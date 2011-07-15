@@ -1,0 +1,1 @@
+../../dimage/simpleaudio.d

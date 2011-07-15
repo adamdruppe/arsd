@@ -1,0 +1,55 @@
+This is a collection of modules I find generally useful.
+
+Modules are usually independent; you don't need this whole directory
+but it doesn't hurt to grab it all either.
+
+Currently included are:
+
+Web related
+================
+
+cgi.d  - base module for making webapps in D
+dom.d  - an xml/html DOM based on what Javascript provides in browsers
+web.d  - a fancier way to write web apps. Uses reflection to make functions
+         accessible via url with minimal boilerplate in your code
+
+
+Database related
+================
+
+database.d  - main interface to databases. Includes DataObject
+mysql.d     - a mysql engine for database.d (most mature of the three)
+postgres.d  - a postgres engne for database.d
+sqlite.d    - a sqlite engine for database.d
+
+Desktop app stuff
+================
+
+simpledisplay.d - gives quick and easy access to a window for drawing
+simpleaudio.d - gives minimal audio output
+
+Other
+================
+
+sha.d  - implementations of the SHA1 and SHA256 algorithms
+png.d  - provides some png read/write support
+curl.d - a small wrapper around the curl library
+csv.d  - gives read support to csv files
+http.d - a lighterweight alternative to curl.d
+
+
+
+Things I might add once I clean up the files (this can be expedited upon
+request, to an extent):
+
+httpd.d - an embedded web server
+oauth.d - client/server stuff for oauth1
+html.d  - a bunch of dom translation functions. Think unobstructive javascript
+          on the server side
+browser.d - a very small html widget
+netman.d - handles net connections  (required by httpd.d)
+imagedraft.d - (temporary name) has algorithms for images
+bmp.d   - gives .bmp read/write
+dws.d  - a draft of my D windowing system (also includes some Qt code)
+wav.d  - reading and writing WAV files
+midi.d - reading and writing MIDI files
