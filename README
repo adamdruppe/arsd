@@ -3,6 +3,9 @@ This is a collection of modules I find generally useful.
 Modules are usually independent; you don't need this whole directory
 but it doesn't hurt to grab it all either.
 
+Recent changes:
+	web.d can now accept file uploads via hackish thing - make a param with type "Cgi.UploadedFile"
+
 Currently included are:
 
 Web related

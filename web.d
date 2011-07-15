@@ -1,6 +1,8 @@
 module arsd.web;
 
 /*
+	FIXME: in params on the wrapped functions generally don't work
+
 	Running from the command line:
 
 	./myapp function positional args....
@@ -571,13 +573,14 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 					}
 				} else static if (is(typeof(param) == bool)) {
 					p.type = "checkbox";
+				} else static if (is(Unqual!(typeof(param)) == Cgi.UploadedFile)) {
+					p.type = "file";
 				} else {
 					if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
 						p.type = "password";
 					else
 						p.type = "text";
 				}
-
 				f.parameters ~= p;
 			}
 
@@ -1034,6 +1037,11 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 				input.type = type;
 				input.name = param.name;
 				input.value = param.value;
+
+				if(type == "file") {
+					form.method = "POST";
+					form.enctype = "multipart/form-data";
+				}
 			}
 		}
 
@@ -1477,6 +1485,10 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 					args[i] = true; // FIXME: should try looking at the value
 				else
 					args[i] = false;
+			} else static if(is(Unqual!(type) == Cgi.UploadedFile)) {
+				if(name !in cgi.files)
+					throw new InsufficientParametersException(funName, "file " ~ name ~ " is not present");
+				args[i] = cast()  cgi.files[name]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
 					throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
