@@ -160,6 +160,25 @@ class ApiProvider {
 		return container;
 	}
 
+	void _catchAll(string path) {
+		throw new NoSuchPageException(_errorMessageForCatchAll);
+	}
+
+	private string _errorMessageForCatchAll;
+	private void _catchallEntry(string path, string funName, string errorMessage) {
+		if(!errorMessage.length) {
+			string allFuncs, allObjs;
+			foreach(n, f; reflection.functions)
+				allFuncs ~= n ~ "\n";
+			foreach(n, f; reflection.objects)
+				allObjs ~= n ~ "\n";
+			errorMessage =  "no such function " ~ funName ~ "\n functions are:\n" ~ allFuncs ~ "\n\nObjects are:\n" ~ allObjs;
+		}
+
+		_errorMessageForCatchAll = errorMessage;
+	}
+
+
 	/// When in website mode, you can use this to beautify the error message
 	Document delegate(Throwable) _errorFunction;
 }
@@ -773,14 +792,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 		if(fun is null) {
 			noSuchFunction:
-			if(errorMessage.length)
-				throw new NoSuchPageException(errorMessage);
-			string allFuncs, allObjs;
-			foreach(n, f; reflection.functions)
-				allFuncs ~= n ~ "\n";
-			foreach(n, f; reflection.objects)
-				allObjs ~= n ~ "\n";
-			throw new NoSuchPageException("no such function " ~ funName ~ "\n functions are:\n" ~ allFuncs ~ "\n\nObjects are:\n" ~ allObjs);
+
+			instantiation._catchallEntry(
+				cgi.pathInfo[pathInfoStartingPoint + 1..$],
+				funName,
+				errorMessage);
 		}
 
 		assert(fun !is null);
