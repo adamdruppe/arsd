@@ -176,6 +176,8 @@ class ApiProvider {
 		}
 
 		_errorMessageForCatchAll = errorMessage;
+
+		_catchAll(path);
 	}
 
 
@@ -797,6 +799,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				cgi.pathInfo[pathInfoStartingPoint + 1..$],
 				funName,
 				errorMessage);
+
+			envelopeFormat = "no-processing";
+
+			return;
 		}
 
 		assert(fun !is null);
@@ -877,6 +883,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 		}
 	} finally {
 		switch(envelopeFormat) {
+			case "no-processing":
+				break;
 			case "redirect":
 				auto redirect = cgi.request("_arsd_redirect_location", cgi.referrer);
 
