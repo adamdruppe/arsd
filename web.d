@@ -83,6 +83,11 @@ public import std.range;
 public import std.traits;
 import std.json;
 
+/// This gets your site's base link. note it's really only good if you are using FancyMain.
+string getSiteLink(Cgi cgi) {
+	return cgi.requestUri[0.. cgi.requestUri.indexOf(cgi.scriptName) + cgi.scriptName.length + 1 /* for the slash at the end */];
+}
+
 struct Envelope {
 	bool success;
 	string type;
@@ -110,7 +115,8 @@ string linkTo(alias func, T...)(T args) {
 /// Your class must provide a default constructor.
 class ApiProvider {
 	Cgi cgi;
-	static immutable(ReflectionInfo)* reflection;
+	// FIXME: the static is meant to be a performance improvement, but it breaks child modules' reflection!
+	/*static */immutable(ReflectionInfo)* reflection;
 	string _baseUrl; // filled based on where this is called from on this request
 
 	/// Override this if you have initialization work that must be done *after* cgi and reflection is ready.
@@ -132,15 +138,30 @@ class ApiProvider {
 	Element _sitemap() {
 		auto container = _getGenericContainer();
 
-		auto list = container.addChild("ul");
+		void writeFunctions(Element list, in ReflectionInfo* reflection, string base) {
+			string[string] handled;
+			foreach(func; reflection.functions) {
+				if(func.originalName in handled)
+					continue;
+				handled[func.originalName] = func.originalName;
+				list.addChild("li", new Link(base ~ func.name, beautify(func.originalName)));
+			}
 
-		string[string] handled;
-		foreach(func; reflection.functions) {
-			if(func.originalName in handled)
-				continue;
-			handled[func.originalName] = func.originalName;
-			list.addChild("li", new Link(_baseUrl ~ "/" ~ func.name, beautify(func.originalName)));
+			handled = null;
+			foreach(obj; reflection.objects) {
+				if(obj.name in handled)
+					continue;
+				handled[obj.name] = obj.name;
+
+				auto li = list.addChild("li", new Link(base ~ obj.name, obj.name));
+
+				auto ul = li.addChild("ul");
+				writeFunctions(ul, obj, base ~ obj.name ~ "/");
+			}
 		}
+
+		auto list = container.addChild("ul");
+		writeFunctions(list, reflection, _baseUrl ~ "/");
 
 		return list.parentNode.removeChild(list);
 	}
@@ -198,6 +219,8 @@ struct ReflectionInfo {
 	const(ReflectionInfo)*[string] objects;
 
 	bool needsInstantiation;
+
+	ApiProvider instantiation;
 
 	// the overall namespace
 	string name; // this is also used as the object name in the JS api
@@ -258,10 +281,16 @@ struct Parameter {
 	string[] optionValues;
 }
 
-string makeJavascriptApi(const ReflectionInfo* mod, string base) {
+string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested = false) {
 	assert(mod !is null);
 
-	string script = `var `~mod.name~` = {
+	string script;
+
+	if(isNested)
+		script = `'`~mod.name~`': {
+	"_apiBase":'`~base~`',`;
+	else
+		script = `var `~mod.name~` = {
 	"_apiBase":'`~base~`',`;
 
 	script ~= javascriptBase;
@@ -339,16 +368,14 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base) {
 	}
 
 	// FIXME: it should output the classes too
-/*
 	foreach(obj; mod.objects) {
 		if(outp)
 			script ~= ",\n\t";
 		else
 			outp = true;
 
-		script ~= makeJavascriptApi(obj, base);
+		script ~= makeJavascriptApi(obj, base ~ obj.name ~ "/", true);
 	}
-*/
 
 	foreach(func; mod.functions) {
 		if(func.originalName in alreadyDone)
@@ -404,6 +431,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base) {
 	script ~= "\n}";
 
 	// some global stuff to put in
+	if(!isNested)
 	script ~= `
 		if(typeof arsdGlobalStuffLoadedForWebDotD == "undefined") {
 			arsdGlobalStuffLoadedForWebDotD = true;
@@ -489,19 +517,21 @@ auto generateGetter(PM, Parent, string member, alias hackToEnsureMultipleFunctio
 
 
 
-immutable(ReflectionInfo*) prepareReflection(alias PM)(Cgi cgi, PM instantiation, ApiObject delegate(string) instantiateObject = null) if(is(PM : ApiProvider) || is(PM: ApiObject) ) {
-	return prepareReflectionImpl!(PM, PM)(cgi, instantiation, instantiateObject);
+immutable(ReflectionInfo*) prepareReflection(alias PM)(Cgi cgi, PM instantiation, ApiObject delegate(string) instantiateObject = null, string aliasedName = null) if(is(PM : ApiProvider) || is(PM: ApiObject) ) {
+	return prepareReflectionImpl!(PM, PM)(cgi, instantiation, instantiateObject, aliasedName);
 }
 
-immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi, Parent instantiation, ApiObject delegate(string) instantiateObject = null) if((is(PM : ApiProvider) || is(PM: ApiObject)) && is(Parent : ApiProvider) ) {
+immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi, Parent instantiation, ApiObject delegate(string) instantiateObject = null, string aliasedName = null) if((is(PM : ApiProvider) || is(PM: ApiObject)) && is(Parent : ApiProvider) ) {
 
 	assert(instantiation !is null);
 
 	ReflectionInfo* reflection = new ReflectionInfo;
-	reflection.name = PM.stringof;
+	reflection.name = aliasedName is null ? PM.stringof : aliasedName;
 
 	static if(is(PM: ApiObject))
 		reflection.needsInstantiation = true;
+	else
+		reflection.instantiation = instantiation;
 
 	// derivedMembers is changed from allMembers
 	foreach(member; __traits(derivedMembers, PM)) {
@@ -630,7 +660,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 		) {
 			PassthroughType!(__traits(getMember, PM, member)) i;
 			i = new typeof(i)();
-			auto r = prepareReflection!(__traits(getMember, PM, member))(cgi, i);
+			auto r = prepareReflection!(__traits(getMember, PM, member))(cgi, i, null, member);
 			reflection.objects[member] = r;
 			if(toLower(member) !in reflection.objects) // web filenames are often lowercase too
 				reflection.objects[member.toLower] = r;
@@ -675,8 +705,6 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 		cgi.close();
 		return;
 	}
-
-	instantiation._initializePerCall();
 
 	// what about some built in functions?
 	/*
@@ -783,6 +811,18 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 							fun = (to!string(cgi.requestMethod)) in currentReflection.functions;
 						}
 					} else {
+						if(parts[0].length == 0) {
+							auto inst = cast(ApiProvider) currentReflection.instantiation;
+							auto document = inst._defaultPage();
+							if(document !is null) {
+								instantiation._postProcess(document);
+								cgi.write(document.toString());
+							}
+							cgi.close();
+							envelopeFormat = "no-processing";
+							return;
+						}
+
 						fun = parts[0] in currentReflection.functions;
 						if(fun is null)
 							errorMessage = "no such method in class "~objectName~": " ~ parts[0];
@@ -1456,10 +1496,14 @@ type fromUrlParam(type)(string[] ofInterest) {
 
 WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, string funName, R)(ReflectionInfo* reflection, R api) if(is(R: ApiProvider)) {
 	JSONValue wrapper(Cgi cgi, string instantiationIdentifier, in string[][string] sargs, in string format, in string secondaryFormat = null) {
+
+
 		JSONValue returnValue;
 		returnValue.type = JSON_TYPE.STRING;
 
 		auto instantiation = getInstantiation(instantiationIdentifier, api);
+
+		api._initializePerCall();
 
 		ParameterTypeTuple!(f) args;
 
