@@ -116,7 +116,6 @@ class Cgi {
 		if(getenv is null)
 			getenv = delegate string(string env) { return .getenv(env); };
 
-		// FIXME: this is wrong on IIS!
 		requestUri = getenv("REQUEST_URI");
 		cookie = getenv("HTTP_COOKIE");
 		referrer = getenv("HTTP_REFERER");
@@ -126,6 +125,22 @@ class Cgi {
 		host = getenv("HTTP_HOST");
 		pathInfo = getenv("PATH_INFO");
 		scriptName = getenv("SCRIPT_NAME");
+
+		bool iis = false;
+
+		// Because IIS doesn't pass requestUri, we simulate it here if it's empty.
+		if(requestUri.length == 0) {
+			// IIS also includes the script name as part of the path info - we don't want that
+			assert(pathInfo[0 .. scriptName.length] == scriptName);
+			pathInfo = pathInfo[scriptName.length .. $];
+			requestUri = scriptName ~ pathInfo ~ (queryString.length ? ("?" ~ queryString) : "");
+
+			iis = true; // FIXME HACK - used in byChunk below - see bugzilla 6339
+
+			// FIXME: this works for apache and iis... but what about others?
+		}
+
+		// NOTE: on shitpache, you need to specifically forward this
 		authorization = getenv("HTTP_AUTHORIZATION");
 		// this is a hack because Apache is a shitload of fuck and
 		// refuses to send the real header to us. Compatible
@@ -174,7 +189,7 @@ class Cgi {
 				}
 
 			if(readdata is null)
-			foreach(ubyte[] chunk; stdin.byChunk(4096)) { // FIXME: maybe it should pass the range directly to the parser
+			foreach(ubyte[] chunk; stdin.byChunk(iis ? contentLength : 4096)) { // FIXME: maybe it should pass the range directly to the parser
 				if(chunk.length > contentLength) {
 					data ~= chunk[0..contentLength];
 					contentLength = 0;
@@ -206,6 +221,7 @@ class Cgi {
 				}
 			}
 
+				//assert(0, cast(string) data);
 			}
 
 			version(preserveData)
