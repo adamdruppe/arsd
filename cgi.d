@@ -130,9 +130,10 @@ class Cgi {
 
 		// Because IIS doesn't pass requestUri, we simulate it here if it's empty.
 		if(requestUri.length == 0) {
-			// IIS also includes the script name as part of the path info - we don't want that
-			assert(pathInfo[0 .. scriptName.length] == scriptName);
-			pathInfo = pathInfo[scriptName.length .. $];
+			// IIS sometimes includes the script name as part of the path info - we don't want that
+			if(pathInfo.length >= scriptName.length && (pathInfo[0 .. scriptName.length] == scriptName))
+				pathInfo = pathInfo[scriptName.length .. $];
+
 			requestUri = scriptName ~ pathInfo ~ (queryString.length ? ("?" ~ queryString) : "");
 
 			iis = true; // FIXME HACK - used in byChunk below - see bugzilla 6339
@@ -220,8 +221,6 @@ class Cgi {
 					chunk = readdata();
 				}
 			}
-
-				//assert(0, cast(string) data);
 			}
 
 			version(preserveData)
