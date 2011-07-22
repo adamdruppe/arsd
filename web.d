@@ -698,6 +698,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 	string funName = cgi.pathInfo[pathInfoStartingPoint + 1..$];
 
+	if(funName[$-1] == '/')
+		funName = funName[0 .. $-1];
+
 	// kinda a hack, but this kind of thing should be available anyway
 	if(funName == "functions.js") {
 		cgi.setResponseContentType("text/javascript");
@@ -813,6 +816,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 					} else {
 						if(parts[0].length == 0) {
 							auto inst = cast(ApiProvider) currentReflection.instantiation;
+
+							// FIXME: this ought to always be available
+							inst._baseUrl = cgi.scriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint] ~ "/" ~ currentReflection.name;
 							auto document = inst._defaultPage();
 							if(document !is null) {
 								instantiation._postProcess(document);
@@ -1517,7 +1523,7 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 			foreach(i, type; ParameterTypeTuple!(__traits(getMember, group, funName ~ "_PermissionCheck"))) {
 				string name = parameterNamesOf!(__traits(getMember, group, funName ~ "_PermissionCheck"))[i];
 				static if(is(type == bool)) {
-					if(name in sargs)
+					if(name in sargs && sargs[name] != "false" && sargs[name] != "0")
 						args[i] = true;
 					else
 						args[i] = false;
@@ -1549,8 +1555,15 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 
 			static if(is(type == bool)) {
 				// bool is special cased because HTML checkboxes don't send anything if it isn't checked
-				if(using in sargs)
+				if(name in sargs) {
+					if(
+					sargs[name][$-1] != "false" &&
+					sargs[name][$-1] != "False" &&
+					sargs[name][$-1] != "FALSE" &&
+					sargs[name][$-1] != "0"
+					)
 					args[i] = true; // FIXME: should try looking at the value
+				}
 				else
 					args[i] = false;
 			} else static if(is(Unqual!(type) == Cgi.UploadedFile)) {
