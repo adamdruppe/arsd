@@ -32,6 +32,7 @@ import std.stdio;
 	setMainPart on it. boom.
 */
 
+///.
 T[] insertAfter(T)(T[] arr, int position, T[] what) {
 	assert(position < arr.length);
 	T[] ret;
@@ -49,6 +50,7 @@ T[] insertAfter(T)(T[] arr, int position, T[] what) {
 	return ret;
 }
 
+///.
 bool isInArray(T)(T item, T[] arr) {
 	foreach(i; arr)
 		if(item == i)
@@ -56,11 +58,15 @@ bool isInArray(T)(T item, T[] arr) {
 	return false;
 }
 
+///.
 class Stack(T) {
+
+	///.
 	void push(T t) {
 		arr ~= t;
 	}
 
+	///.
 	T pop() {
 		assert(arr.length);
 		T tmp = arr[$-1];
@@ -68,22 +74,29 @@ class Stack(T) {
 		return tmp;
 	}
 
+	///.
 	T peek() {
 		return arr[$-1];
 	}
 
+	///.
 	bool empty() {
 		return arr.length ? false : true;
 	}
 
+	///.
 	T[] arr;
 }
 
+///.
 class ElementStream {
+
+	///.
 	Element front() {
 		return current.element;
 	}
 
+	///.
 	this(Element start) {
 		current.element = start;
 		current.childPosition = -1;
@@ -96,6 +109,8 @@ class ElementStream {
 		handle its children
 
 	*/
+
+	///.
 	void popFront() {
 	    more:
 	    	if(isEmpty) return;
@@ -115,6 +130,7 @@ class ElementStream {
 		}
 	}
 
+	///.
 	void currentKilled() {
 		if(stack.empty) // should never happen
 			isEmpty = true;
@@ -124,21 +140,28 @@ class ElementStream {
 		}
 	}
 
+	///.
 	bool empty() {
 		return isEmpty;
 	}
 
+	///.
 	struct Current {
 		Element element;
 		int childPosition;
 	}
 
+	///.
 	Current current;
 
+	///.
 	Stack!(Current) stack;
+
+	///.
 	bool isEmpty;
 }
 
+///.
 string[string] dup(in string[string] arr) {
 	string[string] ret;
 	foreach(k, v; arr)
@@ -150,14 +173,25 @@ string[string] dup(in string[string] arr) {
 	swapNode
 	cloneNode
 */
+///.
 class Element {
+
+	///.
 	Element[] children;
+
+	///.
 	string tagName;
+
+	///.
 	string[string] attributes;
+
+	///.
 	bool selfClosed;
 
+	///.
 	Document parentDocument;
 
+	///.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
 		parentDocument = _parentDocument;
 		tagName = _tagName;
@@ -166,6 +200,7 @@ class Element {
 		selfClosed = _selfClosed;
 	}
 
+	///.
 	@property Element previousSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -180,6 +215,7 @@ class Element {
 		return ps;
 	}
 
+	///.
 	@property Element nextSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -202,6 +238,7 @@ class Element {
 
 
 	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
+	///.
 	@property CssStyle computedStyle() {
 		if(_computedStyle is null) {
 			auto style = this.getAttribute("style");
@@ -226,17 +263,18 @@ class Element {
 
 	private CssStyle _computedStyle;
 
-	// These properties are useless in most cases, but if you write a layout engine on top of this lib, they may be good
+	/// These properties are useless in most cases, but if you write a layout engine on top of this lib, they may be good
 	version(browser) {
-		void* expansionHook;
-		int offsetWidth;
-		int offsetHeight;
-		int offsetLeft;
-		int offsetTop;
-		Element offsetParent;
-		bool hasLayout;
-		int zIndex;
+		void* expansionHook; ///ditto
+		int offsetWidth; ///ditto
+		int offsetHeight; ///ditto
+		int offsetLeft; ///ditto
+		int offsetTop; ///ditto
+		Element offsetParent; ///ditto
+		bool hasLayout; ///ditto
+		int zIndex; ///ditto
 
+		///ditto
 		int absoluteLeft() {
 			int a = offsetLeft;
 			auto p = offsetParent;
@@ -248,6 +286,7 @@ class Element {
 			return a;
 		}
 
+		///ditto
 		int absoluteTop() {
 			int a = offsetTop;
 			auto p = offsetParent;
@@ -262,6 +301,7 @@ class Element {
 
 	// Back to the regular dom functions
 
+	///.
 	@property Element cloned() {
 		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
 		foreach(child; children) {
@@ -367,6 +407,7 @@ class Element {
 		assert(0);
 	}
 
+	///.
 	Element insertAfter(Element where, Element what)
 		in {
 			assert(where !is null);
@@ -437,6 +478,7 @@ class Element {
 		return appendChild(e);
 	}
 
+	///.
 	Element addChild(string tagName, Element firstChild)
 	in {
 		assert(parentDocument !is null);
@@ -454,6 +496,7 @@ class Element {
 		return e;
 	}
 
+	///.
 	T getParent(T)(string tagName = null) if(is(T : Element)) {
 		if(tagName is null) {
 			static if(is(T == Form))
@@ -491,6 +534,7 @@ class Element {
 	}
 
 
+	///.
 	Element getElementById(string id) {
 		foreach(e; tree)
 			if(e.id == id)
@@ -498,6 +542,7 @@ class Element {
 		return null;
 	}
 
+	///.
 	final SomeElementType requireElementById(SomeElementType = Element)(string id)
 	if(
 		is(SomeElementType : Element)
@@ -512,6 +557,7 @@ class Element {
 		return e;
 	}
 
+	///.
 	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
 	if(
 		is(SomeElementType : Element)
@@ -526,6 +572,7 @@ class Element {
 		return e;
 	}
 
+	///.
 	Element querySelector(string selector) {
 		// FIXME: inefficient
 		auto list = getElementsBySelector(selector);
@@ -539,6 +586,7 @@ class Element {
 		return getElementsBySelector(selector);
 	}
 
+	///.
 	Element[] getElementsBySelector(string selector) {
 		if(parentDocument && parentDocument.loose)
 			selector = selector.toLower;
@@ -549,6 +597,7 @@ class Element {
 		return ret;
 	}
 
+	///.
 	Element[] getElementsByTagName(string tag) {
 		if(parentDocument && parentDocument.loose)
 			tag = tag.toLower();
@@ -559,11 +608,13 @@ class Element {
 		return ret;
 	}
 
+	///.
 	Element appendText(string text) {
 		Element e = new TextNode(parentDocument, text);
 		return appendChild(e);
 	}
 
+	///.
 	@property Element[] childElements() {
 		Element[] ret;
 		foreach(c; children)
@@ -619,6 +670,7 @@ class Element {
 		return stealChildren(d.root);
 	}
 
+	///.
 	Element addClass(string c) {
 		string cn = getAttribute("class");
 		if(cn is null) {
@@ -631,6 +683,7 @@ class Element {
 		return this;
 	}
 
+	///.
 	Element removeClass(string c) {
 		auto cn = className;
 
@@ -639,6 +692,7 @@ class Element {
 		return this;
 	}
 
+	///.
 	bool hasClass(string c) {
 		auto cn = className;
 
@@ -674,6 +728,7 @@ class Element {
 		*/
 	}
 
+	///.
 	void reparent(Element newParent)
 		in {
 			assert(newParent !is null);
@@ -688,6 +743,7 @@ class Element {
 		newParent.appendChild(this);
 	}
 
+	///.
 	void insertChildAfter(Element child, Element where)
 		in {
 			assert(child !is null);
@@ -713,6 +769,7 @@ class Element {
 		}
 	}
 
+	///.
 	Element[] stealChildren(Element e, Element position = null)
 		in {
 			assert(!selfClosed);
@@ -786,6 +843,7 @@ class Element {
 
 
 	// should return int
+	///.
 	@property int nodeType() const {
 		return 1;
 	}
@@ -858,10 +916,12 @@ class Element {
 		return doc.root.children;
 	}
 
+	///.
 	@property string outerHTML() {
 		return this.toString();
 	}
 
+	///.
 	@property void innerRawSource(string rawSource) {
 		children.length = 0;
 		auto rs = new RawSource(parentDocument, rawSource);
@@ -940,15 +1000,18 @@ class Element {
 		return c;
 	}
 
+	///.
 	Element className(string c) {
 		setAttribute("class", c);
 		return this;
 	}
 
+	///.
 	string nodeValue() const {
 		return "";
 	}
 
+	///.
 	Element replaceChild(Element find, Element replace) 
 		in {
 			assert(find !is null);
@@ -999,6 +1062,7 @@ class Element {
 		throw new Exception("no such child");
 	}
 
+	///.
 	Element[] removeChildren()
 		out (ret) {
 			assert(children.length == 0);
@@ -1056,6 +1120,7 @@ class Element {
 		throw new Exception("no such child");
 	}
 
+	///.
 	Element parentNode;
 
 	/**
@@ -1201,17 +1266,21 @@ class Element {
 	}
 }
 
+///.
 class DocumentFragment : Element {
+	///.
 	this(Document _parentDocument) {
 		tagName = "#fragment";
 		super(_parentDocument);
 	}
 
+	///.
 	override string toString() const {
 		return this.innerHTML;
 	}
 }
 
+///.
 string htmlEntitiesEncode(string data) {
 	char[] output = "".dup;
 	foreach(dchar d; data) {
@@ -1235,10 +1304,12 @@ string htmlEntitiesEncode(string data) {
 //	data = data.replace("\u00a0", "&nbsp;");
 }
 
+///.
 string xmlEntitiesEncode(string data) {
 	return htmlEntitiesEncode(data);
 }
 
+///.
 dchar parseEntity(in dchar[] entity) {
 	switch(entity[1..$-1]) {
 		case "quot":
@@ -1302,6 +1373,7 @@ dchar parseEntity(in dchar[] entity) {
 
 import std.utf;
 
+///.
 string htmlEntitiesDecode(string data, bool strict = false) {
 	dchar[] a;
 
@@ -1342,61 +1414,77 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	return std.conv.to!string(a);
 }
 
+///.
 class RawSource : Element {
+
+	///.
 	this(Document _parentDocument, string s) {
 		super(_parentDocument);
 		source = s;
 		tagName = "#raw";
 	}
 
+	///.
 	override string nodeValue() const {
 		return this.toString();
 	}
 
+	///.
 	override int nodeType() const {
 		return 100;
 	}
 
+	///.
 	override string toString() const {
 		return source;
 	}
 
+	///.
 	override Element appendChild(Element e) {
 		assert(0, "Cannot append to a text node");
 	}
 
 
+	///.
 	string source;
 }
 
+///.
 enum NodeType { Text = 3}
 
+///.
 class TextNode : Element {
   public:
+	///.
 	this(Document _parentDocument, string e) {
 		super(_parentDocument);
 		contents = e;
 		tagName = "#text";
 	}
 
+	///.
 	static TextNode fromUndecodedString(Document _parentDocument, string html) {
 		auto e = new TextNode(_parentDocument, "");
 		e.contents = htmlEntitiesDecode(html, _parentDocument is null ? false : !_parentDocument.loose);
 		return e;
 	}
 
+	///.
 	override @property Element cloned() {
 		return new TextNode(parentDocument, contents);
 	}
 
+	///.
 	override string nodeValue() const {
 		return this.contents; //toString();
 	}
 
+	///.
 	override int nodeType() const {
 		return NodeType.Text;
 	}
 
+	///.
 	override string toString() const {
 		string s;
 		if(contents.length)
@@ -1408,10 +1496,12 @@ class TextNode : Element {
 		return s;
 	}
 
+	///.
 	override Element appendChild(Element e) {
 		assert(0, "Cannot append to a text node");
 	}
 
+	///.
 	string contents;
 }
 
@@ -1420,11 +1510,16 @@ class TextNode : Element {
 	functions for the element in HTML.
 */
 
+///.
 class Link : Element {
+
+	///.
 	this(Document _parentDocument) {
 		super(_parentDocument);
 	}
 
+
+	///.
 	this(string href, string text) {
 		super("a");
 		setAttribute("href", href);
@@ -1436,10 +1531,12 @@ class Link : Element {
 
 	}
 
+	///.
 	@property string domainName() {
 
 	}
 
+	///.
 	@property string path
 +/
 	/// This gets a variable from the URL's query string.
@@ -1481,6 +1578,7 @@ class Link : Element {
 		return hash;
 	}
 
+	///.
 	/*private*/ void updateQueryString(string[string] vars) {
 		string href = getAttribute("href");
 
@@ -1534,10 +1632,12 @@ class Link : Element {
 	}
 
 	/*
+	///.
 	override string toString() {
 
 	}
 
+	///.
 	override string getAttribute(string name) {
 		if(name == "href") {
 
@@ -1547,7 +1647,10 @@ class Link : Element {
 	*/
 }
 
+///.
 class Form : Element {
+
+	///.
 	this(Document _parentDocument) {
 		super(_parentDocument);
 		tagName = "form";
@@ -1674,6 +1777,7 @@ class Form : Element {
 	}
 
 	// FIXME: doesn't handle multiple elements with the same name (except radio buttons)
+	///.
 	string getPostableData() {
 		bool[string] namesDone;
 
@@ -1707,7 +1811,7 @@ class Form : Element {
 		return ret;
 	}
 
-	// Grabs the <label> with the given for tag, if there is one.
+	/// Grabs the <label> with the given for tag, if there is one.
 	Element getLabel(string forId) {
 		foreach(e; tree)
 			if(e.tagName == "label" && e.getAttribute("for") == forId)
@@ -1739,6 +1843,7 @@ class Form : Element {
 
 	}
 
+	///.
 	string opDispatch(string name)(string v = null)
 		// filter things that should actually be attributes on the form
 		if( name != "method" && name != "action" && name != "enctype"
@@ -1756,12 +1861,16 @@ class Form : Element {
 
 import std.conv;
 
+///.
 class Table : Element {
+
+	///.
 	this(Document _parentDocument) {
 		super(_parentDocument);
 		tagName = "table";
 	}
 
+	///.
 	Element th(T)(T t) {
 		assert(parentDocument !is null);
 		Element e = parentDocument.createElement("th");
@@ -1772,6 +1881,7 @@ class Table : Element {
 		return e;
 	}
 
+	///.
 	Element td(T)(T t) {
 		assert(parentDocument !is null);
 		Element e = parentDocument.createElement("td");
@@ -1782,6 +1892,7 @@ class Table : Element {
 		return e;
 	}
 
+	///.
 	Element appendRow(T...)(T t) {
 		assert(parentDocument !is null);
 
@@ -1822,6 +1933,7 @@ class Table : Element {
 		return row;
 	}
 
+	///.
 	Element captionElement() {
 		Element cap;
 		foreach(c; children) {
@@ -1839,23 +1951,31 @@ class Table : Element {
 		return cap;
 	}
 
+	///.
 	@property string caption() {
 		return captionElement().innerText;
 	}
 
+	///.
 	@property void caption(string text) {
 		captionElement().innerText = text;
 	}
 }
 
 
+///.
 class MarkupError : Exception {
+
+	///.
 	this(string message) {
 		super(message);
 	}
 }
 
+///.
 class ElementNotFoundException : Exception {
+
+	///.
 	this(string type, string search) {
 		super("Element of type '"~type~"' matching {"~search~"} not found.");
 	}
@@ -1863,10 +1983,13 @@ class ElementNotFoundException : Exception {
 
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
 struct Html {
+	///.
 	string source;
 }
 
+///.
 class Document {
+	///.
 	this(string data, bool caseSensitive = false, bool strict = false) {
 		parse(data, caseSensitive, strict);
 	}
@@ -1986,8 +2109,7 @@ class Document {
 						pos++;
 					string v = htmlEntitiesDecode(data[start..pos], strict);
 					pos++; // skip over the end
-					return v;
-				break;
+				return v;
 				default:
 					if(strict)
 						parseError("Attributes must be quoted");
@@ -2104,8 +2226,7 @@ class Document {
 					if(!caseSensitive)
 						tname = tname.toLower;
 
-					return Ele(1, null, tname); // closing tag reports itself here
-				break;
+				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
 					if(strict)
 						parseError("bad markup - improperly placed <");
@@ -2228,10 +2349,8 @@ class Document {
 						default: assert(0);
 						case '/': // self closing tag
 							return addTag(true);
-						break;
 						case '>':
 							return addTag(false);
-						break;
 						case ' ':
 						case '\t':
 						case '\n':
@@ -2242,11 +2361,8 @@ class Document {
 							switch(data[pos]) {
 								case '/': // self closing tag
 									return addTag(true);
-								break;
 								case '>': // closed tag; open -- we now read the contents
-
-										return addTag(false);
-								break;
+									return addTag(false);
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
@@ -2306,6 +2422,7 @@ class Document {
 
 	/* end massive parse function */
 
+	///.
 	@property string title() {
 		bool doesItMatch(Element e) {
 			return (e.tagName == "title");
@@ -2317,6 +2434,7 @@ class Document {
 		return "";
 	}
 
+	///.
 	@property void title(string t) {
 		bool doesItMatch(Element e) {
 			return (e.tagName == "title");
@@ -2336,11 +2454,12 @@ class Document {
 	}
 
 	// FIXME: would it work to alias root this; ???? might be a good idea
-
+	///.
 	Element getElementById(string id) {
 		return root.getElementById(id);
 	}
 
+	///.
 	final SomeElementType requireElementById(SomeElementType = Element)(string id)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
@@ -2348,6 +2467,7 @@ class Document {
 		return root.requireElementById!(SomeElementType)(id);
 	}
 
+	///.
 	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
@@ -2356,18 +2476,22 @@ class Document {
 	}
 
 
+	///.
 	Element querySelector(string selector) {
 		return root.querySelector(selector);
 	}
 
+	///.
 	Element[] querySelectorAll(string selector) {
 		return root.querySelectorAll(selector);
 	}
 
+	///.
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
 	}
 
+	///.
 	Element[] getElementsByTagName(string tag) {
 		return root.getElementsByTagName(tag);
 	}
@@ -2382,12 +2506,13 @@ class Document {
 		return findFirst(&doesItMatch);
 	}
 
+	///.
 	Element mainBody() {
 		return getFirstElementByTagName("body");
 	}
 
-	// this uses a weird thing... it's [name=] if no colon and
-	// [property=] if colon
+	/// this uses a weird thing... it's [name=] if no colon and
+	/// [property=] if colon
 	string getMeta(string name) {
 		string thing = name.indexOf(":") == -1 ? "name" : "property";
 		auto e = querySelector("head meta["~thing~"="~name~"]");
@@ -2396,6 +2521,7 @@ class Document {
 		return e.content;
 	}
 	
+	///.
 	void setMeta(string name, string value) {
 		string thing = name.indexOf(":") == -1 ? "name" : "property";
 		auto e = querySelector("head meta["~thing~"="~name~"]");
@@ -2407,10 +2533,12 @@ class Document {
 		e.content = value;
 	}
 
+	///.
 	Form[] forms() {
 		return cast(Form[]) getElementsByTagName("form");
 	}
 
+	///.
 	Form createForm() 
 		out(ret) {
 			assert(ret !is null);
@@ -2419,6 +2547,7 @@ class Document {
 		return cast(Form) createElement("form");
 	}
 
+	///.
 	Element createElement(string name) {
 		if(loose)
 			name = name.toLower();
@@ -2450,16 +2579,20 @@ class Document {
 //		return new Element(this, name, null, selfClosed);
 	}
 
+	///.
 	Element createFragment() {
 		return new DocumentFragment(this);
 	}
 
+	///.
 	Element createTextNode(string content) {
 		return new TextNode(this, content);
 	}
 
 
 	// ******** Begin extensions ******** //
+
+	///.
 	Element findFirst(bool delegate(Element) doesItMatch) {
 		Element result;
 
@@ -2482,22 +2615,29 @@ class Document {
 		return result;
 	}
 
+	///.
 	void clear() {
 		root = null;
 		loose = false;
 	}
 
+	///.
 	void setProlog(string d) {
 		prolog = d;
 	}
 
+	///.
 	string prolog = "<!DOCTYPE html>\n";
 
-	string toString() const {
+	///.
+	override string toString() const {
 		return prolog ~ root.toString();
 	}
 
+	///.
 	Element root;
+
+	///.
 	bool loose;
 
 }
@@ -2506,6 +2646,7 @@ class Document {
 
 static import std.conv;
 
+///.
 int intFromHex(string hex) {
 	int place = 1;
 	int value = 0;
@@ -2536,6 +2677,7 @@ int intFromHex(string hex) {
 // dt << dl  means go as far up as needed to find a dl (you have an element and want its containers)      NOT IMPLEMENTED
 // :first  means to stop at the first hit, don't do more (so p + p == p ~ p:first
 
+		///.
 		static immutable string[] selectorTokens = [
 			// It is important that the 2 character possibilities go first here for accurate lexing
 		    "~=", "*=", "|=", "^=", "$=", "!=", // "::" should be there too for full standard
@@ -2544,6 +2686,7 @@ int intFromHex(string hex) {
 		    ".", ">", "+", "*", ":", "[", "]", "=", "\"", "#", ",", " ", "~", "<"
 		]; // other is white space or a name.
 
+		///.
 		int idToken(string str, int position) {
 			int tid = -1;
 			char c = str[position];
@@ -2558,6 +2701,8 @@ int intFromHex(string hex) {
 				}
 			return tid;
 		}
+	
+	///.
 	string[] lexSelector(string selector) {
 
 		// FIXME: it doesn't support quoted attributes
@@ -2609,30 +2754,32 @@ int intFromHex(string hex) {
 		return tokens;
 	}
 
+	///.
 	struct SelectorPart {
-		string tagNameFilter;
-		string[] attributesPresent; // [attr]
-		string[2][] attributesEqual; // [attr=value]
-		string[2][] attributesStartsWith; // [attr^=value]
-		string[2][] attributesEndsWith; // [attr$=value]
+		string tagNameFilter; ///.
+		string[] attributesPresent; /// [attr]
+		string[2][] attributesEqual; /// [attr=value]
+		string[2][] attributesStartsWith; /// [attr^=value]
+		string[2][] attributesEndsWith; /// [attr$=value]
 		// split it on space, then match to these
-		string[2][] attributesIncludesSeparatedBySpaces; // [attr~=value]
+		string[2][] attributesIncludesSeparatedBySpaces; /// [attr~=value]
 		// split it on dash, then match to these
-		string[2][] attributesIncludesSeparatedByDashes; // [attr|=value]
-		string[2][] attributesInclude; // [attr*=value]
-		string[2][] attributesNotEqual; // [attr!=value] -- extension by me
+		string[2][] attributesIncludesSeparatedByDashes; /// [attr|=value]
+		string[2][] attributesInclude; /// [attr*=value]
+		string[2][] attributesNotEqual; /// [attr!=value] -- extension by me
 
-		bool firstChild;
-		bool lastChild;
+		bool firstChild; ///.
+		bool lastChild; ///.
 
-		bool emptyElement;
-		bool oddChild;
-		bool evenChild;
+		bool emptyElement; ///.
+		bool oddChild; ///.
+		bool evenChild; ///.
 
-		bool rootElement;
+		bool rootElement; ///.
 
-		int separation = -1; // -1 == only itself; the null selector, 0 == tree, 1 == childNodes, 2 == childAfter, 3 == youngerSibling, 4 == parentOf
+		int separation = -1; /// -1 == only itself; the null selector, 0 == tree, 1 == childNodes, 2 == childAfter, 3 == youngerSibling, 4 == parentOf
 
+		///.
 		string toString() {
 			string ret;
 			switch(separation) {
@@ -2665,6 +2812,7 @@ int intFromHex(string hex) {
 		}
 
 		// USEFUL
+		///.
 		bool matchElement(Element e) {
 			if(e is null) return false;
 			if(e.nodeType != 1) return false;
@@ -2744,6 +2892,7 @@ int intFromHex(string hex) {
 	}
 
 	// USEFUL
+	///.
 	Element[] getElementsBySelectorParts(Element start, SelectorPart[] parts) {
 		Element[] ret;
 		if(!parts.length) {
@@ -2834,9 +2983,12 @@ int intFromHex(string hex) {
 		return ret;
 	}
 
+	///.
 	struct Selector {
+		///.
 		SelectorPart[] parts;
 
+		///.
 		string toString() {
 			string ret;
 			foreach(part; parts)
@@ -2845,6 +2997,7 @@ int intFromHex(string hex) {
 		}
 
 		// USEFUL
+		///.
 		Element[] getElements(Element start) {
 			return removeDuplicates(getElementsBySelectorParts(start, parts));
 		}
@@ -2872,11 +3025,13 @@ int intFromHex(string hex) {
 		}
 
 		// the string should NOT have commas. Use parseSelectorString for that instead
+		///.
 		static Selector fromString(string selector) {
 			return parseSelector(lexSelector(selector));
 		}
 	}
 
+	///.
 	Selector[] parseSelectorString(string selector) {
 		Selector[] ret;
 		foreach(s; selector.split(",")) {
@@ -2886,6 +3041,7 @@ int intFromHex(string hex) {
 		return ret;
 	}
 
+	///.
 	Selector parseSelector(string[] tokens) {
 		Selector s;
 
@@ -3003,13 +3159,7 @@ int intFromHex(string hex) {
 							current.evenChild = true;
 						break;
 
-						case "visited":
-						case "active":
-						case "hover":
-						case "target":
-						case "focus":
-						case "checked":
-						case "selected":
+						case "visited", "active", "hover", "target", "focus", "checked", "selected":
 							current.attributesPresent ~= "nothing";
 							// FIXME
 						/*
@@ -3020,15 +3170,15 @@ int intFromHex(string hex) {
 						// extensions not implemented
 						//case "text": // takes the text in the element and wraps it in an element, returning it
 						+/
-
-						case "before":
-						case "after":
+							goto case;
+						case "before", "after":
 							current.attributesPresent ~= "FIXME";
 
 						break;
 						default:
 							//if(token.indexOf("lang") == -1)
 							//assert(0, token);
+						break;
 					}
 					state = State.Starting;
 				break;
@@ -3050,7 +3200,7 @@ int intFromHex(string hex) {
 						}
 						break;
 					}
-				// fallthrough
+					goto case;
 				case State.ExpectingAttributeCloser:
 					if(token != "]") {
 						// not the closer; consider it part of comparison
@@ -3104,6 +3254,7 @@ int intFromHex(string hex) {
 		return s;
 	}
 
+///.
 Element[] removeDuplicates(Element[] input) {
 	Element[] ret;
 
@@ -3120,7 +3271,7 @@ Element[] removeDuplicates(Element[] input) {
 // done with CSS selector handling
 
 
-
+///.
 string unCamelCase(string a) {
 	string ret;
 	foreach(c; a)
@@ -3131,6 +3282,7 @@ string unCamelCase(string a) {
 	return ret;
 }
 
+///.
 string camelCase(string a) {
 	string ret;
 	bool justSawDash = false;
@@ -3147,7 +3299,9 @@ string camelCase(string a) {
 	return ret;
 }
 
+///.
 class CssStyle {
+	///.
 	this(string rule, string content) {
 		rule = rule.strip;
 		content = content.strip;
@@ -3181,6 +3335,7 @@ class CssStyle {
 			expandShortForm(property, originatingSpecificity);
 	}
 
+	///.
 	Specificity getSpecificityOfRule(string rule) {
 		Specificity s;
 		if(rule.length == 0) { // inline
@@ -3192,30 +3347,35 @@ class CssStyle {
 		return s;
 	}
 
-	string originatingRule;
-	Specificity originatingSpecificity;
+	string originatingRule; ///.
+	Specificity originatingSpecificity; ///.
 
+	///.
 	union Specificity {
-		uint score;
+		uint score; ///.
 		// version(little_endian)
+		///.
 		struct {
-			ubyte tags;
-			ubyte classes;
-			ubyte ids;
-			ubyte important; // 0 = none, 1 = stylesheet author, 2 = inline style, 3 = user important
+			ubyte tags; ///.
+			ubyte classes; ///.
+			ubyte ids; ///.
+			ubyte important; /// 0 = none, 1 = stylesheet author, 2 = inline style, 3 = user important
 		}
 	}
 
+	///.
 	struct Property {
-		bool givenExplicitly; // this is false if for example the user said "padding" and this is "padding-left"
-		string name;
-		string value;
-		Specificity specificity;
+		bool givenExplicitly; /// this is false if for example the user said "padding" and this is "padding-left"
+		string name; ///.
+		string value; ///.
+		Specificity specificity; ///.
 		// do we care about the original source rule?
 	}
 
+	///.
 	Property[] properties;
 
+	///.
 	string opDispatch(string nameGiven)(string value = null) if(nameGiven != "popFront") {
 		string name = unCamelCase(nameGiven);
 		if(value is null)
@@ -3224,7 +3384,7 @@ class CssStyle {
 			return setValue(name, value, 0x02000000 /* inline specificity */);
 	}
 
-	// takes dash style name
+	/// takes dash style name
 	string getValue(string name) {
 		foreach(property; properties)
 			if(property.name == name)
@@ -3232,7 +3392,7 @@ class CssStyle {
 		return null;
 	}
 
-	// takes dash style name
+	/// takes dash style name
 	string setValue(string name, string value, Specificity newSpecificity, bool explicit = true) {
 		value = value.replace("! important", "!important");
 		if(value.indexOf("!important") != -1) {
@@ -3300,6 +3460,7 @@ class CssStyle {
 		}
 	}
 
+	///.
 	void expandShortForm(Property p, Specificity specificity) {
 		switch(p.name) {
 			case "margin":
@@ -3327,7 +3488,8 @@ class CssStyle {
 		}
 	}
 
-	string toString() {
+	///.
+	override string toString() {
 		string ret;
 		if(originatingRule.length)
 			ret = originatingRule ~ " {";
@@ -3351,9 +3513,12 @@ class CssStyle {
 	}
 }
 
+///.
 class StyleSheet {
+	///.
 	CssStyle[] rules;
 
+	///.
 	this(string source) {
 		// FIXME: handle @ rules and probably could improve lexer
 		// add nesting?
@@ -3426,6 +3591,7 @@ class StyleSheet {
 		}
 	}
 
+	///.
 	void apply(Document document) {
 		foreach(rule; rules) {
 			if(rule.originatingRule.length == 0)
