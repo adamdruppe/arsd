@@ -2122,8 +2122,7 @@ class Document {
 						pos++;
 					string v = htmlEntitiesDecode(data[start..pos], strict);
 					pos++; // skip over the end
-					return v;
-				break;
+				return v;
 				default:
 					if(strict)
 						parseError("Attributes must be quoted");
@@ -2240,8 +2239,7 @@ class Document {
 					if(!caseSensitive)
 						tname = tname.toLower;
 
-					return Ele(1, null, tname); // closing tag reports itself here
-				break;
+				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
 					if(strict)
 						parseError("bad markup - improperly placed <");
@@ -2364,10 +2362,8 @@ class Document {
 						default: assert(0);
 						case '/': // self closing tag
 							return addTag(true);
-						break;
 						case '>':
 							return addTag(false);
-						break;
 						case ' ':
 						case '\t':
 						case '\n':
@@ -2378,11 +2374,8 @@ class Document {
 							switch(data[pos]) {
 								case '/': // self closing tag
 									return addTag(true);
-								break;
 								case '>': // closed tag; open -- we now read the contents
-
-										return addTag(false);
-								break;
+									return addTag(false);
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
@@ -2650,7 +2643,7 @@ class Document {
 	string prolog = "<!DOCTYPE html>\n";
 
 	///.
-	string toString() const {
+	override string toString() const {
 		return prolog ~ root.toString();
 	}
 
@@ -3179,13 +3172,7 @@ int intFromHex(string hex) {
 							current.evenChild = true;
 						break;
 
-						case "visited":
-						case "active":
-						case "hover":
-						case "target":
-						case "focus":
-						case "checked":
-						case "selected":
+						case "visited", "active", "hover", "target", "focus", "checked", "selected":
 							current.attributesPresent ~= "nothing";
 							// FIXME
 						/*
@@ -3196,15 +3183,15 @@ int intFromHex(string hex) {
 						// extensions not implemented
 						//case "text": // takes the text in the element and wraps it in an element, returning it
 						+/
-
-						case "before":
-						case "after":
+							goto case;
+						case "before", "after":
 							current.attributesPresent ~= "FIXME";
 
 						break;
 						default:
 							//if(token.indexOf("lang") == -1)
 							//assert(0, token);
+						break;
 					}
 					state = State.Starting;
 				break;
@@ -3226,7 +3213,7 @@ int intFromHex(string hex) {
 						}
 						break;
 					}
-				// fallthrough
+					goto case;
 				case State.ExpectingAttributeCloser:
 					if(token != "]") {
 						// not the closer; consider it part of comparison
@@ -3515,7 +3502,7 @@ class CssStyle {
 	}
 
 	///.
-	string toString() {
+	override string toString() {
 		string ret;
 		if(originatingRule.length)
 			ret = originatingRule ~ " {";
@@ -3638,7 +3625,7 @@ class StyleSheet {
 /*
 Copyright: Adam D. Ruppe, 2010 - 2011
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky
 
         Copyright Adam D. Ruppe 2010-2011.
 Distributed under the Boost Software License, Version 1.0.
