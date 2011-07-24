@@ -697,9 +697,6 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 	string funName = cgi.pathInfo[pathInfoStartingPoint + 1..$];
 
-	if(funName[$-1] == '/')
-		funName = funName[0 .. $-1];
-
 	// kinda a hack, but this kind of thing should be available anyway
 	if(funName == "functions.js") {
 		cgi.setResponseContentType("text/javascript");
@@ -781,6 +778,19 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 			// FIXME: modules? should be done with dots since slashes is used for api objects
 			fun = funName in reflection.functions;
 			if(fun is null) {
+				// first we'll try to strip the trailing slash
+				if(funName[$-1] == '/' && funName[0 .. $-1] in reflection.functions) {
+					// if it's there, just send them to the canonical url
+					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $-1] ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
+					return;
+				}
+
+				// we'll also try to add one for objects
+				if(funName[$-1] != '/' && funName in reflection.objects) {
+					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
+					return;
+				}
+
 				auto parts = funName.split("/");
 
 				const(ReflectionInfo)* currentReflection = reflection;
@@ -970,7 +980,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 					if((fun !is null) && envelopeFormat != "html") {
 						Document document;
-						if(fun.returnTypeIsDocument) {
+						if(result.success && fun.returnTypeIsDocument) {
 							// probably not super efficient...
 							document = new TemplatedDocument(returned);
 						} else {
