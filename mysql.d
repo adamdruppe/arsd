@@ -15,17 +15,6 @@ import std.conv;
 import std.typecons;
 import core.stdc.config;
 
-version(Windows) {
-	extern(Windows) {
-		mixin(mySqlDecl);
-	}
-}
-else {
-	extern(C) {
-		mixin(mySqlDecl);
-	}
-}
-
 class MySqlResult : ResultSet {
 	private int[string] mapping;
 	private MYSQL_RES* result;
@@ -581,7 +570,7 @@ struct ResultByDataObject {
 	MySql mysql;
 }
 
-enum mySqlDecl = q{
+extern(System) {
 	typedef void MYSQL;
 	typedef void MYSQL_RES;
 	typedef const(ubyte)* cstring;
@@ -642,7 +631,7 @@ enum mySqlDecl = q{
 
 	void mysql_free_result(MYSQL_RES*);
 
-};
+}
 
 import std.string;
 cstring toCstring(string c) {
