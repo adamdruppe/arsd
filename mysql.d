@@ -1,5 +1,10 @@
 module arsd.mysql;
-pragma(lib, "mysqlclient");
+version(Windows) {
+	pragma(lib, "libmysql");
+}
+else {
+	pragma(lib, "mysqlclient");
+}
 
 public import arsd.database;
 
@@ -8,6 +13,18 @@ import std.exception;
 import std.string;
 import std.conv;
 import std.typecons;
+import core.stdc.config;
+
+version(Windows) {
+	extern(Windows) {
+		mixin(mySqlDecl);
+	}
+}
+else {
+	extern(C) {
+		mixin(mySqlDecl);
+	}
+}
 
 class MySqlResult : ResultSet {
 	private int[string] mapping;
@@ -564,7 +581,7 @@ struct ResultByDataObject {
 	MySql mysql;
 }
 
-extern(C) {
+enum mySqlDecl = q{
 	typedef void MYSQL;
 	typedef void MYSQL_RES;
 	typedef const(ubyte)* cstring;
@@ -600,7 +617,7 @@ extern(C) {
 	uint mysql_errno(MYSQL*);
 	cstring mysql_error(MYSQL*);
 
-	MYSQL* mysql_real_connect(MYSQL*, cstring, cstring, cstring, cstring, uint, cstring, ulong);
+	MYSQL* mysql_real_connect(MYSQL*, cstring, cstring, cstring, cstring, uint, cstring, c_ulong);
 
 	int mysql_query(MYSQL*, cstring);
 
@@ -625,7 +642,7 @@ extern(C) {
 
 	void mysql_free_result(MYSQL_RES*);
 
-}
+};
 
 import std.string;
 cstring toCstring(string c) {
