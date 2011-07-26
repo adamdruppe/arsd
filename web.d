@@ -2,6 +2,7 @@ module arsd.web;
 
 /*
 	FIXME: in params on the wrapped functions generally don't work
+		(can't modify const)
 
 	Running from the command line:
 
@@ -88,13 +89,17 @@ string getSiteLink(Cgi cgi) {
 	return cgi.requestUri[0.. cgi.requestUri.indexOf(cgi.scriptName) + cgi.scriptName.length + 1 /* for the slash at the end */];
 }
 
+/// This is the JSON envelope format
 struct Envelope {
-	bool success;
-	string type;
-	string errorMessage;
-	string userData;
-	JSONValue result; // use result.str if the format was anything other than json
-	debug string dFullString;
+	bool success; /// did the call succeed? false if it threw an exception
+	string type; /// static type of the return value
+	string errorMessage; /// if !success, this is exception.msg
+	string userData; /// null unless the user request included passedThroughUserData
+
+	// use result.str if the format was anything other than json
+	JSONValue result; /// the return value of the function
+
+	debug string dFullString; /// exception.toString - includes stack trace, etc. Only available in debug mode for privacy reasons.
 }
 
 string linkTo(alias func, T...)(T args) {
@@ -127,6 +132,8 @@ class ApiProvider {
 	void _initializePerCall() {}
 
 	/// Override this if you want to do something special to the document
+	/// You should probably call super._postProcess at some point since I
+	/// might add some default transformations here.
 	void _postProcess(Document document) {}
 
 	/// This tentatively redirects the user - depends on the envelope fomat
@@ -135,6 +142,8 @@ class ApiProvider {
 			cgi.setResponseLocation(location, false);
 	}
 
+	/// Returns a list of links to all functions in this class or sub-classes
+	/// You can expose it publicly with alias: "alias _sitemap sitemap;" for example.
 	Element _sitemap() {
 		auto container = _getGenericContainer();
 
@@ -166,10 +175,16 @@ class ApiProvider {
 		return list.parentNode.removeChild(list);
 	}
 
+	/// If the user goes to your program without specifying a path, this function is called.
+	// FIXME: should it return document? That's kinda a pain in the butt.
 	Document _defaultPage() {
 		throw new Exception("no default");
 	}
 
+	/// When the html document envelope is used, this function is used to get a html element
+	/// where the return value is appended.
+
+	/// It's the main function to override to provide custom HTML templates.
 	Element _getGenericContainer()
 	out(ret) {
 		assert(ret !is null);
@@ -180,6 +195,11 @@ class ApiProvider {
 		return container;
 	}
 
+	/// If the given url path didn't match a function, it is passed to this function
+	/// for further handling. By default, it throws a NoSuchPageException.
+
+	/// Overriding it might be useful if you want to serve generic filenames or an opDispatch kind of thing.
+	/// (opDispatch itself won't work because it's name argument needs to be known at compile time!)
 	void _catchAll(string path) {
 		throw new NoSuchPageException(_errorMessageForCatchAll);
 	}
@@ -205,24 +225,29 @@ class ApiProvider {
 	Document delegate(Throwable) _errorFunction;
 }
 
+/// Implement subclasses of this inside your main provider class to do a more object
+/// oriented site.
 class ApiObject {
 	/* abstract this(ApiProvider parent, string identifier) */
 }
 
 
-
+/// Describes the info collected about your class
 struct ReflectionInfo {
-	FunctionInfo[string] functions;
-	EnumInfo[string] enums;
-	StructInfo[string] structs;
-	const(ReflectionInfo)*[string] objects;
+	FunctionInfo[string] functions; /// the methods
+	EnumInfo[string] enums; /// .
+	StructInfo[string] structs; ///.
+	const(ReflectionInfo)*[string] objects; /// ApiObjects and ApiProviders
 
-	bool needsInstantiation;
+	bool needsInstantiation; // internal - does the object exist or should it be new'd before referenced?
 
-	ApiProvider instantiation;
+	ApiProvider instantiation; // internal (for now) - reference to the actual object being described
 
 	// the overall namespace
-	string name; // this is also used as the object name in the JS api
+	string name; /// this is also used as the object name in the JS api
+
+
+	// these might go away.
 
 	string defaultOutputFormat = "html";
 	int versionOfOutputFormat = 2; // change this in your constructor if you still need the (deprecated) old behavior
@@ -231,55 +256,64 @@ struct ReflectionInfo {
 				// should add format-payload:
 }
 
+/// describes an enum, iff based on int as the underlying type
 struct EnumInfo {
-	string name;
-	int[] values;
-	string[] names;
+	string name; ///.
+	int[] values; ///.
+	string[] names; ///.
 }
 
+/// describes a plain data struct
 struct StructInfo {
-	string name;
+	string name; ///.
 	// a struct is sort of like a function constructor...
-	StructMemberInfo[] members;
+	StructMemberInfo[] members; ///.
 }
 
+///.
 struct StructMemberInfo {
-	string name;
-	string staticType;
-	string defaultValue;
+	string name; ///.
+	string staticType; ///.
+	string defaultValue; ///.
 }
 
+///.
 struct FunctionInfo {
-	WrapperFunction dispatcher;
+	WrapperFunction dispatcher; /// this is the actual function called when a request comes to it - it turns a string[][string] into the actual args
+					/// and formats the return value
 
-	JSONValue delegate(Cgi cgi, in string[][string] sargs) documentDispatcher;
+	JSONValue delegate(Cgi cgi, in string[][string] sargs) documentDispatcher; // i don't recall
 	// should I also offer dispatchers for other formats like Variant[]?
-	string name;
-	string originalName;
+
+	string name; /// the URL friendly name
+	string originalName; /// the original name in code
 
 	//string uriPath;
 
-	Parameter[] parameters;
+	Parameter[] parameters; ///.
 
-	string returnType;
-	bool returnTypeIsDocument;
+	string returnType; ///. static type to string
+	bool returnTypeIsDocument; // internal used when wrapping
 
-	Document function(in string[string] args) createForm;
+	Document function(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
 }
 
+/// Function parameter
 struct Parameter {
-	string name;
-	string value;
+	string name; /// name (not always accurate)
+	string value; // ???
 
-	string type;
-	string staticType;
-	string validator;
+	string type; /// type of HTML element to create when asking
+	string staticType; /// original type
+	string validator; /// FIXME
 
 	// for radio and select boxes
-	string[] options;
-	string[] optionValues;
+	string[] options; /// possible options for selects
+	string[] optionValues; ///.
 }
 
+/// This uses reflection info to generate Javascript that can call the server with some ease.
+/// Also includes javascript base (see bottom of this file)
 string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested = false) {
 	assert(mod !is null);
 
@@ -447,6 +481,8 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 	return script;
 }
 
+// these are all filthy hacks
+
 template isEnum(alias T) if(is(T)) {
 	static if (is(T == enum))
 		enum bool isEnum = true;
@@ -505,6 +541,8 @@ template PassthroughType(T) {
 	alias T PassthroughType;
 }
 
+// instantiates an object, if needed, and returns the reference
+
 auto generateGetter(PM, Parent, string member, alias hackToEnsureMultipleFunctionsWithTheSameSignatureGetTheirOwnInstantiations)(string io, Parent instantiation) {
 	static if(is(PM : ApiObject)) {
 		auto i = new PM(instantiation, io);
@@ -515,6 +553,7 @@ auto generateGetter(PM, Parent, string member, alias hackToEnsureMultipleFunctio
 }
 
 
+// sets up the reflection object. now called automatically so you probably don't have to mess with it
 
 immutable(ReflectionInfo*) prepareReflection(alias PM)(Cgi cgi, PM instantiation, ApiObject delegate(string) instantiateObject = null, string aliasedName = null) if(is(PM : ApiProvider) || is(PM: ApiObject) ) {
 	return prepareReflectionImpl!(PM, PM)(cgi, instantiation, instantiateObject, aliasedName);
@@ -675,6 +714,11 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 	return cast(immutable) reflection;
 }
 
+
+/// If you're not using FancyMain, this is the go-to function to do most the work.
+/// instantiation should be an object of your ApiProvider type.
+/// pathInfoStartingPoint is used to make a slice of it, incase you already consumed part of the path info before you called this.
+/// FIXME: maybe it should just be a string/slice directly instead of an awkward starting point?
 void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 0) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
@@ -696,9 +740,6 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 	}
 
 	string funName = cgi.pathInfo[pathInfoStartingPoint + 1..$];
-
-	if(funName[$-1] == '/')
-		funName = funName[0 .. $-1];
 
 	// kinda a hack, but this kind of thing should be available anyway
 	if(funName == "functions.js") {
@@ -781,6 +822,19 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 			// FIXME: modules? should be done with dots since slashes is used for api objects
 			fun = funName in reflection.functions;
 			if(fun is null) {
+				// first we'll try to strip the trailing slash
+				if(funName[$-1] == '/' && funName[0 .. $-1] in reflection.functions) {
+					// if it's there, just send them to the canonical url
+					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $-1] ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
+					return;
+				}
+
+				// we'll also try to add one for objects
+				if(funName[$-1] != '/' && funName in reflection.objects) {
+					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
+					return;
+				}
+
 				auto parts = funName.split("/");
 
 				const(ReflectionInfo)* currentReflection = reflection;
@@ -970,7 +1024,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 					if((fun !is null) && envelopeFormat != "html") {
 						Document document;
-						if(fun.returnTypeIsDocument) {
+						if(result.success && fun.returnTypeIsDocument) {
 							// probably not super efficient...
 							document = new TemplatedDocument(returned);
 						} else {
@@ -996,6 +1050,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 	}
 }
 
+/// fancier wrapper to cgi.d's GenericMain - does most the work for you, so you can just write your class and be done with it
 mixin template FancyMain(T, Args...) {
 	void fancyMainFunction(Cgi cgi) { //string[] args) {
 //		auto cgi = new Cgi;
@@ -1035,10 +1090,12 @@ mixin template FancyMain(T, Args...) {
 	mixin GenericMain!(fancyMainFunction, Args);
 }
 
+/// Given a function from reflection, build a form to ask for it's params
 Form createAutomaticForm(Document document, in FunctionInfo func, string[string] fieldTypes = null) {
 	return createAutomaticForm(document, func.name, func.parameters, beautify(func.originalName), "POST", fieldTypes);
 }
 
+/// ditto
 Form createAutomaticForm(Document document, string action, in Parameter[] parameters, string submitText = "Submit", string method = "POST", string[string] fieldTypes = null) {
 	assert(document !is null);
 	auto form = cast(Form) document.createElement("form");
@@ -1157,7 +1214,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 }
 
 
-/**
+/* *
  * Returns the parameter names of the given function
  * 
  * Params:
@@ -1261,6 +1318,12 @@ private string[] parameterNamesOfImpl (alias func) ()
 }
 /////////////////////////////////
 
+/// Formats any given type as HTML. In custom types, you can write Element makeHtmlElement(Document document = null); to provide
+/// custom html. (the default arg is important - it won't necessarily pass a Document in at all, and since it's silently duck typed,
+/// not having that means your function won't be called and you can be left wondering WTF is going on.)
+
+/// Alternatively, static Element makeHtmlArray(T[]) if you want to make a whole list of them. By default, it will just concat a bunch of individual
+/// elements though.
 string toHtml(T)(T a) {
 	string ret;
 
@@ -1285,12 +1348,25 @@ string toHtml(T)(T a) {
 	return ret;
 }
 
+/// Translates a given type to a JSON string.
+
+/// TIP: if you're building a Javascript function call by strings, toJson("your string"); will build a nicely escaped string for you of any type.
 string toJson(T)(T a) {
 	auto v = toJsonValue(a);
 	return toJSON(&v);
 }
 
 // FIXME: are the explicit instantiations of this necessary?
+/// like toHtml - it makes a json value of any given type.
+
+/// It can be used generically, or it can be passed an ApiProvider so you can do a secondary custom
+/// format. (it calls api.formatAs!(type)(typeRequestString). Why would you want that? Maybe
+/// your javascript wants to do work with a proper object,but wants to append it to the document too.
+/// Asking for json with secondary format = html means the server will provide both to you.
+
+/// Implement JSONValue makeJsonValue() in your struct or class to provide 100% custom Json.
+
+/// Elements from DOM are turned into JSON strings of the element's html.
 JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R api = null)
 	if(is(R : ApiProvider))
 {
@@ -1442,35 +1518,42 @@ Element toXmlElement(T)(Document document, T t) {
 +/
 
 
+/// throw this if your function needs something that is missing.
 
+/// Done automatically by the wrapper function
 class InsufficientParametersException : Exception {
 	this(string functionName, string msg) {
 		super(functionName ~ ": " ~ msg);
 	}
 }
 
+/// throw this if a paramater is invalid. Automatic forms may present this to the user in a new form. (FIXME: implement that)
 class InvalidParameterException : Exception {
 	this(string param, string value, string expected) {
 		super("bad param: " ~ param ~ ". got: " ~ value ~ ". Expected: " ~expected);
 	}
 }
 
+/// convenience for throwing InvalidParameterExceptions
 void badParameter(alias T)(string expected = "") {
 	throw new InvalidParameterException(T.stringof, T, expected);
 }
 
+/// throw this if the user's access is denied
 class PermissionDeniedException : Exception {
 	this(string msg) {
 		super(msg);
 	}
 }
 
+/// throw if the request path is not found. Done automatically by the default catch all handler.
 class NoSuchPageException : Exception {
 	this(string msg) {
 		super(msg);
 	}
 }
 
+/// turns a string array from the URL into a proper D type
 type fromUrlParam(type)(string[] ofInterest) {
 	type ret;
 
@@ -1499,6 +1582,8 @@ type fromUrlParam(type)(string[] ofInterest) {
 	return ret;
 }
 
+/// generates the massive wrapper function for each of your class' methods.
+/// it is responsible for turning strings to params and return values back to strings.
 WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, string funName, R)(ReflectionInfo* reflection, R api) if(is(R: ApiProvider)) {
 	JSONValue wrapper(Cgi cgi, string instantiationIdentifier, in string[][string] sargs, in string format, in string secondaryFormat = null) {
 
@@ -1631,6 +1716,15 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 }
 
 
+/// This is the function called to turn return values into strings.
+
+/// Implement a template called customFormat in your apiprovider class to make special formats.
+
+/// Otherwise, this provides the defaults of html, table, json, etc.
+
+/// call it like so: JSONValue returnValue; formatAs(value, this, returnValue, "type");
+
+// FIXME: it's awkward to call manually due to the JSONValue ref thing. Returning a string would be mega nice.
 void formatAs(T, R)(T ret, R api, ref JSONValue returnValue, string format, string formatJsonToStringAs = null) if(is(R : ApiProvider)) {
 
 	if(api !is null) {
@@ -1690,8 +1784,10 @@ private string emptyTag(string rootName) {
 }
 
 
+/// The definition of the beastly wrapper function
 alias JSONValue delegate(Cgi cgi, string, in string[][string] args, in string format, in string secondaryFormat = null) WrapperFunction;
 
+/// tries to take a URL name and turn it into a human natural name. so get rid of slashes, capitalize, etc.
 string urlToBeauty(string url) {
 	string u = url.replace("/", "");
 
@@ -1714,6 +1810,7 @@ string urlToBeauty(string url) {
 	return ret;
 }
 
+/// turns camelCase into dash-separated
 string toUrlName(string name) {
 	string res;
 	foreach(c; name) {
@@ -1730,6 +1827,7 @@ string toUrlName(string name) {
 	return res;
 }
 
+/// turns camelCase into human presentable capitalized words with spaces
 string beautify(string name) {
 	string n;
 	n ~= toUpper(name[0..1]);
@@ -1759,6 +1857,8 @@ import std.md5;
 import core.stdc.stdlib;
 import core.stdc.time;
 import std.file;
+
+/// meant to give a generic useful hook for sessions. kinda sucks at this point.
 string getSessionId(Cgi cgi) {
 	static string token; // FIXME: should this actually be static? it seems wrong
 	if(token is null) {
@@ -1775,6 +1875,7 @@ string getSessionId(Cgi cgi) {
 	return getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
 }
 
+/// sets a site-wide cookie, meant to simplify login code
 void setLoginCookie(Cgi cgi, string name, string value) {
 	cgi.setCookie(name, value, 0, "/", null, true);
 }
@@ -1798,6 +1899,7 @@ string htmlTemplate(string filename, string[string] vars) {
 	return htmlTemplateWithData(readText(filename), vars);
 }
 
+/// a specilization of Document that: a) is always in strict mode and b) provides some template variable text replacement, in addition to DOM manips.
 class TemplatedDocument : Document {
 	const override string toString() {
 		string s;
@@ -1810,7 +1912,7 @@ class TemplatedDocument : Document {
 	}
 
 	public:
-		string[string] vars;
+		string[string] vars; /// use this to set up the string replacements. document.vars["name"] = "adam"; then in doc, <p>hellp, {$name}.</p>. Note the vars are converted lazily at toString time and are always HTML escaped.
 
 		this(string src) {
 			super();
@@ -1823,6 +1925,7 @@ class TemplatedDocument : Document {
 		void delegate(ref string)[] postToStringFilters;
 }
 
+/// a convenience function to do filters on your doc and write it out. kinda useless still at this point.
 void writeDocument(Cgi cgi, TemplatedDocument document) {
 	foreach(f; document.preToStringFilters)
 		f(document);
@@ -1837,6 +1940,8 @@ void writeDocument(Cgi cgi, TemplatedDocument document) {
 
 /* Password helpers */
 
+/// These added a dependency on arsd.sha, but hashing passwords is somewhat useful in a lot of apps so I figured it was worth it.
+/// use this to make the hash to put in the database...
 string makeSaltedPasswordHash(string userSuppliedPassword, string salt = null) {
 	if(salt is null)
 		salt = to!string(uniform(0, int.max));
@@ -1844,6 +1949,7 @@ string makeSaltedPasswordHash(string userSuppliedPassword, string salt = null) {
 	return hashToString(SHA256(salt ~ userSuppliedPassword)) ~ ":" ~ salt;
 }
 
+/// and use this to check it.
 bool checkPassword(string saltedPasswordHash, string userSuppliedPassword) {
 	auto parts = saltedPasswordHash.split(":");
 
@@ -1851,7 +1957,7 @@ bool checkPassword(string saltedPasswordHash, string userSuppliedPassword) {
 }
 
 
-
+/// implements the "table" format option. Works on structs and associative arrays (string[string][])
 Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) if(isArray!(T) && !isAssociativeArray!(T)) {
 	auto t = cast(Table) document.createElement("table");
 	t.border = "1";
@@ -1912,6 +2018,7 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 }
 
 // this one handles horizontal tables showing just one item
+/// does a name/field table for just a singular object
 Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(!isArray!(T) || isAssociativeArray!(T)) {
 	static if(__traits(compiles, s.makeHtmlTable(document)))
 		return s.makeHtmlTable(document);
@@ -1957,6 +2064,98 @@ else string javascriptBase = `
 	// change this in your script to get more details in errors
 	"_debugMode":false,` ~ javascriptBaseImpl;
 
+/// The Javascript code used in the generated JS API.
+/**
+	It provides the foundation to calling the server via background requests
+	and handling the response in callbacks. (ajax style stuffs).
+
+	The names with a leading underscore are meant to be private.
+
+
+	Generally:
+
+	YourClassName.yourMethodName(args...).operation(args);
+
+
+	CoolApi.getABox("red").useToReplace(document.getElementById("playground"));
+
+	for example.
+
+	When you call a method, it doesn't make the server request. Instead, it returns
+	an object describing the call. This means you can manipulate it (such as requesting
+	a custom format), pass it as an argument to other functions (thus saving http requests)
+	and finally call it at the end.
+
+	The operations are:
+		get(callback, args to callback...);
+
+		See below.
+
+		useToReplace(element) // pass an element reference. Example: useToReplace(document.querySelector(".name"));
+		useToReplace(element ID : string) // you pass a string, it calls document.getElementById for you
+
+		useToReplace sets the given element's innerHTML to the return value. The return value is automatically requested
+		to be formatted as HTML.
+
+		appendTo(element)
+		appendTo(element ID : String)
+
+		Adds the return value, as HTML, to the given element's inner html.
+
+		useToReplaceElement(element)
+
+		Replaces the given element entirely with the return value. (basically element.outerHTML = returnValue;)
+
+		useToFillForm(form)
+
+		Takes an object. Loop through the members, setting the form.elements[key].value = value.
+
+		Does not work if the return value is not a javascript object (so use it if your function returns a struct or string[string])
+
+		getSync()
+
+		Does a synchronous get and returns the server response. Not recommended.
+
+	get() :
+
+		The generic get() function is the most generic operation to get a response. It's arguments implement
+		partial application for you, so you can pass just about any callback to it.
+
+		Despite the name, the underlying operation may be HTTP GET or HTTP POST. This is determined from the
+		function's server side attributes. (FIXME: implement smarter thing. Currently it actually does it by name - if
+		the function name starts with get, do get. Else, do POST.)
+
+
+		Usage:
+
+		CoolApi.getABox('red').get(alert); // calls alert(returnedValue);  so pops up the returned value
+
+		CoolApi.getABox('red').get(fadeOut, this); // calls fadeOut(this, returnedValue);
+
+
+		Since JS functions generally ignore extra params, this lets you call just about anything:
+
+		CoolApi.getABox('red').get(alert, "Success"); // pops a box saying "Success", ignoring the actual return value
+
+
+		Passing arguments to the functions let you reuse a lot of things that might not have been designed with this in mind.
+		If you use arsd.js, there's other little functions that let you turn properties into callbacks too.
+
+
+		Passing "this" to a callback via get is useful too since inside the callback, this probably won't refer to what you
+		wanted. As an argument though, it all remains sane.
+
+
+
+
+	Error Handling:
+
+		D exceptions are translated into Javascript exceptions by the serverCall function. They are thrown, but since it's
+		async, catching them is painful.
+
+		It will probably show up in your browser's error console, or you can set the returned object's onerror function
+		to something to handle it callback style. FIXME: not sure if this actually works right!
+*/
 enum string javascriptBaseImpl = q{
 	"_doRequest": function(url, args, callback, method, async) {
 		var xmlHttp;

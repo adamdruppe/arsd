@@ -3,7 +3,13 @@ This is a collection of modules I find generally useful.
 Modules are usually independent; you don't need this whole directory
 but it doesn't hurt to grab it all either.
 
-Recent changes:
+Read more about the modules at these links (docs are still works in process):
+
+cgi.d info: http://arsdnet.net/web.d/cgi.d.html
+web.d info: http://arsdnet.net/web.d/web.d.html
+
+
+Recent bigger changes:
 	web.d can now accept file uploads via hackish thing - make a param with type "Cgi.UploadedFile"
 
 Currently included are:
