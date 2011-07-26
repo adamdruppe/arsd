@@ -735,7 +735,7 @@ void main() {
 /*
 Copyright: Adam D. Ruppe, 2009 - 2011
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe
+Authors: Adam D. Ruppe, with contributions from Nick Sabalausky
 
         Copyright Adam D. Ruppe 2009 - 2011.
 Distributed under the Boost Software License, Version 1.0.
