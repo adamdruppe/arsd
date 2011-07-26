@@ -1,3 +1,5 @@
+/// NOTE: If you're using MySQL client library v5.1 or greater,
+///       you must pass this to dmd: -version=MySQL_51
 module arsd.mysql;
 version(Windows) {
 	pragma(lib, "libmysql");
@@ -597,6 +599,10 @@ extern(System) {
 		  uint charsetnr;     /* Character set */
 		  uint type; /* Type of field. See mysql_com.h for types */
 		  // type is actually an enum btw
+		  
+		version(MySQL_51) {
+			void* extension;
+		}
 	}
 
 	typedef cstring* MYSQL_ROW;
