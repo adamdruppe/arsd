@@ -9,30 +9,7 @@ module arsd.web;
 	./myapp function positional args....
 	./myapp --format=json function 
 
-	_GET
-	_POST
-	_PUT
-	_DELETE
-
 	./myapp --make-nested-call
-
-
-
-
-
-
-
-	Procedural vs Object Oriented
-
-	right now it is procedural:
-		root/function
-		root/module/function
-
-	what about an object approach:
-		root/object
-		root/class/object
-
-	static ApiProvider.getObject
 
 
 	Formatting data:
@@ -229,6 +206,11 @@ class ApiProvider {
 /// oriented site.
 class ApiObject {
 	/* abstract this(ApiProvider parent, string identifier) */
+
+	/// Override this to make json out of this object
+	JSONValue makeJsonValue() {
+		return toJsonValue(null);
+	}
 }
 
 
@@ -840,9 +822,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				const(ReflectionInfo)* currentReflection = reflection;
 				if(parts.length > 1)
 				while(parts.length) {
+					if(currentReflection is null)
+						goto noSuchFunction;
 					if(parts.length > 1) {
 						objectName = parts[0];
-						auto object = objectName in reflection.objects;
+						auto object = objectName in currentReflection.objects;
 						if(object is null) { // || object.instantiate is null)
 							errorMessage = "no such object: " ~ objectName;
 							goto noSuchFunction;
@@ -868,6 +852,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 						}
 					} else {
 						if(parts[0].length == 0) {
+
+					if(currentReflection is null || currentReflection.instantiation is null) // FIXME: try to fix?
+						goto noSuchFunction;
 							auto inst = cast(ApiProvider) currentReflection.instantiation;
 
 							// FIXME: this ought to always be available
@@ -1441,7 +1428,7 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 		JSONValue formatted;
 		formatted.type = JSON_TYPE.STRING;
 
-		formatAs!(T, R)(a, api, formatted, formatToStringAs, null /* only doing one level of special formatting */);
+		formatAs!(T, R)(a, formatToStringAs, api, &formatted, null /* only doing one level of special formatting */);
 		assert(formatted.type == JSON_TYPE.STRING);
 		val.object["formattedSecondarily"] = formatted;
 	}
@@ -1587,7 +1574,6 @@ type fromUrlParam(type)(string[] ofInterest) {
 WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, string funName, R)(ReflectionInfo* reflection, R api) if(is(R: ApiProvider)) {
 	JSONValue wrapper(Cgi cgi, string instantiationIdentifier, in string[][string] sargs, in string format, in string secondaryFormat = null) {
 
-
 		JSONValue returnValue;
 		returnValue.type = JSON_TYPE.STRING;
 
@@ -1705,7 +1691,7 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 		else
 			instantiation(args);
 
-		formatAs(ret, api, returnValue, format, secondaryFormat);
+		formatAs(ret, format, api, &returnValue, secondaryFormat);
 
 		done:
 
@@ -1725,14 +1711,15 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 /// call it like so: JSONValue returnValue; formatAs(value, this, returnValue, "type");
 
 // FIXME: it's awkward to call manually due to the JSONValue ref thing. Returning a string would be mega nice.
-void formatAs(T, R)(T ret, R api, ref JSONValue returnValue, string format, string formatJsonToStringAs = null) if(is(R : ApiProvider)) {
-
+string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue = null, string formatJsonToStringAs = null) if(is(R : ApiProvider)) {
+	string retstr;
 	if(api !is null) {
 		static if(__traits(compiles, api.customFormat(ret, format))) {
 			auto customFormatted = api.customFormat(ret, format);
 			if(customFormatted !is null) {
-				returnValue.str = customFormatted;
-				return;
+				if(returnValue !is null)
+					returnValue.str = customFormatted;
+				return customFormatted;
 			}
 		}
 	} 
@@ -1753,21 +1740,29 @@ void formatAs(T, R)(T ret, R api, ref JSONValue returnValue, string format, stri
 			}
 			+/
 
-			returnValue.str = toHtml(ret);
+			retstr = toHtml(ret);
+			if(returnValue !is null)
+				returnValue.str = retstr;
 		break;
 		case "string":
-			static if(__traits(compiles, to!string(ret)))
-				returnValue.str = to!string(ret);
+			static if(__traits(compiles, to!string(ret))) {
+				retstr = to!string(ret);
+				if(returnValue !is null)
+					returnValue.str = retstr;
+			}
 			else goto badType;
 		break;
 		case "json":
-			returnValue = toJsonValue!(typeof(ret), R)(ret, formatJsonToStringAs, api);
+			assert(returnValue !is null);
+			*returnValue = toJsonValue!(typeof(ret), R)(ret, formatJsonToStringAs, api);
 		break;
 		case "table":
 			auto document = new Document("<root></root>");
 			static if(__traits(compiles, structToTable(document, ret)))
 			{
-				returnValue.str = structToTable(document, ret).toString();
+				retstr = structToTable(document, ret).toString();
+				if(returnValue !is null)
+					returnValue.str = retstr;
 				break;
 			}
 			else
@@ -1776,6 +1771,8 @@ void formatAs(T, R)(T ret, R api, ref JSONValue returnValue, string format, stri
 			badType:
 			throw new Exception("Couldn't get result as " ~ format);
 	}
+
+	return retstr;
 }
 
 
