@@ -1334,6 +1334,10 @@ dchar parseEntity(in dchar[] entity) {
 		case "deg":
 		case "micro"
 		*/
+		case "laquo":
+			return '\u00ab';
+		case "raquo":
+			return '\u00bb';
 		case "lsquo":
 			return '\u2018';
 		case "rsquo":
