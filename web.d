@@ -1,6 +1,37 @@
 module arsd.web;
 
 /*
+	Future directions for web stuff:
+
+	an improved css:
+		add definition nesting
+		add importing things from another definition
+
+	All css improvements are done via simple text rewriting. Aside
+	from the nesting, it'd just be a simple macro system.
+
+
+	javascript:
+		I'd like to add functions and do static analysis actually.
+		I can't believe I just said that though.
+
+		But the stuff I'd analyze is checking it against the
+		D functions, recognizing that JS is loosely typed.
+
+		So basically it can do a grep for simple stuff:
+
+			CoolApi.xxxxxxx
+
+			if xxxxxxx isn't a function in CoolApi (the name
+			it knows from the server), it can flag a compile
+			error.
+
+			Might not be able to catch usage all the time
+			but could catch typo names.
+
+*/
+
+/*
 	FIXME: in params on the wrapped functions generally don't work
 		(can't modify const)
 
@@ -79,6 +110,15 @@ struct Envelope {
 	debug string dFullString; /// exception.toString - includes stack trace, etc. Only available in debug mode for privacy reasons.
 }
 
+/// Info about the current request - more specialized than the cgi object directly
+struct RequestInfo {
+	string mainSitePath; /// the bottom-most ApiProvider's path in this request
+	string objectBasePath; /// the top-most resolved path in the current request
+
+	string requestedFormat; /// the format the returned data was requested to be sent
+	string requestedEnvelopeFormat; /// the format the data is to be wrapped in
+}
+
 string linkTo(alias func, T...)(T args) {
 	auto reflection = __traits(parent, func).reflection;
 	assert(reflection !is null);
@@ -101,12 +141,32 @@ class ApiProvider {
 	/*static */immutable(ReflectionInfo)* reflection;
 	string _baseUrl; // filled based on where this is called from on this request
 
+	RequestInfo currentRequest; // FIXME: actually fill this in
+
 	/// Override this if you have initialization work that must be done *after* cgi and reflection is ready.
 	/// It should be used instead of the constructor for most work.
 	void _initialize() {}
 
 	/// This one is called at least once per call. (_initialize is only called once per process)
 	void _initializePerCall() {}
+
+	/// Returns the stylesheet for this module. Use it to encapsulate the needed info for your output so the module is more easily reusable
+	/// Override this to provide your own stylesheet. (of course, you can always provide it via _catchAll or any standard css file/style element too.)
+	string _style() const {
+		return null;
+	}
+
+	/// Returns the combined stylesheet of all child modules and this module
+	string stylesheet() const {
+		string ret;
+		foreach(i; reflection.objects) {
+			if(i.instantiation !is null)
+				ret ~= i.instantiation.stylesheet();
+		}
+
+		ret ~= _style();
+		return ret;
+	}
 
 	/// Override this if you want to do something special to the document
 	/// You should probably call super._postProcess at some point since I

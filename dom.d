@@ -3608,7 +3608,7 @@ class StyleSheet {
 		}
 	}
 
-	///.
+	/// Run through the document and apply this stylesheet to it. The computedStyle member will be accurate after this call
 	void apply(Document document) {
 		foreach(rule; rules) {
 			if(rule.originatingRule.length == 0)
