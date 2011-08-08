@@ -300,12 +300,12 @@ class MySql : Database {
 
 
 
-	ResultByDataObject queryDataObject(T...)(string sql, T t) {
+	ResultByDataObject!R queryDataObject(R = DataObject, T...)(string sql, T t) {
 		// modify sql for the best data object grabbing
 		sql = fixupSqlForDataObjectUse(sql);
 
 		auto magic = query(sql, t);
-		return ResultByDataObject(cast(MySqlResult) magic, this);
+		return ResultByDataObject!R(cast(MySqlResult) magic, this);
 	}
 
 
@@ -539,7 +539,7 @@ class MySql : Database {
 	MYSQL* mysql;
 }
 
-struct ResultByDataObject {
+struct ResultByDataObject(ObjType) if (is(ObjType : DataObject)) {
 	this(MySqlResult r, MySql mysql) {
 		result = r;
 		auto fields = r.fields();
@@ -560,8 +560,8 @@ struct ResultByDataObject {
 	ulong length() { return result.length; }
 	bool empty() { return result.empty; }
 	void popFront() { result.popFront(); }
-	DataObject front() {
-		return new DataObject(mysql, result.front.toAA, mappings);
+	ObjType front() {
+		return new ObjType(mysql, result.front.toAA, mappings);
 	}
 	// would it be good to add a new() method? would be valid even if empty
 	// it'd just fill in the ID's at random and allow you to do the rest

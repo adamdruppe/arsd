@@ -231,6 +231,8 @@ enum UpdateOrInsertMode {
 	AlwaysInsert
 }
 
+
+// BIG FIXME: this should really use prepared statements
 int updateOrInsert(Database db, string table, string[string] values, string where, UpdateOrInsertMode mode = UpdateOrInsertMode.CheckForMe, string key = "id") {
 	bool insert = false;
 
@@ -400,6 +402,12 @@ string fixupSqlForDataObjectUse(string sql) {
 		SELECT name, phone, customers.id AS id_from_customers, phones.id AS id_from_phones FROM customers LEFT JOIN phones ON customer.id[...];
 
 */
+
+mixin template DataObjectConstructors() {
+	this(Database db, string[string] res, Tuple!(string, string)[string] mappings) {
+		super(db, res, mappings);
+	}
+}
 
 string yield(string what) { return `if(auto result = dg(`~what~`)) return result;`; }
 
