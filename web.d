@@ -97,6 +97,14 @@ string getSiteLink(Cgi cgi) {
 	return cgi.requestUri[0.. cgi.requestUri.indexOf(cgi.scriptName) + cgi.scriptName.length + 1 /* for the slash at the end */];
 }
 
+/// use this in a function parameter if you want the automatic form to render
+/// it as a textarea
+/// FIXME: this should really be an annotation on the parameter... someehow
+struct Text {
+	string content;
+	alias content this;
+}
+
 /// This is the JSON envelope format
 struct Envelope {
 	bool success; /// did the call succeed? false if it threw an exception
@@ -693,6 +701,8 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 			foreach(idx, param; fargs) {
 				Parameter p;
 
+				if(idx >= names.length)
+					assert(0, to!string(idx) ~ " " ~ to!string(names));
 				p.name = names[idx];
 				p.staticType = typeof(fargs[idx]).stringof;
 				static if( is( typeof(param) == enum )) {
@@ -706,6 +716,8 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 					p.type = "checkbox";
 				} else static if (is(Unqual!(typeof(param)) == Cgi.UploadedFile)) {
 					p.type = "file";
+				} else static if(is(Unqual!(typeof(param)) == Text)) {
+					p.type = "textarea";
 				} else {
 					if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
 						p.type = "password";
@@ -1614,6 +1626,8 @@ type fromUrlParam(type)(string[] ofInterest) {
 		auto doc = new Document(ofInterest[$-1], true, true);
 
 		ret = doc.root;
+	} else static if(is(type : Text)) {
+		ret = ofInterest[$-1];
 	}
 	/*
 	else static if(is(type : struct)) {
