@@ -41,7 +41,7 @@ class PostgreSql : Database {
 
 	string escape(string sqlData) {
 		char* buffer = (new char[sqlData.length * 2 + 1]).ptr;
-		int size = PQescapeString (buffer, sqlData.ptr, sqlData.length);
+		ulong size = PQescapeString (buffer, sqlData.ptr, sqlData.length);
 
 		string ret = assumeUnique(buffer[0..size]);
 
