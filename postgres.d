@@ -167,8 +167,8 @@ string copyCString(const char* c, int actualLength = -1) {
 }
 
 extern(C) {
-	struct PGconn;
-	struct PGresult;
+	struct PGconn {};
+	struct PGresult {};
 
 	void PQfinish(PGconn*);
 	PGconn* PQconnectdb(const char*);
