@@ -1000,6 +1000,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				 if(fun.createForm !is null) {
 					// go ahead and use it to make the form page
 					auto doc = fun.createForm(cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.post : cgi.get);
+
+					form = doc.requireSelector!Form("form");
 				} else {
 					Parameter[] params = fun.parameters.dup;
 					foreach(i, p; fun.parameters) {
