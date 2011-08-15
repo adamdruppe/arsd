@@ -345,7 +345,7 @@ struct FunctionInfo {
 	string returnType; ///. static type to string
 	bool returnTypeIsDocument; // internal used when wrapping
 
-	Document function(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
+	Document delegate(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
 }
 
 /// Function parameter
@@ -728,7 +728,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 			}
 
 			static if(__traits(hasMember, PM, member ~ "_Form")) {
-				f.createForm = &__traits(getMember, PM, member ~ "_Form");
+				f.createForm = &__traits(getMember, instantiation, member ~ "_Form");
 			}
 
 			reflection.functions[f.name] = f;
@@ -997,7 +997,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 			if(ipe !is null) {
 				assert(fun !is null);
 				Form form;
-				 if(0 || fun.createForm !is null) { // FIXME: if 0
+				 if(fun.createForm !is null) {
 					// go ahead and use it to make the form page
 					auto doc = fun.createForm(cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.post : cgi.get);
 				} else {
