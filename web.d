@@ -11,6 +11,13 @@ module arsd.web;
 	from the nesting, it'd just be a simple macro system.
 
 
+	Struct input functions:
+		static typeof(this) fromWebString(string fromUrl) {}
+
+	Automatic form functions:
+		static Element makeFormElement(Document document) {}
+
+
 	javascript:
 		I'd like to add functions and do static analysis actually.
 		I can't believe I just said that though.
@@ -360,6 +367,8 @@ struct Parameter {
 	// for radio and select boxes
 	string[] options; /// possible options for selects
 	string[] optionValues; ///.
+
+	Element function(Document) makeFormElement;
 }
 
 /// This uses reflection info to generate Javascript that can call the server with some ease.
@@ -475,6 +484,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 		string args;
 		string obj;
 		bool outputted = false;
+		/+
 		foreach(i, arg; func.parameters) {
 			if(outputted) {
 				args ~= ",";
@@ -487,6 +497,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 			// FIXME: we could probably do better checks here too like on type
 			obj ~= `'`~arg.name~`':(typeof `~arg.name ~ ` == "undefined" ? this._raiseError('InsufficientParametersException', '`~func.originalName~`: argument `~to!string(i) ~ " (" ~ arg.staticType~` `~arg.name~`) is not present') : `~arg.name~`)`;
 		}
+		+/
 
 		/*
 		if(outputted)
@@ -505,7 +516,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 		return this._serverCall('`~func.name~`', argumentsObject, '`~func.returnType~`');`;
 		else
 		script ~= `
-		return this._serverCall('`~func.name~`', null, '`~func.returnType~`');`;
+		return this._serverCall('`~func.name~`', arguments, '`~func.returnType~`');`;
 
 		script ~= `
 	}`;
@@ -705,7 +716,10 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 					assert(0, to!string(idx) ~ " " ~ to!string(names));
 				p.name = names[idx];
 				p.staticType = typeof(fargs[idx]).stringof;
-				static if( is( typeof(param) == enum )) {
+
+				static if( __traits(compiles, p.makeFormElement = &(typeof(param).makeFormElement))) {
+					p.makeFormElement = &(typeof(param).makeFormElement);
+				} else static if( is( typeof(param) == enum )) {
 					p.type = "select";
 
 					foreach(opt; __traits(allMembers, typeof(param))) {
@@ -858,7 +872,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 						if(rfun is null)
 							throw new NoSuchPageException("no such function " ~ cgi.request("method"));
 
-						auto form = createAutomaticForm(new Document, *rfun);
+						Form form;
+						if((*rfun).createForm !is null) {
+							form = rfun.createForm(null).requireSelector!Form("form");
+						} else
+							form = createAutomaticForm(new Document, *rfun);
 						auto idx = cgi.requestUri.indexOf("builtin.getAutomaticForm");
 						form.action = cgi.requestUri[0 .. idx] ~ form.action; // make sure it works across the site
 						JSONValue v;
@@ -1024,6 +1042,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				}
 
 				assert(form !is null);
+
+				foreach(k, v; cgi.get)
+					form.setValue(k, v); // carry what we have for params over
+
 				result.result.str = form.toString();
 			} else {
 				if(instantiation._errorFunction !is null) {
@@ -1185,6 +1207,11 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 	foreach(param; parameters) {
 		Element input;
 
+		if(param.makeFormElement !is null) {
+			input = param.makeFormElement(document);
+			goto gotelement;
+		}
+
 		string type = param.type;
 		if(param.name in fieldTypes)
 			type = fieldTypes[param.name];
@@ -1231,6 +1258,8 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 				}
 			}
 		}
+
+		gotelement:
 
 		string n = param.name ~ "_auto-form-" ~ to!string(count);
 
@@ -1614,22 +1643,21 @@ class NoSuchPageException : Exception {
 	}
 }
 
-/// turns a string array from the URL into a proper D type
-type fromUrlParam(type)(string[] ofInterest) {
+
+type fromUrlParam(type)(string ofInterest) {
 	type ret;
 
-	// Arrays in a query string are sent as the name repeating...
 	static if(isArray!(type) && !isSomeString!(type)) {
-		foreach(a; ofInterest) {
-			ret ~= to!(ElementType!(type))(a);
-		}
-	}
-	else static if(is(type : Element)) {
-		auto doc = new Document(ofInterest[$-1], true, true);
+		// how do we get an array out of a simple string?
+		// FIXME
+	} else static if(__traits(compiles, ret = type.fromWebString(ofInterest))) { // for custom object handling...
+		ret = type.fromWebString(ofInterest);
+	} else static if(is(type : Element)) {
+		auto doc = new Document(ofInterest, true, true);
 
 		ret = doc.root;
 	} else static if(is(type : Text)) {
-		ret = ofInterest[$-1];
+		ret = ofInterest;
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -1638,9 +1666,23 @@ type fromUrlParam(type)(string[] ofInterest) {
 	*/
 	else {
 		// enum should be handled by this too
-		ret = to!type(ofInterest[$-1]);
+		ret = to!type(ofInterest);
 	} // FIXME: can we support classes?
 
+	return ret;
+}
+
+/// turns a string array from the URL into a proper D type
+type fromUrlParam(type)(string[] ofInterest) {
+	type ret;
+
+	// Arrays in a query string are sent as the name repeating...
+	static if(isArray!(type) && !isSomeString!(type)) {
+		foreach(a; ofInterest) {
+			ret ~= fromUrlParam!(ElementType!(type))(a);
+		}
+	} else
+		ret = fromUrlParam!type(ofInterest[$-1]);
 
 	return ret;
 }
@@ -1763,13 +1805,11 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 			void* ret;
 
 		static if(!is(ReturnType!f == void))
-			ret = instantiation(args); // version 1 didn't handle exceptions
+			ret = instantiation(args);
 		else
 			instantiation(args);
 
 		formatAs(ret, format, api, &returnValue, secondaryFormat);
-
-		done:
 
 		return returnValue;
 	}
@@ -2348,7 +2388,14 @@ enum string javascriptBaseImpl = q{
 	/// returns an object that can be used to get the actual response from the server
  	"_serverCall": function (name, passedArgs, returnType) {
 		var me = this; // this is the Api object
-		var args = passedArgs;
+		var args;
+		if(typeof args == "object")
+			args = passedArgs;
+		else {
+			args = new Object();
+			for(var a = 0; a < passedArgs.length; a++)
+				args["positional-arg-" + a] = passedArgs[a];
+		}
 		return {
 			// type info metadata
 			"_arsdTypeOf":"ServerResult",
