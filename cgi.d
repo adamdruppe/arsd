@@ -19,6 +19,9 @@ import std.range;
 
 import std.process;
 
+version(with_gzip)
+	import arsd.zlib; // very minor diff from the std.zlib. If std.zlib gets my changes, this can die.
+
 T[] consume(T)(T[] range, int count) {
 	if(count > range.length)
 		count = range.length;
@@ -157,6 +160,10 @@ class Cgi {
 			port = to!int(getenv("SERVER_PORT"));
 		else
 			port = 0; // this was probably called from the command line
+
+		auto ae = getenv("HTTP_ACCEPT_ENCODING");
+		if(ae.length && ae.indexOf("gzip") != -1)
+			acceptsGzip = true;
 
 		auto rm = getenv("REQUEST_METHOD");
 		if(rm.length)
@@ -298,6 +305,10 @@ class Cgi {
 				break;
 				case "host":
 					host = value;
+				break;
+				case "accept-encoding":
+					if(value.indexOf("gzip") != -1)
+						acceptsGzip = true;
 				break;
 				case "user-agent":
 					userAgent = value;
@@ -511,6 +522,12 @@ class Cgi {
 		noCache = !allowCaching;
 	}
 
+	/// Set to true and use cgi.write(data, true); to send a gzipped response to browsers
+	/// who can accept it
+	bool gzipResponse;
+
+	immutable bool acceptsGzip;
+
 	/// This gets a full url for the current request, including port, protocol, host, path, and query
 	string getCurrentCompleteUri() const {
 		return format("http%s://%s%s%s",
@@ -685,6 +702,10 @@ class Cgi {
 			} else
 				hd ~= "Content-Type: text/html; charset=utf-8";
 
+			if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
+				hd ~= "Content-Encoding: gzip";
+			}
+
 			if(customHeaders !is null)
 				hd ~= customHeaders;
 
@@ -702,6 +723,19 @@ class Cgi {
 				writeln("");
 
 			outputtedResponseData = true;
+		}
+
+		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
+			// actually gzip the data here
+
+			auto c = new Compress(true); // want gzip
+
+			auto data = c.compress(t);
+			data ~= c.flush();
+
+			std.file.write("/tmp/last-item", data);
+
+			t = data;
 		}
 
 		if(requestMethod != RequestMethod.HEAD && t.length > 0) {

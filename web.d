@@ -812,7 +812,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 	// kinda a hack, but this kind of thing should be available anyway
 	if(funName == "functions.js") {
 		cgi.setResponseContentType("text/javascript");
-		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.requestUri, "functions.js", "")));
+		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.requestUri, "functions.js", "")), true);
 		cgi.close();
 		return;
 	}
@@ -952,7 +952,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 							auto document = inst._defaultPage();
 							if(document !is null) {
 								instantiation._postProcess(document);
-								cgi.write(document.toString());
+								cgi.write(document.toString(), true);
 							}
 							cgi.close();
 							envelopeFormat = "no-processing";
@@ -1082,19 +1082,19 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				// this makes firefox ugly
 				//cgi.setResponseContentType("application/json");
 				auto json = toJsonValue(result);
-				cgi.write(toJSON(&json));
+				cgi.write(toJSON(&json), true);
 			break;
 			case "none":
 				cgi.setResponseContentType("text/plain");
 
 				if(result.success) {
 					if(result.result.type == JSON_TYPE.STRING) {
-						cgi.write(result.result.str);
+						cgi.write(result.result.str, true);
 					} else {
-						cgi.write(toJSON(&result.result));
+						cgi.write(toJSON(&result.result), true);
 					}
 				} else {
-					cgi.write(result.errorMessage);
+					cgi.write(result.errorMessage, true);
 				}
 			break;
 			case "document":
@@ -1123,9 +1123,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 						returned = document.toString;
 					}
 
-					cgi.write(returned);
+					cgi.write(returned, true);
 				} else
-					cgi.write(htmlEntitiesEncode(toJSON(&result.result)));
+					cgi.write(htmlEntitiesEncode(toJSON(&result.result)), true);
 			break;
 		}
 
