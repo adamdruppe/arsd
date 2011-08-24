@@ -498,6 +498,7 @@ class Element {
 
 	Element addChild(string tagName, Html innerHtml) {
 		auto e = parentDocument.createElement(tagName);
+		this.appendChild(e);
 		e.innerHTML = innerHtml.source;
 		return e;
 	}
@@ -2213,6 +2214,14 @@ class Document {
 						assert(data[pos] == '-');
 						pos++;
 						assert(data[pos] == '>');
+					} else if(data[pos..pos + 7] == "[CDATA[") {
+						pos += 7;
+						// FIXME: major malfunction possible here
+						auto cdataStart = pos;
+						auto cdataEnd = pos + data[pos .. $].indexOf("]]>");
+
+						pos = cdataEnd + 3;
+						return Ele(0, new TextNode(this, data[cdataStart .. cdataEnd]), null);
 					} else
 						while(data[pos] != '>')
 							pos++;
