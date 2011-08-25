@@ -496,7 +496,15 @@ class Element {
 		return e;
 	}
 
-	Element addChild(string tagName, Html innerHtml) {
+	Element addChild(string tagName, Html innerHtml)
+	in {
+		assert(parentDocument !is null);
+	}
+	out(ret) {
+		assert(ret !is null);
+		assert(ret.parentNode is this);
+	}
+	body {
 		auto e = parentDocument.createElement(tagName);
 		this.appendChild(e);
 		e.innerHTML = innerHtml.source;
