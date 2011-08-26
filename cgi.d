@@ -728,6 +728,7 @@ class Cgi {
 		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
 			// actually gzip the data here
 
+			version(with_gzip) {
 			auto c = new Compress(true); // want gzip
 
 			auto data = c.compress(t);
@@ -736,6 +737,7 @@ class Cgi {
 			std.file.write("/tmp/last-item", data);
 
 			t = data;
+			}
 		}
 
 		if(requestMethod != RequestMethod.HEAD && t.length > 0) {
