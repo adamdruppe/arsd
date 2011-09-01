@@ -96,6 +96,21 @@ struct CgiVariableStream {
 	}
 }
 +/
+
+/// If you are doing a custom cgi class, mixing this in can take care of
+/// the required constructors for you
+mixin template ForwardCgiConstructors() {
+	this(int maxContentLength = 5_000_000,
+		string delegate(string env) getenv = null,
+		const(ubyte)[] delegate() readdata = null,
+		void delegate(const(ubyte)[]) _rawDataOutput = null
+		) { super(maxContentLength, getenv, readdata, _rawDataOutput); }
+	
+	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0) {
+		super(headers, data, address, _rawDataOutput, pathInfoStarts);
+	}
+}
+
 /// The main interface with the web request
 class Cgi {
   public:
@@ -963,7 +978,12 @@ string toHex(int num) {
 	return to!string(array(ret.retro));
 }
 
-mixin template GenericMain(alias fun, T...) { // kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
+mixin template GenericMain(alias fun, T...) {
+	mixin CustomCgiMain!(Cgi, fun, T);
+}
+
+mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi)) {
+	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
 version(embedded_httpd)
 	import arsd.httpd;
 
@@ -1011,7 +1031,7 @@ version(embedded_httpd)
 					return "";
 				}
 
-				auto cgi = new Cgi(5_000_000, &getFcgiEnvVar, &getFcgiChunk, &writeFcgi);
+				auto cgi = new CustomCgi(5_000_000, &getFcgiEnvVar, &getFcgiChunk, &writeFcgi);
 				try {
 					fun(cgi);
 					cgi.close();
@@ -1030,7 +1050,7 @@ version(embedded_httpd)
 			return;
 		}
 
-		auto cgi = new Cgi(T);
+		auto cgi = new CustomCgi(T);
 
 		try {
 			fun(cgi);
