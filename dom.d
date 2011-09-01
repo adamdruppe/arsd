@@ -908,6 +908,11 @@ class Element {
 		doc.root.children = null;
 	}
 
+	/// ditto
+	@property void innerHTML(Html html) {
+		this.innerHTML = html.source;
+	}
+
 	/**
 		Replaces this node with the given html string, which is parsed
 
