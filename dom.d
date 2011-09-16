@@ -1165,6 +1165,24 @@ class Element {
 		this.children.length = 0; // we reparented them all above
 	}
 
+	/// shorthand for this.parentNode.removeChild(this) with parentNode null check
+	Element removeFromTree()
+		in {
+
+		}
+		out(var) {
+			assert(this.parentNode is null);
+			assert(var is this);
+		}
+	body {
+		if(this.parentNode is null)
+			return this;
+
+		this.parentNode.removeChild(this);
+
+		return this;
+	}
+
 	Element replaceWith(Element e) {
 		if(e.parentNode !is null)
 			e.parentNode.removeChild(e);
@@ -1348,6 +1366,8 @@ dchar parseEntity(in dchar[] entity) {
 		case "deg":
 		case "micro"
 		*/
+		case "hellip":
+			return '\u2026';
 		case "laquo":
 			return '\u00ab';
 		case "raquo":

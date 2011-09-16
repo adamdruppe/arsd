@@ -922,7 +922,7 @@ string[string] decodeVariablesSingle(string data) {
 	return va;
 }
 
-string encodeVariables(string[string] data) {
+string encodeVariables(in string[string] data) {
 	string ret;
 
 	bool outputted = false;
@@ -938,7 +938,7 @@ string encodeVariables(string[string] data) {
 	return ret;
 }
 
-string encodeVariables(string[][string] data) {
+string encodeVariables(in string[][string] data) {
 	string ret;
 
 	bool outputted = false;
