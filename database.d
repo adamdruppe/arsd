@@ -126,6 +126,10 @@ class DatabaseException : Exception {
 	this(string msg) {
 		super(msg);
 	}
+
+	this(string msg, string file, int line) {
+		super(msg, file, line);
+	}
 }
 
 

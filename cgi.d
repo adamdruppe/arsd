@@ -13,14 +13,13 @@ import std.exception;
 import std.base64;
 //import std.algorithm;
 public import std.stdio;
-static import std.date;
+import std.datetime;
 public import std.conv;
 import std.range;
 
 import std.process;
 
-version(with_gzip)
-	import arsd.zlib; // very minor diff from the std.zlib. If std.zlib gets my changes, this can die.
+import std.zlib;
 
 T[] consume(T)(T[] range, int count) {
 	if(count > range.length)
@@ -622,7 +621,7 @@ class Cgi {
 		if(path !is null)
 			cookie ~= "; path=" ~ path;
 		if(expiresIn != 0)
-			cookie ~= "; expires=" ~ printDate(expiresIn + std.date.getUTCtime());
+			cookie ~= "; expires=" ~ printDate(cast(DateTime) Clock.currTime + dur!"msecs"(expiresIn));
 		if(domain !is null)
 			cookie ~= "; domain=" ~ domain;
 		if(httpOnly == true )
@@ -676,7 +675,7 @@ class Cgi {
 					hd ~= "HTTP/1.1 200 OK";
 			}
 			if(nph) { // we're responsible for setting the date too according to http 1.1
-				hd ~= "Date: " ~ printDate(std.date.getUTCtime());
+				hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
 				if(!isAll) {
 					if(!http10) {
 						hd ~= "Transfer-Encoding: chunked";
@@ -694,7 +693,9 @@ class Cgi {
 				hd ~= "Location: " ~ responseLocation;
 			}
 			if(!noCache && responseExpires != long.min) { // an explicit expiration date is set
-				hd ~= "Expires: " ~ printDate(responseExpires);
+				auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)));
+				hd ~= "Expires: " ~ printDate(
+					cast(DateTime) expires);
 				// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
 				hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie\"";
 			}
@@ -743,8 +744,7 @@ class Cgi {
 		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
 			// actually gzip the data here
 
-			version(with_gzip) {
-			auto c = new Compress(true); // want gzip
+			auto c = new Compress(HeaderFormat.gzip); // want gzip
 
 			auto data = c.compress(t);
 			data ~= c.flush();
@@ -752,7 +752,6 @@ class Cgi {
 			std.file.write("/tmp/last-item", data);
 
 			t = data;
-			}
 		}
 
 		if(requestMethod != RequestMethod.HEAD && t.length > 0) {
@@ -1072,8 +1071,16 @@ version(embedded_httpd)
 	}
 }
 
-string printDate(long date) {
-	return std.date.toUTCString(date).replace("UTC", "GMT"); // the standard is stupid
+string printDate(DateTime date) {
+	return format(
+		"%.3s, %02d %.3s %d %02d:%02d:%02d GMT", // could be UTC too
+		to!string(date.dayOfWeek).capitalize,
+		date.day,
+		to!string(date.month).capitalize,
+		date.year,
+		date.hour,
+		date.minute,
+		date.second);
 }
 
 

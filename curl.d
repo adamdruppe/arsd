@@ -71,7 +71,9 @@ string cachedCurl(string url, int maxCacheHours) {
 
 	auto cacheFile = "/tmp/arsd-curl-cache-" ~ getDigestString(url);
 
-	if(!std.file.exists(cacheFile) || std.file.lastModified(cacheFile) > 1000 * 60 * 60 * maxCacheHours) {
+	import std.datetime;
+
+	if(!std.file.exists(cacheFile) || std.file.timeLastModified(cacheFile) < Clock.currTime() - dur!"hours"(maxCacheHours)) {
 		res = curl(url);
 		std.file.write(cacheFile, res);
 	} else {
