@@ -572,7 +572,7 @@ class Cgi {
 		responseLocation = uri.strip;
 		isCurrentResponseLocationImportant = important;
 	}
-	private string responseLocation = null;
+	protected string responseLocation = null;
 	private bool isCurrentResponseLocationImportant = false;
 
 	/// Sets the Expires: http header. See also: updateResponseExpires, setPublicCaching
@@ -654,91 +654,95 @@ class Cgi {
 
 	private string[] customHeaders;
 
+	void flushHeaders(const(void)[] t, bool isAll = false) {
+		string[] hd;
+		// Flush the headers
+		if(responseStatus !is null) {
+			if(nph) {
+				if(http10)
+					hd ~= "HTTP/1.0 " ~ responseStatus;
+				else
+					hd ~= "HTTP/1.1 " ~ responseStatus;
+			} else
+				hd ~= "Status: " ~ responseStatus;
+		} else if (nph) {
+			if(http10)
+				hd ~= "HTTP/1.0 200 OK";
+			else
+				hd ~= "HTTP/1.1 200 OK";
+		}
+		if(nph) { // we're responsible for setting the date too according to http 1.1
+			hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
+			if(!isAll) {
+				if(!http10) {
+					hd ~= "Transfer-Encoding: chunked";
+					responseChunked = true;
+				}
+			} else
+				hd ~= "Content-Length: " ~ to!string(t.length);
+
+		}
+
+		// FIXME: what if the user wants to set his own content-length?
+		// The custom header function can do it, so maybe that's best.
+		// Or we could reuse the isAll param.
+		if(responseLocation !is null) {
+			hd ~= "Location: " ~ responseLocation;
+		}
+		if(!noCache && responseExpires != long.min) { // an explicit expiration date is set
+			auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)));
+			hd ~= "Expires: " ~ printDate(
+				cast(DateTime) expires);
+			// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
+			hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie\"";
+		}
+		if(responseCookies !is null && responseCookies.length > 0) {
+			foreach(c; responseCookies)
+				hd ~= "Set-Cookie: " ~ c;
+		}
+		if(noCache) { // we specifically do not want caching (this is actually the default)
+			hd ~= "Cache-Control: private, no-cache=\"set-cookie\"";
+			hd ~= "Expires: 0";
+			hd ~= "Pragma: no-cache";
+		} else {
+			if(responseExpires == long.min) { // caching was enabled, but without a date set - that means assume cache forever
+				hd ~= "Cache-Control: public";
+				hd ~= "Expires: Tue, 31 Dec 2030 14:00:00 GMT"; // FIXME: should not be more than one year in the future
+			}
+		}
+		if(responseContentType !is null) {
+			hd ~= "Content-Type: " ~ responseContentType;
+		} else
+			hd ~= "Content-Type: text/html; charset=utf-8";
+
+		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
+			hd ~= "Content-Encoding: gzip";
+		}
+
+		if(customHeaders !is null)
+			hd ~= customHeaders;
+
+		// FIXME: what about duplicated headers?
+
+		foreach(h; hd) {
+			if(rawDataOutput !is null)
+				rawDataOutput(cast(const(ubyte)[]) (h ~ "\r\n"));
+			else
+				writeln(h);
+		}
+		if(rawDataOutput !is null)
+			rawDataOutput(cast(const(ubyte)[]) ("\r\n"));
+		else
+			writeln("");
+
+		outputtedResponseData = true;
+	}
+
 	/// Writes the data to the output, flushing headers if they have not yet been sent.
 	void write(const(void)[] t, bool isAll = false) {
 		assert(!closed, "Output has already been closed");
 		if(!outputtedResponseData && (!autoBuffer || isAll)) {
-			string[] hd;
-			// Flush the headers
-			if(responseStatus !is null) {
-				if(nph) {
-					if(http10)
-						hd ~= "HTTP/1.0 " ~ responseStatus;
-					else
-						hd ~= "HTTP/1.1 " ~ responseStatus;
-				} else
-					hd ~= "Status: " ~ responseStatus;
-			} else if (nph) {
-				if(http10)
-					hd ~= "HTTP/1.0 200 OK";
-				else
-					hd ~= "HTTP/1.1 200 OK";
-			}
-			if(nph) { // we're responsible for setting the date too according to http 1.1
-				hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
-				if(!isAll) {
-					if(!http10) {
-						hd ~= "Transfer-Encoding: chunked";
-						responseChunked = true;
-					}
-				} else
-					hd ~= "Content-Length: " ~ to!string(t.length);
-
-			}
-
-			// FIXME: what if the user wants to set his own content-length?
-			// The custom header function can do it, so maybe that's best.
-			// Or we could reuse the isAll param.
-			if(responseLocation !is null) {
-				hd ~= "Location: " ~ responseLocation;
-			}
-			if(!noCache && responseExpires != long.min) { // an explicit expiration date is set
-				auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)));
-				hd ~= "Expires: " ~ printDate(
-					cast(DateTime) expires);
-				// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
-				hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie\"";
-			}
-			if(responseCookies !is null && responseCookies.length > 0) {
-				foreach(c; responseCookies)
-					hd ~= "Set-Cookie: " ~ c;
-			}
-			if(noCache) { // we specifically do not want caching (this is actually the default)
-				hd ~= "Cache-Control: private, no-cache=\"set-cookie\"";
-				hd ~= "Expires: 0";
-				hd ~= "Pragma: no-cache";
-			} else {
-				if(responseExpires == long.min) { // caching was enabled, but without a date set - that means assume cache forever
-					hd ~= "Cache-Control: public";
-					hd ~= "Expires: Tue, 31 Dec 2030 14:00:00 GMT"; // FIXME: should not be more than one year in the future
-				}
-			}
-			if(responseContentType !is null) {
-				hd ~= "Content-Type: " ~ responseContentType;
-			} else
-				hd ~= "Content-Type: text/html; charset=utf-8";
-
-			if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
-				hd ~= "Content-Encoding: gzip";
-			}
-
-			if(customHeaders !is null)
-				hd ~= customHeaders;
-
-			// FIXME: what about duplicated headers?
-
-			foreach(h; hd) {
-				if(rawDataOutput !is null)
-					rawDataOutput(cast(const(ubyte)[]) (h ~ "\r\n"));
-				else
-					writeln(h);
-			}
-			if(rawDataOutput !is null)
-				rawDataOutput(cast(const(ubyte)[]) ("\r\n"));
-			else
-				writeln("");
-
-			outputtedResponseData = true;
+			flushHeaders(t, isAll);
 		}
 
 		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
@@ -749,7 +753,7 @@ class Cgi {
 			auto data = c.compress(t);
 			data ~= c.flush();
 
-			std.file.write("/tmp/last-item", data);
+			// std.file.write("/tmp/last-item", data);
 
 			t = data;
 		}

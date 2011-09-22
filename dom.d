@@ -1231,7 +1231,7 @@ class Element {
 		Sets the inside text, replacing all children
 	*/
 	@property void innerText(string text) {
-		assert(!selfClosed);
+		selfClosed = false;
 		Element e = new TextNode(parentDocument, text);
 		e.parentNode = this;
 		children = [e];
@@ -1761,7 +1761,7 @@ class Form : Element {
 					}
 
 					if(!found) {
-						addChild("option", value)
+						e.addChild("option", value)
 						.setAttribute("selected", "selected");
 					}
 				break;
