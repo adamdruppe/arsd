@@ -130,6 +130,8 @@ struct RequestInfo {
 	string mainSitePath; /// the bottom-most ApiProvider's path in this request
 	string objectBasePath; /// the top-most resolved path in the current request
 
+	FunctionInfo currentFunction; /// what function is being called according to the url?
+
 	string requestedFormat; /// the format the returned data was requested to be sent
 	string requestedEnvelopeFormat; /// the format the data is to be wrapped in
 }
@@ -189,9 +191,10 @@ class ApiProvider {
 	void _postProcess(Document document) {}
 
 	/// This tentatively redirects the user - depends on the envelope fomat
-	void redirect(string location) {
-		if(cgi.request("envelopeFormat", "document") == "document")
-			cgi.setResponseLocation(location, false);
+	void redirect(string location, bool important = false) {
+		auto f = cgi.request("envelopeFormat", "document");
+		if(f == "document" || f == "redirect")
+			cgi.setResponseLocation(location, important);
 	}
 
 	/// Returns a list of links to all functions in this class or sub-classes
@@ -868,9 +871,13 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 					auto mfun = new FunctionInfo;
 					mfun.returnType = "Form";
 					mfun.dispatcher = delegate JSONValue (Cgi cgi, string, in string[][string] sargs, in string format, in string secondaryFormat = null) {
-						auto rfun = cgi.request("method") in reflection.functions;
+						auto lik = cgi.request("positional-arg-0");
+						if(lik.length == 0)
+							//lik = cgi.get["method"];
+							lik = cgi.post["method"]; // FIXME
+						auto rfun = lik in reflection.functions;
 						if(rfun is null)
-							throw new NoSuchPageException("no such function " ~ cgi.request("method"));
+							throw new NoSuchPageException("no such function " ~ lik);
 
 						Form form;
 						if((*rfun).createForm !is null) {
@@ -2389,7 +2396,8 @@ enum string javascriptBaseImpl = q{
  	"_serverCall": function (name, passedArgs, returnType) {
 		var me = this; // this is the Api object
 		var args;
-		if(typeof args == "object")
+		// FIXME: is there some way to tell arguments apart from other objects? dynamic languages suck.
+		if(!passedArgs.length)
 			args = passedArgs;
 		else {
 			args = new Object();

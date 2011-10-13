@@ -186,10 +186,24 @@ class Element {
 	string[string] attributes;
 
 	///.
-	bool selfClosed;
+	private bool selfClosed;
 
-	///.
-	Document parentDocument;
+	/// Get the parent Document object that contains this element.
+	/// It may return null and/or run in O(n) time with the height of the tree.
+	pure Document parentDocument() {
+		auto e = this;
+		while(e !is null && e._parentDocument is null)
+			e = e.parentNode;
+		if(e is null)
+			return null;
+		return e._parentDocument;
+	}
+
+	pure void parentDocument(Document pd) {
+		_parentDocument = pd;
+	}
+
+	private Document _parentDocument;
 
 	///.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
@@ -434,12 +448,30 @@ class Element {
 		assert(0);
 	}
 
+	/// Convenience function to try to do the right thing for HTML
+	static Element make(string tagName, string childInfo = null, string childInfo2 = null) {
+		bool selfClosed = tagName.isInArray(selfClosedElements);
 
-	/// convenience function to quickly add a tag with some text or
-	/// other relevant info (for example, it's a src for an <img> element
-	/// instead of inner text)
-	Element addChild(string tagName, string childInfo = null, string childInfo2 = null) {
-		auto e = parentDocument.createElement(tagName);
+		Element e;
+		// want to create the right kind of object for the given tag...
+		switch(tagName) {
+			case "table":
+				e = new Table(null);
+			break;
+			case "a":
+				e = new Link(null);
+			break;
+			case "form":
+				e = new Form(null);
+			break;
+			default:
+				e = new Element(null, tagName, null, selfClosed); // parent document should be set elsewhere
+		}
+
+		// make sure all the stuff is constructed properly FIXME: should probably be in all the right constructors too
+		e.tagName = tagName;
+		e.selfClosed = selfClosed;
+
 		if(childInfo !is null)
 			switch(tagName) {
 				case "img":
@@ -475,6 +507,16 @@ class Element {
 				default:
 					e.innerText = childInfo;
 			}
+
+		return e;
+	}
+
+	/// convenience function to quickly add a tag with some text or
+	/// other relevant info (for example, it's a src for an <img> element
+	/// instead of inner text)
+	Element addChild(string tagName, string childInfo = null, string childInfo2 = null) {
+		auto e = Element.make(tagName, childInfo, childInfo2);
+		e.parentDocument = this.parentDocument;
 		return appendChild(e);
 	}
 
@@ -957,7 +999,7 @@ class Element {
 		Note that the returned string is decoded, so it no longer contains any xml entities.
 	*/
 	string getAttribute(string name) const {
-		if(parentDocument && parentDocument.loose)
+		if(_parentDocument && _parentDocument.loose)
 			name = name.toLower();
 		auto e = name in attributes;
 		if(e)
@@ -970,7 +1012,7 @@ class Element {
 		Sets an attribute. Returns this for easy chaining
 	*/
 	Element setAttribute(string name, string value) {
-		if(parentDocument && parentDocument.loose)
+		if(_parentDocument && _parentDocument.loose)
 			name = name.toLower();
 
 		// I never use this shit legitimately and neither should you
@@ -990,7 +1032,7 @@ class Element {
 		Extension
 	*/
 	bool hasAttribute(string name) {
-		if(parentDocument && parentDocument.loose)
+		if(_parentDocument && _parentDocument.loose)
 			name = name.toLower();
 
 		if(name in attributes)
@@ -1003,7 +1045,7 @@ class Element {
 		Extension
 	*/
 	void removeAttribute(string name) {
-		if(parentDocument && parentDocument.loose)
+		if(_parentDocument && _parentDocument.loose)
 			name = name.toLower();
 		if(name in attributes)
 			attributes.remove(name);
@@ -1181,6 +1223,23 @@ class Element {
 		this.parentNode.removeChild(this);
 
 		return this;
+	}
+
+	/// Wraps this element inside the given element.
+	/// It's like this.replaceWith(what); what.appendchild(this);
+	Element wrapIn(Element what)
+		in {
+			assert(what !is null);
+		}
+		out(ret) {
+			assert(this.parentNode is what);
+			assert(ret is what);
+		}
+	body {
+		this.replaceWith(what);
+		what.appendChild(this);
+
+		return what;
 	}
 
 	Element replaceWith(Element e) {
@@ -1560,6 +1619,7 @@ class Link : Element {
 	///.
 	this(Document _parentDocument) {
 		super(_parentDocument);
+		this.tagName = "a";
 	}
 
 
@@ -2610,27 +2670,8 @@ class Document {
 	Element createElement(string name) {
 		if(loose)
 			name = name.toLower();
-
-		bool selfClosed = name.isInArray(selfClosedElements);
-
-		Element e;
-		switch(name) {
-			case "table":
-				e = new Table(this);
-			break;
-			case "a":
-				e = new Link(this);
-			break;
-			case "form":
-				e = new Form(this);
-			break;
-			default:
-				return new Element(this, name, null, selfClosed);
-		}
-
-		// make sure all the stuff is constructed properly FIXME: should probably be in all the right constructors too
-		e.tagName = name;
-		e.selfClosed = selfClosed;
+	
+		auto e = Element.make(name);
 		e.parentDocument = this;
 
 		return e;

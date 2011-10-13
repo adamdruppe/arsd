@@ -525,7 +525,7 @@ class Cgi {
 			setResponseStatus("401 Authorization Required");
 			header ("WWW-Authenticate: Basic realm=\""~message~"\"");
 			close();
-			throw new Exception("Not authorized");
+			throw new Exception("Not authorized; got " ~ authorization);
 		}
 	}
 
@@ -825,6 +825,10 @@ class Cgi {
 		} catch(Exception e) { return def; }
 	}
 
+	bool isClosed() const {
+		return closed;
+	}
+
 	private void delegate(const(ubyte)[]) rawDataOutput = null;
 
 	private bool outputtedResponseData;
@@ -1039,14 +1043,16 @@ version(embedded_httpd)
 					fun(cgi);
 					cgi.close();
 				} catch(Throwable t) {
-					auto msg = t.toString;
-					FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, error);
-					msg = "Status: 500 Internal Server Error\n";
-					msg ~= "Content-Type: text/plain\n\n";
-					debug msg ~= t.toString;
-					else  msg ~= "An unexpected error has occurred.";
+					if(1) { // !cgi.isClosed) {
+						auto msg = t.toString;
+						FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, error);
+						msg = "Status: 500 Internal Server Error\n";
+						msg ~= "Content-Type: text/plain\n\n";
+						debug msg ~= t.toString;
+						else  msg ~= "An unexpected error has occurred.";
 
-					FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, output);
+						FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, output);
+					}
 				}
 			}
 
@@ -1059,6 +1065,10 @@ version(embedded_httpd)
 			fun(cgi);
 			cgi.close();
 		} catch (Throwable c) {
+			// if the thing is closed, the app probably wrote an error message already, don't do it again.
+			//if(cgi.isClosed)
+				//goto doNothing;
+
 			// FIXME: this sucks
 			string message = "An unexpected error has occurred.";
 
@@ -1070,6 +1080,9 @@ version(embedded_httpd)
 			int idx = str.indexOf("\n");
 			if(idx != -1)
 				str = str[0..idx];
+
+			doNothing:
+
 			stderr.writeln(str);
 		}
 	}
