@@ -690,7 +690,7 @@ class Cgi {
 			hd ~= "Location: " ~ responseLocation;
 		}
 		if(!noCache && responseExpires != long.min) { // an explicit expiration date is set
-			auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)));
+			auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)), UTC());
 			hd ~= "Expires: " ~ printDate(
 				cast(DateTime) expires);
 			// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
@@ -1014,7 +1014,6 @@ version(embedded_httpd)
 			void writeFcgi(const(ubyte)[] data) {
 				FCGX_PutStr(data.ptr, data.length, output);
 			}
-
 			while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
 				string[string] fcgienv;
 
@@ -1043,7 +1042,7 @@ version(embedded_httpd)
 					fun(cgi);
 					cgi.close();
 				} catch(Throwable t) {
-					if(1) { // !cgi.isClosed) {
+					if(1) { // !cgi.isClosed) 
 						auto msg = t.toString;
 						FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, error);
 						msg = "Status: 500 Internal Server Error\n";
