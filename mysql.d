@@ -100,6 +100,8 @@ class MySqlResult : ResultSet {
 	private void fetchNext() {
 		assert(result);
 		auto r = mysql_fetch_row(result);
+		if(r is null)
+			throw new Exception("there is no next row");
 		uint numFields = mysql_num_fields(result);
 		uint* lengths = mysql_fetch_lengths(result);
 		string[] row;

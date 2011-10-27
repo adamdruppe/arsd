@@ -71,6 +71,8 @@ struct Row {
 	package ResultSet resultSet;
 
 	string opIndex(size_t idx) {
+		if(idx >= row.length)
+			throw new Exception(text("index ", idx, " is out of bounds on result"));
 		return row[idx];
 	}
 
