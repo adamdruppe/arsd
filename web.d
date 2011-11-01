@@ -1750,21 +1750,21 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 
 			static if(is(type == bool)) {
 				// bool is special cased because HTML checkboxes don't send anything if it isn't checked
-				if(name in sargs) {
+				if(using in sargs) {
 					if(
-					sargs[name][$-1] != "false" &&
-					sargs[name][$-1] != "False" &&
-					sargs[name][$-1] != "FALSE" &&
-					sargs[name][$-1] != "0"
+					sargs[using][$-1] != "false" &&
+					sargs[using][$-1] != "False" &&
+					sargs[using][$-1] != "FALSE" &&
+					sargs[using][$-1] != "0"
 					)
 					args[i] = true; // FIXME: should try looking at the value
 				}
 				else
 					args[i] = false;
 			} else static if(is(Unqual!(type) == Cgi.UploadedFile)) {
-				if(name !in cgi.files)
+				if(using !in cgi.files)
 					throw new InsufficientParametersException(funName, "file " ~ name ~ " is not present");
-				args[i] = cast()  cgi.files[name]; // casting away const for the assignment to compile FIXME: shouldn't be needed
+				args[i] = cast()  cgi.files[using]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
 					throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
@@ -2294,7 +2294,9 @@ enum string javascriptBaseImpl = q{
 		if(async)
 		xmlHttp.onreadystatechange=function() {
 			if(xmlHttp.readyState==4) {
-				if(callback) {
+				// either if the function is nor available or if it returns a good result, we're set.
+				// it might get to this point without the headers if the request was aborted
+				if(callback && (!xmlHttp.getAllResponseHeaders || xmlHttp.getAllResponseHeaders())) {
 					callback(xmlHttp.responseText, xmlHttp.responseXML);
 				}
 			}
@@ -2358,7 +2360,7 @@ enum string javascriptBaseImpl = q{
 				a += encodeURIComponent(i) + "=";
 				a += encodeURIComponent(arg);
 			} else if(arg && arg.length && typeof arg != "string") {
-				// FIXME: are we sure this is actually an array?
+				// FIXME: are we sure this is actually an array? It might be an object with a length property...
 
 				var outputtedHere = false;
 				for(var idx = 0; idx < arg.length; idx++) {
@@ -2370,7 +2372,6 @@ enum string javascriptBaseImpl = q{
 					a += encodeURIComponent(i) + "=";
 					a += encodeURIComponent(arg[idx]);
 				}
-
 			} else {
 				// a regular argument
 				a += encodeURIComponent(i) + "=";
