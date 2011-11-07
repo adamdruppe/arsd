@@ -94,6 +94,8 @@ public import std.stdio : writefln;
 public import std.conv;
 import std.random;
 
+import std.datetime;
+
 public import std.range;
 
 public import std.traits;
@@ -371,7 +373,7 @@ struct Parameter {
 	string[] options; /// possible options for selects
 	string[] optionValues; ///.
 
-	Element function(Document) makeFormElement;
+	Element function(Document, string) makeFormElement;
 }
 
 /// This uses reflection info to generate Javascript that can call the server with some ease.
@@ -722,6 +724,9 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 
 				static if( __traits(compiles, p.makeFormElement = &(typeof(param).makeFormElement))) {
 					p.makeFormElement = &(typeof(param).makeFormElement);
+				} else static if( __traits(compiles, PM.makeFormElement!(typeof(param))(null, null))) {
+					alias PM.makeFormElement!(typeof(param)) LOL;
+					p.makeFormElement = &LOL;
 				} else static if( is( typeof(param) == enum )) {
 					p.type = "select";
 
@@ -1215,7 +1220,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		Element input;
 
 		if(param.makeFormElement !is null) {
-			input = param.makeFormElement(document);
+			input = param.makeFormElement(document, param.name);
 			goto gotelement;
 		}
 
@@ -1665,6 +1670,8 @@ type fromUrlParam(type)(string ofInterest) {
 		ret = doc.root;
 	} else static if(is(type : Text)) {
 		ret = ofInterest;
+	} else static if(is(type : DateTime)) {
+		ret = DateTime.fromISOString(ofInterest);
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -1979,8 +1986,10 @@ import core.stdc.time;
 import std.file;
 
 /// meant to give a generic useful hook for sessions. kinda sucks at this point.
-string getSessionId(Cgi cgi) {
-	static string token; // FIXME: should this actually be static? it seems wrong
+/// use class Session instead. If you just construct it, the sessionId property
+/// works fine. Don't set any data and it won't save any file.
+deprecated string getSessionId(Cgi cgi) {
+	string token; // FIXME: should this actually be static? it seems wrong
 	if(token is null) {
 		if("_sess_id" in cgi.cookies)
 			token = cgi.cookies["_sess_id"];
@@ -1993,6 +2002,174 @@ string getSessionId(Cgi cgi) {
 	}
 
 	return getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
+}
+
+version(Windows) {
+	import core.sys.windows;
+	extern(Windows) DWORD GetTempPathW(DWORD, LPTSTR);
+	alias GetTempPathW GetTempPath;
+}
+
+/// Provides some persistent storage, kinda like PHP
+/// But, you have to manually commit() the data back to a file.
+/// You might want to put this in a scope(exit) block or something like that.
+class Session {
+	/// Loads the session if available, and creates one if not.
+	/// May write a session id cookie to the passed cgi object.
+	this(Cgi cgi, bool useFile = true) {
+		string token;
+		if("_sess_id" in cgi.cookies)
+			token = cgi.cookies["_sess_id"];
+		else {
+			auto tmp = uniform(0, int.max);
+			token = to!string(tmp);
+
+			cgi.setLoginCookie("_sess_id", token);
+		}
+		_sessionId = getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
+
+		if(useFile)
+			reload();
+	}
+
+	string sessionId() const {
+		return _sessionId;
+	}
+
+	bool hasData() const {
+		return _hasData;
+	}
+
+	bool hasKey(string key) const {
+		auto ptr = key in data;
+		if(ptr is null)
+			return false;
+		else
+			return true;
+	}
+
+	string opDispatch(string name)(string v = null) if(name != "popFront") {
+		if(v !is null)
+			set(name, value);
+		if(hasKey(key))
+			return get(key);
+		return null;
+	}
+
+	string opIndex(string key) const {
+		return get(key);
+	}
+
+	string opIndexAssign(string value, string field) {
+		set(field, value);
+		return value;
+	}
+
+	string* opBinary(string op)(string key)  if(op == "in") {
+		return key in fields;
+	}
+
+	void set(string key, string value) {
+		data[key] = value;
+		hasData = true;
+		changed = true;
+	}
+
+	string get(string key) const {
+		if(key !in data)
+			throw new Exception("No such key in session: " ~ key);
+		return data[key];
+	}
+
+	private string getFilePath() const {
+		string path;
+		version(Windows) {
+			wchar[1024] buffer;
+			auto len = GetTempPath(1024, buffer.ptr);
+			if(len == 0)
+				throw new Exception("couldn't find a temporary path");
+
+			auto b = buffer[0 .. len];
+
+			path = to!string(b);
+		} else
+			path = "/tmp/";
+
+		path ~= "arsd_session_file_" ~ sessionId;
+
+		return path;
+	}
+
+	void reload() {
+		data = null;
+		auto path = getFilePath();
+		if(std.file.exists(path)) {
+			_hasData = true;
+			auto json = std.file.readText(getFilePath());
+
+			auto obj = parseJSON(json);
+			enforce(obj.type == JSON_TYPE.OBJECT);
+			foreach(k, v; obj.object) {
+				string ret;
+				final switch(v.type) {
+					case JSON_TYPE.STRING:
+						ret = v.str;
+					break;
+					case JSON_TYPE.INTEGER:
+						ret = to!string(v.integer);
+					break;
+					case JSON_TYPE.FLOAT:
+						ret = to!string(v.floating);
+					break;
+					case JSON_TYPE.OBJECT:
+					case JSON_TYPE.ARRAY:
+						enforce(0, "invalid session data");
+					break;
+					case JSON_TYPE.TRUE:
+						ret = "true";
+					break;
+					case JSON_TYPE.FALSE:
+						ret = "false";
+					break;
+					case JSON_TYPE.NULL:
+						ret = null;
+					break;
+				}
+
+				data[k] = ret;
+			}
+		}			
+	}
+
+	void commit(bool force = false) {
+		if(force || changed)
+			std.file.write(getFilePath(), toJson(data));
+	}
+
+	private string[string] data;
+	private bool _hasData;
+	private bool changed;
+	private string _sessionId;
+
+	//private Variant[string] data;
+	/*
+	Variant* opBinary(string op)(string key)  if(op == "in") {
+		return key in data;
+	}
+
+	T get(T)(string key) {
+		if(key !in data)
+			throw new Exception(key ~ " not in session data");
+
+		return data[key].coerce!T;
+	}
+
+	void set(T)(string key, T t) {
+		Variant v;
+		v = t;
+		data[key] = t;
+	}
+	*/
 }
 
 /// sets a site-wide cookie, meant to simplify login code
