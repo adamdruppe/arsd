@@ -84,6 +84,7 @@ module arsd.web;
 	document (default), json, none
 */
 
+import std.exception;
 public import arsd.dom;
 public import arsd.cgi; // you have to import this in the actual usage file or else it won't link; surely a compiler bug
 import arsd.sha;
@@ -2024,7 +2025,7 @@ class Session {
 			auto tmp = uniform(0, int.max);
 			token = to!string(tmp);
 
-			cgi.setLoginCookie("_sess_id", token);
+			setLoginCookie(cgi, "_sess_id", token);
 		}
 		_sessionId = getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
 
@@ -2071,7 +2072,7 @@ class Session {
 
 	void set(string key, string value) {
 		data[key] = value;
-		hasData = true;
+		_hasData = true;
 		changed = true;
 	}
 
