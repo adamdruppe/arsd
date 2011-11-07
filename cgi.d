@@ -179,6 +179,10 @@ class Cgi {
 		if(ae.length && ae.indexOf("gzip") != -1)
 			acceptsGzip = true;
 
+		auto ka = getenv("HTTP_CONNECTION");
+		if(ka.length && ka.toLower().indexOf("keep-alive") != -1)
+			keepAliveRequested = true;
+
 		auto rm = getenv("REQUEST_METHOD");
 		if(rm.length)
 			requestMethod = to!RequestMethod(getenv("REQUEST_METHOD"));
@@ -316,6 +320,10 @@ class Cgi {
 				break;
 				case "content-type":
 					contentType = value;
+				break;
+				case "connection":
+					if(value.toLower().indexOf("keep-alive") != -1)
+						keepAliveRequested = true;
 				break;
 				case "host":
 					host = value;
@@ -541,6 +549,7 @@ class Cgi {
 	bool gzipResponse;
 
 	immutable bool acceptsGzip;
+	immutable bool keepAliveRequested;
 
 	/// This gets a full url for the current request, including port, protocol, host, path, and query
 	string getCurrentCompleteUri() const {
@@ -673,14 +682,6 @@ class Cgi {
 		}
 		if(nph) { // we're responsible for setting the date too according to http 1.1
 			hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
-			if(!isAll) {
-				if(!http10) {
-					hd ~= "Transfer-Encoding: chunked";
-					responseChunked = true;
-				}
-			} else
-				hd ~= "Content-Length: " ~ to!string(t.length);
-
 		}
 
 		// FIXME: what if the user wants to set his own content-length?
@@ -722,6 +723,18 @@ class Cgi {
 		if(customHeaders !is null)
 			hd ~= customHeaders;
 
+		if(!isAll) {
+			if(nph && !http10) {
+				hd ~= "Transfer-Encoding: chunked";
+				responseChunked = true;
+			}
+		} else {
+			hd ~= "Content-Length: " ~ to!string(t.length);
+			if(nph && keepAliveRequested) {
+				hd ~= "Connection: Keep-Alive";
+			}
+		}
+
 		// FIXME: what about duplicated headers?
 
 		foreach(h; hd) {
@@ -741,9 +754,6 @@ class Cgi {
 	/// Writes the data to the output, flushing headers if they have not yet been sent.
 	void write(const(void)[] t, bool isAll = false) {
 		assert(!closed, "Output has already been closed");
-		if(!outputtedResponseData && (!autoBuffer || isAll)) {
-			flushHeaders(t, isAll);
-		}
 
 		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
 			// actually gzip the data here
@@ -756,6 +766,10 @@ class Cgi {
 			// std.file.write("/tmp/last-item", data);
 
 			t = data;
+		}
+
+		if(!outputtedResponseData && (!autoBuffer || isAll)) {
+			flushHeaders(t, isAll);
 		}
 
 		if(requestMethod != RequestMethod.HEAD && t.length > 0) {
@@ -873,6 +887,109 @@ class Cgi {
   private:
 	//RequestMethod _requestMethod;
 }
+
+
+// should this be a separate module? Probably, but that's a hassle.
+
+/// Represents a url that can be broken down or built up through properties
+// FIXME: finish this
+struct Url {
+	string uri;
+	alias uri this;
+
+	this(string uri) {
+		this.uri = uri;
+	}
+
+	string toString() {
+		return uri;
+	}
+
+	/// Returns a new absolute Url given a base. It treats this one as
+	/// relative where possible, but absolute if not. (If protocol, domain, or
+	/// other info is not set, the new one inherits it from the base.)
+	Url basedOn(in Url baseUrl) const {
+		Url n = this;
+
+		// if anything is given in the existing url, we don't use the base anymore.
+		if(n.protocol is null) {
+			n.protocol = baseUrl.protocol;
+			if(n.server is null) {
+				n.server = baseUrl.server;
+				if(n.port == 0) {
+					n.port = baseUrl.port;
+					if(n.path.length > 0 && n.path[0] != '/') {
+						n.path = baseUrl.path[0 .. baseUrl.path.lastIndexOf("/") + 1] ~ n.path;
+					}
+				}
+			}
+		}
+
+		n.uri = n.toString();
+
+		return n;
+	}
+
+	// This can sometimes be a big pain in the butt for me, so lots of copy/paste here to cover
+	// the possibilities.
+	unittest {
+		auto url = Url("cool.html"); // checking relative links
+		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/what/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/cool.html");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com/cool.html");
+
+		url = Url("/something/cool.html"); // same server, different path
+		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com/something/cool.html");
+
+		url = Url("?query=answer"); // same path. server, protocol, and port, just different query string and fragment
+		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/what/?query=answer");
+		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/?query=answer");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com?query=answer");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Url("http://test.com")) == "http://test.com?query=answer");
+
+		url = Url("#anchor"); // everything should remain the same except the anchor
+
+		url = Url("//example.com"); // same protocol, but different server. the path here should be blank.
+
+		url = Url("//example.com/example.html"); // same protocol, but different server and path
+
+		url = Url("http://example.com/test.html"); // completely absolute link should never be modified
+
+		url = Url("http://example.com"); // completely absolute link should never be modified, even if it has no path
+
+		// FIXME: add something for port too
+
+
+	}
+
+	string protocol;
+	string server;
+	int port;
+	string path;
+	string query;
+	string fragment;
+}
+
+
 /*
 import std.file;
 struct Session {
@@ -962,6 +1079,9 @@ string encodeVariables(in string[][string] data) {
 	return ret;
 }
 
+
+// http helper functions
+
 const(ubyte)[] makeChunk(const(ubyte)[] data) {
 	const(ubyte)[] ret;
 
@@ -985,10 +1105,14 @@ string toHex(int num) {
 	return to!string(array(ret.retro));
 }
 
+// the generic mixins
+
+/// Use this instead of writing your own main
 mixin template GenericMain(alias fun, T...) {
 	mixin CustomCgiMain!(Cgi, fun, T);
 }
 
+/// If you want to use a subclass of Cgi with generic main, use this mixin.
 mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
 version(embedded_httpd)
