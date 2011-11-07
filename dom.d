@@ -394,6 +394,12 @@ class Element {
 		return e;
 	}
 
+	/// .
+	void appendChildren(Element[] children) {
+		foreach(ele; children)
+			appendChild(ele);
+	}
+
 	/// Inserts the second element to this node, right before the first param
 	Element insertBefore(Element where, Element what)
 		in {
@@ -518,6 +524,21 @@ class Element {
 		auto e = Element.make(tagName, childInfo, childInfo2);
 		e.parentDocument = this.parentDocument;
 		return appendChild(e);
+	}
+
+	/// Convenience function to append text intermixed with other children.
+	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
+	/// or div.addChildren("Hello, ", user.name, "!");
+
+	/// See also: appendHtml. This might be a bit simpler though because you don't have to think about escaping.
+	void addChildren(T...)(T t) {
+		foreach(item; t) {
+			static if(is(item : Element))
+				appendChild(item);
+			else static if (is(isSomeString!(item)))
+				appendText(to!string(item));
+			else static assert(0, "Cannot pass " ~ typeof(item).stringof ~ " to addChildren");
+		}
 	}
 
 	///.
@@ -3400,6 +3421,8 @@ string camelCase(string a) {
 }
 
 ///.
+
+// FIXME: use the better parser from html.d
 class CssStyle {
 	///.
 	this(string rule, string content) {
