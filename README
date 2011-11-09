@@ -30,6 +30,7 @@ database.d  - main interface to databases. Includes DataObject
 mysql.d     - a mysql engine for database.d (most mature of the three)
 postgres.d  - a postgres engne for database.d
 sqlite.d    - a sqlite engine for database.d
+mssql.d     - a (super crappy) mssql engine for database.d (uses ODBC)
 
 Desktop app stuff
 ================
