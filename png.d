@@ -92,6 +92,7 @@ PNG* pngFromImage(IndexedImage i) {
 		int shift = 0;
 
 		switch(h.depth) {
+			default: assert(0); break;
 			case 1: shift = 7; break;
 			case 2: shift = 6; break;
 			case 4: shift = 4; break;
@@ -105,6 +106,7 @@ PNG* pngFromImage(IndexedImage i) {
 			datastream[dsp] |= i.data[dpos++] << shift;
 
 			switch(h.depth) {
+				default: assert(0); break;
 				case 1: shift-= 1; break;
 				case 2: shift-= 2; break;
 				case 4: shift-= 4; break;
@@ -115,6 +117,7 @@ PNG* pngFromImage(IndexedImage i) {
 			if(shift < 0) {
 				dsp++;
 				switch(h.depth) {
+					default: assert(0); break;
 					case 1: shift = 7; break;
 					case 2: shift = 6; break;
 					case 4: shift = 4; break;
@@ -125,6 +128,7 @@ PNG* pngFromImage(IndexedImage i) {
 			if(!justAdvanced)
 				dsp++;
 			switch(h.depth) {
+				default: assert(0); break;
 				case 1: shift = 7; break;
 				case 2: shift = 6; break;
 				case 4: shift = 4; break;
