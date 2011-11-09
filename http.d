@@ -59,14 +59,14 @@ struct UriParts {
 		if(uri[0..7] != "http://")
 			throw new Exception("You must use an absolute, unencrypted URL.");
 
-		int posSlash = uri[7..$].indexOf("/");
+		auto posSlash = uri[7..$].indexOf("/");
 		if(posSlash != -1)
 			posSlash += 7;
 
 		if(posSlash == -1)
 			posSlash = uri.length;
 
-		int posColon = uri[7..$].indexOf(":");
+		auto posColon = uri[7..$].indexOf(":");
 		if(posColon != -1)
 			posColon += 7;
 
@@ -160,7 +160,7 @@ body {
 		int size;
 		int start = 0;
 		for(int a = 0; a < response.length; a++) {
-			switch(state) {
+			final switch(state) {
 				case 0: // reading hex
 					char c = response[a];
 					if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {

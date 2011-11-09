@@ -129,7 +129,7 @@ class DatabaseException : Exception {
 		super(msg);
 	}
 
-	this(string msg, string file, int line) {
+	this(string msg, string file, size_t line) {
 		super(msg, file, line);
 	}
 }

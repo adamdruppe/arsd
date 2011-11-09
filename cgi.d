@@ -289,7 +289,7 @@ class Cgi {
 
 		scriptName = requestUri[0 .. pathInfoStarts];
 
-		int question = requestUri.indexOf("?");
+		auto question = requestUri.indexOf("?");
 		if(question == -1) {
 			queryString = "";
 			pathInfo = requestUri[pathInfoStarts..$];
@@ -308,7 +308,7 @@ class Cgi {
 		string contentType = "";
 
 		foreach(header; headers[1..$]) {
-			int colon = header.indexOf(":");
+			auto colon = header.indexOf(":");
 			if(colon == -1)
 				throw new Exception("HTTP headers should have a colon!");
 			string name = header[0..colon].toLower;
@@ -408,7 +408,7 @@ class Cgi {
 		if(data.length == 0)
 			post = null;//post.init;
 		else {
-			int terminator = contentType.indexOf(";");
+			auto terminator = contentType.indexOf(";");
 			if(terminator == -1)
 				terminator = contentType.length;
 			switch(contentType[0..terminator]) {
@@ -418,11 +418,11 @@ class Cgi {
 
 					UploadedFile[string] _files;
 
-					int b = contentType[terminator..$].indexOf("boundary=") + terminator;
+					auto b = contentType[terminator..$].indexOf("boundary=") + terminator;
 					assert(b >= 0, "no boundary");
 					immutable boundary = contentType[b+9..$];
 
-					int pos = 0;
+					sizediff_t pos = 0;
 
 					// all boundaries except the first should have a \r\n before them
 					while(pos < data.length) {
@@ -464,7 +464,7 @@ class Cgi {
 						bool isFile = false;
 
 						foreach(h; pieceHeaders) {
-							int p = h.indexOf(":");
+							auto p = h.indexOf(":");
 							assert(p != -1, "no colon in header");
 							string hn = h[0..p];
 							string hv = h[p+2..$];
@@ -1025,7 +1025,7 @@ string[][string] decodeVariables(string data, string separator = "&") {
 	auto vars = data.split(separator);
 	string[][string] _get;
 	foreach(var; vars) {
-		int equal = var.indexOf("=");
+		auto equal = var.indexOf("=");
 		if(equal == -1) {
 			_get[decodeComponent(var)] ~= "";
 		} else {
@@ -1085,7 +1085,7 @@ string encodeVariables(in string[][string] data) {
 const(ubyte)[] makeChunk(const(ubyte)[] data) {
 	const(ubyte)[] ret;
 
-	ret = cast(const(ubyte)[]) toHex(data.length);
+	ret = cast(const(ubyte)[]) toHex(cast(int) data.length);
 	ret ~= cast(const(ubyte)[]) "\r\n";
 	ret ~= data;
 	ret ~= cast(const(ubyte)[]) "\r\n";
@@ -1200,7 +1200,7 @@ version(embedded_httpd)
 			writefln("Status: 500 Internal Server Error\nContent-Type: text/html\n\n%s", "<html><head><title>Internal Server Error</title></head><body><br><br><br><br><code><pre>"~(std.array.replace(std.array.replace(message, "<", "&lt;"), ">", "&gt;"))~"</pre></code></body></html>");
 
 			string str = c.toString();
-			int idx = str.indexOf("\n");
+			auto idx = str.indexOf("\n");
 			if(idx != -1)
 				str = str[0..idx];
 
