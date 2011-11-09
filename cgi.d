@@ -110,6 +110,72 @@ mixin template ForwardCgiConstructors() {
 	}
 }
 
+
+ 
+version(Windows) {
+// FIXME: ugly hack to solve stdin exception problems on Windows:
+// reading stdin results in StdioException (Bad file descriptor)
+// this is probably due to http://d.puremagic.com/issues/show_bug.cgi?id=3425
+private struct stdin {
+	struct ByChunk { // Replicates std.stdio.ByChunk
+	private:
+		ubyte[] chunk_;
+	public:
+		this(size_t size)
+		in {
+			assert(size, "size must be larger than 0");
+		}
+		body {
+			chunk_ = new ubyte[](size);
+			popFront();
+		}
+
+		@property bool empty() const {
+			return !std.stdio.stdin.isOpen || std.stdio.stdin.eof; // Ugly, but seems to do the job
+		}
+		@property nothrow ubyte[] front() {	return chunk_; }
+		void popFront()	{
+			enforce(!empty, "Cannot call popFront on empty range");
+			chunk_ = stdin.rawRead(chunk_);
+		}
+	}
+
+	import std.c.windows.windows;
+static:
+
+	static this() {
+		// Set stdin to binary mode
+		setmode(std.stdio.stdin.fileno(), 0x8000);
+	}
+
+	T[] rawRead(T)(T[] buf) {
+		uint bytesRead;
+		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, buf.length * T.sizeof, &bytesRead, null);
+
+		if (!result) {
+			auto err = GetLastError();
+			if (err == 38/*ERROR_HANDLE_EOF*/ || err == 109/*ERROR_BROKEN_PIPE*/) // 'good' errors meaning end of input
+				return buf[0..0];
+			// Some other error, throw it
+
+			char* buffer;
+			scope(exit) LocalFree(buffer);
+
+			// FORMAT_MESSAGE_ALLOCATE_BUFFER	= 0x00000100
+			// FORMAT_MESSAGE_FROM_SYSTEM		= 0x00001000
+			FormatMessageA(0x1100, null, err, 0, cast(char*)&buffer, 256, null);
+			throw new Exception(to!string(buffer));
+		}
+		enforce(!(bytesRead % T.sizeof), "I/O error");
+		return buf[0..bytesRead / T.sizeof];
+	}
+
+	auto byChunk(size_t sz) { return ByChunk(sz); }
+}
+}
+
+
+
 /// The main interface with the web request
 class Cgi {
   public:
