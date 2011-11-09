@@ -1352,7 +1352,7 @@ template parameterNamesOf (alias func)
 }
 
 
-int indexOfNew(string s, char a) {
+sizediff_t indexOfNew(string s, char a) {
 	foreach(i, c; s)
 		if(c == a)
 			return i;

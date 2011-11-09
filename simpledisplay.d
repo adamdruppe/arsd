@@ -1090,7 +1090,7 @@ version(X11) {
 			windowName.value = title.ptr;
 			windowName.encoding = XA_STRING;
 			windowName.format = 8;
-			windowName.nitems = title.length;
+			windowName.nitems = cast(uint) title.length;
 
 			XSetWMName(display, window, &windowName);
 

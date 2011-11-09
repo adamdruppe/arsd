@@ -774,7 +774,7 @@ class Element {
 	bool hasClass(string c) {
 		auto cn = className;
 
-		int idx = cn.indexOf(c);
+		auto idx = cn.indexOf(c);
 		if(idx == -1)
 			return false;
 
@@ -1677,12 +1677,12 @@ class Link : Element {
 		if(href is null)
 			return null;
 
-		int ques = href.indexOf("?");
+		auto ques = href.indexOf("?");
 		string str = "";
 		if(ques != -1) {
 			str = href[ques+1..$];
 
-			int fragment = str.indexOf("#");
+			auto fragment = str.indexOf("#");
 			if(fragment != -1)
 				str = str[0..fragment];
 		}
@@ -1692,7 +1692,7 @@ class Link : Element {
 		string[string] hash;
 
 		foreach(var; variables) {
-			int index = var.indexOf("=");
+			auto index = var.indexOf("=");
 			if(index == -1)
 				hash[var] = "";
 			else {
@@ -1707,12 +1707,12 @@ class Link : Element {
 	/*private*/ void updateQueryString(string[string] vars) {
 		string href = getAttribute("href");
 
-		int question = href.indexOf("?");
+		auto question = href.indexOf("?");
 		if(question != -1)
 			href = href[0..question];
 
 		string frag = "";
-		int fragment = href.indexOf("#");
+		auto fragment = href.indexOf("#");
 		if(fragment != -1) {
 			frag = href[fragment..$];
 			href = href[0..fragment];
@@ -2177,7 +2177,7 @@ class Document {
 			}
 		}
 
-		int pos = 0;
+		sizediff_t pos = 0;
 
 		clear();
 
@@ -2185,7 +2185,7 @@ class Document {
 
 		bool sawImproperNesting = false;
 
-		int getLineNumber(int p) {
+		int getLineNumber(sizediff_t p) {
 			int line = 1;
 			foreach(c; data[0..p])
 				if(c == '\n')
@@ -2205,7 +2205,7 @@ class Document {
 		string readTagName() {
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
-			int start = pos;
+			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/' &&
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 				pos++;
@@ -2219,7 +2219,7 @@ class Document {
 		string readAttributeName() {
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
-			int start = pos;
+			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 				pos++;
@@ -2236,7 +2236,7 @@ class Document {
 				case '"':
 					char end = data[pos];
 					pos++;
-					int start = pos;
+					auto start = pos;
 					while(data[pos] != end)
 						pos++;
 					string v = htmlEntitiesDecode(data[start..pos], strict);
@@ -2246,7 +2246,7 @@ class Document {
 					if(strict)
 						parseError("Attributes must be quoted");
 					// read until whitespace or terminator (/ or >)
-					int start = pos;
+					auto start = pos;
 					while(data[pos] != '>' && data[pos] != '/' &&
 					      data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 					      	pos++;
@@ -2258,7 +2258,7 @@ class Document {
 		}
 
 		TextNode readTextNode() {
-			int start = pos;
+			auto start = pos;
 			while(pos < data.length && data[pos] != '<') {
 				pos++;
 			}
@@ -2267,7 +2267,7 @@ class Document {
 		}
 
 		RawSource readCDataNode() {
-			int start = pos;
+			auto start = pos;
 			while(pos < data.length && data[pos] != '<') {
 				pos++;
 			}
@@ -2356,7 +2356,7 @@ class Document {
 				break;
 				case '/': // closing an element
 					pos++; // skip the start
-					int p = pos;
+					auto p = pos;
 					while(data[pos] != '>')
 						pos++;
 					//writefln("</%s>", data[p..pos]);
@@ -2399,7 +2399,7 @@ class Document {
 								pos++;
 						}
 
-						int whereThisTagStarted = pos; // for better error messages
+						auto whereThisTagStarted = pos; // for better error messages
 
 						pos++;
 
@@ -2412,7 +2412,7 @@ class Document {
 						// HACK to handle script as a CDATA section 
 						if(tagName == "script" || tagName == "style") {
 							string closer = "</" ~ tagName ~ ">";
-							int ending = indexOf(data[pos..$], closer);
+							auto ending = indexOf(data[pos..$], closer);
 							if(loose && ending == -1)
 								ending = indexOf(data[pos..$], closer.toUpper);
 							if(ending == -1)
@@ -2771,7 +2771,7 @@ static import std.conv;
 int intFromHex(string hex) {
 	int place = 1;
 	int value = 0;
-	for(int a = hex.length - 1; a >= 0; a--) {
+	for(sizediff_t a = hex.length - 1; a >= 0; a--) {
 		int v;
 		char q = hex[a];
 		if( q >= '0' && q <= '9')
@@ -2808,8 +2808,8 @@ int intFromHex(string hex) {
 		]; // other is white space or a name.
 
 		///.
-		int idToken(string str, int position) {
-			int tid = -1;
+		sizediff_t idToken(string str, sizediff_t position) {
+			sizediff_t tid = -1;
 			char c = str[position];
 			foreach(a, token; selectorTokens)
 				if(c == token[0]) {
@@ -2830,7 +2830,7 @@ int intFromHex(string hex) {
 		// FIXME: it doesn't support backslash escaped characters
 		// FIXME: it should ignore /* comments */
 		string[] tokens;
-		int start = -1;
+		sizediff_t start = -1;
 		bool skip = false;
 		// get rid of useless, non-syntax whitespace
 
@@ -2853,7 +2853,7 @@ int intFromHex(string hex) {
 				continue;
 			}
 
-			int tid = idToken(selector, i);
+			auto tid = idToken(selector, i);
 
 			if(tid == -1) {
 				if(start == -1)
@@ -3044,7 +3044,7 @@ int intFromHex(string hex) {
 			case 2: // next-sibling
 				auto tmp = start.parentNode;
 				if(tmp !is null) {
-					int pos = -1;
+					sizediff_t pos = -1;
 					auto children = tmp.childElements;
 					foreach(i, child; children) {
 						if(child is start) {
@@ -3063,7 +3063,7 @@ int intFromHex(string hex) {
 			case 3: // younger sibling
 				auto tmp = start.parentNode;
 				if(tmp !is null) {
-					int pos = -1;
+					sizediff_t pos = -1;
 					auto children = tmp.childElements;
 					foreach(i, child; children) {
 						if(child is start) {
@@ -3188,7 +3188,7 @@ int intFromHex(string hex) {
 		State state = State.Starting;
 		string attributeName, attributeValue, attributeComparison;
 		foreach(token; tokens) {
-			int tid = -1;
+			sizediff_t tid = -1;
 			foreach(i, item; selectorTokens)
 				if(token == item) {
 					tid = i;

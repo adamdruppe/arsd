@@ -114,7 +114,7 @@ class Sqlite : Database {
 
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		auto s = Statement(this, sql);
-		foreach(i, arg; args) {
+		foreach(int i, arg; args) {
 			s.bind(i + 1, arg);
 		}
 
@@ -140,7 +140,7 @@ class Sqlite : Database {
 	string error(){
 		char* mesg = sqlite3_errmsg(db);
 		char[] m;
-		int a = std.c.string.strlen(mesg);
+		sizediff_t a = std.c.string.strlen(mesg);
 		m.length = a;
 		for(int v = 0; v < a; v++)
 			m[v] = mesg[v];
@@ -161,7 +161,7 @@ class Sqlite : Database {
 		char* mesg;
 		if(sqlite3_exec(db, toStringz(sql), &callback, &onEach, &mesg) != SQLITE_OK) {
 			char[] m;
-			int a = std.c.string.strlen(mesg);
+			sizediff_t a = std.c.string.strlen(mesg);
 			m.length = a;
 			for(int v = 0; v < a; v++)
 				m[v] = mesg[v];
@@ -194,7 +194,7 @@ class Sqlite : Database {
 
 class SqliteResult :  ResultSet {
 	int getFieldIndex(string field) {
-		foreach(i, n; columnNames)
+		foreach(int i, n; columnNames)
 			if(n == field)
 				return i;
 		throw new Exception("no such field " ~ field);
@@ -227,7 +227,7 @@ class SqliteResult :  ResultSet {
 	}
 
 	int length() {
-		return rows.length;
+		return cast(int) rows.length;
 	}
 
 	this(Variant[][] rows, char[][] columnNames) {
@@ -282,7 +282,7 @@ struct Statement {
 				columnNames.length = count;
 				for(int a = 0; a < count; a++){
 					char* str = sqlite3_column_name(s, a);
-					int l = std.c.string.strlen(str);
+					sizediff_t l = std.c.string.strlen(str);
 					columnNames[a].length = l;
 					for(int b = 0; b < l; b++)
 						columnNames[a][b] = str[b];
@@ -321,7 +321,7 @@ struct Statement {
 
 			for(int a = 0; a < count; a++){
 				Variant v;
-				switch(sqlite3_column_type(s, a)){
+				final switch(sqlite3_column_type(s, a)){
 					case SQLITE_INTEGER:
 						v = sqlite3_column_int(s, a);
 					break;
@@ -332,7 +332,7 @@ struct Statement {
 						char* str = sqlite3_column_text(s, a);
 						char[] st;
 
-						int l = std.c.string.strlen(str);
+						sizediff_t l = std.c.string.strlen(str);
 						st.length = l;
 						for(int aa = 0; aa < l; aa++)
 							st[aa] = str[aa];
@@ -484,7 +484,7 @@ template extract(A, T, R...){
 			if(sqlite3_bind_null(s, col) != SQLITE_OK)
 				throw new DatabaseException("bind " ~ db.error());
 		} else {
-			if(sqlite3_bind_text(s, col, value.ptr, value.length, cast(void*)-1) != SQLITE_OK)
+			if(sqlite3_bind_text(s, col, value.ptr, cast(int) value.length, cast(void*)-1) != SQLITE_OK)
 				throw new DatabaseException("bind " ~ db.error());
 		}
 	}
@@ -504,7 +504,7 @@ template extract(A, T, R...){
 			if(sqlite3_bind_null(s, col) != SQLITE_OK)
 				throw new DatabaseException("bind " ~ db.error());
 		} else {
-			if(sqlite3_bind_blob(s, col, cast(void*)value.ptr, value.length, cast(void*)-1) != SQLITE_OK)
+			if(sqlite3_bind_blob(s, col, cast(void*)value.ptr, cast(int) value.length, cast(void*)-1) != SQLITE_OK)
 				throw new DatabaseException("bind " ~ db.error());
 		}
 	}
@@ -623,13 +623,13 @@ extern(C) int callback(void* cb, int howmany, char** text, char** columns){
 	char[][char[]] row;
 
 	for(int a = 0; a < howmany; a++){
-		int b = std.c.string.strlen(columns[a]);
+		sizediff_t b = std.c.string.strlen(columns[a]);
 		char[] buf;
 		buf.length = b;
 		for(int c = 0; c < b; c++)
 			buf[c] = columns[a][c];
 
-		int d = std.c.string.strlen(text[a]);
+		sizediff_t d = std.c.string.strlen(text[a]);
 		char[] t;
 		t.length = d;
 		for(int c = 0; c < d; c++)

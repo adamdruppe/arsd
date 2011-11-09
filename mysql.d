@@ -236,7 +236,7 @@ class MySql : Database {
 
 	string escape(string str) {
 		ubyte[] buffer = new ubyte[str.length * 2 + 1];
-		buffer.length = mysql_real_escape_string(mysql, buffer.ptr, cast(cstring) str.ptr, str.length);
+		buffer.length = mysql_real_escape_string(mysql, buffer.ptr, cast(cstring) str.ptr, cast(uint) str.length);
 
 		return cast(string) buffer;
 	}
