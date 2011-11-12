@@ -480,6 +480,19 @@ class Element {
 
 		if(childInfo !is null)
 			switch(tagName) {
+				/* html5 convenience tags */
+				case "audio":
+					if(childInfo.length)
+						e.addChild("source", childInfo);
+					if(childInfo2 !is null)
+						e.appendText(childInfo2);
+				break;
+				case "source":
+					e.src = childInfo;
+					if(childInfo2 !is null)
+						e.type = childInfo2;
+				break;
+				/* regular html 4 stuff */
 				case "img":
 					e.src = childInfo;
 					if(childInfo2 !is null)
@@ -510,8 +523,11 @@ class Element {
 					if(childInfo2 !is null)
 						e.content = childInfo2;
 				break;
+				/* generically, assume we were passed text and perhaps class */
 				default:
 					e.innerText = childInfo;
+					if(childInfo2.length)
+						e.className = childInfo2;
 			}
 
 		return e;
