@@ -21,25 +21,6 @@ import std.process;
 
 import std.zlib;
 
-T[] consume(T)(T[] range, int count) {
-	if(count > range.length)
-		count = range.length;
-	return range[count..$];
-}
-
-int locationOf(T)(T[] data, string item) {
-	const(ubyte[]) d = cast(const(ubyte[])) data;
-	const(ubyte[]) i = cast(const(ubyte[])) item;
-
-	for(int a = 0; a < d.length; a++) {
-		if(a + i.length > d.length)
-			return -1;
-		if(d[a..a+i.length] == i)
-			return a;
-	}
-
-	return -1;
-}
 
 /+
 /// If you pass -1 to Cgi.this() as maxContentLength, it
@@ -95,6 +76,27 @@ struct CgiVariableStream {
 	}
 }
 +/
+
+
+T[] consume(T)(T[] range, int count) {
+	if(count > range.length)
+		count = range.length;
+	return range[count..$];
+}
+
+int locationOf(T)(T[] data, string item) {
+	const(ubyte[]) d = cast(const(ubyte[])) data;
+	const(ubyte[]) i = cast(const(ubyte[])) item;
+
+	for(int a = 0; a < d.length; a++) {
+		if(a + i.length > d.length)
+			return -1;
+		if(d[a..a+i.length] == i)
+			return a;
+	}
+
+	return -1;
+}
 
 /// If you are doing a custom cgi class, mixing this in can take care of
 /// the required constructors for you
@@ -174,6 +176,10 @@ static:
 }
 }
 
+string makeDataUrl(string mimeType, in ubyte[] data) {
+	auto data64 = Base64.encode(data);
+	return "data:" ~ mimeType ~ ";base64," ~ assumeUnique(data64);
+}
 
 
 /// The main interface with the web request
@@ -244,6 +250,9 @@ class Cgi {
 		auto ae = getenv("HTTP_ACCEPT_ENCODING");
 		if(ae.length && ae.indexOf("gzip") != -1)
 			acceptsGzip = true;
+
+		accept = getenv("HTTP_ACCEPT");
+		lastEventId = getenv("HTTP_LAST_EVENT_ID");
 
 		auto ka = getenv("HTTP_CONNECTION");
 		if(ka.length && ka.toLower().indexOf("keep-alive") != -1)
@@ -381,6 +390,12 @@ class Cgi {
 			string value = header[colon+2..$]; // skip the colon and the space
 
 			switch(name) {
+				case "accept":
+					accept = value;
+				break;
+				case "last-event-id":
+					lastEventId = value;
+				break;
 				case "authorization":
 					authorization = value;
 				break;
@@ -927,6 +942,8 @@ class Cgi {
 	immutable(char[]) pathInfo;
 	immutable(char[]) scriptName;
 	immutable(char[]) authorization;
+	immutable(char[]) accept;
+	immutable(char[]) lastEventId;
 
 	immutable(char[]) queryString;
 	immutable(char[]) referrer;
@@ -1292,7 +1309,6 @@ string printDate(DateTime date) {
 
 version(with_cgi_packed) {
 // This is temporary until Phobos supports base64
-import std.base64;
 immutable(ubyte)[] base64UrlDecode(string e) {
 	string encoded = e.idup;
 	while (encoded.length % 4) {
