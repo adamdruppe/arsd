@@ -281,6 +281,7 @@ class Cgi {
 			// And it has worked reliably for me all year in the live environment,
 			// but some servers might be different.
 			int contentLength = to!int(getenv("CONTENT_LENGTH"));
+			immutable originalContentLength = contentLength;
 			if(contentLength) {
 				if(maxContentLength > 0 && contentLength > maxContentLength) {
 					setResponseStatus("413 Request entity too large");
@@ -301,6 +302,8 @@ class Cgi {
 				}
 				if(contentLength == 0)
 					break;
+
+				onRequestBodyDataReceived(data.length, originalContentLength);
 			}
 			else {
 				// we have a custom data source..
@@ -319,8 +322,10 @@ class Cgi {
 						break;
 
 					chunk = readdata();
+					onRequestBodyDataReceived(data.length, originalContentLength);
 				}
 			}
+			onRequestBodyDataReceived(data.length, originalContentLength);
 			}
 
 			version(preserveData)
@@ -329,6 +334,23 @@ class Cgi {
 
 		mixin(createVariableHashes());
 		// fixme: remote_user script name
+	}
+
+	/// you can override this function to somehow react
+	/// to an upload in progress.
+	///
+	/// Take note that most of the CGI object is not yet
+	/// initialized! Stuff from HTTP headers, in raw form, is usable.
+	/// Stuff processed from them (such as get[]!) is not.
+	///
+	/// In the current implementation, you can't even look at partial
+	/// post. My idea here was so you can output a progress bar or
+	/// something to a cooperative client.
+	///
+	/// The default is to do nothing. Subclass cgi and use the 
+	/// CustomCgiMain mixin to do something here.
+	void onRequestBodyDataReceived(size_t receivedSoFar, size_t totalExpected) {
+		// This space intentionally left blank.
 	}
 
 	/** Initializes it from some almost* raw HTTP request data
@@ -872,6 +894,7 @@ class Cgi {
 	void flush() {
 		if(rawDataOutput is null)
 			stdout.flush();
+		// FIXME: also flush to other sources
 	}
 
 	version(autoBuffer)
