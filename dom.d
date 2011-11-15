@@ -2172,7 +2172,7 @@ class Table : Element {
 			return position;
 		}
 
-		foreach(i, rowElement; rows) {
+		foreach(int i, rowElement; rows) {
 			auto row = cast(TableRow) rowElement;
 			assert(row !is null);
 			assert(i < ret.length);
@@ -2186,8 +2186,8 @@ class Table : Element {
 				// FIXME: colspan == 0 or rowspan == 0
 				// is supposed to mean fill in the rest of
 				// the table, not skip it
-				foreach(j; 0 .. cell.colspan) {
-					foreach(k; 0 .. cell.rowspan)
+				foreach(int j; 0 .. cell.colspan) {
+					foreach(int k; 0 .. cell.rowspan)
 						// if the first row, always append.
 						insertCell(k + i, k == 0 ? -1 : position, cell);
 					position++;
@@ -2195,7 +2195,7 @@ class Table : Element {
 			}
 
 			if(ret[i].length > maxLength)
-				maxLength = ret[i].length;
+				maxLength = cast(int) ret[i].length;
 		}
 
 		// want to ensure it's rectangular
