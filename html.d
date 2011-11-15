@@ -740,7 +740,7 @@ string translateJavascriptSourceWithDToStandardScript(string src)() {
 +/
 
 abstract class CssPart {
-	string toString() const;
+	override string toString() const;
 	CssPart clone() const;
 }
 
@@ -799,7 +799,7 @@ class CssRuleSet : CssPart {
 		css = css[idx .. $];
 		int braceCount = 0;
 		string content;
-		int f = css.length;
+		size_t f = css.length;
 		foreach(i, c; css) {
 			if(c == '{')
 				braceCount++;
@@ -823,7 +823,7 @@ class CssRuleSet : CssPart {
 	string[] selectors;
 	CssPart[] contents;
 
-	CssRuleSet clone() const {
+	override CssRuleSet clone() const {
 		auto n = new CssRuleSet();
 		n.selectors = selectors.dup;
 		n.contents = contents.dup;
@@ -930,7 +930,7 @@ CssPart[] lexCss(string css) {
 
 			auto beginningOfBlock = css.indexOf("{");
 			if(beginningOfBlock == -1 || endOfStatement < beginningOfBlock)
-				p = new CssRule(css, endOfStatement);
+				p = new CssRule(css, cast(int) endOfStatement);
 			else
 				p = new CssRuleSet(css);
 		}
@@ -947,11 +947,12 @@ CssPart[] lexCss(string css) {
 string cssToString(in CssPart[] css) {
 	string ret;
 	foreach(c; css) {
-		if(ret.length)
+		if(ret.length) {
 			if(ret[$ -1] == '}')
 				ret ~= "\n\n";
 			else
 				ret ~= "\n";
+		}
 		ret ~= c.toString();
 	}
 
@@ -1100,12 +1101,9 @@ class MacroExpander {
 		args = args[1 .. $];
 		dstring returned;
 
-		int iterations = args.length;
+		size_t iterations = args.length;
 		if(m.args.length != 0)
 			iterations = (args.length + m.args.length - 1) / m.args.length;
-
-		if(iterations < 0)
-			iterations = 0;
 
 		foreach(i; 0 .. iterations) {
 			returned ~= expandMacro(m, args);
@@ -1151,7 +1149,7 @@ class MacroExpander {
 
 			// the replacement goes
 			// src[0 .. startingSliceForReplacement] ~ new ~ src[endingSliceForReplacement .. $];
-			int startingSliceForReplacement, endingSliceForReplacement;
+			sizediff_t startingSliceForReplacement, endingSliceForReplacement;
 
 			dstring functionName;
 			dstring[] arguments;
@@ -1160,7 +1158,7 @@ class MacroExpander {
 			startingSliceForReplacement = idx;
 			// idx++; // because the star in UTF 8 is two characters. FIXME: hack -- not needed thx to dstrings
 			auto possibility = src[idx + 1 .. $];
-			int argsBegin;
+			size_t argsBegin;
 
 			bool found = false;
 			foreach(i, c; possibility) {
@@ -1217,7 +1215,7 @@ class MacroExpander {
 						goto doReplacement;
 
 					// actually parsing the arguments
-					int currentArgumentStarting = argsBegin + 1;
+					size_t currentArgumentStarting = argsBegin + 1;
 
 					int open;
 
