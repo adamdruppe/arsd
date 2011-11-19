@@ -470,6 +470,12 @@ class Element {
 			case "form":
 				e = new Form(null);
 			break;
+			case "tr":
+				e = new TableRow(null);
+			break;
+			case "td", "th":
+				e = new TableCell(null, tagName);
+			break;
 			default:
 				e = new Element(null, tagName, null, selfClosed); // parent document should be set elsewhere
 		}
@@ -666,7 +672,8 @@ class Element {
 		return e;
 	}
 
-	///.
+	/// Note: you can give multiple selectors, separated by commas.
+	/// It will return the first match it finds.
 	Element querySelector(string selector) {
 		// FIXME: inefficient
 		auto list = getElementsBySelector(selector);
@@ -2101,6 +2108,151 @@ class Table : Element {
 	@property void caption(string text) {
 		captionElement().innerText = text;
 	}
+
+	/// Gets the logical layout of the table as a rectangular grid of
+	/// cells. It considers rowspan and colspan. A cell with a large
+	/// span is represented in the grid by being referenced several times.
+	/// The tablePortition parameter can get just a <thead>, <tbody>, or
+	/// <tfoot> portion if you pass one.
+	///
+	/// Note: the rectangular grid might include null cells.
+	///
+	/// This is kinda expensive so you should call once when you want the grid,
+	/// then do lookups on the returned array.
+	TableCell[][] getGrid(Element tablePortition = null)
+		in {
+			if(tablePortition is null)
+				assert(tablePortition is null);
+			else {
+				assert(tablePortition !is null);
+				assert(tablePortition.parentNode is this);
+				assert(
+					tablePortition.tagName == "tbody"
+					||
+					tablePortition.tagName == "tfoot"
+					||
+					tablePortition.tagName == "thead"
+				);
+			}
+		}
+	body {
+		if(tablePortition is null)
+			tablePortition = this;
+
+		TableCell[][] ret;
+
+		// FIXME: will also return rows of sub tables!
+		auto rows = tablePortition.getElementsByTagName("tr");
+		ret.length = rows.length;
+
+		int maxLength = 0;
+
+		int insertCell(int row, int position, TableCell cell) {
+			if(row >= ret.length)
+				return position; // not supposed to happen - a rowspan is prolly too big.
+
+			if(position == -1) {
+				position++;
+				foreach(item; ret[row]) {
+					if(item is null)
+						break;
+					position++;
+				}
+			}
+
+			if(position < ret[row].length)
+				ret[row][position] = cell;
+			else
+				foreach(i; ret[row].length .. position + 1) {
+					if(i == position)
+						ret[row] ~= cell;
+					else
+						ret[row] ~= null;
+				}
+			return position;
+		}
+
+		foreach(i, rowElement; rows) {
+			auto row = cast(TableRow) rowElement;
+			assert(row !is null);
+			assert(i < ret.length);
+
+			int position = 0;
+			foreach(cellElement; rowElement.childNodes) {
+				auto cell = cast(TableCell) cellElement;
+				if(cell is null)
+					continue;
+
+				// FIXME: colspan == 0 or rowspan == 0
+				// is supposed to mean fill in the rest of
+				// the table, not skip it
+				foreach(j; 0 .. cell.colspan) {
+					foreach(k; 0 .. cell.rowspan)
+						// if the first row, always append.
+						insertCell(k + i, k == 0 ? -1 : position, cell);
+					position++;
+				}
+			}
+
+			if(ret[i].length > maxLength)
+				maxLength = ret[i].length;
+		}
+
+		// want to ensure it's rectangular
+		foreach(ref r; ret) {
+			foreach(i; r.length .. maxLength)
+				r ~= null;
+		}
+
+		return ret;
+	}
+}
+
+/// Represents a table row element - a <tr>
+class TableRow : Element {
+	///.
+	this(Document _parentDocument) {
+		super(_parentDocument);
+		tagName = "tr";
+	}
+
+	// FIXME: the standard says there should be a lot more in here,
+	// but meh, I never use it and it's a pain to implement.
+}
+
+/// Represents anything that can be a table cell - <td> or <th> html.
+class TableCell : Element {
+	///.
+	this(Document _parentDocument, string _tagName) {
+		super(_parentDocument, _tagName);
+	}
+
+	@property int rowspan() const {
+		int ret = 1;
+		auto it = getAttribute("rowspan");
+		if(it.length)
+			ret = to!int(it);
+		return ret;
+	}
+
+	@property int colspan() const {
+		int ret = 1;
+		auto it = getAttribute("colspan");
+		if(it.length)
+			ret = to!int(it);
+		return ret;
+	}
+
+	@property int rowspan(int i) {
+		setAttribute("rowspan", to!string(i));
+		return i;
+	}
+
+	@property int colspan(int i) {
+		setAttribute("colspan", to!string(i));
+		return i;
+	}
+
 }
 
 
@@ -3006,7 +3158,9 @@ int intFromHex(string hex) {
 				if(a[0] !in e.attributes || e.attributes[a[0]] != a[1])
 					return false;
 			foreach(a; attributesNotEqual)
-				if(a[0] !in e.attributes || e.attributes[a[0]] == a[1])
+				// if it's null, it's not equal, right?
+				//if(a[0] !in e.attributes || e.attributes[a[0]] == a[1])
+				if(e.getAttribute(a[0]) == a[1])
 					return false;
 			foreach(a; attributesInclude)
 				if(a[0] !in e.attributes || (e.attributes[a[0]].indexOf(a[1]) == -1))
