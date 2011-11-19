@@ -16,7 +16,8 @@
 	ought to just work.
 
 	Example:
-		auto data = std.file.read("my-windows-file.txt");
+		auto data = cast(immutable(ubyte)[])
+			std.file.read("my-windows-file.txt");
 		string utf8String = convertToUtf8(data, "windows-1252");
 		// utf8String can now be used
 
@@ -36,10 +37,12 @@
 */
 module arsd.characterencodings;
 
+import std.string;
+import std.array;
+import std.conv;
+
 /// Takes data from a given character encoding and returns it as UTF-8
 string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
-	import std.string;
-	import std.array;
 	// just to normalize the passed string...
 	auto encoding = dataCharacterEncoding.toLower();
 	encoding = encoding.replace(" ", "");
@@ -105,7 +108,7 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 
 // this function actually does the work, using the translation tables
 // below.
-string decodeImpl(in ubyte[] data, in char[] chars160to255, in char[] chars128to159 = null)
+string decodeImpl(in ubyte[] data, in dchar[] chars160to255, in dchar[] chars128to159 = null)
 	out(ret) {
 		import std.utf;
 		validate(ret);
@@ -137,7 +140,7 @@ body {
 // this table gives characters for decimal 128 through 159.
 // the < 128 characters are the same as ascii, and > 159 the same as
 // iso 8859 1, seen below.
-immutable char[] Windows_1252 = [
+immutable dchar[] Windows_1252 = [
 	'€', ' ', '‚', 'ƒ', '„', '…', '†', '‡',
 	'ˆ', '‰', 'Š', '‹', 'Œ', ' ', 'Ž', ' ',
 	' ', '‘', '’', '“', '”', '•', '–', '—',
@@ -146,7 +149,7 @@ immutable char[] Windows_1252 = [
 // the following tables give the characters from decimal 160 up to 255
 // in the given encodings.
 
-immutable char[] ISO_8869_1 = [ 
+immutable dchar[] ISO_8869_1 = [ 
 	' ', '¡', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -160,7 +163,7 @@ immutable char[] ISO_8869_1 = [
 	'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'];
 
-immutable char[] ISO_8869_2 = [ 
+immutable dchar[] ISO_8869_2 = [ 
 	' ', 'Ą', '˘', 'Ł', '¤', 'Ľ', 'Ś', '§',
 	'¨', 'Š', 'Ş', 'Ť', 'Ź', '­', 'Ž', 'Ż',
 	'°', 'ą', '˛', 'ł', '´', 'ľ', 'ś', 'ˇ',
@@ -174,7 +177,7 @@ immutable char[] ISO_8869_2 = [
 	'đ', 'ń', 'ň', 'ó', 'ô', 'ő', 'ö', '÷',
 	'ř', 'ů', 'ú', 'ű', 'ü', 'ý', 'ţ', '˙'];
 
-immutable char[] ISO_8869_3 = [ 
+immutable dchar[] ISO_8869_3 = [ 
 	' ', 'Ħ', '˘', '£', '¤', ' ', 'Ĥ', '§',
 	'¨', 'İ', 'Ş', 'Ğ', 'Ĵ', '­', ' ', 'Ż',
 	'°', 'ħ', '²', '³', '´', 'µ', 'ĥ', '·',
@@ -188,7 +191,7 @@ immutable char[] ISO_8869_3 = [
 	' ', 'ñ', 'ò', 'ó', 'ô', 'ġ', 'ö', '÷',
 	'ĝ', 'ù', 'ú', 'û', 'ü', 'ŭ', 'ŝ', '˙'];
 
-immutable char[] ISO_8869_4 = [ 
+immutable dchar[] ISO_8869_4 = [ 
 	' ', 'Ą', 'ĸ', 'Ŗ', '¤', 'Ĩ', 'Ļ', '§',
 	'¨', 'Š', 'Ē', 'Ģ', 'Ŧ', '­', 'Ž', '¯',
 	'°', 'ą', '˛', 'ŗ', '´', 'ĩ', 'ļ', 'ˇ',
@@ -202,7 +205,7 @@ immutable char[] ISO_8869_4 = [
 	'đ', 'ņ', 'ō', 'ķ', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ų', 'ú', 'û', 'ü', 'ũ', 'ū', '˙'];
 
-immutable char[] ISO_8869_5 = [ 
+immutable dchar[] ISO_8869_5 = [ 
 	' ', 'Ё', 'Ђ', 'Ѓ', 'Є', 'Ѕ', 'І', 'Ї',
 	'Ј', 'Љ', 'Њ', 'Ћ', 'Ќ', '­', 'Ў', 'Џ',
 	'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З',
@@ -216,7 +219,7 @@ immutable char[] ISO_8869_5 = [
 	'№', 'ё', 'ђ', 'ѓ', 'є', 'ѕ', 'і', 'ї',
 	'ј', 'љ', 'њ', 'ћ', 'ќ', '§', 'ў', 'џ'];
 
-immutable char[] ISO_8869_6 = [ 
+immutable dchar[] ISO_8869_6 = [ 
 	' ', ' ', ' ', ' ', '¤', ' ', ' ', ' ',
 	' ', ' ', ' ', ' ', '،', '­', ' ', ' ',
 	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
@@ -230,7 +233,7 @@ immutable char[] ISO_8869_6 = [
 	'ِ', 'ّ', 'ْ', ' ', ' ', ' ', ' ', ' ',
 	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '];
 
-immutable char[] ISO_8869_7 = [ 
+immutable dchar[] ISO_8869_7 = [ 
 	' ', '‘', '’', '£', '€', '₯', '¦', '§',
 	'¨', '©', 'ͺ', '«', '¬', '­', ' ', '―',
 	'°', '±', '²', '³', '΄', '΅', 'Ά', '·',
@@ -244,7 +247,7 @@ immutable char[] ISO_8869_7 = [
 	'π', 'ρ', 'ς', 'σ', 'τ', 'υ', 'φ', 'χ',
 	'ψ', 'ω', 'ϊ', 'ϋ', 'ό', 'ύ', 'ώ', ' '];
 
-immutable char[] ISO_8869_8 = [ 
+immutable dchar[] ISO_8869_8 = [ 
 	' ', ' ', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', '×', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -259,7 +262,7 @@ immutable char[] ISO_8869_8 = [
 	//                        v    v    those are wrong
 	'ר', 'ש', 'ת', ' ', ' ', ' ', ' ', ' ']; // FIXME:  those ones marked wrong are supposed to be left to right and right to left markers, not spaces.
 
-immutable char[] ISO_8869_9 = [ 
+immutable dchar[] ISO_8869_9 = [ 
 	' ', '¡', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -273,7 +276,7 @@ immutable char[] ISO_8869_9 = [
 	'ğ', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ı', 'ş', 'ÿ'];
 
-immutable char[] ISO_8869_10 = [ 
+immutable dchar[] ISO_8869_10 = [ 
 	' ', 'Ą', 'Ē', 'Ģ', 'Ī', 'Ĩ', 'Ķ', '§',
 	'Ļ', 'Đ', 'Š', 'Ŧ', 'Ž', '­', 'Ū', 'Ŋ',
 	'°', 'ą', 'ē', 'ģ', 'ī', 'ĩ', 'ķ', '·',
@@ -287,7 +290,7 @@ immutable char[] ISO_8869_10 = [
 	'ð', 'ņ', 'ō', 'ó', 'ô', 'õ', 'ö', 'ũ',
 	'ø', 'ų', 'ú', 'û', 'ü', 'ý', 'þ', 'ĸ'];
 
-immutable char[] ISO_8869_11 = [ 
+immutable dchar[] ISO_8869_11 = [ 
 	' ', 'ก', 'ข', 'ฃ', 'ค', 'ฅ', 'ฆ', 'ง',
 	'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ',
 	'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท',
@@ -301,7 +304,7 @@ immutable char[] ISO_8869_11 = [
 	'๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗',
 	'๘', '๙', '๚', '๛', ' ', ' ', ' ', ' '];
 
-immutable char[] ISO_8869_13 = [ 
+immutable dchar[] ISO_8869_13 = [ 
 	' ', '”', '¢', '£', '¤', '„', '¦', '§',
 	'Ø', '©', 'Ŗ', '«', '¬', '­', '®', 'Æ',
 	'°', '±', '²', '³', '“', 'µ', '¶', '·',
@@ -315,7 +318,7 @@ immutable char[] ISO_8869_13 = [
 	'š', 'ń', 'ņ', 'ó', 'ō', 'ő', 'ö', '÷',
 	'ų', 'ł', 'ś', 'ū', 'ü', 'ż', 'ž', '’'];
 
-immutable char[] ISO_8869_14 = [ 
+immutable dchar[] ISO_8869_14 = [ 
 	' ', 'Ḃ', 'ḃ', '£', 'Ċ', 'ċ', 'Ḋ', '§',
 	'Ẁ', '©', 'Ẃ', 'ḋ', 'Ỳ', '­', '®', 'Ÿ',
 	'Ḟ', 'ḟ', 'Ġ', 'ġ', 'Ṁ', 'ṁ', '¶', 'Ṗ',
@@ -329,7 +332,7 @@ immutable char[] ISO_8869_14 = [
 	'ŵ', 'ñ', 'ò', 'ó', 'ô', 'ő', 'ö', 'ṫ',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'ŷ', 'ÿ'];
 
-immutable char[] ISO_8869_15 = [ 
+immutable dchar[] ISO_8869_15 = [ 
 	' ', '¡', '¢', '£', '€', '¥', 'Š', '§',
 	'š', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', 'Ž', 'µ', '¶', '·',
@@ -343,7 +346,7 @@ immutable char[] ISO_8869_15 = [
 	'ð', 'ñ', 'ò', 'ó', 'ô', 'ő', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'];
 
-immutable char[] ISO_8869_16 = [ 
+immutable dchar[] ISO_8869_16 = [ 
 	' ', 'Ą', 'ą', 'Ł', '€', '„', 'Š', '§',
 	'š', '©', 'Ș', '«', 'Ź', '­', 'ź', 'Ż',
 	'°', '±', 'Č', 'ł', 'Ž', '”', '¶', '·',
