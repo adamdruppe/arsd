@@ -25,35 +25,19 @@ interface Database {
 		Variant[] args;
 		foreach(arg; _arguments) {
 			string a;
-			if(arg == typeid(string)) {
-				a = va_arg!(string)(_argptr);
-			} else if(arg == typeid(immutable(string))) {
-				a = va_arg!(immutable(string))(_argptr);
-			} else if(arg == typeid(const(immutable(char)[]))) {
-				a = va_arg!(const(immutable(char)[]))(_argptr);
-			} else if (arg == typeid(int)) {
-				auto e = va_arg!(int)(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(immutable(int))) {
-				auto e = va_arg!(immutable(int))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(const(int))) {
-				auto e = va_arg!(const(int))(_argptr);
+			if(arg == typeid(string) || arg == typeid(immutable(string)) || arg == typeid(const(string)))
+				a = va_arg!string(_argptr);
+			else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
+				int e = va_arg!int(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(immutable(char))) {
-				auto e = va_arg!(immutable(char))(_argptr);
+				char e = va_arg!char(_argptr);
 				a = to!string(e);
-			} else if (arg == typeid(long)) {
-				auto e = va_arg!(long)(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(const(long))) {
-				auto e = va_arg!(const(long))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(immutable(long))) {
-				auto e = va_arg!(immutable(long))(_argptr);
+			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
+				long e = va_arg!long(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(void*)) {
-				auto e = va_arg!(void*)(_argptr);
+				void* e = va_arg!(void*)(_argptr);
 				assert(e is null, "can only pass null pointer");
 				a = null;
 			} else assert(0, "invalid type " ~ arg.toString );
@@ -162,7 +146,7 @@ string escapedVariants(Database db, in string sql, Variant[] t) {
 		string fixedup;
 		int currentIndex;
 		int currentStart = 0;
-		foreach(i, dchar c; sql) {
+		foreach(int i, dchar c; sql) {
 			if(c == '?') {
 				fixedup ~= sql[currentStart .. i];
 
@@ -321,7 +305,7 @@ string fixupSqlForDataObjectUse(string sql) {
 	string[] tableNames;
 
 	string piece = sql;
-	int idx;
+	sizediff_t idx;
 	while((idx = piece.indexOf("JOIN")) != -1) {
 		auto start = idx + 5;
 		auto i = start;

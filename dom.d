@@ -2172,7 +2172,7 @@ class Table : Element {
 			return position;
 		}
 
-		foreach(i, rowElement; rows) {
+		foreach(int i, rowElement; rows) {
 			auto row = cast(TableRow) rowElement;
 			assert(row !is null);
 			assert(i < ret.length);
@@ -2186,8 +2186,8 @@ class Table : Element {
 				// FIXME: colspan == 0 or rowspan == 0
 				// is supposed to mean fill in the rest of
 				// the table, not skip it
-				foreach(j; 0 .. cell.colspan) {
-					foreach(k; 0 .. cell.rowspan)
+				foreach(int j; 0 .. cell.colspan) {
+					foreach(int k; 0 .. cell.rowspan)
 						// if the first row, always append.
 						insertCell(k + i, k == 0 ? -1 : position, cell);
 					position++;
@@ -2195,7 +2195,7 @@ class Table : Element {
 			}
 
 			if(ret[i].length > maxLength)
-				maxLength = ret[i].length;
+				maxLength = cast(int) ret[i].length;
 		}
 
 		// want to ensure it's rectangular
@@ -2467,6 +2467,7 @@ class Document {
 				parentChain = [];
 
 			if(pos >= data.length)
+			{
 				if(strict) {
 					throw new MarkupError("Gone over the input (is there no root element?), chain: " ~ to!string(parentChain));
 				} else {
@@ -2475,6 +2476,7 @@ class Document {
 					else
 						return Ele(4); // signal emptiness upstream
 				}
+			}
 
 			if(data[pos] != '<') {
 				return Ele(0, readTextNode(), null);
@@ -2701,10 +2703,12 @@ class Document {
 		root = r.element;
 
 		if(root is null)
+		{
 			if(strict)
 				assert(0, "empty document should be impossible in strict mode");
 			else
 				parse(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
+		}
 
 		if(0&&sawImproperNesting) {
 			// in loose mode, we can see some bad nesting. It's hard to fix above though
