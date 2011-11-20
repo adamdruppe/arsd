@@ -57,14 +57,17 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 		// since the input is immutable, these are ok too.
 		// just want to cover all the bases with one runtime function.
 		case "utf16":
+		case "utf16le":
 			return to!string(cast(wstring) data);
 		case "utf32":
+		case "utf32le":
 			return to!string(cast(dstring) data);
+		// FIXME: does the big endian to little endian conversion work?
 		case "utf8":
 			return cast(string) data;
 		// and now the various 8 bit encodings we support.
 		case "windows1252":
-			return decodeImpl(data, ISO_8869_1, Windows_1252);
+			return decodeImpl(data, ISO_8859_1, Windows_1252);
 		case "latin1":
 		case "iso88591":
 			// Why am I putting Windows_1252 here? A lot of
@@ -72,43 +75,85 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 			// do some good in the Just Works department.
 			// Regardless, I don't handle the
 			// control char set in that zone anyway right now.
-			return decodeImpl(data, ISO_8869_1, Windows_1252);
+			return decodeImpl(data, ISO_8859_1, Windows_1252);
 		case "iso88592":
-			return decodeImpl(data, ISO_8869_2);
+			return decodeImpl(data, ISO_8859_2);
 		case "iso88593":
-			return decodeImpl(data, ISO_8869_3);
+			return decodeImpl(data, ISO_8859_3);
 		case "iso88594":
-			return decodeImpl(data, ISO_8869_4);
+			return decodeImpl(data, ISO_8859_4);
 		case "iso88595":
-			return decodeImpl(data, ISO_8869_5);
+			return decodeImpl(data, ISO_8859_5);
 		case "iso88596":
-			return decodeImpl(data, ISO_8869_6);
+			return decodeImpl(data, ISO_8859_6);
 		case "iso88597":
-			return decodeImpl(data, ISO_8869_7);
+			return decodeImpl(data, ISO_8859_7);
 		case "iso88598":
-			return decodeImpl(data, ISO_8869_8);
+			return decodeImpl(data, ISO_8859_8);
 		case "iso88599":
-			return decodeImpl(data, ISO_8869_9);
+			return decodeImpl(data, ISO_8859_9);
 		case "iso885910":
-			return decodeImpl(data, ISO_8869_10);
+			return decodeImpl(data, ISO_8859_10);
 		case "iso885911":
-			return decodeImpl(data, ISO_8869_11);
+			return decodeImpl(data, ISO_8859_11);
 		case "iso885913":
-			return decodeImpl(data, ISO_8869_13);
+			return decodeImpl(data, ISO_8859_13);
 		case "iso885914":
-			return decodeImpl(data, ISO_8869_14);
+			return decodeImpl(data, ISO_8859_14);
 		case "iso885915":
-			return decodeImpl(data, ISO_8869_15);
+			return decodeImpl(data, ISO_8859_15);
 		case "iso885916":
-			return decodeImpl(data, ISO_8869_16);
+			return decodeImpl(data, ISO_8859_16);
 	}
 
 	assert(0);
 }
 
+/// Tries to determine the current encoding based on the content.
+/// Only really helps with the UTF variants.
+/// Returns null if it can't be reasonably sure.
+string tryToDetermineEncoding(in ubyte[] rawdata) {
+	import std.utf;
+	try {
+		validate!string(cast(string) rawdata);
+		// the odds of non stuff validating as utf-8 are pretty low
+		return "UTF-8";
+	} catch(UtfException t) {
+		// it's definitely not UTF-8!
+		// we'll look at the first few characters. If there's a
+		// BOM, it's probably UTF-16 or UTF-32
+
+		if(rawdata.length > 4) {
+			// not checking for utf8 bom; if it was that, we
+			// wouldn't be here.
+			if(rawdata[0] == 0xff && rawdata[1] == 0xfe)
+				return "UTF-16 LE";
+			else if(rawdata[0] == 0xfe && rawdata[1] == 0xff)
+				return "UTF-16 BE";
+			else if(rawdata[0] == 0x00 && rawdata[1] == 0x00
+			     && rawdata[2] == 0xfe && rawdata[3] == 0xff)
+				return "UTF-32 BE";
+			else if(rawdata[0] == 0xff && rawdata[1] == 0xfe
+			     && rawdata[2] == 0x00 && rawdata[3] == 0x00)
+				return "UTF-32 LE";
+			else {
+				// this space is intentionally left blank
+			}
+		}
+	}
+
+	// we don't know with enough confidence. The app will have to find another way.
+	return null;
+}
+
 // this function actually does the work, using the translation tables
 // below.
-string decodeImpl(in ubyte[] data, in dchar[] chars160to255, in dchar[] chars128to159 = null)
+string decodeImpl(in ubyte[] data, in dchar[] chars160to255, in dchar[] chars128to159 = null, in dchar[] chars0to127 = null)
+	in {
+		assert(chars160to255.length == 256 - 160);
+		assert(chars128to159 is null || chars128to159.length == 160 - 128);
+		assert(chars0to127 is null || chars0to127.length == 128 - 0);
+	}
 	out(ret) {
 		import std.utf;
 		validate(ret);
@@ -119,9 +164,12 @@ body {
 	/// I'm sure this could be a lot more efficient, but whatever, it
 	/// works.
 	foreach(octet; data) {
-		if(octet < 128)
-			utf8 ~= cast(char) octet;
-		else if(octet < 160) {
+		if(octet < 128) {
+			if(chars0to127 !is null)
+				utf8 ~= chars0to127[octet];
+			else
+				utf8 ~= cast(char) octet; // ascii is the same
+		} else if(octet < 160) {
 			if(chars128to159 !is null)
 				utf8 ~= chars128to159[octet - 128];
 			else
@@ -149,7 +197,7 @@ immutable dchar[] Windows_1252 = [
 // the following tables give the characters from decimal 160 up to 255
 // in the given encodings.
 
-immutable dchar[] ISO_8869_1 = [ 
+immutable dchar[] ISO_8859_1 = [ 
 	' ', '¡', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -163,7 +211,7 @@ immutable dchar[] ISO_8869_1 = [
 	'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'];
 
-immutable dchar[] ISO_8869_2 = [ 
+immutable dchar[] ISO_8859_2 = [ 
 	' ', 'Ą', '˘', 'Ł', '¤', 'Ľ', 'Ś', '§',
 	'¨', 'Š', 'Ş', 'Ť', 'Ź', '­', 'Ž', 'Ż',
 	'°', 'ą', '˛', 'ł', '´', 'ľ', 'ś', 'ˇ',
@@ -177,7 +225,7 @@ immutable dchar[] ISO_8869_2 = [
 	'đ', 'ń', 'ň', 'ó', 'ô', 'ő', 'ö', '÷',
 	'ř', 'ů', 'ú', 'ű', 'ü', 'ý', 'ţ', '˙'];
 
-immutable dchar[] ISO_8869_3 = [ 
+immutable dchar[] ISO_8859_3 = [ 
 	' ', 'Ħ', '˘', '£', '¤', ' ', 'Ĥ', '§',
 	'¨', 'İ', 'Ş', 'Ğ', 'Ĵ', '­', ' ', 'Ż',
 	'°', 'ħ', '²', '³', '´', 'µ', 'ĥ', '·',
@@ -191,7 +239,7 @@ immutable dchar[] ISO_8869_3 = [
 	' ', 'ñ', 'ò', 'ó', 'ô', 'ġ', 'ö', '÷',
 	'ĝ', 'ù', 'ú', 'û', 'ü', 'ŭ', 'ŝ', '˙'];
 
-immutable dchar[] ISO_8869_4 = [ 
+immutable dchar[] ISO_8859_4 = [ 
 	' ', 'Ą', 'ĸ', 'Ŗ', '¤', 'Ĩ', 'Ļ', '§',
 	'¨', 'Š', 'Ē', 'Ģ', 'Ŧ', '­', 'Ž', '¯',
 	'°', 'ą', '˛', 'ŗ', '´', 'ĩ', 'ļ', 'ˇ',
@@ -205,7 +253,7 @@ immutable dchar[] ISO_8869_4 = [
 	'đ', 'ņ', 'ō', 'ķ', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ų', 'ú', 'û', 'ü', 'ũ', 'ū', '˙'];
 
-immutable dchar[] ISO_8869_5 = [ 
+immutable dchar[] ISO_8859_5 = [ 
 	' ', 'Ё', 'Ђ', 'Ѓ', 'Є', 'Ѕ', 'І', 'Ї',
 	'Ј', 'Љ', 'Њ', 'Ћ', 'Ќ', '­', 'Ў', 'Џ',
 	'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З',
@@ -219,7 +267,7 @@ immutable dchar[] ISO_8869_5 = [
 	'№', 'ё', 'ђ', 'ѓ', 'є', 'ѕ', 'і', 'ї',
 	'ј', 'љ', 'њ', 'ћ', 'ќ', '§', 'ў', 'џ'];
 
-immutable dchar[] ISO_8869_6 = [ 
+immutable dchar[] ISO_8859_6 = [ 
 	' ', ' ', ' ', ' ', '¤', ' ', ' ', ' ',
 	' ', ' ', ' ', ' ', '،', '­', ' ', ' ',
 	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
@@ -233,7 +281,7 @@ immutable dchar[] ISO_8869_6 = [
 	'ِ', 'ّ', 'ْ', ' ', ' ', ' ', ' ', ' ',
 	' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '];
 
-immutable dchar[] ISO_8869_7 = [ 
+immutable dchar[] ISO_8859_7 = [ 
 	' ', '‘', '’', '£', '€', '₯', '¦', '§',
 	'¨', '©', 'ͺ', '«', '¬', '­', ' ', '―',
 	'°', '±', '²', '³', '΄', '΅', 'Ά', '·',
@@ -247,7 +295,7 @@ immutable dchar[] ISO_8869_7 = [
 	'π', 'ρ', 'ς', 'σ', 'τ', 'υ', 'φ', 'χ',
 	'ψ', 'ω', 'ϊ', 'ϋ', 'ό', 'ύ', 'ώ', ' '];
 
-immutable dchar[] ISO_8869_8 = [ 
+immutable dchar[] ISO_8859_8 = [ 
 	' ', ' ', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', '×', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -262,7 +310,7 @@ immutable dchar[] ISO_8869_8 = [
 	//                        v    v    those are wrong
 	'ר', 'ש', 'ת', ' ', ' ', ' ', ' ', ' ']; // FIXME:  those ones marked wrong are supposed to be left to right and right to left markers, not spaces.
 
-immutable dchar[] ISO_8869_9 = [ 
+immutable dchar[] ISO_8859_9 = [ 
 	' ', '¡', '¢', '£', '¤', '¥', '¦', '§',
 	'¨', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', '´', 'µ', '¶', '·',
@@ -276,7 +324,7 @@ immutable dchar[] ISO_8869_9 = [
 	'ğ', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ı', 'ş', 'ÿ'];
 
-immutable dchar[] ISO_8869_10 = [ 
+immutable dchar[] ISO_8859_10 = [ 
 	' ', 'Ą', 'Ē', 'Ģ', 'Ī', 'Ĩ', 'Ķ', '§',
 	'Ļ', 'Đ', 'Š', 'Ŧ', 'Ž', '­', 'Ū', 'Ŋ',
 	'°', 'ą', 'ē', 'ģ', 'ī', 'ĩ', 'ķ', '·',
@@ -290,7 +338,7 @@ immutable dchar[] ISO_8869_10 = [
 	'ð', 'ņ', 'ō', 'ó', 'ô', 'õ', 'ö', 'ũ',
 	'ø', 'ų', 'ú', 'û', 'ü', 'ý', 'þ', 'ĸ'];
 
-immutable dchar[] ISO_8869_11 = [ 
+immutable dchar[] ISO_8859_11 = [ 
 	' ', 'ก', 'ข', 'ฃ', 'ค', 'ฅ', 'ฆ', 'ง',
 	'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ',
 	'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท',
@@ -304,7 +352,7 @@ immutable dchar[] ISO_8869_11 = [
 	'๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗',
 	'๘', '๙', '๚', '๛', ' ', ' ', ' ', ' '];
 
-immutable dchar[] ISO_8869_13 = [ 
+immutable dchar[] ISO_8859_13 = [ 
 	' ', '”', '¢', '£', '¤', '„', '¦', '§',
 	'Ø', '©', 'Ŗ', '«', '¬', '­', '®', 'Æ',
 	'°', '±', '²', '³', '“', 'µ', '¶', '·',
@@ -318,7 +366,7 @@ immutable dchar[] ISO_8869_13 = [
 	'š', 'ń', 'ņ', 'ó', 'ō', 'ő', 'ö', '÷',
 	'ų', 'ł', 'ś', 'ū', 'ü', 'ż', 'ž', '’'];
 
-immutable dchar[] ISO_8869_14 = [ 
+immutable dchar[] ISO_8859_14 = [ 
 	' ', 'Ḃ', 'ḃ', '£', 'Ċ', 'ċ', 'Ḋ', '§',
 	'Ẁ', '©', 'Ẃ', 'ḋ', 'Ỳ', '­', '®', 'Ÿ',
 	'Ḟ', 'ḟ', 'Ġ', 'ġ', 'Ṁ', 'ṁ', '¶', 'Ṗ',
@@ -332,7 +380,7 @@ immutable dchar[] ISO_8869_14 = [
 	'ŵ', 'ñ', 'ò', 'ó', 'ô', 'ő', 'ö', 'ṫ',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'ŷ', 'ÿ'];
 
-immutable dchar[] ISO_8869_15 = [ 
+immutable dchar[] ISO_8859_15 = [ 
 	' ', '¡', '¢', '£', '€', '¥', 'Š', '§',
 	'š', '©', 'ª', '«', '¬', '­', '®', '¯',
 	'°', '±', '²', '³', 'Ž', 'µ', '¶', '·',
@@ -346,7 +394,7 @@ immutable dchar[] ISO_8869_15 = [
 	'ð', 'ñ', 'ò', 'ó', 'ô', 'ő', 'ö', '÷',
 	'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'];
 
-immutable dchar[] ISO_8869_16 = [ 
+immutable dchar[] ISO_8859_16 = [ 
 	' ', 'Ą', 'ą', 'Ł', '€', '„', 'Š', '§',
 	'š', '©', 'Ș', '«', 'Ź', '­', 'ź', 'Ż',
 	'°', '±', 'Č', 'ł', 'Ž', '”', '¶', '·',
