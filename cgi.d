@@ -726,7 +726,7 @@ class Cgi {
 	/// expiresIn is how many milliseconds in the future the cookie will expire.
 	/// TIP: to make a cookie accessible from subdomains, set the domain to .yourdomain.com.
 	/// Note setCookie() must be called *before* you write() any data to the output.
-	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false) {
+	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false, bool secure = false) {
 		assert(!outputtedResponseData);
 		string cookie = name ~ "=";
 		cookie ~= data;
@@ -736,6 +736,8 @@ class Cgi {
 			cookie ~= "; expires=" ~ printDate(cast(DateTime) Clock.currTime + dur!"msecs"(expiresIn));
 		if(domain !is null)
 			cookie ~= "; domain=" ~ domain;
+		if(secure == true)
+			cookie ~= "; Secure";
 		if(httpOnly == true )
 			cookie ~= "; HttpOnly";
 
