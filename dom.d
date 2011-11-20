@@ -9,6 +9,8 @@ import std.array;
 
 import std.stdio;
 
+import arsd.characterencodings;
+
 // Biggest (known) fixme left for "tag soup": <p> .... <p> in loose mode should close it on the second opening.
 // Biggest FIXME for real documents: character set encoding detection
 
@@ -2301,8 +2303,17 @@ class Document {
 	}
 	*/
 
+	/// Given the kind of garbage you find on the Internet, try to make sense of it.
+	/// Equivalent to document.parse(data, false, false, null);
+	/// (Case-insensitive, non-strict, determine character encoding from the data.)
+
+	/// NOTE: this makes no attempt at added security.
+	void parseGarbage(string data) {
+		parse(data, false, false, null);
+	}
+
 	/**
-		Take XMLish* data and try to make the DOM tree out of it.
+		Take XMLish data and try to make the DOM tree out of it.
 
 		The goal isn't to be perfect, but to just be good enough to
 		approximate Javascript's behavior.
@@ -2316,9 +2327,88 @@ class Document {
 		be closed. If you are writing a document specifically for this,
 		try to avoid such - use self closed tags at least. Easier to parse.
 
-		* The xml version at the top really shouldn't be there...
+		The dataEncoding argument can be used to pass a specific
+		charset encoding for automatic conversion. If null (which is NOT
+		the default!), it tries to determine from the data itself,
+		using the xml prolog or meta tags, and assumes UTF-8 if unsure.
+
+		If this assumption is wrong, it can throw on non-ascii
+		characters!
+
+
+		Note that it previously assumed the data was encoded as UTF-8, which
+		is why the dataEncoding argument defaults to that.
+
+		So it shouldn't break backward compatibility.
+
+		But, if you want the best behavior on wild data - figuring it out from the document
+		instead of assuming - you'll probably want to change that argument to null.
+
 	*/
-	void parse(/*in */string data, bool caseSensitive = false, bool strict = false) {
+	void parse(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
+		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
+		if(dataEncoding is null) {
+			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
+			// it can't tell... probably a random 8 bit encoding. Let's check the document itself.
+			// Now, XML and HTML can both list encoding in the document, but we can't really parse
+			// it here without changing a lot of code until we know the encoding. So I'm going to
+			// do some hackish string checking.
+			if(dataEncoding is null) {
+				auto dataAsBytes = cast(immutable(ubyte)[]) rawdata;
+				// first, look for an XML prolog
+				auto idx = std.array.indexOf(dataAsBytes, cast(immutable ubyte[]) "encoding=\"");
+				if(idx != -1) {
+					idx += "encoding=\"".length;
+					// we're probably past the prolog if it's this far in; we might be looking at
+					// content. Forget about it.
+					if(idx > 100)
+						idx = -1;
+				}
+				// if that fails, we're looking for Content-Type http-equiv or a meta charset (see html5)..
+				if(idx == -1) {
+					idx = std.array.indexOf(dataAsBytes, cast(immutable ubyte[]) "charset=");
+					if(idx != -1) {
+						idx += "charset=".length;
+						if(dataAsBytes[idx] == '"')
+							idx++;
+					}
+				}
+
+				// found something in either branch...
+				if(idx != -1) {
+					// read till a quote or about 12 chars, whichever comes first...
+					int end = idx;
+					while(end < dataAsBytes.length && dataAsBytes[end] != '"' && end - idx < 12)
+						end++;
+
+					dataEncoding = cast(string) dataAsBytes[idx .. end];
+				}
+				// otherwise, we just don't know.
+			}
+		}
+
+		if(strict)
+			enforce(dataEncoding !is null, "I couldn't figure out the encoding of this document.");
+		else {
+			// if we really don't know by here, it means we already tried UTF-8,
+			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
+			// tags... let's assume it's Windows-1252, since that's probably the most
+			// common aside from utf that wouldn't be labeled.
+
+			dataEncoding = "Windows 1252";
+		}
+
+		// and now, go ahead and convert it.
+
+		string data;
+
+		if(dataEncoding != "UTF-8")
+			data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
+		else
+			data = rawdata;
+		assert(data !is null);
+
+
 		// go through character by character.
 		// if you see a <, consider it a tag.
 		// name goes until the first non tagname character
