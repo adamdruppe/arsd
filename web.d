@@ -1,11 +1,30 @@
 module arsd.web;
 
+// FIXME: the post process system needs serious cleaning up.
+// I can hack it to work using tuples, but that makes compile
+// time unacceptably skyrocket.
+
+/*
+	Reasonably easy CSRF plan:
+
+	A csrf token can be associated with the entire session, and
+	saved in the session file.
+
+	Each form outputs the token, and it is added as a parameter to
+	the script thingy somewhere.
+
+	It need only be sent on POST items. Your app should handle proper
+	get and post separation.
+*/
+
 /*
 	Future directions for web stuff:
 
 	an improved css:
 		add definition nesting
 		add importing things from another definition
+
+		Implemented: see html.d
 
 	All css improvements are done via simple text rewriting. Aside
 	from the nesting, it'd just be a simple macro system.
@@ -109,7 +128,7 @@ string getSiteLink(Cgi cgi) {
 
 /// use this in a function parameter if you want the automatic form to render
 /// it as a textarea
-/// FIXME: this should really be an annotation on the parameter... someehow
+/// FIXME: this should really be an annotation on the parameter... somehow
 struct Text {
 	string content;
 	alias content this;
@@ -144,7 +163,7 @@ string linkTo(alias func, T...)(T args) {
 	assert(reflection !is null);
 
 	auto name = func.stringof;
-	int idx = name.indexOf("(");
+	auto idx = name.indexOf("(");
 	if(idx != -1)
 		name = name[0 .. idx];
 
@@ -153,10 +172,146 @@ string linkTo(alias func, T...)(T args) {
 	return funinfo.originalName;
 }
 
+/// this is there so there's a common runtime type for all callables
+class WebDotDBaseType {
+	Cgi cgi; /// lower level access to the request
+
+	/// Override this if you want to do something special to the document
+	/// You should probably call super._postProcess at some point since I
+	/// might add some default transformations here.
+
+	/// By default, it forwards the document root to _postProcess(Element).
+	void _postProcess(Document document) {
+		if(document !is null && document.root !is null)
+			_postProcessElement(document.root);
+	}
+
+	/// Override this to do something special to returned HTML Elements.
+	/// This is ONLY run if the return type is(: Element). It is NOT run
+	/// if the return type is(: Document).
+	void _postProcessElement(Element element) {} // why the fuck doesn't overloading actually work?
+
+	/// convenience function to enforce that the current method is POST.
+	/// You should use this if you are going to commit to the database or something.
+	void ensurePost() {
+		assert(cgi !is null);
+		enforce(cgi.requestMethod == Cgi.RequestMethod.POST);
+	}
+}
+
 /// Everything should derive from this instead of the old struct namespace used before
 /// Your class must provide a default constructor.
-class ApiProvider {
-	Cgi cgi;
+class ApiProvider : WebDotDBaseType {
+	private ApiProvider builtInFunctions;
+
+	Session session; // note: may be null
+
+	/// override this to change cross-site request forgery checks.
+	///
+	/// The default is done on POST requests, using the session object. It throws
+	/// a PermissionDeniedException if the check fails. This might change later
+	/// to make catching it easier.
+	///
+	/// If there is no session object, the test always succeeds. This lets you opt
+	/// out of the system. FIXME: should I add ensureGoodPost or something to combine
+	/// enforce(session !is null); ensurePost() and checkCsrfToken();????
+	///
+	/// If the session is null, it does nothing. FancyMain makes a session for you.
+	/// If you are doing manual run(), it is your responsibility to create a session
+	/// and attach it to each primary object.
+	///
+	/// NOTE: it is important for you use ensurePost() on any data changing things!
+	/// Even though this function is called automatically by run(), it is a no-op on
+	/// non-POST methods, so there's no real protection without ensuring POST when
+	/// making changes.
+	///
+	// FIXME: if someone is OAuth authorized, a csrf token should not really be necessary.
+	// This check is done automatically right now, and doesn't account for that. I guess
+	// people could override it in a subclass though. (Which they might have to since there's
+	// no oauth integration at this level right now anyway. Nor may there ever be; it's kinda
+	// high level. Perhaps I'll provide an oauth based subclass later on.)
+	protected void checkCsrfToken() {
+		assert(cgi !is null);
+		if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+			auto tokenInfo = _getCsrfInfo();
+			if(tokenInfo is null)
+				return; // not doing checks
+
+			void fail() {
+				throw new PermissionDeniedException("CSRF token test failed");
+			}
+
+			// expiration is handled by the session itself expiring (in the Session class)
+
+			if(tokenInfo["key"] !in cgi.post)
+				fail();
+			if(cgi.post[tokenInfo["key"]] != tokenInfo["token"])
+				fail();
+		}
+	}
+
+	// gotta make sure this isn't callable externally! Oh lol that'd defeat the point...
+	/// Gets the CSRF info (an associative array with key and token inside at least) from the session.
+	/// Note that the actual token is generated by the Session class.
+	protected string[string] _getCsrfInfo() {
+		if(session is null)
+			return null;
+		return decodeVariablesSingle(session.csrfToken);
+	}
+
+	/// Adds CSRF tokens to the document for use by script (required by the Javascript API)
+	/// and then calls addCsrfTokens(document.root) to add them to all POST forms as well.
+	protected void addCsrfTokens(Document document) {
+		if(!csrfTokenAddedToScript) {
+			auto tokenInfo = _getCsrfInfo();
+			if(tokenInfo is null)
+				return;
+
+			auto bod = document.mainBody;
+			if(bod !is null) {
+				bod.setAttribute("data-csrf-key", tokenInfo["key"]);
+				bod.setAttribute("data-csrf-token", tokenInfo["token"]);
+				csrfTokenAddedToScript = true;
+			}
+
+			addCsrfTokens(document.root);
+		}
+	}
+
+	/// we have to add these things to the document...
+	override void _postProcess(Document document) {
+		addCsrfTokens(document);
+		super._postProcess(document);
+	}
+
+	private bool csrfTokenAddedToScript;
+	private bool csrfTokenAddedToForms;
+
+	/// This adds CSRF tokens to all forms in the tree
+	protected void addCsrfTokens(Element element) {
+		if(!csrfTokenAddedToForms) {
+			auto tokenInfo = _getCsrfInfo();
+			if(tokenInfo is null)
+				return;
+
+			foreach(formElement; element.querySelectorAll("form[method=POST]")) {
+				auto form = cast(Form) formElement;
+				assert(form !is null);
+
+				form.setValue(tokenInfo["key"], tokenInfo["token"]);
+			}
+
+			csrfTokenAddedToForms = true;
+		}
+	}
+
+	// and added to ajax forms..
+	override void _postProcessElement(Element element) {
+		addCsrfTokens(element);
+		super._postProcessElement(element);
+	}
+
+
 	// FIXME: the static is meant to be a performance improvement, but it breaks child modules' reflection!
 	/*static */immutable(ReflectionInfo)* reflection;
 	string _baseUrl; // filled based on where this is called from on this request
@@ -187,11 +342,6 @@ class ApiProvider {
 		ret ~= _style();
 		return ret;
 	}
-
-	/// Override this if you want to do something special to the document
-	/// You should probably call super._postProcess at some point since I
-	/// might add some default transformations here.
-	void _postProcess(Document document) {}
 
 	/// This tentatively redirects the user - depends on the envelope fomat
 	void redirect(string location, bool important = false) {
@@ -285,7 +435,7 @@ class ApiProvider {
 
 /// Implement subclasses of this inside your main provider class to do a more object
 /// oriented site.
-class ApiObject {
+class ApiObject : WebDotDBaseType {
 	/* abstract this(ApiProvider parent, string identifier) */
 
 	/// Override this to make json out of this object
@@ -297,7 +447,7 @@ class ApiObject {
 
 /// Describes the info collected about your class
 struct ReflectionInfo {
-	FunctionInfo[string] functions; /// the methods
+	immutable(FunctionInfo)*[string] functions; /// the methods
 	EnumInfo[string] enums; /// .
 	StructInfo[string] structs; ///.
 	const(ReflectionInfo)*[string] objects; /// ApiObjects and ApiProviders
@@ -305,6 +455,8 @@ struct ReflectionInfo {
 	bool needsInstantiation; // internal - does the object exist or should it be new'd before referenced?
 
 	ApiProvider instantiation; // internal (for now) - reference to the actual object being described
+
+	WebDotDBaseType delegate(string) instantiate;
 
 	// the overall namespace
 	string name; /// this is also used as the object name in the JS api
@@ -342,10 +494,10 @@ struct StructMemberInfo {
 
 ///.
 struct FunctionInfo {
-	WrapperFunction dispatcher; /// this is the actual function called when a request comes to it - it turns a string[][string] into the actual args
-					/// and formats the return value
+	WrapperFunction dispatcher; /// this is the actual function called when a request comes to it - it turns a string[][string] into the actual args and formats the return value
 
-	JSONValue delegate(Cgi cgi, in string[][string] sargs) documentDispatcher; // i don't recall
+	const(ReflectionInfo)* parentObject;
+
 	// should I also offer dispatchers for other formats like Variant[]?
 
 	string name; /// the URL friendly name
@@ -357,6 +509,7 @@ struct FunctionInfo {
 
 	string returnType; ///. static type to string
 	bool returnTypeIsDocument; // internal used when wrapping
+	bool returnTypeIsElement; // internal used when wrapping
 
 	Document delegate(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
 }
@@ -375,177 +528,6 @@ struct Parameter {
 	string[] optionValues; ///.
 
 	Element function(Document, string) makeFormElement;
-}
-
-/// This uses reflection info to generate Javascript that can call the server with some ease.
-/// Also includes javascript base (see bottom of this file)
-string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested = false) {
-	assert(mod !is null);
-
-	string script;
-
-	if(isNested)
-		script = `'`~mod.name~`': {
-	"_apiBase":'`~base~`',`;
-	else
-		script = `var `~mod.name~` = {
-	"_apiBase":'`~base~`',`;
-
-	script ~= javascriptBase;
-
-	script ~= "\n\t";
-
-	bool[string] alreadyDone;
-
-	bool outp = false;
-
-	foreach(s; mod.enums) {
-		if(outp)
-			script ~= ",\n\t";
-		else
-			outp = true;
-
-		script ~= "'"~s.name~"': {\n";
-
-		bool outp2 = false;
-		foreach(i, n; s.names) {
-			if(outp2)
-				script ~= ",\n";
-			else
-				outp2 = true;
-
-			// auto v = s.values[i];
-			auto v = "'" ~ n ~ "'"; // we actually want to use the name here because to!enum() uses member name.
-
-			script ~= "\t\t'"~n~"':" ~ to!string(v);
-		}
-
-		script ~= "\n\t}";
-	}
-
-	foreach(s; mod.structs) {
-		if(outp)
-			script ~= ",\n\t";
-		else
-			outp = true;
-
-		script ~= "'"~s.name~"': function(";
-
-		bool outp2 = false;
-		foreach(n; s.members) {
-			if(outp2)
-				script ~= ", ";
-			else
-				outp2 = true;
-
-			script ~= n.name;
-
-		}		
-		script ~= ") { return {\n";
-
-		outp2 = false;
-
-		script ~= "\t\t'_arsdTypeOf':'"~s.name~"'";
-		if(s.members.length)
-			script ~= ",";
-		script ~= " // metadata, ought to be read only\n";
-
-		// outp2 is still false because I put the comma above
-		foreach(n; s.members) {
-			if(outp2)
-				script ~= ",\n";
-			else
-				outp2 = true;
-
-			auto v = n.defaultValue;
-
-			script ~= "\t\t'"~n.name~"': (typeof "~n.name~" == 'undefined') ? "~n.name~" : '" ~ to!string(v) ~ "'";
-		}
-
-		script ~= "\n\t}; }";
-	}
-
-	// FIXME: it should output the classes too
-	foreach(obj; mod.objects) {
-		if(outp)
-			script ~= ",\n\t";
-		else
-			outp = true;
-
-		script ~= makeJavascriptApi(obj, base ~ obj.name ~ "/", true);
-	}
-
-	foreach(func; mod.functions) {
-		if(func.originalName in alreadyDone)
-			continue; // there's url friendly and code friendly, only need one
-
-		alreadyDone[func.originalName] = true;
-
-		if(outp)
-			script ~= ",\n\t";
-		else
-			outp = true;
-
-
-		string args;
-		string obj;
-		bool outputted = false;
-		/+
-		foreach(i, arg; func.parameters) {
-			if(outputted) {
-				args ~= ",";
-				obj ~= ",";
-			} else
-				outputted = true;
-
-			args ~= arg.name;
-
-			// FIXME: we could probably do better checks here too like on type
-			obj ~= `'`~arg.name~`':(typeof `~arg.name ~ ` == "undefined" ? this._raiseError('InsufficientParametersException', '`~func.originalName~`: argument `~to!string(i) ~ " (" ~ arg.staticType~` `~arg.name~`) is not present') : `~arg.name~`)`;
-		}
-		+/
-
-		/*
-		if(outputted)
-			args ~= ",";
-		args ~= "callback";
-		*/
-
-		script ~= `'` ~ func.originalName ~ `'`;
-		script ~= ":";
-		script ~= `function(`~args~`) {`;
-		if(obj.length)
-		script ~= `
-		var argumentsObject = {
-			`~obj~`
-		};
-		return this._serverCall('`~func.name~`', argumentsObject, '`~func.returnType~`');`;
-		else
-		script ~= `
-		return this._serverCall('`~func.name~`', arguments, '`~func.returnType~`');`;
-
-		script ~= `
-	}`;
-	}
-
-	script ~= "\n}";
-
-	// some global stuff to put in
-	if(!isNested)
-	script ~= `
-		if(typeof arsdGlobalStuffLoadedForWebDotD == "undefined") {
-			arsdGlobalStuffLoadedForWebDotD = true;
-			var oldObjectDotPrototypeDotToString = Object.prototype.toString;
-			Object.prototype.toString = function() {
-				if(this.formattedSecondarily)
-					return this.formattedSecondarily;
-
-				return  oldObjectDotPrototypeDotToString.call(this);
-			}
-		}
-	`;
-
-	return script;
 }
 
 // these are all filthy hacks
@@ -608,38 +590,49 @@ template PassthroughType(T) {
 	alias T PassthroughType;
 }
 
-// instantiates an object, if needed, and returns the reference
-
-auto generateGetter(PM, Parent, string member, alias hackToEnsureMultipleFunctionsWithTheSameSignatureGetTheirOwnInstantiations)(string io, Parent instantiation) {
-	static if(is(PM : ApiObject)) {
-		auto i = new PM(instantiation, io);
-		return &__traits(getMember, i, member);
-	} else {
-		return &__traits(getMember, instantiation, member);
-	}
-}
-
-
 // sets up the reflection object. now called automatically so you probably don't have to mess with it
-
-immutable(ReflectionInfo*) prepareReflection(alias PM)(Cgi cgi, PM instantiation, ApiObject delegate(string) instantiateObject = null, string aliasedName = null) if(is(PM : ApiProvider) || is(PM: ApiObject) ) {
-	return prepareReflectionImpl!(PM, PM)(cgi, instantiation, instantiateObject, aliasedName);
+immutable(ReflectionInfo*) prepareReflection(alias PM)(PM instantiation) if(is(PM : ApiProvider) || is(PM: ApiObject) ) {
+	return prepareReflectionImpl!(PM, PM)(instantiation);
 }
 
-immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi, Parent instantiation, ApiObject delegate(string) instantiateObject = null, string aliasedName = null) if((is(PM : ApiProvider) || is(PM: ApiObject)) && is(Parent : ApiProvider) ) {
+// FIXME: this doubles the compile time and can add megabytes to the executable.
+immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent instantiation)
+	if(is(PM : WebDotDBaseType) && is(Parent : ApiProvider))
+{
 
 	assert(instantiation !is null);
 
 	ReflectionInfo* reflection = new ReflectionInfo;
-	reflection.name = aliasedName is null ? PM.stringof : aliasedName;
+	reflection.name = PM.stringof;
 
-	static if(is(PM: ApiObject))
+	static if(is(PM: ApiObject)) {
 		reflection.needsInstantiation = true;
-	else
+		reflection.instantiate = delegate WebDotDBaseType(string i) {
+			auto n = new PM(instantiation, i);
+			return n;
+		};
+	} else {
 		reflection.instantiation = instantiation;
+
+		static if(!is(PM : BuiltInFunctions)) {
+			auto builtins = new BuiltInFunctions(instantiation, reflection);
+			instantiation.builtInFunctions = builtins;
+			foreach(k, v; builtins.reflection.functions)
+				reflection.functions["builtin." ~ k] = v;
+		}
+	}
+
+	static if(is(PM : ApiProvider)) {{ // double because I want a new scope
+		auto f = new FunctionInfo;
+		f.parentObject = reflection;
+		f.dispatcher = generateWrapper!(PM, "_defaultPage", PM._defaultPage)(reflection, instantiation);
+		f.returnTypeIsDocument = true;
+		reflection.functions["/"] = cast(immutable) f;
+	}}
 
 	// derivedMembers is changed from allMembers
 	foreach(member; __traits(derivedMembers, PM)) {
+	static if(member[0] != '_') {
 		// FIXME: the filthiest of all hacks...
 		static if(!__traits(compiles, 
 			!is(typeof(__traits(getMember, PM, member)) == function) &&
@@ -653,7 +646,6 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 		static if(
 			!is(typeof(__traits(getMember, PM, member)) == function) &&
 			isEnum!(__traits(getMember, PM, member))
-			&& member[0] != '_'
 		) {
 			EnumInfo i;
 			i.name = member;
@@ -667,7 +659,6 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 		} else static if(
 			!is(typeof(__traits(getMember, PM, member)) == function) &&
 			isStruct!(__traits(getMember, PM, member))
-			&& member[0] != '_'
 		) {
 			StructInfo i;
 			i.name = member;
@@ -687,66 +678,41 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 			reflection.structs[member] = i;
 		} else static if(
 			is(typeof(__traits(getMember, PM, member)) == function)
-		&& (
-		member[0] != '_' &&
-		(
-		member.length < 5 ||
-		(
-		member[$ - 5 .. $] != "_Page" &&
-		member[$ - 5 .. $] != "_Form") &&
-		!(member.length > 16 && member[$ - 16 .. $] == "_PermissionCheck")
-		))) {
-			FunctionInfo f;
+				&&
+				(
+				member.length < 5 ||
+				(
+				member[$ - 5 .. $] != "_Page" &&
+				member[$ - 5 .. $] != "_Form") &&
+				!(member.length > 16 && member[$ - 16 .. $] == "_PermissionCheck")
+		)) {
+			FunctionInfo* f = new FunctionInfo;
 			ParameterTypeTuple!(__traits(getMember, PM, member)) fargs;
 
 			f.returnType = ReturnType!(__traits(getMember, PM, member)).stringof;
 			f.returnTypeIsDocument = is(ReturnType!(__traits(getMember, PM, member)) : Document);
+			f.returnTypeIsElement = is(ReturnType!(__traits(getMember, PM, member)) : Element);
+
+			f.parentObject = reflection;
 
 			f.name = toUrlName(member);
 			f.originalName = member;
 
 			assert(instantiation !is null);
-			f.dispatcher = generateWrapper!(
-				generateGetter!(PM, Parent, member,  __traits(getMember, PM, member)),
-				__traits(getMember, PM, member), Parent, member
-			)(reflection, instantiation);
+			f.dispatcher = generateWrapper!(PM, member, __traits(getMember, PM, member))(reflection, instantiation);
 
 			//f.uriPath = f.originalName;
 
 			auto names = parameterNamesOf!(__traits(getMember, PM, member));
 
 			foreach(idx, param; fargs) {
-				Parameter p;
-
 				if(idx >= names.length)
 					assert(0, to!string(idx) ~ " " ~ to!string(names));
+
+				Parameter p = reflectParam!(typeof(param))();
+
 				p.name = names[idx];
-				p.staticType = typeof(fargs[idx]).stringof;
 
-				static if( __traits(compiles, p.makeFormElement = &(typeof(param).makeFormElement))) {
-					p.makeFormElement = &(typeof(param).makeFormElement);
-				} else static if( __traits(compiles, PM.makeFormElement!(typeof(param))(null, null))) {
-					alias PM.makeFormElement!(typeof(param)) LOL;
-					p.makeFormElement = &LOL;
-				} else static if( is( typeof(param) == enum )) {
-					p.type = "select";
-
-					foreach(opt; __traits(allMembers, typeof(param))) {
-						p.options ~= opt;
-						p.optionValues ~= to!string(__traits(getMember, param, opt));
-					}
-				} else static if (is(typeof(param) == bool)) {
-					p.type = "checkbox";
-				} else static if (is(Unqual!(typeof(param)) == Cgi.UploadedFile)) {
-					p.type = "file";
-				} else static if(is(Unqual!(typeof(param)) == Text)) {
-					p.type = "textarea";
-				} else {
-					if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
-						p.type = "password";
-					else
-						p.type = "text";
-				}
 				f.parameters ~= p;
 			}
 
@@ -754,240 +720,225 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Cgi cgi
 				f.createForm = &__traits(getMember, instantiation, member ~ "_Form");
 			}
 
-			reflection.functions[f.name] = f;
+			reflection.functions[f.name] = cast(immutable) (f);
 			// also offer the original name if it doesn't
 			// conflict
 			//if(f.originalName !in reflection.functions)
-			reflection.functions[f.originalName] = f;
+			reflection.functions[f.originalName] = cast(immutable) (f);
 		}
 		else static if(
 			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isApiObject!(__traits(getMember, PM, member)) &&
-			member[0] != '_'
+			isApiObject!(__traits(getMember, PM, member))
 		) {
 			reflection.objects[member] = prepareReflectionImpl!(
 				__traits(getMember, PM, member), Parent)
-				(cgi, instantiation);
+				(instantiation);
 		} else static if( // child ApiProviders are like child modules
 			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isApiProvider!(__traits(getMember, PM, member)) &&
-			member[0] != '_'
+			isApiProvider!(__traits(getMember, PM, member))
 		) {
 			PassthroughType!(__traits(getMember, PM, member)) i;
 			i = new typeof(i)();
-			auto r = prepareReflection!(__traits(getMember, PM, member))(cgi, i, null, member);
+			auto r = prepareReflection!(__traits(getMember, PM, member))(i, null, member);
 			reflection.objects[member] = r;
 			if(toLower(member) !in reflection.objects) // web filenames are often lowercase too
 				reflection.objects[member.toLower] = r;
 		}
 	}
-
-	static if(is(PM: ApiProvider)) {
-		instantiation.cgi = cgi;
-		instantiation.reflection = cast(immutable) reflection;
-		instantiation._initialize();
 	}
 
 	return cast(immutable) reflection;
 }
 
+Parameter reflectParam(param)() {
+	Parameter p;
+
+	p.staticType = param.stringof;
+
+	static if( __traits(compiles, p.makeFormElement = &(typeof(param).makeFormElement))) {
+		p.makeFormElement = &(typeof(param).makeFormElement);
+	} else static if( __traits(compiles, PM.makeFormElement!(typeof(param))(null, null))) {
+		alias PM.makeFormElement!(typeof(param)) LOL;
+		p.makeFormElement = &LOL;
+	} else static if( is( typeof(param) == enum )) {
+		p.type = "select";
+
+		foreach(opt; __traits(allMembers, typeof(param))) {
+			p.options ~= opt;
+			p.optionValues ~= to!string(__traits(getMember, param, opt));
+		}
+	} else static if (is(typeof(param) == bool)) {
+		p.type = "checkbox";
+	} else static if (is(Unqual!(typeof(param)) == Cgi.UploadedFile)) {
+		p.type = "file";
+	} else static if(is(Unqual!(typeof(param)) == Text)) {
+		p.type = "textarea";
+	} else {
+		if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
+			p.type = "password";
+		else
+			p.type = "text";
+	}
+
+	return p;
+}
+
+struct CallInfo {
+	string objectIdentifier;
+	immutable(FunctionInfo)* func;
+}
+
+class NonCanonicalUrlException : Exception {
+	this(CanonicalUrlOption option, string properUrl = null) {
+		this.howToFix = option;
+		this.properUrl = properUrl;
+		super("The given URL needs this fix: " ~ to!string(option) ~ " " ~ properUrl);
+	}
+
+	CanonicalUrlOption howToFix;
+	string properUrl;
+}
+
+enum CanonicalUrlOption {
+	cutTrailingSlash,
+	addTrailingSlash
+}
+
+
+CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunction, in bool hasTrailingSlash) {
+	CallInfo info;
+
+	if(url.length && url[0] == '/')
+		url = url[1 .. $];
+
+	if(reflection.needsInstantiation) {
+		// FIXME: support object identifiers that span more than one slash... maybe
+		auto idx = url.indexOf("/");
+		if(idx != -1) {
+			info.objectIdentifier = url[0 .. idx];
+			url = url[idx + 1 .. $];
+		} else {
+			info.objectIdentifier = url;
+			url = null;
+		}
+	}
+
+	string name;
+	auto idx = url.indexOf("/");
+	if(idx != -1) {
+		name = url[0 .. idx];
+		url = url[idx + 1 .. $];
+	} else {
+		name = url;
+		url = null;
+	}
+
+	bool usingDefault = false;
+	if(name.length == 0) {
+		name = defaultFunction;
+		usingDefault = true;
+		if(name !in reflection.functions)
+			name = "/"; // should call _defaultPage
+	}
+
+	if(name in reflection.functions) {
+		info.func = reflection.functions[name];
+
+		// if we're using a default thing, we need as slash on the end so relative links work
+		if(usingDefault) {
+			if(!hasTrailingSlash)
+				throw new NonCanonicalUrlException(CanonicalUrlOption.addTrailingSlash);
+		} else {
+			if(hasTrailingSlash)
+				throw new NonCanonicalUrlException(CanonicalUrlOption.cutTrailingSlash);
+		}
+	}
+
+	if(name in reflection.objects) {
+		info = parseUrl(reflection.objects[name], url, defaultFunction, hasTrailingSlash);
+	}
+
+	return info;
+}
 
 /// If you're not using FancyMain, this is the go-to function to do most the work.
 /// instantiation should be an object of your ApiProvider type.
 /// pathInfoStartingPoint is used to make a slice of it, incase you already consumed part of the path info before you called this.
-/// FIXME: maybe it should just be a string/slice directly instead of an awkward starting point?
+
 void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 0) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
-	immutable(ReflectionInfo)* reflection;
-	if(instantiation.reflection is null)
-		prepareReflection!(Provider)(cgi, instantiation);
+	if(instantiation.reflection is null) {
+		instantiation.reflection = prepareReflection!(Provider)(instantiation);
+		instantiation.cgi = cgi;
+		instantiation._initialize();
+		// FIXME: what about initializing child objects?
+	}
 
-	reflection = instantiation.reflection;
-
+	auto reflection = instantiation.reflection;
 	instantiation._baseUrl = cgi.scriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint];
-	if(cgi.pathInfo[pathInfoStartingPoint .. $].length <= 1) {
-		auto document = instantiation._defaultPage();
-		if(document !is null) {
-			instantiation._postProcess(document);
-			cgi.write(document.toString());
-		}
-		cgi.close();
+
+	// everything assumes the url isn't empty...
+	if(cgi.pathInfo.length < pathInfoStartingPoint + 1) {
+		cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" ~ cgi.queryString : ""));
 		return;
 	}
 
-	string funName = cgi.pathInfo[pathInfoStartingPoint + 1..$];
-
 	// kinda a hack, but this kind of thing should be available anyway
+	string funName = cgi.pathInfo[pathInfoStartingPoint + 1..$];
 	if(funName == "functions.js") {
+		cgi.gzipResponse = true;
 		cgi.setResponseContentType("text/javascript");
 		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.requestUri, "functions.js", "")), true);
 		cgi.close();
 		return;
 	}
 
-	// what about some built in functions?
-	/*
-		// Basic integer operations
-		builtin.opAdd
-		builtin.opSub
-		builtin.opMul
-		builtin.opDiv
+	CallInfo info;
 
-		// Basic array operations
-		builtin.opConcat 			// use to combine calls easily
-		builtin.opIndex
-		builtin.opSlice
-		builtin.length
+	try
+		info = parseUrl(reflection, cgi.pathInfo[pathInfoStartingPoint + 1 .. $], to!string(cgi.requestMethod), cgi.pathInfo[$-1] == '/');
+	catch(NonCanonicalUrlException e) {
+		final switch(e.howToFix) {
+			case CanonicalUrlOption.cutTrailingSlash:
+				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $ - 1] ~
+					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
+			break;
+			case CanonicalUrlOption.addTrailingSlash:
+				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~
+					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
+			break;
+		}
 
-		// Basic floating point operations
-		builtin.round
-		builtin.floor
-		builtin.ceil
+		return;
+	}
 
-		// Basic object operations
-		builtin.getMember
+	auto fun = info.func;
+	auto instantiator = info.objectIdentifier;
 
-		// Basic functional operations
-		builtin.filter 				// use to slice down on stuff to transfer
-		builtin.map 				// call a server function on a whole array
-		builtin.reduce
-
-		// Access to the html items
-		builtin.getAutomaticForm(method)
-	*/
-
-	const(FunctionInfo)* fun;
-
-	auto envelopeFormat = cgi.request("envelopeFormat", "document");
 	Envelope result;
 	result.userData = cgi.request("passedThroughUserData");
 
-	string instantiator;
-	string objectName;
+	auto envelopeFormat = cgi.request("envelopeFormat", "document");
+
+	WebDotDBaseType base = instantiation;
+
+	// FIXME
+	if(cgi.pathInfo.indexOf("builtin.") != -1 && instantiation.builtInFunctions !is null)
+		base = instantiation.builtInFunctions;
+
+	if(instantiator.length) {
+		base = fun.parentObject.instantiate(instantiator);
+	}
 
 	try {
-		// Built-ins
-		string errorMessage;
-		if(funName.length > 8 && funName[0..8] == "builtin.") {
-			funName = funName[8..$];
-			switch(funName) {
-				default: assert(0);
-				case "getAutomaticForm":
-					auto mfun = new FunctionInfo;
-					mfun.returnType = "Form";
-					mfun.dispatcher = delegate JSONValue (Cgi cgi, string, in string[][string] sargs, in string format, in string secondaryFormat = null) {
-						auto lik = cgi.request("positional-arg-0");
-						if(lik.length == 0)
-							//lik = cgi.get["method"];
-							lik = cgi.post["method"]; // FIXME
-						auto rfun = lik in reflection.functions;
-						if(rfun is null)
-							throw new NoSuchPageException("no such function " ~ lik);
-
-						Form form;
-						if((*rfun).createForm !is null) {
-							form = rfun.createForm(null).requireSelector!Form("form");
-						} else
-							form = createAutomaticForm(new Document, *rfun);
-						auto idx = cgi.requestUri.indexOf("builtin.getAutomaticForm");
-						form.action = cgi.requestUri[0 .. idx] ~ form.action; // make sure it works across the site
-						JSONValue v;
-						v.type = JSON_TYPE.STRING;
-						v.str = form.toString();
-
-						return v;
-					};
-
-					fun = cast(immutable) mfun;
-				break;
-			}
-		} else {
-		// User-defined
-			// FIXME: modules? should be done with dots since slashes is used for api objects
-			fun = funName in reflection.functions;
-			if(fun is null) {
-				// first we'll try to strip the trailing slash
-				if(funName[$-1] == '/' && funName[0 .. $-1] in reflection.functions) {
-					// if it's there, just send them to the canonical url
-					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $-1] ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
-					return;
-				}
-
-				// we'll also try to add one for objects
-				if(funName[$-1] != '/' && funName in reflection.objects) {
-					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" : "") ~ cgi.queryString);
-					return;
-				}
-
-				auto parts = funName.split("/");
-
-				const(ReflectionInfo)* currentReflection = reflection;
-				if(parts.length > 1)
-				while(parts.length) {
-					if(currentReflection is null)
-						goto noSuchFunction;
-					if(parts.length > 1) {
-						objectName = parts[0];
-						auto object = objectName in currentReflection.objects;
-						if(object is null) { // || object.instantiate is null)
-							errorMessage = "no such object: " ~ objectName;
-							goto noSuchFunction;
-						}
-
-						currentReflection = *object;
-
-						if(!currentReflection.needsInstantiation) {
-							parts = parts[1 .. $];
-							continue;
-						}
-
-						auto objectIdentifier = parts[1];
-						instantiator = objectIdentifier;
-
-						//obj = object.instantiate(objectIdentifier);
-
-						parts = parts[2 .. $];
-
-						if(parts.length == 0) {
-							// gotta run the default function
-							fun = (to!string(cgi.requestMethod)) in currentReflection.functions;
-						}
-					} else {
-						if(parts[0].length == 0) {
-
-					if(currentReflection is null || currentReflection.instantiation is null) // FIXME: try to fix?
-						goto noSuchFunction;
-							auto inst = cast(ApiProvider) currentReflection.instantiation;
-
-							// FIXME: this ought to always be available
-							inst._baseUrl = cgi.scriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint] ~ "/" ~ currentReflection.name;
-							auto document = inst._defaultPage();
-							if(document !is null) {
-								instantiation._postProcess(document);
-								cgi.write(document.toString(), true);
-							}
-							cgi.close();
-							envelopeFormat = "no-processing";
-							return;
-						}
-
-						fun = parts[0] in currentReflection.functions;
-						if(fun is null)
-							errorMessage = "no such method in class "~objectName~": " ~ parts[0];
-						parts = parts[1 .. $];
-					}
-				}
-			}
-		}
+		instantiation.checkCsrfToken();
 
 		if(fun is null) {
-			noSuchFunction:
-
 			instantiation._catchallEntry(
 				cgi.pathInfo[pathInfoStartingPoint + 1..$],
 				funName,
-				errorMessage);
+				"");
 
 			envelopeFormat = "no-processing";
 
@@ -1006,11 +957,26 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 		JSONValue res;
 
-		if(envelopeFormat == "document" && fun.documentDispatcher !is null) {
-			res = fun.documentDispatcher(cgi, cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.postArray : cgi.getArray);
-			envelopeFormat = "html";
-		} else
-			res = fun.dispatcher(cgi, instantiator, cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.postArray : cgi.getArray, format, secondaryFormat);
+		// FIXME: hackalicious garbage. kill.
+		string[][string] want = cast(string[][string]) (cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.postArray : cgi.getArray);
+		version(fb_inside_hack) {
+			if(cgi.referrer.indexOf("apps.facebook.com") != -1) {
+				auto idx = cgi.referrer.indexOf("?");
+				if(idx != -1 && cgi.referrer[idx + 1 .. $] != cgi.queryString) {
+					// so fucking broken
+					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ cgi.referrer[idx .. $]);
+					return;
+				}
+			}
+			if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+				foreach(k, v; cgi.getArray)
+					want[k] = cast(string[]) v;
+				foreach(k, v; cgi.postArray)
+					want[k] = cast(string[]) v;
+			}
+		}
+
+		res = fun.dispatcher(cgi, base, want, format, secondaryFormat);
 
 				//if(cgi)
 				//	cgi.setResponseContentType("application/json");
@@ -1044,7 +1010,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 						params[i].value = value;
 					}
 
-					form = createAutomaticForm(new Document, *fun);// params, beautify(fun.originalName));
+					form = createAutomaticForm(new Document, fun);// params, beautify(fun.originalName));
 					foreach(k, v; cgi.get)
 						form.setValue(k, v);
 					form.setValue("envelopeFormat", envelopeFormat);
@@ -1120,7 +1086,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 					if((fun !is null) && envelopeFormat != "html") {
 						Document document;
-						if(result.success && fun.returnTypeIsDocument) {
+						if(result.success && fun.returnTypeIsDocument && returned.length) {
 							// probably not super efficient...
 							document = new TemplatedDocument(returned);
 						} else {
@@ -1130,10 +1096,17 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 							e.innerHTML = returned;
 						}
 
-						if(envelopeFormat == "document")
-							instantiation._postProcess(document);
+						if(document !is null) {
+							if(envelopeFormat == "document") {
+								// forming a nice chain here...
+								// FIXME: this isn't actually a nice chain!
+								if(base !is instantiation)
+									instantiation._postProcess(document);
+								base._postProcess(document);
+							}
 
-						returned = document.toString;
+							returned = document.toString;
+						}
 					}
 
 					cgi.write(returned, true);
@@ -1146,7 +1119,74 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 	}
 }
 
+class BuiltInFunctions : ApiProvider {
+	const(ReflectionInfo)* workingFor;
+	ApiProvider basedOn;
+	this(ApiProvider basedOn, in ReflectionInfo* other) {
+		this.basedOn = basedOn;
+		workingFor = other;
+		if(this.reflection is null)
+			this.reflection = prepareReflection!(BuiltInFunctions)(this);
+
+		assert(this.reflection !is null);
+	}
+
+	Form getAutomaticForm(string method) {
+		if(method !in workingFor.functions)
+			throw new Exception("no such method " ~ method);
+		auto f = workingFor.functions[method];
+
+		Form form;
+		if(f.createForm !is null) {
+			form = f.createForm(null).requireSelector!Form("form");
+		} else
+			form = createAutomaticForm(new Document, f);
+		auto idx = basedOn.cgi.requestUri.indexOf("builtin.getAutomaticForm");
+		if(idx == -1)
+			idx = basedOn.cgi.requestUri.indexOf("builtin.get-automatic-form");
+		assert(idx != -1);
+		form.action = basedOn.cgi.requestUri[0 .. idx] ~ form.action; // make sure it works across the site
+
+		return form;
+	}
+}
+
+	// what about some built in functions?
+		/+
+		// Built-ins
+		// Basic integer operations
+		builtin.opAdd
+		builtin.opSub
+		builtin.opMul
+		builtin.opDiv
+
+		// Basic array operations
+		builtin.opConcat 			// use to combine calls easily
+		builtin.opIndex
+		builtin.opSlice
+		builtin.length
+
+		// Basic floating point operations
+		builtin.round
+		builtin.floor
+		builtin.ceil
+
+		// Basic object operations
+		builtin.getMember
+
+		// Basic functional operations
+		builtin.filter 				// use to slice down on stuff to transfer
+		builtin.map 				// call a server function on a whole array
+		builtin.reduce
+
+		// Access to the html items
+		builtin.getAutomaticForm(method)
+		+/
+
+
 /// fancier wrapper to cgi.d's GenericMain - does most the work for you, so you can just write your class and be done with it
+/// Note it creates a session for you too, and will write to the disk - a csrf token. Compile with -version=no_automatic_session
+/// to disable this.
 mixin template FancyMain(T, Args...) {
 	void fancyMainFunction(Cgi cgi) { //string[] args) {
 //		auto cgi = new Cgi;
@@ -1160,7 +1200,14 @@ mixin template FancyMain(T, Args...) {
 
 		// FIXME: won't work for multiple objects
 		T instantiation = new T();
-		auto reflection = prepareReflection!(T)(cgi, instantiation);
+		auto reflection = prepareReflection!(T)(instantiation);
+
+		version(no_automatic_session) {}
+		else {
+			auto session = new Session(cgi);
+			scope(exit) session.commit();
+			instantiation.session = session;
+		}
 
 		run(cgi, instantiation);
 /+
@@ -1187,7 +1234,7 @@ mixin template FancyMain(T, Args...) {
 }
 
 /// Given a function from reflection, build a form to ask for it's params
-Form createAutomaticForm(Document document, in FunctionInfo func, string[string] fieldTypes = null) {
+Form createAutomaticForm(Document document, in FunctionInfo* func, string[string] fieldTypes = null) {
 	return createAutomaticForm(document, func.name, func.parameters, beautify(func.originalName), "POST", fieldTypes);
 }
 
@@ -1430,9 +1477,12 @@ private string[] parameterNamesOfImpl (alias func) ()
 string toHtml(T)(T a) {
 	string ret;
 
-	static if(is(T : Document))
-		ret = a.toString();
-	else
+	static if(is(T : Document)) {
+		if(a is null)
+			ret = null;
+		else
+			ret = a.toString();
+	} else
 	static if(isArray!(T)) {
 		static if(__traits(compiles, typeof(T[0]).makeHtmlArray(a)))
 			ret = to!string(typeof(T[0]).makeHtmlArray(a));
@@ -1644,15 +1694,15 @@ void badParameter(alias T)(string expected = "") {
 
 /// throw this if the user's access is denied
 class PermissionDeniedException : Exception {
-	this(string msg) {
-		super(msg);
+	this(string msg, string file = __FILE__, int line = __LINE__) {
+		super(msg, file, line);
 	}
 }
 
 /// throw if the request path is not found. Done automatically by the default catch all handler.
 class NoSuchPageException : Exception {
-	this(string msg) {
-		super(msg);
+	this(string msg, string file = __FILE__, int line = __LINE__) {
+		super(msg, file, line);
 	}
 }
 
@@ -1702,49 +1752,30 @@ type fromUrlParam(type)(string[] ofInterest) {
 	return ret;
 }
 
+auto getMemberDelegate(alias ObjectType, string member)(ObjectType object) if(is(ObjectType : WebDotDBaseType)) {
+	if(object is null)
+		throw new NoSuchPageException("no such object");
+	return &__traits(getMember, object, member);
+}
+
 /// generates the massive wrapper function for each of your class' methods.
 /// it is responsible for turning strings to params and return values back to strings.
-WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, string funName, R)(ReflectionInfo* reflection, R api) if(is(R: ApiProvider)) {
-	JSONValue wrapper(Cgi cgi, string instantiationIdentifier, in string[][string] sargs, in string format, in string secondaryFormat = null) {
+WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(ReflectionInfo* reflection, R api)
+	if(is(R: ApiProvider) && (is(ObjectType : WebDotDBaseType)) )
+{
+	JSONValue wrapper(Cgi cgi, WebDotDBaseType object, in string[][string] sargs, in string format, in string secondaryFormat = null) {
 
 		JSONValue returnValue;
 		returnValue.type = JSON_TYPE.STRING;
 
-		auto instantiation = getInstantiation(instantiationIdentifier, api);
+		auto instantiation = getMemberDelegate!(ObjectType, funName)(cast(ObjectType) object);
 
 		api._initializePerCall();
 
 		ParameterTypeTuple!(f) args;
 
-		Throwable t; // the error we see
-
-		// this permission check thing might be removed. It's just there so you can check before 
-		// doing the automatic form... but I think that would be better done some other way.
-		static if(__traits(hasMember, group, funName ~ "_PermissionCheck")) {
-			ParameterTypeTuple!(__traits(getMember, group, funName ~ "_PermissionCheck")) argsperm;
-
-			foreach(i, type; ParameterTypeTuple!(__traits(getMember, group, funName ~ "_PermissionCheck"))) {
-				string name = parameterNamesOf!(__traits(getMember, group, funName ~ "_PermissionCheck"))[i];
-				static if(is(type == bool)) {
-					if(name in sargs && sargs[name] != "false" && sargs[name] != "0")
-						args[i] = true;
-					else
-						args[i] = false;
-				} else {
-					if(!(name in sargs)) {
-						t = new InsufficientParametersException(funName, "arg " ~ name ~ " is not present for permission check");
-						goto maybeThrow;
-					}
-					argsperm[i] = to!type(sargs[name][$-1]);
-				}
-			}
-
-			__traits(getMember, group, funName ~ "_PermissionCheck")(argsperm);
-		}
-		// done with arguably useless permission check
-
-
 		// Actually calling the function
+		// FIXME: default parameters
 		foreach(i, type; ParameterTypeTuple!(f)) {
 			string name = parameterNamesOf!(f)[i];
 
@@ -1794,7 +1825,7 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 						ofInterest = null;
 
 						string str = sargs[using][$-1];
-						int idx = str.indexOf("?");
+						auto idx = str.indexOf("?");
 						string callingName, callingArguments;
 						if(idx == -1) {
 							callingName = str;
@@ -1823,6 +1854,12 @@ WrapperFunction generateWrapper(alias getInstantiation, alias f, alias group, st
 			ret = instantiation(args);
 		else
 			instantiation(args);
+
+		static if(is(ReturnType!f : Element))
+			// we need to make sure that it's not called again when _postProcess(Document) is called!
+			// FIXME: is this right?
+			if(cgi.request("envelopeFormat", "document") != "document")
+				api._postProcessElement(ret); // need to post process the element here so it works in ajax modes.
 
 		formatAs(ret, format, api, &returnValue, secondaryFormat);
 
@@ -1856,32 +1893,20 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 	} 
 	switch(format) {
 		case "html":
-			// FIXME: should we actually post process here?
-			/+
-			static if(is(typeof(ret) : Document)) {
-				instantiation._postProcess(ret);
-				return ret.toString();
-				break;
-			}
-			static if(__traits(hasMember, group, funName ~ "_Page")) {
-				auto doc = __traits(getMember, group, funName ~ "_Page")(ret);
-				instantiation._postProcess(doc);
-				return doc.toString();
-				break;
-			}
-			+/
-
 			retstr = toHtml(ret);
 			if(returnValue !is null)
 				returnValue.str = retstr;
 		break;
-		case "string":
+		case "string": // FIXME: this is the most expensive part of the compile! Two seconds in one of my apps.
+		/+
 			static if(__traits(compiles, to!string(ret))) {
 				retstr = to!string(ret);
 				if(returnValue !is null)
 					returnValue.str = retstr;
 			}
 			else goto badType;
+		+/
+			goto badType; // FIXME
 		break;
 		case "json":
 			assert(returnValue !is null);
@@ -1913,7 +1938,7 @@ private string emptyTag(string rootName) {
 
 
 /// The definition of the beastly wrapper function
-alias JSONValue delegate(Cgi cgi, string, in string[][string] args, in string format, in string secondaryFormat = null) WrapperFunction;
+alias JSONValue delegate(Cgi cgi, WebDotDBaseType, in string[][string] args, in string format, in string secondaryFormat = null) WrapperFunction;
 
 /// tries to take a URL name and turn it into a human natural name. so get rid of slashes, capitalize, etc.
 string urlToBeauty(string url) {
@@ -1987,7 +2012,7 @@ import core.stdc.time;
 import std.file;
 
 /// meant to give a generic useful hook for sessions. kinda sucks at this point.
-/// use class Session instead. If you just construct it, the sessionId property
+/// use the Session class instead. If you just construct it, the sessionId property
 /// works fine. Don't set any data and it won't save any file.
 deprecated string getSessionId(Cgi cgi) {
 	string token; // FIXME: should this actually be static? it seems wrong
@@ -2017,21 +2042,102 @@ version(Windows) {
 class Session {
 	/// Loads the session if available, and creates one if not.
 	/// May write a session id cookie to the passed cgi object.
-	this(Cgi cgi, bool useFile = true) {
+	this(Cgi cgi, string cookieName = "_sess_id", bool useFile = true) {
+		this._cookieName = cookieName;
+		this.cgi = cgi;
+		bool isNew = false;
 		string token;
-		if("_sess_id" in cgi.cookies)
-			token = cgi.cookies["_sess_id"];
+		if(cookieName in cgi.cookies && cgi.cookies[cookieName].length)
+			token = cgi.cookies[cookieName];
 		else {
-			auto tmp = uniform(0, int.max);
-			token = to!string(tmp);
-
-			setLoginCookie(cgi, "_sess_id", token);
+			token = makeNewCookie();
+			isNew = true;
 		}
-		_sessionId = getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
+
+		makeSessionId(token);
 
 		if(useFile)
 			reload();
+		if(isNew)
+			set("csrfToken", generateCsrfToken());
 	}
+
+	private string makeSessionId(string cookieToken) {
+		_sessionId = hashToString(SHA256(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ cookieToken));
+		return _sessionId;
+	}
+
+	private string generateCsrfToken() {
+		string[string] csrf;
+
+		csrf["key"] = to!string(uniform(0, ulong.max));
+		csrf["token"] = to!string(uniform(0, ulong.max));
+
+		return encodeVariables(csrf);
+	}
+
+	// don't forget to make the new session id and set a new csrfToken after this too.
+	private string makeNewCookie() {
+		auto tmp = uniform(0, ulong.max);
+		auto token = to!string(tmp);
+		// FIXME: path, domain?
+		setLoginCookie(cgi, _cookieName, token);
+
+		return token;
+	}
+
+	/// Kill the current session. It wipes out the disk file and memory, and
+	/// changes the session ID.
+	///
+	/// You should do this if the user's authentication info changes
+	/// at all.
+	void invalidate() {
+		setLoginCookie(cgi, _cookieName, "");
+		clear();
+
+		regenerateId();
+	}
+
+	/// Creates a new cookie, session id, and csrf token, deleting the old disk data.
+	/// If you call commit() after doing this, it will save your existing data back to disk.
+	/// (If you don't commit, the data will be lost when this object is deleted.)
+	void regenerateId() {
+		// we want to clean up the old file, but keep the data we have in memory.
+		if(std.file.exists(getFilePath()))
+			std.file.remove(getFilePath());
+
+		// and new cookie -> new session id -> new csrf token
+		makeSessionId(makeNewCookie());
+		set("csrfToken", generateCsrfToken());
+
+		if(hasData)
+			changed = true;
+			
+	}
+
+	/// Clears the session data from both memory and disk.
+	/// The session id is not changed by this function. To change it,
+	/// use invalidate() if you want to clear data and change the ID
+	/// or regenerateId() if you want to change the session ID, but not change the data.
+	///
+	/// Odds are, invalidate() is what you really want.
+	void clear() {
+		if(std.file.exists(getFilePath()))
+			std.file.remove(getFilePath());
+		data = null;
+		_hasData = false;
+		changed = false;
+	}
+
+	// FIXME: what about expiring a session id and perhaps issuing a new
+	// one? They should automatically invalidate at some point.
+
+	// Both an idle timeout and a forced reauth timeout is good to offer.
+	// perhaps a helper function to do it in js too?
+
+
+	// I also want some way to attach to a session if you have root
+	// on the server, for convenience of debugging...
 
 	string sessionId() const {
 		return _sessionId;
@@ -2041,6 +2147,7 @@ class Session {
 		return _hasData;
 	}
 
+	/// like opIn
 	bool hasKey(string key) const {
 		auto ptr = key in data;
 		if(ptr is null)
@@ -2049,11 +2156,12 @@ class Session {
 			return true;
 	}
 
+	/// get/set for strings
 	string opDispatch(string name)(string v = null) if(name != "popFront") {
 		if(v !is null)
-			set(name, value);
-		if(hasKey(key))
-			return get(key);
+			set(name, v);
+		if(hasKey(name))
+			return get(name);
 		return null;
 	}
 
@@ -2101,6 +2209,11 @@ class Session {
 		return path;
 	}
 
+	// FIXME: there's a race condition here - if the user is using the session
+	// from two windows, one might write to it as we're executing, and we won't
+	// see the difference.... meaning we'll write the old data back.
+
+	/// Discards your changes, reloading the session data from the disk file.
 	void reload() {
 		data = null;
 		auto path = getFilePath();
@@ -2142,6 +2255,11 @@ class Session {
 		}			
 	}
 
+	// FIXME: there's a race condition here - if the user is using the session
+	// from two windows, one might write to it as we're executing, and we won't
+	// see the difference.... meaning we'll write the old data back.
+
+	/// Commits your changes back to disk.
 	void commit(bool force = false) {
 		if(force || changed)
 			std.file.write(getFilePath(), toJson(data));
@@ -2151,6 +2269,8 @@ class Session {
 	private bool _hasData;
 	private bool changed;
 	private string _sessionId;
+	private string _cookieName;
+	private Cgi cgi; // used to regenerate cookies, etc.
 
 	//private Variant[string] data;
 	/*
@@ -2355,6 +2475,179 @@ Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(
 	}
 }
 
+
+/// This uses reflection info to generate Javascript that can call the server with some ease.
+/// Also includes javascript base (see bottom of this file)
+string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested = false) {
+	assert(mod !is null);
+
+	string script;
+
+	if(isNested)
+		script = `'`~mod.name~`': {
+	"_apiBase":'`~base~`',`;
+	else
+		script = `var `~mod.name~` = {
+	"_apiBase":'`~base~`',`;
+
+	script ~= javascriptBase;
+
+	script ~= "\n\t";
+
+	bool[string] alreadyDone;
+
+	bool outp = false;
+
+	foreach(s; mod.enums) {
+		if(outp)
+			script ~= ",\n\t";
+		else
+			outp = true;
+
+		script ~= "'"~s.name~"': {\n";
+
+		bool outp2 = false;
+		foreach(i, n; s.names) {
+			if(outp2)
+				script ~= ",\n";
+			else
+				outp2 = true;
+
+			// auto v = s.values[i];
+			auto v = "'" ~ n ~ "'"; // we actually want to use the name here because to!enum() uses member name.
+
+			script ~= "\t\t'"~n~"':" ~ to!string(v);
+		}
+
+		script ~= "\n\t}";
+	}
+
+	foreach(s; mod.structs) {
+		if(outp)
+			script ~= ",\n\t";
+		else
+			outp = true;
+
+		script ~= "'"~s.name~"': function(";
+
+		bool outp2 = false;
+		foreach(n; s.members) {
+			if(outp2)
+				script ~= ", ";
+			else
+				outp2 = true;
+
+			script ~= n.name;
+
+		}		
+		script ~= ") { return {\n";
+
+		outp2 = false;
+
+		script ~= "\t\t'_arsdTypeOf':'"~s.name~"'";
+		if(s.members.length)
+			script ~= ",";
+		script ~= " // metadata, ought to be read only\n";
+
+		// outp2 is still false because I put the comma above
+		foreach(n; s.members) {
+			if(outp2)
+				script ~= ",\n";
+			else
+				outp2 = true;
+
+			auto v = n.defaultValue;
+
+			script ~= "\t\t'"~n.name~"': (typeof "~n.name~" == 'undefined') ? "~n.name~" : '" ~ to!string(v) ~ "'";
+		}
+
+		script ~= "\n\t}; }";
+	}
+
+	// FIXME: it should output the classes too
+	foreach(obj; mod.objects) {
+		if(outp)
+			script ~= ",\n\t";
+		else
+			outp = true;
+
+		script ~= makeJavascriptApi(obj, base ~ obj.name ~ "/", true);
+	}
+
+	foreach(key, func; mod.functions) {
+		if(func.originalName in alreadyDone)
+			continue; // there's url friendly and code friendly, only need one
+
+		alreadyDone[func.originalName] = true;
+
+		if(outp)
+			script ~= ",\n\t";
+		else
+			outp = true;
+
+
+		string args;
+		string obj;
+		bool outputted = false;
+		/+
+		foreach(i, arg; func.parameters) {
+			if(outputted) {
+				args ~= ",";
+				obj ~= ",";
+			} else
+				outputted = true;
+
+			args ~= arg.name;
+
+			// FIXME: we could probably do better checks here too like on type
+			obj ~= `'`~arg.name~`':(typeof `~arg.name ~ ` == "undefined" ? this._raiseError('InsufficientParametersException', '`~func.originalName~`: argument `~to!string(i) ~ " (" ~ arg.staticType~` `~arg.name~`) is not present') : `~arg.name~`)`;
+		}
+		+/
+
+		/*
+		if(outputted)
+			args ~= ",";
+		args ~= "callback";
+		*/
+
+		script ~= `'` ~ func.originalName ~ `'`;
+		script ~= ":";
+		script ~= `function(`~args~`) {`;
+		if(obj.length)
+		script ~= `
+		var argumentsObject = {
+			`~obj~`
+		};
+		return this._serverCall('`~key~`', argumentsObject, '`~func.returnType~`');`;
+		else
+		script ~= `
+		return this._serverCall('`~key~`', arguments, '`~func.returnType~`');`;
+
+		script ~= `
+	}`;
+	}
+
+	script ~= "\n}";
+
+	// some global stuff to put in
+	if(!isNested)
+	script ~= `
+		if(typeof arsdGlobalStuffLoadedForWebDotD == "undefined") {
+			arsdGlobalStuffLoadedForWebDotD = true;
+			var oldObjectDotPrototypeDotToString = Object.prototype.toString;
+			Object.prototype.toString = function() {
+				if(this.formattedSecondarily)
+					return this.formattedSecondarily;
+
+				return  oldObjectDotPrototypeDotToString.call(this);
+			}
+		}
+	`;
+
+	return script;
+}
+
+
 debug string javascriptBase = `
 	// change this in your script to get fewer error popups
 	"_debugMode":true,` ~ javascriptBaseImpl;
@@ -2491,6 +2784,14 @@ enum string javascriptBaseImpl = q{
 		if(method == "POST") {
 			xmlHttp.setRequestHeader("Content-type","application/x-www-form-urlencoded");
 			a = argString;
+			// adding the CSRF stuff, if necessary
+			var csrfKey = document.body.getAttribute("data-csrf-key");
+			var csrfToken = document.body.getAttribute("data-csrf-token");
+			if(csrfKey && csrfKey.length > 0 && csrfToken && csrfToken.length > 0) {
+				if(a.length > 0)
+					a += "&";
+				a += encodeURIComponent(csrfKey) + "=" + encodeURIComponent(csrfToken);
+			}
 		} else {
 			xmlHttp.setRequestHeader("Content-type", "text/plain");
 		}
@@ -2805,10 +3106,6 @@ enum string javascriptBaseImpl = q{
 			// runAsScript has been removed, use get(eval) instead
 			// FIXME: might be nice to have an automatic popin function too
 		};
-	},
-
-	"getAutomaticForm":function(method) {
-		return this._serverCall("builtin.getAutomaticForm", {"method":method}, "Form");
 	},
 
 	"_fillForm": function(what) {
