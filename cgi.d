@@ -640,8 +640,8 @@ class Cgi {
 		}
 	}
 
-	/// Very simple caching controls - setCache(false) means it will never be cached.
-	/// setCache(true) means it will always be cached for as long as possible.
+	/// Very simple caching controls - setCache(false) means it will never be cached. Good for rapidly updated or sensitive sites.
+	/// setCache(true) means it will always be cached for as long as possible. Best for static content.
 	/// Use setResponseExpires and updateResponseExpires for more control
 	void setCache(bool allowCaching) {
 		noCache = !allowCaching;
@@ -703,7 +703,7 @@ class Cgi {
 	/// If you have multiple functions, they all might call updateResponseExpires about their own return value. The program
 	/// output as a whole is as cacheable as the least cachable part in the chain.
 
-	/// setCache(false) always overrides this - it is, by definition, the strictest anti-cache statement available.
+	/// setCache(false) always overrides this - it is, by definition, the strictest anti-cache statement available. If your site outputs sensitive user data, you should probably call setCache(false) when you do, to ensure no other functions will cache the content, as it may be a privacy risk.
 	/// Conversely, setting here overrides setCache(true), since any expiration date is in the past of infinity.
 	void updateResponseExpires(long when, bool isPublic) {
 		if(responseExpires == long.min)
@@ -732,6 +732,7 @@ class Cgi {
 		cookie ~= data;
 		if(path !is null)
 			cookie ~= "; path=" ~ path;
+		// FIXME: should I just be using max-age here? (also in cache below)
 		if(expiresIn != 0)
 			cookie ~= "; expires=" ~ printDate(cast(DateTime) Clock.currTime + dur!"msecs"(expiresIn));
 		if(domain !is null)
@@ -800,7 +801,7 @@ class Cgi {
 			hd ~= "Expires: " ~ printDate(
 				cast(DateTime) expires);
 			// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
-			hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie\"";
+			hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie, set-cookie2\"";
 		}
 		if(responseCookies !is null && responseCookies.length > 0) {
 			foreach(c; responseCookies)
@@ -1099,36 +1100,10 @@ struct Url {
 
 
 /*
-import std.file;
-struct Session {
-	this(Cgi cgi) {
-		sid = "test.sid";
-
-		cgi.setCookie("arsd_sid", sid);
-	}
-
-	void loadFromFile() {
-		if(exists("/tmp/arsd-cgi-session-" ~ sid)) {
-
-		}
-	}
-
-	void saveToFile() {
-		std.file.write("/tmp/arsd-cgi-session-" ~ sid,
-
-		);
-	}
-
-	~this() {
-		saveToFile();
-	}
-
-	@disable this(this) { }
-
-	string sid;
-	string[string] session;
-}
+	for session, see web.d
 */
+
+/// breaks down a url encoded string
 string[][string] decodeVariables(string data, string separator = "&") {
 	auto vars = data.split(separator);
 	string[][string] _get;
@@ -1145,6 +1120,7 @@ string[][string] decodeVariables(string data, string separator = "&") {
 	return _get;
 }
 
+/// breaks down a url encoded string, but only returns the last value of any array
 string[string] decodeVariablesSingle(string data) {
 	string[string] va;
 	auto varArray = decodeVariables(data);
@@ -1154,6 +1130,7 @@ string[string] decodeVariablesSingle(string data) {
 	return va;
 }
 
+/// url encodes the whole string
 string encodeVariables(in string[string] data) {
 	string ret;
 
@@ -1170,6 +1147,7 @@ string encodeVariables(in string[string] data) {
 	return ret;
 }
 
+/// url encodes a whole string
 string encodeVariables(in string[][string] data) {
 	string ret;
 

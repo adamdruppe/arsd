@@ -11,6 +11,20 @@ import std.stdio;
 
 import arsd.characterencodings;
 
+/+
+/* *
+	Does a printf into an html format string.
+
+	eprintf(div, "<span>%s</span> is awesome. %d.",
+		"Adam", 10);
+*/
+
+// is this even a useful idea now that I have add children and such?
+void eprintf(T...)(Element parent, string format, T data) {
+
+}
++/
+
 // Biggest (known) fixme left for "tag soup": <p> .... <p> in loose mode should close it on the second opening.
 // Biggest FIXME for real documents: character set encoding detection
 
@@ -2356,7 +2370,7 @@ class Document {
 			if(dataEncoding is null) {
 				auto dataAsBytes = cast(immutable(ubyte)[]) rawdata;
 				// first, look for an XML prolog
-				auto idx = std.array.indexOf(dataAsBytes, cast(immutable ubyte[]) "encoding=\"");
+				auto idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "encoding=\"");
 				if(idx != -1) {
 					idx += "encoding=\"".length;
 					// we're probably past the prolog if it's this far in; we might be looking at
@@ -2366,7 +2380,7 @@ class Document {
 				}
 				// if that fails, we're looking for Content-Type http-equiv or a meta charset (see html5)..
 				if(idx == -1) {
-					idx = std.array.indexOf(dataAsBytes, cast(immutable ubyte[]) "charset=");
+					idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "charset=");
 					if(idx != -1) {
 						idx += "charset=".length;
 						if(dataAsBytes[idx] == '"')
@@ -2969,7 +2983,7 @@ class Document {
 	}
 
 
-	// ******** Begin extensions ******** //
+	// realistically it's all extensions!
 
 	///.
 	Element findFirst(bool delegate(Element) doesItMatch) {
@@ -3991,6 +4005,13 @@ class StyleSheet {
 	}
 }
 
+// unbelievable.
+int indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
+	auto found = std.algorithm.find(haystack, needle);
+	if(found.length == 0)
+		return -1;
+	return haystack.length - found.length;
+}
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2011
