@@ -404,12 +404,12 @@ class ApiProvider : WebDotDBaseType {
 
 	/// Overriding it might be useful if you want to serve generic filenames or an opDispatch kind of thing.
 	/// (opDispatch itself won't work because it's name argument needs to be known at compile time!)
-	void _catchAll(string path) {
+	Document _catchAll(string path) {
 		throw new NoSuchPageException(_errorMessageForCatchAll);
 	}
 
 	private string _errorMessageForCatchAll;
-	private void _catchallEntry(string path, string funName, string errorMessage) {
+	private Document _catchallEntry(string path, string funName, string errorMessage) {
 		if(!errorMessage.length) {
 			string allFuncs, allObjs;
 			foreach(n, f; reflection.functions)
@@ -421,7 +421,7 @@ class ApiProvider : WebDotDBaseType {
 
 		_errorMessageForCatchAll = errorMessage;
 
-		_catchAll(path);
+		return _catchAll(path);
 	}
 
 
@@ -624,6 +624,14 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 		f.dispatcher = generateWrapper!(PM, "_defaultPage", PM._defaultPage)(reflection, instantiation);
 		f.returnTypeIsDocument = true;
 		reflection.functions["/"] = cast(immutable) f;
+
+		// catchAll here too
+		f = new FunctionInfo;
+		f.parentObject = reflection;
+		f.dispatcher = generateWrapper!(PM, "_catchAll", PM._catchAll)(reflection, instantiation);
+		f.returnTypeIsDocument = true;
+		reflection.functions["/_catchAll"] = cast(immutable) f;
+
 	}}
 
 	// derivedMembers is changed from allMembers
@@ -940,14 +948,20 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 			instantiation.checkCsrfToken();
 
 		if(fun is null) {
-			instantiation._catchallEntry(
+			auto d = instantiation._catchallEntry(
 				cgi.pathInfo[pathInfoStartingPoint + 1..$],
 				funName,
 				"");
 
-			envelopeFormat = "no-processing";
+			result.success = true;
+			JSONValue res;
+			res.type = JSON_TYPE.STRING;
+			res.str = (d is null) ? "" : d.toString();
+			result.result = res;
 
-			return;
+			goto do_nothing_else;
+//			envelopeFormat = "no-processing";
+//			return;
 		}
 
 		assert(fun !is null);
@@ -987,6 +1001,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				//	cgi.setResponseContentType("application/json");
 		result.success = true;
 		result.result = res;
+
+		do_nothing_else: {}
 	}
 	catch (Throwable e) {
 		result.success = false;
