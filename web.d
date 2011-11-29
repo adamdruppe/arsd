@@ -1,9 +1,5 @@
 module arsd.web;
 
-// FIXME: the post process system needs serious cleaning up.
-// I can hack it to work using tuples, but that makes compile
-// time unacceptably skyrocket.
-
 /*
 	Reasonably easy CSRF plan:
 
@@ -755,23 +751,23 @@ Parameter reflectParam(param)() {
 
 	p.staticType = param.stringof;
 
-	static if( __traits(compiles, p.makeFormElement = &(typeof(param).makeFormElement))) {
-		p.makeFormElement = &(typeof(param).makeFormElement);
-	} else static if( __traits(compiles, PM.makeFormElement!(typeof(param))(null, null))) {
-		alias PM.makeFormElement!(typeof(param)) LOL;
+	static if( __traits(compiles, p.makeFormElement = &(param.makeFormElement))) {
+		p.makeFormElement = &(param.makeFormElement);
+	} else static if( __traits(compiles, PM.makeFormElement!(param)(null, null))) {
+		alias PM.makeFormElement!(param) LOL;
 		p.makeFormElement = &LOL;
-	} else static if( is( typeof(param) == enum )) {
+	} else static if( is( param == enum )) {
 		p.type = "select";
 
-		foreach(opt; __traits(allMembers, typeof(param))) {
+		foreach(opt; __traits(allMembers, param)) {
 			p.options ~= opt;
 			p.optionValues ~= to!string(__traits(getMember, param, opt));
 		}
-	} else static if (is(typeof(param) == bool)) {
+	} else static if (is(param == bool)) {
 		p.type = "checkbox";
-	} else static if (is(Unqual!(typeof(param)) == Cgi.UploadedFile)) {
+	} else static if (is(Unqual!(param) == Cgi.UploadedFile)) {
 		p.type = "file";
-	} else static if(is(Unqual!(typeof(param)) == Text)) {
+	} else static if(is(Unqual!(param) == Text)) {
 		p.type = "textarea";
 	} else {
 		if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
@@ -932,7 +928,16 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 	}
 
 	try {
-		instantiation.checkCsrfToken();
+		version(fb_inside_hack) {
+			// FIXME: this almost renders the whole thing useless.
+			if(cgi.referrer.indexOf("apps.facebook.com") == -1)
+				instantiation.checkCsrfToken();
+		} else
+			// you know, I wonder if this should even be automatic. If I
+			// just put it in the ensureGoodPost function or whatever
+			// it prolly works - such needs to be there anyway for it to be properly
+			// right.
+			instantiation.checkCsrfToken();
 
 		if(fun is null) {
 			instantiation._catchallEntry(
@@ -1239,6 +1244,8 @@ Form createAutomaticForm(Document document, in FunctionInfo* func, string[string
 }
 
 /// ditto
+// FIXME: should there be something to prevent the pre-filled options from url? It's convenient but
+// someone might use it to trick people into submitting badness too. I'm leaning toward meh.
 Form createAutomaticForm(Document document, string action, in Parameter[] parameters, string submitText = "Submit", string method = "POST", string[string] fieldTypes = null) {
 	assert(document !is null);
 	auto form = cast(Form) document.createElement("form");
@@ -2364,6 +2371,7 @@ string makeSaltedPasswordHash(string userSuppliedPassword, string salt = null) {
 	if(salt is null)
 		salt = to!string(uniform(0, int.max));
 
+		// FIXME: sha256 is actually not ideal for this, but meh it's what i have.
 	return hashToString(SHA256(salt ~ userSuppliedPassword)) ~ ":" ~ salt;
 }
 
