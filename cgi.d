@@ -981,7 +981,7 @@ class Cgi {
 	immutable(string[string]) get;
 	immutable(string[string]) post;
 	immutable(string[string]) cookies;
-	immutable(UploadedFile)[string] files;
+	immutable(UploadedFile[string]) files;
 
 	// Use these if you expect multiple items submitted with the same name. btw, assert(get[name] is getArray[name][$-1); should pass. Same for post and cookies.
 	// the order of the arrays is the order the data arrives
