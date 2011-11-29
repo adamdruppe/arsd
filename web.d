@@ -1005,10 +1005,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 
 					form = doc.requireSelector!Form("form");
 				} else {
-					Parameter[] params;
+					Parameter[] params = cast(Parameter[]) fun.parameters.dup;
 					foreach(i, p; fun.parameters) {
-						// ugh
-						params ~= cast(Parameter) p;
 						string value = "";
 						if(p.name in cgi.get)
 							value = cgi.get[p.name];
@@ -1992,6 +1990,10 @@ string toUrlName(string name) {
 /// turns camelCase into human presentable capitalized words with spaces
 string beautify(string name) {
 	string n;
+
+	if(name.length == 0)
+		return name;
+
 	n ~= toUpper(name[0..1]);
 
 	dchar last;
