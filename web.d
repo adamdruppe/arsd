@@ -1007,7 +1007,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 
 				} else {
 					Parameter[] params;
 					foreach(i, p; fun.parameters) {
-						params ~= p;
+						// ugh
+						params ~= cast(Parameter) p;
 						string value = "";
 						if(p.name in cgi.get)
 							value = cgi.get[p.name];
