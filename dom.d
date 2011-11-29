@@ -2579,6 +2579,7 @@ class Document {
 				parentChain = [];
 
 			if(pos >= data.length)
+			{
 				if(strict) {
 					throw new MarkupError("Gone over the input (is there no root element?), chain: " ~ to!string(parentChain));
 				} else {
@@ -2587,6 +2588,7 @@ class Document {
 					else
 						return Ele(4); // signal emptiness upstream
 				}
+			}
 
 			if(data[pos] != '<') {
 				return Ele(0, readTextNode(), null);
@@ -2813,10 +2815,12 @@ class Document {
 		root = r.element;
 
 		if(root is null)
+		{
 			if(strict)
 				assert(0, "empty document should be impossible in strict mode");
 			else
 				parse(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
+		}
 
 		if(0&&sawImproperNesting) {
 			// in loose mode, we can see some bad nesting. It's hard to fix above though

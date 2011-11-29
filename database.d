@@ -162,7 +162,7 @@ string escapedVariants(Database db, in string sql, Variant[] t) {
 		string fixedup;
 		int currentIndex;
 		int currentStart = 0;
-		foreach(i, dchar c; sql) {
+		foreach(int i, dchar c; sql) {
 			if(c == '?') {
 				fixedup ~= sql[currentStart .. i];
 
@@ -321,7 +321,7 @@ string fixupSqlForDataObjectUse(string sql) {
 	string[] tableNames;
 
 	string piece = sql;
-	int idx;
+	sizediff_t idx;
 	while((idx = piece.indexOf("JOIN")) != -1) {
 		auto start = idx + 5;
 		auto i = start;

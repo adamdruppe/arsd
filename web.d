@@ -1520,7 +1520,7 @@ string toJson(T)(T a) {
 /// like toHtml - it makes a json value of any given type.
 
 /// It can be used generically, or it can be passed an ApiProvider so you can do a secondary custom
-/// format. (it calls api.formatAs!(type)(typeRequestString). Why would you want that? Maybe
+/// format. (it calls api.formatAs!(type)(typeRequestString)). Why would you want that? Maybe
 /// your javascript wants to do work with a proper object,but wants to append it to the document too.
 /// Asking for json with secondary format = html means the server will provide both to you.
 

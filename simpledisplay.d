@@ -943,7 +943,7 @@ version(X11) {
 
 		void drawText(int x, int y, int x2, int y2, string text) {
 			foreach(line; text.split("\n")) {
-				XDrawString(display, d, gc, x, y + 12, line.ptr, line.length);
+				XDrawString(display, d, gc, x, y + 12, line.ptr, cast(int) line.length);
 				y += 16;
 			}
 		}
@@ -996,11 +996,11 @@ version(X11) {
 			
 			if(backgroundIsNotTransparent) {
 				swapColors();
-				XFillPolygon(display, d, gc, points.ptr, points.length, PolygonShape.Complex, CoordMode.CoordModeOrigin);
+				XFillPolygon(display, d, gc, points.ptr, cast(int) points.length, PolygonShape.Complex, CoordMode.CoordModeOrigin);
 				swapColors();
 			}
 			if(foregroundIsNotTransparent) {
-				XDrawLines(display, d, gc, points.ptr, points.length, CoordMode.CoordModeOrigin);
+				XDrawLines(display, d, gc, points.ptr, cast(int) points.length, CoordMode.CoordModeOrigin);
 			}
 		}
 	}

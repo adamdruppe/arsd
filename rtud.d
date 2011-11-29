@@ -108,7 +108,7 @@ int openNetworkFd(string host, ushort port) {
 
 void writeToFd(int fd, string s) {
 	again:
-	int num = linux.write(fd, s.ptr, s.length);
+	auto num = linux.write(fd, s.ptr, s.length);
 	if(num < 0)
 		throw new Exception("couldn't write");
 	if(num == 0)
@@ -156,7 +156,7 @@ int handleListenerGateway(Cgi cgi, string channelPrefix) {
 	string[4096] buffer;
 
 	for(;;) {
-		int num = linux.read(f, buffer.ptr, buffer.length);
+		auto num = linux.read(f, buffer.ptr, buffer.length);
 		if(num < 0)
 			throw new Exception("read error");
 		if(num == 0)
