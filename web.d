@@ -1500,7 +1500,9 @@ private string[] parameterNamesOfImpl (alias func) ()
 string toHtml(T)(T a) {
 	string ret;
 
-	static if(is(T : Document)) {
+	static if(is(T == typeof(null)))
+		ret = null;
+	else static if(is(T : Document)) {
 		if(a is null)
 			ret = null;
 		else
@@ -1547,7 +1549,9 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 	if(is(R : ApiProvider))
 {
 	JSONValue val;
-	static if(is(T == JSONValue)) {
+	static if(is(T == typeof(null))) {
+		val.type = JSON_TYPE.NULL;
+	} else static if(is(T == JSONValue)) {
 		val = a;
 	} else static if(__traits(compiles, val = a.makeJsonValue())) {
 		val = a.makeJsonValue();
@@ -1568,8 +1572,6 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 		val.type = JSON_TYPE.FLOAT;
 		val.floating = to!real(a);
 		static assert(0);
-	} else static if(is(T == void*)) {
-		val.type = JSON_TYPE.NULL;
 	} else static if(isPointer!(T)) {
 		if(a is null) {
 			val.type = JSON_TYPE.NULL;
