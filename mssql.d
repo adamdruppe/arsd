@@ -156,10 +156,6 @@ class MsSqlResult : ResultSet {
 						if(ptr)
 							goto more;
 					}
-<<<<<<< HEAD
-=======
-				}
->>>>>>> 9d02
 					row ~= a;
 				}
 
