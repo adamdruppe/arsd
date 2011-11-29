@@ -26,7 +26,6 @@ void eprintf(T...)(Element parent, string format, T data) {
 +/
 
 // Biggest (known) fixme left for "tag soup": <p> .... <p> in loose mode should close it on the second opening.
-// Biggest FIXME for real documents: character set encoding detection
 
 // Should I support Element.dataset? it does dash to camelcase for attribute "data-xxx-xxx"
 
@@ -46,7 +45,16 @@ void eprintf(T...)(Element parent, string format, T data) {
 
 	The haml converter produces a mixin string that does getElementBySelectorAndMakeIfNotThere and calls
 	setMainPart on it. boom.
+
+
+	but meh
 */
+
+void sanitizeHtml(Document document) {
+	foreach(e; document.root.tree) {
+
+	}
+}
 
 ///.
 T[] insertAfter(T)(T[] arr, int position, T[] what) {
