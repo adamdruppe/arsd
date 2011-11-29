@@ -1351,6 +1351,82 @@ class MacroExpander {
 	}
 }
 
+
+class CssMacroExpander : MacroExpander {
+	this() {
+		super();
+		functions["prefixed"] = &prefixed;
+	}
+
+	// prefixed(border-radius: 12px);
+	dstring prefixed(dstring[] args) {
+		dstring ret;
+		foreach(prefix; ["-moz-"d, "-webkit-"d, "-o-"d, "-ms-"d, "-khtml-"d, ""d])
+			ret ~= prefix ~ args[0] ~ ";";
+		return ret;
+	}
+
+	string expandAndDenest(string cssSrc) {
+		return cssToString(denestCss(lexCss(this.expand(cssSrc))));
+	}
+}
+
+import std.format;
+
+class JavascriptMacroExpander : MacroExpander {
+	this() {
+		super();
+		functions["foreach"] = &foreachLoop;
+	}
+
+	/**
+		¤foreach(item; array) {
+			// code
+		}
+
+		so arg0 .. argn-1 is the stuff inside. Conc
+	*/
+
+	int foreachLoopCounter;
+	dstring foreachLoop(dstring[] args) {
+		enforce(args.length >= 2, "foreach needs parens and code");
+		dstring parens;
+		bool outputted = false;
+		foreach(arg; args[0 .. $ - 1]) {
+			if(outputted)
+				parens ~= ", ";
+			else
+				outputted = true;
+			parens ~= arg;
+		}
+
+		dstring variableName, arrayName;
+
+		auto it = parens.split(";");
+		variableName = it[0].strip;
+		arrayName = it[1].strip;
+
+		dstring insideCode = args[$-1];
+
+		dstring iteratorName;
+		iteratorName = "arsd_foreach_loop_counter_"d ~ to!dstring(++foreachLoopCounter);
+		dstring temporaryName = "arsd_foreach_loop_temporary_"d ~ to!dstring(++foreachLoopCounter);
+
+		auto writer = appender!dstring();
+
+		formattedWrite(writer, "
+			var %2$s = %5$s;
+			for(var %1$s = 0; %1$s < %2$s.length; %1$s++) {
+				var %3$s = %2$s[%1$s];
+				%4$s
+		}"d, iteratorName, temporaryName, variableName, insideCode, arrayName);
+
+		auto code = writer.data;
+
+		return to!dstring(code);
+	}
+}
+
 string beautifyCss(string css) {
 	css = css.replace("{", " {\n\t");
 	css = css.replace(";", ";\n\t");
