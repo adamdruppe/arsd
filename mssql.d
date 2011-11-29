@@ -19,7 +19,7 @@ class MsSql : Database {
 		enforce(env !is null);
 		scope(failure)
 			SQLFreeHandle(SQL_HANDLE_ENV, env);
-		SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (void *) SQL_OV_ODBC3, 0);
+		SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, cast(void *) SQL_OV_ODBC3, 0);
 		SQLAllocHandle(SQL_HANDLE_DBC, env, &conn);
 		scope(failure)
 			SQLFreeHandle(SQL_HANDLE_DBC, conn);
@@ -51,7 +51,7 @@ class MsSql : Database {
 		// this is passed to MsSqlResult to control
 		SQLHSTMT statement;
 		auto returned = SQLAllocHandle(SQL_HANDLE_STMT, conn,
-                                &statement)
+                                &statement);
 
 		enforce(returned == SQL_SUCCESS);
 
@@ -157,7 +157,6 @@ class MsSqlResult : ResultSet {
 						if(ptr)
 							goto more;
 					}
-}
 					row ~= a;
 				}
 
