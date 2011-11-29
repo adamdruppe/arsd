@@ -837,10 +837,10 @@ string getCreateTable(string sql, string tableName) {
 		string type;
 		string defaultValue;
 	}
-	Field[] fields;
+	Field*[] fields;
 
 	string word = readWord(sql);
-	Field current;
+	Field* current = new Field(); // well, this is interesting... under new DMD, not using new breaks it in CTFE because it overwrites the one entry!
 	while(word != ")" || parens) {
 		if(word == ")") {
 			parens --;
@@ -871,7 +871,7 @@ string getCreateTable(string sql, string tableName) {
 				state = 3;
 			else if (word == ",") {
 				fields ~= current;
-				current = Field();
+				current = new Field();
 				state = 0; // next
 			}
 		    break;
