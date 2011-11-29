@@ -15,6 +15,12 @@
 	In your javascript, use EventListener("path to gateway");
 	And addEventListener(type, function, false);
 
+	Note: this javascript does not work in all browsers, but
+	real time updates should really be optional anyway.
+
+	I might add a traditional ajax fallback but still, it's all
+	js so be sure it's non-essential if possible.
+
 
 	And in your app, as events happen, use in D:
 		auto stream = new UpdateStream(channel);
@@ -136,7 +142,7 @@ int handleListenerGateway(Cgi cgi, string channelPrefix) {
 		if(cgi.lastEventId.length)
 			variables["last-message-id"] = cgi.lastEventId;
 
-		cgi.write("");
+		cgi.write(":\n"); // the comment ensures apache doesn't skip us
 		cgi.flush(); // sending the headers along
 	} else {
 		// gotta handle it as ajax polling
@@ -292,14 +298,19 @@ class NotificationConnection : RtudConnection {
 		Message*[] backMessages;
 
 		if("last-message-id" in message) {
+			auto lastMessageId = message["last-message-id"][$-1];
 			foreach(channel; channels)
 				backMessages ~= channel.messages;
 
 			auto bm = sort!"a.timestamp < b.timestamp"(backMessages);
 
-			backMessages = array(find!("a.id == b")(bm, message["last-message-id"][$-1]));
-			if(backMessages.length)
+			backMessages = array(find!("a.id == b")(bm, lastMessageId));
+			while(backMessages.length && backMessages[0].id == lastMessageId)
 				backMessages = backMessages[1 .. $]; // the last message is the one they got
+
+			//writeln("backed up from ", lastMessageId, " is");
+			//foreach(msg; backMessages)
+				//writeln(*msg);
 		} else if("minimum-time" in message) {
 			foreach(channel; channels)
 				backMessages ~= channel.messages;
@@ -422,6 +433,8 @@ class RealTimeUpdateDaemon : NetworkManager {
 		message.id = id;
 		messages[id] = message;
 
+		//writeln("NEW MESSAGE: ", *message);
+
 		return message;
 	}
 
@@ -453,11 +466,15 @@ class RealTimeUpdateDaemon : NetworkManager {
 				deleteMessage(messageMain); // too old, kill it
 			Message message = *messageMain;
 			message.operation = operation;
-			connection.write("id: " ~ message.id ~ "\n");
-			connection.write("event: " ~ message.type ~ "\n");
+
+			// this should never happen, but just in case
+			replace(message.type, "\n", "");
 			connection.write(":timestamp: " ~ to!string(message.timestamp) ~ "\n");
 			connection.write(":ttl: " ~ to!string(message.ttl) ~ "\n");
 			connection.write(":operation: " ~ message.operation ~ "\n");
+			if(message.id.length)
+				connection.write("id: " ~ message.id ~ "\n");
+			connection.write("event: " ~ message.type ~ "\n");
 			connection.write("data: " ~ replace(message.data, "\n", "\ndata: ") ~ "\n");
 			connection.write("\n");
 		}
