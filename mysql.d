@@ -92,8 +92,12 @@ class MySqlResult : ResultSet {
 		int numFields = mysql_num_fields(result);
 		auto fields = mysql_fetch_fields(result);
 
+		if(fields is null)
+			return;
+
 		for(int i = 0; i < numFields; i++) {
-			mapping[fromCstring(fields[i].name)] = i;
+			if(fields[i].name !is null)
+				mapping[fromCstring(fields[i].name)] = i;
 		}
 	}
 

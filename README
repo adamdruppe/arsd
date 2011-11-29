@@ -63,3 +63,8 @@ bmp.d   - gives .bmp read/write
 dws.d  - a draft of my D windowing system (also includes some Qt code)
 wav.d  - reading and writing WAV files
 midi.d - reading and writing MIDI files
+
+
+Authors:
+
+Thanks go to Nick Sabalusky, Trass3r, and Stanislav Blinov for input and patches.

@@ -142,6 +142,11 @@ string curlAuth(string url, string data = null, string username = null, string p
 		if(res != 0) throw new CurlException(res);
 		res = curl_easy_setopt(curl, CURLOPT_COOKIEFILE, toStringz(cookieJar));
 		if(res != 0) throw new CurlException(res);
+	} else {
+		// just want to enable cookie parsing for location 3xx thingies.
+		// some crappy sites will give you an endless runaround if they can't
+		// place their fucking tracking cookies.
+		res = curl_easy_setopt(curl, CURLOPT_COOKIEFILE, toStringz("lol totally not here"));
 	}
 
 	res = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);

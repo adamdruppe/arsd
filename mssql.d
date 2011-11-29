@@ -50,8 +50,7 @@ class MsSql : Database {
 
 		// this is passed to MsSqlResult to control
 		SQLHSTMT statement;
-		auto returned = SQLAllocHandle(SQL_HANDLE_STMT, conn,
-                                &statement);
+		auto returned = SQLAllocHandle(SQL_HANDLE_STMT, conn, &statement);
 
 		enforce(returned == SQL_SUCCESS);
 
@@ -157,6 +156,10 @@ class MsSqlResult : ResultSet {
 						if(ptr)
 							goto more;
 					}
+<<<<<<< HEAD
+=======
+				}
+>>>>>>> 9d02
 					row ~= a;
 				}
 
