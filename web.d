@@ -1519,7 +1519,7 @@ string toHtml(T)(T a) {
 	else static if(is(T == Html))
 		ret = a.source;
 	else
-		ret = htmlEntitiesEncode(std.array.replace(to!string(a), "\n", "<br />\n"));
+		ret = std.array.replace(htmlEntitiesEncode(to!string(a)), "\n", "<br />\n");
 
 	return ret;
 }
@@ -2325,8 +2325,10 @@ void setLoginCookie(Cgi cgi, string name, string value) {
 	cgi.setCookie(name, value, 0, "/", null, true);
 }
 
-string htmlTemplateWithData(in string text, in string[string] vars) {
-	assert(text !is null);
+// this thing sucks in so many ways. it's kinda useful tho
+string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml = true) {
+	if(text is null)
+		return null;
 
 	string newText = text;
 
@@ -2334,10 +2336,23 @@ string htmlTemplateWithData(in string text, in string[string] vars) {
 	foreach(k, v; vars) {
 		//assert(k !is null);
 		//assert(v !is null);
-		newText = newText.replace("{$" ~ k ~ "}", htmlEntitiesEncode(v).replace("\n", "<br />"));
+		string replacement = useHtml ? htmlEntitiesEncode(v).replace("\n", "<br />") : v;
+		newText = newText.replace("{$" ~ k ~ "}", replacement);
 	}
 
 	return newText;
+}
+
+void applyTemplateToElement(Element e, in string[string] vars) {
+	foreach(ele; e.tree) {
+		foreach(k, v; ele.attributes)
+			ele.attributes[k] = htmlTemplateWithData(v, vars, false);
+		auto tc = cast(TextNode) ele;
+		if(tc !is null) {
+			// FIXME: this should arguably be null
+			tc.contents = htmlTemplateWithData(tc.contents, vars, false);
+		}
+	}
 }
 
 string htmlTemplate(string filename, string[string] vars) {
