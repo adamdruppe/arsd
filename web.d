@@ -404,12 +404,15 @@ class ApiProvider : WebDotDBaseType {
 
 	/// Overriding it might be useful if you want to serve generic filenames or an opDispatch kind of thing.
 	/// (opDispatch itself won't work because it's name argument needs to be known at compile time!)
-	Document _catchAll(string path) {
+	///
+	/// Note that you can return Documents here as they implement
+	/// the FileResource interface too.
+	FileResource _catchAll(string path) {
 		throw new NoSuchPageException(_errorMessageForCatchAll);
 	}
 
 	private string _errorMessageForCatchAll;
-	private Document _catchallEntry(string path, string funName, string errorMessage) {
+	private FileResource _catchallEntry(string path, string funName, string errorMessage) {
 		if(!errorMessage.length) {
 			string allFuncs, allObjs;
 			foreach(n, f; reflection.functions)
@@ -625,13 +628,14 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 		f.returnTypeIsDocument = true;
 		reflection.functions["/"] = cast(immutable) f;
 
+		/+
 		// catchAll here too
 		f = new FunctionInfo;
 		f.parentObject = reflection;
 		f.dispatcher = generateWrapper!(PM, "_catchAll", PM._catchAll)(reflection, instantiation);
 		f.returnTypeIsDocument = true;
 		reflection.functions["/_catchAll"] = cast(immutable) f;
-
+		+/
 	}}
 
 	// derivedMembers is changed from allMembers
@@ -954,14 +958,19 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				"");
 
 			result.success = true;
-			JSONValue res;
-			res.type = JSON_TYPE.STRING;
-			res.str = (d is null) ? "" : d.toString();
-			result.result = res;
 
+			if(d !is null) {
+				auto doc = cast(Document) d;
+				if(doc)
+					instantiation._postProcess(doc);
+
+				cgi.setResponseLocation(d.contentType());
+				cgi.write(d.getData(), true);
+			}
+
+			// we did everything we need above...
+			envelopeFormat = "no-processing";
 			goto do_nothing_else;
-//			envelopeFormat = "no-processing";
-//			return;
 		}
 
 		assert(fun !is null);

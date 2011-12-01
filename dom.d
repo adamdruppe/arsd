@@ -2304,8 +2304,15 @@ struct Html {
 	string source;
 }
 
+
+interface FileResource {
+	string contentType() const;
+	immutable(ubyte)[] getData() const;
+}
+
+
 ///.
-class Document {
+class Document : FileResource {
 	///.
 	this(string data, bool caseSensitive = false, bool strict = false) {
 		parse(data, caseSensitive, strict);
@@ -2317,6 +2324,33 @@ class Document {
 	this() {
 
 	}
+
+	string _contentType = "text/html";
+
+	/// If you're using this for some other kind of XML, you can
+	/// set the content type here.
+	///
+	/// Note: this has no impact on the function of this class.
+	/// It is only used if the document is sent via a protocol like HTTP.
+	///
+	/// This may be called by parse() if it recognizes the data. Otherwise,
+	/// if you don't set it, it assumes text/html.
+	string contentType(string mimeType) {
+		_contentType = mimeType;
+		return _contentType;
+	}
+
+	/// implementing the FileResource interface, useful for sending via
+	/// http automatically.
+	override string contentType() const {
+		return _contentType;
+	}
+
+	/// implementing the FileResource interface; it calls toString.
+	override immutable(ubyte)[] getData() const {
+		return cast(immutable(ubyte)[]) this.toString();
+	}
+
 
 	/// Concatenates any consecutive text nodes
 	/*
