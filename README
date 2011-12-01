@@ -47,6 +47,8 @@ curl.d - a small wrapper around the curl library
 csv.d  - gives read support to csv files
 http.d - a lighterweight alternative to curl.d
 
+color.d - a basic color struct and some HSL functions
+
 
 
 Things I might add once I clean up the files (this can be expedited upon
