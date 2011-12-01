@@ -869,7 +869,7 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 /// instantiation should be an object of your ApiProvider type.
 /// pathInfoStartingPoint is used to make a slice of it, incase you already consumed part of the path info before you called this.
 
-void run(Provider)(Cgi cgi, Provider instantiation, int pathInfoStartingPoint = 0) if(is(Provider : ApiProvider)) {
+void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
 	if(instantiation.reflection is null) {
