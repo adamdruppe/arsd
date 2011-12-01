@@ -451,34 +451,18 @@ class DataObject {
 			auto arg = _arguments[0];
 
 			string a;
-			if(arg == typeid(string)) {
+			if(arg == typeid(string) || arg == typeid(immutable(string)) || arg == typeid(const(immutable(char)[]))) {
 				a = va_arg!(string)(_argptr);
-			} else if(arg == typeid(immutable(string))) {
-				a = va_arg!(immutable(string))(_argptr);
-			} else if(arg == typeid(const(immutable(char)[]))) {
-				a = va_arg!(const(immutable(char)[]))(_argptr);
-			} else if (arg == typeid(int)) {
+			} else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
 				auto e = va_arg!(int)(_argptr);
 				a = to!string(e);
-			} else if (arg == typeid(immutable(int))) {
-				auto e = va_arg!(immutable(int))(_argptr);
+			} else if (arg == typeid(char) || arg == typeid(immutable(char))) {
+				auto e = va_arg!(char)(_argptr);
 				a = to!string(e);
-			} else if (arg == typeid(const(int))) {
-				auto e = va_arg!(const(int))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(immutable(char))) {
-				auto e = va_arg!(immutable(char))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(long)) {
+			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
 				auto e = va_arg!(long)(_argptr);
 				a = to!string(e);
-			} else if (arg == typeid(const(long))) {
-				auto e = va_arg!(const(long))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(immutable(long))) {
-				auto e = va_arg!(immutable(long))(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(void*)) {
+			} else if (arg == typeid(null)) {
 				auto e = va_arg!(void*)(_argptr);
 				assert(e is null, "can only pass null pointer");
 				a = null;
