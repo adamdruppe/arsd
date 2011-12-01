@@ -443,6 +443,23 @@ class ApiObject : WebDotDBaseType {
 	}
 }
 
+class DataFile : FileResource {
+	this(string contentType, immutable(void)[] contents) {
+		_contentType = contentType;
+		_content = contents;
+	}
+
+	private string _contentType;
+	private immutable(void)[] _content;
+
+	string contentType() const {
+		return _contentType;
+	}
+
+	immutable(ubyte)[] getData() {
+		return cast(immutable(ubyte)[]) _content;
+	}
+}
 
 /// Describes the info collected about your class
 struct ReflectionInfo {
