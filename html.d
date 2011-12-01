@@ -777,7 +777,7 @@ class CssAtRule : CssPart {
 
 	string content;
 
-	override CssPart clone() const {
+	override CssAtRule clone() const {
 		auto n = new CssAtRule();
 		n.content = content;
 		return n;
@@ -897,7 +897,7 @@ class CssRule : CssPart {
 	// note: does not include the ending semicolon
 	string content;
 
-	override CssPart clone() const {
+	override CssRule clone() const {
 		auto n = new CssRule();
 		n.content = content;
 		return n;

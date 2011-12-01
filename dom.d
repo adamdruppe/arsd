@@ -2399,7 +2399,7 @@ class Document {
 				// found something in either branch...
 				if(idx != -1) {
 					// read till a quote or about 12 chars, whichever comes first...
-					int end = idx;
+					auto end = idx;
 					while(end < dataAsBytes.length && dataAsBytes[end] != '"' && end - idx < 12)
 						end++;
 
@@ -4018,7 +4018,7 @@ class StyleSheet {
 }
 
 // unbelievable.
-int indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
+sizediff_t indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
 	auto found = std.algorithm.find(haystack, needle);
 	if(found.length == 0)
 		return -1;
