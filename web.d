@@ -993,7 +993,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				if(doc)
 					instantiation._postProcess(doc);
 
-				cgi.setResponseLocation(d.contentType());
+				cgi.setResponseContentType(d.contentType());
 				cgi.write(d.getData(), true);
 			}
 
