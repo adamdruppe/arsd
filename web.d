@@ -1059,7 +1059,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 					form = doc.requireSelector!Form("form");
 				} else {
-					Parameter[] params = cast(Parameter[]) fun.parameters.dup;
+					Parameter[] params = cast(Parameter[]) (cast() *fun).parameters.dup;
 					foreach(i, p; fun.parameters) {
 						string value = "";
 						if(p.name in cgi.get)
@@ -1464,14 +1464,15 @@ template parameterDefaultsOf (alias func) {
 }
 
 bool parameterHasDefault(alias func)(int p) {
-	return parameterDefaultOf!func(p).length > 0;
+        auto a = parameterDefaultsOf!(func);
+	if(a.length == 0)
+		return false;
+	return a[p].length > 0;
 }
 
 string parameterDefaultOf (alias func)(int paramNum) {
-        auto a = parameterInfoImpl!(func)[1];
-	if(paramNum < a.length)
-		return a[paramNum];
-	return null;
+        auto a = parameterDefaultsOf!(func);
+	return a[paramNum];
 }
 
 sizediff_t indexOfNew(string s, char a) {
@@ -1495,13 +1496,16 @@ private string[][2] parameterInfoImpl (alias func) ()
 
         auto start = funcStr.indexOfNew('(');
         auto end = funcStr.indexOfNew(')');
+
+	assert(start != -1);
+	assert(end != -1);
         
         const firstPattern = ' ';
         const secondPattern = ',';
         
         funcStr = funcStr[start + 1 .. end];
         
-        if (funcStr == "")
+        if (funcStr == "") // no parameters
                 return [null, null];
                 
         funcStr ~= secondPattern;
@@ -1524,7 +1528,7 @@ private string[][2] parameterInfoImpl (alias func) ()
         }
         
         if (arr.length == 1)
-                return [arr, [cast(string) null]];
+                return [arr, [""]];
         
         string[] result;
 	string[] defaults;
@@ -1532,7 +1536,8 @@ private string[][2] parameterInfoImpl (alias func) ()
 
 	bool gettingDefault = false;
 
-	string currentDefault = null;
+	string currentName = "";
+	string currentDefault = "";
         
         foreach (str ; arr)
         {
@@ -1542,6 +1547,7 @@ private string[][2] parameterInfoImpl (alias func) ()
 		}
 
 		if(gettingDefault) {
+			assert(str.length);
 			currentDefault = str;
 			gettingDefault = false;
 			continue;
@@ -1549,13 +1555,24 @@ private string[][2] parameterInfoImpl (alias func) ()
 
                 skip = !skip;
                 
-                if (skip)
+                if (skip) {
+			if(currentName.length) {
+				result ~= currentName;
+				defaults ~= currentDefault;
+				currentName = null;
+			}
                         continue;
-                
-                result ~= str;
-		defaults ~= currentDefault;
-		currentDefault = null;
+		}
+
+		currentName = str;
         }
+
+	if(currentName !is null) {
+		result ~= currentName;
+		defaults ~= currentDefault;
+	}
+
+	assert(result.length == defaults.length);
         
         return [result, defaults];
 }
@@ -1903,10 +1920,11 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 				args[i] = cast()  cgi.files[using]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
-					static if(parameterHasDefault!(f)(i))
+					static if(parameterHasDefault!(f)(i)) {
 						args[i] = mixin(parameterDefaultOf!(f)(i));
-					else
+					} else {
 						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
+					}
 				}
 
 				// We now check the type reported by the client, if there is one
