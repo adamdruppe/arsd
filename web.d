@@ -1,5 +1,8 @@
 module arsd.web;
 
+// FIXME: if a method has a default value of a non-primitive type,
+// it's still liable to screw everything else.
+
 /*
 	Reasonably easy CSRF plan:
 
@@ -456,7 +459,7 @@ class DataFile : FileResource {
 		return _contentType;
 	}
 
-	immutable(ubyte)[] getData() {
+	immutable(ubyte)[] getData() const {
 		return cast(immutable(ubyte)[]) _content;
 	}
 }
@@ -538,6 +541,9 @@ struct Parameter {
 	string type; /// type of HTML element to create when asking
 	string staticType; /// original type
 	string validator; /// FIXME
+
+	bool hasDefault; /// if there was a default defined in the function
+	string defaultValue; /// the default value defined in D, but as a string, if present
 
 	// for radio and select boxes
 	string[] options; /// possible options for selects
@@ -728,7 +734,10 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 
 			//f.uriPath = f.originalName;
 
-			auto names = parameterNamesOf!(__traits(getMember, PM, member));
+			auto namesAndDefaults = parameterInfoImpl!(__traits(getMember, PM, member));
+			auto names = namesAndDefaults[0];
+			auto defaults = namesAndDefaults[1];
+			assert(names.length == defaults.length);
 
 			foreach(idx, param; fargs) {
 				if(idx >= names.length)
@@ -737,6 +746,9 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 				Parameter p = reflectParam!(typeof(param))();
 
 				p.name = names[idx];
+				auto d = defaults[idx];
+				p.defaultValue = d == "null" ? "" : d;
+				p.hasDefault = d.length > 0;
 
 				f.parameters ~= p;
 			}
@@ -1442,11 +1454,25 @@ string parameterNamesOf( alias fn )( ) {
 +/
 
  
-template parameterNamesOf (alias func)
-{
-        const parameterNamesOf = parameterNamesOfImpl!(func);
+template parameterNamesOf (alias func) {
+        const parameterNamesOf = parameterInfoImpl!(func)[0];
 }
 
+// FIXME: I lost about a second on compile time after adding support for defaults :-(
+template parameterDefaultsOf (alias func) {
+        const parameterDefaultsOf = parameterInfoImpl!(func)[1];
+}
+
+bool parameterHasDefault(alias func)(int p) {
+	return parameterDefaultOf!func(p).length > 0;
+}
+
+string parameterDefaultOf (alias func)(int paramNum) {
+        auto a = parameterInfoImpl!(func)[1];
+	if(paramNum < a.length)
+		return a[paramNum];
+	return null;
+}
 
 sizediff_t indexOfNew(string s, char a) {
 	foreach(i, c; s)
@@ -1463,7 +1489,7 @@ sizediff_t indexOfNew(string s, char a) {
  *     
  * Returns: an array of strings containing the parameter names 
  */
-private string[] parameterNamesOfImpl (alias func) ()
+private string[][2] parameterInfoImpl (alias func) ()
 {
         string funcStr = typeof(&func).stringof;
 
@@ -1476,7 +1502,7 @@ private string[] parameterNamesOfImpl (alias func) ()
         funcStr = funcStr[start + 1 .. end];
         
         if (funcStr == "")
-                return null;
+                return [null, null];
                 
         funcStr ~= secondPattern;
         
@@ -1498,22 +1524,40 @@ private string[] parameterNamesOfImpl (alias func) ()
         }
         
         if (arr.length == 1)
-                return arr;
+                return [arr, [cast(string) null]];
         
         string[] result;
+	string[] defaults;
         bool skip = false;
+
+	bool gettingDefault = false;
+
+	string currentDefault = null;
         
         foreach (str ; arr)
         {
+		if(str == "=") {
+			gettingDefault = true;
+			continue;
+		}
+
+		if(gettingDefault) {
+			currentDefault = str;
+			gettingDefault = false;
+			continue;
+		}
+
                 skip = !skip;
                 
                 if (skip)
                         continue;
                 
                 result ~= str;
+		defaults ~= currentDefault;
+		currentDefault = null;
         }
         
-        return result;
+        return [result, defaults];
 }
 /////////////////////////////////
 
@@ -1851,13 +1895,18 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 				}
 				else
 					args[i] = false;
+
+				// FIXME: what if the default is true?
 			} else static if(is(Unqual!(type) == Cgi.UploadedFile)) {
 				if(using !in cgi.files)
 					throw new InsufficientParametersException(funName, "file " ~ name ~ " is not present");
 				args[i] = cast()  cgi.files[using]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
-					throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
+					static if(parameterHasDefault!(f)(i))
+						args[i] = mixin(parameterDefaultOf!(f)(i));
+					else
+						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
 				}
 
 				// We now check the type reported by the client, if there is one
