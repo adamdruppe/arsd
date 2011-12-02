@@ -826,7 +826,8 @@ class CssRuleSet : CssPart {
 	override CssRuleSet clone() const {
 		auto n = new CssRuleSet();
 		n.selectors = selectors.dup;
-		n.contents = contents.dup;
+		foreach(part; contents)
+			n.contents ~= part.clone();
 		return n;
 	}
 
