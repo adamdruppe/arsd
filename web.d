@@ -1481,21 +1481,29 @@ sizediff_t indexOfNew(string s, char a) {
 			return i;
 	return -1;
 }
+
+sizediff_t lastIndexOfNew(string s, char a) {
+	for(sizediff_t i = s.length; i > 0; i--)
+		if(s[i - 1] == a)
+			return i - 1;
+	return -1;
+}
  
-/**
- * Returns the parameter names of the given function
- *  
- * Params:
- *     func = the function alias to get the parameter names of
- *     
- * Returns: an array of strings containing the parameter names 
- */
+
+// FIXME: a problem here is the compiler only keeps one stringof
+// for a particular type
+//
+// so if you have void a(string a, string b); and void b(string b, string c),
+// both a() and b() will show up as params == ["a", "b"]!
+//
+// 
 private string[][2] parameterInfoImpl (alias func) ()
 {
-        string funcStr = typeof(&func).stringof;
+        string funcStr = typeof(func).stringof; // this might fix the fixme above...
+						// it used to be typeof(&func).stringof
 
         auto start = funcStr.indexOfNew('(');
-        auto end = funcStr.indexOfNew(')');
+        auto end = funcStr.lastIndexOfNew(')');
 
 	assert(start != -1);
 	assert(end != -1);
@@ -1925,41 +1933,42 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 					} else {
 						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
 					}
-				}
+				} else {
 
-				// We now check the type reported by the client, if there is one
-				// Right now, only one type is supported: ServerResult, which means
-				// it's actually a nested function call
+					// We now check the type reported by the client, if there is one
+					// Right now, only one type is supported: ServerResult, which means
+					// it's actually a nested function call
 
-				string[] ofInterest = cast(string[]) sargs[using]; // I'm changing the reference, but not the underlying stuff, so this cast is ok
+					string[] ofInterest = cast(string[]) sargs[using]; // I'm changing the reference, but not the underlying stuff, so this cast is ok
 
-				if(using ~ "-type" in sargs) {
-					string reportedType = sargs[using ~ "-type"][$-1];
-					if(reportedType == "ServerResult") {
+					if(using ~ "-type" in sargs) {
+						string reportedType = sargs[using ~ "-type"][$-1];
+						if(reportedType == "ServerResult") {
 
-						// FIXME: doesn't handle functions that return
-						// compound types (structs, arrays, etc)
+							// FIXME: doesn't handle functions that return
+							// compound types (structs, arrays, etc)
 
-						ofInterest = null;
+							ofInterest = null;
 
-						string str = sargs[using][$-1];
-						auto idx = str.indexOf("?");
-						string callingName, callingArguments;
-						if(idx == -1) {
-							callingName = str;
-						} else {
-							callingName = str[0..idx];
-							callingArguments = str[idx + 1 .. $];
+							string str = sargs[using][$-1];
+							auto idx = str.indexOf("?");
+							string callingName, callingArguments;
+							if(idx == -1) {
+								callingName = str;
+							} else {
+								callingName = str[0..idx];
+								callingArguments = str[idx + 1 .. $];
+							}
+
+							// find it in reflection
+							ofInterest ~= reflection.functions[callingName].
+								dispatcher(cgi, null, decodeVariables(callingArguments), "string").str;
 						}
-
-						// find it in reflection
-						ofInterest ~= reflection.functions[callingName].
-							dispatcher(cgi, null, decodeVariables(callingArguments), "string").str;
 					}
+
+
+					args[i] = fromUrlParam!type(ofInterest);
 				}
-
-
-				args[i] = fromUrlParam!type(ofInterest);
 			}
 		}
 
