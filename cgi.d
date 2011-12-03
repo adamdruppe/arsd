@@ -624,13 +624,64 @@ class Cgi {
 	};
 	}
 
+	/// This represents a file the user uploaded via a POST request.
 	struct UploadedFile {
-		string name;
-		string filename;
-		string contentType;
-		immutable(ubyte)[] content;
+		string name; 		/// The name of the form element.
+		string filename; 	/// The filename the user set.
+		string contentType; 	/// The MIME type the user's browser reported. (Not reliable.)
+
+		/**
+			For small files, cgi.d will buffer the uploaded file in memory, and make it
+			directly accessible to you through the content member. I find this very convenient
+			and somewhat efficient, since it can avoid hitting the disk entirely. (I
+			often want to inspect and modify the file anyway!)
+
+			I find the file is very large, it is undesirable to eat that much memory just
+			for a file buffer. In those cases, if you pass a large enough value for maxContentLength
+			to the constructor so they are accepted, cgi.d will write the content to a temporary
+			file that you can re-read later.
+
+			You can override this behavior by subclassing Cgi and overriding the protected
+			handlePostChunk method. Note that the object is not initialized when you
+			write that method - the http headers are available, but the cgi.post method
+			is not. You may parse the file as it streams in using this method.
+
+
+			Anyway, if the file is small enough to be in memory, contentInMemory will be
+			set to true, and the content is available in the content member.
+
+			If not, contentInMemory will be set to false, and the content saved in a file,
+			whose name will be available in the contentFilename member.
+
+
+			Tip: if you know you are always dealing with small files, and want the convenience
+			of ignoring this member, construct Cgi with a small maxContentLength. Then, if
+			a large file comes in, it simply throws an exception (and HTTP error response)
+			instead of trying to handle it.
+
+			The default value of maxContentLength in the constructor is for small files.
+		*/
+		bool contentInMemory;
+		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
+		string contentFilename; /// the file where we dumped the content, if contentInMemory == false
 	}
 
+	/// Very simple method to require a basic auth username and password.
+	/// If the http request doesn't include the required credentials, it throws a
+	/// HTTP 401 error, and an exception.
+	///
+	/// Note: basic auth does not provide great security, especially over unencrypted HTTP;
+	/// the user's credentials are sent in plain text on every request.
+	///
+	/// If you are using Apache, the HTTP_AUTHORIZATION variable may not be sent to the
+	/// application. Either use Apache's built in methods for basic authentication, or add
+	/// something along these lines to your server configuration:
+	///
+	///      RewriteEngine On 
+	///      RewriteCond %{HTTP:Authorization} ^(.*) 
+	///      RewriteRule ^(.*) - [E=HTTP_AUTHORIZATION:%1]
+	///
+	/// To ensure the necessary data is available to cgi.d.
 	void requireBasicAuth(string user, string pass, string message = null) {
 		if(authorization != "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (user ~ ":" ~ pass))) {
 			setResponseStatus("401 Authorization Required");
@@ -950,49 +1001,67 @@ class Cgi {
 		return closed;
 	}
 
+	/* Hooks for redirecting input and output */
 	private void delegate(const(ubyte)[]) rawDataOutput = null;
 
-	private bool outputtedResponseData;
+	/* This info is used when handling a more raw HTTP protocol */
 	private bool nph;
 	private bool http10;
 	private bool closed;
 	private bool responseChunked = false;
 
-	private bool noCache = true;
-
-	version(preserveData)
+	version(preserveData) // note: this can eat lots of memory; don't use unless you're sure you need it.
 	immutable(ubyte)[] originalPostData;
 
-	immutable(char[]) host;
-	immutable(char[]) userAgent;
-	immutable(char[]) pathInfo;
-	immutable(char[]) scriptName;
-	immutable(char[]) authorization;
-	immutable(char[]) accept;
-	immutable(char[]) lastEventId;
+	/* Internal state flags */
+	private bool outputtedResponseData;
+	private bool noCache = true;
 
-	immutable(char[]) queryString;
+	/** What follows is data gotten from the HTTP request. It is all fully immutable,
+	    partially because it logically is (your code doesn't change what the user requested...)
+	    and partially because I hate how bad programs in PHP change those superglobals to do
+	    all kinds of hard to follow ugliness. I don't want that to ever happen in D.
+
+	    For some of these, you'll want to refer to the http or cgi specs for more details.
+	*/
+
+	immutable(char[]) host; 	/// The hostname in the request. If one program serves multiple domains, you can use this to differentiate between them.
+	immutable(char[]) userAgent; 	/// The browser's user-agent string. Can be used to identify the browser.
+	immutable(char[]) pathInfo; 	/// This is any stuff sent after your program's name on the url, but before the query string. For example, suppose your program is named "app". If the user goes to site.com/app, pathInfo is empty. But, he can also go to site.com/app/some/sub/path; treating your program like a virtual folder. In this case, pathInfo == "/some/sub/path".
+	immutable(char[]) scriptName;   /// The full base path of your program, as seen by the user. If your program is located at site.com/programs/apps, scriptName == "/programs/apps".
+	immutable(char[]) authorization; /// The full authorization string from the header, undigested. Useful for implementing auth schemes such as OAuth 1.0. Note that some web servers do not forward this to the app without taking extra steps. See requireBasicAuth's comment for more info.
+	immutable(char[]) accept; 	/// The HTTP accept header is the user agent telling what content types it is willing to accept. This is often */*; they accept everything, so it's not terribly useful. (The similar sounding Accept-Encoding header is handled automatically for chunking and gzipping. Simply set gzipResponse = true and cgi.d handles the details, zipping if the user's browser is willing to accept it.
+	immutable(char[]) lastEventId; 	/// The HTML 5 draft includes an EventSource() object that connects to the server, and remains open to take a stream of events. My arsd.rtud module can help with the server side part of that. The Last-Event-Id http header is defined in the draft to help handle loss of connection. When the browser reconnects to you, it sets this header to the last event id it saw, so you can catch it up. This member has the contents of that header.
+
+	immutable(RequestMethod) requestMethod; /// The HTTP request verb: GET, POST, etc. It is represented as an enum in cgi.d (which, like many enums, you can convert back to string with std.conv.to()). A HTTP GET is supposed to, according to the spec, not have side effects; a user can GET something over and over again and always have the same result. On all requests, the get[] and getArray[] members may be filled in. The post[] and postArray[] members are only filled in on POST methods.
+	immutable(char[]) queryString; 	/// The unparsed content of the request query string - the stuff after the ? in your URL. See get[] and getArray[] for a parse view of it. Sometimes, the unparsed string is useful though if you want a custom format of data up there (probably not a good idea, unless it is really simple, like "?username" perhaps.)
+	immutable(char[]) cookie; 	/// The unparsed content of the Cookie: header in the request. See also the cookies[string] member for a parsed view of the data.
+	/** The Referer header from the request. (It is misspelled in the HTTP spec, and thus the actual request and cgi specs too, but I spelled the word correctly here because that's sane. The spec's misspelling is an implementation detail.) It contains the site url that referred the user to your program; the site that linked to you, or if you're serving images, the site that has you as an image. Also, if you're in an iframe, the referrer is the site that is framing you.
+
+	Important note: if the user copy/pastes your url, this is blank, and, just like with all other user data, their browsers can also lie to you. Don't rely on it for real security.
+	*/
 	immutable(char[]) referrer;
-	immutable(char[]) cookie;
-	immutable(char[]) requestUri;
+	immutable(char[]) requestUri; 	/// The full url if the current request, excluding the protocol and host. requestUri == scriptName ~ pathInfo ~ (queryString.length ? "?" ~ queryString : "");
 
-	immutable(RequestMethod) requestMethod;
+	immutable(char[]) remoteAddress; /// The IP address of the user, as we see it. (Might not match the IP of the user's computer due to things like proxies and NAT.) 
 
-	immutable(string[string]) get;
-	immutable(string[string]) post;
-	immutable(string[string]) cookies;
-	immutable(UploadedFile[string]) files;
+	immutable bool https; 	/// Was the request encrypted via https?
+	immutable int port; 	/// On what TCP port number did the server receive the request?
 
-	// Use these if you expect multiple items submitted with the same name. btw, assert(get[name] is getArray[name][$-1); should pass. Same for post and cookies.
-	// the order of the arrays is the order the data arrives
-	immutable(string[][string]) getArray;
-	immutable(string[][string]) postArray;
-	immutable(string[][string]) cookiesArray;
+	/** Here come the parsed request variables - the things that come close to PHP's _GET, _POST, etc. superglobals in content. */
 
-	immutable(char[]) remoteAddress;
+	immutable(string[string]) get; 	/// The data from your query string in the url, only showing the last string of each name. If you want to handle multiple values with the same name, use getArray. This only works right if the query string is x-www-form-urlencoded; the default you see on the web with name=value pairs separated by the & character.
+	immutable(string[string]) post; /// The data from the request's body, on POST requests. It parses application/x-www-form-urlencoded data (used by most web requests, including typical forms), and multipart/form-data requests (used by file uploads on web forms) into the same container, so you can always access them the same way. It makes no attempt to parse other content types. If you want to accept an XML Post body (for a web api perhaps), you'll need to handle the raw data yourself.
+	immutable(string[string]) cookies; /// Separates out the cookie header into individual name/value pairs (which is how you set them!)
+	immutable(UploadedFile[string]) files; /// Represents user uploaded files. When making a file upload form, be sure to follow the standard: set method="POST" and enctype="multipart/form-data" in your html <form> tag attributes. The key into this array is the name attribute on your input tag, just like with other post variables. See the comments on the UploadedFile struct for more information about the data inside, including important notes on max size and content location.
 
-	immutable bool https;
-	immutable int port;
+	/// Use these if you expect multiple items submitted with the same name. btw, assert(get[name] is getArray[name][$-1); should pass. Same for post and cookies.
+	/// the order of the arrays is the order the data arrives
+	immutable(string[][string]) getArray; /// like get, but an array of values per name
+	immutable(string[][string]) postArray; /// ditto for post
+	immutable(string[][string]) cookiesArray; /// ditto for cookies
+
+	// FIXME: what about multiple files with the same name?
   private:
 	//RequestMethod _requestMethod;
 }
