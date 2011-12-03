@@ -1140,7 +1140,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 			case "document":
 			case "html":
 			default:
-				cgi.setResponseContentType("text/html");
+				cgi.setResponseContentType("text/html; charset=utf-8");
 
 				if(result.result.type == JSON_TYPE.STRING) {
 					auto returned = result.result.str;
