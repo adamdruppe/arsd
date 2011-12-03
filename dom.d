@@ -2325,7 +2325,7 @@ class Document : FileResource {
 
 	}
 
-	string _contentType = "text/html";
+	string _contentType = "text/html; charset=utf-8";
 
 	/// If you're using this for some other kind of XML, you can
 	/// set the content type here.
@@ -2445,7 +2445,7 @@ class Document : FileResource {
 
 		if(strict)
 			enforce(dataEncoding !is null, "I couldn't figure out the encoding of this document.");
-		else {
+		else if(dataEncoding is null) {
 			// if we really don't know by here, it means we already tried UTF-8,
 			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
 			// tags... let's assume it's Windows-1252, since that's probably the most
