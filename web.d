@@ -1072,6 +1072,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					form = createAutomaticForm(new Document, fun);// params, beautify(fun.originalName));
 					foreach(k, v; cgi.get)
 						form.setValue(k, v);
+
+					instantiation.addCsrfTokens(form);
 					form.setValue("envelopeFormat", envelopeFormat);
 
 					auto n = form.getElementById("function-name");
