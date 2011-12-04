@@ -2169,6 +2169,10 @@ version(Windows) {
 	alias GetTempPathW GetTempPath;
 }
 
+version(Posix) {
+	static import linux = std.c.linux.linux;
+}
+
 /// Provides some persistent storage, kinda like PHP
 /// But, you have to manually commit() the data back to a file.
 /// You might want to put this in a scope(exit) block or something like that.
@@ -2176,6 +2180,7 @@ class Session {
 	/// Loads the session if available, and creates one if not.
 	/// May write a session id cookie to the passed cgi object.
 	this(Cgi cgi, string cookieName = "_sess_id", bool useFile = true) {
+		// assert(cgi.https); // you want this for best security, but I won't be an ass and require it.
 		this._cookieName = cookieName;
 		this.cgi = cgi;
 		bool isNew = false;
@@ -2183,8 +2188,14 @@ class Session {
 		if(cookieName in cgi.cookies && cgi.cookies[cookieName].length)
 			token = cgi.cookies[cookieName];
 		else {
-			token = makeNewCookie();
-			isNew = true;
+			if("x-arsd-session-override" in cgi.requestHeaders) {
+				loadSpecialSession(cgi);
+				return;
+			} else {
+				// there is no session; make a new one.
+				token = makeNewCookie();
+				isNew = true;
+			}
 		}
 
 		makeSessionId(token);
@@ -2192,7 +2203,63 @@ class Session {
 		if(useFile)
 			reload();
 		if(isNew)
-			set("csrfToken", generateCsrfToken());
+			addDefaults();
+	}
+
+	/// This loads a session that the user requests, without the normal
+	/// checks. The idea is to allow debugging or local request sharing.
+	///
+	/// It is private because you never have to call it yourself, but read on
+	/// to understand how it works and some potential security concerns.
+	///
+	/// It loads the requested session read-only (it does not commit),
+	/// if and only if the request asked for the correct hash and id.
+	///
+	/// If they have enough info to build the correct hash, they must
+	/// already know the contents of the file, so there should be no
+	/// risk of data contamination here. (A traditional session hijack
+	/// is surely much easier.)
+	///
+	/// It is possible for them to forge a request as a particular user
+	/// if they can read the file, but otherwise not write. For that reason,
+	/// especially with this functionality here, it is very important for you
+	/// to lock down your session files. If on a shared host, be sure each user's
+	/// processes run as separate operating system users, so the file permissions
+	/// set in commit() actually help you.
+	///
+	/// If you can't reasonably protect the session file, compile this out with
+	/// -version=no_session_override and only access unauthenticated functions
+	/// from other languages. They can still read your sessions, and potentially
+	/// hijack it, but it will at least be a little harder.
+	///
+	/// Also, don't use this over the open internet at all. It's supposed
+	/// to be local only. If someone sniffs the request, hijacking it
+	/// becomes very easy; even easier than a normal session id since they just reply it.
+	/// (you should really ssl encrypt all sessions for any real protection btw)
+	private void loadSpecialSession(Cgi cgi) {
+		version(no_session_override)
+			throw new Exception("You cannot access sessions this way.");
+		else {
+			// the header goes full-session-id;file-contents-hash
+			auto info = split(cgi.requestHeaders["x-arsd-session-override"], ";");
+
+			_sessionId = info[0];
+			auto hash = info[1];
+
+			// FIXME: race condition if the session changes?
+			enforce(hashToString(SHA256(readText(getFilePath()))) == hash);
+			_readOnly = true;
+			reload();
+		}
+	}
+
+	private void addDefaults() {
+		set("csrfToken", generateCsrfToken());
+
+		// this is there to help control access to someone requesting a specific session id (helpful for debugging or local access from other languages)
+		// the idea is if there's some random stuff in there that you can only know if you have access to the file, it doesn't hurt to load that
+		// session, since they have to be able to read it to know this value anyway, so you aren't giving them anything they don't already have.
+		set("randomRandomness", to!string(uniform(0, ulong.max)));
 	}
 
 	private string makeSessionId(string cookieToken) {
@@ -2241,7 +2308,7 @@ class Session {
 
 		// and new cookie -> new session id -> new csrf token
 		makeSessionId(makeNewCookie());
-		set("csrfToken", generateCsrfToken());
+		addDefaults();
 
 		if(hasData)
 			changed = true;
@@ -2307,6 +2374,7 @@ class Session {
 		return value;
 	}
 
+	// FIXME: doesn't seem to work
 	string* opBinary(string op)(string key)  if(op == "in") {
 		return key in fields;
 	}
@@ -2394,13 +2462,26 @@ class Session {
 
 	/// Commits your changes back to disk.
 	void commit(bool force = false) {
-		if(force || changed)
+		if(_readOnly)
+			return;
+		if(force || changed) {
 			std.file.write(getFilePath(), toJson(data));
+			// We have to make sure that only we can read this file,
+			// since otherwise, on shared hosts, our session data might be
+			// easily stolen. Note: if your shared host doesn't have different
+			// users on the operating system for each user, it's still possible
+			// for them to access this file and hijack your session!
+			version(Posix)
+				enforce(linux.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
+			// FIXME: ensure the file's read permissions are locked down
+			// on Windows too.
+		}
 	}
 
 	private string[string] data;
 	private bool _hasData;
 	private bool changed;
+	private bool _readOnly;
 	private string _sessionId;
 	private string _cookieName;
 	private Cgi cgi; // used to regenerate cookies, etc.
