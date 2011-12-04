@@ -26,6 +26,9 @@ web.d.php - a PHP library meant to ease integration of php components
 	    with web.d apps. Gives (read) access to the session, and full
 	    access to your D ApiProviders.
 
+html.d - functions to manipulate HTML documents, and now css and javascript
+	 with DOM functions, nested css statements, and macros for css and js.
+
 Database related
 ================
 
@@ -59,8 +62,6 @@ request, to an extent):
 
 httpd.d - an embedded web server
 oauth.d - client/server stuff for oauth1
-html.d  - a bunch of dom translation functions. Think unobstructive javascript
-          on the server side
 browser.d - a very small html widget
 netman.d - handles net connections  (required by httpd.d)
 imagedraft.d - (temporary name) has algorithms for images
@@ -72,4 +73,4 @@ midi.d - reading and writing MIDI files
 
 Authors:
 
-Thanks go to Nick Sabalusky, Trass3r, and Stanislav Blinov for input and patches.
+Thanks go to Nick Sabalusky, Trass3r, Stanislav Blinov, and maartenvd for input and patches.
