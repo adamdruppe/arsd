@@ -12,6 +12,7 @@ import std.uri;
 import std.exception;
 import std.base64;
 //import std.algorithm;
+static import std.algorithm;
 public import std.stdio;
 import std.datetime;
 public import std.conv;
@@ -20,62 +21,6 @@ import std.range;
 import std.process;
 
 import std.zlib;
-
-
-/+
-/// If you pass -1 to Cgi.this() as maxContentLength, it
-/// lets you use one of these instead of buffering the data
-/// itself.
-
-/// The benefit is you can handle data of any size without needing
-/// a buffering solution. The downside is this is one-way and the order
-/// of elements might not be what you want. If you need buffering, you've
-/// gotta do it yourself.
-struct CgiVariableStream {
-	bool empty() {
-		return true;
-	}
-
-	void popFront() {
-
-	}
-
-	/// If you want to do an upload progress bar, these functions
-	/// might help.
-	int bytesReceived() {
-
-	}
-
-	/// ditto
-	/// But, note this won't necessarily be known, so it may return zero!
-	int bytesExpected() {
-
-	}
-
-
-	/// The stream returns these Elements.
-	struct Element {
-		enum Type { String, File }
-
-		/// Since the last popFront, is this a new element or a
-		/// continuation of the last?
-		bool isNew;
-
-		/// Is this the last piece of this element?
-		/// Note that sometimes isComplete will only be true with an empty
-		/// payload, since it can't be sure until it actually receives the terminator.
-		/// This, unless you are buffering parts, you can't depend on it.
-		bool isComplete;
-
-		/// Metainfo from the part header is preserved
-		string name;
-		string fileName;
-		string contentType;
-
-		ubyte[] content;
-	}
-}
-+/
 
 
 T[] consume(T)(T[] range, int count) {
@@ -222,13 +167,18 @@ class Cgi {
 		this.requestHeaders = assumeUnique(requestHeadersHere);
 
 		requestUri = getenv("REQUEST_URI");
+
 		cookie = getenv("HTTP_COOKIE");
+		cookiesArray = getCookieArray();
+		cookies = keepLastOf(cookiesArray);
+
 		referrer = getenv("HTTP_REFERER");
 		userAgent = getenv("HTTP_USER_AGENT");
-		queryString = getenv("QUERY_STRING");
 		remoteAddress = getenv("REMOTE_ADDR");
 		host = getenv("HTTP_HOST");
 		pathInfo = getenv("PATH_INFO");
+
+		queryString = getenv("QUERY_STRING");
 		scriptName = getenv("SCRIPT_NAME");
 
 		bool iis = false;
@@ -245,6 +195,12 @@ class Cgi {
 
 			// FIXME: this works for apache and iis... but what about others?
 		}
+
+
+		get = getGetVariables();
+		auto ugh = decodeVariables(queryString);
+		getArray = assumeUnique(ugh);
+
 
 		// NOTE: on shitpache, you need to specifically forward this
 		authorization = getenv("HTTP_AUTHORIZATION");
@@ -284,19 +240,20 @@ class Cgi {
 
 		// FIXME: DOCUMENT_ROOT?
 
-		immutable(ubyte)[] data;
-		string contentType;
-
 		// FIXME: what about PUT?
 		if(requestMethod == RequestMethod.POST) {
-			contentType = getenv("CONTENT_TYPE");
+			version(preserveData) // a hack to make forwarding simpler
+				immutable(ubyte)[] data;
+			size_t amountReceived = 0;
+			auto contentType = getenv("CONTENT_TYPE");
 
 			// FIXME: is this ever not going to be set? I guess it depends
 			// on if the server de-chunks and buffers... seems like it has potential
 			// to be slow if they did that. The spec says it is always there though.
 			// And it has worked reliably for me all year in the live environment,
 			// but some servers might be different.
-			int contentLength = to!int(getenv("CONTENT_LENGTH"));
+			auto  contentLength = to!size_t(getenv("CONTENT_LENGTH"));
+
 			immutable originalContentLength = contentLength;
 			if(contentLength) {
 				if(maxContentLength > 0 && contentLength > maxContentLength) {
@@ -305,51 +262,435 @@ class Cgi {
 					close();
 					throw new Exception("POST too large");
 				}
+				prepareForIncomingDataChunks(contentType, contentLength);
+
 
 			if(readdata is null)
-			foreach(ubyte[] chunk; stdin.byChunk(iis ? contentLength : 4096)) { // FIXME: maybe it should pass the range directly to the parser
-				if(chunk.length > contentLength) {
-					data ~= chunk[0..contentLength];
-					contentLength = 0;
-					break;
-				} else {
-					data ~= chunk;
-					contentLength -= chunk.length;
-				}
-				if(contentLength == 0)
-					break;
-
-				onRequestBodyDataReceived(data.length, originalContentLength);
-			}
-			else {
-				// we have a custom data source..
-				auto chunk = readdata();
-				while(chunk.length) {
-					// FIXME: DRY
+				foreach(ubyte[] chunk; stdin.byChunk(iis ? contentLength : 4096)) { // FIXME: maybe it should pass the range directly to the parser
 					if(chunk.length > contentLength) {
-						data ~= chunk[0..contentLength];
+						handleIncomingDataChunk(chunk[0..contentLength]);
+						amountReceived += contentLength;
 						contentLength = 0;
 						break;
 					} else {
-						data ~= chunk;
+						handleIncomingDataChunk(chunk);
 						contentLength -= chunk.length;
+						amountReceived += chunk.length;
 					}
 					if(contentLength == 0)
 						break;
 
-					chunk = readdata();
-					onRequestBodyDataReceived(data.length, originalContentLength);
+					onRequestBodyDataReceived(amountReceived, originalContentLength);
 				}
-			}
-			onRequestBodyDataReceived(data.length, originalContentLength);
+				else {
+					// we have a custom data source..
+					auto chunk = readdata();
+					while(chunk.length) {
+						// FIXME: DRY
+						if(chunk.length > contentLength) {
+							handleIncomingDataChunk(chunk[0..contentLength]);
+							amountReceived += contentLength;
+							contentLength = 0;
+							break;
+						} else {
+							handleIncomingDataChunk(chunk);
+							contentLength -= chunk.length;
+							amountReceived += chunk.length;
+						}
+						if(contentLength == 0)
+							break;
+
+						chunk = readdata();
+						onRequestBodyDataReceived(amountReceived, originalContentLength);
+					}
+				}
+
+				onRequestBodyDataReceived(amountReceived, originalContentLength);
+				postArray = assumeUnique(pps._post);
+				files = assumeUnique(pps._files);
+				post = keepLastOf(postArray);
+				cleanUpPostDataState();
 			}
 
 			version(preserveData)
 				originalPostData = data;
+//			mixin(createVariableHashes());
+		}
+		// fixme: remote_user script name
+	}
+
+	private {
+		struct PostParserState {
+			string contentType;
+			string boundary;
+			string localBoundary; // the ones used at the end or something lol
+			bool isMultipart;
+
+			ulong expectedLength;
+			ulong contentConsumed;
+			immutable(ubyte)[] buffer;
+
+			// multipart parsing state
+			int whatDoWeWant;
+			bool weHaveAPart;
+			string[] thisOnesHeaders;
+			immutable(ubyte)[] thisOnesData;
+
+			UploadedFile piece;
+			bool isFile = false;
+
+			size_t memoryCommitted;
+
+			// do NOT keep mutable references to these anywhere!
+			// I assume they are unique in the constructor once we're all done getting data.
+			string[][string] _post;
+			UploadedFile[string] _files;
 		}
 
-		mixin(createVariableHashes());
-		// fixme: remote_user script name
+		PostParserState pps;
+	}
+
+	// given a content type and length, decide what we're going to do with the data..
+	void prepareForIncomingDataChunks(string contentType, ulong contentLength) {
+		pps.expectedLength = contentLength;
+
+		auto terminator = contentType.indexOf(";");
+		if(terminator == -1)
+			terminator = contentType.length;
+
+		pps.contentType = contentType[0 .. terminator];
+		auto b = contentType[terminator .. $];
+		if(b.length) {
+			auto idx = b.indexOf("boundary=");
+			if(idx != -1) {
+				pps.boundary = b[idx + "boundary=".length .. $];
+				pps.localBoundary = "\r\n--" ~ pps.boundary;
+			}
+		}
+
+		if(pps.contentType == "application/x-www-form-urlencoded") {
+			pps.isMultipart = false;
+		} else if(pps.contentType == "multipart/form-data") {
+			pps.isMultipart = true;
+			enforce(pps.boundary.length, "no boundary");
+		} else {
+			// FIXME: should set a http error code too
+			throw new Exception("unknown request content type");
+		}
+	}
+
+	// handles streaming POST data. If you handle some other content type, you should
+	// override this. If the data isn't the content type you want, you ought to call
+	// super.handleIncomingDataChunk so regular forms and files still work.
+
+	// FIXME: I do some copying in here that I'm pretty sure is unnecessary, and the
+	// file stuff I'm sure is inefficient. But, my guess is the real bottleneck is network
+	// input anyway, so I'm not going to get too worked up about it right now.
+	void handleIncomingDataChunk(const(ubyte)[] chunk) {
+		assert(chunk.length <= 32 * 1024 * 1024); // we use chunk size as a memory constraint thing, so
+							// if we're passed big chunks, it might throw unnecessarily.
+							// just pass it smaller chunks at a time.
+		if(pps.isMultipart) {
+			// multipart/form-data
+
+
+			void pieceHasNewContent() {
+				// we just grew the piece's buffer. Do we have to switch to file backing?
+				if(pps.piece.contentInMemory) {
+					if(pps.piece.content.length <= 10 * 1024 * 1024)
+						// meh, I'm ok with it.
+						return;
+					else {
+						// this is too big.
+						if(!pps.isFile)
+							throw new Exception("Request entity too large"); // a variable this big is kinda ridiculous, just reject it.
+						else {
+							// a file this large is probably acceptable though... let's use a backing file.
+							pps.piece.contentInMemory = false;
+							// FIXME: say... how do we intend to delete these things? cgi.dispose perhaps.
+
+							int count = 0;
+							pps.piece.contentFilename = getTempDirectory() ~ "arsd_cgi_uploaded_file_" ~ to!string(getUtcTime()) ~ "-" ~ to!string(count);
+							// odds are this loop will never be entered, but we want it just in case.
+							while(std.file.exists(pps.piece.contentFilename)) {
+								count++;
+								pps.piece.contentFilename = getTempDirectory() ~ "arsd_cgi_uploaded_file_" ~ to!string(getUtcTime()) ~ "-" ~ to!string(count);
+							}
+							// I hope this creates the file pretty quickly, or the loop might be useless...
+							// FIXME: maybe I should write some kind of custom transaction here.
+							std.file.write(pps.piece.contentFilename, pps.piece.content);
+
+							pps.piece.content = null;
+						}
+					}
+				} else {
+					// it's already in a file, so just append it to what we have
+					if(pps.piece.content.length) {
+						// FIXME: this is surely very inefficient... we'll be calling this by 4kb chunk...
+						std.file.append(pps.piece.contentFilename, pps.piece.content);
+						pps.piece.content = null;
+					}
+				}
+			}
+
+
+			void commitPart() {
+				if(!pps.weHaveAPart)
+					return;
+
+				pieceHasNewContent(); // be sure the new content is handled every time
+
+				if(pps.isFile) {
+					// I'm not sure if other environments put files in post or not...
+					// I used to not do it, but I think I should, since it is there...
+					pps._post[pps.piece.name] ~= pps.piece.filename;
+					pps._files[pps.piece.name] = pps.piece;
+				} else
+					pps._post[pps.piece.name] ~= cast(string) pps.piece.content;
+
+				/*
+				stderr.writeln("RECEIVED: ", pps.piece.name, "=", 
+					pps.piece.content.length < 1000
+					?
+					to!string(pps.piece.content)
+					:
+					"too long");
+				*/
+
+				// FIXME: the limit here
+				pps.memoryCommitted += pps.piece.content.length;
+
+				pps.weHaveAPart = false;
+				pps.whatDoWeWant = 1;
+				pps.thisOnesHeaders = null;
+				pps.thisOnesData = null;
+
+				pps.piece = UploadedFile.init;
+				pps.isFile = false;
+			}
+
+			void acceptChunk() {
+				pps.buffer ~= chunk;
+				chunk = null; // we've consumed it into the buffer, so keeping it just brings confusion
+			}
+
+			immutable(ubyte)[] consume(size_t howMuch) {
+				pps.contentConsumed += howMuch;
+				auto ret = pps.buffer[0 .. howMuch];
+				pps.buffer = pps.buffer[howMuch .. $];
+				return ret;
+			}
+
+			dataConsumptionLoop: do {
+			switch(pps.whatDoWeWant) {
+				default: assert(0);
+				case 0:
+					acceptChunk();
+					// the format begins with two extra leading dashes, then we should be at the boundary
+					if(pps.buffer.length < 2)
+						return;
+					assert(pps.buffer[0] == '-', "no leading dash");
+					consume(1);
+					assert(pps.buffer[0] == '-', "no second leading dash");
+					consume(1);
+
+					pps.whatDoWeWant = 1;
+					goto case 1;
+				/* fallthrough */
+				case 1: // looking for headers
+					// here, we should be lined up right at the boundary, which is followed by a \r\n
+
+					// want to keep the buffer under control in case we're under attack
+					if(pps.buffer.length + chunk.length > 70 * 1024) // they should be < 1 kb really....
+						throw new Exception("wtf is up with the huge mime part headers");
+
+					acceptChunk();
+
+					if(pps.buffer.length < pps.boundary.length)
+						return; // not enough data, since there should always be a boundary here at least
+
+					if(pps.contentConsumed + pps.boundary.length + 6 == pps.expectedLength) {
+						assert(pps.buffer.length == pps.boundary.length + 4 + 2); // --, --, and \r\n
+						// we *should* be at the end here!
+						assert(pps.buffer[0] == '-');
+						consume(1);
+						assert(pps.buffer[0] == '-');
+						consume(1);
+
+						// the message is terminated by --BOUNDARY--\r\n (after a \r\n leading to the boundary)
+						assert(pps.buffer[0 .. pps.boundary.length] == cast(const(ubyte[])) pps.boundary,
+							"not lined up on boundary " ~ pps.boundary);
+						consume(pps.boundary.length);
+
+						assert(pps.buffer[0] == '-');
+						consume(1);
+						assert(pps.buffer[0] == '-');
+						consume(1);
+
+						assert(pps.buffer[0] == '\r');
+						consume(1);
+						assert(pps.buffer[0] == '\n');
+						consume(1);
+
+						assert(pps.buffer.length == 0);
+						assert(pps.contentConsumed == pps.expectedLength);
+						break dataConsumptionLoop; // we're done!
+					} else {
+						// we're not done yet. We should be lined up on a boundary.
+
+						// But, we want to ensure the headers are here before we consume anything!
+						auto headerEndLocation = locationOf(pps.buffer, "\r\n\r\n");
+						if(headerEndLocation == -1)
+							return; // they *should* all be here, so we can handle them all at once.
+
+						assert(pps.buffer[0 .. pps.boundary.length] == cast(const(ubyte[])) pps.boundary,
+							"not lined up on boundary " ~ pps.boundary);
+
+						consume(pps.boundary.length);
+						// the boundary is always followed by a \r\n
+						assert(pps.buffer[0] == '\r');
+						consume(1);
+						assert(pps.buffer[0] == '\n');
+						consume(1);
+					}
+
+					// re-running since by consuming the boundary, we invalidate the old index.
+					auto headerEndLocation = locationOf(pps.buffer, "\r\n\r\n");
+					assert(headerEndLocation >= 0, "no header");
+					auto thisOnesHeaders = pps.buffer[0..headerEndLocation];
+
+					consume(headerEndLocation + 4); // The +4 is the \r\n\r\n that caps it off
+
+					pps.thisOnesHeaders = split(cast(string) thisOnesHeaders, "\r\n");
+
+					// now we'll parse the headers
+					foreach(h; pps.thisOnesHeaders) {
+						auto p = h.indexOf(":");
+						assert(p != -1, "no colon in header, got " ~ to!string(pps.thisOnesHeaders));
+						string hn = h[0..p];
+						string hv = h[p+2..$];
+
+						switch(hn.toLower) {
+							default: assert(0);
+							case "content-disposition":
+								auto info = hv.split("; ");
+								foreach(i; info[1..$]) { // skipping the form-data
+									auto o = i.split("="); // FIXME
+									string pn = o[0];
+									string pv = o[1][1..$-1];
+
+									if(pn == "name") {
+										pps.piece.name = pv;
+									} else if (pn == "filename") {
+										pps.piece.filename = pv;
+										pps.isFile = true;
+									}
+								}
+							break;
+							case "content-type":
+								pps.piece.contentType = hv;
+							break;
+						}
+					}
+
+					pps.whatDoWeWant++; // move to the next step - the data
+				break;
+				case 2:
+					// when we get here, pps.buffer should contain our first chunk of data
+
+					if(pps.buffer.length + chunk.length > 8 * 1024 * 1024) // we might buffer quite a bit but not much
+						throw new Exception("wtf is up with the huge mime part buffer");
+
+					acceptChunk();
+
+					// so the trick is, we want to process all the data up to the boundary,
+					// but what if the chunk's end cuts the boundary off? If we're unsure, we
+					// want to wait for the next chunk. We start by looking for the whole boundary
+					// in the buffer somewhere.
+
+					auto boundaryLocation = locationOf(pps.buffer, pps.localBoundary);
+					// assert(boundaryLocation != -1, "should have seen "~to!string(cast(ubyte[]) pps.localBoundary)~" in " ~ to!string(pps.buffer));
+					if(boundaryLocation != -1) {
+						// this is easy - we can see it in it's entirety!
+
+						pps.piece.content ~= consume(boundaryLocation);
+
+						assert(pps.buffer[0] == '\r');
+						consume(1);
+						assert(pps.buffer[0] == '\n');
+						consume(1);
+						assert(pps.buffer[0] == '-');
+						consume(1);
+						assert(pps.buffer[0] == '-');
+						consume(1);
+						// the boundary here is always preceded by \r\n--, which is why we used localBoundary instead of boundary to locate it. Cut that off.
+						pps.weHaveAPart = true;
+						pps.whatDoWeWant = 1; // back to getting headers for the next part
+
+						commitPart(); // we're done here
+					} else {
+						// we can't see the whole thing, but what if there's a partial boundary?
+
+						enforce(pps.localBoundary.length < 128); // the boundary ought to be less than a line...
+						assert(pps.localBoundary.length > 1); // should already be sane but just in case
+						bool potentialBoundaryFound = false;
+
+						boundaryCheck: for(int a = 1; a < pps.localBoundary.length; a++) {
+							// we grow the boundary a bit each time. If we think it looks the
+							// same, better pull another chunk to be sure it's not the end.
+							// Starting small because exiting the loop early is desirable, since
+							// we're not keeping any ambiguity and 1 / 256 chance of exiting is
+							// the best we can do.
+							assert(a <= pps.buffer.length);
+							assert(a > 0);
+							if(std.algorithm.endsWith(pps.buffer, pps.localBoundary[0 .. a])) {
+								// ok, there *might* be a boundary here, so let's
+								// not treat the end as data yet. The rest is good to
+								// use though, since if there was a boundary there, we'd
+								// have handled it up above after locationOf.
+
+								pps.piece.content ~= pps.buffer[0 .. $ - a];
+								consume(pps.buffer.length - a);
+								pieceHasNewContent();
+								potentialBoundaryFound = true;
+								break boundaryCheck;
+							}
+						}
+
+						if(!potentialBoundaryFound) {
+							// we can consume the whole thing
+							pps.piece.content ~= pps.buffer;
+							pieceHasNewContent();
+							consume(pps.buffer.length);
+						} else {
+							// we found a possible boundary, but there was
+							// insufficient data to be sure.
+							assert(pps.buffer == cast(const(ubyte[])) pps.localBoundary[0 .. pps.buffer.length]);
+
+							return; // wait for the next chunk.
+						}
+					}
+			}
+			} while(pps.buffer.length);
+
+			// btw all boundaries except the first should have a \r\n before them
+		} else {
+			// application/x-www-form-urlencoded
+
+				// not using maxContentLength because that might be cranked up to allow
+				// large file uploads. We can handle them, but a huge post[] isn't any good.
+			if(pps.buffer.length + chunk.length > 8 * 1024 * 1024) // surely this is plenty big enough
+				throw new Exception("wtf is up with such a gigantic form submission????");
+
+			pps.buffer ~= chunk;
+			// simple handling, but it works... until someone bombs us with gigabytes of crap at least...
+			if(pps.buffer.length == pps.expectedLength)
+				pps._post = decodeVariables(cast(string) pps.buffer);
+		}
+	}
+
+	void cleanUpPostDataState() {
+		pps = PostParserState.init;
 	}
 
 	/// you can override this function to somehow react
@@ -411,6 +752,10 @@ class Cgi {
 			pathInfo = requestUri[pathInfoStarts..question];
 		}
 
+		get = getGetVariables();
+		auto ugh = decodeVariables(queryString);
+		getArray = assumeUnique(ugh);
+
 		remoteAddress = address;
 
 		if(headers[0].indexOf("HTTP/1.0")) {
@@ -471,20 +816,36 @@ class Cgi {
 
 		requestHeaders = assumeUnique(requestHeadersHere);
 
-		// Need to set up get, post, and cookies
-		mixin(createVariableHashes());
+		cookiesArray = getCookieArray();
+		cookies = keepLastOf(cookiesArray);
+		prepareForIncomingDataChunks(contentType, data.length);
+		for(size_t block = 0; block < data.length; block += 4096)
+			handleIncomingDataChunk(data[block .. ((block+4096 > data.length) ? data.length : block + 4096)]);
+		postArray = assumeUnique(pps._post);
+		files = assumeUnique(pps._files);
+		post = keepLastOf(postArray);
+		cleanUpPostDataState();
 	}
 
-	// This gets mixed in because it is shared but set inside invariant constructors
-	pure private static string createVariableHashes() {
-	return q{
-		if(queryString.length == 0)
-			get = null;//get.init;
-		else {
-			auto _get = decodeVariables(queryString);
-			getArray = assumeUnique(_get);
+	private immutable(string[string]) keepLastOf(in string[][string] arr) {
+		string[string] ca;
+		foreach(k, v; arr)
+			ca[k] = v[$-1];
 
-			string[string] ga;
+		return assumeUnique(ca);
+	}
+
+	private immutable(string[][string]) getCookieArray() {
+		auto forTheLoveOfGod = decodeVariables(cookie, "; ");
+		return assumeUnique(forTheLoveOfGod);
+	}
+
+	// this function only exists because of the with_cgi_packed thing, which is
+	// a filthy hack I put in here for a work app. Which still depends on it, so it
+	// stays for now. But I want to remove it.
+	private immutable(string[string]) getGetVariables() {
+		if(queryString.length) {
+			auto _get = decodeVariablesSingle(queryString);
 
 			// Some sites are shit and don't let you handle multiple parameters.
 			// If so, compile this in and encode it as a single parameter
@@ -497,9 +858,9 @@ class Cgi {
 						cast(string) base64UrlDecode(pi));
 
 					foreach(k, v; _unpacked)
-						ga[k] = v[$-1];
-
-					pathInfo = pathInfo[0 .. idx];
+						_get[k] = v[$-1];
+					// possible problem: it used to cut PACKED off the path info
+					// but it doesn't now. I want to kill this crap anyway though.
 				}
 
 				if("arsd_packed_data" in getArray) {
@@ -507,143 +868,14 @@ class Cgi {
 						cast(string) base64UrlDecode(getArray["arsd_packed_data"][0]));
 
 					foreach(k, v; _unpacked)
-						ga[k] = v[$-1];
+						_get[k] = v[$-1];
 				}
 			}
 
-			foreach(k, v; getArray)
-				ga[k] = v[$-1];
-
-			get = assumeUnique(ga);
+			return assumeUnique(_get);
 		}
 
-		if(cookie.length == 0)
-			cookies = null;//cookies.init;
-		else {
-			auto _cookies = decodeVariables(cookie, "; ");
-			cookiesArray = assumeUnique(_cookies);
-
-			string[string] ca;
-			foreach(k, v; cookiesArray)
-				ca[k] = v[$-1];
-
-			cookies = assumeUnique(ca);
-		}
-
-		if(data.length == 0)
-			post = null;//post.init;
-		else {
-			auto terminator = contentType.indexOf(";");
-			if(terminator == -1)
-				terminator = contentType.length;
-			switch(contentType[0..terminator]) {
-				default: assert(0);
-				case "multipart/form-data":
-					string[][string] _post;
-
-					UploadedFile[string] _files;
-
-					auto b = contentType[terminator..$].indexOf("boundary=") + terminator;
-					assert(b >= 0, "no boundary");
-					immutable boundary = contentType[b+9..$];
-
-					sizediff_t pos = 0;
-
-					// all boundaries except the first should have a \r\n before them
-					while(pos < data.length) {
-						assert(data[pos] == '-', "no leading dash");
-						pos++;
-						assert(data[pos] == '-', "no second leading dash");
-						pos++;
-						//writefln("**expected** %s\n** got**     %s", boundary, cast(string) data[pos..pos+boundary.length]);
-						assert(data[pos..pos+boundary.length] == cast(const(ubyte[])) boundary, "not lined up on boundary");
-						pos += boundary.length;
-						if(data[pos] == '\r' && data[pos+1] == '\n') {
-							pos += 2;
-						} else {
-							assert(data[pos] == '-', "improper ending #1");
-							assert(data[pos+1] == '-', "improper ending #2");
-							if(pos+2 != data.length) {
-								pos += 2;
-								assert(data[pos] == '\r', "not new line part 1");
-								assert(data[pos + 1] == '\n', "not new line part 2");
-								assert(pos + 2 == data.length, "wtf, wrong length");
-							}
-							break;
-						}
-
-						auto nextloc = locationOf(data[pos..$], boundary) + pos - 2; // the -2 is a HACK
-						assert(nextloc > 0, "empty piece");
-						assert(nextloc != -1, "no next boundary");
-						immutable thisOne = data[pos..nextloc-2]; // the 2 skips the leading \r\n of the next boundary
-
-						// thisOne has the headers and the data
-						int headerEndLocation = locationOf(thisOne, "\r\n\r\n");
-						assert(headerEndLocation >= 0, "no header");
-						auto thisOnesHeaders = thisOne[0..headerEndLocation];
-						auto thisOnesData = thisOne[headerEndLocation+4..$];
-
-						string[] pieceHeaders = split(cast(string) thisOnesHeaders, "\r\n");
-
-						UploadedFile piece;
-						bool isFile = false;
-
-						foreach(h; pieceHeaders) {
-							auto p = h.indexOf(":");
-							assert(p != -1, "no colon in header");
-							string hn = h[0..p];
-							string hv = h[p+2..$];
-
-							switch(hn.toLower) {
-								default: assert(0);
-								case "content-disposition":
-									auto info = hv.split("; ");
-									foreach(i; info[1..$]) { // skipping the form-data
-										auto o = i.split("="); // FIXME
-										string pn = o[0];
-										string pv = o[1][1..$-1];
-
-										if(pn == "name") {
-											piece.name = pv;
-										} else if (pn == "filename") {
-											piece.filename = pv;
-											isFile = true;
-										}
-									}
-								break;
-								case "content-type":
-									piece.contentType = hv;
-								break;
-							}
-						}
-
-						piece.content = thisOnesData;
-
-						//writefln("Piece: [%s] (%s) %d\n***%s****", piece.name, piece.filename, piece.content.length, cast(string) piece.content);
-
-						if(isFile)
-							_files[piece.name] = piece;
-						else
-							_post[piece.name] ~= cast(string) piece.content;
-
-						pos = nextloc;
-					}
-
-					postArray = assumeUnique(_post);
-					files = assumeUnique(_files);
-				break;
-				case "application/x-www-form-urlencoded":
-					auto _post = decodeVariables(cast(string) data);
-					postArray = assumeUnique(_post);
-				break;
-			}
-			string[string] pa;
-			foreach(k, v; postArray)
-				pa[k] = v[$-1];
-
-			post = assumeUnique(pa);
-		}
-	};
+		return null;
 	}
 
 	/// This represents a file the user uploaded via a POST request.
@@ -683,7 +915,7 @@ class Cgi {
 
 			The default value of maxContentLength in the constructor is for small files.
 		*/
-		bool contentInMemory;
+		bool contentInMemory = true; // the default ought to always be true
 		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
 		string contentFilename; /// the file where we dumped the content, if contentInMemory == false
 	}
@@ -1486,8 +1718,49 @@ version(fastcgi) {
 }
 
 
+/* Helpers for doing temporary files. Used both here and in web.d */
 
+version(Windows) {
+	import core.sys.windows;
+	extern(Windows) DWORD GetTempPathW(DWORD, LPTSTR);
+	alias GetTempPathW GetTempPath;
+}
 
+version(Posix) {
+	static import linux = std.c.linux.linux;
+}
+
+string getTempDirectory() {
+	string path;
+	version(Windows) {
+		wchar[1024] buffer;
+		auto len = GetTempPath(1024, buffer.ptr);
+		if(len == 0)
+			throw new Exception("couldn't find a temporary path");
+
+		auto b = buffer[0 .. len];
+
+		path = to!string(b);
+	} else
+		path = "/tmp/";
+
+	return path;
+}
+
+// I FUCKING HATE that the Phobos managers decided to replace std.date with code that had
+// no idea what kinds of things std.date was useful for.
+//
+// And to add insult to injury, they are going to remove the tiny olive branch the new
+// module offered. Whatever, I want it at least some of it.
+
+long sysTimeToDTime(in SysTime sysTime)
+{
+    return convert!("hnsecs", "msecs")(sysTime.stdTime - 621355968000000000L);
+}
+
+long getUtcTime() { // renamed primarily to avoid conflict with std.date itself
+	return sysTimeToDTime(Clock.currTime(UTC()));
+}
 
 /*
 Copyright: Adam D. Ruppe, 2008 - 2011

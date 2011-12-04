@@ -1079,6 +1079,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					auto n = form.getElementById("function-name");
 					if(n)
 						n.innerText = beautify(fun.originalName);
+
+					form.prependChild(Element.make("p", ipe.msg));
 				}
 
 				assert(form !is null);
@@ -1926,7 +1928,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 				// FIXME: what if the default is true?
 			} else static if(is(Unqual!(type) == Cgi.UploadedFile)) {
 				if(using !in cgi.files)
-					throw new InsufficientParametersException(funName, "file " ~ name ~ " is not present");
+					throw new InsufficientParametersException(funName, "file " ~ using ~ " is not present");
 				args[i] = cast()  cgi.files[using]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
@@ -2163,12 +2165,6 @@ deprecated string getSessionId(Cgi cgi) {
 	return getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
 }
 
-version(Windows) {
-	import core.sys.windows;
-	extern(Windows) DWORD GetTempPathW(DWORD, LPTSTR);
-	alias GetTempPathW GetTempPath;
-}
-
 version(Posix) {
 	static import linux = std.c.linux.linux;
 }
@@ -2392,19 +2388,7 @@ class Session {
 	}
 
 	private string getFilePath() const {
-		string path;
-		version(Windows) {
-			wchar[1024] buffer;
-			auto len = GetTempPath(1024, buffer.ptr);
-			if(len == 0)
-				throw new Exception("couldn't find a temporary path");
-
-			auto b = buffer[0 .. len];
-
-			path = to!string(b);
-		} else
-			path = "/tmp/";
-
+		string path = getTempDirectory();
 		path ~= "arsd_session_file_" ~ sessionId;
 
 		return path;
