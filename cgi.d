@@ -102,10 +102,10 @@ int locationOf(T)(T[] data, string item) {
 /// the required constructors for you
 mixin template ForwardCgiConstructors() {
 	this(int maxContentLength = 5_000_000,
-		string delegate(string env) getenv = null,
+		string[string] env = null,
 		const(ubyte)[] delegate() readdata = null,
 		void delegate(const(ubyte)[]) _rawDataOutput = null
-		) { super(maxContentLength, getenv, readdata, _rawDataOutput); }
+		) { super(maxContentLength, env, readdata, _rawDataOutput); }
 	
 	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0) {
 		super(headers, data, address, _rawDataOutput, pathInfoStarts);
@@ -193,8 +193,8 @@ class Cgi {
 
 	/** Initializes it using the CGI interface */
 	this(int maxContentLength = 5_000_000,
-		// use this to override the environment variable functions
-		string delegate(string env) getenv = null,
+		// use this to override the environment variable listing
+		in string[string] env = null,
 		// and this should return a chunk of data. return empty when done
 		const(ubyte)[] delegate() readdata = null,
 		// finally, use this to do custom output if needed
@@ -202,8 +202,24 @@ class Cgi {
 		)
 	{
 		rawDataOutput = _rawDataOutput;
-		if(getenv is null)
-			getenv = delegate string(string env) { return .getenv(env); };
+		auto getenv = delegate string(string var) {
+			if(env is null)
+				return .getenv(var);
+			auto e = var in env;
+			if(e is null)
+				return null;
+			return *e;
+		};
+
+		// fetching all the request headers
+		string[string] requestHeadersHere;
+		foreach(k, v; env is null ? cast(const) environment.toAA() : env) {
+			if(k.startsWith("HTTP_")) {
+				requestHeadersHere[replace(k["HTTP_".length .. $].toLower(), "_", "-")] = v;
+			}
+		}
+
+		this.requestHeaders = assumeUnique(requestHeadersHere);
 
 		requestUri = getenv("REQUEST_URI");
 		cookie = getenv("HTTP_COOKIE");
@@ -404,12 +420,16 @@ class Cgi {
 
 		string contentType = "";
 
+		string[string] requestHeadersHere;
+
 		foreach(header; headers[1..$]) {
 			auto colon = header.indexOf(":");
 			if(colon == -1)
 				throw new Exception("HTTP headers should have a colon!");
 			string name = header[0..colon].toLower;
 			string value = header[colon+2..$]; // skip the colon and the space
+
+			requestHeadersHere[name] = value;
 
 			switch(name) {
 				case "accept":
@@ -448,6 +468,8 @@ class Cgi {
 					// ignore it
 			}
 		}
+
+		requestHeaders = assumeUnique(requestHeadersHere);
 
 		// Need to set up get, post, and cookies
 		mixin(createVariableHashes());
@@ -1024,6 +1046,7 @@ class Cgi {
 
 	    For some of these, you'll want to refer to the http or cgi specs for more details.
 	*/
+	immutable(string[string]) requestHeaders; /// All the raw headers in the request as name/value pairs. The name is stored as all lower case, but otherwise the same as it is in HTTP; words separated by dashes. For example, "cookie" or "accept-encoding". Many HTTP headers have specialized variables below for more convenience and static name checking; you should generally try to use them.
 
 	immutable(char[]) host; 	/// The hostname in the request. If one program serves multiple domains, you can use this to differentiate between them.
 	immutable(char[]) userAgent; 	/// The browser's user-agent string. Can be used to identify the browser.
@@ -1316,7 +1339,7 @@ version(embedded_httpd)
 					return "";
 				}
 
-				auto cgi = new CustomCgi(5_000_000, &getFcgiEnvVar, &getFcgiChunk, &writeFcgi);
+				auto cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi);
 				try {
 					fun(cgi);
 					cgi.close();
