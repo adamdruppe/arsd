@@ -22,6 +22,9 @@ dom.d  - an xml/html DOM based on what Javascript provides in browsers
 web.d  - a fancier way to write web apps. Uses reflection to make functions
          accessible via url with minimal boilerplate in your code
 
+web.d.php - a PHP library meant to ease integration of php components
+	    with web.d apps. Gives (read) access to the session, and full
+	    access to your D ApiProviders.
 
 Database related
 ================
