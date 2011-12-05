@@ -115,6 +115,37 @@ immutable(ubyte)[/*20*/] SHA1(T)(T data) if(isInputRange!(T)) /*const(ubyte)[] d
 		return hash.idup;
 }
 
+import core.stdc.stdio;
+import std.string;
+// i wish something like this was in phobos.
+struct FileByByte {
+	FILE* fp;
+	this(string filename) {
+		fp = fopen(toStringz(filename), "rb".ptr);
+		if(fp is null)
+			throw new Exception("couldn't open " ~ filename);
+		popFront();
+	}
+	~this() {
+		if(fp !is null)
+			fclose(fp);
+	}
+
+	@property void popFront() {
+		f = cast(ubyte) fgetc(fp);
+	}
+
+	@property ubyte front() {
+		return f;
+	}
+
+	@property bool empty() {
+		return feof(fp) ? true : false;
+	}
+
+	ubyte f;
+}
+
 import std.range;
 
 // This does the preprocessing of input data, fetching one byte at a time of the data until it is empty, then the padding and length at the end
