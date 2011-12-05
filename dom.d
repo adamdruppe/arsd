@@ -607,14 +607,13 @@ class Element {
 
 	Element addChild(string tagName, Html innerHtml)
 	in {
-		assert(parentDocument !is null);
 	}
 	out(ret) {
 		assert(ret !is null);
 		assert(ret.parentNode is this);
 	}
 	body {
-		auto e = parentDocument.createElement(tagName);
+		auto e = Element.make(tagName);
 		this.appendChild(e);
 		e.innerHTML = innerHtml.source;
 		return e;
@@ -2443,9 +2442,10 @@ class Document : FileResource {
 			}
 		}
 
-		if(strict)
-			enforce(dataEncoding !is null, "I couldn't figure out the encoding of this document.");
-		else if(dataEncoding is null) {
+		if(dataEncoding is null) {
+			if(strict)
+				throw new MarkupError("I couldn't figure out the encoding of this document.");
+			else
 			// if we really don't know by here, it means we already tried UTF-8,
 			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
 			// tags... let's assume it's Windows-1252, since that's probably the most

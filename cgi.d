@@ -11,7 +11,6 @@ public import std.string;
 import std.uri;
 import std.exception;
 import std.base64;
-//import std.algorithm;
 static import std.algorithm;
 public import std.stdio;
 import std.datetime;
@@ -136,7 +135,7 @@ class Cgi {
 		// this is an extension for when the method is not specified and you want to assume
 		CommandLine }
 
-	/** Initializes it using the CGI interface */
+	/** Initializes it using the CGI (or FastCGI) interface */
 	this(int maxContentLength = 5_000_000,
 		// use this to override the environment variable listing
 		in string[string] env = null,
@@ -317,6 +316,18 @@ class Cgi {
 //			mixin(createVariableHashes());
 		}
 		// fixme: remote_user script name
+	}
+
+	/// Cleans up any temporary files. Do not use the object
+	/// after calling this.
+	///
+	/// NOTE: it is called automatically by GenericMain
+	void dispose() {
+		foreach(file; files) {
+			if(!file.contentInMemory)
+				if(std.file.exists(file.contentFilename))
+					std.file.remove(file.contentFilename);
+		}
 	}
 
 	private {
@@ -727,6 +738,8 @@ class Cgi {
 
 
 		FIXME: data should be able to be streaming, for large files
+			indeed, it should probably just take a file descriptor
+			or two and do all the work itself.
 	*/
 	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0) {
 		auto parts = headers[0].split(" ");
@@ -917,7 +930,7 @@ class Cgi {
 		*/
 		bool contentInMemory = true; // the default ought to always be true
 		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
-		string contentFilename; /// the file where we dumped the content, if contentInMemory == false
+		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
 	}
 
 	/// Very simple method to require a basic auth username and password.
@@ -1530,7 +1543,9 @@ version(embedded_httpd)
 
 	void main() {
 		version(embedded_httpd) {
-			serveHttp(&fun, 8080);//5005);
+			// what about forwarding the other constructor args?
+			// this probably needs a whole redoing...
+			serveHttp!CustomCgi(&fun, 8080);//5005);
 			return;
 		}
 
@@ -1575,6 +1590,7 @@ version(embedded_httpd)
 				try {
 					fun(cgi);
 					cgi.close();
+					cgi.dispose();
 				} catch(Throwable t) {
 					if(1) { // !cgi.isClosed) 
 						auto msg = t.toString;
@@ -1597,6 +1613,7 @@ version(embedded_httpd)
 		try {
 			fun(cgi);
 			cgi.close();
+			cgi.dispose();
 		} catch (Throwable c) {
 			// if the thing is closed, the app probably wrote an error message already, don't do it again.
 			//if(cgi.isClosed)
@@ -1610,7 +1627,8 @@ version(embedded_httpd)
 			writefln("Status: 500 Internal Server Error\nContent-Type: text/html\n\n%s", "<html><head><title>Internal Server Error</title></head><body><br><br><br><br><code><pre>"~(std.array.replace(std.array.replace(message, "<", "&lt;"), ">", "&gt;"))~"</pre></code></body></html>");
 
 			string str = c.toString();
-			auto idx = str.indexOf("\n");
+			// wtf it is bitching about a conflict with std.algorithm... out of the blue.
+			auto idx = std.string.indexOf(str, "\n");
 			if(idx != -1)
 				str = str[0..idx];
 
@@ -1683,6 +1701,12 @@ void hackAroundLinkerError() {
       writeln(typeid(Cgi.UploadedFile[immutable(char)[]]));
       writeln(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
       writeln(typeid(immutable(char[])[immutable(char)[]]));
+      // this is getting kinda ridiculous btw. Moving assoc arrays
+      // to the library is the pain that keeps on coming.
+
+      // eh this broke the build on the work server
+      // writeln(typeid(immutable(char)[][immutable(string[])]));
+      writeln(typeid(immutable(string[])[immutable(char)[]]));
 }
 
 
