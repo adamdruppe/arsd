@@ -1,6 +1,8 @@
 <?php
 	// FIXME: this doesn't work on Windows
 	// FIXME: doesn't do server side ApiObjects nor nested ApiProviders right
+	// FIXME: nested calls seem to have something wrong, either here
+	// or on the D end...
 	/**************************************
 	*	This file is meant to help integrate web.d apps
 	*	with PHP apps that live on the same domain, or remotely
@@ -23,8 +25,8 @@
 class WebDotDSession {
 	/// Access and load the session
 	public function __construct($cookieName = "_sess_id") {
-		if(isset($_COOKIES[$cookieName])) {
-			$token = $_COOKIES[$cookieName];
+		if(isset($_COOKIE[$cookieName])) {
+			$token = $_COOKIE[$cookieName];
 
 			$this->sessionId = hash("sha256",
 				$_SERVER["REMOTE_ADDR"] . "\r\n" .
@@ -143,7 +145,7 @@ class WebDotDMethodCall {
 	private $apiProvider;
 	private $url;
 	private $urlArgs = array();
-	private $method;
+	public $method; /* public because php doesn't have friends... */
 	private $requestedDataFormat;
 	private $functionName;
 
@@ -320,10 +322,10 @@ class WebDotDApiProvider {
 	}
 
 	/// this can be used to add additional data to a request being prepared by mutating args
-	protected function addCustomRequestData($apiRequest, &$args) { }
+	public function addCustomRequestData($apiRequest, &$args) { }
 
 	/// use this to manipulate the http request a little before it is sent (custom headers, etc.)
-	protected function addCustomCurlCode($ch, $apiRequest, $url, $postData) { }
+	public function addCustomCurlCode($ch, $apiRequest, $url, $postData) { }
 
 	/// Returns a lazy method call object. The arguments and name are dynamic, so
 	/// you can do $api->anyFunction($any, $args)->getSync();
@@ -352,16 +354,34 @@ class WebDotDApiProvider {
 
 /// Provides access to a *local* D ApiProvider, authenticating via a session.
 /// This just works on most web.d code.
-class LocalWebDotApiDProvider extends WebDotDApiProvider {
+class LocalWebDotDApiProvider extends WebDotDApiProvider {
 	/// Takes a WebDotDSession
+	/// The endpoint can be a relative path here if you like as long
+	/// as it doesn't start with http. It will inherit the protocol and
+	/// domain of the current request.
+	/// FIXME: it should be a fully relative link.
 	public function __construct($endPoint, $session) {
+		if(strpos($endPoint, "http") !== 0) {
+			$current = "http";
+			if(isset($_SERVER["HTTPS"]) && $_SERVER["HTTPS"])
+				$current .= "s";
+			$current .= "://";
+			$current .= $_SERVER["HTTP_HOST"];
+
+			if(strpos($endPoint, "/") === 0)
+				$current .= $endPoint;
+			else
+				die("Relative linking isn't really implemented well.");
+			$endPoint = $current;
+		}
+
 		parent::__construct($endPoint);
 		$this->session = $session;
 	}
 
 	protected $session;
 
-	protected function addCustomRequestData($apiRequest, &$args) {
+	public function addCustomRequestData($apiRequest, &$args) {
 		// we have to add the CSRF token or web.d will likely reject our command
 		if($apiRequest->method != "POST")
 			return; // no need for csrf token
@@ -378,7 +398,7 @@ class LocalWebDotApiDProvider extends WebDotDApiProvider {
 		$args[$decoded["key"]] = $decoded["token"];
 	}
 
-	protected function addCustomCurlCode($ch, $apiRequest, $url, $postData) {
+	public function addCustomCurlCode($ch, $apiRequest, $url, $postData) {
 		// we want to ask D to also use the same session we're looking at
 		// The full session ID tells it what to use, and the file hash proves
 		// to D that we already have access to it.
@@ -414,7 +434,7 @@ class RemoteWebDotDApiProvider extends WebDotDApiProvider {
 	private $apiKey;
 	private $apiSecret;
 
-	protected function addCustomCurlCode($ch, $apiRequest, $url, $postData) {
+	public function addCustomCurlCode($ch, $apiRequest, $url, $postData) {
 		$oauth = new ARSDOAuth;
 		$oauthHeader = $oauth->getRequestHeader(
 			$this->apiKey, $this->apiSecret,
