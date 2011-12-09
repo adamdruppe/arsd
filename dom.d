@@ -238,6 +238,11 @@ class Element {
 		selfClosed = _selfClosed;
 	}
 
+	/// Removes all inner content from the tag; all child text and elements are gone.
+	void removeAllChildren() {
+		children = null;
+	}
+
 	///.
 	@property Element previousSibling(string tagName = null) {
 		if(this.parentNode is null)
@@ -712,6 +717,8 @@ class Element {
 
 	///.
 	Element[] getElementsBySelector(string selector) {
+		// POSSIBLE FIXME: this also sends attribute things to lower in the selector,
+		// but the actual get selector check is still case sensitive...
 		if(parentDocument && parentDocument.loose)
 			selector = selector.toLower;
 
@@ -1000,6 +1007,13 @@ class Element {
 	@property void innerHTML(string html) {
 		if(html.length)
 			selfClosed = false;
+
+		if(html.length == 0) {
+			// I often say innerHTML = ""; as a shortcut to clear it out,
+			// so let's optimize that slightly.
+			removeAllChildren();
+			return;
+		}
 
 		auto doc = new Document();
 		doc.parse("<innerhtml>" ~ html ~ "</innerhtml>"); // FIXME: this should preserve the strictness of the parent document
@@ -1631,6 +1645,8 @@ class TextNode : Element {
 		contents = e;
 		tagName = "#text";
 	}
+
+	string opDispatch(string name)(string v = null) if(0) { return null; } // text nodes don't have attributes
 
 	///.
 	static TextNode fromUndecodedString(Document _parentDocument, string html) {
@@ -3630,6 +3646,7 @@ int intFromHex(string hex) {
 					state = State.ReadingAttributeComparison;
 				break;
 				case State.ReadingAttributeComparison:
+					// FIXME: these things really should be quotable in the proper lexer...
 					if(token != "]") {
 						if(token.indexOf("=") == -1) {
 							// not a comparison; consider it
@@ -3651,6 +3668,12 @@ int intFromHex(string hex) {
 							attributeValue ~= token;
 						break;
 					}
+
+					// FIXME: HACK this chops off quotes from the outside for the comparison
+					// for compatibility with real CSS. The lexer should be properly fixed, though.
+					// FIXME: when the lexer is fixed, remove this lest you break it moar.
+					if(attributeValue.length > 2 && attributeValue[0] == '"' && attributeValue[$-1] == '"')
+						attributeValue = attributeValue[1 .. $-1];
 
 					// Selector operators
 					switch(attributeComparison) {
