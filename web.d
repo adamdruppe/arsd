@@ -268,6 +268,8 @@ class ApiProvider : WebDotDBaseType {
 	/// Adds CSRF tokens to the document for use by script (required by the Javascript API)
 	/// and then calls addCsrfTokens(document.root) to add them to all POST forms as well.
 	protected void addCsrfTokens(Document document) {
+		if(document is null)
+			return;
 		if(!csrfTokenAddedToScript) {
 			auto tokenInfo = _getCsrfInfo();
 			if(tokenInfo is null)
@@ -291,24 +293,28 @@ class ApiProvider : WebDotDBaseType {
 	}
 
 	private bool csrfTokenAddedToScript;
-	private bool csrfTokenAddedToForms;
+	//private bool csrfTokenAddedToForms;
 
 	/// This adds CSRF tokens to all forms in the tree
 	protected void addCsrfTokens(Element element) {
-		if(!csrfTokenAddedToForms) {
+		if(element is null)
+			return;
+		//if(!csrfTokenAddedToForms) {
 			auto tokenInfo = _getCsrfInfo();
 			if(tokenInfo is null)
 				return;
 
-			foreach(formElement; element.querySelectorAll("form[method=POST]")) {
+			foreach(formElement; element.getElementsByTagName("form")) {
+				if(formElement.method != "POST" && formElement.method != "post")
+					continue;
 				auto form = cast(Form) formElement;
 				assert(form !is null);
 
 				form.setValue(tokenInfo["key"], tokenInfo["token"]);
 			}
 
-			csrfTokenAddedToForms = true;
-		}
+			//csrfTokenAddedToForms = true;
+		//}
 	}
 
 	// and added to ajax forms..
@@ -404,7 +410,7 @@ class ApiProvider : WebDotDBaseType {
 		assert(ret !is null);
 	}
 	body {
-		auto document = new Document("<!DOCTYPE html><html><head><title></title><link rel=\"stylesheet\" href=\"styles.css\" /></head><body><div id=\"body\"></div><script src=\"functions.js\"></script></body></html>");
+		auto document = new Document("<!DOCTYPE html><html><head><title></title><link rel=\"stylesheet\" href=\"styles.css\" /></head><body><div id=\"body\"></div><script src=\"functions.js\"></script></body></html>", true, true);
 		if(this.reflection !is null)
 			document.title = this.reflection.name;
 		auto container = document.getElementById("body");
@@ -1088,7 +1094,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 						params[i].value = value;
 					}
 
-					form = createAutomaticForm(new Document, fun);// params, beautify(fun.originalName));
+					form = createAutomaticForm(new Document("<html></html", true, true), fun);// params, beautify(fun.originalName));
 					foreach(k, v; cgi.get)
 						form.setValue(k, v);
 
@@ -1118,8 +1124,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					result.result.str = (document.toString());
 				} else {
 				gotnull:
-					auto document = new Document;
-					auto code = document.createElement("pre");
+					auto code = Element.make("pre");
 					code.innerText = e.toString();
 
 					result.result.str = (code.toString());
@@ -1224,7 +1229,7 @@ class BuiltInFunctions : ApiProvider {
 		if(f.createForm !is null) {
 			form = f.createForm(null).requireSelector!Form("form");
 		} else
-			form = createAutomaticForm(new Document, f);
+			form = createAutomaticForm(new Document("<html></html>", true, true), f);
 		auto idx = basedOn.cgi.requestUri.indexOf("builtin.getAutomaticForm");
 		if(idx == -1)
 			idx = basedOn.cgi.requestUri.indexOf("builtin.get-automatic-form");
@@ -1272,6 +1277,12 @@ class BuiltInFunctions : ApiProvider {
 /// Note it creates a session for you too, and will write to the disk - a csrf token. Compile with -version=no_automatic_session
 /// to disable this.
 mixin template FancyMain(T, Args...) {
+	mixin CustomCgiFancyMain!(Cgi, T, Args);
+}
+
+
+/// Like FancyMain, but you can pass a custom subclass of Cgi
+mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi)) {
 	void fancyMainFunction(Cgi cgi) { //string[] args) {
 //		auto cgi = new Cgi;
 
@@ -1314,7 +1325,7 @@ mixin template FancyMain(T, Args...) {
 //		}		
 	}
 
-	mixin GenericMain!(fancyMainFunction, Args);
+	mixin CustomCgiMain!(CustomCgi, fancyMainFunction, Args);
 }
 
 /// Given a function from reflection, build a form to ask for it's params
@@ -1696,7 +1707,6 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 	} else static if(isFloatingPoint!(T)) {
 		val.type = JSON_TYPE.FLOAT;
 		val.floating = to!real(a);
-		static assert(0);
 	} else static if(isPointer!(T)) {
 		if(a is null) {
 			val.type = JSON_TYPE.NULL;
@@ -2012,11 +2022,14 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 		else
 			instantiation(args);
 
-		static if(is(ReturnType!f : Element))
+		static if(is(ReturnType!f : Element)) {
+			if(ret is null)
+				return returnValue; // HACK to handle null returns
 			// we need to make sure that it's not called again when _postProcess(Document) is called!
 			// FIXME: is this right?
 			if(cgi.request("envelopeFormat", "document") != "document")
 				api._postProcessElement(ret); // need to post process the element here so it works in ajax modes.
+		}
 
 		formatAs(ret, format, api, &returnValue, secondaryFormat);
 
