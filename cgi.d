@@ -707,17 +707,17 @@ class Cgi {
 	/// you can override this function to somehow react
 	/// to an upload in progress.
 	///
-	/// Take note that most of the CGI object is not yet
-	/// initialized! Stuff from HTTP headers, in raw form, is usable.
-	/// Stuff processed from them (such as get[]!) is not.
+	/// Take note that parts of the CGI object is not yet
+	/// initialized! Stuff from HTTP headers, including get[], is usable.
+	/// But, none of post[] is usable, and you cannot write here. That's
+	/// why this method is const - mutating the object won't do much anyway.
 	///
-	/// In the current implementation, you can't even look at partial
-	/// post. My idea here was so you can output a progress bar or
-	/// something to a cooperative client.
+	/// My idea here was so you can output a progress bar or
+	/// something to a cooperative client (see arsd.rtud for a potential helper)
 	///
 	/// The default is to do nothing. Subclass cgi and use the 
 	/// CustomCgiMain mixin to do something here.
-	void onRequestBodyDataReceived(size_t receivedSoFar, size_t totalExpected) {
+	void onRequestBodyDataReceived(size_t receivedSoFar, size_t totalExpected) const {
 		// This space intentionally left blank.
 	}
 
