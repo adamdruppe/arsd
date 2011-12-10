@@ -87,7 +87,7 @@ class NetworkManager {
 	}
 
 
-	int numActiveConnections(){
+	size_t numActiveConnections(){
 		return connections.length;
 	}
 
@@ -220,8 +220,8 @@ setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
 				if(connection.writeBufferLength > 0)
 					if(FD_ISSET(connection.socket, &writefs)){
 						auto b = connection.writeBuffer[connection.writeBufferPosition..(connection.writeBufferPosition+connection.writeBufferLength)];
-						//int num = send(connection.socket, b.ptr, b.length, 0);
-						int num = write(connection.socket, b.ptr, b.length);
+						//auto num = send(connection.socket, b.ptr, b.length, 0);
+						auto num = write(connection.socket, b.ptr, b.length);
 						if(num < 0)
 							throw new ConnectionException("send", connection);
 
@@ -234,13 +234,13 @@ setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
 					connection.timeOfLastActivity = now;
 					}
 				if(FD_ISSET(connection.socket, &rdfs)){
-					int s = connection.readBufferPosition + connection.readBufferLength;
+					size_t s = connection.readBufferPosition + connection.readBufferLength;
 					s += 1024;
 					if(connection.readBuffer.length < s)
 						connection.readBuffer.length = s;
-					//int size = recv(connection.socket, connection.readBuffer.ptr + connection.readBufferPosition + connection.readBufferLength, 1024, 0);
+					//auto size = recv(connection.socket, connection.readBuffer.ptr + connection.readBufferPosition + connection.readBufferLength, 1024, 0);
 					//std.stdio.writefln("read buffer length: %s", connection.readBufferLength);
-					int size = read(connection.socket, connection.readBuffer.ptr + connection.readBufferPosition + connection.readBufferLength, 1024);
+					auto size = read(connection.socket, connection.readBuffer.ptr + connection.readBufferPosition + connection.readBufferLength, 1024);
 					if(size == 0){
 						connection.disconnectQueued = true;
 						connection.reason = "size == 0";
@@ -372,7 +372,7 @@ class Connection {
 		if(socket < 0)
 			throw new ConnectionException("cannot write to a closed connection", this);
 
-		int newEnd = writeBufferPosition + writeBufferLength + data.length;
+		size_t newEnd = writeBufferPosition + writeBufferLength + data.length;
 
 		if(newEnd >= writeBuffer.length)
 			writeBuffer.length = newEnd;
