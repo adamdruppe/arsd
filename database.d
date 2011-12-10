@@ -36,9 +36,7 @@ interface Database {
 			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
 				long e = va_arg!long(_argptr);
 				a = to!string(e);
-			} else if (arg == typeid(void*)) {
-				void* e = va_arg!(void*)(_argptr);
-				assert(e is null, "can only pass null pointer");
+			} else if (arg == typeid(null)) {
 				a = null;
 			} else assert(0, "invalid type " ~ arg.toString );
 
@@ -463,8 +461,6 @@ class DataObject {
 				auto e = va_arg!(long)(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(null)) {
-				auto e = va_arg!(void*)(_argptr);
-				assert(e is null, "can only pass null pointer");
 				a = null;
 			} else assert(0, "invalid type " ~ arg.toString );
 

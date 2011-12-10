@@ -1084,7 +1084,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 					form = doc.requireSelector!Form("form");
 				} else {
-					Parameter[] params = cast(Parameter[]) (cast() *fun).parameters.dup;
+					Parameter[] params = (cast(Parameter[])fun.parameters).dup;
 					foreach(i, p; fun.parameters) {
 						string value = "";
 						if(p.name in cgi.get)
