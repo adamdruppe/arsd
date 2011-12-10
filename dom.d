@@ -83,37 +83,54 @@ bool isInArray(T)(T item, T[] arr) {
 }
 
 ///.
-class Stack(T) {
+final class Stack(T) {
+	this() {
+		internalLength = 0;
+		arr = initialBuffer;
+	}
 
 	///.
 	void push(T t) {
-		arr ~= t;
+		if(internalLength >= arr.length) {
+			if(arr.length < 4096)
+				arr = new T[arr.length * 2];
+			else
+				arr = new T[arr.length + 4096];
+		}
+
+		arr[internalLength] = t;
+		internalLength++;
 	}
 
 	///.
 	T pop() {
-		assert(arr.length);
-		T tmp = arr[$-1];
-		arr.length = arr.length - 1;
-		return tmp;
+		assert(internalLength);
+		internalLength--;
+		return arr[internalLength];
 	}
 
 	///.
 	T peek() {
-		return arr[$-1];
+		assert(internalLength);
+		return arr[internalLength - 1];
 	}
 
 	///.
 	bool empty() {
-		return arr.length ? false : true;
+		return internalLength ? false : true;
 	}
 
 	///.
-	T[] arr;
+	private T[] arr;
+	private size_t internalLength;
+	private T[64] initialBuffer;
+	// the static array is allocated with this object, so if we have a small stack (which we prolly do; dom trees usually aren't insanely deep),
+	// using this saves us a bunch of trips to the GC. In my last profiling, I got about a 50x improvement in the push()
+	// function thanks to this, and push() was actually one of the slowest individual functions in the code!
 }
 
 ///.
-class ElementStream {
+final class ElementStream {
 
 	///.
 	Element front() {
@@ -138,6 +155,8 @@ class ElementStream {
 	void popFront() {
 	    more:
 	    	if(isEmpty) return;
+
+		// FIXME: the profiler says this function is somewhat slow (noticeable because it can be called a lot of times)
 
 		current.childPosition++;
 		if(current.childPosition >= current.element.children.length) {
@@ -213,21 +232,8 @@ class Element {
 	private bool selfClosed;
 
 	/// Get the parent Document object that contains this element.
-	/// It may return null and/or run in O(n) time with the height of the tree.
-	pure Document parentDocument() {
-		auto e = this;
-		while(e !is null && e._parentDocument is null)
-			e = e.parentNode;
-		if(e is null)
-			return null;
-		return e._parentDocument;
-	}
-
-	pure void parentDocument(Document pd) {
-		_parentDocument = pd;
-	}
-
-	private Document _parentDocument;
+	/// It may be null, so remember to check for that.
+	Document parentDocument;
 
 	///.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
@@ -239,7 +245,11 @@ class Element {
 	}
 
 	/// Removes all inner content from the tag; all child text and elements are gone.
-	void removeAllChildren() {
+	void removeAllChildren()
+		out {
+			assert(this.children.length == 0);
+		}
+	body {
 		children = null;
 	}
 
@@ -345,7 +355,12 @@ class Element {
 	// Back to the regular dom functions
 
 	///.
-	@property Element cloned() {
+	@property Element cloned()
+		out(ret) {
+			assert(ret.children.length == this.children.length);
+			assert(ret.tagName == this.tagName);
+		}
+	body {
 		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
 		foreach(child; children) {
 			e.appendChild(child.cloned);
@@ -370,6 +385,10 @@ class Element {
 		if(_attributes !is null)
 			attributes = _attributes;
 		selfClosed = tagName.isInArray(selfClosedElements);
+
+		// this is meant to reserve some memory. It makes a small, but consistent improvement.
+		//children.length = 8;
+		//children.length = 0;
 	}
 
 	/*
@@ -413,6 +432,7 @@ class Element {
 		}
 		out (ret) {
 			assert(e.parentNode is this);
+			assert(e.parentDocument is this.parentDocument);
 			assert(e is ret);
 		}
 	body {
@@ -430,7 +450,7 @@ class Element {
 	}
 
 	/// Inserts the second element to this node, right before the first param
-	Element insertBefore(Element where, Element what)
+	Element insertBefore(in Element where, Element what)
 		in {
 			assert(where !is null);
 			assert(where.parentNode is this);
@@ -440,12 +460,15 @@ class Element {
 		out (ret) {
 			assert(where.parentNode is this);
 			assert(what.parentNode is this);
+
+			assert(what.parentDocument is this.parentDocument);
 			assert(ret is what);
 		}
 	body {
 		foreach(i, e; children) {
 			if(e is where) {
 				children = children[0..i] ~ what ~ children[i..$];
+				what.parentDocument = this.parentDocument;
 				what.parentNode = this;
 				return what;
 			}
@@ -457,7 +480,7 @@ class Element {
 	}
 
 	///.
-	Element insertAfter(Element where, Element what)
+	Element insertAfter(in Element where, Element what)
 		in {
 			assert(where !is null);
 			assert(where.parentNode is this);
@@ -467,6 +490,7 @@ class Element {
 		out (ret) {
 			assert(where.parentNode is this);
 			assert(what.parentNode is this);
+			assert(what.parentDocument is this.parentDocument);
 			assert(ret is what);
 		}
 	body {
@@ -474,6 +498,7 @@ class Element {
 			if(e is where) {
 				children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
 				what.parentNode = this;
+				what.parentDocument = this.parentDocument;
 				return what;
 			}
 		}
@@ -571,9 +596,16 @@ class Element {
 	/// convenience function to quickly add a tag with some text or
 	/// other relevant info (for example, it's a src for an <img> element
 	/// instead of inner text)
-	Element addChild(string tagName, string childInfo = null, string childInfo2 = null) {
+	Element addChild(string tagName, string childInfo = null, string childInfo2 = null)
+		in {
+			assert(tagName !is null);
+		}
+		out(e) {
+			assert(e.parentNode is this);
+			assert(e.parentDocument is this.parentDocument);
+		}
+	body {
 		auto e = Element.make(tagName, childInfo, childInfo2);
-		e.parentDocument = this.parentDocument;
 		return appendChild(e);
 	}
 
@@ -602,6 +634,9 @@ class Element {
 		assert(ret !is null);
 		assert(ret.parentNode is this);
 		assert(firstChild.parentNode is ret);
+
+		assert(ret.parentDocument is this.parentDocument);
+		assert(firstChild.parentDocument is this.parentDocument);
 	}
 	body {
 		auto e = parentDocument.createElement(tagName);
@@ -616,6 +651,7 @@ class Element {
 	out(ret) {
 		assert(ret !is null);
 		assert(ret.parentNode is this);
+		assert(ret.parentDocument is this.parentDocument);
 	}
 	body {
 		auto e = Element.make(tagName);
@@ -650,12 +686,25 @@ class Element {
 	}
 
 	/// swaps one child for a new thing. Returns the old child which is now parentless.
-	Element swapNode(Element child, Element replacement) {
+	Element swapNode(Element child, Element replacement)
+		in {
+			assert(child !is null);
+			assert(replacement !is null);
+			assert(child.parentNode is this);
+		}
+		out(ret) {
+			assert(ret is child);
+			assert(ret.parentNode is null);
+			assert(replacement.parentNode is this);
+			assert(replacement.parentDocument is this.parentDocument);
+		}
+	body {
 		foreach(ref c; this.children)
 			if(c is child) {
 				c.parentNode = null;
 				c = replacement;
 				c.parentNode = this;
+				c.parentDocument = this.parentDocument;
 				return child;
 			}
 		assert(0);
@@ -664,6 +713,8 @@ class Element {
 
 	///.
 	Element getElementById(string id) {
+		// FIXME: I use this function a lot, and it's kinda slow
+		// not terribly slow, but not great.
 		foreach(e; tree)
 			if(e.id == id)
 				return e;
@@ -703,7 +754,7 @@ class Element {
 	/// Note: you can give multiple selectors, separated by commas.
 	/// It will return the first match it finds.
 	Element querySelector(string selector) {
-		// FIXME: inefficient
+		// FIXME: inefficient; it gets all results just to discard most of them
 		auto list = getElementsBySelector(selector);
 		if(list.length == 0)
 			return null;
@@ -717,6 +768,10 @@ class Element {
 
 	///.
 	Element[] getElementsBySelector(string selector) {
+		// FIXME: this function could probably use some performance attention
+		// ... but only mildly so according to the profiler in the big scheme of things; probably negligible in a big app.
+
+
 		// POSSIBLE FIXME: this also sends attribute things to lower in the selector,
 		// but the actual get selector check is still case sensitive...
 		if(parentDocument && parentDocument.loose)
@@ -895,6 +950,7 @@ class Element {
 				i++;
 				children = children[0..i] ~ child ~ children[i..$];
 				child.parentNode = this;
+				child.parentDocument = this.parentDocument;
 				break;
 			}
 		}
@@ -908,12 +964,18 @@ class Element {
 			if(position !is null)
 				assert(isInArray(position, children));
 		}
-		out {
+		out (ret) {
 			assert(e.children.length == 0);
+			debug foreach(child; ret) {
+				assert(child.parentNode is this);
+				assert(child.parentDocument is this.parentDocument);
+			}
 		}
 	body {
-		foreach(c; e.children)
+		foreach(c; e.children) {
 			c.parentNode = this;
+			c.parentDocument = this.parentDocument;
+		}
 		if(position is null)
 			children ~= e.children;
 		else {
@@ -941,10 +1003,12 @@ class Element {
 		}
 		out {
 			assert(e.parentNode is this);
+			assert(e.parentDocument is this.parentDocument);
 			assert(children[0] is e);
 		}
 	body {
 		e.parentNode = this;
+		e.parentDocument = this.parentDocument;
 		children = e ~ children;
 		return e;
 	}
@@ -983,22 +1047,19 @@ class Element {
 		Returns a string containing all child elements, formatted such that it could be pasted into
 		an XML file.
 	*/
-	@property string innerHTML() const {
-		string s = "";
-		if(children is null) {
-			assert(s !is null);
-			return s;
-		}
+	@property string innerHTML(Appender!string where = appender!string()) const {
+		if(children is null)
+			return "";
+
+		auto start = where.data.length;
+
 		foreach(child; children) {
 			assert(child !is null);
-			auto ts = child.toString();
-			assert(ts !is null);
-			s ~= ts;
+
+			child.writeToAppender(where);
 		}
 
-		assert(s !is null);
-
-		return s;
+		return where.data[start .. $];
 	}
 
 	/**
@@ -1021,12 +1082,10 @@ class Element {
 		children = doc.root.children;
 		foreach(c; children) {
 			c.parentNode = this;
+			c.parentDocument = this.parentDocument;
 		}
 
-		auto newpd = this.parentDocument;
-		foreach(c; this.tree) {
-			c.parentDocument = newpd;
-		}
+		reparentTreeDocuments();
 
 		doc.root.children = null;
 	}
@@ -1034,6 +1093,11 @@ class Element {
 	/// ditto
 	@property void innerHTML(Html html) {
 		this.innerHTML = html.source;
+	}
+
+	private void reparentTreeDocuments() {
+		foreach(c; this.tree)
+			c.parentDocument = this.parentDocument;
 	}
 
 	/**
@@ -1051,7 +1115,11 @@ class Element {
 		children = doc.root.children;
 		foreach(c; children) {
 			c.parentNode = this;
+			c.parentDocument = this.parentDocument;
 		}
+
+
+		reparentTreeDocuments();
 
 
 		stripOut();
@@ -1080,7 +1148,7 @@ class Element {
 		Note that the returned string is decoded, so it no longer contains any xml entities.
 	*/
 	string getAttribute(string name) const {
-		if(_parentDocument && _parentDocument.loose)
+		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
 		auto e = name in attributes;
 		if(e)
@@ -1093,14 +1161,16 @@ class Element {
 		Sets an attribute. Returns this for easy chaining
 	*/
 	Element setAttribute(string name, string value) {
-		if(_parentDocument && _parentDocument.loose)
+		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
 
 		// I never use this shit legitimately and neither should you
-		if(name.toLower == "href" || name.toLower == "src") {
-			if(value.strip.toLower.startsWith("vbscript:"))
+		auto it = name.toLower;
+		if(it == "href" || it == "src") {
+			auto v = value.strip.toLower();
+			if(v.startsWith("vbscript:"))
 				value = value[9..$];
-			if(value.strip.toLower.startsWith("javascript:"))
+			if(v.startsWith("javascript:"))
 				value = value[11..$];
 		}
 
@@ -1113,7 +1183,7 @@ class Element {
 		Extension
 	*/
 	bool hasAttribute(string name) {
-		if(_parentDocument && _parentDocument.loose)
+		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
 
 		if(name in attributes)
@@ -1126,7 +1196,7 @@ class Element {
 		Extension
 	*/
 	void removeAttribute(string name) {
-		if(_parentDocument && _parentDocument.loose)
+		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
 		if(name in attributes)
 			attributes.remove(name);
@@ -1161,8 +1231,10 @@ class Element {
 			assert(replace !is null);
 			assert(replace.parentNode is null);
 		}
-		out {
+		out(ret) {
+			assert(ret is replace);
 			assert(replace.parentNode is this);
+			assert(replace.parentDocument is this.parentDocument);
 			assert(find.parentNode is null);
 		}
 	body {
@@ -1171,6 +1243,7 @@ class Element {
 				replace.parentNode = this;
 				children[i].parentNode = null;
 				children[i] = replace;
+				replace.parentDocument = this.parentDocument;
 				return replace;
 			}
 		}
@@ -1189,7 +1262,7 @@ class Element {
 			assert(c.parentNode is this);
 		}
 		out {
-			foreach(child; children)
+			debug foreach(child; children)
 				assert(child !is c);
 			assert(c.parentNode is null);
 		}
@@ -1209,7 +1282,7 @@ class Element {
 	Element[] removeChildren()
 		out (ret) {
 			assert(children.length == 0);
-			foreach(r; ret)
+			debug foreach(r; ret)
 				assert(r.parentNode is null);
 		}
 	body {
@@ -1232,15 +1305,15 @@ class Element {
 			assert(find !is null);
 			assert(replace !is null);
 			assert(find.parentNode is this);
-			foreach(r; replace)
+			debug foreach(r; replace)
 				assert(r.parentNode is null);
 		}
 		out {
 			assert(find.parentNode is null);
 			assert(children.length >= replace.length);
-			foreach(child; children)
+			debug foreach(child; children)
 				assert(child !is find);
-			foreach(r; replace)
+			debug foreach(r; replace)
 				assert(r.parentNode is this);
 		}
 	body {
@@ -1253,9 +1326,13 @@ class Element {
 			if(children[i] is find) {
 				children[i].parentNode = null; // this element should now be dead
 				children[i] = replace[0];
-				children = .insertAfter(children, i, replace[1..$]);
-				foreach(e; replace)
+				foreach(e; replace) {
 					e.parentNode = this;
+					e.parentDocument = this.parentDocument;
+				}
+
+				children = .insertAfter(children, i, replace[1..$]);
+
 				return;
 			}
 		}
@@ -1394,7 +1471,7 @@ class Element {
 
 	invariant () {
 		if(children !is null)
-		foreach(child; children) {
+		debug foreach(child; children) {
 		//	assert(parentNode !is null);
 			assert(child !is null);
 			assert(child.parentNode is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parentNode is null ? "null" : child.parentNode.tagName));
@@ -1402,6 +1479,13 @@ class Element {
 			assert(child !is parentNode);
 		}
 
+		/+ // only depend on parentNode's accuracy if you shuffle things around and use the top elements - where the contracts guarantee it on out
+		if(parentNode !is null) {
+			// if you have a parent, you should share the same parentDocument; this is appendChild()'s job
+			auto lol = cast(TextNode) this;
+			assert(parentDocument is parentNode.parentDocument, lol is null ? this.tagName : lol.contents);
+		}
+		+/
 		//assert(parentDocument !is null); // no more; if it is present, we use it, but it is not required
 		// reason is so you can create these without needing a reference to the document
 	}
@@ -1411,29 +1495,45 @@ class Element {
 		an XML file.
 	*/
 	override string toString() const {
+		return writeToAppender();
+	}
+
+	/// This is the actual implementation used by toString. You can pass it a preallocated buffer to save some time.
+	/// Returns the string it creates.
+	string writeToAppender(Appender!string where = appender!string()) const {
 		assert(tagName !is null);
-		string s = "<" ~ tagName;
+
+		where.reserve((this.children.length + 1) * 512);
+
+		auto start = where.data.length;
+
+		where.put("<");
+		where.put(tagName);
 
 		foreach(n, v ; attributes) {
 			assert(n !is null);
 			//assert(v !is null);
-			s ~= " " ~ n ~ "=\"" ~ htmlEntitiesEncode(v) ~ "\"";
+			where.put(" ");
+			where.put(n);
+			where.put("=\"");
+			htmlEntitiesEncode(v, where);
+			where.put("\"");
 		}
 
 		if(selfClosed){
-			s ~= " />";
-			return s;
+			where.put(" />");
+			return where.data[start .. $];
 		}
 
-		s ~= ">";
+		where.put('>');
 
-		s ~= innerHTML();
+		innerHTML(where);
 
-		s ~= "</" ~ tagName ~ ">";
+		where.put("</");
+		where.put(tagName);
+		where.put('>');
 
-		assert(s !is null);
-
-		return s;
+		return where.data[start .. $];
 	}
 
 	/**
@@ -1459,25 +1559,48 @@ class DocumentFragment : Element {
 }
 
 ///.
-string htmlEntitiesEncode(string data) {
-	char[] output = "".dup;
+string htmlEntitiesEncode(string data, Appender!string output = appender!string()) {
+	// if there's no entities, we can save a lot of time by not bothering with the
+	// decoding loop. This check cuts the net toString time by better than half in my test.
+	// let me know if it made your tests worse though, since if you use an entity in just about
+	// every location, the check will add time... but I suspect the average experience is like mine
+	// since the check gives up as soon as it can anyway.
+
+	bool shortcut = true;
+	foreach(char c; data) {
+		// non ascii chars are always higher than 127 in utf8; we'd better go to the full decoder if we see it.
+		if(c == '<' || c == '>' || c == '"' || c == '&' || cast(uint) c > 127) {
+			shortcut = false; // there's actual work to be done
+			break;
+		}
+	}
+
+	if(shortcut) {
+		output.put(data);
+		return data;
+	}
+
+	auto start = output.data.length;
+
+	output.reserve(data.length + 64); // grab some extra space for the encoded entities
+
 	foreach(dchar d; data) {
 		if(d == '&')
-			output ~= "&amp;";
+			output.put("&amp;");
 		else if (d == '<')
-			output ~= "&lt;";
+			output.put("&lt;");
 		else if (d == '>')
-			output ~= "&gt;";
+			output.put("&gt;");
 		else if (d == '\"')
-			output ~= "&quot;";
+			output.put("&quot;");
 		else if (d < 128 && d > 0)
-			output ~= d;
+			output.put(d);
 		else
-			output ~= "&#" ~ std.conv.to!string(cast(int) d) ~ ";";
+			output.put("&#" ~ std.conv.to!string(cast(int) d) ~ ";");
 	}
 
 	//assert(output !is null); // this fails on empty attributes.....
-	return assumeUnique(output);
+	return output.data[start .. $];
 
 //	data = data.replace("\u00a0", "&nbsp;");
 }
@@ -1559,7 +1682,13 @@ import std.utf;
 
 ///.
 string htmlEntitiesDecode(string data, bool strict = false) {
-	dchar[] a;
+	// this check makes a *big* difference; about a 50% improvement of parse speed on my test.
+	if(data.indexOf("&") == -1) // all html entities begin with &
+		return data; // if there are no entities in here, we can return the original slice and save some time
+
+	char[] a; // this seems to do a *better* job than appender!
+
+	char[4] buffer;
 
 	bool tryingEntity = false;
 	dchar[] entityBeingTried;
@@ -1572,14 +1701,14 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 
 			if(ch == ';') {
 				tryingEntity = false;
-				a ~= parseEntity(entityBeingTried);
+				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
 			} else {
 				if(entityAttemptIndex >= 7) {
 					if(strict)
 						throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
 					else {
 						tryingEntity = false;
-						a ~= entityBeingTried;
+						a ~= to!(char[])(entityBeingTried);
 					}
 				}
 			}
@@ -1590,12 +1719,12 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 				entityBeingTried ~= ch;
 				entityAttemptIndex = 0;
 			} else {
-				a ~= ch;
+				a ~= buffer[0 .. std.utf.encode(buffer, ch)];
 			}
 		}
 	}
 
-	return std.conv.to!string(a);
+	return cast(string) a; // assumeUnique is actually kinda slow, lol
 }
 
 ///.
@@ -1671,10 +1800,10 @@ class TextNode : Element {
 	}
 
 	///.
-	override string toString() const {
+	override string writeToAppender(Appender!string where = appender!string()) const {
 		string s;
 		if(contents.length)
-			s = htmlEntitiesEncode(contents);
+			s = htmlEntitiesEncode(contents, where);
 		else
 			s = "";
 
@@ -2417,6 +2546,9 @@ class Document : FileResource {
 
 	*/
 	void parse(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
+		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
+		// of my big app.
+
 		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
 		if(dataEncoding is null) {
 			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
@@ -2493,19 +2625,9 @@ class Document : FileResource {
 
 		// &amp; and friends are converted when I know them, left the same otherwise
 
-		try {
-			validate(data); // it *must* be UTF-8 for this to work correctly
-		} catch (Throwable t) {
-			if(strict)
-			throw new MarkupError("This document is not UTF-8.");
-			else {
-				string newData;
-				foreach(char c; data)
-					if(c < 128)
-						newData ~= cast(char) c;
-				data = newData;
-			}
-		}
+
+		// this it should already be done correctly.. so I'm leaving it off to net a ~10% speed boost on my typical test file (really)
+		//validate(data); // it *must* be UTF-8 for this to work correctly
 
 		sizediff_t pos = 0;
 
@@ -2605,18 +2727,6 @@ class Document : FileResource {
 			return new RawSource(this, data[start..pos]);
 		}
 
-		char readEntity() {
-			return ' ';
-		}
-
-		string readComment() {
-			return "";
-		}
-
-		string readScript() {
-			return "";
-		}
-
 
 		struct Ele {
 			int type; // element or closing tag or nothing
@@ -2625,6 +2735,8 @@ class Document : FileResource {
 		}
 		// recursively read a tag
 		Ele readElement(string[] parentChain = null) {
+			// FIXME: this is the closest function in this module, by far, even in strict mode.
+			// Loose mode should perform decently, but strict mode is the important one.
 			if(!strict && parentChain is null)
 				parentChain = [];
 
@@ -3269,6 +3381,8 @@ int intFromHex(string hex) {
 		// USEFUL
 		///.
 		bool matchElement(Element e) {
+			// FIXME: this can be called a lot of times, and really add up in times according to the profiler.
+			// Each individual call is reasonably fast already, but it adds up.
 			if(e is null) return false;
 			if(e.nodeType != 1) return false;
 

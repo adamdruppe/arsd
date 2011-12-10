@@ -2530,55 +2530,99 @@ class Session {
 	*/
 }
 
-/// sets a site-wide cookie, meant to simplify login code
+/// sets a site-wide cookie, meant to simplify login code. Note: you often might not want a side wide cookie, but I usually do since my projects need single sessions across multiple thingies, hence, this.
 void setLoginCookie(Cgi cgi, string name, string value) {
 	cgi.setCookie(name, value, 0, "/", null, true);
 }
 
-// this thing sucks in so many ways. it's kinda useful tho
-string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml = true) {
-	if(text is null)
-		return null;
-
-	string newText = text;
-
-	if(vars !is null)
-	foreach(k, v; vars) {
-		//assert(k !is null);
-		//assert(v !is null);
-		string replacement = useHtml ? htmlEntitiesEncode(v).replace("\n", "<br />") : v;
-		newText = newText.replace("{$" ~ k ~ "}", replacement);
-	}
-
-	return newText;
-}
 
 void applyTemplateToElement(Element e, in string[string] vars) {
 	foreach(ele; e.tree) {
-		foreach(k, v; ele.attributes)
-			ele.attributes[k] = htmlTemplateWithData(v, vars, false);
 		auto tc = cast(TextNode) ele;
 		if(tc !is null) {
-			// FIXME: this should arguably be null
+			// text nodes have no attributes, but they do have text we might replace.
 			tc.contents = htmlTemplateWithData(tc.contents, vars, false);
+		} else {
+			// if it is not a text node, it has no text where templating is valid, except the attributes
+			// note: text nodes have no attributes, which is why this is in the separate branch.
+			foreach(k, v; ele.attributes)
+				ele.attributes[k] = htmlTemplateWithData(v, vars, false);
 		}
 	}
 }
 
-string htmlTemplate(string filename, string[string] vars) {
-	return htmlTemplateWithData(readText(filename), vars);
+// this thing sucks a little less now.
+// set useHtml to false if you're working on internal data (such as TextNode.contents, or attribute);
+// it should only be set to true if you're doing input that has already been ran through toString or something.
+string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml = true) {
+	if(text is null)
+		return null;
+
+	int state = 0;
+
+	string newText = null;
+
+	size_t nameStart;
+	size_t replacementStart;
+	size_t lastAppend = 0;
+	foreach(i, c; text) {
+		switch(state) {
+			default: assert(0);
+			case 0:
+				if(c == '{') {
+					replacementStart = i;
+					state++;
+				}
+			break;
+			case 1:
+				if(c == '$')
+					state++;
+				else
+					state--; // not a variable
+			break;
+			case 2: // just started seeing a name
+				if(c == '}') {
+					state = 0; // empty names aren't allowed; ignore it
+				} else {
+					nameStart = i;
+					state++;
+				}
+			break;
+			case 3: // reading a name
+				if(c == '}') {
+					// just finished reading it, let's do our replacement.
+					string name = text[nameStart .. i];
+					auto it = name in vars;
+					if(it !is null) {
+						newText ~= text[lastAppend .. replacementStart];
+						string replacement = *it;
+						if(useHtml)
+							replacement = htmlEntitiesEncode(replacement).replace("\n", "<br />");
+						newText ~= *it;
+						lastAppend = i + 1;
+					}
+
+					state = 0;
+				}
+			break;
+		}
+	}
+
+	if(newText is null)
+		newText = text; // nothing was found, so no need to risk allocating anything...
+	else
+		newText ~= text[lastAppend .. $]; // make sure we have everything here
+
+	return newText;
 }
 
-/// a specilization of Document that: a) is always in strict mode and b) provides some template variable text replacement, in addition to DOM manips.
+/// a specialization of Document that: a) is always in strict mode and b) provides some template variable text replacement, in addition to DOM manips. The variable text is valid in text nodes and attribute values. It takes the format of {$variable}, where variable is a key into the vars member.
 class TemplatedDocument : Document {
-	const override string toString() {
-		string s;
-		if(vars !is null)
-			s = htmlTemplateWithData(super.toString(), vars);
-		else
-			s = super.toString();
+	override string toString() const {
+		if(this.root !is null)
+			applyTemplateToElement(cast() this.root, vars); /* FIXME: I shouldn't cast away const, since it's rude to modify an object in any toString.... but that's what I'm doing for now */
 
-		return s;
+		return super.toString();
 	}
 
 	public:

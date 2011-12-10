@@ -656,13 +656,15 @@ string fromCstring(cstring c, int len = -1) {
 	if(c is null)
 		return null;
 	if(len == -1) {
-		while(*c) {
-			ret ~= cast(char) *c;
-			c++;
-		}
-	} else
-		for(int a = 0; a < len; a++)
-			ret ~= cast(char) *(a+c);
+		auto iterator = c;
+		while(*iterator)
+			iterator++;
+
+		len = cast(int) iterator - cast(int) c;
+		assert(len >= 0);
+	}
+
+	ret = cast(string) (c[0 .. len].idup);
 
 	return ret;
 }
