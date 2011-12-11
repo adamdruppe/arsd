@@ -1,5 +1,8 @@
 module arsd.dom;
 
+// NOTE: do *NOT* override toString on Element subclasses. It won't work.
+// Instead, override writeToAppender();
+
 import std.string;
 // import std.ascii;
 import std.exception;
@@ -1521,8 +1524,8 @@ class DocumentFragment : Element {
 	}
 
 	///.
-	override string toString() const {
-		return this.innerHTML;
+	string writeToAppender(Appender!string where = appender!string()) const {
+		return this.innerHTML(where);
 	}
 }
 
@@ -1716,7 +1719,8 @@ class RawSource : Element {
 	}
 
 	///.
-	override string toString() const {
+	string writeToAppender(Appender!string where = appender!string()) const {
+		where.put(source);
 		return source;
 	}
 
