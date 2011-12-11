@@ -1094,7 +1094,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 						params[i].value = value;
 					}
 
-					form = createAutomaticForm(new Document("<html></html", true, true), fun);// params, beautify(fun.originalName));
+					form = createAutomaticForm(new Document("<html></html>", true, true), fun);// params, beautify(fun.originalName));
 					foreach(k, v; cgi.get)
 						form.setValue(k, v);
 
@@ -2280,6 +2280,12 @@ class Session {
 
 			_sessionId = info[0];
 			auto hash = info[1];
+
+			if(_sessionId.length == 0) {
+				// there is no session
+				_readOnly = true;
+				return;
+			}
 
 			// FIXME: race condition if the session changes?
 			enforce(hashToString(SHA256(readText(getFilePath()))) == hash);
