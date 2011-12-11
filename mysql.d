@@ -1,6 +1,16 @@
 /// NOTE: If you're using MySQL client library v5.1 or greater,
 ///       you must pass this to dmd: -version=MySQL_51
+/// This is important - otherwise you will see bizarre segfaults!
 module arsd.mysql;
+
+
+version(MySQL_51) {
+	// we good
+} else version(Less_Than_MySQL_51) {
+	// we good
+} else
+	pragma(msg, "NOTE: If you are using MySQL 5.1 or newer, specify -version=MySQL_51 to dmd to avoid segfaults. If you are on an older version, you can shut this message up with -version=Less_Than_MySQL_51");
+
 version(Windows) {
 	pragma(lib, "libmysql");
 }
@@ -97,7 +107,7 @@ class MySqlResult : ResultSet {
 
 		for(int i = 0; i < numFields; i++) {
 			if(fields[i].name !is null)
-				mapping[fromCstring(fields[i].name)] = i;
+				mapping[fromCstring(fields[i].name, fields[i].name_length)] = i;
 		}
 	}
 
@@ -133,7 +143,7 @@ class MySqlResult : ResultSet {
 
 		string[] names;
 		for(int i = 0; i < numFields; i++) {
-			names ~= fromCstring(fields[i].name);
+			names ~= fromCstring(fields[i].name, fields[i].name_length);
 		}
 
 		return names;
@@ -552,10 +562,10 @@ struct ResultByDataObject(ObjType) if (is(ObjType : DataObject)) {
 		this.mysql = mysql;
 
 		foreach(i, f; fields) {
-			string tbl = fromCstring(f.org_table is null ? f.table : f.org_table);
+			string tbl = fromCstring(f.org_table is null ? f.table : f.org_table, f.org_table is null ? f.table_length : f.org_table_length);
 			mappings[fromCstring(f.name)] = tuple(
 					tbl,
-					fromCstring(f.org_name is null ? f.name : f.org_name));
+					fromCstring(f.org_name is null ? f.name : f.org_name, f.org_name is null ? f.name_length : f.org_name_length));
 		}
 
 
@@ -655,11 +665,14 @@ string fromCstring(cstring c, int len = -1) {
 	string ret;
 	if(c is null)
 		return null;
+	if(len == 0)
+		return "";
 	if(len == -1) {
 		auto iterator = c;
 		while(*iterator)
 			iterator++;
 
+		// note they are both byte pointers, so this is sane
 		len = cast(int) iterator - cast(int) c;
 		assert(len >= 0);
 	}
