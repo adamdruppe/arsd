@@ -11,44 +11,12 @@ import std.stdio;
 
 import arsd.characterencodings;
 
-/+
-/* *
-	Does a printf into an html format string.
+// tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
+// that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
+// most likely a typo so I say kill kill kill.
 
-	eprintf(div, "<span>%s</span> is awesome. %d.",
-		"Adam", 10);
-*/
-
-// is this even a useful idea now that I have add children and such?
-void eprintf(T...)(Element parent, string format, T data) {
-
-}
-+/
-
-// Biggest (known) fixme left for "tag soup": <p> .... <p> in loose mode should close it on the second opening.
 
 // Should I support Element.dataset? it does dash to camelcase for attribute "data-xxx-xxx"
-
-/*
-	To pwn haml, it might be interesting to add a
-
-	getElementBySelectorAndMakeIfNotThere
-
-	It first does querySelector. If null, find the path that was closest to matching using
-	the weight rules or the left to right reading, whatever gets close.
-
-	Then make the elements so it works and return the first matching element.
-
-
-	virtual Element setMainPart() {} // usually does innertext but can be overridden by certain elements
-
-
-	The haml converter produces a mixin string that does getElementBySelectorAndMakeIfNotThere and calls
-	setMainPart on it. boom.
-
-
-	but meh
-*/
 
 void sanitizeHtml(Document document) {
 	foreach(e; document.root.tree) {
@@ -2636,6 +2604,7 @@ class Document : FileResource {
 		loose = !caseSensitive;
 
 		bool sawImproperNesting = false;
+		bool paragraphHackfixRequired = false;
 
 		int getLineNumber(sizediff_t p) {
 			int line = 1;
@@ -2762,6 +2731,8 @@ class Document : FileResource {
 				// I don't care about these, so I just want to skip them
 				case '!': // might be a comment, a doctype, or a special instruction
 					pos++;
+						// FIXME: we should store these in the tree too
+						// though I like having it stripped out tbh.
 					if(data[pos] == '-' && data[pos+1] == '-') {
 						// comment
 						pos += 2;
@@ -2793,6 +2764,9 @@ class Document : FileResource {
 					while(data[pos] != end)
 						pos++;
 					pos++; // skip the end
+
+					// FIXME: we should actually store this somewhere
+						// though I like having it stripped out as well tbh.
 					if(data[pos] == '>')
 						pos++;
 					else
@@ -2853,7 +2827,7 @@ class Document : FileResource {
 						e.parseAttributes();
 
 
-						// HACK to handle script as a CDATA section 
+						// HACK to handle script and style as a raw data section as it is in HTML browsers
 						if(tagName == "script" || tagName == "style") {
 							string closer = "</" ~ tagName ~ ">";
 							auto ending = indexOf(data[pos..$], closer);
@@ -2869,6 +2843,15 @@ class Document : FileResource {
 
 						bool closed = selfClosed;
 
+						void considerHtmlParagraphHack(Element n) {
+							assert(!strict);
+							if(e.tagName == "p" && e.tagName == n.tagName) {
+								// html lets you write <p> para 1 <p> para 1
+								// but in the dom tree, they should be siblings, not children.
+								paragraphHackfixRequired = true;
+							}
+						}
+
 						//writef("<%s>", tagName);
 						while(!closed) {
 							Ele n;
@@ -2881,6 +2864,8 @@ class Document : FileResource {
 
 
 							if(n.type == 0) {
+								if(!strict)
+									considerHtmlParagraphHack(n.element);
 								e.appendChild(n.element);
 							} else if(n.type == 1) {
 								bool found = false;
@@ -2891,6 +2876,8 @@ class Document : FileResource {
 										sawImproperNesting = true;
 										// this is so we don't drop several levels of awful markup
 										if(n.element) {
+											if(!strict)
+												considerHtmlParagraphHack(n.element);
 											e.appendChild(n.element);
 											n.element = null;
 										}
@@ -2917,8 +2904,11 @@ class Document : FileResource {
 										e.appendChild(TextNode.fromUndecodedString(this, "</"~n.payload~">"));
 									}
 								} else {
-									if(n.element)
+									if(n.element) {
+										if(!strict)
+											considerHtmlParagraphHack(n.element);
 										e.appendChild(n.element);
+									}
 								}
 
 								if(n.payload == tagName) // in strict mode, this is always true
@@ -2984,25 +2974,24 @@ class Document : FileResource {
 				parse(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
 		}
 
-		if(0&&sawImproperNesting) {
-			// in loose mode, we can see some bad nesting. It's hard to fix above though
-			// because my code sucks. So, we'll fix it here.
+		if(paragraphHackfixRequired) {
+			assert(!strict); // this should never happen in strict mode; it ought to never set the hack flag...
 
-			fixing_p_again:
-			foreach(ele; root.getElementsBySelector("p > p")) {
-				auto holder = ele.parentNode.parentNode;
-				auto h2 = ele.parentNode;
+			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
+			// It's hard to handle above though because my code sucks. So, we'll fix it here.
 
-				if(holder is null || h2 is null)
+			auto iterator = root.tree;
+			foreach(ele; iterator) {
+				if(ele.parentNode is null)
 					continue;
 
-				ele = ele.parentNode.removeChild(ele);
-
-				holder.insertAfter(h2, ele);
-
-				goto fixing_p_again;
+				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
+					auto shouldBePreviousSibling = ele.parentNode;
+					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
+					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree);
+					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
+				}
 			}
-
 		}
 	}
 
@@ -3209,7 +3198,11 @@ class Document : FileResource {
 
 }
 
-	private static string[] selfClosedElements = [ "img", "hr", "input", "br", "col", "link", "meta" ];
+	private static string[] selfClosedElements = [
+		// html 4
+		"img", "hr", "input", "br", "col", "link", "meta",
+		// html 5
+		"source" ];
 
 static import std.conv;
 
