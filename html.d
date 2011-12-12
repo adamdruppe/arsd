@@ -15,6 +15,188 @@ import std.variant;
 import core.vararg;
 import std.exception;
 
+
+/// This is a list of features you can allow when using the sanitizedHtml function.
+enum HtmlFeatures : uint {
+	images = 1, 	/// The <img> tag
+	links = 2, 	/// <a href=""> tags
+	css = 4, 	/// Inline CSS
+	cssLinkedResources = 8, // FIXME: implement this
+	video = 16, 	/// The html5 <video> tag. autoplay is always stripped out.
+	audio = 32, 	/// The html5 <audio> tag. autoplay is always stripped out.
+	objects = 64, 	/// The <object> tag, which can link to many things, including Flash.
+	iframes = 128, 	/// The <iframe> tag. sandbox and restrict attributes are always added.
+	classes = 256, 	/// The class="" attribute
+}
+
+/// The things to allow in links, images, css, and aother urls.
+/// FIXME: implement this for better flexibility
+enum UriFeatures : uint {
+	http, 		/// http:// protocol absolute links
+	https, 		/// https:// protocol absolute links
+	data, 		/// data: url links to embed content. On some browsers (old Firefoxes) this was a security concern.
+	ftp, 		/// ftp:// protocol links
+	relative, 	/// relative links to the current location. You might want to rebase them.
+	anchors 	/// #anchor links
+}
+
+string[] htmlTagWhitelist = [
+	"span", "div",
+	"p", "br",
+	"b", "i", "u", "s", "big", "small", "sub", "sup", "strong", "em", "tt", "blockquote", "cite", "ins", "del", "strike",
+	"ol", "ul", "li", "dl", "dt", "dd",
+	"q",
+	"table", "caption", "tr", "td", "th", "col", "thead", "tbody", "tfoot",
+	"hr",
+	"h1", "h2", "h3", "h4", "h5", "h6",
+	"abbr",
+
+	"img", "object", "audio", "video", "a", "source" // note that these usually *are* stripped out - see HtmlFeatures-  but this lets them get into stage 2
+	// style isn't here
+];
+
+string[] htmlAttributeWhitelist = [
+	// style isn't here
+		/*
+		if style, expression must be killed
+		all urls must be checked for javascript and/or vbscript
+		imports must be killed
+		*/
+	"style",
+
+	"colspan", "rowspan",
+	"title", "alt", "class",
+
+	"href", "src", "type",
+	"id",
+
+	"align", "valign", "width", "height",
+];
+
+/// This returns an element wrapping sanitized content, using a whitelist for html tags and attributes,
+/// and a blacklist for css. Javascript is never allowed.
+///
+/// It scans all URLs it allows and rejects
+///
+/// You can tweak the allowed features with the HtmlFeatures enum.
+///
+/// Note: you might want to use innerText for most user content. This is meant if you want to
+/// give them a big section of rich text.
+///
+/// userContent should just be a basic div, holding the user's actual content.
+///
+/// FIXME: finish writing this
+Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFeatures allow = HtmlFeatures.links | HtmlFeatures.images | HtmlFeatures.css) {
+	auto div = Element.make("div");
+	div.addClass("sanitized user-content");
+
+	auto content = div.appendChild(userContent.cloned);
+	startOver:
+	foreach(e; content.tree) {
+		if(e.nodeType == NodeType.Text)
+			continue; // text nodes are always fine.
+
+		e.tagName = e.tagName.toLower(); // normalize tag names...
+
+		if(!(e.tagName.isInArray(htmlTagWhitelist))) {
+			e.stripOut;
+			goto startOver;
+		}
+
+		if((!(allow & HtmlFeatures.links) && e.tagName == "a")) {
+			e.stripOut;
+			goto startOver;
+		}
+
+		if((!(allow & HtmlFeatures.video) && e.tagName == "video")
+		  ||(!(allow & HtmlFeatures.audio) && e.tagName == "audio")
+		  ||(!(allow & HtmlFeatures.objects) && e.tagName == "object")
+		  ||(!(allow & HtmlFeatures.iframes) && e.tagName == "iframe")
+		) {
+			e.innerText = e.innerText; // strips out non-text children
+			e.stripOut;
+			goto startOver;
+		}
+
+		if(e.tagName == "source" && (e.parentNode is null || e.parentNode.tagName != "video" || e.parentNode.tagName != "audio")) {
+			// source is only allowed in the HTML5 media elements
+			e.stripOut;
+			goto startOver;
+		}
+
+		if(!(allow & HtmlFeatures.images) && e.tagName == "img") {
+			e.replaceWith(new TextNode(null, e.alt));
+			continue; // images not allowed are replaced with their alt text
+		}
+
+		foreach(k, v; e.attributes) {
+			e.removeAttribute(k);
+			k = k.toLower();
+			if(!(k.isInArray(htmlAttributeWhitelist))) {
+				// not allowed, don't put it back
+				// this space is intentionally left blank
+			} else {
+				// it's allowed but let's make sure it's completely valid
+				if(!(allow & HtmlFeatures.classes)) {
+					// don't allow the class attribute
+				} else if(k == "id") {
+					if(idPrefix !is null)
+						e.setAttribute(k, idPrefix ~ v);
+					// otherwise, don't allow user IDs
+				} else if(k == "style") {
+					if(allow & HtmlFeatures.css) {
+						e.setAttribute(k, sanitizeCss(v));
+					}
+				} else if(k == "href" || k == "src")
+					e.setAttribute(k, sanitizeUrl(v));
+				else
+					e.setAttribute(k, v); // allowed attribute
+			}
+		}
+
+		if(e.tagName == "iframe") {
+			// some additional restrictions for supported browsers
+			e.security = "restricted";
+			e.sandbox = "";
+		}
+	}
+	return div;
+}
+
+Element sanitizedHtml(in Html userContent, string idPrefix = null, HtmlFeatures allow = HtmlFeatures.links | HtmlFeatures.images | HtmlFeatures.css) {
+	auto div = Element.make("div");
+	div.innerHTML = userContent.source;
+	return sanitizedHtml(div, idPrefix, allow);
+}
+
+string sanitizeCss(string css) {
+	// FIXME: do a proper whitelist here; I should probably bring in the parser from html.d
+	// FIXME: sanitize urls inside too
+	return css.replace("expression", "");
+}
+
+string sanitizeUrl(string url) {
+	// FIXME: support other options; this is more restrictive than it has to be
+	if(url.startsWith("http://") || url.startsWith("https://"))
+		return url;
+	return null;
+}
+
+/// This is some basic CSS I suggest you copy/paste into your stylesheet
+/// if you use the sanitizedHtml function.
+string recommendedBasicCssForUserContent = `
+	.sanitized.user-content {
+		position: relative;
+		overflow: hidden;
+	}
+
+	.sanitized.user-content * {
+		max-width: 100%;
+		max-height: 100%;
+	}
+`;
+
+
 /// Translates validate="" tags to inline javascript. "this" is the thing
 /// being checked.
 void translateValidation(Document document) {
@@ -840,8 +1022,19 @@ class CssRuleSet : CssPart {
 			levelOne.selectors = selectors.dup;
 		else {
 			foreach(outerSelector; outer.selectors.length ? outer.selectors : [""])
-			foreach(innerSelector; selectors)
-				levelOne.selectors ~= outerSelector ~ " " ~ innerSelector;
+			foreach(innerSelector; selectors) {
+				// we want to have things like :hover, :before, etc apply without implying
+				// a descendant.
+
+				// If you want it to be a descendant pseudoclass, use the *:something - the
+				// wildcard tag - instead of just a colon.
+
+				// But having this is too useful to ignore.
+				if(innerSelector.length && innerSelector[0] == ':')
+					levelOne.selectors ~= outerSelector ~ innerSelector;
+				else
+					levelOne.selectors ~= outerSelector ~ " " ~ innerSelector; // otherwise, use some other operator...
+			}
 		}
 
 		foreach(part; contents) {
@@ -904,7 +1097,11 @@ class CssRule : CssPart {
 		return n;
 	}
 
-	override string toString() const { return content ~ ";"; }
+	override string toString() const {
+		if(strip(content).length == 0)
+			return "";
+		return content ~ ";";
+	}
 }
 
 CssPart[] lexCss(string css) {
@@ -1169,7 +1366,7 @@ class MacroExpander {
 					||
 					(c >= 'a' && c <= 'z')
 					||
-					(c >= '0' && c <= '0')
+					(c >= '0' && c <= '9')
 					||
 					c == '_'
 				)) {
@@ -1296,6 +1493,8 @@ class MacroExpander {
 				if(endingSliceForReplacement < src.length && src[endingSliceForReplacement] == ';') {
 					endingSliceForReplacement++;
 					addTrailingSemicolon = true; // don't want a doubled semicolon
+					// FIXME: what if it's just some whitespace after the semicolon? should that be
+					// stripped or no?
 				}
 
 				foreach(ref argument; arguments) {
@@ -1415,6 +1614,7 @@ class JavascriptMacroExpander : MacroExpander {
 
 		formattedWrite(writer, "
 			var %2$s = %5$s;
+			if(%2$s != null)
 			for(var %1$s = 0; %1$s < %2$s.length; %1$s++) {
 				var %3$s = %2$s[%1$s];
 				%4$s
