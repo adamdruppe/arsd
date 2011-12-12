@@ -3,200 +3,102 @@ module arsd.dom;
 // NOTE: do *NOT* override toString on Element subclasses. It won't work.
 // Instead, override writeToAppender();
 
-import std.string;
-// import std.ascii;
-import std.exception;
+import arsd.characterencodings;
 
+import std.string;
+import std.exception;
 import std.uri;
 import std.array;
 
 import std.stdio;
-
-import arsd.characterencodings;
 
 // tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
 // that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
 // most likely a typo so I say kill kill kill.
 
 
-// Should I support Element.dataset? it does dash to camelcase for attribute "data-xxx-xxx"
+// this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
+mixin template JavascriptStyleDispatch() {
+	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
+		if(v !is null)
+			return set(name, v);
+		return get(name);
+	}
 
-void sanitizeHtml(Document document) {
-	foreach(e; document.root.tree) {
+	string opIndex(string key) const {
+		return get(key);
+	}
 
+	string opIndexAssign(string value, string field) {
+		return set(field, value);
+	}
+
+	// FIXME: doesn't seem to work
+	string* opBinary(string op)(string key)  if(op == "in") {
+		return key in fields;
 	}
 }
 
+/// A proxy object to do the Element class' dataset property. See Element.dataset for more info.
+///
+/// Do not create this object directly.
+struct DataSet {
+	this(Element e) {
+		this._element = e;
+	}
+
+	private Element _element;
+	string set(string name, string value) {
+		_element.setAttribute("data-" ~ unCamelCase(name), value);
+		return value;
+	}
+
+	string get(string name) const {
+		return _element.getAttribute("data-" ~ unCamelCase(name));
+	}
+
+	mixin JavascriptStyleDispatch!();
+}
+
+// for style, i want to be able to set it with a string
+// but for get... I want the old one to work, but i want this new thing to work too.
+// I almost want opImplicitCast now, lol.
+
+struct ElementStyle {
+	string _attribute;
+	alias _attribute this; // this is meant to allow element.style = element.style ~ " string "; to still work.
+
+	// FIXME: implement this
+	string set(string name, string value) { assert(0); }
+	string get(string name) const { assert(0); }
+
+	mixin JavascriptStyleDispatch!();
+}
+
 ///.
-T[] insertAfter(T)(T[] arr, int position, T[] what) {
-	assert(position < arr.length);
-	T[] ret;
-	ret.length = arr.length + what.length;
-	int a = 0;
-	foreach(i; arr[0..position+1])
-		ret[a++] = i;
-	
-	foreach(i; what)
-		ret[a++] = i;
+enum NodeType { Text = 3}
 
-	foreach(i; arr[position+1..$])
-		ret[a++] = i;
 
+/// You can use this to do an easy null check or a dynamic cast+null check on any element.
+T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) if(is(T : Element))
+	in {}
+	out(ret) { assert(ret !is null); }
+body {
+	auto ret = cast(T) e;
+	if(ret is null)
+		throw new ElementNotFoundException(T.stringof, "passed value", file, line);
 	return ret;
 }
 
-///.
-bool isInArray(T)(T item, T[] arr) {
-	foreach(i; arr)
-		if(item == i)
-			return true;
-	return false;
-}
-
-///.
-final class Stack(T) {
-	this() {
-		internalLength = 0;
-		arr = initialBuffer;
-	}
-
-	///.
-	void push(T t) {
-		if(internalLength >= arr.length) {
-			if(arr.length < 4096)
-				arr = new T[arr.length * 2];
-			else
-				arr = new T[arr.length + 4096];
-		}
-
-		arr[internalLength] = t;
-		internalLength++;
-	}
-
-	///.
-	T pop() {
-		assert(internalLength);
-		internalLength--;
-		return arr[internalLength];
-	}
-
-	///.
-	T peek() {
-		assert(internalLength);
-		return arr[internalLength - 1];
-	}
-
-	///.
-	bool empty() {
-		return internalLength ? false : true;
-	}
-
-	///.
-	private T[] arr;
-	private size_t internalLength;
-	private T[64] initialBuffer;
-	// the static array is allocated with this object, so if we have a small stack (which we prolly do; dom trees usually aren't insanely deep),
-	// using this saves us a bunch of trips to the GC. In my last profiling, I got about a 50x improvement in the push()
-	// function thanks to this, and push() was actually one of the slowest individual functions in the code!
-}
-
-///.
-final class ElementStream {
-
-	///.
-	Element front() {
-		return current.element;
-	}
-
-	///.
-	this(Element start) {
-		current.element = start;
-		current.childPosition = -1;
-		isEmpty = false;
-		stack = new Stack!(Current);
-	}
-
-	/*
-		Handle it
-		handle its children
-
-	*/
-
-	///.
-	void popFront() {
-	    more:
-	    	if(isEmpty) return;
-
-		// FIXME: the profiler says this function is somewhat slow (noticeable because it can be called a lot of times)
-
-		current.childPosition++;
-		if(current.childPosition >= current.element.children.length) {
-			if(stack.empty())
-				isEmpty = true;
-			else {
-				current = stack.pop();
-				goto more;
-			}
-		} else {
-			stack.push(current);
-			current.element = current.element.children[current.childPosition];
-			current.childPosition = -1;
-		}
-	}
-
-	///.
-	void currentKilled() {
-		if(stack.empty) // should never happen
-			isEmpty = true;
-		else {
-			current = stack.pop();
-			current.childPosition--; // when it is killed, the parent is brought back a lil so when we popFront, this is then right
-		}
-	}
-
-	///.
-	bool empty() {
-		return isEmpty;
-	}
-
-	///.
-	struct Current {
-		Element element;
-		int childPosition;
-	}
-
-	///.
-	Current current;
-
-	///.
-	Stack!(Current) stack;
-
-	///.
-	bool isEmpty;
-}
-
-///.
-string[string] dup(in string[string] arr) {
-	string[string] ret;
-	foreach(k, v; arr)
-		ret[k] = v;
-	return ret;
-}
-
-/*
-	swapNode
-	cloneNode
-*/
 ///.
 class Element {
-
-	///.
+	// this ought to be private. don't use it directly.
 	Element[] children;
 
 	///.
 	string tagName;
 
-	///.
+	/// .
 	string[string] attributes;
 
 	///.
@@ -206,7 +108,16 @@ class Element {
 	/// It may be null, so remember to check for that.
 	Document parentDocument;
 
-	///.
+	/// HTML5's dataset property. It is an alternate view into attributes.
+	///
+	/// Given: <a data-my-property="cool" />
+	///
+	/// We get: assert(a.dataset.myProperty == "cool");
+	DataSet dataset() {
+		return DataSet(this);
+	}
+
+	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
 		parentDocument = _parentDocument;
 		tagName = _tagName;
@@ -337,6 +248,15 @@ class Element {
 			e.appendChild(child.cloned);
 		}
 
+		return e;
+	}
+
+	Element cloneNode(bool deepClone) {
+		if(deepClone)
+			return this.cloned;
+
+		// shallow clone
+		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
 		return e;
 	}
 
@@ -631,8 +551,9 @@ class Element {
 		return e;
 	}
 
-	///.
-	T getParent(T)(string tagName = null) if(is(T : Element)) {
+	/// Gets the nearest node, going up the chain, with the given tagName
+	/// May return null or throw.
+	T getParent(T = Element)(string tagName = null) if(is(T : Element)) {
 		if(tagName is null) {
 			static if(is(T == Form))
 				tagName = "form";
@@ -649,9 +570,12 @@ class Element {
 			par = par.parentNode;
 		}
 
-		auto t = cast(T) par;
-		if(t is null)
-			throw new ElementNotFoundException("", tagName ~ " parent not found");
+		static if(!is(T == Element)) {
+			auto t = cast(T) par;
+			if(t is null)
+				throw new ElementNotFoundException("", tagName ~ " parent not found");
+		} else
+			auto t = par;
 
 		return t;
 	}
@@ -1564,6 +1488,11 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 			output.put("&gt;");
 		else if (d == '\"')
 			output.put("&quot;");
+//		else if (d == '\'')
+//			output.put("&#39;"); // if you are in an attribute, it might be important to encode for the same reason as double quotes
+			// FIXME: should I encode apostrophes too? as &#39;... I could also do space but if your html is so bad that it doesn't
+			// quote attributes at all, maybe you deserve the xss. Encoding spaces will make everything really ugly so meh
+			// idk about apostrophes though. Might be worth it, might not.
 		else if (d < 128 && d > 0)
 			output.put(d);
 		else
@@ -1592,6 +1521,8 @@ dchar parseEntity(in dchar[] entity) {
 			return '<';
 		case "gt":
 			return '>';
+		case "amp":
+			return '&';
 		// the next are html rather than xml
 		/*
 		case "cent":
@@ -1620,14 +1551,18 @@ dchar parseEntity(in dchar[] entity) {
 			return '\u2122';
 		case "nbsp":
 			return '\u00a0';
-		case "amp":
-			return '&';
 		case "copy":
 			return '\u00a9';
 		case "eacute":
 			return '\u00e9';
 		case "mdash":
 			return '\u2014';
+		case "Omicron":
+			return '\u039f';
+		case "omicron":
+			return '\u03bf';
+		case "middot":
+			return '\u00b7';
 		// and handling numeric entities
 		default:
 			if(entity[1] == '#') {
@@ -1674,7 +1609,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 				tryingEntity = false;
 				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
 			} else {
-				if(entityAttemptIndex >= 7) {
+				if(entityAttemptIndex >= 9) {
 					if(strict)
 						throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
 					else {
@@ -1733,9 +1668,6 @@ class RawSource : Element {
 	///.
 	string source;
 }
-
-///.
-enum NodeType { Text = 3}
 
 ///.
 class TextNode : Element {
@@ -2409,8 +2341,8 @@ class MarkupError : Exception {
 class ElementNotFoundException : Exception {
 
 	///.
-	this(string type, string search) {
-		super("Element of type '"~type~"' matching {"~search~"} not found.");
+	this(string type, string search, string file = __FILE__, int line = __LINE__) {
+		super("Element of type '"~type~"' matching {"~search~"} not found.", file, line);
 	}
 }
 
@@ -4185,7 +4117,133 @@ class StyleSheet {
 	}
 }
 
+
+///.
+final class Stack(T) {
+	this() {
+		internalLength = 0;
+		arr = initialBuffer;
+	}
+
+	///.
+	void push(T t) {
+		if(internalLength >= arr.length) {
+			if(arr.length < 4096)
+				arr = new T[arr.length * 2];
+			else
+				arr = new T[arr.length + 4096];
+		}
+
+		arr[internalLength] = t;
+		internalLength++;
+	}
+
+	///.
+	T pop() {
+		assert(internalLength);
+		internalLength--;
+		return arr[internalLength];
+	}
+
+	///.
+	T peek() {
+		assert(internalLength);
+		return arr[internalLength - 1];
+	}
+
+	///.
+	bool empty() {
+		return internalLength ? false : true;
+	}
+
+	///.
+	private T[] arr;
+	private size_t internalLength;
+	private T[64] initialBuffer;
+	// the static array is allocated with this object, so if we have a small stack (which we prolly do; dom trees usually aren't insanely deep),
+	// using this saves us a bunch of trips to the GC. In my last profiling, I got about a 50x improvement in the push()
+	// function thanks to this, and push() was actually one of the slowest individual functions in the code!
+}
+
+///.
+final class ElementStream {
+
+	///.
+	Element front() {
+		return current.element;
+	}
+
+	///.
+	this(Element start) {
+		current.element = start;
+		current.childPosition = -1;
+		isEmpty = false;
+		stack = new Stack!(Current);
+	}
+
+	/*
+		Handle it
+		handle its children
+
+	*/
+
+	///.
+	void popFront() {
+	    more:
+	    	if(isEmpty) return;
+
+		// FIXME: the profiler says this function is somewhat slow (noticeable because it can be called a lot of times)
+
+		current.childPosition++;
+		if(current.childPosition >= current.element.children.length) {
+			if(stack.empty())
+				isEmpty = true;
+			else {
+				current = stack.pop();
+				goto more;
+			}
+		} else {
+			stack.push(current);
+			current.element = current.element.children[current.childPosition];
+			current.childPosition = -1;
+		}
+	}
+
+	///.
+	void currentKilled() {
+		if(stack.empty) // should never happen
+			isEmpty = true;
+		else {
+			current = stack.pop();
+			current.childPosition--; // when it is killed, the parent is brought back a lil so when we popFront, this is then right
+		}
+	}
+
+	///.
+	bool empty() {
+		return isEmpty;
+	}
+
+	///.
+	struct Current {
+		Element element;
+		int childPosition;
+	}
+
+	///.
+	Current current;
+
+	///.
+	Stack!(Current) stack;
+
+	///.
+	bool isEmpty;
+}
+
+
+
 // unbelievable.
+// Don't use any of these in your own code. Instead, try to use phobos or roll your own, as I might kill these at any time.
 sizediff_t indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
 	auto found = std.algorithm.find(haystack, needle);
 	if(found.length == 0)
@@ -4193,10 +4251,41 @@ sizediff_t indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) 
 	return haystack.length - found.length;
 }
 
+private T[] insertAfter(T)(T[] arr, int position, T[] what) {
+	assert(position < arr.length);
+	T[] ret;
+	ret.length = arr.length + what.length;
+	int a = 0;
+	foreach(i; arr[0..position+1])
+		ret[a++] = i;
+	
+	foreach(i; what)
+		ret[a++] = i;
+
+	foreach(i; arr[position+1..$])
+		ret[a++] = i;
+
+	return ret;
+}
+
+package bool isInArray(T)(T item, T[] arr) {
+	foreach(i; arr)
+		if(item == i)
+			return true;
+	return false;
+}
+
+private string[string] dup(in string[string] arr) {
+	string[string] ret;
+	foreach(k, v; arr)
+		ret[k] = v;
+	return ret;
+}
+
 /*
 Copyright: Adam D. Ruppe, 2010 - 2011
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe, with contributions by Nick Sabalausky
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r
 
         Copyright Adam D. Ruppe 2010-2011.
 Distributed under the Boost Software License, Version 1.0.
