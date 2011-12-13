@@ -9,6 +9,8 @@
 module arsd.html;
 
 public import arsd.dom;
+import arsd.color;
+
 import std.array;
 import std.string;
 import std.variant;
@@ -196,6 +198,13 @@ string recommendedBasicCssForUserContent = `
 	}
 `;
 
+
+string favicon(Document document) {
+	auto item = document.querySelector("link[rel~=icon]");
+	if(item !is null)
+		return item.href;
+	return "/favicon.ico"; // it pisses me off that the fucking browsers do this.... but they do, so I will too.
+}
 
 /// Translates validate="" tags to inline javascript. "this" is the thing
 /// being checked.
@@ -1554,6 +1563,11 @@ class CssMacroExpander : MacroExpander {
 	this() {
 		super();
 		functions["prefixed"] = &prefixed;
+		functions["lighten"] = &(colorFunctionWrapper!lighten);
+		functions["darken"] = &(colorFunctionWrapper!darken);
+		functions["rotateHue"] = &(colorFunctionWrapper!rotateHue);
+		functions["saturate"] = &(colorFunctionWrapper!saturate);
+		functions["desaturate"] = &(colorFunctionWrapper!desaturate);
 	}
 
 	// prefixed(border-radius: 12px);
@@ -1567,6 +1581,23 @@ class CssMacroExpander : MacroExpander {
 	string expandAndDenest(string cssSrc) {
 		return cssToString(denestCss(lexCss(this.expand(cssSrc))));
 	}
+
+
+	dstring colorFunctionWrapper(alias func)(dstring[] args) {
+		auto color = readCssColor(to!string(args[0]));
+		auto percentage = readCssNumber(args[1]);
+		return to!dstring(func(color, percentage).toString());
+	}
+}
+
+
+real readCssNumber(dstring s) {
+	s = s.replace(" "d, ""d);
+	if(s.length == 0)
+		return 0;
+	if(s[$-1] == '%')
+		return (to!real(s[0 .. $-1]) / 100f);
+	return to!real(s);
 }
 
 import std.format;
@@ -1627,121 +1658,75 @@ class JavascriptMacroExpander : MacroExpander {
 }
 
 string beautifyCss(string css) {
+	css = css.replace(":", ": ");
+	css = css.replace(":  ", ": ");
 	css = css.replace("{", " {\n\t");
 	css = css.replace(";", ";\n\t");
 	css = css.replace("\t}", "}\n\n");
 	return css.strip;
 }
 
-/+
-void main() {
-	import std.stdio;
+int fromHex(string s) {
+	int result = 0;
 
-	writeln((denestCss(`
-		label {
-			color: black;
-			span {
-				background-color: red;
-			}
+	int exp = 1;
+	foreach(c; retro(s)) {
+		if(c >= 'A' && c <= 'F')
+			result += exp * (c - 'A' + 10);
+		else if(c >= 'a' && c <= 'f')
+			result += exp * (c - 'a' + 10);
+		else if(c >= '0' && c <= '9')
+			result += exp * (c - '0');
+		else
+			throw new Exception("invalid hex character: " ~ cast(char) c);
 
-			> input {
-				orange;
-			}
-		}
+		exp *= 16;
+	}
 
-		span { hate: vile; }
-
-		@import url('adasdsa/asdsa');
-
-		cool,
-		that {
-			color: white;
-			this {
-				border: none;
-			}
-		}
-	`)));
+	return result;
 }
-+/
 
-/++
-	This adds nesting, named blocks, and simple macros to css, provided
-	you follow some rules.
+Color readCssColor(string cssColor) {
+	cssColor = cssColor.strip().toLower();
 
-	Since it doesn't do a real parsing, you need to put the right
-	tokens on the right line so it knows what is going on.
+	if(cssColor.startsWith("#")) {
+		cssColor = cssColor[1 .. $];
+		if(cssColor.length == 3) {
+			cssColor = "" ~ cssColor[0] ~ cssColor[0]
+					~ cssColor[1] ~ cssColor[1]
+					~ cssColor[2] ~ cssColor[2];
+		}
+		
+		if(cssColor.length == 6)
+			cssColor ~= "ff";
 
-	1) When nesting, always put the { on the same line.
-	2) Don't put { on lines without selectors
+		/* my extension is to do alpha */
+		if(cssColor.length == 8) {
+			return Color(
+				fromHex(cssColor[0 .. 2]),
+				fromHex(cssColor[2 .. 4]),
+				fromHex(cssColor[4 .. 6]),
+				fromHex(cssColor[6 .. 8]));
+		} else
+			throw new Exception("invalid color " ~ cssColor);
+	} else if(cssColor.startsWith("rgba")) {
+		assert(0); // FIXME: implement
+		/*
+		cssColor = cssColor.replace("rgba", "");
+		cssColor = cssColor.replace(" ", "");
+		cssColor = cssColor.replace("(", "");
+		cssColor = cssColor.replace(")", "");
 
-
-	Examples:
-
-		NESTING:
-
-			label {
-				color: red;
-
-				span {
-
-				}
-			}
-
-		NAMED BLOCKS (for mixing in):
-
-			@name(test) {
-				color: green;
-			}
-
-			input {
-				@mixin(test);
-			}
-
-		VARIABLES:
-
-			@let(a = red); // note these are immutable
-
-			div {
-				color: @var(a); // it's just text replacement...
-			}
-
-		FUNCTIONS:
-
-			Functions are pre-defined. The closest you can get
-			to your own are mixins.
-
-			@funname(arg, args...);
-
-			OR
-
-			@funname(arg, args...) { final_arg }
-
-
-			Unknown function names are passed through without
-			modification.
-
-
-	It works by extracting mixins first, then expanding nested items,
-	then mixing in the mixins, and finally, doing variable replacement.
-
-	But, you'll see that aside from nesting, it's all done the same
-	way.
-
-
-	Alas, this doesn't do extra useful things like accessing the
-	dynamic inherit values because it's just text replacement on
-	the stylesheet.
-
-
-	@foreach(k; v) {
-
+		auto parts = cssColor.split(",");
+		*/
+	} else if(cssColor.startsWith("rgb")) {
+		assert(0); // FIXME: implement
+	} else if(cssColor.startsWith("hsl")) {
+		assert(0); // FIXME: implement
+	} else
+	switch(cssColor) {
+		default:
+			// FIXME let's go ahead and try naked hex for compatibility with my gradient program
+			assert(0, "Unknown color: " ~ cssColor);
 	}
-
-	for(var counter_1 = 0 < counter_1 < v.length; counter_1++) {
-		var k = v[counter_1];
-		/*[original code]*/
-	}
-+/
-string improveCss(string css) {
-	return null;
 }

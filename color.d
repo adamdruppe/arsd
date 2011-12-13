@@ -31,6 +31,14 @@ struct Color {
 	static Color black() {
 		return Color(0, 0, 0);
 	}
+
+	string toString() {
+		import std.string;
+		if(a == 255)
+			return format("%02x%02x%02x", r, g, b);
+		else
+			return format("%02x%02x%02x%02x", r, g, b, a);
+	}
 }
 
 
@@ -123,6 +131,42 @@ real[3] toHsl(Color c) {
 
 	return [H, S, L]; 
 }
+
+
+Color lighten(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	hsl[2] *= (1 + percentage);
+	if(hsl[2] > 1)
+		hsl[2] = 1;
+	return fromHsl(hsl);
+}
+
+Color darken(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	hsl[2] *= (1 - percentage);
+	return fromHsl(hsl);
+}
+
+Color rotateHue(Color c, real degrees) {
+	auto hsl = toHsl(c);
+	hsl[0] += degrees;
+	return fromHsl(hsl);
+}
+
+Color desaturate(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	hsl[1] *= (1 - percentage);
+	return fromHsl(hsl);
+}
+
+Color saturate(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	hsl[1] *= (1 + percentage);
+	if(hsl[1] > 1)
+		hsl[1] = 1;
+	return fromHsl(hsl);
+}
+
 /*
 void main(string[] args) {
 	auto color1 = toHsl(Color(255, 0, 0));
@@ -131,3 +175,64 @@ void main(string[] args) {
 	writefln("#%02x%02x%02x", color.r, color.g, color.b);
 }
 */
+
+/* Color algebra functions */
+
+/* Alpha putpixel looks like this:
+
+void putPixel(Image i, Color c) {
+	Color b;
+	b.r = i.data[(y * i.width + x) * bpp + 0];
+	b.g = i.data[(y * i.width + x) * bpp + 1];
+	b.b = i.data[(y * i.width + x) * bpp + 2];
+	b.a = i.data[(y * i.width + x) * bpp + 3];
+
+	float ca = cast(float) c.a / 255;
+
+	i.data[(y * i.width + x) * bpp + 0] = alpha(c.r, ca, b.r);
+	i.data[(y * i.width + x) * bpp + 1] = alpha(c.g, ca, b.g);
+	i.data[(y * i.width + x) * bpp + 2] = alpha(c.b, ca, b.b);
+	i.data[(y * i.width + x) * bpp + 3] = alpha(c.a, ca, b.a);
+}
+
+ubyte alpha(ubyte c1, float alpha, ubyte onto) {
+	auto got = (1 - alpha) * onto + alpha * c1;
+
+	if(got > 255)
+		return 255;
+	return cast(ubyte) got;
+}
+
+So, given the background color and the resultant color, what was
+composited on to it?
+*/
+
+ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
+	// resultingColor = (1-alpha) * backgroundColor + alpha * answer
+	auto resultingColorf = cast(float) colorYouHave;
+	auto backgroundColorf = cast(float) backgroundColor;
+
+	auto answer = (resultingColorf - backgroundColorf + alpha * backgroundColorf) / alpha;
+	if(answer > 255)
+		return 255;
+	if(answer < 0)
+		return 0;
+	return cast(ubyte) answer;
+}
+
+ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 0x00*/) {
+	//auto foregroundf = cast(float) foreground;
+	auto foregroundf = 0.00f;
+	auto colorYouHavef = cast(float) colorYouHave;
+	auto backgroundColorf = cast(float) backgroundColor;
+
+	// colorYouHave = backgroundColorf - alpha * backgroundColorf + alpha * foregroundf
+	auto alphaf = 1 - colorYouHave / backgroundColorf;
+	alphaf *= 255;
+
+	if(alphaf < 0)
+		return 0;
+	if(alphaf > 255)
+		return 255;
+	return cast(ubyte) alphaf;
+}
