@@ -589,9 +589,9 @@ struct ResultByDataObject(ObjType) if (is(ObjType : DataObject)) {
 }
 
 extern(System) {
-	typedef void MYSQL;
-	typedef void MYSQL_RES;
-	typedef const(ubyte)* cstring;
+	struct MYSQL;
+	struct MYSQL_RES;
+	/* typedef */ alias const(ubyte)* cstring;
 
 	struct MYSQL_FIELD {
 		  cstring name;                 /* Name of column */
@@ -621,7 +621,7 @@ extern(System) {
 		}
 	}
 
-	typedef cstring* MYSQL_ROW;
+	/* typedef */ alias cstring* MYSQL_ROW;
 
 	cstring mysql_get_client_info();
 	MYSQL* mysql_init(MYSQL*);

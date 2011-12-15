@@ -198,6 +198,59 @@ class WebDotDBaseType {
 	}
 }
 
+/// This is meant to beautify and check links and javascripts to call web.d functions.
+/// FIXME: this function sucks.
+string linkCall(alias Func, Args...)(Args args) {
+	static if(!__traits(compiles, Func(args))) {
+		static assert(0, "Your function call doesn't compile. If you need client side dynamic data, try building the call as a string.");
+	}
+
+	// FIXME: this link won't work from other parts of the site...
+
+	//string script = __traits(parent, Func).stringof;
+	auto href = __traits(identifier, Func) ~ "?";
+
+	bool outputted = false;
+	foreach(i, arg; args) {
+		if(outputted) {
+			href ~= "&";
+		} else
+			outputted = true;
+
+		href ~= std.uri.encodeComponent("positional-arg-" ~ to!string(i));
+		href ~= "=";
+		href ~= to!string(arg); // FIXME: this is wrong for all but the simplest types
+	}
+
+	return href;
+
+}
+
+/// This is meant to beautify and check links and javascripts to call web.d functions.
+/// This function works pretty ok. You're going to want to append a string to the return
+/// value to actually call .get() or whatever; it only does the name and arglist.
+string jsCall(alias Func, Args...)(Args args) /*if(is(__traits(parent, Func) : WebDotDBaseType))*/ {
+	static if(!__traits(compiles, Func(args))) {
+		static assert(0, "Your function call doesn't compile. If you need client side dynamic data, try building the call as a string.");
+	}
+
+	string script = __traits(parent, Func).stringof;
+	script ~= "." ~ __traits(identifier, Func) ~ "(";
+
+	bool outputted = false;
+	foreach(arg; args) {
+		if(outputted) {
+			script ~= ",";
+		} else
+			outputted = true;
+
+		script ~= toJson(arg);
+	}
+
+	script ~= ")";
+	return script;
+}
+
 /// Everything should derive from this instead of the old struct namespace used before
 /// Your class must provide a default constructor.
 class ApiProvider : WebDotDBaseType {
@@ -1685,7 +1738,8 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 	if(is(R : ApiProvider))
 {
 	JSONValue val;
-	static if(is(T == typeof(null))) {
+	static if(is(T == typeof(null)) || is(T == void*)) {
+		/* void* goes here too because we don't know how to make it work... */
 		val.type = JSON_TYPE.NULL;
 	} else static if(is(T == JSONValue)) {
 		val = a;
@@ -2549,10 +2603,19 @@ void applyTemplateToElement(Element e, in string[string] vars) {
 			// text nodes have no attributes, but they do have text we might replace.
 			tc.contents = htmlTemplateWithData(tc.contents, vars, false);
 		} else {
+			auto rs = cast(RawSource) ele;
+			if(rs !is null)
+				rs.source = htmlTemplateWithData(rs.source, vars, true); /* FIXME: might be wrong... */
 			// if it is not a text node, it has no text where templating is valid, except the attributes
 			// note: text nodes have no attributes, which is why this is in the separate branch.
-			foreach(k, v; ele.attributes)
+			foreach(k, v; ele.attributes) {
+				if(k == "href" || k == "src") {
+					// FIXME: HACK this should be properly context sensitive..
+					v = v.replace("%7B%24", "{$");
+					v = v.replace("%7D", "}");
+				}
 				ele.attributes[k] = htmlTemplateWithData(v, vars, false);
+			}
 		}
 	}
 }
@@ -3050,6 +3113,7 @@ else string javascriptBase = `
 		It will probably show up in your browser's error console, or you can set the returned object's onerror function
 		to something to handle it callback style. FIXME: not sure if this actually works right!
 */
+// FIXME: this should probably be rewritten to make a constructable prototype object instead of a literal.
 enum string javascriptBaseImpl = q{
 	"_doRequest": function(url, args, callback, method, async) {
 		var xmlHttp;
@@ -3426,6 +3490,8 @@ enum string javascriptBaseImpl = q{
 	},
 
 	"_getElement": function(what) {
+		// FIXME: what about jQuery users? If they do useToReplace($("whatever")), we ought to do what we can with it for the most seamless experience even if I loathe that bloat.
+		// though I guess they should be ok in doing $("whatever")[0] or maybe $("whatever").get() so not too awful really.
 		var e;
 		if(typeof what == "string")
 			e = document.getElementById(what);

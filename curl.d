@@ -4,8 +4,8 @@ pragma(lib, "curl");
 
 import std.string;
 extern(C) {
-	typedef void CURL;
-	typedef void curl_slist;
+	struct CURL;
+	struct curl_slist;
 
 	alias int CURLcode;
 	alias int CURLoption;
@@ -77,7 +77,7 @@ string cachedCurl(string url, int maxCacheHours) {
 		res = curl(url);
 		std.file.write(cacheFile, res);
 	} else {
-		res = readText(cacheFile);
+		res = cast(string) std.file.read(cacheFile);
 	}
 
 	return res;
