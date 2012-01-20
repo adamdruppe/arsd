@@ -45,7 +45,7 @@ int locationOf(T)(T[] data, string item) {
 /// If you are doing a custom cgi class, mixing this in can take care of
 /// the required constructors for you
 mixin template ForwardCgiConstructors() {
-	this(int maxContentLength = 5_000_000,
+	this(long maxContentLength = 5_000_000,
 		string[string] env = null,
 		const(ubyte)[] delegate() readdata = null,
 		void delegate(const(ubyte)[]) _rawDataOutput = null
@@ -136,7 +136,7 @@ class Cgi {
 		CommandLine }
 
 	/** Initializes it using the CGI (or FastCGI) interface */
-	this(int maxContentLength = 5_000_000,
+	this(long maxContentLength = 5_000_000,
 		// use this to override the environment variable listing
 		in string[string] env = null,
 		// and this should return a chunk of data. return empty when done
@@ -251,7 +251,7 @@ class Cgi {
 			// to be slow if they did that. The spec says it is always there though.
 			// And it has worked reliably for me all year in the live environment,
 			// but some servers might be different.
-			auto  contentLength = to!size_t(getenv("CONTENT_LENGTH"));
+			auto contentLength = to!size_t(getenv("CONTENT_LENGTH"));
 
 			immutable originalContentLength = contentLength;
 			if(contentLength) {
@@ -652,6 +652,8 @@ class Cgi {
 							// Starting small because exiting the loop early is desirable, since
 							// we're not keeping any ambiguity and 1 / 256 chance of exiting is
 							// the best we can do.
+							if(a > pps.buffer.length)
+								break; // FIXME: is this right?
 							assert(a <= pps.buffer.length);
 							assert(a > 0);
 							if(std.algorithm.endsWith(pps.buffer, pps.localBoundary[0 .. a])) {
@@ -1777,8 +1779,7 @@ string getTempDirectory() {
 // And to add insult to injury, they are going to remove the tiny olive branch the new
 // module offered. Whatever, I want it at least some of it.
 
-long sysTimeToDTime(in SysTime sysTime)
-{
+long sysTimeToDTime(in SysTime sysTime) {
     return convert!("hnsecs", "msecs")(sysTime.stdTime - 621355968000000000L);
 }
 
@@ -1787,11 +1788,11 @@ long getUtcTime() { // renamed primarily to avoid conflict with std.date itself
 }
 
 /*
-Copyright: Adam D. Ruppe, 2008 - 2011
+Copyright: Adam D. Ruppe, 2008 - 2012
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2011.
+	Copyright Adam D. Ruppe 2008 - 2012.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)

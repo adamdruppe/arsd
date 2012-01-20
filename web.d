@@ -157,6 +157,7 @@ struct RequestInfo {
 	string requestedEnvelopeFormat; /// the format the data is to be wrapped in
 }
 
+/+
 string linkTo(alias func, T...)(T args) {
 	auto reflection = __traits(parent, func).reflection;
 	assert(reflection !is null);
@@ -170,6 +171,7 @@ string linkTo(alias func, T...)(T args) {
 
 	return funinfo.originalName;
 }
++/
 
 /// this is there so there's a common runtime type for all callables
 class WebDotDBaseType {
@@ -260,22 +262,21 @@ class ApiProvider : WebDotDBaseType {
 
 	/// override this to change cross-site request forgery checks.
 	///
-	/// The default is done on POST requests, using the session object. It throws
-	/// a PermissionDeniedException if the check fails. This might change later
-	/// to make catching it easier.
+	/// To perform a csrf check, call ensureGoodPost(); in your code.
+	///
+	/// It throws a PermissionDeniedException if the check fails.
+	/// This might change later to make catching it easier.
 	///
 	/// If there is no session object, the test always succeeds. This lets you opt
-	/// out of the system. FIXME: should I add ensureGoodPost or something to combine
-	/// enforce(session !is null); ensurePost() and checkCsrfToken();????
+	/// out of the system.
 	///
 	/// If the session is null, it does nothing. FancyMain makes a session for you.
 	/// If you are doing manual run(), it is your responsibility to create a session
 	/// and attach it to each primary object.
 	///
-	/// NOTE: it is important for you use ensurePost() on any data changing things!
-	/// Even though this function is called automatically by run(), it is a no-op on
-	/// non-POST methods, so there's no real protection without ensuring POST when
-	/// making changes.
+	/// NOTE: it is important for you use ensureGoodPost() on any data changing things!
+	/// This function alone is a no-op on non-POST methods, so there's no real protection
+	/// without ensuring POST when making changes.
 	///
 	// FIXME: if someone is OAuth authorized, a csrf token should not really be necessary.
 	// This check is done automatically right now, and doesn't account for that. I guess
@@ -843,8 +844,12 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			isApiProvider!(__traits(getMember, PM, member))
 		) {
 			PassthroughType!(__traits(getMember, PM, member)) i;
-			i = new typeof(i)();
-			auto r = prepareReflection!(__traits(getMember, PM, member))(i, null, member);
+			static if(__traits(compiles, i = new typeof(i)(instantiation)))
+				i = new typeof(i)(instantiation);
+			else
+				i = new typeof(i)();
+			auto r = prepareReflectionImpl!(__traits(getMember, PM, member), typeof(i))(i);
+			i.reflection = cast(immutable) r;
 			reflection.objects[member] = r;
 			if(toLower(member) !in reflection.objects) // web filenames are often lowercase too
 				reflection.objects[member.toLower] = r;
@@ -879,10 +884,7 @@ Parameter reflectParam(param)() {
 	} else static if(is(Unqual!(param) == Text)) {
 		p.type = "textarea";
 	} else {
-		if(p.name.toLower.indexOf("password") != -1) // hack to support common naming convention
-			p.type = "password";
-		else
-			p.type = "text";
+		p.type = "text";
 	}
 
 	return p;
@@ -1034,6 +1036,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	auto envelopeFormat = cgi.request("envelopeFormat", "document");
 
 	WebDotDBaseType base = instantiation;
+	WebDotDBaseType realObject = instantiation;
+	if(instantiator.length == 0)
+	if(fun !is null && fun.parentObject !is null && fun.parentObject.instantiation !is null)
+		realObject = fun.parentObject.instantiation;
 
 	// FIXME
 	if(cgi.pathInfo.indexOf("builtin.") != -1 && instantiation.builtInFunctions !is null)
@@ -1043,21 +1049,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		assert(fun !is null);
 		assert(fun.parentObject !is null);
 		assert(fun.parentObject.instantiate !is null);
-		base = fun.parentObject.instantiate(instantiator);
+		realObject = fun.parentObject.instantiate(instantiator);
 	}
 
 	try {
-		version(fb_inside_hack) {
-			// FIXME: this almost renders the whole thing useless.
-			if(cgi.referrer.indexOf("apps.facebook.com") == -1)
-				instantiation.checkCsrfToken();
-		} else
-			// you know, I wonder if this should even be automatic. If I
-			// just put it in the ensureGoodPost function or whatever
-			// it prolly works - such needs to be there anyway for it to be properly
-			// right.
-			instantiation.checkCsrfToken();
-
 		if(fun is null) {
 			auto d = instantiation._catchallEntry(
 				cgi.pathInfo[pathInfoStartingPoint + 1..$],
@@ -1111,7 +1106,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 			}
 		}
 
-		res = fun.dispatcher(cgi, base, want, format, secondaryFormat);
+		realObject.cgi = cgi;
+		res = fun.dispatcher(cgi, realObject, want, format, secondaryFormat);
 
 				//if(cgi)
 				//	cgi.setResponseContentType("application/json");
@@ -1135,7 +1131,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					// go ahead and use it to make the form page
 					auto doc = fun.createForm(cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.post : cgi.get);
 
-					form = doc.requireSelector!Form("form");
+					form = doc.requireSelector!Form("form.created-by-create-form, form.automatic-form, form");
 				} else {
 					Parameter[] params = (cast(Parameter[])fun.parameters).dup;
 					foreach(i, p; fun.parameters) {
@@ -1234,8 +1230,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 						} else {
 							auto e = instantiation._getGenericContainer();
 							document = e.parentDocument;
-							// FIXME: slow, esp if func return element
+							// FIXME: a wee bit slow, esp if func return element
 							e.innerHTML = returned;
+							if(fun !is null)
+							e.setAttribute("data-from-function", fun.originalName);
 						}
 
 						if(document !is null) {
@@ -1390,8 +1388,9 @@ Form createAutomaticForm(Document document, in FunctionInfo* func, string[string
 // FIXME: should there be something to prevent the pre-filled options from url? It's convenient but
 // someone might use it to trick people into submitting badness too. I'm leaning toward meh.
 Form createAutomaticForm(Document document, string action, in Parameter[] parameters, string submitText = "Submit", string method = "POST", string[string] fieldTypes = null) {
-	assert(document !is null);
-	auto form = cast(Form) document.createElement("form");
+	auto form = cast(Form) Element.make("form");
+	form.parentDocument = document;
+	form.addClass("automatic-form");
 
 	form.action = action;
 
@@ -1399,18 +1398,13 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 	form.method = method;
 
 
-	auto fieldset = document.createElement("fieldset");
-	auto legend = document.createElement("legend");
-	legend.innerText = submitText;
-	fieldset.appendChild(legend);
+	auto fieldset = form.addChild("fieldset");
+	auto legend = fieldset.addChild("legend", submitText);
 
-	auto table = cast(Table) document.createElement("table");
+	auto table = cast(Table) fieldset.addChild("table");
 	assert(table !is null);
 
-	form.appendChild(fieldset);
-	fieldset.appendChild(table);
-
-	table.appendChild(document.createElement("tbody"));
+	table.addChild("tbody");
 
 	static int count = 0;
 
@@ -1427,10 +1421,10 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 			type = fieldTypes[param.name];
 		
 		if(type == "select") {
-			input = document.createElement("select");
+			input = Element.make("select");
 
 			foreach(idx, opt; param.options) {
-				auto option = document.createElement("option");
+				auto option = Element.make("option");
 				option.name = opt;
 				option.value = param.optionValues[idx];
 
@@ -1447,9 +1441,11 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 			assert(0, "FIXME");
 		} else {
 			if(type.startsWith("textarea")) {
-				input = document.createElement("textarea");
+				input = Element.make("textarea");
 				input.name = param.name;
 				input.innerText = param.value;
+
+				input.rows = "7";
 
 				auto idx = type.indexOf("-");
 				if(idx != -1) {
@@ -1457,8 +1453,13 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 					input.rows = type[idx .. $];
 				}
 			} else {
-				input = document.createElement("input");
-				input.type = type;
+				input = Element.make("input");
+
+				// hack to support common naming convention
+				if(type == "text" && param.name.toLower.indexOf("password") != -1)
+					input.type = "password";
+				else
+					input.type = type;
 				input.name = param.name;
 				input.value = param.value;
 
@@ -1478,8 +1479,8 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		if(type == "hidden") {
 			form.appendChild(input);
 		} else {
-			auto th = document.createElement("th");
-			auto label = document.createElement("label");
+			auto th = Element.make("th");
+			auto label = Element.make("label");
 			label.setAttribute("for", n); 
 			label.innerText = beautify(param.name) ~ ": ";
 			th.appendChild(label);
@@ -1490,7 +1491,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		count++;
 	};
 
-	auto fmt = document.createElement("select");
+	auto fmt = Element.make("select");
 	fmt.name = "format";
 	fmt.addChild("option", "html").setAttribute("value", "html");
 	fmt.addChild("option", "table").setAttribute("value", "table");
@@ -1502,7 +1503,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 	table.appendRow(th, fmt).className = "format-row";
 
 
-	auto submit = document.createElement("input");
+	auto submit = Element.make("input");
 	submit.value = submitText;
 	submit.type = "submit";
 
@@ -1968,7 +1969,7 @@ type fromUrlParam(type)(string[] ofInterest) {
 
 auto getMemberDelegate(alias ObjectType, string member)(ObjectType object) if(is(ObjectType : WebDotDBaseType)) {
 	if(object is null)
-		throw new NoSuchPageException("no such object");
+		throw new NoSuchPageException("no such object " ~ ObjectType.stringof);
 	return &__traits(getMember, object, member);
 }
 
@@ -2335,7 +2336,7 @@ class Session {
 			_sessionId = info[0];
 			auto hash = info[1];
 
-			if(_sessionId.length == 0) {
+			if(_sessionId.length == 0 || !std.file.exists(getFilePath())) {
 				// there is no session
 				_readOnly = true;
 				return;
@@ -2501,7 +2502,7 @@ class Session {
 	void reload() {
 		data = null;
 		auto path = getFilePath();
-		if(std.file.exists(path)) {
+		try {
 			_hasData = true;
 			auto json = std.file.readText(getFilePath());
 
@@ -2536,7 +2537,13 @@ class Session {
 
 				data[k] = ret;
 			}
-		}			
+		} catch(Exception e) {
+			// it's a bad session...
+			_hasData = false;
+			data = null;
+			if(std.file.exists(path))
+				std.file.remove(path);
+		}
 	}
 
 	// FIXME: there's a race condition here - if the user is using the session
@@ -3269,6 +3276,7 @@ enum string javascriptBaseImpl = q{
 					args.format = "json";
 				args.envelopeFormat = "json";
 				return me._doRequest(me._apiBase + name, args, function(t, xml) {
+					/*
 					if(me._debugMode) {
 						try {
 							var obj = eval("(" + t + ")");
@@ -3278,8 +3286,9 @@ enum string javascriptBaseImpl = q{
 								"\nGot:\n" + t);
 						}
 					} else {
+					*/
 						var obj = eval("(" + t + ")");
-					}
+					//}
 
 					if(obj.success) {
 						if(typeof callback == "function")
@@ -3614,11 +3623,11 @@ css and js.
 */
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2011
+Copyright: Adam D. Ruppe, 2010 - 2012
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky
 
-        Copyright Adam D. Ruppe 2010-2011.
+        Copyright Adam D. Ruppe 2010-2012.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)

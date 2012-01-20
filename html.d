@@ -206,6 +206,105 @@ string favicon(Document document) {
 	return "/favicon.ico"; // it pisses me off that the fucking browsers do this.... but they do, so I will too.
 }
 
+
+/++ Convenience function to create a small <form> to POST, but the creation function is more like a link
+    than a DOM form.
+   
+    The idea is if you have a link to a page which needs to be changed since it is now taking an action,
+    this should provide an easy way to do it.
+
+    You might want to style these with css. The form these functions create has no class - use regular
+    dom functions to add one. When styling, hit the form itself and form > [type=submit]. (That will
+    cover both input[type=submit] and button[type=submit] - the two possibilities the functions may create.)
+   
+    Param:
+    	href: the link. Query params (if present) are converted into hidden form inputs and the rest is used as the form action
+	innerText: the text to show on the submit button
+	params: additional parameters for the form
++/
+Form makePostLink(string href, string innerText, string[string] params = null) {
+	auto submit = Element.make("input");
+	submit.type = "submit";
+	submit.value = innerText;
+
+	return makePostLink_impl(href, params, submit);
+}
+
+/// Similar to the above, but lets you pass HTML rather than just text. It puts the html inside a <button type="submit"> element.
+///
+/// Using html strings imo generally sucks. I recommend you use plain text or structured Elements instead most the time.
+Form makePostLink(string href, Html innerHtml, string[string] params = null) {
+	auto submit = Element.make("button");
+	submit.type = "submit";
+	submit.innerHTML = innerHtml;
+
+	return makePostLink_impl(href, params, submit);
+}
+
+/// Like the Html overload, this uses a <button> tag to get fancier with the submit button. The element you pass is appended to the submit button.
+Form makePostLink(string href, Element submitButtonContents, string[string] params = null) {
+	auto submit = Element.make("button");
+	submit.type = "submit";
+	submit.appendChild(submitButtonContents);
+
+	return makePostLink_impl(href, params, submit);
+}
+
+Form makePostLink_impl(string href, string[string] params, Element submitButton) {
+	auto form = require!Form(Element.make("form"));
+	form.method = "POST";
+
+	auto idx = href.indexOf("?");
+	if(idx == -1) {
+		form.action = href;
+	} else {
+		form.action = href[0 .. idx];
+		foreach(k, arr; decodeVariables(href[idx + 1 .. $]))
+			form.addValueArray(k, arr);
+	}
+
+	foreach(k, v; params)
+		form.setValue(k, v);
+
+	form.appendChild(submitButton);
+
+	return form;
+}
+
+/++ Given an existing link, create a POST item from it.
+    You can use this to do something like:
+
+    auto e = document.requireSelector("a.should-be-post"); // get my link from the dom
+    e.replaceWith(makePostLink(e)); // replace the link with a nice POST form that otherwise does the same thing
+
+    It passes all attributes of the link on to the form, though I could be convinced to put some on the submit button instead.
+++/
+Form makePostLink(Element link) {
+	Form form;
+	if(link.childNodes.length == 1) {
+		auto fc = link.firstChild;
+		if(fc.nodeType == NodeType.Text)
+			form = makePostLink(link.href, fc.nodeValue);
+		else
+			form = makePostLink(link.href, fc);
+	} else {
+		form = makePostLink(link.href, Html(link.innerHTML));
+	}
+
+	assert(form !is null);
+
+	// auto submitButton = form.requireSelector("[type=submit]");
+
+	foreach(k, v; link.attributes) {
+		if(k == "href" || k == "action" || k == "method")
+			continue;
+
+		form.setAttribute(k, v); // carries on class, events, etc. to the form.
+	}
+
+	return form;
+}
+
 /// Translates validate="" tags to inline javascript. "this" is the thing
 /// being checked.
 void translateValidation(Document document) {
@@ -385,6 +484,101 @@ void translateFiltering(Document document) {
 		`;
 	}
 }
+
+enum TextWrapperWhitespaceBehavior {
+	wrap,
+	ignore,
+	stripOut
+}
+
+/// This wraps every non-empty text mode in the document body with
+/// <t:t></t:t>, and sets an xmlns:t to the html root.
+///
+/// If you use it, be sure it's the last thing you do before
+/// calling toString
+///
+/// Why would you want this? Because CSS sucks. If it had a
+/// :text pseudoclass, we'd be right in business, but it doesn't
+/// so we'll hack it with this custom tag.
+///
+/// It's in an xml namespace so it should affect or be affected by
+/// your existing code, while maintaining excellent browser support.
+///
+/// To style it, use myelement > t\:t { style here } in your css.
+///
+/// Note: this can break the css adjacent sibling selector, first-child,
+/// and other structural selectors. For example, if you write
+/// <span>hello</span> <span>world</span>, normally, css span + span would
+/// select "world". But, if you call wrapTextNodes, there's a <t:t> in the
+/// middle.... so now it no longer matches.
+///
+/// Of course, it can also have an effect on your javascript, especially,
+/// again, when working with siblings or firstChild, etc.
+///
+/// You must handle all this yourself, which may limit the usefulness of this
+/// function.
+///
+/// The second parameter, whatToDoWithWhitespaceNodes, tries to mitigate
+/// this somewhat by giving you some options about what to do with text
+/// nodes that consist of nothing but whitespace.
+///
+/// You can: wrap them, like all other text nodes, you can ignore
+/// them entirely, leaving them unwrapped, and in the document normally,
+/// or you can use stripOut to remove them from the document.
+///
+/// Beware with stripOut: <span>you</span> <span>rock</span> -- that space
+/// between the spans is a text node of nothing but whitespace, so it would
+/// be stripped out - probably not what you want!
+///
+/// ignore is the default, since this should break the least of your
+/// expectations with document structure, while still letting you use this
+/// function.
+void wrapTextNodes(Document document, TextWrapperWhitespaceBehavior whatToDoWithWhitespaceNodes = TextWrapperWhitespaceBehavior.ignore) {
+	enum ourNamespace = "t";
+	enum ourTag = ourNamespace ~ ":t";
+	document.root.setAttribute("xmlns:" ~ ourNamespace, null);
+	foreach(e; document.mainBody.tree) {
+		if(e.tagName == "script")
+			continue;
+		if(e.nodeType != NodeType.Text)
+			continue;
+		auto tn = cast(TextNode) e;
+		if(tn is null)
+			continue;
+
+		if(tn.contents.length == 0)
+			continue;
+
+		if(tn.parentNode !is null
+			&& tn.parentNode.tagName == ourTag)
+		{
+			// this is just a sanity check to make sure
+			// we don't double wrap anything
+			continue;
+		}
+
+		final switch(whatToDoWithWhitespaceNodes) {
+			case TextWrapperWhitespaceBehavior.wrap:
+				break; // treat it like all other text
+			break;
+			case TextWrapperWhitespaceBehavior.stripOut:
+				// if it's actually whitespace...
+				if(tn.contents.strip().length == 0) {
+					tn.removeFromTree();
+					continue;
+				}
+			break;
+			case TextWrapperWhitespaceBehavior.ignore:
+				// if it's actually whitespace...
+				if(tn.contents.strip().length == 0)
+					continue;
+			break;
+		}
+
+		tn.replaceWith(Element.make(ourTag, tn.contents));
+	}
+}
+
 
 void translateInputTitles(Document document) {
 	translateInputTitles(document.root);
@@ -1115,6 +1309,7 @@ class CssRule : CssPart {
 
 CssPart[] lexCss(string css) {
 	import std.regex;
+	// strips comments
 	css = std.regex.replace(css, regex(r"\/\*[^*]*\*+([^/*][^*]*\*+)*\/", "g"), "");
 
 	CssPart[] ret;
@@ -1562,12 +1757,24 @@ class MacroExpander {
 class CssMacroExpander : MacroExpander {
 	this() {
 		super();
+
 		functions["prefixed"] = &prefixed;
+
 		functions["lighten"] = &(colorFunctionWrapper!lighten);
 		functions["darken"] = &(colorFunctionWrapper!darken);
+		functions["moderate"] = &(colorFunctionWrapper!moderate);
+		functions["extremify"] = &(colorFunctionWrapper!extremify);
+
+		functions["oppositeLightness"] = &(oneArgColorFunctionWrapper!oppositeLightness);
+
 		functions["rotateHue"] = &(colorFunctionWrapper!rotateHue);
+
 		functions["saturate"] = &(colorFunctionWrapper!saturate);
 		functions["desaturate"] = &(colorFunctionWrapper!desaturate);
+
+		functions["setHue"] = &(colorFunctionWrapper!setHue);
+		functions["setSaturation"] = &(colorFunctionWrapper!setSaturation);
+		functions["setLightness"] = &(colorFunctionWrapper!setLightness);
 	}
 
 	// prefixed(border-radius: 12px);
@@ -1586,7 +1793,12 @@ class CssMacroExpander : MacroExpander {
 	dstring colorFunctionWrapper(alias func)(dstring[] args) {
 		auto color = readCssColor(to!string(args[0]));
 		auto percentage = readCssNumber(args[1]);
-		return to!dstring(func(color, percentage).toString());
+		return "#"d ~ to!dstring(func(color, percentage).toString());
+	}
+
+	dstring oneArgColorFunctionWrapper(alias func)(dstring[] args) {
+		auto color = readCssColor(to!string(args[0]));
+		return "#"d ~ to!dstring(func(color).toString());
 	}
 }
 
@@ -1730,3 +1942,14 @@ Color readCssColor(string cssColor) {
 			assert(0, "Unknown color: " ~ cssColor);
 	}
 }
+
+/*
+Copyright: Adam D. Ruppe, 2010 - 2012
+License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r
+
+        Copyright Adam D. Ruppe 2010-2012.
+Distributed under the Boost Software License, Version 1.0.
+   (See accompanying file LICENSE_1_0.txt or copy at
+        http://www.boost.org/LICENSE_1_0.txt)
+*/

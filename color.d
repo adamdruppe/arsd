@@ -147,9 +147,62 @@ Color darken(Color c, real percentage) {
 	return fromHsl(hsl);
 }
 
+/// for light colors, call darken. for dark colors, call lighten.
+/// The goal: get toward center grey.
+Color moderate(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	if(hsl[2] > 0.5)
+		hsl[2] *= (1 - percentage);
+	else
+		hsl[2] *= (1 + percentage);
+	if(hsl[2] > 1)
+		hsl[2] = 1;
+	return fromHsl(hsl);
+}
+
+/// the opposite of moderate. Make darks darker and lights lighter
+Color extremify(Color c, real percentage) {
+	auto hsl = toHsl(c);
+	if(hsl[2] < 0.5)
+		hsl[2] *= (1 - percentage);
+	else
+		hsl[2] *= (1 + percentage);
+	if(hsl[2] > 1)
+		hsl[2] = 1;
+	return fromHsl(hsl);
+}
+
+/// Move around the lightness wheel, trying not to break on moderate things
+Color oppositeLightness(Color c) {
+	auto hsl = toHsl(c);
+
+	auto original = hsl[2];
+
+	if(original > 0.4 && original < 0.6)
+		hsl[2] = 0.8 - original; // so it isn't quite the same
+	else
+		hsl[2] = 1 - original;
+
+	return fromHsl(hsl);
+}
+
+Color setLightness(Color c, real lightness) {
+	auto hsl = toHsl(c);
+	hsl[2] = lightness;
+	return fromHsl(hsl);
+}
+
+
+
 Color rotateHue(Color c, real degrees) {
 	auto hsl = toHsl(c);
 	hsl[0] += degrees;
+	return fromHsl(hsl);
+}
+
+Color setHue(Color c, real hue) {
+	auto hsl = toHsl(c);
+	hsl[0] = hue;
 	return fromHsl(hsl);
 }
 
@@ -166,6 +219,13 @@ Color saturate(Color c, real percentage) {
 		hsl[1] = 1;
 	return fromHsl(hsl);
 }
+
+Color setSaturation(Color c, real saturation) {
+	auto hsl = toHsl(c);
+	hsl[1] = saturation;
+	return fromHsl(hsl);
+}
+
 
 /*
 void main(string[] args) {

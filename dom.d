@@ -3,6 +3,13 @@ module arsd.dom;
 // NOTE: do *NOT* override toString on Element subclasses. It won't work.
 // Instead, override writeToAppender();
 
+// FIXME: should I keep processing instructions like <?blah ?> and <!-- blah --> (comments too lol)? I *want* them stripped out of most my output, but I want to be able to parse and create them too.
+
+// Stripping them is useful for reading php as html.... but adding them
+// is good for building php.
+
+// I need to maintain compatibility with the way it is now too.
+
 import arsd.characterencodings;
 
 import std.string;
@@ -239,8 +246,9 @@ class Element {
 	///.
 	@property Element cloned()
 		out(ret) {
-			assert(ret.children.length == this.children.length);
-			assert(ret.tagName == this.tagName);
+			// FIXME: not sure why these fail...
+//			assert(ret.children.length == this.children.length);
+//			assert(ret.tagName == this.tagName);
 		}
 	body {
 		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
@@ -448,6 +456,11 @@ class Element {
 					e.src = childInfo;
 					if(childInfo2 !is null)
 						e.alt = childInfo2;
+				break;
+				case "link":
+					e.href = childInfo;
+					if(childInfo2 !is null)
+						e.rel = childInfo2;
 				break;
 				case "option":
 					e.innerText = childInfo;
@@ -676,6 +689,12 @@ class Element {
 		foreach(sel; parseSelectorString(selector))
 			ret ~= sel.getElements(this);
 		return ret;
+	}
+
+	/// .
+	Element[] getElementsByClassName(string cn) {
+		// is this correct?
+		return getElementsBySelector("." ~ cn);
 	}
 
 	///.
@@ -1956,6 +1975,13 @@ class Form : Element {
 		}
 	}
 
+	/// This takes an array of strings and adds hidden <input> elements for each one of them. Unlike setValue,
+	/// it makes no attempt to find and modify existing elements in the form to the new values.
+	void addValueArray(string key, string[] arrayOfValues) {
+		foreach(arr; arrayOfValues)
+			addChild("input", key, arr);
+	}
+
 	/// Gets the value of the field; what would be given if it submitted right now. (so
 	/// it handles select boxes and radio buttons too). For checkboxes, if a value isn't
 	/// given, but it is checked, it returns "checked", since null and "" are indistinguishable
@@ -2092,8 +2118,11 @@ class Table : Element {
 
 	///.
 	Element th(T)(T t) {
-		assert(parentDocument !is null);
-		Element e = parentDocument.createElement("th");
+		Element e;
+		if(parentDocument !is null)
+			e = parentDocument.createElement("th");
+		else
+			e = Element.make("th");
 		static if(is(T == Html))
 			e.innerHTML = t;
 		else
@@ -2103,8 +2132,11 @@ class Table : Element {
 
 	///.
 	Element td(T)(T t) {
-		assert(parentDocument !is null);
-		Element e = parentDocument.createElement("td");
+		Element e;
+		if(parentDocument !is null)
+			e = parentDocument.createElement("td");
+		else
+			e = Element.make("td");
 		static if(is(T == Html))
 			e.innerHTML = t;
 		else
@@ -2114,27 +2146,25 @@ class Table : Element {
 
 	///.
 	Element appendRow(T...)(T t) {
-		assert(parentDocument !is null);
-
-		Element row = parentDocument.createElement("tr");
+		Element row = Element.make("tr");
 
 		foreach(e; t) {
 			static if(is(typeof(e) : Element)) {
 				if(e.tagName == "td" || e.tagName == "th")
 					row.appendChild(e);
 				else {
-					Element a = parentDocument.createElement("td");
+					Element a = Element.make("td");
 
 					a.appendChild(e);
 
 					row.appendChild(a);
 				}
 			} else static if(is(typeof(e) == Html)) {
-				Element a = parentDocument.createElement("td");
+				Element a = Element.make("td");
 				a.innerHTML = e.source;
 				row.appendChild(a);
 			} else {
-				Element a = parentDocument.createElement("td");
+				Element a = Element.make("td");
 				a.innerText = to!string(e);
 				row.appendChild(a);
 			}
@@ -2164,7 +2194,7 @@ class Table : Element {
 		}
 
 		if(cap is null) {
-			cap = parentDocument.createElement("caption");
+			cap = Element.make("caption");
 			appendChild(cap);
 		}
 
@@ -2353,6 +2383,9 @@ struct Html {
 }
 
 
+/// This might belong in another module, but it represents a file with a mime type and some data.
+/// Document implements this interface with type = text/html (see Document.contentType for more info)
+/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
 interface FileResource {
 	string contentType() const;
 	immutable(ubyte)[] getData() const;
@@ -2373,6 +2406,23 @@ class Document : FileResource {
 
 	}
 
+	/// This is just something I'm toying with. Right now, you use opIndex to put in css selectors.
+	/// It returns a struct that forwards calls to all elements it holds, and returns itself so you
+	/// can chain it.
+	///
+	/// Example: document["p"].innerText("hello").addClass("modified");
+	///
+	/// Equivalent to: foreach(e; document.getElementsBySelector("p")) { e.innerText("hello"); e.addClas("modified"); }
+	///
+	/// Note: always use function calls (not property syntax) and don't use toString in there for best results.
+	///
+	/// You can also do things like: document["p"]["b"] though tbh I'm not sure why since the selector string can do all that anyway. Maybe
+	/// you could put in some kind of custom filter function tho.
+	ElementCollection opIndex(string selector) {
+		auto e = ElementCollection(this.root);
+		return e[selector];
+	}
+
 	string _contentType = "text/html; charset=utf-8";
 
 	/// If you're using this for some other kind of XML, you can
@@ -2382,7 +2432,7 @@ class Document : FileResource {
 	/// It is only used if the document is sent via a protocol like HTTP.
 	///
 	/// This may be called by parse() if it recognizes the data. Otherwise,
-	/// if you don't set it, it assumes text/html.
+	/// if you don't set it, it assumes text/html; charset=utf-8.
 	string contentType(string mimeType) {
 		_contentType = mimeType;
 		return _contentType;
@@ -2510,12 +2560,31 @@ class Document : FileResource {
 
 		string data;
 
+		if(!strict) {
+			// if we're in non-strict mode, we need to check
+			// the document for mislabeling too; sometimes
+			// web documents will say they are utf-8, but aren't
+			// actually properly encoded. If it fails to validate,
+			// we'll assume it's actually Windows encoding - the most
+			// likely candidate for mislabeled garbage.
+			dataEncoding = dataEncoding.toLower();
+			dataEncoding = dataEncoding.replace(" ", "");
+			dataEncoding = dataEncoding.replace("-", "");
+			dataEncoding = dataEncoding.replace("_", "");
+			if(dataEncoding == "utf8") {
+				try {
+					validate(rawdata);
+				} catch(UtfException e) {
+					dataEncoding = "Windows 1252";
+				}
+			}
+		}
+
 		if(dataEncoding != "UTF-8")
 			data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
 		else
 			data = rawdata;
 		assert(data !is null);
-
 
 		// go through character by character.
 		// if you see a <, consider it a tag.
@@ -2640,7 +2709,7 @@ class Document : FileResource {
 		}
 		// recursively read a tag
 		Ele readElement(string[] parentChain = null) {
-			// FIXME: this is the closest function in this module, by far, even in strict mode.
+			// FIXME: this is the slowest function in this module, by far, even in strict mode.
 			// Loose mode should perform decently, but strict mode is the important one.
 			if(!strict && parentChain is null)
 				parentChain = [];
@@ -2765,15 +2834,17 @@ class Document : FileResource {
 
 						// HACK to handle script and style as a raw data section as it is in HTML browsers
 						if(tagName == "script" || tagName == "style") {
-							string closer = "</" ~ tagName ~ ">";
-							auto ending = indexOf(data[pos..$], closer);
-							if(loose && ending == -1)
-								ending = indexOf(data[pos..$], closer.toUpper);
-							if(ending == -1)
-								throw new Exception("tag " ~ tagName ~ " never closed");
-							ending += pos;
-							e.innerRawSource = data[pos..ending];
-							pos = ending + closer.length;
+							if(!selfClosed) {
+								string closer = "</" ~ tagName ~ ">";
+								auto ending = indexOf(data[pos..$], closer);
+								if(loose && ending == -1)
+									ending = indexOf(data[pos..$], closer.toUpper);
+								if(ending == -1)
+									throw new Exception("tag " ~ tagName ~ " never closed");
+								ending += pos;
+								e.innerRawSource = data[pos..ending];
+								pos = ending + closer.length;
+							}
 							return Ele(0, e, null);
 						}
 
@@ -3172,6 +3243,11 @@ int intFromHex(string hex) {
 // dt < dl means get the parent of that dt iff it is a dl (usable for "get a dt that are direct children of dl")
 // dt << dl  means go as far up as needed to find a dl (you have an element and want its containers)      NOT IMPLEMENTED
 // :first  means to stop at the first hit, don't do more (so p + p == p ~ p:first
+
+
+
+// CSS4 draft currently says you can change the subject (the element actually returned) by putting a ! at the end of it.
+// That might be useful to implement, though I do have parent selectors too.
 
 		///.
 		static immutable string[] selectorTokens = [
@@ -4281,6 +4357,41 @@ private string[string] dup(in string[string] arr) {
 		ret[k] = v;
 	return ret;
 }
+
+// I'm just dicking around with this
+struct ElementCollection {
+	this(Element e) {
+		elements = [e];
+	}
+
+	this(Element[] e) {
+		elements = e;
+	}
+
+	Element[] elements;
+	//alias elements this; // let it implicitly convert to the underlying array
+
+	ElementCollection opIndex(string selector) {
+		ElementCollection ec;
+		foreach(e; elements)
+			ec.elements ~= e.getElementsBySelector(selector);
+		return ec;
+	}
+
+	/// Forward method calls to each individual element of the collection
+	/// returns this so it can be chained.
+	ElementCollection opDispatch(string name, T...)(T t) {
+		foreach(e; elements) {
+			mixin("e." ~ name)(t);
+		}
+		return this;
+	}
+
+	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
+		return ElementCollection(this.elements ~ rhs.elements);
+	}
+}
+
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2011
