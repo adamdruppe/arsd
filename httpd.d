@@ -78,6 +78,8 @@ class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 		state = 0;
 		separator = "\r\n";
 
+		// writeln("FINISHED");
+
 		scope(exit) {
 			if(closeConnection)
 				disconnect();
@@ -106,6 +108,8 @@ class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 		} catch(Throwable e) {
 			cgi.setResponseStatus("500 Internal Server Error");
 			cgi.write(e.toString());
+			cgi.close();
+			cgi.dispose();
 
 			return;
 		}
@@ -113,6 +117,8 @@ class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 
 	override void onDataReceived(){
 		auto a = read();
+
+		// writeln("data received ", state, "\n", cast(string) a);
 
 	more:
 		switch(state) {
