@@ -67,17 +67,73 @@ struct DataSet {
 	mixin JavascriptStyleDispatch!();
 }
 
-// for style, i want to be able to set it with a string
-// but for get... I want the old one to work, but i want this new thing to work too.
-// I almost want opImplicitCast now, lol.
+/// for style, i want to be able to set it with a string like a plain attribute,
+/// but also be able to do properties Javascript style.
 
 struct ElementStyle {
-	string _attribute;
+	this(Element parent) {
+		_element = parent;
+	}
+
+	Element _element;
+
+	@property ref inout(string) _attribute() inout {
+		auto s = "style" in _element.attributes;
+		if(s is null) {
+			auto e = cast() _element; // const_cast
+			e.attributes["style"] = ""; // we need something to reference
+			s = cast(inout) ("style" in e.attributes);
+		}
+
+		assert(s !is null);
+		return *s;
+	}
+
 	alias _attribute this; // this is meant to allow element.style = element.style ~ " string "; to still work.
 
-	// FIXME: implement this
-	string set(string name, string value) { assert(0); }
-	string get(string name) const { assert(0); }
+	string set(string name, string value) {
+		if(name.length == 0)
+			return value;
+		name = unCamelCase(name);
+		auto r = rules();
+		r[name] = value;
+
+		_attribute = "";
+		foreach(k, v; r) {
+			if(_attribute.length)
+				_attribute ~= " ";
+			_attribute ~= k ~ ": " ~ v ~ ";";
+		}
+
+		return value;
+	}
+	string get(string name) const {
+		name = unCamelCase(name);
+		auto r = rules();
+		if(name in r)
+			return r[name];
+		return null;
+	}
+
+	string[string] rules() const {
+		string[string] ret;
+		foreach(rule;  _attribute().split(";")) {
+			rule = rule.strip();
+			if(rule.length == 0)
+				continue;
+			auto idx = rule.indexOf(":");
+			if(idx == -1)
+				ret[rule] = "";
+			else {
+				auto name = rule[0 .. idx].strip;
+				auto value = rule[idx + 1 .. $].strip;
+
+				ret[name] = value;
+			}
+		}
+
+		return ret;
+	}
 
 	mixin JavascriptStyleDispatch!();
 }
@@ -178,6 +234,14 @@ class Element {
 		return ns;
 	}
 
+	@property ElementStyle style() {
+		return ElementStyle(this);
+	}
+
+	@property ElementStyle style(string s) {
+		this.setAttribute("style", s);
+		return this.style();
+	}
 
 	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
 	///.
@@ -510,7 +574,27 @@ class Element {
 		}
 	body {
 		auto e = Element.make(tagName, childInfo, childInfo2);
+		// FIXME (maybe): if the thing is self closed, we might want to go ahead and
+		// return the parent. That will break existing code though.
 		return appendChild(e);
+	}
+
+	/// Another convenience function. Adds a child directly after the current one, returning
+	/// the new child.
+	///
+	/// Between this, addChild, and parentNode, you can build a tree as a single expression.
+	Element addSibling(string tagName, string childInfo = null, string childInfo2 = null)
+		in {
+			assert(tagName !is null);
+			assert(parentNode !is null);
+		}
+		out(e) {
+			assert(e.parentNode is this.parentNode);
+			assert(e.parentDocument is this.parentDocument);
+		}
+	body {
+		auto e = Element.make(tagName, childInfo, childInfo2);
+		return parentNode.insertAfter(this, e);
 	}
 
 	/// Convenience function to append text intermixed with other children.
@@ -2673,8 +2757,10 @@ class Document : FileResource {
 						parseError("Attributes must be quoted");
 					// read until whitespace or terminator (/ or >)
 					auto start = pos;
-					while(data[pos] != '>' && data[pos] != '/' &&
-					      data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+					while(data[pos] != '>' &&
+						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
+						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
+						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 					      	pos++;
 
 					string v = htmlEntitiesDecode(data[start..pos], strict);
