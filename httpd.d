@@ -40,7 +40,7 @@ void serveHttp(CustomCgi)(void function(Cgi) requestHandler, ushort port) if(is(
 			writefln("Exception: %s", e.toString());
 }
 
-class NetMan(CustomCgi) : NetworkManager if(is(CustomCgi : Cgi)) {
+class NetMan(CustomCgi) : NetworkManager /*if(is(CustomCgi : Cgi))*/ {
 	void function(Cgi) requestHandler;
 
 	this(void function(Cgi) requestHandler) {
@@ -52,7 +52,7 @@ class NetMan(CustomCgi) : NetworkManager if(is(CustomCgi : Cgi)) {
 	}
 }
 
-class HttpdConnection(CustomCgi) : Connection if(is(CustomCgi : Cgi)) {
+class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 	// The way this rolls is to get the whole thing in memory, then pass it off to Cgi to do the rest
 
 	this(void function(Cgi) requestHandler) {
