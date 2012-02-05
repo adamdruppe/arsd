@@ -120,8 +120,8 @@ static:
 }
 }
 
-string makeDataUrl(string mimeType, in ubyte[] data) {
-	auto data64 = Base64.encode(data);
+string makeDataUrl(string mimeType, in void[] data) {
+	auto data64 = Base64.encode(cast(const(ubyte[])) data);
 	return "data:" ~ mimeType ~ ";base64," ~ assumeUnique(data64);
 }
 
@@ -833,13 +833,15 @@ class Cgi {
 
 		cookiesArray = getCookieArray();
 		cookies = keepLastOf(cookiesArray);
-		prepareForIncomingDataChunks(contentType, data.length);
-		for(size_t block = 0; block < data.length; block += 4096)
-			handleIncomingDataChunk(data[block .. ((block+4096 > data.length) ? data.length : block + 4096)]);
-		postArray = assumeUnique(pps._post);
-		files = assumeUnique(pps._files);
-		post = keepLastOf(postArray);
-		cleanUpPostDataState();
+		if(data.length) {
+			prepareForIncomingDataChunks(contentType, data.length);
+			for(size_t block = 0; block < data.length; block += 4096)
+				handleIncomingDataChunk(data[block .. ((block+4096 > data.length) ? data.length : block + 4096)]);
+			postArray = assumeUnique(pps._post);
+			files = assumeUnique(pps._files);
+			post = keepLastOf(postArray);
+			cleanUpPostDataState();
+		}
 	}
 
 	private immutable(string[string]) keepLastOf(in string[][string] arr) {
@@ -1453,7 +1455,7 @@ string[][string] decodeVariables(string data, string separator = "&") {
 		} else {
 			//_get[decodeComponent(var[0..equal])] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
 			// stupid + -> space conversion.
-			_get[decodeComponent(var[0..equal]).replace("+", " ")] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
+			_get[decodeComponent(var[0..equal].replace("+", " "))] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
 		}
 	}
 	return _get;
