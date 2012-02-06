@@ -170,6 +170,8 @@ setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
 		//events to handle: data ready to read, timeout, new connection, connection error
 		// stuff to do: write data
 
+		try_again:
+
 		fd_set rdfs;
 		fd_set writefs;
 		timeval tv;
@@ -207,8 +209,14 @@ setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
 		else
 			ret = linux.select(biggest + 1, &rdfs, &writefs, null, &tv);
 
-		if(ret == -1)
-			throw new Exception("select");
+		if(ret == -1) {
+			import core.stdc.errno;
+			import std.conv;
+			if(errno == 4) // interrupted by signal
+				goto try_again;
+			else
+				throw new Exception("select " ~ to!string(errno));
+		}
 
 		if(ret) {
 			// data ready somewhere
@@ -369,7 +377,21 @@ class Connection {
 
 	// Writes the pending data to the socket now instead of waiting for the manager to proceed
 	void flush(){
+		if(writeBufferLength > 0) {
+			auto b = writeBuffer[writeBufferPosition..(writeBufferPosition+writeBufferLength)];
+			auto num = .write(socket, b.ptr, b.length);
+			if(num < 0)
+				throw new ConnectionException("send", this);
 
+			writeBufferLength -= num;
+			if(writeBufferLength > 0)
+				writeBufferPosition += num;
+			else
+				writeBufferPosition = 0;
+
+			timeOfLastActivity = now;
+			fsync(socket);
+		}
 	}
 
 	// reads the requested amount now, blocking until you get it all.

@@ -48,11 +48,12 @@ mixin template ForwardCgiConstructors() {
 	this(long maxContentLength = 5_000_000,
 		string[string] env = null,
 		const(ubyte)[] delegate() readdata = null,
-		void delegate(const(ubyte)[]) _rawDataOutput = null
-		) { super(maxContentLength, env, readdata, _rawDataOutput); }
+		void delegate(const(ubyte)[]) _rawDataOutput = null,
+		void delegate() _flush = null
+		) { super(maxContentLength, env, readdata, _rawDataOutput, _flush); }
 	
-	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0) {
-		super(headers, data, address, _rawDataOutput, pathInfoStarts);
+	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0, void delegate() _flush = null) {
+		super(headers, data, address, _rawDataOutput, pathInfoStarts, _flush);
 	}
 }
 
@@ -142,10 +143,13 @@ class Cgi {
 		// and this should return a chunk of data. return empty when done
 		const(ubyte)[] delegate() readdata = null,
 		// finally, use this to do custom output if needed
-		void delegate(const(ubyte)[]) _rawDataOutput = null
+		void delegate(const(ubyte)[]) _rawDataOutput = null,
+		// to flush teh custom output
+		void delegate() _flush = null
 		)
 	{
 		rawDataOutput = _rawDataOutput;
+		flushDelegate = _flush;
 		auto getenv = delegate string(string var) {
 			if(env is null)
 				return .getenv(var);
@@ -743,13 +747,14 @@ class Cgi {
 			indeed, it should probably just take a file descriptor
 			or two and do all the work itself.
 	*/
-	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0) {
+	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0, void delegate() _flush = null) {
 		auto parts = headers[0].split(" ");
 
 		https = false;
 		port = 80; // FIXME
 
 		rawDataOutput = _rawDataOutput;
+		flushDelegate = _flush;
 		nph = true;
 
 		requestMethod = to!RequestMethod(parts[0]);
@@ -773,7 +778,7 @@ class Cgi {
 
 		remoteAddress = address;
 
-		if(headers[0].indexOf("HTTP/1.0")) {
+		if(headers[0].indexOf("HTTP/1.0") != -1) {
 			http10 = true;
 			autoBuffer = true;
 		}
@@ -1219,7 +1224,8 @@ class Cgi {
 	void flush() {
 		if(rawDataOutput is null)
 			stdout.flush();
-		// FIXME: also flush to other sources
+		else if(flushDelegate !is null)
+			flushDelegate();
 	}
 
 	version(autoBuffer)
@@ -1274,6 +1280,7 @@ class Cgi {
 
 	/* Hooks for redirecting input and output */
 	private void delegate(const(ubyte)[]) rawDataOutput = null;
+	private void delegate() flushDelegate = null;
 
 	/* This info is used when handling a more raw HTTP protocol */
 	private bool nph;
@@ -1590,7 +1597,11 @@ version(embedded_httpd)
 					return "";
 				}
 
-				auto cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi);
+				void flushFcgi() {
+					FCGX_FFlush(output);
+				}
+
+				auto cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 				try {
 					fun(cgi);
 					cgi.close();
@@ -1741,6 +1752,8 @@ version(fastcgi) {
 	int FCGX_GetChar(FCGX_Stream* stream);
 	int FCGX_PutStr(const ubyte* str, int n, FCGX_Stream* stream);
 	int FCGX_HasSeenEOF(FCGX_Stream* stream);
+	int FCGX_FFlush(FCGX_Stream *stream);
+
 
 	}
 }

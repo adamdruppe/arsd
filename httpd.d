@@ -90,7 +90,7 @@ class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 
 		try {
 			cgi = new CustomCgi(headers, data, peerAddress(),
-				cast(void delegate(const(ubyte)[])) &this.write);
+				cast(void delegate(const(ubyte)[])) &this.write, 0, &this.flush);
 		} catch(Throwable t) {
 			write("HTTP/1.1 400 Bad Request\r\n");
 			write("Content-Type: text/plain\r\n");
