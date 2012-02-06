@@ -89,29 +89,32 @@ class HttpdConnection(CustomCgi) : Connection /* if(is(CustomCgi : Cgi)) */ {
 		Cgi cgi;
 
 		try {
-		cgi = new CustomCgi(headers, data, peerAddress(),
-			cast(void delegate(const(ubyte)[])) &this.write);
+			cgi = new CustomCgi(headers, data, peerAddress(),
+				cast(void delegate(const(ubyte)[])) &this.write);
 		} catch(Throwable t) {
 			write("HTTP/1.1 400 Bad Request\r\n");
 			write("Content-Type: text/plain\r\n");
+			string s = t.toString();
+			write("Content-Length: "~to!string(s.length)~"\r\n");
 			write("Connection: close\r\n");
 			write("\r\n");
-			write(t.toString());
+			write(s);
+
+			closeConnection = true;
 
 			return;
 		}
 
-		try {
-			handler(cgi);
+		scope(exit) {
 			cgi.close();
 			cgi.dispose();
+		}
+
+		try {
+			handler(cgi);
 		} catch(Throwable e) {
 			cgi.setResponseStatus("500 Internal Server Error");
 			cgi.write(e.toString());
-			cgi.close();
-			cgi.dispose();
-
-			return;
 		}
 	}
 

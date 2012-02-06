@@ -54,7 +54,7 @@ class ConnectionException : Exception {
 class NetworkManager {
 	// you might want to override this to construct subclasses of connection
   protected:
-	Connection allocConnection(int port){
+	Connection allocConnection(int port) {
 		if(auto a = port in allocs)
 			return (*a)();
 		assert(0);
@@ -266,10 +266,19 @@ setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
 					if(s == -1)
 						throw new Exception("accept");
 
-					auto con = allocConnection(c.port);
-					con.parentManager = this;
-					addConnection(con, s, addr, c.port);
-					con.onRemoteConnect();
+					version(threaded_connections) {
+						auto con = allocConnection(c.port);
+						con.socket = s;
+						con.addr = addr;
+						con.port = c.port;
+						auto t = new ConnectionThread(con);
+						t.start();
+					} else {
+						auto con = allocConnection(c.port);
+						con.parentManager = this;
+						addConnection(con, s, addr, c.port);
+						con.onRemoteConnect();
+					}
 				}
 			}
 
@@ -476,3 +485,25 @@ int now() {
         return cast(int) getUTCtime();
 }
 
+
+
+version(threaded_connections) {
+	import core.thread;
+	import std.stdio : writeln;
+	class ConnectionThread : Thread {
+		Connection connection;
+		this(Connection c) {
+			connection = c;
+			super(&run);
+		}
+
+		void run() {
+			scope(exit)
+				connection.disconnectNow();
+			auto manager = new NetworkManager();
+			connection.parentManager = manager;
+			manager.addConnection(connection, connection.socket, connection.addr, connection.port);
+			while(manager.proceed()) {}
+		}
+	}
+}
