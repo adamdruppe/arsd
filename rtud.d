@@ -56,6 +56,17 @@ class UpdateStream {
 		net.close();
 	}
 
+	void deleteMessage(string messageId) {
+		import arsd.cgi; // : encodeVariables;
+		string message = encodeVariables([
+			"id" : messageId,
+			"operation" : "delete"
+		]);
+
+		net.writeln(message);
+		net.flush();
+	}
+
 	void sendMessage(string eventType, string messageText, long ttl = 2500) {
 		import arsd.cgi; // : encodeVariables;
 		string message = encodeVariables([
@@ -120,7 +131,17 @@ void writeToFd(int fd, string s) {
 
 
 import arsd.cgi;
-int handleListenerGateway(Cgi cgi, string channelPrefix) {
+/// The throttledConnection param is useful for helping to get
+/// around browser connection limitations.
+
+/// If the user opens a bunch of tabs, these long standing
+/// connections can hit the per-host connection limit, breaking
+/// navigation until the connection times out.
+
+/// The throttle option sets a long retry period and polls
+/// instead of waits. This sucks, but sucks less than your whole
+/// site hanging because the browser is queuing your connections!
+int handleListenerGateway(Cgi cgi, string channelPrefix, bool throttledConnection = false) {
 	cgi.setCache(false);
 
 	auto f = openNetworkFd("localhost", 7070);
@@ -142,12 +163,21 @@ int handleListenerGateway(Cgi cgi, string channelPrefix) {
 		if(cgi.lastEventId.length)
 			variables["last-message-id"] = cgi.lastEventId;
 
-		cgi.write(":\n"); // the comment ensures apache doesn't skip us
+		if(throttledConnection) {
+			cgi.write("retry: 15000\n");
+		} else {
+			cgi.write(":\n"); // the comment ensures apache doesn't skip us
+		}
+
 		cgi.flush(); // sending the headers along
 	} else {
 		// gotta handle it as ajax polling
 		variables["close-time"] = "0"; // ask for long polling
 	}
+
+
+	if(throttledConnection)
+		variables["close-time"] = "-1"; // close immediately
 
 	writeToFd(f, encodeVariables(variables) ~ "\n");
 
@@ -171,20 +201,18 @@ int handleListenerGateway(Cgi cgi, string channelPrefix) {
 		}
 	}
 
+	// this is to support older browsers
 	if(!isSse) {
-		// FIXME
 		// we have to parse it out and reformat for plain cgi...
-		cgi.write("LAME LAME LAME\n");
-		cgi.write(wegot);
+		auto lol = parseMessages(wegot);
+		//cgi.setResponseContentType("text/json");
+		// FIXME gotta reorganize my json stuff
+		//cgi.write(toJson(lol));
 		return 1;
 	}
 
 	return 0;
 }
-
-version(rtud_daemon) :
-
-import arsd.netman;
 
 struct Message {
 	string type;
@@ -196,6 +224,96 @@ struct Message {
 	string operation;
 }
 
+
+Message[] getMessages(string channel, string eventTypeFilter = null, long maxAge = 0) {
+	auto f = openNetworkFd("localhost", 7070);
+	scope(exit) linux.close(f);
+
+	string[string] variables;
+
+	variables["channel"] = channel;
+	if(maxAge)
+		variables["minimum-time"] = to!string(getUtcTime() - maxAge);
+
+	variables["close-time"] = "-1"; // close immediately
+
+	writeToFd(f, encodeVariables(variables) ~ "\n");
+
+	string wegot;
+
+	string[4096] buffer;
+
+	for(;;) {
+		auto num = linux.read(f, buffer.ptr, buffer.length);
+		if(num < 0)
+			throw new Exception("read error");
+		if(num == 0)
+			break;
+
+		auto chunk = buffer[0 .. num];
+		wegot ~= cast(string) chunk;
+	}
+
+	return parseMessages(wegot, eventTypeFilter);
+}
+
+Message[] parseMessages(string wegot, string eventTypeFilter = null) {
+	// gotta parse this since rtud writes out the format for browsers
+	Message[] ret;
+	foreach(message; wegot.split("\n\n")) {
+		Message m;
+		foreach(line; message.split("\n")) {
+			if(line.length == 0)
+				throw new Exception("wtf");
+			if(line[0] == ':')
+				line = line[1 .. $];
+
+			if(line.length == 0)
+				continue; // just an empty comment
+
+			auto idx = line.indexOf(":");
+			if(idx == -1)
+				continue; // probably just a comment
+
+			if(idx + 2 > line.length)
+				continue; // probably just a comment too
+
+			auto name = line[0 .. idx];
+			auto data = line[idx + 2 .. $];
+
+			switch(name) {
+				default: break; // do nothing
+				case "timestamp":
+					m.timestamp = to!long(data);
+				break;
+				case "ttl":
+					m.ttl = to!long(data);
+				break;
+				case "operation":
+					m.operation = data;
+				break;
+				case "id":
+					m.id = data;
+				break;
+				case "event":
+					m.type = data;
+				break;
+				case "data":
+					m.data ~= data;
+				break;
+			}
+		}
+		if(eventTypeFilter is null || eventTypeFilter == m.type)
+			ret ~= m;
+	}
+
+	return ret;
+}
+
+
+version(rtud_daemon) :
+
+import arsd.netman;
 
 // Real time update daemon
 /*
@@ -327,7 +445,7 @@ class NotificationConnection : RtudConnection {
 		daemon.writeMessagesTo(backMessages, this, "backed-up");
 
 //		if(closeTime > 0 && closeTime != long.max)
-//			closeTime = getUTCtime() + closeTime; // FIXME: do i use this? Should I use this?
+//			closeTime = getUtcTime() + closeTime; // FIXME: do i use this? Should I use this?
 	}
 
 	override void onDisconnect() {
@@ -361,7 +479,7 @@ class DataConnection : RtudConnection {
 				// we have to create the message and send it out
 				m.type = getStr("type", "message");
 				m.data = getStr("data", "");
-				m.timestamp = to!long(getStr("timestamp", to!string(getUTCtime())));
+				m.timestamp = to!long(getStr("timestamp", to!string(getUtcTime())));
 				m.ttl = to!long(getStr("ttl", "1000"));
 		}
 
@@ -420,7 +538,7 @@ class RealTimeUpdateDaemon : NetworkManager {
 			return messages[id];
 
 		if(id.length == 0)
-			id = to!string(getUTCtime());
+			id = to!string(getUtcTime());
 
 		longerId:
 		if(id in messages) {
@@ -462,7 +580,7 @@ class RealTimeUpdateDaemon : NetworkManager {
 
 	void writeMessagesTo(Message*[] messages, NotificationConnection connection, string operation) {
 		foreach(messageMain; messages) {
-			if(messageMain.timestamp + messageMain.ttl < getUTCtime)
+			if(messageMain.timestamp + messageMain.ttl < getUtcTime)
 				deleteMessage(messageMain); // too old, kill it
 			Message message = *messageMain;
 			message.operation = operation;

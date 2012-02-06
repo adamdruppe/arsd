@@ -1,5 +1,7 @@
 module arsd.cgi;
 
+// FIXME: the location header is supposed to be an absolute url I guess.
+
 // FIXME: would be cool to flush part of a dom document before complete
 // somehow in here and dom.d.
 

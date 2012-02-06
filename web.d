@@ -423,11 +423,21 @@ class ApiProvider : WebDotDBaseType {
 
 		void writeFunctions(Element list, in ReflectionInfo* reflection, string base) {
 			string[string] handled;
-			foreach(func; reflection.functions) {
+			foreach(key, func; reflection.functions) {
 				if(func.originalName in handled)
 					continue;
 				handled[func.originalName] = func.originalName;
-				list.addChild("li", new Link(base ~ func.name, beautify(func.originalName)));
+
+				// skip these since the root is what this is there for
+				if(func.originalName == "GET" || func.originalName == "POST")
+					continue;
+
+				// the builtins aren't interesting either
+				if(key.startsWith("builtin."))
+					continue;
+
+				if(func.originalName.length)
+					list.addChild("li", new Link(base ~ func.name, beautify(func.originalName)));
 			}
 
 			handled = null;
@@ -444,7 +454,10 @@ class ApiProvider : WebDotDBaseType {
 		}
 
 		auto list = container.addChild("ul");
-		writeFunctions(list, reflection, _baseUrl ~ "/");
+		auto starting = _baseUrl;
+		if(starting is null)
+			starting = cgi.scriptName ~ cgi.pathInfo; // FIXME
+		writeFunctions(list, reflection, starting ~ "/");
 
 		return list.parentNode.removeChild(list);
 	}
@@ -2209,7 +2222,8 @@ string toUrlName(string name) {
 string beautify(string name) {
 	string n;
 
-	if(name.length == 0)
+				// all caps names shouldn't get spaces
+	if(name.length == 0 || name.toUpper() == name)
 		return name;
 
 	n ~= toUpper(name[0..1]);
@@ -2556,6 +2570,7 @@ class Session {
 			return;
 		if(force || changed) {
 			std.file.write(getFilePath(), toJson(data));
+			changed = false;
 			// We have to make sure that only we can read this file,
 			// since otherwise, on shared hosts, our session data might be
 			// easily stolen. Note: if your shared host doesn't have different
@@ -2603,16 +2618,46 @@ void setLoginCookie(Cgi cgi, string name, string value) {
 }
 
 
-void applyTemplateToElement(Element e, in string[string] vars) {
+
+immutable(string[]) monthNames = [
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December"
+];
+
+immutable(string[]) weekdayNames = [
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday"
+];
+
+
+
+
+
+void applyTemplateToElement(Element e, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions = null) {
 	foreach(ele; e.tree) {
 		auto tc = cast(TextNode) ele;
 		if(tc !is null) {
 			// text nodes have no attributes, but they do have text we might replace.
-			tc.contents = htmlTemplateWithData(tc.contents, vars, false);
+			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false);
 		} else {
 			auto rs = cast(RawSource) ele;
 			if(rs !is null)
-				rs.source = htmlTemplateWithData(rs.source, vars, true); /* FIXME: might be wrong... */
+				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, true); /* FIXME: might be wrong... */
 			// if it is not a text node, it has no text where templating is valid, except the attributes
 			// note: text nodes have no attributes, which is why this is in the separate branch.
 			foreach(k, v; ele.attributes) {
@@ -2621,7 +2666,7 @@ void applyTemplateToElement(Element e, in string[string] vars) {
 					v = v.replace("%7B%24", "{$");
 					v = v.replace("%7D", "}");
 				}
-				ele.attributes[k] = htmlTemplateWithData(v, vars, false);
+				ele.attributes[k] = htmlTemplateWithData(v, vars, pipeFunctions, false);
 			}
 		}
 	}
@@ -2630,7 +2675,7 @@ void applyTemplateToElement(Element e, in string[string] vars) {
 // this thing sucks a little less now.
 // set useHtml to false if you're working on internal data (such as TextNode.contents, or attribute);
 // it should only be set to true if you're doing input that has already been ran through toString or something.
-string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml = true) {
+string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml) {
 	if(text is null)
 		return null;
 
@@ -2641,7 +2686,46 @@ string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml
 	size_t nameStart;
 	size_t replacementStart;
 	size_t lastAppend = 0;
+
+	string name = null;
+	string replacement = null;
+	string currentPipe = null;
+
 	foreach(i, c; text) {
+		void stepHandler() {
+			if(name is null)
+				name = text[nameStart .. i];
+			else if(nameStart != i)
+				currentPipe = text[nameStart .. i];
+
+			nameStart = i + 1;
+
+			auto it = name in vars;
+			if(it !is null)
+				replacement = *it;
+		}
+
+		void pipeHandler() {
+			if(currentPipe is null || replacement is null)
+				return;
+
+			switch(currentPipe) {
+				case "date":
+					auto date = to!long(replacement);
+
+					import std.date;
+
+					auto day = dateFromTime(date);
+					auto year = yearFromTime(date);
+					auto month = monthNames[monthFromTime(date)];
+					replacement = format("%s %d, %d", month, day, year);
+				break;
+				default:
+			}
+
+			currentPipe = null;
+		}
+
 		switch(state) {
 			default: assert(0);
 			case 0:
@@ -2661,21 +2745,27 @@ string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml
 					state = 0; // empty names aren't allowed; ignore it
 				} else {
 					nameStart = i;
+					name = null;
 					state++;
 				}
 			break;
 			case 3: // reading a name
-				if(c == '}') {
+				// the pipe operator lets us filter the text
+				if(c == '|') {
+					pipeHandler();
+					stepHandler();
+				} else if(c == '}') {
 					// just finished reading it, let's do our replacement.
-					string name = text[nameStart .. i];
-					auto it = name in vars;
-					if(it !is null) {
+					pipeHandler(); // anything that was there
+					stepHandler(); // might make a new pipe if the first...
+					pipeHandler(); // new names/pipes since this is the last go
+					if(name !is null && replacement !is null) {
 						newText ~= text[lastAppend .. replacementStart];
-						string replacement = *it;
 						if(useHtml)
 							replacement = htmlEntitiesEncode(replacement).replace("\n", "<br />");
-						newText ~= *it;
+						newText ~= replacement;
 						lastAppend = i + 1;
+						replacement = null;
 					}
 
 					state = 0;
@@ -2696,13 +2786,16 @@ string htmlTemplateWithData(in string text, in string[string] vars, bool useHtml
 class TemplatedDocument : Document {
 	override string toString() const {
 		if(this.root !is null)
-			applyTemplateToElement(cast() this.root, vars); /* FIXME: I shouldn't cast away const, since it's rude to modify an object in any toString.... but that's what I'm doing for now */
+			applyTemplateToElement(cast() this.root, vars, viewFunctions); /* FIXME: I shouldn't cast away const, since it's rude to modify an object in any toString.... but that's what I'm doing for now */
 
 		return super.toString();
 	}
 
 	public:
 		string[string] vars; /// use this to set up the string replacements. document.vars["name"] = "adam"; then in doc, <p>hellp, {$name}.</p>. Note the vars are converted lazily at toString time and are always HTML escaped.
+		/// In the html templates, you can write {$varname} or {$varname|func} (or {$varname|func arg arg|func} and so on). This holds the functions available these. The TemplatedDocument constructor puts in a handful of generic ones.
+		string delegate(string, string[], in Element, string)[string] viewFunctions;
+
 
 		this(string src) {
 			super();

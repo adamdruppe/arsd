@@ -525,7 +525,16 @@ version(threaded_connections) {
 			auto manager = new NetworkManager();
 			connection.parentManager = manager;
 			manager.addConnection(connection, connection.socket, connection.addr, connection.port);
-			while(manager.proceed()) {}
+			bool breakNext = false;
+			while(manager.proceed()) {
+				if(breakNext)
+					break;
+				if(connection.disconnectQueued)
+					if(connection.writeBufferLength)
+						breakNext = true;
+					else
+						break;
+			}
 		}
 	}
 }
