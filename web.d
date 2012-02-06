@@ -2675,6 +2675,7 @@ void applyTemplateToElement(Element e, in string[string] vars, in string delegat
 // this thing sucks a little less now.
 // set useHtml to false if you're working on internal data (such as TextNode.contents, or attribute);
 // it should only be set to true if you're doing input that has already been ran through toString or something.
+// NOTE: I'm probably going to change the pipe function thing a bit more, but I'm basically happy with it now.
 string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml) {
 	if(text is null)
 		return null;
