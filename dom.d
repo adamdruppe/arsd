@@ -24,6 +24,17 @@ import std.stdio;
 // most likely a typo so I say kill kill kill.
 
 
+/// This might belong in another module, but it represents a file with a mime type and some data.
+/// Document implements this interface with type = text/html (see Document.contentType for more info)
+/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
+interface FileResource {
+	string contentType() const;
+	immutable(ubyte)[] getData() const;
+}
+
+
+
+
 // this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
 mixin template JavascriptStyleDispatch() {
 	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
@@ -139,7 +150,7 @@ struct ElementStyle {
 }
 
 ///.
-enum NodeType { Text = 3}
+enum NodeType { Text = 3 }
 
 
 /// You can use this to do an easy null check or a dynamic cast+null check on any element.
@@ -153,325 +164,31 @@ body {
 	return ret;
 }
 
-///.
+/// This represents almost everything in the DOM.
 class Element {
 	// this ought to be private. don't use it directly.
 	Element[] children;
 
-	///.
+	/// The name of the tag. Remember, changing this doesn't change the dynamic type of the object.
 	string tagName;
 
-	/// .
+	/// This is where the attributes are actually stored. You should use getAttribute, setAttribute, and hasAttribute instead.
 	string[string] attributes;
 
-	///.
+	/// In XML, it is valid to write <tag /> for all elements with no children, but that breaks HTML, so I don't do it here.
+	/// Instead, this flag tells if it should be. It is based on the source document's notation and a html element list.
 	private bool selfClosed;
 
 	/// Get the parent Document object that contains this element.
 	/// It may be null, so remember to check for that.
 	Document parentDocument;
 
-	/// HTML5's dataset property. It is an alternate view into attributes.
-	///
-	/// Given: <a data-my-property="cool" />
-	///
-	/// We get: assert(a.dataset.myProperty == "cool");
-	DataSet dataset() {
-		return DataSet(this);
-	}
-
-	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
-	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
-		parentDocument = _parentDocument;
-		tagName = _tagName;
-		if(_attributes !is null)
-			attributes = _attributes;
-		selfClosed = _selfClosed;
-	}
-
-	/// Removes all inner content from the tag; all child text and elements are gone.
-	void removeAllChildren()
-		out {
-			assert(this.children.length == 0);
-		}
-	body {
-		children = null;
-	}
-
 	///.
-	@property Element previousSibling(string tagName = null) {
-		if(this.parentNode is null)
-			return null;
-		Element ps = null;
-		foreach(e; this.parentNode.childNodes) {
-			if(e is this)
-				break;
-			if(tagName is null || e.tagName == tagName)
-				ps = e;
-		}
-
-		return ps;
-	}
-
-	///.
-	@property Element nextSibling(string tagName = null) {
-		if(this.parentNode is null)
-			return null;
-		Element ns = null;
-		bool mightBe = false;
-		foreach(e; this.parentNode.childNodes) {
-			if(e is this) {
-				mightBe = true;
-				continue;
-			}
-			if(mightBe)
-				if(tagName is null || e.tagName == tagName) {
-					ns = e;
-					break;
-				}
-		}
-
-		return ns;
-	}
-
-	@property ElementStyle style() {
-		return ElementStyle(this);
-	}
-
-	@property ElementStyle style(string s) {
-		this.setAttribute("style", s);
-		return this.style();
-	}
-
-	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
-	///.
-	@property CssStyle computedStyle() {
-		if(_computedStyle is null) {
-			auto style = this.getAttribute("style");
-		/* we'll treat shitty old html attributes as css here */
-			if(this.hasAttribute("width"))
-				style ~= "; width: " ~ this.width;
-			if(this.hasAttribute("height"))
-				style ~= "; width: " ~ this.height;
-			if(this.hasAttribute("bgcolor"))
-				style ~= "; background-color: " ~ this.bgcolor;
-			if(this.tagName == "body" && this.hasAttribute("text"))
-				style ~= "; color: " ~ this.text;
-			if(this.hasAttribute("color"))
-				style ~= "; color: " ~ this.color;
-		/* done */
+	Element parentNode;
 
 
-			_computedStyle = new CssStyle(null, style); // gives at least something to work with
-		}
-		return _computedStyle;
-	}
-
-	private CssStyle _computedStyle;
-
-	/// These properties are useless in most cases, but if you write a layout engine on top of this lib, they may be good
-	version(browser) {
-		void* expansionHook; ///ditto
-		int offsetWidth; ///ditto
-		int offsetHeight; ///ditto
-		int offsetLeft; ///ditto
-		int offsetTop; ///ditto
-		Element offsetParent; ///ditto
-		bool hasLayout; ///ditto
-		int zIndex; ///ditto
-
-		///ditto
-		int absoluteLeft() {
-			int a = offsetLeft;
-			auto p = offsetParent;
-			while(p) {
-				a += p.offsetLeft;
-				p = p.offsetParent;
-			}
-
-			return a;
-		}
-
-		///ditto
-		int absoluteTop() {
-			int a = offsetTop;
-			auto p = offsetParent;
-			while(p) {
-				a += p.offsetTop;
-				p = p.offsetParent;
-			}
-
-			return a;
-		}
-	}
-
-	// Back to the regular dom functions
-
-	///.
-	@property Element cloned()
-		out(ret) {
-			// FIXME: not sure why these fail...
-//			assert(ret.children.length == this.children.length);
-//			assert(ret.tagName == this.tagName);
-		}
-	body {
-		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
-		foreach(child; children) {
-			e.appendChild(child.cloned);
-		}
-
-		return e;
-	}
-
-	Element cloneNode(bool deepClone) {
-		if(deepClone)
-			return this.cloned;
-
-		// shallow clone
-		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
-		return e;
-	}
-
-	/// Returns the first child of this element. If it has no children, returns null.
-	@property Element firstChild() {
-		return children.length ? children[0] : null;
-	}
-
-	@property Element lastChild() {
-		return children.length ? children[$ - 1] : null;
-	}
-
-	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
-	/// Note also that without a parent document, elements are always in strict, case-sensitive mode.
-	this(string _tagName, string[string] _attributes = null) {
-		tagName = _tagName;
-		if(_attributes !is null)
-			attributes = _attributes;
-		selfClosed = tagName.isInArray(selfClosedElements);
-
-		// this is meant to reserve some memory. It makes a small, but consistent improvement.
-		//children.length = 8;
-		//children.length = 0;
-	}
-
-	/*
-	private this() {
-
-	}
-	*/
-
-	private this(Document _parentDocument) {
-		parentDocument = _parentDocument;
-	}
-
-	private void parseAttributes(string[] whichOnes = null) {
-/+
-		if(whichOnes is null)
-			whichOnes = attributes.keys;
-		foreach(attr; whichOnes) {
-			switch(attr) {
-				case "id":
-
-				break;
-				case "class":
-
-				break;
-				case "style":
-
-				break;
-				default:
-					// we don't care about it
-			}
-		}
-+/
-	}
-
-    public:
-    	/// Appends the given element to this one. The given element must not have a parent already.
-	Element appendChild(Element e)
-		in {
-			assert(e !is null);
-			assert(e.parentNode is null);
-		}
-		out (ret) {
-			assert(e.parentNode is this);
-			assert(e.parentDocument is this.parentDocument);
-			assert(e is ret);
-		}
-	body {
-		selfClosed = false;
-		e.parentNode = this;
-		e.parentDocument = this.parentDocument;
-		children ~= e;
-		return e;
-	}
-
-	/// .
-	void appendChildren(Element[] children) {
-		foreach(ele; children)
-			appendChild(ele);
-	}
-
-	/// Inserts the second element to this node, right before the first param
-	Element insertBefore(in Element where, Element what)
-		in {
-			assert(where !is null);
-			assert(where.parentNode is this);
-			assert(what !is null);
-			assert(what.parentNode is null);
-		}
-		out (ret) {
-			assert(where.parentNode is this);
-			assert(what.parentNode is this);
-
-			assert(what.parentDocument is this.parentDocument);
-			assert(ret is what);
-		}
-	body {
-		foreach(i, e; children) {
-			if(e is where) {
-				children = children[0..i] ~ what ~ children[i..$];
-				what.parentDocument = this.parentDocument;
-				what.parentNode = this;
-				return what;
-			}
-		}
-
-		return what;
-
-		assert(0);
-	}
-
-	///.
-	Element insertAfter(in Element where, Element what)
-		in {
-			assert(where !is null);
-			assert(where.parentNode is this);
-			assert(what !is null);
-			assert(what.parentNode is null);
-		}
-		out (ret) {
-			assert(where.parentNode is this);
-			assert(what.parentNode is this);
-			assert(what.parentDocument is this.parentDocument);
-			assert(ret is what);
-		}
-	body {
-		foreach(i, e; children) {
-			if(e is where) {
-				children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
-				what.parentNode = this;
-				what.parentDocument = this.parentDocument;
-				return what;
-			}
-		}
-
-		return what;
-
-		assert(0);
-	}
-
-	/// Convenience function to try to do the right thing for HTML
+	/// Convenience function to try to do the right thing for HTML. This is the main
+	/// way I create elements.
 	static Element make(string tagName, string childInfo = null, string childInfo2 = null) {
 		bool selfClosed = tagName.isInArray(selfClosedElements);
 
@@ -561,6 +278,546 @@ class Element {
 		return e;
 	}
 
+
+	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
+	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
+		parentDocument = _parentDocument;
+		tagName = _tagName;
+		if(_attributes !is null)
+			attributes = _attributes;
+		selfClosed = _selfClosed;
+	}
+
+	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
+	/// Note also that without a parent document, elements are always in strict, case-sensitive mode.
+	this(string _tagName, string[string] _attributes = null) {
+		tagName = _tagName;
+		if(_attributes !is null)
+			attributes = _attributes;
+		selfClosed = tagName.isInArray(selfClosedElements);
+
+		// this is meant to reserve some memory. It makes a small, but consistent improvement.
+		//children.length = 8;
+		//children.length = 0;
+	}
+
+	private this(Document _parentDocument) {
+		parentDocument = _parentDocument;
+	}
+
+
+	/* *******************************
+	       Navigating the DOM
+	*********************************/
+
+	/// Returns the first child of this element. If it has no children, returns null.
+	/// Remember, text nodes are children too.
+	@property Element firstChild() {
+		return children.length ? children[0] : null;
+	}
+
+	///
+	@property Element lastChild() {
+		return children.length ? children[$ - 1] : null;
+	}
+
+
+	///.
+	@property Element previousSibling(string tagName = null) {
+		if(this.parentNode is null)
+			return null;
+		Element ps = null;
+		foreach(e; this.parentNode.childNodes) {
+			if(e is this)
+				break;
+			if(tagName == "*" && e.nodeType != NodeType.Text) {
+				ps = e;
+				break;
+			}
+			if(tagName is null || e.tagName == tagName)
+				ps = e;
+		}
+
+		return ps;
+	}
+
+	///.
+	@property Element nextSibling(string tagName = null) {
+		if(this.parentNode is null)
+			return null;
+		Element ns = null;
+		bool mightBe = false;
+		foreach(e; this.parentNode.childNodes) {
+			if(e is this) {
+				mightBe = true;
+				continue;
+			}
+			if(mightBe) {
+				if(tagName == "*" && e.nodeType != NodeType.Text) {
+					ns = e;
+					break;
+				}
+				if(tagName is null || e.tagName == tagName) {
+					ns = e;
+					break;
+				}
+			}
+		}
+
+		return ns;
+	}
+
+
+	/// Gets the nearest node, going up the chain, with the given tagName
+	/// May return null or throw.
+	T getParent(T = Element)(string tagName = null) if(is(T : Element)) {
+		if(tagName is null) {
+			static if(is(T == Form))
+				tagName = "form";
+			else static if(is(T == Table))
+				tagName = "table";
+			else static if(is(T == Table))
+				tagName == "a";
+		}
+
+		auto par = this.parentNode;
+		while(par !is null) {
+			if(tagName is null || par.tagName == tagName)
+				break;
+			par = par.parentNode;
+		}
+
+		static if(!is(T == Element)) {
+			auto t = cast(T) par;
+			if(t is null)
+				throw new ElementNotFoundException("", tagName ~ " parent not found");
+		} else
+			auto t = par;
+
+		return t;
+	}
+
+	///.
+	Element getElementById(string id) {
+		// FIXME: I use this function a lot, and it's kinda slow
+		// not terribly slow, but not great.
+		foreach(e; tree)
+			if(e.id == id)
+				return e;
+		return null;
+	}
+
+	///.
+	final SomeElementType requireElementById(SomeElementType = Element)(string id)
+	if(
+		is(SomeElementType : Element)
+	)
+	out(ret) {
+		assert(ret !is null);
+	}
+	body {
+		auto e = cast(SomeElementType) getElementById(id);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id);
+		return e;
+	}
+
+	///.
+	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
+	if(
+		is(SomeElementType : Element)
+	)
+	out(ret) {
+		assert(ret !is null);
+	}
+	body {
+		auto e = cast(SomeElementType) querySelector(selector);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, selector);
+		return e;
+	}
+
+	/// Note: you can give multiple selectors, separated by commas.
+	/// It will return the first match it finds.
+	Element querySelector(string selector) {
+		// FIXME: inefficient; it gets all results just to discard most of them
+		auto list = getElementsBySelector(selector);
+		if(list.length == 0)
+			return null;
+		return list[0];
+	}
+
+	/// a more standards-compliant alias for getElementsBySelector
+	Element[] querySelectorAll(string selector) {
+		return getElementsBySelector(selector);
+	}
+
+	/**
+		Does a CSS selector
+
+		* -- all, default if nothing else is there
+
+		tag#id.class.class.class:pseudo[attrib=what][attrib=what] OP selector
+
+		It is all additive
+
+		OP
+
+		space = descendant
+		>     = direct descendant
+		+     = sibling (E+F Matches any F element immediately preceded by a sibling element E)
+
+		[foo]        Foo is present as an attribute
+		[foo="warning"]   Matches any E element whose "foo" attribute value is exactly equal to "warning".
+		E[foo~="warning"] Matches any E element whose "foo" attribute value is a list of space-separated values, one of which is exactly equal to "warning"
+		E[lang|="en"] Matches any E element whose "lang" attribute has a hyphen-separated list of values beginning (from the left) with "en".
+
+		[item$=sdas] ends with
+		[item^-sdsad] begins with
+
+		Quotes are optional here.
+
+		Pseudos:
+			:first-child
+			:last-child
+			:link (same as a[href] for our purposes here)
+
+
+		There can be commas separating the selector. A comma separated list result is OR'd onto the main.
+
+
+
+		This ONLY cares about elements. text, etc, are ignored
+
+
+		There should be two functions: given element, does it match the selector? and given a selector, give me all the elements
+	*/
+	Element[] getElementsBySelector(string selector) {
+		// FIXME: this function could probably use some performance attention
+		// ... but only mildly so according to the profiler in the big scheme of things; probably negligible in a big app.
+
+
+		// POSSIBLE FIXME: this also sends attribute things to lower in the selector,
+		// but the actual get selector check is still case sensitive...
+		if(parentDocument && parentDocument.loose)
+			selector = selector.toLower;
+
+		Element[] ret;
+		foreach(sel; parseSelectorString(selector))
+			ret ~= sel.getElements(this);
+		return ret;
+	}
+
+	/// .
+	Element[] getElementsByClassName(string cn) {
+		// is this correct?
+		return getElementsBySelector("." ~ cn);
+	}
+
+	///.
+	Element[] getElementsByTagName(string tag) {
+		if(parentDocument && parentDocument.loose)
+			tag = tag.toLower();
+		Element[] ret;
+		foreach(e; tree)
+			if(e.tagName == tag)
+				ret ~= e;
+		return ret;
+	}
+
+
+	/* *******************************
+	          Attributes
+	*********************************/
+
+	/**
+		Gets the given attribute value, or null if the
+		attribute is not set.
+
+		Note that the returned string is decoded, so it no longer contains any xml entities.
+	*/
+	string getAttribute(string name) const {
+		if(parentDocument && parentDocument.loose)
+			name = name.toLower();
+		auto e = name in attributes;
+		if(e)
+			return *e;
+		else
+			return null;
+	}
+
+	/**
+		Sets an attribute. Returns this for easy chaining
+	*/
+	Element setAttribute(string name, string value) {
+		if(parentDocument && parentDocument.loose)
+			name = name.toLower();
+
+		// I never use this shit legitimately and neither should you
+		auto it = name.toLower;
+		if(it == "href" || it == "src") {
+			auto v = value.strip.toLower();
+			if(v.startsWith("vbscript:"))
+				value = value[9..$];
+			if(v.startsWith("javascript:"))
+				value = value[11..$];
+		}
+
+		attributes[name] = value;
+
+		return this;
+	}
+
+	/**
+		Returns if the attribute exists.
+	*/
+	bool hasAttribute(string name) {
+		if(parentDocument && parentDocument.loose)
+			name = name.toLower();
+
+		if(name in attributes)
+			return true;
+		else
+			return false;
+	}
+
+	/**
+		Removes the given attribute from the element.
+	*/
+	void removeAttribute(string name) {
+		if(parentDocument && parentDocument.loose)
+			name = name.toLower();
+		if(name in attributes)
+			attributes.remove(name);
+	}
+
+	/**
+		Gets the class attribute's contents. Returns
+		an empty string if it has no class.
+	*/
+	string className() const {
+		auto c = getAttribute("class");
+		if(c is null)
+			return "";
+		return c;
+	}
+
+	///.
+	Element className(string c) {
+		setAttribute("class", c);
+		return this;
+	}
+
+	/**
+		Provides easy access to attributes, object style.
+
+		auto element = Element.make("a");
+		a.href = "cool.html"; // this is the same as a.setAttribute("href", "cool.html");
+		string where = a.href; // same as a.getAttribute("href");
+	*/
+		// name != "popFront" is so duck typing doesn't think it's a range
+	string opDispatch(string name)(string v = null) if(name != "popFront") {
+		if(v !is null)
+			setAttribute(name, v);
+		return getAttribute(name);
+	}
+
+	/**
+		Returns the element's children.
+	*/
+	@property const(Element[]) childNodes() const {
+		return children;
+	}
+
+	/// Mutable version of the same
+	@property Element[] childNodes() { // FIXME: the above should be inout
+		return children;
+	}
+
+
+
+	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
+	Element addClass(string c) {
+		string cn = getAttribute("class");
+		if(cn is null) {
+			setAttribute("class", c);
+			return this;
+		} else {
+			setAttribute("class", cn ~ " " ~ c);
+		}
+
+		return this;
+	}
+
+	/// Removes a particular class name.
+	Element removeClass(string c) {
+		auto cn = className;
+
+		// FIXME: this is actually wrong!
+		className = cn.replace(c, "").strip;
+
+		return this;
+	}
+
+	/// Returns whether the given class appears in this element.
+	bool hasClass(string c) {
+		auto cn = className;
+
+		auto idx = cn.indexOf(c);
+		if(idx == -1)
+			return false;
+
+		foreach(cla; cn.split(" "))
+			if(cla == c)
+				return true;
+		return false;
+
+		/*
+		int rightSide = idx + c.length;
+
+		bool checkRight() {
+			if(rightSide == cn.length)
+				return true; // it's the only class
+			else if(iswhite(cn[rightSide]))
+				return true;
+			return false; // this is a substring of something else..
+		}
+
+		if(idx == 0) {
+			return checkRight();
+		} else {
+			if(!iswhite(cn[idx - 1]))
+				return false; // substring
+			return checkRight();
+		}
+
+		assert(0);
+		*/
+	}
+
+
+	/// HTML5's dataset property. It is an alternate view into attributes with the data- prefix.
+	///
+	/// Given: <a data-my-property="cool" />
+	///
+	/// We get: assert(a.dataset.myProperty == "cool");
+	DataSet dataset() {
+		return DataSet(this);
+	}
+
+	/// Provides both string and object style (like in Javascript) access to the style attribute.
+	@property ElementStyle style() {
+		return ElementStyle(this);
+	}
+
+	/// This sets the style attribute with a string.
+	@property ElementStyle style(string s) {
+		this.setAttribute("style", s);
+		return this.style();
+	}
+
+	private void parseAttributes(string[] whichOnes = null) {
+/+
+		if(whichOnes is null)
+			whichOnes = attributes.keys;
+		foreach(attr; whichOnes) {
+			switch(attr) {
+				case "id":
+
+				break;
+				case "class":
+
+				break;
+				case "style":
+
+				break;
+				default:
+					// we don't care about it
+			}
+		}
++/
+	}
+
+
+	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
+	///.
+	@property CssStyle computedStyle() {
+		if(_computedStyle is null) {
+			auto style = this.getAttribute("style");
+		/* we'll treat shitty old html attributes as css here */
+			if(this.hasAttribute("width"))
+				style ~= "; width: " ~ this.width;
+			if(this.hasAttribute("height"))
+				style ~= "; width: " ~ this.height;
+			if(this.hasAttribute("bgcolor"))
+				style ~= "; background-color: " ~ this.bgcolor;
+			if(this.tagName == "body" && this.hasAttribute("text"))
+				style ~= "; color: " ~ this.text;
+			if(this.hasAttribute("color"))
+				style ~= "; color: " ~ this.color;
+		/* done */
+
+
+			_computedStyle = new CssStyle(null, style); // gives at least something to work with
+		}
+		return _computedStyle;
+	}
+
+	private CssStyle _computedStyle;
+
+	/// These properties are useless in most cases, but if you write a layout engine on top of this lib, they may be good
+	version(browser) {
+		void* expansionHook; ///ditto
+		int offsetWidth; ///ditto
+		int offsetHeight; ///ditto
+		int offsetLeft; ///ditto
+		int offsetTop; ///ditto
+		Element offsetParent; ///ditto
+		bool hasLayout; ///ditto
+		int zIndex; ///ditto
+
+		///ditto
+		int absoluteLeft() {
+			int a = offsetLeft;
+			auto p = offsetParent;
+			while(p) {
+				a += p.offsetLeft;
+				p = p.offsetParent;
+			}
+
+			return a;
+		}
+
+		///ditto
+		int absoluteTop() {
+			int a = offsetTop;
+			auto p = offsetParent;
+			while(p) {
+				a += p.offsetTop;
+				p = p.offsetParent;
+			}
+
+			return a;
+		}
+	}
+
+	// Back to the regular dom functions
+
+    public:
+
+
+	/* *******************************
+	          DOM Mutation
+	*********************************/
+
+	/// Removes all inner content from the tag; all child text and elements are gone.
+	void removeAllChildren()
+		out {
+			assert(this.children.length == 0);
+		}
+	body {
+		children = null;
+	}
 	/// convenience function to quickly add a tag with some text or
 	/// other relevant info (for example, it's a src for an <img> element
 	/// instead of inner text)
@@ -648,33 +905,89 @@ class Element {
 		return e;
 	}
 
-	/// Gets the nearest node, going up the chain, with the given tagName
-	/// May return null or throw.
-	T getParent(T = Element)(string tagName = null) if(is(T : Element)) {
-		if(tagName is null) {
-			static if(is(T == Form))
-				tagName = "form";
-			else static if(is(T == Table))
-				tagName = "table";
-			else static if(is(T == Table))
-				tagName == "a";
+
+    	/// Appends the given element to this one. The given element must not have a parent already.
+	Element appendChild(Element e)
+		in {
+			assert(e !is null);
+			assert(e.parentNode is null);
+		}
+		out (ret) {
+			assert(e.parentNode is this);
+			assert(e.parentDocument is this.parentDocument);
+			assert(e is ret);
+		}
+	body {
+		selfClosed = false;
+		e.parentNode = this;
+		e.parentDocument = this.parentDocument;
+		children ~= e;
+		return e;
+	}
+
+	/// .
+	void appendChildren(Element[] children) {
+		foreach(ele; children)
+			appendChild(ele);
+	}
+
+	/// Inserts the second element to this node, right before the first param
+	Element insertBefore(in Element where, Element what)
+		in {
+			assert(where !is null);
+			assert(where.parentNode is this);
+			assert(what !is null);
+			assert(what.parentNode is null);
+		}
+		out (ret) {
+			assert(where.parentNode is this);
+			assert(what.parentNode is this);
+
+			assert(what.parentDocument is this.parentDocument);
+			assert(ret is what);
+		}
+	body {
+		foreach(i, e; children) {
+			if(e is where) {
+				children = children[0..i] ~ what ~ children[i..$];
+				what.parentDocument = this.parentDocument;
+				what.parentNode = this;
+				return what;
+			}
 		}
 
-		auto par = this.parentNode;
-		while(par !is null) {
-			if(tagName is null || par.tagName == tagName)
-				break;
-			par = par.parentNode;
+		return what;
+
+		assert(0);
+	}
+
+	///.
+	Element insertAfter(in Element where, Element what)
+		in {
+			assert(where !is null);
+			assert(where.parentNode is this);
+			assert(what !is null);
+			assert(what.parentNode is null);
+		}
+		out (ret) {
+			assert(where.parentNode is this);
+			assert(what.parentNode is this);
+			assert(what.parentDocument is this.parentDocument);
+			assert(ret is what);
+		}
+	body {
+		foreach(i, e; children) {
+			if(e is where) {
+				children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
+				what.parentNode = this;
+				what.parentDocument = this.parentDocument;
+				return what;
+			}
 		}
 
-		static if(!is(T == Element)) {
-			auto t = cast(T) par;
-			if(t is null)
-				throw new ElementNotFoundException("", tagName ~ " parent not found");
-		} else
-			auto t = par;
+		return what;
 
-		return t;
+		assert(0);
 	}
 
 	/// swaps one child for a new thing. Returns the old child which is now parentless.
@@ -704,95 +1017,6 @@ class Element {
 
 
 	///.
-	Element getElementById(string id) {
-		// FIXME: I use this function a lot, and it's kinda slow
-		// not terribly slow, but not great.
-		foreach(e; tree)
-			if(e.id == id)
-				return e;
-		return null;
-	}
-
-	///.
-	final SomeElementType requireElementById(SomeElementType = Element)(string id)
-	if(
-		is(SomeElementType : Element)
-	)
-	out(ret) {
-		assert(ret !is null);
-	}
-	body {
-		auto e = cast(SomeElementType) getElementById(id);
-		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id);
-		return e;
-	}
-
-	///.
-	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
-	if(
-		is(SomeElementType : Element)
-	)
-	out(ret) {
-		assert(ret !is null);
-	}
-	body {
-		auto e = cast(SomeElementType) querySelector(selector);
-		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, selector);
-		return e;
-	}
-
-	/// Note: you can give multiple selectors, separated by commas.
-	/// It will return the first match it finds.
-	Element querySelector(string selector) {
-		// FIXME: inefficient; it gets all results just to discard most of them
-		auto list = getElementsBySelector(selector);
-		if(list.length == 0)
-			return null;
-		return list[0];
-	}
-
-	/// a more standards-compliant alias for getElementsBySelector
-	Element[] querySelectorAll(string selector) {
-		return getElementsBySelector(selector);
-	}
-
-	///.
-	Element[] getElementsBySelector(string selector) {
-		// FIXME: this function could probably use some performance attention
-		// ... but only mildly so according to the profiler in the big scheme of things; probably negligible in a big app.
-
-
-		// POSSIBLE FIXME: this also sends attribute things to lower in the selector,
-		// but the actual get selector check is still case sensitive...
-		if(parentDocument && parentDocument.loose)
-			selector = selector.toLower;
-
-		Element[] ret;
-		foreach(sel; parseSelectorString(selector))
-			ret ~= sel.getElements(this);
-		return ret;
-	}
-
-	/// .
-	Element[] getElementsByClassName(string cn) {
-		// is this correct?
-		return getElementsBySelector("." ~ cn);
-	}
-
-	///.
-	Element[] getElementsByTagName(string tag) {
-		if(parentDocument && parentDocument.loose)
-			tag = tag.toLower();
-		Element[] ret;
-		foreach(e; tree)
-			if(e.tagName == tag)
-				ret ~= e;
-		return ret;
-	}
-
-	///.
 	Element appendText(string text) {
 		Element e = new TextNode(parentDocument, text);
 		return appendChild(e);
@@ -807,109 +1031,10 @@ class Element {
 		return ret;
 	}
 
-	/*
-		Does a CSS selector
-
-		* -- all, default if nothing else is there
-
-		tag#id.class.class.class:pseudo[attrib=what][attrib=what] OP selector
-
-		It is all additive
-
-		OP
-
-		space = descendant
-		>     = direct descendant
-		+     = sibling (E+F Matches any F element immediately preceded by a sibling element E)
-
-		[foo]        Foo is present as an attribute
-		[foo="warning"]   Matches any E element whose "foo" attribute value is exactly equal to "warning".
-		E[foo~="warning"] Matches any E element whose "foo" attribute value is a list of space-separated values, one of which is exactly equal to "warning"
-		E[lang|="en"] Matches any E element whose "lang" attribute has a hyphen-separated list of values beginning (from the left) with "en".
-
-		[item$=sdas] ends with
-		[item^-sdsad] begins with
-
-		Quotes are optional here.
-
-		Pseudos:
-			:first-child
-			:last-child
-			:link (same as a[href] for our purposes here)
-
-
-		There can be commas separating the selector. A comma separated list result is OR'd onto the main.
-
-
-
-		This ONLY cares about elements. text, etc, are ignored
-
-
-		There should be two functions: given element, does it match the selector? and given a selector, give me all the elements
-	*/
-
 	/// Appends the given html to the element, returning the elements appended
 	Element[] appendHtml(string html) {
 		Document d = new Document("<root>" ~ html ~ "</root>");
 		return stealChildren(d.root);
-	}
-
-	///.
-	Element addClass(string c) {
-		string cn = getAttribute("class");
-		if(cn is null) {
-			setAttribute("class", c);
-			return this;
-		} else {
-			setAttribute("class", cn ~ " " ~ c);
-		}
-
-		return this;
-	}
-
-	///.
-	Element removeClass(string c) {
-		auto cn = className;
-
-		className = cn.replace(c, "").strip;
-
-		return this;
-	}
-
-	///.
-	bool hasClass(string c) {
-		auto cn = className;
-
-		auto idx = cn.indexOf(c);
-		if(idx == -1)
-			return false;
-
-		foreach(cla; cn.split(" "))
-			if(cla == c)
-				return true;
-		return false;
-
-		/*
-		int rightSide = idx + c.length;
-
-		bool checkRight() {
-			if(rightSide == cn.length)
-				return true; // it's the only class
-			else if(iswhite(cn[rightSide]))
-				return true;
-			return false; // this is a substring of something else..
-		}
-
-		if(idx == 0) {
-			return checkRight();
-		} else {
-			if(!iswhite(cn[idx - 1]))
-				return false; // substring
-			return checkRight();
-		}
-
-		assert(0);
-		*/
 	}
 
 	///.
@@ -1013,35 +1138,6 @@ class Element {
 
 
 	/**
-		Provides easy access to attributes, like in javascript
-	*/
-		// name != "popFront" is so duck typing doesn't think it's a range
-	string opDispatch(string name)(string v = null) if(name != "popFront") {
-		if(v !is null)
-			setAttribute(name, v);
-		return getAttribute(name);
-	}
-
-	/**
-		Returns the element's children.
-	*/
-	@property const(Element[]) childNodes() const {
-		return children;
-	}
-
-	/// Mutable version of the same
-	@property Element[] childNodes() { // FIXME: the above should be inout
-		return children;
-	}
-
-
-	// should return int
-	///.
-	@property int nodeType() const {
-		return 1;
-	}
-
-	/**
 		Returns a string containing all child elements, formatted such that it could be pasted into
 		an XML file.
 	*/
@@ -1125,101 +1221,23 @@ class Element {
 		return doc.root.children;
 	}
 
-	///.
+	/// Returns all the html for this element, including the tag itself.
+	/// This is equivalent to calling toString().
 	@property string outerHTML() {
 		return this.toString();
 	}
 
-	///.
+	/// This sets the inner content of the element *without* trying to parse it.
+	/// You can inject any code in there; this serves as an escape hatch from the dom.
+	///
+	/// The only times you might actually need it are for <style> and <script> tags in html.
+	/// Other than that, innerHTML and/or innerText should do the job.
 	@property void innerRawSource(string rawSource) {
 		children.length = 0;
 		auto rs = new RawSource(parentDocument, rawSource);
 		rs.parentNode = this;
 
 		children ~= rs;
-	}
-
-	/**
-		Gets the given attribute value, or null if the
-		attribute is not set.
-
-		Note that the returned string is decoded, so it no longer contains any xml entities.
-	*/
-	string getAttribute(string name) const {
-		if(parentDocument && parentDocument.loose)
-			name = name.toLower();
-		auto e = name in attributes;
-		if(e)
-			return *e;
-		else
-			return null;
-	}
-
-	/**
-		Sets an attribute. Returns this for easy chaining
-	*/
-	Element setAttribute(string name, string value) {
-		if(parentDocument && parentDocument.loose)
-			name = name.toLower();
-
-		// I never use this shit legitimately and neither should you
-		auto it = name.toLower;
-		if(it == "href" || it == "src") {
-			auto v = value.strip.toLower();
-			if(v.startsWith("vbscript:"))
-				value = value[9..$];
-			if(v.startsWith("javascript:"))
-				value = value[11..$];
-		}
-
-		attributes[name] = value;
-
-		return this;
-	}
-
-	/**
-		Extension
-	*/
-	bool hasAttribute(string name) {
-		if(parentDocument && parentDocument.loose)
-			name = name.toLower();
-
-		if(name in attributes)
-			return true;
-		else
-			return false;
-	}
-
-	/**
-		Extension
-	*/
-	void removeAttribute(string name) {
-		if(parentDocument && parentDocument.loose)
-			name = name.toLower();
-		if(name in attributes)
-			attributes.remove(name);
-	}
-
-	/**
-		Gets the class attribute's contents. Returns
-		an empty string if it has no class.
-	*/
-	string className() const {
-		auto c = getAttribute("class");
-		if(c is null)
-			return "";
-		return c;
-	}
-
-	///.
-	Element className(string c) {
-		setAttribute("class", c);
-		return this;
-	}
-
-	///.
-	string nodeValue() const {
-		return "";
 	}
 
 	///.
@@ -1276,7 +1294,7 @@ class Element {
 		throw new Exception("no such child");
 	}
 
-	///.
+	/// This removes all the children from this element, returning the old list.
 	Element[] removeChildren()
 		out (ret) {
 			assert(children.length == 0);
@@ -1294,8 +1312,6 @@ class Element {
 	}
 
 	/**
-		EXTENSION
-
 		Replaces the given element with a whole group.
 	*/
 	void replaceChild(Element find, Element[] replace)
@@ -1338,12 +1354,16 @@ class Element {
 		throw new Exception("no such child");
 	}
 
-	///.
-	Element parentNode;
-
 	/**
 		Strips this tag out of the document, putting its inner html
 		as children of the parent.
+
+		For example, given: <p>hello <b>there</b></p>, if you
+		call stripOut() on the b element, you'll be left with
+		<p>hello there<p>.
+
+		The idea here is to make it easy to get rid of garbage
+		markup you aren't interested in.
 	*/
 	void stripOut()
 		in {
@@ -1364,6 +1384,7 @@ class Element {
 	}
 
 	/// shorthand for this.parentNode.removeChild(this) with parentNode null check
+	/// if the element already isn't in a tree, it does nothing.
 	Element removeFromTree()
 		in {
 
@@ -1383,6 +1404,9 @@ class Element {
 
 	/// Wraps this element inside the given element.
 	/// It's like this.replaceWith(what); what.appendchild(this);
+	///
+	/// Given: <b>cool</b>, if you call b.wrapIn(new Link("site.com", "my site is "));
+	/// you'll end up with: <a href="site.com">my site is <b>cool</a>.
 	Element wrapIn(Element what)
 		in {
 			assert(what !is null);
@@ -1398,6 +1422,7 @@ class Element {
 		return what;
 	}
 
+	/// Replaces this element with something else in the tree.
 	Element replaceWith(Element e) {
 		if(e.parentNode !is null)
 			e.parentNode.removeChild(e);
@@ -1406,8 +1431,6 @@ class Element {
 	}
 
 	/**
-		INCOMPATIBLE -- extension
-
 		Splits the className into an array of each class given
 	*/
 	string[] classNames() const {
@@ -1429,7 +1452,10 @@ class Element {
 	}
 
 	/**
-		Fetch the inside text, with all tags stripped out
+		Fetch the inside text, with all tags stripped out.
+
+		<p>cool <b>api</b> &amp; code dude<p>
+		innerText of that is "cool api & code dude".
 	*/
 	@property string innerText() const {
 		string s;
@@ -1443,7 +1469,8 @@ class Element {
 	}
 
 	/**
-		Sets the inside text, replacing all children
+		Sets the inside text, replacing all children. You don't
+		have to worry about entity encoding.
 	*/
 	@property void innerText(string text) {
 		selfClosed = false;
@@ -1460,10 +1487,52 @@ class Element {
 	}
 
 	/**
-		Same result as innerText; the tag with all tags stripped out
+		Same result as innerText; the tag with all inner tags stripped out
 	*/
 	@property string outerText() const {
 		return innerText();
+	}
+
+
+	/* *******************************
+	          Miscellaneous
+	*********************************/
+
+	/// This is a full clone of the element
+	@property Element cloned()
+		out(ret) {
+			// FIXME: not sure why these fail...
+//			assert(ret.children.length == this.children.length);
+//			assert(ret.tagName == this.tagName);
+		}
+	body {
+		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
+		foreach(child; children) {
+			e.appendChild(child.cloned);
+		}
+
+		return e;
+	}
+
+	/// Clones the node. If deepClone is true, clone all inner tags too. If false, only do this tag (and its attributes), but it will have no contents.
+	Element cloneNode(bool deepClone) {
+		if(deepClone)
+			return this.cloned;
+
+		// shallow clone
+		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
+		return e;
+	}
+
+	///.
+	string nodeValue() const {
+		return "";
+	}
+
+	// should return int
+	///.
+	@property int nodeType() const {
+		return 1;
 	}
 
 
@@ -1556,7 +1625,12 @@ class DocumentFragment : Element {
 	}
 }
 
-///.
+/// Given text, encode all html entities on it - &, <, >, and ". This function also
+/// encodes all 8 bit characters as entities, thus ensuring the resultant text will work
+/// even if your charset isn't set right.
+///
+/// The output parameter can be given to append to an existing buffer. You don't have to
+/// pass one; regardless, the return value will be usable for you, with just the data encoded.
 string htmlEntitiesEncode(string data, Appender!string output = appender!string()) {
 	// if there's no entities, we can save a lot of time by not bothering with the
 	// decoding loop. This check cuts the net toString time by better than half in my test.
@@ -1608,12 +1682,12 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 //	data = data.replace("\u00a0", "&nbsp;");
 }
 
-///.
+/// An alias for htmlEntitiesEncode; it works for xml too
 string xmlEntitiesEncode(string data) {
 	return htmlEntitiesEncode(data);
 }
 
-///.
+/// This helper function is used for decoding html entities. It has a hard-coded list of entities and characters.
 dchar parseEntity(in dchar[] entity) {
 	switch(entity[1..$-1]) {
 		case "quot":
@@ -1689,7 +1763,9 @@ dchar parseEntity(in dchar[] entity) {
 
 import std.utf;
 
-///.
+/// This takes a string of raw HTML and decodes the entities into a nice D utf-8 string.
+/// By default, it uses loose mode - it will try to return a useful string from garbage input too.
+/// Set the second parameter to true if you'd prefer it to strictly throw exceptions on garbage input.
 string htmlEntitiesDecode(string data, bool strict = false) {
 	// this check makes a *big* difference; about a 50% improvement of parse speed on my test.
 	if(data.indexOf("&") == -1) // all html entities begin with &
@@ -1825,6 +1901,7 @@ class TextNode : Element {
 
 	///.
 	string contents;
+	// alias contents content; // I just mistype this a lot, 
 }
 
 /**
@@ -2451,28 +2528,21 @@ class MarkupError : Exception {
 	}
 }
 
-///.
+/// This is used when you are using one of the require variants of navigation, and no matching element can be found in the tree.
 class ElementNotFoundException : Exception {
 
-	///.
+	/// type == kind of element you were looking for and search == a selector describing the search.
 	this(string type, string search, string file = __FILE__, int line = __LINE__) {
 		super("Element of type '"~type~"' matching {"~search~"} not found.", file, line);
 	}
 }
 
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
+///
+/// Easiest way to construct it is like this: auto html = Html("<p>hello</p>");
 struct Html {
-	///.
+	/// This string holds the actual html. Use it to retrieve the contents.
 	string source;
-}
-
-
-/// This might belong in another module, but it represents a file with a mime type and some data.
-/// Document implements this interface with type = text/html (see Document.contentType for more info)
-/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
-interface FileResource {
-	string contentType() const;
-	immutable(ubyte)[] getData() const;
 }
 
 
@@ -3038,6 +3108,8 @@ class Document : FileResource {
 										attrValue = readAttributeValue();
 									}
 
+									if(strict && attrName in attributes)
+										throw new MarkupError("Repeated attribute: " ~ attrName);
 									attributes[attrName] = attrValue;
 
 									goto moreAttributes;
@@ -3090,7 +3162,7 @@ class Document : FileResource {
 
 	/* end massive parse function */
 
-	///.
+	/// Gets the <title> element's innerText, if one exists
 	@property string title() {
 		bool doesItMatch(Element e) {
 			return (e.tagName == "title");
@@ -3102,7 +3174,7 @@ class Document : FileResource {
 		return "";
 	}
 
-	///.
+	/// Sets the title of the page, creating a <title> element if needed.
 	@property void title(string t) {
 		bool doesItMatch(Element e) {
 			return (e.tagName == "title");
@@ -3122,12 +3194,12 @@ class Document : FileResource {
 	}
 
 	// FIXME: would it work to alias root this; ???? might be a good idea
-	///.
+	/// These functions all forward to the root element. See the documentation in the Element class.
 	Element getElementById(string id) {
 		return root.getElementById(id);
 	}
 
-	///.
+	/// ditto
 	final SomeElementType requireElementById(SomeElementType = Element)(string id)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
@@ -3135,7 +3207,7 @@ class Document : FileResource {
 		return root.requireElementById!(SomeElementType)(id);
 	}
 
-	///.
+	/// ditto
 	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
@@ -3144,27 +3216,27 @@ class Document : FileResource {
 	}
 
 
-	///.
+	/// ditto
 	Element querySelector(string selector) {
 		return root.querySelector(selector);
 	}
 
-	///.
+	/// ditto
 	Element[] querySelectorAll(string selector) {
 		return root.querySelectorAll(selector);
 	}
 
-	///.
+	/// ditto
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
 	}
 
-	///.
+	/// ditto
 	Element[] getElementsByTagName(string tag) {
 		return root.getElementsByTagName(tag);
 	}
 
-	/** Extension: FIXME: btw, this could just be a lazy range...... */
+	/** FIXME: btw, this could just be a lazy range...... */
 	Element getFirstElementByTagName(string tag) {
 		if(loose)
 			tag = tag.toLower();
@@ -3174,7 +3246,7 @@ class Document : FileResource {
 		return findFirst(&doesItMatch);
 	}
 
-	///.
+	/// This returns the <body> element, if there is one. (It different than Javascript, where it is called 'body', because body is a keyword in D.)
 	Element mainBody() {
 		return getFirstElementByTagName("body");
 	}
@@ -3189,7 +3261,7 @@ class Document : FileResource {
 		return e.content;
 	}
 	
-	///.
+	/// Sets a meta tag in the document header. It is kinda hacky to work easily for both Facebook open graph and traditional html meta tags/
 	void setMeta(string name, string value) {
 		string thing = name.indexOf(":") == -1 ? "name" : "property";
 		auto e = querySelector("head meta["~thing~"="~name~"]");
@@ -3238,8 +3310,6 @@ class Document : FileResource {
 		return new TextNode(this, content);
 	}
 
-
-	// realistically it's all extensions!
 
 	///.
 	Element findFirst(bool delegate(Element) doesItMatch) {
@@ -3940,7 +4010,7 @@ Element[] removeDuplicates(Element[] input) {
 // done with CSS selector handling
 
 
-///.
+/// Converts a camel cased propertyName to a css style dashed property-name
 string unCamelCase(string a) {
 	string ret;
 	foreach(c; a)
@@ -3951,7 +4021,7 @@ string unCamelCase(string a) {
 	return ret;
 }
 
-///.
+/// Translates a css style property-name to a camel cased propertyName
 string camelCase(string a) {
 	string ret;
 	bool justSawDash = false;
@@ -3968,9 +4038,11 @@ string camelCase(string a) {
 	return ret;
 }
 
-///.
 
 // FIXME: use the better parser from html.d
+/// This is probably not useful to you unless you're writing a browser or something like that.
+/// It represents a *computed* style, like what the browser gives you after applying stylesheets, inline styles, and html attributes.
+/// From here, you can start to make a layout engine for the box model and have a css aware browser.
 class CssStyle {
 	///.
 	this(string rule, string content) {
@@ -4184,7 +4256,12 @@ class CssStyle {
 	}
 }
 
-///.
+/// This probably isn't useful, unless you're writing a browser or something like that.
+/// You might want to look at arsd.html for css macro, nesting, etc., or just use standard css
+/// as text.
+///
+/// The idea, however, is to represent a kind of CSS object model, complete with specificity,
+/// that you can apply to your documents to build the complete computedStyle object.
 class StyleSheet {
 	///.
 	CssStyle[] rules;
@@ -4280,7 +4357,7 @@ class StyleSheet {
 }
 
 
-///.
+/// This is kinda private; just a little utility container for use by the ElementStream class.
 final class Stack(T) {
 	this() {
 		internalLength = 0;
@@ -4327,7 +4404,7 @@ final class Stack(T) {
 	// function thanks to this, and push() was actually one of the slowest individual functions in the code!
 }
 
-///.
+/// This is the lazy range that walks the tree for you. It tries to go in the lexical order of the source: node, then children from first to last, each recursively.
 final class ElementStream {
 
 	///.
@@ -4335,7 +4412,7 @@ final class ElementStream {
 		return current.element;
 	}
 
-	///.
+	/// Use Element.tree instead.
 	this(Element start) {
 		current.element = start;
 		current.childPosition = -1;
@@ -4371,7 +4448,7 @@ final class ElementStream {
 		}
 	}
 
-	///.
+	/// You should call this when you remove an element from the tree. It then doesn't recurse into that node and adjusts the current position, keeping the range stable.
 	void currentKilled() {
 		if(stack.empty) // should never happen
 			isEmpty = true;
@@ -4386,19 +4463,17 @@ final class ElementStream {
 		return isEmpty;
 	}
 
-	///.
+	private:
+
 	struct Current {
 		Element element;
 		int childPosition;
 	}
 
-	///.
 	Current current;
 
-	///.
 	Stack!(Current) stack;
 
-	///.
 	bool isEmpty;
 }
 
@@ -4480,11 +4555,11 @@ struct ElementCollection {
 
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2011
+Copyright: Adam D. Ruppe, 2010 - 2012
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r
 
-        Copyright Adam D. Ruppe 2010-2011.
+        Copyright Adam D. Ruppe 2010-2012.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)
