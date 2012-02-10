@@ -1,3 +1,23 @@
+/**
+	This is an html DOM implementation, started with cloning
+	what the browser offers in Javascript, but going well beyond
+	it in convenience.
+
+	If you can do it in Javascript, you can probably do it with
+	this module.
+
+	And much more.
+
+
+	Note: some of the documentation here writes html with added
+	spaces. That's because ddoc doesn't bother encoding html output,
+	and adding spaces is easier than using LT macros everywhere.
+
+
+	BTW: this file depends on arsd.characterencodings, so help it
+	correctly read files from the internet. You should be able to
+	get characterencodings.d from the same place you got this file.
+*/
 module arsd.dom;
 
 // NOTE: do *NOT* override toString on Element subclasses. It won't work.
@@ -16,6 +36,7 @@ import std.string;
 import std.exception;
 import std.uri;
 import std.array;
+import std.range;
 
 import std.stdio;
 
@@ -28,8 +49,8 @@ import std.stdio;
 /// Document implements this interface with type = text/html (see Document.contentType for more info)
 /// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
 interface FileResource {
-	string contentType() const;
-	immutable(ubyte)[] getData() const;
+	string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
+	immutable(ubyte)[] getData() const; /// the data
 }
 
 
@@ -166,6 +187,8 @@ body {
 
 /// This represents almost everything in the DOM.
 class Element {
+	// putting all the members up front
+
 	// this ought to be private. don't use it directly.
 	Element[] children;
 
@@ -186,6 +209,27 @@ class Element {
 	///.
 	Element parentNode;
 
+	// the next few methods are for implementing interactive kind of things
+	private CssStyle _computedStyle;
+
+	// these are here for event handlers. Don't forget that this library never fires events.
+	// (I'm thinking about putting this in a version statement so you don't have the baggage. The instance size of this class is 56 bytes right now.)
+	EventHandler[][string] bubblingEventHandlers;
+	EventHandler[][string] capturingEventHandlers;
+	EventHandler[string] defaultEventHandlers;
+
+	void addEventListener(string event, EventHandler handler, bool useCapture = false) {
+		if(event.length > 2 && event[0..2] == "on")
+			event = event[2 .. $];
+
+		if(useCapture)
+			capturingEventHandlers[event] ~= handler;
+		else
+			bubblingEventHandlers[event] ~= handler;
+	}
+
+
+	// and now methods
 
 	/// Convenience function to try to do the right thing for HTML. This is the main
 	/// way I create elements.
@@ -763,8 +807,6 @@ class Element {
 		return _computedStyle;
 	}
 
-	private CssStyle _computedStyle;
-
 	/// These properties are useless in most cases, but if you write a layout engine on top of this lib, they may be good
 	version(browser) {
 		void* expansionHook; ///ditto
@@ -1230,7 +1272,7 @@ class Element {
 	/// This sets the inner content of the element *without* trying to parse it.
 	/// You can inject any code in there; this serves as an escape hatch from the dom.
 	///
-	/// The only times you might actually need it are for <style> and <script> tags in html.
+	/// The only times you might actually need it are for < style > and < script > tags in html.
 	/// Other than that, innerHTML and/or innerText should do the job.
 	@property void innerRawSource(string rawSource) {
 		children.length = 0;
@@ -1405,8 +1447,8 @@ class Element {
 	/// Wraps this element inside the given element.
 	/// It's like this.replaceWith(what); what.appendchild(this);
 	///
-	/// Given: <b>cool</b>, if you call b.wrapIn(new Link("site.com", "my site is "));
-	/// you'll end up with: <a href="site.com">my site is <b>cool</a>.
+	/// Given: < b >cool</ b >, if you call b.wrapIn(new Link("site.com", "my site is "));
+	/// you'll end up with: < a href="site.com">my site is < b >cool< /b ></ a >.
 	Element wrapIn(Element what)
 		in {
 			assert(what !is null);
@@ -4550,6 +4592,111 @@ struct ElementCollection {
 
 	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
 		return ElementCollection(this.elements ~ rhs.elements);
+	}
+}
+
+
+// dom event support, if you want to use it
+
+/// used for DOM events
+alias void delegate(Element, Event) EventHandler;
+
+/// This is a DOM event, like in javascript. Note that this library never fires events - it is only here for you to use if you want it.
+class Event {
+	this(string eventName, Element target) {
+		this.eventName = eventName;
+		this.srcElement = target;
+	}
+
+	/// Prevents the default event handler (if there is one) from being called
+	void preventDefault() {
+		defaultPrevented = true;
+	}
+
+	/// Stops the event propagation immediately.
+	void stopPropagation() {
+		propagationStopped = true;
+	}
+
+	bool defaultPrevented;
+	bool propagationStopped;
+	string eventName;
+
+	Element srcElement;
+	alias srcElement target;
+
+	Element relatedTarget;
+
+	int clientX;
+	int clientY;
+
+	int button;
+
+	bool isBubbling;
+
+	/// this sends it only to the target. If you want propagation, use dispatch() instead.
+	void send() {
+		if(srcElement is null)
+			return;
+
+		auto e = srcElement;
+
+		if(eventName in e.bubblingEventHandlers)
+		foreach(handler; e.bubblingEventHandlers[eventName])
+			handler(e, this);
+
+		if(!defaultPrevented)
+			if(eventName in e.defaultEventHandlers)
+				e.defaultEventHandlers[eventName](e, this);
+	}
+
+	/// this dispatches the element using the capture -> target -> bubble process
+	void dispatch() {
+		if(srcElement is null)
+			return;
+
+		// first capture, then bubble
+
+		Element[] chain;
+		Element curr = srcElement;
+		while(curr) {
+			auto l = curr;
+			chain ~= l;
+			curr = curr.parentNode;
+
+		}
+
+		isBubbling = false;
+
+		foreach(e; chain.retro) {
+			if(eventName in e.capturingEventHandlers)
+			foreach(handler; e.capturingEventHandlers[eventName])
+				handler(e, this);
+
+			// the default on capture should really be to always do nothing
+
+			//if(!defaultPrevented)
+			//	if(eventName in e.defaultEventHandlers)
+			//		e.defaultEventHandlers[eventName](e.element, this);
+
+			if(propagationStopped)
+				break;
+		}
+
+		isBubbling = true;
+		if(!propagationStopped)
+		foreach(e; chain) {
+			if(eventName in e.bubblingEventHandlers)
+			foreach(handler; e.bubblingEventHandlers[eventName])
+				handler(e, this);
+
+			if(!defaultPrevented)
+				if(eventName in e.defaultEventHandlers)
+					e.defaultEventHandlers[eventName](e, this);
+
+			if(propagationStopped)
+				break;
+		}
 	}
 }
 
