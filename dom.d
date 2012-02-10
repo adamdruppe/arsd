@@ -137,6 +137,8 @@ struct ElementStyle {
 			_attribute ~= k ~ ": " ~ v ~ ";";
 		}
 
+		_element.setAttribute("style", _attribute); // this is to trigger the observer call
+
 		return value;
 	}
 	string get(string name) const {
@@ -187,6 +189,20 @@ body {
 
 /// This represents almost everything in the DOM.
 class Element {
+	// this is a thing so i can remove observer support if it gets slow
+	// I have not implemented all these yet
+	private void sendObserverEvent(DomMutationOperations operation, string s1 = null, string s2 = null, Element r = null, Element r2 = null) {
+		if(parentDocument is null) return;
+		DomMutationEvent me;
+		me.operation = operation;
+		me.target = this;
+		me.relatedString = s1;
+		me.relatedString2 = s2;
+		me.related = r;
+		me.related2 = r2;
+		parentDocument.dispatchMutationEvent(me);
+	}
+
 	// putting all the members up front
 
 	// this ought to be private. don't use it directly.
@@ -330,6 +346,9 @@ class Element {
 		if(_attributes !is null)
 			attributes = _attributes;
 		selfClosed = _selfClosed;
+
+		version(dom_node_indexes)
+			this.dataset.nodeIndex = to!string(&(this.attributes));
 	}
 
 	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
@@ -343,10 +362,16 @@ class Element {
 		// this is meant to reserve some memory. It makes a small, but consistent improvement.
 		//children.length = 8;
 		//children.length = 0;
+
+		version(dom_node_indexes)
+			this.dataset.nodeIndex = to!string(&(this.attributes));
 	}
 
 	private this(Document _parentDocument) {
 		parentDocument = _parentDocument;
+
+		version(dom_node_indexes)
+			this.dataset.nodeIndex = to!string(&(this.attributes));
 	}
 
 
@@ -609,6 +634,8 @@ class Element {
 
 		attributes[name] = value;
 
+		sendObserverEvent(DomMutationOperations.setAttribute, name, value);
+
 		return this;
 	}
 
@@ -633,6 +660,8 @@ class Element {
 			name = name.toLower();
 		if(name in attributes)
 			attributes.remove(name);
+
+		sendObserverEvent(DomMutationOperations.removeAttribute, name);
 	}
 
 	/**
@@ -964,6 +993,9 @@ class Element {
 		e.parentNode = this;
 		e.parentDocument = this.parentDocument;
 		children ~= e;
+
+		sendObserverEvent(DomMutationOperations.appendChild, null, null, e);
+
 		return e;
 	}
 
@@ -3026,6 +3058,10 @@ class Document : FileResource {
 
 						auto e = createElement(tagName);
 						e.attributes = attributes;
+						version(dom_node_indexes) {
+							if(e.dataset.nodeIndex.length == 0)
+								e.dataset.nodeIndex = to!string(&(e.attributes));
+						}
 						e.selfClosed = selfClosed;
 						e.parseAttributes();
 
@@ -3401,13 +3437,48 @@ class Document : FileResource {
 	///.
 	bool loose;
 
+
+
+	// what follows are for mutation events that you can observe
+	void delegate(DomMutationEvent)[] eventObservers;
+
+	void dispatchMutationEvent(DomMutationEvent e) {
+		foreach(o; eventObservers)
+			o(e);
+	}
 }
 
-	private static string[] selfClosedElements = [
-		// html 4
-		"img", "hr", "input", "br", "col", "link", "meta",
-		// html 5
-		"source" ];
+// for the observers
+enum DomMutationOperations {
+	setAttribute,
+	removeAttribute,
+	appendChild, // tagname, attributes[], innerHTML
+	insertBefore,
+	truncateChildren,
+	removeChild,
+	appendHtml,
+	replaceHtml,
+	appendText,
+	replaceText,
+	replaceTextOnly
+}
+
+// and for observers too
+struct DomMutationEvent {
+	DomMutationOperations operation;
+	Element target;
+	Element related; // what this means differs with the operation
+	Element related2;
+	string relatedString;
+	string relatedString2;
+}
+
+
+private static string[] selfClosedElements = [
+	// html 4
+	"img", "hr", "input", "br", "col", "link", "meta",
+	// html 5
+	"source" ];
 
 static import std.conv;
 
@@ -4599,7 +4670,7 @@ struct ElementCollection {
 // dom event support, if you want to use it
 
 /// used for DOM events
-alias void delegate(Element, Event) EventHandler;
+alias void delegate(Element handlerAttachedTo, Event event) EventHandler;
 
 /// This is a DOM event, like in javascript. Note that this library never fires events - it is only here for you to use if you want it.
 class Event {
