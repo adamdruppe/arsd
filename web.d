@@ -324,16 +324,14 @@ class ApiProvider : WebDotDBaseType {
 	protected void addCsrfTokens(Document document) {
 		if(document is null)
 			return;
-		if(!csrfTokenAddedToScript) {
+		auto bod = document.mainBody;
+		if(!bod.hasAttribute("data-csrf-key")) {
 			auto tokenInfo = _getCsrfInfo();
 			if(tokenInfo is null)
 				return;
-
-			auto bod = document.mainBody;
 			if(bod !is null) {
 				bod.setAttribute("data-csrf-key", tokenInfo["key"]);
 				bod.setAttribute("data-csrf-token", tokenInfo["token"]);
-				csrfTokenAddedToScript = true;
 			}
 
 			addCsrfTokens(document.root);
@@ -346,29 +344,22 @@ class ApiProvider : WebDotDBaseType {
 		super._postProcess(document);
 	}
 
-	private bool csrfTokenAddedToScript;
-	//private bool csrfTokenAddedToForms;
-
 	/// This adds CSRF tokens to all forms in the tree
 	protected void addCsrfTokens(Element element) {
 		if(element is null)
 			return;
-		//if(!csrfTokenAddedToForms) {
-			auto tokenInfo = _getCsrfInfo();
-			if(tokenInfo is null)
-				return;
+		auto tokenInfo = _getCsrfInfo();
+		if(tokenInfo is null)
+			return;
 
-			foreach(formElement; element.getElementsByTagName("form")) {
-				if(formElement.method != "POST" && formElement.method != "post")
-					continue;
-				auto form = cast(Form) formElement;
-				assert(form !is null);
+		foreach(formElement; element.getElementsByTagName("form")) {
+			if(formElement.method != "POST" && formElement.method != "post")
+				continue;
+			auto form = cast(Form) formElement;
+			assert(form !is null);
 
-				form.setValue(tokenInfo["key"], tokenInfo["token"]);
-			}
-
-			//csrfTokenAddedToForms = true;
-		//}
+			form.setValue(tokenInfo["key"], tokenInfo["token"]);
+		}
 	}
 
 	// and added to ajax forms..
@@ -477,7 +468,7 @@ class ApiProvider : WebDotDBaseType {
 		assert(ret !is null);
 	}
 	body {
-		auto document = new Document("<!DOCTYPE html><html><head><title></title><link rel=\"stylesheet\" href=\"styles.css\" /></head><body><div id=\"body\"></div><script src=\"functions.js\"></script></body></html>", true, true);
+		auto document = new Document("<!DOCTYPE html><html><head><title></title><style>.format-row { display: none; }</style><link rel=\"stylesheet\" href=\"styles.css\" /></head><body><div id=\"body\"></div><script src=\"functions.js\"></script></body></html>", true, true);
 		if(this.reflection !is null)
 			document.title = this.reflection.name;
 		auto container = document.getElementById("body");
@@ -499,12 +490,16 @@ class ApiProvider : WebDotDBaseType {
 	private string _errorMessageForCatchAll;
 	private FileResource _catchallEntry(string path, string funName, string errorMessage) {
 		if(!errorMessage.length) {
+			/*
 			string allFuncs, allObjs;
 			foreach(n, f; reflection.functions)
 				allFuncs ~= n ~ "\n";
 			foreach(n, f; reflection.objects)
 				allObjs ~= n ~ "\n";
 			errorMessage =  "no such function " ~ funName ~ "\n functions are:\n" ~ allFuncs ~ "\n\nObjects are:\n" ~ allObjs;
+			*/
+
+			errorMessage = "No such page: " ~ funName;
 		}
 
 		_errorMessageForCatchAll = errorMessage;
@@ -906,6 +901,7 @@ Parameter reflectParam(param)() {
 struct CallInfo {
 	string objectIdentifier;
 	immutable(FunctionInfo)* func;
+	void delegate(Document)[] postProcessors;
 }
 
 class NonCanonicalUrlException : Exception {
@@ -960,6 +956,9 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 		if(name !in reflection.functions)
 			name = "/"; // should call _defaultPage
 	}
+
+	if(reflection.instantiation !is null)
+		info.postProcessors ~= &(reflection.instantiation._postProcess);
 
 	if(name in reflection.functions) {
 		info.func = reflection.functions[name];
@@ -1058,13 +1057,6 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	if(cgi.pathInfo.indexOf("builtin.") != -1 && instantiation.builtInFunctions !is null)
 		base = instantiation.builtInFunctions;
 
-	if(instantiator.length) {
-		assert(fun !is null);
-		assert(fun.parentObject !is null);
-		assert(fun.parentObject.instantiate !is null);
-		realObject = fun.parentObject.instantiate(instantiator);
-	}
-
 	try {
 		if(fun is null) {
 			auto d = instantiation._catchallEntry(
@@ -1091,6 +1083,15 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		assert(fun !is null);
 		assert(fun.dispatcher !is null);
 		assert(cgi !is null);
+
+
+		if(instantiator.length) {
+			assert(fun !is null);
+			assert(fun.parentObject !is null);
+			assert(fun.parentObject.instantiate !is null);
+			realObject = fun.parentObject.instantiate(instantiator);
+		}
+
 
 		result.type = fun.returnType;
 
@@ -1179,6 +1180,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 				result.result.str = form.toString();
 			} else {
+				auto fourOhFour = cast(NoSuchPageException) e;
+				if(fourOhFour !is null)
+					cgi.setResponseStatus("404 File Not Found");
+
 				if(instantiation._errorFunction !is null) {
 					auto document = instantiation._errorFunction(e);
 					if(document is null)
@@ -1186,8 +1191,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					result.result.str = (document.toString());
 				} else {
 				gotnull:
-					auto code = Element.make("pre");
-					code.innerText = e.toString();
+					auto code = Element.make("div");
+					code.addClass("exception-error-message");
+					code.addChild("p", e.msg);
+					debug code.addChild("pre", e.toString());
 
 					result.result.str = (code.toString());
 				}
@@ -1235,9 +1242,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				if(result.result.type == JSON_TYPE.STRING) {
 					auto returned = result.result.str;
 
-					if((fun !is null) && envelopeFormat != "html") {
+					if(envelopeFormat != "html") {
 						Document document;
-						if(result.success && fun.returnTypeIsDocument && returned.length) {
+						if(result.success && fun !is null && fun.returnTypeIsDocument && returned.length) {
 							// probably not super efficient...
 							document = new TemplatedDocument(returned);
 						} else {
@@ -1253,9 +1260,18 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 							if(envelopeFormat == "document") {
 								// forming a nice chain here...
 								// FIXME: this isn't actually a nice chain!
+								bool[void delegate(Document)] run;
+
+								auto postProcessors = info.postProcessors;
 								if(base !is instantiation)
-									instantiation._postProcess(document);
-								base._postProcess(document);
+									postProcessors ~= &(instantiation._postProcess);
+								postProcessors ~= &(base._postProcess);
+								foreach(pp; postProcessors) {
+									if(pp in run)
+										continue;
+									run[pp] = true;
+									pp(document);
+								}
 							}
 
 							returned = document.toString;
@@ -2645,10 +2661,50 @@ immutable(string[]) weekdayNames = [
 ];
 
 
+// this might be temporary
+struct TemplateFilters {
+	string date(string replacement, string[], in Element, string) {
+		auto date = to!long(replacement);
+
+		import std.date;
+
+		auto day = dateFromTime(date);
+		auto year = yearFromTime(date);
+		auto month = monthNames[monthFromTime(date)];
+		replacement = format("%s %d, %d", month, day, year);
+
+		return replacement;
+	}
+
+	string uri(string replacement, string[], in Element, string) {
+		return std.uri.encodeComponent(replacement);
+	}
+
+	string js(string replacement, string[], in Element, string) {
+		return toJson(replacement);
+	}
+
+	static auto defaultThings() {
+		string delegate(string, string[], in Element, string)[string] pipeFunctions;
+		TemplateFilters filters;
+
+		if("date" !in pipeFunctions)
+			pipeFunctions["date"] = &filters.date;
+		if("uri" !in pipeFunctions)
+			pipeFunctions["uri"] = &filters.uri;
+		if("js" !in pipeFunctions)
+			pipeFunctions["js"] = &filters.js;
+		return pipeFunctions;
+	}
+}
 
 
+void applyTemplateToElement(
+	Element e,
+	in string[string] vars,
+	in string delegate(string, string[], in Element, string)[string] pipeFunctions = TemplateFilters.defaultThings())
+{
 
-void applyTemplateToElement(Element e, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions = null) {
 	foreach(ele; e.tree) {
 		auto tc = cast(TextNode) ele;
 		if(tc !is null) {
@@ -2689,6 +2745,7 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 	size_t lastAppend = 0;
 
 	string name = null;
+	bool replacementPresent = false;
 	string replacement = null;
 	string currentPipe = null;
 
@@ -2702,26 +2759,19 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 			nameStart = i + 1;
 
 			auto it = name in vars;
-			if(it !is null)
+			if(it !is null) {
 				replacement = *it;
+				replacementPresent = true;
+			}
 		}
 
 		void pipeHandler() {
 			if(currentPipe is null || replacement is null)
 				return;
 
-			switch(currentPipe) {
-				case "date":
-					auto date = to!long(replacement);
-
-					import std.date;
-
-					auto day = dateFromTime(date);
-					auto year = yearFromTime(date);
-					auto month = monthNames[monthFromTime(date)];
-					replacement = format("%s %d, %d", month, day, year);
-				break;
-				default:
+			if(currentPipe in pipeFunctions) {
+				replacement = pipeFunctions[currentPipe](replacement, null, null, null); // FIXME context
+				// string, string[], in Element, string
 			}
 
 			currentPipe = null;
@@ -2733,6 +2783,7 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 				if(c == '{') {
 					replacementStart = i;
 					state++;
+					replacementPresent = false;
 				}
 			break;
 			case 1:
@@ -2760,7 +2811,7 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 					pipeHandler(); // anything that was there
 					stepHandler(); // might make a new pipe if the first...
 					pipeHandler(); // new names/pipes since this is the last go
-					if(name !is null && replacement !is null) {
+					if(name !is null && replacementPresent /*&& replacement !is null*/) {
 						newText ~= text[lastAppend .. replacementStart];
 						if(useHtml)
 							replacement = htmlEntitiesEncode(replacement).replace("\n", "<br />");
@@ -3267,6 +3318,7 @@ enum string javascriptBaseImpl = q{
 		xmlHttp.send(a);
 
 		if(!async && callback) {
+			xmlHttp.timeout = 500;
 			return callback(xmlHttp.responseText, xmlHttp.responseXML);
 		}
 		return xmlHttp;

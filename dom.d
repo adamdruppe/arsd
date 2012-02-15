@@ -477,7 +477,7 @@ class Element {
 	}
 
 	///.
-	final SomeElementType requireElementById(SomeElementType = Element)(string id)
+	final SomeElementType requireElementById(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string id)
 	if(
 		is(SomeElementType : Element)
 	)
@@ -487,12 +487,12 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) getElementById(id);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id);
+			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, file, line);
 		return e;
 	}
 
 	///.
-	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
+	final SomeElementType requireSelector(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string selector)
 	if(
 		is(SomeElementType : Element)
 	)
@@ -502,7 +502,7 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) querySelector(selector);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, selector);
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, file, line);
 		return e;
 	}
 
@@ -689,7 +689,7 @@ class Element {
 		string where = a.href; // same as a.getAttribute("href");
 	*/
 		// name != "popFront" is so duck typing doesn't think it's a range
-	string opDispatch(string name)(string v = null) if(name != "popFront") {
+	@property string opDispatch(string name)(string v = null) if(name != "popFront") {
 		if(v !is null)
 			setAttribute(name, v);
 		return getAttribute(name);
@@ -707,12 +707,18 @@ class Element {
 		return children;
 	}
 
-
+	/// get all the classes on this element
+	@property string[] classes() {
+		return className.split(" ");
+	}
 
 	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
 	Element addClass(string c) {
+		if(hasClass(c))
+			return this; // don't add it twice
+
 		string cn = getAttribute("class");
-		if(cn is null) {
+		if(cn.length == 0) {
 			setAttribute("class", c);
 			return this;
 		} else {
@@ -724,10 +730,18 @@ class Element {
 
 	/// Removes a particular class name.
 	Element removeClass(string c) {
-		auto cn = className;
+		if(!hasClass(c))
+			return this;
+		string n;
+		foreach(name; classes) {
+			if(c == name)
+				continue; // cut it out
+			if(n.length)
+				n ~= " ";
+			n ~= name;
+		}
 
-		// FIXME: this is actually wrong!
-		className = cn.replace(c, "").strip;
+		className = n.strip;
 
 		return this;
 	}
@@ -1680,7 +1694,7 @@ class Element {
 	/**
 		Returns a lazy range of all its children, recursively.
 	*/
-	ElementStream tree() {
+	@property ElementStream tree() {
 		return new ElementStream(this);
 	}
 }
@@ -3286,11 +3300,11 @@ class Document : FileResource {
 	}
 
 	/// ditto
-	final SomeElementType requireSelector(SomeElementType = Element)(string selector)
+	final SomeElementType requireSelector(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string selector)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
 	body {
-		return root.requireSelector!(SomeElementType)(selector);
+		return root.requireSelector!(SomeElementType, file, line)(selector);
 	}
 
 
@@ -4521,7 +4535,7 @@ final class Stack(T) {
 final class ElementStream {
 
 	///.
-	Element front() {
+	@property Element front() {
 		return current.element;
 	}
 
@@ -4572,7 +4586,7 @@ final class ElementStream {
 	}
 
 	///.
-	bool empty() {
+	@property bool empty() {
 		return isEmpty;
 	}
 
