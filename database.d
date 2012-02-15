@@ -48,6 +48,31 @@ interface Database {
 }
 import std.stdio;
 
+struct Query {
+	ResultSet result;
+	static Query opCall(T...)(Database db, string sql, T t) {
+		Query q;
+		q.result = db.query(sql, t);
+		return q;
+	}
+
+	int opApply(T)(T dg) if(is(T == delegate)) {
+		import std.traits;
+		foreach(row; result) {
+			ParameterTypeTuple!dg tuple;
+
+			foreach(i, item; tuple) {
+				tuple[i] = to!(typeof(item))(row[i]);
+			}
+
+			if(auto result = dg(tuple))
+				return result;
+		}
+
+		return 0;
+	}
+}
+
 struct Row {
 	package string[] row;
 	package ResultSet resultSet;
@@ -298,7 +323,7 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 
 
 
-string fixupSqlForDataObjectUse(string sql) {
+string fixupSqlForDataObjectUse(string sql, string[string] keyMapping = null) {
 
 	string[] tableNames;
 
@@ -339,7 +364,10 @@ string fixupSqlForDataObjectUse(string sql) {
 		string sqlToAdd;
 		foreach(tbl; tableNames) {
 			if(tbl.length) {
-				sqlToAdd ~= ", " ~ tbl ~ ".id" ~ " AS " ~ "id_from_" ~ tbl;
+				string keyName = "id";
+				if(tbl in keyMapping)
+					keyName = keyMapping[tbl];
+				sqlToAdd ~= ", " ~ tbl ~ "." ~ keyName ~ " AS " ~ "id_from_" ~ tbl;
 			}
 		}
 
