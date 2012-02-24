@@ -126,6 +126,9 @@ struct FileByByte {
 			throw new Exception("couldn't open " ~ filename);
 		popFront();
 	}
+
+	// FIXME: this should prolly be recounted or something. blargh.
+
 	~this() {
 		if(fp !is null)
 			fclose(fp);
@@ -175,18 +178,28 @@ template SHARange(T) if(isInputRange!(T)) {
 					current = 0x80;
 				}
 			} else {
+				bool hackforward = false;
 				if(state == 1) {
 					current = 0x0;
 					state = 2;
-					position++;
+					if((((position + length + 8) * 8) % 512) == 8) {
+						position--;
+						hackforward = true;
+					}
+					goto proceed;
+				//	position++;
 				} else if( state == 2) {
+				proceed:
 					if(!(((position + length + 8) * 8) % 512)) {
 						state = 3;
 						position = 7;
 						length *= 8;
+						if(hackforward)
+							goto proceedmoar;
 					} else
-					position++;
+						position++;
 				} else if (state == 3) {
+				proceedmoar:
 					current = (length >> (position*8)) & 0xff;
 					if(position == 0)
 						state = 4;
@@ -203,6 +216,8 @@ template SHARange(T) if(isInputRange!(T)) {
 			if(state == 0) {
 				return cast(ubyte) r.front();
 			}
+			assert(state != 5);
+			//writefln("%x", current);
 			return current;
 		}
 
