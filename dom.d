@@ -1754,7 +1754,7 @@ class DocumentFragment : Element {
 	}
 
 	///.
-	string writeToAppender(Appender!string where = appender!string()) const {
+	override string writeToAppender(Appender!string where = appender!string()) const {
 		return this.innerHTML(where);
 	}
 }
@@ -1967,7 +1967,7 @@ class RawSource : Element {
 	}
 
 	///.
-	string writeToAppender(Appender!string where = appender!string()) const {
+	override string writeToAppender(Appender!string where = appender!string()) const {
 		where.put(source);
 		return source;
 	}
@@ -4402,7 +4402,7 @@ class CssStyle {
 			case "outline-left":
 			case "outline-right":
 
-			default: ;
+			default: {}
 		}
 	}
 
