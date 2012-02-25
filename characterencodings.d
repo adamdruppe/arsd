@@ -53,7 +53,6 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 	switch(encoding) {
 		default:
 			throw new Exception("I don't know how to convert " ~ dataCharacterEncoding ~ " to UTF-8");
-		break;
 		// since the input is immutable, these are ok too.
 		// just want to cover all the bases with one runtime function.
 		case "utf16":
