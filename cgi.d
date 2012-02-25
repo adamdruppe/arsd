@@ -1764,8 +1764,8 @@ version(fastcgi) {
 /* Helpers for doing temporary files. Used both here and in web.d */
 
 version(Windows) {
-	import core.sys.windows;
-	extern(Windows) DWORD GetTempPathW(DWORD, LPTSTR);
+	import core.sys.windows.windows;
+	extern(Windows) DWORD GetTempPathW(DWORD, LPWSTR);
 	alias GetTempPathW GetTempPath;
 }
 
