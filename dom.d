@@ -566,13 +566,12 @@ class Element {
 		// ... but only mildly so according to the profiler in the big scheme of things; probably negligible in a big app.
 
 
-		// POSSIBLE FIXME: this also sends attribute things to lower in the selector,
-		// but the actual get selector check is still case sensitive...
+		bool caseSensitiveTags = true;
 		if(parentDocument && parentDocument.loose)
-			selector = selector.toLower;
+			caseSensitiveTags = false;
 
 		Element[] ret;
-		foreach(sel; parseSelectorString(selector))
+		foreach(sel; parseSelectorString(selector, caseSensitiveTags))
 			ret ~= sel.getElements(this);
 		return ret;
 	}
@@ -709,7 +708,7 @@ class Element {
 
 	/// get all the classes on this element
 	@property string[] classes() {
-		return className.split(" ");
+		return split(className, " ");
 	}
 
 	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
@@ -1526,7 +1525,11 @@ class Element {
 	}
 
 	/**
-		Fetches the first consecutive text nodes, concatenated together
+		Fetches the first consecutive nodes, if text nodes, concatenated together
+
+		If the first node is not text, returns null.
+
+		See also: directText, innerText
 	*/
 	string firstInnerText() const {
 		string s;
@@ -1565,6 +1568,49 @@ class Element {
 		Element e = new TextNode(parentDocument, text);
 		e.parentNode = this;
 		children = [e];
+	}
+
+	/**
+		Returns the text directly under this element,
+		not recursively like innerText.
+
+		See also: firstInnerText
+	*/
+	@property string directText() {
+		string ret;
+		foreach(e; children) {
+			if(e.nodeType == NodeType.Text)
+				ret ~= e.nodeValue();
+		}
+
+		return ret;
+	}
+
+	/**
+		Sets the direct text, keeping the same place.
+
+		Unlike innerText, this does *not* remove existing
+		elements in the element.
+
+		It only replaces the first text node it sees.
+
+		If there are no text nodes, it calls appendText
+
+		So, given (ignore the spaces in the tags):
+			< div > < img > text here < /div >
+
+		it will keep the img, and replace the "text here".
+	*/
+	@property void directText(string text) {
+		foreach(e; children) {
+			if(e.nodeType == NodeType.Text) {
+				auto it = cast(TextNode) e;
+				it.contents = text;
+				return;
+			}
+		}
+
+		appendText(text);
 	}
 
 	/**
@@ -3891,17 +3937,17 @@ int intFromHex(string hex) {
 	}
 
 	///.
-	Selector[] parseSelectorString(string selector) {
+	Selector[] parseSelectorString(string selector, bool caseSensitiveTags = true) {
 		Selector[] ret;
 		foreach(s; selector.split(",")) {
-			ret ~= parseSelector(lexSelector(s));
+			ret ~= parseSelector(lexSelector(s), caseSensitiveTags);
 		}
 
 		return ret;
 	}
 
 	///.
-	Selector parseSelector(string[] tokens) {
+	Selector parseSelector(string[] tokens, bool caseSensitiveTags = true) {
 		Selector s;
 
 		SelectorPart current;
@@ -3935,6 +3981,8 @@ int intFromHex(string hex) {
 			final switch(state) {
 				case State.Starting: // fresh, might be reading an operator or a tagname
 					if(tid == -1) {
+						if(!caseSensitiveTags)
+							token = token.toLower();
 						current.tagNameFilter = token;
 					} else {
 						// Selector operators
