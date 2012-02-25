@@ -1,5 +1,8 @@
 module arsd.curl;
 
+// see this for info on making a curl.lib on windows:
+// http://stackoverflow.com/questions/7933845/where-is-curl-lib-for-dmd
+
 pragma(lib, "curl");
 
 import std.string;
