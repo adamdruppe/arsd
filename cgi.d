@@ -1391,6 +1391,7 @@ struct Url {
 
 	// This can sometimes be a big pain in the butt for me, so lots of copy/paste here to cover
 	// the possibilities.
+	/*
 	unittest {
 		auto url = Url("cool.html"); // checking relative links
 		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/what/cool.html");
@@ -1439,6 +1440,7 @@ struct Url {
 
 
 	}
+	*/
 
 	string protocol;
 	string server;
