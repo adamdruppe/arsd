@@ -77,14 +77,17 @@ struct Row {
 	package string[] row;
 	package ResultSet resultSet;
 
-	string opIndex(size_t idx) {
+	string opIndex(size_t idx, string file = __FILE__, int line = __LINE__) {
 		if(idx >= row.length)
-			throw new Exception(text("index ", idx, " is out of bounds on result"));
+			throw new Exception(text("index ", idx, " is out of bounds on result"), file, line);
 		return row[idx];
 	}
 
-	string opIndex(string idx) {
-		return row[resultSet.getFieldIndex(idx)];
+	string opIndex(string name, string file = __FILE__, int line = __LINE__) {
+		auto idx = resultSet.getFieldIndex(name);
+		if(idx >= row.length)
+			throw new Exception(text("no field ", name, " in result"), file, line);
+		return row[idx];
 	}
 
 	string toString() {
@@ -132,11 +135,7 @@ interface ResultSet {
 }
 
 class DatabaseException : Exception {
-	this(string msg) {
-		super(msg);
-	}
-
-	this(string msg, string file, size_t line) {
+	this(string msg, string file = __FILE__, size_t line = __LINE__) {
 		super(msg, file, line);
 	}
 }
@@ -529,9 +528,9 @@ class DataObject {
 	}
 
 
-	string opIndex(string field) {
+	string opIndex(string field, string file = __FILE__, size_t line = __LINE__) {
 		if(field !in fields)
-			throw new DatabaseException("No such field in data object: " ~ field);
+			throw new DatabaseException("No such field in data object: " ~ field, file, line);
 		return fields[field];
 	}
 
