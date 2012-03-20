@@ -38,7 +38,7 @@ import std.uri;
 import std.array;
 import std.range;
 
-import std.stdio;
+//import std.stdio;
 
 // tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
 // that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
@@ -654,13 +654,18 @@ class Element {
 	/**
 		Removes the given attribute from the element.
 	*/
-	void removeAttribute(string name) {
+	Element removeAttribute(string name)
+	out(ret) {
+		assert(ret is this);
+	}
+	body {
 		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
 		if(name in attributes)
 			attributes.remove(name);
 
 		sendObserverEvent(DomMutationOperations.removeAttribute, name);
+		return this;
 	}
 
 	/**
@@ -956,7 +961,6 @@ class Element {
 	///.
 	Element addChild(string tagName, Element firstChild)
 	in {
-		assert(parentDocument !is null);
 		assert(firstChild !is null);
 	}
 	out(ret) {
@@ -965,10 +969,10 @@ class Element {
 		assert(firstChild.parentNode is ret);
 
 		assert(ret.parentDocument is this.parentDocument);
-		assert(firstChild.parentDocument is this.parentDocument);
+		//assert(firstChild.parentDocument is this.parentDocument);
 	}
 	body {
-		auto e = parentDocument.createElement(tagName);
+		auto e = Element.make(tagName);
 		e.appendChild(firstChild);
 		this.appendChild(e);
 		return e;
@@ -1131,8 +1135,8 @@ class Element {
 			assert(parentNode !is null);
 		}
 		out {
-			assert(this.parentNode == newParent);
-			assert(isInArray(this, newParent.children));
+			assert(this.parentNode is newParent);
+			//assert(isInArray(this, newParent.children));
 		}
 	body {
 		parentNode.removeChild(this);
@@ -1146,13 +1150,13 @@ class Element {
 			assert(where !is null);
 			assert(where.parentNode is this);
 			assert(!selfClosed);
-			assert(isInArray(where, children));
+			//assert(isInArray(where, children));
 		}
 		out {
 			assert(child.parentNode is this);
 			assert(where.parentNode is this);
-			assert(isInArray(where, children));
-			assert(isInArray(child, children));
+			//assert(isInArray(where, children));
+			//assert(isInArray(child, children));
 		}
 	body {
 		foreach(i, c; children) {
@@ -1171,8 +1175,8 @@ class Element {
 		in {
 			assert(!selfClosed);
 			assert(e !is null);
-			if(position !is null)
-				assert(isInArray(position, children));
+			//if(position !is null)
+				//assert(isInArray(position, children));
 		}
 		out (ret) {
 			assert(e.children.length == 0);
@@ -1634,12 +1638,15 @@ class Element {
 
 	/// This is a full clone of the element
 	@property Element cloned()
+	/+
 		out(ret) {
 			// FIXME: not sure why these fail...
-//			assert(ret.children.length == this.children.length);
-//			assert(ret.tagName == this.tagName);
+			assert(ret.children.length == this.children.length, format("%d %d", ret.children.length, this.children.length));
+			assert(ret.tagName == this.tagName);
 		}
 	body {
+	+/
+	{
 		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
 		foreach(child; children) {
 			e.appendChild(child.cloned);
@@ -2003,7 +2010,8 @@ class TextNode : Element {
 
 	///.
 	override @property Element cloned() {
-		return new TextNode(parentDocument, contents);
+		auto n = new TextNode(parentDocument, contents);
+		return n;
 	}
 
 	///.
@@ -2468,13 +2476,12 @@ class Table : Element {
 		foreach(e; children) {
 			if(e.tagName == "tbody") {
 				e.appendChild(row);
-				goto done;
+				return row;
 			}
 		}
 
 		appendChild(row);
 
-	    done:
 		return row;
 	}
 
@@ -2679,8 +2686,7 @@ struct Html {
 	string source;
 }
 
-
-///.
+/// The main document interface, including a html parser.
 class Document : FileResource {
 	///.
 	this(string data, bool caseSensitive = false, bool strict = false) {
@@ -3508,6 +3514,19 @@ class Document : FileResource {
 	}
 }
 
+
+/// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+class XmlDocument : Document {
+	this(string data) {
+		contentType = "text/xml; charset=utf-8";
+		prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
+
+		parse(data, true, true);
+	}
+}
+
+
+
 // for the observers
 enum DomMutationOperations {
 	setAttribute,
@@ -4326,7 +4345,7 @@ class CssStyle {
 					return (property.value = value);
 				} else {
 					if(name == "display")
-					writeln("Not setting ", name, " to ", value, " because ", newSpecificity.score, " < ", property.specificity.score);
+					{}//writeln("Not setting ", name, " to ", value, " because ", newSpecificity.score, " < ", property.specificity.score);
 					return value; // do nothing - the specificity is too low
 				}
 			}
