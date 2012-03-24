@@ -53,12 +53,21 @@ mixin template ForwardCgiConstructors() {
 		void delegate(const(ubyte)[]) _rawDataOutput = null,
 		void delegate() _flush = null
 		) { super(maxContentLength, env, readdata, _rawDataOutput, _flush); }
-	
-	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0, void delegate() _flush = null) {
-		super(headers, data, address, _rawDataOutput, pathInfoStarts, _flush);
+
+	this(
+		BufferedInputRange inputData,
+		string address, ushort _port,
+		int pathInfoStarts = 0,
+		bool _https = false,
+		void delegate(const(ubyte)[]) _rawDataOutput = null,
+		void delegate() _flush = null,
+		// this pointer tells if the connection is supposed to be closed after we handle this
+		bool* closeConnection = null)
+	{
+		super(inputData, address, _port, pathInfoStarts, _https, _rawDataOutput, _flush, closeConnection);
 	}
 
-	this(BufferedInputRange ir) { super(ir); }
+	this(BufferedInputRange ir, bool* closeConnection) { super(ir, closeConnection); }
 }
 
 
@@ -732,93 +741,16 @@ class Cgi {
 	}
 
 	/// Initializes the cgi from completely raw HTTP data. The ir must have a Socket source.
-	this(BufferedInputRange ir) {
+	this(BufferedInputRange ir, bool* closeConnection) {
 		import al = std.algorithm;
 
-		auto idx = al.indexOf(ir.front(), "\r\n\r\n");
-		while(idx == -1) {
-			ir.popFront(0);
-			idx = al.indexOf(ir.front(), "\r\n\r\n");
-		}
-
-		assert(idx != -1);
-
-		string[] headers;
-		foreach(line; al.splitter(ir.front()[0 .. idx], "\r\n"))
-			if(line.length)
-				headers ~= cast(string)(line.idup);
-
-		ir.consume(idx + 4);
-
-
-		bool chunked = false;
-		bool closeConnection = false;
-		int contentLength;
-
-		// FIXME: integrate all this below
-
-		if(headers[0].indexOf("HTTP/1.0") != -1)
-			closeConnection = true; // always one request per connection with 1.0
-
-		foreach(h; headers[1..$]) {
-			auto colon = h.indexOf(":");
-			if(colon == -1)
-				throw new Exception("Http headers need colons " ~ h);
-			string name = h[0..colon].toLower;
-			string value = h[colon+2..$]; // FIXME?
-
-			switch(name) {
-			    case "transfer-encoding":
-				if(value == "chunked")
-					chunked = true;
-			    break;
-			    case "content-length":
-				contentLength = to!int(value);
-			    break;
-			    case "connection":
-				if(value == "close")
-					closeConnection = true;
-			    break;
-			    default:
-			}
-		}
-
 		immutable(ubyte)[] data;
-		void log(in ubyte[] d) {
-			data ~= d;
-		}
-
-		auto a = ir.front();
-		// reading Content-Length type data
-		// We need to read up the data we have, and write it out as a chunk.
-		if(!chunked) {
-			if(a.length <= contentLength) {
-				log(a);
-				contentLength -= a.length;
-				a = ir.consume(a.length);
-				// we just finished it off, terminate the chunks
-				if(contentLength == 0) {
-					// goto finish;
-				} else {
-					ir.popFront();
-					a = ir.front();
-				}
-			} else {
-				// we actually have *more* here than we need....
-				log(a[0..contentLength]);
-				contentLength = 0;
-				ir.consume(contentLength);
-				// goto finish;
-			}
-		} else {
-			dechunk(contentLength, &log, ir);
-		}
 
 		void rdo(const(ubyte)[] d) {
 			sendAll(ir.source, d);
 		}
 
-		this(headers, data, ir.source.remoteAddress().toString(), &rdo);
+		this(ir, ir.source.remoteAddress().toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
 	}
 
 	/** Initializes it from some almost* raw HTTP request data
@@ -836,106 +768,177 @@ class Cgi {
 			If null, the data is sent to stdout.
 
 
+		If you are behind a reverse proxy, getting this right is tricky.... FIXME
+
 
 		FIXME: data should be able to be streaming, for large files
 			indeed, it should probably just take a file descriptor
 			or two and do all the work itself.
 	*/
-	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0, void delegate() _flush = null) {
-		auto parts = headers[0].split(" ");
+	this(
+		BufferedInputRange inputData,
+//		string[] headers, immutable(ubyte)[] data,
+		string address, ushort _port,
+		int pathInfoStarts = 0, // use this if you know the script name, like if this is in a folder in a bigger web environment
+		bool _https = false,
+		void delegate(const(ubyte)[]) _rawDataOutput = null,
+		void delegate() _flush = null,
+		// this pointer tells if the connection is supposed to be closed after we handle this
+		bool* closeConnection = null)
+	{
 
-		https = false;
-		port = 80; // FIXME
+
+		https = _https;
+		port = _port;
 
 		rawDataOutput = _rawDataOutput;
 		flushDelegate = _flush;
 		nph = true;
 
-		requestMethod = to!RequestMethod(parts[0]);
-
-		requestUri = parts[1];
-
-		scriptName = requestUri[0 .. pathInfoStarts];
-
-		auto question = requestUri.indexOf("?");
-		if(question == -1) {
-			queryString = "";
-			pathInfo = requestUri[pathInfoStarts..$];
-		} else {
-			queryString = requestUri[question+1..$];
-			pathInfo = requestUri[pathInfoStarts..question];
-		}
-
-		get = getGetVariables();
-		auto ugh = decodeVariables(queryString);
-		getArray = assumeUnique(ugh);
-
 		remoteAddress = address;
 
-		if(headers[0].indexOf("HTTP/1.0") != -1) {
-			http10 = true;
-			autoBuffer = true;
+		// streaming parser
+		import al = std.algorithm;
+
+		auto idx = al.indexOf(inputData.front(), "\r\n\r\n");
+		while(idx == -1) {
+			inputData.popFront(0);
+			idx = al.indexOf(inputData.front(), "\r\n\r\n");
 		}
+
+		assert(idx != -1);
+
 
 		string contentType = "";
-
 		string[string] requestHeadersHere;
 
-		foreach(header; headers[1..$]) {
-			auto colon = header.indexOf(":");
-			if(colon == -1)
-				throw new Exception("HTTP headers should have a colon!");
-			string name = header[0..colon].toLower;
-			string value = header[colon+2..$]; // skip the colon and the space
+		size_t contentLength;
 
-			requestHeadersHere[name] = value;
+		bool isChunked;
 
-			switch(name) {
-				case "accept":
-					accept = value;
-				break;
-				case "last-event-id":
-					lastEventId = value;
-				break;
-				case "authorization":
-					authorization = value;
-				break;
-				case "content-type":
-					contentType = value;
-				break;
-				case "connection":
-					if(value.toLower().indexOf("keep-alive") != -1)
-						keepAliveRequested = true;
-				break;
-				case "host":
-					host = value;
-				break;
-				case "accept-encoding":
-					if(value.indexOf("gzip") != -1)
-						acceptsGzip = true;
-				break;
-				case "user-agent":
-					userAgent = value;
-				break;
-				case "referer":
-					referrer = value;
-				break;
-				case "cookie":
-					cookie ~= value;
-				break;
-				default:
-					// ignore it
+
+		int headerNumber = 0;
+		foreach(line; al.splitter(inputData.front()[0 .. idx], "\r\n"))
+		if(line.length) {
+			headerNumber++;
+			auto header = cast(string) line.idup;
+			if(headerNumber == 1) {
+				// request line
+				auto parts = header.split(" ");
+				requestMethod = to!RequestMethod(parts[0]);
+				requestUri = parts[1];
+
+				scriptName = requestUri[0 .. pathInfoStarts];
+
+				auto question = requestUri.indexOf("?");
+				if(question == -1) {
+					queryString = "";
+					pathInfo = requestUri[pathInfoStarts..$];
+				} else {
+					queryString = requestUri[question+1..$];
+					pathInfo = requestUri[pathInfoStarts..question];
+				}
+
+				get = getGetVariables();
+				auto ugh = decodeVariables(queryString);
+				getArray = assumeUnique(ugh);
+
+				if(header.indexOf("HTTP/1.0") != -1) {
+					http10 = true;
+					autoBuffer = true;
+					if(closeConnection)
+						*closeConnection = true;
+				}
+			} else {
+				// other header
+				auto colon = header.indexOf(":");
+				if(colon == -1)
+					throw new Exception("HTTP headers should have a colon!");
+				string name = header[0..colon].toLower;
+				string value = header[colon+2..$]; // skip the colon and the space
+
+				requestHeadersHere[name] = value;
+
+				switch(name) {
+					case "accept":
+						accept = value;
+					break;
+					case "connection":
+						if(value == "close" && closeConnection)
+							*closeConnection = true;
+						if(value.toLower().indexOf("keep-alive") != -1)
+							keepAliveRequested = true;
+					break;
+					case "transfer-encoding":
+						if(value == "chunked")
+							isChunked = true;
+					break;
+					case "last-event-id":
+						lastEventId = value;
+					break;
+					case "authorization":
+						authorization = value;
+					break;
+					case "content-type":
+						contentType = value;
+					break;
+					case "content-length":
+						contentLength = to!size_t(value);
+					break;
+					case "host":
+						host = value;
+					break;
+					case "accept-encoding":
+						if(value.indexOf("gzip") != -1)
+							acceptsGzip = true;
+					break;
+					case "user-agent":
+						userAgent = value;
+					break;
+					case "referer":
+						referrer = value;
+					break;
+					case "cookie":
+						cookie ~= value;
+					break;
+					default:
+						// ignore it
+				}
+
 			}
 		}
+
+		inputData.consume(idx + 4);
+		// done
 
 		requestHeaders = assumeUnique(requestHeadersHere);
 
 		cookiesArray = getCookieArray();
 		cookies = keepLastOf(cookiesArray);
-		if(data.length) {
-			prepareForIncomingDataChunks(contentType, data.length);
-			for(size_t block = 0; block < data.length; block += 4096)
-				handleIncomingDataChunk(data[block .. ((block+4096 > data.length) ? data.length : block + 4096)]);
+
+		ByChunkRange dataByChunk;
+
+		// reading Content-Length type data
+		// We need to read up the data we have, and write it out as a chunk.
+		if(!isChunked) {
+			dataByChunk = byChunk(inputData, contentLength);
+		} else {
+			// chunked requests happen, but not every day. Since we need to know
+			// the content length (for now, maybe that should change), we'll buffer
+			// the whole thing here instead of parse streaming. (I think this is what Apache does anyway in cgi modes)
+			auto data = dechunk(inputData);
+
+			// set the range here
+			dataByChunk = byChunk(data);
+			contentLength = data.length;
+		}
+
+		assert(dataByChunk !is null);
+
+		if(contentLength) {
+			prepareForIncomingDataChunks(contentType, contentLength);
+			foreach(dataChunk; dataByChunk)
+				handleIncomingDataChunk(dataChunk);
 			postArray = assumeUnique(pps._post);
 			files = assumeUnique(pps._files);
 			post = keepLastOf(postArray);
@@ -1672,12 +1675,16 @@ version(embedded_httpd)
 			foreach(connection; manager) {
 				scope(failure) {
 					// FIXME
-					sendAll(connection, "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+
+					// FIXME: an exception after cgi.write() can output bad stuff according to the http protocol
+					auto msg = "Something went wrong.";
+					sendAll(connection, format("HTTP/1.0 500 Internal Server Error\r\nContent-Length: %s\r\n\r\n%s", msg.length, msg));
 					connection.close();
 				}
+				bool closeConnection;
 				auto ir = new BufferedInputRange(connection);
 				while(!ir.empty) {
-					auto cgi = new Cgi(ir);
+					auto cgi = new Cgi(ir, &closeConnection);
 					fun(cgi);
 					cgi.close();
 					cgi.dispose();
@@ -1685,6 +1692,9 @@ version(embedded_httpd)
 					if(!ir.empty)
 						ir.popFront(); // get the next????
 				}
+
+				if(closeConnection)
+					connection.close();
 			}
 		}
 
@@ -2126,16 +2136,16 @@ class ListeningConnectionManager {
 	Socket listener;
 
 	int opApply(CMT dg) {
-		shared(int) broken;
+		shared(int) loopBroken;
 
-		while(!broken) {
+		while(!loopBroken) {
 			auto sn = listener.accept();
-			auto thread = new ConnectionThread(sn, &broken, dg);
+			auto thread = new ConnectionThread(sn, &loopBroken, dg);
 			thread.start();
-			// broken = dg(sn);
+			// loopBroken = dg(sn);
 		}
 
-		return broken;
+		return loopBroken;
 	}
 }
 
@@ -2236,7 +2246,9 @@ Distributed under the Boost Software License, Version 1.0.
 */
 
 
-void dechunk(int contentLength, void delegate(in ubyte[]) log, BufferedInputRange ir) {
+immutable(ubyte[]) dechunk(BufferedInputRange ir) {
+	immutable(ubyte)[] ret;
+
 	another_chunk:
 	// If here, we are at the beginning of a chunk.
 	auto a = ir.front();
@@ -2309,7 +2321,7 @@ void dechunk(int contentLength, void delegate(in ubyte[]) log, BufferedInputRang
 			a = ir.front();
 		}
 
-		log(a[0..chunkSize]);
+		ret ~= (a[0..chunkSize]);
 
 		if(!(a.length > chunkSize + 2)) {
 			ir.popFront(0, chunkSize + 2);
@@ -2323,5 +2335,66 @@ void dechunk(int contentLength, void delegate(in ubyte[]) log, BufferedInputRang
 	}
 
 	finish:
-	return;
+	return ret;
 }
+
+interface ByChunkRange {
+	bool empty();
+	void popFront();
+	const(ubyte)[] front();
+}
+
+ByChunkRange byChunk(const(ubyte)[] data) {
+	return new class ByChunkRange {
+		override bool empty() {
+			return !data.length;
+		}
+
+		override void popFront() {
+			if(data.length > 4096)
+				data = data[4096 .. $];
+			else
+				data = null;
+		}
+
+		override const(ubyte)[] front() {
+			return data[0 .. $ > 4096 ? 4096 : $];
+		}
+	};
+}
+
+ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
+	const(ubyte)[] f;
+
+	f = ir.front;
+	if(f.length > atMost)
+		f = f[0 .. atMost];
+
+	return new class ByChunkRange {
+		override bool empty() {
+			return atMost == 0;
+		}
+
+		override const(ubyte)[] front() {
+			return f;
+		}
+
+		override void popFront() {
+			auto a = ir.front();
+
+			if(a.length <= atMost) {
+				f = a;
+				atMost -= a.length;
+				a = ir.consume(a.length);
+				if(atMost != 0)
+					ir.popFront();
+			} else {
+				// we actually have *more* here than we need....
+				f = a[0..atMost];
+				atMost = 0;
+				ir.consume(atMost);
+			}
+		}
+	};
+}
+
