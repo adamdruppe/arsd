@@ -57,6 +57,8 @@ mixin template ForwardCgiConstructors() {
 	this(string[] headers, immutable(ubyte)[] data, string address, void delegate(const(ubyte)[]) _rawDataOutput = null, int pathInfoStarts = 0, void delegate() _flush = null) {
 		super(headers, data, address, _rawDataOutput, pathInfoStarts, _flush);
 	}
+
+	this(BufferedInputRange ir) { super(ir); }
 }
 
 
@@ -729,6 +731,96 @@ class Cgi {
 		// This space intentionally left blank.
 	}
 
+	/// Initializes the cgi from completely raw HTTP data. The ir must have a Socket source.
+	this(BufferedInputRange ir) {
+		import al = std.algorithm;
+
+		auto idx = al.indexOf(ir.front(), "\r\n\r\n");
+		while(idx == -1) {
+			ir.popFront(0);
+			idx = al.indexOf(ir.front(), "\r\n\r\n");
+		}
+
+		assert(idx != -1);
+
+		string[] headers;
+		foreach(line; al.splitter(ir.front()[0 .. idx], "\r\n"))
+			if(line.length)
+				headers ~= cast(string)(line.idup);
+
+		ir.consume(idx + 4);
+
+
+		bool chunked = false;
+		bool closeConnection = false;
+		int contentLength;
+
+		// FIXME: integrate all this below
+
+		if(headers[0].indexOf("HTTP/1.0") != -1)
+			closeConnection = true; // always one request per connection with 1.0
+
+		foreach(h; headers[1..$]) {
+			auto colon = h.indexOf(":");
+			if(colon == -1)
+				throw new Exception("Http headers need colons " ~ h);
+			string name = h[0..colon].toLower;
+			string value = h[colon+2..$]; // FIXME?
+
+			switch(name) {
+			    case "transfer-encoding":
+				if(value == "chunked")
+					chunked = true;
+			    break;
+			    case "content-length":
+				contentLength = to!int(value);
+			    break;
+			    case "connection":
+				if(value == "close")
+					closeConnection = true;
+			    break;
+			    default:
+			}
+		}
+
+		immutable(ubyte)[] data;
+		void log(in ubyte[] d) {
+			data ~= d;
+		}
+
+		auto a = ir.front();
+		// reading Content-Length type data
+		// We need to read up the data we have, and write it out as a chunk.
+		if(!chunked) {
+			if(a.length <= contentLength) {
+				log(a);
+				contentLength -= a.length;
+				a = ir.consume(a.length);
+				// we just finished it off, terminate the chunks
+				if(contentLength == 0) {
+					// goto finish;
+				} else {
+					ir.popFront();
+					a = ir.front();
+				}
+			} else {
+				// we actually have *more* here than we need....
+				log(a[0..contentLength]);
+				contentLength = 0;
+				ir.consume(contentLength);
+				// goto finish;
+			}
+		} else {
+			dechunk(contentLength, &log, ir);
+		}
+
+		void rdo(const(ubyte)[] d) {
+			sendAll(ir.source, d);
+		}
+
+		this(headers, data, ir.source.remoteAddress().toString(), &rdo);
+	}
+
 	/** Initializes it from some almost* raw HTTP request data
 		headers[0] should be the "GET / HTTP/1.1" line
 
@@ -1222,10 +1314,11 @@ class Cgi {
 			}
 			if(!autoBuffer || isAll) {
 				if(rawDataOutput !is null)
-					if(nph && responseChunked)
+					if(nph && responseChunked) {
 						rawDataOutput(makeChunk(cast(const(ubyte)[]) t));
-					else
+					} else {
 						rawDataOutput(cast(const(ubyte)[]) t);
+					}
 				else
 					stdout.rawWrite(t);
 			}
@@ -1571,6 +1664,28 @@ version(embedded_httpd)
 			// this probably needs a whole redoing...
 			serveHttp!CustomCgi(&fun, 8080);//5005);
 			return;
+		}
+
+		version(httpd2) {
+			// this might replace embedded_httpd entirely in the near future
+			auto manager = new ListeningConnectionManager(8085);
+			foreach(connection; manager) {
+				scope(failure) {
+					// FIXME
+					sendAll(connection, "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+					connection.close();
+				}
+				auto ir = new BufferedInputRange(connection);
+				while(!ir.empty) {
+					auto cgi = new Cgi(ir);
+					fun(cgi);
+					cgi.close();
+					cgi.dispose();
+
+					if(!ir.empty)
+						ir.popFront(); // get the next????
+				}
+			}
 		}
 
 		version(scgi) {
@@ -1920,7 +2035,7 @@ class BufferedInputRange {
 		if(minBytesToSettleFor > underlyingBuffer.length || view.length == underlyingBuffer.length) {
 			if(allowGrowth) {
 				auto viewStart = view.ptr - underlyingBuffer.ptr;
-				auto growth = 4096;
+				size_t growth = 4096;
 				// make sure we have enough for what we're being asked for
 				if(minBytesToSettleFor - underlyingBuffer.length > growth)
 					growth = minBytesToSettleFor - underlyingBuffer.length;
@@ -2017,6 +2132,7 @@ class ListeningConnectionManager {
 			auto sn = listener.accept();
 			auto thread = new ConnectionThread(sn, &broken, dg);
 			thread.start();
+			// broken = dg(sn);
 		}
 
 		return broken;
@@ -2029,6 +2145,8 @@ void sendAll(Socket s, const(void)[] data) {
 	ptrdiff_t amount;
 	do {
 		amount = s.send(data);
+		if(amount == Socket.ERROR)
+			throw new Exception("wtf in send");
 		data = data[amount .. $];
 	} while(data.length);
 }
@@ -2116,3 +2234,94 @@ Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
 */
+
+
+void dechunk(int contentLength, void delegate(in ubyte[]) log, BufferedInputRange ir) {
+	another_chunk:
+	// If here, we are at the beginning of a chunk.
+	auto a = ir.front();
+	int chunkSize;
+	int loc = locationOf(a, "\r\n");
+	while(loc == -1) {
+		ir.popFront();
+		a = ir.front();
+		loc = locationOf(a, "\r\n");
+	}
+
+	string hex;
+	hex = "";
+	for(int i = 0; i < loc; i++) {
+		char c = a[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 0x20;
+		if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+			hex ~= c;
+		} else {
+			break;
+		}
+	}
+
+	assert(hex.length);
+
+	int power = 1;
+	int size = 0;
+	foreach(cc1; retro(hex)) {
+		dchar cc = cc1;
+		if(cc >= 'a' && cc <= 'z')
+			cc -= 0x20;
+		int val = 0;
+		if(cc >= '0' && cc <= '9')
+			val = cc - '0';
+		else
+			val = cc - 'A' + 10;
+
+		size += power * val;
+		power *= 16;
+	}
+
+	chunkSize = size;
+	assert(size >= 0);
+
+	if(loc + 2 > a.length) {
+		ir.popFront(0, a.length + loc + 2);
+		a = ir.front();
+	}
+
+	a = ir.consume(loc + 2);
+
+	if(chunkSize == 0) { // we're done with the response
+		// if we got here, will change must be true....
+		more_footers:
+		loc = locationOf(a, "\r\n");
+		if(loc == -1) {
+			ir.popFront();
+			a = ir.front;
+			goto more_footers;
+		} else {
+			assert(loc == 0);
+			ir.consume(loc + 2);
+			goto finish;
+		}
+	} else {
+		// if we got here, will change must be true....
+		if(a.length < chunkSize + 2) {
+			ir.popFront(0, chunkSize + 2);
+			a = ir.front();
+		}
+
+		log(a[0..chunkSize]);
+
+		if(!(a.length > chunkSize + 2)) {
+			ir.popFront(0, chunkSize + 2);
+			a = ir.front();
+		}
+		assert(a[chunkSize] == 13);
+		assert(a[chunkSize+1] == 10);
+		a = ir.consume(chunkSize + 2);
+		chunkSize = 0;
+		goto another_chunk;
+	}
+
+	finish:
+	return;
+}
