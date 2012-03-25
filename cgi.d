@@ -1710,16 +1710,26 @@ bool handleException(Cgi cgi, Throwable t) {
 mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
 
-	void main() {
+	void main(string[] args) {
+		ushort listeningPort(ushort def) {
+			bool found = false;
+			foreach(arg; args) {
+				if(found)
+					return to!ushort(arg);
+				if(arg == "--port" || arg == "-p" || arg == "/port")
+					found = true;
+			}
+			return def;
+		}
 		version(netman_httpd) {
 			import arsd.httpd;
 			// what about forwarding the other constructor args?
 			// this probably needs a whole redoing...
-			serveHttp!CustomCgi(&fun, 8080);//5005);
+			serveHttp!CustomCgi(&fun, listeningPort(8080));//5005);
 			return;
 		} else
 		version(embedded_httpd) {
-			auto manager = new ListeningConnectionManager(8085);
+			auto manager = new ListeningConnectionManager(listeningPort(8085));
 			foreach(connection; manager) {
 				scope(failure) {
 					// catch all for other errors
@@ -1765,7 +1775,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 		version(scgi) {
 			import std.exception;
 			import al = std.algorithm;
-			auto manager = new ListeningConnectionManager(4000);
+			auto manager = new ListeningConnectionManager(listeningPort(4000));
 
 			// this threads...
 			foreach(connection; manager) {
