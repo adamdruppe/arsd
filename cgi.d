@@ -741,6 +741,7 @@ class Cgi {
 		immutable(ubyte)[] data;
 
 		void rdo(const(ubyte)[] d) {
+			assert(d.length < 120);
 			sendAll(ir.source, d);
 		}
 
@@ -1292,7 +1293,7 @@ class Cgi {
 	}
 
 	/// Writes the data to the output, flushing headers if they have not yet been sent.
-	void write(const(void)[] t, bool isAll = false) {
+	void write(const(void)[] t, bool isAll = false, bool maybeAutoClose = true) {
 		assert(!closed, "Output has already been closed");
 
 		if(gzipResponse && acceptsGzip && isAll) { // FIXME: isAll really shouldn't be necessary
@@ -1328,8 +1329,9 @@ class Cgi {
 			}
 		}
 
-		if(isAll)
+		if(maybeAutoClose && isAll)
 			close(); // if you say it is all, that means we're definitely done
+				// maybeAutoClose can be false though to avoid this (important if you call from inside close()!
 	}
 
 	void flush() {
@@ -1352,19 +1354,22 @@ class Cgi {
 			return; // don't double close
 
 		if(!outputtedResponseData)
-			write("");
+			write("", false, false);
 
 		// writing auto buffered data
 		if(requestMethod != RequestMethod.HEAD && autoBuffer) {
 			if(!nph)
 				stdout.rawWrite(outputBuffer);
 			else
-				write(outputBuffer, true); // tell it this is everything
+				write(outputBuffer, true, false); // tell it this is everything
 		}
 
 		// closing the last chunk...
 		if(nph && rawDataOutput !is null && responseChunked)
 			rawDataOutput(cast(const(ubyte)[]) "0\r\n\r\n");
+
+		if(flushDelegate)
+			flushDelegate();
 
 		closed = true;
 	}
@@ -1737,7 +1742,17 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 					connection.close();
 				}
 				bool closeConnection;
+/*
+			auto sn = connection;
+			ubyte[1024] b;
+			sn.receive(b);
+			sendAll(sn, "HTTP/1.0 200 OK\r\n");
+			sendAll(sn, "Content-Length:11\r\n\r\nHello world");
+			sn.close();
+			continue;
+*/
 				auto ir = new BufferedInputRange(connection);
+
 				while(!ir.empty) {
 					Cgi cgi;
 					try {
@@ -1758,6 +1773,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 						cgi.close();
 					} catch(Throwable t) {
 						// a processing error can be recovered from
+						stderr.writeln(t.toString);
 						if(!handleException(cgi, t))
 							closeConnection = true;
 					}
@@ -2117,7 +2133,6 @@ class BufferedInputRange {
 
 		do {
 			auto freeSpace = underlyingBuffer[underlyingBuffer.ptr - view.ptr + view.length .. $];
-
 			auto ret = source.receive(freeSpace);
 			if(ret == Socket.ERROR)
 				throw new Exception("uh oh"); // FIXME
@@ -2195,10 +2210,16 @@ class ListeningConnectionManager {
 
 	Socket listener;
 
-	int opApply(CMT dg) {
+	bool running;
+	void quit() {
+		running = false;
+	}
+
+	int opApply(scope CMT dg) {
+		running = true;
 		shared(int) loopBroken;
 
-		while(!loopBroken) {
+		while(!loopBroken && running) {
 			auto sn = listener.accept();
 			auto thread = new ConnectionThread(sn, &loopBroken, dg);
 			thread.start();
@@ -2217,6 +2238,7 @@ void sendAll(Socket s, const(void)[] data) {
 		amount = s.send(data);
 		if(amount == Socket.ERROR)
 			throw new Exception("wtf in send");
+		assert(amount > 0);
 		data = data[amount .. $];
 	} while(data.length);
 }
