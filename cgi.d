@@ -1750,6 +1750,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 					} catch(Throwable t) {
 						// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 						// anyway let's kill the connection
+						stderr.writeln(t.toString());
 						sendAll(connection, plainHttpError(false, "400 Bad Request", t));
 						closeConnection = true;
 						break;
@@ -2227,7 +2228,7 @@ void sendAll(Socket s, const(void)[] data) {
 	do {
 		amount = s.send(data);
 		if(amount == Socket.ERROR)
-			throw new Exception("wtf in send");
+			throw new Exception("wtf in send: " ~ lastSocketError());
 		assert(amount > 0);
 		data = data[amount .. $];
 	} while(data.length);
