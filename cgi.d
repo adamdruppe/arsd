@@ -1660,7 +1660,7 @@ mixin template GenericMain(alias fun, T...) {
 	mixin CustomCgiMain!(Cgi, fun, T);
 }
 
-string simpleHtmlEncode(string s) {
+private string simpleHtmlEncode(string s) {
 	return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />\n");
 }
 
@@ -1693,7 +1693,7 @@ bool handleException(Cgi cgi, Throwable t) {
 
 	if(cgi.outputtedResponseData) {
 		// the headers are sent, but the channel is open... since it closes if all was sent, we can append an error message here.
-		return false; // but I don't want to, since I don't know what condition the output is in; I don't want to inject something.
+		return false; // but I don't want to, since I don't know what condition the output is in; I don't want to inject something (nor check the content-type for that matter. So we say it was not a clean handling.
 	} else {
 		// no headers are sent, we can send a full blown error and recover
 		cgi.setCache(false);
@@ -1895,7 +1895,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 					cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 				} catch(Throwable t) {
 					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
-					writeFcgi(plainHttpError(true, "400 Bad Request", t));
+					writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
 					continue;
 				}
 				assert(cgi !is null);
@@ -1929,8 +1929,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 			try {
 				fun(cgi);
 				cgi.close();
-			} catch (Throwable c) {
-				stderr.writeln(c.msg);
+			} catch (Throwable t) {
+				stderr.writeln(t.msg);
 				if(!handleException(cgi, t))
 					return;
 			}
@@ -2014,6 +2014,12 @@ void hackAroundLinkerError() {
 
 version(fastcgi) {
 	pragma(lib, "fcgi");
+
+	static if(size_t.sizeof == 8) // 64 bit
+		alias long c_int;
+	else
+		alias int c_int;
+
 	extern(C) {
 
 	struct FCGX_Stream {
@@ -2021,22 +2027,22 @@ version(fastcgi) {
 		ubyte* wrNext;
 		ubyte* stop;
 		ubyte* stopUnget;
-		int isReader;
-		int isClosed;
-		int wasFCloseCalled;
-		int FCGI_errno;
+		c_int isReader;
+		c_int isClosed;
+		c_int wasFCloseCalled;
+		c_int FCGI_errno;
 		void* function(FCGX_Stream* stream) fillBuffProc;
-		void* function(FCGX_Stream* stream, int doClose) emptyBuffProc;
+		void* function(FCGX_Stream* stream, c_int doClose) emptyBuffProc;
 		void* data;
 	}
 
 	alias char** FCGX_ParamArray;
 
-	int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
-	int FCGX_GetChar(FCGX_Stream* stream);
-	int FCGX_PutStr(const ubyte* str, int n, FCGX_Stream* stream);
-	int FCGX_HasSeenEOF(FCGX_Stream* stream);
-	int FCGX_FFlush(FCGX_Stream *stream);
+	c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
+	c_int FCGX_GetChar(FCGX_Stream* stream);
+	c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
+	c_int FCGX_HasSeenEOF(FCGX_Stream* stream);
+	c_int FCGX_FFlush(FCGX_Stream *stream);
 
 
 	}
