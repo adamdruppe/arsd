@@ -741,7 +741,6 @@ class Cgi {
 		immutable(ubyte)[] data;
 
 		void rdo(const(ubyte)[] d) {
-			assert(d.length < 120);
 			sendAll(ir.source, d);
 		}
 
@@ -1742,15 +1741,6 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 					connection.close();
 				}
 				bool closeConnection;
-/*
-			auto sn = connection;
-			ubyte[1024] b;
-			sn.receive(b);
-			sendAll(sn, "HTTP/1.0 200 OK\r\n");
-			sendAll(sn, "Content-Length:11\r\n\r\nHello world");
-			sn.close();
-			continue;
-*/
 				auto ir = new BufferedInputRange(connection);
 
 				while(!ir.empty) {
