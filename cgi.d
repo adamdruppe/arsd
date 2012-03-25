@@ -281,45 +281,38 @@ class Cgi {
 				prepareForIncomingDataChunks(contentType, contentLength);
 
 
-			if(readdata is null)
-				foreach(ubyte[] chunk; stdin.byChunk(iis ? contentLength : 4096)) { // FIXME: maybe it should pass the range directly to the parser
+				int processChunk(in ubyte[] chunk) {
 					if(chunk.length > contentLength) {
 						handleIncomingDataChunk(chunk[0..contentLength]);
 						amountReceived += contentLength;
 						contentLength = 0;
-						break;
+						return 1;
 					} else {
 						handleIncomingDataChunk(chunk);
 						contentLength -= chunk.length;
 						amountReceived += chunk.length;
 					}
 					if(contentLength == 0)
-						break;
+						return 1;
 
 					onRequestBodyDataReceived(amountReceived, originalContentLength);
+					return 0;
 				}
-			else {
-				// we have a custom data source..
-				auto chunk = readdata();
-				while(chunk.length) {
-					// FIXME: DRY
-					if(chunk.length > contentLength) {
-						handleIncomingDataChunk(chunk[0..contentLength]);
-						amountReceived += contentLength;
-						contentLength = 0;
-						break;
-					} else {
-						handleIncomingDataChunk(chunk);
-						contentLength -= chunk.length;
-						amountReceived += chunk.length;
+
+
+				if(readdata is null) {
+					foreach(ubyte[] chunk; stdin.byChunk(iis ? contentLength : 4096))
+						if(processChunk(chunk))
+							break;
+				} else {
+					// we have a custom data source..
+					auto chunk = readdata();
+					while(chunk.length) {
+						if(processChunk(chunk))
+							break;
+						chunk = readdata();
 					}
-					if(contentLength == 0)
-						break;
-
-					chunk = readdata();
-					onRequestBodyDataReceived(amountReceived, originalContentLength);
 				}
-			}
 
 				onRequestBodyDataReceived(amountReceived, originalContentLength);
 				postArray = assumeUnique(pps._post);
@@ -330,7 +323,6 @@ class Cgi {
 
 			version(preserveData)
 				originalPostData = data;
-//			mixin(createVariableHashes());
 		}
 		// fixme: remote_user script name
 	}
@@ -339,6 +331,7 @@ class Cgi {
 	/// after calling this.
 	///
 	/// NOTE: it is called automatically by GenericMain
+	// FIXME: this should be called if the constructor fails too, if it has created some garbage...
 	void dispose() {
 		foreach(file; files) {
 			if(!file.contentInMemory)
@@ -741,6 +734,7 @@ class Cgi {
 	}
 
 	/// Initializes the cgi from completely raw HTTP data. The ir must have a Socket source.
+	/// *closeConnection will be set to true if you should close the connection after handling this request
 	this(BufferedInputRange ir, bool* closeConnection) {
 		import al = std.algorithm;
 
@@ -1112,6 +1106,13 @@ class Cgi {
 		if(!important && isCurrentResponseLocationImportant)
 			return; // important redirects always override unimportant ones
 
+		if(uri is null) {
+			responseStatus = "200 OK";
+			responseLocation = null;
+			isCurrentResponseLocationImportant = important;
+			return; // this just cancels the redirect
+		}
+
 		assert(!outputtedResponseData);
 		responseStatus = "302 Found";
 		responseLocation = uri.strip;
@@ -1326,6 +1327,9 @@ class Cgi {
 					stdout.rawWrite(t);
 			}
 		}
+
+		if(isAll)
+			close(); // if you say it is all, that means we're definitely done
 	}
 
 	void flush() {
@@ -1625,6 +1629,7 @@ string encodeVariables(in string[][string] data) {
 
 // http helper functions
 
+// for chunked responses (which embedded http does whenever possible)
 const(ubyte)[] makeChunk(const(ubyte)[] data) {
 	const(ubyte)[] ret;
 
@@ -1655,49 +1660,108 @@ mixin template GenericMain(alias fun, T...) {
 	mixin CustomCgiMain!(Cgi, fun, T);
 }
 
+string simpleHtmlEncode(string s) {
+	return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />\n");
+}
+
+string messageFromException(Throwable t) {
+	string message;
+	if(t !is null) {
+		debug message = t.toString();
+		else  message = "An unexpected error has occurred.";
+	} else {
+		message = "Unknown error";
+	}
+	return message;
+}
+
+string plainHttpError(bool isCgi, string type, Throwable t) {
+	auto message = messageFromException(t);
+	message = simpleHtmlEncode(message);
+
+	return format("%s %s\r\nContent-Length: %s\r\n\r\n%s",
+		isCgi ? "Status:" : "HTTP/1.0",
+		type, message.length, message);
+}
+
+// returns true if we were able to recover reasonably
+bool handleException(Cgi cgi, Throwable t) {
+	if(cgi.isClosed) {
+		// if the channel has been explicitly closed, we can't handle it here
+		return true;
+	}
+
+	if(cgi.outputtedResponseData) {
+		// the headers are sent, but the channel is open... since it closes if all was sent, we can append an error message here.
+		return false; // but I don't want to, since I don't know what condition the output is in; I don't want to inject something.
+	} else {
+		// no headers are sent, we can send a full blown error and recover
+		cgi.setCache(false);
+		cgi.setResponseContentType("text/html");
+		cgi.setResponseLocation(null); // cancel the redirect
+		cgi.setResponseStatus("500 Internal Server Error");
+		cgi.write(simpleHtmlEncode(messageFromException(t)));
+		cgi.close();
+		return true;
+	}
+}
+
 /// If you want to use a subclass of Cgi with generic main, use this mixin.
 mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
-version(embedded_httpd)
-	import arsd.httpd;
 
 	void main() {
-		version(embedded_httpd) {
+		version(netman_httpd) {
+			import arsd.httpd;
 			// what about forwarding the other constructor args?
 			// this probably needs a whole redoing...
 			serveHttp!CustomCgi(&fun, 8080);//5005);
 			return;
-		}
-
-		version(httpd2) {
-			// this might replace embedded_httpd entirely in the near future
+		} else
+		version(embedded_httpd) {
 			auto manager = new ListeningConnectionManager(8085);
 			foreach(connection; manager) {
 				scope(failure) {
-					// FIXME
-
-					// FIXME: an exception after cgi.write() can output bad stuff according to the http protocol
-					auto msg = "Something went wrong.";
-					sendAll(connection, format("HTTP/1.0 500 Internal Server Error\r\nContent-Length: %s\r\n\r\n%s", msg.length, msg));
+					// catch all for other errors
+					sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
 					connection.close();
 				}
 				bool closeConnection;
 				auto ir = new BufferedInputRange(connection);
 				while(!ir.empty) {
-					auto cgi = new Cgi(ir, &closeConnection);
-					fun(cgi);
-					cgi.close();
-					cgi.dispose();
+					Cgi cgi;
+					try {
+						cgi = new CustomCgi(ir, &closeConnection);
+					} catch(Throwable t) {
+						// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
+						// anyway let's kill the connection
+						sendAll(connection, plainHttpError(false, "400 Bad Request", t));
+						closeConnection = true;
+						break;
+					}
+					assert(cgi !is null);
+					scope(exit)
+						cgi.dispose();
 
-					if(!ir.empty)
-						ir.popFront(); // get the next????
+					try {
+						fun(cgi);
+						cgi.close();
+					} catch(Throwable t) {
+						// a processing error can be recovered from
+						if(!handleException(cgi, t))
+							closeConnection = true;
+					}
+
+					if(closeConnection) {
+						connection.close();
+						break;
+					} else {
+						if(!ir.empty)
+							ir.popFront(); // get the next
+					}
 				}
-
-				if(closeConnection)
-					connection.close();
 			}
-		}
-
+		} else
 		version(scgi) {
 			import std.exception;
 			import al = std.algorithm;
@@ -1706,61 +1770,49 @@ version(embedded_httpd)
 			// this threads...
 			foreach(connection; manager) {
 				// and now we can buffer
+				scope(failure)
+					connection.close();
 
-				int state = 0;
 				size_t size;
-				size_t contentLength;
 
 				string[string] headers;
 
 				auto range = new BufferedInputRange(connection);
 				more_data:
 				auto chunk = range.front();
-				switch(state) {
-					default: assert(0);
-					case 0: // waiting for colon for header length
-						auto idx = al.indexOf(chunk, ':');
-						if(idx == -1) {
-							range.popFront();
-							goto more_data;
-						}
-
-						size = to!size_t(cast(string) chunk[0 .. idx]);
-						chunk = range.consume(idx + 1);
-						state = 1;
-						goto case;
-					case 1: // reading headers
-						if(chunk.length < size)
-							range.popFront(0, size + 1);
-						// we are now guaranteed to have enough
-						chunk = range.front();
-						assert(chunk.length > size);
-
-						int idx = 0;
-						string key;
-						string value;
-						foreach(part; al.splitter(chunk, '\0')) {
-							if(idx & 1) { // odd is value
-								value = cast(string)(part.idup);
-								headers[key] = value; // commit
-								if(key == "CONTENT_LENGTH")
-									contentLength = to!int(value);
-							} else
-								key = cast(string)(part.idup);
-							idx++;
-						}
-
-						enforce(chunk[size] == ','); // the terminator
-
-						range.consume(size + 1);
-						state = 2;
-						goto case;
-					case 2:	// reading data
-						// this will be done by Cgi
+				// waiting for colon for header length
+				auto idx = al.indexOf(chunk, ':');
+				if(idx == -1) {
+					range.popFront();
+					goto more_data;
 				}
 
+				size = to!size_t(cast(string) chunk[0 .. idx]);
+				chunk = range.consume(idx + 1);
+				// reading headers
+				if(chunk.length < size)
+					range.popFront(0, size + 1);
+				// we are now guaranteed to have enough
+				chunk = range.front();
+				assert(chunk.length > size);
 
-				// if we are here, we're set.
+				idx = 0;
+				string key;
+				string value;
+				foreach(part; al.splitter(chunk, '\0')) {
+					if(idx & 1) { // odd is value
+						value = cast(string)(part.idup);
+						headers[key] = value; // commit
+					} else
+						key = cast(string)(part.idup);
+					idx++;
+				}
+
+				enforce(chunk[size] == ','); // the terminator
+
+				range.consume(size + 1);
+				// reading data
+				// this will be done by Cgi
 
 				const(ubyte)[] getScgiChunk() {
 					// we are already primed
@@ -1781,26 +1833,28 @@ version(embedded_httpd)
 					// I don't *think* I have to do anything....
 				}
 
-				auto cgi = new CustomCgi(5_000_000, headers, &getScgiChunk, &writeScgi, &flushScgi);
+				Cgi cgi;
+				try {
+					cgi = new CustomCgi(5_000_000, headers, &getScgiChunk, &writeScgi, &flushScgi);
+				} catch(Throwable t) {
+					sendAll(connection, plainHttpError(true, "400 Bad Request", t));
+					connection.close();
+					continue; // this connection is dead
+				}
+				assert(cgi !is null);
+				scope(exit) cgi.dispose();
 				try {
 					fun(cgi);
 					cgi.close();
-					cgi.dispose();
 				} catch(Throwable t) {
 					// no std err
-					auto msg = "Status: 500 Internal Server Error\n";
-					msg ~= "Content-Type: text/plain\n\n";
-					debug msg ~= t.toString;
-					else  msg ~= "An unexpected error has occurred.";
-
-					sendAll(connection, msg);
-					connection.close();
-
-					// FIXME: what about cgi.dispose?
+					if(!handleException(cgi, t)) {
+						connection.close();
+						continue;
+					}
 				}
 			}
-		}
-
+		} else
 		version(fastcgi) {
 			FCGX_Stream* input, output, error;
 			FCGX_ParamArray env;
@@ -1832,65 +1886,54 @@ version(embedded_httpd)
 					fcgienv[name] = value;
 				}
 
-				string getFcgiEnvVar(string what) {
-					if(what in fcgienv)
-						return fcgienv[what];
-					return "";
-				}
-
 				void flushFcgi() {
 					FCGX_FFlush(output);
 				}
 
-				auto cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
+				Cgi cgi;
+				try {
+					cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
+				} catch(Throwable t) {
+					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+					writeFcgi(plainHttpError(true, "400 Bad Request", t));
+					continue;
+				}
+				assert(cgi !is null);
+				scope(exit) cgi.dispose();
 				try {
 					fun(cgi);
 					cgi.close();
-					cgi.dispose();
 				} catch(Throwable t) {
-					if(1) { // !cgi.isClosed) 
-						auto msg = t.toString;
-						FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, error);
-						msg = "Status: 500 Internal Server Error\n";
-						msg ~= "Content-Type: text/plain\n\n";
-						debug msg ~= t.toString;
-						else  msg ~= "An unexpected error has occurred.";
-
-						FCGX_PutStr(cast(ubyte*) msg.ptr, msg.length, output);
-					}
+					// log it to the error stream
+					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+					// handle it for the user, if we can
+					if(!handleException(cgi, t))
+						continue;
 				}
 			}
+		} else {
+			// standard CGI is the default version
+			Cgi cgi;
+			try {
+				cgi = new CustomCgi(T);
+			} catch(Throwable t) {
+				stderr.writeln(t.msg);
+				// the real http server will probably handle this;
+				// most likely, this is a bug in Cgi. But, oh well.
+				stdout.write(plainHttpError(true, "400 Bad Request", t));
+				return;
+			}
+			assert(cgi !is null);
+			scope(exit) cgi.dispose();
 
-			return;
-		}
-
-		auto cgi = new CustomCgi(T);
-
-		try {
-			fun(cgi);
-			cgi.close();
-			cgi.dispose();
-		} catch (Throwable c) {
-			// if the thing is closed, the app probably wrote an error message already, don't do it again.
-			//if(cgi.isClosed)
-				//goto doNothing;
-
-			// FIXME: this sucks
-			string message = "An unexpected error has occurred.";
-
-			debug message = c.toString();
-
-			writefln("Status: 500 Internal Server Error\nContent-Type: text/html\n\n%s", "<html><head><title>Internal Server Error</title></head><body><br><br><br><br><code><pre>"~(std.array.replace(std.array.replace(message, "<", "&lt;"), ">", "&gt;"))~"</pre></code></body></html>");
-
-			string str = c.toString();
-			// wtf it is bitching about a conflict with std.algorithm... out of the blue.
-			auto idx = std.string.indexOf(str, "\n");
-			if(idx != -1)
-				str = str[0..idx];
-
-			doNothing:
-
-			stderr.writeln(str);
+			try {
+				fun(cgi);
+				cgi.close();
+			} catch (Throwable c) {
+				stderr.writeln(c.msg);
+				if(!handleException(cgi, t))
+					return;
+			}
 		}
 	}
 }
@@ -2005,6 +2048,7 @@ version(fastcgi) {
 import std.socket;
 
 // it is a class primarily for reference semantics
+// I might change this interface
 class BufferedInputRange {
 	this(Socket source, ubyte[] buffer = null) {
 		this.source = source;
@@ -2234,18 +2278,9 @@ long getUtcTime() { // renamed primarily to avoid conflict with std.date itself
 	return sysTimeToDTime(Clock.currTime(UTC()));
 }
 
-/*
-Copyright: Adam D. Ruppe, 2008 - 2012
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe
-
-	Copyright Adam D. Ruppe 2008 - 2012.
-Distributed under the Boost Software License, Version 1.0.
-   (See accompanying file LICENSE_1_0.txt or copy at
-	http://www.boost.org/LICENSE_1_0.txt)
-*/
 
 
+// this is a helper to read HTTP transfer-encoding: chunked responses
 immutable(ubyte[]) dechunk(BufferedInputRange ir) {
 	immutable(ubyte)[] ret;
 
@@ -2338,6 +2373,7 @@ immutable(ubyte[]) dechunk(BufferedInputRange ir) {
 	return ret;
 }
 
+// I want to be able to get data from multiple sources the same way...
 interface ByChunkRange {
 	bool empty();
 	void popFront();
@@ -2398,3 +2434,14 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 	};
 }
 
+
+/*
+Copyright: Adam D. Ruppe, 2008 - 2012
+License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+Authors: Adam D. Ruppe
+
+	Copyright Adam D. Ruppe 2008 - 2012.
+Distributed under the Boost Software License, Version 1.0.
+   (See accompanying file LICENSE_1_0.txt or copy at
+	http://www.boost.org/LICENSE_1_0.txt)
+*/
