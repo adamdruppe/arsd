@@ -1465,9 +1465,12 @@ class Cgi {
 
 /// Represents a url that can be broken down or built up through properties
 struct Uri {
-	alias toString this;
+	alias toString this; // blargh idk a url really is a string, but should it be implicit?
+
+	// scheme//userinfo@host:port/path?query#fragment
 
 	string scheme; /// e.g. "http" in "http://example.com/"
+	string userinfo; /// the username (and possibly a password) in the uri
 	string host; /// the domain name
 	int port; /// port number, if given. Will be zero if a port was not explicitly given
 	string path; /// e.g. "/folder/file.html" in "http://example.com/folder/file.html"
@@ -1494,7 +1497,13 @@ struct Uri {
 			scheme = m.captures[2];
 			auto authority = m.captures[4];
 
-			auto idx = authority.indexOf(":");
+			auto idx = authority.indexOf("@");
+			if(idx != -1) {
+				userinfo = authority[0 .. idx];
+				authority = authority[idx + 1 .. $];
+			}
+
+			idx = authority.indexOf(":");
 			if(idx == -1) {
 				port = 0; // 0 means not specified; we should use the default for the scheme
 				host = authority;
@@ -1514,8 +1523,12 @@ struct Uri {
 		string ret;
 		if(scheme.length)
 			ret ~= scheme ~ ":";
+		if(userinfo.length || host.length)
+			ret ~= "//";
+		if(userinfo.length)
+			ret ~= userinfo ~ "@";
 		if(host.length)
-			ret ~= "//" ~ host;
+			ret ~= host;
 		if(port)
 			ret ~= ":" ~ to!string(port);
 
@@ -1546,6 +1559,8 @@ struct Uri {
 	Uri basedOn(in Uri baseUrl) const {
 		Uri n = this; // copies
 		// n.uriInvalidated = true; // make sure we regenerate...
+
+		// userinfo is not inherited... is this wrong?
 
 		// if anything is given in the existing url, we don't use the base anymore.
 		if(n.scheme.empty) {
