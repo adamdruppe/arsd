@@ -1464,103 +1464,160 @@ class Cgi {
 // should this be a separate module? Probably, but that's a hassle.
 
 /// Represents a url that can be broken down or built up through properties
-// FIXME: finish this
-struct Url {
-	string uri;
-	alias uri this;
+struct Uri {
+	alias toString this;
 
+	string scheme; /// e.g. "http" in "http://example.com/"
+	string host; /// the domain name
+	int port; /// port number, if given. Will be zero if a port was not explicitly given
+	string path; /// e.g. "/folder/file.html" in "http://example.com/folder/file.html"
+	string query; /// the stuff after the ? in a uri
+	string fragment; /// the stuff after the # in a uri.
+
+	// idk if i want to keep these, since the functions they wrap are used many, many, many times in existing code, so this is either an unnecessary alias or a gratuitous break of compatibility
+	// the decode ones need to keep different names anyway because we can't overload on return values...
+	static string encode(string s) { return std.uri.encodeComponent(s); }
+	static string encode(string[string] s) { return encodeVariables(s); }
+	static string encode(string[][string] s) { return encodeVariables(s); }
+
+	/// Breaks down a uri string to its components
 	this(string uri) {
-		this.uri = uri;
+		reparse(uri);
 	}
 
-	string toString() {
-		return uri;
+	private void reparse(string uri) {
+		import std.regex;
+		// from RFC 3986
+		enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
+		auto m = match(uri, ctr);
+		if(m) {
+			scheme = m.captures[2];
+			auto authority = m.captures[4];
+
+			auto idx = authority.indexOf(":");
+			if(idx == -1) {
+				port = 0; // 0 means not specified; we should use the default for the scheme
+				host = authority;
+			} else {
+				host = authority[0 .. idx];
+				port = to!int(authority[idx + 1 .. $]);
+			}
+
+			path = m.captures[5];
+			query = m.captures[7];
+			fragment = m.captures[9];
+		}
+		// uriInvalidated = false;
 	}
 
-	/// Returns a new absolute Url given a base. It treats this one as
+	private string rebuildUri() const {
+		string ret;
+		if(scheme.length)
+			ret ~= scheme ~ ":";
+		if(host.length)
+			ret ~= "//" ~ host;
+		if(port)
+			ret ~= ":" ~ to!string(port);
+
+		ret ~= path;
+
+		if(query.length)
+			ret ~= "?" ~ query;
+
+		if(fragment.length)
+			ret ~= "#" ~ fragment;
+
+		// uri = ret;
+		// uriInvalidated = false;
+		return ret;
+	}
+
+	/// Converts the broken down parts back into a complete string
+	string toString() const {
+		// if(uriInvalidated)
+			return rebuildUri();
+	}
+
+	/// Returns a new absolute Uri given a base. It treats this one as
 	/// relative where possible, but absolute if not. (If protocol, domain, or
 	/// other info is not set, the new one inherits it from the base.)
-	Url basedOn(in Url baseUrl) const {
-		Url n = this;
+	///
+	/// Browsers use a function like this to figure out links in html.
+	Uri basedOn(in Uri baseUrl) const {
+		Uri n = this; // copies
+		// n.uriInvalidated = true; // make sure we regenerate...
 
 		// if anything is given in the existing url, we don't use the base anymore.
-		if(n.protocol is null) {
-			n.protocol = baseUrl.protocol;
-			if(n.server is null) {
-				n.server = baseUrl.server;
+		if(n.scheme.empty) {
+			n.scheme = baseUrl.scheme;
+			if(n.host.empty) {
+				n.host = baseUrl.host;
 				if(n.port == 0) {
 					n.port = baseUrl.port;
 					if(n.path.length > 0 && n.path[0] != '/') {
-						n.path = baseUrl.path[0 .. baseUrl.path.lastIndexOf("/") + 1] ~ n.path;
+						auto b = baseUrl.path[0 .. baseUrl.path.lastIndexOf("/") + 1];
+						if(b.length == 0)
+							b = "/";
+						n.path = b ~ n.path;
+					} else if(n.path.length == 0) {
+						n.path = baseUrl.path;
 					}
 				}
 			}
 		}
-
-		n.uri = n.toString();
 
 		return n;
 	}
 
 	// This can sometimes be a big pain in the butt for me, so lots of copy/paste here to cover
 	// the possibilities.
-	/*
 	unittest {
-		auto url = Url("cool.html"); // checking relative links
-		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/what/cool.html");
-		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/what/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/what/cool.html");
-		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/cool.html");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/what/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/cool.html");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com/cool.html");
+		auto url = Uri("cool.html"); // checking relative links
 
-		url = Url("/something/cool.html"); // same server, different path
-		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/something/cool.html");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Uri("https://test.com/what/test.html")) == "https://test.com/what/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Uri("http://test.com/")) == "http://test.com/cool.html");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/cool.html");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com/cool.html");
 
-		url = Url("?query=answer"); // same path. server, protocol, and port, just different query string and fragment
-		assert(url.basedOn(Url("http://test.com/what/test.html")) == "http://test.com/what/test.html?query=answer");
-		assert(url.basedOn(Url("https://test.com/what/test.html")) == "https://test.com/what/test.html?query=answer");
-		assert(url.basedOn(Url("http://test.com/what/")) == "http://test.com/what/?query=answer");
-		assert(url.basedOn(Url("http://test.com/")) == "http://test.com/?query=answer");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com?query=answer");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b")) == "http://test.com/what/test.html?query=answer");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/test.html?query=answer");
-		assert(url.basedOn(Url("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/test.html?query=answer");
-		assert(url.basedOn(Url("http://test.com")) == "http://test.com?query=answer");
+		url = Uri("/something/cool.html"); // same server, different path
+		assert(url.basedOn(Uri("http://test.com/what/test.html")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("https://test.com/what/test.html")) == "https://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/something/cool.html");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com/something/cool.html");
 
-		url = Url("#anchor"); // everything should remain the same except the anchor
+		url = Uri("?query=answer"); // same path. server, protocol, and port, just different query string and fragment
+		assert(url.basedOn(Uri("http://test.com/what/test.html")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Uri("https://test.com/what/test.html")) == "https://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Uri("http://test.com/what/")) == "http://test.com/what/?query=answer");
+		assert(url.basedOn(Uri("http://test.com/")) == "http://test.com/?query=answer");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com?query=answer");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/test.html?query=answer");
+		assert(url.basedOn(Uri("http://test.com")) == "http://test.com?query=answer");
 
-		url = Url("//example.com"); // same protocol, but different server. the path here should be blank.
+		url = Uri("#anchor"); // everything should remain the same except the anchor
 
-		url = Url("//example.com/example.html"); // same protocol, but different server and path
+		url = Uri("//example.com"); // same protocol, but different server. the path here should be blank.
 
-		url = Url("http://example.com/test.html"); // completely absolute link should never be modified
+		url = Uri("//example.com/example.html"); // same protocol, but different server and path
 
-		url = Url("http://example.com"); // completely absolute link should never be modified, even if it has no path
+		url = Uri("http://example.com/test.html"); // completely absolute link should never be modified
+
+		url = Uri("http://example.com"); // completely absolute link should never be modified, even if it has no path
 
 		// FIXME: add something for port too
-
-
 	}
-	*/
-
-	string protocol;
-	string server;
-	int port;
-	string path;
-	string query;
-	string fragment;
 }
 
 
@@ -2212,9 +2269,14 @@ class ListeningConnectionManager {
 
 		while(!loopBroken && running) {
 			auto sn = listener.accept();
-			auto thread = new ConnectionThread(sn, &loopBroken, dg);
-			thread.start();
-			// loopBroken = dg(sn);
+			try {
+				auto thread = new ConnectionThread(sn, &loopBroken, dg);
+				thread.start();
+				// loopBroken = dg(sn);
+			} catch(Exception e) {
+				// if a connection goes wrong, we want to just say no, but try to carry on unless it is an Error of some sort (in which case, we'll die. You might want an external helper program to revive the server when it dies)
+				sn.close();
+			}
 		}
 
 		return loopBroken;
