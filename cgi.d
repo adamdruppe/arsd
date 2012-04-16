@@ -365,7 +365,8 @@ class Cgi {
 
 				onRequestBodyDataReceived(amountReceived, originalContentLength);
 				postArray = assumeUnique(pps._post);
-				files = assumeUnique(pps._files);
+				filesArray = assumeUnique(pps._files);
+				files = keepLastOf(filesArray);
 				post = keepLastOf(postArray);
 				cleanUpPostDataState();
 			}
@@ -993,6 +994,16 @@ class Cgi {
 
 		return assumeUnique(ca);
 	}
+
+	// FIXME duplication
+	private immutable(UploadedFile[string]) keepLastOf(in UploadedFile[][string] arr) {
+		UploadedFile[string] ca;
+		foreach(k, v; arr)
+			ca[k] = v[$-1];
+
+		return assumeUnique(ca);
+	}
+
 
 	private immutable(string[][string]) getCookieArray() {
 		auto forTheLoveOfGod = decodeVariables(cookie, "; ");
