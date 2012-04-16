@@ -2206,6 +2206,7 @@ void hackAroundLinkerError() {
       writeln(typeid(immutable(char)[][][immutable(char)[]]));
       writeln(typeid(Cgi.UploadedFile[immutable(char)[]]));
       writeln(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
+      writeln(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]));
       writeln(typeid(immutable(char[])[immutable(char)[]]));
       // this is getting kinda ridiculous btw. Moving assoc arrays
       // to the library is the pain that keeps on coming.
