@@ -1,3 +1,55 @@
+/++
+	Provides a uniform server-side API for CGI, FastCGI, SCGI, and HTTP web applications.
+
+	---
+	import arsd.cgi;
+
+	// Instead of writing your own main(), you should write a function
+	// that takes a Cgi param, and use mixin GenericMain
+	// for maximum compatibility with different web servers.
+	void hello(Cgi cgi) {
+		cgi.write("Hello, world!");
+	}
+
+	mixin GenericMain!hello;
+	---
+
+	Concepts:
+		Input: get, post, request(), files, cookies, pathInfo, requestMethod, and HTTP headers (headers, userAgent, referrer, accept, authorization, lastEventId
+		Output: cgi.write(), cgi.header(), cgi.setResponseStatus, cgi.setResponseContentType, gzipResponse
+		Cookies: setCookie, clearCookie, cookie, cookies
+		Caching: cgi.setResponseExpires, cgi.updateResponseExpires, cgi.setCache
+		Redirections: cgi.setResponseLocation
+		Other Information: remoteAddress, https, port, scriptName, requestUri, getCurrentCompleteUri, onRequestBodyDataReceived
+		Overriding behavior: handleIncomingDataChunk, prepareForIncomingDataChunks, cleanUpPostDataState
+
+		Installing: Apache, IIS, CGI, FastCGI, SCGI, embedded HTTPD (not recommended for production use)
+
+	Guide_for_PHP_users:
+		If you are coming from PHP, here's a quick guide to help you get started:
+
+		$_GET["var"] == cgi.get["var"]
+		$_POST["var"] == cgi.post["var"]
+		$_COOKIE["var"] == cgi.cookies["var"]
+
+		In PHP, you can give a form element a name like "something[]", and then
+		$_POST["something"] gives an array. In D, you can use whatever name
+		you want, and access an array of values with the cgi.getArray["name"] and
+		cgi.postArray["name"] members.
+
+		echo("hello"); == cgi.write("hello");
+
+		$_SERVER["REMOTE_ADDR"] == cgi.remoteAddress
+		$_SERVER["HTTP_HOST"] == cgi.host
+
+	See_Also:
+
+	You may also want to see dom.d, web.d, and html.d for more code for making
+	web applications. database.d, mysql.d, postgres.d, and sqlite.d can help in
+	accessing databases.
+
+	If you are looking to access a web application via HTTP, try curl.d.
++/
 module arsd.cgi;
 
 // FIXME: the location header is supposed to be an absolute url I guess.
@@ -9,14 +61,16 @@ module arsd.cgi;
 // FIXME: 100 Continue in the nph section? Probably belongs on the
 // httpd class though.
 
+// these are public so you can mixin GenericMain.
+// FIXME: use a function level import instead!
 public import std.string;
+public import std.stdio;
+public import std.conv;
 import std.uri;
 import std.exception;
 import std.base64;
 static import std.algorithm;
-public import std.stdio;
 import std.datetime;
-public import std.conv;
 import std.range;
 
 import std.process;
@@ -134,22 +188,17 @@ static:
 }
 }
 
-string makeDataUrl(string mimeType, in void[] data) {
-	auto data64 = Base64.encode(cast(const(ubyte[])) data);
-	return "data:" ~ mimeType ~ ";base64," ~ assumeUnique(data64);
-}
-
-
 /// The main interface with the web request
 class Cgi {
   public:
+	/// the methods a request can be
 	enum RequestMethod { GET, HEAD, POST, PUT, DELETE, // GET and POST are the ones that really work
 		// these are defined in the standard, but idk if they are useful for anything
 		OPTIONS, TRACE, CONNECT,
 		// this is an extension for when the method is not specified and you want to assume
 		CommandLine }
 
-	/** Initializes it using the CGI (or FastCGI) interface */
+	/** Initializes it using a CGI or CGI-like interface */
 	this(long maxContentLength = 5_000_000,
 		// use this to override the environment variable listing
 		in string[string] env = null,
@@ -365,14 +414,14 @@ class Cgi {
 			// do NOT keep mutable references to these anywhere!
 			// I assume they are unique in the constructor once we're all done getting data.
 			string[][string] _post;
-			UploadedFile[string] _files;
+			UploadedFile[][string] _files;
 		}
 
 		PostParserState pps;
 	}
 
 	// given a content type and length, decide what we're going to do with the data..
-	void prepareForIncomingDataChunks(string contentType, ulong contentLength) {
+	protected void prepareForIncomingDataChunks(string contentType, ulong contentLength) {
 		pps.expectedLength = contentLength;
 
 		auto terminator = contentType.indexOf(";");
@@ -407,7 +456,7 @@ class Cgi {
 	// FIXME: I do some copying in here that I'm pretty sure is unnecessary, and the
 	// file stuff I'm sure is inefficient. But, my guess is the real bottleneck is network
 	// input anyway, so I'm not going to get too worked up about it right now.
-	void handleIncomingDataChunk(const(ubyte)[] chunk) {
+	protected void handleIncomingDataChunk(const(ubyte)[] chunk) {
 		assert(chunk.length <= 32 * 1024 * 1024); // we use chunk size as a memory constraint thing, so
 							// if we're passed big chunks, it might throw unnecessarily.
 							// just pass it smaller chunks at a time.
@@ -465,7 +514,7 @@ class Cgi {
 					// I'm not sure if other environments put files in post or not...
 					// I used to not do it, but I think I should, since it is there...
 					pps._post[pps.piece.name] ~= pps.piece.filename;
-					pps._files[pps.piece.name] = pps.piece;
+					pps._files[pps.piece.name] ~= pps.piece;
 				} else
 					pps._post[pps.piece.name] ~= cast(string) pps.piece.content;
 
@@ -712,7 +761,7 @@ class Cgi {
 		}
 	}
 
-	void cleanUpPostDataState() {
+	protected void cleanUpPostDataState() {
 		pps = PostParserState.init;
 	}
 
@@ -747,27 +796,23 @@ class Cgi {
 		this(ir, ir.source.remoteAddress().toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
 	}
 
-	/** Initializes it from some almost* raw HTTP request data
-		headers[0] should be the "GET / HTTP/1.1" line
+	/**
+		Initializes it from raw HTTP request data. GenericMain uses this when you compile with -version=embedded_httpd.
 
-		* Note the data should /not/ be chunked at this point.
+		NOTE: If you are behind a reverse proxy, the values here might not be what you expect.... FIXME somehow.
 
-		headers: each http header, excluding the \r\n at the end, but including the request line at headers[0]
-		data: the request data (usually POST variables)
-		address: the remote IP
-		_rawDataOutput: delegate to accept response data. If not null, this is called for all data output, which
-			will include HTTP headers and the status line. The data may also be chunked; it is already suitable for
-			being sent directly down the wire.
+		Params:
+			inputData = the incoming data, including headers and other raw http data.
+				When the constructor exits, it will leave this range exactly at the start of
+				the next request on the connection (if there is one).
 
-			If null, the data is sent to stdout.
-
-
-		If you are behind a reverse proxy, getting this right is tricky.... FIXME
-
-
-		FIXME: data should be able to be streaming, for large files
-			indeed, it should probably just take a file descriptor
-			or two and do all the work itself.
+			address = the IP address of the remote user
+			_port = the port number of the connection
+			pathInfoStarts = the offset into the path component of the http header where the SCRIPT_NAME ends and the PATH_INFO begins.
+			_https = if this connection is encrypted (note that the input data must not actually be encrypted)
+			_rawDataOutput = delegate to accept response data. It should write to the socket or whatever; Cgi does all the needed processing to speak http.
+			_flush = if _rawDataOutput buffers, this delegate should flush the buffer down the wire
+			closeConnection = if the request asks to close the connection, *closeConnection == true.
 	*/
 	this(
 		BufferedInputRange inputData,
@@ -934,7 +979,8 @@ class Cgi {
 			foreach(dataChunk; dataByChunk)
 				handleIncomingDataChunk(dataChunk);
 			postArray = assumeUnique(pps._post);
-			files = assumeUnique(pps._files);
+			filesArray = assumeUnique(pps._files);
+			files = keepLastOf(filesArray);
 			post = keepLastOf(postArray);
 			cleanUpPostDataState();
 		}
@@ -1378,8 +1424,55 @@ class Cgi {
 		closed = true;
 	}
 
-	/// Gets a request variable as a specific type, or the default value of it isn't there
-	/// or isn't convertable to the request type. Checks both GET and POST variables.
+	/++
+		Gets a request variable as a specific type, or the default value of it isn't there
+		or isn't convertible to the request type.
+		
+		Checks both GET and POST variables, preferring the POST variable, if available.
+
+		A nice trick is using the default value to choose the type:
+
+		---
+			/*
+				The return value will match the type of the default.
+				Here, I gave 10 as a default, so the return value will
+				be an int.
+
+				If the user-supplied value cannot be converted to the
+				requested type, you will get the default value back.
+			*/
+			int a = cgi.request("number", 10);
+
+			if(cgi.get["number"] == "11")
+				assert(a == 11); // conversion succeeds
+
+			if("number" !in cgi.get)
+				assert(a == 10); // no value means you can't convert - give the default
+
+			if(cgi.get["number"] == "twelve")
+				assert(a == 10); // conversion from string to int would fail, so we get the default
+		---
+
+		You can use an enum as an easy whitelist, too:
+
+		---
+			enum Operations {
+				add, remove, query
+			}
+
+			auto op = cgi.request("op", Operations.query);
+
+			if(cgi.get["op"] == "add")
+				assert(op == Operations.add);
+			if(cgi.get["op"] == "remove")
+				assert(op == Operations.remove);
+			if(cgi.get["op"] == "query")
+				assert(op == Operations.query);
+
+			if(cgi.get["op"] == "random string")
+				assert(op == Operations.query); // the value can't be converted to the enum, so we get the default
+		---
+	+/
 	T request(T = string)(in string name, in T def = T.init) const nothrow {
 		try {
 			return
@@ -1389,6 +1482,7 @@ class Cgi {
 		} catch(Exception e) { return def; }
 	}
 
+	/// Is the output already closed?
 	bool isClosed() const {
 		return closed;
 	}
@@ -1447,7 +1541,14 @@ class Cgi {
 	immutable(string[string]) get; 	/// The data from your query string in the url, only showing the last string of each name. If you want to handle multiple values with the same name, use getArray. This only works right if the query string is x-www-form-urlencoded; the default you see on the web with name=value pairs separated by the & character.
 	immutable(string[string]) post; /// The data from the request's body, on POST requests. It parses application/x-www-form-urlencoded data (used by most web requests, including typical forms), and multipart/form-data requests (used by file uploads on web forms) into the same container, so you can always access them the same way. It makes no attempt to parse other content types. If you want to accept an XML Post body (for a web api perhaps), you'll need to handle the raw data yourself.
 	immutable(string[string]) cookies; /// Separates out the cookie header into individual name/value pairs (which is how you set them!)
-	immutable(UploadedFile[string]) files; /// Represents user uploaded files. When making a file upload form, be sure to follow the standard: set method="POST" and enctype="multipart/form-data" in your html <form> tag attributes. The key into this array is the name attribute on your input tag, just like with other post variables. See the comments on the UploadedFile struct for more information about the data inside, including important notes on max size and content location.
+
+	/**
+		Represents user uploaded files.
+		
+		When making a file upload form, be sure to follow the standard: set method="POST" and enctype="multipart/form-data" in your html <form> tag attributes. The key into this array is the name attribute on your input tag, just like with other post variables. See the comments on the UploadedFile struct for more information about the data inside, including important notes on max size and content location.
+	*/
+	immutable(UploadedFile[][string]) filesArray;
+	immutable(UploadedFile[string]) files;
 
 	/// Use these if you expect multiple items submitted with the same name. btw, assert(get[name] is getArray[name][$-1); should pass. Same for post and cookies.
 	/// the order of the arrays is the order the data arrives
@@ -1462,6 +1563,12 @@ class Cgi {
 
 
 // should this be a separate module? Probably, but that's a hassle.
+
+/// Makes a data:// uri that can be used as links in most newer browsers (IE8+).
+string makeDataUrl(string mimeType, in void[] data) {
+	auto data64 = Base64.encode(cast(const(ubyte[])) data);
+	return "data:" ~ mimeType ~ ";base64," ~ assumeUnique(data64);
+}
 
 /// Represents a url that can be broken down or built up through properties
 struct Uri {
@@ -2110,30 +2217,27 @@ version(fastcgi) {
 		alias int c_int;
 
 	extern(C) {
+		struct FCGX_Stream {
+			ubyte* rdNext;
+			ubyte* wrNext;
+			ubyte* stop;
+			ubyte* stopUnget;
+			c_int isReader;
+			c_int isClosed;
+			c_int wasFCloseCalled;
+			c_int FCGI_errno;
+			void* function(FCGX_Stream* stream) fillBuffProc;
+			void* function(FCGX_Stream* stream, c_int doClose) emptyBuffProc;
+			void* data;
+		}
 
-	struct FCGX_Stream {
-		ubyte* rdNext;
-		ubyte* wrNext;
-		ubyte* stop;
-		ubyte* stopUnget;
-		c_int isReader;
-		c_int isClosed;
-		c_int wasFCloseCalled;
-		c_int FCGI_errno;
-		void* function(FCGX_Stream* stream) fillBuffProc;
-		void* function(FCGX_Stream* stream, c_int doClose) emptyBuffProc;
-		void* data;
-	}
+		alias char** FCGX_ParamArray;
 
-	alias char** FCGX_ParamArray;
-
-	c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
-	c_int FCGX_GetChar(FCGX_Stream* stream);
-	c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
-	c_int FCGX_HasSeenEOF(FCGX_Stream* stream);
-	c_int FCGX_FFlush(FCGX_Stream *stream);
-
-
+		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
+		c_int FCGX_GetChar(FCGX_Stream* stream);
+		c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
+		c_int FCGX_HasSeenEOF(FCGX_Stream* stream);
+		c_int FCGX_FFlush(FCGX_Stream *stream);
 	}
 }
 
@@ -2298,7 +2402,7 @@ class ListeningConnectionManager {
 	}
 }
 
-/// helper function to send a lot to a socket. Since this blocks for the buffer (possibly several times), you should probably call it in a separate thread or something.
+// helper function to send a lot to a socket. Since this blocks for the buffer (possibly several times), you should probably call it in a separate thread or something.
 void sendAll(Socket s, const(void)[] data) {
 	if(data.length == 0) return;
 	ptrdiff_t amount;
@@ -2370,11 +2474,8 @@ string getTempDirectory() {
 	return path;
 }
 
-// I FUCKING HATE that the Phobos managers decided to replace std.date with code that had
-// no idea what kinds of things std.date was useful for.
-//
-// And to add insult to injury, they are going to remove the tiny olive branch the new
-// module offered. Whatever, I want it at least some of it.
+
+// I like std.date. These functions help keep my old code and data working with phobos changing.
 
 long sysTimeToDTime(in SysTime sysTime) {
     return convert!("hnsecs", "msecs")(sysTime.stdTime - 621355968000000000L);
@@ -2382,6 +2483,12 @@ long sysTimeToDTime(in SysTime sysTime) {
 
 long getUtcTime() { // renamed primarily to avoid conflict with std.date itself
 	return sysTimeToDTime(Clock.currTime(UTC()));
+}
+
+// NOTE: new SimpleTimeZone(minutes); can perhaps work with the getTimezoneOffset() JS trick
+SysTime dTimeToSysTime(long dTime, immutable TimeZone tz = null) {
+	immutable hnsecs = convert!("msecs", "hnsecs")(dTime) + 621355968000000000L;
+	return SysTime(hnsecs, tz);
 }
 
 
