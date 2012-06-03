@@ -1518,7 +1518,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		}
 
 		count++;
-	};
+	}
 
 	auto fmt = Element.make("select");
 	fmt.name = "format";
@@ -2161,7 +2161,6 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 			else goto badType;
 		+/
 			goto badType; // FIXME
-		break;
 		case "json":
 			assert(returnValue !is null);
 			*returnValue = toJsonValue!(typeof(ret), R)(ret, formatJsonToStringAs, api);
