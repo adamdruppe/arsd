@@ -2664,13 +2664,12 @@ immutable(string[]) weekdayNames = [
 // this might be temporary
 struct TemplateFilters {
 	string date(string replacement, string[], in Element, string) {
-		auto date = to!long(replacement);
-
-		import std.date;
-
-		auto day = dateFromTime(date);
-		auto year = yearFromTime(date);
-		auto month = monthNames[monthFromTime(date)];
+		auto dateTicks = to!time_t(replacement);
+		auto date = SysTime( unixTimeToStdTime(dateTicks/1_000) );
+		
+		auto day = date.day;
+		auto year = date.year;
+		auto month = monthNames[date.month];
 		replacement = format("%s %d, %d", month, day, year);
 
 		return replacement;
