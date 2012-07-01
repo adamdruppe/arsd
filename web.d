@@ -112,6 +112,7 @@ public import std.array;
 public import std.stdio : writefln;
 public import std.conv;
 import std.random;
+import std.typetuple;
 
 import std.datetime;
 
@@ -698,7 +699,6 @@ immutable(ReflectionInfo*) prepareReflection(alias PM)(PM instantiation) if(is(P
 immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent instantiation)
 	if(is(PM : WebDotDBaseType) && is(Parent : ApiProvider))
 {
-
 	assert(instantiation !is null);
 
 	ReflectionInfo* reflection = new ReflectionInfo;
@@ -739,12 +739,16 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 	}}
 
 	// derivedMembers is changed from allMembers
-	foreach(member; __traits(derivedMembers, PM)) {
+
+	// FIXME: this seems to do the right thing with inheritance.... but I don't really understand why. Isn't the override done first, and thus overwritten by the base class version? you know maybe it is all because it still does a vtable lookup on the real object. eh idk, just confirm what it does eventually
+	foreach(Class; TypeTuple!(PM, BaseClassesTuple!(PM)))
+	static if(is(Class : ApiProvider) && !is(Class == ApiProvider))
+	foreach(member; __traits(derivedMembers, Class)) { // we do derived on a base class loop because we don't want interfaces (OR DO WE? seriously idk) and we definitely don't want stuff from Object, ApiProvider itself is out too but that might change.
 	static if(member[0] != '_') {
 		// FIXME: the filthiest of all hacks...
 		static if(!__traits(compiles, 
-			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isEnum!(__traits(getMember, PM, member))))
+			!is(typeof(__traits(getMember, Class, member)) == function) &&
+			isEnum!(__traits(getMember, Class, member))))
 		continue; // must be a data member or something...
 		else
 		// DONE WITH FILTHIEST OF ALL HACKS
@@ -752,26 +756,26 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 		//if(member.length == 0)
 		//	continue;
 		static if(
-			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isEnum!(__traits(getMember, PM, member))
+			!is(typeof(__traits(getMember, Class, member)) == function) &&
+			isEnum!(__traits(getMember, Class, member))
 		) {
 			EnumInfo i;
 			i.name = member;
-			foreach(m; __traits(allMembers, __traits(getMember, PM, member))) {
+			foreach(m; __traits(allMembers, __traits(getMember, Class, member))) {
 				i.names  ~= m;
-				i.values ~= cast(int) __traits(getMember, __traits(getMember, PM, member), m);
+				i.values ~= cast(int) __traits(getMember, __traits(getMember, Class, member), m);
 			}
 
 			reflection.enums[member] = i;
 
 		} else static if(
-			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isStruct!(__traits(getMember, PM, member))
+			!is(typeof(__traits(getMember, Class, member)) == function) &&
+			isStruct!(__traits(getMember, Class, member))
 		) {
 			StructInfo i;
 			i.name = member;
 
-			typeof(Passthrough!(__traits(getMember, PM, member))) s;
+			typeof(Passthrough!(__traits(getMember, Class, member))) s;
 			foreach(idx, m; s.tupleof) {
 				StructMemberInfo mem;
 
@@ -785,7 +789,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 
 			reflection.structs[member] = i;
 		} else static if(
-			is(typeof(__traits(getMember, PM, member)) == function)
+			is(typeof(__traits(getMember, Class, member)) == function)
 				&&
 				(
 				member.length < 5 ||
@@ -795,11 +799,11 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 				!(member.length > 16 && member[$ - 16 .. $] == "_PermissionCheck")
 		)) {
 			FunctionInfo* f = new FunctionInfo;
-			ParameterTypeTuple!(__traits(getMember, PM, member)) fargs;
+			ParameterTypeTuple!(__traits(getMember, Class, member)) fargs;
 
-			f.returnType = ReturnType!(__traits(getMember, PM, member)).stringof;
-			f.returnTypeIsDocument = is(ReturnType!(__traits(getMember, PM, member)) : Document);
-			f.returnTypeIsElement = is(ReturnType!(__traits(getMember, PM, member)) : Element);
+			f.returnType = ReturnType!(__traits(getMember, Class, member)).stringof;
+			f.returnTypeIsDocument = is(ReturnType!(__traits(getMember, Class, member)) : Document);
+			f.returnTypeIsElement = is(ReturnType!(__traits(getMember, Class, member)) : Element);
 
 			f.parentObject = reflection;
 
@@ -807,11 +811,11 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			f.originalName = member;
 
 			assert(instantiation !is null);
-			f.dispatcher = generateWrapper!(PM, member, __traits(getMember, PM, member))(reflection, instantiation);
+			f.dispatcher = generateWrapper!(Class, member, __traits(getMember, Class, member))(reflection, instantiation);
 
 			//f.uriPath = f.originalName;
 
-			auto namesAndDefaults = parameterInfoImpl!(__traits(getMember, PM, member));
+			auto namesAndDefaults = parameterInfoImpl!(__traits(getMember, Class, member));
 			auto names = namesAndDefaults[0];
 			auto defaults = namesAndDefaults[1];
 			assert(names.length == defaults.length);
@@ -830,7 +834,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 				f.parameters ~= p;
 			}
 
-			static if(__traits(hasMember, PM, member ~ "_Form")) {
+			static if(__traits(hasMember, Class, member ~ "_Form")) {
 				f.createForm = &__traits(getMember, instantiation, member ~ "_Form");
 			}
 
@@ -841,22 +845,22 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			reflection.functions[f.originalName] = cast(immutable) (f);
 		}
 		else static if(
-			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isApiObject!(__traits(getMember, PM, member))
+			!is(typeof(__traits(getMember, Class, member)) == function) &&
+			isApiObject!(__traits(getMember, Class, member))
 		) {
 			reflection.objects[member] = prepareReflectionImpl!(
-				__traits(getMember, PM, member), Parent)
+				__traits(getMember, Class, member), Parent)
 				(instantiation);
 		} else static if( // child ApiProviders are like child modules
-			!is(typeof(__traits(getMember, PM, member)) == function) &&
-			isApiProvider!(__traits(getMember, PM, member))
+			!is(typeof(__traits(getMember, Class, member)) == function) &&
+			isApiProvider!(__traits(getMember, Class, member))
 		) {
-			PassthroughType!(__traits(getMember, PM, member)) i;
+			PassthroughType!(__traits(getMember, Class, member)) i;
 			static if(__traits(compiles, i = new typeof(i)(instantiation)))
 				i = new typeof(i)(instantiation);
 			else
 				i = new typeof(i)();
-			auto r = prepareReflectionImpl!(__traits(getMember, PM, member), typeof(i))(i);
+			auto r = prepareReflectionImpl!(__traits(getMember, Class, member), typeof(i))(i);
 			i.reflection = cast(immutable) r;
 			reflection.objects[member] = r;
 			if(toLower(member) !in reflection.objects) // web filenames are often lowercase too
@@ -984,7 +988,7 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 /// instantiation should be an object of your ApiProvider type.
 /// pathInfoStartingPoint is used to make a slice of it, incase you already consumed part of the path info before you called this.
 
-void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0) if(is(Provider : ApiProvider)) {
+void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0, bool handleAllExceptions = true) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
 	if(instantiation.reflection is null) {
@@ -1191,6 +1195,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					result.result.str = (document.toString());
 				} else {
 				gotnull:
+					if(!handleAllExceptions) {
+						envelopeFormat = "internal";
+						throw e; // pass it up the chain
+					}
 					auto code = Element.make("div");
 					code.addClass("exception-error-message");
 					code.addChild("p", e.msg);
@@ -1201,8 +1209,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 			}
 		}
 	} finally {
+		// the function must have done its own thing; we need to quit or else it will trigger an assert down here
+		if(!cgi.isClosed())
 		switch(envelopeFormat) {
 			case "no-processing":
+			case "internal":
 				break;
 			case "redirect":
 				auto redirect = cgi.request("_arsd_redirect_location", cgi.referrer);
@@ -1265,6 +1276,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 								auto postProcessors = info.postProcessors;
 								if(base !is instantiation)
 									postProcessors ~= &(instantiation._postProcess);
+								if(realObject !is null)
+									postProcessors ~= &(realObject._postProcess);
 								postProcessors ~= &(base._postProcess);
 								foreach(pp; postProcessors) {
 									if(pp in run)
@@ -1284,7 +1297,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 			break;
 		}
 
-		cgi.close();
+		if(envelopeFormat != "internal")
+			cgi.close();
 	}
 }
 
@@ -2126,7 +2140,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 /// This is the function called to turn return values into strings.
 
-/// Implement a template called customFormat in your apiprovider class to make special formats.
+/// Implement a template called _customFormat in your apiprovider class to make special formats.
 
 /// Otherwise, this provides the defaults of html, table, json, etc.
 
@@ -2136,8 +2150,8 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue = null, string formatJsonToStringAs = null) if(is(R : ApiProvider)) {
 	string retstr;
 	if(api !is null) {
-		static if(__traits(compiles, api.customFormat(ret, format))) {
-			auto customFormatted = api.customFormat(ret, format);
+		static if(__traits(compiles, api._customFormat(ret, format))) {
+			auto customFormatted = api._customFormat(ret, format);
 			if(customFormatted !is null) {
 				if(returnValue !is null)
 					returnValue.str = customFormatted;
@@ -2293,20 +2307,36 @@ version(Posix) {
 	static import linux = std.c.linux.linux;
 }
 
+/// This is cookie parameters for the Session class. The default initializers provide some simple default
+/// values for a site-wide session cookie.
+struct CookieParams {
+	string name    = "_sess_id";
+	string host    = null;
+	string path    = "/";
+	long expiresIn = 0;
+	bool httpsOnly = false;
+}
+
 /// Provides some persistent storage, kinda like PHP
 /// But, you have to manually commit() the data back to a file.
 /// You might want to put this in a scope(exit) block or something like that.
 class Session {
 	/// Loads the session if available, and creates one if not.
 	/// May write a session id cookie to the passed cgi object.
-	this(Cgi cgi, string cookieName = "_sess_id", bool useFile = true) {
+	this(Cgi cgi, CookieParams cookieParams = CookieParams(), bool useFile = true) {
+		// uncomment these two to render session useless (it has no backing)
+		// but can be good for benchmarking the rest of your app
+		//useFile = false;
+		//_readOnly = true;
+
+
 		// assert(cgi.https); // you want this for best security, but I won't be an ass and require it.
-		this._cookieName = cookieName;
+		this.cookieParams = cookieParams;
 		this.cgi = cgi;
 		bool isNew = false;
 		string token;
-		if(cookieName in cgi.cookies && cgi.cookies[cookieName].length)
-			token = cgi.cookies[cookieName];
+		if(cookieParams.name in cgi.cookies && cgi.cookies[cookieParams.name].length)
+			token = cgi.cookies[cookieParams.name];
 		else {
 			if("x-arsd-session-override" in cgi.requestHeaders) {
 				loadSpecialSession(cgi);
@@ -2373,14 +2403,38 @@ class Session {
 			}
 
 			// FIXME: race condition if the session changes?
-			enforce(hashToString(SHA256(readText(getFilePath()))) == hash);
+			auto file = getFilePath();
+			auto contents = readText(file);
+			auto ourhash = hashToString(SHA256(contents));
+			enforce(ourhash == hash);//, ourhash);
 			_readOnly = true;
 			reload();
 		}
 	}
 
+	/// Call this periodically to clean up old session files. The finalizer param can cancel the deletion
+	/// of a file by returning false.
+	public static void garbageCollect(bool delegate(string[string] data) finalizer = null, Duration maxAge = dur!"hours"(4)) {
+		auto ctime = Clock.currTime();
+		foreach(DirEntry e; dirEntries(getTempDirectory(), "arsd_session_file_*", SpanMode.shallow)) {
+			try {
+				if(ctime - e.timeLastAccessed() > maxAge) {
+					auto data = Session.loadData(e.name);
+
+					if(finalizer is null || !finalizer(data))
+						std.file.remove(e.name);
+				}
+			} catch(Exception except) {
+				// if it is bad, kill it
+				if(std.file.exists(e.name))
+					std.file.remove(e.name);
+			}
+		}
+	}
+
 	private void addDefaults() {
 		set("csrfToken", generateCsrfToken());
+		set("creationTime", Clock.currTime().toISOExtString());
 
 		// this is there to help control access to someone requesting a specific session id (helpful for debugging or local access from other languages)
 		// the idea is if there's some random stuff in there that you can only know if you have access to the file, it doesn't hurt to load that
@@ -2402,14 +2456,21 @@ class Session {
 		return encodeVariables(csrf);
 	}
 
+	private CookieParams cookieParams;
+
 	// don't forget to make the new session id and set a new csrfToken after this too.
 	private string makeNewCookie() {
 		auto tmp = uniform(0, ulong.max);
 		auto token = to!string(tmp);
-		// FIXME: path, domain?
-		setLoginCookie(cgi, _cookieName, token);
+
+		setOurCookie(token);
 
 		return token;
+	}
+
+	private void setOurCookie(string data) {
+		cgi.setCookie(cookieParams.name, data,
+			cookieParams.expiresIn, cookieParams.path, cookieParams.host, true, cookieParams.httpsOnly);
 	}
 
 	/// Kill the current session. It wipes out the disk file and memory, and
@@ -2418,7 +2479,7 @@ class Session {
 	/// You should do this if the user's authentication info changes
 	/// at all.
 	void invalidate() {
-		setLoginCookie(cgi, _cookieName, "");
+		setOurCookie("");
 		clear();
 
 		regenerateId();
@@ -2524,6 +2585,45 @@ class Session {
 		return path;
 	}
 
+	private static string[string] loadData(string path) {
+		string[string] data = null;
+		auto json = std.file.readText(path);
+
+		auto obj = parseJSON(json);
+		enforce(obj.type == JSON_TYPE.OBJECT);
+		foreach(k, v; obj.object) {
+			string ret;
+			final switch(v.type) {
+				case JSON_TYPE.STRING:
+					ret = v.str;
+				break;
+				case JSON_TYPE.INTEGER:
+					ret = to!string(v.integer);
+				break;
+				case JSON_TYPE.FLOAT:
+					ret = to!string(v.floating);
+				break;
+				case JSON_TYPE.OBJECT:
+				case JSON_TYPE.ARRAY:
+					enforce(0, "invalid session data");
+				break;
+				case JSON_TYPE.TRUE:
+					ret = "true";
+				break;
+				case JSON_TYPE.FALSE:
+					ret = "false";
+				break;
+				case JSON_TYPE.NULL:
+					ret = null;
+				break;
+			}
+
+			data[k] = ret;
+		}
+
+		return data;
+	}
+
 	// FIXME: there's a race condition here - if the user is using the session
 	// from two windows, one might write to it as we're executing, and we won't
 	// see the difference.... meaning we'll write the old data back.
@@ -2533,40 +2633,8 @@ class Session {
 		data = null;
 		auto path = getFilePath();
 		try {
+			data = Session.loadData(path);
 			_hasData = true;
-			auto json = std.file.readText(getFilePath());
-
-			auto obj = parseJSON(json);
-			enforce(obj.type == JSON_TYPE.OBJECT);
-			foreach(k, v; obj.object) {
-				string ret;
-				final switch(v.type) {
-					case JSON_TYPE.STRING:
-						ret = v.str;
-					break;
-					case JSON_TYPE.INTEGER:
-						ret = to!string(v.integer);
-					break;
-					case JSON_TYPE.FLOAT:
-						ret = to!string(v.floating);
-					break;
-					case JSON_TYPE.OBJECT:
-					case JSON_TYPE.ARRAY:
-						enforce(0, "invalid session data");
-					break;
-					case JSON_TYPE.TRUE:
-						ret = "true";
-					break;
-					case JSON_TYPE.FALSE:
-						ret = "false";
-					break;
-					case JSON_TYPE.NULL:
-						ret = null;
-					break;
-				}
-
-				data[k] = ret;
-			}
 		} catch(Exception e) {
 			// it's a bad session...
 			_hasData = false;
@@ -2604,7 +2672,6 @@ class Session {
 	private bool changed;
 	private bool _readOnly;
 	private string _sessionId;
-	private string _cookieName;
 	private Cgi cgi; // used to regenerate cookies, etc.
 
 	//private Variant[string] data;
@@ -2712,8 +2779,12 @@ void applyTemplateToElement(
 			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false);
 		} else {
 			auto rs = cast(RawSource) ele;
-			if(rs !is null)
-				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, true); /* FIXME: might be wrong... */
+			if(rs !is null) {
+				bool isSpecial;
+				if(ele.parentNode)
+					isSpecial = ele.parentNode.tagName == "script" || ele.parentNode.tagName == "style";
+				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, !isSpecial); /* FIXME: might be wrong... */
+			}
 			// if it is not a text node, it has no text where templating is valid, except the attributes
 			// note: text nodes have no attributes, which is why this is in the separate branch.
 			foreach(k, v; ele.attributes) {
@@ -2851,10 +2922,13 @@ class TemplatedDocument : Document {
 
 		this(string src) {
 			super();
+			viewFunctions = TemplateFilters.defaultThings();
 			parse(src, true, true);
 		}
 
-		this() { }
+		this() {
+			viewFunctions = TemplateFilters.defaultThings();
+		}
 
 		void delegate(TemplatedDocument)[] preToStringFilters;
 		void delegate(ref string)[] postToStringFilters;
@@ -3433,7 +3507,11 @@ enum string javascriptBaseImpl = q{
 						}
 					} else {
 					*/
-						var obj = eval("(" + t + ")");
+						var obj;
+						if(JSON && JSON.parse)
+							obj = JSON.parse(t);
+						else
+							obj = eval("(" + t + ")");
 					//}
 
 					if(obj.success) {
@@ -3665,9 +3743,11 @@ enum string javascriptBaseImpl = q{
 	// These are some convenience functions to use as callbacks
 	"_replaceContent": function(what) {
 		var e = this._getElement(what);
+		var me = this;
 		if(this._isListOfNodes(e))
 			return function(obj) {
-				for(var a = 0; a < obj.length; a++) {
+				// I do not want scripts accidentally running here...
+				for(var a = 0; a < e.length; a++) {
 					if( (e[a].tagName.toLowerCase() == "input"
 						&&
 						e[a].getAttribute("type") == "text")
@@ -3681,15 +3761,18 @@ enum string javascriptBaseImpl = q{
 			}
 		else
 			return function(obj) {
+				var data = me._extractHtmlScript(obj);
 				if( (e.tagName.toLowerCase() == "input"
 					&&
 					e.getAttribute("type") == "text")
 					||
 					e.tagName.toLowerCase() == "textarea")
 				{
-					e.value = obj;
+					e.value = obj; // might want script looking thing as a value
 				} else
-					e.innerHTML = obj;
+					e.innerHTML = data[0];
+				if(me._wantScriptExecution && data[1].length)
+					eval(data[1]);
 			}
 	},
 
@@ -3698,75 +3781,59 @@ enum string javascriptBaseImpl = q{
 		var e = this._getElement(what);
 		if(this._isListOfNodes(e))
 			throw new Error("Can only replace individual elements since removal from a list may be unstable.");
+		var me = this;
 		return function(obj) {
+			var data = me._extractHtmlScript(obj);
 			var n = document.createElement("div");
-			n.innerHTML = obj;
+			n.innerHTML = data[0];
 
 			if(n.firstChild) {
 				e.parentNode.replaceChild(n.firstChild, e);
 			} else {
 				e.parentNode.removeChild(e);
 			}
+			if(me._wantScriptExecution && data[1].length)
+				eval(data[1]);
 		}
 	},
 
 	"_appendContent": function(what) {
 		var e = this._getElement(what);
+		var me = this;
 		if(this._isListOfNodes(e)) // FIXME: repeating myself...
 			return function(obj) {
+				var data = me._extractHtmlScript(obj);
 				for(var a = 0; a < e.length; a++)
-					e[a].innerHTML += obj;
+					e[a].innerHTML += data[0];
+				if(me._wantScriptExecution && data[1].length)
+					eval(data[1]);
 			}
 		else
 			return function(obj) {
-				e.innerHTML += obj;
+				var data = me._extractHtmlScript(obj);
+				e.innerHTML += data[0];
+				if(me._wantScriptExecution && data[1].length)
+					eval(data[1]);
 			}
 	},
+
+	"_extractHtmlScript": function(response) {
+		var scriptRegex = new RegExp("<script>([\\s\\S]*?)<\\/script>", "g");
+		var scripts = "";
+		var match;
+		while(match = scriptRegex.exec(response)) {
+			scripts += match[1];
+		}
+		var html = response.replace(scriptRegex, "");
+
+		return [html, scripts];
+	},
+
+	// we say yes by default because these always come from your own domain anyway;
+	// it should be safe (as long as your app is sane). You can turn it off though if you want
+	// by setting this to false somewhere in your code.
+	"_wantScriptExecution" : true,
 };
-
-
-/*
-
-
-
-Note for future: dom.d makes working with html easy, since you can
-do various forms of post processing on it to make custom formats
-among other things.
-
-I'm considering adding similar stuff for CSS and Javascript.
-dom.d now has some more css support - you can apply a stylesheet
-to a document and get the computed style and do some minor changes
-programmically. StyleSheet : css file :: Document : html file.
-
-My css lexer/parser is still pretty crappy though. Also, I'm
-not sure it's worth going all the way here.
-
-I'm doing some of it to support my little browser, but for server
-side programs, I'm not sure how useful it is to do this kind of
-thing.
-
-A simple textual macro would be more useful for css than a 
-struct for it.... I kinda want nested declarations and some
-functions (the sass thing from ruby is kinda nice in some ways).
-
-But I'm fairly meh on it anyway.
-
-
-For javascript, I wouldn't mind having a D style foreach in it.
-But is it worth it writing a fancy javascript AST thingy just
-for that?
-
-Aside from that, I don't mind the language with how sparingly I
-use it though. Besides, writing:
-
-CoolApi.doSomething("asds").appendTo('element');
-
-really isn't bad anyway.
-
-
-The benefit for html was very easy and big. I'm not so sure about
-css and js.
-*/
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2012
