@@ -24,32 +24,7 @@ import std.string; // FIXME: move to drawText X11 on next dmd
 
 import std.stdio;
 
-
-struct Color {
-	ubyte r;
-	ubyte g;
-	ubyte b;
-	ubyte a;
-
-	this(int red, int green, int blue, int alpha = 255) {
-		this.r = cast(ubyte) red;
-		this.g = cast(ubyte) green;
-		this.b = cast(ubyte) blue;
-		this.a = cast(ubyte) alpha;
-	}
-
-	static Color transparent() {
-		return Color(0, 0, 0, 0);
-	}
-
-	static Color white() {
-		return Color(255, 255, 255);
-	}
-
-	static Color black() {
-		return Color(0, 0, 0);
-	}
-}
+import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
 
 struct Point {
 	int x;
