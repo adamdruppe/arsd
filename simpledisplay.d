@@ -173,7 +173,7 @@ void displayImage(Image image, SimpleWindow win = null) {
 			auto p = win.draw;
 			p.drawImage(Point(0, 0), image);
 		}
-		return win.eventLoop(0,
+		win.eventLoop(0,
 			(int) {
 				win.close();
 			} );
@@ -725,8 +725,8 @@ version(Windows) {
 				case WM_MBUTTONUP:
 				case WM_MBUTTONDBLCLK:
 					mouse.type = 0;
-					mouse.x = GET_X_LPARAM(lParam);
-					mouse.y = GET_Y_LPARAM(lParam);
+					mouse.x = LOWORD(lParam);
+					mouse.y = HIWORD(lParam);
 					mouse.buttonFlags = wParam;
 
 					if(handleMouseEvent)
@@ -908,7 +908,7 @@ version(X11) {
 
 			foregroundIsNotTransparent = true;
 
-			XSetForeground(display, gc, 
+			XSetForeground(display, gc,
 				cast(uint) c.r << 16 |
 				cast(uint) c.g << 8 |
 				cast(uint) c.b);
@@ -923,11 +923,11 @@ version(X11) {
 
 			backgroundIsNotTransparent = true;
 
-			XSetBackground(display, gc, 
+			XSetBackground(display, gc,
 				cast(uint) c.r << 16 |
 				cast(uint) c.g << 8 |
 				cast(uint) c.b);
-		
+
 		}
 
 		void swapColors() {
@@ -993,7 +993,7 @@ version(X11) {
 				points[i].x = cast(short) p.x;
 				points[i].y = cast(short) p.y;
 			}
-			
+
 			if(backgroundIsNotTransparent) {
 				swapColors();
 				XFillPolygon(display, d, gc, points.ptr, cast(int) points.length, PolygonShape.Complex, CoordMode.CoordModeOrigin);
@@ -1076,7 +1076,7 @@ version(X11) {
 		void createWindow(int width, int height, string title) {
 			display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
-		 
+
 			window = XCreateSimpleWindow(
 				display,
 				RootWindow(display, screen),
@@ -1354,7 +1354,7 @@ enum NotifyModes:int
 	NotifyWhileGrabbed	=3
 }
 const int NotifyHint	=1;	/* for MotionNotify events */
-		       
+
 /* Notify detail */
 enum NotifyDetail:int
 {
@@ -1409,18 +1409,23 @@ enum ColorMapNotification:int
 
 	struct _XPrivate {}
 	struct _XrmHashBucketRec {}
-	typedef void* XPointer;
-	typedef void* XExtData;
+
+	alias void* XPointer;
+	alias void* XExtData;
+
 	alias uint XID;
-	typedef XID Window;
-	typedef XID Drawable;
-	typedef XID Pixmap;
+
+	alias XID Window;
+	alias XID Drawable;
+	alias XID Pixmap;
+
 	alias uint Atom;
 	alias bool Bool;
 	alias Display XDisplay;
-	typedef int ByteOrder;
-	typedef uint Time;
-	typedef void ScreenFormat;
+
+	alias int ByteOrder;
+	alias uint Time;
+	alias void ScreenFormat;
 
 	struct XImage {
 	    int width, height;			/* size of image */
@@ -1479,8 +1484,8 @@ struct XKeyEvent
 	uint keycode;	/* detail */
 	Bool same_screen;	/* same screen flag */
 }
-typedef XKeyEvent XKeyPressedEvent;
-typedef XKeyEvent XKeyReleasedEvent;
+alias XKeyEvent XKeyPressedEvent;
+alias XKeyEvent XKeyReleasedEvent;
 
 struct XButtonEvent
 {
@@ -1498,8 +1503,8 @@ struct XButtonEvent
 	uint button;	/* detail */
 	Bool same_screen;	/* same screen flag */
 }
-typedef XButtonEvent XButtonPressedEvent;
-typedef XButtonEvent XButtonReleasedEvent;
+alias XButtonEvent XButtonPressedEvent;
+alias XButtonEvent XButtonReleasedEvent;
 
 struct XMotionEvent{
 	int type;		/* of event */
@@ -1516,7 +1521,7 @@ struct XMotionEvent{
 	byte is_hint;		/* detail */
 	Bool same_screen;	/* same screen flag */
 }
-typedef XMotionEvent XPointerMovedEvent;
+alias XMotionEvent XPointerMovedEvent;
 
 struct XCrossingEvent{
 	int type;		/* of event */
@@ -1532,15 +1537,15 @@ struct XCrossingEvent{
 	NotifyModes mode;		/* NotifyNormal, NotifyGrab, NotifyUngrab */
 	NotifyDetail detail;
 	/*
-	 * NotifyAncestor, NotifyVirtual, NotifyInferior, 
+	 * NotifyAncestor, NotifyVirtual, NotifyInferior,
 	 * NotifyNonlinear,NotifyNonlinearVirtual
 	 */
 	Bool same_screen;	/* same screen flag */
 	Bool focus;		/* Boolean focus */
 	KeyOrButtonMask state;	/* key or button mask */
 }
-typedef XCrossingEvent XEnterWindowEvent;
-typedef XCrossingEvent XLeaveWindowEvent;
+alias XCrossingEvent XEnterWindowEvent;
+alias XCrossingEvent XLeaveWindowEvent;
 
 struct XFocusChangeEvent{
 	int type;		/* FocusIn or FocusOut */
@@ -1552,13 +1557,13 @@ struct XFocusChangeEvent{
 				   NotifyGrab, NotifyUngrab */
 	NotifyDetail detail;
 	/*
-	 * NotifyAncestor, NotifyVirtual, NotifyInferior, 
+	 * NotifyAncestor, NotifyVirtual, NotifyInferior,
 	 * NotifyNonlinear,NotifyNonlinearVirtual, NotifyPointer,
-	 * NotifyPointerRoot, NotifyDetailNone 
+	 * NotifyPointerRoot, NotifyDetailNone
 	 */
 }
-typedef XFocusChangeEvent XFocusInEvent;
-typedef XFocusChangeEvent XFocusOutEvent;
+alias XFocusChangeEvent XFocusInEvent;
+alias XFocusChangeEvent XFocusOutEvent;
 Window XCreateSimpleWindow(
     Display*	/* display */,
     Window		/* parent */,
@@ -1587,17 +1592,17 @@ XImage *XCreateImage(
 Atom XInternAtom(
     Display*		/* display */,
     const char*	/* atom_name */,
-    Bool		/* only_if_exists */		 
+    Bool		/* only_if_exists */
 );
 
-typedef int Status;
+alias int Status;
 
- 
+
 enum EventMask:int
-{ 
+{
 	NoEventMask				=0,
 	KeyPressMask			=1<<0,
-	KeyReleaseMask			=1<<1, 
+	KeyReleaseMask			=1<<1,
 	ButtonPressMask			=1<<2,
 	ButtonReleaseMask		=1<<3,
 	EnterWindowMask			=1<<4,
@@ -1633,7 +1638,7 @@ int XPutImage(
     int			/* dest_x */,
     int			/* dest_y */,
     uint		/* width */,
-    uint		/* height */	  
+    uint		/* height */
 );
 
 int XDestroyWindow(
@@ -1713,7 +1718,7 @@ struct XKeymapEvent
 	Display *display;	/* Display the event was read from */
 	Window window;
 	byte key_vector[32];
-}	
+}
 
 struct XExposeEvent
 {
@@ -1772,7 +1777,7 @@ struct XCreateWindowEvent{
 	Bool override_redirect;	/* creation should be overridden */
 }
 
-struct XDestroyWindowEvent 
+struct XDestroyWindowEvent
 {
 	int type;
 	uint serial;		/* # of last request processed by server */
@@ -2003,7 +2008,7 @@ struct XErrorEvent
 	ubyte minor_code;	/* Minor op-code of failed request */
 }
 
-struct XAnyEvent 
+struct XAnyEvent
 {
 	int type;
 	ubyte serial;	/* # of last request processed by server */
@@ -2104,10 +2109,10 @@ struct Depth
 	Visual *visuals;	/* list of visuals possible at this depth */
 }
 
-typedef void* GC;
+alias void* GC;
 alias int VisualID;
-typedef XID Colormap;
-typedef XID KeySym;
+alias XID Colormap;
+alias XID KeySym;
 alias uint KeyCode;
 
 struct Screen{
@@ -2126,7 +2131,7 @@ struct Screen{
 	uint black_pixel;		/* White and Black pixel values */
 	int max_maps, min_maps;	/* max and min color maps */
 	int backing_store;		/* Never, WhenMapped, Always */
-	bool save_unders;	
+	bool save_unders;
 	int root_input_mask;	/* initial root input mask */
 }
 
