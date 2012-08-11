@@ -304,6 +304,22 @@ class ApiProvider : WebDotDBaseType {
 		}
 	}
 
+	protected bool isCsrfTokenCorrect() {
+		auto tokenInfo = _getCsrfInfo();
+		if(tokenInfo is null)
+			return false; // this means we aren't doing checks (probably because there is no session), but it is a failure nonetheless
+
+		auto token = tokenInfo["key"] ~ "=" ~ tokenInfo["token"];
+		if("x-arsd-csrf-pair" in cgi.requestHeaders)
+			return cgi.requestHeaders["x-arsd-csrf-pair"] == token;
+		if(tokenInfo["key"] in cgi.post)
+			return cgi.post[tokenInfo["key"]] == tokenInfo["token"];
+		if(tokenInfo["key"] in cgi.get)
+			return cgi.get[tokenInfo["key"]] == tokenInfo["token"];
+
+		return false;
+	}
+
 	/// Shorthand for ensurePost and checkCsrfToken. You should use this on non-indempotent 
 	/// functions. Override it if doing some custom checking.
 	void ensureGoodPost() {
@@ -341,6 +357,9 @@ class ApiProvider : WebDotDBaseType {
 
 	/// we have to add these things to the document...
 	override void _postProcess(Document document) {
+		foreach(pp; documentPostProcessors)
+			pp(document);
+
 		addCsrfTokens(document);
 		super._postProcess(document);
 	}
@@ -365,6 +384,9 @@ class ApiProvider : WebDotDBaseType {
 
 	// and added to ajax forms..
 	override void _postProcessElement(Element element) {
+		foreach(pp; elementPostProcessors)
+			pp(element);
+
 		addCsrfTokens(element);
 		super._postProcessElement(element);
 	}
@@ -379,6 +401,38 @@ class ApiProvider : WebDotDBaseType {
 	/// Override this if you have initialization work that must be done *after* cgi and reflection is ready.
 	/// It should be used instead of the constructor for most work.
 	void _initialize() {}
+
+	/// On each call, you can register another post processor for the generated html. If your delegate takes a Document, it will only run on document envelopes (full pages generated). If you take an Element, it will apply on almost any generated html.
+	///
+	/// Note: if you override _postProcess or _postProcessElement, be sure to call the superclass version for these registered functions to run.
+	void _registerPostProcessor(void delegate(Document) pp) {
+		documentPostProcessors ~= pp;
+	}
+
+	/// ditto
+	void _registerPostProcessor(void delegate(Element) pp) {
+		elementPostProcessors ~= pp;
+	}
+
+	/// ditto
+	void _registerPostProcessor(void function(Document) pp) {
+		documentPostProcessors ~= delegate void(Document d) { pp(d); };
+	}
+
+	/// ditto
+	void _registerPostProcessor(void function(Element) pp) {
+		elementPostProcessors ~= delegate void(Element d) { pp(d); };
+	}
+
+	// these only work for one particular call
+	private void delegate(Document d)[] documentPostProcessors;
+	private void delegate(Element d)[] elementPostProcessors;
+	private void _initializePerCallInternal() {
+		documentPostProcessors = null;
+		elementPostProcessors = null;
+
+		_initializePerCall();
+	}
 
 	/// This one is called at least once per call. (_initialize is only called once per process)
 	void _initializePerCall() {}
@@ -464,20 +518,44 @@ class ApiProvider : WebDotDBaseType {
 	/// where the return value is appended.
 
 	/// It's the main function to override to provide custom HTML templates.
+	///
+	/// The default document provides a default stylesheet, our default javascript, and some timezone cookie handling (which you must handle on the server. Eventually I'll open source my date-time helpers that do this, but the basic idea is it sends an hour offset, and you can add that to any UTC time you have to get a local time).
 	Element _getGenericContainer()
 	out(ret) {
 		assert(ret !is null);
 	}
 	body {
-		auto document = new Document("<!DOCTYPE html><html><head><title></title><style>.format-row { display: none; }</style><link rel=\"stylesheet\" href=\"styles.css\" /></head><body><div id=\"body\"></div><script src=\"functions.js\"></script></body></html>", true, true);
+		auto document = new TemplatedDocument(
+"<!DOCTYPE html>
+<html>
+<head>
+	<title></title>
+	<link rel=\"stylesheet\" href=\"styles.css\" />
+	<script> var delayedExecutionQueue = []; </script> <!-- FIXME do some better separation -->
+	<script>
+		if(document.cookie.indexOf(\"timezone=\") == -1) {
+			var d = new Date();
+			var tz = -d.getTimezoneOffset() / 60;
+			document.cookie = \"timezone=\" + tz + \"; path=/\";
+		}
+	</script>
+	<style>.format-row { display: none; }</style>
+</head>
+<body>
+	<div id=\"body\"></div>
+	<script src=\"functions.js\"></script>
+</body>
+</html>");
 		if(this.reflection !is null)
 			document.title = this.reflection.name;
-		auto container = document.getElementById("body");
+		auto container = document.requireElementById("body");
 		return container;
 	}
 
+	// FIXME: set a generic container for a particular call
+
 	/// If the given url path didn't match a function, it is passed to this function
-	/// for further handling. By default, it throws a NoSuchPageException.
+	/// for further handling. By default, it throws a NoSuchFunctionException.
 
 	/// Overriding it might be useful if you want to serve generic filenames or an opDispatch kind of thing.
 	/// (opDispatch itself won't work because it's name argument needs to be known at compile time!)
@@ -485,7 +563,7 @@ class ApiProvider : WebDotDBaseType {
 	/// Note that you can return Documents here as they implement
 	/// the FileResource interface too.
 	FileResource _catchAll(string path) {
-		throw new NoSuchPageException(_errorMessageForCatchAll);
+		throw new NoSuchFunctionException(_errorMessageForCatchAll);
 	}
 
 	private string _errorMessageForCatchAll;
@@ -1055,11 +1133,19 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	WebDotDBaseType realObject = instantiation;
 	if(instantiator.length == 0)
 	if(fun !is null && fun.parentObject !is null && fun.parentObject.instantiation !is null)
-		realObject = fun.parentObject.instantiation;
+		realObject = cast() fun.parentObject.instantiation; // casting away transitive immutable...
 
 	// FIXME
 	if(cgi.pathInfo.indexOf("builtin.") != -1 && instantiation.builtInFunctions !is null)
 		base = instantiation.builtInFunctions;
+
+	if(base !is realObject) {
+		auto hack1 = cast(ApiProvider) base;
+		auto hack2 = cast(ApiProvider) realObject;
+
+		if(hack1 !is null && hack2 !is null && hack2.session is null)
+			hack2.session = hack1.session;
+	}
 
 	try {
 		if(fun is null) {
@@ -1232,6 +1318,35 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				auto json = toJsonValue(result);
 				cgi.write(toJSON(&json), true);
 			break;
+			case "script":
+			case "jsonp":
+				bool securityPass = false;
+				version(web_d_unrestricted_jsonp) {
+					// unrestricted is opt-in because i worry about fetching user info from across sites
+					securityPass = true;
+				} else {
+					// we check this on both get and post to ensure they can't fetch user private data cross domain.
+					auto hack1 = cast(ApiProvider) base;
+					if(hack1)
+						securityPass = hack1.isCsrfTokenCorrect();
+				}
+
+				if(securityPass) {
+					if(envelopeFormat == "script")
+						cgi.setResponseContentType("text/html");
+					else
+						cgi.setResponseContentType("application/javascript");
+
+					auto json = cgi.request("jsonp", "throw new Error") ~ "(" ~ toJson(result) ~ ");";
+
+					if(envelopeFormat == "script")
+						json = "<script type=\"text/javascript\">" ~ json ~ "</script>";
+					cgi.write(json, true);
+				} else {
+					// if the security check fails, you just don't get anything at all data wise...
+					cgi.setResponseStatus("403 Forbidden");
+				}
+			break;
 			case "none":
 				cgi.setResponseContentType("text/plain");
 
@@ -1259,7 +1374,15 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 							// probably not super efficient...
 							document = new TemplatedDocument(returned);
 						} else {
-							auto e = instantiation._getGenericContainer();
+							// auto e = instantiation._getGenericContainer();
+							Element e;
+							auto hack = cast(ApiProvider) realObject;
+							if(hack !is null)
+								e = hack._getGenericContainer();
+							else
+								e = instantiation._getGenericContainer();
+
+
 							document = e.parentDocument;
 							// FIXME: a wee bit slow, esp if func return element
 							e.innerHTML = returned;
@@ -1964,6 +2087,11 @@ class NoSuchPageException : Exception {
 	}
 }
 
+class NoSuchFunctionException : NoSuchPageException {
+	this(string msg, string file = __FILE__, int line = __LINE__) {
+		super(msg, file, line);
+	}
+}
 
 type fromUrlParam(type)(string ofInterest) {
 	type ret;
@@ -1971,6 +2099,7 @@ type fromUrlParam(type)(string ofInterest) {
 	static if(isArray!(type) && !isSomeString!(type)) {
 		// how do we get an array out of a simple string?
 		// FIXME
+		static assert(0);
 	} else static if(__traits(compiles, ret = type.fromWebString(ofInterest))) { // for custom object handling...
 		ret = type.fromWebString(ofInterest);
 	} else static if(is(type : Element)) {
@@ -2000,7 +2129,11 @@ type fromUrlParam(type)(string[] ofInterest) {
 	type ret;
 
 	// Arrays in a query string are sent as the name repeating...
-	static if(isArray!(type) && !isSomeString!(type)) {
+	static if(isArray!(type) && !isSomeString!type) {
+		foreach(a; ofInterest) {
+			ret ~= fromUrlParam!(ElementType!(type))(a);
+		}
+	} else static if(isArray!(type) && isSomeString!(ElementType!type)) {
 		foreach(a; ofInterest) {
 			ret ~= fromUrlParam!(ElementType!(type))(a);
 		}
@@ -2012,7 +2145,7 @@ type fromUrlParam(type)(string[] ofInterest) {
 
 auto getMemberDelegate(alias ObjectType, string member)(ObjectType object) if(is(ObjectType : WebDotDBaseType)) {
 	if(object is null)
-		throw new NoSuchPageException("no such object " ~ ObjectType.stringof);
+		throw new NoSuchFunctionException("no such object " ~ ObjectType.stringof);
 	return &__traits(getMember, object, member);
 }
 
@@ -2028,7 +2161,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 		auto instantiation = getMemberDelegate!(ObjectType, funName)(cast(ObjectType) object);
 
-		api._initializePerCall();
+		api._initializePerCallInternal();
 
 		ParameterTypeTuple!(f) args;
 
@@ -2100,7 +2233,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 							// find it in reflection
 							ofInterest ~= reflection.functions[callingName].
-								dispatcher(cgi, null, decodeVariables(callingArguments), "string").str;
+								dispatcher(cgi, null, decodeVariables(callingArguments), "string", null).str;
 						}
 					}
 
@@ -2543,7 +2676,7 @@ class Session {
 	}
 
 	/// get/set for strings
-	string opDispatch(string name)(string v = null) if(name != "popFront") {
+	@property string opDispatch(string name)(string v = null) if(name != "popFront") {
 		if(v !is null)
 			set(name, v);
 		if(hasKey(name))
@@ -2595,6 +2728,9 @@ class Session {
 			final switch(v.type) {
 				case JSON_TYPE.STRING:
 					ret = v.str;
+				break;
+				case JSON_TYPE.UINTEGER:
+					ret = to!string(v.integer);
 				break;
 				case JSON_TYPE.INTEGER:
 					ret = to!string(v.integer);
@@ -3073,7 +3209,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 
 	string script;
 
-	if(isNested)
+	if(0 && isNested)
 		script = `'`~mod.name~`': {
 	"_apiBase":'`~base~`',`;
 	else
@@ -3154,16 +3290,6 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 		script ~= "\n\t}; }";
 	}
 
-	// FIXME: it should output the classes too
-	foreach(obj; mod.objects) {
-		if(outp)
-			script ~= ",\n\t";
-		else
-			outp = true;
-
-		script ~= makeJavascriptApi(obj, base ~ obj.name ~ "/", true);
-	}
-
 	foreach(key, func; mod.functions) {
 		if(func.originalName in alreadyDone)
 			continue; // there's url friendly and code friendly, only need one
@@ -3233,6 +3359,18 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 			}
 		}
 	`;
+
+	// FIXME: it should output the classes too
+	// FIXME: hax hax hax
+	foreach(n, obj; mod.objects) {
+		script ~= ";";
+		//if(outp)
+		//	script ~= ",\n\t";
+		//else
+		//	outp = true;
+
+		script ~= makeJavascriptApi(obj, base ~ n ~ "/", true);
+	}
 
 	return script;
 }
@@ -3372,21 +3510,29 @@ enum string javascriptBaseImpl = q{
 
 		var a = "";
 
+		var csrfKey = document.body.getAttribute("data-csrf-key");
+		var csrfToken = document.body.getAttribute("data-csrf-token");
+		var csrfPair = "";
+		if(csrfKey && csrfKey.length > 0 && csrfToken && csrfToken.length > 0) {
+			csrfPair = encodeURIComponent(csrfKey) + "=" + encodeURIComponent(csrfToken);
+			// we send this so it can be easily verified for things like restricted jsonp
+			xmlHttp.setRequestHeader("X-Arsd-Csrf-Pair", csrfPair);
+		}
+
 		if(method == "POST") {
 			xmlHttp.setRequestHeader("Content-type","application/x-www-form-urlencoded");
 			a = argString;
 			// adding the CSRF stuff, if necessary
-			var csrfKey = document.body.getAttribute("data-csrf-key");
-			var csrfToken = document.body.getAttribute("data-csrf-token");
-			if(csrfKey && csrfKey.length > 0 && csrfToken && csrfToken.length > 0) {
+			if(csrfPair.length) {
 				if(a.length > 0)
 					a += "&";
-				a += encodeURIComponent(csrfKey) + "=" + encodeURIComponent(csrfToken);
+				a += csrfPair;
 			}
 		} else {
 			xmlHttp.setRequestHeader("Content-type", "text/plain");
 		}
 
+		xmlHttp.setRequestHeader("X-Requested-With", "XMLHttpRequest");
 		xmlHttp.send(a);
 
 		if(!async && callback) {
@@ -3487,7 +3633,7 @@ enum string javascriptBaseImpl = q{
 
 			// lower level implementation
 			"_get":function(callback, onError, async) {
-				var resObj = this;
+				var resObj = this; // the request/response object. var me is the ApiObject.
 				if(args == null)
 					args = {};
 				if(!args.format)
@@ -3512,6 +3658,8 @@ enum string javascriptBaseImpl = q{
 							obj = eval("(" + t + ")");
 					//}
 
+					var returnValue;
+
 					if(obj.success) {
 						if(typeof callback == "function")
 							callback(obj.result);
@@ -3527,7 +3675,7 @@ enum string javascriptBaseImpl = q{
 							// FIXME: meh just do something here.
 						}
 
-						return obj.result;
+						returnValue = obj.result;
 					} else {
 						// how should we handle the error? I guess throwing is better than nothing
 						// but should there be an error callback too?
@@ -3554,14 +3702,24 @@ enum string javascriptBaseImpl = q{
 						}
 
 						if(onError) // local override first...
-							return onError(error);
+							returnValue = onError(error);
 						else if(resObj.onError) // then this object
-							return resObj.onError(error);
+							returnValue = resObj.onError(error);
 						else if(me._onError) // then the global object
-							return me._onError(error);
-
-						throw error; // if all else fails...
+							returnValue = me._onError(error);
+						else
+							throw error; // if all else fails...
 					}
+
+					if(typeof resObj.onComplete == "function") {
+						resObj.onComplete();
+					}
+
+					if(typeof me._onComplete == "function") {
+						me._onComplete(resObj);
+					}
+
+					return returnValue;
 
 					// assert(0); // not reached
 				}, (name.indexOf("get") == 0) ? "GET" : "POST", async); // FIXME: hack: naming convention used to figure out method to use

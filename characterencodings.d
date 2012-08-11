@@ -117,7 +117,7 @@ string tryToDetermineEncoding(in ubyte[] rawdata) {
 		validate!string(cast(string) rawdata);
 		// the odds of non stuff validating as utf-8 are pretty low
 		return "UTF-8";
-	} catch(UtfException t) {
+	} catch(UTFException t) {
 		// it's definitely not UTF-8!
 		// we'll look at the first few characters. If there's a
 		// BOM, it's probably UTF-16 or UTF-32

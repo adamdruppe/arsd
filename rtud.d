@@ -129,6 +129,11 @@ void writeToFd(int fd, string s) {
 		goto again;
 }
 
+__gshared bool deathRequested = false;
+extern(C)
+void requestDeath(int sig) {
+	deathRequested = true;
+}
 
 import arsd.cgi;
 /// The throttledConnection param is useful for helping to get
@@ -143,6 +148,14 @@ import arsd.cgi;
 /// site hanging because the browser is queuing your connections!
 int handleListenerGateway(Cgi cgi, string channelPrefix, bool throttledConnection = false) {
 	cgi.setCache(false);
+
+	import core.sys.posix.signal;
+	sigaction_t act;
+	// I want all zero everywhere else; the read() must not automatically restart for this to work.
+	act.sa_handler = &requestDeath;
+
+	if(linux.sigaction(linux.SIGTERM, &act, null) != 0)
+		throw new Exception("sig err");
 
 	auto f = openNetworkFd("localhost", 7070);
 	scope(exit) linux.close(f);
@@ -185,7 +198,7 @@ int handleListenerGateway(Cgi cgi, string channelPrefix, bool throttledConnectio
 
 	string[4096] buffer;
 
-	for(;;) {
+	for(; !deathRequested ;) {
 		auto num = linux.read(f, buffer.ptr, buffer.length);
 		if(num < 0)
 			throw new Exception("read error");
@@ -202,7 +215,7 @@ int handleListenerGateway(Cgi cgi, string channelPrefix, bool throttledConnectio
 	}
 
 	// this is to support older browsers
-	if(!isSse) {
+	if(!isSse && !deathRequested) {
 		// we have to parse it out and reformat for plain cgi...
 		auto lol = parseMessages(wegot);
 		//cgi.setResponseContentType("text/json");

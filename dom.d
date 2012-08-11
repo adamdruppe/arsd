@@ -20,40 +20,432 @@
 */
 module arsd.dom;
 
-// NOTE: do *NOT* override toString on Element subclasses. It won't work.
-// Instead, override writeToAppender();
+// public import arsd.domconvenience; // merged for now
 
-// FIXME: should I keep processing instructions like <?blah ?> and <!-- blah --> (comments too lol)? I *want* them stripped out of most my output, but I want to be able to parse and create them too.
+/* domconvenience follows { */
 
-// Stripping them is useful for reading php as html.... but adding them
-// is good for building php.
-
-// I need to maintain compatibility with the way it is now too.
-
-import arsd.characterencodings;
 
 import std.string;
-import std.exception;
-import std.uri;
-import std.array;
-import std.range;
 
-//import std.stdio;
+// the reason this is separated is so I can plug it into D->JS as well, which uses a different base Element class
 
-// tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
-// that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
-// most likely a typo so I say kill kill kill.
+import arsd.dom;
+
+mixin template DomConvenienceFunctions() {
+
+	/// Calls getElementById, but throws instead of returning null if the element is not found. You can also ask for a specific subclass of Element to dynamically cast to, which also throws if it cannot be done.
+	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
+	if(
+		is(SomeElementType : Element)
+	)
+	out(ret) {
+		assert(ret !is null);
+	}
+	body {
+		auto e = cast(SomeElementType) getElementById(id);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, file, line);
+		return e;
+	}
+
+	/// ditto but with selectors instead of ids
+	final SomeElementType requireSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
+	if(
+		is(SomeElementType : Element)
+	)
+	out(ret) {
+		assert(ret !is null);
+	}
+	body {
+		auto e = cast(SomeElementType) querySelector(selector);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, file, line);
+		return e;
+	}
 
 
-/// This might belong in another module, but it represents a file with a mime type and some data.
-/// Document implements this interface with type = text/html (see Document.contentType for more info)
-/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
-interface FileResource {
-	string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
-	immutable(ubyte)[] getData() const; /// the data
+
+
+	/// get all the classes on this element
+	@property string[] classes() {
+		return split(className, " ");
+	}
+
+	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
+	Element addClass(string c) {
+		if(hasClass(c))
+			return this; // don't add it twice
+
+		string cn = getAttribute("class");
+		if(cn.length == 0) {
+			setAttribute("class", c);
+			return this;
+		} else {
+			setAttribute("class", cn ~ " " ~ c);
+		}
+
+		return this;
+	}
+
+	/// Removes a particular class name.
+	Element removeClass(string c) {
+		if(!hasClass(c))
+			return this;
+		string n;
+		foreach(name; classes) {
+			if(c == name)
+				continue; // cut it out
+			if(n.length)
+				n ~= " ";
+			n ~= name;
+		}
+
+		className = n.strip;
+
+		return this;
+	}
+
+	/// Returns whether the given class appears in this element.
+	bool hasClass(string c) {
+		auto cn = className;
+
+		auto idx = cn.indexOf(c);
+		if(idx == -1)
+			return false;
+
+		foreach(cla; cn.split(" "))
+			if(cla == c)
+				return true;
+		return false;
+
+		/*
+		int rightSide = idx + c.length;
+
+		bool checkRight() {
+			if(rightSide == cn.length)
+				return true; // it's the only class
+			else if(iswhite(cn[rightSide]))
+				return true;
+			return false; // this is a substring of something else..
+		}
+
+		if(idx == 0) {
+			return checkRight();
+		} else {
+			if(!iswhite(cn[idx - 1]))
+				return false; // substring
+			return checkRight();
+		}
+
+		assert(0);
+		*/
+	}
+
+
+	/* *******************************
+		  DOM Mutation
+	*********************************/
+
+	/// Removes all inner content from the tag; all child text and elements are gone.
+	void removeAllChildren()
+		out {
+			assert(this.children.length == 0);
+		}
+	body {
+		children = null;
+	}
+	/// convenience function to quickly add a tag with some text or
+	/// other relevant info (for example, it's a src for an <img> element
+	/// instead of inner text)
+	Element addChild(string tagName, string childInfo = null, string childInfo2 = null)
+		in {
+			assert(tagName !is null);
+		}
+		out(e) {
+			assert(e.parentNode is this);
+			assert(e.parentDocument is this.parentDocument);
+		}
+	body {
+		auto e = Element.make(tagName, childInfo, childInfo2);
+		// FIXME (maybe): if the thing is self closed, we might want to go ahead and
+		// return the parent. That will break existing code though.
+		return appendChild(e);
+	}
+
+	/// Another convenience function. Adds a child directly after the current one, returning
+	/// the new child.
+	///
+	/// Between this, addChild, and parentNode, you can build a tree as a single expression.
+	Element addSibling(string tagName, string childInfo = null, string childInfo2 = null)
+		in {
+			assert(tagName !is null);
+			assert(parentNode !is null);
+		}
+		out(e) {
+			assert(e.parentNode is this.parentNode);
+			assert(e.parentDocument is this.parentDocument);
+		}
+	body {
+		auto e = Element.make(tagName, childInfo, childInfo2);
+		return parentNode.insertAfter(this, e);
+	}
+
+
+	/// Convenience function to append text intermixed with other children.
+	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
+	/// or div.addChildren("Hello, ", user.name, "!");
+
+	/// See also: appendHtml. This might be a bit simpler though because you don't have to think about escaping.
+	void addChildren(T...)(T t) {
+		foreach(item; t) {
+			static if(is(item : Element))
+				appendChild(item);
+			else static if (is(isSomeString!(item)))
+				appendText(to!string(item));
+			else static assert(0, "Cannot pass " ~ typeof(item).stringof ~ " to addChildren");
+		}
+	}
+
+	///.
+	Element addChild(string tagName, Element firstChild)
+	in {
+		assert(firstChild !is null);
+	}
+	out(ret) {
+		assert(ret !is null);
+		assert(ret.parentNode is this);
+		assert(firstChild.parentNode is ret);
+
+		assert(ret.parentDocument is this.parentDocument);
+		//assert(firstChild.parentDocument is this.parentDocument);
+	}
+	body {
+		auto e = Element.make(tagName);
+		e.appendChild(firstChild);
+		this.appendChild(e);
+		return e;
+	}
+
+	Element addChild(string tagName, Html innerHtml)
+	in {
+	}
+	out(ret) {
+		assert(ret !is null);
+		assert(ret.parentNode is this);
+		assert(ret.parentDocument is this.parentDocument);
+	}
+	body {
+		auto e = Element.make(tagName);
+		this.appendChild(e);
+		e.innerHTML = innerHtml.source;
+		return e;
+	}
+
+
+	/// .
+	void appendChildren(Element[] children) {
+		foreach(ele; children)
+			appendChild(ele);
+	}
+
+	///.
+	void reparent(Element newParent)
+		in {
+			assert(newParent !is null);
+			assert(parentNode !is null);
+		}
+		out {
+			assert(this.parentNode is newParent);
+			//assert(isInArray(this, newParent.children));
+		}
+	body {
+		parentNode.removeChild(this);
+		newParent.appendChild(this);
+	}
+
+	/**
+		Strips this tag out of the document, putting its inner html
+		as children of the parent.
+
+		For example, given: <p>hello <b>there</b></p>, if you
+		call stripOut() on the b element, you'll be left with
+		<p>hello there<p>.
+
+		The idea here is to make it easy to get rid of garbage
+		markup you aren't interested in.
+	*/
+	void stripOut()
+		in {
+			assert(parentNode !is null);
+		}
+		out {
+			assert(parentNode is null);
+			assert(children.length == 0);
+		}
+	body {
+		foreach(c; children)
+			c.parentNode = null; // remove the parent
+		if(children.length)
+			parentNode.replaceChild(this, this.children);
+		else
+			parentNode.removeChild(this);
+		this.children.length = 0; // we reparented them all above
+	}
+
+	/// shorthand for this.parentNode.removeChild(this) with parentNode null check
+	/// if the element already isn't in a tree, it does nothing.
+	Element removeFromTree()
+		in {
+
+		}
+		out(var) {
+			assert(this.parentNode is null);
+			assert(var is this);
+		}
+	body {
+		if(this.parentNode is null)
+			return this;
+
+		this.parentNode.removeChild(this);
+
+		return this;
+	}
+
+	/// Wraps this element inside the given element.
+	/// It's like this.replaceWith(what); what.appendchild(this);
+	///
+	/// Given: < b >cool</ b >, if you call b.wrapIn(new Link("site.com", "my site is "));
+	/// you'll end up with: < a href="site.com">my site is < b >cool< /b ></ a >.
+	Element wrapIn(Element what)
+		in {
+			assert(what !is null);
+		}
+		out(ret) {
+			assert(this.parentNode is what);
+			assert(ret is what);
+		}
+	body {
+		this.replaceWith(what);
+		what.appendChild(this);
+
+		return what;
+	}
+
+	/// Replaces this element with something else in the tree.
+	Element replaceWith(Element e)
+	in {
+		assert(this.parentNode !is null);
+	}
+	body {
+		e.removeFromTree();
+		this.parentNode.replaceChild(this, e);
+		return e;
+	}
+
+	/**
+		Splits the className into an array of each class given
+	*/
+	string[] classNames() const {
+		return className().split(" ");
+	}
+
+	/**
+		Fetches the first consecutive nodes, if text nodes, concatenated together
+
+		If the first node is not text, returns null.
+
+		See also: directText, innerText
+	*/
+	string firstInnerText() const {
+		string s;
+		foreach(child; children) {
+			if(child.nodeType != NodeType.Text)
+				break;
+
+			s ~= child.nodeValue();
+		}
+		return s;
+	}
+
+
+	/**
+		Returns the text directly under this element,
+		not recursively like innerText.
+
+		See also: firstInnerText
+	*/
+	@property string directText() {
+		string ret;
+		foreach(e; children) {
+			if(e.nodeType == NodeType.Text)
+				ret ~= e.nodeValue();
+		}
+
+		return ret;
+	}
+
+	/**
+		Sets the direct text, keeping the same place.
+
+		Unlike innerText, this does *not* remove existing
+		elements in the element.
+
+		It only replaces the first text node it sees.
+
+		If there are no text nodes, it calls appendText
+
+		So, given (ignore the spaces in the tags):
+			< div > < img > text here < /div >
+
+		it will keep the img, and replace the "text here".
+	*/
+	@property void directText(string text) {
+		foreach(e; children) {
+			if(e.nodeType == NodeType.Text) {
+				auto it = cast(TextNode) e;
+				it.contents = text;
+				return;
+			}
+		}
+
+		appendText(text);
+	}
 }
 
 
+// I'm just dicking around with this
+struct ElementCollection {
+	this(Element e) {
+		elements = [e];
+	}
+
+	this(Element[] e) {
+		elements = e;
+	}
+
+	Element[] elements;
+	//alias elements this; // let it implicitly convert to the underlying array
+
+	ElementCollection opIndex(string selector) {
+		ElementCollection ec;
+		foreach(e; elements)
+			ec.elements ~= e.getElementsBySelector(selector);
+		return ec;
+	}
+
+	/// Forward method calls to each individual element of the collection
+	/// returns this so it can be chained.
+	ElementCollection opDispatch(string name, T...)(T t) {
+		foreach(e; elements) {
+			mixin("e." ~ name)(t);
+		}
+		return this;
+	}
+
+	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
+		return ElementCollection(this.elements ~ rhs.elements);
+	}
+}
 
 
 // this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
@@ -132,6 +524,8 @@ struct ElementStyle {
 
 		_attribute = "";
 		foreach(k, v; r) {
+			if(v is null)
+				continue;
 			if(_attribute.length)
 				_attribute ~= " ";
 			_attribute ~= k ~ ": " ~ v ~ ";";
@@ -151,7 +545,7 @@ struct ElementStyle {
 
 	string[string] rules() const {
 		string[string] ret;
-		foreach(rule;  _attribute().split(";")) {
+		foreach(rule;  _attribute.split(";")) {
 			rule = rule.strip();
 			if(rule.length == 0)
 				continue;
@@ -172,6 +566,92 @@ struct ElementStyle {
 	mixin JavascriptStyleDispatch!();
 }
 
+/// Converts a camel cased propertyName to a css style dashed property-name
+string unCamelCase(string a) {
+	string ret;
+	foreach(c; a)
+		if((c >= 'A' && c <= 'Z'))
+			ret ~= "-" ~ toLower("" ~ c)[0];
+		else
+			ret ~= c;
+	return ret;
+}
+
+/// Translates a css style property-name to a camel cased propertyName
+string camelCase(string a) {
+	string ret;
+	bool justSawDash = false;
+	foreach(c; a)
+		if(c == '-') {
+			justSawDash = true;
+		} else {
+			if(justSawDash) {
+				justSawDash = false;
+				ret ~= toUpper("" ~ c);
+			} else
+				ret ~= c;
+		}
+	return ret;
+}
+
+
+
+
+
+
+
+
+
+// domconvenience ends }
+
+
+
+
+
+
+
+
+
+
+
+// @safe:
+
+// NOTE: do *NOT* override toString on Element subclasses. It won't work.
+// Instead, override writeToAppender();
+
+// FIXME: should I keep processing instructions like <?blah ?> and <!-- blah --> (comments too lol)? I *want* them stripped out of most my output, but I want to be able to parse and create them too.
+
+// Stripping them is useful for reading php as html.... but adding them
+// is good for building php.
+
+// I need to maintain compatibility with the way it is now too.
+
+import arsd.characterencodings;
+
+import std.string;
+import std.exception;
+import std.uri;
+import std.array;
+import std.range;
+
+//import std.stdio;
+
+// tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
+// that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
+// most likely a typo so I say kill kill kill.
+
+
+/// This might belong in another module, but it represents a file with a mime type and some data.
+/// Document implements this interface with type = text/html (see Document.contentType for more info)
+/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
+interface FileResource {
+	string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
+	immutable(ubyte)[] getData() const; /// the data
+}
+
+
+
+
 ///.
 enum NodeType { Text = 3 }
 
@@ -189,6 +669,8 @@ body {
 
 /// This represents almost everything in the DOM.
 class Element {
+	mixin DomConvenienceFunctions!();
+
 	// this is a thing so i can remove observer support if it gets slow
 	// I have not implemented all these yet
 	private void sendObserverEvent(DomMutationOperations operation, string s1 = null, string s2 = null, Element r = null, Element r2 = null) {
@@ -255,6 +737,10 @@ class Element {
 		Element e;
 		// want to create the right kind of object for the given tag...
 		switch(tagName) {
+			case "#text":
+				e = new TextNode(null, childInfo);
+				return e;
+			break;
 			case "table":
 				e = new Table(null);
 			break;
@@ -314,6 +800,11 @@ class Element {
 					if(childInfo2 !is null)
 						e.value = childInfo2;
 				break;
+				case "button":
+					e.innerText = childInfo;
+					if(childInfo2 !is null)
+						e.type = childInfo2;
+				break;
 				case "a":
 					e.innerText = childInfo;
 					if(childInfo2 !is null)
@@ -336,6 +827,18 @@ class Element {
 			}
 
 		return e;
+	}
+
+	static Element make(string tagName, Html innerHtml, string childInfo2 = null) {
+		auto m = Element.make(tagName, cast(string) null, childInfo2);
+		m.innerHTML = innerHtml.source;
+		return m;
+	}
+
+	static Element make(string tagName, Element child, string childInfo2 = null) {
+		auto m = Element.make(tagName, cast(string) null, childInfo2);
+		m.appendChild(child);
+		return m;
 	}
 
 
@@ -474,36 +977,6 @@ class Element {
 			if(e.id == id)
 				return e;
 		return null;
-	}
-
-	///.
-	final SomeElementType requireElementById(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string id)
-	if(
-		is(SomeElementType : Element)
-	)
-	out(ret) {
-		assert(ret !is null);
-	}
-	body {
-		auto e = cast(SomeElementType) getElementById(id);
-		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, file, line);
-		return e;
-	}
-
-	///.
-	final SomeElementType requireSelector(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string selector)
-	if(
-		is(SomeElementType : Element)
-	)
-	out(ret) {
-		assert(ret !is null);
-	}
-	body {
-		auto e = cast(SomeElementType) querySelector(selector);
-		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, selector, file, line);
-		return e;
 	}
 
 	/// Note: you can give multiple selectors, separated by commas.
@@ -672,7 +1145,7 @@ class Element {
 		Gets the class attribute's contents. Returns
 		an empty string if it has no class.
 	*/
-	string className() const {
+	@property string className() const {
 		auto c = getAttribute("class");
 		if(c is null)
 			return "";
@@ -680,7 +1153,7 @@ class Element {
 	}
 
 	///.
-	Element className(string c) {
+	@property Element className(string c) {
 		setAttribute("class", c);
 		return this;
 	}
@@ -710,82 +1183,6 @@ class Element {
 	@property Element[] childNodes() { // FIXME: the above should be inout
 		return children;
 	}
-
-	/// get all the classes on this element
-	@property string[] classes() {
-		return split(className, " ");
-	}
-
-	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
-	Element addClass(string c) {
-		if(hasClass(c))
-			return this; // don't add it twice
-
-		string cn = getAttribute("class");
-		if(cn.length == 0) {
-			setAttribute("class", c);
-			return this;
-		} else {
-			setAttribute("class", cn ~ " " ~ c);
-		}
-
-		return this;
-	}
-
-	/// Removes a particular class name.
-	Element removeClass(string c) {
-		if(!hasClass(c))
-			return this;
-		string n;
-		foreach(name; classes) {
-			if(c == name)
-				continue; // cut it out
-			if(n.length)
-				n ~= " ";
-			n ~= name;
-		}
-
-		className = n.strip;
-
-		return this;
-	}
-
-	/// Returns whether the given class appears in this element.
-	bool hasClass(string c) {
-		auto cn = className;
-
-		auto idx = cn.indexOf(c);
-		if(idx == -1)
-			return false;
-
-		foreach(cla; cn.split(" "))
-			if(cla == c)
-				return true;
-		return false;
-
-		/*
-		int rightSide = idx + c.length;
-
-		bool checkRight() {
-			if(rightSide == cn.length)
-				return true; // it's the only class
-			else if(iswhite(cn[rightSide]))
-				return true;
-			return false; // this is a substring of something else..
-		}
-
-		if(idx == 0) {
-			return checkRight();
-		} else {
-			if(!iswhite(cn[idx - 1]))
-				return false; // substring
-			return checkRight();
-		}
-
-		assert(0);
-		*/
-	}
-
 
 	/// HTML5's dataset property. It is an alternate view into attributes with the data- prefix.
 	///
@@ -907,91 +1304,6 @@ class Element {
 	body {
 		children = null;
 	}
-	/// convenience function to quickly add a tag with some text or
-	/// other relevant info (for example, it's a src for an <img> element
-	/// instead of inner text)
-	Element addChild(string tagName, string childInfo = null, string childInfo2 = null)
-		in {
-			assert(tagName !is null);
-		}
-		out(e) {
-			assert(e.parentNode is this);
-			assert(e.parentDocument is this.parentDocument);
-		}
-	body {
-		auto e = Element.make(tagName, childInfo, childInfo2);
-		// FIXME (maybe): if the thing is self closed, we might want to go ahead and
-		// return the parent. That will break existing code though.
-		return appendChild(e);
-	}
-
-	/// Another convenience function. Adds a child directly after the current one, returning
-	/// the new child.
-	///
-	/// Between this, addChild, and parentNode, you can build a tree as a single expression.
-	Element addSibling(string tagName, string childInfo = null, string childInfo2 = null)
-		in {
-			assert(tagName !is null);
-			assert(parentNode !is null);
-		}
-		out(e) {
-			assert(e.parentNode is this.parentNode);
-			assert(e.parentDocument is this.parentDocument);
-		}
-	body {
-		auto e = Element.make(tagName, childInfo, childInfo2);
-		return parentNode.insertAfter(this, e);
-	}
-
-	/// Convenience function to append text intermixed with other children.
-	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
-	/// or div.addChildren("Hello, ", user.name, "!");
-
-	/// See also: appendHtml. This might be a bit simpler though because you don't have to think about escaping.
-	void addChildren(T...)(T t) {
-		foreach(item; t) {
-			static if(is(item : Element))
-				appendChild(item);
-			else static if (is(isSomeString!(item)))
-				appendText(to!string(item));
-			else static assert(0, "Cannot pass " ~ typeof(item).stringof ~ " to addChildren");
-		}
-	}
-
-	///.
-	Element addChild(string tagName, Element firstChild)
-	in {
-		assert(firstChild !is null);
-	}
-	out(ret) {
-		assert(ret !is null);
-		assert(ret.parentNode is this);
-		assert(firstChild.parentNode is ret);
-
-		assert(ret.parentDocument is this.parentDocument);
-		//assert(firstChild.parentDocument is this.parentDocument);
-	}
-	body {
-		auto e = Element.make(tagName);
-		e.appendChild(firstChild);
-		this.appendChild(e);
-		return e;
-	}
-
-	Element addChild(string tagName, Html innerHtml)
-	in {
-	}
-	out(ret) {
-		assert(ret !is null);
-		assert(ret.parentNode is this);
-		assert(ret.parentDocument is this.parentDocument);
-	}
-	body {
-		auto e = Element.make(tagName);
-		this.appendChild(e);
-		e.innerHTML = innerHtml.source;
-		return e;
-	}
 
 
     	/// Appends the given element to this one. The given element must not have a parent already.
@@ -1014,12 +1326,6 @@ class Element {
 		sendObserverEvent(DomMutationOperations.appendChild, null, null, e);
 
 		return e;
-	}
-
-	/// .
-	void appendChildren(Element[] children) {
-		foreach(ele; children)
-			appendChild(ele);
 	}
 
 	/// Inserts the second element to this node, right before the first param
@@ -1110,7 +1416,8 @@ class Element {
 	///.
 	Element appendText(string text) {
 		Element e = new TextNode(parentDocument, text);
-		return appendChild(e);
+		appendChild(e);
+		return this;
 	}
 
 	///.
@@ -1128,20 +1435,6 @@ class Element {
 		return stealChildren(d.root);
 	}
 
-	///.
-	void reparent(Element newParent)
-		in {
-			assert(newParent !is null);
-			assert(parentNode !is null);
-		}
-		out {
-			assert(this.parentNode is newParent);
-			//assert(isInArray(this, newParent.children));
-		}
-	body {
-		parentNode.removeChild(this);
-		newParent.appendChild(this);
-	}
 
 	///.
 	void insertChildAfter(Element child, Element where)
@@ -1232,7 +1525,7 @@ class Element {
 		Returns a string containing all child elements, formatted such that it could be pasted into
 		an XML file.
 	*/
-	@property string innerHTML(Appender!string where = appender!string()) const {
+	string innerHTML(Appender!string where = appender!string()) const {
 		if(children is null)
 			return "";
 
@@ -1250,7 +1543,7 @@ class Element {
 	/**
 		Takes some html and replaces the element's children with the tree made from the string.
 	*/
-	@property void innerHTML(string html) {
+	Element innerHTML(string html) {
 		if(html.length)
 			selfClosed = false;
 
@@ -1258,7 +1551,7 @@ class Element {
 			// I often say innerHTML = ""; as a shortcut to clear it out,
 			// so let's optimize that slightly.
 			removeAllChildren();
-			return;
+			return this;
 		}
 
 		auto doc = new Document();
@@ -1273,11 +1566,13 @@ class Element {
 		reparentTreeDocuments();
 
 		doc.root.children = null;
+
+		return this;
 	}
 
 	/// ditto
-	@property void innerHTML(Html html) {
-		this.innerHTML = html.source;
+	Element innerHTML(Html html) {
+		return this.innerHTML(html.source);
 	}
 
 	private void reparentTreeDocuments() {
@@ -1359,6 +1654,50 @@ class Element {
 	}
 
 	/**
+		Replaces the given element with a whole group.
+	*/
+	void replaceChild(Element find, Element[] replace)
+		in {
+			assert(find !is null);
+			assert(replace !is null);
+			assert(find.parentNode is this);
+			debug foreach(r; replace)
+				assert(r.parentNode is null);
+		}
+		out {
+			assert(find.parentNode is null);
+			assert(children.length >= replace.length);
+			debug foreach(child; children)
+				assert(child !is find);
+			debug foreach(r; replace)
+				assert(r.parentNode is this);
+		}
+	body {
+		if(replace.length == 0) {
+			removeChild(find);
+			return;
+		}
+		assert(replace.length);
+		for(int i = 0; i < children.length; i++) {
+			if(children[i] is find) {
+				children[i].parentNode = null; // this element should now be dead
+				children[i] = replace[0];
+				foreach(e; replace) {
+					e.parentNode = this;
+					e.parentDocument = this.parentDocument;
+				}
+
+				children = .insertAfter(children, i, replace[1..$]);
+
+				return;
+			}
+		}
+
+		throw new Exception("no such child");
+	}
+
+
+	/**
 		Removes the given child from this list.
 
 		Returns the removed element.
@@ -1403,156 +1742,12 @@ class Element {
 	}
 
 	/**
-		Replaces the given element with a whole group.
-	*/
-	void replaceChild(Element find, Element[] replace)
-		in {
-			assert(find !is null);
-			assert(replace !is null);
-			assert(find.parentNode is this);
-			debug foreach(r; replace)
-				assert(r.parentNode is null);
-		}
-		out {
-			assert(find.parentNode is null);
-			assert(children.length >= replace.length);
-			debug foreach(child; children)
-				assert(child !is find);
-			debug foreach(r; replace)
-				assert(r.parentNode is this);
-		}
-	body {
-		if(replace.length == 0) {
-			removeChild(find);
-			return;
-		}
-		assert(replace.length);
-		for(int i = 0; i < children.length; i++) {
-			if(children[i] is find) {
-				children[i].parentNode = null; // this element should now be dead
-				children[i] = replace[0];
-				foreach(e; replace) {
-					e.parentNode = this;
-					e.parentDocument = this.parentDocument;
-				}
-
-				children = .insertAfter(children, i, replace[1..$]);
-
-				return;
-			}
-		}
-
-		throw new Exception("no such child");
-	}
-
-	/**
-		Strips this tag out of the document, putting its inner html
-		as children of the parent.
-
-		For example, given: <p>hello <b>there</b></p>, if you
-		call stripOut() on the b element, you'll be left with
-		<p>hello there<p>.
-
-		The idea here is to make it easy to get rid of garbage
-		markup you aren't interested in.
-	*/
-	void stripOut()
-		in {
-			assert(parentNode !is null);
-		}
-		out {
-			assert(parentNode is null);
-			assert(children.length == 0);
-		}
-	body {
-		foreach(c; children)
-			c.parentNode = null; // remove the parent
-		if(children.length)
-			parentNode.replaceChild(this, this.children);
-		else
-			parentNode.removeChild(this);
-		this.children.length = 0; // we reparented them all above
-	}
-
-	/// shorthand for this.parentNode.removeChild(this) with parentNode null check
-	/// if the element already isn't in a tree, it does nothing.
-	Element removeFromTree()
-		in {
-
-		}
-		out(var) {
-			assert(this.parentNode is null);
-			assert(var is this);
-		}
-	body {
-		if(this.parentNode is null)
-			return this;
-
-		this.parentNode.removeChild(this);
-
-		return this;
-	}
-
-	/// Wraps this element inside the given element.
-	/// It's like this.replaceWith(what); what.appendchild(this);
-	///
-	/// Given: < b >cool</ b >, if you call b.wrapIn(new Link("site.com", "my site is "));
-	/// you'll end up with: < a href="site.com">my site is < b >cool< /b ></ a >.
-	Element wrapIn(Element what)
-		in {
-			assert(what !is null);
-		}
-		out(ret) {
-			assert(this.parentNode is what);
-			assert(ret is what);
-		}
-	body {
-		this.replaceWith(what);
-		what.appendChild(this);
-
-		return what;
-	}
-
-	/// Replaces this element with something else in the tree.
-	Element replaceWith(Element e) {
-		if(e.parentNode !is null)
-			e.parentNode.removeChild(e);
-		this.parentNode.replaceChild(this, e);
-		return e;
-	}
-
-	/**
-		Splits the className into an array of each class given
-	*/
-	string[] classNames() const {
-		return className().split(" ");
-	}
-
-	/**
-		Fetches the first consecutive nodes, if text nodes, concatenated together
-
-		If the first node is not text, returns null.
-
-		See also: directText, innerText
-	*/
-	string firstInnerText() const {
-		string s;
-		foreach(child; children) {
-			if(child.nodeType != NodeType.Text)
-				break;
-
-			s ~= child.nodeValue();
-		}
-		return s;
-	}
-
-	/**
 		Fetch the inside text, with all tags stripped out.
 
 		<p>cool <b>api</b> &amp; code dude<p>
 		innerText of that is "cool api & code dude".
 	*/
-	@property string innerText() const {
+	string innerText() const {
 		string s;
 		foreach(child; children) {
 			if(child.nodeType != NodeType.Text)
@@ -1567,54 +1762,11 @@ class Element {
 		Sets the inside text, replacing all children. You don't
 		have to worry about entity encoding.
 	*/
-	@property void innerText(string text) {
+	void innerText(string text) {
 		selfClosed = false;
 		Element e = new TextNode(parentDocument, text);
 		e.parentNode = this;
 		children = [e];
-	}
-
-	/**
-		Returns the text directly under this element,
-		not recursively like innerText.
-
-		See also: firstInnerText
-	*/
-	@property string directText() {
-		string ret;
-		foreach(e; children) {
-			if(e.nodeType == NodeType.Text)
-				ret ~= e.nodeValue();
-		}
-
-		return ret;
-	}
-
-	/**
-		Sets the direct text, keeping the same place.
-
-		Unlike innerText, this does *not* remove existing
-		elements in the element.
-
-		It only replaces the first text node it sees.
-
-		If there are no text nodes, it calls appendText
-
-		So, given (ignore the spaces in the tags):
-			< div > < img > text here < /div >
-
-		it will keep the img, and replace the "text here".
-	*/
-	@property void directText(string text) {
-		foreach(e; children) {
-			if(e.nodeType == NodeType.Text) {
-				auto it = cast(TextNode) e;
-				it.contents = text;
-				return;
-			}
-		}
-
-		appendText(text);
 	}
 
 	/**
@@ -1627,7 +1779,7 @@ class Element {
 	/**
 		Same result as innerText; the tag with all inner tags stripped out
 	*/
-	@property string outerText() const {
+	string outerText() const {
 		return innerText();
 	}
 
@@ -1678,6 +1830,8 @@ class Element {
 
 
 	invariant () {
+		assert(tagName.indexOf(" ") == -1);
+
 		if(children !is null)
 		debug foreach(child; children) {
 		//	assert(parentNode !is null);
@@ -1849,6 +2003,8 @@ dchar parseEntity(in dchar[] entity) {
 		case "deg":
 		case "micro"
 		*/
+		case "times":
+			return '\u00d7';
 		case "hellip":
 			return '\u2026';
 		case "laquo":
@@ -1875,6 +2031,8 @@ dchar parseEntity(in dchar[] entity) {
 			return '\u00e9';
 		case "mdash":
 			return '\u2014';
+		case "ndash":
+			return '\u2013';
 		case "Omicron":
 			return '\u039f';
 		case "omicron":
@@ -1891,6 +2049,14 @@ dchar parseEntity(in dchar[] entity) {
 					return cast(dchar) p;
 				} else {
 					auto decimal = entity[2..$-1];
+
+					// dealing with broken html entities
+					while(decimal.length && (decimal[0] < '0' || decimal[0] >   '9'))
+						decimal = decimal[1 .. $];
+
+					if(decimal.length == 0)
+						return ' '; // this is really broken html
+					// done with dealing with broken stuff
 
 					auto p = std.conv.to!int(decimal);
 					return cast(dchar) p;
@@ -1925,6 +2091,18 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 			entityAttemptIndex++;
 			entityBeingTried ~= ch;
 
+			// I saw some crappy html in the wild that looked like &0&#1111; this tries to handle that.
+			if(ch == '&') {
+				if(strict)
+					throw new Exception("unterminated entity; & inside another at " ~ to!string(entityBeingTried));
+
+				// if not strict, let's try to parse both.
+
+				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+				// tryingEntity is still true
+				entityBeingTried = entityBeingTried[0 .. 1]; // keep the &
+				entityAttemptIndex = 0; // restarting o this
+			} else
 			if(ch == ';') {
 				tryingEntity = false;
 				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
@@ -2198,6 +2376,46 @@ class Form : Element {
 		tagName = "form";
 	}
 
+	Element addField(string label, string name, string type = "text") {
+		auto fs = this.querySelector("fieldset div");
+		if(fs is null) fs = this;
+		auto i = fs.addChild("label");
+		i.addChild("span", label);
+		if(type == "textarea")
+			i.addChild("textarea").
+			setAttribute("name", name).
+			setAttribute("rows", "6");
+		else
+			i.addChild("input").
+			setAttribute("name", name).
+			setAttribute("type", type);
+
+		return i;
+	}
+
+	Element addField(string label, string name, string[string] options) {
+		auto fs = this.querySelector("fieldset div");
+		if(fs is null) fs = this;
+		auto i = fs.addChild("label");
+		i.addChild("span", label);
+		auto sel = i.addChild("select").setAttribute("name", name);
+
+		foreach(k, opt; options)
+			sel.addChild("option", opt, k);
+
+		return i;
+	}
+
+	Element addSubmitButton(string label = null) {
+		auto holder = this.addChild("div");
+		holder.addClass("submit-holder");
+		auto i = holder.addChild("input");
+		i.type = "submit";
+		if(label.length)
+			i.value = label;
+		return holder;
+	}
+
 	// FIXME: doesn't handle arrays; multiple fields can have the same name
 
 	/// Set's the form field's value. For input boxes, this sets the value attribute. For
@@ -2211,7 +2429,7 @@ class Form : Element {
 		auto eles = getField(field);
 		if(eles.length == 0) {
 			if(makeNew) {
-				addField(field, value);
+				addInput(field, value);
 				return;
 			} else
 				throw new Exception("form field does not exist");
@@ -2369,7 +2587,7 @@ class Form : Element {
 	}
 
 	/// Adds a new INPUT field to the end of the form with the given attributes.
-	Element addField(string name, string value, string type = "hidden") {
+	Element addInput(string name, string value, string type = "hidden") {
 		auto e = new Element(parentDocument, "input", null, true);
 		e.name = name;
 		e.value = value;
@@ -2447,8 +2665,22 @@ class Table : Element {
 		return e;
 	}
 
-	///.
+	/// .
+	Element appendHeaderRow(T...)(T t) {
+		return appendRowInternal("th", "thead", t);
+	}
+
+	/// .
+	Element appendFooterRow(T...)(T t) {
+		return appendRowInternal("td", "tfoot", t);
+	}
+
+	/// .
 	Element appendRow(T...)(T t) {
+		return appendRowInternal("td", "tbody", t);
+	}
+
+	private Element appendRowInternal(T...)(string innerType, string findType, T t) {
 		Element row = Element.make("tr");
 
 		foreach(e; t) {
@@ -2456,31 +2688,38 @@ class Table : Element {
 				if(e.tagName == "td" || e.tagName == "th")
 					row.appendChild(e);
 				else {
-					Element a = Element.make("td");
+					Element a = Element.make(innerType);
 
 					a.appendChild(e);
 
 					row.appendChild(a);
 				}
 			} else static if(is(typeof(e) == Html)) {
-				Element a = Element.make("td");
+				Element a = Element.make(innerType);
 				a.innerHTML = e.source;
 				row.appendChild(a);
+			} else static if(is(typeof(e) == Element[])) {
+				Element a = Element.make(innerType);
+				foreach(ele; e)
+					a.appendChild(ele);
+				row.appendChild(a);
 			} else {
-				Element a = Element.make("td");
+				Element a = Element.make(innerType);
 				a.innerText = to!string(e);
 				row.appendChild(a);
 			}
 		}
 
 		foreach(e; children) {
-			if(e.tagName == "tbody") {
+			if(e.tagName == findType) {
 				e.appendChild(row);
 				return row;
 			}
 		}
 
-		appendChild(row);
+		// the type was not found if we are here... let's add it so it is well-formed
+		auto lol = this.addChild(findType);
+		lol.appendChild(row);
 
 		return row;
 	}
@@ -2673,7 +2912,7 @@ class MarkupError : Exception {
 class ElementNotFoundException : Exception {
 
 	/// type == kind of element you were looking for and search == a selector describing the search.
-	this(string type, string search, string file = __FILE__, int line = __LINE__) {
+	this(string type, string search, string file = __FILE__, size_t line = __LINE__) {
 		super("Element of type '"~type~"' matching {"~search~"} not found.", file, line);
 	}
 }
@@ -2868,7 +3107,7 @@ class Document : FileResource {
 			if(dataEncoding == "utf8") {
 				try {
 					validate(rawdata);
-				} catch(UtfException e) {
+				} catch(UTFException e) {
 					dataEncoding = "Windows 1252";
 				}
 			}
@@ -2942,7 +3181,11 @@ class Document : FileResource {
 			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+			{
+				if(data[pos] == '<')
+					throw new MarkupError("The character < can never appear in an attribute name.");
 				pos++;
+			}
 
 			if(!caseSensitive)
 				return toLower(data[start..pos]);
@@ -3009,6 +3252,8 @@ class Document : FileResource {
 			// Loose mode should perform decently, but strict mode is the important one.
 			if(!strict && parentChain is null)
 				parentChain = [];
+
+			static string[] recentAutoClosedTags;
 
 			if(pos >= data.length)
 			{
@@ -3093,6 +3338,28 @@ class Document : FileResource {
 						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
 				break;
 				default:
+
+					if(!strict) {
+						// what about something that kinda looks like a tag, but isn't?
+						auto nextTag = data[pos .. $].indexOf("<");
+						auto closeTag = data[pos .. $].indexOf(">");
+						if(closeTag != -1 && nextTag != -1)
+							if(nextTag < closeTag) {
+								// since attribute names cannot possibly have a < in them, we'll look for an equal since it might be an attribute value... and even in garbage mode, it'd have to be a quoted one realistically
+
+								auto equal = data[pos .. $].indexOf("=\"");
+								if(equal != -1 && equal < closeTag) {
+									// this MIGHT be ok, soldier on
+								} else {
+									// definitely no good, this must be a (horribly distorted) text node
+									pos++; // skip the < we're on - don't want text node to end prematurely
+									auto node = readTextNode();
+									node.contents = "<" ~ node.contents; // put this back
+									return Ele(0, node, null);
+								}
+							}
+					}
+
 					string tagName = readTagName();
 					string[string] attributes;
 
@@ -3190,8 +3457,13 @@ class Document : FileResource {
 										}
 
 										// is the element open somewhere up the chain?
-										foreach(parent; parentChain)
+										foreach(i, parent; parentChain)
 											if(parent == n.payload) {
+												recentAutoClosedTags ~= tagName;
+												// just rotating it so we don't inadvertently break stuff with vile crap
+												if(recentAutoClosedTags.length > 4)
+													recentAutoClosedTags = recentAutoClosedTags[1 .. $];
+
 												n.element = e;
 												return n;
 											}
@@ -3202,6 +3474,13 @@ class Document : FileResource {
 										// and we shouldn't output it - odds are the user just flipped a couple tags
 										foreach(ele; e.tree) {
 											if(ele.tagName == n.payload) {
+												found = true;
+												break;
+											}
+										}
+
+										foreach(ele; recentAutoClosedTags) {
+											if(ele == n.payload) {
 												found = true;
 												break;
 											}
@@ -3344,19 +3623,19 @@ class Document : FileResource {
 	}
 
 	/// ditto
-	final SomeElementType requireElementById(SomeElementType = Element)(string id)
+	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
 	body {
-		return root.requireElementById!(SomeElementType)(id);
+		return root.requireElementById!(SomeElementType)(id, file, line);
 	}
 
 	/// ditto
-	final SomeElementType requireSelector(SomeElementType = Element, string file = __FILE__, int line = __LINE__)(string selector)
+	final SomeElementType requireSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
 	body {
-		return root.requireSelector!(SomeElementType, file, line)(selector);
+		return root.requireSelector!(SomeElementType)(selector, file, line);
 	}
 
 
@@ -3515,6 +3794,7 @@ class Document : FileResource {
 }
 
 
+// FIXME: since Document loosens the input requirements, it should probably be the sub class...
 /// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
 class XmlDocument : Document {
 	this(string data) {
@@ -3791,6 +4071,9 @@ int intFromHex(string hex) {
 				if(a[0] !in e.attributes || e.attributes[a[0]] != a[1])
 					return false;
 			foreach(a; attributesNotEqual)
+				// FIXME: maybe it should say null counts... this just bit me.
+				// I did [attr][attr!=value] to work around.
+				//
 				// if it's null, it's not equal, right?
 				//if(a[0] !in e.attributes || e.attributes[a[0]] == a[1])
 				if(e.getAttribute(a[0]) == a[1])
@@ -4077,6 +4360,7 @@ int intFromHex(string hex) {
 						case "root":
 							current.rootElement = true;
 						break;
+						// FIXME: add :not()
 						// My extensions
 						case "odd-child":
 							current.oddChild = true;
@@ -4202,35 +4486,6 @@ Element[] removeDuplicates(Element[] input) {
 }
 
 // done with CSS selector handling
-
-
-/// Converts a camel cased propertyName to a css style dashed property-name
-string unCamelCase(string a) {
-	string ret;
-	foreach(c; a)
-		if((c >= 'A' && c <= 'Z'))
-			ret ~= "-" ~ toLower("" ~ c)[0];
-		else
-			ret ~= c;
-	return ret;
-}
-
-/// Translates a css style property-name to a camel cased propertyName
-string camelCase(string a) {
-	string ret;
-	bool justSawDash = false;
-	foreach(c; a)
-		if(c == '-') {
-			justSawDash = true;
-		} else {
-			if(justSawDash) {
-				justSawDash = false;
-				ret ~= toUpper("" ~ c);
-			} else
-				ret ~= c;
-		}
-	return ret;
-}
 
 
 // FIXME: use the better parser from html.d
@@ -4448,6 +4703,10 @@ class CssStyle {
 
 		return ret;
 	}
+}
+
+string cssUrl(string url) {
+	return "url(\"" ~ url ~ "\")";
 }
 
 /// This probably isn't useful, unless you're writing a browser or something like that.
@@ -4712,41 +4971,6 @@ private string[string] dup(in string[string] arr) {
 		ret[k] = v;
 	return ret;
 }
-
-// I'm just dicking around with this
-struct ElementCollection {
-	this(Element e) {
-		elements = [e];
-	}
-
-	this(Element[] e) {
-		elements = e;
-	}
-
-	Element[] elements;
-	//alias elements this; // let it implicitly convert to the underlying array
-
-	ElementCollection opIndex(string selector) {
-		ElementCollection ec;
-		foreach(e; elements)
-			ec.elements ~= e.getElementsBySelector(selector);
-		return ec;
-	}
-
-	/// Forward method calls to each individual element of the collection
-	/// returns this so it can be chained.
-	ElementCollection opDispatch(string name, T...)(T t) {
-		foreach(e; elements) {
-			mixin("e." ~ name)(t);
-		}
-		return this;
-	}
-
-	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
-		return ElementCollection(this.elements ~ rhs.elements);
-	}
-}
-
 
 // dom event support, if you want to use it
 

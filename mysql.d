@@ -325,6 +325,13 @@ class MySql : Database {
 	}
 
 
+	ResultByDataObject!R queryDataObjectWithCustomKeys(R = DataObject, T...)(string[string] keyMapping, string sql, T t) {
+		sql = fixupSqlForDataObjectUse(sql, keyMapping);
+
+		auto magic = query(sql, t);
+		return ResultByDataObject!R(cast(MySqlResult) magic, this);
+	}
+
 
 
 

@@ -421,6 +421,58 @@ class Cgi {
 		PostParserState pps;
 	}
 
+	/// This represents a file the user uploaded via a POST request.
+	static struct UploadedFile {
+		/// If you want to create one of these structs for yourself from some data,
+		/// use this function.
+		static UploadedFile fromData(immutable(void)[] data, string name = null) {
+			Cgi.UploadedFile f;
+			f.filename = name;
+			f.content = cast(immutable(ubyte)[]) data;
+			f.contentInMemory = true;
+			return f;
+		}
+
+		string name; 		/// The name of the form element.
+		string filename; 	/// The filename the user set.
+		string contentType; 	/// The MIME type the user's browser reported. (Not reliable.)
+
+		/**
+			For small files, cgi.d will buffer the uploaded file in memory, and make it
+			directly accessible to you through the content member. I find this very convenient
+			and somewhat efficient, since it can avoid hitting the disk entirely. (I
+			often want to inspect and modify the file anyway!)
+
+			I find the file is very large, it is undesirable to eat that much memory just
+			for a file buffer. In those cases, if you pass a large enough value for maxContentLength
+			to the constructor so they are accepted, cgi.d will write the content to a temporary
+			file that you can re-read later.
+
+			You can override this behavior by subclassing Cgi and overriding the protected
+			handlePostChunk method. Note that the object is not initialized when you
+			write that method - the http headers are available, but the cgi.post method
+			is not. You may parse the file as it streams in using this method.
+
+
+			Anyway, if the file is small enough to be in memory, contentInMemory will be
+			set to true, and the content is available in the content member.
+
+			If not, contentInMemory will be set to false, and the content saved in a file,
+			whose name will be available in the contentFilename member.
+
+
+			Tip: if you know you are always dealing with small files, and want the convenience
+			of ignoring this member, construct Cgi with a small maxContentLength. Then, if
+			a large file comes in, it simply throws an exception (and HTTP error response)
+			instead of trying to handle it.
+
+			The default value of maxContentLength in the constructor is for small files.
+		*/
+		bool contentInMemory = true; // the default ought to always be true
+		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
+		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
+	}
+
 	// given a content type and length, decide what we're going to do with the data..
 	protected void prepareForIncomingDataChunks(string contentType, ulong contentLength) {
 		pps.expectedLength = contentLength;
@@ -840,10 +892,11 @@ class Cgi {
 		// streaming parser
 		import al = std.algorithm;
 
-		auto idx = al.indexOf(inputData.front(), "\r\n\r\n");
+			// FIXME: tis cast is technically wrong, but Phobos deprecated al.indexOf... for some reason.
+		auto idx = indexOf(cast(string) inputData.front(), "\r\n\r\n");
 		while(idx == -1) {
 			inputData.popFront(0);
-			idx = al.indexOf(inputData.front(), "\r\n\r\n");
+			idx = indexOf(cast(string) inputData.front(), "\r\n\r\n");
 		}
 
 		assert(idx != -1);
@@ -1047,58 +1100,6 @@ class Cgi {
 
 		return null;
 	}
-
-	/// This represents a file the user uploaded via a POST request.
-	static struct UploadedFile {
-		/// If you want to create one of these structs for yourself from some data,
-		/// use this function.
-		static UploadedFile fromData(immutable(void)[] data) {
-			Cgi.UploadedFile f;
-			f.content = cast(immutable(ubyte)[]) data;
-			f.contentInMemory = true;
-			return f;
-		}
-
-		string name; 		/// The name of the form element.
-		string filename; 	/// The filename the user set.
-		string contentType; 	/// The MIME type the user's browser reported. (Not reliable.)
-
-		/**
-			For small files, cgi.d will buffer the uploaded file in memory, and make it
-			directly accessible to you through the content member. I find this very convenient
-			and somewhat efficient, since it can avoid hitting the disk entirely. (I
-			often want to inspect and modify the file anyway!)
-
-			I find the file is very large, it is undesirable to eat that much memory just
-			for a file buffer. In those cases, if you pass a large enough value for maxContentLength
-			to the constructor so they are accepted, cgi.d will write the content to a temporary
-			file that you can re-read later.
-
-			You can override this behavior by subclassing Cgi and overriding the protected
-			handlePostChunk method. Note that the object is not initialized when you
-			write that method - the http headers are available, but the cgi.post method
-			is not. You may parse the file as it streams in using this method.
-
-
-			Anyway, if the file is small enough to be in memory, contentInMemory will be
-			set to true, and the content is available in the content member.
-
-			If not, contentInMemory will be set to false, and the content saved in a file,
-			whose name will be available in the contentFilename member.
-
-
-			Tip: if you know you are always dealing with small files, and want the convenience
-			of ignoring this member, construct Cgi with a small maxContentLength. Then, if
-			a large file comes in, it simply throws an exception (and HTTP error response)
-			instead of trying to handle it.
-
-			The default value of maxContentLength in the constructor is for small files.
-		*/
-		bool contentInMemory = true; // the default ought to always be true
-		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
-		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
-	}
-
 	/// Very simple method to require a basic auth username and password.
 	/// If the http request doesn't include the required credentials, it throws a
 	/// HTTP 401 error, and an exception.
@@ -1988,7 +1989,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 				more_data:
 				auto chunk = range.front();
 				// waiting for colon for header length
-				auto idx = al.indexOf(chunk, ':');
+				auto idx = indexOf(cast(string) chunk, ':');
 				if(idx == -1) {
 					range.popFront();
 					goto more_data;
@@ -2063,6 +2064,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 			}
 		} else
 		version(fastcgi) {
+			//         SetHandler fcgid-script
+
 			FCGX_Stream* input, output, error;
 			FCGX_ParamArray env;
 
@@ -2421,7 +2424,7 @@ void sendAll(Socket s, const(void)[] data) {
 	do {
 		amount = s.send(data);
 		if(amount == Socket.ERROR)
-			throw new Exception("wtf in send: " ~ lastSocketError());
+			throw new Exception("wtf in send: " ~ lastSocketError);
 		assert(amount > 0);
 		data = data[amount .. $];
 	} while(data.length);

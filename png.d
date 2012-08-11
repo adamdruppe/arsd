@@ -547,6 +547,17 @@ RGBQUAD[] fetchPaletteWin32(PNG* p) {
 Color[] fetchPalette(PNG* p) {
 	Color[] colors;
 
+	auto header = getHeader(p);
+	if(header.type == 0) { // greyscale
+		colors.length = 256;
+		foreach(i; 0..256)
+			colors[i] = Color(cast(ubyte) i, cast(ubyte) i, cast(ubyte) i);
+		return colors;
+	}
+
+	// assuming this is indexed
+	assert(header.type == 3);
+
 	auto palette = p.getChunk("PLTE");
 
 	Chunk* alpha = p.getChunkNullable("tRNS");
@@ -572,7 +583,12 @@ void replacePalette(PNG* p, Color[] colors) {
 	auto palette = p.getChunk("PLTE");
 	auto alpha = p.getChunk("tRNS");
 
-	assert(colors.length == alpha.size);
+	//import std.string;
+	//assert(0, format("%s %s", colors.length, alpha.size));
+	//assert(colors.length == alpha.size);
+	alpha.size = colors.length;
+	alpha.payload.length = colors.length; // we make sure there's room for our simple method below
+	p.length = 0; // so write will recalculate
 
 	for(int i = 0; i < colors.length; i++) {
 		palette.payload[i*3+0] = colors[i].r;

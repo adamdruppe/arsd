@@ -142,6 +142,90 @@ class DatabaseException : Exception {
 
 
 
+abstract class SqlBuilder { }
+
+/// WARNING: this is as susceptible to SQL injections as you would be writing it out by hand
+class SelectBuilder : SqlBuilder {
+	string[] fields;
+	string table;
+	string[] joins;
+	string[] wheres;
+	string[] orderBys;
+	string[] groupBys;
+
+	int limit;
+	int limitStart;
+
+	string toString() {
+		string sql = "SELECT ";
+
+		// the fields first
+		{
+			bool outputted = false;
+			foreach(field; fields) {
+				if(outputted)
+					sql ~= ", ";
+				else
+					outputted = true;
+
+				sql ~= field; // "`" ~ field ~ "`";
+			}
+		}
+
+		sql ~= " FROM " ~ table;
+
+		if(joins.length) {
+			foreach(join; joins)
+				sql ~= " " ~ join;
+		}
+
+		if(wheres.length) {
+			bool outputted = false;
+			sql ~= " WHERE ";
+			foreach(w; wheres) {
+				if(outputted)
+					sql ~= " AND ";
+				else
+					outputted = true;
+				sql ~= "(" ~ w ~ ")";
+			}
+		}
+
+		if(groupBys.length) {
+			bool outputted = false;
+			sql ~= " GROUP BY ";
+			foreach(o; groupBys) {
+				if(outputted)
+					sql ~= ", ";
+				else
+					outputted = true;
+				sql ~= o;
+			}
+		}
+		
+		if(orderBys.length) {
+			bool outputted = false;
+			sql ~= " ORDER BY ";
+			foreach(o; orderBys) {
+				if(outputted)
+					sql ~= ", ";
+				else
+					outputted = true;
+				sql ~= o;
+			}
+		}
+
+		if(limit) {
+			sql ~= " LIMIT ";
+			if(limitStart)
+				sql ~= to!string(limitStart) ~ ", ";
+			sql ~= to!string(limit);
+		}
+
+		return sql;
+	}
+}
+
 
 // ///////////////////////////////////////////////////////
 
@@ -464,12 +548,12 @@ class DataObject {
 	Tuple!(string, string)[string] mappings;
 
 	// vararg hack so property assignment works right, even with null
-	string opDispatch(string field)(...)
+	string opDispatch(string field, string file = __FILE__, size_t line = __LINE__)(...)
 		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
 	{
 		if(_arguments.length == 0) {
 			if(field !in fields)
-				throw new Exception("no such field " ~ field);
+				throw new Exception("no such field " ~ field, file, line);
 
 			return fields[field];
 		} else if(_arguments.length == 1) {
@@ -510,6 +594,10 @@ class DataObject {
 			changed[field] = true;
 		}
 
+		fields[field] = value;
+	}
+
+	public void setWithoutChange(string field, string value) {
 		fields[field] = value;
 	}
 

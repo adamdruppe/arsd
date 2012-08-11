@@ -106,7 +106,7 @@ string curlAuth(string url, string data = null, string username = null, string p
 
 	int res;
 
-	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+	// curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 
 	res = curl_easy_setopt(curl, CURLOPT_URL, std.string.toStringz(url));
 	if(res != 0) throw new CurlException(res);
@@ -122,6 +122,7 @@ string curlAuth(string url, string data = null, string username = null, string p
 	curl_slist* headers = null;
 	//if(data !is null)
 	//	contentType = "";
+	if(contentType.length)
 	headers = curl_slist_append(headers, toStringz("Content-Type: " ~ contentType));
 
 	foreach(h; customHeaders) {
@@ -157,8 +158,10 @@ string curlAuth(string url, string data = null, string username = null, string p
 	//res = curl_easy_setopt(curl, 81, 0); // FIXME verify host
 	//if(res != 0) throw new CurlException(res);
 
-	res = curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-	if(res != 0) throw new CurlException(res);
+	version(no_curl_follow) {} else {
+		res = curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
+		if(res != 0) throw new CurlException(res);
+	}
 
 	if(methodOverride !is null) {
 		switch(methodOverride) {

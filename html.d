@@ -198,12 +198,116 @@ string recommendedBasicCssForUserContent = `
 	}
 `;
 
+Html linkify(string text) {
+	auto div = Element.make("div");
 
+	while(text.length) {
+		auto idx = text.indexOf("http");
+		if(idx == -1) {
+			idx = text.length;
+		}
+
+		div.appendText(text[0 .. idx]);
+		text = text[idx .. $];
+
+		if(text.length) {
+			// where does it end? whitespace I guess
+			auto idxSpace = text.indexOf(" ");
+			if(idxSpace == -1) idxSpace = text.length;
+			auto idxLine = text.indexOf("\n");
+			if(idxLine == -1) idxLine = text.length;
+
+
+			auto idxEnd = idxSpace < idxLine ? idxSpace : idxLine;
+
+			auto link = text[0 .. idxEnd];
+			text = text[idxEnd .. $];
+
+			div.addChild("a", link, link);
+		}
+	}
+
+	return Html(div.innerHTML);
+}
+
+/// Returns true of the string appears to be html/xml - if it matches the pattern
+/// for tags or entities.
+bool appearsToBeHtml(string src) {
+	return false;
+}
+
+/+
+void qsaFilter(string logicalScriptName) {
+	string logicalScriptName = siteBase[0 .. $-1];
+
+	foreach(a; document.querySelectorAll("a[qsa]")) {
+		string href = logicalScriptName ~ _cgi.pathInfo ~ "?";
+
+		int matches, possibilities;
+
+		string[][string] vars;
+		foreach(k, v; _cgi.getArray)
+			vars[k] = cast(string[]) v;
+		foreach(k, v; decodeVariablesSingle(a.qsa)) {
+			if(k in _cgi.get && _cgi.get[k] == v)
+				matches++;
+			possibilities++;
+
+			if(k !in vars || vars[k].length <= 1)
+				vars[k] = [v];
+			else
+				assert(0, "qsa doesn't work here");
+		}
+
+		string[] clear = a.getAttribute("qsa-clear").split("&");
+		clear ~= "ajaxLoading";
+		if(a.parentNode !is null)
+			clear ~= a.parentNode.getAttribute("qsa-clear").split("&");
+
+		bool outputted = false;
+		varskip: foreach(k, varr; vars) {
+			foreach(item; clear)
+				if(k == item)
+					continue varskip;
+			foreach(v; varr) {
+				if(outputted)
+					href ~= "&";
+				else
+					outputted = true;
+
+				href ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
+			}
+		}
+
+		a.href = href;
+
+		a.removeAttribute("qsa");
+
+		if(matches == possibilities)
+			a.addClass("current");
+	}
+}
++/
 string favicon(Document document) {
 	auto item = document.querySelector("link[rel~=icon]");
 	if(item !is null)
 		return item.href;
 	return "/favicon.ico"; // it pisses me off that the fucking browsers do this.... but they do, so I will too.
+}
+
+Element checkbox(string name, string value, string label, bool checked = false) {
+	auto lbl = Element.make("label");
+	auto input = lbl.addChild("input");
+	input.type = "checkbox";
+	input.name = name;
+	input.value = value;
+	if(checked)
+		input.checked = "checked";
+
+	lbl.appendText(" ");
+	lbl.addChild("span", label);
+
+	return lbl;
 }
 
 
@@ -321,7 +425,7 @@ void translateValidation(Document document) {
 			if(i.tagName != "input" && i.tagName != "select")
 				continue;
 			if(i.getAttribute("id") is null)
-				i.id = i.name;
+				i.id = "form-input-" ~ i.name;
 			auto validate = i.getAttribute("validate");
 			if(validate is null)
 				continue;
@@ -588,7 +692,7 @@ void translateInputTitles(Document document) {
 void translateInputTitles(Element rootElement) {
 	foreach(form; rootElement.getElementsByTagName("form")) {
 		string os;
-		foreach(e; form.getElementsBySelector("input[type=text][title]")) {
+		foreach(e; form.getElementsBySelector("input[type=text][title], textarea[title]")) {
 			if(e.hasClass("has-placeholder"))
 				continue;
 			e.addClass("has-placeholder");
@@ -611,9 +715,16 @@ void translateInputTitles(Element rootElement) {
 					temporaryItem.value = '';
 			`;
 
-			if(e.value == "") {
-				e.value = e.title;
-				e.addClass("default");
+			if(e.tagName == "input") {
+				if(e.value == "") {
+					e.value = e.title;
+					e.addClass("default");
+				}
+			} else {
+				if(e.innerText.length == 0) {
+					e.innerText = e.title;
+					e.addClass("default");
+				}
 			}
 		}
 
@@ -1434,6 +1545,11 @@ class MacroExpander {
 	dstring delegate(dstring[])[dstring] functions;
 	dstring[dstring] variables;
 
+	/// This sets a variable inside the macro system
+	void setValue(string key, string value) {
+		variables[to!dstring(key)] = to!dstring(value);
+	}
+
 	struct Macro {
 		dstring name;
 		dstring[] args;
@@ -1464,11 +1580,17 @@ class MacroExpander {
 			return ret;
 		};
 
+		functions["uriEncode"] = delegate dstring(dstring[] args) {
+			return to!dstring(std.uri.encodeComponent(to!string(args[0])));
+		};
+
 		functions["test"] = delegate dstring(dstring[] args) {
 			assert(0, to!string(args.length) ~ " args: " ~ to!string(args));
 			return null;
 		};
 	}
+
+	// the following are used inside the user text
 
 	dstring define(dstring[] args) {
 		enforce(args.length > 1, "requires at least a macro name and definition");
@@ -1518,12 +1640,14 @@ class MacroExpander {
 		return returned;
 	}
 
+	/// Performs the expansion
 	string expand(string srcutf8) {
 		auto src = expand(to!dstring(srcutf8));
 		return to!string(src);
 	}
 
 	private int depth = 0;
+	/// ditto
 	dstring expand(dstring src) {
 		return expandImpl(src, null);
 	}
@@ -1764,6 +1888,7 @@ class CssMacroExpander : MacroExpander {
 		functions["darken"] = &(colorFunctionWrapper!darken);
 		functions["moderate"] = &(colorFunctionWrapper!moderate);
 		functions["extremify"] = &(colorFunctionWrapper!extremify);
+		functions["makeTextColor"] = &(oneArgColorFunctionWrapper!makeTextColor);
 
 		functions["oppositeLightness"] = &(oneArgColorFunctionWrapper!oppositeLightness);
 
@@ -1785,11 +1910,12 @@ class CssMacroExpander : MacroExpander {
 		return ret;
 	}
 
+	/// Runs the macro expansion but then a CSS densesting
 	string expandAndDenest(string cssSrc) {
 		return cssToString(denestCss(lexCss(this.expand(cssSrc))));
 	}
 
-
+	// internal things
 	dstring colorFunctionWrapper(alias func)(dstring[] args) {
 		auto color = readCssColor(to!string(args[0]));
 		auto percentage = readCssNumber(args[1]);

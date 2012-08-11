@@ -134,7 +134,7 @@ struct FileByByte {
 			fclose(fp);
 	}
 
-	@property void popFront() {
+	void popFront() {
 		f = cast(ubyte) fgetc(fp);
 	}
 
