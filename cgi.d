@@ -52,6 +52,14 @@
 +/
 module arsd.cgi;
 
+/*
+
+	To do a file download offer in the browser:
+
+    cgi.setResponseContentType("text/csv");
+    cgi.header("Content-Disposition: attachment; filename=\"customers.csv\"");
+*/
+
 // FIXME: the location header is supposed to be an absolute url I guess.
 
 // FIXME: would be cool to flush part of a dom document before complete

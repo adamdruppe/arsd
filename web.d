@@ -3201,6 +3201,58 @@ Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(
 	}
 }
 
+/// This adds a custom attribute to links in the document called qsa which modifies the values on the query string
+void translateQsa(Document document, Cgi cgi, string logicalScriptName = null) {
+	if(logicalScriptName is null)
+		logicalScriptName = cgi.scriptName;
+
+	foreach(a; document.querySelectorAll("a[qsa]")) {
+		string href = logicalScriptName ~ cgi.pathInfo ~ "?";
+
+		int matches, possibilities;
+
+		string[][string] vars;
+		foreach(k, v; cgi.getArray)
+			vars[k] = cast(string[]) v;
+		foreach(k, v; decodeVariablesSingle(a.qsa)) {
+			if(k in cgi.get && cgi.get[k] == v)
+				matches++;
+			possibilities++;
+
+			if(k !in vars || vars[k].length <= 1)
+				vars[k] = [v];
+			else
+				assert(0, "qsa doesn't work here");
+		}
+
+		string[] clear = a.getAttribute("qsa-clear").split("&");
+		clear ~= "ajaxLoading";
+		if(a.parentNode !is null)
+			clear ~= a.parentNode.getAttribute("qsa-clear").split("&");
+
+		bool outputted = false;
+		varskip: foreach(k, varr; vars) {
+			foreach(item; clear)
+				if(k == item)
+					continue varskip;
+			foreach(v; varr) {
+				if(outputted)
+					href ~= "&";
+				else
+					outputted = true;
+
+				href ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
+			}
+		}
+
+		a.href = href;
+
+		a.removeAttribute("qsa");
+
+		if(matches == possibilities)
+			a.addClass("current");
+	}
+}
 
 /// This uses reflection info to generate Javascript that can call the server with some ease.
 /// Also includes javascript base (see bottom of this file)

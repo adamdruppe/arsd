@@ -233,61 +233,10 @@ Html linkify(string text) {
 /// Returns true of the string appears to be html/xml - if it matches the pattern
 /// for tags or entities.
 bool appearsToBeHtml(string src) {
-	return false;
+	import std.regex;
+	return cast(bool) match(src, `.*\<[A-Za-z]+>.*`);
 }
 
-/+
-void qsaFilter(string logicalScriptName) {
-	string logicalScriptName = siteBase[0 .. $-1];
-
-	foreach(a; document.querySelectorAll("a[qsa]")) {
-		string href = logicalScriptName ~ _cgi.pathInfo ~ "?";
-
-		int matches, possibilities;
-
-		string[][string] vars;
-		foreach(k, v; _cgi.getArray)
-			vars[k] = cast(string[]) v;
-		foreach(k, v; decodeVariablesSingle(a.qsa)) {
-			if(k in _cgi.get && _cgi.get[k] == v)
-				matches++;
-			possibilities++;
-
-			if(k !in vars || vars[k].length <= 1)
-				vars[k] = [v];
-			else
-				assert(0, "qsa doesn't work here");
-		}
-
-		string[] clear = a.getAttribute("qsa-clear").split("&");
-		clear ~= "ajaxLoading";
-		if(a.parentNode !is null)
-			clear ~= a.parentNode.getAttribute("qsa-clear").split("&");
-
-		bool outputted = false;
-		varskip: foreach(k, varr; vars) {
-			foreach(item; clear)
-				if(k == item)
-					continue varskip;
-			foreach(v; varr) {
-				if(outputted)
-					href ~= "&";
-				else
-					outputted = true;
-
-				href ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
-			}
-		}
-
-		a.href = href;
-
-		a.removeAttribute("qsa");
-
-		if(matches == possibilities)
-			a.addClass("current");
-	}
-}
-+/
 string favicon(Document document) {
 	auto item = document.querySelector("link[rel~=icon]");
 	if(item !is null)
