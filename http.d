@@ -146,7 +146,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 			};
 
 			read = () {
-				auto len = SSL_read(ssl, readBuffer.ptr, 1);
+				auto len = SSL_read(ssl, readBuffer.ptr, readBuffer.length);
 				return readBuffer[0 .. len];
 			};
 		}
@@ -197,7 +197,7 @@ body {
 	string buffer;
 
 	string readln() {
-		auto idx = buffer.indexOf("\n");
+		auto idx = buffer.indexOf("\r\n");
 		if(idx == -1) {
 			auto more = read();
 			if(more.length == 0) { // end of file or something
@@ -208,8 +208,8 @@ body {
 			buffer ~= more;
 			return readln();
 		}
-		auto ret = buffer[0 .. idx + 1];
-		buffer = buffer[idx + 1 .. $];
+		auto ret = buffer[0 .. idx + 2]; // + the \r\n
+		buffer = buffer[idx + 2 .. $];
 		return ret;
 	}
 
@@ -233,7 +233,7 @@ body {
 
 	auto line = readln();
 	while(line.length) {
-		if(line.length <= 1)
+		if(line.strip.length == 0)
 			break;
 		hr.headers ~= line;
 		if(line.startsWith("Content-Type: "))
@@ -243,13 +243,13 @@ body {
 		line = readln();
 	}
 
-	ubyte[] response;
+	// there might be leftover stuff in the line buffer
+	ubyte[] response = cast(ubyte[]) buffer.dup;
 	auto part = read();
 	while(part.length) {
 		response ~= part;
 		part = read();
 	}
-
 
 	if(chunked) {
 		// read the hex length, stopping at a \r\n, ignoring everything between the new line but after the first non-valid hex character
