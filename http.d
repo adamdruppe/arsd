@@ -1,7 +1,5 @@
 module arsd.http;
 
-import std.stdio;
-
 version(with_openssl) {
 	pragma(lib, "crypto");
 	pragma(lib, "ssl");
@@ -105,16 +103,21 @@ struct UriParts {
 }
 
 HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = null, string headers[] = null) {
+	import std.socket;
+
 	auto u = UriParts(uri);
-	auto f = openNetwork(u.host, u.port);
+	// auto f = openNetwork(u.host, u.port);
+	auto f = new TcpSocket();
+	f.connect(new InternetAddress(u.host, u.port));
 
 	void delegate(string) write = (string d) {
-		f.rawWrite(d);
+		f.send(d);
 	};
 
-	char[1] readBuffer; // rawRead actually blocks until it can fill up the whole buffer... which is broken as far as http goes so one char at a time i guess. slow lol
+	char[4096] readBuffer; // rawRead actually blocks until it can fill up the whole buffer... which is broken as far as http goes so one char at a time i guess. slow lol
 	char[] delegate() read = () {
-		return f.rawRead(readBuffer);
+		int num = f.receive(readBuffer);
+		return readBuffer[0..num];
 	};
 
 	version(with_openssl) {
@@ -135,7 +138,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 			sslAssert(!(ctx is null));
 
 			ssl = SSL_new(ctx);
-			SSL_set_fd(ssl, f.fileno);
+			SSL_set_fd(ssl, f.handle);
 			sslAssert(SSL_connect(ssl) != -1);
 
 			write = (string d) {
