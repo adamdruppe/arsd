@@ -2,6 +2,11 @@ module arsd.http;
 
 import std.stdio;
 
+version(with_openssl) {
+	pragma(lib, "crypto");
+	pragma(lib, "ssl");
+}
+
 
 /**
 	Gets a textual document, ignoring headers. Throws on non-text or error.
@@ -54,29 +59,44 @@ struct UriParts {
 	ushort port;
 	string path;
 
+	bool useHttps;
+
 	this(string uri) {
 		original = uri;
-		if(uri[0..7] != "http://")
-			throw new Exception("You must use an absolute, unencrypted URL.");
 
-		auto posSlash = uri[7..$].indexOf("/");
+		if(uri[0 .. 8] == "https://")
+			useHttps = true;
+		else
+		if(uri[0..7] != "http://")
+			throw new Exception("You must use an absolute, http or https URL.");
+
+		version(with_openssl) {} else
+		if(useHttps)
+			throw new Exception("openssl support not compiled in try -version=with_openssl");
+
+		int start = useHttps ? 8 : 7;
+
+		auto posSlash = uri[start..$].indexOf("/");
 		if(posSlash != -1)
-			posSlash += 7;
+			posSlash += start;
 
 		if(posSlash == -1)
 			posSlash = uri.length;
 
-		auto posColon = uri[7..$].indexOf(":");
+		auto posColon = uri[start..$].indexOf(":");
 		if(posColon != -1)
-			posColon += 7;
+			posColon += start;
 
-		port = 80;
+		if(useHttps)
+			port = 443;
+		else
+			port = 80;
 
 		if(posColon != -1 && posColon < posSlash) {
-			host = uri[7..posColon];
+			host = uri[start..posColon];
 			port = to!ushort(uri[posColon+1..posSlash]);
 		} else
-			host = uri[7..posSlash];
+			host = uri[start..posSlash];
 
 		path = uri[posSlash..$];
 		if(path == "")
@@ -88,7 +108,58 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 	auto u = UriParts(uri);
 	auto f = openNetwork(u.host, u.port);
 
-	return doHttpRequestOnFile(f, method, uri, content, headers);
+	void delegate(string) write = (string d) {
+		f.rawWrite(d);
+	};
+
+	char[1] readBuffer; // rawRead actually blocks until it can fill up the whole buffer... which is broken as far as http goes so one char at a time i guess. slow lol
+	char[] delegate() read = () {
+		return f.rawRead(readBuffer);
+	};
+
+	version(with_openssl) {
+		import deimos.openssl.ssl;
+		SSL* ssl;
+		SSL_CTX* ctx;
+		if(u.useHttps) {
+			void sslAssert(bool ret){
+				if (!ret){
+					throw new Exception("SSL_ERROR");
+				}
+			}
+			SSL_library_init();
+			OpenSSL_add_all_algorithms();
+			SSL_load_error_strings();
+			
+			ctx = SSL_CTX_new(SSLv3_client_method());
+			sslAssert(!(ctx is null));
+
+			ssl = SSL_new(ctx);
+			SSL_set_fd(ssl, f.fileno);
+			sslAssert(SSL_connect(ssl) != -1);
+
+			write = (string d) {
+				SSL_write(ssl, d.ptr, d.length);
+			};
+
+			read = () {
+				auto len = SSL_read(ssl, readBuffer.ptr, 1);
+				return readBuffer[0 .. len];
+			};
+		}
+	}
+
+
+	HttpResponse response = doHttpRequestOnHelpers(write, read, method, uri, content, headers, u.useHttps);
+
+	version(with_openssl) {
+		if(u.useHttps) {
+			SSL_free(ssl);
+			SSL_CTX_free(ctx);
+		}
+	}
+
+	return response;
 }
 
 /**
@@ -96,29 +167,52 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 	of the parameters are the caller's responsibility. Content-Length is added automatically,
 	but YOU must give Content-Type!
 */
-HttpResponse doHttpRequestOnFile(File f, string method, string uri, const(ubyte)[] content = null, string headers[] = null) 
+HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate() read, string method, string uri, const(ubyte)[] content = null, string headers[] = null, bool https = false) 
 	in {
 		assert(method == "POST" || method == "GET");
 	}
 body {
 	auto u = UriParts(uri);
 
-	f.writefln("%s %s HTTP/1.1", method, u.path);
-	f.writefln("Host: %s", u.host);
-	f.writefln("Connection: close");
+
+
+
+
+	write(format("%s %s HTTP/1.1\r\n", method, u.path));
+	write(format("Host: %s\r\n", u.host));
+	write(format("Connection: close\r\n"));
 	if(content !is null)
-		f.writefln("Content-Length: %d", content.length);
+		write(format("Content-Length: %d\r\n", content.length));
 	if(headers !is null)
 		foreach(header; headers)
-			f.writefln("%s", header);
-	f.writefln("");
+			write(format("%s\r\n", header));
+	write("\r\n");
 	if(content !is null)
-		f.rawWrite(content);
+		write(cast(string) content);
 
+
+	string buffer;
+
+	string readln() {
+		auto idx = buffer.indexOf("\n");
+		if(idx == -1) {
+			auto more = read();
+			if(more.length == 0) { // end of file or something
+				auto ret = buffer;
+				buffer = null;
+				return ret;
+			}
+			buffer ~= more;
+			return readln();
+		}
+		auto ret = buffer[0 .. idx + 1];
+		buffer = buffer[idx + 1 .. $];
+		return ret;
+	}
 
 	HttpResponse hr;
  cont:
-	string l = f.readln();
+	string l = readln();
 	if(l[0..9] != "HTTP/1.1 ")
 		throw new Exception("Not talking to a http server");
 
@@ -134,19 +228,23 @@ body {
 
 	bool chunked = false;
 
-	foreach(line; f.byLine) {
+	auto line = readln();
+	while(line.length) {
 		if(line.length <= 1)
 			break;
-		hr.headers ~= line.idup;
+		hr.headers ~= line;
 		if(line.startsWith("Content-Type: "))
-			hr.contentType = line[14..$-1].idup;
+			hr.contentType = line[14..$-1];
 		if(line.startsWith("Transfer-Encoding: chunked"))
 			chunked = true;
+		line = readln();
 	}
 
 	ubyte[] response;
-	foreach(ubyte[] chunk; f.byChunk(4096)) {
-		response ~= chunk;
+	auto part = read();
+	while(part.length) {
+		response ~= part;
+		part = read();
 	}
 
 
