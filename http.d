@@ -116,7 +116,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 
 	char[4096] readBuffer; // rawRead actually blocks until it can fill up the whole buffer... which is broken as far as http goes so one char at a time i guess. slow lol
 	char[] delegate() read = () {
-		int num = f.receive(readBuffer);
+		size_t num = f.receive(readBuffer);
 		return readBuffer[0..num];
 	};
 
@@ -142,7 +142,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 			sslAssert(SSL_connect(ssl) != -1);
 
 			write = (string d) {
-				SSL_write(ssl, d.ptr, d.length);
+				SSL_write(ssl, d.ptr, cast(uint)d.length);
 			};
 
 			read = () {
