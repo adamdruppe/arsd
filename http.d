@@ -209,7 +209,10 @@ body {
 			return readln();
 		}
 		auto ret = buffer[0 .. idx + 2]; // + the \r\n
-		buffer = buffer[idx + 2 .. $];
+		if(idx + 2 < buffer.length)
+			buffer = buffer[idx + 2 .. $];
+		else
+			buffer = null;
 		return ret;
 	}
 
