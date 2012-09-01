@@ -15,7 +15,7 @@ import win32.sqlext;
 class MsSql : Database {
 	// dbname = name  is probably the most common connection string
 	this(string connectionString) {
-		SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
+		SQLAllocHandle(SQL_HANDLE_ENV, cast(void*)SQL_NULL_HANDLE, &env);
 		enforce(env !is null);
 		scope(failure)
 			SQLFreeHandle(SQL_HANDLE_ENV, env);
@@ -25,14 +25,15 @@ class MsSql : Database {
 			SQLFreeHandle(SQL_HANDLE_DBC, conn);
 		enforce(conn !is null);
 
-		auto ret = SqlDriverConnect(
-			conn, null, connectionString, SQL_NTS,
-			outstr, sizeof(outstr), &outstrlen,
-			SQL_DRIVER_COMPLETE);
+		auto ret = SQLDriverConnect(
+			conn, null, cast(ubyte*)connectionString.ptr, SQL_NTS,
+			null, 0, null,
+			SQL_DRIVER_NOPROMPT );
 
-		if(!SQL_SUCCEEDED(ret))
-			throw new DatabaseException("Unable to connect to ODBC object"); // FIXME: print error
-		query("SET NAMES 'utf8'"); // D does everything with utf8
+		if ((ret != SQL_SUCCESS_WITH_INFO) && (ret != SQL_SUCCESS))
+			throw new DatabaseException("Unable to connect to ODBC object: " ~ getSQLError(SQL_HANDLE_DBC, conn)); // FIXME: print error
+
+		//query("SET NAMES 'utf8'"); // D does everything with utf8
 	}
 
 	~this() {
@@ -54,7 +55,7 @@ class MsSql : Database {
 
 		enforce(returned == SQL_SUCCESS);
 
-		returned = SQLExecDirect(statement, sql.ptr, SQL_NTS);
+		returned = SQLExecDirect(statement, cast(ubyte*)sql.ptr, SQL_NTS);
 		if(returned != SQL_SUCCESS)
 			throw new DatabaseException(error());
 
@@ -62,7 +63,8 @@ class MsSql : Database {
 	}
 
 	string escape(string sqlData) { // FIXME
-		return ret.replace("'", "''");
+		return ""; //FIX ME
+		//return ret.replace("'", "''");
 	}
 
 
@@ -80,6 +82,8 @@ class MsSqlResult : ResultSet {
 	int getFieldIndex(string field) {
 		if(mapping is null)
 			makeFieldMapping();
+		if (field !in mapping)
+			return -1;
 		return mapping[field];
 	}
 
@@ -104,6 +108,11 @@ class MsSqlResult : ResultSet {
 			fetchNext;
 	}
 
+	int length()
+	{
+		return 1; //FIX ME
+	}
+	
 	this(SQLHSTMT statement) {
 		this.statement = statement;
 
@@ -144,8 +153,8 @@ class MsSqlResult : ResultSet {
 
 					more:
 				        SQLCHAR buf[255];
-					if(SQLGetData(statement, i, SQL_CHAR, buf.ptr, 255, &ptr) != SQL_SUCCESS)
-						throw new DatabaseException("get data");
+					if(SQLGetData(statement, cast(ushort)(i+1), SQL_CHAR, buf.ptr, 255, &ptr) != SQL_SUCCESS)
+						throw new DatabaseException("get data: " ~ getSQLError(SQL_HANDLE_STMT, statement));
 
 					assert(ptr != SQL_NO_TOTAL);
 					if(ptr == SQL_NULL_DATA)
@@ -170,13 +179,15 @@ class MsSqlResult : ResultSet {
 			for(int i = 0; i < numFields; i++) {
 				SQLSMALLINT len;
 				SQLCHAR[255] buf;
-				SQLDescribeCol(statement,
-					i,
-					&buf,
+				auto ret = SQLDescribeCol(statement,
+					cast(ushort)(i+1),
+					cast(ubyte*)buf.ptr,
 					255,
 					&len,
 					null, null, null, null);
-
+				if (ret != SQL_SUCCESS)
+					throw new DatabaseException("Field mapping error: " ~ getSQLError(SQL_HANDLE_STMT, statement));
+				
 				string a = cast(string) buf[0 .. len].idup;
 
 				columnNames ~= a;
@@ -186,12 +197,29 @@ class MsSqlResult : ResultSet {
 		}
 }
 
+private string getSQLError(short handletype, SQLHANDLE handle)
+{
+	char sqlstate[32];
+	char message[256]; 
+	SQLINTEGER nativeerror=0;
+	SQLSMALLINT textlen=0;			
+	auto ret = SQLGetDiagRec(handletype, handle, 1, 
+			cast(ubyte*)sqlstate.ptr, 
+			cast(int*)&nativeerror, 
+			cast(ubyte*)message.ptr, 
+			256, 
+			&textlen);
+
+	return message.idup;
+}
+
 /*
 import std.stdio;
 void main() {
-	auto db = new PostgreSql("dbname = test");
+	//auto db = new MsSql("Driver={SQL Server};Server=<host>[\\<optional-instance-name>]>;Database=dbtest;Trusted_Connection=Yes");
+	auto db = new MsSql("Driver={SQL Server Native Client 10.0};Server=<host>[\\<optional-instance-name>];Database=dbtest;Trusted_Connection=Yes")
 
-	db.query("INSERT INTO users (id, name) values (?, ?)", 30, "hello mang");
+	db.query("INSERT INTO users (id, name) values (30, 'hello mang')");
 
 	foreach(line; db.query("SELECT * FROM users")) {
 		writeln(line[0], line["name"]);
