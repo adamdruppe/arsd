@@ -33,7 +33,9 @@ class EmailMessage {
 	private bool isMime = false;
 	private bool isHtml = false;
 
-	void setTextBody(string text) {}
+	void setTextBody(string text) {
+		textBody = text;
+	}
 	void setHtmlBody(string html) {
 		isMime = true;
 		isHtml = true;
