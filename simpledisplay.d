@@ -441,13 +441,17 @@ version(Windows) {
 	alias HWND NativeWindowHandle;
 
 	extern(Windows)
-	int WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
-		if(hWnd in windowObjects) {
-			auto window = windowObjects[hWnd];
-			return window.windowProcedure(hWnd, iMessage, wParam, lParam);
-		} else {
-			return DefWindowProc(hWnd, iMessage, wParam, lParam);
-		}
+	int WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+	    try {
+            if(hWnd in windowObjects) {
+                auto window = windowObjects[hWnd];
+                return window.windowProcedure(hWnd, iMessage, wParam, lParam);
+            } else {
+                return DefWindowProc(hWnd, iMessage, wParam, lParam);
+            }
+	    } catch (Exception e) {
+            assert(false, "Exception caught in WndProc");
+	    }
 	}
 
 	mixin template NativeScreenPainterImplementation() {
@@ -772,7 +776,7 @@ version(Windows) {
 
 					if(!done && handlePulse !is null)
 						handlePulse();
-					Thread.sleep(pulseTimeout * 10000);
+					Thread.sleep(dur!"msecs"(pulseTimeout));
 				}
 			} else {
 				while((ret = GetMessage(&message, hwnd, 0, 0)) != 0) {
