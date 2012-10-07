@@ -92,7 +92,9 @@ Variant[string] fbGraph(string[] info, string id, bool useCache = false, long ma
 		url = "http://graph.facebook.com" ~ id
 			~ c ~ "format=json";
 
-
+	// this makes pagination easier. the initial / is there because it is added above
+	if(id.indexOf("/http://") == 0 || id.indexOf("/https://") == 0)
+		url = id[1 ..$];
 
 	if(useCache)
 		cacheFile = "/tmp/fbGraphCache-" ~ hashToString(SHA1(url));
@@ -425,6 +427,18 @@ string getApiKeyFromRequest(Cgi cgi) {
 	throw new Exception("api key not present");
 }
 
+string getTokenFromRequest(Cgi cgi) {
+	enforce(isOAuthRequest(cgi));
+	auto variables = split(cgi.authorization[6..$], ",");
+
+	foreach(var; variables)
+		if(var.startsWith("oauth_token"))
+			return var["oauth_token".length + 3 .. $ - 1]; // trimming quotes too
+	return null;
+}
+
+// FIXME check timestamp and maybe nonce too
+
 bool isSignatureValid(Cgi cgi, string apiSecret, string tokenSecret) {
 	enforce(isOAuthRequest(cgi));
 	auto variables = split(cgi.authorization[6..$], ",");
@@ -588,6 +602,61 @@ Variant parseSignedRequest(in string req, string apisecret) {
 	return jsonToVariant(json);
 }
 
+string stripWhitespace(string w) {
+	return w.replace("\t", "").replace("\n", "").replace(" ", "");
+}
+
+string translateCodeToAccessToken(string code, string redirectUrl, string appId, string apiSecret) {
+	string res = curl(stripWhitespace("https://graph.facebook.com/oauth/access_token?
+		client_id="~appId~"&redirect_uri="~std.uri.encodeComponent(redirectUrl)~"&
+		client_secret="~apiSecret~"&code=" ~ std.uri.encodeComponent(code)
+	));
+
+	if(res.indexOf("access_token=") == -1) {
+		throw new Exception("Couldn't translate code to access token. [" ~ res ~ "]");
+	}
+
+	auto vars = decodeVariablesSingle(res);
+	return vars["access_token"];
+}
+
+/+
+
+void updateFbGraphPermissions(string token) {
+	fbGraph([null, token], "/me/permissions", true, -1); // use the cache, but only read if it is in the future - basically, force a cache refresh
+	fbGraph([null, token], "/me/friends", true, -1); // do the same thing for friends..
+}
+
+auto fbGraphPermissions(string token) {
+	return fbGraph([null, token], "/me/permissions", true, 36); // use the cache
+}
+
+enum FacebookPermissions {
+	user_likes,
+	friends_likes,
+	publish_stream,
+	publish_actions,
+	offline_access,
+	manage_pages,
+}
+
+bool hasPermission(DataObject person, FacebookPermissions permission) {
+	version(live) {} else return true; // on dev, just skip this stuff
+
+	if(person.facebook_access_token.length == 0)
+		return false;
+	try {   
+		auto perms = getBasicDataFromVariant(fbGraphPermissions(person.                       facebook_access_token))[0];
+		return (to!string(permission) in perms) ? true : false;
+	} catch(FacebookApiException e) {
+		return false; // the token doesn't work
+	}
+
+	return false;                                                               
+}
+
++/
+
 
 /****************************************/
 
@@ -610,12 +679,9 @@ Variant jsonValueToVariant(JSONValue v) {
 		case JSON_TYPE.STRING:
 			ret = v.str;
 		break;
-		// FIXME FIXME FIXME
-		version(live) {} else {
 		case JSON_TYPE.UINTEGER:
 			ret = v.uinteger;
 		break;
-		}
 		case JSON_TYPE.INTEGER:
 			ret = v.integer;
 		break;

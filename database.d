@@ -48,6 +48,14 @@ interface Database {
 }
 import std.stdio;
 
+Ret queryOneColumn(Ret, T...)(Database db, string sql, T t) {
+	auto res = db.query(sql, t);
+	if(res.empty)
+		throw new Exception("no row in result");
+	auto row = res.front;
+	return to!Ret(row[0]);
+}
+
 struct Query {
 	ResultSet result;
 	static Query opCall(T...)(Database db, string sql, T t) {

@@ -20,6 +20,18 @@
 */
 module arsd.dom;
 
+// FIXME: it would be kinda cool to have some support for internal DTDs
+// and maybe XPath as well, to some extent
+/*
+	we could do
+	meh this sux
+
+	auto xpath = XPath(element);
+
+	     // get the first p
+	xpath.p[0].a["href"]
+*/
+
 // public import arsd.domconvenience; // merged for now
 
 /* domconvenience follows { */
@@ -190,6 +202,13 @@ mixin template DomConvenienceFunctions() {
 		return parentNode.insertAfter(this, e);
 	}
 
+	Element addSibling(Element e) {
+		return parentNode.insertAfter(this, e);
+	}
+
+	Element addChild(Element e) {
+		return this.appendChild(e);
+	}
 
 	/// Convenience function to append text intermixed with other children.
 	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
@@ -207,7 +226,7 @@ mixin template DomConvenienceFunctions() {
 	}
 
 	///.
-	Element addChild(string tagName, Element firstChild)
+	Element addChild(string tagName, Element firstChild, string info2 = null)
 	in {
 		assert(firstChild !is null);
 	}
@@ -220,13 +239,13 @@ mixin template DomConvenienceFunctions() {
 		//assert(firstChild.parentDocument is this.parentDocument);
 	}
 	body {
-		auto e = Element.make(tagName);
+		auto e = Element.make(tagName, "", info2);
 		e.appendChild(firstChild);
 		this.appendChild(e);
 		return e;
 	}
 
-	Element addChild(string tagName, Html innerHtml)
+	Element addChild(string tagName, in Html innerHtml, string info2 = null)
 	in {
 	}
 	out(ret) {
@@ -235,7 +254,7 @@ mixin template DomConvenienceFunctions() {
 		assert(ret.parentDocument is this.parentDocument);
 	}
 	body {
-		auto e = Element.make(tagName);
+		auto e = Element.make(tagName, "", info2);
 		this.appendChild(e);
 		e.innerHTML = innerHtml.source;
 		return e;
@@ -419,6 +438,10 @@ struct ElementCollection {
 		elements = [e];
 	}
 
+	this(Element e, string selector) {
+		elements = e.querySelectorAll(selector);
+	}
+
 	this(Element[] e) {
 		elements = e;
 	}
@@ -518,7 +541,10 @@ struct ElementStyle {
 	string set(string name, string value) {
 		if(name.length == 0)
 			return value;
-		name = unCamelCase(name);
+		if(name == "cssFloat")
+			name = "float";
+		else
+			name = unCamelCase(name);
 		auto r = rules();
 		r[name] = value;
 
@@ -536,7 +562,10 @@ struct ElementStyle {
 		return value;
 	}
 	string get(string name) const {
-		name = unCamelCase(name);
+		if(name == "cssFloat")
+			name = "float";
+		else
+			name = unCamelCase(name);
 		auto r = rules();
 		if(name in r)
 			return r[name];
@@ -829,7 +858,8 @@ class Element {
 		return e;
 	}
 
-	static Element make(string tagName, Html innerHtml, string childInfo2 = null) {
+	static Element make(string tagName, in Html innerHtml, string childInfo2 = null) {
+		// FIXME: childInfo2 is ignored when info1 is null
 		auto m = Element.make(tagName, cast(string) null, childInfo2);
 		m.innerHTML = innerHtml.source;
 		return m;
@@ -1171,6 +1201,16 @@ class Element {
 			setAttribute(name, v);
 		return getAttribute(name);
 	}
+
+	/*
+	// this would be nice for convenience, but it broke the getter above.
+	@property void opDispatch(string name)(bool boolean) if(name != "popFront") {
+		if(boolean)
+			setAttribute(name, name);
+		else
+			removeAttribute(name);
+	}
+	*/
 
 	/**
 		Returns the element's children.
@@ -1904,6 +1944,59 @@ class Element {
 	@property ElementStream tree() {
 		return new ElementStream(this);
 	}
+
+
+	// I moved these from Form because they are generally useful.
+	// Ideally, I'd put them in arsd.html and use UFCS, but that doesn't work with the opDispatch here.
+	/// Tags: HTML, HTML5
+	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+		auto fs = this;
+		auto i = fs.addChild("label");
+		i.addChild("span", label);
+		Element input;
+		if(type == "textarea")
+			input = i.addChild("textarea").
+			setAttribute("name", name).
+			setAttribute("rows", "6");
+		else
+			input = i.addChild("input").
+			setAttribute("name", name).
+			setAttribute("type", type);
+
+		// these are html 5 attributes; you'll have to implement fallbacks elsewhere. In Javascript or maybe I'll add a magic thing to html.d later.
+		fieldOptions.applyToElement(input);
+		return i;
+	}
+
+	Element addField(string label, string name, FormFieldOptions fieldOptions) {
+		return addField(label, name, "text", fieldOptions);
+	}
+
+	Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
+		auto fs = this;
+		auto i = fs.addChild("label");
+		i.addChild("span", label);
+		auto sel = i.addChild("select").setAttribute("name", name);
+
+		foreach(k, opt; options)
+			sel.addChild("option", opt, k);
+
+		// FIXME: implement requirements somehow
+
+		return i;
+	}
+
+	Element addSubmitButton(string label = null) {
+		auto t = this;
+		auto holder = t.addChild("div");
+		holder.addClass("submit-holder");
+		auto i = holder.addChild("input");
+		i.type = "submit";
+		if(label.length)
+			i.value = label;
+		return holder;
+	}
+
 }
 
 ///.
@@ -2069,6 +2162,7 @@ dchar parseEntity(in dchar[] entity) {
 }
 
 import std.utf;
+import std.stdio;
 
 /// This takes a string of raw HTML and decodes the entities into a nice D utf-8 string.
 /// By default, it uses loose mode - it will try to return a useful string from garbage input too.
@@ -2098,7 +2192,11 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 
 				// if not strict, let's try to parse both.
 
-				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+				if(entityBeingTried == "&&")
+					a ~= "&"; // double amp means keep the first one, still try to parse the next one
+				else
+					a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+
 				// tryingEntity is still true
 				entityBeingTried = entityBeingTried[0 .. 1]; // keep the &
 				entityAttemptIndex = 0; // restarting o this
@@ -2106,6 +2204,14 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 			if(ch == ';') {
 				tryingEntity = false;
 				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+			} else if(ch == ' ') {
+				// e.g. you &amp i
+				if(strict)
+					throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
+				else {
+					tryingEntity = false;
+					a ~= to!(char[])(entityBeingTried);
+				}
 			} else {
 				if(entityAttemptIndex >= 9) {
 					if(strict)
@@ -2126,6 +2232,15 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 				a ~= buffer[0 .. std.utf.encode(buffer, ch)];
 			}
 		}
+	}
+
+	if(tryingEntity) {
+		if(strict)
+			throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
+
+		// otherwise, let's try to recover, at least so we don't drop any data
+		a ~= to!string(entityBeingTried);
+		// FIXME: what if we have "cool &amp"? should we try to parse it?
 	}
 
 	return cast(string) a; // assumeUnique is actually kinda slow, lol
@@ -2376,44 +2491,29 @@ class Form : Element {
 		tagName = "form";
 	}
 
-	Element addField(string label, string name, string type = "text") {
-		auto fs = this.querySelector("fieldset div");
-		if(fs is null) fs = this;
-		auto i = fs.addChild("label");
-		i.addChild("span", label);
-		if(type == "textarea")
-			i.addChild("textarea").
-			setAttribute("name", name).
-			setAttribute("rows", "6");
+	override Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+		auto t = this.querySelector("fieldset div");
+		if(t is null)
+			return super.addField(label, name, type, fieldOptions);
 		else
-			i.addChild("input").
-			setAttribute("name", name).
-			setAttribute("type", type);
-
-		return i;
+			return t.addField(label, name, type, fieldOptions);
 	}
 
-	Element addField(string label, string name, string[string] options) {
-		auto fs = this.querySelector("fieldset div");
-		if(fs is null) fs = this;
-		auto i = fs.addChild("label");
-		i.addChild("span", label);
-		auto sel = i.addChild("select").setAttribute("name", name);
-
-		foreach(k, opt; options)
-			sel.addChild("option", opt, k);
-
-		return i;
+	override Element addField(string label, string name, FormFieldOptions fieldOptions) {
+		auto type = "text";
+		auto t = this.querySelector("fieldset div");
+		if(t is null)
+			return super.addField(label, name, type, fieldOptions);
+		else
+			return t.addField(label, name, type, fieldOptions);
 	}
 
-	Element addSubmitButton(string label = null) {
-		auto holder = this.addChild("div");
-		holder.addClass("submit-holder");
-		auto i = holder.addChild("input");
-		i.type = "submit";
-		if(label.length)
-			i.value = label;
-		return holder;
+	override Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
+		auto t = this.querySelector("fieldset div");
+		if(t is null)
+			return super.addField(label, name, options, fieldOptions);
+		else
+			return t.addField(label, name, options, fieldOptions);
 	}
 
 	// FIXME: doesn't handle arrays; multiple fields can have the same name
@@ -2678,6 +2778,16 @@ class Table : Element {
 	/// .
 	Element appendRow(T...)(T t) {
 		return appendRowInternal("td", "tbody", t);
+	}
+
+	void addColumnClasses(string[] classes...) {
+		auto grid = getGrid();
+		foreach(row; grid)
+		foreach(i, cl; classes) {
+			if(cl.length)
+			if(i < row.length)
+				row[i].addClass(cl);
+		}
 	}
 
 	private Element appendRowInternal(T...)(string innerType, string findType, T t) {
@@ -3293,6 +3403,8 @@ class Document : FileResource {
 						pos += 7;
 						// FIXME: major malfunction possible here
 						auto cdataStart = pos;
+
+						// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
 						auto cdataEnd = pos + data[pos .. $].indexOf("]]>");
 
 						pos = cdataEnd + 3;
@@ -5076,6 +5188,59 @@ class Event {
 	}
 }
 
+struct FormFieldOptions {
+	// usable for any
+
+	/// this is a regex pattern used to validate the field
+	string pattern;
+	/// must the field be filled in? Even with a regex, it can be submitted blank if this is false.
+	bool isRequired;
+	/// this is displayed as an example to the user
+	string placeholder;
+
+	// usable for numeric ones
+
+
+	// convenience methods to quickly get some options
+	static FormFieldOptions none() {
+		FormFieldOptions f;
+		return f;
+	}
+
+	static FormFieldOptions required() {
+		FormFieldOptions f;
+		f.isRequired = true;
+		return f;
+	}
+
+	static FormFieldOptions regex(string pattern, bool required = false) {
+		FormFieldOptions f;
+		f.pattern = pattern;
+		f.isRequired = required;
+		return f;
+	}
+
+	static FormFieldOptions fromElement(Element e) {
+		FormFieldOptions f;
+		if(e.hasAttribute("required"))
+			f.isRequired = true;
+		if(e.hasAttribute("pattern"))
+			f.pattern = e.pattern;
+		if(e.hasAttribute("placeholder"))
+			f.placeholder = e.placeholder;
+		return f;
+	}
+
+	Element applyToElement(Element e) {
+		if(this.isRequired)
+			e.required = "required";
+		if(this.pattern.length)
+			e.pattern = this.pattern;
+		if(this.placeholder.length)
+			e.placeholder = this.placeholder;
+		return e;
+	}
+}
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2012

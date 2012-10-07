@@ -1,11 +1,9 @@
 module arsd.color;
 
-// NOTE: this is obsolete. use color.d instead.
-
-import std.stdio;
 import std.math;
 import std.conv;
 import std.algorithm;
+import std.string : strip, split;
 
 struct Color {
 	ubyte r;
@@ -20,16 +18,28 @@ struct Color {
 		this.a = cast(ubyte) alpha;
 	}
 
-	static Color transparent() {
-		return Color(0, 0, 0, 0);
-	}
+	static Color transparent() { return Color(0, 0, 0, 0); }
+	static Color white() { return Color(255, 255, 255); }
+	static Color black() { return Color(0, 0, 0); }
+	static Color red() { return Color(255, 0, 0); }
+	static Color green() { return Color(0, 255, 0); }
+	static Color blue() { return Color(0, 0, 255); }
+	static Color yellow() { return Color(255, 255, 0); }
+	static Color teal() { return Color(0, 255, 255); }
+	static Color purple() { return Color(255, 0, 255); }
 
-	static Color white() {
-		return Color(255, 255, 255);
+	/*
+	ubyte[4] toRgbaArray() {
+		return [r,g,b,a];
 	}
+	*/
 
-	static Color black() {
-		return Color(0, 0, 0);
+	string toCssString() {
+		import std.string;
+		if(a == 255)
+			return format("#%02x%02x%02x", r, g, b);
+		else
+			return format("rgba(%d, %d, %d, %f)", r, g, b, cast(real)a / 255.0);
 	}
 
 	string toString() {
@@ -39,6 +49,141 @@ struct Color {
 		else
 			return format("%02x%02x%02x%02x", r, g, b, a);
 	}
+
+	static Color fromNameString(string s) {
+		Color c;
+		foreach(member; __traits(allMembers, Color)) {
+			static if(__traits(compiles, c = __traits(getMember, Color, member))) {
+				if(s == member)
+					return __traits(getMember, Color, member);
+			}
+		}
+		throw new Exception("Unknown color " ~ s);
+	}
+
+	static Color fromString(string s) {
+		s = s.strip();
+
+		Color c;
+		c.a = 255;
+
+		// trying named colors via the static no-arg methods here
+		foreach(member; __traits(allMembers, Color)) {
+			static if(__traits(compiles, c = __traits(getMember, Color, member))) {
+				if(s == member)
+					return __traits(getMember, Color, member);
+			}
+		}
+
+		// try various notations borrowed from CSS (though a little extended)
+
+		// hsl(h,s,l,a) where h is degrees and s,l,a are 0 >= x <= 1.0
+		if(s.startsWith("hsl(") || s.startsWith("hsla(")) {
+			assert(s[$-1] == ')');
+			s = s[s.startsWith("hsl(") ? 4 : 5  .. $ - 1]; // the closing paren
+
+			real[3] hsl;
+			ubyte a = 255;
+
+			auto parts = s.split(",");
+			foreach(i, part; parts) {
+				if(i < 3)
+					hsl[i] = to!real(part.strip);
+				else
+					a = cast(ubyte) (to!real(part.strip) * 255);
+			}
+
+			c = .fromHsl(hsl);
+			c.a = a;
+
+			return c;
+		}
+
+		// rgb(r,g,b,a) where r,g,b are 0-255 and a is 0-1.0
+		if(s.startsWith("rgb(") || s.startsWith("rgba(")) {
+			assert(s[$-1] == ')');
+			s = s[s.startsWith("rgb(") ? 4 : 5  .. $ - 1]; // the closing paren
+
+			auto parts = s.split(",");
+			foreach(i, part; parts) {
+				// lol the loop-switch pattern
+				auto v = to!real(part.strip);
+				switch(i) {
+					case 0: // red
+						c.r = cast(ubyte) v;
+					break;
+					case 1:
+						c.g = cast(ubyte) v;
+					break;
+					case 2:
+						c.b = cast(ubyte) v;
+					break;
+					case 3:
+						c.a = cast(ubyte) (v * 255);
+					break;
+					default: // ignore
+				}
+			}
+
+			return c;
+		}
+
+
+
+
+		// otherwise let's try it as a hex string, really loosely
+
+		if(s.length && s[0] == '#')
+			s = s[1 .. $];
+
+		// not a built in... do it as a hex string
+		if(s.length >= 2) {
+			c.r = fromHexInternal(s[0 .. 2]);
+			s = s[2 .. $];
+		}
+		if(s.length >= 2) {
+			c.g = fromHexInternal(s[0 .. 2]);
+			s = s[2 .. $];
+		}
+		if(s.length >= 2) {
+			c.b = fromHexInternal(s[0 .. 2]);
+			s = s[2 .. $];
+		}
+		if(s.length >= 2) {
+			c.a = fromHexInternal(s[0 .. 2]);
+			s = s[2 .. $];
+		}
+
+		return c;
+	}
+
+	static Color fromHsl(real h, real s, real l) {
+		return .fromHsl(h, s, l);
+	}
+}
+
+
+private ubyte fromHexInternal(string s) {
+	import std.range;
+	int result = 0;
+
+	int exp = 1;
+	//foreach(c; retro(s)) { // FIXME: retro doesn't work right in dtojs
+	foreach_reverse(c; s) {
+		if(c >= 'A' && c <= 'F')
+			result += exp * (c - 'A' + 10);
+		else if(c >= 'a' && c <= 'f')
+			result += exp * (c - 'a' + 10);
+		else if(c >= '0' && c <= '9')
+			result += exp * (c - '0');
+		else
+			// throw new Exception("invalid hex character: " ~ cast(char) c);
+			return 0;
+
+		exp *= 16;
+	}
+
+	return cast(ubyte) result;
 }
 
 
@@ -46,7 +191,7 @@ Color fromHsl(real[3] hsl) {
 	return fromHsl(hsl[0], hsl[1], hsl[2]);
 }
 
-Color fromHsl(real h, real s, real l) {
+Color fromHsl(real h, real s, real l, real a = 255) {
 	h = h % 360;
 
 	real C = (1 - abs(2 * l - 1)) * s;
@@ -95,7 +240,7 @@ Color fromHsl(real h, real s, real l) {
 		cast(ubyte)(r * 255),
 		cast(ubyte)(g * 255),
 		cast(ubyte)(b * 255),
-		255);
+		cast(ubyte)(a));
 }
 
 real[3] toHsl(Color c, bool useWeightedLightness = false) {
@@ -198,7 +343,7 @@ Color oppositeLightness(Color c) {
 /// Try to determine a text color - either white or black - based on the input
 Color makeTextColor(Color c) {
 	auto hsl = toHsl(c, true); // give green a bonus for contrast
-	if(hsl[2] > 0.5)
+	if(hsl[2] > 0.71)
 		return Color(0, 0, 0);
 	else
 		return Color(255, 255, 255);
@@ -321,7 +466,8 @@ int fromHex(string s) {
 	int result = 0;
 
 	int exp = 1;
-	foreach(c; retro(s)) {
+	// foreach(c; retro(s)) {
+	foreach_reverse(c; s) {
 		if(c >= 'A' && c <= 'F')
 			result += exp * (c - 'A' + 10);
 		else if(c >= 'a' && c <= 'f')
@@ -356,3 +502,26 @@ Color colorFromString(string s) {
 
 	return c;
 }
+
+/*
+import browser.window;
+import std.conv;
+void main() {
+	import browser.document;
+	foreach(ele; document.querySelectorAll("input")) {
+		ele.addEventListener("change", {
+			auto h = to!real(document.querySelector("input[name=h]").value);
+			auto s = to!real(document.querySelector("input[name=s]").value);
+			auto l = to!real(document.querySelector("input[name=l]").value);
+
+			Color c = Color.fromHsl(h, s, l);
+
+			auto e = document.getElementById("example");
+			e.style.backgroundColor = c.toCssString();
+
+			// JSElement __js_this;
+			// __js_this.style.backgroundColor = c.toCssString();
+		}, false);
+	}
+}
+*/

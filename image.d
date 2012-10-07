@@ -19,13 +19,15 @@ module arsd.image;
 
 */
 
+import arsd.color;
+/*
 struct Color {
 	ubyte r;
 	ubyte g;
 	ubyte b;
 	ubyte a = 255;
 }
-
+*/
 interface Image {
 
 }

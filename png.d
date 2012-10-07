@@ -492,12 +492,15 @@ PNGHeader getHeader(PNG* p) {
 	return h;
 }
 
+public import arsd.color;
+/*
 struct Color {
 	ubyte r;
 	ubyte g;
 	ubyte b;
 	ubyte a;
 }
+*/
 
 /+
 class Image {
@@ -581,24 +584,28 @@ Color[] fetchPalette(PNG* p) {
 
 void replacePalette(PNG* p, Color[] colors) {
 	auto palette = p.getChunk("PLTE");
-	auto alpha = p.getChunk("tRNS");
+	auto alpha = p.getChunkNullable("tRNS");
 
 	//import std.string;
 	//assert(0, format("%s %s", colors.length, alpha.size));
 	//assert(colors.length == alpha.size);
-	alpha.size = colors.length;
-	alpha.payload.length = colors.length; // we make sure there's room for our simple method below
+	if(alpha) {
+		alpha.size = colors.length;
+		alpha.payload.length = colors.length; // we make sure there's room for our simple method below
+	}
 	p.length = 0; // so write will recalculate
 
 	for(int i = 0; i < colors.length; i++) {
 		palette.payload[i*3+0] = colors[i].r;
 		palette.payload[i*3+1] = colors[i].g;
 		palette.payload[i*3+2] = colors[i].b;
-		alpha.payload[i] = colors[i].a;
+		if(alpha)
+			alpha.payload[i] = colors[i].a;
 	}
 
 	palette.checksum = crc("PLTE", palette.payload);
-	alpha.checksum = crc("tRNS", alpha.payload);
+	if(alpha)
+		alpha.checksum = crc("tRNS", alpha.payload);
 }
 
 uint update_crc(in uint crc, in ubyte[] buf){

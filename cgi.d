@@ -1,3 +1,4 @@
+// FIXME: if an exception is thrown, we shouldn't necessarily cache...
 /++
 	Provides a uniform server-side API for CGI, FastCGI, SCGI, and HTTP web applications.
 
@@ -1581,6 +1582,26 @@ class Cgi {
 	//RequestMethod _requestMethod;
 }
 
+/// use this for testing or other isolated things
+Cgi dummyCgi(Cgi.RequestMethod method = Cgi.RequestMethod.GET, string url = null, in ubyte[] data = null, void delegate(const(ubyte)[]) outputSink = null) {
+	// we want to ignore, not use stdout
+	if(outputSink is null)
+		outputSink = delegate void(const(ubyte)[]) { };
+
+	string[string] env;
+	env["REQUEST_METHOD"] = to!string(method);
+	env["CONTENT_LENGTH"] = to!string(data.length);
+
+	auto cgi = new Cgi(
+		5_000_000,
+		env,
+		{ return data; },
+		outputSink,
+		null);
+
+	return cgi;
+}
+
 
 // should this be a separate module? Probably, but that's a hassle.
 
@@ -2502,6 +2523,10 @@ string getTempDirectory() {
 
 long sysTimeToDTime(in SysTime sysTime) {
     return convert!("hnsecs", "msecs")(sysTime.stdTime - 621355968000000000L);
+}
+
+long dateTimeToDTime(in DateTime dt) {
+	return sysTimeToDTime(cast(SysTime) dt);
 }
 
 long getUtcTime() { // renamed primarily to avoid conflict with std.date itself

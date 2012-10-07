@@ -259,7 +259,6 @@ Element checkbox(string name, string value, string label, bool checked = false) 
 	return lbl;
 }
 
-
 /++ Convenience function to create a small <form> to POST, but the creation function is more like a link
     than a DOM form.
    
@@ -1286,6 +1285,41 @@ class CssRuleSet : CssPart {
 		else {
 			foreach(outerSelector; outer.selectors.length ? outer.selectors : [""])
 			foreach(innerSelector; selectors) {
+				/*
+					it would be great to do a top thing and a bottom, examples:
+					.awesome, .awesome\& {
+						.something img {}
+					}
+
+					should give:
+						.awesome .something img, .awesome.something img { }
+
+					And also
+					\&.cool {
+						.something img {}
+					}
+
+					should give:
+						.something img.cool {}
+
+					OR some such syntax.
+
+
+					The idea though is it will ONLY apply to end elements with that particular class. Why is this good? We might be able to isolate the css more for composited files.
+
+					idk though.
+				*/
+				/+
+				// FIXME: this implementation is useless, but the idea of allowing combinations at the top level rox.
+				if(outerSelector.length > 2 && outerSelector[$-2] == '\\' && outerSelector[$-1] == '&') {
+					// the outer one is an adder... so we always want to paste this on, and if the inner has it, collapse it
+					if(innerSelector.length > 2 && innerSelector[0] == '\\' && innerSelector[1] == '&')
+						levelOne.selectors ~= outerSelector[0 .. $-2] ~ innerSelector[2 .. $];
+					else
+						levelOne.selectors ~= outerSelector[0 .. $-2] ~ innerSelector;
+				} else
+				+/
+
 				// we want to have things like :hover, :before, etc apply without implying
 				// a descendant.
 
@@ -1295,6 +1329,9 @@ class CssRuleSet : CssPart {
 				// But having this is too useful to ignore.
 				if(innerSelector.length && innerSelector[0] == ':')
 					levelOne.selectors ~= outerSelector ~ innerSelector;
+				// we also allow \&something to get them concatenated
+				else if(innerSelector.length > 2 && innerSelector[0] == '\\' && innerSelector[1] == '&')
+					levelOne.selectors ~= outerSelector ~ innerSelector[2 .. $].strip;
 				else
 					levelOne.selectors ~= outerSelector ~ " " ~ innerSelector; // otherwise, use some other operator...
 			}
@@ -2011,11 +2048,14 @@ Color readCssColor(string cssColor) {
 	} else if(cssColor.startsWith("hsl")) {
 		assert(0); // FIXME: implement
 	} else
+		return Color.fromNameString(cssColor);
+	/*
 	switch(cssColor) {
 		default:
 			// FIXME let's go ahead and try naked hex for compatibility with my gradient program
 			assert(0, "Unknown color: " ~ cssColor);
 	}
+	*/
 }
 
 /*
