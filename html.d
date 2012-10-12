@@ -1574,6 +1574,20 @@ class MacroExpander {
 			assert(0, to!string(args.length) ~ " args: " ~ to!string(args));
 			return null;
 		};
+
+		functions["include"] = &include;
+	}
+
+	string[string] includeFiles;
+
+	dstring include(dstring[] args) {
+		string s;
+		foreach(arg; args) {
+			string lol = to!string(arg);
+			s ~= to!string(includeFiles[lol]);
+		}
+
+		return to!dstring(s);
 	}
 
 	// the following are used inside the user text
@@ -1697,6 +1711,8 @@ class MacroExpander {
 				functionName = possibility;
 				argsBegin = possibility.length;
 			}
+
+			auto endOfVariable = argsBegin + idx + 1; // this is the offset into the original source
 
 			bool checkForAllArguments = true;
 
@@ -1837,9 +1853,13 @@ class MacroExpander {
 						returned = localVariables[functionName];
 				} else if(functionName in functions)
 					returned = functions[functionName](arguments);
-				else if(functionName in variables)
+				else if(functionName in variables) {
 					returned = variables[functionName];
-				else if(functionName in macros) {
+					// FIXME
+					// we also need to re-attach the arguments array, since variable pulls can't have args
+					assert(endOfVariable > startingSliceForReplacement);
+					endingSliceForReplacement = endOfVariable;
+				} else if(functionName in macros) {
 					returned = expandMacro(macros[functionName], arguments);
 				}
 
@@ -1931,6 +1951,7 @@ class JavascriptMacroExpander : MacroExpander {
 		super();
 		functions["foreach"] = &foreachLoop;
 	}
+
 
 	/**
 		¤foreach(item; array) {
