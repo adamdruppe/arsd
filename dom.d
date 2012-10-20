@@ -4003,6 +4003,7 @@ int intFromHex(string hex) {
 			sizediff_t tid = -1;
 			char c = str[position];
 			foreach(a, token; selectorTokens)
+
 				if(c == token[0]) {
 					if(token.length > 1) {
 						if(position + 1 >= str.length   ||   str[position+1] != token[1])
@@ -4038,20 +4039,35 @@ int intFromHex(string hex) {
 		selector = selector.replace("< ", "<");
 			// FIXME: this is ugly ^^^^^. It should just ignore that whitespace somewhere else.
 
+		// FIXME: another ugly hack. maybe i should just give in and do this the right way......
+		string fixupEscaping(string input) {
+			auto lol = input.replace("\\", "\u00ff");
+			lol = lol.replace("\u00ff\u00ff", "\\");
+			return lol.replace("\u00ff", "");
+		}
+
+		bool escaping = false;
 		foreach(i, c; selector) { // kill useless leading/trailing whitespace too
 			if(skip) {
 				skip = false;
 				continue;
 			}
 
-			auto tid = idToken(selector, i);
+			sizediff_t tid = -1;
+
+			if(escaping)
+				escaping = false;
+			else if(c == '\\')
+				escaping = true;
+			else
+				tid = idToken(selector, i);
 
 			if(tid == -1) {
 				if(start == -1)
 					start = i;
 			} else {
 				if(start != -1) {
-					tokens ~= selector[start..i];
+					tokens ~= fixupEscaping(selector[start..i]);
 					start = -1;
 				}
 				tokens ~= selectorTokens[tid];
@@ -4061,7 +4077,7 @@ int intFromHex(string hex) {
 				skip = true;
 		}
 		if(start != -1)
-			tokens ~= selector[start..$];
+			tokens ~= fixupEscaping(selector[start..$]);
 
 		return tokens;
 	}
