@@ -457,8 +457,24 @@ class ApiProvider : WebDotDBaseType {
 		return ret;
 	}
 
+	int redirectsSuppressed;
+
+	/// Temporarily disables the redirect() call.
+	void disableRedirects() {
+		redirectsSuppressed++;
+	}
+
+	/// Re-enables redirects. Call this once for every call to disableRedirects.
+	void enableRedirects() {
+		if(redirectsSuppressed)
+			redirectsSuppressed--;
+	}
+
 	/// This tentatively redirects the user - depends on the envelope fomat
+	/// You can temporarily disable this using disableRedirects()
 	void redirect(string location, bool important = false) {
+		if(redirectsSuppressed)
+			return;
 		auto f = cgi.request("envelopeFormat", "document");
 		if(f == "document" || f == "redirect")
 			cgi.setResponseLocation(location, important);
@@ -504,7 +520,7 @@ class ApiProvider : WebDotDBaseType {
 		auto list = container.addChild("ul");
 		auto starting = _baseUrl;
 		if(starting is null)
-			starting = cgi.scriptName ~ cgi.pathInfo; // FIXME
+			starting = cgi.logicalScriptName ~ cgi.pathInfo; // FIXME
 		writeFunctions(list, reflection, starting ~ "/");
 
 		return list.parentNode.removeChild(list);
@@ -1092,11 +1108,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	}
 
 	auto reflection = instantiation.reflection;
-	instantiation._baseUrl = cgi.scriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint];
+	instantiation._baseUrl = cgi.logicalScriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint];
 
 	// everything assumes the url isn't empty...
 	if(cgi.pathInfo.length < pathInfoStartingPoint + 1) {
-		cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" ~ cgi.queryString : ""));
+		cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" ~ cgi.queryString : ""));
 		return;
 	}
 
@@ -1124,11 +1140,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	catch(NonCanonicalUrlException e) {
 		final switch(e.howToFix) {
 			case CanonicalUrlOption.cutTrailingSlash:
-				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $ - 1] ~
+				cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo[0 .. $ - 1] ~
 					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
 			break;
 			case CanonicalUrlOption.addTrailingSlash:
-				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~
+				cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ "/" ~
 					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
 			break;
 		}
@@ -1215,7 +1231,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				auto idx = cgi.referrer.indexOf("?");
 				if(idx != -1 && cgi.referrer[idx + 1 .. $] != cgi.queryString) {
 					// so fucking broken
-					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ cgi.referrer[idx .. $]);
+					cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ cgi.referrer[idx .. $]);
 					return;
 				}
 			}
@@ -2145,8 +2161,12 @@ type fromUrlParam(type)(string ofInterest) {
 		ret = doc.root;
 	} else static if(is(type : Text)) {
 		ret = ofInterest;
+	} else static if(is(type : TimeOfDay)) {
+		ret = TimeOfDay.fromISOExtString(ofInterest);
+	} else static if(is(type : Date)) {
+		ret = Date.fromISOExtString(ofInterest);
 	} else static if(is(type : DateTime)) {
-		ret = DateTime.fromISOString(ofInterest);
+		ret = DateTime.fromISOExtString(ofInterest);
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -3309,7 +3329,7 @@ Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(
 /// This adds a custom attribute to links in the document called qsa which modifies the values on the query string
 void translateQsa(Document document, Cgi cgi, string logicalScriptName = null) {
 	if(logicalScriptName is null)
-		logicalScriptName = cgi.scriptName;
+		logicalScriptName = cgi.logicalScriptName;
 
 	foreach(a; document.querySelectorAll("a[qsa]")) {
 		string href = logicalScriptName ~ cgi.pathInfo ~ "?";
