@@ -3039,25 +3039,44 @@ struct TemplateFilters {
 	}
 
 	string plural(string replacement, string[] args, in Element, string) {
-		if(replacement.length == 0)
-			return replacement;
+		return pluralHelper(args.length ? args[0] : null, replacement);
+	}
+
+	string pluralHelper(string number, string word) {
+		if(word.length == 0)
+			return word;
 
 		int count = 0;
-		if(args.length && std.string.isNumeric(args[0]))
-			count = to!int(args[0]);
+		if(number.length && std.string.isNumeric(number))
+			count = to!int(number);
 
 		if(count == 1)
-			return replacement; // it isn't actually plural
+			return word; // it isn't actually plural
 
-		switch(replacement[$ - 1]) {
+		switch(word[$ - 1]) {
 			case 's':
 			case 'a', 'e', 'i', 'o', 'u':
-				return replacement ~ "es";
+				return word ~ "es";
 			case 'f':
-				return replacement[0 .. $-1] ~ "ves";
+				return word[0 .. $-1] ~ "ves";
 			default:
-				return replacement ~ "s";
+				return word ~ "s";
 		}
+	}
+
+	// replacement is the number here, and args is some text to write
+	// it goes {$count|cnt thing(s)}
+	string cnt(string replacement, string[] args, in Element, string) {
+		string s = replacement;
+		foreach(arg; args) {
+			s ~= " ";
+			if(arg.endsWith("(s)"))
+				s ~= pluralHelper(replacement, arg[0 .. $-3]);
+			else
+				s ~= arg;
+		}
+
+		return s;
 	}
 
 	static auto defaultThings() {
@@ -3161,8 +3180,15 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 			foreach(ref arg; pipeArgs) {
 				if(arg.length && arg[0] == '$') {
 					string n = arg[1 .. $];
+					auto idx = n.indexOf("(");
+					string moar;
+					if(idx != -1) {
+						moar = n[idx .. $];
+						n = n[0 .. idx];
+					}
+
 					if(n in vars)
-						arg = vars[n];
+						arg = vars[n] ~ moar;
 				}
 			}
 
