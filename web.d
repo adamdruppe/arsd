@@ -2298,7 +2298,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 							// find it in reflection
 							ofInterest ~= reflection.functions[callingName].
-								dispatcher(cgi, null, decodeVariables(callingArguments), "string", null).value.str;
+								dispatcher(cgi, object, decodeVariables(callingArguments), "string", null).value.str;
 						}
 					}
 
@@ -2379,6 +2379,9 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 				returnValue.str = retstr;
 		break;
 		case "string": // FIXME: this is the most expensive part of the compile! Two seconds in one of my apps.
+			static if(is(typeof(ret) == string))
+				returnValue.str = ret;
+			else
 		/+
 			static if(__traits(compiles, to!string(ret))) {
 				retstr = to!string(ret);
@@ -2990,6 +2993,10 @@ immutable(string[]) weekdayNames = [
 
 // this might be temporary
 struct TemplateFilters {
+	// arguments:
+	//                              args (space separated on pipe), context element, attribute name (if we're in an attribute)
+	// string (string replacement, string[], in Element, string)
+
 	string date(string replacement, string[], in Element, string) {
 		auto dateTicks = to!time_t(replacement);
 		auto date = SysTime( unixTimeToStdTime(dateTicks/1_000) );
@@ -3010,16 +3017,61 @@ struct TemplateFilters {
 		return toJson(replacement);
 	}
 
+	string article(string replacement, string[], in Element, string) {
+		if(replacement.length && replacement[0].isVowel())
+			return "an " ~ replacement;
+		else if(replacement.length)
+			return "a " ~ replacement;
+		return replacement;
+	}
+
+	string capitalize(string replacement, string[], in Element, string) {
+		return std.string.capitalize(replacement);
+	}
+
+	string possessive(string replacement, string[], in Element, string) {
+		if(replacement.length && replacement[$ - 1] == 's')
+			return replacement ~ "'";
+		else if(replacement.length)
+			return replacement ~ "'s";
+		else
+			return replacement;
+	}
+
+	string plural(string replacement, string[] args, in Element, string) {
+		if(replacement.length == 0)
+			return replacement;
+
+		int count = 0;
+		if(args.length && std.string.isNumeric(args[0]))
+			count = to!int(args[0]);
+
+		if(count == 1)
+			return replacement; // it isn't actually plural
+
+		switch(replacement[$ - 1]) {
+			case 's':
+			case 'a', 'e', 'i', 'o', 'u':
+				return replacement ~ "es";
+			case 'f':
+				return replacement[0 .. $-1] ~ "ves";
+			default:
+				return replacement ~ "s";
+		}
+	}
+
 	static auto defaultThings() {
 		string delegate(string, string[], in Element, string)[string] pipeFunctions;
 		TemplateFilters filters;
 
-		if("date" !in pipeFunctions)
-			pipeFunctions["date"] = &filters.date;
-		if("uri" !in pipeFunctions)
-			pipeFunctions["uri"] = &filters.uri;
-		if("js" !in pipeFunctions)
-			pipeFunctions["js"] = &filters.js;
+		string delegate(string, string[], in Element, string) tmp;
+		foreach(member; __traits(allMembers, TemplateFilters)) {
+			static if(__traits(compiles, tmp = &__traits(getMember, filters, member))) {
+				if(member !in pipeFunctions)
+					pipeFunctions[member] = &__traits(getMember, filters, member);
+			}
+		}
+
 		return pipeFunctions;
 	}
 }
@@ -3035,14 +3087,14 @@ void applyTemplateToElement(
 		auto tc = cast(TextNode) ele;
 		if(tc !is null) {
 			// text nodes have no attributes, but they do have text we might replace.
-			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false);
+			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false, tc, null);
 		} else {
 			auto rs = cast(RawSource) ele;
 			if(rs !is null) {
 				bool isSpecial;
 				if(ele.parentNode)
 					isSpecial = ele.parentNode.tagName == "script" || ele.parentNode.tagName == "style";
-				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, !isSpecial); /* FIXME: might be wrong... */
+				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, !isSpecial, rs, null); /* FIXME: might be wrong... */
 			}
 			// if it is not a text node, it has no text where templating is valid, except the attributes
 			// note: text nodes have no attributes, which is why this is in the separate branch.
@@ -3052,7 +3104,7 @@ void applyTemplateToElement(
 					v = v.replace("%7B%24", "{$");
 					v = v.replace("%7D", "}");
 				}
-				ele.attributes[k] = htmlTemplateWithData(v, vars, pipeFunctions, false);
+				ele.attributes[k] = htmlTemplateWithData(v, vars, pipeFunctions, false, ele, k);
 			}
 		}
 	}
@@ -3062,7 +3114,7 @@ void applyTemplateToElement(
 // set useHtml to false if you're working on internal data (such as TextNode.contents, or attribute);
 // it should only be set to true if you're doing input that has already been ran through toString or something.
 // NOTE: I'm probably going to change the pipe function thing a bit more, but I'm basically happy with it now.
-string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml) {
+string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml, Element contextElement = null, string contextAttribute = null) {
 	if(text is null)
 		return null;
 
@@ -3088,10 +3140,12 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 
 			nameStart = i + 1;
 
-			auto it = name in vars;
-			if(it !is null) {
-				replacement = *it;
-				replacementPresent = true;
+			if(!replacementPresent) {
+				auto it = name in vars;
+				if(it !is null) {
+					replacement = *it;
+					replacementPresent = true;
+				}
 			}
 		}
 
@@ -3099,8 +3153,21 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 			if(currentPipe is null || replacement is null)
 				return;
 
-			if(currentPipe in pipeFunctions) {
-				replacement = pipeFunctions[currentPipe](replacement, null, null, null); // FIXME context
+			auto pieces = currentPipe.split(" ");
+			assert(pieces.length);
+			auto pipeName = pieces[0];
+			auto pipeArgs = pieces[1 ..$];
+
+			foreach(ref arg; pipeArgs) {
+				if(arg.length && arg[0] == '$') {
+					string n = arg[1 .. $];
+					if(n in vars)
+						arg = vars[n];
+				}
+			}
+
+			if(pipeName in pipeFunctions) {
+				replacement = pipeFunctions[pipeName](replacement, pipeArgs, contextElement, contextAttribute);
 				// string, string[], in Element, string
 			}
 
@@ -3550,6 +3617,16 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 	}
 
 	return script;
+}
+
+bool isVowel(char c) {
+	return (
+		c == 'a' || c == 'A' ||
+		c == 'e' || c == 'E' ||
+		c == 'i' || c == 'I' ||
+		c == 'o' || c == 'O' ||
+		c == 'u' || c == 'U'
+	);
 }
 
 
