@@ -30,6 +30,9 @@ interface Database {
 			else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
 				int e = va_arg!int(_argptr);
 				a = to!string(e);
+			} else if (arg == typeid(uint) || arg == typeid(immutable(uint)) || arg == typeid(const(uint))) {
+				int e = va_arg!uint(_argptr);
+				a = to!string(e);
 			} else if (arg == typeid(immutable(char))) {
 				char e = va_arg!char(_argptr);
 				a = to!string(e);
@@ -163,6 +166,20 @@ class SelectBuilder : SqlBuilder {
 
 	int limit;
 	int limitStart;
+
+	SelectBuilder cloned() {
+		auto s = new SelectBuilder();
+		s.fields = this.fields.dup;
+		s.table = this.table;
+		s.joins = this.joins.dup;
+		s.wheres = this.wheres.dup;
+		s.orderBys = this.orderBys.dup;
+		s.groupBys = this.groupBys.dup;
+		s.limit = this.limit;
+		s.limitStart = this.limitStart;
+
+		return s;
+	}
 
 	string toString() {
 		string sql = "SELECT ";
@@ -555,6 +572,10 @@ class DataObject {
 	//     table,  column  [alias]
 	Tuple!(string, string)[string] mappings;
 
+	// value [field] [table]
+	string[string][string] multiTableKeys; // note this is not set internally tight now
+						// but it can be set manually to do multi table mappings for automatic update
+
 	// vararg hack so property assignment works right, even with null
 	string opDispatch(string field, string file = __FILE__, size_t line = __LINE__)(...)
 		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
@@ -684,6 +705,7 @@ class DataObject {
 					keys = [null];
 				}
 
+				if(multiTableKeys is null || tbl !in multiTableKeys)
 				foreach(i, key; keys) {
 					string keyField;
 
@@ -711,6 +733,18 @@ class DataObject {
 						keyFieldToPass ~= ", ";
 
 					keyFieldToPass ~= keyField;
+				}
+				else {
+					foreach(keyField, v; multiTableKeys[tbl]) {
+						if(where.length)
+							where ~= " AND ";
+
+						where ~= keyField ~ " = '"~db.escape(v)~"'" ;
+						if(keyFieldToPass.length)
+							keyFieldToPass ~= ", ";
+
+						keyFieldToPass ~= keyField;
+					}
 				}
 
 
