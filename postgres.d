@@ -84,7 +84,7 @@ class PostgresResult : ResultSet {
 	void popFront() {
 		position++;
 		if(position < numRows)
-			fetchNext;
+			fetchNext();
 	}
 
 	int length() {
