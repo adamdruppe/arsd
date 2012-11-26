@@ -41,7 +41,7 @@ interface Database {
 				a = to!string(e);
 			} else if (arg == typeid(null)) {
 				a = null;
-			} else assert(0, "invalid type " ~ arg.toString );
+			} else assert(0, "invalid type " ~ arg.toString() );
 
 			args ~= Variant(a);
 		}
@@ -117,7 +117,7 @@ struct Row {
 	}
 
 	int opApply(int delegate(ref string, ref string) dg) {
-		foreach(a, b; toAA)
+		foreach(a, b; toAA())
 			mixin(yield("a, b"));
 
 		return 0;
@@ -137,10 +137,10 @@ interface ResultSet {
 	string[] fieldNames();
 
 	// this is a range that can offer other ranges to access it
-	bool empty();
-	Row front();
-	void popFront();
-	int length();
+	bool empty() @property;
+	Row front() @property;
+	void popFront() ;
+	int length() @property;
 
 	/* deprecated */ final ResultSet byAssoc() { return this; }
 }
@@ -181,7 +181,7 @@ class SelectBuilder : SqlBuilder {
 		return s;
 	}
 
-	string toString() {
+	override string toString() {
 		string sql = "SELECT ";
 
 		// the fields first
@@ -460,7 +460,7 @@ string fixupSqlForDataObjectUse(string sql, string[string] keyMapping = null) {
 		auto from = sql[start..i];
 		auto pieces = from.split(",");
 		foreach(p; pieces) {
-			p = p.strip;
+			p = p.strip();
 			start = 0;
 			i = 0;
 			while(i < p.length && p[i] != ' ' && p[i] != '\n' && p[i] != '\t' && p[i] != ',')

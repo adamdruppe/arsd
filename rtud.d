@@ -297,9 +297,11 @@ Message[] parseMessages(string wegot, string eventTypeFilter = null) {
 			switch(name) {
 				default: break; // do nothing
 				case "timestamp":
+					if(data.length)
 					m.timestamp = to!long(data);
 				break;
 				case "ttl":
+					if(data.length)
 					m.ttl = to!long(data);
 				break;
 				case "operation":
@@ -448,7 +450,7 @@ class NotificationConnection : RtudConnection {
 
 			auto bm = sort!"a.timestamp < b.timestamp"(backMessages);
 
-			backMessages = array(find!("a.timestamp > b")(bm, to!long(message["minimum-time"][$-1])));
+			backMessages = array(find!("a.timestamp >= b")(bm, to!long(message["minimum-time"][$-1])));
 		}
 
 		if("close-time" in message)
@@ -474,8 +476,11 @@ class DataConnection : RtudConnection {
 
 	override void handleMessage(string[][string] message) {
 		string getStr(string key, string def) {
-			if(key in message)
-				return message[key][$ - 1];
+			if(key in message) {
+				auto s = message[key][$ - 1];
+				if(s.length)
+					return s;
+			}
 			return def;
 		}
 

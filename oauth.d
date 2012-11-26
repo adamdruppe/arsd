@@ -35,7 +35,7 @@ import std.md5;
 import std.file;
 
 
-Variant[string] postToFacebookWall(string[] info, string id, string message, string picture = null, string link = null) {
+Variant[string] postToFacebookWall(string[] info, string id, string message, string picture = null, string link = null, long when = 0) {
 	string url = "https://graph.facebook.com/" ~ id ~ "/feed";
 
 
@@ -46,6 +46,8 @@ Variant[string] postToFacebookWall(string[] info, string id, string message, str
 		data ~= "&picture=" ~ std.uri.encodeComponent(picture);
 	if(link !is null && link.length)
 		data ~= "&link=" ~ std.uri.encodeComponent(link);
+	if(when)
+		data ~= "&scheduled_publish_time=" ~ to!string(when);
 
 	auto response = curl(url, data);
 
@@ -271,6 +273,8 @@ string tweet(OAuthParams params, string oauthToken, string tokenSecret, string m
 	auto ret = curlOAuth(params, "http://api.twitter.com" ~ "/1/statuses/update.json", args, "POST", data);
 
 	auto val = jsonToVariant(ret).get!(Variant[string]);
+	if("id_str" !in val)
+		throw new Exception("bad result from twitter: " ~ ret);
 	return val["id_str"].get!string;
 }
 
@@ -317,7 +321,7 @@ void authorizeStepOne(Cgi cgi, OAuthParams params, string oauthCallback = null) 
 	Gets the final token, given the stuff from step one. This should be called
 	from the callback in step one.
 
-	Returns [token, secret]
+	Returns [token, secret, raw original data (for extended processing - twitter also sends the screen_name and user_id there)]
 */
 string[] authorizeStepTwo(const(Cgi) cgi, OAuthParams params) {
 	if("oauth_problem" in cgi.get)
@@ -339,7 +343,7 @@ string[] authorizeStepTwo(const(Cgi) cgi, OAuthParams params) {
 
 	auto vars = decodeVariables(ret);
 
-	return [vars["oauth_token"][0], vars["oauth_token_secret"][0]];
+	return [vars["oauth_token"][0], vars["oauth_token_secret"][0], ret];
 }
 
 

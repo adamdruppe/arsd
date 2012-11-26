@@ -310,7 +310,8 @@ class Cgi {
 		else
 			requestMethod = RequestMethod.CommandLine;
 
-		https = getenv("HTTPS") == "on";
+						// FIXME: hack on REDIRECT_HTTPS; this is there because the work app uses mod_rewrite which loses the https flag! So I set it with [E=HTTPS=%HTTPS] or whatever but then it gets translated to here so i want it to still work. This is arguably wrong but meh.
+		https = (getenv("HTTPS") == "on" || getenv("REDIRECT_HTTPS") == "on");
 
 		// FIXME: DOCUMENT_ROOT?
 
@@ -480,6 +481,15 @@ class Cgi {
 		bool contentInMemory = true; // the default ought to always be true
 		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
 		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
+
+
+		void writeToFile(string filenameToSaveTo) {
+			import std.file;
+			if(contentInMemory)
+				std.file.write(filenameToSaveTo, content);
+			else
+				std.file.rename(contentFilename, filenameToSaveTo);
+		}
 	}
 
 	// given a content type and length, decide what we're going to do with the data..
@@ -633,8 +643,9 @@ class Cgi {
 					// here, we should be lined up right at the boundary, which is followed by a \r\n
 
 					// want to keep the buffer under control in case we're under attack
-					if(pps.buffer.length + chunk.length > 70 * 1024) // they should be < 1 kb really....
-						throw new Exception("wtf is up with the huge mime part headers");
+					//stderr.writeln("here once");
+					//if(pps.buffer.length + chunk.length > 70 * 1024) // they should be < 1 kb really....
+					//	throw new Exception("wtf is up with the huge mime part headers");
 
 					acceptChunk();
 
@@ -1155,6 +1166,11 @@ class Cgi {
 			host,
 			port == 80 ? "" : ":" ~ to!string(port),
 			requestUri);
+	}
+
+	/// You can override this if your site base url isn't the same as the script name
+	string logicalScriptName() const {
+		return scriptName;
 	}
 
 	/// Sets the HTTP status of the response. For example, "404 File Not Found" or "500 Internal Server Error".

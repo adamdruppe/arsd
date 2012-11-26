@@ -230,6 +230,21 @@ Html linkify(string text) {
 	return Html(div.innerHTML);
 }
 
+Html nl2br(string text) {
+	auto div = Element.make("div");
+
+	bool first = true;
+	foreach(line; splitLines(text)) {
+		if(!first)
+			div.addChild("br");
+		else
+			first = false;
+		div.appendText(line);
+	}
+
+	return Html(div.innerHTML);
+}
+
 /// Returns true of the string appears to be html/xml - if it matches the pattern
 /// for tags or entities.
 bool appearsToBeHtml(string src) {
@@ -640,7 +655,7 @@ void translateInputTitles(Document document) {
 void translateInputTitles(Element rootElement) {
 	foreach(form; rootElement.getElementsByTagName("form")) {
 		string os;
-		foreach(e; form.getElementsBySelector("input[type=text][title], textarea[title]")) {
+		foreach(e; form.getElementsBySelector("input[type=text][title], input[type=email][title], textarea[title]")) {
 			if(e.hasClass("has-placeholder"))
 				continue;
 			e.addClass("has-placeholder");

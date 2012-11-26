@@ -403,8 +403,10 @@ class LocalWebDotDApiProvider extends WebDotDApiProvider {
 		// The full session ID tells it what to use, and the file hash proves
 		// to D that we already have access to it.
 		$magic = $this->session->sessionId . ";" . $this->session->fileHash;
+		$headers = array("X-Arsd-Local: yes");
 		if(strlen($magic) > 0)
-			curl_setopt($ch, CURLOPT_HTTPHEADER, array("X-Arsd-Session-Override: $magic"));
+			$headers[] = "X-Arsd-Session-Override: $magic";
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 	}
 }
 

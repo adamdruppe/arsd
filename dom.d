@@ -3414,14 +3414,23 @@ class Document : FileResource {
 							pos++;
 					pos++; // skip the >
 				break;
+				// case '%':
 				case '?':
 					char end = data[pos];
+					// FIXME this is all kinda broken
 
 				    more:
 					pos++; // skip the start
-					while(data[pos] != end)
+
+					while(data[pos] != end) {
+						// FIXME: what if it is PHP?
+						if(data[pos] == '>')
+							break; // I've seen this in the wild: <?EM-dummyText>
 						pos++;
-					pos++; // skip the end
+					}
+
+					if(data[pos] == end)
+						pos++; // skip the end
 
 					// FIXME: we should actually store this somewhere
 						// though I like having it stripped out as well tbh.
