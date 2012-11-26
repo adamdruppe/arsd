@@ -550,7 +550,7 @@ struct ElementStyle {
 
 		_attribute = "";
 		foreach(k, v; r) {
-			if(v is null)
+			if(v is null || v.length == 0) /* css can't do empty rules anyway so we'll use that to remove */
 				continue;
 			if(_attribute.length)
 				_attribute ~= " ";

@@ -457,8 +457,24 @@ class ApiProvider : WebDotDBaseType {
 		return ret;
 	}
 
+	int redirectsSuppressed;
+
+	/// Temporarily disables the redirect() call.
+	void disableRedirects() {
+		redirectsSuppressed++;
+	}
+
+	/// Re-enables redirects. Call this once for every call to disableRedirects.
+	void enableRedirects() {
+		if(redirectsSuppressed)
+			redirectsSuppressed--;
+	}
+
 	/// This tentatively redirects the user - depends on the envelope fomat
+	/// You can temporarily disable this using disableRedirects()
 	void redirect(string location, bool important = false) {
+		if(redirectsSuppressed)
+			return;
 		auto f = cgi.request("envelopeFormat", "document");
 		if(f == "document" || f == "redirect")
 			cgi.setResponseLocation(location, important);
@@ -504,7 +520,7 @@ class ApiProvider : WebDotDBaseType {
 		auto list = container.addChild("ul");
 		auto starting = _baseUrl;
 		if(starting is null)
-			starting = cgi.scriptName ~ cgi.pathInfo; // FIXME
+			starting = cgi.logicalScriptName ~ cgi.pathInfo; // FIXME
 		writeFunctions(list, reflection, starting ~ "/");
 
 		return list.parentNode.removeChild(list);
@@ -1092,11 +1108,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	}
 
 	auto reflection = instantiation.reflection;
-	instantiation._baseUrl = cgi.scriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint];
+	instantiation._baseUrl = cgi.logicalScriptName ~ cgi.pathInfo[0 .. pathInfoStartingPoint];
 
 	// everything assumes the url isn't empty...
 	if(cgi.pathInfo.length < pathInfoStartingPoint + 1) {
-		cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" ~ cgi.queryString : ""));
+		cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ "/" ~ (cgi.queryString.length ? "?" ~ cgi.queryString : ""));
 		return;
 	}
 
@@ -1124,11 +1140,11 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	catch(NonCanonicalUrlException e) {
 		final switch(e.howToFix) {
 			case CanonicalUrlOption.cutTrailingSlash:
-				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $ - 1] ~
+				cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo[0 .. $ - 1] ~
 					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
 			break;
 			case CanonicalUrlOption.addTrailingSlash:
-				cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ "/" ~
+				cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ "/" ~
 					(cgi.queryString.length ? ("?" ~ cgi.queryString) : ""));
 			break;
 		}
@@ -1215,7 +1231,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				auto idx = cgi.referrer.indexOf("?");
 				if(idx != -1 && cgi.referrer[idx + 1 .. $] != cgi.queryString) {
 					// so fucking broken
-					cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo ~ cgi.referrer[idx .. $]);
+					cgi.setResponseLocation(cgi.logicalScriptName ~ cgi.pathInfo ~ cgi.referrer[idx .. $]);
 					return;
 				}
 			}
@@ -2145,8 +2161,12 @@ type fromUrlParam(type)(string ofInterest) {
 		ret = doc.root;
 	} else static if(is(type : Text)) {
 		ret = ofInterest;
+	} else static if(is(type : TimeOfDay)) {
+		ret = TimeOfDay.fromISOExtString(ofInterest);
+	} else static if(is(type : Date)) {
+		ret = Date.fromISOExtString(ofInterest);
 	} else static if(is(type : DateTime)) {
-		ret = DateTime.fromISOString(ofInterest);
+		ret = DateTime.fromISOExtString(ofInterest);
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -2278,7 +2298,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 							// find it in reflection
 							ofInterest ~= reflection.functions[callingName].
-								dispatcher(cgi, null, decodeVariables(callingArguments), "string", null).value.str;
+								dispatcher(cgi, object, decodeVariables(callingArguments), "string", null).value.str;
 						}
 					}
 
@@ -2359,6 +2379,9 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 				returnValue.str = retstr;
 		break;
 		case "string": // FIXME: this is the most expensive part of the compile! Two seconds in one of my apps.
+			static if(is(typeof(ret) == string))
+				returnValue.str = ret;
+			else
 		/+
 			static if(__traits(compiles, to!string(ret))) {
 				retstr = to!string(ret);
@@ -2970,6 +2993,10 @@ immutable(string[]) weekdayNames = [
 
 // this might be temporary
 struct TemplateFilters {
+	// arguments:
+	//                              args (space separated on pipe), context element, attribute name (if we're in an attribute)
+	// string (string replacement, string[], in Element, string)
+
 	string date(string replacement, string[], in Element, string) {
 		auto dateTicks = to!time_t(replacement);
 		auto date = SysTime( unixTimeToStdTime(dateTicks/1_000) );
@@ -2990,16 +3017,80 @@ struct TemplateFilters {
 		return toJson(replacement);
 	}
 
+	string article(string replacement, string[], in Element, string) {
+		if(replacement.length && replacement[0].isVowel())
+			return "an " ~ replacement;
+		else if(replacement.length)
+			return "a " ~ replacement;
+		return replacement;
+	}
+
+	string capitalize(string replacement, string[], in Element, string) {
+		return std.string.capitalize(replacement);
+	}
+
+	string possessive(string replacement, string[], in Element, string) {
+		if(replacement.length && replacement[$ - 1] == 's')
+			return replacement ~ "'";
+		else if(replacement.length)
+			return replacement ~ "'s";
+		else
+			return replacement;
+	}
+
+	string plural(string replacement, string[] args, in Element, string) {
+		return pluralHelper(args.length ? args[0] : null, replacement);
+	}
+
+	string pluralHelper(string number, string word) {
+		if(word.length == 0)
+			return word;
+
+		int count = 0;
+		if(number.length && std.string.isNumeric(number))
+			count = to!int(number);
+
+		if(count == 1)
+			return word; // it isn't actually plural
+
+		switch(word[$ - 1]) {
+			case 's':
+			case 'a', 'e', 'i', 'o', 'u':
+				return word ~ "es";
+			case 'f':
+				return word[0 .. $-1] ~ "ves";
+			default:
+				return word ~ "s";
+		}
+	}
+
+	// replacement is the number here, and args is some text to write
+	// it goes {$count|cnt thing(s)}
+	string cnt(string replacement, string[] args, in Element, string) {
+		string s = replacement;
+		foreach(arg; args) {
+			s ~= " ";
+			if(arg.endsWith("(s)"))
+				s ~= pluralHelper(replacement, arg[0 .. $-3]);
+			else
+				s ~= arg;
+		}
+
+		return s;
+	}
+
 	static auto defaultThings() {
 		string delegate(string, string[], in Element, string)[string] pipeFunctions;
 		TemplateFilters filters;
 
-		if("date" !in pipeFunctions)
-			pipeFunctions["date"] = &filters.date;
-		if("uri" !in pipeFunctions)
-			pipeFunctions["uri"] = &filters.uri;
-		if("js" !in pipeFunctions)
-			pipeFunctions["js"] = &filters.js;
+		string delegate(string, string[], in Element, string) tmp;
+		foreach(member; __traits(allMembers, TemplateFilters)) {
+			static if(__traits(compiles, tmp = &__traits(getMember, filters, member))) {
+				if(member !in pipeFunctions)
+					pipeFunctions[member] = &__traits(getMember, filters, member);
+			}
+		}
+
 		return pipeFunctions;
 	}
 }
@@ -3015,14 +3106,14 @@ void applyTemplateToElement(
 		auto tc = cast(TextNode) ele;
 		if(tc !is null) {
 			// text nodes have no attributes, but they do have text we might replace.
-			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false);
+			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false, tc, null);
 		} else {
 			auto rs = cast(RawSource) ele;
 			if(rs !is null) {
 				bool isSpecial;
 				if(ele.parentNode)
 					isSpecial = ele.parentNode.tagName == "script" || ele.parentNode.tagName == "style";
-				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, !isSpecial); /* FIXME: might be wrong... */
+				rs.source = htmlTemplateWithData(rs.source, vars, pipeFunctions, !isSpecial, rs, null); /* FIXME: might be wrong... */
 			}
 			// if it is not a text node, it has no text where templating is valid, except the attributes
 			// note: text nodes have no attributes, which is why this is in the separate branch.
@@ -3032,7 +3123,7 @@ void applyTemplateToElement(
 					v = v.replace("%7B%24", "{$");
 					v = v.replace("%7D", "}");
 				}
-				ele.attributes[k] = htmlTemplateWithData(v, vars, pipeFunctions, false);
+				ele.attributes[k] = htmlTemplateWithData(v, vars, pipeFunctions, false, ele, k);
 			}
 		}
 	}
@@ -3042,7 +3133,7 @@ void applyTemplateToElement(
 // set useHtml to false if you're working on internal data (such as TextNode.contents, or attribute);
 // it should only be set to true if you're doing input that has already been ran through toString or something.
 // NOTE: I'm probably going to change the pipe function thing a bit more, but I'm basically happy with it now.
-string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml) {
+string htmlTemplateWithData(in string text, in string[string] vars, in string delegate(string, string[], in Element, string)[string] pipeFunctions, bool useHtml, Element contextElement = null, string contextAttribute = null) {
 	if(text is null)
 		return null;
 
@@ -3068,10 +3159,12 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 
 			nameStart = i + 1;
 
-			auto it = name in vars;
-			if(it !is null) {
-				replacement = *it;
-				replacementPresent = true;
+			if(!replacementPresent) {
+				auto it = name in vars;
+				if(it !is null) {
+					replacement = *it;
+					replacementPresent = true;
+				}
 			}
 		}
 
@@ -3079,8 +3172,28 @@ string htmlTemplateWithData(in string text, in string[string] vars, in string de
 			if(currentPipe is null || replacement is null)
 				return;
 
-			if(currentPipe in pipeFunctions) {
-				replacement = pipeFunctions[currentPipe](replacement, null, null, null); // FIXME context
+			auto pieces = currentPipe.split(" ");
+			assert(pieces.length);
+			auto pipeName = pieces[0];
+			auto pipeArgs = pieces[1 ..$];
+
+			foreach(ref arg; pipeArgs) {
+				if(arg.length && arg[0] == '$') {
+					string n = arg[1 .. $];
+					auto idx = n.indexOf("(");
+					string moar;
+					if(idx != -1) {
+						moar = n[idx .. $];
+						n = n[0 .. idx];
+					}
+
+					if(n in vars)
+						arg = vars[n] ~ moar;
+				}
+			}
+
+			if(pipeName in pipeFunctions) {
+				replacement = pipeFunctions[pipeName](replacement, pipeArgs, contextElement, contextAttribute);
 				// string, string[], in Element, string
 			}
 
@@ -3309,7 +3422,7 @@ Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(
 /// This adds a custom attribute to links in the document called qsa which modifies the values on the query string
 void translateQsa(Document document, Cgi cgi, string logicalScriptName = null) {
 	if(logicalScriptName is null)
-		logicalScriptName = cgi.scriptName;
+		logicalScriptName = cgi.logicalScriptName;
 
 	foreach(a; document.querySelectorAll("a[qsa]")) {
 		string href = logicalScriptName ~ cgi.pathInfo ~ "?";
@@ -3530,6 +3643,16 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 	}
 
 	return script;
+}
+
+bool isVowel(char c) {
+	return (
+		c == 'a' || c == 'A' ||
+		c == 'e' || c == 'E' ||
+		c == 'i' || c == 'I' ||
+		c == 'o' || c == 'O' ||
+		c == 'u' || c == 'U'
+	);
 }
 
 
