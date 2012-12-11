@@ -24,7 +24,7 @@ import std.string; // FIXME: move to drawText X11 on next dmd
 
 import std.stdio;
 
-import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
+public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
 
 struct Point {
 	int x;
@@ -1173,7 +1173,7 @@ version(X11) {
 				if(!done && pulseTimeout !=0) {
 					if(handlePulse !is null)
 						handlePulse();
-					Thread.sleep(pulseTimeout * 10000);
+					Thread.sleep(dur!"msecs"(pulseTimeout));
 				}
 			}
 
