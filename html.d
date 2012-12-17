@@ -1210,22 +1210,31 @@ class CssAtRule : CssPart {
 		assert(css[0] == '@');
 
 		int braceCount = 0;
+		int startOfInnerSlice = -1;
 
 		foreach(i, c; css) {
 			if(braceCount == 0 && c == ';') {
 				content = css[0 .. i + 1];
 				css = css[i + 1 .. $];
+
+				opener = content;
 				break;
 			}
 
-			if(c == '{')
+			if(c == '{') {
 				braceCount++;
+				if(startOfInnerSlice == -1)
+					startOfInnerSlice = i;
+			}
 			if(c == '}') {
 				braceCount--;
 				if(braceCount < 0)
 					throw new Exception("Bad CSS: mismatched }");
 
 				if(braceCount == 0) {
+					opener = css[0 .. startOfInnerSlice];
+					inner = css[startOfInnerSlice + 1 .. i];
+
 					content = css[0 .. i + 1];
 					css = css[i + 1 .. $];
 					break;
@@ -1236,9 +1245,14 @@ class CssAtRule : CssPart {
 
 	string content;
 
+	string opener;
+	string inner;
+
 	override CssAtRule clone() const {
 		auto n = new CssAtRule();
 		n.content = content;
+		n.opener = opener;
+		n.inner = inner;
 		return n;
 	}
 	override string toString() const { return content; }
@@ -1477,11 +1491,30 @@ string cssToString(in CssPart[] css) {
 const(CssPart)[] denestCss(CssPart[] css) {
 	CssPart[] ret;
 	foreach(part; css) {
-		auto set = cast(CssRuleSet) part;
-		if(set is null)
-			ret ~= part;
-		else {
-			ret ~= set.deNest();
+		auto at = cast(CssAtRule) part;
+		if(at is null) {
+			auto set = cast(CssRuleSet) part;
+			if(set is null)
+				ret ~= part;
+			else {
+				ret ~= set.deNest();
+			}
+		} else {
+			// at rules with content may be denested at the top level...
+			// FIXME: is this even right all the time?
+
+			if(at.inner.length) {
+				auto newCss = at.opener ~ "{\n";
+
+					// the whitespace manipulations are just a crude indentation thing
+				newCss ~= "\t" ~ (cssToString(denestCss(lexCss(at.inner))).replace("\n", "\n\t").replace("\n\t\n\t", "\n\n\t"));
+
+				newCss ~= "\n}";
+
+				ret ~= new CssAtRule(newCss);
+			} else {
+				ret ~= part; // no inner content, nothing special needed
+			}
 		}
 	}
 
