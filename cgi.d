@@ -1185,7 +1185,7 @@ class Cgi {
 	/// Sets the location header, which the browser will redirect the user to automatically.
 	/// Note setResponseLocation() must be called *before* you write() any data to the output.
 	/// The optional important argument is used if it's a default suggestion rather than something to insist upon.
-	void setResponseLocation(string uri, bool important = true) {
+	void setResponseLocation(string uri, bool important = true, string status = null) {
 		if(!important && isCurrentResponseLocationImportant)
 			return; // important redirects always override unimportant ones
 
@@ -1197,7 +1197,11 @@ class Cgi {
 		}
 
 		assert(!outputtedResponseData);
-		responseStatus = "302 Found";
+		if(status is null)
+			responseStatus = "302 Found";
+		else
+			responseStatus = status;
+
 		responseLocation = uri.strip;
 		isCurrentResponseLocationImportant = important;
 	}
@@ -2296,7 +2300,7 @@ version(fastcgi) {
 		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
 		c_int FCGX_GetChar(FCGX_Stream* stream);
 		c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
-		c_int FCGX_HasSeenEOF(FCGX_Stream* stream);
+		int FCGX_HasSeenEOF(FCGX_Stream* stream);
 		c_int FCGX_FFlush(FCGX_Stream *stream);
 	}
 }
