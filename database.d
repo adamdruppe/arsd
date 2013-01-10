@@ -61,11 +61,13 @@ Ret queryOneColumn(Ret, T...)(Database db, string sql, T t) {
 
 struct Query {
 	ResultSet result;
-	static Query opCall(T...)(Database db, string sql, T t) {
-		Query q;
-		q.result = db.query(sql, t);
-		return q;
+	this(T...)(Database db, string sql, T t) if(T.length!=1 || !is(T[0]==Variant[])) {
+		result = db.query(sql, t);
 	}
+    // Version for dynamic generation of args: (Needs to be a template for coexistence with other constructor.
+    this(T...)(Database db, string sql, T args) if (T.length==1 && is(T[0] == Variant[])) {
+        result = db.queryImpl(sql, args);
+    }
 
 	int opApply(T)(T dg) if(is(T == delegate)) {
 		import std.traits;
