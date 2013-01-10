@@ -1,5 +1,69 @@
 module arsd.web;
 
+enum RequirePost;
+
+/// Attribute for the default formatting (html, table, json, etc)
+struct DefaultFormat {
+	string format;
+}
+
+/// Sets the preferred request method, used by things like other code generators.
+/// While this is preferred, the function is still callable from any request method.
+///
+/// By default, the preferred method is GET if the name starts with "get" and POST otherwise.
+///
+/// See also: RequirePost, ensureGoodPost, and using Cgi.RequestMethod as an attribute
+struct PreferredMethod {
+	Cgi.RequestMethod preferredMethod;
+}
+
+/// With this attribute, the function is only called if the input data's
+/// content type is what you specify here. Makes sense for POST and PUT
+/// verbs.
+struct IfInputContentType {
+	string contentType;
+	string dataGoesInWhichArgument;
+}
+
+/**
+	URL Mapping
+
+	By default, it is the method name OR the method name separated by dashes instead of camel case
+*/
+
+
+/+
+	Attributes
+
+	// this is different than calling ensureGoodPost because
+	// it is only called on direct calls. ensureGoodPost is flow oriented
+	enum RequirePost;
+
+	// path info? One could be the name of the current function, one could be the stuff past it...
+
+	// Incomplete form handler
+
+	// overrides the getGenericContainer
+	struct DocumentContainer {}
+
+	// custom formatter for json and other user defined types
+
+	// custom title for the page
+
+	// do we prefill from url? something else? default?
+	struct Prefill {}
+
+	// btw prefill should also take a function
+	// perhaps a FormFinalizer
+
+	// for automatic form creation
+	struct ParameterSuggestions {
+		string[] suggestions;
+		bool showDropdown; /* otherwise it is just autocomplete on a text box */
+	}
+
++/
+
 // FIXME: if a method has a default value of a non-primitive type,
 // it's still liable to screw everything else.
 
@@ -233,7 +297,7 @@ string linkCall(alias Func, Args...)(Args args) {
 /// This function works pretty ok. You're going to want to append a string to the return
 /// value to actually call .get() or whatever; it only does the name and arglist.
 string jsCall(alias Func, Args...)(Args args) /*if(is(__traits(parent, Func) : WebDotDBaseType))*/ {
-	static if(!__traits(compiles, Func(args))) {
+	static if(!is(typeof(Func(args)))) { //__traits(compiles, Func(args))) {
 		static assert(0, "Your function call doesn't compile. If you need client side dynamic data, try building the call as a string.");
 	}
 
@@ -359,10 +423,12 @@ class ApiProvider : WebDotDBaseType {
 
 	/// we have to add these things to the document...
 	override void _postProcess(Document document) {
-		foreach(pp; documentPostProcessors)
-			pp(document);
+		if(document !is null) {
+			foreach(pp; documentPostProcessors)
+				pp(document);
 
-		addCsrfTokens(document);
+			addCsrfTokens(document);
+		}
 		super._postProcess(document);
 	}
 
@@ -472,12 +538,13 @@ class ApiProvider : WebDotDBaseType {
 
 	/// This tentatively redirects the user - depends on the envelope fomat
 	/// You can temporarily disable this using disableRedirects()
-	void redirect(string location, bool important = false) {
+	string redirect(string location, bool important = false, string status = null) {
 		if(redirectsSuppressed)
-			return;
+			return location;
 		auto f = cgi.request("envelopeFormat", "document");
-		if(f == "document" || f == "redirect")
-			cgi.setResponseLocation(location, important);
+		if(f == "document" || f == "redirect" || f == "json_enable_redirects")
+			cgi.setResponseLocation(location, important, status);
+		return location;
 	}
 
 	/// Returns a list of links to all functions in this class or sub-classes
@@ -899,6 +966,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			reflection.structs[member] = i;
 		} else static if(
 			is(typeof(__traits(getMember, Class, member)) == function)
+				&& __traits(getProtection, __traits(getMember, Class, member)) == "export"
 				&&
 				(
 				member.length < 5 ||
@@ -1100,9 +1168,10 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0, bool handleAllExceptions = true) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
+	instantiation.cgi = cgi;
+
 	if(instantiation.reflection is null) {
 		instantiation.reflection = prepareReflection!(Provider)(instantiation);
-		instantiation.cgi = cgi;
 		instantiation._initialize();
 		// FIXME: what about initializing child objects?
 	}
@@ -1354,6 +1423,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				cgi.setResponseLocation(redirect, false);
 			break;
 			case "json":
+			case "json_enable_redirects":
 				// this makes firefox ugly
 				//cgi.setResponseContentType("application/json");
 				auto json = toJsonValue(result);
@@ -1452,6 +1522,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 								if(realObject !is null)
 									postProcessors ~= &(realObject._postProcess);
 								postProcessors ~= &(base._postProcess);
+
+								// FIXME: cgi is sometimes null in te post processor... wtf
 								foreach(pp; postProcessors) {
 									if(pp in run)
 										continue;
@@ -1974,6 +2046,17 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 		} else {
 			val.type = JSON_TYPE.STRING;
 			val.str = a.toString();
+		}
+	} else static if(is(T == long)) {
+		// FIXME: let's get a better range... I think it goes up to like 1 << 50 on positive and negative
+		// but this works for now
+		if(a < int.max && a > int.min) {
+			val.type = JSON_TYPE.INTEGER;
+			val.integer = to!long(a);
+		} else {
+			// WHY? because javascript can't actually store all 64 bit numbers correctly
+			val.type = JSON_TYPE.STRING;
+			val.str = to!string(a);
 		}
 	} else static if(isIntegral!(T)) {
 		val.type = JSON_TYPE.INTEGER;
@@ -2530,7 +2613,6 @@ string beautify(string name) {
 
 
 
-import std.md5;
 import core.stdc.stdlib;
 import core.stdc.time;
 import std.file;
@@ -2538,6 +2620,7 @@ import std.file;
 /// meant to give a generic useful hook for sessions. kinda sucks at this point.
 /// use the Session class instead. If you just construct it, the sessionId property
 /// works fine. Don't set any data and it won't save any file.
+version(none)
 deprecated string getSessionId(Cgi cgi) {
 	string token; // FIXME: should this actually be static? it seems wrong
 	if(token is null) {
@@ -2551,6 +2634,7 @@ deprecated string getSessionId(Cgi cgi) {
 		}
 	}
 
+	import std.md5;
 	return getDigestString(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ token);
 }
 
@@ -2591,7 +2675,7 @@ class Session {
 		this._readOnly = readOnly;
 
 		bool isNew = false;
-		string token;
+		// string token; // using a member, see the note below
 		if(cookieParams.name in cgi.cookies && cgi.cookies[cookieParams.name].length)
 			token = cgi.cookies[cookieParams.name];
 		else {
@@ -2725,7 +2809,10 @@ class Session {
 		return token;
 	}
 
-	private void setOurCookie(string data) {
+	// FIXME: hack, see note on member string token
+	// don't use this, it is meant to be private (...probably)
+	/*private*/ void setOurCookie(string data) {
+		this.token = data;
 		if(!_readOnly)
 		cgi.setCookie(cookieParams.name, data,
 			cookieParams.expiresIn, cookieParams.path, cookieParams.host, true, cookieParams.httpsOnly);
@@ -2937,6 +3024,8 @@ class Session {
 	private string _sessionId;
 	private Cgi cgi; // used to regenerate cookies, etc.
 
+	string token; // this isn't private, but don't use it FIXME this is a hack to allow cross domain session sharing on the same server....
+
 	//private Variant[string] data;
 	/*
 	Variant* opBinary(string op)(string key)  if(op == "in") {
@@ -2966,6 +3055,7 @@ void setLoginCookie(Cgi cgi, string name, string value) {
 
 
 immutable(string[]) monthNames = [
+	null,
 	"January",
 	"February",
 	"March",
@@ -2998,11 +3088,14 @@ struct TemplateFilters {
 	// string (string replacement, string[], in Element, string)
 
 	string date(string replacement, string[], in Element, string) {
-		auto dateTicks = to!time_t(replacement);
-		auto date = SysTime( unixTimeToStdTime(dateTicks/1_000) );
+		if(replacement.length == 0)
+			return replacement;
+		auto dateTicks = to!long(replacement);
+		auto date = SysTime( unixTimeToStdTime(cast(time_t)(dateTicks/1_000)) );
 		
 		auto day = date.day;
 		auto year = date.year;
+		assert(date.month < monthNames.length, to!string(date.month));
 		auto month = monthNames[date.month];
 		replacement = format("%s %d, %d", month, day, year);
 
@@ -3077,6 +3170,21 @@ struct TemplateFilters {
 		}
 
 		return s;
+	}
+
+	string stringArray(string replacement, string[] args, in Element, string) {
+		if(replacement.length == 0)
+			return replacement;
+		int idx = to!int(replacement);
+		if(idx < 0 || idx >= args.length)
+			return replacement;
+		return args[idx];
+	}
+
+	string boolean(string replacement, string[] args, in Element, string) {
+		if(replacement == "1")
+			return "yes";
+		return "no";
 	}
 
 	static auto defaultThings() {
@@ -3421,6 +3529,9 @@ Table structToTable(T)(Document document, T s, string[] fieldsToSkip = null) if(
 
 /// This adds a custom attribute to links in the document called qsa which modifies the values on the query string
 void translateQsa(Document document, Cgi cgi, string logicalScriptName = null) {
+	if(document is null || cgi is null)
+		return;
+
 	if(logicalScriptName is null)
 		logicalScriptName = cgi.logicalScriptName;
 
@@ -4284,6 +4395,44 @@ enum string javascriptBaseImpl = q{
 	// by setting this to false somewhere in your code.
 	"_wantScriptExecution" : true,
 };
+
+
+template hasAnnotation(alias f, Attr) {
+	bool helper() {
+		foreach(attr; __traits(getAttributes, f))
+			static if(is(attr == Attr) || is(typeof(attr) == Attr))
+				return true;
+		return false;
+
+	}
+	enum bool hasAnnotation = helper;
+}
+
+template hasValueAnnotation(alias f, Attr) {
+	bool helper() {
+		foreach(attr; __traits(getAttributes, f))
+			static if(is(typeof(attr) == Attr))
+				return true;
+		return false;
+
+	}
+	enum bool hasValueAnnotation = helper;
+}
+
+
+
+template getAnnotation(alias f, Attr) if(hasValueAnnotation!(f, Attr)) {
+	auto helper() {
+		foreach(attr; __traits(getAttributes, f))
+			static if(is(typeof(attr) == Attr))
+				return attr;
+		assert(0);
+	}
+
+	enum getAnnotation = helper;
+}
+
+
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2012

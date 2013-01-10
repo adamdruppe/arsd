@@ -60,7 +60,7 @@ class EmailMessage {
 	}
 
 
-	string toString() {
+	override string toString() {
 		string boundary = "0016e64be86203dd36047610926a"; // FIXME
 
 		assert(!isHtml || (isHtml && isMime));
@@ -137,6 +137,8 @@ class EmailMessage {
 
 	void send(RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 		auto smtp = new SMTP(mailServer.server);
+		if(mailServer.username.length)
+			smtp.setAuthentication(mailServer.username, mailServer.password);
 		const(char)[][] allRecipients = cast(const(char)[][]) (to ~ cc ~ bcc); // WTF cast
 		smtp.mailTo(allRecipients);
 		smtp.mailFrom = from;
@@ -145,11 +147,11 @@ class EmailMessage {
 	}
 }
 
-void email(string to, string subject, string message, string from) {
+void email(string to, string subject, string message, string from, RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 	auto msg = new EmailMessage();
 	msg.from = from;
 	msg.to = [to];
 	msg.subject = subject;
 	msg.textBody = message;
-	msg.send();
+	msg.send(mailServer);
 }

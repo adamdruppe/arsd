@@ -30,12 +30,13 @@ class FacebookApiException : Exception {
 
 import arsd.curl;
 import arsd.sha;
-import std.md5;
+import std.digest.md;
 
 import std.file;
 
 
-Variant[string] postToFacebookWall(string[] info, string id, string message, string picture = null, string link = null, long when = 0) {
+// note when is a d_time, so unix_timestamp * 1000
+Variant[string] postToFacebookWall(string[] info, string id, string message, string picture = null, string link = null, long when = 0, string linkDescription = null) {
 	string url = "https://graph.facebook.com/" ~ id ~ "/feed";
 
 
@@ -46,8 +47,12 @@ Variant[string] postToFacebookWall(string[] info, string id, string message, str
 		data ~= "&picture=" ~ std.uri.encodeComponent(picture);
 	if(link !is null && link.length)
 		data ~= "&link=" ~ std.uri.encodeComponent(link);
-	if(when)
-		data ~= "&scheduled_publish_time=" ~ to!string(when);
+	if(when) {
+		data ~= "&scheduled_publish_time=" ~ to!string(when / 1000);
+		data ~= "&published=false";
+	}
+	if(linkDescription.length)
+		data ~= "&description=" ~ std.uri.encodeComponent(linkDescription);
 
 	auto response = curl(url, data);
 

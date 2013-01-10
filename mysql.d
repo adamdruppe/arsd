@@ -691,7 +691,7 @@ string fromCstring(cstring c, int len = -1) {
 
 
 // FIXME: this should work generically with all database types and them moved to database.d
-Ret queryOneRow(Ret = Row, DB, T...)(DB db, string sql, T t) if(
+Ret queryOneRow(Ret = Row, DB, string file = __FILE__, size_t line = __LINE__, T...)(DB db, string sql, T t) if(
 	(is(DB : Database))
 	// && (is(Ret == Row) || is(Ret : DataObject)))
 	)
@@ -699,12 +699,12 @@ Ret queryOneRow(Ret = Row, DB, T...)(DB db, string sql, T t) if(
 	static if(is(Ret : DataObject) && is(DB == MySql)) {
 		auto res = db.queryDataObject!Ret(sql, t);
 		if(res.empty)
-			throw new Exception("result was empty");
+			throw new Exception("result was empty", file, line);
 		return res.front;
 	} else static if(is(Ret == Row)) {
 		auto res = db.query(sql, t);
 		if(res.empty)
-			throw new Exception("result was empty");
+			throw new Exception("result was empty", file, line);
 		return res.front;
 	} else static assert(0, "Unsupported single row query return value, " ~ Ret.stringof);
 }

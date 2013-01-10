@@ -53,6 +53,8 @@
 +/
 module arsd.cgi;
 
+enum long defaultMaxContentLength = 5_000_000;
+
 /*
 
 	To do a file download offer in the browser:
@@ -110,7 +112,7 @@ int locationOf(T)(T[] data, string item) {
 /// If you are doing a custom cgi class, mixing this in can take care of
 /// the required constructors for you
 mixin template ForwardCgiConstructors() {
-	this(long maxContentLength = 5_000_000,
+	this(long maxContentLength = defaultMaxContentLength,
 		string[string] env = null,
 		const(ubyte)[] delegate() readdata = null,
 		void delegate(const(ubyte)[]) _rawDataOutput = null,
@@ -208,7 +210,7 @@ class Cgi {
 		CommandLine }
 
 	/** Initializes it using a CGI or CGI-like interface */
-	this(long maxContentLength = 5_000_000,
+	this(long maxContentLength = defaultMaxContentLength,
 		// use this to override the environment variable listing
 		in string[string] env = null,
 		// and this should return a chunk of data. return empty when done
@@ -1613,7 +1615,7 @@ Cgi dummyCgi(Cgi.RequestMethod method = Cgi.RequestMethod.GET, string url = null
 	env["CONTENT_LENGTH"] = to!string(data.length);
 
 	auto cgi = new Cgi(
-		5_000_000,
+		0,
 		env,
 		{ return data; },
 		outputSink,
@@ -1900,8 +1902,8 @@ string toHex(int num) {
 // the generic mixins
 
 /// Use this instead of writing your own main
-mixin template GenericMain(alias fun, T...) {
-	mixin CustomCgiMain!(Cgi, fun, T);
+mixin template GenericMain(alias fun, long maxContentLength = defaultMaxContentLength) {
+	mixin CustomCgiMain!(Cgi, fun, maxContentLength);
 }
 
 private string simpleHtmlEncode(string s) {
@@ -1951,7 +1953,7 @@ bool handleException(Cgi cgi, Throwable t) {
 }
 
 /// If you want to use a subclass of Cgi with generic main, use this mixin.
-mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi)) {
+mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
 
 	void main(string[] args) {
@@ -2092,7 +2094,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 
 				Cgi cgi;
 				try {
-					cgi = new CustomCgi(5_000_000, headers, &getScgiChunk, &writeScgi, &flushScgi);
+					cgi = new CustomCgi(maxContentLength, headers, &getScgiChunk, &writeScgi, &flushScgi);
 				} catch(Throwable t) {
 					sendAll(connection, plainHttpError(true, "400 Bad Request", t));
 					connection.close();
@@ -2151,7 +2153,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 
 				Cgi cgi;
 				try {
-					cgi = new CustomCgi(5_000_000, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
+					cgi = new CustomCgi(maxContentLength, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 				} catch(Throwable t) {
 					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
 					writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
@@ -2174,7 +2176,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, T...) if(is(CustomCgi : Cgi))
 			// standard CGI is the default version
 			Cgi cgi;
 			try {
-				cgi = new CustomCgi(T);
+				cgi = new CustomCgi(maxContentLength);
 			} catch(Throwable t) {
 				stderr.writeln(t.msg);
 				// the real http server will probably handle this;
@@ -2257,6 +2259,7 @@ void hackAroundLinkerError() {
       writeln(typeid(const(immutable(char)[][])[immutable(char)[]]));
       writeln(typeid(immutable(char)[][][immutable(char)[]]));
       writeln(typeid(Cgi.UploadedFile[immutable(char)[]]));
+      writeln(typeid(Cgi.UploadedFile[][immutable(char)[]]));
       writeln(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
       writeln(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]));
       writeln(typeid(immutable(char[])[immutable(char)[]]));

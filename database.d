@@ -167,8 +167,28 @@ class SelectBuilder : SqlBuilder {
 	int limit;
 	int limitStart;
 
+	Variant[string] vars;
+	void setVariable(T)(string name, T value) {
+		vars[name] = Variant(value);
+	}
+
+	Database db;
+	this(Database db = null) {
+		this.db = db;
+	}
+
+	/*
+		It would be nice to put variables right here in the builder
+
+		?name
+
+		will prolly be the syntax, and we'll do a Variant[string] of them.
+
+		Anything not translated here will of course be in the ending string too
+	*/
+
 	SelectBuilder cloned() {
-		auto s = new SelectBuilder();
+		auto s = new SelectBuilder(this.db);
 		s.fields = this.fields.dup;
 		s.table = this.table;
 		s.joins = this.joins.dup;
@@ -177,6 +197,9 @@ class SelectBuilder : SqlBuilder {
 		s.groupBys = this.groupBys.dup;
 		s.limit = this.limit;
 		s.limitStart = this.limitStart;
+
+		foreach(k, v; this.vars)
+			s.vars[k] = v;
 
 		return s;
 	}
@@ -247,31 +270,88 @@ class SelectBuilder : SqlBuilder {
 			sql ~= to!string(limit);
 		}
 
-		return sql;
+		if(db is null)
+			return sql;
+
+		return escapedVariants(db, sql, vars);
 	}
 }
 
 
-// ///////////////////////////////////////////////////////
+// /////////////////////sql//////////////////////////////////
 
+// used in the internal placeholder thing
+string toSql(Database db, Variant a) {
+	auto v = a.peek!(void*);
+	if(v && (*v is null))
+		return "NULL";
+	else {
+		string str = to!string(a);
+		return '\'' ~ db.escape(str) ~ '\'';
+	}
+
+	assert(0);
+}
+
+// just for convenience; "str".toSql(db);
+string toSql(string s, Database db) {
+	if(s is null)
+		return "NULL";
+	return '\'' ~ db.escape(s) ~ '\'';
+}
+
+string toSql(long s, Database db) {
+	return to!string(s);
+}
+
+string escapedVariants(Database db, in string sql, Variant[string] t) {
+	if(t.keys.length <= 0 || sql.indexOf("?") == -1) {
+		return sql;
+	}
+
+	string fixedup;
+	int currentStart = 0;
+// FIXME: let's make ?? render as ? so we have some escaping capability
+	foreach(int i, dchar c; sql) {
+		if(c == '?') {
+			fixedup ~= sql[currentStart .. i];
+
+			int idxStart = i + 1;
+			int idxLength;
+
+			bool isFirst = true;
+
+			while(idxStart + idxLength < sql.length) {
+				char C = sql[idxStart + idxLength];
+
+				if((C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_' || (!isFirst && C >= '0' && C <= '9'))
+					idxLength++;
+				else
+					break;
+
+				isFirst = false;
+			}
+
+			auto idx = sql[idxStart .. idxStart + idxLength];
+
+			if(idx in t) {
+				fixedup ~= toSql(db, t[idx]);
+				currentStart = idxStart + idxLength;
+			} else {
+				// just leave it there, it might be done on another layer
+				currentStart = i;
+			}
+		}
+	}
+
+	fixedup ~= sql[currentStart .. $];
+
+	return fixedup;
+}
 
 /// Note: ?n params are zero based!
 string escapedVariants(Database db, in string sql, Variant[] t) {
-
-	string toSql(Variant a) {
-		auto v = a.peek!(void*);
-		if(v && (*v is null))
-			return "NULL";
-		else {
-			string str = to!string(a);
-			return '\'' ~ db.escape(str) ~ '\'';
-		}
-
-		assert(0);
-	}
-
-
-
+// FIXME: let's make ?? render as ? so we have some escaping capability
 	// if nothing to escape or nothing to escape with, don't bother
 	if(t.length > 0 && sql.indexOf("?") != -1) {
 		string fixedup;
@@ -298,7 +378,7 @@ string escapedVariants(Database db, in string sql, Variant[] t) {
 				if(idx < 0 || idx >= t.length)
 					throw new Exception("SQL Parameter index is out of bounds: " ~ to!string(idx) ~ " at `"~sql[0 .. i]~"`");
 
-				fixedup ~= toSql(t[idx]);
+				fixedup ~= toSql(db, t[idx]);
 			}
 		}
 

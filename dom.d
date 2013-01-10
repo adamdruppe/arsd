@@ -1945,14 +1945,33 @@ class Element {
 		return new ElementStream(this);
 	}
 
-
 	// I moved these from Form because they are generally useful.
 	// Ideally, I'd put them in arsd.html and use UFCS, but that doesn't work with the opDispatch here.
 	/// Tags: HTML, HTML5
+	// FIXME: add overloads for other label types... 
 	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto fs = this;
 		auto i = fs.addChild("label");
 		i.addChild("span", label);
+		Element input;
+		if(type == "textarea")
+			input = i.addChild("textarea").
+			setAttribute("name", name).
+			setAttribute("rows", "6");
+		else
+			input = i.addChild("input").
+			setAttribute("name", name).
+			setAttribute("type", type);
+
+		// these are html 5 attributes; you'll have to implement fallbacks elsewhere. In Javascript or maybe I'll add a magic thing to html.d later.
+		fieldOptions.applyToElement(input);
+		return i;
+	}
+
+	Element addField(Element label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+		auto fs = this;
+		auto i = fs.addChild("label");
+		i.addChild(label);
 		Element input;
 		if(type == "textarea")
 			input = i.addChild("textarea").

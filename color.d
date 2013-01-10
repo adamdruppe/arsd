@@ -39,7 +39,7 @@ struct Color {
 		if(a == 255)
 			return format("#%02x%02x%02x", r, g, b);
 		else
-			return format("rgba(%d, %d, %d, %f)", r, g, b, cast(real)a / 255.0);
+			return format("rgba(%d, %d, %d, %s)", r, g, b, cast(real)a / 255.0);
 	}
 
 	string toString() {

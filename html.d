@@ -317,6 +317,9 @@ Form makePostLink(string href, Element submitButtonContents, string[string] para
 	return makePostLink_impl(href, params, submit);
 }
 
+import arsd.cgi;
+import std.range;
+
 Form makePostLink_impl(string href, string[string] params, Element submitButton) {
 	auto form = require!Form(Element.make("form"));
 	form.method = "POST";
@@ -791,6 +794,8 @@ mixin template opDispatches(R) {
 
 	The passed code is evaluated lazily.
 */
+
+/+
 class ClientSideScript : Element {
 	private Stack!(string*) codes;
 	this(Document par) {
@@ -993,6 +998,7 @@ class ClientSideScript : Element {
 		return *v;
 	}
 }
++/
 
 /*
 	Interesting things with scripts:
@@ -1088,6 +1094,7 @@ import std.stdio;
 import std.json;
 import std.traits;
 
+/+
 string toJavascript(T)(T a) {
 	static if(is(T == ClientSideScript.Variable)) {
 		return a.name;
@@ -1196,6 +1203,7 @@ string translateJavascriptSourceWithDToStandardScript(string src)() {
 
 	return result;
 }
++/
 +/
 
 abstract class CssPart {

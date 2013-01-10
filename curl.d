@@ -65,6 +65,7 @@ struct CurlOptions {
 }
 */
 
+//import std.digest.md;
 import std.md5;
 import std.file;
 /// this automatically caches to a local file for the given time. it ignores the expires header in favor of your time to keep.
