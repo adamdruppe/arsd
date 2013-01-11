@@ -117,7 +117,7 @@ string createQueryGenerator(string preSql) {
   * data_ will be made available with D's 'with' statement to the embedded code in queryString. So you can access the elements just as regular variables.
   *
   * Params: 
-  *     queryString = An SQL template. An SQL consists of nested blocks. The
+  *     queryString = An SQL template. An SQL template consists of nested blocks. The
   *                   uppermost block is the queryString itself, you create subblocks by
   *                   enclosing it in braces '{}'.
 
@@ -150,14 +150,14 @@ string createQueryGenerator(string preSql) {
                       might access the loop variable, ('a' in our case).
 
                       Multiple declarations of the form '${}' might be present
-                      within the declaration part, they may be separated with
+                      within the declaration part, they may be separated by
                       white space. 
 
                       __Body part__
 
                       If no declaration part is present, then the whole content
-                      of the block is the body part. (This is if the first
-                      character is no '$'.) Otherwise it starts with the colon
+                      of the block is the body part. (This is, if the first
+                      character is no '$'.) Otherwise it starts after the colon
                       at the end of the declaration part.
 
                       Everything in the body part will be echoed to the
@@ -172,7 +172,7 @@ string createQueryGenerator(string preSql) {
                       3. A '$' will trigger an error as it is only valid in the
                       declaration part.
 
-                      4. SQL string which can either start with " or with ' it
+                      4. SQL string which can either start with " or with '. It
                       might contain any of '{' '}' '$' '#' they all will be
                       ignored within a string. Apart from this, no escaping of
                       these characters is possible at the moment.
@@ -197,8 +197,7 @@ string createQueryGenerator(string preSql) {
                       .. params[n], all declarations made in the declarations
                       parts of the blocks above it and the contents of the data_ struct.
                       It is made available with D's 'with' statement so
-                      data_.foo will just be
-                      'foo'.
+                      data_.foo will just be 'foo'.
 
                       __Blocks__
                         
@@ -206,19 +205,24 @@ string createQueryGenerator(string preSql) {
                       expression. If a block contains a D expression or a
                       subblock which contains D expressions, then its contents
                       will only be included in the output if at least one of
-                      the D expressions are valid. (Different from their init
-                              value). So if you have a SQL expression of the
+                      the D expressions are valid or if it contains a text only sub block.
+                      So if you have a SQL expression of the
                       form {someColumn=#{some D code}} there will be no output
                       at all if #{some D code} was not valid. If a block does
                       not contain any D code and neither do any sub blocks then
-                      its output will be included in the output, of the
-                      containing block. Which in turn will only be emitted if
-                      this block either has no D expressions at all or at least
-                      on of the is valid.
+                      its output will be included in the output of the
+                      containing block. If you want to ensure that a particular
+                      text does not get dropped, include it in its own block.
 
-                      The second property that makes blocks useful is that if a block produces no output, for the above mentioned reasons, then the text before it will be dropped
-                      if there were D expression found already. It will also be dropped if the preceding block vanished. This way you can concatenate blocks with ' and ' and ' or '
-                      and they will be dropped if not applicable. A leading ' where ' on the other hand would not be dropped in any case, except the whole output vanishes.
+                      The second property that makes blocks useful is that if a
+                      block produces no output, for the above mentioned
+                      reasons, then the text before it will be dropped if there
+                      were no valid sub blocks found already in the parent block.
+                      It will also be dropped if the preceding block vanished. This way you can
+                      concatenate blocks with ' and ' and ' or ' and they will
+                      be dropped if not applicable. A leading ' where ' on the
+                      other hand would not be dropped in any case, except the
+                      whole output vanishes.
 
                       For examples, see the unittests, a more complex example, I used in reality is here:
                         `({${db=params[0]} : `
@@ -236,11 +240,11 @@ string createQueryGenerator(string preSql) {
                             comes from the data_ struct) followed by an inner
                     variable declaration of arData, you can see both d (the
                             looping variable) and db from the outer block are
-                    accessible. Afterwards the body starts, which starts with a
-                    block containing '(' and subblocks of a comparisons with a D
+                    accessible. Afterwards the body starts  with a
+                    block containing '(' and subblocks of comparisons with a D
                     expression like {({date>=#{d.from}})}.
                     If all D expressions in the block like d.from evaluate to
-                    an empty string, the whole containig block will not produce
+                    an empty string, the whole containing block will not produce
                     any output. So not even '()' this is because they are
                     enclused in a subblock. The 'and' between {date>=#{d.from}}
                     and {date<=#{d.to}}  for example will only appear in the
@@ -248,7 +252,7 @@ string createQueryGenerator(string preSql) {
                     string.
 
                     The outputs of each loop iteration will be separated with " or " by default,
-                    you can change this by setting queryGenSep in the declaration part. 
+                    you can change this, by setting queryGenSep in the declaration part. 
 
   */
 CreatedQuery createQuery(string queryString, StructT, Params...)(StructT data_, Params params) {
@@ -503,9 +507,8 @@ string preSqlParser(ref string data, int level=0) {
 
                 out_cmd~="if("~wasValid~"==0 && "~validCount~">0) {\n"; // validCount has to be greater than 0 otherwise we have removed the data already. (See above)
                 out_cmd~=buf~"="~buf~"[0..$-"~text~".length];\n}\n";
-                out_cmd~="if("~wasValid~">0 || "~wasValid~"==0) {\n";
+                out_cmd~=wasValid~"="~wasValid~"==-1 ? 1 : "~wasValid~";\n";
                 out_cmd~=validCount~"="~validCount~"==-1 ? "~wasValid~" : "~validCount~"+"~wasValid~";\n";
-                out_cmd~="}\n";
                 break;
             case '}' : 
                 goto finish;
