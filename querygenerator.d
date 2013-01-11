@@ -477,7 +477,7 @@ string preSqlParser(ref string data, int level=0) {
     immutable wasValid="wasValid"~slevel;
     immutable isFirst="isFirst"~to!string(level); // Defined in doVariableProcessing
     out_cmd~="int "~validCount~"=-1;\n";
-    out_cmd~="int "~wasValid~";\n"; // Tri state: 0 not valid; -1 valid (was just text); >0 valid (contained valid D expressions)
+    out_cmd~="int "~wasValid~";\n"; // validCount of inner level. (But never -1, if it would be -1 it is 1)
     out_cmd~="string "~text~";\n";
     while(data.length) {
         auto end=data.length;
@@ -499,7 +499,7 @@ string preSqlParser(ref string data, int level=0) {
                 data=data[1..$];
                 out_cmd~="if("~validCount~"==0) {\n";
                 out_cmd~=buf~"="~buf~"[0..$-"~text~".length];\n}\n";
-
+                out_cmd~=wasValid~"=0;\n"; // Reset, because inner level will just add to it.
                 out_cmd~=preSqlParser(data, level+1); 
 
                 assert(data[0]=='}', "Expected closing '}', got: "~data);
@@ -507,8 +507,9 @@ string preSqlParser(ref string data, int level=0) {
 
                 out_cmd~="if("~wasValid~"==0 && "~validCount~">0) {\n"; // validCount has to be greater than 0 otherwise we have removed the data already. (See above)
                 out_cmd~=buf~"="~buf~"[0..$-"~text~".length];\n}\n";
-                out_cmd~=wasValid~"="~wasValid~"==-1 ? 1 : "~wasValid~";\n";
+                out_cmd~=`debug(queryGenerator) writefln("Received data from level: `~to!string(level+1)~` on level: `~slevel~`, data was valid: %s, current valid count: %s", `~wasValid~`, `~validCount~`);`~"\n";
                 out_cmd~=validCount~"="~validCount~"==-1 ? "~wasValid~" : "~validCount~"+"~wasValid~";\n";
+                out_cmd~=`debug(queryGenerator) writefln("Updated valid count is now: %s", `~validCount~`);`~"\n";
                 break;
             case '}' : 
                 goto finish;
@@ -534,12 +535,11 @@ finish:
     out_cmd~=isFirst~"=false;\n"; // No longer the first valid run, so separator should be inserted.
     out_cmd~=upperBuf~"~="~buf~";\n}\n";
     if(level>0) {
-        out_cmd~=upperWasValid~"="~validCount~";\n";
+        out_cmd~=upperWasValid~"+="~validCount~"<0 ? 1 : "~validCount~";\n";
     }
     // End of loop:
     out_cmd~="}\n";
-    if(level>0)
-        out_cmd~="if("~isFirst~") "~upperWasValid~"=0;\n"; // In case loop wasn't executed a single time.
-    out_cmd~="}\n";
+    // End of block:
+    out_cmd~="}\n"; 
     return out_cmd;
 }
