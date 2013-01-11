@@ -56,6 +56,8 @@ struct CreatedQuery {
 
     CreatedQuery opBinaryRight(string op)(string left) if(op=="~") {
         CreatedQuery res=this;
+        if(left.length && query.length)
+            left~=prepend;
         res.query=left~res.query;
         return res;
     }
