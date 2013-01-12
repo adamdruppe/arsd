@@ -44,6 +44,17 @@ Desktop app stuff
 simpledisplay.d - gives quick and easy access to a window for drawing
 simpleaudio.d - gives minimal audio output
 
+Game stuff
+=================
+
+engine.d, screen.d, audio.d - a quick wrapper to SDL and OpenGL I used
+         in the pre D1 days, now updated so it compiles as both D1 and
+	 D2 (use the -d switch to dmd)
+
+	 Requires some SDL bindings.
+
+	 Eventually I'll redo it.
+
 Other
 ================
 
@@ -60,10 +71,9 @@ color.d - a basic color struct and some HSL functions
 Things I might add once I clean up the files (this can be expedited upon
 request, to an extent):
 
-httpd.d - an embedded web server
-oauth.d - client/server stuff for oauth1
-browser.d - a very small html widget
-netman.d - handles net connections  (required by httpd.d)
+htmlwidget.d - a very small html widget
+browser.d - a tiny browser based on htmlwidget.d
+netman.d - old code handles net connections  (required by httpd.d)
 imagedraft.d - (temporary name) has algorithms for images
 bmp.d   - gives .bmp read/write
 dws.d  - a draft of my D windowing system (also includes some Qt code)
