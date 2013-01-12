@@ -550,12 +550,14 @@ class Screen : Drawable{
 
 	void switchSplitScreenMode(int player, int numberOfPlayers, bool horizontal){
 			switch(numberOfPlayers){
+				default: assert(0);
 				case 1:
 					return;
 //					glViewport(0, 0, xr, yr);
 				break;
 				case 2:
 					switch(player){
+						default: assert(0);
 						case 0:
 							if(horizontal)
 								glViewport(0, yr / 2, xr, yr / 2);
@@ -573,6 +575,7 @@ class Screen : Drawable{
 				case 3:
 				case 4:
 					switch(player){
+						default: assert(0);
 					  case 0:
 						glViewport(0, yr / 2, xr / 2, yr / 2);
 					  break;

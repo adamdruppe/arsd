@@ -261,6 +261,7 @@ class Engine{
 
 					// And handle the data here.
 					switch(clients[a].state){
+					  default: assert(0);
 					  case 0: // this is the timestamp and stuff
 						int ts = SDLNet_Read32(data.ptr);
 						clients[a].numPlayers = SDLNet_Read32(data.ptr+4);
