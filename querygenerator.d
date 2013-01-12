@@ -256,6 +256,11 @@ string createQueryGenerator(string preSql) {
                     The outputs of each loop iteration will be separated with " or " by default,
                     you can change this, by setting queryGenSep in the declaration part. 
 
+        data_   = The contents of data_ will be made available to the D expressions and declarations in the queryString. (The code gets embedded withing a with(data_) { ... })
+
+        params  = Additional data you need in the queryString. You can access it via params[0], params[1], ...
+                  If you happen to have a member of data_ which is named params, you will have to access it via data_.params.
+
   */
 CreatedQuery createQuery(string queryString, StructT, Params...)(StructT data_, Params params) {
     debug(queryGenerator) import std.stdio;
