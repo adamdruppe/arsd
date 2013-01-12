@@ -978,7 +978,7 @@ class Element {
 				tagName = "form";
 			else static if(is(T == Table))
 				tagName = "table";
-			else static if(is(T == Table))
+			else static if(is(T == Link))
 				tagName == "a";
 		}
 
@@ -1276,7 +1276,7 @@ class Element {
 			if(this.hasAttribute("width"))
 				style ~= "; width: " ~ this.width;
 			if(this.hasAttribute("height"))
-				style ~= "; width: " ~ this.height;
+				style ~= "; height: " ~ this.height;
 			if(this.hasAttribute("bgcolor"))
 				style ~= "; background-color: " ~ this.bgcolor;
 			if(this.tagName == "body" && this.hasAttribute("text"))
