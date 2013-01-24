@@ -19,14 +19,16 @@ template isValidEventListener(T) {
 	enum bool isValidEventListener = isCallable!T && ParameterTypeTuple!(T).length == 1;
 }
 
+private enum backingSize = (void*).sizeof + hash_t.sizeof;
+
 /// Sends an exit event to the loop. The loop will break when it sees this event, ignoring any events after that point.
 public void exit() {
-	ubyte[(void*).sizeof + hash_t.sizeof] bufferBacking = 0; // a null message means exit...
+	ubyte[backingSize] bufferBacking = 0; // a null message means exit...
 
 	writeToEventPipe(bufferBacking);
 }
 
-void writeToEventPipe(ubyte[8] bufferBacking) {
+void writeToEventPipe(ubyte[backingSize] bufferBacking) {
 	ubyte[] buffer = bufferBacking[];
 	while(buffer.length) {
 		auto written = unix.write(pipes[1], buffer.ptr, buffer.length);
