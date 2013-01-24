@@ -13,6 +13,7 @@ template typehash(T...) {
 }
 
 private WrappedListener[][hash_t] listeners;
+private WrappedListener[] idleHandlers;
 
 /// Valid event listeners must be callable and take exactly one argument. The type of argument determines the type of event.
 template isValidEventListener(T) {
@@ -20,6 +21,22 @@ template isValidEventListener(T) {
 }
 
 private enum backingSize = (void*).sizeof + hash_t.sizeof;
+
+/// Calls this function once every time the event system is idle
+public void addOnIdle(T)(T t) if(isCallable!T && ParameterTypeTuple!(T).length == 0) {
+	idleHandlers ~= wrap(t);
+}
+
+/// Removes an idle handler (added with addOnIdle)
+public void removeOnIdle(T)(T t) if(isCallable!T && ParameterTypeTuple!(T).length == 0) {
+	auto pair = getPtrPair(t);
+	foreach(idx, listener; idleHandlers) {
+		if(listener.matches(pair)) {
+			idleHandlers = idleHandlers[0 .. idx] ~ idleHandlers[idx + 1 .. $];
+			break;
+		}
+	}
+}
 
 /// Sends an exit event to the loop. The loop will break when it sees this event, ignoring any events after that point.
 public void exit() {
@@ -84,8 +101,13 @@ public void sendSync(T)(T t) {
 public void send(T)(T t) {
 	// FIXME: we need to cycle the buffer position back so we can reuse this as the message is received
 	// (if you want to keep a message, it is your responsibility to make your own copy, unless it is a pointer itself)
-	static ubyte[1024] copyBuffer;
-	static size_t copyBufferPosition;
+	//static ubyte[1024] copyBuffer;
+	//static size_t copyBufferPosition;
+
+	// for now we'll use the gc
+	size_t copyBufferPosition = 0;
+	auto copyBuffer = new ubyte[](T.sizeof);
+
 
 	auto hash = typehash!T;
 	//auto ptr  = (cast(void*) &t);
@@ -314,6 +336,17 @@ private void addBackFilesToLoop() {
 	backFilesForLoop = null;
 }
 
+/*
+	addOnIdle(function) is similar to calling setInterval(function, 0)
+
+	auto id = setTimeout(function, wait)
+	clearTimeout(id)
+
+	auto id = setInterval(function, call at least after)
+	clearInterval(0)
+
+*/
+
 private bool insideLoop = false;
 
 version(linux) {
@@ -365,6 +398,7 @@ version(linux) {
 
 		outer_loop: for(;;) {
 			auto nfds = epoll_wait(epoll, events.ptr, events.length, -1 /* wait forever, otherwise in milliseconds */);
+			moreEvents:
 			if(nfds == -1)
 				throw new Exception("epoll_wait");
 
@@ -383,6 +417,13 @@ version(linux) {
 						sendSync(FileError(fd));
 				}
 			}
+
+			nfds = epoll_wait(epoll, events.ptr, events.length, 0 /* no wait */);
+			if(nfds != 0)
+				goto moreEvents;
+			// no immediate events means we're idle for now, run those functions
+			foreach(idleHandler; idleHandlers)
+				idleHandler.call(null);
 		}
 	}
 }
@@ -430,7 +471,12 @@ private WrappedListener wrap(T)(T t) {
 	else {
 		return new class WrappedListener {
 			override void call(void* ptr) {
-				t(*(cast(ParameterTypeTuple!(T)[0]*) ptr));
+				enum arity = ParameterTypeTuple!(T).length;
+				static if(arity == 1)
+					t(*(cast(ParameterTypeTuple!(T)[0]*) ptr));
+				else static if(arity == 0)
+					t();
+				else static assert(0, "bad number of arguments");
 			}
 
 			override bool matches(void*[2] pair) {
