@@ -230,6 +230,41 @@ ubyte[] writePng(PNG* p) {
 	return a;
 }
 
+PNGHeader getHeaderFromFile(string filename) {
+	import std.stdio;
+	auto file = File(filename, "rb");
+	ubyte[12] initialBuffer; // file header + size of first chunk (should be IHDR)
+	auto data = file.rawRead(initialBuffer[]);
+	if(data.length != 12)
+		throw new Exception("couldn't get png file header off " ~ filename);
+
+	if(data[0..8] != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+		throw new Exception("file " ~ filename ~ " is not a png");
+
+	auto pos = 8;
+	uint size;
+	size |= data[pos++] << 24;
+	size |= data[pos++] << 16;
+	size |= data[pos++] << 8;
+	size |= data[pos++] << 0;
+
+	size += 4; // chunk type
+	size += 4; // checksum
+
+	ubyte[] more;
+	more.length = size;
+
+	auto chunk = file.rawRead(more);
+	if(chunk.length != size)
+		throw new Exception("couldn't get png image header off " ~ filename);
+
+
+	more = data ~ chunk;
+
+	auto png = readPng(more);
+	return getHeader(png);
+}
+
 PNG* readPng(ubyte[] data) {
 	auto p = new PNG;
 

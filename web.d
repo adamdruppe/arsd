@@ -1,6 +1,8 @@
 module arsd.web;
 
 enum RequirePost;
+enum RequireHttps;
+enum NoAutomaticForm;
 
 /// Attribute for the default formatting (html, table, json, etc)
 struct DefaultFormat {
@@ -624,7 +626,10 @@ class ApiProvider : WebDotDBaseType {
 			document.cookie = \"timezone=\" + tz + \"; path=/\";
 		}
 	</script>
-	<style>.format-row { display: none; }</style>
+	<style>
+		.format-row { display: none; }
+		.validation-failed { background-color: #ffe0e0; }
+	</style>
 </head>
 <body>
 	<div id=\"body\"></div>
@@ -783,6 +788,8 @@ struct FunctionInfo {
 	string returnType; ///. static type to string
 	bool returnTypeIsDocument; // internal used when wrapping
 	bool returnTypeIsElement; // internal used when wrapping
+
+	bool requireHttps;
 
 	Document delegate(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
 }
@@ -978,6 +985,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			FunctionInfo* f = new FunctionInfo;
 			ParameterTypeTuple!(__traits(getMember, Class, member)) fargs;
 
+			f.requireHttps = hasAnnotation!(__traits(getMember, Class, member), RequireHttps);
 			f.returnType = ReturnType!(__traits(getMember, Class, member)).stringof;
 			f.returnTypeIsDocument = is(ReturnType!(__traits(getMember, Class, member)) : Document);
 			f.returnTypeIsElement = is(ReturnType!(__traits(getMember, Class, member)) : Element);
@@ -1248,6 +1256,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	}
 
 	bool returnedHoldsADocument = false;
+	string[][string] want;
+	string format, secondaryFormat;
+	void delegate(Document d) moreProcessing;
+	WrapperReturn ret;
 
 	try {
 		if(fun is null) {
@@ -1276,6 +1288,12 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		assert(fun.dispatcher !is null);
 		assert(cgi !is null);
 
+		if(fun.requireHttps && !cgi.https) {
+			cgi.setResponseLocation("https://" ~ cgi.host ~ cgi.logicalScriptName ~ cgi.pathInfo ~
+				(cgi.queryString.length ? "?" : "") ~ cgi.queryString);
+			envelopeFormat = "no-processing";
+			goto do_nothing_else;
+		}
 
 		if(instantiator.length) {
 			assert(fun !is null);
@@ -1287,14 +1305,14 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 		result.type = fun.returnType;
 
-		string format = cgi.request("format", reflection.defaultOutputFormat);
-		string secondaryFormat = cgi.request("secondaryFormat", "");
+		format = cgi.request("format", reflection.defaultOutputFormat);
+		secondaryFormat = cgi.request("secondaryFormat", "");
 		if(secondaryFormat.length == 0) secondaryFormat = null;
 
 		JSONValue res;
 
 		// FIXME: hackalicious garbage. kill.
-		string[][string] want = cast(string[][string]) (cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.postArray : cgi.getArray);
+		want = cast(string[][string]) (cgi.requestMethod == Cgi.RequestMethod.POST ? cgi.postArray : cgi.getArray);
 		version(fb_inside_hack) {
 			if(cgi.referrer.indexOf("apps.facebook.com") != -1) {
 				auto idx = cgi.referrer.indexOf("?");
@@ -1313,7 +1331,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		}
 
 		realObject.cgi = cgi;
-		auto ret = fun.dispatcher(cgi, realObject, want, format, secondaryFormat);
+		ret = fun.dispatcher(cgi, realObject, want, format, secondaryFormat);
 		if(ret.completed) {
 			envelopeFormat = "no-processing";
 			goto do_nothing_else;
@@ -1336,8 +1354,38 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		debug result.dFullString = e.toString();
 
 		if(envelopeFormat == "document" || envelopeFormat == "html") {
-			auto ipe = cast(InsufficientParametersException) e;
-			if(ipe !is null) {
+			if(auto fve = cast(FormValidationException) e) {
+				auto thing = fve.formFunction;
+				if(thing is null)
+					thing = fun;
+				fun = thing;
+				ret = fun.dispatcher(cgi, realObject, want, format, secondaryFormat);
+				result.result = ret.value;
+
+				if(fun.returnTypeIsDocument)
+					returnedHoldsADocument = true; // we don't replace the success flag, so this ensures no double document
+
+				moreProcessing = (Document d) {
+					Form f;
+					if(fve.getForm !is null)
+						f = fve.getForm(d);
+					else
+						f = d.requireSelector!Form("form");
+
+					foreach(k, v; want)
+						f.setValue(k, v[$-1]);
+
+					foreach(idx, failure; fve.failed) {
+						auto ele = f.querySelector("[name=\""~failure~"\"]");
+						ele.addClass("validation-failed");
+						ele.dataset.validationMessage = fve.messagesForUser[idx];
+						ele.parentNode.addChild("span", fve.messagesForUser[idx]).addClass("validation-message");
+					}
+
+					if(fve.postProcessor !is null)
+						fve.postProcessor(d, f, fve);
+				};
+			} else if(auto ipe = cast(InsufficientParametersException) e) {
 				assert(fun !is null);
 				Form form;
 				 if(fun.createForm !is null) {
@@ -1375,6 +1423,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				assert(form !is null);
 
 				foreach(k, v; cgi.get)
+					form.setValue(k, v); // carry what we have for params over
+				foreach(k, v; cgi.post)
 					form.setValue(k, v); // carry what we have for params over
 
 				result.result.str = form.toString();
@@ -1504,6 +1554,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 
 							document = e.parentDocument;
+							//assert(0, document.toString());
 							// FIXME: a wee bit slow, esp if func return element
 							e.innerHTML = returned;
 							if(fun !is null)
@@ -1531,6 +1582,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 									pp(document);
 								}
 							}
+
+							if(moreProcessing !is null)
+								moreProcessing(document);
 
 							returned = document.toString;
 						}
@@ -1623,6 +1677,13 @@ mixin template FancyMain(T, Args...) {
 /// Like FancyMain, but you can pass a custom subclass of Cgi
 mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi)) {
 	void fancyMainFunction(Cgi cgi) { //string[] args) {
+		version(catch_segfault) {
+			import etc.linux.memoryerror;
+			// NOTE: this is private on stock dmd right now, just
+			// open the file (src/druntime/import/etc/linux/memoryerror.d) and make it public
+			registerMemoryErrorHandler();
+		}
+
 //		auto cgi = new Cgi;
 
 		// there must be a trailing slash for relative links..
@@ -2192,16 +2253,146 @@ Element toXmlElement(T)(Document document, T t) {
 
 /// Done automatically by the wrapper function
 class InsufficientParametersException : Exception {
-	this(string functionName, string msg) {
-		super(functionName ~ ": " ~ msg);
+	this(string functionName, string msg, string file = __FILE__, size_t line = __LINE__) {
+		this.functionName = functionName;
+		super(functionName ~ ": " ~ msg, file, line);
 	}
+
+	string functionName;
+	string argumentName;
+	string formLocation;
+}
+
+/// helper for param checking
+bool isValidLookingEmailAddress(string e) {
+	import std.net.isemail;
+	return isEmail(e, CheckDns.no, EmailStatusCode.any).statusCode == EmailStatusCode.valid;
+}
+
+/// Looks for things like <a or [url - the kind of stuff I often see in blatantly obvious comment spam
+bool isFreeOfTypicalPlainTextSpamLinks(string txt) {
+	if(txt.indexOf("href=") != -1)
+		return false;
+	if(txt.indexOf("[url") != -1)
+		return false;
+	return true;
+}
+
+/**
+	---
+	auto checker = new ParamCheckHelper();
+
+	checker.finish(); // this will throw if any of the checks failed
+	// now go ahead and use the params
+	---
+*/
+class ParamCheckHelper {
+	this(in Cgi cgi) {
+		this.cgi = cgi;
+	}
+
+	string[] failed;
+	string[] messagesForUser;
+	const(Cgi) cgi;
+
+	void failure(string name, string messageForUser = null) {
+		failed ~= name;
+		messagesForUser ~= messageForUser;
+	}
+
+	string checkParam(in string[string] among, string name, bool delegate(string) ok, string messageForUser = null) {
+		string value = null;
+		auto ptr = "name" in among;
+		if(ptr !is null) {
+			value = *ptr;
+		}
+
+		if(!ok(value)) {
+			failure(name, messageForUser is null ? "Please complete this field" : messageForUser);
+		}
+
+		return value;
+	}
+
+	// int a = checkParam!int(cgi, "cool", (a) => a > 10);
+	T checkCgiParam(T)(string name, T defaultValue, bool delegate(T) ok, string messageForUser = null) {
+		auto value = cgi.request(name, defaultValue);
+		if(!ok(value)) {
+			failure(name, messageForUser);
+		}
+
+		return value;
+	}
+
+	void finish(
+		immutable(FunctionInfo)* formFunction,
+		Form delegate(Document) getForm,
+		void delegate(Document, Form, FormValidationException) postProcessor,
+		string file = __FILE__, size_t line = __LINE__)
+	{
+		if(failed.length)
+			throw new FormValidationException(
+				formFunction, getForm, postProcessor,
+				failed, messagesForUser,
+				to!string(failed), file, line);
+	}
+}
+
+auto check(alias field)(ParamCheckHelper helper, bool delegate(typeof(field)) ok, string messageForUser = null) {
+	if(!ok(field)) {
+		helper.failure(field.stringof, messageForUser);
+	}
+
+	return field;
+}
+
+
+class FormValidationException : Exception {
+	this(
+		immutable(FunctionInfo)* formFunction,
+		Form delegate(Document) getForm,
+		void delegate(Document, Form, FormValidationException) postProcessor,
+		string[] failed, string[] messagesForUser,
+		string msg, string file = __FILE__, size_t line = __LINE__)
+	{
+		this.formFunction = formFunction;
+		this.getForm = getForm;
+		this.postProcessor = postProcessor;
+		this.failed = failed;
+		this.messagesForUser = messagesForUser;
+
+		super(msg, file, line);
+	}
+
+	// this will be called by the automatic catch
+	// it goes: Document d = formatAs(formFunction, document);
+	// then   : Form f = getForm(d);
+	// it will add the values used in the current call to the form with the error conditions
+	// and finally, postProcessor(d, f, this);
+	immutable(FunctionInfo)* formFunction;
+	Form delegate(Document) getForm;
+	void delegate(Document, Form, FormValidationException) postProcessor;
+	string[] failed;
+	string[] messagesForUser;
 }
 
 /// throw this if a paramater is invalid. Automatic forms may present this to the user in a new form. (FIXME: implement that)
 class InvalidParameterException : Exception {
-	this(string param, string value, string expected) {
-		super("bad param: " ~ param ~ ". got: " ~ value ~ ". Expected: " ~expected);
+	this(string param, string value, string expected, string file = __FILE__, size_t line = __LINE__) {
+		this.param = param;
+		super("bad param: " ~ param ~ ". got: " ~ value ~ ". Expected: " ~expected, file, line);
 	}
+
+	/*
+		The way these are handled automatically is if something fails, web.d will
+		redirect the user to
+
+		formLocation ~ "?" ~ encodeVariables(cgi.get|postArray)
+	*/
+
+	string functionName;
+	string param;
+	string formLocation;
 }
 
 /// convenience for throwing InvalidParameterExceptions
@@ -2347,7 +2538,9 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 				args[i] = cast()  cgi.files[using]; // casting away const for the assignment to compile FIXME: shouldn't be needed
 			} else {
 				if(using !in sargs) {
-					static if(parameterHasDefault!(f)(i)) {
+					static if(isArray!(type) && !isSomeString!(type)) {
+						args[i] = null;
+					} else 	static if(parameterHasDefault!(f)(i)) {
 						args[i] = mixin(parameterDefaultOf!(f)(i));
 					} else {
 						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
@@ -3132,10 +3325,10 @@ struct TemplateFilters {
 	}
 
 	string plural(string replacement, string[] args, in Element, string) {
-		return pluralHelper(args.length ? args[0] : null, replacement);
+		return pluralHelper(args.length ? args[0] : null, replacement, args.length > 1 ? args[1] : null);
 	}
 
-	string pluralHelper(string number, string word) {
+	string pluralHelper(string number, string word, string pluralWord = null) {
 		if(word.length == 0)
 			return word;
 
@@ -3146,12 +3339,17 @@ struct TemplateFilters {
 		if(count == 1)
 			return word; // it isn't actually plural
 
+		if(pluralWord !is null)
+			return pluralWord;
+
 		switch(word[$ - 1]) {
 			case 's':
 			case 'a', 'e', 'i', 'o', 'u':
 				return word ~ "es";
 			case 'f':
 				return word[0 .. $-1] ~ "ves";
+			case 'y':
+				return word[0 .. $-1] ~ "ies";
 			default:
 				return word ~ "s";
 		}

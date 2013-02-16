@@ -21,8 +21,8 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	html = html.replace("&nbsp;", " ");
 	html = html.replace("&#160;", " ");
 	html = html.replace("&#xa0;", " ");
-	html = html.replace("\n", "");
-	html = html.replace("\r", "");
+	html = html.replace("\n", " ");
+	html = html.replace("\r", " ");
 	html = std.regex.replace(html, std.regex.regex("[\n\r\t \u00a0]+", "gm"), " ");
 
 	document.parse("<roottag>" ~ html ~ "</roottag>");
@@ -75,6 +75,7 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 				ele.stripOut();
 				goto again;
 			break;
+			case "td":
 			case "p":
 			/*
 				if(ele.innerHTML.length > 1)
@@ -121,7 +122,14 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	start.innerHTML = start.innerHTML().replace("\u0001", "\n");
 
 	foreach(ele; start.tree) {
-		if(ele.tagName == "p") {
+		if(ele.tagName == "td") {
+			if(ele.directText().strip().length) {
+				ele.prependText("\r");
+				ele.appendText("\r");
+			}
+			ele.stripOut();
+			goto again2;
+		} else if(ele.tagName == "p") {
 			if(strip(ele.innerText()).length > 1) {
 				string res = "";
 				string all = ele.innerText().replace("\n \n", "\n\n");
@@ -136,6 +144,7 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	}
 
 	result = start.innerText();
+	result = squeeze(result, " ");
 
 	result = result.replace("\r ", "\r");
 	result = result.replace(" \r", "\r");

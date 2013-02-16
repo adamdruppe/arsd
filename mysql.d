@@ -699,14 +699,20 @@ Ret queryOneRow(Ret = Row, DB, string file = __FILE__, size_t line = __LINE__, T
 	static if(is(Ret : DataObject) && is(DB == MySql)) {
 		auto res = db.queryDataObject!Ret(sql, t);
 		if(res.empty)
-			throw new Exception("result was empty", file, line);
+			throw new EmptyResultException("result was empty", file, line);
 		return res.front;
 	} else static if(is(Ret == Row)) {
 		auto res = db.query(sql, t);
 		if(res.empty)
-			throw new Exception("result was empty", file, line);
+			throw new EmptyResultException("result was empty", file, line);
 		return res.front;
 	} else static assert(0, "Unsupported single row query return value, " ~ Ret.stringof);
+}
+
+class EmptyResultException : Exception {
+	this(string message, string file = __FILE__, size_t line = __LINE__) {
+		super(message, file, line);
+	}
 }
 
 

@@ -5,7 +5,6 @@ import std.stdio;
 import std.conv;
 
 struct JpegSection {
-	ushort length;
 	ubyte identifier;
 	ubyte[] data;
 }
@@ -37,16 +36,16 @@ struct LazyJpegFile {
 			throw new Exception("not lined up in file");
 
 		_front.identifier = startingBuffer[1];
-		_front.length = cast(ushort) (startingBuffer[2]) * 256 + startingBuffer[3];
+		ushort length = cast(ushort) (startingBuffer[2]) * 256 + startingBuffer[3];
 
-		if(_front.length < 2)
+		if(length < 2)
 			throw new Exception("wtf");
-		_front.length -= 2; // the length in the file includes the block header, but we just want the data here
+		length -= 2; // the length in the file includes the block header, but we just want the data here
 
-		_front.data = new ubyte[](_front.length);
+		_front.data = new ubyte[](length);
 		read = f.rawRead(_front.data);
-		if(read.length != _front.length)
-			throw new Exception("didn't read the file right, got " ~ to!string(read.length) ~ " instead of " ~ to!string(_front.length));
+		if(read.length != length)
+			throw new Exception("didn't read the file right, got " ~ to!string(read.length) ~ " instead of " ~ to!string(length));
 
 		_frontIsValid = true;
 	}
@@ -60,7 +59,7 @@ struct LazyJpegFile {
 	}
 }
 
-// http://www.obrador.com/essentialjpeg/headerinfo.htm
+// returns width, height
 Tuple!(int, int) getSizeFromFile(string filename) {
 	import std.stdio;
 
@@ -71,6 +70,7 @@ Tuple!(int, int) getSizeFromFile(string filename) {
 	auto firstSection = jpeg.front();
 	jpeg.popFront();
 
+	// commented because exif and jfif are both readable by this so no need to be picky
 	//if(firstSection.identifier != 0xe0)
 		//throw new Exception("bad header");
 

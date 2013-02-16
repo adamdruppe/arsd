@@ -20,6 +20,9 @@
 */
 module arsd.dom;
 
+// FIXME: something like <ol>spam <ol> with no closing </ol> should read the second tag as the closer in garbage mode
+// FIXME: failing to close a paragraph sometimes messes things up too
+
 // FIXME: it would be kinda cool to have some support for internal DTDs
 // and maybe XPath as well, to some extent
 /*
@@ -1583,7 +1586,7 @@ class Element {
 	/**
 		Takes some html and replaces the element's children with the tree made from the string.
 	*/
-	Element innerHTML(string html) {
+	Element innerHTML(string html, bool strict = false) {
 		if(html.length)
 			selfClosed = false;
 
@@ -1595,7 +1598,7 @@ class Element {
 		}
 
 		auto doc = new Document();
-		doc.parse("<innerhtml>" ~ html ~ "</innerhtml>"); // FIXME: this should preserve the strictness of the parent document
+		doc.parse("<innerhtml>" ~ html ~ "</innerhtml>", strict, strict); // FIXME: this should preserve the strictness of the parent document
 
 		children = doc.root.children;
 		foreach(c; children) {
@@ -3029,7 +3032,7 @@ class TableCell : Element {
 
 
 ///.
-class MarkupError : Exception {
+class MarkupException : Exception {
 
 	///.
 	this(string message) {
@@ -3208,7 +3211,7 @@ class Document : FileResource {
 
 		if(dataEncoding is null) {
 			if(strict)
-				throw new MarkupError("I couldn't figure out the encoding of this document.");
+				throw new MarkupException("I couldn't figure out the encoding of this document.");
 			else
 			// if we really don't know by here, it means we already tried UTF-8,
 			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
@@ -3282,7 +3285,7 @@ class Document : FileResource {
 		}
 
 		void parseError(string message) {
-			throw new MarkupError(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
+			throw new MarkupException(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
 		}
 
 		void eatWhitespace() {
@@ -3312,7 +3315,7 @@ class Document : FileResource {
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 			{
 				if(data[pos] == '<')
-					throw new MarkupError("The character < can never appear in an attribute name.");
+					throw new MarkupException("The character < can never appear in an attribute name.");
 				pos++;
 			}
 
@@ -3326,11 +3329,14 @@ class Document : FileResource {
 			switch(data[pos]) {
 				case '\'':
 				case '"':
+					auto started = pos;
 					char end = data[pos];
 					pos++;
 					auto start = pos;
-					while(data[pos] != end)
+					while(pos < data.length && data[pos] != end)
 						pos++;
+					if(strict && pos == data.length)
+						throw new MarkupException("Unclosed attribute value, started on char " ~ to!string(started));
 					string v = htmlEntitiesDecode(data[start..pos], strict);
 					pos++; // skip over the end
 				return v;
@@ -3387,7 +3393,7 @@ class Document : FileResource {
 			if(pos >= data.length)
 			{
 				if(strict) {
-					throw new MarkupError("Gone over the input (is there no root element?), chain: " ~ to!string(parentChain));
+					throw new MarkupException("Gone over the input (is there no root element?), chain: " ~ to!string(parentChain));
 				} else {
 					if(parentChain.length)
 						return Ele(1, null, parentChain[0]); // in loose mode, we just assume the document has ended
@@ -3672,7 +3678,7 @@ class Document : FileResource {
 									}
 
 									if(strict && attrName in attributes)
-										throw new MarkupError("Repeated attribute: " ~ attrName);
+										throw new MarkupException("Repeated attribute: " ~ attrName);
 									attributes[attrName] = attrValue;
 
 									goto moreAttributes;

@@ -1163,10 +1163,12 @@ class Cgi {
 
 	/// This gets a full url for the current request, including port, protocol, host, path, and query
 	string getCurrentCompleteUri() const {
+		ushort defaultPort = https ? 443 : 80;
+
 		return format("http%s://%s%s%s",
 			https ? "s" : "",
 			host,
-			port == 80 ? "" : ":" ~ to!string(port),
+			port == defaultPort ? "" : ":" ~ to!string(port),
 			requestUri);
 	}
 

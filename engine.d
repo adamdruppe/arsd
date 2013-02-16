@@ -8,6 +8,13 @@
 */
 module arsd.engine; //@-L-lSDL -L-lSDL_mixer -L-lSDL_ttf -L-lSDL_image -L-lGL -L-lSDL_net
 
+pragma(lib, "SDL");
+pragma(lib, "SDL_mixer");
+pragma(lib, "SDL_ttf");
+pragma(lib, "SDL_image");
+pragma(lib, "SDL_net");
+pragma(lib, "GL");
+
 // FIXME: the difference between directions and buttons should be removed
 
 
@@ -44,8 +51,6 @@ else
 
 import std.stdio;
 //version(linux) pragma(lib, "kbhit.o");
-
-extern(C) bool kbhit();
 
 int randomNumber(int min, int max){
 	if(min == max)
@@ -1209,5 +1214,39 @@ bool directionIsDown(Engine.Direction d, int which = 0){
 	return engine.directionIsDown(d, which);
 }
 */
+
+
+
+version(linux) {
+	version(D_Version2) {
+		import sys = core.sys.posix.sys.select;
+		version=CustomKbhit;
+
+		int kbhit()
+		{
+			sys.timeval tv;
+			sys.fd_set read_fd;
+
+			tv.tv_sec=0;
+			tv.tv_usec=0;
+			sys.FD_ZERO(&read_fd);
+			sys.FD_SET(0,&read_fd);
+
+			if(sys.select(1, &read_fd, null, null, &tv) == -1)
+				return 0;
+
+			if(sys.FD_ISSET(0,&read_fd))
+				return 1;
+
+			return 0;
+		}
+	}
+	
+	// else, use kbhit.o from the C file
+}
+
+version(CustomKbhit) {} else
+	extern(C) bool kbhit();
+
 
 
