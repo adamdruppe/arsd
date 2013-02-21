@@ -119,6 +119,8 @@ mixin template ForwardCgiConstructors() {
 		void delegate() _flush = null
 		) { super(maxContentLength, env, readdata, _rawDataOutput, _flush); }
 
+	this(string[] args) { super(args); }
+
 	this(
 		BufferedInputRange inputData,
 		string address, ushort _port,
@@ -209,6 +211,190 @@ class Cgi {
 		// this is an extension for when the method is not specified and you want to assume
 		CommandLine }
 
+
+
+/*
+	import core.runtime;
+	auto args = Runtime.args();
+
+	we can call the app a few ways:
+
+	1) set up the environment variables and call the app (manually simulating CGI)
+	2) simulate a call automatically:
+		./app method 'uri'
+
+		for example:
+			./app get /path?arg arg2=something
+
+	  Anything on the uri is treated as query string etc
+
+	  on get method, further args are appended to the query string (encoded automatically)
+	  on post method, further args are done as post
+
+
+	  @name means import from file "name". if name == -, it uses stdin
+	  (so info=@- means set info to the value of stdin)
+
+
+	  Other arguments include:
+	  	--cookie name=value (these are all concated together)
+		--header 'X-Something: cool'
+		--referrer 'something'
+		--port 80
+		--remote-address some.ip.address.here
+		--https yes
+		--user-agent 'something'
+		--userpass 'user:pass'
+		--authorization 'Basic base64encoded_user:pass'
+		--accept 'content' // FIXME: better example
+		--last-event-id 'something'
+		--host 'something.com'
+
+	  Non-simulation arguments:
+	  	--port xxx listening port for non-cgi things (valid for the cgi interfaces)
+
+*/
+
+	/** Initializes it with command line arguments (for easy testing) */
+	this(string[] args) {
+		bool lookingForMethod;
+		bool lookingForUri;
+		string nextArgIs;
+
+		string _cookie;
+		string _queryString;
+		string[][string] _post;
+		string[string] _headers;
+
+		string[] breakUp(string s) {
+			string k, v;
+			auto idx = s.indexOf("=");
+			if(idx == -1) {
+				k = s;
+			} else {
+				k = s[0 .. idx];
+				v = s[idx + 1 .. $];
+			}
+
+			return [k, v];
+		}
+
+		lookingForMethod = true;
+
+		scriptName = args[0];
+
+		foreach(arg; args[1 .. $]) {
+			if(arg.startsWith("--")) {
+				nextArgIs = arg[2 .. $];
+			} else if(nextArgIs.length) {
+				switch(nextArgIs) {
+					case "cookie":
+						auto info = breakUp(arg);
+						if(_cookie.length)
+							_cookie ~= "; ";
+						_cookie ~= std.uri.encodeComponent(info[0]) ~ "=" ~ std.uri.encodeComponent(info[1]);
+					break;
+					case "port":
+						port = to!int(arg);
+					break;
+					case "referrer":
+						referrer = arg;
+					break;
+					case "remote-address":
+						remoteAddress = arg;
+					break;
+					case "user-agent":
+						userAgent = arg;
+					break;
+					case "authorization":
+						authorization = arg;
+					break;
+					case "userpass":
+						authorization = "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (arg)).idup;
+					break;
+					case "accept":
+						accept = arg;
+					break;
+					case "last-event-id":
+						lastEventId = arg;
+					break;
+					case "https":
+						if(arg == "yes")
+							https = true;
+					break;
+					case "header":
+						string thing, other;
+						auto idx = arg.indexOf(":");
+						if(idx == -1)
+							throw new Exception("need a colon in a http header");
+						thing = arg[0 .. idx];
+						other = arg[idx + 1.. $];
+						_headers[thing.strip.toLower()] = other.strip;
+					break;
+					case "host":
+						host = arg;
+					break;
+					default:
+						// skip, we don't know it but that's ok, it might be used elsewhere so no error
+				}
+
+				nextArgIs = null;
+			} else if(lookingForMethod) {
+				lookingForMethod = false;
+				lookingForUri = true;
+
+				if(arg.toLower() == "commandline")
+					requestMethod = RequestMethod.CommandLine;
+				else
+					requestMethod = to!RequestMethod(arg.toUpper());
+			} else if(lookingForUri) {
+				lookingForUri = false;
+
+				requestUri = arg;
+
+				auto idx = arg.indexOf("?");
+				if(idx == -1)
+					pathInfo = arg;
+				else {
+					pathInfo = arg[0 .. idx];
+					queryString = arg[idx + 1 .. $];
+				}
+			} else {
+				// it is an argument of some sort
+				if(requestMethod == Cgi.RequestMethod.POST) {
+					auto parts = breakUp(arg);
+					_post[parts[0]] ~= parts[1];
+				} else {
+					if(_queryString.length)
+						_queryString ~= "&";
+					auto parts = breakUp(arg);
+					_queryString ~= std.uri.encodeComponent(parts[0]) ~ "=" ~ std.uri.encodeComponent(parts[1]);
+				}
+			}
+		}
+
+		acceptsGzip = false;
+		keepAliveRequested = false;
+		requestHeaders = cast(immutable) _headers;
+
+		cookie = _cookie;
+		cookiesArray =  getCookieArray();
+		cookies = keepLastOf(cookiesArray);
+
+		queryString = _queryString;
+		getArray = cast(immutable) decodeVariables(queryString);
+		get = keepLastOf(getArray);
+
+		postArray = cast(immutable) _post;
+		post = keepLastOf(_post);
+
+		// FIXME
+		filesArray = null;
+		files = null;
+
+		isCalledWithCommandLineArguments = true;
+	}
+
 	/** Initializes it using a CGI or CGI-like interface */
 	this(long maxContentLength = defaultMaxContentLength,
 		// use this to override the environment variable listing
@@ -221,6 +407,7 @@ class Cgi {
 		void delegate() _flush = null
 		)
 	{
+		isCalledWithCommandLineArguments = false;
 		rawDataOutput = _rawDataOutput;
 		flushDelegate = _flush;
 		auto getenv = delegate string(string var) {
@@ -860,6 +1047,7 @@ class Cgi {
 	/// Initializes the cgi from completely raw HTTP data. The ir must have a Socket source.
 	/// *closeConnection will be set to true if you should close the connection after handling this request
 	this(BufferedInputRange ir, bool* closeConnection) {
+		isCalledWithCommandLineArguments = false;
 		import al = std.algorithm;
 
 		immutable(ubyte)[] data;
@@ -901,6 +1089,7 @@ class Cgi {
 		bool* closeConnection = null)
 	{
 
+		isCalledWithCommandLineArguments = false;
 
 		https = _https;
 		port = _port;
@@ -1160,6 +1349,9 @@ class Cgi {
 
 	immutable bool acceptsGzip;
 	immutable bool keepAliveRequested;
+
+	/// Set to true if and only if this was initialized with command line arguments
+	immutable bool isCalledWithCommandLineArguments;
 
 	/// This gets a full url for the current request, including port, protocol, host, path, and query
 	string getCurrentCompleteUri() const {
@@ -1954,17 +2146,40 @@ bool handleException(Cgi cgi, Throwable t) {
 	}
 }
 
+bool isCgiRequestMethod(string s) {
+	s = s.toUpper();
+	if(s == "COMMANDLINE")
+		return true;
+	foreach(member; __traits(allMembers, Cgi.RequestMethod))
+		if(s == member)
+			return true;
+	return false;
+}
+
 /// If you want to use a subclass of Cgi with generic main, use this mixin.
 mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
 
 	void main(string[] args) {
+
+
+		// we support command line thing for easy testing everywhere
+		// it needs to be called ./app method uri [other args...]
+		if(args.length >= 3 && isCgiRequestMethod(args[1])) {
+			Cgi cgi = new CustomCgi(args);
+			scope(exit) cgi.dispose();
+			fun(cgi);
+			cgi.close();
+			return;
+		}
+
+
 		ushort listeningPort(ushort def) {
 			bool found = false;
 			foreach(arg; args) {
 				if(found)
 					return to!ushort(arg);
-				if(arg == "--port" || arg == "-p" || arg == "/port")
+				if(arg == "--port" || arg == "-p" || arg == "/port" || arg == "--listening-port")
 					found = true;
 			}
 			return def;
