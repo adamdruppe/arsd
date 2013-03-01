@@ -62,11 +62,15 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 		case "utf32le":
 			return to!string(cast(dstring) data);
 		// FIXME: does the big endian to little endian conversion work?
+		case "ascii":
+		case "usascii": // utf-8 is a superset of ascii
 		case "utf8":
 			return cast(string) data;
 		// and now the various 8 bit encodings we support.
 		case "windows1252":
 			return decodeImpl(data, ISO_8859_1, Windows_1252);
+		case "koi8r":
+			return decodeImpl(data, KOI8_R, KOI8_R_Lower);
 		case "latin1":
 		case "iso88591":
 			// Why am I putting Windows_1252 here? A lot of
@@ -307,7 +311,7 @@ immutable dchar[] ISO_8859_8 = [
 	'ט', 'י', 'ך', 'כ', 'ל', 'ם', 'מ', 'ן',
 	'נ', 'ס', 'ע', 'ף', 'פ', 'ץ', 'צ', 'ק',
 	//                        v    v    those are wrong
-	'ר', 'ש', 'ת', ' ', ' ', ' ', ' ', ' ']; // FIXME:  those ones marked wrong are supposed to be left to right and right to left markers, not spaces.
+	'ר', 'ש', 'ת', ' ', ' ', ' ', ' ', ' ']; // FIXME:  those ones marked wrong are supposed to be left to right and right to left markers, not spaces. lol maybe it isn't wrong
 
 immutable dchar[] ISO_8859_9 = [ 
 	' ', '¡', '¢', '£', '¤', '¥', '¦', '§',
@@ -407,3 +411,22 @@ immutable dchar[] ISO_8859_16 = [
 	'đ', 'ń', 'ò', 'ó', 'ô', 'ő', 'ö', 'ś',
 	'ű', 'ù', 'ú', 'û', 'ü', 'ę', 'ț', 'ÿ'];
 
+immutable dchar[] KOI8_R_Lower = [
+	'─', '│', '┌', '┐', '└', '┘', '├', '┤',
+	'┬', '┴', '┼', '▀', '▄', '█', '▌', '▐',
+	'░', '▒', '▓', '⌠', '■', '∙', '√', '≈',
+	'≤', '≥', '\u00a0', '⌡', '°', '²', '·', '÷'];
+
+immutable dchar[] KOI8_R = [
+	'═', '║', '╒', 'ё', '╓', '╔', '╕', '╖',
+	'╗', '╘', '╙', '╚', '╛', '╜', '╝', '╞',
+	'╟', '╠', '╡', 'ё', '╢', '╣', '╤', '╥',
+	'╦', '╧', '╨', '╩', '╪', '╫', '╬', '©',
+	'ю', 'а', 'б', 'ц', 'д', 'е', 'ф', 'г',
+	'х', 'и', 'й', 'к', 'л', 'м', 'н', 'о',
+	'п', 'я', 'р', 'с', 'т', 'у', 'ж', 'в',
+	'ь', 'ы', 'з', 'ш', 'э', 'щ', 'ч', 'ъ',
+	'ю', 'а', 'б', 'ц', 'д', 'е', 'ф', 'г',
+	'х', 'и', 'й', 'к', 'л', 'м', 'н', 'о',
+	'п', 'я', 'р', 'с', 'т', 'у', 'ж', 'в',
+	'ь', 'ы', 'з', 'ш', 'э', 'щ', 'ч', 'ъ'];
