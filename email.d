@@ -6,6 +6,8 @@ pragma(lib, "curl");
 import std.base64;
 import std.string;
 
+import arsd.characterencodings;
+
 // SEE ALSO: std.net.curl.SMTP
 
 struct RelayInfo {
@@ -13,6 +15,14 @@ struct RelayInfo {
 	string username;
 	string password;
 }
+
+struct MimeAttachment {
+	string type;
+	string filename;
+	const(void)[] content;
+	string id;
+}
+
 
 class EmailMessage {
 	void setHeader(string name, string value) {
@@ -45,13 +55,6 @@ class EmailMessage {
 		import arsd.htmltotext;
 		if(textBody is null)
 			textBody = htmlToText(html);
-	}
-
-	struct MimeAttachment {
-		string type;
-		string filename;
-		const(void)[] content;
-		string id;
 	}
 
 	const(MimeAttachment)[] attachments;
@@ -230,6 +233,220 @@ void email(string to, string subject, string message, string from, RelayInfo mai
 
 import std.conv;
 
+// for reading
+class MimePart {
+	string[] headers;
+	immutable(ubyte)[] content;
+	string textContent;
+	MimePart[] stuff;
+
+	string name;
+	string charset;
+	string type;
+	string transferEncoding;
+	string disposition;
+	string id;
+	string filename;
+
+	MimeAttachment toMimeAttachment() {
+		MimeAttachment att;
+		att.type = type;
+		att.filename = filename;
+		att.id = id;
+		att.content = content;
+		return att;
+	}
+
+	this(immutable(ubyte)[][] lines, string contentType = null) {
+		string boundary;
+
+		void parseContentType(string content) {
+			foreach(k, v; breakUpHeaderParts(content)) {
+				switch(k) {
+					case "root":
+						type = v;
+					break;
+					case "name":
+						name = v;
+					break;
+					case "charset":
+						charset = v;
+					break;
+					case "boundary":
+						boundary = v;
+					break;
+					default:
+				}
+			}
+		}
+
+		if(contentType is null) {
+			// read headers immediately...
+			auto copyOfLines = lines;
+			immutable(ubyte)[] currentHeader;
+
+			void commitHeader() {
+				if(currentHeader.length == 0)
+					return;
+				string h = decodeEncodedWord(cast(string) currentHeader);
+				headers ~= h;
+				currentHeader = null;
+
+				auto idx = h.indexOf(":");
+				if(idx != -1) {
+					auto name = h[0 .. idx].strip.toLower;
+					auto content = h[idx + 1 .. $].strip;
+
+					switch(name) {
+						case "content-type":
+							parseContentType(content);
+						break;
+						case "content-transfer-encoding":
+							transferEncoding = content.toLower;
+						break;
+						case "content-disposition":
+							foreach(k, v; breakUpHeaderParts(content)) {
+								switch(k) {
+									case "root":
+										disposition = v;
+									break;
+									case "filename":
+										filename = v;
+									break;
+									default:
+								}
+							}
+						break;
+						case "content-id":
+							id = content;
+						break;
+						default:
+					}
+				}
+			}
+
+			foreach(line; copyOfLines) {
+				lines = lines[1 .. $];
+				if(line.length == 0)
+					break;
+
+				if(line[0] == ' ' || line[0] == '\t')
+					currentHeader ~= (cast(string) line).stripLeft();
+				else {
+					if(currentHeader.length) {
+						commitHeader();
+					}
+					currentHeader = line;
+				}
+			}
+
+			commitHeader();
+		} else {
+			parseContentType(contentType);
+		}
+
+		// if it is multipart, find the start boundary. we'll break it up and fill in stuff
+		// otherwise, all the data that follows is just content
+
+		if(boundary.length) {
+			immutable(ubyte)[][] partLines;
+			bool inPart;
+			foreach(line; lines) {
+				if(line.startsWith("--" ~ boundary)) {
+					if(inPart)
+						stuff ~= new MimePart(partLines);
+					inPart = true;
+					partLines = null;
+
+					if(line == "--" ~ boundary ~ "--")
+						break; // all done
+				}
+
+				if(inPart) {
+					partLines ~= line;
+				} else {
+					content ~= line ~ '\n';
+				}
+			}
+		} else {
+			foreach(line; lines) {
+				content ~= line;
+
+				if(transferEncoding != "base64")
+					content ~= '\n';
+			}
+		}
+
+		// decode the content..
+		switch(transferEncoding) {
+			case "base64":
+				content = Base64.decode(cast(string) content);
+			break;
+			case "quoted-printable":
+				content = decodeQuotedPrintable(cast(string) content);
+			break;
+			default:
+				// no change needed (I hope)
+		}
+
+		if(type.indexOf("text/") == 0) {
+			if(charset.length == 0)
+				charset = "latin1";
+			textContent = convertToUtf8(content, charset);
+		}
+	}
+}
+
+string[string] breakUpHeaderParts(string headerContent) {
+	string[string] ret;
+
+	string currentName = "root";
+	string currentContent;
+	bool inQuote;
+	bool gettingName = false;
+	bool ignoringSpaces = false;
+	foreach(char c; headerContent) {
+		if(ignoringSpaces) {
+			if(c == ' ')
+				continue;
+			else
+				ignoringSpaces = false;
+		}
+
+		if(gettingName) {
+			if(c == '=') {
+				gettingName = false;
+				continue;
+			}
+			currentName ~= c;
+		}
+
+		if(c == '"') {
+			inQuote = !inQuote;
+			break;
+		}
+
+		if(!inQuote && c == ';') {
+			ret[currentName] = currentContent;
+			ignoringSpaces = true;
+			currentName = null;
+			currentContent = null;
+
+			gettingName = true;
+			continue;
+		}
+
+		if(!gettingName)
+			currentContent ~= c;
+	}
+
+	if(currentName.length)
+		ret[currentName] = currentContent;
+
+	return ret;
+}
+
+// for writing
 class MimeContainer {
 	private static int sequence;
 
@@ -281,4 +498,355 @@ class MimeContainer {
 
 		return ret;
 	}
+}
+
+import std.algorithm : startsWith;
+class IncomingEmailMessage {
+	this(ref immutable(ubyte)[][] mboxLines) {
+
+		enum ParseState {
+			lookingForFrom,
+			readingHeaders,
+			readingBody
+		}
+
+		auto state = ParseState.lookingForFrom;
+		string contentType;
+
+		bool isMultipart;
+		bool isHtml;
+		immutable(ubyte)[][] mimeLines;
+
+		string charset = "latin-1";
+
+		string headerName;
+		string headerContent;
+		void commitHeader() {
+			if(headerName is null)
+				return;
+
+			headerName = headerName.toLower();
+			headerContent = headerContent.strip();
+
+			headerContent = decodeEncodedWord(headerContent);
+
+			if(headerName == "content-type") {
+				contentType = headerContent;
+				if(contentType.indexOf("multipart/") != -1)
+					isMultipart = true;
+				else if(contentType.indexOf("text/html") != -1)
+					isHtml = true;
+
+				auto charsetIdx = contentType.indexOf("charset=");
+				if(charsetIdx != -1) {
+					string cs = contentType[charsetIdx + "charset=".length .. $];
+					if(cs.length && cs[0] == '\"')
+						cs = cs[1 .. $];
+
+					auto quoteIdx = cs.indexOf("\"");
+					if(quoteIdx != -1)
+						cs = cs[0 .. quoteIdx];
+					auto semicolonIdx = cs.indexOf(";");
+					if(semicolonIdx != -1)
+						cs = cs[0 .. semicolonIdx];
+
+					cs = cs.strip();
+					if(cs.length)
+						charset = cs.toLower();
+				}
+			} else if(headerName == "from") {
+				this.from = headerContent;
+			} else if(headerName == "subject") {
+				this.subject = headerContent;
+			}
+
+			// FIXME: do I have to worry about content-transfer-encoding here? I think procmail takes care of it but I'm not entirely sure
+
+			headers[headerName] = headerContent;
+			headerName = null;
+			headerContent = null;
+		}
+
+		lineLoop: while(mboxLines.length) {
+			// this can needlessly convert headers too, but that won't harm anything since they are 7 bit anyway
+			auto line = convertToUtf8(mboxLines[0], charset);
+			line = line.stripRight;
+
+			final switch(state) {
+				case ParseState.lookingForFrom:
+					if(line.startsWith("From "))
+						state = ParseState.readingHeaders;
+				break;
+				case ParseState.readingHeaders:
+					if(line.length == 0) {
+						commitHeader();
+						state = ParseState.readingBody;
+					} else {
+						if(line[0] == ' ' || line[0] == '\t') {
+							headerContent ~= " " ~ line.stripLeft();
+						} else {
+							commitHeader();
+
+							auto idx = line.indexOf(":");
+							if(idx == -1)
+								headerName = line;
+							else {
+								headerName = line[0 .. idx];
+								headerContent = line[idx + 1 .. $].stripLeft();
+							}
+						}
+					}
+				break;
+				case ParseState.readingBody:
+					if(line.startsWith("From ")) {
+						break lineLoop; // we're at the beginning of the next messsage
+					}
+					if(line.startsWith(">>From") || line.startsWith(">From")) {
+						line = line[1 .. $];
+					}
+
+					if(isMultipart) {
+						mimeLines ~= mboxLines[0];
+					} else if(isHtml) {
+						// html with no alternative and no attachments
+						htmlMessageBody ~= line ~ "\n";
+					} else {
+						// plain text!
+						textMessageBody ~= line ~ "\n";
+					}
+				break;
+			}
+
+			mboxLines = mboxLines[1 .. $];
+		}
+
+		if(mimeLines.length) {
+			auto part = new MimePart(mimeLines, contentType);
+			deeperInTheMimeTree:
+			switch(part.type) {
+				case "text/html":
+					htmlMessageBody = part.textContent;
+				break;
+				case "text/plain":
+					textMessageBody = part.textContent;
+				break;
+				case "multipart/alternative":
+					foreach(p; part.stuff) {
+						if(p.type == "text/html")
+							htmlMessageBody = p.textContent;
+						else if(p.type == "text/plain")
+							textMessageBody = p.textContent;
+					}
+				break;
+				case "multipart/related":
+					// the first one is the message itself
+					// after that comes attachments that can be rendered inline
+					if(part.stuff.length) {
+						auto msg = part.stuff[0];
+						foreach(thing; part.stuff[1 .. $]) {
+							// FIXME: should this be special?
+							attachments ~= thing.toMimeAttachment();
+						}
+						part = msg;
+						goto deeperInTheMimeTree;
+					}
+				break;
+				case "multipart/mixed":
+					if(part.stuff.length) {
+						auto msg = part.stuff[0];
+						foreach(thing; part.stuff[1 .. $]) {
+							attachments ~= thing.toMimeAttachment();
+						}
+						part = msg;
+						goto deeperInTheMimeTree;
+					}
+
+					// FIXME: the more proper way is:
+					// check the disposition
+					// if none, concat it to make a text message body
+					// if inline it is prolly an image to be concated in the other body
+					// if attachment, it is an attachment
+				break;
+				default:
+					// FIXME: correctly handle more
+			}
+		}
+
+		if(htmlMessageBody.length > 0 && textMessageBody.length == 0) {
+			import arsd.htmltotext;
+			textMessageBody = htmlToText(htmlMessageBody);
+			textAutoConverted = true;
+		}
+	}
+
+	string[string] headers;
+
+	string subject;
+
+	string htmlMessageBody;
+	string textMessageBody;
+
+	string from;
+
+	bool textAutoConverted;
+
+	MimeAttachment[] attachments;
+}
+
+struct MboxMessages {
+	immutable(ubyte)[][] linesRemaining;
+
+	this(immutable(ubyte)[] data) {
+		linesRemaining = splitLinesWithoutDecoding(data);
+		popFront();
+	}
+
+	IncomingEmailMessage currentFront;
+
+	IncomingEmailMessage front() {
+		return currentFront;
+	}
+
+	bool empty() {
+		return currentFront is null;
+	}
+
+	void popFront() {
+		if(linesRemaining.length)
+			currentFront = new IncomingEmailMessage(linesRemaining);
+		else
+			currentFront = null;
+	}
+}
+
+MboxMessages processMboxData(immutable(ubyte)[] data) {
+	return MboxMessages(data);
+}
+
+immutable(ubyte)[][] splitLinesWithoutDecoding(immutable(ubyte)[] data) {
+	immutable(ubyte)[][] ret;
+
+	size_t starting = 0;
+	bool justSaw13 = false;
+	foreach(idx, b; data) {
+		if(b == 13)
+			justSaw13 = true;
+
+		if(b == 10) {
+			auto use = idx;
+			if(justSaw13)
+				use--;
+
+			ret ~= data[starting .. use];
+			starting = idx + 1;
+		}
+
+		if(b != 13)
+			justSaw13 = false;
+	}
+
+	if(starting < data.length)
+		ret ~= data[starting .. $];
+
+	return ret;
+}
+
+string decodeEncodedWord(string data) {
+	string originalData = data;
+
+	auto delimiter = data.indexOf("=?");
+	if(delimiter == -1)
+		return data;
+
+	string ret;
+
+	while(delimiter != -1) {
+		ret ~= data[0 .. delimiter];
+		data = data[delimiter + 2 .. $];
+
+		string charset;
+		string encoding;
+		string encodedText;
+
+		// FIXME: the insane things should probably throw an
+		// exception that keeps a copy of orignal data for use later
+
+		auto questionMark = data.indexOf("?");
+		if(questionMark == -1) return originalData; // not sane
+
+		charset = data[0 .. questionMark];
+		data = data[questionMark + 1 .. $];
+
+		questionMark = data.indexOf("?");
+		if(questionMark == -1) return originalData; // not sane
+
+		encoding = data[0 .. questionMark];
+		data = data[questionMark + 1 .. $];
+
+		questionMark = data.indexOf("?=");
+		if(questionMark == -1) return originalData; // not sane
+
+		encodedText = data[0 .. questionMark];
+		data = data[questionMark + 2 .. $];
+
+		delimiter = data.indexOf("=?");
+
+		immutable(ubyte)[] decodedText;
+		if(encoding == "Q")
+			decodedText = decodeQuotedPrintable(encodedText);
+		else if(encoding == "B")
+			decodedText = cast(typeof(decodedText)) Base64.decode(encodedText);
+		else
+			return originalData; // wtf
+
+		ret ~= convertToUtf8(decodedText, charset);
+	}
+
+	ret ~= data; // keep the rest since there could be trailing stuff
+
+	return ret;
+}
+
+immutable(ubyte)[] decodeQuotedPrintable(string text) {
+	immutable(ubyte)[] ret;
+
+	int state = 0;
+	ubyte hexByte;
+	foreach(b; cast(immutable(ubyte)[]) text) {
+		switch(state) {
+			case 0:
+				if(b == '=') {
+					state++;
+					hexByte = 0;
+				} else
+					ret ~= b;
+			break;
+			case 1:
+				if(b == '\n') {
+					state = 0;
+					continue;
+				}
+				goto case;
+			case 2:
+				int value;
+				if(b >= '0' && b <= '9')
+					value = b - '0';
+				else if(b >= 'A' && b <= 'F')
+					value = b - 'A' + 10;
+				else if(b >= 'a' && b <= 'f')
+					value = b - 'a' + 10;
+				if(state == 1) {
+					hexByte |= value << 4;
+					state++;
+				} else {
+					hexByte |= value;
+					ret ~= hexByte;
+					state = 0;
+				}
+			break;
+			default: assert(0);
+		}
+	}
+
+	return ret;
 }
