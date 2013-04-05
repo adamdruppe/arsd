@@ -1,0 +1,31 @@
+{
+	"name": "arsd",
+	"description": "Collection of D modules I find useful",
+	"homepage": "https://github.com/adamdruppe/misc-stuff-including-D-programming-language-web-stuff",
+	"copyright": "Copyright © 2013, Adam D. Ruppe",
+	"authors": [
+		"Adam D. Ruppe"
+	],
+	"dependencies": {
+	},
+    "sourcePaths" : [
+        "arsd"
+    ],
+    "importPaths" : [
+        "."
+    ],
+    "excludedSourceFiles" : [
+        "arsd/engine.d",
+        "arsd/mssql.d",
+        "arsd/audio.d",
+        "arsd/screen.d",
+        "arsd/dom.d",
+        "arsd/png.d",
+        "arsd/html.d",
+        "arsd/web.d",
+        "arsd/htmltotext.d",
+        "arsd/image.d",
+        "arsd/http.d",
+        "arsd/netman.d"
+    ]
+}
