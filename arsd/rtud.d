@@ -40,7 +40,7 @@ module arsd.rtud;
 import std.string;
 import std.array : replace;
 import std.conv;
-import std.date;
+import std.datetime;
 
 
 class UpdateStream {

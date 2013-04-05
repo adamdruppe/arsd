@@ -653,8 +653,8 @@ extern(C) int callback(void* cb, int howmany, char** text, char** columns){
 
 
 extern(C){
-	typedef void sqlite3;
-	typedef void sqlite3_stmt;
+	alias void sqlite3;
+	alias void sqlite3_stmt;
 	int sqlite3_changes(sqlite3*);
 	int sqlite3_close(sqlite3 *);
 	int sqlite3_exec(
