@@ -185,8 +185,12 @@ class MySql : Database {
 		return fromCstring(mysql_error(mysql));
 	}
 
-	~this() {
+	void close() {
 		mysql_close(mysql);
+	}
+
+	~this() {
+		close();
 	}
 
 	int lastInsertId() {

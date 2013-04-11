@@ -402,7 +402,7 @@ string[string] breakUpHeaderParts(string headerContent) {
 
 	string currentName = "root";
 	string currentContent;
-	bool inQuote;
+	bool inQuote = false;
 	bool gettingName = false;
 	bool ignoringSpaces = false;
 	foreach(char c; headerContent) {
@@ -423,7 +423,7 @@ string[string] breakUpHeaderParts(string headerContent) {
 
 		if(c == '"') {
 			inQuote = !inQuote;
-			break;
+			continue;
 		}
 
 		if(!inQuote && c == ';') {
@@ -519,6 +519,8 @@ class IncomingEmailMessage {
 
 		string charset = "latin-1";
 
+		string contentTransferEncoding;
+
 		string headerName;
 		string headerContent;
 		void commitHeader() {
@@ -556,11 +558,13 @@ class IncomingEmailMessage {
 				}
 			} else if(headerName == "from") {
 				this.from = headerContent;
+			} else if(headerName == "to") {
+				this.to = headerContent;
 			} else if(headerName == "subject") {
 				this.subject = headerContent;
+			} else if(headerName == "content-transfer-encoding") {
+				contentTransferEncoding = headerContent;
 			}
-
-			// FIXME: do I have to worry about content-transfer-encoding here? I think procmail takes care of it but I'm not entirely sure
 
 			headers[headerName] = headerContent;
 			headerName = null;
@@ -667,8 +671,25 @@ class IncomingEmailMessage {
 					// if inline it is prolly an image to be concated in the other body
 					// if attachment, it is an attachment
 				break;
+				case "multipart/signed":
+					// FIXME: it would be cool to actually check the signature
 				default:
 					// FIXME: correctly handle more
+					if(part.stuff.length) {
+						part = part.stuff[0];
+						goto deeperInTheMimeTree;
+					}
+			}
+		} else {
+			switch(contentTransferEncoding) {
+				case "quoted-printable":
+					if(textMessageBody.length)
+						textMessageBody = cast(string) decodeQuotedPrintable(textMessageBody);
+					if(htmlMessageBody.length)
+						htmlMessageBody = cast(string) decodeQuotedPrintable(htmlMessageBody);
+				break;
+				default:
+					// nothing needed
 			}
 		}
 
@@ -687,6 +708,7 @@ class IncomingEmailMessage {
 	string textMessageBody;
 
 	string from;
+	string to;
 
 	bool textAutoConverted;
 
@@ -850,3 +872,17 @@ immutable(ubyte)[] decodeQuotedPrintable(string text) {
 
 	return ret;
 }
+
+/+
+void main() {
+	import std.file;
+	import std.stdio;
+
+	auto data = cast(immutable(ubyte)[]) std.file.read("/home/me/test_email_data");
+	foreach(message; processMboxData(data)) {
+		writeln(message.subject);
+		writeln(message.textMessageBody);
+		writeln("**************** END MESSSAGE **************");
+	}
+}
++/

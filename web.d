@@ -250,6 +250,10 @@ class WebDotDBaseType {
 
 	/// By default, it forwards the document root to _postProcess(Element).
 	void _postProcess(Document document) {
+		auto td = cast(TemplatedDocument) document;
+		if(td !is null)
+			td.vars["compile.timestamp"] = compiliationStamp;
+
 		if(document !is null && document.root !is null)
 			_postProcessElement(document.root);
 	}
@@ -617,7 +621,7 @@ class ApiProvider : WebDotDBaseType {
 <html>
 <head>
 	<title></title>
-	<link rel=\"stylesheet\" href=\"styles.css\" />
+	<link rel=\"stylesheet\" href=\"styles.css?"~compiliationStamp~"\" />
 	<script> var delayedExecutionQueue = []; </script> <!-- FIXME do some better separation -->
 	<script>
 		if(document.cookie.indexOf(\"timezone=\") == -1) {
@@ -633,7 +637,7 @@ class ApiProvider : WebDotDBaseType {
 </head>
 <body>
 	<div id=\"body\"></div>
-	<script src=\"functions.js\"></script>
+	<script src=\"functions.js?"~compiliationStamp~"\"></script>
 	" ~ deqFoot ~ "
 </body>
 </html>");
@@ -1198,6 +1202,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	if(funName == "functions.js") {
 		cgi.gzipResponse = true;
 		cgi.setResponseContentType("text/javascript");
+		cgi.setCache(true);
 		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.requestUri, "functions.js", "")), true);
 		cgi.close();
 		return;
@@ -1205,6 +1210,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 	if(funName == "styles.css") {
 		cgi.gzipResponse = true;
 		cgi.setResponseContentType("text/css");
+		cgi.setCache(true);
 		cgi.write(instantiation.stylesheet(), true);
 		cgi.close();
 		return;
@@ -1376,7 +1382,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 						f.setValue(k, v[$-1]);
 
 					foreach(idx, failure; fve.failed) {
-						auto ele = f.querySelector("[name=\""~failure~"\"]");
+						auto ele = f.requireSelector("[name=\""~failure~"\"]");
 						ele.addClass("validation-failed");
 						ele.dataset.validationMessage = fve.messagesForUser[idx];
 						ele.parentNode.addChild("span", fve.messagesForUser[idx]).addClass("validation-message");
@@ -1673,7 +1679,6 @@ mixin template FancyMain(T, Args...) {
 	mixin CustomCgiFancyMain!(Cgi, T, Args);
 }
 
-
 /// Like FancyMain, but you can pass a custom subclass of Cgi
 mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi)) {
 	void fancyMainFunction(Cgi cgi) { //string[] args) {
@@ -1700,7 +1705,13 @@ mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi))
 		version(no_automatic_session) {}
 		else {
 			auto session = new Session(cgi);
-			scope(exit) session.commit();
+			scope(exit) {
+				// I only commit automatically on non-bots to avoid writing too many files
+				// looking for bot should catch most them without false positives...
+				// empty user agent is prolly a tester too so i'll let that slide
+				if(cgi.userAgent.length && cgi.userAgent.toLower.indexOf("bot") == -1)
+					session.commit();
+			}
 			instantiation.session = session;
 		}
 
@@ -2300,15 +2311,42 @@ class ParamCheckHelper {
 		messagesForUser ~= messageForUser;
 	}
 
-	string checkParam(in string[string] among, string name, bool delegate(string) ok, string messageForUser = null) {
-		string value = null;
-		auto ptr = "name" in among;
-		if(ptr !is null) {
-			value = *ptr;
+	string checkParam(in string[string] among, in string name, bool delegate(string) ok, string messageForUser = null) {
+		return checkTypedParam!string(among, name, ok, messageForUser);
+	}
+
+	T checkTypedParam(T)(in string[string] among, in string name, bool delegate(T) ok, string messageForUser = null) {
+		T value;
+
+		bool isOk = false;
+		string genericErrorMessage = "Please complete this field";
+
+
+		try {
+			//auto ptr = "name" in among;
+			//if(ptr !is null) {
+			//	value = *ptr;
+			//} else {
+				// D's in operator is sometimes buggy, so let's confirm this with a linear search ugh)
+				// FIXME: fix D's AA
+				foreach(k, v; among)
+					if(k == name) {
+						value = fromUrlParam!T(v);
+						break;
+					}
+			//}
+
+			if(ok !is null)
+				isOk = ok(value);
+			else
+				isOk = true; // no checker means if we were able to convert above, we're ok
+		} catch(Exception e) {
+			genericErrorMessage = e.msg;
+			isOk = false;
 		}
 
-		if(!ok(value)) {
-			failure(name, messageForUser is null ? "Please complete this field" : messageForUser);
+		if(!isOk) {
+			failure(name, messageForUser is null ? genericErrorMessage : messageForUser);
 		}
 
 		return value;
@@ -2346,6 +2384,14 @@ auto check(alias field)(ParamCheckHelper helper, bool delegate(typeof(field)) ok
 	return field;
 }
 
+bool isConvertableTo(T)(string v) {
+	try {
+		auto t = fromUrlParam!(T)(v);
+		return true;
+	} catch(Exception e) {
+		return false;
+	}
+}
 
 class FormValidationException : Exception {
 	this(
@@ -2674,9 +2720,8 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 		case "table":
 		case "csv":
 			auto document = new Document("<root></root>");
-			static if(__traits(compiles, structToTable(document, ret)))
-			{
-				auto table = structToTable(document, ret);
+
+			void gotATable(Table table) {
 				if(format == "csv") {
 					retstr = tableToCsv(table);
 				} else if(format == "table")
@@ -2686,6 +2731,18 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 
 				if(returnValue !is null)
 					returnValue.str = retstr;
+			}
+
+			static if(__traits(compiles, structToTable(document, ret)))
+			{
+				auto table = structToTable(document, ret);
+				gotATable(table);
+				break;
+			} else static if(is(typeof(ret) : Element)) {
+				auto table = cast(Table) ret;
+				if(table is null)
+					goto badType;
+				gotATable(table);
 				break;
 			}
 			else
@@ -2706,7 +2763,7 @@ string tableToCsv(Table table) {
 	string csv;
 	foreach(tr; table.querySelectorAll("tr")) {
 		if(csv.length)
-			csv ~= "\n";
+			csv ~= "\r\n";
 
 		bool outputted = false;
 		foreach(item; tr.querySelectorAll("td, th")) {
@@ -3401,6 +3458,18 @@ struct TemplateFilters {
 	}
 }
 
+
+string applyTemplateToText(
+	string text,
+	in string[string] vars,
+	in string delegate(string, string[], in Element, string)[string] pipeFunctions = TemplateFilters.defaultThings())
+{
+	// kinda hacky, but meh
+	auto element = Element.make("body");
+	element.innerText = text;
+	applyTemplateToElement(element, vars, pipeFunctions);
+	return element.innerText;
+}
 
 void applyTemplateToElement(
 	Element e,
@@ -4630,7 +4699,16 @@ template getAnnotation(alias f, Attr) if(hasValueAnnotation!(f, Attr)) {
 	enum getAnnotation = helper;
 }
 
+// use this as a query string param to all forever-cached resources
+string makeCompileTimestamp(string ts) {
+	string ret;
+	foreach(t; ts)
+		if((t >= '0' && t <= '9'))
+			ret ~= t;
+	return ret;
+}
 
+enum compiliationStamp = makeCompileTimestamp(__TIMESTAMP__);
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2012

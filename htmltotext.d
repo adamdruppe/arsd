@@ -86,9 +86,13 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 			break;
 			case "a":
 				string href = ele.getAttribute("href");
-				if(href) {
-					if(ele.innerText != href)
-						ele.innerText = ele.innerText ~ " <" ~ href ~ "> ";
+				if(href && !ele.hasClass("no-brackets")) {
+					if(ele.hasClass("href-text"))
+						ele.innerText = href;
+					else {
+						if(ele.innerText != href)
+							ele.innerText = ele.innerText ~ " <" ~ href ~ "> ";
+					}
 				}
 				ele.stripOut();
 				goto again;
@@ -98,8 +102,9 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 				ele.innerHTML = "\r" ~ ele.innerHTML ~ "\r";
 			break;
 			case "li":
-				ele.innerHTML = "\t* " ~ ele.innerHTML ~ "\r";
-				ele.stripOut();
+				if(!ele.innerHTML.startsWith("* "))
+					ele.innerHTML = "* " ~ ele.innerHTML ~ "\r";
+				// ele.stripOut();
 			break;
 			case "sup":
 				ele.innerText = "^" ~ ele.innerText;
@@ -140,6 +145,13 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 				ele.innerText = strip(ele.innerText);
 			ele.stripOut();
 			goto again2;
+		} else if(ele.tagName == "li") {
+			auto part = ele.innerText;
+			part = strip( wantWordWrap ? wrap(part, wrapAmount - 2) : part );
+			part = "  " ~ part.replace("\n", "\n\v") ~ "\r";
+			ele.innerText = part;
+			ele.stripOut();
+			goto again2;
 		}
 	}
 
@@ -154,6 +166,8 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 
 	result = squeeze(result, "\r");
 	result = result.replace("\r", "\n\n");
+
+	result = result.replace("\v", "  ");
 
 	result = result.replace("&#33303;", "'"); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere
 	result = result.replace("&quot;", "\""); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere

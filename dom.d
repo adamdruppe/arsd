@@ -885,6 +885,8 @@ class Element {
 
 		version(dom_node_indexes)
 			this.dataset.nodeIndex = to!string(&(this.attributes));
+
+		assert(_tagName.indexOf(" ") == -1);
 	}
 
 	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
@@ -3245,9 +3247,17 @@ class Document : FileResource {
 			}
 		}
 
-		if(dataEncoding != "UTF-8")
-			data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
-		else
+		if(dataEncoding != "UTF-8") {
+			if(strict)
+				data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
+			else {
+				try {
+					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
+				} catch(Exception e) {
+					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, "Windows 1252");
+				}
+			}
+		} else
 			data = rawdata;
 		assert(data !is null);
 

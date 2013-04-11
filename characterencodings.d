@@ -1,3 +1,5 @@
+// helper program is in ~me/encodings.d to make more tables from wikipedia
+
 /**
 	This is meant to help get data from the wild into utf8 strings
 	so you can work with them easily inside D.
@@ -69,6 +71,8 @@ string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 		// and now the various 8 bit encodings we support.
 		case "windows1252":
 			return decodeImpl(data, ISO_8859_1, Windows_1252);
+		case "windows1251":
+			return decodeImpl(data, Windows_1251, Windows_1251_Lower);
 		case "koi8r":
 			return decodeImpl(data, KOI8_R, KOI8_R_Lower);
 		case "latin1":
@@ -430,3 +434,24 @@ immutable dchar[] KOI8_R = [
 	'х', 'и', 'й', 'к', 'л', 'м', 'н', 'о',
 	'п', 'я', 'р', 'с', 'т', 'у', 'ж', 'в',
 	'ь', 'ы', 'з', 'ш', 'э', 'щ', 'ч', 'ъ'];
+
+immutable dchar[] Windows_1251_Lower = [
+	'Ђ', 'Ѓ', '‚', 'ѓ', '„', '…', '†', '‡',
+	'€', '‰', 'Љ', '‹', 'Њ', 'Ќ', 'Ћ', 'Џ',
+	'ђ', '‘', '’', '“', '”', '•', '–', '—',
+	' ', '™', 'љ', '›', 'њ', 'ќ', 'ћ', 'џ'];
+
+immutable dchar[] Windows_1251 = [
+	' ', 'Ў', 'ў', 'Ј', '¤', 'Ґ', '¦', '§',
+	'Ё', '©', 'Є', '«', '¬', '­', '®', 'Ї',
+	'°', '±', 'І', 'і', 'ґ', 'µ', '¶', '·',
+	'ё', '№', 'є', '»', 'ј', 'Ѕ', 'ѕ', 'ї',
+	'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З',
+	'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П',
+	'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч',
+	'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я',
+	'а', 'б', 'в', 'г', 'д', 'е', 'ж', 'з',
+	'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п',
+	'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч',
+	'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я'];
+

@@ -28,16 +28,19 @@ interface Database {
 			if(arg == typeid(string) || arg == typeid(immutable(string)) || arg == typeid(const(string)))
 				a = va_arg!string(_argptr);
 			else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
-				int e = va_arg!int(_argptr);
+				auto e = va_arg!int(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(uint) || arg == typeid(immutable(uint)) || arg == typeid(const(uint))) {
-				int e = va_arg!uint(_argptr);
+				auto e = va_arg!uint(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(immutable(char))) {
-				char e = va_arg!char(_argptr);
+				auto e = va_arg!char(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
-				long e = va_arg!long(_argptr);
+				auto e = va_arg!long(_argptr);
+				a = to!string(e);
+			} else if (arg == typeid(ulong) || arg == typeid(const(ulong)) || arg == typeid(immutable(ulong))) {
+				auto e = va_arg!ulong(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(null)) {
 				a = null;
@@ -51,10 +54,10 @@ interface Database {
 }
 import std.stdio;
 
-Ret queryOneColumn(Ret, T...)(Database db, string sql, T t) {
+Ret queryOneColumn(Ret, string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
 	auto res = db.query(sql, t);
 	if(res.empty)
-		throw new Exception("no row in result");
+		throw new Exception("no row in result", file, line);
 	auto row = res.front;
 	return to!Ret(row[0]);
 }

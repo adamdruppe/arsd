@@ -30,7 +30,9 @@ class FacebookApiException : Exception {
 
 import arsd.curl;
 import arsd.sha;
-import std.digest.md;
+
+import std.md5;
+// import std.digest.md;
 
 import std.file;
 
@@ -38,7 +40,6 @@ import std.file;
 // note when is a d_time, so unix_timestamp * 1000
 Variant[string] postToFacebookWall(string[] info, string id, string message, string picture = null, string link = null, long when = 0, string linkDescription = null) {
 	string url = "https://graph.facebook.com/" ~ id ~ "/feed";
-
 
 	string data = "access_token=" ~ std.uri.encodeComponent(info[1]);
 	data ~= "&message=" ~ std.uri.encodeComponent(message);
@@ -224,8 +225,8 @@ OAuthParams twitter(string apiKey, string apiSecret) {
 	params.apiKey = apiKey;
 	params.apiSecret = apiSecret;
 
-	//params.baseUrl = "https://api.twitter.com";
-	params.baseUrl = "http://twitter.com";
+	params.baseUrl = "https://api.twitter.com";
+	//params.baseUrl = "http://twitter.com";
 	params.requestTokenPath = "/oauth/request_token";
 	params.authorizePath = "/oauth/authorize";
 	params.accessTokenPath = "/oauth/access_token";

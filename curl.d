@@ -107,7 +107,8 @@ string curlAuth(string url, string data = null, string username = null, string p
 
 	int res;
 
-	// curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+	debug(arsd_curl_verbose)
+		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 
 	res = curl_easy_setopt(curl, CURLOPT_URL, std.string.toStringz(url));
 	if(res != 0) throw new CurlException(res);

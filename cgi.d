@@ -1793,6 +1793,14 @@ class Cgi {
 	immutable(string[][string]) postArray; /// ditto for post
 	immutable(string[][string]) cookiesArray; /// ditto for cookies
 
+	// convenience function for appending to a uri without extra ?
+	// matches the name and effect of javascript's location.search property
+	string search() const {
+		if(queryString.length)
+			return "?" ~ queryString;
+		return "";
+	}
+
 	// FIXME: what about multiple files with the same name?
   private:
 	//RequestMethod _requestMethod;
@@ -1996,6 +2004,14 @@ struct Uri {
 		url = Uri("http://example.com"); // completely absolute link should never be modified, even if it has no path
 
 		// FIXME: add something for port too
+	}
+
+	// these are like javascript's location.search and location.hash
+	string search() const {
+		return query.length ? ("?" ~ query) : "";
+	}
+	string hash() const {
+		return fragment.length ? ("#" ~ fragment) : "";
 	}
 }
 
