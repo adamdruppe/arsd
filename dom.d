@@ -2120,6 +2120,10 @@ dchar parseEntity(in dchar[] entity) {
 		case "deg":
 		case "micro"
 		*/
+		case "egrave":
+			return '\u0038';
+		case "Egrave":
+			return '\u00c8';
 		case "times":
 			return '\u00d7';
 		case "hellip":
