@@ -2113,6 +2113,114 @@ dchar parseEntity(in dchar[] entity) {
 		case "amp":
 			return '&';
 		// the next are html rather than xml
+
+		case "Agrave": return '\u00C0';
+		case "Aacute": return '\u00C1';
+		case "Acirc": return '\u00C2';
+		case "Atilde": return '\u00C3';
+		case "Auml": return '\u00C4';
+		case "Aring": return '\u00C5';
+		case "AElig": return '\u00C6';
+		case "Ccedil": return '\u00C7';
+		case "Egrave": return '\u00C8';
+		case "Eacute": return '\u00C9';
+		case "Ecirc": return '\u00CA';
+		case "Euml": return '\u00CB';
+		case "Igrave": return '\u00CC';
+		case "Iacute": return '\u00CD';
+		case "Icirc": return '\u00CE';
+		case "Iuml": return '\u00CF';
+		case "ETH": return '\u00D0';
+		case "Ntilde": return '\u00D1';
+		case "Ograve": return '\u00D2';
+		case "Oacute": return '\u00D3';
+		case "Ocirc": return '\u00D4';
+		case "Otilde": return '\u00D5';
+		case "Ouml": return '\u00D6';
+		case "Oslash": return '\u00D8';
+		case "Ugrave": return '\u00D9';
+		case "Uacute": return '\u00DA';
+		case "Ucirc": return '\u00DB';
+		case "Uuml": return '\u00DC';
+		case "Yacute": return '\u00DD';
+		case "THORN": return '\u00DE';
+		case "szlig": return '\u00DF';
+		case "agrave": return '\u00E0';
+		case "aacute": return '\u00E1';
+		case "acirc": return '\u00E2';
+		case "atilde": return '\u00E3';
+		case "auml": return '\u00E4';
+		case "aring": return '\u00E5';
+		case "aelig": return '\u00E6';
+		case "ccedil": return '\u00E7';
+		case "egrave": return '\u00E8';
+		case "eacute": return '\u00E9';
+		case "ecirc": return '\u00EA';
+		case "euml": return '\u00EB';
+		case "igrave": return '\u00EC';
+		case "iacute": return '\u00ED';
+		case "icirc": return '\u00EE';
+		case "iuml": return '\u00EF';
+		case "eth": return '\u00F0';
+		case "ntilde": return '\u00F1';
+		case "ograve": return '\u00F2';
+		case "oacute": return '\u00F3';
+		case "ocirc": return '\u00F4';
+		case "otilde": return '\u00F5';
+		case "ouml": return '\u00F6';
+		case "oslash": return '\u00F8';
+		case "ugrave": return '\u00F9';
+		case "uacute": return '\u00FA';
+		case "ucirc": return '\u00FB';
+		case "uuml": return '\u00FC';
+		case "yacute": return '\u00FD';
+		case "thorn": return '\u00FE';
+		case "yuml": return '\u00FF';
+		case "nbsp": return '\u00A0';
+		case "iexcl": return '\u00A1';
+		case "cent": return '\u00A2';
+		case "pound": return '\u00A3';
+		case "curren": return '\u00A4';
+		case "yen": return '\u00A5';
+		case "brvbar": return '\u00A6';
+		case "sect": return '\u00A7';
+		case "uml": return '\u00A8';
+		case "copy": return '\u00A9';
+		case "ordf": return '\u00AA';
+		case "laquo": return '\u00AB';
+		case "not": return '\u00AC';
+		case "shy": return '\u00AD';
+		case "reg": return '\u00AE';
+		case "macr": return '\u00AF';
+		case "deg": return '\u00B0';
+		case "plusmn": return '\u00B1';
+		case "sup2": return '\u00B2';
+		case "sup3": return '\u00B3';
+		case "acute": return '\u00B4';
+		case "micro": return '\u00B5';
+		case "para": return '\u00B6';
+		case "middot": return '\u00B7';
+		case "cedil": return '\u00B8';
+		case "sup1": return '\u00B9';
+		case "ordm": return '\u00BA';
+		case "raquo": return '\u00BB';
+		case "frac14": return '\u00BC';
+		case "frac12": return '\u00BD';
+		case "frac34": return '\u00BE';
+		case "iquest": return '\u00BF';
+		case "times": return '\u00D7';
+		case "divide": return '\u00F7';
+		case "OElig": return '\u0152';
+		case "oelig": return '\u0153';
+		case "Scaron": return '\u0160';
+		case "scaron": return '\u0161';
+		case "Yuml": return '\u0178';
+		case "fnof": return '\u0192';
+		case "circ": return '\u02C6';
+		case "tilde": return '\u02DC';
+
+
+
 		/*
 		case "cent":
 		case "pound":
@@ -2120,6 +2228,7 @@ dchar parseEntity(in dchar[] entity) {
 		case "deg":
 		case "micro"
 		*/
+		/*
 		case "egrave":
 			return '\u0038';
 		case "Egrave":
@@ -2160,6 +2269,7 @@ dchar parseEntity(in dchar[] entity) {
 			return '\u03bf';
 		case "middot":
 			return '\u00b7';
+		*/
 		// and handling numeric entities
 		default:
 			if(entity[1] == '#') {
