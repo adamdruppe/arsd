@@ -765,7 +765,7 @@ version(Windows) {
 			if(pulseTimeout) {
 				bool done = false;
 				while(!done) {
-					while(!done && PeekMessage(&message, hwnd, 0, 0, PM_NOREMOVE)) {
+					if(PeekMessage(&message, hwnd, 0, 0, PM_NOREMOVE)) {
 						ret = GetMessage(&message, hwnd, 0, 0);
 						if(ret == 0)
 							done = true;
