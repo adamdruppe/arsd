@@ -2191,6 +2191,8 @@ dchar parseEntity(in dchar[] entity) {
 		case "not": return '\u00AC';
 		case "shy": return '\u00AD';
 		case "reg": return '\u00AE';
+		case "ldquo": return '\u201c';
+		case "rdquo": return '\u201d';
 		case "macr": return '\u00AF';
 		case "deg": return '\u00B0';
 		case "plusmn": return '\u00B1';
@@ -3439,7 +3441,10 @@ class Document : FileResource {
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 			{
 				if(data[pos] == '<')
-					throw new MarkupException("The character < can never appear in an attribute name.");
+					if(strict)
+						throw new MarkupException("The character < can never appear in an attribute name. Line " ~ to!string(getLineNumber(pos)));
+					else
+						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
 				pos++;
 			}
 
@@ -3803,7 +3808,17 @@ class Document : FileResource {
 
 									if(strict && attrName in attributes)
 										throw new MarkupException("Repeated attribute: " ~ attrName);
-									attributes[attrName] = attrValue;
+
+									if(attrName.strip.length)
+										attributes[attrName] = attrValue;
+									else if(strict) throw new MarkupException("wtf, zero length attribute name");
+
+									if(!strict && data[pos] == '<') {
+										// this is the broken tag that doesn't have a > at the end
+										// let's insert one as a hack
+										data = data[0 .. pos-1] ~ ">" ~ data[pos .. $];
+										goto case '>';
+									}
 
 									goto moreAttributes;
 							}
