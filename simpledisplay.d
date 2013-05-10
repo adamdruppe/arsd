@@ -135,6 +135,15 @@ class Image {
 		putPixel(x, y, c);
 	}
 
+	// if you pass in a buffer, it will put it right there. length must be width*height*4 already
+	// if you pass null, it will allocate a new one.
+	ubyte[] getRgbaBytes(ubyte[] where = null) {
+		if(where is null)
+			where = new ubyte[this.width*this.height*4];
+		convertToRgbaBytes(where);
+		return where;
+	}
+
 	immutable int width;
 	immutable int height;
     private:
@@ -805,6 +814,28 @@ version(Windows) {
 			rawData[offset + 2] = c.r;
 		}
 
+		void convertToRgbaBytes(ubyte[] where) {
+			assert(where.length == this.width * this.height * 4);
+
+			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			int idx = 0;
+			int offset = itemsPerLine * (height - 1);
+			// remember, bmps are upside down
+			for(int y = height - 1; y >= 0; y--) {
+				auto offsetStart = offset;
+				for(int x = 0; x < width; x++) {
+					where[idx + 0] = rawData[offset + 2]; // r
+					where[idx + 1] = rawData[offset + 1]; // g
+					where[idx + 2] = rawData[offset + 0]; // b
+					where[idx + 3] = 255; // a
+					idx += 4; 
+					offset += 3;
+				}
+
+				offset = offsetStart - itemsPerLine;
+			}
+		}
+
 		void createImage(int width, int height) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
@@ -1038,6 +1069,19 @@ version(X11) {
 			rawData[offset + 0] = c.b;
 			rawData[offset + 1] = c.g;
 			rawData[offset + 2] = c.r;
+		}
+
+		void convertToRgbaBytes(ubyte[] where) {
+			assert(where.length == this.width * this.height * 4);
+
+			// if rawData had a length....
+			//assert(rawData.length == where.length);
+			for(int idx = 0; idx < where.length; idx += 4) {
+				where[idx + 0] = rawData[idx + 2]; // r
+				where[idx + 1] = rawData[idx + 1]; // g
+				where[idx + 2] = rawData[idx + 0]; // b
+				where[idx + 3] = 255; // a
+			}
 		}
 	}
 
