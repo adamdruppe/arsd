@@ -1,4 +1,9 @@
-module arsd.imagedraft;
+// this is like png.d but all range based so more complicated...
+// and I don't remember how to actually use it.
+
+// some day I'll prolly merge it with png.d but for now just throwing it up there
+
+module arsd.lazypng;
 
 import arsd.color;
 
@@ -23,7 +28,7 @@ struct Color {
 }
 */
 
-import simpledisplay;
+//import simpledisplay;
 
 struct RgbaScanline {
 	Color[] pixels;
