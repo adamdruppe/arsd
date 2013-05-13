@@ -197,6 +197,82 @@ struct PNG {
 	}
 }
 
+// this is just like writePng(filename, pngFromImage(image)), but it manages
+// is own memory and writes straight to the file instead of using intermediate buffers that might not get gc'd right
+void writeImageToPngFile(in char[] filename, TrueColorImage image) {
+	PNG* png;
+	ubyte[] com;
+{
+	PNGHeader h;
+	h.width = image.width;
+	h.height = image.height;
+	png = blankPNG(h);
+
+	auto bytesPerLine = h.width * 4;
+	if(h.type == 3)
+		bytesPerLine = h.width * 8 /  h.depth;
+	Chunk dat;
+	dat.type = ['I', 'D', 'A', 'T'];
+	int pos = 0;
+
+	auto compressor = new Compress();
+
+	import core.stdc.stdlib;
+	auto lineBuffer = (cast(ubyte*)malloc(1 + bytesPerLine))[0 .. 1+bytesPerLine];
+	scope(exit) free(lineBuffer.ptr);
+
+	while(pos+bytesPerLine <= image.data.length) {
+		lineBuffer[0] = 0;
+		lineBuffer[1..1+bytesPerLine] = image.data[pos.. pos+bytesPerLine];
+		com ~= cast(ubyte[]) compressor.compress(lineBuffer);
+		pos += bytesPerLine;
+	}
+
+	com ~= cast(ubyte[]) compressor.flush();
+
+	dat.size = com.length;
+	dat.payload = com;
+	dat.checksum = crc("IDAT", dat.payload);
+
+	png.chunks ~= dat;
+
+	Chunk c;
+
+	c.size = 0;
+	c.type = ['I', 'E', 'N', 'D'];
+	c.checksum = crc("IEND", c.payload);
+
+	png.chunks ~= c;
+}
+	assert(png !is null);
+
+	import core.stdc.stdio;
+	import std.string;
+	FILE* fp = fopen(toStringz(filename), "wb");
+	if(fp is null)
+		throw new Exception("Couldn't open png file for writing.");
+	scope(exit) fclose(fp);
+
+	fwrite(png.header.ptr, 1, 8, fp);
+	foreach(c; png.chunks) {
+		fputc((c.size & 0xff000000) >> 24, fp);
+		fputc((c.size & 0x00ff0000) >> 16, fp);
+		fputc((c.size & 0x0000ff00) >> 8, fp);
+		fputc((c.size & 0x000000ff) >> 0, fp);
+
+		fwrite(c.type.ptr, 1, 4, fp);
+		fwrite(c.payload.ptr, 1, c.size, fp);
+
+		fputc((c.checksum & 0xff000000) >> 24, fp);
+		fputc((c.checksum & 0x00ff0000) >> 16, fp);
+		fputc((c.checksum & 0x0000ff00) >> 8, fp);
+		fputc((c.checksum & 0x000000ff) >> 0, fp);
+	}
+
+	delete com; // there is a reference to this in the PNG struct, but it is going out of scope here too, so who cares
+	// just wanna make sure this crap doesn't stick around
+}
+
 ubyte[] writePng(PNG* p) {
 	ubyte[] a;
 	if(p.length)
