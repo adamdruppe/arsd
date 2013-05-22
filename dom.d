@@ -886,7 +886,7 @@ class Element {
 		version(dom_node_indexes)
 			this.dataset.nodeIndex = to!string(&(this.attributes));
 
-		assert(_tagName.indexOf(" ") == -1);
+		assert(_tagName.indexOf(" ") == -1);//, "<" ~ _tagName ~ "> is invalid");
 	}
 
 	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
@@ -5114,16 +5114,18 @@ class StyleSheet {
 final class Stack(T) {
 	this() {
 		internalLength = 0;
-		arr = initialBuffer;
+		arr = initialBuffer[];
 	}
 
 	///.
 	void push(T t) {
 		if(internalLength >= arr.length) {
+			auto oldarr = arr;
 			if(arr.length < 4096)
 				arr = new T[arr.length * 2];
 			else
 				arr = new T[arr.length + 4096];
+			arr[0 .. oldarr.length] = oldarr[];
 		}
 
 		arr[internalLength] = t;
