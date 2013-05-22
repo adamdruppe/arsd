@@ -1497,7 +1497,7 @@ class Element {
 			//assert(isInArray(child, children));
 		}
 	body {
-		foreach(i, c; children) {
+		foreach(ref i, c; children) {
 			if(c is where) {
 				i++;
 				children = children[0..i] ~ child ~ children[i..$];
