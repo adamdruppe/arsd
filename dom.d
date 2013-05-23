@@ -3467,6 +3467,12 @@ class Document : FileResource {
 		}
 
 		string readAttributeValue() {
+			if(pos >= data.length) {
+				if(strict)
+					throw new Exception("no attribute value before end of file");
+				else
+					return null;
+			}
 			switch(data[pos]) {
 				case '\'':
 				case '"':
@@ -3810,6 +3816,10 @@ class Document : FileResource {
 							moreAttributes:
 							eatWhitespace();
 
+							// same deal as above the switch....
+							if(!strict && pos >= data.length)
+								return addTag(false);
+
 							switch(data[pos]) {
 								case '/': // self closing tag
 									return addTag(true);
@@ -3839,7 +3849,7 @@ class Document : FileResource {
 										attributes[attrName] = attrValue;
 									else if(strict) throw new MarkupException("wtf, zero length attribute name");
 
-									if(!strict && data[pos] == '<') {
+									if(!strict && pos < data.length && data[pos] == '<') {
 										// this is the broken tag that doesn't have a > at the end
 										// let's insert one as a hack
 										goto case '>';
