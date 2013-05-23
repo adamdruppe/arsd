@@ -3446,6 +3446,11 @@ class Document : FileResource {
 					else
 						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
 				pos++;
+				if(pos == data.length)
+					if(strict)
+						throw new Exception("unterminated attribute name");
+					else
+						break;
 			}
 
 			if(!caseSensitive)
@@ -3801,10 +3806,19 @@ class Document : FileResource {
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
+									if(pos >= data.length)
+										if(strict)
+											assert(0, "this should have thrown in readAttributeName");
+										else {
+											data ~= ">";
+											goto blankValue;
+										}
 									if(data[pos] == '=') {
 										pos++;
 										attrValue = readAttributeValue();
 									}
+
+									blankValue:
 
 									if(strict && attrName in attributes)
 										throw new MarkupException("Repeated attribute: " ~ attrName);
