@@ -3851,6 +3851,7 @@ class Document : FileResource {
 
 									if(!strict && pos < data.length && data[pos] == '<') {
 										// this is the broken tag that doesn't have a > at the end
+										data = data[0 .. pos] ~ ">" ~ data[pos.. $];
 										// let's insert one as a hack
 										goto case '>';
 									}
