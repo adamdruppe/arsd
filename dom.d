@@ -3425,7 +3425,14 @@ class Document : FileResource {
 			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/' &&
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+			{
 				pos++;
+				if(pos == data.length)
+					if(strict)
+						throw new Exception("tag name incomplete when file ended");
+					else
+						break;
+			}
 
 			if(!caseSensitive)
 				return toLower(data[start..pos]);
@@ -3661,7 +3668,7 @@ class Document : FileResource {
 							if(!selfClosed)
 								selfClosed = tagName.isInArray(selfClosedElements);
 
-							while(data[pos] != '>')
+							while(pos < data.length && data[pos] != '>')
 								pos++;
 						}
 
@@ -3784,6 +3791,11 @@ class Document : FileResource {
 						//writef("</%s>\n", tagName);
 						return Ele(0, e, null);
 					}
+
+					// if a tag was opened but not closed by end of file, we can arrive here
+					if(!strict && pos >= data.length)
+						return addTag(false);
+					//else if(strict) assert(0); // should be caught before
 
 					switch(data[pos]) {
 						default: assert(0);
