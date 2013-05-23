@@ -139,8 +139,8 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 				// this space is intentionally left blank
 			} else {
 				// it's allowed but let's make sure it's completely valid
-				if(!(allow & HtmlFeatures.classes)) {
-					// don't allow the class attribute
+				if(k == "class" && (allow & HtmlFeatures.classes)) {
+					e.setAttribute("class", v);
 				} else if(k == "id") {
 					if(idPrefix !is null)
 						e.setAttribute(k, idPrefix ~ v);
@@ -149,9 +149,9 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 					if(allow & HtmlFeatures.css) {
 						e.setAttribute(k, sanitizeCss(v));
 					}
-				} else if(k == "href" || k == "src")
+				} else if(k == "href" || k == "src") {
 					e.setAttribute(k, sanitizeUrl(v));
-				else
+				} else
 					e.setAttribute(k, v); // allowed attribute
 			}
 		}
@@ -179,7 +179,7 @@ string sanitizeCss(string css) {
 
 string sanitizeUrl(string url) {
 	// FIXME: support other options; this is more restrictive than it has to be
-	if(url.startsWith("http://") || url.startsWith("https://"))
+	if(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//"))
 		return url;
 	return null;
 }
