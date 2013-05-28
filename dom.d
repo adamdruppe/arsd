@@ -3153,8 +3153,8 @@ class TableCell : Element {
 class MarkupException : Exception {
 
 	///.
-	this(string message) {
-		super(message);
+	this(string message, string file = __FILE__, size_t line = __LINE__) {
+		super(message, file, line);
 	}
 }
 
@@ -3249,43 +3249,7 @@ class Document : FileResource {
 		parse(data, false, false, null);
 	}
 
-	/**
-		Take XMLish data and try to make the DOM tree out of it.
-
-		The goal isn't to be perfect, but to just be good enough to
-		approximate Javascript's behavior.
-
-		If strict, it throws on something that doesn't make sense.
-		(Examples: mismatched tags. It doesn't validate!)
-		If not strict, it tries to recover anyway, and only throws
-		when something is REALLY unworkable.
-
-		If strict is false, it uses a magic list of tags that needn't
-		be closed. If you are writing a document specifically for this,
-		try to avoid such - use self closed tags at least. Easier to parse.
-
-		The dataEncoding argument can be used to pass a specific
-		charset encoding for automatic conversion. If null (which is NOT
-		the default!), it tries to determine from the data itself,
-		using the xml prolog or meta tags, and assumes UTF-8 if unsure.
-
-		If this assumption is wrong, it can throw on non-ascii
-		characters!
-
-
-		Note that it previously assumed the data was encoded as UTF-8, which
-		is why the dataEncoding argument defaults to that.
-
-		So it shouldn't break backward compatibility.
-
-		But, if you want the best behavior on wild data - figuring it out from the document
-		instead of assuming - you'll probably want to change that argument to null.
-
-	*/
-	void parse(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
-		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
-		// of my big app.
-
+	Utf8Stream handleDataEncoding(in string rawdata, string dataEncoding, bool strict) {
 		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
 		if(dataEncoding is null) {
 			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
@@ -3375,6 +3339,53 @@ class Document : FileResource {
 			}
 		} else
 			data = rawdata;
+
+		return new Utf8Stream(data);
+	}
+
+	/**
+		Take XMLish data and try to make the DOM tree out of it.
+
+		The goal isn't to be perfect, but to just be good enough to
+		approximate Javascript's behavior.
+
+		If strict, it throws on something that doesn't make sense.
+		(Examples: mismatched tags. It doesn't validate!)
+		If not strict, it tries to recover anyway, and only throws
+		when something is REALLY unworkable.
+
+		If strict is false, it uses a magic list of tags that needn't
+		be closed. If you are writing a document specifically for this,
+		try to avoid such - use self closed tags at least. Easier to parse.
+
+		The dataEncoding argument can be used to pass a specific
+		charset encoding for automatic conversion. If null (which is NOT
+		the default!), it tries to determine from the data itself,
+		using the xml prolog or meta tags, and assumes UTF-8 if unsure.
+
+		If this assumption is wrong, it can throw on non-ascii
+		characters!
+
+
+		Note that it previously assumed the data was encoded as UTF-8, which
+		is why the dataEncoding argument defaults to that.
+
+		So it shouldn't break backward compatibility.
+
+		But, if you want the best behavior on wild data - figuring it out from the document
+		instead of assuming - you'll probably want to change that argument to null.
+
+	*/
+	void parse(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
+		auto data = handleDataEncoding(rawdata, dataEncoding, strict);
+		parseStream(data, caseSensitive, strict);
+	}
+
+	// note: this work best in strict mode, unless data is just a simple string wrapper
+	void parseStream(Utf8Stream data, bool caseSensitive = false, bool strict = false) {
+		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
+		// of my big app.
+
 		assert(data !is null);
 
 		// go through character by character.
@@ -5469,12 +5480,105 @@ struct FormFieldOptions {
 	}
 }
 
+// this needs to look just like a string, but can expand as needed
+class Utf8Stream {
+	protected:
+		// these two should be overridden in subclasses to actually do the stream magic
+		string getMore() {
+			if(getMoreHelper !is null)
+				return getMoreHelper();
+			return null;
+		}
+
+		bool hasMore() {
+			if(hasMoreHelper !is null)
+				return hasMoreHelper();
+			return false;
+		}
+		// the rest should be ok
+
+	public:
+		this(string d) {
+			this.data = d;
+		}
+
+		this(string delegate() getMoreHelper, bool delegate() hasMoreHelper) {
+			this.getMoreHelper = getMoreHelper;
+			this.hasMoreHelper = hasMoreHelper;
+
+			if(hasMore())
+				this.data ~= getMore();
+
+			stdout.flush();
+		}
+
+		final size_t length() {
+			// the parser checks length primarily directly before accessing the next character
+			// so this is the place we'll hook to append more if possible and needed.
+			if(lastIdx + 1 >= data.length && hasMore()) {
+				data ~= getMore();
+			}
+			return data.length;
+		}
+
+		final char opIndex(size_t idx) {
+			if(idx > lastIdx)
+				lastIdx = idx;
+			return data[idx];
+		}
+
+		final string opSlice(size_t start, size_t end) {
+			if(end > lastIdx)
+				lastIdx = end;
+			return data[start .. end];
+		}
+
+		final size_t opDollar() {
+			return length();
+		}
+
+		final Utf8Stream opBinary(string op : "~")(string s) {
+			this.data ~= s;
+			return this;
+		}
+
+		final Utf8Stream opOpAssign(string op : "~")(string s) {
+			this.data ~= s;
+			return this;
+		}
+
+		final Utf8Stream opAssign(string rhs) {
+			this.data = rhs;
+			return this;
+		}
+	private:
+		string data;
+
+		size_t lastIdx;
+
+		bool delegate() hasMoreHelper;
+		string delegate() getMoreHelper;
+
+
+		/+
+		// used to maybe clear some old stuff
+		// you might have to remove elements parsed with it too since they can hold slices into the
+		// old stuff, preventing gc
+		void dropFront(int bytes) {
+			posAdjustment += bytes;
+			data = data[bytes .. $];
+		}
+
+		int posAdjustment;
+		+/
+}
+
 /*
-Copyright: Adam D. Ruppe, 2010 - 2012
+Copyright: Adam D. Ruppe, 2010 - 2013
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r
 
-        Copyright Adam D. Ruppe 2010-2012.
+        Copyright Adam D. Ruppe 2010-2013.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)
