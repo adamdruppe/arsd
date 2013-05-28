@@ -4154,7 +4154,7 @@ struct DomMutationEvent {
 }
 
 
-private static string[] selfClosedElements = [
+private enum static string[] selfClosedElements = [
 	// html 4
 	"img", "hr", "input", "br", "col", "link", "meta",
 	// html 5
