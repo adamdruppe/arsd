@@ -473,7 +473,10 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 
 			//cs ~= "`" ~ db.escape(column) ~ "`";
 			cs ~= "`" ~ column ~ "`"; // FIXME: possible insecure
-			vs ~= "'" ~ db.escape(value) ~ "'";
+			if(value is null)
+				vs ~= "NULL";
+			else
+				vs ~= "'" ~ db.escape(value) ~ "'";
 		}
 
 		if(!outputted)
@@ -499,7 +502,10 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 			else
 				outputted = true;
 
-			updateSql ~= "`" ~ db.escape(column) ~ "` = '" ~ db.escape(value) ~ "'";
+			if(value is null)
+				updateSql ~= "`" ~ db.escape(column) ~ "` = NULL";
+			else
+				updateSql ~= "`" ~ db.escape(column) ~ "` = '" ~ db.escape(value) ~ "'";
 		}
 
 		if(!outputted)
@@ -813,7 +819,11 @@ class DataObject {
 					if(where.length)
 						where ~= " AND ";
 
-					where ~= keyField ~ " = '"~db.escape(key in fields ? fields[key] : null)~"'" ;
+					auto f = key in fields ? fields[key] : null;
+					if(f is null)
+						where ~= keyField ~ " = NULL";
+					else
+						where ~= keyField ~ " = '"~db.escape(f)~"'" ;
 					if(keyFieldToPass.length)
 						keyFieldToPass ~= ", ";
 

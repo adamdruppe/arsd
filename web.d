@@ -1,5 +1,7 @@
 module arsd.web;
 
+// it would be nice to be able to add meta info to a returned envelope
+
 enum RequirePost;
 enum RequireHttps;
 enum NoAutomaticForm;
@@ -3138,6 +3140,12 @@ class Session {
 			return false;
 		else
 			return true;
+	}
+
+	void removeKey(string key) {
+		data.remove(key);
+		_hasData = true;
+		changed = true;
 	}
 
 	/// get/set for strings

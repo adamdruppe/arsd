@@ -288,7 +288,7 @@ import std.file;
 /**
 	Redirects the user to the authorize page on the provider's website.
 */
-void authorizeStepOne(Cgi cgi, OAuthParams params, string oauthCallback = null) {
+void authorizeStepOne(Cgi cgi, OAuthParams params, string oauthCallback = null, string additionalOptions = null, string[string] additionalTokenArgs = null) {
 	if(oauthCallback is null) {
 		oauthCallback = cgi.getCurrentCompleteUri();
 		if(oauthCallback.indexOf("?") == -1)
@@ -301,7 +301,13 @@ void authorizeStepOne(Cgi cgi, OAuthParams params, string oauthCallback = null) 
 	if(oauthCallback.length)
 		args["oauth_callback"] = oauthCallback;
 
-	auto ret = curlOAuth(params, params.baseUrl ~ params.requestTokenPath,
+	//foreach(k, v; additionalTokenArgs)
+		//args[k] = v;
+
+	auto moreArgs = encodeVariables(additionalTokenArgs);
+	if(moreArgs.length)
+		moreArgs = "?" ~ moreArgs;
+	auto ret = curlOAuth(params, params.baseUrl ~ params.requestTokenPath ~ moreArgs,
 	 		args, "POST", "", "");
 	auto vals = decodeVariables(ret);
 
@@ -320,7 +326,11 @@ void authorizeStepOne(Cgi cgi, OAuthParams params, string oauthCallback = null) 
 	std.file.write("/tmp/oauth-token-secret-" ~ oauth_token,
 		oauth_secret);
 
-	cgi.setResponseLocation(params.baseUrl ~ params.authorizePath ~ "?oauth_token=" ~ oauth_token);
+	// FIXME: make sure this doesn't break twitter etc
+	if("login_url" in vals) // apparently etsy does it this way...
+		cgi.setResponseLocation(vals["login_url"][0]);
+	else
+		cgi.setResponseLocation(params.baseUrl ~ params.authorizePath ~ "?" ~(additionalOptions.length ? (additionalOptions ~ "&") : "")~ "oauth_token=" ~ oauth_token);
 }
 
 /**

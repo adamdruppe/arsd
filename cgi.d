@@ -477,7 +477,8 @@ class Cgi {
 		//if(authorization.length == 0) // if the std is there, use it
 		//	authorization = getenv("HTTP_X_AUTHORIZATION");
 
-		if(getenv("SERVER_PORT").length)
+		// the REDIRECT_HTTPS check is here because with an Apache hack, the port can become wrong
+		if(getenv("SERVER_PORT").length && getenv("REDIRECT_HTTPS") != "on")
 			port = to!int(getenv("SERVER_PORT"));
 		else
 			port = 0; // this was probably called from the command line
@@ -1360,7 +1361,7 @@ class Cgi {
 		return format("http%s://%s%s%s",
 			https ? "s" : "",
 			host,
-			port == defaultPort ? "" : ":" ~ to!string(port),
+			(!port || port == defaultPort) ? "" : ":" ~ to!string(port),
 			requestUri);
 	}
 

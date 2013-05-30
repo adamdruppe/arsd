@@ -43,6 +43,19 @@ import std.string;
 import std.array;
 import std.conv;
 
+/// Like convertToUtf8, but if the encoding is unknown, it just strips all chars > 127 and calls it done instead of throwing
+string convertToUtf8Lossy(immutable(ubyte)[] data, string dataCharacterEncoding) {
+	try {
+		return convertToUtf8(data, dataCharacterEncoding);
+	} catch(Exception e) {
+		string ret;
+		foreach(b; data)
+			if(b < 128)
+				ret ~= b;
+		return ret;
+	}
+}
+
 /// Takes data from a given character encoding and returns it as UTF-8
 string convertToUtf8(immutable(ubyte)[] data, string dataCharacterEncoding) {
 	// just to normalize the passed string...
