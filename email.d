@@ -200,6 +200,9 @@ class EmailMessage {
 
 	void send(RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 		auto smtp = new SMTP(mailServer.server);
+
+		smtp.verifyHost = false;
+		smtp.verifyPeer = false;
 		// smtp.verbose = true;
 		if(mailServer.username.length)
 			smtp.setAuthentication(mailServer.username, mailServer.password);
@@ -392,7 +395,7 @@ class MimePart {
 		if(type.indexOf("text/") == 0) {
 			if(charset.length == 0)
 				charset = "latin1";
-			textContent = convertToUtf8(content, charset);
+			textContent = convertToUtf8Lossy(content, charset);
 		}
 	}
 }
@@ -573,7 +576,7 @@ class IncomingEmailMessage {
 
 		lineLoop: while(mboxLines.length) {
 			// this can needlessly convert headers too, but that won't harm anything since they are 7 bit anyway
-			auto line = convertToUtf8(mboxLines[0], charset);
+			auto line = convertToUtf8Lossy(mboxLines[0], charset);
 			line = line.stripRight;
 
 			final switch(state) {
@@ -684,9 +687,9 @@ class IncomingEmailMessage {
 			switch(contentTransferEncoding) {
 				case "quoted-printable":
 					if(textMessageBody.length)
-						textMessageBody = cast(string) decodeQuotedPrintable(textMessageBody);
+						textMessageBody = convertToUtf8Lossy(decodeQuotedPrintable(textMessageBody), charset);
 					if(htmlMessageBody.length)
-						htmlMessageBody = cast(string) decodeQuotedPrintable(htmlMessageBody);
+						htmlMessageBody = convertToUtf8Lossy(decodeQuotedPrintable(htmlMessageBody), charset);
 				break;
 				default:
 					// nothing needed
@@ -821,7 +824,7 @@ string decodeEncodedWord(string data) {
 		else
 			return originalData; // wtf
 
-		ret ~= convertToUtf8(decodedText, charset);
+		ret ~= convertToUtf8Lossy(decodedText, charset);
 	}
 
 	ret ~= data; // keep the rest since there could be trailing stuff
