@@ -354,10 +354,10 @@ class SimpleWindow {
 
 	/// What follows are the event handlers. These are set automatically
 	/// by the eventLoop function, but are still public so you can change
-	/// them later.
+	/// them later. wasPressed == true means key down. false == key up.
 
 	/// Handles a low-level keyboard event
-	void delegate(int key) handleKeyEvent;
+	void delegate(int key, bool wasPressed) handleKeyEvent;
 
 	/// Handles a higher level keyboard event - c is the character just pressed.
 	void delegate(dchar c) handleCharEvent;
@@ -721,8 +721,9 @@ version(Windows) {
 						handleMouseEvent(mouse);
 				break;
 				case WM_KEYDOWN:
+				case WM_KEYUP:
 					if(handleKeyEvent)
-						handleKeyEvent(wParam);
+						handleKeyEvent(wParam, msg == WM_KEYDOWN);
 				break;
 				case WM_CLOSE:
 				case WM_DESTROY:
@@ -1208,8 +1209,10 @@ version(X11) {
 								XDisplayConnection.get(),
 								e.xkey.keycode,
 								0)); // FIXME: we should check shift, etc. too, so it matches Windows' behavior better
+				  goto case;
+				  case EventType.KeyRelease:
 				  	if(handleKeyEvent)
-						handleKeyEvent(e.xkey.keycode);
+						handleKeyEvent(e.xkey.keycode, e.type == EventType.ButtonPress);
 				  break;
 				  default:
 				}
