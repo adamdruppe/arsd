@@ -158,7 +158,7 @@ void displayImage(Image image, SimpleWindow win = null) {
 			p.drawImage(Point(0, 0), image);
 		}
 		win.eventLoop(0,
-			(int) {
+			(int, bool pressed) {
 				win.close();
 			} );
 	} else {
@@ -326,7 +326,7 @@ class SimpleWindow {
 				handlePulse = handler;
 			} else static if(__traits(compiles, handleMouseEvent = handler)) {
 				handleMouseEvent = handler;
-			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof);
+			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof ~ "\nNote: if you want to capture keycode events, this recently changed to (int code, bool pressed) instead of the old (int code)");
 		}
 
 
