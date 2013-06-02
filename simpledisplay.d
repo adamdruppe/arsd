@@ -1205,7 +1205,7 @@ version(X11) {
 				  case EventType.KeyPress:
 					if(handleCharEvent)
 						handleCharEvent(
-							XKeycodeToKeysym(
+							cast(dchar) XKeycodeToKeysym(
 								XDisplayConnection.get(),
 								e.xkey.keycode,
 								0)); // FIXME: we should check shift, etc. too, so it matches Windows' behavior better
@@ -1439,18 +1439,24 @@ enum ColorMapNotification:int
 	alias void* XPointer;
 	alias void* XExtData;
 
-	alias uint XID;
+	version( X86_64 ) {
+		alias ulong XID;
+		alias ulong arch_ulong;
+	} else {
+		alias uint XID;
+		alias uint arch_ulong;
+	}
 
 	alias XID Window;
 	alias XID Drawable;
 	alias XID Pixmap;
 
-	alias uint Atom;
+	alias arch_ulong Atom;
 	alias bool Bool;
 	alias Display XDisplay;
 
 	alias int ByteOrder;
-	alias uint Time;
+	alias arch_ulong Time;
 	alias void ScreenFormat;
 
 	struct XImage {
@@ -1465,9 +1471,9 @@ enum ColorMapNotification:int
 	    int depth;					/* depth of image */
 	    int bytes_per_line;			/* accelarator to next line */
 	    int bits_per_pixel;			/* bits per pixel (ZPixmap) */
-	    uint red_mask;	/* bits in z arrangment */
-	    uint green_mask;
-	    uint blue_mask;
+	    arch_ulong red_mask;	/* bits in z arrangment */
+	    arch_ulong green_mask;
+	    arch_ulong blue_mask;
 	    XPointer obdata;			/* hook for the object routines to hang on */
 	    struct f {				/* image manipulation routines */
 			XImage* function(
@@ -1482,13 +1488,13 @@ enum ColorMapNotification:int
 				int					/* bitmap_pad */,
 				int					/* bytes_per_line */) create_image;
 			int  function(XImage *)destroy_image;
-			uint function(XImage *, int, int)get_pixel;
+			arch_ulong function(XImage *, int, int)get_pixel;
 			int  function(XImage *, int, int, uint)put_pixel;
 			XImage function(XImage *, int, int, uint, uint)sub_image;
 			int function(XImage *, int)add_pixel;
 		}
 	}
-
+	version(X86_64) static assert(XImage.sizeof == 136);
 
 
 /*
@@ -1497,7 +1503,7 @@ enum ColorMapNotification:int
 struct XKeyEvent
 {
 	int type;			/* of event */
-	uint serial;		/* # of last request processed by server */
+	arch_ulong serial;		/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;	        /* "event" window it is reported relative to */
@@ -1510,13 +1516,14 @@ struct XKeyEvent
 	uint keycode;	/* detail */
 	Bool same_screen;	/* same screen flag */
 }
+version(X86_64) static assert(XKeyEvent.sizeof == 96);
 alias XKeyEvent XKeyPressedEvent;
 alias XKeyEvent XKeyReleasedEvent;
 
 struct XButtonEvent
 {
 	int type;		/* of event */
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;	        /* "event" window it is reported relative to */
@@ -1534,7 +1541,7 @@ alias XButtonEvent XButtonReleasedEvent;
 
 struct XMotionEvent{
 	int type;		/* of event */
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;	        /* "event" window reported relative to */
@@ -1551,7 +1558,7 @@ alias XMotionEvent XPointerMovedEvent;
 
 struct XCrossingEvent{
 	int type;		/* of event */
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;	        /* "event" window reported relative to */
@@ -1575,7 +1582,7 @@ alias XCrossingEvent XLeaveWindowEvent;
 
 struct XFocusChangeEvent{
 	int type;		/* FocusIn or FocusOut */
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;		/* window of event */
@@ -1739,7 +1746,7 @@ enum EventType:int
 struct XKeymapEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1749,7 +1756,7 @@ struct XKeymapEvent
 struct XExposeEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1760,7 +1767,7 @@ struct XExposeEvent
 
 struct XGraphicsExposeEvent{
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Drawable drawable;
@@ -1773,7 +1780,7 @@ struct XGraphicsExposeEvent{
 
 struct XNoExposeEvent{
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Drawable drawable;
@@ -1783,7 +1790,7 @@ struct XNoExposeEvent{
 
 struct XVisibilityEvent{
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1792,7 +1799,7 @@ struct XVisibilityEvent{
 
 struct XCreateWindowEvent{
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window parent;		/* parent of the window */
@@ -1806,7 +1813,7 @@ struct XCreateWindowEvent{
 struct XDestroyWindowEvent
 {
 	int type;
-	uint serial;		/* # of last request processed by server */
+	arch_ulong serial;		/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1816,7 +1823,7 @@ struct XDestroyWindowEvent
 struct XUnmapEvent
 {
 	int type;
-	uint serial;		/* # of last request processed by server */
+	arch_ulong serial;		/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1827,7 +1834,7 @@ struct XUnmapEvent
 struct XMapEvent
 {
 	int type;
-	uint serial;		/* # of last request processed by server */
+	arch_ulong serial;		/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1838,7 +1845,7 @@ struct XMapEvent
 struct XMapRequestEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window parent;
@@ -1848,7 +1855,7 @@ struct XMapRequestEvent
 struct XReparentEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1861,7 +1868,7 @@ struct XReparentEvent
 struct XConfigureEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1876,7 +1883,7 @@ struct XConfigureEvent
 struct XGravityEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1887,7 +1894,7 @@ struct XGravityEvent
 struct XResizeRequestEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1897,7 +1904,7 @@ struct XResizeRequestEvent
 struct  XConfigureRequestEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window parent;
@@ -1907,13 +1914,13 @@ struct  XConfigureRequestEvent
 	int border_width;
 	Window above;
 	WindowStackingMethod detail;		/* Above, Below, TopIf, BottomIf, Opposite */
-	uint value_mask;
+	arch_ulong value_mask;
 }
 
 struct XCirculateEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window event;
@@ -1924,7 +1931,7 @@ struct XCirculateEvent
 struct XCirculateRequestEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window parent;
@@ -1935,7 +1942,7 @@ struct XCirculateRequestEvent
 struct XPropertyEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1947,7 +1954,7 @@ struct XPropertyEvent
 struct XSelectionClearEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1958,7 +1965,7 @@ struct XSelectionClearEvent
 struct XSelectionRequestEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window owner;
@@ -1972,7 +1979,7 @@ struct XSelectionRequestEvent
 struct XSelectionEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window requestor;
@@ -1981,11 +1988,12 @@ struct XSelectionEvent
 	Atom property;		/* ATOM or None */
 	Time time;
 }
+version(X86_64) static assert(XSelectionClearEvent.sizeof == 56);
 
 struct XColormapEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
@@ -1993,27 +2001,31 @@ struct XColormapEvent
 	Bool new_;		/* C++ */
 	ColorMapNotification state;		/* ColormapInstalled, ColormapUninstalled */
 }
+version(X86_64) static assert(XColormapEvent.sizeof == 56);
 
 struct XClientMessageEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
 	Atom message_type;
 	int format;
-	union data{
+	union Data{
 		byte b[20];
 		short s[10];
-		int l[5];
-		}
+		arch_ulong l[5];
+	}
+	Data data;
+	
 }
+version(X86_64) static assert(XClientMessageEvent.sizeof == 96);
 
 struct XMappingEvent
 {
 	int type;
-	uint serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;		/* unused */
@@ -2028,8 +2040,8 @@ struct XErrorEvent
 	int type;
 	Display *display;	/* Display the event was read from */
 	XID resourceid;		/* resource id */
-	uint serial;	/* serial number of failed request */
-	uint error_code;	/* error code of failed request */
+	arch_ulong serial;	/* serial number of failed request */
+	ubyte error_code;	/* error code of failed request */
 	ubyte request_code;	/* Major op-code of failed request */
 	ubyte minor_code;	/* Minor op-code of failed request */
 }
@@ -2037,7 +2049,7 @@ struct XErrorEvent
 struct XAnyEvent
 {
 	int type;
-	ubyte serial;	/* # of last request processed by server */
+	arch_ulong serial;	/* # of last request processed by server */
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;/* Display the event was read from */
 	Window window;	/* window on which event was requested in event mask */
@@ -2076,7 +2088,7 @@ union XEvent{
 	XMappingEvent xmapping;
 	XErrorEvent xerror;
 	XKeymapEvent xkeymap;
-	int pad[24];
+	arch_ulong pad[24];
 }
 
 
@@ -2104,8 +2116,8 @@ union XEvent{
 		_XPrivate *private9;
 		_XPrivate *private10;
 		int qlen;		/* Length of input event queue */
-		uint last_request_read; /* seq number of last event read */
-		uint request;	/* sequence number of last request. */
+		arch_ulong last_request_read; /* seq number of last event read */
+		arch_ulong request;	/* sequence number of last request. */
 		XPointer private11;
 		XPointer private12;
 		XPointer private13;
@@ -2117,8 +2129,8 @@ union XEvent{
 		int default_screen;	/* default screen for operations */
 		int nscreens;		/* number of screens on this server*/
 		Screen *screens;	/* pointer to list of screens */
-		uint motion_buffer;	/* size of motion buffer */
-		uint private16;
+		arch_ulong motion_buffer;	/* size of motion buffer */
+		arch_ulong private16;
 		int min_keycode;	/* minimum defined keycode */
 		int max_keycode;	/* maximum defined keycode */
 		XPointer private17;
@@ -2126,6 +2138,20 @@ union XEvent{
 		int private19;
 		byte *xdefaults;	/* contents of defaults from server */
 		/* there is more to this structure, but it is private to Xlib */
+	}
+
+	// I got these numbers from a C program as a sanity test
+	version(X86_64) {
+		static assert(Display.sizeof == 296);
+		static assert(XPointer.sizeof == 8);
+		static assert(XErrorEvent.sizeof == 40);
+		static assert(XAnyEvent.sizeof == 40);
+		static assert(XMappingEvent.sizeof == 56);
+		static assert(XEvent.sizeof == 192);
+	} else {
+		static assert(Display.sizeof == 176);
+		static assert(XPointer.sizeof == 4);
+		static assert(XEvent.sizeof == 96);
 	}
 
 struct Depth
@@ -2174,7 +2200,8 @@ struct Visual
 	alias Display* _XPrivDisplay;
 
 	Screen* ScreenOfDisplay(Display* dpy, int scr) {
-		return (&(cast(_XPrivDisplay)dpy).screens[scr]);
+		assert(dpy !is null);
+		return &dpy.screens[scr];
 	}
 
 	Window	RootWindow(Display *dpy,int scr) {
@@ -2224,6 +2251,7 @@ struct Visual
 	int XFreePixmap(Display*, Pixmap);
 	int XCopyArea(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int);
 	int XFlush(Display*);
+	int XSync(Display*, bool);
 
 	struct XPoint {
 		short x;
@@ -2248,7 +2276,11 @@ struct Visual
 		const(char)* value;		/* same as Property routines */
 		Atom encoding;			/* prop type */
 		int format;				/* prop data format: 8, 16, or 32 */
-		uint nitems;		/* number of data items in value */
+		arch_ulong nitems;		/* number of data items in value */
+	}
+
+	version( X86_64 ) {
+		static assert(XTextProperty.sizeof == 32);
 	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
