@@ -772,7 +772,7 @@ class Element {
 			case "#text":
 				e = new TextNode(null, childInfo);
 				return e;
-			break;
+			// break;
 			case "table":
 				e = new Table(null);
 			break;
@@ -3624,11 +3624,12 @@ class Document : FileResource {
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 			{
 				pos++;
-				if(pos == data.length)
+				if(pos == data.length) {
 					if(strict)
 						throw new Exception("tag name incomplete when file ended");
 					else
 						break;
+				}
 			}
 
 			if(!caseSensitive)
@@ -3644,17 +3645,19 @@ class Document : FileResource {
 			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 			{
-				if(data[pos] == '<')
+				if(data[pos] == '<') {
 					if(strict)
 						throw new MarkupException("The character < can never appear in an attribute name. Line " ~ to!string(getLineNumber(pos)));
 					else
 						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
+				}
 				pos++;
-				if(pos == data.length)
+				if(pos == data.length) {
 					if(strict)
 						throw new Exception("unterminated attribute name");
 					else
 						break;
+				}
 			}
 
 			if(!caseSensitive)
@@ -3950,11 +3953,12 @@ class Document : FileResource {
 					while(pos < data.length && data[pos] != '>')
 						pos++;
 					//writefln("</%s>", data[p..pos]);
-					if(pos == data.length && data[pos-1] != '>')
+					if(pos == data.length && data[pos-1] != '>') {
 						if(strict)
 							throw new MarkupException("File ended before closing tag had a required >");
 						else
 							data ~= ">"; // just hack it in
+					}
 					pos++; // skip the '>'
 
 					string tname = data[p..pos-1];
@@ -4182,13 +4186,14 @@ class Document : FileResource {
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
-									if(pos >= data.length)
+									if(pos >= data.length) {
 										if(strict)
 											assert(0, "this should have thrown in readAttributeName");
 										else {
 											data ~= ">";
 											goto blankValue;
 										}
+									}
 									if(data[pos] == '=') {
 										pos++;
 										attrValue = readAttributeValue();
