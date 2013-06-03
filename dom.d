@@ -2426,13 +2426,10 @@ class RawSource : SpecialElement {
 	string source;
 }
 
-///.
-class PhpCode : SpecialElement {
-	///.
-	this(Document _parentDocument, string s) {
+abstract class ServerSideCode : SpecialElement {
+	this(Document _parentDocument, string type) {
 		super(_parentDocument);
-		source = s;
-		tagName = "#php";
+		tagName = "#" ~ type;
 	}
 
 	///.
@@ -2454,30 +2451,21 @@ class PhpCode : SpecialElement {
 }
 
 ///.
-class AspCode : SpecialElement {
+class PhpCode : ServerSideCode {
 	///.
 	this(Document _parentDocument, string s) {
-		super(_parentDocument);
+		super(_parentDocument, "php");
 		source = s;
-		tagName = "#asp";
 	}
+}
 
+///.
+class AspCode : ServerSideCode {
 	///.
-	override string nodeValue() const {
-		return this.source;
+	this(Document _parentDocument, string s) {
+		super(_parentDocument, "asp");
+		source = s;
 	}
-
-	///.
-	override string writeToAppender(Appender!string where = appender!string()) const {
-		auto start = where.data.length;
-		where.put("<");
-		where.put(source);
-		where.put(">");
-		return where.data[start .. $];
-	}
-
-	///.
-	string source;
 }
 
 ///.
@@ -3819,7 +3807,7 @@ class Document : FileResource {
 
 						auto cdataStart = pos;
 
-						typeof(indexOf(data, "")) end = -1;
+						ptrdiff_t end = -1;
 						typeof(end) cdataEnd;
 
 						if(pos < data.length) {
@@ -4038,7 +4026,7 @@ class Document : FileResource {
 						if(tagName == "script" || tagName == "style") {
 							if(!selfClosed) {
 								string closer = "</" ~ tagName ~ ">";
-								typeof(indexOf(data, closer)) ending;
+								ptrdiff_t ending;
 								if(pos >= data.length)
 									ending = -1;
 								else
