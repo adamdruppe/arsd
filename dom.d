@@ -3720,14 +3720,25 @@ class Document : FileResource {
 						if(tagName == "script" || tagName == "style") {
 							if(!selfClosed) {
 								string closer = "</" ~ tagName ~ ">";
-								auto ending = indexOf(data[pos..$], closer);
-								if(loose && ending == -1)
+								typeof(indexOf(data, closer)) ending;
+								if(pos >= data.length)
+									ending = -1;
+								else
+									ending = indexOf(data[pos..$], closer);
+
+								if(loose && ending == -1 && pos < data.length)
 									ending = indexOf(data[pos..$], closer.toUpper);
-								if(ending == -1)
-									throw new Exception("tag " ~ tagName ~ " never closed");
-								ending += pos;
-								e.innerRawSource = data[pos..ending];
-								pos = ending + closer.length;
+								if(ending == -1) {
+									if(strict)
+										throw new Exception("tag " ~ tagName ~ " never closed");
+									else {
+										// let's call it totally empty
+									}
+								} else {
+									ending += pos;
+									e.innerRawSource = data[pos..ending];
+									pos = ending + closer.length;
+								}
 							}
 							return Ele(0, e, null);
 						}
