@@ -1603,7 +1603,15 @@ class Cgi {
 			if(!autoBuffer || isAll) {
 				if(rawDataOutput !is null)
 					if(nph && responseChunked) {
-						rawDataOutput(makeChunk(cast(const(ubyte)[]) t));
+						//rawDataOutput(makeChunk(cast(const(ubyte)[]) t));
+						// we're making the chunk here instead of in a function
+						// to avoid unneeded gc pressure
+						rawDataOutput(cast(const(ubyte)[]) toHex(t.length));
+						rawDataOutput(cast(const(ubyte)[]) "\r\n");
+						rawDataOutput(cast(const(ubyte)[]) t);
+						rawDataOutput(cast(const(ubyte)[]) "\r\n");
+
+
 					} else {
 						rawDataOutput(cast(const(ubyte)[]) t);
 					}
@@ -2087,10 +2095,11 @@ string encodeVariables(in string[][string] data) {
 // http helper functions
 
 // for chunked responses (which embedded http does whenever possible)
+version(none) // this is moved up above to avoid making a copy of the data
 const(ubyte)[] makeChunk(const(ubyte)[] data) {
 	const(ubyte)[] ret;
 
-	ret = cast(const(ubyte)[]) toHex(cast(int) data.length);
+	ret = cast(const(ubyte)[]) toHex(data.length);
 	ret ~= cast(const(ubyte)[]) "\r\n";
 	ret ~= data;
 	ret ~= cast(const(ubyte)[]) "\r\n";
@@ -2098,7 +2107,7 @@ const(ubyte)[] makeChunk(const(ubyte)[] data) {
 	return ret;
 }
 
-string toHex(int num) {
+string toHex(long num) {
 	string ret;
 	while(num) {
 		int v = num % 16;
