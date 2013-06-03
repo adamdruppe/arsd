@@ -3833,7 +3833,7 @@ class Document : FileResource {
 						if(pos == data.length) {
 							if(strict)
 								throw new MarkupException("unclosed processing instruction (<!xxx>)");
-						}
+						} else pos++; // skipping the >
 
 						if(parseSawBangInstruction !is null)
 							if(parseSawBangInstruction(data[start .. pos])) {
@@ -3844,10 +3844,12 @@ class Document : FileResource {
 							}
 					}
 
+					/*
 					if(pos < data.length && data[pos] == '>')
 						pos++; // skip the >
 					else
 						assert(!strict);
+					*/
 				break;
 				case '%':
 				case '?':
