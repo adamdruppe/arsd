@@ -2220,7 +2220,7 @@ dchar parseEntity(in dchar[] entity) {
 		case "fnof": return '\u0192';
 		case "circ": return '\u02C6';
 		case "tilde": return '\u02DC';
-
+		case "trade": return '\u2122';
 
 
 		/*
@@ -3340,7 +3340,10 @@ class Document : FileResource {
 		} else
 			data = rawdata;
 
-		return new Utf8Stream(data);
+		static if(is(Utf8Stream == string))
+			return data;
+		else
+			return new Utf8Stream(data);
 	}
 
 	/**
@@ -3625,9 +3628,14 @@ class Document : FileResource {
 				case '/': // closing an element
 					pos++; // skip the start
 					auto p = pos;
-					while(data[pos] != '>')
+					while(pos < data.length && data[pos] != '>')
 						pos++;
 					//writefln("</%s>", data[p..pos]);
+					if(pos == data.length && data[pos-1] != '>')
+						if(strict)
+							throw new MarkupException("File ended before closing tag had a required >");
+						else
+							data ~= ">"; // just hack it in
 					pos++; // skip the '>'
 
 					string tname = data[p..pos-1];
@@ -5481,6 +5489,9 @@ struct FormFieldOptions {
 }
 
 // this needs to look just like a string, but can expand as needed
+version(no_dom_stream)
+alias string Utf8Stream;
+else
 class Utf8Stream {
 	protected:
 		// these two should be overridden in subclasses to actually do the stream magic
