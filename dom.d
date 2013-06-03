@@ -2386,9 +2386,24 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	return cast(string) a; // assumeUnique is actually kinda slow, lol
 }
 
-///.
-class RawSource : Element {
+abstract class SpecialElement : Element {
+	this(Document _parentDocument) {
+		super(_parentDocument);
+	}
 
+	///.
+	override Element appendChild(Element e) {
+		assert(0, "Cannot append to a special node");
+	}
+
+	///.
+	override int nodeType() const {
+		return 100;
+	}
+}
+
+///.
+class RawSource : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
 		super(_parentDocument);
@@ -2402,25 +2417,152 @@ class RawSource : Element {
 	}
 
 	///.
-	override int nodeType() const {
-		return 100;
-	}
-
-	///.
 	override string writeToAppender(Appender!string where = appender!string()) const {
 		where.put(source);
 		return source;
 	}
 
 	///.
-	override Element appendChild(Element e) {
-		assert(0, "Cannot append to a text node");
+	string source;
+}
+
+///.
+class PhpCode : SpecialElement {
+	///.
+	this(Document _parentDocument, string s) {
+		super(_parentDocument);
+		source = s;
+		tagName = "#php";
 	}
 
+	///.
+	override string nodeValue() const {
+		return this.source;
+	}
+
+	///.
+	override string writeToAppender(Appender!string where = appender!string()) const {
+		auto start = where.data.length;
+		where.put("<");
+		where.put(source);
+		where.put(">");
+		return where.data[start .. $];
+	}
 
 	///.
 	string source;
 }
+
+///.
+class AspCode : SpecialElement {
+	///.
+	this(Document _parentDocument, string s) {
+		super(_parentDocument);
+		source = s;
+		tagName = "#asp";
+	}
+
+	///.
+	override string nodeValue() const {
+		return this.source;
+	}
+
+	///.
+	override string writeToAppender(Appender!string where = appender!string()) const {
+		auto start = where.data.length;
+		where.put("<");
+		where.put(source);
+		where.put(">");
+		return where.data[start .. $];
+	}
+
+	///.
+	string source;
+}
+
+///.
+class BangInstruction : SpecialElement {
+	///.
+	this(Document _parentDocument, string s) {
+		super(_parentDocument);
+		source = s;
+		tagName = "#bpi";
+	}
+
+	///.
+	override string nodeValue() const {
+		return this.source;
+	}
+
+	///.
+	override string writeToAppender(Appender!string where = appender!string()) const {
+		auto start = where.data.length;
+		where.put("<!");
+		where.put(source);
+		where.put(">");
+		return where.data[start .. $];
+	}
+
+	///.
+	string source;
+}
+
+///.
+class QuestionInstruction : SpecialElement {
+	///.
+	this(Document _parentDocument, string s) {
+		super(_parentDocument);
+		source = s;
+		tagName = "#qpi";
+	}
+
+	///.
+	override string nodeValue() const {
+		return this.source;
+	}
+
+	///.
+	override string writeToAppender(Appender!string where = appender!string()) const {
+		auto start = where.data.length;
+		where.put("<");
+		where.put(source);
+		where.put(">");
+		return where.data[start .. $];
+	}
+
+	///.
+	string source;
+}
+
+///.
+class HtmlComment : SpecialElement {
+	///.
+	this(Document _parentDocument, string s) {
+		super(_parentDocument);
+		source = s;
+		tagName = "#comment";
+	}
+
+	///.
+	override string nodeValue() const {
+		return this.source;
+	}
+
+	///.
+	override string writeToAppender(Appender!string where = appender!string()) const {
+		auto start = where.data.length;
+		where.put("<!--");
+		where.put(source);
+		where.put("-->");
+		return where.data[start .. $];
+	}
+
+	///.
+	string source;
+}
+
+
+
 
 ///.
 class TextNode : Element {
@@ -3240,6 +3382,47 @@ class Document : FileResource {
 	}
 	*/
 
+	/// This will set delegates for parseSaw* (note: this overwrites anything else you set, and you setting subsequently will overwrite this) that add those things to the dom tree when it sees them.
+	/// Call this before calling parse().
+
+	/// Note this will also preserve the prolog and doctype from the original file, if there was one.
+	void enableAddingSpecialTagsToDom() {
+		parseSawComment = (string) => true;
+		parseSawAspCode = (string) => true;
+		parseSawPhpCode = (string) => true;
+		parseSawQuestionInstruction = (string) => true;
+		parseSawBangInstruction = (string) => true;
+	}
+
+	/// If the parser sees a html comment, it will call this callback
+	/// <!-- comment --> will call parseSawComment(" comment ")
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawComment;
+
+	/// If the parser sees <% asp code... %>, it will call this callback.
+	/// It will be passed "% asp code... %" or "%= asp code .. %"
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawAspCode;
+
+	/// If the parser sees <?php php code... ?>, it will call this callback.
+	/// It will be passed "?php php code... ?" or "?= asp code .. ?"
+	/// Note: dom.d cannot identify  the other php <? code ?> short format.
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawPhpCode;
+
+	/// if it sees a <?xxx> that is not php or asp   
+	/// it calls this function with the contents.
+	/// <?SOMETHING foo> calls parseSawQuestionInstruction("?SOMETHING foo")
+	/// Unlike the php/asp ones, this ends on the first > it sees, without requiring ?>.
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawQuestionInstruction;
+
+	/// if it sees a <! that is not CDATA or comment (CDATA is handled automatically and comments call parseSawComment),
+	/// it calls this function with the contents.
+	/// <!SOMETHING foo> calls parseSawBangInstruction("SOMETHING foo")
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawBangInstruction;
+
 	/// Given the kind of garbage you find on the Internet, try to make sense of it.
 	/// Equivalent to document.parse(data, false, false, null);
 	/// (Case-insensitive, non-strict, determine character encoding from the data.)
@@ -3527,6 +3710,7 @@ class Document : FileResource {
 			return TextNode.fromUndecodedString(this, data[start..pos]);
 		}
 
+		// this is obsolete!
 		RawSource readCDataNode() {
 			auto start = pos;
 			while(pos < data.length && data[pos] != '<') {
@@ -3539,7 +3723,14 @@ class Document : FileResource {
 
 		struct Ele {
 			int type; // element or closing tag or nothing
-			Element element; // for type == 0
+				/*
+					type == 0 means regular node, self-closed (element is valid)
+					type == 1 means closing tag (payload is the tag name, element may be valid)
+					type == 2 means you should ignore it completely
+					type == 3 means it is a special element that should be appended, if possible, e.g. a <!DOCTYPE> that was chosen to be kept, php code, or comment. It will be appended at the current element if inside the root, and to a special document area if not
+					type == 4 means the document was totally empty
+				*/
+			Element element; // for type == 0 or type == 3
 			string payload; // for type == 1
 		}
 		// recursively read a tag
@@ -3554,7 +3745,7 @@ class Document : FileResource {
 			if(pos >= data.length)
 			{
 				if(strict) {
-					throw new MarkupException("Gone over the input (is there no root element?), chain: " ~ to!string(parentChain));
+					throw new MarkupException("Gone over the input (is there no root element or did it never close?), chain: " ~ to!string(parentChain));
 				} else {
 					if(parentChain.length)
 						return Ele(1, null, parentChain[0]); // in loose mode, we just assume the document has ended
@@ -3578,57 +3769,180 @@ class Document : FileResource {
 				// I don't care about these, so I just want to skip them
 				case '!': // might be a comment, a doctype, or a special instruction
 					pos++;
+
 						// FIXME: we should store these in the tree too
 						// though I like having it stripped out tbh.
-					if(data[pos] == '-' && data[pos+1] == '-') {
+
+					if(pos == data.length) {
+						if(strict)
+							throw new MarkupException("<! opened at end of file");
+					} else if(data[pos] == '-' && (pos + 1 < data.length) && data[pos+1] == '-') {
 						// comment
 						pos += 2;
-						while(data[pos..pos+3] != "-->")
+
+						// FIXME: technically, a comment is anything
+						// between -- and -- inside a <!> block.
+						// so in <!-- test -- lol> , the " lol" is NOT a comment
+						// and should probably be handled differently in here, but for now
+						// I'll just keep running until --> since that's the common way
+
+						auto commentStart = pos;
+						while(pos+3 < data.length && data[pos..pos+3] != "-->")
 							pos++;
-						assert(data[pos] == '-');
-						pos++;
-						assert(data[pos] == '-');
-						pos++;
-						assert(data[pos] == '>');
-					} else if(data[pos..pos + 7] == "[CDATA[") {
+
+						auto end = commentStart;
+
+						if(pos + 3 >= data.length) {
+							if(strict)
+								throw new MarkupException("unclosed comment");
+							end = data.length;
+							pos = data.length;
+						} else {
+							end = pos;
+							assert(data[pos] == '-');
+							pos++;
+							assert(data[pos] == '-');
+							pos++;
+							assert(data[pos] == '>');
+							pos++;
+						}
+
+						if(parseSawComment !is null)
+							if(parseSawComment(data[commentStart .. end])) {
+								return Ele(3, new HtmlComment(this, data[commentStart .. end]), null);
+							}
+					} else if(pos + 7 <= data.length && data[pos..pos + 7] == "[CDATA[") {
 						pos += 7;
-						// FIXME: major malfunction possible here
+
 						auto cdataStart = pos;
 
-						// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
-						auto cdataEnd = pos + data[pos .. $].indexOf("]]>");
+						typeof(indexOf(data, "")) end = -1;
+						typeof(end) cdataEnd;
 
-						pos = cdataEnd + 3;
+						if(pos < data.length) {
+							// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
+							end = data[pos .. $].indexOf("]]>");
+						}
+
+						if(end == -1) {
+							if(strict)
+								throw new MarkupException("Unclosed CDATA section");
+							end = pos;
+							cdataEnd = pos;
+						} else {
+							cdataEnd = pos + end;
+							pos = cdataEnd + 3;
+						}
+
 						return Ele(0, new TextNode(this, data[cdataStart .. cdataEnd]), null);
-					} else
-						while(data[pos] != '>')
+					} else {
+						auto start = pos;
+						while(pos < data.length && data[pos] != '>')
 							pos++;
-					pos++; // skip the >
+						if(pos == data.length) {
+							if(strict)
+								throw new MarkupException("unclosed processing instruction (<!xxx>)");
+						}
+
+						if(parseSawBangInstruction !is null)
+							if(parseSawBangInstruction(data[start .. pos])) {
+								// FIXME: these should be able to modify the parser state,
+								// doing things like adding entities, somehow.
+
+								return Ele(3, new BangInstruction(this, data[start .. pos]), null);
+							}
+					}
+
+					if(pos < data.length && data[pos] == '>')
+						pos++; // skip the >
+					else
+						assert(!strict);
 				break;
-				// case '%':
+				case '%':
 				case '?':
+					/*
+						Here's what we want to support:
+
+						<% asp code %>
+						<%= asp code %>
+						<?php php code ?>
+						<?= php code ?>
+
+						The contents don't really matter, just if it opens with
+						one of the above for, it ends on the two char terminator.
+
+						<?something>
+							this is NOT php code
+							because I've seen this in the wild: <?EM-dummyText>
+
+							This could be php with shorttags which would be cut off
+							prematurely because if(a >) - that > counts as the close
+							of the tag, but since dom.d can't tell the difference
+							between that and the <?EM> real world example, it will
+							not try to look for the ?> ending.
+
+						The difference between this and the asp/php stuff is that it
+						ends on >, not ?>. ONLY <?php or <?= ends on ?>. The rest end
+						on >.
+					*/
+
 					char end = data[pos];
-					// FIXME this is all kinda broken
+					auto started = pos;
+					bool isAsp = end == '%';
+					int currentIndex = 0;
+					bool isPhp = false;
+					bool isEqualTag = false;
+					int phpCount = 0;
 
 				    more:
 					pos++; // skip the start
+					if(pos == data.length) {
+						if(strict)
+							throw new MarkupException("Unclosed <"~end~" by end of file");
+					} else {
+						currentIndex++;
+						if(currentIndex == 1 && data[pos] == '=') {
+							if(!isAsp)
+								isPhp = true;
+							isEqualTag = true;
+							goto more;
+						}
+						if(currentIndex == 1 && data[pos] == 'p')
+							phpCount++;
+						if(currentIndex == 2 && data[pos] == 'h')
+							phpCount++;
+						if(currentIndex == 3 && data[pos] == 'p' && phpCount == 2)
+							isPhp = true;
 
-					while(data[pos] != end) {
-						// FIXME: what if it is PHP?
-						if(data[pos] == '>')
-							break; // I've seen this in the wild: <?EM-dummyText>
-						pos++;
+						if(data[pos] == '>') {
+							if((isAsp || isPhp) && data[pos - 1] != end)
+								goto more;
+							// otherwise we're done
+						} else
+							goto more;
 					}
 
-					if(data[pos] == end)
-						pos++; // skip the end
+					//writefln("%s: %s", isAsp ? "ASP" : isPhp ? "PHP" : "<? ", data[started .. pos]);
+					auto code = data[started .. pos];
 
-					// FIXME: we should actually store this somewhere
-						// though I like having it stripped out as well tbh.
-					if(data[pos] == '>')
-						pos++;
-					else
-						goto more;
+
+					assert((pos < data.length && data[pos] == '>') || (!strict && pos == data.length));
+					if(pos < data.length)
+						pos++; // get past the >
+
+					if(isAsp && parseSawAspCode !is null) {
+						if(parseSawAspCode(code)) {
+							return Ele(3, new AspCode(this, code), null);
+						}
+					} else if(isPhp && parseSawPhpCode !is null) {
+						if(parseSawPhpCode(code)) {
+							return Ele(3, new PhpCode(this, code), null);
+						}
+					} else if(!isAsp && !isPhp && parseSawQuestionInstruction !is null) {
+						if(parseSawQuestionInstruction(code)) {
+							return Ele(3, new QuestionInstruction(this, code), null);
+						}
+					}
 				break;
 				case '/': // closing an element
 					pos++; // skip the start
@@ -3764,8 +4078,13 @@ class Document : FileResource {
 
 							if(n.type == 4) return n; // the document is empty
 
-
-							if(n.type == 0) {
+							if(n.type == 3 && n.element !is null) {
+								// special node, append if possible
+								if(e !is null)
+									e.appendChild(n.element);
+								else
+									piecesBeforeRoot ~= n.element;
+							} else if(n.type == 0) {
 								if(!strict)
 									considerHtmlParagraphHack(n.element);
 								e.appendChild(n.element);
@@ -3896,7 +4215,7 @@ class Document : FileResource {
 					}
 			}
 
-			return Ele(2, null, null); // this is a <! or <? thing prolly.
+			return Ele(2, null, null); // this is a <! or <? thing that got ignored prolly.
 			//assert(0);
 		}
 
@@ -3904,9 +4223,13 @@ class Document : FileResource {
 		Ele r;
 		do {
 			r = readElement; // there SHOULD only be one element...
+
+			if(r.type == 3 && r.element !is null)
+				piecesBeforeRoot ~= r.element;
+
 			if(r.type == 4)
 				break; // the document is completely empty...
-		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype
+		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype; root only begins on a regular node
 
 		root = r.element;
 
@@ -4121,11 +4444,26 @@ class Document : FileResource {
 
 	///.
 	void setProlog(string d) {
-		prolog = d;
+		_prolog = d;
+		prologWasSet = true;
 	}
 
 	///.
-	string prolog = "<!DOCTYPE html>\n";
+	private string _prolog = "<!DOCTYPE html>\n";
+	private bool prologWasSet = false; // set to true if the user changed it
+
+	@property string prolog() const {
+		// if the user explicitly changed it, do what they want
+		// or if we didn't keep/find stuff from the document itself,
+		// we'll use the builtin one as a default.
+		if(prologWasSet || piecesBeforeRoot.length == 0)
+			return _prolog;
+
+		string p;
+		foreach(e; piecesBeforeRoot)
+			p ~= e.toString() ~ "\n";
+		return p;
+	}
 
 	///.
 	override string toString() const {
@@ -4134,6 +4472,9 @@ class Document : FileResource {
 
 	///.
 	Element root;
+
+	/// if these were kept, this is stuff that appeared before the root element, such as <?xml version ?> decls and <!DOCTYPE>s
+	Element[] piecesBeforeRoot;
 
 	///.
 	bool loose;
@@ -4155,7 +4496,7 @@ class Document : FileResource {
 class XmlDocument : Document {
 	this(string data) {
 		contentType = "text/xml; charset=utf-8";
-		prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
+		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
 		parse(data, true, true);
 	}
