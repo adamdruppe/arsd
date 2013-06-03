@@ -3569,6 +3569,11 @@ class Document : FileResource {
 
 			enforce(data[pos] == '<');
 			pos++;
+			if(pos == data.length) {
+				if(strict)
+					throw new MarkupException("Found trailing < at end of file");
+				// if not strict, we'll just skip the switch
+			} else
 			switch(data[pos]) {
 				// I don't care about these, so I just want to skip them
 				case '!': // might be a comment, a doctype, or a special instruction
