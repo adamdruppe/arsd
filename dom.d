@@ -115,7 +115,7 @@ mixin template DomConvenienceFunctions() {
 			n ~= name;
 		}
 
-		className = n.strip;
+		className = n.strip();
 
 		return this;
 	}
@@ -585,8 +585,8 @@ struct ElementStyle {
 			if(idx == -1)
 				ret[rule] = "";
 			else {
-				auto name = rule[0 .. idx].strip;
-				auto value = rule[idx + 1 .. $].strip;
+				auto name = rule[0 .. idx].strip();
+				auto value = rule[idx + 1 .. $].strip();
 
 				ret[name] = value;
 			}
@@ -677,7 +677,7 @@ import std.range;
 /// Document implements this interface with type = text/html (see Document.contentType for more info)
 /// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
 interface FileResource {
-	string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
+	@property string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
 	immutable(ubyte)[] getData() const; /// the data
 }
 
@@ -1130,9 +1130,9 @@ class Element {
 			name = name.toLower();
 
 		// I never use this shit legitimately and neither should you
-		auto it = name.toLower;
+		auto it = name.toLower();
 		if(it == "href" || it == "src") {
-			auto v = value.strip.toLower();
+			auto v = value.strip().toLower();
 			if(v.startsWith("vbscript:"))
 				value = value[9..$];
 			if(v.startsWith("javascript:"))
@@ -1570,7 +1570,7 @@ class Element {
 		Returns a string containing all child elements, formatted such that it could be pasted into
 		an XML file.
 	*/
-	string innerHTML(Appender!string where = appender!string()) const {
+	@property string innerHTML(Appender!string where = appender!string()) const {
 		if(children is null)
 			return "";
 
@@ -1588,7 +1588,7 @@ class Element {
 	/**
 		Takes some html and replaces the element's children with the tree made from the string.
 	*/
-	Element innerHTML(string html, bool strict = false) {
+	@property Element innerHTML(string html, bool strict = false) {
 		if(html.length)
 			selfClosed = false;
 
@@ -1616,7 +1616,7 @@ class Element {
 	}
 
 	/// ditto
-	Element innerHTML(Html html) {
+	@property Element innerHTML(Html html) {
 		return this.innerHTML(html.source);
 	}
 
@@ -1792,7 +1792,7 @@ class Element {
 		<p>cool <b>api</b> &amp; code dude<p>
 		innerText of that is "cool api & code dude".
 	*/
-	string innerText() const {
+	@property string innerText() const {
 		string s;
 		foreach(child; children) {
 			if(child.nodeType != NodeType.Text)
@@ -1807,7 +1807,7 @@ class Element {
 		Sets the inside text, replacing all children. You don't
 		have to worry about entity encoding.
 	*/
-	void innerText(string text) {
+	@property void innerText(string text) {
 		selfClosed = false;
 		Element e = new TextNode(parentDocument, text);
 		e.parentNode = this;
@@ -2397,7 +2397,7 @@ abstract class SpecialElement : Element {
 	}
 
 	///.
-	override int nodeType() const {
+	@property override int nodeType() const {
 		return 100;
 	}
 }
@@ -2583,7 +2583,7 @@ class TextNode : Element {
 	}
 
 	///.
-	override int nodeType() const {
+	@property override int nodeType() const {
 		return NodeType.Text;
 	}
 
@@ -3346,14 +3346,14 @@ class Document : FileResource {
 	///
 	/// This may be called by parse() if it recognizes the data. Otherwise,
 	/// if you don't set it, it assumes text/html; charset=utf-8.
-	string contentType(string mimeType) {
+	@property string contentType(string mimeType) {
 		_contentType = mimeType;
 		return _contentType;
 	}
 
 	/// implementing the FileResource interface, useful for sending via
 	/// http automatically.
-	override string contentType() const {
+	override @property string contentType() const {
 		return _contentType;
 	}
 
@@ -3953,7 +3953,7 @@ class Document : FileResource {
 
 					string tname = data[p..pos-1];
 					if(!caseSensitive)
-						tname = tname.toLower;
+						tname = tname.toLower();
 
 				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
@@ -4035,7 +4035,7 @@ class Document : FileResource {
 									ending = indexOf(data[pos..$], closer);
 
 								if(loose && ending == -1 && pos < data.length)
-									ending = indexOf(data[pos..$], closer.toUpper);
+									ending = indexOf(data[pos..$], closer.toUpper());
 								if(ending == -1) {
 									if(strict)
 										throw new Exception("tag " ~ tagName ~ " never closed");
@@ -4194,7 +4194,7 @@ class Document : FileResource {
 									if(strict && attrName in attributes)
 										throw new MarkupException("Repeated attribute: " ~ attrName);
 
-									if(attrName.strip.length)
+									if(attrName.strip().length)
 										attributes[attrName] = attrValue;
 									else if(strict) throw new MarkupException("wtf, zero length attribute name");
 
@@ -4217,7 +4217,7 @@ class Document : FileResource {
 		eatWhitespace();
 		Ele r;
 		do {
-			r = readElement; // there SHOULD only be one element...
+			r = readElement(); // there SHOULD only be one element...
 
 			if(r.type == 3 && r.element !is null)
 				piecesBeforeRoot ~= r.element;
@@ -4250,7 +4250,7 @@ class Document : FileResource {
 				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
 					auto shouldBePreviousSibling = ele.parentNode;
 					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
-					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree);
+					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
 					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
 				}
 			}
@@ -4606,7 +4606,7 @@ int intFromHex(string hex) {
 		bool skip = false;
 		// get rid of useless, non-syntax whitespace
 
-		selector = selector.strip;
+		selector = selector.strip();
 		selector = selector.replace("\n", " "); // FIXME hack
 
 		selector = selector.replace(" >", ">");
@@ -5174,7 +5174,7 @@ int intFromHex(string hex) {
 			}
 		}
 
-		commit;
+		commit();
 
 		return s;
 	}
@@ -5203,8 +5203,8 @@ Element[] removeDuplicates(Element[] input) {
 class CssStyle {
 	///.
 	this(string rule, string content) {
-		rule = rule.strip;
-		content = content.strip;
+		rule = rule.strip();
+		content = content.strip();
 
 		if(content.length == 0)
 			return;
@@ -5213,7 +5213,7 @@ class CssStyle {
 		originatingSpecificity = getSpecificityOfRule(rule); // FIXME: if there's commas, this won't actually work!
 
 		foreach(part; content.split(";")) {
-			part = part.strip;
+			part = part.strip();
 			if(part.length == 0)
 				continue;
 			auto idx = part.indexOf(":");
@@ -5223,8 +5223,8 @@ class CssStyle {
 
 			Property p;
 
-			p.name = part[0 .. idx].strip;
-			p.value = part[idx + 1 .. $].replace("! important", "!important").replace("!important", "").strip; // FIXME don't drop important
+			p.name = part[0 .. idx].strip();
+			p.value = part[idx + 1 .. $].replace("! important", "!important").replace("!important", "").strip(); // FIXME don't drop important
 			p.givenExplicitly = true;
 			p.specificity = originatingSpecificity;
 
@@ -5297,7 +5297,7 @@ class CssStyle {
 		value = value.replace("! important", "!important");
 		if(value.indexOf("!important") != -1) {
 			newSpecificity.important = 1; // FIXME
-			value = value.replace("!important", "").strip;
+			value = value.replace("!important", "").strip();
 		}
 
 		foreach(ref property; properties)
@@ -5554,7 +5554,7 @@ final class Stack(T) {
 	}
 
 	///.
-	bool empty() {
+	@property bool empty() {
 		return internalLength ? false : true;
 	}
 
@@ -5754,7 +5754,7 @@ class Event {
 
 		isBubbling = false;
 
-		foreach(e; chain.retro) {
+		foreach(e; chain.retro()) {
 			if(eventName in e.capturingEventHandlers)
 			foreach(handler; e.capturingEventHandlers[eventName])
 				handler(e, this);
@@ -5800,7 +5800,7 @@ struct FormFieldOptions {
 
 
 	// convenience methods to quickly get some options
-	static FormFieldOptions none() {
+	@property static FormFieldOptions none() {
 		FormFieldOptions f;
 		return f;
 	}
@@ -5875,7 +5875,7 @@ class Utf8Stream {
 			stdout.flush();
 		}
 
-		final size_t length() {
+		@property final size_t length() {
 			// the parser checks length primarily directly before accessing the next character
 			// so this is the place we'll hook to append more if possible and needed.
 			if(lastIdx + 1 >= data.length && hasMore()) {
