@@ -115,7 +115,7 @@ mixin template DomConvenienceFunctions() {
 			n ~= name;
 		}
 
-		className = n.strip;
+		className = n.strip();
 
 		return this;
 	}
@@ -259,7 +259,7 @@ mixin template DomConvenienceFunctions() {
 	body {
 		auto e = Element.make(tagName, "", info2);
 		this.appendChild(e);
-		e.innerHTML = innerHtml.source;
+		e.innerHTML(innerHtml.source);
 		return e;
 	}
 
@@ -585,8 +585,8 @@ struct ElementStyle {
 			if(idx == -1)
 				ret[rule] = "";
 			else {
-				auto name = rule[0 .. idx].strip;
-				auto value = rule[idx + 1 .. $].strip;
+				auto name = rule[0 .. idx].strip();
+				auto value = rule[idx + 1 .. $].strip();
 
 				ret[name] = value;
 			}
@@ -822,7 +822,7 @@ class Element {
 						e.rel = childInfo2;
 				break;
 				case "option":
-					e.innerText = childInfo;
+					e.innerText(childInfo);
 					if(childInfo2 !is null)
 						e.value = childInfo2;
 				break;
@@ -833,12 +833,12 @@ class Element {
 						e.value = childInfo2;
 				break;
 				case "button":
-					e.innerText = childInfo;
+					e.innerText(childInfo);
 					if(childInfo2 !is null)
 						e.type = childInfo2;
 				break;
 				case "a":
-					e.innerText = childInfo;
+					e.innerText(childInfo);
 					if(childInfo2 !is null)
 						e.href = childInfo2;
 				break;
@@ -853,7 +853,7 @@ class Element {
 				break;
 				/* generically, assume we were passed text and perhaps class */
 				default:
-					e.innerText = childInfo;
+					e.innerText(childInfo);
 					if(childInfo2.length)
 						e.className = childInfo2;
 			}
@@ -864,7 +864,7 @@ class Element {
 	static Element make(string tagName, in Html innerHtml, string childInfo2 = null) {
 		// FIXME: childInfo2 is ignored when info1 is null
 		auto m = Element.make(tagName, cast(string) null, childInfo2);
-		m.innerHTML = innerHtml.source;
+		m.innerHTML(innerHtml.source);
 		return m;
 	}
 
@@ -1130,9 +1130,9 @@ class Element {
 			name = name.toLower();
 
 		// I never use this shit legitimately and neither should you
-		auto it = name.toLower;
+		auto it = name.toLower();
 		if(it == "href" || it == "src") {
-			auto v = value.strip.toLower();
+			auto v = value.strip().toLower();
 			if(v.startsWith("vbscript:"))
 				value = value[9..$];
 			if(v.startsWith("javascript:"))
@@ -1796,7 +1796,7 @@ class Element {
 		string s;
 		foreach(child; children) {
 			if(child.nodeType != NodeType.Text)
-				s ~= child.innerText;
+				s ~= child.innerText();
 			else
 				s ~= child.nodeValue();
 		}
@@ -1954,7 +1954,7 @@ class Element {
 	// Ideally, I'd put them in arsd.html and use UFCS, but that doesn't work with the opDispatch here.
 	/// Tags: HTML, HTML5
 	// FIXME: add overloads for other label types... 
-	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none()) {
 		auto fs = this;
 		auto i = fs.addChild("label");
 		i.addChild("span", label);
@@ -1973,7 +1973,7 @@ class Element {
 		return i;
 	}
 
-	Element addField(Element label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+	Element addField(Element label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none()) {
 		auto fs = this;
 		auto i = fs.addChild("label");
 		i.addChild(label);
@@ -1996,7 +1996,7 @@ class Element {
 		return addField(label, name, "text", fieldOptions);
 	}
 
-	Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
+	Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none()) {
 		auto fs = this;
 		auto i = fs.addChild("label");
 		i.addChild("span", label);
@@ -2628,7 +2628,7 @@ class Link : Element {
 	this(string href, string text) {
 		super("a");
 		setAttribute("href", href);
-		innerText = text;
+		innerText(text);
 	}
 /+
 	/// Returns everything in the href EXCEPT the query string
@@ -2761,7 +2761,7 @@ class Form : Element {
 		tagName = "form";
 	}
 
-	override Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
+	override Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none()) {
 		auto t = this.querySelector("fieldset div");
 		if(t is null)
 			return super.addField(label, name, type, fieldOptions);
@@ -2778,7 +2778,7 @@ class Form : Element {
 			return t.addField(label, name, type, fieldOptions);
 	}
 
-	override Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
+	override Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none()) {
 		auto t = this.querySelector("fieldset div");
 		if(t is null)
 			return super.addField(label, name, options, fieldOptions);
@@ -2810,7 +2810,7 @@ class Form : Element {
 			switch(e.tagName) {
 				default: assert(0);
 				case "textarea":
-					e.innerText = value;
+					e.innerText(value);
 				break;
 				case "input":
 					string type = e.getAttribute("type");
@@ -2838,7 +2838,7 @@ class Form : Element {
 							continue;
 						string val = child.getAttribute("value");
 						if(val is null)
-							val = child.innerText;
+							val = child.innerText();
 						if(val == value) {
 							child.setAttribute("selected", "selected");
 							found = true;
@@ -2892,7 +2892,7 @@ class Form : Element {
 					} else
 						return e.value;
 				case "textarea":
-					return e.innerText;
+					return e.innerText();
 				case "select":
 					foreach(child; e.tree) {
 						if(child.tagName != "option")
@@ -3124,12 +3124,12 @@ class Table : Element {
 
 	///.
 	@property string caption() {
-		return captionElement().innerText;
+		return captionElement().innerText();
 	}
 
 	///.
 	@property void caption(string text) {
-		captionElement().innerText = text;
+		captionElement().innerText(text);
 	}
 
 	/// Gets the logical layout of the table as a rectangular grid of
@@ -3600,7 +3600,7 @@ class Document : FileResource {
 		}
 
 		void eatWhitespace() {
-			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t'))
+			while(pos < data.length() && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t'))
 				pos++;
 		}
 
@@ -3612,7 +3612,7 @@ class Document : FileResource {
 				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 			{
 				pos++;
-				if(pos == data.length) {
+				if(pos == data.length()) {
 					if(strict)
 						throw new Exception("tag name incomplete when file ended");
 					else
@@ -3640,7 +3640,7 @@ class Document : FileResource {
 						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
 				}
 				pos++;
-				if(pos == data.length) {
+				if(pos == data.length()) {
 					if(strict)
 						throw new Exception("unterminated attribute name");
 					else
@@ -3655,7 +3655,7 @@ class Document : FileResource {
 		}
 
 		string readAttributeValue() {
-			if(pos >= data.length) {
+			if(pos >= data.length()) {
 				if(strict)
 					throw new Exception("no attribute value before end of file");
 				else
@@ -3668,9 +3668,9 @@ class Document : FileResource {
 					char end = data[pos];
 					pos++;
 					auto start = pos;
-					while(pos < data.length && data[pos] != end)
+					while(pos < data.length() && data[pos] != end)
 						pos++;
-					if(strict && pos == data.length)
+					if(strict && pos == data.length())
 						throw new MarkupException("Unclosed attribute value, started on char " ~ to!string(started));
 					string v = htmlEntitiesDecode(data[start..pos], strict);
 					pos++; // skip over the end
@@ -3682,7 +3682,7 @@ class Document : FileResource {
 					auto start = pos;
 					while(data[pos] != '>' &&
 						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
-						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
+						!(data[pos] == '/' && pos + 1 < data.length() && data[pos+1] == '>') &&
 						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
 					      	pos++;
 
@@ -3694,7 +3694,7 @@ class Document : FileResource {
 
 		TextNode readTextNode() {
 			auto start = pos;
-			while(pos < data.length && data[pos] != '<') {
+			while(pos < data.length() && data[pos] != '<') {
 				pos++;
 			}
 
@@ -3704,7 +3704,7 @@ class Document : FileResource {
 		// this is obsolete!
 		RawSource readCDataNode() {
 			auto start = pos;
-			while(pos < data.length && data[pos] != '<') {
+			while(pos < data.length() && data[pos] != '<') {
 				pos++;
 			}
 
@@ -3733,7 +3733,7 @@ class Document : FileResource {
 
 			static string[] recentAutoClosedTags;
 
-			if(pos >= data.length)
+			if(pos >= data.length())
 			{
 				if(strict) {
 					throw new MarkupException("Gone over the input (is there no root element or did it never close?), chain: " ~ to!string(parentChain));
@@ -3751,7 +3751,7 @@ class Document : FileResource {
 
 			enforce(data[pos] == '<');
 			pos++;
-			if(pos == data.length) {
+			if(pos == data.length()) {
 				if(strict)
 					throw new MarkupException("Found trailing < at end of file");
 				// if not strict, we'll just skip the switch
@@ -3764,10 +3764,10 @@ class Document : FileResource {
 						// FIXME: we should store these in the tree too
 						// though I like having it stripped out tbh.
 
-					if(pos == data.length) {
+					if(pos == data.length()) {
 						if(strict)
 							throw new MarkupException("<! opened at end of file");
-					} else if(data[pos] == '-' && (pos + 1 < data.length) && data[pos+1] == '-') {
+					} else if(data[pos] == '-' && (pos + 1 < data.length()) && data[pos+1] == '-') {
 						// comment
 						pos += 2;
 
@@ -3778,16 +3778,16 @@ class Document : FileResource {
 						// I'll just keep running until --> since that's the common way
 
 						auto commentStart = pos;
-						while(pos+3 < data.length && data[pos..pos+3] != "-->")
+						while(pos+3 < data.length() && data[pos..pos+3] != "-->")
 							pos++;
 
 						auto end = commentStart;
 
-						if(pos + 3 >= data.length) {
+						if(pos + 3 >= data.length()) {
 							if(strict)
 								throw new MarkupException("unclosed comment");
-							end = data.length;
-							pos = data.length;
+							end = data.length();
+							pos = data.length();
 						} else {
 							end = pos;
 							assert(data[pos] == '-');
@@ -3802,7 +3802,7 @@ class Document : FileResource {
 							if(parseSawComment(data[commentStart .. end])) {
 								return Ele(3, new HtmlComment(this, data[commentStart .. end]), null);
 							}
-					} else if(pos + 7 <= data.length && data[pos..pos + 7] == "[CDATA[") {
+					} else if(pos + 7 <= data.length() && data[pos..pos + 7] == "[CDATA[") {
 						pos += 7;
 
 						auto cdataStart = pos;
@@ -3810,7 +3810,7 @@ class Document : FileResource {
 						ptrdiff_t end = -1;
 						typeof(end) cdataEnd;
 
-						if(pos < data.length) {
+						if(pos < data.length()) {
 							// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
 							end = data[pos .. $].indexOf("]]>");
 						}
@@ -3828,9 +3828,9 @@ class Document : FileResource {
 						return Ele(0, new TextNode(this, data[cdataStart .. cdataEnd]), null);
 					} else {
 						auto start = pos;
-						while(pos < data.length && data[pos] != '>')
+						while(pos < data.length() && data[pos] != '>')
 							pos++;
-						if(pos == data.length) {
+						if(pos == data.length()) {
 							if(strict)
 								throw new MarkupException("unclosed processing instruction (<!xxx>)");
 						} else pos++; // skipping the >
@@ -3889,7 +3889,7 @@ class Document : FileResource {
 
 				    more:
 					pos++; // skip the start
-					if(pos == data.length) {
+					if(pos == data.length()) {
 						if(strict)
 							throw new MarkupException("Unclosed <"~end~" by end of file");
 					} else {
@@ -3919,8 +3919,8 @@ class Document : FileResource {
 					auto code = data[started .. pos];
 
 
-					assert((pos < data.length && data[pos] == '>') || (!strict && pos == data.length));
-					if(pos < data.length)
+					assert((pos < data.length() && data[pos] == '>') || (!strict && pos == data.length()));
+					if(pos < data.length())
 						pos++; // get past the >
 
 					if(isAsp && parseSawAspCode !is null) {
@@ -3940,10 +3940,10 @@ class Document : FileResource {
 				case '/': // closing an element
 					pos++; // skip the start
 					auto p = pos;
-					while(pos < data.length && data[pos] != '>')
+					while(pos < data.length() && data[pos] != '>')
 						pos++;
 					//writefln("</%s>", data[p..pos]);
-					if(pos == data.length && data[pos-1] != '>') {
+					if(pos == data.length() && data[pos-1] != '>') {
 						if(strict)
 							throw new MarkupException("File ended before closing tag had a required >");
 						else
@@ -3953,7 +3953,7 @@ class Document : FileResource {
 
 					string tname = data[p..pos-1];
 					if(!caseSensitive)
-						tname = tname.toLower;
+						tname = tname.toLower();
 
 				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
@@ -4006,7 +4006,7 @@ class Document : FileResource {
 							if(!selfClosed)
 								selfClosed = tagName.isInArray(selfClosedElements);
 
-							while(pos < data.length && data[pos] != '>')
+							while(pos < data.length() && data[pos] != '>')
 								pos++;
 						}
 
@@ -4029,13 +4029,13 @@ class Document : FileResource {
 							if(!selfClosed) {
 								string closer = "</" ~ tagName ~ ">";
 								ptrdiff_t ending;
-								if(pos >= data.length)
+								if(pos >= data.length())
 									ending = -1;
 								else
 									ending = indexOf(data[pos..$], closer);
 
-								if(loose && ending == -1 && pos < data.length)
-									ending = indexOf(data[pos..$], closer.toUpper);
+								if(loose && ending == -1 && pos < data.length())
+									ending = indexOf(data[pos..$], closer.toUpper());
 								if(ending == -1) {
 									if(strict)
 										throw new Exception("tag " ~ tagName ~ " never closed");
@@ -4147,7 +4147,7 @@ class Document : FileResource {
 					}
 
 					// if a tag was opened but not closed by end of file, we can arrive here
-					if(!strict && pos >= data.length)
+					if(!strict && pos >= data.length())
 						return addTag(false);
 					//else if(strict) assert(0); // should be caught before
 
@@ -4165,7 +4165,7 @@ class Document : FileResource {
 							eatWhitespace();
 
 							// same deal as above the switch....
-							if(!strict && pos >= data.length)
+							if(!strict && pos >= data.length())
 								return addTag(false);
 
 							switch(data[pos]) {
@@ -4176,7 +4176,7 @@ class Document : FileResource {
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
-									if(pos >= data.length) {
+									if(pos >= data.length()) {
 										if(strict)
 											assert(0, "this should have thrown in readAttributeName");
 										else {
@@ -4194,11 +4194,11 @@ class Document : FileResource {
 									if(strict && attrName in attributes)
 										throw new MarkupException("Repeated attribute: " ~ attrName);
 
-									if(attrName.strip.length)
+									if(attrName.strip().length)
 										attributes[attrName] = attrValue;
 									else if(strict) throw new MarkupException("wtf, zero length attribute name");
 
-									if(!strict && pos < data.length && data[pos] == '<') {
+									if(!strict && pos < data.length() && data[pos] == '<') {
 										// this is the broken tag that doesn't have a > at the end
 										data = data[0 .. pos] ~ ">" ~ data[pos.. $];
 										// let's insert one as a hack
@@ -4217,7 +4217,7 @@ class Document : FileResource {
 		eatWhitespace();
 		Ele r;
 		do {
-			r = readElement; // there SHOULD only be one element...
+			r = readElement(); // there SHOULD only be one element...
 
 			if(r.type == 3 && r.element !is null)
 				piecesBeforeRoot ~= r.element;
@@ -4250,7 +4250,7 @@ class Document : FileResource {
 				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
 					auto shouldBePreviousSibling = ele.parentNode;
 					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
-					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree);
+					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
 					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
 				}
 			}
@@ -4287,7 +4287,7 @@ class Document : FileResource {
 		}
 
 		if(e)
-			e.innerText = t;
+			e.innerText(t);
 	}
 
 	// FIXME: would it work to alias root this; ???? might be a good idea
@@ -4490,7 +4490,7 @@ class Document : FileResource {
 /// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
 class XmlDocument : Document {
 	this(string data) {
-		contentType = "text/xml; charset=utf-8";
+		contentType("text/xml; charset=utf-8");
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
 		parse(data, true, true);
@@ -4606,7 +4606,7 @@ int intFromHex(string hex) {
 		bool skip = false;
 		// get rid of useless, non-syntax whitespace
 
-		selector = selector.strip;
+		selector = selector.strip();
 		selector = selector.replace("\n", " "); // FIXME hack
 
 		selector = selector.replace(" >", ">");
@@ -5174,7 +5174,7 @@ int intFromHex(string hex) {
 			}
 		}
 
-		commit;
+		commit();
 
 		return s;
 	}
@@ -5203,8 +5203,8 @@ Element[] removeDuplicates(Element[] input) {
 class CssStyle {
 	///.
 	this(string rule, string content) {
-		rule = rule.strip;
-		content = content.strip;
+		rule = rule.strip();
+		content = content.strip();
 
 		if(content.length == 0)
 			return;
@@ -5213,7 +5213,7 @@ class CssStyle {
 		originatingSpecificity = getSpecificityOfRule(rule); // FIXME: if there's commas, this won't actually work!
 
 		foreach(part; content.split(";")) {
-			part = part.strip;
+			part = part.strip();
 			if(part.length == 0)
 				continue;
 			auto idx = part.indexOf(":");
@@ -5223,8 +5223,8 @@ class CssStyle {
 
 			Property p;
 
-			p.name = part[0 .. idx].strip;
-			p.value = part[idx + 1 .. $].replace("! important", "!important").replace("!important", "").strip; // FIXME don't drop important
+			p.name = part[0 .. idx].strip();
+			p.value = part[idx + 1 .. $].replace("! important", "!important").replace("!important", "").strip(); // FIXME don't drop important
 			p.givenExplicitly = true;
 			p.specificity = originatingSpecificity;
 
@@ -5297,7 +5297,7 @@ class CssStyle {
 		value = value.replace("! important", "!important");
 		if(value.indexOf("!important") != -1) {
 			newSpecificity.important = 1; // FIXME
-			value = value.replace("!important", "").strip;
+			value = value.replace("!important", "").strip();
 		}
 
 		foreach(ref property; properties)
@@ -5613,7 +5613,7 @@ final class ElementStream {
 
 	/// You should call this when you remove an element from the tree. It then doesn't recurse into that node and adjusts the current position, keeping the range stable.
 	void currentKilled() {
-		if(stack.empty) // should never happen
+		if(stack.empty()) // should never happen
 			isEmpty = true;
 		else {
 			current = stack.pop();
@@ -5754,7 +5754,7 @@ class Event {
 
 		isBubbling = false;
 
-		foreach(e; chain.retro) {
+		foreach(e; chain.retro()) {
 			if(eventName in e.capturingEventHandlers)
 			foreach(handler; e.capturingEventHandlers[eventName])
 				handler(e, this);
