@@ -434,6 +434,24 @@ mixin template DomConvenienceFunctions() {
 	}
 }
 
+/// finds comments that match the given txt. Case insensitive, strips whitespace.
+Element[] findComments(Document document, string txt) {
+	return findComments(document.root, txt);
+}
+
+/// ditto
+Element[] findComments(Element element, string txt) {
+	txt = txt.strip().toLower();
+	Element[] ret;
+
+	foreach(comment; element.getElementsByTagName("#comment")) {
+		string t = comment.nodeValue().strip().toLower();
+		if(t == txt)
+			ret ~= comment;
+	}
+
+	return ret;
+}
 
 // I'm just dicking around with this
 struct ElementCollection {
