@@ -3680,7 +3680,9 @@ class Document : FileResource {
 						parseError("Attributes must be quoted");
 					// read until whitespace or terminator (/ or >)
 					auto start = pos;
-					while(data[pos] != '>' &&
+					while(
+						pos < data.length &&
+						data[pos] != '>' &&
 						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
 						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
 						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
@@ -3830,17 +3832,19 @@ class Document : FileResource {
 						auto start = pos;
 						while(pos < data.length && data[pos] != '>')
 							pos++;
+
+						auto bangEnds = pos;
 						if(pos == data.length) {
 							if(strict)
 								throw new MarkupException("unclosed processing instruction (<!xxx>)");
 						} else pos++; // skipping the >
 
 						if(parseSawBangInstruction !is null)
-							if(parseSawBangInstruction(data[start .. pos])) {
+							if(parseSawBangInstruction(data[start .. bangEnds])) {
 								// FIXME: these should be able to modify the parser state,
 								// doing things like adding entities, somehow.
 
-								return Ele(3, new BangInstruction(this, data[start .. pos]), null);
+								return Ele(3, new BangInstruction(this, data[start .. bangEnds]), null);
 							}
 					}
 
@@ -4040,7 +4044,9 @@ class Document : FileResource {
 									if(strict)
 										throw new Exception("tag " ~ tagName ~ " never closed");
 									else {
-										// let's call it totally empty
+										// let's call it totally empty and do the rest of the file as text. doing it as html could still result in some weird stuff like if(a<4) being read as <4 being a tag so it comes out if(a<4></4> and other weirdness) It is either a closed script tag or the rest of the file is forfeit.
+										e = new TextNode(this, data[pos .. $]);
+										pos = data.length;
 									}
 								} else {
 									ending += pos;
@@ -4167,6 +4173,9 @@ class Document : FileResource {
 							// same deal as above the switch....
 							if(!strict && pos >= data.length)
 								return addTag(false);
+
+							if(strict && pos >= data.length)
+								throw new MarkupException("tag open, didn't find > before end of file");
 
 							switch(data[pos]) {
 								case '/': // self closing tag
