@@ -20,6 +20,10 @@
 */
 module arsd.dom;
 
+// FIXME: might be worth doing Element.attrs and taking opDispatch off that
+// so more UFCS works.
+
+
 // FIXME: something like <ol>spam <ol> with no closing </ol> should read the second tag as the closer in garbage mode
 // FIXME: failing to close a paragraph sometimes messes things up too
 
@@ -4257,6 +4261,15 @@ class Document : FileResource {
 
 		root = r.element;
 
+		if(!strict) // in strict mode, we'll just ignore stuff after the xml
+		while(r.type != 4) {
+			r = readElement();
+			if(r.type != 4 && r.type != 2) { // if not empty and not ignored
+				if(r.element !is null)
+					piecesAfterRoot ~= r.element;
+			}
+		}
+
 		if(root is null)
 		{
 			if(strict)
@@ -4499,6 +4512,9 @@ class Document : FileResource {
 
 	/// if these were kept, this is stuff that appeared before the root element, such as <?xml version ?> decls and <!DOCTYPE>s
 	Element[] piecesBeforeRoot;
+
+	/// stuff after the root, only stored in non-strict mode and not used in toString, but available in case you want it
+	Element[] piecesAfterRoot;
 
 	///.
 	bool loose;
