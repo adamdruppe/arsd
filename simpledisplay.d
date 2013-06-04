@@ -1475,7 +1475,7 @@ enum ColorMapNotification:int
 	    arch_ulong green_mask;
 	    arch_ulong blue_mask;
 	    XPointer obdata;			/* hook for the object routines to hang on */
-	    struct f {				/* image manipulation routines */
+	    struct F {				/* image manipulation routines */
 			XImage* function(
 				XDisplay* 			/* display */,
 				Visual*				/* visual */,
@@ -1493,6 +1493,8 @@ enum ColorMapNotification:int
 			XImage function(XImage *, int, int, uint, uint)sub_image;
 			int function(XImage *, int)add_pixel;
 		}
+
+		F f;
 	}
 	version(X86_64) static assert(XImage.sizeof == 136);
 
