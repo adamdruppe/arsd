@@ -4063,8 +4063,10 @@ class Document : FileResource {
 										throw new Exception("tag " ~ tagName ~ " never closed");
 									else {
 										// let's call it totally empty and do the rest of the file as text. doing it as html could still result in some weird stuff like if(a<4) being read as <4 being a tag so it comes out if(a<4></4> and other weirdness) It is either a closed script tag or the rest of the file is forfeit.
-										e = new TextNode(this, data[pos .. $]);
-										pos = data.length;
+										if(pos < data.length) {
+											e = new TextNode(this, data[pos .. $]);
+											pos = data.length;
+										}
 									}
 								} else {
 									ending += pos;
