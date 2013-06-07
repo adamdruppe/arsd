@@ -38,7 +38,8 @@ struct Size {
 
 
 struct KeyEvent {
-
+	uint keycode;
+	bool pressed;
 }
 
 struct MouseEvent {
@@ -902,6 +903,7 @@ version(X11) {
 			XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
 
 			XFreeGC(display, gc);
+			XFlush(display);
 		}
 
 		bool backgroundIsNotTransparent = true;
@@ -1020,14 +1022,38 @@ version(X11) {
 	class XDisplayConnection {
 		private static Display* display;
 
-		static Display* get() {
-			if(display is null)
+		static Display* get(SimpleWindow window = null) {
+			// FIXME: this shouldn't even be necessary
+			version(with_eventloop)
+				if(window !is null)
+					this.window = window;
+			if(display is null) {
 				display = enforce(XOpenDisplay(null));
+				version(with_eventloop) {
+					import arsd.eventloop;
+					addFileEventListeners(display.fd, &eventListener, null, null);
+				}
+			}
 
 			return display;
 		}
 
+		version(with_eventloop) {
+			import arsd.eventloop;
+			static void eventListener(OsFileHandle fd) {
+				while(XPending(display))
+					doXNextEvent(window);
+			}
+
+			static SimpleWindow window;
+		}
+
 		static void close() {
+			version(with_eventloop) {
+				import arsd.eventloop;
+				removeFileEventListeners(display.fd);
+			}
+
 			XCloseDisplay(display);
 			display = null;
 		}
@@ -1098,7 +1124,7 @@ version(X11) {
 		}
 
 		void createWindow(int width, int height, string title) {
-			display = XDisplayConnection.get();
+			display = XDisplayConnection.get(this);
 			auto screen = DefaultScreen(display);
 
 			window = XCreateSimpleWindow(
@@ -1141,11 +1167,14 @@ version(X11) {
 				| EventMask.ButtonPressMask
 				| EventMask.ButtonReleaseMask
 			);
+
+			XFlush(display);
 		}
 
 		void closeWindow() {
 			XFreePixmap(display, buffer);
 			XDestroyWindow(display, window);
+			XFlush(display);
 		}
 
 		void dispose() {
@@ -1154,68 +1183,13 @@ version(X11) {
 		bool destroyed = false;
 
 		int eventLoop(long pulseTimeout) {
-			XEvent e;
 			bool done = false;
 
 			while (!done) {
 			while(!done &&
 				(pulseTimeout == 0 || (XPending(display) > 0)))
 			{
-				XNextEvent(display, &e);
-
-				switch(e.type) {
-				  case EventType.Expose:
-				  	//if(backingImage !is null)
-					//	XPutImage(display, cast(Drawable) window, gc, backingImage.handle, 0, 0, 0, 0, backingImage.width, backingImage.height);
-					XCopyArea(display, cast(Drawable) buffer, cast(Drawable) window, gc, 0, 0, width, height, 0, 0);
-				  break;
-				  case EventType.ClientMessage: // User clicked the close button
-				  case EventType.DestroyNotify:
-					done = true;
-					destroyed = true;
-				  break;
-
-				  case EventType.MotionNotify:
-				  	MouseEvent mouse;
-					auto event = e.xmotion;
-
-					mouse.type = 0;
-					mouse.x = event.x;
-					mouse.y = event.y;
-					mouse.buttonFlags = event.state;
-
-					if(handleMouseEvent)
-						handleMouseEvent(mouse);
-				  break;
-				  case EventType.ButtonPress:
-				  case EventType.ButtonRelease:
-				  	MouseEvent mouse;
-					auto event = e.xbutton;
-
-					mouse.type = e.type == EventType.ButtonPress ? 1 : 2;
-					mouse.x = event.x;
-					mouse.y = event.y;
-					mouse.button = event.button;
-					//mouse.buttonFlags = event.detail;
-
-					if(handleMouseEvent)
-						handleMouseEvent(mouse);
-				  break;
-
-				  case EventType.KeyPress:
-					if(handleCharEvent)
-						handleCharEvent(
-							cast(dchar) XKeycodeToKeysym(
-								XDisplayConnection.get(),
-								e.xkey.keycode,
-								0)); // FIXME: we should check shift, etc. too, so it matches Windows' behavior better
-				  goto case;
-				  case EventType.KeyRelease:
-				  	if(handleKeyEvent)
-						handleKeyEvent(e.xkey.keycode, e.type == EventType.ButtonPress);
-				  break;
-				  default:
-				}
+				done = doXNextEvent(this); // FIXME: what about multiple windows? This wasn't originally going to support them but maybe I should
 			}
 				if(!done && pulseTimeout !=0) {
 					if(handlePulse !is null)
@@ -1226,6 +1200,85 @@ version(X11) {
 
 			return 0;
 		}
+	}
+}
+
+version(X11) {
+	bool doXNextEvent(SimpleWindow t) {
+		bool done;
+		XEvent e;
+		XNextEvent(t.display, &e);
+
+		version(with_eventloop)
+			import arsd.eventloop;
+
+		switch(e.type) {
+		  case EventType.Expose:
+			//if(backingImage !is null)
+			//	XPutImage(display, cast(Drawable) window, gc, backingImage.handle, 0, 0, 0, 0, backingImage.width, backingImage.height);
+			XCopyArea(t.display, cast(Drawable) t.buffer, cast(Drawable) t.window, t.gc, 0, 0, t.width, t.height, 0, 0);
+		  break;
+		  case EventType.ClientMessage: // User clicked the close button
+		  case EventType.DestroyNotify:
+			done = true;
+			t.destroyed = true;
+			version(with_eventloop)
+				exit();
+		  break;
+
+		  case EventType.MotionNotify:
+			MouseEvent mouse;
+			auto event = e.xmotion;
+
+			mouse.type = 0;
+			mouse.x = event.x;
+			mouse.y = event.y;
+			mouse.buttonFlags = event.state;
+
+			if(t.handleMouseEvent)
+				t.handleMouseEvent(mouse);
+		  	version(with_eventloop)
+				send(mouse);
+		  break;
+		  case EventType.ButtonPress:
+		  case EventType.ButtonRelease:
+			MouseEvent mouse;
+			auto event = e.xbutton;
+
+			mouse.type = e.type == EventType.ButtonPress ? 1 : 2;
+			mouse.x = event.x;
+			mouse.y = event.y;
+			mouse.button = event.button;
+			//mouse.buttonFlags = event.detail;
+
+			if(t.handleMouseEvent)
+				t.handleMouseEvent(mouse);
+			version(with_eventloop)
+				send(mouse);
+		  break;
+
+		  case EventType.KeyPress:
+			auto ch = cast(dchar) XKeycodeToKeysym(
+				XDisplayConnection.get(),
+				e.xkey.keycode,
+				0); // FIXME: we should check shift, etc. too, so it matches Windows' behavior better
+
+			if(t.handleCharEvent)
+				t.handleCharEvent(ch);
+			version(with_eventloop)
+				send(ch);
+		  goto case;
+		  case EventType.KeyRelease:
+			if(t.handleKeyEvent)
+				t.handleKeyEvent(e.xkey.keycode, e.type == EventType.ButtonPress);
+
+			version(with_eventloop)
+				send(KeyEvent(e.xkey.keycode, e.type == EventType.ButtonPress));
+		  break;
+		  default:
+		}
+
+		return done;
 	}
 }
 
