@@ -312,6 +312,9 @@ class Cgi {
 					case "userpass":
 						authorization = "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (arg)).idup;
 					break;
+					case "origin":
+						origin = arg;
+					break;
 					case "accept":
 						accept = arg;
 					break;
@@ -493,6 +496,9 @@ class Cgi {
 		auto ka = getenv("HTTP_CONNECTION");
 		if(ka.length && ka.toLower().indexOf("keep-alive") != -1)
 			keepAliveRequested = true;
+
+		auto or = getenv("HTTP_ORIGIN");
+			origin = or;
 
 		auto rm = getenv("REQUEST_METHOD");
 		if(rm.length)
@@ -1089,6 +1095,7 @@ class Cgi {
 		// this pointer tells if the connection is supposed to be closed after we handle this
 		bool* closeConnection = null)
 	{
+		idlol = inputData;
 
 		isCalledWithCommandLineArguments = false;
 
@@ -1167,6 +1174,9 @@ class Cgi {
 				switch(name) {
 					case "accept":
 						accept = value;
+					break;
+					case "origin":
+						origin = value;
 					break;
 					case "connection":
 						if(value == "close" && closeConnection)
@@ -1251,6 +1261,7 @@ class Cgi {
 			cleanUpPostDataState();
 		}
 	}
+	BufferedInputRange idlol;
 
 	private immutable(string[string]) keepLastOf(in string[][string] arr) {
 		string[string] ca;
@@ -1486,6 +1497,7 @@ class Cgi {
 	}
 
 	private string[] customHeaders;
+	private bool websocketMode;
 
 	void flushHeaders(const(void)[] t, bool isAll = false) {
 		string[] hd;
@@ -1504,6 +1516,10 @@ class Cgi {
 			else
 				hd ~= "HTTP/1.1 200 OK";
 		}
+
+		if(websocketMode)
+			goto websocket;
+
 		if(nph) { // we're responsible for setting the date too according to http 1.1
 			hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
 		}
@@ -1544,8 +1560,6 @@ class Cgi {
 			hd ~= "Content-Encoding: gzip";
 		}
 
-		if(customHeaders !is null)
-			hd ~= customHeaders;
 
 		if(!isAll) {
 			if(nph && !http10) {
@@ -1558,6 +1572,10 @@ class Cgi {
 				hd ~= "Connection: Keep-Alive";
 			}
 		}
+
+		websocket:
+		if(customHeaders !is null)
+			hd ~= customHeaders;
 
 		// FIXME: what about duplicated headers?
 
@@ -1760,6 +1778,7 @@ class Cgi {
 	immutable(string[string]) requestHeaders; /// All the raw headers in the request as name/value pairs. The name is stored as all lower case, but otherwise the same as it is in HTTP; words separated by dashes. For example, "cookie" or "accept-encoding". Many HTTP headers have specialized variables below for more convenience and static name checking; you should generally try to use them.
 
 	immutable(char[]) host; 	/// The hostname in the request. If one program serves multiple domains, you can use this to differentiate between them.
+	immutable(char[]) origin; 	/// The origin header in the request, if present. Some HTML5 cross-domain apis set this and you should check it on those cross domain requests and websockets.
 	immutable(char[]) userAgent; 	/// The browser's user-agent string. Can be used to identify the browser.
 	immutable(char[]) pathInfo; 	/// This is any stuff sent after your program's name on the url, but before the query string. For example, suppose your program is named "app". If the user goes to site.com/app, pathInfo is empty. But, he can also go to site.com/app/some/sub/path; treating your program like a virtual folder. In this case, pathInfo == "/some/sub/path".
 	immutable(char[]) scriptName;   /// The full base path of your program, as seen by the user. If your program is located at site.com/programs/apps, scriptName == "/programs/apps".
@@ -2961,13 +2980,310 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 	};
 }
 
+version(cgi_with_websocket) {
+
+	/**
+		WEBSOCKET SUPPORT:
+
+		Full example:
+			import arsd.cgi;
+
+			void websocketEcho(Cgi cgi) {
+				if(cgi.websocketRequested()) {
+					if(cgi.origin != "http://arsdnet.net")
+						throw new Exception("bad origin");
+					auto websocket = cgi.acceptWebsocket();
+
+					websocket.send("hello");
+					websocket.send(" world!");
+
+					auto msg = websocket.recv();
+					while(msg.opcode != WebSocketOpcode.close) {
+						if(msg.opcode == WebSocketOpcode.text) {
+							websocket.send(msg.textData);
+						} else if(msg.opcode == WebSocketOpcode.binary) {
+							websocket.send(msg.data);
+						}
+
+						msg = websocket.recv();
+					}
+
+					websocket.close();
+				} else assert(0, "i want a web socket!");
+			}
+
+			mixin GenericMain!websocketEcho;
+	*/
+
+	class WebSocket {
+		Cgi cgi;
+
+		private this(Cgi cgi) {
+			this.cgi = cgi;
+		}
+
+		// note: this blocks
+		WebSocketMessage recv() {
+			// FIXME: should we automatically handle pings and pongs?
+			assert(!cgi.idlol.empty());
+			cgi.idlol.popFront(0);
+
+			WebSocketMessage message;
+
+			auto info = cgi.idlol.front();
+
+			// FIXME: read should prolly take the whole range so it can request more if needed
+			// read should also go ahead and consume the range
+			message = WebSocketMessage.read(info);
+
+			cgi.idlol.consume(info.length);
+
+			return message;
+		}
+
+		void send(in char[] text) {
+			// I cast away const here because I know this msg is private and it doesn't write
+			// to that buffer unless masking is set... which it isn't, so we're ok.
+			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.text, cast(void[]) text);
+			msg.send(cgi);
+		}
+
+		void send(in ubyte[] binary) {
+			// I cast away const here because I know this msg is private and it doesn't write
+			// to that buffer unless masking is set... which it isn't, so we're ok.
+			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.binary, cast(void[]) binary);
+			msg.send(cgi);
+		}
+
+		void close() {
+			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.close, null);
+			msg.send(cgi);
+		}
+	}
+
+	bool websocketRequested(Cgi cgi) {
+		return
+			"sec-websocket-key" in cgi.requestHeaders
+			&&
+			"connection" in cgi.requestHeaders &&
+				cgi.requestHeaders["connection"].toLower().indexOf("upgrade") != -1
+			&&
+			"upgrade" in cgi.requestHeaders &&
+				cgi.requestHeaders["upgrade"].toLower() == "websocket"
+			;
+	}
+
+	WebSocket acceptWebsocket(Cgi cgi) {
+		assert(!cgi.closed);
+		assert(!cgi.outputtedResponseData);
+		cgi.setResponseStatus("101 Web Socket Protocol Handshake");
+		cgi.header("Upgrade: WebSocket");
+		cgi.header("Connection: upgrade");
+
+		string key = cgi.requestHeaders["sec-websocket-key"];
+		key ~= "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+		import arsd.sha;
+		auto accept = Base64.encode(SHA1(key));
+
+		cgi.header(("Sec-WebSocket-Accept: " ~ accept).idup);
+
+		cgi.websocketMode = true;
+		cgi.write("");
+
+		return new WebSocket(cgi);
+	}
+
+	// FIXME: implement websocket extension frames
+	// get websocket to work on other modes, not just embedded_httpd
+
+	enum WebSocketOpcode : ubyte {
+		text = 1,
+		binary = 2,
+		// 3, 4, 5, 6, 7 RESERVED
+		close = 8,
+		ping = 9,
+		pong = 10,
+		// 11,12,13,14,15 RESERVED
+	}
+
+	struct WebSocketMessage {
+		bool fin;
+		bool rsv1;
+		bool rsv2;
+		bool rsv3;
+		WebSocketOpcode opcode; // 4 bits
+		bool masked;
+		ubyte lengthIndicator; // don't set this when building one to send
+		ulong realLength; // don't use when sending
+		ubyte[4] maskingKey; // don't set this when sending
+		ubyte[] data;
+
+		static WebSocketMessage simpleMessage(WebSocketOpcode opcode, void[] data) {
+			WebSocketMessage msg;
+			msg.fin = true;
+			msg.opcode = opcode;
+			msg.data = cast(ubyte[]) data;
+
+			return msg;
+		}
+
+		private void send(Cgi cgi) {
+			ubyte[64] headerScratch;
+			int headerScratchPos = 0;
+
+			realLength = data.length;
+
+			{
+				ubyte b1;
+				b1 |= cast(ubyte) opcode;
+				b1 |= rsv3 ? (1 << 4) : 0;
+				b1 |= rsv2 ? (1 << 5) : 0;
+				b1 |= rsv1 ? (1 << 6) : 0;
+				b1 |= fin  ? (1 << 7) : 0;
+
+				headerScratch[0] = b1;
+				headerScratchPos++;
+			}
+
+			{
+				headerScratchPos++; // we'll set header[1] at the end of this
+				auto rlc = realLength;
+				ubyte b2;
+				b2 |= masked ? (1 << 7) : 0;
+
+				assert(headerScratchPos == 2);
+
+				if(realLength > 65535) {
+					// use 64 bit length
+					b2 |= 0x7f;
+
+					// FIXME: double check endinaness
+					foreach(i; 0 .. 8) {
+						headerScratch[2 + 7 - i] = rlc & 0x0ff;
+						rlc >>>= 8;
+					}
+
+					headerScratchPos += 8;
+				} else if(realLength > 127) {
+					// use 16 bit length
+					b2 |= 0x7e;
+
+					// FIXME: double check endinaness
+					foreach(i; 0 .. 2) {
+						headerScratch[2 + 1 - i] = rlc & 0x0ff;
+						rlc >>>= 8;
+					}
+
+					headerScratchPos += 2;
+				} else {
+					// use 7 bit length
+					b2 |= realLength & 0b_0111_1111;
+				}
+
+				headerScratch[1] = b2;
+			}
+
+			assert(!masked, "masking key not properly implemented");
+			if(masked) {
+				// FIXME: randomize this
+				headerScratch[headerScratchPos .. headerScratchPos + 4] = maskingKey[];
+				headerScratchPos += 4;
+
+				// we'll just mask it in place...
+				int keyIdx = 0;
+				foreach(i; 0 .. data.length) {
+					data[i] = data[i] ^ maskingKey[keyIdx];
+					if(keyIdx == 3)
+						keyIdx = 0;
+					else
+						keyIdx++;
+				}
+			}
+
+			writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
+			cgi.write(headerScratch[0 .. headerScratchPos]);
+			cgi.write(data);
+		}
+
+		static WebSocketMessage read(ubyte[] d) {
+			WebSocketMessage msg;
+			assert(d.length >= 2);
+
+			ubyte b = d[0];
+
+			msg.opcode = cast(WebSocketOpcode) (b & 0x0f);
+			b >>= 4;
+			msg.rsv3 = b & 0x01;
+			b >>= 1;
+			msg.rsv2 = b & 0x01;
+			b >>= 1;
+			msg.rsv1 = b & 0x01;
+			b >>= 1;
+			msg.fin = b & 0x01;
+
+			b = d[1];
+			msg.masked = (b & 0b1000_0000) ? true : false;
+			msg.lengthIndicator = b & 0b0111_1111;
+
+			d = d[2 .. $];
+
+			if(msg.lengthIndicator == 0x7e) {
+				// 16 bit length
+				msg.realLength = 0;
+
+				foreach(i; 0 .. 2) {
+					msg.realLength |= d[0] << ((1-i) * 8);
+					d = d[1 .. $];
+				}
+			} else if(msg.lengthIndicator == 0x7f) {
+				// 64 bit length
+				msg.realLength = 0;
+
+				foreach(i; 0 .. 8) {
+					msg.realLength |= d[0] << ((7-i) * 8);
+					d = d[1 .. $];
+				}
+			} else {
+				// 7 bit length
+				msg.realLength = msg.lengthIndicator;
+			}
+
+			if(msg.masked) {
+				msg.maskingKey = d[0 .. 4];
+				d = d[4 .. $];
+			}
+
+			msg.data = d[0 .. $];
+
+			if(msg.masked) {
+				// let's just unmask it now
+				int keyIdx = 0;
+				foreach(i; 0 .. msg.data.length) {
+					msg.data[i] = msg.data[i] ^ msg.maskingKey[keyIdx];
+					if(keyIdx == 3)
+						keyIdx = 0;
+					else
+						keyIdx++;
+				}
+			}
+
+			return msg;
+		}
+
+		char[] textData() {
+			return cast(char[]) data;
+		}
+	}
+
+}
 
 /*
-Copyright: Adam D. Ruppe, 2008 - 2012
+Copyright: Adam D. Ruppe, 2008 - 2013
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2012.
+	Copyright Adam D. Ruppe 2008 - 2013.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
