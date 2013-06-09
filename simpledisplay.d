@@ -9,17 +9,19 @@ module simpledisplay;
 	Key items
 */
 
-version(linux)
-	version = X11;
-version(OSX) {
-	version(OSXCocoa) {}
-	else { version = X11; }
+version(html5) {} else {
+	version(linux)
+		version = X11;
+	version(OSX) {
+		version(OSXCocoa) {}
+		else { version = X11; }
+	}
+		//version = OSXCocoa; // this was written by KennyTM
+	version(FreeBSD)
+		version = X11;
+	version(Solaris)
+		version = X11;
 }
-	//version = OSXCocoa; // this was written by KennyTM
-version(FreeBSD)
-	version = X11;
-version(Solaris)
-	version = X11;
 
 import std.exception;
 import core.thread;
@@ -346,6 +348,10 @@ class Sprite {
 
 			auto rdl = (width * height * 4);
 			rawData[0 .. rdl] = i.rawData[0 .. rdl];
+		} else version(html5) {
+			handle = nextHandle;
+			nextHandle++;
+			Html5.createImage(handle, i);
 		} else static assert(0);
 	}
 
@@ -356,6 +362,8 @@ class Sprite {
 			DeleteObject(handle);
 		else version(OSXCocoa)
 			CGContextRelease(context);
+		else version(html5)
+			Html5.freeImage(handle);
 		else static assert(0);
 
 	}
@@ -368,6 +376,10 @@ class Sprite {
 		HBITMAP handle;
 	else version(OSXCocoa)
 		CGContextRef context;
+	else version(html5) {
+		static int nextHandle;
+		int handle;
+	}
 	else static assert(0);
 
 	void drawAt(ScreenPainter painter, Point where) {
@@ -447,11 +459,17 @@ class SimpleWindow {
 			r.bottom = i.height;
 
 			InvalidateRect(hwnd, &r, false);
-		}
+		} else
 		version(X11) {
 			if(!destroyed)
 			XPutImage(display, cast(Drawable) window, gc, backingImage.handle, 0, 0, 0, 0, backingImage.width, backingImage.height);
-		}
+		} else
+		version(OSXCocoa) {
+           		draw().drawImage(Point(0, 0), i);
+			setNeedsDisplay(view, true);
+		} else version(html5) {
+			// FIXME html5
+		} else static assert(0);
 	}
 
 	/// What follows are the event handlers. These are set automatically
@@ -673,7 +691,7 @@ version(Windows) {
 			HDC hdcMem = CreateCompatibleDC(hdc);
 			HBITMAP hbmOld = SelectObject(hdcMem, s.handle);
 
-			GetObject(i.handle, bm.sizeof, &bm);
+			GetObject(s.handle, bm.sizeof, &bm);
 
 			BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
 
@@ -2690,7 +2708,7 @@ private:
     alias objc_msgSend_classMethod!("NSApplication", "sharedApplication",
                                     id) sharedNSApplication;
     alias objc_msgSend_specialized!("setActivationPolicy:", void, ptrdiff_t) setActivationPolicy;
-} else static assert(0, "Unsupported operating system");
+} else version(html5) {} else static assert(0, "Unsupported operating system");
 
 
 version(OSXCocoa) {
@@ -3076,4 +3094,142 @@ version(OSXCocoa) {
         simpleWindowIvar = class_getInstanceVariable(viewClass,
                                                      "simpledisplay_simpleWindow");
     }
+}
+
+version(html5) {
+	import arsd.cgi;
+
+	alias int NativeWindowHandle;
+	alias void delegate() NativeEventHandler;
+
+	mixin template NativeImageImplementation() {
+		static import arsd.image;
+		arsd.image.TrueColorImage handle;
+
+		void createImage(int width, int height) {
+			handle = new arsd.image.TrueColorImage(width, height);
+		}
+
+		void dispose() {
+			handle = null;
+		}
+
+		void setPixel(int x, int y, Color c) {
+			auto offset = (y * width + x) * 4;
+			handle.data[offset + 0] = c.b;
+			handle.data[offset + 1] = c.g;
+			handle.data[offset + 2] = c.r;
+			handle.data[offset + 3] = c.a;
+		}
+
+		void convertToRgbaBytes(ubyte[] where) {
+			if(where is handle.data)
+				return;
+			assert(where.length == this.width * this.height * 4);
+
+			where[] = handle.data[];
+		}
+
+	}
+
+	mixin template NativeScreenPainterImplementation() {
+		void create(NativeWindowHandle window) {
+		}
+
+		void dispose() {
+		}
+		@property void outlineColor(Color c) {
+		}
+
+		@property void fillColor(Color c) {
+		}
+
+		void drawImage(int x, int y, Image i) {
+		}
+
+		void drawPixmap(Sprite s, int x, int y) {
+		}
+
+		void drawText(int x, int y, int x2, int y2, string text) {
+		}
+
+		void drawPixel(int x, int y) {
+		}
+
+		void drawLine(int x1, int y1, int x2, int y2) {
+		}
+
+		void drawRectangle(int x, int y, int width, int height) {
+		}
+
+		/// Arguments are the points of the bounding rectangle
+		void drawEllipse(int x1, int y1, int x2, int y2) {
+		}
+
+		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
+			// FIXME: start X, start Y, end X, end Y
+			//Arc(hdc, x1, y1, x1 + width, y1 + height, 0, 0, 0, 0);
+		}
+
+		void drawPolygon(Point[] vertexes) {
+		}
+
+	}
+
+	/// on html5 mode you MUST set this socket up
+	WebSocket socket;
+
+	mixin template NativeSimpleWindowImplementation() {
+		ScreenPainter getPainter() {
+			return ScreenPainter(this, 0);
+		}
+
+		void createWindow(int width, int height, string title) {
+			Html5.createCanvas(width, height);
+		}
+
+		void closeWindow() { /* no need, can just leave it on the page */ }
+
+		void dispose() { }
+
+		bool destroyed = false;
+
+		int eventLoop(long pulseTimeout) {
+			bool done = false;
+
+			while (!done) {
+			while(!done &&
+				(pulseTimeout == 0 || socket.recvAvailable()))
+			{
+				//done = doXNextEvent(this); // FIXME: what about multiple windows? This wasn't originally going to support them but maybe I should
+			}
+				if(!done && pulseTimeout !=0) {
+					if(handlePulse !is null)
+						handlePulse();
+					Thread.sleep(dur!"msecs"(pulseTimeout));
+				}
+			}
+
+			return 0;
+		}
+	}
+
+	struct JsImpl { string code; }
+
+	struct Html5 {
+		@JsImpl(q{
+
+		})
+		static void createImage(int handle, Image i) {
+
+		}
+
+		static void freeImage(int handle) {
+
+		}
+
+		static void createCanvas(int width, int height) {
+
+		}
+	}
 }
