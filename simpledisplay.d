@@ -112,7 +112,7 @@ struct Pen {
 }
 
 
-class Image {
+final class Image {
 	this(int width, int height) {
 		this.width = width;
 		this.height = height;
@@ -128,7 +128,7 @@ class Image {
 		impl.dispose();
 	}
 
-	void putPixel(int x, int y, Color c) {
+	final void putPixel(int x, int y, Color c) {
 		if(x < 0 || x >= width)
 			return;
 		if(y < 0 || y >= height)
@@ -137,7 +137,7 @@ class Image {
 		impl.setPixel(x, y, c);
 	}
 
-	void opIndexAssign(Color c, int x, int y) {
+	final void opIndexAssign(Color c, int x, int y) {
 		putPixel(x, y, c);
 	}
 
@@ -148,6 +148,39 @@ class Image {
 			where = new ubyte[this.width*this.height*4];
 		convertToRgbaBytes(where);
 		return where;
+	}
+
+	// FIXME: make properly cross platform by getting rgba right
+
+	/// warning: this is not portable across platforms because the data format can change
+	ubyte* getDataPointer() {
+		return impl.rawData;
+	}
+
+	/// for use with getDataPointer
+	final int bytesPerLine() const pure @safe nothrow {
+		version(Windows)
+			return ((cast(int) width * 3 + 3) / 4) * 4;
+		else version(X11)
+			return 4 * width;
+		else version(OSXCocoa)
+			return 4 * width;
+		else version(html5)
+			return 4 * width;
+		else static assert(0);
+	}
+
+	/// for use with getDataPointer
+	final int bytesPerPixel() const pure @safe nothrow {
+		version(Windows)
+			return 3;
+		else version(X11)
+			return 4;
+		else version(OSXCocoa)
+			return 4;
+		else version(html5)
+			return 4;
+		else static assert(0);
 	}
 
 	immutable int width;
@@ -320,7 +353,7 @@ class Sprite {
 			infoheader.bmiHeader.biBitCount = 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
 
-			byte* rawData;
+			ubyte* rawData;
 
 			// FIXME: this should prolly be a device dependent bitmap...
 			handle = enforce(CreateDIBSection(
@@ -937,7 +970,7 @@ version(Windows) {
 
 	mixin template NativeImageImplementation() {
 		HBITMAP handle;
-		byte* rawData;
+		ubyte* rawData;
 
 		void setPixel(int x, int y, Color c) {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
@@ -1198,14 +1231,14 @@ version(X11) {
 
 	mixin template NativeImageImplementation() {
 		XImage* handle;
-		byte* rawData;
+		ubyte* rawData;
 
 		void createImage(int width, int height) {
 			auto display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
 
 			// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
-			rawData = cast(byte*) malloc(width * height * 4);
+			rawData = cast(ubyte*) malloc(width * height * 4);
 
 			handle = XCreateImage(
 				display,
@@ -1807,7 +1840,7 @@ XImage *XCreateImage(
     uint	/* depth */,
     int			/* format */,
     int			/* offset */,
-    byte*		/* data */,
+    ubyte*		/* data */,
     uint	/* width */,
     uint	/* height */,
     int			/* bitmap_pad */,
