@@ -1,4 +1,19 @@
 module arsd.png;
+/*
+//Here's a simple test program that shows how to write a quick image viewer with simpledisplay:
+
+import arsd.png;
+import simpledisplay;
+
+import std.file;
+void main(string[] args) {
+	auto tci = imageFromPng(readPng(cast(ubyte[]) read(args[1]))).getAsTrueColorImage();
+
+	auto convertedImage = new simpledisplay.Image(tci.width, tci.height);
+	convertedImage.setRgbaBytes(tci.imageData.bytes);
+	displayImage(convertedImage);
+}
+*/
 
 // By Adam D. Ruppe, 2009-2010, released into the public domain
 import std.stdio;
@@ -6,24 +21,114 @@ import std.conv;
 import std.file;
 
 import std.zlib;
+import std.array;
 
 public import arsd.image;
 
 /**
-	The return value should be casted to indexed or truecolor depending on what you need.
+	The return value should be casted to indexed or truecolor depending on what the file is. You can
+	also use getAsTrueColorImage to forcibly convert it if needed.
 
-	To get an image from a png file, do this:
+	To get an image from a png file, do something like this:
 
 	auto i = cast(TrueColorImage) imageFromPng(readPng(cast(ubyte)[]) std.file.read("file.png")));
 */
 Image imageFromPng(PNG* png) {
-	PNGHeader h = getHeader(png);
+	PngHeader h = getHeader(png);
 
-	return new IndexedImage(h.width, h.height);
+	/** Types from the PNG spec:
+		0 - greyscale
+		2 - truecolor
+		3 - indexed color
+		4 - grey with alpha
+		6 - true with alpha
+
+		1, 5, and 7 are invalid.
+
+		There's a kind of bitmask going on here:
+			If type&1, it has a palette.
+			If type&2, it is in color.
+			If type&4, it has an alpha channel in the datastream.
+	*/
+
+	Image i;
+	ubyte[] idata;
+	// FIXME: some duplication with the lazy reader below in the module
+
+	switch(h.type) {
+		case 0: // greyscale
+		case 4: // greyscale with alpha
+			// this might be a different class eventually...
+			auto a = new TrueColorImage(h.width, h.height);
+			idata = a.imageData.bytes;
+			i = a;
+		break;
+		case 2: // truecolor
+		case 6: // truecolor with alpha
+			auto a = new TrueColorImage(h.width, h.height);
+			idata = a.imageData.bytes;
+			i = a;
+		break;
+		case 3: // indexed
+			auto a = new IndexedImage(h.width, h.height);
+			a.palette = fetchPalette(png);
+			a.hasAlpha = true; // FIXME: don't be so conservative here
+			idata = a.data;
+			i = a;
+		break;
+		default:
+			assert(0, "invalid png");
+	}
+
+	auto idataIdx = 0;
+	assert(h.depth == 8, "bit depths other than 8 not yet implemented");
+
+	auto file = LazyPngFile!(Chunk[])(png.chunks);
+	immutable(ubyte)[] previousLine;
+	auto bpp = bytesPerPixel(h);
+	foreach(line; file.rawDatastreamByChunk()) {
+		auto filter = line[0];
+		auto data = unfilter(filter, line[1 .. $], previousLine, bpp);
+		ubyte consumeOne() {
+			ubyte ret = data[0];
+			data = data[1 .. $];
+			return ret;
+		}
+		previousLine = data;
+
+		foreach(pixel; 0 .. h.width)
+			switch(h.type) {
+				case 0: // greyscale
+				case 4: // greyscale with alpha
+					auto value = consumeOne();
+					idata[idataIdx++] = value;
+					idata[idataIdx++] = value;
+					idata[idataIdx++] = value;
+					idata[idataIdx++] = (h.type == 4) ? consumeOne() : 255;
+				break;
+				case 3: // indexed
+					idata[idataIdx++] = consumeOne();
+				break;
+				case 2: // truecolor
+				case 6: // true with alpha
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
+				break;
+				default: assert(0);
+			}
+		assert(data.length == 0, "not all consumed, wtf");
+	}
+	assert(idataIdx == idata.length, "not all filled, wtf");
+
+	assert(i !is null);
+
+	return i;
 }
 
 /*
-struct PNGHeader {
+struct PngHeader {
 	uint width;
 	uint height;
 	ubyte depth = 8;
@@ -36,7 +141,7 @@ struct PNGHeader {
 
 
 PNG* pngFromImage(IndexedImage i) {
-	PNGHeader h;
+	PngHeader h;
 	h.width = i.width;
 	h.height = i.height;
 	h.type = 3;
@@ -144,13 +249,13 @@ PNG* pngFromImage(IndexedImage i) {
 }
 
 PNG* pngFromImage(TrueColorImage i) {
-	PNGHeader h;
+	PngHeader h;
 	h.width = i.width;
 	h.height = i.height;
 	// FIXME: optimize it if it is greyscale or doesn't use alpha alpha
 
 	auto png = blankPNG(h);
-	addImageDatastreamToPng(i.data, png);
+	addImageDatastreamToPng(i.imageData.bytes, png);
 
 	return png;
 }
@@ -167,13 +272,6 @@ void main(string[] args) {
 	writefln("\n\n%d", f.length);
 }
 */
-
-struct Chunk {
-	uint size;
-	ubyte[4] type;
-	ubyte[] payload;
-	uint checksum;
-}
 
 struct PNG {
 	uint length;
@@ -203,7 +301,7 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	PNG* png;
 	ubyte[] com;
 {
-	PNGHeader h;
+	PngHeader h;
 	h.width = image.width;
 	h.height = image.height;
 	png = blankPNG(h);
@@ -221,9 +319,9 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	auto lineBuffer = (cast(ubyte*)malloc(1 + bytesPerLine))[0 .. 1+bytesPerLine];
 	scope(exit) free(lineBuffer.ptr);
 
-	while(pos+bytesPerLine <= image.data.length) {
+	while(pos+bytesPerLine <= image.imageData.bytes.length) {
 		lineBuffer[0] = 0;
-		lineBuffer[1..1+bytesPerLine] = image.data[pos.. pos+bytesPerLine];
+		lineBuffer[1..1+bytesPerLine] = image.imageData.bytes[pos.. pos+bytesPerLine];
 		com ~= cast(ubyte[]) compressor.compress(lineBuffer);
 		pos += bytesPerLine;
 	}
@@ -306,7 +404,7 @@ ubyte[] writePng(PNG* p) {
 	return a;
 }
 
-PNGHeader getHeaderFromFile(string filename) {
+PngHeader getHeaderFromFile(string filename) {
 	import std.stdio;
 	auto file = File(filename, "rb");
 	ubyte[12] initialBuffer; // file header + size of first chunk (should be IHDR)
@@ -372,7 +470,7 @@ PNG* readPng(ubyte[] data) {
 	return p;
 }
 
-PNG* blankPNG(PNGHeader h) {
+PNG* blankPNG(PngHeader h) {
 	auto p = new PNG;
 	p.header = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -415,7 +513,7 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 	// then compress it into an IDAT chunk
 	// then add the IEND chunk
 
-	PNGHeader h = getHeader(png);
+	PngHeader h = getHeader(png);
 
 	auto bytesPerLine = h.width * 4;
 	if(h.type == 3)
@@ -448,15 +546,7 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 }
 
-struct PNGHeader {
-	uint width;
-	uint height;
-	ubyte depth = 8;
-	ubyte type = 6; // 0 - greyscale, 2 - truecolor, 3 - indexed color, 4 - grey with alpha, 6 - true with alpha
-	ubyte compressionMethod = 0; // should be zero
-	ubyte filterMethod = 0; // should be zero
-	ubyte interlaceMethod = 0; // bool
-}
+deprecated alias PngHeader PNGHeader;
 
 // bKGD - palette entry for background or the RGB (16 bits each) for that. or 16 bits of grey
 
@@ -474,7 +564,7 @@ ubyte[] getDatastream(PNG* p) {
 
 // FIXME: Assuming 8 bits per pixel
 ubyte[] getUnfilteredDatastream(PNG* p) {
-	PNGHeader h = getHeader(p);
+	PngHeader h = getHeader(p);
 	assert(h.filterMethod == 0);
 
 	assert(h.type == 3); // FIXME
@@ -497,7 +587,7 @@ ubyte[] getUnfilteredDatastream(PNG* p) {
 }
 
 ubyte[] getFlippedUnfilteredDatastream(PNG* p) {
-	PNGHeader h = getHeader(p);
+	PngHeader h = getHeader(p);
 	assert(h.filterMethod == 0);
 
 	assert(h.type == 3); // FIXME
@@ -530,7 +620,7 @@ ubyte getLowNybble(ubyte a) {
 
 // Takes the transparency info and returns
 ubyte[] getANDMask(PNG* p) {
-	PNGHeader h = getHeader(p);
+	PngHeader h = getHeader(p);
 	assert(h.filterMethod == 0);
 
 	assert(h.type == 3); // FIXME
@@ -578,8 +668,8 @@ ubyte[] getANDMask(PNG* p) {
 
 // Done with assumption
 
-PNGHeader getHeader(PNG* p) {
-	PNGHeader h;
+PngHeader getHeader(PNG* p) {
+	PngHeader h;
 	ubyte[] data = p.getChunk("IHDR").payload;
 
 	int pos = 0;
@@ -735,4 +825,876 @@ uint crc(in string lol, in ubyte[] buf){
 	uint c = update_crc(0xffffffffL, cast(ubyte[]) lol);
 	return update_crc(c, buf) ^ 0xffffffffL;
 }
+
+
+/* former module arsd.lazypng follows */
+
+// this is like png.d but all range based so more complicated...
+// and I don't remember how to actually use it.
+
+// some day I'll prolly merge it with png.d but for now just throwing it up there
+
+//module arsd.lazypng;
+
+import arsd.color;
+
+import std.stdio;
+
+import std.range;
+import std.traits;
+import std.exception;
+import std.string;
+import std.conv;
+
+/*
+struct Color {
+	ubyte r;
+	ubyte g;
+	ubyte b;
+	ubyte a;
+
+	string toString() {
+		return format("#%2x%2x%2x %2x", r, g, b, a);
+	}
+}
+*/
+
+//import simpledisplay;
+
+struct RgbaScanline {
+	Color[] pixels;
+}
+
+
+auto convertToGreyscale(ImageLines)(ImageLines lines)
+	if(isInputRange!ImageLines && is(ElementType!ImageLines == RgbaScanline))
+{
+	struct GreyscaleLines {
+		ImageLines lines;
+		bool isEmpty;
+		this(ImageLines lines) {
+			this.lines = lines;
+			if(!empty())
+				popFront(); // prime
+		}
+
+		int length() {
+			return lines.length;
+		}
+
+		bool empty() {
+			return isEmpty;
+		}
+
+		RgbaScanline current;
+		RgbaScanline front() {
+			return current;
+		}
+
+		void popFront() {
+			if(lines.empty()) {
+				isEmpty = true;
+				return;
+			}
+			auto old = lines.front();
+			current.pixels.length = old.pixels.length;
+			foreach(i, c; old.pixels) {
+				ubyte v = cast(ubyte) (
+					cast(int) c.r * 0.30 +
+					cast(int) c.g * 0.59 +
+					cast(int) c.b * 0.11);
+				current.pixels[i] = Color(v, v, v, c.a);
+			}
+			lines.popFront;
+		}
+	}
+
+	return GreyscaleLines(lines);
+}
+
+
+
+
+/// Lazily breaks the buffered input range into
+/// png chunks, as defined in the PNG spec
+///
+/// Note: bufferedInputRange is defined in this file too.
+LazyPngChunks!(Range) readPngChunks(Range)(Range r)
+	if(isBufferedInputRange!(Range) && is(ElementType!(Range) == ubyte[]))
+{
+	// First, we need to check the header
+	// Then we'll lazily pull the chunks
+
+	while(r.front.length < 8) {
+		enforce(!r.empty(), "This isn't big enough to be a PNG file");
+		r.appendToFront();
+	}
+
+	enforce(r.front[0..8] == PNG_MAGIC_NUMBER,
+		"The file's magic number doesn't look like PNG");
+
+	r.consumeFromFront(8);
+
+	return LazyPngChunks!Range(r);
+}
+
+/// Same as above, but takes a regular input range instead of a buffered one.
+/// Provided for easier compatibility with standard input ranges
+/// (for example, std.stdio.File.byChunk)
+auto readPngChunks(Range)(Range r)
+	if(!isBufferedInputRange!(Range) && isInputRange!(Range))
+{
+	return readPngChunks(BufferedInputRange!Range(r));
+}
+
+/// Given an input range of bytes, return a lazy PNG file
+auto pngFromBytes(Range)(Range r)
+	if(isInputRange!(Range) && is(ElementType!Range == ubyte[]))
+{
+	auto chunks = readPngChunks(r);
+	auto file = LazyPngFile!(typeof(chunks))(chunks);
+
+	return file;
+}
+
+struct LazyPngChunks(T)
+	if(isBufferedInputRange!(T) && is(ElementType!T == ubyte[]))
+{
+	T bytes;
+	Chunk current;
+
+	this(T range) {
+		bytes = range;
+		popFront(); // priming it
+	}
+
+	Chunk front() {
+		return current;
+	}
+
+	bool empty() {
+		return (bytes.front.length == 0 && bytes.empty);
+	}
+
+	void popFront() {
+		enforce(!empty());
+
+		while(bytes.front().length < 4) {
+			enforce(!bytes.empty,
+				format("Malformed PNG file - chunk size too short (%s < 4)",
+					bytes.front().length));
+			bytes.appendToFront();
+		}
+
+		Chunk n;
+		n.size |= bytes.front()[0] << 24;
+		n.size |= bytes.front()[1] << 16;
+		n.size |= bytes.front()[2] << 8;
+		n.size |= bytes.front()[3] << 0;
+
+		bytes.consumeFromFront(4);
+
+		while(bytes.front().length < n.size + 8) {
+			enforce(!bytes.empty,
+				format("Malformed PNG file - chunk too short (%s < %s)",
+					bytes.front.length, n.size));
+			bytes.appendToFront();
+		}
+		n.type[0 .. 4] = bytes.front()[0 .. 4];
+		bytes.consumeFromFront(4);
+
+		n.payload.length = n.size;
+		n.payload[0 .. n.size] = bytes.front()[0 .. n.size];
+		bytes.consumeFromFront(n.size);
+
+		n.checksum |= bytes.front()[0] << 24;
+		n.checksum |= bytes.front()[1] << 16;
+		n.checksum |= bytes.front()[2] << 8;
+		n.checksum |= bytes.front()[3] << 0;
+
+		bytes.consumeFromFront(4);
+
+		enforce(n.checksum == crcPng(n.stype, n.payload), "Chunk checksum didn't match");
+
+		current = n;
+	}
+}
+
+/// Lazily reads out basic info from a png (header, palette, image data)
+/// It will only allocate memory to read a palette, and only copies on
+/// the header and the palette. It ignores everything else.
+///
+/// FIXME: it doesn't handle interlaced files.
+struct LazyPngFile(LazyPngChunksProvider)
+	if(isInputRange!(LazyPngChunksProvider) &&
+		is(ElementType!(LazyPngChunksProvider) == Chunk))
+{
+
+	LazyPngChunksProvider chunks;
+
+	this(LazyPngChunksProvider chunks) {
+		enforce(!chunks.empty(), "There are no chunks in this png");
+
+		header = PngHeader.fromChunk(chunks.front());
+		chunks.popFront();
+
+		// And now, find the datastream so we're primed for lazy
+		// reading, saving the palette and transparency info, if
+		// present
+
+		chunkLoop:
+		while(!chunks.empty()) {
+			auto chunk = chunks.front();
+			switch(chunks.front.stype) {
+				case "PLTE":
+					// if it is in color, palettes are
+					// always stored as 8 bit per channel
+					// RGB triplets Alpha is stored elsewhere.
+
+					// FIXME: doesn't do greyscale palettes!
+
+					enforce(chunk.size % 3 == 0);
+					palette.length = chunk.size / 3;
+
+					auto offset = 0;
+					foreach(i; 0 .. palette.length) {
+						palette[i] = Color(
+							chunk.payload[offset+0],
+							chunk.payload[offset+1],
+							chunk.payload[offset+2],
+							255);
+						offset += 3;
+					}
+				break;
+				case "tRNS":
+					// 8 bit channel in same order as
+					// palette
+
+					enforce(chunk.size < palette.length);
+
+					foreach(i, a; chunk.payload)
+						palette[i].a = a;
+				break;
+				case "IDAT":
+					// leave the datastream for later
+					break chunkLoop;
+				default:
+					// ignore chunks we don't care about
+			}
+			chunks.popFront();
+		}
+
+		this.chunks = chunks;
+		enforce(!chunks.empty() && chunks.front().stype == "IDAT",
+			"Malformed PNG file - no image data is present");
+	}
+
+	/// Lazily reads and decompresses the image datastream, returning chunkSize bytes of
+	/// it per front. It does *not* change anything, so the filter byte is still there.
+	///
+	/// If chunkSize == 0, it automatically calculates chunk size to give you data by line.
+	auto rawDatastreamByChunk(int chunkSize = 0) {
+		assert(chunks.front().stype == "IDAT");
+
+		if(chunkSize == 0)
+			chunkSize = bytesPerLine();
+
+		struct DatastreamByChunk(T) {
+			std.zlib.UnCompress decompressor;
+			int chunkSize;
+			T chunks;
+
+			this(int cs, T chunks) {
+				decompressor = new std.zlib.UnCompress();
+				this.chunkSize = cs;
+				this.chunks = chunks;
+
+				popFront(); // priming
+			}
+
+			ubyte[] front() {
+				assert(current.length == chunkSize);
+				return current;
+			}
+
+			ubyte[] current;
+			ubyte[] buffer;
+
+			void popFront() {
+				if(buffer.length < chunkSize) {
+					if(chunks.front().stype != "IDAT") {
+						buffer ~= cast(ubyte[]) decompressor.flush();
+						if(buffer.length != 0)
+							goto stillMore;
+						current = null;
+						buffer = null;
+						return;
+					}
+
+					buffer ~= cast(ubyte[])
+						decompressor.uncompress(chunks.front().payload);
+					chunks.popFront();
+				}
+				stillMore:
+				assert(chunkSize <= buffer.length, format("%s !<= %s remaining data: \n%s", chunkSize, buffer.length, buffer));
+				current = buffer[0 .. chunkSize];
+				buffer = buffer[chunkSize .. $];
+			}
+
+			bool empty() {
+				return (current.length == 0);
+			}
+		}
+
+		auto range = DatastreamByChunk!(typeof(chunks))(chunkSize, chunks);
+
+		return range;
+	}
+
+	auto byRgbaScanline() {
+		static struct ByRgbaScanline {
+			ReturnType!(rawDatastreamByChunk) datastream;
+			RgbaScanline current;
+			PngHeader header;
+			int bpp;
+			Color[] palette;
+
+			bool isEmpty = false;
+
+			bool empty() {
+				return isEmpty;
+			}
+
+			int length() {
+				return header.height;
+			}
+
+			// This is needed for the filter algorithms
+			immutable(ubyte)[] previousLine;
+
+			// FIXME: I think my range logic got screwed somewhere
+			// in the stack... this is messed up.
+			void popFront() {
+				assert(!empty());
+				if(datastream.empty()) {
+					isEmpty = true;
+					return;
+				}
+				current.pixels.length = header.width;
+
+				// ensure it is primed
+				if(datastream.front.length == 0)
+					datastream.popFront;
+
+				auto rawData = datastream.front();
+				auto filter = rawData[0];
+				auto data = unfilter(filter, rawData[1 .. $], previousLine, bpp);
+
+				if(data.length == 0) {
+					isEmpty = true;
+					return;
+				}
+
+				assert(data.length);
+
+				previousLine = data;
+
+				// FIXME: if it's rgba, this could probably be faster
+				assert(header.depth == 8,
+					"Sorry, depths other than 8 aren't implemented yet.");
+
+				auto offset = 0;
+				foreach(i; 0 .. header.width) {
+					switch(header.type) {
+						case 0: // greyscale
+						case 4: // grey with alpha
+							auto value = data[offset++];
+							current.pixels[i] = Color(
+								value,
+								value,
+								value,
+								(header.type == 4)
+									? data[offset++] : 255
+							);
+						break;
+						case 3: // indexed
+							current.pixels[i] = palette[data[offset++]];
+						break;
+						case 2: // truecolor
+						case 6: // true with alpha
+							current.pixels[i] = Color(
+								data[offset++],
+								data[offset++],
+								data[offset++],
+								(header.type == 6)
+									? data[offset++] : 255
+							);
+						break;
+						default:
+							throw new Exception("invalid png file");
+					}
+				}
+
+				assert(offset == data.length);
+				if(!datastream.empty())
+					datastream.popFront();
+			}
+
+			RgbaScanline front() {
+				return current;
+			}
+		}
+
+		assert(chunks.front.stype == "IDAT");
+
+		ByRgbaScanline range;
+		range.header = header;
+		range.bpp = bytesPerPixel;
+		range.palette = palette;
+		range.datastream = rawDatastreamByChunk(bytesPerLine());
+		range.popFront();
+
+		return range;
+	}
+
+	int bytesPerPixel() {
+		return .bytesPerPixel(header);
+	}
+
+	// FIXME: doesn't handle interlacing... I think
+	int bytesPerLine() {
+		immutable bitsPerChannel = header.depth;
+
+		int bitsPerPixel = bitsPerChannel;
+		if(header.type & 2 && !(header.type & 1)) // in color, but no palette
+			bitsPerPixel *= 3;
+		if(header.type & 4) // has alpha channel
+			bitsPerPixel += bitsPerChannel;
+
+
+		immutable int sizeInBits = header.width * bitsPerPixel;
+
+		// need to round up to the nearest byte
+		int sizeInBytes = (sizeInBits + 7) / 8;
+
+		return sizeInBytes + 1; // the +1 is for the filter byte that precedes all lines
+	}
+
+	PngHeader header;
+	Color[] palette;
+}
+
+
+/**************************************************
+ * Buffered input range - generic, non-image code
+***************************************************/
+
+/// Is the given range a buffered input range? That is, an input range
+/// that also provides consumeFromFront(int) and appendToFront()
+template isBufferedInputRange(R) {
+	enum bool isBufferedInputRange =
+		isInputRange!(R) && is(typeof(
+	{
+		R r;
+		r.consumeFromFront(0);
+		r.appendToFront();
+	}()));
+}
+
+/// Allows appending to front on a regular input range, if that range is
+/// an array. It appends to the array rather than creating an array of
+/// arrays; it's meant to make the illusion of one continuous front rather
+/// than simply adding capability to walk backward to an existing input range.
+///
+/// I think something like this should be standard; I find File.byChunk
+/// to be almost useless without this capability.
+
+// FIXME: what if Range is actually an array itself? We should just use
+// slices right into it... I guess maybe r.front() would be the whole
+// thing in that case though, so we would indeed be slicing in right now.
+// Gotta check it though.
+struct BufferedInputRange(Range)
+	if(isInputRange!(Range) && isArray!(ElementType!(Range)))
+{
+	private Range underlyingRange;
+	private ElementType!(Range) buffer;
+
+	/// Creates a buffer for the given range. You probably shouldn't
+	/// keep using the underlying range directly.
+	///
+	/// It assumes the underlying range has already been primed.
+	this(Range r) {
+		underlyingRange = r;
+		// Is this really correct? Want to make sure r.front
+		// is valid but it doesn't necessarily need to have
+		// more elements...
+		enforce(!r.empty());
+
+		buffer = r.front();
+		usingUnderlyingBuffer = true;
+	}
+
+	/// Forwards to the underlying range's empty function
+	bool empty() {
+		return underlyingRange.empty();
+	}
+
+	/// Returns the current buffer
+	ElementType!(Range) front() {
+		return buffer;
+	}
+
+	// actually, not terribly useful IMO. appendToFront calls it
+	// implicitly when necessary
+
+	/// Discard the current buffer and get the next item off the
+	/// underlying range. Be sure to call at least once to prime
+	/// the range (after checking if it is empty, of course)
+	void popFront() {
+		enforce(!empty());
+		underlyingRange.popFront();
+		buffer = underlyingRange.front();
+		usingUnderlyingBuffer = true;
+	}
+
+	bool usingUnderlyingBuffer = false;
+
+	/// Remove the first count items from the buffer
+	void consumeFromFront(int count) {
+		buffer = buffer[count .. $];
+	}
+
+	/// Append the next item available on the underlying range to
+	/// our buffer.
+	void appendToFront() {
+		if(buffer.length == 0) {
+			// may let us reuse the underlying range's buffer,
+			// hopefully avoiding an extra allocation
+			popFront();
+		} else {
+			enforce(!underlyingRange.empty());
+
+			// need to make sure underlyingRange.popFront doesn't overwrite any
+			// of our buffer...
+			if(usingUnderlyingBuffer) {
+				buffer = buffer.dup;
+				usingUnderlyingBuffer = false;
+			}
+
+			underlyingRange.popFront();
+
+			buffer ~= underlyingRange.front();
+		}
+	}
+}
+
+/**************************************************
+ * Lower level implementations of image formats.
+ * and associated helper functions.
+ *
+ * Related to the module, but not particularly
+ * interesting, so it's at the bottom.
+***************************************************/
+
+
+/* PNG file format implementation */
+
+import std.zlib;
+import std.math;
+
+/// All PNG files are supposed to open with these bytes according to the spec
+enum immutable(ubyte[]) PNG_MAGIC_NUMBER = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// A PNG file consists of the magic number then a stream of chunks. This
+/// struct represents those chunks.
+struct Chunk {
+	uint size;
+	ubyte[4] type;
+	ubyte[] payload;
+	uint checksum;
+
+	/// returns the type as a string for easier comparison with literals
+	string stype() const {
+		return cast(string) type;
+	}
+
+	static Chunk* create(string type, ubyte[] payload)
+		in {
+			assert(type.length == 4);
+		}
+	body {
+		Chunk* c = new Chunk;
+		c.size = payload.length;
+		c.type = cast(ubyte[]) type;
+		c.payload = payload;
+
+		c.checksum = crcPng(type, payload);
+
+		return c;
+	}
+
+	/// Puts it into the format for outputting to a file
+	ubyte[] toArray() {
+		ubyte[] a;
+		a.length = size + 12;
+
+		int pos = 0;
+
+		a[pos++] = (size & 0xff000000) >> 24;
+		a[pos++] = (size & 0x00ff0000) >> 16;
+		a[pos++] = (size & 0x0000ff00) >> 8;
+		a[pos++] = (size & 0x000000ff) >> 0;
+
+		a[pos .. pos + 4] = type[0 .. 4];
+		pos += 4;
+
+		a[pos .. pos + size] = payload[0 .. size];
+
+		pos += size;
+
+		assert(checksum);
+
+		a[pos++] = (checksum & 0xff000000) >> 24;
+		a[pos++] = (checksum & 0x00ff0000) >> 16;
+		a[pos++] = (checksum & 0x0000ff00) >> 8;
+		a[pos++] = (checksum & 0x000000ff) >> 0;
+
+		return a;
+	}
+}
+
+/// The first chunk in a PNG file is a header that contains this info
+struct PngHeader {
+	/// Width of the image, in pixels.
+	uint width;
+
+	/// Height of the image, in pixels.
+	uint height;
+
+	/**
+		This is bits per channel - per color for truecolor or grey
+		and per pixel for palette.
+
+		Indexed ones can have depth of 1,2,4, or 8,
+
+		Greyscale can be 1,2,4,8,16
+
+		Everything else must be 8 or 16.
+	*/
+	ubyte depth = 8;
+
+	/** Types from the PNG spec:
+		0 - greyscale
+		2 - truecolor
+		3 - indexed color
+		4 - grey with alpha
+		6 - true with alpha
+
+		1, 5, and 7 are invalid.
+
+		There's a kind of bitmask going on here:
+			If type&1, it has a palette.
+			If type&2, it is in color.
+			If type&4, it has an alpha channel in the datastream.
+	*/
+	ubyte type = 6;
+
+	ubyte compressionMethod = 0; /// should be zero
+	ubyte filterMethod = 0; /// should be zero
+	/// 0 is non interlaced, 1 if Adam7. No more are defined in the spec
+	ubyte interlaceMethod = 0;
+
+	static PngHeader fromChunk(in Chunk c) {
+		enforce(c.stype == "IHDR",
+			"The chunk is not an image header");
+
+		PngHeader h;
+		auto data = c.payload;
+		int pos = 0;
+
+		enforce(data.length == 13,
+			"Malformed PNG file - the IHDR is the wrong size");
+
+		h.width |= data[pos++] << 24;
+		h.width |= data[pos++] << 16;
+		h.width |= data[pos++] << 8;
+		h.width |= data[pos++] << 0;
+
+		h.height |= data[pos++] << 24;
+		h.height |= data[pos++] << 16;
+		h.height |= data[pos++] << 8;
+		h.height |= data[pos++] << 0;
+
+		h.depth = data[pos++];
+		h.type = data[pos++];
+		h.compressionMethod = data[pos++];
+		h.filterMethod = data[pos++];
+		h.interlaceMethod = data[pos++];
+
+		return h;
+	}
+
+	Chunk* toChunk() {
+		ubyte[] data;
+		data.length = 13;
+		int pos = 0;
+
+		data[pos++] = width >> 24;
+		data[pos++] = (width >> 16) & 0xff;
+		data[pos++] = (width >> 8) & 0xff;
+		data[pos++] = width & 0xff;
+
+		data[pos++] = height >> 24;
+		data[pos++] = (height >> 16) & 0xff;
+		data[pos++] = (height >> 8) & 0xff;
+		data[pos++] = height & 0xff;
+
+		data[pos++] = depth;
+		data[pos++] = type;
+		data[pos++] = compressionMethod;
+		data[pos++] = filterMethod;
+		data[pos++] = interlaceMethod;
+
+		assert(pos == 13);
+
+		return Chunk.create("IHDR", data);
+	}
+}
+
+void writePngLazy(OutputRange, InputRange)(OutputRange where, InputRange image)
+	if(
+		isOutputRange!(OutputRange, ubyte[]) &&
+		isInputRange!(InputRange) &&
+		is(ElementType!InputRange == RgbaScanline))
+{
+	where.put(PNG_MAGIC_NUMBER);
+	PngHeader header;
+
+	assert(!image.empty());
+
+	// using the default values for header here... FIXME not super clear
+
+	header.width = image.front.pixels.length;
+	header.height = image.length;
+
+	enforce(header.width > 0, "Image width <= 0");
+	enforce(header.height > 0, "Image height <= 0");
+
+	where.put(header.toChunk().toArray());
+
+	auto compressor = new std.zlib.Compress();
+	const(void)[] compressedData;
+	int cnt;
+	foreach(line; image) {
+		// YOU'VE GOT TO BE FUCKING KIDDING ME!
+		// I have to /cast/ to void[]!??!?
+
+		ubyte[] data;
+		data.length = 1 + header.width * 4;
+		data[0] = 0; // filter type
+		int offset = 1;
+		foreach(pixel; line.pixels) {
+			data[offset++] = pixel.r;
+			data[offset++] = pixel.g;
+			data[offset++] = pixel.b;
+			data[offset++] = pixel.a;
+		}
+
+		compressedData ~= compressor.compress(cast(void[])
+			data);
+		if(compressedData.length > 2_000) {
+			where.put(Chunk.create("IDAT", cast(ubyte[])
+				compressedData).toArray());
+			compressedData = null;
+		}
+
+		cnt++;
+	}
+
+	assert(cnt == header.height, format("Got %d lines instead of %d", cnt, header.height));
+
+	compressedData ~= compressor.flush();
+	if(compressedData.length)
+		where.put(Chunk.create("IDAT", cast(ubyte[])
+			compressedData).toArray());
+
+	where.put(Chunk.create("IEND", null).toArray());
+}
+
+// bKGD - palette entry for background or the RGB (16 bits each) for that. or 16 bits of grey
+
+uint crcPng(in string chunkName, in ubyte[] buf){
+	uint c = update_crc(0xffffffffL, cast(ubyte[]) chunkName);
+	return update_crc(c, buf) ^ 0xffffffffL;
+}
+
+immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previousLine, int bpp) {
+	// Note: the overflow arithmetic on the ubytes in here is intentional
+	switch(filterType) {
+		case 0:
+			return data.idup; // FIXME is copying really necessary?
+		case 1:
+			auto arr = data.dup;
+			// first byte gets zero added to it so nothing special
+			foreach(i; bpp .. arr.length) {
+				arr[i] += arr[i - bpp];
+			}
+
+			return assumeUnique(arr);
+		case 2:
+			auto arr = data.dup;
+			foreach(i; 0 .. arr.length) {
+				arr[i] += previousLine[i];
+			}
+
+			return assumeUnique(arr);
+		case 3:
+			auto arr = data.dup;
+			foreach(i; 0 .. arr.length) {
+				auto prev = i < bpp ? 0 : arr[i - bpp];
+				arr[i] += cast(ubyte)
+					std.math.floor( cast(int) (prev + previousLine[i]) / 2);
+			}
+
+			return assumeUnique(arr);
+		case 4:
+			auto arr = data.dup;
+			foreach(i; 0 .. arr.length) {
+				ubyte prev   = i < bpp ? 0 : arr[i - bpp];
+				ubyte prevLL = i < bpp ? 0 : previousLine[i - bpp];
+
+				arr[i] += PaethPredictor(prev, previousLine[i], prevLL);
+			}
+
+			return assumeUnique(arr);
+		default:
+			throw new Exception("invalid PNG file, bad filter type");
+	}
+}
+
+ubyte PaethPredictor(ubyte a, ubyte b, ubyte c) {
+	int p = cast(int) a + b - c;
+	auto pa = abs(p - a);
+	auto pb = abs(p - b);
+	auto pc = abs(p - c);
+
+	if(pa <= pb && pa <= pc)
+		return a;
+	if(pb <= pc)
+		return b;
+	return c;
+}
+
+int bytesPerPixel(PngHeader header) {
+	immutable bitsPerChannel = header.depth;
+
+	int bitsPerPixel = bitsPerChannel;
+	if(header.type & 2 && !(header.type & 1)) // in color, but no palette
+		bitsPerPixel *= 3;
+	if(header.type & 4) // has alpha channel
+		bitsPerPixel += bitsPerChannel;
+
+	return (bitsPerPixel + 7) / 8;
+}
+
 

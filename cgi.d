@@ -2715,11 +2715,45 @@ class ListeningConnectionManager {
 		running = true;
 		shared(int) loopBroken;
 
+		version(cgi_multiple_connections_per_thread) {
+			ConnectionThread[16] pool;
+			foreach(ref t; pool) {
+				t = new ConnectionThread(null, &loopBroken, dg);
+				t.start();
+			}
+		}
+
+
 		while(!loopBroken && running) {
 			auto sn = listener.accept();
 			try {
-				auto thread = new ConnectionThread(sn, &loopBroken, dg);
-				thread.start();
+				version(cgi_no_threads) {
+					// NEVER USE THIS
+					// it exists only for debugging and other special occasions
+
+					// the thread mode is faster and less likely to stall the whole
+					// thing when a request is slow
+					dg(sn);
+				} else {
+					/*
+					version(cgi_multiple_connections_per_thread) {
+						bool foundOne = false;
+						tryAgain:
+						foreach(t; pool)
+							if(t.s is null) {
+								t.s = sn;
+								foundOne = true;
+								break;
+							}
+						Thread.sleep(dur!"msecs"(1));
+						if(!foundOne)
+							goto tryAgain;
+					} else {
+					*/
+						auto thread = new ConnectionThread(sn, &loopBroken, dg);
+						thread.start();
+					//}
+				}
 				// loopBroken = dg(sn);
 			} catch(Exception e) {
 				// if a connection goes wrong, we want to just say no, but try to carry on unless it is an Error of some sort (in which case, we'll die. You might want an external helper program to revive the server when it dies)
@@ -2752,7 +2786,21 @@ class ConnectionThread : Thread {
 		this.s = s;
 	 	this.breakSignifier = breakSignifier;
 		this.dg = dg;
-		super(&run);
+		super(&runAll);
+	}
+
+	void runAll() {
+		if(s !is null)
+			run();
+		/*
+		version(cgi_multiple_connections_per_thread) {
+			while(1) {
+				while(s is null)
+					sleep(dur!"msecs"(1));
+				run();
+			}
+		}
+		*/
 	}
 
 	void run() {
@@ -2761,6 +2809,7 @@ class ConnectionThread : Thread {
 			// might be fragile, but meh
 			if(s.handle() != socket_t.init)
 				s.close();
+			s = null; // so we know this thread is clear
 		}
 		if(auto result = dg(s)) {
 			*breakSignifier = result;
@@ -2981,6 +3030,7 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 }
 
 version(cgi_with_websocket) {
+	// http://tools.ietf.org/html/rfc6455
 
 	/**
 		WEBSOCKET SUPPORT:
@@ -3022,6 +3072,19 @@ version(cgi_with_websocket) {
 			this.cgi = cgi;
 		}
 
+		// returns true if data available, false if it timed out
+		bool recvAvailable(Duration timeout = dur!"msecs"(0)) {
+			Socket socket = cgi.idlol.source;
+
+			auto check = new SocketSet();
+			check.add(socket);
+
+			auto got = Socket.select(check, null, null, timeout);
+			if(got > 0)
+				return true;
+			return false;
+		}
+
 		// note: this blocks
 		WebSocketMessage recv() {
 			// FIXME: should we automatically handle pings and pongs?
@@ -3057,6 +3120,16 @@ version(cgi_with_websocket) {
 
 		void close() {
 			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.close, null);
+			msg.send(cgi);
+		}
+
+		void ping() {
+			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.ping, null);
+			msg.send(cgi);
+		}
+
+		void pong() {
+			auto msg = WebSocketMessage.simpleMessage(WebSocketOpcode.pong, null);
 			msg.send(cgi);
 		}
 	}
@@ -3201,7 +3274,7 @@ version(cgi_with_websocket) {
 				}
 			}
 
-			writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
+			//writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
 			cgi.write(headerScratch[0 .. headerScratchPos]);
 			cgi.write(data);
 		}

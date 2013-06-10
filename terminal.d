@@ -580,7 +580,7 @@ struct Terminal {
 				import std.string;
 
 				if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
-					writeStringRaw(xformat("\033[%dm\033[3%dm\033[4%dm",
+					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm",
 						(foreground & Bright) ? 1 : 0,
 						cast(int) foreground & ~Bright,
 						cast(int) background & ~Bright));
@@ -649,7 +649,7 @@ struct Terminal {
 		} else {
 			import std.string;
 			if(terminalInFamily("xterm", "rxvt", "screen"))
-				writeStringRaw(xformat("\033]0;%s\007", t));
+				writeStringRaw(format("\033]0;%s\007", t));
 		}
 	}
 

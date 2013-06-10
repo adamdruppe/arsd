@@ -124,7 +124,7 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	}
 
     again2:
-	start.innerHTML = start.innerHTML().replace("\u0001", "\n");
+	//start.innerHTML = start.innerHTML().replace("\u0001", "\n");
 
 	foreach(ele; start.tree) {
 		if(ele.tagName == "td") {
@@ -172,6 +172,9 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	result = result.replace("&#33303;", "'"); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere
 	result = result.replace("&quot;", "\""); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere
 	//result = htmlEntitiesDecode(result);  // for special chars mainly
+
+	result = result.replace("\u0001 ", "\n");
+	result = result.replace("\u0001", "\n");
 
 	//a = std.regex.replace(a, std.regex.regex("(\n\t)+", "g"), "\n"); //\t");
 	return result.strip;

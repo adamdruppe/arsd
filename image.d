@@ -20,16 +20,11 @@ module arsd.image;
 */
 
 import arsd.color;
-/*
-struct Color {
-	ubyte r;
-	ubyte g;
-	ubyte b;
-	ubyte a = 255;
-}
-*/
-interface Image {
 
+interface Image {
+	//IndexedImage convertToIndexedImage() const;
+	//TrueColorImage convertToTrueColor() const;
+	TrueColorImage getAsTrueColorImage();
 }
 
 class IndexedImage : Image {
@@ -46,14 +41,24 @@ class IndexedImage : Image {
 		data = new ubyte[w*h];
 	}
 
+	/*
 	void resize(int w, int h, bool scale) {
 
 	}
-/+
-	TrueColorImage convertToTrueColor() const {
+	*/
 
+	override TrueColorImage getAsTrueColorImage() {
+		return convertToTrueColor();
 	}
-+/
+
+	TrueColorImage convertToTrueColor() const {
+		auto tci = new TrueColorImage(width, height);
+		foreach(i, b; data) {
+			tci.imageData.colors[i] = palette[b];
+		}
+		return tci;
+	}
+
 	ubyte getOrAddColor(Color c) {
 		foreach(i, co; palette) {
 			if(c == co)
@@ -80,7 +85,16 @@ class IndexedImage : Image {
 class TrueColorImage : Image {
 //	bool hasAlpha;
 //	bool isGreyscale;
-	ubyte[] data; // stored as rgba quads, upper left to right to bottom
+	//ubyte[] data; // stored as rgba quads, upper left to right to bottom
+	union Data {
+		ubyte[] bytes;
+		Color[] colors;
+
+		static assert(Color.sizeof == 4);
+	}
+
+	Data imageData;
+	alias imageData.bytes data;
 
 	int width;
 	int height;
@@ -88,7 +102,11 @@ class TrueColorImage : Image {
 	this(int w, int h) {
 		width = w;
 		height = h;
-		data = new ubyte[w*h*4];
+		imageData.bytes = new ubyte[w*h*4];
+	}
+
+	override TrueColorImage getAsTrueColorImage() {
+		return this;
 	}
 
 /+

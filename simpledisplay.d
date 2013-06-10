@@ -141,13 +141,20 @@ final class Image {
 		putPixel(x, y, c);
 	}
 
-	// if you pass in a buffer, it will put it right there. length must be width*height*4 already
-	// if you pass null, it will allocate a new one.
+	/// this is here for interop with arsd.image. where can be a TrueColorImage's data member
+	/// if you pass in a buffer, it will put it right there. length must be width*height*4 already
+	/// if you pass null, it will allocate a new one.
 	ubyte[] getRgbaBytes(ubyte[] where = null) {
 		if(where is null)
 			where = new ubyte[this.width*this.height*4];
 		convertToRgbaBytes(where);
 		return where;
+	}
+
+	/// this is here for interop with arsd.image. from can be a TrueColorImage's data member
+	void setRgbaBytes(in ubyte[] from ) {
+		assert(from.length == this.width * this.height * 4);
+		setFromRgbaBytes(from);
 	}
 
 	// FIXME: make properly cross platform by getting rgba right
@@ -431,8 +438,8 @@ class SimpleWindow {
 	/// width and height is equal to the image. (A window's client area
 	/// is the drawable space inside; it excludes the title bar, etc.)
 	this(Image image, string title = null) {
-		this.backingImage = image;
 		this(image.width, image.height, title);
+		this.image = image;
 	}
 
 	this(Size size, string title = null) {
@@ -444,8 +451,6 @@ class SimpleWindow {
 		this.height = height;
 		impl.createWindow(width, height, title is null ? "D Application" : title);
 	}
-
-	Image backingImage;
 
 	~this() {
 		impl.dispose();
@@ -485,17 +490,30 @@ class SimpleWindow {
 	}
 
 	@property void image(Image i) {
-		backingImage = i;
 		version(Windows) {
+			BITMAP bm;
+			HDC hdc = GetDC(hwnd);
+			HDC hdcMem = CreateCompatibleDC(hdc);
+			HBITMAP hbmOld = SelectObject(hdcMem, i.handle);
+
+			GetObject(i.handle, bm.sizeof, &bm);
+
+			BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+
+			SelectObject(hdcMem, hbmOld);
+			DeleteDC(hdcMem);
+			DeleteDC(hwnd);
+
+			/*
 			RECT r;
 			r.right = i.width;
 			r.bottom = i.height;
-
 			InvalidateRect(hwnd, &r, false);
+			*/
 		} else
 		version(X11) {
 			if(!destroyed)
-			XPutImage(display, cast(Drawable) window, gc, backingImage.handle, 0, 0, 0, 0, backingImage.width, backingImage.height);
+			XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
 		} else
 		version(OSXCocoa) {
            		draw().drawImage(Point(0, 0), i);
@@ -540,55 +558,7 @@ import std.conv;
 import std.math;
 
 Color fromHsl(real h, real s, real l) {
-	h = h % 360;
-
-	real C = (1 - abs(2 * l - 1)) * s;
-
-	real hPrime = h / 60;
-
-	real X = C * (1 - abs(hPrime % 2 - 1));
-
-	real r, g, b;
-
-	if(std.math.isNaN(h))
-		r = g = b = 0;
-	else if (hPrime >= 0 && hPrime < 1) {
-		r = C;
-		g = X;
-		b = 0;
-	} else if (hPrime >= 1 && hPrime < 2) {
-		r = X;
-		g = C;
-		b = 0;
-	} else if (hPrime >= 2 && hPrime < 3) {
-		r = 0;
-		g = C;
-		b = X;
-	} else if (hPrime >= 3 && hPrime < 4) {
-		r = 0;
-		g = X;
-		b = C;
-	} else if (hPrime >= 4 && hPrime < 5) {
-		r = X;
-		g = 0;
-		b = C;
-	} else if (hPrime >= 5 && hPrime < 6) {
-		r = C;
-		g = 0;
-		b = X;
-	}
-
-	real m = l - C / 2;
-
-	r += m;
-	g += m;
-	b += m;
-
-	return Color(
-		cast(ubyte)(r * 255),
-		cast(ubyte)(g * 255),
-		cast(ubyte)(b * 255),
-		255);
+	return arsd.color.fromHsl([h,s,l]);
 }
 
 
@@ -902,19 +872,6 @@ version(Windows) {
 
 					HDC hdc = BeginPaint(hwnd, &ps);
 
-/*
-					if(backingImage !is null) {
-						HDC hdcMem = CreateCompatibleDC(hdc);
-						HBITMAP hbmOld = SelectObject(hdcMem, backingImage.handle);
-
-						GetObject(backingImage.handle, bm.sizeof, &bm);
-
-						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
-
-						SelectObject(hdcMem, hbmOld);
-						DeleteDC(hdcMem);
-					}
-*/
 					HDC hdcMem = CreateCompatibleDC(hdc);
 					HBITMAP hbmOld = SelectObject(hdcMem, buffer);
 
@@ -1003,6 +960,29 @@ version(Windows) {
 				offset = offsetStart - itemsPerLine;
 			}
 		}
+
+		void setFromRgbaBytes(in ubyte[] what) {
+			assert(what.length == this.width * this.height * 4);
+
+			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			int idx = 0;
+			int offset = itemsPerLine * (height - 1);
+			// remember, bmps are upside down
+			for(int y = height - 1; y >= 0; y--) {
+				auto offsetStart = offset;
+				for(int x = 0; x < width; x++) {
+					rawData[offset + 2] = what[idx + 0]; // r
+					rawData[offset + 1] = what[idx + 1]; // g
+					rawData[offset + 0] = what[idx + 2]; // b
+					//where[idx + 3] = 255; // a
+					idx += 4; 
+					offset += 3;
+				}
+
+				offset = offsetStart - itemsPerLine;
+			}
+		}
+
 
 		void createImage(int width, int height) {
 			BITMAPINFO infoheader;
@@ -1280,6 +1260,20 @@ version(X11) {
 				where[idx + 3] = 255; // a
 			}
 		}
+
+		void setFromRgbaBytes(in ubyte[] where) {
+			assert(where.length == this.width * this.height * 4);
+
+			// if rawData had a length....
+			//assert(rawData.length == where.length);
+			for(int idx = 0; idx < where.length; idx += 4) {
+				rawData[idx + 2] = where[idx + 0]; // r
+				rawData[idx + 1] = where[idx + 1]; // g
+				rawData[idx + 0] = where[idx + 2]; // b
+				//rawData[idx + 3] = 255; // a
+			}
+		}
+
 	}
 
 	mixin template NativeSimpleWindowImplementation() {
@@ -1384,8 +1378,6 @@ version(X11) {
 
 		switch(e.type) {
 		  case EventType.Expose:
-			//if(backingImage !is null)
-			//	XPutImage(display, cast(Drawable) window, gc, backingImage.handle, 0, 0, 0, 0, backingImage.width, backingImage.height);
 			XCopyArea(t.display, cast(Drawable) t.buffer, cast(Drawable) t.window, t.gc, 0, 0, t.width, t.height, 0, 0);
 		  break;
 		  case EventType.ClientMessage: // User clicked the close button
@@ -2790,6 +2782,29 @@ version(OSXCocoa) {
 		}
 	}
 
+	void setFromRgbaBytes(in ubyte[] where) {
+		// FIXME: this is probably wrong
+		assert(where.length == this.width * this.height * 4);
+
+		// if rawData had a length....
+		//assert(rawData.length == where.length);
+		for(int idx = 0; idx < where.length; idx += 4) {
+			auto alpha = rawData[idx + 3];
+			if(alpha == 255) {
+				rawData[idx + 0] = where[idx + 0]; // r
+				rawData[idx + 1] = where[idx + 1]; // g
+				rawData[idx + 2] = where[idx + 2]; // b
+				rawData[idx + 3] = where[idx + 3]; // a
+			} else {
+				rawData[idx + 0] = cast(ubyte)(where[idx + 0] * 255 / alpha); // r
+				rawData[idx + 1] = cast(ubyte)(where[idx + 1] * 255 / alpha); // g
+				rawData[idx + 2] = cast(ubyte)(where[idx + 2] * 255 / alpha); // b
+				rawData[idx + 3] = where[idx + 3]; // a
+
+			}
+		}
+	}
+
         
         void createImage(int width, int height) {
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
@@ -3161,6 +3176,14 @@ version(html5) {
 			assert(where.length == this.width * this.height * 4);
 
 			where[] = handle.data[];
+		}
+
+		void setFromRgbaBytes(in ubyte[] where) {
+			if(where is handle.data)
+				return;
+			assert(where.length == this.width * this.height * 4);
+
+			handle.data[] = where[];
 		}
 
 	}

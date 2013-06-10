@@ -2056,11 +2056,12 @@ string toHtml(T)(T a) {
 			ret = a.toString();
 	} else
 	static if(isArray!(T) && !isSomeString!(T)) {
-		static if(__traits(compiles, typeof(T[0]).makeHtmlArray(a)))
-			ret = to!string(typeof(T[0]).makeHtmlArray(a));
-		else
-		foreach(v; a)
-			ret ~= toHtml(v);
+		static if(__traits(compiles, typeof(a[0]).makeHtmlArray(a))) {
+			ret = to!string(typeof(a[0]).makeHtmlArray(a));
+		} else {
+			foreach(v; a)
+				ret ~= toHtml(v);
+		}
 	} else static if(is(T : Element))
 		ret = a.toString();
 	else static if(__traits(compiles, a.makeHtmlElement().toString()))

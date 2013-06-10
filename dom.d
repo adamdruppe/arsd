@@ -1979,7 +1979,10 @@ class Element {
 	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto fs = this;
 		auto i = fs.addChild("label");
-		i.addChild("span", label);
+
+		if(!(type == "checkbox" || type == "radio"))
+			i.addChild("span", label);
+
 		Element input;
 		if(type == "textarea")
 			input = i.addChild("textarea").
@@ -1989,6 +1992,9 @@ class Element {
 			input = i.addChild("input").
 			setAttribute("name", name).
 			setAttribute("type", type);
+
+		if(type == "checkbox" || type == "radio")
+			i.addChild("span", label);
 
 		// these are html 5 attributes; you'll have to implement fallbacks elsewhere. In Javascript or maybe I'll add a magic thing to html.d later.
 		fieldOptions.applyToElement(input);
