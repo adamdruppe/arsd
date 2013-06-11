@@ -8,19 +8,17 @@ Read more about the modules at these links (docs are still works in process):
 cgi.d info: http://arsdnet.net/web.d/cgi.d.html
 web.d info: http://arsdnet.net/web.d/web.d.html
 
-
-Recent bigger changes:
-	web.d can now accept file uploads via hackish thing - make a param with type "Cgi.UploadedFile"
-
 Currently included are:
 
 Web related
 ================
 
-cgi.d  - base module for making webapps in D
+cgi.d  - base module for making webapps in D. Supports cgi, fastcgi, scgi, and embedded_httpd via -version=xxxx
 dom.d  - an xml/html DOM based on what Javascript provides in browsers
 web.d  - a fancier way to write web apps. Uses reflection to make functions
          accessible via url with minimal boilerplate in your code
+email.d - gives read and write support for emails, sending via SMTP and
+          reading mbox files
 
 web.d.php - a PHP library meant to ease integration of php components
 	    with web.d apps. Gives (read) access to the session, and full
@@ -29,20 +27,27 @@ web.d.php - a PHP library meant to ease integration of php components
 html.d - functions to manipulate HTML documents, and now css and javascript
 	 with DOM functions, nested css statements, and macros for css and js.
 
+oauth.d - Oauth 1.0 implementation with some helper functions for facebook, twitter, etc.
+htmltotext.d - converts html into plain text
+
+rtud.d - a real time update helper for HTML5 EventSource. Kinda buggy.
+
 Database related
 ================
 
 database.d  - main interface to databases. Includes DataObject
-mysql.d     - a mysql engine for database.d (most mature of the three)
+mysql.d     - a mysql engine for database.d (most mature of the three). also includes some basic ORM
 postgres.d  - a postgres engne for database.d
 sqlite.d    - a sqlite engine for database.d
 mssql.d     - a (super crappy) mssql engine for database.d (uses ODBC)
+querygenerator.d - a user submission for generating sql queries
 
 Desktop app stuff
 ================
 
 simpledisplay.d - gives quick and easy access to a window for drawing
-simpleaudio.d - gives minimal audio output
+htmlwidget.d - a very small html widget, built on simpledisplay.d
+terminal.d - quick and easy access to a text mode console/terminal
 
 Game stuff
 =================
@@ -58,27 +63,38 @@ engine.d, screen.d, audio.d - a quick wrapper to SDL and OpenGL I used
 Other
 ================
 
+eventloop.d - first draft of a generic event loop that can be reused by several libraries
+              try it with terminal.d or simpledisplay.d with -version=with_eventloop. Only
+              works on Linux right now.
 sha.d  - implementations of the SHA1 and SHA256 algorithms
+image.d - generic image class that can be drawn upon (coming soon) or loaded/written by png.d
 png.d  - provides some png read/write support
+jpg.d  - just reading jpg header right now
 curl.d - a small wrapper around the curl library
 csv.d  - gives read support to csv files
 http.d - a lighterweight alternative to curl.d
-
 color.d - a basic color struct and some HSL functions
+characterencodings.d - conversion to UTF8 of various encodings
 
 
+Obsolete
+================
+lazypng.d - now merged into png.d
+httpd.d - old http server, use cgi.d with -version=embedded_httpd instead
+netman.d - old network helper code, you should try vibe.d <http://vibed.org/> or maybe
+           cgi.d's threaded thing instead since this one is now unmaintained and poor in
+           quality compared to vibe anyway.
+domconvenience.d - now merged into dom.d
 
-Things I might add once I clean up the files (this can be expedited upon
-request, to an extent):
 
-htmlwidget.d - a very small html widget
+Things I'll add when I get the time:
+
 browser.d - a tiny browser based on htmlwidget.d
-netman.d - old code handles net connections  (required by httpd.d)
-imagedraft.d - (temporary name) has algorithms for images
 bmp.d   - gives .bmp read/write
-dws.d  - a draft of my D windowing system (also includes some Qt code)
 wav.d  - reading and writing WAV files
 midi.d - reading and writing MIDI files
+simpleaudio.d - gives minimal audio output
+minimal.zip - a set of minimal D functions, works on bare metal. see: http://arsdnet.net/dcode/minimal.zip
 
 
 Authors:

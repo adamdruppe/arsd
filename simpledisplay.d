@@ -2,6 +2,8 @@ module simpledisplay;
 /*
 	Stuff to add:
 
+	take a screenshot function!
+
 	Pens and brushes?
 	Maybe a global event loop?
 
@@ -22,12 +24,6 @@ version(html5) {} else {
 	version(Solaris)
 		version = X11;
 }
-
-import std.exception;
-import core.thread;
-import std.string; // FIXME: move to drawText X11 on next dmd
-
-import std.stdio;
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
 
@@ -363,13 +359,16 @@ class Sprite {
 			ubyte* rawData;
 
 			// FIXME: this should prolly be a device dependent bitmap...
-			handle = enforce(CreateDIBSection(
+			handle = CreateDIBSection(
 				null,
 				&infoheader,
 				DIB_RGB_COLORS,
 				cast(void**) &rawData,
 				null,
-				0));
+				0);
+
+			if(handle is null)
+				throw new Exception("couldn't create pixmap");
 
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
 			auto arrLength = itemsPerLine * height;
@@ -554,9 +553,6 @@ class SimpleWindow {
 /* Additional utilities */
 
 
-import std.conv;
-import std.math;
-
 Color fromHsl(real h, real s, real l) {
 	return arsd.color.fromHsl([h,s,l]);
 }
@@ -565,7 +561,6 @@ Color fromHsl(real h, real s, real l) {
 
 /* ********** What follows is the system-specific implementations *********/
 version(Windows) {
-	import std.string;
 
 	SimpleWindow[HWND] windowObjects;
 
@@ -782,6 +777,7 @@ version(Windows) {
 			if(!RegisterClass(&wc))
 				throw new Exception("RegisterClass");
 
+			import std.string : toStringz;
 			hwnd = CreateWindow(cn, toStringz(title), WS_OVERLAPPEDWINDOW,
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				null, null, hInstance, null);
@@ -896,6 +892,8 @@ version(Windows) {
 			MSG message;
 			int ret;
 
+			import core.thread;
+
 			if(pulseTimeout) {
 				bool done = false;
 				while(!done) {
@@ -993,13 +991,15 @@ version(Windows) {
 			infoheader.bmiHeader.biBitCount = 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
 
-			handle = enforce(CreateDIBSection(
+			handle = CreateDIBSection(
 				null,
 				&infoheader,
 				DIB_RGB_COLORS,
 				cast(void**) &rawData,
 				null,
-				0));
+				0);
+			if(handle is null)
+				throw new Exception("create image failed");
 
 		}
 
@@ -1016,7 +1016,6 @@ version(X11) {
 	alias Window NativeWindowHandle;
 
 	enum KEY_ESCAPE = 9;
-	import core.stdc.stdlib;
 
 	mixin template NativeScreenPainterImplementation() {
 		Display* display;
@@ -1105,6 +1104,7 @@ version(X11) {
 		}
 
 		void drawText(int x, int y, int x2, int y2, string text) {
+			import std.string : split;
 			foreach(line; text.split("\n")) {
 				XDrawString(display, d, gc, x, y + 12, line.ptr, cast(int) line.length);
 				y += 16;
@@ -1178,7 +1178,9 @@ version(X11) {
 				if(window !is null)
 					this.window = window;
 			if(display is null) {
-				display = enforce(XOpenDisplay(null));
+				display = XOpenDisplay(null);
+				if(display is null)
+					throw new Exception("Unable to open X display");
 				version(with_eventloop) {
 					import arsd.eventloop;
 					addFileEventListeners(display.fd, &eventListener, null, null);
@@ -1199,6 +1201,9 @@ version(X11) {
 		}
 
 		static void close() {
+			if(display is null)
+				return;
+
 			version(with_eventloop) {
 				import arsd.eventloop;
 				removeFileEventListeners(display.fd);
@@ -1218,6 +1223,7 @@ version(X11) {
 			auto screen = DefaultScreen(display);
 
 			// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
+			import core.stdc.stdlib : malloc;
 			rawData = cast(ubyte*) malloc(width * height * 4);
 
 			handle = XCreateImage(
@@ -1232,6 +1238,8 @@ version(X11) {
 		}
 
 		void dispose() {
+			// note: this calls free(rawData) for us
+			if(handle)
 			XDestroyImage(handle);
 		}
 
@@ -1348,6 +1356,7 @@ version(X11) {
 
 		int eventLoop(long pulseTimeout) {
 			bool done = false;
+			import core.thread;
 
 			while (!done) {
 			while(!done &&
@@ -3252,6 +3261,7 @@ version(html5) {
 
 		int eventLoop(long pulseTimeout) {
 			bool done = false;
+			import core.thread;
 
 			while (!done) {
 			while(!done &&

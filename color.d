@@ -1,8 +1,8 @@
 module arsd.color;
 
-import std.math;
-import std.conv;
-import std.algorithm;
+import std.math : abs;
+import std.conv : to;
+import std.algorithm : startsWith, min, max;
 import std.string : strip, split;
 
 struct Color {
@@ -35,7 +35,7 @@ struct Color {
 	*/
 
 	string toCssString() {
-		import std.string;
+		import std.string : format;
 		if(a == 255)
 			return format("#%02x%02x%02x", r, g, b);
 		else
@@ -43,7 +43,7 @@ struct Color {
 	}
 
 	string toString() {
-		import std.string;
+		import std.string : format;
 		if(a == 255)
 			return format("%02x%02x%02x", r, g, b);
 		else

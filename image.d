@@ -19,7 +19,7 @@ module arsd.image;
 
 */
 
-import arsd.color;
+public import arsd.color;
 
 interface Image {
 	//IndexedImage convertToIndexedImage() const;
