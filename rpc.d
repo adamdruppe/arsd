@@ -260,11 +260,11 @@ final public inout(ubyte)[] deserializeInto(T)(inout(ubyte)[] buffer, ref T s) {
 	return buffer;
 }
 
-auto makeNetworkClient(Interface)(string serverHost, ushort serverPort) {
-	static string createClass() {
+mixin template NetworkClient(Interface) {
+	private static string createClass() {
 		// this doesn't actually inherit from the interface because
 		// the return value needs to be handled async
-		string code = `final class Class /*: ` ~ Interface.stringof ~ `*/ {`;
+		string code;// = `final class Class /*: ` ~ Interface.stringof ~ `*/ {`;
 		code ~= "\n\timport std.socket;";
 		code ~= "\n\tprivate Socket socket;";
 		code ~= "\n\tprivate void delegate(const(ubyte)[] buffer)[uint] onSuccesses;";
@@ -406,16 +406,12 @@ auto makeNetworkClient(Interface)(string serverHost, ushort serverPort) {
 			code ~= "\n";
 		}
 
-		code ~= `}`;
+		//code ~= `}`;
 		return code;
 	}
 
 	//pragma(msg, createClass()); // for debugging help
-	#line 363
 	mixin(createClass());
-	#line 365
-
-	return new Class(serverHost, serverPort);
 }
 
 // the protocol is:
