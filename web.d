@@ -1922,9 +1922,10 @@ bool parameterHasDefault(alias func)(int p) {
 	return a[p].length > 0;
 }
 
-string parameterDefaultOf (alias func)(int paramNum) {
-        auto a = parameterDefaultsOf!(func);
-	return a[paramNum];
+template parameterDefaultOf (alias func, int paramNum) {
+	alias parameterDefaultOf = ParameterDefaultValueTuple!func[paramNum];
+        //auto a = parameterDefaultsOf!(func);
+	//return a[paramNum];
 }
 
 sizediff_t indexOfNew(string s, char a) {
@@ -2575,7 +2576,8 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 				}
 				else {
 					static if(parameterHasDefault!(f)(i)) {
-						args[i] = mixin(parameterDefaultOf!(f)(i));
+						// args[i] = mixin(parameterDefaultOf!(f)(i));
+						args[i] = cast(type) parameterDefaultOf!(f, i);
 					} else
 						args[i] = false;
 				}
@@ -2590,7 +2592,8 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 					static if(isArray!(type) && !isSomeString!(type)) {
 						args[i] = null;
 					} else 	static if(parameterHasDefault!(f)(i)) {
-						args[i] = mixin(parameterDefaultOf!(f)(i));
+						//args[i] = mixin(parameterDefaultOf!(f)(i));
+						args[i] = cast(type) parameterDefaultOf!(f, i);
 					} else {
 						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
 					}
