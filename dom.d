@@ -1866,7 +1866,10 @@ class Element {
 	body {
 	+/
 	{
-		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
+		auto e = Element.make(this.tagName);
+		e.parentDocument = this.parentDocument;
+		e.attributes = this.attributes.dup;
+		e.selfClosed = this.selfClosed;
 		foreach(child; children) {
 			e.appendChild(child.cloned);
 		}
@@ -1880,7 +1883,10 @@ class Element {
 			return this.cloned;
 
 		// shallow clone
-		auto e = new Element(parentDocument, tagName, attributes.dup, selfClosed);
+		auto e = Element.make(this.tagName);
+		e.parentDocument = this.parentDocument;
+		e.attributes = this.attributes.dup;
+		e.selfClosed = this.selfClosed;
 		return e;
 	}
 
