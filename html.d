@@ -29,6 +29,7 @@ enum HtmlFeatures : uint {
 	objects = 64, 	/// The <object> tag, which can link to many things, including Flash.
 	iframes = 128, 	/// The <iframe> tag. sandbox and restrict attributes are always added.
 	classes = 256, 	/// The class="" attribute
+	forms = 512, 	/// HTML forms
 }
 
 /// The things to allow in links, images, css, and aother urls.
@@ -53,7 +54,9 @@ string[] htmlTagWhitelist = [
 	"h1", "h2", "h3", "h4", "h5", "h6",
 	"abbr",
 
-	"img", "object", "audio", "video", "a", "source" // note that these usually *are* stripped out - see HtmlFeatures-  but this lets them get into stage 2
+	"img", "object", "audio", "video", "a", "source", // note that these usually *are* stripped out - see HtmlFeatures-  but this lets them get into stage 2
+
+	"form", "input", "textarea", "legend", "fieldset", "label", // ditto, but with HtmlFeatures.forms
 	// style isn't here
 ];
 
@@ -69,8 +72,9 @@ string[] htmlAttributeWhitelist = [
 	"colspan", "rowspan",
 	"title", "alt", "class",
 
-	"href", "src", "type",
+	"href", "src", "type", "name",
 	"id",
+	"method", "enctype", // for forms only FIXME
 
 	"align", "valign", "width", "height",
 ];
@@ -114,6 +118,15 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 		  ||(!(allow & HtmlFeatures.audio) && e.tagName == "audio")
 		  ||(!(allow & HtmlFeatures.objects) && e.tagName == "object")
 		  ||(!(allow & HtmlFeatures.iframes) && e.tagName == "iframe")
+		  ||(!(allow & HtmlFeatures.forms) && (
+		  	e.tagName == "form" ||
+		  	e.tagName == "input" ||
+		  	e.tagName == "textarea" ||
+		  	e.tagName == "label" ||
+		  	e.tagName == "fieldset" ||
+		  	e.tagName == "legend" ||
+			1
+			))
 		) {
 			e.innerText = e.innerText; // strips out non-text children
 			e.stripOut;
