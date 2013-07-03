@@ -931,7 +931,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 
 	// FIXME: this seems to do the right thing with inheritance.... but I don't really understand why. Isn't the override done first, and thus overwritten by the base class version? you know maybe it is all because it still does a vtable lookup on the real object. eh idk, just confirm what it does eventually
 	foreach(Class; TypeTuple!(PM, BaseClassesTuple!(PM)))
-	static if(is(Class : ApiProvider) && !is(Class == ApiProvider))
+	static if((is(Class : ApiProvider) && !is(Class == ApiProvider)) || is(Class : ApiObject))
 	foreach(member; __traits(derivedMembers, Class)) { // we do derived on a base class loop because we don't want interfaces (OR DO WE? seriously idk) and we definitely don't want stuff from Object, ApiProvider itself is out too but that might change.
 	static if(member[0] != '_') {
 		// FIXME: the filthiest of all hacks...
