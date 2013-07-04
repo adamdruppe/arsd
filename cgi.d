@@ -2147,7 +2147,7 @@ string rawurlencode(in char[] data) {
 		} else {
 			ret ~= '%';
 			// since we iterate on char, this should give us the octets of the full utf8 string
-			ret ~= toHex(c);
+			ret ~= toHexUpper(c);
 		}
 	}
 
@@ -2181,6 +2181,19 @@ string toHex(long num) {
 
 	return to!string(array(ret.retro));
 }
+
+string toHexUpper(long num) {
+	string ret;
+	while(num) {
+		int v = num % 16;
+		num /= 16;
+		char d = cast(char) ((v < 10) ? v + '0' : (v-10) + 'A');
+		ret ~= d;
+	}
+
+	return to!string(array(ret.retro));
+}
+
 
 // the generic mixins
 
