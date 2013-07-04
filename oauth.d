@@ -255,9 +255,9 @@ OAuthParams aWeber(string apiKey, string apiSecret) {
 	params.apiSecret = apiSecret;
 
 	params.baseUrl = "https://auth.aweber.com";
-	params.requestTokenPath = "/1.0/oauth/request_token";
-	params.accessTokenPath = "/1.0/oauth/access_token";
-	params.authorizePath = "/1.0/oauth/authorize";
+	params.requestTokenPath = "/1.1/oauth/request_token";
+	params.accessTokenPath = "/1.1/oauth/access_token";
+	params.authorizePath = "/1.1/oauth/authorize";
 
 	// API Base: https://api.aweber.com/1.0/
 
@@ -274,14 +274,14 @@ string tweet(OAuthParams params, string oauthToken, string tokenSecret, string m
 		"token_secret" : tokenSecret,
 	];
 
-	auto data = encodeVariables(["status" : message]);
+	auto data = "status=" ~ rawurlencode(message);//encodeVariables(["status" : message]);
 
-	auto ret = curlOAuth(params, "http://api.twitter.com" ~ "/1/statuses/update.json", args, "POST", data);
+	auto ret = curlOAuth(params, "http://api.twitter.com" ~ "/1.1/statuses/update.json", args, "POST", data);
 
 	auto val = jsonToVariant(ret).get!(Variant[string]);
 	if("id_str" !in val)
 		throw new Exception("bad result from twitter: " ~ ret);
-	return val["id_str"].get!string;
+	return to!string(val);//val["id_str"].get!string;
 }
 
 import std.file;
@@ -512,9 +512,9 @@ struct Pair {
 
 	string output(bool useQuotes = false) {
 		if(useQuotes)
-			return std.uri.encodeComponent(name) ~ "=\"" ~ std.uri.encodeComponent(value) ~ "\"";
+			return std.uri.encodeComponent(name) ~ "=\"" ~ rawurlencode(value) ~ "\"";
 		else
-			return std.uri.encodeComponent(name) ~ "=" ~ std.uri.encodeComponent(value);
+			return std.uri.encodeComponent(name) ~ "=" ~ rawurlencode(value);
 	}
 
 	int opCmp(Pair rhs) {

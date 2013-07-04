@@ -1,4 +1,8 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
+
+// FIXME: to do: add openssl optionally
+// make sure embedded_httpd doesn't send two answers if one writes() then dies
+
 /++
 	Provides a uniform server-side API for CGI, FastCGI, SCGI, and HTTP web applications.
 
@@ -52,6 +56,20 @@
 	If you are looking to access a web application via HTTP, try curl.d.
 +/
 module arsd.cgi;
+
+version(embedded_httpd) {
+	version(Posix)
+		version=embedded_httpd_processes;
+	else
+		version=embedded_httpd_threads;
+
+	/*
+	version(with_openssl) {
+		pragma(lib, "crypto");
+		pragma(lib, "ssl");
+	}
+	*/
+}
 
 enum long defaultMaxContentLength = 5_000_000;
 
@@ -1145,6 +1163,7 @@ class Cgi {
 				auto question = requestUri.indexOf("?");
 				if(question == -1) {
 					queryString = "";
+					// FIXME: double check, this might be wrong since it could be url encoded
 					pathInfo = requestUri[pathInfoStarts..$];
 				} else {
 					queryString = requestUri[question+1..$];
@@ -1863,6 +1882,7 @@ string makeDataUrl(string mimeType, in void[] data) {
 	return "data:" ~ mimeType ~ ";base64," ~ assumeUnique(data64);
 }
 
+// FIXME: I don't think this class correctly decodes/encodes the individual parts
 /// Represents a url that can be broken down or built up through properties
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
@@ -2110,6 +2130,30 @@ string encodeVariables(in string[][string] data) {
 	return ret;
 }
 
+/// Encodes all but the explicitly unreserved characters per rfc 3986
+/// Alphanumeric and -_.~ are the only ones left unencoded
+/// name is borrowed from php
+string rawurlencode(in char[] data) {
+	string ret;
+	ret.reserve(data.length * 2);
+	foreach(char c; data) {
+		if(
+			(c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~')
+		{
+			ret ~= c;
+		} else {
+			ret ~= '%';
+			// since we iterate on char, this should give us the octets of the full utf8 string
+			ret ~= toHex(c);
+		}
+	}
+
+	return ret;
+}
+
 
 // http helper functions
 
@@ -2236,7 +2280,110 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 			serveHttp!CustomCgi(&fun, listeningPort(8080));//5005);
 			return;
 		} else
-		version(embedded_httpd) {
+		version(embedded_httpd_processes) {
+			import core.sys.posix.unistd;
+			//import core.sys.posix.sys.socket;
+			import std.c.linux.socket;
+
+			int sock = socket(AF_INET, SOCK_STREAM, 0);
+			if(sock == -1)
+				throw new Exception("socket");
+
+			{
+				sockaddr_in addr;
+				addr.sin_family = AF_INET;
+				addr.sin_port = htons(listeningPort(8085));
+				addr.sin_addr.s_addr = INADDR_ANY;
+
+				// HACKISH
+				int on = 1;
+				setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
+				// end hack
+
+				
+				if(bind(sock, cast(sockaddr*) &addr, addr.sizeof) == -1) {
+					close(sock);
+					throw new Exception("bind");
+				}
+
+				if(sock.listen(16) == -1) {
+					close(sock);
+					throw new Exception("listen");
+				}
+			}
+
+
+			int processCount;
+			pid_t newPid;
+			reopen:
+			while(processCount < 8) {
+				newPid = fork();
+				if(newPid == 0) {
+					// start serving on the socket
+					for(;;) {
+						bool closeConnection;
+						uint i;
+						sockaddr addr;
+						i = addr.sizeof;
+						int s = accept(sock, &addr, &i);
+
+						if(s == -1)
+							throw new Exception("accept");
+						auto ir = new BufferedInputRange(s);
+
+						while(!ir.empty) {
+							Cgi cgi;
+							try {
+								cgi = new CustomCgi(ir, &closeConnection);
+							} catch(Throwable t) {
+								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
+								// anyway let's kill the connection
+								stderr.writeln(t.toString());
+								sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
+								closeConnection = true;
+								break;
+							}
+							assert(cgi !is null);
+							scope(exit)
+								cgi.dispose();
+
+							try {
+								fun(cgi);
+								cgi.close();
+							} catch(Throwable t) {
+								// a processing error can be recovered from
+								stderr.writeln(t.toString);
+								if(!handleException(cgi, t))
+									closeConnection = true;
+							}
+
+							if(closeConnection) {
+								ir.source.close();
+								break;
+							} else {
+								if(!ir.empty)
+									ir.popFront(); // get the next
+							}
+						}
+					}
+				} else {
+					processCount++;
+				}
+			}
+
+			// the parent should wait for its children...
+			if(newPid) {
+				import core.sys.posix.sys.wait;
+				int status;
+				// FIXME: maybe we should respawn if one dies unexpectedly
+				while(-1 != wait(&status)) {
+					processCount--;
+					goto reopen;
+				}
+				close(sock);
+			}
+		} else
+		version(embedded_httpd_threads) {
 			auto manager = new ListeningConnectionManager(listeningPort(8085));
 			foreach(connection; manager) {
 				scope(failure) {
@@ -2578,6 +2725,11 @@ import std.socket;
 // it is a class primarily for reference semantics
 // I might change this interface
 class BufferedInputRange {
+	version(Posix)
+	this(int source, ubyte[] buffer = null) {
+		this(new Socket(cast(socket_t) source, AddressFamily.INET), buffer);
+	}
+
 	this(Socket source, ubyte[] buffer = null) {
 		this.source = source;
 		if(buffer is null) {
