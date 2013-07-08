@@ -47,6 +47,13 @@ import std.json;
 
 	it should consistently throw on missing semicolons
 
+	*) nesting comments, `` string literals
+	*) properties???//
+		a.prop on the rhs => a.prop()
+		a.prop on the lhs => a.prop(rhs);
+		if opAssign, it can just do a.prop(a.prop().opBinary!op(rhs));
+
+		But, how do we mark properties in var? Can we make them work this way in D too?
 	0) add global functions to the object like assert()
 	1) ensure operator precedence is sane
 	2) a++ would prolly be nice, and def -a
@@ -55,10 +62,10 @@ import std.json;
 		foreach(i; array) -> for(var i = 0; i < array.length; i++)
 		foreach(i; object) -> for(var v = object.visit; !v.empty; v.popFront) { var i = v.front; / *...* / }
 	4) switches?
-	8) IMPORTANT FIXME: make sure return/break/continue/exit? work right
-	15) perhaps new, which can work in the style of javascript i figure
-
+	6) explicit type conversions somehow
 	10) __FILE__ and __LINE__ as default function arguments should work like in D
+	16) stack traces on script exceptions
+	17) an exception type that we can create in the script
 
 	14) import???????/ it could just attach a particular object to the local scope, and the module decl just giving the local scope a name
 		there could be a super-global object that is the prototype of the "global" used here
@@ -69,9 +76,9 @@ import std.json;
 
 		though maybe to export vars there could be an explicit export namespace or something.
 
-	16) stack traces on script exceptions
-	17) an exception type that we can create in the script
-	5) gotos? labels?
+
+	6) gotos? labels? labeled break/continue?
+	18) what about something like ruby's blocks or macros? parsing foo(arg) { code } is easy enough, but how would we use it?
 
 	try is considered a statement right now and this only works on top level surrounded by {}
 	it should be usable anywhere
@@ -79,9 +86,10 @@ import std.json;
 	var FIXME:
 
 	user defined operator overloading on objects, including opCall
-	prototype objects for Array, String, and Function
+	flesh out prototype objects for Array, String, and Function
 
 	opEquals and stricterOpEquals
+	opDispatch overriding
 
 	it would be nice if delegates on native types could work
 */
@@ -96,9 +104,30 @@ import std.json;
 	There is no comma operator, but you can use a scope as an expression: a++, b++; can be written as {a++;b++;}
 */
 
-
+version(test_script)
+	struct Foop {
+		int a = 12;
+		string n = "hate";
+		void speak() { writeln(n, " ", a); n = "love"; writeln(n, " is what it is now"); }
+		void speak2() { writeln("speak2 ", n, " ", a); }
+	}
 version(test_script)
 void main() {
+	// the WrappedNativeObject is disgusting
+	// but works.
+	/*
+	Foop foop2;
+
+	var foop;
+	foop._object = new WrappedNativeObject!Foop(foop2);
+
+	foop.speak()();
+	foop.a = 25;
+	writeln(foop.n);
+	foop.speak2()();
+	return;
+	*/
+
 	import arsd.script;
 	struct Test {
 		int a = 10;
@@ -111,7 +140,13 @@ void main() {
 
 	globals.arrtest = var.emptyArray;
 
-	globals.write = (var a) { writeln("script said: ", a); };
+	globals.write._function = (var _this, var[] args) {
+		string s;
+		foreach(a; args)
+			s ~= a.get!string;
+		writeln("script said: ", s);
+		return var(null);
+	};
 
 	// call D defined functions in script
 	globals.func =  (var a, var b) { writeln("Hello, world! You are : ", a, " and ", b); };
@@ -266,6 +301,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op == "~") {
 
 }
 
+// FIXME: maybe the bitops should be moved out to another function like ~ is
 private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 	static if(is(T == var)) {
 		if(t.payloadType() == var.Type.Integral)
@@ -284,23 +320,38 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 				_this._payload._integral = l;
 				return _this;
 			} else static if(isFloatingPoint!T) {
-				this2._type = var.Type.Floating;
-				real f = l;
-				mixin("f "~op~"= t;");
-				_this._type = var.Type.Floating;
-				_this._payload._floating = f;
+				static if(op == "&" || op == "|" || op == "^") {
+					this2._type = var.Type.Integral;
+					long f = l;
+					mixin("f "~op~"= cast(long) t;");
+					_this._type = var.Type.Integral;
+					_this._payload._integral = f;
+				} else {
+					this2._type = var.Type.Floating;
+					real f = l;
+					mixin("f "~op~"= t;");
+					_this._type = var.Type.Floating;
+					_this._payload._floating = f;
+				}
 				return _this;
 			} else static if(isSomeString!T) {
 				auto rhs = stringToNumber(t);
 				if(realIsInteger(rhs)) {
-					mixin("l "~op~"= rhs;");
+					mixin("l "~op~"= cast(long) rhs;");
 					_this._type = var.Type.Integral;
 					_this._payload._integral = l;
 				} else{
-					real f = l;
-					mixin("f "~op~"= rhs;");
-					_this._type = var.Type.Floating;
-					_this._payload._floating = f;
+					static if(op == "&" || op == "|" || op == "^") {
+						long f = l;
+						mixin("f "~op~"= cast(long) rhs;");
+						_this._type = var.Type.Integral;
+						_this._payload._integral = f;
+					} else {
+						real f = l;
+						mixin("f "~op~"= rhs;");
+						_this._type = var.Type.Floating;
+						_this._payload._floating = f;
+					}
 				}
 				return _this;
 
@@ -309,30 +360,56 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 			auto f = this._payload._floating;
 
 			static if(isIntegral!T || isFloatingPoint!T) {
-				mixin("f "~op~"= t;");
-				_this._type = var.Type.Floating;
-				_this._payload._floating = f;
+				static if(op == "&" || op == "|" || op == "^") {
+					long argh = cast(long) f;
+					mixin("argh "~op~"= cast(long) t;");
+					_this._type = var.Type.Integral;
+					_this._payload._integral = argh;
+				} else {
+					mixin("f "~op~"= t;");
+					_this._type = var.Type.Floating;
+					_this._payload._floating = f;
+				}
 				return _this;
 			} else static if(isSomeString!T) {
 				auto rhs = stringToNumber(t);
-				mixin("f "~op~"= rhs;");
-				_this._type = var.Type.Floating;
-				_this._payload._floating = f;
+
+				static if(op == "&" || op == "|" || op == "^") {
+					long pain = cast(long) f;
+					mixin("pain "~op~"= cast(long) rhs;");
+					_this._type = var.Type.Integral;
+					_this._payload._floating = pain;
+				} else {
+					mixin("f "~op~"= rhs;");
+					_this._type = var.Type.Floating;
+					_this._payload._floating = f;
+				}
 				return _this;
 			} else assert(0);
 		} else if(this2.payloadType() == var.Type.String) {
-			real r = stringToNumber(this2._payload._string);
-			real rhs;
+			static if(op == "&" || op == "|" || op == "^") {
+				long r = cast(long) stringToNumber(this2._payload._string);
+				long rhs;
+			} else {
+				real r = stringToNumber(this2._payload._string);
+				real rhs;
+			}
 
 			static if(isSomeString!T) {
-				rhs = stringToNumber(t);
+				rhs = cast(typeof(rhs)) stringToNumber(t);
 			} else {
-				rhs = to!real(t);
+				rhs = to!(typeof(rhs))(t);
 			}
 
 			mixin("r " ~ op ~ "= rhs;");
-			_this._type = var.Type.Floating;
-			_this._payload._floating = r;
+
+			static if(is(typeof(r) == real)) {
+				_this._type = var.Type.Floating;
+				_this._payload._floating = r;
+			} else static if(is(typeof(r) == long)) {
+				_this._type = var.Type.Integral;
+				_this._payload._integral = r;
+			} else static assert(0);
 			return _this;
 		} else {
 			// the operation is nonsensical, we should throw or ignore it
@@ -351,6 +428,28 @@ struct var {
 			this = t;
 		else
 			this.opAssign(t);
+	}
+
+	public var _copy() {
+		final switch(payloadType()) {
+			case Type.Integral:
+			case Type.Boolean:
+			case Type.Floating:
+			case Type.Function:
+			case Type.String:
+				// since strings are immutable, we can pretend they are value types too
+				return this; // value types don't need anything special to be copied
+
+			case Type.Array:
+				var cp;
+				cp = this._payload._array[];
+				return cp;
+			case Type.Object:
+				var cp;
+				if(this._payload._object !is null)
+					cp._object = this._payload._object.copy;
+				return cp;
+		}
 	}
 
 	public bool opCast(T:bool)() {
@@ -449,11 +548,23 @@ struct var {
 	}
 
 	public var opOpAssign(string op, T)(T t) {
+		if(payloadType() == Type.Object) {
+			var operator = this["opOpAssign"];
+			if(operator._type == Type.Function)
+				return operator.call(this, op, t);
+		}
+
 		return _op!(this, this, op, T)(t);
 	}
 
 	public var opBinary(string op, T)(T t) {
 		var n;
+		if(payloadType() == Type.Object) {
+			var operator = this["opBinary"];
+			if(operator._type == Type.Function) {
+				return operator.call(this, op, t);
+			}
+		}
 		return _op!(n, this, op, T)(t);
 	}
 
@@ -555,9 +666,11 @@ struct var {
 
 				return T.init;
 			case Type.Function:
+				static if(isSomeString!T)
+					return "<function>";
 				// FIXME: we just might be able to do better for both of these
 				return T.init;
-			break;
+			//break;
 		}
 	}
 
@@ -614,6 +727,36 @@ struct var {
 			throw new DynamicTypeException(this, t, file, line);
 	}
 
+	public var opSlice(var e1, var e2) {
+		return this.opSlice(e1.get!int, e2.get!int);
+	}
+
+	public var opSlice(int e1, int e2) {
+		if(this.payloadType() == Type.Array) {
+			if(e1 > _payload._array.length)
+				e1 = _payload._array.length;
+			if(e2 > _payload._array.length)
+				e2 = _payload._array.length;
+			return var(_payload._array[e1 .. e2]);
+		}
+		if(this.payloadType() == Type.String) {
+			if(e1 > _payload._string.length)
+				e1 = _payload._string.length;
+			if(e2 > _payload._string.length)
+				e2 = _payload._string.length;
+			return var(_payload._string[e1 .. e2]);
+		}
+		if(this.payloadType() == Type.Object) {
+			var operator = this["opSlice"];
+			if(operator._type == Type.Function) {
+				return operator.call(this, e1, e2);
+			}
+		}
+
+		// might be worth throwing here too
+		return var(null);
+	}
+
 	public @property ref var opDispatch(string name, string file = __FILE__, size_t line = __LINE__)() {
 		return this[name];
 	}
@@ -634,18 +777,48 @@ struct var {
 		// if name is numeric, we should convert to int
 		if(name.length && name[0] >= '0' && name[0] <= '9')
 			return opIndex(to!size_t(name), file, line);
-		_requireType(Type.Object); // FIXME
-		if(_payload._object is null)
+
+		if(this.payloadType() != Type.Object && name == "prototype")
+			return prototype();
+
+		if(name == "typeof") {
+			var* tmp = new var;
+			*tmp = to!string(this.payloadType());
+			return *tmp;
+		}
+
+		if(name == "length" && this.payloadType() == Type.String) {
+			var* tmp = new var;
+			*tmp = _payload._string.length;
+			return *tmp;
+		}
+		if(name == "length" && this.payloadType() == Type.Array) {
+			var* tmp = new var;
+			*tmp = _payload._array.length;
+			return *tmp;
+		}
+
+		PrototypeObject from;
+		if(this.payloadType() == Type.Object)
+			from = _payload._object;
+		else {
+			var pt = this.prototype();
+			assert(pt.payloadType() == Type.Object);
+			from = pt._payload._object;
+		}
+
+		if(from is null)
 			throw new DynamicTypeException(var(null), Type.Object, file, line);
-		return this._payload._object._getMember(name, true, false, file, line);
+		return from._getMember(name, true, false, file, line);
 	}
 
 	public ref var opIndexAssign(T)(T t, string name, string file = __FILE__, size_t line = __LINE__) {
 		if(name.length && name[0] >= '0' && name[0] <= '9')
 			return opIndexAssign(t, to!size_t(name), file, line);
-		_requireType(Type.Object); // FIXME
+		_requireType(Type.Object); // FIXME?
 		if(_payload._object is null)
 			throw new DynamicTypeException(var(null), Type.Object, file, line);
+
 		this._payload._object._getMember(name, false, false, file, line) = t;
 		return this._payload._object._properties[name];
 	}
@@ -672,6 +845,14 @@ struct var {
 		return *n;
 	}
 
+	ref var _getOwnProperty(string name, string file = __FILE__, size_t line = __LINE__) {
+		if(_type == Type.Object) {
+			if(_payload._object !is null)
+				return this._payload._object._getMember(name, false, false, file, line);
+		}
+		var* n = new var();
+		return *n;
+	}
 
 	@property static var emptyObject(PrototypeObject prototype = null) {
 		var v;
@@ -679,6 +860,54 @@ struct var {
 		v._payload._object = new PrototypeObject();
 		v._payload._object.prototype = prototype;
 		return v;
+	}
+
+	// what I call prototype is more like what Mozilla calls __proto__, but tbh I think this is better so meh
+	@property ref var prototype() {
+		static var _arrayPrototype;
+		static var _functionPrototype;
+		static var _stringPrototype;
+
+
+		final switch(payloadType()) {
+			case Type.Array:
+				assert(_arrayPrototype._type == Type.Object);
+				if(_arrayPrototype._payload._object is null) {
+					_arrayPrototype._object = new PrototypeObject();
+					writeln("ctor on ", payloadType());
+				}
+
+				return _arrayPrototype;
+			break;
+			case Type.Function:
+				assert(_functionPrototype._type == Type.Object);
+				if(_functionPrototype._payload._object is null) {
+					_functionPrototype._object = new PrototypeObject();
+				}
+
+				return _functionPrototype;
+			break;
+			case Type.String:
+				assert(_stringPrototype._type == Type.Object);
+				if(_stringPrototype._payload._object is null) {
+					_stringPrototype._object = new PrototypeObject();
+				}
+
+				return _stringPrototype;
+			break;
+			case Type.Object:
+				if(_payload._object)
+					return _payload._object._prototype;
+				// FIXME: should we do a generic object prototype?
+			break;
+			case Type.Integral:
+			case Type.Floating:
+			case Type.Boolean:
+				// these types don't have prototypes
+		}
+
+		var* v = new var(null);
+		return *v;
 	}
 
 	@property static var emptyArray() {
@@ -789,22 +1018,129 @@ struct var {
 	}
 }
 
-/*
-@PrototypeConstructor
-void foo(var _this) {
+class WrappedNativeObject(T, bool wrapData = true) : PrototypeObject {
+	T nativeObject;
 
+
+	auto makeWrapper(string member)() {
+		return (var _this, var[] args) {
+			auto func = &(__traits(getMember, nativeObject, member));
+			var ret;
+
+			// this is a filthy hack and i hate it
+			// the problem with overriding getMember though is we can't really control what happens when it is set, since that's all done through the ref, and we don't want to overload stuff there since it can be copied.
+			// so instead on each method call, I'll copy the data from the prototype back out... and then afterward, copy from the object back to the prototype. gross.
+
+			// first we need to make sure that the native object is updated...
+			static if(wrapData)
+				updateNativeObject();
+
+
+
+			ParameterTypeTuple!(__traits(getMember, nativeObject, member)) fargs;
+			foreach(idx, a; fargs) {
+				if(idx == args.length)
+					break;
+				cast(Unqual!(typeof(a))) fargs[idx] = args[idx].get!(Unqual!(typeof(a)));
+			}
+
+			static if(is(ReturnType!func == void)) {
+				func(fargs);
+			} else {
+				ret = func(fargs);
+			}
+
+
+			// then transfer updates from it back here
+			static if(wrapData)
+				getUpdatesFromNativeObject();
+
+			return ret;
+		};
+	}
+
+
+	this(T t) {
+		this.name = T.stringof;
+		this.nativeObject = t;
+		// this.prototype = new PrototypeObject();
+
+		foreach(member; __traits(allMembers, T)) {
+			static if(__traits(compiles, __traits(getMember, nativeObject, member))) {
+				static if(is(typeof(__traits(getMember, nativeObject, member)) == function)) {
+					this._getMember(member, false, false)._function =
+						makeWrapper!(member)();
+				} else static if(wrapData)
+					this._getMember(member, false, false) = __traits(getMember, nativeObject, member);
+			}
+		}
+	}
+
+	void updateNativeObject() {
+		foreach(member; __traits(allMembers, T)) {
+			static if(__traits(compiles, __traits(getMember, nativeObject, member))) {
+				static if(is(typeof(__traits(getMember, nativeObject, member)) == function)) {
+					// ignore, if these are overridden, we want it to stay that way
+				} else {
+					// if this doesn't compile, it is prolly cuz it is const or something
+					static if(__traits(compiles, this._getMember(member, false, false).putInto(__traits(getMember, nativeObject, member))))
+						this._getMember(member, false, false).putInto(__traits(getMember, nativeObject, member));
+				}
+			}
+		}
+	}
+
+	void getUpdatesFromNativeObject() {
+		foreach(member; __traits(allMembers, T)) {
+			static if(__traits(compiles, __traits(getMember, nativeObject, member))) {
+				static if(is(typeof(__traits(getMember, nativeObject, member)) == function)) {
+					// ignore, these won't change
+				} else {
+					this._getMember(member, false, false) = __traits(getMember, nativeObject, member);
+				}
+			}
+		}
+	}
+
+	override WrappedNativeObject!T copy() {
+		auto n = new WrappedNativeObject!T(nativeObject);
+		// FIXME: what if nativeObject is a reference type?
+		return n;
+	}
 }
-
-@PrototypeThis
-a.foo = function(var _this) {}
-*/
 
 class PrototypeObject {
 	string name;
-	PrototypeObject prototype;
+	var _prototype;
+
+	PrototypeObject prototype() {
+		if(_prototype.payloadType() == var.Type.Object)
+			return _prototype._payload._object;
+		return null;
+	}
+
+	PrototypeObject prototype(PrototypeObject set) {
+		this._prototype._object = set;
+		return set;
+	}
+
 	var[string] _properties;
+
+	PrototypeObject copy() {
+		auto n = new PrototypeObject();
+		n.prototype = this.prototype;
+		n.name = this.name;
+		foreach(k, v; _properties) {
+			n._properties[k] = v._copy;
+		}
+		return n;
+	}
+
 	// FIXME: maybe throw something else
-	package ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
+	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
+		if(name == "prototype")
+			return _prototype;
+
 		auto curr = this;
 		do {
 			auto prop = name in curr._properties;
