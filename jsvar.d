@@ -60,9 +60,9 @@ import std.json;
 	3) loops (foreach - preferably about as well as D (int ranges, arrays, objects with opApply overloaded, and input ranges), do while?)
 		foreach(i; 1 .. 10) -> for(var i = 1; i < 10; i++)
 		foreach(i; array) -> for(var i = 0; i < array.length; i++)
-		foreach(i; object) -> for(var v = object.visit; !v.empty; v.popFront) { var i = v.front; / *...* / }
+		foreach(i; object) -> for(var v = new object.iterator; !v.empty(); v.popFront()) { var i = v.front(); / *...* / }
 	4) switches?
-	6) explicit type conversions somehow
+	6) explicit type conversions somehow (cast?)
 	10) __FILE__ and __LINE__ as default function arguments should work like in D
 	16) stack traces on script exceptions
 	17) an exception type that we can create in the script
@@ -683,11 +683,33 @@ struct var {
 		return cast(int)(f - r);
 	}
 
-	/*
 	public bool opEquals(T)(T t) {
-
+		return this.opEquals(var(t));
 	}
-	*/
+
+
+	public bool opEquals(T:var)(T t) {
+		// FIXME: should this be == or === ?
+		if(this._type != t._type)
+			return false;
+		final switch(this._type) {
+			case Type.Object:
+				return _payload._object is t._payload._object;
+			case Type.Integral:
+				return _payload._integral == t._payload._integral;
+			case Type.Boolean:
+				return _payload._boolean == t._payload._boolean;
+			case Type.Floating:
+				return _payload._floating == t._payload._floating; // FIXME: approxEquals?
+			case Type.String:
+				return _payload._string == t._payload._string;
+			case Type.Function:
+				return _payload._function is t._payload._function;
+			case Type.Array:
+				return _payload._array == t._payload._array;
+		}
+		assert(0);
+	}
 
 	public enum Type {
 		Object, Array, Integral, Floating, String, Function, Boolean
@@ -728,10 +750,10 @@ struct var {
 	}
 
 	public var opSlice(var e1, var e2) {
-		return this.opSlice(e1.get!int, e2.get!int);
+		return this.opSlice(e1.get!ptrdiff_t, e2.get!ptrdiff_t);
 	}
 
-	public var opSlice(int e1, int e2) {
+	public var opSlice(ptrdiff_t e1, ptrdiff_t e2) {
 		if(this.payloadType() == Type.Array) {
 			if(e1 > _payload._array.length)
 				e1 = _payload._array.length;

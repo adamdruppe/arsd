@@ -161,7 +161,7 @@ class TokenStream(TextStream) {
 	int lineNumber = 1;
 	string scriptFilename;
 
-	void advance(int size) {
+	void advance(ptrdiff_t size) {
 		foreach(i; 0 .. size) {
 			if(text.empty)
 				break;
@@ -363,8 +363,9 @@ TokenStream!TextStream lexScript(TextStream)(TextStream textStream, string scrip
 struct InterpretResult {
 	var value;
 	PrototypeObject sc;
-	enum FlowControl { Normal, Return, Continue, Break }
+	enum FlowControl { Normal, Return, Continue, Break, Goto }
 	FlowControl flowControl;
+	string flowControlDetails; // which label
 }
 
 class Expression {
@@ -376,6 +377,8 @@ class MixinExpression : Expression {
 	this(Expression e1) {
 		this.e1 = e1;
 	}
+
+	override string toString() { return "mixin(" ~ e1.toString() ~ ")"; }
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		return InterpretResult(.interpret(e1.interpret(sc).value.get!string ~ ";", sc), sc);
@@ -447,6 +450,16 @@ class NullLiteralExpression : Expression {
 class ArrayLiteralExpression : Expression {
 	this() {}
 
+	override string toString() {
+		string s = "[";
+		foreach(i, ele; elements) {
+			if(i) s ~= ", ";
+			s ~= ele.toString();
+		}
+		s ~= "]";
+		return s;
+	}
+
 	Expression[] elements;
 	override InterpretResult interpret(PrototypeObject sc) {
 		var n = var.emptyArray;
@@ -457,6 +470,24 @@ class ArrayLiteralExpression : Expression {
 }
 class ObjectLiteralExpression : Expression {
 	Expression[string] elements;
+
+	override string toString() {
+		string s = "json!q{";
+		bool first = true;
+		foreach(k, e; elements) {
+			if(first)
+				first = false;
+			else
+				s ~= ", ";
+
+			s ~= "\"" ~ k ~ "\":"; // FIXME: escape if needed
+			s ~= e.toString();
+		}
+
+		s ~= "}";
+		return s;
+	}
+
 	override InterpretResult interpret(PrototypeObject sc) {
 		var n = var.emptyObject;
 		foreach(k, v; elements)
@@ -476,6 +507,15 @@ class FunctionLiteralExpression : Expression {
 		this();
 		this.arguments = args;
 		this.functionBody = bod;
+	}
+
+	override string toString() {
+		string s = "function (";
+		s ~= arguments.toString();
+
+		s ~= ") ";
+		s ~= functionBody.toString();
+		return s;
 	}
 
 	/*
@@ -529,6 +569,19 @@ class VariableDeclaration : Expression {
 	Expression[] initializers;
 
 	this() {}
+
+	override string toString() {
+		string s = "";
+		foreach(i, ident; identifiers) {
+			if(i)
+				s ~= ", ";
+			s ~= "var " ~ ident;
+			if(initializers[i] !is null)
+				s ~= " = " ~ initializers[i].toString();
+		}
+		return s;
+	}
+
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		var n;
@@ -623,6 +676,8 @@ class AssignExpression : Expression {
 		this.e1 = e1;
 		this.e2 = e2;
 	}
+
+	override string toString() { return e1.toString() ~ " = " ~ e2.toString(); }
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		auto v = cast(VariableExpression) e1;
@@ -779,6 +834,11 @@ class LoopControlExpression : Expression {
 		else assert(0, op);
 	}
 
+	override string toString() {
+		import std.string;
+		return to!string(this.op).toLower();
+	}
+
 	override InterpretResult interpret(PrototypeObject sc) {
 		return InterpretResult(var(null), sc, op);
 	}
@@ -792,6 +852,8 @@ class ReturnExpression : Expression {
 		value = v;
 	}
 
+	override string toString() { return "return " ~ value.toString(); }
+
 	override InterpretResult interpret(PrototypeObject sc) {
 		return InterpretResult(value.interpret(sc).value, sc, InterpretResult.FlowControl.Return);
 	}
@@ -803,6 +865,18 @@ class ScopeExpression : Expression {
 	}
 
 	Expression[] expressions;
+
+	override string toString() {
+		string s;
+		s = "{\n";
+		foreach(expr; expressions) {
+			s ~= "\t";
+			s ~= expr.toString();
+			s ~= ";\n";
+		}
+		s ~= "}";
+		return s;
+	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		var ret;
