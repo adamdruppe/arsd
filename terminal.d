@@ -719,11 +719,9 @@ struct Terminal {
 	*/
 
 	/// Writes to the terminal at the current cursor position.
-	///
-	/// Uses std.string.xformat for the format string handling.
 	void writef(T...)(string f, T t) {
 		import std.string;
-		writePrintableString(xformat(f, t));
+		writePrintableString(format(f, t));
 	}
 
 	/// ditto
@@ -753,7 +751,7 @@ struct Terminal {
 	/// Might give better performance than moveTo/writef because if the data to write matches the internal buffer, it skips sending anything (to override the buffer check, you can use moveTo and writePrintableString with ForceOption.alwaysSend)
 	void writefAt(T...)(int x, int y, string f, T t) {
 		import std.string;
-		auto toWrite = xformat(f, t);
+		auto toWrite = format(f, t);
 
 		auto oldX = _cursorX;
 		auto oldY = _cursorY;

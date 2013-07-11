@@ -1,5 +1,25 @@
 module arsd.english;
 
+string plural(int count, string word, string pluralWord = null) {
+	if(count == 1 || word.length == 0)
+		return word; // it isn't actually plural
+
+	if(pluralWord !is null)
+		return pluralWord;
+
+	switch(word[$ - 1]) {
+		case 's':
+		case 'a', 'e', 'i', 'o', 'u':
+			return word ~ "es";
+		case 'f':
+			return word[0 .. $-1] ~ "ves";
+		case 'y':
+			return word[0 .. $-1] ~ "ies";
+		default:
+			return word ~ "s";
+	}
+}
+
 string numberToEnglish(long number) {
 	string word;
 	if(number == 0)

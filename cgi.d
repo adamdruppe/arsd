@@ -2191,6 +2191,9 @@ string toHexUpper(long num) {
 		ret ~= d;
 	}
 
+	if(ret.length == 1)
+		ret ~= "0"; // url encoding requires two digits and that's what this function is used for...
+
 	return to!string(array(ret.retro));
 }
 

@@ -74,7 +74,7 @@ string[] htmlAttributeWhitelist = [
 
 	"href", "src", "type", "name",
 	"id",
-	"method", "enctype", // for forms only FIXME
+	"method", "enctype", "value", "type", // for forms only FIXME
 
 	"align", "valign", "width", "height",
 ];

@@ -126,7 +126,7 @@ mixin template DomConvenienceFunctions() {
 
 	/// Returns whether the given class appears in this element.
 	bool hasClass(string c) {
-		auto cn = className;
+		string cn = className;
 
 		auto idx = cn.indexOf(c);
 		if(idx == -1)
@@ -1268,7 +1268,7 @@ class Element {
 	/// This sets the style attribute with a string.
 	@property ElementStyle style(string s) {
 		this.setAttribute("style", s);
-		return this.style();
+		return this.style;
 	}
 
 	private void parseAttributes(string[] whichOnes = null) {
@@ -1639,7 +1639,7 @@ class Element {
 
 	/// ditto
 	@property Element innerHTML(Html html) {
-		return this.innerHTML(html.source);
+		return this.innerHTML = html.source;
 	}
 
 	private void reparentTreeDocuments() {
@@ -1847,7 +1847,7 @@ class Element {
 		Same result as innerText; the tag with all inner tags stripped out
 	*/
 	string outerText() const {
-		return innerText();
+		return innerText;
 	}
 
 

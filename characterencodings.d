@@ -46,7 +46,10 @@ import std.conv;
 /// Like convertToUtf8, but if the encoding is unknown, it just strips all chars > 127 and calls it done instead of throwing
 string convertToUtf8Lossy(immutable(ubyte)[] data, string dataCharacterEncoding) {
 	try {
-		return convertToUtf8(data, dataCharacterEncoding);
+		auto ret = convertToUtf8(data, dataCharacterEncoding);
+		import std.utf;
+		validate(ret);
+		return ret;
 	} catch(Exception e) {
 		string ret;
 		foreach(b; data)
