@@ -28,6 +28,32 @@ static immutable string[23] primitives = [
 	"dchar", // w
 ];
 
+// FIXME: using this will allocate at *runtime*! Unbelievable.
+// it does that even if everything is enum
+auto dTokensPain() {
+	string[] p = cast(string[]) primitives[];
+	string[] ret;
+	foreach(i; (sort!"a.length > b.length"(
+	p~
+[
+	"(",
+	")",
+	".",
+	",",
+	"!",
+	"[",
+	"]",
+	"*",
+	"const",
+	"immutable",
+	"shared",
+	"extern",
+]))) { ret ~= i; }
+
+	return ret;
+}
+
+static immutable string[] dTokens = dTokensPain();
 
 
 char manglePrimitive(in char[] t) {
@@ -59,26 +85,6 @@ struct StackArray(Type, size_t capacity) {
 }
 
 char[] mangle(const(char)[] decl, char[] buffer) {
-
-// FIXME: using this will allocate at *runtime*! Unbelievable.
-// it does that even if everything is enum
-auto dTokens = (sort!"a.length > b.length"(
-	primitives ~
-[
-	"(",
-	")",
-	".",
-	",",
-	"!",
-	"[",
-	"]",
-	"*",
-	"const",
-	"immutable",
-	"shared",
-	"extern",
-]));
-
 
 
 	StackArray!(const(char)[], 128) tokensBuffer;
@@ -286,6 +292,7 @@ version(unittest) {
 	S foo3(S, S, string, long, int, S, int[], char[][]);
 	long testcomplex(int, const(const(char)[]*)[], long);
 }
+
 unittest {
 	import core.demangle;
 	char[512] buffer;
@@ -312,4 +319,5 @@ void main(string[] args) {
 		writeln(mangle(args[1], buffer));
 	else
 		writeln(mangle("int test30.foo(int, immutable(char)[])", buffer));
+		//mangle("int test30.foo(int, immutable(char)[])", buffer);
 }
