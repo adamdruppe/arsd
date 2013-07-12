@@ -652,6 +652,7 @@ struct var {
 					} catch (Exception e) {}
 				return T.init;
 			case Type.Array:
+				import std.range;
 				auto pl = this._payload._array;
 				static if(isSomeString!T) {
 					return to!string(pl);
@@ -721,7 +722,6 @@ struct var {
 
 	private Type _type;
 
-	// FIXME: arrays, functions, and strings are supposed to have prototypes too
 	private union Payload {
 		PrototypeObject _object;
 		var[] _array;
@@ -938,7 +938,6 @@ struct var {
 		return v;
 	}
 
-	// FIXME
 	static var fromJson(string json) {
 		auto decoded = parseJSON(json);
 		return var.fromJsonValue(decoded);
@@ -992,7 +991,6 @@ struct var {
 		return toJSON(&v);
 	}
 
-	// FIXME: maybe we could do some cool stuff with boolean true/false and uinteger too
 	JSONValue toJsonValue() {
 		JSONValue val;
 		final switch(payloadType()) {
