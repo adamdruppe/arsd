@@ -33,6 +33,7 @@
 	* int, float, string, array, bool, and json!q{} literals
 	* var.prototype, var.typeof. prototype works more like Mozilla's __proto__ than standard javascript prototype.
 	* classes:
+		// inheritance works
 		class Foo : bar {
 			// constructors, D style
 			this(var a) { ctor.... }
@@ -45,11 +46,16 @@
 
 			// "virtual" functions can be overridden kinda like you expect in D, though there is no override keyword
 			function virt() {
-				// be sure to use this. as a prefix for any class defined variables in here
+				b = 30; // lexical scoping is supported for static variables and functions
+
+				// but be sure to use this. as a prefix for any class defined instance variables in here
+				this.instance = 10;
 			}
 		}
 
 		var foo = new Foo(12);
+
+		foo.newFunc = function() { this.derived = 0; }; // this is ok too, and scoping, including 'this', works like in Javascript
 
 		You can also use 'new' on another object to get a copy of it.
 	* return, break, continue, but currently cannot do labeled breaks and continues
@@ -488,8 +494,18 @@ class ObjectLiteralExpression : Expression {
 		return s;
 	}
 
+	PrototypeObject backing;
+	this(PrototypeObject backing = null) {
+		this.backing = backing;
+	}
+
 	override InterpretResult interpret(PrototypeObject sc) {
-		var n = var.emptyObject;
+		var n;
+		if(backing is null)
+			n = var.emptyObject;
+		else
+			n._object = backing;
+
 		foreach(k, v; elements)
 			n[k] = v.interpret(sc).value;
 
@@ -503,10 +519,11 @@ class FunctionLiteralExpression : Expression {
 			DefaultArgumentDummyObject = new PrototypeObject();
 	}
 
-	this(VariableDeclaration args, Expression bod) {
+	this(VariableDeclaration args, Expression bod, PrototypeObject lexicalScope = null) {
 		this();
 		this.arguments = args;
 		this.functionBody = bod;
+		this.lexicalScope = lexicalScope;
 	}
 
 	override string toString() {
@@ -528,16 +545,25 @@ class FunctionLiteralExpression : Expression {
 		// the return value is just the last expression's result that was evaluated
 		// to return void, be sure to do a "return;" at the end of the function
 	*/
-	// PrototypeObject lexicalScope;
 	VariableDeclaration arguments;
 	Expression functionBody; // can be a ScopeExpression btw
+
+	PrototypeObject lexicalScope;
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		assert(DefaultArgumentDummyObject !is null);
 		var v;
 		v._function = (var _this, var[] args) {
 			auto argumentsScope = new PrototypeObject();
-			argumentsScope.prototype = sc;
+			PrototypeObject scToUse;
+			if(lexicalScope is null)
+				scToUse = sc;
+			else {
+				scToUse = lexicalScope;
+				scToUse._secondary = sc;
+			}
+
+			argumentsScope.prototype = scToUse;
 
 			argumentsScope._getMember("this", false, false) = _this;
 			argumentsScope._getMember("_arguments", false, false) = args;
@@ -986,6 +1012,29 @@ class IfExpression : Expression {
 	}
 }
 
+// this is kinda like a placement new, and currently isn't exposed inside the language,
+// but is used for class inheritance
+class ShallowCopyExpression : Expression {
+	Expression e1;
+	Expression e2;
+
+	this(Expression e1, Expression e2) {
+		this.e1 = e1;
+		this.e2 = e2;
+	}
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		auto v = cast(VariableExpression) e1;
+		if(v is null)
+			throw new ScriptRuntimeException("not an lvalue", 0 /* FIXME */);
+
+		v.getVar(sc, false)._object.copyPropertiesFrom(e2.interpret(sc).value._object);
+
+		return InterpretResult(var(null), sc);
+	}
+
+}
+
 class NewExpression : Expression {
 	Expression what;
 	Expression[] args;
@@ -1003,7 +1052,7 @@ class NewExpression : Expression {
 		var original = what.interpret(sc).value;
 		var n = original._copy;
 		if(n.payloadType() == var.Type.Object) {
-			var ctor = original._getOwnProperty("__ctor");
+			var ctor = original.prototype ? original.prototype._getOwnProperty("__ctor") : var(null);
 			if(ctor)
 				ctor.apply(n, args);
 		}
@@ -1525,10 +1574,14 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 			auto vars = new VariableDeclaration();
 			vars.identifiers = ["__proto", "__obj"];
-			vars.initializers = [new ObjectLiteralExpression(), new ObjectLiteralExpression()];
+
+			auto staticScopeBacking = new PrototypeObject();
+			auto instanceScopeBacking = new PrototypeObject();
+
+			vars.initializers = [new ObjectLiteralExpression(staticScopeBacking), new ObjectLiteralExpression(instanceScopeBacking)];
 			expressions ~= vars;
 
-			 // FIXME: operators need to have their this be bound somehow since it isn't passwed
+			 // FIXME: operators need to have their this be bound somehow since it isn't passed
 			 // OR the op rewrite could pass this
 
 			expressions ~= new AssignExpression(
@@ -1541,9 +1594,14 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				tokens.popFront();
 				auto inheritFrom = tokens.requireNextToken(ScriptToken.Type.identifier);
 
+				// we set our prototype to the Foo prototype, thereby inheriting any static data that way (includes functions)
+				// the inheritFrom object itself carries instance  data that we need to copy onto our instance
 				expressions ~= new AssignExpression(
 					new DotVarExpression(new VariableExpression("__proto"), new VariableExpression("prototype")),
-					new VariableExpression(inheritFrom.str));
+					new DotVarExpression(new VariableExpression(inheritFrom.str), new VariableExpression("prototype")));
+
+				// and copying the instance initializer from the parent
+				expressions ~= new ShallowCopyExpression(new VariableExpression("__obj"), new VariableExpression(inheritFrom.str));
 			}
 
 			tokens.requireNextToken(ScriptToken.Type.symbol, "{");
@@ -1579,9 +1637,9 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 					expressions ~= new AssignExpression(
 						new DotVarExpression(
-							new VariableExpression("__obj"),
+							new VariableExpression("__proto"),
 							new VariableExpression("__ctor")),
-						new FunctionLiteralExpression(args, bod));
+						new FunctionLiteralExpression(args, bod, staticScopeBacking));
 				} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "var")) {
 					// instance variable
 					auto decl = parseVariableDeclaration(tokens, ";");
@@ -1606,7 +1664,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 							new VariableExpression("__proto"),
 							new VariableExpression(ident.str),
 							false),
-						new FunctionLiteralExpression(args, bod));
+						new FunctionLiteralExpression(args, bod, staticScopeBacking));
 				} else throw new ScriptCompileException("Unexpected " ~ tokens.front.str ~ " when reading class decl", tokens.front.lineNumber);
 			}
 

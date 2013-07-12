@@ -742,6 +742,12 @@ struct var {
 		this._payload._object = obj;
 	}
 
+	public PrototypeObject _object() {
+		if(this._type == Type.Object)
+			return this._payload._object;
+		return null;
+	}
+
 	package Payload _payload;
 
 	private void _requireType(Type t, string file = __FILE__, size_t line = __LINE__){
@@ -1133,6 +1139,8 @@ class PrototypeObject {
 	string name;
 	var _prototype;
 
+	package PrototypeObject _secondary; // HACK don't use this
+
 	PrototypeObject prototype() {
 		if(_prototype.payloadType() == var.Type.Object)
 			return _prototype._payload._object;
@@ -1156,15 +1164,34 @@ class PrototypeObject {
 		return n;
 	}
 
+	PrototypeObject copyPropertiesFrom(PrototypeObject p) {
+		foreach(k, v; p._properties) {
+			this._properties[k] = v._copy;
+		}
+		return this;
+	}
+
+
 	// FIXME: maybe throw something else
 	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
 		if(name == "prototype")
 			return _prototype;
 
 		auto curr = this;
+
+		// for the secondary hack
+		bool triedOne = false;
+		// for the secondary hack
+		PrototypeObject possibleSecondary;
+
+		tryAgain:
 		do {
 			auto prop = name in curr._properties;
 			if(prop is null) {
+				// the secondary hack is to do more scoping in the script, it is really hackish
+				if(possibleSecondary is null)
+					possibleSecondary = curr._secondary;
+
 				if(!recurse)
 					break;
 				else
@@ -1172,6 +1199,15 @@ class PrototypeObject {
 			} else
 				return *prop;
 		} while(curr);
+
+		if(possibleSecondary !is null) {
+			curr = possibleSecondary;
+			if(!triedOne) {
+			writeln("trying again");
+				triedOne = true;
+				goto tryAgain;
+			}
+		}
 
 		// if we're here, the property was not found, so let's implicitly create it
 		if(throwOnFailure)
