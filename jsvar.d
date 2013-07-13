@@ -48,21 +48,17 @@ import std.json;
 	it should consistently throw on missing semicolons
 
 	*) nesting comments, `` string literals
+	*) opDispatch overloading
 	*) properties???//
 		a.prop on the rhs => a.prop()
 		a.prop on the lhs => a.prop(rhs);
 		if opAssign, it can just do a.prop(a.prop().opBinary!op(rhs));
 
 		But, how do we mark properties in var? Can we make them work this way in D too?
-	0) add global functions to the object like assert()
+	0) add global functions to the object (or at least provide a convenience function to make a pre-populated global object)
 	1) ensure operator precedence is sane
 	2) a++ would prolly be nice, and def -a
-	3) loops (foreach - preferably about as well as D (int ranges, arrays, objects with opApply overloaded, and input ranges), do while?)
-		foreach(i; 1 .. 10) -> for(var i = 1; i < 10; i++)
-		foreach(i; array) -> for(var i = 0; i < array.length; i++)
-		foreach(i; object) -> for(var v = new object.iterator; !v.empty(); v.popFront()) { var i = v.front(); / *...* / }
 	4) switches?
-	6) explicit type conversions somehow (cast?)
 	10) __FILE__ and __LINE__ as default function arguments should work like in D
 	16) stack traces on script exceptions
 	17) an exception type that we can create in the script
@@ -80,16 +76,12 @@ import std.json;
 	6) gotos? labels? labeled break/continue?
 	18) what about something like ruby's blocks or macros? parsing foo(arg) { code } is easy enough, but how would we use it?
 
-	try is considered a statement right now and this only works on top level surrounded by {}
-	it should be usable anywhere
-
 	var FIXME:
 
-	user defined operator overloading on objects, including opCall
+	user defined operator overloading on objects, including opCall, opApply, and more
 	flesh out prototype objects for Array, String, and Function
 
-	opEquals and stricterOpEquals
-	opDispatch overriding
+	looserOpEquals
 
 	it would be nice if delegates on native types could work
 */
@@ -471,13 +463,43 @@ struct var {
 		}
 	}
 
-	public int opApply(int delegate(ref var) dg) {
-		if(this.payloadType() == Type.Array)
-			foreach(ref v; this._payload._array)
-				if(auto result = dg(v))
-					return result;
+	public int opApply(scope int delegate(ref var) dg) {
+		foreach(i, item; this)
+			if(auto result = dg(item))
+				return result;
 		return 0;
 	}
+
+	public int opApply(scope int delegate(var, ref var) dg) {
+		if(this.payloadType() == Type.Array) {
+			foreach(i, ref v; this._payload._array)
+				if(auto result = dg(var(i), v))
+					return result;
+		} else if(this.payloadType() == Type.Object && this._payload._object !is null) {
+			// FIXME: if it offers input range primitives, we should use them
+			// FIXME: user defined opApply on the object
+			foreach(k, ref v; this._payload._object._properties)
+				if(auto result = dg(var(k), v))
+					return result;
+		} else if(this.payloadType() == Type.String) {
+			// this is to prevent us from allocating a new string on each character, hopefully limiting that massively
+			static immutable string chars = makeAscii!();
+
+			foreach(i, dchar c; this._payload._string) {
+				var lol = "";
+				if(c < 128)
+					lol._payload._string = chars[c .. c + 1];
+				else
+					lol._payload._string = to!string(""d ~ c); // blargh, how slow can we go?
+				if(auto result = dg(var(i), lol))
+					return result;
+			}
+		}
+		// throw invalid foreach aggregate
+
+		return 0;
+	}
+
 
 	public T opCast(T)() {
 		return this.get!T;
@@ -611,7 +633,7 @@ struct var {
 			case Type.Object:
 				static if(isAssociativeArray!T) {
 					T ret;
-					foreach(k, v; this._properties)
+					foreach(k, v; this._payload._object._properties)
 						ret[to!(KeyType!T)(k)] = v.get!(ValueType!T);
 
 					return ret;
@@ -1203,7 +1225,6 @@ class PrototypeObject {
 		if(possibleSecondary !is null) {
 			curr = possibleSecondary;
 			if(!triedOne) {
-			writeln("trying again");
 				triedOne = true;
 				goto tryAgain;
 			}
@@ -1227,4 +1248,15 @@ class DynamicTypeException : Exception {
 		else
 			super(format("Tried to use %s as a %s", v.payloadType(), required), file, line);
 	}
+}
+
+template makeAscii() {
+	string helper() {
+		string s;
+		foreach(i; 0 .. 128)
+			s ~= cast(char) i;
+		return s;
+	}
+
+	enum makeAscii = helper();
 }
