@@ -9,8 +9,8 @@ version(with_openssl) {
 /**
 	Gets a textual document, ignoring headers. Throws on non-text or error.
 */
-string get(string url) {
-	auto hr = httpRequest("GET", url);
+string get(string url, string[string] cookies = null) {
+	auto hr = httpRequest("GET", url, null, cookies);
 	if(hr.code != 200)
 		throw new Exception(format("HTTP answered %d instead of 200 on %s", hr.code, url));
 	if(hr.contentType.indexOf("text/") == -1)
@@ -21,7 +21,7 @@ string get(string url) {
 
 static import std.uri;
 
-string post(string url, string[string] args) {
+string post(string url, string[string] args, string[string] cookies = null) {
 	string content;
 
 	foreach(name, arg; args) {
@@ -30,7 +30,7 @@ string post(string url, string[string] args) {
 		content ~= std.uri.encode(name) ~ "=" ~ std.uri.encode(arg);
 	}
 
-	auto hr = httpRequest("POST", url, cast(ubyte[]) content, ["Content-Type: application/x-www-form-urlencoded"]);
+	auto hr = httpRequest("POST", url, cast(ubyte[]) content, cookies, ["Content-Type: application/x-www-form-urlencoded"]);
 	if(hr.code != 200)
 		throw new Exception(format("HTTP answered %d instead of 200", hr.code));
 	if(hr.contentType.indexOf("text/") == -1)
@@ -42,6 +42,7 @@ string post(string url, string[string] args) {
 struct HttpResponse {
 	int code;
 	string contentType;
+	string[string] cookies;
 	string[] headers;
 	ubyte[] content;
 }
@@ -102,7 +103,7 @@ struct UriParts {
 	}
 }
 
-HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = null, string headers[] = null) {
+HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string headers[] = null) {
 	import std.socket;
 
 	auto u = UriParts(uri);
@@ -153,7 +154,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 	}
 
 
-	HttpResponse response = doHttpRequestOnHelpers(write, read, method, uri, content, headers, u.useHttps);
+	HttpResponse response = doHttpRequestOnHelpers(write, read, method, uri, content, cookies, headers, u.useHttps);
 
 	version(with_openssl) {
 		if(u.useHttps) {
@@ -170,7 +171,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 	of the parameters are the caller's responsibility. Content-Length is added automatically,
 	but YOU must give Content-Type!
 */
-HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate() read, string method, string uri, const(ubyte)[] content = null, string headers[] = null, bool https = false) 
+HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate() read, string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string headers[] = null, bool https = false) 
 	in {
 		assert(method == "POST" || method == "GET");
 	}
@@ -186,6 +187,21 @@ body {
 	write(format("Connection: close\r\n"));
 	if(content !is null)
 		write(format("Content-Length: %d\r\n", content.length));
+
+	if(cookies !is null) {
+		string cookieHeader = "Cookie: ";
+		bool first = true;
+		foreach(k, v; cookies) {
+			if(first)
+				first = false;
+			else
+				cookieHeader ~= "; ";
+			cookieHeader ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
+		}
+
+		write(format("%s\r\n", cookieHeader));
+	}
+
 	if(headers !is null)
 		foreach(header; headers)
 			write(format("%s\r\n", header));
@@ -241,6 +257,27 @@ body {
 		hr.headers ~= line;
 		if(line.startsWith("Content-Type: "))
 			hr.contentType = line[14..$-1];
+		if(line.startsWith("Set-Cookie: ")) {
+			auto hdr = line["Set-Cookie: ".length .. $-1];
+			auto semi = hdr.indexOf(";");
+			if(semi != -1)
+				hdr = hdr[0 .. semi];
+
+			auto equal = hdr.indexOf("=");
+			string name, value;
+			if(equal == -1) {
+				name = hdr;
+				// doesn't this mean erase the cookie?
+			} else {
+				name = hdr[0 .. equal];
+				value = hdr[equal + 1 .. $];
+			}
+
+			name = std.uri.decodeComponent(name);
+			value = std.uri.decodeComponent(value);
+
+			hr.cookies[name] = value;
+		}
 		if(line.startsWith("Transfer-Encoding: chunked"))
 			chunked = true;
 		line = readln();
