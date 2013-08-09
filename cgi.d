@@ -2542,6 +2542,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 		version(fastcgi) {
 			//         SetHandler fcgid-script
 
+			FCGX_Init();
+
 			FCGX_Stream* input, output, error;
 			FCGX_ParamArray env;
 
@@ -2724,6 +2726,8 @@ version(fastcgi) {
 		}
 
 		alias char** FCGX_ParamArray;
+
+		void FCGX_Init();
 
 		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
 		c_int FCGX_GetChar(FCGX_Stream* stream);
