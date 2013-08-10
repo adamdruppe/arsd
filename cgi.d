@@ -1,5 +1,7 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 
+// Note: spawn-fcgi can help with fastcgi on nginx
+
 // FIXME: to do: add openssl optionally
 // make sure embedded_httpd doesn't send two answers if one writes() then dies
 
@@ -300,6 +302,7 @@ class Cgi {
 		lookingForMethod = true;
 
 		scriptName = args[0];
+		scriptFileName = args[0];
 
 		foreach(arg; args[1 .. $]) {
 			if(arg.startsWith("--")) {
@@ -464,6 +467,11 @@ class Cgi {
 
 		queryString = getenv("QUERY_STRING");
 		scriptName = getenv("SCRIPT_NAME");
+		{
+			import core.runtime;
+			auto sfn = getenv("SCRIPT_FILENAME");
+			scriptFileName = sfn.length ? sfn : Runtime.args[0];
+		}
 
 		bool iis = false;
 
@@ -1146,6 +1154,11 @@ class Cgi {
 
 		bool isChunked;
 
+		{
+			import core.runtime;
+			scriptFileName = Runtime.args[0];
+		}
+
 
 		int headerNumber = 0;
 		foreach(line; al.splitter(inputData.front()[0 .. idx], "\r\n"))
@@ -1801,6 +1814,7 @@ class Cgi {
 	immutable(char[]) userAgent; 	/// The browser's user-agent string. Can be used to identify the browser.
 	immutable(char[]) pathInfo; 	/// This is any stuff sent after your program's name on the url, but before the query string. For example, suppose your program is named "app". If the user goes to site.com/app, pathInfo is empty. But, he can also go to site.com/app/some/sub/path; treating your program like a virtual folder. In this case, pathInfo == "/some/sub/path".
 	immutable(char[]) scriptName;   /// The full base path of your program, as seen by the user. If your program is located at site.com/programs/apps, scriptName == "/programs/apps".
+	immutable(char[]) scriptFileName;   /// The physical filename of your script
 	immutable(char[]) authorization; /// The full authorization string from the header, undigested. Useful for implementing auth schemes such as OAuth 1.0. Note that some web servers do not forward this to the app without taking extra steps. See requireBasicAuth's comment for more info.
 	immutable(char[]) accept; 	/// The HTTP accept header is the user agent telling what content types it is willing to accept. This is often */*; they accept everything, so it's not terribly useful. (The similar sounding Accept-Encoding header is handled automatically for chunking and gzipping. Simply set gzipResponse = true and cgi.d handles the details, zipping if the user's browser is willing to accept it.
 	immutable(char[]) lastEventId; 	/// The HTML 5 draft includes an EventSource() object that connects to the server, and remains open to take a stream of events. My arsd.rtud module can help with the server side part of that. The Last-Event-Id http header is defined in the draft to help handle loss of connection. When the browser reconnects to you, it sets this header to the last event id it saw, so you can catch it up. This member has the contents of that header.
@@ -2542,8 +2556,6 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 		version(fastcgi) {
 			//         SetHandler fcgid-script
 
-			FCGX_Init();
-
 			FCGX_Stream* input, output, error;
 			FCGX_ParamArray env;
 
@@ -2726,8 +2738,6 @@ version(fastcgi) {
 		}
 
 		alias char** FCGX_ParamArray;
-
-		void FCGX_Init();
 
 		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
 		c_int FCGX_GetChar(FCGX_Stream* stream);
