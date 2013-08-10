@@ -2555,9 +2555,10 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 		} else
 		version(fastcgi) {
 			//         SetHandler fcgid-script
-
 			FCGX_Stream* input, output, error;
 			FCGX_ParamArray env;
+
+
 
 			const(ubyte)[] getFcgiChunk() {
 				const(ubyte)[] ret;
@@ -2569,7 +2570,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 			void writeFcgi(const(ubyte)[] data) {
 				FCGX_PutStr(data.ptr, data.length, output);
 			}
-			while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
+
+			void doARequest() {
 				string[string] fcgienv;
 
 				for(auto e = env; e !is null && *e !is null; e++) {
@@ -2596,7 +2598,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 				} catch(Throwable t) {
 					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
 					writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
-					continue;
+					return; //continue;
 				}
 				assert(cgi !is null);
 				scope(exit) cgi.dispose();
@@ -2608,7 +2610,32 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
 					// handle it for the user, if we can
 					if(!handleException(cgi, t))
-						continue;
+						return; // continue;
+				}
+			}
+
+			auto lp = listeningPort(0);
+			FCGX_Request request;
+			if(lp) {
+				// if a listening port was specified on the command line, we want to spawn ourself
+				// (needed for nginx without spawn-fcgi, e.g. on Windows)
+				FCGX_Init();
+				auto sock = FCGX_OpenSocket(toStringz(":" ~ to!string(lp)), 12);
+				if(sock < 0)
+					throw new Exception("Couldn't listen on the port");
+				FCGX_InitRequest(&request, sock, 0);
+				while(FCGX_Accept_r(&request) >= 0) {
+					input = request.inStream;
+					output = request.outStream;
+					error = request.errStream;
+					env = request.envp;
+					doARequest();
+				}
+			} else {
+				// otherwise, assume the httpd is doing it (the case for Apache, IIS, and Lighttpd)
+				// using the version with a global variable since we are separate processes anyway
+				while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
+					doARequest();
 				}
 			}
 		} else {
@@ -2737,6 +2764,30 @@ version(fastcgi) {
 			void* data;
 		}
 
+		// note: this is meant to be opaque, so don't access it directly
+		struct FCGX_Request {
+			int requestId;
+			int role;
+			FCGX_Stream* inStream;
+			FCGX_Stream* outStream;
+			FCGX_Stream* errStream;
+			char** envp;
+			void* paramsPtr;
+			int ipcFd;
+			int isBeginProcessed;
+			int keepConnection;
+			int appStatus;
+			int nWriters;
+			int flags;
+			int listen_sock;
+		}
+
+		int FCGX_InitRequest(FCGX_Request *request, int sock, int flags);
+		void FCGX_Init();
+
+		int FCGX_Accept_r(FCGX_Request *request);
+
+
 		alias char** FCGX_ParamArray;
 
 		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
@@ -2744,6 +2795,8 @@ version(fastcgi) {
 		c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
 		int FCGX_HasSeenEOF(FCGX_Stream* stream);
 		c_int FCGX_FFlush(FCGX_Stream *stream);
+
+		int FCGX_OpenSocket(in char*, int);
 	}
 }
 
