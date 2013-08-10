@@ -272,6 +272,7 @@ class Cgi {
 
 	  Non-simulation arguments:
 	  	--port xxx listening port for non-cgi things (valid for the cgi interfaces)
+		--listening-host  the ip address the application should listen on (only implemented for fastcgi right now)
 
 */
 
@@ -2303,6 +2304,17 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 			}
 			return def;
 		}
+
+		string listeningHost() {
+			bool found = false;
+			foreach(arg; args) {
+				if(found)
+					return arg;
+				if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
+					found = true;
+			}
+			return "";
+		}
 		version(netman_httpd) {
 			import arsd.httpd;
 			// what about forwarding the other constructor args?
@@ -2620,7 +2632,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 				// if a listening port was specified on the command line, we want to spawn ourself
 				// (needed for nginx without spawn-fcgi, e.g. on Windows)
 				FCGX_Init();
-				auto sock = FCGX_OpenSocket(toStringz(":" ~ to!string(lp)), 12);
+				auto sock = FCGX_OpenSocket(toStringz(listeningHost() ~ ":" ~ to!string(lp)), 12);
 				if(sock < 0)
 					throw new Exception("Couldn't listen on the port");
 				FCGX_InitRequest(&request, sock, 0);
