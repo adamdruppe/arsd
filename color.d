@@ -1,9 +1,112 @@
 module arsd.color;
 
-import std.math : abs;
-import std.conv : to;
-import std.algorithm : startsWith, min, max;
-import std.string : strip, split;
+// importing phobos explodes the size of this code 10x, so not doing it.
+
+private {
+	real toInternal(T)(string s) {
+		real accumulator = 0.0;
+		size_t i = s.length;
+		foreach(idx, c; s) {
+			if(c >= '0' && c <= '9') {
+				accumulator *= 10;
+				accumulator += c - '0';
+			} else if(c == '.') {
+				i = idx + 1;
+				break;
+			} else
+				throw new Exception("bad char to make real from " ~ s);
+		}
+
+		real accumulator2 = 0.0;
+		real count = 1;
+		foreach(c; s[i .. $]) {
+			if(c >= '0' && c <= '9') {
+				accumulator2 *= 10;
+				accumulator2 += c - '0';
+				count *= 10;
+			} else
+				throw new Exception("bad char to make real from " ~ s);
+		}
+
+		return accumulator + accumulator2 / count;
+	}
+
+	string toInternal(T)(int a) {
+		if(a == 0)
+			return "0";
+		char[] ret;
+		while(a) {
+			ret ~= (a % 10) + '0';
+			a /= 10;
+		}
+		for(int i = 0; i < ret.length / 2; i++) {
+			char c = ret[i];
+			ret[i] = ret[$ - i - 1];
+			ret[$ - i - 1] = c;
+		}
+		return cast(string) ret;
+	}
+	string toInternal(T)(real a) {
+		// a simplifying assumption here is the fact that we only use this in one place: toInternal!string(cast(real) a / 255)
+		// thus we know this will always be between 0.0 and 1.0, inclusive.
+		if(a <= 0.0)
+			return "0.0";
+		if(a >= 1.0)
+			return "1.0";
+		string ret = "0.";
+		// I wonder if I can handle round off error any better. Phobos does, but that isn't worth 100 KB of code.
+		int amt = cast(int)(a * 1000);
+		return ret ~ toInternal!string(amt);
+	}
+
+	real absInternal(real a) { return a < 0 ? -a : a; }
+	real minInternal(real a, real b, real c) {
+		auto m = a;
+		if(b < m) m = b;
+		if(c < m) m = c;
+		return m;
+	}
+	real maxInternal(real a, real b, real c) {
+		auto m = a;
+		if(b > m) m = b;
+		if(c > m) m = c;
+		return m;
+	}
+	bool startsWithInternal(string a, string b) {
+		return (a.length >= b.length && a[0 .. b.length] == b);
+	}
+	string[] splitInternal(string a, char c) {
+		string[] ret;
+		size_t previous = 0;
+		foreach(i, char ch; a) {
+			if(ch == c) {
+				ret ~= a[previous .. i];
+				previous = i + 1;
+			}
+		}
+		if(previous != a.length)
+			ret ~= a[previous .. $];
+		return ret;
+	}
+	string stripInternal(string s) {
+		foreach(i, char c; s)
+			if(c != ' ' && c != '\t' && c != '\n') {
+				s = s[i .. $];
+				break;
+			}
+		for(int a = cast(int)(s.length - 1); a > 0; a--) {
+			char c = s[a];
+			if(c != ' ' && c != '\t' && c != '\n') {
+				s = s[0 .. a + 1];
+				break;
+			}
+		}
+
+		return s;
+	}
+}
+
+// done with mini-phobos
 
 struct Color {
 	ubyte r;
@@ -35,19 +138,18 @@ struct Color {
 	*/
 
 	string toCssString() {
-		import std.string : format;
 		if(a == 255)
-			return format("#%02x%02x%02x", r, g, b);
-		else
-			return format("rgba(%d, %d, %d, %s)", r, g, b, cast(real)a / 255.0);
+			return "#" ~ toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b);
+		else {
+			return "rgba("~toInternal!string(r)~", "~toInternal!string(g)~", "~toInternal!string(b)~", "~toInternal!string(cast(real)a / 255.0)~")";
+		}
 	}
 
 	string toString() {
-		import std.string : format;
 		if(a == 255)
-			return format("%02x%02x%02x", r, g, b);
+			return toCssString()[1 .. $];
 		else
-			return format("%02x%02x%02x%02x", r, g, b, a);
+			return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
 	}
 
 	static Color fromNameString(string s) {
@@ -62,7 +164,7 @@ struct Color {
 	}
 
 	static Color fromString(string s) {
-		s = s.strip();
+		s = s.stripInternal();
 
 		Color c;
 		c.a = 255;
@@ -78,19 +180,19 @@ struct Color {
 		// try various notations borrowed from CSS (though a little extended)
 
 		// hsl(h,s,l,a) where h is degrees and s,l,a are 0 >= x <= 1.0
-		if(s.startsWith("hsl(") || s.startsWith("hsla(")) {
+		if(s.startsWithInternal("hsl(") || s.startsWithInternal("hsla(")) {
 			assert(s[$-1] == ')');
-			s = s[s.startsWith("hsl(") ? 4 : 5  .. $ - 1]; // the closing paren
+			s = s[s.startsWithInternal("hsl(") ? 4 : 5  .. $ - 1]; // the closing paren
 
 			real[3] hsl;
 			ubyte a = 255;
 
-			auto parts = s.split(",");
+			auto parts = s.splitInternal(',');
 			foreach(i, part; parts) {
 				if(i < 3)
-					hsl[i] = to!real(part.strip);
+					hsl[i] = toInternal!real(part.stripInternal);
 				else
-					a = cast(ubyte) (to!real(part.strip) * 255);
+					a = cast(ubyte) (toInternal!real(part.stripInternal) * 255);
 			}
 
 			c = .fromHsl(hsl);
@@ -100,14 +202,14 @@ struct Color {
 		}
 
 		// rgb(r,g,b,a) where r,g,b are 0-255 and a is 0-1.0
-		if(s.startsWith("rgb(") || s.startsWith("rgba(")) {
+		if(s.startsWithInternal("rgb(") || s.startsWithInternal("rgba(")) {
 			assert(s[$-1] == ')');
-			s = s[s.startsWith("rgb(") ? 4 : 5  .. $ - 1]; // the closing paren
+			s = s[s.startsWithInternal("rgb(") ? 4 : 5  .. $ - 1]; // the closing paren
 
-			auto parts = s.split(",");
+			auto parts = s.splitInternal(',');
 			foreach(i, part; parts) {
 				// lol the loop-switch pattern
-				auto v = to!real(part.strip);
+				auto v = toInternal!real(part.stripInternal);
 				switch(i) {
 					case 0: // red
 						c.r = cast(ubyte) v;
@@ -162,9 +264,27 @@ struct Color {
 	}
 }
 
+private string toHexInternal(ubyte b) {
+	string s;
+	if(b < 16)
+		s ~= '0';
+	else {
+		ubyte t = (b & 0xf0) >> 4;
+		if(t >= 10)
+			s ~= 'A' + t - 10;
+		else
+			s ~= '0' + t;
+		b &= 0x0f;
+	}
+	if(b >= 10)
+		s ~= 'A' + b - 10;
+	else
+		s ~= '0' + b;
+
+	return s;
+}
 
 private ubyte fromHexInternal(string s) {
-	import std.range;
 	int result = 0;
 
 	int exp = 1;
@@ -194,11 +314,11 @@ Color fromHsl(real[3] hsl) {
 Color fromHsl(real h, real s, real l, real a = 255) {
 	h = h % 360;
 
-	real C = (1 - abs(2 * l - 1)) * s;
+	real C = (1 - absInternal(2 * l - 1)) * s;
 
 	real hPrime = h / 60;
 
-	real X = C * (1 - abs(hPrime % 2 - 1));
+	real X = C * (1 - absInternal(hPrime % 2 - 1));
 
 	real r, g, b;
 
@@ -248,8 +368,8 @@ real[3] toHsl(Color c, bool useWeightedLightness = false) {
 	real g1 = cast(real) c.g / 255;
 	real b1 = cast(real) c.b / 255;
 
-	real maxColor = max(r1, g1, b1);
-	real minColor = min(r1, g1, b1);
+	real maxColor = maxInternal(r1, g1, b1);
+	real minColor = minInternal(r1, g1, b1);
 
 	real L = (maxColor + minColor) / 2 ;
 	if(useWeightedLightness) {
@@ -462,7 +582,6 @@ ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 
 
 
 int fromHex(string s) {
-	import std.range;
 	int result = 0;
 
 	int exp = 1;
@@ -510,9 +629,9 @@ void main() {
 	import browser.document;
 	foreach(ele; document.querySelectorAll("input")) {
 		ele.addEventListener("change", {
-			auto h = to!real(document.querySelector("input[name=h]").value);
-			auto s = to!real(document.querySelector("input[name=s]").value);
-			auto l = to!real(document.querySelector("input[name=l]").value);
+			auto h = toInternal!real(document.querySelector("input[name=h]").value);
+			auto s = toInternal!real(document.querySelector("input[name=s]").value);
+			auto l = toInternal!real(document.querySelector("input[name=l]").value);
 
 			Color c = Color.fromHsl(h, s, l);
 
@@ -525,3 +644,120 @@ void main() {
 	}
 }
 */
+
+
+
+/**
+	This provides two image classes and a bunch of functions that work on them.
+
+	Why are they separate classes? I think the operations on the two of them
+	are necessarily different. There's a whole bunch of operations that only
+	really work on truecolor (blurs, gradients), and a few that only work
+	on indexed images (palette swaps).
+
+	Even putpixel is pretty different. On indexed, it is a palette entry's
+	index number. On truecolor, it is the actual color.
+
+	A greyscale image is the weird thing in the middle. It is truecolor, but
+	fits in the same size as indexed. Still, I'd say it is a specialization
+	of truecolor.
+
+	There is a subset that works on both
+
+*/
+
+
+interface MemoryImage {
+	//IndexedImage convertToIndexedImage() const;
+	//TrueColorImage convertToTrueColor() const;
+	TrueColorImage getAsTrueColorImage();
+}
+
+class IndexedImage : MemoryImage {
+	bool hasAlpha;
+	Color[] palette;
+	ubyte[] data;
+
+	int width;
+	int height;
+
+	this(int w, int h) {
+		width = w;
+		height = h;
+		data = new ubyte[w*h];
+	}
+
+	/*
+	void resize(int w, int h, bool scale) {
+
+	}
+	*/
+
+	override TrueColorImage getAsTrueColorImage() {
+		return convertToTrueColor();
+	}
+
+	TrueColorImage convertToTrueColor() const {
+		auto tci = new TrueColorImage(width, height);
+		foreach(i, b; data) {
+			tci.imageData.colors[i] = palette[b];
+		}
+		return tci;
+	}
+
+	ubyte getOrAddColor(Color c) {
+		foreach(i, co; palette) {
+			if(c == co)
+				return cast(ubyte) i;
+		}
+
+		return addColor(c);
+	}
+
+	int numColors() const {
+		return palette.length;
+	}
+
+	ubyte addColor(Color c) {
+		assert(palette.length < 256);
+		if(c.a != 255)
+			hasAlpha = true;
+		palette ~= c;
+
+		return cast(ubyte) (palette.length - 1);
+	}
+}
+
+class TrueColorImage : MemoryImage {
+//	bool hasAlpha;
+//	bool isGreyscale;
+	//ubyte[] data; // stored as rgba quads, upper left to right to bottom
+	union Data {
+		ubyte[] bytes;
+		Color[] colors;
+
+		static assert(Color.sizeof == 4);
+	}
+
+	Data imageData;
+	alias imageData.bytes data;
+
+	int width;
+	int height;
+
+	this(int w, int h) {
+		width = w;
+		height = h;
+		imageData.bytes = new ubyte[w*h*4];
+	}
+
+	override TrueColorImage getAsTrueColorImage() {
+		return this;
+	}
+
+/+
+	IndexedImage convertToIndexedImage(int maxColors = 256) {
+
+	}
++/
+}
