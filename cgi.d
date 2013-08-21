@@ -2432,95 +2432,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 		version(scgi) {
 			import std.exception;
 			import al = std.algorithm;
-			auto manager = new ListeningConnectionManager(listeningPort(4000));
-
-			// this threads...
-			foreach(connection; manager) {
-				// and now we can buffer
-				scope(failure)
-					connection.close();
-
-				size_t size;
-
-				string[string] headers;
-
-				auto range = new BufferedInputRange(connection);
-				more_data:
-				auto chunk = range.front();
-				// waiting for colon for header length
-				auto idx = indexOf(cast(string) chunk, ':');
-				if(idx == -1) {
-					range.popFront();
-					goto more_data;
-				}
-
-				size = to!size_t(cast(string) chunk[0 .. idx]);
-				chunk = range.consume(idx + 1);
-				// reading headers
-				if(chunk.length < size)
-					range.popFront(0, size + 1);
-				// we are now guaranteed to have enough
-				chunk = range.front();
-				assert(chunk.length > size);
-
-				idx = 0;
-				string key;
-				string value;
-				foreach(part; al.splitter(chunk, '\0')) {
-					if(idx & 1) { // odd is value
-						value = cast(string)(part.idup);
-						headers[key] = value; // commit
-					} else
-						key = cast(string)(part.idup);
-					idx++;
-				}
-
-				enforce(chunk[size] == ','); // the terminator
-
-				range.consume(size + 1);
-				// reading data
-				// this will be done by Cgi
-
-				const(ubyte)[] getScgiChunk() {
-					// we are already primed
-					auto data = range.front();
-					if(data.length == 0 && !range.sourceClosed) {
-						range.popFront(0);
-						data = range.front();
-					}
-
-					return data;
-				}
-
-				void writeScgi(const(ubyte)[] data) {
-					sendAll(connection, data);
-				}
-
-				void flushScgi() {
-					// I don't *think* I have to do anything....
-				}
-
-				Cgi cgi;
-				try {
-					cgi = new CustomCgi(maxContentLength, headers, &getScgiChunk, &writeScgi, &flushScgi);
-				} catch(Throwable t) {
-					sendAll(connection, plainHttpError(true, "400 Bad Request", t));
-					connection.close();
-					continue; // this connection is dead
-				}
-				assert(cgi !is null);
-				scope(exit) cgi.dispose();
-				try {
-					fun(cgi);
-					cgi.close();
-				} catch(Throwable t) {
-					// no std err
-					if(!handleException(cgi, t)) {
-						connection.close();
-						continue;
-					}
-				}
-			}
+			auto manager = new ListeningConnectionManager(listeningPort(4000), &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
+			manager.listen();
 		} else
 		version(fastcgi) {
 			//         SetHandler fcgid-script
@@ -2680,6 +2593,95 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 	}
 }
 
+version(scgi)
+void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket connection) {
+	// and now we can buffer
+	scope(failure)
+		connection.close();
+
+	import al = std.algorithm;
+
+	size_t size;
+
+	string[string] headers;
+
+	auto range = new BufferedInputRange(connection);
+	more_data:
+	auto chunk = range.front();
+	// waiting for colon for header length
+	auto idx = indexOf(cast(string) chunk, ':');
+	if(idx == -1) {
+		range.popFront();
+		goto more_data;
+	}
+
+	size = to!size_t(cast(string) chunk[0 .. idx]);
+	chunk = range.consume(idx + 1);
+	// reading headers
+	if(chunk.length < size)
+		range.popFront(0, size + 1);
+	// we are now guaranteed to have enough
+	chunk = range.front();
+	assert(chunk.length > size);
+
+	idx = 0;
+	string key;
+	string value;
+	foreach(part; al.splitter(chunk, '\0')) {
+		if(idx & 1) { // odd is value
+			value = cast(string)(part.idup);
+			headers[key] = value; // commit
+		} else
+			key = cast(string)(part.idup);
+		idx++;
+	}
+
+	enforce(chunk[size] == ','); // the terminator
+
+	range.consume(size + 1);
+	// reading data
+	// this will be done by Cgi
+
+	const(ubyte)[] getScgiChunk() {
+		// we are already primed
+		auto data = range.front();
+		if(data.length == 0 && !range.sourceClosed) {
+			range.popFront(0);
+			data = range.front();
+		}
+
+		return data;
+	}
+
+	void writeScgi(const(ubyte)[] data) {
+		sendAll(connection, data);
+	}
+
+	void flushScgi() {
+		// I don't *think* I have to do anything....
+	}
+
+	Cgi cgi;
+	try {
+		cgi = new CustomCgi(maxContentLength, headers, &getScgiChunk, &writeScgi, &flushScgi);
+	} catch(Throwable t) {
+		sendAll(connection, plainHttpError(true, "400 Bad Request", t));
+		connection.close();
+		return; // this connection is dead
+	}
+	assert(cgi !is null);
+	scope(exit) cgi.dispose();
+	try {
+		fun(cgi);
+		cgi.close();
+	} catch(Throwable t) {
+		// no std err
+		if(!handleException(cgi, t)) {
+			connection.close();
+			return;
+		}
+	}
+}
 
 string printDate(DateTime date) {
 	return format(
