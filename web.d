@@ -1524,6 +1524,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					cgi.write(result.result.str, true);
 				} else assert(0);
 			break;
+			case "download":
+    				cgi.header("Content-Disposition: attachment; filename=\"data.csv\"");
+			goto case;
 			case "none":
 				cgi.setResponseContentType("text/plain");
 
@@ -2916,6 +2919,9 @@ class Session {
 		return new Session(cgi, cookieParams, useFile, true);
 	}
 
+	version(webd_memory_sessions)
+		__gshared static string[string][string] sessions;
+
 	/// Loads the session if available, and creates one if not.
 	/// May write a session id cookie to the passed cgi object.
 	this(Cgi cgi, CookieParams cookieParams = CookieParams(), bool useFile = true, bool readOnly = false) {
@@ -2984,34 +2990,42 @@ class Session {
 	/// becomes very easy; even easier than a normal session id since they just reply it.
 	/// (you should really ssl encrypt all sessions for any real protection btw)
 	private void loadSpecialSession(Cgi cgi) {
-		version(no_session_override)
+		// Note: this won't work with memory sessions
+		version(webd_memory_sessions)
 			throw new Exception("You cannot access sessions this way.");
 		else {
-			// the header goes full-session-id;file-contents-hash
-			auto info = split(cgi.requestHeaders["x-arsd-session-override"], ";");
+			version(no_session_override)
+				throw new Exception("You cannot access sessions this way.");
+			else {
+				// the header goes full-session-id;file-contents-hash
+				auto info = split(cgi.requestHeaders["x-arsd-session-override"], ";");
 
-			_sessionId = info[0];
-			auto hash = info[1];
+				_sessionId = info[0];
+				auto hash = info[1];
 
-			if(_sessionId.length == 0 || !std.file.exists(getFilePath())) {
-				// there is no session
+				if(_sessionId.length == 0 || !std.file.exists(getFilePath())) {
+					// there is no session
+					_readOnly = true;
+					return;
+				}
+
+				// FIXME: race condition if the session changes?
+				auto file = getFilePath();
+				auto contents = readText(file);
+				auto ourhash = hashToString(SHA256(contents));
+				enforce(ourhash == hash);//, ourhash);
 				_readOnly = true;
-				return;
+				reload();
 			}
-
-			// FIXME: race condition if the session changes?
-			auto file = getFilePath();
-			auto contents = readText(file);
-			auto ourhash = hashToString(SHA256(contents));
-			enforce(ourhash == hash);//, ourhash);
-			_readOnly = true;
-			reload();
 		}
 	}
 
 	/// Call this periodically to clean up old session files. The finalizer param can cancel the deletion
 	/// of a file by returning false.
 	public static void garbageCollect(bool delegate(string[string] data) finalizer = null, Duration maxAge = dur!"hours"(4)) {
+		version(webd_memory_sessions)
+			return; // blargh. FIXME really, they should be null so the gc can free them
+
 		auto ctime = Clock.currTime();
 		foreach(DirEntry e; dirEntries(getTempDirectory(), "arsd_session_file_*", SpanMode.shallow)) {
 			try {
@@ -3091,8 +3105,16 @@ class Session {
 	/// (If you don't commit, the data will be lost when this object is deleted.)
 	void regenerateId() {
 		// we want to clean up the old file, but keep the data we have in memory.
-		if(std.file.exists(getFilePath()))
-			std.file.remove(getFilePath());
+
+		version(webd_memory_sessions) {
+			synchronized {
+				if(sessionId in sessions)
+					sessions.remove(sessionId);
+			}
+		} else {
+			if(std.file.exists(getFilePath()))
+				std.file.remove(getFilePath());
+		}
 
 		// and new cookie -> new session id -> new csrf token
 		makeSessionId(makeNewCookie());
@@ -3111,9 +3133,15 @@ class Session {
 	/// Odds are, invalidate() is what you really want.
 	void clear() {
 		assert(!_readOnly); // or should I throw an exception or just silently ignore it???
-
-		if(std.file.exists(getFilePath()))
-			std.file.remove(getFilePath());
+		version(webd_memory_sessions) {
+			synchronized {
+				if(sessionId in sessions)
+					sessions.remove(sessionId);
+			}
+		} else {
+			if(std.file.exists(getFilePath()))
+				std.file.remove(getFilePath());
+		}
 		data = null;
 		_hasData = false;
 		changed = false;
@@ -3243,16 +3271,30 @@ class Session {
 	/// Discards your changes, reloading the session data from the disk file.
 	void reload() {
 		data = null;
-		auto path = getFilePath();
-		try {
-			data = Session.loadData(path);
-			_hasData = true;
-		} catch(Exception e) {
-			// it's a bad session...
-			_hasData = false;
-			data = null;
-			if(std.file.exists(path))
-				std.file.remove(path);
+
+
+		version(webd_memory_sessions) {
+			synchronized {
+				if(auto s = sessionId in sessions) {
+					foreach(k, v; *s)
+						data[k] = v;
+					_hasData = true;
+				} else {
+					_hasData = false;
+				}
+			}
+		} else {
+			auto path = getFilePath();
+			try {
+				data = Session.loadData(path);
+				_hasData = true;
+			} catch(Exception e) {
+				// it's a bad session...
+				_hasData = false;
+				data = null;
+				if(std.file.exists(path))
+					std.file.remove(path);
+			}
 		}
 	}
 
@@ -3265,17 +3307,26 @@ class Session {
 		if(_readOnly)
 			return;
 		if(force || changed) {
-			std.file.write(getFilePath(), toJson(data));
-			changed = false;
-			// We have to make sure that only we can read this file,
-			// since otherwise, on shared hosts, our session data might be
-			// easily stolen. Note: if your shared host doesn't have different
-			// users on the operating system for each user, it's still possible
-			// for them to access this file and hijack your session!
-			version(Posix)
-				enforce(linux.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
-			// FIXME: ensure the file's read permissions are locked down
-			// on Windows too.
+
+
+			version(webd_memory_sessions) {
+				synchronized {
+					sessions[sessionId] = data;
+					changed = false;
+				}
+			} else {
+				std.file.write(getFilePath(), toJson(data));
+				changed = false;
+				// We have to make sure that only we can read this file,
+				// since otherwise, on shared hosts, our session data might be
+				// easily stolen. Note: if your shared host doesn't have different
+				// users on the operating system for each user, it's still possible
+				// for them to access this file and hijack your session!
+				version(Posix)
+					enforce(linux.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
+				// FIXME: ensure the file's read permissions are locked down
+				// on Windows too.
+			}
 		}
 	}
 
