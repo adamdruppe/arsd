@@ -45,9 +45,10 @@ querygenerator.d - a user submission for generating sql queries
 Desktop app stuff
 ================
 
-simpledisplay.d - gives quick and easy access to a window for drawing
-htmlwidget.d - a very small html widget, built on simpledisplay.d
+simpledisplay.d - gives quick and easy access to a window for drawing and input. Also has some OpenGL capabilities.
+minigui.d - a small widgetset built on top of simpledisplay.d offering buttons, checkboxes, etc.
 terminal.d - quick and easy access to a text mode console/terminal
+htmlwidget.d - a very small html widget, built on simpledisplay.d
 
 Game stuff
 =================
@@ -60,25 +61,32 @@ engine.d, screen.d, audio.d - a quick wrapper to SDL and OpenGL I used
 
 	 Eventually I'll redo it.
 
+Reading Common Files
+=================
+bmp.d  - basic .bmp file read/write support
+png.d  - provides some png read/write support
+jpg.d  - just reading jpg header right now
+csv.d  - gives read support to csv files
+
 Other
 ================
+
+stb_truetype.d - a port of the nice little C library stb_truetype.h to D for drawing text without external dependencies
 
 eventloop.d - first draft of a generic event loop that can be reused by several libraries
               try it with terminal.d or simpledisplay.d with -version=with_eventloop. Only
               works on Linux right now.
 sha.d  - implementations of the SHA1 and SHA256 algorithms
-image.d - generic image class that can be drawn upon (coming soon) or loaded/written by png.d
-png.d  - provides some png read/write support
-jpg.d  - just reading jpg header right now
 curl.d - a small wrapper around the curl library
-csv.d  - gives read support to csv files
 http.d - a lighterweight alternative to curl.d
-color.d - a basic color struct and some HSL functions
+color.d - a basic color struct and some HSL functions. Also includes really basic image classes
+	on which png.d, bmp.d, and others depend, and now some quantization and dithering algorithms.
 characterencodings.d - conversion to UTF8 of various encodings
 
 
 Obsolete
 ================
+image.d - now merged into color.d
 lazypng.d - now merged into png.d
 httpd.d - old http server, use cgi.d with -version=embedded_httpd instead
 netman.d - old network helper code, you should try vibe.d <http://vibed.org/> or maybe
@@ -89,10 +97,10 @@ domconvenience.d - now merged into dom.d
 
 Things I'll add when I get the time:
 
+event.d - reading Linux's /dev/event e.g. for second keyboards and usb joysticks
 browser.d - a tiny browser based on htmlwidget.d
-bmp.d   - gives .bmp read/write
 wav.d  - reading and writing WAV files
-midi.d - reading and writing MIDI files
+midi.d - reading and writing MIDI files (I actually need to port it from C still!)
 simpleaudio.d - gives minimal audio output
 minimal.zip - a set of minimal D functions, works on bare metal. see: http://arsdnet.net/dcode/minimal.zip
 
