@@ -40,6 +40,12 @@
 		This forwards directly to the D function var.opCast.
 
 	* some operator overloading on objects, passing opBinary(op, rhs), length, and perhaps others through like they would be in D.
+		opIndex(name)
+		opIndexAssign(value, name) // same order as D, might some day support [n1, n2] => (value, n1, n2)
+
+		obj.__prop("name", value); // bypasses operator overloading, useful for use inside the opIndexAssign especially
+
+		Note: if opIndex is not overloaded, getting a non-existent member will actually add it to the member. This might be a bug but is needed right now in the D impl for nice chaining. Or is it? FIXME
 	* if/else
 	* array slicing, but note that slices are rvalues currently
 	* variables must start with A-Z, a-z, _, or $, then must be [A-Za-z0-9_]*.
@@ -101,6 +107,9 @@
 
 	FIXME:
 		* make sure superclass ctors are called
+	Might be nice:
+		varargs
+		lambdas
 */
 module arsd.script;
 
@@ -205,6 +214,7 @@ class TokenStream(TextStream) {
 
 	ScriptToken next;
 
+	// FIXME: might be worth changing this so i can peek far enough ahead to do () => expr lambdas.
 	ScriptToken peek;
 	bool peeked;
 	void pushFront(ScriptToken f) {
@@ -314,7 +324,7 @@ class TokenStream(TextStream) {
 				int pos = 1; // skip the opening "
 				bool escaped = false;
 				// FIXME: escaping doesn't do the right thing lol. we should slice if we can, copy if not
-				while(pos < text.length && !escaped && text[pos] != '"') {
+				while(pos < text.length && (escaped || text[pos] != '"')) {
 					if(escaped)
 						escaped = false;
 					else
@@ -419,7 +429,42 @@ class StringLiteralExpression : Expression {
 	}
 
 	this(string s) {
-		literal = s;
+		char[] unescaped;
+		int lastPos;
+		bool changed = false;
+		bool inEscape = false;
+		foreach(pos, char c; s) {
+			if(c == '\\') {
+				if(!changed) {
+					changed = true;
+					unescaped.reserve(s.length);
+				}
+				unescaped ~= s[lastPos .. pos];
+				inEscape = true;
+				continue;
+			}
+			if(inEscape) {
+				lastPos = pos + 1;
+				inEscape = false;
+				switch(c) {
+					case 'n':
+						unescaped ~= '\n';
+					break;
+					case 't':
+						unescaped ~= '\t';
+					break;
+					case '\\':
+						unescaped ~= '\\';
+					break;
+					default: throw new ScriptCompileException("literal escape unknown " ~ c, 0, null, 0);
+				}
+			}
+		}
+
+		if(changed)
+			literal = cast(string) unescaped;
+		else
+			literal = s;
 	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
@@ -734,10 +779,12 @@ class OpAssignExpression : Expression {
 class AssignExpression : Expression {
 	Expression e1;
 	Expression e2;
+	bool suppressOverloading;
 
-	this(Expression e1, Expression e2) {
+	this(Expression e1, Expression e2, bool suppressOverloading = false) {
 		this.e1 = e1;
 		this.e2 = e2;
+		this.suppressOverloading = suppressOverloading;
 	}
 
 	override string toString() { return e1.toString() ~ " = " ~ e2.toString(); }
@@ -747,7 +794,7 @@ class AssignExpression : Expression {
 		if(v is null)
 			throw new ScriptRuntimeException("not an lvalue", 0 /* FIXME */);
 
-		auto ret = v.getVar(sc, false) = e2.interpret(sc).value;
+		auto ret = v.setVar(sc, e2.interpret(sc).value, false, suppressOverloading);
 
 		return InterpretResult(ret, sc);
 	}
@@ -777,6 +824,10 @@ class VariableExpression : Expression {
 
 	ref var getVar(PrototypeObject sc, bool recurse = true) {
 		return sc._getMember(identifier, true /* FIXME: recurse?? */, true);
+	}
+
+	ref var setVar(PrototypeObject sc, var t, bool recurse = true, bool suppressOverloading = false) {
+		return sc._setMember(identifier, t, true /* FIXME: recurse?? */, true, suppressOverloading);
 	}
 
 	ref var getVarFrom(PrototypeObject sc, ref var v) {
@@ -828,6 +879,14 @@ class DotVarExpression : VariableExpression {
 			return this.getVarFrom(sc, *v);
 		}
 	}
+
+	override ref var setVar(PrototypeObject sc, var t, bool recurse = true, bool suppressOverloading = false) {
+		if(suppressOverloading)
+			return e1.interpret(sc).value.opIndexAssignNoOverload(t, e2.identifier);
+		else
+			return e1.interpret(sc).value.opIndexAssign(t, e2.identifier);
+	}
+
 
 	override ref var getVarFrom(PrototypeObject sc, ref var v) {
 		return e2.getVarFrom(sc, v);
@@ -1264,7 +1323,7 @@ class CallExpression : Expression {
 		} else if(auto ide = cast(IndexExpression) func)
 			_this = ide.interpret(sc).value;
 
-		return InterpretResult(f.apply(var(_this), args), sc);
+		return InterpretResult(f.apply(_this, args), sc);
 	}
 }
 
@@ -1708,7 +1767,8 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 							new VariableExpression(o),
 							new VariableExpression(ident),
 							false),
-						decl.initializers[i]
+						decl.initializers[i],
+						true // no overloading because otherwise an early opIndexAssign can mess up the decls
 					);
 				}
 			}
@@ -2194,6 +2254,12 @@ var interpret(string code, var variables = null, string scriptFilename = null) {
 	return interpretStream(
 		lexScript(repeat(code, 1), scriptFilename),
 		(variables.payloadType() == var.Type.Object && variables._payload._object !is null) ? variables._payload._object : new PrototypeObject());
+}
+
+var interpretFile(File file, var globals) {
+	import std.algorithm;
+	return interpretStream(lexScript(file.byLine.map!((a) => a.idup), file.name),
+		(globals.payloadType() == var.Type.Object && globals._payload._object !is null) ? globals._payload._object : new PrototypeObject());
 }
 
 void repl(var globals) {

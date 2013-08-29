@@ -5,6 +5,12 @@ version(with_openssl) {
 	pragma(lib, "ssl");
 }
 
+ubyte[] getBinary(string url, string[string] cookies = null) {
+	auto hr = httpRequest("GET", url, null, cookies);
+	if(hr.code != 200)
+		throw new Exception(format("HTTP answered %d instead of 200 on %s", hr.code, url));
+	return hr.content;
+}
 
 /**
 	Gets a textual document, ignoring headers. Throws on non-text or error.

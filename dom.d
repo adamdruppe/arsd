@@ -20,6 +20,12 @@
 */
 module arsd.dom;
 
+version(with_arsd_jsvar)
+	import arsd.jsvar;
+else {
+	enum Scriptable;
+}
+
 // FIXME: might be worth doing Element.attrs and taking opDispatch off that
 // so more UFCS works.
 
@@ -538,6 +544,27 @@ struct DataSet {
 
 	mixin JavascriptStyleDispatch!();
 }
+
+/// Proxy object for attributes which will replace the main opDispatch eventually
+struct AttributeSet {
+	this(Element e) {
+		this._element = e;
+	}
+
+	private Element _element;
+	string set(string name, string value) {
+		_element.setAttribute(name, value);
+		return value;
+	}
+
+	string get(string name) const {
+		return _element.getAttribute(name);
+	}
+
+	mixin JavascriptStyleDispatch!();
+}
+
+
 
 /// for style, i want to be able to set it with a string like a plain attribute,
 /// but also be able to do properties Javascript style.
@@ -1256,8 +1283,14 @@ class Element {
 	/// Given: <a data-my-property="cool" />
 	///
 	/// We get: assert(a.dataset.myProperty == "cool");
-	DataSet dataset() {
+	@property DataSet dataset() {
 		return DataSet(this);
+	}
+
+	/// Gives dot/opIndex access to attributes
+	/// ele.attrs.largeSrc = "foo"; // same as ele.setAttribute("largeSrc", "foo")
+	@property AttributeSet attrs() {
+		return AttributeSet(this);
 	}
 
 	/// Provides both string and object style (like in Javascript) access to the style attribute.
@@ -5833,12 +5866,14 @@ class Event {
 			foreach(handler; e.bubblingEventHandlers[eventName])
 				handler(e, this);
 
-			if(!defaultPrevented)
-				if(eventName in e.defaultEventHandlers)
-					e.defaultEventHandlers[eventName](e, this);
-
 			if(propagationStopped)
 				break;
+		}
+
+		if(!defaultPrevented)
+		foreach(e; chain) {
+				if(eventName in e.defaultEventHandlers)
+					e.defaultEventHandlers[eventName](e, this);
 		}
 	}
 }

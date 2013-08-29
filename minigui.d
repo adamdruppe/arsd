@@ -2,7 +2,12 @@ module arsd.minigui;
 
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775491(v=vs.85).aspx#PROGRESS_CLASS
 
+// FIXME: menus should prolly capture the mouse. ugh i kno.
+
 import simpledisplay;
+
+// this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
+private bool lastDefaultPrevented;
 
 version(Windows) {
 	// use native widgets when available unless specifically asked otherwise
@@ -13,6 +18,20 @@ version(Windows) {
 	// and native theming when needed
 	version = win32_theming;
 }
+
+/*
+	TextEdit needs:
+
+	* carat manipulation
+	* selection control
+	* convenience functions for appendText, insertText, insertTextAtCarat, etc.
+
+	For example:
+
+	connect(paste, &textEdit.insertTextAtCarat);
+
+	would be nice.
+*/
 
 enum windowBackgroundColor = Color(190, 190, 190);
 
@@ -53,11 +72,12 @@ class Action {
 		sortable table view
 
 		maybe notification area icons
+		basic clipboard
 
 		* radio box
 		toggle buttons (optionally mutually exclusive, like in Paint)
 		label, rich text display, multi line plain text (selectable)
-		fieldset
+		* fieldset
 		* nestable grid layout
 		single line text input
 		* multi line text input
@@ -67,7 +87,7 @@ class Action {
 		drop down
 		combo box
 		auto complete box
-		progress bar
+		* progress bar
 
 		terminal window/widget (on unix it might even be a pty but really idk)
 
@@ -229,10 +249,17 @@ version(win32_widgets) {
 	extern(Windows)
 	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		if(auto te = hWnd in Widget.nativeMapping) {
+			if(iMessage == WM_SETFOCUS)
+				(*te).parentWindow.focusedWidget = *te;
+
 			auto pos = getChildPositionRelativeToParentOrigin(*te);
-			if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win))
-				{}
-			return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
+			lastDefaultPrevented = false;
+			if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
+				return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
+			else {
+				// it was something we recognized, should only call the window procedure if the default was not prevented
+			}
+			return 0;
 		}
 		assert(0, "shouldn't be receiving messages for this window....");
 		//import std.conv;
@@ -370,7 +397,7 @@ class Widget {
 			child.newWindow(parent);
 	}
 
-	void addChild(Widget w, int position = int.max) {
+	protected void addChild(Widget w, int position = int.max) {
 		w.parent = this;
 		if(position == int.max || position == children.length)
 			children ~= w;
@@ -596,9 +623,9 @@ class MainWindow : Window {
 
 		defaultEventHandlers["mouseover"] = delegate void(Widget _this, Event event) {
 			if(this.statusBar !is null && event.target.statusTip.length)
-				this.statusBar.content = event.target.statusTip;
+				this.statusBar.parts[0].content = event.target.statusTip;
 			else if(this.statusBar !is null && _this.statusTip.length)
-				this.statusBar.content = _this.statusTip ~ " " ~ event.target.toString();
+				this.statusBar.parts[0].content = _this.statusTip ~ " " ~ event.target.toString();
 		};
 
 		version(win32_widgets)
@@ -645,7 +672,7 @@ class MainWindow : Window {
 
 		super.addChild(_clientArea);
 
-		statusBar = new StatusBar("", this);
+		statusBar = new StatusBar(this);
 	}
 
 	override void addChild(Widget c, int position = int.max) {
@@ -823,56 +850,105 @@ class MenuBar : Widget {
 
 /**
 	Status bars appear at the bottom of a MainWindow.
-
-	auto window = new MainWindow(100, 100);
-	window.statusBar = new StatusBar("Test", window);
-
-	// two parts, spaced automatically
-	or new StatusBar(["test", "23"], window);
-
-	// three parts, evenly spaced, no identifier
-	or new StatusBar(3, window);
-
-	// part spacing
-	or new StatusBar([32, 0], window)
-	or new StatusBar([StatusBarPart(32, "foo"), StatusBarPart("test")]);
-
+	They are made out of Parts, with a width and content.
 
 	They can have multiple parts or be in simple mode. FIXME: implement
+
+
+	sb.parts[0].content = "Status bar text!";
 */
 class StatusBar : Widget {
-	private string _content;
-	@property string content() { return _content; }
-	@property void content(string s) {
-		version(win32_widgets) {
-			WPARAM wParam;
-			auto idx = 0; // see also SB_SIMPLEID
-			wParam = idx;
-			SendMessageA(hwnd, SB_SETTEXT, wParam, cast(LPARAM) toStringzInternal(s));
+	private Part[] partsArray;
+	struct Parts {
+		@disable this();
+		this(StatusBar owner) { this.owner = owner; }
+		//@disable this(this);
+		@property int length() { return owner.partsArray.length; }
+		private StatusBar owner;
+		private this(StatusBar owner, Part[] parts) {
+			this.owner.partsArray = parts;
+			this.owner = owner;
+		}
+		Part opIndex(int p) {
+			if(owner.partsArray.length == 0)
+				this ~= new StatusBar.Part(300);
+			return owner.partsArray[p];
+		}
 
-			SendMessageA(hwnd, WM_USER + 4 /*SB_SETPARTS*/, 5, cast(int) [32, 100, 200, 400, -1].ptr);
-		} else {
-			_content = s;
-			redraw();
+		Part opOpAssign(string op : "~" )(Part p) {
+			assert(owner.partsArray.length < 255);
+			p.owner = this.owner;
+			p.idx = owner.partsArray.length;
+			owner.partsArray ~= p;
+			version(win32_widgets) {
+				int[256] pos;
+				int cpos = 0;
+				foreach(idx, part; owner.partsArray) {
+					if(part.width)
+						cpos += part.width;
+					else
+						cpos += 100;
+
+					if(idx + 1 == owner.partsArray.length)
+						pos[idx] = -1;
+					else
+						pos[idx] = cpos;
+				}
+				SendMessageA(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(int) pos.ptr);
+			} else {
+				owner.redraw();
+			}
+
+			return p;
 		}
 	}
 
-	version(win32_widgets)
-	this(string c, Widget parent = null) {
-		super(null); // FIXME
-		parentWindow = parent.parentWindow;
-		createWin32Window(this, "msctls_statusbar32", "D rox", 0);
+	private Parts _parts;
+	@property Parts parts() {
+		return _parts;
 	}
-	else
-	this(string c, Widget parent = null) {
-		super(null); // is this right?
-		_content = c;
-		this.paint = (ScreenPainter painter) {
-			painter.outlineColor = Color.black;
-			painter.fillColor = windowBackgroundColor;
-			painter.drawRectangle(Point(0, 0), width, height);
-			painter.drawText(Point(4, 0), content, Point(width, height));
-		};
+
+	static class Part {
+		int width;
+		StatusBar owner;
+
+		this(int w = 100) { width = w; }
+
+		private int idx;
+		private string _content;
+		@property string content() { return _content; }
+		@property void content(string s) {
+			version(win32_widgets) {
+				_content = s;
+				SendMessageA(owner.hwnd, SB_SETTEXT, idx, cast(LPARAM) toStringzInternal(s));
+			} else {
+				_content = s;
+				owner.redraw();
+			}
+		}
+	}
+	string simpleModeContent;
+	bool inSimpleMode;
+
+
+	this(Widget parent = null) {
+		super(null); // FIXME
+		_parts = Parts(this);
+		version(win32_widgets) {
+			parentWindow = parent.parentWindow;
+			createWin32Window(this, "msctls_statusbar32", "D rox", 0);
+		} else {
+			this.paint = (ScreenPainter painter) {
+				painter.outlineColor = Color.black;
+				painter.fillColor = windowBackgroundColor;
+				painter.drawRectangle(Point(0, 0), width, height);
+				int cpos = 4;
+				foreach(part; this.partsArray) {
+					painter.drawText(Point(cpos, 0), part.content, Point(width, height));
+					cpos += part.width ? part.width : 100;
+				}
+			};
+		}
 	}
 
 	override int maxHeight() { return Window.lineHeight; }
@@ -1526,6 +1602,7 @@ class Event {
 
 	/// Prevents the default event handler (if there is one) from being called
 	void preventDefault() {
+		lastDefaultPrevented = true;
 		defaultPrevented = true;
 	}
 
@@ -1609,12 +1686,14 @@ class Event {
 				if(handler !is null)
 					handler(e, this);
 
-			if(!defaultPrevented)
-				if(eventName in e.defaultEventHandlers)
-					e.defaultEventHandlers[eventName](e, this);
-
 			if(propagationStopped)
 				break;
+		}
+
+		if(!defaultPrevented)
+		foreach(e; chain) {
+			if(eventName in e.defaultEventHandlers)
+				e.defaultEventHandlers[eventName](e, this);
 		}
 	}
 }

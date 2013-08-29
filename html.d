@@ -124,8 +124,7 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 		  	e.tagName == "textarea" ||
 		  	e.tagName == "label" ||
 		  	e.tagName == "fieldset" ||
-		  	e.tagName == "legend" ||
-			1
+		  	e.tagName == "legend"
 			))
 		) {
 			e.innerText = e.innerText; // strips out non-text children

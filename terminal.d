@@ -9,6 +9,11 @@
  */
 module terminal;
 
+// FIXME: SIGWINCH
+
+version(linux)
+	enum SIGWINCH = 28; // FIXME: confirm this is correct on other posix
+
 // parts of this were taken from Robik's ConsoleD
 // https://github.com/robik/ConsoleD/blob/master/consoled.d
 
@@ -214,6 +219,7 @@ enum ConsoleInputFlags {
 	echo = 1, /// do you want to automatically echo input back to the user?
 	mouse = 2, /// capture mouse events
 	paste = 4, /// capture paste events (note: without this, paste can come through as keystrokes)
+	size = 8, /// window resize events
 }
 
 /// Defines how terminal output should be handled.
@@ -897,6 +903,7 @@ struct RealTimeConsoleInput {
 
 			DWORD mode = 0;
 			mode |= ENABLE_PROCESSED_INPUT /* 0x01 */; // this gives Ctrl+C which we probably want to be similar to linux
+			//if(flags & ConsoleInputFlags.size)
 			mode |= ENABLE_WINDOW_INPUT /* 0208 */; // gives size etc
 			if(flags & ConsoleInputFlags.echo)
 				mode |= ENABLE_ECHO_INPUT; // 0x4
@@ -933,6 +940,22 @@ struct RealTimeConsoleInput {
 
 			// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
 			//destructor ~= { tcsetattr(fd, TCSANOW, &old); };
+
+			/+
+			if(flags & ConsoleInputFlags.size) {
+				// FIXME: finish this
+				import core.sys.posix.signal;
+				sigaction n;
+				n.sa_handler = &handler;
+				n.sa_mask = 0;
+				n.sa_flags = 0;
+				sigaction o;
+				sigaction(SIGWINCH, &n, &o);
+
+				// restoration
+				sigaction(SIGWINCH, &o, null);
+			}
+			+/
 
 			if(flags & ConsoleInputFlags.mouse) {
 				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "linux")) {

@@ -37,6 +37,9 @@ import std.traits;
 import std.conv;
 import std.json;
 
+// uda for wrapping classes
+enum Scriptable;
+
 /*
 	PrototypeObject FIXME:
 		make undefined variables reaction overloadable in PrototypeObject, not just a switch
@@ -46,6 +49,8 @@ import std.json;
 	the Expression should keep scriptFilename and lineNumber around for error messages
 
 	it should consistently throw on missing semicolons
+
+	*) in operator
 
 	*) nesting comments, `` string literals
 	*) opDispatch overloading
@@ -105,6 +110,11 @@ version(test_script)
 	}
 version(test_script)
 void main() {
+	{
+	var a = var.emptyObject;
+	a.qweq = 12;
+	}
+
 	// the WrappedNativeObject is disgusting
 	// but works.
 	/*
@@ -545,6 +555,7 @@ struct var {
 			auto obj = new PrototypeObject();
 			this._payload._object = obj;
 
+			static if((is(T == class) || is(T == struct)))
 			foreach(member; __traits(allMembers, T)) {
 				static if(__traits(compiles, __traits(getMember, t, member))) {
 					static if(is(typeof(__traits(getMember, t, member)) == function)) {
@@ -552,6 +563,11 @@ struct var {
 						//this[member] = &__traits(getMember, proxyObject, member);
 					} else
 						this[member] = __traits(getMember, t, member);
+				}
+			} else {
+				// assoc array
+				foreach(l, v; t) {
+					this[var(l)] = var(v);
 				}
 			}
 		} else static if(isArray!T) {
@@ -571,8 +587,8 @@ struct var {
 
 	public var opOpAssign(string op, T)(T t) {
 		if(payloadType() == Type.Object) {
-			var operator = this["opOpAssign"];
-			if(operator._type == Type.Function)
+			var* operator = this._payload._object._peekMember("opOpAssign", true);
+			if(operator !is null && operator._type == Type.Function)
 				return operator.call(this, op, t);
 		}
 
@@ -582,8 +598,8 @@ struct var {
 	public var opBinary(string op, T)(T t) {
 		var n;
 		if(payloadType() == Type.Object) {
-			var operator = this["opBinary"];
-			if(operator._type == Type.Function) {
+			var* operator = this._payload._object._peekMember("opBinary", true);
+			if(operator !is null && operator._type == Type.Function) {
 				return operator.call(this, op, t);
 			}
 		}
@@ -592,10 +608,13 @@ struct var {
 
 	public var apply(var _this, var[] args) {
 		if(this.payloadType() == Type.Function) {
+			assert(this._payload._function !is null);
 			return this._payload._function(_this, args);
 		}
 
-		// or we could throw
+		version(jsvar_throw)
+			throw new DynamicTypeException(this, Type.Function);
+
 		var ret;
 		return ret;
 	}
@@ -616,7 +635,7 @@ struct var {
 		return this.get!string;
 	}
 
-	public T get(T)() {
+	public T get(T)() if(!is(T == void)) {
 		static if(is(T == var)) {
 			return this;
 		} else
@@ -648,8 +667,9 @@ struct var {
 
 					return t;
 				} else static if(isSomeString!T) {
-					// FIXME: is this best?
-					return this.toJson();
+					if(this._object !is null)
+						return this._object.toString();
+					return "null";
 				}
 
 				return T.init;
@@ -680,8 +700,13 @@ struct var {
 					return to!string(pl);
 				} else static if(isArray!T) {
 					T ret;
+					static if(is(ElementType!T == void)) {
+						static assert(0, "try wrapping the function to get rid of void[] args");
+						//alias getType = ubyte;
+					} else
+						alias getType = ElementType!T;
 					foreach(item; pl)
-						ret ~= item.get!(ElementType!T);
+						ret ~= item.get!(getType);
 					return ret;
 				}
 
@@ -758,6 +783,15 @@ struct var {
 		this._payload._function = f;
 		this._type = Type.Function;
 	}
+
+	/*
+	public void _function(var function(var, var[]) f) {
+		var delegate(var, var[]) dg;
+		dg.ptr = null;
+		dg.funcptr = f;
+		this._function = dg;
+	}
+	*/
 
 	public void _object(PrototypeObject obj) {
 		this._type = Type.Object;
@@ -847,6 +881,33 @@ struct var {
 			*tmp = _payload._array.length;
 			return *tmp;
 		}
+		if(name == "__prop" && this.payloadType() == Type.Object) {
+			var* tmp = new var;
+			(*tmp)._function = delegate var(var _this, var[] args) {
+				if(args.length == 0)
+					return var(null);
+				if(args.length == 1) {
+					auto peek = this._payload._object._peekMember(args[0].get!string, false);
+					if(peek is null)
+						return var(null);
+					else
+						return *peek;
+				}
+				if(args.length == 2) {
+					auto peek = this._payload._object._peekMember(args[0].get!string, false);
+					if(peek is null) {
+						this._payload._object._properties[args[0].get!string] = args[1];
+						return var(null);
+					} else {
+						*peek = args[1];
+						return *peek;
+					}
+
+				}
+				throw new Exception("too many args");
+			};
+			return *tmp;
+		}
 
 		PrototypeObject from;
 		if(this.payloadType() == Type.Object)
@@ -869,9 +930,19 @@ struct var {
 		if(_payload._object is null)
 			throw new DynamicTypeException(var(null), Type.Object, file, line);
 
-		this._payload._object._getMember(name, false, false, file, line) = t;
-		return this._payload._object._properties[name];
+		return this._payload._object._setMember(name, var(t), false, false, false, file, line);
 	}
+
+	public ref var opIndexAssignNoOverload(T)(T t, string name, string file = __FILE__, size_t line = __LINE__) {
+		if(name.length && name[0] >= '0' && name[0] <= '9')
+			return opIndexAssign(t, to!size_t(name), file, line);
+		_requireType(Type.Object); // FIXME?
+		if(_payload._object is null)
+			throw new DynamicTypeException(var(null), Type.Object, file, line);
+
+		return this._payload._object._setMember(name, var(t), false, false, true, file, line);
+	}
+
 
 	public ref var opIndex(size_t idx, string file = __FILE__, size_t line = __LINE__) {
 		if(_type == Type.Array) {
@@ -879,6 +950,8 @@ struct var {
 			if(idx < arr.length)
 				return arr[idx];
 		}
+		version(jsvar_throw)
+			throw new DynamicTypeException(this, Type.Array, file, line);
 		var* n = new var();
 		return *n;
 	}
@@ -891,15 +964,22 @@ struct var {
 			this._payload._array[idx] = t;
 			return this._payload._array[idx];
 		}
+		version(jsvar_throw)
+			throw new DynamicTypeException(this, Type.Array, file, line);
 		var* n = new var();
 		return *n;
 	}
 
 	ref var _getOwnProperty(string name, string file = __FILE__, size_t line = __LINE__) {
 		if(_type == Type.Object) {
-			if(_payload._object !is null)
-				return this._payload._object._getMember(name, false, false, file, line);
+			if(_payload._object !is null) {
+				auto peek = this._payload._object._peekMember(name, false);
+				if(peek !is null)
+					return *peek;
+			}
 		}
+		version(jsvar_throw)
+			throw new DynamicTypeException(this, Type.Object, file, line);
 		var* n = new var();
 		return *n;
 	}
@@ -1085,7 +1165,7 @@ class WrappedNativeObject(T, bool wrapData = true) : PrototypeObject {
 
 
 
-			ParameterTypeTuple!(__traits(getMember, nativeObject, member)) fargs;
+			ParameterTypeTuple!(func) fargs;
 			foreach(idx, a; fargs) {
 				if(idx == args.length)
 					break;
@@ -1116,6 +1196,7 @@ class WrappedNativeObject(T, bool wrapData = true) : PrototypeObject {
 		foreach(member; __traits(allMembers, T)) {
 			static if(__traits(compiles, __traits(getMember, nativeObject, member))) {
 				static if(is(typeof(__traits(getMember, nativeObject, member)) == function)) {
+					static if(__traits(getOverloads, nativeObject, member).length == 1)
 					this._getMember(member, false, false)._function =
 						makeWrapper!(member)();
 				} else static if(wrapData)
@@ -1157,6 +1238,32 @@ class WrappedNativeObject(T, bool wrapData = true) : PrototypeObject {
 	}
 }
 
+
+class OpaqueNativeObject(T) : PrototypeObject {
+	T item;
+
+	this(T t) {
+		this.item = t;
+	}
+
+	override string toString() const {
+		return item.toString();
+	}
+
+	override OpaqueNativeObject!T copy() {
+		auto n = new OpaqueNativeObject!T(item);
+		// FIXME: what if it is a reference type?
+		return n;
+	}
+}
+
+T getOpaqueNative(T)(var v, string file = __FILE__, size_t line = __LINE__) {
+	auto obj = cast(OpaqueNativeObject!T) v._object;
+	if(obj is null)
+		throw new DynamicTypeException(v, var.Type.Object, file, line);
+	return obj.item;
+}
+
 class PrototypeObject {
 	string name;
 	var _prototype;
@@ -1172,6 +1279,23 @@ class PrototypeObject {
 	PrototypeObject prototype(PrototypeObject set) {
 		this._prototype._object = set;
 		return set;
+	}
+
+	override string toString() {
+
+		var* ts = _peekMember("toString", true);
+		if(ts) {
+			var _this;
+			_this._object = this;
+			return (*ts).call(_this).get!string;
+		}
+
+		JSONValue val;
+		val.type = JSON_TYPE.OBJECT;
+		foreach(k, v; this._properties)
+			val.object[k] = v.toJsonValue();
+
+		return toJSON(&val);
 	}
 
 	var[string] _properties;
@@ -1193,11 +1317,9 @@ class PrototypeObject {
 		return this;
 	}
 
-
-	// FIXME: maybe throw something else
-	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
+	var* _peekMember(string name, bool recurse) {
 		if(name == "prototype")
-			return _prototype;
+			return &_prototype;
 
 		auto curr = this;
 
@@ -1219,7 +1341,7 @@ class PrototypeObject {
 				else
 					curr = curr.prototype;
 			} else
-				return *prop;
+				return prop;
 		} while(curr);
 
 		if(possibleSecondary !is null) {
@@ -1230,6 +1352,23 @@ class PrototypeObject {
 			}
 		}
 
+		return null;
+	}
+
+	// FIXME: maybe throw something else
+	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
+		var* mem = _peekMember(name, recurse);
+
+		if(mem !is null)
+			return *mem;
+
+		mem = _peekMember("opIndex", recurse);
+		if(mem !is null) {
+			auto n = new var;
+			*n = ((*mem)(name));
+			return *n;
+		}
+
 		// if we're here, the property was not found, so let's implicitly create it
 		if(throwOnFailure)
 			throw new Exception("no such property " ~ name, file, line);
@@ -1237,6 +1376,32 @@ class PrototypeObject {
 		this._properties[name] = n;
 		return this._properties[name];
 	}
+
+	// FIXME: maybe throw something else
+	/*package*/ ref var _setMember(string name, var t, bool recurse, bool throwOnFailure, bool suppressOverloading, string file = __FILE__, size_t line = __LINE__) {
+		var* mem = _peekMember(name, recurse);
+
+		if(mem !is null) {
+			*mem = t;
+			return *mem;
+		}
+
+		if(!suppressOverloading) {
+			mem = _peekMember("opIndexAssign", true);
+			if(mem !is null) {
+				auto n = new var;
+				*n = ((*mem)(t, name));
+				return *n;
+			}
+		}
+
+		// if we're here, the property was not found, so let's implicitly create it
+		if(throwOnFailure)
+			throw new Exception("no such property " ~ name, file, line);
+		this._properties[name] = t;
+		return this._properties[name];
+	}
+
 }
 
 

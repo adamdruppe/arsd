@@ -183,9 +183,9 @@ version(X11) {
 		F10 = 0xffc7,
 		F11 = 0xffc8,
 		F12 = 0xffc9,
-		PrintScreen = -1, // FIXME
-		ScrollLock = -2, // FIXME
-		Pause = -3, // FIXME
+		PrintScreen = 0xff61,
+		ScrollLock = 0xff14,
+		Pause = 0xff13,
 		Grave = 0x60,
 		// number keys across the top of the keyboard
 		N1 = 0x31,
@@ -252,11 +252,11 @@ version(X11) {
 		Slash = 0x2f,
 		Shift_r = 0xffe2, // Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
 		Ctrl = 0xffe3,
-		Windows = -4, // FIXME
+		Windows = 0xffeb,
 		Alt = 0xffe9,
 		Space = 0x20,
 		Alt_r = 0xffea, // ditto of shift_r
-		Windows_r = -5, // FIXME
+		Windows_r = 0xffec,
 		Menu = 0xff67,
 		Ctrl_r = 0xffe4,
 
@@ -265,7 +265,7 @@ version(X11) {
 		Multiply = 0xffaa,
 		Minus = 0xffad,
 		Plus = 0xffab,
-		PadEnter = -6, // FIXME
+		PadEnter = 0xff8d,
 		Pad1 = 0xff9c,
 		Pad2 = 0xff99,
 		Pad3 = 0xff9b,
@@ -559,6 +559,9 @@ struct MouseEvent {
 	int x;
 	int y;
 
+	int dx;
+	int dy;
+
 	int button;
 	int buttonFlags;
 
@@ -639,6 +642,19 @@ final class Image {
 
 	final void opIndexAssign(Color c, int x, int y) {
 		putPixel(x, y, c);
+	}
+
+	TrueColorImage toTrueColorImage() {
+		auto tci = new TrueColorImage(width, height);
+		convertToRgbaBytes(tci.imageData.bytes);
+		return tci;
+	}
+
+	static Image fromMemoryImage(MemoryImage i) {
+		auto tci = i.getAsTrueColorImage();
+		auto img = new Image(tci.width, tci.height);
+		img.setRgbaBytes(tci.imageData.bytes);
+		return img;
 	}
 
 	/// this is here for interop with arsd.image. where can be a TrueColorImage's data member
@@ -1118,6 +1134,23 @@ class SimpleWindow {
 
 	void delegate() handlePulse;
 
+	private {
+		int lastMouseX = int.min;
+		int lastMouseY = int.min;
+		void mdx(ref MouseEvent ev) {
+			if(lastMouseX == int.min || lastMouseY == int.min) {
+				ev.dx = 0;
+				ev.dy = 0;
+			} else {
+				ev.dx = ev.x - lastMouseX;
+				ev.dy = ev.y - lastMouseY;
+			}
+
+			lastMouseX = ev.x;
+			lastMouseY = ev.y;
+		}
+	}
+
 	void delegate(MouseEvent) handleMouseEvent;
 
 	void delegate() paintingFinished; // use to redraw child widgets if you use system apis to add stuff
@@ -1437,9 +1470,8 @@ version(Windows) {
 
 			version(without_opengl) {}
 			else {
-				ghDC = hdc;
-
 				if(opengl == OpenGlOptions.yes) {
+					ghDC = hdc;
 					PIXELFORMATDESCRIPTOR pfd; 
 
 					pfd.nSize = PIXELFORMATDESCRIPTOR.sizeof; 
@@ -1459,9 +1491,9 @@ version(Windows) {
 
 					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0) 
 						throw new Exception("SetPixelFormat");
+
+					ghRC = wglCreateContext(ghDC); 
 				}
-				 
-				ghRC = wglCreateContext(ghDC); 
 			}
 
 			if(opengl == OpenGlOptions.no) {
@@ -1509,6 +1541,7 @@ version(Windows) {
 			void mouseEvent() {
 				mouse.x = LOWORD(lParam) + offsetX;
 				mouse.y = HIWORD(lParam) + offsetY;
+				wind.mdx(mouse);
 				mouse.buttonFlags = wParam;
 				mouse.window = wind;
 
@@ -1529,6 +1562,7 @@ version(Windows) {
 					ev.key = cast(Key) wParam;
 					ev.pressed = msg == WM_KEYDOWN;
 					// FIXME
+					// ev.hardwareCode
 					// ev.modifierState = 
 					ev.window = wind;
 					if(wind.handleKeyEvent)
@@ -1628,7 +1662,8 @@ version(Windows) {
 						EndPaint(hwnd, &ps);
 					} else {
 						EndPaint(hwnd, &ps);
-						redrawOpenGlSceneNow();
+						version(with_opengl)
+							redrawOpenGlSceneNow();
 					}
 				} break;
 				  default:
@@ -2201,9 +2236,13 @@ version(X11) {
 			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
 			XSetWMProtocols(display, window, &atom, 1);
 
+			// What would be ideal here is if they only were
+			// selected if there was actually an event handler
+			// for them...
 			XSelectInput(display, window,
 				EventMask.ExposureMask |
 				EventMask.KeyPressMask |
+				EventMask.KeyReleaseMask |
 				EventMask.StructureNotifyMask
 				| EventMask.PointerMotionMask // FIXME: not efficient
 				| EventMask.ButtonPressMask
@@ -2211,7 +2250,6 @@ version(X11) {
 			);
 
 			XMapWindow(display, window);
-			XFlush(display);
 		}
 
 		void createOpenGlContext() {
@@ -2317,6 +2355,7 @@ version(X11) {
 			mouse.buttonFlags = event.state;
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
+				(*win).mdx(mouse);
 				if((*win).handleMouseEvent)
 					(*win).handleMouseEvent(mouse);
 				mouse.window = *win;
@@ -2349,6 +2388,7 @@ version(X11) {
 			//mouse.buttonFlags = event.detail;
 
 			if(auto win = e.xbutton.window in SimpleWindow.nativeMapping) {
+				(*win).mdx(mouse);
 				if((*win).handleMouseEvent)
 					(*win).handleMouseEvent(mouse);
 				mouse.window = *win;
@@ -2361,6 +2401,7 @@ version(X11) {
 		  case EventType.KeyRelease:
 			KeyEvent ke;
 			ke.pressed = e.type == EventType.KeyPress;
+			ke.hardwareCode = e.xkey.keycode;
 			
 			auto sym = XKeycodeToKeysym(
 				XDisplayConnection.get(),
@@ -2381,7 +2422,7 @@ version(X11) {
 					ke.character = cast(dchar) buffer[0];
 			}
 
-			else switch(sym) {
+			switch(sym) {
 				case 0xff09: ke.character = '\t'; break;
 				case 0xff8d: // keypad enter
 				case 0xff0d: ke.character = '\n'; break;

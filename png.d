@@ -16,14 +16,11 @@ void main(string[] args) {
 */
 
 // By Adam D. Ruppe, 2009-2010, released into the public domain
-import std.stdio;
-import std.conv;
-import std.file;
+//import std.file;
 
 import std.zlib;
-import std.array;
 
-public import arsd.image;
+public import arsd.color;
 
 /**
 	The return value should be casted to indexed or truecolor depending on what the file is. You can
@@ -33,7 +30,7 @@ public import arsd.image;
 
 	auto i = cast(TrueColorImage) imageFromPng(readPng(cast(ubyte)[]) std.file.read("file.png")));
 */
-Image imageFromPng(PNG* png) {
+MemoryImage imageFromPng(PNG* png) {
 	PngHeader h = getHeader(png);
 
 	/** Types from the PNG spec:
@@ -51,7 +48,7 @@ Image imageFromPng(PNG* png) {
 			If type&4, it has an alpha channel in the datastream.
 	*/
 
-	Image i;
+	MemoryImage i;
 	ubyte[] idata;
 	// FIXME: some duplication with the lazy reader below in the module
 
@@ -693,7 +690,6 @@ PngHeader getHeader(PNG* p) {
 	return h;
 }
 
-public import arsd.color;
 /*
 struct Color {
 	ubyte r;
@@ -836,15 +832,15 @@ uint crc(in string lol, in ubyte[] buf){
 
 //module arsd.lazypng;
 
-import arsd.color;
+//import arsd.color;
 
-import std.stdio;
+//import std.stdio;
 
 import std.range;
 import std.traits;
 import std.exception;
 import std.string;
-import std.conv;
+//import std.conv;
 
 /*
 struct Color {
@@ -1165,7 +1161,7 @@ struct LazyPngFile(LazyPngChunksProvider)
 				return isEmpty;
 			}
 
-			int length() {
+			@property int length() {
 				return header.height;
 			}
 
@@ -1561,7 +1557,7 @@ struct PngHeader {
 	}
 }
 
-void writePngLazy(OutputRange, InputRange)(OutputRange where, InputRange image)
+void writePngLazy(OutputRange, InputRange)(ref OutputRange where, InputRange image)
 	if(
 		isOutputRange!(OutputRange, ubyte[]) &&
 		isInputRange!(InputRange) &&
@@ -1643,6 +1639,7 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			return assumeUnique(arr);
 		case 2:
 			auto arr = data.dup;
+			if(previousLine.length)
 			foreach(i; 0 .. arr.length) {
 				arr[i] += previousLine[i];
 			}
