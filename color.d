@@ -108,12 +108,23 @@ private {
 
 // done with mini-phobos
 
+/// Represents an RGBA color
 struct Color {
-	ubyte r;
-	ubyte g;
-	ubyte b;
-	ubyte a;
+	ubyte r; /// red
+	ubyte g; /// green
+	ubyte b; /// blue
+	ubyte a; /// alpha. 255 == opaque
 
+	// this makes sure they are in range before casting
+	static Color fromIntegers(int red, int green, int blue, int alpha = 255) {
+		if(red < 0) red = 0; if(red > 255) red = 255;
+		if(green < 0) green = 0; if(green > 255) green = 255;
+		if(blue < 0) blue = 0; if(blue > 255) blue = 255;
+		if(alpha < 0) alpha = 0; if(alpha > 255) alpha = 255;
+		return Color(red, green, blue, alpha);
+	}
+
+	/// .
 	this(int red, int green, int blue, int alpha = 255) {
 		this.r = cast(ubyte) red;
 		this.g = cast(ubyte) green;
@@ -121,15 +132,16 @@ struct Color {
 		this.a = cast(ubyte) alpha;
 	}
 
+	/// Convenience functions for common color names
 	static Color transparent() { return Color(0, 0, 0, 0); }
-	static Color white() { return Color(255, 255, 255); }
-	static Color black() { return Color(0, 0, 0); }
-	static Color red() { return Color(255, 0, 0); }
-	static Color green() { return Color(0, 255, 0); }
-	static Color blue() { return Color(0, 0, 255); }
-	static Color yellow() { return Color(255, 255, 0); }
-	static Color teal() { return Color(0, 255, 255); }
-	static Color purple() { return Color(255, 0, 255); }
+	static Color white() { return Color(255, 255, 255); } ///.
+	static Color black() { return Color(0, 0, 0); } ///.
+	static Color red() { return Color(255, 0, 0); } ///.
+	static Color green() { return Color(0, 255, 0); } ///.
+	static Color blue() { return Color(0, 0, 255); } ///.
+	static Color yellow() { return Color(255, 255, 0); } ///.
+	static Color teal() { return Color(0, 255, 255); } ///.
+	static Color purple() { return Color(255, 0, 255); } ///.
 
 	/*
 	ubyte[4] toRgbaArray() {
@@ -137,6 +149,7 @@ struct Color {
 	}
 	*/
 
+	/// Makes a string that matches CSS syntax for websites
 	string toCssString() {
 		if(a == 255)
 			return "#" ~ toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b);
@@ -145,6 +158,7 @@ struct Color {
 		}
 	}
 
+	/// Makes a hex string RRGGBBAA (aa only present if it is not 255)
 	string toString() {
 		if(a == 255)
 			return toCssString()[1 .. $];
@@ -152,6 +166,7 @@ struct Color {
 			return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
 	}
 
+	/// Gets a color by name, iff the name is one of the static members listed above
 	static Color fromNameString(string s) {
 		Color c;
 		foreach(member; __traits(allMembers, Color)) {
@@ -163,6 +178,7 @@ struct Color {
 		throw new Exception("Unknown color " ~ s);
 	}
 
+	/// Reads a CSS style string to get the color. Understands #rrggbb, rgba(), hsl(), and rrggbbaa
 	static Color fromString(string s) {
 		s = s.stripInternal();
 
@@ -259,6 +275,7 @@ struct Color {
 		return c;
 	}
 
+	/// from hsl
 	static Color fromHsl(real h, real s, real l) {
 		return .fromHsl(h, s, l);
 	}
@@ -306,11 +323,12 @@ private ubyte fromHexInternal(string s) {
 	return cast(ubyte) result;
 }
 
-
+/// Converts hsl to rgb
 Color fromHsl(real[3] hsl) {
 	return fromHsl(hsl[0], hsl[1], hsl[2]);
 }
 
+/// Converts hsl to rgb
 Color fromHsl(real h, real s, real l, real a = 255) {
 	h = h % 360;
 
@@ -363,6 +381,7 @@ Color fromHsl(real h, real s, real l, real a = 255) {
 		cast(ubyte)(a));
 }
 
+/// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
 real[3] toHsl(Color c, bool useWeightedLightness = false) {
 	real r1 = cast(real) c.r / 255;
 	real g1 = cast(real) c.g / 255;
@@ -402,7 +421,7 @@ real[3] toHsl(Color c, bool useWeightedLightness = false) {
 	return [H, S, L]; 
 }
 
-
+/// .
 Color lighten(Color c, real percentage) {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 + percentage);
@@ -411,6 +430,7 @@ Color lighten(Color c, real percentage) {
 	return fromHsl(hsl);
 }
 
+/// .
 Color darken(Color c, real percentage) {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 - percentage);
@@ -468,6 +488,8 @@ Color makeTextColor(Color c) {
 	else
 		return Color(255, 255, 255);
 }
+
+// These provide functional access to hsl manipulation; useful if you need a delegate
 
 Color setLightness(Color c, real lightness) {
 	auto hsl = toHsl(c);
@@ -666,24 +688,47 @@ void main() {
 
 */
 
-
+/// An image in memory
 interface MemoryImage {
 	//IndexedImage convertToIndexedImage() const;
 	//TrueColorImage convertToTrueColor() const;
+
+	/// gets it as a TrueColorImage. May return this or may do a conversion and return a new image
 	TrueColorImage getAsTrueColorImage();
+
+	/// Image width, in pixels
+	int width() const;
+
+	/// Image height, in pixels
+	int height() const;
 }
 
+/// An image that consists of indexes into a color palette. Use getAsTrueColorImage() if you don't care about palettes
 class IndexedImage : MemoryImage {
 	bool hasAlpha;
+
+	/// .
 	Color[] palette;
+	/// the data as indexes into the palette. Stored left to right, top to bottom, no padding.
 	ubyte[] data;
 
-	int width;
-	int height;
+	/// .
+	override int width() const {
+		return _width;
+	}
 
+	/// .
+	override int height() const {
+		return _height;
+	}
+
+	private int _width;
+	private int _height;
+
+	/// .
 	this(int w, int h) {
-		width = w;
-		height = h;
+		_width = w;
+		_height = h;
 		data = new ubyte[w*h];
 	}
 
@@ -693,10 +738,12 @@ class IndexedImage : MemoryImage {
 	}
 	*/
 
+	/// returns a new image
 	override TrueColorImage getAsTrueColorImage() {
 		return convertToTrueColor();
 	}
 
+	/// Creates a new TrueColorImage based on this data
 	TrueColorImage convertToTrueColor() const {
 		auto tci = new TrueColorImage(width, height);
 		foreach(i, b; data) {
@@ -705,6 +752,7 @@ class IndexedImage : MemoryImage {
 		return tci;
 	}
 
+	/// Gets an exact match, if possible, adds if not. See also: the findNearestColor free function.
 	ubyte getOrAddColor(Color c) {
 		foreach(i, co; palette) {
 			if(c == co)
@@ -714,10 +762,12 @@ class IndexedImage : MemoryImage {
 		return addColor(c);
 	}
 
+	/// Number of colors currently in the palette (note: palette entries are not necessarily used in the image data)
 	int numColors() const {
 		return palette.length;
 	}
 
+	/// Adds an entry to the palette, returning its inded
 	ubyte addColor(Color c) {
 		assert(palette.length < 256);
 		if(c.a != 255)
@@ -728,36 +778,290 @@ class IndexedImage : MemoryImage {
 	}
 }
 
+/// An RGBA array of image data. Use the free function quantize() to convert to an IndexedImage
 class TrueColorImage : MemoryImage {
 //	bool hasAlpha;
 //	bool isGreyscale;
+
 	//ubyte[] data; // stored as rgba quads, upper left to right to bottom
-	union Data {
-		ubyte[] bytes;
-		Color[] colors;
+	/// .
+	struct Data {
+		ubyte[] bytes; /// the data as rgba bytes. Stored left to right, top to bottom, no padding.
+		// the union is no good because the length of the struct is wrong!
+
+		/// the same data as Color structs
+		@property inout(Color)[] colors() inout {
+			return cast(inout(Color)[]) bytes;
+		}
 
 		static assert(Color.sizeof == 4);
 	}
 
+	/// .
 	Data imageData;
 	alias imageData.bytes data;
 
-	int width;
-	int height;
+	int _width;
+	int _height;
 
+	/// .
+	override int width() const { return _width; }
+	///.
+	override int height() const { return _height; }
+
+	/// .
 	this(int w, int h) {
-		width = w;
-		height = h;
+		_width = w;
+		_height = h;
 		imageData.bytes = new ubyte[w*h*4];
 	}
 
+	/// Returns this
 	override TrueColorImage getAsTrueColorImage() {
 		return this;
 	}
+}
+
+/// Converts true color to an indexed image. It uses palette as the starting point, adding entries
+/// until maxColors as needed. If palette is null, it creates a whole new palette.
+///
+/// After quantizing the image, it applies a dithering algorithm.
+///
+/// This is not written for speed.
+IndexedImage quantize(in TrueColorImage img, Color[] palette = null, in int maxColors = 256)
+	// this is just because IndexedImage assumes ubyte palette values
+	in { assert(maxColors <= 256); }
+body {
+	int[Color] uses;
+	foreach(pixel; img.imageData.colors) {
+		if(auto i = pixel in uses) {
+			(*i)++;
+		} else {
+			uses[pixel] = 1;
+		}
+	}
+
+	struct ColorUse {
+		Color c;
+		int uses;
+		//string toString() { import std.conv; return c.toCssString() ~ " x " ~ to!string(uses); }
+		int opCmp(ref const ColorUse co) const {
+			return co.uses - uses;
+		}
+	}
+
+	ColorUse[] sorted;
+
+	foreach(color, count; uses)
+		sorted ~= ColorUse(color, count);
+
+	uses = null;
+	sorted = sorted.sort;
+
+	ubyte[Color] paletteAssignments;
+	foreach(idx, entry; palette)
+		paletteAssignments[entry] = cast(ubyte) idx;
+
+	// For the color assignments from the image, I do multiple passes, decreasing the acceptable
+	// distance each time until we're full.
+
+	// This is probably really slow.... but meh it gives pretty good results.
+
+	auto ddiff = 32;
+	outer: for(int d1 = 128; d1 >= 0; d1 -= ddiff) {
+	auto minDist = d1*d1;
+	if(d1 <= 64)
+		ddiff = 16;
+	if(d1 <= 32)
+		ddiff = 8;
+	foreach(possibility; sorted) {
+		if(palette.length == maxColors)
+			break;
+		if(palette.length) {
+			auto co = palette[findNearestColor(palette, possibility.c)];
+			auto pixel = possibility.c;
+
+			auto dr = cast(int) co.r - pixel.r;
+			auto dg = cast(int) co.g - pixel.g;
+			auto db = cast(int) co.b - pixel.b;
+
+			auto dist = dr*dr + dg*dg + db*db;
+			// not good enough variety to justify an allocation yet
+			if(dist < minDist)
+				continue;
+		}
+		paletteAssignments[possibility.c] = cast(ubyte) palette.length;
+		palette ~= possibility.c;
+	}
+	}
+
+	// Final pass: just fill in any remaining space with the leftover common colors
+	while(palette.length < maxColors && sorted.length) {
+		if(sorted[0].c !in paletteAssignments) {
+			paletteAssignments[sorted[0].c] = cast(ubyte) palette.length;
+			palette ~= sorted[0].c;
+		}
+		sorted = sorted[1 .. $];
+	}
+
+
+	bool wasPerfect = true;
+	auto newImage = new IndexedImage(img.width, img.height);
+	newImage.palette = palette;
+	foreach(idx, pixel; img.imageData.colors) {
+		if(auto p = pixel in paletteAssignments)
+			newImage.data[idx] = *p;
+		else {
+			// gotta find the closest one...
+			newImage.data[idx] = findNearestColor(palette, pixel);
+			wasPerfect = false;
+		}
+	}
+
+	if(!wasPerfect)
+		floydSteinbergDither(newImage, img);
+
+	return newImage;
+}
+
+/// Finds the best match for pixel in palette (currently by checking for minimum euclidean distance in rgb colorspace)
+ubyte findNearestColor(in Color[] palette, in Color pixel) {
+	int best = 0;
+	int bestDistance = int.max;
+	foreach(pe, co; palette) {
+		auto dr = cast(int) co.r - pixel.r;
+		auto dg = cast(int) co.g - pixel.g;
+		auto db = cast(int) co.b - pixel.b;
+		int dist = dr*dr + dg*dg + db*db;
+
+		if(dist < bestDistance) {
+			best = pe;
+			bestDistance = dist;
+		}
+	}
+
+	return cast(ubyte) best;
+}
 
 /+
-	IndexedImage convertToIndexedImage(int maxColors = 256) {
 
+// Quantizing and dithering test program
+
+void main( ){
+/*
+	auto img = new TrueColorImage(256, 32);
+	foreach(y; 0 .. img.height) {
+		foreach(x; 0 .. img.width) {
+			img.imageData.colors[x + y * img.width] = Color(x, y * (255 / img.height), 0);
+		}
 	}
+*/
+
+TrueColorImage img;
+
+{
+
+import arsd.png;
+
+struct P {
+	ubyte[] range;
+	void put(ubyte[] a) { range ~= a; }
+}
+
+P range;
+import std.algorithm;
+
+import std.stdio;
+writePngLazy(range, pngFromBytes(File("/home/me/nyesha.png").byChunk(4096)).byRgbaScanline.map!((line) {
+	foreach(ref pixel; line.pixels) {
+	continue;
+		auto sum = cast(int) pixel.r + pixel.g + pixel.b;
+		ubyte a = cast(ubyte)(sum / 3);
+		pixel.r = a;
+		pixel.g = a;
+		pixel.b = a;
+	}
+	return line;
+}));
+
+img = imageFromPng(readPng(range.range)).getAsTrueColorImage;
+
+
+}
+
+
+
+	auto qimg = quantize(img, null, 2);
+
+	import simpledisplay;
+	auto win = new SimpleWindow(img.width, img.height * 3);
+	auto painter = win.draw();
+	painter.drawImage(Point(0, 0), Image.fromMemoryImage(img));
+	painter.drawImage(Point(0, img.height), Image.fromMemoryImage(qimg));
+	floydSteinbergDither(qimg, img);
+	painter.drawImage(Point(0, img.height * 2), Image.fromMemoryImage(qimg));
+	win.eventLoop(0);
+}
 +/
+
+/+
+/// If the background is transparent, it simply erases the alpha channel.
+void removeTransparency(IndexedImage img, Color background)
+
+Color alphaBlend(Color a, Color b) {
+
+}
++/
+
+/*
+/// Reduces the number of colors in a palette.
+void reducePaletteSize(IndexedImage img, int maxColors = 16) {
+
+}
+*/
+
+// I think I did this wrong... but the results aren't too bad so the bug can't be awful.
+/// Dithers img in place to look more like original.
+void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
+	assert(img.width == original.width);
+	assert(img.height == original.height);
+
+	auto buffer = new Color[](original.imageData.colors.length);
+
+	int x, y;
+
+	foreach(idx, c; original.imageData.colors) {
+		auto n = img.palette[img.data[idx]];
+		int errorR = cast(int) c.r - n.r;
+		int errorG = cast(int) c.g - n.g;
+		int errorB = cast(int) c.b - n.b;
+
+		void doit(int idxOffset, int multiplier) {
+		//	if(idx + idxOffset < buffer.length)
+				buffer[idx + idxOffset] = Color.fromIntegers(
+					c.r + multiplier * errorR / 16,
+					c.g + multiplier * errorG / 16,
+					c.b + multiplier * errorB / 16,
+					c.a
+				);
+		}
+
+		if((x+1) != original.width)
+			doit(1, 7);
+		if((y+1) != original.height) {
+			if(x != 0)
+				doit(-1 + img.width, 3);
+			doit(img.width, 5);
+			if(x+1 != original.width)
+				doit(1 + img.width, 1);
+		}
+
+		img.data[idx] = findNearestColor(img.palette, buffer[idx]);
+
+		x++;
+		if(x == original.width) {
+			x = 0;
+			y++;
+		}
+	}
 }
