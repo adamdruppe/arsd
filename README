@@ -68,6 +68,11 @@ png.d  - provides some png read/write support
 jpg.d  - just reading jpg header right now
 csv.d  - gives read support to csv files
 
+Cool stuff
+================
+jsvar.d - gives a dynamic type in D similar to Javascript's var
+script.d - a little script interpreter whose language is like a hybrid of D and Javascript (builds on jsvar.d)
+
 Other
 ================
 
