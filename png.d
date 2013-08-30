@@ -1,4 +1,23 @@
 module arsd.png;
+
+/// Easily reads a png file into a MemoryImage
+MemoryImage readPng(string filename) {
+	import std.file;
+	return imageFromPng(readPng(cast(ubyte[]) read(filename)));
+}
+
+/// Saves a MemoryImage to a png. See also: writeImageToPngFile which uses memory a little more efficiently
+void writePng(string filename, MemoryImage mi) {
+	// FIXME: it would be nice to write the file lazily so we don't have so many intermediate buffers here
+	PNG* png;
+	if(auto p = cast(IndexedImage) mi)
+		png = pngFromImage(p);
+	else if(auto p = cast(TrueColorImage) mi)
+		png = pngFromImage(p);
+	else assert(0);
+	std.file.write(filename, writePng(png));
+}
+
 /*
 //Here's a simple test program that shows how to write a quick image viewer with simpledisplay:
 
@@ -7,11 +26,8 @@ import simpledisplay;
 
 import std.file;
 void main(string[] args) {
-	auto tci = imageFromPng(readPng(cast(ubyte[]) read(args[1]))).getAsTrueColorImage();
-
-	auto convertedImage = new simpledisplay.Image(tci.width, tci.height);
-	convertedImage.setRgbaBytes(tci.imageData.bytes);
-	displayImage(convertedImage);
+	auto img = imageFromPng(readPng(cast(ubyte[]) read(args[1])));
+	displayImage(Image.fromMemoryImage(img));
 }
 */
 
