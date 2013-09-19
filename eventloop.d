@@ -12,6 +12,15 @@ template typehash(T...) {
 	enum typehash = hashOf(tmp.mangleof.ptr, tmp.mangleof.length);
 }
 
+private struct TimerInfo {
+	WrappedListener handler;
+	int timeoutRemaining; // in milliseconds
+	int originalTimeout;
+	int countRemaining;
+}
+
+private TimerInfo*[] timers;
+
 private WrappedListener[][hash_t] listeners;
 private WrappedListener[] idleHandlers;
 
@@ -36,6 +45,64 @@ public void removeOnIdle(T)(T t) if(isCallable!T && ParameterTypeTuple!(T).lengt
 			break;
 		}
 	}
+}
+
+/// An opaque type to reference an active timer
+struct TimerHandle {
+	private TimerInfo* ptr;
+}
+
+/// Sets a timer, one-shot by default. Count tells how many times the timer will fire. Set to zero for a continuously firing timer
+public TimerHandle setTimeout(T)(T t, int msecsWait, int count = 1) if(isCallable!T && ParameterTypeTuple!(T).length == 0) {
+	auto ti = new TimerInfo;
+	ti.handler = wrap(t);
+	ti.timeoutRemaining = msecsWait;
+	ti.originalTimeout = msecsWait;
+	ti.countRemaining = count;
+
+	// FIXME: this could prolly be faster by taking advantage of the fact that the timers are sorted
+	bool inserted = false;
+	foreach(idx, timer; timers) {
+		if(timer.timeoutRemaining > msecsWait) {
+			import std.array;
+			insertInPlace(timers, idx, ti);
+			inserted = true;
+			break;
+		}
+	}
+
+	if(!inserted)
+		timers ~= ti;
+
+	return TimerHandle(ti);
+}
+
+/// Sets a continuously firing interval. It will call the function as close to the interval as it can, but it won't let triggers stack up.
+public TimerHandle setInterval(T)(T t, int msecsInterval)  if(isCallable!T && ParameterTypeTuple!(T).length == 0) {
+	return setTimeout(t, msecsInterval, 0);
+}
+
+/// Clears a timer
+public void clearTimeout(TimerHandle handle) {
+	size_t foundIndex = size_t.max;
+	// FIXME: this could prolly be faster by taking advantage of the fact that the timers are sorted
+	foreach(idx, timer; timers) {
+		if(timer is handle.ptr) {
+			foundIndex = idx;
+			break;
+		}
+	}
+
+	if(foundIndex == size_t.max)
+		return;
+
+	for(auto i = foundIndex; i < timers.length - 1; i++)
+		timers[i] = timers[i + 1];
+	timers.length = timers.length - 1;
+}
+
+public void clearInterval(TimerHandle handle) {
+	clearTimeout(handle);
 }
 
 /// Sends an exit event to the loop. The loop will break when it sees this event, ignoring any events after that point.
@@ -396,8 +463,16 @@ version(linux) {
 
 		epoll_event[16] events;
 
+		timeval tv;
+
 		outer_loop: for(;;) {
-			auto nfds = epoll_wait(epoll, events.ptr, events.length, -1 /* wait forever, otherwise in milliseconds */);
+			int lowestWait = -1; /* wait forever. this is in milliseconds */
+			if(timers.length) {
+				gettimeofday(&tv, null);
+				lowestWait = timers[0].timeoutRemaining;
+			}
+
+			auto nfds = epoll_wait(epoll, events.ptr, events.length, lowestWait);
 			moreEvents:
 			if(nfds == -1)
 				throw new Exception("epoll_wait");
@@ -418,9 +493,53 @@ version(linux) {
 				}
 			}
 
+			// are any timers ready to fire?
+			if(timers.length) {
+				long prev = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+				gettimeofday(&tv, null);
+				long diff = tv.tv_sec * 1000 + tv.tv_usec / 1000 - prev;
+
+				bool resetDone = false;
+				for(size_t idx = 0; idx < timers.length; idx++) {
+					auto timer = timers[idx];
+					timer.timeoutRemaining -= diff;
+					if(timer.timeoutRemaining <= 0) {
+						if(timer.countRemaining) {
+							timer.countRemaining--;
+							if(timer.countRemaining != 0)
+								goto reset;
+							// otherwise we should remove it
+							for(size_t i2 = idx; i2 < timers.length - 1; i2++) {
+								timers[i2] = timers[i2 + 1];
+							}
+
+							timers.length = timers.length - 1;
+							idx--; // cuz we removed it, this keeps the outer loop going
+						} else {
+							reset:
+							timer.timeoutRemaining += timer.originalTimeout;
+							// this is meant to throttle - if we missed a frame, oh well, just skip it instead of trying to throttle
+							// FIXME: maybe the throttling should be configurable
+							if(timer.timeoutRemaining <= 0)
+								timer.timeoutRemaining = timer.originalTimeout;
+							resetDone = true;
+						}
+						timer.handler.call(null);
+					}
+				}
+
+				if(resetDone) {
+					// it could be out of order now, so we'll resort
+					import std.algorithm;
+					import std.range;
+					timers = sort!("a.timeoutRemaining < b.timeoutRemaining")(timers).array;
+				}
+			}
+
 			nfds = epoll_wait(epoll, events.ptr, events.length, 0 /* no wait */);
 			if(nfds != 0)
 				goto moreEvents;
+
 			// no immediate events means we're idle for now, run those functions
 			foreach(idleHandler; idleHandlers)
 				idleHandler.call(null);
@@ -602,6 +721,8 @@ version(linux) {
 	int epoll_create1(int flags);
 	int epoll_ctl(int epfd, int op, int fd, epoll_event* event);
 	int epoll_wait(int epfd, epoll_event* events, int maxevents, int timeout);
+
+	import core.sys.posix.sys.time;
 }
 
 /* **** */
