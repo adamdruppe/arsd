@@ -1,6 +1,21 @@
 module simpledisplay;
 
+// Note: if you are using Image on X, you might want to do:
+/*
+	static if(UsingSimpledisplayX11) {
+		if(Image.impl.xshmQueryCompleted && !Image.impl.xshmAvailable) {
+			// the images will use the slower XPutImage, you might
+			// want to consider an alternative method to get better speed
+		}
+	}
+
+	If the shared memory extension is available though, simpledisplay uses it
+	for a significant speed boost whenever you draw Images.
+*/
+
 // CHANGE FROM LAST VERSION: the window background is no longer fixed, so you might want to fill the screen with a particular color before drawing.
+
+// WARNING: if you are using with_eventloop, don't forget to call XFlush(XDisplayConnection.get()); before calling loop()!
 
 /*
 	Biggest FIXME:
@@ -61,6 +76,13 @@ version(html5) {} else {
 		version = X11;
 }
 
+// If you have to get down and dirty with implementation details, this helps figure out if X is available
+// you can static if(UsingSimpledisplayX11) ... more reliably than version() because version is module-local.
+version(X11)
+	enum bool UsingSimpledisplayX11 = true;
+else
+	enum bool UsingSimpledisplayX11 = false;
+
 // being phobos-free keeps the size WAY down
 private const(char)* toStringz(string s) { return (s ~ '\0').ptr; }
 private string[] split(string a, char c) {
@@ -104,10 +126,13 @@ version(without_opengl) {
 		static assert(0, "OpenGL not supported on your system yet. Try -version=X11 if you have X Windows available, or -version=without_opengl to go without.");
 }
 
+/// When you create a SimpleWindow, you can see its resizability to be one of these via the constructor...
 enum Resizablity {
-	fixedSize, // on Windows, it may allow them to resize anyway, and just stretch. or something. idk really
-	allowResizing,
-	// automaticallyScale // this isn't implemented because Xlib doesn't have StretchBlt.
+	fixedSize, /// the window cannot be resized
+	allowResizing, /// the window can be resized. The buffer (if there is one) will automatically adjust size, but not stretch the contents. the windowResized delegate will be called so you can respond to the new size yourself.
+	automaticallyScaleIfPossible, /// if possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size. If this is impossible, it will not allow the user to resize the window at all. Note: window.width and window.height WILL be adjusted, which might throw you off if you draw based on them, so keep track of your expected width and height separately. That way, when it is scaled, things won't be thrown off.
+
+	// FIXME: automaticallyScaleIfPossible should adjust the OpenGL viewport on resize events
 }
 
 enum MouseEventType : int {
@@ -117,6 +142,7 @@ enum MouseEventType : int {
 }
 
 enum MouseButton : int {
+	// these names assume a right-handed mouse
 	left = 1,
 	right = 2,
 	middle = 4,
@@ -136,17 +162,6 @@ enum TextAlignment : uint {
 }
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
-
-struct Point {
-	int x;
-	int y;
-}
-
-struct Size {
-	int width;
-	int height;
-}
-
 
 struct KeyEvent {
 	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms.
@@ -807,6 +822,10 @@ struct ScreenPainter {
 		impl.drawImage(upperLeft.x, upperLeft.y, i);
 	}
 
+	Size textSize(string text) {
+		return impl.textSize(text);
+	}
+
 	void drawText(Point upperLeft, string text, Point lowerRight = Point(0, 0), uint alignment = 0) {
 		transform(upperLeft);
 		if(lowerRight.x != 0 || lowerRight.y != 0)
@@ -895,6 +914,9 @@ class Sprite {
 		version(X11) {
 			auto display = XDisplayConnection.get();
 			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
+			if(i.xshmAvailable)
+			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
+			else
 			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
 		} else version(Windows) {
 			BITMAPINFO infoheader;
@@ -975,6 +997,12 @@ class Sprite {
 	}
 }
 
+/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
+void flushGui() {
+	version(X11)
+		XFlush(XDisplayConnection.get());
+}
+
 class SimpleWindow {
 	// maps native window handles to SimpleWindow instances, if there are any
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
@@ -989,23 +1017,27 @@ class SimpleWindow {
 	/// Creates a window based on the given image. It's client area
 	/// width and height is equal to the image. (A window's client area
 	/// is the drawable space inside; it excludes the title bar, etc.)
+	///
+	/// Windows based on images will not be resizable and do not use OpenGL
 	this(Image image, string title = null) {
 		this(image.width, image.height, title);
 		this.image = image;
 	}
 
-	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no) {
-		this(size.width, size.height, title, opengl);
+	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
+		this(size.width, size.height, title, opengl, resizable);
 	}
 
-	this(int width, int height, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.fixedSize) {
+	this(int width, int height, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
 		this.width = width;
 		this.height = height;
 		this.openglMode = opengl;
+		this.resizability = resizable;
 		impl.createWindow(width, height, title is null ? "D Application" : title, opengl);
 	}
 
 	OpenGlOptions openglMode;
+	Resizablity resizability;
 
 	version(without_opengl) {} else {
 		/// Makes all gl* functions target this window until changed.
@@ -1084,9 +1116,17 @@ class SimpleWindow {
 		return impl.eventLoop(pulseTimeout);
 	}
 
+	/// this lets you draw on the window (or its backing buffer)
 	ScreenPainter draw() {
 		return impl.getPainter();
 	}
+
+	// the idea here is to draw something temporary on top of the main picture e.g. a blinking cursor
+	/*
+	ScreenPainter drawTransiently() {
+		return impl.getPainter();
+	}
+	*/
 
 	@property void image(Image i) {
 		version(Windows) {
@@ -1111,8 +1151,12 @@ class SimpleWindow {
 			*/
 		} else
 		version(X11) {
-			if(!destroyed)
-			XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
+			if(!destroyed) {
+				if(i.xshmAvailable)
+				XShmPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height, false);
+				else
+				XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
+			}
 		} else
 		version(OSXCocoa) {
            		draw().drawImage(Point(0, 0), i);
@@ -1338,6 +1382,12 @@ version(Windows) {
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
+		}
+
+		Size textSize(string text) {
+			RECT rect;
+			DrawText(hdc, text.ptr, text.length, &rect, DT_CALCRECT);
+			return Size(rect.right, rect.bottom);
 		}
 
 		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
@@ -1637,11 +1687,53 @@ version(Windows) {
 				case WM_SIZE:
 					auto width = LOWORD(lParam);
 					auto height = HIWORD(lParam);
-					// FIXME: do something else here
-					// fire resizeEvent at least
+
+					auto oldWidth = this.width;
+					auto oldHeight = this.height;
+
+					this.width = width;
+					this.height = height;
+
+					// note: OpenGL windows don't use a backing bmp, so no need to change them
+					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
+					if(openglMode == OpenGlOptions.no && resizability == Resizablity.allowResizing) {
+						// gotta get the double buffer bmp to match the window
+					// FIXME: could this be more efficient? It isn't really necessary to make
+					// a new buffer if we're sizing down at least.
+						auto hdc = GetDC(hwnd);
+						auto oldBuffer = buffer;
+						buffer = CreateCompatibleBitmap(hdc, width, height);
+
+						auto hdcBmp = CreateCompatibleDC(hdc);
+						auto oldBmp = SelectObject(hdcBmp, buffer);
+
+						auto hdcOldBmp = CreateCompatibleDC(hdc);
+						auto oldOldBmp = SelectObject(hdcOldBmp, oldBmp);
+
+						BitBlt(hdcBmp, 0, 0, width, height, hdcOldBmp, oldWidth, oldHeight, SRCCOPY);
+
+						SelectObject(hdcOldBmp, oldOldBmp);
+						DeleteDC(hdcOldBmp);
+
+						SelectObject(hdcBmp, oldBmp);
+						DeleteDC(hdcBmp);
+
+						ReleaseDC(hwnd, hdc);
+
+						DeleteObject(oldBuffer);
+					}
+
+					version(with_opengl)
+					if(openglMode == OpenGlOptions.yes && resizability == Resizablity.automaticallyScaleIfPossible) {
+						glViewport(0, 0, width, height);
+					}
+
 					if(windowResized !is null)
 						windowResized(width, height);
 				break;
+				//case WM_ERASEBKGND:
+					// no need since we double buffer
+				//break;
 				case WM_PAINT: {
 					BITMAP bm;
 					PAINTSTRUCT ps;
@@ -1655,6 +1747,10 @@ version(Windows) {
 
 						GetObject(buffer, bm.sizeof, &bm);
 
+						// FIXME: only BitBlt the invalidated rectangle, not the whole thing
+						if(resizability == Resizablity.automaticallyScaleIfPossible)
+						StretchBlt(hdc, 0, 0, this.width, this.height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+						else
 						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
 
 						SelectObject(hdcMem, hbmOld);
@@ -1796,6 +1892,7 @@ version(Windows) {
 	enum KEY_ESCAPE = 27;
 }
 version(X11) {
+	__gshared string xfontstr = "-bitstream-bitstream vera sans-medium-r-*-*-12-*-*-*-*-*-*-*";
 
 	alias int delegate(XEvent) NativeEventHandler;
 	alias Window NativeWindowHandle;
@@ -1828,7 +1925,7 @@ version(X11) {
 			XCopyGC(display, dgc, 0xffffffff, this.gc);
 
 			if(!fontAttempted) {
-				font = XLoadQueryFont(display, "-bitstream-bitstream vera sans-medium-r-*-*-12-*-*-*-*-*-*-*".ptr);
+				font = XLoadQueryFont(display, xfontstr.ptr);
 				// bitstream is a pretty nice font, but if it fails, fixed is pretty reliable and not bad either
 				if(font is null)
 					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-12-*-*-*-*-*-*-*".ptr);
@@ -1916,7 +2013,10 @@ version(X11) {
 
 		void drawImage(int x, int y, Image i) {
 			// source x, source y
-			XPutImage(display, d, gc, i.handle, 0, 0, x, y, i.width, i.height);
+			if(i.xshmAvailable)
+				XShmPutImage(display, d, gc, i.handle, 0, 0, x, y, i.width, i.height, false);
+			else
+				XPutImage(display, d, gc, i.handle, 0, 0, x, y, i.width, i.height);
 		}
 
 		void drawPixmap(Sprite s, int x, int y) {
@@ -1927,6 +2027,24 @@ version(X11) {
 			if(font)
 				return font.max_bounds.ascent + font.max_bounds.descent;
 			return 12; // pretty common default...
+		}
+
+		Size textSize(string text) {
+			auto maxWidth = 0;
+			auto lineHeight = fontHeight;
+			int h = 0;
+			foreach(line; text.split('\n')) {
+				int textWidth;
+				if(font)
+					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
+				else
+					textWidth = 12 * cast(int) line.length;
+
+				if(textWidth > maxWidth)
+					maxWidth = textWidth;
+				h += lineHeight + 4;
+			}
+			return Size(maxWidth, h);
 		}
 
 		void drawText(in int x, in int y, in int x2, in int y2, in string text, in uint alignment) {
@@ -2050,9 +2168,6 @@ version(X11) {
 
 		static Display* get(SimpleWindow window = null) {
 			// FIXME: this shouldn't even be necessary
-			version(with_eventloop)
-				if(window !is null)
-					this.window = window;
 			if(display is null) {
 				display = XOpenDisplay(null);
 				if(display is null)
@@ -2070,10 +2185,8 @@ version(X11) {
 			import arsd.eventloop;
 			static void eventListener(OsFileHandle fd) {
 				while(XPending(display))
-					doXNextEvent(window);
+					doXNextEvent(display);
 			}
-
-			static SimpleWindow window;
 		}
 
 		static void close() {
@@ -2094,29 +2207,66 @@ version(X11) {
 		XImage* handle;
 		ubyte* rawData;
 
+		XShmSegmentInfo shminfo;
+
+		static bool xshmQueryCompleted;
+		static bool xshmAvailable;
+
 		void createImage(int width, int height) {
 			auto display = XDisplayConnection.get();
+			assert(display !is null);
 			auto screen = DefaultScreen(display);
 
-			// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
-			import core.stdc.stdlib : malloc;
-			rawData = cast(ubyte*) malloc(width * height * 4);
+			if(!xshmQueryCompleted) {
+				int i1, i2, i3;
+				xshmQueryCompleted = true;
+				xshmAvailable = XQueryExtension(display, "MIT-SHM", &i1, &i2, &i3);
+			}
 
-			handle = XCreateImage(
-				display,
-				DefaultVisual(display, screen),
-				24, // bpp
-				ImageFormat.ZPixmap,
-				0, // offset
-				rawData,
-				width, height,
-				8 /* FIXME */, 4 * width); // padding, bytes per line
+			if(xshmAvailable) {
+				handle = XShmCreateImage(
+					display,
+					DefaultVisual(display, screen),
+					24,
+					ImageFormat.ZPixmap,
+					null,
+					&shminfo,
+					width, height);
+				assert(handle !is null);
+
+				shminfo.shmid = shmget(IPC_PRIVATE, handle.bytes_per_line * height, IPC_CREAT | 511 /* 0777 */);
+				assert(shminfo.shmid >= 0);
+				handle.data = shminfo.shmaddr = rawData = cast(ubyte*) shmat(shminfo.shmid, null, 0);
+				assert(rawData != cast(ubyte*) -1);
+				shminfo.readOnly = 0;
+				XShmAttach(display, &shminfo);
+
+			} else {
+				// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
+				import core.stdc.stdlib : malloc;
+				rawData = cast(ubyte*) malloc(width * height * 4);
+
+				handle = XCreateImage(
+					display,
+					DefaultVisual(display, screen),
+					24, // bpp
+					ImageFormat.ZPixmap,
+					0, // offset
+					rawData,
+					width, height,
+					8 /* FIXME */, 4 * width); // padding, bytes per line
+			}
 		}
 
 		void dispose() {
 			// note: this calls free(rawData) for us
-			if(handle)
-			XDestroyImage(handle);
+			if(handle) {
+				if(xshmAvailable)
+					XShmDetach(XDisplayConnection.get(), &shminfo);
+				XDestroyImage(handle);
+				if(xshmAvailable)
+					shmdt(shminfo.shmaddr);
+			}
 		}
 
 		/*
@@ -2236,6 +2386,17 @@ version(X11) {
 			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
 			XSetWMProtocols(display, window, &atom, 1);
 
+
+			if(this.resizability != Resizablity.allowResizing && opengl == OpenGlOptions.no) {
+				XSizeHints sh;
+				sh.min_width = width;
+				sh.min_height = height;
+				sh.max_width = width;
+				sh.max_height = height;
+				sh.flags = PMaxSize | PMinSize;
+				XSetWMNormalHints(display, window, &sh);
+			}
+
 			// What would be ideal here is if they only were
 			// selected if there was actually an event handler
 			// for them...
@@ -2311,8 +2472,35 @@ version(X11) {
 			auto event = e.xconfigure;
 		  	if(auto win = event.window in SimpleWindow.nativeMapping) {
 				if(event.width != win.width || event.height != win.height) {
-					// FIXME: do something here
-					// fire resizeEvent at least
+					auto oldWidth = win.width;
+					auto oldHeight = win.height;
+
+					win.width = event.width;
+					win.height = event.height;
+
+					if(win.openglMode == OpenGlOptions.no && win.resizability == Resizablity.allowResizing) {
+						// FIXME: could this be more efficient? It isn't really necessary to make
+						// a new buffer if we're sizing down at least.
+
+						// resize the internal buffer to match the window...
+						auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, win.width, win.height, 24);
+						XCopyArea(display,
+							cast(Drawable) (*win).buffer,
+							cast(Drawable) newPixmap,
+							(*win).gc, 0, 0,
+							oldWidth < (*win).width ? oldWidth : win.width,
+							oldHeight < (*win).height ? oldHeight : win.height,
+							0, 0);
+
+						XFreePixmap(display, win.buffer);
+						win.buffer = newPixmap;
+					}
+
+					version(with_opengl)
+					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizablity.automaticallyScaleIfPossible) {
+						glViewport(0, 0, event.width, event.height);
+					}
+
 					if(win.windowResized !is null)
 						win.windowResized(event.width, event.height);
 				}
@@ -2321,7 +2509,7 @@ version(X11) {
 		  case EventType.Expose:
 		  	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
 				if((*win).openglMode == OpenGlOptions.no)
-					XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, 0, 0, (*win).width, (*win).height, 0, 0);
+					XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
 				else {
 					// need to redraw the scene somehow.
 					win.redrawOpenGlSceneNow();
@@ -2603,6 +2791,8 @@ struct TEXTMETRIC {
   BYTE tmCharSet; 
 }
 
+nothrow:
+
 
 		uint SetTextAlign(HDC hdc, uint fMode);
 
@@ -2625,6 +2815,9 @@ struct TEXTMETRIC {
 		bool DestroyWindow(HWND);
 		int DrawTextA(HDC hDC, LPCTSTR lpchText, int nCount, LPRECT lpRect, UINT uFormat);
 		bool Rectangle(HDC, int, int, int, int);
+		HBRUSH GetSysColorBrush(int nIndex);
+		DWORD GetSysColor(int nIndex);
+
 		bool Ellipse(HDC, int, int, int, int);
 		bool Arc(HDC, int, int, int, int, int, int, int, int);
 		bool Polygon(HDC, POINT*, int);
@@ -2664,6 +2857,10 @@ pragma(lib, "X11");
 
 extern(C):
 
+Cursor XCreateFontCursor(Display*, uint shape);
+int XDefineCursor(Display* display, Window w, Cursor cursor);
+int XUndefineCursor(Display* display, Window w);
+
 int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
 
 char *XKeysymToString(KeySym keysym);
@@ -2675,6 +2872,64 @@ KeySym XKeycodeToKeysym(
 
 Display* XOpenDisplay(const char*);
 int XCloseDisplay(Display*);
+
+Bool XQueryExtension(Display*, const char*, int*, int*, int*);
+
+/* X Shared Memory Extension functions */
+	//pragma(lib, "Xshm");
+	alias arch_ulong ShmSeg;
+	struct XShmSegmentInfo {
+		ShmSeg shmseg;
+		int shmid;
+		ubyte* shmaddr;
+		Bool readOnly;
+	}
+	Status XShmAttach(Display*, XShmSegmentInfo*);
+	Status XShmDetach(Display*, XShmSegmentInfo*);
+	Status XShmPutImage(
+		Display*            /* dpy */,
+		Drawable            /* d */,
+		GC                  /* gc */,
+		XImage*             /* image */,
+		int                 /* src_x */,
+		int                 /* src_y */,
+		int                 /* dst_x */,
+		int                 /* dst_y */,
+		uint        /* src_width */,
+		uint        /* src_height */,
+		Bool                /* send_event */
+	);
+
+	XImage *XShmCreateImage(
+		Display*            /* dpy */,
+		Visual*             /* visual */,
+		uint        /* depth */,
+		int                 /* format */,
+		char*               /* data */,
+		XShmSegmentInfo*    /* shminfo */,
+		uint        /* width */,
+		uint        /* height */
+	);
+
+	Pixmap XShmCreatePixmap(
+		Display*            /* dpy */,
+		Drawable            /* d */,
+		char*               /* data */,
+		XShmSegmentInfo*    /* shminfo */,
+		uint        /* width */,
+		uint        /* height */,
+		uint        /* depth */
+	);
+
+	// and the necessary OS functions
+	int shmget(int, size_t, int);
+	void* shmat(int, in void*, int);
+	int shmdt(in void*);
+
+	enum IPC_PRIVATE = 0;
+	enum IPC_CREAT = 512;
+
+/* MIT-SHM end */
 
 uint XSendEvent(Display* display, Window w, Bool propagate, arch_long event_mask, XEvent* event_send);
 
@@ -3167,6 +3422,48 @@ Status XSetWMProtocols(
     Atom*		/* protocols */,
     int			/* count */
 );
+
+void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
+
+       /* Size hints mask bits */
+
+       enum   USPosition  = (1L << 0)          /* user specified x, y */;
+       enum   USSize      = (1L << 1)          /* user specified width, height
+                                                  */;
+       enum   PPosition   = (1L << 2)          /* program specified position
+                                                  */;
+       enum   PSize       = (1L << 3)          /* program specified size */;
+       enum   PMinSize    = (1L << 4)          /* program specified minimum
+                                                  size */;
+       enum   PMaxSize    = (1L << 5)          /* program specified maximum
+                                                  size */;
+       enum   PResizeInc  = (1L << 6)          /* program specified resize
+                                                  increments */;
+       enum   PAspect     = (1L << 7)          /* program specified min and
+                                                  max aspect ratios */;
+       enum   PBaseSize   = (1L << 8);
+       enum   PWinGravity = (1L << 9);
+       enum   PAllHints   = (PPosition|PSize| PMinSize|PMaxSize| PResizeInc|PAspect);
+       struct XSizeHints {
+            arch_long flags;         /* marks which fields in this structure are defined */
+            int x, y;           /* Obsolete */
+            int width, height;  /* Obsolete */
+            int min_width, min_height;
+            int max_width, max_height;
+            int width_inc, height_inc;
+            struct Aspect {
+                   int x;       /* numerator */
+                   int y;       /* denominator */
+            }
+	    
+	    Aspect min_aspect;
+	    Aspect max_aspect;
+            int base_width, base_height;
+            int win_gravity;
+            /* this structure may be extended in the future */
+       }
+
+
 
 enum EventType:int
 {
@@ -3815,6 +4112,7 @@ struct Visual
 	int XFreePixmap(Display*, Pixmap);
 	int XCopyArea(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int);
 	int XFlush(Display*);
+	int XBell(Display*, int);
 	int XSync(Display*, bool);
 
 	struct XPoint {
