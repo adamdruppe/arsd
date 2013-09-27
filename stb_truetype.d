@@ -18,9 +18,41 @@ struct TtfFont {
 			throw new Exception("load font problem");
 	}
 
-	ubyte[] renderCharacter(dchar c, int size, out int width, out int height) {
-   		auto ptr = stbtt_GetCodepointBitmap(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size), c, &width, &height, null,null);
+	ubyte[] renderCharacter(dchar c, int size, out int width, out int height, float shift_x = 0.0, float shift_y = 0.0) {
+   		auto ptr = stbtt_GetCodepointBitmapSubpixel(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size),
+			shift_x, shift_y, c, &width, &height, null,null);
 		return ptr[0 .. width * height];
+	}
+
+	void getStringSize(string s, int size, out int width, out int height) {
+		float xpos=0;
+
+		auto scale = stbtt_ScaleForPixelHeight(&font, size);
+		int ascent, descent, line_gap;
+		stbtt_GetFontVMetrics(&font, &ascent,&descent,&line_gap);
+		auto baseline = cast(int) (ascent*scale);
+
+		import std.math;
+
+		int maxWidth;
+
+		foreach(i, dchar ch; s) {
+			int advance,lsb;
+			auto x_shift = xpos - floor(xpos);
+			stbtt_GetCodepointHMetrics(&font, ch, &advance, &lsb);
+
+			int x0, y0, x1, y1;
+			stbtt_GetCodepointBitmapBoxSubpixel(&font, ch, scale,scale,x_shift,0, &x0,&y0,&x1,&y1);
+
+			maxWidth = cast(int)(xpos + x1);
+
+			xpos += (advance * scale);
+			if (i + 1 < s.length)
+				xpos += scale*stbtt_GetCodepointKernAdvance(&font, ch,s[i+1]);
+		}
+
+   		width = maxWidth;
+		height = size;
 	}
 
 	ubyte[] renderString(string s, int size, out int width, out int height) {
@@ -33,16 +65,17 @@ struct TtfFont {
 
 		import std.math;
 
-		auto swidth = s.length * size;
-		int sheight = size + baseline + 32;
+		int swidth;
+		int sheight;
+		getStringSize(s, size, swidth, sheight);
 		auto screen = new ubyte[](swidth * sheight);
 
-		foreach(i, ch; s) {
+		foreach(i, dchar ch; s) {
 			int advance,lsb;
 			auto x_shift = xpos - floor(xpos);
 			stbtt_GetCodepointHMetrics(&font, ch, &advance, &lsb);
 			int cw, cheight;
-			auto c = renderCharacter(ch, size, cw, cheight);
+			auto c = renderCharacter(ch, size, cw, cheight, x_shift, 0.0);
 
 			int x0, y0, x1, y1;
 			stbtt_GetCodepointBitmapBoxSubpixel(&font, ch, scale,scale,x_shift,0, &x0,&y0,&x1,&y1);
@@ -56,10 +89,13 @@ struct TtfFont {
 					y++;
 					x = cast(int) xpos + x0;
 				}
-				int val = (pixel * (255 - screen[swidth * y + x]) / 255);
+				auto offset = swidth * y + x;
+				if(offset >= screen.length)
+					break;
+				int val = (cast(int) pixel * (255 - screen[offset]) / 255);
 				if(val > 255)
 					val = 255;
-				screen[swidth * y + x] += cast(ubyte)(val);
+				screen[offset] += cast(ubyte)(val);
 				x++;
 				cx++;
 			}
@@ -85,6 +121,7 @@ struct TtfFont {
 
 
 // test program
+/+
 int main(string[] args)
 {
 import std.conv;
@@ -100,12 +137,12 @@ import std.file;
 
    for (int j=0; j < h; ++j) {
       for (int i=0; i < w; ++i)
-      	img.putPixel(i, j, Color(0, bitmap[j*w+i], 0));
+      	img.putPixel(i, j, Color(0, (bitmap[j*w+i] > 128) ? 255 : 0, 0));
    }
    img.displayImage();
    return 0;
 }
-
++/
 
 
 

@@ -1,5 +1,7 @@
 module arsd.color;
 
+@safe:
+
 // importing phobos explodes the size of this code 10x, so not doing it.
 
 private {
@@ -31,6 +33,7 @@ private {
 		return accumulator + accumulator2 / count;
 	}
 
+	@trusted
 	string toInternal(T)(int a) {
 		if(a == 0)
 			return "0";
@@ -110,10 +113,16 @@ private {
 
 /// Represents an RGBA color
 struct Color {
-	ubyte r; /// red
-	ubyte g; /// green
-	ubyte b; /// blue
-	ubyte a; /// alpha. 255 == opaque
+	union {
+		ubyte[4] components;
+
+		struct {
+			ubyte r; /// red
+			ubyte g; /// green
+			ubyte b; /// blue
+			ubyte a; /// alpha. 255 == opaque
+		}
+	}
 
 	// this makes sure they are in range before casting
 	static Color fromIntegers(int red, int green, int blue, int alpha = 255) {
@@ -126,7 +135,11 @@ struct Color {
 
 	/// .
 	this(int red, int green, int blue, int alpha = 255) {
-		this.r = cast(ubyte) red;
+		// workaround dmd bug 10937
+		if(__ctfe)
+			this.components[0] = cast(ubyte) red;
+		else
+			this.r = cast(ubyte) red;
 		this.g = cast(ubyte) green;
 		this.b = cast(ubyte) blue;
 		this.a = cast(ubyte) alpha;
@@ -764,7 +777,7 @@ class IndexedImage : MemoryImage {
 
 	/// Number of colors currently in the palette (note: palette entries are not necessarily used in the image data)
 	int numColors() const {
-		return palette.length;
+		return cast(int) palette.length;
 	}
 
 	/// Adds an entry to the palette, returning its inded
@@ -790,6 +803,8 @@ class TrueColorImage : MemoryImage {
 		// the union is no good because the length of the struct is wrong!
 
 		/// the same data as Color structs
+		@trusted // the cast here is typically unsafe, but it is ok
+		// here because I guarantee the layout, note the static assert below
 		@property inout(Color)[] colors() inout {
 			return cast(inout(Color)[]) bytes;
 		}
@@ -935,7 +950,7 @@ ubyte findNearestColor(in Color[] palette, in Color pixel) {
 		int dist = dr*dr + dg*dg + db*db;
 
 		if(dist < bestDistance) {
-			best = pe;
+			best = cast(int) pe;
 			bestDistance = dist;
 		}
 	}
@@ -1007,11 +1022,17 @@ img = imageFromPng(readPng(range.range)).getAsTrueColorImage;
 /+
 /// If the background is transparent, it simply erases the alpha channel.
 void removeTransparency(IndexedImage img, Color background)
-
-Color alphaBlend(Color a, Color b) {
-
-}
 +/
+
+Color alphaBlend(Color foreground, Color background) {
+	if(foreground.a != 255)
+	foreach(idx, ref part; foreground.components) {
+		part = cast(ubyte) (part * foreground.a / 255 +
+			background.components[idx] * (255 - foreground.a) / 255);
+	}
+
+	return foreground;
+}
 
 /*
 /// Reduces the number of colors in a palette.
@@ -1064,4 +1085,16 @@ void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
 			y++;
 		}
 	}
+}
+
+// these are just really useful in a lot of places where the color/image functions are used,
+// so I want them available with Color
+struct Point {
+	int x;
+	int y;
+}
+
+struct Size {
+	int width;
+	int height;
 }

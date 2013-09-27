@@ -474,8 +474,25 @@ version(linux) {
 
 			auto nfds = epoll_wait(epoll, events.ptr, events.length, lowestWait);
 			moreEvents:
-			if(nfds == -1)
+			if(nfds == -1) {
+				if(errno == EINTR) {
+					// if we're interrupted, we can just advance the timers (we know none triggered since the timeout didn't go off) and try again
+					if(timers.length) {
+						long prev = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+						gettimeofday(&tv, null);
+						long diff = tv.tv_sec * 1000 + tv.tv_usec / 1000 - prev;
+
+						for(size_t idx = 0; idx < timers.length; idx++) {
+							auto timer = timers[idx];
+							timer.timeoutRemaining -= diff;
+						}
+					}
+
+					continue;
+				}
+
 				throw new Exception("epoll_wait");
+			}
 
 			foreach(n; 0 .. nfds) {
 				auto fd = events[n].data.fd;
