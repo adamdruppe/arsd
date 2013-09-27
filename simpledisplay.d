@@ -3,7 +3,7 @@ module simpledisplay;
 // Note: if you are using Image on X, you might want to do:
 /*
 	static if(UsingSimpledisplayX11) {
-		if(Image.impl.xshmQueryCompleted && !Image.impl.xshmAvailable) {
+		if(!Image.impl.xshmAvailable) {
 			// the images will use the slower XPutImage, you might
 			// want to consider an alternative method to get better speed
 		}
@@ -82,6 +82,135 @@ version(X11)
 	enum bool UsingSimpledisplayX11 = true;
 else
 	enum bool UsingSimpledisplayX11 = false;
+
+
+// basic functions to access the clipboard
+/+
+
+
+http://msdn.microsoft.com/en-us/library/windows/desktop/ff729168%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649039%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649035%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649051%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649037%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649035%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.aspx
+
+string getClipboardText(SimpleWindow clipboardOwner) {
+	version(Windows) {
+		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
+		if(OpenClipboard(hwndOwner) == 0)
+			throw new Exception("OpenClipboard");
+		scope(exit)
+			CloseClipboard();
+		if(auto dataHandle = GetClipboardData(1 /*CF_TEXT*/)) {
+/*
+Text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data. Use this format for ANSI text.
+
+CF_UNICODETEXT
+13
+Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data.
+*/
+
+			if(auto data = GlobalLock(dataHandle)) {
+				scope(exit)
+					GlobalUnlock(data);
+
+				// FIXME actually copy data
+			}
+		}
+	}
+
+	assert(0, "not implementeD");
+}
+
+void setClipboardText(string text) {
+	version(Windows) {
+		OpenClipboard();
+		EmptyClipboard();
+		SetClipboardData();
+		CloseClipboard();
+	}
+}
++/
+
+// FIXME: functions for doing images would be nice too - CF_DIB and whatever it is on X would be ok if we took the MemoryImage from color.d, or an Image from here. hell it might even be a variadic template that sets all the formats in one call. that might be cool.
+
+version(X11) {
+	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
+
+	@property Atom GetAtom(string name, bool create = false)(Display* display) {
+		static Atom a;
+		if(!a) {
+			a = XInternAtom(display, name, !create);
+		}
+		if(a == None)
+			throw new Exception("XInternAtom");
+		return a;
+	}
+
+	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later
+	void setPrimarySelection(SimpleWindow window, string text) {
+		assert(window !is null);
+
+		auto display = XDisplayConnection.get();
+		XSetSelectionOwner(display, GetAtom!"PRIMARY"(display), window.impl.window, 0 /* CurrentTime */);
+		window.impl.setSelectionHandler = (XEvent ev) {
+			XSelectionRequestEvent* event = &ev.xselectionrequest;
+			XSelectionEvent selectionEvent;
+			selectionEvent.type = EventType.SelectionNotify;
+			selectionEvent.display = event.display;
+			selectionEvent.requestor = event.requestor;
+			selectionEvent.selection = event.selection;
+			selectionEvent.time = event.time;
+			selectionEvent.target = event.target;
+
+			if(event.property == None)
+				selectionEvent.property = event.target;
+			if(event.target == XA_STRING) {
+				selectionEvent.property = event.property;
+				XChangeProperty (display,
+					selectionEvent.requestor,
+					selectionEvent.property,
+					event.target,
+					8 /* bits */, 0 /* PropModeReplace */,
+					text.ptr, text.length);
+			} else if(event.target == GetAtom!"UTF8_STRING"(display)) {
+				selectionEvent.property = event.property;
+				XChangeProperty (display,
+					selectionEvent.requestor,
+					selectionEvent.property,
+					event.target,
+					8 /* bits */, 0 /* PropModeReplace */,
+					text.ptr, text.length);
+			} else {
+				selectionEvent.property = None; // I don't know how to handle this type...
+			}
+
+			XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+		};
+	}
+
+	void getPrimarySelection(SimpleWindow window, void delegate(string) handler) {
+		assert(window !is null);
+
+		auto display = XDisplayConnection.get();
+		auto atom = GetAtom!"PRIMARY"(display);
+
+		window.impl.getSelectionHandler = handler;
+
+		auto target = XA_STRING;
+		// or auto target = GetAtom!"UTF8_STRING"(display)
+		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
+	}
+}
+
+
+
+enum RasterOp {
+	normal,
+	xor,
+}
 
 // being phobos-free keeps the size WAY down
 private const(char)* toStringz(string s) { return (s ~ '\0').ptr; }
@@ -646,6 +775,94 @@ final class Image {
 		impl.dispose();
 	}
 
+	// these numbers are used for working with rawData itself, skipping putPixel and getPixel
+	// if you do the math yourself you might be able to optimize it. Call these functions only once and cache the value.
+	pure const @system nothrow {
+		/*
+			To use these to draw a blue rectangle with size WxH at position X,Y...
+
+			// make certain that it will fit before we proceed
+			enforce(X + W <= img.width && Y + H <= img.height); // you could also adjust the size to clip it, but be sure not to run off since this here will do raw pointers with no bounds checks!
+
+			// gather all the values you'll need up front. These can be kept until the image changes size if you want
+			// (though calculating them isn't really that expensive).
+			auto nextLineAdjustment = img.adjustmentForNextLine();
+			auto offR = img.redByteOffset();
+			auto offB = img.blueByteOffset();
+			auto offG = img.greenByteOffset();
+			auto bpp = img.bytesPerPixel();
+
+			auto data = img.getDataPointer();
+
+			// figure out the starting byte offset
+			auto offset = img.offsetForTopLeftPixel() + nextLineAdjustment*Y + bpp * X;
+
+			auto startOfLine = data + offset; // get our pointer lined up on the first pixel
+
+			// and now our drawing loop for the rectangle
+			foreach(y; 0 .. H) {
+				auto data = startOfLine; // we keep the start of line separately so moving to the next line is simple and portable
+				foreach(x; 0 .. W) {
+					// write our color
+					data[offR] = 0;
+					data[offG] = 0;
+					data[offB] = 255;
+
+					data += bpp; // moving to the next pixel is just an addition...
+				}
+				startOfLine += nextLineAdjustment;
+			}
+
+
+			As you can see, the loop itself was very simple thanks to the calculations being moved outside.
+
+			FIXME: I wonder if I can make the pixel formats consistently 32 bit across platforms, so the color offsets
+			can be made into a bitmask or something so we can write them as *uint...
+		*/
+
+		int offsetForTopLeftPixel() {
+			version(X11) {
+				return 0;
+			} else version(Windows) {
+				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		int adjustmentForNextLine() {
+			version(X11) {
+				return width * 4;
+			} else version(Windows) {
+				// windows bmps are upside down, so the adjustment is actually negative
+				return -((cast(int) width * 3 + 3) / 4) * 4;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		// once you have the position of a pixel, use these to get to the proper color
+		int redByteOffset() {
+			version(X11) {
+				return 2;
+			} else version(Windows) {
+				return 2;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		int greenByteOffset() {
+			version(X11) {
+				return 1;
+			} else version(Windows) {
+				return 1;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		int blueByteOffset() {
+			version(X11) {
+				return 0;
+			} else version(Windows) {
+				return 0;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+	}
+
 	final void putPixel(int x, int y, Color c) {
 		if(x < 0 || x >= width)
 			return;
@@ -653,6 +870,15 @@ final class Image {
 			return;
 
 		impl.setPixel(x, y, c);
+	}
+
+	final Color getPixel(int x, int y) {
+		if(x < 0 || x >= width)
+			return Color.transparent;
+		if(y < 0 || y >= height)
+			return Color.transparent;
+
+		return impl.getPixel(x, y);
 	}
 
 	final void opIndexAssign(Color c, int x, int y) {
@@ -795,6 +1021,10 @@ struct ScreenPainter {
 		impl.fillColor(c);
 	}
 
+	@property void rasterOp(RasterOp op) {
+		impl.rasterOp(op);
+	}
+
 	void transform(ref Point p) {
 		p.x += originX;
 		p.y += originY;
@@ -817,9 +1047,18 @@ struct ScreenPainter {
 		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
 	}
 
-	void drawImage(Point upperLeft, Image i) {
+	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
 		transform(upperLeft);
-		impl.drawImage(upperLeft.x, upperLeft.y, i);
+		if(w == 0 || w > i.width)
+			w = i.width;
+		if(h == 0 || h > i.height)
+			h = i.height;
+		if(upperLeftOfImage.x < 0)
+			upperLeftOfImage.x = 0;
+		if(upperLeftOfImage.y < 0)
+			upperLeftOfImage.y = 0;
+
+		impl.drawImage(upperLeft.x, upperLeft.y, i, upperLeftOfImage.x, upperLeftOfImage.y, w, h);
 	}
 
 	Size textSize(string text) {
@@ -1248,7 +1487,7 @@ version(Windows) {
                 return DefWindowProc(hWnd, iMessage, wParam, lParam);
             }
 	    } catch (Exception e) {
-            assert(false, "Exception caught in WndProc");
+            	assert(false, "Exception caught in WndProc " ~ e.toString());
 	    }
 	}
 
@@ -1334,6 +1573,19 @@ version(Windows) {
 			pen = _activePen;
 		}
 
+		@property void rasterOp(RasterOp op) {
+			int mode;
+			final switch(op) {
+				case RasterOp.normal:
+					mode = R2_COPYPEN;
+				break;
+				case RasterOp.xor:
+					mode = R2_XORPEN;
+				break;
+			}
+			SetROP2(hdc, mode);
+		}
+
 		HBRUSH originalBrush;
 		HBRUSH currentBrush;
 		@property void fillColor(Color c) {
@@ -1356,7 +1608,7 @@ version(Windows) {
 			//   SetBkColor(hdc, RGB(255, 255, 255));
 		}
 
-		void drawImage(int x, int y, Image i) {
+		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
 			BITMAP bm;
 
 			HDC hdcMem = CreateCompatibleDC(hdc);
@@ -1364,7 +1616,7 @@ version(Windows) {
 
 			GetObject(i.handle, bm.sizeof, &bm);
 
-			BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+			BitBlt(hdc, x, y, w /* bm.bmWidth */, /*bm.bmHeight*/ h, hdcMem, ix, iy, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
@@ -1391,6 +1643,7 @@ version(Windows) {
 		}
 
 		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
+			// FIXME: use the unicode function
 			if(x2 == 0 && y2 == 0)
 				TextOut(hdc, x, y, text.ptr, text.length);
 			else {
@@ -1442,7 +1695,7 @@ version(Windows) {
 		}
 
 		void drawRectangle(int x, int y, int width, int height) {
-			Rectangle(hdc, x, y, x + width, y + height);
+			Rectangle(hdc, x, y, x + width+1, y + height+1); // FIXME: I think it now matches the X version with +1 but I don't think this is right
 		}
 
 		/// Arguments are the points of the bounding rectangle
@@ -1614,6 +1867,20 @@ version(Windows) {
 					// FIXME
 					// ev.hardwareCode
 					// ev.modifierState = 
+
+					/+
+					// we always want to send the character too, so let's convert it
+					ubyte[256] state;
+					wchar[16] buffer;
+					GetKeyboardState(state.ptr);
+					ToUnicodeEx(wParam, lParam, state.ptr, buffer.ptr, buffer.length, 0, null);
+
+					foreach(dchar d; buffer) {
+						ev.character = d;
+						break;
+					}
+					+/
+
 					ev.window = wind;
 					if(wind.handleKeyEvent)
 						wind.handleKeyEvent(ev);
@@ -1789,7 +2056,7 @@ version(Windows) {
 
 					if(!done && handlePulse !is null)
 						handlePulse();
-					Thread.sleep(dur!"msecs"(pulseTimeout));
+					SleepEx(cast(DWORD) pulseTimeout, true);
 				}
 			} else {
 				while((ret = GetMessage(&message, null, 0, 0)) != 0) {
@@ -1797,6 +2064,8 @@ version(Windows) {
 						throw new Exception("GetMessage failed");
 					TranslateMessage(&message);
 					DispatchMessage(&message);
+
+					SleepEx(0, true); // I call this to give it a chance to do stuff like async io, which apparently never happens when you just block in GetMessage
 				}
 			}
 
@@ -1807,6 +2076,19 @@ version(Windows) {
 	mixin template NativeImageImplementation() {
 		HBITMAP handle;
 		ubyte* rawData;
+
+		Color getPixel(int x, int y) {
+			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			// remember, bmps are upside down
+			auto offset = itemsPerLine * (height - y - 1) + x * 3;
+
+			Color c;
+			c.a = 255;
+			c.b = rawData[offset + 0];
+			c.g = rawData[offset + 1];
+			c.r = rawData[offset + 2];
+			return c;
+		}
 
 		void setPixel(int x, int y, Color c) {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
@@ -1989,6 +2271,21 @@ version(X11) {
 			pen = _pen;
 		}
 
+		@property void rasterOp(RasterOp op) {
+			int mode;
+			final switch(op) {
+				case RasterOp.normal:
+					mode = GXcopy;
+				break;
+				case RasterOp.xor:
+					mode = GXxor;
+				break;
+			}
+			XSetFunction(display, gc, mode);
+		}
+
+
+
 		@property void fillColor(Color c) {
 			_fillColor = c;
 			if(c.a == 0) {
@@ -2011,12 +2308,12 @@ version(X11) {
 			outlineColor = tmp;
 		}
 
-		void drawImage(int x, int y, Image i) {
+		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
 			// source x, source y
 			if(i.xshmAvailable)
-				XShmPutImage(display, d, gc, i.handle, 0, 0, x, y, i.width, i.height, false);
+				XShmPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h, false);
 			else
-				XPutImage(display, d, gc, i.handle, 0, 0, x, y, i.width, i.height);
+				XPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h);
 		}
 
 		void drawPixmap(Sprite s, int x, int y) {
@@ -2047,7 +2344,16 @@ version(X11) {
 			return Size(maxWidth, h);
 		}
 
-		void drawText(in int x, in int y, in int x2, in int y2, in string text, in uint alignment) {
+		void drawText(in int x, in int y, in int x2, in int y2, in string originalText, in uint alignment) {
+			// FIXME: we should actually draw unicode.. but until then, I'm going to strip out multibyte chars
+			string text;
+			foreach(dchar ch; originalText)
+				if(ch < 128)
+					text ~= ch;
+			if(text.length == 0)
+				return;
+
+
 			int textHeight = 12;
 
 			// FIXME: should we clip it to the bounding box?
@@ -2100,7 +2406,7 @@ version(X11) {
 						px = pos;
 				}
 
-				XDrawString(display, d, gc, px, py + lineHeight, line.ptr, cast(int) line.length);
+				XDrawString(display, d, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
 				cy += lineHeight + 4;
 			}
 		}
@@ -2119,7 +2425,7 @@ version(X11) {
 		void drawRectangle(int x, int y, int width, int height) {
 			if(backgroundIsNotTransparent) {
 				swapColors();
-				XFillRectangle(display, d, gc, x, y, width, height);
+				XFillRectangle(display, d, gc, x+1, y+1, width-1, height-1);
 				swapColors();
 			}
 			if(foregroundIsNotTransparent)
@@ -2210,18 +2516,20 @@ version(X11) {
 		XShmSegmentInfo shminfo;
 
 		static bool xshmQueryCompleted;
-		static bool xshmAvailable;
+		static bool _xshmAvailable;
+		public static @property bool xshmAvailable() {
+			if(!xshmQueryCompleted) {
+				int i1, i2, i3;
+				xshmQueryCompleted = true;
+				_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3);
+			}
+			return _xshmAvailable;
+		}
 
 		void createImage(int width, int height) {
 			auto display = XDisplayConnection.get();
 			assert(display !is null);
 			auto screen = DefaultScreen(display);
-
-			if(!xshmQueryCompleted) {
-				int i1, i2, i3;
-				xshmQueryCompleted = true;
-				xshmAvailable = XQueryExtension(display, "MIT-SHM", &i1, &i2, &i3);
-			}
 
 			if(xshmAvailable) {
 				handle = XShmCreateImage(
@@ -2234,6 +2542,7 @@ version(X11) {
 					width, height);
 				assert(handle !is null);
 
+				assert(handle.bytes_per_line == 4 * width);
 				shminfo.shmid = shmget(IPC_PRIVATE, handle.bytes_per_line * height, IPC_CREAT | 511 /* 0777 */);
 				assert(shminfo.shmid >= 0);
 				handle.data = shminfo.shmaddr = rawData = cast(ubyte*) shmat(shminfo.shmid, null, 0);
@@ -2266,14 +2575,19 @@ version(X11) {
 				XDestroyImage(handle);
 				if(xshmAvailable)
 					shmdt(shminfo.shmaddr);
+				handle = null;
 			}
 		}
 
-		/*
 		Color getPixel(int x, int y) {
-
+			auto offset = (y * width + x) * 4;
+			Color c;
+			c.a = 255;
+			c.b = rawData[offset + 0];
+			c.g = rawData[offset + 1];
+			c.r = rawData[offset + 2];
+			return c;
 		}
-		*/
 
 		void setPixel(int x, int y, Color c) {
 			auto offset = (y * width + x) * 4;
@@ -2316,6 +2630,9 @@ version(X11) {
 		Display* display;
 
 		Pixmap buffer;
+
+		void delegate(XEvent) setSelectionHandler;
+		void delegate(string) getSelectionHandler;
 
 		version(without_opengl) {} else
 		GLXContext glc;
@@ -2404,6 +2721,8 @@ version(X11) {
 				EventMask.ExposureMask |
 				EventMask.KeyPressMask |
 				EventMask.KeyReleaseMask |
+				EventMask.PropertyChangeMask |
+				EventMask.FocusChangeMask |
 				EventMask.StructureNotifyMask
 				| EventMask.PointerMotionMask // FIXME: not efficient
 				| EventMask.ButtonPressMask
@@ -2468,6 +2787,49 @@ version(X11) {
 		}
 
 		switch(e.type) {
+		  case EventType.SelectionClear:
+		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping)
+				{ /* FIXME??????? */ }
+		  break;
+		  case EventType.SelectionRequest:
+		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
+			if(win.setSelectionHandler !is null) {
+				win.setSelectionHandler(e);
+			}
+		  break;
+		  case EventType.SelectionNotify:
+		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
+		  	if(win.getSelectionHandler !is null) {
+				// FIXME: maybe we should call a different handler for PRIMARY vs CLIPBOARD
+				if(e.xselection.property == None || e.xselection.property == GetAtom!"NULL"(e.xselection.display)) {
+					win.getSelectionHandler(null);
+				} else {
+					Atom target;
+					int format;
+					arch_ulong bytesafter, length;
+					char* value;
+					XGetWindowProperty(
+						e.xselection.display,
+						e.xselection.requestor,
+						e.xselection.property,
+						0,
+						100000 /* length */,
+						false,
+						0 /*AnyPropertyType*/,
+						&target, &format, &length, &bytesafter, &value);
+
+					// FIXME: it might be sent in pieces...
+					// FIXME: or be other formats...
+
+					win.getSelectionHandler(value[0 .. length].idup);
+					XFree(value);
+					XDeleteProperty(
+						e.xselection.display,
+						e.xselection.requestor,
+						e.xselection.property);
+				}
+			}
+		  break;
 		  case EventType.ConfigureNotify:
 			auto event = e.xconfigure;
 		  	if(auto win = event.window in SimpleWindow.nativeMapping) {
@@ -2484,6 +2846,7 @@ version(X11) {
 
 						// resize the internal buffer to match the window...
 						auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, win.width, win.height, 24);
+						XFillRectangle(display, newPixmap, (*win).gc, 0, 0, win.width, win.height);
 						XCopyArea(display,
 							cast(Drawable) (*win).buffer,
 							cast(Drawable) newPixmap,
@@ -2729,6 +3092,8 @@ version(Windows) {
 	extern(Windows) {
 		// The included D headers are incomplete, finish them here
 		// enough that this module works.
+
+		DWORD SleepEx(DWORD, BOOL);
 		alias GetObjectA GetObject;
 		alias GetMessageA GetMessage;
 		alias PeekMessageA PeekMessage;
@@ -2741,6 +3106,20 @@ version(Windows) {
 		alias CreateWindowA CreateWindow;
 		alias DefWindowProcA DefWindowProc;
 		alias DrawTextA DrawText;
+
+		
+int ToUnicodeEx(
+  UINT wVirtKey,
+  UINT wScanCode,
+  const BYTE *lpKeyState,
+  LPWSTR pwszBuff,
+  int cchBuff,
+  UINT wFlags,
+  HKL dwhkl
+);
+BOOL GetKeyboardState(
+  PBYTE lpKeyState
+);
 
 		enum DT_BOTTOM = 8;
 		enum DT_CALCRECT = 1024;
@@ -2818,6 +3197,10 @@ nothrow:
 		HBRUSH GetSysColorBrush(int nIndex);
 		DWORD GetSysColor(int nIndex);
 
+		int SetROP2(HDC, int);
+		enum R2_XORPEN = 7;
+		enum R2_COPYPEN = 13;
+
 		bool Ellipse(HDC, int, int, int, int);
 		bool Arc(HDC, int, int, int, int, int, int, int, int);
 		bool Polygon(HDC, POINT*, int);
@@ -2869,6 +3252,33 @@ KeySym XKeycodeToKeysym(
     KeyCode		/* keycode */,
     int			/* index */
 );
+
+
+int XConvertSelection(Display *display, Atom selection, Atom target,
+              Atom property, Window requestor, Time time);
+
+int XFree(void*);
+              int XDeleteProperty(Display *display, Window w, Atom property);
+
+    int XChangeProperty(Display *display, Window w, Atom property, Atom
+              type, int format, int mode, in void *data, int nelements);
+
+
+
+       int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
+              long_offset, arch_long long_length, Bool del, Atom req_type, Atom
+              *actual_type_return, int *actual_format_return, arch_ulong
+              *nitems_return, arch_ulong *bytes_after_return, char
+              **prop_return);
+
+       int XSetSelectionOwner(Display *display, Atom selection, Window owner,
+              Time time);
+
+       Window XGetSelectionOwner(Display *display, Atom selection);
+
+
+
+
 
 Display* XOpenDisplay(const char*);
 int XCloseDisplay(Display*);
@@ -4098,6 +4508,10 @@ struct Visual
 	int XDrawPoint(Display*, Drawable, GC, int, int);
 	int XSetForeground(Display*, GC, uint);
 	int XSetBackground(Display*, GC, uint);
+
+	int XSetFunction(Display*, GC, int);
+	enum GXcopy = 0x3;
+	enum GXxor = 0x6;
 
 	GC XCreateGC(Display*, Drawable, uint, void*);
 	int XCopyGC(Display*, GC, uint, GC);
