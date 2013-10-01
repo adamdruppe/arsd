@@ -1,4 +1,5 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
+// FIXME: there's some annoying duplication of code in the various versioned mains
 
 // Note: spawn-fcgi can help with fastcgi on nginx
 
@@ -2392,6 +2393,8 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 							try {
 								fun(cgi);
 								cgi.close();
+							} catch(ConnectionException ce) {
+								closeConnection = true;
 							} catch(Throwable t) {
 								// a processing error can be recovered from
 								stderr.writeln(t.toString);
@@ -2561,6 +2564,10 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(ir, &closeConnection);
+		} catch(ConnectionException ce) {
+			// broken pipe or something, just abort the connection
+			closeConnection = true;
+			break;
 		} catch(Throwable t) {
 			// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 			// anyway let's kill the connection
@@ -2576,6 +2583,9 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		try {
 			fun(cgi);
 			cgi.close();
+		} catch(ConnectionException ce) {
+			// broken pipe or something, just abort the connection
+			closeConnection = true;
 		} catch(Throwable t) {
 			// a processing error can be recovered from
 			stderr.writeln(t.toString);
@@ -3066,16 +3076,24 @@ class ListeningConnectionManager {
 }
 
 // helper function to send a lot to a socket. Since this blocks for the buffer (possibly several times), you should probably call it in a separate thread or something.
-void sendAll(Socket s, const(void)[] data) {
+void sendAll(Socket s, const(void)[] data, string file = __FILE__, size_t line = __LINE__) {
 	if(data.length == 0) return;
 	ptrdiff_t amount;
 	do {
 		amount = s.send(data);
 		if(amount == Socket.ERROR)
-			throw new Exception("wtf in send: " ~ lastSocketError);
+			throw new ConnectionException(s, lastSocketError, file, line);
 		assert(amount > 0);
 		data = data[amount .. $];
 	} while(data.length);
+}
+
+class ConnectionException : Exception {
+	Socket socket;
+	this(Socket s, string msg, string file = __FILE__, size_t line = __LINE__) {
+		this.socket = s;
+		super(msg, file, line);
+	}
 }
 
 alias int delegate(Socket) CMT;
