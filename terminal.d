@@ -6,6 +6,13 @@
  * this struct will perform console initialization; when the struct
  * goes out of scope, any changes in console settings will be automatically
  * reverted.
+ *
+ * Note: on Posix, it traps SIGINT and translates it into an input event. You should
+ * keep your event loop moving and keep an eye open for this to exit cleanly; simply break
+ * your event loop upon receiving a UserInterruptionEvent. (Without
+ * the signal handler, ctrl+c can leave your terminal in a bizarre state.)
+ *
+ * As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
  */
 module terminal;
 
@@ -13,6 +20,19 @@ module terminal;
 
 version(linux)
 	enum SIGWINCH = 28; // FIXME: confirm this is correct on other posix
+
+version(Posix) {
+	__gshared bool windowSizeChanged = false;
+	__gshared bool interrupted = false;
+	extern(C)
+	void sizeSignalHandler(int sigNumber) {
+		windowSizeChanged = true;
+	}
+	extern(C)
+	void interruptSignalHandler(int sigNumber) {
+		interrupted = true;
+	}
+}
 
 // parts of this were taken from Robik's ConsoleD
 // https://github.com/robik/ConsoleD/blob/master/consoled.d
@@ -214,12 +234,16 @@ enum Color : ushort {
 /// When capturing input, what events are you interested in?
 ///
 /// Note: these flags can be OR'd together to select more than one option at a time.
+///
+/// Ctrl+C and other keyboard input is always captured, though it may be line buffered if you don't use raw.
 enum ConsoleInputFlags {
 	raw = 0, /// raw input returns keystrokes immediately, without line buffering
 	echo = 1, /// do you want to automatically echo input back to the user?
 	mouse = 2, /// capture mouse events
 	paste = 4, /// capture paste events (note: without this, paste can come through as keystrokes)
 	size = 8, /// window resize events
+
+	allInputEvents = 8|4|2, /// subscribe to all input events.
 }
 
 /// Defines how terminal output should be handled.
@@ -567,6 +591,9 @@ struct Terminal {
 				foreground ^= LowContrast;
 				background ^= LowContrast;
 				*/
+
+				// FIXME: is this if good?
+				//if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
 				SetConsoleTextAttribute(
 					GetStdHandle(STD_OUTPUT_HANDLE),
 					cast(ushort)((background << 4) | foreground));
@@ -815,7 +842,8 @@ struct Terminal {
 
 	private string writeBuffer;
 
-	private void writeStringRaw(in char[] s) {
+	// you really, really shouldn't use this unless you know what you are doing
+	/*private*/ void writeStringRaw(in char[] s) {
 		// FIXME: make sure all the data is sent, check for errors
 		version(Posix) {
 			writeBuffer ~= s; // buffer it to do everything at once in flush() calls
@@ -874,6 +902,8 @@ struct RealTimeConsoleInput {
 
 	version(Posix) {
 		private int fd;
+		private sigaction_t oldSigWinch;
+		private sigaction_t oldSigIntr;
 		private termios old;
 		ubyte[128] hack;
 		// apparently termios isn't the size druntime thinks it is (at least on 32 bit, sometimes)....
@@ -928,34 +958,40 @@ struct RealTimeConsoleInput {
 
 		version(Posix) {
 			this.fd = 0; // stdin
-			tcgetattr(fd, &old);
-			auto n = old;
 
-			auto f = ICANON;
-			if(!(flags & ConsoleInputFlags.echo))
-				f |= ECHO;
+			{
+				tcgetattr(fd, &old);
+				auto n = old;
 
-			n.c_lflag &= ~f;
-			tcsetattr(fd, TCSANOW, &n);
+				auto f = ICANON;
+				if(!(flags & ConsoleInputFlags.echo))
+					f |= ECHO;
+
+				n.c_lflag &= ~f;
+				tcsetattr(fd, TCSANOW, &n);
+			}
 
 			// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
 			//destructor ~= { tcsetattr(fd, TCSANOW, &old); };
 
-			/+
 			if(flags & ConsoleInputFlags.size) {
-				// FIXME: finish this
 				import core.sys.posix.signal;
-				sigaction n;
-				n.sa_handler = &handler;
-				n.sa_mask = 0;
+				sigaction_t n;
+				n.sa_handler = &sizeSignalHandler;
+				n.sa_mask = cast(sigset_t) 0;
 				n.sa_flags = 0;
-				sigaction o;
-				sigaction(SIGWINCH, &n, &o);
-
-				// restoration
-				sigaction(SIGWINCH, &o, null);
+				sigaction(SIGWINCH, &n, &oldSigWinch);
 			}
-			+/
+
+			{
+				import core.sys.posix.signal;
+				sigaction_t n;
+				n.sa_handler = &interruptSignalHandler;
+				n.sa_mask = cast(sigset_t) 0;
+				n.sa_flags = 0;
+				sigaction(SIGINT, &n, &oldSigIntr);
+			}
+
 
 			if(flags & ConsoleInputFlags.mouse) {
 				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "linux")) {
@@ -1007,6 +1043,15 @@ struct RealTimeConsoleInput {
 		// the delegate thing doesn't actually work for this... for some reason
 		version(Posix)
 			tcsetattr(fd, TCSANOW, &old);
+
+		version(Posix) {
+			if(flags & ConsoleInputFlags.size) {
+				// restoration
+				sigaction(SIGWINCH, &oldSigWinch, null);
+			}
+			sigaction(SIGINT, &oldSigIntr, null);
+		}
+
 		// we're just undoing everything the constructor did, in reverse order, same criteria
 		foreach_reverse(d; destructor)
 			d();
@@ -1048,13 +1093,23 @@ struct RealTimeConsoleInput {
 	//char[128] inputBuffer;
 	//int inputBufferPosition;
 	version(Posix)
-	int nextRaw() {
+	int nextRaw(bool interruptable = false) {
 		char[1] buf;
+		try_again:
 		auto ret = read(fd, buf.ptr, buf.length);
 		if(ret == 0)
 			return 0; // input closed
-		if(ret == -1)
-			throw new Exception("read failed");
+		if(ret == -1) {
+			import core.stdc.errno;
+			if(errno == EINTR)
+				// interrupted by signal call, quite possibly resize or ctrl+c which we want to check for in the event loop
+				if(interruptable)
+					return -1;
+				else
+					goto try_again;
+			else
+				throw new Exception("read failed");
+		}
 
 		//terminal.writef("RAW READ: %d\n", buf[0]);
 
@@ -1108,9 +1163,23 @@ struct RealTimeConsoleInput {
 			return e;
 		}
 
+		wait_for_more:
+		if(interrupted) {
+			return InputEvent(UserInterruptionEvent());
+		}
+
+		if(windowSizeChanged) {
+			auto oldWidth = terminal.width;
+			auto oldHeight = terminal.height;
+			terminal.updateSize();
+			windowSizeChanged = false;
+			return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
+		}
+
 		auto more = readNextEvents();
-		while(!more.length)
-			more = readNextEvents();
+		if(!more.length)
+			goto wait_for_more; // i used to do a loop (readNextEvents can read something, but it might be discarded by the input filter) but now it goto's above because readNextEvents might be interrupted by a SIGWINCH aka size event so we want to check that at least
+
 		assert(more.length);
 
 		auto e = more[0];
@@ -1206,6 +1275,7 @@ struct RealTimeConsoleInput {
 					auto ev = record.WindowBufferSizeEvent;
 					// FIXME
 				break;
+				// FIXME: can we catch ctrl+c here too?
 				default:
 					// ignore
 			}
@@ -1398,7 +1468,9 @@ struct RealTimeConsoleInput {
 			return null;
 		}
 
-		auto c = nextRaw();
+		auto c = nextRaw(true);
+		if(c == -1)
+			return null; // interrupted; give back nothing so the other level can recheck signal flags
 		if(c == '\033') {
 			if(timedCheckForInput(50)) {
 				// escape sequence
@@ -1524,6 +1596,17 @@ struct MouseEvent {
 	uint modifierState; /// shift, ctrl, alt, meta, altgr
 }
 
+/// .
+struct SizeChangedEvent {
+	int oldWidth;
+	int oldHeight;
+	int newWidth;
+	int newHeight;
+}
+
+/// the user hitting ctrl+c will send this
+struct UserInterruptionEvent {}
+
 interface CustomEvent {}
 
 /// GetNextEvent returns this. Check the type, then use get to get the more detailed input
@@ -1533,8 +1616,10 @@ struct InputEvent {
 		CharacterEvent, ///.
 		NonCharacterKeyEvent, /// .
 		PasteEvent, /// .
-		MouseEvent, /// .
-		CustomEvent
+		MouseEvent, /// only sent if you subscribed to mouse events
+		SizeChangedEvent, /// only sent if you subscribed to size events
+		UserInterruptionEvent, /// the user hit ctrl+c
+		CustomEvent /// .
 	}
 
 	/// .
@@ -1552,6 +1637,10 @@ struct InputEvent {
 			return pasteEvent;
 		else static if(T == Type.MouseEvent)
 			return mouseEvent;
+		else static if(T == Type.SizeChangedEvent)
+			return sizeChangedEvent;
+		else static if(T == Type.UserInterruptionEvent)
+			return userInterruptionEvent;
 		else static if(T == Type.CustomEvent)
 			return customEvent;
 		else static assert(0, "Type " ~ T.stringof ~ " not added to the get function");
@@ -1574,6 +1663,14 @@ struct InputEvent {
 			t = Type.MouseEvent;
 			mouseEvent = c;
 		}
+		this(SizeChangedEvent c) {
+			t = Type.SizeChangedEvent;
+			sizeChangedEvent = c;
+		}
+		this(UserInterruptionEvent c) {
+			t = Type.UserInterruptionEvent;
+			userInterruptionEvent = c;
+		}
 		this(CustomEvent c) {
 			t = Type.CustomEvent;
 			customEvent = c;
@@ -1586,6 +1683,8 @@ struct InputEvent {
 			NonCharacterKeyEvent nonCharacterKeyEvent;
 			PasteEvent pasteEvent;
 			MouseEvent mouseEvent;
+			SizeChangedEvent sizeChangedEvent;
+			UserInterruptionEvent userInterruptionEvent;
 			CustomEvent customEvent;
 		}
 	}
@@ -1596,7 +1695,7 @@ void main() {
 	auto terminal = Terminal(ConsoleOutputType.linear);
 
 	terminal.setTitle("Basic I/O");
-	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.mouse | ConsoleInputFlags.paste);
+	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.mouse | ConsoleInputFlags.paste | ConsoleInputFlags.size);
 
 	terminal.color(Color.green | Bright, Color.black);
 
@@ -1611,6 +1710,13 @@ void main() {
 	void handleEvent(InputEvent event) {
 		terminal.writef("%s\n", event.type);
 		final switch(event.type) {
+			case InputEvent.Type.UserInterruptionEvent:
+				timeToBreak = true;
+			break;
+			case InputEvent.Type.SizeChangedEvent:
+				auto ev = event.get!(InputEvent.Type.SizeChangedEvent);
+				terminal.writeln(ev);
+			break;
 			case InputEvent.Type.CharacterEvent:
 				auto ev = event.get!(InputEvent.Type.CharacterEvent);
 				terminal.writef("\t%s\n", ev);
