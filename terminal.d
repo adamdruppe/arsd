@@ -16,7 +16,7 @@
  */
 module terminal;
 
-// FIXME: SIGWINCH
+// FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
 
 version(linux)
 	enum SIGWINCH = 28; // FIXME: confirm this is correct on other posix
@@ -24,13 +24,25 @@ version(linux)
 version(Posix) {
 	__gshared bool windowSizeChanged = false;
 	__gshared bool interrupted = false;
+
+	version(with_eventloop)
+		struct SignalFired {}
+
 	extern(C)
 	void sizeSignalHandler(int sigNumber) {
 		windowSizeChanged = true;
+		version(with_eventloop) {
+			import arsd.eventloop;
+			send(SignalFired());
+		}
 	}
 	extern(C)
 	void interruptSignalHandler(int sigNumber) {
 		interrupted = true;
+		version(with_eventloop) {
+			import arsd.eventloop;
+			send(SignalFired());
+		}
 	}
 }
 
@@ -228,7 +240,8 @@ enum Color : ushort {
 	blue = BLUE_BIT, /// .
 	magenta = red | blue, /// .
 	cyan = blue | green, /// .
-	white = red | green | blue /// .
+	white = red | green | blue, /// .
+	DEFAULT = 256,
 }
 
 /// When capturing input, what events are you interested in?
@@ -568,6 +581,23 @@ struct Terminal {
 	/// ditto
 	this(ConsoleOutputType type) {
 		hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+		if(type == ConsoleOutputType.cellular) {
+			/*
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
+			*/
+			COORD size;
+			/*
+			CONSOLE_SCREEN_BUFFER_INFO sbi;
+			GetConsoleScreenBufferInfo(hConsole, &sbi);
+			size.X = cast(short) GetSystemMetrics(SM_CXMIN);
+			size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
+			*/
+			size.X = 80;
+			size.Y = 24;
+			SetConsoleScreenBufferSize(hConsole, size);
+			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
+		}
 	}
 
 	version(Posix)
@@ -579,8 +609,13 @@ struct Terminal {
 		flush();
 	}
 
-	int _currentForeground = Color.black; // FIXME: this isn't necessarily right
-	int _currentBackground = Color.white;
+	version(Windows)
+	~this() {
+		showCursor();
+	}
+
+	int _currentForeground = Color.DEFAULT;
+	int _currentBackground = Color.DEFAULT;
 
 	/// Changes the current color. See enum Color for the values.
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic) {
@@ -592,11 +627,20 @@ struct Terminal {
 				background ^= LowContrast;
 				*/
 
+				ushort setTof = cast(ushort) foreground;
+				ushort setTob = cast(ushort) background;
+
+				// this isn't necessarily right but meh
+				if(background == Color.DEFAULT)
+					setTob = Color.black;
+				if(foreground == Color.DEFAULT)
+					setTof = Color.white;
+
 				// FIXME: is this if good?
 				//if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
 				SetConsoleTextAttribute(
 					GetStdHandle(STD_OUTPUT_HANDLE),
-					cast(ushort)((background << 4) | foreground));
+					cast(ushort)((setTob << 4) | setTof));
 			} else {
 				import std.process;
 				// I started using this envvar for my text editor, but now use it elsewhere too
@@ -610,13 +654,21 @@ struct Terminal {
 				}
 				*/
 
+				ushort setTof = cast(ushort) foreground & ~Bright;
+				ushort setTob = cast(ushort) background & ~Bright;
+
+				if(foreground == Color.DEFAULT)
+					setTof = 9; // ansi sequence for reset
+				if(background == Color.DEFAULT)
+					setTob = 9;
+
 				import std.string;
 
 				if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
 					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm",
-						(foreground & Bright) ? 1 : 0,
-						cast(int) foreground & ~Bright,
-						cast(int) background & ~Bright));
+						(foreground != Color.DEFAULT && (foreground & Bright)) ? 1 : 0,
+						cast(int) setTof,
+						cast(int) setTob));
 				}
 			}
 		}
@@ -663,6 +715,31 @@ struct Terminal {
 
 		_cursorX = x;
 		_cursorY = y;
+	}
+
+	/// shows the cursor
+	void showCursor() {
+		version(Posix)
+			doTermcap("ve");
+		else {
+			CONSOLE_CURSOR_INFO info;
+			GetConsoleCursorInfo(hConsole, &info);
+			info.bVisible = true;
+			SetConsoleCursorInfo(hConsole, &info);
+		}
+	}
+
+	/// hides the cursor
+	void hideCursor() {
+		version(Posix)
+			doTermcap("vi");
+		else {
+			CONSOLE_CURSOR_INFO info;
+			GetConsoleCursorInfo(hConsole, &info);
+			info.bVisible = false;
+			SetConsoleCursorInfo(hConsole, &info);
+		}
+
 	}
 
 	/*
@@ -1023,6 +1100,9 @@ struct RealTimeConsoleInput {
 				auto listenTo = this.fd;
 			else static assert(0, "idk about this OS");
 
+			version(Posix)
+			addListener(&signalFired);
+
 			addFileEventListeners(listenTo, &eventListener, null, null);
 			destructor ~= { removeFileEventListeners(listenTo); };
 			addOnIdle(&terminal.flush);
@@ -1031,6 +1111,16 @@ struct RealTimeConsoleInput {
 	}
 
 	version(with_eventloop) {
+		version(Posix)
+		void signalFired(SignalFired) {
+			if(interrupted) {
+				interrupted = false;
+				send(InputEvent(UserInterruptionEvent()));
+			}
+			if(windowSizeChanged)
+				send(checkWindowSizeChanged());
+		}
+
 		import arsd.eventloop;
 		void eventListener(OsFileHandle fd) {
 			auto queue = readNextEvents();
@@ -1145,6 +1235,16 @@ struct RealTimeConsoleInput {
 		return decode(buffer, throwAway);
 	}
 
+	InputEvent checkWindowSizeChanged() {
+		auto oldWidth = terminal.width;
+		auto oldHeight = terminal.height;
+		terminal.updateSize();
+		version(Posix)
+		windowSizeChanged = false;
+		return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
+	}
+
+
 	// character event
 	// non-character key event
 	// paste event
@@ -1164,16 +1264,15 @@ struct RealTimeConsoleInput {
 		}
 
 		wait_for_more:
+		version(Posix)
 		if(interrupted) {
+			interrupted = false;
 			return InputEvent(UserInterruptionEvent());
 		}
 
+		version(Posix)
 		if(windowSizeChanged) {
-			auto oldWidth = terminal.width;
-			auto oldHeight = terminal.height;
-			terminal.updateSize();
-			windowSizeChanged = false;
-			return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
+			return checkWindowSizeChanged();
 		}
 
 		auto more = readNextEvents();
@@ -1237,9 +1336,15 @@ struct RealTimeConsoleInput {
 						e.character = cast(dchar) cast(wchar) ev.UnicodeChar;
 						newEvents ~= InputEvent(e);
 					} else {
-						// FIXME actually translate
 						ne.key = cast(NonCharacterKeyEvent.Key) ev.wVirtualKeyCode;
-						newEvents ~= InputEvent(ne);
+
+						// FIXME: make this better. the goal is to make sure the key code is a valid enum member
+						// Windows sends more keys than Unix and we're doing lowest common denominator here
+						foreach(member; __traits(allMembers, NonCharacterKeyEvent.Key))
+							if(__traits(getMember, NonCharacterKeyEvent.Key, member) == ne.key) {
+								newEvents ~= InputEvent(ne);
+								break;
+							}
 					}
 				break;
 				case MOUSE_EVENT:
@@ -1267,13 +1372,18 @@ struct RealTimeConsoleInput {
 							else
 								e.buttons = MouseEvent.Button.ScrollUp;
 						break;
+						default:
 					}
 
 					newEvents ~= InputEvent(e);
 				break;
 				case WINDOW_BUFFER_SIZE_EVENT:
 					auto ev = record.WindowBufferSizeEvent;
-					// FIXME
+					auto oldWidth = terminal.width;
+					auto oldHeight = terminal.height;
+					terminal._width = ev.dwSize.X;
+					terminal._height = ev.dwSize.Y;
+					newEvents ~= InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
 				break;
 				// FIXME: can we catch ctrl+c here too?
 				default:
@@ -1695,9 +1805,10 @@ void main() {
 	auto terminal = Terminal(ConsoleOutputType.linear);
 
 	terminal.setTitle("Basic I/O");
-	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.mouse | ConsoleInputFlags.paste | ConsoleInputFlags.size);
+	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
 
 	terminal.color(Color.green | Bright, Color.black);
+	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
 	terminal.write("test some long string to see if it wraps or what because i dont really know what it is going to do so i just want to test i think it will wrap but gotta be sure lolololololololol");
 	terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
@@ -1712,6 +1823,10 @@ void main() {
 		final switch(event.type) {
 			case InputEvent.Type.UserInterruptionEvent:
 				timeToBreak = true;
+				version(with_eventloop) {
+					import arsd.eventloop;
+					exit();
+				}
 			break;
 			case InputEvent.Type.SizeChangedEvent:
 				auto ev = event.get!(InputEvent.Type.SizeChangedEvent);
