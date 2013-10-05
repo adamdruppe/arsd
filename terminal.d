@@ -593,6 +593,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			size.X = cast(short) GetSystemMetrics(SM_CXMIN);
 			size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
 			*/
+
+			// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
 			size.X = 80;
 			size.Y = 24;
 			SetConsoleScreenBufferSize(hConsole, size);

@@ -26,7 +26,15 @@ import simpledisplay;
 
 import std.file;
 void main(string[] args) {
-	auto img = imageFromPng(readPng(cast(ubyte[]) read(args[1])));
+	// older api, the individual functions give you more control if you need it
+	//auto img = imageFromPng(readPng(cast(ubyte[]) read(args[1])));
+
+	// newer api, simpler but less control
+	auto img = readPng(args[1]);
+
+	// displayImage is from simpledisplay and just pops up a window to show the image
+	// simpledisplay's Images are a little different than MemoryImages that this loads,
+	// but conversion is easy
 	displayImage(Image.fromMemoryImage(img));
 }
 */
@@ -452,7 +460,7 @@ PngHeader getHeaderFromFile(string filename) {
 	return getHeader(png);
 }
 
-PNG* readPng(ubyte[] data) {
+PNG* readPng(in ubyte[] data) {
 	auto p = new PNG;
 
 	p.length = data.length;

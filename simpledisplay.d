@@ -1,5 +1,8 @@
 module simpledisplay;
 
+// FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
+
+
 // Note: if you are using Image on X, you might want to do:
 /*
 	static if(UsingSimpledisplayX11) {
@@ -10,7 +13,7 @@ module simpledisplay;
 	}
 
 	If the shared memory extension is available though, simpledisplay uses it
-	for a significant speed boost whenever you draw Images.
+	for a significant speed boost whenever you draw large Images.
 */
 
 // CHANGE FROM LAST VERSION: the window background is no longer fixed, so you might want to fill the screen with a particular color before drawing.
@@ -214,17 +217,17 @@ enum RasterOp {
 
 // being phobos-free keeps the size WAY down
 private const(char)* toStringz(string s) { return (s ~ '\0').ptr; }
-private string[] split(string a, char c) {
+private string[] split(in void[] a, char c) {
 		string[] ret;
 		size_t previous = 0;
-		foreach(i, char ch; a) {
+		foreach(i, char ch; cast(ubyte[]) a) {
 			if(ch == c) {
-				ret ~= a[previous .. i];
+				ret ~= cast(string) a[previous .. i];
 				previous = i + 1;
 			}
 		}
 		if(previous != a.length)
-			ret ~= a[previous .. $];
+			ret ~= cast(string) a[previous .. $];
 		return ret;
 	}
 
@@ -292,6 +295,35 @@ enum TextAlignment : uint {
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
 
+version(X11)
+enum ModifierState : uint {
+	shift = 1,
+	capsLock = 2,
+	ctrl = 4,
+	alt = 8,
+	numLock = 16,
+	windows = 64,
+
+	// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	leftButtonDown = 256,
+	middleButtonDown = 512,
+	rightButtonDown = 1024,
+}
+else version(Windows)
+enum ModifierState : uint {
+	shift = 4,
+	ctrl = 8,
+
+	alt = 256,
+	windows = 512,
+	capsLock = 1024,
+	numLock = 2048,
+
+	leftButtonDown = 1,
+	middleButtonDown = 16,
+	rightButtonDown = 2,
+}
+
 struct KeyEvent {
 	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms.
 	Key key;
@@ -300,11 +332,7 @@ struct KeyEvent {
 
 	dchar character;
 
-	// state:
-	// 1 == shift
-	// 8 == alt
-	// 4 == ctrl
-	uint modifierState;
+	uint modifierState; /// see enum ModifierState
 
 	SimpleWindow window;
 }
@@ -698,7 +726,7 @@ version(X11) {
 // FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
 /// Listen for this on your event listeners if you are interested in mouse
 struct MouseEvent {
-	int type; // movement, press, release, double click
+	MouseEventType type; // movement, press, release, double click
 
 	int x;
 	int y;
@@ -706,8 +734,8 @@ struct MouseEvent {
 	int dx;
 	int dy;
 
-	int button;
-	int buttonFlags;
+	MouseButton button;
+	int modifierState;
 
 	SimpleWindow window;
 }
@@ -1153,7 +1181,7 @@ class Sprite {
 		version(X11) {
 			auto display = XDisplayConnection.get();
 			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
-			if(i.xshmAvailable)
+			if(i.usingXshm)
 			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
 			else
 			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
@@ -1391,7 +1419,7 @@ class SimpleWindow {
 		} else
 		version(X11) {
 			if(!destroyed) {
-				if(i.xshmAvailable)
+				if(i.usingXshm)
 				XShmPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height, false);
 				else
 				XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
@@ -1845,7 +1873,7 @@ version(Windows) {
 				mouse.x = LOWORD(lParam) + offsetX;
 				mouse.y = HIWORD(lParam) + offsetY;
 				wind.mdx(mouse);
-				mouse.buttonFlags = wParam;
+				mouse.modifierState = wParam;
 				mouse.window = wind;
 
 				if(wind.handleMouseEvent)
@@ -1866,7 +1894,19 @@ version(Windows) {
 					ev.pressed = msg == WM_KEYDOWN;
 					// FIXME
 					// ev.hardwareCode
-					// ev.modifierState = 
+
+					if(GetKeyState(Key.Shift)&0x8000 || GetKeyState(Key.Shift_r)&0x8000)
+						ev.modifierState |= ModifierState.shift;
+					if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
+						ev.modifierState |= ModifierState.alt;
+					if(GetKeyState(Key.Ctrl)&0x8000 || GetKeyState(Key.Ctrl_r)&0x8000)
+						ev.modifierState |= ModifierState.ctrl;
+					if(GetKeyState(Key.Windows)&0x8000 || GetKeyState(Key.Windows_r)&0x8000)
+						ev.modifierState |= ModifierState.windows;
+					if(GetKeyState(Key.NumLock))
+						ev.modifierState |= ModifierState.numLock;
+					if(GetKeyState(Key.CapsLock))
+						ev.modifierState |= ModifierState.capsLock;
 
 					/+
 					// we always want to send the character too, so let's convert it
@@ -1886,45 +1926,45 @@ version(Windows) {
 						wind.handleKeyEvent(ev);
 				break;
 				case 0x020a /*WM_MOUSEWHEEL*/:
-					mouse.type = 1;
-					mouse.button = (HIWORD(wParam) > 120) ? 16 : 8;
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = cast(MouseButton) ((HIWORD(wParam) > 120) ? 16 : 8);
 					mouseEvent();
 				break;
 				case WM_MOUSEMOVE:
-					mouse.type = 0;
+					mouse.type = cast(MouseEventType) 0;
 					mouseEvent();
 				break;
 				case WM_LBUTTONDOWN:
 				case WM_LBUTTONDBLCLK:
-					mouse.type = 1;
-					mouse.button = 1;
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = cast(MouseButton) 1;
 					mouseEvent();
 				break;
 				case WM_LBUTTONUP:
-					mouse.type = 2;
-					mouse.button = 1;
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button =cast(MouseButton)  1;
 					mouseEvent();
 				break;
 				case WM_RBUTTONDOWN:
 				case WM_RBUTTONDBLCLK:
-					mouse.type = 1;
-					mouse.button = 2;
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button =cast(MouseButton)  2;
 					mouseEvent();
 				break;
 				case WM_RBUTTONUP:
-					mouse.type = 2;
-					mouse.button = 2;
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button =cast(MouseButton)  2;
 					mouseEvent();
 				break;
 				case WM_MBUTTONDOWN:
 				case WM_MBUTTONDBLCLK:
-					mouse.type = 1;
-					mouse.button = 4;
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = cast(MouseButton) 4;
 					mouseEvent();
 				break;
 				case WM_MBUTTONUP:
-					mouse.type = 2;
-					mouse.button = 4;
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button = cast(MouseButton) 4;
 					mouseEvent();
 				break;
 				default: return 1;
@@ -2310,7 +2350,7 @@ version(X11) {
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
 			// source x, source y
-			if(i.xshmAvailable)
+			if(i.usingXshm)
 				XShmPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h, false);
 			else
 				XPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h);
@@ -2346,10 +2386,12 @@ version(X11) {
 
 		void drawText(in int x, in int y, in int x2, in int y2, in string originalText, in uint alignment) {
 			// FIXME: we should actually draw unicode.. but until then, I'm going to strip out multibyte chars
-			string text;
+			immutable(ubyte)[] text;
+			// the first 256 unicode codepoints are the same as ascii and latin-1, which is what X expects, so we can keep all those
+			// then strip the rest so there isn't garbage
 			foreach(dchar ch; originalText)
-				if(ch < 128)
-					text ~= ch;
+				if(ch < 256)
+					text ~= cast(ubyte) ch;
 			if(text.length == 0)
 				return;
 
@@ -2526,12 +2568,17 @@ version(X11) {
 			return _xshmAvailable;
 		}
 
+		bool usingXshm;
+
 		void createImage(int width, int height) {
 			auto display = XDisplayConnection.get();
 			assert(display !is null);
 			auto screen = DefaultScreen(display);
 
-			if(xshmAvailable) {
+			// it will only use shared memory for somewhat largish images,
+			// since otherwise we risk wasting shared memory handles on a lot of little ones
+			if(xshmAvailable && width > 100 && height > 100) {
+				usingXshm = true;
 				handle = XShmCreateImage(
 					display,
 					DefaultVisual(display, screen),
@@ -2544,7 +2591,8 @@ version(X11) {
 
 				assert(handle.bytes_per_line == 4 * width);
 				shminfo.shmid = shmget(IPC_PRIVATE, handle.bytes_per_line * height, IPC_CREAT | 511 /* 0777 */);
-				assert(shminfo.shmid >= 0);
+				//import std.conv; import core.stdc.errno;
+				assert(shminfo.shmid >= 0);//, to!string(errno));
 				handle.data = shminfo.shmaddr = rawData = cast(ubyte*) shmat(shminfo.shmid, null, 0);
 				assert(rawData != cast(ubyte*) -1);
 				shminfo.readOnly = 0;
@@ -2570,11 +2618,12 @@ version(X11) {
 		void dispose() {
 			// note: this calls free(rawData) for us
 			if(handle) {
-				if(xshmAvailable)
+				if(usingXshm)
 					XShmDetach(XDisplayConnection.get(), &shminfo);
 				XDestroyImage(handle);
-				if(xshmAvailable)
+				if(usingXshm) {
 					shmdt(shminfo.shmaddr);
+				}
 				handle = null;
 			}
 		}
@@ -2900,10 +2949,10 @@ version(X11) {
 			MouseEvent mouse;
 			auto event = e.xmotion;
 
-			mouse.type = 0;
+			mouse.type = MouseEventType.motion;
 			mouse.x = event.x;
 			mouse.y = event.y;
-			mouse.buttonFlags = event.state;
+			mouse.modifierState = event.state;
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
 				(*win).mdx(mouse);
@@ -2920,23 +2969,23 @@ version(X11) {
 			MouseEvent mouse;
 			auto event = e.xbutton;
 
-			mouse.type = e.type == EventType.ButtonPress ? 1 : 2;
+			mouse.type = cast(MouseEventType) (e.type == EventType.ButtonPress ? 1 : 2);
 			mouse.x = event.x;
 			mouse.y = event.y;
 
 			switch(event.button) {
-				case 1: mouse.button = 1; break; // left
-				case 2: mouse.button = 4; break; // middle
-				case 3: mouse.button = 2; break; // right
-				case 4: mouse.button = 8; break; // scroll up
-				case 5: mouse.button = 16; break; // scroll down
+				case 1: mouse.button = MouseButton.left; break; // left
+				case 2: mouse.button = MouseButton.middle; break; // middle
+				case 3: mouse.button = MouseButton.right; break; // right
+				case 4: mouse.button = MouseButton.wheelUp; break; // scroll up
+				case 5: mouse.button = MouseButton.wheelDown; break; // scroll down
 				default:
 			}
 
 			// FIXME: double check this
-			mouse.buttonFlags = event.state;
+			mouse.modifierState = event.state;
 
-			//mouse.buttonFlags = event.detail;
+			//mouse.modifierState = event.detail;
 
 			if(auto win = e.xbutton.window in SimpleWindow.nativeMapping) {
 				(*win).mdx(mouse);
@@ -3196,6 +3245,8 @@ nothrow:
 		bool Rectangle(HDC, int, int, int, int);
 		HBRUSH GetSysColorBrush(int nIndex);
 		DWORD GetSysColor(int nIndex);
+
+		SHORT GetKeyState(int nVirtKey);
 
 		int SetROP2(HDC, int);
 		enum R2_XORPEN = 7;

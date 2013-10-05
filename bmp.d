@@ -1,16 +1,40 @@
-import core.stdc.stdio;
+module arsd.bmp;
 
 import arsd.color;
 
 MemoryImage readBmp(string filename) {
+	import core.stdc.stdio;
+
 	FILE* fp = fopen((filename ~ "\0").ptr, "rb".ptr);
 	if(fp is null)
 		throw new Exception("can't open save file");
 	scope(exit) fclose(fp);
 
-	uint read4()  { uint what; fread(&what, 4, 1, fp); return what; }
-	ushort read2(){ ushort what; fread(&what, 2, 1, fp); return what; }
-	ubyte read1() { return cast(ubyte) fgetc(fp); }
+	void specialFread(void* tgt, size_t size) {
+		fread(tgt, size, 1, fp);
+	}
+
+	return readBmpIndirect(&specialFread);
+}
+
+MemoryImage readBmp(in ubyte[] data) {
+	const(ubyte)[] current = data;
+	void specialFread(void* tgt, size_t size) {
+		while(size) {
+			*cast(ubyte*)(tgt) = current[0];
+			current = current[1 .. $];
+			tgt++;
+			size--;
+		}
+	}
+
+	return readBmpIndirect(&specialFread);
+}
+
+MemoryImage readBmpIndirect(void delegate(void*, size_t) fread) {
+	uint read4()  { uint what; fread(&what, 4); return what; }
+	ushort read2(){ ushort what; fread(&what, 2); return what; }
+	ubyte read1(){ ubyte what; fread(&what, 1); return what; }
 
 	void require1(ubyte t, size_t line = __LINE__) {
 		if(read1() != t)
@@ -234,6 +258,7 @@ MemoryImage readBmp(string filename) {
 }
 
 void writeBmp(MemoryImage img, string filename) {
+	import core.stdc.stdio;
 	FILE* fp = fopen((filename ~ "\0").ptr, "wb".ptr);
 	if(fp is null)
 		throw new Exception("can't open save file");
@@ -351,13 +376,15 @@ void writeBmp(MemoryImage img, string filename) {
 	}
 }
 
-/*
+/+
 void main() {
 	import simpledisplay;
+	//import std.file;
+	//auto img = readBmp(cast(ubyte[]) std.file.read("/home/me/test2.bmp"));
 	auto img = readBmp("/home/me/test2.bmp");
 	import std.stdio;
 	writeln((cast(Object)img).toString());
 	displayImage(Image.fromMemoryImage(img));
 	//img.writeBmp("/home/me/test2.bmp");
 }
-*/
++/

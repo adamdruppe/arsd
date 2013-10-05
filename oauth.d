@@ -234,6 +234,20 @@ OAuthParams twitter(string apiKey, string apiSecret) {
 	return params;
 }
 
+OAuthParams tumblr(string apiKey, string apiSecret) {
+	OAuthParams params;
+
+	params.apiKey = apiKey;
+	params.apiSecret = apiSecret;
+
+	params.baseUrl = "http://www.tumblr.com";
+	params.requestTokenPath = "/oauth/request_token";
+	params.authorizePath = "/oauth/authorize";
+	params.accessTokenPath = "/oauth/access_token";
+
+	return params;
+}
+
 OAuthParams linkedIn(string apiKey, string apiSecret) {
 	OAuthParams params;
 

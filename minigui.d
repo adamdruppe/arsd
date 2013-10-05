@@ -1,22 +1,136 @@
+// http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
+
+/// FOR BEST RESULTS: be sure to link with the appropriate subsystem command
+/// -L/SUBSYSTEM:WINDOWS:5.0
+/// otherwise you'll get a console and other visual bugs.
 module arsd.minigui;
+
+/*
+	STILL NEEDED:
+		* combo box. (this is diff than select because you can free-form edit too. more like a lineedit with autoselect)
+		* slider
+		* listbox
+		* spinner
+		* label?
+		* rich text
+*/
+
+abstract class ComboboxBase : Widget {
+	// if the user can enter arbitrary data, we want to use  2 == CBS_DROPDOWN
+	// or to always show the list, we want CBS_SIMPLE == 1
+	version(win32_widgets)
+	this(uint style, Widget parent = null) {
+		super(parent);
+		parentWindow = parent.parentWindow;
+		createWin32Window(this, "ComboBox", null, style);
+	}
+
+	private string[] options;
+	private int selection = -1;
+
+	void addOption(string s) {
+		options ~= s;
+		version(win32_widgets)
+		SendMessageA(hwnd, 323 /*CB_ADDSTRING*/, 0, cast(LPARAM) toStringzInternal(s));
+	}
+
+	void setSelection(int idx) {
+		selection = idx;
+		version(win32_widgets)
+		SendMessageA(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
+	}
+
+	version(win32_widgets)
+	override void handleWmCommand(ushort cmd, ushort id) {
+		selection = SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+		auto event = new Event("changed", this);
+		event.dispatch();
+	}
+}
+
+class DropDownSelection : ComboboxBase {
+	this(Widget parent = null) {
+		version(win32_widgets)
+		super(3 /* CBS_DROPDOWNLIST */, parent);
+	}
+}
+
+class FreeEntrySelection : ComboboxBase {
+	this(Widget parent = null) {
+		version(win32_widgets)
+		super(2 /* CBS_DROPDOWN */, parent);
+	}
+}
+
+class ComboBox : ComboboxBase {
+	this(Widget parent = null) {
+		version(win32_widgets)
+		super(1 /* CBS_SIMPLE */, parent);
+	}
+}
+
+
+/+
+class Spinner : Widget {
+	version(win32_widgets)
+	this(Widget parent = null) {
+		super(parent);
+		parentWindow = parent.parentWindow;
+		auto hlayout = new HorizontalLayout(this);
+		lineEdit = new LineEdit(hlayout);
+		upDownControl = new UpDownControl(hlayout);
+	}
+
+	LineEdit lineEdit;
+	UpDownControl upDownControl;
+}
+
+class UpDownControl : Widget {
+	version(win32_widgets)
+	this(Widget parent = null) {
+		super(parent);
+		parentWindow = parent.parentWindow;
+		createWin32Window(this, "msctls_updown32", null, 4/*UDS_ALIGNRIGHT*/| 2 /* UDS_SETBUDDYINT */ | 16 /* UDS_AUTOBUDDY */ | 32 /* UDS_ARROWKEYS */);
+	}
+
+	override int minHeight() { return Window.lineHeight; }
+	override int maxHeight() { return Window.lineHeight * 3/2; }
+
+	override int minWidth() { return Window.lineHeight * 3/2; }
+	override int maxWidth() { return Window.lineHeight * 3/2; }
+}
++/
+
+class DataView : Widget {
+	// this is the omnibus data viewer
+	// the internal data layout is something like:
+	// string[string][] but also each node can have parents
+}
+
 
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775491(v=vs.85).aspx#PROGRESS_CLASS
 
+// http://svn.dsource.org/projects/bindings/trunk/win32/commctrl.d
+
 // FIXME: menus should prolly capture the mouse. ugh i kno.
 
-import simpledisplay;
+public import simpledisplay;
 
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
 
 version(Windows) {
 	// use native widgets when available unless specifically asked otherwise
-	version(custom_widgets) {}
-	else {
+	version(custom_widgets) {
+		enum bool UsingCustomWidgets = true;
+	} else {
 		version = win32_widgets;
+		enum bool UsingCustomWidgets = false;
 	}
 	// and native theming when needed
-	version = win32_theming;
+	//version = win32_theming;
+} else {
+	enum bool UsingCustomWidgets = true;
 }
 
 /*
@@ -31,11 +145,30 @@ version(Windows) {
 	connect(paste, &textEdit.insertTextAtCarat);
 
 	would be nice.
+
+
+
+	I kinda want an omnibus dataview that combines list, tree,
+	and table - it can be switched dynamically between them.
+
+	Flattening policy: only show top level, show recursive, show grouped
+	List styles: plain list (e.g. <ul>), tiles (some details next to it), icons (like Windows explorer)
+
+	Single select, multi select, organization, drag+drop
 */
 
-enum windowBackgroundColor = Color(190, 190, 190);
+static if(UsingSimpledisplayX11)
+enum windowBackgroundColor = Color(220, 220, 220);
 
 private const(char)* toStringzInternal(string s) { return (s ~ '\0').ptr; }
+private const(wchar)* toWstringzInternal(in char[] s) {
+	wchar[] str;
+	str.reserve(s.length + 1);
+	foreach(dchar ch; s)
+		str ~= ch;
+	str ~= '\0';
+	return str.ptr;
+}
 
 class Action {
 	version(win32_widgets) {
@@ -75,6 +208,7 @@ class Action {
 		basic clipboard
 
 		* radio box
+		splitter
 		toggle buttons (optionally mutually exclusive, like in Paint)
 		label, rich text display, multi line plain text (selectable)
 		* fieldset
@@ -131,16 +265,46 @@ enum LinePreference {
 }
 */
 
+mixin template Padding(string code) {
+	override int paddingLeft() { return mixin(code);}
+	override int paddingRight() { return mixin(code);}
+	override int paddingTop() { return mixin(code);}
+	override int paddingBottom() { return mixin(code);}
+}
+
+mixin template Margin(string code) {
+	override int marginLeft() { return mixin(code);}
+	override int marginRight() { return mixin(code);}
+	override int marginTop() { return mixin(code);}
+	override int marginBottom() { return mixin(code);}
+}
+
+
 mixin template LayoutInfo() {
 	int minWidth() { return 0; }
-	int minHeight() { return 0; }
+	int minHeight() {
+		// default widgets have a vertical layout, therefore the minimum height is the sum of the contents
+		int sum = 0;
+		foreach(child; children) {
+			sum += child.minHeight();
+			sum += child.marginTop();
+		}
+
+		return sum;
+	}
 	int maxWidth() { return int.max; }
 	int maxHeight() { return int.max; }
 	int widthStretchiness() { return 1; }
 	int heightStretchiness() { return 1; }
 
-	int margin() { return 0; }
-	int padding() { return 0; }
+	int marginLeft() { return 0; }
+	int marginRight() { return 0; }
+	int marginTop() { return 0; }
+	int marginBottom() { return 0; }
+	int paddingLeft() { return 0; }
+	int paddingRight() { return 0; }
+	int paddingTop() { return 0; }
+	int paddingBottom() { return 0; }
 	//LinePreference linePreference() { return LinePreference.PreferOwnLine; }
 
 	void recomputeChildLayout() {
@@ -155,12 +319,24 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 	if(parent.children.length == 0)
 		return;
+
+	enum firstThingy = relevantMeasure == "height" ? "Top" : "Left";
+	enum secondThingy = relevantMeasure == "height" ? "Bottom" : "Right";
+
 	// my own width and height should already be set by the caller of this function...
-	int spaceRemaining = mixin("parent." ~ relevantMeasure) - parent.padding() * 2;
+	int spaceRemaining = mixin("parent." ~ relevantMeasure) -
+		mixin("parent.padding"~firstThingy~"()") -
+		mixin("parent.padding"~secondThingy~"()");
+
 	int stretchinessSum;
+	int lastMargin = 0;
 	foreach(child; parent.children) {
 		static if(calcingV) {
-			child.width = parent.width - child.margin() * 2 - parent.padding() * 2; // block element style
+			child.width = parent.width -
+				mixin("child.margin"~firstThingy~"()") -
+				mixin("child.margin"~secondThingy~"()") -
+				mixin("parent.padding"~firstThingy~"()") -
+				mixin("parent.padding"~secondThingy~"()");
 			if(child.width < 0)
 				child.width = 0;
 			if(child.width > child.maxWidth())
@@ -169,20 +345,32 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		} else {
 			if(child.height < 0)
 				child.height = 0;
-			child.height = parent.height - child.margin() * 2 - parent.padding() * 2;
+			child.height = parent.height -
+				mixin("child.margin"~firstThingy~"()") -
+				mixin("child.margin"~secondThingy~"()") -
+				mixin("parent.padding"~firstThingy~"()") -
+				mixin("parent.padding"~secondThingy~"()");
 			if(child.height > child.maxHeight())
 				child.height = child.maxHeight();
 			child.width = child.minWidth();
 		}
 
 		spaceRemaining -= mixin("child." ~ relevantMeasure);
+
+		int thisMargin = mymax(lastMargin, mixin("child.margin"~firstThingy~"()"));
+		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
+		lastMargin = margin;
+		spaceRemaining -= thisMargin + margin;
 		stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
 	}
 
-	while(stretchinessSum) {
+
+	while(spaceRemaining > 0 && stretchinessSum) {
+		//import std.stdio; writeln("str ", stretchinessSum);
 		auto spacePerChild = spaceRemaining / stretchinessSum;
-		if(spacePerChild == 0)
+		if(spacePerChild <= 0)
 			break;
+		int previousSpaceRemaining = spaceRemaining;
 		stretchinessSum = 0;
 		foreach(child; parent.children) {
 			static if(calcingV)
@@ -200,34 +388,41 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			mixin("child." ~ relevantMeasure) += spaceAdjustment;
 			spaceRemaining -= spaceAdjustment;
 			if(mixin("child." ~ relevantMeasure) > maximum) {
-				auto diff = maximum - mixin("child." ~ relevantMeasure);
+				auto diff = mixin("child." ~ relevantMeasure) - maximum;
 				mixin("child." ~ relevantMeasure) -= diff;
 				spaceRemaining += diff;
 			} else if(mixin("child." ~ relevantMeasure) < maximum) {
 				stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
 			}
-
-			spaceRemaining -= child.margin();
 		}
+
+		if(spaceRemaining == previousSpaceRemaining)
+			break; // apparently nothing more we can do
 	}
 
-	int currentPos = parent.padding();
+	lastMargin = 0;
+	int currentPos = mixin("parent.padding"~firstThingy~"()");
 	foreach(child; parent.children) {
-		currentPos += child.margin();
+		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
+		int thisMargin = mymax(lastMargin, mixin("child.margin"~firstThingy~"()"));
+		currentPos += thisMargin;
 		static if(calcingV) {
-			child.x = parent.padding() + child.margin();
+			child.x = parent.paddingLeft() + child.marginLeft();
 			child.y = currentPos;
 		} else {
 			child.x = currentPos;
-			child.y = parent.padding() + child.margin();
+			child.y = parent.paddingTop() + child.marginTop();
 
 		}
 		currentPos += mixin("child." ~ relevantMeasure);
-		currentPos += child.margin();
+		currentPos += margin;
+		lastMargin = margin;
 
 		child.recomputeChildLayout();
 	}
 }
+
+int mymax(int a, int b) { return a > b ? a : b; }
 
 /+
 mixin template StyleInfo(string windowType) {
@@ -244,7 +439,7 @@ mixin template StyleInfo(string windowType) {
 +/
 
 // OK so we need to make getting at the native window stuff possible in simpledisplay.d
-// and here, it must be integratable with the layout, the event system, and not be painted over.
+// and here, it must be integrable with the layout, the event system, and not be painted over.
 version(win32_widgets) {
 	extern(Windows)
 	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
@@ -275,6 +470,8 @@ version(win32_widgets) {
 			phwnd = p.parent.hwnd;
 		else
 			phwnd = p.parentWindow.win.impl.hwnd;
+
+		assert(phwnd !is null);
 
 		style |= WS_VISIBLE | WS_CHILD;
 		p.hwnd = CreateWindow(toStringzInternal(className), toStringzInternal(windowText), style,
@@ -308,6 +505,16 @@ version(win32_widgets) {
 class Widget {
 	mixin EventStuff!();
 	mixin LayoutInfo!();
+
+	static if(UsingSimpledisplayX11) {
+		// see: http://tronche.com/gui/x/xlib/appendix/b/
+		protected Cursor cursor;
+
+		// maybe I can do something similar cross platform
+	}
+
+	version(win32_widgets)
+	void handleWmCommand(ushort cmd, ushort id) {}
 
 	string statusTip;
 	// string toolTip;
@@ -404,7 +611,7 @@ class Widget {
 		else {
 			assert(position < children.length);
 			children.length = children.length + 1;
-			for(int i = children.length - 1; i > position; i--)
+			for(int i = cast(int) children.length - 1; i > position; i--)
 				children[i] = children[i - 1];
 			children[position] = w;
 		}
@@ -472,23 +679,65 @@ class VerticalLayout : Widget {
 	// intentionally blank - widget's default is vertical layout right now
 }
 class HorizontalLayout : Widget {
+	this(Widget parent = null) { super(parent); }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
+
+	override int minHeight() {
+		int largest = 0;
+		int margins = 0;
+		int lastMargin = 0;
+		foreach(child; children) {
+			auto mh = child.minHeight();
+			if(mh > largest)
+				largest = mh;
+			margins += mymax(lastMargin, child.marginTop());
+			lastMargin = child.marginBottom();
+		}
+		return largest + margins;
+	}
+
+	override int maxHeight() {
+		int largest = 0;
+		int margins = 0;
+		int lastMargin = 0;
+		foreach(child; children) {
+			auto mh = child.maxHeight();
+			if(mh > largest)
+				largest = mh;
+			margins += mymax(lastMargin, child.marginTop());
+			lastMargin = child.marginBottom();
+		}
+		return largest + margins;
+	}
+
 }
 
 
 
 class Window : Widget {
+	int mouseCaptureCount = 0;
+	Widget mouseCapturedBy;
+	void captureMouse(Widget byWhom) {
+		assert(mouseCapturedBy is null || byWhom is mouseCapturedBy);
+		mouseCaptureCount++;
+		mouseCapturedBy = byWhom;
+	}
+	void releaseMouseCapture() {
+		mouseCaptureCount--;
+		mouseCapturedBy = null;
+	}
+
 	static int lineHeight;
 
 	Widget focusedWidget;
 
 	SimpleWindow win;
-	this(int width = 500, int height = 500) {
+	this(int width = 500, int height = 500, string title = null) {
 		super(null);
 
-		win = new SimpleWindow(width, height);
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizablity.allowResizing);
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
@@ -511,6 +760,24 @@ class Window : Widget {
 			lineHeight = painter.fontHeight() * 5 / 4;
 		}
 
+		version(win32_widgets) {
+			this.paint = (ScreenPainter painter) {
+				/*
+				RECT rect;
+				rect.right = this.width;
+				rect.bottom = this.height;
+				DrawThemeBackground(theme, painter.impl.hdc, 4, 1, &rect, null);
+				*/
+				// 3dface is used as window backgrounds by Windows too, so that's why I'm using it here
+				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+				auto p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
+				// since the pen is null, to fill the whole space, we need the +1 on both.
+				Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
+				SelectObject(painter.impl.hdc, p);
+				SelectObject(painter.impl.hdc, b);
+			};
+		}
+		else
 		this.paint = (ScreenPainter painter) {
 			painter.fillColor = windowBackgroundColor;
 			painter.drawRectangle(Point(0, 0), this.width, this.height);
@@ -545,6 +812,11 @@ class Window : Widget {
 	override bool dispatchMouseEvent(MouseEvent ev) {
 		auto ele = widgetAtPoint(this, ev.x, ev.y);
 
+		if(mouseCapturedBy !is null) {
+			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
+				ele = this;
+		}
+
 		if(ev.type == 1) {
 			mouseLastDownOn = ele;
 			auto event = new Event("mousedown", ele);
@@ -558,6 +830,7 @@ class Window : Widget {
 				event = new Event("click", ele);
 				event.clientX = ev.x;
 				event.clientY = ev.y;
+				event.button = ev.button;
 				event.dispatch();
 			}
 		} else if(ev.type == 0) {
@@ -573,6 +846,9 @@ class Window : Widget {
 						event = new Event("mouseenter", ele);
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
+
+						static if(UsingSimpledisplayX11)
+							XDefineCursor(XDisplayConnection.get(), ele.parentWindow.win.impl.window, ele.cursor);
 					}
 				}
 
@@ -625,7 +901,7 @@ class MainWindow : Window {
 			if(this.statusBar !is null && event.target.statusTip.length)
 				this.statusBar.parts[0].content = event.target.statusTip;
 			else if(this.statusBar !is null && _this.statusTip.length)
-				this.statusBar.parts[0].content = _this.statusTip ~ " " ~ event.target.toString();
+				this.statusBar.parts[0].content = _this.statusTip; // ~ " " ~ event.target.toString();
 		};
 
 		version(win32_widgets)
@@ -648,10 +924,9 @@ class MainWindow : Window {
 								event.dispatch();
 							*/
 							} else {
-								auto buttonHandle = cast(HWND) lParam;
-								if(auto widget = buttonHandle in Widget.nativeMapping) {
-									auto event = new Event("triggered", *widget);
-									event.dispatch();
+								auto handle = cast(HWND) lParam;
+								if(auto widgetp = handle in Widget.nativeMapping) {
+									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
 								}
 							}
 						break;
@@ -718,7 +993,15 @@ class MainWindow : Window {
 	Each button ought to correspond to a menu item.
 */
 class ToolBar : Widget {
-	override int maxHeight() { return 40; }
+	version(win32_widgets) {
+		private const int idealHeight;
+		override int minHeight() { return idealHeight; }
+		override int maxHeight() { return idealHeight; }
+	} else {
+		override int minHeight() { return Window.lineHeight * 3/2; }
+		override int maxHeight() { return Window.lineHeight * 3/2; }
+	}
+	override int heightStretchiness() { return 0; }
 
 	version(win32_widgets) 
 		HIMAGELIST imageList;
@@ -743,10 +1026,22 @@ class ToolBar : Widget {
 
 			// FIXME: I_IMAGENONE is if here is no icon
 			foreach(action; actions)
-				buttons ~= TBBUTTON(MAKELONG(action.iconId, 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toStringzInternal(action.label));
+				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toStringzInternal(action.label));
 
 			SendMessageA(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageA(hwnd, TB_ADDBUTTONSA,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
+
+			/* this seems to make it a vertical toolbar on windows xp... don't actually want that
+			SIZE size;
+			SendMessageA(hwnd, TB_GETIDEALSIZE, true, cast(LPARAM) &size);
+			idealHeight = size.cy;
+			*/
+
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			idealHeight = rect.bottom - rect.top + 10; // the +10 is a hack since the size right now doesn't look right on a real Windows XP box
+
+			assert(idealHeight);
 		} else {
 			foreach(action; actions)
 				addChild(new ToolButton(action));
@@ -773,11 +1068,15 @@ class ToolButton : Button {
 			};
 
 			paint = (ScreenPainter painter) {
-				painter.outlineColor = Color.black;
+				painter.outlineColor = windowBackgroundColor;
 				if(isHovering) {
-					painter.fillColor = Color.transparent;
-					painter.drawRectangle(Point(0, 0), width, height);
+					painter.fillColor = lighten(windowBackgroundColor, 0.8);
+				} else {
+					painter.fillColor = windowBackgroundColor;
 				}
+
+				painter.drawRectangle(Point(1, 1), width, height);
+				painter.outlineColor = Color.black;
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 			};
 		}
@@ -786,7 +1085,6 @@ class ToolButton : Button {
 	Action action;
 
 	override int maxWidth() { return 40; }
-	override int minWidth() { return 40; }
 }
 
 
@@ -842,8 +1140,8 @@ class MenuBar : Widget {
 		.recomputeChildLayout!"width"(this);
 	}
 
-	override int maxHeight() { return Window.lineHeight; }
-	override int minHeight() { return Window.lineHeight; }
+	override int maxHeight() { return Window.lineHeight + 4; }
+	override int minHeight() { return Window.lineHeight + 4; }
 
 }
 
@@ -863,7 +1161,7 @@ class StatusBar : Widget {
 		@disable this();
 		this(StatusBar owner) { this.owner = owner; }
 		//@disable this(this);
-		@property int length() { return owner.partsArray.length; }
+		@property int length() { return cast(int) owner.partsArray.length; }
 		private StatusBar owner;
 		private this(StatusBar owner, Part[] parts) {
 			this.owner.partsArray = parts;
@@ -878,7 +1176,7 @@ class StatusBar : Widget {
 		Part opOpAssign(string op : "~" )(Part p) {
 			assert(owner.partsArray.length < 255);
 			p.owner = this.owner;
-			p.idx = owner.partsArray.length;
+			p.idx = cast(int) owner.partsArray.length;
 			owner.partsArray ~= p;
 			version(win32_widgets) {
 				int[256] pos;
@@ -937,6 +1235,11 @@ class StatusBar : Widget {
 		version(win32_widgets) {
 			parentWindow = parent.parentWindow;
 			createWin32Window(this, "msctls_statusbar32", "D rox", 0);
+
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			idealHeight = rect.bottom - rect.top;
+			assert(idealHeight);
 		} else {
 			this.paint = (ScreenPainter painter) {
 				painter.outlineColor = Color.black;
@@ -951,8 +1254,14 @@ class StatusBar : Widget {
 		}
 	}
 
-	override int maxHeight() { return Window.lineHeight; }
-	override int minHeight() { return Window.lineHeight; }
+	version(win32_widgets) {
+		private const int idealHeight;
+		override int maxHeight() { return idealHeight; }
+		override int minHeight() { return idealHeight; }
+	} else {
+		override int maxHeight() { return Window.lineHeight + 4; }
+		override int minHeight() { return Window.lineHeight + 4; }
+	}
 }
 
 /// Displays an in-progress indicator without known values
@@ -1038,11 +1347,17 @@ class ProgressBar : Widget {
 }
 
 class Fieldset : Widget {
-	override int padding() { return 8; }
-	override int margin() { return 4; }
+	version(win32_widgets)
+		override int paddingTop() { return Window.lineHeight; }
+	else
+		override int paddingTop() { return Window.lineHeight / 2 + 2; }
+	override int paddingBottom() { return 6; }
+	override int paddingLeft() { return 6; }
+	override int paddingRight() { return 6; }
+	mixin Margin!q{ Window.lineHeight / 2 + 2 };
 
 	string legend;
-	/*
+
 	version(win32_widgets)
 	this(string legend, Widget parent = null) {
 		super(parent);
@@ -1051,23 +1366,43 @@ class Fieldset : Widget {
 		createWin32Window(this, "button", legend, BS_GROUPBOX);
 	}
 	else
-	*/
 	this(string legend, Widget parent = null) {
 		super(parent);
 		this.legend = legend;
 		parentWindow = parent.parentWindow;
 		this.paint = (ScreenPainter painter) {
-			painter.fillColor = Color(220, 220, 220);
-			painter.outlineColor = Color.black;
+			painter.fillColor = Color.transparent;
+			painter.pen = Pen(Color.black, 1);
 			painter.drawRectangle(Point(0, 0), width, height);
+
+			auto tx = painter.textSize(legend);
+			painter.outlineColor = Color.transparent;
+
+			static if(UsingSimpledisplayX11) {
+				painter.fillColor = windowBackgroundColor;
+				painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
+			} else version(Windows) {
+				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+				painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
+				SelectObject(painter.impl.hdc, b);
+			} else static assert(0);
+			painter.outlineColor = Color.black;
+			painter.drawText(Point(8, -tx.height / 2), legend);
 		};
 	}
 
 	override int maxHeight() {
-		auto m = padding * 2;
-		foreach(child; children)
+		auto m = paddingTop() + paddingBottom();
+		foreach(child; children) {
 			m += child.maxHeight();
-		return m;
+			m += child.marginBottom();
+			m += child.marginTop();
+		}
+		return m + 6;
+	}
+
+	override int minHeight() {
+		return super.minHeight() + Window.lineHeight + 4;
 	}
 }
 
@@ -1081,23 +1416,25 @@ class Menu : Widget {
 		parentWindow.redraw();
 
 		parentWindow.removeEventListener("mousedown", &remove);
+		parentWindow.releaseMouseCapture();
 	}
 
+	version(win32_widgets) {} else
 	void popup(Widget parent) {
 		assert(parentWindow !is null);
 		auto pos = getChildPositionRelativeToParentOrigin(parent);
 		this.x = pos[0];
 		this.y = pos[1] + parent.height;
-		this.width = parent.width;
+		this.width = 150;
 		if(this.children.length)
-			this.height = this.children.length * this.children[0].maxHeight();
+			this.height = cast(int) this.children.length * this.children[0].maxHeight();
 		else
 			this.height = 4;
 		this.recomputeChildLayout();
 
 		this.paint = (ScreenPainter painter) {
 			painter.outlineColor = Color.black;
-			painter.fillColor = Color(190, 190, 190);
+			painter.fillColor = lighten(windowBackgroundColor, 0.8);
 			painter.drawRectangle(Point(0, 0), width, height);
 		};
 
@@ -1108,6 +1445,8 @@ class Menu : Widget {
 		defaultEventHandlers["mousedown"] = (Widget _this, Event ev) {
 			ev.stopPropagation();
 		};
+
+		parentWindow.captureMouse(this);
 
 		foreach(child; children)
 			child.parentWindow = this.parentWindow;
@@ -1157,10 +1496,14 @@ class MenuItem : MouseActivatedWidget {
 	Action action;
 	string label;
 
-	override int maxHeight() { return Window.lineHeight; }
-	override int minWidth() { return Window.lineHeight * label.length; }
-	override int maxWidth() { return Window.lineHeight / 2 * label.length; }
-	this(string lbl, Window parent = null) {
+	override int maxHeight() { return Window.lineHeight + 4; }
+	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
+	override int maxWidth() {
+		if(cast(MenuBar) parent)
+			return Window.lineHeight / 2 * cast(int) label.length + 8;
+		return int.max;
+	}
+	this(string lbl, Widget parent = null) {
 		super(parent);
 		label = lbl;
 		version(win32_widgets) {} else
@@ -1169,11 +1512,11 @@ class MenuItem : MouseActivatedWidget {
 				painter.outlineColor = Color.blue;
 			else
 				painter.outlineColor = Color.black;
-			painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center);
+			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
 		};
 	}
 
-	this(Action action, Window parent = null) {
+	this(Action action, Widget parent = null) {
 		assert(action !is null);
 		this(action.label);
 		this.action = action;
@@ -1182,6 +1525,9 @@ class MenuItem : MouseActivatedWidget {
 			//event.dispatch();
 			foreach(handler; action.triggered)
 				handler();
+
+			if(auto pmenu = cast(Menu) this.parent)
+				pmenu.remove();
 		};
 	}
 }
@@ -1249,6 +1595,7 @@ class Checkbox : MouseActivatedWidget {
 
 	override int maxHeight() { return 16; }
 	override int minHeight() { return 16; }
+	mixin Margin!"4";
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
@@ -1288,6 +1635,14 @@ class Checkbox : MouseActivatedWidget {
 	}
 }
 
+class VerticalSpacer : Widget {
+	override int maxHeight() { return 20; }
+	override int minHeight() { return 20; }
+	this(Widget parent = null) {
+		super(parent);
+	}
+}
+
 class MutuallyExclusiveGroup {
 	MouseActivatedWidget[] members;
 
@@ -1322,7 +1677,7 @@ class Radiobox : MouseActivatedWidget {
 	this(string label, Widget parent = null) {
 		super(parent);
 		height = 16;
-		width = height + 4 + label.length * 16;
+		width = height + 4 + cast(int) label.length * 16;
 
 		this.paint = (ScreenPainter painter) {
 			painter.outlineColor = Color.black;
@@ -1358,6 +1713,12 @@ class Button : MouseActivatedWidget {
 	Color normalBgColor;
 	Color hoverBgColor;
 	Color depressedBgColor;
+
+	version(win32_widgets)
+	override void handleWmCommand(ushort cmd, ushort id) {
+		auto event = new Event("triggered", this);
+		event.dispatch();
+	}
 
 	version(win32_widgets) {} else
 	Color currentButtonColor() {
@@ -1408,6 +1769,8 @@ class Button : MouseActivatedWidget {
 			painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 		};
 	}
+
+	override int minHeight() { return Window.lineHeight; }
 }
 
 int[2] getChildPositionRelativeToParentOrigin(Widget c) nothrow {
@@ -1435,8 +1798,18 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 	return [x, y];
 }
 
+class LineEdit : Widget {
+	version(win32_widgets)
+	this(Widget parent = null) {
+		super(parent);
+		parentWindow = parent.parentWindow;
+		createWin32Window(this, "edit", "", 
+			WS_BORDER|WS_HSCROLL|ES_AUTOHSCROLL);
+	}
+}
 
 class TextEdit : Widget {
+	override int minHeight() { return Window.lineHeight; }
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
 
@@ -1468,6 +1841,8 @@ class TextEdit : Widget {
 			redraw();
 		};
 
+		static if(UsingSimpledisplayX11)
+			cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
 		//super();
 	}
 
@@ -1493,10 +1868,10 @@ class MessageBox : Window {
 	this(string message) {
 		super(300, 100);
 
+		auto superPaint = this.paint;
 		this.paint = (ScreenPainter painter) {
-			painter.fillColor = Color(192, 192, 192);
-			painter.drawRectangle(Point(0, 0), this.width, this.height);
-
+			if(superPaint)
+				superPaint(painter);
 			painter.outlineColor = Color.black;
 			painter.drawText(Point(0, 0), message, Point(width, height / 2), TextAlignment.Center | TextAlignment.VerticalCenter);
 		};
@@ -1725,6 +2100,39 @@ Widget widgetAtPoint(Widget starting, int x, int y) {
 	return starting;
 }
 
+version(win32_theming) {
+	import std.c.windows.windows;
+
+	alias HANDLE HTHEME;
+
+	// Since dmd doesn't offer uxtheme.lib, I'll load the dll at runtime instead
+	HMODULE uxtheme;
+	static this() {
+		uxtheme = LoadLibraryA("uxtheme.dll");
+		if(uxtheme) {
+			DrawThemeBackground = cast(typeof(DrawThemeBackground)) GetProcAddress(uxtheme, "DrawThemeBackground");
+			OpenThemeData = cast(typeof(OpenThemeData)) GetProcAddress(uxtheme, "OpenThemeData");
+			CloseThemeData = cast(typeof(CloseThemeData)) GetProcAddress(uxtheme, "CloseThemeData");
+			GetThemeSysColorBrush = cast(typeof(GetThemeSysColorBrush)) GetProcAddress(uxtheme, "CloseThemeData");
+		}
+	}
+
+	// everything from here is just win32 headers copy pasta
+private:
+extern(Windows):
+
+	HRESULT function(HTHEME, HDC, int, int, in RECT*, in RECT*) DrawThemeBackground;
+	HTHEME function(HWND, LPCWSTR) OpenThemeData;
+	HRESULT function(HTHEME) CloseThemeData;
+	HBRUSH function(HTHEME, int) GetThemeSysColorBrush;
+
+	HMODULE LoadLibraryA(LPCSTR);
+	BOOL FreeLibrary(HMODULE);
+	FARPROC GetProcAddress(HMODULE, LPCSTR);
+	// pragma(lib, "uxtheme");
+
+	BOOL GetClassInfoA(HINSTANCE, LPCSTR, WNDCLASS*);
+}
 
 version(win32_widgets) {
 	import std.c.windows.windows;
@@ -1737,7 +2145,7 @@ version(win32_widgets) {
 		// http://msdn.microsoft.com/en-us/library/windows/desktop/bb775507(v=vs.85).aspx
 		INITCOMMONCONTROLSEX ic;
 		ic.dwSize = cast(DWORD) ic.sizeof;
-		ic.dwICC = ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_COOL_CLASSES;
+		ic.dwICC = ICC_UPDOWN_CLASS | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_COOL_CLASSES | ICC_STANDARD_CLASSES;
 		InitCommonControlsEx(&ic);
 	}
 
@@ -1808,8 +2216,14 @@ struct TBBUTTON {
 
 	enum {
 		TB_ADDBUTTONSA   = WM_USER + 20,
-		TB_INSERTBUTTONA = WM_USER + 21
+		TB_INSERTBUTTONA = WM_USER + 21,
+		TB_GETIDEALSIZE = WM_USER + 99,
 	}
+
+struct SIZE {
+	LONG cx;
+	LONG cy;
+}
 
 
 enum {
@@ -1946,7 +2360,8 @@ enum {
         ICC_WIN95_CLASSES    = 255,
         ICC_DATE_CLASSES     = 256,
         ICC_USEREX_CLASSES   = 512,
-        ICC_COOL_CLASSES     = 1024
+        ICC_COOL_CLASSES     = 1024,
+	ICC_STANDARD_CLASSES = 0x00004000,
 }
 
 	enum WM_USER = 1024;
@@ -1955,15 +2370,24 @@ enum {
 
 
 
-version(win32_widgets)
 enum GenericIcons : ushort {
-	New = STD_FILENEW,
-	Open = STD_FILEOPEN,
-	Save = STD_FILESAVE,
-}
-else
-enum GenericIcons : ushort {
-	New, Open, Save
+	None,
+	// these happen to match the win32 std icons numerically if you just subtract one from the value
+	Cut,
+	Copy,
+	Paste,
+	Undo,
+	Redo,
+	Delete,
+	New,
+	Open,
+	Save,
+	PrintPreview,
+	Properties,
+	Help,
+	Find,
+	Replace,
+	Print,
 }
 
 /*

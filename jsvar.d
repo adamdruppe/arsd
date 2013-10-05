@@ -116,7 +116,7 @@ void main() {
 	}
 
 	// the WrappedNativeObject is disgusting
-	// but works.
+	// but works. sort of.
 	/*
 	Foop foop2;
 
@@ -168,6 +168,18 @@ void main() {
 		a.b.c = 10;
 		a;
 	}, globals));
+
+	/*
+	globals.minigui = json!q{};
+	import arsd.minigui;
+	globals.minigui.createWindow = {
+		var v;
+		auto mw = new MainWindow();
+		v._object = new OpaqueNativeObject!(MainWindow)(mw);
+		v.loop = { mw.loop(); };
+		return v;
+	};
+	*/
 
 	repl(globals);
 
@@ -1146,6 +1158,7 @@ struct var {
 	}
 }
 
+// this doesn't really work
 class WrappedNativeObject(T, bool wrapData = true) : PrototypeObject {
 	T nativeObject;
 
@@ -1246,9 +1259,9 @@ class OpaqueNativeObject(T) : PrototypeObject {
 		this.item = t;
 	}
 
-	override string toString() const {
-		return item.toString();
-	}
+	//override string toString() const {
+		//return item.toString();
+	//}
 
 	override OpaqueNativeObject!T copy() {
 		auto n = new OpaqueNativeObject!T(item);
