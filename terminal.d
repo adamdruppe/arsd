@@ -1330,7 +1330,6 @@ struct RealTimeConsoleInput {
 					e.eventType = ev.bKeyDown ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
 					ne.eventType = ev.bKeyDown ? NonCharacterKeyEvent.Type.Pressed : NonCharacterKeyEvent.Type.Released;
 
-					// FIXME standardize
 					e.modifierState = ev.dwControlKeyState;
 					ne.modifierState = ev.dwControlKeyState;
 
@@ -1406,16 +1405,17 @@ struct RealTimeConsoleInput {
 				InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0)),
 			];
 		}
-		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key) {
+		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key, uint modifiers = 0) {
 			return [
-				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, 0)),
-				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, 0)),
+				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)),
+				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers)),
 			];
 		}
 
+		char[30] sequenceBuffer;
+
 		// this assumes you just read "\033["
-		char[] readEscapeSequence() {
-			char[30] sequence;
+		char[] readEscapeSequence(char[] sequence) {
 			int sequenceLength = 2;
 			sequence[0] = '\033';
 			sequence[1] = '[';
@@ -1514,7 +1514,7 @@ struct RealTimeConsoleInput {
 						if(n == '\033') {
 							n = nextRaw();
 							if(n == '[') {
-								auto esc = readEscapeSequence();
+								auto esc = readEscapeSequence(sequenceBuffer);
 								if(esc == "\033[201~") {
 									// complete!
 									break;
@@ -1566,7 +1566,7 @@ struct RealTimeConsoleInput {
 						m.buttons = 1 << (buttonNumber - 1); // I prefer flags so that's how we do it
 					m.x = x;
 					m.y = y;
-					m.modifierState = modifiers; // FIXME, standardize
+					m.modifierState = modifiers;
 
 					return [InputEvent(m)];
 				break;
@@ -1575,6 +1575,79 @@ struct RealTimeConsoleInput {
 					auto cap = terminal.findSequenceInTermcap(sequence);
 					if(cap !is null)
 						return translateTermcapName(cap);
+					else {
+						if(terminal.terminalInFamily("xterm")) {
+							import std.conv, std.string;
+							auto terminator = sequence[$ - 1];
+							auto parts = sequence[2 .. $ - 1].split(";");
+							// parts[0] and terminator tells us the key
+							// parts[1] tells us the modifierState
+
+							uint modifierState;
+
+							int modGot = to!int(parts[1]);
+							mod_switch: switch(modGot) {
+								case 2: modifierState |= ModifierState.shift; break;
+								case 3: modifierState |= ModifierState.alt; break;
+								case 4: modifierState |= ModifierState.shift | ModifierState.alt; break;
+								case 5: modifierState |= ModifierState.control; break;
+								case 6: modifierState |= ModifierState.shift | ModifierState.control; break;
+								case 7: modifierState |= ModifierState.alt | ModifierState.control; break;
+								case 8: modifierState |= ModifierState.shift | ModifierState.alt | ModifierState.control; break;
+								case 9:
+								..
+								case 16:
+									modifierState |= ModifierState.meta;
+									if(modGot != 9) {
+										modGot -= 8;
+										goto mod_switch;
+									}
+								break;
+								default:
+							}
+
+							switch(terminator) {
+								case 'A': return keyPressAndRelease(NonCharacterKeyEvent.Key.UpArrow, modifierState);
+								case 'B': return keyPressAndRelease(NonCharacterKeyEvent.Key.DownArrow, modifierState);
+								case 'C': return keyPressAndRelease(NonCharacterKeyEvent.Key.RightArrow, modifierState);
+								case 'D': return keyPressAndRelease(NonCharacterKeyEvent.Key.LeftArrow, modifierState);
+
+								case 'H': return keyPressAndRelease(NonCharacterKeyEvent.Key.Home, modifierState);
+								case 'F': return keyPressAndRelease(NonCharacterKeyEvent.Key.End, modifierState);
+
+								case 'P': return keyPressAndRelease(NonCharacterKeyEvent.Key.F1, modifierState);
+								case 'Q': return keyPressAndRelease(NonCharacterKeyEvent.Key.F2, modifierState);
+								case 'R': return keyPressAndRelease(NonCharacterKeyEvent.Key.F3, modifierState);
+								case 'S': return keyPressAndRelease(NonCharacterKeyEvent.Key.F4, modifierState);
+
+								case '~': // others
+									switch(parts[0]) {
+										case "5": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageUp, modifierState);
+										case "6": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageDown, modifierState);
+										case "2": return keyPressAndRelease(NonCharacterKeyEvent.Key.Insert, modifierState);
+										case "3": return keyPressAndRelease(NonCharacterKeyEvent.Key.Delete, modifierState);
+
+										case "15": return keyPressAndRelease(NonCharacterKeyEvent.Key.F5, modifierState);
+										case "17": return keyPressAndRelease(NonCharacterKeyEvent.Key.F6, modifierState);
+										case "18": return keyPressAndRelease(NonCharacterKeyEvent.Key.F7, modifierState);
+										case "19": return keyPressAndRelease(NonCharacterKeyEvent.Key.F8, modifierState);
+										case "20": return keyPressAndRelease(NonCharacterKeyEvent.Key.F9, modifierState);
+										case "21": return keyPressAndRelease(NonCharacterKeyEvent.Key.F10, modifierState);
+										case "23": return keyPressAndRelease(NonCharacterKeyEvent.Key.F11, modifierState);
+										case "24": return keyPressAndRelease(NonCharacterKeyEvent.Key.F12, modifierState);
+										default:
+									}
+								break;
+
+								default:
+							}
+						} else if(terminal.terminalInFamily("rxvt")) {
+							// FIXME: figure these out
+						} else {
+							// maybe we could do more terminals, but linux doesn't even send it and screen just seems to pass through, so i don't think so; xterm prolly covers most them anyway
+							// so this space is semi-intentionally left blank
+						}
+					}
 			}
 
 			return null;
@@ -1588,7 +1661,7 @@ struct RealTimeConsoleInput {
 				// escape sequence
 				c = nextRaw();
 				if(c == '[') { // CSI, ends on anything >= 'A'
-					return doEscapeSequence(readEscapeSequence());
+					return doEscapeSequence(readEscapeSequence(sequenceBuffer));
 				} else if(c == 'O') {
 					// could be xterm function key
 					auto n = nextRaw();
@@ -1631,7 +1704,7 @@ struct CharacterEvent {
 
 	Type eventType; /// .
 	dchar character; /// .
-	uint modifierState; /// .
+	uint modifierState; /// Don't depend on this to be available for character events
 }
 
 struct NonCharacterKeyEvent {
@@ -1672,7 +1745,7 @@ struct NonCharacterKeyEvent {
 		}
 	Key key; /// .
 
-	uint modifierState; /// .
+	uint modifierState; /// A mask of ModifierState. Always use by checking modifierState & ModifierState.something, the actual value differs across platforms
 
 }
 
@@ -1705,7 +1778,7 @@ struct MouseEvent {
 	uint buttons; /// A mask of Button
 	int x; /// 0 == left side
 	int y; /// 0 == top
-	uint modifierState; /// shift, ctrl, alt, meta, altgr
+	uint modifierState; /// shift, ctrl, alt, meta, altgr. Not always available. Always check by using modifierState & ModifierState.something
 }
 
 /// .
@@ -1720,6 +1793,25 @@ struct SizeChangedEvent {
 struct UserInterruptionEvent {}
 
 interface CustomEvent {}
+
+version(Windows)
+enum ModifierState : uint {
+	shift = 4,
+	ctrl = 8,
+
+	// i'm not sure if the next two are available
+	alt = 256,
+	// windows = 512,
+
+	meta = 4096, // FIXME sanity
+}
+else
+enum ModifierState : uint {
+	shift = 4,
+	alt = 2,
+	control = 16,
+	meta = 8
+}
 
 /// GetNextEvent returns this. Check the type, then use get to get the more detailed input
 struct InputEvent {
