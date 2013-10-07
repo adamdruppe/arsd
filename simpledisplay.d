@@ -2,6 +2,9 @@ module simpledisplay;
 
 // FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
 
+// Cool stuff: I want right alt and scroll lock to do different stuff for personal use. maybe even right ctrl
+// but can i control the scroll lock led
+
 
 // Note: if you are using Image on X, you might want to do:
 /*
@@ -314,11 +317,14 @@ enum ModifierState : uint {
 	shift = 4,
 	ctrl = 8,
 
+	// i'm not sure if the next two are available
 	alt = 256,
 	windows = 512,
+
 	capsLock = 1024,
 	numLock = 2048,
 
+	// not available on key events
 	leftButtonDown = 1,
 	middleButtonDown = 16,
 	rightButtonDown = 2,
@@ -1347,7 +1353,106 @@ class SimpleWindow {
 		impl.setTitle(title);
 	}
 
+	@property void icon(MemoryImage icon) {
+		auto tci = icon.getAsTrueColorImage();
+		version(Windows) {
+			winIcon = new WindowsIcon(icon);
+			 SendMessageA(impl.hwnd, 0x0080 /*WM_SETICON*/, 0 /*ICON_SMALL*/, cast(LPARAM) winIcon.hIcon); // there is also 1 == ICON_BIG
+		} else version(X11) {
+			// FIXME: ensure this is correct
+			auto display = XDisplayConnection.get;
+			arch_ulong[] buffer;
+			buffer ~= icon.width;
+			buffer ~= icon.height;
+			foreach(c; tci.imageData.colors) {
+				arch_ulong b;
+				b |= c.a << 24;
+				b |= c.r << 16;
+				b |= c.g << 8;
+				b |= c.b;
+				buffer ~= b;
+			}
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!"_NET_WM_ICON"(display),
+				GetAtom!"CARDINAL"(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				buffer.ptr,
+				buffer.length);
+
+			// also setting a pixmap up for compatibility with older window managers
+			// these do a pixmap and a mask
+
+			if(icon.width == 16 && icon.height == 16) {
+				Pixmap[2] oldOnes = pixmapsHolder[];
+
+				XImage* img;
+				import core.stdc.stdlib;
+				ubyte* rawData = cast(ubyte*) malloc(icon.width * icon.height * 4);
+				//ubyte* rawData2 = cast(ubyte*) malloc((icon.width * icon.height) * 4);
+
+				int bitIdx = 0;
+				for(int idx = 0; idx < (icon.width * icon.height * 4); idx += 4) {
+					rawData[idx + 2] = tci.imageData.bytes[idx + 0]; // r
+					rawData[idx + 1] = tci.imageData.bytes[idx + 1]; // g
+					rawData[idx + 0] = tci.imageData.bytes[idx + 2]; // b
+
+					/*
+					rawData2[idx + 0] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
+					rawData2[idx + 1] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
+					rawData2[idx + 2] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
+					*/
+				}
+
+				// color pixmap
+				img = XCreateImage(display, DefaultVisual(display, DefaultScreen(display)), 24, ImageFormat.ZPixmap, 0, rawData, icon.width, icon.height, 8, 4*icon.width);
+				pixmapsHolder[0] = XCreatePixmap(display, cast(Drawable) window, icon.width, icon.height, 24);
+				XPutImage(display, pixmapsHolder[0], DefaultGC(display, DefaultScreen(display)), img, 0, 0, 0, 0, icon.width, icon.height);
+				XDestroyImage(img);
+
+				// transparency mask
+				// FIXME
+				/*
+				img = XCreateImage(display, DefaultVisual(display, DefaultScreen(display)), 24, ImageFormat.ZPixmap, 0, rawData2, icon.width, icon.height, 8, icon.width*4);
+				pixmapsHolder[1] = XCreatePixmap(display, cast(Drawable) window, icon.width, icon.height, 24);
+				XPutImage(display, pixmapsHolder[1], DefaultGC(display, DefaultScreen(display)), img, 0, 0, 0, 0, icon.width, icon.height);
+				XDestroyImage(img);
+				*/
+
+				XChangeProperty(
+					display,
+					impl.window,
+					GetAtom!"KWM_WIN_ICON"(display),
+					GetAtom!"KWM_WIN_ICON"(display),
+					Pixmap.sizeof * 8 /* bits */,
+					0 /*PropModeReplace*/,
+					pixmapsHolder.ptr,
+					pixmapsHolder.length);
+
+				if(oldOnes[0])
+					XFreePixmap(XDisplayConnection.get, oldOnes[0]);
+				if(oldOnes[1])
+					XFreePixmap(XDisplayConnection.get, oldOnes[1]);
+			}
+		}
+	}
+
+	version(X11)
+		private Pixmap[2] pixmapsHolder; // for window icons
+	version(Windows)
+		private WindowsIcon winIcon;
+
+
 	~this() {
+		version(X11) {
+			if(pixmapsHolder[0])
+				XFreePixmap(XDisplayConnection.get, pixmapsHolder[0]);
+			if(pixmapsHolder[1])
+				XFreePixmap(XDisplayConnection.get, pixmapsHolder[1]);
+		}
 		impl.dispose();
 	}
 
@@ -1494,6 +1599,126 @@ Color fromHsl(real h, real s, real l) {
 
 /* ********** What follows is the system-specific implementations *********/
 version(Windows) {
+
+
+	// helpers for making HICONs from MemoryImages
+	class WindowsIcon {
+		struct Win32Icon(int colorCount) {
+			uint biSize;
+			int biWidth;
+			int biHeight;
+			ushort biPlanes;
+			ushort biBitCount;
+			uint biCompression;
+			uint biSizeImage;
+			int biXPelsPerMeter;
+			int biYPelsPerMeter;
+			uint biClrUsed;
+			uint biClrImportant;
+			RGBQUAD biColors[colorCount];
+			/* Pixels:
+			Uint8 pixels[]
+			*/
+			/* Mask:
+			Uint8 mask[]
+			*/
+
+			ubyte[4096] data;
+
+			void fromMemoryImage(MemoryImage mi, out int icon_len, out int width, out int height) {
+				width = mi.width;
+				height = mi.height;
+
+				auto indexedImage = cast(IndexedImage) mi;
+				if(indexedImage is null)
+					indexedImage = quantize(mi.getAsTrueColorImage());
+
+				assert(width %8 == 0); // i don't want padding nor do i want the and mask to get fancy
+				assert(height %4 == 0);
+				
+				int icon_plen = height*((width+3)&~3);
+				int icon_mlen = height*((((width+7)/8)+3)&~3);
+				icon_len = 40+icon_plen+icon_mlen;
+
+				biSize = 40;
+				biWidth = width;
+				biHeight = height*2;
+				biPlanes = 1;
+				biBitCount = 8;
+				biSizeImage = icon_plen+icon_mlen;
+
+				int offset = 0;
+				for(int y = height - 1; y >= 0; y--) {
+					int off2 = y * width;
+					foreach(x; 0 .. width) {
+						auto b = indexedImage.data[offset + x];
+						data[off2 + x] = b;
+
+						// FIXME: I think the and mask is broken
+						int andOff = y * width/8 + x / 8 + icon_plen;
+						auto andBit = x % 8;
+						assert(b < indexedImage.palette.length);
+						data[andOff] |= ((indexedImage.palette[b].a > 127) ? (1 << andBit) : 0);
+					}
+				}
+
+				foreach(idx, entry; indexedImage.palette) {
+					biColors[idx].rgbBlue = entry.b;
+					biColors[idx].rgbGreen = entry.g;
+					biColors[idx].rgbRed = entry.r;
+				}
+
+				/*
+				data[0..icon_plen] = getFlippedUnfilteredDatastream(png);
+				data[icon_plen..icon_plen+icon_mlen] = getANDMask(png);
+				//icon_win32.biColors[1] = Win32Icon.RGBQUAD(0,255,0,0);
+				auto pngMap = fetchPaletteWin32(png);
+				biColors[0..pngMap.length] = pngMap[];
+				*/
+			}
+		}
+
+
+		Win32Icon!(256) icon_win32;
+
+
+		this(MemoryImage mi) {
+			int icon_len, width, height;
+
+			icon_win32.fromMemoryImage(mi, icon_len, width, height);
+
+			/*
+			PNG* png = readPnpngData);
+			PNGHeader pngh = getHeader(png);
+			void* icon_win32;
+			if(pngh.depth == 4) {
+				auto i = new Win32Icon!(16);
+				i.fromPNG(png, pngh, icon_len, width, height);
+				icon_win32 = i;
+			}
+			else if(pngh.depth == 8) {
+				auto i = new Win32Icon!(256);
+				i.fromPNG(png, pngh, icon_len, width, height);
+				icon_win32 = i;
+			} else assert(0);
+			*/
+
+			hIcon = CreateIconFromResourceEx(cast(ubyte*) &icon_win32, icon_len, true, 0x00030000, width, height, 0);
+
+			if(hIcon is null) throw new Exception("CreateIconFromResourceEx");
+		}
+
+		~this() {
+			DestroyIcon(hIcon);
+		}
+
+		HICON hIcon;
+	}
+
+
+
+
+
 
 	alias int delegate(HWND, UINT, WPARAM, LPARAM) NativeEventHandler;
 	alias HWND NativeWindowHandle;
@@ -3141,6 +3366,17 @@ version(Windows) {
 	extern(Windows) {
 		// The included D headers are incomplete, finish them here
 		// enough that this module works.
+
+		HICON CreateIconFromResourceEx(
+			PBYTE pbIconBits,
+			DWORD cbIconBits,
+			BOOL fIcon,
+			DWORD dwVersion,
+			int cxDesired,
+			int cyDesired,
+			UINT uFlags
+		);
+		BOOL DestroyIcon(HICON);
 
 		DWORD SleepEx(DWORD, BOOL);
 		alias GetObjectA GetObject;
