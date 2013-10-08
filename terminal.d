@@ -602,8 +602,15 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		}
 	}
 
+	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
+	bool _suppressDestruction;
+
 	version(Posix)
 	~this() {
+		if(_suppressDestruction) {
+			flush();
+			return;
+		}
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("te");
 		}
@@ -613,6 +620,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	version(Windows)
 	~this() {
+		flush();
 		showCursor();
 	}
 
@@ -638,11 +646,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				if(foreground == Color.DEFAULT)
 					setTof = Color.white;
 
-				// FIXME: is this if good?
-				//if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
-				SetConsoleTextAttribute(
-					GetStdHandle(STD_OUTPUT_HANDLE),
-					cast(ushort)((setTob << 4) | setTof));
+				if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
+					flush(); // if we don't do this now, the buffering can screw up the colors...
+					SetConsoleTextAttribute(
+						GetStdHandle(STD_OUTPUT_HANDLE),
+						cast(ushort)((setTob << 4) | setTof));
+				}
 			} else {
 				import std.process;
 				// I started using this envvar for my text editor, but now use it elsewhere too
@@ -710,6 +719,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			version(Posix)
 				doTermcap("cm", y, x);
 			else version(Windows) {
+
+				flush(); // if we don't do this now, the buffering can screw up the position
 				COORD coord = {cast(short) x, cast(short) y};
 				SetConsoleCursorPosition(hConsole, coord);
 			} else static assert(0);
@@ -775,6 +786,13 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				written = unix.write(1 /*this.fd*/, writeBuffer.ptr, writeBuffer.length);
 				if(written < 0)
 					throw new Exception("write failed for some reason");
+				writeBuffer = writeBuffer[written .. $];
+			}
+		} else version(Windows) {
+			while(writeBuffer.length) {
+				DWORD written;
+				/* FIXME: WriteConsoleW */
+				WriteConsoleA(hConsole, writeBuffer.ptr, writeBuffer.length, &written, null);
 				writeBuffer = writeBuffer[written .. $];
 			}
 		}
@@ -898,7 +916,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					_cursorX++;
 			}
 
-			if(_cursorX >= width) {
+			if(_wrapAround && _cursorX >= width) {
 				_cursorX = 0;
 				_cursorY++;
 			}
@@ -917,6 +935,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		writeStringRaw(s);
 	}
 
+	/* private */ bool _wrapAround = true;
+
 	deprecated alias writePrintableString writeString; /// use write() or writePrintableString instead
 
 	private string writeBuffer;
@@ -927,9 +947,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		version(Posix) {
 			writeBuffer ~= s; // buffer it to do everything at once in flush() calls
 		} else version(Windows) {
-			DWORD written;
-			/* FIXME: WriteConsoleW */
-			WriteConsoleA(hConsole, s.ptr, s.length, &written, null);
+			writeBuffer ~= s;
 		} else static assert(0);
 	}
 
@@ -1603,6 +1621,14 @@ struct RealTimeConsoleInput {
 										goto mod_switch;
 									}
 								break;
+
+								// this is an extension in my own terminal emulator
+								case 20:
+								..
+								case 36:
+									modifierState |= ModifierState.windows;
+									modGot -= 20;
+									goto mod_switch;
 								default:
 							}
 
@@ -1642,7 +1668,8 @@ struct RealTimeConsoleInput {
 								default:
 							}
 						} else if(terminal.terminalInFamily("rxvt")) {
-							// FIXME: figure these out
+							// FIXME: figure these out. rxvt seems to just change the terminator while keeping the rest the same
+							// though it isn't consistent. ugh.
 						} else {
 							// maybe we could do more terminals, but linux doesn't even send it and screen just seems to pass through, so i don't think so; xterm prolly covers most them anyway
 							// so this space is semi-intentionally left blank
@@ -1797,11 +1824,11 @@ interface CustomEvent {}
 version(Windows)
 enum ModifierState : uint {
 	shift = 4,
-	ctrl = 8,
+	control = 8,
 
 	// i'm not sure if the next two are available
 	alt = 256,
-	// windows = 512,
+	windows = 512,
 
 	meta = 4096, // FIXME sanity
 }
@@ -1810,7 +1837,9 @@ enum ModifierState : uint {
 	shift = 4,
 	alt = 2,
 	control = 16,
-	meta = 8
+	meta = 8,
+
+	windows = 512 // only available if you are using my terminal emulator; it isn't actually offered on standard linux ones
 }
 
 /// GetNextEvent returns this. Check the type, then use get to get the more detailed input
