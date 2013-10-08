@@ -1823,14 +1823,18 @@ interface CustomEvent {}
 
 version(Windows)
 enum ModifierState : uint {
-	shift = 4,
-	control = 8,
+	shift = 0x10,
+	control = 0x8 | 0x4, // 8 == left ctrl, 4 == right ctrl
 
 	// i'm not sure if the next two are available
-	alt = 256,
-	windows = 512,
+	alt = 2 | 1, //2 ==left alt, 1 == right alt
 
+	// FIXME: I don't think these are actually available
+	windows = 512,
 	meta = 4096, // FIXME sanity
+
+	// I don't think this is available on Linux....
+	scrollLock = 0x40,
 }
 else
 enum ModifierState : uint {
@@ -2011,3 +2015,80 @@ void main() {
 	}
 }
 
+
+/*
+
+	// more efficient scrolling
+	http://msdn.microsoft.com/en-us/library/windows/desktop/ms685113%28v=vs.85%29.aspx
+	// and the unix sequences
+
+
+	rxvt documentation:
+	use this to finish the input magic for that
+
+
+       For the keypad, use Shift to temporarily override Application-Keypad
+       setting use Num_Lock to toggle Application-Keypad setting if Num_Lock
+       is off, toggle Application-Keypad setting. Also note that values of
+       Home, End, Delete may have been compiled differently on your system.
+
+                         Normal       Shift         Control      Ctrl+Shift
+       Tab               ^I           ESC [ Z       ^I           ESC [ Z
+       BackSpace         ^H           ^?            ^?           ^?
+       Find              ESC [ 1 ~    ESC [ 1 $     ESC [ 1 ^    ESC [ 1 @
+       Insert            ESC [ 2 ~    paste         ESC [ 2 ^    ESC [ 2 @
+       Execute           ESC [ 3 ~    ESC [ 3 $     ESC [ 3 ^    ESC [ 3 @
+       Select            ESC [ 4 ~    ESC [ 4 $     ESC [ 4 ^    ESC [ 4 @
+       Prior             ESC [ 5 ~    scroll-up     ESC [ 5 ^    ESC [ 5 @
+       Next              ESC [ 6 ~    scroll-down   ESC [ 6 ^    ESC [ 6 @
+       Home              ESC [ 7 ~    ESC [ 7 $     ESC [ 7 ^    ESC [ 7 @
+       End               ESC [ 8 ~    ESC [ 8 $     ESC [ 8 ^    ESC [ 8 @
+       Delete            ESC [ 3 ~    ESC [ 3 $     ESC [ 3 ^    ESC [ 3 @
+       F1                ESC [ 11 ~   ESC [ 23 ~    ESC [ 11 ^   ESC [ 23 ^
+       F2                ESC [ 12 ~   ESC [ 24 ~    ESC [ 12 ^   ESC [ 24 ^
+       F3                ESC [ 13 ~   ESC [ 25 ~    ESC [ 13 ^   ESC [ 25 ^
+       F4                ESC [ 14 ~   ESC [ 26 ~    ESC [ 14 ^   ESC [ 26 ^
+       F5                ESC [ 15 ~   ESC [ 28 ~    ESC [ 15 ^   ESC [ 28 ^
+       F6                ESC [ 17 ~   ESC [ 29 ~    ESC [ 17 ^   ESC [ 29 ^
+       F7                ESC [ 18 ~   ESC [ 31 ~    ESC [ 18 ^   ESC [ 31 ^
+       F8                ESC [ 19 ~   ESC [ 32 ~    ESC [ 19 ^   ESC [ 32 ^
+       F9                ESC [ 20 ~   ESC [ 33 ~    ESC [ 20 ^   ESC [ 33 ^
+       F10               ESC [ 21 ~   ESC [ 34 ~    ESC [ 21 ^   ESC [ 34 ^
+       F11               ESC [ 23 ~   ESC [ 23 $    ESC [ 23 ^   ESC [ 23 @
+       F12               ESC [ 24 ~   ESC [ 24 $    ESC [ 24 ^   ESC [ 24 @
+       F13               ESC [ 25 ~   ESC [ 25 $    ESC [ 25 ^   ESC [ 25 @
+       F14               ESC [ 26 ~   ESC [ 26 $    ESC [ 26 ^   ESC [ 26 @
+       F15 (Help)        ESC [ 28 ~   ESC [ 28 $    ESC [ 28 ^   ESC [ 28 @
+       F16 (Menu)        ESC [ 29 ~   ESC [ 29 $    ESC [ 29 ^   ESC [ 29 @
+
+       F17               ESC [ 31 ~   ESC [ 31 $    ESC [ 31 ^   ESC [ 31 @
+       F18               ESC [ 32 ~   ESC [ 32 $    ESC [ 32 ^   ESC [ 32 @
+       F19               ESC [ 33 ~   ESC [ 33 $    ESC [ 33 ^   ESC [ 33 @
+       F20               ESC [ 34 ~   ESC [ 34 $    ESC [ 34 ^   ESC [ 34 @
+                                                                 Application
+       Up                ESC [ A      ESC [ a       ESC O a      ESC O A
+       Down              ESC [ B      ESC [ b       ESC O b      ESC O B
+       Right             ESC [ C      ESC [ c       ESC O c      ESC O C
+       Left              ESC [ D      ESC [ d       ESC O d      ESC O D
+       KP_Enter          ^M                                      ESC O M
+       KP_F1             ESC O P                                 ESC O P
+       KP_F2             ESC O Q                                 ESC O Q
+       KP_F3             ESC O R                                 ESC O R
+       KP_F4             ESC O S                                 ESC O S
+       XK_KP_Multiply    *                                       ESC O j
+       XK_KP_Add         +                                       ESC O k
+       XK_KP_Separator   ,                                       ESC O l
+       XK_KP_Subtract    -                                       ESC O m
+       XK_KP_Decimal     .                                       ESC O n
+       XK_KP_Divide      /                                       ESC O o
+       XK_KP_0           0                                       ESC O p
+       XK_KP_1           1                                       ESC O q
+       XK_KP_2           2                                       ESC O r
+       XK_KP_3           3                                       ESC O s
+       XK_KP_4           4                                       ESC O t
+       XK_KP_5           5                                       ESC O u
+       XK_KP_6           6                                       ESC O v
+       XK_KP_7           7                                       ESC O w
+       XK_KP_8           8                                       ESC O x
+       XK_KP_9           9                                       ESC O y
+*/
