@@ -626,9 +626,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	int _currentForeground = Color.DEFAULT;
 	int _currentBackground = Color.DEFAULT;
+	bool reverseVideo = false;
 
 	/// Changes the current color. See enum Color for the values.
-	void color(int foreground, int background, ForceOption force = ForceOption.automatic) {
+	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
 		if(force != ForceOption.neverSend) {
 			version(Windows) {
 				// assuming a dark background on windows, so LowContrast == dark which means the bit is NOT set on hardware
@@ -646,8 +647,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				if(foreground == Color.DEFAULT)
 					setTof = Color.white;
 
-				if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
+				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
 					flush(); // if we don't do this now, the buffering can screw up the colors...
+					if(reverseVideo) {
+						if(background == Color.DEFAULT)
+							setTof = Color.black;
+						else
+							setTof = cast(ushort) background | (foreground & Bright);
+
+						if(background == Color.DEFAULT)
+							setTob = Color.white;
+						else
+							setTob = cast(ushort) (foreground & ~Bright);
+					}
 					SetConsoleTextAttribute(
 						GetStdHandle(STD_OUTPUT_HANDLE),
 						cast(ushort)((setTob << 4) | setTof));
@@ -675,8 +687,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 				import std.string;
 
-				if(force == ForceOption.alwaysSend || foreground != _currentForeground || background != _currentBackground) {
-					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm",
+				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
+					writeStringRaw(format("\033[%dm\033[%dm\033[3%dm\033[4%dm",
+						reverseVideo ? 7 : 27,
 						(foreground != Color.DEFAULT && (foreground & Bright)) ? 1 : 0,
 						cast(int) setTof,
 						cast(int) setTob));
@@ -686,6 +699,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		_currentForeground = foreground;
 		_currentBackground = background;
+		this.reverseVideo = reverseVideo;
 	}
 
 	/// Returns the terminal to normal output colors
