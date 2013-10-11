@@ -164,6 +164,8 @@ public void sendSync(T)(T t) {
 	dispatchToListenerWithPtr(hash, ptr);
 }
 
+import core.stdc.stdlib;
+
 /// Send a message to the event loop
 public void send(T)(T t) {
 	// FIXME: we need to cycle the buffer position back so we can reuse this as the message is received
@@ -171,9 +173,12 @@ public void send(T)(T t) {
 	//static ubyte[1024] copyBuffer;
 	//static size_t copyBufferPosition;
 
-	// for now we'll use the gc
+	// for now we'll use the [s]gc[/s] malloc. The problem with the gc was it could actually be collected while pending in the pipe. since there's no reference around, if there's a collection between the send and receive, the gc will reap it leaving the receiver with garbage data.
+	// so instead, I'm mallocing it.
+
+	// Might be able to go back to a static buffer eventually but eh for now malloc will do it. I called free() at the end of the receiver function from the pipe.
 	size_t copyBufferPosition = 0;
-	auto copyBuffer = new ubyte[](T.sizeof);
+	auto copyBuffer = (cast(ubyte*) malloc(T.sizeof))[0 .. T.sizeof]; //new ubyte[](T.sizeof);
 
 
 	auto hash = typehash!T;
@@ -588,6 +593,7 @@ private bool readFromEventPipe() {
 				return false;
 
 			dispatchToListenerWithPtr(hash, ptr);
+			free(ptr);
 		}
 	}
 	return true;
