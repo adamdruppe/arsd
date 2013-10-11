@@ -1,6 +1,10 @@
 module simpledisplay;
 
+// http://wiki.dlang.org/Simpledisplay.d
+
 // FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
+
+// see : http://www.sbin.org/doc/Xlib/chapt_09.html section on Keyboard Preferences re: scroll lock led
 
 // Cool stuff: I want right alt and scroll lock to do different stuff for personal use. maybe even right ctrl
 // but can i control the scroll lock led
@@ -102,7 +106,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649037%28v=vs.85%29.as
 http://msdn.microsoft.com/en-us/library/windows/desktop/ms649035%28v=vs.85%29.aspx
 http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.aspx
 
-string getClipboardText(SimpleWindow clipboardOwner) {
++/
+
+// this does a delegate because it is actually an async call on X...
+// the receiver may never be called if the clipboard is empty or unavailable
+void getClipboardText(SimpleWindow clipboardOwner, void delegate(string) receiver) {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
 		if(OpenClipboard(hwndOwner) == 0)
@@ -118,27 +126,52 @@ CF_UNICODETEXT
 Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data.
 */
 
-			if(auto data = GlobalLock(dataHandle)) {
+			if(auto data = cast(char*) GlobalLock(dataHandle)) {
 				scope(exit)
-					GlobalUnlock(data);
+					GlobalUnlock(dataHandle);
 
-				// FIXME actually copy data
+				// FIXME: CR/LF conversions
+				// FIXME: wchar instead
+				string s;
+				while(*data) {
+					s ~= *data;
+					data++;
+				}
+				receiver(s);
 			}
 		}
-	}
-
-	assert(0, "not implementeD");
+	} else version(X11) {
+		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
+	} else static assert(0);
 }
 
-void setClipboardText(string text) {
+void setClipboardText(SimpleWindow clipboardOwner, string text) {
+	assert(clipboardOwner !is null);
 	version(Windows) {
-		OpenClipboard();
+		if(OpenClipboard(clipboardOwner.impl.hwnd) == 0)
+			throw new Exception("OpenClipboard");
+		scope(exit)
+			CloseClipboard();
 		EmptyClipboard();
-		SetClipboardData();
-		CloseClipboard();
-	}
+
+		auto handle = GlobalAlloc(GMEM_MOVEABLE, text.length + 1); // zero terminated
+		if(handle is null) throw new Exception("GlobalAlloc");
+		if(auto data = cast(char*) GlobalLock(handle)) {
+			scope(failure)
+				GlobalUnlock(handle);
+
+			// FIXME: CR/LF conversions
+			// FIXME: wchar instead
+			data[0 .. text.length] = text[];
+			data[text.length] = 0;
+
+			GlobalUnlock(handle);
+			SetClipboardData(1 /* CF_TEXT */, handle);
+		}
+	} else version(X11) {
+		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
+	} else static assert(0);
 }
-+/
 
 // FIXME: functions for doing images would be nice too - CF_DIB and whatever it is on X would be ok if we took the MemoryImage from color.d, or an Image from here. hell it might even be a variadic template that sets all the formats in one call. that might be cool.
 
@@ -151,16 +184,20 @@ version(X11) {
 			a = XInternAtom(display, name, !create);
 		}
 		if(a == None)
-			throw new Exception("XInternAtom");
+			throw new Exception("XInternAtom " ~ name ~ " " ~ (create ? "true":"false"));
 		return a;
 	}
 
 	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later
 	void setPrimarySelection(SimpleWindow window, string text) {
+		setX11Selection!"PRIMARY"(window, text);
+	}
+
+	void setX11Selection(string atomName)(SimpleWindow window, string text) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
-		XSetSelectionOwner(display, GetAtom!"PRIMARY"(display), window.impl.window, 0 /* CurrentTime */);
+		XSetSelectionOwner(display, GetAtom!atomName(display), window.impl.window, 0 /* CurrentTime */);
 		window.impl.setSelectionHandler = (XEvent ev) {
 			XSelectionRequestEvent* event = &ev.xselectionrequest;
 			XSelectionEvent selectionEvent;
@@ -198,10 +235,14 @@ version(X11) {
 	}
 
 	void getPrimarySelection(SimpleWindow window, void delegate(string) handler) {
+		getX11Selection!"PRIMARY"(window, handler);
+	}
+
+	void getX11Selection(string atomName)(SimpleWindow window, void delegate(string) handler) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
-		auto atom = GetAtom!"PRIMARY"(display);
+		auto atom = GetAtom!atomName(display);
 
 		window.impl.getSelectionHandler = handler;
 
@@ -1068,7 +1109,11 @@ struct ScreenPainter {
 	int originY;
 
 	void updateDisplay() {
-		// FIXME
+		// FIXME this should do what the dtor does
+	}
+
+	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
+		// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
 	}
 
 	void clear() {
@@ -3075,7 +3120,7 @@ version(X11) {
 		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
 		  	if(win.getSelectionHandler !is null) {
 				// FIXME: maybe we should call a different handler for PRIMARY vs CLIPBOARD
-				if(e.xselection.property == None || e.xselection.property == GetAtom!"NULL"(e.xselection.display)) {
+				if(e.xselection.property == None) { // || e.xselection.property == GetAtom!("NULL", true)(e.xselection.display)) {
 					win.getSelectionHandler(null);
 				} else {
 					Atom target;
@@ -3290,6 +3335,18 @@ version(Windows) {
 	import core.sys.windows.windows;
 
 	pragma(lib, "gdi32");
+
+	extern(Windows) {
+		BOOL OpenClipboard(HWND hWndNewOwner);
+		BOOL CloseClipboard();
+		BOOL EmptyClipboard();
+		HANDLE SetClipboardData(UINT uFormat, HANDLE hMem);
+		HANDLE GetClipboardData(UINT uFormat);
+		LPVOID GlobalLock(HGLOBAL hMem);
+		BOOL GlobalUnlock(HGLOBAL hMem);
+		HGLOBAL GlobalAlloc(UINT uFlags, SIZE_T dwBytes);
+		enum GMEM_MOVEABLE = 0x02;
+	}
 
 	version(without_opengl){} else {
 		extern(Windows) {
