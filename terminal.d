@@ -575,6 +575,10 @@ struct Terminal {
 			doTermcap("ti");
 			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
 		}
+
+		if(terminalInFamily("xterm", "rxvt", "screen")) {
+			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
+		}
 	}
 
 	version(Windows)
@@ -616,6 +620,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		}
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("te");
+		}
+		if(terminalInFamily("xterm", "rxvt", "screen")) {
+			writeStringRaw("\033[23;0t"); // restore window title from the stack
 		}
 		showCursor();
 		reset();
@@ -1110,9 +1117,20 @@ struct RealTimeConsoleInput {
 
 
 			if(flags & ConsoleInputFlags.mouse) {
-				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "linux")) {
-					terminal.writeStringRaw("\033[?1000h"); // this is vt200 mouse, supported by xterm and linux + gpm
-					destructor ~= { terminal.writeStringRaw("\033[?1000l"); };
+				// basic button press+release notification
+
+				// FIXME: try to get maximum capabilities from all terminals
+				// right now this works well on xterm but rxvt isn't sending movements...
+
+				terminal.writeStringRaw("\033[?1000h");
+				destructor ~= { terminal.writeStringRaw("\033[?1000l"); };
+				if(terminal.terminalInFamily("xterm")) {
+					// this is vt200 mouse with full motion tracking, supported by xterm
+					terminal.writeStringRaw("\033[?1003h");
+					destructor ~= { terminal.writeStringRaw("\033[?1003l"); };
+				} else if(terminal.terminalInFamily("rxvt", "screen")) {
+					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
+					destructor ~= { terminal.writeStringRaw("\033[?1002l"); };
 				}
 			}
 			if(flags & ConsoleInputFlags.paste) {
@@ -1395,15 +1413,21 @@ struct RealTimeConsoleInput {
 
 					switch(ev.dwEventFlags) {
 						case 0:
-							//press
+							//press or release
 							e.eventType = MouseEvent.Type.Pressed;
+							static DWORD lastButtonState;
 							e.buttons = ev.dwButtonState;
 
-							// this is sent on state change. if nothing is pressed, it must mean released
-							// FIXME: ideally we should compare the current state to the previous state to generate
-							// the appropriate event
-							if(e.buttons == 0)
+							// this is sent on state change. if fewer buttons are pressed, it must mean released
+							if(e.buttons < lastButtonState) {
 								e.eventType = MouseEvent.Type.Released;
+								// if last was 101 and now it is 100, then button far right was released
+								// so we flip the bits, ~100 == 011, then and them: 101 & 011 == 001, the
+								// button that was released
+								e.buttons = lastButtonState & ~e.buttons;
+							}
+
+							lastButtonState = e.buttons;
 						break;
 						case MOUSE_MOVED:
 							e.eventType = MouseEvent.Type.Moved;
@@ -1577,7 +1601,7 @@ struct RealTimeConsoleInput {
 				break;
 				case "\033[M":
 					// mouse event
-					auto buttonCode = nextRaw();
+					auto buttonCode = nextRaw() - 32;
 						// nextChar is commented because i'm not using UTF-8 mouse mode
 						// cuz i don't think it is as widely supported
 					auto x = cast(int) (/*nextChar*/(nextRaw())) - 33; /* they encode value + 32, but make upper left 1,1. I want it to be 0,0 */
@@ -1609,9 +1633,28 @@ struct RealTimeConsoleInput {
 						// 16 == control
 
 					MouseEvent m;
-					m.eventType = isRelease ? MouseEvent.Type.Released : MouseEvent.Type.Pressed;
+
+					if(buttonCode & 32)
+						m.eventType = MouseEvent.Type.Moved;
+					else
+						m.eventType = isRelease ? MouseEvent.Type.Released : MouseEvent.Type.Pressed;
+
+					// ugh, if no buttons are pressed, released and moved are indistinguishable...
+					// so we'll count the buttons down, and if we get a release
+					static int buttonsDown = 0;
+					if(!isRelease && buttonNumber <= 3) // exclude wheel "presses"...
+						buttonsDown++;
+
+					if(isRelease && m.eventType != MouseEvent.Type.Moved) {
+						if(buttonsDown)
+							buttonsDown--;
+						else // no buttons down, so this should be a motion instead..
+							m.eventType = MouseEvent.Type.Moved;
+					}
+
+
 					if(buttonNumber == 0)
-						m.buttons = 0; // we don't actually know
+						m.buttons = 0; // we don't actually know :(
 					else
 						m.buttons = 1 << (buttonNumber - 1); // I prefer flags so that's how we do it
 					m.x = x;
