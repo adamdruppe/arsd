@@ -157,6 +157,7 @@ vs|xterm|xterm-color|vs100|xterm terminal emulator (X Window System):\
 	:ct=\E[3k:ue=\E[m:\
 	:is=\E[m\E[?1l\E>:\
 	:rs=\E[m\E[?1l\E>:\
+	:vi=\E[?25l:ve=\E[?25h:\
 	:eA=\E)0:as=^N:ae=^O:ac=aaffggjjkkllmmnnooqqssttuuvvwwxx:\
 	:kI=\E[2~:kD=\E[3~:kP=\E[5~:kN=\E[6~:\
 	:k1=\EOP:k2=\EOQ:k3=\EOR:k4=\EOS:k5=\E[15~:\
@@ -175,6 +176,8 @@ rxvt|rxvt-unicode:\
 	:ct=\E[3k:ue=\E[m:\
 	:is=\E[m\E[?1l\E>:\
 	:rs=\E[m\E[?1l\E>:\
+	:vi=\E[?25l:\
+	:ve=\E[?25h:\
 	:eA=\E)0:as=^N:ae=^O:ac=aaffggjjkkllmmnnooqqssttuuvvwwxx:\
 	:kI=\E[2~:kD=\E[3~:kP=\E[5~:kN=\E[6~:\
 	:k1=\E[11~:k2=\E[12~:k3=\E[13~:k4=\E[14~:k5=\E[15~:\
@@ -614,6 +617,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("te");
 		}
+		showCursor();
 		reset();
 		flush();
 	}
@@ -680,7 +684,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				ushort setTof = cast(ushort) foreground & ~Bright;
 				ushort setTob = cast(ushort) background & ~Bright;
 
-				if(foreground == Color.DEFAULT)
+				if(foreground & Color.DEFAULT)
 					setTof = 9; // ansi sequence for reset
 				if(background == Color.DEFAULT)
 					setTob = 9;
@@ -688,11 +692,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				import std.string;
 
 				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
-					writeStringRaw(format("\033[%dm\033[%dm\033[3%dm\033[4%dm",
-						reverseVideo ? 7 : 27,
+					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm\033[%dm",
 						(foreground != Color.DEFAULT && (foreground & Bright)) ? 1 : 0,
 						cast(int) setTof,
-						cast(int) setTob));
+						cast(int) setTob,
+						reverseVideo ? 7 : 27
+					));
 				}
 			}
 		}
@@ -758,9 +763,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// hides the cursor
 	void hideCursor() {
-		version(Posix)
+		version(Posix) {
 			doTermcap("vi");
-		else {
+		} else {
 			CONSOLE_CURSOR_INFO info;
 			GetConsoleCursorInfo(hConsole, &info);
 			info.bVisible = false;
@@ -930,7 +935,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					_cursorX++;
 			}
 
-			if(_wrapAround && _cursorX >= width) {
+			if(_wrapAround && _cursorX > width) {
 				_cursorX = 0;
 				_cursorY++;
 			}
@@ -1393,6 +1398,12 @@ struct RealTimeConsoleInput {
 							//press
 							e.eventType = MouseEvent.Type.Pressed;
 							e.buttons = ev.dwButtonState;
+
+							// this is sent on state change. if nothing is pressed, it must mean released
+							// FIXME: ideally we should compare the current state to the previous state to generate
+							// the appropriate event
+							if(e.buttons == 0)
+								e.eventType = MouseEvent.Type.Released;
 						break;
 						case MOUSE_MOVED:
 							e.eventType = MouseEvent.Type.Moved;
@@ -1583,6 +1594,13 @@ struct RealTimeConsoleInput {
 
 						// note: buttonNumber == 0 means button 1 at this point
 						buttonNumber++; // hence this
+
+
+						// apparently this considers middle to be button 2. but i want middle to be button 3.
+						if(buttonNumber == 2)
+							buttonNumber = 3;
+						else if(buttonNumber == 3)
+							buttonNumber = 2;
 					}
 
 					auto modifiers = buttonCode & (0b0001_1100);
@@ -1797,16 +1815,18 @@ struct PasteEvent {
 
 /// .
 struct MouseEvent {
+	// these match simpledisplay.d numerically as well
 	/// .
 	enum Type {
-		Released, /// .
-		Pressed, /// .
+		Moved = 0, /// .
+		Pressed = 1, /// .
+		Released = 2, /// .
 		Clicked, /// .
-		Moved /// .
 	}
 
 	Type eventType; /// .
 
+	// note: these should numerically match simpledisplay.d for maximum beauty in my other code
 	/// .
 	enum Button : uint {
 		None = 0, /// .
