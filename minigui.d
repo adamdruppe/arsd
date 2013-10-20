@@ -679,7 +679,7 @@ class VerticalLayout : Widget {
 	// intentionally blank - widget's default is vertical layout right now
 }
 class HorizontalLayout : Widget {
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
@@ -1234,7 +1234,7 @@ class StatusBar : Widget {
 		_parts = Parts(this);
 		version(win32_widgets) {
 			parentWindow = parent.parentWindow;
-			createWin32Window(this, "msctls_statusbar32", "D rox", 0);
+			createWin32Window(this, "msctls_statusbar32", "", 0);
 
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
@@ -1798,6 +1798,22 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 	return [x, y];
 }
 
+class TextLabel : Widget {
+	override int maxHeight() { return Window.lineHeight; }
+	override int minHeight() { return Window.lineHeight; }
+
+	string label;
+	this(string label, Widget parent = null) {
+		this.label = label;
+		super(parent);
+		parentWindow = parent.parentWindow;
+		paint = (ScreenPainter painter) {
+			painter.drawText(Point(0, 0), this.label);
+		};
+	}
+
+}
+
 class LineEdit : Widget {
 	version(win32_widgets)
 	this(Widget parent = null) {
@@ -1806,6 +1822,36 @@ class LineEdit : Widget {
 		createWin32Window(this, "edit", "", 
 			WS_BORDER|WS_HSCROLL|ES_AUTOHSCROLL);
 	}
+
+	string _content;
+	@property string content() {
+		version(win32_widgets) {
+			char[4096] buffer;
+
+			// FIXME: GetWindowTextW
+			// FIXME: GetWindowTextLength
+			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
+			if(l >= 0)
+				_content = buffer[0 .. l].idup;
+		}
+		return _content;
+	}
+	@property void content(string s) {
+		_content = s;
+		version(win32_widgets)
+			SetWindowTextA(hwnd, toStringzInternal(s));
+		else
+			redraw();
+	}
+
+	void focus() {
+		assert(parentWindow !is null);
+		parentWindow.focusedWidget = this;
+	}
+
+	override int minHeight() { return Window.lineHeight; }
+	override int maxHeight() { return Window.lineHeight; }
+	override int widthStretchiness() { return 3; }
 }
 
 class TextEdit : Widget {
@@ -1847,7 +1893,17 @@ class TextEdit : Widget {
 	}
 
 	string _content;
-	@property string content() { return _content; }
+	@property string content() {
+		version(win32_widgets) {
+			char[4096] buffer;
+			// FIXME: GetWindowTextW
+			// FIXME: GetWindowTextLength
+			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
+			if(l >= 0)
+				_content = buffer[0 .. l].idup;
+		}
+		return _content;
+	}
 	@property void content(string s) {
 		_content = s;
 		version(win32_widgets)

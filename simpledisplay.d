@@ -110,6 +110,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 
 // this does a delegate because it is actually an async call on X...
 // the receiver may never be called if the clipboard is empty or unavailable
+/// gets plain text from the clipboard
 void getClipboardText(SimpleWindow clipboardOwner, void delegate(string) receiver) {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
@@ -145,6 +146,7 @@ Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) comb
 	} else static assert(0);
 }
 
+/// copies some text to the clipboard
 void setClipboardText(SimpleWindow clipboardOwner, string text) {
 	assert(clipboardOwner !is null);
 	version(Windows) {
@@ -1342,10 +1344,26 @@ class SimpleWindow {
 		this.image = image;
 	}
 
+	/// to wrap a native window handle with very little additional processing - notably no destruction
+	/// this is incomplete so don't use it for much right now
+	this(NativeWindowHandle nativeWindow) {
+		version(Windows)
+			impl.hwnd = nativeWindow;
+		else version(X11)
+			impl.window = nativeWindow;
+		else static assert(0);
+		// FIXME: set the size correctly
+		width = 1;
+		height = 1;
+		nativeMapping[nativeWindow] = this;
+		_suppressDestruction = true; // so it doesn't try to close
+	}
+
 	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
 		this(size.width, size.height, title, opengl, resizable);
 	}
 
+	/// the base constructor
 	this(int width, int height, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
 		this.width = width;
 		this.height = height;
@@ -1490,8 +1508,11 @@ class SimpleWindow {
 	version(Windows)
 		private WindowsIcon winIcon;
 
+	bool _suppressDestruction;
 
 	~this() {
+		if(_suppressDestruction)
+			return;
 		version(X11) {
 			if(pixmapsHolder[0])
 				XFreePixmap(XDisplayConnection.get, pixmapsHolder[0]);
@@ -1682,8 +1703,8 @@ version(Windows) {
 				assert(height %4 == 0);
 				
 				int icon_plen = height*((width+3)&~3);
-				int icon_mlen = height*((((width+7)/8)+3)&~3);
-				icon_len = 40+icon_plen+icon_mlen;
+				int icon_mlen = icon_plen / 8; // height*((((width+7)/8)+3)&~3);
+				icon_len = 40+icon_plen+icon_mlen + RGBQUAD.sizeof * colorCount;
 
 				biSize = 40;
 				biWidth = width;
@@ -1693,17 +1714,22 @@ version(Windows) {
 				biSizeImage = icon_plen+icon_mlen;
 
 				int offset = 0;
+				int andOff = icon_plen * 8; // the and offset is in bits
 				for(int y = height - 1; y >= 0; y--) {
 					int off2 = y * width;
 					foreach(x; 0 .. width) {
-						auto b = indexedImage.data[offset + x];
-						data[off2 + x] = b;
+						auto b = indexedImage.data[off2 + x];
+						data[offset] = b;
+						offset++;
 
-						// FIXME: I think the and mask is broken
-						int andOff = y * width/8 + x / 8 + icon_plen;
-						auto andBit = x % 8;
+						auto andBit = andOff % 8;
+						auto andIdx = andOff / 8;
 						assert(b < indexedImage.palette.length);
-						data[andOff] |= ((indexedImage.palette[b].a > 127) ? (1 << andBit) : 0);
+						// this is anded to the destination, since and 0 means erase,
+						// we want that to  be opaque, and 1 for transparent
+						data[andIdx] |= ((indexedImage.palette[b].a < 127) ? (1 << (7-andBit)) : 0);
+
+						andOff++;
 					}
 				}
 
@@ -3337,6 +3363,8 @@ version(Windows) {
 	pragma(lib, "gdi32");
 
 	extern(Windows) {
+		HWND GetConsoleWindow();
+
 		BOOL OpenClipboard(HWND hWndNewOwner);
 		BOOL CloseClipboard();
 		BOOL EmptyClipboard();
@@ -3527,6 +3555,8 @@ nothrow:
 		alias SetWindowTextA SetWindowText;
 
 		BOOL SetWindowTextA(HWND hWnd, LPCTSTR lpString);
+		int GetWindowTextA(HWND hWnd, LPTSTR lpString, int maxCount);
+		int GetWindowTextLength(HWND hwnd);
 
 
 		alias SetWindowLongW SetWindowLong;
