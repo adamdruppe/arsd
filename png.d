@@ -1125,7 +1125,8 @@ struct LazyPngFile(LazyPngChunksProvider)
 					// 8 bit channel in same order as
 					// palette
 
-					enforce(chunk.size < palette.length);
+					if(chunk.size > palette.length)
+						palette.length = chunk.size;
 
 					foreach(i, a; chunk.payload)
 						palette[i].a = a;
