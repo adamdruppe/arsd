@@ -102,7 +102,6 @@ MemoryImage imageFromPng(PNG* png) {
 	}
 
 	auto idataIdx = 0;
-	assert(h.depth == 8, "bit depths other than 8 not yet implemented");
 
 	auto file = LazyPngFile!(Chunk[])(png.chunks);
 	immutable(ubyte)[] previousLine;
@@ -117,7 +116,7 @@ MemoryImage imageFromPng(PNG* png) {
 		}
 		previousLine = data;
 
-		foreach(pixel; 0 .. h.width)
+		loop: for(int pixel = 0; pixel < h.width; pixel++)
 			switch(h.type) {
 				case 0: // greyscale
 				case 4: // greyscale with alpha
@@ -128,7 +127,43 @@ MemoryImage imageFromPng(PNG* png) {
 					idata[idataIdx++] = (h.type == 4) ? consumeOne() : 255;
 				break;
 				case 3: // indexed
-					idata[idataIdx++] = consumeOne();
+					auto b = consumeOne();
+					switch(h.depth) {
+						case 1:
+							idata[idataIdx++] = (b >> 7) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 6) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 5) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 4) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 3) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 2) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = b & 0x01;
+						break;
+						case 2:
+							idata[idataIdx++] = (b >> 6) & 0x03;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 4) & 0x03;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 2) & 0x03;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = b & 0x03;
+						break;
+						case 4:
+							idata[idataIdx++] = (b >> 4) & 0x0f;
+							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = b & 0x0f;
+						break;
+						case 8:
+							idata[idataIdx++] = b;
+						break;
+						default:
+							assert(0, "bit depth not implemented");
+					}
 				break;
 				case 2: // truecolor
 				case 6: // true with alpha
@@ -218,7 +253,7 @@ PNG* pngFromImage(IndexedImage i) {
 		int shift = 0;
 
 		switch(h.depth) {
-			default: assert(0); break;
+			default: assert(0);
 			case 1: shift = 7; break;
 			case 2: shift = 6; break;
 			case 4: shift = 4; break;
@@ -232,7 +267,7 @@ PNG* pngFromImage(IndexedImage i) {
 			datastream[dsp] |= i.data[dpos++] << shift;
 
 			switch(h.depth) {
-				default: assert(0); break;
+				default: assert(0);
 				case 1: shift-= 1; break;
 				case 2: shift-= 2; break;
 				case 4: shift-= 4; break;
@@ -243,7 +278,7 @@ PNG* pngFromImage(IndexedImage i) {
 			if(shift < 0) {
 				dsp++;
 				switch(h.depth) {
-					default: assert(0); break;
+					default: assert(0);
 					case 1: shift = 7; break;
 					case 2: shift = 6; break;
 					case 4: shift = 4; break;
@@ -254,7 +289,7 @@ PNG* pngFromImage(IndexedImage i) {
 			if(!justAdvanced)
 				dsp++;
 			switch(h.depth) {
-				default: assert(0); break;
+				default: assert(0);
 				case 1: shift = 7; break;
 				case 2: shift = 6; break;
 				case 4: shift = 4; break;
@@ -1445,7 +1480,7 @@ struct Chunk {
 	body {
 		Chunk* c = new Chunk;
 		c.size = payload.length;
-		c.type = cast(ubyte[]) type;
+		c.type[] = (cast(ubyte[]) type)[];
 		c.payload = payload;
 
 		c.checksum = crcPng(type, payload);
