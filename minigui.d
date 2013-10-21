@@ -677,7 +677,18 @@ class Widget {
 
 class VerticalLayout : Widget {
 	// intentionally blank - widget's default is vertical layout right now
+	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 }
+
+class StaticLayout : Widget {
+	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+	override void recomputeChildLayout() {
+		registerMovement();
+		foreach(child; children)
+			child.recomputeChildLayout();
+	}
+}
+
 class HorizontalLayout : Widget {
 	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
