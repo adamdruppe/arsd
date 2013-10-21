@@ -1820,7 +1820,7 @@ class LineEdit : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "edit", "", 
-			WS_BORDER|WS_HSCROLL|ES_AUTOHSCROLL);
+			WS_BORDER);//|WS_HSCROLL|ES_AUTOHSCROLL);
 	}
 
 	string _content;
