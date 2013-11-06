@@ -667,7 +667,33 @@ class DataObject {
 	string[string][string] multiTableKeys; // note this is not set internally tight now
 						// but it can be set manually to do multi table mappings for automatic update
 
+
+	string opDispatch(string field, string file = __FILE__, size_t line = __LINE__)()
+		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
+	{
+		if(field !in fields)
+			throw new Exception("no such field " ~ field, file, line);
+
+		return fields[field];
+	}
+
+	string opDispatch(string field, T)(T t)
+		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
+	{
+		static if(__traits(compiles, t is null)) {
+			if(t is null)
+				setImpl(field, null);
+			else
+				setImpl(field, to!string(t));
+		} else
+			setImpl(field, to!string(t));
+
+		return fields[field];
+	}
+
+
 	// vararg hack so property assignment works right, even with null
+	version(none)
 	string opDispatch(string field, string file = __FILE__, size_t line = __LINE__)(...)
 		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
 	{
