@@ -279,6 +279,24 @@ class Cgi {
 
 	/** Initializes it with command line arguments (for easy testing) */
 	this(string[] args) {
+		// these are all set locally so the loop works
+		// without triggering errors in dmd 2.064
+		// we go ahead and set them at the end of it to the this version
+		int port;
+		string referrer;
+		string remoteAddress;
+		string userAgent;
+		string authorization;
+		string origin;
+		string accept;
+		string lastEventId;
+		bool https;
+		string host;
+		RequestMethod requestMethod;
+		string requestUri;
+		string pathInfo;
+		string queryString;
+
 		bool lookingForMethod;
 		bool lookingForUri;
 		string nextArgIs;
@@ -419,6 +437,21 @@ class Cgi {
 		files = null;
 
 		isCalledWithCommandLineArguments = true;
+
+		this.port = port;
+		this.referrer = referrer;
+		this.remoteAddress = remoteAddress;
+		this.userAgent = userAgent;
+		this.authorization = authorization;
+		this.origin = origin;
+		this.accept = accept;
+		this.lastEventId = lastEventId;
+		this.https = https;
+		this.host = host;
+		this.requestMethod = requestMethod;
+		this.requestUri = requestUri;
+		this.pathInfo = pathInfo;
+		this.queryString = queryString;
 	}
 
 	/** Initializes it using a CGI or CGI-like interface */
@@ -433,6 +466,27 @@ class Cgi {
 		void delegate() _flush = null
 		)
 	{
+
+		// these are all set locally so the loop works
+		// without triggering errors in dmd 2.064
+		// we go ahead and set them at the end of it to the this version
+		int port;
+		string referrer;
+		string remoteAddress;
+		string userAgent;
+		string authorization;
+		string origin;
+		string accept;
+		string lastEventId;
+		bool https;
+		string host;
+		RequestMethod requestMethod;
+		string requestUri;
+		string pathInfo;
+		string queryString;
+
+
+
 		isCalledWithCommandLineArguments = false;
 		rawDataOutput = _rawDataOutput;
 		flushDelegate = _flush;
@@ -609,6 +663,22 @@ class Cgi {
 				originalPostData = data;
 		}
 		// fixme: remote_user script name
+
+
+		this.port = port;
+		this.referrer = referrer;
+		this.remoteAddress = remoteAddress;
+		this.userAgent = userAgent;
+		this.authorization = authorization;
+		this.origin = origin;
+		this.accept = accept;
+		this.lastEventId = lastEventId;
+		this.https = https;
+		this.host = host;
+		this.requestMethod = requestMethod;
+		this.requestUri = requestUri;
+		this.pathInfo = pathInfo;
+		this.queryString = queryString;
 	}
 
 	/// Cleans up any temporary files. Do not use the object
@@ -1123,6 +1193,33 @@ class Cgi {
 		// this pointer tells if the connection is supposed to be closed after we handle this
 		bool* closeConnection = null)
 	{
+		// these are all set locally so the loop works
+		// without triggering errors in dmd 2.064
+		// we go ahead and set them at the end of it to the this version
+		int port;
+		string referrer;
+		string remoteAddress;
+		string userAgent;
+		string authorization;
+		string origin;
+		string accept;
+		string lastEventId;
+		bool https;
+		string host;
+		RequestMethod requestMethod;
+		string requestUri;
+		string pathInfo;
+		string queryString;
+		string scriptName;
+		string[string] get;
+		string[][string] getArray;
+		bool keepAliveRequested;
+		bool acceptsGzip;
+		string cookie;
+
+
+
+
 		idlol = inputData;
 
 		isCalledWithCommandLineArguments = false;
@@ -1185,9 +1282,9 @@ class Cgi {
 					pathInfo = requestUri[pathInfoStarts..question];
 				}
 
-				get = getGetVariables();
+				get = cast(string[string]) getGetVariables();
 				auto ugh = decodeVariables(queryString);
-				getArray = assumeUnique(ugh);
+				getArray = cast(string[][string]) assumeUnique(ugh);
 
 				if(header.indexOf("HTTP/1.0") != -1) {
 					http10 = true;
@@ -1294,6 +1391,29 @@ class Cgi {
 			post = keepLastOf(postArray);
 			cleanUpPostDataState();
 		}
+
+		this.port = port;
+		this.referrer = referrer;
+		this.remoteAddress = remoteAddress;
+		this.userAgent = userAgent;
+		this.authorization = authorization;
+		this.origin = origin;
+		this.accept = accept;
+		this.lastEventId = lastEventId;
+		this.https = https;
+		this.host = host;
+		this.requestMethod = requestMethod;
+		this.requestUri = requestUri;
+		this.pathInfo = pathInfo;
+		this.queryString = queryString;
+
+		this.scriptName = scriptName;
+		this.get = cast(immutable) get;
+		this.getArray = cast(immutable) getArray;
+		this.keepAliveRequested = keepAliveRequested;
+		this.acceptsGzip = acceptsGzip;
+		this.cookie = cookie;
+
 	}
 	BufferedInputRange idlol;
 
