@@ -501,6 +501,9 @@ PNG* readPng(in ubyte[] data) {
 	p.length = data.length;
 	p.header[0..8] = data[0..8];
 
+	if(p.header != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+		throw new Exception("not a png, header wrong");
+
 	uint pos = 8;
 
 	while(pos < data.length) {
@@ -512,6 +515,10 @@ PNG* readPng(in ubyte[] data) {
 		n.type[0..4] = data[pos..pos+4];
 		pos += 4;
 		n.payload.length = n.size;
+		if(pos + n.size > data.length)
+			throw new Exception(format("malformed png, chunk '%s' %d @ %d longer than data %d", n.type, n.size, pos, data.length));
+		if(pos + n.size < pos)
+			throw new Exception("uint overflow: chunk too large");
 		n.payload[0..n.size] = data[pos..pos+n.size];
 		pos += n.size;
 
@@ -1177,11 +1184,14 @@ struct LazyPngFile(LazyPngChunksProvider)
 			ubyte[] buffer;
 
 			void popFront() {
-				if(buffer.length < chunkSize) {
+				while(buffer.length < chunkSize) {
 					if(chunks.front().stype != "IDAT") {
 						buffer ~= cast(ubyte[]) decompressor.flush();
-						if(buffer.length != 0)
-							goto stillMore;
+						if(buffer.length != 0) {
+							buffer ~= cast(ubyte[])
+								decompressor.uncompress(chunks.front().payload);
+							continue;
+						}
 						current = null;
 						buffer = null;
 						return;
@@ -1191,7 +1201,6 @@ struct LazyPngFile(LazyPngChunksProvider)
 						decompressor.uncompress(chunks.front().payload);
 					chunks.popFront();
 				}
-				stillMore:
 				assert(chunkSize <= buffer.length, format("%s !<= %s remaining data: \n%s", chunkSize, buffer.length, buffer));
 				current = buffer[0 .. chunkSize];
 				buffer = buffer[chunkSize .. $];
