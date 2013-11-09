@@ -401,7 +401,7 @@ class Cgi {
 					pathInfo = arg;
 				else {
 					pathInfo = arg[0 .. idx];
-					queryString = arg[idx + 1 .. $];
+					_queryString = arg[idx + 1 .. $];
 				}
 			} else {
 				// it is an argument of some sort
@@ -545,7 +545,7 @@ class Cgi {
 		}
 
 
-		get = getGetVariables();
+		get = getGetVariables(queryString);
 		auto ugh = decodeVariables(queryString);
 		getArray = assumeUnique(ugh);
 
@@ -1282,7 +1282,7 @@ class Cgi {
 					pathInfo = requestUri[pathInfoStarts..question];
 				}
 
-				get = cast(string[string]) getGetVariables();
+				get = cast(string[string]) getGetVariables(queryString);
 				auto ugh = decodeVariables(queryString);
 				getArray = cast(string[][string]) assumeUnique(ugh);
 
@@ -1413,7 +1413,6 @@ class Cgi {
 		this.keepAliveRequested = keepAliveRequested;
 		this.acceptsGzip = acceptsGzip;
 		this.cookie = cookie;
-
 	}
 	BufferedInputRange idlol;
 
@@ -1443,7 +1442,7 @@ class Cgi {
 	// this function only exists because of the with_cgi_packed thing, which is
 	// a filthy hack I put in here for a work app. Which still depends on it, so it
 	// stays for now. But I want to remove it.
-	private immutable(string[string]) getGetVariables() {
+	private immutable(string[string]) getGetVariables(in string queryString) {
 		if(queryString.length) {
 			auto _get = decodeVariablesSingle(queryString);
 
