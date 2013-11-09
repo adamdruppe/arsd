@@ -50,6 +50,11 @@ class OpenSslSocket : Socket {
 		super(sock, af);
 		initSsl();
 	}
+
+	~this() {
+		SSL_free(ssl);
+		SSL_CTX_free(ctx);
+	}
 }
 
 version(ssl_test)
