@@ -648,6 +648,18 @@ struct var {
 		return _op!(n, this, op, T)(t);
 	}
 
+	// this in foo
+	public var* opBinary(string op : "in", T)(T s) {
+		var rhs = var(s);
+		return rhs.opBinaryRight!"in"(this);
+	}
+
+	// foo in this
+	public var* opBinaryRight(string op : "in", T)(T s) {
+		// this needs to be an object
+		return var(s).get!string in this._object._properties;
+	}
+
 	public var apply(var _this, var[] args) {
 		if(this.payloadType() == Type.Function) {
 			assert(this._payload._function !is null);
