@@ -260,6 +260,36 @@ template json(string s) {
 	}
 }
 
+// literals
+
+// var a = varArray(10, "cool", 2);
+// assert(a[0] == 10); assert(a[1] == "cool"); assert(a[2] == 2);
+var varArray(T...)(T t) {
+	var a = var.emptyArray;
+	foreach(arg; t)
+		a ~= var(arg);
+	return a;
+}
+
+// var a = varObject("cool", 10, "bar", "baz");
+// assert(a.cool == 10 && a.bar == "baz");
+var varObject(T...)(T t) {
+	var a = var.emptyObject;
+
+	string lastString;
+	foreach(idx, arg; t) {
+		static if(idx % 2 == 0) {
+			lastString = arg;
+		} else {
+			assert(lastString !is null);
+			a[lastString] = arg;
+			lastString = null;
+		}
+	}
+	return a;
+}
+
+
 private real stringToNumber(string s) {
 	real r;
 	try {
