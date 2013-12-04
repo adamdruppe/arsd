@@ -648,6 +648,10 @@ struct var {
 		return _op!(n, this, op, T)(t);
 	}
 
+	public var opBinaryRight(string op, T)(T s) {
+		return var(s).opBinary!op(this);
+	}
+
 	// this in foo
 	public var* opBinary(string op : "in", T)(T s) {
 		var rhs = var(s);
