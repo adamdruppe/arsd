@@ -697,7 +697,7 @@ struct FileError {
 version(linux) {
 	extern(C):
 
-	alias int c_int; // FIXME for 64 bit
+	alias int c_int;
 
 	alias uint uint32_t;
 	alias ulong uint64_t;
