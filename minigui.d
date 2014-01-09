@@ -461,7 +461,7 @@ version(win32_widgets) {
 		//assert(0, to!string(hWnd) ~ " :: " ~ to!string(TextEdit.nativeMapping)); // not supposed to happen
 	}
 
-	void createWin32Window(Widget p, string className, string windowText, DWORD style) {
+	void createWin32Window(Widget p, string className, string windowText, DWORD style, DWORD extStyle = 0) {
 		assert(p.parentWindow !is null);
 		assert(p.parentWindow.win.impl.hwnd !is null);
 
@@ -474,7 +474,7 @@ version(win32_widgets) {
 		assert(phwnd !is null);
 
 		style |= WS_VISIBLE | WS_CHILD;
-		p.hwnd = CreateWindow(toStringzInternal(className), toStringzInternal(windowText), style,
+		p.hwnd = CreateWindowExA(extStyle, toStringzInternal(className), toStringzInternal(windowText), style,
 				CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
 				phwnd, null, cast(HINSTANCE) GetModuleHandle(null), null);
 
@@ -1831,7 +1831,7 @@ class LineEdit : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "edit", "", 
-			WS_BORDER);//|WS_HSCROLL|ES_AUTOHSCROLL);
+			0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 	}
 
 	string _content;
@@ -1875,7 +1875,7 @@ class TextEdit : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "edit", "", 
-			WS_BORDER|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL);
+			0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 	}
 	else
 	this(Widget parent = null) {
@@ -2208,12 +2208,14 @@ version(win32_widgets) {
 
 	pragma(lib, "comctl32");
 
-	static this() {
+	shared static this() {
 		// http://msdn.microsoft.com/en-us/library/windows/desktop/bb775507(v=vs.85).aspx
 		INITCOMMONCONTROLSEX ic;
 		ic.dwSize = cast(DWORD) ic.sizeof;
-		ic.dwICC = ICC_UPDOWN_CLASS | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_COOL_CLASSES | ICC_STANDARD_CLASSES;
-		InitCommonControlsEx(&ic);
+		ic.dwICC = ICC_UPDOWN_CLASS | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_COOL_CLASSES | ICC_STANDARD_CLASSES | ICC_USEREX_CLASSES;
+		if(!InitCommonControlsEx(&ic)) {
+			//import std.stdio; writeln("ICC failed");
+		}
 	}
 
 
