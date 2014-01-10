@@ -1,6 +1,8 @@
 /**
 	Script features:
 
+	FIXME: add COM support on Windows
+
 	OVERVIEW
 	* easy interop with D thanks to arsd.jsvar. When interpreting, pass a var object to use as globals.
 		This object also contains the global state when interpretation is done.
@@ -113,7 +115,7 @@
 */
 module arsd.script;
 
-import arsd.jsvar;
+public import arsd.jsvar;
 
 import std.stdio;
 import std.traits;
@@ -230,7 +232,16 @@ class TokenStream(TextStream) {
 	}
 
 	bool empty() {
+		advanceSkips();
 		return text.length == 0 && textStream.empty && !peeked;
+	}
+
+	int skipNext;
+	void advanceSkips() {
+		if(skipNext) {
+			skipNext--;
+			popFront();
+		}
 	}
 
 	void popFront() {
@@ -1953,8 +1964,8 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 
 	//writeln("parsed expression ", ret.toString());
 
-	if(tokens.empty)
-		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", first.lineNumber);
+	if(expectedEnd.length && tokens.empty)
+		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression, expecting " ~ expectedEnd, first.lineNumber);
 
 	if(expectedEnd.length && consumeEnd) {
 		 if(tokens.peekNextToken(ScriptToken.Type.symbol, expectedEnd))
@@ -2169,7 +2180,7 @@ struct CompoundStatementRange(MyTokenStreamHere) {
 
 		if(terminatingSymbol !is null) {
 			assert(tokens.front.str == terminatingSymbol);
-			tokens.popFront();
+			tokens.skipNext++;
 		}
 
 		isEmpty = true;
