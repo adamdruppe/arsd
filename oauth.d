@@ -290,7 +290,7 @@ string tweet(OAuthParams params, string oauthToken, string tokenSecret, string m
 
 	auto data = "status=" ~ rawurlencode(message);//.replace("%3F", "?");//encodeVariables(["status" : message]);
 
-	auto ret = curlOAuth(params, "http://api.twitter.com" ~ "/1.1/statuses/update.json", args, "POST", data);
+	auto ret = curlOAuth(params, "https://api.twitter.com" ~ "/1.1/statuses/update.json", args, "POST", data);
 
 	auto val = jsonToVariant(ret).get!(Variant[string]);
 	if("id_str" !in val)
