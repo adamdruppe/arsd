@@ -1908,6 +1908,7 @@ class TextLabel : Widget {
 	string label;
 	this(string label, Widget parent = null) {
 		this.label = label;
+		this.tabStop = false;
 		super(parent);
 		parentWindow = parent.parentWindow;
 		paint = (ScreenPainter painter) {
