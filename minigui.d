@@ -443,12 +443,18 @@ mixin template StyleInfo(string windowType) {
 version(win32_widgets) {
 	extern(Windows)
 	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
 		if(auto te = hWnd in Widget.nativeMapping) {
-			if(iMessage == WM_SETFOCUS)
-				(*te).parentWindow.focusedWidget = *te;
+			if(iMessage == WM_SETFOCUS) {
+				auto lol = *te;
+				while(lol !is null && lol.implicitlyCreated)
+					lol = lol.parent;
+				(*te).parentWindow.focusedWidget = lol;
+			}
 
 			auto pos = getChildPositionRelativeToParentOrigin(*te);
 			lastDefaultPrevented = false;
+			// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
 			if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
 				return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
 			else {
@@ -483,7 +489,23 @@ version(win32_widgets) {
 		Widget.nativeMapping[p.hwnd] = p;
 
 		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+
+		EnumChildWindows(p.hwnd, &childHandler, cast(LPARAM) cast(void*) p);
 	}
+}
+
+extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
+	if(hwnd is null || hwnd in Widget.nativeMapping)
+		return true;
+	auto parent = cast(Widget) cast(void*) lparam;
+	Widget p = new Widget();
+	p.parent = parent;
+	p.parentWindow = parent.parentWindow;
+	p.hwnd = hwnd;
+	p.implicitlyCreated = true;
+	Widget.nativeMapping[p.hwnd] = p;
+	p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+	return true;
 }
 
 /**
@@ -520,11 +542,15 @@ class Widget {
 	// string toolTip;
 	// string helpText;
 
+	bool tabStop = true;
+	int tabOrder;
+
 	version(win32_widgets) {
 		static Widget[HWND] nativeMapping;
 		HWND hwnd;
 		WNDPROC originalWindowProcedure;
 	}
+	bool implicitlyCreated;
 
 	int x; // relative to the parent's origin
 	int y; // relative to the parent's origin
@@ -677,11 +703,11 @@ class Widget {
 
 class VerticalLayout : Widget {
 	// intentionally blank - widget's default is vertical layout right now
-	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 }
 
 class StaticLayout : Widget {
-	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
 		registerMovement();
 		foreach(child; children)
@@ -690,7 +716,7 @@ class StaticLayout : Widget {
 }
 
 class HorizontalLayout : Widget {
-	this(Widget parent = null) { super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
@@ -765,6 +791,66 @@ class Window : Widget {
 				dispatchCharEvent(e);
 			},
 		);
+
+
+		defaultEventHandlers["keydown"] = delegate void(Widget ignored, Event event) {
+			Widget _this = event.target;
+
+			if(event.key == Key.Tab) {
+				/* Window tab ordering is a recursive thingy with each group */
+
+				// FIXME inefficient
+				Widget[] helper(Widget p) {
+					Widget[] childOrdering = p.children.dup;
+
+					import std.algorithm;
+					sort!((a, b) => a.tabOrder < b.tabOrder)(childOrdering);
+
+					Widget[] ret;
+					foreach(child; childOrdering) {
+						if(child.tabStop)
+							ret ~= child;
+						ret ~= helper(child);
+					}
+
+					return ret;
+				}
+
+				Widget[] tabOrdering = helper(this);
+
+				Widget recipient;
+
+				if(tabOrdering.length) {
+					bool seenThis = false;
+					foreach(idx, child; tabOrdering) {
+						if(child is focusedWidget) {
+							seenThis = true;
+							if(idx + 1 == tabOrdering.length) {
+								// we're at the end, either move to the next group
+								// or start back over
+								recipient = tabOrdering[0];
+							}
+							continue;
+						}
+						if(seenThis) {
+							recipient = child;
+							break;
+						}
+					}
+				}
+
+				if(recipient !is null) {
+					import std.stdio; writeln(typeid(recipient));
+					version(Windows) {
+						if(recipient.hwnd !is null)
+							SetFocus(recipient.hwnd);
+					} else {
+						focusedWidget = recipient;
+					}
+				}
+			}
+		};
+
 
 		if(lineHeight == 0) {
 			auto painter = win.draw();
@@ -955,6 +1041,7 @@ class MainWindow : Window {
 		_clientArea.y = 0;
 		_clientArea.width = this.width;
 		_clientArea.height = this.height;
+		_clientArea.tabStop = false;
 
 		super.addChild(_clientArea);
 
@@ -1019,6 +1106,8 @@ class ToolBar : Widget {
 
 	this(Action[] actions, Widget parent = null) {
 		super(parent);
+
+		tabStop = false;
 
 		version(win32_widgets) {
 			parentWindow = parent.parentWindow;
@@ -1243,6 +1332,7 @@ class StatusBar : Widget {
 	this(Widget parent = null) {
 		super(null); // FIXME
 		_parts = Parts(this);
+		tabStop = false;
 		version(win32_widgets) {
 			parentWindow = parent.parentWindow;
 			createWin32Window(this, "msctls_statusbar32", "", 0);
@@ -1283,6 +1373,7 @@ class IndefiniteProgressBar : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "msctls_progress32", "", 8 /* PBS_MARQUEE */);
+		tabStop = false;
 	}
 	override int minHeight() { return 10; }
 }
@@ -1294,6 +1385,7 @@ class ProgressBar : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "msctls_progress32", "", 0);
+		tabStop = false;
 	}
 	else {
 		this(Widget parent = null) {
@@ -1833,6 +1925,32 @@ class LineEdit : Widget {
 		createWin32Window(this, "edit", "", 
 			0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 	}
+	else
+	this(Widget parent = null) {
+		super(parent);
+
+		this.paint = (ScreenPainter painter) {
+			painter.fillColor = Color.white;
+			painter.drawRectangle(Point(0, 0), width, height);
+
+			painter.outlineColor = Color.black;
+			painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+		};
+
+		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
+			this.focus();
+		};
+
+		defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
+			content = content() ~ cast(char) ev.character;
+			redraw();
+		};
+
+		static if(UsingSimpledisplayX11)
+			cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
+		//super();
+	}
+
 
 	string _content;
 	@property string content() {
@@ -2365,6 +2483,12 @@ enum {
 	TB_SAVERESTOREW          = WM_USER + 76,
 	TB_ADDSTRINGW            = WM_USER + 77,
 }
+
+extern(Windows)
+BOOL EnumChildWindows(HWND, WNDENUMPROC, LPARAM);
+
+alias extern(Windows) BOOL function (HWND, LPARAM) WNDENUMPROC;
+
 
 	enum {
 		TB_SETINDENT = WM_USER + 47,
