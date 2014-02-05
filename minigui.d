@@ -792,6 +792,15 @@ class Window : Widget {
 			},
 		);
 
+		bool skipNextChar = false;
+
+		addEventListener("char", (Widget, Event ev) {
+			if(skipNextChar) {
+				ev.preventDefault();
+				skipNextChar = false;
+			}
+		});
+
 
 		defaultEventHandlers["keydown"] = delegate void(Widget ignored, Event event) {
 			Widget _this = event.target;
@@ -822,8 +831,18 @@ class Window : Widget {
 
 				if(tabOrdering.length) {
 					bool seenThis = false;
+					Widget previous;
 					foreach(idx, child; tabOrdering) {
 						if(child is focusedWidget) {
+
+							if(event.shiftKey) {
+								if(idx == 0)
+									recipient = tabOrdering[$-1];
+								else
+									recipient = tabOrdering[idx - 1];
+								break;
+							}
+
 							seenThis = true;
 							if(idx + 1 == tabOrdering.length) {
 								// we're at the end, either move to the next group
@@ -836,17 +855,20 @@ class Window : Widget {
 							recipient = child;
 							break;
 						}
+						previous = child;
 					}
 				}
 
 				if(recipient !is null) {
-					import std.stdio; writeln(typeid(recipient));
+					// import std.stdio; writeln(typeid(recipient));
 					version(Windows) {
 						if(recipient.hwnd !is null)
 							SetFocus(recipient.hwnd);
 					} else {
 						focusedWidget = recipient;
 					}
+
+					skipNextChar = true;
 				}
 			}
 		};
@@ -890,6 +912,7 @@ class Window : Widget {
 			auto event = new Event(ev.pressed ? "keydown" : "keyup", focusedWidget);
 			event.character = ev.character;
 			event.key = ev.key;
+			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
 			event.dispatch();
 		}
 		return super.dispatchKeyEvent(ev);
@@ -2187,6 +2210,8 @@ class Event {
 	int button;
 	Key key;
 	dchar character;
+
+	bool shiftKey;
 
 	private bool isBubbling;
 
