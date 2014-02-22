@@ -324,6 +324,8 @@ class Cgi {
 		scriptName = args[0];
 		scriptFileName = args[0];
 
+		environmentVariables = cast(const) environment.toAA;
+
 		foreach(arg; args[1 .. $]) {
 			if(arg.startsWith("--")) {
 				nextArgIs = arg[2 .. $];
@@ -498,6 +500,10 @@ class Cgi {
 				return null;
 			return *e;
 		};
+
+		environmentVariables = env is null ?
+			cast(const) environment.toAA :
+			env;
 
 		// fetching all the request headers
 		string[string] requestHeadersHere;
@@ -1219,6 +1225,7 @@ class Cgi {
 
 
 
+		environmentVariables = cast(const) environment.toAA;
 
 		idlol = inputData;
 
@@ -1266,9 +1273,10 @@ class Cgi {
 			auto header = cast(string) line.idup;
 			if(headerNumber == 1) {
 				// request line
-				auto parts = header.split(" ");
-				requestMethod = to!RequestMethod(parts[0]);
-				requestUri = parts[1];
+				auto parts = al.splitter(header, " ");
+				requestMethod = to!RequestMethod(parts.front);
+				parts.popFront();
+				requestUri = parts.front;
 
 				scriptName = requestUri[0 .. pathInfoStarts];
 
@@ -1359,9 +1367,6 @@ class Cgi {
 
 		requestHeaders = assumeUnique(requestHeadersHere);
 
-		cookiesArray = getCookieArray();
-		cookies = keepLastOf(cookiesArray);
-
 		ByChunkRange dataByChunk;
 
 		// reading Content-Length type data
@@ -1413,6 +1418,10 @@ class Cgi {
 		this.keepAliveRequested = keepAliveRequested;
 		this.acceptsGzip = acceptsGzip;
 		this.cookie = cookie;
+
+		cookiesArray = getCookieArray();
+		cookies = keepLastOf(cookiesArray);
+
 	}
 	BufferedInputRange idlol;
 
@@ -1543,6 +1552,11 @@ class Cgi {
 	}
 	private string responseStatus = null;
 
+	/// Returns true if it is still possible to output headers
+	bool canOutputHeaders() {
+		return !isClosed && !outputtedResponseData;
+	}
+
 	/// Sets the location header, which the browser will redirect the user to automatically.
 	/// Note setResponseLocation() must be called *before* you write() any data to the output.
 	/// The optional important argument is used if it's a default suggestion rather than something to insist upon.
@@ -1610,13 +1624,13 @@ class Cgi {
 	/// Note setCookie() must be called *before* you write() any data to the output.
 	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false, bool secure = false) {
 		assert(!outputtedResponseData);
-		string cookie = name ~ "=";
-		cookie ~= data;
+		string cookie = std.uri.encodeComponent(name) ~ "=";
+		cookie ~= std.uri.encodeComponent(data);
 		if(path !is null)
 			cookie ~= "; path=" ~ path;
 		// FIXME: should I just be using max-age here? (also in cache below)
 		if(expiresIn != 0)
-			cookie ~= "; expires=" ~ printDate(cast(DateTime) Clock.currTime + dur!"msecs"(expiresIn));
+			cookie ~= "; expires=" ~ printDate(cast(DateTime) Clock.currTime(UTC()) + dur!"msecs"(expiresIn));
 		if(domain !is null)
 			cookie ~= "; domain=" ~ domain;
 		if(secure == true)
@@ -1624,9 +1638,15 @@ class Cgi {
 		if(httpOnly == true )
 			cookie ~= "; HttpOnly";
 
-		responseCookies ~= cookie;
+		if(auto idx = name in cookieIndexes) {
+			responseCookies[*idx] = cookie;
+		} else {
+			cookieIndexes[name] = responseCookies.length;
+			responseCookies ~= cookie;
+		}
 	}
 	private string[] responseCookies;
+	private int[string] cookieIndexes;
 
 	/// Clears a previously set cookie with the given name, path, and domain.
 	void clearCookie(string name, string path = null, string domain = null) {
@@ -1674,7 +1694,7 @@ class Cgi {
 			goto websocket;
 
 		if(nph) { // we're responsible for setting the date too according to http 1.1
-			hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime);
+			hd ~= "Date: " ~ printDate(cast(DateTime) Clock.currTime(UTC()));
 		}
 
 		// FIXME: what if the user wants to set his own content-length?
@@ -1920,6 +1940,8 @@ class Cgi {
 	/* Internal state flags */
 	private bool outputtedResponseData;
 	private bool noCache = true;
+
+	const(string[string]) environmentVariables;
 
 	/** What follows is data gotten from the HTTP request. It is all fully immutable,
 	    partially because it logically is (your code doesn't change what the user requested...)
@@ -2468,7 +2490,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 					throw new Exception("bind");
 				}
 
-				if(sock.listen(16) == -1) {
+				if(sock.listen(128) == -1) {
 					close(sock);
 					throw new Exception("listen");
 				}
@@ -2482,6 +2504,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 				newPid = fork();
 				if(newPid == 0) {
 					// start serving on the socket
+					//ubyte[4096] backingBuffer;
 					for(;;) {
 						bool closeConnection;
 						uint i;
@@ -2491,12 +2514,17 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 
 						if(s == -1)
 							throw new Exception("accept");
+						//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
 						auto ir = new BufferedInputRange(s);
+						//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
 
 						while(!ir.empty) {
+							ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+
 							Cgi cgi;
 							try {
 								cgi = new CustomCgi(ir, &closeConnection);
+								//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
 							} catch(Throwable t) {
 								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 								// anyway let's kill the connection
@@ -2541,6 +2569,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 				int status;
 				// FIXME: maybe we should respawn if one dies unexpectedly
 				while(-1 != wait(&status)) {
+				import std.stdio; writeln("Process died ", status);
 					processCount--;
 					goto reopen;
 				}
@@ -3011,9 +3040,16 @@ class BufferedInputRange {
 
 		do {
 			auto freeSpace = underlyingBuffer[underlyingBuffer.ptr - view.ptr + view.length .. $];
+			try_again:
 			auto ret = source.receive(freeSpace);
-			if(ret == Socket.ERROR)
-				throw new Exception("uh oh"); // FIXME
+			if(ret == Socket.ERROR) {
+				version(Posix) {
+					import core.stdc.errno;
+					if(errno == EINTR)
+						goto try_again;
+				}
+				throw new Exception("uh oh " ~ lastSocketError); // FIXME
+			}
 			if(ret == 0) {
 				sourceClosed = true;
 				return;
@@ -3138,7 +3174,7 @@ class ListeningConnectionManager {
 		listener = new TcpSocket();
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
 		listener.bind(new InternetAddress(port));
-		listener.listen(10);
+		listener.listen(128);
 	}
 
 	Socket listener;
