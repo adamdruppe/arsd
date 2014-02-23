@@ -1646,7 +1646,7 @@ class Cgi {
 		}
 	}
 	private string[] responseCookies;
-	private int[string] cookieIndexes;
+	private size_t[string] cookieIndexes;
 
 	/// Clears a previously set cookie with the given name, path, and domain.
 	void clearCookie(string name, string path = null, string domain = null) {
