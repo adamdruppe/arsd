@@ -161,7 +161,6 @@ template SHARange(T) if(isInputRange!(T)) {
 		}
 
 		void popFront() {
-		static int lol = 0;
 			if(state == 0) {
 				r.popFront;
 				/*

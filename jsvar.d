@@ -1,3 +1,15 @@
+/*
+	FIXME:
+		pointer to member functions can give a way to wrap things
+
+		we'll pass it an opaque object as this and it will unpack and call the method
+
+		we can also auto-generate getters and setters for properties with this method
+
+		and constructors, so the script can create class objects too
+*/
+
+
 /**
 	jsvar provides a D type called 'var' that works similarly to the same in Javascript.
 
@@ -31,6 +43,8 @@
 	D and Javascript - just like you can write in D itself using this type.
 */
 module arsd.jsvar;
+
+version=new_std_json;
 
 import std.stdio;
 import std.traits;
@@ -110,6 +124,9 @@ version(test_script)
 	}
 version(test_script)
 void main() {
+import arsd.script;
+writeln(interpret("x*x + 3*x;", var(["x":3])));
+
 	{
 	var a = var.emptyObject;
 	a.qweq = 12;
@@ -571,6 +588,9 @@ struct var {
 			this._payload._integral = t;
 		} else static if(isCallable!T) {
 			this._type = Type.Function;
+			static if(is(T == typeof(this._payload._function))) {
+				this._payload._function = t;
+			} else
 			this._payload._function = delegate var(var _this, var[] args) {
 				var ret;
 
@@ -778,6 +798,12 @@ struct var {
 				return T.init;
 			//break;
 		}
+	}
+
+	public T nullCoalesce(T)(T t) {
+		if(_type == Type.Object && _payload._object is null)
+			return t;
+		return this.get!T;
 	}
 
 	public int opCmp(T)(T t) {
@@ -1062,7 +1088,6 @@ struct var {
 				assert(_arrayPrototype._type == Type.Object);
 				if(_arrayPrototype._payload._object is null) {
 					_arrayPrototype._object = new PrototypeObject();
-					writeln("ctor on ", payloadType());
 				}
 
 				return _arrayPrototype;

@@ -31,8 +31,7 @@ class FacebookApiException : Exception {
 import arsd.curl;
 import arsd.sha;
 
-import std.md5;
-// import std.digest.md;
+import std.digest.md;
 
 import std.file;
 
@@ -74,60 +73,43 @@ Variant[string] postToFacebookWall(string[] info, string id, string message, str
 	}
 
 	return var;
-
 }
 
-// note ids=a,b,c works too. it returns an associative array of the ids requested.
-Variant[string] fbGraph(string[] info, string id, bool useCache = false, long maxCacheHours = 2) {
-	string response;
+version(with_arsd_jsvar) {
+	import arsd.jsvar;
+	var fbGraph(string token, string id, bool useCache = false, long maxCacheHours = 2) {
+		auto response = fbGraphImpl(token, id, useCache, maxCacheHours);
 
-	string cacheFile;
+		var ret = var.emptyObject;
 
-	char c = '?';
-
-	if(id.indexOf("?") != -1)
-		c = '&';
-
-	string url;
-
-	if(id[0] != '/')
-		id = "/" ~ id;
-	
-	if(info !is null)
-		url = "https://graph.facebook.com" ~ id
-			~ c ~ "access_token=" ~ info[1] ~ "&format=json";
-	else
-		url = "http://graph.facebook.com" ~ id
-			~ c ~ "format=json";
-
-	// this makes pagination easier. the initial / is there because it is added above
-	if(id.indexOf("/http://") == 0 || id.indexOf("/https://") == 0)
-		url = id[1 ..$];
-
-	if(useCache)
-		cacheFile = "/tmp/fbGraphCache-" ~ hashToString(SHA1(url));
-
-	if(useCache) {
-		if(std.file.exists(cacheFile)) {
-			if((Clock.currTime() - std.file.timeLastModified(cacheFile)) < dur!"hours"(maxCacheHours)) {
-				response = std.file.readText(cacheFile);
-				goto haveResponse;
-			}
+		if(response == "false") {
+			var v1 = id[1..$];
+			ret["id"] = v1;
+			ret["name"] = v1 = "Private";
+			ret["description"] = v1 = "This is a private facebook page. Please make it public in Facebook if you want to promote it.";
+			ret["link"] = v1 = "http://facebook.com?profile.php?id=" ~ id[1..$];
+			ret["is_false"] = true;
+			return ret;
 		}
-	}
-	
-	try {
-		response = curl(url);
-	} catch(CurlException e) {
-		throw new FacebookApiException(e.msg);
-	}
 
-	if(useCache) {
-		std.file.write(cacheFile, response);
-	}
+		ret = var.fromJson(response);
 
-    haveResponse:
-	assert(response.length);
+		if("error" in ret) {
+			auto error = ret.error;
+
+			if("message" in error)
+				throw new FacebookApiException(error["message"].get!string, token.length > 1 ? token : null,
+					"scope" in error ? error["scope"].get!string : null);
+			else
+				throw new FacebookApiException("couldn't get FB info");
+		}
+
+		return ret;
+	}
+}
+
+Variant[string] fbGraph(string[] info, string id, bool useCache = false, long maxCacheHours = 2) {
+	auto response = fbGraphImpl(info[1], id, useCache, maxCacheHours);
 
 	if(response == "false") {
 		//throw new Exception("This page is private. Please make it public in Facebook.");
@@ -163,6 +145,62 @@ Variant[string] fbGraph(string[] info, string id, bool useCache = false, long ma
 	}
 
 	return var;
+
+}
+
+// note ids=a,b,c works too. it returns an associative array of the ids requested.
+string fbGraphImpl(string info, string id, bool useCache = false, long maxCacheHours = 2) {
+	string response;
+
+	string cacheFile;
+
+	char c = '?';
+
+	if(id.indexOf("?") != -1)
+		c = '&';
+
+	string url;
+
+	if(id[0] != '/')
+		id = "/" ~ id;
+	
+	if(info !is null)
+		url = "https://graph.facebook.com" ~ id
+			~ c ~ "access_token=" ~ info ~ "&format=json";
+	else
+		url = "http://graph.facebook.com" ~ id
+			~ c ~ "format=json";
+
+	// this makes pagination easier. the initial / is there because it is added above
+	if(id.indexOf("/http://") == 0 || id.indexOf("/https://") == 0)
+		url = id[1 ..$];
+
+	if(useCache)
+		cacheFile = "/tmp/fbGraphCache-" ~ hashToString(SHA1(url));
+
+	if(useCache) {
+		if(std.file.exists(cacheFile)) {
+			if((Clock.currTime() - std.file.timeLastModified(cacheFile)) < dur!"hours"(maxCacheHours)) {
+				response = std.file.readText(cacheFile);
+				goto haveResponse;
+			}
+		}
+	}
+	
+	try {
+		response = curl(url);
+	} catch(CurlException e) {
+		throw new FacebookApiException(e.msg);
+	}
+
+	if(useCache) {
+		std.file.write(cacheFile, response);
+	}
+
+    haveResponse:
+	assert(response.length);
+
+	return response;
 }
 
 
@@ -620,7 +658,7 @@ immutable(ubyte)[] base64UrlDecode(string e) {
 	return assumeUnique(ugh);
 }
 
-Variant parseSignedRequest(in string req, string apisecret) {
+Ret parseSignedRequest(Ret = Variant)(in string req, string apisecret) {
 	auto parts = req.split(".");
 
 	immutable signature = parts[0];
@@ -633,7 +671,10 @@ Variant parseSignedRequest(in string req, string apisecret) {
 
 	auto json = cast(string) base64UrlDecode(jsonEncoded);
 
-	return jsonToVariant(json);
+	static if(is(Ret == Variant))
+		return jsonToVariant(json);
+	else
+		return Ret.fromJson(json);
 }
 
 string stripWhitespace(string w) {

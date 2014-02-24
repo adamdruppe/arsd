@@ -267,6 +267,8 @@ enum ConsoleOutputType {
 	linear = 0, /// do you want output to work one line at a time?
 	cellular = 1, /// or do you want access to the terminal screen as a grid of characters?
 	//truncatedCellular = 3, /// cellular, but instead of wrapping output to the next line automatically, it will truncate at the edges
+
+	minimalProcessing = 255, /// do the least possible work, skips most construction and desturction tasks. Only use if you know what you're doing here
 }
 
 /// Some methods will try not to send unnecessary commands to the screen. You can override their judgement using a ForceOption parameter, if present
@@ -286,6 +288,12 @@ struct Terminal {
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
+
+	version(Posix) {
+		private int fdOut;
+		private int fdIn;
+		private int[] delegate() getSizeOverride;
+	}
 
 	version(Posix) {
 		bool terminalInFamily(string[] terms...) {
@@ -403,7 +411,8 @@ struct Terminal {
 			char[10] sequenceBuffer;
 			char[] sequence;
 			if(sequenceIn.length > 0 && sequenceIn[0] == '\033') {
-				assert(sequenceIn.length < sequenceBuffer.length - 1);
+				if(!(sequenceIn.length < sequenceBuffer.length - 1))
+					return null;
 				sequenceBuffer[1 .. sequenceIn.length + 1] = sequenceIn[];
 				sequenceBuffer[0] = '\\';
 				sequenceBuffer[1] = 'E';
@@ -566,11 +575,25 @@ struct Terminal {
 	/**
 	 * Constructs an instance of Terminal representing the capabilities of
 	 * the current terminal.
+	 *
+	 * While it is possible to override the stdin+stdout file descriptors, remember
+	 * that is not portable across platforms and be sure you know what you're doing.
+	 *
+	 * ditto on getSizeOverride. That's there so you can do something instead of ioctl.
 	 */
-	this(ConsoleOutputType type) {
+	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		this.fdIn = fdIn;
+		this.fdOut = fdOut;
+		this.getSizeOverride = getSizeOverride;
+		this.type = type;
+
 		readTermcap();
 
-		this.type = type;
+		if(type == ConsoleOutputType.minimalProcessing) {
+			_suppressDestruction = true;
+			return;
+		}
+
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
 			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
@@ -809,7 +832,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			ssize_t written;
 
 			while(writeBuffer.length) {
-				written = unix.write(1 /*this.fd*/, writeBuffer.ptr, writeBuffer.length);
+				written = unix.write(this.fdOut, writeBuffer.ptr, writeBuffer.length);
 				if(written < 0)
 					throw new Exception("write failed for some reason");
 				writeBuffer = writeBuffer[written .. $];
@@ -837,9 +860,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			return [cols, rows];
 		} else {
-			winsize w;
-			ioctl(0, TIOCGWINSZ, &w);
-			return [w.ws_col, w.ws_row];
+			if(getSizeOverride is null) {
+				winsize w;
+				ioctl(0, TIOCGWINSZ, &w);
+				return [w.ws_col, w.ws_row];
+			} else return getSizeOverride();
 		}
 	}
 
@@ -1024,7 +1049,8 @@ struct RealTimeConsoleInput {
 	@disable this(this);
 
 	version(Posix) {
-		private int fd;
+		private int fdOut;
+		private int fdIn;
 		private sigaction_t oldSigWinch;
 		private sigaction_t oldSigIntr;
 		private termios old;
@@ -1080,10 +1106,11 @@ struct RealTimeConsoleInput {
 		}
 
 		version(Posix) {
-			this.fd = 0; // stdin
+			this.fdIn = terminal.fdIn;
+			this.fdOut = terminal.fdOut;
 
-			{
-				tcgetattr(fd, &old);
+			if(fdIn != -1) {
+				tcgetattr(fdIn, &old);
 				auto n = old;
 
 				auto f = ICANON;
@@ -1091,11 +1118,11 @@ struct RealTimeConsoleInput {
 					f |= ECHO;
 
 				n.c_lflag &= ~f;
-				tcsetattr(fd, TCSANOW, &n);
+				tcsetattr(fdIn, TCSANOW, &n);
 			}
 
 			// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
-			//destructor ~= { tcsetattr(fd, TCSANOW, &old); };
+			//destructor ~= { tcsetattr(fdIn, TCSANOW, &old); };
 
 			if(flags & ConsoleInputFlags.size) {
 				import core.sys.posix.signal;
@@ -1154,14 +1181,16 @@ struct RealTimeConsoleInput {
 			version(Windows)
 				auto listenTo = inputHandle;
 			else version(Posix)
-				auto listenTo = this.fd;
+				auto listenTo = this.fdIn;
 			else static assert(0, "idk about this OS");
 
 			version(Posix)
 			addListener(&signalFired);
 
-			addFileEventListeners(listenTo, &eventListener, null, null);
-			destructor ~= { removeFileEventListeners(listenTo); };
+			if(listenTo != -1) {
+				addFileEventListeners(listenTo, &eventListener, null, null);
+				destructor ~= { removeFileEventListeners(listenTo); };
+			}
 			addOnIdle(&terminal.flush);
 			destructor ~= { removeOnIdle(&terminal.flush); };
 		}
@@ -1189,7 +1218,8 @@ struct RealTimeConsoleInput {
 	~this() {
 		// the delegate thing doesn't actually work for this... for some reason
 		version(Posix)
-			tcsetattr(fd, TCSANOW, &old);
+			if(fdIn != -1)
+				tcsetattr(fdIn, TCSANOW, &old);
 
 		version(Posix) {
 			if(flags & ConsoleInputFlags.size) {
@@ -1217,6 +1247,9 @@ struct RealTimeConsoleInput {
 				return true; // the object is ready
 			return false;
 		} else version(Posix) {
+			if(fdIn == -1)
+				return false;
+
 			timeval tv;
 			tv.tv_sec = 0;
 			tv.tv_usec = milliseconds * 1000;
@@ -1224,10 +1257,10 @@ struct RealTimeConsoleInput {
 			fd_set fs;
 			FD_ZERO(&fs);
 
-			FD_SET(fd, &fs);
-			select(fd + 1, &fs, null, null, &tv);
+			FD_SET(fdIn, &fs);
+			select(fdIn + 1, &fs, null, null, &tv);
 
-			return FD_ISSET(fd, &fs);
+			return FD_ISSET(fdIn, &fs);
 		}
 	}
 
@@ -1241,9 +1274,12 @@ struct RealTimeConsoleInput {
 	//int inputBufferPosition;
 	version(Posix)
 	int nextRaw(bool interruptable = false) {
+		if(fdIn == -1)
+			return 0;
+
 		char[1] buf;
 		try_again:
-		auto ret = read(fd, buf.ptr, buf.length);
+		auto ret = read(fdIn, buf.ptr, buf.length);
 		if(ret == 0)
 			return 0; // input closed
 		if(ret == -1) {
@@ -1261,10 +1297,13 @@ struct RealTimeConsoleInput {
 		//terminal.writef("RAW READ: %d\n", buf[0]);
 
 		if(ret == 1)
-			return buf[0];
+			return inputPrefilter ? inputPrefilter(buf[0]) : buf[0];
 		else
 			assert(0); // read too much, should be impossible
 	}
+
+	version(Posix)
+		int delegate(char) inputPrefilter;
 
 	version(Posix)
 	dchar nextChar(int starting) {
@@ -1375,7 +1414,7 @@ struct RealTimeConsoleInput {
 			throw new Exception("ReadConsoleInput");
 
 		InputEvent[] newEvents;
-		foreach(record; buffer[0 .. actuallyRead]) {
+		input_loop: foreach(record; buffer[0 .. actuallyRead]) {
 			switch(record.EventType) {
 				case KEY_EVENT:
 					auto ev = record.KeyEvent;
@@ -1416,18 +1455,18 @@ struct RealTimeConsoleInput {
 							//press or release
 							e.eventType = MouseEvent.Type.Pressed;
 							static DWORD lastButtonState;
+							auto lastButtonState2 = lastButtonState;
 							e.buttons = ev.dwButtonState;
+							lastButtonState = e.buttons;
 
 							// this is sent on state change. if fewer buttons are pressed, it must mean released
-							if(e.buttons < lastButtonState) {
+							if(cast(DWORD) e.buttons < lastButtonState2) {
 								e.eventType = MouseEvent.Type.Released;
 								// if last was 101 and now it is 100, then button far right was released
 								// so we flip the bits, ~100 == 011, then and them: 101 & 011 == 001, the
 								// button that was released
-								e.buttons = lastButtonState & ~e.buttons;
+								e.buttons = lastButtonState2 & ~e.buttons;
 							}
-
-							lastButtonState = e.buttons;
 						break;
 						case MOUSE_MOVED:
 							e.eventType = MouseEvent.Type.Moved;
@@ -1441,6 +1480,7 @@ struct RealTimeConsoleInput {
 								e.buttons = MouseEvent.Button.ScrollUp;
 						break;
 						default:
+							continue input_loop;
 					}
 
 					newEvents ~= InputEvent(e);
@@ -1678,7 +1718,9 @@ struct RealTimeConsoleInput {
 
 							uint modifierState;
 
-							int modGot = to!int(parts[1]);
+							int modGot;
+							if(parts.length > 1)
+								modGot = to!int(parts[1]);
 							mod_switch: switch(modGot) {
 								case 2: modifierState |= ModifierState.shift; break;
 								case 3: modifierState |= ModifierState.alt; break;
@@ -1758,6 +1800,8 @@ struct RealTimeConsoleInput {
 		auto c = nextRaw(true);
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
+		if(c == 0)
+			throw new Exception("stdin has reached end of file");
 		if(c == '\033') {
 			if(timedCheckForInput(50)) {
 				// escape sequence

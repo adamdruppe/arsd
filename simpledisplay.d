@@ -2386,8 +2386,10 @@ version(Windows) {
 						if(ret == 0)
 							done = true;
 
-						TranslateMessage(&message);
-						DispatchMessage(&message);
+			//			if(!IsDialogMessageA(message.hwnd, &message)) {
+							TranslateMessage(&message);
+							DispatchMessage(&message);
+			//			}
 					}
 
 					if(!done && handlePulse !is null)
@@ -2398,8 +2400,10 @@ version(Windows) {
 				while((ret = GetMessage(&message, null, 0, 0)) != 0) {
 					if(ret == -1)
 						throw new Exception("GetMessage failed");
-					TranslateMessage(&message);
-					DispatchMessage(&message);
+			//		if(!IsDialogMessageA(message.hwnd, &message)) {
+						TranslateMessage(&message);
+						DispatchMessage(&message);
+			//		}
 
 					SleepEx(0, true); // I call this to give it a chance to do stuff like async io, which apparently never happens when you just block in GetMessage
 				}
@@ -3570,6 +3574,8 @@ nothrow:
 		DWORD GetSysColor(int nIndex);
 
 		SHORT GetKeyState(int nVirtKey);
+
+		BOOL IsDialogMessageA(HWND, LPMSG);
 
 		int SetROP2(HDC, int);
 		enum R2_XORPEN = 7;

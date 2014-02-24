@@ -1,5 +1,8 @@
 public import std.socket;
 
+// see also:
+// http://msdn.microsoft.com/en-us/library/aa380536%28v=vs.85%29.aspx
+
 import deimos.openssl.ssl;
 
 static this() {

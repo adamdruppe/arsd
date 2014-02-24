@@ -21,6 +21,19 @@ interface Database {
 	/// Just executes a query. It supports placeholders for parameters
 	/// by using ? in the sql string. NOTE: it only accepts string, int, long, and null types.
 	/// Others will fail runtime asserts.
+	final ResultSet query(T...)(string sql, T t) {
+		Variant[] args;
+		foreach(arg; t) {
+			Variant a;
+			static if(__traits(compiles, a = arg))
+				a = arg;
+			else
+				a = to!string(t);
+			args ~= a;
+		}
+		return queryImpl(sql, args);
+	}
+	version(none)
 	final ResultSet query(string sql, ...) {
 		Variant[] args;
 		foreach(arg; _arguments) {
@@ -440,11 +453,14 @@ enum UpdateOrInsertMode {
 
 // BIG FIXME: this should really use prepared statements
 int updateOrInsert(Database db, string table, string[string] values, string where, UpdateOrInsertMode mode = UpdateOrInsertMode.CheckForMe, string key = "id") {
+
+	string identifierQuote = "";
+
 	bool insert = false;
 
 	final switch(mode) {
 		case UpdateOrInsertMode.CheckForMe:
-			auto res = db.query("SELECT "~key~" FROM `"~db.escape(table)~"` WHERE " ~ where);
+			auto res = db.query("SELECT "~key~" FROM "~identifierQuote~db.escape(table)~identifierQuote~" WHERE " ~ where);
 			insert = res.empty;
 
 		break;
@@ -458,7 +474,7 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 
 
 	if(insert) {
-		string insertSql = "INSERT INTO `" ~ db.escape(table) ~ "` ";
+		string insertSql = "INSERT INTO " ~identifierQuote ~ db.escape(table) ~ identifierQuote ~ " ";
 
 		bool outputted = false;
 		string vs, cs;
@@ -472,7 +488,7 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 				outputted = true;
 
 			//cs ~= "`" ~ db.escape(column) ~ "`";
-			cs ~= "`" ~ column ~ "`"; // FIXME: possible insecure
+			cs ~= identifierQuote ~ column ~ identifierQuote; // FIXME: possible insecure
 			if(value is null)
 				vs ~= "NULL";
 			else
@@ -491,7 +507,7 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 
 		return 0; // db.lastInsertId;
 	} else {
-		string updateSql = "UPDATE `"~db.escape(table)~"` SET ";
+		string updateSql = "UPDATE "~identifierQuote~db.escape(table)~identifierQuote~" SET ";
 
 		bool outputted = false;
 		foreach(column, value; values) {
@@ -503,9 +519,9 @@ int updateOrInsert(Database db, string table, string[string] values, string wher
 				outputted = true;
 
 			if(value is null)
-				updateSql ~= "`" ~ db.escape(column) ~ "` = NULL";
+				updateSql ~= identifierQuote ~ db.escape(column) ~ identifierQuote ~ " = NULL";
 			else
-				updateSql ~= "`" ~ db.escape(column) ~ "` = '" ~ db.escape(value) ~ "'";
+				updateSql ~= identifierQuote ~ db.escape(column) ~ identifierQuote ~ " = '" ~ db.escape(value) ~ "'";
 		}
 
 		if(!outputted)
@@ -641,13 +657,15 @@ class DataObject {
 
 	JSONValue makeJsonValue() {
 		JSONValue val;
-		val.type = JSON_TYPE.OBJECT;
+		JSONValue[string] valo;
+		//val.type = JSON_TYPE.OBJECT;
 		foreach(k, v; fields) {
 			JSONValue s;
-			s.type = JSON_TYPE.STRING;
+			//s.type = JSON_TYPE.STRING;
 			s.str = v;
-			val.object[k] = s;
+			valo[k] = s;
 		}
+		val = valo;
 		return val;
 	}
 
@@ -713,6 +731,9 @@ class DataObject {
 				a = to!string(e);
 			} else if (arg == typeid(char) || arg == typeid(immutable(char))) {
 				auto e = va_arg!(char)(_argptr);
+				a = to!string(e);
+			} else if (arg == typeid(uint) || arg == typeid(immutable(uint)) || arg == typeid(const(uint))) {
+				auto e = va_arg!uint(_argptr);
 				a = to!string(e);
 			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
 				auto e = va_arg!(long)(_argptr);

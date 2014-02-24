@@ -273,6 +273,12 @@ class TokenStream(TextStream) {
 					pos++;
 				}
 
+				if(text[pos - 1] == '.') {
+					// This is something like "1.x", which is *not* a floating literal; it is UFCS on an int
+					sawDot = false;
+					pos --;
+				}
+
 				token.type = sawDot ? ScriptToken.Type.float_number : ScriptToken.Type.int_number;
 				token.str = text[0 .. pos];
 				advance(pos);
@@ -1585,7 +1591,7 @@ Expression parseFactor(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				default:
 					break loop;
 			}
-		}
+		} else throw new Exception("Got " ~ peek.str ~ " when expecting symbol");
 	}
 
 	return e1;
@@ -1605,6 +1611,11 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case ",": // possible FIXME these are passed on to the next thing
 				case ";":
 					return e1;
+
+				case ".":
+					tokens.popFront();
+					e1 = new DotVarExpression(e1, parseVariableName(tokens));
+				break;
 				case "=":
 					tokens.popFront();
 					return new AssignExpression(e1, parseExpression(tokens));

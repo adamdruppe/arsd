@@ -122,6 +122,8 @@ struct Color {
 			ubyte b; /// blue
 			ubyte a; /// alpha. 255 == opaque
 		}
+
+		uint asUint;
 	}
 
 	// this makes sure they are in range before casting
@@ -176,7 +178,12 @@ struct Color {
 		if(a == 255)
 			return toCssString()[1 .. $];
 		else
-			return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
+			return toRgbaHexString();
+	}
+
+	/// returns RRGGBBAA, even if a== 255
+	string toRgbaHexString() {
+		return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
 	}
 
 	/// Gets a color by name, iff the name is one of the static members listed above
@@ -760,6 +767,15 @@ class IndexedImage : MemoryImage {
 	TrueColorImage convertToTrueColor() const {
 		auto tci = new TrueColorImage(width, height);
 		foreach(i, b; data) {
+			/*
+			if(b >= palette.length) {
+				string fuckyou;
+				fuckyou ~= b + '0';
+				fuckyou ~= " ";
+				fuckyou ~= palette.length + '0';
+				assert(0, fuckyou);
+			}
+			*/
 			tci.imageData.colors[i] = palette[b];
 		}
 		return tci;

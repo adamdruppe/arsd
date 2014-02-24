@@ -242,6 +242,24 @@ Html linkify(string text) {
 	return Html(div.innerHTML);
 }
 
+// your things should already be encoded
+Html paragraphsToP(Html html) {
+	auto text = html.source;
+	string total;
+	foreach(p; text.split("\n\n")) {
+		total ~= "<p>";
+		auto lines = p.splitLines;
+		foreach(idx, line; lines)
+			if(line.strip.length) {
+				total ~= line;
+				if(idx != lines.length - 1)
+					total ~= "<br />";
+			}
+		total ~= "</p>";
+	}
+	return Html(total);
+}
+
 Html nl2br(string text) {
 	auto div = Element.make("div");
 

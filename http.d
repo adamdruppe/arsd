@@ -1,4 +1,7 @@
-module arsd.http;
+// Copyright 2013, Adam D. Ruppe. All Rights Reserved.
+module arsd.http2;
+
+// FIXME: check Transfer-Encoding: gzip always
 
 version(with_openssl) {
 	pragma(lib, "crypto");
@@ -366,3 +369,299 @@ void main(string args[]) {
 	write(post("http://arsdnet.net/bugs.php", ["test" : "hey", "again" : "what"]));
 }
 */
+
+struct Url {
+	string url;
+}
+
+struct BasicAuth {
+	string username;
+	string password;
+}
+
+/*
+	When you send something, it creates a request
+	and sends it asynchronously. The request object
+
+	auto request = new HttpRequest();
+	// set any properties here
+
+	// synchronous usage
+	auto reply = request.perform();
+
+	// async usage, type 1:
+	request.send();
+	request2.send();
+
+	// wait until the first one is done, with the second one still in-flight
+	auto response = request.waitForCompletion();
+
+
+	// async usage, type 2:
+	request.onDataReceived = (HttpRequest hr) {
+		if(hr.state == HttpRequest.State.complete) {
+			// use hr.responseData
+		}
+	};
+	request.send(); // send, using the callback
+
+	// before terminating, be sure you wait for your requests to finish!
+
+	request.waitForCompletion();
+
+*/
+
+class HttpRequest {
+	private static {
+		// we manage the actual connections. When a request is made on a particular
+		// host, we try to reuse connections. We may open more than one connection per
+		// host to do parallel requests.
+		//
+		// The key is the *domain name*. Multiple domains on the same address will have separate connections.
+		Socket[][string] socketsPerHost;
+
+		// only one request can be active on a given socket (at least HTTP < 2.0) so this is that
+		HttpRequest[Socket] activeRequestOnSocket;
+		HttpRequest[] pending; // and these are the requests that are waiting
+
+		SocketSet readSet;
+
+
+		void advanceConnections() {
+			if(readSet is null)
+				readSet = new SocketSet();
+
+			// are there pending requests? let's try to send them
+
+			readSet.reset();
+
+			// active requests need to be read or written to
+			foreach(sock, request; activeRequestOnSocket)
+				readSet.add(sock);
+
+			// check the other sockets just for EOF, if they close, take them out of our list,
+			// we'll reopen if needed upon request.
+
+			auto got = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */);
+			if(got == 0) /* timeout */
+				{}
+			else
+			if(got == -1) /* interrupted */
+				{}
+			else /* ready */
+				{}
+
+			// call select(), do what needs to be done
+			// no requests are active, send the ones pending connection now
+			// we've completed a request, are there any more pending connection? if so, send them now
+
+			auto readSet = new SocketSet();
+		}
+	}
+
+	this() {
+		addConnection(this);
+	}
+
+	~this() {
+		removeConnection(this);
+	}
+
+	HttpResponse responseData;
+	HttpRequestParameters parameters;
+	private HttpClient parentClient;
+
+	size_t bodyBytesSent;
+	size_t bodyBytesReceived;
+
+	State state;
+	/// Called when data is received. Check the state to see what data is available.
+	void delegate(AsynchronousHttpRequest) onDataReceived;
+
+	enum State {
+		/// The request has not yet been sent
+		unsent,
+
+		/// The send() method has been called, but no data is
+		/// sent on the socket yet because the connection is busy.
+		pendingAvailableConnection,
+
+		/// The headers are being sent now
+		sendingHeaders,
+
+		/// The body is being sent now
+		sendingBody,
+
+		/// The request has been sent but we haven't received any response yet
+		waitingForResponse,
+
+		/// We have received some data and are currently receiving headers
+		readingHeaders,
+
+		/// All headers are available but we're still waiting on the body
+		readingBody,
+
+		/// The request is complete.
+		complete,
+
+		/// The request is aborted, either by the abort() method, or as a result of the server disconnecting
+		aborted
+	}
+
+	/// Sends now and waits for the request to finish, returning the response.
+	HttpResponse perform() {
+		send();
+		return waitForCompletion();
+	}
+
+	/// Sends the request asynchronously.
+	void send() {
+		if(state != State.unsent && state != State.aborted)
+			return; // already sent
+
+		responseData = HttpResponse.init;
+		bodyBytesSent = 0;
+		bodyBytesReceived = 0;
+		state = State.pendingAvailableConnection;
+
+		HttpResponse.advanceConnections();
+	}
+
+
+	/// Waits for the request to finish or timeout, whichever comes furst.
+	HttpResponse waitForCompletion() {
+		while(state != State.aborted && state != State.complete)
+			HttpResponse.advanceConnections();
+		return responseData;
+	}
+
+	/// Aborts this request.
+	/// Due to the nature of the HTTP protocol, aborting one request will result in all subsequent requests made on this same connection to be aborted as well.
+	void abort() {
+		parentClient.close();
+	}
+}
+
+struct HttpRequestParameters {
+	Duration timeout;
+
+	// debugging
+	bool useHttp11 = true;
+	bool acceptGzip = true;
+
+	// the request itself
+	HttpVerb method;
+	string host;
+	string uri;
+
+	string userAgent;
+
+	string[string] cookies;
+
+	string[] headers; /// do not duplicate host, content-length, content-type, or any others that have a specific property
+
+	string contentType;
+	ubyte[] bodyData;
+}
+
+interface IHttpClient {
+
+}
+
+enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT }
+
+/*
+	Usage:
+
+	auto client = new HttpClient("localhost", 80);
+	// relative links work based on the current url
+	client.get("foo/bar");
+	client.get("baz"); // gets foo/baz
+
+	auto request = client.get("rofl");
+	auto response = request.waitForCompletion();
+*/
+
+/// HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.
+class HttpClient {
+	/* Protocol restrictions, useful to disable when debugging servers */
+	bool useHttp11 = true;
+	bool useGzip = true;
+
+	/// Automatically follow a redirection?
+	bool followLocation = false;
+
+	@property Url location() {
+		return currentUrl;
+	}
+
+	/// High level function that works similarly to entering a url
+	/// into a browser.
+	///
+	/// Follows locations, updates the current url.
+	AsynchronousHttpRequest navigateTo(Url where) {
+		currentUrl = where.basedOn(currentUrl);
+		assert(0);
+	}
+
+	private Url currentUrl;
+
+	this() {
+
+	}
+
+	this(Url url) {
+		open(url);
+	}
+
+	this(string host, ushort port = 80, bool useSsl = false) {
+		open(host, port);
+	}
+
+	// FIXME: add proxy
+	// FIXME: some kind of caching
+
+	void open(Url url) {
+
+	}
+
+	void open(string host, ushort port = 80, bool useSsl = false) {
+
+	}
+
+	void close() {
+		socket.close();
+	}
+
+	void setCookie(string name, string value) {
+
+	}
+
+	void clearCookies() {
+
+	}
+
+	HttpResponse sendSynchronously() {
+		auto request = sendAsynchronously();
+		return request.waitForCompletion();
+	}
+
+	AsynchronousHttpRequest sendAsynchronously() {
+
+	}
+
+	string method;
+	string host;
+	ushort port;
+	string uri;
+
+	string[] headers;
+	ubyte[] requestBody;
+
+	string userAgent;
+
+	/* inter-request state */
+	string[string] cookies;
+}
+
+// FIXME: websocket

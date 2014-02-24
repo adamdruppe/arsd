@@ -62,7 +62,10 @@ class PostgresResult : ResultSet {
 	int getFieldIndex(string field) {
 		if(mapping is null)
 			makeFieldMapping();
-		return mapping[field];
+		field = field.toLower;
+		if(field in mapping)
+			return mapping[field];
+		else throw new Exception("no mapping " ~ field);
 	}
 
 

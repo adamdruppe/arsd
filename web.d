@@ -2,6 +2,8 @@ module arsd.web;
 
 // it would be nice to be able to add meta info to a returned envelope
 
+// with cookie sessions, you must commit your session yourself before writing any content
+
 enum RequirePost;
 enum RequireHttps;
 enum NoAutomaticForm;
@@ -246,6 +248,9 @@ string linkTo(alias func, T...)(T args) {
 class WebDotDBaseType {
 	Cgi cgi; /// lower level access to the request
 
+	/// use this to look at exceptions and set up redirects and such. keep in mind it does NOT change the regular behavior
+	void exceptionExaminer(Throwable e) {}
+
 	/// Override this if you want to do something special to the document
 	/// You should probably call super._postProcess at some point since I
 	/// might add some default transformations here.
@@ -416,6 +421,8 @@ class ApiProvider : WebDotDBaseType {
 		if(document is null)
 			return;
 		auto bod = document.mainBody;
+		if(bod is null)
+			return;
 		if(!bod.hasAttribute("data-csrf-key")) {
 			auto tokenInfo = _getCsrfInfo();
 			if(tokenInfo is null)
@@ -682,7 +689,6 @@ class ApiProvider : WebDotDBaseType {
 
 		return _catchAll(path);
 	}
-
 
 	/// When in website mode, you can use this to beautify the error message
 	Document delegate(Throwable) _errorFunction;
@@ -1179,7 +1185,7 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 /// instantiation should be an object of your ApiProvider type.
 /// pathInfoStartingPoint is used to make a slice of it, incase you already consumed part of the path info before you called this.
 
-void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0, bool handleAllExceptions = true) if(is(Provider : ApiProvider)) {
+void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint = 0, bool handleAllExceptions = true, Session session = null) if(is(Provider : ApiProvider)) {
 	assert(instantiation !is null);
 
 	instantiation.cgi = cgi;
@@ -1317,6 +1323,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		secondaryFormat = cgi.request("secondaryFormat", "");
 		if(secondaryFormat.length == 0) secondaryFormat = null;
 
+		{ // scope so we can goto over this
 		JSONValue res;
 
 		// FIXME: hackalicious garbage. kill.
@@ -1351,6 +1358,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				//	cgi.setResponseContentType("application/json");
 		result.success = true;
 		result.result = res;
+		}
 
 		do_nothing_else: {}
 
@@ -1360,6 +1368,8 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		result.errorMessage = e.msg;
 		result.type = e.classinfo.name;
 		debug result.dFullString = e.toString();
+
+		realObject.exceptionExaminer(e);
 
 		if(envelopeFormat == "document" || envelopeFormat == "html") {
 			if(auto fve = cast(FormValidationException) e) {
@@ -1464,6 +1474,10 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		}
 	} finally {
 		// the function must have done its own thing; we need to quit or else it will trigger an assert down here
+		version(webd_cookie_sessions) {
+			if(cgi.canOutputHeaders() && session !is null)
+				session.commit();
+		}
 		if(!cgi.isClosed())
 		switch(envelopeFormat) {
 			case "no-processing":
@@ -1710,17 +1724,24 @@ mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi))
 		version(no_automatic_session) {}
 		else {
 			auto session = new Session(cgi);
-			scope(exit) {
-				// I only commit automatically on non-bots to avoid writing too many files
-				// looking for bot should catch most them without false positives...
-				// empty user agent is prolly a tester too so i'll let that slide
-				if(cgi.userAgent.length && cgi.userAgent.toLower.indexOf("bot") == -1)
-					session.commit();
+			version(webd_cookie_sessions) { } // cookies have to be outputted before here since they are headers
+			else {
+				scope(exit) {
+					// I only commit automatically on non-bots to avoid writing too many files
+					// looking for bot should catch most them without false positives...
+					// empty user agent is prolly a tester too so i'll let that slide
+					if(cgi.userAgent.length && cgi.userAgent.toLower.indexOf("bot") == -1)
+						session.commit();
+				}
 			}
 			instantiation.session = session;
 		}
 
-		run(cgi, instantiation);
+		version(webd_cookie_sessions)
+			run(cgi, instantiation, 0, true, session);
+		else
+			run(cgi, instantiation);
+
 /+
 		if(args.length > 1) {
 			string[string][] namedArgs;
@@ -1775,13 +1796,14 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 
 	foreach(param; parameters) {
 		Element input;
+		string type;
 
 		if(param.makeFormElement !is null) {
 			input = param.makeFormElement(document, param.name);
 			goto gotelement;
 		}
 
-		string type = param.type;
+		type = param.type;
 		if(param.name in fieldTypes)
 			type = fieldTypes[param.name];
 		
@@ -2108,7 +2130,8 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 	JSONValue val;
 	static if(is(T == typeof(null)) || is(T == void*)) {
 		/* void* goes here too because we don't know how to make it work... */
-		val.type = JSON_TYPE.NULL;
+		val.object = null;
+		//val.type = JSON_TYPE.NULL;
 	} else static if(is(T == JSONValue)) {
 		val = a;
 	} else static if(__traits(compiles, val = a.makeJsonValue())) {
@@ -2117,69 +2140,76 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 
 	// FIXME: should we special case something like struct Html?
 	} else static if(is(T : DateTime)) {
-		val.type = JSON_TYPE.STRING;
+		//val.type = JSON_TYPE.STRING;
 		val.str = a.toISOExtString();
 	} else static if(is(T : Element)) {
 		if(a is null) {
-			val.type = JSON_TYPE.NULL;
+			//val.type = JSON_TYPE.NULL;
+			val = null;
 		} else {
-			val.type = JSON_TYPE.STRING;
+			//val.type = JSON_TYPE.STRING;
 			val.str = a.toString();
 		}
 	} else static if(is(T == long)) {
 		// FIXME: let's get a better range... I think it goes up to like 1 << 50 on positive and negative
 		// but this works for now
 		if(a < int.max && a > int.min) {
-			val.type = JSON_TYPE.INTEGER;
+			//val.type = JSON_TYPE.INTEGER;
 			val.integer = to!long(a);
 		} else {
 			// WHY? because javascript can't actually store all 64 bit numbers correctly
-			val.type = JSON_TYPE.STRING;
+			//val.type = JSON_TYPE.STRING;
 			val.str = to!string(a);
 		}
 	} else static if(isIntegral!(T)) {
-		val.type = JSON_TYPE.INTEGER;
+		//val.type = JSON_TYPE.INTEGER;
 		val.integer = to!long(a);
 	} else static if(isFloatingPoint!(T)) {
-		val.type = JSON_TYPE.FLOAT;
+		//val.type = JSON_TYPE.FLOAT;
 		val.floating = to!real(a);
 	} else static if(isPointer!(T)) {
 		if(a is null) {
-			val.type = JSON_TYPE.NULL;
+			//val.type = JSON_TYPE.NULL;
+			val = null;
 		} else {
 			val = toJsonValue!(typeof(*a), R)(*a, formatToStringAs, api);
 		}
 	} else static if(is(T == bool)) {
 		if(a == true)
-			val.type = JSON_TYPE.TRUE;
+			val = true; // .type = JSON_TYPE.TRUE;
 		if(a == false)
-			val.type = JSON_TYPE.FALSE;
+			val = false; // .type = JSON_TYPE.FALSE;
 	} else static if(isSomeString!(T)) {
-		val.type = JSON_TYPE.STRING;
+		//val.type = JSON_TYPE.STRING;
 		val.str = to!string(a);
 	} else static if(isAssociativeArray!(T)) {
-		val.type = JSON_TYPE.OBJECT;
+		//val.type = JSON_TYPE.OBJECT;
+		JSONValue[string] valo;
 		foreach(k, v; a) {
-			val.object[to!string(k)] = toJsonValue!(typeof(v), R)(v, formatToStringAs, api);
+			valo[to!string(k)] = toJsonValue!(typeof(v), R)(v, formatToStringAs, api);
 		}
+		val = valo;
 	} else static if(isArray!(T)) {
-		val.type = JSON_TYPE.ARRAY;
+		//val.type = JSON_TYPE.ARRAY;
 		val.array.length = a.length;
 		foreach(i, v; a) {
 			val.array[i] = toJsonValue!(typeof(v), R)(v, formatToStringAs, api);
 		}
 	} else static if(is(T == struct)) { // also can do all members of a struct...
-		val.type = JSON_TYPE.OBJECT;
+		//val.type = JSON_TYPE.OBJECT;
+
+		JSONValue[string] valo;
 
 		foreach(i, member; a.tupleof) {
 			string name = a.tupleof[i].stringof[2..$];
 			static if(a.tupleof[i].stringof[2] != '_')
-				val.object[name] = toJsonValue!(typeof(member), R)(member, formatToStringAs, api);
+				valo[name] = toJsonValue!(typeof(member), R)(member, formatToStringAs, api);
 		}
 			// HACK: bug in dmd can give debug members in a non-debug build
 			//static if(__traits(compiles, __traits(getMember, a, member)))
+		val = valo;
 	} else { /* our catch all is to just do strings */
-		val.type = JSON_TYPE.STRING;
+		//val.type = JSON_TYPE.STRING;
 		val.str = to!string(a);
 		// FIXME: handle enums
 	}
@@ -2188,7 +2218,8 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 	// don't want json because it could recurse
 	if(val.type == JSON_TYPE.OBJECT && formatToStringAs !is null && formatToStringAs != "json") {
 		JSONValue formatted;
-		formatted.type = JSON_TYPE.STRING;
+		//formatted.type = JSON_TYPE.STRING;
+		formatted.str = "";
 
 		formatAs!(T, R)(a, formatToStringAs, api, &formatted, null /* only doing one level of special formatting */);
 		assert(formatted.type == JSON_TYPE.STRING);
@@ -2338,7 +2369,7 @@ class ParamCheckHelper {
 				// FIXME: fix D's AA
 				foreach(k, v; among)
 					if(k == name) {
-						value = fromUrlParam!T(v);
+						value = fromUrlParam!T(v, name, null);
 						break;
 					}
 			//}
@@ -2393,7 +2424,7 @@ auto check(alias field)(ParamCheckHelper helper, bool delegate(typeof(field)) ok
 
 bool isConvertableTo(T)(string v) {
 	try {
-		auto t = fromUrlParam!(T)(v);
+		auto t = fromUrlParam!(T)(v, null, null);
 		return true;
 	} catch(Exception e) {
 		return false;
@@ -2473,7 +2504,7 @@ class NoSuchFunctionException : NoSuchPageException {
 	}
 }
 
-type fromUrlParam(type)(string ofInterest) {
+type fromUrlParam(type)(in string ofInterest, in string name, in string[][string] all) {
 	type ret;
 
 	static if(isArray!(type) && !isSomeString!(type)) {
@@ -2488,12 +2519,22 @@ type fromUrlParam(type)(string ofInterest) {
 		ret = doc.root;
 	} else static if(is(type : Text)) {
 		ret = ofInterest;
+	} else static if(is(type : Html)) {
+		ret.source = ofInterest;
 	} else static if(is(type : TimeOfDay)) {
 		ret = TimeOfDay.fromISOExtString(ofInterest);
 	} else static if(is(type : Date)) {
 		ret = Date.fromISOExtString(ofInterest);
 	} else static if(is(type : DateTime)) {
 		ret = DateTime.fromISOExtString(ofInterest);
+	} else static if(is(type == struct)) {
+		auto n = name.length ? (name ~ ".")  : "";
+		foreach(idx, thing; ret.tupleof) {
+			enum fn = ret.tupleof[idx].stringof[4..$];
+			auto lol = n ~ fn;
+			if(lol in all)
+				ret.tupleof[idx] = fromUrlParam!(typeof(thing))(all[lol], lol, all);
+		}
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -2509,20 +2550,20 @@ type fromUrlParam(type)(string ofInterest) {
 }
 
 /// turns a string array from the URL into a proper D type
-type fromUrlParam(type)(string[] ofInterest) {
+type fromUrlParam(type)(in string[] ofInterest, in string name, in string[][string] all) {
 	type ret;
 
 	// Arrays in a query string are sent as the name repeating...
 	static if(isArray!(type) && !isSomeString!type) {
 		foreach(a; ofInterest) {
-			ret ~= fromUrlParam!(ElementType!(type))(a);
+			ret ~= fromUrlParam!(ElementType!(type))(a, name, all);
 		}
 	} else static if(isArray!(type) && isSomeString!(ElementType!type)) {
 		foreach(a; ofInterest) {
-			ret ~= fromUrlParam!(ElementType!(type))(a);
+			ret ~= fromUrlParam!(ElementType!(type))(a, name, all);
 		}
 	} else
-		ret = fromUrlParam!type(ofInterest[$-1]);
+		ret = fromUrlParam!type(ofInterest[$-1], name, all);
 
 	return ret;
 }
@@ -2541,7 +2582,8 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 	WrapperReturn wrapper(Cgi cgi, WebDotDBaseType object, in string[][string] sargs, in string format, in string secondaryFormat = null) {
 
 		JSONValue returnValue;
-		returnValue.type = JSON_TYPE.STRING;
+		returnValue.str = "";
+		//returnValue.type = JSON_TYPE.STRING;
 
 		auto instantiation = getMemberDelegate!(ObjectType, funName)(cast(ObjectType) object);
 
@@ -2597,6 +2639,9 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 					} else 	static if(parameterHasDefault!(f)(i)) {
 						//args[i] = mixin(parameterDefaultOf!(f)(i));
 						args[i] = cast(type) parameterDefaultOf!(f, i);
+					} else 	static if(is(type == struct)) {
+						// try to load a struct as obj.members
+						args[i] = fromUrlParam!type(cast(string) null, name, sargs);
 					} else {
 						throw new InsufficientParametersException(funName, "arg " ~ name ~ " is not present");
 					}
@@ -2634,7 +2679,7 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 					}
 
 
-					args[i] = fromUrlParam!type(ofInterest);
+					args[i] = fromUrlParam!type(ofInterest, using, sargs);
 				}
 			}
 		}
@@ -2919,8 +2964,11 @@ class Session {
 		return new Session(cgi, cookieParams, useFile, true);
 	}
 
-	version(webd_memory_sessions)
+	version(webd_memory_sessions) {
+		// FIXME: make this a full fledged option, maybe even with an additional
+		// process to hold the information
 		__gshared static string[string][string] sessions;
+	}
 
 	/// Loads the session if available, and creates one if not.
 	/// May write a session id cookie to the passed cgi object.
@@ -2938,9 +2986,9 @@ class Session {
 
 		bool isNew = false;
 		// string token; // using a member, see the note below
-		if(cookieParams.name in cgi.cookies && cgi.cookies[cookieParams.name].length)
+		if(cookieParams.name in cgi.cookies && cgi.cookies[cookieParams.name].length) {
 			token = cgi.cookies[cookieParams.name];
-		else {
+		} else {
 			if("x-arsd-session-override" in cgi.requestHeaders) {
 				loadSpecialSession(cgi);
 				return;
@@ -2993,7 +3041,9 @@ class Session {
 		// Note: this won't work with memory sessions
 		version(webd_memory_sessions)
 			throw new Exception("You cannot access sessions this way.");
-		else {
+		else version(webd_cookie_sessions) {
+			// FIXME: implement
+		} else {
 			version(no_session_override)
 				throw new Exception("You cannot access sessions this way.");
 			else {
@@ -3025,6 +3075,8 @@ class Session {
 	public static void garbageCollect(bool delegate(string[string] data) finalizer = null, Duration maxAge = dur!"hours"(4)) {
 		version(webd_memory_sessions)
 			return; // blargh. FIXME really, they should be null so the gc can free them
+		version(webd_cookie_sessions)
+			return; // nothing needed to be done here
 
 		auto ctime = Clock.currTime();
 		foreach(DirEntry e; dirEntries(getTempDirectory(), "arsd_session_file_*", SpanMode.shallow)) {
@@ -3054,7 +3106,9 @@ class Session {
 	}
 
 	private string makeSessionId(string cookieToken) {
-		_sessionId = hashToString(SHA256(cgi.remoteAddress ~ "\r\n" ~ cgi.userAgent ~ "\r\n" ~ cookieToken));
+		// the remote address changes too much on some ISPs to be a useful check;
+		// using it means sessions get lost regularly and users log out :(
+		_sessionId = hashToString(SHA256(/*cgi.remoteAddress ~ "\r\n" ~*/ cgi.userAgent ~ "\r\n" ~ cookieToken));
 		return _sessionId;
 	}
 
@@ -3074,7 +3128,9 @@ class Session {
 		auto tmp = uniform(0, ulong.max);
 		auto token = to!string(tmp);
 
-		setOurCookie(token);
+		version(webd_cookie_sessions) {}
+		else
+			setOurCookie(token);
 
 		return token;
 	}
@@ -3111,6 +3167,8 @@ class Session {
 				if(sessionId in sessions)
 					sessions.remove(sessionId);
 			}
+		} else version(webd_cookie_sessions) {
+			// intentionally blank; the cookie will replace the old one
 		} else {
 			if(std.file.exists(getFilePath()))
 				std.file.remove(getFilePath());
@@ -3138,6 +3196,8 @@ class Session {
 				if(sessionId in sessions)
 					sessions.remove(sessionId);
 			}
+		} else version(webd_cookie_sessions) {
+			// nothing needed, setting data to null will do the trick
 		} else {
 			if(std.file.exists(getFilePath()))
 				std.file.remove(getFilePath());
@@ -3223,9 +3283,12 @@ class Session {
 	}
 
 	private static string[string] loadData(string path) {
-		string[string] data = null;
 		auto json = std.file.readText(path);
+		return loadDataFromJson(json);
+	}
 
+	private static string[string] loadDataFromJson(string json) {
+		string[string] data = null;
 		auto obj = parseJSON(json);
 		enforce(obj.type == JSON_TYPE.OBJECT);
 		foreach(k, v; obj.object) {
@@ -3272,7 +3335,6 @@ class Session {
 	void reload() {
 		data = null;
 
-
 		version(webd_memory_sessions) {
 			synchronized {
 				if(auto s = sessionId in sessions) {
@@ -3281,6 +3343,27 @@ class Session {
 					_hasData = true;
 				} else {
 					_hasData = false;
+				}
+			}
+		} else version(webd_cookie_sessions) {
+			// FIXME
+			if(cookieParams.name in cgi.cookies) {
+				auto cookie = cgi.cookies[cookieParams.name];
+				if(cookie.length) {
+					import std.base64;
+					import std.zlib;
+
+					auto cd = Base64URL.decode(cookie);
+
+					if(cd[0] == 'Z')
+						cd = cast(ubyte[]) uncompress(cd[1 .. $]);
+
+					if(cd.length > 20) {
+						auto hash = cd[$ - 20 .. $];
+						auto json = cast(string) cd[0 .. $-20];
+
+						data = loadDataFromJson(json);
+					}
 				}
 			}
 		} else {
@@ -3298,6 +3381,12 @@ class Session {
 		}
 	}
 
+	version(webd_cookie_sessions)
+	private ubyte[20] getSignature(string jsonData) {
+		import arsd.hmac;
+		return hmac!SHA1(import("webd-cookie-signature-key.txt"), jsonData)[0 .. 20];
+	}
+
 	// FIXME: there's a race condition here - if the user is using the session
 	// from two windows, one might write to it as we're executing, and we won't
 	// see the difference.... meaning we'll write the old data back.
@@ -3307,13 +3396,31 @@ class Session {
 		if(_readOnly)
 			return;
 		if(force || changed) {
-
-
 			version(webd_memory_sessions) {
 				synchronized {
 					sessions[sessionId] = data;
 					changed = false;
 				}
+			} else version(webd_cookie_sessions) {
+				immutable(ubyte)[] dataForCookie;
+				auto jsonData = toJson(data);
+				auto hash = getSignature(jsonData);
+				if(jsonData.length > 64) {
+					import std.zlib;
+					// file format: JSON ~ hash[20]
+					auto compressor = new Compress();
+					dataForCookie ~= "Z";
+					dataForCookie ~= cast(ubyte[]) compressor.compress(toJson(data));
+					dataForCookie ~= cast(ubyte[]) compressor.compress(hash);
+					dataForCookie ~= cast(ubyte[]) compressor.flush();
+				} else {
+					dataForCookie = cast(immutable(ubyte)[]) jsonData;
+					dataForCookie ~= hash;
+				}
+
+				import std.base64;
+				setOurCookie(Base64URL.encode(dataForCookie));
+				changed = false;
 			} else {
 				std.file.write(getFilePath(), toJson(data));
 				changed = false;
@@ -3330,7 +3437,7 @@ class Session {
 		}
 	}
 
-	private string[string] data;
+	string[string] data;
 	private bool _hasData;
 	private bool changed;
 	private bool _readOnly;
@@ -3403,14 +3510,34 @@ struct TemplateFilters {
 	string date(string replacement, string[], in Element, string) {
 		if(replacement.length == 0)
 			return replacement;
-		auto dateTicks = to!long(replacement);
-		auto date = SysTime( unixTimeToStdTime(cast(time_t)(dateTicks/1_000)) );
+		SysTime date;
+		if(replacement.isNumeric) {
+			auto dateTicks = to!long(replacement);
+			date = SysTime( unixTimeToStdTime(cast(time_t)(dateTicks/1_000)) );
+		} else {
+			date = cast(SysTime) DateTime.fromISOExtString(replacement);
+		}
 		
 		auto day = date.day;
 		auto year = date.year;
 		assert(date.month < monthNames.length, to!string(date.month));
 		auto month = monthNames[date.month];
 		replacement = format("%s %d, %d", month, day, year);
+
+		return replacement;
+	}
+
+	string limitSize(string replacement, string[] args, in Element, string) {
+		auto limit = to!int(args[0]);
+
+		if(replacement.length > limit) {
+			replacement = replacement[0 .. limit];
+			while(replacement.length && replacement[$-1] > 127)
+				replacement = replacement[0 .. $-1];
+
+			if(args.length > 1)
+				replacement ~= args[1];
+		}
 
 		return replacement;
 	}
@@ -3546,6 +3673,11 @@ void applyTemplateToElement(
 			// text nodes have no attributes, but they do have text we might replace.
 			tc.contents = htmlTemplateWithData(tc.contents, vars, pipeFunctions, false, tc, null);
 		} else {
+			if(ele.hasAttribute("data-html-from")) {
+				ele.innerHTML = htmlTemplateWithData(ele.dataset.htmlFrom, vars, pipeFunctions, false, ele, null);
+				ele.removeAttribute("data-html-from");
+			}
+
 			auto rs = cast(RawSource) ele;
 			if(rs !is null) {
 				bool isSpecial;
@@ -4728,7 +4860,7 @@ enum string javascriptBaseImpl = q{
 
 
 template hasAnnotation(alias f, Attr) {
-	bool helper() {
+	static bool helper() {
 		foreach(attr; __traits(getAttributes, f))
 			static if(is(attr == Attr) || is(typeof(attr) == Attr))
 				return true;
@@ -4739,7 +4871,7 @@ template hasAnnotation(alias f, Attr) {
 }
 
 template hasValueAnnotation(alias f, Attr) {
-	bool helper() {
+	static bool helper() {
 		foreach(attr; __traits(getAttributes, f))
 			static if(is(typeof(attr) == Attr))
 				return true;
@@ -4752,7 +4884,7 @@ template hasValueAnnotation(alias f, Attr) {
 
 
 template getAnnotation(alias f, Attr) if(hasValueAnnotation!(f, Attr)) {
-	auto helper() {
+	static auto helper() {
 		foreach(attr; __traits(getAttributes, f))
 			static if(is(typeof(attr) == Attr))
 				return attr;

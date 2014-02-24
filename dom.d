@@ -2289,6 +2289,8 @@ dchar parseEntity(in dchar[] entity) {
 		case "tilde": return '\u02DC';
 		case "trade": return '\u2122';
 
+		case "hellip": return '\u2026';
+		case "mdash": return '\u2014';
 
 		/*
 		case "cent":
@@ -2328,8 +2330,7 @@ dchar parseEntity(in dchar[] entity) {
 			return '\u00a9';
 		case "eacute":
 			return '\u00e9';
-		case "mdash":
-			return '\u2014';
+		case "mdash": return '\u2014';
 		case "ndash":
 			return '\u2013';
 		case "Omicron":
