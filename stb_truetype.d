@@ -383,7 +383,7 @@ version(BigEndian) {
    stbtt_int32 ttLONG(in stbtt_uint8* p)     { return * cast(stbtt_int32 *) (p); }
 } else {
    stbtt_uint16 ttUSHORT(const stbtt_uint8 *p) { return p[0]*256 + p[1]; }
-   stbtt_int16 ttSHORT(const stbtt_uint8 *p)   { return p[0]*256 + p[1]; }
+   stbtt_int16 ttSHORT(const stbtt_uint8 *p)   { return cast(short)(p[0]*256 + p[1]); }
    stbtt_uint32 ttULONG(const stbtt_uint8 *p)  { return (p[0]<<24) + (p[1]<<16) + (p[2]<<8) + p[3]; }
    stbtt_int32 ttLONG(const stbtt_uint8 *p)    { return (p[0]<<24) + (p[1]<<16) + (p[2]<<8) + p[3]; }
 }
