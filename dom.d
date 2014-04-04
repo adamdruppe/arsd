@@ -3488,6 +3488,12 @@ class Document : FileResource {
 		parse(data, false, false, null);
 	}
 
+	/// Parses well-formed UTF-8, case-sensitive, XML or XHTML
+	/// Will throw exceptions on things like unclosed tags.
+	void parseStrict(string data) {
+		parse(data, true, true);
+	}
+
 	Utf8Stream handleDataEncoding(in string rawdata, string dataEncoding, bool strict) {
 		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
 		if(dataEncoding is null) {
@@ -6028,6 +6034,12 @@ class Utf8Stream {
 		int posAdjustment;
 		+/
 }
+
+void fillForm(T)(Form form, T obj, string name) {
+	import arsd.database;
+	fillData((k, v) => form.setValue(k, v), obj, name);
+}
+
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2013
