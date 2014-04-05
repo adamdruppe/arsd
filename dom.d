@@ -752,6 +752,11 @@ body {
 class Element {
 	mixin DomConvenienceFunctions!();
 
+	// do nothing, this is primarily a virtual hook
+	// for links and forms
+	void setValue(string field, string value) { }
+
+
 	// this is a thing so i can remove observer support if it gets slow
 	// I have not implemented all these yet
 	private void sendObserverEvent(DomMutationOperations operation, string s1 = null, string s2 = null, Element r = null, Element r2 = null) {
@@ -2789,7 +2794,7 @@ class Link : Element {
 
 	/// Sets or adds the variable with the given name to the given value
 	/// It automatically URI encodes the values and takes care of the ? and &.
-	void setValue(string name, string variable) {
+	override void setValue(string name, string variable) {
 		auto vars = variablesHash();
 		vars[name] = variable;
 
@@ -2854,6 +2859,10 @@ class Form : Element {
 			return t.addField(label, name, options, fieldOptions);
 	}
 
+	override void setValue(string field, string value) {
+		setValue(field, value, true);
+	}
+
 	// FIXME: doesn't handle arrays; multiple fields can have the same name
 
 	/// Set's the form field's value. For input boxes, this sets the value attribute. For
@@ -2863,7 +2872,7 @@ class Form : Element {
 
 	/// If you set a value that doesn't exist, it throws an exception if makeNew is false.
 	/// Otherwise, it makes a new input with type=hidden to keep the value.
-	void setValue(string field, string value, bool makeNew = true) {
+	void setValue(string field, string value, bool makeNew) {
 		auto eles = getField(field);
 		if(eles.length == 0) {
 			if(makeNew) {
