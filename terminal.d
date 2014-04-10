@@ -1266,6 +1266,7 @@ struct RealTimeConsoleInput {
 
 	/// Get one character from the terminal
 	char getch() {
+		terminal.flush();
 		import core.stdc.stdio;
 		return cast(char) fgetc(stdin);
 	}
@@ -1353,6 +1354,7 @@ struct RealTimeConsoleInput {
 	/// a generic event loop, currently under -version=with_eventloop and it will
 	/// require the module arsd.eventloop (Linux only at this point)
 	InputEvent nextEvent() {
+		terminal.flush();
 		if(inputQueue.length) {
 			auto e = inputQueue[0];
 			inputQueue = inputQueue[1 .. $];
