@@ -1264,11 +1264,16 @@ struct RealTimeConsoleInput {
 		}
 	}
 
-	/// Get one character from the terminal
-	char getch() {
-		terminal.flush();
-		import core.stdc.stdio;
-		return cast(char) fgetc(stdin);
+	/// Get one character from the terminal, discarding other
+	/// events in the process.
+	dchar getch() {
+		auto event = nextEvent();
+		while(event.type != InputEvent.Type.CharacterEvent) {
+			if(event.type == InputEvent.Type.UserInterruptionEvent)
+				throw new Exception("Ctrl+c");
+			event = nextEvent();
+		}
+		return event.characterEvent.character;
 	}
 
 	//char[128] inputBuffer;
