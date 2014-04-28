@@ -654,6 +654,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	version(Windows)
 	~this() {
+		reset();
 		flush();
 		showCursor();
 	}
