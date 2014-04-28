@@ -5775,7 +5775,10 @@ extern(System){
 	void glTexCoord2f(float, float);
 	void glVertex2i(int, int);
 	void glBlendFunc (int, int);
+	void glDepthFunc (int);
 	void glViewport(int, int, int, int);
+
+	void glClearDepth(double);
 
 	void glReadBuffer(uint);
 	void glReadPixels(int, int, int, int, int, int, void*);
@@ -5786,6 +5789,7 @@ extern(System){
 	enum uint GL_BLEND = 0x0be2;
 	enum uint GL_SRC_ALPHA = 0x0302;
 	enum uint GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+	enum uint GL_LEQUAL = 0x0203;
 
 
 	enum uint GL_UNSIGNED_BYTE = 0x1401;
