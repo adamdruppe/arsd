@@ -29,19 +29,23 @@ version(Posix) {
 		struct SignalFired {}
 
 	extern(C)
-	void sizeSignalHandler(int sigNumber) {
+	void sizeSignalHandler(int sigNumber) nothrow {
 		windowSizeChanged = true;
 		version(with_eventloop) {
 			import arsd.eventloop;
-			send(SignalFired());
+			try
+				send(SignalFired());
+			catch(Exception) {}
 		}
 	}
 	extern(C)
-	void interruptSignalHandler(int sigNumber) {
+	void interruptSignalHandler(int sigNumber) nothrow {
 		interrupted = true;
 		version(with_eventloop) {
 			import arsd.eventloop;
-			send(SignalFired());
+			try
+				send(SignalFired());
+			catch(Exception) {}
 		}
 	}
 }
