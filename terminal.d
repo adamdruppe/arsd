@@ -1339,7 +1339,7 @@ struct RealTimeConsoleInput {
 
 		import std.utf;
 		size_t throwAway; // it insists on the index but we don't care
-		return decode(buffer, throwAway);
+		return decode(buffer[], throwAway);
 	}
 
 	InputEvent checkWindowSizeChanged() {
