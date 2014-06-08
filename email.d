@@ -199,7 +199,7 @@ class EmailMessage {
 	}
 
 	void send(RelayInfo mailServer = RelayInfo("smtp://localhost")) {
-		auto smtp = new SMTP(mailServer.server);
+		auto smtp = SMTP(mailServer.server);
 
 		smtp.verifyHost = false;
 		smtp.verifyPeer = false;

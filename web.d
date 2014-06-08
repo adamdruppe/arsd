@@ -251,6 +251,9 @@ class WebDotDBaseType {
 	/// use this to look at exceptions and set up redirects and such. keep in mind it does NOT change the regular behavior
 	void exceptionExaminer(Throwable e) {}
 
+	// HACK: to enable breaking up the path somehow
+	int pathInfoStartingPoint() { return 0; }
+
 	/// Override this if you want to do something special to the document
 	/// You should probably call super._postProcess at some point since I
 	/// might add some default transformations here.
@@ -400,6 +403,7 @@ class ApiProvider : WebDotDBaseType {
 	/// Shorthand for ensurePost and checkCsrfToken. You should use this on non-indempotent 
 	/// functions. Override it if doing some custom checking.
 	void ensureGoodPost() {
+		if(_noCsrfChecks) return;
 		ensurePost();
 		checkCsrfToken();
 	}
@@ -1719,6 +1723,7 @@ mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi))
 
 		// FIXME: won't work for multiple objects
 		T instantiation = new T();
+		instantiation.cgi = cgi;
 		auto reflection = prepareReflection!(T)(instantiation);
 
 		version(no_automatic_session) {}
@@ -1738,9 +1743,9 @@ mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi))
 		}
 
 		version(webd_cookie_sessions)
-			run(cgi, instantiation, 0, true, session);
+			run(cgi, instantiation, instantiation.pathInfoStartingPoint, true, session);
 		else
-			run(cgi, instantiation);
+			run(cgi, instantiation, instantiation.pathInfoStartingPoint);
 
 /+
 		if(args.length > 1) {
@@ -2191,10 +2196,13 @@ JSONValue toJsonValue(T, R = ApiProvider)(T a, string formatToStringAs = null, R
 		val = valo;
 	} else static if(isArray!(T)) {
 		//val.type = JSON_TYPE.ARRAY;
-		val.array.length = a.length;
+		JSONValue[] arr;
+		arr.length = a.length;
 		foreach(i, v; a) {
-			val.array[i] = toJsonValue!(typeof(v), R)(v, formatToStringAs, api);
+			arr[i] = toJsonValue!(typeof(v), R)(v, formatToStringAs, api);
 		}
+
+		val.array = arr;
 	} else static if(is(T == struct)) { // also can do all members of a struct...
 		//val.type = JSON_TYPE.OBJECT;
 
@@ -3571,8 +3579,9 @@ struct TemplateFilters {
 			return replacement;
 	}
 
+	// {$count|plural singular plural}
 	string plural(string replacement, string[] args, in Element, string) {
-		return pluralHelper(args.length ? args[0] : null, replacement, args.length > 1 ? args[1] : null);
+		return pluralHelper(replacement, args.length ? args[0] : null, args.length > 1 ? args[1] : null);
 	}
 
 	string pluralHelper(string number, string word, string pluralWord = null) {

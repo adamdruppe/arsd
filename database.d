@@ -1285,3 +1285,150 @@ void main() {
 void typeinfoBugWorkaround() {
 	assert(0, to!string(typeid(immutable(char[])[immutable(char)[]])));
 }
+
+mixin template DatabaseOperations(string table) {
+	DataObject getAsDb(Database db) {
+		return objectToDataObject!(typeof(this))(this, db, table);
+	}
+
+	static typeof(this) fromRow(Row row) {
+		return rowToObject!(typeof(this))(row);
+	}
+
+	static typeof(this) fromId(Database db, long id) {
+		auto query = new SelectBuilder(db);
+		query.table = table;
+		query.fields ~= "*";
+		query.wheres ~= "id = ?0";
+		auto res = db.query(query.toString(), id);
+		if(res.empty)
+			throw new Exception("no such row");
+		return fromRow(res.front);
+	}
+
+}
+
+import std.traits, std.datetime;
+enum DbSave;
+enum DbNullable;
+alias AliasHelper(alias T) = T;
+
+T rowToObject(T)(Row row) {
+	import arsd.dom, arsd.cgi;
+
+	T t;
+	foreach(memberName; __traits(allMembers, T)) {
+		alias member = AliasHelper!(__traits(getMember, t, memberName));
+		foreach(attr; __traits(getAttributes, member)) {
+			static if(is(attr == DbSave)) {
+				static if(is(typeof(member) == enum))
+					__traits(getMember, t, memberName) = cast(typeof(member)) to!int(row[memberName]);
+				else static if(is(typeof(member) == bool)) {
+					__traits(getMember, t, memberName) = row[memberName][0] == 't';
+				} else static if(is(typeof(member) == Html)) {
+					__traits(getMember, t, memberName).source = row[memberName];
+				} else static if(is(typeof(member) == DateTime))
+					__traits(getMember, t, memberName) = cast(DateTime) dTimeToSysTime(to!long(row[memberName]));
+				else {
+					if(row[memberName].length)
+						__traits(getMember, t, memberName) = to!(typeof(member))(row[memberName]);
+					// otherwise, we'll leave it as .init - most likely null
+				}
+			}
+		}
+	}
+	return t;
+
+}
+
+DataObject objectToDataObject(T)(T t, Database db, string table) {
+	import arsd.dom, arsd.cgi;
+
+	DataObject obj = new DataObject(db, table);
+	foreach(memberName; __traits(allMembers, T)) {
+		alias member = AliasHelper!(__traits(getMember, t, memberName));
+		foreach(attr; __traits(getAttributes, member)) {
+			static if(is(attr == DbSave)) {
+				static if(is(typeof(member) == enum))
+					obj.opDispatch!memberName(cast(int) __traits(getMember, t, memberName));
+				else static if(is(typeof(member) == Html)) {
+					obj.opDispatch!memberName(__traits(getMember, t, memberName).source);
+				} else static if(is(typeof(member) == DateTime))
+					obj.opDispatch!memberName(dateTimeToDTime(__traits(getMember, t, memberName)));
+				else {
+					bool done;
+					foreach(attr2; __traits(getAttributes, member)) {
+						static if(is(attr2 == DbNullable)) {
+							if(__traits(getMember, t, memberName) == 0)
+								done = true;
+						}
+					}
+
+					if(!done)
+						obj.opDispatch!memberName(__traits(getMember, t, memberName));
+				}
+			}
+		}
+	}
+	return obj;
+}
+
+
+
+void fillData(T)(string delegate(string, string) setter, T obj, string name) {
+	fillData( (k, v) { setter(k, v); }, obj, name);
+}
+
+void fillData(T)(void delegate(string, string) setter, T obj, string name) {
+	import arsd.dom, arsd.cgi;
+
+	import std.traits;
+	static if(!isSomeString!T && isArray!T) {
+		// FIXME: indexing
+		foreach(o; obj)
+			fillData(setter, o, name);
+	} else static if(is(T == DateTime)) {
+		 fillData(setter, obj.toISOExtString(), name);
+	} else static if(is(T == Html)) {
+		 fillData(setter, obj.source, name);
+	} else static if(is(T == struct)) {
+		foreach(idx, memberName; __traits(allMembers, T)) {
+			alias member = AliasHelper!(__traits(getMember, obj, memberName));
+			static if(!is(typeof(member) == function))
+				fillData(setter, __traits(getMember, obj, memberName), name ~ "." ~ memberName);
+			else static if(is(typeof(member) == function)) {
+				static if(functionAttributes!member & FunctionAttribute.property) {
+					fillData(setter, __traits(getMember, obj, memberName)(), name ~ "." ~ memberName);
+				}
+			}
+		}
+	} else {
+		auto value = to!string(obj);
+		setter(name, value);
+	}
+}
+
+struct varchar(size_t max) {
+	private string payload;
+
+	this(string s, string file = __FILE__, size_t line = __LINE__) {
+		opAssign(s, file, line);
+	}
+
+	typeof(this) opAssign(string s, string file = __FILE__, size_t line = __LINE__) {
+		if(s.length > max)
+			throw new Exception(s ~ " :: too long", file, line);
+		payload = s;
+
+		return this;
+	}
+
+	string asString() {
+		return payload;
+
+	}
+	alias asString this;
+}
+
+
+

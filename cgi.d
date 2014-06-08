@@ -229,6 +229,8 @@ class Cgi {
 	enum RequestMethod { GET, HEAD, POST, PUT, DELETE, // GET and POST are the ones that really work
 		// these are defined in the standard, but idk if they are useful for anything
 		OPTIONS, TRACE, CONNECT,
+		// These seem new, I have only recently seen them
+		PATCH, MERGE,
 		// this is an extension for when the method is not specified and you want to assume
 		CommandLine }
 

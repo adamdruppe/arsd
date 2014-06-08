@@ -660,7 +660,6 @@ void wrapTextNodes(Document document, TextWrapperWhitespaceBehavior whatToDoWith
 		final switch(whatToDoWithWhitespaceNodes) {
 			case TextWrapperWhitespaceBehavior.wrap:
 				break; // treat it like all other text
-			break;
 			case TextWrapperWhitespaceBehavior.stripOut:
 				// if it's actually whitespace...
 				if(tn.contents.strip().length == 0) {
@@ -672,7 +671,6 @@ void wrapTextNodes(Document document, TextWrapperWhitespaceBehavior whatToDoWith
 				// if it's actually whitespace...
 				if(tn.contents.strip().length == 0)
 					continue;
-			break;
 		}
 
 		tn.replaceWith(Element.make(ourTag, tn.contents));
@@ -1658,7 +1656,6 @@ class MacroExpander {
 
 		functions["test"] = delegate dstring(dstring[] args) {
 			assert(0, to!string(args.length) ~ " args: " ~ to!string(args));
-			return null;
 		};
 
 		functions["include"] = &include;
@@ -1878,7 +1875,6 @@ class MacroExpander {
 					// then see if there's a { argument too
 					checkForAllArguments = false;
 					goto moreArguments;
-				break;
 				case '{':
 					// find the match
 					int open;
@@ -1900,7 +1896,6 @@ class MacroExpander {
 					}
 
 					goto doReplacement;
-				break;
 				default:
 					goto doReplacement;
 			}
