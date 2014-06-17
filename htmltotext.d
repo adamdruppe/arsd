@@ -4,7 +4,7 @@ import arsd.dom;
 import std.string;
 import std.array : replace;
 
-string repeat(string s, int num) {
+string repeat(string s, ulong num) {
 	string ret;
 	foreach(i; 0 .. num)
 		ret ~= s;
