@@ -815,6 +815,13 @@ string decodeEncodedWord(string data) {
 		data = data[questionMark + 2 .. $];
 
 		delimiter = data.indexOf("=?");
+		if (delimiter == 1 && data[0] == ' ') {
+			// a single space between encoded words must be ignored because it is
+			// used to separate multiple encoded words (RFC2047 says CRLF SPACE but a most clients
+			// just use a space)
+			data = data[1..$];
+			delimiter = 0;
+		}
 
 		immutable(ubyte)[] decodedText;
 		if(encoding == "Q")
@@ -843,6 +850,8 @@ immutable(ubyte)[] decodeQuotedPrintable(string text) {
 				if(b == '=') {
 					state++;
 					hexByte = 0;
+				} else if (b == '_') { // RFC2047 4.2.2: a _ may be used to represent a space
+					ret ~= ' ';
 				} else
 					ret ~= b;
 			break;
