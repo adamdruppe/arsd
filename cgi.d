@@ -812,14 +812,17 @@ class Cgi {
 			}
 		}
 
-		if(pps.contentType == "application/x-www-form-urlencoded") {
+		// while a content type SHOULD be sent according to the RFC, it is
+		// not required. We're told we SHOULD guess by looking at the content
+		// but it seems to me that this only happens when it is urlencoded.
+		if(pps.contentType == "application/x-www-form-urlencoded" || pps.contentType == "") {
 			pps.isMultipart = false;
 		} else if(pps.contentType == "multipart/form-data") {
 			pps.isMultipart = true;
 			enforce(pps.boundary.length, "no boundary");
 		} else {
 			// FIXME: should set a http error code too
-			throw new Exception("unknown request content type");
+			throw new Exception("unknown request content type: " ~ pps.contentType);
 		}
 	}
 
