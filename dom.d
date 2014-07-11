@@ -1906,7 +1906,7 @@ class Element {
 	{
 		auto e = Element.make(this.tagName);
 		e.parentDocument = this.parentDocument;
-		e.attributes = this.attributes.dup;
+		e.attributes = this.attributes.aadup;
 		e.selfClosed = this.selfClosed;
 		foreach(child; children) {
 			e.appendChild(child.cloned);
@@ -1923,7 +1923,7 @@ class Element {
 		// shallow clone
 		auto e = Element.make(this.tagName);
 		e.parentDocument = this.parentDocument;
-		e.attributes = this.attributes.dup;
+		e.attributes = this.attributes.aadup;
 		e.selfClosed = this.selfClosed;
 		return e;
 	}
@@ -5781,7 +5781,7 @@ package bool isInArray(T)(T item, T[] arr) {
 	return false;
 }
 
-private string[string] dup(in string[string] arr) {
+private string[string] aadup(in string[string] arr) {
 	string[string] ret;
 	foreach(k, v; arr)
 		ret[k] = v;
