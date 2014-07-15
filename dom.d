@@ -2300,6 +2300,9 @@ dchar parseEntity(in dchar[] entity) {
 		case "lsquo": return '\u2018';
 		case "rsquo": return '\u2019';
 
+		case "Omicron": return '\u039f'; 
+		case "omicron": return '\u03bf'; 
+
 		// and handling numeric entities
 		default:
 			if(entity[1] == '#') {
@@ -2323,7 +2326,7 @@ dchar parseEntity(in dchar[] entity) {
 					return cast(dchar) p;
 				}
 			} else
-				return '?';
+				return '\ufffd'; // replacement character diamond thing
 	}
 
 	assert(0);
