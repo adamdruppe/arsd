@@ -303,7 +303,7 @@ struct Terminal {
 		bool terminalInFamily(string[] terms...) {
 			import std.process;
 			import std.string;
-			auto term = environment["TERM"];
+			auto term = environment.get("TERM");
 			foreach(t; terms)
 				if(indexOf(term, t) != -1)
 					return true;
@@ -393,9 +393,9 @@ struct Terminal {
 			import std.string;
 			import std.array;
 
-			string termcapData = environment["TERMCAP"];
+			string termcapData = environment.get("TERMCAP");
 			if(termcapData.length == 0) {
-				termcapData = getTermcapDatabase(environment["TERM"]);
+				termcapData = getTermcapDatabase(environment.get("TERM"));
 			}
 
 			auto e = replace(termcapData, "\\\n", "\n");
