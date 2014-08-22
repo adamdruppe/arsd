@@ -6003,6 +6003,10 @@ class Utf8Stream {
 		+/
 }
 
+void fillForm(T)(Form form, T obj, string name) {
+    import arsd.database;
+    fillData((k, v) => form.setValue(k, v), obj, name);
+}
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2013
