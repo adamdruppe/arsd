@@ -51,7 +51,6 @@ else {
 
 
 import std.string;
-import std.container;
 
 // the reason this is separated is so I can plug it into D->JS as well, which uses a different base Element class
 
@@ -1602,7 +1601,7 @@ class Element {
 			}
 		}
 
-		auto ret = std.container.dup(e.children);
+		auto ret = e.children.dup;
 		e.children.length = 0;
 
 		return ret;
@@ -1838,7 +1837,7 @@ class Element {
 				assert(r.parentNode is null);
 		}
 	body {
-		Element[] oldChildren = std.container.dup(children);
+		Element[] oldChildren = children.dup;
 		foreach(c; oldChildren)
 			c.parentNode = null;
 
@@ -6003,11 +6002,15 @@ class Utf8Stream {
 		+/
 }
 
+void fillForm(T)(Form form, T obj, string name) { 
+	import arsd.database; 
+	fillData((k, v) => form.setValue(k, v), obj, name); 
+} 
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2013
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r among others
 
         Copyright Adam D. Ruppe 2010-2013.
 Distributed under the Boost Software License, Version 1.0.
