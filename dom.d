@@ -51,6 +51,7 @@ else {
 
 
 import std.string;
+import std.container;
 
 // the reason this is separated is so I can plug it into D->JS as well, which uses a different base Element class
 
@@ -1601,7 +1602,7 @@ class Element {
 			}
 		}
 
-		auto ret = e.children.dup;
+		auto ret = std.container.dup(e.children);
 		e.children.length = 0;
 
 		return ret;
@@ -1837,7 +1838,7 @@ class Element {
 				assert(r.parentNode is null);
 		}
 	body {
-		Element[] oldChildren = children.dup;
+		Element[] oldChildren = std.container.dup(children);
 		foreach(c; oldChildren)
 			c.parentNode = null;
 
@@ -6042,11 +6043,6 @@ class Utf8Stream {
 
 		int posAdjustment;
 		+/
-}
-
-void fillForm(T)(Form form, T obj, string name) {
-	import arsd.database;
-	fillData((k, v) => form.setValue(k, v), obj, name);
 }
 
 
