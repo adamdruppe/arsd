@@ -25,18 +25,21 @@ class OpenSslSocket : Socket {
 		SSL_set_fd(ssl, this.handle);
 	}
 
+	@trusted
 	override void connect(Address to) {
 		super.connect(to);
 		if(SSL_connect(ssl) == -1)
 			throw new Exception("ssl connect");
 	}
-
+	
+	@trusted
 	override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
 		return SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 	}
 	override ptrdiff_t send(const(void)[] buf) {
 		return send(buf, SocketFlags.NONE);
 	}
+	@trusted
 	override ptrdiff_t receive(void[] buf, SocketFlags flags) {
 		return SSL_read(ssl, buf.ptr, buf.length);
 	}
