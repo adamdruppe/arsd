@@ -41,7 +41,7 @@ class OpenSslSocket : Socket {
 	}
 	@trusted
 	override ptrdiff_t receive(void[] buf, SocketFlags flags) {
-		return SSL_read(ssl, buf.ptr, buf.length);
+		return SSL_read(ssl, buf.ptr, cast(int)buf.length);
 	}
 	override ptrdiff_t receive(void[] buf) {
 		return receive(buf, SocketFlags.NONE);
