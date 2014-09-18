@@ -1,5 +1,6 @@
-// Copyright 2013, Adam D. Ruppe. All Rights Reserved.
-module arsd.http2;
+module arsd.http;
+
+import std.socket;
 
 // FIXME: check Transfer-Encoding: gzip always
 
@@ -313,7 +314,7 @@ body {
 			final switch(state) {
 				case 0: // reading hex
 					char c = response[a];
-					if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+					if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 						// just keep reading
 					} else {
 						int power = 1;
@@ -326,7 +327,7 @@ body {
 							if(cc >= '0' && cc <= '9')
 								val = cc - '0';
 							else
-								val = cc - 'A';
+								val = cc - 'A' + 10;
 
 							size += power * val;
 							power *= 16;
@@ -347,8 +348,8 @@ body {
 				case 2: // reading data
 					hr.content ~= response[a..a+size];
 					a += size;
-					a+= 2; // skipping a 13 10
-					start = a;
+					a+= 1; // skipping a 13 10
+					start = a + 1;
 					state = 0;
 				break;
 				case 3: // reading footers
@@ -369,6 +370,8 @@ void main(string args[]) {
 	write(post("http://arsdnet.net/bugs.php", ["test" : "hey", "again" : "what"]));
 }
 */
+
+version(none):
 
 struct Url {
 	string url;

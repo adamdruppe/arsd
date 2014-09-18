@@ -488,7 +488,7 @@ class HttpRequest {
 					final switch(bodyReadingState.chunkedState) {
 						case 0: // reading hex
 							char c = data[a];
-							if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+							if((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 								// just keep reading
 							} else {
 								int power = 1;
@@ -501,7 +501,7 @@ class HttpRequest {
 									if(cc >= '0' && cc <= '9')
 										val = cc - '0';
 									else
-										val = cc - 'A';
+										val = cc - 'A' + 10;
 
 									bodyReadingState.contentLengthRemaining += power * val;
 									power *= 16;
@@ -524,8 +524,8 @@ class HttpRequest {
 							responseData.content ~= data[a .. a + bodyReadingState.contentLengthRemaining];
 
 							a += bodyReadingState.contentLengthRemaining;
-							a += 2; // skipping a 13 10
-							data = data[a .. $];
+							a += 1; // skipping a 13 10
+							data = data[a+1 .. $];
 							bodyReadingState.chunkedState = 0;
 							goto start_over;
 						break;
