@@ -138,9 +138,10 @@ class Sqlite : Database {
 	}
 
 	string error(){
+		import core.stdc.string : strlen;
 		char* mesg = sqlite3_errmsg(db);
 		char[] m;
-		sizediff_t a = std.c.string.strlen(mesg);
+		sizediff_t a = strlen(mesg);
 		m.length = a;
 		for(int v = 0; v < a; v++)
 			m[v] = mesg[v];
@@ -160,8 +161,9 @@ class Sqlite : Database {
 	int exec(string sql, void delegate (char[][char[]]) onEach = null) {
 		char* mesg;
 		if(sqlite3_exec(db, toStringz(sql), &callback, &onEach, &mesg) != SQLITE_OK) {
+			import core.stdc.string : strlen;
 			char[] m;
-			sizediff_t a = std.c.string.strlen(mesg);
+			sizediff_t a = strlen(mesg);
 			m.length = a;
 			for(int v = 0; v < a; v++)
 				m[v] = mesg[v];
@@ -281,8 +283,9 @@ struct Statement {
 
 				columnNames.length = count;
 				for(int a = 0; a < count; a++){
+					import core.stdc.string : strlen;
 					char* str = sqlite3_column_name(s, a);
-					sizediff_t l = std.c.string.strlen(str);
+					sizediff_t l = strlen(str);
 					columnNames[a].length = l;
 					for(int b = 0; b < l; b++)
 						columnNames[a][b] = str[b];
@@ -332,7 +335,8 @@ struct Statement {
 						char* str = sqlite3_column_text(s, a);
 						char[] st;
 
-						sizediff_t l = std.c.string.strlen(str);
+						import core.stdc.string : strlen;
+						sizediff_t l = strlen(str);
 						st.length = l;
 						for(int aa = 0; aa < l; aa++)
 							st[aa] = str[aa];
@@ -621,15 +625,16 @@ extern(C) int callback(void* cb, int howmany, char** text, char** columns){
 
 
 	char[][char[]] row;
+	import core.stdc.string : strlen;
 
 	for(int a = 0; a < howmany; a++){
-		sizediff_t b = std.c.string.strlen(columns[a]);
+		sizediff_t b = strlen(columns[a]);
 		char[] buf;
 		buf.length = b;
 		for(int c = 0; c < b; c++)
 			buf[c] = columns[a][c];
 
-		sizediff_t d = std.c.string.strlen(text[a]);
+		sizediff_t d = strlen(text[a]);
 		char[] t;
 		t.length = d;
 		for(int c = 0; c < d; c++)

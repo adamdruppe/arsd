@@ -1471,7 +1471,6 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						obj.elements[key.str] = value;
 
 						goto moreKeys;
-					break;
 					case "function":
 						tokens.requireNextToken(ScriptToken.Type.symbol, "(");
 
@@ -1969,7 +1968,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 			ret = parseAddend(tokens);
 	} else {
 		assert(0);
-		return null;
+		// return null;
 	//	throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", token.lineNumber);
 	}
 
@@ -2140,13 +2139,12 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 					// whatever else keyword or operator related is actually illegal here
 					throw new ScriptCompileException("Parse error, unexpected " ~ token.str, token.lineNumber);
 			}
-		break;
+		// break;
 		case ScriptToken.Type.identifier:
 		case ScriptToken.Type.string:
 		case ScriptToken.Type.int_number:
 		case ScriptToken.Type.float_number:
 			return parseExpression(tokens);
-		break;
 	}
 
 	assert(0);

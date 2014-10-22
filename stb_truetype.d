@@ -157,8 +157,8 @@ import std.file;
    alias uint   stbtt_uint32;
    alias int    stbtt_int32;
 
-   alias char stbtt__check_size32[(stbtt_int32.sizeof)==4 ? 1 : -1];
-   alias char stbtt__check_size16[(stbtt_int16.sizeof)==2 ? 1 : -1];
+   alias char[(stbtt_int32.sizeof)==4 ? 1 : -1] stbtt__check_size32;
+   alias char[(stbtt_int16.sizeof)==2 ? 1 : -1] stbtt__check_size16;
 
    static import core.stdc.stdlib;
    alias STBTT_sort = core.stdc.stdlib.qsort;
@@ -508,7 +508,7 @@ int stbtt_FindGlyphIndex(const stbtt_fontinfo *info, int unicode_codepoint)
       return 0;
    } else if (format == 2) {
       assert(0); // @TODO: high-byte mapping for japanese/chinese/korean
-      return 0;
+      //return 0;
    } else if (format == 4) { // standard mapping for windows fonts: binary search collection of ranges
       stbtt_uint16 segcount = ttUSHORT(data+index_map+6) >> 1;
       stbtt_uint16 searchRange = ttUSHORT(data+index_map+8) >> 1;
@@ -581,7 +581,7 @@ int stbtt_FindGlyphIndex(const stbtt_fontinfo *info, int unicode_codepoint)
    }
    // @TODO
    assert(0);
-   return 0;
+   // return 0;
 }
 
 int stbtt_GetCodepointShape(const stbtt_fontinfo *info, int unicode_codepoint, stbtt_vertex **vertices)
@@ -806,7 +806,7 @@ int stbtt_GetGlyphShape(const stbtt_fontinfo *info, int glyph_index, stbtt_verte
          stbtt_uint16 flags, gidx;
          int comp_num_verts = 0, i;
          stbtt_vertex* comp_verts = null, tmp = null;
-         float mtx[6] = [1,0,0,1,0,0];
+         float[6] mtx = [1,0,0,1,0,0];
 	 float m, n;
          
          flags = ttSHORT(comp); comp+=2;
@@ -1231,7 +1231,7 @@ static void stbtt__rasterize(stbtt__bitmap *result, stbtt__point *pts, int *wcou
          e[n].invert = 0;
          if (invert ? p[j].y > p[k].y : p[j].y < p[k].y) {
             e[n].invert = 1;
-            a=j,b=k;
+            a=j;b=k;
          }
          e[n].x0 = p[a].x * scale_x + shift_x;
          e[n].y0 = p[a].y * y_scale_inv * vsubsample + shift_y;
@@ -1321,7 +1321,7 @@ stbtt__point *stbtt_FlattenCurves(stbtt_vertex *vertices, int num_verts, float o
                ++n;
                start = num_points;
 
-               x = vertices[i].x, y = vertices[i].y;
+               x = vertices[i].x; y = vertices[i].y;
                stbtt__add_point(points, num_points++, x,y);
                break;
             case STBTT_vline:
@@ -1333,7 +1333,7 @@ stbtt__point *stbtt_FlattenCurves(stbtt_vertex *vertices, int num_verts, float o
                                         vertices[i].cx, vertices[i].cy,
                                         vertices[i].x,  vertices[i].y,
                                         objspace_flatness_squared, 0);
-               x = vertices[i].x, y = vertices[i].y;
+               x = vertices[i].x; y = vertices[i].y;
                break;
          }
       }
@@ -1483,7 +1483,7 @@ extern int stbtt_BakeFontBitmap(const ubyte *data, int offset,  // font location
       gw = x1-x0;
       gh = y1-y0;
       if (x + gw + 1 >= pw)
-         y = bottom_y, x = 1; // advance to next row
+         { y = bottom_y; x = 1; } // advance to next row
       if (y + gh + 1 >= ph) // check if it fits vertically AFTER potentially moving to next row
          return -i;
       assert(x+gw < pw);

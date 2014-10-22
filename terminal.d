@@ -1650,7 +1650,6 @@ struct RealTimeConsoleInput {
 						}
 					}
 					return [InputEvent(PasteEvent(data))];
-				break;
 				case "\033[M":
 					// mouse event
 					auto buttonCode = nextRaw() - 32;
@@ -1714,7 +1713,6 @@ struct RealTimeConsoleInput {
 					m.modifierState = modifiers;
 
 					return [InputEvent(m)];
-				break;
 				default:
 					// look it up in the termcap key database
 					auto cap = terminal.findSequenceInTermcap(sequence);

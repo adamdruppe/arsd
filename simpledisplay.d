@@ -1681,7 +1681,7 @@ version(Windows) {
 			int biYPelsPerMeter;
 			uint biClrUsed;
 			uint biClrImportant;
-			RGBQUAD biColors[colorCount];
+			RGBQUAD[colorCount] biColors;
 			/* Pixels:
 			Uint8 pixels[]
 			*/
@@ -4300,7 +4300,7 @@ struct XKeymapEvent
 	Bool send_event;	/* true if this came from a SendEvent request */
 	Display *display;	/* Display the event was read from */
 	Window window;
-	byte key_vector[32];
+	byte[32] key_vector;
 }
 
 struct XExposeEvent
@@ -4563,9 +4563,9 @@ struct XClientMessageEvent
 	Atom message_type;
 	int format;
 	union Data{
-		byte b[20];
-		short s[10];
-		arch_ulong l[5];
+		byte[20] b;
+		short[10] s;
+		arch_ulong[5] l;
 	}
 	Data data;
 	
@@ -4638,7 +4638,7 @@ union XEvent{
 	XMappingEvent xmapping;
 	XErrorEvent xerror;
 	XKeymapEvent xkeymap;
-	arch_ulong pad[24];
+	arch_ulong[24] pad;
 }
 
 
@@ -4942,6 +4942,10 @@ struct Visual
 	void XSetWMName(Display*, Window, XTextProperty*);
 
 	enum Atom XA_STRING = 31;
+	enum Atom XA_ATOM = 4;
+	enum int PropModeAppend = 2;
+	enum int PropModeReplace = 0;
+	enum int PropModePrepend = 1;
 
 
  } else version (OSXCocoa) {

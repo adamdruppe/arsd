@@ -48,33 +48,27 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 				ele.innerText = "*" ~ ele.innerText ~ "*";
 				ele.stripOut();
 				goto again;
-			break;
 			case "i":
 			case "em":
 				ele.innerText = "/" ~ ele.innerText ~ "/";
 				ele.stripOut();
 				goto again;
-			break;
 			case "u":
 				ele.innerText = "_" ~ ele.innerText ~ "_";
 				ele.stripOut();
 				goto again;
-			break;
 			case "h1":
 				ele.innerText = "\r" ~ ele.innerText ~ "\n" ~ repeat("=", ele.innerText.length) ~ "\r";
 				ele.stripOut();
 				goto again;
-			break;
 			case "h2":
 				ele.innerText = "\r" ~ ele.innerText ~ "\n" ~ repeat("-", ele.innerText.length) ~ "\r";
 				ele.stripOut();
 				goto again;
-			break;
 			case "h3":
 				ele.innerText = "\r" ~ ele.innerText.toUpper ~ "\r";
 				ele.stripOut();
 				goto again;
-			break;
 			case "td":
 			case "p":
 			/*
@@ -96,7 +90,6 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 				}
 				ele.stripOut();
 				goto again;
-			break;
 			case "ol":
 			case "ul":
 				ele.innerHTML = "\r" ~ ele.innerHTML ~ "\r";

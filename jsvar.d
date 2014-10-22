@@ -168,7 +168,7 @@ writeln(interpret("x*x + 3*x;", var(["x":3])));
 	};
 
 	// call D defined functions in script
-	globals.func =  (var a, var b) { writeln("Hello, world! You are : ", a, " and ", b); };
+	globals.func = (var a, var b) { writeln("Hello, world! You are : ", a, " and ", b); };
 
 	globals.ex = () { throw new ScriptRuntimeException("test", 1); };
 
@@ -613,7 +613,7 @@ struct var {
 			this._type = Type.String;
 			this._payload._string = to!string(t);
 		} else static if((is(T == class) || is(T == struct) || isAssociativeArray!T)) {
-			this,_type = Type.Object;
+			this._type = Type.Object;
 			auto obj = new PrototypeObject();
 			this._payload._object = obj;
 
@@ -748,9 +748,8 @@ struct var {
 					if(this._object !is null)
 						return this._object.toString();
 					return "null";
-				}
-
-				return T.init;
+				} else
+					return T.init;
 			case Type.Integral:
 				static if(isFloatingPoint!T || isIntegral!T)
 					return to!T(this._payload._integral);
@@ -766,11 +765,12 @@ struct var {
 				else
 					return T.init;
 			case Type.String:
-				static if(__traits(compiles, to!T(this._payload._string)))
+				static if(__traits(compiles, to!T(this._payload._string))) {
 					try {
 						return to!T(this._payload._string);
-					} catch (Exception e) {}
-				return T.init;
+					} catch (Exception e) { return T.init; }
+				} else
+					return T.init;
 			case Type.Array:
 				import std.range;
 				auto pl = this._payload._array;
@@ -786,16 +786,15 @@ struct var {
 					foreach(item; pl)
 						ret ~= item.get!(getType);
 					return ret;
-				}
-
+				} else
+					return T.init;
 				// is it sane to translate anything else?
-
-				return T.init;
 			case Type.Function:
 				static if(isSomeString!T)
 					return "<function>";
+				else
+					return T.init;
 				// FIXME: we just might be able to do better for both of these
-				return T.init;
 			//break;
 		}
 	}
@@ -1091,7 +1090,6 @@ struct var {
 				}
 
 				return _arrayPrototype;
-			break;
 			case Type.Function:
 				assert(_functionPrototype._type == Type.Object);
 				if(_functionPrototype._payload._object is null) {
@@ -1099,7 +1097,6 @@ struct var {
 				}
 
 				return _functionPrototype;
-			break;
 			case Type.String:
 				assert(_stringPrototype._type == Type.Object);
 				if(_stringPrototype._payload._object is null) {
@@ -1107,7 +1104,6 @@ struct var {
 				}
 
 				return _stringPrototype;
-			break;
 			case Type.Object:
 				if(_payload._object)
 					return _payload._object._prototype;

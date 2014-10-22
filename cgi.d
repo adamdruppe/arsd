@@ -496,7 +496,7 @@ class Cgi {
 		flushDelegate = _flush;
 		auto getenv = delegate string(string var) {
 			if(env is null)
-				return .getenv(var);
+				return std.process.environment.get(var);
 			auto e = var in env;
 			if(e is null)
 				return null;

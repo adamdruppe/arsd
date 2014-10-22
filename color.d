@@ -887,7 +887,12 @@ body {
 		sorted ~= ColorUse(color, count);
 
 	uses = null;
-	sorted = sorted.sort;
+	version(no_phobos)
+		sorted = sorted.sort;
+	else {
+		import std.algorithm : sort;
+		sort(sorted);
+	}
 
 	ubyte[Color] paletteAssignments;
 	foreach(idx, entry; palette)

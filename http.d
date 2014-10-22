@@ -113,7 +113,7 @@ struct UriParts {
 	}
 }
 
-HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string headers[] = null) {
+HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string[] headers = null) {
 	import std.socket;
 
 	auto u = UriParts(uri);
@@ -181,7 +181,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 	of the parameters are the caller's responsibility. Content-Length is added automatically,
 	but YOU must give Content-Type!
 */
-HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate() read, string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string headers[] = null, bool https = false) 
+HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate() read, string method, string uri, const(ubyte)[] content = null, string[string] cookies = null, string[] headers = null, bool https = false) 
 	in {
 		assert(method == "POST" || method == "GET");
 	}
@@ -354,7 +354,6 @@ body {
 				break;
 				case 3: // reading footers
 					goto done; // FIXME
-				break;
 			}
 		}
 	} else

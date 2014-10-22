@@ -372,7 +372,13 @@ class ApiProvider : WebDotDBaseType {
 				return; // not doing checks
 
 			void fail() {
-				throw new PermissionDeniedException("CSRF token test failed");
+				throw new PermissionDeniedException("CSRF token test failed " ~ to!string(cgi.postArray));
+				/*
+				~ "::::::"~cgi.post[
+				tokenInfo["key"]
+				] ~ " != " ~
+				tokenInfo["token"]);
+				*/
 			}
 
 			// expiration is handled by the session itself expiring (in the Session class)
@@ -2763,9 +2769,10 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 				returnValue.str = retstr;
 		break;
 		case "string": // FIXME: this is the most expensive part of the compile! Two seconds in one of my apps.
-			static if(is(typeof(ret) == string))
+			static if(is(typeof(ret) == string)) {
 				returnValue.str = ret;
-			else
+				break;
+			} else
 		/+
 			static if(__traits(compiles, to!string(ret))) {
 				retstr = to!string(ret);
