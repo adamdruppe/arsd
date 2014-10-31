@@ -219,7 +219,7 @@ version(X11) {
 					selectionEvent.property,
 					event.target,
 					8 /* bits */, 0 /* PropModeReplace */,
-					text.ptr, text.length);
+					text.ptr, cast(int) text.length);
 			} else if(event.target == GetAtom!"UTF8_STRING"(display)) {
 				selectionEvent.property = event.property;
 				XChangeProperty (display,
@@ -227,7 +227,7 @@ version(X11) {
 					selectionEvent.property,
 					event.target,
 					8 /* bits */, 0 /* PropModeReplace */,
-					text.ptr, text.length);
+					text.ptr, cast(int) text.length);
 			} else {
 				selectionEvent.property = None; // I don't know how to handle this type...
 			}
@@ -1444,7 +1444,7 @@ class SimpleWindow {
 				32 /* bits */,
 				0 /*PropModeReplace*/,
 				buffer.ptr,
-				buffer.length);
+				cast(int) buffer.length);
 
 			// also setting a pixmap up for compatibility with older window managers
 			// these do a pixmap and a mask
@@ -1493,7 +1493,7 @@ class SimpleWindow {
 					Pixmap.sizeof * 8 /* bits */,
 					0 /*PropModeReplace*/,
 					pixmapsHolder.ptr,
-					pixmapsHolder.length);
+					cast(int) pixmapsHolder.length);
 
 				if(oldOnes[0])
 					XFreePixmap(XDisplayConnection.get, oldOnes[0]);
