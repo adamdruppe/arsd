@@ -249,8 +249,71 @@ version(X11) {
 		window.impl.getSelectionHandler = handler;
 
 		auto target = XA_STRING;
-		// or auto target = GetAtom!"UTF8_STRING"(display)
+		//auto target = GetAtom!"UTF8_STRING"(display);
+
+		// SDD_DATA is "simpledisplay.d data"
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
+	}
+}
+
+version(Windows) {
+	void sendSyntheticInput(wstring s) {
+		INPUT[] inputs;
+		inputs.reserve(s.length * 2);
+
+		foreach(wchar c; s) {
+			INPUT input;
+			input.type = INPUT_KEYBOARD;
+			input.ki.wScan = c;
+			input.ki.dwFlags = KEYEVENTF_UNICODE;
+			inputs ~= input;
+
+			input.ki.dwFlags |= KEYEVENTF_KEYUP;
+			inputs ~= input;
+		}
+
+		if(SendInput(inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
+			throw new Exception("SendInput failed");
+		}
+	}
+
+	// global hotkey helper function
+
+	void registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
+		static int hotkeyId = 0;
+		int id = ++hotkeyId;
+		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
+			throw new Exception("RegisterHotKey failed");
+
+		static void delegate()[int][HWND] handlers;
+
+		handlers[window.impl.hwnd][id] = handler;
+
+		int delegate(HWND, UINT, WPARAM, LPARAM) oldHandler;
+
+		auto nativeEventHandler = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+			switch(msg) {
+				// http://msdn.microsoft.com/en-us/library/windows/desktop/ms646279%28v=vs.85%29.aspx
+				case WM_HOTKEY:
+					if(auto list = hwnd in handlers) {
+						if(auto h = wParam in *list) {
+							(*h)();
+							return 0;
+						}
+					}
+				goto default;
+				default:
+			}
+			if(oldHandler)
+				return oldHandler(hwnd, msg, wParam, lParam);
+			return 1; // pass it on
+		};
+
+		if(window.handleNativeEvent.funcptr !is nativeEventHandler.funcptr) {
+			oldHandler = window.handleNativeEvent;
+			window.handleNativeEvent = nativeEventHandler;
+		}
+
 	}
 }
 
@@ -1522,9 +1585,12 @@ class SimpleWindow {
 		impl.dispose();
 	}
 
+	bool closed;
+
 	/// Closes the window and terminates it's event loop.
 	void close() {
 		impl.closeWindow();
+		closed = true;
 	}
 
 	/// Sets your event handlers, without entering the event loop. Useful if you
@@ -2392,7 +2458,7 @@ version(Windows) {
 			//			}
 					}
 
-					if(!done && handlePulse !is null)
+					if(!done && !closed && handlePulse !is null)
 						handlePulse();
 					SleepEx(cast(DWORD) pulseTimeout, true);
 				}
@@ -3107,7 +3173,7 @@ version(X11) {
 			{
 				done = doXNextEvent(this.display);
 			}
-				if(!done && pulseTimeout !=0) {
+				if(!done && !closed && pulseTimeout !=0) {
 					if(handlePulse !is null)
 						handlePulse();
 					Thread.sleep(dur!"msecs"(pulseTimeout));
@@ -3598,6 +3664,61 @@ nothrow:
 
 	}
 
+	// Input fabrication functions
+
+	// http://msdn.microsoft.com/en-us/library/windows/desktop/ms646309%28v=vs.85%29.aspx
+	extern(Windows) BOOL RegisterHotKey(HWND, int, UINT, UINT);
+	// http://msdn.microsoft.com/en-us/library/ms646310%28v=vs.85%29.aspx
+	extern(Windows) UINT SendInput(UINT, INPUT*, int);
+
+	struct INPUT {
+		DWORD type;
+		union {
+			MOUSEINPUT mi;
+			KEYBDINPUT ki;
+			HARDWAREINPUT hi;
+		}
+	}
+
+	struct MOUSEINPUT {
+		LONG      dx;
+		LONG      dy;
+		DWORD     mouseData;
+		DWORD     dwFlags;
+		DWORD     time;
+		ULONG_PTR dwExtraInfo;
+	}
+
+	struct KEYBDINPUT {
+		WORD      wVk;
+		WORD      wScan;
+		DWORD     dwFlags;
+		DWORD     time;
+		ULONG_PTR dwExtraInfo;
+	}
+
+	struct HARDWAREINPUT {
+		DWORD uMsg;
+		WORD wParamL;
+		WORD wParamH;
+	}
+
+	enum INPUT_MOUSE = 0;
+	enum INPUT_KEYBOARD = 1;
+	enum INPUT_HARDWARE = 2;
+
+	enum MOD_ALT = 0x1;
+	enum MOD_CONTROL = 0x2;
+	enum MOD_NOREPEAT = 0x4000; // unsupported
+	enum MOD_SHIFT = 0x4;
+	enum MOD_WIN = 0x8; // reserved
+
+	enum WM_HOTKEY = 0x0312;
+
+	enum KEYEVENTF_EXTENDEDKEY = 0x1;
+	enum KEYEVENTF_KEYUP = 0x2;
+	enum KEYEVENTF_SCANCODE = 0x8;
+	enum KEYEVENTF_UNICODE = 0x4;
 }
 
 else version(X11) {
