@@ -1,4 +1,6 @@
 /**
+   FIXME: Also ability to get source code for function something so you can mixin.
+
 	Script features:
 
 	FIXME: add COM support on Windows
@@ -104,6 +106,11 @@
 		args can say var if you want, but don't have to
 		default arguments supported in any position
 		when calling, you can use the default keyword to use the default value in any position
+	* macros:
+		A macro is defined just like a function, except with the
+		macro keyword instead of the function keyword. The difference
+		is a macro must interpret its own arguments - it is passed
+		AST objects instead of values. Still a WIP.
 
 
 
@@ -172,7 +179,7 @@ private enum string[] keywords = [
 	"__FILE__", "__LINE__", // these two are special to the lexer
 	"foreach", "json!q{", "default", "finally",
 	"return", "static", "struct", "import", "module", "assert", "switch",
-	"while", "catch", "throw", "scope", "break", "super", "class", "false", "mixin", "super",
+	"while", "catch", "throw", "scope", "break", "super", "class", "false", "mixin", "super", "macro",
 	"auto", // provided as an alias for var right now, may change later
 	"null", "else", "true", "eval", "goto", "enum", "case", "cast",
 	"var", "for", "try", "new",
@@ -412,6 +419,20 @@ TokenStream!TextStream lexScript(TextStream)(TextStream textStream, string scrip
 	return new TokenStream!TextStream(textStream, scriptFilename);
 }
 
+class MacroPrototype : PrototypeObject {
+	var func;
+
+	// macros are basically functions that get special treatment for their arguments
+	// they are passed as AST objects instead of interpreted
+	// calling an AST object will interpret it in the script
+	this(var func) {
+		this.func = func;
+		this._properties["opCall"] = (var _this, var[] args) {
+			return func.apply(_this, args);
+		};
+	}
+}
+
 struct InterpretResult {
 	var value;
 	PrototypeObject sc;
@@ -422,6 +443,26 @@ struct InterpretResult {
 
 class Expression {
 	abstract InterpretResult interpret(PrototypeObject sc);
+
+	// this returns an AST object that can be inspected and possibly altered
+	// by the script. Calling the returned object will interpret the object in
+	// the original scope passed
+	var toScriptExpressionObject(PrototypeObject sc) {
+		var obj = var.emptyObject;
+
+		obj["type"] = typeid(this).name;
+		obj["toString"] = (var _this, var[] args) {
+			return var(this.toString());
+		};
+		obj["opCall"] = (var _this, var[] args) {
+			Expression e = this;
+			// FIXME: if they changed the properties in the
+			// script, we should update them here too.
+			return e.interpret(sc).value;
+		};
+
+		return obj;
+	}
 }
 
 class MixinExpression : Expression {
@@ -608,7 +649,7 @@ class FunctionLiteralExpression : Expression {
 	}
 
 	override string toString() {
-		string s = "function (";
+		string s = (isMacro ? "macro" : "function") ~ " (";
 		s ~= arguments.toString();
 
 		s ~= ") ";
@@ -630,6 +671,8 @@ class FunctionLiteralExpression : Expression {
 	Expression functionBody; // can be a ScopeExpression btw
 
 	PrototypeObject lexicalScope;
+
+	bool isMacro;
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		assert(DefaultArgumentDummyObject !is null);
@@ -666,6 +709,11 @@ class FunctionLiteralExpression : Expression {
 				assert(0);
 			}
 		};
+		if(isMacro) {
+			var n = var.emptyObject;
+			n._object = new MacroPrototype(v);
+			v = n;
+		}
 		return InterpretResult(v, sc);
 	}
 }
@@ -1144,6 +1192,22 @@ class ForExpression : Expression {
 
 		return InterpretResult(result, sc, flowControl);
 	}
+
+	override string toString() {
+		string code = "for(";
+		if(initialization !is null)
+			code ~= initialization.toString();
+		code ~= "; ";
+		if(condition !is null)
+			code ~= condition.toString();
+		code ~= "; ";
+		if(advancement !is null)
+			code ~= advancement.toString();
+		code ~= ") ";
+		code ~= loopBody.toString();
+
+		return code;
+	}
 }
 
 class IfExpression : Expression {
@@ -1168,6 +1232,19 @@ class IfExpression : Expression {
 				result = ifFalse.interpret(ifScope);
 		}
 		return InterpretResult(result.value, sc, result.flowControl);
+	}
+
+	override string toString() {
+		string code = "if(";
+		code ~= condition.toString();
+		code ~= ") ";
+		if(ifTrue !is null)
+			code ~= ifTrue.toString();
+		else
+			code ~= " { }";
+		if(ifFalse !is null)
+			code ~= " else " ~ ifFalse.toString();
+		return code;
 	}
 }
 
@@ -1320,10 +1397,14 @@ class CallExpression : Expression {
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		auto f = func.interpret(sc).value;
+		bool isMacro =  (f.payloadType == var.Type.Object && ((cast(MacroPrototype) f._payload._object) !is null));
 		var[] args;
 		foreach(argument; arguments)
 			if(argument !is null) {
-				args ~= argument.interpret(sc).value;
+				if(isMacro) // macro, pass the argument as an expression object
+					args ~= argument.toScriptExpressionObject(sc);
+				else // regular function, interpret the arguments
+					args ~= argument.interpret(sc).value;
 			} else {
 				if(DefaultArgumentDummyObject is null)
 					DefaultArgumentDummyObject = new PrototypeObject();
@@ -1471,6 +1552,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						obj.elements[key.str] = value;
 
 						goto moreKeys;
+					case "macro":
 					case "function":
 						tokens.requireNextToken(ScriptToken.Type.symbol, "(");
 
@@ -1481,6 +1563,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 
 						exp.functionBody = parseExpression(tokens);
+						exp.isMacro = token.str == "macro";
 
 						e = exp;
 					break;
@@ -2066,6 +2149,7 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 					goto skip;
 				// literals
 				case "function":
+				case "macro":
 					// function can be a literal, or a declaration.
 
 					tokens.popFront(); // we're peeking ahead
@@ -2090,6 +2174,8 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 						auto e = new VariableDeclaration();
 						e.identifiers ~= ident.str;
 						e.initializers ~= exp;
+
+						exp.isMacro = token.str == "macro";
 
 						return e;
 

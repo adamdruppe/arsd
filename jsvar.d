@@ -688,6 +688,11 @@ struct var {
 		if(this.payloadType() == Type.Function) {
 			assert(this._payload._function !is null);
 			return this._payload._function(_this, args);
+		} else if(this.payloadType() == Type.Object) {
+			assert(this._payload._object !is null);
+			var* operator = this._payload._object._peekMember("opCall", true);
+			if(operator !is null && operator._type == Type.Function)
+				return operator.apply(_this, args);
 		}
 
 		version(jsvar_throw)
@@ -1075,12 +1080,18 @@ struct var {
 		return v;
 	}
 
+	@property PrototypeObject prototypeObject() {
+		var v = prototype();
+		if(v._type == Type.Object)
+			return v._payload._object;
+		return null;
+	}
+
 	// what I call prototype is more like what Mozilla calls __proto__, but tbh I think this is better so meh
 	@property ref var prototype() {
 		static var _arrayPrototype;
 		static var _functionPrototype;
 		static var _stringPrototype;
-
 
 		final switch(payloadType()) {
 			case Type.Array:
@@ -1100,7 +1111,20 @@ struct var {
 			case Type.String:
 				assert(_stringPrototype._type == Type.Object);
 				if(_stringPrototype._payload._object is null) {
-					_stringPrototype._object = new PrototypeObject();
+					auto p = new PrototypeObject();
+					_stringPrototype._object = p;
+
+					var replaceFunction;
+					replaceFunction._type = Type.Function;
+					replaceFunction._function = (var _this, var[] args) {
+						string s = _this.toString();
+						import std.array : replace;
+						return var(std.array.replace(s,
+							args[0].toString(),
+							args[1].toString()));
+					};
+
+					p._properties["replace"] = replaceFunction;
 				}
 
 				return _stringPrototype;
@@ -1114,6 +1138,7 @@ struct var {
 			case Type.Boolean:
 				// these types don't have prototypes
 		}
+
 
 		var* v = new var(null);
 		return *v;
