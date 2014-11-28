@@ -106,13 +106,13 @@ public void clearInterval(TimerHandle handle) {
 }
 
 /// Sends an exit event to the loop. The loop will break when it sees this event, ignoring any events after that point.
-public void exit() {
+public void exit() @nogc {
 	ubyte[backingSize] bufferBacking = 0; // a null message means exit...
 
 	writeToEventPipe(bufferBacking);
 }
 
-void writeToEventPipe(ubyte[backingSize] bufferBacking) {
+void writeToEventPipe(ubyte[backingSize] bufferBacking) @nogc {
 	ubyte[] buffer = bufferBacking[];
 	while(buffer.length) {
 		auto written = unix.write(pipes[1], buffer.ptr, buffer.length);
@@ -124,9 +124,10 @@ void writeToEventPipe(ubyte[backingSize] bufferBacking) {
 				// are virtually guaranteed to be smaller than the pipe buffer
 				// ...unless there's like a thousand messages, which is a WTF anyway
 				import std.string;
-				assert(0, format("EAGAIN on %d", buffer.length));
+				assert(0); // , format("EAGAIN on %d", buffer.length));
 			} else
-				throw new Exception("write");
+				assert(0, "write failure");
+				// throw new Exception("write");
 		} else {
 			assert(written <= buffer.length);
 			buffer = buffer[written .. $];

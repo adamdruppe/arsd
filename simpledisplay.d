@@ -279,7 +279,7 @@ version(Windows) {
 
 	// global hotkey helper function
 
-	void registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
+	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
 		static int hotkeyId = 0;
 		int id = ++hotkeyId;
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
@@ -314,6 +314,12 @@ version(Windows) {
 			window.handleNativeEvent = nativeEventHandler;
 		}
 
+		return id;
+	}
+
+	void unregisterHotKey(SimpleWindow window, int id) {
+		if(!UnregisterHotKey(window.impl.hwnd, id))
+			throw new Exception("UnregisterHotKey");
 	}
 }
 
@@ -3671,6 +3677,8 @@ nothrow:
 	// http://msdn.microsoft.com/en-us/library/ms646310%28v=vs.85%29.aspx
 	extern(Windows) UINT SendInput(UINT, INPUT*, int);
 
+	extern(Windows) BOOL UnregisterHotKey(HWND, int);
+
 	struct INPUT {
 		DWORD type;
 		union {
@@ -3738,6 +3746,7 @@ else version(X11) {
 */
 
 pragma(lib, "X11");
+pragma(lib, "Xext");
 
 extern(C):
 

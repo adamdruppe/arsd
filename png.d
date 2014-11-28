@@ -115,6 +115,7 @@ MemoryImage imageFromPng(PNG* png) {
 			return ret;
 		}
 		previousLine = data;
+		import std.conv;
 
 		loop: for(int pixel = 0; pixel < h.width; pixel++)
 			switch(h.type) {
@@ -167,14 +168,27 @@ MemoryImage imageFromPng(PNG* png) {
 				break;
 				case 2: // truecolor
 				case 6: // true with alpha
-					idata[idataIdx++] = consumeOne();
-					idata[idataIdx++] = consumeOne();
-					idata[idataIdx++] = consumeOne();
-					idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
+					if(h.depth == 8) {
+						idata[idataIdx++] = consumeOne();
+						idata[idataIdx++] = consumeOne();
+						idata[idataIdx++] = consumeOne();
+						idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
+					} else if(h.depth == 16) {
+						idata[idataIdx++] = consumeOne();
+						consumeOne();
+						idata[idataIdx++] = consumeOne();
+						consumeOne();
+						idata[idataIdx++] = consumeOne();
+						consumeOne();
+						idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
+						if(h.type == 6)
+							consumeOne();
+
+					} else assert(0, "unsupported truecolor bit depth " ~ to!string(h.depth));
 				break;
 				default: assert(0);
 			}
-		assert(data.length == 0, "not all consumed, wtf");
+		assert(data.length == 0, "not all consumed, wtf " ~ to!string(h));
 	}
 	assert(idataIdx == idata.length, "not all filled, wtf");
 

@@ -433,6 +433,40 @@ class MacroPrototype : PrototypeObject {
 	}
 }
 
+alias helper(alias T) = T;
+// alternative to virtual function for converting the expression objects to script objects
+void addChildElementsOfExpressionToScriptExpressionObject(ClassInfo c, Expression _thisin, PrototypeObject sc, ref var obj) {
+	foreach(itemName; __traits(allMembers, mixin(__MODULE__)))
+	static if(__traits(compiles, __traits(getMember, mixin(__MODULE__), itemName))) {
+		alias Class = helper!(__traits(getMember, mixin(__MODULE__), itemName));
+		static if(is(Class : Expression)) if(c == typeid(Class)) {
+			auto _this = cast(Class) _thisin;
+			foreach(memberName; __traits(allMembers, Class)) {
+				alias member = helper!(__traits(getMember, Class, memberName));
+
+				static if(is(typeof(member) : Expression)) {
+					auto lol = __traits(getMember, _this, memberName);
+					if(lol is null)
+						obj[memberName] = null;
+					else
+						obj[memberName] = lol.toScriptExpressionObject(sc);
+				}
+				static if(is(typeof(member) : Expression[])) {
+					obj[memberName] = var.emptyArray;
+					foreach(m; __traits(getMember, _this, memberName))
+						if(m !is null)
+							obj[memberName] ~= m.toScriptExpressionObject(sc);
+						else
+							obj[memberName] ~= null;
+				}
+				static if(is(typeof(member) : string) || is(typeof(member) : long) || is(typeof(member) : real) || is(typeof(member) : bool)) {
+					obj[memberName] = __traits(getMember, _this, memberName);
+				}
+			}
+		}
+	}
+}
+
 struct InterpretResult {
 	var value;
 	PrototypeObject sc;
@@ -451,8 +485,11 @@ class Expression {
 		var obj = var.emptyObject;
 
 		obj["type"] = typeid(this).name;
-		obj["toString"] = (var _this, var[] args) {
-			return var(this.toString());
+		obj["toSourceCode"] = (var _this, var[] args) {
+			Expression e = this;
+			// FIXME: if they changed the properties in the
+			// script, we should update them here too.
+			return var(e.toString());
 		};
 		obj["opCall"] = (var _this, var[] args) {
 			Expression e = this;
@@ -460,6 +497,10 @@ class Expression {
 			// script, we should update them here too.
 			return e.interpret(sc).value;
 		};
+
+		// adding structure is going to be a little bit magical
+		// I could have done this with a virtual function, but I'm lazy.
+		addChildElementsOfExpressionToScriptExpressionObject(typeid(this), this, sc, obj);
 
 		return obj;
 	}

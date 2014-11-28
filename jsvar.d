@@ -721,6 +721,10 @@ struct var {
 	public T get(T)() if(!is(T == void)) {
 		static if(is(T == var)) {
 			return this;
+		} else static if(__traits(compiles, T(this))) {
+			return T(this);
+		} else static if(__traits(compiles, new T(this))) {
+			return new T(this);
 		} else
 		final switch(payloadType) {
 			case Type.Boolean:
@@ -956,6 +960,12 @@ struct var {
 		if(name == "typeof") {
 			var* tmp = new var;
 			*tmp = to!string(this.payloadType());
+			return *tmp;
+		}
+
+		if(name == "toJson") {
+			var* tmp = new var;
+			*tmp = to!string(this.toJson());
 			return *tmp;
 		}
 
