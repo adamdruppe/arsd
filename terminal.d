@@ -123,6 +123,7 @@ lx|linux|console|con80x25|LINUX System Console:\
         :it#8:ku=\E[A:kd=\E[B:kr=\E[C:kl=\E[D:kb=^H:ti=\E[r\E[H:\
         :ho=\E[H:kP=\E[5~:kN=\E[6~:kH=\E[4~:kh=\E[1~:kD=\E[3~:kI=\E[2~:\
         :k1=\E[[A:k2=\E[[B:k3=\E[[C:k4=\E[[D:k5=\E[[E:k6=\E[17~:\
+	:F1=\E[23~:F2=\E[24~:\
         :k7=\E[18~:k8=\E[19~:k9=\E[20~:k0=\E[21~:K1=\E[1~:K2=\E[5~:\
         :K4=\E[4~:K5=\E[6~:\
         :pt:sr=\EM:vt#3:xn:km:bl=^G:vi=\E[?25l:ve=\E[?25h:vs=\E[?25h:\
@@ -1542,7 +1543,10 @@ struct RealTimeConsoleInput {
 			while(sequenceLength < sequence.length) {
 				auto n = nextRaw();
 				sequence[sequenceLength++] = cast(char) n;
-				if(n >= 0x40)
+				// I think a [ is supposed to termiate a CSI sequence
+				// but the Linux console sends CSI[A for F1, so I'm
+				// hacking it to accept that too
+				if(n >= 0x40 && !(sequenceLength == 3 && n == '['))
 					break;
 			}
 
@@ -1598,11 +1602,14 @@ struct RealTimeConsoleInput {
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.RightArrow);
 
 				case "kN":
+				case "K5":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.PageDown);
 				case "kP":
+				case "K2":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.PageUp);
 
 				case "kh":
+				case "K1":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.Home);
 				case "kH":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.End);
@@ -1716,9 +1723,9 @@ struct RealTimeConsoleInput {
 				default:
 					// look it up in the termcap key database
 					auto cap = terminal.findSequenceInTermcap(sequence);
-					if(cap !is null)
+					if(cap !is null) {
 						return translateTermcapName(cap);
-					else {
+					} else {
 						if(terminal.terminalInFamily("xterm")) {
 							import std.conv, std.string;
 							auto terminator = sequence[$ - 1];
