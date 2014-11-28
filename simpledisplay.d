@@ -4988,9 +4988,38 @@ struct Visual
 		return ScreenOfDisplay(dpy,scr).root;
 	}
 
+	struct XWMHints {
+		arch_long flags;
+		Bool input;
+		int initial_state;
+		Pixmap icon_pixmap;
+		Window icon_window;
+		int icon_x, icon_y;
+		Pixmap icon_mask;
+		XID window_group;
+	}
+
+	Status XInternAtoms(Display*, in char**, int, Bool, Atom*);
+
+	// this requires -lXpm
+	int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
+
 	int DefaultScreen(Display *dpy) {
 		return dpy.default_screen;
 	}
+
+	int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
+	int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
+	int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
+	int DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
+
+	int ConnectionNumber(Display* dpy) { return dpy.fd; }
+
+	enum int RevertToNone = None;
+	enum int PointerRoot = 1;
+	enum Time CurrentTime = 0;
+	enum int RevertToPointerRoot = PointerRoot;
+	enum int RevertToParent = 2;
 
 	Visual* DefaultVisual(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).root_visual;
@@ -5069,14 +5098,117 @@ struct Visual
 		static assert(XTextProperty.sizeof == 32);
 	}
 
+
+	struct XGCValues { 
+		int function_;           /* logical operation */ 
+		arch_ulong plane_mask;/* plane mask */ 
+		arch_ulong foreground;/* foreground pixel */ 
+		arch_ulong background;/* background pixel */ 
+		int line_width;         /* line width */ 
+		int line_style;         /* LineSolid, LineOnOffDash, LineDoubleDash */ 
+		int cap_style;          /* CapNotLast, CapButt, 
+					   CapRound, CapProjecting */ 
+		int join_style;         /* JoinMiter, JoinRound, JoinBevel */ 
+		int fill_style;         /* FillSolid, FillTiled, 
+					   FillStippled, FillOpaeueStippled */ 
+		int fill_rule;          /* EvenOddRule, WindingRule */ 
+		int arc_mode;           /* ArcChord, ArcPieSlice */ 
+		Pixmap tile;            /* tile pixmap for tiling operations */ 
+		Pixmap stipple;         /* stipple 1 plane pixmap for stipping */ 
+		int ts_x_origin;        /* offset for tile or stipple operations */ 
+		int ts_y_origin; 
+		Font font;              /* default text font for text operations */ 
+		int subwindow_mode;     /* ClipByChildren, IncludeInferiors */ 
+		Bool graphics_exposures;/* boolean, should exposures be generated */ 
+		int clip_x_origin;      /* origin for clipping */ 
+		int clip_y_origin; 
+		Pixmap clip_mask;       /* bitmap clipping; other calls for rects */ 
+		int dash_offset;        /* patterned/dashed line information */ 
+		char dashes; 
+	}
+
+	struct XColor {
+		arch_ulong pixel;
+		ushort red, green, blue;
+		byte flags;
+		byte pad;
+	}
+	Status XAllocColor(Display*, Colormap, XColor*);
+
+	int XUnmapWindow(Display*, Window);
+	int XLowerWindow(Display*, Window);
+	int XRaiseWindow(Display*, Window);
+
+	int XGetInputFocus(Display*, Window*, int*);
+	int XSetInputFocus(Display*, Window, int, Time);
+	alias XErrorHandler = int function(Display*, XErrorEvent*);
+	XErrorHandler XSetErrorHandler(XErrorHandler);
+
+	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
+
+	Status XGetGeometry(Display*, Drawable, Window*, int*, int*, uint*, uint*, uint*, uint*);
+	int XSetClipMask(Display*, GC, Pixmap);
+	int XSetClipOrigin(Display*, GC, int, int);
+
 	void XSetWMName(Display*, Window, XTextProperty*);
 
+	enum ClipByChildren = 0;
+	enum IncludeInferiors = 1;
+
 	enum Atom XA_STRING = 31;
+	enum Atom XA_CARDINAL = 6;
+	enum Atom XA_WM_NAME = 39;
 	enum Atom XA_ATOM = 4;
+	enum Atom XA_WINDOW = 33;
+	enum Atom XA_WM_HINTS = 35;
 	enum int PropModeAppend = 2;
 	enum int PropModeReplace = 0;
 	enum int PropModePrepend = 1;
 
+	enum int CopyFromParent = 0;
+	enum int InputOutput = 1;
+
+	// XWMHints
+	enum InputHint = 1 << 0;
+	enum StateHint = 1 << 1;
+	enum IconPixmapHint = (1L << 2);
+	enum IconWindowHint = (1L << 3);
+	enum IconPositionHint = (1L << 4);
+	enum IconMaskHint = (1L << 5);
+	enum WindowGroupHint = (1L << 6);
+	enum AllHints = (InputHint|StateHint|IconPixmapHint|IconWindowHint|IconPositionHint|IconMaskHint|WindowGroupHint);
+	enum XUrgencyHint = (1L << 8);
+
+	// GC Components
+	enum GCFunction           =   (1L<<0);
+	enum GCPlaneMask         =    (1L<<1);
+	enum GCForeground       =     (1L<<2);
+	enum GCBackground      =      (1L<<3);
+	enum GCLineWidth      =       (1L<<4);
+	enum GCLineStyle     =        (1L<<5);
+	enum GCCapStyle     =         (1L<<6);
+	enum GCJoinStyle   =          (1L<<7);
+	enum GCFillStyle  =           (1L<<8);
+	enum GCFillRule  =            (1L<<9);
+	enum GCTile     =             (1L<<10);
+	enum GCStipple           =    (1L<<11);
+	enum GCTileStipXOrigin  =     (1L<<12);
+	enum GCTileStipYOrigin =      (1L<<13);
+	enum GCFont               =   (1L<<14);
+	enum GCSubwindowMode     =    (1L<<15);
+	enum GCGraphicsExposures=     (1L<<16);
+	enum GCClipXOrigin     =      (1L<<17);
+	enum GCClipYOrigin    =       (1L<<18);
+	enum GCClipMask      =        (1L<<19);
+	enum GCDashOffset   =         (1L<<20);
+	enum GCDashList    =          (1L<<21);
+	enum GCArcMode    =           (1L<<22);
+	enum GCLastBit   =            22;
+
+
+	enum int WithdrawnState = 0;
+	enum int NormalState = 1;
+	enum int IconicState = 3;
 
  } else version (OSXCocoa) {
 private:
