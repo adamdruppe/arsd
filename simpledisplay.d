@@ -282,41 +282,113 @@ version(X11) {
 	enum SYSTEM_TRAY_BEGIN_MESSAGE  = 1;
 	enum SYSTEM_TRAY_CANCEL_MESSAGE = 2;
 
-	class NotificationAreaIcon {
+	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(XEvent e) {
+				switch(e.type) {
+					case EventType.Expose:
+						redraw();
+					break;
+					case EventType.ButtonPress:
+						auto event = e.xbutton;
+						if(onClick)
+							onClick(event.button);
+					break;
+					case EventType.DestroyNotify:
+						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
+					break;
+					case EventType.ConfigureNotify:
+						auto event = e.xconfigure;
+						this.width = event.width;
+						this.height = event.height;
+
+						redraw();
+					break;
+					default: return 1;
+				}
+				return 1;
+			};
+		}
+
+		void redraw() {
+			auto display = XDisplayConnection.get;
+			auto gc = DefaultGC(display, DefaultScreen(display));
+			XClearWindow(display, nativeHandle);
+
+			XSetForeground(display, gc,
+				cast(uint) 0 << 16 |
+				cast(uint) 0 << 8 |
+				cast(uint) 0);
+			XFillRectangle(display, nativeHandle,
+				gc, 0, 0, width, height);
+
+			XSetForeground(display, gc,
+				cast(uint) 0 << 16 |
+				cast(uint) 127 << 8 |
+				cast(uint) 0);
+			XFillArc(display, nativeHandle,
+				gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+		}
+
 		static Window getTrayOwner() {
 			auto display = XDisplayConnection.get;
-			auto i = cast(int) DefaultScreen(screen);
-			if(i < 10 && i >= 0)
-				return XGetSelectionOwner(display, GetAtom!("_NET_SYSTEM_TRAY_S"~(cast(char) i + '0'))(display, true));
+			auto i = cast(int) DefaultScreen(display);
+			if(i < 10 && i >= 0) {
+				static Atom atom;
+				if(atom == None)
+					atom = XInternAtom(display, cast(char*) ("_NET_SYSTEM_TRAY_S"~(cast(char) (i + '0')) ~ '\0').ptr, false);
+				return XGetSelectionOwner(display, atom);
+			}
 			return None;
 		}
 
-		static void sendTrayMessage(Window w, arch_long message, arch_long d1, arch_long d2, arch_long d3) {
+		static void sendTrayMessage(arch_long message, arch_long d1, arch_long d2, arch_long d3) {
+			auto to = getTrayOwner();
+			auto display = XDisplayConnection.get;
 			XEvent ev;
 			ev.xclient.type = EventType.ClientMessage;
-			ev.xclient.window = w;
-			ev.xclient.message_type = GetAtom!"_NET_SYSTEM_TRAY_OPCODE"(display, true);
+			ev.xclient.window = to;
+			ev.xclient.message_type = GetAtom!("_NET_SYSTEM_TRAY_OPCODE", true)(display);
 			ev.xclient.format = 32;
-			ev.xclient.data.l[0] = Now;
+			ev.xclient.data.l[0] = CurrentTime;
 			ev.xclient.data.l[1] = message;
 			ev.xclient.data.l[2] = d1;
 			ev.xclient.data.l[3] = d2;
 			ev.xclient.data.l[4] = d3;
 
-			XSendEvent(XDisplayConnection.get, w, false, EventMask.NoEventMask, &ev);
+			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
 		}
 
 		this(string name, MemoryImage icon, void delegate(int button) onClick) {
+			if(getTrayOwner() == None)
+				throw new Exception("No notification area found");
+			// create window
+			auto display = XDisplayConnection.get;
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
+			assert(nativeWindow);
 
+			this.onClick = onClick;
+
+			nativeHandle = nativeWindow;
+
+			XSelectInput(display, nativeWindow,
+				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask);
+
+			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
+			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 		}
+
+		private Window nativeHandle;
+		private int width = 12;
+		private int height = 12;
 
 		void delegate(int) onClick;
 
-		@proeprty void name(string n) {
+		@property void name(string n) {
 
 		}
 
-		@proeprty void icon(MemoryImage i) {
+		@property void icon(MemoryImage i) {
 
 		}
 	}
@@ -1458,7 +1530,15 @@ void flushGui() {
 		XFlush(XDisplayConnection.get());
 }
 
-class SimpleWindow {
+interface CapableOfHandlingNativeEvent {
+	NativeEventHandler getNativeEventHandler();
+
+	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+}
+
+class SimpleWindow : CapableOfHandlingNativeEvent {
+	NativeEventHandler getNativeEventHandler() { return handleNativeEvent; }
+
 	// maps native window handles to SimpleWindow instances, if there are any
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
 	public static SimpleWindow[NativeWindowHandle] nativeMapping;
@@ -1491,6 +1571,7 @@ class SimpleWindow {
 		width = 1;
 		height = 1;
 		nativeMapping[nativeWindow] = this;
+		CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
@@ -1724,7 +1805,7 @@ class SimpleWindow {
 	  * IMPORTANT: it used to be static in old versions of simpledisplay.d, but I always used
 	  * it as if it wasn't static... so now I just fixed it so it isn't anymore.
 	**/
-	NativeEventHandler handleNativeEvent
+	NativeEventHandler handleNativeEvent;
 
 	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
 	/// If you used to use handleNativeEvent depending on it being static, just change it to use
@@ -1886,13 +1967,16 @@ version(Windows) {
 					return ret;
 			}
 
-            if(auto window = hWnd in SimpleWindow.nativeMapping) {
-	    	if(window.handleNativeEvent !is null) {
-			auto ret = window.handleNativeEvent(hWnd, iMessage, wParam, lParam);
+            if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+	    	if(window.getNativeEventHandler !is null) {
+			auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
 			if(ret == 0)
 				return ret;
 		}
-                return (*window).windowProcedure(hWnd, iMessage, wParam, lParam);
+		if(auto w = cast(SimpleWindow) (*window))
+	                return w.windowProcedure(hWnd, iMessage, wParam, lParam);
+		else
+			return DefWindowProc(hWnd, iMessage, wParam, lParam);
             } else {
                 return DefWindowProc(hWnd, iMessage, wParam, lParam);
             }
@@ -2177,6 +2261,7 @@ version(Windows) {
 				null, null, hInstance, null);
 
 			SimpleWindow.nativeMapping[hwnd] = this;
+			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
 
 			HDC hdc = GetDC(hwnd);
 
@@ -2370,6 +2455,7 @@ version(Windows) {
 				break;
 				case WM_DESTROY:
 					SimpleWindow.nativeMapping.remove(hwnd);
+					CapableOfHandlingNativeEvent.nativeHandleMapping.remove(hwnd);
 					if(SimpleWindow.nativeMapping.keys.length == 0)
 						PostQuitMessage(0);
 				break;
@@ -3133,6 +3219,7 @@ version(X11) {
 
 			setTitle(title);
 			SimpleWindow.nativeMapping[window] = this;
+			CapableOfHandlingNativeEvent.nativeHandleMapping[window] = this;
 
 			// This gives our window a close button
 			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
@@ -3222,9 +3309,9 @@ version(X11) {
 		}
 
 
-		if(auto win = e.xany.window in SimpleWindow.nativeMapping) {
-			if(win.handleNativeEvent !is null) {
-				auto ret = win.handleNativeEvent(e);
+		if(auto win = e.xany.window in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+			if(win.getNativeEventHandler !is null) {
+				auto ret = win.getNativeEventHandler()(e);
 				if(ret == 0)
 					return done;
 			}
@@ -3334,6 +3421,9 @@ version(X11) {
 				if(SimpleWindow.nativeMapping.keys.length == 0)
 					done = true;
 			}
+			auto window = e.xdestroywindow.window;
+			if(window in CapableOfHandlingNativeEvent.nativeHandleMapping)
+				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(window);
 
 			version(with_eventloop) {
 				if(done) exit();
