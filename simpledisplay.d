@@ -254,6 +254,72 @@ version(X11) {
 		// SDD_DATA is "simpledisplay.d data"
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
 	}
+
+	void[] getX11PropertyData(Window window, Atom property, Atom type = AnyPropertyType) {
+		Atom actualType;
+		int actualFormat;
+		arch_ulong actualItems;
+		arch_ulong bytesRemaining;
+		void* data;
+
+		auto display = XDisplayConnection.get();
+		if(XGetWindowProperty(display, window, property, 0, 0x7fffffff, false, type, &actualType, &actualFormat, &actualItems, &bytesRemaining, &data) == Success) {
+			if(actualFormat == 0)
+				return null;
+			else {
+				auto byteLength = actualItems * actualFormat / 8;
+				auto d = new ubyte[](byteLength);
+				d[] = cast(ubyte[]) data[0 .. byteLength];
+				XFree(data);
+				return d;
+			}
+		}
+		return null;
+	}
+
+	/* defined in the systray spec */
+	enum SYSTEM_TRAY_REQUEST_DOCK   = 0;
+	enum SYSTEM_TRAY_BEGIN_MESSAGE  = 1;
+	enum SYSTEM_TRAY_CANCEL_MESSAGE = 2;
+
+	class NotificationAreaIcon {
+		static Window getTrayOwner() {
+			auto display = XDisplayConnection.get;
+			auto i = cast(int) DefaultScreen(screen);
+			if(i < 10 && i >= 0)
+				return XGetSelectionOwner(display, GetAtom!("_NET_SYSTEM_TRAY_S"~(cast(char) i + '0'))(display, true));
+			return None;
+		}
+
+		static void sendTrayMessage(Window w, arch_long message, arch_long d1, arch_long d2, arch_long d3) {
+			XEvent ev;
+			ev.xclient.type = EventType.ClientMessage;
+			ev.xclient.window = w;
+			ev.xclient.message_type = GetAtom!"_NET_SYSTEM_TRAY_OPCODE"(display, true);
+			ev.xclient.format = 32;
+			ev.xclient.data.l[0] = Now;
+			ev.xclient.data.l[1] = message;
+			ev.xclient.data.l[2] = d1;
+			ev.xclient.data.l[3] = d2;
+			ev.xclient.data.l[4] = d3;
+
+			XSendEvent(XDisplayConnection.get, w, false, EventMask.NoEventMask, &ev);
+		}
+
+		this(string name, MemoryImage icon, void delegate(int button) onClick) {
+
+		}
+
+		void delegate(int) onClick;
+
+		@proeprty void name(string n) {
+
+		}
+
+		@proeprty void icon(MemoryImage i) {
+
+		}
+	}
 }
 
 version(Windows) {
@@ -1514,66 +1580,9 @@ class SimpleWindow {
 				0 /*PropModeReplace*/,
 				buffer.ptr,
 				cast(int) buffer.length);
-
-			// also setting a pixmap up for compatibility with older window managers
-			// these do a pixmap and a mask
-
-			if(icon.width == 16 && icon.height == 16) {
-				Pixmap[2] oldOnes = pixmapsHolder[];
-
-				XImage* img;
-				import core.stdc.stdlib;
-				ubyte* rawData = cast(ubyte*) malloc(icon.width * icon.height * 4);
-				//ubyte* rawData2 = cast(ubyte*) malloc((icon.width * icon.height) * 4);
-
-				int bitIdx = 0;
-				for(int idx = 0; idx < (icon.width * icon.height * 4); idx += 4) {
-					rawData[idx + 2] = tci.imageData.bytes[idx + 0]; // r
-					rawData[idx + 1] = tci.imageData.bytes[idx + 1]; // g
-					rawData[idx + 0] = tci.imageData.bytes[idx + 2]; // b
-
-					/*
-					rawData2[idx + 0] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
-					rawData2[idx + 1] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
-					rawData2[idx + 2] = (tci.imageData.bytes[idx + 3] > 128) ? 255 : 0;
-					*/
-				}
-
-				// color pixmap
-				img = XCreateImage(display, DefaultVisual(display, DefaultScreen(display)), 24, ImageFormat.ZPixmap, 0, rawData, icon.width, icon.height, 8, 4*icon.width);
-				pixmapsHolder[0] = XCreatePixmap(display, cast(Drawable) window, icon.width, icon.height, 24);
-				XPutImage(display, pixmapsHolder[0], DefaultGC(display, DefaultScreen(display)), img, 0, 0, 0, 0, icon.width, icon.height);
-				XDestroyImage(img);
-
-				// transparency mask
-				// FIXME
-				/*
-				img = XCreateImage(display, DefaultVisual(display, DefaultScreen(display)), 24, ImageFormat.ZPixmap, 0, rawData2, icon.width, icon.height, 8, icon.width*4);
-				pixmapsHolder[1] = XCreatePixmap(display, cast(Drawable) window, icon.width, icon.height, 24);
-				XPutImage(display, pixmapsHolder[1], DefaultGC(display, DefaultScreen(display)), img, 0, 0, 0, 0, icon.width, icon.height);
-				XDestroyImage(img);
-				*/
-
-				XChangeProperty(
-					display,
-					impl.window,
-					GetAtom!"KWM_WIN_ICON"(display),
-					GetAtom!"KWM_WIN_ICON"(display),
-					Pixmap.sizeof * 8 /* bits */,
-					0 /*PropModeReplace*/,
-					pixmapsHolder.ptr,
-					cast(int) pixmapsHolder.length);
-
-				if(oldOnes[0])
-					XFreePixmap(XDisplayConnection.get, oldOnes[0]);
-				if(oldOnes[1])
-					XFreePixmap(XDisplayConnection.get, oldOnes[1]);
-			}
 		}
 	}
 
-	version(X11)
-		private Pixmap[2] pixmapsHolder; // for window icons
 	version(Windows)
 		private WindowsIcon winIcon;
 
@@ -1582,12 +1591,6 @@ class SimpleWindow {
 	~this() {
 		if(_suppressDestruction)
 			return;
-		version(X11) {
-			if(pixmapsHolder[0])
-				XFreePixmap(XDisplayConnection.get, pixmapsHolder[0]);
-			if(pixmapsHolder[1])
-				XFreePixmap(XDisplayConnection.get, pixmapsHolder[1]);
-		}
 		impl.dispose();
 	}
 
@@ -1718,9 +1721,15 @@ class SimpleWindow {
 
 	  * On X11, it takes the form of int delegate(XEvent).
 
-	  * It is static because it is called on the global message loop.
+	  * IMPORTANT: it used to be static in old versions of simpledisplay.d, but I always used
+	  * it as if it wasn't static... so now I just fixed it so it isn't anymore.
 	**/
-	static NativeEventHandler handleNativeEvent;
+	NativeEventHandler handleNativeEvent
+
+	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
+	/// If you used to use handleNativeEvent depending on it being static, just change it to use
+	/// this instead and it will work the same way.
+	static NativeEventHandler handleNativeGlobalEvent;
 
 //  private:
 	mixin NativeSimpleWindowImplementation!() impl;
@@ -1869,15 +1878,20 @@ version(Windows) {
 	extern(Windows)
 	int WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 	    try {
-			if(SimpleWindow.handleNativeEvent !is null) {
+			if(SimpleWindow.handleNativeGlobalEvent !is null) {
 				// it returns zero if the message is handled, so we won't do anything more there
 				// do I like that though?
-				auto ret = SimpleWindow.handleNativeEvent(hWnd, iMessage, wParam, lParam);
+				auto ret = SimpleWindow.handleNativeGlobalEvent(hWnd, iMessage, wParam, lParam);
 				if(ret == 0)
 					return ret;
 			}
 
             if(auto window = hWnd in SimpleWindow.nativeMapping) {
+	    	if(window.handleNativeEvent !is null) {
+			auto ret = window.handleNativeEvent(hWnd, iMessage, wParam, lParam);
+			if(ret == 0)
+				return ret;
+		}
                 return (*window).windowProcedure(hWnd, iMessage, wParam, lParam);
             } else {
                 return DefWindowProc(hWnd, iMessage, wParam, lParam);
@@ -3200,11 +3214,20 @@ version(X11) {
 		version(with_eventloop)
 			import arsd.eventloop;
 
-		if(SimpleWindow.handleNativeEvent !is null) {
+		if(SimpleWindow.handleNativeGlobalEvent !is null) {
 			// see windows impl's comments
-			auto ret = SimpleWindow.handleNativeEvent(e);
+			auto ret = SimpleWindow.handleNativeGlobalEvent(e);
 			if(ret == 0)
 				return done;
+		}
+
+
+		if(auto win = e.xany.window in SimpleWindow.nativeMapping) {
+			if(win.handleNativeEvent !is null) {
+				auto ret = win.handleNativeEvent(e);
+				if(ret == 0)
+					return done;
+			}
 		}
 
 		switch(e.type) {
@@ -3228,7 +3251,7 @@ version(X11) {
 					Atom target;
 					int format;
 					arch_ulong bytesafter, length;
-					char* value;
+					void* value;
 					XGetWindowProperty(
 						e.xselection.display,
 						e.xselection.requestor,
@@ -3242,7 +3265,7 @@ version(X11) {
 					// FIXME: it might be sent in pieces...
 					// FIXME: or be other formats...
 
-					win.getSelectionHandler(value[0 .. length].idup);
+					win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
 					XFree(value);
 					XDeleteProperty(
 						e.xselection.display,
@@ -3778,8 +3801,7 @@ int XFree(void*);
        int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
               long_offset, arch_long long_length, Bool del, Atom req_type, Atom
               *actual_type_return, int *actual_format_return, arch_ulong
-              *nitems_return, arch_ulong *bytes_after_return, char
-              **prop_return);
+              *nitems_return, arch_ulong *bytes_after_return, void** prop_return);
 
        int XSetSelectionOwner(Display *display, Atom selection, Window owner,
               Time time);
@@ -4207,6 +4229,11 @@ Window XCreateSimpleWindow(
 );
 Window XCreateWindow(Display *display, Window parent, int x, int y, uint width, uint height, uint border_width, int depth, uint class_, Visual *visual, arch_ulong valuemask, XSetWindowAttributes *attributes);
 
+int XReparentWindow(Display*, Window, Window, int, int);
+int XClearWindow(Display*, Window);
+int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
+int XMoveWindow(Display*, Window, int, int);
+
        Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
 enum CWBackPixmap              = (1L<<0);
@@ -4225,6 +4252,35 @@ enum CWDontPropagate           = (1L<<12);
 enum CWColormap                = (1L<<13);
 enum CWCursor                  = (1L<<14);
 
+struct XWindowAttributes {
+	int x, y;			/* location of window */
+	int width, height;		/* width and height of window */
+	int border_width;		/* border width of window */
+	int depth;			/* depth of window */
+	Visual *visual;			/* the associated visual structure */
+	Window root;			/* root of screen containing window */
+	int class_;			/* InputOutput, InputOnly*/
+	int bit_gravity;		/* one of the bit gravity values */
+	int win_gravity;		/* one of the window gravity values */
+	int backing_store;		/* NotUseful, WhenMapped, Always */
+	arch_ulong	 backing_planes;	/* planes to be preserved if possible */
+	arch_ulong	 backing_pixel;	/* value to be used when restoring planes */
+	Bool save_under;		/* boolean, should bits under be saved? */
+	Colormap colormap;		/* color map to be associated with window */
+	Bool map_installed;		/* boolean, is color map currently installed*/
+	int map_state;			/* IsUnmapped, IsUnviewable, IsViewable */
+	arch_long all_event_masks;		/* set of events all people have interest in*/
+	arch_long your_event_mask;		/* my event mask */
+	arch_long do_not_propagate_mask;	/* set of events that should not propagate */
+	Bool override_redirect;		/* boolean value for override-redirect */
+	Screen *screen;			/* back pointer to correct screen */
+}
+
+enum IsUnmapped = 0;
+enum IsUnviewable = 1;
+enum IsViewable = 2;
+
+Status XGetWindowAttributes(Display*, Window, XWindowAttributes*);
 
 struct XSetWindowAttributes {
 	Pixmap background_pixmap;/* background, None, or ParentRelative */
@@ -4330,6 +4386,10 @@ int XMapWindow(
     Display*	/* display */,
     Window		/* w */
 );
+
+Status XIconifyWindow(Display*, Window, int);
+int XMapRaised(Display*, Window);
+int XMapSubwindows(Display*, Window);
 
 int XNextEvent(
     Display*	/* display */,
@@ -4999,6 +5059,13 @@ struct Visual
 		XID window_group;
 	}
 
+	struct XClassHint {
+		char* res_name;
+		char* res_class;
+	}
+
+	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
+
 	Status XInternAtoms(Display*, in char**, int, Bool, Atom*);
 
 	// this requires -lXpm
@@ -5014,6 +5081,9 @@ struct Visual
 	int DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
 
 	int ConnectionNumber(Display* dpy) { return dpy.fd; }
+
+	enum int AnyPropertyType = 0;
+	enum int Success = 0;
 
 	enum int RevertToNone = None;
 	enum int PointerRoot = 1;
