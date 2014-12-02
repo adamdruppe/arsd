@@ -1852,7 +1852,10 @@ struct RealTimeConsoleInput {
 			}
 		} else {
 			// FIXME: what if it is neither? we should check the termcap
-			return charPressAndRelease(nextChar(c));
+			auto next = nextChar(c);
+			if(next == 127) // some terminals send 127 on the backspace. Let's normalize that.
+				next = '\b';
+			return charPressAndRelease(next);
 		}
 	}
 }

@@ -847,6 +847,14 @@ class TrueColorImage : MemoryImage {
 		imageData.bytes = new ubyte[w*h*4];
 	}
 
+	/// Creates with existing data. The data pointer is stored here.
+	this(int w, int h, ubyte[] data) {
+		_width = w;
+		_height = h;
+		assert(data.length == w * h * 4);
+		imageData.bytes = data;
+	}
+
 	/// Returns this
 	override TrueColorImage getAsTrueColorImage() {
 		return this;
