@@ -662,13 +662,26 @@ import fcntl = core.sys.posix.fcntl;
 import core.stdc.errno;
 alias int OsFileHandle;
 private int[2] pipes;
-private void openEventPipes() {
+/// you generally won't want to call this, but if you fork()
+/// and then try to use the thing without exec(), you might want
+/// new pipes so the events don't get mixed up.
+/* private */ void openNewEventPipes() {
 	unix.pipe(pipes);
 	makeNonBlocking(pipes[0]);
 	makeNonBlocking(pipes[1]);
 }
+
+// you shouldn't have to call this
+void closeEventPipes() {
+	unix.close(pipes[0]);
+	unix.close(pipes[1]);
+
+	pipes[0] = -1;
+	pipes[1] = -1;
+}
+
 static this() {
-	openEventPipes();
+	openNewEventPipes();
 }
 
 /* **** */
