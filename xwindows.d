@@ -10,6 +10,8 @@ module arsd.xwindows;
 
 import simpledisplay;
 
+static if(UsingSimpledisplayX11) {
+
 enum _NET_WM_STATE_ADD = 1;
 enum _NET_WM_STATE_REMOVE = 0;
 enum _NET_WM_STATE_TOGGLE = 2;
@@ -85,4 +87,6 @@ TrueColorImage getWindowNetWmIcon(Window window) {
 	}
 
 	return null;
+}
+
 }

@@ -1,4 +1,9 @@
 /**
+   FIXME: easier object interop with D
+   FIXME: prettier stack trace when sent to D
+
+   FIXME: add continuations or something too
+
    FIXME: Also ability to get source code for function something so you can mixin.
 
 	Script features:

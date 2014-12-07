@@ -1772,6 +1772,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	void delegate() handlePulse;
 
+	void delegate(bool) onFocusChange; /// called when the focus changes, param is if we have it (true) or are losing it (false)
+
 	private {
 		int lastMouseX = int.min;
 		int lastMouseY = int.min;
@@ -2354,6 +2356,11 @@ version(Windows) {
 					if(wind.handleCharEvent)
 						wind.handleCharEvent(cast(dchar) c);
 				break;
+				  case WM_SETFOCUS:
+				  case WM_KILLFOCUS:
+					if(wind.onFocusChange)
+						wind.onFocusChange(msg == WM_SETFOCUS);
+				  break;
 				case WM_KEYDOWN:
 				case WM_KEYUP:
 					KeyEvent ev;
@@ -2443,6 +2450,8 @@ version(Windows) {
 		}
 
 		HWND hwnd;
+		int oldWidth;
+		int oldHeight;
 
 		// the extern(Windows) wndproc should just forward to this
 		int windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
@@ -2460,14 +2469,20 @@ version(Windows) {
 						PostQuitMessage(0);
 				break;
 				case WM_SIZE:
-					auto width = LOWORD(lParam);
-					auto height = HIWORD(lParam);
-
-					auto oldWidth = this.width;
-					auto oldHeight = this.height;
-
-					this.width = width;
-					this.height = height;
+					width = LOWORD(lParam);
+					height = HIWORD(lParam);
+				break;
+				// I don't like the tearing I get when redrawing on WM_SIZE
+				// (I know there's other ways to fix that but I don't like that behavior anyway)
+				// so instead it is going to redraw only at the end of a size.
+				case 0x0231: /* WM_ENTERSIZEMOVE */
+					oldWidth = this.width;
+					oldHeight = this.height;
+				break;
+				case 0x0232: /* WM_EXITSIZEMOVE */
+					// nothing relevant changed, don't bother redrawing
+					if(oldWidth == width && oldHeight == height)
+						break;
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
@@ -3408,6 +3423,13 @@ version(X11) {
 					// need to redraw the scene somehow.
 					win.redrawOpenGlSceneNow();
 				}
+			}
+		  break;
+		  case EventType.FocusIn:
+		  case EventType.FocusOut:
+		  	if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
+				if(win.onFocusChange)
+					win.onFocusChange(e.type == EventType.FocusIn);
 			}
 		  break;
 		  case EventType.ClientMessage: // User clicked the close button
