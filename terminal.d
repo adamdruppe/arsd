@@ -1274,7 +1274,7 @@ struct RealTimeConsoleInput {
 	/// events in the process.
 	dchar getch() {
 		auto event = nextEvent();
-		while(event.type != InputEvent.Type.CharacterEvent) {
+		while(event.type != InputEvent.Type.CharacterEvent || event.characterEvent.eventType == CharacterEvent.Type.Released) {
 			if(event.type == InputEvent.Type.UserInterruptionEvent)
 				throw new Exception("Ctrl+c");
 			event = nextEvent();
@@ -1818,7 +1818,7 @@ struct RealTimeConsoleInput {
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
 		if(c == 0)
-			throw new Exception("stdin has reached end of file");
+			throw new Exception("stdin has reached end of file"); // FIXME: return this as an event instead
 		if(c == '\033') {
 			if(timedCheckForInput(50)) {
 				// escape sequence
@@ -2078,6 +2078,16 @@ void main() {
 	terminal.color(Color.green | Bright, Color.black);
 	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
+	//
+	auto getter = new LineGetter(&terminal);
+	terminal.writeln("\n" ~ getter.getline());
+	terminal.writeln("\n" ~ getter.getline());
+
+	input.getch();
+
+	return;
+	//
+
 	terminal.write("test some long string to see if it wraps or what because i dont really know what it is going to do so i just want to test i think it will wrap but gotta be sure lolololololololol");
 	terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
 
@@ -2156,6 +2166,464 @@ void main() {
 	}
 }
 
+/*
+	FIXME: support lines that wrap
+	FIXME: better controls maybe
+	FIXME: tab completion
+	FIXME: handle when the thing scrolls cuz of tab complete or something
+	FIXME: insert mode vs overstrike mode????
+	FIXME: read/save file
+	FIXME: add a prompt
+*/
+class LineGetter {
+	/* A note on the assumeSafeAppends in here: since these buffers are private, we can be
+	   pretty sure that stomping isn't an issue, so I'm using this liberally to keep the
+	   append/realloc code simple and hopefully reasonably fast. */
+
+	// saved to file
+	string[] history;
+
+	// not saved
+	Terminal* terminal;
+	this(Terminal* tty) {
+		this.terminal = tty;
+
+		line.reserve(128);
+
+		history = ["first", "second", "third"];
+
+		regularForeground = cast(Color) terminal._currentForeground;
+		background = cast(Color) terminal._currentBackground;
+		suggestionForeground = Color.blue;
+	}
+
+	Color suggestionForeground;
+	Color regularForeground;
+	Color background;
+	//bool reverseVideo;
+
+	/// Override this if you don't want all lines added to the history.
+	/// You can return null to not add it at all, or you can transform it.
+	string historyFilter(string candidate) {
+		return candidate;
+	}
+
+	void saveSettingsAndHistoryToFile() {
+		assert(0); // FIXME
+	}
+
+	void loadSettingsAndHistoryFromFile() {
+		assert(0); // FIXME
+	}
+
+	/// Turn on auto suggest if you want a greyed thing of what tab
+	/// would be able to fill in as you type.
+	///
+	/// You might want to turn it off if generating a completion list is slow.
+	bool autoSuggest = true;
+
+	/**
+		Override this to provide tab completion. You may use the candidate
+		argument to filter the list, but you don't have to (LineGetter will
+		do it for you on the values you return).
+
+		Ideally, you wouldn't return more than about ten items since the list
+		gets difficult to use if it is too long.
+
+		Default is to provide recent command history as autocomplete.
+	*/
+	protected string[] tabComplete(in dchar[] candidate) {
+		return history.length > 20 ? history[0 .. 20] : history;
+	}
+
+	private string[] filterTabCompleteList(string[] list) {
+		if(list.length == 0)
+			return list;
+
+		string[] f;
+		f.reserve(list.length);
+
+		foreach(item; list) {
+			import std.algorithm;
+			if(startsWith(item, line[0 .. cursorPosition]))
+				f ~= item;
+		}
+
+		return f;
+	}
+
+	protected void showTabCompleteList(string[] list) {
+		if(list.length) {
+			// FIXME: allow mouse clicking of an item, that would be cool
+
+			//if(terminal.type == ConsoleOutputType.linear) {
+				terminal.writeln();
+				foreach(item; list) {
+					terminal.color(suggestionForeground, background);
+					import std.utf;
+					auto idx = codeLength!char(line[0 .. cursorPosition]);
+					terminal.write("  ", item[0 .. idx]);
+					terminal.color(regularForeground, background);
+					terminal.writeln(item[idx .. $]);
+				}
+				updateCursorPosition();
+				redraw();
+			//}
+		}
+	}
+
+	/// One-call shop for the main workhorse
+	/// If you already have a RealTimeConsoleInput ready to go, you
+	/// should pass a pointer to yours here. Otherwise, LineGetter will
+	/// make its own.
+	public string getline(RealTimeConsoleInput* input = null) {
+		startGettingLine();
+		if(input is null) {
+			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+			while(workOnLine(i.nextEvent())) {}
+		} else
+			while(workOnLine(input.nextEvent())) {}
+		return finishGettingLine();
+	}
+
+	private int currentHistoryViewPosition = 0;
+	private dchar[] uncommittedHistoryCandidate;
+	void loadFromHistory(int howFarBack) {
+		if(howFarBack < 0)
+			howFarBack = 0;
+		if(howFarBack > history.length) // lol signed/unsigned comparison here means if i did this first, before howFarBack < 0, it would totally cycle around.
+			howFarBack = history.length;
+		if(howFarBack == currentHistoryViewPosition)
+			return;
+		if(currentHistoryViewPosition == 0) {
+			// save the current line so we can down arrow back to it later
+			if(uncommittedHistoryCandidate.length < line.length) {
+				uncommittedHistoryCandidate.length = line.length;
+			}
+
+			uncommittedHistoryCandidate[0 .. line.length] = line[];
+			uncommittedHistoryCandidate = uncommittedHistoryCandidate[0 .. line.length];
+			uncommittedHistoryCandidate.assumeSafeAppend();
+		}
+
+		currentHistoryViewPosition = howFarBack;
+
+		if(howFarBack == 0) {
+			line.length = uncommittedHistoryCandidate.length;
+			line.assumeSafeAppend();
+			line[] = uncommittedHistoryCandidate[];
+		} else {
+			line = line[0 .. 0];
+			line.assumeSafeAppend();
+			foreach(dchar ch; history[$ - howFarBack])
+				line ~= ch;
+		}
+
+		cursorPosition = line.length;
+	}
+
+	bool insertMode = true;
+
+	private dchar[] line;
+	private int cursorPosition = 0;
+
+	// used for redrawing the line in the right place
+	// and detecting mouse events on our line.
+	private int startOfLineX;
+	private int startOfLineY;
+
+	private string suggestion(string[] list = null) {
+		import std.algorithm, std.utf;
+		auto relevantLineSection = line[0 .. cursorPosition];
+		// FIXME: see about caching the list if we easily can
+		if(list is null)
+			list = filterTabCompleteList(tabComplete(relevantLineSection));
+
+		if(list.length) {
+			string commonality = list[0];
+			foreach(item; list[1 .. $]) {
+				commonality = commonPrefix(commonality, item);
+			}
+
+			if(commonality.length) {
+				return commonality[codeLength!char(relevantLineSection) .. $];
+			}
+		}
+
+		return null;
+	}
+
+	/// Adds a character at the current position in the line. You can call this too if you hook events for hotkeys or something.
+	/// You'll probably want to call redraw() after adding chars.
+	void addChar(dchar ch) {
+		assert(cursorPosition >= 0 && cursorPosition <= line.length);
+		if(cursorPosition == line.length)
+			line ~= ch;
+		else {
+			assert(line.length);
+			line ~= ' ';
+			for(int i = line.length - 2; i >= cursorPosition; i --)
+				line[i + 1] = line[i];
+			line[cursorPosition] = ch;
+		}
+		cursorPosition++;
+	}
+
+	void addString(string s) {
+		// FIXME: this could be more efficient
+		// but does it matter? these lines aren't super long anyway. But then again a paste could be excessively long (prolly accidental, but still)
+		foreach(dchar ch; s)
+			addChar(ch);
+	}
+
+	/// Deletes the character at the current position in the line.
+	/// You'll probably want to call redraw() after deleting chars.
+	void deleteChar() {
+		if(cursorPosition == line.length)
+			return;
+		for(int i = cursorPosition; i < line.length - 1; i++)
+			line[i] = line[i + 1];
+		line = line[0 .. $-1];
+		line.assumeSafeAppend();
+	}
+
+	int lastDrawLength = 0;
+	void redraw() {
+		terminal.moveTo(startOfLineX, startOfLineY);
+		terminal.write(line);
+		auto suggestion = ((cursorPosition == line.length) && autoSuggest) ? this.suggestion() : null;
+		if(suggestion.length) {
+			terminal.color(suggestionForeground, background);
+			terminal.write(suggestion);
+			terminal.color(regularForeground, background);
+		}
+		if(line.length < lastDrawLength)
+		foreach(i; line.length + suggestion.length .. lastDrawLength)
+			terminal.write(" ");
+		lastDrawLength = line.length + suggestion.length; // FIXME: graphemes and utf-8 on suggestion
+
+		// FIXME: wrapping
+		terminal.moveTo(startOfLineX + cursorPosition, startOfLineY);
+	}
+
+	// Make sure that you've flushed your input and output before calling this
+	// function or else you might lose events or get exceptions from this.
+	void startGettingLine() {
+		// reset from any previous call first
+		cursorPosition = 0;
+		lastDrawLength = 0;
+		justHitTab = false;
+		currentHistoryViewPosition = 0;
+		if(line.length) {
+			line = line[0 .. 0];
+			line.assumeSafeAppend();
+		}
+
+		updateCursorPosition();
+	}
+
+	private void updateCursorPosition() {
+		terminal.flush();
+
+		// then get the current cursor position to start fresh
+		version(Windows) {
+			CONSOLE_SCREEN_BUFFER_INFO info;
+			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
+			startOfLineX = info.dwCursorPosition.X;
+			startOfLineY = info.dwCursorPosition.Y;
+		} else {
+			// request current cursor position
+			terminal.writeStringRaw("\033[6n");
+			terminal.flush();
+
+			import core.sys.posix.unistd;
+			// reading directly to bypass any buffering
+			ubyte[16] buffer;
+			auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
+			if(len <= 0)
+				throw new Exception("Couldn't get cursor position to initialize get line");
+			auto got = buffer[0 .. len];
+			if(got.length < 6)
+				throw new Exception("not enough cursor reply answer");
+			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R')
+				throw new Exception("wrong answer for cursor position");
+			auto gots = cast(char[]) got[2 .. $-1];
+
+			import std.conv;
+			import std.string;
+
+			auto pieces = split(gots, ";");
+			if(pieces.length != 2) throw new Exception("wtf wrong answer on cursor position");
+
+			startOfLineX = to!int(pieces[1]) - 1;
+			startOfLineY = to!int(pieces[0]) - 1;
+		}
+
+		// updating these too because I can with the more accurate info from above
+		terminal._cursorX = startOfLineX;
+		terminal._cursorY = startOfLineY;
+	}
+
+	private bool justHitTab;
+
+	/// for integrating into another event loop
+	/// you can pass individual events to this and
+	/// the line getter will work on it
+	///
+	/// returns false when there's nothing more to do
+	bool workOnLine(InputEvent e) {
+		switch(e.type) {
+			case InputEvent.Type.CharacterEvent:
+				if(e.characterEvent.eventType == CharacterEvent.Type.Released)
+					return true;
+				/* Insert the character (unless it is backspace, tab, or some other control char) */
+				auto ch = e.characterEvent.character;
+				switch(ch) {
+					case '\r':
+					case '\n':
+						justHitTab = false;
+						return false;
+					case '\t':
+						auto relevantLineSection = line[0 .. cursorPosition];
+						auto possibilities = filterTabCompleteList(tabComplete(relevantLineSection));
+						import std.utf;
+
+						if(possibilities.length == 1) {
+							auto toFill = possibilities[0][codeLength!char(relevantLineSection) .. $];
+							if(toFill.length) {
+								addString(toFill);
+								redraw();
+							}
+							justHitTab = false;
+						} else {
+							if(justHitTab) {
+								justHitTab = false;
+								showTabCompleteList(possibilities);
+							} else {
+								justHitTab = true;
+								/* fill it in with as much commonality as there is amongst all the suggestions */
+								auto suggestion = this.suggestion(possibilities);
+								if(suggestion.length) {
+									addString(suggestion);
+									redraw();
+								}
+							}
+						}
+					break;
+					case '\b':
+						justHitTab = false;
+						if(cursorPosition) {
+							cursorPosition--;
+							for(int i = cursorPosition; i < line.length - 1; i++)
+								line[i] = line[i + 1];
+							line = line[0 .. $ - 1];
+							line.assumeSafeAppend();
+							redraw();
+						}
+					break;
+					default:
+						justHitTab = false;
+						addChar(ch);
+						redraw();
+				}
+			break;
+			case InputEvent.Type.NonCharacterKeyEvent:
+				if(e.nonCharacterKeyEvent.eventType == NonCharacterKeyEvent.Type.Released)
+					return true;
+				justHitTab = false;
+				/* Navigation */
+				auto key = e.nonCharacterKeyEvent.key;
+				switch(key) {
+					case NonCharacterKeyEvent.Key.LeftArrow:
+						if(cursorPosition)
+							cursorPosition--;
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.RightArrow:
+						if(cursorPosition < line.length)
+							cursorPosition++;
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.UpArrow:
+						loadFromHistory(currentHistoryViewPosition + 1);
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.DownArrow:
+						loadFromHistory(currentHistoryViewPosition - 1);
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.PageUp:
+						loadFromHistory(history.length);
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.PageDown:
+						loadFromHistory(0);
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.Home:
+						cursorPosition = 0;
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.End:
+						cursorPosition = line.length;
+						redraw();
+					break;
+					case NonCharacterKeyEvent.Key.Delete:
+						deleteChar();
+						redraw();
+					break;
+					default:
+						/* ignore */
+				}
+			break;
+			case InputEvent.Type.PasteEvent:
+				justHitTab = false;
+				addString(e.pasteEvent.pastedText);
+				redraw();
+			break;
+			case InputEvent.Type.MouseEvent:
+				/* Clicking with the mouse to move the cursor is so much easier than arrowing
+				   or even emacs/vi style movements much of the time, so I'ma support it. */
+
+				auto me = e.mouseEvent;
+				if(me.eventType == MouseEvent.Type.Pressed) {
+					if(me.buttons & MouseEvent.Button.Left) {
+						if(me.y == startOfLineY) {
+							int p = me.x - startOfLineX;
+							if(p >= 0 && p < line.length) {
+								justHitTab = false;
+								cursorPosition = p;
+								redraw();
+							}
+						}
+					}
+				}
+			break;
+			case InputEvent.Type.SizeChangedEvent:
+				/* We'll adjust the bounding box. If you don't like this, handle SizeChangedEvent
+				   yourself and then don't pass it to this function. */
+				// FIXME
+			break;
+			case InputEvent.Type.UserInterruptionEvent:
+				/* I'll take this as canceling the line. */
+				throw new Exception("user canceled"); // FIXME
+			break;
+			default:
+				/* ignore. ideally it wouldn't be passed to us anyway! */
+		}
+
+		return true;
+	}
+
+	string finishGettingLine() {
+		import std.conv;
+		auto f = to!string(line);
+		auto history = historyFilter(f);
+		if(history !is null)
+			this.history ~= history;
+		return f;
+	}
+}
 
 /*
 
