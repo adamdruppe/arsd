@@ -3432,9 +3432,12 @@ version(X11) {
 					win.onFocusChange(e.type == EventType.FocusIn);
 			}
 		  break;
-		  case EventType.ClientMessage: // User clicked the close button
-			if(auto win = e.xclient.window in SimpleWindow.nativeMapping)
-				(*win).close();
+		  case EventType.ClientMessage:
+		  	if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
+				// user clicked the close button on the window manager
+				if(auto win = e.xclient.window in SimpleWindow.nativeMapping)
+					(*win).close();
+			}
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
