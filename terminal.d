@@ -2070,23 +2070,26 @@ struct InputEvent {
 
 version(Demo)
 void main() {
-	auto terminal = Terminal(ConsoleOutputType.linear);
+	auto terminal = Terminal(ConsoleOutputType.cellular);
 
-	terminal.setTitle("Basic I/O");
-	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
-
-	terminal.color(Color.green | Bright, Color.black);
 	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
 	//
-	auto getter = new LineGetter(&terminal);
+	auto getter = new LineGetter(&terminal, "test");
+	getter.prompt = "> ";
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
+	terminal.writeln("\n" ~ getter.getline());
+	getter.dispose();
 
-	input.getch();
+	//input.getch();
 
 	return;
 	//
+
+	terminal.setTitle("Basic I/O");
+	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+	terminal.color(Color.green | Bright, Color.black);
 
 	terminal.write("test some long string to see if it wraps or what because i dont really know what it is going to do so i just want to test i think it will wrap but gotta be sure lolololololololol");
 	terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
@@ -2166,14 +2169,32 @@ void main() {
 	}
 }
 
-/*
+/**
 	FIXME: support lines that wrap
 	FIXME: better controls maybe
-	FIXME: tab completion
-	FIXME: handle when the thing scrolls cuz of tab complete or something
-	FIXME: insert mode vs overstrike mode????
-	FIXME: read/save file
-	FIXME: add a prompt
+
+	FIXME: fix lengths on prompt and suggestion
+
+	A note on history:
+
+	To save history, you must call LineGetter.dispose() when you're done with it.
+	History will not be automatically saved without that call!
+
+	The history saving and loading as a trivially encountered race condition: if you
+	open two programs that use the same one at the same time, the one that closes second
+	will overwrite any history changes the first closer saved.
+
+	GNU Getline does this too... and it actually kinda drives me nuts. But I don't know
+	what a good fix is except for doing a transactional commit straight to the file every
+	time and that seems like hitting the disk way too often.
+
+	We could also do like a history server like a database daemon that keeps the order
+	correct but I don't actually like that either because I kinda like different bashes
+	to have different history, I just don't like it all to get lost.
+
+	Regardless though, this isn't even used in bash anyway, so I don't think I care enough
+	to put that much effort into it. Just using separate files for separate tasks is good
+	enough I think.
 */
 class LineGetter {
 	/* A note on the assumeSafeAppends in here: since these buffers are private, we can be
@@ -2185,22 +2206,71 @@ class LineGetter {
 
 	// not saved
 	Terminal* terminal;
-	this(Terminal* tty) {
+	string historyFilename;
+
+	/// Make sure that the parent terminal struct remains in scope for the duration
+	/// of LineGetter's lifetime, as it does hold on to and use the passed pointer
+	/// throughout.
+	///
+	/// historyFilename will load and save an input history log to a particular folder.
+	/// Leaving it null will mean no file will be used and history will not be saved across sessions.
+	this(Terminal* tty, string historyFilename = null) {
 		this.terminal = tty;
+		this.historyFilename = historyFilename;
 
 		line.reserve(128);
 
-		history = ["first", "second", "third"];
+		if(historyFilename.length)
+			loadSettingsAndHistoryFromFile();
 
 		regularForeground = cast(Color) terminal._currentForeground;
 		background = cast(Color) terminal._currentBackground;
 		suggestionForeground = Color.blue;
 	}
 
+	/// Call this before letting LineGetter die so it can do any necessary
+	/// cleanup and save the updated history to a file.
+	void dispose() {
+		if(historyFilename.length)
+			saveSettingsAndHistoryToFile();
+	}
+
+	/// Override this to change the directory where history files are stored
+	///
+	/// Default is $HOME/.arsd-getline on linux and %APPDATA%/arsd-getline/ on Windows.
+	string historyFileDirectory() {
+		version(Windows) {
+			char[1024] path;
+			// FIXME: this doesn't link because the crappy dmd lib doesn't have it
+			if(0) { // SHGetFolderPathA(null, CSIDL_APPDATA, null, 0, path.ptr) >= 0) {
+				import core.stdc.string;
+				return cast(string) path[0 .. strlen(path.ptr)] ~ "\\arsd-getline";
+			} else {
+				import std.process;
+				return environment["APPDATA"] ~ "\\arsd-getline";
+			}
+		} else version(Posix) {
+			import std.process;
+			return environment["HOME"] ~ "/.arsd-getline";
+		}
+	}
+
+	/// You can customize the colors here. You should set these after construction, but before
+	/// calling startGettingLine or getline.
 	Color suggestionForeground;
-	Color regularForeground;
-	Color background;
+	Color regularForeground; /// .
+	Color background; /// .
 	//bool reverseVideo;
+
+	/// Set this if you want a prompt to be drawn with the line. It does NOT support color in string.
+	string prompt;
+
+	/// Turn on auto suggest if you want a greyed thing of what tab
+	/// would be able to fill in as you type.
+	///
+	/// You might want to turn it off if generating a completion list is slow.
+	bool autoSuggest = true;
+
 
 	/// Override this if you don't want all lines added to the history.
 	/// You can return null to not add it at all, or you can transform it.
@@ -2208,19 +2278,36 @@ class LineGetter {
 		return candidate;
 	}
 
+	/// You may override this to do nothing
 	void saveSettingsAndHistoryToFile() {
-		assert(0); // FIXME
+		import std.file;
+		if(!exists(historyFileDirectory))
+			mkdir(historyFileDirectory);
+		auto fn = historyPath();
+		import std.stdio;
+		auto file = File(fn, "wt");
+		foreach(item; history)
+			file.writeln(item);
 	}
 
+	private string historyPath() {
+		import std.path;
+		auto filename = historyFileDirectory() ~ dirSeparator ~ historyFilename ~ ".history";
+		return filename;
+	}
+
+	/// You may override this to do nothing
 	void loadSettingsAndHistoryFromFile() {
-		assert(0); // FIXME
-	}
+		import std.file;
+		history = null;
+		auto fn = historyPath();
+		if(exists(fn)) {
+			import std.stdio;
+			foreach(line; File(fn, "rt").byLine)
+				history ~= line.idup;
 
-	/// Turn on auto suggest if you want a greyed thing of what tab
-	/// would be able to fill in as you type.
-	///
-	/// You might want to turn it off if generating a completion list is slow.
-	bool autoSuggest = true;
+		}
+	}
 
 	/**
 		Override this to provide tab completion. You may use the candidate
@@ -2252,6 +2339,7 @@ class LineGetter {
 		return f;
 	}
 
+	/// Override this to provide a custom display of the tab completion list
 	protected void showTabCompleteList(string[] list) {
 		if(list.length) {
 			// FIXME: allow mouse clicking of an item, that would be cool
@@ -2361,14 +2449,17 @@ class LineGetter {
 			line ~= ch;
 		else {
 			assert(line.length);
-			line ~= ' ';
-			for(int i = line.length - 2; i >= cursorPosition; i --)
-				line[i + 1] = line[i];
+			if(insertMode) {
+				line ~= ' ';
+				for(int i = line.length - 2; i >= cursorPosition; i --)
+					line[i + 1] = line[i];
+			}
 			line[cursorPosition] = ch;
 		}
 		cursorPosition++;
 	}
 
+	/// .
 	void addString(string s) {
 		// FIXME: this could be more efficient
 		// but does it matter? these lines aren't super long anyway. But then again a paste could be excessively long (prolly accidental, but still)
@@ -2390,6 +2481,9 @@ class LineGetter {
 	int lastDrawLength = 0;
 	void redraw() {
 		terminal.moveTo(startOfLineX, startOfLineY);
+
+		terminal.write(prompt);
+
 		terminal.write(line);
 		auto suggestion = ((cursorPosition == line.length) && autoSuggest) ? this.suggestion() : null;
 		if(suggestion.length) {
@@ -2398,16 +2492,18 @@ class LineGetter {
 			terminal.color(regularForeground, background);
 		}
 		if(line.length < lastDrawLength)
-		foreach(i; line.length + suggestion.length .. lastDrawLength)
+		foreach(i; line.length + suggestion.length + prompt.length .. lastDrawLength)
 			terminal.write(" ");
-		lastDrawLength = line.length + suggestion.length; // FIXME: graphemes and utf-8 on suggestion
+		lastDrawLength = line.length + suggestion.length + prompt.length; // FIXME: graphemes and utf-8 on suggestion/prompt
 
 		// FIXME: wrapping
-		terminal.moveTo(startOfLineX + cursorPosition, startOfLineY);
+		terminal.moveTo(startOfLineX + cursorPosition + prompt.length, startOfLineY);
 	}
 
-	// Make sure that you've flushed your input and output before calling this
-	// function or else you might lose events or get exceptions from this.
+	/// Starts getting a new line. Call workOnLine and finishGettingLine afterward.
+	///
+	/// Make sure that you've flushed your input and output before calling this
+	/// function or else you might lose events or get exceptions from this.
 	void startGettingLine() {
 		// reset from any previous call first
 		cursorPosition = 0;
@@ -2420,6 +2516,8 @@ class LineGetter {
 		}
 
 		updateCursorPosition();
+
+		redraw();
 	}
 
 	private void updateCursorPosition() {
@@ -2433,6 +2531,11 @@ class LineGetter {
 			startOfLineY = info.dwCursorPosition.Y;
 		} else {
 			// request current cursor position
+
+			// we have to turn off cooked mode to get this answer, otherwise it will all
+			// be messed up. (I hate unix terminals, the Windows way is so much easer.)
+			RealTimeConsoleInput input = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw);
+
 			terminal.writeStringRaw("\033[6n");
 			terminal.flush();
 
@@ -2568,6 +2671,11 @@ class LineGetter {
 						cursorPosition = line.length;
 						redraw();
 					break;
+					case NonCharacterKeyEvent.Key.Insert:
+						insertMode = !insertMode;
+						// FIXME: indicate this on the UI somehow
+						// like change the cursor or something
+					break;
 					case NonCharacterKeyEvent.Key.Delete:
 						deleteChar();
 						redraw();
@@ -2589,7 +2697,8 @@ class LineGetter {
 				if(me.eventType == MouseEvent.Type.Pressed) {
 					if(me.buttons & MouseEvent.Button.Left) {
 						if(me.y == startOfLineY) {
-							int p = me.x - startOfLineX;
+							// FIXME: prompt.length should be graphemes or at least code poitns
+							int p = me.x - startOfLineX - prompt.length;
 							if(p >= 0 && p < line.length) {
 								justHitTab = false;
 								cursorPosition = p;
@@ -2623,6 +2732,12 @@ class LineGetter {
 			this.history ~= history;
 		return f;
 	}
+}
+
+version(Windows) {
+	// to get the directory for saving history in the line things
+	enum CSIDL_APPDATA = 26;
+	extern(Windows) HRESULT SHGetFolderPathA(HWND, int, HANDLE, DWORD, LPSTR);
 }
 
 /*
