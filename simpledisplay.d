@@ -111,7 +111,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 // this does a delegate because it is actually an async call on X...
 // the receiver may never be called if the clipboard is empty or unavailable
 /// gets plain text from the clipboard
-void getClipboardText(SimpleWindow clipboardOwner, void delegate(string) receiver) {
+void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
 		if(OpenClipboard(hwndOwner) == 0)
@@ -133,6 +133,7 @@ Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) comb
 
 				// FIXME: CR/LF conversions
 				// FIXME: wchar instead
+				// FIXME: I might not have to copy it now that the receiver is in char[] instead of string
 				string s;
 				while(*data) {
 					s ~= *data;
@@ -236,11 +237,11 @@ version(X11) {
 		};
 	}
 
-	void getPrimarySelection(SimpleWindow window, void delegate(string) handler) {
+	void getPrimarySelection(SimpleWindow window, void delegate(in char[]) handler) {
 		getX11Selection!"PRIMARY"(window, handler);
 	}
 
-	void getX11Selection(string atomName)(SimpleWindow window, void delegate(string) handler) {
+	void getX11Selection(string atomName)(SimpleWindow window, void delegate(in char[]) handler) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
@@ -3168,7 +3169,7 @@ version(X11) {
 		Pixmap buffer;
 
 		void delegate(XEvent) setSelectionHandler;
-		void delegate(string) getSelectionHandler;
+		void delegate(in char[]) getSelectionHandler;
 
 		version(without_opengl) {} else
 		GLXContext glc;
@@ -3366,6 +3367,7 @@ version(X11) {
 
 					// FIXME: it might be sent in pieces...
 					// FIXME: or be other formats...
+					// FIXME: I don't have to copy it now since it is in char[] instead of string
 
 					win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
 					XFree(value);
