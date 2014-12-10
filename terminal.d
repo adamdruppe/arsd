@@ -2380,7 +2380,7 @@ class LineGetter {
 		if(howFarBack < 0)
 			howFarBack = 0;
 		if(howFarBack > history.length) // lol signed/unsigned comparison here means if i did this first, before howFarBack < 0, it would totally cycle around.
-			howFarBack = history.length;
+			howFarBack = cast(int) history.length;
 		if(howFarBack == currentHistoryViewPosition)
 			return;
 		if(currentHistoryViewPosition == 0) {
@@ -2407,7 +2407,7 @@ class LineGetter {
 				line ~= ch;
 		}
 
-		cursorPosition = line.length;
+		cursorPosition = cast(int) line.length;
 	}
 
 	bool insertMode = true;
@@ -2451,7 +2451,7 @@ class LineGetter {
 			assert(line.length);
 			if(insertMode) {
 				line ~= ' ';
-				for(int i = line.length - 2; i >= cursorPosition; i --)
+				for(int i = cast(int) line.length - 2; i >= cursorPosition; i --)
 					line[i + 1] = line[i];
 			}
 			line[cursorPosition] = ch;
@@ -2494,10 +2494,10 @@ class LineGetter {
 		if(line.length < lastDrawLength)
 		foreach(i; line.length + suggestion.length + prompt.length .. lastDrawLength)
 			terminal.write(" ");
-		lastDrawLength = line.length + suggestion.length + prompt.length; // FIXME: graphemes and utf-8 on suggestion/prompt
+		lastDrawLength = cast(int) (line.length + suggestion.length + prompt.length); // FIXME: graphemes and utf-8 on suggestion/prompt
 
 		// FIXME: wrapping
-		terminal.moveTo(startOfLineX + cursorPosition + prompt.length, startOfLineY);
+		terminal.moveTo(startOfLineX + cursorPosition + cast(int) prompt.length, startOfLineY);
 	}
 
 	/// Starts getting a new line. Call workOnLine and finishGettingLine afterward.
@@ -2656,7 +2656,7 @@ class LineGetter {
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.PageUp:
-						loadFromHistory(history.length);
+						loadFromHistory(cast(int) history.length);
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.PageDown:
@@ -2668,7 +2668,7 @@ class LineGetter {
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.End:
-						cursorPosition = line.length;
+						cursorPosition = cast(int) line.length;
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.Insert:
@@ -2698,7 +2698,7 @@ class LineGetter {
 					if(me.buttons & MouseEvent.Button.Left) {
 						if(me.y == startOfLineY) {
 							// FIXME: prompt.length should be graphemes or at least code poitns
-							int p = me.x - startOfLineX - prompt.length;
+							int p = me.x - startOfLineX - cast(int) prompt.length;
 							if(p >= 0 && p < line.length) {
 								justHitTab = false;
 								cursorPosition = p;
