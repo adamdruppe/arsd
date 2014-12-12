@@ -2482,7 +2482,12 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 				sockaddr_in addr;
 				addr.sin_family = AF_INET;
 				addr.sin_port = htons(listeningPort(8085));
-				addr.sin_addr.s_addr = INADDR_ANY;
+				auto lh = listeningHost();
+				if(lh.length) {
+					if(inet_pton(AF_INET, lh.toStringz(), &addr.sin_addr.s_addr) != 1)
+						throw new Exception("bad listening host given, please use an IP address.\nExample: --listening-host 127.0.0.1 means listen only on Localhost.\nExample: --listening-host 0.0.0.0 means listen on all interfaces.\nOr you can pass any other single numeric IPv4 address.");
+				} else
+					addr.sin_addr.s_addr = INADDR_ANY;
 
 				// HACKISH
 				int on = 1;
@@ -2582,13 +2587,13 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 			}
 		} else
 		version(embedded_httpd_threads) {
-			auto manager = new ListeningConnectionManager(listeningPort(8085), &doThreadHttpConnection!(CustomCgi, fun));
+			auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(8085), &doThreadHttpConnection!(CustomCgi, fun));
 			manager.listen();
 		} else
 		version(scgi) {
 			import std.exception;
 			import al = std.algorithm;
-			auto manager = new ListeningConnectionManager(listeningPort(4000), &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
+			auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(4000), &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
 			manager.listen();
 		} else
 		version(fastcgi) {
@@ -3129,7 +3134,7 @@ class ConnectionThread2 : Thread {
 	To use this thing:
 
 	void handler(Socket s) { do something... }
-	auto manager = new ListeningConnectionManager(80, &handler);
+	auto manager = new ListeningConnectionManager("127.0.0.1", 80, &handler);
 	manager.listen();
 
 	I suggest you use BufferedInputRange(connection) to handle the input. As a packet
@@ -3174,11 +3179,11 @@ class ListeningConnectionManager {
 		}
 	}
 
-	this(ushort port, void function(Socket) handler) {
+	this(string host, ushort port, void function(Socket) handler) {
 		this.handler = handler;
 		listener = new TcpSocket();
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-		listener.bind(new InternetAddress(port));
+		listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
 		listener.listen(128);
 	}
 
