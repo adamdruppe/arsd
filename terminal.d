@@ -16,6 +16,9 @@
  */
 module terminal;
 
+// FIXME: ctrl+d eof on stdin
+// FIXME: sig hup
+
 // FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
 
 version(linux)
@@ -743,6 +746,22 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		this.reverseVideo = reverseVideo;
 	}
 
+	private bool _underlined = false;
+
+	/// Note: the Windows console does not support underlining
+	void underline(bool set, ForceOption force = ForceOption.automatic) {
+		if(set == _underlined && force != ForceOption.alwaysSend)
+			return;
+		version(Posix) {
+			if(set)
+				writeStringRaw("\033[4m");
+			else
+				writeStringRaw("\033[24m");
+		}
+		_underlined = set;
+	}
+	// FIXME: do I want to do bold and italic?
+
 	/// Returns the terminal to normal output colors
 	void reset() {
 		version(Windows)
@@ -751,6 +770,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				cast(ushort)((Color.black << 4) | Color.white));
 		else
 			writeStringRaw("\033[0m");
+
+		_underlined = false;
+		_currentForeground = Color.DEFAULT;
+		_currentBackground = Color.DEFAULT;
+		reverseVideo = false;
 	}
 
 	// FIXME: add moveRelative
@@ -771,6 +795,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	/// Moves the output cursor to the given position. (0, 0) is the upper left corner of the screen. The force parameter can be used to force an update, even if Terminal doesn't think it is necessary
 	void moveTo(int x, int y, ForceOption force = ForceOption.automatic) {
 		if(force != ForceOption.neverSend && (force == ForceOption.alwaysSend || x != _cursorX || y != _cursorY)) {
+			executeAutoHideCursor();
 			version(Posix)
 				doTermcap("cm", y, x);
 			else version(Windows) {
@@ -808,6 +833,39 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			SetConsoleCursorInfo(hConsole, &info);
 		}
 
+	}
+
+	private bool autoHidingCursor;
+	private bool autoHiddenCursor;
+	// explicitly not publicly documented
+	// Sets the cursor to automatically insert a hide command at the front of the output buffer iff it is moved.
+	// Call autoShowCursor when you are done with the batch update.
+	void autoHideCursor() {
+		autoHidingCursor = true;
+	}
+
+	private void executeAutoHideCursor() {
+		if(autoHidingCursor) {
+			version(Windows)
+				hideCursor();
+			else version(Posix) {
+				// prepend the hide cursor command so it is the first thing flushed
+				writeBuffer = "\033[?25l" ~ writeBuffer;
+			}
+
+			autoHiddenCursor = true;
+			autoHidingCursor = false; // already been done, don't insert the command again
+		}
+	}
+
+	// explicitly not publicly documented
+	// Shows the cursor if it was automatically hidden by autoHideCursor and resets the internal auto hide state.
+	void autoShowCursor() {
+		if(autoHiddenCursor)
+			showCursor();
+
+		autoHidingCursor = false;
+		autoHiddenCursor = false;
 	}
 
 	/*
@@ -965,12 +1023,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					_cursorX = 0;
 					_cursorY++;
 				break;
+				case '\r':
+					_cursorX = 0;
+				break;
 				case '\t':
 					_cursorX ++;
 					_cursorX += _cursorX % 8; // FIXME: get the actual tabstop, if possible
 				break;
 				default:
-					_cursorX++;
+					if(ch <= 127) // way of only advancing once per dchar instead of per code unit
+						_cursorX++;
 			}
 
 			if(_wrapAround && _cursorX > width) {
