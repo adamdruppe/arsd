@@ -17,7 +17,6 @@
 module terminal;
 
 // FIXME: ctrl+d eof on stdin
-// FIXME: sig hup
 
 // FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
 
@@ -26,7 +25,8 @@ version(linux)
 
 version(Posix) {
 	__gshared bool windowSizeChanged = false;
-	__gshared bool interrupted = false;
+	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
+	__gshared bool hangedUp = false; /// similar to interrupted.
 
 	version(with_eventloop)
 		struct SignalFired {}
@@ -51,6 +51,17 @@ version(Posix) {
 			catch(Exception) {}
 		}
 	}
+	extern(C)
+	void hangupSignalHandler(int sigNumber) nothrow {
+		hangedUp = true;
+		version(with_eventloop) {
+			import arsd.eventloop;
+			try
+				send(SignalFired());
+			catch(Exception) {}
+		}
+	}
+
 }
 
 // parts of this were taken from Robik's ConsoleD
@@ -260,6 +271,7 @@ enum Color : ushort {
 /// Note: these flags can be OR'd together to select more than one option at a time.
 ///
 /// Ctrl+C and other keyboard input is always captured, though it may be line buffered if you don't use raw.
+/// The rationale for that is to ensure the Terminal destructor has a chance to run, since the terminal is a shared resource and should be put back before the program terminates.
 enum ConsoleInputFlags {
 	raw = 0, /// raw input returns keystrokes immediately, without line buffering
 	echo = 1, /// do you want to automatically echo input back to the user?
@@ -267,7 +279,10 @@ enum ConsoleInputFlags {
 	paste = 4, /// capture paste events (note: without this, paste can come through as keystrokes)
 	size = 8, /// window resize events
 
-	allInputEvents = 8|4|2, /// subscribe to all input events.
+	releasedKeys = 64, /// key release events. Not reliable on Posix.
+
+	allInputEvents = 8|4|2, /// subscribe to all input events. Note: in previous versions, this also returned release events. It no longer does, use allInputEventsWithRelease if you want them.
+	allInputEventsWithRelease = allInputEvents|releasedKeys, /// subscribe to all input events, including (unreliable on Posix) key release events.
 }
 
 /// Defines how terminal output should be handled.
@@ -282,7 +297,7 @@ enum ConsoleOutputType {
 /// Some methods will try not to send unnecessary commands to the screen. You can override their judgement using a ForceOption parameter, if present
 enum ForceOption {
 	automatic = 0, /// automatically decide what to do (best, unless you know for sure it isn't right)
-	neverSend = -1, /// never send the data. This will only update Terminal's internal state. Use with caution because this can
+	neverSend = -1, /// never send the data. This will only update Terminal's internal state. Use with caution.
 	alwaysSend = 1, /// always send the data, even if it doesn't seem necessary
 }
 
@@ -658,6 +673,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		showCursor();
 		reset();
 		flush();
+
+		if(lineGetter !is null)
+			lineGetter.dispose();
 	}
 
 	version(Windows)
@@ -665,7 +683,14 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		reset();
 		flush();
 		showCursor();
+
+		if(lineGetter !is null)
+			lineGetter.dispose();
 	}
+
+	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
+	// and some history storage.
+	LineGetter lineGetter;
 
 	int _currentForeground = Color.DEFAULT;
 	int _currentBackground = Color.DEFAULT;
@@ -1083,6 +1108,31 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_cursorX = 0;
 		_cursorY = 0;
 	}
+
+	/// gets a line, including user editing. Convenience method around the LineGetter class and RealTimeConsoleInput facilities - use them if you need more control.
+	/// You really shouldn't call this if stdin isn't actually a user-interactive terminal! So if you expect people to pipe data to your app, check for that or use something else.
+	// FIXME: add a method to make it easy to check if stdin is actually a tty and use other methods there.
+	string getline(string prompt = null) {
+		if(lineGetter is null)
+			lineGetter = new LineGetter(&this);
+		// since the struct might move (it shouldn't, this should be unmovable!) but since
+		// it technically might, I'm updating the pointer before using it just in case.
+		lineGetter.terminal = &this;
+
+		lineGetter.prompt = prompt;
+
+		auto line = lineGetter.getline();
+
+		// lineGetter leaves us exactly where it was when the user hit enter, giving best
+		// flexibility to real-time input and cellular programs. The convenience function,
+		// however, wants to do what is right in most the simple cases, which is to actually
+		// print the line (echo would be enabled without RealTimeConsoleInput anyway and they
+		// did hit enter), so we'll do that here too.
+		writePrintableString("\n");
+
+		return line;
+	}
+
 }
 
 /+
@@ -1121,6 +1171,7 @@ struct RealTimeConsoleInput {
 		private int fdIn;
 		private sigaction_t oldSigWinch;
 		private sigaction_t oldSigIntr;
+		private sigaction_t oldHupIntr;
 		private termios old;
 		ubyte[128] hack;
 		// apparently termios isn't the size druntime thinks it is (at least on 32 bit, sometimes)....
@@ -1210,6 +1261,16 @@ struct RealTimeConsoleInput {
 				sigaction(SIGINT, &n, &oldSigIntr);
 			}
 
+			{
+				import core.sys.posix.signal;
+				sigaction_t n;
+				n.sa_handler = &hangupSignalHandler;
+				n.sa_mask = cast(sigset_t) 0;
+				n.sa_flags = 0;
+				sigaction(SIGHUP, &n, &oldHupIntr);
+			}
+
+
 
 			if(flags & ConsoleInputFlags.mouse) {
 				// basic button press+release notification
@@ -1273,6 +1334,10 @@ struct RealTimeConsoleInput {
 			}
 			if(windowSizeChanged)
 				send(checkWindowSizeChanged());
+			if(hangedUp) {
+				hangedUp = false;
+				send(InputEvent(HangupEvent()));
+			}
 		}
 
 		import arsd.eventloop;
@@ -1295,6 +1360,7 @@ struct RealTimeConsoleInput {
 				sigaction(SIGWINCH, &oldSigWinch, null);
 			}
 			sigaction(SIGINT, &oldSigIntr, null);
+			sigaction(SIGHUP, &oldHupIntr, null);
 		}
 
 		// we're just undoing everything the constructor did, in reverse order, same criteria
@@ -1333,12 +1399,16 @@ struct RealTimeConsoleInput {
 	}
 
 	/// Get one character from the terminal, discarding other
-	/// events in the process.
+	/// events in the process. Returns dchar.init upon receiving end-of-file.
 	dchar getch() {
 		auto event = nextEvent();
 		while(event.type != InputEvent.Type.CharacterEvent || event.characterEvent.eventType == CharacterEvent.Type.Released) {
 			if(event.type == InputEvent.Type.UserInterruptionEvent)
 				throw new Exception("Ctrl+c");
+			if(event.type == InputEvent.Type.HangupEvent)
+				throw new Exception("Hangup");
+			if(event.type == InputEvent.Type.EndOfFileEvent)
+				return dchar.init;
 			event = nextEvent();
 		}
 		return event.characterEvent.character;
@@ -1441,6 +1511,11 @@ struct RealTimeConsoleInput {
 			return InputEvent(UserInterruptionEvent());
 		}
 
+		if(hangedUp) {
+			hangedUp = false;
+			return InputEvent(HangupEvent());
+		}
+
 		version(Posix)
 		if(windowSizeChanged) {
 			return checkWindowSizeChanged();
@@ -1498,6 +1573,10 @@ struct RealTimeConsoleInput {
 
 					e.eventType = ev.bKeyDown ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
 					ne.eventType = ev.bKeyDown ? NonCharacterKeyEvent.Type.Pressed : NonCharacterKeyEvent.Type.Released;
+
+					// only send released events when specifically requested
+					if(!(flags & ConsoleInputFlags.releasedKeys) && !ev.bKeyDown)
+						break;
 
 					e.modifierState = ev.dwControlKeyState;
 					ne.modifierState = ev.dwControlKeyState;
@@ -1582,16 +1661,20 @@ struct RealTimeConsoleInput {
 		terminal.flush(); // make sure all output is sent out before we try to get input
 
 		InputEvent[] charPressAndRelease(dchar character) {
-			return [
-				InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0)),
-				InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0)),
-			];
+			if((flags & ConsoleInputFlags.releasedKeys))
+				return [
+					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0)),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0)),
+				];
+			else return [ InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0)) ];
 		}
 		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key, uint modifiers = 0) {
-			return [
-				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)),
-				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers)),
-			];
+			if((flags & ConsoleInputFlags.releasedKeys))
+				return [
+					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)),
+					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers)),
+				];
+			else return [ InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)) ];
 		}
 
 		char[30] sequenceBuffer;
@@ -1880,7 +1963,7 @@ struct RealTimeConsoleInput {
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
 		if(c == 0)
-			throw new Exception("stdin has reached end of file"); // FIXME: return this as an event instead
+			return [InputEvent(EndOfFileEvent())];
 		if(c == '\033') {
 			if(timedCheckForInput(50)) {
 				// escape sequence
@@ -2020,7 +2103,15 @@ struct SizeChangedEvent {
 }
 
 /// the user hitting ctrl+c will send this
+/// You should drop what you're doing and perhaps exit when this happens.
 struct UserInterruptionEvent {}
+
+/// If the user hangs up (for example, closes the terminal emulator without exiting the app), this is sent.
+/// If you receive it, you should generally cleanly exit.
+struct HangupEvent {}
+
+/// Sent upon receiving end-of-file from stdin.
+struct EndOfFileEvent {}
 
 interface CustomEvent {}
 
@@ -2055,10 +2146,12 @@ struct InputEvent {
 	enum Type {
 		CharacterEvent, ///.
 		NonCharacterKeyEvent, /// .
-		PasteEvent, /// .
+		PasteEvent, /// The user pasted some text. Not always available, the pasted text might come as a series of character events instead.
 		MouseEvent, /// only sent if you subscribed to mouse events
 		SizeChangedEvent, /// only sent if you subscribed to size events
 		UserInterruptionEvent, /// the user hit ctrl+c
+		EndOfFileEvent, /// stdin has received an end of file
+		HangupEvent, /// the terminal hanged up - for example, if the user closed a terminal emulator
 		CustomEvent /// .
 	}
 
@@ -2081,6 +2174,10 @@ struct InputEvent {
 			return sizeChangedEvent;
 		else static if(T == Type.UserInterruptionEvent)
 			return userInterruptionEvent;
+		else static if(T == Type.EndOfFileEvent)
+			return endOfFileEvent;
+		else static if(T == Type.HangupEvent)
+			return hangupEvent;
 		else static if(T == Type.CustomEvent)
 			return customEvent;
 		else static assert(0, "Type " ~ T.stringof ~ " not added to the get function");
@@ -2111,6 +2208,14 @@ struct InputEvent {
 			t = Type.UserInterruptionEvent;
 			userInterruptionEvent = c;
 		}
+		this(HangupEvent c) {
+			t = Type.HangupEvent;
+			hangupEvent = c;
+		}
+		this(EndOfFileEvent c) {
+			t = Type.EndOfFileEvent;
+			endOfFileEvent = c;
+		}
 		this(CustomEvent c) {
 			t = Type.CustomEvent;
 			customEvent = c;
@@ -2125,6 +2230,8 @@ struct InputEvent {
 			MouseEvent mouseEvent;
 			SizeChangedEvent sizeChangedEvent;
 			UserInterruptionEvent userInterruptionEvent;
+			HangupEvent hangupEvent;
+			EndOfFileEvent endOfFileEvent;
 			CustomEvent customEvent;
 		}
 	}
@@ -2137,16 +2244,22 @@ void main() {
 	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
 	//
+	/*
 	auto getter = new LineGetter(&terminal, "test");
 	getter.prompt = "> ";
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	getter.dispose();
+	*/
+
+	terminal.writeln(terminal.getline());
+	terminal.writeln(terminal.getline());
+	terminal.writeln(terminal.getline());
 
 	//input.getch();
 
-	return;
+	// return;
 	//
 
 	terminal.setTitle("Basic I/O");
@@ -2165,6 +2278,8 @@ void main() {
 		terminal.writef("%s\n", event.type);
 		final switch(event.type) {
 			case InputEvent.Type.UserInterruptionEvent:
+			case InputEvent.Type.HangupEvent:
+			case InputEvent.Type.EndOfFileEvent:
 				timeToBreak = true;
 				version(with_eventloop) {
 					import arsd.eventloop;
@@ -2638,12 +2753,17 @@ class LineGetter {
 	/// returns false when there's nothing more to do
 	bool workOnLine(InputEvent e) {
 		switch(e.type) {
+			case InputEvent.Type.EndOfFileEvent:
+				justHitTab = false;
+				return false;
+			break;
 			case InputEvent.Type.CharacterEvent:
 				if(e.characterEvent.eventType == CharacterEvent.Type.Released)
 					return true;
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
 				auto ch = e.characterEvent.character;
 				switch(ch) {
+					case 4: // ctrl+d will also send a newline-equivalent 
 					case '\r':
 					case '\n':
 						justHitTab = false;
@@ -2778,6 +2898,10 @@ class LineGetter {
 			case InputEvent.Type.UserInterruptionEvent:
 				/* I'll take this as canceling the line. */
 				throw new Exception("user canceled"); // FIXME
+			break;
+			case InputEvent.Type.HangupEvent:
+				/* I'll take this as canceling the line. */
+				throw new Exception("user hanged up"); // FIXME
 			break;
 			default:
 				/* ignore. ideally it wouldn't be passed to us anyway! */
