@@ -1,12 +1,40 @@
 This is a collection of modules I find generally useful.
 
+Documentation
+==================
+
+I know I'm pretty light on this. There's some ddocs but for the most part, I kinda expect you to use it the way I do: hoping things are logical and looking
+at the source to fill in the gaps.
+
+You can always catch me on email though: destructionator@gmail.com. That's
+the most reliable way to reach me.
+
+Basic idea
+===================
+
 Modules are usually independent; you don't need this whole directory
 but it doesn't hurt to grab it all either.
+
+I like to compile by just passing all the modules to the command line
+at once. For example: dmd yourapp.d cgi.d. That's why I don't bother
+with a separate arsd/ directory nor with dub packages. Passing the files
+is faster to compile and easier to use!
 
 Read more about the modules at these links (docs are still works in process):
 
 cgi.d info: http://arsdnet.net/web.d/cgi.d.html
 web.d info: http://arsdnet.net/web.d/web.d.html
+
+64 Bit
+=============
+
+Believe it or not, but I still mostly use 32 bit programs myself. I try
+to keep things working on 64 bit, but don't always test it. If something
+doesn't compile or work on 64 bit, email me and I'll see about fixing it.
+
+I also tend to run a version behind bleeding-edge dmd, so sometimes things
+break there too. Again, if that's a problem, just email me and I can typically
+get you a fix in about an hour.
 
 Currently included are:
 
