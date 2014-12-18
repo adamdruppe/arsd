@@ -2693,6 +2693,7 @@ class LineGetter {
 		}
 
 		updateCursorPosition();
+		terminal.showCursor();
 
 		redraw();
 	}
@@ -2916,6 +2917,8 @@ class LineGetter {
 		auto history = historyFilter(f);
 		if(history !is null)
 			this.history ~= history;
+
+		// FIXME: we should hide the cursor if it was hidden in the call to startGettingLine
 		return f;
 	}
 }

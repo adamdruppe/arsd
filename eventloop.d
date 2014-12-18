@@ -671,6 +671,9 @@ private int[2] pipes;
 	makeNonBlocking(pipes[1]);
 }
 
+// FIXME: maybe I should reset all the handles too when new thigns are opened
+// so like listeners = null, etc.
+
 // you shouldn't have to call this
 void closeEventPipes() {
 	unix.close(pipes[0]);
