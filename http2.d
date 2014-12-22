@@ -92,6 +92,9 @@ struct HttpResponse {
 	string[string] headersHash;
 
 	ubyte[] content;
+	string contentText;
+
+	HttpRequestParameters requestParameters;
 }
 
 import std.string;
@@ -472,6 +475,8 @@ class HttpRequest {
 	}
 	BodyReadingState bodyReadingState;
 
+	bool closeSocketWhenComplete;
+
 	void handleIncomingData(scope const ubyte[] dataIn) {
 		if(state == State.waitingForResponse) {
 			state = State.readingHeaders;
@@ -492,7 +497,14 @@ class HttpRequest {
 					parts.popFront();
 					responseData.code = to!int(parts.front());
 					parts.popFront();
-					responseData.codeText = parts.front();
+					responseData.codeText = "";
+					while(!parts.empty) {
+						// FIXME: this sucks!
+						responseData.codeText ~= parts.front();
+						parts.popFront();
+						if(!parts.empty)
+							responseData.codeText ~= " ";
+					}
 				} else {
 					// parse the new header
 					auto header = responseData.headers[$-1];
@@ -504,6 +516,10 @@ class HttpRequest {
 					auto value = header[colon + 2 .. $]; // skipping the colon itself and the following space
 
 					switch(name) {
+						case "Connection":
+							if(value == "close")
+								closeSocketWhenComplete = true;
+						break;
 						case "Content-Type":
 							responseData.contentType = value;
 						break;
@@ -643,13 +659,23 @@ class HttpRequest {
 
 				done:
 				state = State.complete;
+
+				responseData.contentText = cast(string) responseData.content;
+				// FIXME
+				//if(closeSocketWhenComplete)
+					//socket.close();
 			} else {
 				// FIXME: gunzip
 				responseData.content ~= data;
 				assert(data.length <= bodyReadingState.contentLengthRemaining);
 				bodyReadingState.contentLengthRemaining -= data.length;
-				if(bodyReadingState.contentLengthRemaining == 0)
+				if(bodyReadingState.contentLengthRemaining == 0) {
 					state = State.complete;
+					responseData.contentText = cast(string) responseData.content;
+					// FIXME
+					//if(closeSocketWhenComplete)
+						//socket.close();
+				}
 			}
 		}
 	}
@@ -657,9 +683,9 @@ class HttpRequest {
 	this() {
 	}
 
-	this(Uri where) {
+	this(Uri where, HttpVerb method) {
 		auto parts = where;
-		requestParameters.method = HttpVerb.GET;
+		requestParameters.method = method;
 		requestParameters.host = parts.host;
 		requestParameters.port = cast(ushort) parts.port;
 		if(parts.port == 0)
@@ -723,9 +749,26 @@ class HttpRequest {
 	void send() {
 		if(state != State.unsent && state != State.aborted)
 			return; // already sent
-		sendBuffer = cast(ubyte[]) ("GET "~requestParameters.uri~" HTTP/1.1\r\nHost: "~requestParameters.host~"\r\n\r\n");
+		string headers;
+
+		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri~" HTTP/1.1\r\n";
+		headers ~= "Host: "~requestParameters.host~"\r\n";
+		if(requestParameters.userAgent.length)
+			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
+		if(requestParameters.authorization.length)
+			headers ~= "User-Agent: "~requestParameters.authorization~"\r\n";
+		if(requestParameters.bodyData.length)
+			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
+
+		foreach(header; requestParameters.headers)
+			headers ~= header ~ "\r\n";
+
+		headers ~= "\r\n";
+
+		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
 
 		responseData = HttpResponse.init;
+		responseData.requestParameters = requestParameters;
 		bodyBytesSent = 0;
 		bodyBytesReceived = 0;
 		state = State.pendingAvailableConnection;
@@ -757,7 +800,7 @@ class HttpRequest {
 }
 
 struct HttpRequestParameters {
-	Duration timeout;
+	// Duration timeout;
 
 	// debugging
 	bool useHttp11 = true;
@@ -770,6 +813,7 @@ struct HttpRequestParameters {
 	string uri;
 
 	string userAgent;
+	string authorization;
 
 	string[string] cookies;
 
@@ -783,7 +827,7 @@ interface IHttpClient {
 
 }
 
-enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT }
+enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH, MERGE }
 
 /*
 	Usage:
@@ -814,10 +858,14 @@ class HttpClient {
 	/// into a browser.
 	///
 	/// Follows locations, updates the current url.
-	HttpRequest navigateTo(Uri where) {
+	HttpRequest navigateTo(Uri where, HttpVerb method = HttpVerb.GET) {
 		currentUrl = where.basedOn(currentUrl);
 		currentDomain = where.host;
-		auto request = new HttpRequest(currentUrl);
+		auto request = new HttpRequest(currentUrl, method);
+
+		request.requestParameters.userAgent = userAgent;
+		request.requestParameters.authorization = authorization;
+
 		return request;
 	}
 
@@ -845,7 +893,9 @@ class HttpClient {
 			cookies[domain] = null;
 	}
 
-	string userAgent = "D std.net.html";
+	// If you set these, they will be pre-filled on all requests made with this client
+	string userAgent = "D arsd.html2";
+	string authorization;
 
 	/* inter-request state */
 	string[string][string] cookies;
