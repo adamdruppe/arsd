@@ -2073,7 +2073,12 @@ struct Uri {
 	private void reparse(string uri) {
 		import std.regex;
 		// from RFC 3986
-		enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
+
+		// the ctRegex triples the compile time and makes ugly errors for no real benefit
+		// it was a nice experiment but just not worth it.
+		// enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
+		auto ctr = regex(r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?");
+
 		auto m = match(uri, ctr);
 		if(m) {
 			scheme = m.captures[2];
