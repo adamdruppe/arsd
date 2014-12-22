@@ -1,6 +1,8 @@
 // Copyright 2013, Adam D. Ruppe.
 module arsd.http2;
 
+debug import std.stdio;
+
 import std.socket;
 import core.time;
 
@@ -95,56 +97,128 @@ struct HttpResponse {
 import std.string;
 static import std.algorithm;
 import std.conv;
+import std.range;
 
-struct UriParts {
-	string original;
-	string method;
-	string host;
-	ushort port;
-	string path;
 
-	bool useHttps;
 
+// Copy pasta from cgi.d, then stripped down
+struct Uri {
+	alias toString this; // blargh idk a url really is a string, but should it be implicit?
+
+	// scheme//userinfo@host:port/path?query#fragment
+
+	string scheme; /// e.g. "http" in "http://example.com/"
+	string userinfo; /// the username (and possibly a password) in the uri
+	string host; /// the domain name
+	int port; /// port number, if given. Will be zero if a port was not explicitly given
+	string path; /// e.g. "/folder/file.html" in "http://example.com/folder/file.html"
+	string query; /// the stuff after the ? in a uri
+	string fragment; /// the stuff after the # in a uri.
+
+	/// Breaks down a uri string to its components
 	this(string uri) {
-		original = uri;
+		reparse(uri);
+	}
 
-		if(uri[0 .. 8] == "https://")
-			useHttps = true;
-		else
-		if(uri[0..7] != "http://")
-			throw new Exception("You must use an absolute, http or https URL.");
+	private void reparse(string uri) {
+		import std.regex;
+		// from RFC 3986
 
-		version(with_openssl) {} else
-		if(useHttps)
-			throw new Exception("openssl support not compiled in try -version=with_openssl");
+		// the ctRegex triples the compile time and makes ugly errors for no real benefit
+		// it was a nice experiment but just not worth it.
+		// enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
+		auto ctr = regex(r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?");
 
-		int start = useHttps ? 8 : 7;
+		auto m = match(uri, ctr);
+		if(m) {
+			scheme = m.captures[2];
+			auto authority = m.captures[4];
 
-		auto posSlash = uri[start..$].indexOf("/");
-		if(posSlash != -1)
-			posSlash += start;
+			auto idx = authority.indexOf("@");
+			if(idx != -1) {
+				userinfo = authority[0 .. idx];
+				authority = authority[idx + 1 .. $];
+			}
 
-		if(posSlash == -1)
-			posSlash = uri.length;
+			idx = authority.indexOf(":");
+			if(idx == -1) {
+				port = 0; // 0 means not specified; we should use the default for the scheme
+				host = authority;
+			} else {
+				host = authority[0 .. idx];
+				port = to!int(authority[idx + 1 .. $]);
+			}
 
-		auto posColon = uri[start..$].indexOf(":");
-		if(posColon != -1)
-			posColon += start;
+			path = m.captures[5];
+			query = m.captures[7];
+			fragment = m.captures[9];
+		}
+		// uriInvalidated = false;
+	}
 
-		if(useHttps)
-			port = 443;
-		else
-			port = 80;
+	private string rebuildUri() const {
+		string ret;
+		if(scheme.length)
+			ret ~= scheme ~ ":";
+		if(userinfo.length || host.length)
+			ret ~= "//";
+		if(userinfo.length)
+			ret ~= userinfo ~ "@";
+		if(host.length)
+			ret ~= host;
+		if(port)
+			ret ~= ":" ~ to!string(port);
 
-		if(posColon != -1 && posColon < posSlash) {
-			host = uri[start..posColon];
-			port = to!ushort(uri[posColon+1..posSlash]);
-		} else
-			host = uri[start..posSlash];
+		ret ~= path;
 
-		path = uri[posSlash..$];
-		if(path == "")
-			path = "/";
+		if(query.length)
+			ret ~= "?" ~ query;
+
+		if(fragment.length)
+			ret ~= "#" ~ fragment;
+
+		// uri = ret;
+		// uriInvalidated = false;
+		return ret;
+	}
+
+	/// Converts the broken down parts back into a complete string
+	string toString() const {
+		// if(uriInvalidated)
+			return rebuildUri();
+	}
+
+	/// Returns a new absolute Uri given a base. It treats this one as
+	/// relative where possible, but absolute if not. (If protocol, domain, or
+	/// other info is not set, the new one inherits it from the base.)
+	///
+	/// Browsers use a function like this to figure out links in html.
+	Uri basedOn(in Uri baseUrl) const {
+		Uri n = this; // copies
+		// n.uriInvalidated = true; // make sure we regenerate...
+
+		// userinfo is not inherited... is this wrong?
+
+		// if anything is given in the existing url, we don't use the base anymore.
+		if(n.scheme.empty) {
+			n.scheme = baseUrl.scheme;
+			if(n.host.empty) {
+				n.host = baseUrl.host;
+				if(n.port == 0) {
+					n.port = baseUrl.port;
+					if(n.path.length > 0 && n.path[0] != '/') {
+						auto b = baseUrl.path[0 .. baseUrl.path.lastIndexOf("/") + 1];
+						if(b.length == 0)
+							b = "/";
+						n.path = b ~ n.path;
+					} else if(n.path.length == 0) {
+						n.path = baseUrl.path;
+					}
+				}
+			}
+		}
+
+		return n;
 	}
 }
 
@@ -153,12 +227,6 @@ void main(string args[]) {
 	write(post("http://arsdnet.net/bugs.php", ["test" : "hey", "again" : "what"]));
 }
 */
-
-struct Url {
-	string url;
-
-	Url basedOn(Url url) { return url; }
-}
 
 struct BasicAuth {
 	string username;
@@ -203,23 +271,58 @@ class HttpRequest {
 		// host, we try to reuse connections. We may open more than one connection per
 		// host to do parallel requests.
 		//
-		// The key is the *domain name*. Multiple domains on the same address will have separate connections.
+		// The key is the *domain name* and the port. Multiple domains on the same address will have separate connections.
 		Socket[][string] socketsPerHost;
 
-		Socket getOpenSocketOnHost(string host, ushort port) {
-			// FIXME: port
+		void loseSocket(string host, ushort port, Socket s) {
+			import std.string;
+			auto key = format("%s:%s", host, port);
 
+			if(auto list = key in socketsPerHost) {
+				for(int a = 0; a < (*list).length; a++) {
+					if((*list)[a] is s) {
+
+						for(int b = a; b < (*list).length - 1; b++)
+							(*list)[b] = (*list)[b+1];
+						(*list).length = (*list).length - 1;
+						break;
+					}
+				}
+			}
+		}
+
+		Socket getOpenSocketOnHost(string host, ushort port) {
 			Socket openNewConnection() {
 				auto socket = new Socket(AddressFamily.INET, SocketType.STREAM);
 				socket.connect(new InternetAddress(host, port));
+				debug writeln("opening to ", host, ":", port);
 				return socket;
 			}
 
-			if(auto hostListing = host in socketsPerHost) {
+			import std.string;
+			auto key = format("%s:%s", host, port);
+
+			if(auto hostListing = key in socketsPerHost) {
 				// try to find an available socket that is already open
 				foreach(socket; *hostListing) {
-					if(socket !in activeRequestOnSocket)
+					if(socket !in activeRequestOnSocket) {
+						// let's see if it has closed since we last tried
+						// e.g. a server timeout or something. If so, we need
+						// to lose this one and immediately open a new one.
+						SocketSet readSet = new SocketSet();
+						readSet.reset();
+						readSet.add(socket);
+						auto got = Socket.select(readSet, null, null, 5.msecs /* timeout */);
+						if(got > 0) {
+							// we can read something off this... but there aren't
+							// any active requests. Assume it is EOF and open a new one
+
+							socket.close();
+							loseSocket(host, port, socket);
+							goto openNew;
+						}
 						return socket;
+					}
 				}
 
 				// if not too many already open, go ahead and do a new one
@@ -231,8 +334,10 @@ class HttpRequest {
 					return null; // too many, you'll have to wait
 			}
 
+			openNew:
+
 			auto socket = openNewConnection();
-			socketsPerHost[host] ~= socket;
+			socketsPerHost[key] ~= socket;
 			return socket;
 		}
 
@@ -265,7 +370,7 @@ class HttpRequest {
 					continue;
 				}
 
-				auto socket = getOpenSocketOnHost(pc.requestParameters.host, 80);
+				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port);
 
 				if(socket !is null) {
 					activeRequestOnSocket[socket] = pc;
@@ -308,9 +413,10 @@ class HttpRequest {
 							throw new Exception("receive error");
 						} else if(got == 0) {
 							// remote side disconnected
+							debug writeln("remote disconnect");
 							request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
-							// FIXME remove the socket from the list
+							loseSocket(request.requestParameters.host, request.requestParameters.port, sock);
 						} else {
 							// data available
 							request.handleIncomingData(buffer[0 .. got]);
@@ -336,8 +442,10 @@ class HttpRequest {
 					}
 				}
 
-				foreach(s; inactive[0 .. inactiveCount])
+				foreach(s; inactive[0 .. inactiveCount]) {
+					debug writeln("removing socket from active list");
 					activeRequestOnSocket.remove(s);
+				}
 			}
 
 			// we've completed a request, are there any more pending connection? if so, send them now
@@ -549,10 +657,13 @@ class HttpRequest {
 	this() {
 	}
 
-	this(Url where) {
-		auto parts = UriParts(where.url);
+	this(Uri where) {
+		auto parts = where;
 		requestParameters.method = HttpVerb.GET;
 		requestParameters.host = parts.host;
+		requestParameters.port = cast(ushort) parts.port;
+		if(parts.port == 0)
+			requestParameters.port = 80; // FIXME: SSL
 		requestParameters.uri = parts.path;
 	}
 
@@ -655,6 +766,7 @@ struct HttpRequestParameters {
 	// the request itself
 	HttpVerb method;
 	string host;
+	ushort port;
 	string uri;
 
 	string userAgent;
@@ -694,7 +806,7 @@ class HttpClient {
 	/// Automatically follow a redirection?
 	bool followLocation = false;
 
-	@property Url location() {
+	@property Uri location() {
 		return currentUrl;
 	}
 
@@ -702,16 +814,14 @@ class HttpClient {
 	/// into a browser.
 	///
 	/// Follows locations, updates the current url.
-	HttpRequest navigateTo(Url where) {
+	HttpRequest navigateTo(Uri where) {
 		currentUrl = where.basedOn(currentUrl);
-		currentUrl = where;
-		auto parts = UriParts(where.url);
-		currentDomain = parts.host;
+		currentDomain = where.host;
 		auto request = new HttpRequest(currentUrl);
 		return request;
 	}
 
-	private Url currentUrl;
+	private Uri currentUrl;
 	private string currentDomain;
 
 	this(ICache cache = null) {
@@ -771,6 +881,7 @@ struct HttpCookie {
 
 // FIXME: websocket
 
+version(testing)
 void main() {
 	import std.stdio;
 	auto client = new HttpClient();
