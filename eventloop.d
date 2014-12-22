@@ -438,7 +438,13 @@ version(linux) {
 	private void addFileToLoopImplementation(int fd, int events) {
 		epoll_event ev;
 
-		ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
+		// I don't remember why I made it edge triggered in the first
+		// place as that requires a bit more care to do correctly and I don't
+		// think I've ever taken that kind of care. I'm going to try switching it
+		// to level triggered (the event fires whenever the loop goes through and
+		// there's still data available) and see if things work better.
+
+		// ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
 
 		if(events & FileEvents.read)
 			ev.events |= EPOLL_EVENTS.EPOLLIN;

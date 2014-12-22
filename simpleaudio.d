@@ -294,6 +294,7 @@ struct MidiOutput {
 	}
 }
 
+
 // FIXME: maybe add a PC speaker beep function for completeness
 
 /// Interfaces with the default sound card. You should only have a single instance of this and it should
@@ -317,7 +318,7 @@ struct AudioMixer {
 		snd_mixer_selem_id_t* sid;
 		snd_mixer_elem_t* selem;
 
-		c_long maxVolume, minVolume;
+		c_long maxVolume, minVolume; // these are ok to use if you are writing ALSA specific code i guess
 
 		enum selemName = "Master";
 	}
@@ -353,14 +354,43 @@ struct AudioMixer {
 
 			if(auto err = snd_mixer_selem_get_playback_volume_range(selem, &minVolume, &maxVolume))
 				throw new AlsaException("get volume range", err);
+
+			version(with_eventloop) {
+				import arsd.eventloop;
+				addFileEventListeners(getAlsaFileDescriptors()[0], &eventListener, null, null);
+				setAlsaElemCallback(&alsaCallback);
+			}
 		} else static assert(0);
 	}
 
 	~this() {
 		version(ALSA) {
+			version(with_eventloop) {
+				import arsd.eventloop;
+				removeFileEventListeners(getAlsaFileDescriptors()[0]);
+			}
 			snd_mixer_selem_id_free(sid);
 			snd_mixer_close(handle);
 		} else static assert(0);
+	}
+
+	version(ALSA)
+	version(with_eventloop) {
+		static struct MixerEvent {}
+		nothrow @nogc
+		extern(C) static int alsaCallback(snd_mixer_elem_t*, uint) {
+			import arsd.eventloop;
+			try
+				send(MixerEvent());
+			catch(Exception)
+				return 1;
+
+			return 0;
+		}
+
+		void eventListener(int fd) {
+			handleAlsaEvents();
+		}
 	}
 
 	/// Gets the master channel's mute state
@@ -384,12 +414,19 @@ struct AudioMixer {
 	}
 
 	/// returns a percentage, between 0 and 100 (inclusive)
-	/// Note: this affects shared system state and you should not use it unless the end user wants you to.
 	int getMasterVolume() {
+		version(ALSA) {
+			auto volume = getMasterVolumeExact();
+			return volume * 100 / (maxVolume - minVolume);
+		} else static assert(0);
+	}
+
+	/// Gets the exact value returned from the operating system. The range may vary.
+	int getMasterVolumeExact() {
 		version(ALSA) {
 			c_long volume;
 			snd_mixer_selem_get_playback_volume(selem, 0, &volume);
-			return volume * 100 / (maxVolume - minVolume);
+			return volume;
 		} else static assert(0);
 	}
 
@@ -398,8 +435,15 @@ struct AudioMixer {
 	void setMasterVolume(int volume) {
 		version(ALSA) {
 			assert(volume >= 0 && volume <= 100);
-			snd_mixer_selem_set_playback_volume_all(selem,
-				volume * (maxVolume - minVolume) / 100); 
+			setMasterVolumeExact(volume * (maxVolume - minVolume) / 100);
+		} else static assert(0);
+	}
+
+	/// Sets an exact volume. Must be in range of the OS provided min and max.
+	void setMasterVolumeExact(int volume) {
+		version(ALSA) {
+			if(auto err = snd_mixer_selem_set_playback_volume_all(selem, volume))
+				throw new AlsaException("set volume", err);
 		} else static assert(0);
 	}
 

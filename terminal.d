@@ -2350,6 +2350,10 @@ void main() {
 	FIXME: support lines that wrap
 	FIXME: better controls maybe
 
+	FIXME: support multi-line "lines" and some form of line continuation, both
+	       from the user (if permitted) and from the application, so like the user
+	       hits "class foo { \n" and the app says "that line needs continuation" automatically.
+
 	FIXME: fix lengths on prompt and suggestion
 
 	A note on history:
@@ -2757,7 +2761,7 @@ class LineGetter {
 			case InputEvent.Type.EndOfFileEvent:
 				justHitTab = false;
 				return false;
-			break;
+			//break;
 			case InputEvent.Type.CharacterEvent:
 				if(e.characterEvent.eventType == CharacterEvent.Type.Released)
 					return true;
@@ -2899,11 +2903,11 @@ class LineGetter {
 			case InputEvent.Type.UserInterruptionEvent:
 				/* I'll take this as canceling the line. */
 				throw new Exception("user canceled"); // FIXME
-			break;
+			//break;
 			case InputEvent.Type.HangupEvent:
 				/* I'll take this as canceling the line. */
 				throw new Exception("user hanged up"); // FIXME
-			break;
+			//break;
 			default:
 				/* ignore. ideally it wouldn't be passed to us anyway! */
 		}

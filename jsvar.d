@@ -636,8 +636,9 @@ struct var {
 			this._type = Type.Array;
 			var[] arr;
 			arr.length = t.length;
-			foreach(i, item; t)
-				arr[i] = var(item);
+			static if(!is(T == void[])) // we can't append a void array but it is nice to support x = [];
+				foreach(i, item; t)
+					arr[i] = var(item);
 			this._payload._array = arr;
 		} else static if(is(T == bool)) {
 			this._type = Type.Boolean;
@@ -645,6 +646,10 @@ struct var {
 		}
 
 		return this;
+	}
+
+	public size_t opDollar() {
+		return this.length().get!size_t;
 	}
 
 	public var opOpAssign(string op, T)(T t) {
