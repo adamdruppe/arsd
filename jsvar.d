@@ -41,6 +41,20 @@
 	Also, if you combine this with my new arsd.script module, you get pretty
 	easy interop with a little scripting language that resembles a cross between
 	D and Javascript - just like you can write in D itself using this type.
+
+
+	Properties:
+		* note that @property doesn't work right in D, so the opDispatch properties
+		  will require double parenthesis to call as functions.
+
+		* Properties inside a var itself are set specially:
+			obj.propName._object = new PropertyPrototype(getter, setter);
+
+	D structs can be turned to vars, but it is a copy.
+
+	Wrapping D native objects is coming later, the current ways suck. I really needed
+	properties to do them sanely at all, and now I have it. A native wrapped object will
+	also need to be set with _object prolly.
 */
 module arsd.jsvar;
 
@@ -547,7 +561,7 @@ struct var {
 		} else if(this.payloadType() == Type.Object && this._payload._object !is null) {
 			// FIXME: if it offers input range primitives, we should use them
 			// FIXME: user defined opApply on the object
-			foreach(k, ref v; this._payload._object._properties)
+			foreach(k, ref v; this._payload._object)
 				if(auto result = dg(var(k), v))
 					return result;
 		} else if(this.payloadType() == Type.String) {
@@ -1236,10 +1250,7 @@ struct var {
 					if(_payload._object is null) {
 						val = null;
 					} else {
-						JSONValue[string] tmp;
-						foreach(k, v; _payload._object._properties)
-							tmp[k] = v.toJsonValue();
-						val = tmp;
+						val = _payload._object.toJsonValue();
 					}
 				} else {
 					if(_payload._object is null) {
@@ -1516,8 +1527,14 @@ class PrototypeObject {
 	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
 		var* mem = _peekMember(name, recurse);
 
-		if(mem !is null)
+		if(mem !is null) {
+			// If it is a property, we need to call the getter on it
+			if((*mem).payloadType == var.Type.Object && cast(PropertyPrototype) (*mem)._payload._object) {
+				auto prop = cast(PropertyPrototype) (*mem)._payload._object;
+				return prop.get;
+			}
 			return *mem;
+		}
 
 		mem = _peekMember("opIndex", recurse);
 		if(mem !is null) {
@@ -1539,6 +1556,11 @@ class PrototypeObject {
 		var* mem = _peekMember(name, recurse);
 
 		if(mem !is null) {
+			// Property check - the setter should be proxied over to it
+			if((*mem).payloadType == var.Type.Object && cast(PropertyPrototype) (*mem)._payload._object) {
+				auto prop = cast(PropertyPrototype) (*mem)._payload._object;
+				return prop.set(t);
+			}
 			*mem = t;
 			return *mem;
 		}
@@ -1559,6 +1581,56 @@ class PrototypeObject {
 		return this._properties[name];
 	}
 
+	JSONValue toJsonValue() {
+		JSONValue val;
+		JSONValue[string] tmp;
+		foreach(k, v; this._properties)
+			tmp[k] = v.toJsonValue();
+		val = tmp;
+		return val;
+	}
+
+	public int opApply(scope int delegate(var, ref var) dg) {
+		foreach(k, v; this._properties) {
+			if(v.payloadType == var.Type.Object && cast(PropertyPrototype) v._payload._object)
+				v = (cast(PropertyPrototype) v._payload._object).get;
+			if(auto result = dg(var(k), v))
+				return result;
+		}
+		return 0;
+	}
+}
+
+// A property is a special type of object that can only be set by assigning
+// one of these instances to foo.child._object. When foo.child is accessed and it
+// is an instance of PropertyPrototype, it will return the getter. When foo.child is
+// set (excluding direct assignments through _type), it will call the setter.
+class PropertyPrototype : PrototypeObject {
+	var delegate() getter;
+	void delegate(var) setter;
+	this(var delegate() getter, void delegate(var) setter) {
+		this.getter = getter;
+		this.setter = setter;
+	}
+
+	override string toString() {
+		return get.toString();
+	}
+
+	ref var get() {
+		var* g = new var();
+		*g = getter();
+		return *g;
+	}
+
+	ref var set(var t) {
+		setter(t);
+		return get;
+	}
+
+	override JSONValue toJsonValue() {
+		return get.toJsonValue();
+	}
 }
 
 
