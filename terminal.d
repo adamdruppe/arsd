@@ -1511,6 +1511,7 @@ struct RealTimeConsoleInput {
 			return InputEvent(UserInterruptionEvent());
 		}
 
+		version(Posix)
 		if(hangedUp) {
 			hangedUp = false;
 			return InputEvent(HangupEvent());
@@ -2760,6 +2761,7 @@ class LineGetter {
 		switch(e.type) {
 			case InputEvent.Type.EndOfFileEvent:
 				justHitTab = false;
+				// FIXME: this should be distinct from an empty line when hit at the beginning
 				return false;
 			//break;
 			case InputEvent.Type.CharacterEvent:
