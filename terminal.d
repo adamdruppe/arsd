@@ -1100,9 +1100,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		version(Posix) {
 			doTermcap("cl");
 		} else version(Windows) {
-			// TBD: copy the code from here and test it:
 			// http://support.microsoft.com/kb/99261
-			assert(0, "clear not yet implemented");
+
+			DWORD c;
+			CONSOLE_SCREEN_BUFFER_INFO csbi;
+			DWORD conSize;
+			GetConsoleScreenBufferInfo(hConsole, &csbi);
+			COORD coordScreen;
+			FillConsoleOutputCharacterA(hConsole, ' ', conSize, coordScreen, &c);
+			FillConsoleOutputAttribute(hConsole, csbi.wAttributes, conSize, coordScreen, &c);
+			moveTo(0, 0);
 		}
 
 		_cursorX = 0;
