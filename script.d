@@ -352,17 +352,39 @@ class TokenStream(TextStream) {
 				token.type = ScriptToken.Type.string;
 				int pos = 1; // skip the opening "
 				bool escaped = false;
+				bool mustCopy = false;
 				// FIXME: escaping doesn't do the right thing lol. we should slice if we can, copy if not
 				while(pos < text.length && (escaped || text[pos] != '"')) {
-					if(escaped)
+					if(escaped) {
+						mustCopy = true;
 						escaped = false;
-					else
+					} else
 						if(text[pos] == '\\')
 							escaped = true;
 					pos++;
 				}
 
-				token.str = text[1 .. pos];
+				if(mustCopy) {
+					// there must be something escaped in there, so we need
+					// to copy it and properly handle those cases
+					string copy;
+					copy.reserve(pos);
+
+					escaped = false;
+					foreach(dchar ch; text[1 .. pos]) {
+						if(escaped)
+							escaped = false;
+						else if(ch == '\\') {
+							escaped = true;
+							continue;
+						}
+						copy ~= ch;
+					}
+
+					token.str = copy;
+				} else {
+					token.str = text[1 .. pos];
+				}
 				advance(pos + 1); // skip the closing " too
 			} else {
 				// let's check all symbols

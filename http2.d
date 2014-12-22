@@ -756,7 +756,7 @@ class HttpRequest {
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
 		if(requestParameters.authorization.length)
-			headers ~= "User-Agent: "~requestParameters.authorization~"\r\n";
+			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
 		if(requestParameters.bodyData.length)
 			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
 
