@@ -323,16 +323,23 @@ public struct FileEventDispatcher {
 
 		WrappedListener[3] handlerSet;
 
-		if(readEventHandler !is null)
+		int events;
+
+		if(readEventHandler !is null) {
 			handlerSet[0] = wrap(readEventHandler);
-		if(writeEventHandler !is null)
+			events |= FileEvents.read;
+		}
+		if(writeEventHandler !is null) {
 			handlerSet[0] = wrap(writeEventHandler);
+			events |= FileEvents.write;
+		}
 		if(errorEventHandler !is null)
 			handlerSet[0] = wrap(errorEventHandler);
 
 		listeners[handle] = handlerSet;
 
-		addFileToLoop(handle, FileEvents.read | FileEvents.write);
+
+		addFileToLoop(handle, events);
 	}
 
 	public void removeFile(OsFileHandle handle) {
@@ -446,6 +453,24 @@ version(linux) {
 
 		// ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
 
+		// Oh I think I know why I did this: if it is level triggered
+		// and the data is not actually handled, it infinite loops
+		// on it. So either way, the application needs to do its thing:
+		// either consume all available data every single time it is
+		// triggered - read until you get EAGAIN, OR make sure that
+		// data is never ignored; that every trigger leads to at LEAST
+		// ONE read.
+		//
+		// With writes, it is important to be extremely careful with
+		// level triggered - a file is often ready to write, especially
+		// if you aren't actually using it! I like to do blocking
+		// writes with non-blocking reads, so any level-triggered epoll
+		// on write is probably not what I want.
+		//
+		// Bottom line is this is a kinda leaky abstraction either way
+		// and we all need to understand what is going on to make the
+		// best of it. Also watch your CPU usage for infinite loops!
+
 		if(events & FileEvents.read)
 			ev.events |= EPOLL_EVENTS.EPOLLIN;
 		if(events & FileEvents.write)
@@ -515,8 +540,9 @@ version(linux) {
 					auto flags = events[n].events;
 					if(flags & EPOLL_EVENTS.EPOLLIN)
 						sendSync(FileReadyToRead(fd));
-					if(flags & EPOLL_EVENTS.EPOLLOUT)
+					if(flags & EPOLL_EVENTS.EPOLLOUT) {
 						sendSync(FileReadyToWrite(fd));
+					}
 					if((flags & EPOLL_EVENTS.EPOLLERR) || (flags & EPOLL_EVENTS.EPOLLHUP))
 						sendSync(FileError(fd));
 				}
