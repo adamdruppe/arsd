@@ -1668,6 +1668,23 @@ struct RealTimeConsoleInput {
 	InputEvent[] readNextEvents() {
 		terminal.flush(); // make sure all output is sent out before we try to get input
 
+		// we want to starve the read, especially if we're called from an edge-triggered
+		// epoll (which might happen in version=with_eventloop.. impl detail there subject
+		// to change).
+		auto initial = readNextEventsHelper();
+
+		// lol this calls select() inside a function prolly called from epoll but meh,
+		// it is the simplest thing that can possibly work. The alternative would be
+		// doing non-blocking reads and buffering in the nextRaw function (not a bad idea
+		// btw, just a bit more of a hassle).
+		while(timedCheckForInput(0))
+			initial ~= readNextEventsHelper();
+		return initial;
+	}
+
+	// The helper reads just one actual event from the pipe...
+	version(Posix)
+	InputEvent[] readNextEventsHelper() {
 		InputEvent[] charPressAndRelease(dchar character) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
