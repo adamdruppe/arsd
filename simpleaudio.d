@@ -16,6 +16,18 @@
 	being able to get/set the volume.
 
 
+	HOW IT WORKS:
+		You make a callback which feeds data to the device. Make an
+		AudioOutput struct then feed your callback to it. Then play.
+
+		Then call loop? Or that could be in play?
+
+		Methods:
+			setCallback
+			play
+			pause
+
+
 	TODO:
 		* play audio high level with options to wait until completion or return immediately
 		* midi mid-level stuff
@@ -30,6 +42,9 @@
 */
 module arsd.simpleaudio;
 
+enum BUFFER_SIZE_FRAMES = 2048;
+enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
+
 version(Demo)
 void main() {
 	/*
@@ -39,6 +54,7 @@ void main() {
 	writeln(aio.muteMaster);
 	*/
 
+	/*
 	mciSendStringA("play test.wav", null, 0, null);
 	Sleep(3000);
 	import std.stdio;
@@ -46,16 +62,33 @@ void main() {
 		writeln(err);
 	Sleep(6000);
 	return;
+	*/
 
 	// output about a second of random noise to demo PCM
 	auto ao = AudioOutput(0);
-	short[4046] randomSpam = void;
+	short[BUFFER_SIZE_SHORT] randomSpam = void;
 	import core.stdc.stdlib;
 	foreach(ref s; randomSpam)
 		s = cast(short)((cast(short) rand()) - short.max / 2);
-	foreach(i; 0 .. 50) {
-		 ao.write(randomSpam[]);
-	}
+
+	int loopCount = 40;
+
+	//import std.stdio;
+	//writeln("Should be about ", loopCount * BUFFER_SIZE_FRAMES * 1000 / 44100, " microseconds");
+
+	int loops = 0;
+	// only do simple stuff in here like fill the data, set simple
+	// variables, or call stop anything else might cause deadlock
+	ao.fillData = (short[] buffer) {
+		buffer[] = randomSpam[0 .. buffer.length];
+		loops++;
+		if(loops == loopCount)
+			ao.stop();
+	};
+
+	ao.play();
+
+	return;
 
 	// Play a C major scale on the piano to demonstrate midi
 	auto midi = MidiOutput(0);
@@ -197,54 +230,124 @@ struct AudioOutput {
 		} else static assert(0);
 	}
 
+	/// passes a buffer of data to fill
+	///
 	/// Data is assumed to be interleaved stereo, LE 16 bit, 44.1 kHz
 	/// Each item in the array thus alternates between left and right channel
 	/// and it takes a total of 88,200 items to make one second of sound.
-	void write(scope const(short)[] data) {
-		version(ALSA) {
-			snd_pcm_sframes_t written;
+	void delegate(short[]) fillData;
 
-			while(data.length) {
-				written = snd_pcm_writei(handle, data.ptr, data.length / 2);
-				if(written < 0)
-					throw new AlsaException("pcm write", written);
-				data = data[written * 2 .. $];
+	shared(bool) playing = false; // considered to be volatile
+
+	/// Starts playing, loops until stop is called
+	void play() {
+		assert(fillData !is null);
+		playing = true;
+
+		version(ALSA) {
+			short[BUFFER_SIZE_SHORT] buffer;
+			while(playing) {
+				auto err = snd_pcm_wait(handle, 500);
+				if(err < 0)
+					throw new AlsaException("uh oh", err);
+				// err == 0 means timeout
+				// err == 1 means ready
+
+				auto ready = snd_pcm_avail_update(handle);
+				if(ready < 0)
+					throw new AlsaException("avail", ready);
+				if(ready > BUFFER_SIZE_FRAMES)
+					ready = BUFFER_SIZE_FRAMES;
+				fillData(buffer[0 .. ready * 2]);
+				if(playing) {
+					snd_pcm_sframes_t written;
+					auto data = buffer[];
+
+					while(data.length) {
+						written = snd_pcm_writei(handle, data.ptr, data.length / 2);
+						if(written < 0)
+							throw new AlsaException("pcm write", written);
+						data = data[written * 2 .. $];
+					}
+				}
 			}
 		} else version(WinMM) {
-			// This is probably suboptimal but I need to change the API to fix it and not sure what is best yet
 
-			WAVEHDR header;
+			enum numBuffers = 4; // use a lot of buffers to get smooth output with Sleep, see below
+			short[BUFFER_SIZE_SHORT][numBuffers] buffers;
 
-			header.lpData = cast(void*) data.ptr; // since this is wave out, it promises not to write...
-			header.dwBufferLength = data.length * short.sizeof;
-			header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
-			header.dwLoops = 1;
+			WAVEHDR[numBuffers] headers;
 
-			if(auto err = waveOutPrepareHeader(handle, &header, header.sizeof))
-				throw new WinMMException("prepare header", err);
+			foreach(i, ref header; headers) {
+				// since this is wave out, it promises not to write...
+				auto buffer = buffers[i];
+				header.lpData = cast(void*) buffer.ptr;
+				header.dwBufferLength = buffer.length * short.sizeof;
+				header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
+				header.dwLoops = 1;
 
-			playing = true;
+				if(auto err = waveOutPrepareHeader(handle, &header, header.sizeof))
+					throw new WinMMException("prepare header", err);
 
-			if(auto err = waveOutWrite(handle, &header, header.sizeof))
-				throw new WinMMException("wave out write", err);
+				// prime it
+				fillData(buffer[]);
 
-			while(playing)
+				// indicate that they are filled and good to go
+				header.dwUser = 1;
+			}
+
+			while(playing) {
+				// and queue both to be played, if they are ready
+				foreach(ref header; headers)
+					if(header.dwUser) {
+						if(auto err = waveOutWrite(handle, &header, header.sizeof))
+							throw new WinMMException("wave out write", err);
+						header.dwUser = 0;
+					}
 				Sleep(1);
+				// the system resolution may be lower than this sleep. To avoid gaps
+				// in output, we use multiple buffers. Might introduce latency, not
+				// sure how best to fix. I don't want to busy loop...
+			}
 
-			if(auto err = waveOutUnprepareHeader(handle, &header, header.sizeof))
-				throw new WinMMException("unprepare", err);
+			// wait for the system to finish with our buffers
+			bool anyInUse = true;
+
+			while(anyInUse) {
+				anyInUse = false;
+				foreach(header; headers) {
+					if(!header.dwUser) {
+						anyInUse = true;
+						break;
+					}
+				}
+				if(anyInUse)
+					Sleep(1);
+			}
+
+			foreach(ref header; headers) 
+				if(auto err = waveOutUnprepareHeader(handle, &header, header.sizeof))
+					throw new WinMMException("unprepare", err);
 		} else static assert(0);
 	}
 
-	version(WinMM) {
-		// volatile
-		shared(bool) playing = false;
+	/// Breaks the play loop
+	void stop() {
+		playing = false;
+	}
 
+	version(WinMM) {
 		extern(Windows)
 		static void mmCallback(HWAVEOUT handle, UINT msg, void* userData, DWORD param1, DWORD param2) {
 			AudioOutput* ao = cast(AudioOutput*) userData;
 			if(msg == WOM_DONE) {
-				ao.playing = false;
+				auto header = cast(WAVEHDR*) param1;
+				// we want to bounce back and forth between two buffers
+				// to keep the sound going all the time
+				if(ao.playing) {
+					ao.fillData((cast(short*) header.lpData)[0 .. header.dwBufferLength / short.sizeof]);
+				}
+				header.dwUser = 1;
 			}
 		}
 	}
@@ -668,6 +771,8 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 	snd_pcm_t* handle;
 	snd_pcm_hw_params_t* hwParams;
 
+	/* Open PCM and initialize hardware */
+
 	if (auto err = snd_pcm_open(&handle, cardName, direction, 0))
 		throw new AlsaException("open device", err);
 	scope(failure)
@@ -697,6 +802,24 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 
 	if (auto err = snd_pcm_hw_params(handle, hwParams))
 		throw new AlsaException("params install", err);
+
+	/* Setting up the callbacks */
+
+	snd_pcm_sw_params_t* swparams;
+	if(auto err = snd_pcm_sw_params_malloc(&swparams))
+		throw new AlsaException("sw malloc", err);
+	scope(exit)
+		snd_pcm_sw_params_free(swparams);
+	if(auto err = snd_pcm_sw_params_current(handle, swparams))
+		throw new AlsaException("sw set", err);
+	if(auto err = snd_pcm_sw_params_set_avail_min(handle, swparams, BUFFER_SIZE_FRAMES))
+		throw new AlsaException("sw min", err);
+	if(auto err = snd_pcm_sw_params_set_start_threshold(handle, swparams, 0))
+		throw new AlsaException("sw threshold", err);
+	if(auto err = snd_pcm_sw_params(handle, swparams))
+		throw new AlsaException("sw params", err);
+
+	/* finish setup */
 
 	if (auto err = snd_pcm_prepare(handle))
 		throw new AlsaException("prepare", err);
@@ -853,6 +976,7 @@ extern(C):
 
 	struct snd_pcm_t {}
 	struct snd_pcm_hw_params_t {}
+	struct snd_pcm_sw_params_t {}
 
 	int snd_pcm_open(snd_pcm_t**, const char*, snd_pcm_stream_t, int);
 	int snd_pcm_close(snd_pcm_t*);
@@ -866,10 +990,23 @@ extern(C):
 	int snd_pcm_hw_params_set_format(snd_pcm_t*, snd_pcm_hw_params_t*, snd_pcm_format);
 	int snd_pcm_hw_params_set_rate_near(snd_pcm_t*, snd_pcm_hw_params_t*, uint*, int*);
 
+	int snd_pcm_sw_params_malloc(snd_pcm_sw_params_t**);
+	void snd_pcm_sw_params_free(snd_pcm_sw_params_t*);
+
+	int snd_pcm_sw_params_current(snd_pcm_t *pcm, snd_pcm_sw_params_t *params);
+	int snd_pcm_sw_params(snd_pcm_t *pcm, snd_pcm_sw_params_t *params);
+	int snd_pcm_sw_params_set_avail_min(snd_pcm_t*, snd_pcm_sw_params_t*, snd_pcm_uframes_t);
+	int snd_pcm_sw_params_set_start_threshold(snd_pcm_t*, snd_pcm_sw_params_t*, snd_pcm_uframes_t);
+	int snd_pcm_sw_params_set_stop_threshold(snd_pcm_t*, snd_pcm_sw_params_t*, snd_pcm_uframes_t);
+
 	alias snd_pcm_sframes_t = c_long;
 	alias snd_pcm_uframes_t = c_ulong;
 	snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t*, const void*, snd_pcm_uframes_t size);
 	snd_pcm_sframes_t snd_pcm_readi(snd_pcm_t*, void*, snd_pcm_uframes_t size);
+
+	int snd_pcm_wait(snd_pcm_t *pcm, int timeout);
+	snd_pcm_sframes_t snd_pcm_avail(snd_pcm_t *pcm);
+	snd_pcm_sframes_t snd_pcm_avail_update(snd_pcm_t *pcm);
 
 	// raw midi
 
