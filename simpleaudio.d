@@ -39,13 +39,23 @@ void main() {
 	writeln(aio.muteMaster);
 	*/
 
+	mciSendStringA("play test.wav", null, 0, null);
+	Sleep(3000);
+	import std.stdio;
+	if(auto err = mciSendStringA("play test2.wav", null, 0, null))
+		writeln(err);
+	Sleep(6000);
+	return;
+
 	// output about a second of random noise to demo PCM
 	auto ao = AudioOutput(0);
-	short[1024] randomSpam = void;
+	short[4046] randomSpam = void;
+	import core.stdc.stdlib;
+	foreach(ref s; randomSpam)
+		s = cast(short)((cast(short) rand()) - short.max / 2);
 	foreach(i; 0 .. 50) {
 		 ao.write(randomSpam[]);
 	}
-
 
 	// Play a C major scale on the piano to demonstrate midi
 	auto midi = MidiOutput(0);
@@ -53,7 +63,7 @@ void main() {
 	ubyte[16] buffer = void;
 	ubyte[] where = buffer[];
 	midi.writeRawMessageData(where.midiProgramChange(1, 1));
-	for(ubyte note = MidiNote.middleC; note <= MidiNote.middleC + 12; note++) {
+	for(ubyte note = MidiNote.C; note <= MidiNote.C + 12; note++) {
 		where = buffer[];
 		midi.writeRawMessageData(where.midiNoteOn(1, note, 127));
 		import core.thread;
@@ -63,6 +73,8 @@ void main() {
 		if(note != 76 && note != 83)
 			note++;
 	}
+	import core.thread;
+	Thread.sleep(dur!"msecs"(500)); // give the last note a chance to finish
 }
 
 
@@ -108,6 +120,7 @@ class AudioException : Exception {
 }
 
 /// Gives PCM input access (such as a microphone).
+version(ALSA) // FIXME
 struct AudioInput {
 	version(ALSA) {
 		snd_pcm_t* handle;
@@ -138,7 +151,7 @@ struct AudioInput {
 			if(read < 0)
 				throw new AlsaException("pcm read", read);
 
-			return buffer[0 .. read];
+			return buffer[0 .. read * 2];
 		} else static assert(0);
 	}
 
@@ -155,9 +168,13 @@ struct AudioInput {
 struct AudioOutput {
 	version(ALSA) {
 		snd_pcm_t* handle;
+	} else version(WinMM) {
+		HWAVEOUT handle;
 	}
 
 	@disable this();
+	// This struct must NEVER be moved or copied, a pointer to it may
+	// be passed to a device driver and stored!
 	@disable this(this);
 
 	/// Always pass card == 0.
@@ -166,6 +183,17 @@ struct AudioOutput {
 
 		version(ALSA) {
 			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK);
+		} else version(WinMM) {
+			WAVEFORMATEX format;
+			format.wFormatTag = WAVE_FORMAT_PCM;
+			format.nChannels = 2;
+			format.nSamplesPerSec = 44100;
+			format.nAvgBytesPerSec = 44100 * 2 * 2; // two channels, two bytes per sample
+			format.nBlockAlign = 4;
+			format.wBitsPerSample = 16;
+			format.cbSize = 0;
+			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, &mmCallback, &this, CALLBACK_FUNCTION))
+				throw new WinMMException("wave out open", err);
 		} else static assert(0);
 	}
 
@@ -177,12 +205,48 @@ struct AudioOutput {
 			snd_pcm_sframes_t written;
 
 			while(data.length) {
-				written = snd_pcm_writei(handle, data.ptr, data.length);
+				written = snd_pcm_writei(handle, data.ptr, data.length / 2);
 				if(written < 0)
 					throw new AlsaException("pcm write", written);
-				data = data[written .. $];
+				data = data[written * 2 .. $];
 			}
+		} else version(WinMM) {
+			// This is probably suboptimal but I need to change the API to fix it and not sure what is best yet
+
+			WAVEHDR header;
+
+			header.lpData = cast(void*) data.ptr; // since this is wave out, it promises not to write...
+			header.dwBufferLength = data.length * short.sizeof;
+			header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
+			header.dwLoops = 1;
+
+			if(auto err = waveOutPrepareHeader(handle, &header, header.sizeof))
+				throw new WinMMException("prepare header", err);
+
+			playing = true;
+
+			if(auto err = waveOutWrite(handle, &header, header.sizeof))
+				throw new WinMMException("wave out write", err);
+
+			while(playing)
+				Sleep(1);
+
+			if(auto err = waveOutUnprepareHeader(handle, &header, header.sizeof))
+				throw new WinMMException("unprepare", err);
 		} else static assert(0);
+	}
+
+	version(WinMM) {
+		// volatile
+		shared(bool) playing = false;
+
+		extern(Windows)
+		static void mmCallback(HWAVEOUT handle, UINT msg, void* userData, DWORD param1, DWORD param2) {
+			AudioOutput* ao = cast(AudioOutput*) userData;
+			if(msg == WOM_DONE) {
+				ao.playing = false;
+			}
+		}
 	}
 
 	// FIXME: add async function hooks
@@ -190,6 +254,8 @@ struct AudioOutput {
 	~this() {
 		version(ALSA) {
 			snd_pcm_close(handle);
+		} else version(WinMM) {
+			waveOutClose(handle);
 		} else static assert(0);
 	}
 }
@@ -302,6 +368,7 @@ struct MidiOutput {
 ///
 /// A mixer gives access to things like volume controls and mute buttons. It should also give a
 /// callback feature to alert you of when the settings are changed by another program.
+version(ALSA) // FIXME
 struct AudioMixer {
 	// To port to a new OS: put the data in the right version blocks
 	// then implement each function. Leave else static assert(0) at the
@@ -877,10 +944,109 @@ extern(Windows):
 
 	alias HMIDIOUT = HANDLE;
 	alias MMRESULT = UINT;
-	enum CALLBACK_NULL = 0;
 
 	MMRESULT midiOutOpen(HMIDIOUT*, UINT, DWORD, DWORD, DWORD);
 	MMRESULT midiOutClose(HMIDIOUT);
 	MMRESULT midiOutReset(HMIDIOUT);
 	MMRESULT midiOutShortMsg(HMIDIOUT, DWORD);
+
+	alias HWAVEOUT = HANDLE;
+
+	struct WAVEFORMATEX {
+		WORD wFormatTag;
+		WORD nChannels;
+		DWORD nSamplesPerSec;
+		DWORD nAvgBytesPerSec;
+		WORD nBlockAlign;
+		WORD wBitsPerSample;
+		WORD cbSize;
+	}
+
+	struct WAVEHDR {
+		void* lpData;
+		DWORD dwBufferLength;
+		DWORD dwBytesRecorded;
+		DWORD dwUser;
+		DWORD dwFlags;
+		DWORD dwLoops;
+		WAVEHDR *lpNext;
+		DWORD reserved;
+	}
+
+	enum UINT WAVE_MAPPER= -1;
+
+	MMRESULT waveOutOpen(HWAVEOUT*, UINT_PTR, WAVEFORMATEX*, void* callback, void*, DWORD);
+	MMRESULT waveOutClose(HWAVEOUT);
+	MMRESULT waveOutPrepareHeader(HWAVEOUT, WAVEHDR*, UINT);
+	MMRESULT waveOutUnprepareHeader(HWAVEOUT, WAVEHDR*, UINT);
+	MMRESULT waveOutWrite(HWAVEOUT, WAVEHDR*, UINT);
+
+	MMRESULT waveOutGetVolume(HWAVEOUT, PDWORD);
+	MMRESULT waveOutSetVolume(HWAVEOUT, DWORD);
+
+	enum CALLBACK_TYPEMASK = 0x70000;
+	enum CALLBACK_NULL     = 0;
+	enum CALLBACK_WINDOW   = 0x10000;
+	enum CALLBACK_TASK     = 0x20000;
+	enum CALLBACK_FUNCTION = 0x30000;
+	enum CALLBACK_THREAD   = CALLBACK_TASK;
+	enum CALLBACK_EVENT    = 0x50000;
+
+	enum WAVE_FORMAT_PCM = 1;
+
+	enum WHDR_PREPARED = 2;
+	enum WHDR_BEGINLOOP = 4;
+	enum WHDR_ENDLOOP = 8;
+	enum WHDR_INQUEUE = 16;
+
+	enum WinMMMessage : UINT {
+		MM_JOY1MOVE            = 0x3A0,
+		MM_JOY2MOVE,
+		MM_JOY1ZMOVE,
+		MM_JOY2ZMOVE,       // = 0x3A3
+		MM_JOY1BUTTONDOWN      = 0x3B5,
+		MM_JOY2BUTTONDOWN,
+		MM_JOY1BUTTONUP,
+		MM_JOY2BUTTONUP,
+		MM_MCINOTIFY,       // = 0x3B9
+		MM_WOM_OPEN            = 0x3BB,
+		MM_WOM_CLOSE,
+		MM_WOM_DONE,
+		MM_WIM_OPEN,
+		MM_WIM_CLOSE,
+		MM_WIM_DATA,
+		MM_MIM_OPEN,
+		MM_MIM_CLOSE,
+		MM_MIM_DATA,
+		MM_MIM_LONGDATA,
+		MM_MIM_ERROR,
+		MM_MIM_LONGERROR,
+		MM_MOM_OPEN,
+		MM_MOM_CLOSE,
+		MM_MOM_DONE,        // = 0x3C9
+		MM_DRVM_OPEN           = 0x3D0,
+		MM_DRVM_CLOSE,
+		MM_DRVM_DATA,
+		MM_DRVM_ERROR,
+		MM_STREAM_OPEN,
+		MM_STREAM_CLOSE,
+		MM_STREAM_DONE,
+		MM_STREAM_ERROR,    // = 0x3D7
+		MM_MOM_POSITIONCB      = 0x3CA,
+		MM_MCISIGNAL,
+		MM_MIM_MOREDATA,    // = 0x3CC
+		MM_MIXM_LINE_CHANGE    = 0x3D0,
+		MM_MIXM_CONTROL_CHANGE = 0x3D1
+	}
+
+
+	enum WOM_OPEN  = WinMMMessage.MM_WOM_OPEN;
+	enum WOM_CLOSE = WinMMMessage.MM_WOM_CLOSE;
+	enum WOM_DONE  = WinMMMessage.MM_WOM_DONE;
+	enum WIM_OPEN  = WinMMMessage.MM_WIM_OPEN;
+	enum WIM_CLOSE = WinMMMessage.MM_WIM_CLOSE;
+	enum WIM_DATA  = WinMMMessage.MM_WIM_DATA;
+
+
+	uint mciSendStringA(in char*,char*,uint,void*);
 }
