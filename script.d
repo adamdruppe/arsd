@@ -19,6 +19,7 @@
 	* simple implementation is moderately small and fairly easy to hack on (though it gets messier by the day), but it isn't made for speed.
 
 	SPECIFICS
+	* string literals come in "foo" or 'foo', like Javascript, or `raw string` like D. Also come as “nested “double quotes” are an option!”
 	* mixin aka eval (does it at runtime, so more like eval than mixin, but I want it to look like D)
 	* scope guards, like in D
 	* try/catch/finally/throw
