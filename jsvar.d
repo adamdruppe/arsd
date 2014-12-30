@@ -768,11 +768,25 @@ struct var {
 			case Type.Object:
 				static if(isAssociativeArray!T) {
 					T ret;
+					if(this._payload._object !is null)
 					foreach(k, v; this._payload._object._properties)
 						ret[to!(KeyType!T)(k)] = v.get!(ValueType!T);
 
 					return ret;
+				} else static if(is(T : PrototypeObject)) {
+					// they are requesting an implementation object, just give it to them
+					return cast(T) this._payload._object;
 				} else static if(is(T == struct) || is(T == class)) {
+					// first, we'll try to give them back the native object we have, if we have one
+					static if(is(T : Object)) {
+						if(auto wno = cast(WrappedNativeObject) this._payload._object) {
+							auto no = cast(T) wno.getObject();
+							if(no !is null)
+								return no;
+						}
+					}
+
+					// failing that, generic struct or class getting: try to fill in the fields by name
 					T t;
 					static if(is(T == class))
 						t = new T();
@@ -1076,6 +1090,11 @@ struct var {
 			auto arr = this._payload._array;
 			if(idx < arr.length)
 				return arr[idx];
+		} else if(_type == Type.Object) {
+			// objects might overload opIndex
+			var* n = new var();
+			*n = this["opIndex"](idx);
+			return *n;
 		}
 		version(jsvar_throw)
 			throw new DynamicTypeException(this, Type.Array, file, line);
@@ -1549,6 +1568,7 @@ template makeAscii() {
 // just a base class we can reference when looking for native objects
 class WrappedNativeObject : PrototypeObject {
 	TypeInfo wrappedType;
+	abstract Object getObject();
 }
 
 template helper(alias T) { alias helper = T; }
@@ -1562,6 +1582,10 @@ template helper(alias T) { alias helper = T; }
 /// That may be done automatically with opAssign in the future.
 WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 	return new class WrappedNativeObject {
+		override Object getObject() {
+			return obj;
+		}
+
 		this() {
 			wrappedType = typeid(obj);
 			// wrap the other methods
