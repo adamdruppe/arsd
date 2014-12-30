@@ -2,6 +2,8 @@
    FIXME: easier object interop with D
    FIXME: prettier stack trace when sent to D
 
+   FIXME: the debugger statement from javascript might be cool to throw in too.
+
    FIXME: add continuations or something too
 
    FIXME: Also ability to get source code for function something so you can mixin.
@@ -215,7 +217,8 @@ class TokenStream(TextStream) {
 				break;
 			if(text[0] == '\n')
 				lineNumber ++;
-			text.popFront();
+			text = text[1 .. $];
+			// text.popFront(); // don't want this because it pops too much trying to do its own UTF-8, which we already handled!
 		}
 	}
 
@@ -348,19 +351,44 @@ class TokenStream(TextStream) {
 					token.str = text[0 .. pos];
 					advance(pos);
 				}
-			} else if(text[0] == '"') {
+			} else if(text[0] == '"' || text[0] == '\'' || text[0] == '`' ||
+				// Also supporting double curly quoted strings: “foo” which nest. This is the utf 8 coding:
+				(text.length >= 3 && text[0] == 0xe2 && text[1] == 0x80 && text[2] == 0x9c)) 
+			{
+				char end = text[0]; // support single quote and double quote strings the same
+				int openCurlyQuoteCount = (end == 0xe2) ? 1 : 0;
+				bool escapingAllowed = end != '`'; // `` strings are raw, they don't support escapes. the others do.
 				token.type = ScriptToken.Type.string;
-				int pos = 1; // skip the opening "
+				int pos = openCurlyQuoteCount ? 3 : 1; // skip the opening dchar
+				int started = pos;
 				bool escaped = false;
 				bool mustCopy = false;
-				// FIXME: escaping doesn't do the right thing lol. we should slice if we can, copy if not
-				while(pos < text.length && (escaped || text[pos] != '"')) {
+
+				bool atEnd() {
+					if(openCurlyQuoteCount) {
+						if(openCurlyQuoteCount == 1)
+							return (pos + 3 <= text.length && text[pos] == 0xe2 && text[pos+1] == 0x80 && text[pos+2] == 0x9d); // ”
+						else // greater than one means we nest
+							return false;
+					} else
+						return text[pos] == end;
+				}
+
+				while(pos < text.length && (escaped || !atEnd())) {
 					if(escaped) {
 						mustCopy = true;
 						escaped = false;
-					} else
-						if(text[pos] == '\\')
+					} else {
+						if(text[pos] == '\\' && escapingAllowed)
 							escaped = true;
+						if(openCurlyQuoteCount) {
+							// also need to count curly quotes to support nesting
+							if(pos + 3 <= text.length && text[pos+0] == 0xe2 && text[pos+1] == 0x80 && text[pos+2] == 0x9c) // “
+								openCurlyQuoteCount++;
+							if(pos + 3 <= text.length && text[pos+0] == 0xe2 && text[pos+1] == 0x80 && text[pos+2] == 0x9d) // ”
+								openCurlyQuoteCount--;
+						}
+					}
 					pos++;
 				}
 
@@ -368,10 +396,10 @@ class TokenStream(TextStream) {
 					// there must be something escaped in there, so we need
 					// to copy it and properly handle those cases
 					string copy;
-					copy.reserve(pos);
+					copy.reserve(pos + 4);
 
 					escaped = false;
-					foreach(dchar ch; text[1 .. pos]) {
+					foreach(dchar ch; text[started .. pos]) {
 						if(escaped)
 							escaped = false;
 						else if(ch == '\\') {
@@ -383,9 +411,9 @@ class TokenStream(TextStream) {
 
 					token.str = copy;
 				} else {
-					token.str = text[1 .. pos];
+					token.str = text[started .. pos];
 				}
-				advance(pos + 1); // skip the closing " too
+				advance(pos + ((end == 0xe2) ? 3 : 1)); // skip the closing " too
 			} else {
 				// let's check all symbols
 				bool found = false;
