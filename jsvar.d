@@ -667,7 +667,14 @@ struct var {
 		} else static if(is(T == bool)) {
 			this._type = Type.Boolean;
 			this._payload._boolean = t;
-		}
+		} else static if(isSomeChar!T) {
+			this._type = Type.String;
+			this._payload._string = "";
+			import std.utf;
+			char[4] ugh;
+			auto size = encode(ugh, t);
+			this._payload._string = ugh[0..size].idup;
+		}// else static assert(0, "unsupported type");
 
 		return this;
 	}
@@ -718,7 +725,7 @@ struct var {
 			assert(this._payload._function !is null);
 			return this._payload._function(_this, args);
 		} else if(this.payloadType() == Type.Object) {
-			assert(this._payload._object !is null);
+			assert(this._payload._object !is null, this.toString());
 			var* operator = this._payload._object._peekMember("opCall", true);
 			if(operator !is null && operator._type == Type.Function)
 				return operator.apply(_this, args);
@@ -760,7 +767,7 @@ struct var {
 				static if(is(T == bool))
 					return this._payload._boolean;
 				else static if(isFloatingPoint!T || isIntegral!T)
-					return this._payload._boolean ? 1 : 0;
+					return cast(T) (this._payload._boolean ? 1 : 0); // the cast is for enums, I don't like this so FIXME
 				else static if(isSomeString!T)
 					return this._payload._boolean ? "true" : "false";
 				else
@@ -788,9 +795,16 @@ struct var {
 
 					// failing that, generic struct or class getting: try to fill in the fields by name
 					T t;
-					static if(is(T == class))
-						t = new T();
+					bool initialized = true;
+					static if(is(T == class)) {
+						static if(__traits(compiles, new T()))
+							t = new T();
+						else
+							initialized = false;
+					}
 
+
+					if(initialized)
 					foreach(i, a; t.tupleof) {
 						cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
 					}
@@ -844,7 +858,27 @@ struct var {
 			case Type.Function:
 				static if(isSomeString!T)
 					return "<function>";
-				else
+				else static if(isDelegate!T) {
+					// making a local copy because otherwise the delegate might refer to a struct on the stack and get corrupted later or something
+					auto func = this._payload._function;
+
+					// the static helper lets me pass specific variables to the closure
+					static T helper(typeof(func) func) {
+						return delegate ReturnType!T (ParameterTypeTuple!T args) {
+							var[] arr;
+							foreach(arg; args)
+								arr ~= var(arg);
+							var ret = func(var(null), arr);
+							static if(is(ReturnType!T == void))
+								return;
+							else
+								return ret.get!(ReturnType!T);
+						};
+					}
+
+					return helper(func);
+
+				} else
 					return T.init;
 				// FIXME: we just might be able to do better for both of these
 			//break;
@@ -1601,6 +1635,9 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 						_properties[memberName] = new PropertyPrototype(
 							() => var(__traits(getMember, obj, memberName)),
 							(var v) {
+							static if(memberName == "handleCharEvent") {
+							import std.stdio; writeln("setting ", memberName, " to ", v.get!type.ptr);
+							}
 								__traits(getMember, obj, memberName) = v.get!(type);
 							});
 					}
