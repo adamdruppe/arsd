@@ -233,13 +233,13 @@ PNG* pngFromImage(IndexedImage i) {
 	// FIXME: we'd get a smaller file size if the transparent pixels were arranged first
 	Chunk palette;
 	palette.type = ['P', 'L', 'T', 'E'];
-	palette.size = i.palette.length * 3;
+	palette.size = cast(int) i.palette.length * 3;
 	palette.payload.length = palette.size;
 
 	Chunk alpha;
 	if(i.hasAlpha) {
 		alpha.type = ['t', 'R', 'N', 'S'];
-		alpha.size = i.palette.length;
+		alpha.size = cast(int) i.palette.length;
 		alpha.payload.length = alpha.size;
 	}
 
@@ -398,7 +398,7 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 
 	com ~= cast(ubyte[]) compressor.flush();
 
-	dat.size = com.length;
+	dat.size = cast(int) com.length;
 	dat.payload = com;
 	dat.checksum = crc("IDAT", dat.payload);
 
@@ -512,7 +512,7 @@ PngHeader getHeaderFromFile(string filename) {
 PNG* readPng(in ubyte[] data) {
 	auto p = new PNG;
 
-	p.length = data.length;
+	p.length = cast(int) data.length;
 	p.header[0..8] = data[0..8];
 
 	if(p.header != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -607,7 +607,7 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 	}
 
 	auto com = cast(ubyte[]) compress(output);
-	dat.size = com.length;
+	dat.size = cast(int) com.length;
 	dat.payload = com;
 	dat.checksum = crc("IDAT", dat.payload);
 
@@ -650,7 +650,7 @@ ubyte[] getUnfilteredDatastream(PNG* p) {
 	ubyte[] data = getDatastream(p);
 	ubyte[] ufdata = new ubyte[data.length - h.height];
 
-	int bytesPerLine = ufdata.length / h.height;
+	int bytesPerLine = cast(int) ufdata.length / h.height;
 
 	int pos = 0, pos2 = 0;
 	for(int a = 0; a < h.height; a++) {
@@ -673,10 +673,10 @@ ubyte[] getFlippedUnfilteredDatastream(PNG* p) {
 	ubyte[] data = getDatastream(p);
 	ubyte[] ufdata = new ubyte[data.length - h.height];
 
-	int bytesPerLine = ufdata.length / h.height;
+	int bytesPerLine = cast(int) ufdata.length / h.height;
 
 
-	int pos = ufdata.length - bytesPerLine, pos2 = 0;
+	int pos = cast(int) ufdata.length - bytesPerLine, pos2 = 0;
 	for(int a = 0; a < h.height; a++) {
 		assert(data[pos2] == 0);
 		ufdata[pos..pos+bytesPerLine] = data[pos2+1..pos2+bytesPerLine+1];
@@ -867,7 +867,7 @@ void replacePalette(PNG* p, Color[] colors) {
 	//assert(0, format("%s %s", colors.length, alpha.size));
 	//assert(colors.length == alpha.size);
 	if(alpha) {
-		alpha.size = colors.length;
+		alpha.size = cast(int) colors.length;
 		alpha.payload.length = colors.length; // we make sure there's room for our simple method below
 	}
 	p.length = 0; // so write will recalculate
@@ -1503,7 +1503,7 @@ struct Chunk {
 		}
 	body {
 		Chunk* c = new Chunk;
-		c.size = payload.length;
+		c.size = cast(int) payload.length;
 		c.type[] = (cast(ubyte[]) type)[];
 		c.payload = payload;
 

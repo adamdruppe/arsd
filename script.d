@@ -1,6 +1,12 @@
 /**
-   FIXME: easier object interop with D
    FIXME: prettier stack trace when sent to D
+
+   FIXME: interpolated string: "$foo" or "#{expr}" or something.
+   FIXME: support more escape things in strings like \n, \t etc.
+
+   FIXME: add easy to use premade packages for the global object.
+
+   FIXME: maybe simplify the json!q{ } thing a bit.
 
    FIXME: the debugger statement from javascript might be cool to throw in too.
 

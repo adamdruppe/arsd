@@ -351,7 +351,7 @@ void writeBmp(MemoryImage img, string filename) {
 		bytesPerPixel = 4;
 	else assert(0, "not implemented"); // FIXME
 
-	int offsetStart = data.length;
+	int offsetStart = cast(int) data.length;
 	for(int y = height; y > 0; y--) {
 		offsetStart -= width * bytesPerPixel;
 		int offset = offsetStart;

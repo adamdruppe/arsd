@@ -62,8 +62,8 @@ TrueColorImage getWindowNetWmIcon(Window window) {
 	if (data.length > 2) {
 		// these are an array of rgba images that we have to convert into pixmaps ourself
 
-		int width = data[0];
-		int height = data[1];
+		int width = cast(int) data[0];
+		int height = cast(int) data[1];
 		data = data[2 .. 2 + width * height];
 
 		auto bytes = cast(ubyte[]) data;

@@ -1,3 +1,21 @@
+/*
+	This is CLIENT only at this point. Don't try to
+	bind/accept with these.
+
+	FIXME: Windows isn't implemented
+
+	On Windows, it uses Microsoft schannel so it doesn't
+	need openssl or gnutls as a dependency.
+
+	On other platforms, it uses the openssl api, which should
+	work with both openssl and gnutls.
+
+
+	btw, interesting:
+	http://msdn.microsoft.com/en-us/library/windows/desktop/aa364510%28v=vs.85%29.aspx
+*/
+
+
 public import std.socket;
 
 // see also:

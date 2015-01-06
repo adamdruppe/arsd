@@ -494,6 +494,7 @@ version(win32_widgets) {
 	}
 }
 
+version(Windows)
 extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	if(hwnd is null || hwnd in Widget.nativeMapping)
 		return true;

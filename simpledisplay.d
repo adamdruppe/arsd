@@ -5053,8 +5053,6 @@ enum GLX_ACCUM_ALPHA_SIZE=  17;      /* number of alpha accum bits */
 XVisualInfo* glXChooseVisual(Display *dpy, int screen, in int *attrib_list);
 
 
-void gluLookAt(double, double, double, double, double, double, double, double, double);
-
 
 enum GL_TRUE = 1;
 enum GL_FALSE = 0;
@@ -5195,7 +5193,7 @@ struct Visual
 	int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
 	int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
 	int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
-	int DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
+	auto DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
 
 	int ConnectionNumber(Display* dpy) { return dpy.fd; }
 
@@ -6191,6 +6189,11 @@ extern(System){
 	void glPushMatrix();
 	void glLoadIdentity();
 	void glOrtho(double, double, double, double, double, double);
+	void glFrustum(double, double, double, double, double, double);
+
+	void gluLookAt(double, double, double, double, double, double, double, double, double);
+	void gluPerspective(double, double, double, double);
+
 	void glPopMatrix();
 	void glEnable(int);
 	void glDisable(int);

@@ -31,7 +31,7 @@ static immutable string[23] primitives = [
 // FIXME: using this will allocate at *runtime*! Unbelievable.
 // it does that even if everything is enum
 auto dTokensPain() {
-	string[] p = cast(string[]) primitives[];
+	immutable p = cast(immutable(string[])) primitives[];
 	string[] ret;
 	foreach(i; (sort!"a.length > b.length"(
 	p~

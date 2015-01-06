@@ -266,13 +266,13 @@ int enableJoystickInput(
 
 		assert(getJoystickOSState !is null);
 
-		if(!getJoystickOSState(player1ControllerId, &(joystickState[0])))
+		if(getJoystickOSState(player1ControllerId, &(joystickState[0])))
 			return 0;
-		if(!getJoystickOSState(player2ControllerId, &(joystickState[1])))
+		if(getJoystickOSState(player2ControllerId, &(joystickState[1])))
 			return 1;
-		if(!getJoystickOSState(player3ControllerId, &(joystickState[2])))
+		if(getJoystickOSState(player3ControllerId, &(joystickState[2])))
 			return 2;
-		if(!getJoystickOSState(player4ControllerId, &(joystickState[3])))
+		if(getJoystickOSState(player4ControllerId, &(joystickState[3])))
 			return 3;
 
 		return 4;
@@ -442,7 +442,7 @@ struct JoystickUpdate {
 				case XBox360Axes.horizontalRightStick:
 					return normalizeAxis(what.Gamepad.sThumbRX);
 				case XBox360Axes.verticalRightStick:
-					return normalizeAxis(what.Gamepad.sThumbRX);
+					return normalizeAxis(what.Gamepad.sThumbRY);
 				case XBox360Axes.verticalDpad:
 					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? short.min :
 					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? short.max :
@@ -460,8 +460,8 @@ struct JoystickUpdate {
 			final switch(axis) {
 				case PS1AnalogAxes.horizontalDpad:
 				case PS1AnalogAxes.horizontalLeftStick:
-					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? short.min :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? short.max :
+					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? short.min :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? short.max :
 					       0;
 					if(got == 0)
 						got = what.Gamepad.sThumbLX;
@@ -469,13 +469,11 @@ struct JoystickUpdate {
 					return normalizeAxis(got);
 				case PS1AnalogAxes.verticalDpad:
 				case PS1AnalogAxes.verticalLeftStick:
-					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? short.min :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? short.max :
-					       0;
-					if(got == 0)
-						got = what.Gamepad.sThumbLY;
+					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? short.max :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? short.min :
+						what.Gamepad.sThumbLY;
 
-					return normalizeAxis(got);
+					return normalizeAxis(-got);
 				case PS1AnalogAxes.horizontalRightStick:
 					return normalizeAxis(what.Gamepad.sThumbRX);
 				case PS1AnalogAxes.verticalRightStick:
@@ -497,8 +495,9 @@ JoystickUpdate getJoystickUpdate(int player) {
 
 	version(Windows) {
 		assert(getJoystickOSState !is null);
-		if(!getJoystickOSState(player, &(joystickState[player])))
-			throw new Exception("wtf");
+		if(getJoystickOSState(player, &(joystickState[player])))
+			return JoystickUpdate();
+			//throw new Exception("wtf");
 	}
 
 	auto it = JoystickUpdate(player, previous[player], joystickState[player]);

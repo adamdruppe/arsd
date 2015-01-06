@@ -366,6 +366,12 @@ private FileEventDispatcher fileEventDispatcher;
 
 /// To add listeners for file events on a specific file dispatcher, use this.
 /// See FileEventDispatcher.addFile for the parameters
+///
+/// When you get an event that a file is ready, you MUST read all of it until
+/// exhausted (that is, read until it would block - you could use select() for
+/// this or set the file to nonblocking mode) because you only get an event
+/// when the state changes. Failure to read it all will leave whatever is left
+/// in the buffer sitting there unnoticed until even more stuff comes in.
 public void addFileEventListeners(T...)(T t) {// if(__traits(compiles, fileEventDispatcher.addFile(t))) {
 	fileEventDispatcher.addFile!(T)(t);
 }
@@ -378,7 +384,7 @@ public void removeFileEventListeners(OsFileHandle handle) {
 /// If you add a file to the event loop, which events are you interested in?
 public enum FileEvents : int {
 	read = 1, /// the file is ready to be read from
-	write = 2 /// the file is ready to be written to
+	write = 2, /// the file is ready to be written to
 }
 
 /// Adds a file handle to the event loop. When the handle has data available to read
@@ -451,7 +457,10 @@ version(linux) {
 		// to level triggered (the event fires whenever the loop goes through and
 		// there's still data available) and see if things work better.
 
-		// ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
+		// OK I'm turning it back on because otherwise unhandled events
+		// cause an infinite loop. So when an event comes, you MUST starve
+		// the read to get all your info in a timely fashion. Gonna document this.
+		ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
 
 		// Oh I think I know why I did this: if it is level triggered
 		// and the data is not actually handled, it infinite loops

@@ -2,6 +2,9 @@
 // It's probably godawful, if it works at all.
 
 module arsd.mssql;
+
+version(Windows):
+
 pragma(lib, "odbc32");
 
 public import arsd.database;
