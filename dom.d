@@ -487,6 +487,27 @@ struct ElementCollection {
 		return ec;
 	}
 
+	/// if you slice it, give the underlying array for easy forwarding of the
+	/// collection to range expecting algorithms or looping over.
+	Element[] opSlice() {
+		return elements;
+	}
+
+	/// And input range primitives so we can foreach over this
+	void popFront() {
+		elements = elements[1..$];
+	}
+
+	/// ditto
+	Element front() {
+		return elements[0];
+	}
+
+	/// ditto
+	bool empty() {
+		return !elements.length;
+	}
+
 	/// Forward method calls to each individual element of the collection
 	/// returns this so it can be chained.
 	ElementCollection opDispatch(string name, T...)(T t) {
@@ -706,8 +727,6 @@ string camelCase(string a) {
 // is good for building php.
 
 // I need to maintain compatibility with the way it is now too.
-
-import arsd.characterencodings;
 
 import std.string;
 import std.exception;
@@ -1660,7 +1679,7 @@ class Element {
 		}
 
 		auto doc = new Document();
-		doc.parse("<innerhtml>" ~ html ~ "</innerhtml>", strict, strict); // FIXME: this should preserve the strictness of the parent document
+		doc.parseUtf8("<innerhtml>" ~ html ~ "</innerhtml>", strict, strict); // FIXME: this should preserve the strictness of the parent document
 
 		children = doc.root.children;
 		foreach(c; children) {
@@ -1695,7 +1714,7 @@ class Element {
 	*/
 	@property Element[] outerHTML(string html) {
 		auto doc = new Document();
-		doc.parse("<innerhtml>" ~ html ~ "</innerhtml>"); // FIXME: needs to preserve the strictness
+		doc.parseUtf8("<innerhtml>" ~ html ~ "</innerhtml>"); // FIXME: needs to preserve the strictness
 
 		children = doc.root.children;
 		foreach(c; children) {
@@ -3344,7 +3363,7 @@ struct Html {
 class Document : FileResource {
 	///.
 	this(string data, bool caseSensitive = false, bool strict = false) {
-		parse(data, caseSensitive, strict);
+		parseUtf8(data, caseSensitive, strict);
 	}
 
 	/**
@@ -3451,17 +3470,30 @@ class Document : FileResource {
 	/// (Case-insensitive, non-strict, determine character encoding from the data.)
 
 	/// NOTE: this makes no attempt at added security.
-	void parseGarbage(string data) {
+	///
+	/// It is a template so it lazily imports characterencodings.
+	void parseGarbage()(string data) {
 		parse(data, false, false, null);
 	}
 
 	/// Parses well-formed UTF-8, case-sensitive, XML or XHTML
 	/// Will throw exceptions on things like unclosed tags.
 	void parseStrict(string data) {
-		parse(data, true, true);
+		parseStream(toUtf8Stream(data), true, true);
 	}
 
-	Utf8Stream handleDataEncoding(in string rawdata, string dataEncoding, bool strict) {
+	/// Parses well-formed UTF-8 in loose mode (by default). Tries to correct
+	/// tag soup, but does NOT try to correct bad character encodings.
+	///
+	/// They will still throw an exception.
+	void parseUtf8(string data, bool caseSensitive = false, bool strict = false) {
+		parseStream(toUtf8Stream(data), caseSensitive, strict);
+	}
+
+	// this is a template so we get lazy import behavior
+	Utf8Stream handleDataEncoding()(in string rawdata, string dataEncoding, bool strict) {
+		static assert(0);
+		import arsd.characterencodings;
 		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
 		if(dataEncoding is null) {
 			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
@@ -3552,6 +3584,12 @@ class Document : FileResource {
 		} else
 			data = rawdata;
 
+		return toUtf8Stream(data);
+	}
+
+	private
+	Utf8Stream toUtf8Stream(in string rawdata) {
+		string data = rawdata;
 		static if(is(Utf8Stream == string))
 			return data;
 		else
@@ -3590,8 +3628,16 @@ class Document : FileResource {
 		But, if you want the best behavior on wild data - figuring it out from the document
 		instead of assuming - you'll probably want to change that argument to null.
 
+		This is a template so it lazily imports arsd.characterencodings, which is required
+		to fix up data encodings.
+
+		If you are sure the encoding is good, try parseUtf8 or parseStrict to avoid the
+		dependency. If it is data from the Internet though, a random website, the encoding
+		is often a lie. This function, if dataEncoding == null, can correct for that, or
+		you can try parseGarbage. In those cases, arsd.characterencodings is required to
+		compile.
 	*/
-	void parse(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
+	void parse()(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
 		auto data = handleDataEncoding(rawdata, dataEncoding, strict);
 		parseStream(data, caseSensitive, strict);
 	}
@@ -4294,7 +4340,7 @@ class Document : FileResource {
 			if(strict)
 				assert(0, "empty document should be impossible in strict mode");
 			else
-				parse(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
+				parseUtf8(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
 		}
 
 		if(paragraphHackfixRequired) {
@@ -4557,7 +4603,7 @@ class XmlDocument : Document {
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
-		parse(data, true, true);
+		parseStrict(data);
 	}
 }
 
