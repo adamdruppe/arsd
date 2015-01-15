@@ -1274,7 +1274,8 @@ class Element {
 		string where = a.href; // same as a.getAttribute("href");
 	*/
 		// name != "popFront" is so duck typing doesn't think it's a range
-	@property string opDispatch(string name)(string v = null) if(name != "popFront") {
+	// deprecated("use element.attr instead")
+	@property string opDispatch(string name)(string v = null) if(name != "popFront" && name != "opCall") {
 		if(v !is null)
 			setAttribute(name, v);
 		return getAttribute(name);
@@ -3492,7 +3493,6 @@ class Document : FileResource {
 
 	// this is a template so we get lazy import behavior
 	Utf8Stream handleDataEncoding()(in string rawdata, string dataEncoding, bool strict) {
-		static assert(0);
 		import arsd.characterencodings;
 		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
 		if(dataEncoding is null) {
