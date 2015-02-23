@@ -306,7 +306,7 @@ public struct FileEventDispatcher {
 	/// You can add a file to listen to here. Files can be OS handles or Phobos types. The handlers can be null, meaning use the default
 	/// (see: setDefaultHandler), or callables with zero or one argument. If they take an argument, it will be the file being handled at this time.
 	public void addFile(FileType, ReadEventHandler, WriteEventHandler, ErrorEventHandler)
-		(FileType handle, ReadEventHandler readEventHandler = null, WriteEventHandler writeEventHandler = null, ErrorEventHandler errorEventHandler = null)
+		(FileType handle, ReadEventHandler readEventHandler = null, WriteEventHandler writeEventHandler = null, ErrorEventHandler errorEventHandler = null, bool edgeTriggered = true)
 		if(
 			// FIXME: we should be able to take other Phobos types too, and correctly translate them up above
 			templateCheckHelper!(is(FileType == OsFileHandle), "The FileType must be an operating system file handle")
@@ -339,7 +339,7 @@ public struct FileEventDispatcher {
 		listeners[handle] = handlerSet;
 
 
-		addFileToLoop(handle, events);
+		addFileToLoop(handle, events, edgeTriggered);
 	}
 
 	public void removeFile(OsFileHandle handle) {
@@ -395,11 +395,11 @@ public enum FileEvents : int {
 /// buffers is already handled, since you won't get events for data that already exists
 
 // FIXME: do we want to be able to pass a function pointer to be a special handler?
-public void addFileToLoop(OsFileHandle fd, /* FileEvents */ int events) {
+public void addFileToLoop(OsFileHandle fd, /* FileEvents */ int events, bool edgeTriggered = true) {
 	if(insideLoop) {
-		addFileToLoopImplementation(fd, events);
+		addFileToLoopImplementation(fd, events, edgeTriggered);
 	} else {
-		backFilesForLoop ~= BackFilesForLoop(fd, events);
+		backFilesForLoop ~= BackFilesForLoop(fd, events, edgeTriggered);
 	}
 }
 
@@ -408,6 +408,7 @@ public void addFileToLoop(OsFileHandle fd, /* FileEvents */ int events) {
 private struct BackFilesForLoop {
 	OsFileHandle file;
 	int events;
+	bool edgeTriggered;
 }
 
 private BackFilesForLoop[] backFilesForLoop;
@@ -416,7 +417,7 @@ private BackFilesForLoop[] backFilesForLoop;
 private void addBackFilesToLoop() {
 	assert(insideLoop);
 	foreach(bf; backFilesForLoop) {
-		addFileToLoop(bf.file, bf.events);
+		addFileToLoop(bf.file, bf.events, bf.edgeTriggered);
 	}
 
 	backFilesForLoop = null;
@@ -448,7 +449,7 @@ version(linux) {
 
 	int epoll = -1;
 
-	private void addFileToLoopImplementation(int fd, int events) {
+	private void addFileToLoopImplementation(int fd, int events, bool edgeTriggered = true) {
 		epoll_event ev;
 
 		// I don't remember why I made it edge triggered in the first
@@ -460,7 +461,8 @@ version(linux) {
 		// OK I'm turning it back on because otherwise unhandled events
 		// cause an infinite loop. So when an event comes, you MUST starve
 		// the read to get all your info in a timely fashion. Gonna document this.
-		ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
+		if(edgeTriggered)
+			ev.events = EPOLL_EVENTS.EPOLLET; // edge triggered
 
 		// Oh I think I know why I did this: if it is level triggered
 		// and the data is not actually handled, it infinite loops
@@ -505,7 +507,7 @@ version(linux) {
 		// anything done before the loop is open needs to be caught up on
 		addBackFilesToLoop();
 
-		addFileToLoop(pipes[0], FileEvents.read);
+		addFileToLoop(pipes[0], FileEvents.read, false);
 
 		epoll_event[16] events;
 
@@ -547,13 +549,22 @@ version(linux) {
 						break outer_loop;
 				} else {
 					auto flags = events[n].events;
-					if(flags & EPOLL_EVENTS.EPOLLIN)
+					import core.stdc.stdio;
+					if(flags & EPOLL_EVENTS.EPOLLIN) {
 						sendSync(FileReadyToRead(fd));
+					}
 					if(flags & EPOLL_EVENTS.EPOLLOUT) {
 						sendSync(FileReadyToWrite(fd));
 					}
-					if((flags & EPOLL_EVENTS.EPOLLERR) || (flags & EPOLL_EVENTS.EPOLLHUP))
+					if((flags & EPOLL_EVENTS.EPOLLERR)) {
+						//import core.stdc.stdio; printf("ERROR on fd from epoll %d\n", fd);
 						sendSync(FileError(fd));
+						break outer_loop;
+					}
+					if((flags & EPOLL_EVENTS.EPOLLHUP)) {
+						//import core.stdc.stdio; printf("HUP on fd from epoll %d\n", fd);
+						sendSync(FileHup(fd));
+					}
 				}
 			}
 
@@ -620,8 +631,9 @@ private bool readFromEventPipe() {
 	for(;;) {
 		auto read = unix.read(pipes[0], buffer.ptr, buffer.length);
 		if(read == -1) {
-			if(errno == EAGAIN)
+			if(errno == EAGAIN) {
 				break; // we got it all
+			}
 			throw new Exception("read");
 		} else if(read == 0) {
 			assert(0); // this is never supposed to happen
@@ -746,6 +758,11 @@ struct FileReadyToWrite {
 
 /// This is a low level event that is dispatched when a listened file (see: addFileToLoop) has an error
 struct FileError {
+	OsFileHandle fd; // file handle;
+}
+
+/// This is a low level event that is dispatched when a listened file (see: addFileToLoop) has a hang up event
+struct FileHup {
 	OsFileHandle fd; // file handle;
 }
 
