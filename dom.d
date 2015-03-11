@@ -26,6 +26,21 @@ else {
 	enum Scriptable;
 }
 
+// this is only meant to be used at compile time, as a filter for opDispatch
+// lists the attributes we want to allow without the use of .attr
+bool isConvenientAttribute(string name) {
+	static immutable list = [
+		"name", "id", "href", "value",
+		"checked", "selected", "type",
+		"src", "content", "pattern",
+		"placeholder", "required", "alt",
+		"rel",
+	];
+	foreach(l; list)
+		if(name == l) return true;
+	return false;
+}
+
 // FIXME: might be worth doing Element.attrs and taking opDispatch off that
 // so more UFCS works.
 
@@ -1272,13 +1287,23 @@ class Element {
 		auto element = Element.make("a");
 		a.href = "cool.html"; // this is the same as a.setAttribute("href", "cool.html");
 		string where = a.href; // same as a.getAttribute("href");
+
 	*/
-		// name != "popFront" is so duck typing doesn't think it's a range
-	// deprecated("use element.attr instead")
-	@property string opDispatch(string name)(string v = null) if(name != "popFront" && name != "opCall") {
+	@property string opDispatch(string name)(string v = null) if(isConvenientAttribute(name)) {
 		if(v !is null)
 			setAttribute(name, v);
 		return getAttribute(name);
+	}
+
+	/**
+		DEPRECATED: generally open opDispatch caused a lot of unforeseen trouble with compile time duck typing and UFCS extensions.
+		so I want to remove it. A small whitelist of attributes is still allowed, but others are not.
+		
+		Instead, use element.attrs.attribute, element.attrs["attribute"],
+		or element.getAttribute("attribute")/element.setAttribute("attribute").
+	*/
+	@property string opDispatch(string name)(string v = null) if(!isConvenientAttribute(name)) {
+		static assert(0, "Don't use " ~ name ~ " direct on Element, instead use element.attrs.attributeName");
 	}
 
 	/*
@@ -1359,15 +1384,15 @@ class Element {
 			auto style = this.getAttribute("style");
 		/* we'll treat shitty old html attributes as css here */
 			if(this.hasAttribute("width"))
-				style ~= "; width: " ~ this.width;
+				style ~= "; width: " ~ this.attrs.width;
 			if(this.hasAttribute("height"))
-				style ~= "; height: " ~ this.height;
+				style ~= "; height: " ~ this.attrs.height;
 			if(this.hasAttribute("bgcolor"))
-				style ~= "; background-color: " ~ this.bgcolor;
+				style ~= "; background-color: " ~ this.attrs.bgcolor;
 			if(this.tagName == "body" && this.hasAttribute("text"))
-				style ~= "; color: " ~ this.text;
+				style ~= "; color: " ~ this.attrs.text;
 			if(this.hasAttribute("color"))
-				style ~= "; color: " ~ this.color;
+				style ~= "; color: " ~ this.attrs.color;
 		/* done */
 
 
@@ -4125,8 +4150,11 @@ class Document : FileResource {
 								else
 									ending = indexOf(data[pos..$], closer);
 
+								ending = indexOf(data[pos..$], closer, 0, (loose ? CaseSensitive.no : CaseSensitive.yes));
+								/*
 								if(loose && ending == -1 && pos < data.length)
 									ending = indexOf(data[pos..$], closer.toUpper());
+								*/
 								if(ending == -1) {
 									if(strict)
 										throw new Exception("tag " ~ tagName ~ " never closed");
