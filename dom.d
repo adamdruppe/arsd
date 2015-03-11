@@ -5783,6 +5783,7 @@ final class ElementStream {
 // unbelievable.
 // Don't use any of these in your own code. Instead, try to use phobos or roll your own, as I might kill these at any time.
 sizediff_t indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
+	static import std.algorithm;
 	auto found = std.algorithm.find(haystack, needle);
 	if(found.length == 0)
 		return -1;
