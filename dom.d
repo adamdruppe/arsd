@@ -20,6 +20,9 @@
 */
 module arsd.dom;
 
+// FIXME: do parent selector picking in get selector
+// FIXME: do :has too... or instead, :has is quite nice.
+
 version(with_arsd_jsvar)
 	import arsd.jsvar;
 else {
@@ -4734,70 +4737,131 @@ int intFromHex(string hex) {
 		}
 
 	///.
-	string[] lexSelector(string selector) {
+	// look, ma, no phobos!
+	// new lexer by ketmar
+	string[] lexSelector (string selstr) {
 
-		// FIXME: it doesn't support quoted attributes
-		// FIXME: it doesn't support backslash escaped characters
-		// FIXME: it should ignore /* comments */
-		string[] tokens;
-		sizediff_t start = -1;
-		bool skip = false;
-		// get rid of useless, non-syntax whitespace
-
-		selector = selector.strip();
-		selector = selector.replace("\n", " "); // FIXME hack
-
-		selector = selector.replace(" >", ">");
-		selector = selector.replace("> ", ">");
-		selector = selector.replace(" +", "+");
-		selector = selector.replace("+ ", "+");
-		selector = selector.replace(" ~", "~");
-		selector = selector.replace("~ ", "~");
-		selector = selector.replace(" <", "<");
-		selector = selector.replace("< ", "<");
-			// FIXME: this is ugly ^^^^^. It should just ignore that whitespace somewhere else.
-
-		// FIXME: another ugly hack. maybe i should just give in and do this the right way......
-		string fixupEscaping(string input) {
-			auto lol = input.replace("\\", "\u00ff");
-			lol = lol.replace("\u00ff\u00ff", "\\");
-			return lol.replace("\u00ff", "");
+		static sizediff_t idToken (string str, size_t stpos) {
+			char c = str[stpos];
+			foreach (sizediff_t tidx, immutable token; selectorTokens) {
+				if (c == token[0]) {
+					if (token.length > 1) {
+						assert(token.length == 2); // we don't have 3-char tokens yet
+						if (str.length-stpos < 2 || str[stpos+1] != token[1]) continue;
+					}
+					return tidx;
+				}
+			}
+			return -1;
 		}
 
-		bool escaping = false;
-		foreach(i, c; selector) { // kill useless leading/trailing whitespace too
-			if(skip) {
-				skip = false;
+		// skip spaces and comments
+		static string removeLeadingBlanks (string str) {
+			size_t curpos = 0;
+			while (curpos < str.length) {
+				immutable char ch = str[curpos];
+				// this can overflow on 4GB strings on 32-bit; 'cmon, don't be silly, nobody cares!
+				if (ch == '/' && str.length-curpos > 1 && str[curpos+1] == '*') {
+					// comment
+					curpos += 2;
+					while (curpos < str.length) {
+						if (str[curpos] == '*' && str.length-curpos > 1 && str[curpos+1] == '/') {
+							curpos += 2;
+							break;
+						}
+						++curpos;
+					}
+				} else if (ch <= 32) {
+					// we should consider unicode spaces too, but... unicode sux anyway.
+					++curpos;
+				} else {
+					break;
+				}
+			}
+			return str[curpos..$];
+		}
+
+		static bool isBlankAt() (string str, size_t pos) {
+			// we should consider unicode spaces too, but... unicode sux anyway.
+			return
+				(pos < str.length && // in string
+				 (str[pos] <= 32 || // space
+					(str.length-pos > 1 && str[pos] == '/' && str[pos+1] == '*'))); // comment
+		}
+
+		string[] tokens;
+		// lexx it!
+		while ((selstr = removeLeadingBlanks(selstr)).length > 0) {
+			if(selstr[0] == '\"') {
+				auto pos = 1;
+				bool escaping;
+				while(pos < selstr.length && !escaping && selstr[pos] != '"') {
+					if(escaping)
+						escaping = false;
+					else if(selstr[pos] == '\\')
+						escaping = true;
+					pos++;
+				}
+
+				// FIXME: do better unescaping
+				tokens ~= selstr[1 .. pos].replace(`\"`, `"`);
+				selstr = selstr[pos + 1.. $];
 				continue;
 			}
 
-			sizediff_t tid = -1;
 
-			if(escaping)
-				escaping = false;
-			else if(c == '\\')
-				escaping = true;
-			else
-				tid = idToken(selector, i);
-
-			if(tid == -1) {
-				if(start == -1)
-					start = i;
-			} else {
-				if(start != -1) {
-					tokens ~= fixupEscaping(selector[start..i]);
-					start = -1;
-				}
-				tokens ~= selectorTokens[tid];
+			// no tokens starts with escape
+			immutable tid = idToken(selstr, 0);
+			if (tid >= 0) {
+				// special token
+				tokens ~= selectorTokens[tid]; // it's funnier this way
+				selstr = selstr[selectorTokens[tid].length..$];
+				continue;
 			}
-
-			if (tid != -1 && selectorTokens[tid].length == 2)
-				skip = true;
+			// from start to space or special token
+			size_t escapePos = size_t.max;
+			size_t curpos = 0; // i can has chizburger^w escape at the start
+			while (curpos < selstr.length) {
+				if (selstr[curpos] == '\\') {
+					// this is escape, just skip it and next char
+					if (escapePos == size_t.max) escapePos = curpos;
+					curpos = (selstr.length-curpos >= 2 ? curpos+2 : selstr.length);
+				} else {
+					if (isBlankAt(selstr, curpos) || idToken(selstr, curpos) >= 0) break;
+					++curpos;
+				}
+			}
+			// identifier
+			if (escapePos != size_t.max) {
+				// i hate it when it happens
+				string id = selstr[0..escapePos];
+				while (escapePos < curpos) {
+					if (curpos-escapePos < 2) break;
+					id ~= selstr[escapePos+1]; // escaped char
+					escapePos += 2;
+					immutable stp = escapePos;
+					while (escapePos < curpos && selstr[escapePos] != '\\') ++escapePos;
+					if (escapePos > stp) id ~= selstr[stp..escapePos];
+				}
+				if (id.length > 0) tokens ~= id;
+			} else {
+				tokens ~= selstr[0..curpos];
+			}
+			selstr = selstr[curpos..$];
 		}
-		if(start != -1)
-			tokens ~= fixupEscaping(selector[start..$]);
-
 		return tokens;
+	}
+	version(unittest_domd_lexer) unittest {
+		assert(lexSelector(r" test\=me  /*d*/") == [r"test=me"]);
+		assert(lexSelector(r"div/**/. id") == ["div", ".", "id"]);
+		assert(lexSelector(r" < <") == ["<", "<"]);
+		assert(lexSelector(r" <<") == ["<<"]);
+		assert(lexSelector(r" <</") == ["<<", "/"]);
+		assert(lexSelector(r" <</*") == ["<<"]);
+		assert(lexSelector(r" <\</*") == ["<", "<"]);
+		assert(lexSelector(r"heh\") == ["heh"]);
+		assert(lexSelector(r"alice \") == ["alice"]);
+		assert(lexSelector(r"alice,is#best") == ["alice", ",", "is", "#", "best"]);
 	}
 
 	///.
@@ -4839,13 +4903,13 @@ int intFromHex(string hex) {
 			}
 			ret ~= tagNameFilter;
 			foreach(a; attributesPresent) ret ~= "[" ~ a ~ "]";
-			foreach(a; attributesEqual) ret ~= "[" ~ a[0] ~ "=" ~ a[1] ~ "]";
-			foreach(a; attributesEndsWith) ret ~= "[" ~ a[0] ~ "$=" ~ a[1] ~ "]";
-			foreach(a; attributesStartsWith) ret ~= "[" ~ a[0] ~ "^=" ~ a[1] ~ "]";
-			foreach(a; attributesNotEqual) ret ~= "[" ~ a[0] ~ "!=" ~ a[1] ~ "]";
-			foreach(a; attributesInclude) ret ~= "[" ~ a[0] ~ "*=" ~ a[1] ~ "]";
-			foreach(a; attributesIncludesSeparatedByDashes) ret ~= "[" ~ a[0] ~ "|=" ~ a[1] ~ "]";
-			foreach(a; attributesIncludesSeparatedBySpaces) ret ~= "[" ~ a[0] ~ "~=" ~ a[1] ~ "]";
+			foreach(a; attributesEqual) ret ~= "[" ~ a[0] ~ "=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesEndsWith) ret ~= "[" ~ a[0] ~ "$=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesStartsWith) ret ~= "[" ~ a[0] ~ "^=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesNotEqual) ret ~= "[" ~ a[0] ~ "!=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesInclude) ret ~= "[" ~ a[0] ~ "*=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesIncludesSeparatedByDashes) ret ~= "[" ~ a[0] ~ "|=\"" ~ a[1] ~ "\"]";
+			foreach(a; attributesIncludesSeparatedBySpaces) ret ~= "[" ~ a[0] ~ "~=\"" ~ a[1] ~ "\"]";
 
 			if(firstChild) ret ~= ":first-child";
 			if(lastChild) ret ~= ":last-child";
@@ -5087,10 +5151,15 @@ int intFromHex(string hex) {
 	///.
 	Selector[] parseSelectorString(string selector, bool caseSensitiveTags = true) {
 		Selector[] ret;
-		foreach(s; selector.split(",")) {
-			ret ~= parseSelector(lexSelector(s), caseSensitiveTags);
+		auto tokens = lexSelector(selector); // this will parse commas too
+		// and now do comma-separated slices (i haz phobosophobia!)
+		while (tokens.length > 0) {
+			size_t end = 0;
+			while (end < tokens.length && tokens[end] != ",") ++end;
+			if (end > 0) ret ~= parseSelector(tokens[0..end], caseSensitiveTags);
+			if (tokens.length-end < 2) break;
+			tokens = tokens[end+1..$];
 		}
-
 		return ret;
 	}
 
@@ -5131,6 +5200,12 @@ int intFromHex(string hex) {
 					if(tid == -1) {
 						if(!caseSensitiveTags)
 							token = token.toLower();
+						if(current.tagNameFilter) {
+							// if it was already set, we must see two thingies
+							// separated by whitespace...
+							commit();
+							current.separation = 0; // tree
+						}
 						current.tagNameFilter = token;
 					} else {
 						// Selector operators
@@ -5267,12 +5342,6 @@ int intFromHex(string hex) {
 							attributeValue ~= token;
 						break;
 					}
-
-					// FIXME: HACK this chops off quotes from the outside for the comparison
-					// for compatibility with real CSS. The lexer should be properly fixed, though.
-					// FIXME: when the lexer is fixed, remove this lest you break it moar.
-					if(attributeValue.length > 2 && attributeValue[0] == '"' && attributeValue[$-1] == '"')
-						attributeValue = attributeValue[1 .. $-1];
 
 					// Selector operators
 					switch(attributeComparison) {

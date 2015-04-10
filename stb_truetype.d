@@ -24,7 +24,7 @@ struct TtfFont {
 		return ptr[0 .. width * height];
 	}
 
-	void getStringSize(string s, int size, out int width, out int height) {
+	void getStringSize(in char[] s, int size, out int width, out int height) {
 		float xpos=0;
 
 		auto scale = stbtt_ScaleForPixelHeight(&font, size);
@@ -55,7 +55,7 @@ struct TtfFont {
 		height = size;
 	}
 
-	ubyte[] renderString(string s, int size, out int width, out int height) {
+	ubyte[] renderString(in char[] s, int size, out int width, out int height) {
 		float xpos=0;
 
 		auto scale = stbtt_ScaleForPixelHeight(&font, size);

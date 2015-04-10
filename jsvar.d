@@ -1635,9 +1635,6 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 						_properties[memberName] = new PropertyPrototype(
 							() => var(__traits(getMember, obj, memberName)),
 							(var v) {
-							static if(memberName == "handleCharEvent") {
-							import std.stdio; writeln("setting ", memberName, " to ", v.get!type.ptr);
-							}
 								__traits(getMember, obj, memberName) = v.get!(type);
 							});
 					}

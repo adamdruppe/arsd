@@ -3,6 +3,22 @@
 
 	This will offer a pollable state of two styles of controller: a PS1 or an XBox 360.
 
+
+	Actually, maybe I'll combine the two controller types. Make L2 and R2 just digital aliases
+	for the triggers, which are analog aliases for it.
+
+	Then have a virtual left stick which has the dpad aliases, while keeping the other two independent
+	(physical dpad and physical left stick).
+
+	Everything else should basically just work. We'll simply be left with naming and I can do them with
+	aliases too.
+
+
+	I do NOT bother with pressure sensitive other buttons, though Xbox original and PS2 had them, they
+	have been removed from the newer models. It makes things simpler anyway since we can check "was just
+	pressed" instead of all deltas.
+
+
 	The PS1 controller style works for a lot of games:
 		* The D-pad is an alias for the left stick. Analog input still works too.
 		* L2 and R2 are given as buttons
@@ -326,8 +342,8 @@ struct JoystickUpdate {
 	}
 
 	// Note: UP is negative!
-	short axisPosition(Axis axis) {
-		return axisPositionHelper(axis, &current);
+	short axisPosition(Axis axis, short digitalFallbackValue = short.max) {
+		return axisPositionHelper(axis, &current, digitalFallbackValue);
 	}
 
 	/* private */
@@ -337,31 +353,31 @@ struct JoystickUpdate {
 		return buttonIsPressedHelper(button, &old);
 	}
 
-	short oldAxisPosition(Axis axis) {
-		return axisPositionHelper(axis, &old);
+	short oldAxisPosition(Axis axis, short digitalFallbackValue = short.max) {
+		return axisPositionHelper(axis, &old, digitalFallbackValue);
 	}
 
-	short axisPositionHelper(Axis axis, JoystickState* what) {
+	short axisPositionHelper(Axis axis, JoystickState* what, short digitalFallbackValue = short.max) {
 		version(ps1_style) {
 			// on PS1, the d-pad and left stick are synonyms for each other
 			// the dpad takes precedence, if it is pressed
 
 			if(axis == PS1AnalogAxes.horizontalDpad || axis == PS1AnalogAxes.horizontalLeftStick) {
-				auto it = axisPositionHelperRaw(PS1AnalogAxes.horizontalDpad, what);
+				auto it = axisPositionHelperRaw(PS1AnalogAxes.horizontalDpad, what, digitalFallbackValue);
 				if(!it)
-					it = axisPositionHelperRaw(PS1AnalogAxes.horizontalLeftStick, what);
+					it = axisPositionHelperRaw(PS1AnalogAxes.horizontalLeftStick, what, digitalFallbackValue);
 				return it;
 			}
 
 			if(axis == PS1AnalogAxes.verticalDpad || axis == PS1AnalogAxes.verticalLeftStick) {
-				auto it = axisPositionHelperRaw(PS1AnalogAxes.verticalDpad, what);
+				auto it = axisPositionHelperRaw(PS1AnalogAxes.verticalDpad, what, digitalFallbackValue);
 				if(!it)
-					it = axisPositionHelperRaw(PS1AnalogAxes.verticalLeftStick, what);
+					it = axisPositionHelperRaw(PS1AnalogAxes.verticalLeftStick, what, digitalFallbackValue);
 				return it;
 			}
 		}
 
-		return axisPositionHelperRaw(axis, what);
+		return axisPositionHelperRaw(axis, what, digitalFallbackValue);
 	}
 
 	static short normalizeAxis(short value) {
@@ -423,7 +439,7 @@ struct JoystickUpdate {
 		}
 	}
 
-	short axisPositionHelperRaw(Axis axis, JoystickState* what) {
+	short axisPositionHelperRaw(Axis axis, JoystickState* what, short digitalFallbackValue = short.max) {
 		version(linux) {
 			int mapping = -1;
 			if(auto ptr = joystickMapping[player])
@@ -444,12 +460,12 @@ struct JoystickUpdate {
 				case XBox360Axes.verticalRightStick:
 					return normalizeAxis(what.Gamepad.sThumbRY);
 				case XBox360Axes.verticalDpad:
-					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? short.min :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? short.max :
+					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? digitalFallbackValue :
 					       0;
 				case XBox360Axes.horizontalDpad:
-					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? short.min :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? short.max :
+					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? digitalFallbackValue :
 					       0;
 				case XBox360Axes.lt:
 					return normalizeTrigger(what.Gamepad.bLeftTrigger);
@@ -460,8 +476,8 @@ struct JoystickUpdate {
 			final switch(axis) {
 				case PS1AnalogAxes.horizontalDpad:
 				case PS1AnalogAxes.horizontalLeftStick:
-					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? short.min :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? short.max :
+					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? digitalFallbackValue :
 					       0;
 					if(got == 0)
 						got = what.Gamepad.sThumbLX;
@@ -469,8 +485,8 @@ struct JoystickUpdate {
 					return normalizeAxis(got);
 				case PS1AnalogAxes.verticalDpad:
 				case PS1AnalogAxes.verticalLeftStick:
-					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? short.max :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? short.min :
+					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? -digitalFallbackValue :
 						what.Gamepad.sThumbLY;
 
 					return normalizeAxis(-got);

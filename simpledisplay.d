@@ -6207,6 +6207,9 @@ extern(System){
 	void glColor3f(float, float, float);
 	void glColor4f(float, float, float, float);
 	void glTranslatef(float, float, float);
+	void glScalef(float, float, float);
+
+	void glDrawElements(int, int, int, void*);
 
 	void glRotatef(float, float, float, float);
 
@@ -6225,7 +6228,7 @@ extern(System){
 	void glGenTextures(uint, uint*);
 	void glBindTexture(int, int);
 	void glTexParameteri(uint, uint, int);
-	void glTexImage2D(int, int, int, int, int, int, int, int, void*);
+	void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
 
 
 	void glTexCoord2f(float, float);

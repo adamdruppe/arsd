@@ -316,6 +316,7 @@ struct Terminal {
 		private int fdOut;
 		private int fdIn;
 		private int[] delegate() getSizeOverride;
+		void delegate(in void[]) _writeDelegate; // used to override the unix write() system call, set it magically
 	}
 
 	version(Posix) {
@@ -917,14 +918,21 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	/// Flushes your updates to the terminal.
 	/// It is important to call this when you are finished writing for now if you are using the version=with_eventloop
 	void flush() {
-		version(Posix) {
-			ssize_t written;
+		if(writeBuffer.length == 0)
+			return;
 
-			while(writeBuffer.length) {
-				written = unix.write(this.fdOut, writeBuffer.ptr, writeBuffer.length);
-				if(written < 0)
-					throw new Exception("write failed for some reason");
-				writeBuffer = writeBuffer[written .. $];
+		version(Posix) {
+			if(_writeDelegate !is null) {
+				_writeDelegate(writeBuffer);
+			} else {
+				ssize_t written;
+
+				while(writeBuffer.length) {
+					written = unix.write(this.fdOut, writeBuffer.ptr, writeBuffer.length);
+					if(written < 0)
+						throw new Exception("write failed for some reason");
+					writeBuffer = writeBuffer[written .. $];
+				}
 			}
 		} else version(Windows) {
 			while(writeBuffer.length) {
@@ -934,7 +942,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				writeBuffer = writeBuffer[written .. $];
 			}
 		}
-		// not buffering right now on Windows, since it probably isn't on ssh anyway
 	}
 
 	int[] getSize() {
@@ -1287,11 +1294,16 @@ struct RealTimeConsoleInput {
 
 				terminal.writeStringRaw("\033[?1000h");
 				destructor ~= { terminal.writeStringRaw("\033[?1000l"); };
-				if(terminal.terminalInFamily("xterm")) {
+				// the MOUSE_HACK env var is for the case where I run screen
+				// but set TERM=xterm (which I do from putty). The 1003 mouse mode
+				// doesn't work there, breaking mouse support entirely. So by setting
+				// MOUSE_HACK=1002 it tells us to use the other mode for a fallback.
+				import std.process : environment;
+				if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
 					// this is vt200 mouse with full motion tracking, supported by xterm
 					terminal.writeStringRaw("\033[?1003h");
 					destructor ~= { terminal.writeStringRaw("\033[?1003l"); };
-				} else if(terminal.terminalInFamily("rxvt", "screen")) {
+				} else if(terminal.terminalInFamily("rxvt", "screen") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 					destructor ~= { terminal.writeStringRaw("\033[?1002l"); };
 				}
@@ -1677,8 +1689,14 @@ struct RealTimeConsoleInput {
 		// it is the simplest thing that can possibly work. The alternative would be
 		// doing non-blocking reads and buffering in the nextRaw function (not a bad idea
 		// btw, just a bit more of a hassle).
-		while(timedCheckForInput(0))
-			initial ~= readNextEventsHelper();
+		while(timedCheckForInput(0)) {
+			auto ne = readNextEventsHelper();
+			initial ~= ne;
+			foreach(n; ne)
+				if(n.type == InputEvent.Type.EndOfFileEvent)
+					return initial; // hit end of file, get out of here lest we infinite loop
+					// (select still returns info available even after we read end of file)
+		}
 		return initial;
 	}
 
