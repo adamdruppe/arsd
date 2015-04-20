@@ -155,7 +155,7 @@ class MsSqlResult : ResultSet {
 					string a;
 
 					more:
-				        SQLCHAR buf[255];
+				        SQLCHAR[255] buf;
 					if(SQLGetData(statement, cast(ushort)(i+1), SQL_CHAR, buf.ptr, 255, &ptr) != SQL_SUCCESS)
 						throw new DatabaseException("get data: " ~ getSQLError(SQL_HANDLE_STMT, statement));
 
@@ -202,8 +202,8 @@ class MsSqlResult : ResultSet {
 
 private string getSQLError(short handletype, SQLHANDLE handle)
 {
-	char sqlstate[32];
-	char message[256]; 
+	char[32] sqlstate;
+	char[256] message; 
 	SQLINTEGER nativeerror=0;
 	SQLSMALLINT textlen=0;			
 	auto ret = SQLGetDiagRec(handletype, handle, 1, 
