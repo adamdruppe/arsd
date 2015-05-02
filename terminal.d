@@ -1349,13 +1349,13 @@ struct RealTimeConsoleInput {
 		void signalFired(SignalFired) {
 			if(interrupted) {
 				interrupted = false;
-				send(InputEvent(UserInterruptionEvent()));
+				send(InputEvent(UserInterruptionEvent(), terminal));
 			}
 			if(windowSizeChanged)
 				send(checkWindowSizeChanged());
 			if(hangedUp) {
 				hangedUp = false;
-				send(InputEvent(HangupEvent()));
+				send(InputEvent(HangupEvent(), terminal));
 			}
 		}
 
@@ -1387,8 +1387,9 @@ struct RealTimeConsoleInput {
 			d();
 	}
 
-	/// Returns true if there is input available now
+	/// Returns true if there iff getch() would not block.
 	bool kbhit() {
+		// FIXME this can break with keyup events on Windows
 		return timedCheckForInput(0);
 	}
 
@@ -1500,7 +1501,7 @@ struct RealTimeConsoleInput {
 		terminal.updateSize();
 		version(Posix)
 		windowSizeChanged = false;
-		return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
+		return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height), terminal);
 	}
 
 
@@ -1527,13 +1528,13 @@ struct RealTimeConsoleInput {
 		version(Posix)
 		if(interrupted) {
 			interrupted = false;
-			return InputEvent(UserInterruptionEvent());
+			return InputEvent(UserInterruptionEvent(), terminal);
 		}
 
 		version(Posix)
 		if(hangedUp) {
 			hangedUp = false;
-			return InputEvent(HangupEvent());
+			return InputEvent(HangupEvent(), terminal);
 		}
 
 		version(Posix)
@@ -1603,7 +1604,7 @@ struct RealTimeConsoleInput {
 
 					if(ev.UnicodeChar) {
 						e.character = cast(dchar) cast(wchar) ev.UnicodeChar;
-						newEvents ~= InputEvent(e);
+						newEvents ~= InputEvent(e, terminal);
 					} else {
 						ne.key = cast(NonCharacterKeyEvent.Key) ev.wVirtualKeyCode;
 
@@ -1611,7 +1612,7 @@ struct RealTimeConsoleInput {
 						// Windows sends more keys than Unix and we're doing lowest common denominator here
 						foreach(member; __traits(allMembers, NonCharacterKeyEvent.Key))
 							if(__traits(getMember, NonCharacterKeyEvent.Key, member) == ne.key) {
-								newEvents ~= InputEvent(ne);
+								newEvents ~= InputEvent(ne, terminal);
 								break;
 							}
 					}
@@ -1657,7 +1658,7 @@ struct RealTimeConsoleInput {
 							continue input_loop;
 					}
 
-					newEvents ~= InputEvent(e);
+					newEvents ~= InputEvent(e, terminal);
 				break;
 				case WINDOW_BUFFER_SIZE_EVENT:
 					auto ev = record.WindowBufferSizeEvent;
@@ -1665,7 +1666,7 @@ struct RealTimeConsoleInput {
 					auto oldHeight = terminal.height;
 					terminal._width = ev.dwSize.X;
 					terminal._height = ev.dwSize.Y;
-					newEvents ~= InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height));
+					newEvents ~= InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height), terminal);
 				break;
 				// FIXME: can we catch ctrl+c here too?
 				default:
@@ -1706,18 +1707,18 @@ struct RealTimeConsoleInput {
 		InputEvent[] charPressAndRelease(dchar character) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
-					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0)),
-					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0)),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0), terminal),
 				];
-			else return [ InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0)) ];
+			else return [ InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal) ];
 		}
 		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key, uint modifiers = 0) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
-					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)),
-					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers)),
+					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers), terminal),
+					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers), terminal),
 				];
-			else return [ InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers)) ];
+			else return [ InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers), terminal) ];
 		}
 
 		char[30] sequenceBuffer;
@@ -1844,7 +1845,7 @@ struct RealTimeConsoleInput {
 							data ~= cast(char) n;
 						}
 					}
-					return [InputEvent(PasteEvent(data))];
+					return [InputEvent(PasteEvent(data), terminal)];
 				case "\033[M":
 					// mouse event
 					auto buttonCode = nextRaw() - 32;
@@ -1907,7 +1908,7 @@ struct RealTimeConsoleInput {
 					m.y = y;
 					m.modifierState = modifiers;
 
-					return [InputEvent(m)];
+					return [InputEvent(m, terminal)];
 				default:
 					// look it up in the termcap key database
 					auto cap = terminal.findSequenceInTermcap(sequence);
@@ -2006,7 +2007,7 @@ struct RealTimeConsoleInput {
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
 		if(c == 0)
-			return [InputEvent(EndOfFileEvent())];
+			return [InputEvent(EndOfFileEvent(), terminal)];
 		if(c == '\033') {
 			if(timedCheckForInput(50)) {
 				// escape sequence
@@ -2201,6 +2202,12 @@ struct InputEvent {
 	/// .
 	@property Type type() { return t; }
 
+	/// Returns a pointer to the terminal associated with this event.
+	/// (You can usually just ignore this as there's only one terminal typically.)
+	///
+	/// It may be null in the case of program-generated events;
+	@property Terminal* terminal() { return term; }
+
 	/// .
 	@property auto get(Type T)() {
 		if(type != T)
@@ -2226,45 +2233,48 @@ struct InputEvent {
 		else static assert(0, "Type " ~ T.stringof ~ " not added to the get function");
 	}
 
+	// custom event is public because otherwise there's no point at all
+	this(CustomEvent c, Terminal* p = null) {
+		t = Type.CustomEvent;
+		customEvent = c;
+	}
+
 	private {
-		this(CharacterEvent c) {
+		this(CharacterEvent c, Terminal* p) {
 			t = Type.CharacterEvent;
 			characterEvent = c;
 		}
-		this(NonCharacterKeyEvent c) {
+		this(NonCharacterKeyEvent c, Terminal* p) {
 			t = Type.NonCharacterKeyEvent;
 			nonCharacterKeyEvent = c;
 		}
-		this(PasteEvent c) {
+		this(PasteEvent c, Terminal* p) {
 			t = Type.PasteEvent;
 			pasteEvent = c;
 		}
-		this(MouseEvent c) {
+		this(MouseEvent c, Terminal* p) {
 			t = Type.MouseEvent;
 			mouseEvent = c;
 		}
-		this(SizeChangedEvent c) {
+		this(SizeChangedEvent c, Terminal* p) {
 			t = Type.SizeChangedEvent;
 			sizeChangedEvent = c;
 		}
-		this(UserInterruptionEvent c) {
+		this(UserInterruptionEvent c, Terminal* p) {
 			t = Type.UserInterruptionEvent;
 			userInterruptionEvent = c;
 		}
-		this(HangupEvent c) {
+		this(HangupEvent c, Terminal* p) {
 			t = Type.HangupEvent;
 			hangupEvent = c;
 		}
-		this(EndOfFileEvent c) {
+		this(EndOfFileEvent c, Terminal* p) {
 			t = Type.EndOfFileEvent;
 			endOfFileEvent = c;
 		}
-		this(CustomEvent c) {
-			t = Type.CustomEvent;
-			customEvent = c;
-		}
 
 		Type t;
+		Terminal* term;
 
 		union {
 			CharacterEvent characterEvent;
