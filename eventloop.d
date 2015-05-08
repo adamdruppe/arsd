@@ -373,7 +373,7 @@ private FileEventDispatcher fileEventDispatcher;
 /// when the state changes. Failure to read it all will leave whatever is left
 /// in the buffer sitting there unnoticed until even more stuff comes in.
 public void addFileEventListeners(T...)(T t) {// if(__traits(compiles, fileEventDispatcher.addFile(t))) {
-	fileEventDispatcher.addFile!(T)(t);
+	fileEventDispatcher.addFile(t);
 }
 
 /// Removes the file from event handling

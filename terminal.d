@@ -2752,6 +2752,7 @@ class LineGetter {
 		updateCursorPosition();
 		terminal.showCursor();
 
+		lastDrawLength = terminal.width; // setting this so it clears the line
 		redraw();
 	}
 
@@ -2769,7 +2770,20 @@ class LineGetter {
 
 			// we have to turn off cooked mode to get this answer, otherwise it will all
 			// be messed up. (I hate unix terminals, the Windows way is so much easer.)
-			RealTimeConsoleInput input = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw);
+
+			// We also can't use RealTimeConsoleInput here because it also does event loop stuff
+			// which would be broken by the child destructor :( (maybe that should be a FIXME)
+
+			ubyte[128] hack2;
+			termios old;
+			ubyte[128] hack;
+			tcgetattr(terminal.fdIn, &old);
+			auto n = old;
+			n.c_lflag &= ~(ICANON | ECHO);
+			tcsetattr(terminal.fdIn, TCSANOW, &n);
+			scope(exit)
+				tcsetattr(terminal.fdIn, TCSANOW, &old);
+
 
 			terminal.writeStringRaw("\033[6n");
 			terminal.flush();
