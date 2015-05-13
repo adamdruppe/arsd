@@ -1,5 +1,7 @@
 module simpledisplay;
 
+// FIXME: icons on Windows don't look quite right, I think the transparency mask is off.
+
 // http://wiki.dlang.org/Simpledisplay.d
 
 // FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
@@ -2086,6 +2088,8 @@ version(Windows) {
 		HBRUSH originalBrush;
 		HBRUSH currentBrush;
 		@property void fillColor(Color c) {
+			// FIXME: we probably don't need to call all this if the brush
+			// is already good
 			HBRUSH brush;
 			if(c.a == 0) {
 				brush = GetStockObject(HOLLOW_BRUSH);
@@ -2795,6 +2799,8 @@ version(X11) {
 		}
 
 		@property void outlineColor(Color c) {
+			if(_pen.color == c)
+				return; // don't double call for performance
 			_pen.color = c;
 			pen = _pen;
 		}
@@ -2815,6 +2821,8 @@ version(X11) {
 
 
 		@property void fillColor(Color c) {
+			if(_fillColor == c)
+				return; // already good, no need to waste time calling it
 			_fillColor = c;
 			if(c.a == 0) {
 				backgroundIsNotTransparent = false;
