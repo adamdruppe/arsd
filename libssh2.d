@@ -2,6 +2,8 @@
 // just link with it on Linux
 // it'll need a couple dlls and a lib on windows.
 
+module arsd.libssh2;
+
 version(libssh_example)
 void main() {
 	import std.socket;
@@ -148,10 +150,10 @@ extern(C) {
 	void libssh2_exit();
 
 	// stream_id 0 == normal, 1 == error.
-	ssize_t libssh2_channel_read_ex(LIBSSH2_CHANNEL *channel, int stream_id, char *buf, size_t buflen);
+	ssize_t libssh2_channel_read_ex(LIBSSH2_CHANNEL *channel, int stream_id, void *buf, size_t buflen);
 
 	ssize_t libssh2_channel_write_ex(LIBSSH2_CHANNEL *channel,
-                                  int stream_id, char *buf,
+                                  int stream_id, const(void)* buf,
                                   size_t buflen);
 
 	void libssh2_session_set_blocking(LIBSSH2_SESSION* session, int blocking);
@@ -163,6 +165,8 @@ extern(C) {
 	int libssh2_keepalive_send(LIBSSH2_SESSION *session,
 		int *seconds_to_next);
 
+	LIBSSH2_CHANNEL * libssh2_channel_direct_tcpip_ex(LIBSSH2_SESSION *session, const char *host, int port, const char *shost, int sport); 
+
 	int libssh2_channel_request_pty_size_ex(LIBSSH2_CHANNEL *channel,
 		int width, int height,
 		int width_px,
@@ -171,6 +175,8 @@ extern(C) {
 	char *
  libssh2_userauth_list(LIBSSH2_SESSION *session, const char *username,
                        uint username_len);
+
+	int libssh2_channel_eof(LIBSSH2_CHANNEL*);
 
 	enum LIBSSH2_ERROR_EAGAIN = -37;
 }
