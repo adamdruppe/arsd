@@ -117,7 +117,7 @@ class MySqlResult : ResultSet {
 		if(r is null)
 			throw new Exception("there is no next row");
 		uint numFields = mysql_num_fields(result);
-		uint* lengths = mysql_fetch_lengths(result);
+		size_t* lengths = mysql_fetch_lengths(result);
 		string[] row;
 		// potential FIXME: not really binary safe
 
@@ -656,7 +656,7 @@ extern(System) {
 	MYSQL_RES* mysql_use_result(MYSQL*);
 
 	MYSQL_ROW mysql_fetch_row(MYSQL_RES *);
-	uint* mysql_fetch_lengths(MYSQL_RES*);
+	size_t* mysql_fetch_lengths(MYSQL_RES*);
 	MYSQL_FIELD* mysql_fetch_field(MYSQL_RES*);
 	MYSQL_FIELD* mysql_fetch_fields(MYSQL_RES*);
 
@@ -672,7 +672,7 @@ cstring toCstring(string c) {
 }
 
 import std.array;
-string fromCstring(cstring c, int len = -1) {
+string fromCstring(cstring c, size_t len = -1) {
 	string ret;
 	if(c is null)
 		return null;
