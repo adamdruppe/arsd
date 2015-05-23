@@ -117,7 +117,7 @@ class MySqlResult : ResultSet {
 		if(r is null)
 			throw new Exception("there is no next row");
 		uint numFields = mysql_num_fields(result);
-		uint* lengths = mysql_fetch_lengths(result);
+		auto lengths = mysql_fetch_lengths(result);
 		string[] row;
 		// potential FIXME: not really binary safe
 
@@ -612,8 +612,8 @@ extern(System) {
 		  cstring db;                   /* Database for table */
 		  cstring catalog;	      /* Catalog for table */
 		  cstring def;                  /* Default value (set by mysql_list_fields) */
-		  uint length;       /* Width of column (create length) */
-		  uint max_length;   /* Max width for selected set */
+		  c_ulong length;       /* Width of column (create length) */
+		  c_ulong max_length;   /* Max width for selected set */
 		  uint name_length;
 		  uint org_name_length;
 		  uint table_length;
@@ -656,11 +656,11 @@ extern(System) {
 	MYSQL_RES* mysql_use_result(MYSQL*);
 
 	MYSQL_ROW mysql_fetch_row(MYSQL_RES *);
-	uint* mysql_fetch_lengths(MYSQL_RES*);
+	c_ulong* mysql_fetch_lengths(MYSQL_RES*);
 	MYSQL_FIELD* mysql_fetch_field(MYSQL_RES*);
 	MYSQL_FIELD* mysql_fetch_fields(MYSQL_RES*);
 
-	uint mysql_real_escape_string(MYSQL*, ubyte* to, cstring from, uint length);
+	uint mysql_real_escape_string(MYSQL*, ubyte* to, cstring from, c_ulong length);
 
 	void mysql_free_result(MYSQL_RES*);
 
@@ -672,19 +672,19 @@ cstring toCstring(string c) {
 }
 
 import std.array;
-string fromCstring(cstring c, int len = -1) {
+string fromCstring(cstring c, size_t len = size_t.max) {
 	string ret;
 	if(c is null)
 		return null;
 	if(len == 0)
 		return "";
-	if(len == -1) {
+	if(len == size_t.max) {
 		auto iterator = c;
-		while(*iterator)
+		len = 0;
+		while(*iterator) {
 			iterator++;
-
-		// note they are both byte pointers, so this is sane
-		len = cast(int) iterator - cast(int) c;
+			len++;
+		}
 		assert(len >= 0);
 	}
 
