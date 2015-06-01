@@ -3,6 +3,7 @@
 	"targetType": "sourceLibrary",
 	"dependencies": {},
 	"description": "A container of various subpackages that do lots of different things.",
+	"license":"BSL-1.0",
 	"subPackages": [
 		{
 			"name": "simpledisplay",
