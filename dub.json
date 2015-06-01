@@ -1,0 +1,19 @@
+{
+	"name": "arsd",
+	"targetType": "sourceLibrary",
+	"dependencies": {}
+	"subPackages": [
+		{
+			"name": "simpledisplay",
+			"description": "Window creation and basic drawing",
+			"dependencies": {
+				"color": "*"
+			}
+		},
+		{
+			"name": "color",
+			"description": "Base library for image and color definitions"
+		}
+
+	]
+}
