@@ -16,10 +16,90 @@
 	// that takes a Cgi param, and use mixin GenericMain
 	// for maximum compatibility with different web servers.
 	void hello(Cgi cgi) {
-		cgi.write("Hello, world!");
+		cgi.setResponseContentType("text/plain");
+
+		if("name" in cgi.get)
+			cgi.write("Hello, " ~ cgi.get["name"]);
+		else
+			cgi.write("Hello, world!");
 	}
 
 	mixin GenericMain!hello;
+	---
+
+	Compile_and_run:
+	
+	For CGI, `dmd yourfile.d cgi.d` then put the executable in your cgi-bin directory.
+	For FastCGI: `dmd yourfile.d cgi.d -version=fastcgi` and run it. spawn-fcgi helps on nginx. You can put the file in the directory for Apache. On IIS, run it with a port on the command line.
+	For SCGI: `dmd yourfile.d cgi.d -version=scgi` and run the executable, providing a port number on the command line.
+	For an embedded HTTP server, run `dmd yourfile.d cgi.d -version=embedded_httpd` and run the generated program. It listens on port 8085 by default. You can change this on the command line with the --port option when running your program.
+
+	You can also simulate a request by passing parameters on the command line, like:
+
+	./yourprogram GET / name=adr
+
+	And it will print the result to stdout.
+
+	CGI_Setup_tips:
+
+	On Apache, you may do `SetHandler cgi-script` in your `.htaccess` file.
+
+	Integration_tips:
+
+	cgi.d works well with dom.d for generating html. You may also use web.d for other utilities and automatic api wrapping.
+
+	dom.d usage:
+
+	---
+		import arsd.cgi;
+		import arsd.dom;
+
+		void hello_dom(Cgi cgi) {
+			auto document = new Document();
+
+			static import std.file;
+			// parse the file in strict mode, requiring it to be well-formed UTF-8 XHTML
+			// (You'll appreciate this if you've ever had to deal with a missing </div>
+			// or something in a php or erb template before that would randomly mess up
+			// the output in your browser. Just check it and throw an exception early!)
+			//
+			// You could also hard-code a template or load one at compile time with an
+			// import expression, but you might appreciate making it a regular file
+			// because that means it can be more easily edited by the frontend team and
+			// they can see their changes without needing to recompile the program.
+			//
+			// Note on CTFE: if you do choose to load a static file at compile time,
+			// you *can* parse it in CTFE using enum, which will cause it to throw at
+			// compile time, which is kinda cool too. Be careful in modifying that document,
+			// though, as it will be a static instance. You might want to clone on on demand,
+			// or perhaps modify it lazily as you print it out. (Try element.tree, it returns
+			// a range of elements which you could send through std.algorithm functions. But
+			// since my selector implementation doesn't work on that level yet, you'll find that
+			// harder to use. Of course, you could make a static list of matching elements and
+			// then use a simple e is e2 predicate... :) )
+			document.parseUtf8(std.file.read("your_template.html"), true, true);
+
+			// fill in data using DOM functions, so placing it is in the hands of HTML
+			// and it will be properly encoded as text too.
+			//
+			// Plain html templates can't run server side logic, but I think that's a
+			// good thing - it keeps them simple. You may choose to extend the html,
+			// but I think it is best to try to stick to standard elements and fill them
+			// in with requested data with IDs or class names. A further benefit of
+			// this is the designer can also highlight data based on sources in the CSS.
+			//
+			// However, all of dom.d is available, so you can format your data however
+			// you like. You can do partial templates with innerHTML too, or perhaps better,
+			// injecting cloned nodes from a partial document.
+			//
+			// There's a lot of possibilities.
+			document["#name"].innerText = cgi.request("name", "default name");
+
+			// send the document to the browser. The second argument to `cgi.write`
+			// indicates that this is all the data at once, enabling a few small
+			// optimizations.
+			cgi.write(document.toString(), true);
+		}
 	---
 
 	Concepts:
@@ -57,6 +137,12 @@
 	accessing databases.
 
 	If you are looking to access a web application via HTTP, try curl.d.
+
+	Copyright:
+
+	cgi.d copyright 2008-2015, Adam D. Ruppe. Provided under the Boost Software License.
+
+	Yes, this file is seven years old, and yes, it is still actively maintained and used.
 +/
 module arsd.cgi;
 
@@ -2570,8 +2656,13 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 							} else {
 								if(!ir.empty)
 									ir.popFront(); // get the next
+								else if(ir.sourceClosed) {
+									ir.source.close();
+								}
 							}
 						}
+
+						ir.source.close();
 					}
 				} else {
 					processCount++;
@@ -2762,8 +2853,12 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		} else {
 			if(!ir.empty)
 				ir.popFront(); // get the next
+			else if(ir.sourceClosed)
+				ir.source.close();
 		}
 	}
+
+	ir.source.close();
 }
 
 version(scgi)
@@ -2821,7 +2916,8 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 		if(data.length == 0 && !range.sourceClosed) {
 			range.popFront(0);
 			data = range.front();
-		}
+		} else if (range.sourceClosed)
+			range.source.close();
 
 		return data;
 	}
@@ -3840,11 +3936,11 @@ version(cgi_with_websocket) {
 }
 
 /*
-Copyright: Adam D. Ruppe, 2008 - 2013
+Copyright: Adam D. Ruppe, 2008 - 2015
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2013.
+	Copyright Adam D. Ruppe 2008 - 2015.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
