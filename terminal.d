@@ -1133,7 +1133,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		// it technically might, I'm updating the pointer before using it just in case.
 		lineGetter.terminal = &this;
 
-		lineGetter.prompt = prompt;
+		if(prompt !is null)
+			lineGetter.prompt = prompt;
 
 		auto line = lineGetter.getline();
 
@@ -2297,14 +2298,15 @@ void main() {
 	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
 	//
-	/*
-	auto getter = new LineGetter(&terminal, "test");
+	///*
+	auto getter = new FileLineGetter(&terminal, "test");
 	getter.prompt = "> ";
+	getter.history = ["abcdefghijklmnopqrstuvwzyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	getter.dispose();
-	*/
+	//*/
 
 	terminal.writeln(terminal.getline());
 	terminal.writeln(terminal.getline());
@@ -2472,7 +2474,7 @@ class LineGetter {
 	/// Override this to change the directory where history files are stored
 	///
 	/// Default is $HOME/.arsd-getline on linux and %APPDATA%/arsd-getline/ on Windows.
-	string historyFileDirectory() {
+	/* virtual */ string historyFileDirectory() {
 		version(Windows) {
 			char[1024] path;
 			// FIXME: this doesn't link because the crappy dmd lib doesn't have it
@@ -2508,12 +2510,12 @@ class LineGetter {
 
 	/// Override this if you don't want all lines added to the history.
 	/// You can return null to not add it at all, or you can transform it.
-	string historyFilter(string candidate) {
+	/* virtual */ string historyFilter(string candidate) {
 		return candidate;
 	}
 
 	/// You may override this to do nothing
-	void saveSettingsAndHistoryToFile() {
+	/* virtual */ void saveSettingsAndHistoryToFile() {
 		import std.file;
 		if(!exists(historyFileDirectory))
 			mkdir(historyFileDirectory);
@@ -2531,7 +2533,7 @@ class LineGetter {
 	}
 
 	/// You may override this to do nothing
-	void loadSettingsAndHistoryFromFile() {
+	/* virtual */ void loadSettingsAndHistoryFromFile() {
 		import std.file;
 		history = null;
 		auto fn = historyPath();
@@ -2553,7 +2555,7 @@ class LineGetter {
 
 		Default is to provide recent command history as autocomplete.
 	*/
-	protected string[] tabComplete(in dchar[] candidate) {
+	/* virtual */ protected string[] tabComplete(in dchar[] candidate) {
 		return history.length > 20 ? history[0 .. 20] : history;
 	}
 
@@ -2578,6 +2580,7 @@ class LineGetter {
 		if(list.length) {
 			// FIXME: allow mouse clicking of an item, that would be cool
 
+			// FIXME: scroll
 			//if(terminal.type == ConsoleOutputType.linear) {
 				terminal.writeln();
 				foreach(item; list) {
@@ -2642,18 +2645,34 @@ class LineGetter {
 		}
 
 		cursorPosition = cast(int) line.length;
+		scrollToEnd();
 	}
 
 	bool insertMode = true;
+	bool multiLineMode = false;
 
 	private dchar[] line;
 	private int cursorPosition = 0;
+	private int horizontalScrollPosition = 0;
+
+	private void scrollToEnd() {
+		horizontalScrollPosition = (cast(int) line.length);
+		horizontalScrollPosition -= availableLineLength();
+		if(horizontalScrollPosition < 0)
+			horizontalScrollPosition = 0;
+	}
 
 	// used for redrawing the line in the right place
 	// and detecting mouse events on our line.
 	private int startOfLineX;
 	private int startOfLineY;
 
+	// private string[] cachedCompletionList;
+
+	// FIXME
+	// /// Note that this assumes the tab complete list won't change between actual
+	// /// presses of tab by the user. If you pass it a list, it will use it, but
+	// /// otherwise it will keep track of the last one to avoid calls to tabComplete.
 	private string suggestion(string[] list = null) {
 		import std.algorithm, std.utf;
 		auto relevantLineSection = line[0 .. cursorPosition];
@@ -2691,6 +2710,9 @@ class LineGetter {
 			line[cursorPosition] = ch;
 		}
 		cursorPosition++;
+
+		if(cursorPosition >= horizontalScrollPosition + availableLineLength())
+			horizontalScrollPosition++;
 	}
 
 	/// .
@@ -2712,26 +2734,50 @@ class LineGetter {
 		line.assumeSafeAppend();
 	}
 
-	int lastDrawLength = 0;
+	int availableLineLength() {
+		return terminal.width - startOfLineX - cast(int) prompt.length - 1;
+	}
+
+	private int lastDrawLength = 0;
 	void redraw() {
 		terminal.moveTo(startOfLineX, startOfLineY);
 
+		auto lineLength = availableLineLength();
+		if(lineLength < 0)
+			throw new Exception("too narrow terminal to draw");
+
 		terminal.write(prompt);
 
-		terminal.write(line);
-		auto suggestion = ((cursorPosition == line.length) && autoSuggest) ? this.suggestion() : null;
-		if(suggestion.length) {
-			terminal.color(suggestionForeground, background);
-			terminal.write(suggestion);
-			terminal.color(regularForeground, background);
-		}
-		if(line.length < lastDrawLength)
-		foreach(i; line.length + suggestion.length + prompt.length .. lastDrawLength)
-			terminal.write(" ");
-		lastDrawLength = cast(int) (line.length + suggestion.length + prompt.length); // FIXME: graphemes and utf-8 on suggestion/prompt
+		auto towrite = line[horizontalScrollPosition .. $];
+		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
+		auto cursorPositionToDrawY = 0;
 
-		// FIXME: wrapping
-		terminal.moveTo(startOfLineX + cursorPosition + cast(int) prompt.length, startOfLineY);
+		if(towrite.length > lineLength) {
+			towrite = towrite[0 .. lineLength];
+		}
+
+		terminal.write(towrite);
+
+		lineLength -= towrite.length;
+
+		if(lineLength >= 0) {
+			auto suggestion = ((cursorPosition == towrite.length) && autoSuggest) ? this.suggestion() : null;
+			if(suggestion.length) {
+				terminal.color(suggestionForeground, background);
+				terminal.write(suggestion);
+				terminal.color(regularForeground, background);
+			}
+		}
+
+		// FIXME: graphemes and utf-8 on suggestion/prompt
+		auto written = cast(int) (towrite.length + suggestion.length + prompt.length);
+
+		if(written < lastDrawLength)
+		foreach(i; written .. lastDrawLength)
+			terminal.write(" ");
+		lastDrawLength = written;
+
+		terminal.moveTo(startOfLineX + cursorPositionToDrawX + cast(int) prompt.length, startOfLineY + cursorPositionToDrawY);
 	}
 
 	/// Starts getting a new line. Call workOnLine and finishGettingLine afterward.
@@ -2741,7 +2787,7 @@ class LineGetter {
 	void startGettingLine() {
 		// reset from any previous call first
 		cursorPosition = 0;
-		lastDrawLength = 0;
+		horizontalScrollPosition = 0;
 		justHitTab = false;
 		currentHistoryViewPosition = 0;
 		if(line.length) {
@@ -2752,7 +2798,7 @@ class LineGetter {
 		updateCursorPosition();
 		terminal.showCursor();
 
-		lastDrawLength = terminal.width; // setting this so it clears the line
+		lastDrawLength = availableLineLength();
 		redraw();
 	}
 
@@ -2876,6 +2922,14 @@ class LineGetter {
 								line[i] = line[i + 1];
 							line = line[0 .. $ - 1];
 							line.assumeSafeAppend();
+
+							if(!multiLineMode) {
+								if(horizontalScrollPosition > cursorPosition - 1)
+									horizontalScrollPosition = cursorPosition - 1 - availableLineLength();
+								if(horizontalScrollPosition < 0)
+									horizontalScrollPosition = 0;
+							}
+
 							redraw();
 						}
 					break;
@@ -2895,11 +2949,21 @@ class LineGetter {
 					case NonCharacterKeyEvent.Key.LeftArrow:
 						if(cursorPosition)
 							cursorPosition--;
+						if(!multiLineMode) {
+							if(cursorPosition < horizontalScrollPosition)
+								horizontalScrollPosition--;
+						}
+
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.RightArrow:
 						if(cursorPosition < line.length)
 							cursorPosition++;
+						if(!multiLineMode) {
+							if(cursorPosition >= horizontalScrollPosition + availableLineLength())
+								horizontalScrollPosition++;
+						}
+
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.UpArrow:
@@ -2920,10 +2984,12 @@ class LineGetter {
 					break;
 					case NonCharacterKeyEvent.Key.Home:
 						cursorPosition = 0;
+						horizontalScrollPosition = 0;
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.End:
 						cursorPosition = cast(int) line.length;
+						scrollToEnd();
 						redraw();
 					break;
 					case NonCharacterKeyEvent.Key.Insert:
@@ -2953,7 +3019,7 @@ class LineGetter {
 					if(me.buttons & MouseEvent.Button.Left) {
 						if(me.y == startOfLineY) {
 							// FIXME: prompt.length should be graphemes or at least code poitns
-							int p = me.x - startOfLineX - cast(int) prompt.length;
+							int p = me.x - startOfLineX - cast(int) prompt.length + horizontalScrollPosition;
 							if(p >= 0 && p < line.length) {
 								justHitTab = false;
 								cursorPosition = p;
@@ -2992,6 +3058,43 @@ class LineGetter {
 
 		// FIXME: we should hide the cursor if it was hidden in the call to startGettingLine
 		return f;
+	}
+}
+
+/// Adds default constructors that just forward to the superclass
+mixin template LineGetterConstructors() {
+	this(Terminal* tty, string historyFilename = null) {
+		super(tty, historyFilename);
+	}
+}
+
+/// This is a line getter that customizes the tab completion to
+/// fill in file names separated by spaces, like a command line thing.
+class FileLineGetter : LineGetter {
+	mixin LineGetterConstructors;
+
+	/// You can set this property to tell it where to search for the files
+	/// to complete.
+	string searchDirectory = ".";
+
+	override protected string[] tabComplete(in dchar[] candidate) {
+		import std.file, std.conv, std.algorithm, std.string;
+		const(dchar)[] soFar = candidate;
+		auto idx = candidate.lastIndexOf(" ");
+		if(idx != -1)
+			soFar = candidate[idx + 1 .. $];
+
+		string[] list;
+		foreach(string name; dirEntries(searchDirectory, SpanMode.breadth)) {
+			// try without the ./
+			if(startsWith(name[2..$], soFar))
+				list ~= text(candidate, name[searchDirectory.length + 1 + soFar.length .. $]);
+			else // and with
+			if(startsWith(name, soFar))
+				list ~= text(candidate, name[soFar.length .. $]);
+		}
+
+		return list;
 	}
 }
 
