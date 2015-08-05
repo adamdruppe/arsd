@@ -920,6 +920,8 @@ class Cgi {
 	// file stuff I'm sure is inefficient. But, my guess is the real bottleneck is network
 	// input anyway, so I'm not going to get too worked up about it right now.
 	protected void handleIncomingDataChunk(const(ubyte)[] chunk) {
+		if(chunk.length == 0)
+			return;
 		assert(chunk.length <= 32 * 1024 * 1024); // we use chunk size as a memory constraint thing, so
 							// if we're passed big chunks, it might throw unnecessarily.
 							// just pass it smaller chunks at a time.
@@ -1222,6 +1224,9 @@ class Cgi {
 			// simple handling, but it works... until someone bombs us with gigabytes of crap at least...
 			if(pps.buffer.length == pps.expectedLength)
 				pps._post = decodeVariables(cast(string) pps.buffer);
+			else {
+				// just for debugging
+			}
 		}
 	}
 
@@ -1479,8 +1484,9 @@ class Cgi {
 
 		if(contentLength) {
 			prepareForIncomingDataChunks(contentType, contentLength);
-			foreach(dataChunk; dataByChunk)
+			foreach(dataChunk; dataByChunk) {
 				handleIncomingDataChunk(dataChunk);
+			}
 			postArray = assumeUnique(pps._post);
 			filesArray = assumeUnique(pps._files);
 			files = keepLastOf(filesArray);
@@ -3130,10 +3136,11 @@ class BufferedInputRange {
 		You can also specify 0, to append to the buffer, or any other number
 		to remove the front n bytes and wait for more.
 	*/
-	void popFront(size_t maxBytesToConsume = 0 /*size_t.max*/, size_t minBytesToSettleFor = 0) {
+	void popFront(size_t maxBytesToConsume = 0 /*size_t.max*/, size_t minBytesToSettleFor = 0, bool skipConsume = false) {
 		if(sourceClosed)
 			throw new Exception("can't get any more data from a closed source");
-		consume(maxBytesToConsume);
+		if(!skipConsume)
+			consume(maxBytesToConsume);
 
 		// we might have to grow the buffer
 		if(minBytesToSettleFor > underlyingBuffer.length || view.length == underlyingBuffer.length) {
@@ -3178,8 +3185,15 @@ class BufferedInputRange {
 	/// consume some.
 	ubyte[] consume(size_t bytes) {
 		view = view[bytes > $ ? $ : bytes .. $];
-		if(view.length == 0)
+		if(view.length == 0) {
 			view = underlyingBuffer[0 .. 0]; // go ahead and reuse the beginning
+			/*
+			writeln("HERE");
+			popFront(0, 0, true); // try to load more if we can, checks if the source is closed
+			writeln(cast(string)front);
+			writeln("DONE");
+			*/
+		}
 		return front;
 	}
 
@@ -3603,6 +3617,9 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 				a = ir.consume(a.length);
 				if(atMost != 0)
 					ir.popFront();
+				if(f.length == 0) {
+					f = ir.front();
+				}
 			} else {
 				// we actually have *more* here than we need....
 				f = a[0..atMost];
