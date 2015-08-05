@@ -904,8 +904,7 @@ struct var {
 		return this.opEquals(var(t));
 	}
 
-
-	public bool opEquals(T:var)(T t) {
+	public bool opEquals(T:var)(T t) const {
 		// FIXME: should this be == or === ?
 		if(this._type != t._type)
 			return false;
@@ -1127,7 +1126,8 @@ struct var {
 		} else if(_type == Type.Object) {
 			// objects might overload opIndex
 			var* n = new var();
-			*n = this["opIndex"](idx);
+			if("opIndex" in this)
+				*n = this["opIndex"](idx);
 			return *n;
 		}
 		version(jsvar_throw)

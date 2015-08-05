@@ -68,8 +68,12 @@ final class OpenGlTexture {
 
 	// For easy 2d drawing of it
 	void draw(Point where, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
+		draw(where.x, where.y, width, height, rotation, bg);
+	}
+
+	void draw(float x, float y, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
 		glPushMatrix();
-		glTranslatef(where.x, where.y, 0);
+		glTranslatef(x, y, 0);
 		glRotatef(rotation, 0,0, 1);
 
 		if(width == 0)

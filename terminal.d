@@ -3104,6 +3104,145 @@ version(Windows) {
 	extern(Windows) HRESULT SHGetFolderPathA(HWND, int, HANDLE, DWORD, LPSTR);
 }
 
+
+
+
+
+/* Like getting a line, printing a lot of lines is kinda important too, so I'm including
+   that widget here too. */
+
+
+struct ScrollbackBuffer {
+	struct LineComponent {
+		string text;
+		int color = Color.DEFAULT;
+		int background = Color.DEFAULT;
+		void delegate() onclick;
+	}
+
+	struct Line {
+		LineComponent[] components;
+		int length() {
+			int l = 0;
+			foreach(c; components)
+				l += c.text.length;
+			return l;
+		}
+	}
+
+	// FIXME: limit scrollback lines.length
+
+	Line[] lines;
+	string name;
+
+	int scrollbackPosition;
+
+	void drawInto(Terminal* terminal, in int x, in int y, in int width, in int height) {
+		if(lines.length == 0)
+			return;
+
+		/* We need to figure out how much is going to fit
+		   in a first pass, so we can figure out where to
+		   start drawing */
+
+		int remaining = height + scrollbackPosition;
+		int start = lines.length;
+		int howMany = 0;
+
+		// we'll work backwards to figure out how much will fit...
+		// this will give accurate per-line things even with changing width and wrapping
+		// while being generally efficient - we usually want to show the end of the list
+		// anyway; actually using the scrollback is a bit of an exceptional case.
+		foreach_reverse(line; lines) {
+			int written = 0;
+			foreach(component; line.components) {
+				auto towrite = component.text;
+				written += towrite.length;
+				while(written > width) {
+					written -= width;
+					remaining--;
+					if(remaining <= 0)
+						break;
+				}
+			}
+
+			remaining--;
+
+
+			start--;
+			howMany++;
+			if(remaining <= 0)
+				break;
+		}
+
+		// second pass: actually draw it
+		int linePos = remaining;
+
+		foreach(idx, line; lines[start .. start + howMany]) {
+			int written = 0;
+		
+			terminal.moveTo(x, y + ((linePos >= 0) ? linePos : 0));
+			foreach(component; line.components) {
+				terminal.color(component.color, component.background);
+				auto towrite = component.text;
+				while(linePos < 0 && width < towrite.length) {
+					towrite = towrite[width .. $];
+					linePos++;
+				}
+				terminal.write(towrite);
+				written += towrite.length;
+				while(written > width) {
+					written -= width;
+					linePos++;
+					if(linePos >= height)
+						break;
+				}
+			}
+
+			if(written < width)
+			foreach(i; written .. width)
+				terminal.write(" ");
+
+			linePos++;
+
+			if(linePos >= height)
+				break;
+		}
+
+		foreach(i; linePos .. height) {
+			if(i >= 0 && i < height) {
+				terminal.moveTo(x, y + i);
+				foreach(w; 0 .. width)
+					terminal.write(" ");
+			}
+		}
+	}
+
+	void addLine(string line) {
+		lines ~= Line([LineComponent(line)]);
+	}
+
+	void scrollUp(int lines = 1) {
+		scrollbackPosition += lines;
+		if(scrollbackPosition >= this.lines.length)
+			scrollbackPosition = this.lines.length - 1;
+	}
+
+	void scrollDown(int lines = 1) {
+		scrollbackPosition -= lines;
+		if(scrollbackPosition < 0)
+			scrollbackPosition = 0;
+	}
+
+	// does scrolling via wheel and keyboard and also clicks on content
+	void handleEvent() {
+	}
+}
+
+
+
+
+
 /*
 
 	// more efficient scrolling

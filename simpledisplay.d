@@ -2457,6 +2457,7 @@ version(Windows) {
 		HWND hwnd;
 		int oldWidth;
 		int oldHeight;
+		bool inSizeMove;
 
 		// the extern(Windows) wndproc should just forward to this
 		int windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
@@ -2476,6 +2477,12 @@ version(Windows) {
 				case WM_SIZE:
 					width = LOWORD(lParam);
 					height = HIWORD(lParam);
+
+					// I want to avoid tearing in the windows (my code is inefficient
+					// so this is a hack around that) so while sizing, we don't trigger,
+					// but we do want to trigger on events like mazimize.
+					if(!inSizeMove)
+						goto size_changed;
 				break;
 				// I don't like the tearing I get when redrawing on WM_SIZE
 				// (I know there's other ways to fix that but I don't like that behavior anyway)
@@ -2483,11 +2490,15 @@ version(Windows) {
 				case 0x0231: /* WM_ENTERSIZEMOVE */
 					oldWidth = this.width;
 					oldHeight = this.height;
+					inSizeMove = true;
 				break;
 				case 0x0232: /* WM_EXITSIZEMOVE */
+					inSizeMove = false;
 					// nothing relevant changed, don't bother redrawing
 					if(oldWidth == width && oldHeight == height)
 						break;
+
+					size_changed:
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing

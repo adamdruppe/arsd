@@ -14,9 +14,11 @@
 	and adding spaces is easier than using LT macros everywhere.
 
 
-	BTW: this file depends on arsd.characterencodings, so help it
-	correctly read files from the internet. You should be able to
+	BTW: this file optionally depends on arsd.characterencodings, to
+	help it correctly read files from the internet. You should be able to
 	get characterencodings.d from the same place you got this file.
+
+	If you want it to stand alone, just always use the `parseUtf8` function.
 */
 module arsd.dom;
 
@@ -38,6 +40,7 @@ bool isConvenientAttribute(string name) {
 		"src", "content", "pattern",
 		"placeholder", "required", "alt",
 		"rel",
+		"method", "action", "enctype"
 	];
 	foreach(l; list)
 		if(name == l) return true;

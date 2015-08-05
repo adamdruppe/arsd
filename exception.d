@@ -271,7 +271,7 @@ version(exception_2_example) {
 		alias enforce = enforceBase!ExceptionBase;
 
 		import core.stdc.stdio;
-		//auto fp = enforce!fopen("nofile.txt".ptr, "rb".ptr);
+		auto fp = enforce!fopen("nofile.txt".ptr, "rb".ptr);
 
 
 		// construct, passing it error details as data, not strings.

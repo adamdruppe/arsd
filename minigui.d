@@ -6,6 +6,37 @@
 module arsd.minigui;
 
 /*
+
+	The main goals of minigui.d are to:
+		1) Provide basic widgets that just work in a lightweight lib.
+		   I basically want things comparable to a plain HTML form,
+		   plus the easy and obvious things you expect from Windows
+		   apps like a menu.
+		2) Use native things when possible for best functionality with
+		   least library weight.
+		3) Give building blocks to provide easy extension for your
+		   custom widgets, or hooking into additional native widgets
+		   I didn't wrap.
+		4) Provide interfaces for easy interaction between third
+		   party minigui extensions. (event model, perhaps
+		   signals/slots, drop-in ease of use bits.)
+		5) Zero non-system dependencies, including Phobos as much as
+		   I reasonably can. It must only import arsd.color and
+		   my simpledisplay.d. If you need more, it will have to be
+		   an extension module.
+		6) An easy layout system that generally works.
+
+	A stretch goal is to make it easy to make gui forms with code,
+	some kind of resource file (xml?) and even a wysiwyg designer.
+
+	Another stretch goal is to make it easy to hook data into the gui,
+	including from reflection. So like auto-generate a form from a
+	function signature or struct definition, or show a list from an
+	array that automatically updates as the array is changed. Then,
+	your program focuses on the data more than the gui interaction.
+
+
+
 	STILL NEEDED:
 		* combo box. (this is diff than select because you can free-form edit too. more like a lineedit with autoselect)
 		* slider

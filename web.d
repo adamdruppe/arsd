@@ -1843,12 +1843,12 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 				input.name = param.name;
 				input.innerText = param.value;
 
-				input.rows = "7";
+				input.attrs.rows = "7";
 
 				auto idx = type.indexOf("-");
 				if(idx != -1) {
 					idx++;
-					input.rows = type[idx .. $];
+					input.attrs.rows = type[idx .. $];
 				}
 			} else {
 				input = Element.make("input");
@@ -4021,7 +4021,7 @@ void translateQsa(Document document, Cgi cgi, string logicalScriptName = null) {
 		string[][string] vars;
 		foreach(k, v; cgi.getArray)
 			vars[k] = cast(string[]) v;
-		foreach(k, v; decodeVariablesSingle(a.qsa)) {
+		foreach(k, v; decodeVariablesSingle(a.attrs.qsa)) {
 			if(k in cgi.get && cgi.get[k] == v)
 				matches++;
 			possibilities++;
