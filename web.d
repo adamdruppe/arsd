@@ -844,48 +844,35 @@ template isEnum(alias T) if(is(T)) {
 		enum bool isEnum = false;
 }
 
+template isEnum(alias T) if(!is(T)) {
+	enum bool isEnum = false;
+}
+
 // WTF, shouldn't is(T == xxx) already do this?
 template isEnum(T) if(!is(T)) {
 	enum bool isEnum = false;
 }
 
-template isStruct(alias T) if(is(T)) {
+template isStruct(alias T) {
 	static if (is(T == struct))
 		enum bool isStruct = true;
 	else
 		enum bool isStruct = false;
 }
 
-// WTF
-template isStruct(T) if(!is(T)) {
-	enum bool isStruct = false;
-}
-
-
-template isApiObject(alias T) if(is(T)) {
+template isApiObject(alias T) {
 	static if (is(T : ApiObject))
 		enum bool isApiObject = true;
 	else
 		enum bool isApiObject = false;
 }
 
-// WTF
-template isApiObject(T) if(!is(T)) {
-	enum bool isApiObject = false;
-}
-
-template isApiProvider(alias T) if(is(T)) {
+template isApiProvider(alias T) {
 	static if (is(T : ApiProvider))
 		enum bool isApiProvider = true;
 	else
 		enum bool isApiProvider = false;
 }
-
-// WTF
-template isApiProvider(T) if(!is(T)) {
-	enum bool isApiProvider = false;
-}
-
 
 template Passthrough(T) {
 	T Passthrough;
