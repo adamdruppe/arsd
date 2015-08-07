@@ -3146,7 +3146,7 @@ struct ScrollbackBuffer {
 		   start drawing */
 
 		int remaining = height + scrollbackPosition;
-		int start = lines.length;
+		int start = cast(int) lines.length;
 		int howMany = 0;
 
 		// we'll work backwards to figure out how much will fit...
@@ -3225,7 +3225,7 @@ struct ScrollbackBuffer {
 	void scrollUp(int lines = 1) {
 		scrollbackPosition += lines;
 		if(scrollbackPosition >= this.lines.length)
-			scrollbackPosition = this.lines.length - 1;
+			scrollbackPosition = cast(int) this.lines.length - 1;
 	}
 
 	void scrollDown(int lines = 1) {
