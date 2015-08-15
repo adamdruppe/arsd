@@ -605,7 +605,7 @@ class StringLiteralExpression : Expression {
 				continue;
 			}
 			if(inEscape) {
-				lastPos = pos + 1;
+				lastPos = cast(int) pos + 1;
 				inEscape = false;
 				switch(c) {
 					case 'n':
