@@ -8,20 +8,43 @@
 	Usage example:
 
 	---
-	class MyGame {
+	final class MyGame : GameHelperBase {
 		/// Called when it is time to redraw the frame
 		/// it will try for a particular FPS
-		final void drawFrame() {
+		override void drawFrame() {
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_ACCUM_BUFFER_BIT);
 
+			glLoadIdentity();
+
+			glColor3f(1.0, 1.0, 1.0);
+			glTranslatef(x, y, 0);
+			glBegin(GL_QUADS);
+
+			glVertex2i(0, 0);
+			glVertex2i(16, 0);
+			glVertex2i(16, 16);
+			glVertex2i(0, 16);
+
+			glEnd();
 		}
 
-		final void update(Duration deltaTime) {
-
+		int x, y;
+		override void update(Duration deltaTime) {
+			x += 1;
+			y += 1;
 		}
 
+		override SimpleWindow getWindow() {
+			auto window = create2dWindow("My game");
+			// load textures and such here
+			return window;
+		}
+
+		/*
 		final void fillAudioBuffer(short[] buffer) {
 
 		}
+		*/
 	}
 
 	void main() {
@@ -45,11 +68,92 @@ public import arsd.color;
 public import simpledisplay;
 
 import std.math;
+public import core.time;
+
+public import arsd.joystick;
+
+SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
+	auto window = new SimpleWindow(width, height, title, OpenGlOptions.yes);
+
+	window.setAsCurrentOpenGlContext();
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glClearColor(0,0,0,0);
+	glDepthFunc(GL_LEQUAL);
+
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, width, height, 0, 0, 1);
+
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_TEXTURE_2D);
+
+	return window;
+}
+
+/// This is the base class for your game.
+class GameHelperBase {
+	/// Implement this to draw.
+	abstract void drawFrame();
+
+	/// Implement this to update. The deltaTime tells how much real time has passed since the last update.
+	abstract void update(Duration deltaTime);
+	//abstract void fillAudioBuffer(short[] buffer);
+
+	/// Returns the main game window. This function will only be
+	/// called once if you use runGame. You should return a window
+	/// here like one created with `create2dWindow`.
+	abstract SimpleWindow getWindow();
+
+
+	/// These functions help you handle user input. It offers polling functions for
+	/// keyboard, mouse, joystick, and virtual controller input.
+	///
+	/// The virtual digital controllers are best to use if that model fits you because it
+	/// works with several kinds of controllers as well as keyboards.
+
+	JoystickUpdate joystick1;
+}
 
 /// The max rates are given in executions per second
 /// Redraw will never be called unless there has been at least one update
-void runGame(T)(T game, int maxRedrawRate, int maxUpdateRate) {
+void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRate = 0) {
+	// this is a template btw because then it can statically dispatch
+	// the members instead of going through the virtual interface.
 
+	int joystickPlayers = enableJoystickInput();
+	scope(exit) closeJoysticks();
+
+	auto window = game.getWindow();
+
+	window.redrawOpenGlScene = &game.drawFrame;
+
+	auto lastUpdate = MonoTime.currTime;
+
+	window.eventLoop(1000 / maxUpdateRate,
+		delegate() {
+			if(joystickPlayers) {
+				version(linux)
+					readJoystickEvents(joystickFds[0]);
+				auto update = getJoystickUpdate(0);
+				game.joystick1 = update;
+			} else assert(0);
+
+			auto now = MonoTime.currTime;
+			game.update(now - lastUpdate);
+			lastUpdate = now;
+
+			// FIXME: rate limiting
+			window.redrawOpenGlSceneNow();
+		},
+
+		delegate (KeyEvent ke) {
+			// FIXME
+		}
+	);
 }
 
 /// Simple class for putting a TrueColorImage in as an OpenGL texture.

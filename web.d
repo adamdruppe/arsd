@@ -1208,7 +1208,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 		cgi.gzipResponse = true;
 		cgi.setResponseContentType("text/javascript");
 		cgi.setCache(true);
-		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.requestUri, "functions.js", "")), true);
+		cgi.write(makeJavascriptApi(reflection, replace(cast(string) cgi.pathInfo, "functions.js", "")), true);
 		cgi.close();
 		return;
 	}
@@ -4376,7 +4376,7 @@ enum string javascriptBaseImpl = q{
 		}
 
 		if(method == "POST") {
-			xmlHttp.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+			xmlHttp.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
 			a = argString;
 			// adding the CSRF stuff, if necessary
 			if(csrfPair.length) {
@@ -4385,7 +4385,7 @@ enum string javascriptBaseImpl = q{
 				a += csrfPair;
 			}
 		} else {
-			xmlHttp.setRequestHeader("Content-type", "text/plain");
+			xmlHttp.setRequestHeader("Content-Type", "text/plain");
 		}
 
 		xmlHttp.setRequestHeader("X-Requested-With", "XMLHttpRequest");

@@ -1230,6 +1230,8 @@ struct LazyPngFile(LazyPngChunksProvider)
 		return range;
 	}
 
+	// FIXME: no longer compiles
+	version(none)
 	auto byRgbaScanline() {
 		static struct ByRgbaScanline {
 			ReturnType!(rawDatastreamByChunk) datastream;

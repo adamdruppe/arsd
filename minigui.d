@@ -962,7 +962,8 @@ class Window : Widget {
 	Widget mouseLastOver;
 	Widget mouseLastDownOn;
 	override bool dispatchMouseEvent(MouseEvent ev) {
-		auto ele = widgetAtPoint(this, ev.x, ev.y);
+		auto eleR = widgetAtPoint(this, ev.x, ev.y);
+		auto ele = eleR.widget;
 
 		if(mouseCapturedBy !is null) {
 			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
@@ -973,23 +974,30 @@ class Window : Widget {
 			mouseLastDownOn = ele;
 			auto event = new Event("mousedown", ele);
 			event.button = ev.button;
+			event.state = ev.modifierState;
+			event.clientX = eleR.x;
+			event.clientY = eleR.y;
 			event.dispatch();
 		} else if(ev.type == 2) {
 			auto event = new Event("mouseup", ele);
 			event.button = ev.button;
+			event.clientX = eleR.x;
+			event.clientY = eleR.y;
+			event.state = ev.modifierState;
 			event.dispatch();
 			if(mouseLastDownOn is ele) {
 				event = new Event("click", ele);
-				event.clientX = ev.x;
-				event.clientY = ev.y;
+				event.clientX = eleR.x;
+				event.clientY = eleR.y;
 				event.button = ev.button;
 				event.dispatch();
 			}
 		} else if(ev.type == 0) {
 			// motion
 			Event event = new Event("mousemove", ele);
-			event.clientX = ev.x;
-			event.clientY = ev.y;
+			event.state = ev.modifierState;
+			event.clientX = eleR.x;
+			event.clientY = eleR.y;
 			event.dispatch();
 
 			if(mouseLastOver !is ele) {
@@ -2243,6 +2251,8 @@ class Event {
 	Key key;
 	dchar character;
 
+	int state;
+
 	bool shiftKey;
 
 	private bool isBubbling;
@@ -2329,18 +2339,24 @@ bool isAParentOf(Widget a, Widget b) {
 	return false;
 }
 
-Widget widgetAtPoint(Widget starting, int x, int y) {
+struct WidgetAtPointResponse {
+	Widget widget;
+	int x;
+	int y;
+}
+
+WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 	assert(starting !is null);
 	auto child = starting.getChildAtPosition(x, y);
 	while(child) {
 		starting = child;
 		x -= child.x;
 		y -= child.y;
-		child = starting.widgetAtPoint(x, y);//starting.getChildAtPosition(x, y);
+		child = starting.widgetAtPoint(x, y).widget;//starting.getChildAtPosition(x, y);
 		if(child is starting)
 			break;
 	}
-	return starting;
+	return WidgetAtPointResponse(starting, x, y);
 }
 
 version(win32_theming) {

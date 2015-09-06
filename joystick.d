@@ -171,9 +171,9 @@ version(linux) {
 			int r = read(fd, &event, event.sizeof);
 			if(r == -1) {
 				import core.stdc.errno;
-				if(errno == EAGAIN || EWOULDBLOCK)
+				if(errno == EAGAIN || errno == EWOULDBLOCK)
 					break;
-				else assert(0);
+				else assert(0); // , to!string(fd) ~ " " ~ to!string(errno));
 			}
 			assert(r == event.sizeof);
 
@@ -251,11 +251,23 @@ int enableJoystickInput(
 
 			int fd = open(filename.ptr, O_RDONLY);
 			if(fd > 0) {
+				joystickFds[player] = fd;
+
 				version(with_eventloop) {
 					import arsd.eventloop;
-					joystickFds[player] = fd;
 					makeNonBlocking(fd);
 					addFileEventListeners(fd, &readJoystickEvents, null, null);
+				} else {
+					// for polling, we will set nonblocking mode anyway,
+					// the readJoystickEvents function will handle this fine
+					// so we can call it when needed even on like a game timer.
+					auto flags = fcntl(fd, F_GETFL, 0);
+					if(flags == -1)
+						throw new Exception("fcntl get");
+					flags |= O_NONBLOCK;
+					auto s = fcntl(fd, F_SETFL, flags);
+					if(s == -1)
+						throw new Exception("fcntl set");
 				}
 
 				return true;
@@ -855,6 +867,7 @@ version(linux) {
 		printf("\n");
 	}
 
+	version(joystick_demo)
 	version(linux)
 	void amain(string[] args) {
 		import arsd.simpleaudio;
@@ -945,6 +958,7 @@ version(linux) {
 
 
 
+	version(joystick_demo)
 	version(Windows)
 	void amain() {
 		import arsd.simpleaudio;

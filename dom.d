@@ -1902,6 +1902,11 @@ class Element {
 
 		<p>cool <b>api</b> &amp; code dude<p>
 		innerText of that is "cool api & code dude".
+
+		This does not match what real innerText does!
+		http://perfectionkills.com/the-poor-misunderstood-innerText/
+
+		It is more like textContent.
 	*/
 	@property string innerText() const {
 		string s;
