@@ -40,11 +40,9 @@
 			return window;
 		}
 
-		/*
 		final void fillAudioBuffer(short[] buffer) {
 
 		}
-		*/
 	}
 
 	void main() {

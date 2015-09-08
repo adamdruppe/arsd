@@ -711,6 +711,18 @@ class Widget {
 	protected void privatePaint(ScreenPainter painter, int lox, int loy) {
 		painter.originX = lox + x;
 		painter.originY = loy + y;
+
+		static if(UsingSimpledisplayX11) {
+			XRectangle[1] rects;
+			rects[0] = XRectangle(cast(short)(lox + x), cast(short)(loy + y), cast(short) width, cast(short) height);
+			XSetClipRectangles(XDisplayConnection.get, painter.impl.gc, 0, 0, rects.ptr, 1, 0);
+		} else {
+			version(Windows) {
+				auto region = CreateRectRgn(lox + x, loy + y, lox + x + width, loy + y + height);
+				SelectClipRgn(painter.impl.hdc, region);
+				DeleteObject(region);
+			}
+		}
 		if(paint !is null)
 			paint(painter);
 		foreach(child; children)
@@ -810,6 +822,15 @@ class Window : Widget {
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
+
+
+		win.windowResized = (int w, int h) {
+			this.width = w;
+			this.height = h;
+			recomputeChildLayout();
+			redraw();
+		};
+
 		win.setEventHandlers(
 			(MouseEvent e) {
 				dispatchMouseEvent(e);
@@ -931,6 +952,7 @@ class Window : Widget {
 		else
 		this.paint = (ScreenPainter painter) {
 			painter.fillColor = windowBackgroundColor;
+			painter.outlineColor = windowBackgroundColor;
 			painter.drawRectangle(Point(0, 0), this.width, this.height);
 		};
 	}
@@ -1047,15 +1069,8 @@ class Window : Widget {
 }
 
 class MainWindow : Window {
-	this() {
-		super(500, 500);
-
-		win.windowResized = (int w, int h) {
-			this.width = w;
-			this.height = h;
-			recomputeChildLayout();
-			redraw();
-		};
+	this(string title = null) {
+		super(500, 500, title);
 
 		defaultEventHandlers["mouseover"] = delegate void(Widget _this, Event event) {
 			if(this.statusBar !is null && event.target.statusTip.length)
@@ -1383,8 +1398,10 @@ class StatusBar : Widget {
 				_content = s;
 				SendMessageA(owner.hwnd, SB_SETTEXT, idx, cast(LPARAM) toStringzInternal(s));
 			} else {
-				_content = s;
-				owner.redraw();
+				if(_content != s) {
+					_content = s;
+					owner.redraw();
+				}
 			}
 		}
 	}
@@ -1975,7 +1992,8 @@ class TextLabel : Widget {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		paint = (ScreenPainter painter) {
-			painter.drawText(Point(0, 0), this.label);
+			painter.outlineColor = Color.black;
+			painter.drawText(Point(0, 0), this.label, Point(width,height), TextAlignment.Right);
 		};
 	}
 

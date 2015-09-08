@@ -2155,7 +2155,9 @@ version(Windows) {
 				rect.bottom = y2;
 
 				uint mode = DT_LEFT;
-				if(alignment & TextAlignment.Center)
+				if(alignment & TextAlignment.Right)
+					mode = DT_RIGHT;
+				else if(alignment & TextAlignment.Center)
 					mode = DT_CENTER;
 
 				// FIXME: vcenter on windows only works with single line, but I want it to work in all cases
@@ -2769,6 +2771,7 @@ version(X11) {
 			// FIXME: this.window.width/height is probably wrong
 
 			// src x,y     then dest x, y
+			XSetClipMask(display, gc, None);
 			XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
 
 			XFreeGC(display, gc);
@@ -5353,6 +5356,15 @@ struct Visual
 	Status XGetGeometry(Display*, Drawable, Window*, int*, int*, uint*, uint*, uint*, uint*);
 	int XSetClipMask(Display*, GC, Pixmap);
 	int XSetClipOrigin(Display*, GC, int, int);
+
+	void XSetClipRectangles(Display*, GC, int, int, XRectangle*, int, int);
+
+	struct XRectangle {
+		short x;
+		short y;
+		ushort width;
+		ushort height;
+	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
 
