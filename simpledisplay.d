@@ -88,6 +88,13 @@ version(html5) {} else {
 		version = X11;
 }
 
+// these are so the static asserts don't trigger unless you want to
+// add support to it for an OS
+version(Windows)
+	version = with_timer;
+version(linux)
+	version = with_timer;
+
 // If you have to get down and dirty with implementation details, this helps figure out if X is available
 // you can static if(UsingSimpledisplayX11) ... more reliably than version() because version is module-local.
 version(X11)
@@ -95,6 +102,157 @@ version(X11)
 else
 	enum bool UsingSimpledisplayX11 = false;
 
+// basic functions to make timers
+/**
+	TIMERS
+
+	You create a timer with an interval and a callback. It will continue
+	to fire on the interval until it is destroyed.
+
+	There are currently no one-off timers (instead, just create one and
+	destroy it when it is triggered) nor are there pause/resume functions -
+	the timer must again be destroyed and recreated if you want to pause it.
+
+	auto timer = new Timer(50, { it happened!; });
+	timer.destroy();
+	destroyTimer(handle);
+*/
+
+
+version(with_timer)
+class Timer {
+	// FIXME: I might add overloads for ones that take a count of
+	// how many elapsed since last time (on Windows, it will divide
+	// the ticks thing given, on Linux it is just available) and
+	// maybe one that takes an instance of the Timer itself too
+	this(int intervalInMilliseconds, void delegate() onPulse) {
+		assert(onPulse !is null);
+
+		this.onPulse = onPulse;
+
+		version(Windows) {
+			handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
+			if(handle == 0)
+				throw new Exception("SetTimer fail");
+
+			mapping[handle] = this;
+
+		} else version(linux) {
+			static import ep = core.sys.linux.epoll;
+
+			// static import tfd = core.sys.linux.timerfd;
+
+			static struct tfd {
+				static:
+				import core.sys.posix.time;
+				extern(C):
+				pragma(mangle, "timerfd_create")
+				int timerfd_create(int, int);
+				pragma(mangle, "timerfd_settime")
+				int timerfd_settime(int, int, const itimerspec*, itimerspec*);
+				pragma(mangle, "timerfd_gettime")
+				int timerfd_gettime(int, itimerspec*);
+				enum TFD_TIMER_ABSTIME = 1 << 0;
+				enum TFD_CLOEXEC       = 0x80000;
+				enum TFD_NONBLOCK      = 0x800;
+			}
+
+
+			fd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+			if(fd == -1)
+				throw new Exception("timer create failed");
+
+			mapping[fd] = this;
+
+			tfd.itimerspec value;
+			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+
+			value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+			value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+
+			if(tfd.timerfd_settime(fd, 0, &value, null) == -1)
+				throw new Exception("couldn't make pulse timer");
+
+			version(with_eventloop) {
+				import arsd.eventloop;
+				addFileEventListeners(fd, &trigger);
+			} else {
+				prepareEventLoop();
+
+				ep.epoll_event ev = void;
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = fd;
+				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+			}
+		} else static assert(0);
+	}
+
+	void destroy() {
+		version(Windows) {
+			if(handle) {
+				KillTimer(null, handle);
+				mapping.remove(handle);
+				handle = 0;
+			}
+		} else version(linux) {
+			if(fd != -1) {
+				import unix = core.sys.posix.unistd;
+				static import ep = core.sys.linux.epoll;
+
+				version(with_eventloop) {
+					import arsd.eventloop;
+					removeFileEventListeners(fd);
+				} else {
+					ep.epoll_event ev = void;
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = fd;
+
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+				}
+				unix.close(fd);
+				mapping.remove(fd);
+				fd = -1;
+			}
+		} else static assert(0);
+	}
+
+	~this() {
+		destroy();
+	}
+
+	private:
+
+	void delegate() onPulse;
+
+	void trigger() {
+		version(linux) {
+			import unix = core.sys.posix.unistd;
+			long val;
+			unix.read(fd, &val, val.sizeof); // gotta clear the pipe
+		} else version(Windows) {
+
+		} else static assert(0);
+
+		onPulse();
+	}
+
+	version(Windows)
+		extern(Windows)
+		static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) {
+			if(Timer* t = timer in mapping) {
+				(*t).trigger();
+			}
+		}
+
+	version(Windows) {
+		UINT_PTR handle;
+		static Timer[UINT_PTR] mapping;
+	} else version(linux) {
+		int fd = -1;
+		static Timer[int] mapping;
+	} else static assert(0, "timer not supported");
+}
 
 // basic functions to access the clipboard
 /+
@@ -2581,37 +2739,24 @@ version(Windows) {
 			MSG message;
 			int ret;
 
-			import core.thread;
+			Timer pulser;
+			scope(exit)
+				if(pulser !is null)
+					pulser.destroy();
 
-			if(pulseTimeout) {
-				bool done = false;
-				while(!done) {
-					if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) {
-						ret = GetMessage(&message, null, 0, 0);
-						if(ret == 0)
-							done = true;
+			if(pulseTimeout)
+				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
-			//			if(!IsDialogMessageA(message.hwnd, &message)) {
-							TranslateMessage(&message);
-							DispatchMessage(&message);
-			//			}
-					}
+			// if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE))
+			while((ret = GetMessage(&message, null, 0, 0)) != 0) {
+				if(ret == -1)
+					throw new Exception("GetMessage failed");
+		//		if(!IsDialogMessageA(message.hwnd, &message)) {
+					TranslateMessage(&message);
+					DispatchMessage(&message);
+		//		}
 
-					if(!done && !closed && handlePulse !is null)
-						handlePulse();
-					SleepEx(cast(DWORD) pulseTimeout, true);
-				}
-			} else {
-				while((ret = GetMessage(&message, null, 0, 0)) != 0) {
-					if(ret == -1)
-						throw new Exception("GetMessage failed");
-			//		if(!IsDialogMessageA(message.hwnd, &message)) {
-						TranslateMessage(&message);
-						DispatchMessage(&message);
-			//		}
-
-					SleepEx(0, true); // I call this to give it a chance to do stuff like async io, which apparently never happens when you just block in GetMessage
-				}
+				SleepEx(0, true); // I call this to give it a chance to do stuff like async io, which never happens when you just block in GetMessage
 			}
 
 			return message.wParam;
@@ -2719,7 +2864,7 @@ version(Windows) {
 	enum KEY_ESCAPE = 27;
 }
 version(X11) {
-	__gshared string xfontstr = "-bitstream-bitstream vera sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
 
 	alias int delegate(XEvent) NativeEventHandler;
 	alias Window NativeWindowHandle;
@@ -3308,20 +3453,159 @@ version(X11) {
 
 		bool destroyed = false;
 
+		version(with_eventloop)
+		int eventLoop(long pulseTimeout) {
+			version(X11)
+				XFlush(display);
+
+			import arsd.eventloop;
+			auto handle = setInterval(handlePulse, cast(int) pulseTimeout);
+			scope(exit) clearInterval(handle);
+
+			loop();
+			return 0;
+		}
+		else
 		int eventLoop(long pulseTimeout) {
 			bool done = false;
-			import core.thread;
 
-			while (!done) {
-			while(!done &&
-				(pulseTimeout == 0 || (XPending(display) > 0)))
-			{
-				done = doXNextEvent(this.display);
-			}
-				if(!done && !closed && pulseTimeout !=0) {
-					if(handlePulse !is null)
-						handlePulse();
-					Thread.sleep(dur!"msecs"(pulseTimeout));
+			version(X11)
+				XFlush(display);
+
+			version(linux) {
+				static import ep = core.sys.linux.epoll;
+				static import unix = core.sys.posix.unistd;
+				static import err = core.stdc.errno;
+
+				// until this is reliably in druntime i'll use my own
+				// so probably like next year i'll switch this over!
+				// static import tfd = core.sys.linux.timerfd;
+
+				static struct tfd {
+					static:
+					import core.sys.posix.time;
+					extern(C):
+					pragma(mangle, "timerfd_create")
+					int timerfd_create(int, int);
+					pragma(mangle, "timerfd_settime")
+					int timerfd_settime(int, int, const itimerspec*, itimerspec*);
+					pragma(mangle, "timerfd_gettime")
+					int timerfd_gettime(int, itimerspec*);
+					enum TFD_TIMER_ABSTIME = 1 << 0;
+					enum TFD_CLOEXEC       = 0x80000;
+					enum TFD_NONBLOCK      = 0x800;
+				}
+
+				prepareEventLoop();
+
+				ep.epoll_event[16] events = void;
+
+				int pulseFd = -1;
+				scope(exit)
+					if(pulseFd != -1)
+						unix.close(pulseFd);
+
+
+				{
+					// adding Xlib file
+					ep.epoll_event ev = void;
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = display.fd;
+					import std.conv;
+					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
+						throw new Exception("add x fd" ~ to!string(epollFd));
+				}
+
+				if(pulseTimeout) {
+					pulseFd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+					if(pulseFd == -1)
+						throw new Exception("pulse timer create failed");
+
+					tfd.itimerspec value;
+					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
+					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
+					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+					if(tfd.timerfd_settime(pulseFd, 0, &value, null) == -1)
+						throw new Exception("couldn't make pulse timer");
+						
+					ep.epoll_event ev = void;
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = pulseFd;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
+				}
+
+				while(!done) {
+					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, -1);
+					if(nfds == -1) {
+						if(err.errno == err.EINTR) {
+							continue; // interrupted by signal, just try again
+						}
+						throw new Exception("epoll wait failure");
+					}
+
+					foreach(idx; 0 .. nfds) {
+						if(done) break;
+						auto fd = events[idx].data.fd;
+						assert(fd != -1); // should never happen cuz the api doesn't do that but better to assert than assume.
+						auto flags = events[idx].events;
+						if(flags & ep.EPOLLIN) {
+							if(fd == display.fd) {
+								while(!done && XPending(display))
+									done = doXNextEvent(this.display);
+							} else if(fd == pulseFd) {
+								long expirationCount;
+								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
+
+								// read just to clear the buffer so poll doesn't trigger again
+								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
+
+								handlePulse();
+							} else {
+								// some other timer
+
+								if(Timer* t = fd in Timer.mapping)
+									(*t).trigger();
+
+								// or i might add support for other FDs too
+								// but for now it is just timer
+								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
+							}
+						} else {
+							// not interested in OUT, we are just reading here.
+							//
+							// error or hup might also be reported
+							// but it shouldn't here since we are only
+							// using a few types of FD and Xlib will report
+							// if it dies.
+							// so instead of thoughtfully handling it, I'll
+							// just throw. for now at least
+
+							throw new Exception("epoll did something else");
+						}
+					}
+				}
+			} else {
+				// Generic fallback: yes to simple pulse support,
+				// but NO timer support!
+
+				// FIXME: we could probably support the POSIX timer_create
+				// signal-based option, but I'm in no rush to write it since
+				// I prefer the fd-based functions.
+				while (!done) {
+					while(!done &&
+						(pulseTimeout == 0 || (XPending(display) > 0)))
+					{
+						done = doXNextEvent(this.display);
+					}
+					if(!done && !closed && pulseTimeout !=0) {
+						if(handlePulse !is null)
+							handlePulse();
+						import core.thread;
+						Thread.sleep(dur!"msecs"(pulseTimeout));
+					}
 				}
 			}
 
@@ -6179,7 +6463,6 @@ version(html5) {
 			while(!done &&
 				(pulseTimeout == 0 || socket.recvAvailable()))
 			{
-				//done = doXNextEvent(this); // FIXME: what about multiple windows? This wasn't originally going to support them but maybe I should
 			}
 				if(!done && pulseTimeout !=0) {
 					if(handlePulse !is null)
@@ -6319,4 +6602,18 @@ extern(System){
 
 }
 
+version(linux) {
+	version(with_eventloop) {} else {
+		private int epollFd = -1;
+		void prepareEventLoop() {
+			if(epollFd != -1)
+				return; // already initialized, no need to do it again
+			import ep = core.sys.linux.epoll;
 
+			epollFd = ep.epoll_create1(0);
+			if(epollFd == -1)
+				throw new Exception("epoll create failure");
+		}
+	}
+
+}

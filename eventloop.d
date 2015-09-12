@@ -450,7 +450,9 @@ version(linux) {
 	int epoll = -1;
 
 	private void addFileToLoopImplementation(int fd, int events, bool edgeTriggered = true) {
-		epoll_event ev;
+		epoll_event ev = void;
+
+		ev.events = 0;
 
 		// I don't remember why I made it edge triggered in the first
 		// place as that requires a bit more care to do correctly and I don't
@@ -509,7 +511,7 @@ version(linux) {
 
 		addFileToLoop(pipes[0], FileEvents.read, false);
 
-		epoll_event[16] events;
+		epoll_event[16] events = void;
 
 		timeval tv;
 
