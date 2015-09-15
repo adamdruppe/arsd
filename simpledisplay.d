@@ -1,3 +1,418 @@
+/*
+	FIXME: rectangle drawing on Windows might be wrong in the window ctor
+	it should not leave an outline...
+*/
+/++
+	simpledisplay.d provides basic cross-platform GUI-related functionality,
+	including creating windows, drawing on them, working with the clipboard,
+	timers, OpenGL, and more. However, it does NOT provide high level GUI
+	widgets. See my minigui.d, an extension to this module, for that
+	functionality.
+
+	simpledisplay provides cross-platform wrapping for Windows and Linux
+	(and perhaps other OSes that use X11), but also does not prevent you
+	from using the underlying facilities if you need them. It has a goal
+	of working efficiently over a remote X link (at least as far as Xlib
+	reasonably allows.)
+
+	simpledisplay depends on `color.d`, which should be available from the
+	same place where you got this file. Other than that, however, it has
+	very few dependencies and ones that don't come with the OS and/or the
+	compiler are all opt-in.
+
+	simpledisplay.d's home base is on my arsd repo on Github. The file is:
+	$(L https://github.com/adamdruppe/arsd/blob/master/simpledisplay.d)
+
+	Examples:
+
+	This program creates a window and draws events inside them as they
+	happen, scrolling the text in the window as needed. Run this program
+	and experiment to get a feel for where basic input events take place
+	in the library.
+
+	---
+	import simpledisplay;
+	import std.conv;
+
+	void main() {
+		auto window = new SimpleWindow(Size(500, 500), "My D App");
+
+		int y = 0;
+
+		void addLine(string text) {
+			auto painter = window.draw();
+
+			if(y + painter.fontHeight >= window.height) {
+				painter.scrollArea(Point(0, 0), window.width, window.height, 0, painter.fontHeight);
+				y -= painter.fontHeight;
+			}
+
+			painter.outlineColor = Color.red;
+			painter.fillColor = Color.black;
+			painter.drawRectangle(Point(0, y), window.width, painter.fontHeight);
+
+			painter.outlineColor = Color.white;
+
+			painter.drawText(Point(10, y), text);
+
+			y += painter.fontHeight;
+		}
+
+		window.eventLoop(1000,
+		  () {
+			addLine("Timer went off!");
+		  },
+		  (KeyEvent event) {
+			addLine(to!string(event));
+		  },
+		  (MouseEvent event) {
+			addLine(to!string(event));
+		  },
+		  (dchar ch) {
+			addLine(to!string(ch));
+		  }
+		);
+	}
+	---
+
+	This program creates a little Pong-like game. Player one is controlled
+	with the keyboard.  Player two is controlled with the mouse. It demos
+	the pulse timer, event handling, and some basic drawing.
+
+	---
+	import simpledisplay;
+
+	enum paddleMovementSpeed = 8;
+	enum paddleHeight = 48;
+
+	void main() {
+		auto window = new SimpleWindow(600, 400, "Pong game!");
+
+		int playerOnePosition, playerTwoPosition;
+		int playerOneMovement, playerTwoMovement;
+		int playerOneScore, playerTwoScore;
+
+		int ballX, ballY;
+		int ballDx, ballDy;
+
+		void serve() {
+			import std.random;
+
+			ballX = window.width / 2;
+			ballY = window.height / 2;
+			ballDx = uniform(-4, 4) * 3;
+			ballDy = uniform(-4, 4) * 3;
+			if(ballDx == 0)
+				ballDx = uniform(0, 2) == 0 ? 3 : -3;
+		}
+
+		serve();
+
+		window.eventLoop(50, // set a 50 ms timer pulls
+			// This runs once per timer pulse
+			delegate () {
+				auto painter = window.draw();
+
+				painter.clear();
+
+				// Update everyone's motion
+				playerOnePosition += playerOneMovement;
+				playerTwoPosition += playerTwoMovement;
+
+				ballX += ballDx;
+				ballY += ballDy;
+
+				// Bounce off the top and bottom edges of the window
+				if(ballY + 7 >= window.height)
+					ballDy = -ballDy;
+				if(ballY - 8 <= 0)
+					ballDy = -ballDy;
+
+				// Bounce off the paddle, if it is in position
+				if(ballX - 8 <= 16) {
+					if(ballY + 7 > playerOnePosition && ballY - 8 < playerOnePosition + paddleHeight) {
+						ballDx = -ballDx + 1; // add some speed to keep it interesting
+						ballDy += playerOneMovement; // and y movement based on your controls too
+						ballX = 24; // move it past the paddle so it doesn't wiggle inside
+					} else {
+						// Missed it
+						playerTwoScore ++;
+						serve();
+					}
+				}
+
+				if(ballX + 7 >= window.width - 16) { // do the same thing but for player 1
+					if(ballY + 7 > playerTwoPosition && ballY - 8 < playerTwoPosition + paddleHeight) {
+						ballDx = -ballDx - 1;
+						ballDy += playerTwoMovement;
+						ballX = window.width - 24;
+					} else {
+						// Missed it
+						playerOneScore ++;
+						serve();
+					}
+				}
+
+				// Draw the paddles
+				painter.outlineColor = Color.black;
+				painter.drawLine(Point(16, playerOnePosition), Point(16, playerOnePosition + paddleHeight));
+				painter.drawLine(Point(window.width - 16, playerTwoPosition), Point(window.width - 16, playerTwoPosition + paddleHeight));
+
+				// Draw the ball
+				painter.fillColor = Color.red;
+				painter.outlineColor = Color.yellow;
+				painter.drawEllipse(Point(ballX - 8, ballY - 8), Point(ballX + 7, ballY + 7));
+
+				// Draw the score
+				painter.outlineColor = Color.blue;
+				import std.conv;
+				painter.drawText(Point(64, 4), to!string(playerOneScore));
+				painter.drawText(Point(window.width - 64, 4), to!string(playerTwoScore));
+
+			},
+			delegate (KeyEvent event) {
+				// Player 1's controls are the arrow keys on the keyboard
+				if(event.key == Key.Down)
+					playerOneMovement = event.pressed ? paddleMovementSpeed : 0;
+				if(event.key == Key.Up)
+					playerOneMovement = event.pressed ? -paddleMovementSpeed : 0;
+
+			},
+			delegate (MouseEvent event) {
+				// Player 2's controls are mouse movement while the left button is held down
+				if(event.type == MouseEventType.motion && (event.modifierState & ModifierState.leftButtonDown)) {
+					if(event.dy > 0)
+						playerTwoMovement = paddleMovementSpeed;
+					else if(event.dy < 0)
+						playerTwoMovement = -paddleMovementSpeed;
+				} else {
+					playerTwoMovement = 0;
+				}
+			}
+		);
+	}
+	---
+
+	If you are interested in more game writing with D, check out my gamehelpers.d which builds upon simpledisplay, and its other stand-alone support modules, simpleaudio.d and joystick.d, too.
+
+	This program displays a pie chart. Clicking on a color will increase its share of the pie.
+
+	---
+
+	---
+
+	<h2>About this documentation</h2>
+
+	The goal here is to give an overview of each major feature with working examples first, then the inline class and method list will follow. Scan for headers for a topic you're interested in to get started quickly.
+
+	<h2>Topics</h2>
+
+	<h3>Windows</h3>
+		The $(M SimpleWindow) class is simpledisplay's flagship feature.
+
+		You may create multiple windows. A single running event loop will handle as many as needed.
+
+		setEventHandlers function
+		eventLoop function
+		draw function
+		title property
+
+	<h3>Event loops</h3>
+		The simpledisplay event loop is designed to handle common cases easily while being extensible for more advanced cases, or replaceable by other libraries.
+
+		The most common scenario is creating a window, then calling `window.eventLoop` when setup is complete. You can pass several handlers to the `eventLoop` method right there:
+
+		---
+		import simpledisplay;
+		void main() {
+			auto window = new SimpleWindow(200, 200);
+			window.eventLoop(0,
+			  delegate (dchar) { /* got a character key press */ }
+			);
+		}
+		---
+
+		Tip: if you get a compile error saying "I can't use this event handler", the most common thing in my experience is passing a function instead of a delegate. The simple solution is to use the `delegate` keyword, like I did in the example above.
+
+		On Linux, the event loop is implemented with the `epoll` system call for efficiency an extensibility to other files. On Windows, it runs a traditional `GetMessage` + `DispatchMessage` loop, with a call to `SleepEx` in each iteration to allow the thread to enter an alertable wait state regularly, primarily so Overlapped I/O callbacks will get a chance to run.
+
+		On Linux, simpledisplay also supports my `arsd.eventloop` module. Compile your program, including the eventloop.d file, with the `-version=with_eventloop` switch.
+
+		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
+
+	<h3>Notification area (aka systray) icons</h3>
+		Notification area icons are currently only implemented on X11 targets. Windows support will come when I need it (or if someone requests it and I have some time to spend on it).
+
+	<h3>Input handling</h3>
+		There are event handlers for low-level keyboard and mouse events, and higher level handlers for character events.
+
+	<h3>2d Drawing</h3>
+		To draw on your window, use the `window.draw` method. It returns a $(M ScreenPainter) structure with drawing methods.
+
+		Important: `ScreenPainter` double-buffers and will not actually update the window until its destructor is run. Always ensure the painter instance goes out-of-scope before proceeding. You can do this by calling it inside an event handler, a timer callback, or an small scope inside main. For example:
+
+		---
+		import simpledisplay;
+		void main() {
+			auto window = new SimpleWindow(200, 200);
+			{ // introduce sub-scope
+				auto painter = window.draw(); // begin drawing
+				/* draw here */
+				painter.outlineColor = Color.red;
+				painter.fillColor = Color.black;
+				painter.drawRectangle(Point(0, 0), 200, 200);
+			} // end scope, calling `painter`'s destructor, drawing to the screen.
+			window.eventLoop(0); // handle events
+		}
+		---
+
+		Painting is done based on two color properties, a pen and a brush.
+	<h3>3d Drawing</h3>
+		simpledisplay can create OpenGL contexts on your window. It works quite differently than 2d drawing.
+
+		Note that it is still possible to draw 2d on top of an OpenGL window, using the `draw` method, though I don't recommend it.
+
+		To start, you create a `SimpleWindow` with OpenGL enabled by passing the argument `OpenGlOptions.yes` to the constructor.
+
+		Important: the required import libraries are now packaged with dmd on 32 bit Windows for OpenGL support. You may download the necessary .libs from by github, put them in your dmd/windows/lib folder, then pass the `-version=with_opengl` flag to dmd when compiling to opt-in to this feature.
+
+		Next, you set `redrawOpenGlScene` to a delegate which draws your frame.
+
+		To force a redraw of the scene, call `window.redrawOpenGlSceneNow()`.
+
+		Please note that my experience with OpenGL is very out-of-date, and the bindings in simpledisplay reflect that. If you want to use more modern functions, you may have to define the bindings yourself, or import them from another module. However, I believe the OpenGL context creation done in simpledisplay will work for any version.
+
+		This example program will draw a rectangle on your window:
+
+		---
+
+		---
+
+	<h3>Image Displaying</h3>
+		You can also load PNG images using my `png.d`.
+
+		---
+			import simpledisplay;
+			import arsd.png;
+
+			void main() {
+				auto image = Image.fromMemoryImage(readPng("image.png"));
+				displayImage(image);
+			}
+		---
+
+		Compile with `dmd example.d simpledisplay.d png.d`.
+
+		If you find an image file which is a valid png that `arsd.png` fails to load, please let me know. In the mean time of fixing the bug, you can probably convert the file into an easier-to-load format. Be sure to turn OFF png interlacing, as that isn't supported. Other things to try would be making the image smaller, or trying 24 bit truecolor mode with an alpha channel.
+
+	<h3>Sprites</h3>
+		The $(M Sprite) class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
+
+	<h3>Clipboard</h3>
+		The free functions $(M getClipboardText) and $(M setClipboardText) consist of simpledisplay's cross-platform clipboard support at this time.
+
+		It also has helpers for handling X-specific events.
+	<h3>Timers</h3>
+		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, $(M Timer).
+
+		The pulse timeout is used by setting a non-zero interval as the first argument to `eventLoop` function and adding a zero-argument delegate to handle the pulse.
+
+		---
+			import simpledisplay;
+
+			void main() {
+				auto window = new SimpleWindow(400, 400);
+				// every 100 ms, it will draw a random line
+				// on the window.
+				window.eventLoop(100, {
+					auto painter = window.draw();
+
+					import std.random;
+					// random color
+					painter.outlineColor = Color(uniform(0, 256), uniform(0, 256), uniform(0, 256));
+					// random line
+					painter.drawLine(
+						Point(uniform(0, window.width), uniform(0, window.height)),
+						Point(uniform(0, window.width), uniform(0, window.height)));
+
+				});
+			}
+		---
+
+		The `Timer` class works similarly, but is created separately from the event loop. (It still fires through the event loop, though.) You may make as many instances of `Timer` as you wish.
+
+		The pulse timer and instances of the $(M Timer) class may be combined at will.
+
+		---
+			import simpledisplay;
+
+			void main() {
+				auto window = new SimpleWindow(400, 400);
+				auto timer = new Timer(1000, delegate {
+					auto painter = window.draw();
+					painter.clear();
+				});
+
+				window.eventLoop(0);
+			}
+		---
+
+		Timers are currently only implemented on Windows, using `SetTimer` and Linux, using `timerfd_create`. These deliver timeout messages through your application event loop.
+
+	<h3>OS-specific helpers</h3>
+		simpledisplay carries a lot of code to help implement itself without extra dependencies, and much of this code is available for you too, so you may extend the functionality yourself.
+	<h3>Extending with OS-specific functionality</h3>
+		`handleNativeEvent` and `handleNativeGlobalEvent`.
+	<h3>Integration with other libraries</h3>
+		Integration with a third-party event loop is possible.
+
+		On Linux, you might want to support both terminal input and GUI input. You can do this by using simpledisplay together with eventloop.d and terminal.d.
+	<h3>GUI widgets</h3>
+		simpledisplay does not provide GUI widgets such as text areas, buttons, checkboxes, etc. It only gives basic windows, the ability to draw on it, receive input from it, and access native information for extension. You may write your own gui widgets with these, but you don't have to because I already did for you!
+
+		Download `minigui.d` from my github repository and add it to your project. minigui builds these things on top of simpledisplay and offers its own Window class (and subclasses) to use that wrap SimpleWindow, adding a new event and drawing model that is hookable by subwidgets, represented by their own classes.
+
+		Migrating to minigui from simpledisplay is often easy though, because they both use the same ScreenPainter API, and the same simpledisplay events are available, if you want them. (Though you may like using the minigui model, especially if you are familiar with writing web apps in the browser with Javascript.)
+
+		minigui still needs a lot of work to be finished at this time, but it already offers a number of useful classes.
+
+	<h2>Developer notes</h2>
+
+	I don't have a Mac, so that code isn't maintained. I would like to have a Cocoa
+	implementation though.
+
+	The NativeSimpleWindowImplementation and NativeScreenPainterImplementation both
+	suck. If I was rewriting it, I wouldn't do it that way again.
+
+	This file must not have any more required dependencies. If you need bindings, add
+	them right to this file. Once it gets into druntime and is there for a while, remove
+	bindings from here to avoid conflicts (or put them in an appropriate version block
+	so it continues to just work on old dmd), but wait a couple releases before making the
+	transition so this module remains usable with older versions of dmd.
+
+	You may have optional dependencies if needed by putting them in version blocks or
+	template functions. You may also extend the module with other modules with UFCS without
+	actually editing this - that is nice to do if you can.
+
+	Try to make functions work the same way across operating systems. I typically make
+	it thinly wrap Windows, then emulate that on Linux.
+
+	A goal of this is to keep a gui hello world to less than 250 KB. This means avoiding
+	Phobos! So try to avoid it.
+
+	See more comments throughout the source.
+
+
+	Authors: Adam D. Ruppe with the help of others. If you need help, please email me: destructionator@gmail.com or find me on IRC - #d on Freenode. I go by Destructionator or adam_d_ruppe, depending on which computer I'm logged into.
+
+	License: Copyright Adam D. Ruppe, 2011-2015. Released under the Boost Software License.
+
+	<hr />
+
+	Macros:
+		M=<a style="font-weight: bold;" href="#$1">$1</a>
+		L=<a href="$1">$1</a>
++/
 module simpledisplay;
 
 // FIXME: icons on Windows don't look quite right, I think the transparency mask is off.
@@ -104,8 +519,6 @@ else
 
 // basic functions to make timers
 /**
-	TIMERS
-
 	You create a timer with an interval and a callback. It will continue
 	to fire on the interval until it is destroyed.
 
@@ -115,7 +528,8 @@ else
 
 	auto timer = new Timer(50, { it happened!; });
 	timer.destroy();
-	destroyTimer(handle);
+
+	Timers can only be expected to fire when the event loop is running.
 */
 
 
@@ -125,6 +539,7 @@ class Timer {
 	// how many elapsed since last time (on Windows, it will divide
 	// the ticks thing given, on Linux it is just available) and
 	// maybe one that takes an instance of the Timer itself too
+	/// Create a timer with a callback when it triggers.
 	this(int intervalInMilliseconds, void delegate() onPulse) {
 		assert(onPulse !is null);
 
@@ -188,6 +603,7 @@ class Timer {
 		} else static assert(0);
 	}
 
+	/// Stop and destroy the timer object.
 	void destroy() {
 		version(Windows) {
 			if(handle) {
@@ -268,8 +684,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 
 +/
 
-// this does a delegate because it is actually an async call on X...
-// the receiver may never be called if the clipboard is empty or unavailable
+/// this does a delegate because it is actually an async call on X...
+/// the receiver may never be called if the clipboard is empty or unavailable
 /// gets plain text from the clipboard
 void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
 	version(Windows) {
@@ -624,9 +1040,10 @@ version(Windows) {
 
 
 
+///
 enum RasterOp {
-	normal,
-	xor,
+	normal, ///
+	xor, ///
 }
 
 // being phobos-free keeps the size WAY down
@@ -744,14 +1161,14 @@ enum ModifierState : uint {
 struct KeyEvent {
 	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms.
 	Key key;
-	uint hardwareCode;
-	bool pressed; // note: released events aren't always sent...
+	uint hardwareCode; ///
+	bool pressed; /// note: released events aren't always sent...
 
-	dchar character;
+	dchar character; ///
 
 	uint modifierState; /// see enum ModifierState
 
-	SimpleWindow window;
+	SimpleWindow window; /// associated Window
 }
 
 version(X11) {
@@ -1143,21 +1560,21 @@ version(X11) {
 // FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
 /// Listen for this on your event listeners if you are interested in mouse
 struct MouseEvent {
-	MouseEventType type; // movement, press, release, double click
+	MouseEventType type; /// movement, press, release, double click
 
-	int x;
-	int y;
+	int x; ///
+	int y; ///
 
-	int dx;
-	int dy;
+	int dx; ///
+	int dy; ///
 
-	MouseButton button;
-	int modifierState;
+	MouseButton button; ///
+	int modifierState; ///
 
-	SimpleWindow window;
+	SimpleWindow window; ///
 }
 
-/// This gives a few more options to drawing lines and such
+//// This gives a few more options to drawing lines and such
 struct Pen {
 	Color color; /// the foreground color
 	int width = 1; /// width of the line
@@ -1204,7 +1621,9 @@ struct Pen {
 }
 
 
+///
 final class Image {
+	///
 	this(int width, int height) {
 		this.width = width;
 		this.height = height;
@@ -1212,6 +1631,7 @@ final class Image {
 		impl.createImage(width, height);
 	}
 
+	///
 	this(Size size) {
 		this(size.width, size.height);
 	}
@@ -1221,7 +1641,7 @@ final class Image {
 	}
 
 	// these numbers are used for working with rawData itself, skipping putPixel and getPixel
-	// if you do the math yourself you might be able to optimize it. Call these functions only once and cache the value.
+	/// if you do the math yourself you might be able to optimize it. Call these functions only once and cache the value.
 	pure const @system nothrow {
 		/*
 			To use these to draw a blue rectangle with size WxH at position X,Y...
@@ -1265,6 +1685,7 @@ final class Image {
 			can be made into a bitmask or something so we can write them as *uint...
 		*/
 
+		///
 		int offsetForTopLeftPixel() {
 			version(X11) {
 				return 0;
@@ -1273,6 +1694,7 @@ final class Image {
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
+		///
 		int adjustmentForNextLine() {
 			version(X11) {
 				return width * 4;
@@ -1282,7 +1704,7 @@ final class Image {
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
-		// once you have the position of a pixel, use these to get to the proper color
+		/// once you have the position of a pixel, use these to get to the proper color
 		int redByteOffset() {
 			version(X11) {
 				return 2;
@@ -1291,6 +1713,7 @@ final class Image {
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
+		///
 		int greenByteOffset() {
 			version(X11) {
 				return 1;
@@ -1299,6 +1722,7 @@ final class Image {
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
+		///
 		int blueByteOffset() {
 			version(X11) {
 				return 0;
@@ -1308,6 +1732,7 @@ final class Image {
 		}
 	}
 
+	///
 	final void putPixel(int x, int y, Color c) {
 		if(x < 0 || x >= width)
 			return;
@@ -1317,6 +1742,7 @@ final class Image {
 		impl.setPixel(x, y, c);
 	}
 
+	///
 	final Color getPixel(int x, int y) {
 		if(x < 0 || x >= width)
 			return Color.transparent;
@@ -1326,16 +1752,19 @@ final class Image {
 		return impl.getPixel(x, y);
 	}
 
+	///
 	final void opIndexAssign(Color c, int x, int y) {
 		putPixel(x, y, c);
 	}
 
+	///
 	TrueColorImage toTrueColorImage() {
 		auto tci = new TrueColorImage(width, height);
 		convertToRgbaBytes(tci.imageData.bytes);
 		return tci;
 	}
 
+	///
 	static Image fromMemoryImage(MemoryImage i) {
 		auto tci = i.getAsTrueColorImage();
 		auto img = new Image(tci.width, tci.height);
@@ -1392,12 +1821,19 @@ final class Image {
 		else static assert(0);
 	}
 
+	///
 	immutable int width;
+
+	///
 	immutable int height;
     private:
 	mixin NativeImageImplementation!() impl;
 }
 
+/// A convenience function to pop up a window displaying the image.
+/// If you pass a win, it will draw the image in it. Otherwise, it will
+/// create a window with the size of the image and run its event loop, closing
+/// when a key is pressed.
 void displayImage(Image image, SimpleWindow win = null) {
 	if(win is null) {
 		win = new SimpleWindow(image);
@@ -1415,6 +1851,8 @@ void displayImage(Image image, SimpleWindow win = null) {
 }
 
 /// Most functions use the outlineColor instead of taking a color themselves.
+/// ScreenPainter is reference counted and draws its buffer to the screen when its
+/// final reference goes out of scope.
 struct ScreenPainter {
 	SimpleWindow window;
 	this(SimpleWindow window, NativeWindowHandle handle) {
@@ -1450,27 +1888,32 @@ struct ScreenPainter {
 		//writeln("refcount ++ ", impl.referenceCount);
 	}
 
+	///
 	int fontHeight() {
 		return impl.fontHeight();
 	}
 
+	///
 	@property void pen(Pen p) {
 		impl.pen(p);
 	}
 
+	///
 	@property void outlineColor(Color c) {
 		impl.outlineColor(c);
 	}
 
+	///
 	@property void fillColor(Color c) {
 		impl.fillColor(c);
 	}
 
+	///
 	@property void rasterOp(RasterOp op) {
 		impl.rasterOp(op);
 	}
 
-	void transform(ref Point p) {
+	private void transform(ref Point p) {
 		p.x += originX;
 		p.y += originY;
 	}
@@ -1482,20 +1925,38 @@ struct ScreenPainter {
 		// FIXME this should do what the dtor does
 	}
 
+	/// Scrolls the contents in the bounding rectangle by dx, dy. Positive dx means scroll left (make space available at the right), positive dy means scroll up (make space available at the bottom)
 	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
-		// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
+		transform(upperLeft);
+		version(Windows) {
+			// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
+			RECT scroll = RECT(upperLeft.x, upperLeft.y, upperLeft.x + width, upperLeft.y + height);
+			RECT clip = scroll;
+			RECT uncovered;
+			HRGN hrgn;
+			if(!ScrollDC(impl.hdc, -dx, -dy, &scroll, &clip, hrgn, &uncovered))
+				throw new Exception("ScrollDC");
+
+		} else version(X11) {
+			// FIXME: clip stuff outside this rectangle
+			XCopyArea(impl.display, impl.d, impl.d, impl.gc, upperLeft.x, upperLeft.y, width, height, upperLeft.x - dx, upperLeft.y - dy);
+		} else static assert(0);
 	}
 
+	///
 	void clear() {
 		fillColor = Color(255, 255, 255);
+		outlineColor = Color(255, 255, 255);
 		drawRectangle(Point(0, 0), window.width, window.height);
 	}
 
+	///
 	void drawPixmap(Sprite s, Point upperLeft) {
 		transform(upperLeft);
 		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
 	}
 
+	///
 	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
 		transform(upperLeft);
 		if(w == 0 || w > i.width)
@@ -1510,10 +1971,12 @@ struct ScreenPainter {
 		impl.drawImage(upperLeft.x, upperLeft.y, i, upperLeftOfImage.x, upperLeftOfImage.y, w, h);
 	}
 
+	///
 	Size textSize(string text) {
 		return impl.textSize(text);
 	}
 
+	///
 	void drawText(Point upperLeft, string text, Point lowerRight = Point(0, 0), uint alignment = 0) {
 		transform(upperLeft);
 		if(lowerRight.x != 0 || lowerRight.y != 0)
@@ -1521,18 +1984,23 @@ struct ScreenPainter {
 		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
 	}
 
+	/// Drawing an individual pixel is slow. Avoid it if possible.
 	void drawPixel(Point where) {
 		transform(where);
 		impl.drawPixel(where.x, where.y);
 	}
 
 
+	/// Draws a pen using the current pen / outlineColor
 	void drawLine(Point starting, Point ending) {
 		transform(starting);
 		transform(ending);
 		impl.drawLine(starting.x, starting.y, ending.x, ending.y);
 	}
 
+	/// Draws a rectangle using the current pen/outline color for the border and brush/fill color for the insides
+	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
+	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
 	void drawRectangle(Point upperLeft, int width, int height) {
 		transform(upperLeft);
 		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
@@ -1545,11 +2013,13 @@ struct ScreenPainter {
 		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
 	}
 
+	/// .
 	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
 		transform(upperLeft);
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
+	/// .
 	void drawPolygon(Point[] vertexes) {
 		foreach(vertex; vertexes)
 			transform(vertex);
@@ -1595,6 +2065,7 @@ class Sprite {
 	// FIXME: we should actually be able to draw upon these, same as windows
 	//ScreenPainter drawUpon();
 
+	/// Makes a sprite based on the image with the initial contents from the Image
 	this(SimpleWindow win, Image i) {
 		this.width = i.width;
 		this.height = i.height;
@@ -1653,6 +2124,7 @@ class Sprite {
 		} else static assert(0);
 	}
 
+	/// Call this when you're ready to get rid of it
 	void dispose() {
 		version(X11)
 			XFreePixmap(XDisplayConnection.get(), handle);
@@ -1680,6 +2152,7 @@ class Sprite {
 	}
 	else static assert(0);
 
+	/// .
 	void drawAt(ScreenPainter painter, Point where) {
 		painter.drawPixmap(this, where);
 	}
@@ -1697,6 +2170,7 @@ interface CapableOfHandlingNativeEvent {
 	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
 }
 
+/// The flagship window class.
 class SimpleWindow : CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler() { return handleNativeEvent; }
 
@@ -1736,6 +2210,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
+	/// ctor
 	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
 		this(size.width, size.height, title, opengl, resizable);
 	}
@@ -1789,10 +2264,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		}
 	}
 
+	/// Set the title
 	@property void title(string title) {
 		impl.setTitle(title);
 	}
 
+	/// Set the icon
 	@property void icon(MemoryImage icon) {
 		auto tci = icon.getAsTrueColorImage();
 		version(Windows) {
@@ -1838,7 +2315,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	bool closed;
 
-	/// Closes the window and terminates it's event loop.
+	/// Closes the window. If there are no more open windows, the event loop will terminate.
 	void close() {
 		impl.closeWindow();
 		closed = true;
@@ -1883,6 +2360,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 	*/
 
+	/// Draws an image on the window. This is meant to provide quick look
+	/// of a static image generated elsewhere.
 	@property void image(Image i) {
 		version(Windows) {
 			BITMAP bm;
@@ -1925,12 +2404,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// by the eventLoop function, but are still public so you can change
 	/// them later. wasPressed == true means key down. false == key up.
 
-	/// Handles a low-level keyboard event
+	/// Handles a low-level keyboard event. Settable through setEventHandlers.
 	void delegate(KeyEvent ke) handleKeyEvent;
 
-	/// Handles a higher level keyboard event - c is the character just pressed.
+	/// Handles a higher level keyboard event - c is the character just pressed. Settable through setEventHandlers.
 	void delegate(dchar c) handleCharEvent;
 
+	/// Handles a timer pulse. Settable through setEventHandlers.
 	void delegate() handlePulse;
 
 	void delegate(bool) onFocusChange; /// called when the focus changes, param is if we have it (true) or are losing it (false)
@@ -1952,10 +2432,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		}
 	}
 
+	/// Mouse event handler. Settable through setEventHandlers.
 	void delegate(MouseEvent) handleMouseEvent;
 
-	void delegate() paintingFinished; // use to redraw child widgets if you use system apis to add stuff
-	void delegate(int width, int height) windowResized;
+	void delegate() paintingFinished; /// use to redraw child widgets if you use system apis to add stuff
+	void delegate(int width, int height) windowResized; /// handle a resize, after it happens
 
 	/** Platform specific - handle any native messages this window gets.
 	  *
@@ -1976,6 +2457,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	static NativeEventHandler handleNativeGlobalEvent;
 
 //  private:
+	/// The native implementation is available, but you shouldn't use it unless you are
+	/// familiar with the underlying operating system, don't mind depending on it, and
+	/// know simpledisplay.d's internals too. It is virtually private; you can hopefully
+	/// do what you need to do with handleNativeEvent instead.
 	mixin NativeSimpleWindowImplementation!() impl;
 }
 
@@ -2356,7 +2841,7 @@ version(Windows) {
 		}
 
 		void drawRectangle(int x, int y, int width, int height) {
-			Rectangle(hdc, x, y, x + width+1, y + height+1); // FIXME: I think it now matches the X version with +1 but I don't think this is right
+			Rectangle(hdc, x, y, x + width, y + height);
 		}
 
 		/// Arguments are the points of the bounding rectangle
@@ -2864,6 +3349,9 @@ version(Windows) {
 	enum KEY_ESCAPE = 27;
 }
 version(X11) {
+	/// This is the default font used. You might change this before doing anything else with
+	/// the library if you want to try something else. Surround that in `static if(UsingSimpledisplayX11)`
+	/// for cross-platform compatibility.
 	__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
 
 	alias int delegate(XEvent) NativeEventHandler;
@@ -3126,7 +3614,7 @@ version(X11) {
 				swapColors();
 			}
 			if(foregroundIsNotTransparent)
-				XDrawRectangle(display, d, gc, x, y, width, height);
+				XDrawRectangle(display, d, gc, x, y, width - 1, height - 1);
 		}
 
 		/// Arguments are the points of the bounding rectangle
