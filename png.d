@@ -143,6 +143,8 @@ MemoryImage imageFromPng(PNG* png) {
 							pixel++; if(pixel == h.width) break loop;
 							idata[idataIdx++] = (b >> 2) & 0x01;
 							pixel++; if(pixel == h.width) break loop;
+							idata[idataIdx++] = (b >> 1) & 0x01;
+							pixel++; if(pixel == h.width) break loop;
 							idata[idataIdx++] = b & 0x01;
 						break;
 						case 2:
@@ -1202,8 +1204,9 @@ struct LazyPngFile(LazyPngChunksProvider)
 					if(chunks.front().stype != "IDAT") {
 						buffer ~= cast(ubyte[]) decompressor.flush();
 						if(buffer.length != 0) {
-							buffer ~= cast(ubyte[])
-								decompressor.uncompress(chunks.front().payload);
+							// FIXME why was this here?
+							//buffer ~= cast(ubyte[])
+								//decompressor.uncompress(chunks.front().payload);
 							continue;
 						}
 						current = null;
