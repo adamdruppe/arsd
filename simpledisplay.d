@@ -1,7 +1,17 @@
 /*
-	FIXME: rectangle drawing on Windows might be wrong in the window ctor
-	it should not leave an outline...
+	FIXME:
+		blink taskbar / demand attention cross platform. FlashWindow and demandAttention
+
+		WS_EX_NOACTIVATE
+		WS_CHILD - owner and owned vs parent and child. Does X have something similar?
+		full screen windows. Can just set the atom on X. Windows will be harder.
+
+		moving windows. resizing windows.
+
+	REMEMBER: simpledisplay does NOT have to do everything! It just needs to make
+	sure the pieces are there to do its job easily and make other jobs possible.
 */
+
 /++
 	simpledisplay.d provides basic cross-platform GUI-related functionality,
 	including creating windows, drawing on them, working with the clipboard,
@@ -23,14 +33,55 @@
 	simpledisplay.d's home base is on my arsd repo on Github. The file is:
 	$(L https://github.com/adamdruppe/arsd/blob/master/simpledisplay.d)
 
+	simpledisplay is basically stable. I plan to refactor the internals,
+	and may add new features and fix bugs, but It do not expect to
+	significantly change the API. It has been stable a few years already now.
+
+	Jump_list:$(BR)
+
+	Don't worry, you don't have to read this whole documentation file!
+
+	Check out the $(M Event-example) and $(M Pong-example) to get started quickly.
+
+	The main classes you may want to create are $(M SimpleWindow), $(M Timer),
+	$(M Image), and $(M Sprite).
+
+	The main functions you'll want are $(M setClipboardText) and $(M getClipboardText).
+
+	There are also platform-specific functions available such as $(M XDisplayConnection)
+	and $(M GetAtom) for X11, among others.
+
+	See the examples and topics list below to learn more.
+
+	<h2>About this documentation</h2>
+
+	The goal here is to give some complete programs as overview examples first, then a look at each major feature with working examples first, then, finally, the inline class and method list will follow.
+	
+	Scan for headers for a topic - $(B they will visually stand out) - you're interested in to get started quickly and feel free to copy and paste any example as a starting point for your program. I encourage you to learn the library by experimenting with the examples!
+
+	All examples are provided with no copyright restrictions whatsoever. You do not need to credit me or carry any kind of notice with the source if you copy and paste from them.
+
+	To get started, download `simpledisplay.d` and `color.d` to a working directory. Copy an example info a file called `example.d` and compile using the command given at the top of each example.
+
+	If you need help, email me: destructionator@gmail.com or IRC us, #d on Freenode (I am destructionator or adam_d_ruppe there). If you learn something that isn't documented, I appreciate pull requests on github to this file.
+
+	At points, I will talk about implementation details in the documentation. These are sometimes
+	subject to change, but nevertheless useful to understand what is really going on. You can learn
+	more about some of the referenced things by searching the web for info about using them from C.
+	You can always look at the source of simpledisplay.d too for the most authoritative source on
+	its specific implementation. If you disagree with how I did something, please contact me so we
+	can discuss it!
+
 	Examples:
 
+	$(DDOC_ANCHOR Event-example)
 	This program creates a window and draws events inside them as they
 	happen, scrolling the text in the window as needed. Run this program
 	and experiment to get a feel for where basic input events take place
 	in the library.
 
 	---
+	// dmd example.d simpledisplay.d color.d
 	import simpledisplay;
 	import std.conv;
 
@@ -75,11 +126,13 @@
 	}
 	---
 
+	$(DDOC_ANCHOR Pong-example)
 	This program creates a little Pong-like game. Player one is controlled
 	with the keyboard.  Player two is controlled with the mouse. It demos
 	the pulse timer, event handling, and some basic drawing.
 
 	---
+	// dmd example.d simpledisplay.d color.d
 	import simpledisplay;
 
 	enum paddleMovementSpeed = 8;
@@ -201,28 +254,30 @@
 
 	---
 
-	<h2>About this documentation</h2>
-
-	The goal here is to give an overview of each major feature with working examples first, then the inline class and method list will follow. Scan for headers for a topic you're interested in to get started quickly.
-
 	<h2>Topics</h2>
 
-	<h3>Windows</h3>
-		The $(M SimpleWindow) class is simpledisplay's flagship feature.
+	<h3>$(DDOC_ANCHOR topic-windows) Windows</h3>
+		The $(M SimpleWindow) class is simpledisplay's flagship feature. It represents a single
+		window on the user's screen.
 
-		You may create multiple windows. A single running event loop will handle as many as needed.
+		You may create multiple windows, if the underlying platform supports it. You may check
+		`static if(multipleWindowsSupported)` at compile time, or catch exceptions thrown by
+		SimpleWindow's constructor at runtime to handle those cases.
+		
+		A single running event loop will handle as many windows as needed.
 
 		setEventHandlers function
 		eventLoop function
 		draw function
 		title property
 
-	<h3>Event loops</h3>
+	<h3>$(DDOC_ANCHOR topic-event-loops) Event loops</h3>
 		The simpledisplay event loop is designed to handle common cases easily while being extensible for more advanced cases, or replaceable by other libraries.
 
 		The most common scenario is creating a window, then calling `window.eventLoop` when setup is complete. You can pass several handlers to the `eventLoop` method right there:
 
 		---
+		// dmd example.d simpledisplay.d color.d
 		import simpledisplay;
 		void main() {
 			auto window = new SimpleWindow(200, 200);
@@ -232,7 +287,7 @@
 		}
 		---
 
-		Tip: if you get a compile error saying "I can't use this event handler", the most common thing in my experience is passing a function instead of a delegate. The simple solution is to use the `delegate` keyword, like I did in the example above.
+		$(TIP If you get a compile error saying "I can't use this event handler", the most common thing in my experience is passing a function instead of a delegate. The simple solution is to use the `delegate` keyword, like I did in the example above.)
 
 		On Linux, the event loop is implemented with the `epoll` system call for efficiency an extensibility to other files. On Windows, it runs a traditional `GetMessage` + `DispatchMessage` loop, with a call to `SleepEx` in each iteration to allow the thread to enter an alertable wait state regularly, primarily so Overlapped I/O callbacks will get a chance to run.
 
@@ -240,18 +295,19 @@
 
 		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
 
-	<h3>Notification area (aka systray) icons</h3>
+	<h3>$(DDOC_ANCHOR topic-notification-areas) Notification area (aka systray) icons</h3>
 		Notification area icons are currently only implemented on X11 targets. Windows support will come when I need it (or if someone requests it and I have some time to spend on it).
 
-	<h3>Input handling</h3>
+	<h3>$(DDOC_ANCHOR topic-input-handling) Input handling</h3>
 		There are event handlers for low-level keyboard and mouse events, and higher level handlers for character events.
 
-	<h3>2d Drawing</h3>
+	<h3>$(DDOC_ANCHOR topic-2d-drawing) 2d Drawing</h3>
 		To draw on your window, use the `window.draw` method. It returns a $(M ScreenPainter) structure with drawing methods.
 
 		Important: `ScreenPainter` double-buffers and will not actually update the window until its destructor is run. Always ensure the painter instance goes out-of-scope before proceeding. You can do this by calling it inside an event handler, a timer callback, or an small scope inside main. For example:
 
 		---
+		// dmd example.d simpledisplay.d color.d
 		import simpledisplay;
 		void main() {
 			auto window = new SimpleWindow(200, 200);
@@ -267,7 +323,10 @@
 		---
 
 		Painting is done based on two color properties, a pen and a brush.
-	<h3>3d Drawing</h3>
+
+		At this time, the 2d drawing does not support alpha blending. If you need that, use a 2d OpenGL context instead.
+		FIXME add example of 2d opengl drawing here
+	<h3>$(DDOC_ANCHOR topic-3d-drawing) 3d Drawing (or 2d with OpenGL)</h3>
 		simpledisplay can create OpenGL contexts on your window. It works quite differently than 2d drawing.
 
 		Note that it is still possible to draw 2d on top of an OpenGL window, using the `draw` method, though I don't recommend it.
@@ -285,34 +344,47 @@
 		This example program will draw a rectangle on your window:
 
 		---
+		// On Windows: dmd example.d simpledisplay.d color.d -version=with_opengl
+		//
+		// When compiling a 32 bit application on Windows, be sure you
+		// got opengl32.lib and glu32.lib from my github and added them
+		// to your `dmd2\windows\lib` directory. When you update dmd,
+		// remember to ensure those lib files are still there afterward.
+		//
+		// Elsewhere : dmd example.d simpledisplay.d color.d
+		import simpledisplay;
 
+		void main() {
+
+		}
 		---
 
-	<h3>Image Displaying</h3>
+	<h3>$(DDOC_ANCHOR topic-images) Image Displaying</h3>
 		You can also load PNG images using my `png.d`.
 
 		---
-			import simpledisplay;
-			import arsd.png;
+		// dmd example.d simpledisplay.d color.d png.d
+		import simpledisplay;
+		import arsd.png;
 
-			void main() {
-				auto image = Image.fromMemoryImage(readPng("image.png"));
-				displayImage(image);
-			}
+		void main() {
+			auto image = Image.fromMemoryImage(readPng("image.png"));
+			displayImage(image);
+		}
 		---
 
 		Compile with `dmd example.d simpledisplay.d png.d`.
 
 		If you find an image file which is a valid png that `arsd.png` fails to load, please let me know. In the mean time of fixing the bug, you can probably convert the file into an easier-to-load format. Be sure to turn OFF png interlacing, as that isn't supported. Other things to try would be making the image smaller, or trying 24 bit truecolor mode with an alpha channel.
 
-	<h3>Sprites</h3>
+	<h3>$(DDOC_ANCHOR topic-sprites) Sprites</h3>
 		The $(M Sprite) class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
 
-	<h3>Clipboard</h3>
+	<h3>$(DDOC_ANCHOR topic-clipboard) Clipboard</h3>
 		The free functions $(M getClipboardText) and $(M setClipboardText) consist of simpledisplay's cross-platform clipboard support at this time.
 
 		It also has helpers for handling X-specific events.
-	<h3>Timers</h3>
+	<h3>$(DDOC_ANCHOR topic-timers) Timers</h3>
 		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, $(M Timer).
 
 		The pulse timeout is used by setting a non-zero interval as the first argument to `eventLoop` function and adding a zero-argument delegate to handle the pulse.
@@ -359,15 +431,17 @@
 
 		Timers are currently only implemented on Windows, using `SetTimer` and Linux, using `timerfd_create`. These deliver timeout messages through your application event loop.
 
-	<h3>OS-specific helpers</h3>
+	<h3>$(DDOC_ANCHOR topic-os-helpers) OS-specific helpers</h3>
 		simpledisplay carries a lot of code to help implement itself without extra dependencies, and much of this code is available for you too, so you may extend the functionality yourself.
-	<h3>Extending with OS-specific functionality</h3>
+
+		See also: `xwindows.d` from my github.
+	<h3>$(DDOC_ANCHOR topic-os-extension) Extending with OS-specific functionality</h3>
 		`handleNativeEvent` and `handleNativeGlobalEvent`.
-	<h3>Integration with other libraries</h3>
+	<h3>$(DDOC_ANCHOR topic-integration) Integration with other libraries</h3>
 		Integration with a third-party event loop is possible.
 
 		On Linux, you might want to support both terminal input and GUI input. You can do this by using simpledisplay together with eventloop.d and terminal.d.
-	<h3>GUI widgets</h3>
+	<h3>$(DDOC_ANCHOR topic-guis) GUI widgets</h3>
 		simpledisplay does not provide GUI widgets such as text areas, buttons, checkboxes, etc. It only gives basic windows, the ability to draw on it, receive input from it, and access native information for extension. You may write your own gui widgets with these, but you don't have to because I already did for you!
 
 		Download `minigui.d` from my github repository and add it to your project. minigui builds these things on top of simpledisplay and offers its own Window class (and subclasses) to use that wrap SimpleWindow, adding a new event and drawing model that is hookable by subwidgets, represented by their own classes.
@@ -376,7 +450,7 @@
 
 		minigui still needs a lot of work to be finished at this time, but it already offers a number of useful classes.
 
-	<h2>Developer notes</h2>
+	<h2>$(DDOC_ANCHOR developer-notes) Developer notes</h2>
 
 	I don't have a Mac, so that code isn't maintained. I would like to have a Cocoa
 	implementation though.
@@ -402,16 +476,38 @@
 
 	See more comments throughout the source.
 
+	I realize this file is fairly large, but over half that is just bindings at the bottom
+	or documentation at the top. Some of the classes are a bit big too, but hopefully easy
+	to understand. I suggest you jump around the source by looking for a particular
+	declaration you're interested in, like `class SimpleWindow` using your editor's search
+	function, then look at one piece at a time.
 
-	Authors: Adam D. Ruppe with the help of others. If you need help, please email me: destructionator@gmail.com or find me on IRC - #d on Freenode. I go by Destructionator or adam_d_ruppe, depending on which computer I'm logged into.
+	<h2>$(DDOC_ANCHOR about-the-author) Meta</h2>
+
+	Authors: Adam D. Ruppe with the help of others. If you need help, please email me with
+	destructionator@gmail.com or find me on IRC. Our channel is #d on Freenode. I go by
+	Destructionator or adam_d_ruppe, depending on which computer I'm logged into.
+
+	I live in the eastern United States, so I will most likely not be around at night in
+	that US east timezone.
 
 	License: Copyright Adam D. Ruppe, 2011-2015. Released under the Boost Software License.
+
+	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
+	building the documentation for simpledisplay yourself. It will give it a bit more style.
+	Simply download the arsd.ddoc file and add it to your compile command when building docs.
+	`dmd -c simpledisplay.d color.d -D arsd.ddoc`
 
 	<hr />
 
 	Macros:
-		M=<a style="font-weight: bold;" href="#$1">$1</a>
+		M=<a style="font-weight: bold;" href="#$0">$0</a>
 		L=<a href="$1">$1</a>
+		TIP=<div class="tip">$0</div>
+		NOTE=<div class="note">$0</div>
+		IMPORTANT=<div class="important">$0</div>
+		PITFALL=<div class="pitfall">$0</div>
+		WARNING=<div class="warning">$0</div>
 +/
 module simpledisplay;
 
@@ -510,12 +606,479 @@ version(Windows)
 version(linux)
 	version = with_timer;
 
-// If you have to get down and dirty with implementation details, this helps figure out if X is available
-// you can static if(UsingSimpledisplayX11) ... more reliably than version() because version is module-local.
+/// If you have to get down and dirty with implementation details, this helps figure out if X is available you can `static if(UsingSimpledisplayX11) ...` more reliably than `version()` because `version` is module-local.
 version(X11)
 	enum bool UsingSimpledisplayX11 = true;
 else
 	enum bool UsingSimpledisplayX11 = false;
+
+/// Does this platform support multiple windows? If not, trying to create another will cause it to throw an exception.
+version(Windows)
+	enum multipleWindowsSupported = true;
+else version(X11)
+	enum multipleWindowsSupported = true;
+else
+	static assert(0);
+
+/++
+	After selecting a type from $(M WindowTypes), you may further customize
+	its behavior by setting one or more of these flags.
+
+	The different window types have different meanings of `normal`. If the
+	window type already is a good match for what you want to do, you should
+	just use `WindowFlags.normal`, the default, which will do the right thing
+	for your users.
++/
+enum WindowFlags : int {
+	normal,
+	skipTaskbar,
+	alwaysOnTop,
+	alwaysOnBottom,
+	cannotBeActivated,
+}
+
+/++
+	When creating a window, you can pass a type to SimpleWindow's constructor,
+	then further customize the window by changing `WindowFlags`.
+
+	This list is based on the EMWH spec for X11.
+	($L http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896)
++/
+enum WindowTypes : int {
+	/// An ordinary application window.
+	normal,
+	/// A generic window without a title bar or border. You can draw on the entire area of the screen it takes up and use it as you wish. Remember that users don't really expect these though, so don't use it where a window of any other type is appropriate.
+	undecorated,
+	/*
+	splashScreen, /// a loading splash screen for your application
+	tooltip, /// A tiny window showing temporary help text or something.
+	notification, /// A popup bubble notification
+	comboBoxDropdown,
+	dropdownMenu,
+	popupMenu,
+	dialog,
+	toolbar
+	*/
+}
+
+
+/++
+	The flagship window class.
+
+	SimpleWindow tries to make ordinary windows very easy to create and use without locking you
+	out of more advanced or complex features of the underlying windowing system.
+
+	For many applications, you can simply call `new SimpleWindow(some_width, some_height, "some title")`
+	and get a suitable window to work with.
+
+	From there, you can opt into additional features, like custom resizability and OpenGL support
+	with the next two constructor arguments. Or, if you need even more, you can set a window type
+	and customization flags with the final two constructor arguments.
+
+	If none of that works for you, you can also create a window using native function calls, then
+	wrap the window in a SimpleWindow instance by calling `new SimpleWindow(native_handle)`. Remember,
+	though, if you do this, managing the window is still your own responsibility! Notably, you
+	will need to destroy it yourself.
++/
+class SimpleWindow : CapableOfHandlingNativeEvent {
+	/++
+		This creates a window with the given options. The window will be visible and able to receive input as soon as you start your event loop. You may draw on it immediately after creating the window, without needing to wait for the event loop to start if you want.
+
+		The constructor tries to have sane default arguments, so for many cases, you only need to provide a few of them.
+
+		Params:
+
+		width = the width of the window's client area, in pixels
+		height = the height of the window's client area, in pixels
+		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the $(M SimpleWindow._title) property.
+		opengl = $(M OpenGlOptions) are yes and no. If yes, it creates an OpenGL context on the window.
+			$(TIP On Windows, you need to compile with `-version=with_opengl` to enable `OpenGlOptions.yes`)
+		resizable = $(M Resizablity) has three options:
+			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
+			$(P `fixedSize` will not allow the user to resize the window.)
+			$(P `automaticallyScaleIfPossible` will allow the user to resize, but will still present the original size to the API user. The contents you draw will be scaled to the size the user chose. If this scaling is not efficient, the window will be fixed size. The `windowResized` event handler will never be called. This is the default.)
+		windowType = The type of window you want to make.
+		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined $(M WindowTypes), given in the `windowType` argument, is a good match for what you need.
+		parent = the parent window, if applicable
+	+/
+	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+		this._width = width;
+		this._height = height;
+		this.openglMode = opengl;
+		this.resizability = resizable;
+		this.windowType = windowType;
+		this.customizationFlags = customizationFlags;
+		impl.createWindow(width, height, title is null ? "D Application" : title, opengl, parent);
+	}
+
+	/// Same as above, except using the `Size` struct instead of separate width and height.
+	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
+		this(size.width, size.height, title, opengl, resizable);
+	}
+
+
+	/++
+		Creates a window based on the given $(M Image). It's client area
+		width and height is equal to the image. (A window's client area
+		is the drawable space inside; it excludes the title bar, etc.)
+	   
+		Windows based on images will not be resizable and do not use OpenGL.
+	+/
+	this(Image image, string title = null) {
+		this(image.width, image.height, title);
+		this.image = image;
+	}
+
+	/++
+		Wraps a native window handle with very little additional processing - notably no destruction
+		this is incomplete so don't use it for much right now. The purpose of this is to make native
+		windows created through the low level API (so you can use platform-specific options and
+		other details SimpleWindow does not expose) available to the event loop wrappers.
+	+/
+	this(NativeWindowHandle nativeWindow) {
+		version(Windows)
+			impl.hwnd = nativeWindow;
+		else version(X11)
+			impl.window = nativeWindow;
+		else static assert(0);
+		// FIXME: set the size correctly
+		_width = 1;
+		_height = 1;
+		nativeMapping[nativeWindow] = this;
+		CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+		_suppressDestruction = true; // so it doesn't try to close
+	}
+
+	/// Returns true if the window has been closed.
+	final @property bool closed() { return _closed; }
+
+	/// Closes the window. If there are no more open windows, the event loop will terminate.
+	void close() {
+		impl.closeWindow();
+		_closed = true;
+	}
+
+	/// Alias for `hidden = false`
+	void show() {
+		hidden = false;
+	}
+
+	/// Alias for `hidden = true`
+	void hide() {
+		hidden = true;
+	}
+
+	private bool _hidden;
+
+	/// Returns true if the window is hidden.
+	final @property bool hidden() {
+		return _hidden;
+	}
+
+	/// Shows or hides the window based on the bool argument.
+	final @property void hidden(bool b) {
+		_hidden = b;
+		version(Windows) {
+			ShowWindow(impl.hwnd, b ? SW_HIDE : SW_SHOW);
+		} else version(X11) {
+			if(b)
+				//XUnmapWindow(impl.display, impl.window);
+				XWithdrawWindow(impl.display, impl.window, DefaultScreen(impl.display));
+			else
+				XMapWindow(impl.display, impl.window);
+		} else static assert(0);
+	}
+
+	/++
+		Sets your event handlers, without entering the event loop. Useful if you
+		have multiple windows - set the handlers on each window, then only do eventLoop on your main window.
+	+/
+	void setEventHandlers(T...)(T eventHandlers) {
+		// FIXME: add more events
+		foreach(handler; eventHandlers) {
+			static if(__traits(compiles, handleKeyEvent = handler)) {
+				handleKeyEvent = handler;
+			} else static if(__traits(compiles, handleCharEvent = handler)) {
+				handleCharEvent = handler;
+			} else static if(__traits(compiles, handlePulse = handler)) {
+				handlePulse = handler;
+			} else static if(__traits(compiles, handleMouseEvent = handler)) {
+				handleMouseEvent = handler;
+			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof ~ "\nNote: if you want to capture keycode events, this recently changed to (KeyEvent event) instead of the old (int code) and second draft, (int code, bool pressed), key, character, and pressed are members of KeyEvent.");
+		}
+	}
+
+	/// The event loop automatically returns when the window is closed
+	/// pulseTimeout is given in milliseconds.
+	final int eventLoop(T...)(
+		long pulseTimeout,    /// set to zero if you don't want a pulse. Note: don't set it too big, or user input may not be processed in a timely manner. I suggest something < 150.
+		T eventHandlers) /// delegate list like std.concurrency.receive
+	{
+		setEventHandlers(eventHandlers);
+		return impl.eventLoop(pulseTimeout);
+	}
+
+	/++
+		This lets you draw on the window (or its backing buffer) using basic
+		2D primitives.
+
+		Be sure to call this in a limited scope because your changes will not
+		actually appear on the window until ScreenPainter's destructor runs.
+
+		Returns: an instance of $(M ScreenPainter), which has the drawing methods
+		on it to draw on this window.
+	+/
+	ScreenPainter draw() {
+		return impl.getPainter();
+	}
+
+	// This is here to implement the interface we use for various native handlers.
+	NativeEventHandler getNativeEventHandler() { return handleNativeEvent; }
+
+	// maps native window handles to SimpleWindow instances, if there are any
+	// you shouldn't need this, but it is public in case you do in a native event handler or something
+	public static SimpleWindow[NativeWindowHandle] nativeMapping;
+
+	/// Width of the window's drawable client area, in pixels.
+	final @property int width() { return _width; }
+
+	/// Height of the window's drawable client area, in pixels.
+	final @property int height() { return _height; }
+
+	private int _width;
+	private int _height;
+
+	// HACK: making the best of some copy constructor woes with refcounting
+	private ScreenPainterImplementation* activeScreenPainter;
+
+	private OpenGlOptions openglMode;
+	private Resizablity resizability;
+	private WindowTypes windowType;
+	private int customizationFlags;
+
+	version(without_opengl) {} else {
+		/// Put your code in here that you want to be drawn automatically when your window is uncovered. Set a handler here *before* entering your event loop any time you pass `OpenGlOptions.yes` to the constructor. Ideally, you will set this delegate immediately after constructing the `SimpleWindow`.
+		void delegate() redrawOpenGlScene;
+
+		// FIXME: it should schedule it for the end of the current iteration of the event loop...
+		/// call this to invoke your delegate. It automatically sets up the context and flips the buffer. If you need to redraw the scene in response to an event, call this.
+		void redrawOpenGlSceneNow() {
+			this.setAsCurrentOpenGlContext();
+
+			if(redrawOpenGlScene !is null)
+				redrawOpenGlScene();
+
+			this.swapOpenGlBuffers();
+
+		}
+
+
+		/// Makes all gl* functions target this window until changed. This is only valid if you passed `OpenGlOptions.yes` to the constructor.
+		void setAsCurrentOpenGlContext() {
+			assert(openglMode == OpenGlOptions.yes);
+			version(X11) {
+				if(glXMakeCurrent(display, impl.window, impl.glc) == 0)
+					throw new Exception("glXMakeCurrent");
+			} else version(Windows) {
+        			wglMakeCurrent(ghDC, ghRC); 
+			}
+		}
+
+		/++
+			simpledisplay always uses double buffering. this swaps the OpenGL buffers.
+			You should not need to call this yourself because simpledisplay will do it
+			for you after calling your `redrawOpenGlScene`.
+		+/
+		void swapOpenGlBuffers() {
+			assert(openglMode == OpenGlOptions.yes);
+			version(X11) {
+				glXSwapBuffers(XDisplayConnection.get, impl.window);
+			} else version(Windows) {
+        			SwapBuffers(ghDC);
+			}
+		}
+	}
+
+	/++
+		Set the window title, which is visible on the window manager title bar, operating system taskbar, etc.
+
+		---
+			auto window = new SimpleWindow(100, 100, "First title");
+			window.title = "A new title";
+		---
+
+		You may call this function at any time.
+	+/
+	@property void title(string title) {
+		impl.setTitle(title);
+	}
+
+	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
+	@property void icon(MemoryImage icon) {
+		auto tci = icon.getAsTrueColorImage();
+		version(Windows) {
+			winIcon = new WindowsIcon(icon);
+			 SendMessageA(impl.hwnd, 0x0080 /*WM_SETICON*/, 0 /*ICON_SMALL*/, cast(LPARAM) winIcon.hIcon); // there is also 1 == ICON_BIG
+		} else version(X11) {
+			// FIXME: ensure this is correct
+			auto display = XDisplayConnection.get;
+			arch_ulong[] buffer;
+			buffer ~= icon.width;
+			buffer ~= icon.height;
+			foreach(c; tci.imageData.colors) {
+				arch_ulong b;
+				b |= c.a << 24;
+				b |= c.r << 16;
+				b |= c.g << 8;
+				b |= c.b;
+				buffer ~= b;
+			}
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!"_NET_WM_ICON"(display),
+				GetAtom!"CARDINAL"(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				buffer.ptr,
+				cast(int) buffer.length);
+		} else static assert(0);
+	}
+
+	version(Windows)
+		private WindowsIcon winIcon;
+
+	bool _suppressDestruction;
+
+	~this() {
+		if(_suppressDestruction)
+			return;
+		impl.dispose();
+	}
+
+	private bool _closed;
+
+	// the idea here is to draw something temporary on top of the main picture e.g. a blinking cursor
+	/*
+	ScreenPainter drawTransiently() {
+		return impl.getPainter();
+	}
+	*/
+
+	/// Draws an image on the window. This is meant to provide quick look
+	/// of a static image generated elsewhere.
+	@property void image(Image i) {
+		version(Windows) {
+			BITMAP bm;
+			HDC hdc = GetDC(hwnd);
+			HDC hdcMem = CreateCompatibleDC(hdc);
+			HBITMAP hbmOld = SelectObject(hdcMem, i.handle);
+
+			GetObject(i.handle, bm.sizeof, &bm);
+
+			BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+
+			SelectObject(hdcMem, hbmOld);
+			DeleteDC(hdcMem);
+			DeleteDC(hwnd);
+
+			/*
+			RECT r;
+			r.right = i.width;
+			r.bottom = i.height;
+			InvalidateRect(hwnd, &r, false);
+			*/
+		} else
+		version(X11) {
+			if(!destroyed) {
+				if(i.usingXshm)
+				XShmPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height, false);
+				else
+				XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
+			}
+		} else
+		version(OSXCocoa) {
+           		draw().drawImage(Point(0, 0), i);
+			setNeedsDisplay(view, true);
+		} else version(html5) {
+			// FIXME html5
+		} else static assert(0);
+	}
+
+	/// What follows are the event handlers. These are set automatically
+	/// by the eventLoop function, but are still public so you can change
+	/// them later. wasPressed == true means key down. false == key up.
+
+	/// Handles a low-level keyboard event. Settable through setEventHandlers.
+	void delegate(KeyEvent ke) handleKeyEvent;
+
+	/// Handles a higher level keyboard event - c is the character just pressed. Settable through setEventHandlers.
+	void delegate(dchar c) handleCharEvent;
+
+	/// Handles a timer pulse. Settable through setEventHandlers.
+	void delegate() handlePulse;
+
+	/// called when the focus changes, param is if we have it (true) or are losing it (false)
+	void delegate(bool) onFocusChange;
+
+	private {
+		int lastMouseX = int.min;
+		int lastMouseY = int.min;
+		void mdx(ref MouseEvent ev) {
+			if(lastMouseX == int.min || lastMouseY == int.min) {
+				ev.dx = 0;
+				ev.dy = 0;
+			} else {
+				ev.dx = ev.x - lastMouseX;
+				ev.dy = ev.y - lastMouseY;
+			}
+
+			lastMouseX = ev.x;
+			lastMouseY = ev.y;
+		}
+	}
+
+	/// Mouse event handler. Settable through setEventHandlers.
+	void delegate(MouseEvent) handleMouseEvent;
+
+	/// use to redraw child widgets if you use system apis to add stuff
+	void delegate() paintingFinished;
+
+	/// handle a resize, after it happens. You must construct the window with Resizablity.allowResizing
+	/// for this to ever happen.
+	void delegate(int width, int height) windowResized;
+
+	/** Platform specific - handle any native messages this window gets.
+	  *
+	  * Note: this is called *in addition to* other event handlers, unless you return zero indicating that you handled it.
+
+	  * On Windows, it takes the form of int delegate(HWND,UINT, WPARAM, LPARAM).
+
+	  * On X11, it takes the form of int delegate(XEvent).
+
+	  * IMPORTANT: it used to be static in old versions of simpledisplay.d, but I always used
+	  * it as if it wasn't static... so now I just fixed it so it isn't anymore.
+	**/
+	NativeEventHandler handleNativeEvent;
+
+	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
+	/// If you used to use handleNativeEvent depending on it being static, just change it to use
+	/// this instead and it will work the same way.
+	static NativeEventHandler handleNativeGlobalEvent;
+
+//  private:
+	/// The native implementation is available, but you shouldn't use it unless you are
+	/// familiar with the underlying operating system, don't mind depending on it, and
+	/// know simpledisplay.d's internals too. It is virtually private; you can hopefully
+	/// do what you need to do with handleNativeEvent instead.
+	///
+	/// This is likely to eventually change to be just a struct holding platform-specific
+	/// handles instead of a template mixin at some point because I'm not happy with the
+	/// code duplication here (ironically).
+	mixin NativeSimpleWindowImplementation!() impl;
+}
+
 
 // basic functions to make timers
 /**
@@ -531,8 +1094,6 @@ else
 
 	Timers can only be expected to fire when the event loop is running.
 */
-
-
 version(with_timer)
 class Timer {
 	// FIXME: I might add overloads for ones that take a count of
@@ -591,7 +1152,7 @@ class Timer {
 
 			version(with_eventloop) {
 				import arsd.eventloop;
-				addFileEventListeners(fd, &trigger);
+				addFileEventListeners(fd, &trigger, null, null);
 			} else {
 				prepareEventLoop();
 
@@ -757,6 +1318,7 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 version(X11) {
 	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
 
+	/// Platform specific for X11
 	@property Atom GetAtom(string name, bool create = false)(Display* display) {
 		static Atom a;
 		if(!a) {
@@ -772,6 +1334,7 @@ version(X11) {
 		setX11Selection!"PRIMARY"(window, text);
 	}
 
+	///
 	void setX11Selection(string atomName)(SimpleWindow window, string text) {
 		assert(window !is null);
 
@@ -813,10 +1376,12 @@ version(X11) {
 		};
 	}
 
+	///
 	void getPrimarySelection(SimpleWindow window, void delegate(in char[]) handler) {
 		getX11Selection!"PRIMARY"(window, handler);
 	}
 
+	///
 	void getX11Selection(string atomName)(SimpleWindow window, void delegate(in char[]) handler) {
 		assert(window !is null);
 
@@ -832,6 +1397,7 @@ version(X11) {
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
 	}
 
+	///
 	void[] getX11PropertyData(Window window, Atom property, Atom type = AnyPropertyType) {
 		Atom actualType;
 		int actualFormat;
@@ -859,6 +1425,7 @@ version(X11) {
 	enum SYSTEM_TRAY_BEGIN_MESSAGE  = 1;
 	enum SYSTEM_TRAY_CANCEL_MESSAGE = 2;
 
+	///
 	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		NativeEventHandler getNativeEventHandler() {
 			return delegate int(XEvent e) {
@@ -936,6 +1503,7 @@ version(X11) {
 			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
 		}
 
+		///
 		this(string name, MemoryImage icon, void delegate(int button) onClick) {
 			if(getTrayOwner() == None)
 				throw new Exception("No notification area found");
@@ -971,7 +1539,17 @@ version(X11) {
 	}
 }
 
+version(D_Ddoc) {
+	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
+	void sendSyntheticInput(wstring s);
+	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
+	int registerHotKey(SimpleWindow window, uint modifiers, uint vk, void delegate() handler);
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
+	void unregisterHotKey(SimpleWindow window, int id);
+}
+
 version(Windows) {
+	/// Platform-specific
 	void sendSyntheticInput(wstring s) {
 		INPUT[] inputs;
 		inputs.reserve(s.length * 2);
@@ -994,6 +1572,7 @@ version(Windows) {
 
 	// global hotkey helper function
 
+	/// Platform-specific for Windows
 	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
 		static int hotkeyId = 0;
 		int id = ++hotkeyId;
@@ -1032,6 +1611,7 @@ version(Windows) {
 		return id;
 	}
 
+	/// Platform-specific for Windows
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
@@ -1040,10 +1620,10 @@ version(Windows) {
 
 
 
-///
+/// ScreenPainter operations can use different operations to combine the color with the color on screen.
 enum RasterOp {
-	normal, ///
-	xor, ///
+	normal, /// Replaces the pixel.
+	xor, /// Uses bitwise xor to draw.
 }
 
 // being phobos-free keeps the size WAY down
@@ -1074,9 +1654,31 @@ version(without_opengl) {
 		no,
 	}
 } else {
+	/++
+		Determines if you want an OpenGL context created on the new window
+
+		Compile with `-version=with_opengl` on Windows if you want to use `yes`. See more: <a href="#topics-3d">in the 3d topic</a>.
+
+		---
+		import simpledisplay;
+		void main() {
+			auto window = new SimpleWindow(500, 500, "OpenGL Test", OpenGlOptions.yes);
+
+			// Set up the matrix
+			window.setAsCurrentOpenGlContext(); // make this window active
+
+			// This is called on each frame, we will draw our scene
+			window.redrawOpenGlScene = delegate() {
+
+			};
+
+			window.eventLoop(0);
+		}
+		---
+	+/
 	enum OpenGlOptions {
-		no,
-		yes,
+		no, /// No OpenGL context is created
+		yes, /// Yes, create an OpenGL context
 	}
 
 	version(X11) {
@@ -1098,47 +1700,759 @@ enum Resizablity {
 	// FIXME: automaticallyScaleIfPossible should adjust the OpenGL viewport on resize events
 }
 
-enum MouseEventType : int {
-	motion = 0,
-	buttonPressed = 1,
-	buttonReleased = 2,
-}
 
-enum MouseButton : int {
-	// these names assume a right-handed mouse
-	left = 1,
-	right = 2,
-	middle = 4,
-	wheelUp = 8,
-	wheelDown = 16,
-}
-
-
+/++
+	Alignment for $(ScreenPainter.drawText). Left, Center, or Right may be combined with VerticalTop, VerticalCenter, or VerticalBottom via bitwise or.
++/
 enum TextAlignment : uint {
-	Left = 0,
-	Center = 1,
-	Right = 2,
+	Left = 0, ///
+	Center = 1, ///
+	Right = 2, ///
 
-	VerticalTop = 0,
-	VerticalCenter = 4,
-	VerticalBottom = 8,
+	VerticalTop = 0, ///
+	VerticalCenter = 4, ///
+	VerticalBottom = 8, ///
 }
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
 
+
+/++
+	Keyboard press and release events
++/
+struct KeyEvent {
+	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms. See $(M Key)
+	Key key;
+	uint hardwareCode; /// A platform and hardware specific code for the key
+	bool pressed; /// true if the key was just pressed, false if it was just released. note: released events aren't always sent...
+
+	dchar character; ///
+
+	uint modifierState; /// see enum $(M ModifierState). They are bitwise combined together.
+
+	SimpleWindow window; /// associated Window
+}
+
+/// Type of a $(M MouseEvent)
+enum MouseEventType : int {
+	motion = 0, /// The mouse moved inside the window
+	buttonPressed = 1, /// A mouse button was pressed or the wheel was spun
+	buttonReleased = 2, /// A mouse button was released
+}
+
+// FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
+/++
+	Listen for this on your event listeners if you are interested in mouse action.
++/
+struct MouseEvent {
+	MouseEventType type; /// movement, press, release, double click. See $(M MouseEventType)
+
+	int x; /// Current X position of the cursor when the event fired, relative to the upper-left corner of the window, reported in pixels. (0, 0) is the upper left, (window.width - 1, window.height - 1) is the lower right corner of the window.
+	int y; /// Current Y position of the cursor when the event fired.
+
+	int dx; /// Change in X position since last report
+	int dy; /// Change in Y position since last report
+
+	MouseButton button; /// See $(M MouseButton)
+	int modifierState; /// See $(M ModifierState)
+
+	SimpleWindow window; /// The window in which the event happened.
+}
+
+//// This gives a few more options to drawing lines and such
+struct Pen {
+	Color color; /// the foreground color
+	int width = 1; /// width of the line
+	Style style; /// See $(M Style) FIXME: not implemented
+/+
+// From X.h
+
+#define LineSolid		0
+#define LineOnOffDash		1
+#define LineDoubleDash		2
+       LineDou-        The full path of the line is drawn, but the
+       bleDash         even dashes are filled differently from the
+                       odd dashes (see fill-style) with CapButt
+                       style used where even and odd dashes meet.
+
+
+
+/* capStyle */
+
+#define CapNotLast		0
+#define CapButt			1
+#define CapRound		2
+#define CapProjecting		3
+
+/* joinStyle */
+
+#define JoinMiter		0
+#define JoinRound		1
+#define JoinBevel		2
+
+/* fillStyle */
+
+#define FillSolid		0
+#define FillTiled		1
+#define FillStippled		2
+#define FillOpaqueStippled	3
+
+
++/
+	/// NOT IMPLEMENTED
+	enum Style {
+		Solid, ///
+		Dashed ///
+	}
+}
+
+
+/++
+	Represents an in-memory image in the format that the GUI expects, but with its raw data available to your program.
+	
+	On Windows, this means a device-independent bitmap. On X11, it is an XImage.
+
+	$(NOTE If you are writing platform-aware code and need to know low-level details, uou may check `if(Image.impl.xshmAvailable)` to see if MIT-SHM is used on X11 targets to draw `Image`s and `Sprite`s. Use `static if(UsingSimpledisplayX11)` to determine if you are compiling for an X11 target.)
+
+	Drawing an image to screen is not necessarily fast, but applying algorithms to draw to the image itself should be fast. An `Image` is also the first step in loading and displaying images loaded from files.
+
+	If you intend to draw an image to screen several times, you will want to convert it into a $(M Sprite).
+
+	$(IMPORTANT `Image` may represent a scarce, shared resource that persists across process termination, and should be disposed of properly. On X11, it uses the MIT-SHM extension, if available, which uses shared memory handles with the X server, which is a long-lived process that holds onto them after your program terminates if you don't free it.
+
+	It is possible for your user's system to run out of these handles over time, forcing them to clean it up with extraordinary measures - their GUI is liable to stop working!
+
+	Be sure these are cleaned up properly. simpledisplay will do its best to do the right thing, including cleaning them up in garbage collection sweeps (one of which is run at most normal program terminations) and catching some deadly signals. It will almost always do the right thing. But, this is no substitute for you managing the resource properly yourself. (And try not to segfault, as recovery from them is alway dicey!)
+
+	Please call `destroy(image);` when you are done with it. The easiest way to do this is with scope:
+	
+	---
+		auto image = new Image(256, 256);
+		scope(exit) destroy(image);
+	---
+
+	As long as you don't hold on to it outside the scope.
+
+	I might change it to be an owned pointer at some point in the future.
+	
+	)
+
+	Drawing pixels on the image may be simple, using the `opIndexAssign` function, but
+	you can also often get a fair amount of speedup by getting the raw data format and
+	writing some custom code.
+
+	FIXME INSERT EXAMPLES HERE
+
+
++/
+final class Image {
+	///
+	this(int width, int height) {
+		this.width = width;
+		this.height = height;
+
+		impl.createImage(width, height);
+	}
+
+	///
+	this(Size size) {
+		this(size.width, size.height);
+	}
+
+	~this() {
+		impl.dispose();
+	}
+
+	// these numbers are used for working with rawData itself, skipping putPixel and getPixel
+	/// if you do the math yourself you might be able to optimize it. Call these functions only once and cache the value.
+	pure const @system nothrow {
+		/*
+			To use these to draw a blue rectangle with size WxH at position X,Y...
+
+			// make certain that it will fit before we proceed
+			enforce(X + W <= img.width && Y + H <= img.height); // you could also adjust the size to clip it, but be sure not to run off since this here will do raw pointers with no bounds checks!
+
+			// gather all the values you'll need up front. These can be kept until the image changes size if you want
+			// (though calculating them isn't really that expensive).
+			auto nextLineAdjustment = img.adjustmentForNextLine();
+			auto offR = img.redByteOffset();
+			auto offB = img.blueByteOffset();
+			auto offG = img.greenByteOffset();
+			auto bpp = img.bytesPerPixel();
+
+			auto data = img.getDataPointer();
+
+			// figure out the starting byte offset
+			auto offset = img.offsetForTopLeftPixel() + nextLineAdjustment*Y + bpp * X;
+
+			auto startOfLine = data + offset; // get our pointer lined up on the first pixel
+
+			// and now our drawing loop for the rectangle
+			foreach(y; 0 .. H) {
+				auto data = startOfLine; // we keep the start of line separately so moving to the next line is simple and portable
+				foreach(x; 0 .. W) {
+					// write our color
+					data[offR] = 0;
+					data[offG] = 0;
+					data[offB] = 255;
+
+					data += bpp; // moving to the next pixel is just an addition...
+				}
+				startOfLine += nextLineAdjustment;
+			}
+
+
+			As you can see, the loop itself was very simple thanks to the calculations being moved outside.
+
+			FIXME: I wonder if I can make the pixel formats consistently 32 bit across platforms, so the color offsets
+			can be made into a bitmask or something so we can write them as *uint...
+		*/
+
+		///
+		int offsetForTopLeftPixel() {
+			version(X11) {
+				return 0;
+			} else version(Windows) {
+				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		///
+		int adjustmentForNextLine() {
+			version(X11) {
+				return width * 4;
+			} else version(Windows) {
+				// windows bmps are upside down, so the adjustment is actually negative
+				return -((cast(int) width * 3 + 3) / 4) * 4;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		/// once you have the position of a pixel, use these to get to the proper color
+		int redByteOffset() {
+			version(X11) {
+				return 2;
+			} else version(Windows) {
+				return 2;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		///
+		int greenByteOffset() {
+			version(X11) {
+				return 1;
+			} else version(Windows) {
+				return 1;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		///
+		int blueByteOffset() {
+			version(X11) {
+				return 0;
+			} else version(Windows) {
+				return 0;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+	}
+
+	///
+	final void putPixel(int x, int y, Color c) {
+		if(x < 0 || x >= width)
+			return;
+		if(y < 0 || y >= height)
+			return;
+
+		impl.setPixel(x, y, c);
+	}
+
+	///
+	final Color getPixel(int x, int y) {
+		if(x < 0 || x >= width)
+			return Color.transparent;
+		if(y < 0 || y >= height)
+			return Color.transparent;
+
+		return impl.getPixel(x, y);
+	}
+
+	///
+	final void opIndexAssign(Color c, int x, int y) {
+		putPixel(x, y, c);
+	}
+
+	///
+	TrueColorImage toTrueColorImage() {
+		auto tci = new TrueColorImage(width, height);
+		convertToRgbaBytes(tci.imageData.bytes);
+		return tci;
+	}
+
+	///
+	static Image fromMemoryImage(MemoryImage i) {
+		auto tci = i.getAsTrueColorImage();
+		auto img = new Image(tci.width, tci.height);
+		img.setRgbaBytes(tci.imageData.bytes);
+		return img;
+	}
+
+	/// this is here for interop with arsd.image. where can be a TrueColorImage's data member
+	/// if you pass in a buffer, it will put it right there. length must be width*height*4 already
+	/// if you pass null, it will allocate a new one.
+	ubyte[] getRgbaBytes(ubyte[] where = null) {
+		if(where is null)
+			where = new ubyte[this.width*this.height*4];
+		convertToRgbaBytes(where);
+		return where;
+	}
+
+	/// this is here for interop with arsd.image. from can be a TrueColorImage's data member
+	void setRgbaBytes(in ubyte[] from ) {
+		assert(from.length == this.width * this.height * 4);
+		setFromRgbaBytes(from);
+	}
+
+	// FIXME: make properly cross platform by getting rgba right
+
+	/// warning: this is not portable across platforms because the data format can change
+	ubyte* getDataPointer() {
+		return impl.rawData;
+	}
+
+	/// for use with getDataPointer
+	final int bytesPerLine() const pure @safe nothrow {
+		version(Windows)
+			return ((cast(int) width * 3 + 3) / 4) * 4;
+		else version(X11)
+			return 4 * width;
+		else version(OSXCocoa)
+			return 4 * width;
+		else version(html5)
+			return 4 * width;
+		else static assert(0);
+	}
+
+	/// for use with getDataPointer
+	final int bytesPerPixel() const pure @safe nothrow {
+		version(Windows)
+			return 3;
+		else version(X11)
+			return 4;
+		else version(OSXCocoa)
+			return 4;
+		else version(html5)
+			return 4;
+		else static assert(0);
+	}
+
+	///
+	immutable int width;
+
+	///
+	immutable int height;
+    //private:
+	mixin NativeImageImplementation!() impl;
+}
+
+/// A convenience function to pop up a window displaying the image.
+/// If you pass a win, it will draw the image in it. Otherwise, it will
+/// create a window with the size of the image and run its event loop, closing
+/// when a key is pressed.
+void displayImage(Image image, SimpleWindow win = null) {
+	if(win is null) {
+		win = new SimpleWindow(image);
+		{
+			auto p = win.draw;
+			p.drawImage(Point(0, 0), image);
+		}
+		win.eventLoop(0,
+			(KeyEvent ev) {
+				win.close();
+			} );
+	} else {
+		win.image = image;
+	}
+}
+
+/// Most functions use the outlineColor instead of taking a color themselves.
+/// ScreenPainter is reference counted and draws its buffer to the screen when its
+/// final reference goes out of scope.
+struct ScreenPainter {
+	SimpleWindow window;
+	this(SimpleWindow window, NativeWindowHandle handle) {
+		this.window = window;
+		if(window.activeScreenPainter !is null) {
+			impl = window.activeScreenPainter;
+			impl.referenceCount++;
+		//	writeln("refcount ++ ", impl.referenceCount);
+		} else {
+			impl = new ScreenPainterImplementation;
+			impl.window = window;
+			impl.create(handle);
+			impl.referenceCount = 1;
+			window.activeScreenPainter = impl;
+		//	writeln("constructed");
+		}
+	}
+
+	~this() {
+		impl.referenceCount--;
+		//writeln("refcount -- ", impl.referenceCount);
+		if(impl.referenceCount == 0) {
+			//writeln("destructed");
+			impl.dispose();
+			window.activeScreenPainter = null;
+		}
+	}
+
+	// @disable this(this) { } // compiler bug? the linker is bitching about it beind defined twice
+
+	this(this) {
+		impl.referenceCount++;
+		//writeln("refcount ++ ", impl.referenceCount);
+	}
+
+	///
+	int fontHeight() {
+		return impl.fontHeight();
+	}
+
+	///
+	@property void pen(Pen p) {
+		impl.pen(p);
+	}
+
+	///
+	@property void outlineColor(Color c) {
+		impl.outlineColor(c);
+	}
+
+	///
+	@property void fillColor(Color c) {
+		impl.fillColor(c);
+	}
+
+	///
+	@property void rasterOp(RasterOp op) {
+		impl.rasterOp(op);
+	}
+
+	private void transform(ref Point p) {
+		p.x += originX;
+		p.y += originY;
+	}
+
+	int originX;
+	int originY;
+
+	void updateDisplay() {
+		// FIXME this should do what the dtor does
+	}
+
+	/// Scrolls the contents in the bounding rectangle by dx, dy. Positive dx means scroll left (make space available at the right), positive dy means scroll up (make space available at the bottom)
+	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
+		transform(upperLeft);
+		version(Windows) {
+			// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
+			RECT scroll = RECT(upperLeft.x, upperLeft.y, upperLeft.x + width, upperLeft.y + height);
+			RECT clip = scroll;
+			RECT uncovered;
+			HRGN hrgn;
+			if(!ScrollDC(impl.hdc, -dx, -dy, &scroll, &clip, hrgn, &uncovered))
+				throw new Exception("ScrollDC");
+
+		} else version(X11) {
+			// FIXME: clip stuff outside this rectangle
+			XCopyArea(impl.display, impl.d, impl.d, impl.gc, upperLeft.x, upperLeft.y, width, height, upperLeft.x - dx, upperLeft.y - dy);
+		} else static assert(0);
+	}
+
+	///
+	void clear() {
+		fillColor = Color(255, 255, 255);
+		outlineColor = Color(255, 255, 255);
+		drawRectangle(Point(0, 0), window.width, window.height);
+	}
+
+	///
+	void drawPixmap(Sprite s, Point upperLeft) {
+		transform(upperLeft);
+		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
+	}
+
+	///
+	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
+		transform(upperLeft);
+		if(w == 0 || w > i.width)
+			w = i.width;
+		if(h == 0 || h > i.height)
+			h = i.height;
+		if(upperLeftOfImage.x < 0)
+			upperLeftOfImage.x = 0;
+		if(upperLeftOfImage.y < 0)
+			upperLeftOfImage.y = 0;
+
+		impl.drawImage(upperLeft.x, upperLeft.y, i, upperLeftOfImage.x, upperLeftOfImage.y, w, h);
+	}
+
+	///
+	Size textSize(string text) {
+		return impl.textSize(text);
+	}
+
+	///
+	void drawText(Point upperLeft, string text, Point lowerRight = Point(0, 0), uint alignment = 0) {
+		transform(upperLeft);
+		if(lowerRight.x != 0 || lowerRight.y != 0)
+			transform(lowerRight);
+		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
+	}
+
+	/// Drawing an individual pixel is slow. Avoid it if possible.
+	void drawPixel(Point where) {
+		transform(where);
+		impl.drawPixel(where.x, where.y);
+	}
+
+
+	/// Draws a pen using the current pen / outlineColor
+	void drawLine(Point starting, Point ending) {
+		transform(starting);
+		transform(ending);
+		impl.drawLine(starting.x, starting.y, ending.x, ending.y);
+	}
+
+	/// Draws a rectangle using the current pen/outline color for the border and brush/fill color for the insides
+	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
+	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
+	void drawRectangle(Point upperLeft, int width, int height) {
+		transform(upperLeft);
+		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
+	}
+
+	/// Arguments are the points of the bounding rectangle
+	void drawEllipse(Point upperLeft, Point lowerRight) {
+		transform(upperLeft);
+		transform(lowerRight);
+		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
+	}
+
+	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
+		// FIXME: not actually implemented
+		transform(upperLeft);
+		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
+	}
+
+	/// .
+	void drawPolygon(Point[] vertexes) {
+		foreach(vertex; vertexes)
+			transform(vertex);
+		impl.drawPolygon(vertexes);
+	}
+
+
+	// and do a draw/fill in a single call maybe. Windows can do it... but X can't, though it could do two calls.
+
+	//mixin NativeScreenPainterImplementation!() impl;
+
+
+	// HACK: if I mixin the impl directly, it won't let me override the copy
+	// constructor! The linker complains about there being multiple definitions.
+	// I'll make the best of it and reference count it though.
+	ScreenPainterImplementation* impl;
+}
+
+	// HACK: I need a pointer to the implementation so it's separate
+	struct ScreenPainterImplementation {
+		SimpleWindow window;
+		int referenceCount;
+		mixin NativeScreenPainterImplementation!();
+	}
+
+// FIXME: i haven't actually tested the sprite class on MS Windows
+
+/**
+	Sprites are optimized for fast drawing on the screen, but slow for direct pixel
+	access. They are best for drawing a relatively unchanging image repeatedly on the screen.
+
+	On X11, this corresponds to an `XPixmap`. On Windows, it still uses a bitmap,
+	though I'm not sure that's ideal and the implementation might change.
+
+	You create one by giving a window and an image. It optimizes for that window,
+	and copies the image into it to use as the initial picture. Creating a sprite
+	can be quite slow (especially over a network connection) so you should do it
+	as little as possible and just hold on to your sprite handles after making them.
+	simpledisplay does try to do its best though, using the XSHM extension if available,
+	but you should still write your code as if it will always be slow.
+
+	Then you can use `sprite.drawAt(painter, point);` to draw it, which should be
+	a fast operation - much faster than drawing the Image itself every time.
+
+	`Sprite` represents a scarce resource which should be freed when you
+	are done with it. Use the `dispose` method to do this. Do not use a `Sprite`
+	after it has been disposed. If you are unsure about this, don't take chances,
+	just let the garbage collector do it for you. But ideally, you can manage its
+	lifetime more efficiently.
+
+	$(NOTE `Sprite`, like the rest of simpledisplay's `ScreenPainter`, does not
+	support alpha blending in its drawing at this time. That might change in the
+	future, but if you need alpha blending right now, use OpenGL instead. See
+	`gamehelpers.d` for a similar class to `Sprite` that uses OpenGL: `OpenGlTexture`.)
+
+	FIXME: you are supposed to be able to draw on these similarly to on windows.
+	ScreenPainter needs to be refactored to allow that though. So until that is
+	done, consider a `Sprite` to have const contents.
+*/
+class Sprite {
+	// FIXME: we should actually be able to draw upon these, same as windows
+	//ScreenPainter drawUpon();
+
+	/// Makes a sprite based on the image with the initial contents from the Image
+	this(SimpleWindow win, Image i) {
+		this._width = i.width;
+		this._height = i.height;
+
+		version(X11) {
+			auto display = XDisplayConnection.get();
+			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
+			if(i.usingXshm)
+			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
+			else
+			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
+		} else version(Windows) {
+			BITMAPINFO infoheader;
+			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
+			infoheader.bmiHeader.biWidth = width;
+			infoheader.bmiHeader.biHeight = height;
+			infoheader.bmiHeader.biPlanes = 1;
+			infoheader.bmiHeader.biBitCount = 24;
+			infoheader.bmiHeader.biCompression = BI_RGB;
+
+			ubyte* rawData;
+
+			// FIXME: this should prolly be a device dependent bitmap...
+			handle = CreateDIBSection(
+				null,
+				&infoheader,
+				DIB_RGB_COLORS,
+				cast(void**) &rawData,
+				null,
+				0);
+
+			if(handle is null)
+				throw new Exception("couldn't create pixmap");
+
+			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			auto arrLength = itemsPerLine * height;
+			rawData[0..arrLength] = i.rawData[0..arrLength];
+		} else version(OSXCocoa) {
+			// FIXME: I have no idea if this is even any good
+			ubyte* rawData;
+        
+			auto colorSpace = CGColorSpaceCreateDeviceRGB();
+			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
+                                            colorSpace,
+                                            kCGImageAlphaPremultipliedLast
+                                                   |kCGBitmapByteOrder32Big);
+            		CGColorSpaceRelease(colorSpace);
+            		rawData = CGBitmapContextGetData(context);
+
+			auto rdl = (width * height * 4);
+			rawData[0 .. rdl] = i.rawData[0 .. rdl];
+		} else version(html5) {
+			handle = nextHandle;
+			nextHandle++;
+			Html5.createImage(handle, i);
+		} else static assert(0);
+	}
+
+	/++
+		Draws the image on the specified painter at the specified point. The point is the upper-left point where the image will be drawn.
+	+/
+	void drawAt(ScreenPainter painter, Point where) {
+		painter.drawPixmap(this, where);
+	}
+
+
+	/// Call this when you're ready to get rid of it
+	void dispose() {
+		version(X11) {
+			if(handle)
+				XFreePixmap(XDisplayConnection.get(), handle);
+			handle = None;
+		} else version(Windows) {
+			if(handle)
+				DeleteObject(handle);
+			handle = null;
+		} else version(OSXCocoa) {
+			if(context)
+				CGContextRelease(context);
+			context = null;
+		} else version(html5) {
+			if(handle)
+				Html5.freeImage(handle);
+			handle = 0;
+		} else static assert(0);
+
+	}
+
+	~this() {
+		dispose();
+	}
+
+	///
+	final @property int width() { return _width; }
+
+	///
+	final @property int height() { return _height; }
+
+	private:
+
+	int _width;
+	int _height;
+	version(X11)
+		Pixmap handle;
+	else version(Windows)
+		HBITMAP handle;
+	else version(OSXCocoa)
+		CGContextRef context;
+	else version(html5) {
+		static int nextHandle;
+		int handle;
+	}
+	else static assert(0);
+}
+
+/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
+void flushGui() {
+	version(X11)
+		XFlush(XDisplayConnection.get());
+}
+
+// Internal
+interface CapableOfHandlingNativeEvent {
+	NativeEventHandler getNativeEventHandler();
+
+	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+}
+
 version(X11)
+/++
+	State of keys on mouse events, especially motion.
+
+	Do not trust the actual integer values in this, they are platform-specific. Always use the names.
++/
 enum ModifierState : uint {
-	shift = 1,
-	capsLock = 2,
-	ctrl = 4,
-	alt = 8,
-	numLock = 16,
-	windows = 64,
+	shift = 1, ///
+	capsLock = 2, ///
+	ctrl = 4, ///
+	alt = 8, ///
+	numLock = 16, ///
+	windows = 64, ///
 
 	// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
-	leftButtonDown = 256,
-	middleButtonDown = 512,
-	rightButtonDown = 1024,
+	leftButtonDown = 256, ///
+	middleButtonDown = 512, ///
+	rightButtonDown = 1024, ///
 }
 else version(Windows)
 enum ModifierState : uint {
@@ -1158,131 +2472,128 @@ enum ModifierState : uint {
 	rightButtonDown = 2,
 }
 
-struct KeyEvent {
-	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms.
-	Key key;
-	uint hardwareCode; ///
-	bool pressed; /// note: released events aren't always sent...
-
-	dchar character; ///
-
-	uint modifierState; /// see enum ModifierState
-
-	SimpleWindow window; /// associated Window
+/// The names assume a right-handed mouse. These are bitwise combined on the events that use them
+enum MouseButton : int {
+	left = 1, ///
+	right = 2, ///
+	middle = 4, ///
+	wheelUp = 8, ///
+	wheelDown = 16, ///
 }
 
 version(X11) {
 	// FIXME: match ASCII whenever we can. Most of it is already there,
 	// but there's a few exceptions and mismatches with Windows
 
+	/// Do not trust the numeric values as they are platform-specific. Always use the symbolic name.
 	enum Key {
-		Escape = 0xff1b,
-		F1 = 0xffbe,
-		F2 = 0xffbf,
-		F3 = 0xffc0,
-		F4 = 0xffc1,
-		F5 = 0xffc2,
-		F6 = 0xffc3,
-		F7 = 0xffc4,
-		F8 = 0xffc5,
-		F9 = 0xffc6,
-		F10 = 0xffc7,
-		F11 = 0xffc8,
-		F12 = 0xffc9,
-		PrintScreen = 0xff61,
-		ScrollLock = 0xff14,
-		Pause = 0xff13,
-		Grave = 0x60,
+		Escape = 0xff1b, ///
+		F1 = 0xffbe, ///
+		F2 = 0xffbf, ///
+		F3 = 0xffc0, ///
+		F4 = 0xffc1, ///
+		F5 = 0xffc2, ///
+		F6 = 0xffc3, ///
+		F7 = 0xffc4, ///
+		F8 = 0xffc5, ///
+		F9 = 0xffc6, ///
+		F10 = 0xffc7, ///
+		F11 = 0xffc8, ///
+		F12 = 0xffc9, ///
+		PrintScreen = 0xff61, ///
+		ScrollLock = 0xff14, ///
+		Pause = 0xff13, ///
+		Grave = 0x60, /// The $(BACKTICK) ~ key
 		// number keys across the top of the keyboard
-		N1 = 0x31,
-		N2 = 0x32,
-		N3 = 0x33,
-		N4 = 0x34,
-		N5 = 0x35,
-		N6 = 0x36,
-		N7 = 0x37,
-		N8 = 0x38,
-		N9 = 0x39,
-		N0 = 0x30,
-		Dash = 0x2d,
-		Equals = 0x3d,
-		Backslash = 0x5c,
-		Backspace = 0xff08,
-		Insert = 0xff63,
-		Home = 0xff50,
-		PageUp = 0xff55,
-		Delete = 0xffff,
-		End = 0xff57,
-		PageDown = 0xff56,
-		Up = 0xff52,
-		Down = 0xff54,
-		Left = 0xff51,
-		Right = 0xff53,
+		N1 = 0x31, /// Number key atop the keyboard
+		N2 = 0x32, ///
+		N3 = 0x33, ///
+		N4 = 0x34, ///
+		N5 = 0x35, ///
+		N6 = 0x36, ///
+		N7 = 0x37, ///
+		N8 = 0x38, ///
+		N9 = 0x39, ///
+		N0 = 0x30, ///
+		Dash = 0x2d, ///
+		Equals = 0x3d, ///
+		Backslash = 0x5c, /// The \ | key
+		Backspace = 0xff08, ///
+		Insert = 0xff63, ///
+		Home = 0xff50, ///
+		PageUp = 0xff55, ///
+		Delete = 0xffff, ///
+		End = 0xff57, ///
+		PageDown = 0xff56, ///
+		Up = 0xff52, ///
+		Down = 0xff54, ///
+		Left = 0xff51, ///
+		Right = 0xff53, ///
 
-		Tab = 0xff09,
-		Q = 0x71,
-		W = 0x77,
-		E = 0x65,
-		R = 0x72,
-		T = 0x74,
-		Y = 0x79,
-		U = 0x75,
-		I = 0x69,
-		O = 0x6f,
-		P = 0x70,
-		LeftBracket = 0x5b,
-		RightBracket = 0x5d,
-		CapsLock = 0xffe5,
-		A = 0x61,
-		S = 0x73,
-		D = 0x64,
-		F = 0x66,
-		G = 0x67,
-		H = 0x68,
-		J = 0x6a,
-		K = 0x6b,
-		L = 0x6c,
-		Semicolon = 0x3b,
-		Apostrophe = 0x27,
-		Enter = 0xff0d,
-		Shift = 0xffe1,
-		Z = 0x7a,
-		X = 0x78,
-		C = 0x63,
-		V = 0x76,
-		B = 0x62,
-		N = 0x6e,
-		M = 0x6d,
-		Comma = 0x2c,
-		Period = 0x2e,
-		Slash = 0x2f,
-		Shift_r = 0xffe2, // Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
-		Ctrl = 0xffe3,
-		Windows = 0xffeb,
-		Alt = 0xffe9,
-		Space = 0x20,
-		Alt_r = 0xffea, // ditto of shift_r
-		Windows_r = 0xffec,
-		Menu = 0xff67,
-		Ctrl_r = 0xffe4,
+		Tab = 0xff09, ///
+		Q = 0x71, ///
+		W = 0x77, ///
+		E = 0x65, ///
+		R = 0x72, ///
+		T = 0x74, ///
+		Y = 0x79, ///
+		U = 0x75, ///
+		I = 0x69, ///
+		O = 0x6f, ///
+		P = 0x70, ///
+		LeftBracket = 0x5b, /// the [ { key
+		RightBracket = 0x5d, /// the ] } key
+		CapsLock = 0xffe5, ///
+		A = 0x61, ///
+		S = 0x73, ///
+		D = 0x64, ///
+		F = 0x66, ///
+		G = 0x67, ///
+		H = 0x68, ///
+		J = 0x6a, ///
+		K = 0x6b, ///
+		L = 0x6c, ///
+		Semicolon = 0x3b, ///
+		Apostrophe = 0x27, ///
+		Enter = 0xff0d, ///
+		Shift = 0xffe1, ///
+		Z = 0x7a, ///
+		X = 0x78, ///
+		C = 0x63, ///
+		V = 0x76, ///
+		B = 0x62, ///
+		N = 0x6e, ///
+		M = 0x6d, ///
+		Comma = 0x2c, ///
+		Period = 0x2e, ///
+		Slash = 0x2f, /// the / ? key
+		Shift_r = 0xffe2, /// Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it. If it is supported though, it is the right Shift key, as opposed to the left Shift key
+		Ctrl = 0xffe3, ///
+		Windows = 0xffeb, ///
+		Alt = 0xffe9, ///
+		Space = 0x20, ///
+		Alt_r = 0xffea, /// ditto of shift_r
+		Windows_r = 0xffec, ///
+		Menu = 0xff67, ///
+		Ctrl_r = 0xffe4, ///
 
-		NumLock = 0xff7f,
-		Divide = 0xffaf,
-		Multiply = 0xffaa,
-		Minus = 0xffad,
-		Plus = 0xffab,
-		PadEnter = 0xff8d,
-		Pad1 = 0xff9c,
-		Pad2 = 0xff99,
-		Pad3 = 0xff9b,
-		Pad4 = 0xff96,
-		Pad5 = 0xff9d,
-		Pad6 = 0xff98,
-		Pad7 = 0xff95,
-		Pad8 = 0xff97,
-		Pad9 = 0xff9a,
-		Pad0 = 0xff9e,
-		PadDot = 0xff9f,
+		NumLock = 0xff7f, ///
+		Divide = 0xffaf, /// The / key on the number pad
+		Multiply = 0xffaa, /// The * key on the number pad
+		Minus = 0xffad, /// The - key on the number pad
+		Plus = 0xffab, /// The + key on the number pad
+		PadEnter = 0xff8d, /// Numberpad enter key
+		Pad1 = 0xff9c, /// Numberpad keys
+		Pad2 = 0xff99, ///
+		Pad3 = 0xff9b, ///
+		Pad4 = 0xff96, ///
+		Pad5 = 0xff9d, ///
+		Pad6 = 0xff98, ///
+		Pad7 = 0xff95, ///
+		Pad8 = 0xff97, ///
+		Pad9 = 0xff9a, ///
+		Pad0 = 0xff9e, ///
+		PadDot = 0xff9f, ///
 	}
 } else version(Windows) {
 	// the character here is for en-us layouts and for illustration only
@@ -1555,913 +2866,6 @@ version(X11) {
 		OEM_CLEAR = 0xFE,
 	}
 
-}
-
-// FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
-/// Listen for this on your event listeners if you are interested in mouse
-struct MouseEvent {
-	MouseEventType type; /// movement, press, release, double click
-
-	int x; ///
-	int y; ///
-
-	int dx; ///
-	int dy; ///
-
-	MouseButton button; ///
-	int modifierState; ///
-
-	SimpleWindow window; ///
-}
-
-//// This gives a few more options to drawing lines and such
-struct Pen {
-	Color color; /// the foreground color
-	int width = 1; /// width of the line
-	Style style; // FIXME: not implemented
-/+
-// From X.h
-
-#define LineSolid		0
-#define LineOnOffDash		1
-#define LineDoubleDash		2
-       LineDou-        The full path of the line is drawn, but the
-       bleDash         even dashes are filled differently from the
-                       odd dashes (see fill-style) with CapButt
-                       style used where even and odd dashes meet.
-
-
-
-/* capStyle */
-
-#define CapNotLast		0
-#define CapButt			1
-#define CapRound		2
-#define CapProjecting		3
-
-/* joinStyle */
-
-#define JoinMiter		0
-#define JoinRound		1
-#define JoinBevel		2
-
-/* fillStyle */
-
-#define FillSolid		0
-#define FillTiled		1
-#define FillStippled		2
-#define FillOpaqueStippled	3
-
-
-+/
-	enum Style {
-		Solid,
-		Dashed
-	}
-}
-
-
-///
-final class Image {
-	///
-	this(int width, int height) {
-		this.width = width;
-		this.height = height;
-
-		impl.createImage(width, height);
-	}
-
-	///
-	this(Size size) {
-		this(size.width, size.height);
-	}
-
-	~this() {
-		impl.dispose();
-	}
-
-	// these numbers are used for working with rawData itself, skipping putPixel and getPixel
-	/// if you do the math yourself you might be able to optimize it. Call these functions only once and cache the value.
-	pure const @system nothrow {
-		/*
-			To use these to draw a blue rectangle with size WxH at position X,Y...
-
-			// make certain that it will fit before we proceed
-			enforce(X + W <= img.width && Y + H <= img.height); // you could also adjust the size to clip it, but be sure not to run off since this here will do raw pointers with no bounds checks!
-
-			// gather all the values you'll need up front. These can be kept until the image changes size if you want
-			// (though calculating them isn't really that expensive).
-			auto nextLineAdjustment = img.adjustmentForNextLine();
-			auto offR = img.redByteOffset();
-			auto offB = img.blueByteOffset();
-			auto offG = img.greenByteOffset();
-			auto bpp = img.bytesPerPixel();
-
-			auto data = img.getDataPointer();
-
-			// figure out the starting byte offset
-			auto offset = img.offsetForTopLeftPixel() + nextLineAdjustment*Y + bpp * X;
-
-			auto startOfLine = data + offset; // get our pointer lined up on the first pixel
-
-			// and now our drawing loop for the rectangle
-			foreach(y; 0 .. H) {
-				auto data = startOfLine; // we keep the start of line separately so moving to the next line is simple and portable
-				foreach(x; 0 .. W) {
-					// write our color
-					data[offR] = 0;
-					data[offG] = 0;
-					data[offB] = 255;
-
-					data += bpp; // moving to the next pixel is just an addition...
-				}
-				startOfLine += nextLineAdjustment;
-			}
-
-
-			As you can see, the loop itself was very simple thanks to the calculations being moved outside.
-
-			FIXME: I wonder if I can make the pixel formats consistently 32 bit across platforms, so the color offsets
-			can be made into a bitmask or something so we can write them as *uint...
-		*/
-
-		///
-		int offsetForTopLeftPixel() {
-			version(X11) {
-				return 0;
-			} else version(Windows) {
-				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
-			} else static assert(0, "fill in this info for other OSes");
-		}
-
-		///
-		int adjustmentForNextLine() {
-			version(X11) {
-				return width * 4;
-			} else version(Windows) {
-				// windows bmps are upside down, so the adjustment is actually negative
-				return -((cast(int) width * 3 + 3) / 4) * 4;
-			} else static assert(0, "fill in this info for other OSes");
-		}
-
-		/// once you have the position of a pixel, use these to get to the proper color
-		int redByteOffset() {
-			version(X11) {
-				return 2;
-			} else version(Windows) {
-				return 2;
-			} else static assert(0, "fill in this info for other OSes");
-		}
-
-		///
-		int greenByteOffset() {
-			version(X11) {
-				return 1;
-			} else version(Windows) {
-				return 1;
-			} else static assert(0, "fill in this info for other OSes");
-		}
-
-		///
-		int blueByteOffset() {
-			version(X11) {
-				return 0;
-			} else version(Windows) {
-				return 0;
-			} else static assert(0, "fill in this info for other OSes");
-		}
-	}
-
-	///
-	final void putPixel(int x, int y, Color c) {
-		if(x < 0 || x >= width)
-			return;
-		if(y < 0 || y >= height)
-			return;
-
-		impl.setPixel(x, y, c);
-	}
-
-	///
-	final Color getPixel(int x, int y) {
-		if(x < 0 || x >= width)
-			return Color.transparent;
-		if(y < 0 || y >= height)
-			return Color.transparent;
-
-		return impl.getPixel(x, y);
-	}
-
-	///
-	final void opIndexAssign(Color c, int x, int y) {
-		putPixel(x, y, c);
-	}
-
-	///
-	TrueColorImage toTrueColorImage() {
-		auto tci = new TrueColorImage(width, height);
-		convertToRgbaBytes(tci.imageData.bytes);
-		return tci;
-	}
-
-	///
-	static Image fromMemoryImage(MemoryImage i) {
-		auto tci = i.getAsTrueColorImage();
-		auto img = new Image(tci.width, tci.height);
-		img.setRgbaBytes(tci.imageData.bytes);
-		return img;
-	}
-
-	/// this is here for interop with arsd.image. where can be a TrueColorImage's data member
-	/// if you pass in a buffer, it will put it right there. length must be width*height*4 already
-	/// if you pass null, it will allocate a new one.
-	ubyte[] getRgbaBytes(ubyte[] where = null) {
-		if(where is null)
-			where = new ubyte[this.width*this.height*4];
-		convertToRgbaBytes(where);
-		return where;
-	}
-
-	/// this is here for interop with arsd.image. from can be a TrueColorImage's data member
-	void setRgbaBytes(in ubyte[] from ) {
-		assert(from.length == this.width * this.height * 4);
-		setFromRgbaBytes(from);
-	}
-
-	// FIXME: make properly cross platform by getting rgba right
-
-	/// warning: this is not portable across platforms because the data format can change
-	ubyte* getDataPointer() {
-		return impl.rawData;
-	}
-
-	/// for use with getDataPointer
-	final int bytesPerLine() const pure @safe nothrow {
-		version(Windows)
-			return ((cast(int) width * 3 + 3) / 4) * 4;
-		else version(X11)
-			return 4 * width;
-		else version(OSXCocoa)
-			return 4 * width;
-		else version(html5)
-			return 4 * width;
-		else static assert(0);
-	}
-
-	/// for use with getDataPointer
-	final int bytesPerPixel() const pure @safe nothrow {
-		version(Windows)
-			return 3;
-		else version(X11)
-			return 4;
-		else version(OSXCocoa)
-			return 4;
-		else version(html5)
-			return 4;
-		else static assert(0);
-	}
-
-	///
-	immutable int width;
-
-	///
-	immutable int height;
-    private:
-	mixin NativeImageImplementation!() impl;
-}
-
-/// A convenience function to pop up a window displaying the image.
-/// If you pass a win, it will draw the image in it. Otherwise, it will
-/// create a window with the size of the image and run its event loop, closing
-/// when a key is pressed.
-void displayImage(Image image, SimpleWindow win = null) {
-	if(win is null) {
-		win = new SimpleWindow(image);
-		{
-			auto p = win.draw;
-			p.drawImage(Point(0, 0), image);
-		}
-		win.eventLoop(0,
-			(KeyEvent ev) {
-				win.close();
-			} );
-	} else {
-		win.image = image;
-	}
-}
-
-/// Most functions use the outlineColor instead of taking a color themselves.
-/// ScreenPainter is reference counted and draws its buffer to the screen when its
-/// final reference goes out of scope.
-struct ScreenPainter {
-	SimpleWindow window;
-	this(SimpleWindow window, NativeWindowHandle handle) {
-		this.window = window;
-		if(window.activeScreenPainter !is null) {
-			impl = window.activeScreenPainter;
-			impl.referenceCount++;
-		//	writeln("refcount ++ ", impl.referenceCount);
-		} else {
-			impl = new ScreenPainterImplementation;
-			impl.window = window;
-			impl.create(handle);
-			impl.referenceCount = 1;
-			window.activeScreenPainter = impl;
-		//	writeln("constructed");
-		}
-	}
-
-	~this() {
-		impl.referenceCount--;
-		//writeln("refcount -- ", impl.referenceCount);
-		if(impl.referenceCount == 0) {
-			//writeln("destructed");
-			impl.dispose();
-			window.activeScreenPainter = null;
-		}
-	}
-
-	// @disable this(this) { } // compiler bug? the linker is bitching about it beind defined twice
-
-	this(this) {
-		impl.referenceCount++;
-		//writeln("refcount ++ ", impl.referenceCount);
-	}
-
-	///
-	int fontHeight() {
-		return impl.fontHeight();
-	}
-
-	///
-	@property void pen(Pen p) {
-		impl.pen(p);
-	}
-
-	///
-	@property void outlineColor(Color c) {
-		impl.outlineColor(c);
-	}
-
-	///
-	@property void fillColor(Color c) {
-		impl.fillColor(c);
-	}
-
-	///
-	@property void rasterOp(RasterOp op) {
-		impl.rasterOp(op);
-	}
-
-	private void transform(ref Point p) {
-		p.x += originX;
-		p.y += originY;
-	}
-
-	int originX;
-	int originY;
-
-	void updateDisplay() {
-		// FIXME this should do what the dtor does
-	}
-
-	/// Scrolls the contents in the bounding rectangle by dx, dy. Positive dx means scroll left (make space available at the right), positive dy means scroll up (make space available at the bottom)
-	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
-		transform(upperLeft);
-		version(Windows) {
-			// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
-			RECT scroll = RECT(upperLeft.x, upperLeft.y, upperLeft.x + width, upperLeft.y + height);
-			RECT clip = scroll;
-			RECT uncovered;
-			HRGN hrgn;
-			if(!ScrollDC(impl.hdc, -dx, -dy, &scroll, &clip, hrgn, &uncovered))
-				throw new Exception("ScrollDC");
-
-		} else version(X11) {
-			// FIXME: clip stuff outside this rectangle
-			XCopyArea(impl.display, impl.d, impl.d, impl.gc, upperLeft.x, upperLeft.y, width, height, upperLeft.x - dx, upperLeft.y - dy);
-		} else static assert(0);
-	}
-
-	///
-	void clear() {
-		fillColor = Color(255, 255, 255);
-		outlineColor = Color(255, 255, 255);
-		drawRectangle(Point(0, 0), window.width, window.height);
-	}
-
-	///
-	void drawPixmap(Sprite s, Point upperLeft) {
-		transform(upperLeft);
-		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
-	}
-
-	///
-	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
-		transform(upperLeft);
-		if(w == 0 || w > i.width)
-			w = i.width;
-		if(h == 0 || h > i.height)
-			h = i.height;
-		if(upperLeftOfImage.x < 0)
-			upperLeftOfImage.x = 0;
-		if(upperLeftOfImage.y < 0)
-			upperLeftOfImage.y = 0;
-
-		impl.drawImage(upperLeft.x, upperLeft.y, i, upperLeftOfImage.x, upperLeftOfImage.y, w, h);
-	}
-
-	///
-	Size textSize(string text) {
-		return impl.textSize(text);
-	}
-
-	///
-	void drawText(Point upperLeft, string text, Point lowerRight = Point(0, 0), uint alignment = 0) {
-		transform(upperLeft);
-		if(lowerRight.x != 0 || lowerRight.y != 0)
-			transform(lowerRight);
-		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
-	}
-
-	/// Drawing an individual pixel is slow. Avoid it if possible.
-	void drawPixel(Point where) {
-		transform(where);
-		impl.drawPixel(where.x, where.y);
-	}
-
-
-	/// Draws a pen using the current pen / outlineColor
-	void drawLine(Point starting, Point ending) {
-		transform(starting);
-		transform(ending);
-		impl.drawLine(starting.x, starting.y, ending.x, ending.y);
-	}
-
-	/// Draws a rectangle using the current pen/outline color for the border and brush/fill color for the insides
-	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
-	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
-	void drawRectangle(Point upperLeft, int width, int height) {
-		transform(upperLeft);
-		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
-	}
-
-	/// Arguments are the points of the bounding rectangle
-	void drawEllipse(Point upperLeft, Point lowerRight) {
-		transform(upperLeft);
-		transform(lowerRight);
-		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
-	}
-
-	/// .
-	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
-		transform(upperLeft);
-		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
-	}
-
-	/// .
-	void drawPolygon(Point[] vertexes) {
-		foreach(vertex; vertexes)
-			transform(vertex);
-		impl.drawPolygon(vertexes);
-	}
-
-
-	// and do a draw/fill in a single call maybe. Windows can do it... but X can't, though it could do two calls.
-
-	//mixin NativeScreenPainterImplementation!() impl;
-
-
-	// HACK: if I mixin the impl directly, it won't let me override the copy
-	// constructor! The linker complains about there being multiple definitions.
-	// I'll make the best of it and reference count it though.
-	ScreenPainterImplementation* impl;
-}
-
-	// HACK: I need a pointer to the implementation so it's separate
-	struct ScreenPainterImplementation {
-		SimpleWindow window;
-		int referenceCount;
-		mixin NativeScreenPainterImplementation!();
-	}
-
-// FIXME: i haven't actually tested the sprite class on MS Windows
-
-/**
-	Sprites are optimized for fast drawing on the screen, but slow for direct pixel
-	access. They are best for drawing a relatively unchanging image repeatedly on the screen.
-
-	You create one by giving a window and an image. It optimizes for that window,
-	and copies the image into it to use as the initial picture. Creating a sprite
-	can be quite slow (especially over a network connection) so you should do it
-	as little as possible and just hold on to your sprite handles after making them.
-
-	Then you can use sprite.drawAt(painter, point); to draw it, which should be
-	a fast operation - much faster than drawing the Image itself every time.
-
-	FIXME: you are supposed to be able to draw on these similarly to on windows.
-*/
-class Sprite {
-	// FIXME: we should actually be able to draw upon these, same as windows
-	//ScreenPainter drawUpon();
-
-	/// Makes a sprite based on the image with the initial contents from the Image
-	this(SimpleWindow win, Image i) {
-		this.width = i.width;
-		this.height = i.height;
-
-		version(X11) {
-			auto display = XDisplayConnection.get();
-			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
-			if(i.usingXshm)
-			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
-			else
-			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
-		} else version(Windows) {
-			BITMAPINFO infoheader;
-			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
-			infoheader.bmiHeader.biWidth = width;
-			infoheader.bmiHeader.biHeight = height;
-			infoheader.bmiHeader.biPlanes = 1;
-			infoheader.bmiHeader.biBitCount = 24;
-			infoheader.bmiHeader.biCompression = BI_RGB;
-
-			ubyte* rawData;
-
-			// FIXME: this should prolly be a device dependent bitmap...
-			handle = CreateDIBSection(
-				null,
-				&infoheader,
-				DIB_RGB_COLORS,
-				cast(void**) &rawData,
-				null,
-				0);
-
-			if(handle is null)
-				throw new Exception("couldn't create pixmap");
-
-			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
-			auto arrLength = itemsPerLine * height;
-			rawData[0..arrLength] = i.rawData[0..arrLength];
-		} else version(OSXCocoa) {
-			// FIXME: I have no idea if this is even any good
-			ubyte* rawData;
-        
-			auto colorSpace = CGColorSpaceCreateDeviceRGB();
-			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
-                                            colorSpace,
-                                            kCGImageAlphaPremultipliedLast
-                                                   |kCGBitmapByteOrder32Big);
-            		CGColorSpaceRelease(colorSpace);
-            		rawData = CGBitmapContextGetData(context);
-
-			auto rdl = (width * height * 4);
-			rawData[0 .. rdl] = i.rawData[0 .. rdl];
-		} else version(html5) {
-			handle = nextHandle;
-			nextHandle++;
-			Html5.createImage(handle, i);
-		} else static assert(0);
-	}
-
-	/// Call this when you're ready to get rid of it
-	void dispose() {
-		version(X11)
-			XFreePixmap(XDisplayConnection.get(), handle);
-		else version(Windows)
-			DeleteObject(handle);
-		else version(OSXCocoa)
-			CGContextRelease(context);
-		else version(html5)
-			Html5.freeImage(handle);
-		else static assert(0);
-
-	}
-
-	int width;
-	int height;
-	version(X11)
-		Pixmap handle;
-	else version(Windows)
-		HBITMAP handle;
-	else version(OSXCocoa)
-		CGContextRef context;
-	else version(html5) {
-		static int nextHandle;
-		int handle;
-	}
-	else static assert(0);
-
-	/// .
-	void drawAt(ScreenPainter painter, Point where) {
-		painter.drawPixmap(this, where);
-	}
-}
-
-/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
-void flushGui() {
-	version(X11)
-		XFlush(XDisplayConnection.get());
-}
-
-interface CapableOfHandlingNativeEvent {
-	NativeEventHandler getNativeEventHandler();
-
-	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
-}
-
-/// The flagship window class.
-class SimpleWindow : CapableOfHandlingNativeEvent {
-	NativeEventHandler getNativeEventHandler() { return handleNativeEvent; }
-
-	// maps native window handles to SimpleWindow instances, if there are any
-	// you shouldn't need this, but it is public in case you do in a native event handler or something
-	public static SimpleWindow[NativeWindowHandle] nativeMapping;
-
-	int width;
-	int height;
-
-	// HACK: making the best of some copy constructor woes with refcounting
-	private ScreenPainterImplementation* activeScreenPainter;
-
-	/// Creates a window based on the given image. It's client area
-	/// width and height is equal to the image. (A window's client area
-	/// is the drawable space inside; it excludes the title bar, etc.)
-	///
-	/// Windows based on images will not be resizable and do not use OpenGL
-	this(Image image, string title = null) {
-		this(image.width, image.height, title);
-		this.image = image;
-	}
-
-	/// to wrap a native window handle with very little additional processing - notably no destruction
-	/// this is incomplete so don't use it for much right now
-	this(NativeWindowHandle nativeWindow) {
-		version(Windows)
-			impl.hwnd = nativeWindow;
-		else version(X11)
-			impl.window = nativeWindow;
-		else static assert(0);
-		// FIXME: set the size correctly
-		width = 1;
-		height = 1;
-		nativeMapping[nativeWindow] = this;
-		CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
-		_suppressDestruction = true; // so it doesn't try to close
-	}
-
-	/// ctor
-	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
-		this(size.width, size.height, title, opengl, resizable);
-	}
-
-	/// the base constructor
-	this(int width, int height, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
-		this.width = width;
-		this.height = height;
-		this.openglMode = opengl;
-		this.resizability = resizable;
-		impl.createWindow(width, height, title is null ? "D Application" : title, opengl);
-	}
-
-	OpenGlOptions openglMode;
-	Resizablity resizability;
-
-	version(without_opengl) {} else {
-		/// Makes all gl* functions target this window until changed.
-		void setAsCurrentOpenGlContext() {
-			assert(openglMode == OpenGlOptions.yes);
-			version(X11) {
-				if(glXMakeCurrent(display, impl.window, impl.glc) == 0)
-					throw new Exception("glXMakeCurrent");
-			} else version(Windows) {
-        			wglMakeCurrent(ghDC, ghRC); 
-			}
-		}
-
-		/// simpledisplay always uses double buffering, this swaps the OpenGL buffers.
-		void swapOpenGlBuffers() {
-			assert(openglMode == OpenGlOptions.yes);
-			version(X11) {
-				glXSwapBuffers(XDisplayConnection.get, impl.window);
-			} else version(Windows) {
-        			SwapBuffers(ghDC);
-			}
-		}
-
-		/// Put your code in here that you want to be drawn automatically when your window is uncovered
-		void delegate() redrawOpenGlScene;
-
-		/// call this to invoke your delegate. It automatically sets up the context and flips the buffer.
-		void redrawOpenGlSceneNow() {
-			this.setAsCurrentOpenGlContext();
-
-			if(redrawOpenGlScene !is null)
-				redrawOpenGlScene();
-
-			this.swapOpenGlBuffers();
-
-		}
-	}
-
-	/// Set the title
-	@property void title(string title) {
-		impl.setTitle(title);
-	}
-
-	/// Set the icon
-	@property void icon(MemoryImage icon) {
-		auto tci = icon.getAsTrueColorImage();
-		version(Windows) {
-			winIcon = new WindowsIcon(icon);
-			 SendMessageA(impl.hwnd, 0x0080 /*WM_SETICON*/, 0 /*ICON_SMALL*/, cast(LPARAM) winIcon.hIcon); // there is also 1 == ICON_BIG
-		} else version(X11) {
-			// FIXME: ensure this is correct
-			auto display = XDisplayConnection.get;
-			arch_ulong[] buffer;
-			buffer ~= icon.width;
-			buffer ~= icon.height;
-			foreach(c; tci.imageData.colors) {
-				arch_ulong b;
-				b |= c.a << 24;
-				b |= c.r << 16;
-				b |= c.g << 8;
-				b |= c.b;
-				buffer ~= b;
-			}
-
-			XChangeProperty(
-				display,
-				impl.window,
-				GetAtom!"_NET_WM_ICON"(display),
-				GetAtom!"CARDINAL"(display),
-				32 /* bits */,
-				0 /*PropModeReplace*/,
-				buffer.ptr,
-				cast(int) buffer.length);
-		}
-	}
-
-	version(Windows)
-		private WindowsIcon winIcon;
-
-	bool _suppressDestruction;
-
-	~this() {
-		if(_suppressDestruction)
-			return;
-		impl.dispose();
-	}
-
-	bool closed;
-
-	/// Closes the window. If there are no more open windows, the event loop will terminate.
-	void close() {
-		impl.closeWindow();
-		closed = true;
-	}
-
-	/// Sets your event handlers, without entering the event loop. Useful if you
-	/// have multiple windows - set the handlers on each window, then only do eventLoop on your main window.
-	void setEventHandlers(T...)(T eventHandlers) {
-		// FIXME: add more events
-		foreach(handler; eventHandlers) {
-			static if(__traits(compiles, handleKeyEvent = handler)) {
-				handleKeyEvent = handler;
-			} else static if(__traits(compiles, handleCharEvent = handler)) {
-				handleCharEvent = handler;
-			} else static if(__traits(compiles, handlePulse = handler)) {
-				handlePulse = handler;
-			} else static if(__traits(compiles, handleMouseEvent = handler)) {
-				handleMouseEvent = handler;
-			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof ~ "\nNote: if you want to capture keycode events, this recently changed to (KeyEvent event) instead of the old (int code) and second draft, (int code, bool pressed), key, character, and pressed are members of KeyEvent.");
-		}
-	}
-
-	/// The event loop automatically returns when the window is closed
-	/// pulseTimeout is given in milliseconds.
-	final int eventLoop(T...)(
-		long pulseTimeout,    /// set to zero if you don't want a pulse. Note: don't set it too big, or user input may not be processed in a timely manner. I suggest something < 150.
-		T eventHandlers) /// delegate list like std.concurrency.receive
-	{
-		setEventHandlers(eventHandlers);
-		return impl.eventLoop(pulseTimeout);
-	}
-
-	/// this lets you draw on the window (or its backing buffer)
-	ScreenPainter draw() {
-		return impl.getPainter();
-	}
-
-	// the idea here is to draw something temporary on top of the main picture e.g. a blinking cursor
-	/*
-	ScreenPainter drawTransiently() {
-		return impl.getPainter();
-	}
-	*/
-
-	/// Draws an image on the window. This is meant to provide quick look
-	/// of a static image generated elsewhere.
-	@property void image(Image i) {
-		version(Windows) {
-			BITMAP bm;
-			HDC hdc = GetDC(hwnd);
-			HDC hdcMem = CreateCompatibleDC(hdc);
-			HBITMAP hbmOld = SelectObject(hdcMem, i.handle);
-
-			GetObject(i.handle, bm.sizeof, &bm);
-
-			BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
-
-			SelectObject(hdcMem, hbmOld);
-			DeleteDC(hdcMem);
-			DeleteDC(hwnd);
-
-			/*
-			RECT r;
-			r.right = i.width;
-			r.bottom = i.height;
-			InvalidateRect(hwnd, &r, false);
-			*/
-		} else
-		version(X11) {
-			if(!destroyed) {
-				if(i.usingXshm)
-				XShmPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height, false);
-				else
-				XPutImage(display, cast(Drawable) window, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
-			}
-		} else
-		version(OSXCocoa) {
-           		draw().drawImage(Point(0, 0), i);
-			setNeedsDisplay(view, true);
-		} else version(html5) {
-			// FIXME html5
-		} else static assert(0);
-	}
-
-	/// What follows are the event handlers. These are set automatically
-	/// by the eventLoop function, but are still public so you can change
-	/// them later. wasPressed == true means key down. false == key up.
-
-	/// Handles a low-level keyboard event. Settable through setEventHandlers.
-	void delegate(KeyEvent ke) handleKeyEvent;
-
-	/// Handles a higher level keyboard event - c is the character just pressed. Settable through setEventHandlers.
-	void delegate(dchar c) handleCharEvent;
-
-	/// Handles a timer pulse. Settable through setEventHandlers.
-	void delegate() handlePulse;
-
-	void delegate(bool) onFocusChange; /// called when the focus changes, param is if we have it (true) or are losing it (false)
-
-	private {
-		int lastMouseX = int.min;
-		int lastMouseY = int.min;
-		void mdx(ref MouseEvent ev) {
-			if(lastMouseX == int.min || lastMouseY == int.min) {
-				ev.dx = 0;
-				ev.dy = 0;
-			} else {
-				ev.dx = ev.x - lastMouseX;
-				ev.dy = ev.y - lastMouseY;
-			}
-
-			lastMouseX = ev.x;
-			lastMouseY = ev.y;
-		}
-	}
-
-	/// Mouse event handler. Settable through setEventHandlers.
-	void delegate(MouseEvent) handleMouseEvent;
-
-	void delegate() paintingFinished; /// use to redraw child widgets if you use system apis to add stuff
-	void delegate(int width, int height) windowResized; /// handle a resize, after it happens
-
-	/** Platform specific - handle any native messages this window gets.
-	  *
-	  * Note: this is called *in addition to* other event handlers, unless you return zero indicating that you handled it.
-
-	  * On Windows, it takes the form of int delegate(HWND,UINT, WPARAM, LPARAM).
-
-	  * On X11, it takes the form of int delegate(XEvent).
-
-	  * IMPORTANT: it used to be static in old versions of simpledisplay.d, but I always used
-	  * it as if it wasn't static... so now I just fixed it so it isn't anymore.
-	**/
-	NativeEventHandler handleNativeEvent;
-
-	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
-	/// If you used to use handleNativeEvent depending on it being static, just change it to use
-	/// this instead and it will work the same way.
-	static NativeEventHandler handleNativeGlobalEvent;
-
-//  private:
-	/// The native implementation is available, but you shouldn't use it unless you are
-	/// familiar with the underlying operating system, don't mind depending on it, and
-	/// know simpledisplay.d's internals too. It is virtually private; you can hopefully
-	/// do what you need to do with handleNativeEvent instead.
-	mixin NativeSimpleWindowImplementation!() impl;
 }
 
 /* Additional utilities */
@@ -2886,7 +3290,7 @@ version(Windows) {
 			HDC ghDC;
 		}
 
-		void createWindow(int width, int height, string title, OpenGlOptions opengl) {
+		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
 			const char* cn = "DSimpleWindow";
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
@@ -2908,9 +3312,21 @@ version(Windows) {
 				classRegistered = true;
 			}
 
-			hwnd = CreateWindow(cn, toStringz(title), WS_OVERLAPPEDWINDOW,
+			int style;
+
+			// FIXME: windowType and customizationFlags
+			final switch(windowType) {
+				case WindowTypes.normal:
+					style = WS_OVERLAPPEDWINDOW;
+				break;
+				case WindowTypes.undecorated:
+					style = WS_POPUP | WS_SYSMENU;
+				break;
+			}
+
+			hwnd = CreateWindow(cn, toStringz(title), style,
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
-				null, null, hInstance, null);
+				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
 			SimpleWindow.nativeMapping[hwnd] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
@@ -2953,9 +3369,11 @@ version(Windows) {
 				// make sure it's filled with a blank slate
 				auto oldBmp = SelectObject(hdcBmp, buffer);
 				auto oldBrush = SelectObject(hdcBmp, GetStockObject(WHITE_BRUSH));
+				auto oldPen = SelectObject(hdcBmp, GetStockObject(WHITE_PEN));
 				Rectangle(hdcBmp, 0, 0, width, height);
 				SelectObject(hdcBmp, oldBmp);
 				SelectObject(hdcBmp, oldBrush);
+				SelectObject(hdcBmp, oldPen);
 				DeleteDC(hdcBmp);
 
 				ReleaseDC(hwnd, hdc); // we keep this in opengl mode since it is a class member now
@@ -3120,8 +3538,8 @@ version(Windows) {
 						PostQuitMessage(0);
 				break;
 				case WM_SIZE:
-					width = LOWORD(lParam);
-					height = HIWORD(lParam);
+					_width = LOWORD(lParam);
+					_height = HIWORD(lParam);
 
 					// I want to avoid tearing in the windows (my code is inefficient
 					// so this is a hack around that) so while sizing, we don't trigger,
@@ -3251,6 +3669,8 @@ version(Windows) {
 	mixin template NativeImageImplementation() {
 		HBITMAP handle;
 		ubyte* rawData;
+
+	final:
 
 		Color getPixel(int x, int y) {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
@@ -3610,7 +4030,7 @@ version(X11) {
 		void drawRectangle(int x, int y, int width, int height) {
 			if(backgroundIsNotTransparent) {
 				swapColors();
-				XFillRectangle(display, d, gc, x+1, y+1, width-1, height-1);
+				XFillRectangle(display, d, gc, x+1, y+1, width-2, height-2); // Need to ensure pixels are only drawn once...
 				swapColors();
 			}
 			if(foregroundIsNotTransparent)
@@ -3654,11 +4074,12 @@ version(X11) {
 	}
 
 
+	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
 		private static Display* display;
 
-		static Display* get(SimpleWindow window = null) {
-			// FIXME: this shouldn't even be necessary
+		///
+		static Display* get() {
 			if(display is null) {
 				display = XOpenDisplay(null);
 				if(display is null)
@@ -3680,6 +4101,7 @@ version(X11) {
 			}
 		}
 
+		///
 		static void close() {
 			if(display is null)
 				return;
@@ -3712,6 +4134,7 @@ version(X11) {
 		}
 
 		bool usingXshm;
+	final:
 
 		void createImage(int width, int height) {
 			auto display = XDisplayConnection.get();
@@ -3843,8 +4266,8 @@ version(X11) {
 			XSetWMName(display, window, &windowName);
 		}
 
-		void createWindow(int width, int height, string title, in OpenGlOptions opengl) {
-			display = XDisplayConnection.get(this);
+		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
+			display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
 
 			version(without_opengl) {}
@@ -3858,7 +4281,7 @@ version(X11) {
 					auto root = RootWindow(display, screen);
 					swa.colormap = XCreateColormap(display, root, vi.visual, AllocNone);
 
-					window = XCreateWindow(display, root,
+					window = XCreateWindow(display, parent is null ? root : parent.impl.window,
 						0, 0, width, height,
 						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap, &swa);
 
@@ -3871,7 +4294,7 @@ version(X11) {
 			if(opengl == OpenGlOptions.no) {
 				window = XCreateSimpleWindow(
 					display,
-					RootWindow(display, screen),
+					parent is null ? RootWindow(display, screen) : parent.impl.window,
 					0, 0, // x, y
 					width, height,
 					1, // border width
@@ -3895,6 +4318,61 @@ version(X11) {
 			// This gives our window a close button
 			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
 			XSetWMProtocols(display, window, &atom, 1);
+
+
+			// FIXME: windowType and customizationFlags
+
+			final switch(windowType) {
+				case WindowTypes.normal:
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
+				break;
+				case WindowTypes.undecorated:
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
+					motifHideDecorations();
+				break;
+				/+
+				case WindowTypes.desktop:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DESKTOP"(display);
+				break;
+				case WindowTypes.dock:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DOCK"(display);
+				break;
+				case WindowTypes.toolbar:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLBAR"(display);
+				break;
+				case WindowTypes.menu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
+				break;
+				case WindowTypes.utility:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_UTILITY"(display);
+				break;
+				case WindowTypes.splash:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_SPLASH"(display);
+				break;
+				case WindowTypes.dialog:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display);
+				break;
+				case WindowTypes.dropdownMenu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display);
+				break;
+				case WindowTypes.popupMenu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display);
+				break;
+				case WindowTypes.tooltip:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display);
+				break;
+				case WindowTypes.notification:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_NOTIFICATION"(display);
+				break;
+				case WindowTypes.combo:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_COMBO"(display);
+				break;
+				case WindowTypes.dnd:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DND"(display);
+				break;
+				+/
+			}
+
 
 
 			if(this.resizability != Resizablity.allowResizing && opengl == OpenGlOptions.no) {
@@ -3923,6 +4401,39 @@ version(X11) {
 			);
 
 			XMapWindow(display, window);
+		}
+
+		void setNetWMWindowType(Atom type) {
+			Atom[2] atoms;
+
+			atoms[0] = type;
+			// generic fallback
+			atoms[1] = GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display);
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!"_NET_WM_WINDOW_TYPE"(display),
+				XA_ATOM,
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				atoms.ptr,
+				cast(int) atoms.length);
+		}
+
+		void motifHideDecorations() {
+			MwmHints hints;
+			hints.flags = MWM_HINTS_DECORATIONS;
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!"_MOTIF_WM_HINTS"(display),
+				GetAtom!"_MOTIF_WM_HINTS"(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				&hints,
+				hints.sizeof / 4);
 		}
 
 		void createOpenGlContext() {
@@ -3999,9 +4510,9 @@ version(X11) {
 					ep.epoll_event ev = void;
 					ev.events = ep.EPOLLIN;
 					ev.data.fd = display.fd;
-					import std.conv;
+					//import std.conv;
 					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
-						throw new Exception("add x fd" ~ to!string(epollFd));
+						throw new Exception("add x fd");// ~ to!string(epollFd));
 				}
 
 				if(pulseTimeout) {
@@ -4103,6 +4614,7 @@ version(X11) {
 }
 
 version(X11) {
+	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
 		bool done;
 		XEvent e;
@@ -4179,8 +4691,8 @@ version(X11) {
 					auto oldWidth = win.width;
 					auto oldHeight = win.height;
 
-					win.width = event.width;
-					win.height = event.height;
+					win._width = event.width;
+					win._height = event.height;
 
 					if(win.openglMode == OpenGlOptions.no && win.resizability == Resizablity.allowResizing) {
 						// FIXME: could this be more efficient? It isn't really necessary to make
@@ -5298,6 +5810,26 @@ int XMapWindow(
     Window		/* w */
 );
 
+struct MwmHints {
+    int flags;
+    int functions;
+    int decorations;
+    int input_mode;
+    int status;
+}
+
+enum {
+    MWM_HINTS_FUNCTIONS = (1L << 0),
+    MWM_HINTS_DECORATIONS =  (1L << 1),
+
+    MWM_FUNC_ALL = (1L << 0),
+    MWM_FUNC_RESIZE = (1L << 1),
+    MWM_FUNC_MOVE = (1L << 2),
+    MWM_FUNC_MINIMIZE = (1L << 3),
+    MWM_FUNC_MAXIMIZE = (1L << 4),
+    MWM_FUNC_CLOSE = (1L << 5)
+}
+
 Status XIconifyWindow(Display*, Window, int);
 int XMapRaised(Display*, Window);
 int XMapSubwindows(Display*, Window);
@@ -6114,6 +6646,7 @@ struct Visual
 	}
 	Status XAllocColor(Display*, Colormap, XColor*);
 
+	int XWithdrawWindow(Display*, Window, int);
 	int XUnmapWindow(Display*, Window);
 	int XLowerWindow(Display*, Window);
 	int XRaiseWindow(Display*, Window);
@@ -6451,6 +6984,7 @@ version(OSXCocoa) {
     mixin template NativeImageImplementation() {
         CGContextRef context;
         ubyte* rawData;
+    final:
 
 	void convertToRgbaBytes(ubyte[] where) {
 		assert(where.length == this.width * this.height * 4);

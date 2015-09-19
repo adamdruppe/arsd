@@ -1,6 +1,6 @@
 // WORK IN PROGRESS
 
-/**
+/++
 	An add-on for simpledisplay.d, joystick.d, and simpleaudio.d
 	that includes helper functions for writing games (and perhaps
 	other multimedia programs).
@@ -57,9 +57,9 @@
 
 	The MyGame handler is actually a template, so you don't have virtual
 	function indirection and not all functions are required. The interfaces
-	are just to help you get the signatures right, they don't work at
-	runtime.
-*/
+	are just to help you get the signatures right, they don't force virtual
+	dispatch at runtime.
++/
 module arsd.gamehelpers;
 
 public import arsd.color;
@@ -154,9 +154,11 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 	);
 }
 
-/// Simple class for putting a TrueColorImage in as an OpenGL texture.
-///
-/// Doesn't do mipmapping btw.
+/++
+	Simple class for putting a TrueColorImage in as an OpenGL texture.
+
+	Doesn't do mipmapping btw.
++/
 final class OpenGlTexture {
 	private uint _tex;
 	private int _width;
@@ -164,15 +166,17 @@ final class OpenGlTexture {
 	private float _texCoordWidth;
 	private float _texCoordHeight;
 
+	/// Calls glBindTexture
 	void bind() {
 		glBindTexture(GL_TEXTURE_2D, _tex);
 	}
 
-	// For easy 2d drawing of it
+	/// For easy 2d drawing of it
 	void draw(Point where, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
 		draw(where.x, where.y, width, height, rotation, bg);
 	}
 
+	///
 	void draw(float x, float y, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
 		glPushMatrix();
 		glTranslatef(x, y, 0);
