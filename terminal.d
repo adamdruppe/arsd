@@ -1106,11 +1106,13 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			doTermcap("cl");
 		} else version(Windows) {
 			// http://support.microsoft.com/kb/99261
+			flush();
 
 			DWORD c;
 			CONSOLE_SCREEN_BUFFER_INFO csbi;
 			DWORD conSize;
 			GetConsoleScreenBufferInfo(hConsole, &csbi);
+			conSize = csbi.dwSize.X * csbi.dwSize.Y;
 			COORD coordScreen;
 			FillConsoleOutputCharacterA(hConsole, ' ', conSize, coordScreen, &c);
 			FillConsoleOutputAttribute(hConsole, csbi.wAttributes, conSize, coordScreen, &c);
