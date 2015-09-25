@@ -811,7 +811,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// The event loop automatically returns when the window is closed
 	/// pulseTimeout is given in milliseconds.
 	final int eventLoop(T...)(
-		long pulseTimeout,    /// set to zero if you don't want a pulse. Note: don't set it too big, or user input may not be processed in a timely manner. I suggest something < 150.
+		long pulseTimeout,    /// set to zero if you don't want a pulse.
 		T eventHandlers) /// delegate list like std.concurrency.receive
 	{
 		setEventHandlers(eventHandlers);
@@ -3640,7 +3640,7 @@ version(Windows) {
 
 		int eventLoop(long pulseTimeout) {
 			MSG message;
-			int ret;
+			int ret = -1;
 
 			Timer pulser;
 			scope(exit)
@@ -3650,19 +3650,39 @@ version(Windows) {
 			if(pulseTimeout)
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
-			// if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE))
-			while((ret = GetMessage(&message, null, 0, 0)) != 0) {
-				if(ret == -1)
-					throw new Exception("GetMessage failed");
-		//		if(!IsDialogMessageA(message.hwnd, &message)) {
-					TranslateMessage(&message);
-					DispatchMessage(&message);
-		//		}
+			HANDLE[] handles;
+			while(ret != 0) {
+				auto waitResult = MsgWaitForMultipleObjectsEx(
+					handles.length, handles.ptr,
+					INFINITE, /* timeout */
+					0x04FF, /* QS_ALLINPUT */
+					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
 
-				SleepEx(0, true); // I call this to give it a chance to do stuff like async io, which never happens when you just block in GetMessage
+				enum WAIT_OBJECT_0 = 0;
+				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
+					// process handles[waitResult - WAIT_OBJECT_0];
+				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
+					// message ready
+					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
+						if(ret == -1)
+							throw new Exception("GetMessage failed");
+						TranslateMessage(&message);
+						DispatchMessage(&message);
+					}
+				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
+					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
+				} else if(waitResult == 258L /* WAIT_TIMEOUT */) {
+					// timeout, should never happen since we aren't using it
+				} else if(waitResult == 0xFFFFFFFF) {
+						// failed
+						throw new Exception("MsgWaitForMultipleObjectsEx failed");
+				} else {
+					// idk....
+				}
 			}
 
-			return message.wParam;
+			// return message.wParam;
+			return 0;
 		}
 	}
 
@@ -5173,6 +5193,16 @@ nothrow:
 	enum KEYEVENTF_KEYUP = 0x2;
 	enum KEYEVENTF_SCANCODE = 0x8;
 	enum KEYEVENTF_UNICODE = 0x4;
+
+	extern(Windows)
+	DWORD MsgWaitForMultipleObjectsEx(
+	  in       DWORD  nCount,
+	  in HANDLE *pHandles,
+	  in       DWORD  dwMilliseconds,
+	  in       DWORD  dwWakeMask,
+	  in       DWORD  dwFlags
+	);
+
 }
 
 else version(X11) {

@@ -177,6 +177,8 @@ extern(C) {
                        uint username_len);
 
 	int libssh2_channel_eof(LIBSSH2_CHANNEL*);
+	int libssh2_channel_close(LIBSSH2_CHANNEL*);
+	int libssh2_channel_wait_closed(LIBSSH2_CHANNEL *channel);
 
 	enum LIBSSH2_ERROR_EAGAIN = -37;
 }
