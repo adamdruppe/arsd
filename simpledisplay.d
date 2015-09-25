@@ -3538,6 +3538,8 @@ version(Windows) {
 						PostQuitMessage(0);
 				break;
 				case WM_SIZE:
+					if(wParam == 1 /* SIZE_MINIMIZED */)
+						break;
 					_width = LOWORD(lParam);
 					_height = HIWORD(lParam);
 
