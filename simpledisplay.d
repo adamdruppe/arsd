@@ -1918,6 +1918,19 @@ final class Image {
 		}
 
 		///
+		int offsetForPixel(int x, int y) {
+			version(X11) {
+				auto offset = (y * width + x) * 4;
+				return offset;
+			} else version(Windows) {
+				auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+				// remember, bmps are upside down
+				auto offset = itemsPerLine * (height - y - 1) + x * 3;
+				return offset;
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		///
 		int adjustmentForNextLine() {
 			version(X11) {
 				return width * 4;
