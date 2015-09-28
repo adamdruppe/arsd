@@ -9,10 +9,7 @@
 		{
 			"name": "simpledisplay",
 			"description": "Window creation and basic drawing",
-			"sourceFiles": ["simpledisplay.d", "color.d"],
-			"dependencies": {
-				"arsd-official:color": ">=0.0.0"
-			}
+			"sourceFiles": ["simpledisplay.d", "color.d"]
 		},
 		{
 			"name": "color",
