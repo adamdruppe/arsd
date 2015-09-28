@@ -1094,7 +1094,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	Timers can only be expected to fire when the event loop is running.
 */
-version(with_timer)
+version(with_timer) {
 class Timer {
 	// FIXME: I might add overloads for ones that take a count of
 	// how many elapsed since last time (on Windows, it will divide
@@ -1229,6 +1229,7 @@ class Timer {
 		int fd = -1;
 		static Timer[int] mapping;
 	} else static assert(0, "timer not supported");
+}
 }
 
 // basic functions to access the clipboard
