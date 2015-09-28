@@ -1,3 +1,6 @@
+// Please note when compiling on Win64, you need to explicitly list
+// `-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
+// subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`
 /*
 	FIXME:
 		blink taskbar / demand attention cross platform. FlashWindow and demandAttention
@@ -1566,7 +1569,7 @@ version(Windows) {
 			inputs ~= input;
 		}
 
-		if(SendInput(inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
+		if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
 			throw new Exception("SendInput failed");
 		}
 	}
@@ -1580,7 +1583,7 @@ version(Windows) {
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
 			throw new Exception("RegisterHotKey failed");
 
-		static void delegate()[int][HWND] handlers;
+		static void delegate()[WPARAM][HWND] handlers;
 
 		handlers[window.impl.hwnd][id] = handler;
 
@@ -2932,7 +2935,7 @@ version(Windows) {
 				
 				int icon_plen = height*((width+3)&~3);
 				int icon_mlen = icon_plen / 8; // height*((((width+7)/8)+3)&~3);
-				icon_len = 40+icon_plen+icon_mlen + RGBQUAD.sizeof * colorCount;
+				icon_len = 40+icon_plen+icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
 
 				biSize = 40;
 				biWidth = width;
@@ -3023,7 +3026,7 @@ version(Windows) {
 	alias HWND NativeWindowHandle;
 
 	extern(Windows)
-	int WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+	LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 	    try {
 			if(SimpleWindow.handleNativeGlobalEvent !is null) {
 				// it returns zero if the message is handled, so we won't do anything more there
@@ -3200,14 +3203,14 @@ version(Windows) {
 
 		Size textSize(string text) {
 			RECT rect;
-			DrawText(hdc, text.ptr, text.length, &rect, DT_CALCRECT);
+			DrawText(hdc, text.ptr, cast(int) text.length, &rect, DT_CALCRECT);
 			return Size(rect.right, rect.bottom);
 		}
 
 		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
 			// FIXME: use the unicode function
 			if(x2 == 0 && y2 == 0)
-				TextOut(hdc, x, y, text.ptr, text.length);
+				TextOut(hdc, x, y, text.ptr, cast(int) text.length);
 			else {
 				RECT rect;
 				rect.left = x;
@@ -3225,7 +3228,7 @@ version(Windows) {
 				if(alignment & TextAlignment.VerticalCenter)
 					mode |= DT_VCENTER | DT_SINGLELINE;
 
-				DrawText(hdc, text.ptr, text.length, &rect, mode);
+				DrawText(hdc, text.ptr, cast(int) text.length, &rect, mode);
 			}
 
 			/*
@@ -3281,7 +3284,7 @@ version(Windows) {
 				points[i].y = p.y;
 			}
 
-			Polygon(hdc, points.ptr, points.length);
+			Polygon(hdc, points.ptr, cast(int) points.length);
 		}
 	}
 
@@ -3424,7 +3427,7 @@ version(Windows) {
 				mouse.x = LOWORD(lParam) + offsetX;
 				mouse.y = HIWORD(lParam) + offsetY;
 				wind.mdx(mouse);
-				mouse.modifierState = wParam;
+				mouse.modifierState = cast(int) wParam;
 				mouse.window = wind;
 
 				if(wind.handleMouseEvent)
@@ -3537,7 +3540,7 @@ version(Windows) {
 		bool inSizeMove;
 
 		// the extern(Windows) wndproc should just forward to this
-		int windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
+		LRESULT windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
 			assert(hwnd is this.hwnd);
 
 			if(triggerEvents(hwnd, msg, wParam, lParam, 0, 0, this))
@@ -3669,7 +3672,7 @@ version(Windows) {
 			HANDLE[] handles;
 			while(ret != 0) {
 				auto waitResult = MsgWaitForMultipleObjectsEx(
-					handles.length, handles.ptr,
+					cast(int) handles.length, handles.ptr,
 					INFINITE, /* timeout */
 					0x04FF, /* QS_ALLINPUT */
 					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
@@ -4919,6 +4922,7 @@ version(Windows) {
 	import core.sys.windows.windows;
 
 	pragma(lib, "gdi32");
+	pragma(lib, "user32");
 
 	extern(Windows) {
 		HWND GetConsoleWindow();
@@ -5142,14 +5146,13 @@ nothrow:
 
 		HBITMAP CreateCompatibleBitmap(HDC, int, int);
 
-		uint SetTimer(HWND, uint, uint, void*);
-		bool KillTimer(HWND, uint);
+		uint SetTimer(HWND, UINT_PTR, uint, void*);
+		bool KillTimer(HWND, UINT_PTR);
 
 
 		enum BI_RGB = 0;
 		enum DIB_RGB_COLORS = 0;
 		enum TRANSPARENT = 1;
-
 	}
 
 	// Input fabrication functions
