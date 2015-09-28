@@ -11,7 +11,7 @@
 			"description": "Window creation and basic drawing",
 			"sourceFiles": ["simpledisplay.d"],
 			"dependencies": {
-				"color": ">=0.0.0"
+				"arsd-official:color": ">=0.0.0"
 			}
 		},
 		{
