@@ -12,7 +12,7 @@
 			"targetType": "sourceLibrary",
 			"libs-posix": ["X11", "Xext", "GL", "GLU"],
 			"libs-windows": ["gdi32"],
-			"configurations" [
+			"configurations": [
 				{
 					"name": "normal"
 				},
