@@ -9,6 +9,7 @@
 		{
 			"name": "simpledisplay",
 			"description": "Window creation and basic drawing",
+			"targetType": "sourceLibrary",
 			"sourceFiles": ["simpledisplay.d", "color.d"]
 		}
 
