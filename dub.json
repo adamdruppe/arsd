@@ -16,7 +16,7 @@
 		},
 		{
 			"name": "color",
-			"description": "Base library for image and color definitions"
+			"description": "Base library for image and color definitions",
 			"sourceFiles": ["color.d"]
 		}
 
