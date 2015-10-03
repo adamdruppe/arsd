@@ -13,6 +13,8 @@
  * the signal handler, ctrl+c can leave your terminal in a bizarre state.)
  *
  * As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
+ *
+ * On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. It basically works now though.
  */
 module terminal;
 
@@ -92,8 +94,15 @@ version(Posix) {
 		enum BLUE_BIT = 4;
 	}
 
-	extern(C) int ioctl(int, int, ...);
-	enum int TIOCGWINSZ = 0x5413;
+	version(linux) {
+		extern(C) int ioctl(int, int, ...);
+		enum int TIOCGWINSZ = 0x5413;
+	} else version(OSX) {
+		import core.stdc.config;
+		extern(C) int ioctl(int, c_ulong, ...);
+		enum TIOCGWINSZ = 1074295912;
+	} else static assert(0, "confirm the value of tiocgwinsz");
+
 	struct winsize {
 		ushort ws_row;
 		ushort ws_col;
@@ -168,9 +177,10 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|xterm-color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
+	:cl=\E[H\E[J:\
 	:ct=\E[3k:ue=\E[m:\
 	:is=\E[m\E[?1l\E>:\
 	:rs=\E[m\E[?1l\E>:\
@@ -327,6 +337,16 @@ struct Terminal {
 					return true;
 
 			return false;
+		}
+
+		// This is a filthy hack because Terminal.app and OS X are garbage who don't
+		// work the way they're advertised. I just have to best-guess hack and hope it
+		// doesn't break anything else. (If you know a better way, let me know!)
+		bool isMacTerminal() {
+			import std.process;
+			import std.string;
+			auto term = environment.get("TERM");
+			return term == "xterm-256color";
 		}
 
 		static string[string] termcapDatabase;
@@ -618,6 +638,7 @@ struct Terminal {
 
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
+			clear();
 			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
 		}
 
@@ -820,9 +841,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void moveTo(int x, int y, ForceOption force = ForceOption.automatic) {
 		if(force != ForceOption.neverSend && (force == ForceOption.alwaysSend || x != _cursorX || y != _cursorY)) {
 			executeAutoHideCursor();
-			version(Posix)
+			version(Posix) {
 				doTermcap("cm", y, x);
-			else version(Windows) {
+			} else version(Windows) {
 
 				flush(); // if we don't do this now, the buffering can screw up the position
 				COORD coord = {cast(short) x, cast(short) y};
@@ -1317,7 +1338,7 @@ struct RealTimeConsoleInput {
 			}
 
 			// try to ensure the terminal is in UTF-8 mode
-			if(terminal.terminalInFamily("xterm", "screen", "linux")) {
+			if(terminal.terminalInFamily("xterm", "screen", "linux") && !terminal.isMacTerminal()) {
 				terminal.writeStringRaw("\033%G");
 			}
 
