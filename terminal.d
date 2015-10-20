@@ -1819,6 +1819,7 @@ struct RealTimeConsoleInput {
 				case "K2":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.PageUp);
 
+				case "ho": // this might not be a key but my thing sometimes returns it... weird...
 				case "kh":
 				case "K1":
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.Home);
@@ -1935,6 +1936,7 @@ struct RealTimeConsoleInput {
 					// look it up in the termcap key database
 					auto cap = terminal.findSequenceInTermcap(sequence);
 					if(cap !is null) {
+							import std.stdio; writeln(cap);
 						return translateTermcapName(cap);
 					} else {
 						if(terminal.terminalInFamily("xterm")) {
