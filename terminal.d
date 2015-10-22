@@ -1936,7 +1936,6 @@ struct RealTimeConsoleInput {
 					// look it up in the termcap key database
 					auto cap = terminal.findSequenceInTermcap(sequence);
 					if(cap !is null) {
-							import std.stdio; writeln(cap);
 						return translateTermcapName(cap);
 					} else {
 						if(terminal.terminalInFamily("xterm")) {
