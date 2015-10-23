@@ -4477,6 +4477,11 @@ class Document : FileResource {
 		return root.getElementsByTagName(tag);
 	}
 
+	/// ditto
+	Element[] getElementsByClassName(string tag) {
+		return root.getElementsByClassName(tag);
+	}
+
 	/** FIXME: btw, this could just be a lazy range...... */
 	Element getFirstElementByTagName(string tag) {
 		if(loose)
