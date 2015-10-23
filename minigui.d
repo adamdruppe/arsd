@@ -147,6 +147,9 @@ class DataView : Widget {
 
 public import simpledisplay;
 
+version(Windows)
+	import core.sys.windows.windows;
+
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
 
@@ -188,8 +191,10 @@ version(Windows) {
 	Single select, multi select, organization, drag+drop
 */
 
-static if(UsingSimpledisplayX11)
-enum windowBackgroundColor = Color(220, 220, 220);
+//static if(UsingSimpledisplayX11)
+version(win32_widgets) {}
+else
+	enum windowBackgroundColor = Color(220, 220, 220);
 
 private const(char)* toStringzInternal(string s) { return (s ~ '\0').ptr; }
 private const(wchar)* toWstringzInternal(in char[] s) {
@@ -483,6 +488,17 @@ version(win32_widgets) {
 				(*te).parentWindow.focusedWidget = lol;
 			}
 
+
+
+			if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
+				SetBkMode(cast(HDC) wParam, TRANSPARENT);
+				return cast(typeof(return)) 
+					//GetStockObject(NULL_BRUSH);
+					// this is the window background color...
+					GetSysColorBrush(COLOR_3DFACE);
+			}
+
+
 			auto pos = getChildPositionRelativeToParentOrigin(*te);
 			lastDefaultPrevented = false;
 			// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
@@ -525,7 +541,7 @@ version(win32_widgets) {
 	}
 }
 
-version(Windows)
+version(win32_widgets)
 extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	if(hwnd is null || hwnd in Widget.nativeMapping)
 		return true;
@@ -702,6 +718,14 @@ class Widget {
 	void delegate(ScreenPainter painter) paint;
 
 	ScreenPainter draw() {
+		int x = this.x, y = this.y;
+		auto parent = this.parent;
+		while(parent) {
+			x += parent.x;
+			y += parent.y;
+			parent = parent.parent;
+		}
+
 		auto painter = parentWindow.win.draw();
 		painter.originX = x;
 		painter.originY = y;
@@ -914,7 +938,7 @@ class Window : Widget {
 
 				if(recipient !is null) {
 					// import std.stdio; writeln(typeid(recipient));
-					version(Windows) {
+					version(win32_widgets) {
 						if(recipient.hwnd !is null)
 							SetFocus(recipient.hwnd);
 					} else {
@@ -1530,6 +1554,8 @@ class ProgressBar : Widget {
 }
 
 class Fieldset : Widget {
+	// FIXME: on Windows,it doesn't draw the background on the label
+	// on X, it doesn't fix the clipping rectangle for it
 	version(win32_widgets)
 		override int paddingTop() { return Window.lineHeight; }
 	else
@@ -2089,6 +2115,13 @@ class TextEdit : Widget {
 			painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
 		};
 
+		caratTimer = new Timer(500, {
+			auto painter = this.draw();
+			painter.pen = Pen(Color.white, 1);
+			painter.rasterOp = RasterOp.xor;
+			painter.drawLine(Point(16, 0), Point(16, 16));
+		});
+
 		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
 			this.focus();
 		};
@@ -2126,6 +2159,12 @@ class TextEdit : Widget {
 	void focus() {
 		assert(parentWindow !is null);
 		parentWindow.focusedWidget = this;
+	}
+
+	version(win32_widgets) {
+
+	} else {
+		Timer caratTimer;
 	}
 }
 

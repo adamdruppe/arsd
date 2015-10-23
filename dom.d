@@ -75,8 +75,6 @@ import std.string;
 
 // the reason this is separated is so I can plug it into D->JS as well, which uses a different base Element class
 
-import arsd.dom;
-
 mixin template DomConvenienceFunctions() {
 
 	/// Calls getElementById, but throws instead of returning null if the element is not found. You can also ask for a specific subclass of Element to dynamically cast to, which also throws if it cannot be done.

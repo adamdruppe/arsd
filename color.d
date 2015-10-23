@@ -1127,3 +1127,10 @@ struct Size {
 	int width;
 	int height;
 }
+
+struct Rectangle {
+	int left;
+	int top;
+	int right;
+	int bottom;
+}

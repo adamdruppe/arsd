@@ -3,6 +3,20 @@
 // subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`
 /*
 	FIXME:
+
+	Text layout needs a lot of work. Plain drawText is useful but too
+	limited. It will need some kind of text context thing which it will
+	update and you can pass it on and get more details out of it.
+
+	It will need a bounding box, a current cursor location that is updated
+	as drawing continues, and various changable facts (which can also be
+	changed on the painter i guess) like font, color, size, background,
+	etc.
+
+	We can also fetch the carat location from it somehow.
+
+	Should prolly be an overload of drawText
+
 		blink taskbar / demand attention cross platform. FlashWindow and demandAttention
 
 		WS_EX_NOACTIVATE
@@ -2224,6 +2238,41 @@ struct ScreenPainter {
 		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
 	}
 
+	static struct TextDrawingContext {
+		Point boundingBoxUpperLeft;
+		Point boundingBoxLowerRight;
+
+		Point currentLocation;
+
+		Point lastDrewUpperLeft;
+		Point lastDrewLowerRight;
+
+		// how do i do right aligned rich text?
+		// i kinda want to do a pre-made drawing then right align
+		// draw the whole block.
+		//
+		// That's exactly the diff: inline vs block stuff.
+
+		// I need to get coordinates of an inline section out too,
+		// not just a bounding box, but a series of bounding boxes
+		// should be ok. Consider what's needed to detect a click
+		// on a link in the middle of a paragraph breaking a line.
+		//
+		// Generally, we should be able to get the rectangles of
+		// any portion we draw.
+		//
+		// It also needs to tell what text is left if it overflows
+		// out of the box, so we can do stuff like float images around
+		// it. It should not attempt to draw a letter that would be
+		// clipped.
+		//
+		// I might also turn off word wrap stuff.
+	}
+
+	void drawText(TextDrawingContext context, string text, uint alignment = 0) {
+		// FIXME
+	}
+
 	/// Drawing an individual pixel is slow. Avoid it if possible.
 	void drawPixel(Point where) {
 		transform(where);
@@ -3622,6 +3671,12 @@ version(Windows) {
 				//case WM_ERASEBKGND:
 					// no need since we double buffer
 				//break;
+				case WM_CTLCOLORBTN:
+				case WM_CTLCOLORSTATIC:
+					SetBkMode(cast(HDC) wParam, TRANSPARENT);
+					return cast(typeof(return)) //GetStockObject(NULL_BRUSH);
+					GetSysColorBrush(COLOR_3DFACE);
+				break;
 				case WM_PAINT: {
 					BITMAP bm;
 					PAINTSTRUCT ps;
@@ -3859,6 +3914,8 @@ version(X11) {
 
 		void dispose() {
     			auto buffer = this.window.impl.buffer;
+
+			this.rasterOp = RasterOp.normal;
 
 			// FIXME: this.window.width/height is probably wrong
 
@@ -4361,6 +4418,7 @@ version(X11) {
 
 			// FIXME: windowType and customizationFlags
 
+			try
 			final switch(windowType) {
 				case WindowTypes.normal:
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
@@ -4410,6 +4468,10 @@ version(X11) {
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DND"(display);
 				break;
 				+/
+			}
+			catch(Exception e) {
+				// XInternAtom failed, prolly a WM
+				// that doesn't support these things
 			}
 
 
