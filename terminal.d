@@ -2782,8 +2782,10 @@ class LineGetter {
 
 		lineLength -= towrite.length;
 
+		string suggestion;
+
 		if(lineLength >= 0) {
-			auto suggestion = ((cursorPosition == towrite.length) && autoSuggest) ? this.suggestion() : null;
+			suggestion = ((cursorPosition == towrite.length) && autoSuggest) ? this.suggestion() : null;
 			if(suggestion.length) {
 				terminal.color(suggestionForeground, background);
 				terminal.write(suggestion);
@@ -3172,7 +3174,15 @@ struct ScrollbackBuffer {
 		int howMany = 0;
 
 		bool firstPartial = false;
-		size_t firstPartialStartIndex;
+
+		static struct Idx {
+			size_t cidx;
+			size_t idx;
+		}
+
+		Idx firstPartialStartIndex;
+
+		// FIXME: should prolly handle \n and \r in here too.
 
 		// we'll work backwards to figure out how much will fit...
 		// this will give accurate per-line things even with changing width and wrapping
@@ -3184,16 +3194,16 @@ struct ScrollbackBuffer {
 		foreach_reverse(line; lines) {
 			int written = 0;
 			int brokenLineCount;
-			size_t[16] lineBreaksBuffer;
-			size_t[] lineBreaks = lineBreaksBuffer[];
-			comp_loop: foreach(component; line.components) {
+			Idx[16] lineBreaksBuffer;
+			Idx[] lineBreaks = lineBreaksBuffer[];
+			comp_loop: foreach(cidx, component; line.components) {
 				auto towrite = component.text;
 				foreach(idx, dchar ch; towrite) {
 					if(written >= width) {
 						if(brokenLineCount == lineBreaks.length)
-							lineBreaks ~= idx;
+							lineBreaks ~= Idx(cidx, idx);
 						else
-							lineBreaks[brokenLineCount] = idx;
+							lineBreaks[brokenLineCount] = Idx(cidx, idx);
 
 						brokenLineCount++;
 
@@ -3241,7 +3251,14 @@ struct ScrollbackBuffer {
 			}
 		
 			terminal.moveTo(x, y + ((linePos >= 0) ? linePos : 0));
-			foreach(component; line.components) {
+
+			auto todo = line.components;
+
+			if(firstPartial) {
+				todo = todo[firstPartialStartIndex.cidx .. $];
+			}
+
+			foreach(component; todo) {
 				terminal.color(component.color, component.background);
 				auto towrite = component.text;
 
@@ -3251,7 +3268,7 @@ struct ScrollbackBuffer {
 					break;
 
 				if(firstPartial) {
-					towrite = towrite[firstPartialStartIndex .. $];
+					towrite = towrite[firstPartialStartIndex.idx .. $];
 					firstPartial = false;
 				}
 
