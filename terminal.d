@@ -3171,25 +3171,57 @@ struct ScrollbackBuffer {
 		int start = cast(int) lines.length;
 		int howMany = 0;
 
+		bool firstPartial = false;
+		size_t firstPartialStartIndex;
+
 		// we'll work backwards to figure out how much will fit...
 		// this will give accurate per-line things even with changing width and wrapping
 		// while being generally efficient - we usually want to show the end of the list
 		// anyway; actually using the scrollback is a bit of an exceptional case.
+
+		// It could probably do this instead of on each redraw, on each resize or insertion.
+		// or at least cache between redraws until one of those invalidates it.
 		foreach_reverse(line; lines) {
 			int written = 0;
-			foreach(component; line.components) {
+			int brokenLineCount;
+			size_t[16] lineBreaksBuffer;
+			size_t[] lineBreaks = lineBreaksBuffer[];
+			comp_loop: foreach(component; line.components) {
 				auto towrite = component.text;
-				written += towrite.length;
-				while(written > width) {
-					written -= width;
-					remaining--;
-					if(remaining <= 0)
-						break;
+				foreach(idx, dchar ch; towrite) {
+					if(written >= width) {
+						if(brokenLineCount == lineBreaks.length)
+							lineBreaks ~= idx;
+						else
+							lineBreaks[brokenLineCount] = idx;
+
+						brokenLineCount++;
+
+						written = 0;
+					}
+
+					if(ch == '\t')
+						written += 8; // FIXME
+					else
+						written++;
 				}
 			}
 
-			remaining--;
+			lineBreaks = lineBreaks[0 .. brokenLineCount];
 
+			foreach_reverse(lineBreak; lineBreaks) {
+				if(remaining == 1) {
+					firstPartial = true;
+					firstPartialStartIndex = lineBreak;
+					break;
+				} else {
+					remaining--;
+				}
+				if(remaining <= 0)
+					break;
+			}
+
+			remaining--;
 
 			start--;
 			howMany++;
@@ -3202,23 +3234,45 @@ struct ScrollbackBuffer {
 
 		foreach(idx, line; lines[start .. start + howMany]) {
 			int written = 0;
+
+			if(linePos < 0) {
+				linePos++;
+				continue;
+			}
 		
 			terminal.moveTo(x, y + ((linePos >= 0) ? linePos : 0));
 			foreach(component; line.components) {
 				terminal.color(component.color, component.background);
 				auto towrite = component.text;
-				while(linePos < 0 && width < towrite.length) {
-					towrite = towrite[width .. $];
-					linePos++;
+
+				again:
+
+				if(linePos >= height)
+					break;
+
+				if(firstPartial) {
+					towrite = towrite[firstPartialStartIndex .. $];
+					firstPartial = false;
 				}
-				terminal.write(towrite);
-				written += towrite.length;
-				while(written > width) {
-					written -= width;
-					linePos++;
-					if(linePos >= height)
-						break;
+
+				foreach(idx, dchar ch; towrite) {
+					if(written >= width) {
+						terminal.write(towrite[0 .. idx]);
+						towrite = towrite[idx .. $];
+						linePos++;
+						written = 0;
+						terminal.moveTo(x, y + linePos);
+						goto again;
+					}
+
+					if(ch == '\t')
+						written += 8; // FIXME
+					else
+						written++;
 				}
+
+				if(towrite.length)
+					terminal.write(towrite);
 			}
 
 			if(written < width)
@@ -3231,6 +3285,7 @@ struct ScrollbackBuffer {
 				break;
 		}
 
+		if(linePos < height)
 		foreach(i; linePos .. height) {
 			if(i >= 0 && i < height) {
 				terminal.moveTo(x, y + i);
@@ -3242,12 +3297,14 @@ struct ScrollbackBuffer {
 
 	void addLine(string line) {
 		lines ~= Line([LineComponent(line)]);
+		if(scrollbackPosition) // if the user is scrolling back, we want to keep them basically centered where they are
+			scrollbackPosition++;
 	}
 
 	void scrollUp(int lines = 1) {
 		scrollbackPosition += lines;
-		if(scrollbackPosition >= this.lines.length)
-			scrollbackPosition = cast(int) this.lines.length - 1;
+		//if(scrollbackPosition >= this.lines.length)
+		//	scrollbackPosition = cast(int) this.lines.length - 1;
 	}
 
 	void scrollDown(int lines = 1) {
