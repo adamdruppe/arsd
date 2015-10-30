@@ -294,16 +294,21 @@ class HttpRequest {
 			}
 		}
 
-		Socket getOpenSocketOnHost(string host, ushort port) {
+		Socket getOpenSocketOnHost(string host, ushort port, bool ssl) {
 			Socket openNewConnection() {
-				auto socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+				Socket socket;
+				if(ssl)
+					socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
+				else
+					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+
 				socket.connect(new InternetAddress(host, port));
 				debug writeln("opening to ", host, ":", port);
 				return socket;
 			}
 
 			import std.string;
-			auto key = format("%s:%s", host, port);
+			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
 
 			if(auto hostListing = key in socketsPerHost) {
 				// try to find an available socket that is already open
@@ -373,7 +378,7 @@ class HttpRequest {
 					continue;
 				}
 
-				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port);
+				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl);
 
 				if(socket !is null) {
 					activeRequestOnSocket[socket] = pc;
@@ -411,6 +416,7 @@ class HttpRequest {
 				int inactiveCount = 0;
 				foreach(sock, request; activeRequestOnSocket) {
 					if(readSet.isSet(sock)) {
+						keep_going:
 						auto got = sock.receive(buffer);
 						if(got < 0) {
 							throw new Exception("receive error");
@@ -432,6 +438,14 @@ class HttpRequest {
 
 						if(request.onDataReceived)
 							request.onDataReceived(request);
+
+						if(auto s = cast(SslClientSocket) sock) {
+							// select doesn't handle the case with stuff
+							// left in the ssl buffer so i'm checking it separately
+							if(s.dataPending()) {
+								goto keep_going;
+							}
+						}
 					}
 
 					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
@@ -476,6 +490,9 @@ class HttpRequest {
 	BodyReadingState bodyReadingState;
 
 	bool closeSocketWhenComplete;
+
+	import std.zlib;
+	UnCompress uncompress;
 
 	void handleIncomingData(scope const ubyte[] dataIn) {
 		if(state == State.waitingForResponse) {
@@ -529,16 +546,18 @@ class HttpRequest {
 						case "Transfer-Encoding":
 							// note that if it is gzipped, it zips first, then chunks the compressed stream.
 							// so we should always dechunk first, then feed into the decompressor
-							if(value == "chunked")
+							if(value.strip == "chunked")
 								bodyReadingState.isChunked = true;
 							else throw new Exception("Unknown Transfer-Encoding: " ~ value);
 						break;
 						case "Content-Encoding":
-							if(value == "gzip")
+							if(value == "gzip") {
 								bodyReadingState.isGzipped = true;
-							else if(value == "deflate")
+								uncompress = new UnCompress();
+							} else if(value == "deflate") {
 								bodyReadingState.isDeflated = true;
-							else throw new Exception("Unknown Content-Encoding: " ~ value);
+								uncompress = new UnCompress();
+							} else throw new Exception("Unknown Content-Encoding: " ~ value);
 						break;
 						case "Set-Cookie":
 							// FIXME handle
@@ -644,32 +663,58 @@ class HttpRequest {
 							}
 						break;
 						case 2: // reading data
-							// FIXME: gunzip
-							responseData.content ~= data[a .. a + bodyReadingState.contentLengthRemaining];
+							auto can = a + bodyReadingState.contentLengthRemaining;
+							if(can > data.length)
+								can = data.length;
 
-							a += bodyReadingState.contentLengthRemaining;
-							a += 1; // skipping a 13 10
-							data = data[a+1 .. $];
-							bodyReadingState.chunkedState = 0;
+							//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
+							//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data[a .. can]);
+							//else
+								responseData.content ~= data[a .. can];
+
+							bodyReadingState.contentLengthRemaining -= can - a;
+							a += can - a;
+							if(bodyReadingState.contentLengthRemaining == 0) {
+								a += 1; // skipping a 13 10
+								bodyReadingState.chunkedState = 0;
+								data = data[a+1 .. $];
+							} else {
+								data = data[a .. $];
+							}
 							goto start_over;
 						case 3: // reading footers
-							goto done; // FIXME
+							//goto done; // FIXME
+							state = State.complete;
+
+							auto n = uncompress.uncompress(responseData.content);
+							n ~= uncompress.flush();
+							responseData.content = cast(ubyte[]) n;
+
+							//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
+							//	responseData.content ~= cast(ubyte[]) uncompress.flush();
+
+							responseData.contentText = cast(string) responseData.content;
 					}
 				}
 
 				done:
-				state = State.complete;
-
-				responseData.contentText = cast(string) responseData.content;
 				// FIXME
 				//if(closeSocketWhenComplete)
 					//socket.close();
 			} else {
-				// FIXME: gunzip
-				responseData.content ~= data;
+				//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
+				//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data);
+				//else
+					responseData.content ~= data;
 				assert(data.length <= bodyReadingState.contentLengthRemaining);
 				bodyReadingState.contentLengthRemaining -= data.length;
 				if(bodyReadingState.contentLengthRemaining == 0) {
+					if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
+						auto n = uncompress.uncompress(responseData.content);
+						n ~= uncompress.flush();
+						responseData.content = cast(ubyte[]) n;
+						//responseData.content ~= cast(ubyte[]) uncompress.flush();
+					}
 					state = State.complete;
 					responseData.contentText = cast(string) responseData.content;
 					// FIXME
@@ -688,8 +733,9 @@ class HttpRequest {
 		requestParameters.method = method;
 		requestParameters.host = parts.host;
 		requestParameters.port = cast(ushort) parts.port;
+		requestParameters.ssl = parts.scheme == "https";
 		if(parts.port == 0)
-			requestParameters.port = 80; // FIXME: SSL
+			requestParameters.port = requestParameters.ssl ? 443 : 80;
 		requestParameters.uri = parts.path;
 	}
 
@@ -751,7 +797,11 @@ class HttpRequest {
 			return; // already sent
 		string headers;
 
-		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri~" HTTP/1.1\r\n";
+		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
+		if(requestParameters.useHttp11)
+			headers ~= " HTTP/1.1\r\n";
+		else
+			headers ~= " HTTP/1.0\r\n";
 		headers ~= "Host: "~requestParameters.host~"\r\n";
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
@@ -759,6 +809,8 @@ class HttpRequest {
 			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
 		if(requestParameters.bodyData.length)
 			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
+		if(requestParameters.acceptGzip)
+			headers ~= "Accept-Encoding: gzip\r\n";
 
 		foreach(header; requestParameters.headers)
 			headers ~= header ~ "\r\n";
@@ -812,6 +864,8 @@ struct HttpRequestParameters {
 	ushort port;
 	string uri;
 
+	bool ssl;
+
 	string userAgent;
 	string authorization;
 
@@ -845,7 +899,7 @@ enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH, ME
 class HttpClient {
 	/* Protocol restrictions, useful to disable when debugging servers */
 	bool useHttp11 = true;
-	bool useGzip = true;
+	bool acceptGzip = true;
 
 	/// Automatically follow a redirection?
 	bool followLocation = false;
@@ -865,6 +919,9 @@ class HttpClient {
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
+
+		request.requestParameters.useHttp11 = this.useHttp11;
+		request.requestParameters.acceptGzip = this.acceptGzip;
 
 		return request;
 	}
@@ -935,18 +992,113 @@ version(testing)
 void main() {
 	import std.stdio;
 	auto client = new HttpClient();
-	auto request = client.navigateTo(Url("http://localhost/chunked.php"));
+	auto request = client.navigateTo(Uri("http://localhost/chunked.php"));
 	request.send();
-	auto request2 = client.navigateTo(Url("http://dlang.org/"));
+	auto request2 = client.navigateTo(Uri("http://dlang.org/"));
 	request2.send();
 
 	{
 	auto response = request2.waitForCompletion();
-	write(cast(string) response.content);
+	//write(cast(string) response.content);
 	}
 
 	auto response = request.waitForCompletion();
 	write(cast(string) response.content);
 
 	writeln(HttpRequest.socketsPerHost);
+}
+
+
+// From sslsocket.d
+
+version=use_openssl;
+
+version(use_openssl) {
+	alias SslClientSocket = OpenSslSocket;
+
+	extern(C) {
+		int SSL_library_init();
+		void OpenSSL_add_all_ciphers();
+		void OpenSSL_add_all_digests();
+		void SSL_load_error_strings();
+
+		struct SSL {}
+		struct SSL_CTX {}
+		struct SSL_METHOD {}
+
+		SSL_CTX* SSL_CTX_new(const SSL_METHOD* method);
+		SSL* SSL_new(SSL_CTX*);
+		int SSL_set_fd(SSL*, int);
+		int SSL_connect(SSL*);
+		int SSL_write(SSL*, const void*, int);
+		int SSL_read(SSL*, void*, int);
+		int SSL_pending(const SSL*);
+		void SSL_free(SSL*);
+		void SSL_CTX_free(SSL_CTX*);
+
+		SSL_METHOD* SSLv3_client_method();
+	}
+
+	shared static this() {
+		SSL_library_init();
+		OpenSSL_add_all_ciphers();
+		OpenSSL_add_all_digests();
+		SSL_load_error_strings();
+	}
+
+	pragma(lib, "crypto");
+	pragma(lib, "ssl");
+
+	class OpenSslSocket : Socket {
+		private SSL* ssl;
+		private SSL_CTX* ctx;
+		private void initSsl() {
+			ctx = SSL_CTX_new(SSLv3_client_method());
+			assert(ctx !is null);
+
+			ssl = SSL_new(ctx);
+			SSL_set_fd(ssl, this.handle);
+		}
+
+		bool dataPending() {
+			return SSL_pending(ssl) > 0;
+		}
+
+		@trusted
+		override void connect(Address to) {
+			super.connect(to);
+			if(SSL_connect(ssl) == -1)
+				throw new Exception("ssl connect");
+		}
+		
+		@trusted
+		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+			return SSL_write(ssl, buf.ptr, cast(uint) buf.length);
+		}
+		override ptrdiff_t send(const(void)[] buf) {
+			return send(buf, SocketFlags.NONE);
+		}
+		@trusted
+		override ptrdiff_t receive(void[] buf, SocketFlags flags) {
+			return SSL_read(ssl, buf.ptr, cast(int)buf.length);
+		}
+		override ptrdiff_t receive(void[] buf) {
+			return receive(buf, SocketFlags.NONE);
+		}
+
+		this(AddressFamily af, SocketType type = SocketType.STREAM) {
+			super(af, type);
+			initSsl();
+		}
+
+		this(socket_t sock, AddressFamily af) {
+			super(sock, af);
+			initSsl();
+		}
+
+		~this() {
+			SSL_free(ssl);
+			SSL_CTX_free(ctx);
+		}
+	}
 }
