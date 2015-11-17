@@ -1,8 +1,15 @@
 {
 	"name": "arsd-official",
-	"targetType": "sourceLibrary",
+	"targetType": "none",
 	"sourcePaths": ["dummy"],
-	"dependencies": {},
+	"dependencies": {
+		"arsd-official:simpledisplay" "~master",
+		"arsd-official:dom" "~master",
+		"arsd-official:cgi" "~master",
+		"arsd-official:http" "~master",
+		"arsd-official:script" "~master",
+		"arsd-official:terminal" "~master"
+	},
 	"description": "A container of various subpackages that do lots of different things. Do not use this as a package itself, instead use the subpackages for what you need (or better yet, ditch dub and do things the simple, reliable way of dmd *.d). So make your dependency like \"arsd-official:simpledisplay\" rather than \"arsd-official\".",
 	"license":"BSL-1.0",
 	"subPackages": [
@@ -37,7 +44,7 @@
 			"sourcefiles": ["cgi.d"]
 		},
 		{
-			"name": "HTTP client",
+			"name": "http",
 			"description": "HTTP client library",
 			"libs-posix": ["crypto", "ssl"],
 			"versions-posix": ["with_openssl"],
