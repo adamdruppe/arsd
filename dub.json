@@ -23,6 +23,38 @@
 				}
 			],
 			"sourceFiles": ["simpledisplay.d", "color.d"]
+		},
+		{
+			"name": "dom",
+			"description": "HTML tag soup DOM library",
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["dom.d", "characterencodings.d"]
+		},
+		{
+			"name": "cgi",
+			"description": "web server library with cgi, fastcgi, scgi, and embedded http server support",
+			"targettype": "sourcelibrary",
+			"sourcefiles": ["cgi.d"]
+		},
+		{
+			"name": "HTTP client",
+			"description": "HTTP client library",
+			"libs-posix": ["crypto", "ssl"],
+			"versions-posix": ["with_openssl"],
+			"targettype": "sourcelibrary",
+			"sourcefiles": ["http2.d"]
+		},
+		{
+			"name": "script",
+			"description": "Small Javascript-like script interpreter with easy D API",
+			"targettype": "sourcelibrary",
+			"sourcefiles": ["script.d", "jsvar.d"]
+		},
+		{
+			"name": "terminal",
+			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["terminal.d"]
 		}
 
 	]
