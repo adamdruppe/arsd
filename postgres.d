@@ -7,6 +7,11 @@ import std.string;
 import std.exception;
 
 // remember to CREATE DATABASE name WITH ENCODING 'utf8'
+//
+// http://www.postgresql.org/docs/8.0/static/libpq-exec.html
+// ExecParams, PQPrepare, PQExecPrepared
+//
+// SQL: `DEALLOCATE name` is how to dealloc a prepared statement.
 
 class PostgreSql : Database {
 	// dbname = name  is probably the most common connection string
@@ -21,6 +26,36 @@ class PostgreSql : Database {
 
 	~this() {
 		PQfinish(conn);
+	}
+
+	/*
+		Prepared statement support
+
+		This will be added to the Database interface eventually in some form,
+		but first I need to implement it for all my providers.
+
+		The common function of those 4 will be what I put in the interface.
+	*/
+
+	ResultSet executePreparedStatement(T...)(string name, T args) {
+		char*[args.length] argsStrings;
+
+		foreach(idx, arg; args) {
+			// FIXME: optimize to remove allocations here
+			static if(!is(typeof(arg) == typeof(null)))
+				argsStrings[idx] = toStringz(to!string(arg));
+			// else make it null
+		}
+
+		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argStrings.ptr, 0, null, 0);
+
+		int ress = PQresultStatus(res);
+		if(ress != PGRES_TUPLES_OK
+			&& ress != PGRES_COMMAND_OK)
+			throw new DatabaseException(error());
+
+		return new PostgresResult(res);
+
 	}
 
 	override void startTransaction() {
@@ -182,6 +217,10 @@ extern(C) {
 
 	PGresult* PQexec(PGconn*, const char*);
 	void PQclear(PGresult*);
+
+	PGresult* PQprepare(PGconn*, const char* stmtName, const char* query, int nParams, const void* paramTypes);
+
+	PGresult* PQexecPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
 
 	int PQresultStatus(PGresult*); // FIXME check return value
 

@@ -3,7 +3,23 @@ module arsd.database;
 public import std.variant;
 import std.string;
 
-import core.vararg;
+/*
+	Database 2.0 plan, WIP:
+
+	// Do I want to do some kind of RAII?
+	auto database = Database(new MySql("connection info"));
+
+	* Prepared statement support
+	* Queries with separate args whenever we can with consistent interface
+	* Query returns some typed info when we can.
+	* ....?
+
+
+	PreparedStatement prepareStatement(string sql);
+
+	Might be worth looking at doing the preparations in static ctors
+	so they are always done once per program...
+*/
 
 interface Database {
 	/// Actually implements the query for the database. The query() method
@@ -16,11 +32,7 @@ interface Database {
 	/// query to start a transaction, only here because sqlite is apparently different in syntax...
 	void startTransaction();
 
-	// FIXME: this would be better as a template, but can't because it is an interface
-
 	/// Just executes a query. It supports placeholders for parameters
-	/// by using ? in the sql string. NOTE: it only accepts string, int, long, and null types.
-	/// Others will fail runtime asserts.
 	final ResultSet query(T...)(string sql, T t) {
 		Variant[] args;
 		foreach(arg; t) {
@@ -33,37 +45,12 @@ interface Database {
 		}
 		return queryImpl(sql, args);
 	}
-	version(none)
-	final ResultSet query(string sql, ...) {
-		Variant[] args;
-		foreach(arg; _arguments) {
-			string a;
-			if(arg == typeid(string) || arg == typeid(immutable(string)) || arg == typeid(const(string)))
-				a = va_arg!string(_argptr);
-			else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
-				auto e = va_arg!int(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(uint) || arg == typeid(immutable(uint)) || arg == typeid(const(uint))) {
-				auto e = va_arg!uint(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(immutable(char))) {
-				auto e = va_arg!char(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
-				auto e = va_arg!long(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(ulong) || arg == typeid(const(ulong)) || arg == typeid(immutable(ulong))) {
-				auto e = va_arg!ulong(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(null)) {
-				a = null;
-			} else assert(0, "invalid type " ~ arg.toString() );
 
-			args ~= Variant(a);
-		}
+	/// Prepared statement api
+	/*
+	PreparedStatement prepareStatement(string sql, int numberOfArguments);
 
-		return queryImpl(sql, args);
-	}
+	*/
 }
 import std.stdio;
 
@@ -709,49 +696,6 @@ class DataObject {
 		return fields[field];
 	}
 
-
-	// vararg hack so property assignment works right, even with null
-	version(none)
-	string opDispatch(string field, string file = __FILE__, size_t line = __LINE__)(...)
-		if((field.length < 8 || field[0..8] != "id_from_") && field != "popFront")
-	{
-		if(_arguments.length == 0) {
-			if(field !in fields)
-				throw new Exception("no such field " ~ field, file, line);
-
-			return fields[field];
-		} else if(_arguments.length == 1) {
-			auto arg = _arguments[0];
-
-			string a;
-			if(arg == typeid(string) || arg == typeid(immutable(string)) || arg == typeid(const(immutable(char)[]))) {
-				a = va_arg!(string)(_argptr);
-			} else if (arg == typeid(int) || arg == typeid(immutable(int)) || arg == typeid(const(int))) {
-				auto e = va_arg!(int)(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(char) || arg == typeid(immutable(char))) {
-				auto e = va_arg!(char)(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(uint) || arg == typeid(immutable(uint)) || arg == typeid(const(uint))) {
-				auto e = va_arg!uint(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(long) || arg == typeid(const(long)) || arg == typeid(immutable(long))) {
-				auto e = va_arg!(long)(_argptr);
-				a = to!string(e);
-			} else if (arg == typeid(null)) {
-				a = null;
-			} else assert(0, "invalid type " ~ arg.toString );
-
-
-			auto setTo = a;
-			setImpl(field, setTo);
-
-			return setTo;
-
-		} else assert(0, "too many arguments");
-
-		assert(0); // should never be reached
-	}
 
 	private void setImpl(string field, string value) {
 		if(field in fields) {

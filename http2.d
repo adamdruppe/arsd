@@ -665,7 +665,7 @@ class HttpRequest {
 						case 2: // reading data
 							auto can = a + bodyReadingState.contentLengthRemaining;
 							if(can > data.length)
-								can = data.length;
+								can = cast(int) data.length;
 
 							//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
 							//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data[a .. can]);
