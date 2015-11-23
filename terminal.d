@@ -1611,11 +1611,14 @@ struct RealTimeConsoleInput {
 			switch(record.EventType) {
 				case KEY_EVENT:
 					auto ev = record.KeyEvent;
+					KeyboardEvent ke;
 					CharacterEvent e;
 					NonCharacterKeyEvent ne;
 
 					e.eventType = ev.bKeyDown ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
 					ne.eventType = ev.bKeyDown ? NonCharacterKeyEvent.Type.Pressed : NonCharacterKeyEvent.Type.Released;
+
+					ke.pressed = ev.bKeyDown ? true : false;
 
 					// only send released events when specifically requested
 					if(!(flags & ConsoleInputFlags.releasedKeys) && !ev.bKeyDown)
@@ -1623,17 +1626,28 @@ struct RealTimeConsoleInput {
 
 					e.modifierState = ev.dwControlKeyState;
 					ne.modifierState = ev.dwControlKeyState;
+					ke.modifierState = ev.dwControlKeyState;
 
 					if(ev.UnicodeChar) {
+						// new style event goes first
+						ke.which = cast(dchar) cast(wchar) ev.UnicodeChar;
+						newEvents ~= InputEvent(ke, terminal);
+
+						// old style event then follows as the fallback
 						e.character = cast(dchar) cast(wchar) ev.UnicodeChar;
 						newEvents ~= InputEvent(e, terminal);
 					} else {
+						// old style event
 						ne.key = cast(NonCharacterKeyEvent.Key) ev.wVirtualKeyCode;
+
+						// new style event. See comment on KeyboardEvent.Key
+						ke.which = cast(KeyboardEvent.Key) (ev.wVirtualKeyCode + 0xF0000);
 
 						// FIXME: make this better. the goal is to make sure the key code is a valid enum member
 						// Windows sends more keys than Unix and we're doing lowest common denominator here
 						foreach(member; __traits(allMembers, NonCharacterKeyEvent.Key))
 							if(__traits(getMember, NonCharacterKeyEvent.Key, member) == ne.key) {
+								newEvents ~= InputEvent(ke, terminal);
 								newEvents ~= InputEvent(ne, terminal);
 								break;
 							}
@@ -1729,18 +1743,36 @@ struct RealTimeConsoleInput {
 		InputEvent[] charPressAndRelease(dchar character) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
+					// new style event
+					InputEvent(KeyboardEvent(true, character, 0), terminal),
+					InputEvent(KeyboardEvent(false, character, 0), terminal),
+					// old style event
 					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal),
 					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0), terminal),
 				];
-			else return [ InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal) ];
+			else return [
+				// new style event
+				InputEvent(KeyboardEvent(true, character, 0), terminal),
+				// old style event
+				InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal)
+			];
 		}
 		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key, uint modifiers = 0) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
+					// new style event FIXME: when the old events are removed, kill the +0xF0000 from here!
+					InputEvent(KeyboardEvent(true, cast(dchar)(key) + 0xF0000, modifiers), terminal),
+					InputEvent(KeyboardEvent(false, cast(dchar)(key) + 0xF0000, modifiers), terminal),
+					// old style event
 					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers), terminal),
 					InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Released, key, modifiers), terminal),
 				];
-			else return [ InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers), terminal) ];
+			else return [
+				// new style event FIXME: when the old events are removed, kill the +0xF0000 from here!
+				InputEvent(KeyboardEvent(true, cast(dchar)(key) + 0xF0000, modifiers), terminal),
+				// old style event
+				InputEvent(NonCharacterKeyEvent(NonCharacterKeyEvent.Type.Pressed, key, modifiers), terminal)
+			];
 		}
 
 		char[30] sequenceBuffer;
@@ -2072,6 +2104,49 @@ struct RealTimeConsoleInput {
 	}
 }
 
+/// The new style of keyboard event
+struct KeyboardEvent {
+	bool pressed;
+	dchar which;
+	uint modifierState;
+
+	bool isCharacter() {
+		return !(which >= Key.min && which <= Key.max);
+	}
+
+	// these match Windows virtual key codes numerically for simplicity of translation there
+	// but are plus a unicode private use area offset so i can cram them in the dchar
+	// http://msdn.microsoft.com/en-us/library/windows/desktop/dd375731%28v=vs.85%29.aspx
+	/// .
+	enum Key : dchar {
+		escape = 0x1b + 0xF0000, /// .
+		F1 = 0x70 + 0xF0000, /// .
+		F2 = 0x71 + 0xF0000, /// .
+		F3 = 0x72 + 0xF0000, /// .
+		F4 = 0x73 + 0xF0000, /// .
+		F5 = 0x74 + 0xF0000, /// .
+		F6 = 0x75 + 0xF0000, /// .
+		F7 = 0x76 + 0xF0000, /// .
+		F8 = 0x77 + 0xF0000, /// .
+		F9 = 0x78 + 0xF0000, /// .
+		F10 = 0x79 + 0xF0000, /// .
+		F11 = 0x7A + 0xF0000, /// .
+		F12 = 0x7B + 0xF0000, /// .
+		LeftArrow = 0x25 + 0xF0000, /// .
+		RightArrow = 0x27 + 0xF0000, /// .
+		UpArrow = 0x26 + 0xF0000, /// .
+		DownArrow = 0x28 + 0xF0000, /// .
+		Insert = 0x2d + 0xF0000, /// .
+		Delete = 0x2e + 0xF0000, /// .
+		Home = 0x24 + 0xF0000, /// .
+		End = 0x23 + 0xF0000, /// .
+		PageUp = 0x21 + 0xF0000, /// .
+		PageDown = 0x22 + 0xF0000, /// .
+	}
+
+
+}
+
 /// Input event for characters
 struct CharacterEvent {
 	/// .
@@ -2211,6 +2286,7 @@ enum ModifierState : uint {
 struct InputEvent {
 	/// .
 	enum Type {
+		KeyboardEvent, ///.
 		CharacterEvent, ///.
 		NonCharacterKeyEvent, /// .
 		PasteEvent, /// The user pasted some text. Not always available, the pasted text might come as a series of character events instead.
@@ -2237,6 +2313,8 @@ struct InputEvent {
 			throw new Exception("Wrong event type");
 		static if(T == Type.CharacterEvent)
 			return characterEvent;
+		else static if(T == Type.KeyboardEvent)
+			return keyboardEvent;
 		else static if(T == Type.NonCharacterKeyEvent)
 			return nonCharacterKeyEvent;
 		else static if(T == Type.PasteEvent)
@@ -2266,6 +2344,10 @@ struct InputEvent {
 		this(CharacterEvent c, Terminal* p) {
 			t = Type.CharacterEvent;
 			characterEvent = c;
+		}
+		this(KeyboardEvent c, Terminal* p) {
+			t = Type.KeyboardEvent;
+			keyboardEvent = c;
 		}
 		this(NonCharacterKeyEvent c, Terminal* p) {
 			t = Type.NonCharacterKeyEvent;
@@ -2300,6 +2382,7 @@ struct InputEvent {
 		Terminal* term;
 
 		union {
+			KeyboardEvent keyboardEvent;
 			CharacterEvent characterEvent;
 			NonCharacterKeyEvent nonCharacterKeyEvent;
 			PasteEvent pasteEvent;
@@ -2367,10 +2450,12 @@ void main() {
 				auto ev = event.get!(InputEvent.Type.SizeChangedEvent);
 				terminal.writeln(ev);
 			break;
-			case InputEvent.Type.CharacterEvent:
-				auto ev = event.get!(InputEvent.Type.CharacterEvent);
-				terminal.writef("\t%s\n", ev);
-				if(ev.character == 'Q') {
+			case InputEvent.Type.KeyboardEvent:
+				auto ev = event.get!(InputEvent.Type.KeyboardEvent);
+					terminal.writef("\t%s", ev);
+				terminal.writef(" (%s)", cast(KeyboardEvent.Key) ev.which);
+				terminal.writeln();
+				if(ev.which == 'Q') {
 					timeToBreak = true;
 					version(with_eventloop) {
 						import arsd.eventloop;
@@ -2378,10 +2463,14 @@ void main() {
 					}
 				}
 
-				if(ev.character == 'C')
+				if(ev.which == 'C')
 					terminal.clear();
 			break;
-			case InputEvent.Type.NonCharacterKeyEvent:
+			case InputEvent.Type.CharacterEvent: // obsolete
+				auto ev = event.get!(InputEvent.Type.CharacterEvent);
+				terminal.writef("\t%s\n", ev);
+			break;
+			case InputEvent.Type.NonCharacterKeyEvent: // obsolete
 				terminal.writef("\t%s\n", event.get!(InputEvent.Type.NonCharacterKeyEvent));
 			break;
 			case InputEvent.Type.PasteEvent:
@@ -3060,11 +3149,11 @@ class LineGetter {
 			break;
 			case InputEvent.Type.UserInterruptionEvent:
 				/* I'll take this as canceling the line. */
-				throw new Exception("user canceled"); // FIXME
+				throw new UserInterruptionException();
 			//break;
 			case InputEvent.Type.HangupEvent:
 				/* I'll take this as canceling the line. */
-				throw new Exception("user hanged up"); // FIXME
+				throw new HangupException();
 			//break;
 			default:
 				/* ignore. ideally it wouldn't be passed to us anyway! */
@@ -3336,6 +3425,12 @@ struct ScrollbackBuffer {
 }
 
 
+class UserInterruptionException : Exception {
+	this() { super("Ctrl+C"); }
+}
+class HangupException : Exception {
+	this() { super("Hup"); }
+}
 
 
 
