@@ -1,21 +1,60 @@
-/**
- * Module for supporting cursor and color manipulation on the console.
- *
- * The main interface for this module is the Terminal struct, which
- * encapsulates the functions of the terminal. Creating an instance of
- * this struct will perform console initialization; when the struct
- * goes out of scope, any changes in console settings will be automatically
- * reverted.
- *
- * Note: on Posix, it traps SIGINT and translates it into an input event. You should
- * keep your event loop moving and keep an eye open for this to exit cleanly; simply break
- * your event loop upon receiving a UserInterruptionEvent. (Without
- * the signal handler, ctrl+c can leave your terminal in a bizarre state.)
- *
- * As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
- *
- * On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. It basically works now though.
- */
+/++
+	Module for supporting cursor and color manipulation on the console as well
+	as full-featured real-time input.
+
+	The main interface for this module is the Terminal struct, which
+	encapsulates the output functions and line-buffered input of the terminal, and
+	RealTimeConsoleInput, which gives real time input.
+	
+	Creating an instance of these structs will perform console initialization. When the struct
+	goes out of scope, any changes in console settings will be automatically reverted.
+
+	Note: on Posix, it traps SIGINT and translates it into an input event. You should
+	keep your event loop moving and keep an eye open for this to exit cleanly; simply break
+	your event loop upon receiving a UserInterruptionEvent. (Without
+	the signal handler, ctrl+c can leave your terminal in a bizarre state.)
+
+	As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
+
+	On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
+	work now though.
+
+	ROADMAP:
+		* The CharacterEvent and NonCharacterKeyEvent types will be removed. Instead, use KeyboardEvent
+		  on new programs.
+
+		* The ScrollbackBuffer will be expanded to be easier to use to partition your screen. It might even
+		  handle input events of some sort.
+
+		* getline I want to be really easy to use both for code and end users. It will need multi-line support
+		  eventually.
+
+		* I might add an expandable event loop and base level widget classes. This may be Linux-specific in places and may overlap with similar functionality in simpledisplay.d. If I can pull it off without a third module, I want them to be compatible with each other too so the two modules can be combined easily. (Currently, they are both compatible with my eventloop.d and can be easily combined through it, but that is a third module.)
+
+		* More advanced terminal features as functions, where available, like cursor changing and full-color functions.
+
+		* The module will eventually be renamed to `arsd.terminal`.
+
+		* More documentation.
+
+	WHAT I WON'T DO:
+		* support everything under the sun. If it isn't default-installed on an OS I or significant number of other people
+		  might actually use, and isn't written by me, I don't really care about it. This means the only supported terminals are:
+
+		  - xterm (and decently xterm compatible emulators like Konsole)
+		  - Windows console
+		  - rxvt (to a lesser extent)
+		  - Linux console
+		  - My terminal emulator family of applications <https://github.com/adamdruppe/terminal-emulator>
+
+		  Anything else is cool if it does work, but I don't want to go out of my way for it.
+
+		* Use other libraries, unless strictly optional. terminal.d is a stand-alone module by default and
+		  always will be.
+
+		* Do a full TUI widget set. I might do some basics and lay a little groundwork, but a full TUI
+		  is outside the scope of this module (unless I can do it really small.)
++/
 module terminal;
 
 // FIXME: ctrl+d eof on stdin
