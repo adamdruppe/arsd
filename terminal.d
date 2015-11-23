@@ -1409,10 +1409,22 @@ struct RealTimeConsoleInput {
 			d();
 	}
 
-	/// Returns true if there iff getch() would not block.
+	/**
+		Returns true if there iff getch() would not block.
+
+		WARNING: kbhit might consume input that would be ignored by getch. This
+		function is really only meant to be used in conjunction with getch. Typically,
+		you should use a full-fledged event loop if you want all kinds of input. kbhit+getch
+		are just for simple keyboard driven applications.
+	*/
 	bool kbhit() {
-		// FIXME this can break with keyup events on Windows
-		return timedCheckForInput(0);
+		auto got = getch(true);
+
+		if(got == dchar.init)
+			return false;
+
+		getchBuffer = got;
+		return true;
 	}
 
 	/// Check for input, waiting no longer than the number of milliseconds
@@ -1440,20 +1452,46 @@ struct RealTimeConsoleInput {
 		}
 	}
 
-	/// Get one character from the terminal, discarding other
+	private bool anyInput_internal() {
+		if(inputQueue.length || timedCheckForInput(0))
+			return true;
+		version(Posix)
+			if(interrupted || windowSizeChanged || hangedUp)
+				return true;
+		return false;
+	}
+
+	private dchar getchBuffer;
+
+	/// Get one key press from the terminal, discarding other
 	/// events in the process. Returns dchar.init upon receiving end-of-file.
-	dchar getch() {
+	///
+	/// Be aware that this may return non-character key events, like F1, F2, arrow keys, etc., as private use Unicode characters. Check them against KeyboardEvent.Key if you like.
+	dchar getch(bool nonblocking = false) {
+		if(getchBuffer != dchar.init) {
+			auto a = getchBuffer;
+			getchBuffer = dchar.init;
+			return a;
+		}
+
+		if(nonblocking && !anyInput_internal())
+			return dchar.init;
+
 		auto event = nextEvent();
-		while(event.type != InputEvent.Type.CharacterEvent || event.characterEvent.eventType == CharacterEvent.Type.Released) {
+		while(event.type != InputEvent.Type.KeyboardEvent || event.keyboardEvent.pressed == false) {
 			if(event.type == InputEvent.Type.UserInterruptionEvent)
-				throw new Exception("Ctrl+c");
+				throw new UserInterruptionException();
 			if(event.type == InputEvent.Type.HangupEvent)
-				throw new Exception("Hangup");
+				throw new HangupException();
 			if(event.type == InputEvent.Type.EndOfFileEvent)
 				return dchar.init;
+
+			if(nonblocking && !anyInput_internal())
+				return dchar.init;
+
 			event = nextEvent();
 		}
-		return event.characterEvent.character;
+		return event.keyboardEvent.which;
 	}
 
 	//char[128] inputBuffer;
@@ -3527,3 +3565,32 @@ class HangupException : Exception {
        XK_KP_8           8                                       ESC O x
        XK_KP_9           9                                       ESC O y
 */
+
+version(Demo_kbhit)
+void main() {
+	auto terminal = Terminal(ConsoleOutputType.linear);
+	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw);
+
+	int a;
+	char ch = '.';
+	while(a < 1000) {
+		a++;
+		if(a % terminal.width == 0) {
+			terminal.write("\r");
+			if(ch == '.')
+				ch = ' ';
+			else
+				ch = '.';
+		}
+
+		if(input.kbhit())
+			terminal.write(input.getch());
+		else
+			terminal.write(ch);
+
+		terminal.flush();
+
+		import core.thread;
+		Thread.sleep(50.msecs);
+	}
+}
