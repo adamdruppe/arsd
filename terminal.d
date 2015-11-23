@@ -2845,6 +2845,12 @@ class LineGetter {
 		line.assumeSafeAppend();
 	}
 
+	///
+	void deleteToEndOfLine() {
+		while(cursorPosition < line.length)
+			deleteChar();
+	}
+
 	int availableLineLength() {
 		return terminal.width - startOfLineX - cast(int) prompt.length - 1;
 	}
@@ -2989,11 +2995,12 @@ class LineGetter {
 				// FIXME: this should be distinct from an empty line when hit at the beginning
 				return false;
 			//break;
-			case InputEvent.Type.CharacterEvent:
-				if(e.characterEvent.eventType == CharacterEvent.Type.Released)
+			case InputEvent.Type.KeyboardEvent:
+				auto ev = e.keyboardEvent;
+				if(ev.pressed == false)
 					return true;
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
-				auto ch = e.characterEvent.character;
+				auto ch = ev.which;
 				switch(ch) {
 					case 4: // ctrl+d will also send a newline-equivalent 
 					case '\r':
@@ -3046,20 +3053,8 @@ class LineGetter {
 							redraw();
 						}
 					break;
-					default:
+					case KeyboardEvent.Key.LeftArrow:
 						justHitTab = false;
-						addChar(ch);
-						redraw();
-				}
-			break;
-			case InputEvent.Type.NonCharacterKeyEvent:
-				if(e.nonCharacterKeyEvent.eventType == NonCharacterKeyEvent.Type.Released)
-					return true;
-				justHitTab = false;
-				/* Navigation */
-				auto key = e.nonCharacterKeyEvent.key;
-				switch(key) {
-					case NonCharacterKeyEvent.Key.LeftArrow:
 						if(cursorPosition)
 							cursorPosition--;
 						if(!multiLineMode) {
@@ -3069,7 +3064,8 @@ class LineGetter {
 
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.RightArrow:
+					case KeyboardEvent.Key.RightArrow:
+						justHitTab = false;
 						if(cursorPosition < line.length)
 							cursorPosition++;
 						if(!multiLineMode) {
@@ -3079,43 +3075,64 @@ class LineGetter {
 
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.UpArrow:
+					case KeyboardEvent.Key.UpArrow:
+						justHitTab = false;
 						loadFromHistory(currentHistoryViewPosition + 1);
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.DownArrow:
+					case KeyboardEvent.Key.DownArrow:
+						justHitTab = false;
 						loadFromHistory(currentHistoryViewPosition - 1);
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.PageUp:
+					case KeyboardEvent.Key.PageUp:
+						justHitTab = false;
 						loadFromHistory(cast(int) history.length);
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.PageDown:
+					case KeyboardEvent.Key.PageDown:
+						justHitTab = false;
 						loadFromHistory(0);
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.Home:
+					case 1: // ctrl+a does home too in the emacs keybindings
+					case KeyboardEvent.Key.Home:
+						justHitTab = false;
 						cursorPosition = 0;
 						horizontalScrollPosition = 0;
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.End:
+					case 5: // ctrl+e from emacs
+					case KeyboardEvent.Key.End:
+						justHitTab = false;
 						cursorPosition = cast(int) line.length;
 						scrollToEnd();
 						redraw();
 					break;
-					case NonCharacterKeyEvent.Key.Insert:
+					case KeyboardEvent.Key.Insert:
+						justHitTab = false;
 						insertMode = !insertMode;
 						// FIXME: indicate this on the UI somehow
 						// like change the cursor or something
 					break;
-					case NonCharacterKeyEvent.Key.Delete:
-						deleteChar();
+					case KeyboardEvent.Key.Delete:
+						justHitTab = false;
+						if(ev.modifierState & ModifierState.control)
+							deleteToEndOfLine();
+						else
+							deleteChar();
+						redraw();
+					break;
+					case 11: // ctrl+k is delete to end of line from emacs
+						justHitTab = false;
+						deleteToEndOfLine();
 						redraw();
 					break;
 					default:
-						/* ignore */
+						justHitTab = false;
+						if(e.keyboardEvent.isCharacter)
+							addChar(ch);
+						redraw();
 				}
 			break;
 			case InputEvent.Type.PasteEvent:
