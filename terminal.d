@@ -24,7 +24,7 @@
 		  on new programs.
 
 		* The ScrollbackBuffer will be expanded to be easier to use to partition your screen. It might even
-		  handle input events of some sort.
+		  handle input events of some sort. Its API may change.
 
 		* getline I want to be really easy to use both for code and end users. It will need multi-line support
 		  eventually.
@@ -3325,7 +3325,7 @@ struct ScrollbackBuffer {
 		string text;
 		int color = Color.DEFAULT;
 		int background = Color.DEFAULT;
-		void delegate() onclick;
+		bool delegate() onclick; // return true if you need to redraw
 	}
 
 	struct Line {
@@ -3343,11 +3343,23 @@ struct ScrollbackBuffer {
 	Line[] lines;
 	string name;
 
+	int x, y, width, height;
+
 	int scrollbackPosition;
 
-	void drawInto(Terminal* terminal, in int x, in int y, in int width, in int height) {
+	void drawInto(Terminal* terminal, in int x = 0, in int y = 0, int width = 0, int height = 0) {
 		if(lines.length == 0)
 			return;
+
+		if(width == 0)
+			width = terminal.width;
+		if(height == 0)
+			height = terminal.height;
+
+		this.x = x;
+		this.y = y;
+		this.width = width;
+		this.height = height;
 
 		/* We need to figure out how much is going to fit
 		   in a first pass, so we can figure out where to
@@ -3365,6 +3377,10 @@ struct ScrollbackBuffer {
 		}
 
 		Idx firstPartialStartIndex;
+
+		// this is private so I know we can safe append
+		clickRegions.length = 0;
+		clickRegions.assumeSafeAppend();
 
 		// FIXME: should prolly handle \n and \r in here too.
 
@@ -3442,7 +3458,7 @@ struct ScrollbackBuffer {
 				todo = todo[firstPartialStartIndex.cidx .. $];
 			}
 
-			foreach(component; todo) {
+			foreach(ref component; todo) {
 				terminal.color(component.color, component.background);
 				auto towrite = component.text;
 
@@ -3458,6 +3474,7 @@ struct ScrollbackBuffer {
 
 				foreach(idx, dchar ch; towrite) {
 					if(written >= width) {
+						clickRegions ~= ClickRegion(&component, terminal.cursorX, terminal.cursorY, written);
 						terminal.write(towrite[0 .. idx]);
 						towrite = towrite[idx .. $];
 						linePos++;
@@ -3472,8 +3489,10 @@ struct ScrollbackBuffer {
 						written++;
 				}
 
-				if(towrite.length)
+				if(towrite.length) {
+					clickRegions ~= ClickRegion(&component, terminal.cursorX, terminal.cursorY, written);
 					terminal.write(towrite);
+				}
 			}
 
 			if(written < width)
@@ -3496,6 +3515,14 @@ struct ScrollbackBuffer {
 		}
 	}
 
+	private struct ClickRegion {
+		LineComponent* component;
+		int xStart;
+		int yStart;
+		int length;
+	}
+	private ClickRegion[] clickRegions;
+
 	void addLine(string line) {
 		lines ~= Line([LineComponent(line)]);
 		if(scrollbackPosition) // if the user is scrolling back, we want to keep them basically centered where they are
@@ -3514,8 +3541,82 @@ struct ScrollbackBuffer {
 			scrollbackPosition = 0;
 	}
 
-	// does scrolling via wheel and keyboard and also clicks on content
-	void handleEvent() {
+	/// Default event handling for this widget. Call this only after drawing it into a rectangle
+	/// and only if the event ought to be dispatched to it (which you determine however you want;
+	/// you could dispatch all events to it, or perhaps filter some out too)
+	///
+	/// Returns true if it should be redrawn
+	bool handleEvent(InputEvent e) {
+		final switch(e.type) {
+			case InputEvent.Type.KeyboardEvent:
+				auto ev = e.keyboardEvent;
+
+				switch(ev.which) {
+					case KeyboardEvent.Key.UpArrow:
+						scrollUp();
+						return true;
+					case KeyboardEvent.Key.DownArrow:
+						scrollDown();
+						return true;
+					case KeyboardEvent.Key.PageUp:
+						scrollUp(height);
+						return true;
+					case KeyboardEvent.Key.PageDown:
+						scrollDown(height);
+						return true;
+					default:
+						// ignore
+				}
+			break;
+			case InputEvent.Type.MouseEvent:
+				auto ev = e.mouseEvent;
+				if(ev.x >= x && ev.x < x + width && ev.y >= y && ev.y < y + height) {
+					// it is inside our box, so do something with it
+					auto mx = ev.x - x;
+					auto my = ev.y - y;
+
+					if(ev.eventType == MouseEvent.Type.Pressed) {
+						if(ev.buttons & MouseEvent.Button.Left) {
+							foreach(region; clickRegions)
+								if(ev.x >= region.xStart && ev.x < region.xStart + region.length && ev.y == region.yStart)
+									if(region.component.onclick !is null)
+										return region.component.onclick();
+						}
+						if(ev.buttons & MouseEvent.Button.ScrollUp) {
+							scrollUp();
+							return true;
+						}
+						if(ev.buttons & MouseEvent.Button.ScrollDown) {
+							scrollDown();
+							return true;
+						}
+					}
+				} else {
+					// outside our area, free to ignore
+				}
+			break;
+			case InputEvent.Type.SizeChangedEvent:
+				// (size changed might be but it needs to be handled at a higher level really anyway)
+				// though it will return true because it probably needs redrawing anyway.
+				return true;
+			case InputEvent.Type.UserInterruptionEvent:
+				throw new UserInterruptionException();
+			case InputEvent.Type.HangupEvent:
+				throw new HangupException();
+			case InputEvent.Type.EndOfFileEvent:
+				// ignore, not relevant to this
+			break;
+			case InputEvent.Type.CharacterEvent:
+			case InputEvent.Type.NonCharacterKeyEvent:
+				// obsolete, ignore them until they are removed
+			break;
+			case InputEvent.Type.CustomEvent:
+			case InputEvent.Type.PasteEvent:
+				// ignored, not relevant to us
+			break;
+		}
+
+		return false;
 	}
 }
 
