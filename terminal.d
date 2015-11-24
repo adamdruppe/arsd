@@ -1196,7 +1196,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(prompt !is null)
 			lineGetter.prompt = prompt;
 
-		auto line = lineGetter.getline();
+		auto input = RealTimeConsoleInput(&this, ConsoleInputFlags.raw);
+		auto line = lineGetter.getline(&input);
 
 		// lineGetter leaves us exactly where it was when the user hit enter, giving best
 		// flexibility to real-time input and cellular programs. The convenience function,
