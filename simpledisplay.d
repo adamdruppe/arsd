@@ -766,8 +766,26 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
+	/// This will be called when WM wants to close your window (i.e. user clicked "close" icon, for example).
+	/// You'll have to call `close()` manually if you set this delegate.
+	version(X11) void delegate () closeQuery;
+
+	/// This will be called when window visibility was changed.
+	void delegate (bool becomesVisible) visibilityChanged;
+
+	/// This will be called when window becomes visible for the first time.
+	/// You can do OpenGL initialization here. Note that in X11 you can't call
+	/// `setAsCurrentOpenGlContext()` right after window creation, or X11 may
+	/// fail to send reparent and map events (hit that with proprietary NVidia drivers).
+	private bool _visibleForTheFirstTimeCalled;
+	void delegate () visibleForTheFirstTime;
+
 	/// Returns true if the window has been closed.
 	final @property bool closed() { return _closed; }
+
+	private bool _visible;
+	/// Returns true if the window is visible (mapped).
+	final @property bool visible() { return _visible; }
 
 	/// Closes the window. If there are no more open windows, the event loop will terminate.
 	void close() {
@@ -877,15 +895,34 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		/// Put your code in here that you want to be drawn automatically when your window is uncovered. Set a handler here *before* entering your event loop any time you pass `OpenGlOptions.yes` to the constructor. Ideally, you will set this delegate immediately after constructing the `SimpleWindow`.
 		void delegate() redrawOpenGlScene;
 
+		/// This will allow you to change OpenGL vsync state.
+		final @property void vsync (bool wait) {
+		  if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
+		  version(X11) {
+		    setAsCurrentOpenGlContext();
+		    glxSetVSync(display, impl.window, wait);
+		  }
+		}
+
+    /// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
+    /// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
+    /// enough without waiting 'em to finish their frame bussiness.
+    bool useGLFinish = true;
+
 		// FIXME: it should schedule it for the end of the current iteration of the event loop...
 		/// call this to invoke your delegate. It automatically sets up the context and flips the buffer. If you need to redraw the scene in response to an event, call this.
 		void redrawOpenGlSceneNow() {
+		  version(X11) if (!this._visible) return; // no need to do this if window is invisible
+			if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
+
 			this.setAsCurrentOpenGlContext();
 
 			if(redrawOpenGlScene !is null)
 				redrawOpenGlScene();
 
 			this.swapOpenGlBuffers();
+			// at least nvidia proprietary crap segfaults on exit if you won't do this and will call glTexSubImage2D() too fast; no, `glFlush()` won't work.
+			if (useGLFinish) glFinish();
 
 		}
 
@@ -909,6 +946,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		void swapOpenGlBuffers() {
 			assert(openglMode == OpenGlOptions.yes);
 			version(X11) {
+				if (!this._visible) return; // no need to do this if window is invisible
+				if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
 				glXSwapBuffers(XDisplayConnection.get, impl.window);
 			} else version(Windows) {
         			SwapBuffers(ghDC);
@@ -3677,6 +3716,14 @@ version(Windows) {
 					return cast(typeof(return)) //GetStockObject(NULL_BRUSH);
 					GetSysColorBrush(COLOR_3DFACE);
 				break;
+				case WM_SHOWWINDOW:
+					this._visible = (wParam != 0);
+					if (!this._visibleForTheFirstTimeCalled) {
+						this._visibleForTheFirstTimeCalled = true;
+						if (this.visibleForTheFirstTime !is null) this.visibleForTheFirstTime();
+					}
+					if (this.visibilityChanged !is null) this.visibilityChanged(this._visible);
+					break;
 				case WM_PAINT: {
 					BITMAP bm;
 					PAINTSTRUCT ps;
@@ -4180,6 +4227,8 @@ version(X11) {
 				display = XOpenDisplay(null);
 				if(display is null)
 					throw new Exception("Unable to open X display");
+				Bool sup;
+				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released
 				version(with_eventloop) {
 					import arsd.eventloop;
 					addFileEventListeners(display.fd, &eventListener, null, null);
@@ -4224,7 +4273,7 @@ version(X11) {
 			if(!xshmQueryCompleted) {
 				int i1, i2, i3;
 				xshmQueryCompleted = true;
-				_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3);
+				_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3) != 0;
 			}
 			return _xshmAvailable;
 		}
@@ -4381,7 +4430,7 @@ version(X11) {
 						0, 0, width, height,
 						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap, &swa);
 
-					glc = glXCreateContext(display, vi, null, GL_TRUE);
+					glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
 					if(glc is null)
 						throw new Exception("glc");
 				}
@@ -4537,9 +4586,11 @@ version(X11) {
 				hints.sizeof / 4);
 		}
 
+		/*k8: unused
 		void createOpenGlContext() {
 
 		}
+		*/
 
 		void closeWindow() {
 			if(buffer)
@@ -4609,6 +4660,7 @@ version(X11) {
 				{
 					// adding Xlib file
 					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
 					ev.data.fd = display.fd;
 					//import std.conv;
@@ -4632,6 +4684,7 @@ version(X11) {
 						throw new Exception("couldn't make pulse timer");
 						
 					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
 					ev.data.fd = pulseFd;
 					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
@@ -4646,6 +4699,7 @@ version(X11) {
 						throw new Exception("epoll wait failure");
 					}
 
+					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
 					foreach(idx; 0 .. nfds) {
 						if(done) break;
 						auto fd = events[idx].data.fd;
@@ -4653,6 +4707,7 @@ version(X11) {
 						auto flags = events[idx].events;
 						if(flags & ep.EPOLLIN) {
 							if(fd == display.fd) {
+							  version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
 								while(!done && XPending(display))
 									done = doXNextEvent(this.display);
 							} else if(fd == pulseFd) {
@@ -4665,6 +4720,7 @@ version(X11) {
 								handlePulse();
 							} else {
 								// some other timer
+								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
 
 								if(Timer* t = fd in Timer.mapping)
 									(*t).trigger();
@@ -4720,6 +4776,7 @@ version(X11) {
 		bool done;
 		XEvent e;
 		XNextEvent(display, &e);
+		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
 
 		version(with_eventloop)
 			import arsd.eventloop;
@@ -4788,6 +4845,7 @@ version(X11) {
 		  case EventType.ConfigureNotify:
 			auto event = e.xconfigure;
 		  	if(auto win = event.window in SimpleWindow.nativeMapping) {
+					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
 				if(event.width != win.width || event.height != win.height) {
 					auto oldWidth = win.width;
 					auto oldHeight = win.height;
@@ -4844,12 +4902,31 @@ version(X11) {
 		  case EventType.ClientMessage:
 		  	if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
 				// user clicked the close button on the window manager
-				if(auto win = e.xclient.window in SimpleWindow.nativeMapping)
-					(*win).close();
+				// FIXME: not implemented on Windows
+				if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+					if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+				}
+			}
+		  break;
+		  case EventType.MapNotify:
+				if(auto win = e.xmap.window in SimpleWindow.nativeMapping) {
+					(*win)._visible = true;
+					if (!(*win)._visibleForTheFirstTimeCalled) {
+						(*win)._visibleForTheFirstTimeCalled = true;
+						if ((*win).visibleForTheFirstTime !is null) (*win).visibleForTheFirstTime();
+					}
+					if ((*win).visibilityChanged !is null) (*win).visibilityChanged(true);
+				}
+		  break;
+		  case EventType.UnmapNotify:
+				if(auto win = e.xunmap.window in SimpleWindow.nativeMapping) {
+					(*win)._visible = false;
+					if ((*win).visibilityChanged !is null) (*win).visibilityChanged(false);
 			}
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
+				(*win)._closed = true; // just in case
 				(*win).destroyed = true;
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
 				if(SimpleWindow.nativeMapping.keys.length == 0)
@@ -5351,6 +5428,94 @@ int XCloseDisplay(Display*);
 
 Bool XQueryExtension(Display*, const char*, int*, int*, int*);
 
+// XIM and other crap
+struct _XOM {}
+struct _XIM {}
+struct _XIC {}
+alias XOM = _XOM*;
+alias XIM = _XIM*;
+alias XIC = _XIC*;
+Bool XSupportsLocale();
+char* XSetLocaleModifiers(const(char)* modifier_list);
+XOM XOpenOM(Display* display, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
+Status XCloseOM(XOM om);
+
+XIM XOpenIM(Display* dpy, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
+Status XCloseIM(XIM im);
+
+char* XGetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
+char* XSetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
+Display* XDisplayOfIM(XIM im);
+char* XLocaleOfIM(XIM im);
+XIC XCreateIC(XIM im, ...) /*_X_SENTINEL(0)*/;
+void XDestroyIC(XIC ic);
+void XSetICFocus(XIC ic);
+void XUnsetICFocus(XIC ic);
+//wchar_t* XwcResetIC(XIC ic);
+char* XmbResetIC(XIC ic);
+char* Xutf8ResetIC(XIC ic);
+char* XSetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
+char* XGetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
+XIM XIMOfIC(XIC ic);
+
+alias XIMStyle = arch_ulong;
+enum : arch_ulong {
+  XIMPreeditArea      = 0x0001,
+  XIMPreeditCallbacks = 0x0002,
+  XIMPreeditPosition  = 0x0004,
+  XIMPreeditNothing   = 0x0008,
+  XIMPreeditNone      = 0x0010,
+  XIMStatusArea       = 0x0100,
+  XIMStatusCallbacks  = 0x0200,
+  XIMStatusNothing    = 0x0400,
+  XIMStatusNone       = 0x0800,
+}
+
+immutable char* XNVaNestedList = "XNVaNestedList";
+immutable char* XNQueryInputStyle = "queryInputStyle";
+immutable char* XNClientWindow = "clientWindow";
+immutable char* XNInputStyle = "inputStyle";
+immutable char* XNFocusWindow = "focusWindow";
+immutable char* XNResourceName = "resourceName";
+immutable char* XNResourceClass = "resourceClass";
+immutable char* XNGeometryCallback = "geometryCallback";
+immutable char* XNDestroyCallback = "destroyCallback";
+immutable char* XNFilterEvents = "filterEvents";
+immutable char* XNPreeditStartCallback = "preeditStartCallback";
+immutable char* XNPreeditDoneCallback = "preeditDoneCallback";
+immutable char* XNPreeditDrawCallback = "preeditDrawCallback";
+immutable char* XNPreeditCaretCallback = "preeditCaretCallback";
+immutable char* XNPreeditStateNotifyCallback = "preeditStateNotifyCallback";
+immutable char* XNPreeditAttributes = "preeditAttributes";
+immutable char* XNStatusStartCallback = "statusStartCallback";
+immutable char* XNStatusDoneCallback = "statusDoneCallback";
+immutable char* XNStatusDrawCallback = "statusDrawCallback";
+immutable char* XNStatusAttributes = "statusAttributes";
+immutable char* XNArea = "area";
+immutable char* XNAreaNeeded = "areaNeeded";
+immutable char* XNSpotLocation = "spotLocation";
+immutable char* XNColormap = "colorMap";
+immutable char* XNStdColormap = "stdColorMap";
+immutable char* XNForeground = "foreground";
+immutable char* XNBackground = "background";
+immutable char* XNBackgroundPixmap = "backgroundPixmap";
+immutable char* XNFontSet = "fontSet";
+immutable char* XNLineSpace = "lineSpace";
+immutable char* XNCursor = "cursor";
+
+immutable char* XNQueryIMValuesList = "queryIMValuesList";
+immutable char* XNQueryICValuesList = "queryICValuesList";
+immutable char* XNVisiblePosition = "visiblePosition";
+immutable char* XNR6PreeditCallback = "r6PreeditCallback";
+immutable char* XNStringConversionCallback = "stringConversionCallback";
+immutable char* XNStringConversion = "stringConversion";
+immutable char* XNResetState = "resetState";
+immutable char* XNHotKey = "hotKey";
+immutable char* XNHotKeyState = "hotKeyState";
+immutable char* XNPreeditState = "preeditState";
+immutable char* XNSeparatorofNestedList = "separatorofNestedList";
+
+
 /* X Shared Memory Extension functions */
 	//pragma(lib, "Xshm");
 	alias arch_ulong ShmSeg;
@@ -5551,7 +5716,7 @@ enum ColorMapNotification:int
 	alias XID Pixmap;
 
 	alias arch_ulong Atom;
-	alias bool Bool;
+	alias int Bool;
 	alias Display XDisplay;
 
 	alias int ByteOrder;
@@ -6767,6 +6932,12 @@ struct Visual
 	alias XErrorHandler = int function(Display*, XErrorEvent*);
 	XErrorHandler XSetErrorHandler(XErrorHandler);
 
+  /* WARNING, this type not in Xlib spec */
+  extern(C) alias XIOErrorHandler = int function (Display* display);
+  XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
+
+  Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+
 	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
 
 	Status XGetGeometry(Display*, Drawable, Window*, int*, int*, uint*, uint*, uint*, uint*);
@@ -7631,6 +7802,27 @@ version(html5) {
 
 version(without_opengl) {} else
 extern(System){
+  version(X11) {
+	char* glXQueryExtensionsString (Display*, int);
+	void* glXGetProcAddress (const(char)*);
+    // GLX_EXT_swap_control
+    alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/uint drawable, int interval);
+    private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
+
+    void glxSetVSync (Display* dpy, /*GLXDrawable*/uint drawable, bool wait) {
+      if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
+      if (_glx_swapInterval_fn is null) {
+        _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
+        if (_glx_swapInterval_fn is null) {
+          _glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
+          return;
+        }
+        version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
+      }
+      _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+    }
+  }
+
 	void glGetIntegerv(int, void*);
 	void glMatrixMode(int);
 	void glPushMatrix();
@@ -7649,8 +7841,14 @@ extern(System){
 	void glVertex2f(float, float);
 	void glVertex3f(float, float, float);
 	void glEnd();
-	void glColor3b(ubyte, ubyte, ubyte);
+	void glColor3b(byte, byte, byte);
+	void glColor3ub(ubyte, ubyte, ubyte);
+	void glColor4b(byte, byte, byte, byte);
+	void glColor4ub(ubyte, ubyte, ubyte, ubyte);
 	void glColor3i(int, int, int);
+	void glColor3ui(uint, uint, uint);
+	void glColor4i(int, int, int, int);
+	void glColor4ui(uint, uint, uint, uint);
 	void glColor3f(float, float, float);
 	void glColor4f(float, float, float, float);
 	void glTranslatef(float, float, float);
@@ -7675,7 +7873,15 @@ extern(System){
 	void glGenTextures(uint, uint*);
 	void glBindTexture(int, int);
 	void glTexParameteri(uint, uint, int);
+	void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 	void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
+	void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
+                       /*GLsizei*/int width, /*GLsizei*/int height,
+                       uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+	void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
+                           /*GLsizei*/int width, /*GLsizei*/int height,
+                           uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+	void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
 
 	void glTexCoord2f(float, float);
@@ -7689,6 +7895,8 @@ extern(System){
 	void glReadBuffer(uint);
 	void glReadPixels(int, int, int, int, int, int, void*);
 
+	void glFlush();
+	void glFinish();
 
 	enum uint GL_FRONT = 0x0404;
 
@@ -7707,6 +7915,18 @@ extern(System){
 	enum uint GL_NEAREST = 0x2600;
 	enum uint GL_LINEAR = 0x2601;
 	enum uint GL_TEXTURE_MAG_FILTER = 0x2800;
+	enum uint GL_TEXTURE_WRAP_S = 0x2802;
+	enum uint GL_TEXTURE_WRAP_T = 0x2803;
+	enum uint GL_REPEAT = 0x2901;
+	enum uint GL_CLAMP = 0x2900;
+	enum uint GL_CLAMP_TO_EDGE = 0x812F;
+	enum uint GL_DECAL = 0x2101;
+	enum uint GL_MODULATE = 0x2100;
+	enum uint GL_TEXTURE_ENV = 0x2300;
+	enum uint GL_TEXTURE_ENV_MODE = 0x2200;
+	enum uint GL_REPLACE = 0x1E01;
+	enum uint GL_LIGHTING = 0x0B50;
+	enum uint GL_DITHER = 0x0BD0;
 
 	enum uint GL_NO_ERROR = 0;
 
@@ -7743,10 +7963,60 @@ version(linux) {
 				return; // already initialized, no need to do it again
 			import ep = core.sys.linux.epoll;
 
-			epollFd = ep.epoll_create1(0);
+			epollFd = ep.epoll_create1(ep.EPOLL_CLOEXEC);
 			if(epollFd == -1)
 				throw new Exception("epoll create failure");
 		}
 	}
 
+}
+
+version(X11) {
+__gshared bool sdx_isUTF8Locale;
+version(linux) {
+  pragma(mangle, "strcasestr")
+  private extern(C) const(char)* strcasestr(const(char)* ns, const(char)* nd) nothrow @nogc;
+}
+
+// This whole crap is used to initialize X11 locale, so that you can use XIM methods later.
+// Yes, there are people with non-utf locale (it's me, Ketmar!), but XIM (composing) will
+// not work right if app/X11 locale is not utf. This sux. That's why all that "utf detection"
+// anal magic is here. I (Ketmar) hope you like it.
+shared static this () {
+  import core.stdc.locale;
+
+  setlocale(LC_ALL, "");
+  // check if out locale is UTF-8
+  auto lct = setlocale(LC_CTYPE, null);
+  if (lct is null) {
+    sdx_isUTF8Locale = false;
+  } else {
+    version(linux) {
+      sdx_isUTF8Locale = (strcasestr(lct, "utf-8") !is null) || (strcasestr(lct, "utf8") !is null);
+    } else {
+      for (size_t idx = 0; lct[idx] && lct[idx+1] && lct[idx+2]; ++idx) {
+        if ((lct[idx+0] == 'u' || lct[idx+0] == 'U') &&
+            (lct[idx+1] == 't' || lct[idx+1] == 'T') &&
+            (lct[idx+2] == 'f' || lct[idx+2] == 'F'))
+        {
+          sdx_isUTF8Locale = true;
+          break;
+        }
+      }
+    }
+  }
+
+  import core.stdc.stdlib : free;
+  import core.stdc.string : strdup;
+  auto olocale = strdup(setlocale(LC_ALL, null));
+  if (sdx_isUTF8Locale) {
+    if (!setlocale(LC_ALL, "")) assert(0, "simpledisplay: can't set locale");
+  } else {
+    if (!setlocale(LC_ALL, "en_US.UTF-8")) assert(0, "simpledisplay: can't set UTF locale");
+  }
+  // this will setup XIM, so we can use it later
+  if (XSupportsLocale()) XSetLocaleModifiers("@im=local");
+  setlocale(LC_ALL, olocale);
+  free(olocale);
+}
 }
