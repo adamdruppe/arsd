@@ -4220,6 +4220,28 @@ version(X11) {
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
 		private static Display* display;
+    private static XIM xim;
+
+    // Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
+    private static void createXIM () {
+      import core.stdc.locale : setlocale, LC_ALL;
+      import core.stdc.stdio : stderr, fprintf;
+      import core.stdc.stdlib : free;
+      import core.stdc.string : strdup;
+
+      static immutable string[] mtry = [ null, "@im=local", "@im=" ];
+
+      auto olocale = strdup(setlocale(LC_ALL, null));
+      setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
+      scope(exit) { setlocale(LC_ALL, olocale); free(olocale); }
+
+      //fprintf(stderr, "opening IM...\n");
+      foreach (string s; mtry) {
+        if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
+        if ((xim = XOpenIM(display, null, null, null)) !is null) return;
+      }
+      fprintf(stderr, "createXIM: XOpenIM failed!\n");
+    }
 
 		///
 		static Display* get() {
@@ -4229,6 +4251,7 @@ version(X11) {
 					throw new Exception("Unable to open X display");
 				Bool sup;
 				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released
+				createXIM();
 				version(with_eventloop) {
 					import arsd.eventloop;
 					addFileEventListeners(display.fd, &eventListener, null, null);
@@ -4390,6 +4413,7 @@ version(X11) {
 		Display* display;
 
 		Pixmap buffer;
+    XIC xic; // input context
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
@@ -4455,6 +4479,20 @@ version(X11) {
 				XFillRectangle(display, cast(Drawable) buffer, gc, 0, 0, width, height);
 				XSetForeground(display, gc, BlackPixel(display, screen));
 			}
+
+      // input context
+      //TODO: create this only for top-level windows, and reuse that?
+      if (XDisplayConnection.xim !is null) {
+        xic = XCreateIC(XDisplayConnection.xim,
+          /*XNInputStyle*/"inputStyle".ptr, XIMPreeditNothing|XIMStatusNothing,
+          /*XNClientWindow*/"clientWindow".ptr, window,
+          /*XNFocusWindow*/"focusWindow".ptr, window,
+          null);
+        if (xic is null) {
+          import core.stdc.stdio : stderr, fprintf;
+          fprintf(stderr, "XCreateIC failed for window %u\n", cast(uint)window);
+        }
+      }
 
 			setTitle(title);
 			SimpleWindow.nativeMapping[window] = this;
@@ -4777,6 +4815,18 @@ version(X11) {
 		XEvent e;
 		XNextEvent(display, &e);
 		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
+    // filter out compose events
+    if (XFilterEvent(&e, None)) {
+      //{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
+      //NOTE: we should ungrab keyboard here, but simpledisplay doesn't use keyboard grabbing (yet)
+      return false;
+    }
+    // process keyboard mapping changes
+    if (e.type == EventType.KeymapNotify) {
+      //{ import core.stdc.stdio : printf; printf("KeymapNotify processed!\n"); }
+      XRefreshKeyboardMapping(&e.xmapping);
+      return false;
+    }
 
 		version(with_eventloop)
 			import arsd.eventloop;
@@ -4895,6 +4945,10 @@ version(X11) {
 		  case EventType.FocusIn:
 		  case EventType.FocusOut:
 		  	if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
+        if (win.xic !is null) {
+          //{ import core.stdc.stdio : printf; printf("XIC focus change!\n"); }
+          if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
+        }
 				if(win.onFocusChange)
 					win.onFocusChange(e.type == EventType.FocusIn);
 			}
@@ -4920,14 +4974,18 @@ version(X11) {
 		  break;
 		  case EventType.UnmapNotify:
 				if(auto win = e.xunmap.window in SimpleWindow.nativeMapping) {
-					(*win)._visible = false;
-					if ((*win).visibilityChanged !is null) (*win).visibilityChanged(false);
+					win._visible = false;
+					if (win.visibilityChanged !is null) win.visibilityChanged(false);
 			}
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
-				(*win)._closed = true; // just in case
-				(*win).destroyed = true;
+				win._closed = true; // just in case
+				win.destroyed = true;
+				if (win.xic !is null) {
+					XDestroyIC(win.xic);
+					win.xic = null; // just in calse
+				}
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
 				if(SimpleWindow.nativeMapping.keys.length == 0)
 					done = true;
@@ -4995,6 +5053,7 @@ version(X11) {
 
 		  case EventType.KeyPress:
 		  case EventType.KeyRelease:
+			//if (e.type == EventType.KeyPress) { import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "X11 keyboard event!\n"); }
 			KeyEvent ke;
 			ke.pressed = e.type == EventType.KeyPress;
 			ke.hardwareCode = e.xkey.keycode;
@@ -5008,35 +5067,45 @@ version(X11) {
 
 			ke.modifierState = e.xkey.state;
 
-			// Xutf8LookupString
-
 			// import std.stdio; writefln("%x", sym);
-			if(sym != 0 && ke.pressed) {
-				char[16] buffer;
-				auto res = XLookupString(&e.xkey, buffer.ptr, buffer.length, null, null);
-				if(res && buffer[0] < 128)
-					ke.character = cast(dchar) buffer[0];
+			wchar_t[128] charbuf = void; // buffer for XwcLookupString; composed value can consist of many chars!
+			int charbuflen = 0; // return value of XwcLookupString
+			if (ke.pressed) {
+				auto win = e.xkey.window in SimpleWindow.nativeMapping;
+				if (win !is null && win.xic !is null) {
+					//{ import core.stdc.stdio : printf; printf("using xic!\n"); }
+					Status status;
+					charbuflen = XwcLookupString(win.xic, &e.xkey, charbuf.ptr, cast(int)charbuf.length, &sym, &status);
+					//{ import core.stdc.stdio : printf; printf("charbuflen=%d\n", charbuflen); }
+				} else {
+					//{ import core.stdc.stdio : printf; printf("NOT using xic!\n"); }
+					// If XIM initialization failed, don't process intl chars. Sorry, boys and girls.
+					char[16] buffer;
+					auto res = XLookupString(&e.xkey, buffer.ptr, buffer.length, null, null);
+					if (res && buffer[0] < 128) charbuf[charbuflen++] = cast(wchar_t)buffer[0];
+				}
 			}
 
-			switch(sym) {
-				case 0xff09: ke.character = '\t'; break;
-				case 0xff8d: // keypad enter
-				case 0xff0d: ke.character = '\n'; break;
-				default : // ignore
+			// if there's no char, subst one
+			if (charbuflen == 0) {
+				switch (sym) {
+					case 0xff09: charbuf[charbuflen++] = '\t'; break;
+					case 0xff8d: // keypad enter
+					case 0xff0d: charbuf[charbuflen++] = '\n'; break;
+					default : // ignore
+				}
 			}
 
-			if(auto win = e.xkey.window in SimpleWindow.nativeMapping) {
-
+			if (auto win = e.xkey.window in SimpleWindow.nativeMapping) {
 				ke.window = *win;
-
-				if((*win).handleKeyEvent)
-					(*win).handleKeyEvent(ke);
+				if (win.handleKeyEvent) win.handleKeyEvent(ke);
 
 				// char events are separate since they are on Windows too
-				if(ke.pressed && ke.character != dchar.init) {
+				// also, xcompose can generate long char sequences
+				if (ke.pressed && charbuflen > 0) {
 					// FIXME: I think Windows sends these on releases... we should try to match that, but idk about repeats.
-					if((*win).handleCharEvent) {
-						(*win).handleCharEvent(ke.character);
+					foreach (immutable dchar ch; charbuf[0..charbuflen]) {
+						if (win.handleCharEvent) win.handleCharEvent(ch);
 					}
 				}
 			}
@@ -5381,6 +5450,7 @@ else version(X11) {
 
 pragma(lib, "X11");
 pragma(lib, "Xext");
+import core.stdc.stddef : wchar_t;
 
 extern(C):
 
@@ -5389,6 +5459,8 @@ int XDefineCursor(Display* display, Window w, Cursor cursor);
 int XUndefineCursor(Display* display, Window w);
 
 int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
+
+int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int wchars_buffer, KeySym* keysym_return, Status* status_return);
 
 char *XKeysymToString(KeySym keysym);
 KeySym XKeycodeToKeysym(
@@ -5470,50 +5542,6 @@ enum : arch_ulong {
   XIMStatusNothing    = 0x0400,
   XIMStatusNone       = 0x0800,
 }
-
-immutable char* XNVaNestedList = "XNVaNestedList";
-immutable char* XNQueryInputStyle = "queryInputStyle";
-immutable char* XNClientWindow = "clientWindow";
-immutable char* XNInputStyle = "inputStyle";
-immutable char* XNFocusWindow = "focusWindow";
-immutable char* XNResourceName = "resourceName";
-immutable char* XNResourceClass = "resourceClass";
-immutable char* XNGeometryCallback = "geometryCallback";
-immutable char* XNDestroyCallback = "destroyCallback";
-immutable char* XNFilterEvents = "filterEvents";
-immutable char* XNPreeditStartCallback = "preeditStartCallback";
-immutable char* XNPreeditDoneCallback = "preeditDoneCallback";
-immutable char* XNPreeditDrawCallback = "preeditDrawCallback";
-immutable char* XNPreeditCaretCallback = "preeditCaretCallback";
-immutable char* XNPreeditStateNotifyCallback = "preeditStateNotifyCallback";
-immutable char* XNPreeditAttributes = "preeditAttributes";
-immutable char* XNStatusStartCallback = "statusStartCallback";
-immutable char* XNStatusDoneCallback = "statusDoneCallback";
-immutable char* XNStatusDrawCallback = "statusDrawCallback";
-immutable char* XNStatusAttributes = "statusAttributes";
-immutable char* XNArea = "area";
-immutable char* XNAreaNeeded = "areaNeeded";
-immutable char* XNSpotLocation = "spotLocation";
-immutable char* XNColormap = "colorMap";
-immutable char* XNStdColormap = "stdColorMap";
-immutable char* XNForeground = "foreground";
-immutable char* XNBackground = "background";
-immutable char* XNBackgroundPixmap = "backgroundPixmap";
-immutable char* XNFontSet = "fontSet";
-immutable char* XNLineSpace = "lineSpace";
-immutable char* XNCursor = "cursor";
-
-immutable char* XNQueryIMValuesList = "queryIMValuesList";
-immutable char* XNQueryICValuesList = "queryICValuesList";
-immutable char* XNVisiblePosition = "visiblePosition";
-immutable char* XNR6PreeditCallback = "r6PreeditCallback";
-immutable char* XNStringConversionCallback = "stringConversionCallback";
-immutable char* XNStringConversion = "stringConversion";
-immutable char* XNResetState = "resetState";
-immutable char* XNHotKey = "hotKey";
-immutable char* XNHotKeyState = "hotKeyState";
-immutable char* XNPreeditState = "preeditState";
-immutable char* XNSeparatorofNestedList = "separatorofNestedList";
 
 
 /* X Shared Memory Extension functions */
@@ -6114,6 +6142,9 @@ int XNextEvent(
     Display*	/* display */,
     XEvent*		/* event_return */
 );
+
+Bool XFilterEvent(XEvent *event, Window window);
+int XRefreshKeyboardMapping(XMappingEvent *event_map);
 
 Status XSetWMProtocols(
     Display*	/* display */,
@@ -7973,17 +8004,16 @@ version(linux) {
 
 version(X11) {
 __gshared bool sdx_isUTF8Locale;
-version(linux) {
-  pragma(mangle, "strcasestr")
-  private extern(C) const(char)* strcasestr(const(char)* ns, const(char)* nd) nothrow @nogc;
-}
 
 // This whole crap is used to initialize X11 locale, so that you can use XIM methods later.
 // Yes, there are people with non-utf locale (it's me, Ketmar!), but XIM (composing) will
 // not work right if app/X11 locale is not utf. This sux. That's why all that "utf detection"
 // anal magic is here. I (Ketmar) hope you like it.
+// We will use `sdx_isUTF8Locale` on XIM creation to enforce UTF-8 locale, so XCompose will
+// always return correct unicode symbols. The detection is here 'cause user can change locale
+// later.
 shared static this () {
-  import core.stdc.locale;
+  import core.stdc.locale : setlocale, LC_ALL, LC_CTYPE;
 
   setlocale(LC_ALL, "");
   // check if out locale is UTF-8
@@ -7991,32 +8021,16 @@ shared static this () {
   if (lct is null) {
     sdx_isUTF8Locale = false;
   } else {
-    version(linux) {
-      sdx_isUTF8Locale = (strcasestr(lct, "utf-8") !is null) || (strcasestr(lct, "utf8") !is null);
-    } else {
-      for (size_t idx = 0; lct[idx] && lct[idx+1] && lct[idx+2]; ++idx) {
-        if ((lct[idx+0] == 'u' || lct[idx+0] == 'U') &&
-            (lct[idx+1] == 't' || lct[idx+1] == 'T') &&
-            (lct[idx+2] == 'f' || lct[idx+2] == 'F'))
-        {
-          sdx_isUTF8Locale = true;
-          break;
-        }
+    for (size_t idx = 0; lct[idx] && lct[idx+1] && lct[idx+2]; ++idx) {
+      if ((lct[idx+0] == 'u' || lct[idx+0] == 'U') &&
+          (lct[idx+1] == 't' || lct[idx+1] == 'T') &&
+          (lct[idx+2] == 'f' || lct[idx+2] == 'F'))
+      {
+        sdx_isUTF8Locale = true;
+        break;
       }
     }
   }
-
-  import core.stdc.stdlib : free;
-  import core.stdc.string : strdup;
-  auto olocale = strdup(setlocale(LC_ALL, null));
-  if (sdx_isUTF8Locale) {
-    if (!setlocale(LC_ALL, "")) assert(0, "simpledisplay: can't set locale");
-  } else {
-    if (!setlocale(LC_ALL, "en_US.UTF-8")) assert(0, "simpledisplay: can't set UTF locale");
-  }
-  // this will setup XIM, so we can use it later
-  if (XSupportsLocale()) XSetLocaleModifiers("@im=local");
-  setlocale(LC_ALL, olocale);
-  free(olocale);
+  //{ import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "UTF8: %s\n", sdx_isUTF8Locale ? "tan".ptr : "ona".ptr); }
 }
 }
