@@ -170,8 +170,8 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 
 		if(e.tagName == "iframe") {
 			// some additional restrictions for supported browsers
-			e.security = "restricted";
-			e.sandbox = "";
+			e.attrs.security = "restricted";
+			e.attrs.sandbox = "";
 		}
 	}
 	return div;
@@ -478,7 +478,7 @@ void translateValidation(Document document) {
 
 		if(formValidation != "") {
 			auto os = f.getAttribute("onsubmit");
-			f.onsubmit = `var failed = null; var failedMessage = ''; with(this) { ` ~ formValidation ~ '\n' ~ ` if(failed != null) { alert('Please complete all required fields.\n' + failedMessage); failed.focus(); return false; } `~os~` return true; }`;
+			f.attrs.onsubmit = `var failed = null; var failedMessage = ''; with(this) { ` ~ formValidation ~ '\n' ~ ` if(failed != null) { alert('Please complete all required fields.\n' + failedMessage); failed.focus(); return false; } `~os~` return true; }`;
 		}
 	}
 }
@@ -493,7 +493,7 @@ void translateDateInputs(Document document) {
 			assert(name !is null);
 			auto button = document.createElement("button");
 			button.type = "button";
-			button.onclick = "displayDatePicker('"~name~"');";
+			button.attrs.onclick = "displayDatePicker('"~name~"');";
 			button.innerText = "Choose...";
 			e.parentNode.insertChildAfter(button, e);
 
@@ -537,21 +537,21 @@ void translateStriping(Document document) {
 /// tries to make an input to filter a list. it kinda sucks.
 void translateFiltering(Document document) {
 	foreach(e; document.getElementsBySelector("input[filter_what]")) {
-		auto filterWhat = e.filter_what;
+		auto filterWhat = e.attrs.filter_what;
 		if(filterWhat[0] == '#')
 			filterWhat = filterWhat[1..$];
 
 		auto fw = document.getElementById(filterWhat);
 		assert(fw !is null);
 
-		foreach(a; fw.getElementsBySelector(e.filter_by)) {
+		foreach(a; fw.getElementsBySelector(e.attrs.filter_by)) {
 			a.addClass("filterable_content");
 		}
 
 		e.removeAttribute("filter_what");
 		e.removeAttribute("filter_by");
 
-		e.onkeydown = e.onkeyup = `
+		e.attrs.onkeydown = e.attrs.onkeyup = `
 			var value = this.value;
 			var a = document.getElementById("`~filterWhat~`");
 			var children = a.childNodes;
@@ -690,13 +690,13 @@ void translateInputTitles(Element rootElement) {
 			if(e.hasClass("has-placeholder"))
 				continue;
 			e.addClass("has-placeholder");
-			e.onfocus = e.onfocus ~ `
+			e.attrs.onfocus = e.attrs.onfocus ~ `
 				removeClass(this, 'default');
 				if(this.value == this.getAttribute('title'))
 					this.value = '';
 			`;
 
-			e.onblur = e.onblur ~ `
+			e.attrs.onblur = e.attrs.onblur ~ `
 				if(this.value == '') {
 					addClass(this, 'default');
 					this.value = this.getAttribute('title');
@@ -711,18 +711,18 @@ void translateInputTitles(Element rootElement) {
 
 			if(e.tagName == "input") {
 				if(e.value == "") {
-					e.value = e.title;
+					e.attrs.value = e.attrs.title;
 					e.addClass("default");
 				}
 			} else {
 				if(e.innerText.length == 0) {
-					e.innerText = e.title;
+					e.innerText = e.attrs.title;
 					e.addClass("default");
 				}
 			}
 		}
 
-		form.onsubmit = os ~ form.onsubmit;
+		form.attrs.onsubmit = os ~ form.attrs.onsubmit;
 	}
 }
 
@@ -1260,7 +1260,7 @@ class CssAtRule : CssPart {
 			if(c == '{') {
 				braceCount++;
 				if(startOfInnerSlice == -1)
-					startOfInnerSlice = i;
+					startOfInnerSlice = cast(int) i;
 			}
 			if(c == '}') {
 				braceCount--;
