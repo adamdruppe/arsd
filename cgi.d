@@ -147,7 +147,7 @@
 module arsd.cgi;
 
 version(embedded_httpd) {
-	version(Posix)
+	version(linux)
 		version=embedded_httpd_processes;
 	else
 		version=embedded_httpd_threads;
@@ -3765,6 +3765,8 @@ version(cgi_with_websocket) {
 		cgi.websocketMode = true;
 		cgi.write("");
 
+		cgi.flush();
+
 		return new WebSocket(cgi);
 	}
 
@@ -3878,6 +3880,7 @@ version(cgi_with_websocket) {
 			//writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
 			cgi.write(headerScratch[0 .. headerScratchPos]);
 			cgi.write(data);
+			cgi.flush();
 		}
 
 		static WebSocketMessage read(ubyte[] d) {
