@@ -4413,7 +4413,7 @@ version(X11) {
 		Display* display;
 
 		Pixmap buffer;
-    XIC xic; // input context
+		XIC xic; // input context
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
@@ -4480,19 +4480,19 @@ version(X11) {
 				XSetForeground(display, gc, BlackPixel(display, screen));
 			}
 
-      // input context
-      //TODO: create this only for top-level windows, and reuse that?
-      if (XDisplayConnection.xim !is null) {
-        xic = XCreateIC(XDisplayConnection.xim,
-          /*XNInputStyle*/"inputStyle".ptr, XIMPreeditNothing|XIMStatusNothing,
-          /*XNClientWindow*/"clientWindow".ptr, window,
-          /*XNFocusWindow*/"focusWindow".ptr, window,
-          null);
-        if (xic is null) {
-          import core.stdc.stdio : stderr, fprintf;
-          fprintf(stderr, "XCreateIC failed for window %u\n", cast(uint)window);
-        }
-      }
+			// input context
+			//TODO: create this only for top-level windows, and reuse that?
+			if (XDisplayConnection.xim !is null) {
+				xic = XCreateIC(XDisplayConnection.xim,
+						/*XNInputStyle*/"inputStyle".ptr, XIMPreeditNothing|XIMStatusNothing,
+						/*XNClientWindow*/"clientWindow".ptr, window,
+						/*XNFocusWindow*/"focusWindow".ptr, window,
+						null);
+				if (xic is null) {
+					import core.stdc.stdio : stderr, fprintf;
+					fprintf(stderr, "XCreateIC failed for window %u\n", cast(uint)window);
+				}
+			}
 
 			setTitle(title);
 			SimpleWindow.nativeMapping[window] = this;
