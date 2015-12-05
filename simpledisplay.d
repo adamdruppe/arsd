@@ -966,7 +966,21 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		You may call this function at any time.
 	+/
 	@property void title(string title) {
+		_title = title;
 		impl.setTitle(title);
+	}
+
+	private string _title;
+
+	@property string title() {
+		return _title;
+		/*
+		version(Windows) {
+
+		} else version(X11) {
+
+		} else static assert(0);
+		*/
 	}
 
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
