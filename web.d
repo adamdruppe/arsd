@@ -3431,7 +3431,7 @@ class Session {
 				// easily stolen. Note: if your shared host doesn't have different
 				// users on the operating system for each user, it's still possible
 				// for them to access this file and hijack your session!
-				version(Posix)
+				version(linux)
 					enforce(linux.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
 				// FIXME: ensure the file's read permissions are locked down
 				// on Windows too.
