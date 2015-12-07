@@ -1,6 +1,8 @@
 // Please note when compiling on Win64, you need to explicitly list
 // `-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
 // subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`
+//
+// On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
 /*
 	FIXME:
 
@@ -7851,10 +7853,10 @@ extern(System){
 	char* glXQueryExtensionsString (Display*, int);
 	void* glXGetProcAddress (const(char)*);
     // GLX_EXT_swap_control
-    alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/uint drawable, int interval);
+    alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
     private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
 
-    void glxSetVSync (Display* dpy, /*GLXDrawable*/uint drawable, bool wait) {
+    void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
       if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
       if (_glx_swapInterval_fn is null) {
         _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
