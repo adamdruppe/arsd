@@ -736,7 +736,7 @@ class HttpRequest {
 		requestParameters.ssl = parts.scheme == "https";
 		if(parts.port == 0)
 			requestParameters.port = requestParameters.ssl ? 443 : 80;
-		requestParameters.uri = parts.path;
+		requestParameters.uri = parts.path.length ? parts.path : "/";
 	}
 
 	~this() {

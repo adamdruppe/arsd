@@ -15,6 +15,7 @@ void writePng(string filename, MemoryImage mi) {
 	else if(auto p = cast(TrueColorImage) mi)
 		png = pngFromImage(p);
 	else assert(0);
+	import std.file;
 	std.file.write(filename, writePng(png));
 }
 

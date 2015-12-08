@@ -2118,6 +2118,10 @@ class LineEdit : Widget {
 }
 
 class TextEdit : Widget {
+
+	// FIXME
+	mixin ExperimentalTextComponent;
+
 	override int minHeight() { return Window.lineHeight; }
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
@@ -2133,29 +2137,46 @@ class TextEdit : Widget {
 	this(Widget parent = null) {
 		super(parent);
 
+		textLayout = new TextLayout(Rectangle(0, 0, width, height));
+
 		this.paint = (ScreenPainter painter) {
 			painter.fillColor = Color.white;
 			painter.drawRectangle(Point(0, 0), width, height);
 
+			textLayout.boundingBox = Rectangle(4, 4, width - 8, height - 8);
+
 			painter.outlineColor = Color.black;
-			painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+
+			textLayout.drawInto(painter);
 		};
 
 		caratTimer = new Timer(500, {
-			if(parentWindow.focusedWidget is this) {
+			if(!parentWindow.win.closed && parentWindow.focusedWidget is this) {
 				auto painter = this.draw();
 				painter.pen = Pen(Color.white, 1);
 				painter.rasterOp = RasterOp.xor;
-				painter.drawLine(Point(16, 0), Point(16, 16));
+				if(lastClick.element) {
+					painter.drawLine(
+						Point(lastClick.element.xOfIndex(lastClick.offset + 1), lastClick.element.boundingBox.top),
+						Point(lastClick.element.xOfIndex(lastClick.offset + 1), lastClick.element.boundingBox.bottom)
+					);
+				} else {
+					painter.drawLine(
+						Point(4, 4),
+						Point(4, 10)
+					);
+				}
 			}
 		});
 
 		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
 			this.focus();
+			lastClick = textLayout.identify(ev.clientX, ev.clientY);
 		};
 
 		defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
-			content = content() ~ cast(char) ev.character;
+			textLayout.addText("" ~ cast(char) ev.character); // FIXME
 			redraw();
 		};
 
@@ -2164,7 +2185,6 @@ class TextEdit : Widget {
 		//super();
 	}
 
-	string _content;
 	@property string content() {
 		version(win32_widgets) {
 			char[4096] buffer;
@@ -2172,16 +2192,19 @@ class TextEdit : Widget {
 			// FIXME: GetWindowTextLength
 			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
 			if(l >= 0)
-				_content = buffer[0 .. l].idup;
+				return buffer[0 .. l].idup;
+		} else {
+			return textLayout.getPlainText();
 		}
-		return _content;
 	}
 	@property void content(string s) {
-		_content = s;
 		version(win32_widgets)
 			SetWindowTextA(hwnd, toStringzInternal(s));
-		else
+		else {
+			textLayout.clear();
+			textLayout.addText(s);
 			redraw();
+		}
 	}
 
 	void focus() {
@@ -2193,6 +2216,8 @@ class TextEdit : Widget {
 
 	} else {
 		Timer caratTimer;
+		TextLayout textLayout;
+		TextIdentifyResult lastClick;
 	}
 }
 

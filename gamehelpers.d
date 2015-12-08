@@ -180,12 +180,15 @@ final class OpenGlTexture {
 	void draw(float x, float y, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
 		glPushMatrix();
 		glTranslatef(x, y, 0);
-		glRotatef(rotation, 0,0, 1);
 
 		if(width == 0)
 			width = this.originalImageWidth;
 		if(height == 0)
 			height = this.originalImageHeight;
+
+		glTranslatef(cast(float) width / 2, cast(float) height / 2, 0);
+		glRotatef(rotation, 0, 0, 1);
+		glTranslatef(cast(float) -width / 2, cast(float) -height / 2, 0);
 
 		glColor4f(cast(float)bg.r/255.0, cast(float)bg.g/255.0, cast(float)bg.b/255.0, cast(float)bg.a / 255.0);
 		glBindTexture(GL_TEXTURE_2D, _tex);
@@ -212,12 +215,17 @@ final class OpenGlTexture {
 	int originalImageWidth() { return _width; }
 	int originalImageHeight() { return _height; } /// ditto
 
+	// explicitly undocumented, i might remove this
+	TrueColorImage from;
+
 	/// Make a texture from an image.
 	this(TrueColorImage from) {
 		assert(from.width > 0 && from.height > 0);
 
 		_width = from.width;
 		_height = from.height;
+
+		this.from = from;
 
 		auto _texWidth = _width;
 		auto _texHeight = _height;
@@ -327,4 +335,29 @@ void rotateAboutAxis(
 	xp = u * (u*x + v*y + w*z) * (1 - cos(theta)) + x * cos(theta) + (-w*y + v*z) * sin(theta);
 	yp = v * (u*x + v*y + w*z) * (1 - cos(theta)) + y * cos(theta) + (w*x - u*z) * sin(theta);
 	zp = w * (u*x + v*y + w*z) * (1 - cos(theta)) + z * cos(theta) + (-v*x + u*y) * sin(theta);
+}
+
+void rotateAboutPoint(
+	float theta, // in RADIANS
+	float originX, float originY,
+	float rotatingX, float rotatingY,
+	out float xp, out float yp)
+{
+	if(theta == 0) {
+		xp = rotatingX;
+		yp = rotatingY;
+		return;
+	}
+
+	rotatingX -= originX;
+	rotatingY -= originY;
+
+	float s = sin(theta);
+	float c = cos(theta);
+
+	float x = rotatingX * c - rotatingY * s;
+	float y = rotatingX * s + rotatingY * c;
+
+	xp = x + originX;
+	yp = y + originY;
 }

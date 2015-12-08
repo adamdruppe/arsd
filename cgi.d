@@ -2523,8 +2523,15 @@ bool isCgiRequestMethod(string s) {
 /// If you want to use a subclass of Cgi with generic main, use this mixin.
 mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
+	mixin CustomCgiMainImpl!(CustomCgi, fun, maxContentLength) customCgiMainImpl_;
 
 	void main(string[] args) {
+		customCgiMainImpl_.cgiMainImpl(args);
+	}
+}
+
+mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
+	void cgiMainImpl(string[] args) {
 
 
 		// we support command line thing for easy testing everywhere

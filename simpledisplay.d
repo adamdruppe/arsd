@@ -805,6 +805,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		hidden = true;
 	}
 
+	/// Hide cursor when it enters the window.
+	void hideCursor() {
+		if (!_closed) impl.hideCursor();
+	}
+
+	/// Don't hide cursor when it enters the window.
+	void showCursor() {
+		if (!_closed) impl.showCursor();
+	}
+
 	private bool _hidden;
 
 	/// Returns true if the window is hidden.
@@ -3395,6 +3405,16 @@ version(Windows) {
 
 	// Mix this into the SimpleWindow class
 	mixin template NativeSimpleWindowImplementation() {
+		int curHidden = 0; // counter
+
+		void hideCursor () {
+			++curHidden;
+		}
+
+		void showCursor () {
+			--curHidden;
+		}
+
 		ScreenPainter getPainter() {
 			return ScreenPainter(this, hwnd);
 		}
@@ -3538,6 +3558,11 @@ version(Windows) {
 					wind.handleMouseEvent(mouse);
 			}
 
+			// hide cursor in client area if necessary
+			if (curHidden > 0 && msg == WM_SETCURSOR && cast(ushort)lParam == HTCLIENT) {
+				SetCursor(null);
+				return 1;
+			}
 
 			switch(msg) {
 				case WM_CHAR:
@@ -4430,6 +4455,8 @@ version(X11) {
 
 		Pixmap buffer;
 		XIC xic; // input context
+		int curHidden = 0; // counter
+		int blankCurPtr = 0;
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
@@ -4439,6 +4466,23 @@ version(X11) {
 
 		ScreenPainter getPainter() {
 			return ScreenPainter(this, window);
+		}
+
+		void hideCursor () {
+			if (curHidden++ == 0) {
+				if (!blankCurPtr) {
+					static const(char)[1] cmbmp = 0;
+					XColor blackcolor = { 0, 0, 0, 0, 0, 0 };
+					Pixmap pm = XCreateBitmapFromData(display, window, cmbmp.ptr, 1, 1);
+					blankCurPtr = XCreatePixmapCursor(display, pm, pm, &blackcolor, &blackcolor, 0, 0);
+					XFreePixmap(display, pm);
+				}
+				XDefineCursor(display, window, blankCurPtr);
+			}
+		}
+
+		void showCursor () {
+			if (--curHidden == 0) XUndefineCursor(display, window);
 		}
 
 		void setTitle(string title) {
@@ -4649,6 +4693,7 @@ version(X11) {
 		void closeWindow() {
 			if(buffer)
 				XFreePixmap(display, buffer);
+			if (blankCurPtr) XFreeCursor(display, blankCurPtr);
 			XDestroyWindow(display, window);
 			XFlush(display);
 		}
@@ -5473,6 +5518,10 @@ extern(C):
 Cursor XCreateFontCursor(Display*, uint shape);
 int XDefineCursor(Display* display, Window w, Cursor cursor);
 int XUndefineCursor(Display* display, Window w);
+
+Pixmap XCreateBitmapFromData(Display* display, Drawable d, const(char)* data, uint width, uint height);
+Cursor XCreatePixmapCursor(Display* display, Pixmap source, Pixmap mask, XColor* foreground_color, XColor* background_color, uint x, uint y);
+int XFreeCursor(Display* display, Cursor cursor);
 
 int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
 

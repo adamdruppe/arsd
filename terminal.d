@@ -57,6 +57,13 @@
 +/
 module terminal;
 
+/*
+	Widgets:
+		tab widget
+		scrollback buffer
+		partitioned canvas
+*/
+
 // FIXME: ctrl+d eof on stdin
 
 // FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
@@ -3321,6 +3328,79 @@ version(Windows) {
 
 
 struct ScrollbackBuffer {
+	this(string name) {
+		this.name = name;
+	}
+
+	void write(T...)(T t) {
+		import std.conv : text;
+		addComponent(text(t), foreground_, background_, null);
+	}
+
+	void writeln(T...)(T t) {
+		write(t, "\n");
+	}
+
+	void writef(T...)(string fmt, T t) {
+		import std.format: format;
+		write(format(fmt, t));
+	}
+
+	void writefln(T...)(string fmt, T t) {
+		writef(fmt, t, "\n");
+	}
+
+	void clear() {
+		lines = null;
+		clickRegions = null;
+		scrollbackPosition = 0;
+	}
+
+	int foreground_ = Color.DEFAULT, background_ = Color.DEFAULT;
+	void color(int foreground, int background) {
+		this.foreground_ = foreground;
+		this.background_ = background;
+	}
+
+	void addComponent(string text, int foreground, int background, bool delegate() onclick) {
+		if(lines.length == 0) {
+			addLine();
+		}
+		bool first = true;
+		import std.algorithm;
+		foreach(t; splitter(text, "\n")) {
+			if(!first) addLine();
+			first = false;
+			lines[$-1].components ~= LineComponent(t, foreground, background, onclick);
+		}
+	}
+
+	void addLine() {
+		lines ~= Line();
+		if(scrollbackPosition) // if the user is scrolling back, we want to keep them basically centered where they are
+			scrollbackPosition++;
+	}
+
+	void addLine(string line) {
+		lines ~= Line([LineComponent(line)]);
+		if(scrollbackPosition) // if the user is scrolling back, we want to keep them basically centered where they are
+			scrollbackPosition++;
+	}
+
+	void scrollUp(int lines = 1) {
+		scrollbackPosition += lines;
+		//if(scrollbackPosition >= this.lines.length)
+		//	scrollbackPosition = cast(int) this.lines.length - 1;
+	}
+
+	void scrollDown(int lines = 1) {
+		scrollbackPosition -= lines;
+		if(scrollbackPosition < 0)
+			scrollbackPosition = 0;
+	}
+
+
+
 	struct LineComponent {
 		string text;
 		int color = Color.DEFAULT;
@@ -3495,9 +3575,11 @@ struct ScrollbackBuffer {
 				}
 			}
 
-			if(written < width)
-			foreach(i; written .. width)
-				terminal.write(" ");
+			if(written < width) {
+				terminal.color(Color.DEFAULT, Color.DEFAULT);
+				foreach(i; written .. width)
+					terminal.write(" ");
+			}
 
 			linePos++;
 
@@ -3505,12 +3587,14 @@ struct ScrollbackBuffer {
 				break;
 		}
 
-		if(linePos < height)
-		foreach(i; linePos .. height) {
-			if(i >= 0 && i < height) {
-				terminal.moveTo(x, y + i);
-				foreach(w; 0 .. width)
-					terminal.write(" ");
+		if(linePos < height) {
+			terminal.color(Color.DEFAULT, Color.DEFAULT);
+			foreach(i; linePos .. height) {
+				if(i >= 0 && i < height) {
+					terminal.moveTo(x, y + i);
+					foreach(w; 0 .. width)
+						terminal.write(" ");
+				}
 			}
 		}
 	}
@@ -3522,24 +3606,6 @@ struct ScrollbackBuffer {
 		int length;
 	}
 	private ClickRegion[] clickRegions;
-
-	void addLine(string line) {
-		lines ~= Line([LineComponent(line)]);
-		if(scrollbackPosition) // if the user is scrolling back, we want to keep them basically centered where they are
-			scrollbackPosition++;
-	}
-
-	void scrollUp(int lines = 1) {
-		scrollbackPosition += lines;
-		//if(scrollbackPosition >= this.lines.length)
-		//	scrollbackPosition = cast(int) this.lines.length - 1;
-	}
-
-	void scrollDown(int lines = 1) {
-		scrollbackPosition -= lines;
-		if(scrollbackPosition < 0)
-			scrollbackPosition = 0;
-	}
 
 	/// Default event handling for this widget. Call this only after drawing it into a rectangle
 	/// and only if the event ought to be dispatched to it (which you determine however you want;
