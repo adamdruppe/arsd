@@ -3963,7 +3963,7 @@ version(X11) {
 				font = XLoadQueryFont(display, xfontstr.ptr);
 				// bitstream is a pretty nice font, but if it fails, fixed is pretty reliable and not bad either
 				if(font is null)
-					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-12-*-*-*-*-*-*-*".ptr);
+					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
 
 				fontAttempted = true;
 			}
@@ -8017,34 +8017,361 @@ version(linux) {
 }
 
 version(X11) {
-__gshared bool sdx_isUTF8Locale;
+	__gshared bool sdx_isUTF8Locale;
 
-// This whole crap is used to initialize X11 locale, so that you can use XIM methods later.
-// Yes, there are people with non-utf locale (it's me, Ketmar!), but XIM (composing) will
-// not work right if app/X11 locale is not utf. This sux. That's why all that "utf detection"
-// anal magic is here. I (Ketmar) hope you like it.
-// We will use `sdx_isUTF8Locale` on XIM creation to enforce UTF-8 locale, so XCompose will
-// always return correct unicode symbols. The detection is here 'cause user can change locale
-// later.
-shared static this () {
-  import core.stdc.locale : setlocale, LC_ALL, LC_CTYPE;
+	// This whole crap is used to initialize X11 locale, so that you can use XIM methods later.
+	// Yes, there are people with non-utf locale (it's me, Ketmar!), but XIM (composing) will
+	// not work right if app/X11 locale is not utf. This sux. That's why all that "utf detection"
+	// anal magic is here. I (Ketmar) hope you like it.
+	// We will use `sdx_isUTF8Locale` on XIM creation to enforce UTF-8 locale, so XCompose will
+	// always return correct unicode symbols. The detection is here 'cause user can change locale
+	// later.
+	shared static this () {
+		import core.stdc.locale : setlocale, LC_ALL, LC_CTYPE;
 
-  setlocale(LC_ALL, "");
-  // check if out locale is UTF-8
-  auto lct = setlocale(LC_CTYPE, null);
-  if (lct is null) {
-    sdx_isUTF8Locale = false;
-  } else {
-    for (size_t idx = 0; lct[idx] && lct[idx+1] && lct[idx+2]; ++idx) {
-      if ((lct[idx+0] == 'u' || lct[idx+0] == 'U') &&
-          (lct[idx+1] == 't' || lct[idx+1] == 'T') &&
-          (lct[idx+2] == 'f' || lct[idx+2] == 'F'))
-      {
-        sdx_isUTF8Locale = true;
-        break;
-      }
-    }
-  }
-  //{ import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "UTF8: %s\n", sdx_isUTF8Locale ? "tan".ptr : "ona".ptr); }
+		setlocale(LC_ALL, "");
+		// check if out locale is UTF-8
+		auto lct = setlocale(LC_CTYPE, null);
+		if (lct is null) {
+			sdx_isUTF8Locale = false;
+		} else {
+			for (size_t idx = 0; lct[idx] && lct[idx+1] && lct[idx+2]; ++idx) {
+				if ((lct[idx+0] == 'u' || lct[idx+0] == 'U') &&
+						(lct[idx+1] == 't' || lct[idx+1] == 'T') &&
+						(lct[idx+2] == 'f' || lct[idx+2] == 'F'))
+				{
+					sdx_isUTF8Locale = true;
+					break;
+				}
+			}
+		}
+		//{ import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "UTF8: %s\n", sdx_isUTF8Locale ? "tan".ptr : "ona".ptr); }
+	}
 }
+
+
+// Don't use this yet. When I'm happy with it, I will move it to the
+// regular module namespace.
+mixin template ExperimentalTextComponent() {
+
+	alias Rectangle = arsd.color.Rectangle;
+
+	// FIXME remove this
+	import std.string : split;
+
+	struct ForegroundColor {
+		Color color;
+		alias color this;
+
+		this(Color c) {
+			color = c;
+		}
+
+		this(int r, int g, int b, int a = 255) {
+			color = Color(r, g, b, a);
+		}
+
+		static ForegroundColor opDispatch(string s)() if(__traits(compiles, ForegroundColor(mixin("Color." ~ s)))) {
+			return ForegroundColor(mixin("Color." ~ s));
+		}
+	}
+
+	struct BackgroundColor {
+		Color color;
+		alias color this;
+
+		this(Color c) {
+			color = c;
+		}
+
+		this(int r, int g, int b, int a = 255) {
+			color = Color(r, g, b, a);
+		}
+
+		static BackgroundColor opDispatch(string s)() if(__traits(compiles, BackgroundColor(mixin("Color." ~ s)))) {
+			return BackgroundColor(mixin("Color." ~ s));
+		}
+	}
+
+	struct InlineElement {
+		string text;
+
+		Color color = Color.black;
+		Color backgroundColor = Color.transparent;
+		ushort styles;
+
+		string font;
+		int fontSize;
+
+		int lineHeight;
+
+		void* identifier;
+
+		Rectangle boundingBox;
+		int[] letterXs; // FIXME: maybe i should do bounding boxes for every character
+
+		int xOfIndex(size_t index) {
+			if(index < letterXs.length)
+				return letterXs[index];
+			else
+				return boundingBox.right;
+		}
+	}
+
+	// Block elements are used entirely for positioning inline elements,
+	// which are the things that are actually drawn.
+	class BlockElement {
+		InlineElement[] parts;
+		uint alignment;
+
+		int whiteSpace; // pre, pre-wrap, wrap
+
+		// inputs
+		Point where;
+		Size minimumSize;
+		Size maximumSize;
+		Rectangle[] excludedBoxes; // like if you want it to write around a floated image or something. Coordinates are relative to the bounding box.
+		void* identifier;
+
+		Rectangle margin;
+		Rectangle padding;
+
+		// outputs
+		Rectangle[] boundingBoxes;
+	}
+
+	struct TextIdentifyResult {
+		InlineElement* element;
+		size_t offset;
+	}
+
+	class TextLayout {
+		BlockElement[] blocks;
+		Rectangle boundingBox;
+
+		BlockElement[] getBlocks() {
+			return blocks;
+		}
+
+		InlineElement[] getTexts() {
+			InlineElement[] elements;
+			foreach(block; blocks)
+				elements ~= block.parts;
+			return elements;
+		}
+
+		string getPlainText() {
+			string text;
+			foreach(block; blocks)
+				foreach(part; block.parts)
+					text ~= part.text;
+			return text;
+		}
+
+		string getHtml() {
+			return null; // FIXME
+		}
+
+		this(Rectangle boundingBox) {
+			this.boundingBox = boundingBox;
+		}
+
+		BlockElement addBlock(Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
+			auto be = new BlockElement();
+			blocks ~= be;
+			return be;
+		}
+
+		void clear() {
+			blocks = null;
+		}
+
+		void addText(Args...)(Args args) {
+			if(blocks.length == 0)
+				addBlock();
+
+			InlineElement ie;
+			foreach(idx, arg; args) {
+				static if(is(typeof(arg) == ForegroundColor))
+					ie.color = arg;
+				else static if(is(typeof(arg) == TextFormat)) {
+					if(arg & 0x8000) // ~TextFormat.something turns it off
+						ie.styles &= arg;
+					else
+						ie.styles |= arg;
+				} else static if(is(typeof(arg) == string)) {
+					static if(idx == 0 && args.length > 1)
+						static assert(0, "Put styles before the string.");
+					size_t lastLineIndex;
+					foreach(cidx, char a; arg) {
+						if(a == '\n') {
+							ie.text = arg[lastLineIndex .. cidx];
+							lastLineIndex = cidx + 1;
+							blocks[$-1].parts ~= ie;
+							ie.text = "\n";
+							blocks[$-1].parts ~= ie;
+							addBlock();
+						} else {
+
+						}
+					}
+
+					ie.text = arg[lastLineIndex .. $];
+					blocks[$-1].parts ~= ie;
+				}
+			}
+		}
+
+		/// Call this if the inputs change. It will reflow everything
+		void redoLayout() {
+
+		}
+
+		TextIdentifyResult identify(int x, int y) {
+			foreach(block; blocks) {
+				foreach(ref part; block.parts) {
+					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
+
+						// FIXME binary search
+						size_t tidx;
+						foreach_reverse(idx, lx; part.letterXs)
+							if(lx <= x) {
+								tidx = idx;
+								break;
+							}
+
+						return TextIdentifyResult(&part, tidx);
+					}
+				}
+			}
+
+			return TextIdentifyResult(null, 0);
+		}
+
+		void drawInto(ScreenPainter painter) {
+			auto pos = Point(boundingBox.left, boundingBox.top);
+
+			int lastHeight;
+			foreach(block; blocks) {
+				pos.x = boundingBox.left;
+				pos.y += lastHeight;
+				foreach(ref part; block.parts) {
+					painter.outlineColor = part.color;
+					painter.fillColor = part.backgroundColor;
+					if(part.text == "\n")
+						continue;
+					auto size = painter.textSize(part.text);
+
+					painter.drawText(pos, part.text);
+					if(part.styles & TextFormat.underline)
+						painter.drawLine(Point(pos.x, pos.y + size.height - 1), Point(pos.x + size.width, pos.y + size.height - 1));
+					if(part.styles & TextFormat.strikethrough)
+						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
+
+					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
+
+					part.letterXs = null;
+					foreach(idx, char c; part.text) {
+							// FIXME: unicode
+						part.letterXs ~= painter.textSize(part.text[0 .. idx]).width + pos.x;
+					}
+
+					pos.x += size.width;
+					if(pos.x >= boundingBox.right) {
+						pos.y += size.height;
+						pos.x = boundingBox.left;
+						lastHeight = 0;
+					} else {
+						lastHeight = size.height;
+					}
+				}
+			}
+
+		}
+
+		/// Carat movement api
+		/// These should give the user a logical result based on what they see on screen...
+		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
+		void moveUp(ref Carat carat) {}
+		void moveDown(ref Carat carat) {}
+		void moveLeft(ref Carat carat) {}
+		void moveRight(ref Carat carat) {}
+		void moveHome(ref Carat carat) {}
+		void moveEnd(ref Carat carat) {}
+		void movePageUp(ref Carat carat) {}
+		void movePageDown(ref Carat carat) {}
+
+		/// Plain text editing api. These work at the current carat inside the selected inline element.
+		void insertText(string text) {}
+		void backspace() {}
+		void delete_() {}
+		void overstrike() {}
+
+		/// Selection API. See also: carat movement.
+		void selectAll() {}
+		void selectNone() {}
+
+		/// Rich text editing api. These allow you to manipulate the meta data of the current element and add new elements.
+		/// They will modify the current selection if there is one and will splice one in if needed.
+		void changeAttributes() {}
+
+
+		/// Text search api. They manipulate the selection and/or carat.
+		void findText(string text) {}
+		void findIndex(size_t textIndex) {}
+
+		// sample event handlers
+
+		void handleEvent(KeyEvent event) {
+			//if(event.type == KeyEvent.Type.KeyPressed) {
+
+			//}
+		}
+
+		void handleEvent(dchar ch) {
+
+		}
+
+		void handleEvent(MouseEvent event) {
+
+		}
+
+		bool contentEditable; // can it be edited?
+		bool contentCaratable; // is there a carat/cursor that moves around in there?
+		bool contentSelectable; // selectable?
+
+		Carat carat;
+		Carat selectionStart;
+		Carat selectionEnd;
+
+		bool insertMode;
+	}
+
+	struct Carat {
+		TextLayout layout;
+		InlineElement* inlineElement;
+		int offset;
+	}
+
+	enum TextFormat : ushort {
+		// decorations
+		underline = 1,
+		strikethrough = 2,
+
+		// font selectors
+
+		bold = 0x4000 | 1, // weight 700
+		light = 0x4000 | 2, // weight 300
+		veryBoldOrLight = 0x4000 | 4, // weight 100 with light, weight 900 with bold
+		// bold | light is really invalid but should give weight 500
+		// veryBoldOrLight without one of the others should just give the default for the font; it should be ignored.
+
+		italic = 0x4000 | 8,
+		smallcaps = 0x4000 | 16,
+	}
+
+	void* findFont(string family, int weight, TextFormat formats) {
+		return null;
+	}
+
 }
