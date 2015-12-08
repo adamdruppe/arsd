@@ -3559,7 +3559,7 @@ version(Windows) {
 			}
 
 			// hide cursor in client area if necessary
-			if (curHidden > 0 && msg == WM_SETCURSOR && cast(ushort)lParam == HTCLIENT) {
+			if (wind.curHidden > 0 && msg == WM_SETCURSOR && cast(ushort)lParam == 1/*HTCLIENT*/) {
 				SetCursor(null);
 				return 1;
 			}

@@ -2193,6 +2193,8 @@ class TextEdit : Widget {
 			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
 			if(l >= 0)
 				return buffer[0 .. l].idup;
+			else
+				return null;
 		} else {
 			return textLayout.getPlainText();
 		}
