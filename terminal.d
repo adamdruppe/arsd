@@ -746,8 +746,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	version(Windows)
 	~this() {
+		flush(); // make sure user data is all flushed before resetting
 		reset();
-		flush();
 		showCursor();
 
 		if(lineGetter !is null)
