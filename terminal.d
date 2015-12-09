@@ -693,14 +693,22 @@ struct Terminal {
 		}
 	}
 
-	version(Windows)
+	version(Windows) {
 		HANDLE hConsole;
+		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
+	}
 
 	version(Windows)
 	/// ditto
 	this(ConsoleOutputType type) {
-		hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 		if(type == ConsoleOutputType.cellular) {
+			hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
+			if(hConsole == INVALID_HANDLE_VALUE) {
+				import std.conv;
+				throw new Exception(to!string(GetLastError()));
+			}
+
+			SetConsoleActiveScreenBuffer(hConsole);
 			/*
 http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
 http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
@@ -714,11 +722,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			*/
 
 			// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
-			size.X = 80;
-			size.Y = 24;
-			SetConsoleScreenBufferSize(hConsole, size);
-			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
+			//size.X = 80;
+			//size.Y = 24;
+			//SetConsoleScreenBufferSize(hConsole, size);
+
+			clear();
+		} else {
+			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 		}
+
+		GetConsoleScreenBufferInfo(hConsole, &originalSbi);
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
@@ -752,6 +765,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		if(lineGetter !is null)
 			lineGetter.dispose();
+
+		auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
+		SetConsoleActiveScreenBuffer(stdo);
+		if(hConsole !is stdo)
+			CloseHandle(hConsole);
 	}
 
 	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
@@ -795,7 +813,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 							setTob = cast(ushort) (foreground & ~Bright);
 					}
 					SetConsoleTextAttribute(
-						GetStdHandle(STD_OUTPUT_HANDLE),
+						hConsole,
 						cast(ushort)((setTob << 4) | setTof));
 				}
 			} else {
@@ -857,8 +875,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void reset() {
 		version(Windows)
 			SetConsoleTextAttribute(
-				GetStdHandle(STD_OUTPUT_HANDLE),
-				cast(ushort)((Color.black << 4) | Color.white));
+				hConsole,
+				originalSbi.wAttributes);
 		else
 			writeStringRaw("\033[0m");
 
@@ -1000,12 +1018,17 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				}
 			}
 		} else version(Windows) {
-			while(writeBuffer.length) {
+			import std.conv;
+			// FIXME: I'm not sure I'm actually happy with this allocation but
+			// it probably isn't a big deal. At least it has unicode support now.
+			wstring writeBufferw = to!wstring(writeBuffer);
+			while(writeBufferw.length) {
 				DWORD written;
-				/* FIXME: WriteConsoleW */
-				WriteConsoleA(hConsole, writeBuffer.ptr, writeBuffer.length, &written, null);
-				writeBuffer = writeBuffer[written .. $];
+				WriteConsoleW(hConsole, writeBufferw.ptr, writeBufferw.length, &written, null);
+				writeBufferw = writeBufferw[written .. $];
 			}
+
+			writeBuffer = null;
 		}
 	}
 
@@ -1183,7 +1206,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			COORD coordScreen;
 			FillConsoleOutputCharacterA(hConsole, ' ', conSize, coordScreen, &c);
 			FillConsoleOutputAttribute(hConsole, csbi.wAttributes, conSize, coordScreen, &c);
-			moveTo(0, 0);
+			moveTo(0, 0, ForceOption.alwaysSend);
 		}
 
 		_cursorX = 0;
