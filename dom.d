@@ -4726,7 +4726,7 @@ int intFromHex(string hex) {
 			// It is important that the 2 character possibilities go first here for accurate lexing
 		    "~=", "*=", "|=", "^=", "$=", "!=", // "::" should be there too for full standard
 		    "<<", // my any-parent extension (reciprocal of whitespace)
-		    " - ", // previous-sibling extension (whitespace required to disambiguate tag-names)
+		    // " - ", // previous-sibling extension (whitespace required to disambiguate tag-names)
 		    ".", ">", "+", "*", ":", "[", "]", "=", "\"", "#", ",", " ", "~", "<"
 		]; // other is white space or a name.
 
@@ -4757,7 +4757,7 @@ int intFromHex(string hex) {
 			foreach (sizediff_t tidx, immutable token; selectorTokens) {
 				if (c == token[0]) {
 					if (token.length > 1) {
-						assert(token.length == 2); // we don't have 3-char tokens yet
+						assert(token.length == 2, token); // we don't have 3-char tokens yet
 						if (str.length-stpos < 2 || str[stpos+1] != token[1]) continue;
 					}
 					return tidx;
@@ -4782,9 +4782,15 @@ int intFromHex(string hex) {
 						}
 						++curpos;
 					}
-				} else if (ch <= 32) {
-					// we should consider unicode spaces too, but... unicode sux anyway.
+				} else if (ch < 32) { // The < instead of <= is INTENTIONAL. See note from adr below.
 					++curpos;
+
+					// FROM ADR: This does NOT catch ' '! Spaces have semantic meaning in CSS! While
+					// "foo bar" is clear, and can only have one meaning, consider ".foo .bar".
+					// That is not the same as ".foo.bar". If the space is stripped, important
+					// information is lost, despite the tokens being separatable anyway.
+					//
+					// The parser really needs to be aware of the presence of a space.
 				} else {
 					break;
 				}
@@ -5187,7 +5193,7 @@ int intFromHex(string hex) {
 		SelectorPart current;
 		void commit() {
 			// might as well skip null items
-			if(current !is SelectorPart.init) {
+			if(!current.isCleanSlateExceptSeparation()) {
 				s.parts ~= current;
 				current = current.init; // start right over
 			}
@@ -5233,6 +5239,11 @@ int intFromHex(string hex) {
 								current.tagNameFilter = "*";
 							break;
 							case " ":
+								// If some other separation has already been set,
+								// this is irrelevant whitespace, so we should skip it.
+								// this happens in the case of "foo > bar" for example.
+								if(current.isCleanSlateExceptSeparation() && current.separation > 0)
+									continue;
 								commit();
 								current.separation = 0; // tree
 							break;
