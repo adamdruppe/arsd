@@ -4900,6 +4900,12 @@ int intFromHex(string hex) {
 
 		int separation = -1; /// -1 == only itself; the null selector, 0 == tree, 1 == childNodes, 2 == childAfter, 3 == youngerSibling, 4 == parentOf
 
+		bool isCleanSlateExceptSeparation() {
+			auto cp = this;
+			cp.separation = -1;
+			return cp is SelectorPart.init;
+		}
+
 		///.
 		string toString() {
 			string ret;
@@ -4907,10 +4913,10 @@ int intFromHex(string hex) {
 				default: assert(0);
 				case -1: break;
 				case 0: ret ~= " "; break;
-				case 1: ret ~= ">"; break;
-				case 2: ret ~= "+"; break;
-				case 3: ret ~= "~"; break;
-				case 4: ret ~= "<"; break;
+				case 1: ret ~= " > "; break;
+				case 2: ret ~= " + "; break;
+				case 3: ret ~= " ~ "; break;
+				case 4: ret ~= " < "; break;
 			}
 			ret ~= tagNameFilter;
 			foreach(a; attributesPresent) ret ~= "[" ~ a ~ "]";
@@ -5181,9 +5187,8 @@ int intFromHex(string hex) {
 		SelectorPart current;
 		void commit() {
 			// might as well skip null items
-			if(current != current.init) {
+			if(current !is SelectorPart.init) {
 				s.parts ~= current;
-
 				current = current.init; // start right over
 			}
 		}
@@ -5211,13 +5216,16 @@ int intFromHex(string hex) {
 					if(tid == -1) {
 						if(!caseSensitiveTags)
 							token = token.toLower();
-						if(current.tagNameFilter) {
+
+						if(current.isCleanSlateExceptSeparation()) {
+							current.tagNameFilter = token;
+						} else {
 							// if it was already set, we must see two thingies
 							// separated by whitespace...
 							commit();
 							current.separation = 0; // tree
+							current.tagNameFilter = token;
 						}
-						current.tagNameFilter = token;
 					} else {
 						// Selector operators
 						switch(token) {
