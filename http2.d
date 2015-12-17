@@ -686,11 +686,12 @@ class HttpRequest {
 							//goto done; // FIXME
 							state = State.complete;
 
-							auto n = uncompress.uncompress(responseData.content);
-							n ~= uncompress.flush();
-							responseData.content = cast(ubyte[]) n;
+							if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
+								auto n = uncompress.uncompress(responseData.content);
+								n ~= uncompress.flush();
+								responseData.content = cast(ubyte[]) n;
+							}
 
-							//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
 							//	responseData.content ~= cast(ubyte[]) uncompress.flush();
 
 							responseData.contentText = cast(string) responseData.content;
