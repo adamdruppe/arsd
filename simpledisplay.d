@@ -27,6 +27,8 @@
 
 		moving windows. resizing windows.
 
+		hide cursor, capture cursor, change cursor.
+
 	REMEMBER: simpledisplay does NOT have to do everything! It just needs to make
 	sure the pieces are there to do its job easily and make other jobs possible.
 */
@@ -4456,7 +4458,7 @@ version(X11) {
 		Pixmap buffer;
 		XIC xic; // input context
 		int curHidden = 0; // counter
-		int blankCurPtr = 0;
+		Cursor blankCurPtr = 0;
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
