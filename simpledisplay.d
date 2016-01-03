@@ -74,6 +74,7 @@
 
 	See the examples and topics list below to learn more.
 
+
 	<h2>About this documentation</h2>
 
 	The goal here is to give some complete programs as overview examples first, then a look at each major feature with working examples first, then, finally, the inline class and method list will follow.
@@ -405,6 +406,7 @@
 		The free functions $(M getClipboardText) and $(M setClipboardText) consist of simpledisplay's cross-platform clipboard support at this time.
 
 		It also has helpers for handling X-specific events.
+
 	<h3>$(DDOC_ANCHOR topic-timers) Timers</h3>
 		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, $(M Timer).
 
@@ -456,12 +458,15 @@
 		simpledisplay carries a lot of code to help implement itself without extra dependencies, and much of this code is available for you too, so you may extend the functionality yourself.
 
 		See also: `xwindows.d` from my github.
+
 	<h3>$(DDOC_ANCHOR topic-os-extension) Extending with OS-specific functionality</h3>
 		`handleNativeEvent` and `handleNativeGlobalEvent`.
+
 	<h3>$(DDOC_ANCHOR topic-integration) Integration with other libraries</h3>
 		Integration with a third-party event loop is possible.
 
 		On Linux, you might want to support both terminal input and GUI input. You can do this by using simpledisplay together with eventloop.d and terminal.d.
+
 	<h3>$(DDOC_ANCHOR topic-guis) GUI widgets</h3>
 		simpledisplay does not provide GUI widgets such as text areas, buttons, checkboxes, etc. It only gives basic windows, the ability to draw on it, receive input from it, and access native information for extension. You may write your own gui widgets with these, but you don't have to because I already did for you!
 
@@ -645,6 +650,7 @@ else
 	After selecting a type from $(M WindowTypes), you may further customize
 	its behavior by setting one or more of these flags.
 
+
 	The different window types have different meanings of `normal`. If the
 	window type already is a good match for what you want to do, you should
 	just use `WindowFlags.normal`, the default, which will do the right thing
@@ -662,8 +668,9 @@ enum WindowFlags : int {
 	When creating a window, you can pass a type to SimpleWindow's constructor,
 	then further customize the window by changing `WindowFlags`.
 
+
 	This list is based on the EMWH spec for X11.
-	($L http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896)
+	$(L http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896)
 +/
 enum WindowTypes : int {
 	/// An ordinary application window.
@@ -685,6 +692,7 @@ enum WindowTypes : int {
 
 /++
 	The flagship window class.
+
 
 	SimpleWindow tries to make ordinary windows very easy to create and use without locking you
 	out of more advanced or complex features of the underlying windowing system.
@@ -853,7 +861,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 				handlePulse = handler;
 			} else static if(__traits(compiles, handleMouseEvent = handler)) {
 				handleMouseEvent = handler;
-			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof ~ "\nNote: if you want to capture keycode events, this recently changed to (KeyEvent event) instead of the old (int code) and second draft, (int code, bool pressed), key, character, and pressed are members of KeyEvent.");
+			} else static assert(0, "I can't use this event handler " ~ typeof(handler).stringof ~ "\nHave you tried using the delegate keyword?");
 		}
 	}
 
@@ -972,6 +980,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/++
 		Set the window title, which is visible on the window manager title bar, operating system taskbar, etc.
 
+
 		---
 			auto window = new SimpleWindow(100, 100, "First title");
 			window.title = "A new title";
@@ -986,6 +995,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	private string _title;
 
+	/// Gets the title
 	@property string title() {
 		return _title;
 		/*
@@ -1166,6 +1176,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 // basic functions to make timers
 /**
+	A timer that will trigger your function on a given interval.
+
+
 	You create a timer with an interval and a callback. It will continue
 	to fire on the interval until it is destroyed.
 
@@ -1705,7 +1718,13 @@ version(Windows) {
 
 
 
-/// ScreenPainter operations can use different operations to combine the color with the color on screen.
+/++
+	$(M ScreenPainter) operations can use different operations to combine the color with the color on screen.
+
+	See_Also:
+		$(M ScreenPainter)
+		$(M ScreenPainter.rasterOp)
++/
 enum RasterOp {
 	normal, /// Replaces the pixel.
 	xor, /// Uses bitwise xor to draw.
@@ -1740,7 +1759,8 @@ version(without_opengl) {
 	}
 } else {
 	/++
-		Determines if you want an OpenGL context created on the new window
+		Determines if you want an OpenGL context created on the new window.
+
 
 		Compile with `-version=with_opengl` on Windows if you want to use `yes`. See more: <a href="#topics-3d">in the 3d topic</a>.
 
@@ -1844,7 +1864,7 @@ struct MouseEvent {
 	SimpleWindow window; /// The window in which the event happened.
 }
 
-//// This gives a few more options to drawing lines and such
+/// This gives a few more options to drawing lines and such
 struct Pen {
 	Color color; /// the foreground color
 	int width = 1; /// width of the line
@@ -1894,7 +1914,8 @@ struct Pen {
 
 /++
 	Represents an in-memory image in the format that the GUI expects, but with its raw data available to your program.
-	
+
+
 	On Windows, this means a device-independent bitmap. On X11, it is an XImage.
 
 	$(NOTE If you are writing platform-aware code and need to know low-level details, uou may check `if(Image.impl.xshmAvailable)` to see if MIT-SHM is used on X11 targets to draw `Image`s and `Sprite`s. Use `static if(UsingSimpledisplayX11)` to determine if you are compiling for an X11 target.)
@@ -2171,9 +2192,14 @@ void displayImage(Image image, SimpleWindow win = null) {
 	}
 }
 
-/// Most functions use the outlineColor instead of taking a color themselves.
-/// ScreenPainter is reference counted and draws its buffer to the screen when its
-/// final reference goes out of scope.
+/**
+	The 2D drawing proxy.
+
+
+	Most functions use the outlineColor instead of taking a color themselves.
+	ScreenPainter is reference counted and draws its buffer to the screen when its
+	final reference goes out of scope.
+*/
 struct ScreenPainter {
 	SimpleWindow window;
 	this(SimpleWindow window, NativeWindowHandle handle) {
@@ -2406,6 +2432,7 @@ struct ScreenPainter {
 /**
 	Sprites are optimized for fast drawing on the screen, but slow for direct pixel
 	access. They are best for drawing a relatively unchanging image repeatedly on the screen.
+
 
 	On X11, this corresponds to an `XPixmap`. On Windows, it still uses a bitmap,
 	though I'm not sure that's ideal and the implementation might change.
@@ -7203,7 +7230,7 @@ private:
         OBJC_ASSOCIATION_COPY_NONATOMIC = 3,
         OBJC_ASSOCIATION_RETAIN = 0x301, //01401,
         OBJC_ASSOCIATION_COPY = 0x303 //01403
-    };
+    }
 
     extern(C) {
         id objc_msgSend(id receiver, SEL selector, ...);
