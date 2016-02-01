@@ -936,11 +936,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		void redrawOpenGlSceneNow() {
 		  version(X11) if (!this._visible) return; // no need to do this if window is invisible
 			if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
+			if(redrawOpenGlScene is null)
+				return;
 
 			this.setAsCurrentOpenGlContext();
 
-			if(redrawOpenGlScene !is null)
-				redrawOpenGlScene();
+			redrawOpenGlScene();
 
 			this.swapOpenGlBuffers();
 			// at least nvidia proprietary crap segfaults on exit if you won't do this and will call glTexSubImage2D() too fast; no, `glFlush()` won't work.
