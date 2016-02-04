@@ -646,6 +646,7 @@ else version(X11)
 else
 	static assert(0);
 
+
 /++
 	After selecting a type from $(LREF WindowTypes), you may further customize
 	its behavior by setting one or more of these flags.
@@ -926,10 +927,27 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		  }
 		}
 
-    /// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
-    /// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
-    /// enough without waiting 'em to finish their frame bussiness.
-    bool useGLFinish = true;
+		/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
+		/// to call this, as it's not recommended to share window between threads.
+		private shared int lockCount = 0;
+		void mtLock () {
+			version(X11) {
+				XLockDisplay(this.display);
+			}
+		}
+
+		/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
+		/// to call this, as it's not recommended to share window between threads.
+		void mtUnlock () {
+			version(X11) {
+				XUnlockDisplay(this.display);
+			}
+		}
+
+		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
+		/// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
+		/// enough without waiting 'em to finish their frame bussiness.
+		bool useGLFinish = true;
 
 		// FIXME: it should schedule it for the end of the current iteration of the event loop...
 		/// call this to invoke your delegate. It automatically sets up the context and flips the buffer. If you need to redraw the scene in response to an event, call this.
@@ -957,23 +975,52 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 				if(glXMakeCurrent(display, impl.window, impl.glc) == 0)
 					throw new Exception("glXMakeCurrent");
 			} else version(Windows) {
-        			wglMakeCurrent(ghDC, ghRC); 
+				if (!wglMakeCurrent(ghDC, ghRC))
+					throw new Exception("wglMakeCurrent"); // let windows users suffer too
+			}
+		}
+
+		/// Makes all gl* functions target this window until changed. This is only valid if you passed `OpenGlOptions.yes` to the constructor.
+		/// This doesn't throw, returning success flag instead.
+		bool setAsCurrentOpenGlContextNT() nothrow {
+			assert(openglMode == OpenGlOptions.yes);
+			version(X11) {
+				return (glXMakeCurrent(display, impl.window, impl.glc) != 0);
+			} else version(Windows) {
+				return wglMakeCurrent(ghDC, ghRC);
+			}
+		}
+
+		/// Releases OpenGL context, so it can be reused in, for example, different thread. This is only valid if you passed `OpenGlOptions.yes` to the constructor.
+		/// This doesn't throw, returning success flag instead.
+		bool releaseCurrentOpenGlContext() nothrow {
+			assert(openglMode == OpenGlOptions.yes);
+			version(X11) {
+				return (glXMakeCurrent(display, 0, null) != 0);
+			} else version(Windows) {
+				return wglMakeCurrent(ghDC, null);
 			}
 		}
 
 		/++
-			simpledisplay always uses double buffering. this swaps the OpenGL buffers.
+			simpledisplay always uses double buffering, usually automatically. This
+			manually swaps the OpenGL buffers.
+
+
 			You should not need to call this yourself because simpledisplay will do it
 			for you after calling your `redrawOpenGlScene`.
+
+			Remember that this may throw an exception, which you can catch in a multithreaded
+			application to keep your thread from dying from an unhandled exception.
 		+/
 		void swapOpenGlBuffers() {
 			assert(openglMode == OpenGlOptions.yes);
 			version(X11) {
 				if (!this._visible) return; // no need to do this if window is invisible
 				if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
-				glXSwapBuffers(XDisplayConnection.get, impl.window);
+				glXSwapBuffers(display, impl.window);
 			} else version(Windows) {
-        			SwapBuffers(ghDC);
+				SwapBuffers(ghDC);
 			}
 		}
 	}
@@ -4335,6 +4382,8 @@ version(X11) {
 		version(with_eventloop) {
 			import arsd.eventloop;
 			static void eventListener(OsFileHandle fd) {
+				this.mtLock();
+				scope(exit) this.mtUnlock();
 				while(XPending(display))
 					doXNextEvent(display);
 			}
@@ -4836,7 +4885,9 @@ version(X11) {
 						auto flags = events[idx].events;
 						if(flags & ep.EPOLLIN) {
 							if(fd == display.fd) {
-							  version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
+								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
+								this.mtLock();
+								scope(exit) this.mtUnlock();
 								while(!done && XPending(display))
 									done = doXNextEvent(this.display);
 							} else if(fd == pulseFd) {
@@ -4888,6 +4939,8 @@ version(X11) {
 					while(!done &&
 						(pulseTimeout == 0 || (XPending(display) > 0)))
 					{
+						this.mtLock();
+						scope(exit) this.mtUnlock();
 						done = doXNextEvent(this.display);
 					}
 					if(!done && !closed && pulseTimeout !=0) {
@@ -5243,7 +5296,7 @@ version(Windows) {
 	}
 
 	version(without_opengl){} else {
-		extern(Windows) {
+		extern(Windows) nothrow @nogc {
 			alias HANDLE HGLRC;
 			BOOL wglMakeCurrent(HDC, HGLRC);
 			HGLRC wglCreateContext(HDC);
@@ -5251,6 +5304,13 @@ version(Windows) {
 			BOOL wglDeleteContext(HGLRC);
 			int ChoosePixelFormat(HDC, in PIXELFORMATDESCRIPTOR*);
 			BOOL SetPixelFormat(HDC hdc, int iPixelFormat, const PIXELFORMATDESCRIPTOR *ppfd);
+			void* wglGetProcAddress (const(char)*);
+			void* glGetProcAddress (const(char)* name) {
+				// see https://www.opengl.org/wiki/Load_OpenGL_Functions for rationale
+				auto res = wglGetProcAddress(name);
+				if (res is null || res is cast(void*)(0x01) || res is cast(void*)(0x02) || res is cast(void*)(0x03) || res is cast(void*)(-1)) return null;
+				return res;
+			}
 
 			struct PIXELFORMATDESCRIPTOR {
 			  WORD  nSize;
@@ -5548,7 +5608,7 @@ pragma(lib, "X11");
 pragma(lib, "Xext");
 import core.stdc.stddef : wchar_t;
 
-extern(C):
+extern(C) nothrow @nogc {
 
 Cursor XCreateFontCursor(Display*, uint shape);
 int XDefineCursor(Display* display, Window w, Cursor cursor);
@@ -6758,10 +6818,11 @@ alias XID Cursor;
 alias XID KeySym;
 alias uint KeyCode;
 enum None = 0;
+}
 
 version(without_opengl) {}
 else {
-
+extern(C) nothrow @nogc {
 
 enum GLX_USE_GL=            1;       /* support GLX rendering */
 enum GLX_BUFFER_SIZE=       2;       /* depth of the color buffer */
@@ -6854,7 +6915,9 @@ alias void* GLXContext;
 		int bits_per_rgb;
 	}
 }
+}
 
+extern(C) nothrow @nogc {
 struct Screen{
 	XExtData *ext_data;		/* hook for extension to hang data */
 	Display *display;		/* back pointer to display structure */
@@ -6911,6 +6974,10 @@ struct Visual
 		char* res_name;
 		char* res_class;
 	}
+
+	Status XInitThreads();
+	void XLockDisplay (Display* display);
+	void XUnlockDisplay (Display* display);
 
 	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
 
@@ -7144,7 +7211,8 @@ struct Visual
 	enum int NormalState = 1;
 	enum int IconicState = 3;
 
- } else version (OSXCocoa) {
+}
+} else version (OSXCocoa) {
 private:
     alias void* id;
     alias void* Class;
@@ -7936,6 +8004,9 @@ extern(System){
   version(X11) {
 	char* glXQueryExtensionsString (Display*, int);
 	void* glXGetProcAddress (const(char)*);
+
+  alias glGetProcAddress = glXGetProcAddress;
+
     // GLX_EXT_swap_control
     alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
     private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
@@ -8114,6 +8185,12 @@ version(X11) {
 	// later.
 	shared static this () {
 		import core.stdc.locale : setlocale, LC_ALL, LC_CTYPE;
+
+		// this doesn't hurt; it may add some locking, but the speed is still
+		// allows doing 60 FPS videogames; also, ignore the result, as most
+		// users will probably won't do mulththreaded X11 anyway (and I (ketmar)
+		// never seen this failing).
+		if (XInitThreads() == 0) { import core.stdc.stdio; fprintf(stderr, "XInitThreads() failed!\n"); }
 
 		setlocale(LC_ALL, "");
 		// check if out locale is UTF-8
