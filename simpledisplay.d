@@ -957,6 +957,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			if(redrawOpenGlScene is null)
 				return;
 
+			this.mtLock();
+			scope(exit) this.mtUnlock();
+
 			this.setAsCurrentOpenGlContext();
 
 			redrawOpenGlScene();
@@ -964,7 +967,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			this.swapOpenGlBuffers();
 			// at least nvidia proprietary crap segfaults on exit if you won't do this and will call glTexSubImage2D() too fast; no, `glFlush()` won't work.
 			if (useGLFinish) glFinish();
-
 		}
 
 
@@ -2632,8 +2634,12 @@ class Sprite {
 
 /// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
 void flushGui() {
-	version(X11)
-		XFlush(XDisplayConnection.get());
+	version(X11) {
+		auto dpy = XDisplayConnection.get();
+		XLockDisplay(dpy);
+		scope(exit) XUnlockDisplay(dpy);
+		XFlush(dpy);
+	}
 }
 
 // Internal
@@ -4982,6 +4988,8 @@ version(X11) {
 
 		if(SimpleWindow.handleNativeGlobalEvent !is null) {
 			// see windows impl's comments
+			XUnlockDisplay(display);
+			scope(exit) XLockDisplay(display);
 			auto ret = SimpleWindow.handleNativeGlobalEvent(e);
 			if(ret == 0)
 				return done;
@@ -4990,6 +4998,8 @@ version(X11) {
 
 		if(auto win = e.xany.window in CapableOfHandlingNativeEvent.nativeHandleMapping) {
 			if(win.getNativeEventHandler !is null) {
+				XUnlockDisplay(display);
+				scope(exit) XLockDisplay(display);
 				auto ret = win.getNativeEventHandler()(e);
 				if(ret == 0)
 					return done;
@@ -5004,6 +5014,8 @@ version(X11) {
 		  case EventType.SelectionRequest:
 		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
 			if(win.setSelectionHandler !is null) {
+				XUnlockDisplay(display);
+				scope(exit) XLockDisplay(display);
 				win.setSelectionHandler(e);
 			}
 		  break;
@@ -5012,6 +5024,8 @@ version(X11) {
 		  	if(win.getSelectionHandler !is null) {
 				// FIXME: maybe we should call a different handler for PRIMARY vs CLIPBOARD
 				if(e.xselection.property == None) { // || e.xselection.property == GetAtom!("NULL", true)(e.xselection.display)) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					win.getSelectionHandler(null);
 				} else {
 					Atom target;
@@ -5032,7 +5046,11 @@ version(X11) {
 					// FIXME: or be other formats...
 					// FIXME: I don't have to copy it now since it is in char[] instead of string
 
-					win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+					{
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+					}
 					XFree(value);
 					XDeleteProperty(
 						e.xselection.display,
@@ -5077,6 +5095,8 @@ version(X11) {
 					}
 
 					if(win.windowResized !is null)
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
 						win.windowResized(event.width, event.height);
 				}
 			}
@@ -5086,7 +5106,9 @@ version(X11) {
 				if((*win).openglMode == OpenGlOptions.no)
 					XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
 				else {
-					// need to redraw the scene somehow.
+					// need to redraw the scene somehow
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					win.redrawOpenGlSceneNow();
 				}
 			}
@@ -5098,8 +5120,11 @@ version(X11) {
           //{ import core.stdc.stdio : printf; printf("XIC focus change!\n"); }
           if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
         }
-				if(win.onFocusChange)
+				if(win.onFocusChange) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					win.onFocusChange(e.type == EventType.FocusIn);
+				}
 			}
 		  break;
 		  case EventType.ClientMessage:
@@ -5107,6 +5132,8 @@ version(X11) {
 				// user clicked the close button on the window manager
 				// FIXME: not implemented on Windows
 				if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
 				}
 			}
@@ -5116,15 +5143,27 @@ version(X11) {
 					(*win)._visible = true;
 					if (!(*win)._visibleForTheFirstTimeCalled) {
 						(*win)._visibleForTheFirstTimeCalled = true;
-						if ((*win).visibleForTheFirstTime !is null) (*win).visibleForTheFirstTime();
+						if ((*win).visibleForTheFirstTime !is null) {
+							XUnlockDisplay(display);
+							scope(exit) XLockDisplay(display);
+							(*win).visibleForTheFirstTime();
+						}
 					}
-					if ((*win).visibilityChanged !is null) (*win).visibilityChanged(true);
+					if ((*win).visibilityChanged !is null) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						(*win).visibilityChanged(true);
+					}
 				}
 		  break;
 		  case EventType.UnmapNotify:
 				if(auto win = e.xunmap.window in SimpleWindow.nativeMapping) {
 					win._visible = false;
-					if (win.visibilityChanged !is null) win.visibilityChanged(false);
+					if (win.visibilityChanged !is null) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						win.visibilityChanged(false);
+					}
 			}
 		  break;
 		  case EventType.DestroyNotify:
@@ -5159,8 +5198,11 @@ version(X11) {
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
 				(*win).mdx(mouse);
-				if((*win).handleMouseEvent)
+				if((*win).handleMouseEvent) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					(*win).handleMouseEvent(mouse);
+				}
 				mouse.window = *win;
 			}
 
@@ -5192,8 +5234,11 @@ version(X11) {
 
 			if(auto win = e.xbutton.window in SimpleWindow.nativeMapping) {
 				(*win).mdx(mouse);
-				if((*win).handleMouseEvent)
+				if((*win).handleMouseEvent) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
 					(*win).handleMouseEvent(mouse);
+				}
 				mouse.window = *win;
 			}
 			version(with_eventloop)
@@ -5247,14 +5292,22 @@ version(X11) {
 
 			if (auto win = e.xkey.window in SimpleWindow.nativeMapping) {
 				ke.window = *win;
-				if (win.handleKeyEvent) win.handleKeyEvent(ke);
+				if (win.handleKeyEvent) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
+					win.handleKeyEvent(ke);
+				}
 
 				// char events are separate since they are on Windows too
 				// also, xcompose can generate long char sequences
 				if (ke.pressed && charbuflen > 0) {
 					// FIXME: I think Windows sends these on releases... we should try to match that, but idk about repeats.
 					foreach (immutable dchar ch; charbuf[0..charbuflen]) {
-						if (win.handleCharEvent) win.handleCharEvent(ch);
+						if (win.handleCharEvent) {
+							XUnlockDisplay(display);
+							scope(exit) XLockDisplay(display);
+							win.handleCharEvent(ch);
+						}
 					}
 				}
 			}
