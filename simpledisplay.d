@@ -691,6 +691,34 @@ enum WindowTypes : int {
 }
 
 
+private __gshared ushort sdpyOpenGLContextVersion = 0; // default: use legacy call
+private __gshared bool sdpyOpenGLContextCompatible = true; // default: allow "deprecated" features
+
+/**
+	Set OpenGL context version to use. This has no effect on non-OpenGL windows.
+	You may want to change context version if you want to use advanced shaders or
+	other modern OpenGL techinques. This setting doesn't affect already created
+	windows. You may use version 2.1 as your default, which should be supported
+	by any box since 2006, so seems to be a reasonable choice.
+
+	Note that by default version is set to `0`, which forces SimpleDisplay to use
+	old context creation code without any version specified. This is the safest
+	way to init OpenGL, but it may not give you access to advanced features.
+
+	See available OpenGL versions here: $(L https://en.wikipedia.org/wiki/OpenGL).
+*/
+void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion = cast(ushort)(hi<<8|lo); }
+
+/**
+	Set OpenGL context mode. Modern (3.0+) OpenGL versions deprecated old fixed
+	pipeline functions, and without "compatible" mode you won't be able to use
+	your old non-shader-based code with such contexts. By default SimpleDisplay
+	creates compatible context, so you can gradually upgrade your OpenGL code if
+	you want to (or leave it as is, as it should "just work").
+*/
+@property void openGLContextCompatible() (bool v) { sdpyOpenGLContextCompatible = v; }
+
+
 /++
 	The flagship window class.
 
@@ -4587,11 +4615,54 @@ version(X11) {
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
-					static immutable GLint[] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
-					auto vi = glXChooseVisual(display, 0, attrs.ptr);
-					if(vi is null) throw new Exception("no open gl visual found");
+					glxInitOtherFunctions(); // load some OpenGL functions; it doesn't hurt to call this repeatedly
 
-    					XSetWindowAttributes swa; 
+					GLXFBConfig fbconf = null;
+					XVisualInfo* vi = null;
+					bool useLegacy = false;
+					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB !is null) {
+						int[23] visualAttribs = [
+							GLX_X_RENDERABLE , 1/*True*/,
+							GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+							GLX_RENDER_TYPE  , GLX_RGBA_BIT,
+							GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+							GLX_RED_SIZE     , 8,
+							GLX_GREEN_SIZE   , 8,
+							GLX_BLUE_SIZE    , 8,
+							GLX_ALPHA_SIZE   , 8,
+							GLX_DEPTH_SIZE   , 24,
+							GLX_STENCIL_SIZE , 8,
+							GLX_DOUBLEBUFFER , 1/*True*/,
+							0/*None*/,
+						];
+						int fbcount;
+						GLXFBConfig* fbc = glXChooseFBConfig(display, screen, visualAttribs.ptr, &fbcount);
+						if (fbcount == 0) {
+							useLegacy = true; // try to do at least something
+						} else {
+							// pick the FB config/visual with the most samples per pixel
+							int bestidx = -1, bestns = -1;
+							foreach (int fbi; 0..fbcount) {
+								int sb, samples;
+								glXGetFBConfigAttrib(display, fbc[fbi], GLX_SAMPLE_BUFFERS, &sb);
+								glXGetFBConfigAttrib(display, fbc[fbi], GLX_SAMPLES, &samples);
+								if (bestidx < 0 || sb && samples > bestns) { bestidx = fbi; bestns = samples; }
+							}
+							//{ import core.stdc.stdio; printf("found gl visual with %d samples\n", bestns); }
+							fbconf = fbc[bestidx];
+							// Be sure to free the FBConfig list allocated by glXChooseFBConfig()
+							XFree(fbc);
+							vi = glXGetVisualFromFBConfig(display, fbconf);
+						}
+					}
+					if (vi is null || useLegacy) {
+						static immutable GLint[] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
+						vi = glXChooseVisual(display, 0, attrs.ptr);
+						useLegacy = true;
+					}
+					if (vi is null) throw new Exception("no open gl visual found");
+
+					XSetWindowAttributes swa;
 					auto root = RootWindow(display, screen);
 					swa.colormap = XCreateColormap(display, root, vi.visual, AllocNone);
 
@@ -4599,7 +4670,27 @@ version(X11) {
 						0, 0, width, height,
 						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap, &swa);
 
-					glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+					// now try to use `glXCreateContextAttribsARB()` if it's here
+					if (!useLegacy) {
+						// request fairly advanced context, even with stencil buffer!
+						int[9] contextAttribs = [
+							GLX_CONTEXT_MAJOR_VERSION_ARB, (sdpyOpenGLContextVersion>>8),
+							GLX_CONTEXT_MINOR_VERSION_ARB, (sdpyOpenGLContextVersion&0xff),
+							/*GLX_CONTEXT_PROFILE_MASK_ARB*/0x9126, (sdpyOpenGLContextCompatible ? /*GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB*/0x02 : /*GLX_CONTEXT_CORE_PROFILE_BIT_ARB*/ 0x01),
+							// for modern context, set "forward compatibility" flag too
+							(sdpyOpenGLContextCompatible ? None : /*GLX_CONTEXT_FLAGS_ARB*/ 0x2094), /*GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB*/ 0x02,
+							0/*None*/,
+						];
+						glc = glXCreateContextAttribsARB(display, fbconf, null, 1/*True*/, contextAttribs.ptr);
+						//{ import core.stdc.stdio; printf("using modern ogl v%d.%d\n", contextAttribs[1], contextAttribs[3]); }
+					} else {
+						// fallback to old GLX call
+					useglxlegacycontext:
+						glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+					}
+					// sync to ensure any errors generated are processed
+					XSync(display, 0/*False*/);
+					{ import core.stdc.stdio; printf("ogl is here\n"); }
 					if(glc is null)
 						throw new Exception("glc");
 				}
@@ -8053,30 +8144,59 @@ version(html5) {
 
 
 version(without_opengl) {} else
-extern(System){
+extern(System) nothrow @nogc {
   version(X11) {
-	char* glXQueryExtensionsString (Display*, int);
-	void* glXGetProcAddress (const(char)*);
+		struct __GLXFBConfigRec {}
+		alias GLXFBConfig = __GLXFBConfigRec*;
 
-  alias glGetProcAddress = glXGetProcAddress;
+		enum GLX_X_RENDERABLE = 0x8012;
+		enum GLX_DRAWABLE_TYPE = 0x8010;
+		enum GLX_RENDER_TYPE = 0x8011;
+		enum GLX_X_VISUAL_TYPE = 0x22;
+		enum GLX_TRUE_COLOR = 0x8002;
+		enum GLX_WINDOW_BIT = 0x00000001;
+		enum GLX_RGBA_BIT = 0x00000001;
+		enum GLX_COLOR_INDEX_BIT = 0x00000002;
+		enum GLX_SAMPLE_BUFFERS = 0x186a0;
+		enum GLX_SAMPLES = 0x186a1;
+		enum GLX_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
+		enum GLX_CONTEXT_MINOR_VERSION_ARB = 0x2092;
 
-    // GLX_EXT_swap_control
-    alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
-    private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
+		GLXFBConfig* glXChooseFBConfig (Display*, int, int*, int*);
+		int glXGetFBConfigAttrib (Display*, GLXFBConfig, int, int*);
+		XVisualInfo* glXGetVisualFromFBConfig (Display*, GLXFBConfig);
 
-    void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
-      if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
-      if (_glx_swapInterval_fn is null) {
-        _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
-        if (_glx_swapInterval_fn is null) {
-          _glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
-          return;
-        }
-        version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
-      }
-      _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
-    }
-  }
+		char* glXQueryExtensionsString (Display*, int);
+		void* glXGetProcAddress (const(char)*);
+
+		alias glGetProcAddress = glXGetProcAddress;
+
+		// GLX_EXT_swap_control
+		alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
+		private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
+
+		alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
+		__gshared glXCreateContextAttribsARB_fna glXCreateContextAttribsARB = null; // this made public so we don't have to get it again and again; it will become valid after window creation
+		
+		void glxInitOtherFunctions () {
+			if (glXCreateContextAttribsARB is null) {
+				glXCreateContextAttribsARB = cast(glXCreateContextAttribsARB_fna)glGetProcAddress("glXCreateContextAttribsARB");
+			}
+		}
+
+		void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
+		  if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
+		  if (_glx_swapInterval_fn is null) {
+		    _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
+		    if (_glx_swapInterval_fn is null) {
+		      _glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
+		      return;
+		    }
+		    version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
+		  }
+		  _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+		}
+	}
 
 	void glGetIntegerv(int, void*);
 	void glMatrixMode(int);
@@ -8207,7 +8327,6 @@ extern(System){
 	enum int GL_QUADS = 7;
 	enum int GL_QUAD_STRIP = 8;
 	enum int GL_POLYGON = 9;
-
 }
 
 version(linux) {
