@@ -955,7 +955,7 @@ class Element {
 
 	static Element make(string tagName, in Html innerHtml, string childInfo2 = null) {
 		// FIXME: childInfo2 is ignored when info1 is null
-		auto m = Element.make(tagName, cast(string) null, childInfo2);
+		auto m = Element.make(tagName, "not null"[0..0], childInfo2);
 		m.innerHTML = innerHtml.source;
 		return m;
 	}
@@ -1122,7 +1122,7 @@ class Element {
 	}
 
 	/**
-		Does a CSS selector
+		Returns elements that match the given CSS selector
 
 		* -- all, default if nothing else is there
 
@@ -2647,6 +2647,11 @@ class TextNode : Element {
 		tagName = "#text";
 	}
 
+	///
+	this(string e) {
+		this(null, e);
+	}
+
 	string opDispatch(string name)(string v = null) if(0) { return null; } // text nodes don't have attributes
 
 	///.
@@ -3388,7 +3393,7 @@ class ElementNotFoundException : Exception {
 
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
 ///
-/// Easiest way to construct it is like this: auto html = Html("<p>hello</p>");
+/// Easiest way to construct it is like this: `auto html = Html("<p>hello</p>");`
 struct Html {
 	/// This string holds the actual html. Use it to retrieve the contents.
 	string source;
@@ -4822,6 +4827,8 @@ int intFromHex(string hex) {
 
 				// FIXME: do better unescaping
 				tokens ~= selstr[1 .. pos].replace(`\"`, `"`);
+				if(pos+1 >= selstr.length)
+					assert(0, selstr);
 				selstr = selstr[pos + 1.. $];
 				continue;
 			}
@@ -6182,11 +6189,11 @@ void fillForm(T)(Form form, T obj, string name) {
 } 
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2013
+Copyright: Adam D. Ruppe, 2010 - 2016
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r among others
 
-        Copyright Adam D. Ruppe 2010-2013.
+        Copyright Adam D. Ruppe 2010-2016.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)
