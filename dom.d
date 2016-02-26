@@ -4730,9 +4730,10 @@ int intFromHex(string hex) {
 		static immutable string[] selectorTokens = [
 			// It is important that the 2 character possibilities go first here for accurate lexing
 		    "~=", "*=", "|=", "^=", "$=", "!=", // "::" should be there too for full standard
+		    "::", ">>",
 		    "<<", // my any-parent extension (reciprocal of whitespace)
 		    // " - ", // previous-sibling extension (whitespace required to disambiguate tag-names)
-		    ".", ">", "+", "*", ":", "[", "]", "=", "\"", "#", ",", " ", "~", "<"
+		    ".", ">", "+", "*", ":", "[", "]", "=", "\"", "#", ",", " ", "~", "<", "(", ")"
 		]; // other is white space or a name.
 
 		///.
@@ -4902,10 +4903,14 @@ int intFromHex(string hex) {
 		string[2][] attributesInclude; /// [attr*=value]
 		string[2][] attributesNotEqual; /// [attr!=value] -- extension by me
 
+		string[] hasSelectors; /// :has(this)
+		string[] notSelectors; /// :not(this)
+
 		bool firstChild; ///.
 		bool lastChild; ///.
 
 		bool emptyElement; ///.
+		bool whitespaceOnly; ///
 		bool oddChild; ///.
 		bool evenChild; ///.
 
@@ -4941,9 +4946,13 @@ int intFromHex(string hex) {
 			foreach(a; attributesIncludesSeparatedByDashes) ret ~= "[" ~ a[0] ~ "|=\"" ~ a[1] ~ "\"]";
 			foreach(a; attributesIncludesSeparatedBySpaces) ret ~= "[" ~ a[0] ~ "~=\"" ~ a[1] ~ "\"]";
 
+			foreach(a; notSelectors) ret ~= ":not(" ~ a ~ ")";
+			foreach(a; hasSelectors) ret ~= ":has(" ~ a ~ ")";
+
 			if(firstChild) ret ~= ":first-child";
 			if(lastChild) ret ~= ":last-child";
 			if(emptyElement) ret ~= ":empty";
+			if(whitespaceOnly) ret ~= ":whitespace-only";
 			if(oddChild) ret ~= ":odd-child";
 			if(evenChild) ret ~= ":even-child";
 			if(rootElement) ret ~= ":root";
@@ -4977,6 +4986,10 @@ int intFromHex(string hex) {
 			}
 			if(emptyElement) {
 				if(e.children.length)
+					return false;
+			}
+			if(whitespaceOnly) {
+				if(e.innerText.strip.length)
 					return false;
 			}
 			if(rootElement) {
@@ -5033,6 +5046,17 @@ int intFromHex(string hex) {
 			foreach(a; attributesIncludesSeparatedByDashes)
 				if(a[0] !in e.attributes || !matchWithSeparator(e.attributes[a[0]], a[1], "-"))
 					return false;
+			foreach(a; hasSelectors) {
+				if(e.querySelector(a) is null)
+					return false;
+			}
+			foreach(a; notSelectors) {
+				auto sels = parseSelectorString(a);
+				foreach(sel; sels)
+				foreach(part; sel.parts)
+					if(part.matchElement(e))
+						return false;
+			}
 
 			return true;
 		}
@@ -5213,11 +5237,32 @@ int intFromHex(string hex) {
 			ReadingAttributeComparison,
 			ExpectingAttributeCloser,
 			ReadingPseudoClass,
-			ReadingAttributeValue
+			ReadingAttributeValue,
+
+			SkippingFunctionalSelector,
 		}
 		State state = State.Starting;
 		string attributeName, attributeValue, attributeComparison;
-		foreach(token; tokens) {
+		int parensCount;
+		foreach(idx, token; tokens) {
+			string readFunctionalSelector() {
+				string s;
+				if(tokens[idx + 1] != "(")
+					throw new Exception("parse error");
+				int pc = 1;
+				foreach(t; tokens[idx + 2 .. $]) {
+					if(t == "(")
+						pc++;
+					if(t == ")")
+						pc--;
+					if(pc == 0)
+						break;
+					s ~= t;
+				}
+
+				return s;
+			}
+
 			sizediff_t tid = -1;
 			foreach(i, item; selectorTokens)
 				if(token == item) {
@@ -5254,6 +5299,10 @@ int intFromHex(string hex) {
 								commit();
 								current.separation = 0; // tree
 							break;
+							case ">>":
+								commit();
+								current.separation = 0; // alternate syntax for tree from html5 css
+							break;
 							case ">":
 								commit();
 								current.separation = 1; // child
@@ -5280,6 +5329,7 @@ int intFromHex(string hex) {
 								state = State.ReadingId;
 							break;
 							case ":":
+							case "::":
 								state = State.ReadingPseudoClass;
 							break;
 
@@ -5312,13 +5362,23 @@ int intFromHex(string hex) {
 							// one with no children
 							current.emptyElement = true;
 						break;
+						case "whitespace-only":
+							current.whitespaceOnly = true;
+						break;
 						case "link":
 							current.attributesPresent ~= "href";
 						break;
 						case "root":
 							current.rootElement = true;
 						break;
-						// FIXME: add :not()
+						case "not":
+							state = State.SkippingFunctionalSelector;
+							current.notSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
+						case "has":
+							state = State.SkippingFunctionalSelector;
+							current.hasSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
 						// My extensions
 						case "odd-child":
 							current.oddChild = true;
@@ -5326,8 +5386,15 @@ int intFromHex(string hex) {
 						case "even-child":
 							current.evenChild = true;
 						break;
+						// back to standards though not quite right lol
+						case "disabled":
+							current.attributesPresent ~= "disabled";
+						break;
+						case "checked":
+							current.attributesPresent ~= "checked";
+						break;
 
-						case "visited", "active", "hover", "target", "focus", "checked", "selected":
+						case "visited", "active", "hover", "target", "focus", "selected":
 							current.attributesPresent ~= "nothing";
 							// FIXME
 						/*
@@ -5349,6 +5416,16 @@ int intFromHex(string hex) {
 						break;
 					}
 					state = State.Starting;
+				break;
+				case State.SkippingFunctionalSelector:
+					if(token == "(") {
+						parensCount++;
+					} else if(token == ")") {
+						parensCount--;
+					}
+
+					if(parensCount == 0)
+						state = State.Starting;
 				break;
 				case State.ReadingAttributeSelector:
 					attributeName = token;
