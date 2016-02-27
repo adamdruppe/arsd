@@ -5154,8 +5154,81 @@ int intFromHex(string hex) {
 		return ret;
 	}
 
-	///.
+	/++
+		Represents a parsed CSS selector.
+
+		See_Also:
+			[Element.querySelector]
+			[Element.querySelectorAll]
+			[Document.querySelector]
+			[Document.querySelectorAll]
+	+/
 	struct Selector {
+		SelectorComponent[] components;
+		string original;
+		/++
+			Parses the selector string and returns the usable structure.
+		+/
+		this(string cssSelector) {
+			components = parseSelectorString(cssSelector);
+			original = cssSelector;
+		}
+
+		/++
+			Returns true if the given element matches this selector,
+			considered relative to an arbitrary element.
+
+			You can do a form of lazy [Element.querySelectorAll|querySelectorAll] by using this
+			with [std.algorithm.iteration.filter]:
+
+			---
+			Selector sel = Selector("foo > bar");
+			auto lazySelectorRange = element.tree.filter!(e => sel.matchElement(e))(document.root);
+			---
+		+/
+		bool matchesElement(Element e, Element relativeTo = null) {
+			foreach(component; components)
+				if(component.matchElement(e, relativeTo))
+					return true;
+
+			return false;
+		}
+
+		/++
+			Reciprocal of [Element.querySelectorAll]
+		+/
+		Element[] getMatchingElements(Element start) {
+			Element[] ret;
+			foreach(component; components)
+				ret ~= getElementsBySelectorParts(start, component.parts);
+			return removeDuplicates(ret);
+		}
+
+		/// Returns the string this was built from
+		string toString() {
+			return original;
+		}
+
+		/++
+			Returns a string from the parsed result
+
+
+			(may not match the original, this is mostly for debugging right now but in the future might be useful for pretty-printing)
+		+/
+		string parsedToString() {
+			string ret;
+
+			foreach(idx, component; components) {
+				if(idx) ret ~= ", ";
+				ret ~= component.toString();
+			}
+
+			return ret;
+		}
+	}
+
+	///.
+	struct SelectorComponent {
 		///.
 		SelectorPart[] parts;
 
@@ -5176,35 +5249,77 @@ int intFromHex(string hex) {
 		// USEFUL (but not implemented)
 		/// If relativeTo == null, it assumes the root of the parent document.
 		bool matchElement(Element e, Element relativeTo = null) {
-			// FIXME
-			/+
+			if(e is null) return false;
 			Element where = e;
+			int lastSeparation = -1;
 			foreach(part; retro(parts)) {
+
+				writeln("matching ", where, " with ", part, " via ", lastSeparation);
+
+				if(lastSeparation == -1) {
+					if(!part.matchElement(where))
+						return false;
+				} else if(lastSeparation == 0) { // generic parent
+					// need to go up the whole chain
+					where = where.parentNode;
+					while(where !is null) {
+						if(part.matchElement(where))
+							break;
+
+						if(where is relativeTo)
+							return false;
+
+						where = where.parentNode;
+					}
+
+					if(where is null)
+						return false;
+				} else if(lastSeparation == 1) { // the > operator
+					where = where.parentNode;
+
+					if(!part.matchElement(where))
+						return false;
+				} else if(lastSeparation == 2) { // the + operator
+					where = where.previousSibling;
+
+					if(!part.matchElement(where))
+						return false;
+				} else if(lastSeparation == 3) { // the ~ operator
+					where = where.previousSibling;
+					while(where !is null) {
+						if(part.matchElement(where))
+							break;
+
+						if(where is relativeTo)
+							return false;
+
+						where = where.previousSibling;
+					}
+
+					if(where is null)
+						return false;
+				} else if(lastSeparation == 4) { // my bad idea extension < operator, don't use this anymore
+					// FIXME
+				}
+
+				lastSeparation = part.separation;
+
 				if(where is relativeTo)
 					return false; // at end of line, if we aren't done by now, the match fails
-				if(!part.matchElement(where))
-					return false; // didn't match
-
-				if(part.selection == 1) // the > operator
-					where = where.parentNode;
-				else if(part.selection == 0) { // generic parent
-					// need to go up the whole chain
-				}
 			}
-			+/
 			return true; // if we got here, it is a success
 		}
 
 		// the string should NOT have commas. Use parseSelectorString for that instead
 		///.
-		static Selector fromString(string selector) {
+		static SelectorComponent fromString(string selector) {
 			return parseSelector(lexSelector(selector));
 		}
 	}
 
 	///.
-	Selector[] parseSelectorString(string selector, bool caseSensitiveTags = true) {
-		Selector[] ret;
+	SelectorComponent[] parseSelectorString(string selector, bool caseSensitiveTags = true) {
+		SelectorComponent[] ret;
 		auto tokens = lexSelector(selector); // this will parse commas too
 		// and now do comma-separated slices (i haz phobosophobia!)
 		while (tokens.length > 0) {
@@ -5218,8 +5333,8 @@ int intFromHex(string hex) {
 	}
 
 	///.
-	Selector parseSelector(string[] tokens, bool caseSensitiveTags = true) {
-		Selector s;
+	SelectorComponent parseSelector(string[] tokens, bool caseSensitiveTags = true) {
+		SelectorComponent s;
 
 		SelectorPart current;
 		void commit() {
