@@ -5051,11 +5051,9 @@ int intFromHex(string hex) {
 					return false;
 			}
 			foreach(a; notSelectors) {
-				auto sels = parseSelectorString(a);
-				foreach(sel; sels)
-				foreach(part; sel.parts)
-					if(part.matchElement(e))
-						return false;
+				auto sel = Selector(a);
+				if(sel.matchesElement(e))
+					return false;
 			}
 
 			return true;
@@ -5092,23 +5090,9 @@ int intFromHex(string hex) {
 				}
 			break;
 			case 2: // next-sibling
-				auto tmp = start.parentNode;
-				if(tmp !is null) {
-					sizediff_t pos = -1;
-					auto children = tmp.childElements;
-					foreach(i, child; children) {
-						if(child is start) {
-							pos = i;
-							break;
-						}
-					}
-					assert(pos != -1);
-					if(pos + 1 < children.length) {
-						auto e = children[pos+1];
-						if(part.matchElement(e))
-							ret ~= getElementsBySelectorParts(e, parts[1..$]);
-					}
-				}
+				auto e = start.nextSibling("*");
+				if(part.matchElement(e))
+					ret ~= getElementsBySelectorParts(e, parts[1..$]);
 			break;
 			case 3: // younger sibling
 				auto tmp = start.parentNode;
@@ -5204,6 +5188,16 @@ int intFromHex(string hex) {
 			return removeDuplicates(ret);
 		}
 
+		/++
+			Like [getMatchingElements], but returns a lazy range. Be careful
+			about mutating the dom as you iterate through this.
+		+/
+		auto getMatchingElementsLazy(Element start, Element relativeTo = null) {
+			import std.algorithm.iteration;
+			return start.tree.filter!(a => this.matchesElement(a, relativeTo));
+		}
+
+
 		/// Returns the string this was built from
 		string toString() {
 			return original;
@@ -5254,7 +5248,7 @@ int intFromHex(string hex) {
 			int lastSeparation = -1;
 			foreach(part; retro(parts)) {
 
-				writeln("matching ", where, " with ", part, " via ", lastSeparation);
+				// writeln("matching ", where, " with ", part, " via ", lastSeparation);
 
 				if(lastSeparation == -1) {
 					if(!part.matchElement(where))
@@ -5280,12 +5274,12 @@ int intFromHex(string hex) {
 					if(!part.matchElement(where))
 						return false;
 				} else if(lastSeparation == 2) { // the + operator
-					where = where.previousSibling;
+					where = where.previousSibling("*");
 
 					if(!part.matchElement(where))
 						return false;
 				} else if(lastSeparation == 3) { // the ~ operator
-					where = where.previousSibling;
+					where = where.previousSibling("*");
 					while(where !is null) {
 						if(part.matchElement(where))
 							break;
@@ -5293,7 +5287,7 @@ int intFromHex(string hex) {
 						if(where is relativeTo)
 							return false;
 
-						where = where.previousSibling;
+						where = where.previousSibling("*");
 					}
 
 					if(where is null)

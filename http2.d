@@ -1,3 +1,4 @@
+/// HTTP client lib
 // Copyright 2013, Adam D. Ruppe.
 module arsd.http2;
 

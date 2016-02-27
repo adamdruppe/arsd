@@ -1,3 +1,4 @@
+///
 module arsd.jpg;
 
 import std.typecons;
@@ -88,6 +89,7 @@ Tuple!(int, int) getSizeFromFile(string filename) {
 }
 
 version(with_libjpeg) {
+/+
 	import arsd.color;
 
 	TrueColorImage read_JPEG_file(string filename) {
@@ -213,4 +215,5 @@ version(with_libjpeg) {
 		/* And we're done! */
 		return 1;
 	}
++/
 }

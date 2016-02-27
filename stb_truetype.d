@@ -1,11 +1,12 @@
-// stb_truetype.h - v0.6c - public domain
-// authored from 2009-2012 by Sean Barrett / RAD Game Tools
+/// stb_truetype.h - v0.6c - public domain
+/// authored from 2009-2012 by Sean Barrett / RAD Game Tools
 //
 // http://nothings.org/stb/stb_truetype.h
 //
 // port to D by adam d. ruppe. see the link above for more info about the lib and real author.
 
 // here's some D convenience functions
+module stb_truetype;
 
 struct TtfFont {
 	stbtt_fontinfo font;

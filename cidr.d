@@ -1,3 +1,7 @@
+///
+module cidr;
+
+///
 uint addressToUint(string address) {
 	import std.algorithm.iteration, std.conv;
 
@@ -12,6 +16,7 @@ uint addressToUint(string address) {
 	return result;
 }
 
+///
 string uintToAddress(uint addr) {
 	import std.conv;
 	string res;
@@ -26,6 +31,7 @@ string uintToAddress(uint addr) {
 	return res;
 }
 
+///
 struct IPv4Block {
 	this(string cidr) {
 		import std.algorithm.searching, std.conv;

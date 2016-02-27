@@ -1,8 +1,10 @@
+///
 module arsd.csv;
 
 import std.string;
 import std.array;
 
+///
 string[][] readCsv(string data) {
 	data = data.replace("\r", "");
 

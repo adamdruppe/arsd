@@ -1,3 +1,4 @@
+/// curl wrapper, it sux
 module arsd.curl;
 
 // see this for info on making a curl.lib on windows:

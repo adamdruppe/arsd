@@ -1,6 +1,6 @@
-// Small wrapper for libssh2
-// just link with it on Linux
-// it'll need a couple dlls and a lib on windows.
+/// Small wrapper for libssh2
+/// just link with it on Linux
+/// it'll need a couple dlls and a lib on windows.
 
 module arsd.libssh2;
 
@@ -181,4 +181,9 @@ extern(C) {
 	int libssh2_channel_wait_closed(LIBSSH2_CHANNEL *channel);
 
 	enum LIBSSH2_ERROR_EAGAIN = -37;
+
+	int libssh2_session_flag(LIBSSH2_SESSION*, int, int);
+	enum LIBSSH2_FLAG_SIGPIPE = 1;
+	enum LIBSSH2_FLAG_COMPRESS = 2;
+
 }

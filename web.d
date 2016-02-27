@@ -1,3 +1,4 @@
+/// magic web wrapper
 module arsd.web;
 
 // it would be nice to be able to add meta info to a returned envelope
@@ -3594,7 +3595,7 @@ struct TemplateFilters {
 
 		switch(word[$ - 1]) {
 			case 's':
-			case 'a', 'e', 'i', 'o', 'u':
+			case 'a', 'i', 'o', 'u':
 				return word ~ "es";
 			case 'f':
 				return word[0 .. $-1] ~ "ves";

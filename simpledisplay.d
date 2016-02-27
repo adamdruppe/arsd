@@ -52,7 +52,7 @@
 	compiler are all opt-in.
 
 	simpledisplay.d's home base is on my arsd repo on Github. The file is:
-	$(L https://github.com/adamdruppe/arsd/blob/master/simpledisplay.d)
+	https://github.com/adamdruppe/arsd/blob/master/simpledisplay.d
 
 	simpledisplay is basically stable. I plan to refactor the internals,
 	and may add new features and fix bugs, but It do not expect to
@@ -4416,8 +4416,8 @@ version(X11) {
 		version(with_eventloop) {
 			import arsd.eventloop;
 			static void eventListener(OsFileHandle fd) {
-				this.mtLock();
-				scope(exit) this.mtUnlock();
+				//this.mtLock();
+				//scope(exit) this.mtUnlock();
 				while(XPending(display))
 					doXNextEvent(display);
 			}

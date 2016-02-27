@@ -1,3 +1,4 @@
+///
 module arsd.hmac;
 
 // FIXME: the blocksize is correct for MD5, SHA1, and SHA256 but not generally

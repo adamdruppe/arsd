@@ -1,3 +1,5 @@
+/// A draft of a better way to do exceptions
+module arsd.exception;
 /*
 	Exceptions 2.0
 */

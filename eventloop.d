@@ -1,3 +1,4 @@
+/// crappy event loop for linux
 module arsd.eventloop;
 
 /* **** */
@@ -251,6 +252,7 @@ public struct FileEventDispatcher {
 			return;
 
 		addListener(&lowLevelReadHandler);
+		addListener(&lowLevelHupHandler);
 		addListener(&lowLevelWriteHandler);
 		addListener(&lowLevelErrorHandler);
 		handlersActive = true;
@@ -261,6 +263,7 @@ public struct FileEventDispatcher {
 			return;
 
 		removeListener(&lowLevelErrorHandler);
+		removeListener(&lowLevelHupHandler);
 		removeListener(&lowLevelWriteHandler);
 		removeListener(&lowLevelReadHandler);
 		handlersActive = false;
@@ -302,6 +305,9 @@ public struct FileEventDispatcher {
 	private void lowLevelErrorHandler(FileError ev) {
 		doHandler(ev.fd, 2);
 	}
+	private void lowLevelHupHandler(FileHup ev) {
+		doHandler(ev.fd, 2);
+	}
 
 	/// You can add a file to listen to here. Files can be OS handles or Phobos types. The handlers can be null, meaning use the default
 	/// (see: setDefaultHandler), or callables with zero or one argument. If they take an argument, it will be the file being handled at this time.
@@ -330,11 +336,11 @@ public struct FileEventDispatcher {
 			events |= FileEvents.read;
 		}
 		if(writeEventHandler !is null) {
-			handlerSet[0] = wrap(writeEventHandler);
+			handlerSet[1] = wrap(writeEventHandler);
 			events |= FileEvents.write;
 		}
 		if(errorEventHandler !is null)
-			handlerSet[0] = wrap(errorEventHandler);
+			handlerSet[2] = wrap(errorEventHandler);
 
 		listeners[handle] = handlerSet;
 
@@ -344,6 +350,7 @@ public struct FileEventDispatcher {
 
 	public void removeFile(OsFileHandle handle) {
 		listeners.remove(handle);
+		removeFileFromLoopImplementation(handle);
 	}
 
 	/// What should this default handler work on?
@@ -492,6 +499,12 @@ version(linux) {
 		epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &ev);
 	}
 
+	private void removeFileFromLoopImplementation(int fd) {
+		epoll_event ev = void;
+		ev.data.fd = fd;
+		epoll_ctl(epoll, EPOLL_CTL_DEL, fd, &ev);
+	}
+
 
 	private void loopImplementation() {
 		insideLoop = true;
@@ -561,7 +574,10 @@ version(linux) {
 					if((flags & EPOLLERR)) {
 						//import core.stdc.stdio; printf("ERROR on fd from epoll %d\n", fd);
 						sendSync(FileError(fd));
-						break outer_loop;
+
+						// I automatically remove them because otherwise the error flag
+						// may never actually be cleared and this thing will infinite loop.
+						removeFileEventListeners(fd);
 					}
 					if((flags & EPOLLHUP)) {
 						//import core.stdc.stdio; printf("HUP on fd from epoll %d\n", fd);

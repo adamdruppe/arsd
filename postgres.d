@@ -1,3 +1,4 @@
+/// minimal libpq wrapper
 module arsd.postgres;
 pragma(lib, "pq");
 

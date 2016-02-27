@@ -1,3 +1,4 @@
+///
 module arsd.htmltotext;
 
 import arsd.dom;

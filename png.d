@@ -1,3 +1,4 @@
+/// PNG file handling for color.d's Image interfaces
 module arsd.png;
 
 /// Easily reads a png file into a MemoryImage

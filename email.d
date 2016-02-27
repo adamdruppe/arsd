@@ -1,3 +1,4 @@
+///
 module arsd.email;
 
 import std.net.curl;

@@ -1,4 +1,4 @@
-/*
+/**
 	This is CLIENT only at this point. Don't try to
 	bind/accept with these.
 
@@ -47,8 +47,17 @@ version(use_openssl) {
 		void SSL_free(SSL*);
 		void SSL_CTX_free(SSL_CTX*);
 
+		void SSL_set_verify(SSL*, int, void*);
+		enum SSL_VERIFY_NONE = 0;
+
 		SSL_METHOD* SSLv3_client_method();
+		SSL_METHOD* TLS_client_method();
+		SSL_METHOD* SSLv23_client_method();
+
+		void ERR_print_errors_fp(FILE*);
 	}
+
+	import core.stdc.stdio;
 
 	shared static this() {
 		SSL_library_init();
@@ -63,19 +72,26 @@ version(use_openssl) {
 	class OpenSslSocket : Socket {
 		private SSL* ssl;
 		private SSL_CTX* ctx;
-		private void initSsl() {
-			ctx = SSL_CTX_new(SSLv3_client_method());
+		private void initSsl(bool verifyPeer) {
+			ctx = SSL_CTX_new(SSLv23_client_method());
 			assert(ctx !is null);
 
 			ssl = SSL_new(ctx);
+			if(!verifyPeer)
+				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
 			SSL_set_fd(ssl, this.handle);
 		}
 
 		@trusted
 		override void connect(Address to) {
 			super.connect(to);
-			if(SSL_connect(ssl) == -1)
+			if(SSL_connect(ssl) == -1) {
+				ERR_print_errors_fp(stderr);
+				int i;
+				printf("wtf\n");
+				scanf("%d\n", i);
 				throw new Exception("ssl connect");
+			}
 		}
 		
 		@trusted
@@ -93,14 +109,14 @@ version(use_openssl) {
 			return receive(buf, SocketFlags.NONE);
 		}
 
-		this(AddressFamily af, SocketType type = SocketType.STREAM) {
+		this(AddressFamily af, SocketType type = SocketType.STREAM, bool verifyPeer = true) {
 			super(af, type);
-			initSsl();
+			initSsl(verifyPeer);
 		}
 
 		this(socket_t sock, AddressFamily af) {
 			super(sock, af);
-			initSsl();
+			initSsl(true);
 		}
 
 		~this() {

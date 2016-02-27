@@ -1516,13 +1516,15 @@ struct RealTimeConsoleInput {
 			FD_ZERO(&fs);
 
 			FD_SET(fdIn, &fs);
-			select(fdIn + 1, &fs, null, null, &tv);
+			if(select(fdIn + 1, &fs, null, null, &tv) == -1) {
+				return false;
+			}
 
 			return FD_ISSET(fdIn, &fs);
 		}
 	}
 
-	private bool anyInput_internal() {
+	/* private */ bool anyInput_internal() {
 		if(inputQueue.length || timedCheckForInput(0))
 			return true;
 		version(Posix)
@@ -3351,6 +3353,9 @@ version(Windows) {
 
 
 struct ScrollbackBuffer {
+
+	bool demandsAttention;
+
 	this(string name) {
 		this.name = name;
 	}
@@ -3640,6 +3645,8 @@ struct ScrollbackBuffer {
 			case InputEvent.Type.KeyboardEvent:
 				auto ev = e.keyboardEvent;
 
+				demandsAttention = false;
+
 				switch(ev.which) {
 					case KeyboardEvent.Key.UpArrow:
 						scrollUp();
@@ -3660,6 +3667,7 @@ struct ScrollbackBuffer {
 			case InputEvent.Type.MouseEvent:
 				auto ev = e.mouseEvent;
 				if(ev.x >= x && ev.x < x + width && ev.y >= y && ev.y < y + height) {
+					demandsAttention = false;
 					// it is inside our box, so do something with it
 					auto mx = ev.x - x;
 					auto my = ev.y - y;

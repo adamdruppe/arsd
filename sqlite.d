@@ -1,4 +1,4 @@
-/*
+/**
 	Compile with version=sqlite_extended_metadata_available
 	if your sqlite is compiled with the
 	 SQLITE_ENABLE_COLUMN_METADATA C-preprocessor symbol.
@@ -8,7 +8,6 @@
 	use DataObjects, but you'll have to set up the mappings
 	manually without the extended metadata.)
 */
-
 module arsd.sqlite;
 pragma(lib, "sqlite3");
 version(linux)

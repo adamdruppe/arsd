@@ -1,3 +1,4 @@
+/// homemade sha 1 and sha2 impls. beware of bugs.
 module arsd.sha;
 
 /*

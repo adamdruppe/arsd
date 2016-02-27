@@ -1,3 +1,4 @@
+///
 module arsd.color;
 
 @safe:
@@ -114,7 +115,7 @@ private {
 /// Represents an RGBA color
 struct Color {
 	union {
-		ubyte[4] components;
+		ubyte[4] components; ///
 
 		struct {
 			ubyte r; /// red
@@ -123,7 +124,7 @@ struct Color {
 			ubyte a; /// alpha. 255 == opaque
 		}
 
-		uint asUint;
+		uint asUint; ///
 	}
 
 	// this makes sure they are in range before casting
@@ -518,25 +519,28 @@ Color setLightness(Color c, real lightness) {
 }
 
 
-
+///
 Color rotateHue(Color c, real degrees) {
 	auto hsl = toHsl(c);
 	hsl[0] += degrees;
 	return fromHsl(hsl);
 }
 
+///
 Color setHue(Color c, real hue) {
 	auto hsl = toHsl(c);
 	hsl[0] = hue;
 	return fromHsl(hsl);
 }
 
+///
 Color desaturate(Color c, real percentage) {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 - percentage);
 	return fromHsl(hsl);
 }
 
+///
 Color saturate(Color c, real percentage) {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 + percentage);
@@ -545,6 +549,7 @@ Color saturate(Color c, real percentage) {
 	return fromHsl(hsl);
 }
 
+///
 Color setSaturation(Color c, real saturation) {
 	auto hsl = toHsl(c);
 	hsl[1] = saturation;
@@ -592,6 +597,7 @@ So, given the background color and the resultant color, what was
 composited on to it?
 */
 
+///
 ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
 	// resultingColor = (1-alpha) * backgroundColor + alpha * answer
 	auto resultingColorf = cast(float) colorYouHave;
@@ -605,6 +611,7 @@ ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
 	return cast(ubyte) answer;
 }
 
+///
 ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 0x00*/) {
 	//auto foregroundf = cast(float) foreground;
 	auto foregroundf = 0.00f;
@@ -644,6 +651,7 @@ int fromHex(string s) {
 	return result;
 }
 
+///
 Color colorFromString(string s) {
 	if(s.length == 0)
 		return Color(0,0,0,255);
@@ -1118,19 +1126,22 @@ void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
 
 // these are just really useful in a lot of places where the color/image functions are used,
 // so I want them available with Color
+///
 struct Point {
-	int x;
-	int y;
+	int x; ///
+	int y; ///
 }
 
+///
 struct Size {
-	int width;
-	int height;
+	int width; ///
+	int height; ///
 }
 
+///
 struct Rectangle {
-	int left;
-	int top;
-	int right;
-	int bottom;
+	int left; ///
+	int top; ///
+	int right; ///
+	int bottom; ///
 }

@@ -1,3 +1,4 @@
+/// a D mangler
 module mangle;
 
 import std.conv;

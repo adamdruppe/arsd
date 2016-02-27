@@ -1,3 +1,4 @@
+///
 module arsd.database;
 
 public import std.variant;
@@ -21,6 +22,7 @@ import std.string;
 	so they are always done once per program...
 */
 
+///
 interface Database {
 	/// Actually implements the query for the database. The query() method
 	/// below might be easier to use.

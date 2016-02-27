@@ -1,3 +1,4 @@
+/// bmp impl for MemoryImage
 module arsd.bmp;
 
 import arsd.color;
