@@ -1575,10 +1575,10 @@ class Element {
 	}
 
 	///.
-	@property Element[] childElements() {
+	@property Element[] childElements(string tagName = null) {
 		Element[] ret;
 		foreach(c; children)
-			if(c.nodeType == 1)
+			if(c.nodeType == 1 && (tagName is null || c.tagName == tagName))
 				ret ~= c;
 		return ret;
 	}
@@ -4906,8 +4906,15 @@ int intFromHex(string hex) {
 		string[] hasSelectors; /// :has(this)
 		string[] notSelectors; /// :not(this)
 
+		ParsedNth[] nthOfType; /// .
+		ParsedNth[] nthLastOfType; /// .
+		ParsedNth[] nthChild; /// .
+
 		bool firstChild; ///.
 		bool lastChild; ///.
+
+		bool firstOfType; /// .
+		bool lastOfType; /// .
 
 		bool emptyElement; ///.
 		bool whitespaceOnly; ///
@@ -4949,8 +4956,14 @@ int intFromHex(string hex) {
 			foreach(a; notSelectors) ret ~= ":not(" ~ a ~ ")";
 			foreach(a; hasSelectors) ret ~= ":has(" ~ a ~ ")";
 
+			foreach(a; nthChild) ret ~= ":nth-child(" ~ a.toString ~ ")";
+			foreach(a; nthOfType) ret ~= ":nth-of-type(" ~ a.toString ~ ")";
+			foreach(a; nthLastOfType) ret ~= ":nth-last-of-type(" ~ a.toString ~ ")";
+
 			if(firstChild) ret ~= ":first-child";
 			if(lastChild) ret ~= ":last-child";
+			if(firstOfType) ret ~= ":first-of-type";
+			if(lastOfType) ret ~= ":last-of-type";
 			if(emptyElement) ret ~= ":empty";
 			if(whitespaceOnly) ret ~= ":whitespace-only";
 			if(oddChild) ret ~= ":odd-child";
@@ -4983,6 +4996,32 @@ int intFromHex(string hex) {
 				auto ce = e.parentNode.childElements;
 				if(ce[$-1] !is e)
 					return false;
+			}
+			if(firstOfType) {
+				if(e.parentNode is null)
+					return false;
+				auto ce = e.parentNode.childElements;
+				foreach(c; ce) {
+					if(c.tagName == e.tagName) {
+						if(c is e)
+							return true;
+						else
+							return false;
+					}
+				}
+			}
+			if(lastOfType) {
+				if(e.parentNode is null)
+					return false;
+				auto ce = e.parentNode.childElements;
+				foreach_reverse(c; ce) {
+					if(c.tagName == e.tagName) {
+						if(c is e)
+							return true;
+						else
+							return false;
+					}
+				}
 			}
 			if(emptyElement) {
 				if(e.children.length)
@@ -5056,7 +5095,143 @@ int intFromHex(string hex) {
 					return false;
 			}
 
+			foreach(a; nthChild) {
+				if(e.parentNode is null)
+					return false;
+
+				auto among = e.parentNode.childElements;
+
+				if(!a.solvesFor(among, e))
+					return false;
+			}
+			foreach(a; nthOfType) {
+				if(e.parentNode is null)
+					return false;
+
+				auto among = e.parentNode.childElements(e.tagName);
+
+				if(!a.solvesFor(among, e))
+					return false;
+			}
+			foreach(a; nthLastOfType) {
+				if(e.parentNode is null)
+					return false;
+
+				auto among = retro(e.parentNode.childElements(e.tagName));
+
+				if(!a.solvesFor(among, e))
+					return false;
+			}
+
 			return true;
+		}
+	}
+
+	struct ParsedNth {
+		int multiplier;
+		int adder;
+
+		string of;
+
+		this(string text) {
+			auto original = text;
+			consumeWhitespace(text);
+			if(text.startsWith("odd")) {
+				multiplier = 2;
+				adder = 1;
+
+				text = text[3 .. $];
+			} else if(text.startsWith("even")) {
+				multiplier = 2;
+				adder = 1;
+
+				text = text[4 .. $];
+			} else {
+				int n = (text.length && text[0] == 'n') ? 1 : parseNumber(text);
+				consumeWhitespace(text);
+				if(text.length && text[0] == 'n') {
+					multiplier = n;
+					text = text[1 .. $];
+					consumeWhitespace(text);
+					if(text.length) {
+						if(text[0] == '+') {
+							text = text[1 .. $];
+							adder = parseNumber(text);
+						} else if(text[0] == '-') {
+							text = text[1 .. $];
+							adder = -parseNumber(text);
+						} else if(text[0] == 'o') {
+							// continue, this is handled below
+						} else
+							throw new Exception("invalid css string at " ~ text ~ " in " ~ original);
+					}
+				} else {
+					adder = n;
+				}
+			}
+
+			consumeWhitespace(text);
+			if(text.startsWith("of")) {
+				text = text[2 .. $];
+				consumeWhitespace(text);
+				of = text[0 .. $];
+			}
+		}
+
+		string toString() {
+			return format("%dn%s%d%s%s", multiplier, adder >= 0 ? "+" : "", adder, of.length ? " of " : "", of);
+		}
+
+		bool solvesFor(R)(R elements, Element e) {
+			int idx = 0;
+			bool found = false;
+			foreach(ele; elements) {
+				if(of.length) {
+					auto sel = Selector(of);
+					if(!sel.matchesElement(ele))
+						continue;
+				}
+				if(ele is e) {
+					found = true;
+					break;
+				}
+				idx++;
+			}
+			if(!found) return false;
+
+			// multiplier* n + adder = idx
+			// if there is a solution for integral n, it matches
+
+			idx -= adder;
+			if(multiplier) {
+				if(idx % multiplier == 0)
+					return true;
+			} else {
+				return idx == 0;
+			}
+			return false;
+		}
+
+		private void consumeWhitespace(ref string text) {
+			while(text.length && text[0] == ' ')
+				text = text[1 .. $];
+		}
+
+		private int parseNumber(ref string text) {
+			consumeWhitespace(text);
+			if(text.length == 0) return 0;
+			bool negative = text[0] == '-';
+			if(text[0] == '+')
+				text = text[1 .. $];
+			if(negative) text = text[1 .. $];
+			int i = 0;
+			while(i < text.length && (text[i] >= '0' && text[i] <= '9'))
+				i++;
+			if(i == 0)
+				return 0;
+			int cool = to!int(text[0 .. i]);
+			text = text[i .. $];
+			return negative ? -cool : cool;
 		}
 	}
 
@@ -5457,6 +5632,16 @@ int intFromHex(string hex) {
 				break;
 				case State.ReadingPseudoClass:
 					switch(token) {
+						case "first-of-type":
+							current.firstOfType = true;
+						break;
+						case "last-of-type":
+							current.lastOfType = true;
+						break;
+						case "only-of-type":
+							current.firstOfType = true;
+							current.lastOfType = true;
+						break;
 						case "first-child":
 							current.firstChild = true;
 						break;
@@ -5480,6 +5665,18 @@ int intFromHex(string hex) {
 						case "root":
 							current.rootElement = true;
 						break;
+						case "nth-child":
+							current.nthChild ~= ParsedNth(readFunctionalSelector());
+							state = State.SkippingFunctionalSelector;
+						continue;
+						case "nth-of-type":
+							current.nthOfType ~= ParsedNth(readFunctionalSelector());
+							state = State.SkippingFunctionalSelector;
+						continue;
+						case "nth-last-of-type":
+							current.nthLastOfType ~= ParsedNth(readFunctionalSelector());
+							state = State.SkippingFunctionalSelector;
+						continue;
 						case "not":
 							state = State.SkippingFunctionalSelector;
 							current.notSelectors ~= readFunctionalSelector();
@@ -5488,13 +5685,6 @@ int intFromHex(string hex) {
 							state = State.SkippingFunctionalSelector;
 							current.hasSelectors ~= readFunctionalSelector();
 						continue; // now the rest of the parser skips past the parens we just handled
-						// My extensions
-						case "odd-child":
-							current.oddChild = true;
-						break;
-						case "even-child":
-							current.evenChild = true;
-						break;
 						// back to standards though not quite right lol
 						case "disabled":
 							current.attributesPresent ~= "disabled";
@@ -5518,6 +5708,13 @@ int intFromHex(string hex) {
 						case "before", "after":
 							current.attributesPresent ~= "FIXME";
 
+						break;
+						// My extensions
+						case "odd-child":
+							current.oddChild = true;
+						break;
+						case "even-child":
+							current.evenChild = true;
 						break;
 						default:
 							//if(token.indexOf("lang") == -1)
@@ -6377,7 +6574,7 @@ void fillForm(T)(Form form, T obj, string name) {
 /*
 Copyright: Adam D. Ruppe, 2010 - 2016
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe, with contributions by Nick Sabalausky and Trass3r among others
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 
         Copyright Adam D. Ruppe 2010-2016.
 Distributed under the Boost Software License, Version 1.0.
