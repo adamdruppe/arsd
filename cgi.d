@@ -3455,7 +3455,7 @@ version(Windows) {
 }
 
 version(Posix) {
-	static import linux = std.c.linux.linux;
+	static import linux = core.sys.posix.unistd;
 }
 
 string getTempDirectory() {
