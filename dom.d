@@ -1,29 +1,32 @@
-/**
+/++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond
 	it in convenience.
 
 	If you can do it in Javascript, you can probably do it with
-	this module.
+	this module, and much more.
 
-	And much more.
+	---
+	import arsd.dom;
 
+	void main() {
+		auto document = new Document("<html><p>paragraph</p></html>");
+		writeln(document.querySelector("p"));
+		document.root.innerHTML = "<p>hey</p>";
+		writeln(document);
+	}
+	---
 
-	Note: some of the documentation here writes html with added
-	spaces. That's because ddoc doesn't bother encoding html output,
-	and adding spaces is easier than using LT macros everywhere.
-
-
-	BTW: this file optionally depends on arsd.characterencodings, to
+	BTW: this file optionally depends on `arsd.characterencodings`, to
 	help it correctly read files from the internet. You should be able to
 	get characterencodings.d from the same place you got this file.
 
-	If you want it to stand alone, just always use the `parseUtf8` function.
-*/
+	If you want it to stand alone, just always use the `Document.parseUtf8`
+	function or the constructor that takes a string.
++/
 module arsd.dom;
 
-// FIXME: do parent selector picking in get selector
-// FIXME: do :has too... or instead, :has is quite nice.
+// FIXME: support the css standard namespace thing in the selectors too
 
 version(with_arsd_jsvar)
 	import arsd.jsvar;
@@ -47,9 +50,6 @@ bool isConvenientAttribute(string name) {
 	return false;
 }
 
-// FIXME: might be worth doing Element.attrs and taking opDispatch off that
-// so more UFCS works.
-
 
 // FIXME: something like <ol>spam <ol> with no closing </ol> should read the second tag as the closer in garbage mode
 // FIXME: failing to close a paragraph sometimes messes things up too
@@ -66,16 +66,1252 @@ bool isConvenientAttribute(string name) {
 	xpath.p[0].a["href"]
 */
 
-// public import arsd.domconvenience; // merged for now
 
-/* domconvenience follows { */
+/// The main document interface, including a html parser.
+class Document : FileResource {
+	///.
+	this(string data, bool caseSensitive = false, bool strict = false) {
+		parseUtf8(data, caseSensitive, strict);
+	}
+
+	/**
+		Creates an empty document. It has *nothing* in it at all.
+	*/
+	this() {
+
+	}
+
+	/// This is just something I'm toying with. Right now, you use opIndex to put in css selectors.
+	/// It returns a struct that forwards calls to all elements it holds, and returns itself so you
+	/// can chain it.
+	///
+	/// Example: document["p"].innerText("hello").addClass("modified");
+	///
+	/// Equivalent to: foreach(e; document.getElementsBySelector("p")) { e.innerText("hello"); e.addClas("modified"); }
+	///
+	/// Note: always use function calls (not property syntax) and don't use toString in there for best results.
+	///
+	/// You can also do things like: document["p"]["b"] though tbh I'm not sure why since the selector string can do all that anyway. Maybe
+	/// you could put in some kind of custom filter function tho.
+	ElementCollection opIndex(string selector) {
+		auto e = ElementCollection(this.root);
+		return e[selector];
+	}
+
+	string _contentType = "text/html; charset=utf-8";
+
+	/// If you're using this for some other kind of XML, you can
+	/// set the content type here.
+	///
+	/// Note: this has no impact on the function of this class.
+	/// It is only used if the document is sent via a protocol like HTTP.
+	///
+	/// This may be called by parse() if it recognizes the data. Otherwise,
+	/// if you don't set it, it assumes text/html; charset=utf-8.
+	@property string contentType(string mimeType) {
+		_contentType = mimeType;
+		return _contentType;
+	}
+
+	/// implementing the FileResource interface, useful for sending via
+	/// http automatically.
+	override @property string contentType() const {
+		return _contentType;
+	}
+
+	/// implementing the FileResource interface; it calls toString.
+	override immutable(ubyte)[] getData() const {
+		return cast(immutable(ubyte)[]) this.toString();
+	}
 
 
-import std.string;
+	/// Concatenates any consecutive text nodes
+	/*
+	void normalize() {
 
-// the reason this is separated is so I can plug it into D->JS as well, which uses a different base Element class
+	}
+	*/
 
-mixin template DomConvenienceFunctions() {
+	/// This will set delegates for parseSaw* (note: this overwrites anything else you set, and you setting subsequently will overwrite this) that add those things to the dom tree when it sees them.
+	/// Call this before calling parse().
+
+	/// Note this will also preserve the prolog and doctype from the original file, if there was one.
+	void enableAddingSpecialTagsToDom() {
+		parseSawComment = (string) => true;
+		parseSawAspCode = (string) => true;
+		parseSawPhpCode = (string) => true;
+		parseSawQuestionInstruction = (string) => true;
+		parseSawBangInstruction = (string) => true;
+	}
+
+	/// If the parser sees a html comment, it will call this callback
+	/// <!-- comment --> will call parseSawComment(" comment ")
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawComment;
+
+	/// If the parser sees <% asp code... %>, it will call this callback.
+	/// It will be passed "% asp code... %" or "%= asp code .. %"
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawAspCode;
+
+	/// If the parser sees <?php php code... ?>, it will call this callback.
+	/// It will be passed "?php php code... ?" or "?= asp code .. ?"
+	/// Note: dom.d cannot identify  the other php <? code ?> short format.
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawPhpCode;
+
+	/// if it sees a <?xxx> that is not php or asp
+	/// it calls this function with the contents.
+	/// <?SOMETHING foo> calls parseSawQuestionInstruction("?SOMETHING foo")
+	/// Unlike the php/asp ones, this ends on the first > it sees, without requiring ?>.
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawQuestionInstruction;
+
+	/// if it sees a <! that is not CDATA or comment (CDATA is handled automatically and comments call parseSawComment),
+	/// it calls this function with the contents.
+	/// <!SOMETHING foo> calls parseSawBangInstruction("SOMETHING foo")
+	/// Return true if you want the node appended to the document.
+	bool delegate(string) parseSawBangInstruction;
+
+	/// Given the kind of garbage you find on the Internet, try to make sense of it.
+	/// Equivalent to document.parse(data, false, false, null);
+	/// (Case-insensitive, non-strict, determine character encoding from the data.)
+
+	/// NOTE: this makes no attempt at added security.
+	///
+	/// It is a template so it lazily imports characterencodings.
+	void parseGarbage()(string data) {
+		parse(data, false, false, null);
+	}
+
+	/// Parses well-formed UTF-8, case-sensitive, XML or XHTML
+	/// Will throw exceptions on things like unclosed tags.
+	void parseStrict(string data) {
+		parseStream(toUtf8Stream(data), true, true);
+	}
+
+	/// Parses well-formed UTF-8 in loose mode (by default). Tries to correct
+	/// tag soup, but does NOT try to correct bad character encodings.
+	///
+	/// They will still throw an exception.
+	void parseUtf8(string data, bool caseSensitive = false, bool strict = false) {
+		parseStream(toUtf8Stream(data), caseSensitive, strict);
+	}
+
+	// this is a template so we get lazy import behavior
+	Utf8Stream handleDataEncoding()(in string rawdata, string dataEncoding, bool strict) {
+		import arsd.characterencodings;
+		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
+		if(dataEncoding is null) {
+			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
+			// it can't tell... probably a random 8 bit encoding. Let's check the document itself.
+			// Now, XML and HTML can both list encoding in the document, but we can't really parse
+			// it here without changing a lot of code until we know the encoding. So I'm going to
+			// do some hackish string checking.
+			if(dataEncoding is null) {
+				auto dataAsBytes = cast(immutable(ubyte)[]) rawdata;
+				// first, look for an XML prolog
+				auto idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "encoding=\"");
+				if(idx != -1) {
+					idx += "encoding=\"".length;
+					// we're probably past the prolog if it's this far in; we might be looking at
+					// content. Forget about it.
+					if(idx > 100)
+						idx = -1;
+				}
+				// if that fails, we're looking for Content-Type http-equiv or a meta charset (see html5)..
+				if(idx == -1) {
+					idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "charset=");
+					if(idx != -1) {
+						idx += "charset=".length;
+						if(dataAsBytes[idx] == '"')
+							idx++;
+					}
+				}
+
+				// found something in either branch...
+				if(idx != -1) {
+					// read till a quote or about 12 chars, whichever comes first...
+					auto end = idx;
+					while(end < dataAsBytes.length && dataAsBytes[end] != '"' && end - idx < 12)
+						end++;
+
+					dataEncoding = cast(string) dataAsBytes[idx .. end];
+				}
+				// otherwise, we just don't know.
+			}
+		}
+
+		if(dataEncoding is null) {
+			if(strict)
+				throw new MarkupException("I couldn't figure out the encoding of this document.");
+			else
+			// if we really don't know by here, it means we already tried UTF-8,
+			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
+			// tags... let's assume it's Windows-1252, since that's probably the most
+			// common aside from utf that wouldn't be labeled.
+
+			dataEncoding = "Windows 1252";
+		}
+
+		// and now, go ahead and convert it.
+
+		string data;
+
+		if(!strict) {
+			// if we're in non-strict mode, we need to check
+			// the document for mislabeling too; sometimes
+			// web documents will say they are utf-8, but aren't
+			// actually properly encoded. If it fails to validate,
+			// we'll assume it's actually Windows encoding - the most
+			// likely candidate for mislabeled garbage.
+			dataEncoding = dataEncoding.toLower();
+			dataEncoding = dataEncoding.replace(" ", "");
+			dataEncoding = dataEncoding.replace("-", "");
+			dataEncoding = dataEncoding.replace("_", "");
+			if(dataEncoding == "utf8") {
+				try {
+					validate(rawdata);
+				} catch(UTFException e) {
+					dataEncoding = "Windows 1252";
+				}
+			}
+		}
+
+		if(dataEncoding != "UTF-8") {
+			if(strict)
+				data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
+			else {
+				try {
+					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
+				} catch(Exception e) {
+					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, "Windows 1252");
+				}
+			}
+		} else
+			data = rawdata;
+
+		return toUtf8Stream(data);
+	}
+
+	private
+	Utf8Stream toUtf8Stream(in string rawdata) {
+		string data = rawdata;
+		static if(is(Utf8Stream == string))
+			return data;
+		else
+			return new Utf8Stream(data);
+	}
+
+	/**
+		Take XMLish data and try to make the DOM tree out of it.
+
+		The goal isn't to be perfect, but to just be good enough to
+		approximate Javascript's behavior.
+
+		If strict, it throws on something that doesn't make sense.
+		(Examples: mismatched tags. It doesn't validate!)
+		If not strict, it tries to recover anyway, and only throws
+		when something is REALLY unworkable.
+
+		If strict is false, it uses a magic list of tags that needn't
+		be closed. If you are writing a document specifically for this,
+		try to avoid such - use self closed tags at least. Easier to parse.
+
+		The dataEncoding argument can be used to pass a specific
+		charset encoding for automatic conversion. If null (which is NOT
+		the default!), it tries to determine from the data itself,
+		using the xml prolog or meta tags, and assumes UTF-8 if unsure.
+
+		If this assumption is wrong, it can throw on non-ascii
+		characters!
+
+
+		Note that it previously assumed the data was encoded as UTF-8, which
+		is why the dataEncoding argument defaults to that.
+
+		So it shouldn't break backward compatibility.
+
+		But, if you want the best behavior on wild data - figuring it out from the document
+		instead of assuming - you'll probably want to change that argument to null.
+
+		This is a template so it lazily imports arsd.characterencodings, which is required
+		to fix up data encodings.
+
+		If you are sure the encoding is good, try parseUtf8 or parseStrict to avoid the
+		dependency. If it is data from the Internet though, a random website, the encoding
+		is often a lie. This function, if dataEncoding == null, can correct for that, or
+		you can try parseGarbage. In those cases, arsd.characterencodings is required to
+		compile.
+	*/
+	void parse()(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
+		auto data = handleDataEncoding(rawdata, dataEncoding, strict);
+		parseStream(data, caseSensitive, strict);
+	}
+
+	// note: this work best in strict mode, unless data is just a simple string wrapper
+	void parseStream(Utf8Stream data, bool caseSensitive = false, bool strict = false) {
+		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
+		// of my big app.
+
+		assert(data !is null);
+
+		// go through character by character.
+		// if you see a <, consider it a tag.
+		// name goes until the first non tagname character
+		// then see if it self closes or has an attribute
+
+		// if not in a tag, anything not a tag is a big text
+		// node child. It ends as soon as it sees a <
+
+		// Whitespace in text or attributes is preserved, but not between attributes
+
+		// &amp; and friends are converted when I know them, left the same otherwise
+
+
+		// this it should already be done correctly.. so I'm leaving it off to net a ~10% speed boost on my typical test file (really)
+		//validate(data); // it *must* be UTF-8 for this to work correctly
+
+		sizediff_t pos = 0;
+
+		clear();
+
+		loose = !caseSensitive;
+
+		bool sawImproperNesting = false;
+		bool paragraphHackfixRequired = false;
+
+		int getLineNumber(sizediff_t p) {
+			int line = 1;
+			foreach(c; data[0..p])
+				if(c == '\n')
+					line++;
+			return line;
+		}
+
+		void parseError(string message) {
+			throw new MarkupException(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
+		}
+
+		void eatWhitespace() {
+			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t'))
+				pos++;
+		}
+
+		string readTagName() {
+			// remember to include : for namespaces
+			// basically just keep going until >, /, or whitespace
+			auto start = pos;
+			while(  data[pos] != '>' && data[pos] != '/' &&
+				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+			{
+				pos++;
+				if(pos == data.length) {
+					if(strict)
+						throw new Exception("tag name incomplete when file ended");
+					else
+						break;
+				}
+			}
+
+			if(!caseSensitive)
+				return toLower(data[start..pos]);
+			else
+				return data[start..pos];
+		}
+
+		string readAttributeName() {
+			// remember to include : for namespaces
+			// basically just keep going until >, /, or whitespace
+			auto start = pos;
+			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
+				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+			{
+				if(data[pos] == '<') {
+					if(strict)
+						throw new MarkupException("The character < can never appear in an attribute name. Line " ~ to!string(getLineNumber(pos)));
+					else
+						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
+				}
+				pos++;
+				if(pos == data.length) {
+					if(strict)
+						throw new Exception("unterminated attribute name");
+					else
+						break;
+				}
+			}
+
+			if(!caseSensitive)
+				return toLower(data[start..pos]);
+			else
+				return data[start..pos];
+		}
+
+		string readAttributeValue() {
+			if(pos >= data.length) {
+				if(strict)
+					throw new Exception("no attribute value before end of file");
+				else
+					return null;
+			}
+			switch(data[pos]) {
+				case '\'':
+				case '"':
+					auto started = pos;
+					char end = data[pos];
+					pos++;
+					auto start = pos;
+					while(pos < data.length && data[pos] != end)
+						pos++;
+					if(strict && pos == data.length)
+						throw new MarkupException("Unclosed attribute value, started on char " ~ to!string(started));
+					string v = htmlEntitiesDecode(data[start..pos], strict);
+					pos++; // skip over the end
+				return v;
+				default:
+					if(strict)
+						parseError("Attributes must be quoted");
+					// read until whitespace or terminator (/ or >)
+					auto start = pos;
+					while(
+						pos < data.length &&
+						data[pos] != '>' &&
+						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
+						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
+						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+					      	pos++;
+
+					string v = htmlEntitiesDecode(data[start..pos], strict);
+					// don't skip the end - we'll need it later
+					return v;
+			}
+		}
+
+		TextNode readTextNode() {
+			auto start = pos;
+			while(pos < data.length && data[pos] != '<') {
+				pos++;
+			}
+
+			return TextNode.fromUndecodedString(this, data[start..pos]);
+		}
+
+		// this is obsolete!
+		RawSource readCDataNode() {
+			auto start = pos;
+			while(pos < data.length && data[pos] != '<') {
+				pos++;
+			}
+
+			return new RawSource(this, data[start..pos]);
+		}
+
+
+		struct Ele {
+			int type; // element or closing tag or nothing
+				/*
+					type == 0 means regular node, self-closed (element is valid)
+					type == 1 means closing tag (payload is the tag name, element may be valid)
+					type == 2 means you should ignore it completely
+					type == 3 means it is a special element that should be appended, if possible, e.g. a <!DOCTYPE> that was chosen to be kept, php code, or comment. It will be appended at the current element if inside the root, and to a special document area if not
+					type == 4 means the document was totally empty
+				*/
+			Element element; // for type == 0 or type == 3
+			string payload; // for type == 1
+		}
+		// recursively read a tag
+		Ele readElement(string[] parentChain = null) {
+			// FIXME: this is the slowest function in this module, by far, even in strict mode.
+			// Loose mode should perform decently, but strict mode is the important one.
+			if(!strict && parentChain is null)
+				parentChain = [];
+
+			static string[] recentAutoClosedTags;
+
+			if(pos >= data.length)
+			{
+				if(strict) {
+					throw new MarkupException("Gone over the input (is there no root element or did it never close?), chain: " ~ to!string(parentChain));
+				} else {
+					if(parentChain.length)
+						return Ele(1, null, parentChain[0]); // in loose mode, we just assume the document has ended
+					else
+						return Ele(4); // signal emptiness upstream
+				}
+			}
+
+			if(data[pos] != '<') {
+				return Ele(0, readTextNode(), null);
+			}
+
+			enforce(data[pos] == '<');
+			pos++;
+			if(pos == data.length) {
+				if(strict)
+					throw new MarkupException("Found trailing < at end of file");
+				// if not strict, we'll just skip the switch
+			} else
+			switch(data[pos]) {
+				// I don't care about these, so I just want to skip them
+				case '!': // might be a comment, a doctype, or a special instruction
+					pos++;
+
+						// FIXME: we should store these in the tree too
+						// though I like having it stripped out tbh.
+
+					if(pos == data.length) {
+						if(strict)
+							throw new MarkupException("<! opened at end of file");
+					} else if(data[pos] == '-' && (pos + 1 < data.length) && data[pos+1] == '-') {
+						// comment
+						pos += 2;
+
+						// FIXME: technically, a comment is anything
+						// between -- and -- inside a <!> block.
+						// so in <!-- test -- lol> , the " lol" is NOT a comment
+						// and should probably be handled differently in here, but for now
+						// I'll just keep running until --> since that's the common way
+
+						auto commentStart = pos;
+						while(pos+3 < data.length && data[pos..pos+3] != "-->")
+							pos++;
+
+						auto end = commentStart;
+
+						if(pos + 3 >= data.length) {
+							if(strict)
+								throw new MarkupException("unclosed comment");
+							end = data.length;
+							pos = data.length;
+						} else {
+							end = pos;
+							assert(data[pos] == '-');
+							pos++;
+							assert(data[pos] == '-');
+							pos++;
+							assert(data[pos] == '>');
+							pos++;
+						}
+
+						if(parseSawComment !is null)
+							if(parseSawComment(data[commentStart .. end])) {
+								return Ele(3, new HtmlComment(this, data[commentStart .. end]), null);
+							}
+					} else if(pos + 7 <= data.length && data[pos..pos + 7] == "[CDATA[") {
+						pos += 7;
+
+						auto cdataStart = pos;
+
+						ptrdiff_t end = -1;
+						typeof(end) cdataEnd;
+
+						if(pos < data.length) {
+							// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
+							end = data[pos .. $].indexOf("]]>");
+						}
+
+						if(end == -1) {
+							if(strict)
+								throw new MarkupException("Unclosed CDATA section");
+							end = pos;
+							cdataEnd = pos;
+						} else {
+							cdataEnd = pos + end;
+							pos = cdataEnd + 3;
+						}
+
+						return Ele(0, new TextNode(this, data[cdataStart .. cdataEnd]), null);
+					} else {
+						auto start = pos;
+						while(pos < data.length && data[pos] != '>')
+							pos++;
+
+						auto bangEnds = pos;
+						if(pos == data.length) {
+							if(strict)
+								throw new MarkupException("unclosed processing instruction (<!xxx>)");
+						} else pos++; // skipping the >
+
+						if(parseSawBangInstruction !is null)
+							if(parseSawBangInstruction(data[start .. bangEnds])) {
+								// FIXME: these should be able to modify the parser state,
+								// doing things like adding entities, somehow.
+
+								return Ele(3, new BangInstruction(this, data[start .. bangEnds]), null);
+							}
+					}
+
+					/*
+					if(pos < data.length && data[pos] == '>')
+						pos++; // skip the >
+					else
+						assert(!strict);
+					*/
+				break;
+				case '%':
+				case '?':
+					/*
+						Here's what we want to support:
+
+						<% asp code %>
+						<%= asp code %>
+						<?php php code ?>
+						<?= php code ?>
+
+						The contents don't really matter, just if it opens with
+						one of the above for, it ends on the two char terminator.
+
+						<?something>
+							this is NOT php code
+							because I've seen this in the wild: <?EM-dummyText>
+
+							This could be php with shorttags which would be cut off
+							prematurely because if(a >) - that > counts as the close
+							of the tag, but since dom.d can't tell the difference
+							between that and the <?EM> real world example, it will
+							not try to look for the ?> ending.
+
+						The difference between this and the asp/php stuff is that it
+						ends on >, not ?>. ONLY <?php or <?= ends on ?>. The rest end
+						on >.
+					*/
+
+					char end = data[pos];
+					auto started = pos;
+					bool isAsp = end == '%';
+					int currentIndex = 0;
+					bool isPhp = false;
+					bool isEqualTag = false;
+					int phpCount = 0;
+
+				    more:
+					pos++; // skip the start
+					if(pos == data.length) {
+						if(strict)
+							throw new MarkupException("Unclosed <"~end~" by end of file");
+					} else {
+						currentIndex++;
+						if(currentIndex == 1 && data[pos] == '=') {
+							if(!isAsp)
+								isPhp = true;
+							isEqualTag = true;
+							goto more;
+						}
+						if(currentIndex == 1 && data[pos] == 'p')
+							phpCount++;
+						if(currentIndex == 2 && data[pos] == 'h')
+							phpCount++;
+						if(currentIndex == 3 && data[pos] == 'p' && phpCount == 2)
+							isPhp = true;
+
+						if(data[pos] == '>') {
+							if((isAsp || isPhp) && data[pos - 1] != end)
+								goto more;
+							// otherwise we're done
+						} else
+							goto more;
+					}
+
+					//writefln("%s: %s", isAsp ? "ASP" : isPhp ? "PHP" : "<? ", data[started .. pos]);
+					auto code = data[started .. pos];
+
+
+					assert((pos < data.length && data[pos] == '>') || (!strict && pos == data.length));
+					if(pos < data.length)
+						pos++; // get past the >
+
+					if(isAsp && parseSawAspCode !is null) {
+						if(parseSawAspCode(code)) {
+							return Ele(3, new AspCode(this, code), null);
+						}
+					} else if(isPhp && parseSawPhpCode !is null) {
+						if(parseSawPhpCode(code)) {
+							return Ele(3, new PhpCode(this, code), null);
+						}
+					} else if(!isAsp && !isPhp && parseSawQuestionInstruction !is null) {
+						if(parseSawQuestionInstruction(code)) {
+							return Ele(3, new QuestionInstruction(this, code), null);
+						}
+					}
+				break;
+				case '/': // closing an element
+					pos++; // skip the start
+					auto p = pos;
+					while(pos < data.length && data[pos] != '>')
+						pos++;
+					//writefln("</%s>", data[p..pos]);
+					if(pos == data.length && data[pos-1] != '>') {
+						if(strict)
+							throw new MarkupException("File ended before closing tag had a required >");
+						else
+							data ~= ">"; // just hack it in
+					}
+					pos++; // skip the '>'
+
+					string tname = data[p..pos-1];
+					if(!caseSensitive)
+						tname = tname.toLower();
+
+				return Ele(1, null, tname); // closing tag reports itself here
+				case ' ': // assume it isn't a real element...
+					if(strict)
+						parseError("bad markup - improperly placed <");
+					else
+						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
+				break;
+				default:
+
+					if(!strict) {
+						// what about something that kinda looks like a tag, but isn't?
+						auto nextTag = data[pos .. $].indexOf("<");
+						auto closeTag = data[pos .. $].indexOf(">");
+						if(closeTag != -1 && nextTag != -1)
+							if(nextTag < closeTag) {
+								// since attribute names cannot possibly have a < in them, we'll look for an equal since it might be an attribute value... and even in garbage mode, it'd have to be a quoted one realistically
+
+								auto equal = data[pos .. $].indexOf("=\"");
+								if(equal != -1 && equal < closeTag) {
+									// this MIGHT be ok, soldier on
+								} else {
+									// definitely no good, this must be a (horribly distorted) text node
+									pos++; // skip the < we're on - don't want text node to end prematurely
+									auto node = readTextNode();
+									node.contents = "<" ~ node.contents; // put this back
+									return Ele(0, node, null);
+								}
+							}
+					}
+
+					string tagName = readTagName();
+					string[string] attributes;
+
+					Ele addTag(bool selfClosed) {
+						if(selfClosed)
+							pos++;
+						else {
+							if(!strict)
+								if(tagName.isInArray(selfClosedElements))
+									// these are de-facto self closed
+									selfClosed = true;
+						}
+
+						if(strict)
+						enforce(data[pos] == '>');//, format("got %s when expecting >\nContext:\n%s", data[pos], data[pos - 100 .. pos + 100]));
+						else {
+							// if we got here, it's probably because a slash was in an
+							// unquoted attribute - don't trust the selfClosed value
+							if(!selfClosed)
+								selfClosed = tagName.isInArray(selfClosedElements);
+
+							while(pos < data.length && data[pos] != '>')
+								pos++;
+						}
+
+						auto whereThisTagStarted = pos; // for better error messages
+
+						pos++;
+
+						auto e = createElement(tagName);
+						e.attributes = attributes;
+						version(dom_node_indexes) {
+							if(e.dataset.nodeIndex.length == 0)
+								e.dataset.nodeIndex = to!string(&(e.attributes));
+						}
+						e.selfClosed = selfClosed;
+						e.parseAttributes();
+
+
+						// HACK to handle script and style as a raw data section as it is in HTML browsers
+						if(tagName == "script" || tagName == "style") {
+							if(!selfClosed) {
+								string closer = "</" ~ tagName ~ ">";
+								ptrdiff_t ending;
+								if(pos >= data.length)
+									ending = -1;
+								else
+									ending = indexOf(data[pos..$], closer);
+
+								ending = indexOf(data[pos..$], closer, 0, (loose ? CaseSensitive.no : CaseSensitive.yes));
+								/*
+								if(loose && ending == -1 && pos < data.length)
+									ending = indexOf(data[pos..$], closer.toUpper());
+								*/
+								if(ending == -1) {
+									if(strict)
+										throw new Exception("tag " ~ tagName ~ " never closed");
+									else {
+										// let's call it totally empty and do the rest of the file as text. doing it as html could still result in some weird stuff like if(a<4) being read as <4 being a tag so it comes out if(a<4></4> and other weirdness) It is either a closed script tag or the rest of the file is forfeit.
+										if(pos < data.length) {
+											e = new TextNode(this, data[pos .. $]);
+											pos = data.length;
+										}
+									}
+								} else {
+									ending += pos;
+									e.innerRawSource = data[pos..ending];
+									pos = ending + closer.length;
+								}
+							}
+							return Ele(0, e, null);
+						}
+
+						bool closed = selfClosed;
+
+						void considerHtmlParagraphHack(Element n) {
+							assert(!strict);
+							if(e.tagName == "p" && e.tagName == n.tagName) {
+								// html lets you write <p> para 1 <p> para 1
+								// but in the dom tree, they should be siblings, not children.
+								paragraphHackfixRequired = true;
+							}
+						}
+
+						//writef("<%s>", tagName);
+						while(!closed) {
+							Ele n;
+							if(strict)
+								n = readElement();
+							else
+								n = readElement(parentChain ~ tagName);
+
+							if(n.type == 4) return n; // the document is empty
+
+							if(n.type == 3 && n.element !is null) {
+								// special node, append if possible
+								if(e !is null)
+									e.appendChild(n.element);
+								else
+									piecesBeforeRoot ~= n.element;
+							} else if(n.type == 0) {
+								if(!strict)
+									considerHtmlParagraphHack(n.element);
+								e.appendChild(n.element);
+							} else if(n.type == 1) {
+								bool found = false;
+								if(n.payload != tagName) {
+									if(strict)
+										parseError(format("mismatched tag: </%s> != <%s> (opened on line %d)", n.payload, tagName, getLineNumber(whereThisTagStarted)));
+									else {
+										sawImproperNesting = true;
+										// this is so we don't drop several levels of awful markup
+										if(n.element) {
+											if(!strict)
+												considerHtmlParagraphHack(n.element);
+											e.appendChild(n.element);
+											n.element = null;
+										}
+
+										// is the element open somewhere up the chain?
+										foreach(i, parent; parentChain)
+											if(parent == n.payload) {
+												recentAutoClosedTags ~= tagName;
+												// just rotating it so we don't inadvertently break stuff with vile crap
+												if(recentAutoClosedTags.length > 4)
+													recentAutoClosedTags = recentAutoClosedTags[1 .. $];
+
+												n.element = e;
+												return n;
+											}
+
+										// if not, this is a text node; we can't fix it up...
+
+										// If it's already in the tree somewhere, assume it is closed by algorithm
+										// and we shouldn't output it - odds are the user just flipped a couple tags
+										foreach(ele; e.tree) {
+											if(ele.tagName == n.payload) {
+												found = true;
+												break;
+											}
+										}
+
+										foreach(ele; recentAutoClosedTags) {
+											if(ele == n.payload) {
+												found = true;
+												break;
+											}
+										}
+
+										if(!found) // if not found in the tree though, it's probably just text
+										e.appendChild(TextNode.fromUndecodedString(this, "</"~n.payload~">"));
+									}
+								} else {
+									if(n.element) {
+										if(!strict)
+											considerHtmlParagraphHack(n.element);
+										e.appendChild(n.element);
+									}
+								}
+
+								if(n.payload == tagName) // in strict mode, this is always true
+									closed = true;
+							} else { /*throw new Exception("wtf " ~ tagName);*/ }
+						}
+						//writef("</%s>\n", tagName);
+						return Ele(0, e, null);
+					}
+
+					// if a tag was opened but not closed by end of file, we can arrive here
+					if(!strict && pos >= data.length)
+						return addTag(false);
+					//else if(strict) assert(0); // should be caught before
+
+					switch(data[pos]) {
+						default: assert(0);
+						case '/': // self closing tag
+							return addTag(true);
+						case '>':
+							return addTag(false);
+						case ' ':
+						case '\t':
+						case '\n':
+							// there might be attributes...
+							moreAttributes:
+							eatWhitespace();
+
+							// same deal as above the switch....
+							if(!strict && pos >= data.length)
+								return addTag(false);
+
+							if(strict && pos >= data.length)
+								throw new MarkupException("tag open, didn't find > before end of file");
+
+							switch(data[pos]) {
+								case '/': // self closing tag
+									return addTag(true);
+								case '>': // closed tag; open -- we now read the contents
+									return addTag(false);
+								default: // it is an attribute
+									string attrName = readAttributeName();
+									string attrValue = attrName;
+									if(pos >= data.length) {
+										if(strict)
+											assert(0, "this should have thrown in readAttributeName");
+										else {
+											data ~= ">";
+											goto blankValue;
+										}
+									}
+									if(data[pos] == '=') {
+										pos++;
+										attrValue = readAttributeValue();
+									}
+
+									blankValue:
+
+									if(strict && attrName in attributes)
+										throw new MarkupException("Repeated attribute: " ~ attrName);
+
+									if(attrName.strip().length)
+										attributes[attrName] = attrValue;
+									else if(strict) throw new MarkupException("wtf, zero length attribute name");
+
+									if(!strict && pos < data.length && data[pos] == '<') {
+										// this is the broken tag that doesn't have a > at the end
+										data = data[0 .. pos] ~ ">" ~ data[pos.. $];
+										// let's insert one as a hack
+										goto case '>';
+									}
+
+									goto moreAttributes;
+							}
+					}
+			}
+
+			return Ele(2, null, null); // this is a <! or <? thing that got ignored prolly.
+			//assert(0);
+		}
+
+		eatWhitespace();
+		Ele r;
+		do {
+			r = readElement(); // there SHOULD only be one element...
+
+			if(r.type == 3 && r.element !is null)
+				piecesBeforeRoot ~= r.element;
+
+			if(r.type == 4)
+				break; // the document is completely empty...
+		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype; root only begins on a regular node
+
+		root = r.element;
+
+		if(!strict) // in strict mode, we'll just ignore stuff after the xml
+		while(r.type != 4) {
+			r = readElement();
+			if(r.type != 4 && r.type != 2) { // if not empty and not ignored
+				if(r.element !is null)
+					piecesAfterRoot ~= r.element;
+			}
+		}
+
+		if(root is null)
+		{
+			if(strict)
+				assert(0, "empty document should be impossible in strict mode");
+			else
+				parseUtf8(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
+		}
+
+		if(paragraphHackfixRequired) {
+			assert(!strict); // this should never happen in strict mode; it ought to never set the hack flag...
+
+			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
+			// It's hard to handle above though because my code sucks. So, we'll fix it here.
+
+			auto iterator = root.tree;
+			foreach(ele; iterator) {
+				if(ele.parentNode is null)
+					continue;
+
+				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
+					auto shouldBePreviousSibling = ele.parentNode;
+					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
+					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
+					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
+				}
+			}
+		}
+	}
+
+	/* end massive parse function */
+
+	/// Gets the <title> element's innerText, if one exists
+	@property string title() {
+		bool doesItMatch(Element e) {
+			return (e.tagName == "title");
+		}
+
+		auto e = findFirst(&doesItMatch);
+		if(e)
+			return e.innerText();
+		return "";
+	}
+
+	/// Sets the title of the page, creating a <title> element if needed.
+	@property void title(string t) {
+		bool doesItMatch(Element e) {
+			return (e.tagName == "title");
+		}
+
+		auto e = findFirst(&doesItMatch);
+
+		if(!e) {
+			e = createElement("title");
+			auto heads = getElementsByTagName("head");
+			if(heads.length)
+				heads[0].appendChild(e);
+		}
+
+		if(e)
+			e.innerText = t;
+	}
+
+	// FIXME: would it work to alias root this; ???? might be a good idea
+	/// These functions all forward to the root element. See the documentation in the Element class.
+	Element getElementById(string id) {
+		return root.getElementById(id);
+	}
+
+	/// ditto
+	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
+		if( is(SomeElementType : Element))
+		out(ret) { assert(ret !is null); }
+	body {
+		return root.requireElementById!(SomeElementType)(id, file, line);
+	}
+
+	/// ditto
+	final SomeElementType requireSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
+		if( is(SomeElementType : Element))
+		out(ret) { assert(ret !is null); }
+	body {
+		return root.requireSelector!(SomeElementType)(selector, file, line);
+	}
+
+
+	/// ditto
+	Element querySelector(string selector) {
+		return root.querySelector(selector);
+	}
+
+	/// ditto
+	Element[] querySelectorAll(string selector) {
+		return root.querySelectorAll(selector);
+	}
+
+	/// ditto
+	Element[] getElementsBySelector(string selector) {
+		return root.getElementsBySelector(selector);
+	}
+
+	/// ditto
+	Element[] getElementsByTagName(string tag) {
+		return root.getElementsByTagName(tag);
+	}
+
+	/// ditto
+	Element[] getElementsByClassName(string tag) {
+		return root.getElementsByClassName(tag);
+	}
+
+	/** FIXME: btw, this could just be a lazy range...... */
+	Element getFirstElementByTagName(string tag) {
+		if(loose)
+			tag = tag.toLower();
+		bool doesItMatch(Element e) {
+			return e.tagName == tag;
+		}
+		return findFirst(&doesItMatch);
+	}
+
+	/// This returns the <body> element, if there is one. (It different than Javascript, where it is called 'body', because body is a keyword in D.)
+	Element mainBody() {
+		return getFirstElementByTagName("body");
+	}
+
+	/// this uses a weird thing... it's [name=] if no colon and
+	/// [property=] if colon
+	string getMeta(string name) {
+		string thing = name.indexOf(":") == -1 ? "name" : "property";
+		auto e = querySelector("head meta["~thing~"="~name~"]");
+		if(e is null)
+			return null;
+		return e.content;
+	}
+
+	/// Sets a meta tag in the document header. It is kinda hacky to work easily for both Facebook open graph and traditional html meta tags/
+	void setMeta(string name, string value) {
+		string thing = name.indexOf(":") == -1 ? "name" : "property";
+		auto e = querySelector("head meta["~thing~"="~name~"]");
+		if(e is null) {
+			e = requireSelector("head").addChild("meta");
+			e.setAttribute(thing, name);
+		}
+
+		e.content = value;
+	}
+
+	///.
+	Form[] forms() {
+		return cast(Form[]) getElementsByTagName("form");
+	}
+
+	///.
+	Form createForm()
+		out(ret) {
+			assert(ret !is null);
+		}
+	body {
+		return cast(Form) createElement("form");
+	}
+
+	///.
+	Element createElement(string name) {
+		if(loose)
+			name = name.toLower();
+
+		auto e = Element.make(name);
+		e.parentDocument = this;
+
+		return e;
+
+//		return new Element(this, name, null, selfClosed);
+	}
+
+	///.
+	Element createFragment() {
+		return new DocumentFragment(this);
+	}
+
+	///.
+	Element createTextNode(string content) {
+		return new TextNode(this, content);
+	}
+
+
+	///.
+	Element findFirst(bool delegate(Element) doesItMatch) {
+		Element result;
+
+		bool goThroughElement(Element e) {
+			if(doesItMatch(e)) {
+				result = e;
+				return true;
+			}
+
+			foreach(child; e.children) {
+				if(goThroughElement(child))
+					return true;
+			}
+
+			return false;
+		}
+
+		goThroughElement(root);
+
+		return result;
+	}
+
+	///.
+	void clear() {
+		root = null;
+		loose = false;
+	}
+
+	///.
+	void setProlog(string d) {
+		_prolog = d;
+		prologWasSet = true;
+	}
+
+	///.
+	private string _prolog = "<!DOCTYPE html>\n";
+	private bool prologWasSet = false; // set to true if the user changed it
+
+	@property string prolog() const {
+		// if the user explicitly changed it, do what they want
+		// or if we didn't keep/find stuff from the document itself,
+		// we'll use the builtin one as a default.
+		if(prologWasSet || piecesBeforeRoot.length == 0)
+			return _prolog;
+
+		string p;
+		foreach(e; piecesBeforeRoot)
+			p ~= e.toString() ~ "\n";
+		return p;
+	}
+
+	///.
+	override string toString() const {
+		return prolog ~ root.toString();
+	}
+
+	///.
+	Element root;
+
+	/// if these were kept, this is stuff that appeared before the root element, such as <?xml version ?> decls and <!DOCTYPE>s
+	Element[] piecesBeforeRoot;
+
+	/// stuff after the root, only stored in non-strict mode and not used in toString, but available in case you want it
+	Element[] piecesAfterRoot;
+
+	///.
+	bool loose;
+
+
+
+	// what follows are for mutation events that you can observe
+	void delegate(DomMutationEvent)[] eventObservers;
+
+	void dispatchMutationEvent(DomMutationEvent e) {
+		foreach(o; eventObservers)
+			o(e);
+	}
+}
+
+/// This represents almost everything in the DOM.
+class Element {
 
 	/// Calls getElementById, but throws instead of returning null if the element is not found. You can also ask for a specific subclass of Element to dynamically cast to, which also throws if it cannot be done.
 	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
@@ -189,15 +1425,6 @@ mixin template DomConvenienceFunctions() {
 	/* *******************************
 		  DOM Mutation
 	*********************************/
-
-	/// Removes all inner content from the tag; all child text and elements are gone.
-	void removeAllChildren()
-		out {
-			assert(this.children.length == 0);
-		}
-	body {
-		children = null;
-	}
 	/// convenience function to quickly add a tag with some text or
 	/// other relevant info (for example, it's a src for an <img> element
 	/// instead of inner text)
@@ -234,10 +1461,12 @@ mixin template DomConvenienceFunctions() {
 		return parentNode.insertAfter(this, e);
 	}
 
+	///
 	Element addSibling(Element e) {
 		return parentNode.insertAfter(this, e);
 	}
 
+	///
 	Element addChild(Element e) {
 		return this.appendChild(e);
 	}
@@ -277,6 +1506,7 @@ mixin template DomConvenienceFunctions() {
 		return e;
 	}
 
+	///
 	Element addChild(string tagName, in Html innerHtml, string info2 = null)
 	in {
 	}
@@ -318,9 +1548,9 @@ mixin template DomConvenienceFunctions() {
 		Strips this tag out of the document, putting its inner html
 		as children of the parent.
 
-		For example, given: <p>hello <b>there</b></p>, if you
-		call stripOut() on the b element, you'll be left with
-		<p>hello there<p>.
+		For example, given: `<p>hello <b>there</b></p>`, if you
+		call `stripOut` on the `b` element, you'll be left with
+		`<p>hello there<p>`.
 
 		The idea here is to make it easy to get rid of garbage
 		markup you aren't interested in.
@@ -343,7 +1573,7 @@ mixin template DomConvenienceFunctions() {
 		this.children.length = 0; // we reparented them all above
 	}
 
-	/// shorthand for this.parentNode.removeChild(this) with parentNode null check
+	/// shorthand for `this.parentNode.removeChild(this)` with `parentNode` `null` check
 	/// if the element already isn't in a tree, it does nothing.
 	Element removeFromTree()
 		in {
@@ -362,11 +1592,13 @@ mixin template DomConvenienceFunctions() {
 		return this;
 	}
 
-	/// Wraps this element inside the given element.
-	/// It's like this.replaceWith(what); what.appendchild(this);
-	///
-	/// Given: < b >cool</ b >, if you call b.wrapIn(new Link("site.com", "my site is "));
-	/// you'll end up with: < a href="site.com">my site is < b >cool< /b ></ a >.
+	/++
+		Wraps this element inside the given element.
+		It's like `this.replaceWith(what); what.appendchild(this);`
+
+		Given: `<b>cool</b>`, if you call `b.wrapIn(new Link("site.com", "my site is "));`
+		you'll end up with: `<a href="site.com">my site is <b>cool</b></a>`.
+	+/
 	Element wrapIn(Element what)
 		in {
 			assert(what !is null);
@@ -401,11 +1633,12 @@ mixin template DomConvenienceFunctions() {
 	}
 
 	/**
-		Fetches the first consecutive nodes, if text nodes, concatenated together
+		Fetches the first consecutive text nodes concatenated together.
 
-		If the first node is not text, returns null.
 
-		See also: directText, innerText
+		`firstInnerText` of `<example>some text<span>more text</span></example>` is `some text`. It stops at the first child tag encountered.
+
+		See_also: [directText], [innerText]
 	*/
 	string firstInnerText() const {
 		string s;
@@ -420,10 +1653,14 @@ mixin template DomConvenienceFunctions() {
 
 
 	/**
-		Returns the text directly under this element,
-		not recursively like innerText.
+		Returns the text directly under this element.
+		
 
-		See also: firstInnerText
+		Unlike [innerText], it does not recurse, and unlike [firstInnerText], it continues
+		past child tags. So, `<example>some <b>bold</b> text</example>`
+		will return `some  text` because it only gets the text, skipping non-text children.
+
+		See_also: [firstInnerText], [innerText]
 	*/
 	@property string directText() {
 		string ret;
@@ -436,19 +1673,16 @@ mixin template DomConvenienceFunctions() {
 	}
 
 	/**
-		Sets the direct text, keeping the same place.
+		Sets the direct text, without modifying other child nodes.
 
-		Unlike innerText, this does *not* remove existing
-		elements in the element.
+
+		Unlike [innerText], this does *not* remove existing elements in the element.
 
 		It only replaces the first text node it sees.
 
-		If there are no text nodes, it calls appendText
+		If there are no text nodes, it calls [appendText].
 
-		So, given (ignore the spaces in the tags):
-			< div > < img > text here < /div >
-
-		it will keep the img, and replace the "text here".
+		So, given `<div><img />text here</div>`, it will keep the `<img />`, and replace the `text here`.
 	*/
 	@property void directText(string text) {
 		foreach(e; children) {
@@ -461,334 +1695,6 @@ mixin template DomConvenienceFunctions() {
 
 		appendText(text);
 	}
-}
-
-/// finds comments that match the given txt. Case insensitive, strips whitespace.
-Element[] findComments(Document document, string txt) {
-	return findComments(document.root, txt);
-}
-
-/// ditto
-Element[] findComments(Element element, string txt) {
-	txt = txt.strip().toLower();
-	Element[] ret;
-
-	foreach(comment; element.getElementsByTagName("#comment")) {
-		string t = comment.nodeValue().strip().toLower();
-		if(t == txt)
-			ret ~= comment;
-	}
-
-	return ret;
-}
-
-// I'm just dicking around with this
-struct ElementCollection {
-	this(Element e) {
-		elements = [e];
-	}
-
-	this(Element e, string selector) {
-		elements = e.querySelectorAll(selector);
-	}
-
-	this(Element[] e) {
-		elements = e;
-	}
-
-	Element[] elements;
-	//alias elements this; // let it implicitly convert to the underlying array
-
-	ElementCollection opIndex(string selector) {
-		ElementCollection ec;
-		foreach(e; elements)
-			ec.elements ~= e.getElementsBySelector(selector);
-		return ec;
-	}
-
-	/// if you slice it, give the underlying array for easy forwarding of the
-	/// collection to range expecting algorithms or looping over.
-	Element[] opSlice() {
-		return elements;
-	}
-
-	/// And input range primitives so we can foreach over this
-	void popFront() {
-		elements = elements[1..$];
-	}
-
-	/// ditto
-	Element front() {
-		return elements[0];
-	}
-
-	/// ditto
-	bool empty() {
-		return !elements.length;
-	}
-
-	/// Forward method calls to each individual element of the collection
-	/// returns this so it can be chained.
-	ElementCollection opDispatch(string name, T...)(T t) {
-		foreach(e; elements) {
-			mixin("e." ~ name)(t);
-		}
-		return this;
-	}
-
-	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
-		return ElementCollection(this.elements ~ rhs.elements);
-	}
-}
-
-
-// this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
-mixin template JavascriptStyleDispatch() {
-	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
-		if(v !is null)
-			return set(name, v);
-		return get(name);
-	}
-
-	string opIndex(string key) const {
-		return get(key);
-	}
-
-	string opIndexAssign(string value, string field) {
-		return set(field, value);
-	}
-
-	// FIXME: doesn't seem to work
-	string* opBinary(string op)(string key)  if(op == "in") {
-		return key in fields;
-	}
-}
-
-/// A proxy object to do the Element class' dataset property. See Element.dataset for more info.
-///
-/// Do not create this object directly.
-struct DataSet {
-	this(Element e) {
-		this._element = e;
-	}
-
-	private Element _element;
-	string set(string name, string value) {
-		_element.setAttribute("data-" ~ unCamelCase(name), value);
-		return value;
-	}
-
-	string get(string name) const {
-		return _element.getAttribute("data-" ~ unCamelCase(name));
-	}
-
-	mixin JavascriptStyleDispatch!();
-}
-
-/// Proxy object for attributes which will replace the main opDispatch eventually
-struct AttributeSet {
-	this(Element e) {
-		this._element = e;
-	}
-
-	private Element _element;
-	string set(string name, string value) {
-		_element.setAttribute(name, value);
-		return value;
-	}
-
-	string get(string name) const {
-		return _element.getAttribute(name);
-	}
-
-	mixin JavascriptStyleDispatch!();
-}
-
-
-
-/// for style, i want to be able to set it with a string like a plain attribute,
-/// but also be able to do properties Javascript style.
-
-struct ElementStyle {
-	this(Element parent) {
-		_element = parent;
-	}
-
-	Element _element;
-
-	@property ref inout(string) _attribute() inout {
-		auto s = "style" in _element.attributes;
-		if(s is null) {
-			auto e = cast() _element; // const_cast
-			e.attributes["style"] = ""; // we need something to reference
-			s = cast(inout) ("style" in e.attributes);
-		}
-
-		assert(s !is null);
-		return *s;
-	}
-
-	alias _attribute this; // this is meant to allow element.style = element.style ~ " string "; to still work.
-
-	string set(string name, string value) {
-		if(name.length == 0)
-			return value;
-		if(name == "cssFloat")
-			name = "float";
-		else
-			name = unCamelCase(name);
-		auto r = rules();
-		r[name] = value;
-
-		_attribute = "";
-		foreach(k, v; r) {
-			if(v is null || v.length == 0) /* css can't do empty rules anyway so we'll use that to remove */
-				continue;
-			if(_attribute.length)
-				_attribute ~= " ";
-			_attribute ~= k ~ ": " ~ v ~ ";";
-		}
-
-		_element.setAttribute("style", _attribute); // this is to trigger the observer call
-
-		return value;
-	}
-	string get(string name) const {
-		if(name == "cssFloat")
-			name = "float";
-		else
-			name = unCamelCase(name);
-		auto r = rules();
-		if(name in r)
-			return r[name];
-		return null;
-	}
-
-	string[string] rules() const {
-		string[string] ret;
-		foreach(rule;  _attribute.split(";")) {
-			rule = rule.strip();
-			if(rule.length == 0)
-				continue;
-			auto idx = rule.indexOf(":");
-			if(idx == -1)
-				ret[rule] = "";
-			else {
-				auto name = rule[0 .. idx].strip();
-				auto value = rule[idx + 1 .. $].strip();
-
-				ret[name] = value;
-			}
-		}
-
-		return ret;
-	}
-
-	mixin JavascriptStyleDispatch!();
-}
-
-/// Converts a camel cased propertyName to a css style dashed property-name
-string unCamelCase(string a) {
-	string ret;
-	foreach(c; a)
-		if((c >= 'A' && c <= 'Z'))
-			ret ~= "-" ~ toLower("" ~ c)[0];
-		else
-			ret ~= c;
-	return ret;
-}
-
-/// Translates a css style property-name to a camel cased propertyName
-string camelCase(string a) {
-	string ret;
-	bool justSawDash = false;
-	foreach(c; a)
-		if(c == '-') {
-			justSawDash = true;
-		} else {
-			if(justSawDash) {
-				justSawDash = false;
-				ret ~= toUpper("" ~ c);
-			} else
-				ret ~= c;
-		}
-	return ret;
-}
-
-
-
-
-
-
-
-
-
-// domconvenience ends }
-
-
-
-
-
-
-
-
-
-
-
-// @safe:
-
-// NOTE: do *NOT* override toString on Element subclasses. It won't work.
-// Instead, override writeToAppender();
-
-// FIXME: should I keep processing instructions like <?blah ?> and <!-- blah --> (comments too lol)? I *want* them stripped out of most my output, but I want to be able to parse and create them too.
-
-// Stripping them is useful for reading php as html.... but adding them
-// is good for building php.
-
-// I need to maintain compatibility with the way it is now too.
-
-import std.string;
-import std.exception;
-import std.uri;
-import std.array;
-import std.range;
-
-//import std.stdio;
-
-// tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
-// that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
-// most likely a typo so I say kill kill kill.
-
-
-/// This might belong in another module, but it represents a file with a mime type and some data.
-/// Document implements this interface with type = text/html (see Document.contentType for more info)
-/// and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
-interface FileResource {
-	@property string contentType() const; /// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
-	immutable(ubyte)[] getData() const; /// the data
-}
-
-
-
-
-///.
-enum NodeType { Text = 3 }
-
-
-/// You can use this to do an easy null check or a dynamic cast+null check on any element.
-T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) if(is(T : Element))
-	in {}
-	out(ret) { assert(ret !is null); }
-body {
-	auto ret = cast(T) e;
-	if(ret is null)
-		throw new ElementNotFoundException(T.stringof, "passed value", file, line);
-	return ret;
-}
-
-/// This represents almost everything in the DOM.
-class Element {
-	mixin DomConvenienceFunctions!();
 
 	// do nothing, this is primarily a virtual hook
 	// for links and forms
@@ -1286,11 +2192,13 @@ class Element {
 	}
 
 	/**
-		Provides easy access to attributes, object style.
+		Provides easy access to common HTML attributes, object style.
 
+		---
 		auto element = Element.make("a");
 		a.href = "cool.html"; // this is the same as a.setAttribute("href", "cool.html");
 		string where = a.href; // same as a.getAttribute("href");
+		---
 
 	*/
 	@property string opDispatch(string name)(string v = null) if(isConvenientAttribute(name)) {
@@ -1300,6 +2208,8 @@ class Element {
 	}
 
 	/**
+		Old access to attributes. Use [attrs] instead.
+
 		DEPRECATED: generally open opDispatch caused a lot of unforeseen trouble with compile time duck typing and UFCS extensions.
 		so I want to remove it. A small whitelist of attributes is still allowed, but others are not.
 		
@@ -1332,27 +2242,38 @@ class Element {
 		return children;
 	}
 
-	/// HTML5's dataset property. It is an alternate view into attributes with the data- prefix.
-	///
-	/// Given: <a data-my-property="cool" />
-	///
-	/// We get: assert(a.dataset.myProperty == "cool");
+	/++
+		HTML5's dataset property. It is an alternate view into attributes with the data- prefix.
+		Given `<a data-my-property="cool" />`, we get `assert(a.dataset.myProperty == "cool");`
+	+/
 	@property DataSet dataset() {
 		return DataSet(this);
 	}
 
-	/// Gives dot/opIndex access to attributes
-	/// ele.attrs.largeSrc = "foo"; // same as ele.setAttribute("largeSrc", "foo")
+	/++
+		Gives dot/opIndex access to attributes
+		---
+		ele.attrs.largeSrc = "foo"; // same as ele.setAttribute("largeSrc", "foo")
+		---
+	+/
 	@property AttributeSet attrs() {
 		return AttributeSet(this);
 	}
 
-	/// Provides both string and object style (like in Javascript) access to the style attribute.
+	/++
+		Provides both string and object style (like in Javascript) access to the style attribute.
+
+		---
+		element.style.color = "red"; // translates into setting `color: red;` in the `style` attribute
+		---
+	+/
 	@property ElementStyle style() {
 		return ElementStyle(this);
 	}
 
-	/// This sets the style attribute with a string.
+	/++
+		This sets the style attribute with a string.
+	+/
 	@property ElementStyle style(string s) {
 		this.setAttribute("style", s);
 		return this.style;
@@ -1382,7 +2303,7 @@ class Element {
 
 
 	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
-	///.
+	/// Don't use this.
 	@property CssStyle computedStyle() {
 		if(_computedStyle is null) {
 			auto style = this.getAttribute("style");
@@ -1512,7 +2433,9 @@ class Element {
 		assert(0);
 	}
 
-	///.
+	/++
+		Inserts the given element `what` as a sibling of the `this` element, after the element `where` in the parent node.
+	+/
 	Element insertAfter(in Element where, Element what)
 		in {
 			assert(where !is null);
@@ -1567,14 +2490,31 @@ class Element {
 	}
 
 
-	///.
+	/++
+		Appends the given to the node.
+
+
+		Calling `e.appendText(" hi")` on `<example>text <b>bold</b></example>`
+		yields `<example>text <b>bold</b> hi</example>`.
+
+		See_Also:
+			[firstInnerText], [directText], [innerText], [appendChild]
+	+/
 	Element appendText(string text) {
 		Element e = new TextNode(parentDocument, text);
 		appendChild(e);
 		return this;
 	}
 
-	///.
+	/++
+		Returns child elements which are of a tag type (excludes text, comments, etc.).
+
+
+		childElements of `<example>text <b>bold</b></example>` is just the `<b>` tag.
+
+		Params:
+			tagName = filter results to only the child elements with the given tag name.
+	+/
 	@property Element[] childElements(string tagName = null) {
 		Element[] ret;
 		foreach(c; children)
@@ -1583,7 +2523,12 @@ class Element {
 		return ret;
 	}
 
-	/// Appends the given html to the element, returning the elements appended
+	/++
+		Appends the given html to the element, returning the elements appended
+
+
+		This is similar to `element.innerHTML += "html string";` in Javascript.
+	+/
 	Element[] appendHtml(string html) {
 		Document d = new Document("<root>" ~ html ~ "</root>");
 		return stealChildren(d.root);
@@ -1617,7 +2562,13 @@ class Element {
 		}
 	}
 
-	///.
+	/++
+		Reparents all the child elements of `e` to `this`, leaving `e` childless.
+
+		Params:
+			e = the element whose children you want to steal
+			position = an existing child element in `this` before which you want the stolen children to be inserted. If `null`, it will append the stolen children at the end of our current children.
+	+/
 	Element[] stealChildren(Element e, Element position = null)
 		in {
 			assert(!selfClosed);
@@ -1761,8 +2712,11 @@ class Element {
 		return doc.root.children;
 	}
 
-	/// Returns all the html for this element, including the tag itself.
-	/// This is equivalent to calling toString().
+	/++
+		Returns all the html for this element, including the tag itself.
+
+		This is equivalent to calling toString().
+	+/
 	@property string outerHTML() {
 		return this.toString();
 	}
@@ -1982,7 +2936,7 @@ class Element {
 		return e;
 	}
 
-	///.
+	/// W3C DOM interface. Only really meaningful on [TextNode] instances, but the interface is present on the base class.
 	string nodeValue() const {
 		return "";
 	}
@@ -2148,6 +3102,370 @@ class Element {
 	}
 
 }
+
+// FIXME: since Document loosens the input requirements, it should probably be the sub class...
+/// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+class XmlDocument : Document {
+	this(string data) {
+		contentType = "text/xml; charset=utf-8";
+		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
+
+		parseStrict(data);
+	}
+}
+
+
+
+
+import std.string;
+
+/* domconvenience follows { */
+
+/// finds comments that match the given txt. Case insensitive, strips whitespace.
+Element[] findComments(Document document, string txt) {
+	return findComments(document.root, txt);
+}
+
+/// ditto
+Element[] findComments(Element element, string txt) {
+	txt = txt.strip().toLower();
+	Element[] ret;
+
+	foreach(comment; element.getElementsByTagName("#comment")) {
+		string t = comment.nodeValue().strip().toLower();
+		if(t == txt)
+			ret ~= comment;
+	}
+
+	return ret;
+}
+
+/++
+	A collection of elements which forwards methods to the children.
++/
+struct ElementCollection {
+	///
+	this(Element e) {
+		elements = [e];
+	}
+
+	///
+	this(Element e, string selector) {
+		elements = e.querySelectorAll(selector);
+	}
+
+	///
+	this(Element[] e) {
+		elements = e;
+	}
+
+	Element[] elements;
+	//alias elements this; // let it implicitly convert to the underlying array
+
+	///
+	ElementCollection opIndex(string selector) {
+		ElementCollection ec;
+		foreach(e; elements)
+			ec.elements ~= e.getElementsBySelector(selector);
+		return ec;
+	}
+
+	/// if you slice it, give the underlying array for easy forwarding of the
+	/// collection to range expecting algorithms or looping over.
+	Element[] opSlice() {
+		return elements;
+	}
+
+	/// And input range primitives so we can foreach over this
+	void popFront() {
+		elements = elements[1..$];
+	}
+
+	/// ditto
+	Element front() {
+		return elements[0];
+	}
+
+	/// ditto
+	bool empty() {
+		return !elements.length;
+	}
+
+	/// Forward method calls to each individual element of the collection
+	/// returns this so it can be chained.
+	ElementCollection opDispatch(string name, T...)(T t) {
+		foreach(e; elements) {
+			mixin("e." ~ name)(t);
+		}
+		return this;
+	}
+
+	/// Concatenates two ElementCollection together.
+	ElementCollection opBinary(string op : "~")(ElementCollection rhs) {
+		return ElementCollection(this.elements ~ rhs.elements);
+	}
+}
+
+
+/// this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
+mixin template JavascriptStyleDispatch() {
+	///
+	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
+		if(v !is null)
+			return set(name, v);
+		return get(name);
+	}
+
+	///
+	string opIndex(string key) const {
+		return get(key);
+	}
+
+	///
+	string opIndexAssign(string value, string field) {
+		return set(field, value);
+	}
+
+	// FIXME: doesn't seem to work
+	string* opBinary(string op)(string key)  if(op == "in") {
+		return key in fields;
+	}
+}
+
+/// A proxy object to do the Element class' dataset property. See Element.dataset for more info.
+///
+/// Do not create this object directly.
+struct DataSet {
+	///
+	this(Element e) {
+		this._element = e;
+	}
+
+	private Element _element;
+	///
+	string set(string name, string value) {
+		_element.setAttribute("data-" ~ unCamelCase(name), value);
+		return value;
+	}
+
+	///
+	string get(string name) const {
+		return _element.getAttribute("data-" ~ unCamelCase(name));
+	}
+
+	///
+	mixin JavascriptStyleDispatch!();
+}
+
+/// Proxy object for attributes which will replace the main opDispatch eventually
+struct AttributeSet {
+	///
+	this(Element e) {
+		this._element = e;
+	}
+
+	private Element _element;
+	///
+	string set(string name, string value) {
+		_element.setAttribute(name, value);
+		return value;
+	}
+
+	///
+	string get(string name) const {
+		return _element.getAttribute(name);
+	}
+
+	///
+	mixin JavascriptStyleDispatch!();
+}
+
+
+
+/// for style, i want to be able to set it with a string like a plain attribute,
+/// but also be able to do properties Javascript style.
+
+struct ElementStyle {
+	this(Element parent) {
+		_element = parent;
+	}
+
+	Element _element;
+
+	@property ref inout(string) _attribute() inout {
+		auto s = "style" in _element.attributes;
+		if(s is null) {
+			auto e = cast() _element; // const_cast
+			e.attributes["style"] = ""; // we need something to reference
+			s = cast(inout) ("style" in e.attributes);
+		}
+
+		assert(s !is null);
+		return *s;
+	}
+
+	alias _attribute this; // this is meant to allow element.style = element.style ~ " string "; to still work.
+
+	string set(string name, string value) {
+		if(name.length == 0)
+			return value;
+		if(name == "cssFloat")
+			name = "float";
+		else
+			name = unCamelCase(name);
+		auto r = rules();
+		r[name] = value;
+
+		_attribute = "";
+		foreach(k, v; r) {
+			if(v is null || v.length == 0) /* css can't do empty rules anyway so we'll use that to remove */
+				continue;
+			if(_attribute.length)
+				_attribute ~= " ";
+			_attribute ~= k ~ ": " ~ v ~ ";";
+		}
+
+		_element.setAttribute("style", _attribute); // this is to trigger the observer call
+
+		return value;
+	}
+	string get(string name) const {
+		if(name == "cssFloat")
+			name = "float";
+		else
+			name = unCamelCase(name);
+		auto r = rules();
+		if(name in r)
+			return r[name];
+		return null;
+	}
+
+	string[string] rules() const {
+		string[string] ret;
+		foreach(rule;  _attribute.split(";")) {
+			rule = rule.strip();
+			if(rule.length == 0)
+				continue;
+			auto idx = rule.indexOf(":");
+			if(idx == -1)
+				ret[rule] = "";
+			else {
+				auto name = rule[0 .. idx].strip();
+				auto value = rule[idx + 1 .. $].strip();
+
+				ret[name] = value;
+			}
+		}
+
+		return ret;
+	}
+
+	mixin JavascriptStyleDispatch!();
+}
+
+/// Converts a camel cased propertyName to a css style dashed property-name
+string unCamelCase(string a) {
+	string ret;
+	foreach(c; a)
+		if((c >= 'A' && c <= 'Z'))
+			ret ~= "-" ~ toLower("" ~ c)[0];
+		else
+			ret ~= c;
+	return ret;
+}
+
+/// Translates a css style property-name to a camel cased propertyName
+string camelCase(string a) {
+	string ret;
+	bool justSawDash = false;
+	foreach(c; a)
+		if(c == '-') {
+			justSawDash = true;
+		} else {
+			if(justSawDash) {
+				justSawDash = false;
+				ret ~= toUpper("" ~ c);
+			} else
+				ret ~= c;
+		}
+	return ret;
+}
+
+
+
+
+
+
+
+
+
+// domconvenience ends }
+
+
+
+
+
+
+
+
+
+
+
+// @safe:
+
+// NOTE: do *NOT* override toString on Element subclasses. It won't work.
+// Instead, override writeToAppender();
+
+// FIXME: should I keep processing instructions like <?blah ?> and <!-- blah --> (comments too lol)? I *want* them stripped out of most my output, but I want to be able to parse and create them too.
+
+// Stripping them is useful for reading php as html.... but adding them
+// is good for building php.
+
+// I need to maintain compatibility with the way it is now too.
+
+import std.string;
+import std.exception;
+import std.uri;
+import std.array;
+import std.range;
+
+//import std.stdio;
+
+// tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
+// that's rarer than the flipped closing tags that hack fixes so I'm ok with it. (Odds are it should be erased anyway; it's
+// most likely a typo so I say kill kill kill.
+
+
+/++
+	This might belong in another module, but it represents a file with a mime type and some data.
+	Document implements this interface with type = text/html (see Document.contentType for more info)
+	and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
++/
+interface FileResource {
+	/// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
+	@property string contentType() const;
+	/// the data
+	immutable(ubyte)[] getData() const;
+}
+
+
+
+
+///.
+enum NodeType { Text = 3 }
+
+
+/// You can use this to do an easy null check or a dynamic cast+null check on any element.
+T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) if(is(T : Element))
+	in {}
+	out(ret) { assert(ret !is null); }
+body {
+	auto ret = cast(T) e;
+	if(ret is null)
+		throw new ElementNotFoundException(T.stringof, "passed value", file, line);
+	return ret;
+}
+
 
 ///.
 class DocumentFragment : Element {
@@ -3399,1263 +4717,6 @@ struct Html {
 	string source;
 }
 
-/// The main document interface, including a html parser.
-class Document : FileResource {
-	///.
-	this(string data, bool caseSensitive = false, bool strict = false) {
-		parseUtf8(data, caseSensitive, strict);
-	}
-
-	/**
-		Creates an empty document. It has *nothing* in it at all.
-	*/
-	this() {
-
-	}
-
-	/// This is just something I'm toying with. Right now, you use opIndex to put in css selectors.
-	/// It returns a struct that forwards calls to all elements it holds, and returns itself so you
-	/// can chain it.
-	///
-	/// Example: document["p"].innerText("hello").addClass("modified");
-	///
-	/// Equivalent to: foreach(e; document.getElementsBySelector("p")) { e.innerText("hello"); e.addClas("modified"); }
-	///
-	/// Note: always use function calls (not property syntax) and don't use toString in there for best results.
-	///
-	/// You can also do things like: document["p"]["b"] though tbh I'm not sure why since the selector string can do all that anyway. Maybe
-	/// you could put in some kind of custom filter function tho.
-	ElementCollection opIndex(string selector) {
-		auto e = ElementCollection(this.root);
-		return e[selector];
-	}
-
-	string _contentType = "text/html; charset=utf-8";
-
-	/// If you're using this for some other kind of XML, you can
-	/// set the content type here.
-	///
-	/// Note: this has no impact on the function of this class.
-	/// It is only used if the document is sent via a protocol like HTTP.
-	///
-	/// This may be called by parse() if it recognizes the data. Otherwise,
-	/// if you don't set it, it assumes text/html; charset=utf-8.
-	@property string contentType(string mimeType) {
-		_contentType = mimeType;
-		return _contentType;
-	}
-
-	/// implementing the FileResource interface, useful for sending via
-	/// http automatically.
-	override @property string contentType() const {
-		return _contentType;
-	}
-
-	/// implementing the FileResource interface; it calls toString.
-	override immutable(ubyte)[] getData() const {
-		return cast(immutable(ubyte)[]) this.toString();
-	}
-
-
-	/// Concatenates any consecutive text nodes
-	/*
-	void normalize() {
-
-	}
-	*/
-
-	/// This will set delegates for parseSaw* (note: this overwrites anything else you set, and you setting subsequently will overwrite this) that add those things to the dom tree when it sees them.
-	/// Call this before calling parse().
-
-	/// Note this will also preserve the prolog and doctype from the original file, if there was one.
-	void enableAddingSpecialTagsToDom() {
-		parseSawComment = (string) => true;
-		parseSawAspCode = (string) => true;
-		parseSawPhpCode = (string) => true;
-		parseSawQuestionInstruction = (string) => true;
-		parseSawBangInstruction = (string) => true;
-	}
-
-	/// If the parser sees a html comment, it will call this callback
-	/// <!-- comment --> will call parseSawComment(" comment ")
-	/// Return true if you want the node appended to the document.
-	bool delegate(string) parseSawComment;
-
-	/// If the parser sees <% asp code... %>, it will call this callback.
-	/// It will be passed "% asp code... %" or "%= asp code .. %"
-	/// Return true if you want the node appended to the document.
-	bool delegate(string) parseSawAspCode;
-
-	/// If the parser sees <?php php code... ?>, it will call this callback.
-	/// It will be passed "?php php code... ?" or "?= asp code .. ?"
-	/// Note: dom.d cannot identify  the other php <? code ?> short format.
-	/// Return true if you want the node appended to the document.
-	bool delegate(string) parseSawPhpCode;
-
-	/// if it sees a <?xxx> that is not php or asp
-	/// it calls this function with the contents.
-	/// <?SOMETHING foo> calls parseSawQuestionInstruction("?SOMETHING foo")
-	/// Unlike the php/asp ones, this ends on the first > it sees, without requiring ?>.
-	/// Return true if you want the node appended to the document.
-	bool delegate(string) parseSawQuestionInstruction;
-
-	/// if it sees a <! that is not CDATA or comment (CDATA is handled automatically and comments call parseSawComment),
-	/// it calls this function with the contents.
-	/// <!SOMETHING foo> calls parseSawBangInstruction("SOMETHING foo")
-	/// Return true if you want the node appended to the document.
-	bool delegate(string) parseSawBangInstruction;
-
-	/// Given the kind of garbage you find on the Internet, try to make sense of it.
-	/// Equivalent to document.parse(data, false, false, null);
-	/// (Case-insensitive, non-strict, determine character encoding from the data.)
-
-	/// NOTE: this makes no attempt at added security.
-	///
-	/// It is a template so it lazily imports characterencodings.
-	void parseGarbage()(string data) {
-		parse(data, false, false, null);
-	}
-
-	/// Parses well-formed UTF-8, case-sensitive, XML or XHTML
-	/// Will throw exceptions on things like unclosed tags.
-	void parseStrict(string data) {
-		parseStream(toUtf8Stream(data), true, true);
-	}
-
-	/// Parses well-formed UTF-8 in loose mode (by default). Tries to correct
-	/// tag soup, but does NOT try to correct bad character encodings.
-	///
-	/// They will still throw an exception.
-	void parseUtf8(string data, bool caseSensitive = false, bool strict = false) {
-		parseStream(toUtf8Stream(data), caseSensitive, strict);
-	}
-
-	// this is a template so we get lazy import behavior
-	Utf8Stream handleDataEncoding()(in string rawdata, string dataEncoding, bool strict) {
-		import arsd.characterencodings;
-		// gotta determine the data encoding. If you know it, pass it in above to skip all this.
-		if(dataEncoding is null) {
-			dataEncoding = tryToDetermineEncoding(cast(const(ubyte[])) rawdata);
-			// it can't tell... probably a random 8 bit encoding. Let's check the document itself.
-			// Now, XML and HTML can both list encoding in the document, but we can't really parse
-			// it here without changing a lot of code until we know the encoding. So I'm going to
-			// do some hackish string checking.
-			if(dataEncoding is null) {
-				auto dataAsBytes = cast(immutable(ubyte)[]) rawdata;
-				// first, look for an XML prolog
-				auto idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "encoding=\"");
-				if(idx != -1) {
-					idx += "encoding=\"".length;
-					// we're probably past the prolog if it's this far in; we might be looking at
-					// content. Forget about it.
-					if(idx > 100)
-						idx = -1;
-				}
-				// if that fails, we're looking for Content-Type http-equiv or a meta charset (see html5)..
-				if(idx == -1) {
-					idx = indexOfBytes(dataAsBytes, cast(immutable ubyte[]) "charset=");
-					if(idx != -1) {
-						idx += "charset=".length;
-						if(dataAsBytes[idx] == '"')
-							idx++;
-					}
-				}
-
-				// found something in either branch...
-				if(idx != -1) {
-					// read till a quote or about 12 chars, whichever comes first...
-					auto end = idx;
-					while(end < dataAsBytes.length && dataAsBytes[end] != '"' && end - idx < 12)
-						end++;
-
-					dataEncoding = cast(string) dataAsBytes[idx .. end];
-				}
-				// otherwise, we just don't know.
-			}
-		}
-
-		if(dataEncoding is null) {
-			if(strict)
-				throw new MarkupException("I couldn't figure out the encoding of this document.");
-			else
-			// if we really don't know by here, it means we already tried UTF-8,
-			// looked for utf 16 and 32 byte order marks, and looked for xml or meta
-			// tags... let's assume it's Windows-1252, since that's probably the most
-			// common aside from utf that wouldn't be labeled.
-
-			dataEncoding = "Windows 1252";
-		}
-
-		// and now, go ahead and convert it.
-
-		string data;
-
-		if(!strict) {
-			// if we're in non-strict mode, we need to check
-			// the document for mislabeling too; sometimes
-			// web documents will say they are utf-8, but aren't
-			// actually properly encoded. If it fails to validate,
-			// we'll assume it's actually Windows encoding - the most
-			// likely candidate for mislabeled garbage.
-			dataEncoding = dataEncoding.toLower();
-			dataEncoding = dataEncoding.replace(" ", "");
-			dataEncoding = dataEncoding.replace("-", "");
-			dataEncoding = dataEncoding.replace("_", "");
-			if(dataEncoding == "utf8") {
-				try {
-					validate(rawdata);
-				} catch(UTFException e) {
-					dataEncoding = "Windows 1252";
-				}
-			}
-		}
-
-		if(dataEncoding != "UTF-8") {
-			if(strict)
-				data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
-			else {
-				try {
-					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, dataEncoding);
-				} catch(Exception e) {
-					data = convertToUtf8(cast(immutable(ubyte)[]) rawdata, "Windows 1252");
-				}
-			}
-		} else
-			data = rawdata;
-
-		return toUtf8Stream(data);
-	}
-
-	private
-	Utf8Stream toUtf8Stream(in string rawdata) {
-		string data = rawdata;
-		static if(is(Utf8Stream == string))
-			return data;
-		else
-			return new Utf8Stream(data);
-	}
-
-	/**
-		Take XMLish data and try to make the DOM tree out of it.
-
-		The goal isn't to be perfect, but to just be good enough to
-		approximate Javascript's behavior.
-
-		If strict, it throws on something that doesn't make sense.
-		(Examples: mismatched tags. It doesn't validate!)
-		If not strict, it tries to recover anyway, and only throws
-		when something is REALLY unworkable.
-
-		If strict is false, it uses a magic list of tags that needn't
-		be closed. If you are writing a document specifically for this,
-		try to avoid such - use self closed tags at least. Easier to parse.
-
-		The dataEncoding argument can be used to pass a specific
-		charset encoding for automatic conversion. If null (which is NOT
-		the default!), it tries to determine from the data itself,
-		using the xml prolog or meta tags, and assumes UTF-8 if unsure.
-
-		If this assumption is wrong, it can throw on non-ascii
-		characters!
-
-
-		Note that it previously assumed the data was encoded as UTF-8, which
-		is why the dataEncoding argument defaults to that.
-
-		So it shouldn't break backward compatibility.
-
-		But, if you want the best behavior on wild data - figuring it out from the document
-		instead of assuming - you'll probably want to change that argument to null.
-
-		This is a template so it lazily imports arsd.characterencodings, which is required
-		to fix up data encodings.
-
-		If you are sure the encoding is good, try parseUtf8 or parseStrict to avoid the
-		dependency. If it is data from the Internet though, a random website, the encoding
-		is often a lie. This function, if dataEncoding == null, can correct for that, or
-		you can try parseGarbage. In those cases, arsd.characterencodings is required to
-		compile.
-	*/
-	void parse()(in string rawdata, bool caseSensitive = false, bool strict = false, string dataEncoding = "UTF-8") {
-		auto data = handleDataEncoding(rawdata, dataEncoding, strict);
-		parseStream(data, caseSensitive, strict);
-	}
-
-	// note: this work best in strict mode, unless data is just a simple string wrapper
-	void parseStream(Utf8Stream data, bool caseSensitive = false, bool strict = false) {
-		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
-		// of my big app.
-
-		assert(data !is null);
-
-		// go through character by character.
-		// if you see a <, consider it a tag.
-		// name goes until the first non tagname character
-		// then see if it self closes or has an attribute
-
-		// if not in a tag, anything not a tag is a big text
-		// node child. It ends as soon as it sees a <
-
-		// Whitespace in text or attributes is preserved, but not between attributes
-
-		// &amp; and friends are converted when I know them, left the same otherwise
-
-
-		// this it should already be done correctly.. so I'm leaving it off to net a ~10% speed boost on my typical test file (really)
-		//validate(data); // it *must* be UTF-8 for this to work correctly
-
-		sizediff_t pos = 0;
-
-		clear();
-
-		loose = !caseSensitive;
-
-		bool sawImproperNesting = false;
-		bool paragraphHackfixRequired = false;
-
-		int getLineNumber(sizediff_t p) {
-			int line = 1;
-			foreach(c; data[0..p])
-				if(c == '\n')
-					line++;
-			return line;
-		}
-
-		void parseError(string message) {
-			throw new MarkupException(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
-		}
-
-		void eatWhitespace() {
-			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t'))
-				pos++;
-		}
-
-		string readTagName() {
-			// remember to include : for namespaces
-			// basically just keep going until >, /, or whitespace
-			auto start = pos;
-			while(  data[pos] != '>' && data[pos] != '/' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
-			{
-				pos++;
-				if(pos == data.length) {
-					if(strict)
-						throw new Exception("tag name incomplete when file ended");
-					else
-						break;
-				}
-			}
-
-			if(!caseSensitive)
-				return toLower(data[start..pos]);
-			else
-				return data[start..pos];
-		}
-
-		string readAttributeName() {
-			// remember to include : for namespaces
-			// basically just keep going until >, /, or whitespace
-			auto start = pos;
-			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
-			{
-				if(data[pos] == '<') {
-					if(strict)
-						throw new MarkupException("The character < can never appear in an attribute name. Line " ~ to!string(getLineNumber(pos)));
-					else
-						break; // e.g. <a href="something" <img src="poo" /></a>. The > should have been after the href, but some shitty files don't do that right and the browser handles it, so we will too, by pretending the > was indeed there
-				}
-				pos++;
-				if(pos == data.length) {
-					if(strict)
-						throw new Exception("unterminated attribute name");
-					else
-						break;
-				}
-			}
-
-			if(!caseSensitive)
-				return toLower(data[start..pos]);
-			else
-				return data[start..pos];
-		}
-
-		string readAttributeValue() {
-			if(pos >= data.length) {
-				if(strict)
-					throw new Exception("no attribute value before end of file");
-				else
-					return null;
-			}
-			switch(data[pos]) {
-				case '\'':
-				case '"':
-					auto started = pos;
-					char end = data[pos];
-					pos++;
-					auto start = pos;
-					while(pos < data.length && data[pos] != end)
-						pos++;
-					if(strict && pos == data.length)
-						throw new MarkupException("Unclosed attribute value, started on char " ~ to!string(started));
-					string v = htmlEntitiesDecode(data[start..pos], strict);
-					pos++; // skip over the end
-				return v;
-				default:
-					if(strict)
-						parseError("Attributes must be quoted");
-					// read until whitespace or terminator (/ or >)
-					auto start = pos;
-					while(
-						pos < data.length &&
-						data[pos] != '>' &&
-						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
-						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
-						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
-					      	pos++;
-
-					string v = htmlEntitiesDecode(data[start..pos], strict);
-					// don't skip the end - we'll need it later
-					return v;
-			}
-		}
-
-		TextNode readTextNode() {
-			auto start = pos;
-			while(pos < data.length && data[pos] != '<') {
-				pos++;
-			}
-
-			return TextNode.fromUndecodedString(this, data[start..pos]);
-		}
-
-		// this is obsolete!
-		RawSource readCDataNode() {
-			auto start = pos;
-			while(pos < data.length && data[pos] != '<') {
-				pos++;
-			}
-
-			return new RawSource(this, data[start..pos]);
-		}
-
-
-		struct Ele {
-			int type; // element or closing tag or nothing
-				/*
-					type == 0 means regular node, self-closed (element is valid)
-					type == 1 means closing tag (payload is the tag name, element may be valid)
-					type == 2 means you should ignore it completely
-					type == 3 means it is a special element that should be appended, if possible, e.g. a <!DOCTYPE> that was chosen to be kept, php code, or comment. It will be appended at the current element if inside the root, and to a special document area if not
-					type == 4 means the document was totally empty
-				*/
-			Element element; // for type == 0 or type == 3
-			string payload; // for type == 1
-		}
-		// recursively read a tag
-		Ele readElement(string[] parentChain = null) {
-			// FIXME: this is the slowest function in this module, by far, even in strict mode.
-			// Loose mode should perform decently, but strict mode is the important one.
-			if(!strict && parentChain is null)
-				parentChain = [];
-
-			static string[] recentAutoClosedTags;
-
-			if(pos >= data.length)
-			{
-				if(strict) {
-					throw new MarkupException("Gone over the input (is there no root element or did it never close?), chain: " ~ to!string(parentChain));
-				} else {
-					if(parentChain.length)
-						return Ele(1, null, parentChain[0]); // in loose mode, we just assume the document has ended
-					else
-						return Ele(4); // signal emptiness upstream
-				}
-			}
-
-			if(data[pos] != '<') {
-				return Ele(0, readTextNode(), null);
-			}
-
-			enforce(data[pos] == '<');
-			pos++;
-			if(pos == data.length) {
-				if(strict)
-					throw new MarkupException("Found trailing < at end of file");
-				// if not strict, we'll just skip the switch
-			} else
-			switch(data[pos]) {
-				// I don't care about these, so I just want to skip them
-				case '!': // might be a comment, a doctype, or a special instruction
-					pos++;
-
-						// FIXME: we should store these in the tree too
-						// though I like having it stripped out tbh.
-
-					if(pos == data.length) {
-						if(strict)
-							throw new MarkupException("<! opened at end of file");
-					} else if(data[pos] == '-' && (pos + 1 < data.length) && data[pos+1] == '-') {
-						// comment
-						pos += 2;
-
-						// FIXME: technically, a comment is anything
-						// between -- and -- inside a <!> block.
-						// so in <!-- test -- lol> , the " lol" is NOT a comment
-						// and should probably be handled differently in here, but for now
-						// I'll just keep running until --> since that's the common way
-
-						auto commentStart = pos;
-						while(pos+3 < data.length && data[pos..pos+3] != "-->")
-							pos++;
-
-						auto end = commentStart;
-
-						if(pos + 3 >= data.length) {
-							if(strict)
-								throw new MarkupException("unclosed comment");
-							end = data.length;
-							pos = data.length;
-						} else {
-							end = pos;
-							assert(data[pos] == '-');
-							pos++;
-							assert(data[pos] == '-');
-							pos++;
-							assert(data[pos] == '>');
-							pos++;
-						}
-
-						if(parseSawComment !is null)
-							if(parseSawComment(data[commentStart .. end])) {
-								return Ele(3, new HtmlComment(this, data[commentStart .. end]), null);
-							}
-					} else if(pos + 7 <= data.length && data[pos..pos + 7] == "[CDATA[") {
-						pos += 7;
-
-						auto cdataStart = pos;
-
-						ptrdiff_t end = -1;
-						typeof(end) cdataEnd;
-
-						if(pos < data.length) {
-							// cdata isn't allowed to nest, so this should be generally ok, as long as it is found
-							end = data[pos .. $].indexOf("]]>");
-						}
-
-						if(end == -1) {
-							if(strict)
-								throw new MarkupException("Unclosed CDATA section");
-							end = pos;
-							cdataEnd = pos;
-						} else {
-							cdataEnd = pos + end;
-							pos = cdataEnd + 3;
-						}
-
-						return Ele(0, new TextNode(this, data[cdataStart .. cdataEnd]), null);
-					} else {
-						auto start = pos;
-						while(pos < data.length && data[pos] != '>')
-							pos++;
-
-						auto bangEnds = pos;
-						if(pos == data.length) {
-							if(strict)
-								throw new MarkupException("unclosed processing instruction (<!xxx>)");
-						} else pos++; // skipping the >
-
-						if(parseSawBangInstruction !is null)
-							if(parseSawBangInstruction(data[start .. bangEnds])) {
-								// FIXME: these should be able to modify the parser state,
-								// doing things like adding entities, somehow.
-
-								return Ele(3, new BangInstruction(this, data[start .. bangEnds]), null);
-							}
-					}
-
-					/*
-					if(pos < data.length && data[pos] == '>')
-						pos++; // skip the >
-					else
-						assert(!strict);
-					*/
-				break;
-				case '%':
-				case '?':
-					/*
-						Here's what we want to support:
-
-						<% asp code %>
-						<%= asp code %>
-						<?php php code ?>
-						<?= php code ?>
-
-						The contents don't really matter, just if it opens with
-						one of the above for, it ends on the two char terminator.
-
-						<?something>
-							this is NOT php code
-							because I've seen this in the wild: <?EM-dummyText>
-
-							This could be php with shorttags which would be cut off
-							prematurely because if(a >) - that > counts as the close
-							of the tag, but since dom.d can't tell the difference
-							between that and the <?EM> real world example, it will
-							not try to look for the ?> ending.
-
-						The difference between this and the asp/php stuff is that it
-						ends on >, not ?>. ONLY <?php or <?= ends on ?>. The rest end
-						on >.
-					*/
-
-					char end = data[pos];
-					auto started = pos;
-					bool isAsp = end == '%';
-					int currentIndex = 0;
-					bool isPhp = false;
-					bool isEqualTag = false;
-					int phpCount = 0;
-
-				    more:
-					pos++; // skip the start
-					if(pos == data.length) {
-						if(strict)
-							throw new MarkupException("Unclosed <"~end~" by end of file");
-					} else {
-						currentIndex++;
-						if(currentIndex == 1 && data[pos] == '=') {
-							if(!isAsp)
-								isPhp = true;
-							isEqualTag = true;
-							goto more;
-						}
-						if(currentIndex == 1 && data[pos] == 'p')
-							phpCount++;
-						if(currentIndex == 2 && data[pos] == 'h')
-							phpCount++;
-						if(currentIndex == 3 && data[pos] == 'p' && phpCount == 2)
-							isPhp = true;
-
-						if(data[pos] == '>') {
-							if((isAsp || isPhp) && data[pos - 1] != end)
-								goto more;
-							// otherwise we're done
-						} else
-							goto more;
-					}
-
-					//writefln("%s: %s", isAsp ? "ASP" : isPhp ? "PHP" : "<? ", data[started .. pos]);
-					auto code = data[started .. pos];
-
-
-					assert((pos < data.length && data[pos] == '>') || (!strict && pos == data.length));
-					if(pos < data.length)
-						pos++; // get past the >
-
-					if(isAsp && parseSawAspCode !is null) {
-						if(parseSawAspCode(code)) {
-							return Ele(3, new AspCode(this, code), null);
-						}
-					} else if(isPhp && parseSawPhpCode !is null) {
-						if(parseSawPhpCode(code)) {
-							return Ele(3, new PhpCode(this, code), null);
-						}
-					} else if(!isAsp && !isPhp && parseSawQuestionInstruction !is null) {
-						if(parseSawQuestionInstruction(code)) {
-							return Ele(3, new QuestionInstruction(this, code), null);
-						}
-					}
-				break;
-				case '/': // closing an element
-					pos++; // skip the start
-					auto p = pos;
-					while(pos < data.length && data[pos] != '>')
-						pos++;
-					//writefln("</%s>", data[p..pos]);
-					if(pos == data.length && data[pos-1] != '>') {
-						if(strict)
-							throw new MarkupException("File ended before closing tag had a required >");
-						else
-							data ~= ">"; // just hack it in
-					}
-					pos++; // skip the '>'
-
-					string tname = data[p..pos-1];
-					if(!caseSensitive)
-						tname = tname.toLower();
-
-				return Ele(1, null, tname); // closing tag reports itself here
-				case ' ': // assume it isn't a real element...
-					if(strict)
-						parseError("bad markup - improperly placed <");
-					else
-						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
-				break;
-				default:
-
-					if(!strict) {
-						// what about something that kinda looks like a tag, but isn't?
-						auto nextTag = data[pos .. $].indexOf("<");
-						auto closeTag = data[pos .. $].indexOf(">");
-						if(closeTag != -1 && nextTag != -1)
-							if(nextTag < closeTag) {
-								// since attribute names cannot possibly have a < in them, we'll look for an equal since it might be an attribute value... and even in garbage mode, it'd have to be a quoted one realistically
-
-								auto equal = data[pos .. $].indexOf("=\"");
-								if(equal != -1 && equal < closeTag) {
-									// this MIGHT be ok, soldier on
-								} else {
-									// definitely no good, this must be a (horribly distorted) text node
-									pos++; // skip the < we're on - don't want text node to end prematurely
-									auto node = readTextNode();
-									node.contents = "<" ~ node.contents; // put this back
-									return Ele(0, node, null);
-								}
-							}
-					}
-
-					string tagName = readTagName();
-					string[string] attributes;
-
-					Ele addTag(bool selfClosed) {
-						if(selfClosed)
-							pos++;
-						else {
-							if(!strict)
-								if(tagName.isInArray(selfClosedElements))
-									// these are de-facto self closed
-									selfClosed = true;
-						}
-
-						if(strict)
-						enforce(data[pos] == '>');//, format("got %s when expecting >\nContext:\n%s", data[pos], data[pos - 100 .. pos + 100]));
-						else {
-							// if we got here, it's probably because a slash was in an
-							// unquoted attribute - don't trust the selfClosed value
-							if(!selfClosed)
-								selfClosed = tagName.isInArray(selfClosedElements);
-
-							while(pos < data.length && data[pos] != '>')
-								pos++;
-						}
-
-						auto whereThisTagStarted = pos; // for better error messages
-
-						pos++;
-
-						auto e = createElement(tagName);
-						e.attributes = attributes;
-						version(dom_node_indexes) {
-							if(e.dataset.nodeIndex.length == 0)
-								e.dataset.nodeIndex = to!string(&(e.attributes));
-						}
-						e.selfClosed = selfClosed;
-						e.parseAttributes();
-
-
-						// HACK to handle script and style as a raw data section as it is in HTML browsers
-						if(tagName == "script" || tagName == "style") {
-							if(!selfClosed) {
-								string closer = "</" ~ tagName ~ ">";
-								ptrdiff_t ending;
-								if(pos >= data.length)
-									ending = -1;
-								else
-									ending = indexOf(data[pos..$], closer);
-
-								ending = indexOf(data[pos..$], closer, 0, (loose ? CaseSensitive.no : CaseSensitive.yes));
-								/*
-								if(loose && ending == -1 && pos < data.length)
-									ending = indexOf(data[pos..$], closer.toUpper());
-								*/
-								if(ending == -1) {
-									if(strict)
-										throw new Exception("tag " ~ tagName ~ " never closed");
-									else {
-										// let's call it totally empty and do the rest of the file as text. doing it as html could still result in some weird stuff like if(a<4) being read as <4 being a tag so it comes out if(a<4></4> and other weirdness) It is either a closed script tag or the rest of the file is forfeit.
-										if(pos < data.length) {
-											e = new TextNode(this, data[pos .. $]);
-											pos = data.length;
-										}
-									}
-								} else {
-									ending += pos;
-									e.innerRawSource = data[pos..ending];
-									pos = ending + closer.length;
-								}
-							}
-							return Ele(0, e, null);
-						}
-
-						bool closed = selfClosed;
-
-						void considerHtmlParagraphHack(Element n) {
-							assert(!strict);
-							if(e.tagName == "p" && e.tagName == n.tagName) {
-								// html lets you write <p> para 1 <p> para 1
-								// but in the dom tree, they should be siblings, not children.
-								paragraphHackfixRequired = true;
-							}
-						}
-
-						//writef("<%s>", tagName);
-						while(!closed) {
-							Ele n;
-							if(strict)
-								n = readElement();
-							else
-								n = readElement(parentChain ~ tagName);
-
-							if(n.type == 4) return n; // the document is empty
-
-							if(n.type == 3 && n.element !is null) {
-								// special node, append if possible
-								if(e !is null)
-									e.appendChild(n.element);
-								else
-									piecesBeforeRoot ~= n.element;
-							} else if(n.type == 0) {
-								if(!strict)
-									considerHtmlParagraphHack(n.element);
-								e.appendChild(n.element);
-							} else if(n.type == 1) {
-								bool found = false;
-								if(n.payload != tagName) {
-									if(strict)
-										parseError(format("mismatched tag: </%s> != <%s> (opened on line %d)", n.payload, tagName, getLineNumber(whereThisTagStarted)));
-									else {
-										sawImproperNesting = true;
-										// this is so we don't drop several levels of awful markup
-										if(n.element) {
-											if(!strict)
-												considerHtmlParagraphHack(n.element);
-											e.appendChild(n.element);
-											n.element = null;
-										}
-
-										// is the element open somewhere up the chain?
-										foreach(i, parent; parentChain)
-											if(parent == n.payload) {
-												recentAutoClosedTags ~= tagName;
-												// just rotating it so we don't inadvertently break stuff with vile crap
-												if(recentAutoClosedTags.length > 4)
-													recentAutoClosedTags = recentAutoClosedTags[1 .. $];
-
-												n.element = e;
-												return n;
-											}
-
-										// if not, this is a text node; we can't fix it up...
-
-										// If it's already in the tree somewhere, assume it is closed by algorithm
-										// and we shouldn't output it - odds are the user just flipped a couple tags
-										foreach(ele; e.tree) {
-											if(ele.tagName == n.payload) {
-												found = true;
-												break;
-											}
-										}
-
-										foreach(ele; recentAutoClosedTags) {
-											if(ele == n.payload) {
-												found = true;
-												break;
-											}
-										}
-
-										if(!found) // if not found in the tree though, it's probably just text
-										e.appendChild(TextNode.fromUndecodedString(this, "</"~n.payload~">"));
-									}
-								} else {
-									if(n.element) {
-										if(!strict)
-											considerHtmlParagraphHack(n.element);
-										e.appendChild(n.element);
-									}
-								}
-
-								if(n.payload == tagName) // in strict mode, this is always true
-									closed = true;
-							} else { /*throw new Exception("wtf " ~ tagName);*/ }
-						}
-						//writef("</%s>\n", tagName);
-						return Ele(0, e, null);
-					}
-
-					// if a tag was opened but not closed by end of file, we can arrive here
-					if(!strict && pos >= data.length)
-						return addTag(false);
-					//else if(strict) assert(0); // should be caught before
-
-					switch(data[pos]) {
-						default: assert(0);
-						case '/': // self closing tag
-							return addTag(true);
-						case '>':
-							return addTag(false);
-						case ' ':
-						case '\t':
-						case '\n':
-							// there might be attributes...
-							moreAttributes:
-							eatWhitespace();
-
-							// same deal as above the switch....
-							if(!strict && pos >= data.length)
-								return addTag(false);
-
-							if(strict && pos >= data.length)
-								throw new MarkupException("tag open, didn't find > before end of file");
-
-							switch(data[pos]) {
-								case '/': // self closing tag
-									return addTag(true);
-								case '>': // closed tag; open -- we now read the contents
-									return addTag(false);
-								default: // it is an attribute
-									string attrName = readAttributeName();
-									string attrValue = attrName;
-									if(pos >= data.length) {
-										if(strict)
-											assert(0, "this should have thrown in readAttributeName");
-										else {
-											data ~= ">";
-											goto blankValue;
-										}
-									}
-									if(data[pos] == '=') {
-										pos++;
-										attrValue = readAttributeValue();
-									}
-
-									blankValue:
-
-									if(strict && attrName in attributes)
-										throw new MarkupException("Repeated attribute: " ~ attrName);
-
-									if(attrName.strip().length)
-										attributes[attrName] = attrValue;
-									else if(strict) throw new MarkupException("wtf, zero length attribute name");
-
-									if(!strict && pos < data.length && data[pos] == '<') {
-										// this is the broken tag that doesn't have a > at the end
-										data = data[0 .. pos] ~ ">" ~ data[pos.. $];
-										// let's insert one as a hack
-										goto case '>';
-									}
-
-									goto moreAttributes;
-							}
-					}
-			}
-
-			return Ele(2, null, null); // this is a <! or <? thing that got ignored prolly.
-			//assert(0);
-		}
-
-		eatWhitespace();
-		Ele r;
-		do {
-			r = readElement(); // there SHOULD only be one element...
-
-			if(r.type == 3 && r.element !is null)
-				piecesBeforeRoot ~= r.element;
-
-			if(r.type == 4)
-				break; // the document is completely empty...
-		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype; root only begins on a regular node
-
-		root = r.element;
-
-		if(!strict) // in strict mode, we'll just ignore stuff after the xml
-		while(r.type != 4) {
-			r = readElement();
-			if(r.type != 4 && r.type != 2) { // if not empty and not ignored
-				if(r.element !is null)
-					piecesAfterRoot ~= r.element;
-			}
-		}
-
-		if(root is null)
-		{
-			if(strict)
-				assert(0, "empty document should be impossible in strict mode");
-			else
-				parseUtf8(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
-		}
-
-		if(paragraphHackfixRequired) {
-			assert(!strict); // this should never happen in strict mode; it ought to never set the hack flag...
-
-			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
-			// It's hard to handle above though because my code sucks. So, we'll fix it here.
-
-			auto iterator = root.tree;
-			foreach(ele; iterator) {
-				if(ele.parentNode is null)
-					continue;
-
-				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
-					auto shouldBePreviousSibling = ele.parentNode;
-					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
-					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
-					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
-				}
-			}
-		}
-	}
-
-	/* end massive parse function */
-
-	/// Gets the <title> element's innerText, if one exists
-	@property string title() {
-		bool doesItMatch(Element e) {
-			return (e.tagName == "title");
-		}
-
-		auto e = findFirst(&doesItMatch);
-		if(e)
-			return e.innerText();
-		return "";
-	}
-
-	/// Sets the title of the page, creating a <title> element if needed.
-	@property void title(string t) {
-		bool doesItMatch(Element e) {
-			return (e.tagName == "title");
-		}
-
-		auto e = findFirst(&doesItMatch);
-
-		if(!e) {
-			e = createElement("title");
-			auto heads = getElementsByTagName("head");
-			if(heads.length)
-				heads[0].appendChild(e);
-		}
-
-		if(e)
-			e.innerText = t;
-	}
-
-	// FIXME: would it work to alias root this; ???? might be a good idea
-	/// These functions all forward to the root element. See the documentation in the Element class.
-	Element getElementById(string id) {
-		return root.getElementById(id);
-	}
-
-	/// ditto
-	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
-		if( is(SomeElementType : Element))
-		out(ret) { assert(ret !is null); }
-	body {
-		return root.requireElementById!(SomeElementType)(id, file, line);
-	}
-
-	/// ditto
-	final SomeElementType requireSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
-		if( is(SomeElementType : Element))
-		out(ret) { assert(ret !is null); }
-	body {
-		return root.requireSelector!(SomeElementType)(selector, file, line);
-	}
-
-
-	/// ditto
-	Element querySelector(string selector) {
-		return root.querySelector(selector);
-	}
-
-	/// ditto
-	Element[] querySelectorAll(string selector) {
-		return root.querySelectorAll(selector);
-	}
-
-	/// ditto
-	Element[] getElementsBySelector(string selector) {
-		return root.getElementsBySelector(selector);
-	}
-
-	/// ditto
-	Element[] getElementsByTagName(string tag) {
-		return root.getElementsByTagName(tag);
-	}
-
-	/// ditto
-	Element[] getElementsByClassName(string tag) {
-		return root.getElementsByClassName(tag);
-	}
-
-	/** FIXME: btw, this could just be a lazy range...... */
-	Element getFirstElementByTagName(string tag) {
-		if(loose)
-			tag = tag.toLower();
-		bool doesItMatch(Element e) {
-			return e.tagName == tag;
-		}
-		return findFirst(&doesItMatch);
-	}
-
-	/// This returns the <body> element, if there is one. (It different than Javascript, where it is called 'body', because body is a keyword in D.)
-	Element mainBody() {
-		return getFirstElementByTagName("body");
-	}
-
-	/// this uses a weird thing... it's [name=] if no colon and
-	/// [property=] if colon
-	string getMeta(string name) {
-		string thing = name.indexOf(":") == -1 ? "name" : "property";
-		auto e = querySelector("head meta["~thing~"="~name~"]");
-		if(e is null)
-			return null;
-		return e.content;
-	}
-
-	/// Sets a meta tag in the document header. It is kinda hacky to work easily for both Facebook open graph and traditional html meta tags/
-	void setMeta(string name, string value) {
-		string thing = name.indexOf(":") == -1 ? "name" : "property";
-		auto e = querySelector("head meta["~thing~"="~name~"]");
-		if(e is null) {
-			e = requireSelector("head").addChild("meta");
-			e.setAttribute(thing, name);
-		}
-
-		e.content = value;
-	}
-
-	///.
-	Form[] forms() {
-		return cast(Form[]) getElementsByTagName("form");
-	}
-
-	///.
-	Form createForm()
-		out(ret) {
-			assert(ret !is null);
-		}
-	body {
-		return cast(Form) createElement("form");
-	}
-
-	///.
-	Element createElement(string name) {
-		if(loose)
-			name = name.toLower();
-
-		auto e = Element.make(name);
-		e.parentDocument = this;
-
-		return e;
-
-//		return new Element(this, name, null, selfClosed);
-	}
-
-	///.
-	Element createFragment() {
-		return new DocumentFragment(this);
-	}
-
-	///.
-	Element createTextNode(string content) {
-		return new TextNode(this, content);
-	}
-
-
-	///.
-	Element findFirst(bool delegate(Element) doesItMatch) {
-		Element result;
-
-		bool goThroughElement(Element e) {
-			if(doesItMatch(e)) {
-				result = e;
-				return true;
-			}
-
-			foreach(child; e.children) {
-				if(goThroughElement(child))
-					return true;
-			}
-
-			return false;
-		}
-
-		goThroughElement(root);
-
-		return result;
-	}
-
-	///.
-	void clear() {
-		root = null;
-		loose = false;
-	}
-
-	///.
-	void setProlog(string d) {
-		_prolog = d;
-		prologWasSet = true;
-	}
-
-	///.
-	private string _prolog = "<!DOCTYPE html>\n";
-	private bool prologWasSet = false; // set to true if the user changed it
-
-	@property string prolog() const {
-		// if the user explicitly changed it, do what they want
-		// or if we didn't keep/find stuff from the document itself,
-		// we'll use the builtin one as a default.
-		if(prologWasSet || piecesBeforeRoot.length == 0)
-			return _prolog;
-
-		string p;
-		foreach(e; piecesBeforeRoot)
-			p ~= e.toString() ~ "\n";
-		return p;
-	}
-
-	///.
-	override string toString() const {
-		return prolog ~ root.toString();
-	}
-
-	///.
-	Element root;
-
-	/// if these were kept, this is stuff that appeared before the root element, such as <?xml version ?> decls and <!DOCTYPE>s
-	Element[] piecesBeforeRoot;
-
-	/// stuff after the root, only stored in non-strict mode and not used in toString, but available in case you want it
-	Element[] piecesAfterRoot;
-
-	///.
-	bool loose;
-
-
-
-	// what follows are for mutation events that you can observe
-	void delegate(DomMutationEvent)[] eventObservers;
-
-	void dispatchMutationEvent(DomMutationEvent e) {
-		foreach(o; eventObservers)
-			o(e);
-	}
-}
-
-
-// FIXME: since Document loosens the input requirements, it should probably be the sub class...
-/// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
-class XmlDocument : Document {
-	this(string data) {
-		contentType = "text/xml; charset=utf-8";
-		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
-
-		parseStrict(data);
-	}
-}
-
-
-
 // for the observers
 enum DomMutationOperations {
 	setAttribute,
@@ -4815,10 +4876,11 @@ int intFromHex(string hex) {
 		string[] tokens;
 		// lexx it!
 		while ((selstr = removeLeadingBlanks(selstr)).length > 0) {
-			if(selstr[0] == '\"') {
+			if(selstr[0] == '\"' || selstr[0] == '\'') {
+				auto end = selstr[0];
 				auto pos = 1;
 				bool escaping;
-				while(pos < selstr.length && !escaping && selstr[pos] != '"') {
+				while(pos < selstr.length && !escaping && selstr[pos] != end) {
 					if(escaping)
 						escaping = false;
 					else if(selstr[pos] == '\\')
@@ -4827,7 +4889,7 @@ int intFromHex(string hex) {
 				}
 
 				// FIXME: do better unescaping
-				tokens ~= selstr[1 .. pos].replace(`\"`, `"`);
+				tokens ~= selstr[1 .. pos].replace(`\"`, `"`).replace(`\'`, `'`).replace(`\\`, `\`);
 				if(pos+1 >= selstr.length)
 					assert(0, selstr);
 				selstr = selstr[pos + 1.. $];
@@ -5183,7 +5245,7 @@ int intFromHex(string hex) {
 		}
 
 		bool solvesFor(R)(R elements, Element e) {
-			int idx = 0;
+			int idx = 1;
 			bool found = false;
 			foreach(ele; elements) {
 				if(of.length) {
@@ -6313,7 +6375,7 @@ private string[string] aadup(in string[string] arr) {
 // dom event support, if you want to use it
 
 /// used for DOM events
-alias void delegate(Element handlerAttachedTo, Event event) EventHandler;
+alias EventHandler = void delegate(Element handlerAttachedTo, Event event);
 
 /// This is a DOM event, like in javascript. Note that this library never fires events - it is only here for you to use if you want it.
 class Event {
