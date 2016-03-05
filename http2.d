@@ -744,6 +744,10 @@ class HttpRequest {
 		if(parts.port == 0)
 			requestParameters.port = requestParameters.ssl ? 443 : 80;
 		requestParameters.uri = parts.path.length ? parts.path : "/";
+		if(parts.query.length) {
+			requestParameters.uri ~= "?";
+			requestParameters.uri ~= parts.query;
+		}
 	}
 
 	~this() {
