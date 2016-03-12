@@ -1,7 +1,7 @@
 {
 	"name": "arsd-official",
 	"targetType": "none",
-	"sourcePaths": ["dummy"],
+	"sourcePaths": ["."],
 	"dependencies": {
 		"arsd-official:simpledisplay":"~master",
 		"arsd-official:dom":"~master",
@@ -40,22 +40,22 @@
 		{
 			"name": "cgi",
 			"description": "web server library with cgi, fastcgi, scgi, and embedded http server support",
-			"targettype": "sourcelibrary",
-			"sourcefiles": ["cgi.d"]
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["cgi.d"]
 		},
 		{
 			"name": "http",
 			"description": "HTTP client library",
 			"libs-posix": ["crypto", "ssl"],
 			"versions-posix": ["with_openssl"],
-			"targettype": "sourcelibrary",
-			"sourcefiles": ["http2.d"]
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["http2.d"]
 		},
 		{
 			"name": "script",
 			"description": "Small Javascript-like script interpreter with easy D API",
-			"targettype": "sourcelibrary",
-			"sourcefiles": ["script.d", "jsvar.d"]
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["script.d", "jsvar.d"]
 		},
 		{
 			"name": "terminal",
