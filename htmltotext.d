@@ -2,8 +2,332 @@
 module arsd.htmltotext;
 
 import arsd.dom;
+import arsd.color;
 import std.string;
-import std.array : replace;
+
+import std.uni : isWhite;
+
+class HtmlConverter {
+	int width;
+
+	void htmlToText(Element element, bool preformatted, int width) {
+		this.width = width;
+		if(auto tn = cast(TextNode) element) {
+			foreach(dchar ch; tn.nodeValue) {
+				sink(ch, preformatted);
+			}
+		} else {
+			void sinkChildren() {
+				foreach(child; element.childNodes)
+					htmlToText(child, preformatted, width);
+			}
+			switch(element.tagName) {
+				case "head", "script", "style":
+					// intentionally blank
+				break;
+				case "trfixme":
+					auto children = element.childElements;
+
+					auto tdWidth = (width - cast(int)(children.length)*3) / cast(int)(children.length);
+					if(tdWidth < 12) {
+						// too narrow to be reasonable
+						startBlock();
+						sinkChildren();
+						endBlock();
+					} else {
+						string[] tdBlocks;
+						int longestBlock;
+						foreach(child; children) {
+							auto fmt = new HtmlConverter();
+
+							fmt.htmlToText(child, false, tdWidth);
+							tdBlocks ~= fmt.s;
+							int lineCount = 1;
+							foreach(ch; fmt.s)
+								if(ch == '\n')
+									lineCount++;
+							if(lineCount > longestBlock)
+								longestBlock = lineCount;
+						}
+
+						if(s.length && s[$-1] != '\n')
+							s ~= '\n';
+						foreach(lineNumber; 0 .. longestBlock) {
+							foreach(bidx, ref block; tdBlocks) {
+								auto ob = block;
+								if(bidx)
+									s ~= " | ";
+								if(block.length) {
+									auto idx = block.indexOf("\n");
+									if(idx == -1)
+										idx = block.length;
+
+									s ~= block[0 .. idx];
+
+									if(idx == block.length)
+										block = block[$..$];
+									else
+										block = block[idx + 1 .. $];
+								}
+
+								if(ob.length < tdWidth)
+								foreach(a; 0 .. tdWidth - block.length)
+									s ~= " ";
+
+							}
+							s ~= "\n";
+						}
+
+						foreach(a; 0 .. children.length) {
+							foreach(w; 0 .. tdWidth) {
+								s ~= "-";
+							}
+							if(a +1 != children.length)
+								s ~= "-+-";
+						}
+						s ~= "\n";
+					}
+				break;
+				case "a":
+					sinkChildren();
+					if(element.href != element.innerText) {
+						sink(' ', false);
+						sink('<', false);
+						foreach(dchar ch; element.href)
+							sink(ch, false);
+						sink('>', false);
+					}
+				break;
+				case "span":
+					auto csc = element.computedStyle.getValue("color");
+					if(csc.length) {
+						auto c = Color.fromString(csc);
+						s ~= format("\033[38;2;%d;%d;%dm", c.r, c.g, c.b);
+					}
+					sinkChildren();
+
+					if(csc.length)
+						s ~= "\033[39m";
+				break;
+				case "p":
+					startBlock();
+					sinkChildren();
+					endBlock();
+				break;
+				case "b", "strong":
+				case "em", "i":
+					if(element.innerText.length == 0)
+						break;
+					sink('*', false);
+					sinkChildren();
+					sink('*', false);
+				break;
+				case "u":
+					if(element.innerText.length == 0)
+						break;
+					sink('_', false);
+					sinkChildren();
+					sink('_', false);
+				break;
+				case "ul":
+					ulDepth++;
+					sinkChildren();
+					ulDepth--;
+				break;
+				case "ol":
+					olDepth++;
+					sinkChildren();
+					olDepth--;
+				break;
+				case "li":
+					startBlock();
+
+					//sink('\t', true);
+					sink(' ', true);
+					sink(' ', true);
+					if(olDepth)
+						sink('*', false);
+					if(ulDepth)
+						sink('*', false);
+					sink(' ', true);
+
+					sinkChildren();
+
+					endBlock();
+				break;
+
+				case "h1", "h2":
+					startBlock();
+					sinkChildren();
+					sink('\n', true);
+					foreach(dchar ch; element.innerText)
+						sink(element.tagName == "h1" ? '=' : '-', false);
+					endBlock();
+				break;
+
+				case "hr":
+					startBlock();
+					foreach(i; 0 .. width / 4)
+						sink(' ', true);
+					foreach(i; 0 .. width / 2)
+						sink('-', false);
+					endBlock();
+				break;
+
+				case "br":
+					sink('\n', true);
+				break;
+				case "div":
+					startBlock();
+
+					/*
+					auto csc = element.computedStyle.getValue("background-color");
+					if(csc.length) {
+						auto c = Color.fromString(csc);
+						s ~= format("\033[48;2;%d;%d;%dm", c.r, c.g, c.b);
+					}
+					*/
+
+					sinkChildren();
+
+					/*
+					if(csc.length)
+						s ~= "\033[49m";
+					*/
+
+					endBlock();
+				break;
+				case "pre":
+					startBlock();
+					foreach(child; element.childNodes)
+						htmlToText(child, true, width);
+					endBlock();
+				break;
+				default:
+					sinkChildren();
+			}
+		}
+	}
+
+	int olDepth;
+	int ulDepth;
+
+	string convert(string html, bool wantWordWrap = true, int wrapAmount = 74) {
+		Document document = new Document;
+
+		document.parse("<roottag>" ~ html ~ "</roottag>");
+
+		Element start;
+		auto bod = document.getElementsByTagName("body");
+		if(bod.length)
+			start = bod[0];
+		else
+			start = document.root;
+
+		import std.file;
+		auto stylesheet = new StyleSheet(readText("/var/www/dpldocs.info/experimental-docs/style.css"));
+
+		stylesheet.apply(document);
+
+		htmlToText(start, false, wrapAmount);
+		return s;
+	}
+
+	void reset() {
+		s = null;
+		justOutputWhitespace = true;
+		justOutputBlock = true;
+		justOutputMargin = true;
+	}
+
+	string s;
+	bool justOutputWhitespace = true;
+	bool justOutputBlock = true;
+	bool justOutputMargin = true;
+	int lineLength;
+
+	void sink(dchar item, bool preformatted) {
+		if(!preformatted && isWhite(item)) {
+			if(!justOutputWhitespace) {
+				item = ' ';
+				justOutputWhitespace = true;
+			} else {
+				return;
+			}
+		} else {
+			// if it is preformatted, we still need to keep track of if it is whitespace
+			// so stuff like <br> is somewhat sane
+			justOutputWhitespace = preformatted && isWhite(item);
+		}
+
+		s ~= item;
+
+		if(lineLength >= width) {
+			// rewind to the nearest space, if there is one, to break on a word boundary
+			int c =  lineLength;
+			bool broken;
+			foreach_reverse(idx, char ch; s) {
+				if(ch == '\n')
+					break;
+				if(ch == ' ') {
+					auto os = s;
+					s = os[0 .. idx];
+					s ~= '\n';
+					s ~= os[idx + 1 .. $];
+					lineLength = os[idx+1..$].length;
+					broken = true;
+					break;
+				}
+				c--;
+				if(c < 5)
+					break;
+			}
+
+			if(!broken) {
+				s ~= '\n';
+				lineLength = 0;
+				justOutputWhitespace = true;
+			}
+
+		}
+
+
+		if(item == '\n')
+			lineLength = 0;
+		else
+			lineLength ++;
+
+
+		if(!justOutputWhitespace) {
+			justOutputBlock = false;
+			justOutputMargin = false;
+		}
+	}
+	void startBlock() {
+		if(!justOutputBlock) {
+			s ~= "\n";
+			lineLength = 0;
+			justOutputBlock = true;
+		}
+		if(!justOutputMargin) {
+			s ~= "\n";
+			lineLength = 0;
+			justOutputMargin = true;
+		}
+	}
+	void endBlock() {
+		if(!justOutputMargin) {
+			s ~= "\n";
+			lineLength = 0;
+			justOutputMargin = true;
+		}
+	}
+}
+
+string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
+	auto converter = new HtmlConverter();
+	return converter.convert(html, true, wrapAmount);
+}
 
 string repeat(string s, ulong num) {
 	string ret;
@@ -13,29 +337,8 @@ string repeat(string s, ulong num) {
 }
 
 import std.stdio;
-
-static import std.regex;
-string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
-	Document document = new Document;
-
-
-	html = html.replace("&nbsp;", " ");
-	html = html.replace("&#160;", " ");
-	html = html.replace("&#xa0;", " ");
-	html = html.replace("\n", " ");
-	html = html.replace("\r", " ");
-	html = std.regex.replace(html, std.regex.regex("[\n\r\t \u00a0]+", "gm"), " ");
-
-	document.parse("<roottag>" ~ html ~ "</roottag>");
-
-	Element start;
-	auto bod = document.getElementsByTagName("body");
-	if(bod.length)
-		start = bod[0];
-	else
-		start = document.root;
-
-	start.innerHTML = start.innerHTML().replace("<br />", "\u0001");
+version(none)
+void penis() {
 
     again:
     	string result = "";
@@ -44,19 +347,6 @@ string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 		if(ele.nodeType != 1) continue;
 
 		switch(ele.tagName) {
-			case "b":
-			case "strong":
-				ele.innerText = "*" ~ ele.innerText ~ "*";
-				ele.stripOut();
-				goto again;
-			case "i":
-			case "em":
-				ele.innerText = "/" ~ ele.innerText ~ "/";
-				ele.stripOut();
-				goto again;
-			case "u":
-				ele.innerText = "_" ~ ele.innerText ~ "_";
-				ele.stripOut();
 				goto again;
 			case "h1":
 				ele.innerText = "\r" ~ ele.innerText ~ "\n" ~ repeat("=", ele.innerText.length) ~ "\r";
