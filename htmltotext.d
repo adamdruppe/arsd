@@ -25,6 +25,9 @@ class HtmlConverter {
 				case "head", "script", "style":
 					// intentionally blank
 				break;
+				// The table stuff is removed right now because while it looks
+				// ok for test tables, it isn't working well for the emails I have
+				// - it handles data ok but not really nested layouts.
 				case "trfixme":
 					auto children = element.childElements;
 
@@ -99,6 +102,7 @@ class HtmlConverter {
 					}
 				break;
 				case "span":
+					/*
 					auto csc = element.computedStyle.getValue("color");
 					if(csc.length) {
 						auto c = Color.fromString(csc);
@@ -108,6 +112,7 @@ class HtmlConverter {
 
 					if(csc.length)
 						s ~= "\033[39m";
+					*/
 				break;
 				case "p":
 					startBlock();
@@ -224,10 +229,9 @@ class HtmlConverter {
 		else
 			start = document.root;
 
-		import std.file;
-		auto stylesheet = new StyleSheet(readText("/var/www/dpldocs.info/experimental-docs/style.css"));
-
-		stylesheet.apply(document);
+		//import std.file;
+		//auto stylesheet = new StyleSheet(readText("/var/www/dpldocs.info/experimental-docs/style.css"));
+		//stylesheet.apply(document);
 
 		htmlToText(start, false, wrapAmount);
 		return s;
