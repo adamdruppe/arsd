@@ -12,8 +12,8 @@ public import arsd.database;
 import std.string;
 import std.exception;
 
-import win32.sql;
-import win32.sqlext;
+import core.sys.windows.sql;
+import core.sys.windows.sqlext;
 
 class MsSql : Database {
 	// dbname = name  is probably the most common connection string
