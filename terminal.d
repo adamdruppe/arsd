@@ -778,7 +778,75 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	int _currentForeground = Color.DEFAULT;
 	int _currentBackground = Color.DEFAULT;
+	RGB _currentForegroundRGB;
+	RGB _currentBackgroundRGB;
 	bool reverseVideo = false;
+
+	/++
+		Attempts to set color according to a 24 bit value (r, g, b, each >= 0 and < 256).
+
+
+		This is not supported on all terminals. It will attempt to fall back to a 256-color
+		or 8-color palette in those cases automatically.
+
+		Returns: true if it believes it was successful (note that it cannot be completely sure),
+		false if it had to use a fallback.
+	+/
+	bool setTrueColor(RGB foreground, RGB background, ForceOption force = ForceOption.automatic) {
+		if(force == ForceOption.neverSend) {
+			_currentForeground = -1;
+			_currentBackground = -1;
+			_currentForegroundRGB = foreground;
+			_currentBackgroundRGB = background;
+			return true;
+		}
+
+		if(force == ForceOption.automatic && _currentForeground == -1 && _currentBackground == -1 && (_currentForegroundRGB == foreground && _currentBackgroundRGB == background))
+			return true;
+
+		_currentForeground = -1;
+		_currentBackground = -1;
+		_currentForegroundRGB = foreground;
+		_currentBackgroundRGB = background;
+
+		version(Windows) {
+			flush();
+			ushort setTob = cast(ushort) approximate16Color(background);
+			ushort setTof = cast(ushort) approximate16Color(foreground);
+			SetConsoleTextAttribute(
+				hConsole,
+				cast(ushort)((setTob << 4) | setTof));
+			return false;
+		} else {
+			// FIXME: if the terminal reliably does support 24 bit color, use it
+			// instead of the round off. But idk how to detect that yet...
+
+			// fallback to 16 color for term that i know don't take it well
+			import std.process;
+			import std.string;
+			if(environment.get("TERM") == "rxvt" || environment.get("TERM") == "linux") {
+				// not likely supported, use 16 color fallback
+				auto setTof = approximate16Color(foreground);
+				auto setTob = approximate16Color(background);
+
+				writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm",
+					(setTof & Bright) ? 1 : 0,
+					cast(int) (setTof & ~Bright),
+					cast(int) (setTob & ~Bright)
+				));
+
+				return false;
+			}
+
+			// otherwise, assume it is probably supported and give it a try
+			writeStringRaw(format("\033[38;5;%dm\033[48;5;%dm",
+				colorToXTermPaletteIndex(foreground),
+				colorToXTermPaletteIndex(background)
+			));
+
+			return true;
+		}
+	}
 
 	/// Changes the current color. See enum Color for the values.
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
@@ -3832,3 +3900,123 @@ void main() {
 		Thread.sleep(50.msecs);
 	}
 }
+
+/*
+	The Xterm palette progression is:
+	[0, 95, 135, 175, 215, 255]
+
+	So if I take the color and subtract 55, then div 40, I get
+	it into one of these areas. If I add 20, I get a reasonable
+	rounding.
+*/
+
+ubyte colorToXTermPaletteIndex(RGB color) {
+	/*
+		Here, I will round off to the color ramp or the
+		greyscale. I will NOT use the bottom 16 colors because
+		there's duplicates (or very close enough) to them in here
+	*/
+
+	if(color.r == color.g && color.g == color.b) {
+		// grey - find one of them:
+		if(color.r == 0) return 0;
+		// meh don't need those two, let's simplify branche
+		//if(color.r == 0xc0) return 7;
+		//if(color.r == 0x80) return 8;
+		// it isn't == 255 because it wants to catch anything
+		// that would wrap the simple algorithm below back to 0.
+		if(color.r >= 248) return 15;
+
+		// there's greys in the color ramp too, but these
+		// are all close enough as-is, no need to complicate
+		// algorithm for approximation anyway
+
+		return cast(ubyte) (232 + ((color.r - 8) / 10));
+	}
+
+	// if it isn't grey, it is color
+
+	// the ramp goes blue, green, red, with 6 of each,
+	// so just multiplying will give something good enough
+
+	// will give something between 0 and 5, with some rounding
+	auto r = (cast(int) color.r - 35) / 40;
+	auto g = (cast(int) color.g - 35) / 40;
+	auto b = (cast(int) color.b - 35) / 40;
+
+	return cast(ubyte) (16 + b + g*6 + r*36);
+}
+
+/++
+	Represents a 24-bit color.
+
+
+	$(TIP You can convert these to and from [arsd.color.Color] using
+	      `.tupleof`:
+
+	      ---
+	      	RGB rgb;
+		Color c = Color(rgb.tupleof);
+	)
+	      ---
++/
+struct RGB {
+	ubyte r; ///
+	ubyte g; ///
+	ubyte b; ///
+	// terminal can't actually use this but I want the value
+	// there for assignment to an arsd.color.Color
+	private ubyte a = 255;
+}
+
+// This is an approximation too for a few entries, but a very close one.
+RGB xtermPaletteIndexToColor(int paletteIdx) {
+	RGB color;
+
+	if(paletteIdx < 16) {
+		if(paletteIdx == 7)
+			return RGB(0xc0, 0xc0, 0xc0);
+		else if(paletteIdx == 8)
+			return RGB(0x80, 0x80, 0x80);
+
+		color.r = (paletteIdx & 0b001) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
+		color.g = (paletteIdx & 0b010) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
+		color.b = (paletteIdx & 0b100) ? ((paletteIdx & 0b1000) ? 0xff : 0x80) : 0x00;
+
+	} else if(paletteIdx < 232) {
+		// color ramp, 6x6x6 cube
+		color.r = cast(ubyte) ((paletteIdx - 16) / 36 * 40 + 55);
+		color.g = cast(ubyte) (((paletteIdx - 16) % 36) / 6 * 40 + 55);
+		color.b = cast(ubyte) ((paletteIdx - 16) % 6 * 40 + 55);
+
+		if(color.r == 55) color.r = 0;
+		if(color.g == 55) color.g = 0;
+		if(color.b == 55) color.b = 0;
+	} else {
+		// greyscale ramp, from 0x8 to 0xee
+		color.r = cast(ubyte) (8 + (paletteIdx - 232) * 10);
+		color.g = color.r;
+		color.b = color.g;
+	}
+
+	return color;
+}
+
+int approximate16Color(RGB color) {
+	int c;
+	c |= color.r > 64 ? RED_BIT : 0;
+	c |= color.g > 64 ? GREEN_BIT : 0;
+	c |= color.b > 64 ? BLUE_BIT : 0;
+
+	c |= (((color.r + color.g + color.b) / 3) > 80) ? Bright : 0;
+
+	return c;
+}
+
+/*
+void main() {
+	auto terminal = Terminal(ConsoleOutputType.linear);
+	terminal.setTrueColor(RGB(255, 0, 255), RGB(255, 255, 255));
+	terminal.writeln("Hello, world!");
+}
+*/
