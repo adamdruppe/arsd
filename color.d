@@ -63,19 +63,23 @@ private {
 		return ret ~ toInternal!string(amt);
 	}
 
+	nothrow @safe @nogc pure
 	real absInternal(real a) { return a < 0 ? -a : a; }
+	nothrow @safe @nogc pure
 	real minInternal(real a, real b, real c) {
 		auto m = a;
 		if(b < m) m = b;
 		if(c < m) m = c;
 		return m;
 	}
+	nothrow @safe @nogc pure
 	real maxInternal(real a, real b, real c) {
 		auto m = a;
 		if(b > m) m = b;
 		if(c > m) m = c;
 		return m;
 	}
+	nothrow @safe @nogc pure
 	bool startsWithInternal(string a, string b) {
 		return (a.length >= b.length && a[0 .. b.length] == b);
 	}
@@ -92,6 +96,7 @@ private {
 			ret ~= a[previous .. $];
 		return ret;
 	}
+	nothrow @safe @nogc pure
 	string stripInternal(string s) {
 		foreach(i, char c; s)
 			if(c != ' ' && c != '\t' && c != '\n') {
@@ -114,9 +119,16 @@ private {
 
 /// Represents an RGBA color
 struct Color {
-	union {
-		ubyte[4] components; ///
+@safe:
+	/++
+		The color components are available as a static array, individual bytes, and a uint inside this union.
 
+		Since it is anonymous, you can use the inner members' names directly.
+	+/
+	union {
+		ubyte[4] components; /// [r, g, b, a]
+
+		/// Holder for rgba individual components.
 		struct {
 			ubyte r; /// red
 			ubyte g; /// green
@@ -124,10 +136,13 @@ struct Color {
 			ubyte a; /// alpha. 255 == opaque
 		}
 
-		uint asUint; ///
+		uint asUint; /// The components as a single 32 bit value (beware of endian issues!)
 	}
 
-	// this makes sure they are in range before casting
+	/++
+		Like the constructor, but this makes sure they are in range before casting. If they are out of range, it saturates: anything less than zero becomes zero and anything greater than 255 becomes 255.
+	+/
+	nothrow pure
 	static Color fromIntegers(int red, int green, int blue, int alpha = 255) {
 		if(red < 0) red = 0; if(red > 255) red = 255;
 		if(green < 0) green = 0; if(green > 255) green = 255;
@@ -136,7 +151,8 @@ struct Color {
 		return Color(red, green, blue, alpha);
 	}
 
-	/// .
+	/// Construct a color with the given values. They should be in range 0 <= x <= 255, where 255 is maximum intensity and 0 is minimum intensity.
+	nothrow pure @nogc
 	this(int red, int green, int blue, int alpha = 255) {
 		// workaround dmd bug 10937
 		if(__ctfe)
@@ -148,16 +164,33 @@ struct Color {
 		this.a = cast(ubyte) alpha;
 	}
 
-	/// Convenience functions for common color names
+	/// Static convenience functions for common color names
+	nothrow pure @nogc
 	static Color transparent() { return Color(0, 0, 0, 0); }
-	static Color white() { return Color(255, 255, 255); } ///.
-	static Color black() { return Color(0, 0, 0); } ///.
-	static Color red() { return Color(255, 0, 0); } ///.
-	static Color green() { return Color(0, 255, 0); } ///.
-	static Color blue() { return Color(0, 0, 255); } ///.
-	static Color yellow() { return Color(255, 255, 0); } ///.
-	static Color teal() { return Color(0, 255, 255); } ///.
-	static Color purple() { return Color(255, 0, 255); } ///.
+	/// Ditto
+	nothrow pure @nogc
+	static Color white() { return Color(255, 255, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color black() { return Color(0, 0, 0); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color red() { return Color(255, 0, 0); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color green() { return Color(0, 255, 0); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color blue() { return Color(0, 0, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color yellow() { return Color(255, 255, 0); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color teal() { return Color(0, 255, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color purple() { return Color(255, 0, 255); }
 
 	/*
 	ubyte[4] toRgbaArray() {
@@ -302,6 +335,7 @@ struct Color {
 	}
 }
 
+nothrow @safe
 private string toHexInternal(ubyte b) {
 	string s;
 	if(b < 16)
@@ -322,6 +356,7 @@ private string toHexInternal(ubyte b) {
 	return s;
 }
 
+nothrow @safe @nogc pure
 private ubyte fromHexInternal(string s) {
 	int result = 0;
 
