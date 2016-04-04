@@ -1092,7 +1092,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			wstring writeBufferw = to!wstring(writeBuffer);
 			while(writeBufferw.length) {
 				DWORD written;
-				WriteConsoleW(hConsole, writeBufferw.ptr, writeBufferw.length, &written, null);
+				WriteConsoleW(hConsole, writeBufferw.ptr, cast(DWORD)writeBufferw.length, &written, null);
 				writeBufferw = writeBufferw[written .. $];
 			}
 
