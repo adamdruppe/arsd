@@ -24,7 +24,7 @@ void writePng(string filename, MemoryImage mi) {
 //Here's a simple test program that shows how to write a quick image viewer with simpledisplay:
 
 import arsd.png;
-import simpledisplay;
+import arsd.simpledisplay;
 
 import std.file;
 void main(string[] args) {
@@ -939,7 +939,7 @@ struct Color {
 }
 */
 
-//import simpledisplay;
+//import arsd.simpledisplay;
 
 struct RgbaScanline {
 	Color[] pixels;

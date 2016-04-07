@@ -379,7 +379,7 @@ void writeBmp(MemoryImage img, string filename) {
 
 /+
 void main() {
-	import simpledisplay;
+	import arsd.simpledisplay;
 	//import std.file;
 	//auto img = readBmp(cast(ubyte[]) std.file.read("/home/me/test2.bmp"));
 	auto img = readBmp("/home/me/test2.bmp");

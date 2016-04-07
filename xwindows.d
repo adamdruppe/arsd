@@ -16,5 +16,5 @@ writing plain applications.
 */
 module arsd.xwindows;
 
-public import simpledisplay;
+public import arsd.simpledisplay;
 

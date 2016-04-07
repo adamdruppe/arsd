@@ -1080,7 +1080,7 @@ img = imageFromPng(readPng(range.range)).getAsTrueColorImage;
 
 	auto qimg = quantize(img, null, 2);
 
-	import simpledisplay;
+	import arsd.simpledisplay;
 	auto win = new SimpleWindow(img.width, img.height * 3);
 	auto painter = win.draw();
 	painter.drawImage(Point(0, 0), Image.fromMemoryImage(img));

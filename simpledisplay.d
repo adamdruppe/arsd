@@ -104,7 +104,7 @@
 
 	---
 	// dmd example.d simpledisplay.d color.d
-	import simpledisplay;
+	import arsd.simpledisplay;
 	import std.conv;
 
 	void main() {
@@ -155,7 +155,7 @@
 
 	---
 	// dmd example.d simpledisplay.d color.d
-	import simpledisplay;
+	import arsd.simpledisplay;
 
 	enum paddleMovementSpeed = 8;
 	enum paddleHeight = 48;
@@ -300,7 +300,7 @@
 
 		---
 		// dmd example.d simpledisplay.d color.d
-		import simpledisplay;
+		import arsd.simpledisplay;
 		void main() {
 			auto window = new SimpleWindow(200, 200);
 			window.eventLoop(0,
@@ -330,7 +330,7 @@
 
 		---
 		// dmd example.d simpledisplay.d color.d
-		import simpledisplay;
+		import arsd.simpledisplay;
 		void main() {
 			auto window = new SimpleWindow(200, 200);
 			{ // introduce sub-scope
@@ -365,7 +365,7 @@
 
 		---
 		// dmd example.d simpledisplay.d color.d
-		import simpledisplay;
+		import arsd.simpledisplay;
 
 		void main() {
 
@@ -377,7 +377,7 @@
 
 		---
 		// dmd example.d simpledisplay.d color.d png.d
-		import simpledisplay;
+		import arsd.simpledisplay;
 		import arsd.png;
 
 		void main() {
@@ -404,7 +404,7 @@
 		The pulse timeout is used by setting a non-zero interval as the first argument to `eventLoop` function and adding a zero-argument delegate to handle the pulse.
 
 		---
-			import simpledisplay;
+			import arsd.simpledisplay;
 
 			void main() {
 				auto window = new SimpleWindow(400, 400);
@@ -430,7 +430,7 @@
 		The pulse timer and instances of the $(LREF Timer) class may be combined at will.
 
 		---
-			import simpledisplay;
+			import arsd.simpledisplay;
 
 			void main() {
 				auto window = new SimpleWindow(400, 400);
@@ -526,7 +526,7 @@
 		PITFALL=<div class="pitfall">$0</div>
 		WARNING=<div class="warning">$0</div>
 +/
-module simpledisplay;
+module arsd.simpledisplay;
 
 // FIXME: icons on Windows don't look quite right, I think the transparency mask is off.
 
@@ -1866,7 +1866,7 @@ version(without_opengl) {
 		See more: <a href="#topics-3d">in the 3d topic</a>.
 
 		---
-		import simpledisplay;
+		import arsd.simpledisplay;
 		void main() {
 			auto window = new SimpleWindow(500, 500, "OpenGL Test", OpenGlOptions.yes);
 

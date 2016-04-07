@@ -163,7 +163,7 @@ class DataView : Widget {
 
 // FIXME: menus should prolly capture the mouse. ugh i kno.
 
-public import simpledisplay;
+public import arsd.simpledisplay;
 
 version(Windows)
 	import core.sys.windows.windows;

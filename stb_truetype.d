@@ -126,7 +126,7 @@ struct TtfFont {
 int main(string[] args)
 {
 import std.conv;
-import simpledisplay;
+import arsd.simpledisplay;
    int c = (args.length > 1 ? to!int(args[1]) : 'a'), s = (args.length > 2 ? to!int(args[2]) : 20);
 import std.file;
 

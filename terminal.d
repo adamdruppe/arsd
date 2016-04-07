@@ -55,7 +55,7 @@
 		* Do a full TUI widget set. I might do some basics and lay a little groundwork, but a full TUI
 		  is outside the scope of this module (unless I can do it really small.)
 +/
-module terminal;
+module arsd.terminal;
 
 /*
 	Widgets:

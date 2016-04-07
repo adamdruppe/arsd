@@ -63,7 +63,7 @@
 module arsd.gamehelpers;
 
 public import arsd.color;
-public import simpledisplay;
+public import arsd.simpledisplay;
 
 import std.math;
 public import core.time;
