@@ -355,8 +355,6 @@
 
 		To start, you create a `SimpleWindow` with OpenGL enabled by passing the argument `OpenGlOptions.yes` to the constructor.
 
-		Important: the required import libraries are now packaged with dmd on 32 bit Windows for OpenGL support. You may download the necessary .libs from by github, put them in your dmd/windows/lib folder, then pass the `-version=with_opengl` flag to dmd when compiling to opt-in to this feature.
-
 		Next, you set `redrawOpenGlScene` to a delegate which draws your frame.
 
 		To force a redraw of the scene, call `window.redrawOpenGlSceneNow()`.
@@ -366,14 +364,7 @@
 		This example program will draw a rectangle on your window:
 
 		---
-		// On Windows: dmd example.d simpledisplay.d color.d -version=with_opengl
-		//
-		// When compiling a 32 bit application on Windows, be sure you
-		// got opengl32.lib and glu32.lib from my github and added them
-		// to your `dmd2\windows\lib` directory. When you update dmd,
-		// remember to ensure those lib files are still there afterward.
-		//
-		// Elsewhere : dmd example.d simpledisplay.d color.d
+		// dmd example.d simpledisplay.d color.d
 		import simpledisplay;
 
 		void main() {
@@ -750,7 +741,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		height = the height of the window's client area, in pixels
 		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the $(LREF SimpleWindow._title) property.
 		opengl = $(LREF OpenGlOptions) are yes and no. If yes, it creates an OpenGL context on the window.
-			$(TIP On Windows, you need to compile with `-version=with_opengl` to enable `OpenGlOptions.yes`)
 		resizable = $(LREF Resizablity) has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
 			$(P `fixedSize` will not allow the user to resize the window.)
@@ -1514,7 +1504,7 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 			data[text.length] = 0;
 
 			GlobalUnlock(handle);
-			SetClipboardData(1 /* CF_TEXT */, handle);
+			SetClipboardData(1 /* CF_TEXT */, handle); // XXX
 		}
 	} else version(X11) {
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
@@ -1864,13 +1854,6 @@ private string[] split(in void[] a, char c) {
 		return ret;
 	}
 
-version(Windows) {
-	// Since opengl32.lib isn't provided by default with dmd yet, OpenGL on Windows is opt in
-	// rather than opt out, so simpledisplay.d just works with a stock dmd.
-	version(with_opengl) {}
-	else version = without_opengl;
-}
-
 version(without_opengl) {
 	enum OpenGlOptions {
 		no,
@@ -1880,7 +1863,7 @@ version(without_opengl) {
 		Determines if you want an OpenGL context created on the new window.
 
 
-		Compile with `-version=with_opengl` on Windows if you want to use `yes`. See more: <a href="#topics-3d">in the 3d topic</a>.
+		See more: <a href="#topics-3d">in the 3d topic</a>.
 
 		---
 		import simpledisplay;
