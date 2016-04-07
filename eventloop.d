@@ -1,6 +1,8 @@
 /// crappy event loop for linux
 module arsd.eventloop;
 
+version(linux):
+
 /* **** */
 // Loop implementation
 // FIXME: much of this is posix or even linux specific, but we ideally want the same interface across all operating systems, though not necessarily even a remotely similar implementation

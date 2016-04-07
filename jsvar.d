@@ -61,6 +61,7 @@ module arsd.jsvar;
 version=new_std_json;
 
 import std.stdio;
+static import std.array;
 import std.traits;
 import std.conv;
 import std.json;

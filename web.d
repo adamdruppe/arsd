@@ -174,6 +174,7 @@ struct IfInputContentType {
 */
 
 import std.exception;
+static import std.uri;
 public import arsd.dom;
 public import arsd.cgi; // you have to import this in the actual usage file or else it won't link; surely a compiler bug
 import arsd.sha;
@@ -2946,7 +2947,8 @@ deprecated string getSessionId(Cgi cgi) {
 }
 
 version(Posix) {
-	static import linux = std.c.linux.linux;
+	static import linux = core.sys.linux.unistd;
+	static import sys_stat = core.sys.posix.sys.stat;
 }
 
 /// This is cookie parameters for the Session class. The default initializers provide some simple default
@@ -3433,7 +3435,7 @@ class Session {
 				// users on the operating system for each user, it's still possible
 				// for them to access this file and hijack your session!
 				version(linux)
-					enforce(linux.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
+					enforce(sys_stat.chmod(toStringz(getFilePath()), octal!600) == 0, "chmod failed");
 				// FIXME: ensure the file's read permissions are locked down
 				// on Windows too.
 			}

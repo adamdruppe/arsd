@@ -163,6 +163,8 @@
 +/
 module arsd.cgi;
 
+static import std.file;
+
 version(embedded_httpd) {
 	version(linux)
 		version=embedded_httpd_processes;
@@ -291,7 +293,7 @@ private struct stdin {
 		}
 	}
 
-	import std.c.windows.windows;
+	import core.sys.windows.windows;
 static:
 
 	static this() {

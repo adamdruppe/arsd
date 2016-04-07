@@ -988,7 +988,7 @@ class Window : Widget {
 				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
 				auto p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
 				// since the pen is null, to fill the whole space, we need the +1 on both.
-				Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
+				gdi.Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
 				SelectObject(painter.impl.hdc, p);
 				SelectObject(painter.impl.hdc, b);
 			};
@@ -1341,7 +1341,7 @@ class MenuBar : Widget {
 		this.addChild(item);
 		items ~= item;
 		version(win32_widgets) {
-			AppendMenu(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label));
+			AppendMenuA(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label)); // XXX
 		}
 		return item;
 	}
@@ -1353,7 +1353,7 @@ class MenuBar : Widget {
 		items ~= mbItem;
 
 		version(win32_widgets) {
-			AppendMenu(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label));
+			AppendMenuA(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label)); // XXX
 		} else {
 			mbItem.defaultEventHandlers["click"] = (Widget e, Event ev) {
 				item.parentWindow = e.parentWindow;
@@ -1695,7 +1695,7 @@ class Menu : Widget {
 		addChild(item);
 		items ~= item;
 		version(win32_widgets) {
-			AppendMenu(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label));
+			AppendMenuA(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label)); // XXX
 		}
 		return item;
 	}
@@ -2506,7 +2506,8 @@ extern(Windows):
 }
 
 version(win32_widgets) {
-	import std.c.windows.windows;
+	import core.sys.windows.windows;
+	import gdi = core.sys.windows.wingdi;
 	// import win32.commctrl;
 	// import win32.winuser;
 
@@ -2531,8 +2532,6 @@ extern(Windows):
 	HMENU CreateMenu();
 	bool SetMenu(HWND, HMENU);
 	HMENU CreatePopupMenu();
-	BOOL AppendMenuA(HMENU, uint, UINT_PTR, LPCTSTR);
-	alias AppendMenuA AppendMenu;
 	enum MF_POPUP = 0x10;
 	enum MF_STRING = 0;
 

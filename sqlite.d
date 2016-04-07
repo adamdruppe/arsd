@@ -18,7 +18,7 @@ import std.exception;
 
 import std.string;
 
-import std.c.stdlib;
+import core.stdc.stdlib;
 import core.exception;
 import core.memory;
 import std.file;
@@ -558,7 +558,7 @@ template extract(A, T, R...){
 	    {
 		void* p;
 
-		p = std.c.stdlib.malloc(sz);
+		p = core.stdc.stdlib.malloc(sz);
 		if (!p)
 		    throw new OutOfMemoryError(__FILE__, __LINE__);
 		GC.addRange(p, sz);
@@ -569,7 +569,7 @@ template extract(A, T, R...){
 	    {
 		if (p)
 		{   GC.removeRange(p);
-		    std.c.stdlib.free(p);
+		    core.stdc.stdlib.free(p);
 		}
 	    }
 

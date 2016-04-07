@@ -1063,7 +1063,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			version(X11) {
 				return (glXMakeCurrent(display, impl.window, impl.glc) != 0);
 			} else version(Windows) {
-				return wglMakeCurrent(ghDC, ghRC);
+				return wglMakeCurrent(ghDC, ghRC) ? true : false;
 			}
 		}
 
@@ -1074,7 +1074,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			version(X11) {
 				return (glXMakeCurrent(display, 0, null) != 0);
 			} else version(Windows) {
-				return wglMakeCurrent(ghDC, null);
+				return wglMakeCurrent(ghDC, null) ? true : false;
 			}
 		}
 
@@ -1337,23 +1337,7 @@ class Timer {
 		} else version(linux) {
 			static import ep = core.sys.linux.epoll;
 
-			// static import tfd = core.sys.linux.timerfd;
-
-			static struct tfd {
-				static:
-				import core.sys.posix.time;
-				extern(C):
-				pragma(mangle, "timerfd_create")
-				int timerfd_create(int, int);
-				pragma(mangle, "timerfd_settime")
-				int timerfd_settime(int, int, const itimerspec*, itimerspec*);
-				pragma(mangle, "timerfd_gettime")
-				int timerfd_gettime(int, itimerspec*);
-				enum TFD_TIMER_ABSTIME = 1 << 0;
-				enum TFD_CLOEXEC       = 0x80000;
-				enum TFD_NONBLOCK      = 0x800;
-			}
-
+			static import tfd = core.sys.linux.timerfd;
 
 			fd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
 			if(fd == -1)
@@ -1437,9 +1421,11 @@ class Timer {
 
 	version(Windows)
 		extern(Windows)
-		static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) {
+		static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
 			if(Timer* t = timer in mapping) {
+				try
 				(*t).trigger();
+				catch(Exception e) { throw new Error(e.msg, e.file, e.line); }
 			}
 		}
 
@@ -1856,6 +1842,14 @@ enum RasterOp {
 
 // being phobos-free keeps the size WAY down
 private const(char)* toStringz(string s) { return (s ~ '\0').ptr; }
+private const(wchar)* toWStringz(wstring s) { return (s ~ '\0').ptr; }
+private const(wchar)* toWStringz(string s) {
+	wstring r;
+	foreach(dchar c; s)
+		r ~= c;
+	r ~= '\0';
+	return r.ptr;
+}
 private string[] split(in void[] a, char c) {
 		string[] ret;
 		size_t previous = 0;
@@ -3474,14 +3468,14 @@ version(Windows) {
 
 		Size textSize(string text) {
 			RECT rect;
-			DrawText(hdc, text.ptr, cast(int) text.length, &rect, DT_CALCRECT);
+			DrawTextA(hdc, text.ptr, cast(int) text.length, &rect, DT_CALCRECT); /// XXX
 			return Size(rect.right, rect.bottom);
 		}
 
 		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
 			// FIXME: use the unicode function
 			if(x2 == 0 && y2 == 0)
-				TextOut(hdc, x, y, text.ptr, cast(int) text.length);
+				TextOutA(hdc, x, y, text.ptr, cast(int) text.length); // XXX
 			else {
 				RECT rect;
 				rect.left = x;
@@ -3499,7 +3493,7 @@ version(Windows) {
 				if(alignment & TextAlignment.VerticalCenter)
 					mode |= DT_VCENTER | DT_SINGLELINE;
 
-				DrawText(hdc, text.ptr, cast(int) text.length, &rect, mode);
+				DrawTextA(hdc, text.ptr, cast(int) text.length, &rect, mode); // XXX
 			}
 
 			/*
@@ -3533,7 +3527,7 @@ version(Windows) {
 		}
 
 		void drawRectangle(int x, int y, int width, int height) {
-			Rectangle(hdc, x, y, x + width, y + height);
+			gdi.Rectangle(hdc, x, y, x + width, y + height);
 		}
 
 		/// Arguments are the points of the bounding rectangle
@@ -3589,7 +3583,7 @@ version(Windows) {
 		}
 
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-			const char* cn = "DSimpleWindow";
+			wstring cn = "DSimpleWindow"w;
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
@@ -3599,13 +3593,13 @@ version(Windows) {
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);
-				wc.hCursor = LoadCursor(null, IDC_ARROW);
+				wc.hCursor = LoadCursorW(null, IDC_ARROW);
 				wc.hIcon = LoadIcon(hInstance, null);
 				wc.hInstance = hInstance;
 				wc.lpfnWndProc = &WndProc;
-				wc.lpszClassName = cn;
+				wc.lpszClassName = cn.ptr;
 				wc.style = CS_HREDRAW | CS_VREDRAW;
-				if(!RegisterClass(&wc))
+				if(!RegisterClassW(&wc))
 					throw new Exception("RegisterClass");
 				classRegistered = true;
 			}
@@ -3622,7 +3616,7 @@ version(Windows) {
 				break;
 			}
 
-			hwnd = CreateWindow(cn, toStringz(title), style,
+			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
@@ -3668,7 +3662,7 @@ version(Windows) {
 				auto oldBmp = SelectObject(hdcBmp, buffer);
 				auto oldBrush = SelectObject(hdcBmp, GetStockObject(WHITE_BRUSH));
 				auto oldPen = SelectObject(hdcBmp, GetStockObject(WHITE_PEN));
-				Rectangle(hdcBmp, 0, 0, width, height);
+				gdi.Rectangle(hdcBmp, 0, 0, width, height);
 				SelectObject(hdcBmp, oldBmp);
 				SelectObject(hdcBmp, oldBrush);
 				SelectObject(hdcBmp, oldPen);
@@ -4950,25 +4944,7 @@ version(X11) {
 				static import unix = core.sys.posix.unistd;
 				static import err = core.stdc.errno;
 
-				// until this is reliably in druntime i'll use my own
-				// so probably like next year i'll switch this over!
-				// static import tfd = core.sys.linux.timerfd;
-
-				static struct tfd {
-					static:
-					import core.sys.posix.time;
-					extern(C):
-					pragma(mangle, "timerfd_create")
-					int timerfd_create(int, int);
-					pragma(mangle, "timerfd_settime")
-					int timerfd_settime(int, int, const itimerspec*, itimerspec*);
-					pragma(mangle, "timerfd_gettime")
-					int timerfd_gettime(int, itimerspec*);
-					enum TFD_TIMER_ABSTIME = 1 << 0;
-					enum TFD_CLOEXEC       = 0x80000;
-					enum TFD_NONBLOCK      = 0x800;
-				}
-
+				static import tfd = core.sys.linux.timerfd;
 				prepareEventLoop();
 
 				ep.epoll_event[16] events = void;
@@ -5474,9 +5450,13 @@ version(X11) {
 
 version(Windows) {
 	import core.sys.windows.windows;
+	static import gdi = core.sys.windows.wingdi;
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
+} else
+
+version(none) {
 
 	extern(Windows) {
 		HWND GetConsoleWindow();

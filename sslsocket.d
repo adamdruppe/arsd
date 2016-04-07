@@ -41,6 +41,7 @@ version(use_openssl) {
 
 		SSL_CTX* SSL_CTX_new(const SSL_METHOD* method);
 		SSL* SSL_new(SSL_CTX*);
+		int SSL_pending(SSL*);
 		int SSL_set_fd(SSL*, int);
 		int SSL_connect(SSL*);
 		int SSL_write(SSL*, const void*, int);
