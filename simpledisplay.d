@@ -8773,7 +8773,9 @@ enum _NET_WM_STATE_TOGGLE = 2;
 /// X-specific
 void demandAttention(SimpleWindow window, bool needs = true) {
 	auto display = XDisplayConnection.get();
-	auto atom = GetAtom!"_NET_WM_STATE_DEMANDS_ATTENTION"(display);
+	auto atom = XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", true);
+	if(atom == None)
+		return; // non-failure error
 	//auto atom2 = GetAtom!"_NET_WM_STATE_SHADED"(display);
 
 	XClientMessageEvent xclient;

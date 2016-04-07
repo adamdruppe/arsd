@@ -168,7 +168,7 @@ version(linux) {
 		js_event event;
 
 		while(true) {
-			int r = read(fd, &event, event.sizeof);
+			auto r = read(fd, &event, event.sizeof);
 			if(r == -1) {
 				import core.stdc.errno;
 				if(errno == EAGAIN || errno == EWOULDBLOCK)
@@ -177,7 +177,7 @@ version(linux) {
 			}
 			assert(r == event.sizeof);
 
-			int player = -1;
+			ptrdiff_t player = -1;
 			foreach(i, f; joystickFds)
 				if(f == fd) {
 					player = i;
@@ -306,7 +306,7 @@ int enableJoystickInput(
 		return 4;
 	} else static assert(0, "Unsupported OS");
 
-	return 0;
+	// return 0;
 }
 
 void closeJoysticks() {

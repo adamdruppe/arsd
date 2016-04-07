@@ -14,6 +14,7 @@
 	btw, interesting:
 	http://msdn.microsoft.com/en-us/library/windows/desktop/aa364510%28v=vs.85%29.aspx
 */
+module sslsocket;
 
 
 public import std.socket;
@@ -82,6 +83,10 @@ version(use_openssl) {
 			SSL_set_fd(ssl, this.handle);
 		}
 
+		bool dataPending() {
+			return SSL_pending(ssl) > 0;
+		}
+
 		@trusted
 		override void connect(Address to) {
 			super.connect(to);
@@ -96,14 +101,31 @@ version(use_openssl) {
 		
 		@trusted
 		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
-			return SSL_write(ssl, buf.ptr, cast(uint) buf.length);
+			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
+			if(retval == -1) {
+				ERR_print_errors_fp(stderr);
+				int i;
+				printf("wtf\n");
+				scanf("%d\n", i);
+				throw new Exception("ssl send");
+			}
+			return retval;
+
 		}
 		override ptrdiff_t send(const(void)[] buf) {
 			return send(buf, SocketFlags.NONE);
 		}
 		@trusted
 		override ptrdiff_t receive(void[] buf, SocketFlags flags) {
-			return SSL_read(ssl, buf.ptr, cast(int)buf.length);
+			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
+			if(retval == -1) {
+				ERR_print_errors_fp(stderr);
+				int i;
+				printf("wtf\n");
+				scanf("%d\n", i);
+				throw new Exception("ssl send");
+			}
+			return retval;
 		}
 		override ptrdiff_t receive(void[] buf) {
 			return receive(buf, SocketFlags.NONE);

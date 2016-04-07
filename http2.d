@@ -535,16 +535,20 @@ class HttpRequest {
 
 					switch(name) {
 						case "Connection":
+						case "connection":
 							if(value == "close")
 								closeSocketWhenComplete = true;
 						break;
 						case "Content-Type":
+						case "content-type":
 							responseData.contentType = value;
 						break;
 						case "Content-Length":
+						case "content-length":
 							bodyReadingState.contentLengthRemaining = to!int(value);
 						break;
 						case "Transfer-Encoding":
+						case "transfer-encoding":
 							// note that if it is gzipped, it zips first, then chunks the compressed stream.
 							// so we should always dechunk first, then feed into the decompressor
 							if(value.strip == "chunked")
@@ -552,6 +556,7 @@ class HttpRequest {
 							else throw new Exception("Unknown Transfer-Encoding: " ~ value);
 						break;
 						case "Content-Encoding":
+						case "content-encoding":
 							if(value == "gzip") {
 								bodyReadingState.isGzipped = true;
 								uncompress = new UnCompress();
@@ -561,6 +566,7 @@ class HttpRequest {
 							} else throw new Exception("Unknown Content-Encoding: " ~ value);
 						break;
 						case "Set-Cookie":
+						case "set-cookie":
 							// FIXME handle
 						break;
 						default:
@@ -713,7 +719,7 @@ class HttpRequest {
 				//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data);
 				//else
 					responseData.content ~= data;
-				assert(data.length <= bodyReadingState.contentLengthRemaining);
+				assert(data.length <= bodyReadingState.contentLengthRemaining, format("%d <= %d\n%s", data.length, bodyReadingState.contentLengthRemaining, cast(string)data));
 				bodyReadingState.contentLengthRemaining -= data.length;
 				if(bodyReadingState.contentLengthRemaining == 0) {
 					if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
