@@ -4160,6 +4160,7 @@ version(X11) {
 
 		static XFontStruct* font;
 		static bool fontAttempted;
+		static XFontSet fontset;
 
 		void create(NativeWindowHandle window) {
 			this.display = XDisplayConnection.get();
@@ -4180,6 +4181,11 @@ version(X11) {
 				// bitstream is a pretty nice font, but if it fails, fixed is pretty reliable and not bad either
 				if(font is null)
 					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
+
+				char** lol;
+				int lol2;
+				char* lol3;
+				fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
 				fontAttempted = true;
 			}
@@ -4205,6 +4211,9 @@ version(X11) {
 			version(none) // we don't want to free it because we can use it later
 			if(font)
 				XFreeFont(display, font);
+			version(none) // we don't want to free it because we can use it later
+			if(fontset)
+				XFreeFontSet(display, fontset);
 			XFlush(display);
 
 			if(window.paintingFinished !is null)
@@ -4309,6 +4318,7 @@ version(X11) {
 			foreach(line; text.split('\n')) {
 				int textWidth;
 				if(font)
+					// FIXME: unicode
 					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
 				else
 					textWidth = 12 * cast(int) line.length;
@@ -4322,12 +4332,19 @@ version(X11) {
 
 		void drawText(in int x, in int y, in int x2, in int y2, in char[] originalText, in uint alignment) {
 			// FIXME: we should actually draw unicode.. but until then, I'm going to strip out multibyte chars
-			immutable(ubyte)[] text;
-			// the first 256 unicode codepoints are the same as ascii and latin-1, which is what X expects, so we can keep all those
-			// then strip the rest so there isn't garbage
-			foreach(dchar ch; originalText)
-				if(ch < 256)
-					text ~= cast(ubyte) ch;
+			const(char)[] text;
+			if(fontset)
+				text = originalText;
+			else {
+				text.reserve(originalText.length);
+				// the first 256 unicode codepoints are the same as ascii and latin-1, which is what X expects, so we can keep all those
+				// then strip the rest so there isn't garbage
+				foreach(dchar ch; originalText)
+					if(ch < 256)
+						text ~= cast(ubyte) ch;
+					else
+						text ~= 191; // FIXME: using a random character to fill the space
+			}
 			if(text.length == 0)
 				return;
 
@@ -4366,6 +4383,7 @@ version(X11) {
 			foreach(line; text.split('\n')) {
 				int textWidth;
 				if(font)
+					// FIXME: unicode
 					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
 				else
 					textWidth = 12 * cast(int) line.length;
@@ -4384,7 +4402,11 @@ version(X11) {
 						px = pos;
 				}
 
-				XDrawString(display, d, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
+				if(fontset)
+					Xutf8DrawString(display, d, fontset, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
+
+				else
+					XDrawString(display, d, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
 				cy += lineHeight + 4;
 			}
 		}
@@ -6929,6 +6951,11 @@ struct Visual
 	int XDrawPoint(Display*, Drawable, GC, int, int);
 	int XSetForeground(Display*, GC, uint);
 	int XSetBackground(Display*, GC, uint);
+
+	alias void* XFontSet; // i think
+	XFontSet XCreateFontSet(Display*, const char*, char***, int*, char**);
+	void XFreeFontSet(Display*, XFontSet);
+	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
 
 	int XSetFunction(Display*, GC, int);
 	enum GXcopy = 0x3;
