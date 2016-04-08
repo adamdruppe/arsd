@@ -528,6 +528,15 @@
 +/
 module arsd.simpledisplay;
 
+version(Windows) {
+	import core.sys.windows.windows;
+	static import gdi = core.sys.windows.wingdi;
+
+	pragma(lib, "gdi32");
+	pragma(lib, "user32");
+}
+
+
 // FIXME: icons on Windows don't look quite right, I think the transparency mask is off.
 
 // http://wiki.dlang.org/Simpledisplay.d
@@ -1453,26 +1462,24 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 			throw new Exception("OpenClipboard");
 		scope(exit)
 			CloseClipboard();
-		if(auto dataHandle = GetClipboardData(1 /*CF_TEXT*/)) {
-/*
-Text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data. Use this format for ANSI text.
+		if(auto dataHandle = GetClipboardData(CF_UNICODETEXT)) {
 
-CF_UNICODETEXT
-13
-Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data.
-*/
-
-			if(auto data = cast(char*) GlobalLock(dataHandle)) {
+			if(auto data = cast(wchar*) GlobalLock(dataHandle)) {
 				scope(exit)
 					GlobalUnlock(dataHandle);
 
 				// FIXME: CR/LF conversions
-				// FIXME: wchar instead
 				// FIXME: I might not have to copy it now that the receiver is in char[] instead of string
+				int len = 0;
+				auto d = data;
+				while(*d) {
+					d++;
+					len++;
+				}
 				string s;
-				while(*data) {
-					s ~= *data;
-					data++;
+				s.reserve(len);
+				foreach(dchar ch; data[0 .. len]) {
+					s ~= ch;
 				}
 				receiver(s);
 			}
@@ -1480,6 +1487,52 @@ Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) comb
 	} else version(X11) {
 		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
 	} else static assert(0);
+}
+
+version(Windows)
+struct WCharzBuffer {
+	wchar[256] staticBuffer;
+	wchar[] buffer;
+
+	size_t length() {
+		return buffer.length;
+	}
+
+	wchar* ptr() {
+		return buffer.ptr;
+	}
+
+	this(in char[] data) {
+		/*
+			I don't think there's any string with a longer length
+			in code units when encoded in UTF-16 than it has in UTF-8.
+			This will probably over allocate, but that's OK.
+		*/
+		if(data.length + 1 > staticBuffer.length) // +1 cuz of zero terminator
+			buffer = new wchar[](data.length + 1);
+		else
+			buffer = staticBuffer[];
+
+		buffer = makeWindowsString(data, buffer);
+	}
+}
+
+version(Windows)
+wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = true) {
+	if(str.length == 0)
+		return null;
+	auto got = MultiByteToWideChar(CP_UTF8, 0, str.ptr, cast(int) str.length, buffer.ptr, cast(int) buffer.length);
+	if(got == 0) {
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+			throw new Exception("not enough buffer");
+		else
+			throw new Exception("conversion"); // FIXME: GetLastError
+	}
+	if(zeroTerminate) {
+		buffer[got] = 0;
+		got++;
+	}
+	return buffer[0 .. got];
 }
 
 /// copies some text to the clipboard
@@ -1492,19 +1545,19 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 			CloseClipboard();
 		EmptyClipboard();
 
-		auto handle = GlobalAlloc(GMEM_MOVEABLE, text.length + 1); // zero terminated
+		auto handle = GlobalAlloc(GMEM_MOVEABLE, (text.length + 1) * 2); // zero terminated wchars
 		if(handle is null) throw new Exception("GlobalAlloc");
-		if(auto data = cast(char*) GlobalLock(handle)) {
+		if(auto data = cast(wchar*) GlobalLock(handle)) {
+			auto slice = data[0 .. text.length + 1];
 			scope(failure)
 				GlobalUnlock(handle);
 
-			// FIXME: CR/LF conversions
-			// FIXME: wchar instead
-			data[0 .. text.length] = text[];
-			data[text.length] = 0;
+			auto str = makeWindowsString(text, slice);
+
+			// FIXME: CR/LF conversions?
 
 			GlobalUnlock(handle);
-			SetClipboardData(1 /* CF_TEXT */, handle); // XXX
+			SetClipboardData(CF_UNICODETEXT, handle);
 		}
 	} else version(X11) {
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
@@ -2425,7 +2478,7 @@ struct ScreenPainter {
 	}
 
 	///
-	void drawText(Point upperLeft, string text, Point lowerRight = Point(0, 0), uint alignment = 0) {
+	void drawText(Point upperLeft, in char[] text, Point lowerRight = Point(0, 0), uint alignment = 0) {
 		transform(upperLeft);
 		if(lowerRight.x != 0 || lowerRight.y != 0)
 			transform(lowerRight);
@@ -2463,7 +2516,7 @@ struct ScreenPainter {
 		// I might also turn off word wrap stuff.
 	}
 
-	void drawText(TextDrawingContext context, string text, uint alignment = 0) {
+	void drawText(TextDrawingContext context, in char[] text, uint alignment = 0) {
 		// FIXME
 	}
 
@@ -3451,14 +3504,15 @@ version(Windows) {
 
 		Size textSize(string text) {
 			RECT rect;
-			DrawTextA(hdc, text.ptr, cast(int) text.length, &rect, DT_CALCRECT); /// XXX
+			WCharzBuffer buffer = WCharzBuffer(text);
+			DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, DT_CALCRECT);
 			return Size(rect.right, rect.bottom);
 		}
 
-		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
-			// FIXME: use the unicode function
+		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
+			WCharzBuffer buffer = WCharzBuffer(text);
 			if(x2 == 0 && y2 == 0)
-				TextOutA(hdc, x, y, text.ptr, cast(int) text.length); // XXX
+				TextOutW(hdc, x, y, buffer.ptr, cast(int) buffer.length);
 			else {
 				RECT rect;
 				rect.left = x;
@@ -3476,7 +3530,7 @@ version(Windows) {
 				if(alignment & TextAlignment.VerticalCenter)
 					mode |= DT_VCENTER | DT_SINGLELINE;
 
-				DrawTextA(hdc, text.ptr, cast(int) text.length, &rect, mode); // XXX
+				DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, mode);
 			}
 
 			/*
@@ -4266,7 +4320,7 @@ version(X11) {
 			return Size(maxWidth, h);
 		}
 
-		void drawText(in int x, in int y, in int x2, in int y2, in string originalText, in uint alignment) {
+		void drawText(in int x, in int y, in int x2, in int y2, in char[] originalText, in uint alignment) {
 			// FIXME: we should actually draw unicode.. but until then, I'm going to strip out multibyte chars
 			immutable(ubyte)[] text;
 			// the first 256 unicode codepoints are the same as ascii and latin-1, which is what X expects, so we can keep all those
@@ -5430,325 +5484,8 @@ version(X11) {
 /* *************************************** */
 
 // Necessary C library bindings follow
-
-version(Windows) {
-	import core.sys.windows.windows;
-	static import gdi = core.sys.windows.wingdi;
-
-	pragma(lib, "gdi32");
-	pragma(lib, "user32");
-} else
-
-version(none) {
-
-	extern(Windows) {
-		HWND GetConsoleWindow();
-
-		BOOL OpenClipboard(HWND hWndNewOwner);
-		BOOL CloseClipboard();
-		BOOL EmptyClipboard();
-		HANDLE SetClipboardData(UINT uFormat, HANDLE hMem);
-		HANDLE GetClipboardData(UINT uFormat);
-		LPVOID GlobalLock(HGLOBAL hMem);
-		BOOL GlobalUnlock(HGLOBAL hMem);
-		HGLOBAL GlobalAlloc(UINT uFlags, SIZE_T dwBytes);
-		enum GMEM_MOVEABLE = 0x02;
-	}
-
-	version(without_opengl){} else {
-		extern(Windows) nothrow @nogc {
-			alias HANDLE HGLRC;
-			BOOL wglMakeCurrent(HDC, HGLRC);
-			HGLRC wglCreateContext(HDC);
-			BOOL SwapBuffers(HDC);
-			BOOL wglDeleteContext(HGLRC);
-			int ChoosePixelFormat(HDC, in PIXELFORMATDESCRIPTOR*);
-			BOOL SetPixelFormat(HDC hdc, int iPixelFormat, const PIXELFORMATDESCRIPTOR *ppfd);
-			void* wglGetProcAddress (const(char)*);
-			void* glGetProcAddress (const(char)* name) {
-				// see https://www.opengl.org/wiki/Load_OpenGL_Functions for rationale
-				auto res = wglGetProcAddress(name);
-				if (res is null || res is cast(void*)(0x01) || res is cast(void*)(0x02) || res is cast(void*)(0x03) || res is cast(void*)(-1)) return null;
-				return res;
-			}
-
-			struct PIXELFORMATDESCRIPTOR {
-			  WORD  nSize;
-			  WORD  nVersion;
-			  DWORD dwFlags;
-			  BYTE  iPixelType;
-			  BYTE  cColorBits;
-			  BYTE  cRedBits;
-			  BYTE  cRedShift;
-			  BYTE  cGreenBits;
-			  BYTE  cGreenShift;
-			  BYTE  cBlueBits;
-			  BYTE  cBlueShift;
-			  BYTE  cAlphaBits;
-			  BYTE  cAlphaShift;
-			  BYTE  cAccumBits;
-			  BYTE  cAccumRedBits;
-			  BYTE  cAccumGreenBits;
-			  BYTE  cAccumBlueBits;
-			  BYTE  cAccumAlphaBits;
-			  BYTE  cDepthBits;
-			  BYTE  cStencilBits;
-			  BYTE  cAuxBuffers;
-			  BYTE  iLayerType;
-			  BYTE  bReserved;
-			  DWORD dwLayerMask;
-			  DWORD dwVisibleMask;
-			  DWORD dwDamageMask;
-			}
-
-			enum PFD_TYPE_RGBA = 0;
-			enum PFD_TYPE_COLORINDEX = 1;
-
-			enum PFD_MAIN_PLANE = 0;
-			enum PFD_OVERLAY_PLANE = 1;
-			enum PFD_UNDERLAY_PLANE = -1;
-
-			enum {
-				PFD_DOUBLEBUFFER          = 0x00000001,
-				PFD_STEREO                = 0x00000002,
-				PFD_DRAW_TO_WINDOW        = 0x00000004,
-				PFD_DRAW_TO_BITMAP        = 0x00000008,
-				PFD_SUPPORT_GDI           = 0x00000010,
-				PFD_SUPPORT_OPENGL        = 0x00000020,
-				PFD_GENERIC_FORMAT        = 0x00000040,
-				PFD_NEED_PALETTE          = 0x00000080,
-				PFD_NEED_SYSTEM_PALETTE   = 0x00000100,
-				PFD_SWAP_EXCHANGE         = 0x00000200,
-				PFD_SWAP_COPY             = 0x00000400,
-				PFD_SWAP_LAYER_BUFFERS    = 0x00000800,
-				PFD_GENERIC_ACCELERATED   = 0x00001000,
-				PFD_SUPPORT_DIRECTDRAW    = 0x00002000,
-				/* PIXELFORMATDESCRIPTOR flags for use in ChoosePixelFormat only */
-				PFD_DEPTH_DONTCARE        = 0x20000000,
-				PFD_DOUBLEBUFFER_DONTCARE = 0x40000000,
-				PFD_STEREO_DONTCARE       = 0x80000000
-			}
-
-
-
-		}
-	}
-
-	extern(Windows) {
-		// The included D headers are incomplete, finish them here
-		// enough that this module works.
-
-		HICON CreateIconFromResourceEx(
-			PBYTE pbIconBits,
-			DWORD cbIconBits,
-			BOOL fIcon,
-			DWORD dwVersion,
-			int cxDesired,
-			int cyDesired,
-			UINT uFlags
-		);
-		BOOL DestroyIcon(HICON);
-
-		DWORD SleepEx(DWORD, BOOL);
-		alias GetObjectA GetObject;
-		alias GetMessageA GetMessage;
-		alias PeekMessageA PeekMessage;
-		alias TextOutA TextOut;
-		alias DispatchMessageA DispatchMessage;
-		alias GetModuleHandleA GetModuleHandle;
-		alias LoadCursorA LoadCursor;
-		alias LoadIconA LoadIcon;
-		alias RegisterClassA RegisterClass;
-		alias CreateWindowA CreateWindow;
-		alias DefWindowProcA DefWindowProc;
-		alias DrawTextA DrawText;
-
-		
-int ToUnicodeEx(
-  UINT wVirtKey,
-  UINT wScanCode,
-  const BYTE *lpKeyState,
-  LPWSTR pwszBuff,
-  int cchBuff,
-  UINT wFlags,
-  HKL dwhkl
-);
-BOOL GetKeyboardState(
-  PBYTE lpKeyState
-);
-
-		enum DT_BOTTOM = 8;
-		enum DT_CALCRECT = 1024;
-		enum DT_CENTER = 1;
-		enum DT_EDITCONTROL = 8192;
-		enum DT_END_ELLIPSIS = 32768;
-		enum DT_PATH_ELLIPSIS = 16384;
-		enum DT_WORD_ELLIPSIS = 0x40000;
-		enum DT_EXPANDTABS = 64;
-		enum DT_EXTERNALLEADING = 512;
-		enum DT_LEFT = 0;
-		enum DT_MODIFYSTRING = 65536;
-		enum DT_NOCLIP = 256;
-		enum DT_NOPREFIX = 2048;
-		enum DT_RIGHT = 2;
-		enum DT_RTLREADING = 131072;
-		enum DT_SINGLELINE = 32;
-		enum DT_TABSTOP = 128;
-		enum DT_TOP = 0;
-		enum DT_VCENTER = 4;
-		enum DT_WORDBREAK = 16;
-		enum DT_INTERNAL = 4096;
-
-
-
-		bool GetTextMetricsW(HDC hdc, TEXTMETRIC* lptm);
-
-struct TEXTMETRIC {
-  LONG tmHeight; 
-  LONG tmAscent; 
-  LONG tmDescent; 
-  LONG tmInternalLeading; 
-  LONG tmExternalLeading; 
-  LONG tmAveCharWidth; 
-  LONG tmMaxCharWidth; 
-  LONG tmWeight; 
-  LONG tmOverhang; 
-  LONG tmDigitizedAspectX; 
-  LONG tmDigitizedAspectY; 
-  char tmFirstChar; 
-  char tmLastChar; 
-  char tmDefaultChar; 
-  char tmBreakChar; 
-  BYTE tmItalic; 
-  BYTE tmUnderlined; 
-  BYTE tmStruckOut; 
-  BYTE tmPitchAndFamily; 
-  BYTE tmCharSet; 
-}
-
-nothrow:
-
-
-		uint SetTextAlign(HDC hdc, uint fMode);
-
-		bool MoveWindow(HWND hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-		HBITMAP CreateDIBSection(HDC, const BITMAPINFO*, uint, void**, HANDLE hSection, DWORD);
-		bool BitBlt(HDC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HDC hdcSrc, int nXSrc, int nYSrc, DWORD dwRop);
-
-		LRESULT CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) nothrow;
-		alias CallWindowProcW CallWindowProc;
-
-		alias SetWindowTextA SetWindowText;
-
-		BOOL SetWindowTextA(HWND hWnd, LPCTSTR lpString);
-		int GetWindowTextA(HWND hWnd, LPTSTR lpString, int maxCount);
-		int GetWindowTextLength(HWND hwnd);
-
-
-		alias SetWindowLongW SetWindowLong;
-		LONG SetWindowLongW(HWND hWnd,int nIndex,LONG dwNewLong);
-		enum GWL_WNDPROC = -4;
-
-		bool DestroyWindow(HWND);
-		int DrawTextA(HDC hDC, LPCTSTR lpchText, int nCount, LPRECT lpRect, UINT uFormat);
-		bool Rectangle(HDC, int, int, int, int);
-		HBRUSH GetSysColorBrush(int nIndex);
-		DWORD GetSysColor(int nIndex);
-
-		SHORT GetKeyState(int nVirtKey);
-
-		BOOL IsDialogMessageA(HWND, LPMSG);
-
-		int SetROP2(HDC, int);
-		enum R2_XORPEN = 7;
-		enum R2_COPYPEN = 13;
-
-		bool Ellipse(HDC, int, int, int, int);
-		bool Arc(HDC, int, int, int, int, int, int, int, int);
-		bool Polygon(HDC, POINT*, int);
-		HBRUSH CreateSolidBrush(COLORREF);
-
-		HBITMAP CreateCompatibleBitmap(HDC, int, int);
-
-		uint SetTimer(HWND, UINT_PTR, uint, void*);
-		bool KillTimer(HWND, UINT_PTR);
-
-
-		enum BI_RGB = 0;
-		enum DIB_RGB_COLORS = 0;
-		enum TRANSPARENT = 1;
-	}
-
-	// Input fabrication functions
-
-	// http://msdn.microsoft.com/en-us/library/windows/desktop/ms646309%28v=vs.85%29.aspx
-	extern(Windows) BOOL RegisterHotKey(HWND, int, UINT, UINT);
-	// http://msdn.microsoft.com/en-us/library/ms646310%28v=vs.85%29.aspx
-	extern(Windows) UINT SendInput(UINT, INPUT*, int);
-
-	extern(Windows) BOOL UnregisterHotKey(HWND, int);
-
-	struct INPUT {
-		DWORD type;
-		union {
-			MOUSEINPUT mi;
-			KEYBDINPUT ki;
-			HARDWAREINPUT hi;
-		}
-	}
-
-	struct MOUSEINPUT {
-		LONG      dx;
-		LONG      dy;
-		DWORD     mouseData;
-		DWORD     dwFlags;
-		DWORD     time;
-		ULONG_PTR dwExtraInfo;
-	}
-
-	struct KEYBDINPUT {
-		WORD      wVk;
-		WORD      wScan;
-		DWORD     dwFlags;
-		DWORD     time;
-		ULONG_PTR dwExtraInfo;
-	}
-
-	struct HARDWAREINPUT {
-		DWORD uMsg;
-		WORD wParamL;
-		WORD wParamH;
-	}
-
-	enum INPUT_MOUSE = 0;
-	enum INPUT_KEYBOARD = 1;
-	enum INPUT_HARDWARE = 2;
-
-	enum MOD_ALT = 0x1;
-	enum MOD_CONTROL = 0x2;
-	enum MOD_NOREPEAT = 0x4000; // unsupported
-	enum MOD_SHIFT = 0x4;
-	enum MOD_WIN = 0x8; // reserved
-
-	enum WM_HOTKEY = 0x0312;
-
-	enum KEYEVENTF_EXTENDEDKEY = 0x1;
-	enum KEYEVENTF_KEYUP = 0x2;
-	enum KEYEVENTF_SCANCODE = 0x8;
-	enum KEYEVENTF_UNICODE = 0x4;
-
-	extern(Windows)
-	DWORD MsgWaitForMultipleObjectsEx(
-	  in       DWORD  nCount,
-	  in HANDLE *pHandles,
-	  in       DWORD  dwMilliseconds,
-	  in       DWORD  dwWakeMask,
-	  in       DWORD  dwFlags
-	);
-
-}
-
-else version(X11) {
+version(Windows) {} else
+version(X11) {
 
 // X11 bindings needed here
 /*
@@ -7754,7 +7491,7 @@ version(OSXCocoa) {
         }
 
         
-        void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
+        void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
 		// FIXME: alignment
             if (_outlineComponents[3] != 0) {
                 CGContextSaveGState(context);
@@ -8074,7 +7811,7 @@ version(html5) {
 		void drawPixmap(Sprite s, int x, int y) {
 		}
 
-		void drawText(int x, int y, int x2, int y2, string text, uint alignment) {
+		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
 		}
 
 		void drawPixel(int x, int y) {
