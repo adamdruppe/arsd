@@ -60,7 +60,7 @@ class MsSql : Database {
 
 		returned = SQLExecDirect(statement, cast(ubyte*)sql.ptr, SQL_NTS);
 		if(returned != SQL_SUCCESS)
-			throw new DatabaseException(getSQLError(SQL_HANDLE_STMT, statement))
+			throw new DatabaseException(getSQLError(SQL_HANDLE_STMT, statement));
 
 		return new MsSqlResult(statement);
 	}
