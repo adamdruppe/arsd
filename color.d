@@ -764,6 +764,9 @@ interface MemoryImage {
 
 	/// Image height, in pixels
 	int height() const;
+
+	/// Get image pixel. Slow, but returns valid RGBA color (completely transparent for off-image pixels).
+	Color getPixel(int x, int y) const;
 }
 
 /// An image that consists of indexes into a color palette. Use getAsTrueColorImage() if you don't care about palettes
@@ -783,6 +786,18 @@ class IndexedImage : MemoryImage {
 	/// .
 	override int height() const {
 		return _height;
+	}
+
+	override Color getPixel(int x, int y) const @trusted {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = y*_width+x;
+			if (pos >= data.length) return Color(0, 0, 0, 0);
+			ubyte b = data.ptr[pos];
+			if (b >= palette.length) return Color(0, 0, 0, 0);
+			return palette.ptr[b];
+		} else {
+			return Color(0, 0, 0, 0);
+		}
 	}
 
 	private int _width;
@@ -882,6 +897,16 @@ class TrueColorImage : MemoryImage {
 	override int width() const { return _width; }
 	///.
 	override int height() const { return _height; }
+
+	override Color getPixel(int x, int y) const @trusted {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = y*_width+x;
+			if (pos >= imageData.bytes.length/4) return Color(0, 0, 0, 0);
+			return imageData.colors.ptr[pos];
+		} else {
+			return Color(0, 0, 0, 0);
+		}
+	}
 
 	/// .
 	this(int w, int h) {
