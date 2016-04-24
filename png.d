@@ -1748,9 +1748,9 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			auto arr = data.dup;
 			foreach(i; 0 .. arr.length) {
 				ubyte prev   = i < bpp ? 0 : arr[i - bpp];
-				ubyte prevLL = i < bpp ? 0 : previousLine[i - bpp];
+				ubyte prevLL = i < bpp ? 0 : (i < previousLine.length ? previousLine[i - bpp] : 0);
 
-				arr[i] += PaethPredictor(prev, previousLine[i], prevLL);
+				arr[i] += PaethPredictor(prev, (i < previousLine.length ? previousLine[i] : 0), prevLL);
 			}
 
 			return assumeUnique(arr);
