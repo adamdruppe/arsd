@@ -1512,7 +1512,7 @@ class Element {
 	}
 	out(ret) {
 		assert(ret !is null);
-		assert(ret.parentNode is this);
+		assert((cast(DocumentFragment) this !is null) || (ret.parentNode is this), ret.toString);// e.parentNode ? e.parentNode.toString : "null");
 		assert(ret.parentDocument is this.parentDocument);
 	}
 	body {
@@ -1735,7 +1735,21 @@ class Element {
 	Document parentDocument;
 
 	///.
-	Element parentNode;
+	inout(Element) parentNode() inout {
+		auto p = _parentNode;
+
+		if(cast(DocumentFragment) p)
+			return p._parentNode;
+
+		return p;
+	}
+
+	//protected
+	Element parentNode(Element e) {
+		return _parentNode = e;
+	}
+
+	private Element _parentNode;
 
 	// the next few methods are for implementing interactive kind of things
 	private CssStyle _computedStyle;
@@ -2385,10 +2399,10 @@ class Element {
 	Element appendChild(Element e)
 		in {
 			assert(e !is null);
-			assert(e.parentNode is null);
+			assert(e.parentNode is null, e.parentNode.toString);
 		}
 		out (ret) {
-			assert(e.parentNode is this);
+			assert((cast(DocumentFragment) this !is null) || (e.parentNode is this), e.toString);// e.parentNode ? e.parentNode.toString : "null");
 			assert(e.parentDocument is this.parentDocument);
 			assert(e is ret);
 		}
@@ -2396,7 +2410,10 @@ class Element {
 		selfClosed = false;
 		e.parentNode = this;
 		e.parentDocument = this.parentDocument;
-		children ~= e;
+		if(auto frag = cast(DocumentFragment) e)
+			children ~= frag.children;
+		else
+			children ~= e;
 
 		sendObserverEvent(DomMutationOperations.appendChild, null, null, e);
 
@@ -2421,7 +2438,10 @@ class Element {
 	body {
 		foreach(i, e; children) {
 			if(e is where) {
-				children = children[0..i] ~ what ~ children[i..$];
+				if(auto frag = cast(DocumentFragment) what)
+					children = children[0..i] ~ frag.children ~ children[i..$];
+				else
+					children = children[0..i] ~ what ~ children[i..$];
 				what.parentDocument = this.parentDocument;
 				what.parentNode = this;
 				return what;
@@ -2452,7 +2472,10 @@ class Element {
 	body {
 		foreach(i, e; children) {
 			if(e is where) {
-				children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
+				if(auto frag = cast(DocumentFragment) what)
+					children = children[0 .. i + 1] ~ what.children ~ children[i + 1 .. $];
+				else
+					children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
 				what.parentNode = this;
 				what.parentDocument = this.parentDocument;
 				return what;
@@ -2554,7 +2577,10 @@ class Element {
 		foreach(ref i, c; children) {
 			if(c is where) {
 				i++;
-				children = children[0..i] ~ child ~ children[i..$];
+				if(auto frag = cast(DocumentFragment) child)
+					children = children[0..i] ~ child.children ~ children[i..$];
+				else
+					children = children[0..i] ~ child ~ children[i..$];
 				child.parentNode = this;
 				child.parentDocument = this.parentDocument;
 				break;
@@ -2621,7 +2647,10 @@ class Element {
 	body {
 		e.parentNode = this;
 		e.parentDocument = this.parentDocument;
-		children = e ~ children;
+		if(auto frag = cast(DocumentFragment) e)
+			children = e.children ~ children;
+		else
+			children = e ~ children;
 		return e;
 	}
 
@@ -2748,6 +2777,9 @@ class Element {
 			assert(find.parentNode is null);
 		}
 	body {
+		// FIXME
+		//if(auto frag = cast(DocumentFragment) replace)
+			//return this.replaceChild(frag, replace.children);
 		for(int i = 0; i < children.length; i++) {
 			if(children[i] is find) {
 				replace.parentNode = this;
@@ -3478,6 +3510,19 @@ class DocumentFragment : Element {
 	///.
 	override string writeToAppender(Appender!string where = appender!string()) const {
 		return this.innerHTML(where);
+	}
+
+	/// DocumentFragments don't really exist in a dom, so they ignore themselves in parent nodes
+	/*
+	override inout(Element) parentNode() inout {
+		return children.length ? children[0].parentNode : null;
+	}
+	*/
+	override Element parentNode(Element p) {
+		this._parentNode = p;
+		foreach(child; children)
+			child.parentNode = p;
+		return p;
 	}
 }
 
