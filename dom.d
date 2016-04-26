@@ -2989,7 +2989,7 @@ class Element {
 			assert(child !is null);
 			assert(child.parentNode is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parentNode is null ? "null" : child.parentNode.tagName));
 			assert(child !is this);
-			assert(child !is parentNode);
+			//assert(child !is parentNode);
 		}
 
 		/+ // only depend on parentNode's accuracy if you shuffle things around and use the top elements - where the contracts guarantee it on out
