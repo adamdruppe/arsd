@@ -198,6 +198,13 @@ struct Color {
 	}
 	*/
 
+  /// Return black-and-white color
+	Color toBW() () {
+		int intens = cast(int)(0.2126*r+0.7152*g+0.0722*b);
+		if (intens < 0) intens = 0; else if (intens > 255) intens = 255;
+		return Color(intens, intens, intens, a);
+	}
+
 	/// Makes a string that matches CSS syntax for websites
 	string toCssString() {
 		if(a == 255)
@@ -767,6 +774,9 @@ interface MemoryImage {
 
 	/// Get image pixel. Slow, but returns valid RGBA color (completely transparent for off-image pixels).
 	Color getPixel(int x, int y) const;
+
+  // Set image pixel.
+	void setPixel(int x, int y, in Color clr);
 }
 
 /// An image that consists of indexes into a color palette. Use getAsTrueColorImage() if you don't care about palettes
@@ -797,6 +807,20 @@ class IndexedImage : MemoryImage {
 			return palette.ptr[b];
 		} else {
 			return Color(0, 0, 0, 0);
+		}
+	}
+
+	override void setPixel(int x, int y, in Color clr) @trusted {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = y*_width+x;
+			if (pos >= data.length) return;
+			ubyte pidx = findNearestColor(palette, clr);
+			if (palette.length < 255 &&
+				 (palette.ptr[pidx].r != clr.r || palette.ptr[pidx].g != clr.g || palette.ptr[pidx].b != clr.b || palette.ptr[pidx].a != clr.a)) {
+				// add new color
+				pidx = addColor(clr);
+			}
+			data.ptr[pos] = pidx;
 		}
 	}
 
@@ -901,10 +925,17 @@ class TrueColorImage : MemoryImage {
 	override Color getPixel(int x, int y) const @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
-			if (pos >= imageData.bytes.length/4) return Color(0, 0, 0, 0);
+			if (pos+3 >= imageData.bytes.length/4) return Color(0, 0, 0, 0);
 			return imageData.colors.ptr[pos];
 		} else {
 			return Color(0, 0, 0, 0);
+		}
+	}
+
+	override void setPixel(int x, int y, in Color clr) @trusted {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = y*_width+x;
+			if (pos+3 < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
 		}
 	}
 
