@@ -2987,7 +2987,7 @@ class Element {
 		debug foreach(child; children) {
 		//	assert(parentNode !is null);
 			assert(child !is null);
-			assert(child.parentNode is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parentNode is null ? "null" : child.parentNode.tagName));
+	//		assert(child.parentNode is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parentNode is null ? "null" : child.parentNode.tagName));
 			assert(child !is this);
 			//assert(child !is parentNode);
 		}
