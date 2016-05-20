@@ -339,7 +339,7 @@ string jsCall(alias Func, Args...)(Args args) /*if(is(__traits(parent, Func) : W
 /// Everything should derive from this instead of the old struct namespace used before
 /// Your class must provide a default constructor.
 class ApiProvider : WebDotDBaseType {
-	private ApiProvider builtInFunctions;
+	/*private*/ ApiProvider builtInFunctions;
 
 	Session session; // note: may be null
 
@@ -522,7 +522,7 @@ class ApiProvider : WebDotDBaseType {
 	// these only work for one particular call
 	private void delegate(Document d)[] documentPostProcessors;
 	private void delegate(Element d)[] elementPostProcessors;
-	private void _initializePerCallInternal() {
+	/*private*/ void _initializePerCallInternal() {
 		documentPostProcessors = null;
 		elementPostProcessors = null;
 
@@ -683,7 +683,7 @@ class ApiProvider : WebDotDBaseType {
 	}
 
 	private string _errorMessageForCatchAll;
-	private FileResource _catchallEntry(string path, string funName, string errorMessage) {
+	/*private*/ FileResource _catchallEntry(string path, string funName, string errorMessage) {
 		if(!errorMessage.length) {
 			/*
 			string allFuncs, allObjs;

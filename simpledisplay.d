@@ -96,7 +96,7 @@
 
 	Examples:
 
-	$(DDOC_ANCHOR Event-example)
+	$(H3 Event-example)
 	This program creates a window and draws events inside them as they
 	happen, scrolling the text in the window as needed. Run this program
 	and experiment to get a feel for where basic input events take place
@@ -148,7 +148,7 @@
 	}
 	---
 
-	$(DDOC_ANCHOR Pong-example)
+	$(H3 Pong-example)
 	This program creates a little Pong-like game. Player one is controlled
 	with the keyboard.  Player two is controlled with the mouse. It demos
 	the pulse timer, event handling, and some basic drawing.
@@ -278,8 +278,8 @@
 
 	$(H2 Topics)
 
-	$(H3 $(DDOC_ANCHOR topic-windows) Windows)
-		The $(LREF SimpleWindow) class is simpledisplay's flagship feature. It represents a single
+	$(H3 $(ID topic-windows) Windows)
+		The [SimpleWindow] class is simpledisplay's flagship feature. It represents a single
 		window on the user's screen.
 
 		You may create multiple windows, if the underlying platform supports it. You may check
@@ -293,7 +293,7 @@
 		draw function
 		title property
 
-	$(H3 $(DDOC_ANCHOR topic-event-loops) Event loops)
+	$(H3 $(ID topic-event-loops) Event loops)
 		The simpledisplay event loop is designed to handle common cases easily while being extensible for more advanced cases, or replaceable by other libraries.
 
 		The most common scenario is creating a window, then calling `window.eventLoop` when setup is complete. You can pass several handlers to the `eventLoop` method right there:
@@ -317,14 +317,14 @@
 
 		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
 
-	$(H3 $(DDOC_ANCHOR topic-notification-areas) Notification area (aka systray) icons)
+	$(H3 $(ID topic-notification-areas) Notification area (aka systray) icons)
 		Notification area icons are currently only implemented on X11 targets. Windows support will come when I need it (or if someone requests it and I have some time to spend on it).
 
-	$(H3 $(DDOC_ANCHOR topic-input-handling) Input handling)
+	$(H3 $(ID topic-input-handling) Input handling)
 		There are event handlers for low-level keyboard and mouse events, and higher level handlers for character events.
 
-	$(H3 $(DDOC_ANCHOR topic-2d-drawing) 2d Drawing)
-		To draw on your window, use the `window.draw` method. It returns a $(LREF ScreenPainter) structure with drawing methods.
+	$(H3 $(ID topic-2d-drawing) 2d Drawing)
+		To draw on your window, use the `window.draw` method. It returns a [ScreenPainter] structure with drawing methods.
 
 		Important: `ScreenPainter` double-buffers and will not actually update the window until its destructor is run. Always ensure the painter instance goes out-of-scope before proceeding. You can do this by calling it inside an event handler, a timer callback, or an small scope inside main. For example:
 
@@ -348,7 +348,7 @@
 
 		At this time, the 2d drawing does not support alpha blending. If you need that, use a 2d OpenGL context instead.
 		FIXME add example of 2d opengl drawing here
-	$(H3 $(DDOC_ANCHOR topic-3d-drawing) 3d Drawing (or 2d with OpenGL))
+	$(H3 $(ID topic-3d-drawing) 3d Drawing (or 2d with OpenGL))
 		simpledisplay can create OpenGL contexts on your window. It works quite differently than 2d drawing.
 
 		Note that it is still possible to draw 2d on top of an OpenGL window, using the `draw` method, though I don't recommend it.
@@ -372,7 +372,7 @@
 		}
 		---
 
-	$(H3 $(DDOC_ANCHOR topic-images) Displaying images)
+	$(H3 $(ID topic-images) Displaying images)
 		You can also load PNG images using my `png.d`.
 
 		---
@@ -390,16 +390,16 @@
 
 		If you find an image file which is a valid png that `arsd.png` fails to load, please let me know. In the mean time of fixing the bug, you can probably convert the file into an easier-to-load format. Be sure to turn OFF png interlacing, as that isn't supported. Other things to try would be making the image smaller, or trying 24 bit truecolor mode with an alpha channel.
 
-	$(H3 $(DDOC_ANCHOR topic-sprites) Sprites)
-		The $(LREF Sprite) class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
+	$(H3 $(ID topic-sprites) Sprites)
+		The [Sprite] class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
 
-	$(H3 $(DDOC_ANCHOR topic-clipboard) Clipboard)
-		The free functions $(LREF getClipboardText) and $(LREF setClipboardText) consist of simpledisplay's cross-platform clipboard support at this time.
+	$(H3 $(ID topic-clipboard) Clipboard)
+		The free functions [getClipboardText] and [setClipboardText] consist of simpledisplay's cross-platform clipboard support at this time.
 
 		It also has helpers for handling X-specific events.
 
-	$(H3 $(DDOC_ANCHOR topic-timers) Timers)
-		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, $(LREF Timer).
+	$(H3 $(ID topic-timers) Timers)
+		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, [Timer].
 
 		The pulse timeout is used by setting a non-zero interval as the first argument to `eventLoop` function and adding a zero-argument delegate to handle the pulse.
 
@@ -427,7 +427,7 @@
 
 		The `Timer` class works similarly, but is created separately from the event loop. (It still fires through the event loop, though.) You may make as many instances of `Timer` as you wish.
 
-		The pulse timer and instances of the $(LREF Timer) class may be combined at will.
+		The pulse timer and instances of the [Timer] class may be combined at will.
 
 		---
 			import arsd.simpledisplay;
@@ -445,20 +445,20 @@
 
 		Timers are currently only implemented on Windows, using `SetTimer` and Linux, using `timerfd_create`. These deliver timeout messages through your application event loop.
 
-	$(H3 $(DDOC_ANCHOR topic-os-helpers) OS-specific helpers)
+	$(H3 $(ID topic-os-helpers) OS-specific helpers)
 		simpledisplay carries a lot of code to help implement itself without extra dependencies, and much of this code is available for you too, so you may extend the functionality yourself.
 
 		See also: `xwindows.d` from my github.
 
-	$(H3 $(DDOC_ANCHOR topic-os-extension) Extending with OS-specific functionality)
+	$(H3 $(ID topic-os-extension) Extending with OS-specific functionality)
 		`handleNativeEvent` and `handleNativeGlobalEvent`.
 
-	$(H3 $(DDOC_ANCHOR topic-integration) Integration with other libraries)
+	$(H3 $(ID topic-integration) Integration with other libraries)
 		Integration with a third-party event loop is possible.
 
 		On Linux, you might want to support both terminal input and GUI input. You can do this by using simpledisplay together with eventloop.d and terminal.d.
 
-	$(H3 $(DDOC_ANCHOR topic-guis) GUI widgets)
+	$(H3 $(ID topic-guis) GUI widgets)
 		simpledisplay does not provide GUI widgets such as text areas, buttons, checkboxes, etc. It only gives basic windows, the ability to draw on it, receive input from it, and access native information for extension. You may write your own gui widgets with these, but you don't have to because I already did for you!
 
 		Download `minigui.d` from my github repository and add it to your project. minigui builds these things on top of simpledisplay and offers its own Window class (and subclasses) to use that wrap SimpleWindow, adding a new event and drawing model that is hookable by subwidgets, represented by their own classes.
@@ -467,7 +467,7 @@
 
 		minigui still needs a lot of work to be finished at this time, but it already offers a number of useful classes.
 
-	$(H2 $(DDOC_ANCHOR developer-notes) Developer notes)
+	$(H2 $(ID developer-notes) Developer notes)
 
 	I don't have a Mac, so that code isn't maintained. I would like to have a Cocoa
 	implementation though.
@@ -499,8 +499,6 @@
 	declaration you're interested in, like `class SimpleWindow` using your editor's search
 	function, then look at one piece at a time.
 
-	$(H2 $(DDOC_ANCHOR about-the-author) Meta)
-
 	Authors: Adam D. Ruppe with the help of others. If you need help, please email me with
 	destructionator@gmail.com or find me on IRC. Our channel is #d on Freenode. I go by
 	Destructionator or adam_d_ruppe, depending on which computer I'm logged into.
@@ -514,17 +512,6 @@
 	building the documentation for simpledisplay yourself. It will give it a bit more style.
 	Simply download the arsd.ddoc file and add it to your compile command when building docs.
 	`dmd -c simpledisplay.d color.d -D arsd.ddoc`
-
-	<hr />
-
-	Macros:
-		M=<a style="font-weight: bold;" href="#$0">$0</a>
-		L=<a href="$1">$1</a>
-		TIP=<div class="tip">$0</div>
-		NOTE=<div class="note">$0</div>
-		IMPORTANT=<div class="important">$0</div>
-		PITFALL=<div class="pitfall">$0</div>
-		WARNING=<div class="warning">$0</div>
 +/
 module arsd.simpledisplay;
 
@@ -648,13 +635,13 @@ else
 
 
 /++
-	After selecting a type from $(LREF WindowTypes), you may further customize
+	After selecting a type from [WindowTypes], you may further customize
 	its behavior by setting one or more of these flags.
 
 
 	The different window types have different meanings of `normal`. If the
 	window type already is a good match for what you want to do, you should
-	just use `WindowFlags.normal`, the default, which will do the right thing
+	just use [WindowFlags.normal], the default, which will do the right thing
 	for your users.
 +/
 enum WindowFlags : int {
@@ -671,7 +658,7 @@ enum WindowFlags : int {
 
 
 	This list is based on the EMWH spec for X11.
-	$(L http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896)
+	http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896
 +/
 enum WindowTypes : int {
 	/// An ordinary application window.
@@ -705,7 +692,7 @@ private __gshared bool sdpyOpenGLContextCompatible = true; // default: allow "de
 	old context creation code without any version specified. This is the safest
 	way to init OpenGL, but it may not give you access to advanced features.
 
-	See available OpenGL versions here: $(L https://en.wikipedia.org/wiki/OpenGL).
+	See available OpenGL versions here: https://en.wikipedia.org/wiki/OpenGL
 */
 void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion = cast(ushort)(hi<<8|lo); }
 
@@ -748,14 +735,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 		width = the width of the window's client area, in pixels
 		height = the height of the window's client area, in pixels
-		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the $(LREF SimpleWindow._title) property.
-		opengl = $(LREF OpenGlOptions) are yes and no. If yes, it creates an OpenGL context on the window.
-		resizable = $(LREF Resizablity) has three options:
+		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title\ property.
+		opengl = [OpenGlOptions] are yes and no. If yes, it creates an OpenGL context on the window.
+		resizable = [Resizablity] has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
 			$(P `fixedSize` will not allow the user to resize the window.)
 			$(P `automaticallyScaleIfPossible` will allow the user to resize, but will still present the original size to the API user. The contents you draw will be scaled to the size the user chose. If this scaling is not efficient, the window will be fixed size. The `windowResized` event handler will never be called. This is the default.)
 		windowType = The type of window you want to make.
-		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined $(LREF WindowTypes), given in the `windowType` argument, is a good match for what you need.
+		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined [WindowTypes], given in the `windowType` argument, is a good match for what you need.
 		parent = the parent window, if applicable
 	+/
 	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
@@ -775,7 +762,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 
 	/++
-		Creates a window based on the given $(LREF Image). It's client area
+		Creates a window based on the given [Image]. It's client area
 		width and height is equal to the image. (A window's client area
 		is the drawable space inside; it excludes the title bar, etc.)
 	   
@@ -956,7 +943,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		Be sure to call this in a limited scope because your changes will not
 		actually appear on the window until ScreenPainter's destructor runs.
 
-		Returns: an instance of $(LREF ScreenPainter), which has the drawing methods
+		Returns: an instance of [ScreenPainter], which has the drawing methods
 		on it to draw on this window.
 	+/
 	ScreenPainter draw() {
@@ -1872,11 +1859,13 @@ version(Windows) {
 
 
 /++
-	$(LREF ScreenPainter) operations can use different operations to combine the color with the color on screen.
+	[ScreenPainter] operations can use different operations to combine the color with the color on screen.
 
 	See_Also:
-		$(LREF ScreenPainter)
-		$(LREF ScreenPainter.rasterOp)
+	$(LIST
+		*[ScreenPainter]
+		*[ScreenPainter.rasterOp]
+	)
 +/
 enum RasterOp {
 	normal, /// Replaces the pixel.
@@ -1980,19 +1969,19 @@ public import arsd.color; // no longer stand alone... :-( but i need a common ty
 	Keyboard press and release events
 +/
 struct KeyEvent {
-	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms. See $(LREF Key)
+	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms. See [Key]
 	Key key;
 	uint hardwareCode; /// A platform and hardware specific code for the key
 	bool pressed; /// true if the key was just pressed, false if it was just released. note: released events aren't always sent...
 
 	dchar character; ///
 
-	uint modifierState; /// see enum $(LREF ModifierState). They are bitwise combined together.
+	uint modifierState; /// see enum [ModifierState]. They are bitwise combined together.
 
 	SimpleWindow window; /// associated Window
 }
 
-/// Type of a $(LREF MouseEvent)
+/// Type of a [MouseEvent]
 enum MouseEventType : int {
 	motion = 0, /// The mouse moved inside the window
 	buttonPressed = 1, /// A mouse button was pressed or the wheel was spun
@@ -2004,7 +1993,7 @@ enum MouseEventType : int {
 	Listen for this on your event listeners if you are interested in mouse action.
 +/
 struct MouseEvent {
-	MouseEventType type; /// movement, press, release, double click. See $(LREF MouseEventType)
+	MouseEventType type; /// movement, press, release, double click. See [MouseEventType]
 
 	int x; /// Current X position of the cursor when the event fired, relative to the upper-left corner of the window, reported in pixels. (0, 0) is the upper left, (window.width - 1, window.height - 1) is the lower right corner of the window.
 	int y; /// Current Y position of the cursor when the event fired.
@@ -2012,8 +2001,8 @@ struct MouseEvent {
 	int dx; /// Change in X position since last report
 	int dy; /// Change in Y position since last report
 
-	MouseButton button; /// See $(LREF MouseButton)
-	int modifierState; /// See $(LREF ModifierState)
+	MouseButton button; /// See [MouseButton]
+	int modifierState; /// See [ModifierState]
 
 	SimpleWindow window; /// The window in which the event happened.
 }
@@ -2022,7 +2011,7 @@ struct MouseEvent {
 struct Pen {
 	Color color; /// the foreground color
 	int width = 1; /// width of the line
-	Style style; /// See $(LREF Style) FIXME: not implemented
+	Style style; /// See [Style] FIXME: not implemented
 /+
 // From X.h
 
@@ -2076,7 +2065,7 @@ struct Pen {
 
 	Drawing an image to screen is not necessarily fast, but applying algorithms to draw to the image itself should be fast. An `Image` is also the first step in loading and displaying images loaded from files.
 
-	If you intend to draw an image to screen several times, you will want to convert it into a $(LREF Sprite).
+	If you intend to draw an image to screen several times, you will want to convert it into a [Sprite].
 
 	$(IMPORTANT `Image` may represent a scarce, shared resource that persists across process termination, and should be disposed of properly. On X11, it uses the MIT-SHM extension, if available, which uses shared memory handles with the X server, which is a long-lived process that holds onto them after your program terminates if you don't free it.
 

@@ -2,6 +2,9 @@
 // Copyright 2013, Adam D. Ruppe.
 module arsd.http2;
 
+// FIXME: multipart encoded file uploads needs implementation
+// future: do web client api stuff
+
 debug import std.stdio;
 
 import std.socket;
@@ -77,25 +80,26 @@ string post(string url, string[string] args, string[string] cookies = null) {
 }
 +/
 
+///
 struct HttpResponse {
-	int code;
-	string codeText;
+	int code; ///
+	string codeText; ///
 
-	string httpVersion;
+	string httpVersion; ///
 
-	string statusLine;
+	string statusLine; ///
 
-	string contentType;
+	string contentType; ///
 
-	string[string] cookies;
+	string[string] cookies; ///
 
-	string[] headers;
-	string[string] headersHash;
+	string[] headers; ///
+	string[string] headersHash; ///
 
-	ubyte[] content;
-	string contentText;
+	ubyte[] content; ///
+	string contentText; ///
 
-	HttpRequestParameters requestParameters;
+	HttpRequestParameters requestParameters; ///
 }
 
 import std.string;
@@ -106,6 +110,7 @@ import std.range;
 
 
 // Copy pasta from cgi.d, then stripped down
+///
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
 
@@ -232,12 +237,13 @@ void main(string args[]) {
 }
 */
 
+///
 struct BasicAuth {
-	string username;
-	string password;
+	string username; ///
+	string password; ///
 }
 
-/*
+/**
 	When you send something, it creates a request
 	and sends it asynchronously. The request object
 
@@ -268,7 +274,6 @@ struct BasicAuth {
 	request.waitForCompletion();
 
 */
-
 class HttpRequest {
 	private static {
 		// we manage the actual connections. When a request is made on a particular
@@ -696,7 +701,7 @@ class HttpRequest {
 							// skip the tailing chunk of headers
 							// FIXME
 							if(data.length == 5 && data == [48, 13, 10, 13, 10])
-								a = data.length;
+								a = cast(int) data.length;
 
 							if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
 								auto n = uncompress.uncompress(responseData.content);
@@ -741,6 +746,7 @@ class HttpRequest {
 	this() {
 	}
 
+	///
 	this(Uri where, HttpVerb method) {
 		auto parts = where;
 		requestParameters.method = method;
@@ -870,42 +876,65 @@ class HttpRequest {
 		// FIXME
 	}
 
-	HttpRequestParameters requestParameters;
+	HttpRequestParameters requestParameters; ///
 }
 
+///
 struct HttpRequestParameters {
 	// Duration timeout;
 
 	// debugging
-	bool useHttp11 = true;
-	bool acceptGzip = true;
+	bool useHttp11 = true; ///
+	bool acceptGzip = true; ///
 
 	// the request itself
-	HttpVerb method;
-	string host;
-	ushort port;
-	string uri;
+	HttpVerb method; ///
+	string host; ///
+	ushort port; ///
+	string uri; ///
 
-	bool ssl;
+	bool ssl; ///
 
-	string userAgent;
-	string authorization;
+	string userAgent; ///
+	string authorization; ///
 
-	string[string] cookies;
+	string[string] cookies; ///
 
 	string[] headers; /// do not duplicate host, content-length, content-type, or any others that have a specific property
 
-	string contentType;
-	ubyte[] bodyData;
+	string contentType; ///
+	ubyte[] bodyData; ///
 }
 
 interface IHttpClient {
 
 }
 
-enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH, MERGE }
+///
+enum HttpVerb {
+	///
+	GET,
+	///
+	HEAD,
+	///
+	POST,
+	///
+	PUT,
+	///
+	DELETE,
+	///
+	OPTIONS,
+	///
+	TRACE,
+	///
+	CONNECT,
+	///
+	PATCH,
+	///
+	MERGE
+}
 
-/*
+/**
 	Usage:
 
 	auto client = new HttpClient("localhost", 80);
@@ -920,12 +949,13 @@ enum HttpVerb { GET, HEAD, POST, PUT, DELETE, OPTIONS, TRACE, CONNECT, PATCH, ME
 /// HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.
 class HttpClient {
 	/* Protocol restrictions, useful to disable when debugging servers */
-	bool useHttp11 = true;
-	bool acceptGzip = true;
+	bool useHttp11 = true; ///
+	bool acceptGzip = true; ///
 
 	/// Automatically follow a redirection?
-	bool followLocation = false;
+	bool followLocation = false; ///
 
+	///
 	@property Uri location() {
 		return currentUrl;
 	}
@@ -958,6 +988,7 @@ class HttpClient {
 	// FIXME: add proxy
 	// FIXME: some kind of caching
 
+	///
 	void setCookie(string name, string value, string domain = null) {
 		if(domain == null)
 			domain = currentDomain;
@@ -965,6 +996,7 @@ class HttpClient {
 		cookies[domain][name] = value;
 	}
 
+	///
 	void clearCookies(string domain = null) {
 		if(domain is null)
 			cookies = null;
@@ -973,8 +1005,8 @@ class HttpClient {
 	}
 
 	// If you set these, they will be pre-filled on all requests made with this client
-	string userAgent = "D arsd.html2";
-	string authorization;
+	string userAgent = "D arsd.html2"; ///
+	string authorization; ///
 
 	/* inter-request state */
 	string[string][string] cookies;
@@ -998,14 +1030,15 @@ class SimpleCache : ICache {
 	}
 }
 
+///
 struct HttpCookie {
-	string name;
-	string value;
-	string domain;
-	string path;
-	//SysTime expirationDate;
-	bool secure;
-	bool httpOnly;
+	string name; ///
+	string value; ///
+	string domain; ///
+	string path; ///
+	//SysTime expirationDate; ///
+	bool secure; ///
+	bool httpOnly; ///
 }
 
 // FIXME: websocket
@@ -1102,7 +1135,7 @@ version(use_openssl) {
 		override void connect(Address to) {
 			super.connect(to);
 			if(SSL_connect(ssl) == -1) {
-				ERR_print_errors_fp(stderr);
+				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
 				printf("wtf\n");
 				scanf("%d\n", i);
@@ -1114,7 +1147,7 @@ version(use_openssl) {
 		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
-				ERR_print_errors_fp(stderr);
+				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
 				printf("wtf\n");
 				scanf("%d\n", i);
@@ -1130,7 +1163,7 @@ version(use_openssl) {
 		override ptrdiff_t receive(void[] buf, SocketFlags flags) {
 			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			if(retval == -1) {
-				ERR_print_errors_fp(stderr);
+				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
 				printf("wtf\n");
 				scanf("%d\n", i);

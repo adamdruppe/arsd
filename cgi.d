@@ -40,9 +40,9 @@
 
 	You can also simulate a request by passing parameters on the command line, like:
 
-	```console
+	$(CONSOLE
 	./yourprogram GET / name=adr
-	```
+	)
 
 	And it will print the result to stdout.
 

@@ -1,6 +1,6 @@
 /++
-	Module for supporting cursor and color manipulation on the console as well
-	as full-featured real-time input.
+	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input.
+
 
 	The main interface for this module is the Terminal struct, which
 	encapsulates the output functions and line-buffered input of the terminal, and
@@ -20,6 +20,7 @@
 	work now though.
 
 	ROADMAP:
+	$(LIST
 		* The CharacterEvent and NonCharacterKeyEvent types will be removed. Instead, use KeyboardEvent
 		  on new programs.
 
@@ -36,16 +37,20 @@
 		* The module will eventually be renamed to `arsd.terminal`.
 
 		* More documentation.
+	)
 
 	WHAT I WON'T DO:
+	$(LIST
 		* support everything under the sun. If it isn't default-installed on an OS I or significant number of other people
 		  might actually use, and isn't written by me, I don't really care about it. This means the only supported terminals are:
+		  $(LIST
 
-		  - xterm (and decently xterm compatible emulators like Konsole)
-		  - Windows console
-		  - rxvt (to a lesser extent)
-		  - Linux console
-		  - My terminal emulator family of applications <https://github.com/adamdruppe/terminal-emulator>
+		  * xterm (and decently xterm compatible emulators like Konsole)
+		  * Windows console
+		  * rxvt (to a lesser extent)
+		  * Linux console
+		  * My terminal emulator family of applications https://github.com/adamdruppe/terminal-emulator
+		  )
 
 		  Anything else is cool if it does work, but I don't want to go out of my way for it.
 
@@ -54,6 +59,7 @@
 
 		* Do a full TUI widget set. I might do some basics and lay a little groundwork, but a full TUI
 		  is outside the scope of this module (unless I can do it really small.)
+	)
 +/
 module arsd.terminal;
 
