@@ -367,6 +367,35 @@ struct PNG {
 		}
 		return null;
 	}
+
+	// Insert chunk before IDAT. PNG specs allows to drop all chunks after IDAT,
+	// so we have to insert our custom chunks right before it.
+	// Use `Chunk.create()` to create new chunk, and then `insertChunk()` to add it.
+	// Return `true` if we did replacement.
+	bool insertChunk (Chunk* chk, bool replaceExisting=false) {
+		if (chk is null) return false; // just in case
+		// use reversed loop, as "IDAT" is usually present, and it is usually the last,
+		// so we will somewhat amortize painter's algorithm here.
+		foreach_reverse (immutable idx, ref cc; chunks) {
+			if (replaceExisting && cc.type == chk.type) {
+				// replace existing chunk, the easiest case
+				chunks[idx] = *chk;
+				return true;
+			}
+			if (cast(string)cc.type == "IDAT") {
+				// ok, insert it; and don't use phobos
+				chunks.length += 1;
+				foreach_reverse (immutable c; idx+1..chunks.length) chunks.ptr[c] = chunks.ptr[c-1];
+				chunks.ptr[idx] = *chk;
+				return false;
+			}
+		}
+		chunks ~= *chk;
+		return false;
+	}
+
+	// Convenient wrapper for `insertChunk()`.
+	bool replaceChunk (Chunk* chk) { return insertChunk(chk, true); }
 }
 
 // this is just like writePng(filename, pngFromImage(image)), but it manages
