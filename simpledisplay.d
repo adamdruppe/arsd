@@ -4600,6 +4600,7 @@ version(X11) {
 				XDestroyImage(handle);
 				if(usingXshm) {
 					shmdt(shminfo.shmaddr);
+					shmctl(shminfo.shmid, IPC_RMID, null);
 				}
 				handle = null;
 			}
@@ -5663,9 +5664,11 @@ enum : arch_ulong {
 	int shmget(int, size_t, int);
 	void* shmat(int, in void*, int);
 	int shmdt(in void*);
+	int shmctl (int shmid, int cmd, void* ptr /*struct shmid_ds *buf*/);
 
 	enum IPC_PRIVATE = 0;
 	enum IPC_CREAT = 512;
+	enum IPC_RMID = 0;
 
 /* MIT-SHM end */
 
