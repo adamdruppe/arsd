@@ -5256,10 +5256,11 @@ version(X11) {
 						glViewport(0, 0, event.width, event.height);
 					}
 
-					if(win.windowResized !is null)
+					if(win.windowResized !is null) {
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
 						win.windowResized(event.width, event.height);
+					}
 				}
 			}
 		  break;
