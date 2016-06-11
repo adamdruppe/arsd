@@ -3918,7 +3918,7 @@ version(Windows) {
 						DeleteObject(oldBuffer);
 					}
 
-					version(with_opengl)
+					version(without_opengl) {} else
 					if(openglMode == OpenGlOptions.yes && resizability == Resizablity.automaticallyScaleIfPossible) {
 						glViewport(0, 0, width, height);
 					}
@@ -3967,7 +3967,7 @@ version(Windows) {
 						EndPaint(hwnd, &ps);
 					} else {
 						EndPaint(hwnd, &ps);
-						version(with_opengl)
+						version(without_opengl) {} else
 							redrawOpenGlSceneNow();
 					}
 				} break;
@@ -5252,7 +5252,7 @@ version(X11) {
 						win.buffer = newPixmap;
 					}
 
-					version(with_opengl)
+					version(without_opengl) {} else
 					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizablity.automaticallyScaleIfPossible) {
 						glViewport(0, 0, event.width, event.height);
 					}
