@@ -925,7 +925,6 @@ class TrueColorImage : MemoryImage {
 	override Color getPixel(int x, int y) const @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
-			if (pos+3 >= imageData.bytes.length/4) return Color(0, 0, 0, 0);
 			return imageData.colors.ptr[pos];
 		} else {
 			return Color(0, 0, 0, 0);
