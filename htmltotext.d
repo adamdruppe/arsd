@@ -278,7 +278,7 @@ class HtmlConverter {
 					s = os[0 .. idx];
 					s ~= '\n';
 					s ~= os[idx + 1 .. $];
-					lineLength = os[idx+1..$].length;
+					lineLength = cast(int)(os[idx+1..$].length);
 					broken = true;
 					break;
 				}
