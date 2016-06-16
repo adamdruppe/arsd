@@ -4461,28 +4461,86 @@ version(X11) {
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
 		private static Display* display;
-    private static XIM xim;
+		private static XIM xim;
 
-    // Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
-    private static void createXIM () {
-      import core.stdc.locale : setlocale, LC_ALL;
-      import core.stdc.stdio : stderr, fprintf;
-      import core.stdc.stdlib : free;
-      import core.stdc.string : strdup;
+		// Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
+		private static void createXIM () {
+			import core.stdc.locale : setlocale, LC_ALL;
+			import core.stdc.stdio : stderr, fprintf;
+			import core.stdc.stdlib : free;
+			import core.stdc.string : strdup;
 
-      static immutable string[] mtry = [ null, "@im=local", "@im=" ];
+			static immutable string[] mtry = [ null, "@im=local", "@im=" ];
 
-      auto olocale = strdup(setlocale(LC_ALL, null));
-      setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
-      scope(exit) { setlocale(LC_ALL, olocale); free(olocale); }
+			auto olocale = strdup(setlocale(LC_ALL, null));
+			setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
+			scope(exit) { setlocale(LC_ALL, olocale); free(olocale); }
 
-      //fprintf(stderr, "opening IM...\n");
-      foreach (string s; mtry) {
-        if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
-        if ((xim = XOpenIM(display, null, null, null)) !is null) return;
-      }
-      fprintf(stderr, "createXIM: XOpenIM failed!\n");
-    }
+			//fprintf(stderr, "opening IM...\n");
+			foreach (string s; mtry) {
+				if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
+				if ((xim = XOpenIM(display, null, null, null)) !is null) return;
+			}
+			fprintf(stderr, "createXIM: XOpenIM failed!\n");
+		}
+
+		// for X11 we will keep all XShm-allocated images in this list, so we can free 'em on connection closing.
+		// we'll use glibc malloc()/free(), 'cause `unregisterImage()` can be called from object dtor.
+		static struct ImgList {
+			size_t img; // class; hide it from GC
+			ImgList* next;
+		}
+
+		static ImgList* imglist = null;
+		static bool imglistLocked = false; // true: don't register and unregister images
+
+		static void registerImage (Image img) {
+			if (!imglistLocked && img !is null) {
+				import core.stdc.stdlib : malloc;
+				auto it = cast(ImgList*)malloc(ImgList.sizeof);
+				assert(it !is null); // do proper checks
+				it.img = cast(size_t)cast(void*)img;
+				it.next = imglist;
+				imglist = it;
+				version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("registering image %p\n", cast(void*)img); }
+			}
+		}
+
+		static void unregisterImage (Image img) {
+			if (!imglistLocked && img !is null) {
+				import core.stdc.stdlib : free;
+				ImgList* prev = null;
+				ImgList* cur = imglist;
+				while (cur !is null) {
+					if (cur.img == cast(size_t)cast(void*)img) break; // i found her!
+					prev = cur;
+					cur = cur.next;
+				}
+				if (cur !is null) {
+					if (prev is null) imglist = cur.next; else prev.next = cur.next;
+					free(cur);
+					version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("unregistering image %p\n", cast(void*)img); }
+				} else {
+					version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("trying to unregister unknown image %p\n", cast(void*)img); }
+				}
+			}
+		}
+
+		static void freeImages () {
+			imglistLocked = true;
+			scope(exit) imglistLocked = false;
+			ImgList* cur = imglist;
+			ImgList* next = null;
+			while (cur !is null) {
+				import core.stdc.stdlib : free;
+				next = cur.next;
+				version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("disposing image %p\n", cast(void*)cur.img); }
+				(cast(Image)cast(void*)cur.img).dispose();
+				free(cur);
+				cur = next;
+			}
+			imglist = null;
+		}
 
 		///
 		static Display* get() {
@@ -4512,6 +4570,9 @@ version(X11) {
 			}
 		}
 
+		// close connection on program exit -- we need this to properly free all images
+		shared static ~this () { close(); }
+
 		///
 		static void close() {
 			if(display is null)
@@ -4521,6 +4582,9 @@ version(X11) {
 				import arsd.eventloop;
 				removeFileEventListeners(display.fd);
 			}
+
+			// now remove all registered images to prevent shared memory leaks
+			freeImages();
 
 			XCloseDisplay(display);
 			display = null;
@@ -4574,7 +4638,7 @@ version(X11) {
 				assert(rawData != cast(ubyte*) -1);
 				shminfo.readOnly = 0;
 				XShmAttach(display, &shminfo);
-
+				XDisplayConnection.registerImage(this);
 			} else {
 				// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
 				import core.stdc.stdlib : malloc;
@@ -4595,8 +4659,10 @@ version(X11) {
 		void dispose() {
 			// note: this calls free(rawData) for us
 			if(handle) {
-				if(usingXshm)
-					XShmDetach(XDisplayConnection.get(), &shminfo);
+				if (usingXshm) {
+					XDisplayConnection.unregisterImage(this);
+					if (XDisplayConnection.get()) XShmDetach(XDisplayConnection.get(), &shminfo);
+				}
 				XDestroyImage(handle);
 				if(usingXshm) {
 					shmdt(shminfo.shmaddr);
