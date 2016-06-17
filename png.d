@@ -44,7 +44,7 @@ void main(string[] args) {
 // By Adam D. Ruppe, 2009-2010, released into the public domain
 //import std.file;
 
-import std.zlib;
+//import std.zlib;
 
 public import arsd.color;
 
@@ -404,6 +404,7 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	PNG* png;
 	ubyte[] com;
 {
+	import std.zlib;
 	PngHeader h;
 	h.width = image.width;
 	h.height = image.height;
@@ -622,6 +623,7 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 	// we need to go through the lines and add the filter byte
 	// then compress it into an IDAT chunk
 	// then add the IEND chunk
+	import std.zlib;
 
 	PngHeader h = getHeader(png);
 
@@ -661,6 +663,7 @@ deprecated alias PngHeader PNGHeader;
 // bKGD - palette entry for background or the RGB (16 bits each) for that. or 16 bits of grey
 
 ubyte[] getDatastream(PNG* p) {
+	import std.zlib;
 	ubyte[] compressed;
 
 	foreach(c; p.chunks) {
@@ -1138,7 +1141,6 @@ struct LazyPngFile(LazyPngChunksProvider)
 	if(isInputRange!(LazyPngChunksProvider) &&
 		is(ElementType!(LazyPngChunksProvider) == Chunk))
 {
-
 	LazyPngChunksProvider chunks;
 
 	this(LazyPngChunksProvider chunks) {
@@ -1210,58 +1212,98 @@ struct LazyPngFile(LazyPngChunksProvider)
 			chunkSize = bytesPerLine();
 
 		struct DatastreamByChunk(T) {
-			std.zlib.UnCompress decompressor;
+			private import etc.c.zlib;
+			z_stream zs;
 			int chunkSize;
+			int bufpos;
+			int plpos; // bytes eaten in current chunk payload
 			T chunks;
+			bool eoz;
 
 			this(int cs, T chunks) {
-				decompressor = new std.zlib.UnCompress();
+				import core.stdc.stdlib : malloc;
 				this.chunkSize = cs;
 				this.chunks = chunks;
-
+				assert(chunkSize > 0);
+				buffer = (cast(ubyte*)malloc(chunkSize))[0..chunkSize];
+				pkbuf = (cast(ubyte*)malloc(32768))[0..32768]; // arbitrary number
+				zs.avail_in = 0;
+				zs.avail_out = 0;
+				auto res = inflateInit2(&zs, 15);
+				assert(res == Z_OK);
 				popFront(); // priming
 			}
 
-			ubyte[] front() {
-				assert(current.length == chunkSize);
-				return current;
+			~this () {
+				version(arsdpng_debug) { import core.stdc.stdio : printf; printf("destroying lazy PNG reader...\n"); }
+				import core.stdc.stdlib : free;
+				inflateEnd(&zs);
+				if (pkbuf.ptr !is null) free(pkbuf.ptr);
+				if (buffer.ptr !is null) free(buffer.ptr);
 			}
 
-			ubyte[] current;
+			@disable this (this); // no copies!
+
+			ubyte[] front () { return (bufpos > 0 ? buffer[0..bufpos] : null); }
+
 			ubyte[] buffer;
+			ubyte[] pkbuf; // we will keep some packed data here in case payload moves, lol
 
-			void popFront() {
-				while(buffer.length < chunkSize) {
-					if(chunks.front().stype != "IDAT") {
-						buffer ~= cast(ubyte[]) decompressor.flush();
-						if(buffer.length != 0) {
-							// FIXME why was this here?
-							//buffer ~= cast(ubyte[])
-								//decompressor.uncompress(chunks.front().payload);
-							continue;
+			void popFront () {
+				bufpos = 0;
+				while (plpos != plpos.max && bufpos < chunkSize) {
+					// do we have some bytes in zstream?
+					if (zs.avail_in > 0) {
+						// just unpack
+						zs.next_out = cast(typeof(zs.next_out))(buffer.ptr+bufpos);
+						int rd = chunkSize-bufpos;
+						zs.avail_out = rd;
+						auto err = inflate(&zs, Z_SYNC_FLUSH);
+						if (err != Z_STREAM_END && err != Z_OK) throw new Exception("PNG unpack error");
+						if (err == Z_STREAM_END) {
+							assert(zs.avail_in == 0);
+							eoz = true;
 						}
-						current = null;
-						buffer = null;
-						return;
+						bufpos += rd-zs.avail_out;
+						continue;
 					}
-
-					buffer ~= cast(ubyte[])
-						decompressor.uncompress(chunks.front().payload);
-					chunks.popFront();
+					// no more zstream bytes; do we have something in current chunk?
+					if (plpos == plpos.max || plpos >= chunks.front.payload.length) {
+						// current chunk is complete, do we have more chunks?
+						if (chunks.front.stype != "IDAT") break; // this chunk is not IDAT, that means that... alas
+						chunks.popFront(); // remove current IDAT
+						plpos = 0;
+						if (chunks.empty || chunks.front.stype != "IDAT") plpos = plpos.max; // special value
+						continue;
+					}
+					if (plpos < chunks.front.payload.length) {
+						// current chunk is not complete, get some more bytes from it
+						int rd = cast(int)(chunks.front.payload.length-plpos <= pkbuf.length ? chunks.front.payload.length-plpos : pkbuf.length);
+						assert(rd > 0);
+						pkbuf[0..rd] = chunks.front.payload[plpos..plpos+rd];
+						plpos += rd;
+						if (eoz) {
+							// we did hit end-of-stream, reinit zlib (well, well, i know that we can reset it... meh)
+							inflateEnd(&zs);
+							zs.avail_in = 0;
+							zs.avail_out = 0;
+							auto res = inflateInit2(&zs, 15);
+							assert(res == Z_OK);
+							eoz = false;
+						}
+						// setup read pointer
+						zs.next_in = cast(typeof(zs.next_in))pkbuf.ptr;
+						zs.avail_in = cast(uint)rd;
+						continue;
+					}
+					assert(0, "wtf?! we should not be here!");
 				}
-				assert(chunkSize <= buffer.length, format("%s !<= %s remaining data: \n%s", chunkSize, buffer.length, buffer));
-				current = buffer[0 .. chunkSize];
-				buffer = buffer[chunkSize .. $];
 			}
 
-			bool empty() {
-				return (current.length == 0);
-			}
+			bool empty () { return (bufpos == 0); }
 		}
 
-		auto range = DatastreamByChunk!(typeof(chunks))(chunkSize, chunks);
-
-		return range;
+		return DatastreamByChunk!(typeof(chunks))(chunkSize, chunks);
 	}
 
 	// FIXME: no longer compiles
@@ -1514,7 +1556,7 @@ struct BufferedInputRange(Range)
 
 /* PNG file format implementation */
 
-import std.zlib;
+//import std.zlib;
 import std.math;
 
 /// All PNG files are supposed to open with these bytes according to the spec
@@ -1682,6 +1724,7 @@ void writePngLazy(OutputRange, InputRange)(ref OutputRange where, InputRange ima
 		isInputRange!(InputRange) &&
 		is(ElementType!InputRange == RgbaScanline))
 {
+	import std.zlib;
 	where.put(PNG_MAGIC_NUMBER);
 	PngHeader header;
 
@@ -1812,5 +1855,3 @@ int bytesPerPixel(PngHeader header) {
 
 	return (bitsPerPixel + 7) / 8;
 }
-
-
