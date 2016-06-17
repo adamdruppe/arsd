@@ -3609,13 +3609,19 @@ version(Windows) {
 		}
 
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-			wstring cn = "DSimpleWindow"w;
+			// the .dup here is a hack to make it work on dmd 64 bit. Apparently the
+			// address of the literal doesn't play nice with RegisterClass - it was
+			// returning error 998 without it.
+			wstring cn = "DSimpleWindow\0"w.dup;
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
 			if(!classRegistered) {
-				WNDCLASS wc;
+				WNDCLASSEX wc;
 
+				// FIXME: I might be able to use cbWndExtra to hold the pointer back
+				// to the object. Maybe.
+				wc.cbSize = wc.sizeofl
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);
@@ -3624,8 +3630,9 @@ version(Windows) {
 				wc.hInstance = hInstance;
 				wc.lpfnWndProc = &WndProc;
 				wc.lpszClassName = cn.ptr;
+				wc.hIconSm = null;
 				wc.style = CS_HREDRAW | CS_VREDRAW;
-				if(!RegisterClassW(&wc))
+				if(!RegisterClassExW(&wc))
 					throw new Exception("RegisterClass");
 				classRegistered = true;
 			}
