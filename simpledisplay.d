@@ -3621,7 +3621,7 @@ version(Windows) {
 
 				// FIXME: I might be able to use cbWndExtra to hold the pointer back
 				// to the object. Maybe.
-				wc.cbSize = wc.sizeofl
+				wc.cbSize = wc.sizeof;
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);

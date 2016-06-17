@@ -309,7 +309,7 @@ class HttpRequest {
 					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
 
 				socket.connect(new InternetAddress(host, port));
-				debug writeln("opening to ", host, ":", port);
+				debug(arsd_http2) writeln("opening to ", host, ":", port);
 				return socket;
 			}
 
@@ -424,11 +424,12 @@ class HttpRequest {
 					if(readSet.isSet(sock)) {
 						keep_going:
 						auto got = sock.receive(buffer);
+						debug(arsd_http2) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
 						if(got < 0) {
 							throw new Exception("receive error");
 						} else if(got == 0) {
 							// remote side disconnected
-							debug writeln("remote disconnect");
+							debug(arsd_http2) writeln("remote disconnect");
 							request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
 							loseSocket(request.requestParameters.host, request.requestParameters.port, sock);
@@ -466,7 +467,7 @@ class HttpRequest {
 				}
 
 				foreach(s; inactive[0 .. inactiveCount]) {
-					debug writeln("removing socket from active list");
+					debug(arsd_http2) writeln("removing socket from active list");
 					activeRequestOnSocket.remove(s);
 				}
 			}
@@ -501,6 +502,7 @@ class HttpRequest {
 	UnCompress uncompress;
 
 	void handleIncomingData(scope const ubyte[] dataIn) {
+	debug(arsd_http2) writeln("handleIncomingData, state: ", state);
 		if(state == State.waitingForResponse) {
 			state = State.readingHeaders;
 			headerReadingState = HeaderReadingState.init;
@@ -648,6 +650,7 @@ class HttpRequest {
 							} else {
 								int power = 1;
 								bodyReadingState.contentLengthRemaining = 0;
+								assert(a != 0, cast(string) data);
 								for(int b = a-1; b >= 0; b--) {
 									char cc = data[b];
 									if(cc >= 'a' && cc <= 'z')
@@ -658,9 +661,11 @@ class HttpRequest {
 									else
 										val = cc - 'A' + 10;
 
+									assert(val >= 0 && val <= 15, to!string(val));
 									bodyReadingState.contentLengthRemaining += power * val;
 									power *= 16;
 								}
+								debug(arsd_http2) writeln("Chunk length: ", bodyReadingState.contentLengthRemaining);
 								bodyReadingState.chunkedState++;
 								continue;
 							}
@@ -669,7 +674,7 @@ class HttpRequest {
 							char c = data[a];
 							if(c == '\n') {
 								if(bodyReadingState.contentLengthRemaining == 0)
-									bodyReadingState.chunkedState = 3;
+									bodyReadingState.chunkedState = 5;
 								else
 									bodyReadingState.chunkedState = 2;
 							}
@@ -685,16 +690,27 @@ class HttpRequest {
 								responseData.content ~= data[a .. can];
 
 							bodyReadingState.contentLengthRemaining -= can - a;
+							debug(arsd_http2) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
 							a += can - a;
+							assert(bodyReadingState.contentLengthRemaining >= 0);
 							if(bodyReadingState.contentLengthRemaining == 0) {
-								a += 1; // skipping a 13 10
-								bodyReadingState.chunkedState = 0;
-								data = data[a+1 .. $];
+								bodyReadingState.chunkedState++;
+								data = data[a .. $];
 							} else {
 								data = data[a .. $];
 							}
 							goto start_over;
-						case 3: // reading footers
+						case 3: // reading 13/10
+							assert(data[a] == 13);
+							bodyReadingState.chunkedState++;
+						break;
+						case 4: // reading 10 at end of packet
+							assert(data[a] == 10);
+							data = data[a + 1 .. $];
+							bodyReadingState.chunkedState = 0;
+							goto start_over;
+						break;
+						case 5: // reading footers
 							//goto done; // FIXME
 							state = State.complete;
 
@@ -1189,5 +1205,165 @@ version(use_openssl) {
 			SSL_free(ssl);
 			SSL_CTX_free(ctx);
 		}
+	}
+}
+
+class HttpApiClient() {
+	import arsd.jsvar;
+
+	HttpClient httpClient;
+
+	alias HttpApiClientType = typeof(this);
+
+	string urlBase;
+	string oauth2Token;
+	string submittedContentType;
+
+	this(string urlBase, string oauth2Token, string submittedContentType = "application/json") {
+		httpClient = new HttpClient();
+
+		assert(urlBase[0] == 'h');
+		assert(urlBase[$-1] == '/');
+
+		this.urlBase = urlBase;
+		this.oauth2Token = oauth2Token;
+		this.submittedContentType = submittedContentType;
+	}
+
+	static struct HttpRequestWrapper {
+		HttpApiClientType apiClient;
+		HttpRequest request;
+		this(HttpApiClientType apiClient, HttpRequest request) {
+			this.apiClient = apiClient;
+			this.request = request;
+		}
+
+		var result() {
+			return apiClient.throwOnError(request.waitForCompletion());
+		}
+
+		alias request this;
+	}
+
+	HttpRequestWrapper request(string uri, HttpVerb requestMethod = HttpVerb.GET, ubyte[] bodyBytes = null) {
+		if(uri[0] == '/')
+			uri = uri[1 .. $];
+
+		auto u = Uri(uri).basedOn(Uri(urlBase));
+		auto req = httpClient.navigateTo(u, requestMethod);
+
+		if(oauth2Token.length)
+			req.requestParameters.headers ~= "Authorization: Bearer " ~ oauth2Token;
+		req.requestParameters.contentType = submittedContentType;
+		req.requestParameters.bodyData = bodyBytes;
+
+		return HttpRequestWrapper(this, req);
+	}
+
+	var throwOnError(HttpResponse res) {
+		if(res.code < 200 || res.code >= 300)
+			throw new Exception(res.codeText);
+
+		var response = var.fromJson(res.contentText);
+		if(response.errors) {
+			throw new Exception(response.errors.toJson());
+		}
+
+		return response;
+	}
+
+	@property RestBuilder rest() {
+		return RestBuilder(this, null, null);
+	}
+
+	// hipchat.rest.room["Tech Team"].history
+        // gives: "/room/Tech%20Team/history"
+	//
+	// hipchat.rest.room["Tech Team"].history("page", "12)
+	static struct RestBuilder {
+		HttpApiClientType apiClient;
+		string[] pathParts;
+		string[2][] queryParts;
+		this(HttpApiClientType apiClient, string[] pathParts, string[2][] queryParts) {
+			this.apiClient = apiClient;
+			this.pathParts = pathParts;
+			this.queryParts = queryParts;
+		}
+
+		RestBuilder opDispatch(string str)() {
+			return RestBuilder(apiClient, pathParts ~ str, queryParts);
+		}
+
+		RestBuilder opIndex(string str) {
+			return RestBuilder(apiClient, pathParts ~ str, queryParts);
+		}
+
+		RestBuilder opCall(T)(string name, T value) {
+			return RestBuilder(apiClient, pathParts, queryParts ~ [name, to!string(value)]);
+		}
+
+		string toUri() {
+			import std.uri;
+			string result;
+			foreach(idx, part; pathParts) {
+				if(idx)
+					result ~= "/";
+				result ~= encodeComponent(part);
+			}
+			result ~= "?";
+			foreach(idx, part; queryParts) {
+				if(idx)
+					result ~= "&";
+				result ~= encodeComponent(part[0]);
+				result ~= "=";
+				result ~= encodeComponent(part[1]);
+			}
+			return result;
+		}
+
+		final HttpRequestWrapper GET() { return _EXECUTE(HttpVerb.GET, this.toUri(), null); }
+		final HttpRequestWrapper DELETE() { return _EXECUTE(HttpVerb.DELETE, this.toUri(), null); }
+
+		// need to be able to send: JSON, urlencoded, multipart/form-data, and raw stuff.
+		final HttpRequestWrapper POST(T...)(T t) { return _EXECUTE(HttpVerb.POST, this.toUri(), toBytes(t)); }
+		final HttpRequestWrapper PATCH(T...)(T t) { return _EXECUTE(HttpVerb.PATCH, this.toUri(), toBytes(t)); }
+		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
+
+		private ubyte[] toBytes(T...)(T t) {
+			return null; // FIXME
+
+		}
+
+		HttpRequestWrapper _EXECUTE(HttpVerb verb, string uri, ubyte[] bodyBytes) {
+			return apiClient.request(uri, verb, bodyBytes);
+		}
+	}
+}
+
+version(none)
+void main() {
+	import std.stdio;
+	import arsd.jsvar, arsd.dom;
+
+	/*
+	auto canvas = new HttpApiClient!()("https://stagingportal.bebraven.org/api/v1/", "76bIlgGhTrbE8BahoVdduIwEobqcaKxZG3bBKh9z2TdOEubMruYjqdxILlAlmhjN", "application/json");
+
+	var result = canvas.rest.courses["11"].pages["getting-started-in-braven-canvas"].GET.result;
+	string str = result["body"].get!string;
+	writeln(str);
+	*/
+
+	/*
+	auto asana = new HttpApiClient!()("https://app.asana.com/api/1.0/", "0/c9008c594f96b7ec1477ff8c873514b9");
+	writeln(asana.rest.tasks()("workspace", "9489617740507")("assignee", "me")("completed_since", "now").GET.result);
+	*/
+
+	auto hipchat = new HttpApiClient!()("https://api.hipchat.com/v2/", "Jy5RM8LpLItS71H724veTwGPVjdtloicUg9JuI8S");
+	foreach(msg; hipchat.rest.room["Tech Team"].history.GET.result.items) {
+		if(msg.from)
+			writeln(msg.from.name);
+		writeln(msg.date);
+		writeln(msg.message);
+		writeln();
 	}
 }
