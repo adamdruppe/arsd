@@ -1809,6 +1809,7 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			return assumeUnique(arr);
 		case 3:
 			auto arr = data.dup;
+			if(previousLine.length)
 			foreach(i; 0 .. arr.length) {
 				auto prev = i < bpp ? 0 : arr[i - bpp];
 				arr[i] += cast(ubyte)
