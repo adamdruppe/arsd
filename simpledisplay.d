@@ -1314,9 +1314,17 @@ class Timer {
 		this.onPulse = onPulse;
 
 		version(Windows) {
+			/*
 			handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
 			if(handle == 0)
 				throw new Exception("SetTimer fail");
+			*/
+
+			// thanks to Archival 998 for the WaitableTimer blocks
+			handle = CreateWaitableTimer(null, false, null);
+			long initialTime = 0;
+			if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
+				throw new Exception("SetWaitableTimer Failed");
 
 			mapping[handle] = this;
 
@@ -1359,9 +1367,10 @@ class Timer {
 	void destroy() {
 		version(Windows) {
 			if(handle) {
-				KillTimer(null, handle);
+				// KillTimer(null, handle);
+				CancelWaitableTimer(cast(void*)handle);
 				mapping.remove(handle);
-				handle = 0;
+				handle = null;
 			}
 		} else version(linux) {
 			if(fd != -1) {
@@ -1389,6 +1398,22 @@ class Timer {
 		destroy();
 	}
 
+
+	void changeTime(int intervalInMilliseconds)
+	{
+		version(Windows)
+		{
+			if(handle)
+			{
+				//handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
+				long initialTime = 0;
+				if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
+					throw new Exception("couldn't change pulse timer");
+			}
+		}
+	}
+
+
 	private:
 
 	void delegate() onPulse;
@@ -1407,7 +1432,8 @@ class Timer {
 
 	version(Windows)
 		extern(Windows)
-		static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
+		//static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
+		static void timerCallback(HANDLE timer, DWORD lowTime, DWORD hiTime) nothrow {
 			if(Timer* t = timer in mapping) {
 				try
 				(*t).trigger();
@@ -1416,8 +1442,10 @@ class Timer {
 		}
 
 	version(Windows) {
-		UINT_PTR handle;
-		static Timer[UINT_PTR] mapping;
+		//UINT_PTR handle;
+		//static Timer[UINT_PTR] mapping;
+		HANDLE handle;
+		static Timer[HANDLE] mapping;
 	} else version(linux) {
 		int fd = -1;
 		static Timer[int] mapping;
