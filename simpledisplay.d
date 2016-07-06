@@ -1370,6 +1370,7 @@ class Timer {
 				// KillTimer(null, handle);
 				CancelWaitableTimer(cast(void*)handle);
 				mapping.remove(handle);
+				CloseHandle(handle);
 				handle = null;
 			}
 		} else version(linux) {
