@@ -709,7 +709,6 @@ class HttpRequest {
 							data = data[a + 1 .. $];
 							bodyReadingState.chunkedState = 0;
 							goto start_over;
-						break;
 						case 5: // reading footers
 							//goto done; // FIXME
 							state = State.complete;
