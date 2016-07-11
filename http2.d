@@ -1297,6 +1297,9 @@ class HttpApiClient() {
 		RestBuilder opIndex(string str) {
 			return RestBuilder(apiClient, pathParts ~ str, queryParts);
 		}
+		RestBuilder opIndex(int i) {
+			return RestBuilder(apiClient, pathParts ~ to!string(i), queryParts);
+		}
 
 		RestBuilder opCall(T)(string name, T value) {
 			return RestBuilder(apiClient, pathParts, queryParts ~ [name, to!string(value)]);
@@ -1337,33 +1340,5 @@ class HttpApiClient() {
 		HttpRequestWrapper _EXECUTE(HttpVerb verb, string uri, ubyte[] bodyBytes) {
 			return apiClient.request(uri, verb, bodyBytes);
 		}
-	}
-}
-
-version(none)
-void main() {
-	import std.stdio;
-	import arsd.jsvar, arsd.dom;
-
-	/*
-	auto canvas = new HttpApiClient!()("https://stagingportal.bebraven.org/api/v1/", "76bIlgGhTrbE8BahoVdduIwEobqcaKxZG3bBKh9z2TdOEubMruYjqdxILlAlmhjN", "application/json");
-
-	var result = canvas.rest.courses["11"].pages["getting-started-in-braven-canvas"].GET.result;
-	string str = result["body"].get!string;
-	writeln(str);
-	*/
-
-	/*
-	auto asana = new HttpApiClient!()("https://app.asana.com/api/1.0/", "0/c9008c594f96b7ec1477ff8c873514b9");
-	writeln(asana.rest.tasks()("workspace", "9489617740507")("assignee", "me")("completed_since", "now").GET.result);
-	*/
-
-	auto hipchat = new HttpApiClient!()("https://api.hipchat.com/v2/", "Jy5RM8LpLItS71H724veTwGPVjdtloicUg9JuI8S");
-	foreach(msg; hipchat.rest.room["Tech Team"].history.GET.result.items) {
-		if(msg.from)
-			writeln(msg.from.name);
-		writeln(msg.date);
-		writeln(msg.message);
-		writeln();
 	}
 }
