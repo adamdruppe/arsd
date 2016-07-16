@@ -886,6 +886,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		if (!_closed) impl.showCursor();
 	}
 
+	/// Move window.
+	void move (int x, int y) { if (!_closed) impl.move(x, y); }
+
+	/// Resize window.
+	void resize (int w, int h) { if (!_closed) impl.resize(w, h); }
+
+	// Move and resize window (this can be faster and more visually pleasant than doing it separately).
+	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
+
 	private bool _hidden;
 
 	/// Returns true if the window is hidden.
@@ -3632,6 +3641,33 @@ version(Windows) {
 			SetWindowTextA(hwnd, toStringz(title));
 		}
 
+		void move (int x, int y) {
+			// TODO
+			//MoveWindow(hwnd, x, y, oops...);
+		}
+
+		void resize (int w, int h) {
+			// TODO
+			/*
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XResizeWindow(display, window, w, h);
+			glViewport(0, 0, w, h);
+			if (windowResized !is null) windowResized(w, h);
+			*/
+		}
+
+		void moveResize (int x, int y, int w, int h) {
+			// TODO
+			/*
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XMoveResizeWindow(display, window, x, y, w, h);
+			glViewport(0, 0, w, h);
+			if (windowResized !is null) windowResized(w, h);
+			*/
+		}
+
 		version(without_opengl) {} else {
 			HGLRC ghRC;
 			HDC ghDC;
@@ -4773,6 +4809,26 @@ version(X11) {
 			return ScreenPainter(this, window);
 		}
 
+		void move (int x, int y) {
+			XMoveWindow(display, window, x, y);
+		}
+
+		void resize (int w, int h) {
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XResizeWindow(display, window, w, h);
+			glViewport(0, 0, w, h);
+			if (windowResized !is null) windowResized(w, h);
+		}
+
+		void moveResize (int x, int y, int w, int h) {
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XMoveResizeWindow(display, window, x, y, w, h);
+			glViewport(0, 0, w, h);
+			if (windowResized !is null) windowResized(w, h);
+		}
+
 		void hideCursor () {
 			if (curHidden++ == 0) {
 				if (!blankCurPtr) {
@@ -4791,13 +4847,21 @@ version(X11) {
 		}
 
 		void setTitle(string title) {
+			if (title.ptr is null) title = "";
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
 			XTextProperty windowName;
 			windowName.value = title.ptr;
-			windowName.encoding = XA_STRING;
+			windowName.encoding = XA_UTF8; //XA_STRING;
 			windowName.format = 8;
-			windowName.nitems = cast(uint) title.length;
-
+			windowName.nitems = cast(uint)title.length;
 			XSetWMName(display, window, &windowName);
+			char[1024] namebuf = 0;
+			auto maxlen = namebuf.length-1;
+			if (maxlen > title.length) maxlen = title.length;
+			namebuf[0..maxlen] = title[0..maxlen];
+			XStoreName(display, window, namebuf.ptr);
+			XChangeProperty(display, window, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
@@ -6134,6 +6198,7 @@ int XReparentWindow(Display*, Window, Window, int, int);
 int XClearWindow(Display*, Window);
 int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
 int XMoveWindow(Display*, Window, int, int);
+int XResizeWindow(Display *display, Window w, uint width, uint height);
 
        Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
@@ -6915,6 +6980,7 @@ alias void* GLXContext;
 	 void glXWaitX();
 
 
+
 	enum AllocNone = 0;
 	struct XVisualInfo {
 		Visual *visual;
@@ -7171,6 +7237,7 @@ struct Visual
 	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
+	int XStoreName(Display* display, Window w, const(char)* window_name);
 
 	enum ClipByChildren = 0;
 	enum IncludeInferiors = 1;
