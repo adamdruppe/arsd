@@ -406,7 +406,7 @@ class Document : FileResource {
 		}
 
 		void eatWhitespace() {
-			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t'))
+			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t' || data[pos] == '\r'))
 				pos++;
 		}
 
@@ -415,7 +415,7 @@ class Document : FileResource {
 			// basically just keep going until >, /, or whitespace
 			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t' && data[pos] != '\r')
 			{
 				pos++;
 				if(pos == data.length) {
@@ -437,7 +437,7 @@ class Document : FileResource {
 			// basically just keep going until >, /, or whitespace
 			auto start = pos;
 			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
+				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t' && data[pos] != '\r')
 			{
 				if(data[pos] == '<') {
 					if(strict)
@@ -977,6 +977,7 @@ class Document : FileResource {
 						case ' ':
 						case '\t':
 						case '\n':
+						case '\r':
 							// there might be attributes...
 							moreAttributes:
 							eatWhitespace();
