@@ -3642,30 +3642,24 @@ version(Windows) {
 		}
 
 		void move (int x, int y) {
-			// TODO
-			//MoveWindow(hwnd, x, y, oops...);
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			MoveWindow(hwnd, x, y, rect.right, rect.bottom, true);
 		}
 
 		void resize (int w, int h) {
-			// TODO
-			/*
-			if (w < 1) w = 1;
-			if (h < 1) h = 1;
-			XResizeWindow(display, window, w, h);
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			MoveWindow(hwnd, rect.left, rect.top, w, h, true);
+			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
-			if (windowResized !is null) windowResized(w, h);
-			*/
 		}
 
 		void moveResize (int x, int y, int w, int h) {
-			// TODO
-			/*
-			if (w < 1) w = 1;
-			if (h < 1) h = 1;
-			XMoveResizeWindow(display, window, x, y, w, h);
+			MoveWindow(hwnd, x, y, w, h, true);
+			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
-			*/
 		}
 
 		version(without_opengl) {} else {
@@ -3728,27 +3722,55 @@ version(Windows) {
 			else {
 				if(opengl == OpenGlOptions.yes) {
 					ghDC = hdc;
-					PIXELFORMATDESCRIPTOR pfd; 
+					PIXELFORMATDESCRIPTOR pfd;
 
-					pfd.nSize = PIXELFORMATDESCRIPTOR.sizeof; 
-					pfd.nVersion = 1; 
-					pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |  PFD_DOUBLEBUFFER; 
-					pfd.dwLayerMask = PFD_MAIN_PLANE; 
-					pfd.iPixelType = PFD_TYPE_RGBA; 
-					pfd.cColorBits = 24; 
-					pfd.cDepthBits = 8; 
-					pfd.cAccumBits = 0; 
-					pfd.cStencilBits = 0; 
+					pfd.nSize = PIXELFORMATDESCRIPTOR.sizeof;
+					pfd.nVersion = 1;
+					pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |  PFD_DOUBLEBUFFER;
+					pfd.dwLayerMask = PFD_MAIN_PLANE;
+					pfd.iPixelType = PFD_TYPE_RGBA;
+					pfd.cColorBits = 24;
+					pfd.cDepthBits = 24;
+					pfd.cAccumBits = 0;
+					pfd.cStencilBits = 8; // any reasonable OpenGL implementation should support this anyway
 
-					auto pixelformat = ChoosePixelFormat(hdc, &pfd); 
+					auto pixelformat = ChoosePixelFormat(hdc, &pfd);
 
-					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0) 
+					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0)
 						throw new Exception("ChoosePixelFormat");
 
-					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0) 
+					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0)
 						throw new Exception("SetPixelFormat");
 
-					ghRC = wglCreateContext(ghDC); 
+					if (sdpyOpenGLContextVersion && wglCreateContextAttribsARB is null) {
+						// windoze is idiotic: we have to have OpenGL context to get function addresses
+						// so we will create fake context to get that stupid address
+						auto tmpcc = wglCreateContext(ghDC);
+						if (tmpcc !is null) {
+							scope(exit) { wglMakeCurrent(ghDC, null); wglDeleteContext(tmpcc); }
+							wglMakeCurrent(ghDC, tmpcc);
+							wglInitOtherFunctions();
+						}
+					}
+
+					if (wglCreateContextAttribsARB !is null && sdpyOpenGLContextVersion) {
+						int[9] contextAttribs = [
+							WGL_CONTEXT_MAJOR_VERSION_ARB, (sdpyOpenGLContextVersion>>8),
+							WGL_CONTEXT_MINOR_VERSION_ARB, (sdpyOpenGLContextVersion&0xff),
+							WGL_CONTEXT_PROFILE_MASK_ARB, (sdpyOpenGLContextCompatible ? WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB : WGL_CONTEXT_CORE_PROFILE_BIT_ARB),
+							// for modern context, set "forward compatibility" flag too
+							(sdpyOpenGLContextCompatible ? 0/*None*/ : WGL_CONTEXT_FLAGS_ARB), WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+							0/*None*/,
+						];
+						ghRC = wglCreateContextAttribsARB(ghDC, null, contextAttribs.ptr);
+						if (ghRC is null)
+							throw new Exception("wglCreateContextAttribsARB");
+					} else {
+						// try to do at least something
+						ghRC = wglCreateContext(ghDC);
+						if (ghRC is null)
+							throw new Exception("wglCreateContext");
+					}
 				}
 			}
 
@@ -3779,6 +3801,7 @@ version(Windows) {
 			MoveWindow(hwnd,rcWindow.left, rcWindow.top, width + ptDiff.x, height + ptDiff.y, true);
 
 			ShowWindow(hwnd, SW_SHOWNORMAL);
+			this._visibleForTheFirstTimeCalled = false; // hack!
 		}
 
 
@@ -4016,6 +4039,11 @@ version(Windows) {
 					if (this.visibilityChanged !is null) this.visibilityChanged(this._visible);
 					break;
 				case WM_PAINT: {
+					if (!this._visibleForTheFirstTimeCalled) {
+						this._visibleForTheFirstTimeCalled = true;
+						if (this.visibleForTheFirstTime !is null) this.visibleForTheFirstTime();
+					}
+
 					BITMAP bm;
 					PAINTSTRUCT ps;
 
@@ -4817,6 +4845,7 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
+			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
@@ -4825,6 +4854,7 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XMoveResizeWindow(display, window, x, y, w, h);
+			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
@@ -8087,6 +8117,8 @@ version(html5) {
 
 version(without_opengl) {} else
 extern(System) nothrow @nogc {
+  enum uint GL_VERSION = 0x1F02;
+  const(char)* glGetString (/*GLenum*/uint);
   version(X11) {
 		struct __GLXFBConfigRec {}
 		alias GLXFBConfig = __GLXFBConfigRec*;
@@ -8137,6 +8169,47 @@ extern(System) nothrow @nogc {
 		    version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
 		  }
 		  _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+		}
+	} else version(Windows) {
+    enum GL_TRUE = 1;
+    enum GL_FALSE = 0;
+    alias int GLint;
+
+    public void* glGetProcAddress (const(char)* name) {
+      void* res = wglGetProcAddress(name);
+      if (res is null) {
+        //{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
+        import core.sys.windows.windef, core.sys.windows.winbase;
+        static HINSTANCE dll = null;
+        if (dll is null) {
+          dll = LoadLibraryA("opengl32.dll");
+          if (dll is null) return null; // <32, but idc
+        }
+        res = GetProcAddress(dll, name);
+      }
+      //{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
+      return res;
+    }
+
+		enum WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
+		enum WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
+		enum WGL_CONTEXT_LAYER_PLANE_ARB = 0x2093;
+		enum WGL_CONTEXT_FLAGS_ARB = 0x2094;
+		enum WGL_CONTEXT_PROFILE_MASK_ARB = 0x9126;
+
+		enum WGL_CONTEXT_DEBUG_BIT_ARB = 0x0001;
+		enum WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB = 0x0002;
+
+		enum WGL_CONTEXT_CORE_PROFILE_BIT_ARB = 0x00000001;
+		enum WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = 0x00000002;
+
+		alias wglCreateContextAttribsARB_fna = HGLRC function (HDC hDC, HGLRC hShareContext, const(int)* attribList);
+		__gshared wglCreateContextAttribsARB_fna wglCreateContextAttribsARB = null;
+
+		void wglInitOtherFunctions () {
+			if (wglCreateContextAttribsARB is null) {
+				wglCreateContextAttribsARB = cast(wglCreateContextAttribsARB_fna)glGetProcAddress("wglCreateContextAttribsARB");
+			}
 		}
 	}
 
@@ -8258,6 +8331,7 @@ extern(System) nothrow @nogc {
 	enum int GL_COLOR_BUFFER_BIT = 0x00004000;
 	enum int GL_ACCUM_BUFFER_BIT = 0x00000200;
 	enum int GL_DEPTH_BUFFER_BIT = 0x00000100;
+	enum uint GL_STENCIL_BUFFER_BIT = 0x00000400;
 
 	enum int GL_POINTS = 0x0000;
 	enum int GL_LINES =  0x0001;
