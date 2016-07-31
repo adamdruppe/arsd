@@ -886,6 +886,24 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		if (!_closed) impl.showCursor();
 	}
 
+	/// Set window minimal size.
+	/// TODO: winapi implementation
+	void setMinSize (int minwidth, int minheight) {
+		if (!_closed) impl.setMinSize(minwidth, minheight);
+	}
+
+	/// Set window maximal size.
+	/// TODO: winapi implementation
+	void setMaxSize (int maxwidth, int maxheight) {
+		if (!_closed) impl.setMaxSize(maxwidth, maxheight);
+	}
+
+	/// Set window resize step (window size will be changed with the given granularity).
+	/// TODO: winapi implementation
+	void setResizeGranularity (int granx, int grany) {
+		if (!_closed) impl.setResizeGranularity(granx, grany);
+	}
+
 	/// Move window.
 	void move (int x, int y) { if (!_closed) impl.move(x, y); }
 
@@ -3630,6 +3648,11 @@ version(Windows) {
 			--curHidden;
 		}
 
+		//TODO: implement these, probably by processing WM_SIZE message or something.
+		void setMinSize (int minwidth, int minheight) {}
+		void setMaxSize (int maxwidth, int maxheight) {}
+		void setResizeGranularity (int granx, int grany) {}
+
 		ScreenPainter getPainter() {
 			return ScreenPainter(this, hwnd);
 		}
@@ -4892,6 +4915,40 @@ version(X11) {
 			namebuf[0..maxlen] = title[0..maxlen];
 			XStoreName(display, window, namebuf.ptr);
 			XChangeProperty(display, window, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
+			flushGui(); // without this OpenGL windows has a LONG delay before changing title
+		}
+
+		void setMinSize (int minwidth, int minheight) {
+			if (minwidth < 1) minwidth = 1;
+			if (minheight < 1) minheight = 1;
+			XSizeHints sh;
+			sh.min_width = minwidth;
+			sh.min_height = minheight;
+			sh.flags = PMinSize;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
+		}
+
+		void setMaxSize (int maxwidth, int maxheight) {
+			if (maxwidth < 1) maxwidth = 1;
+			if (maxheight < 1) maxheight = 1;
+			XSizeHints sh;
+			sh.max_width = maxwidth;
+			sh.max_height = maxheight;
+			sh.flags = PMaxSize;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
+		}
+
+		void setResizeGranularity (int granx, int grany) {
+			if (granx < 1) granx = 1;
+			if (grany < 1) grany = 1;
+			XSizeHints sh;
+			sh.width_inc = granx;
+			sh.height_inc = grany;
+			sh.flags = PResizeInc;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
@@ -5084,8 +5141,9 @@ version(X11) {
 			}
 
 
-
-			if(this.resizability != Resizablity.allowResizing && opengl == OpenGlOptions.no) {
+			if (this.resizability == Resizablity.fixedSize ||
+			    (opengl == OpenGlOptions.no && this.resizability != Resizablity.fixedSize))
+			{
 				XSizeHints sh;
 				sh.min_width = width;
 				sh.min_height = height;
