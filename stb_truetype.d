@@ -1,3 +1,8 @@
+/************************
+	This module is no longer maintained, use arsd.ttf instead.
+*************************/
+
+
 /// stb_truetype.h - v0.6c - public domain
 /// authored from 2009-2012 by Sean Barrett / RAD Game Tools
 //

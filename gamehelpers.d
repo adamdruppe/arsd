@@ -286,7 +286,7 @@ final class OpenGlTexture {
 			free(cast(void*) data);
 	}
 
-	/// Generates from text. Requires stb_truetype.d
+	/// Generates from text. Requires ttf.d
 	/// pass a pointer to the TtfFont as the first arg (it is template cuz of lazy importing, not because it actually works with different types)
 	this(T, FONT)(FONT* font, int size, in T[] text) if(is(T == char)) {
 		assert(font !is null);
