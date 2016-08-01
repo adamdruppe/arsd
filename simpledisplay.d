@@ -887,19 +887,17 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 
 	/// Set window minimal size.
-	/// TODO: winapi implementation
 	void setMinSize (int minwidth, int minheight) {
 		if (!_closed) impl.setMinSize(minwidth, minheight);
 	}
 
 	/// Set window maximal size.
-	/// TODO: winapi implementation
 	void setMaxSize (int maxwidth, int maxheight) {
 		if (!_closed) impl.setMaxSize(maxwidth, maxheight);
 	}
 
-	/// Set window resize step (window size will be changed with the given granularity).
-	/// TODO: winapi implementation
+	/// Set window resize step (window size will be changed with the given granularity on supported platforms).
+	/// Currently only supported on X11.
 	void setResizeGranularity (int granx, int grany) {
 		if (!_closed) impl.setResizeGranularity(granx, grany);
 	}
@@ -910,7 +908,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// Resize window.
 	void resize (int w, int h) { if (!_closed) impl.resize(w, h); }
 
-	// Move and resize window (this can be faster and more visually pleasant than doing it separately).
+	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
 	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
 
 	private bool _hidden;
@@ -3648,9 +3646,20 @@ version(Windows) {
 			--curHidden;
 		}
 
-		//TODO: implement these, probably by processing WM_SIZE message or something.
-		void setMinSize (int minwidth, int minheight) {}
-		void setMaxSize (int maxwidth, int maxheight) {}
+
+		int minWidth = 0, minHeight = 0, maxWidth = int.max, maxHeight = int.max;
+
+		void setMinSize (int minwidth, int minheight) {
+			minWidth = minwidth;
+			minHeight = minheight;
+		}
+		void setMaxSize (int maxwidth, int maxheight) {
+			maxWidth = maxwidth;
+			maxHeight = maxheight;
+		}
+
+		// FIXME i'm not sure that Windows has this functionality
+		// though it is nonessential anyway.
 		void setResizeGranularity (int granx, int grany) {}
 
 		ScreenPainter getPainter() {
@@ -3860,6 +3869,35 @@ version(Windows) {
 			}
 
 			switch(msg) {
+				case WM_GETMINMAXINFO:
+					MINMAXINFO* mmi = cast(MINMAXINFO*) lParam;
+
+					if(wind.minWidth > 0) {
+						RECT rect;
+						rect.left = 100;
+						rect.top = 100;
+						rect.right = wind.minWidth + 100;
+						rect.bottom = wind.minHeight + 100;
+						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
+							throw new Exception("AdjustWindowRect");
+
+						mmi.ptMinTrackSize.x = rect.right - rect.left;
+						mmi.ptMinTrackSize.y = rect.bottom - rect.top;
+					}
+
+					if(wind.maxWidth < int.max) {
+						RECT rect;
+						rect.left = 100;
+						rect.top = 100;
+						rect.right = wind.maxWidth + 100;
+						rect.bottom = wind.maxHeight + 100;
+						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
+							throw new Exception("AdjustWindowRect");
+
+						mmi.ptMaxTrackSize.x = rect.right - rect.left;
+						mmi.ptMaxTrackSize.y = rect.bottom - rect.top;
+					}
+				break;
 				case WM_CHAR:
 					wchar c = cast(wchar) wParam;
 					if(wind.handleCharEvent)
