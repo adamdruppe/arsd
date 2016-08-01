@@ -3676,19 +3676,39 @@ version(Windows) {
 		void move (int x, int y) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
-			MoveWindow(hwnd, x, y, rect.right, rect.bottom, true);
+			// move it while maintaining the same size...
+			MoveWindow(hwnd, x, y, rect.right - rect.left + x, rect.bottom - rect.top + y, true);
 		}
 
 		void resize (int w, int h) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
-			MoveWindow(hwnd, rect.left, rect.top, w, h, true);
+
+			RECT client;
+			GetClientRect(hwnd, &client);
+
+			rect.right = rect.right - client.right + w;
+			rect.bottom = rect.bottom - client.bottom + w;
+
+			// same position, new size for the client rectangle
+			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
+
 			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
 		}
 
 		void moveResize (int x, int y, int w, int h) {
-			MoveWindow(hwnd, x, y, w, h, true);
+			// what's given is the client rectangle, we need to adjust
+
+			RECT rect;
+			rect.left = x;
+			rect.top = y;
+			rect.right = w;
+			rect.bottom = y;
+			if(!AdjustWindowRect(&rect, GetWindowLong(hwnd, GWL_STYLE), GetMenu(hwnd) !is null))
+				throw new Exception("AdjustWindowRect");
+
+			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
 			version(without_opengl) {} else
 			glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
