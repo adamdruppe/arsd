@@ -3215,6 +3215,11 @@ struct ElementCollection {
 		return ec;
 	}
 
+	///
+	Element opIndex(int i) {
+		return elements[i];
+	}
+
 	/// if you slice it, give the underlying array for easy forwarding of the
 	/// collection to range expecting algorithms or looping over.
 	Element[] opSlice() {
