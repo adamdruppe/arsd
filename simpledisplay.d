@@ -5226,6 +5226,22 @@ version(X11) {
 				| EventMask.ButtonReleaseMask
 			);
 
+			// set the pid property for lookup later by window managers
+			// a standard convenience
+			import core.sys.posix.unistd;
+			uint pid = getpid();
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!"_NET_WM_PID"(display),
+				XA_CARDINAL,
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				&pid,
+				1);
+
+
 			XMapWindow(display, window);
 		}
 
