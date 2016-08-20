@@ -5200,7 +5200,7 @@ version(X11) {
 
 
 			if (this.resizability == Resizablity.fixedSize ||
-			    (opengl == OpenGlOptions.no && this.resizability != Resizablity.fixedSize))
+			    (opengl == OpenGlOptions.no && this.resizability != Resizablity.allowResizing))
 			{
 				XSizeHints sh;
 				sh.min_width = width;
