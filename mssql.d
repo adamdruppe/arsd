@@ -58,7 +58,7 @@ class MsSql : Database {
 
 		enforce(returned == SQL_SUCCESS);
 
-		returned = SQLExecDirect(statement, cast(ubyte*)sql.ptr, SQL_NTS);
+		returned = SQLExecDirect(statement, cast(ubyte*)sql.ptr, cast(SQLINTEGER) sql.length);
 		if(returned != SQL_SUCCESS)
 			throw new DatabaseException(getSQLError(SQL_HANDLE_STMT, statement));
 
