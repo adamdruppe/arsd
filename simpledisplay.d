@@ -1809,7 +1809,7 @@ version(X11) {
 			nativeHandle = nativeWindow;
 
 			XSelectInput(display, nativeWindow,
-				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask);
+				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask);
 
 			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
@@ -3245,6 +3245,7 @@ version(Windows) {
 	// helpers for making HICONs from MemoryImages
 	class WindowsIcon {
 		struct Win32Icon(int colorCount) {
+		align(1):
 			uint biSize;
 			int biWidth;
 			int biHeight;
@@ -3278,7 +3279,7 @@ version(Windows) {
 				assert(height %4 == 0);
 				
 				int icon_plen = height*((width+3)&~3);
-				int icon_mlen = icon_plen / 8; // height*((((width+7)/8)+3)&~3);
+				int icon_mlen = height*((((width+7)/8)+3)&~3);
 				icon_len = 40+icon_plen+icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
 
 				biSize = 40;
@@ -3293,25 +3294,34 @@ version(Windows) {
 				for(int y = height - 1; y >= 0; y--) {
 					int off2 = y * width;
 					foreach(x; 0 .. width) {
-						auto b = indexedImage.data[off2 + x];
+						const b = indexedImage.data[off2 + x];
 						data[offset] = b;
 						offset++;
 
-						auto andBit = andOff % 8;
-						auto andIdx = andOff / 8;
+						const andBit = andOff % 8;
+						const andIdx = andOff / 8;
 						assert(b < indexedImage.palette.length);
 						// this is anded to the destination, since and 0 means erase,
 						// we want that to  be opaque, and 1 for transparent
-						data[andIdx] |= ((indexedImage.palette[b].a < 127) ? (1 << (7-andBit)) : 0);
+						auto transparent = (indexedImage.palette[b].a <= 127);
+						data[andIdx] |= (transparent ? (1 << (7-andBit)) : 0);
 
 						andOff++;
 					}
+
+					andOff += andOff % 32;
 				}
 
 				foreach(idx, entry; indexedImage.palette) {
-					biColors[idx].rgbBlue = entry.b;
-					biColors[idx].rgbGreen = entry.g;
-					biColors[idx].rgbRed = entry.r;
+					if(entry.a > 127) {
+						biColors[idx].rgbBlue = entry.b;
+						biColors[idx].rgbGreen = entry.g;
+						biColors[idx].rgbRed = entry.r;
+					} else {
+						biColors[idx].rgbBlue = 255;
+						biColors[idx].rgbGreen = 255;
+						biColors[idx].rgbRed = 255;
+					}
 				}
 
 				/*
@@ -5220,7 +5230,8 @@ version(X11) {
 				EventMask.KeyReleaseMask |
 				EventMask.PropertyChangeMask |
 				EventMask.FocusChangeMask |
-				EventMask.StructureNotifyMask
+				EventMask.StructureNotifyMask |
+				EventMask.VisibilityChangeMask
 				| EventMask.PointerMotionMask // FIXME: not efficient
 				| EventMask.ButtonPressMask
 				| EventMask.ButtonReleaseMask
@@ -5625,6 +5636,23 @@ version(X11) {
 				}
 			}
 		  break;
+		  case EventType.VisibilityNotify:
+				if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
+					if (e.xvisibility.state == VisibilityNotify.VisibilityFullyObscured) {
+						if (win.visibilityChanged !is null) {
+								XUnlockDisplay(display);
+								scope(exit) XLockDisplay(display);
+								win.visibilityChanged(false);
+							}
+					} else {
+						if (win.visibilityChanged !is null) {
+							XUnlockDisplay(display);
+							scope(exit) XLockDisplay(display);
+							win.visibilityChanged(true);
+						}
+					}
+				}
+				break;
 		  case EventType.ClientMessage:
 		  	if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
 				// user clicked the close button on the window manager
