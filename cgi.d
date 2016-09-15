@@ -298,12 +298,15 @@ static:
 
 	static this() {
 		// Set stdin to binary mode
+		version(Win64)
+		_setmode(std.stdio.stdin.fileno(), 0x8000);
+		else
 		setmode(std.stdio.stdin.fileno(), 0x8000);
 	}
 
 	T[] rawRead(T)(T[] buf) {
 		uint bytesRead;
-		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, buf.length * T.sizeof, &bytesRead, null);
+		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, cast(int) (buf.length * T.sizeof), &bytesRead, null);
 
 		if (!result) {
 			auto err = GetLastError();
