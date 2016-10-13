@@ -970,7 +970,7 @@ class TrueColorImage : MemoryImage {
 	override void setPixel(int x, int y, in Color clr) @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
-			if (pos+3 < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
+			if (pos < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
 		}
 	}
 
