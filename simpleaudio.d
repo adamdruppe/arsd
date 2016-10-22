@@ -280,7 +280,7 @@ struct AudioOutput {
 
 			foreach(i, ref header; headers) {
 				// since this is wave out, it promises not to write...
-				auto buffer = buffers[i];
+				auto buffer = buffers[i][];
 				header.lpData = cast(void*) buffer.ptr;
 				header.dwBufferLength = buffer.length * short.sizeof;
 				header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
