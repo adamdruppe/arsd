@@ -680,6 +680,7 @@ enum WindowTypes : int {
 
 private __gshared ushort sdpyOpenGLContextVersion = 0; // default: use legacy call
 private __gshared bool sdpyOpenGLContextCompatible = true; // default: allow "deprecated" features
+private __gshared char* sdpyWindowClassStr = null;
 
 /**
 	Set OpenGL context version to use. This has no effect on non-OpenGL windows.
@@ -704,6 +705,32 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 	you want to (or leave it as is, as it should "just work").
 */
 @property void openGLContextCompatible() (bool v) { sdpyOpenGLContextCompatible = v; }
+
+
+/**
+	Set window class name for all following `new SimpleWindow()` calls.
+
+	WARNING! For Windows, you should set your class name before creating any
+	window, and NEVER change it after that!
+*/
+void sdpyWindowClass (const(char)[] v) {
+	import core.stdc.stdlib : realloc;
+	if (v.length == 0) v = "SimpleDisplayWindow";
+	sdpyWindowClassStr = cast(char*)realloc(sdpyWindowClassStr, v.length+1);
+	sdpyWindowClassStr[0..v.length+1] = 0;
+	sdpyWindowClassStr[0..v.length] = v[];
+}
+
+/**
+	Get current window class name.
+*/
+string sdpyWindowClass () {
+	if (sdpyWindowClassStr is null) return null;
+	foreach (immutable idx; 0..size_t.max-1) {
+		if (sdpyWindowClassStr[idx] == 0) return sdpyWindowClassStr[0..idx].idup;
+	}
+	return null;
+}
 
 
 /++
@@ -3733,7 +3760,14 @@ version(Windows) {
 			// the .dup here is a hack to make it work on dmd 64 bit. Apparently the
 			// address of the literal doesn't play nice with RegisterClass - it was
 			// returning error 998 without it.
-			wstring cn = "DSimpleWindow\0"w.dup;
+			wstring cn;
+			// = "DSimpleWindow\0"w.dup;
+			if (sdpyWindowClassStr is null || sdpyWindowClassStr[0] == 0) {
+				cn = "DSimpleWindow\0"w.dup;
+			} else {
+				import std.conv : to;
+				cn = sdpyWindowClass.to!wstring ~ "\0"; // just in case, lol
+			}
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
@@ -5141,6 +5175,16 @@ version(X11) {
 				}
 			}
 
+			// window class
+			if (sdpyWindowClass !is null) {
+				XClassHint klass;
+				XWMHints wh;
+				XSizeHints size;
+				klass.res_name = sdpyWindowClassStr;
+				klass.res_class = sdpyWindowClassStr;
+				XSetWMProperties(display, window, null, null, null, 0, &size, &wh, &klass);
+			}
+
 			setTitle(title);
 			SimpleWindow.nativeMapping[window] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[window] = this;
@@ -5396,8 +5440,9 @@ version(X11) {
 								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
 								this.mtLock();
 								scope(exit) this.mtUnlock();
-								while(!done && XPending(display))
+								while(!done && XPending(display)) {
 									done = doXNextEvent(this.display);
+								}
 							} else if(fd == pulseFd) {
 								long expirationCount;
 								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
