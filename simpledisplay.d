@@ -717,6 +717,7 @@ void sdpyWindowClass (const(char)[] v) {
 	import core.stdc.stdlib : realloc;
 	if (v.length == 0) v = "SimpleDisplayWindow";
 	sdpyWindowClassStr = cast(char*)realloc(sdpyWindowClassStr, v.length+1);
+	if (sdpyWindowClassStr is null) return; // oops
 	sdpyWindowClassStr[0..v.length+1] = 0;
 	sdpyWindowClassStr[0..v.length] = v[];
 }
@@ -3674,6 +3675,7 @@ version(Windows) {
 	// Mix this into the SimpleWindow class
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
+		bool[string] knownWinClasses;
 
 		void hideCursor () {
 			++curHidden;
@@ -3704,7 +3706,6 @@ version(Windows) {
 		}
 
 		HBITMAP buffer;
-		static bool classRegistered;
 
 		void setTitle(string title) {
 			SetWindowTextA(hwnd, toStringz(title));
@@ -3757,21 +3758,20 @@ version(Windows) {
 		}
 
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-			// the .dup here is a hack to make it work on dmd 64 bit. Apparently the
-			// address of the literal doesn't play nice with RegisterClass - it was
-			// returning error 998 without it.
-			wstring cn;
-			// = "DSimpleWindow\0"w.dup;
+			import std.conv : to;
+			string cnamec;
+			wstring cn;// = "DSimpleWindow\0"w.dup;
+			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
 			if (sdpyWindowClassStr is null || sdpyWindowClassStr[0] == 0) {
-				cn = "DSimpleWindow\0"w.dup;
+				cnamec = "DSimpleWindow";
 			} else {
-				import std.conv : to;
-				cn = sdpyWindowClass.to!wstring ~ "\0"; // just in case, lol
+				cnamec = sdpyWindowClass;
 			}
+			cn = cnamec.to!wstring ~ "\0"; // just in case, lol
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
-			if(!classRegistered) {
+			if(cnamec !in knownWinClasses) {
 				WNDCLASSEX wc;
 
 				// FIXME: I might be able to use cbWndExtra to hold the pointer back
@@ -3789,7 +3789,7 @@ version(Windows) {
 				wc.style = CS_HREDRAW | CS_VREDRAW;
 				if(!RegisterClassExW(&wc))
 					throw new Exception("RegisterClass");
-				classRegistered = true;
+				knownWinClasses[cnamec] = true;
 			}
 
 			int style;
@@ -5175,8 +5175,11 @@ version(X11) {
 				}
 			}
 
+			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
+			if (sdpyWindowClassStr is null) sdpyWindowClass = "DSimpleWindow";
 			// window class
-			if (sdpyWindowClass !is null) {
+			if (sdpyWindowClassStr !is null && sdpyWindowClassStr[0]) {
+				//{ import core.stdc.stdio; printf("winclass: [%s]\n", sdpyWindowClassStr); }
 				XClassHint klass;
 				XWMHints wh;
 				XSizeHints size;
@@ -9015,4 +9018,27 @@ TrueColorImage getWindowNetWmIcon(Window window) {
 	return null;
 }
 
+}
+
+
+void loadBinNameToWindowClassName () {
+	import core.stdc.stdlib : realloc;
+	version(linux) {
+		// args[0] MAY be empty, so we'll just use this
+		import core.sys.posix.unistd : readlink;
+		char[1024] ebuf = void; // 1KB should be enough for everyone!
+		auto len = readlink("/proc/self/exe", ebuf.ptr, ebuf.length);
+		if (len < 1) return;
+	} else /*version(Windows)*/ {
+		import core.runtime : Runtime;
+		if (Runtime.args.length == 0 || Runtime.args[0].length == 0) return;
+		auto ebuf = Runtime.args[0];
+		auto len = ebuf.length;
+	}
+	auto pos = len;
+	while (pos > 0 && ebuf[pos-1] != '/') --pos;
+	sdpyWindowClassStr = cast(char*)realloc(sdpyWindowClassStr, len-pos+1);
+	if (sdpyWindowClassStr is null) return; // oops
+	sdpyWindowClassStr[0..len-pos+1] = 0; // just in case
+	sdpyWindowClassStr[0..len-pos] = ebuf[pos..len];
 }
