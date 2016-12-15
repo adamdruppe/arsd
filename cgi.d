@@ -1243,6 +1243,7 @@ class Cgi {
 				throw new Exception("wtf is up with such a gigantic form submission????");
 
 			pps.buffer ~= chunk;
+
 			// simple handling, but it works... until someone bombs us with gigabytes of crap at least...
 			if(pps.buffer.length == pps.expectedLength)
 				pps._post = decodeVariables(cast(string) pps.buffer);
@@ -3639,6 +3640,8 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 		}
 
 		override void popFront() {
+			ir.consume(f.length);
+			atMost -= f.length;
 			auto a = ir.front();
 
 			if(a.length <= atMost) {
