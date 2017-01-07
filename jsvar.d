@@ -1093,8 +1093,12 @@ struct var {
 			from = pt._payload._object;
 		}
 
-		if(from is null)
-			throw new DynamicTypeException(var(null), Type.Object, file, line);
+		if(from is null) {
+			version(jsvar_throw)
+				throw new DynamicTypeException(var(null), Type.Object, file, line);
+			else
+				return *(new var);
+		}
 		return from._getMember(name, true, false, file, line);
 	}
 
@@ -1293,7 +1297,7 @@ struct var {
 
 	string toJson() {
 		auto v = toJsonValue();
-		return toJSON(&v);
+		return toJSON(v);
 	}
 
 	JSONValue toJsonValue() {
@@ -1408,7 +1412,7 @@ class PrototypeObject {
 				val.object[k] = v.toJsonValue();
 		}
 
-		return toJSON(&val);
+		return toJSON(val);
 	}
 
 	var[string] _properties;
