@@ -294,7 +294,7 @@ Eterm|Eterm Terminal Emulator (X11 Window System):\
         :sc=\E7:se=\E[27m:sf=^J:so=\E[7m:sr=\EM:st=\EH:ta=^I:\
         :te=\E[2J\E[?47l\E8:ti=\E7\E[?47h:ue=\E[24m:up=\E[A:\
         :us=\E[4m:vb=\E[?5h\E[?5l:ve=\E[?25h:vi=\E[?25l:\
-        :ac=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~:
+        :ac=aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~:
 
 # DOS terminal emulator such as Telix or TeleMate.
 # This probably also works for the SCO console, though it's incomplete.
@@ -3501,13 +3501,48 @@ struct ScrollbackBuffer {
 			scrollbackPosition = 0;
 	}
 
+	void scrollToBottom() {
+		scrollbackPosition = 0;
+	}
+
+	// this needs width and height to know how to word wrap it
+	void scrollToTop(int width, int height) {
+		scrollbackPosition = scrollTopPosition(width, height);
+	}
+
+
 
 
 	struct LineComponent {
 		string text;
-		int color = Color.DEFAULT;
-		int background = Color.DEFAULT;
+		bool isRgb;
+		union {
+			int color;
+			RGB colorRgb;
+		}
+		union {
+			int background;
+			RGB backgroundRgb;
+		}
 		bool delegate() onclick; // return true if you need to redraw
+
+		// 16 color ctor
+		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null) {
+			this.text = text;
+			this.color = color;
+			this.background = background;
+			this.onclick = onclick;
+			this.isRgb = false;
+		}
+
+		// true color ctor
+		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null) {
+			this.text = text;
+			this.colorRgb = colorRgb;
+			this.backgroundRgb = backgroundRgb;
+			this.onclick = onclick;
+			this.isRgb = true;
+		}
 	}
 
 	struct Line {
@@ -3528,6 +3563,34 @@ struct ScrollbackBuffer {
 	int x, y, width, height;
 
 	int scrollbackPosition;
+
+
+	int scrollTopPosition(int width, int height) {
+		int lineCount;
+
+		foreach_reverse(line; lines) {
+			int written = 0;
+			comp_loop: foreach(cidx, component; line.components) {
+				auto towrite = component.text;
+				foreach(idx, dchar ch; towrite) {
+					if(written >= width) {
+						lineCount++;
+						written = 0;
+					}
+
+					if(ch == '\t')
+						written += 8; // FIXME
+					else
+						written++;
+				}
+			}
+			lineCount++;
+		}
+
+		//if(lineCount > height)
+			return lineCount - height;
+		//return 0;
+	}
 
 	void drawInto(Terminal* terminal, in int x = 0, in int y = 0, int width = 0, int height = 0) {
 		if(lines.length == 0)
@@ -3641,7 +3704,10 @@ struct ScrollbackBuffer {
 			}
 
 			foreach(ref component; todo) {
-				terminal.color(component.color, component.background);
+				if(component.isRgb)
+					terminal.setTrueColor(component.colorRgb, component.backgroundRgb);
+				else
+					terminal.color(component.color, component.background);
 				auto towrite = component.text;
 
 				again:

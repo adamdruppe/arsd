@@ -848,6 +848,8 @@ class HttpRequest {
 		headers ~= "Host: "~requestParameters.host~"\r\n";
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
+		if(requestParameters.contentType.length)
+			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
 		if(requestParameters.authorization.length)
 			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
 		if(requestParameters.bodyData.length)
@@ -1160,6 +1162,7 @@ version(use_openssl) {
 		
 		@trusted
 		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+		//import std.stdio;writeln(cast(string) buf);
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
@@ -1296,6 +1299,9 @@ class HttpApiClient() {
 		RestBuilder opIndex(string str) {
 			return RestBuilder(apiClient, pathParts ~ str, queryParts);
 		}
+		RestBuilder opIndex(var str) {
+			return RestBuilder(apiClient, pathParts ~ str.get!string, queryParts);
+		}
 		RestBuilder opIndex(int i) {
 			return RestBuilder(apiClient, pathParts ~ to!string(i), queryParts);
 		}
@@ -1332,7 +1338,12 @@ class HttpApiClient() {
 		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
 
 		private ubyte[] toBytes(T...)(T t) {
-			return null; // FIXME
+			static if(T.length == 0)
+				return null;
+			else static if(T.length == 1 && is(T[0] == var))
+				return cast(ubyte[]) t[0].toJson(); // FIXME: cast
+			else
+				static assert(0); // FIXME
 
 		}
 
