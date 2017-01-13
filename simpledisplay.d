@@ -681,6 +681,7 @@ enum WindowTypes : int {
 private __gshared ushort sdpyOpenGLContextVersion = 0; // default: use legacy call
 private __gshared bool sdpyOpenGLContextCompatible = true; // default: allow "deprecated" features
 private __gshared char* sdpyWindowClassStr = null;
+private __gshared bool sdpyOpenGLContextAllowFallback = false;
 
 /**
 	Set OpenGL context version to use. This has no effect on non-OpenGL windows.
@@ -705,6 +706,18 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 	you want to (or leave it as is, as it should "just work").
 */
 @property void openGLContextCompatible() (bool v) { sdpyOpenGLContextCompatible = v; }
+
+/**
+	Set to `true` to allow creating OpenGL context with lower version than requested
+	instead of throwing. If fallback was activated (or legacy OpenGL was requested),
+	`openGLContextFallbackActivated()` will return `true`.
+	*/
+@property void openGLContextAllowFallback() (bool v) { sdpyOpenGLContextAllowFallback = v; }
+
+/**
+	After creating OpenGL window, you can check this to see if you got only "legacy" OpenGL context.
+	*/
+@property bool openGLContextFallbackActivated() (bool v) { return (sdpyOpenGLContextVersion == 0); }
 
 
 /**
@@ -912,6 +925,21 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// Don't hide cursor when it enters the window.
 	void showCursor() {
 		if (!_closed) impl.showCursor();
+	}
+
+	/** "Warp" mouse pointer to coordinates relative to window top-left corner. Return "success" flag.
+	 *
+	 * Currently only supported on X11, so Windows implementation will return `false`.
+	 *
+	 * Note: "warping" pointer will not send any synthesised mouse events, so you probably doesn't want
+	 *       to use it to move mouse pointer to some active GUI area, for example, as your window won't
+	 *       receive "mouse moved here" event.
+	 */
+	bool warpMouse (int x, int y) {
+		version(X11) {
+			if (!_closed) { impl.warpMouse(x, y); return true; }
+		}
+		return false;
 	}
 
 	/// Set window minimal size.
@@ -2061,6 +2089,132 @@ struct KeyEvent {
 	uint modifierState; /// see enum [ModifierState]. They are bitwise combined together.
 
 	SimpleWindow window; /// associated Window
+
+// convert key event to simplified string representation a-la emacs
+const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted {
+  uint dpos = 0;
+  void put (const(char)[] s...) nothrow @trusted {
+    static if (growdest) {
+      foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch; else { dest ~= ch; ++dpos; }
+    } else {
+      foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch;
+    }
+  }
+
+  if (!this.key) return null;
+
+  // put modifiers
+  if (this.modifierState&ModifierState.ctrl) put("C-");
+  if (this.modifierState&ModifierState.alt) put("M-");
+  if (this.modifierState&ModifierState.shift) put("S-");
+
+  foreach (string kn; __traits(allMembers, Key)) {
+    if (this.key == __traits(getMember, Key, kn)) {
+      put(kn);
+      return dest[0..dpos];
+    }
+  }
+
+  put("Unknown");
+  return dest[0..dpos];
+}
+
+string toStr() () { return cast(string)toStrBuf!true(null); } // it is safe to cast here
+
+// sorry for pasta, but i don't want to create new struct in `opEquals()`
+static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
+  KeyEvent res;
+  while (name.length && name.ptr[0] <= ' ') name = name[1..$];
+  while (name.length && name[$-1] <= ' ') name = name[0..$-1];
+  uint mods = 0;
+  while (name.length > 1 && name.ptr[1] == '-') {
+    switch (name.ptr[0]) {
+      case 'C': case 'c': mods |= ModifierState.ctrl; break;
+      case 'M': case 'm': mods |= ModifierState.alt; break;
+      case 'S': case 's': mods |= ModifierState.shift; break;
+      default: return res; // alas
+    }
+    name = name[2..$];
+  }
+  if (name.length == 0) return res;
+  res.modifierState = mods;
+  //HACK
+  if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
+    final switch (name.ptr[0]) {
+      case '0': name = "N0"; break;
+      case '1': name = "N1"; break;
+      case '2': name = "N2"; break;
+      case '3': name = "N3"; break;
+      case '4': name = "N4"; break;
+      case '5': name = "N5"; break;
+      case '6': name = "N6"; break;
+      case '7': name = "N7"; break;
+      case '8': name = "N8"; break;
+      case '9': name = "N9"; break;
+    }
+  }
+  foreach (string kn; __traits(allMembers, Key)) {
+    if (kn.length == name.length) {
+      // case-insensitive comapre
+      bool ok = true;
+      foreach (immutable ci, char c0; kn) {
+        if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+        char c1 = name.ptr[ci];
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+        if (c0 != c1) { ok = false; break; }
+      }
+      if (ok) { res.key = __traits(getMember, Key, kn); return res; }
+    }
+  }
+  return res; // at least modifier state, lol
+}
+
+bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
+  while (name.length && name.ptr[0] <= ' ') name = name[1..$];
+  while (name.length && name[$-1] <= ' ') name = name[0..$-1];
+  if (!this.key) return (name.length == 0);
+  uint mods = 0;
+  while (name.length > 1 && name.ptr[1] == '-') {
+    switch (name.ptr[0]) {
+      case 'C': case 'c': mods |= ModifierState.ctrl; break;
+      case 'M': case 'm': mods |= ModifierState.alt; break;
+      case 'S': case 's': mods |= ModifierState.shift; break;
+      default: return false; // alas
+    }
+    name = name[2..$];
+  }
+  if (name.length == 0) return false;
+  if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift)) != mods) return false;
+  //HACK
+  if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
+    final switch (name.ptr[0]) {
+      case '0': name = "N0"; break;
+      case '1': name = "N1"; break;
+      case '2': name = "N2"; break;
+      case '3': name = "N3"; break;
+      case '4': name = "N4"; break;
+      case '5': name = "N5"; break;
+      case '6': name = "N6"; break;
+      case '7': name = "N7"; break;
+      case '8': name = "N8"; break;
+      case '9': name = "N9"; break;
+    }
+  }
+  foreach (string kn; __traits(allMembers, Key)) {
+    if (kn.length == name.length) {
+      // case-insensitive comapre
+      bool ok = true;
+      foreach (immutable ci, char c0; kn) {
+        if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+        char c1 = name.ptr[ci];
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+        if (c0 != c1) { ok = false; break; }
+      }
+      if (ok && this.key == __traits(getMember, Key, kn)) return true;
+    }
+  }
+  return false;
+}
 }
 
 /// Type of a [MouseEvent]
@@ -3859,11 +4013,19 @@ version(Windows) {
 							0/*None*/,
 						];
 						ghRC = wglCreateContextAttribsARB(ghDC, null, contextAttribs.ptr);
+						if (ghRC is null && sdpyOpenGLContextAllowFallback) {
+							// activate fallback mode
+							sdpyOpenGLContextVersion = 0;
+							ghRC = wglCreateContext(ghDC);
+						}
 						if (ghRC is null)
 							throw new Exception("wglCreateContextAttribsARB");
 					} else {
 						// try to do at least something
-						ghRC = wglCreateContext(ghDC);
+						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
+							sdpyOpenGLContextVersion = 0;
+							ghRC = wglCreateContext(ghDC);
+						}
 						if (ghRC is null)
 							throw new Exception("wglCreateContext");
 					}
@@ -4951,6 +5113,7 @@ version(X11) {
 		XIC xic; // input context
 		int curHidden = 0; // counter
 		Cursor blankCurPtr = 0;
+		int warpEventCount = 0; // number of mouse movement events to eat
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
@@ -4999,6 +5162,29 @@ version(X11) {
 
 		void showCursor () {
 			if (--curHidden == 0) XUndefineCursor(display, window);
+		}
+
+		void warpMouse (int x, int y) {
+			// here i will send dummy "ignore next mouse motion" event,
+			// 'cause `XWarpPointer()` sends synthesised mouse motion,
+			// and we don't need to report it to the user (as warping is
+			// used when the user needs movement deltas).
+			//XClientMessageEvent xclient;
+			XEvent e;
+			e.xclient.type = EventType.ClientMessage;
+			e.xclient.window = window;
+			e.xclient.message_type = GetAtom!("_X11SDPY_INSMME_FLAG_EVENT_", true)(display); // let's hope nobody else will use such stupid name ;-)
+			e.xclient.format = 32;
+			e.xclient.data.l[0] = 0;
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: sending \"INSMME\"...\n"); }
+			//{ import core.stdc.stdio : printf; printf("*X11 CLIENT: w=%u; type=%u; [0]=%u\n", cast(uint)e.xclient.window, cast(uint)e.xclient.message_type, cast(uint)e.xclient.data.l[0]); }
+			XSendEvent(display, window, false, EventMask.NoEventMask, /*cast(XEvent*)&xclient*/&e);
+			// now warp pointer...
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: sending \"warp\"...\n"); }
+			XWarpPointer(display, None, window, 0, 0, 0, 0, x, y);
+			// ...and flush
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: flushing...\n"); }
+			XFlush(display);
 		}
 
 		void setTitle(string title) {
@@ -5127,11 +5313,17 @@ version(X11) {
 							0/*None*/,
 						];
 						glc = glXCreateContextAttribsARB(display, fbconf, null, 1/*True*/, contextAttribs.ptr);
+						if (glc is null && sdpyOpenGLContextAllowFallback) {
+							sdpyOpenGLContextVersion = 0;
+							glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						}
 						//{ import core.stdc.stdio; printf("using modern ogl v%d.%d\n", contextAttribs[1], contextAttribs[3]); }
 					} else {
 						// fallback to old GLX call
-					useglxlegacycontext:
-						glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
+							sdpyOpenGLContextVersion = 0;
+							glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						}
 					}
 					// sync to ensure any errors generated are processed
 					XSync(display, 0/*False*/);
@@ -5702,15 +5894,23 @@ version(X11) {
 				}
 				break;
 		  case EventType.ClientMessage:
-		  	if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
-				// user clicked the close button on the window manager
-				// FIXME: not implemented on Windows
-				if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+				if (e.xclient.message_type == GetAtom!("_X11SDPY_INSMME_FLAG_EVENT_", true)(e.xany.display)) {
+					// "ignore next mouse motion" event, increment ignore counter for teh window
+					if (auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+						++(*win).warpEventCount;
+						debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"INSMME\" message, new count=%d\n", (*win).warpEventCount); }
+					} else {
+						debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"INSMME\" WTF?!!\n"); }
+					}
+				} else if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
+					// user clicked the close button on the window manager
+					// FIXME: not implemented on Windows
+					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+					}
 				}
-			}
 		  break;
 		  case EventType.MapNotify:
 				if(auto win = e.xmap.window in SimpleWindow.nativeMapping) {
@@ -5771,11 +5971,18 @@ version(X11) {
 			mouse.modifierState = event.state;
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
-				(*win).mdx(mouse);
-				if((*win).handleMouseEvent) {
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					(*win).handleMouseEvent(mouse);
+				if (win.warpEventCount > 0) {
+					debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"warp motion\" message, current count=%d\n", (*win).warpEventCount); }
+					--(*win).warpEventCount;
+					(*win).mdx(mouse); // so deltas will be correctly updated
+				} else {
+					win.warpEventCount = 0; // just in case
+					(*win).mdx(mouse);
+					if((*win).handleMouseEvent) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						(*win).handleMouseEvent(mouse);
+					}
 				}
 				mouse.window = *win;
 			}
@@ -7447,6 +7654,8 @@ struct Visual
 	int XUnmapWindow(Display*, Window);
 	int XLowerWindow(Display*, Window);
 	int XRaiseWindow(Display*, Window);
+
+	int XWarpPointer(Display *display, Window src_w, Window dest_w, int src_x, int src_y, uint src_width, uint src_height, int dest_x, int dest_y);
 
 	int XGetInputFocus(Display*, Window*, int*);
 	int XSetInputFocus(Display*, Window, int, Time);
