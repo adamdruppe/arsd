@@ -717,7 +717,7 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 /**
 	After creating OpenGL window, you can check this to see if you got only "legacy" OpenGL context.
 	*/
-@property bool openGLContextFallbackActivated() (bool v) { return (sdpyOpenGLContextVersion == 0); }
+@property bool openGLContextFallbackActivated() () { return (sdpyOpenGLContextVersion == 0); }
 
 
 /**
