@@ -2106,6 +2106,7 @@ const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted
   // put modifiers
   if (this.modifierState&ModifierState.ctrl) put("C-");
   if (this.modifierState&ModifierState.alt) put("M-");
+  if (this.modifierState&ModifierState.windows) put("H-");
   if (this.modifierState&ModifierState.shift) put("S-");
 
   foreach (string kn; __traits(allMembers, Key)) {
@@ -2131,6 +2132,7 @@ static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
     switch (name.ptr[0]) {
       case 'C': case 'c': mods |= ModifierState.ctrl; break;
       case 'M': case 'm': mods |= ModifierState.alt; break;
+      case 'H': case 'h': mods |= ModifierState.windows; break;
       case 'S': case 's': mods |= ModifierState.shift; break;
       default: return res; // alas
     }
@@ -2178,13 +2180,14 @@ bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
     switch (name.ptr[0]) {
       case 'C': case 'c': mods |= ModifierState.ctrl; break;
       case 'M': case 'm': mods |= ModifierState.alt; break;
+      case 'H': case 'h': mods |= ModifierState.windows; break;
       case 'S': case 's': mods |= ModifierState.shift; break;
       default: return false; // alas
     }
     name = name[2..$];
   }
   if (name.length == 0) return false;
-  if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift)) != mods) return false;
+  if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) != mods) return false;
   //HACK
   if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
     final switch (name.ptr[0]) {
