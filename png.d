@@ -1213,7 +1213,7 @@ struct LazyPngFile(LazyPngChunksProvider)
 
 		struct DatastreamByChunk(T) {
 			private import etc.c.zlib;
-			z_stream zs;
+			z_stream* zs; // we have to malloc this too, as dmd can move the struct, and zlib 1.2.10 is intolerant to that
 			int chunkSize;
 			int bufpos;
 			int plpos; // bytes eaten in current chunk payload
@@ -1222,14 +1222,17 @@ struct LazyPngFile(LazyPngChunksProvider)
 
 			this(int cs, T chunks) {
 				import core.stdc.stdlib : malloc;
+				import core.stdc.string : memset;
 				this.chunkSize = cs;
 				this.chunks = chunks;
 				assert(chunkSize > 0);
 				buffer = (cast(ubyte*)malloc(chunkSize))[0..chunkSize];
 				pkbuf = (cast(ubyte*)malloc(32768))[0..32768]; // arbitrary number
+				zs = cast(z_stream*)malloc(z_stream.sizeof);
+				memset(zs, 0, z_stream.sizeof);
 				zs.avail_in = 0;
 				zs.avail_out = 0;
-				auto res = inflateInit2(&zs, 15);
+				auto res = inflateInit2(zs, 15);
 				assert(res == Z_OK);
 				popFront(); // priming
 			}
@@ -1237,7 +1240,7 @@ struct LazyPngFile(LazyPngChunksProvider)
 			~this () {
 				version(arsdpng_debug) { import core.stdc.stdio : printf; printf("destroying lazy PNG reader...\n"); }
 				import core.stdc.stdlib : free;
-				inflateEnd(&zs);
+				if (zs !is null) { inflateEnd(zs); free(zs); }
 				if (pkbuf.ptr !is null) free(pkbuf.ptr);
 				if (buffer.ptr !is null) free(buffer.ptr);
 			}
@@ -1258,7 +1261,7 @@ struct LazyPngFile(LazyPngChunksProvider)
 						zs.next_out = cast(typeof(zs.next_out))(buffer.ptr+bufpos);
 						int rd = chunkSize-bufpos;
 						zs.avail_out = rd;
-						auto err = inflate(&zs, Z_SYNC_FLUSH);
+						auto err = inflate(zs, Z_SYNC_FLUSH);
 						if (err != Z_STREAM_END && err != Z_OK) throw new Exception("PNG unpack error");
 						if (err == Z_STREAM_END) {
 							assert(zs.avail_in == 0);
@@ -1284,10 +1287,10 @@ struct LazyPngFile(LazyPngChunksProvider)
 						plpos += rd;
 						if (eoz) {
 							// we did hit end-of-stream, reinit zlib (well, well, i know that we can reset it... meh)
-							inflateEnd(&zs);
+							inflateEnd(zs);
 							zs.avail_in = 0;
 							zs.avail_out = 0;
-							auto res = inflateInit2(&zs, 15);
+							auto res = inflateInit2(zs, 15);
 							assert(res == Z_OK);
 							eoz = false;
 						}
