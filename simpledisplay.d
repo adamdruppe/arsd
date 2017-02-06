@@ -1362,6 +1362,137 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// handles instead of a template mixin at some point because I'm not happy with the
 	/// code duplication here (ironically).
 	mixin NativeSimpleWindowImplementation!() impl;
+
+//private import std.traits : isCallable;
+
+	/**
+		This is in-process one-way (from anything to window) event sending mechanics.
+		It is thread-safe, so it can be used in multi-threaded applications to send,
+		for example, "wake up and repaint" events when thread completed some operation.
+		This will allow to avoid using timer pulse to check events with synchronization,
+		'cause event handler will be called in UI thread. You can stop guessing which
+		pulse frequency will be enough for your app.
+		Note that events handlers may be called in arbitrary order, i.e. last registered
+		handler can be called first, and vice versa.
+	*/
+public:
+	/** Is our custom event queue empty? Can be used in simple cases to prevent
+	 * "spamming" window with events it can't cope with.
+	 * It is safe to call this from non-UI threads.
+	 */
+	@property bool eventQueueEmpty() () {
+		synchronized(this) {
+			return (eventQueueUsed != 0);
+		}
+	}
+
+	/** Does our custom event queue contains at least one with the given type?
+	 * Can be used in simple cases to prevent "spamming" window with events
+	 * it can't cope with.
+	 * It is safe to call this from non-UI threads.
+	 */
+	@property bool eventQueued(ET:Object) () {
+		synchronized(this) {
+			foreach (Object o; eventQueue[0..eventQueueUsed]) if (cast(ET)o) return true;
+		}
+		return false;
+	}
+
+	/** Add listener for custom event. Can be used like this:
+	 *
+	 * ---------------------
+	 *   auto eid = win.addEventListener((MyStruct evt) { ... });
+	 *   ...
+	 *   win.removeEventListener(eid);
+	 * ---------------------
+	 *
+	 * Returns: 0 on failure (should never happen, so ignore it)
+	 */
+	uint addEventListener(ET:Object) (void delegate (ET) dg) {
+		if (dg is null) return 0; // ignore empty handlers
+		synchronized(this) {
+			//FIXME: abort on overflow?
+			if (++lastUsentHandlerId == 0) { --lastUsentHandlerId; return 0; } // alas, can't register more events. at all.
+			eventHandlers[lastUsentHandlerId] = delegate (Object o) {
+				if (auto co = cast(ET)o) {
+					try {
+						dg(co);
+					} catch (Exception) {
+						// sorry!
+					}
+					return true;
+				}
+				return false;
+			};
+			return lastUsentHandlerId;
+		}
+	}
+
+	/// Remove event listener. It is safe to pass invalid event id here.
+	void removeEventListener() (uint id) {
+		synchronized(this) {
+			if (id) eventHandlers.remove(id);
+		}
+	}
+
+	/// Post event to queue. It is safe to call this from non-UI threads.
+	bool postEvent(ET:Object) (ET evt) {
+		if (evt is null) return false; // ignore empty events, they can't be handled anyway
+		version(X11) {
+			if (customEventFD == -1) return false;
+		}
+		synchronized(this) {
+			if (eventQueueUsed == uint.max) return false; // just in case
+			if (eventQueueUsed < eventQueue.length) {
+				eventQueue[eventQueueUsed++] = evt;
+			} else {
+				eventQueue ~= evt;
+				++eventQueueUsed;
+			}
+			version(X11) {
+				// if this is first event in queue, wake up eventfd
+				if (eventQueueUsed == 1) {
+					import core.sys.posix.unistd : write;
+					ulong n = 1;
+					write(customEventFD, &n, n.sizeof);
+				}
+				return true;
+			} else {
+				//FIXME: not implemented for non-X11 systems yet!
+				--eventQueueUsed;
+				return false;
+			}
+		}
+	}
+
+private:
+	version(X11) int customEventFD = -1;
+
+	alias CustomEventHandler = bool delegate (Object o) nothrow;
+	uint lastUsentHandlerId;
+	CustomEventHandler[uint] eventHandlers;
+	Object[] eventQueue;
+	uint eventQueueUsed; // to avoid `.assumeSafeAppend` and length changes
+
+	// call all custom event handlers (if any)
+	void processCustomEvents () {
+		// don't lock and re-lock on each iteration, or other threads may spam event queue.
+		synchronized(this) {
+			for (;;) {
+				import core.stdc.string : memmove;
+				if (eventQueueUsed == 0) break;
+				Object evt = eventQueue[0];
+				if (--eventQueueUsed > 0) memmove(eventQueue.ptr, eventQueue.ptr+1, eventQueueUsed*eventQueue[0].sizeof);
+				eventQueue[eventQueueUsed] = null; // so GC will eventually collect event object
+				assert(evt !is null); // just in case
+				// try all handlers; this can be slow, but meh...
+				foreach (ref evhan; eventHandlers.byValue) {
+					assert(evhan !is null);
+					evhan(evt);
+				}
+			}
+		}
+	}
 }
 
 
@@ -5330,7 +5461,7 @@ version(X11) {
 					}
 					// sync to ensure any errors generated are processed
 					XSync(display, 0/*False*/);
-					{ import core.stdc.stdio; printf("ogl is here\n"); }
+					//{ import core.stdc.stdio; printf("ogl is here\n"); }
 					if(glc is null)
 						throw new Exception("glc");
 				}
@@ -5538,6 +5669,11 @@ version(X11) {
 		*/
 
 		void closeWindow() {
+			if (customEventFD != -1) {
+				import core.sys.posix.unistd : close;
+				close(customEventFD);
+				customEventFD = -1;
+			}
 			if(buffer)
 				XFreePixmap(display, buffer);
 			if (blankCurPtr) XFreeCursor(display, blankCurPtr);
@@ -5618,6 +5754,18 @@ version(X11) {
 					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
 				}
 
+				// eventfd for custom events
+				if (customEventFD == -1) {
+					customEventFD = eventfd(0, 0);
+					if (customEventFD) {
+					ep.epoll_event ev = void;
+						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+						ev.events = ep.EPOLLIN;
+						ev.data.fd = customEventFD;
+						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+					}
+				}
+
 				while(!done) {
 					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, -1);
 					if(nfds == -1) {
@@ -5654,6 +5802,13 @@ version(X11) {
 								//
 								// IOW handlePulse happens at most once per pulse interval.
 								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
+							} else if (fd == customEventFD) {
+								// we have some custom events; process 'em
+								import core.sys.posix.unistd : read;
+								ulong n;
+								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
+								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
+								processCustomEvents();
 							} else {
 								// some other timer
 								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
@@ -6113,6 +6268,8 @@ version(X11) {
 // Necessary C library bindings follow
 version(Windows) {} else
 version(X11) {
+
+extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
 
 // X11 bindings needed here
 /*
