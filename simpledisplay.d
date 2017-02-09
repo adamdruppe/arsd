@@ -1438,9 +1438,7 @@ public:
 	/// Post event to queue. It is safe to call this from non-UI threads.
 	bool postEvent(ET:Object) (ET evt) {
 		if (evt is null) return false; // ignore empty events, they can't be handled anyway
-		version(X11) {
-			if (customEventFD == -1) return false;
-		}
+		// add events even if no event FD/event object created yet
 		synchronized(this) {
 			if (eventQueueUsed == uint.max) return false; // just in case
 			if (eventQueueUsed < eventQueue.length) {
@@ -1457,8 +1455,11 @@ public:
 					write(customEventFD, &n, n.sizeof);
 				}
 				return true;
+			} else version(Windows) {
+				if (customEventH !is null) SetEvent(customEventH);
+				return true;
 			} else {
-				//FIXME: not implemented for non-X11 systems yet!
+				// not implemented for other OSes
 				--eventQueueUsed;
 				return false;
 			}
@@ -1466,7 +1467,11 @@ public:
 	}
 
 private:
-	version(X11) int customEventFD = -1;
+	version(X11) {
+		int customEventFD = -1;
+	} else version(Windows) {
+		HANDLE customEventH = null;
+	}
 
 	alias CustomEventHandler = bool delegate (Object o) nothrow;
 	uint lastUsentHandlerId;
@@ -1476,12 +1481,14 @@ private:
 
 	// call all custom event handlers (if any)
 	void processCustomEvents () {
-		// don't lock and re-lock on each iteration, or other threads may spam event queue.
+		// don't lock and re-lock on each iteration, or other threads may spam event queue
 		synchronized(this) {
-			for (;;) {
+			// user may want to post new events from an event handler; process 'em on next iteration
+			for (uint ecount = eventQueueUsed; ecount > 0; --ecount) {
 				import core.stdc.string : memmove;
 				if (eventQueueUsed == 0) break;
 				Object evt = eventQueue[0];
+				// do memmove on each step, it is cheap
 				if (--eventQueueUsed > 0) memmove(eventQueue.ptr, eventQueue.ptr+1, eventQueueUsed*eventQueue[0].sizeof);
 				eventQueue[eventQueueUsed] = null; // so GC will eventually collect event object
 				assert(evt !is null); // just in case
@@ -4512,6 +4519,24 @@ version(Windows) {
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
 			HANDLE[] handles;
+			if (customEventH is null) {
+				customEventH = CreateEvent(null, FALSE/*autoreset*/, FALSE/*initial state*/, null);
+				if (customEventH !is null) {
+					handles ~= customEventH;
+				} else {
+					// this is something that should not be; better be safe than sorry
+					throw new Exception("can't create eventfd for custom event processing");
+				}
+			}
+			scope(exit) {
+				if (customEventH !is null) {
+					CloseHandle(customEventH);
+					customEventH = null;
+				}
+			}
+
+			processCustomEvents(); // process events added before event object creation
+
 			while(ret != 0) {
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
@@ -4522,6 +4547,10 @@ version(Windows) {
 				enum WAIT_OBJECT_0 = 0;
 				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
 					// process handles[waitResult - WAIT_OBJECT_0];
+					if (handles[waitResult-WAIT_OBJECT_0] is customEventH) {
+						//{ import core.stdc.stdio; printf("WIN: EVENT SIGNAL!\n"); }
+						processCustomEvents();
+					}
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
 					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
@@ -5757,14 +5786,19 @@ version(X11) {
 				// eventfd for custom events
 				if (customEventFD == -1) {
 					customEventFD = eventfd(0, 0);
-					if (customEventFD) {
-					ep.epoll_event ev = void;
+					if (customEventFD >= 0) {
+						ep.epoll_event ev = void;
 						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 						ev.events = ep.EPOLLIN;
 						ev.data.fd = customEventFD;
 						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+					} else {
+						// this is something that should not be; better be safe than sorry
+						throw new Exception("can't create eventfd for custom event processing");
 					}
 				}
+
+				processCustomEvents(); // process events added before event FD creation
 
 				while(!done) {
 					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, -1);
