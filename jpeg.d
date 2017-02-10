@@ -2591,7 +2591,7 @@ private:
     cb.block_num_y = block_num_y;
     cb.block_len_x = block_len_x;
     cb.block_len_y = block_len_y;
-    cb.block_size = (block_len_x * block_len_y) * jpgd_block_t.sizeof;
+    cb.block_size = cast(int)((block_len_x * block_len_y) * jpgd_block_t.sizeof);
     cb.pData = cast(ubyte*)alloc(cb.block_size * block_num_x * block_num_y, true);
     return cb;
   }
