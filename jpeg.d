@@ -1023,7 +1023,7 @@ private:
     }
     if (!rv)
     {
-      int capacity = JPGD_MAX(32768 - 256, (nSize + 2047) & ~2047);
+      size_t capacity = JPGD_MAX(32768 - 256, (nSize + 2047) & ~2047);
       mem_block *b = cast(mem_block*)jpgd_malloc(mem_block.sizeof + capacity);
       if (!b) { stop_decoding(JPGD_NOTENOUGHMEM); }
       b.m_pNext = m_pMem_blocks; m_pMem_blocks = b;
@@ -2591,7 +2591,7 @@ private:
     cb.block_num_y = block_num_y;
     cb.block_len_x = block_len_x;
     cb.block_len_y = block_len_y;
-    cb.block_size = (block_len_x * block_len_y) * jpgd_block_t.sizeof;
+    cb.block_size = cast(int)((block_len_x * block_len_y) * jpgd_block_t.sizeof);
     cb.pData = cast(ubyte*)alloc(cb.block_size * block_num_x * block_num_y, true);
     return cb;
   }
