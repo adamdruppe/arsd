@@ -1448,8 +1448,8 @@ public:
 				++eventQueueUsed;
 			}
 			version(X11) {
-				// if this is first event in queue, wake up eventfd
-				if (eventQueueUsed == 1) {
+				// wake up eventfd
+				{
 					import core.sys.posix.unistd : write;
 					ulong n = 1;
 					write(customEventFD, &n, n.sizeof);
