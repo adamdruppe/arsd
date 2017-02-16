@@ -1904,12 +1904,20 @@ version(X11) {
 		setX11Selection!"PRIMARY"(window, text);
 	}
 
+	/// Asserts ownership of SECONDARY and copies the text into a buffer that clients can request later
+	void setSecondarySelection(SimpleWindow window, string text) {
+		setX11Selection!"SECONDARY"(window, text);
+	}
+
 	///
 	void setX11Selection(string atomName)(SimpleWindow window, string text) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
-		XSetSelectionOwner(display, GetAtom!atomName(display), window.impl.window, 0 /* CurrentTime */);
+		static if (atomName == "PRIMARY") Atom a = XA_PRIMARY;
+		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
+		else Atom a = GetAtom!atomName(display);
+		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
 		window.impl.setSelectionHandler = (XEvent ev) {
 			XSelectionRequestEvent* event = &ev.xselectionrequest;
 			XSelectionEvent selectionEvent;
@@ -1922,7 +1930,15 @@ version(X11) {
 
 			if(event.property == None)
 				selectionEvent.property = event.target;
-			if(event.target == XA_STRING) {
+			if(event.target == GetAtom!"TARGETS"(display)) {
+				/* respond with the supported types */
+				Atom[3] tlist;// = [XA_UTF8, XA_STRING, XA_TARGETS];
+				tlist[0] = GetAtom!"UTF8_STRING"(display);
+				tlist[1] = XA_STRING;
+				tlist[2] = GetAtom!"TARGETS"(display);
+				XChangeProperty(display, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, cast(void*)tlist.ptr, 3);
+				selectionEvent.property = event.property;
+			} else if(event.target == XA_STRING) {
 				selectionEvent.property = event.property;
 				XChangeProperty (display,
 					selectionEvent.requestor,
@@ -7967,6 +7983,8 @@ struct Visual
 	enum ClipByChildren = 0;
 	enum IncludeInferiors = 1;
 
+	enum Atom XA_PRIMARY = 1;
+	enum Atom XA_SECONDARY = 2;
 	enum Atom XA_STRING = 31;
 	enum Atom XA_CARDINAL = 6;
 	enum Atom XA_WM_NAME = 39;
