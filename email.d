@@ -699,6 +699,15 @@ class IncomingEmailMessage {
 					if(htmlMessageBody.length)
 						htmlMessageBody = convertToUtf8Lossy(decodeQuotedPrintable(htmlMessageBody), charset);
 				break;
+				case "base64":
+					if(textMessageBody.length) {
+						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
+						char[] mmb;
+						mmb.reserve(textMessageBody.length);
+						foreach (char ch; textMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
+						textMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+					}
+				break;
 				default:
 					// nothing needed
 			}
