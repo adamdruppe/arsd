@@ -1008,7 +1008,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 
 	/// The event loop automatically returns when the window is closed
-	/// pulseTimeout is given in milliseconds.
+	/// pulseTimeout is given in milliseconds. If pulseTimeout == 0, no
+	/// pulse timer is created. The event loop will block until an event
+	/// arrives or the pulse timer goes off.
 	final int eventLoop(T...)(
 		long pulseTimeout,    /// set to zero if you don't want a pulse.
 		T eventHandlers) /// delegate list like std.concurrency.receive
