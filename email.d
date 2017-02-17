@@ -506,7 +506,12 @@ class MimeContainer {
 
 import std.algorithm : startsWith;
 class IncomingEmailMessage {
-	this(ref immutable(ubyte)[][] mboxLines) {
+	this(string[] lines) {
+		auto lns = cast(immutable(ubyte)[][])lines;
+		this(lns, false);
+	}
+
+	this(ref immutable(ubyte)[][] mboxLines, bool asmbox=true) {
 
 		enum ParseState {
 			lookingForFrom,
@@ -514,7 +519,7 @@ class IncomingEmailMessage {
 			readingBody
 		}
 
-		auto state = ParseState.lookingForFrom;
+		auto state = (asmbox ? ParseState.lookingForFrom : ParseState.readingHeaders);
 		string contentType;
 
 		bool isMultipart;
@@ -606,11 +611,13 @@ class IncomingEmailMessage {
 					}
 				break;
 				case ParseState.readingBody:
-					if(line.startsWith("From ")) {
-						break lineLoop; // we're at the beginning of the next messsage
-					}
-					if(line.startsWith(">>From") || line.startsWith(">From")) {
-						line = line[1 .. $];
+					if (asmbox) {
+						if(line.startsWith("From ")) {
+							break lineLoop; // we're at the beginning of the next messsage
+						}
+						if(line.startsWith(">>From") || line.startsWith(">From")) {
+							line = line[1 .. $];
+						}
 					}
 
 					if(isMultipart) {
