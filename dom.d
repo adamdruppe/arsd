@@ -1300,6 +1300,25 @@ class Document : FileResource {
 		return prolog ~ root.toString();
 	}
 
+	/++
+		Writes it out with whitespace for easier eyeball debugging
+
+		Do NOT use for anything other than eyeball debugging,
+		because whitespace may be significant content in XML.
+	+/
+	string toPrettyString(bool insertComments = false) const {
+		string s = prolog;
+
+		if(insertComments) s ~= "<!--";
+		s ~= "\n";
+		if(insertComments) s ~= "-->";
+
+		s ~= root.toPrettyString(insertComments);
+		foreach(a; piecesAfterRoot)
+			s ~= a.toPrettyString(insertComments);
+		return s;
+	}
+
 	///.
 	Element root;
 
@@ -3024,6 +3043,70 @@ class Element {
 		return writeToAppender();
 	}
 
+	protected string toPrettyStringIndent(bool insertComments, int indentationLevel) const {
+		string s;
+
+		if(insertComments) s ~= "<!--";
+		s ~= "\n";
+		foreach(indent; 0 .. indentationLevel)
+			s ~= "\t";
+		if(insertComments) s ~= "-->";
+
+		return s;
+	}
+
+	/++
+		Writes out with formatting. Be warned: formatting changes the contents. Use ONLY
+		for eyeball debugging.
+	+/
+	string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+		string s = toPrettyStringIndent(insertComments, indentationLevel);
+
+		s ~= "<";
+		s ~= tagName;
+
+		foreach(n, v ; attributes) {
+			s ~= " ";
+			s ~= n;
+			s ~= "=\"";
+			s ~= htmlEntitiesEncode(v);
+			s ~= "\"";
+		}
+
+		if(selfClosed){
+			s ~= " />";
+			return s;
+		}
+
+		s ~= ">";
+
+		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
+		// just keep them on the same line
+		if(children.length == 1 && children[0].nodeType == NodeType.Text)
+			s ~= children[0].toString();
+		else
+		foreach(child; children) {
+			assert(child !is null);
+
+			s ~= child.toPrettyString(insertComments, indentationLevel + 1);
+		}
+
+		// see comment above
+		if(!(children.length == 1 && children[0].nodeType == NodeType.Text))
+			s ~= toPrettyStringIndent(insertComments, indentationLevel);
+
+		s ~= "</";
+		s ~= tagName;
+		s ~= ">";
+
+		return s;
+	}
+
+	/+
+	/// Writes out the opening tag only, if applicable.
+	string writeTagOnly(Appender!string where = appender!string()) const {
+	+/
+
 	/// This is the actual implementation used by toString. You can pass it a preallocated buffer to save some time.
 	/// Returns the string it creates.
 	string writeToAppender(Appender!string where = appender!string()) const {
@@ -3530,6 +3613,13 @@ class DocumentFragment : Element {
 		return this.innerHTML(where);
 	}
 
+	override string toPrettyString(bool insertComments, int indentationLevel) const {
+		string s;
+		foreach(child; children)
+			s ~= child.toPrettyString(insertComments, indentationLevel);
+		return s;
+	}
+
 	/// DocumentFragments don't really exist in a dom, so they ignore themselves in parent nodes
 	/*
 	override inout(Element) parentNode() inout {
@@ -3888,6 +3978,10 @@ class RawSource : SpecialElement {
 		return source;
 	}
 
+	override string toPrettyString(bool, int) const {
+		return source;
+	}
+
 	///.
 	string source;
 }
@@ -3910,6 +4004,10 @@ abstract class ServerSideCode : SpecialElement {
 		where.put(source);
 		where.put(">");
 		return where.data[start .. $];
+	}
+
+	override string toPrettyString(bool, int) const {
+		return "<" ~ source ~ ">";
 	}
 
 	///.
@@ -3957,6 +4055,14 @@ class BangInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
+	override string toPrettyString(bool, int) const {
+		string s;
+		s ~= "<!";
+		s ~= source;
+		s ~= ">";
+		return s;
+	}
+
 	///.
 	string source;
 }
@@ -3984,6 +4090,15 @@ class QuestionInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
+	override string toPrettyString(bool, int) const {
+		string s;
+		s ~= "<";
+		s ~= source;
+		s ~= ">";
+		return s;
+	}
+
+
 	///.
 	string source;
 }
@@ -4010,6 +4125,15 @@ class HtmlComment : SpecialElement {
 		where.put("-->");
 		return where.data[start .. $];
 	}
+
+	override string toPrettyString(bool, int) const {
+		string s;
+		s ~= "<!--";
+		s ~= source;
+		s ~= "-->";
+		return s;
+	}
+
 
 	///.
 	string source;
@@ -4067,6 +4191,29 @@ class TextNode : Element {
 			s = "";
 
 		assert(s !is null);
+		return s;
+	}
+
+	override string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+		string s;
+		auto e = htmlEntitiesEncode(contents);
+		import std.algorithm.iteration : splitter;
+		bool first = true;
+		foreach(line; splitter(e, "\n")) {
+			if(first) {
+				s ~= toPrettyStringIndent(insertComments, indentationLevel);
+				first = false;
+			} else {
+				s ~= "\n";
+				if(insertComments)
+					s ~= "<!--";
+				foreach(i; 0 .. indentationLevel)
+					s ~= "\t";
+				if(insertComments)
+					s ~= "-->";
+			}
+			s ~= line;
+		}
 		return s;
 	}
 
