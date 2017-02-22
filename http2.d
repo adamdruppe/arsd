@@ -283,9 +283,9 @@ class HttpRequest {
 		// The key is the *domain name* and the port. Multiple domains on the same address will have separate connections.
 		Socket[][string] socketsPerHost;
 
-		void loseSocket(string host, ushort port, Socket s) {
+		void loseSocket(string host, ushort port, bool ssl, Socket s) {
 			import std.string;
-			auto key = format("%s:%s", host, port);
+			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
 
 			if(auto list = key in socketsPerHost) {
 				for(int a = 0; a < (*list).length; a++) {
@@ -293,7 +293,7 @@ class HttpRequest {
 
 						for(int b = a; b < (*list).length - 1; b++)
 							(*list)[b] = (*list)[b+1];
-						(*list).length = (*list).length - 1;
+						(*list) = (*list)[0 .. $-1];
 						break;
 					}
 				}
@@ -310,6 +310,7 @@ class HttpRequest {
 
 				socket.connect(new InternetAddress(host, port));
 				debug(arsd_http2) writeln("opening to ", host, ":", port);
+				assert(socket.handle() !is socket_t.init);
 				return socket;
 			}
 
@@ -323,8 +324,11 @@ class HttpRequest {
 						// let's see if it has closed since we last tried
 						// e.g. a server timeout or something. If so, we need
 						// to lose this one and immediately open a new one.
-						SocketSet readSet = new SocketSet();
+						static SocketSet readSet = null;
+						if(readSet is null)
+							readSet = new SocketSet();
 						readSet.reset();
+						assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
 						readSet.add(socket);
 						auto got = Socket.select(readSet, null, null, 5.msecs /* timeout */);
 						if(got > 0) {
@@ -332,7 +336,7 @@ class HttpRequest {
 							// any active requests. Assume it is EOF and open a new one
 
 							socket.close();
-							loseSocket(host, port, socket);
+							loseSocket(host, port, ssl, socket);
 							goto openNew;
 						}
 						return socket;
@@ -432,7 +436,7 @@ class HttpRequest {
 							debug(arsd_http2) writeln("remote disconnect");
 							request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
-							loseSocket(request.requestParameters.host, request.requestParameters.port, sock);
+							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else {
 							// data available
 							request.handleIncomingData(buffer[0 .. got]);
