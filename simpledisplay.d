@@ -521,6 +521,10 @@ version(Windows) {
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
+} else version (Posix) {
+	//k8: this is hack for rdmd. sorry.
+	static import core.sys.linux.epoll;
+	static import core.sys.linux.timerfd;
 }
 
 
@@ -942,6 +946,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		return false;
 	}
 
+	/// Send dummy window event to ping event loop. Required to process NotificationIcon on X11, for example.
+	void sendDummyEvent () {
+		version(X11) {
+			if (!_closed) { impl.sendDummyEvent(); }
+		}
+	}
+
 	/// Set window minimal size.
 	void setMinSize (int minwidth, int minheight) {
 		if (!_closed) impl.setMinSize(minwidth, minheight);
@@ -1086,6 +1097,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 				XUnlockDisplay(this.display);
 			}
 		}
+
+		/// Emit a beep to get user's attention.
+		void beep () {
+			version(X11) {
+				XBell(this.display, 100);
+			} else version(Windows) {
+				MessageBeep(0xFFFFFFFF);
+			}
+		}
+
 
 		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
 		/// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
@@ -2015,6 +2036,8 @@ version(X11) {
 
 	///
 	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+		Image img;
+
 		NativeEventHandler getNativeEventHandler() {
 			return delegate int(XEvent e) {
 				switch(e.type) {
@@ -2023,10 +2046,21 @@ version(X11) {
 					break;
 					case EventType.ButtonPress:
 						auto event = e.xbutton;
-						if(onClick)
-							onClick(event.button);
+						if (onClick) {
+							MouseButton mb = cast(MouseButton)0;
+							switch (event.button) {
+								case 1: mb = MouseButton.left; break; // left
+								case 2: mb = MouseButton.middle; break; // middle
+								case 3: mb = MouseButton.right; break; // right
+								case 4: mb = MouseButton.wheelUp; break; // scroll up
+								case 5: mb = MouseButton.wheelDown; break; // scroll down
+								default:
+							}
+							if (mb) onClick(mb);
+						}
 					break;
 					case EventType.DestroyNotify:
+						active = false;
 						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
 					break;
 					case EventType.ConfigureNotify:
@@ -2043,6 +2077,8 @@ version(X11) {
 		}
 
 		void redraw() {
+			if (!active) return;
+
 			auto display = XDisplayConnection.get;
 			auto gc = DefaultGC(display, DefaultScreen(display));
 			XClearWindow(display, nativeHandle);
@@ -2054,12 +2090,19 @@ version(X11) {
 			XFillRectangle(display, nativeHandle,
 				gc, 0, 0, width, height);
 
-			XSetForeground(display, gc,
-				cast(uint) 0 << 16 |
-				cast(uint) 127 << 8 |
-				cast(uint) 0);
-			XFillArc(display, nativeHandle,
-				gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+			if (img is null) {
+				XSetForeground(display, gc,
+					cast(uint) 0 << 16 |
+					cast(uint) 127 << 8 |
+					cast(uint) 0);
+				XFillArc(display, nativeHandle,
+					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+			} else {
+				if (img.usingXshm)
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
+				else
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
+			}
 		}
 
 		static Window getTrayOwner() {
@@ -2091,16 +2134,13 @@ version(X11) {
 			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
 		}
 
-		///
-		this(string name, MemoryImage icon, void delegate(int button) onClick) {
+		private void createXWin () {
 			if(getTrayOwner() == None)
 				throw new Exception("No notification area found");
 			// create window
 			auto display = XDisplayConnection.get;
 			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
 			assert(nativeWindow);
-
-			this.onClick = onClick;
 
 			nativeHandle = nativeWindow;
 
@@ -2109,20 +2149,60 @@ version(X11) {
 
 			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+			active = true;
+		}
+
+		///
+		this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
+			this.onClick = onClick;
+			if (icon !is null) this.img = Image.fromMemoryImage(icon);
+			createXWin();
+		}
+
+		///
+		this(string name, Image icon, void delegate(MouseButton button) onClick) {
+			this.onClick = onClick;
+			this.img = icon;
+			createXWin();
 		}
 
 		private Window nativeHandle;
-		private int width = 12;
-		private int height = 12;
+		private int width = 16;
+		private int height = 16;
+		private bool active = false;
 
-		void delegate(int) onClick;
+		void delegate (MouseButton button) onClick;
+
+		@property bool closed () const pure nothrow @safe @nogc { return !active; }
+
+		void close () {
+			if (active) {
+				active = false;
+				//TODO
+			}
+		}
 
 		@property void name(string n) {
 
 		}
 
 		@property void icon(MemoryImage i) {
+			if (i !is null) {
+				this.img = Image.fromMemoryImage(i);
+				redraw();
+			} else {
+				if (this.img !is null) {
+					this.img = null;
+					redraw();
+				}
+			}
+		}
 
+		@property void icon (Image i) {
+			if (i !is img) {
+				img = i;
+				redraw();
+			}
 		}
 	}
 }
@@ -2255,7 +2335,7 @@ version(without_opengl) {
 		Determines if you want an OpenGL context created on the new window.
 
 
-		See more: <a href="#topics-3d">in the 3d topic</a>.
+		See more: [#topics-3d|in the 3d topic].
 
 		---
 		import arsd.simpledisplay;
@@ -5447,6 +5527,18 @@ version(X11) {
 			XWarpPointer(display, None, window, 0, 0, 0, 0, x, y);
 			// ...and flush
 			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: flushing...\n"); }
+			XFlush(display);
+		}
+
+		void sendDummyEvent () {
+			// here i will send dummy event to ping event queue
+			XEvent e;
+			e.xclient.type = EventType.ClientMessage;
+			e.xclient.window = window;
+			e.xclient.message_type = GetAtom!("_X11SDPY_DUMMY_EVENT_", true)(display); // let's hope nobody else will use such stupid name ;-)
+			e.xclient.format = 32;
+			e.xclient.data.l[0] = 0;
+			XSendEvent(display, window, false, EventMask.NoEventMask, /*cast(XEvent*)&xclient*/&e);
 			XFlush(display);
 		}
 
@@ -9077,6 +9169,7 @@ version(linux) {
 }
 
 version(X11) {
+	import core.stdc.locale : LC_ALL; // rdmd fix
 	__gshared bool sdx_isUTF8Locale;
 
 	// This whole crap is used to initialize X11 locale, so that you can use XIM methods later.

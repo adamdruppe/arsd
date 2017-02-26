@@ -368,6 +368,7 @@ enum ForceOption {
 /// Warning: do not write out escape sequences to the terminal. This won't work
 /// on Windows and will confuse Terminal's internal state on Posix.
 struct Terminal {
+	///
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
@@ -4026,11 +4027,11 @@ ubyte colorToXTermPaletteIndex(RGB color) {
 	$(TIP You can convert these to and from [arsd.color.Color] using
 	      `.tupleof`:
 
-	      ---
+		---
 	      	RGB rgb;
 		Color c = Color(rgb.tupleof);
+		---
 	)
-	      ---
 +/
 struct RGB {
 	ubyte r; ///

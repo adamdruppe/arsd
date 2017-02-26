@@ -1239,13 +1239,20 @@ class HttpApiClient() {
 	static struct HttpRequestWrapper {
 		HttpApiClientType apiClient;
 		HttpRequest request;
+		HttpResponse _response;
 		this(HttpApiClientType apiClient, HttpRequest request) {
 			this.apiClient = apiClient;
 			this.request = request;
 		}
 
+		@property HttpResponse response() {
+			if(_response is HttpResponse.init)
+				_response = request.waitForCompletion();
+			return _response;
+		}
+
 		var result() {
-			return apiClient.throwOnError(request.waitForCompletion());
+			return apiClient.throwOnError(response);
 		}
 
 		alias request this;

@@ -206,7 +206,7 @@ struct Color {
 	}
 
 	/// Makes a string that matches CSS syntax for websites
-	string toCssString() {
+	string toCssString() const {
 		if(a == 255)
 			return "#" ~ toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b);
 		else {
@@ -215,7 +215,7 @@ struct Color {
 	}
 
 	/// Makes a hex string RRGGBBAA (aa only present if it is not 255)
-	string toString() {
+	string toString() const {
 		if(a == 255)
 			return toCssString()[1 .. $];
 		else
@@ -223,7 +223,7 @@ struct Color {
 	}
 
 	/// returns RRGGBBAA, even if a== 255
-	string toRgbaHexString() {
+	string toRgbaHexString() const {
 		return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
 	}
 
@@ -815,7 +815,7 @@ interface MemoryImage {
 	}
 }
 
-/// An image that consists of indexes into a color palette. Use getAsTrueColorImage() if you don't care about palettes
+/// An image that consists of indexes into a color palette. Use [getAsTrueColorImage]() if you don't care about palettes
 class IndexedImage : MemoryImage {
 	bool hasAlpha;
 

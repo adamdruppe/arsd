@@ -241,6 +241,7 @@ import std.conv;
 class MimePart {
 	string[] headers;
 	immutable(ubyte)[] content;
+	immutable(ubyte)[] encodedContent; // usually valid only for GPG, and will be cleared by creator; canonical form
 	string textContent;
 	MimePart[] stuff;
 
@@ -251,6 +252,9 @@ class MimePart {
 	string disposition;
 	string id;
 	string filename;
+	// gpg signatures
+	string gpgalg;
+	string gpgproto;
 
 	MimeAttachment toMimeAttachment() {
 		MimeAttachment att;
@@ -265,7 +269,9 @@ class MimePart {
 		string boundary;
 
 		void parseContentType(string content) {
+			//{ import std.stdio; writeln("c=[", content, "]"); }
 			foreach(k, v; breakUpHeaderParts(content)) {
+				//{ import std.stdio; writeln("  k=[", k, "]; v=[", v, "]"); }
 				switch(k) {
 					case "root":
 						type = v;
@@ -280,6 +286,12 @@ class MimePart {
 						boundary = v;
 					break;
 					default:
+					case "micalg":
+						gpgalg = v;
+					break;
+					case "protocol":
+						gpgproto = v;
+					break;
 				}
 			}
 		}
@@ -380,6 +392,9 @@ class MimePart {
 					content ~= '\n';
 			}
 		}
+
+		// store encoded content for GPG (should be cleared by caller if necessary)
+		encodedContent = content;
 
 		// decode the content..
 		switch(transferEncoding) {
@@ -583,6 +598,7 @@ class IncomingEmailMessage {
 		lineLoop: while(mboxLines.length) {
 			// this can needlessly convert headers too, but that won't harm anything since they are 7 bit anyway
 			auto line = convertToUtf8Lossy(mboxLines[0], charset);
+			auto origline = line;
 			line = line.stripRight;
 
 			final switch(state) {
@@ -627,6 +643,15 @@ class IncomingEmailMessage {
 						htmlMessageBody ~= line ~ "\n";
 					} else {
 						// plain text!
+						// we want trailing spaces for "format=flowed", for example, so...
+						line = origline;
+						size_t epos = line.length;
+						while (epos > 0) {
+							char ch = line.ptr[epos-1];
+							if (ch >= ' ' || ch == '\t') break;
+							--epos;
+						}
+						line = line.ptr[0..epos];
 						textMessageBody ~= line ~ "\n";
 					}
 				break;
@@ -684,6 +709,19 @@ class IncomingEmailMessage {
 				break;
 				case "multipart/signed":
 					// FIXME: it would be cool to actually check the signature
+					if (part.stuff.length) {
+						auto msg = part.stuff[0];
+						//{ import std.stdio; writeln("hdrs: ", part.stuff[0].headers); }
+						gpgalg = part.gpgalg;
+						gpgproto = part.gpgproto;
+						gpgmime = part;
+						foreach (thing; part.stuff[1 .. $]) {
+							attachments ~= thing.toMimeAttachment();
+						}
+						part = msg;
+						goto deeperInTheMimeTree;
+					}
+				break;
 				default:
 					// FIXME: correctly handle more
 					if(part.stuff.length) {
@@ -720,6 +758,53 @@ class IncomingEmailMessage {
 		}
 	}
 
+	@property bool hasGPGSignature () const nothrow @trusted @nogc {
+		MimePart mime = cast(MimePart)gpgmime; // sorry
+		if (mime is null) return false;
+		if (mime.type != "multipart/signed") return false;
+		if (mime.stuff.length != 2) return false;
+		if (mime.stuff[1].type != "application/pgp-signature") return false;
+		if (mime.stuff[0].type.length <= 5 && mime.stuff[0].type[0..5] != "text/") return false;
+		return true;
+	}
+
+	ubyte[] extractGPGData () const nothrow @trusted {
+		if (!hasGPGSignature) return null;
+		MimePart mime = cast(MimePart)gpgmime; // sorry
+		char[] res;
+		res.reserve(mime.stuff[0].encodedContent.length); // more, actually
+		foreach (string s; mime.stuff[0].headers[1..$]) {
+			while (s.length && s[$-1] <= ' ') s = s[0..$-1];
+			if (s.length == 0) return null; // wtf?! empty headers?
+			res ~= s;
+			res ~= "\r\n";
+		}
+		res ~= "\r\n";
+		// extract content (see rfc3156)
+		size_t pos = 0;
+		auto ctt = mime.stuff[0].encodedContent;
+		// last CR/LF is a part of mime signature, actually, so remove it
+		if (ctt.length && ctt[$-1] == '\n') {
+			ctt = ctt[0..$-1];
+			if (ctt.length && ctt[$-1] == '\r') ctt = ctt[0..$-1];
+		}
+		while (pos < ctt.length) {
+			auto epos = pos;
+			while (epos < ctt.length && ctt.ptr[epos] != '\n') ++epos;
+			auto xpos = epos;
+			while (xpos > pos && ctt.ptr[xpos-1] <= ' ') --xpos; // according to rfc
+			res ~= ctt[pos..xpos].dup;
+			res ~= "\r\n"; // according to rfc
+			pos = epos+1;
+		}
+		return cast(ubyte[])res;
+	}
+
+	immutable(ubyte)[] extractGPGSignature () const nothrow @safe @nogc {
+		if (!hasGPGSignature) return null;
+		return gpgmime.stuff[1].content;
+	}
+
 	string[string] headers;
 
 	string subject;
@@ -733,6 +818,11 @@ class IncomingEmailMessage {
 	bool textAutoConverted;
 
 	MimeAttachment[] attachments;
+
+	// gpg signature fields
+	string gpgalg;
+	string gpgproto;
+	MimePart gpgmime;
 }
 
 struct MboxMessages {
@@ -841,9 +931,9 @@ string decodeEncodedWord(string data) {
 		}
 
 		immutable(ubyte)[] decodedText;
-		if(encoding == "Q")
+		if(encoding == "Q" || encoding == "q")
 			decodedText = decodeQuotedPrintable(encodedText);
-		else if(encoding == "B")
+		else if(encoding == "B" || encoding == "b")
 			decodedText = cast(typeof(decodedText)) Base64.decode(encodedText);
 		else
 			return originalData; // wtf
