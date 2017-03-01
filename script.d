@@ -1,4 +1,6 @@
 /**
+  FIXME: I might allow identifiers-with-dashes, making minus require whitespace around it
+
    FIXME: prettier stack trace when sent to D
 
    FIXME: interpolated string: "$foo" or "#{expr}" or something.

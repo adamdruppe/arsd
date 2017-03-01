@@ -100,6 +100,109 @@ struct HttpResponse {
 	string contentText; ///
 
 	HttpRequestParameters requestParameters; ///
+
+	LinkHeader[] linksStored;
+	bool linksLazilyParsed;
+
+	/// Returns links header sorted by "rel" attribute.
+	/// It returns a new array on each call.
+	LinkHeader[string] linksHash() {
+		auto links = this.links();
+		LinkHeader[string] ret;
+		foreach(link; links)
+			ret[link.rel] = link;
+		return ret;
+	}
+
+	/// Returns the Link header, parsed.
+	LinkHeader[] links() {
+		if(linksLazilyParsed)
+			return linksStored;
+		linksLazilyParsed = true;
+		LinkHeader[] ret;
+
+		auto hdrPtr = "Link" in headersHash;
+		if(hdrPtr is null)
+			return ret;
+
+		auto header = *hdrPtr;
+
+		LinkHeader current;
+
+		while(header.length) {
+			char ch = header[0];
+
+			if(ch == '<') {
+				// read url
+				header = header[1 .. $];
+				size_t idx;
+				while(idx < header.length && header[idx] != '>')
+					idx++;
+				current.url = header[0 .. idx];
+				header = header[idx .. $];
+			} else if(ch == ';') {
+				// read attribute
+				header = header[1 .. $];
+				header = header.stripLeft;
+
+				size_t idx;
+				while(idx < header.length && header[idx] != '=')
+					idx++;
+
+				string name = header[0 .. idx];
+				header = header[idx + 1 .. $];
+
+				string value;
+
+				if(header.length && header[0] == '"') {
+					// quoted value
+					header = header[1 .. $];
+					idx = 0;
+					while(idx < header.length && header[idx] != '\"')
+						idx++;
+					value = header[0 .. idx];
+					header = header[idx .. $];
+
+				} else if(header.length) {
+					// unquoted value
+					idx = 0;
+					while(idx < header.length && header[idx] != ',' && header[idx] != ' ' && header[idx] != ';')
+						idx++;
+
+					value = header[0 .. idx];
+					header = header[idx .. $].stripLeft;
+				}
+
+				name = name.toLower;
+				if(name == "rel")
+					current.rel = value;
+				else
+					current.attributes[name] = value;
+
+			} else if(ch == ',') {
+				// start another
+				ret ~= current;
+				current = LinkHeader.init;
+			} else if(ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
+				// ignore
+			}
+
+			header = header[1 .. $];
+		}
+
+		ret ~= current;
+
+		linksStored = ret;
+
+		return ret;
+	}
+}
+
+///
+struct LinkHeader {
+	string url; ///
+	string rel; ///
+	string[string] attributes; /// like title, rev, media, whatever attributes
 }
 
 import std.string;
@@ -1214,6 +1317,9 @@ version(use_openssl) {
 	}
 }
 
+/++
+
++/
 class HttpApiClient() {
 	import arsd.jsvar;
 
@@ -1225,6 +1331,7 @@ class HttpApiClient() {
 	string oauth2Token;
 	string submittedContentType;
 
+	///
 	this(string urlBase, string oauth2Token, string submittedContentType = "application/json") {
 		httpClient = new HttpClient();
 
@@ -1236,21 +1343,30 @@ class HttpApiClient() {
 		this.submittedContentType = submittedContentType;
 	}
 
+	///
 	static struct HttpRequestWrapper {
-		HttpApiClientType apiClient;
-		HttpRequest request;
+		HttpApiClientType apiClient; ///
+		HttpRequest request; ///
 		HttpResponse _response;
+
+		///
 		this(HttpApiClientType apiClient, HttpRequest request) {
 			this.apiClient = apiClient;
 			this.request = request;
 		}
 
+		/// Returns the full [HttpResponse] object so you can inspect the headers
 		@property HttpResponse response() {
 			if(_response is HttpResponse.init)
 				_response = request.waitForCompletion();
 			return _response;
 		}
 
+		/++
+			Returns the parsed JSON from the body of the response.
+
+			Throws on non-2xx responses.
+		+/
 		var result() {
 			return apiClient.throwOnError(response);
 		}
