@@ -3873,56 +3873,57 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	char[4] buffer;
 
 	bool tryingEntity = false;
-	dchar[] entityBeingTried;
+	dchar[16] entityBeingTried;
+	int entityBeingTriedLength = 0;
 	int entityAttemptIndex = 0;
 
 	foreach(dchar ch; data) {
 		if(tryingEntity) {
 			entityAttemptIndex++;
-			entityBeingTried ~= ch;
+			entityBeingTried[entityBeingTriedLength++] = ch;
 
 			// I saw some crappy html in the wild that looked like &0&#1111; this tries to handle that.
 			if(ch == '&') {
 				if(strict)
-					throw new Exception("unterminated entity; & inside another at " ~ to!string(entityBeingTried));
+					throw new Exception("unterminated entity; & inside another at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 
 				// if not strict, let's try to parse both.
 
-				if(entityBeingTried == "&&")
+				if(entityBeingTried[0 .. entityBeingTriedLength] == "&&")
 					a ~= "&"; // double amp means keep the first one, still try to parse the next one
 				else
-					a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+					a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
 
 				// tryingEntity is still true
-				entityBeingTried = entityBeingTried[0 .. 1]; // keep the &
+				entityBeingTriedLength = 1;
 				entityAttemptIndex = 0; // restarting o this
 			} else
 			if(ch == ';') {
 				tryingEntity = false;
-				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried))];
+				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
 			} else if(ch == ' ') {
 				// e.g. you &amp i
 				if(strict)
-					throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
+					throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 				else {
 					tryingEntity = false;
-					a ~= to!(char[])(entityBeingTried);
+					a ~= to!(char[])(entityBeingTried[0 .. entityBeingTriedLength]);
 				}
 			} else {
 				if(entityAttemptIndex >= 9) {
 					if(strict)
-						throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
+						throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 					else {
 						tryingEntity = false;
-						a ~= to!(char[])(entityBeingTried);
+						a ~= to!(char[])(entityBeingTried[0 .. entityBeingTriedLength]);
 					}
 				}
 			}
 		} else {
 			if(ch == '&') {
 				tryingEntity = true;
-				entityBeingTried = null;
-				entityBeingTried ~= ch;
+				entityBeingTriedLength = 0;
+				entityBeingTried[entityBeingTriedLength++] = ch;
 				entityAttemptIndex = 0;
 			} else {
 				a ~= buffer[0 .. std.utf.encode(buffer, ch)];
@@ -3932,10 +3933,10 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 
 	if(tryingEntity) {
 		if(strict)
-			throw new Exception("unterminated entity at " ~ to!string(entityBeingTried));
+			throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 
 		// otherwise, let's try to recover, at least so we don't drop any data
-		a ~= to!string(entityBeingTried);
+		a ~= to!string(entityBeingTried[0 .. entityBeingTriedLength]);
 		// FIXME: what if we have "cool &amp"? should we try to parse it?
 	}
 
