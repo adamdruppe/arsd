@@ -6467,7 +6467,12 @@ version(X11) {
 
 				// char events are separate since they are on Windows too
 				// also, xcompose can generate long char sequences
-				if (ke.pressed && charbuflen > 0) {
+				// don't send char events if Meta and/or Hyper is pressed
+				// TODO: ctrl+char should only send control chars; not yet
+				if ((e.xkey.state&ModifierState.ctrl) != 0) {
+					if (charbuflen > 1 || charbuf[0] >= ' ') charbuflen = 0;
+				}
+				if (ke.pressed && charbuflen > 0 && (e.xkey.state&(ModifierState.alt|ModifierState.windows)) == 0) {
 					// FIXME: I think Windows sends these on releases... we should try to match that, but idk about repeats.
 					foreach (immutable dchar ch; charbuf[0..charbuflen]) {
 						if (win.handleCharEvent) {
