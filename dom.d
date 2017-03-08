@@ -1142,6 +1142,12 @@ class Document : FileResource {
 		return root.requireSelector!(SomeElementType)(selector, file, line);
 	}
 
+	final MaybeNullElement!SomeElementType optionSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
+		if(is(SomeElementType : Element))
+	{
+		return root.optionSelector!(SomeElementType)(selector, file, line);
+	}
+
 
 	/// ditto
 	Element querySelector(string selector) {
@@ -1375,6 +1381,16 @@ class Element {
 		return e;
 	}
 
+
+	/++
+		If a matching selector is found, it returns that Element. Otherwise, the returned object returns null for all methods.
+	+/
+	final MaybeNullElement!SomeElementType optionSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
+		if(is(SomeElementType : Element))
+	{
+		auto e = cast(SomeElementType) querySelector(selector);
+		return MaybeNullElement!SomeElementType(e);
+	}
 
 
 
@@ -3268,6 +3284,37 @@ Element[] findComments(Element element, string txt) {
 	return ret;
 }
 
+/// An option type that propagates null. See: [Element.optionSelector]
+struct MaybeNullElement(SomeElementType) {
+	this(SomeElementType ele) {
+		this.element = ele;
+	}
+	SomeElementType element;
+
+	/// Forwards to the element, wit a null check inserted that propagates null.
+	auto opDispatch(string method, T...)(T args) {
+		alias type = typeof(__traits(getMember, element, method)(args));
+		static if(is(type : Element)) {
+			if(element is null)
+				return MaybeNullElement!type(null);
+			return __traits(getMember, element, method)(args);
+		} else static if(is(type == string)) {
+			if(element is null)
+				return cast(string) null;
+			return __traits(getMember, element, method)(args);
+		} else static if(is(type == void)) {
+			if(element is null)
+				return;
+			__traits(getMember, element, method)(args);
+		} else {
+			static assert(0);
+		}
+	}
+
+	/// Allows implicit casting to the wrapped element.
+	alias element this;
+}
+
 /++
 	A collection of elements which forwards methods to the children.
 +/
@@ -3322,6 +3369,17 @@ struct ElementCollection {
 	/// ditto
 	bool empty() {
 		return !elements.length;
+	}
+
+	/// Collects strings from the collection, concatenating them together
+	/// Kinda like running reduce and ~= on it.
+	string collect(string method)(string separator = "") {
+		string text;
+		foreach(e; elements) {
+			text ~= mixin("e." ~ method);
+			text ~= separator;
+		}
+		return text;
 	}
 
 	/// Forward method calls to each individual element of the collection
