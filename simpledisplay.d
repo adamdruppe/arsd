@@ -4203,7 +4203,7 @@ version(Windows) {
 			GetClientRect(hwnd, &client);
 
 			rect.right = rect.right - client.right + w;
-			rect.bottom = rect.bottom - client.bottom + w;
+			rect.bottom = rect.bottom - client.bottom + h;
 
 			// same position, new size for the client rectangle
 			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
