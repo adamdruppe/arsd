@@ -5562,34 +5562,43 @@ version(X11) {
 		}
 
 		void setMinSize (int minwidth, int minheight) {
+			import core.stdc.config : c_long;
 			if (minwidth < 1) minwidth = 1;
 			if (minheight < 1) minheight = 1;
 			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
 			sh.min_width = minwidth;
 			sh.min_height = minheight;
-			sh.flags = PMinSize;
+			sh.flags |= PMinSize;
 			XSetWMNormalHints(display, window, &sh);
 			flushGui();
 		}
 
 		void setMaxSize (int maxwidth, int maxheight) {
+			import core.stdc.config : c_long;
 			if (maxwidth < 1) maxwidth = 1;
 			if (maxheight < 1) maxheight = 1;
 			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
 			sh.max_width = maxwidth;
 			sh.max_height = maxheight;
-			sh.flags = PMaxSize;
+			sh.flags |= PMaxSize;
 			XSetWMNormalHints(display, window, &sh);
 			flushGui();
 		}
 
 		void setResizeGranularity (int granx, int grany) {
+			import core.stdc.config : c_long;
 			if (granx < 1) granx = 1;
 			if (grany < 1) grany = 1;
 			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
 			sh.width_inc = granx;
 			sh.height_inc = grany;
-			sh.flags = PResizeInc;
+			sh.flags |= PResizeInc;
 			XSetWMNormalHints(display, window, &sh);
 			flushGui();
 		}
@@ -7230,7 +7239,9 @@ Status XSetWMProtocols(
     int			/* count */
 );
 
+import core.stdc.config : c_long;
 void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
+Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
 
        /* Size hints mask bits */
 
