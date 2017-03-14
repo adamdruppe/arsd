@@ -5764,8 +5764,10 @@ version(X11) {
 			CapableOfHandlingNativeEvent.nativeHandleMapping[window] = this;
 
 			// This gives our window a close button
-			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
-			XSetWMProtocols(display, window, &atom, 1);
+			if (windowType != WindowTypes.hidden) {
+				Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
+				XSetWMProtocols(display, window, &atom, 1);
+			}
 
 
 			// FIXME: windowType and customizationFlags
@@ -5781,6 +5783,7 @@ version(X11) {
 				break;
 				case WindowTypes.hidden:
 					_hidden = true;
+					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
 					goto hiddenWindow;
 				break;
 				/+
