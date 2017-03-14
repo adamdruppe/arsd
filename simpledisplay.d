@@ -2103,6 +2103,7 @@ version(X11) {
 				else
 					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
 			}
+			flushGui();
 		}
 
 		static Window getTrayOwner() {
@@ -2177,16 +2178,18 @@ version(X11) {
 
 		void close () {
 			if (active) {
-				active = false;
-				//TODO
+				active = false; // event handler will set this too, but meh
+				XUnmapWindow(XDisplayConnection.get, nativeHandle); // 'cause why not; let's be polite
+				XDestroyWindow(XDisplayConnection.get, nativeHandle);
+				flushGui();
 			}
 		}
 
 		@property void name(string n) {
-
 		}
 
 		@property void icon(MemoryImage i) {
+			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
 				redraw();
@@ -2199,6 +2202,7 @@ version(X11) {
 		}
 
 		@property void icon (Image i) {
+			if (!active) return;
 			if (i !is img) {
 				img = i;
 				redraw();
@@ -8060,6 +8064,7 @@ struct Visual
 	int XRaiseWindow(Display*, Window);
 
 	int XWarpPointer(Display *display, Window src_w, Window dest_w, int src_x, int src_y, uint src_width, uint src_height, int dest_x, int dest_y);
+	Bool XTranslateCoordinates(Display *display, Window src_w, Window dest_w, int src_x, int src_y, int *dest_x_return, int *dest_y_return, Window *child_return);
 
 	int XGetInputFocus(Display*, Window*, int*);
 	int XSetInputFocus(Display*, Window, int, Time);
