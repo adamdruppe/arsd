@@ -669,6 +669,8 @@ enum WindowTypes : int {
 	normal,
 	/// A generic window without a title bar or border. You can draw on the entire area of the screen it takes up and use it as you wish. Remember that users don't really expect these though, so don't use it where a window of any other type is appropriate.
 	undecorated,
+	/// A window that doesn't actually display on screen. You can use it for cases where you need a window handle to communicate or something.
+	hidden,
 	/*
 	splashScreen, /// a loading splash screen for your application
 	tooltip, /// A tiny window showing temporary help text or something.
@@ -782,7 +784,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		height = the height of the window's client area, in pixels
 		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title\ property.
 		opengl = [OpenGlOptions] are yes and no. If yes, it creates an OpenGL context on the window.
-		resizable = [Resizablity] has three options:
+		resizable = [Resizability] has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
 			$(P `fixedSize` will not allow the user to resize the window.)
 			$(P `automaticallyScaleIfPossible` will allow the user to resize, but will still present the original size to the API user. The contents you draw will be scaled to the size the user chose. If this scaling is not efficient, the window will be fixed size. The `windowResized` event handler will never be called. This is the default.)
@@ -790,7 +792,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined [WindowTypes], given in the `windowType` argument, is a good match for what you need.
 		parent = the parent window, if applicable
 	+/
-	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
 		this._width = width;
 		this._height = height;
 		this.openglMode = opengl;
@@ -801,7 +803,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 
 	/// Same as above, except using the `Size` struct instead of separate width and height.
-	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
+	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible) {
 		this(size.width, size.height, title, opengl, resizable);
 	}
 
@@ -1064,7 +1066,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	private ScreenPainterImplementation* activeScreenPainter;
 
 	private OpenGlOptions openglMode;
-	private Resizablity resizability;
+	private Resizability resizability;
 	private WindowTypes windowType;
 	private int customizationFlags;
 
@@ -1353,7 +1355,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// use to redraw child widgets if you use system apis to add stuff
 	void delegate() paintingFinished;
 
-	/// handle a resize, after it happens. You must construct the window with Resizablity.allowResizing
+	/// handle a resize, after it happens. You must construct the window with Resizability.allowResizing
 	/// for this to ever happen.
 	void delegate(int width, int height) windowResized;
 
@@ -2373,8 +2375,11 @@ version(without_opengl) {
 		static assert(0, "OpenGL not supported on your system yet. Try -version=X11 if you have X Windows available, or -version=without_opengl to go without.");
 }
 
+deprecated("Sorry, I misspelled it in the first version! Use `Resizability` instead.")
+alias Resizablity = Resizability;
+
 /// When you create a SimpleWindow, you can see its resizability to be one of these via the constructor...
-enum Resizablity {
+enum Resizability {
 	fixedSize, /// the window cannot be resized
 	allowResizing, /// the window can be resized. The buffer (if there is one) will automatically adjust size, but not stretch the contents. the windowResized delegate will be called so you can respond to the new size yourself.
 	automaticallyScaleIfPossible, /// if possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size. If this is impossible, it will not allow the user to resize the window at all. Note: window.width and window.height WILL be adjusted, which might throw you off if you draw based on them, so keep track of your expected width and height separately. That way, when it is scaled, things won't be thrown off.
@@ -4283,6 +4288,9 @@ version(Windows) {
 				case WindowTypes.undecorated:
 					style = WS_POPUP | WS_SYSMENU;
 				break;
+				case WindowTypes.hidden:
+					_hidden = true;
+				break;
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -4291,6 +4299,9 @@ version(Windows) {
 
 			SimpleWindow.nativeMapping[hwnd] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
+
+			if(windowType == WindowTypes.hidden)
+				return;
 
 			HDC hdc = GetDC(hwnd);
 
@@ -4600,7 +4611,7 @@ version(Windows) {
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
-					if(openglMode == OpenGlOptions.no && resizability == Resizablity.allowResizing) {
+					if(openglMode == OpenGlOptions.no && resizability == Resizability.allowResizing) {
 						// gotta get the double buffer bmp to match the window
 					// FIXME: could this be more efficient? It isn't really necessary to make
 					// a new buffer if we're sizing down at least.
@@ -4628,7 +4639,7 @@ version(Windows) {
 					}
 
 					version(without_opengl) {} else
-					if(openglMode == OpenGlOptions.yes && resizability == Resizablity.automaticallyScaleIfPossible) {
+					if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
 						glViewport(0, 0, width, height);
 					}
 
@@ -4671,7 +4682,7 @@ version(Windows) {
 						GetObject(buffer, bm.sizeof, &bm);
 
 						// FIXME: only BitBlt the invalidated rectangle, not the whole thing
-						if(resizability == Resizablity.automaticallyScaleIfPossible)
+						if(resizability == Resizability.automaticallyScaleIfPossible)
 						StretchBlt(hdc, 0, 0, this.width, this.height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
 						else
 						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
@@ -5768,6 +5779,10 @@ version(X11) {
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 					motifHideDecorations();
 				break;
+				case WindowTypes.hidden:
+					_hidden = true;
+					goto hiddenWindow;
+				break;
 				/+
 				case WindowTypes.desktop:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DESKTOP"(display);
@@ -5816,8 +5831,8 @@ version(X11) {
 			}
 
 
-			if (this.resizability == Resizablity.fixedSize ||
-			    (opengl == OpenGlOptions.no && this.resizability != Resizablity.allowResizing))
+			if (this.resizability == Resizability.fixedSize ||
+			    (opengl == OpenGlOptions.no && this.resizability != Resizability.allowResizing))
 			{
 				XSizeHints sh;
 				sh.min_width = width;
@@ -5844,6 +5859,8 @@ version(X11) {
 				| EventMask.ButtonReleaseMask
 			);
 
+			hiddenWindow:
+
 			// set the pid property for lookup later by window managers
 			// a standard convenience
 			import core.sys.posix.unistd;
@@ -5860,7 +5877,8 @@ version(X11) {
 				1);
 
 
-			XMapWindow(display, window);
+			if(windowType != WindowTypes.hidden)
+				XMapWindow(display, window);
 		}
 
 		void setNetWMWindowType(Atom type) {
@@ -6211,7 +6229,7 @@ version(X11) {
 					win._width = event.width;
 					win._height = event.height;
 
-					if(win.openglMode == OpenGlOptions.no && win.resizability == Resizablity.allowResizing) {
+					if(win.openglMode == OpenGlOptions.no && win.resizability == Resizability.allowResizing) {
 						// FIXME: could this be more efficient? It isn't really necessary to make
 						// a new buffer if we're sizing down at least.
 
@@ -6231,7 +6249,7 @@ version(X11) {
 					}
 
 					version(without_opengl) {} else
-					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizablity.automaticallyScaleIfPossible) {
+					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
 						glViewport(0, 0, event.width, event.height);
 					}
 
