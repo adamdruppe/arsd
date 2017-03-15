@@ -6040,8 +6040,21 @@ version(X11) {
 
 				processCustomEvents(); // process events added before event FD creation
 
+				{
+					this.mtLock();
+					scope(exit) this.mtUnlock();
+					XPending(display); // no, really
+				}
 				while(!done) {
+					bool forceXPending = false;
 					auto wto = eventQueueTimeoutMSecs();
+					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
+					{
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						if (XEventsQueued(this.display, QueueMode.QueuedAlready)) { forceXPending = true; if (wto > 10 || wto <= 0) wto = 10; } // so libX event loop will be able to do it's work
+					}
+					//{ import core.stdc.stdio; printf("*** wto=%d; force=%d\n", wto, (forceXPending ? 1 : 0)); }
 					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, (wto == 0 || wto >= int.max ? -1 : cast(int)wto));
 					if(nfds == -1) {
 						if(err.errno == err.EINTR) {
@@ -6065,6 +6078,7 @@ version(X11) {
 								while(!done && XPending(display)) {
 									done = doXNextEvent(this.display);
 								}
+								forceXPending = false;
 							} else if(fd == pulseFd) {
 								long expirationCount;
 								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
@@ -6107,6 +6121,16 @@ version(X11) {
 							// just throw. for now at least
 
 							throw new Exception("epoll did something else");
+						}
+					}
+					// if we won't call `XPending()` here, libX may delay some internal event delivery.
+					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
+					if (!done && forceXPending) {
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
+						while(!done && XPending(display)) {
+							done = doXNextEvent(this.display);
 						}
 					}
 				}
@@ -8019,6 +8043,12 @@ struct Visual
 	bool XCheckMaskEvent(Display*, int, XEvent*);
 
 	int XPending(Display*);
+	int XEventsQueued(Display* display, int mode);
+	enum QueueMode : int {
+		QueuedAlready,
+		QueuedAfterReading,
+		QueuedAfterFlush
+	}
 
 	Pixmap XCreatePixmap(Display*, Drawable, uint, uint, uint);
 	int XFreePixmap(Display*, Pixmap);
