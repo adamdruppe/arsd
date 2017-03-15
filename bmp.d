@@ -3,6 +3,9 @@ module arsd.bmp;
 
 import arsd.color;
 
+//version = arsd_debug_bitmap_loader;
+
+
 MemoryImage readBmp(string filename) {
 	import core.stdc.stdio;
 
@@ -12,6 +15,7 @@ MemoryImage readBmp(string filename) {
 	scope(exit) fclose(fp);
 
 	void specialFread(void* tgt, size_t size) {
+		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("ofs: 0x%08x\n", cast(uint)ftell(fp)); }
 		fread(tgt, size, 1, fp);
 	}
 
@@ -60,51 +64,92 @@ MemoryImage readBmpIndirect(void delegate(void*, size_t) fread) {
 	require2(0); 	// reserved
 
 	auto offsetToBits = read4();
+	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("pixel data offset: 0x%08x\n", cast(uint)offsetToBits); }
 
 	auto sizeOfBitmapInfoHeader = read4();
+	if (sizeOfBitmapInfoHeader < 12) throw new Exception("invalid bitmap header size");
 
-	auto width = read4();
-	auto height = read4();
+	int width, height, rdheight;
+
+	if (sizeOfBitmapInfoHeader == 12) {
+		width = read2();
+		rdheight = cast(short)read2();
+	} else {
+		if (sizeOfBitmapInfoHeader < 16) throw new Exception("invalid bitmap header size");
+		sizeOfBitmapInfoHeader -= 4; // hack!
+		width = read4();
+		rdheight = cast(int)read4();
+	}
+
+	height = (rdheight < 0 ? -rdheight : rdheight);
+	rdheight = (rdheight < 0 ? 1 : -1); // so we can use it as delta (note the inverted sign)
+
+	if (width < 1 || height < 1) throw new Exception("invalid bitmap dimensions");
 
 	require2(1); // planes
 
 	auto bitsPerPixel = read2();
+	switch (bitsPerPixel) {
+		case 1: case 2: case 4: case 8: case 16: case 24: case 32: break;
+		default: throw new Exception("invalid bitmap depth");
+	}
 
 	/*
 		0 = BI_RGB
+		1 = BI_RLE8   RLE 8-bit/pixel   Can be used only with 8-bit/pixel bitmaps
+		2 = BI_RLE4   RLE 4-bit/pixel   Can be used only with 4-bit/pixel bitmaps
 		3 = BI_BITFIELDS
 	*/
-	auto compression = read4();
-	auto sizeOfUncompressedData = read4();
+	uint compression = 0;
+	uint sizeOfUncompressedData = 0;
+	uint xPixelsPerMeter = 0;
+	uint yPixelsPerMeter = 0;
+	uint colorsUsed = 0;
+	uint colorsImportant = 0;
 
-	auto xPixelsPerMeter = read4();
-	auto yPixelsPerMeter = read4();
-	auto colorsUsed = read4();
-	auto colorsImportant = read4();
+	sizeOfBitmapInfoHeader -= 12;
+	if (sizeOfBitmapInfoHeader > 0) {
+		if (sizeOfBitmapInfoHeader < 6*4) throw new Exception("invalid bitmap header size");
+		sizeOfBitmapInfoHeader -= 6*4;
+		compression = read4();
+		sizeOfUncompressedData = read4();
+		xPixelsPerMeter = read4();
+		yPixelsPerMeter = read4();
+		colorsUsed = read4();
+		colorsImportant = read4();
+	}
 
-	int additionalRead = 0;
+	if (compression > 3) throw new Exception("invalid bitmap compression");
+	if (compression == 1 && bitsPerPixel != 8) throw new Exception("invalid bitmap compression");
+	if (compression == 2 && bitsPerPixel != 4) throw new Exception("invalid bitmap compression");
+
+	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("compression: %u; bpp: %u\n", compression, cast(uint)bitsPerPixel); }
+
 	uint redMask;
 	uint greenMask;
 	uint blueMask;
 	uint alphaMask;
-	if(compression == 3) {
+	if (compression == 3) {
+		if (sizeOfBitmapInfoHeader < 4*4) throw new Exception("invalid bitmap compression");
+		sizeOfBitmapInfoHeader -= 4*4;
 		redMask = read4();
 		greenMask = read4();
 		blueMask = read4();
 		alphaMask = read4();
-		additionalRead += 4 * 4;
 	}
-	// FIXME: we could probably handle RLE as well
+	// FIXME: we could probably handle RLE4 as well
 
 	// I don't know about the rest of the header, so I'm just skipping it.
-	// 40 is the size of the basic info header that I did read.
-	foreach(skip; 0 .. sizeOfBitmapInfoHeader - 40 - additionalRead)
-		read1();
+	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("header bytes left: %u\n", cast(uint)sizeOfBitmapInfoHeader); }
+	foreach (skip; 0..sizeOfBitmapInfoHeader) read1();
 
 	if(bitsPerPixel <= 8) {
 		// indexed image
+		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("colorsUsed=%u; colorsImportant=%u\n", colorsUsed, colorsImportant); }
+		if (colorsUsed == 0 || colorsUsed > (1 << bitsPerPixel)) colorsUsed = (1 << bitsPerPixel);
 		auto img = new IndexedImage(width, height);
-		foreach(idx; 0 .. (1 << bitsPerPixel)) {
+		img.palette.reserve(1 << bitsPerPixel);
+		foreach(idx; 0 .. /*(1 << bitsPerPixel)*/colorsUsed) {
 			auto b = read1();
 			auto g = read1();
 			auto r = read1();
@@ -112,64 +157,118 @@ MemoryImage readBmpIndirect(void delegate(void*, size_t) fread) {
 
 			img.palette ~= Color(r, g, b);
 		}
+		while (img.palette.length < (1 << bitsPerPixel)) img.palette ~= Color.transparent;
 
 		// and the data
 		int bytesPerPixel = 1;
-		auto offsetStart = width * height * bytesPerPixel;
+		auto offsetStart = (rdheight > 0 ? 0 : width * height * bytesPerPixel);
+		int bytesRead = 0;
 
-		for(int y = height; y > 0; y--) {
-			offsetStart -= width * bytesPerPixel;
-			int offset = offsetStart;
-			int bytesRead = 0;
-			for(int x = 0; x < width; x++) {
-				auto b = read1();
-				bytesRead++;
-
-				if(bitsPerPixel == 8) {
-					img.data[offset++] = b;
-				} else if(bitsPerPixel == 4) {
-					img.data[offset++] = (b&0xf0) >> 4;
-					x++;
-					if(offset == img.data.length)
+		if (compression == 1) {
+			// this is complicated
+			assert(bitsPerPixel == 8); // always
+			int x = 0, y = (rdheight > 0 ? 0 : height-1);
+			void setpix (int v) {
+				if (x >= 0 && y >= 0 && x < width && y < height) img.data.ptr[y*width+x] = v&0xff;
+				++x;
+			}
+			version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("width=%d; height=%d; rdheight=%d\n", width, height, rdheight); }
+			for (;;) {
+				ubyte codelen = read1();
+				ubyte codecode = read1();
+				version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("x=%d; y=%d; len=%u; code=%u\n", x, y, cast(uint)codelen, cast(uint)codecode); }
+				bytesRead += 2;
+				if (codelen == 0) {
+					// special code
+					if (codecode == 0) {
+						// end of line
+						version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  EOL\n"); }
+						while (x < width) setpix(1);
+						x = 0;
+						y += rdheight;
+						if (y < 0 || y >= height) break; // ooops
+					} else if (codecode == 1) {
+						version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  EOB\n"); }
+						// end of bitmap
 						break;
-					img.data[offset++] = (b&0x0f);
-				} else if(bitsPerPixel == 2) {
-					img.data[offset++] = (b & 0b11000000) >> 6;
-					x++;
-					if(offset == img.data.length)
-						break;
-					img.data[offset++] = (b & 0b00110000) >> 4;
-					x++;
-					if(offset == img.data.length)
-						break;
-					img.data[offset++] = (b & 0b00001100) >> 2;
-					x++;
-					if(offset == img.data.length)
-						break;
-					img.data[offset++] = (b & 0b00000011) >> 0;
-				} else if(bitsPerPixel == 1) {
-					foreach(lol; 0 .. 8) {
-						img.data[offset++] = (b & (1 << lol)) >> (7 - lol);
+					} else if (codecode == 2) {
+						// delta
+						int xofs = read1();
+						int yofs = read1();
+						version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  deltax=%d; deltay=%d\n", xofs, yofs); }
+						bytesRead += 2;
+						x += xofs;
+						y += yofs*rdheight;
+						if (y < 0 || y >= height) break; // ooops
+					} else {
+						version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  LITERAL: %u\n", cast(uint)codecode); }
+						// literal copy
+						while (codecode-- > 0) {
+							setpix(read1());
+							++bytesRead;
+						}
+						version(arsd_debug_bitmap_loader) if (bytesRead%2) { import core.stdc.stdio; printf("  LITERAL SKIP\n"); }
+						if (bytesRead%2) { read1(); ++bytesRead; }
+						assert(bytesRead%2 == 0);
+					}
+				} else {
+					while (codelen-- > 0) setpix(codecode);
+				}
+			}
+		} else if (compression == 2) {
+			throw new Exception("4RLE for bitmaps aren't supported yet");
+		} else {
+			for(int y = height; y > 0; y--) {
+				if (rdheight < 0) offsetStart -= width * bytesPerPixel;
+				int offset = offsetStart;
+				while (bytesRead%4 != 0) {
+					read1();
+					++bytesRead;
+				}
+				bytesRead = 0;
+				for(int x = 0; x < width; x++) {
+					auto b = read1();
+					++bytesRead;
+					if(bitsPerPixel == 8) {
+						img.data[offset++] = b;
+					} else if(bitsPerPixel == 4) {
+						img.data[offset++] = (b&0xf0) >> 4;
 						x++;
 						if(offset == img.data.length)
 							break;
-					}
-					x--; // we do this once too many times in the loop
-
-				} else assert(0);
-				// I don't think these happen in the wild but I could be wrong, my bmp knowledge is somewhat outdated
+						img.data[offset++] = (b&0x0f);
+					} else if(bitsPerPixel == 2) {
+						img.data[offset++] = (b & 0b11000000) >> 6;
+						x++;
+						if(offset == img.data.length)
+							break;
+						img.data[offset++] = (b & 0b00110000) >> 4;
+						x++;
+						if(offset == img.data.length)
+							break;
+						img.data[offset++] = (b & 0b00001100) >> 2;
+						x++;
+						if(offset == img.data.length)
+							break;
+						img.data[offset++] = (b & 0b00000011) >> 0;
+					} else if(bitsPerPixel == 1) {
+						foreach(lol; 0 .. 8) {
+							img.data[offset++] = (b & (1 << lol)) >> (7 - lol);
+							x++;
+							if(offset == img.data.length)
+								break;
+						}
+						x--; // we do this once too many times in the loop
+					} else assert(0);
+					// I don't think these happen in the wild but I could be wrong, my bmp knowledge is somewhat outdated
+				}
+				if (rdheight > 0) offsetStart += width * bytesPerPixel;
 			}
-
-			int w = bytesRead%4;
-			if(w)
-			for(int a = 0; a < 4-w; a++)
-				require1(0); // pad until divisible by four
 		}
-
-
 
 		return img;
 	} else {
+		if (compression != 0) throw new Exception("invalid bitmap compression");
 		// true color image
 		auto img = new TrueColorImage(width, height);
 
