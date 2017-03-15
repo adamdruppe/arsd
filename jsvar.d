@@ -498,6 +498,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 }
 
 
+///
 struct var {
 	public this(T)(T t) {
 		static if(is(T == var))

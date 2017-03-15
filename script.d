@@ -1,23 +1,13 @@
-/**
+/++
+	A small script interpreter that is easily embedded inside and has easy two-way interop with the host D program.
+	The script language it implements is based on a hybrid of D and Javascript.
 
-   FIXME: prettier stack trace when sent to D
+	The interpreter is slightly buggy and poorly documented, but the basic functionality works well and much of
+	your existing knowledge from Javascript will carry over, making it hopefully easy to use right out of the box.
+	See the [#examples] to quickly get the feel of the script language as well as the interop.
 
-   FIXME: interpolated string: "$foo" or "#{expr}" or something.
-   FIXME: support more escape things in strings like \n, \t etc.
 
-   FIXME: add easy to use premade packages for the global object.
-
-   FIXME: maybe simplify the json!q{ } thing a bit.
-
-   FIXME: the debugger statement from javascript might be cool to throw in too.
-
-   FIXME: add continuations or something too
-
-   FIXME: Also ability to get source code for function something so you can mixin.
-
-	Script features:
-
-	FIXME: add COM support on Windows
+	Script_features:
 
 	OVERVIEW
 	* easy interop with D thanks to arsd.jsvar. When interpreting, pass a var object to use as globals.
@@ -31,6 +21,7 @@
 	* string literals come in "foo" or 'foo', like Javascript, or `raw string` like D. Also come as “nested “double quotes” are an option!”
 	* mixin aka eval (does it at runtime, so more like eval than mixin, but I want it to look like D)
 	* scope guards, like in D
+	* Built-in assert() which prints its source and its arguments
 	* try/catch/finally/throw
 		You can use try as an expression without any following catch to return the exception:
 
@@ -133,11 +124,44 @@
 
 	FIXME:
 		* make sure superclass ctors are called
+
+   FIXME: prettier stack trace when sent to D
+
+   FIXME: interpolated string: "$foo" or "#{expr}" or something.
+   FIXME: support more escape things in strings like \n, \t etc.
+
+   FIXME: add easy to use premade packages for the global object.
+
+   FIXME: maybe simplify the json!q{ } thing a bit.
+
+   FIXME: the debugger statement from javascript might be cool to throw in too.
+
+   FIXME: add continuations or something too
+
+   FIXME: Also ability to get source code for function something so you can mixin.
+   FIXME: add COM support on Windows
+
+
 	Might be nice:
 		varargs
-		lambdas
-*/
+		lambdas - maybe without function keyword and the x => foo syntax from D.
++/
 module arsd.script;
+
+/++
+
++/
+unittest {
+	var globals = var.emptyObject;
+	q{
+		function foo() {
+			return 13;
+		}
+
+		var a = foo() + 12;
+		assert(a == 25);
+	}.interpret(globals);
+}
 
 public import arsd.jsvar;
 
@@ -149,24 +173,29 @@ import std.json;
 import std.array;
 import std.range;
 
-/***************************************
+/* **************************************
   script to follow
 ****************************************/
 
+/// Thrown on script syntax errors and the sort.
 class ScriptCompileException : Exception {
 	this(string msg, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
 		super(to!string(lineNumber) ~ ": " ~ msg, file, line);
 	}
 }
 
+/// Thrown on things like interpretation failures.
 class ScriptRuntimeException : Exception {
 	this(string msg, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
 		super(to!string(lineNumber) ~ ": " ~ msg, file, line);
 	}
 }
 
+/// This represents an exception thrown by `throw x;` inside the script as it is interpreted.
 class ScriptException : Exception {
+	///
 	var payload;
+	///
 	int lineNumber;
 	this(var payload, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
 		this.payload = payload;
@@ -570,6 +599,10 @@ class Expression {
 
 		return obj;
 	}
+
+	string toInterpretedString(PrototypeObject sc) {
+		return toString();
+	}
 }
 
 class MixinExpression : Expression {
@@ -899,6 +932,10 @@ class BinaryExpression : Expression {
 		return e1.toString() ~ " " ~ op ~ " " ~ e2.toString();
 	}
 
+	override string toInterpretedString(PrototypeObject sc) {
+		return e1.toInterpretedString(sc) ~ " " ~ op ~ " " ~ e2.toInterpretedString(sc);
+	}
+
 	this(string op, Expression e1, Expression e2) {
 		this.op = op;
 		this.e1 = e1;
@@ -1002,6 +1039,10 @@ class VariableExpression : Expression {
 
 	override string toString() {
 		return identifier;
+	}
+
+	override string toInterpretedString(PrototypeObject sc) {
+		return getVar(sc).get!string;
 	}
 
 	ref var getVar(PrototypeObject sc, bool recurse = true) {
@@ -1491,6 +1532,25 @@ class ParentheticalExpression : Expression {
 	}
 }
 
+class AssertKeyword : Expression {
+	ScriptToken token;
+	this(ScriptToken token) {
+		this.token = token;
+	}
+	override string toString() {
+		return "assert";
+	}
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		if(AssertKeywordObject is null)
+			AssertKeywordObject = new PrototypeObject();
+		var dummy;
+		dummy._object = AssertKeywordObject;
+		return InterpretResult(dummy, sc);
+	}
+}
+
+PrototypeObject AssertKeywordObject;
 PrototypeObject DefaultArgumentDummyObject;
 
 class CallExpression : Expression {
@@ -1513,6 +1573,22 @@ class CallExpression : Expression {
 	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
+		if(auto asrt = cast(AssertKeyword) func) {
+			auto assertExpression = arguments[0];
+			Expression assertString;
+			if(arguments.length > 1)
+				assertString = arguments[1];
+
+			var v = assertExpression.interpret(sc).value;
+
+			if(!v)
+				throw new ScriptException(
+					var(this.toString() ~ " failed, got: " ~ assertExpression.toInterpretedString(sc)),
+					asrt.token.lineNumber);
+
+			return InterpretResult(v, sc);
+		}
+
 		auto f = func.interpret(sc).value;
 		bool isMacro =  (f.payloadType == var.Type.Object && ((cast(MacroPrototype) f._payload._object) !is null));
 		var[] args;
@@ -1535,8 +1611,9 @@ class CallExpression : Expression {
 		var _this;
 		if(auto dve = cast(DotVarExpression) func) {
 			_this = dve.e1.interpret(sc).value;
-		} else if(auto ide = cast(IndexExpression) func)
+		} else if(auto ide = cast(IndexExpression) func) {
 			_this = ide.interpret(sc).value;
+		}
 
 		return InterpretResult(f.apply(_this, args), sc);
 	}
@@ -2265,6 +2342,13 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 		case ScriptToken.Type.keyword:
 		case ScriptToken.Type.symbol:
 			switch(token.str) {
+				// assert
+				case "assert":
+					tokens.popFront();
+
+					return parseFunctionCall(tokens, new AssertKeyword(token));
+
+				break;
 				// declarations
 				case "var":
 					return parseVariableDeclaration(tokens, ";");
@@ -2480,18 +2564,57 @@ var interpret(string code, PrototypeObject variables, string scriptFilename = nu
 	return interpretStream(lexScript(repeat(code, 1), scriptFilename), variables);
 }
 
+/++
+	This is likely your main entry point to the interpreter. It will interpret the script code
+	given, with the given global variable object (which will be modified by the script, meaning
+	you can pass it to subsequent calls to `interpret` to store context), and return the result
+	of the last expression given.
+
+	---
+	var globals = var.emptyObject; // the global object must be an object of some type
+	globals.x = 10;
+	globals.y = 15;
+	// you can also set global functions through this same style, etc
+
+	var result = interpret(`x + y`, globals);
+	assert(result == 25);
+	---
+
+
+	$(TIP
+		If you want to just call a script function, interpret the definition of it,
+		then just call it through the `globals` object you passed to it.
+
+		---
+		var globals = var.emptyObject;
+		interpret(`function foo(name) { return "hello, " ~ name ~ "!"; }`, globals);
+		var result = globals.foo()("world");
+		assert(result == "hello, world!");
+		---
+	)
+
+	Params:
+		code = the script source code you want to interpret
+		scriptFilename = the filename of the script, if you want to provide it. Gives nicer error messages if you provide one.
+		variables = The global object of the script context. It will be modified by the user script.
+
+	Returns:
+		the result of the last expression evaluated by the script engine
++/
 var interpret(string code, var variables = null, string scriptFilename = null) {
 	return interpretStream(
 		lexScript(repeat(code, 1), scriptFilename),
 		(variables.payloadType() == var.Type.Object && variables._payload._object !is null) ? variables._payload._object : new PrototypeObject());
 }
 
+///
 var interpretFile(File file, var globals) {
 	import std.algorithm;
 	return interpretStream(lexScript(file.byLine.map!((a) => a.idup), file.name),
 		(globals.payloadType() == var.Type.Object && globals._payload._object !is null) ? globals._payload._object : new PrototypeObject());
 }
 
+///
 void repl(var globals) {
 	import std.stdio;
 	import std.algorithm;

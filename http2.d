@@ -1,6 +1,36 @@
-/// HTTP client lib
-// Copyright 2013, Adam D. Ruppe.
+// Copyright 2013-2017, Adam D. Ruppe.
+/++
+	This is version 2 of my http/1.1 client implementation.
+	
+	
+	It has no dependencies for basic operation, but does require OpenSSL
+	libraries (or compatible) to be support HTTPS. Compile with
+	`-version=with_openssl` to enable such support.
+	
+	http2.d, despite its name, does NOT implement HTTP/2.0, but this
+	shouldn't matter for 99.9% of usage, since all servers will continue
+	to support HTTP/1.1 for a very long time.
+
++/
 module arsd.http2;
+
+/++
+	Demonstrates core functionality, using the [HttpClient],
+	[HttpRequest] (returned by [HttpClient.navigateTo|client.navigateTo]),
+	and [HttpResponse] (returned by [HttpRequest.waitForCompletion|request.waitForCompletion]).
+
++/
+unittest {
+	import arsd.http2;
+
+	void main() {
+		auto client = new HttpClient();
+		auto request = client.navigateTo(Uri("http://dlang.org/"));
+		auto response = request.waitForCompletion();
+
+		string returnedHtml = response.contentText;
+	}
+}
 
 // FIXME: multipart encoded file uploads needs implementation
 // future: do web client api stuff
@@ -89,15 +119,32 @@ struct HttpResponse {
 
 	string statusLine; ///
 
-	string contentType; ///
+	string contentType; /// The content type header
 
-	string[string] cookies; ///
+	string[string] cookies; /// Names and values of cookies set in the response.
 
-	string[] headers; ///
+	string[] headers; /// Array of all headers returned.
 	string[string] headersHash; ///
 
-	ubyte[] content; ///
-	string contentText; ///
+	ubyte[] content; /// The raw content returned in the response body.
+	string contentText; /// [content], but casted to string (for convenience)
+
+	/++
+		returns `new Document(this.contentText)`. Requires [arsd.dom].
+	+/
+	auto contentDom()() {
+		import arsd.dom;
+		return new Document(this.contentText);
+
+	}
+
+	/++
+		returns `var.fromJson(this.contentText)`. Requires [arsd.jsvar].
+	+/
+	auto contentJson()() {
+		import arsd.jsvar;
+		return var.fromJson(this.contentText);
+	}
 
 	HttpRequestParameters requestParameters; ///
 
@@ -1140,14 +1187,14 @@ interface ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request);
 }
 
-/// Provides caching behavior similar to a real web browser
+// / Provides caching behavior similar to a real web browser
 class HttpCache : ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request) {
 		return null;
 	}
 }
 
-/// Gives simple maximum age caching, ignoring the actual http headers
+// / Gives simple maximum age caching, ignoring the actual http headers
 class SimpleCache : ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request) {
 		return null;
@@ -1318,7 +1365,42 @@ version(use_openssl) {
 }
 
 /++
+	An experimental component for working with REST apis. Note that it
+	is a zero-argument template, so to create one, use `new HttpApiClient!()(args..)`
+	or you will get "HttpApiClient is used as a type" compile errors.
 
+	This will probably not work for you yet, and I might change it significantly.
+
+	Requires [arsd.jsvar].
+
+
+	Here's a snippet to create a pull request on GitHub to Phobos:
+
+	---
+	auto github = new HttpApiClient!()("https://api.github.com/", "your personal api token here");
+
+	// create the arguments object
+	// see: https://developer.github.com/v3/pulls/#create-a-pull-request
+	var args = var.emptyObject;
+	args.title = "My Pull Request";
+	args.head = "yourusername:" ~ branchName;
+	args.base = "master";
+	// note it is ["body"] instead of .body because `body` is a D keyword
+	args["body"] = "My cool PR is opened by the API!";
+	args.maintainer_can_modify = true;
+
+	// this translates to `repos/dlang/phobos/pulls` and sends a POST request,
+	// containing `args` as json, then immediately grabs the json result and extracts
+	// the value `html_url` from it. `prUrl` is typed `var`, from arsd.jsvar.
+	auto prUrl = github.rest.repos.dlang.phobos.pulls.POST(args).result.html_url;
+
+	writeln("Created: ", prUrl);
+	---
+
+	Why use this instead of just building the URL? Well, of course you can! This just makes
+	it a bit more convenient than string concatenation and manages a few headers for you.
+
+	Subtypes could potentially add static type checks too.
 +/
 class HttpApiClient() {
 	import arsd.jsvar;
@@ -1331,7 +1413,13 @@ class HttpApiClient() {
 	string oauth2Token;
 	string submittedContentType;
 
-	///
+	/++
+		Params:
+
+		urlBase = The base url for the api. Tends to be something like `https://api.example.com/v2/` or similar.
+		oauth2Token = the authorization token for the service. You'll have to get it from somewhere else.
+		submittedContentType = the content-type of POST, PUT, etc. bodies.
+	+/
 	this(string urlBase, string oauth2Token, string submittedContentType = "application/json") {
 		httpClient = new HttpClient();
 
@@ -1374,6 +1462,7 @@ class HttpApiClient() {
 		alias request this;
 	}
 
+	///
 	HttpRequestWrapper request(string uri, HttpVerb requestMethod = HttpVerb.GET, ubyte[] bodyBytes = null) {
 		if(uri[0] == '/')
 			uri = uri[1 .. $];
@@ -1389,6 +1478,7 @@ class HttpApiClient() {
 		return HttpRequestWrapper(this, req);
 	}
 
+	///
 	var throwOnError(HttpResponse res) {
 		if(res.code < 200 || res.code >= 300)
 			throw new Exception(res.codeText);
@@ -1401,6 +1491,7 @@ class HttpApiClient() {
 		return response;
 	}
 
+	///
 	@property RestBuilder rest() {
 		return RestBuilder(this, null, null);
 	}
@@ -1409,6 +1500,7 @@ class HttpApiClient() {
         // gives: "/room/Tech%20Team/history"
 	//
 	// hipchat.rest.room["Tech Team"].history("page", "12)
+	///
 	static struct RestBuilder {
 		HttpApiClientType apiClient;
 		string[] pathParts;
@@ -1419,24 +1511,30 @@ class HttpApiClient() {
 			this.queryParts = queryParts;
 		}
 
+		///
 		RestBuilder opDispatch(string str)() {
 			return RestBuilder(apiClient, pathParts ~ str, queryParts);
 		}
 
+		///
 		RestBuilder opIndex(string str) {
 			return RestBuilder(apiClient, pathParts ~ str, queryParts);
 		}
+		///
 		RestBuilder opIndex(var str) {
 			return RestBuilder(apiClient, pathParts ~ str.get!string, queryParts);
 		}
+		///
 		RestBuilder opIndex(int i) {
 			return RestBuilder(apiClient, pathParts ~ to!string(i), queryParts);
 		}
 
+		///
 		RestBuilder opCall(T)(string name, T value) {
 			return RestBuilder(apiClient, pathParts, queryParts ~ [name, to!string(value)]);
 		}
 
+		///
 		string toUri() {
 			import std.uri;
 			string result;
@@ -1456,12 +1554,17 @@ class HttpApiClient() {
 			return result;
 		}
 
+		///
 		final HttpRequestWrapper GET() { return _EXECUTE(HttpVerb.GET, this.toUri(), null); }
+		/// ditto
 		final HttpRequestWrapper DELETE() { return _EXECUTE(HttpVerb.DELETE, this.toUri(), null); }
 
 		// need to be able to send: JSON, urlencoded, multipart/form-data, and raw stuff.
+		/// ditto
 		final HttpRequestWrapper POST(T...)(T t) { return _EXECUTE(HttpVerb.POST, this.toUri(), toBytes(t)); }
+		/// ditto
 		final HttpRequestWrapper PATCH(T...)(T t) { return _EXECUTE(HttpVerb.PATCH, this.toUri(), toBytes(t)); }
+		/// ditto
 		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
 
 		private ubyte[] toBytes(T...)(T t) {
