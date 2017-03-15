@@ -1,5 +1,5 @@
 /++
-	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input.
+	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
 
 
 	The main interface for this module is the Terminal struct, which
@@ -19,7 +19,7 @@
 	On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
 	work now though.
 
-	ROADMAP:
+	Future_Roadmap:
 	$(LIST
 		* The CharacterEvent and NonCharacterKeyEvent types will be removed. Instead, use KeyboardEvent
 		  on new programs.
@@ -62,6 +62,36 @@
 	)
 +/
 module arsd.terminal;
+
+/++
+	This example will demonstrate the high-level getline interface.
+
+	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter. Then, the final line will be returned to your program, which the example will simply print back to the user.
++/
+unittest {
+	import arsd.terminal;
+
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		string line = terminal.getline();
+		terminal.writeln("You wrote: ", line);
+	}
+}
+
+/++
+	This example demonstrates color output, using [Terminal.color]
+	and the output functions like [Terminal.writeln].
++/
+unittest {
+	import arsd.terminal;
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		terminal.color(Color.green, Color.black);
+		terminal.writeln("Hello world, in green on black!");
+		terminal.color(Color.DEFAULT, Color.DEFAULT);
+		terminal.writeln("And back to normal.");
+	}
+}
 
 /*
 	Widgets:
@@ -2291,10 +2321,11 @@ struct RealTimeConsoleInput {
 
 /// The new style of keyboard event
 struct KeyboardEvent {
-	bool pressed;
-	dchar which;
-	uint modifierState;
+	bool pressed; ///
+	dchar which; ///
+	uint modifierState; ///
 
+	///
 	bool isCharacter() {
 		return !(which >= Key.min && which <= Key.max);
 	}
@@ -2332,6 +2363,7 @@ struct KeyboardEvent {
 
 }
 
+/// Deprecated: use KeyboardEvent instead in new programs
 /// Input event for characters
 struct CharacterEvent {
 	/// .
@@ -2345,6 +2377,7 @@ struct CharacterEvent {
 	uint modifierState; /// Don't depend on this to be available for character events
 }
 
+/// Deprecated: use KeyboardEvent instead in new programs
 struct NonCharacterKeyEvent {
 	/// .
 	enum Type {
@@ -2421,7 +2454,7 @@ struct MouseEvent {
 	uint modifierState; /// shift, ctrl, alt, meta, altgr. Not always available. Always check by using modifierState & ModifierState.something
 }
 
-/// .
+/// When you get this, check terminal.width and terminal.height to see the new size and react accordingly.
 struct SizeChangedEvent {
 	int oldWidth;
 	int oldHeight;
@@ -2467,13 +2500,27 @@ enum ModifierState : uint {
 	windows = 512 // only available if you are using my terminal emulator; it isn't actually offered on standard linux ones
 }
 
-/// GetNextEvent returns this. Check the type, then use get to get the more detailed input
+version(DDoc)
+///
+enum ModifierState : uint {
+	///
+	shift = 4,
+	///
+	alt = 2,
+	///
+	control = 16,
+
+}
+
+/++
+	[RealTimeConsoleInput.nextEvent] returns one of these. Check the type, then use the [InputEvent.get|get] method to get the more detailed information about the event.
+++/
 struct InputEvent {
 	/// .
 	enum Type {
-		KeyboardEvent, ///.
-		CharacterEvent, ///.
-		NonCharacterKeyEvent, /// .
+		KeyboardEvent, /// Keyboard key pressed (or released, where supported)
+		CharacterEvent, /// Do not use this in new programs, use KeyboardEvent instead
+		NonCharacterKeyEvent, /// Do not use this in new programs, use KeyboardEvent instead
 		PasteEvent, /// The user pasted some text. Not always available, the pasted text might come as a series of character events instead.
 		MouseEvent, /// only sent if you subscribed to mouse events
 		SizeChangedEvent, /// only sent if you subscribed to size events
@@ -2492,7 +2539,19 @@ struct InputEvent {
 	/// It may be null in the case of program-generated events;
 	@property Terminal* terminal() { return term; }
 
-	/// .
+	/++
+		Gets the specific event instance. First, check the type (such as in a `switch` statement, then extract the correct one from here. Note that the template argument is a $(B value type of the enum above), not a type argument. So to use it, do $(D event.get!(InputEvent.Type.KeyboardEvent)), for example.
+
+		See_Also:
+
+		The event types:
+			[KeyboardEvent], [MouseEvent], [SizeChangedEvent],
+			[PasteEvent], [UserInterruptionEvent], 
+			[EndOfFileEvent], [HangupEvent], [CustomEvent]
+
+		And associated functions:
+			[RealTimeConsoleInput], [ConsoleInputFlags]
+	++/
 	@property auto get(Type T)() {
 		if(type != T)
 			throw new Exception("Wrong event type");
@@ -2519,7 +2578,7 @@ struct InputEvent {
 		else static assert(0, "Type " ~ T.stringof ~ " not added to the get function");
 	}
 
-	// custom event is public because otherwise there's no point at all
+	/// custom event is public because otherwise there's no point at all
 	this(CustomEvent c, Terminal* p = null) {
 		t = Type.CustomEvent;
 		customEvent = c;
@@ -2582,6 +2641,7 @@ struct InputEvent {
 }
 
 version(Demo)
+/// View the source of this!
 void main() {
 	auto terminal = Terminal(ConsoleOutputType.cellular);
 

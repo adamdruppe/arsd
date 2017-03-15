@@ -799,7 +799,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		this.resizability = resizable;
 		this.windowType = windowType;
 		this.customizationFlags = customizationFlags;
-		impl.createWindow(width, height, title is null ? "D Application" : title, opengl, parent);
+		this._title = (title is null ? "D Application" : title);
+		impl.createWindow(width, height, this._title, opengl, parent);
 	}
 
 	/// Same as above, except using the `Size` struct instead of separate width and height.
@@ -909,8 +910,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	/// Closes the window. If there are no more open windows, the event loop will terminate.
 	void close() {
-		impl.closeWindow();
-		_closed = true;
+		if (!_closed) {
+			if (onClosing !is null) onClosing();
+			impl.closeWindow();
+			_closed = true;
+		}
 	}
 
 	/// Alias for `hidden = false`
@@ -1329,8 +1333,17 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// Handles a timer pulse. Settable through setEventHandlers.
 	void delegate() handlePulse;
 
-	/// called when the focus changes, param is if we have it (true) or are losing it (false)
+	/// Called when the focus changes, param is if we have it (true) or are losing it (false).
 	void delegate(bool) onFocusChange;
+
+	/** Called inside `close()` method. Our window is still alive, and we can free various resources.
+	 * Sometimes it is easier to setup the delegate instead of subclassing. */
+	void delegate() onClosing;
+
+	/** Called when we received destroy notification. At this stage we cannot do much with our window
+	 * (as it is already dead, and it's native handle cannot be used), but we still can do some
+	 * last minute cleanup. */
+	void delegate() onDestroyed;
 
 	private {
 		int lastMouseX = int.min;
@@ -4576,6 +4589,7 @@ version(Windows) {
 					DestroyWindow(hwnd);
 				break;
 				case WM_DESTROY:
+					if (this.onDestroyed !is null) try { this.onDestroyed(); } catch (Exception e) {} // sorry
 					SimpleWindow.nativeMapping.remove(hwnd);
 					CapableOfHandlingNativeEvent.nativeHandleMapping.remove(hwnd);
 					if(SimpleWindow.nativeMapping.keys.length == 0)
@@ -6362,6 +6376,7 @@ version(X11) {
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
+				if (win.onDestroyed !is null) try { win.onDestroyed(); } catch (Exception e) {} // sorry
 				win._closed = true; // just in case
 				win.destroyed = true;
 				if (win.xic !is null) {

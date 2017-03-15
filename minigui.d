@@ -64,6 +64,8 @@ module arsd.minigui;
 		* rich text
 */
 
+alias HWND=void*;
+
 abstract class ComboboxBase : Widget {
 	// if the user can enter arbitrary data, we want to use  2 == CBS_DROPDOWN
 	// or to always show the list, we want CBS_SIMPLE == 1
@@ -2581,7 +2583,7 @@ struct TBBUTTON {
 	int   idCommand;
 	BYTE  fsState;
 	BYTE  fsStyle;
-	BYTE  bReserved[2]; // FIXME: isn't that different on 64 bit?
+	BYTE[2]  bReserved; // FIXME: isn't that different on 64 bit?
 	DWORD dwData;
 	int   iString;
 }
