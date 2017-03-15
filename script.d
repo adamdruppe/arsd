@@ -1,5 +1,4 @@
 /**
-  FIXME: I might allow identifiers-with-dashes, making minus require whitespace around it
 
    FIXME: prettier stack trace when sent to D
 
@@ -27,6 +26,8 @@
 	* simple implementation is moderately small and fairly easy to hack on (though it gets messier by the day), but it isn't made for speed.
 
 	SPECIFICS
+	* Allows identifiers-with-dashes. To do subtraction, put spaces around the minus sign.
+	* Allows identifiers starting with a dollar sign.
 	* string literals come in "foo" or 'foo', like Javascript, or `raw string` like D. Also come as “nested “double quotes” are an option!”
 	* mixin aka eval (does it at runtime, so more like eval than mixin, but I want it to look like D)
 	* scope guards, like in D
@@ -351,6 +352,7 @@ class TokenStream(TextStream) {
 					while(pos < text.length
 						&& ((text[pos] >= 'a' && text[pos] <= 'z') ||
 							(text[pos] == '_') ||
+							(pos != 0 && text[pos] == '-') || // allow mid-identifier dashes for this-kind-of-name. For subtraction, add a space.
 							(text[pos] >= 'A' && text[pos] <= 'Z') ||
 							(text[pos] >= '0' && text[pos] <= '9')))
 					{
@@ -678,6 +680,16 @@ class NullLiteralExpression : Expression {
 	override InterpretResult interpret(PrototypeObject sc) {
 		var n;
 		return InterpretResult(n, sc);
+	}
+}
+class NegationExpression : Expression {
+	Expression e;
+	this(Expression e) { this.e = e;}
+	override string toString() { return "-" ~ e.toString(); }
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		var n = e.interpret(sc).value;
+		return InterpretResult(-n, sc);
 	}
 }
 class ArrayLiteralExpression : Expression {
@@ -1567,7 +1579,14 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 		Expression e;
 		if(token.type == ScriptToken.Type.identifier)
 			e = parseVariableName(tokens);
-		else {
+		else if(token.type == ScriptToken.Type.symbol && (token.str == "-" || token.str == "+")) {
+			auto op = token.str;
+			tokens.popFront();
+
+			e = parsePart(tokens);
+			if(op == "-")
+				e = new NegationExpression(e);
+		} else {
 			tokens.popFront();
 
 			if(token.type == ScriptToken.Type.int_number)

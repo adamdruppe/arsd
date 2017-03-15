@@ -694,6 +694,23 @@ struct var {
 		return _op!(this, this, op, T)(t);
 	}
 
+	public var opUnary(string op)() {
+		static assert(op == "-");
+		final switch(payloadType()) {
+			case Type.Object:
+			case Type.Array:
+			case Type.Boolean:
+			case Type.String:
+			case Type.Function:
+				assert(0); // FIXME
+			break;
+			case Type.Integral:
+				return var(-this.get!long);
+			case Type.Floating:
+				return var(-this.get!double);
+		}
+	}
+
 	public var opBinary(string op, T)(T t) {
 		var n;
 		if(payloadType() == Type.Object) {
