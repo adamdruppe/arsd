@@ -602,19 +602,17 @@ Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coord
 
 */
 
-version(html5) {} else {
-	version(linux)
-		version = X11;
-	version(OSX) {
-		version(OSXCocoa) {}
-		else { version = X11; }
-	}
-		//version = OSXCocoa; // this was written by KennyTM
-	version(FreeBSD)
-		version = X11;
-	version(Solaris)
-		version = X11;
+version(linux)
+	version = X11;
+version(OSX) {
+	version(OSXCocoa) {}
+	else { version = X11; }
 }
+	//version = OSXCocoa; // this was written by KennyTM
+version(FreeBSD)
+	version = X11;
+version(Solaris)
+	version = X11;
 
 // these are so the static asserts don't trigger unless you want to
 // add support to it for an OS
@@ -1315,8 +1313,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		version(OSXCocoa) {
            		draw().drawImage(Point(0, 0), i);
 			setNeedsDisplay(view, true);
-		} else version(html5) {
-			// FIXME html5
 		} else static assert(0);
 	}
 
@@ -2061,7 +2057,7 @@ version(X11) {
 					break;
 					case EventType.ButtonPress:
 						auto event = e.xbutton;
-						if (onClick) {
+						if (onClick !is null || onClickEx !is null) {
 							MouseButton mb = cast(MouseButton)0;
 							switch (event.button) {
 								case 1: mb = MouseButton.left; break; // left
@@ -2071,9 +2067,20 @@ version(X11) {
 								case 5: mb = MouseButton.wheelDown; break; // scroll down
 								default:
 							}
-							if (mb) onClick(mb);
+							if (mb) {
+								if (onClick !is null) try { onClick(mb); } catch (Exception) {}
+								if (onClickEx !is null) try { onClickEx(event.x_root, event.y_root, mb, cast(ModifierState)event.state); } catch (Exception) {}
+							}
 						}
 					break;
+					case EventType.EnterNotify:
+						if (onEnter !is null) {
+							onEnter(e.xcrossing.x_root, e.xcrossing.y_root, cast(ModifierState)e.xcrossing.state);
+						}
+						break;
+					case EventType.LeaveNotify:
+						if (onLeave !is null) try { onLeave(); } catch (Exception) {}
+						break;
 					case EventType.DestroyNotify:
 						active = false;
 						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
@@ -2082,7 +2089,6 @@ version(X11) {
 						auto event = e.xconfigure;
 						this.width = event.width;
 						this.height = event.height;
-
 						redraw();
 					break;
 					default: return 1;
@@ -2091,6 +2097,7 @@ version(X11) {
 			};
 		}
 
+		///
 		void redraw() {
 			if (!active) return;
 
@@ -2161,7 +2168,8 @@ version(X11) {
 			nativeHandle = nativeWindow;
 
 			XSelectInput(display, nativeWindow,
-				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask);
+				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
+				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
 
 			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
@@ -2182,15 +2190,34 @@ version(X11) {
 			createXWin();
 		}
 
+		///
+		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			if (icon !is null) this.img = Image.fromMemoryImage(icon);
+			createXWin();
+		}
+
+		///
+		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			this.img = icon;
+			createXWin();
+		}
+
 		private Window nativeHandle;
 		private int width = 16;
 		private int height = 16;
 		private bool active = false;
 
-		void delegate (MouseButton button) onClick;
+		void delegate (MouseButton button) onClick; ///
 
-		@property bool closed () const pure nothrow @safe @nogc { return !active; }
+		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window)
+		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates
+		void delegate () onLeave; ///
 
+		@property bool closed () const pure nothrow @safe @nogc { return !active; } ///
+
+		///
 		void close () {
 			if (active) {
 				active = false; // event handler will set this too, but meh
@@ -2203,6 +2230,7 @@ version(X11) {
 		@property void name(string n) {
 		}
 
+		///
 		@property void icon(MemoryImage i) {
 			if (!active) return;
 			if (i !is null) {
@@ -2216,12 +2244,26 @@ version(X11) {
 			}
 		}
 
+		///
 		@property void icon (Image i) {
 			if (!active) return;
 			if (i !is img) {
 				img = i;
 				redraw();
 			}
+		}
+
+		/// Get global window coordinates and size. This can be used to show various notifications.
+		void getWindowRect (out int x, out int y, out int width, out int height) {
+			if (!active) { width = 1; height = 1; return; } // 1: just in case
+			Window dummyw;
+			auto dpy = XDisplayConnection.get;
+			//XWindowAttributes xwa;
+			//XGetWindowAttributes(dpy, nativeHandle, &xwa);
+			//XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), xwa.x, xwa.y, &x, &y, &dummyw);
+			XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
+			width = this.width;
+			height = this.height;
 		}
 	}
 
@@ -3057,8 +3099,6 @@ final class Image {
 			return 4 * width;
 		else version(OSXCocoa)
 			return 4 * width;
-		else version(html5)
-			return 4 * width;
 		else static assert(0);
 	}
 
@@ -3069,8 +3109,6 @@ final class Image {
 		else version(X11)
 			return 4;
 		else version(OSXCocoa)
-			return 4;
-		else version(html5)
 			return 4;
 		else static assert(0);
 	}
@@ -3430,10 +3468,6 @@ class Sprite {
 
 			auto rdl = (width * height * 4);
 			rawData[0 .. rdl] = i.rawData[0 .. rdl];
-		} else version(html5) {
-			handle = nextHandle;
-			nextHandle++;
-			Html5.createImage(handle, i);
 		} else static assert(0);
 	}
 
@@ -3459,10 +3493,6 @@ class Sprite {
 			if(context)
 				CGContextRelease(context);
 			context = null;
-		} else version(html5) {
-			if(handle)
-				Html5.freeImage(handle);
-			handle = 0;
 		} else static assert(0);
 
 	}
@@ -3487,10 +3517,6 @@ class Sprite {
 		HBITMAP handle;
 	else version(OSXCocoa)
 		CGContextRef context;
-	else version(html5) {
-		static int nextHandle;
-		int handle;
-	}
 	else static assert(0);
 }
 
@@ -8642,7 +8668,7 @@ private:
     alias objc_msgSend_classMethod!("NSApplication", "sharedApplication",
                                     id) sharedNSApplication;
     alias objc_msgSend_specialized!("setActivationPolicy:", void, ptrdiff_t) setActivationPolicy;
-} else version(html5) {} else static assert(0, "Unsupported operating system");
+} else static assert(0, "Unsupported operating system");
 
 
 version(OSXCocoa) {
@@ -9054,153 +9080,6 @@ version(OSXCocoa) {
                                                      "simpledisplay_simpleWindow");
     }
 }
-
-version(html5) {
-	import arsd.cgi;
-
-	alias int NativeWindowHandle;
-	alias void delegate() NativeEventHandler;
-
-	mixin template NativeImageImplementation() {
-		static import arsd.image;
-		arsd.image.TrueColorImage handle;
-
-		void createImage(int width, int height) {
-			handle = new arsd.image.TrueColorImage(width, height);
-		}
-
-		void dispose() {
-			handle = null;
-		}
-
-		void setPixel(int x, int y, Color c) {
-			auto offset = (y * width + x) * 4;
-			handle.data[offset + 0] = c.b;
-			handle.data[offset + 1] = c.g;
-			handle.data[offset + 2] = c.r;
-			handle.data[offset + 3] = c.a;
-		}
-
-		void convertToRgbaBytes(ubyte[] where) {
-			if(where is handle.data)
-				return;
-			assert(where.length == this.width * this.height * 4);
-
-			where[] = handle.data[];
-		}
-
-		void setFromRgbaBytes(in ubyte[] where) {
-			if(where is handle.data)
-				return;
-			assert(where.length == this.width * this.height * 4);
-
-			handle.data[] = where[];
-		}
-
-	}
-
-	mixin template NativeScreenPainterImplementation() {
-		void create(NativeWindowHandle window) {
-		}
-
-		void dispose() {
-		}
-		@property void outlineColor(Color c) {
-		}
-
-		@property void fillColor(Color c) {
-		}
-
-		void drawImage(int x, int y, Image i) {
-		}
-
-		void drawPixmap(Sprite s, int x, int y) {
-		}
-
-		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
-		}
-
-		void drawPixel(int x, int y) {
-		}
-
-		void drawLine(int x1, int y1, int x2, int y2) {
-		}
-
-		void drawRectangle(int x, int y, int width, int height) {
-		}
-
-		/// Arguments are the points of the bounding rectangle
-		void drawEllipse(int x1, int y1, int x2, int y2) {
-		}
-
-		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
-			// FIXME: start X, start Y, end X, end Y
-			//Arc(hdc, x1, y1, x1 + width, y1 + height, 0, 0, 0, 0);
-		}
-
-		void drawPolygon(Point[] vertexes) {
-		}
-
-	}
-
-	/// on html5 mode you MUST set this socket up
-	WebSocket socket;
-
-	mixin template NativeSimpleWindowImplementation() {
-		ScreenPainter getPainter() {
-			return ScreenPainter(this, 0);
-		}
-
-		void createWindow(int width, int height, string title) {
-			Html5.createCanvas(width, height);
-		}
-
-		void closeWindow() { /* no need, can just leave it on the page */ }
-
-		void dispose() { }
-
-		bool destroyed = false;
-
-		int eventLoop(long pulseTimeout) {
-			bool done = false;
-			import core.thread;
-
-			while (!done) {
-			while(!done &&
-				(pulseTimeout == 0 || socket.recvAvailable()))
-			{
-			}
-				if(!done && pulseTimeout !=0) {
-					if(handlePulse !is null)
-						handlePulse();
-					Thread.sleep(dur!"msecs"(pulseTimeout));
-				}
-			}
-
-			return 0;
-		}
-	}
-
-	struct JsImpl { string code; }
-
-	struct Html5 {
-		@JsImpl(q{
-
-		})
-		static void createImage(int handle, Image i) {
-
-		}
-
-		static void freeImage(int handle) {
-
-		}
-
-		static void createCanvas(int width, int height) {
-
-		}
-	}
-}
-
 
 version(without_opengl) {} else
 extern(System) nothrow @nogc {
