@@ -149,18 +149,65 @@
 module arsd.script;
 
 /++
+	This example shows the basics of how to interact with the script.
+	The string enclosed in `q{ .. }` is the script language source.
 
+	The [var] type comes from [arsd.jsvar] and provides a dynamic type
+	to D. It is the same type used in the script language and is weakly
+	typed, providing operator overloads to work with many D types seamlessly.
+
+	However, if you do need to convert it to a static type, such as if passing
+	to a function, you can use `get!T` to get a static type out of it.
 +/
 unittest {
 	var globals = var.emptyObject;
-	q{
+	globals.x = 25; // we can set variables on the global object
+	globals.name = "script.d"; // of various types
+	// and we can make native functions available to the script
+	globals.sum = (int a, int b) {
+		return a + b;
+	};
+
+	// This is the source code of the script. It is similar
+	// to javascript with pieces borrowed from D, so should
+	// be pretty familiar.
+	string scriptSource = q{
 		function foo() {
 			return 13;
 		}
 
 		var a = foo() + 12;
 		assert(a == 25);
-	}.interpret(globals);
+
+		// you can also access the D globals from the script
+		assert(x == 25);
+		assert(name == "script.d");
+
+		// as well as call D functions set via globals:
+		assert(sum(5, 6) == 11);
+
+		// I will also set a function to call from D
+		function bar(str) {
+			// unlike Javascript though, we use the D style
+			// concatenation operator.
+			return str ~ " concatenation";
+		}
+	};
+	
+	// once you have the globals set up, you call the interpreter
+	// with one simple function.
+	interpret(scriptSource, globals);
+
+	// finally, globals defined from the script are accessible here too:
+	// however, notice the two sets of parenthesis: the first is because
+	// @property is broken in D. The second set calls the function and you
+	// can pass values to it.
+	assert(globals.foo()() == 13);
+
+	assert(globals.bar()("test") == "test concatenation");
+
+	// this shows how to convert the var back to a D static type.
+	int x = globals.x.get!int;
 }
 
 public import arsd.jsvar;
