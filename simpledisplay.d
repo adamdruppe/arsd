@@ -78,7 +78,7 @@
 	$(H2 About this documentation)
 
 	The goal here is to give some complete programs as overview examples first, then a look at each major feature with working examples first, then, finally, the inline class and method list will follow.
-	
+
 	Scan for headers for a topic - $(B they will visually stand out) - you're interested in to get started quickly and feel free to copy and paste any example as a starting point for your program. I encourage you to learn the library by experimenting with the examples!
 
 	All examples are provided with no copyright restrictions whatsoever. You do not need to credit me or carry any kind of notice with the source if you copy and paste from them.
@@ -285,7 +285,7 @@
 		You may create multiple windows, if the underlying platform supports it. You may check
 		`static if(multipleWindowsSupported)` at compile time, or catch exceptions thrown by
 		SimpleWindow's constructor at runtime to handle those cases.
-		
+
 		A single running event loop will handle as many windows as needed.
 
 		setEventHandlers function
@@ -813,7 +813,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		Creates a window based on the given [Image]. It's client area
 		width and height is equal to the image. (A window's client area
 		is the drawable space inside; it excludes the title bar, etc.)
-	   
+
 		Windows based on images will not be resizable and do not use OpenGL.
 	+/
 	this(Image image, string title = null) {
@@ -848,7 +848,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		The typical result of this function is to change the color
 		of the taskbar icon, though it may be tweaked on specific
 		platforms.
-		
+
 		It is meant to unobtrusively tell the user that something
 		relevant to them happened in the background and they should
 		check the window when they get a chance. Upon receiving the
@@ -2224,6 +2224,194 @@ version(X11) {
 			}
 		}
 	}
+
+
+	/** Global hotkey handler. Simpledisplay will usually create one for you, but if you want to use subclassing
+	 * instead of delegates, you can subclass this, and override `doHandle()` method. */
+	public class GlobalHotkey {
+		KeyEvent key;
+		void delegate () handler;
+
+		void doHandle () { if (handler !is null) handler(); } /// this will be called by hotkey manager
+
+		/// Create from initialzed KeyEvent object
+		this (KeyEvent akey, void delegate () ahandler=null) {
+			if (akey.key == 0 || !GlobalHotkeyManager.isGoodModifierMask(akey.modifierState)) throw new Exception("invalid global hotkey");
+			key = akey;
+			handler = ahandler;
+		}
+
+		/// Create from emacs-like key name ("C-M-Y", etc.)
+		this (const(char)[] akey, void delegate () ahandler=null) {
+			key = KeyEvent.parse(akey);
+			if (key.key == 0 || !GlobalHotkeyManager.isGoodModifierMask(key.modifierState)) throw new Exception("invalid global hotkey");
+			handler = ahandler;
+		}
+
+	}
+
+	private extern(C) int XGrabErrorHandler (Display* dpy, XErrorEvent* evt) nothrow @nogc {
+		//conwriteln("failed to grab key");
+		GlobalHotkeyManager.ghfailed = true;
+		return 0;
+	}
+
+	/++
+		Global hotkey manager. It contains static methods to manage global hotkeys.
+
+		---
+		 try {
+   GlobalHotkeyManager.register("M-H-A", delegate () { hideShowWindows(); });
+ } catch (Exception e) {
+   conwriteln("ERROR registering hotkey!");
+ }
+		---
+
+		The key strings are based on Emacs. In practical terms,
+		`M` means `alt` and `H` means the Windows logo key. `C`
+		is `ctrl`.
+
+		$(WARNING
+			This is X-specific right now. If you are on
+			Windows, try [registerHotKey] instead.
+
+			We will probably merge these into a single
+			interface later.
+		)
+	+/
+	public class GlobalHotkeyManager : CapableOfHandlingNativeEvent {
+		private static immutable uint[8] masklist = [ 0,
+			KeyOrButtonMask.LockMask,
+			KeyOrButtonMask.Mod2Mask,
+			KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask,
+		];
+		private __gshared GlobalHotkeyManager ghmanager;
+		private __gshared bool ghfailed = false;
+
+		private static bool isGoodModifierMask (uint modmask) pure nothrow @safe @nogc {
+			if (modmask == 0) return false;
+			if (modmask&(KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask)) return false;
+			if (modmask&~(KeyOrButtonMask.Mod5Mask-1)) return false;
+			return true;
+		}
+
+		private static uint cleanupModifiers (uint modmask) pure nothrow @safe @nogc {
+			modmask &= ~(KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask); // remove caps, num, scroll
+			modmask &= (KeyOrButtonMask.Mod5Mask-1); // and other modifiers
+			return modmask;
+		}
+
+		private static uint keyEvent2KeyCode() (in auto ref KeyEvent ke) {
+			uint keycode = cast(uint)ke.key;
+			auto dpy = XDisplayConnection.get;
+			return XKeysymToKeycode(dpy, keycode);
+		}
+
+		private static ulong keyCode2Hash() (uint keycode, uint modstate) pure nothrow @safe @nogc { return ((cast(ulong)modstate)<<32)|keycode; }
+
+		private __gshared GlobalHotkey[ulong] globalHotkeyList;
+
+		NativeEventHandler getNativeEventHandler () {
+			return delegate int (XEvent e) {
+				if (e.type != EventType.KeyPress) return 1;
+				auto kev = cast(const(XKeyEvent)*)&e;
+				auto hash = keyCode2Hash(e.xkey.keycode, cleanupModifiers(e.xkey.state));
+				if (auto ghkp = hash in globalHotkeyList) {
+					try {
+						ghkp.doHandle();
+					} catch (Exception e) {
+						import core.stdc.stdio : stderr, fprintf;
+						stderr.fprintf("HOTKEY HANDLER EXCEPTION: %.*s", cast(uint)e.msg.length, e.msg.ptr);
+					}
+				}
+				return 1;
+			};
+		}
+
+		private this () {
+			auto dpy = XDisplayConnection.get;
+			auto root = RootWindow(dpy, DefaultScreen(dpy));
+			CapableOfHandlingNativeEvent.nativeHandleMapping[root] = this;
+			XSelectInput(dpy, root, EventMask.KeyPressMask);
+		}
+
+		/// Register new global hotkey with initialized `GlobalHotkey` object.
+		/// This function will throw if it failed to register hotkey (i.e. hotkey is invalid or already taken).
+		static void register (GlobalHotkey gh) {
+			if (gh is null) return;
+			if (gh.key.key == 0 || !isGoodModifierMask(gh.key.modifierState)) throw new Exception("invalid global hotkey");
+
+			auto dpy = XDisplayConnection.get;
+			immutable keycode = keyEvent2KeyCode(gh.key);
+
+			auto hash = keyCode2Hash(keycode, gh.key.modifierState);
+			if (hash in globalHotkeyList) throw new Exception("duplicate global hotkey");
+			if (ghmanager is null) ghmanager = new GlobalHotkeyManager();
+			XSync(dpy, 0/*False*/);
+
+			Window root = RootWindow(dpy, DefaultScreen(dpy));
+			XErrorHandler savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+			ghfailed = false;
+			foreach (immutable uint ormask; masklist[]) {
+				XGrabKey(dpy, keycode, gh.key.modifierState|ormask, /*grab_window*/root, /*owner_events*/0/*False*/, GrabMode.GrabModeAsync, GrabMode.GrabModeAsync);
+			}
+			XSync(dpy, 0/*False*/);
+			XSetErrorHandler(savedErrorHandler);
+
+			if (ghfailed) {
+				savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+				foreach (immutable uint ormask; masklist[]) XUngrabKey(dpy, keycode, gh.key.modifierState|ormask, /*grab_window*/root);
+				XSync(dpy, 0/*False*/);
+				XSetErrorHandler(savedErrorHandler);
+				throw new Exception("cannot register global hotkey");
+			}
+
+			globalHotkeyList[hash] = gh;
+		}
+
+		/// Ditto
+		static void register (const(char)[] akey, void delegate () ahandler) {
+			register(new GlobalHotkey(akey, ahandler));
+		}
+
+		private static void removeByHash (ulong hash) {
+			if (auto ghp = hash in globalHotkeyList) {
+				auto dpy = XDisplayConnection.get;
+				immutable keycode = keyEvent2KeyCode(ghp.key);
+				Window root = RootWindow(dpy, DefaultScreen(dpy));
+				XSync(dpy, 0/*False*/);
+				XErrorHandler savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+				foreach (immutable uint ormask; masklist[]) XUngrabKey(dpy, keycode, ghp.key.modifierState|ormask, /*grab_window*/root);
+				XSync(dpy, 0/*False*/);
+				XSetErrorHandler(savedErrorHandler);
+				globalHotkeyList.remove(hash);
+			}
+		}
+
+		/// Register new global hotkey with previously used `GlobalHotkey` object.
+		/// It is safe to unregister unknown or invalid hotkey.
+		static void unregister (GlobalHotkey gh) {
+			//TODO: add second AA for faster search? prolly doesn't worth it.
+			if (gh is null) return;
+			foreach (const ref kv; globalHotkeyList.byKeyValue) {
+				if (kv.value is gh) {
+					removeByHash(kv.key);
+					return;
+				}
+			}
+		}
+
+		/// Ditto.
+		static void unregister (const(char)[] key) {
+			auto kev = KeyEvent.parse(key);
+			immutable keycode = keyEvent2KeyCode(kev);
+			removeByHash(keyCode2Hash(keycode, kev.modifierState));
+		}
+	}
 }
 
 version(D_Ddoc) {
@@ -2655,7 +2843,7 @@ struct Pen {
 	Be sure these are cleaned up properly. simpledisplay will do its best to do the right thing, including cleaning them up in garbage collection sweeps (one of which is run at most normal program terminations) and catching some deadly signals. It will almost always do the right thing. But, this is no substitute for you managing the resource properly yourself. (And try not to segfault, as recovery from them is alway dicey!)
 
 	Please call `destroy(image);` when you are done with it. The easiest way to do this is with scope:
-	
+
 	---
 		auto image = new Image(256, 256);
 		scope(exit) destroy(image);
@@ -2664,7 +2852,7 @@ struct Pen {
 	As long as you don't hold on to it outside the scope.
 
 	I might change it to be an owned pointer at some point in the future.
-	
+
 	)
 
 	Drawing pixels on the image may be simple, using the `opIndexAssign` function, but
@@ -3231,7 +3419,7 @@ class Sprite {
 		} else version(OSXCocoa) {
 			// FIXME: I have no idea if this is even any good
 			ubyte* rawData;
-        
+
 			auto colorSpace = CGColorSpaceCreateDeviceRGB();
 			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
                                             colorSpace,
@@ -3320,7 +3508,7 @@ void flushGui() {
 interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
-	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+	/*private*//*protected*/ static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
 }
 
 version(X11)
@@ -3804,7 +3992,7 @@ version(Windows) {
 
 				assert(width %8 == 0); // i don't want padding nor do i want the and mask to get fancy
 				assert(height %4 == 0);
-				
+
 				int icon_plen = height*((width+3)&~3);
 				int icon_mlen = height*((((width+7)/8)+3)&~3);
 				icon_len = 40+icon_plen+icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
@@ -4828,7 +5016,7 @@ version(Windows) {
 					where[idx + 1] = rawData[offset + 1]; // g
 					where[idx + 2] = rawData[offset + 0]; // b
 					where[idx + 3] = 255; // a
-					idx += 4; 
+					idx += 4;
 					offset += 3;
 				}
 
@@ -4850,7 +5038,7 @@ version(Windows) {
 					rawData[offset + 1] = what[idx + 1]; // g
 					rawData[offset + 0] = what[idx + 2]; // b
 					//where[idx + 3] = 255; // a
-					idx += 4; 
+					idx += 4;
 					offset += 3;
 				}
 
@@ -6015,7 +6203,7 @@ version(X11) {
 
 					if(tfd.timerfd_settime(pulseFd, 0, &value, null) == -1)
 						throw new Exception("couldn't make pulse timer");
-						
+
 					ep.epoll_event ev = void;
 					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
@@ -6491,7 +6679,7 @@ version(X11) {
 			KeyEvent ke;
 			ke.pressed = e.type == EventType.KeyPress;
 			ke.hardwareCode = e.xkey.keycode;
-			
+
 			auto sym = XKeycodeToKeysym(
 				XDisplayConnection.get(),
 				e.xkey.keycode,
@@ -7337,7 +7525,7 @@ Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* 
                    int x;       /* numerator */
                    int y;       /* denominator */
             }
-	    
+
 	    Aspect min_aspect;
 	    Aspect max_aspect;
             int base_width, base_height;
@@ -7660,7 +7848,7 @@ struct XClientMessageEvent
 		arch_ulong[5] l;
 	}
 	Data data;
-	
+
 }
 version(X86_64) static assert(XClientMessageEvent.sizeof == 96);
 
@@ -8057,6 +8245,11 @@ struct Visual
 	int XBell(Display*, int);
 	int XSync(Display*, bool);
 
+	enum GrabMode { GrabModeSync = 0, GrabModeAsync = 1 }
+	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
+	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
+	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
+
 	struct XPoint {
 		short x;
 		short y;
@@ -8088,32 +8281,32 @@ struct Visual
 	}
 
 
-	struct XGCValues { 
-		int function_;           /* logical operation */ 
-		arch_ulong plane_mask;/* plane mask */ 
-		arch_ulong foreground;/* foreground pixel */ 
-		arch_ulong background;/* background pixel */ 
-		int line_width;         /* line width */ 
-		int line_style;         /* LineSolid, LineOnOffDash, LineDoubleDash */ 
-		int cap_style;          /* CapNotLast, CapButt, 
-					   CapRound, CapProjecting */ 
-		int join_style;         /* JoinMiter, JoinRound, JoinBevel */ 
-		int fill_style;         /* FillSolid, FillTiled, 
-					   FillStippled, FillOpaeueStippled */ 
-		int fill_rule;          /* EvenOddRule, WindingRule */ 
-		int arc_mode;           /* ArcChord, ArcPieSlice */ 
-		Pixmap tile;            /* tile pixmap for tiling operations */ 
-		Pixmap stipple;         /* stipple 1 plane pixmap for stipping */ 
-		int ts_x_origin;        /* offset for tile or stipple operations */ 
-		int ts_y_origin; 
-		Font font;              /* default text font for text operations */ 
-		int subwindow_mode;     /* ClipByChildren, IncludeInferiors */ 
-		Bool graphics_exposures;/* boolean, should exposures be generated */ 
-		int clip_x_origin;      /* origin for clipping */ 
-		int clip_y_origin; 
-		Pixmap clip_mask;       /* bitmap clipping; other calls for rects */ 
-		int dash_offset;        /* patterned/dashed line information */ 
-		char dashes; 
+	struct XGCValues {
+		int function_;           /* logical operation */
+		arch_ulong plane_mask;/* plane mask */
+		arch_ulong foreground;/* foreground pixel */
+		arch_ulong background;/* background pixel */
+		int line_width;         /* line width */
+		int line_style;         /* LineSolid, LineOnOffDash, LineDoubleDash */
+		int cap_style;          /* CapNotLast, CapButt,
+					   CapRound, CapProjecting */
+		int join_style;         /* JoinMiter, JoinRound, JoinBevel */
+		int fill_style;         /* FillSolid, FillTiled,
+					   FillStippled, FillOpaeueStippled */
+		int fill_rule;          /* EvenOddRule, WindingRule */
+		int arc_mode;           /* ArcChord, ArcPieSlice */
+		Pixmap tile;            /* tile pixmap for tiling operations */
+		Pixmap stipple;         /* stipple 1 plane pixmap for stipping */
+		int ts_x_origin;        /* offset for tile or stipple operations */
+		int ts_y_origin;
+		Font font;              /* default text font for text operations */
+		int subwindow_mode;     /* ClipByChildren, IncludeInferiors */
+		Bool graphics_exposures;/* boolean, should exposures be generated */
+		int clip_x_origin;      /* origin for clipping */
+		int clip_y_origin;
+		Pixmap clip_mask;       /* bitmap clipping; other calls for rects */
+		int dash_offset;        /* patterned/dashed line information */
+		char dashes;
 	}
 
 	struct XColor {
@@ -8237,19 +8430,19 @@ private:
     alias const(void)* CGColorSpaceRef;
     alias const(void)* CGImageRef;
     alias uint CGBitmapInfo;
-    
+
     struct objc_super {
         id self;
         Class superclass;
     }
-    
+
     struct CFRange {
         int location, length;
     }
 
     struct NSPoint {
         float x, y;
-        
+
         static fromTuple(T)(T tupl) {
             return NSPoint(tupl.tupleof);
         }
@@ -8281,7 +8474,7 @@ private:
         NSResizableWindowMask = 1 << 3,
         NSTexturedBackgroundWindowMask = 1 << 8
     }
-    
+
     enum : uint {
         kCGImageAlphaNone,
         kCGImageAlphaPremultipliedLast,
@@ -8335,9 +8528,9 @@ private:
                            size_t size, ubyte alignment, const(char)* types);
 
         extern __gshared id NSApp;
-            
+
         void CFRelease(CFTypeRef obj);
-            
+
         CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
                                             const(char)* bytes, int numBytes,
                                             int encoding,
@@ -8346,7 +8539,7 @@ private:
                              char lossByte, bool isExternalRepresentation,
                              char* buffer, int maxBufLen, int* usedBufLen);
         int CFStringGetLength(CFStringRef theString);
-        
+
         CGContextRef CGBitmapContextCreate(void* data,
                                            size_t width, size_t height,
                                            size_t bitsPerComponent,
@@ -8358,10 +8551,10 @@ private:
         CGImageRef CGBitmapContextCreateImage(CGContextRef c);
         size_t CGBitmapContextGetWidth(CGContextRef c);
         size_t CGBitmapContextGetHeight(CGContextRef c);
-                
+
         CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
         void CGColorSpaceRelease(CGColorSpaceRef cs);
-        
+
         void CGContextSetRGBStrokeColor(CGContextRef c,
                                         float red, float green, float blue,
                                         float alpha);
@@ -8373,7 +8566,7 @@ private:
                                       const(char)* str, size_t length);
         void CGContextStrokeLineSegments(CGContextRef c,
                                          const(CGPoint)* points, size_t count);
-        
+
         void CGContextBeginPath(CGContextRef c);
         void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
         void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
@@ -8388,17 +8581,17 @@ private:
                                  uint textEncoding);
         CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
         void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
-        
+
         void CGImageRelease(CGImageRef image);
     }
-    
+
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
         return CFStringCreateWithBytes(null, str.ptr, str.length,
                                              kCFStringEncodingUTF8, false);
     }
-    
+
     // Objective-C calls.
     RetType objc_msgSend_specialized(string selector, RetType, T...)(id self, T args) {
         auto _cmd = sel_registerName(selector.ptr);
@@ -8414,7 +8607,7 @@ private:
     RetType objc_msgSend_classMethod(string className, string selector, RetType, T...)(T args) {
         return objc_msgSend_classMethod!(selector, RetType, T)(className.ptr, args);
     }
-    
+
     alias objc_msgSend_specialized!("setNeedsDisplay:", void, BOOL) setNeedsDisplay;
     alias objc_msgSend_classMethod!("alloc", id) alloc;
     alias objc_msgSend_specialized!("initWithContentRect:styleMask:backing:defer:",
@@ -8464,12 +8657,12 @@ version(OSXCocoa) {
     import std.math : PI;
     import std.algorithm : map;
     import std.array : array;
-    
+
     alias SimpleWindow NativeWindowHandle;
     alias void delegate(id) NativeEventHandler;
 
     static Ivar simpleWindowIvar;
-    
+
     enum KEY_ESCAPE = 27;
 
     mixin template NativeImageImplementation() {
@@ -8522,7 +8715,7 @@ version(OSXCocoa) {
 		}
 	}
 
-        
+
         void createImage(int width, int height) {
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             context = CGBitmapContextCreate(null, width, height, 8, 4*width,
@@ -8535,7 +8728,7 @@ version(OSXCocoa) {
         void dispose() {
             CGContextRelease(context);
         }
-        
+
         void setPixel(int x, int y, Color c) {
             auto offset = (y * width + x) * 4;
             if (c.a == 255) {
@@ -8551,18 +8744,18 @@ version(OSXCocoa) {
             }
         }
     }
-    
+
     mixin template NativeScreenPainterImplementation() {
         CGContextRef context;
         ubyte[4] _outlineComponents;
-        
+
         void create(NativeWindowHandle window) {
             context = window.drawingContext;
         }
-        
+
         void dispose() {
         }
-        
+
         @property void outlineColor(Color color) {
             float alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
@@ -8580,12 +8773,12 @@ version(OSXCocoa) {
                 _outlineComponents[3] = color.a;
             }
         }
-        
+
         @property void fillColor(Color color) {
             CGContextSetRGBFillColor(context,
                                      color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
         }
-        
+
         void drawImage(int x, int y, Image image) {
             auto cgImage = CGBitmapContextCreateImage(image.context);
             auto size = CGSize(CGBitmapContextGetWidth(image.context),
@@ -8593,7 +8786,7 @@ version(OSXCocoa) {
             CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
             CGImageRelease(cgImage);
         }
- 
+
         void drawPixmap(Sprite image, int x, int y) {
 		// FIXME: is this efficient?
             auto cgImage = CGBitmapContextCreateImage(image.context);
@@ -8603,7 +8796,7 @@ version(OSXCocoa) {
             CGImageRelease(cgImage);
         }
 
-        
+
         void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
 		// FIXME: alignment
             if (_outlineComponents[3] != 0) {
@@ -8629,7 +8822,7 @@ version(OSXCocoa) {
             auto offset = ((height - y - 1) * width + x) * 4;
             rawData[offset .. offset+4] = _outlineComponents;
         }
-        
+
         void drawLine(int x1, int y1, int x2, int y2) {
             CGPoint[2] linePoints;
             linePoints[0] = CGPoint(x1, y1);
@@ -8643,14 +8836,14 @@ version(OSXCocoa) {
             CGContextAddRect(context, rect);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawEllipse(int x1, int y1, int x2, int y2) {
             CGContextBeginPath(context);
             auto rect = CGRect(CGPoint(x1, y1), CGSize(x2-x1, y2-y1));
             CGContextAddEllipseInRect(context, rect);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawArc(int x1, int y1, int width, int height, int start, int finish) {
             // @@@BUG@@@ Does not support elliptic arc (width != height).
             CGContextBeginPath(context);
@@ -8658,7 +8851,7 @@ version(OSXCocoa) {
                             start*PI/(180*64), finish*PI/(180*64), 0);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawPolygon(Point[] intPoints) {
             CGContextBeginPath(context);
             auto points = array(map!(CGPoint.fromTuple)(intPoints));
@@ -8666,15 +8859,15 @@ version(OSXCocoa) {
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
     }
-    
+
     mixin template NativeSimpleWindowImplementation() {
         void createWindow(int width, int height, string title) {
             synchronized {
                 if (NSApp == null) initializeApp();
             }
-            
+
             auto contentRect = NSRect(NSPoint(0, 0), NSSize(width, height));
-            
+
             // create the window.
             window = initWithContentRect(alloc("NSWindow"),
                                          contentRect,
@@ -8690,7 +8883,7 @@ version(OSXCocoa) {
             setTitle(window, windowTitle);
             CFRelease(windowTitle);
             center(window);
-            
+
             // create area to draw on.
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             drawingContext = CGBitmapContextCreate(null, width, height,
@@ -8703,7 +8896,7 @@ version(OSXCocoa) {
             matrix.c = -matrix.c;
             matrix.d = -matrix.d;
             CGContextSetTextMatrix(drawingContext, matrix);
-            
+
             // create the subview that things will be drawn on.
             view = initWithFrame(alloc("SDGraphicsView"), contentRect);
             setContentView(window, view);
@@ -8721,29 +8914,29 @@ version(OSXCocoa) {
             invalidate(timer);
             .close(window);
         }
-        
+
         ScreenPainter getPainter() {
 		return ScreenPainter(this, this);
 	}
-        
+
         int eventLoop(long pulseTimeout) {
             if (handlePulse !is null && pulseTimeout != 0) {
                 timer = scheduledTimer(pulseTimeout*1e-3,
                                        view, sel_registerName("simpledisplay_pulse"),
                                        null, true);
             }
-            
+
             setNeedsDisplay(view, true);
             run(NSApp);
             return 0;
         }
-        
+
         id window;
         id timer;
         id view;
         CGContextRef drawingContext;
     }
-    
+
     extern(C) {
     private:
         BOOL returnTrue3(id self, SEL _cmd, id app) {
@@ -8752,7 +8945,7 @@ version(OSXCocoa) {
         BOOL returnTrue2(id self, SEL _cmd) {
             return true;
         }
-        
+
         void pulse(id self, SEL _cmd) {
             auto simpleWindow = cast(SimpleWindow)object_getIvar(self, simpleWindowIvar);
             simpleWindow.handlePulse();
@@ -8786,27 +8979,27 @@ version(OSXCocoa) {
                         simpleWindow.handleKeyEvent(dc, true); // FIXME: what about keyUp?
                 }
             }
-            
+
             // the event's 'keyCode' is hardware-dependent. I don't think people
             // will like it. Let's leave it to the native handler.
-            
+
             // perform the default action.
             auto superData = objc_super(self, superclass(self));
             alias extern(C) void function(objc_super*, SEL, id) T;
             (cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
         }
     }
-    
+
     // initialize the app so that it can be interacted with the user.
     // based on http://cocoawithlove.com/2010/09/minimalist-cocoa-programming.html
     private void initializeApp() {
         // push an autorelease pool to avoid leaking.
         init(alloc("NSAutoreleasePool"));
-        
+
         // create a new NSApp instance
         sharedNSApplication;
         setActivationPolicy(NSApp, NSApplicationActivationPolicyRegular);
-        
+
         // create the "Quit" menu.
         auto menuBar = init(alloc("NSMenu"));
         auto appMenuItem = init(alloc("NSMenuItem"));
@@ -8814,7 +9007,7 @@ version(OSXCocoa) {
         setMainMenu(NSApp, menuBar);
         release(appMenuItem);
         release(menuBar);
-        
+
         auto appMenu = init(alloc("NSMenu"));
         auto quitTitle = createCFString("Quit");
         auto q = createCFString("q");
@@ -8835,7 +9028,7 @@ version(OSXCocoa) {
                         sel_registerName("applicationShouldTerminateAfterLastWindowClosed:"),
                         &returnTrue3, "c@:@");
         objc_registerClassPair(delegateClass);
-    
+
         auto appDelegate = init(alloc("SDWindowCloseDelegate"));
         setDelegate(NSApp, appDelegate);
         activateIgnoringOtherApps(NSApp, true);
@@ -9045,7 +9238,7 @@ extern(System) nothrow @nogc {
 
 		alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
 		__gshared glXCreateContextAttribsARB_fna glXCreateContextAttribsARB = null; // this made public so we don't have to get it again and again; it will become valid after window creation
-		
+
 		void glxInitOtherFunctions () {
 			if (glXCreateContextAttribsARB is null) {
 				glXCreateContextAttribsARB = cast(glXCreateContextAttribsARB_fna)glGetProcAddress("glXCreateContextAttribsARB");
