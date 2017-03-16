@@ -864,7 +864,7 @@ class Window : Widget {
 	this(int width = 500, int height = 500, string title = null) {
 		super(null);
 
-		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizablity.allowResizing);
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing);
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
