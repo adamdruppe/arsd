@@ -26,6 +26,7 @@ MemoryImage readBmp(in ubyte[] data) {
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
 		while(size) {
+			if (current.length == 0) throw new Exception("out of bmp data"); // it's not *that* fatal, so don't throw RangeError
 			*cast(ubyte*)(tgt) = current[0];
 			current = current[1 .. $];
 			tgt++;
@@ -36,7 +37,7 @@ MemoryImage readBmp(in ubyte[] data) {
 	return readBmpIndirect(&specialFread);
 }
 
-MemoryImage readBmpIndirect(void delegate(void*, size_t) fread) {
+MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
 	ushort read2(){ ushort what; fread(&what, 2); return what; }
 	ubyte read1(){ ubyte what; fread(&what, 1); return what; }
@@ -347,7 +348,7 @@ MemoryImage readBmpIndirect(void delegate(void*, size_t) fread) {
 			int w = b%4;
 			if(w)
 			for(int a = 0; a < 4-w; a++)
-				require1(0); // pad until divisible by four
+				read1(); // pad until divisible by four
 		}
 
 

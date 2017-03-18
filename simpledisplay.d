@@ -1053,7 +1053,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	// maps native window handles to SimpleWindow instances, if there are any
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
-	public static SimpleWindow[NativeWindowHandle] nativeMapping;
+	public __gshared SimpleWindow[NativeWindowHandle] nativeMapping;
 
 	/// Width of the window's drawable client area, in pixels.
 	final @property int width() { return _width; }
@@ -1073,6 +1073,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	private int customizationFlags;
 
 	version(without_opengl) {} else {
+		@property bool isOpenGL () const pure nothrow @safe @nogc { return (openglMode == OpenGlOptions.yes); } /// `true` if OpenGL was initialized for this window.
+		@property Resizability resizingMode () const pure nothrow @safe @nogc { return resizability; } /// Original resizability.
+		@property WindowTypes type () const pure nothrow @safe @nogc { return windowType; } /// Original window type.
+		@property int customFlags () const pure nothrow @safe @nogc { return customizationFlags; } /// Original customization flags.
+
 		/// Put your code in here that you want to be drawn automatically when your window is uncovered. Set a handler here *before* entering your event loop any time you pass `OpenGlOptions.yes` to the constructor. Ideally, you will set this delegate immediately after constructing the `SimpleWindow`.
 		void delegate() redrawOpenGlScene;
 
@@ -1384,7 +1389,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
 	/// If you used to use handleNativeEvent depending on it being static, just change it to use
 	/// this instead and it will work the same way.
-	static NativeEventHandler handleNativeGlobalEvent;
+	__gshared NativeEventHandler handleNativeGlobalEvent;
 
 //  private:
 	/// The native implementation is available, but you shouldn't use it unless you are
@@ -1783,10 +1788,10 @@ class Timer {
 		//UINT_PTR handle;
 		//static Timer[UINT_PTR] mapping;
 		HANDLE handle;
-		static Timer[HANDLE] mapping;
+		__gshared Timer[HANDLE] mapping;
 	} else version(linux) {
 		int fd = -1;
-		static Timer[int] mapping;
+		__gshared Timer[int] mapping;
 	} else static assert(0, "timer not supported");
 }
 }
@@ -2491,12 +2496,12 @@ version(Windows) {
 
 	/// Platform-specific for Windows
 	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
-		static int hotkeyId = 0;
+		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
 			throw new Exception("RegisterHotKey failed");
 
-		static void delegate()[WPARAM][HWND] handlers;
+		__gshared void delegate()[WPARAM][HWND] handlers;
 
 		handlers[window.impl.hwnd][id] = handler;
 
@@ -3534,7 +3539,7 @@ void flushGui() {
 interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
-	/*private*//*protected*/ static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+	/*private*//*protected*/ __gshared CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
 }
 
 version(X11)
@@ -5120,9 +5125,9 @@ version(X11) {
 		// FIXME: should the gc be static too so it isn't recreated every time draw is called?
 		GC gc;
 
-		static XFontStruct* font;
-		static bool fontAttempted;
-		static XFontSet fontset;
+		__gshared XFontStruct* font;
+		__gshared bool fontAttempted;
+		__gshared XFontSet fontset;
 
 		void create(NativeWindowHandle window) {
 			this.display = XDisplayConnection.get();
@@ -5433,8 +5438,8 @@ version(X11) {
 
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
-		private static Display* display;
-		private static XIM xim;
+		private __gshared Display* display;
+		private __gshared XIM xim;
 
 		// Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
 		private static void createXIM () {
@@ -5443,7 +5448,7 @@ version(X11) {
 			import core.stdc.stdlib : free;
 			import core.stdc.string : strdup;
 
-			static immutable string[] mtry = [ null, "@im=local", "@im=" ];
+			static immutable string[3] mtry = [ null, "@im=local", "@im=" ];
 
 			auto olocale = strdup(setlocale(LC_ALL, null));
 			setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
@@ -5464,8 +5469,8 @@ version(X11) {
 			ImgList* next;
 		}
 
-		static ImgList* imglist = null;
-		static bool imglistLocked = false; // true: don't register and unregister images
+		static __gshared ImgList* imglist = null;
+		static __gshared bool imglistLocked = false; // true: don't register and unregister images
 
 		static void registerImage (Image img) {
 			if (!imglistLocked && img !is null) {
@@ -5570,8 +5575,8 @@ version(X11) {
 
 		XShmSegmentInfo shminfo;
 
-		static bool xshmQueryCompleted;
-		static bool _xshmAvailable;
+		__gshared bool xshmQueryCompleted;
+		__gshared bool _xshmAvailable;
 		public static @property bool xshmAvailable() {
 			if(!xshmQueryCompleted) {
 				int i1, i2, i3;
@@ -5894,7 +5899,7 @@ version(X11) {
 						}
 					}
 					if (vi is null || useLegacy) {
-						static immutable GLint[] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
+						static immutable GLint[5] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
 						vi = glXChooseVisual(display, 0, attrs.ptr);
 						useLegacy = true;
 					}
@@ -8687,7 +8692,7 @@ version(OSXCocoa) {
     alias SimpleWindow NativeWindowHandle;
     alias void delegate(id) NativeEventHandler;
 
-    static Ivar simpleWindowIvar;
+    __gshared Ivar simpleWindowIvar;
 
     enum KEY_ESCAPE = 27;
 
@@ -9146,7 +9151,7 @@ extern(System) nothrow @nogc {
       if (res is null) {
         //{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
         import core.sys.windows.windef, core.sys.windows.winbase;
-        static HINSTANCE dll = null;
+        __gshared HINSTANCE dll = null;
         if (dll is null) {
           dll = LoadLibraryA("opengl32.dll");
           if (dll is null) return null; // <32, but idc
