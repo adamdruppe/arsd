@@ -1346,6 +1346,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	 * last minute cleanup. */
 	void delegate() onDestroyed;
 
+	static if (UsingSimpledisplayX11)
+	/** Called when Expose event comes. See Xlib manual to understand the arguments.
+	 * Return `false` if you want Simpledisplay to copy backbuffer, or `true` if you did it yourself.
+	 * You will probably never need to setup this handler, it is for very low-level stuff.
+	 *
+	 * WARNING! Xlib is multithread-locked when this handles is called! */
+	bool delegate(int x, int y, int width, int height, int eventsLeft) handleExpose;
+
 	private {
 		int lastMouseX = int.min;
 		int lastMouseY = int.min;
@@ -2912,16 +2920,16 @@ struct Pen {
 +/
 final class Image {
 	///
-	this(int width, int height) {
+	this(int width, int height, bool forcexshm=false) {
 		this.width = width;
 		this.height = height;
 
-		impl.createImage(width, height);
+		impl.createImage(width, height, forcexshm);
 	}
 
 	///
-	this(Size size) {
-		this(size.width, size.height);
+	this(Size size, bool forcexshm=false) {
+		this(size.width, size.height, forcexshm);
 	}
 
 	~this() {
@@ -5076,7 +5084,7 @@ version(Windows) {
 		}
 
 
-		void createImage(int width, int height) {
+		void createImage(int width, int height, bool forcexshm=false) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
 			infoheader.bmiHeader.biWidth = width;
@@ -5587,14 +5595,14 @@ version(X11) {
 		bool usingXshm;
 	final:
 
-		void createImage(int width, int height) {
+		void createImage(int width, int height, bool forcexshm=false) {
 			auto display = XDisplayConnection.get();
 			assert(display !is null);
 			auto screen = DefaultScreen(display);
 
 			// it will only use shared memory for somewhat largish images,
 			// since otherwise we risk wasting shared memory handles on a lot of little ones
-			if(xshmAvailable && width > 100 && height > 100) {
+			if (xshmAvailable && (forcexshm || (width > 100 && height > 100))) {
 				usingXshm = true;
 				handle = XShmCreateImage(
 					display,
@@ -5616,6 +5624,7 @@ version(X11) {
 				XShmAttach(display, &shminfo);
 				XDisplayConnection.registerImage(this);
 			} else {
+				if (forcexshm) throw new Exception("can't create XShm Image");
 				// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
 				import core.stdc.stdlib : malloc;
 				rawData = cast(ubyte*) malloc(width * height * 4);
@@ -6519,9 +6528,11 @@ version(X11) {
 		  break;
 		  case EventType.Expose:
 		  	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
-				if((*win).openglMode == OpenGlOptions.no)
-					XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
-				else {
+				if((*win).openglMode == OpenGlOptions.no) {
+					bool doCopy = true;
+					if (win.handleExpose !is null) doCopy = !win.handleExpose(e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.count);
+					if (doCopy) XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
+				} else {
 					// need to redraw the scene somehow
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
@@ -8743,7 +8754,7 @@ version(OSXCocoa) {
 	}
 
 
-        void createImage(int width, int height) {
+        void createImage(int width, int height, bool forcexshm=false) {
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             context = CGBitmapContextCreate(null, width, height, 8, 4*width,
                                             colorSpace,
