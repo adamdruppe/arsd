@@ -4449,8 +4449,7 @@ version(Windows) {
 			// same position, new size for the client rectangle
 			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
 
-			version(without_opengl) {} else
-			glViewport(0, 0, w, h);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 		}
 
 		void moveResize (int x, int y, int w, int h) {
@@ -4465,8 +4464,7 @@ version(Windows) {
 				throw new Exception("AdjustWindowRect");
 
 			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
-			version(without_opengl) {} else
-			glViewport(0, 0, w, h);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
 
@@ -5724,8 +5722,7 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
-			version(without_opengl) {} else
-			glViewport(0, 0, w, h);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
 
@@ -5733,8 +5730,7 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XMoveResizeWindow(display, window, x, y, w, h);
-			version(without_opengl) {} else
-			glViewport(0, 0, w, h);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
 
