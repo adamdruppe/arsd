@@ -2652,6 +2652,8 @@ class Element {
 		}
 		out (ret) {
 			assert(e.children.length == 0);
+			// all the parentNode is this checks fail because DocumentFragments do not appear in the parent tree, they are invisible...
+			version(none)
 			debug foreach(child; ret) {
 				assert(child.parentNode is this);
 				assert(child.parentDocument is this.parentDocument);
@@ -2675,7 +2677,7 @@ class Element {
 			}
 		}
 
-		auto ret = e.children.dup;
+		auto ret = e.children[];
 		e.children.length = 0;
 
 		return ret;
