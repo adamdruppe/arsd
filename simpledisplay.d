@@ -6288,7 +6288,7 @@ version(X11) {
 					_hidden = true;
 					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
 					goto hiddenWindow;
-				break;
+				//break;
 				/+
 				case WindowTypes.desktop:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DESKTOP"(display);
