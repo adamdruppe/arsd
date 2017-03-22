@@ -1,8 +1,3 @@
-// Please note when compiling on Win64, you need to explicitly list
-// `-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
-// subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`
-//
-// On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
 /*
 	FIXME:
 
@@ -58,6 +53,31 @@
 	and may add new features and fix bugs, but It do not expect to
 	significantly change the API. It has been stable a few years already now.
 
+	Installation_instructions:
+
+	`simpledisplay.d` does not have any dependencies outside the
+	operating system and `color.d`, so it should just work most the
+	time, but there are a few caveats on some systems:
+
+	Please note when compiling on Win64, you need to explicitly list
+	`-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
+	subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`.
+
+	On Win32, you can pass `-L/subsystem:windows` if you don't want a
+	console to be automatically allocated.
+
+	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
+
+	On Ubuntu, you might need to install X11 development libraries to
+	successfully link.
+
+	$(CONSOLE
+		$ sudo apt-get install libglc-dev
+		$ sudo apt-get install libx11-dev
+	)
+
+
+
 	Jump_list:
 
 	Don't worry, you don't have to read this whole documentation file!
@@ -108,7 +128,7 @@
 	import std.conv;
 
 	void main() {
-		auto window = new SimpleWindow(Size(500, 500), "My D App");
+		auto window = new SimpleWindow(Size(500, 500), "Event example - simpledisplay.d");
 
 		int y = 0;
 
@@ -144,126 +164,6 @@
 		  (dchar ch) {
 			addLine(to!string(ch));
 		  }
-		);
-	}
-	---
-
-	$(H3 Pong-example)
-	This program creates a little Pong-like game. Player one is controlled
-	with the keyboard.  Player two is controlled with the mouse. It demos
-	the pulse timer, event handling, and some basic drawing.
-
-	---
-	// dmd example.d simpledisplay.d color.d
-	import arsd.simpledisplay;
-
-	enum paddleMovementSpeed = 8;
-	enum paddleHeight = 48;
-
-	void main() {
-		auto window = new SimpleWindow(600, 400, "Pong game!");
-
-		int playerOnePosition, playerTwoPosition;
-		int playerOneMovement, playerTwoMovement;
-		int playerOneScore, playerTwoScore;
-
-		int ballX, ballY;
-		int ballDx, ballDy;
-
-		void serve() {
-			import std.random;
-
-			ballX = window.width / 2;
-			ballY = window.height / 2;
-			ballDx = uniform(-4, 4) * 3;
-			ballDy = uniform(-4, 4) * 3;
-			if(ballDx == 0)
-				ballDx = uniform(0, 2) == 0 ? 3 : -3;
-		}
-
-		serve();
-
-		window.eventLoop(50, // set a 50 ms timer pulls
-			// This runs once per timer pulse
-			delegate () {
-				auto painter = window.draw();
-
-				painter.clear();
-
-				// Update everyone's motion
-				playerOnePosition += playerOneMovement;
-				playerTwoPosition += playerTwoMovement;
-
-				ballX += ballDx;
-				ballY += ballDy;
-
-				// Bounce off the top and bottom edges of the window
-				if(ballY + 7 >= window.height)
-					ballDy = -ballDy;
-				if(ballY - 8 <= 0)
-					ballDy = -ballDy;
-
-				// Bounce off the paddle, if it is in position
-				if(ballX - 8 <= 16) {
-					if(ballY + 7 > playerOnePosition && ballY - 8 < playerOnePosition + paddleHeight) {
-						ballDx = -ballDx + 1; // add some speed to keep it interesting
-						ballDy += playerOneMovement; // and y movement based on your controls too
-						ballX = 24; // move it past the paddle so it doesn't wiggle inside
-					} else {
-						// Missed it
-						playerTwoScore ++;
-						serve();
-					}
-				}
-
-				if(ballX + 7 >= window.width - 16) { // do the same thing but for player 1
-					if(ballY + 7 > playerTwoPosition && ballY - 8 < playerTwoPosition + paddleHeight) {
-						ballDx = -ballDx - 1;
-						ballDy += playerTwoMovement;
-						ballX = window.width - 24;
-					} else {
-						// Missed it
-						playerOneScore ++;
-						serve();
-					}
-				}
-
-				// Draw the paddles
-				painter.outlineColor = Color.black;
-				painter.drawLine(Point(16, playerOnePosition), Point(16, playerOnePosition + paddleHeight));
-				painter.drawLine(Point(window.width - 16, playerTwoPosition), Point(window.width - 16, playerTwoPosition + paddleHeight));
-
-				// Draw the ball
-				painter.fillColor = Color.red;
-				painter.outlineColor = Color.yellow;
-				painter.drawEllipse(Point(ballX - 8, ballY - 8), Point(ballX + 7, ballY + 7));
-
-				// Draw the score
-				painter.outlineColor = Color.blue;
-				import std.conv;
-				painter.drawText(Point(64, 4), to!string(playerOneScore));
-				painter.drawText(Point(window.width - 64, 4), to!string(playerTwoScore));
-
-			},
-			delegate (KeyEvent event) {
-				// Player 1's controls are the arrow keys on the keyboard
-				if(event.key == Key.Down)
-					playerOneMovement = event.pressed ? paddleMovementSpeed : 0;
-				if(event.key == Key.Up)
-					playerOneMovement = event.pressed ? -paddleMovementSpeed : 0;
-
-			},
-			delegate (MouseEvent event) {
-				// Player 2's controls are mouse movement while the left button is held down
-				if(event.type == MouseEventType.motion && (event.modifierState & ModifierState.leftButtonDown)) {
-					if(event.dy > 0)
-						playerTwoMovement = paddleMovementSpeed;
-					else if(event.dy < 0)
-						playerTwoMovement = -paddleMovementSpeed;
-				} else {
-					playerTwoMovement = 0;
-				}
-			}
 		);
 	}
 	---
@@ -514,6 +414,347 @@
 	`dmd -c simpledisplay.d color.d -D arsd.ddoc`
 +/
 module arsd.simpledisplay;
+
+// FIXME: tetris demo
+// FIXME: space invaders demo
+// FIXME: asteroids demo
+
+/++ $(ID Pong-example)
+	$(H3 Pong)
+
+	This program creates a little Pong-like game. Player one is controlled
+	with the keyboard.  Player two is controlled with the mouse. It demos
+	the pulse timer, event handling, and some basic drawing.
++/
+unittest {
+	// dmd example.d simpledisplay.d color.d
+	import arsd.simpledisplay;
+
+	enum paddleMovementSpeed = 8;
+	enum paddleHeight = 48;
+
+	void main() {
+		auto window = new SimpleWindow(600, 400, "Pong game!");
+
+		int playerOnePosition, playerTwoPosition;
+		int playerOneMovement, playerTwoMovement;
+		int playerOneScore, playerTwoScore;
+
+		int ballX, ballY;
+		int ballDx, ballDy;
+
+		void serve() {
+			import std.random;
+
+			ballX = window.width / 2;
+			ballY = window.height / 2;
+			ballDx = uniform(-4, 4) * 3;
+			ballDy = uniform(-4, 4) * 3;
+			if(ballDx == 0)
+				ballDx = uniform(0, 2) == 0 ? 3 : -3;
+		}
+
+		serve();
+
+		window.eventLoop(50, // set a 50 ms timer pulls
+			// This runs once per timer pulse
+			delegate () {
+				auto painter = window.draw();
+
+				painter.clear();
+
+				// Update everyone's motion
+				playerOnePosition += playerOneMovement;
+				playerTwoPosition += playerTwoMovement;
+
+				ballX += ballDx;
+				ballY += ballDy;
+
+				// Bounce off the top and bottom edges of the window
+				if(ballY + 7 >= window.height)
+					ballDy = -ballDy;
+				if(ballY - 8 <= 0)
+					ballDy = -ballDy;
+
+				// Bounce off the paddle, if it is in position
+				if(ballX - 8 <= 16) {
+					if(ballY + 7 > playerOnePosition && ballY - 8 < playerOnePosition + paddleHeight) {
+						ballDx = -ballDx + 1; // add some speed to keep it interesting
+						ballDy += playerOneMovement; // and y movement based on your controls too
+						ballX = 24; // move it past the paddle so it doesn't wiggle inside
+					} else {
+						// Missed it
+						playerTwoScore ++;
+						serve();
+					}
+				}
+
+				if(ballX + 7 >= window.width - 16) { // do the same thing but for player 1
+					if(ballY + 7 > playerTwoPosition && ballY - 8 < playerTwoPosition + paddleHeight) {
+						ballDx = -ballDx - 1;
+						ballDy += playerTwoMovement;
+						ballX = window.width - 24;
+					} else {
+						// Missed it
+						playerOneScore ++;
+						serve();
+					}
+				}
+
+				// Draw the paddles
+				painter.outlineColor = Color.black;
+				painter.drawLine(Point(16, playerOnePosition), Point(16, playerOnePosition + paddleHeight));
+				painter.drawLine(Point(window.width - 16, playerTwoPosition), Point(window.width - 16, playerTwoPosition + paddleHeight));
+
+				// Draw the ball
+				painter.fillColor = Color.red;
+				painter.outlineColor = Color.yellow;
+				painter.drawEllipse(Point(ballX - 8, ballY - 8), Point(ballX + 7, ballY + 7));
+
+				// Draw the score
+				painter.outlineColor = Color.blue;
+				import std.conv;
+				painter.drawText(Point(64, 4), to!string(playerOneScore));
+				painter.drawText(Point(window.width - 64, 4), to!string(playerTwoScore));
+
+			},
+			delegate (KeyEvent event) {
+				// Player 1's controls are the arrow keys on the keyboard
+				if(event.key == Key.Down)
+					playerOneMovement = event.pressed ? paddleMovementSpeed : 0;
+				if(event.key == Key.Up)
+					playerOneMovement = event.pressed ? -paddleMovementSpeed : 0;
+
+			},
+			delegate (MouseEvent event) {
+				// Player 2's controls are mouse movement while the left button is held down
+				if(event.type == MouseEventType.motion && (event.modifierState & ModifierState.leftButtonDown)) {
+					if(event.dy > 0)
+						playerTwoMovement = paddleMovementSpeed;
+					else if(event.dy < 0)
+						playerTwoMovement = -paddleMovementSpeed;
+				} else {
+					playerTwoMovement = 0;
+				}
+			}
+		);
+	}
+}
+
+/++ $(ID example-minesweeper)
+
+	This minesweeper demo shows how we can implement another classic
+	game with simpledisplay and shows some mouse input and basic output
+	code.
++/
+unittest {
+	import arsd.simpledisplay;
+
+	enum GameSquare {
+		mine = 0,
+		clear,
+		m1, m2, m3, m4, m5, m6, m7, m8
+	}
+
+	enum UserSquare {
+		unknown,
+		revealed,
+		flagged,
+		questioned
+	}
+
+	enum GameState {
+		inProgress,
+		lose,
+		win
+	}
+
+	GameSquare[] board;
+	UserSquare[] userState;
+	GameState gameState;
+	int boardWidth;
+	int boardHeight;
+
+	bool isMine(int x, int y) {
+		if(x < 0 || y < 0 || x >= boardWidth || y >= boardHeight)
+			return false;
+		return board[y * boardWidth + x] == GameSquare.mine;
+	}
+
+	GameState reveal(int x, int y) {
+		if(board[y * boardWidth + x] == GameSquare.clear) {
+			floodFill(userState, boardWidth, boardHeight,
+				UserSquare.unknown, UserSquare.revealed,
+				x, y,
+				(x, y) {
+					if(board[y * boardWidth + x] == GameSquare.clear)
+						return true;
+					else {
+						userState[y * boardWidth + x] = UserSquare.revealed;
+						return false;
+					}
+				});
+		} else {
+			userState[y * boardWidth + x] = UserSquare.revealed;
+			if(isMine(x, y))
+				return GameState.lose;
+		}
+
+		foreach(state; userState) {
+			if(state == UserSquare.unknown || state == UserSquare.questioned)
+				return GameState.inProgress;
+		}
+
+		return GameState.win;
+	}
+
+	void initializeBoard(int width, int height, int numberOfMines) {
+		boardWidth = width;
+		boardHeight = height;
+		board.length = width * height;
+
+		userState.length = width * height;
+		userState[] = UserSquare.unknown; 
+
+		import std.algorithm, std.random, std.range;
+
+		board[] = GameSquare.clear;
+
+		foreach(minePosition; randomSample(iota(0, board.length), numberOfMines))
+			board[minePosition] = GameSquare.mine;
+
+		int x;
+		int y;
+		foreach(idx, ref square; board) {
+			if(square == GameSquare.clear) {
+				int danger = 0;
+				danger += isMine(x-1, y-1)?1:0;
+				danger += isMine(x-1, y)?1:0;
+				danger += isMine(x-1, y+1)?1:0;
+				danger += isMine(x, y-1)?1:0;
+				danger += isMine(x, y+1)?1:0;
+				danger += isMine(x+1, y-1)?1:0;
+				danger += isMine(x+1, y)?1:0;
+				danger += isMine(x+1, y+1)?1:0;
+
+				square = cast(GameSquare) (danger + 1);
+			}
+
+			x++;
+			if(x == width) {
+				x = 0;
+				y++;
+			}
+		}
+	}
+
+	void redraw(SimpleWindow window) {
+		import std.conv;
+
+		auto painter = window.draw();
+
+		painter.clear();
+
+		final switch(gameState) with(GameState) {
+			case inProgress:
+				break;
+			case win:
+				painter.fillColor = Color.green;
+				painter.drawRectangle(Point(0, 0), window.width, window.height);
+				return;
+			case lose:
+				painter.fillColor = Color.red;
+				painter.drawRectangle(Point(0, 0), window.width, window.height);
+				return;
+		}
+
+		int x = 0;
+		int y = 0;
+
+		foreach(idx, square; board) {
+			auto state = userState[idx];
+
+			final switch(state) with(UserSquare) {
+				case unknown:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color(128,128,128);
+
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+				case revealed:
+					if(square == GameSquare.clear) {
+						painter.outlineColor = Color.white;
+						painter.fillColor = Color.white;
+
+						painter.drawRectangle(
+							Point(x * 20, y * 20),
+							20, 20
+						);
+					} else {
+						painter.outlineColor = Color.black;
+						painter.fillColor = Color.white;
+
+						painter.drawText(
+							Point(x * 20, y * 20),
+							to!string(square)[1..2],
+							Point(x * 20 + 20, y * 20 + 20),
+							TextAlignment.Center | TextAlignment.VerticalCenter);
+					}
+				break;
+				case flagged:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color.red;
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+				case questioned:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color.yellow;
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+			}
+
+			x++;
+			if(x == boardWidth) {
+				x = 0;
+				y++;
+			}
+		}
+
+	}
+
+	void main() {
+		auto window = new SimpleWindow(200, 200);
+
+		initializeBoard(10, 10, 10);
+
+		redraw(window);
+		window.eventLoop(0,
+			delegate (MouseEvent me) {
+				if(me.type != MouseEventType.buttonPressed)
+					return;
+				auto x = me.x / 20;
+				auto y = me.y / 20;
+				if(x >= 0 && x < boardWidth && y >= 0 && y < boardHeight) {
+					if(me.button == MouseButton.left) {
+						gameState = reveal(x, y);
+					} else {
+						userState[y*boardWidth+x] = UserSquare.flagged;
+					}
+					redraw(window);
+				}
+			}
+		);
+	}
+}
 
 version(Windows) {
 	import core.sys.windows.windows;
@@ -1681,22 +1922,22 @@ class Timer {
 		} else version(linux) {
 			static import ep = core.sys.linux.epoll;
 
-			static import tfd = core.sys.linux.timerfd;
+			import core.sys.linux.timerfd;
 
-			fd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+			fd = timerfd_create(CLOCK_MONOTONIC, 0);
 			if(fd == -1)
 				throw new Exception("timer create failed");
 
 			mapping[fd] = this;
 
-			tfd.itimerspec value;
+			itimerspec value;
 			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
 			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
 
 			value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
 			value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
 
-			if(tfd.timerfd_settime(fd, 0, &value, null) == -1)
+			if(timerfd_settime(fd, 0, &value, null) == -1)
 				throw new Exception("couldn't make pulse timer");
 
 			version(with_eventloop) {
@@ -2815,6 +3056,30 @@ enum MouseEventType : int {
 // FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
 /++
 	Listen for this on your event listeners if you are interested in mouse action.
+
+	Note that [button] is used on mouse press and release events. If you are curious about which button is being held in during motion, use [modifierState] and check the bitmask for [ModifierState.leftButtonDown], etc.
+
+	Examples:
+
+	This will draw boxes on the window with the mouse as you hold the left button.
+	---
+	import arsd.simpledisplay;
+
+	void main() {
+		auto window = new SimpleWindow();
+
+		window.eventLoop(0,
+			(MouseEvent ev) {
+				if(ev.modifierState & ModifierState.leftButtonDown) {
+					auto painter = window.draw();
+					painter.fillColor = Color.red;
+					painter.outlineColor = Color.black;
+					painter.drawRectangle(Point(ev.x / 16 * 16, ev.y / 16 * 16), 16, 16);
+				}
+			}
+		);
+	}
+	---
 +/
 struct MouseEvent {
 	MouseEventType type; /// movement, press, release, double click. See [MouseEventType]
@@ -6203,7 +6468,7 @@ version(X11) {
 				static import unix = core.sys.posix.unistd;
 				static import err = core.stdc.errno;
 
-				static import tfd = core.sys.linux.timerfd;
+				import core.sys.linux.timerfd;
 				prepareEventLoop();
 
 				ep.epoll_event[16] events = void;
@@ -6226,18 +6491,18 @@ version(X11) {
 				}
 
 				if(pulseTimeout) {
-					pulseFd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+					pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
 					if(pulseFd == -1)
 						throw new Exception("pulse timer create failed");
 
-					tfd.itimerspec value;
+					itimerspec value;
 					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
 					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
 
 					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
 					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
 
-					if(tfd.timerfd_settime(pulseFd, 0, &value, null) == -1)
+					if(timerfd_settime(pulseFd, 0, &value, null) == -1)
 						throw new Exception("couldn't make pulse timer");
 
 					ep.epoll_event ev = void;
