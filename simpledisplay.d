@@ -886,13 +886,16 @@ else
 	window type already is a good match for what you want to do, you should
 	just use [WindowFlags.normal], the default, which will do the right thing
 	for your users.
+
+	The window flags will not always be honored by the operating system
+	and window managers; they are hints, not commands.
 +/
 enum WindowFlags : int {
-	normal, ///
-	skipTaskbar, ///
-	alwaysOnTop, ///
-	alwaysOnBottom, ///
-	cannotBeActivated, ///
+	normal = 0, ///
+	skipTaskbar = 1, ///
+	alwaysOnTop = 2, ///
+	alwaysOnBottom = 4, ///
+	cannotBeActivated = 8, ///
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
