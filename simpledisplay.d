@@ -888,11 +888,12 @@ else
 	for your users.
 +/
 enum WindowFlags : int {
-	normal,
-	skipTaskbar,
-	alwaysOnTop,
-	alwaysOnBottom,
-	cannotBeActivated,
+	normal, ///
+	skipTaskbar, ///
+	alwaysOnTop, ///
+	alwaysOnBottom, ///
+	cannotBeActivated, ///
+	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
 /++
@@ -4899,7 +4900,11 @@ version(Windows) {
 			ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
 			MoveWindow(hwnd,rcWindow.left, rcWindow.top, width + ptDiff.x, height + ptDiff.y, true);
 
-			ShowWindow(hwnd, SW_SHOWNORMAL);
+			if ((customizationFlags&WindowFlags.dontAutoShow) == 0) {
+				ShowWindow(hwnd, SW_SHOWNORMAL);
+			} else {
+				_hidden = true;
+			}
 			this._visibleForTheFirstTimeCalled = false; // hack!
 		}
 
@@ -6274,6 +6279,8 @@ version(X11) {
 
 
 			// FIXME: windowType and customizationFlags
+			Atom[8] wsatoms; // here, due to goto
+			int wmsacount = 0; // here, due to goto
 
 			try
 			final switch(windowType) {
@@ -6336,6 +6343,12 @@ version(X11) {
 				// that doesn't support these things
 			}
 
+			if (customizationFlags&WindowFlags.skipTaskbar) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_SKIP_TASKBAR", true)(display);
+			// the two following flags may be ignored by WM
+			if (customizationFlags&WindowFlags.alwaysOnTop) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_ABOVE", true)(display);
+			if (customizationFlags&WindowFlags.alwaysOnBottom) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_BELOW", true)(display);
+
+			if (wmsacount != 0) XChangeProperty(display, window, GetAtom!("_NET_WM_STATE", true)(display), XA_ATOM, 32 /* bits */,0 /*PropModeReplace*/, wsatoms.ptr, wmsacount);
 
 			if (this.resizability == Resizability.fixedSize ||
 			    (opengl == OpenGlOptions.no && this.resizability != Resizability.allowResizing))
@@ -6383,8 +6396,11 @@ version(X11) {
 				1);
 
 
-			if(windowType != WindowTypes.hidden)
+			if(windowType != WindowTypes.hidden && (customizationFlags&WindowFlags.dontAutoShow) == 0) {
 				XMapWindow(display, window);
+			} else {
+				_hidden = true;
+			}
 		}
 
 		void setNetWMWindowType(Atom type) {
@@ -7794,7 +7810,7 @@ Status XSetWMProtocols(
     int			/* count */
 );
 
-import core.stdc.config : c_long;
+import core.stdc.config : c_long, c_ulong;
 void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
 Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
 
@@ -8466,6 +8482,13 @@ struct Visual
 	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
 
 	Status XInternAtoms(Display*, in char**, int, Bool, Atom*);
+
+	int XSetWindowBackground (Display* display, Window w, c_ulong background_pixel);
+	int XSetWindowBackgroundPixmap (Display* display, Window w, Pixmap background_pixmap);
+	//int XSetWindowBorder (Display* display, Window w, c_ulong border_pixel);
+	//int XSetWindowBorderPixmap (Display* display, Window w, Pixmap border_pixmap);
+	//int XSetWindowBorderWidth (Display* display, Window w, uint width);
+
 
 	// this requires -lXpm
 	int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
