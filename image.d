@@ -22,7 +22,7 @@ private bool strEquCI (const(char)[] s0, const(char)[] s1) pure nothrow @trusted
 
 
 /// Image formats `arsd.image` can load (except `Unknown`, of course).
-enum ImageFormat {
+enum ImageFileFormat {
   Unknown, ///
   Png, ///
   Bmp, ///
@@ -31,8 +31,8 @@ enum ImageFormat {
 
 
 /// Try to guess image format from file extension.
-public ImageFormat guessImageFormatFromExtension (const(char)[] filename) {
-  if (filename.length < 2) return ImageFormat.Unknown;
+public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
+  if (filename.length < 2) return ImageFileFormat.Unknown;
   size_t extpos = filename.length;
   version(Windows) {
     while (extpos > 0 && filename.ptr[extpos-1] != '.' && filename.ptr[extpos-1] != '/' && filename.ptr[extpos-1] != '\\' && filename.ptr[extpos-1] != ':') --extpos;
@@ -41,35 +41,35 @@ public ImageFormat guessImageFormatFromExtension (const(char)[] filename) {
   }
   if (extpos == 0 || filename.ptr[extpos-1] != '.') throw new Exception("cannot determine file format from extension");
   auto ext = filename[extpos..$];
-  if (strEquCI(ext, "png")) return ImageFormat.Png;
-  if (strEquCI(ext, "bmp")) return ImageFormat.Bmp;
-  if (strEquCI(ext, "jpg") || strEquCI(ext, "jpeg")) return ImageFormat.Jpeg;
-  return ImageFormat.Unknown;
+  if (strEquCI(ext, "png")) return ImageFileFormat.Png;
+  if (strEquCI(ext, "bmp")) return ImageFileFormat.Bmp;
+  if (strEquCI(ext, "jpg") || strEquCI(ext, "jpeg")) return ImageFileFormat.Jpeg;
+  return ImageFileFormat.Unknown;
 }
 
 
 /// Try to guess image format by first data bytes.
-public ImageFormat guessImageFormatFromMemory (const(void)[] membuf) {
+public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
   auto buf = cast(const(ubyte)[])membuf;
-  if (buf.length == 0) return ImageFormat.Unknown;
+  if (buf.length == 0) return ImageFileFormat.Unknown;
   // detect file format
   // png
   if (buf.length > 7 && buf.ptr[0] == 0x89 && buf.ptr[1] == 0x50 && buf.ptr[2] == 0x4E &&
       buf.ptr[3] == 0x47 && buf.ptr[4] == 0x0D && buf.ptr[5] == 0x0A && buf.ptr[6] == 0x1A)
   {
-    return ImageFormat.Png;
+    return ImageFileFormat.Png;
   }
   // bmp
   if (buf.length > 6 && buf.ptr[0] == 'B' && buf.ptr[1] == 'M') {
     uint datasize = buf.ptr[2]|(buf.ptr[3]<<8)|(buf.ptr[4]<<16)|(buf.ptr[5]<<24);
-    if (datasize > 6 && datasize <= buf.length) return ImageFormat.Bmp;
+    if (datasize > 6 && datasize <= buf.length) return ImageFileFormat.Bmp;
   }
   // jpg
   try {
     int width, height, components;
-    if (detect_jpeg_image_from_memory(buf, width, height, components)) return ImageFormat.Jpeg;
+    if (detect_jpeg_image_from_memory(buf, width, height, components)) return ImageFileFormat.Jpeg;
   } catch (Exception e) {} // sorry
-  return ImageFormat.Unknown;
+  return ImageFileFormat.Unknown;
 }
 
 
@@ -79,10 +79,10 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
     throw new Exception("cannot load image from unnamed file");
   } else {
     final switch (guessImageFormatFromExtension(filename)) {
-      case ImageFormat.Unknown: throw new Exception("cannot determine file format from extension");
-      case ImageFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
-      case ImageFormat.Bmp: static if (is(T == string)) return readBmp(filename); else return readBmp(filename.idup);
-      case ImageFormat.Jpeg: return readJpeg(filename);
+      case ImageFileFormat.Unknown: throw new Exception("cannot determine file format from extension");
+      case ImageFileFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
+      case ImageFileFormat.Bmp: static if (is(T == string)) return readBmp(filename); else return readBmp(filename.idup);
+      case ImageFileFormat.Jpeg: return readJpeg(filename);
     }
   }
 }
@@ -91,10 +91,10 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
 /// Try to guess image format from data and load that image.
 public MemoryImage loadImageFromMemory (const(void)[] membuf) {
   final switch (guessImageFormatFromMemory(membuf)) {
-    case ImageFormat.Unknown: throw new Exception("cannot determine file format");
-    case ImageFormat.Png: return imageFromPng(readPng(cast(const(ubyte)[])membuf));
-    case ImageFormat.Bmp: return readBmp(cast(const(ubyte)[])membuf);
-    case ImageFormat.Jpeg: return readJpegFromMemory(cast(const(ubyte)[])membuf);
+    case ImageFileFormat.Unknown: throw new Exception("cannot determine file format");
+    case ImageFileFormat.Png: return imageFromPng(readPng(cast(const(ubyte)[])membuf));
+    case ImageFileFormat.Bmp: return readBmp(cast(const(ubyte)[])membuf);
+    case ImageFileFormat.Jpeg: return readJpegFromMemory(cast(const(ubyte)[])membuf);
   }
 }
 
