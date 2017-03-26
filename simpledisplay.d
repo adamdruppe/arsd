@@ -3563,6 +3563,17 @@ struct ScreenPainter {
 		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
 	}
 
+	/++
+		Draws text using a custom font.
+
+		This is still MAJOR work in progress.
+
+		Creating a [DrawableFont] can be tricky and require additional dependencies.
+	+/
+	void drawText(DrawableFont font, Point upperLeft, in char[] text) {
+		font.drawString(this, upperLeft, text);
+	}
+
 	static struct TextDrawingContext {
 		Point boundingBoxUpperLeft;
 		Point boundingBoxLowerRight;
@@ -7411,43 +7422,43 @@ enum ColorMapNotification:int
 	alias void ScreenFormat;
 
 	struct XImage {
-	    int width, height;			/* size of image */
-	    int xoffset;				/* number of pixels offset in X direction */
-	    ImageFormat format;		/* XYBitmap, XYPixmap, ZPixmap */
-	    void *data;					/* pointer to image data */
-	    ByteOrder byte_order;		/* data byte order, LSBFirst, MSBFirst */
-	    int bitmap_unit;			/* quant. of scanline 8, 16, 32 */
-	    int bitmap_bit_order;		/* LSBFirst, MSBFirst */
-	    int bitmap_pad;			/* 8, 16, 32 either XY or ZPixmap */
-	    int depth;					/* depth of image */
-	    int bytes_per_line;			/* accelarator to next line */
-	    int bits_per_pixel;			/* bits per pixel (ZPixmap) */
-	    arch_ulong red_mask;	/* bits in z arrangment */
-	    arch_ulong green_mask;
-	    arch_ulong blue_mask;
-	    XPointer obdata;			/* hook for the object routines to hang on */
-	    struct F {				/* image manipulation routines */
+		int width, height;			/* size of image */
+		int xoffset;				/* number of pixels offset in X direction */
+		ImageFormat format;		/* XYBitmap, XYPixmap, ZPixmap */
+		void *data;					/* pointer to image data */
+		ByteOrder byte_order;		/* data byte order, LSBFirst, MSBFirst */
+		int bitmap_unit;			/* quant. of scanline 8, 16, 32 */
+		int bitmap_bit_order;		/* LSBFirst, MSBFirst */
+		int bitmap_pad;			/* 8, 16, 32 either XY or ZPixmap */
+		int depth;					/* depth of image */
+		int bytes_per_line;			/* accelarator to next line */
+		int bits_per_pixel;			/* bits per pixel (ZPixmap) */
+		arch_ulong red_mask;	/* bits in z arrangment */
+		arch_ulong green_mask;
+		arch_ulong blue_mask;
+		XPointer obdata;			/* hook for the object routines to hang on */
+		static struct F {				/* image manipulation routines */
 			XImage* function(
 				XDisplay* 			/* display */,
 				Visual*				/* visual */,
 				uint				/* depth */,
 				int					/* format */,
 				int					/* offset */,
-				byte*				/* data */,
+				ubyte*				/* data */,
 				uint				/* width */,
 				uint				/* height */,
 				int					/* bitmap_pad */,
 				int					/* bytes_per_line */) create_image;
-			int  function(XImage *)destroy_image;
-			arch_ulong function(XImage *, int, int)get_pixel;
-			int  function(XImage *, int, int, uint)put_pixel;
-			XImage function(XImage *, int, int, uint, uint)sub_image;
-			int function(XImage *, int)add_pixel;
+			int function(XImage *) destroy_image;
+			arch_ulong function(XImage *, int, int) get_pixel;
+			int function(XImage *, int, int, arch_ulong) put_pixel;
+			XImage* function(XImage *, int, int, uint, uint) sub_image;
+			int function(XImage *, arch_long) add_pixel;
 		}
-
 		F f;
 	}
 	version(X86_64) static assert(XImage.sizeof == 136);
+	else version(X86) static assert(XImage.sizeof == 88);
 
 struct XCharStruct {
     short       lbearing;       /* origin to left edge of raster */
@@ -7702,6 +7713,8 @@ XImage *XCreateImage(
     int			/* bitmap_pad */,
     int			/* bytes_per_line */
 );
+
+Status XInitImage (XImage* image);
 
 Atom XInternAtom(
     Display*		/* display */,
@@ -10103,4 +10116,69 @@ void loadBinNameToWindowClassName () {
 	if (sdpyWindowClassStr is null) return; // oops
 	sdpyWindowClassStr[0..len-pos+1] = 0; // just in case
 	sdpyWindowClassStr[0..len-pos] = ebuf[pos..len];
+}
+
+/++
+	An interface representing a font.
+
+	This is still MAJOR work in progress.
++/
+interface DrawableFont {
+	void drawString(ScreenPainter painter, Point upperLeft, in char[] text);
+}
+
+/++
+	Loads a true type font using [arsd.ttf]. That module must be compiled
+	in if you choose to use this function.
+
+	Be warned: this can be slow and memory hungry, especially on remote connections
+	to the X server.
+
+	This is still MAJOR work in progress.
++/
+DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
+	import arsd.ttf;
+	static class ArsdTtfFont : DrawableFont {
+		TtfFont font;
+		int size;
+		this(in ubyte[] data, int size) {
+			font = TtfFont(data);
+			this.size = size;
+		}
+
+		Sprite[string] cache;
+
+		void drawString(ScreenPainter painter, Point upperLeft, in char[] text) {
+			Sprite sprite = (text in cache) ? *(text in cache) : null;
+
+			auto fg = painter.impl._outlineColor;
+			auto bg = painter.impl._fillColor;
+
+			if(sprite is null) {
+				int width, height;
+				auto data = font.renderString(text, size, width, height);
+				auto image = new TrueColorImage(width, height);
+				int pos = 0;
+				foreach(y; 0 .. height)
+				foreach(x; 0 .. width) {
+					fg.a = data[0];
+					bg.a = 255;
+					auto color = alphaBlend(fg, bg);
+					image.imageData.bytes[pos++] = color.r;
+					image.imageData.bytes[pos++] = color.g;
+					image.imageData.bytes[pos++] = color.b;
+					image.imageData.bytes[pos++] = data[0];
+					data = data[1 .. $];
+				}
+				assert(data.length == 0);
+
+				sprite = new Sprite(painter.window, Image.fromMemoryImage(image));
+				cache[text.idup] = sprite;
+			}
+
+			sprite.drawAt(painter, upperLeft);
+		}
+	}
+
+	return new ArsdTtfFont(data, size);
 }
