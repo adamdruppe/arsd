@@ -914,13 +914,16 @@ enum WindowTypes : int {
 	undecorated,
 	/// A window that doesn't actually display on screen. You can use it for cases where you need a window handle to communicate or something.
 	hidden,
+	/// A drop down menu, such as from a menu bar
+	dropdownMenu,
+	/// A popup menu, such as from a right click
+	popupMenu,
 	/*
+	menu, /// a tearable menu bar
 	splashScreen, /// a loading splash screen for your application
 	tooltip, /// A tiny window showing temporary help text or something.
 	notification, /// A popup bubble notification
 	comboBoxDropdown,
-	dropdownMenu,
-	popupMenu,
 	dialog,
 	toolbar
 	*/
@@ -2141,7 +2144,7 @@ wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = tr
 	}
 	if(zeroTerminate) {
 		buffer[got] = 0;
-		got++;
+		//got++;
 	}
 	return buffer[0 .. got];
 }
@@ -4809,6 +4812,9 @@ version(Windows) {
 				case WindowTypes.hidden:
 					_hidden = true;
 				break;
+				case WindowTypes.dropdownMenu:
+				case WindowTypes.popupMenu:
+					// FIXME
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -6310,7 +6316,20 @@ version(X11) {
 					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
 					goto hiddenWindow;
 				//break;
+
+				case WindowTypes.dropdownMenu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display);
+					motifHideDecorations();
+				break;
+				case WindowTypes.popupMenu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display);
+					motifHideDecorations();
+				break;
 				/+
+				case WindowTypes.menu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
+					motifHideDecorations();
+				break;
 				case WindowTypes.desktop:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DESKTOP"(display);
 				break;
@@ -6331,12 +6350,6 @@ version(X11) {
 				break;
 				case WindowTypes.dialog:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display);
-				break;
-				case WindowTypes.dropdownMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display);
-				break;
-				case WindowTypes.popupMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display);
 				break;
 				case WindowTypes.tooltip:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display);
