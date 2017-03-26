@@ -1222,10 +1222,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 
 	/// Move window.
-	void move (int x, int y) { if (!_closed) impl.move(x, y); }
+	void move(int x, int y) { if (!_closed) impl.move(x, y); }
+
+	/// ditto
+	void move(Point p) { if (!_closed) impl.move(p.x, p.y); }
 
 	/// Resize window.
-	void resize (int w, int h) { if (!_closed) impl.resize(w, h); }
+	void resize(int w, int h) { if (!_closed) impl.resize(w, h); }
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
 	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
@@ -2066,9 +2069,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 
 +/
 
-/// this does a delegate because it is actually an async call on X...
-/// the receiver may never be called if the clipboard is empty or unavailable
-/// gets plain text from the clipboard
+/++
+	this does a delegate because it is actually an async call on X...
+	the receiver may never be called if the clipboard is empty or unavailable
+	gets plain text from the clipboard
++/
 void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
@@ -2144,7 +2149,6 @@ wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = tr
 	}
 	if(zeroTerminate) {
 		buffer[got] = 0;
-		//got++;
 	}
 	return buffer[0 .. got];
 }
@@ -3101,6 +3105,21 @@ struct MouseEvent {
 	int modifierState; /// See [ModifierState]
 
 	SimpleWindow window; /// The window in which the event happened.
+
+	Point globalCoordinates() {
+		Point p;
+		if(window is null)
+			throw new Exception("wtf");
+		static if(UsingSimpledisplayX11) {
+			Window child;
+			XTranslateCoordinates(
+				XDisplayConnection.get,
+				window.impl.window,
+				RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get)),
+				x, y, &p.x, &p.y, &child);
+			return p;
+		} else {} // FIXME: windows impl
+	}
 }
 
 /// This gives a few more options to drawing lines and such
@@ -4720,14 +4739,14 @@ version(Windows) {
 			SetWindowTextA(hwnd, toStringz(title));
 		}
 
-		void move (int x, int y) {
+		void move(int x, int y) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
 			// move it while maintaining the same size...
 			MoveWindow(hwnd, x, y, rect.right - rect.left + x, rect.bottom - rect.top + y, true);
 		}
 
-		void resize (int w, int h) {
+		void resize(int w, int h) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
 
@@ -6013,11 +6032,11 @@ version(X11) {
 			return ScreenPainter(this, window);
 		}
 
-		void move (int x, int y) {
+		void move(int x, int y) {
 			XMoveWindow(display, window, x, y);
 		}
 
-		void resize (int w, int h) {
+		void resize(int w, int h) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
@@ -6318,12 +6337,14 @@ version(X11) {
 				//break;
 
 				case WindowTypes.dropdownMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display);
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display));
 					motifHideDecorations();
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				case WindowTypes.popupMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display);
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display));
 					motifHideDecorations();
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				/+
 				case WindowTypes.menu:
@@ -6964,6 +6985,7 @@ version(X11) {
 			mouse.modifierState = event.state;
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
+				mouse.window = *win;
 				if (win.warpEventCount > 0) {
 					debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"warp motion\" message, current count=%d\n", (*win).warpEventCount); }
 					--(*win).warpEventCount;
@@ -6977,7 +6999,6 @@ version(X11) {
 						(*win).handleMouseEvent(mouse);
 					}
 				}
-				mouse.window = *win;
 			}
 
 		  	version(with_eventloop)
@@ -7007,13 +7028,13 @@ version(X11) {
 			//mouse.modifierState = event.detail;
 
 			if(auto win = e.xbutton.window in SimpleWindow.nativeMapping) {
+				mouse.window = *win;
 				(*win).mdx(mouse);
 				if((*win).handleMouseEvent) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
 					(*win).handleMouseEvent(mouse);
 				}
-				mouse.window = *win;
 			}
 			version(with_eventloop)
 				send(mouse);
