@@ -1271,3 +1271,51 @@ struct Rectangle {
 	int right; ///
 	int bottom; ///
 }
+
+/++
+	Implements a flood fill algorithm, like the bucket tool in
+	MS Paint.
+
+	Params:
+		what = the canvas to work with, arranged as top to bottom, left to right elements
+		width = the width of the canvas
+		height = the height of the canvas
+		target = the type to replace. You may pass the existing value if you want to do what Paint does
+		replacement = the replacement value
+		x = the x-coordinate to start the fill (think of where the user clicked in Paint)
+		y = the y-coordinate to start the fill
+		additionalCheck = A custom additional check to perform on each square before continuing. Returning true means keep flooding, returning false means stop.
++/
+void floodFill(T)(
+	T[] what, int width, int height, // the canvas to inspect
+	T target, T replacement, // fill params
+	int x, int y, bool delegate(int x, int y) additionalCheck) // the node
+{
+	T node = what[y * width + x];
+
+	if(target == replacement) return;
+
+	if(node != target) return;
+
+	if(!additionalCheck(x, y))
+		return;
+
+	what[y * width + x] = replacement;
+
+	if(x)
+		floodFill(what, width, height, target, replacement,
+			x - 1, y, additionalCheck);
+
+	if(x != width - 1)
+		floodFill(what, width, height, target, replacement,
+			x + 1, y, additionalCheck);
+
+	if(y)
+		floodFill(what, width, height, target, replacement,
+			x, y - 1, additionalCheck);
+
+	if(y != height - 1)
+		floodFill(what, width, height, target, replacement,
+			x, y + 1, additionalCheck);
+}
+

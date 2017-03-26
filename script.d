@@ -1,24 +1,43 @@
 /++
-	A small script interpreter that is easily embedded inside and has easy two-way interop with the host D program.
-	The script language it implements is based on a hybrid of D and Javascript.
+	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
+	two-way interop with the host D program.  The script language it implements is based on a hybrid of D and Javascript.
+	The type the language uses is based directly on [var] from [arsd.jsvar].
 
 	The interpreter is slightly buggy and poorly documented, but the basic functionality works well and much of
 	your existing knowledge from Javascript will carry over, making it hopefully easy to use right out of the box.
 	See the [#examples] to quickly get the feel of the script language as well as the interop.
 
 
+	Installation_instructions:
+	This script interpreter is contained entirely in two files: jsvar.d and script.d. Download both of them
+	and add them to your project. Then, `import arsd.script;`, declare and populate a `var globals = var.emptyObject;`,
+	and `interpret("some code", globals);` in D.
+
+	There's nothing else to it, no complicated build, no external dependencies.
+
+	$(CONSOLE
+		$ wget https://raw.githubusercontent.com/adamdruppe/arsd/master/script.d
+		$ wget https://raw.githubusercontent.com/adamdruppe/arsd/master/jsvar.d
+
+		$ dmd yourfile.d script.d jsvar.d
+	)
+
 	Script_features:
 
 	OVERVIEW
+	$(LIST
 	* easy interop with D thanks to arsd.jsvar. When interpreting, pass a var object to use as globals.
 		This object also contains the global state when interpretation is done.
 	* mostly familiar syntax, hybrid of D and Javascript
 	* simple implementation is moderately small and fairly easy to hack on (though it gets messier by the day), but it isn't made for speed.
+	)
 
 	SPECIFICS
+	$(LIST
 	* Allows identifiers-with-dashes. To do subtraction, put spaces around the minus sign.
 	* Allows identifiers starting with a dollar sign.
 	* string literals come in "foo" or 'foo', like Javascript, or `raw string` like D. Also come as “nested “double quotes” are an option!”
+	* double quoted string literals can do Ruby-style interpolation: "Hello, #{name}".
 	* mixin aka eval (does it at runtime, so more like eval than mixin, but I want it to look like D)
 	* scope guards, like in D
 	* Built-in assert() which prints its source and its arguments
@@ -119,7 +138,7 @@
 		macro keyword instead of the function keyword. The difference
 		is a macro must interpret its own arguments - it is passed
 		AST objects instead of values. Still a WIP.
-
+	)
 
 
 	FIXME:
@@ -208,6 +227,35 @@ unittest {
 
 	// this shows how to convert the var back to a D static type.
 	int x = globals.x.get!int;
+}
+
+/++
+	$(H3 Macros)
+
+	Macros are like functions, but instead of evaluating their arguments at
+	the call site and passing value, the AST nodes are passed right in. Calling
+	the node evaluates the argument and yields the result (this is similar to
+	to `lazy` parameters in D), and they also have methods like `toSourceCode`,
+	`type`, and `interpolate`, which forwards to the given string.
+
+	The language also supports macros and custom interpolation functions. This
+	example shows an interpolation string being passed to a macro and used
+	with a custom interpolation string.
+
+	You might use this to encode interpolated things or something like that.
++/
+unittest {
+	var globals = var.emptyObject;
+	interpret(q{
+		macro test(x) {
+			return x.interpolate(function(str) {
+				return str ~ "test";
+			});
+		}
+
+		var a = "cool";
+		assert(test("hey #{a}") == "hey cooltest");
+	}, globals;)
 }
 
 public import arsd.jsvar;
@@ -451,7 +499,11 @@ class TokenStream(TextStream) {
 				bool escaped = false;
 				bool mustCopy = false;
 
+				bool allowInterpolation = text[0] == '"';
+
 				bool atEnd() {
+					if(pos == text.length)
+						return false;
 					if(openCurlyQuoteCount) {
 						if(openCurlyQuoteCount == 1)
 							return (pos + 3 <= text.length && text[pos] == 0xe2 && text[pos+1] == 0x80 && text[pos+2] == 0x9d); // ”
@@ -461,13 +513,33 @@ class TokenStream(TextStream) {
 						return text[pos] == end;
 				}
 
-				while(pos < text.length && (escaped || !atEnd())) {
+				bool interpolationDetected = false;
+				bool inInterpolate = false;
+				int interpolateCount = 0;
+
+				while(pos < text.length && (escaped || inInterpolate || !atEnd())) {
+					if(inInterpolate) {
+						if(text[pos] == '{')
+							interpolateCount++;
+						else if(text[pos] == '}') {
+							interpolateCount--;
+							if(interpolateCount == 0)
+								inInterpolate = false;
+						}
+						pos++;
+						continue;
+					}
+
 					if(escaped) {
 						mustCopy = true;
 						escaped = false;
 					} else {
 						if(text[pos] == '\\' && escapingAllowed)
 							escaped = true;
+						if(allowInterpolation && text[pos] == '#' && pos + 1 < text.length  && text[pos + 1] == '{') {
+							interpolationDetected = true;
+							inInterpolate = true;
+						}
 						if(openCurlyQuoteCount) {
 							// also need to count curly quotes to support nesting
 							if(pos + 3 <= text.length && text[pos+0] == 0xe2 && text[pos+1] == 0x80 && text[pos+2] == 0x9c) // “
@@ -479,6 +551,9 @@ class TokenStream(TextStream) {
 					pos++;
 				}
 
+				if(pos == text.length && (escaped || inInterpolate || !atEnd()))
+					throw new ScriptCompileException("Unclosed string literal", token.lineNumber);
+
 				if(mustCopy) {
 					// there must be something escaped in there, so we need
 					// to copy it and properly handle those cases
@@ -486,10 +561,23 @@ class TokenStream(TextStream) {
 					copy.reserve(pos + 4);
 
 					escaped = false;
-					foreach(dchar ch; text[started .. pos]) {
-						if(escaped)
+					foreach(idx, dchar ch; text[started .. pos]) {
+						if(escaped) {
 							escaped = false;
-						else if(ch == '\\') {
+							switch(ch) {
+								case '\\': copy ~= "\\"; break;
+								case 'n': copy ~= "\n"; break;
+								case 'r': copy ~= "\r"; break;
+								case 'a': copy ~= "\a"; break;
+								case 't': copy ~= "\t"; break;
+								case '#': copy ~= "#"; break;
+								case '"': copy ~= "\""; break;
+								case '\'': copy ~= "'"; break;
+								default:
+									throw new ScriptCompileException("Unknown escape char " ~ cast(char) ch, token.lineNumber);
+							}
+							continue;
+						} else if(ch == '\\') {
 							escaped = true;
 							continue;
 						}
@@ -500,6 +588,8 @@ class TokenStream(TextStream) {
 				} else {
 					token.str = text[started .. pos];
 				}
+				if(interpolationDetected)
+					token.wasSpecial = "\"";
 				advance(pos + ((end == 0xe2) ? 3 : 1)); // skip the closing " too
 			} else {
 				// let's check all symbols
@@ -629,8 +719,6 @@ class Expression {
 		obj["type"] = typeid(this).name;
 		obj["toSourceCode"] = (var _this, var[] args) {
 			Expression e = this;
-			// FIXME: if they changed the properties in the
-			// script, we should update them here too.
 			return var(e.toString());
 		};
 		obj["opCall"] = (var _this, var[] args) {
@@ -639,6 +727,13 @@ class Expression {
 			// script, we should update them here too.
 			return e.interpret(sc).value;
 		};
+		obj["interpolate"] = (var _this, var[] args) {
+			StringLiteralExpression e = cast(StringLiteralExpression) this;
+			if(!e)
+				return var(null);
+			return e.interpolate(args.length ? args[0] : var(null), sc);
+		};
+
 
 		// adding structure is going to be a little bit magical
 		// I could have done this with a virtual function, but I'm lazy.
@@ -666,54 +761,73 @@ class MixinExpression : Expression {
 }
 
 class StringLiteralExpression : Expression {
-	string literal;
+	string content;
+	bool allowInterpolation;
+
+	ScriptToken token;
 
 	override string toString() {
 		import std.string : replace;
-		return `"` ~ literal.replace("\\", "\\\\").replace("\"", "\\\"") ~ "\"";
+		return "\"" ~ content.replace(`\`, `\\`).replace("\"", "\\\"") ~ "\"";
+	}
+
+	this(ScriptToken token) {
+		this.token = token;
+		this(token.str);
+		if(token.wasSpecial == "\"")
+			allowInterpolation = true;
+
 	}
 
 	this(string s) {
-		char[] unescaped;
-		int lastPos;
-		bool changed = false;
-		bool inEscape = false;
-		foreach(pos, char c; s) {
-			if(c == '\\') {
-				if(!changed) {
-					changed = true;
-					unescaped.reserve(s.length);
-				}
-				unescaped ~= s[lastPos .. pos];
-				inEscape = true;
-				continue;
-			}
-			if(inEscape) {
-				lastPos = cast(int) pos + 1;
-				inEscape = false;
-				switch(c) {
-					case 'n':
-						unescaped ~= '\n';
-					break;
-					case 't':
-						unescaped ~= '\t';
-					break;
-					case '\\':
-						unescaped ~= '\\';
-					break;
-					default: throw new ScriptCompileException("literal escape unknown " ~ c, 0, null, 0);
-				}
-			}
-		}
+		content = s;
+	}
 
-		if(changed)
-			literal = cast(string) unescaped;
-		else
-			literal = s;
+	var interpolate(var funcObj, PrototypeObject sc) {
+		import std.string : indexOf;
+		if(allowInterpolation) {
+			string r;
+
+			auto c = content;
+			auto idx = c.indexOf("#{");
+			while(idx != -1) {
+				r ~= c[0 .. idx];
+				c = c[idx + 2 .. $];
+				idx = 0;
+				int open = 1;
+				while(idx < c.length) {
+					if(c[idx] == '}')
+						open--;
+					else if(c[idx] == '{')
+						open++;
+					if(open == 0)
+						break;
+					idx++;
+				}
+				if(open != 0)
+					throw new ScriptRuntimeException("Unclosed interpolation thing", token.lineNumber);
+				auto code = c[0 .. idx];
+
+				var result = .interpret(code, sc);
+
+				if(funcObj == var(null))
+					r ~= result.get!string;
+				else
+					r ~= funcObj(result).get!string;
+
+				c = c[idx + 1 .. $];
+				idx = c.indexOf("#{");
+			}
+
+			r ~= c;
+			return var(r);
+		} else {
+			return var(content);
+		}
 	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
-		return InterpretResult(var(literal), sc);
+		return InterpretResult(interpolate(var(null), sc), sc);
 	}
 }
 
@@ -1142,7 +1256,16 @@ class DotVarExpression : VariableExpression {
 
 		if(auto ve = cast(VariableExpression) e1)
 			return this.getVarFrom(sc, ve.getVar(sc, recurse));
-		else {
+		else if(cast(StringLiteralExpression) e1 && e2.identifier == "interpolate") {
+			auto se = cast(StringLiteralExpression) e1;
+			var* functor = new var;
+			//if(!se.allowInterpolation)
+				//throw new ScriptRuntimeException("Cannot interpolate this string", se.token.lineNumber);
+			(*functor)._function = (var _this, var[] args) {
+				return se.interpolate(args.length ? args[0] : var(null), sc);
+			};
+			return *functor;
+		} else {
 			// make a temporary for the lhs
 			auto v = new var();
 			*v = e1.interpret(sc).value;
@@ -1718,7 +1841,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 			else if(token.type == ScriptToken.Type.float_number)
 				e = new FloatLiteralExpression(token.str);
 			else if(token.type == ScriptToken.Type.string)
-				e = new StringLiteralExpression(token.str);
+				e = new StringLiteralExpression(token);
 			else if(token.type == ScriptToken.Type.symbol || token.type == ScriptToken.Type.keyword) {
 				switch(token.str) {
 					case "true":
@@ -2305,7 +2428,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 
 	//writeln("parsed expression ", ret.toString());
 
-	if(expectedEnd.length && tokens.empty)
+	if(expectedEnd.length && tokens.empty && consumeEnd) // going loose on final ; at the end of input for repl convenience
 		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression, expecting " ~ expectedEnd, first.lineNumber);
 
 	if(expectedEnd.length && consumeEnd) {

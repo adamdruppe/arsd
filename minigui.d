@@ -4,7 +4,8 @@
 	minigui is a smallish GUI widget library, aiming to be on par with at least
 	HTML4 forms and a few other expected gui components. It uses native controls
 	on Windows and does its own thing on Linux (Mac is not currently supported but
-	may be later, and should use native controls) to keep size down.
+	may be later, and should use native controls) to keep size down. Its only
+	dependencies are [arsd.simpledisplay] and [arsd.color].
 
 	Its #1 goal is to be useful without being large and complicated like GTK and Qt.
 	I love Qt, if you want something full featured, use it! But if you want something
@@ -18,8 +19,6 @@
 	FOR BEST RESULTS: be sure to link with the appropriate subsystem command
 	`-L/SUBSYSTEM:WINDOWS:5.0`, for example, because otherwise you'll get a
 	console and other visual bugs.
-
-	Examples:
 +/
 module arsd.minigui;
 
@@ -66,6 +65,7 @@ module arsd.minigui;
 
 alias HWND=void*;
 
+///
 abstract class ComboboxBase : Widget {
 	// if the user can enter arbitrary data, we want to use  2 == CBS_DROPDOWN
 	// or to always show the list, we want CBS_SIMPLE == 1
@@ -99,6 +99,7 @@ abstract class ComboboxBase : Widget {
 	}
 }
 
+///
 class DropDownSelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
@@ -106,6 +107,7 @@ class DropDownSelection : ComboboxBase {
 	}
 }
 
+///
 class FreeEntrySelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
@@ -113,6 +115,7 @@ class FreeEntrySelection : ComboboxBase {
 	}
 }
 
+///
 class ComboBox : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
@@ -226,6 +229,7 @@ private const(wchar)* toWstringzInternal(in char[] s) {
 	return str.ptr;
 }
 
+///
 class Action {
 	version(win32_widgets) {
 		int id;
@@ -791,11 +795,13 @@ class Widget {
 	}
 }
 
+///
 class VerticalLayout : Widget {
 	// intentionally blank - widget's default is vertical layout right now
 	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 }
 
+///
 class StaticLayout : Widget {
 	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
@@ -805,6 +811,7 @@ class StaticLayout : Widget {
 	}
 }
 
+///
 class HorizontalLayout : Widget {
 	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
 	override void recomputeChildLayout() {
@@ -843,6 +850,7 @@ class HorizontalLayout : Widget {
 
 
 
+///
 class Window : Widget {
 	int mouseCaptureCount = 0;
 	Widget mouseCapturedBy;
@@ -1114,6 +1122,7 @@ class Window : Widget {
 	}
 }
 
+///
 class MainWindow : Window {
 	this(string title = null) {
 		super(500, 500, title);
@@ -1283,6 +1292,7 @@ class ToolBar : Widget {
 	}
 }
 
+///
 class ToolButton : Button {
 	this(string label, Widget parent = null) {
 		super(label, parent);
@@ -1318,6 +1328,7 @@ class ToolButton : Button {
 }
 
 
+///
 class MenuBar : Widget {
 	MenuItem[] items;
 
@@ -1581,6 +1592,7 @@ class ProgressBar : Widget {
 	override int minHeight() { return 10; }
 }
 
+///
 class Fieldset : Widget {
 	// FIXME: on Windows,it doesn't draw the background on the label
 	// on X, it doesn't fix the clipping rectangle for it
@@ -1643,6 +1655,7 @@ class Fieldset : Widget {
 	}
 }
 
+///
 class Menu : Widget {
 	void remove() {
 		foreach(i, child; parentWindow.children)
@@ -1727,6 +1740,7 @@ class Menu : Widget {
 	override int minHeight() { return Window.lineHeight; }
 }
 
+///
 class MenuItem : MouseActivatedWidget {
 	Menu submenu;
 
@@ -1828,6 +1842,7 @@ class MouseActivatedWidget : Widget {
 }
 
 
+///
 class Checkbox : MouseActivatedWidget {
 
 	override int maxHeight() { return 16; }
@@ -1872,6 +1887,7 @@ class Checkbox : MouseActivatedWidget {
 	}
 }
 
+///
 class VerticalSpacer : Widget {
 	override int maxHeight() { return 20; }
 	override int minHeight() { return 20; }
@@ -1880,6 +1896,7 @@ class VerticalSpacer : Widget {
 	}
 }
 
+///
 class MutuallyExclusiveGroup {
 	MouseActivatedWidget[] members;
 
@@ -1898,6 +1915,7 @@ class MutuallyExclusiveGroup {
 	}
 }
 
+///
 class Radiobox : MouseActivatedWidget {
 	MutuallyExclusiveGroup group;
 
@@ -1946,6 +1964,7 @@ class Radiobox : MouseActivatedWidget {
 }
 
 
+///
 class Button : MouseActivatedWidget {
 	Color normalBgColor;
 	Color hoverBgColor;
@@ -2035,6 +2054,7 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 	return [x, y];
 }
 
+///
 class TextLabel : Widget {
 	override int maxHeight() { return Window.lineHeight; }
 	override int minHeight() { return Window.lineHeight; }
@@ -2053,6 +2073,7 @@ class TextLabel : Widget {
 
 }
 
+///
 class LineEdit : Widget {
 	version(win32_widgets)
 	this(Widget parent = null) {
@@ -2119,6 +2140,7 @@ class LineEdit : Widget {
 	override int widthStretchiness() { return 3; }
 }
 
+///
 class TextEdit : Widget {
 
 	// FIXME
@@ -2227,6 +2249,7 @@ class TextEdit : Widget {
 
 
 
+///
 class MessageBox : Window {
 	this(string message) {
 		super(300, 100);
@@ -2332,6 +2355,7 @@ enum EventType : string {
 	triggered = "triggered",
 }
 
+///
 class Event {
 	this(string eventName, Widget target) {
 		this.eventName = eventName;

@@ -10,14 +10,16 @@
 */
 
 
-/**
-	jsvar provides a D type called 'var' that works similarly to the same in Javascript.
+/++
+	jsvar provides a D type called [var] that works similarly to the same in Javascript.
 
-	It is weakly and dynamically typed, but interops pretty easily with D itself:
+	It is weakly (even weaker than JS, frequently returning null rather than throwing on
+	an invalid operation) and dynamically typed, but interops pretty easily with D itself:
 
+	---
 	var a = 10;
 	a ~= "20";
-	assert(a == "1020");
+		assert(a == "1020");
 
 	var a = function(int b, int c) { return b+c; };
 	// note the second set of () is because of broken @property
@@ -33,29 +35,32 @@
 	};
 
 	assert(b.bar.hey[1] == 2);
+	---
 
 
-	You can also use var.fromJson, a static method, to quickly and easily
-	read json or var.toJson to write it.
+	You can also use [var.fromJson], a static method, to quickly and easily
+	read json or [var.toJson] to write it.
 
-	Also, if you combine this with my new arsd.script module, you get pretty
+	Also, if you combine this with my [arsd.script] module, you get pretty
 	easy interop with a little scripting language that resembles a cross between
 	D and Javascript - just like you can write in D itself using this type.
 
 
 	Properties:
+	$(LIST
 		* note that @property doesn't work right in D, so the opDispatch properties
 		  will require double parenthesis to call as functions.
 
 		* Properties inside a var itself are set specially:
 			obj.propName._object = new PropertyPrototype(getter, setter);
+	)
 
 	D structs can be turned to vars, but it is a copy.
 
 	Wrapping D native objects is coming later, the current ways suck. I really needed
 	properties to do them sanely at all, and now I have it. A native wrapped object will
 	also need to be set with _object prolly.
-*/
++/
 module arsd.jsvar;
 
 version=new_std_json;
@@ -461,7 +466,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 					_this._payload._floating = f;
 				}
 				return _this;
-			} else assert(0);
+			} else static assert(0);
 		} else if(this2.payloadType() == var.Type.String) {
 			static if(op == "&" || op == "|" || op == "^") {
 				long r = cast(long) stringToNumber(this2._payload._string);
@@ -695,7 +700,7 @@ struct var {
 		return _op!(this, this, op, T)(t);
 	}
 
-	public var opUnary(string op)() {
+	public var opUnary(string op : "-")() {
 		static assert(op == "-");
 		final switch(payloadType()) {
 			case Type.Object:
@@ -741,10 +746,20 @@ struct var {
 
 	public var apply(var _this, var[] args) {
 		if(this.payloadType() == Type.Function) {
-			assert(this._payload._function !is null);
+			if(this._payload._function is null) {
+				version(jsvar_throw)
+					throw new DynamicTypeException(this, Type.Function);
+				else
+					return var(null);
+			}
 			return this._payload._function(_this, args);
 		} else if(this.payloadType() == Type.Object) {
-			assert(this._payload._object !is null, this.toString());
+			if(this._payload._object is null) {
+				version(jsvar_throw)
+					throw new DynamicTypeException(this, Type.Function);
+				else
+					return var(null);
+			}
 			var* operator = this._payload._object._peekMember("opCall", true);
 			if(operator !is null && operator._type == Type.Function)
 				return operator.apply(_this, args);
@@ -753,8 +768,13 @@ struct var {
 		version(jsvar_throw)
 			throw new DynamicTypeException(this, Type.Function);
 
-		var ret;
-		return ret;
+		if(this.payloadType() == Type.Integral || this.payloadType() == Type.Floating) {
+			if(args.length)
+				return var(this.get!double * args[0].get!double);
+		}
+
+		//return this;
+		return var(null);
 	}
 
 	public var call(T...)(var _this, T t) {
@@ -768,6 +788,12 @@ struct var {
 	public var opCall(T...)(T t) {
 		return this.call(this, t);
 	}
+
+	/*
+	public var applyWithMagicLocals(var _this, var[] args, var[string] magicLocals) {
+
+	}
+	*/
 
 	public string toString() {
 		return this.get!string;
