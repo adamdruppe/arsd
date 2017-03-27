@@ -3191,6 +3191,8 @@ struct MouseEvent {
 	MouseButton button; /// See [MouseButton]
 	int modifierState; /// See [ModifierState]
 
+	bool doubleClick; /// was it a double click? Only set on type == [MouseEventType.buttonPressed]
+
 	SimpleWindow window; /// The window in which the event happened.
 
 	Point globalCoordinates() {
@@ -4913,7 +4915,7 @@ version(Windows) {
 				wc.lpfnWndProc = &WndProc;
 				wc.lpszClassName = cn.ptr;
 				wc.hIconSm = null;
-				wc.style = CS_HREDRAW | CS_VREDRAW;
+				wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
 				if(!RegisterClassExW(&wc))
 					throw new Exception("RegisterClass " ~ to!string(GetLastError()));
 				knownWinClasses[cnamec] = true;
@@ -5173,6 +5175,7 @@ version(Windows) {
 				case WM_LBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = cast(MouseButton) 1;
+					mouse.doubleClick = msg == WM_LBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_LBUTTONUP:
@@ -5184,6 +5187,7 @@ version(Windows) {
 				case WM_RBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button =cast(MouseButton)  2;
+					mouse.doubleClick = msg == WM_RBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_RBUTTONUP:
@@ -5195,6 +5199,7 @@ version(Windows) {
 				case WM_MBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = cast(MouseButton) 4;
+					mouse.doubleClick = msg == WM_MBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_MBUTTONUP:
@@ -6836,6 +6841,9 @@ version(X11) {
 }
 
 version(X11) {
+
+	int mouseDoubleClickTimeout = 200; /// double click timeout. X only, you probably shouldn't change this.
+
 	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
 		bool done;
@@ -7131,6 +7139,11 @@ version(X11) {
 			mouse.type = cast(MouseEventType) (e.type == EventType.ButtonPress ? 1 : 2);
 			mouse.x = event.x;
 			mouse.y = event.y;
+
+			static Time lastMouseDownTime = 0;
+
+			mouse.doubleClick = e.type == EventType.ButtonPress && (event.time - lastMouseDownTime) < mouseDoubleClickTimeout;
+			if(e.type == EventType.ButtonPress) lastMouseDownTime = event.time;
 
 			switch(event.button) {
 				case 1: mouse.button = MouseButton.left; break; // left
