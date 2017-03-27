@@ -1087,6 +1087,81 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
+	/// Experimental, do not use yet
+	/++
+		Grabs exclusive input from the user until you release it with
+		[releaseInputGrab].
+
+
+		Note: it is extremely rude to do this without good reason.
+		Reasons may include doing some kind of mouse drag operation
+		or popping up a temporary menu that should get events and will
+		be dismissed at ease by the user clicking away.
+
+		Params:
+			keyboard = do you want to grab keyboard input?
+			mouse = grab mouse input?
+			confine = confine the mouse cursor to inside this window?
+	+/
+	void grabInput(bool keyboard = true, bool mouse = true, bool confine = false) {
+		static if(UsingSimpledisplayX11) {
+			XSync(XDisplayConnection.get, 0);
+			if(keyboard)
+				XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+			if(mouse)
+			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */, 
+				EventMask.PointerMotionMask // FIXME: not efficient
+				| EventMask.ButtonPressMask
+				| EventMask.ButtonReleaseMask
+			/* event mask */, GrabMode.GrabModeAsync, GrabMode.GrabModeAsync, confine ? this.impl.window : None, None, CurrentTime)
+				)
+			{
+				XSync(XDisplayConnection.get, 0);
+				import core.stdc.stdio;
+				printf("Grab input failed %d\n", res);
+				//throw new Exception("Grab input failed");
+			} else {
+				// cool
+			}
+
+		} else version(Windows) {
+			// FIXME: keyboard?
+			SetCapture(impl.hwnd);
+			if(confine) {
+				RECT rcClip;
+				//RECT rcOldClip;
+				//GetClipCursor(&rcOldClip); 
+				GetWindowRect(hwnd, &rcClip); 
+				ClipCursor(&rcClip); 
+			}
+		} else static assert(0);
+	}
+
+	/++
+		Releases the grab acquired by [grabInput].
+	+/
+	void releaseInputGrab() {
+		static if(UsingSimpledisplayX11) {
+			XUngrabPointer(XDisplayConnection.get, CurrentTime);
+		} else version(Windows) {
+			ReleaseCapture();
+			ClipCursor(null); 
+		} else static assert(0);
+	}
+
+	/++
+		Sets the input focus to this window.
+
+		You shouldn't call this very often - please let the user control the input focus.
+	+/
+	void focus() {
+		static if(UsingSimpledisplayX11) {
+			XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+		} else version(Windows) {
+			SetFocus(this.impl.hwnd);
+		} else static assert(0);
+	}
+
 	/++
 		Requests attention from the user for this window.
 
@@ -2563,6 +2638,14 @@ version(X11) {
 		return 0;
 	}
 
+	private extern(C) int adrlogger (Display* dpy, XErrorEvent* evt) nothrow @nogc {
+		import core.stdc.stdio;
+		char[265] buffer;
+		XGetErrorText(dpy, evt.error_code, buffer.ptr, cast(int) buffer.length);
+		printf("ERROR: %s\n", buffer.ptr);
+		return 0;
+	}
+
 	/++
 		Global hotkey manager. It contains static methods to manage global hotkeys.
 
@@ -3118,7 +3201,21 @@ struct MouseEvent {
 				RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get)),
 				x, y, &p.x, &p.y, &child);
 			return p;
-		} else {} // FIXME: windows impl
+		} else version(Windows) {
+			POINT[1] points;
+			points[0].x = x;
+			points[0].y = y;
+			MapWindowPoints(
+				window.impl.hwnd,
+				null,
+				points.ptr,
+				points.length
+			);
+			p.x = points[0].x;
+			p.y = points[0].y;
+
+			return p;
+		} else static assert(0);
 	}
 }
 
@@ -4703,7 +4800,7 @@ version(Windows) {
 	// Mix this into the SimpleWindow class
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
-		bool[string] knownWinClasses;
+		static bool[string] knownWinClasses;
 
 		void hideCursor () {
 			++curHidden;
@@ -4743,7 +4840,7 @@ version(Windows) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
 			// move it while maintaining the same size...
-			MoveWindow(hwnd, x, y, rect.right - rect.left + x, rect.bottom - rect.top + y, true);
+			MoveWindow(hwnd, x, y, rect.right - rect.left, rect.bottom - rect.top, true);
 		}
 
 		void resize(int w, int h) {
@@ -4814,7 +4911,7 @@ version(Windows) {
 				wc.hIconSm = null;
 				wc.style = CS_HREDRAW | CS_VREDRAW;
 				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass");
+					throw new Exception("RegisterClass " ~ to!string(GetLastError()));
 				knownWinClasses[cnamec] = true;
 			}
 
@@ -4833,7 +4930,7 @@ version(Windows) {
 				break;
 				case WindowTypes.dropdownMenu:
 				case WindowTypes.popupMenu:
-					// FIXME
+					style = WS_POPUP | WS_SYSMENU | WS_BORDER;
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -4896,7 +4993,7 @@ version(Windows) {
 						ghRC = wglCreateContextAttribsARB(ghDC, null, contextAttribs.ptr);
 						if (ghRC is null && sdpyOpenGLContextAllowFallback) {
 							// activate fallback mode
-							sdpyOpenGLContextVersion = 0;
+							// sdpyOpenGLContextVeto-type focus management policy leads to race conditions because the window becoming unviewable may coincide with the window manager deciding to move the focus elsrsion = 0;
 							ghRC = wglCreateContext(ghDC);
 						}
 						if (ghRC is null)
@@ -4958,8 +5055,7 @@ version(Windows) {
 		}
 
 		// returns zero if it recognized the event
-		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) nothrow {
-		try {
+		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
 
 			void mouseEvent() {
@@ -5103,9 +5199,6 @@ version(Windows) {
 				default: return 1;
 			}
 			return 0;
-			} catch(Exception e) {
-				return 0;
-			}
 		}
 
 		HWND hwnd;
@@ -6260,6 +6353,25 @@ version(X11) {
 			}
 
 			if(opengl == OpenGlOptions.no) {
+
+				bool overrideRedirect = false;
+				if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu)
+					overrideRedirect = true;
+
+				XSetWindowAttributes swa;
+				swa.background_pixel = WhitePixel(display, screen);
+				swa.border_pixel = BlackPixel(display, screen);
+				swa.override_redirect = overrideRedirect;
+				auto root = RootWindow(display, screen);
+				swa.colormap = XCreateColormap(display, root, DefaultVisual(display, screen), AllocNone);
+
+				window = XCreateWindow(display, parent is null ? root : parent.impl.window,
+					0, 0, width, height,
+					0, CopyFromParent, 1 /* InputOutput */, cast(Visual*) CopyFromParent, CWColormap | CWBackPixel | CWBorderPixel | CWOverrideRedirect, &swa);
+
+
+
+				/*
 				window = XCreateSimpleWindow(
 					display,
 					parent is null ? RootWindow(display, screen) : parent.impl.window,
@@ -6268,6 +6380,7 @@ version(X11) {
 					1, // border width
 					BlackPixel(display, screen), // border
 					WhitePixel(display, screen)); // background
+				*/
 
 				buffer = XCreatePixmap(display, cast(Drawable) window, width, height, 24);
 
@@ -6327,8 +6440,8 @@ version(X11) {
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 				break;
 				case WindowTypes.undecorated:
-					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 				break;
 				case WindowTypes.hidden:
 					_hidden = true;
@@ -6337,13 +6450,13 @@ version(X11) {
 				//break;
 
 				case WindowTypes.dropdownMenu:
-					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display));
 					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display));
 					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				case WindowTypes.popupMenu:
-					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display));
 					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display));
 					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				/+
@@ -6436,7 +6549,7 @@ version(X11) {
 			XChangeProperty(
 				display,
 				impl.window,
-				GetAtom!"_NET_WM_PID"(display),
+				GetAtom!("_NET_WM_PID", true)(display),
 				XA_CARDINAL,
 				32 /* bits */,
 				0 /*PropModeReplace*/,
@@ -8706,11 +8819,18 @@ struct Visual
 	alias XErrorHandler = int function(Display*, XErrorEvent*);
 	XErrorHandler XSetErrorHandler(XErrorHandler);
 
+	int XGetErrorText(Display*, int, char*, int);
+
   /* WARNING, this type not in Xlib spec */
   extern(C) alias XIOErrorHandler = int function (Display* display);
   XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
 
   Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+
+
+	int XGrabPointer(Display *display, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor, Time time);
+       int XUngrabPointer(Display *display, Time time);
+       int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
 
 	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
 
