@@ -1112,7 +1112,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			XSync(XDisplayConnection.get, 0);
 			if(keyboard)
 				XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
-			if(mouse)
+			if(mouse) {
 			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */, 
 				EventMask.PointerMotionMask // FIXME: not efficient
 				| EventMask.ButtonPressMask
@@ -1126,6 +1126,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 				//throw new Exception("Grab input failed");
 			} else {
 				// cool
+			}
 			}
 
 		} else version(Windows) {
