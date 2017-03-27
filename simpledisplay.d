@@ -904,6 +904,10 @@ enum WindowFlags : int {
 	then further customize the window by changing `WindowFlags`.
 
 
+	You should mostly only need [normal], [undecorated], and [hidden] for normal
+	use. The others are there to build a foundation for a higher level GUI toolkit,
+	but are themselves not as high level as you might think from their names.
+
 	This list is based on the EMWH spec for X11.
 	http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896
 +/
@@ -5116,11 +5120,13 @@ version(Windows) {
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
+				case WM_SYSKEYDOWN:
+				case WM_SYSKEYUP:
 				case WM_KEYDOWN:
 				case WM_KEYUP:
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
-					ev.pressed = msg == WM_KEYDOWN;
+					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
 					// FIXME
 					// ev.hardwareCode
 
