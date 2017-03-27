@@ -6842,7 +6842,7 @@ version(X11) {
 
 version(X11) {
 
-	int mouseDoubleClickTimeout = 200; /// double click timeout. X only, you probably shouldn't change this.
+	int mouseDoubleClickTimeout = 350; /// double click timeout. X only, you probably shouldn't change this.
 
 	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
