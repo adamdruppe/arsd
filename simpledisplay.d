@@ -1,6 +1,4 @@
 /*
-	FIXME: WindowTypes.hidden to WindowTypes.eventOnly
-
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
 	update and you can pass it on and get more details out of it.
@@ -904,7 +902,7 @@ enum WindowFlags : int {
 	then further customize the window by changing `WindowFlags`.
 
 
-	You should mostly only need [normal], [undecorated], and [hidden] for normal
+	You should mostly only need [normal], [undecorated], and [eventOnly] for normal
 	use. The others are there to build a foundation for a higher level GUI toolkit,
 	but are themselves not as high level as you might think from their names.
 
@@ -916,8 +914,8 @@ enum WindowTypes : int {
 	normal,
 	/// A generic window without a title bar or border. You can draw on the entire area of the screen it takes up and use it as you wish. Remember that users don't really expect these though, so don't use it where a window of any other type is appropriate.
 	undecorated,
-	/// A window that doesn't actually display on screen. You can use it for cases where you need a window handle to communicate or something.
-	hidden,
+	/// A window that doesn't actually display on screen. You can use it for cases where you need a dummy window handle to communicate with or something.
+	eventOnly,
 	/// A drop down menu, such as from a menu bar
 	dropdownMenu,
 	/// A popup menu, such as from a right click
@@ -2870,7 +2868,11 @@ version(Windows) {
 
 
 
-	///
+	/++
+		NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
+		If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
+		use the older version.
+	+/
 	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		/+
 			What I actually want from this:
@@ -5034,7 +5036,7 @@ version(Windows) {
 				case WindowTypes.undecorated:
 					style = WS_POPUP | WS_SYSMENU;
 				break;
-				case WindowTypes.hidden:
+				case WindowTypes.eventOnly:
 					_hidden = true;
 				break;
 				case WindowTypes.dropdownMenu:
@@ -5049,7 +5051,7 @@ version(Windows) {
 			SimpleWindow.nativeMapping[hwnd] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
 
-			if(windowType == WindowTypes.hidden)
+			if(windowType == WindowTypes.eventOnly)
 				return;
 
 			HDC hdc = GetDC(hwnd);
@@ -6538,7 +6540,7 @@ version(X11) {
 			CapableOfHandlingNativeEvent.nativeHandleMapping[window] = this;
 
 			// This gives our window a close button
-			if (windowType != WindowTypes.hidden) {
+			if (windowType != WindowTypes.eventOnly) {
 				Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
 				XSetWMProtocols(display, window, &atom, 1);
 			}
@@ -6557,7 +6559,7 @@ version(X11) {
 					motifHideDecorations();
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 				break;
-				case WindowTypes.hidden:
+				case WindowTypes.eventOnly:
 					_hidden = true;
 					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
 					goto hiddenWindow;
@@ -6671,7 +6673,7 @@ version(X11) {
 				1);
 
 
-			if(windowType != WindowTypes.hidden && (customizationFlags&WindowFlags.dontAutoShow) == 0) {
+			if(windowType != WindowTypes.eventOnly && (customizationFlags&WindowFlags.dontAutoShow) == 0) {
 				XMapWindow(display, window);
 			} else {
 				_hidden = true;
