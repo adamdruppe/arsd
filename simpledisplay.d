@@ -1,5 +1,5 @@
 /*
-	FIXME:
+	FIXME: WindowTypes.hidden to WindowTypes.eventOnly
 
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
@@ -1820,15 +1820,21 @@ public:
 	/// If `timeoutmsecs` is greater than zero, the event will be delayed for at least `timeoutmsecs` milliseconds.
 	bool postTimeout(ET:Object) (ET evt, uint timeoutmsecs) {
 		if (evt is null) return false; // ignore empty events, they can't be handled anyway
+		if (this.closed) return false; // closed windows can't handle events
 		// add events even if no event FD/event object created yet
 		synchronized(this) {
 			if (eventQueueUsed == uint.max) return false; // just in case
 			if (eventQueueUsed < eventQueue.length) {
 				eventQueue[eventQueueUsed++] = QueuedEvent(evt, timeoutmsecs);
 			} else {
+				auto optr = eventQueue.ptr;
 				eventQueue ~= QueuedEvent(evt, timeoutmsecs);
 				++eventQueueUsed;
 				assert(eventQueueUsed == eventQueue.length);
+				if (eventQueue.ptr !is optr) {
+					import core.memory : GC;
+					if (eventQueue.ptr is GC.addrOf(eventQueue.ptr)) GC.setAttr(eventQueue.ptr, GC.BlkAttr.NO_INTERIOR);
+				}
 			}
 			if (!eventWakeUp()) {
 				// can't wake up event processor, so there is no reason to keep the event
@@ -1848,9 +1854,9 @@ private:
 	private import core.time : MonoTime;
 
 	version(X11) {
-		int customEventFD = -1;
+		__gshared int customEventFD = -1;
 	} else version(Windows) {
-		HANDLE customEventH = null;
+		__gshared HANDLE customEventH = null;
 	}
 
 	// wake up event processor
@@ -1943,6 +1949,14 @@ private:
 		}
 	}
 
+	// for all windows in nativeMapping
+	static void processAllCustomEvents () {
+		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
+			if (sw is null || sw.closed) continue;
+			sw.processCustomEvents();
+		}
+	}
+
 	// 0: infinite (i.e. no scheduled events in queue)
 	uint eventQueueTimeoutMSecs () {
 		synchronized(this) {
@@ -1961,6 +1975,20 @@ private:
 			}
 			return (res >= int.max ? 0 : res);
 		}
+	}
+
+	// for all windows in nativeMapping
+	static uint eventAllQueueTimeoutMSecs () {
+		uint res = uint.max;
+		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
+			if (sw is null || sw.closed) continue;
+			uint to = sw.eventQueueTimeoutMSecs();
+			if (to && to < res) {
+				res = to;
+				if (to == 1) break; // can't have less than this
+			}
+		}
+		return (res >= int.max ? 0 : res);
 	}
 }
 
@@ -2839,6 +2867,80 @@ version(Windows) {
 			throw new Exception("SendInput failed");
 		}
 	}
+
+
+
+	///
+	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+		/+
+			What I actually want from this:
+
+			* set / change: icon, tooltip
+			* handle: mouse click, right click
+			* show: notification bubble.
+		+/
+
+
+		WindowsIcon icon;
+		void delegate(MouseButton button) onClick;
+		HWND hwnd;
+
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+				return 0;
+			};
+		}
+
+		///
+		this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
+			this.onClick = onClick;
+			this.icon = new WindowsIcon(icon);
+
+			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+
+			static bool registered = false;
+			if(!registered) {
+				WNDCLASSEX wc;
+				wc.cbSize = wc.sizeof;
+				wc.hInstance = hInstance;
+				wc.lpfnWndProc = &WndProc;
+				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+			}
+
+			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
+			if(hwnd is null)
+				throw new Exception("CreateWindow");
+
+			NOTIFYICONDATA data;
+			data.cbSize = data.sizeof;
+			data.hWnd = hwnd;
+			data.uID = cast(uint) cast(void*) this;
+			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE; // | NIF_SHOWTIP /* use default tooltip, for now. */;
+				// NIF_INFO means show balloon
+			data.uCallbackMessage = WM_USER;
+			data.hIcon = this.icon.hIcon;
+			data.szTip = ""; // FIXME
+			//data.dwState = 0; // NIS_HIDDEN; // windows vista
+			//data.dwStateMask = NIS_HIDDEN; // windows vista
+
+			// data.szInfo = ""; // for balloon
+			// data.szInfoTitle = ""; // for balloon
+			// data.swInfoFlags = 0; // for balloon https://msdn.microsoft.com/en-us/library/windows/desktop/bb773352(v=vs.85).aspx
+			// data.hBalloonIcon = null; // for balloon
+			//data.uVersion = NOTIFYICON_VERSION_4; // Windows Vista and up
+
+
+			Shell_NotifyIcon(NIM_ADD, &data);
+		}
+
+		///
+		void close () {
+		}
+	}
+
+
 
 	// global hotkey helper function
 
@@ -5385,17 +5487,17 @@ version(Windows) {
 				}
 			}
 
-			processCustomEvents(); // process events added before event object creation
+			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
 
 			while(ret != 0) {
-				auto wto = eventQueueTimeoutMSecs();
+				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
 					(wto == 0 ? INFINITE : wto), /* timeout */
 					0x04FF, /* QS_ALLINPUT */
 					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
 
-				processCustomEvents(); // anyway
+				SimpleWindow.processAllCustomEvents(); // anyway
 				enum WAIT_OBJECT_0 = 0;
 				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
 					// process handles[waitResult - WAIT_OBJECT_0];
@@ -6716,7 +6818,7 @@ version(X11) {
 					}
 				}
 
-				processCustomEvents(); // process events added before event FD creation
+				SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
 
 				{
 					this.mtLock();
@@ -6725,7 +6827,7 @@ version(X11) {
 				}
 				while(!done) {
 					bool forceXPending = false;
-					auto wto = eventQueueTimeoutMSecs();
+					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
 					{
 						this.mtLock();
@@ -6741,7 +6843,7 @@ version(X11) {
 						throw new Exception("epoll wait failure");
 					}
 
-					processCustomEvents(); // anyway
+					SimpleWindow.processAllCustomEvents(); // anyway
 					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
 					foreach(idx; 0 .. nfds) {
 						if(done) break;
@@ -6776,7 +6878,7 @@ version(X11) {
 								ulong n;
 								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
 								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
-								//processCustomEvents();
+								//SimpleWindow.processAllCustomEvents();
 							} else {
 								// some other timer
 								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
