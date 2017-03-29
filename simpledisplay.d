@@ -2227,6 +2227,17 @@ struct WCharzBuffer {
 		return buffer.ptr;
 	}
 
+	wchar[] slice() {
+		return buffer;
+	}
+
+	void copyInto(R)(ref R r) {
+		static if(is(R == wchar[N], size_t N)) {
+			r[0 .. this.length] = slice[];
+			r[this.length] = 0;
+		} else static assert(0, "can only copy into wchar[n], not " ~ R.stringof);
+	}
+
 	this(in char[] data) {
 		/*
 			I don't think there's any string with a longer length
@@ -2872,6 +2883,9 @@ version(Windows) {
 		NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
 		If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
 		use the older version.
+
+		EXPERIMENTAL: this class will soon be merged with the same-named version(X11)
+		class.
 	+/
 	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		/+
@@ -2887,15 +2901,49 @@ version(Windows) {
 		void delegate(MouseButton button) onClick;
 		HWND hwnd;
 
-		NOTIFYICONDATA data;
+		NOTIFYICONDATAW data;
 
 		NativeEventHandler getNativeEventHandler() {
 			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+				if(msg == WM_USER) {
+					auto event = LOWORD(lParam);
+					auto iconId = HIWORD(lParam);
+					//auto x = GET_X_LPARAM(wParam);
+					//auto y = GET_Y_LPARAM(wParam);
+					switch(event) {
+						case WM_LBUTTONDOWN:
+							if(onClick)
+								onClick(MouseButton.left);
+						break;
+						case WM_RBUTTONDOWN:
+							if(onClick)
+								onClick(MouseButton.right);
+						break;
+						case WM_MBUTTONDOWN:
+							if(onClick)
+								onClick(MouseButton.middle);
+						break;
+						case WM_MOUSEMOVE:
+							// sent, we could use it.
+						break;
+						case WM_MOUSEWHEEL:
+							// NOT SENT
+						break;
+						//case NIN_KEYSELECT:
+						//case NIN_SELECT:
+						break;
+						default: {}
+					}
+				}
 				return 0;
 			};
 		}
 
-		///
+		/++
+			Note that on Windows, only left, right, and middle buttons are sent.
+			Mouse wheel buttons are NOT set, so don't rely on those events if your
+			program is meant to be used on Windows too.
+		+/
 		this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
 			this.onClick = onClick;
 			this.icon = new WindowsIcon(icon);
@@ -2920,27 +2968,109 @@ version(Windows) {
 			data.cbSize = data.sizeof;
 			data.hWnd = hwnd;
 			data.uID = cast(uint) cast(void*) this;
-			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE; // | NIF_SHOWTIP /* use default tooltip, for now. */;
+			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP /* use default tooltip, for now. */;
 				// NIF_INFO means show balloon
 			data.uCallbackMessage = WM_USER;
 			data.hIcon = this.icon.hIcon;
 			data.szTip = ""; // FIXME
+			data.dwState = 0; // NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+
+			data.uVersion = 4; // NOTIFYICON_VERSION_4; // Windows Vista and up
+
+
+			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
+
+			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
+		}
+
+		///
+		void changeIcon(MemoryImage icon) {
+			this.icon = new WindowsIcon(icon);
+
+			data.uFlags = NIF_ICON;
+			data.hIcon = this.icon.hIcon;
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		}
+
+		///
+		void showBalloon(string title, string message, MemoryImage icon = null) {
+			enum NIF_INFO = 0x00000010;
+
+			data.uFlags = NIF_INFO;
+
+			enum NIIF_RESPECT_QUIET_TIME = 0x00000080;
+			enum NIIF_LARGE_ICON  = 0x00000020;
+			enum NIIF_NOSOUND = 0x00000010;
+			enum NIIF_USER = 0x00000004;
+			enum NIIF_ERROR = 0x00000003;
+			enum NIIF_WARNING = 0x00000002;
+			enum NIIF_INFO = 0x00000001;
+			enum NIIF_NONE = 0;
+
+			WCharzBuffer t = WCharzBuffer(title);
+			WCharzBuffer m = WCharzBuffer(message);
+
+			t.copyInto(data.szInfoTitle);
+			m.copyInto(data.szInfo);
+			data.dwInfoFlags = NIIF_RESPECT_QUIET_TIME;
+
+			if(icon !is null) {
+				auto i = new WindowsIcon(icon);
+				data.hBalloonIcon = i.hIcon;
+				data.dwInfoFlags |= NIIF_USER;
+			}
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		}
+
+		enum NIF_SHOWTIP = 0x00000080;
+
+		private static struct NOTIFYICONDATAW {
+			DWORD cbSize;
+			HWND  hWnd;
+			UINT  uID;
+			UINT  uFlags;
+			UINT  uCallbackMessage;
+			HICON hIcon;
+			WCHAR[128] szTip;
+			DWORD dwState;
+			DWORD dwStateMask;
+			WCHAR[256] szInfo;
+			union {
+				UINT uTimeout;
+				UINT uVersion;
+			}
+			WCHAR[64] szInfoTitle;
+			DWORD dwInfoFlags;
+			GUID  guidItem;
+			HICON hBalloonIcon;
+		}
+
+		///
+		void show() {
+			data.uFlags = NIF_STATE;
 			//data.dwState = 0; // NIS_HIDDEN; // windows vista
 			//data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		}
 
-			// data.szInfo = ""; // for balloon
-			// data.szInfoTitle = ""; // for balloon
-			// data.swInfoFlags = 0; // for balloon https://msdn.microsoft.com/en-us/library/windows/desktop/bb773352(v=vs.85).aspx
-			// data.hBalloonIcon = null; // for balloon
-			//data.uVersion = NOTIFYICON_VERSION_4; // Windows Vista and up
-
-
-			Shell_NotifyIcon(NIM_ADD, &data);
+		///
+		void hide() {
+			data.uFlags = NIF_STATE;
+			//data.dwState = NIS_HIDDEN; // windows vista
+			//data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
 		}
 
 		///
 		void close () {
-			Shell_NotifyIcon(NIM_DELETE, &data);
+			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
+		}
+
+		~this() {
+			close();
 		}
 	}
 
