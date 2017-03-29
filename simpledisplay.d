@@ -2887,6 +2887,8 @@ version(Windows) {
 		void delegate(MouseButton button) onClick;
 		HWND hwnd;
 
+		NOTIFYICONDATA data;
+
 		NativeEventHandler getNativeEventHandler() {
 			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 				return 0;
@@ -2915,7 +2917,6 @@ version(Windows) {
 			if(hwnd is null)
 				throw new Exception("CreateWindow");
 
-			NOTIFYICONDATA data;
 			data.cbSize = data.sizeof;
 			data.hWnd = hwnd;
 			data.uID = cast(uint) cast(void*) this;
@@ -2939,6 +2940,7 @@ version(Windows) {
 
 		///
 		void close () {
+			Shell_NotifyIcon(NIM_DELETE, &data);
 		}
 	}
 
@@ -5505,6 +5507,7 @@ version(Windows) {
 					// process handles[waitResult - WAIT_OBJECT_0];
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
+					if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it.
 					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
 						if(ret == -1)
 							throw new Exception("GetMessage failed");
