@@ -6904,12 +6904,48 @@ void fillForm(T)(Form form, T obj, string name) {
 	fillData((k, v) => form.setValue(k, v), obj, name); 
 } 
 
+
+/+
+Syntax:
+
+Tag: tagname#id.class
+Tree: Tag(Children, comma, separated...)
+Children: Tee or Variable
+Variable: $varname with optional |funcname following.
+
+If a variable has a tree after it, it breaks the variable down:
+	* if array, foreach it does the tree
+	* if struct, it breaks down the member variables
+
+stolen from georgy on irc, see: https://github.com/georgy7/stringplate
++/
+struct Stringplate {
+	/++
+
+	+/
+	this(string s) {
+
+	}
+
+	/++
+
+	+/
+	Element expand(T...)(T vars) {
+		return null;
+	}
+}
+///
+unittest {
+	auto stringplate = Stringplate("#bar(.foo($foo), .baz($baz))");
+	assert(stringplate.expand.innerHTML == `<div id="bar"><div class="foo">$foo</div><div class="baz">$baz</div></div>`);
+}
+
 /*
-Copyright: Adam D. Ruppe, 2010 - 2016
+Copyright: Adam D. Ruppe, 2010 - 2017
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 
-        Copyright Adam D. Ruppe 2010-2016.
+        Copyright Adam D. Ruppe 2010-2017.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)

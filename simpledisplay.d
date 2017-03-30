@@ -1993,12 +1993,12 @@ private:
 
 
 /++
+	Provides an icon on the system notification area (also known as the system tray).
+
+
 	NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
 	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
 	use the older version.
-
-	EXPERIMENTAL: this class will soon be merged with the same-named version(X11)
-	class.
 +/
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
@@ -2061,7 +2061,6 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			timer = null;
 		}
 
-		///
 		void redraw() {
 			if (!active) return;
 
@@ -2149,13 +2148,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		private int height = 16;
 		private bool active = false;
 
-		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window)
-		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates
-		void delegate () onLeave; ///
+		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window). X11 only.
+		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates. X11 only.
+		void delegate () onLeave; /// X11 only.
 
 		@property bool closed () const pure nothrow @safe @nogc { return !active; } ///
 
-		/// Get global window coordinates and size. This can be used to show various notifications.
+		/// X11 only. Get global window coordinates and size. This can be used to show various notifications.
 		void getWindowRect (out int x, out int y, out int width, out int height) {
 			if (!active) { width = 1; height = 1; return; } // 1: just in case
 			Window dummyw;
@@ -2325,14 +2324,14 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	private void delegate (MouseButton button) onClick_;
 
 	///
-	final void delegate(MouseButton) onClick() {
+	@property final void delegate(MouseButton) onClick() {
 		if(onClick_ is null)
 			onClick_ = delegate void(MouseButton) {};
 		return onClick_;
 	}
 
-	///
-	final void onClick(void delegate(MouseButton) handler) {
+	/// ditto
+	@property final void onClick(void delegate(MouseButton) handler) {
 		// I made this a property setter so we can wrap smaller arg
 		// delegates and just forward all to onClickEx or something.
 		onClick_ = handler;
@@ -2365,7 +2364,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		} else static assert(0);
 	}
 
-	///
+	/// ditto
 	@property void icon (Image i) {
 		version(X11) {
 			if (!active) return;
@@ -2386,6 +2385,10 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if(balloon) {
 				hideBalloon();
 			}
+			// I know there are two specs for this, but one is never
+			// implemented by any window manager I have ever seen, and
+			// the other is a bloated mess and too complicated for simpledisplay...
+			// so doing my own little window instead.
 			balloon = new SimpleWindow(180, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
 
 			int x, y, width, height;
