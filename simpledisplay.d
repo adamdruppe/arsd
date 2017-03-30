@@ -920,11 +920,12 @@ enum WindowTypes : int {
 	dropdownMenu,
 	/// A popup menu, such as from a right click
 	popupMenu,
+	/// A popup bubble notification
+	notification,
 	/*
 	menu, /// a tearable menu bar
 	splashScreen, /// a loading splash screen for your application
 	tooltip, /// A tiny window showing temporary help text or something.
-	notification, /// A popup bubble notification
 	comboBoxDropdown,
 	dialog,
 	toolbar
@@ -2479,6 +2480,45 @@ version(X11) {
 			};
 		}
 
+		private SimpleWindow balloon;
+		private Timer timer;
+
+		void showBalloon(string title, string message, MemoryImage icon = null) {
+
+			if(balloon) {
+				hideBalloon();
+			}
+			balloon = new SimpleWindow(180, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
+
+			int x, y, width, height;
+			getWindowRect(x, y, width, height);
+
+			balloon.move(x - balloon.width, y - balloon.height);
+			auto painter = balloon.draw();
+			painter.fillColor = Color(220, 220, 220);
+			painter.outlineColor = Color.black;
+			painter.drawRectangle(Point(0, 0), balloon.width, balloon.height);
+			painter.drawText(Point(4, 4), title);
+			painter.drawText(Point(4, 4 + painter.fontHeight * 2), message);
+			balloon.setEventHandlers(
+				(MouseEvent ev) {
+					if(ev.type == MouseEventType.buttonPressed) {
+						hideBalloon();
+					}
+				}
+			);
+			balloon.show();
+
+			timer = new Timer(10_000, &hideBalloon);
+		}
+
+		private void hideBalloon() {
+			balloon.close();
+			timer.destroy();
+			balloon = null;
+			timer = null;
+		}
+
 		///
 		void redraw() {
 			if (!active) return;
@@ -2846,17 +2886,8 @@ version(X11) {
 	}
 }
 
-version(D_Ddoc) {
-	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
-	void sendSyntheticInput(wstring s);
-	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
-	int registerHotKey(SimpleWindow window, uint modifiers, uint vk, void delegate() handler);
-	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
-	void unregisterHotKey(SimpleWindow window, int id);
-}
-
 version(Windows) {
-	/// Platform-specific
+	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
 	void sendSyntheticInput(wstring s) {
 		INPUT[] inputs;
 		inputs.reserve(s.length * 2);
@@ -3078,7 +3109,7 @@ version(Windows) {
 
 	// global hotkey helper function
 
-	/// Platform-specific for Windows
+	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
 	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
 		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
@@ -3117,7 +3148,7 @@ version(Windows) {
 		return id;
 	}
 
-	/// Platform-specific for Windows
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
@@ -5173,6 +5204,7 @@ version(Windows) {
 				break;
 				case WindowTypes.dropdownMenu:
 				case WindowTypes.popupMenu:
+				case WindowTypes.notification:
 					style = WS_POPUP | WS_SYSMENU | WS_BORDER;
 			}
 
@@ -6623,7 +6655,7 @@ version(X11) {
 			if(opengl == OpenGlOptions.no) {
 
 				bool overrideRedirect = false;
-				if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu)
+				if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.notification)
 					overrideRedirect = true;
 
 				XSetWindowAttributes swa;
@@ -6727,6 +6759,11 @@ version(X11) {
 				case WindowTypes.popupMenu:
 					motifHideDecorations();
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
+				case WindowTypes.notification:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NOTIFICATION"(display));
 					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				/+
