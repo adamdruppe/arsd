@@ -2378,10 +2378,22 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	}
 
 	/++
-		Shows a balloon notification.
+		Shows a balloon notification. You can only show one balloon at a time, if you call
+		it twice while one is already up, the first balloon will be replaced.
+		
+		
+		The user is free to block notifications and they will automatically disappear after
+		a timeout period.
+
+		Params:
+			title = Title of the notification. Must be 40 chars or less.
+			message = The message to pop up. Must be 220 chars or less.
+			icon = the icon to display with the notification. If null, it uses your existing icon.
+			onclick = delegate called if the user clicks the balloon. (not yet implemented)
 	+/
-	void showBalloon(string title, string message, MemoryImage icon = null) {
+	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null) {
 		version(X11) {
+			if(!active) return;
 			if(balloon) {
 				hideBalloon();
 			}
@@ -2389,7 +2401,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			// implemented by any window manager I have ever seen, and
 			// the other is a bloated mess and too complicated for simpledisplay...
 			// so doing my own little window instead.
-			balloon = new SimpleWindow(180, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
+			balloon = new SimpleWindow(380, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
 
 			int x, y, width, height;
 			getWindowRect(x, y, width, height);
@@ -2399,12 +2411,34 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			painter.fillColor = Color(220, 220, 220);
 			painter.outlineColor = Color.black;
 			painter.drawRectangle(Point(0, 0), balloon.width, balloon.height);
-			painter.drawText(Point(4, 4), title);
-			painter.drawText(Point(4, 4 + painter.fontHeight * 2), message);
+			auto iconWidth = icon is null ? 0 : icon.width;
+			if(icon)
+				painter.drawImage(Point(4, 4), Image.fromMemoryImage(icon));
+			iconWidth += 6; // margin around the icon
+
+			// draw a close button
+			painter.outlineColor = Color(44, 44, 44);
+			painter.fillColor = Color(255, 255, 255);
+			painter.drawRectangle(Point(balloon.width - 15, 3), 13, 13);
+			painter.pen = Pen(Color.black, 3);
+			painter.drawLine(Point(balloon.width - 14, 4), Point(balloon.width - 4, 14));
+			painter.drawLine(Point(balloon.width - 4, 4), Point(balloon.width - 14, 13));
+			painter.pen = Pen(Color.black, 1);
+			painter.fillColor = Color(220, 220, 220);
+
+			// Draw the title and message
+			painter.drawText(Point(4 + iconWidth, 4), title);
+			painter.drawLine(
+				Point(4 + iconWidth, 4 + painter.fontHeight + 1),
+				Point(balloon.width - 4, 4 + painter.fontHeight + 1),
+			);
+			painter.drawText(Point(4 + iconWidth, 4 + painter.fontHeight + 4), message);
+
 			balloon.setEventHandlers(
 				(MouseEvent ev) {
 					if(ev.type == MouseEventType.buttonPressed) {
-						hideBalloon();
+						if(ev.x > balloon.width - 16 && ev.y < 16)
+							hideBalloon();
 					}
 				}
 			);
