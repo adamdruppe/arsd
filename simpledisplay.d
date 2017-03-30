@@ -1992,6 +1992,509 @@ private:
 }
 
 
+/++
+	NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
+	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
+	use the older version.
+
+	EXPERIMENTAL: this class will soon be merged with the same-named version(X11)
+	class.
++/
+class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+
+
+	version(X11) {
+		Image img;
+
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(XEvent e) {
+				switch(e.type) {
+					case EventType.Expose:
+						redraw();
+					break;
+					case EventType.ButtonPress:
+						auto event = e.xbutton;
+						if (onClick !is null || onClickEx !is null) {
+							MouseButton mb = cast(MouseButton)0;
+							switch (event.button) {
+								case 1: mb = MouseButton.left; break; // left
+								case 2: mb = MouseButton.middle; break; // middle
+								case 3: mb = MouseButton.right; break; // right
+								case 4: mb = MouseButton.wheelUp; break; // scroll up
+								case 5: mb = MouseButton.wheelDown; break; // scroll down
+								default:
+							}
+							if (mb) {
+								try { onClick()(mb); } catch (Exception) {}
+								if (onClickEx !is null) try { onClickEx(event.x_root, event.y_root, mb, cast(ModifierState)event.state); } catch (Exception) {}
+							}
+						}
+					break;
+					case EventType.EnterNotify:
+						if (onEnter !is null) {
+							onEnter(e.xcrossing.x_root, e.xcrossing.y_root, cast(ModifierState)e.xcrossing.state);
+						}
+						break;
+					case EventType.LeaveNotify:
+						if (onLeave !is null) try { onLeave(); } catch (Exception) {}
+						break;
+					case EventType.DestroyNotify:
+						active = false;
+						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
+					break;
+					case EventType.ConfigureNotify:
+						auto event = e.xconfigure;
+						this.width = event.width;
+						this.height = event.height;
+						redraw();
+					break;
+					default: return 1;
+				}
+				return 1;
+			};
+		}
+
+		private void hideBalloon() {
+			balloon.close();
+			timer.destroy();
+			balloon = null;
+			timer = null;
+		}
+
+		///
+		void redraw() {
+			if (!active) return;
+
+			auto display = XDisplayConnection.get;
+			auto gc = DefaultGC(display, DefaultScreen(display));
+			XClearWindow(display, nativeHandle);
+
+			XSetForeground(display, gc,
+				cast(uint) 0 << 16 |
+				cast(uint) 0 << 8 |
+				cast(uint) 0);
+			XFillRectangle(display, nativeHandle,
+				gc, 0, 0, width, height);
+
+			if (img is null) {
+				XSetForeground(display, gc,
+					cast(uint) 0 << 16 |
+					cast(uint) 127 << 8 |
+					cast(uint) 0);
+				XFillArc(display, nativeHandle,
+					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+			} else {
+				if (img.usingXshm)
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
+				else
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
+			}
+			flushGui();
+		}
+
+		static Window getTrayOwner() {
+			auto display = XDisplayConnection.get;
+			auto i = cast(int) DefaultScreen(display);
+			if(i < 10 && i >= 0) {
+				static Atom atom;
+				if(atom == None)
+					atom = XInternAtom(display, cast(char*) ("_NET_SYSTEM_TRAY_S"~(cast(char) (i + '0')) ~ '\0').ptr, false);
+				return XGetSelectionOwner(display, atom);
+			}
+			return None;
+		}
+
+		static void sendTrayMessage(arch_long message, arch_long d1, arch_long d2, arch_long d3) {
+			auto to = getTrayOwner();
+			auto display = XDisplayConnection.get;
+			XEvent ev;
+			ev.xclient.type = EventType.ClientMessage;
+			ev.xclient.window = to;
+			ev.xclient.message_type = GetAtom!("_NET_SYSTEM_TRAY_OPCODE", true)(display);
+			ev.xclient.format = 32;
+			ev.xclient.data.l[0] = CurrentTime;
+			ev.xclient.data.l[1] = message;
+			ev.xclient.data.l[2] = d1;
+			ev.xclient.data.l[3] = d2;
+			ev.xclient.data.l[4] = d3;
+
+			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
+		}
+
+		private void createXWin () {
+			if(getTrayOwner() == None)
+				throw new Exception("No notification area found");
+			// create window
+			auto display = XDisplayConnection.get;
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
+			assert(nativeWindow);
+
+			nativeHandle = nativeWindow;
+
+			XSelectInput(display, nativeWindow,
+				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
+				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
+
+			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
+			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+			active = true;
+		}
+
+
+		private SimpleWindow balloon;
+		private Timer timer;
+
+		private Window nativeHandle;
+		private int width = 16;
+		private int height = 16;
+		private bool active = false;
+
+		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window)
+		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates
+		void delegate () onLeave; ///
+
+		@property bool closed () const pure nothrow @safe @nogc { return !active; } ///
+
+		/// Get global window coordinates and size. This can be used to show various notifications.
+		void getWindowRect (out int x, out int y, out int width, out int height) {
+			if (!active) { width = 1; height = 1; return; } // 1: just in case
+			Window dummyw;
+			auto dpy = XDisplayConnection.get;
+			//XWindowAttributes xwa;
+			//XGetWindowAttributes(dpy, nativeHandle, &xwa);
+			//XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), xwa.x, xwa.y, &x, &y, &dummyw);
+			XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
+			width = this.width;
+			height = this.height;
+		}
+	}
+
+	/+
+		What I actually want from this:
+
+		* set / change: icon, tooltip
+		* handle: mouse click, right click
+		* show: notification bubble.
+	+/
+
+	version(Windows) {
+		WindowsIcon win32Icon;
+		HWND hwnd;
+
+		NOTIFYICONDATAW data;
+
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+				if(msg == WM_USER) {
+					auto event = LOWORD(lParam);
+					auto iconId = HIWORD(lParam);
+					//auto x = GET_X_LPARAM(wParam);
+					//auto y = GET_Y_LPARAM(wParam);
+					switch(event) {
+						case WM_LBUTTONDOWN:
+							onClick()(MouseButton.left);
+						break;
+						case WM_RBUTTONDOWN:
+							onClick()(MouseButton.right);
+						break;
+						case WM_MBUTTONDOWN:
+							onClick()(MouseButton.middle);
+						break;
+						case WM_MOUSEMOVE:
+							// sent, we could use it.
+						break;
+						case WM_MOUSEWHEEL:
+							// NOT SENT
+						break;
+						//case NIN_KEYSELECT:
+						//case NIN_SELECT:
+						break;
+						default: {}
+					}
+				}
+				return 0;
+			};
+		}
+
+		enum NIF_SHOWTIP = 0x00000080;
+
+		private static struct NOTIFYICONDATAW {
+			DWORD cbSize;
+			HWND  hWnd;
+			UINT  uID;
+			UINT  uFlags;
+			UINT  uCallbackMessage;
+			HICON hIcon;
+			WCHAR[128] szTip;
+			DWORD dwState;
+			DWORD dwStateMask;
+			WCHAR[256] szInfo;
+			union {
+				UINT uTimeout;
+				UINT uVersion;
+			}
+			WCHAR[64] szInfoTitle;
+			DWORD dwInfoFlags;
+			GUID  guidItem;
+			HICON hBalloonIcon;
+		}
+
+	}
+
+	/++
+		Note that on Windows, only left, right, and middle buttons are sent.
+		Mouse wheel buttons are NOT set, so don't rely on those events if your
+		program is meant to be used on Windows too.
+	+/
+	this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
+		// The canonical constructor for Windows needs the MemoryImage, so it is here,
+		// but on X, we need an Image, so its canonical ctor is there. They should
+		// forward to each other though.
+		version(X11) {
+			this(name, icon is null ? null : Image.fromMemoryImage(icon), onClick);
+		} else version(Windows) {
+			this.onClick = onClick;
+			this.win32Icon = new WindowsIcon(icon);
+
+			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+
+			static bool registered = false;
+			if(!registered) {
+				WNDCLASSEX wc;
+				wc.cbSize = wc.sizeof;
+				wc.hInstance = hInstance;
+				wc.lpfnWndProc = &WndProc;
+				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+			}
+
+			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
+			if(hwnd is null)
+				throw new Exception("CreateWindow");
+
+			data.cbSize = data.sizeof;
+			data.hWnd = hwnd;
+			data.uID = cast(uint) cast(void*) this;
+			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP /* use default tooltip, for now. */;
+				// NIF_INFO means show balloon
+			data.uCallbackMessage = WM_USER;
+			data.hIcon = this.win32Icon.hIcon;
+			data.szTip = ""; // FIXME
+			data.dwState = 0; // NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+
+			data.uVersion = 4; // NOTIFYICON_VERSION_4; // Windows Vista and up
+
+
+			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
+
+			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
+		} else static assert(0);
+	}
+
+	/// ditto
+	this(string name, Image icon, void delegate(MouseButton button) onClick) {
+		version(X11) {
+			this.onClick = onClick;
+			this.img = icon;
+			createXWin();
+		} else version(Windows) {
+			this(name, icon is null ? null : icon.toTrueColorImage(), onClick);
+		} else static assert(0);
+	}
+
+	version(X11) {
+		/++
+			X-specific extension (for now at least)
+		+/
+		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			if (icon !is null) this.img = Image.fromMemoryImage(icon);
+			createXWin();
+		}
+
+		/// ditto
+		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			this.img = icon;
+			createXWin();
+		}
+	}
+
+	private void delegate (MouseButton button) onClick_;
+
+	///
+	final void delegate(MouseButton) onClick() {
+		if(onClick_ is null)
+			onClick_ = delegate void(MouseButton) {};
+		return onClick_;
+	}
+
+	///
+	final void onClick(void delegate(MouseButton) handler) {
+		// I made this a property setter so we can wrap smaller arg
+		// delegates and just forward all to onClickEx or something.
+		onClick_ = handler;
+	}
+
+
+	@property void name(string n) {
+	}
+
+	///
+	@property void icon(MemoryImage i) {
+		version(X11) {
+			if (!active) return;
+			if (i !is null) {
+				this.img = Image.fromMemoryImage(i);
+				redraw();
+			} else {
+				if (this.img !is null) {
+					this.img = null;
+					redraw();
+				}
+			}
+		} else version(Windows) {
+			this.win32Icon = new WindowsIcon(i);
+
+			data.uFlags = NIF_ICON;
+			data.hIcon = this.win32Icon.hIcon;
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	///
+	@property void icon (Image i) {
+		version(X11) {
+			if (!active) return;
+			if (i !is img) {
+				img = i;
+				redraw();
+			}
+		} else version(Windows) {
+			this.icon(i is null ? null : i.toTrueColorImage());
+		} else static assert(0);
+	}
+
+	/++
+		Shows a balloon notification.
+	+/
+	void showBalloon(string title, string message, MemoryImage icon = null) {
+		version(X11) {
+			if(balloon) {
+				hideBalloon();
+			}
+			balloon = new SimpleWindow(180, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
+
+			int x, y, width, height;
+			getWindowRect(x, y, width, height);
+
+			balloon.move(x - balloon.width, y - balloon.height);
+			auto painter = balloon.draw();
+			painter.fillColor = Color(220, 220, 220);
+			painter.outlineColor = Color.black;
+			painter.drawRectangle(Point(0, 0), balloon.width, balloon.height);
+			painter.drawText(Point(4, 4), title);
+			painter.drawText(Point(4, 4 + painter.fontHeight * 2), message);
+			balloon.setEventHandlers(
+				(MouseEvent ev) {
+					if(ev.type == MouseEventType.buttonPressed) {
+						hideBalloon();
+					}
+				}
+			);
+			balloon.show();
+
+			timer = new Timer(10_000, &hideBalloon);
+		} else version(Windows) {
+			enum NIF_INFO = 0x00000010;
+
+			data.uFlags = NIF_INFO;
+
+			enum NIIF_RESPECT_QUIET_TIME = 0x00000080;
+			enum NIIF_LARGE_ICON  = 0x00000020;
+			enum NIIF_NOSOUND = 0x00000010;
+			enum NIIF_USER = 0x00000004;
+			enum NIIF_ERROR = 0x00000003;
+			enum NIIF_WARNING = 0x00000002;
+			enum NIIF_INFO = 0x00000001;
+			enum NIIF_NONE = 0;
+
+			WCharzBuffer t = WCharzBuffer(title);
+			WCharzBuffer m = WCharzBuffer(message);
+
+			t.copyInto(data.szInfoTitle);
+			m.copyInto(data.szInfo);
+			data.dwInfoFlags = NIIF_RESPECT_QUIET_TIME;
+
+			if(icon !is null) {
+				auto i = new WindowsIcon(icon);
+				data.hBalloonIcon = i.hIcon;
+				data.dwInfoFlags |= NIIF_USER;
+			}
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	///
+	//version(Windows)
+	void show() {
+		version(X11) {
+			if(!hidden)
+				return;
+			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeHandle, 0, 0);
+			hidden = false;
+		} else version(Windows) {
+			data.uFlags = NIF_STATE;
+			data.dwState = 0; // NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	version(X11)
+		bool hidden = false;
+
+	///
+	//version(Windows)
+	void hide() {
+		version(X11) {
+			if(hidden)
+				return;
+			hidden = true;
+			XUnmapWindow(XDisplayConnection.get, nativeHandle);
+		} else version(Windows) {
+			data.uFlags = NIF_STATE;
+			data.dwState = NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	///
+	void close () {
+		version(X11) {
+			if (active) {
+				active = false; // event handler will set this too, but meh
+				XUnmapWindow(XDisplayConnection.get, nativeHandle); // 'cause why not; let's be polite
+				XDestroyWindow(XDisplayConnection.get, nativeHandle);
+				flushGui();
+			}
+		} else version(Windows) {
+			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	~this() {
+		close();
+	}
+}
+
+
+
 // basic functions to make timers
 /**
 	A timer that will trigger your function on a given interval.
@@ -2428,267 +2931,6 @@ version(X11) {
 	enum SYSTEM_TRAY_BEGIN_MESSAGE  = 1;
 	enum SYSTEM_TRAY_CANCEL_MESSAGE = 2;
 
-	///
-	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
-		Image img;
-
-		NativeEventHandler getNativeEventHandler() {
-			return delegate int(XEvent e) {
-				switch(e.type) {
-					case EventType.Expose:
-						redraw();
-					break;
-					case EventType.ButtonPress:
-						auto event = e.xbutton;
-						if (onClick !is null || onClickEx !is null) {
-							MouseButton mb = cast(MouseButton)0;
-							switch (event.button) {
-								case 1: mb = MouseButton.left; break; // left
-								case 2: mb = MouseButton.middle; break; // middle
-								case 3: mb = MouseButton.right; break; // right
-								case 4: mb = MouseButton.wheelUp; break; // scroll up
-								case 5: mb = MouseButton.wheelDown; break; // scroll down
-								default:
-							}
-							if (mb) {
-								if (onClick !is null) try { onClick(mb); } catch (Exception) {}
-								if (onClickEx !is null) try { onClickEx(event.x_root, event.y_root, mb, cast(ModifierState)event.state); } catch (Exception) {}
-							}
-						}
-					break;
-					case EventType.EnterNotify:
-						if (onEnter !is null) {
-							onEnter(e.xcrossing.x_root, e.xcrossing.y_root, cast(ModifierState)e.xcrossing.state);
-						}
-						break;
-					case EventType.LeaveNotify:
-						if (onLeave !is null) try { onLeave(); } catch (Exception) {}
-						break;
-					case EventType.DestroyNotify:
-						active = false;
-						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
-					break;
-					case EventType.ConfigureNotify:
-						auto event = e.xconfigure;
-						this.width = event.width;
-						this.height = event.height;
-						redraw();
-					break;
-					default: return 1;
-				}
-				return 1;
-			};
-		}
-
-		private SimpleWindow balloon;
-		private Timer timer;
-
-		void showBalloon(string title, string message, MemoryImage icon = null) {
-
-			if(balloon) {
-				hideBalloon();
-			}
-			balloon = new SimpleWindow(180, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
-
-			int x, y, width, height;
-			getWindowRect(x, y, width, height);
-
-			balloon.move(x - balloon.width, y - balloon.height);
-			auto painter = balloon.draw();
-			painter.fillColor = Color(220, 220, 220);
-			painter.outlineColor = Color.black;
-			painter.drawRectangle(Point(0, 0), balloon.width, balloon.height);
-			painter.drawText(Point(4, 4), title);
-			painter.drawText(Point(4, 4 + painter.fontHeight * 2), message);
-			balloon.setEventHandlers(
-				(MouseEvent ev) {
-					if(ev.type == MouseEventType.buttonPressed) {
-						hideBalloon();
-					}
-				}
-			);
-			balloon.show();
-
-			timer = new Timer(10_000, &hideBalloon);
-		}
-
-		private void hideBalloon() {
-			balloon.close();
-			timer.destroy();
-			balloon = null;
-			timer = null;
-		}
-
-		///
-		void redraw() {
-			if (!active) return;
-
-			auto display = XDisplayConnection.get;
-			auto gc = DefaultGC(display, DefaultScreen(display));
-			XClearWindow(display, nativeHandle);
-
-			XSetForeground(display, gc,
-				cast(uint) 0 << 16 |
-				cast(uint) 0 << 8 |
-				cast(uint) 0);
-			XFillRectangle(display, nativeHandle,
-				gc, 0, 0, width, height);
-
-			if (img is null) {
-				XSetForeground(display, gc,
-					cast(uint) 0 << 16 |
-					cast(uint) 127 << 8 |
-					cast(uint) 0);
-				XFillArc(display, nativeHandle,
-					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
-			} else {
-				if (img.usingXshm)
-					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
-				else
-					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
-			}
-			flushGui();
-		}
-
-		static Window getTrayOwner() {
-			auto display = XDisplayConnection.get;
-			auto i = cast(int) DefaultScreen(display);
-			if(i < 10 && i >= 0) {
-				static Atom atom;
-				if(atom == None)
-					atom = XInternAtom(display, cast(char*) ("_NET_SYSTEM_TRAY_S"~(cast(char) (i + '0')) ~ '\0').ptr, false);
-				return XGetSelectionOwner(display, atom);
-			}
-			return None;
-		}
-
-		static void sendTrayMessage(arch_long message, arch_long d1, arch_long d2, arch_long d3) {
-			auto to = getTrayOwner();
-			auto display = XDisplayConnection.get;
-			XEvent ev;
-			ev.xclient.type = EventType.ClientMessage;
-			ev.xclient.window = to;
-			ev.xclient.message_type = GetAtom!("_NET_SYSTEM_TRAY_OPCODE", true)(display);
-			ev.xclient.format = 32;
-			ev.xclient.data.l[0] = CurrentTime;
-			ev.xclient.data.l[1] = message;
-			ev.xclient.data.l[2] = d1;
-			ev.xclient.data.l[3] = d2;
-			ev.xclient.data.l[4] = d3;
-
-			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
-		}
-
-		private void createXWin () {
-			if(getTrayOwner() == None)
-				throw new Exception("No notification area found");
-			// create window
-			auto display = XDisplayConnection.get;
-			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
-			assert(nativeWindow);
-
-			nativeHandle = nativeWindow;
-
-			XSelectInput(display, nativeWindow,
-				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
-				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
-
-			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
-			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
-			active = true;
-		}
-
-		///
-		this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
-			this.onClick = onClick;
-			if (icon !is null) this.img = Image.fromMemoryImage(icon);
-			createXWin();
-		}
-
-		///
-		this(string name, Image icon, void delegate(MouseButton button) onClick) {
-			this.onClick = onClick;
-			this.img = icon;
-			createXWin();
-		}
-
-		///
-		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
-			this.onClickEx = onClickEx;
-			if (icon !is null) this.img = Image.fromMemoryImage(icon);
-			createXWin();
-		}
-
-		///
-		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
-			this.onClickEx = onClickEx;
-			this.img = icon;
-			createXWin();
-		}
-
-		private Window nativeHandle;
-		private int width = 16;
-		private int height = 16;
-		private bool active = false;
-
-		void delegate (MouseButton button) onClick; ///
-
-		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window)
-		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates
-		void delegate () onLeave; ///
-
-		@property bool closed () const pure nothrow @safe @nogc { return !active; } ///
-
-		///
-		void close () {
-			if (active) {
-				active = false; // event handler will set this too, but meh
-				XUnmapWindow(XDisplayConnection.get, nativeHandle); // 'cause why not; let's be polite
-				XDestroyWindow(XDisplayConnection.get, nativeHandle);
-				flushGui();
-			}
-		}
-
-		@property void name(string n) {
-		}
-
-		///
-		@property void icon(MemoryImage i) {
-			if (!active) return;
-			if (i !is null) {
-				this.img = Image.fromMemoryImage(i);
-				redraw();
-			} else {
-				if (this.img !is null) {
-					this.img = null;
-					redraw();
-				}
-			}
-		}
-
-		///
-		@property void icon (Image i) {
-			if (!active) return;
-			if (i !is img) {
-				img = i;
-				redraw();
-			}
-		}
-
-		/// Get global window coordinates and size. This can be used to show various notifications.
-		void getWindowRect (out int x, out int y, out int width, out int height) {
-			if (!active) { width = 1; height = 1; return; } // 1: just in case
-			Window dummyw;
-			auto dpy = XDisplayConnection.get;
-			//XWindowAttributes xwa;
-			//XGetWindowAttributes(dpy, nativeHandle, &xwa);
-			//XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), xwa.x, xwa.y, &x, &y, &dummyw);
-			XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
-			width = this.width;
-			height = this.height;
-		}
-	}
-
 
 	/** Global hotkey handler. Simpledisplay will usually create one for you, but if you want to use subclassing
 	 * instead of delegates, you can subclass this, and override `doHandle()` method. */
@@ -2908,202 +3150,6 @@ version(Windows) {
 		}
 	}
 
-
-
-	/++
-		NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
-		If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
-		use the older version.
-
-		EXPERIMENTAL: this class will soon be merged with the same-named version(X11)
-		class.
-	+/
-	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
-		/+
-			What I actually want from this:
-
-			* set / change: icon, tooltip
-			* handle: mouse click, right click
-			* show: notification bubble.
-		+/
-
-
-		WindowsIcon icon;
-		void delegate(MouseButton button) onClick;
-		HWND hwnd;
-
-		NOTIFYICONDATAW data;
-
-		NativeEventHandler getNativeEventHandler() {
-			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-				if(msg == WM_USER) {
-					auto event = LOWORD(lParam);
-					auto iconId = HIWORD(lParam);
-					//auto x = GET_X_LPARAM(wParam);
-					//auto y = GET_Y_LPARAM(wParam);
-					switch(event) {
-						case WM_LBUTTONDOWN:
-							if(onClick)
-								onClick(MouseButton.left);
-						break;
-						case WM_RBUTTONDOWN:
-							if(onClick)
-								onClick(MouseButton.right);
-						break;
-						case WM_MBUTTONDOWN:
-							if(onClick)
-								onClick(MouseButton.middle);
-						break;
-						case WM_MOUSEMOVE:
-							// sent, we could use it.
-						break;
-						case WM_MOUSEWHEEL:
-							// NOT SENT
-						break;
-						//case NIN_KEYSELECT:
-						//case NIN_SELECT:
-						break;
-						default: {}
-					}
-				}
-				return 0;
-			};
-		}
-
-		/++
-			Note that on Windows, only left, right, and middle buttons are sent.
-			Mouse wheel buttons are NOT set, so don't rely on those events if your
-			program is meant to be used on Windows too.
-		+/
-		this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
-			this.onClick = onClick;
-			this.icon = new WindowsIcon(icon);
-
-			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
-
-			static bool registered = false;
-			if(!registered) {
-				WNDCLASSEX wc;
-				wc.cbSize = wc.sizeof;
-				wc.hInstance = hInstance;
-				wc.lpfnWndProc = &WndProc;
-				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
-				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
-			}
-
-			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
-			if(hwnd is null)
-				throw new Exception("CreateWindow");
-
-			data.cbSize = data.sizeof;
-			data.hWnd = hwnd;
-			data.uID = cast(uint) cast(void*) this;
-			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP /* use default tooltip, for now. */;
-				// NIF_INFO means show balloon
-			data.uCallbackMessage = WM_USER;
-			data.hIcon = this.icon.hIcon;
-			data.szTip = ""; // FIXME
-			data.dwState = 0; // NIS_HIDDEN; // windows vista
-			data.dwStateMask = NIS_HIDDEN; // windows vista
-
-			data.uVersion = 4; // NOTIFYICON_VERSION_4; // Windows Vista and up
-
-
-			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
-
-			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
-		}
-
-		///
-		void changeIcon(MemoryImage icon) {
-			this.icon = new WindowsIcon(icon);
-
-			data.uFlags = NIF_ICON;
-			data.hIcon = this.icon.hIcon;
-
-			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
-		}
-
-		///
-		void showBalloon(string title, string message, MemoryImage icon = null) {
-			enum NIF_INFO = 0x00000010;
-
-			data.uFlags = NIF_INFO;
-
-			enum NIIF_RESPECT_QUIET_TIME = 0x00000080;
-			enum NIIF_LARGE_ICON  = 0x00000020;
-			enum NIIF_NOSOUND = 0x00000010;
-			enum NIIF_USER = 0x00000004;
-			enum NIIF_ERROR = 0x00000003;
-			enum NIIF_WARNING = 0x00000002;
-			enum NIIF_INFO = 0x00000001;
-			enum NIIF_NONE = 0;
-
-			WCharzBuffer t = WCharzBuffer(title);
-			WCharzBuffer m = WCharzBuffer(message);
-
-			t.copyInto(data.szInfoTitle);
-			m.copyInto(data.szInfo);
-			data.dwInfoFlags = NIIF_RESPECT_QUIET_TIME;
-
-			if(icon !is null) {
-				auto i = new WindowsIcon(icon);
-				data.hBalloonIcon = i.hIcon;
-				data.dwInfoFlags |= NIIF_USER;
-			}
-
-			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
-		}
-
-		enum NIF_SHOWTIP = 0x00000080;
-
-		private static struct NOTIFYICONDATAW {
-			DWORD cbSize;
-			HWND  hWnd;
-			UINT  uID;
-			UINT  uFlags;
-			UINT  uCallbackMessage;
-			HICON hIcon;
-			WCHAR[128] szTip;
-			DWORD dwState;
-			DWORD dwStateMask;
-			WCHAR[256] szInfo;
-			union {
-				UINT uTimeout;
-				UINT uVersion;
-			}
-			WCHAR[64] szInfoTitle;
-			DWORD dwInfoFlags;
-			GUID  guidItem;
-			HICON hBalloonIcon;
-		}
-
-		///
-		void show() {
-			data.uFlags = NIF_STATE;
-			//data.dwState = 0; // NIS_HIDDEN; // windows vista
-			//data.dwStateMask = NIS_HIDDEN; // windows vista
-			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
-		}
-
-		///
-		void hide() {
-			data.uFlags = NIF_STATE;
-			//data.dwState = NIS_HIDDEN; // windows vista
-			//data.dwStateMask = NIS_HIDDEN; // windows vista
-			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
-		}
-
-		///
-		void close () {
-			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
-		}
-
-		~this() {
-			close();
-		}
-	}
 
 
 
