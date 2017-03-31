@@ -75,7 +75,6 @@
 	)
 
 
-
 	Jump_list:
 
 	Don't worry, you don't have to read this whole documentation file!
@@ -365,6 +364,50 @@
 
 		minigui still needs a lot of work to be finished at this time, but it already offers a number of useful classes.
 
+	$(H2 Platform-specific tips and tricks)
+
+	Windows_tips:
+
+	You can add icons or manifest files to your exe using a resource file.
+
+	To create a Windows .ico file, use the gimp or something. I'll write a helper
+	program later.
+
+	Create `yourapp.rc`:
+
+	```rc
+		1 ICON filename.ico
+		CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "YourApp.exe.manifest"
+	```
+
+	And `yourapp.exe.manifest`:
+
+	```xml
+		<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+		<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+		<assemblyIdentity
+		    version="1.0.0.0"
+		    processorArchitecture="*"
+		    name="CompanyName.ProductName.YourApplication"
+		    type="win32"
+		/>
+		<description>Your application description here.</description>
+		<dependency>
+		    <dependentAssembly>
+			<assemblyIdentity
+			    type="win32"
+			    name="Microsoft.Windows.Common-Controls"
+			    version="6.0.0.0"
+			    processorArchitecture="*"
+			    publicKeyToken="6595b64144ccf1df"
+			    language="*"
+			/>
+		    </dependentAssembly>
+		</dependency>
+		</assembly>
+	```
+
+
 	$(H2 $(ID developer-notes) Developer notes)
 
 	I don't have a Mac, so that code isn't maintained. I would like to have a Cocoa
@@ -404,7 +447,7 @@
 	I live in the eastern United States, so I will most likely not be around at night in
 	that US east timezone.
 
-	License: Copyright Adam D. Ruppe, 2011-2016. Released under the Boost Software License.
+	License: Copyright Adam D. Ruppe, 2011-2017. Released under the Boost Software License.
 
 	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
 	building the documentation for simpledisplay yourself. It will give it a bit more style.
@@ -3901,7 +3944,10 @@ void displayImage(Image image, SimpleWindow win = null) {
 }
 
 /**
-	The 2D drawing proxy.
+	The 2D drawing proxy. You acquire one of these with [SimpleWindow.draw] rather
+	than constructing it directly. Then, it is reference counted so you can pass it
+	at around and when the last ref goes out of scope, the buffered drawing activities
+	are all carried out.
 
 
 	Most functions use the outlineColor instead of taking a color themselves.
@@ -3911,6 +3957,8 @@ void displayImage(Image image, SimpleWindow win = null) {
 struct ScreenPainter {
 	SimpleWindow window;
 	this(SimpleWindow window, NativeWindowHandle handle) {
+		if(window.closed)
+			throw new Exception("cannot draw on a closed window");
 		this.window = window;
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
@@ -3935,8 +3983,6 @@ struct ScreenPainter {
 			window.activeScreenPainter = null;
 		}
 	}
-
-	// @disable this(this) { } // compiler bug? the linker is bitching about it beind defined twice
 
 	this(this) {
 		impl.referenceCount++;
@@ -6115,7 +6161,7 @@ version(X11) {
 				auto h = y2 - y;
 				if(textHeight < h) {
 					cy += (h - textHeight) / 2;
-					cy -= lineHeight / 4;
+					//cy -= lineHeight / 4;
 				}
 			}
 
@@ -10419,6 +10465,7 @@ mixin template ExperimentalTextComponent() {
 
 					ie.text = arg[lastLineIndex .. $];
 					blocks[$-1].parts ~= ie;
+					carat = Carat(this, &(blocks[$-1].parts[$-1]), ie.text.length);
 				}
 			}
 		}
@@ -10449,7 +10496,13 @@ mixin template ExperimentalTextComponent() {
 			return TextIdentifyResult(null, 0);
 		}
 
-		void drawInto(ScreenPainter painter) {
+		void moveCaratToPixelCoordinates(int x, int y) {
+			auto result = identify(x, y);
+			carat.inlineElement = result.element;
+			carat.offset = result.offset;
+		}
+
+		void drawInto(ScreenPainter painter, bool focused = false) {
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
 			int lastHeight;
@@ -10488,6 +10541,60 @@ mixin template ExperimentalTextComponent() {
 				}
 			}
 
+			if(focused) {
+				highlightSelection(painter);
+				drawCarat(painter);
+			} else {
+				eraseCarat(painter);
+			}
+		}
+
+		void highlightSelection(ScreenPainter painter) {
+
+		}
+
+		int caratLastDrawnX, caratLastDrawnY1, caratLastDrawnY2;
+		bool caratShowingOnScreen = false;
+		void drawCarat(ScreenPainter painter) {
+			int x, y1, y2;
+			if(carat.inlineElement is null) {
+				x = boundingBox.left;
+				y1 = boundingBox.top + 2;
+				y2 = boundingBox.bottom - 2;
+			} else {
+				x = carat.inlineElement.xOfIndex(carat.offset + 1);
+				y1 = carat.inlineElement.boundingBox.top + 2;
+				y2 = carat.inlineElement.boundingBox.bottom - 2;
+			}
+
+			if(caratShowingOnScreen && (x != caratLastDrawnX || y1 != caratLastDrawnY1 || y2 != caratLastDrawnY2))
+				eraseCarat(painter);
+
+			painter.pen = Pen(Color.white, 1);
+			painter.rasterOp = RasterOp.xor;
+			painter.drawLine(
+				Point(x, y1),
+				Point(x, y2)
+			);
+			caratShowingOnScreen = !caratShowingOnScreen;
+
+			if(caratShowingOnScreen) {
+				caratLastDrawnX = x;
+				caratLastDrawnY1 = y1;
+				caratLastDrawnY2 = y2;
+			}
+		}
+
+		void eraseCarat(ScreenPainter painter) {
+			if(!caratShowingOnScreen) return;
+			painter.pen = Pen(Color.white, 1);
+			painter.rasterOp = RasterOp.xor;
+			painter.drawLine(
+				Point(caratLastDrawnX, caratLastDrawnY1),
+				Point(caratLastDrawnX, caratLastDrawnY2)
+			);
+
+			caratShowingOnScreen = false;
 		}
 
 		/// Carat movement api

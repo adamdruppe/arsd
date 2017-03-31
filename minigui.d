@@ -507,31 +507,36 @@ version(win32_widgets) {
 	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
 		if(auto te = hWnd in Widget.nativeMapping) {
-			if(iMessage == WM_SETFOCUS) {
-				auto lol = *te;
-				while(lol !is null && lol.implicitlyCreated)
-					lol = lol.parent;
-				(*te).parentWindow.focusedWidget = lol;
-			}
+			try {
+				if(iMessage == WM_SETFOCUS) {
+					auto lol = *te;
+					while(lol !is null && lol.implicitlyCreated)
+						lol = lol.parent;
+					lol.focus();
+					//(*te).parentWindow.focusedWidget = lol;
+				}
 
 
 
-			if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
-				SetBkMode(cast(HDC) wParam, TRANSPARENT);
-				return cast(typeof(return)) 
-					//GetStockObject(NULL_BRUSH);
-					// this is the window background color...
-					GetSysColorBrush(COLOR_3DFACE);
-			}
+				if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
+					SetBkMode(cast(HDC) wParam, TRANSPARENT);
+					return cast(typeof(return)) 
+						//GetStockObject(NULL_BRUSH);
+						// this is the window background color...
+						GetSysColorBrush(COLOR_3DFACE);
+				}
 
 
-			auto pos = getChildPositionRelativeToParentOrigin(*te);
-			lastDefaultPrevented = false;
-			// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
-			if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
-				return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
-			else {
-				// it was something we recognized, should only call the window procedure if the default was not prevented
+				auto pos = getChildPositionRelativeToParentOrigin(*te);
+				lastDefaultPrevented = false;
+				// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
+				if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
+					return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
+				else {
+					// it was something we recognized, should only call the window procedure if the default was not prevented
+				}
+			} catch(Exception e) {
+				assert(0, e.toString());
 			}
 			return 0;
 		}
@@ -649,6 +654,10 @@ class Widget {
 			parent.addChild(this);
 	}
 
+	bool isFocused() {
+		return parentWindow && parentWindow.focusedWidget is this;
+	}
+
 	bool showing = true;
 	void show() { showing = true; redraw(); }
 	void hide() { showing = false; }
@@ -694,6 +703,31 @@ class Widget {
 
 		return false;
 	}
+
+
+	void focus() {
+		assert(parentWindow !is null);
+		if(parentWindow.focusedWidget is this)
+			return;
+
+		if(parentWindow.focusedWidget) {
+			// FIXME: more details here? like from and to
+			auto evt = new Event("blur", parentWindow.focusedWidget);
+			parentWindow.focusedWidget = null;
+			evt.sendDirectly();
+		}
+
+
+		version(win32_widgets) {
+			if(this.hwnd !is null)
+				SetFocus(this.hwnd);
+		}
+
+		parentWindow.focusedWidget = this;
+		auto evt = new Event("focus", this);
+		evt.sendDirectly();
+	}
+
 
 	void attachedToWindow(Window w) {}
 	void addedTo(Widget w) {}
@@ -783,6 +817,9 @@ class Widget {
 		if(!showing) return;
 
 		assert(parentWindow !is null);
+		if(parentWindow.win.closed())
+			return;
+
 		auto ugh = this.parent;
 		int lox, loy;
 		while(ugh) {
@@ -872,7 +909,7 @@ class Window : Widget {
 	this(int width = 500, int height = 500, string title = null) {
 		super(null);
 
-		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing);
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
@@ -883,6 +920,15 @@ class Window : Widget {
 			this.height = h;
 			recomputeChildLayout();
 			redraw();
+		};
+
+		win.onFocusChange = (bool getting) {
+			if(this.focusedWidget) {
+				auto evt = new Event(getting ? "focus" : "blur", this.focusedWidget);
+				evt.sendDirectly();
+			}
+			auto evt = new Event(getting ? "focus" : "blur", this);
+			evt.sendDirectly();
 		};
 
 		win.setEventHandlers(
@@ -968,12 +1014,15 @@ class Window : Widget {
 
 				if(recipient !is null) {
 					// import std.stdio; writeln(typeid(recipient));
+					recipient.focus();
+					/*
 					version(win32_widgets) {
 						if(recipient.hwnd !is null)
 							SetFocus(recipient.hwnd);
 					} else {
 						focusedWidget = recipient;
 					}
+					*/
 
 					skipNextChar = true;
 				}
@@ -1117,6 +1166,7 @@ class Window : Widget {
 
 	void loop() {
 		recomputeChildLayout();
+		win.show();
 		redraw();
 		win.eventLoop(0);
 	}
@@ -1821,6 +1871,7 @@ class MouseActivatedWidget : Widget {
 
 		addEventListener("mouseleave", delegate (Widget _this, Event ev) {
 			isHovering = false;
+			isDepressed = false;
 			redraw();
 		});
 
@@ -1834,9 +1885,34 @@ class MouseActivatedWidget : Widget {
 			redraw();
 		});
 
+		defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
+			_this.redraw();
+		};
+		defaultEventHandlers["blur"] = delegate (Widget _this, Event ev) {
+			isDepressed = false;
+			isHovering = false;
+			_this.redraw();
+		};
+		defaultEventHandlers["keydown"] = delegate (Widget _this, Event ev) {
+			if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
+				isDepressed = true;
+				_this.redraw();
+			}
+		};
+		defaultEventHandlers["keyup"] = delegate (Widget _this, Event ev) {
+			if(!isDepressed)
+				return;
+			isDepressed = false;
+			_this.redraw();
+
+			auto event = new Event("triggered", this);
+			event.sendDirectly();
+		};
+
+
 		defaultEventHandlers["click"] = (Widget w, Event ev) {
 			auto event = new Event("triggered", this);
-			event.dispatch();
+			event.sendDirectly();
 		};
 	}
 }
@@ -2012,17 +2088,24 @@ class Button : MouseActivatedWidget {
 			painter.drawRectangle(Point(0, 0), width, height);
 
 
-			painter.outlineColor = (isHovering && isDepressed) ? Color(128, 128, 128) : Color.white;
+			painter.outlineColor = (isDepressed) ? Color(128, 128, 128) : Color.white;
 			painter.drawLine(Point(0, 0), Point(width, 0));
 			painter.drawLine(Point(0, 0), Point(0, height - 1));
 
-			painter.outlineColor = (isHovering && isDepressed) ? Color.white : Color(128, 128, 128);
+			painter.outlineColor = (isDepressed) ? Color.white : Color(128, 128, 128);
 			painter.drawLine(Point(width - 1, 1), Point(width - 1, height - 1));
 			painter.drawLine(Point(1, height - 1), Point(width - 1, height - 1));
 
 
 			painter.outlineColor = Color.black;
 			painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+
+			if(isFocused()) {
+				painter.fillColor = Color.transparent;
+				painter.outlineColor = Color.black;
+				painter.drawRectangle(Point(2, 2), width - 4, height - 4);
+
+			}
 		};
 	}
 
@@ -2073,141 +2156,15 @@ class TextLabel : Widget {
 
 }
 
-///
-class LineEdit : Widget {
-	version(win32_widgets)
+/// Contains the implementation of text editing
+abstract class EditableTextWidget : Widget {
 	this(Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
-		createWin32Window(this, "edit", "", 
-			0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
-	}
-	else
-	this(Widget parent = null) {
-		super(parent);
-
-		this.paint = (ScreenPainter painter) {
-			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(0, 0), width, height);
-
-			painter.outlineColor = Color.black;
-			painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
-		};
-
-		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
-			this.focus();
-		};
-
-		defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
-			content = content() ~ cast(char) ev.character;
-			redraw();
-		};
-
-		static if(UsingSimpledisplayX11)
-			cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
-		//super();
 	}
 
-
-	string _content;
-	@property string content() {
-		version(win32_widgets) {
-			char[4096] buffer;
-
-			// FIXME: GetWindowTextW
-			// FIXME: GetWindowTextLength
-			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
-			if(l >= 0)
-				_content = buffer[0 .. l].idup;
-		}
-		return _content;
-	}
-	@property void content(string s) {
-		_content = s;
-		version(win32_widgets)
-			SetWindowTextA(hwnd, toStringzInternal(s));
-		else
-			redraw();
-	}
-
-	void focus() {
-		assert(parentWindow !is null);
-		parentWindow.focusedWidget = this;
-	}
-
-	override int minHeight() { return Window.lineHeight; }
-	override int maxHeight() { return Window.lineHeight; }
+	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
+	override int maxHeight() { return Window.lineHeight + 0; }
 	override int widthStretchiness() { return 3; }
-}
-
-///
-class TextEdit : Widget {
-
-	// FIXME
-	mixin ExperimentalTextComponent;
-
-	override int minHeight() { return Window.lineHeight; }
-	override int heightStretchiness() { return 3; }
-	override int widthStretchiness() { return 3; }
-
-	version(win32_widgets)
-	this(Widget parent = null) {
-		super(parent);
-		parentWindow = parent.parentWindow;
-		createWin32Window(this, "edit", "", 
-			0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
-	}
-	else
-	this(Widget parent = null) {
-		super(parent);
-
-		textLayout = new TextLayout(Rectangle(0, 0, width, height));
-
-		this.paint = (ScreenPainter painter) {
-			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(0, 0), width, height);
-
-			textLayout.boundingBox = Rectangle(4, 4, width - 8, height - 8);
-
-			painter.outlineColor = Color.black;
-			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
-
-			textLayout.drawInto(painter);
-		};
-
-		caratTimer = new Timer(500, {
-			if(!parentWindow.win.closed && parentWindow.focusedWidget is this) {
-				auto painter = this.draw();
-				painter.pen = Pen(Color.white, 1);
-				painter.rasterOp = RasterOp.xor;
-				if(lastClick.element) {
-					painter.drawLine(
-						Point(lastClick.element.xOfIndex(lastClick.offset + 1), lastClick.element.boundingBox.top),
-						Point(lastClick.element.xOfIndex(lastClick.offset + 1), lastClick.element.boundingBox.bottom)
-					);
-				} else {
-					painter.drawLine(
-						Point(4, 4),
-						Point(4, 10)
-					);
-				}
-			}
-		});
-
-		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
-			this.focus();
-			lastClick = textLayout.identify(ev.clientX, ev.clientY);
-		};
-
-		defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
-			textLayout.addText("" ~ cast(char) ev.character); // FIXME
-			redraw();
-		};
-
-		static if(UsingSimpledisplayX11)
-			cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
-		//super();
-	}
 
 	@property string content() {
 		version(win32_widgets) {
@@ -2233,17 +2190,110 @@ class TextEdit : Widget {
 		}
 	}
 
-	void focus() {
-		assert(parentWindow !is null);
-		parentWindow.focusedWidget = this;
-	}
+	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
+	else {
+		// FIXME
+		mixin ExperimentalTextComponent;
 
-	version(win32_widgets) {
-
-	} else {
 		Timer caratTimer;
 		TextLayout textLayout;
 		TextIdentifyResult lastClick;
+
+		void setupCustomTextEditing() {
+			textLayout = new TextLayout(Rectangle(0, 0, width, height));
+
+			this.paint = (ScreenPainter painter) {
+				if(parentWindow.win.closed) return;
+				painter.fillColor = Color.white;
+				painter.drawRectangle(Point(0, 0), width, height);
+
+				textLayout.boundingBox = Rectangle(4, 0, width - 8, height - 0);
+
+				painter.outlineColor = Color.black;
+				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+
+				textLayout.caratShowingOnScreen = false;
+
+				textLayout.drawInto(painter, !parentWindow.win.closed && parentWindow.focusedWidget is this);
+			};
+
+			defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
+				if(parentWindow.win.closed) return;
+				this.focus();
+				textLayout.moveCaratToPixelCoordinates(ev.clientX, ev.clientY);
+			};
+
+			defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
+				if(parentWindow.win.closed) return;
+				auto painter = this.draw();
+				textLayout.drawCarat(painter);
+
+				if(caratTimer) {
+					caratTimer.destroy();
+					caratTimer = null;
+				}
+
+				caratTimer = new Timer(500, {
+					if(parentWindow.win.closed) {
+						caratTimer.destroy();
+						return;
+					}
+					if(parentWindow.focusedWidget is this) {
+						auto painter = this.draw();
+						textLayout.drawCarat(painter);
+					} else if(textLayout.caratShowingOnScreen) {
+						auto painter = this.draw();
+						textLayout.eraseCarat(painter);
+					}
+				});
+
+			};
+			defaultEventHandlers["blur"] = delegate (Widget _this, Event ev) {
+				if(parentWindow.win.closed) return;
+				auto painter = this.draw();
+				textLayout.eraseCarat(painter);
+				if(caratTimer) {
+					caratTimer.destroy();
+					caratTimer = null;
+				}
+			};
+
+			defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
+				textLayout.addText("" ~ cast(char) ev.character); // FIXME
+				redraw();
+			};
+
+			static if(UsingSimpledisplayX11)
+				cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
+		}
+	}
+}
+
+///
+class LineEdit : EditableTextWidget {
+	this(Widget parent = null) {
+		super(parent);
+		version(win32_widgets) {
+			parentWindow = parent.parentWindow;
+			createWin32Window(this, "edit", "", 
+				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
+		} else {
+			setupCustomTextEditing();
+		}
+	}
+}
+
+///
+class TextEdit : EditableTextWidget {
+	this(Widget parent = null) {
+		super(parent);
+		version(win32_widgets) {
+			parentWindow = parent.parentWindow;
+			createWin32Window(this, "edit", "", 
+				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
+		} else {
+			setupCustomTextEditing();
+		}
 	}
 }
 
@@ -2265,12 +2315,14 @@ class MessageBox : Window {
 		auto button = new Button("OK", this);
 		button. x = this.width / 2 - button.width / 2;
 		button.y = height - (button.height + 10);
-		button.addEventListener(EventType.click, () {
+		button.addEventListener(EventType.triggered, () {
 			close();
 		});
 
 		button.registerMovement();
+		button.focus();
 
+		win.show();
 		redraw();
 	}
 
