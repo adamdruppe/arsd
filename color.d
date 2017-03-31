@@ -154,11 +154,7 @@ struct Color {
 	/// Construct a color with the given values. They should be in range 0 <= x <= 255, where 255 is maximum intensity and 0 is minimum intensity.
 	nothrow pure @nogc
 	this(int red, int green, int blue, int alpha = 255) {
-		// workaround dmd bug 10937
-		if(__ctfe)
-			this.components[0] = cast(ubyte) red;
-		else
-			this.r = cast(ubyte) red;
+		this.r = cast(ubyte) red;
 		this.g = cast(ubyte) green;
 		this.b = cast(ubyte) blue;
 		this.a = cast(ubyte) alpha;
