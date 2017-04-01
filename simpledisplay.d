@@ -1065,6 +1065,7 @@ string sdpyWindowClass () {
 	will need to destroy it yourself.
 +/
 class SimpleWindow : CapableOfHandlingNativeEvent {
+	bool beingOpenKeepsAppOpen = true;
 	/++
 		This creates a window with the given options. The window will be visible and able to receive input as soon as you start your event loop. You may draw on it immediately after creating the window, without needing to wait for the event loop to start if you want.
 
@@ -1093,6 +1094,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		this.customizationFlags = customizationFlags;
 		this._title = (title is null ? "D Application" : title);
 		impl.createWindow(width, height, this._title, opengl, parent);
+
+		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu)
+			beingOpenKeepsAppOpen = false;
 	}
 
 	/// Same as above, except using the `Size` struct instead of separate width and height.
@@ -1349,7 +1353,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// ditto
 	void move(Point p) { if (!_closed) impl.move(p.x, p.y); }
 
-	/// Resize window.
+	/++
+		Resize window.
+
+		Note that the width and height of the window are NOT instantly
+		updated - it waits for the window manager to approve the resize
+		request, which means you must return to the event loop before the
+		width and height are actually changed.
+	+/
 	void resize(int w, int h) { if (!_closed) impl.resize(w, h); }
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
@@ -1445,11 +1456,46 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	private WindowTypes windowType;
 	private int customizationFlags;
 
+	/// `true` if OpenGL was initialized for this window.
+	@property bool isOpenGL () const pure nothrow @safe @nogc {
+		version(without_opengl)
+			return false;
+		else
+			return (openglMode == OpenGlOptions.yes);
+	}
+	@property Resizability resizingMode () const pure nothrow @safe @nogc { return resizability; } /// Original resizability.
+	@property WindowTypes type () const pure nothrow @safe @nogc { return windowType; } /// Original window type.
+	@property int customFlags () const pure nothrow @safe @nogc { return customizationFlags; } /// Original customization flags.
+
+	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	private shared int lockCount = 0;
+	void mtLock () {
+		version(X11) {
+			XLockDisplay(this.display);
+		}
+	}
+
+	/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	void mtUnlock () {
+		version(X11) {
+			XUnlockDisplay(this.display);
+		}
+	}
+
+	/// Emit a beep to get user's attention.
+	void beep () {
+		version(X11) {
+			XBell(this.display, 100);
+		} else version(Windows) {
+			MessageBeep(0xFFFFFFFF);
+		}
+	}
+
+
+
 	version(without_opengl) {} else {
-		@property bool isOpenGL () const pure nothrow @safe @nogc { return (openglMode == OpenGlOptions.yes); } /// `true` if OpenGL was initialized for this window.
-		@property Resizability resizingMode () const pure nothrow @safe @nogc { return resizability; } /// Original resizability.
-		@property WindowTypes type () const pure nothrow @safe @nogc { return windowType; } /// Original window type.
-		@property int customFlags () const pure nothrow @safe @nogc { return customizationFlags; } /// Original customization flags.
 
 		/// Put your code in here that you want to be drawn automatically when your window is uncovered. Set a handler here *before* entering your event loop any time you pass `OpenGlOptions.yes` to the constructor. Ideally, you will set this delegate immediately after constructing the `SimpleWindow`.
 		void delegate() redrawOpenGlScene;
@@ -1462,33 +1508,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		    glxSetVSync(display, impl.window, wait);
 		  }
 		}
-
-		/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
-		/// to call this, as it's not recommended to share window between threads.
-		private shared int lockCount = 0;
-		void mtLock () {
-			version(X11) {
-				XLockDisplay(this.display);
-			}
-		}
-
-		/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
-		/// to call this, as it's not recommended to share window between threads.
-		void mtUnlock () {
-			version(X11) {
-				XUnlockDisplay(this.display);
-			}
-		}
-
-		/// Emit a beep to get user's attention.
-		void beep () {
-			version(X11) {
-				XBell(this.display, 100);
-			} else version(Windows) {
-				MessageBeep(0xFFFFFFFF);
-			}
-		}
-
 
 		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
 		/// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
@@ -5268,12 +5287,12 @@ version(Windows) {
 			RECT rect;
 			rect.left = x;
 			rect.top = y;
-			rect.right = w;
-			rect.bottom = y;
+			rect.right = w + x;
+			rect.bottom = h + y;
 			if(!AdjustWindowRect(&rect, GetWindowLong(hwnd, GWL_STYLE), GetMenu(hwnd) !is null))
 				throw new Exception("AdjustWindowRect");
 
-			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
+			MoveWindow(hwnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, true);
 			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
@@ -5334,7 +5353,7 @@ version(Windows) {
 				case WindowTypes.dropdownMenu:
 				case WindowTypes.popupMenu:
 				case WindowTypes.notification:
-					style = WS_POPUP | WS_SYSMENU | WS_BORDER;
+					style = WS_POPUP;
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -5628,7 +5647,14 @@ version(Windows) {
 					if (this.onDestroyed !is null) try { this.onDestroyed(); } catch (Exception e) {} // sorry
 					SimpleWindow.nativeMapping.remove(hwnd);
 					CapableOfHandlingNativeEvent.nativeHandleMapping.remove(hwnd);
-					if(SimpleWindow.nativeMapping.keys.length == 0)
+
+					bool anyImportant = false;
+					foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+						if(w.beingOpenKeepsAppOpen) {
+							anyImportant = true;
+							break;
+						}
+					if(!anyImportant)
 						PostQuitMessage(0);
 				break;
 				case WM_SIZE:
@@ -5661,7 +5687,7 @@ version(Windows) {
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
-					if(openglMode == OpenGlOptions.no && resizability == Resizability.allowResizing) {
+					if(openglMode == OpenGlOptions.no) { // && resizability == Resizability.allowResizing) {
 						// gotta get the double buffer bmp to match the window
 					// FIXME: could this be more efficient? It isn't really necessary to make
 					// a new buffer if we're sizing down at least.
@@ -7432,6 +7458,7 @@ version(X11) {
 					// need to redraw the scene somehow
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
+					version(without_opengl) {} else
 					win.redrawOpenGlSceneNow();
 				}
 			}
@@ -7530,7 +7557,13 @@ version(X11) {
 					win.xic = null; // just in calse
 				}
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
-				if(SimpleWindow.nativeMapping.keys.length == 0)
+				bool anyImportant = false;
+				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+					if(w.beingOpenKeepsAppOpen) {
+						anyImportant = true;
+						break;
+					}
+				if(!anyImportant)
 					done = true;
 			}
 			auto window = e.xdestroywindow.window;
@@ -9023,7 +9056,6 @@ alias void* GLXContext;
 
 
 
-	enum AllocNone = 0;
 	struct XVisualInfo {
 		Visual *visual;
 		VisualID visualid;
@@ -9038,6 +9070,8 @@ alias void* GLXContext;
 	}
 }
 }
+
+enum AllocNone = 0;
 
 extern(C) nothrow @nogc {
 struct Screen{
@@ -10560,7 +10594,7 @@ mixin template ExperimentalTextComponent() {
 			if(carat.inlineElement is null) {
 				x = boundingBox.left;
 				y1 = boundingBox.top + 2;
-				y2 = boundingBox.bottom - 2;
+				y2 = boundingBox.top + painter.fontHeight;
 			} else {
 				x = carat.inlineElement.xOfIndex(carat.offset + 1);
 				y1 = carat.inlineElement.boundingBox.top + 2;
@@ -10602,16 +10636,62 @@ mixin template ExperimentalTextComponent() {
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
 		void moveUp(ref Carat carat) {}
 		void moveDown(ref Carat carat) {}
-		void moveLeft(ref Carat carat) {}
-		void moveRight(ref Carat carat) {}
-		void moveHome(ref Carat carat) {}
-		void moveEnd(ref Carat carat) {}
+		void moveLeft(ref Carat carat) {
+			if(carat.offset)
+				carat.offset--;
+		}
+		void moveRight(ref Carat carat) {
+			if(carat.inlineElement && carat.offset < carat.inlineElement.text.length)
+				carat.offset++;
+		}
+		void moveHome(ref Carat carat) {
+			carat.offset = 0;
+		}
+		void moveEnd(ref Carat carat) {
+			if(carat.inlineElement)
+				carat.offset = carat.inlineElement.text.length;
+		}
 		void movePageUp(ref Carat carat) {}
 		void movePageDown(ref Carat carat) {}
 
 		/// Plain text editing api. These work at the current carat inside the selected inline element.
-		void insertText(string text) {}
-		void backspace() {}
+		void insert(string text) {}
+		void insert(dchar ch) {
+			if(ch == 8) {
+				backspace();
+				return;
+			}
+			auto e = carat.inlineElement;
+			if(e is null) {
+				addText("" ~ cast(char) ch) ; // FIXME
+				return;
+			}
+
+			if(carat.offset == e.text.length) {
+				e.text ~= cast(char) ch; // FIXME
+				carat.offset++;
+			} else {
+				// FIXME cast char sucks
+				e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch ~ e.text[carat.offset + 1 .. $];
+				carat.offset++;
+			}
+		}
+		void backspace() {
+			auto e = carat.inlineElement;
+			if(e is null)
+				return;
+			if(carat.offset == 0)
+				return;
+			// FIXME: what if it spans parts?
+			if(carat.offset == e.text.length) {
+				e.text = e.text[0 .. $-1];
+				carat.offset--;
+			} else {
+				e.text = e.text[0 .. carat.offset] ~ e.text[carat.offset + 1 .. $];
+				carat.offset--;
+			}
+		
+		}
 		void delete_() {}
 		void overstrike() {}
 

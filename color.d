@@ -1252,6 +1252,10 @@ void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
 struct Point {
 	int x; ///
 	int y; ///
+
+	Point opBinary(string op)(Point rhs) {
+		return Point(mixin("x" ~ op ~ "rhs.x"), mixin("y" ~ op ~ "rhs.y"));
+	}
 }
 
 ///

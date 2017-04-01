@@ -188,6 +188,7 @@ version(Windows) {
 	//version = win32_theming;
 } else {
 	enum bool UsingCustomWidgets = true;
+	version=custom_widgets;
 }
 
 /*
@@ -217,7 +218,7 @@ version(Windows) {
 //static if(UsingSimpledisplayX11)
 version(win32_widgets) {}
 else
-	enum windowBackgroundColor = Color(220, 220, 220);
+	enum windowBackgroundColor = Color(192, 192, 192);
 
 private const(char)* toStringzInternal(string s) { return (s ~ '\0').ptr; }
 private const(wchar)* toWstringzInternal(in char[] s) {
@@ -227,6 +228,38 @@ private const(wchar)* toWstringzInternal(in char[] s) {
 		str ~= ch;
 	str ~= '\0';
 	return str.ptr;
+}
+
+enum FrameStyle {
+	risen,
+	sunk
+}
+
+version(custom_widgets)
+void draw3dFrame(Widget widget, ScreenPainter painter, FrameStyle style, Color background = windowBackgroundColor) {
+	draw3dFrame(0, 0, widget.width, widget.height, painter, style, background);
+}
+
+version(custom_widgets)
+void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, FrameStyle style, Color background = windowBackgroundColor) {
+	// outer layer
+	painter.outlineColor = style == FrameStyle.sunk ? Color.white : Color.black;
+	painter.fillColor = background;
+	painter.drawRectangle(Point(x + 0, y + 0), width, height);
+
+	painter.outlineColor = (style == FrameStyle.sunk) ? Color(128, 128, 128) : Color(223, 223, 223);
+	painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
+	painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
+
+	// inner layer
+	//right, bottom
+	painter.outlineColor = (style == FrameStyle.sunk) ? Color(223, 223, 223) : Color(128, 128, 128);
+	painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
+	painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
+	// left, top
+	painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
+	painter.drawLine(Point(x + 1, y + 1), Point(x + width - 2, y + 1));
+	painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
 }
 
 ///
@@ -385,6 +418,9 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	enum firstThingy = relevantMeasure == "height" ? "Top" : "Left";
 	enum secondThingy = relevantMeasure == "height" ? "Bottom" : "Right";
 
+	enum otherFirstThingy = relevantMeasure == "height" ? "Left" : "Top";
+	enum otherSecondThingy = relevantMeasure == "height" ? "Right" : "Bottom";
+
 	// my own width and height should already be set by the caller of this function...
 	int spaceRemaining = mixin("parent." ~ relevantMeasure) -
 		mixin("parent.padding"~firstThingy~"()") -
@@ -395,10 +431,11 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	foreach(child; parent.children) {
 		static if(calcingV) {
 			child.width = parent.width -
-				mixin("child.margin"~firstThingy~"()") -
-				mixin("child.margin"~secondThingy~"()") -
-				mixin("parent.padding"~firstThingy~"()") -
-				mixin("parent.padding"~secondThingy~"()");
+				mixin("child.margin"~otherFirstThingy~"()") -
+				mixin("child.margin"~otherSecondThingy~"()") -
+				mixin("parent.padding"~otherFirstThingy~"()") -
+				mixin("parent.padding"~otherSecondThingy~"()");
+
 			if(child.width < 0)
 				child.width = 0;
 			if(child.width > child.maxWidth())
@@ -614,6 +651,32 @@ class Widget {
 		// maybe I can do something similar cross platform
 	}
 
+	Point globalCoordinates() {
+		int x = this.x;
+		int y = this.y;
+		auto p = this.parent;
+		while(p) {
+			x += p.x;
+			y += p.y;
+			p = p.parent;
+		}
+
+		static if(UsingSimpledisplayX11) {
+			auto dpy = XDisplayConnection.get;
+			arsd.simpledisplay.Window dummyw;
+			XTranslateCoordinates(dpy, this.parentWindow.win.impl.window, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
+		} else {
+			POINT pt;
+			pt.x = x;
+			pt.y = y;
+			MapWindowPoints(this.parentWindow.win.impl.hwnd, null, &pt, 1);
+			x = pt.x;
+			y = pt.y;
+		}
+
+		return Point(x, y);
+	}
+
 	version(win32_widgets)
 	void handleWmCommand(ushort cmd, ushort id) {}
 
@@ -817,7 +880,12 @@ class Widget {
 		if(!showing) return;
 
 		assert(parentWindow !is null);
-		if(parentWindow.win.closed())
+
+		auto w = drawableWindow;
+		if(w is null)
+			w = parentWindow.win;
+
+		if(w.closed())
 			return;
 
 		auto ugh = this.parent;
@@ -827,9 +895,11 @@ class Widget {
 			loy += ugh.y;
 			ugh = ugh.parent;
 		}
-		auto painter = parentWindow.win.draw();
+		auto painter = w.draw();
 		privatePaint(painter, lox, loy);
 	}
+
+	SimpleWindow drawableWindow;
 }
 
 ///
@@ -906,14 +976,18 @@ class Window : Widget {
 	Widget focusedWidget;
 
 	SimpleWindow win;
-	this(int width = 500, int height = 500, string title = null) {
-		super(null);
 
-		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
+	this(Widget p) {
+		super(p);
+	}
+
+	this(SimpleWindow win) {
+		super(null);
+		this.win = win;
+
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
-
 
 		win.windowResized = (int w, int h) {
 			this.width = w;
@@ -1058,6 +1132,12 @@ class Window : Widget {
 			painter.outlineColor = windowBackgroundColor;
 			painter.drawRectangle(Point(0, 0), this.width, this.height);
 		};
+
+	}
+
+	this(int width = 500, int height = 500, string title = null) {
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
+		this(win);
 	}
 
 	void close() {
@@ -1219,7 +1299,7 @@ class MainWindow : Window {
 			return 0;
 		};
 
-		_clientArea = new Widget();
+		_clientArea = new ClientAreaWidget();
 		_clientArea.x = 0;
 		_clientArea.y = 0;
 		_clientArea.width = this.width;
@@ -1273,6 +1353,15 @@ class MainWindow : Window {
 
 	@property string title() { return parentWindow.win.title; }
 	@property void title(string title) { parentWindow.win.title = title; }
+}
+
+class ClientAreaWidget : Widget {
+	this(Widget parent = null) {
+		super(parent);
+	}
+
+	override int paddingLeft() { return 2; }
+	override int paddingRight() { return 2; }
 }
 
 /**
@@ -1358,14 +1447,8 @@ class ToolButton : Button {
 			};
 
 			paint = (ScreenPainter painter) {
-				painter.outlineColor = windowBackgroundColor;
-				if(isHovering) {
-					painter.fillColor = lighten(windowBackgroundColor, 0.8);
-				} else {
-					painter.fillColor = windowBackgroundColor;
-				}
+				this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
 
-				painter.drawRectangle(Point(1, 1), width, height);
 				painter.outlineColor = Color.black;
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 			};
@@ -1393,9 +1476,7 @@ class MenuBar : Widget {
 		this(Widget parent = null) {
 			super(parent);
 			this.paint = (ScreenPainter painter) {
-				painter.outlineColor = Color.black;
-				painter.fillColor = Color.transparent;
-				painter.drawRectangle(Point(0, 0), width, height);
+				draw3dFrame(this, painter, FrameStyle.risen);
 			};
 		}
 	}
@@ -1419,7 +1500,6 @@ class MenuBar : Widget {
 			AppendMenuA(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label)); // XXX
 		} else {
 			mbItem.defaultEventHandlers["click"] = (Widget e, Event ev) {
-				item.parentWindow = e.parentWindow;
 				item.popup(mbItem);
 			};
 		}
@@ -1536,13 +1616,15 @@ class StatusBar : Widget {
 			assert(idealHeight);
 		} else {
 			this.paint = (ScreenPainter painter) {
-				painter.outlineColor = Color.black;
-				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(0, 0), width, height);
-				int cpos = 4;
-				foreach(part; this.partsArray) {
-					painter.drawText(Point(cpos, 0), part.content, Point(width, height));
-					cpos += part.width ? part.width : 100;
+				this.draw3dFrame(painter, FrameStyle.risen);
+				int cpos = 0;
+				int remainingLength = this.width;
+				foreach(idx, part; this.partsArray) {
+					auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
+					draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk);
+					painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
+					cpos += partWidth;
+					remainingLength -= partWidth;
 				}
 			};
 		}
@@ -1586,8 +1668,7 @@ class ProgressBar : Widget {
 			max = 100;
 			step = 10;
 			paint = (ScreenPainter painter) {
-				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(0, 0), width, height);
+				this.draw3dFrame(painter, FrameStyle.sunk);
 				painter.fillColor = Color.blue;
 				painter.drawRectangle(Point(0, 0), width * current / max, height);
 			};
@@ -1649,11 +1730,15 @@ class Fieldset : Widget {
 	version(win32_widgets)
 		override int paddingTop() { return Window.lineHeight; }
 	else
-		override int paddingTop() { return Window.lineHeight / 2 + 2; }
+		override int paddingTop() { return Window.lineHeight + 2; }
 	override int paddingBottom() { return 6; }
 	override int paddingLeft() { return 6; }
 	override int paddingRight() { return 6; }
-	mixin Margin!q{ Window.lineHeight / 2 + 2 };
+
+	override int marginLeft() { return 6; }
+	override int marginRight() { return 6; }
+	override int marginTop() { return 2; }
+	override int marginBottom() { return 2; }
 
 	string legend;
 
@@ -1663,30 +1748,32 @@ class Fieldset : Widget {
 		this.legend = legend;
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", legend, BS_GROUPBOX);
+		tabStop = false;
 	}
 	else
 	this(string legend, Widget parent = null) {
 		super(parent);
+		tabStop = false;
 		this.legend = legend;
 		parentWindow = parent.parentWindow;
 		this.paint = (ScreenPainter painter) {
 			painter.fillColor = Color.transparent;
 			painter.pen = Pen(Color.black, 1);
-			painter.drawRectangle(Point(0, 0), width, height);
+			painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
 
 			auto tx = painter.textSize(legend);
 			painter.outlineColor = Color.transparent;
 
 			static if(UsingSimpledisplayX11) {
 				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
+				painter.drawRectangle(Point(8, 0), tx.width, tx.height);
 			} else version(Windows) {
 				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
 				painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
 				SelectObject(painter.impl.hdc, b);
 			} else static assert(0);
 			painter.outlineColor = Color.black;
-			painter.drawText(Point(8, -tx.height / 2), legend);
+			painter.drawText(Point(8, 0), legend);
 		};
 	}
 
@@ -1706,7 +1793,7 @@ class Fieldset : Widget {
 }
 
 ///
-class Menu : Widget {
+class Menu : Window {
 	void remove() {
 		foreach(i, child; parentWindow.children)
 			if(child is this) {
@@ -1719,39 +1806,45 @@ class Menu : Widget {
 		parentWindow.releaseMouseCapture();
 	}
 
-	version(win32_widgets) {} else
-	void popup(Widget parent) {
-		assert(parentWindow !is null);
-		auto pos = getChildPositionRelativeToParentOrigin(parent);
-		this.x = pos[0];
-		this.y = pos[1] + parent.height;
-		this.width = 150;
-		if(this.children.length)
-			this.height = cast(int) this.children.length * this.children[0].maxHeight();
-		else
-			this.height = 4;
-		this.recomputeChildLayout();
+	version(win32_widgets) {} else {
+		SimpleWindow dropDown;
+		Widget menuParent;
+		void popup(Widget parent) {
+			this.menuParent = parent;
 
-		this.paint = (ScreenPainter painter) {
-			painter.outlineColor = Color.black;
-			painter.fillColor = lighten(windowBackgroundColor, 0.8);
-			painter.drawRectangle(Point(0, 0), width, height);
-		};
+			auto w = 150;
+			auto h = this.children.length ? cast(int) this.children.length * this.children[0].maxHeight() : 20;
 
-		parentWindow.children ~= this;
+			auto coord = parent.globalCoordinates();
+			dropDown.moveResize(coord.x, coord.y + parent.parentWindow.lineHeight, w, h);
+			this.x = 0;
+			this.y = 0;
+			this.width = dropDown.width;
+			this.height = dropDown.height;
+			this.drawableWindow = dropDown;
+			this.recomputeChildLayout();
 
-		parentWindow.addEventListener("mousedown", &remove);
+			static if(UsingSimpledisplayX11)
+				XSync(XDisplayConnection.get, 0);
 
-		defaultEventHandlers["mousedown"] = (Widget _this, Event ev) {
-			ev.stopPropagation();
-		};
+			dropDown.visibilityChanged = (bool visible) {
+				if(visible) {
+					this.redraw();
+					auto painter = dropDown.draw();
+					dropDown.grabInput();
+				}
+			};
 
-		parentWindow.captureMouse(this);
+			dropDown.show();
+		}
+	}
 
-		foreach(child; children)
-			child.parentWindow = this.parentWindow;
-
-		this.show();
+	version(custom_widgets)
+	void unpopup() {
+		dropDown.releaseInputGrab();
+		dropDown.hide();
+		if(!menuParent.parentWindow.win.closed)
+			menuParent.parentWindow.win.focus();
 	}
 
 	MenuItem[] items;
@@ -1776,12 +1869,24 @@ class Menu : Widget {
 		}
 	} else {
 		this(string label, Widget parent = null) {
-			super(parent);
+
+			if(dropDown) {
+				dropDown.close();
+			}
+			dropDown = new SimpleWindow(
+				150, 4,
+				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow/*, window*/);
+
 			this.label = label;
-			this.paint = (ScreenPainter painter) {
-				painter.outlineColor = Color.black;
-				painter.fillColor = Color.transparent;
-				painter.drawRectangle(Point(0, 0), width, height);
+
+			defaultEventHandlers["click"] = delegate(Widget this_, Event ev) {
+				unpopup();
+			};
+
+			super(dropDown);
+
+			this.paint = delegate (ScreenPainter painter) {
+				this.draw3dFrame(painter, FrameStyle.risen);
 			};
 		}
 	}
@@ -1797,6 +1902,8 @@ class MenuItem : MouseActivatedWidget {
 	Action action;
 	string label;
 
+	override int paddingLeft() { return 4; }
+
 	override int maxHeight() { return Window.lineHeight + 4; }
 	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
 	override int maxWidth() {
@@ -1806,13 +1913,17 @@ class MenuItem : MouseActivatedWidget {
 	}
 	this(string lbl, Widget parent = null) {
 		super(parent);
-		label = lbl;
+		//label = lbl; // FIXME
+		foreach(char ch; lbl) // FIXME
+			if(ch != '&') // FIXME
+				label ~= ch; // FIXME
 		version(win32_widgets) {} else
 		this.paint = (ScreenPainter painter) {
 			if(isHovering)
 				painter.outlineColor = Color.blue;
 			else
 				painter.outlineColor = Color.black;
+			painter.fillColor = Color.transparent;
 			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
 		};
 	}
@@ -1911,6 +2022,8 @@ class MouseActivatedWidget : Widget {
 
 
 		defaultEventHandlers["click"] = (Widget w, Event ev) {
+			if(this.tabStop)
+				this.focus();
 			auto event = new Event("triggered", this);
 			event.sendDirectly();
 		};
@@ -1973,28 +2086,7 @@ class VerticalSpacer : Widget {
 }
 
 ///
-class MutuallyExclusiveGroup {
-	MouseActivatedWidget[] members;
-
-	Radiobox addMember(Radiobox w) {
-		members ~= w;
-		w.group = this;
-		return w;
-	}
-
-	void uncheckOthers(Widget checked) {
-		foreach(member; members)
-			if(member !is checked) {
-				member.isChecked = false;
-				member.redraw();
-			}
-	}
-}
-
-///
 class Radiobox : MouseActivatedWidget {
-	MutuallyExclusiveGroup group;
-
 	override int maxHeight() { return 16; }
 	override int minHeight() { return 16; }
 
@@ -2011,6 +2103,15 @@ class Radiobox : MouseActivatedWidget {
 		width = height + 4 + cast(int) label.length * 16;
 
 		this.paint = (ScreenPainter painter) {
+			if(isFocused) {
+				painter.fillColor = windowBackgroundColor;
+				painter.outlineColor = Color.black;
+			} else {
+				painter.fillColor = windowBackgroundColor;
+				painter.outlineColor = windowBackgroundColor;
+			}
+			painter.drawRectangle(Point(0, 0), width, height);
+
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.white;
 			painter.drawEllipse(Point(2, 2), Point(height - 2, height - 2));
@@ -2025,11 +2126,20 @@ class Radiobox : MouseActivatedWidget {
 			painter.drawText(Point(height + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		};
 
-		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
+		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
 			isChecked = true;
 
-			if(group !is null)
-				group.uncheckOthers(this);
+			if(this.parent) {
+				foreach(child; this.parent.children) {
+					if(child is this) continue;
+					if(auto rb = cast(Radiobox) child) {
+						rb.isChecked = false;
+						auto event = new Event("change", rb);
+						event.dispatch();
+						rb.redraw();
+					}
+				}
+			}
 
 			auto event = new Event("change", this);
 			event.dispatch();
@@ -2083,18 +2193,7 @@ class Button : MouseActivatedWidget {
 		height = 30;
 
 		this.paint = (ScreenPainter painter) {
-			painter.outlineColor = Color.black;
-			painter.fillColor = currentButtonColor;
-			painter.drawRectangle(Point(0, 0), width, height);
-
-
-			painter.outlineColor = (isDepressed) ? Color(128, 128, 128) : Color.white;
-			painter.drawLine(Point(0, 0), Point(width, 0));
-			painter.drawLine(Point(0, 0), Point(0, height - 1));
-
-			painter.outlineColor = (isDepressed) ? Color.white : Color(128, 128, 128);
-			painter.drawLine(Point(width - 1, 1), Point(width - 1, height - 1));
-			painter.drawLine(Point(1, height - 1), Point(width - 1, height - 1));
+			this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
 
 
 			painter.outlineColor = Color.black;
@@ -2163,7 +2262,6 @@ abstract class EditableTextWidget : Widget {
 	}
 
 	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
-	override int maxHeight() { return Window.lineHeight + 0; }
 	override int widthStretchiness() { return 3; }
 
 	@property string content() {
@@ -2204,10 +2302,10 @@ abstract class EditableTextWidget : Widget {
 
 			this.paint = (ScreenPainter painter) {
 				if(parentWindow.win.closed) return;
-				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(0, 0), width, height);
 
-				textLayout.boundingBox = Rectangle(4, 0, width - 8, height - 0);
+				this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
+
+				textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
 
 				painter.outlineColor = Color.black;
 				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
@@ -2259,9 +2357,37 @@ abstract class EditableTextWidget : Widget {
 			};
 
 			defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
-				textLayout.addText("" ~ cast(char) ev.character); // FIXME
+				textLayout.insert(ev.character);
 				redraw();
 			};
+			addEventListener("keydown", delegate (Widget _this, Event ev) {
+				switch(ev.key) {
+					case Key.Left:
+						textLayout.moveLeft(textLayout.carat);
+						redraw();
+					break;
+					case Key.Right:
+						textLayout.moveRight(textLayout.carat);
+						redraw();
+					break;
+					case Key.Home:
+						textLayout.moveHome(textLayout.carat);
+						redraw();
+					break;
+					case Key.End:
+						textLayout.moveEnd(textLayout.carat);
+						redraw();
+					break;
+					default:
+						 {} // intentionally blank, let "char" handle it
+				}
+				/*
+				if(ev.key == Key.Backspace) {
+					textLayout.backspace();
+					redraw();
+				}
+				*/
+			});
 
 			static if(UsingSimpledisplayX11)
 				cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
@@ -2281,6 +2407,7 @@ class LineEdit : EditableTextWidget {
 			setupCustomTextEditing();
 		}
 	}
+	override int maxHeight() { return Window.lineHeight + 0; }
 }
 
 ///
@@ -2295,6 +2422,8 @@ class TextEdit : EditableTextWidget {
 			setupCustomTextEditing();
 		}
 	}
+	override int maxHeight() { return int.max; }
+	override int heightStretchiness() { return 3; }
 }
 
 
@@ -2374,9 +2503,11 @@ mixin template EventStuff() {
 			event = event[2 .. $];
 
 		if(useCapture) {
+			if(event in capturingEventHandlers)
 			foreach(ref evt; capturingEventHandlers[event])
 				if(evt is handler) evt = null;
 		} else {
+			if(event in bubblingEventHandlers)
 			foreach(ref evt; bubblingEventHandlers[event])
 				if(evt is handler) evt = null;
 		}
