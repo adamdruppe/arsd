@@ -1237,7 +1237,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		atom on X11 and the FlashWindow function on Windows.
 	+/
 	void requestAttention() {
-		if(focused)
+		if(_focused)
 			return;
 
 		version(Windows) {
@@ -1255,7 +1255,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		} else static assert(0);
 	}
 
-	private bool focused; // FIXME:I might make a getter for this public later
+	private bool _focused;
 
 	version(X11) private bool demandingAttention;
 
@@ -1275,6 +1275,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	/// Returns true if the window has been closed.
 	final @property bool closed() { return _closed; }
+
+	/// Returns true if the window is focused.
+	final @property bool focused() { return _focused; }
 
 	private bool _visible;
 	/// Returns true if the window is visible (mapped).
@@ -3678,10 +3681,10 @@ struct Pen {
 
 
 +/
-	/// NOT IMPLEMENTED
+	/// Style of lines drawn
 	enum Style {
-		Solid, ///
-		Dashed ///
+		Solid, /// a solid line
+		Dashed /// a dashed line
 	}
 }
 
@@ -5044,7 +5047,16 @@ version(Windows) {
 			if(p.color.a == 0) {
 				pen = GetStockObject(NULL_PEN);
 			} else {
-				pen = CreatePen(PS_SOLID, p.width, RGB(p.color.r, p.color.g, p.color.b));
+				int style = PS_SOLID;
+				final switch(p.style) {
+					case Pen.Style.Solid:
+						style = PS_SOLID;
+					break;
+					case Pen.Style.Dashed:
+						style = PS_DASH;
+					break;
+				}
+				pen = CreatePen(style, p.width, RGB(p.color.r, p.color.g, p.color.b));
 			}
 			auto orig = SelectObject(hdc, pen);
 			if(originalPen is null)
@@ -5535,7 +5547,7 @@ version(Windows) {
 				break;
 				  case WM_SETFOCUS:
 				  case WM_KILLFOCUS:
-					wind.focused = msg == WM_SETFOCUS;
+					wind._focused = msg == WM_SETFOCUS;
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
@@ -6043,7 +6055,18 @@ version(X11) {
 			_pen = p;
 			_outlineColor = p.color;
 
-			XSetLineAttributes(display, gc, p.width, 0, 0, 0);
+			int style;
+
+			final switch(p.style) {
+				case Pen.Style.Solid:
+					style = 0 /*LineSolid*/;
+				break;
+				case Pen.Style.Dashed:
+					style = 1 /*LineOnOffDash*/;
+				break;
+			}
+
+			XSetLineAttributes(display, gc, p.width, style, 0, 0);
 
 			if(p.color.a == 0) {
 				foregroundIsNotTransparent = false;
@@ -7471,7 +7494,7 @@ version(X11) {
 					if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
 				}
 
-				win.focused = e.type == EventType.FocusIn;
+				win._focused = e.type == EventType.FocusIn;
 
 				if(win.demandingAttention)
 					demandAttention(*win, false);
@@ -9202,8 +9225,24 @@ struct Visual
 	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
 
 	int XSetFunction(Display*, GC, int);
-	enum GXcopy = 0x3;
-	enum GXxor = 0x6;
+	enum {
+		GXclear        = 0x0, /* 0 */
+		GXand          = 0x1, /* src AND dst */
+		GXandReverse   = 0x2, /* src AND NOT dst */
+		GXcopy         = 0x3, /* src */
+		GXandInverted  = 0x4, /* NOT src AND dst */
+		GXnoop         = 0x5, /* dst */
+		GXxor          = 0x6, /* src XOR dst */
+		GXor           = 0x7, /* src OR dst */
+		GXnor          = 0x8, /* NOT src AND NOT dst */
+		GXequiv        = 0x9, /* NOT src XOR dst */
+		GXinvert       = 0xa, /* NOT dst */
+		GXorReverse    = 0xb, /* src OR NOT dst */
+		GXcopyInverted = 0xc, /* NOT src */
+		GXorInverted   = 0xd, /* NOT src OR dst */
+		GXnand         = 0xe, /* NOT src OR NOT dst */
+		GXset          = 0xf, /* 1 */
+	}
 
 	GC XCreateGC(Display*, Drawable, uint, void*);
 	int XCopyGC(Display*, GC, uint, GC);
@@ -10374,8 +10413,10 @@ mixin template ExperimentalTextComponent() {
 		}
 	}
 
-	struct InlineElement {
+	static class InlineElement {
 		string text;
+
+		BlockElement containingBlock;
 
 		Color color = Color.black;
 		Color backgroundColor = Color.transparent;
@@ -10397,6 +10438,41 @@ mixin template ExperimentalTextComponent() {
 			else
 				return boundingBox.right;
 		}
+
+		InlineElement clone() {
+			auto ie = new InlineElement();
+			ie.tupleof = this.tupleof;
+			return ie;
+		}
+
+		InlineElement getPreviousInlineElement() {
+			InlineElement prev = null;
+			foreach(ie; this.containingBlock.parts) {
+				if(ie is this)
+					break;
+				prev = ie;
+			}
+			if(prev is null) {
+				BlockElement pb;
+				BlockElement cb = this.containingBlock;
+				moar:
+				foreach(ie; this.containingBlock.containingLayout.blocks) {
+					if(ie is cb)
+						break;
+					pb = ie;
+				}
+				if(pb is null)
+					return null;
+				if(pb.parts.length == 0) {
+					cb = pb;
+					goto moar;
+				}
+
+				prev = pb.parts[$-1];
+
+			}
+			return prev;
+		}
 	}
 
 	// Block elements are used entirely for positioning inline elements,
@@ -10406,6 +10482,8 @@ mixin template ExperimentalTextComponent() {
 		uint alignment;
 
 		int whiteSpace; // pre, pre-wrap, wrap
+
+		TextLayout containingLayout;
 
 		// inputs
 		Point where;
@@ -10422,7 +10500,7 @@ mixin template ExperimentalTextComponent() {
 	}
 
 	struct TextIdentifyResult {
-		InlineElement* element;
+		InlineElement element;
 		size_t offset;
 	}
 
@@ -10457,21 +10535,32 @@ mixin template ExperimentalTextComponent() {
 			this.boundingBox = boundingBox;
 		}
 
-		BlockElement addBlock(Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
+		BlockElement addBlock(InlineElement after = null, Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
 			auto be = new BlockElement();
-			blocks ~= be;
+			be.containingLayout = this;
+			if(after is null)
+				blocks ~= be;
+			else {
+				foreach(idx, b; blocks) {
+					if(b is after.containingBlock) {
+						blocks = blocks[0 .. idx + 1] ~  be ~ blocks[idx + 1 .. $];
+						break;
+					}
+				}
+			}
 			return be;
 		}
 
 		void clear() {
 			blocks = null;
+			carat = Carat.init;
 		}
 
 		void addText(Args...)(Args args) {
 			if(blocks.length == 0)
 				addBlock();
 
-			InlineElement ie;
+			InlineElement ie = new InlineElement();
 			foreach(idx, arg; args) {
 				static if(is(typeof(arg) == ForegroundColor))
 					ie.color = arg;
@@ -10488,9 +10577,11 @@ mixin template ExperimentalTextComponent() {
 						if(a == '\n') {
 							ie.text = arg[lastLineIndex .. cidx];
 							lastLineIndex = cidx + 1;
-							blocks[$-1].parts ~= ie;
+							ie.containingBlock = blocks[$-1];
+							blocks[$-1].parts ~= ie.clone;
 							ie.text = "\n";
-							blocks[$-1].parts ~= ie;
+							ie.containingBlock = blocks[$-1];
+							blocks[$-1].parts ~= ie.clone;
 							addBlock();
 						} else {
 
@@ -10498,8 +10589,9 @@ mixin template ExperimentalTextComponent() {
 					}
 
 					ie.text = arg[lastLineIndex .. $];
-					blocks[$-1].parts ~= ie;
-					carat = Carat(this, &(blocks[$-1].parts[$-1]), ie.text.length);
+					ie.containingBlock = blocks[$-1];
+					blocks[$-1].parts ~= ie.clone;
+					carat = Carat(this, blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length);
 				}
 			}
 		}
@@ -10511,7 +10603,7 @@ mixin template ExperimentalTextComponent() {
 
 		TextIdentifyResult identify(int x, int y) {
 			foreach(block; blocks) {
-				foreach(ref part; block.parts) {
+				foreach(part; block.parts) {
 					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
 
 						// FIXME binary search
@@ -10522,7 +10614,7 @@ mixin template ExperimentalTextComponent() {
 								break;
 							}
 
-						return TextIdentifyResult(&part, tidx);
+						return TextIdentifyResult(part, tidx);
 					}
 				}
 			}
@@ -10670,18 +10762,42 @@ mixin template ExperimentalTextComponent() {
 			if(carat.offset == e.text.length) {
 				e.text ~= cast(char) ch; // FIXME
 				carat.offset++;
+				if(ch == 10) {
+					auto c = carat.inlineElement.clone;
+					c.text = null;
+					auto b = addBlock(c);
+					c.containingBlock = b;
+					b.parts ~= c;
+					carat = Carat(this, c, 0);
+				}
 			} else {
 				// FIXME cast char sucks
-				e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch ~ e.text[carat.offset + 1 .. $];
-				carat.offset++;
+				if(ch == 10) {
+					auto c = carat.inlineElement.clone;
+					c.text = e.text[carat.offset + 1 .. $];
+					e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch;
+					auto b = addBlock(c);
+					c.containingBlock = b;
+					b.parts ~= c;
+					carat = Carat(this, c, 0);
+				} else {
+					e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch ~ e.text[carat.offset + 1 .. $];
+					carat.offset++;
+				}
 			}
 		}
 		void backspace() {
+			try_again:
 			auto e = carat.inlineElement;
 			if(e is null)
 				return;
-			if(carat.offset == 0)
-				return;
+			if(carat.offset == 0) {
+				auto prev = e.getPreviousInlineElement();
+				carat.inlineElement = prev;
+				carat.offset = prev is null ? 0 : prev.text.length;
+
+				goto try_again;
+			}
 			// FIXME: what if it spans parts?
 			if(carat.offset == e.text.length) {
 				e.text = e.text[0 .. $-1];
@@ -10737,7 +10853,7 @@ mixin template ExperimentalTextComponent() {
 
 	struct Carat {
 		TextLayout layout;
-		InlineElement* inlineElement;
+		InlineElement inlineElement;
 		int offset;
 	}
 
