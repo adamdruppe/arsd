@@ -11019,6 +11019,8 @@ mixin template ExperimentalTextComponent() {
 				return;
 			if(carat.offset == 0) {
 				auto prev = e.getPreviousInlineElement();
+				if(prev is null)
+					return;
 				auto newOffset = prev.text.length;
 				tryMerge(prev, e);
 				carat.inlineElement = prev;
