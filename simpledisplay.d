@@ -11087,7 +11087,7 @@ mixin template ExperimentalTextComponent() {
 	struct Carat {
 		TextLayout layout;
 		InlineElement inlineElement;
-		int offset;
+		size_t offset;
 	}
 
 	enum TextFormat : ushort {
