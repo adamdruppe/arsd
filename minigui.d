@@ -95,10 +95,11 @@ abstract class ComboboxBase : Widget {
 			parentWindow = parent.parentWindow;
 			createWin32Window(this, "ComboBox", null, style);
 		}
-	else
+	else version(custom_widgets)
 		this(Widget parent = null) {
 			super(parent);
 		}
+	else static assert(false);
 
 	private string[] options;
 	private int selection = -1;
@@ -134,8 +135,9 @@ class DropDownSelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(3 /* CBS_DROPDOWNLIST */, parent);
-		else
+		else version(custom_widgets)
 			super(parent);
+		else static assert(false);
 	}
 }
 
@@ -147,8 +149,9 @@ class FreeEntrySelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(2 /* CBS_DROPDOWN */, parent);
-		else
+		else version(custom_widgets)
 			super(parent);
+		else static assert(false);
 	}
 }
 
@@ -159,8 +162,9 @@ class ComboBox : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(1 /* CBS_SIMPLE */, parent);
-		else
+		else version(custom_widgets)
 			super(parent);
+		else static assert(false);
 	}
 
 	override int minHeight() { return Window.lineHeight * 3; }
@@ -262,8 +266,9 @@ version(Windows) {
 
 //static if(UsingSimpledisplayX11)
 version(win32_widgets) {}
-else
+else version(custom_widgets)
 	enum windowBackgroundColor = Color(192, 192, 192);
+else static assert(false);
 
 private const(char)* toStringzInternal(string s) { return (s ~ '\0').ptr; }
 private const(wchar)* toWstringzInternal(in char[] s) {
@@ -1142,9 +1147,9 @@ class Window : Widget {
 					version(win32_widgets) {
 						if(recipient.hwnd !is null)
 							SetFocus(recipient.hwnd);
-					} else {
+					} else version(custom_widgets) {
 						focusedWidget = recipient;
-					}
+					} else static assert(false);
 					*/
 
 					skipNextChar = true;
@@ -1175,13 +1180,13 @@ class Window : Widget {
 				SelectObject(painter.impl.hdc, b);
 			};
 		}
-		else
-		this.paint = (ScreenPainter painter) {
-			painter.fillColor = windowBackgroundColor;
-			painter.outlineColor = windowBackgroundColor;
-			painter.drawRectangle(Point(0, 0), this.width, this.height);
-		};
-
+		else version(custom_widgets)
+			this.paint = (ScreenPainter painter) {
+				painter.fillColor = windowBackgroundColor;
+				painter.outlineColor = windowBackgroundColor;
+				painter.drawRectangle(Point(0, 0), this.width, this.height);
+			};
+		else static assert(false);
 	}
 
 	this(int width = 500, int height = 500, string title = null) {
@@ -1389,14 +1394,14 @@ class MainWindow : Window {
 
 		version(win32_widgets) {
 			SetMenu(parentWindow.win.impl.hwnd, m.handle);
-		} else {
+		} else version(custom_widgets) {
 			super.addChild(m, 0);
 
 		//	clientArea.y = menu.height;
 		//	clientArea.height = this.height - menu.height;
 
 			recomputeChildLayout();
-		}
+		} else static assert(false);
 
 		return _menu;
 	}
@@ -1435,10 +1440,10 @@ class ToolBar : Widget {
 		private const int idealHeight;
 		override int minHeight() { return idealHeight; }
 		override int maxHeight() { return idealHeight; }
-	} else {
+	} else version(custom_widgets) {
 		override int minHeight() { return Window.lineHeight * 3/2; }
 		override int maxHeight() { return Window.lineHeight * 3/2; }
-	}
+	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
 	version(win32_widgets) 
@@ -1482,10 +1487,10 @@ class ToolBar : Widget {
 			idealHeight = rect.bottom - rect.top + 10; // the +10 is a hack since the size right now doesn't look right on a real Windows XP box
 
 			assert(idealHeight);
-		} else {
+		} else version(custom_widgets) {
 			foreach(action; actions)
 				addChild(new ToolButton(action));
-		}
+		} else static assert(false);
 	}
 
 	override void recomputeChildLayout() {
@@ -1504,7 +1509,8 @@ class ToolButton : Button {
 		tabStop = false;
 		this.action = action;
 
-		version(win32_widgets) {} else {
+		version(win32_widgets) {}
+		else version(custom_widgets) {
 			defaultEventHandlers["click"] = (Widget _this, Event event) {
 				foreach(handler; action.triggered)
 					handler();
@@ -1517,6 +1523,7 @@ class ToolButton : Button {
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 			};
 		}
+		else static assert(false);
 	}
 
 	Action action;
@@ -1537,7 +1544,7 @@ class MenuBar : Widget {
 			handle = CreateMenu();
 			tabStop = false;
 		}
-	} else {
+	} else version(custom_widgets) {
 		this(Widget parent = null) {
 			tabStop = false; // these are selected some other way
 			super(parent);
@@ -1545,7 +1552,7 @@ class MenuBar : Widget {
 				draw3dFrame(this, painter, FrameStyle.risen);
 			};
 		}
-	}
+	} else static assert(false);
 
 	MenuItem addItem(MenuItem item) {
 		this.addChild(item);
@@ -1564,11 +1571,11 @@ class MenuBar : Widget {
 
 		version(win32_widgets) {
 			AppendMenuA(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label)); // XXX
-		} else {
+		} else version(custom_widgets) {
 			mbItem.defaultEventHandlers["click"] = (Widget e, Event ev) {
 				item.popup(mbItem);
 			};
-		}
+		} else static assert(false);
 
 		return item;
 	}
@@ -1630,9 +1637,9 @@ class StatusBar : Widget {
 						pos[idx] = cpos;
 				}
 				SendMessageA(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(int) pos.ptr);
-			} else {
+			} else version(custom_widgets) {
 				owner.redraw();
-			}
+			} else static assert(false);
 
 			return p;
 		}
@@ -1656,12 +1663,12 @@ class StatusBar : Widget {
 			version(win32_widgets) {
 				_content = s;
 				SendMessageA(owner.hwnd, SB_SETTEXT, idx, cast(LPARAM) toStringzInternal(s));
-			} else {
+			} else version(custom_widgets) {
 				if(_content != s) {
 					_content = s;
 					owner.redraw();
 				}
-			}
+			} else static assert(false);
 		}
 	}
 	string simpleModeContent;
@@ -1680,7 +1687,7 @@ class StatusBar : Widget {
 			GetWindowRect(hwnd, &rect);
 			idealHeight = rect.bottom - rect.top;
 			assert(idealHeight);
-		} else {
+		} else version(custom_widgets) {
 			this.paint = (ScreenPainter painter) {
 				this.draw3dFrame(painter, FrameStyle.risen);
 				int cpos = 0;
@@ -1693,17 +1700,17 @@ class StatusBar : Widget {
 					remainingLength -= partWidth;
 				}
 			};
-		}
+		} else static assert(false);
 	}
 
 	version(win32_widgets) {
 		private const int idealHeight;
 		override int maxHeight() { return idealHeight; }
 		override int minHeight() { return idealHeight; }
-	} else {
+	} else version(custom_widgets) {
 		override int maxHeight() { return Window.lineHeight + 4; }
 		override int minHeight() { return Window.lineHeight + 4; }
-	}
+	} else static assert(false);
 }
 
 /// Displays an in-progress indicator without known values
@@ -1728,7 +1735,7 @@ class ProgressBar : Widget {
 		createWin32Window(this, "msctls_progress32", "", 0);
 		tabStop = false;
 	}
-	else {
+	else version(custom_widgets) {
 		this(Widget parent = null) {
 			super(parent);
 			max = 100;
@@ -1745,46 +1752,51 @@ class ProgressBar : Widget {
 		int max;
 		int step;
 	}
+	else static assert(false);
 
 	void advanceOneStep() {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_STEPIT, 0, 0);
-		else
+		else version(custom_widgets)
 			addToPosition(step);
+		else static assert(false);
 	}
 
 	void setStepIncrement(int increment) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETSTEP, increment, 0);
-		else
+		else version(custom_widgets)
 			step = increment;
+		else static assert(false);
 	}
 
 	void addToPosition(int amount) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_DELTAPOS, amount, 0);
-		else {
+		else version(custom_widgets)
 			setPosition(current + amount);
-		}
+		else static assert(false);
 	}
 
 	void setPosition(int pos) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETPOS, pos, 0);
-		else {
+		else version(custom_widgets) {
 			current = pos;
 			if(current > max)
 				current = max;
 			redraw();
 		}
+		else static assert(false);
 	}
 
 	void setRange(ushort min, ushort max) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETRANGE, 0, MAKELONG(min, max));
-		else {
+		else version(custom_widgets) {
 			this.max = max;
 		}
+		else static assert(false);
 	}
 
 	override int minHeight() { return 10; }
@@ -1796,8 +1808,9 @@ class Fieldset : Widget {
 	// on X, it doesn't fix the clipping rectangle for it
 	version(win32_widgets)
 		override int paddingTop() { return Window.lineHeight; }
-	else
+	else version(custom_widgets)
 		override int paddingTop() { return Window.lineHeight + 2; }
+	else static assert(false);
 	override int paddingBottom() { return 6; }
 	override int paddingLeft() { return 6; }
 	override int paddingRight() { return 6; }
@@ -1817,7 +1830,7 @@ class Fieldset : Widget {
 		createWin32Window(this, "button", legend, BS_GROUPBOX);
 		tabStop = false;
 	}
-	else
+	else version(custom_widgets)
 	this(string legend, Widget parent = null) {
 		super(parent);
 		tabStop = false;
@@ -1843,6 +1856,7 @@ class Fieldset : Widget {
 			painter.drawText(Point(8, 0), legend);
 		};
 	}
+	else static assert(false);
 
 	override int maxHeight() {
 		auto m = paddingTop() + paddingBottom();
@@ -1873,7 +1887,8 @@ class Menu : Window {
 		parentWindow.releaseMouseCapture();
 	}
 
-	version(win32_widgets) {} else {
+	version(win32_widgets) {}
+	else version(custom_widgets) {
 		SimpleWindow dropDown;
 		Widget menuParent;
 		void popup(Widget parent) {
@@ -1905,6 +1920,7 @@ class Menu : Window {
 			dropDown.show();
 		}
 	}
+	else static assert(false);
 
 	version(custom_widgets)
 	void unpopup() {
@@ -1934,7 +1950,7 @@ class Menu : Window {
 			this.label = label;
 			handle = CreatePopupMenu();
 		}
-	} else {
+	} else version(custom_widgets) {
 		this(string label, Widget parent = null) {
 
 			if(dropDown) {
@@ -1956,7 +1972,7 @@ class Menu : Window {
 				this.draw3dFrame(painter, FrameStyle.risen);
 			};
 		}
-	}
+	} else static assert(false);
 
 	override int maxHeight() { return Window.lineHeight; }
 	override int minHeight() { return Window.lineHeight; }
@@ -1984,15 +2000,17 @@ class MenuItem : MouseActivatedWidget {
 		foreach(char ch; lbl) // FIXME
 			if(ch != '&') // FIXME
 				label ~= ch; // FIXME
-		version(win32_widgets) {} else
-		this.paint = (ScreenPainter painter) {
-			if(isHovering)
-				painter.outlineColor = Color.blue;
-			else
-				painter.outlineColor = Color.black;
-			painter.fillColor = Color.transparent;
-			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
-		};
+		version(win32_widgets) {}
+		else version(custom_widgets)
+			this.paint = (ScreenPainter painter) {
+				if(isHovering)
+					painter.outlineColor = Color.blue;
+				else
+					painter.outlineColor = Color.black;
+				painter.fillColor = Color.transparent;
+				painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
+			};
+		else static assert(false);
 		tabStop = false; // these are selected some other way
 	}
 
@@ -2030,7 +2048,7 @@ class MouseActivatedWidget : Widget {
 		super(parent);
 	}
 }
-else
+else version(custom_widgets)
 class MouseActivatedWidget : Widget {
 	bool isDepressed = false;
 	bool isHovering = false;
@@ -2098,6 +2116,7 @@ class MouseActivatedWidget : Widget {
 		};
 	}
 }
+else static assert(false);
 
 
 ///
@@ -2113,7 +2132,7 @@ class Checkbox : MouseActivatedWidget {
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
 	}
-	else
+	else version(custom_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
 
@@ -2157,6 +2176,7 @@ class Checkbox : MouseActivatedWidget {
 			redraw();
 		};
 	}
+	else static assert(false);
 }
 
 ///
@@ -2179,7 +2199,7 @@ class Radiobox : MouseActivatedWidget {
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", label, BS_AUTORADIOBUTTON);
 	}
-	else
+	else version(custom_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
 		height = 16;
@@ -2232,6 +2252,7 @@ class Radiobox : MouseActivatedWidget {
 			redraw();
 		};
 	}
+	else static assert(false);
 }
 
 
@@ -2247,7 +2268,8 @@ class Button : MouseActivatedWidget {
 		event.dispatch();
 	}
 
-	version(win32_widgets) {} else
+	version(win32_widgets) {}
+	else version(custom_widgets)
 	Color currentButtonColor() {
 		if(isHovering) {
 			return isDepressed ? depressedBgColor : hoverBgColor;
@@ -2255,6 +2277,7 @@ class Button : MouseActivatedWidget {
 
 		return normalBgColor;
 	}
+	else static assert(false);
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
@@ -2266,8 +2289,7 @@ class Button : MouseActivatedWidget {
 		width = 50;
 		height = 30;
 	}
-	else
-
+	else version(custom_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
 		normalBgColor = Color(192, 192, 192);
@@ -2293,6 +2315,7 @@ class Button : MouseActivatedWidget {
 			}
 		};
 	}
+	else static assert(false);
 
 	override int minHeight() { return Window.lineHeight; }
 }
@@ -2363,14 +2386,14 @@ abstract class EditableTextWidget : Widget {
 				return buffer[0 .. l].idup;
 			else
 				return null;
-		} else {
+		} else version(custom_widgets) {
 			return textLayout.getPlainText();
-		}
+		} else static assert(false);
 	}
 	@property void content(string s) {
 		version(win32_widgets)
 			SetWindowTextA(hwnd, toStringzInternal(s));
-		else {
+		else version(custom_widgets) {
 			textLayout.clear();
 			textLayout.addText(s);
 			textLayout.addText(ForegroundColor.red, s);
@@ -2378,10 +2401,11 @@ abstract class EditableTextWidget : Widget {
 			textLayout.addText(" is the best!");
 			redraw();
 		}
+		else static assert(false);
 	}
 
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
-	else {
+	else version(custom_widgets) {
 		// FIXME
 
 		Timer caratTimer;
@@ -2496,6 +2520,7 @@ abstract class EditableTextWidget : Widget {
 				cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
 		}
 	}
+	else static assert(false);
 }
 
 ///
@@ -2506,13 +2531,13 @@ class LineEdit : EditableTextWidget {
 			parentWindow = parent.parentWindow;
 			createWin32Window(this, "edit", "", 
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
-		} else {
+		} else version(custom_widgets) {
 			setupCustomTextEditing();
 			addEventListener("char", delegate(Widget _this, Event ev) {
 				if(ev.character == '\n')
 					ev.preventDefault();
 			});
-		}
+		} else static assert(false);
 	}
 	override int maxHeight() { return Window.lineHeight + 4; }
 }
@@ -2525,9 +2550,9 @@ class TextEdit : EditableTextWidget {
 			parentWindow = parent.parentWindow;
 			createWin32Window(this, "edit", "", 
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
-		} else {
+		} else version(custom_widgets) {
 			setupCustomTextEditing();
-		}
+		} else static assert(false);
 	}
 	override int maxHeight() { return int.max; }
 	override int heightStretchiness() { return 4; }
