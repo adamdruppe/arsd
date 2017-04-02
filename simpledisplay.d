@@ -5149,7 +5149,10 @@ version(Windows) {
 			return Size(rect.right, rect.bottom);
 		}
 
-		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
+		void drawText(int x, int y, int x2, int y2, scope const(char)[] text, uint alignment) {
+			if(text.length && text[$-1] == '\n')
+				text = text[0 .. $-1]; // tailing newlines are weird on windows...
+
 			WCharzBuffer buffer = WCharzBuffer(text);
 			if(x2 == 0 && y2 == 0)
 				TextOutW(hdc, x, y, buffer.ptr, cast(int) buffer.length);
@@ -6148,7 +6151,7 @@ version(X11) {
 		Size textSize(string text) {
 			auto maxWidth = 0;
 			auto lineHeight = fontHeight;
-			int h = 0;
+			int h = text.length ? 0 : lineHeight + 4; // if text is empty, it still gives the line height
 			foreach(line; text.split('\n')) {
 				int textWidth;
 				if(font)
@@ -10432,6 +10435,18 @@ mixin template ExperimentalTextComponent() {
 		Rectangle boundingBox;
 		int[] letterXs; // FIXME: maybe i should do bounding boxes for every character
 
+		bool isMergeCompatible(InlineElement other) {
+			return
+				containingBlock is other.containingBlock &&
+				color == other.color &&
+				backgroundColor == other.backgroundColor &&
+				styles == other.styles &&
+				font == other.font &&
+				fontSize == other.fontSize &&
+				lineHeight == other.lineHeight &&
+				true;
+		}
+
 		int xOfIndex(size_t index) {
 			if(index < letterXs.length)
 				return letterXs[index];
@@ -10473,6 +10488,36 @@ mixin template ExperimentalTextComponent() {
 			}
 			return prev;
 		}
+
+		InlineElement getNextInlineElement() {
+			InlineElement next = null;
+			foreach(idx, ie; this.containingBlock.parts) {
+				if(ie is this) {
+					if(idx + 1 < this.containingBlock.parts.length)
+						next = this.containingBlock.parts[idx + 1];
+					break;
+				}
+			}
+			if(next is null) {
+				BlockElement n;
+				foreach(idx, ie; this.containingBlock.containingLayout.blocks) {
+					if(ie is this.containingBlock) {
+						if(idx + 1 < this.containingBlock.containingLayout.blocks.length)
+							n = this.containingBlock.containingLayout.blocks[idx + 1];
+						break;
+					}
+				}
+				if(n is null)
+					return null;
+
+				if(n.parts.length)
+					next = n.parts[0];
+				else {} // FIXME
+
+			}
+			return next;
+		}
+
 	}
 
 	// Block elements are used entirely for positioning inline elements,
@@ -10502,6 +10547,15 @@ mixin template ExperimentalTextComponent() {
 	struct TextIdentifyResult {
 		InlineElement element;
 		size_t offset;
+
+		private TextIdentifyResult fixupNewline() {
+			if(element !is null && offset < element.text.length && element.text[offset] == '\n') {
+				offset--;
+			} else if(element !is null && offset == element.text.length && element.text.length > 1 && element.text[$-1] == '\n') {
+				offset--;
+			}
+			return this;
+		}
 	}
 
 	class TextLayout {
@@ -10575,14 +10629,11 @@ mixin template ExperimentalTextComponent() {
 					size_t lastLineIndex;
 					foreach(cidx, char a; arg) {
 						if(a == '\n') {
-							ie.text = arg[lastLineIndex .. cidx];
+							ie.text = arg[lastLineIndex .. cidx + 1];
 							lastLineIndex = cidx + 1;
 							ie.containingBlock = blocks[$-1];
 							blocks[$-1].parts ~= ie.clone;
-							ie.text = "\n";
-							ie.containingBlock = blocks[$-1];
-							blocks[$-1].parts ~= ie.clone;
-							addBlock();
+							ie.text = null;
 						} else {
 
 						}
@@ -10596,30 +10647,66 @@ mixin template ExperimentalTextComponent() {
 			}
 		}
 
+		void tryMerge(InlineElement into, InlineElement what) {
+			if(!into.isMergeCompatible(what)) {
+				return; // cannot merge, different configs
+			}
+
+			// cool, can merge, bring text together...
+			into.text ~= what.text;
+
+			// and remove what
+			for(size_t a = 0; a < what.containingBlock.parts.length; a++) {
+				if(what.containingBlock.parts[a] is what) {
+					for(size_t i = a; i < what.containingBlock.parts.length - 1; i++)
+						what.containingBlock.parts[i] = what.containingBlock.parts[i + 1];
+					what.containingBlock.parts = what.containingBlock.parts[0 .. $-1];
+
+				}
+			}
+
+			// FIXME: ensure no other carats have a reference to it
+		}
+
 		/// Call this if the inputs change. It will reflow everything
 		void redoLayout() {
 
 		}
 
-		TextIdentifyResult identify(int x, int y) {
+		/// exact = true means return null if no match. otherwise, get the closest one that makes sense for a mouse click.
+		TextIdentifyResult identify(int x, int y, bool exact = false) {
+			TextIdentifyResult inexactMatch;
 			foreach(block; blocks) {
 				foreach(part; block.parts) {
 					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
 
 						// FIXME binary search
 						size_t tidx;
-						foreach_reverse(idx, lx; part.letterXs)
+						int lastX;
+						foreach_reverse(idx, lx; part.letterXs) {
 							if(lx <= x) {
-								tidx = idx;
+								if(lastX && lastX - x < x - lx)
+									tidx = idx + 1;
+								else
+									tidx = idx;
 								break;
 							}
+							lastX = lx;
+						}
 
-						return TextIdentifyResult(part, tidx);
+						return TextIdentifyResult(part, tidx).fixupNewline;
+					} else if(!exact) {
+						// we're not in the box, but are we on the same line?
+						if(y >= part.boundingBox.top && y < part.boundingBox.bottom)
+							inexactMatch = TextIdentifyResult(part, x == 0 ? 0 : part.text.length);
 					}
 				}
 			}
 
-			return TextIdentifyResult(null, 0);
+			if(!exact && inexactMatch is TextIdentifyResult.init && blocks.length && blocks[$-1].parts.length)
+				return TextIdentifyResult(blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length).fixupNewline;
+
+			return exact ? TextIdentifyResult.init : inexactMatch.fixupNewline;
 		}
 
 		void moveCaratToPixelCoordinates(int x, int y) {
@@ -10632,14 +10719,17 @@ mixin template ExperimentalTextComponent() {
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
 			int lastHeight;
-			foreach(block; blocks) {
+			void nl() {
 				pos.x = boundingBox.left;
 				pos.y += lastHeight;
-				foreach(ref part; block.parts) {
+			}
+			foreach(block; blocks) {
+				nl();
+				foreach(part; block.parts) {
 					painter.outlineColor = part.color;
 					painter.fillColor = part.backgroundColor;
-					if(part.text == "\n")
-						continue;
+					part.letterXs = null;
+
 					auto size = painter.textSize(part.text);
 
 					painter.drawText(pos, part.text);
@@ -10650,7 +10740,6 @@ mixin template ExperimentalTextComponent() {
 
 					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
 
-					part.letterXs = null;
 					foreach(idx, char c; part.text) {
 							// FIXME: unicode
 						part.letterXs ~= painter.textSize(part.text[0 .. idx]).width + pos.x;
@@ -10664,14 +10753,20 @@ mixin template ExperimentalTextComponent() {
 					} else {
 						lastHeight = size.height;
 					}
+
+					if(part.text.length && part.text[$-1] == '\n')
+						nl();
 				}
 			}
+
+			// on every redraw, I will force the carat to be
+			// redrawn too, in order to eliminate perceived lag
+			// when moving around with the mouse.
+			eraseCarat(painter);
 
 			if(focused) {
 				highlightSelection(painter);
 				drawCarat(painter);
-			} else {
-				eraseCarat(painter);
 			}
 		}
 
@@ -10688,7 +10783,7 @@ mixin template ExperimentalTextComponent() {
 				y1 = boundingBox.top + 2;
 				y2 = boundingBox.top + painter.fontHeight;
 			} else {
-				x = carat.inlineElement.xOfIndex(carat.offset + 1);
+				x = carat.inlineElement.xOfIndex(carat.offset);
 				y1 = carat.inlineElement.boundingBox.top + 2;
 				y2 = carat.inlineElement.boundingBox.bottom - 2;
 			}
@@ -10726,22 +10821,80 @@ mixin template ExperimentalTextComponent() {
 		/// Carat movement api
 		/// These should give the user a logical result based on what they see on screen...
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
-		void moveUp(ref Carat carat) {}
-		void moveDown(ref Carat carat) {}
+		void moveUp(ref Carat carat) {
+			auto x = carat.inlineElement.xOfIndex(carat.offset);
+			auto y = carat.inlineElement.boundingBox.top + 2;
+
+			y -= carat.inlineElement.boundingBox.bottom - carat.inlineElement.boundingBox.top;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				carat.inlineElement = i.element;
+				carat.offset = i.offset;
+			}
+		}
+		void moveDown(ref Carat carat) {
+			auto x = carat.inlineElement.xOfIndex(carat.offset);
+			auto y = carat.inlineElement.boundingBox.bottom - 2;
+
+			y += carat.inlineElement.boundingBox.bottom - carat.inlineElement.boundingBox.top;
+
+			auto i = identify(x, y);
+			if(i.element) {
+				carat.inlineElement = i.element;
+				carat.offset = i.offset;
+			}
+		}
 		void moveLeft(ref Carat carat) {
+			if(carat.inlineElement is null) return;
 			if(carat.offset)
 				carat.offset--;
+			else {
+				auto p = carat.inlineElement.getPreviousInlineElement();
+				if(p) {
+					carat.inlineElement = p;
+					if(p.text.length && p.text[$-1] == '\n')
+						carat.offset = p.text.length - 1;
+					else
+						carat.offset = p.text.length;
+				}
+			}
 		}
 		void moveRight(ref Carat carat) {
-			if(carat.inlineElement && carat.offset < carat.inlineElement.text.length)
+			if(carat.inlineElement is null) return;
+			if(carat.offset < carat.inlineElement.text.length && carat.inlineElement.text[carat.offset] != '\n') {
 				carat.offset++;
+			} else {
+				auto p = carat.inlineElement.getNextInlineElement();
+				if(p) {
+					carat.inlineElement = p;
+					carat.offset = 0;
+				}
+			}
 		}
 		void moveHome(ref Carat carat) {
-			carat.offset = 0;
+			auto x = 0;
+			auto y = carat.inlineElement.boundingBox.top + 2;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				carat.inlineElement = i.element;
+				carat.offset = i.offset;
+			}
 		}
 		void moveEnd(ref Carat carat) {
-			if(carat.inlineElement)
-				carat.offset = carat.inlineElement.text.length;
+			auto x = int.max;
+			auto y = carat.inlineElement.boundingBox.top + 2;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				carat.inlineElement = i.element;
+				carat.offset = i.offset;
+			}
+
 		}
 		void movePageUp(ref Carat carat) {}
 		void movePageDown(ref Carat carat) {}
@@ -10749,10 +10902,15 @@ mixin template ExperimentalTextComponent() {
 		/// Plain text editing api. These work at the current carat inside the selected inline element.
 		void insert(string text) {}
 		void insert(dchar ch) {
+			if(ch == 127) {
+				delete_();
+				return;
+			}
 			if(ch == 8) {
 				backspace();
 				return;
 			}
+			if(ch == 13) ch = 10;
 			auto e = carat.inlineElement;
 			if(e is null) {
 				addText("" ~ cast(char) ch) ; // FIXME
@@ -10765,27 +10923,55 @@ mixin template ExperimentalTextComponent() {
 				if(ch == 10) {
 					auto c = carat.inlineElement.clone;
 					c.text = null;
-					auto b = addBlock(c);
-					c.containingBlock = b;
-					b.parts ~= c;
+					insertPartAfter(c,e);
 					carat = Carat(this, c, 0);
 				}
 			} else {
 				// FIXME cast char sucks
 				if(ch == 10) {
 					auto c = carat.inlineElement.clone;
-					c.text = e.text[carat.offset + 1 .. $];
-					e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch;
-					auto b = addBlock(c);
-					c.containingBlock = b;
-					b.parts ~= c;
+					c.text = e.text[carat.offset .. $];
+					e.text = e.text[0 .. carat.offset] ~ cast(char) ch;
+					insertPartAfter(c,e);
 					carat = Carat(this, c, 0);
 				} else {
-					e.text = e.text[0 .. carat.offset + 1] ~ cast(char) ch ~ e.text[carat.offset + 1 .. $];
+					e.text = e.text[0 .. carat.offset] ~ cast(char) ch ~ e.text[carat.offset .. $];
 					carat.offset++;
 				}
 			}
 		}
+
+		void insertPartAfter(InlineElement what, InlineElement where) {
+			foreach(idx, p; where.containingBlock.parts) {
+				if(p is where) {
+					if(idx + 1 == where.containingBlock.parts.length)
+						where.containingBlock.parts ~= what;
+					else
+						where.containingBlock.parts = where.containingBlock.parts[0 .. idx + 1] ~ what ~ where.containingBlock.parts[idx + 1 .. $];
+					return;
+				}
+			}
+		}
+
+		void cleanupStructures() {
+			for(size_t i = 0; i < blocks.length; i++) {
+				auto block = blocks[i];
+				for(size_t a = 0; a < block.parts.length; a++) {
+					auto part = block.parts[a];
+					if(part.text.length == 0) {
+						for(size_t b = a; b < block.parts.length - 1; b++)
+							block.parts[b] = block.parts[b+1];
+						block.parts = block.parts[0 .. $-1];
+					}
+				}
+				if(block.parts.length == 0) {
+					for(size_t a = i; a < blocks.length - 1; a++)
+						blocks[a] = blocks[a+1];
+					blocks = blocks[0 .. $-1];
+				}
+			}
+		}
+
 		void backspace() {
 			try_again:
 			auto e = carat.inlineElement;
@@ -10793,22 +10979,29 @@ mixin template ExperimentalTextComponent() {
 				return;
 			if(carat.offset == 0) {
 				auto prev = e.getPreviousInlineElement();
+				auto newOffset = prev.text.length;
+				tryMerge(prev, e);
 				carat.inlineElement = prev;
-				carat.offset = prev is null ? 0 : prev.text.length;
+				carat.offset = prev is null ? 0 : newOffset;
 
 				goto try_again;
-			}
-			// FIXME: what if it spans parts?
-			if(carat.offset == e.text.length) {
+			} else if(carat.offset == e.text.length) {
 				e.text = e.text[0 .. $-1];
 				carat.offset--;
 			} else {
-				e.text = e.text[0 .. carat.offset] ~ e.text[carat.offset + 1 .. $];
+				e.text = e.text[0 .. carat.offset - 1] ~ e.text[carat.offset .. $];
 				carat.offset--;
 			}
-		
+			//cleanupStructures();
 		}
-		void delete_() {}
+		void delete_() {
+			auto after = carat;
+			moveRight(after);
+			if(carat != after) {
+				carat = after;
+				backspace();
+			}
+		}
 		void overstrike() {}
 
 		/// Selection API. See also: carat movement.

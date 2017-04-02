@@ -1,19 +1,31 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+/*
+
+1(15:19:48) NotSpooky: Menus, text entry, label, notebook, box, frame, file dialogs and layout (this one is very useful because I can draw lines between its child widgets
+*/
+
 /++
 	minigui is a smallish GUI widget library, aiming to be on par with at least
 	HTML4 forms and a few other expected gui components. It uses native controls
 	on Windows and does its own thing on Linux (Mac is not currently supported but
-	may be later, and should use native controls) to keep size down. Its only
-	dependencies are [arsd.simpledisplay] and [arsd.color].
+	may be later, and should use native controls) to keep size down. The Linux
+	appearance is similar to Windows 95 and avoids using images to maintain network
+	efficiency on remote X connections.
+	
+	minigui's only required dependencies are [arsd.simpledisplay] and [arsd.color].
 
 	Its #1 goal is to be useful without being large and complicated like GTK and Qt.
+	It isn't hugely concerned with appearance - on Windows, it just uses the native
+	controls and native theme, and on Linux, it keeps it simple and I may change that
+	at any time.
+
 	I love Qt, if you want something full featured, use it! But if you want something
 	you can just drop into a small project and expect the basics to work without outside
 	dependencies, hopefully minigui will work for you.
 
 	The event model is similar to what you use in the browser with Javascript and the
-	layout engine tries to automatically fit things in.
+	layout engine tries to automatically fit things in, similar to a css flexbox.
 
 
 	FOR BEST RESULTS: be sure to link with the appropriate subsystem command
@@ -770,7 +782,7 @@ class Widget {
 
 	void focus() {
 		assert(parentWindow !is null);
-		if(parentWindow.focusedWidget is this)
+		if(isFocused())
 			return;
 
 		if(parentWindow.focusedWidget) {
@@ -1015,6 +1027,8 @@ class Window : Widget {
 				dispatchKeyEvent(e);
 			},
 			(dchar e) {
+				if(e == 13) e = 10; // hack?
+				if(e == 127) return; // linux sends this, windows doesn't. we don't want it.
 				dispatchCharEvent(e);
 			},
 		);
@@ -2049,6 +2063,20 @@ class Checkbox : MouseActivatedWidget {
 		super(parent);
 
 		this.paint = (ScreenPainter painter) {
+
+			if(isFocused()) {
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+				painter.fillColor = windowBackgroundColor;
+				painter.drawRectangle(Point(0, 0), width, height);
+				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+			} else {
+				painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
+				painter.fillColor = windowBackgroundColor;
+				painter.drawRectangle(Point(0, 0), width, height);
+			}
+
+
+
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.white;
 			painter.drawRectangle(Point(2, 2), height - 2, height - 2);
@@ -2065,7 +2093,7 @@ class Checkbox : MouseActivatedWidget {
 			painter.drawText(Point(height + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		};
 
-		defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
+		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
 			isChecked = !isChecked;
 
 			auto event = new Event("change", this);
@@ -2105,12 +2133,14 @@ class Radiobox : MouseActivatedWidget {
 		this.paint = (ScreenPainter painter) {
 			if(isFocused) {
 				painter.fillColor = windowBackgroundColor;
-				painter.outlineColor = Color.black;
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
 			} else {
 				painter.fillColor = windowBackgroundColor;
 				painter.outlineColor = windowBackgroundColor;
 			}
 			painter.drawRectangle(Point(0, 0), width, height);
+
+			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.white;
@@ -2201,8 +2231,9 @@ class Button : MouseActivatedWidget {
 
 			if(isFocused()) {
 				painter.fillColor = Color.transparent;
-				painter.outlineColor = Color.black;
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
 				painter.drawRectangle(Point(2, 2), width - 4, height - 4);
+				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
 			}
 		};
@@ -2312,13 +2343,13 @@ abstract class EditableTextWidget : Widget {
 
 				textLayout.caratShowingOnScreen = false;
 
-				textLayout.drawInto(painter, !parentWindow.win.closed && parentWindow.focusedWidget is this);
+				textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
 			};
 
 			defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
 				if(parentWindow.win.closed) return;
-				this.focus();
 				textLayout.moveCaratToPixelCoordinates(ev.clientX, ev.clientY);
+				this.focus();
 			};
 
 			defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
@@ -2336,7 +2367,7 @@ abstract class EditableTextWidget : Widget {
 						caratTimer.destroy();
 						return;
 					}
-					if(parentWindow.focusedWidget is this) {
+					if(isFocused()) {
 						auto painter = this.draw();
 						textLayout.drawCarat(painter);
 					} else if(textLayout.caratShowingOnScreen) {
@@ -2362,12 +2393,24 @@ abstract class EditableTextWidget : Widget {
 			};
 			addEventListener("keydown", delegate (Widget _this, Event ev) {
 				switch(ev.key) {
+					case Key.Delete:
+						textLayout.delete_();
+						redraw();
+					break;
 					case Key.Left:
 						textLayout.moveLeft(textLayout.carat);
 						redraw();
 					break;
 					case Key.Right:
 						textLayout.moveRight(textLayout.carat);
+						redraw();
+					break;
+					case Key.Up:
+						textLayout.moveUp(textLayout.carat);
+						redraw();
+					break;
+					case Key.Down:
+						textLayout.moveDown(textLayout.carat);
 						redraw();
 					break;
 					case Key.Home:
