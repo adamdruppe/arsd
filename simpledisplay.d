@@ -1418,7 +1418,32 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		T eventHandlers) /// delegate list like std.concurrency.receive
 	{
 		setEventHandlers(eventHandlers);
-		return impl.eventLoop(pulseTimeout);
+		version(X11) {
+		keep_trying:
+			try {
+				return impl.eventLoop(pulseTimeout);
+			} catch(XDisconnectException e) {
+				if(e.userRequested)
+					XCloseDisplay(XDisplayConnection.display);
+
+				XDisplayConnection.display = null;
+
+				throw e;
+
+				/*
+				auto dpy = XDisplayConnection.get;
+				if(dpy is null)
+					throw new XDisconnectException(false);
+				foreach(Window w, SimpleWindow window; SimpleWindow.nativeMapping) {
+					window.impl.createWindow(window.width, window.height, window.title, OpenGlOptions.no, null); //, window.opengl, window.parent);
+					window.show();
+				}
+				goto keep_trying;
+				*/
+			}
+		} else {
+			return impl.eventLoop(pulseTimeout);
+		}
 	}
 
 	/++
@@ -6305,6 +6330,13 @@ version(X11) {
 		}
 	}
 
+	class XDisconnectException : Exception {
+		bool userRequested;
+		this(bool userRequested = true) {
+			this.userRequested = userRequested;
+			super("X disconnected");
+		}
+	}
 
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
@@ -6396,6 +6428,7 @@ version(X11) {
 				display = XOpenDisplay(null);
 				if(display is null)
 					throw new Exception("Unable to open X display");
+				XSetIOErrorHandler(&x11ioerrCB);
 				Bool sup;
 				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released
 				createXIM();
@@ -6406,6 +6439,11 @@ version(X11) {
 			}
 
 			return display;
+		}
+
+		extern(C)
+		static int x11ioerrCB(Display* dpy) {
+			throw new XDisconnectException(false);
 		}
 
 		version(with_eventloop) {
@@ -9099,6 +9137,12 @@ alias void* GLXContext;
 
 enum AllocNone = 0;
 
+extern(C) {
+	/* WARNING, this type not in Xlib spec */
+	extern(C) alias XIOErrorHandler = int function (Display* display);
+	XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
+}
+
 extern(C) nothrow @nogc {
 struct Screen{
 	XExtData *ext_data;		/* hook for extension to hang data */
@@ -9355,10 +9399,6 @@ struct Visual
 	XErrorHandler XSetErrorHandler(XErrorHandler);
 
 	int XGetErrorText(Display*, int, char*, int);
-
-  /* WARNING, this type not in Xlib spec */
-  extern(C) alias XIOErrorHandler = int function (Display* display);
-  XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
 
   Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
 
@@ -10734,7 +10774,7 @@ mixin template ExperimentalTextComponent() {
 
 					painter.drawText(pos, part.text);
 					if(part.styles & TextFormat.underline)
-						painter.drawLine(Point(pos.x, pos.y + size.height - 1), Point(pos.x + size.width, pos.y + size.height - 1));
+						painter.drawLine(Point(pos.x, pos.y + size.height - 4), Point(pos.x + size.width, pos.y + size.height - 4));
 					if(part.styles & TextFormat.strikethrough)
 						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
 

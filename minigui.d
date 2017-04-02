@@ -31,6 +31,14 @@
 	FOR BEST RESULTS: be sure to link with the appropriate subsystem command
 	`-L/SUBSYSTEM:WINDOWS:5.0`, for example, because otherwise you'll get a
 	console and other visual bugs.
+
+	HTML_To_Classes:
+		`<input type="text">` = [LineEdit]
+		`<textarea>` = [TextEdit]
+		`<select>` = [DropDownSelection]
+		`<input type="checkbox">` = [Checkbox]
+		`<input type="radio">` = [Radiobox]
+		`<button>` = [Button]
 +/
 module arsd.minigui;
 
@@ -82,11 +90,15 @@ abstract class ComboboxBase : Widget {
 	// if the user can enter arbitrary data, we want to use  2 == CBS_DROPDOWN
 	// or to always show the list, we want CBS_SIMPLE == 1
 	version(win32_widgets)
-	this(uint style, Widget parent = null) {
-		super(parent);
-		parentWindow = parent.parentWindow;
-		createWin32Window(this, "ComboBox", null, style);
-	}
+		this(uint style, Widget parent = null) {
+			super(parent);
+			parentWindow = parent.parentWindow;
+			createWin32Window(this, "ComboBox", null, style);
+		}
+	else
+		this(Widget parent = null) {
+			super(parent);
+		}
 
 	private string[] options;
 	private int selection = -1;
@@ -109,30 +121,51 @@ abstract class ComboboxBase : Widget {
 		auto event = new Event("changed", this);
 		event.dispatch();
 	}
+
+	override int minHeight() { return Window.lineHeight * 4 / 3; }
+	override int maxHeight() { return Window.lineHeight * 4 / 3; }
 }
 
-///
+/++
+	A drop-down list where the user must select one of the
+	given options. Like `<select>` in HTML.
++/
 class DropDownSelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
-		super(3 /* CBS_DROPDOWNLIST */, parent);
+			super(3 /* CBS_DROPDOWNLIST */, parent);
+		else
+			super(parent);
 	}
 }
 
-///
+/++
+	A text box with a drop down arrow listing selections.
+	The user can choose from the list, or type their own.
++/
 class FreeEntrySelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
-		super(2 /* CBS_DROPDOWN */, parent);
+			super(2 /* CBS_DROPDOWN */, parent);
+		else
+			super(parent);
 	}
 }
 
-///
+/++
+	A combination of free entry with a list below it.
++/
 class ComboBox : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
-		super(1 /* CBS_SIMPLE */, parent);
+			super(1 /* CBS_SIMPLE */, parent);
+		else
+			super(parent);
 	}
+
+	override int minHeight() { return Window.lineHeight * 3; }
+	override int maxHeight() { return int.max; }
+	override int heightStretchiness() { return 2; }
 }
 
 
@@ -990,10 +1023,12 @@ class Window : Widget {
 	SimpleWindow win;
 
 	this(Widget p) {
+		tabStop = false;
 		super(p);
 	}
 
 	this(SimpleWindow win) {
+		tabStop = false;
 		super(null);
 		this.win = win;
 
@@ -1260,9 +1295,22 @@ class Window : Widget {
 
 	void loop() {
 		recomputeChildLayout();
+		focusedWidget = getFirstFocusable(this); // FIXME: autofocus?
 		win.show();
 		redraw();
 		win.eventLoop(0);
+	}
+
+	static Widget getFirstFocusable(Widget start) {
+		if(start.tabStop)
+			return start;
+
+		foreach(child; start.children) {
+			auto f = getFirstFocusable(child);
+			if(f !is null)
+				return f;
+		}
+		return null;
 	}
 }
 
@@ -1449,9 +1497,11 @@ class ToolBar : Widget {
 class ToolButton : Button {
 	this(string label, Widget parent = null) {
 		super(label, parent);
+		tabStop = false;
 	}
 	this(Action action, Widget parent = null) {
 		super(action.label, parent);
+		tabStop = false;
 		this.action = action;
 
 		version(win32_widgets) {} else {
@@ -1485,9 +1535,11 @@ class MenuBar : Widget {
 			super(parent);
 
 			handle = CreateMenu();
+			tabStop = false;
 		}
 	} else {
 		this(Widget parent = null) {
+			tabStop = false; // these are selected some other way
 			super(parent);
 			this.paint = (ScreenPainter painter) {
 				draw3dFrame(this, painter, FrameStyle.risen);
@@ -1681,6 +1733,7 @@ class ProgressBar : Widget {
 			super(parent);
 			max = 100;
 			step = 10;
+			tabStop = false;
 			paint = (ScreenPainter painter) {
 				this.draw3dFrame(painter, FrameStyle.sunk);
 				painter.fillColor = Color.blue;
@@ -1940,13 +1993,14 @@ class MenuItem : MouseActivatedWidget {
 			painter.fillColor = Color.transparent;
 			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
 		};
+		tabStop = false; // these are selected some other way
 	}
 
 	this(Action action, Widget parent = null) {
 		assert(action !is null);
 		this(action.label);
 		this.action = action;
-		defaultEventHandlers["click"] = (Widget w, Event ev) {
+		defaultEventHandlers["triggered"] = (Widget w, Event ev) {
 			//auto event = new Event("triggered", this);
 			//event.dispatch();
 			foreach(handler; action.triggered)
@@ -1955,6 +2009,7 @@ class MenuItem : MouseActivatedWidget {
 			if(auto pmenu = cast(Menu) this.parent)
 				pmenu.remove();
 		};
+		tabStop = false; // these are selected some other way
 	}
 }
 
@@ -2286,6 +2341,9 @@ class TextLabel : Widget {
 
 }
 
+version(custom_widgets)
+	mixin ExperimentalTextComponent;
+
 /// Contains the implementation of text editing
 abstract class EditableTextWidget : Widget {
 	this(Widget parent = null) {
@@ -2315,6 +2373,9 @@ abstract class EditableTextWidget : Widget {
 		else {
 			textLayout.clear();
 			textLayout.addText(s);
+			textLayout.addText(ForegroundColor.red, s);
+			textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
+			textLayout.addText(" is the best!");
 			redraw();
 		}
 	}
@@ -2322,7 +2383,6 @@ abstract class EditableTextWidget : Widget {
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
 	else {
 		// FIXME
-		mixin ExperimentalTextComponent;
 
 		Timer caratTimer;
 		TextLayout textLayout;
@@ -2448,9 +2508,13 @@ class LineEdit : EditableTextWidget {
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else {
 			setupCustomTextEditing();
+			addEventListener("char", delegate(Widget _this, Event ev) {
+				if(ev.character == '\n')
+					ev.preventDefault();
+			});
 		}
 	}
-	override int maxHeight() { return Window.lineHeight + 0; }
+	override int maxHeight() { return Window.lineHeight + 4; }
 }
 
 ///
@@ -2466,7 +2530,7 @@ class TextEdit : EditableTextWidget {
 		}
 	}
 	override int maxHeight() { return int.max; }
-	override int heightStretchiness() { return 3; }
+	override int heightStretchiness() { return 4; }
 }
 
 
@@ -2488,7 +2552,7 @@ class MessageBox : Window {
 		button. x = this.width / 2 - button.width / 2;
 		button.y = height - (button.height + 10);
 		button.addEventListener(EventType.triggered, () {
-			close();
+			win.close();
 		});
 
 		button.registerMovement();
