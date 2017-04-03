@@ -42,6 +42,31 @@
 +/
 module arsd.minigui;
 
+public import arsd.simpledisplay;
+
+version(Windows)
+	import core.sys.windows.windows;
+
+// this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
+private bool lastDefaultPrevented;
+
+version(Windows) {
+	// use native widgets when available unless specifically asked otherwise
+	version(custom_widgets) {
+		enum bool UsingCustomWidgets = true;
+	} else {
+		version = win32_widgets;
+		enum bool UsingCustomWidgets = false;
+	}
+	// and native theming when needed
+	//version = win32_theming;
+} else {
+	enum bool UsingCustomWidgets = true;
+	version=custom_widgets;
+}
+
+
+
 /*
 
 	The main goals of minigui.d are to:
@@ -125,6 +150,51 @@ abstract class ComboboxBase : Widget {
 
 	override int minHeight() { return Window.lineHeight * 4 / 3; }
 	override int maxHeight() { return Window.lineHeight * 4 / 3; }
+
+	version(custom_widgets) {
+		SimpleWindow dropDown;
+		void popup() {
+			auto w = width;
+			auto h = this.options.length * Window.lineHeight + 8;
+
+			auto coord = this.globalCoordinates();
+			auto dropDown = new SimpleWindow(
+				w, h,
+				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow/*, window*/);
+
+			dropDown.move(coord.x, coord.y + this.height);
+
+			{
+				auto painter = dropDown.draw();
+				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen);
+				auto p = Point(4, 4);
+				painter.outlineColor = Color.black;
+				foreach(option; options) {
+					painter.drawText(p, option);
+					p.y += Window.lineHeight;
+				}
+			}
+
+			dropDown.setEventHandlers(
+				(MouseEvent event) {
+					if(event.type == MouseEventType.buttonPressed) {
+						auto element = (event.y - 4) / Window.lineHeight;
+						if(element >= 0 && element <= options.length) {
+							selection = element;
+
+							auto t = new Event("changed", this);
+							t.dispatch();
+						}
+						dropDown.close();
+					}
+				}
+			);
+
+			dropDown.show();
+			dropDown.grabInput();
+		}
+
+	}
 }
 
 /++
@@ -135,9 +205,19 @@ class DropDownSelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(3 /* CBS_DROPDOWNLIST */, parent);
-		else version(custom_widgets)
+		else version(custom_widgets) {
 			super(parent);
-		else static assert(false);
+			paint = delegate(ScreenPainter painter) {
+				draw3dFrame(this, painter, FrameStyle.risen);
+				painter.outlineColor = Color.black;
+				painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
+				painter.drawLine(Point(width - 4 - 8, 4), Point(width - 4 - 2, height - 2));
+				painter.drawLine(Point(width - 2, 4), Point(width - 4 - 2, height - 2));
+			};
+
+			addEventListener("changed", &this.redraw);
+			addEventListener("click", &this.popup);
+		} else static assert(false);
 	}
 }
 
@@ -149,9 +229,31 @@ class FreeEntrySelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(2 /* CBS_DROPDOWN */, parent);
-		else version(custom_widgets)
+		else version(custom_widgets) {
 			super(parent);
+			auto hl = new HorizontalLayout(this);
+			lineEdit = new LineEdit(hl);
+			lineEdit.content = selection == -1 ? "" : options[selection];
+
+			auto btn = new class Button {
+				this() {
+					super("V", hl);
+				}
+				override int maxWidth() {
+					return 16;
+				}
+			};
+			btn.addEventListener("triggered", &this.popup);
+			addEventListener("changed", {
+				lineEdit.content = selection == -1 ? "" : options[selection];
+				redraw();
+			});
+		}
 		else static assert(false);
+	}
+
+	version(custom_widgets) {
+		LineEdit lineEdit;
 	}
 }
 
@@ -162,14 +264,91 @@ class ComboBox : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
 			super(1 /* CBS_SIMPLE */, parent);
-		else version(custom_widgets)
+		else version(custom_widgets) {
 			super(parent);
-		else static assert(false);
+			lineEdit = new LineEdit(this);
+			listWidget = new ListWidget(this);
+			listWidget.multiSelect = false;
+			listWidget.addEventListener("change", delegate(Widget, Event) {
+				string c = null;
+				foreach(option; listWidget.options)
+					if(option.selected) {
+						c = option.label;
+						break;
+					}
+				lineEdit.content = c;
+			});
+		} else static assert(false);
 	}
 
 	override int minHeight() { return Window.lineHeight * 3; }
 	override int maxHeight() { return int.max; }
 	override int heightStretchiness() { return 2; }
+
+	version(custom_widgets) {
+		LineEdit lineEdit;
+		ListWidget listWidget;
+
+		override void addOption(string s) {
+			listWidget.options ~= ListWidget.Option(s);
+			ComboboxBase.addOption(s);
+		}
+	}
+}
+
+/++
+
++/
+version(custom_widgets)
+class ListWidget : Widget {
+
+	static struct Option {
+		string label;
+		bool selected;
+	}
+
+	this(Widget parent = null) {
+		super(parent);
+
+		defaultEventHandlers["click"] = delegate(Widget _this, Event event) {
+			auto y = (event.clientY - 4) / Window.lineHeight;
+			if(y >= 0 && y < options.length) {
+				if(!multiSelect)
+					foreach(ref opt; options)
+						opt.selected = false;
+				options[y].selected = !options[y].selected;
+
+				auto evt = new Event("change", this);
+				evt.dispatch();
+
+				redraw();
+			}
+		};
+
+		paint = delegate(ScreenPainter painter) {
+			draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
+
+			auto pos = Point(4, 4);
+			foreach(idx, option; options) {
+				painter.fillColor = Color.white;
+				painter.outlineColor = Color.white;
+				painter.drawRectangle(pos, width - 8, Window.lineHeight);
+				painter.outlineColor = Color.black;
+				painter.drawText(pos, option.label);
+				if(option.selected) {
+					painter.rasterOp = RasterOp.xor;
+					painter.outlineColor = Color.white;
+					painter.fillColor = Color(255, 255, 0);
+					painter.drawRectangle(pos, width - 8, Window.lineHeight);
+					painter.rasterOp = RasterOp.normal;
+				}
+				pos.y += Window.lineHeight;
+			}
+		};
+	}
+
+	Option[] options;
+	bool multiSelect;
 }
 
 
@@ -216,30 +395,6 @@ class DataView : Widget {
 // http://svn.dsource.org/projects/bindings/trunk/win32/commctrl.d
 
 // FIXME: menus should prolly capture the mouse. ugh i kno.
-
-public import arsd.simpledisplay;
-
-version(Windows)
-	import core.sys.windows.windows;
-
-// this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
-private bool lastDefaultPrevented;
-
-version(Windows) {
-	// use native widgets when available unless specifically asked otherwise
-	version(custom_widgets) {
-		enum bool UsingCustomWidgets = true;
-	} else {
-		version = win32_widgets;
-		enum bool UsingCustomWidgets = false;
-	}
-	// and native theming when needed
-	//version = win32_theming;
-} else {
-	enum bool UsingCustomWidgets = true;
-	version=custom_widgets;
-}
-
 /*
 	TextEdit needs:
 
@@ -1223,6 +1378,16 @@ class Window : Widget {
 	override bool dispatchMouseEvent(MouseEvent ev) {
 		auto eleR = widgetAtPoint(this, ev.x, ev.y);
 		auto ele = eleR.widget;
+
+		// a hack to get it relative to the widget.
+		eleR.x = ev.x;
+		eleR.y = ev.y;
+		auto pain = ele;
+		while(pain) {
+			eleR.x -= pain.x;
+			eleR.y -= pain.y;
+			pain = pain.parent;
+		}
 
 		if(mouseCapturedBy !is null) {
 			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
@@ -2396,9 +2561,11 @@ abstract class EditableTextWidget : Widget {
 		else version(custom_widgets) {
 			textLayout.clear();
 			textLayout.addText(s);
+			/*
 			textLayout.addText(ForegroundColor.red, s);
 			textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
 			textLayout.addText(" is the best!");
+			*/
 			redraw();
 		}
 		else static assert(false);
@@ -2805,7 +2972,8 @@ WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 		starting = child;
 		x -= child.x;
 		y -= child.y;
-		child = starting.widgetAtPoint(x, y).widget;//starting.getChildAtPosition(x, y);
+		auto r = starting.widgetAtPoint(x, y);//starting.getChildAtPosition(x, y);
+		child = r.widget;
 		if(child is starting)
 			break;
 	}
