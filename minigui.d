@@ -1,6 +1,19 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
 /*
+	TODO:
+
+	scrolling
+	event cleanup
+	ScreenPainter dtor stuff. clipping api.
+	Windows radio button sizing and theme text selection
+	tooltips.
+	api improvements
+
+	margins are kinda broken, they don't collapse like they should. at least.
+*/
+
+/*
 
 1(15:19:48) NotSpooky: Menus, text entry, label, notebook, box, frame, file dialogs and layout (this one is very useful because I can draw lines between its child widgets
 */
@@ -123,6 +136,27 @@ abstract class ComboboxBase : Widget {
 	else version(custom_widgets)
 		this(Widget parent = null) {
 			super(parent);
+
+			addEventListener("keydown", (Event event) {
+				if(event.key == Key.Up) {
+					if(selection > -1) { // -1 means select blank
+						selection--;
+						auto t = new Event("change", this);
+						t.dispatch();
+					}
+					event.preventDefault();
+				}
+				if(event.key == Key.Down) {
+					if(selection + 1 < options.length) {
+						selection++;
+						auto t = new Event("change", this);
+						t.dispatch();
+					}
+					event.preventDefault();
+				}
+
+			});
+
 		}
 	else static assert(false);
 
@@ -139,12 +173,15 @@ abstract class ComboboxBase : Widget {
 		selection = idx;
 		version(win32_widgets)
 		SendMessageA(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
+
+		auto t = new Event("change", this);
+		t.dispatch();
 	}
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
 		selection = SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
-		auto event = new Event("changed", this);
+		auto event = new Event("change", this);
 		event.dispatch();
 	}
 
@@ -177,12 +214,12 @@ abstract class ComboboxBase : Widget {
 
 			dropDown.setEventHandlers(
 				(MouseEvent event) {
-					if(event.type == MouseEventType.buttonPressed) {
+					if(event.type == MouseEventType.buttonReleased) {
 						auto element = (event.y - 4) / Window.lineHeight;
 						if(element >= 0 && element <= options.length) {
 							selection = element;
 
-							auto t = new Event("changed", this);
+							auto t = new Event("change", this);
 							t.dispatch();
 						}
 						dropDown.close();
@@ -211,12 +248,36 @@ class DropDownSelection : ComboboxBase {
 				draw3dFrame(this, painter, FrameStyle.risen);
 				painter.outlineColor = Color.black;
 				painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
-				painter.drawLine(Point(width - 4 - 8, 4), Point(width - 4 - 2, height - 2));
-				painter.drawLine(Point(width - 2, 4), Point(width - 4 - 2, height - 2));
+
+				painter.outlineColor = Color.black;
+				painter.fillColor = Color.black;
+				Point[3] triangle;
+				enum padding = 6;
+				enum paddingV = 8;
+				enum triangleWidth = 10;
+				triangle[0] = Point(width - padding - triangleWidth, paddingV);
+				triangle[1] = Point(width - padding - triangleWidth / 2, height - paddingV);
+				triangle[2] = Point(width - padding - 0, paddingV);
+				painter.drawPolygon(triangle[]);
+
+				if(isFocused()) {
+					painter.fillColor = Color.transparent;
+					painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+					painter.drawRectangle(Point(2, 2), width - 4, height - 4);
+					painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+
+				}
+
 			};
 
-			addEventListener("changed", &this.redraw);
-			addEventListener("click", &this.popup);
+			addEventListener("focus", &this.redraw);
+			addEventListener("blur", &this.redraw);
+			addEventListener("change", &this.redraw);
+			addEventListener("mousedown", () { this.focus(); this.popup(); });
+			addEventListener("keydown", (Event event) {
+				if(event.key == Key.Space)
+					popup();
+			});
 		} else static assert(false);
 	}
 }
@@ -233,7 +294,8 @@ class FreeEntrySelection : ComboboxBase {
 			super(parent);
 			auto hl = new HorizontalLayout(this);
 			lineEdit = new LineEdit(hl);
-			lineEdit.content = selection == -1 ? "" : options[selection];
+
+			tabStop = false;
 
 			auto btn = new class Button {
 				this() {
@@ -243,9 +305,11 @@ class FreeEntrySelection : ComboboxBase {
 					return 16;
 				}
 			};
+			//btn.addDirectEventListener("focus", &lineEdit.focus);
 			btn.addEventListener("triggered", &this.popup);
-			addEventListener("changed", {
-				lineEdit.content = selection == -1 ? "" : options[selection];
+			addEventListener("change", {
+				lineEdit.content = (selection == -1 ? "" : options[selection]);
+				lineEdit.focus();
 				redraw();
 			});
 		}
@@ -278,6 +342,30 @@ class ComboBox : ComboboxBase {
 					}
 				lineEdit.content = c;
 			});
+
+			listWidget.tabStop = false;
+			this.tabStop = false;
+			listWidget.addEventListener("focus", &lineEdit.focus);
+			this.addEventListener("focus", &lineEdit.focus);
+
+			addDirectEventListener("change", {
+				listWidget.setSelection(selection);
+				if(selection != -1)
+					lineEdit.content = options[selection];
+				lineEdit.focus();
+				redraw();
+			});
+
+			listWidget.addDirectEventListener("change", {
+				int set = -1;
+				foreach(idx, opt; listWidget.options)
+					if(opt.selected) {
+						set = cast(int) idx;
+						break;
+					}
+				if(set != selection)
+					this.setSelection(set);
+			});
 		} else static assert(false);
 	}
 
@@ -307,21 +395,28 @@ class ListWidget : Widget {
 		bool selected;
 	}
 
+	void setSelection(int y) {
+		if(!multiSelect)
+			foreach(ref opt; options)
+				opt.selected = false;
+		if(y >= 0 && y < options.length)
+			options[y].selected = !options[y].selected;
+
+		auto evt = new Event("change", this);
+		evt.dispatch();
+
+		redraw();
+
+	}
+
 	this(Widget parent = null) {
 		super(parent);
 
 		defaultEventHandlers["click"] = delegate(Widget _this, Event event) {
+			this.focus();
 			auto y = (event.clientY - 4) / Window.lineHeight;
 			if(y >= 0 && y < options.length) {
-				if(!multiSelect)
-					foreach(ref opt; options)
-						opt.selected = false;
-				options[y].selected = !options[y].selected;
-
-				auto evt = new Event("change", this);
-				evt.dispatch();
-
-				redraw();
+				setSelection(y);
 			}
 		};
 
@@ -588,6 +683,7 @@ mixin template LayoutInfo() {
 		foreach(child; children) {
 			sum += child.minHeight();
 			sum += child.marginTop();
+			sum += child.marginBottom();
 		}
 
 		return sum;
@@ -806,6 +902,19 @@ version(win32_widgets) {
 
 		assert(p.hwnd !is null);
 
+
+		static HFONT font;
+		if(font is null) {
+			NONCLIENTMETRICS params;
+			params.cbSize = params.sizeof;
+			if(SystemParametersInfo(SPI_GETNONCLIENTMETRICS, params.sizeof, &params, 0)) {
+				font = CreateFontIndirect(&params.lfMessageFont);
+			}
+		}
+
+		if(font)
+			SendMessage(p.hwnd, WM_SETFONT, cast(uint) font, true);
+
 		Widget.nativeMapping[p.hwnd] = p;
 
 		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
@@ -993,7 +1102,7 @@ class Widget {
 
 		parentWindow.focusedWidget = this;
 		auto evt = new Event("focus", this);
-		evt.sendDirectly();
+		evt.dispatch();
 	}
 
 
@@ -1206,10 +1315,10 @@ class Window : Widget {
 		win.onFocusChange = (bool getting) {
 			if(this.focusedWidget) {
 				auto evt = new Event(getting ? "focus" : "blur", this.focusedWidget);
-				evt.sendDirectly();
+				evt.dispatch();
 			}
 			auto evt = new Event(getting ? "focus" : "blur", this);
-			evt.sendDirectly();
+			evt.dispatch();
 		};
 
 		win.setEventHandlers(
@@ -1606,8 +1715,8 @@ class ToolBar : Widget {
 		override int minHeight() { return idealHeight; }
 		override int maxHeight() { return idealHeight; }
 	} else version(custom_widgets) {
-		override int minHeight() { return Window.lineHeight * 3/2; }
-		override int maxHeight() { return Window.lineHeight * 3/2; }
+		override int minHeight() { return 32; }// Window.lineHeight * 3/2; }
+		override int maxHeight() { return 32; } //Window.lineHeight * 3/2; }
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
@@ -1685,7 +1794,61 @@ class ToolButton : Button {
 				this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
 
 				painter.outlineColor = Color.black;
-				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+
+				enum iconSize = 32;
+				enum multiplier = iconSize / 16;
+				switch(action.iconId) {
+					case GenericIcons.New:
+						painter.fillColor = Color.white;
+						painter.drawPolygon(
+							Point(3, 2) * multiplier, Point(3, 13) * multiplier, Point(12, 13) * multiplier, Point(12, 6) * multiplier,
+							Point(8, 2) * multiplier, Point(8, 6) * multiplier, Point(12, 6) * multiplier, Point(8, 2) * multiplier
+						);
+					break;
+					case GenericIcons.Save:
+						painter.fillColor = Color.black;
+						painter.drawRectangle(Point(2, 2) * multiplier, Point(13, 13) * multiplier);
+
+						painter.fillColor = Color.white;
+						painter.outlineColor = Color.white;
+						painter.drawRectangle(Point(6, 3) * multiplier, Point(9, 5) * multiplier);
+						painter.drawRectangle(Point(5, 9) * multiplier, Point(10, 12) * multiplier);
+					break;
+					case GenericIcons.Open:
+						painter.fillColor = Color.white;
+						painter.drawPolygon(
+							Point(2, 4) * multiplier, Point(2, 12) * multiplier, Point(13, 12) * multiplier, Point(13, 3) * multiplier,
+							Point(9, 3) * multiplier, Point(9, 4) * multiplier, Point(2, 4) * multiplier);
+						painter.drawLine(Point(3, 6) * multiplier, Point(9, 6) * multiplier);
+						painter.drawLine(Point(9, 7) * multiplier, Point(13, 7) * multiplier);
+					break;
+					case GenericIcons.Copy:
+						painter.fillColor = Color.white;
+						painter.drawRectangle(Point(3, 2) * multiplier, Point(9, 10) * multiplier);
+						painter.drawRectangle(Point(6, 5) * multiplier, Point(12, 13) * multiplier);
+					break;
+					case GenericIcons.Cut:
+						painter.fillColor = Color.transparent;
+						painter.drawLine(Point(3, 2) * multiplier, Point(10, 9) * multiplier);
+						painter.drawLine(Point(4, 9) * multiplier, Point(11, 2) * multiplier);
+						painter.drawRectangle(Point(3, 9) * multiplier, Point(5, 13) * multiplier);
+						painter.drawRectangle(Point(9, 9) * multiplier, Point(11, 12) * multiplier);
+					break;
+					case GenericIcons.Paste:
+						painter.fillColor = Color.white;
+						painter.drawRectangle(Point(2, 3) * multiplier, Point(11, 11) * multiplier);
+						painter.drawRectangle(Point(6, 8) * multiplier, Point(13, 13) * multiplier);
+						painter.drawLine(Point(6, 2) * multiplier, Point(4, 5) * multiplier);
+						painter.drawLine(Point(7, 2) * multiplier, Point(9, 5) * multiplier);
+						painter.fillColor = Color.black;
+						painter.drawRectangle(Point(4, 5) * multiplier, Point(9, 6) * multiplier);
+					break;
+					case GenericIcons.Help:
+						painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+					break;
+					default:
+						painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+				}
 			};
 		}
 		else static assert(false);
@@ -1693,7 +1856,10 @@ class ToolButton : Button {
 
 	Action action;
 
-	override int maxWidth() { return 40; }
+	override int maxWidth() { return 32; }
+	override int minWidth() { return 32; }
+	override int maxHeight() { return 32; }
+	override int minHeight() { return 32; }
 }
 
 
@@ -1854,7 +2020,7 @@ class StatusBar : Widget {
 			assert(idealHeight);
 		} else version(custom_widgets) {
 			this.paint = (ScreenPainter painter) {
-				this.draw3dFrame(painter, FrameStyle.risen);
+				this.draw3dFrame(painter, FrameStyle.sunk);
 				int cpos = 0;
 				int remainingLength = this.width;
 				foreach(idx, part; this.partsArray) {
@@ -2287,9 +2453,15 @@ else static assert(false);
 ///
 class Checkbox : MouseActivatedWidget {
 
-	override int maxHeight() { return 16; }
-	override int minHeight() { return 16; }
-	mixin Margin!"4";
+	version(win32_widgets) {
+		override int maxHeight() { return 16; }
+		override int minHeight() { return 16; }
+	} else version(custom_widgets) {
+		override int maxHeight() { return Window.lineHeight; }
+		override int minHeight() { return Window.lineHeight; }
+	} else static assert(0);
+
+	override int marginLeft() { return 4; }
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
@@ -2315,21 +2487,23 @@ class Checkbox : MouseActivatedWidget {
 			}
 
 
+			enum buttonSize = 16;
 
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(2, 2), height - 2, height - 2);
+			painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
 
 			if(isChecked) {
 				painter.pen = Pen(Color.black, 2);
 				// I'm using height so the checkbox is square
-				painter.drawLine(Point(6, 6), Point(height - 4, height - 4));
-				painter.drawLine(Point(height-4, 6), Point(6, height - 4));
+				enum padding = 5;
+				painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
+				painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
 
 				painter.pen = Pen(Color.black, 1);
 			}
 
-			painter.drawText(Point(height + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		};
 
 		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
@@ -2355,8 +2529,16 @@ class VerticalSpacer : Widget {
 
 ///
 class Radiobox : MouseActivatedWidget {
-	override int maxHeight() { return 16; }
-	override int minHeight() { return 16; }
+
+	version(win32_widgets) {
+		override int maxHeight() { return 16; }
+		override int minHeight() { return 16; }
+	} else version(custom_widgets) {
+		override int maxHeight() { return Window.lineHeight; }
+		override int minHeight() { return Window.lineHeight; }
+	} else static assert(0);
+
+	override int marginLeft() { return 4; }
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
@@ -2382,18 +2564,19 @@ class Radiobox : MouseActivatedWidget {
 
 			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
+			enum buttonSize = 16;
+
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.white;
-			painter.drawEllipse(Point(2, 2), Point(height - 2, height - 2));
-
+			painter.drawEllipse(Point(2, 2), Point(buttonSize - 2, buttonSize - 2));
 			if(isChecked) {
 				painter.outlineColor = Color.black;
 				painter.fillColor = Color.black;
 				// I'm using height so the checkbox is square
-				painter.drawEllipse(Point(5, 5), Point(height - 5, height - 5));
+				painter.drawEllipse(Point(5, 5), Point(buttonSize - 5, buttonSize - 5));
 			}
 
-			painter.drawText(Point(height + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		};
 
 		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
@@ -2770,6 +2953,13 @@ mixin template EventStuff() {
 	EventHandler[][string] bubblingEventHandlers;
 	EventHandler[][string] capturingEventHandlers;
 	EventHandler[string] defaultEventHandlers;
+
+	void addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
+		addEventListener(event, (Widget, Event e) {
+			if(e.srcElement is this)
+				handler();
+		}, useCapture);
+	}
 
 	void addEventListener(string event, void delegate() handler, bool useCapture = false) {
 		addEventListener(event, (Widget, Event) { handler(); }, useCapture);

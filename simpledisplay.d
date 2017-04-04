@@ -3990,6 +3990,122 @@ void displayImage(Image image, SimpleWindow win = null) {
 	}
 }
 
+enum FontWeight : int {
+	dontcare = 0,
+	thin = 100,
+	extralight = 200,
+	light = 300,
+	regular = 400,
+	medium = 500,
+	semibold = 600,
+	bold = 700,
+	extrabold = 800,
+	heavy = 900
+}
+
+/++
+	Represents a font loaded off the operating system or the X server.
+
+
+	While the api here is unified cross platform, the fonts are not necessarily
+	available, even across machines of the same platform, so be sure to always check
+	for null (using [isNull]) and have a fallback plan.
+
+	When you have a font you like, use [ScreenPainter.setFont] to load it for drawing.
+
+	Worst case, a null font will automatically fall back to the default font loaded
+	for your system.
++/
+class OperatingSystemFont {
+
+	version(X11) {
+		XFontStruct* font;
+		XFontSet fontset;
+	} else version(Windows) {
+		HFONT font;
+	} else static assert(0);
+
+	///
+	this(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		load(name, size, weight, italic);
+	}
+
+	///
+	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		unload();
+		version(X11) {
+			string weightstr;
+			with(FontWeight)
+			final switch(weight) {
+				case dontcare: weightstr = "*"; break;
+				case thin: weightstr = "extralight"; break;
+				case extralight: weightstr = "extralight"; break;
+				case light: weightstr = "light"; break;
+				case regular: weightstr = "regular"; break;
+				case medium: weightstr = "medium"; break;
+				case semibold: weightstr = "demibold"; break;
+				case bold: weightstr = "bold"; break;
+				case extrabold: weightstr = "demibold"; break;
+				case heavy: weightstr = "black"; break;
+			}
+			string sizestr;
+			if(size == 0)
+				sizestr = "*";
+			else
+				sizestr = "" ~ cast(char)(size / 10 + '0') ~ cast(char)(size % 10 + '0');
+			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*";
+
+			//import std.stdio; writeln(xfontstr);
+
+			auto display = XDisplayConnection.get;
+
+			font = XLoadQueryFont(display, xfontstr.ptr);
+			if(font is null)
+				return false;
+
+			char** lol;
+			int lol2;
+			char* lol3;
+			fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
+		} else version(Windows) {
+			WCharzBuffer buffer = WCharzBuffer(name);
+			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+		} else static assert(0);
+
+		return !isNull();
+	}
+
+	///
+	void unload() {
+		if(isNull())
+			return;
+
+		version(X11) {
+			auto display = XDisplayConnection.get;
+
+			if(font)
+				XFreeFont(display, font);
+			if(fontset)
+				XFreeFontSet(display, fontset);
+
+			font = null;
+			fontset = null;
+		} else version(Windows) {
+			DeleteObject(font);
+			font = null;
+		} else static assert(0);
+	}
+
+	///
+	bool isNull() {
+		return font is null;
+	}
+
+	~this() {
+		unload();
+	}
+}
+
 /**
 	The 2D drawing proxy. You acquire one of these with [SimpleWindow.draw] rather
 	than constructing it directly. Then, it is reference counted so you can pass it
@@ -4034,6 +4150,11 @@ struct ScreenPainter {
 	this(this) {
 		impl.referenceCount++;
 		//writeln("refcount ++ ", impl.referenceCount);
+	}
+
+	///
+	void setFont(OperatingSystemFont font) {
+		impl.setFont(font);
 	}
 
 	///
@@ -4200,6 +4321,13 @@ struct ScreenPainter {
 		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
 	}
 
+	void drawRectangle(Point upperLeft, Point lowerRightInclusive) {
+		transform(upperLeft);
+		transform(lowerRightInclusive);
+		impl.drawRectangle(upperLeft.x, upperLeft.y,
+			lowerRightInclusive.x - upperLeft.x + 1, lowerRightInclusive.y - upperLeft.y + 1);
+	}
+
 	/// Arguments are the points of the bounding rectangle
 	void drawEllipse(Point upperLeft, Point lowerRight) {
 		transform(upperLeft);
@@ -4215,9 +4343,14 @@ struct ScreenPainter {
 
 	/// .
 	void drawPolygon(Point[] vertexes) {
-		foreach(vertex; vertexes)
+		foreach(ref vertex; vertexes)
 			transform(vertex);
 		impl.drawPolygon(vertexes);
+	}
+
+	/// ditto
+	void drawPolygon(Point[] vertexes...) {
+		drawPolygon(vertexes);
 	}
 
 
@@ -5030,6 +5163,31 @@ version(Windows) {
 
 			// X doesn't draw a text background, so neither should we
 			SetBkMode(hdc, TRANSPARENT);
+
+
+			static bool triedDefaultGuiFont = false;
+			if(!triedDefaultGuiFont) {
+				NONCLIENTMETRICS params;
+				params.cbSize = params.sizeof;
+				if(SystemParametersInfo(SPI_GETNONCLIENTMETRICS, params.sizeof, &params, 0)) {
+					defaultGuiFont = CreateFontIndirect(&params.lfMessageFont);
+				}
+				triedDefaultGuiFont = true;
+			}
+
+			if(defaultGuiFont) {
+				SelectObject(hdc, defaultGuiFont);
+				// DeleteObject(defaultGuiFont);
+			}
+		}
+
+		static HFONT defaultGuiFont;
+
+		void setFont(OperatingSystemFont font) {
+			if(font && font.font)
+				SelectObject(hdc, font.font);
+			else if(defaultGuiFont)
+				SelectObject(hdc, defaultGuiFont);
 		}
 
 		// just because we can on Windows...
@@ -6009,9 +6167,13 @@ version(X11) {
 		// FIXME: should the gc be static too so it isn't recreated every time draw is called?
 		GC gc;
 
-		__gshared XFontStruct* font;
 		__gshared bool fontAttempted;
-		__gshared XFontSet fontset;
+
+		__gshared XFontStruct* defaultfont;
+		__gshared XFontSet defaultfontset;
+
+		XFontStruct* font;
+		XFontSet fontset;
 
 		void create(NativeWindowHandle window) {
 			this.display = XDisplayConnection.get();
@@ -6039,11 +6201,29 @@ version(X11) {
 				fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
 				fontAttempted = true;
+
+				defaultfont = font;
+				defaultfontset = fontset;
 			}
+
+			font = defaultfont;
+			fontset = defaultfontset;
 
 			if(font) {
 				XSetFont(display, gc, font.fid);
 			}
+		}
+
+		void setFont(OperatingSystemFont font) {
+			if(font && font.font) {
+				this.font = font.font;
+				this.fontset = font.fontset;
+				XSetFont(display, gc, font.font.fid);
+			} else {
+				this.font = defaultfont;
+				this.fontset = defaultfontset;
+			}
+
 		}
 
 		void dispose() {
@@ -6311,8 +6491,12 @@ version(X11) {
 		}
 
 		void drawPolygon(Point[] vertexes) {
+			XPoint[16] pointsBuffer;
 			XPoint[] points;
-			points.length = vertexes.length;
+			if(vertexes.length <= pointsBuffer.length)
+				points = pointsBuffer[0 .. vertexes.length];
+			else
+				points.length = vertexes.length;
 
 			foreach(i, p; vertexes) {
 				points[i].x = cast(short) p.x;
@@ -10837,6 +11021,7 @@ mixin template ExperimentalTextComponent() {
 				Point(x, y1),
 				Point(x, y2)
 			);
+			painter.rasterOp = RasterOp.normal;
 			caratShowingOnScreen = !caratShowingOnScreen;
 
 			if(caratShowingOnScreen) {
@@ -10856,12 +11041,14 @@ mixin template ExperimentalTextComponent() {
 			);
 
 			caratShowingOnScreen = false;
+			painter.rasterOp = RasterOp.normal;
 		}
 
 		/// Carat movement api
 		/// These should give the user a logical result based on what they see on screen...
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
 		void moveUp(ref Carat carat) {
+			if(carat.inlineElement is null) return;
 			auto x = carat.inlineElement.xOfIndex(carat.offset);
 			auto y = carat.inlineElement.boundingBox.top + 2;
 
@@ -10875,6 +11062,7 @@ mixin template ExperimentalTextComponent() {
 			}
 		}
 		void moveDown(ref Carat carat) {
+			if(carat.inlineElement is null) return;
 			auto x = carat.inlineElement.xOfIndex(carat.offset);
 			auto y = carat.inlineElement.boundingBox.bottom - 2;
 
@@ -10914,6 +11102,7 @@ mixin template ExperimentalTextComponent() {
 			}
 		}
 		void moveHome(ref Carat carat) {
+			if(carat.inlineElement is null) return;
 			auto x = 0;
 			auto y = carat.inlineElement.boundingBox.top + 2;
 
@@ -10925,6 +11114,7 @@ mixin template ExperimentalTextComponent() {
 			}
 		}
 		void moveEnd(ref Carat carat) {
+			if(carat.inlineElement is null) return;
 			auto x = int.max;
 			auto y = carat.inlineElement.boundingBox.top + 2;
 
