@@ -4135,7 +4135,15 @@ struct ScreenPainter {
 			window.activeScreenPainter = impl;
 		//	writeln("constructed");
 		}
+
+		originalPen = impl._activePen;
+		originalFillColor = impl._fillColor;
+		originalClipRectangle = impl._clipRectangle;
 	}
+
+	private Pen originalPen;
+	private Color originalFillColor;
+	private arsd.color.Rectangle originalClipRectangle;
 
 	~this() {
 		impl.referenceCount--;
@@ -4144,12 +4152,31 @@ struct ScreenPainter {
 			//writeln("destructed");
 			impl.dispose();
 			window.activeScreenPainter = null;
+		} else {
+			// there is still an active reference, reset stuff so the
+			// next user doesn't get weirdness via the reference
+			this.rasterOp = RasterOp.normal;
+			pen = originalPen;
+			fillColor = originalFillColor;
+			impl.setClipRectangle(originalClipRectangle.left, originalClipRectangle.top, originalClipRectangle.width, originalClipRectangle.height);
 		}
 	}
 
 	this(this) {
 		impl.referenceCount++;
 		//writeln("refcount ++ ", impl.referenceCount);
+	}
+
+	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
+	void setClipRectangle(Point pt, int width, int height) {
+		transform(pt);
+
+		impl.setClipRectangle(pt.x, pt.y, width, height);
+	}
+
+	/// ditto
+	void setClipRectangle(arsd.color.Rectangle rect) {
+		setClipRectangle(rect.upperLeft, rect.width, rect.height);
 	}
 
 	///
@@ -4162,14 +4189,23 @@ struct ScreenPainter {
 		return impl.fontHeight();
 	}
 
+	private Pen activePen;
+
+	int originX;
+	int originY;
+
 	///
 	@property void pen(Pen p) {
+		activePen = p;
 		impl.pen(p);
 	}
 
 	///
 	@property void outlineColor(Color c) {
-		impl.outlineColor(c);
+		if(activePen.color == c)
+			return;
+		activePen.color = c;
+		impl.pen(activePen);
 	}
 
 	///
@@ -4186,9 +4222,6 @@ struct ScreenPainter {
 		p.x += originX;
 		p.y += originY;
 	}
-
-	int originX;
-	int originY;
 
 	void updateDisplay() {
 		// FIXME this should do what the dtor does
@@ -5190,6 +5223,21 @@ version(Windows) {
 				SelectObject(hdc, defaultGuiFont);
 		}
 
+		arsd.color.Rectangle _clipRectangle;
+
+		void setClipRectangle(int x, int y, int width, int height) {
+			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+
+			if(width == 0 || height == 0) {
+				SelectClipRgn(hdc, null);
+			} else {
+				auto region = CreateRectRgn(x, y, x + width, y + height);
+				SelectClipRgn(hdc, region);
+				DeleteObject(region);
+			}
+		}
+
+
 		// just because we can on Windows...
 		//void create(Image image);
 
@@ -5255,11 +5303,6 @@ version(Windows) {
 
 		}
 
-		@property void outlineColor(Color c) {
-			_activePen.color = c;
-			pen = _activePen;
-		}
-
 		@property void rasterOp(RasterOp op) {
 			int mode;
 			final switch(op) {
@@ -5275,9 +5318,11 @@ version(Windows) {
 
 		HBRUSH originalBrush;
 		HBRUSH currentBrush;
+		Color _fillColor = Color(1, 1, 1, 1); // what are the odds that they'd set this??
 		@property void fillColor(Color c) {
-			// FIXME: we probably don't need to call all this if the brush
-			// is already good
+			if(c == _fillColor)
+				return;
+			_fillColor = c;
 			HBRUSH brush;
 			if(c.a == 0) {
 				brush = GetStockObject(HOLLOW_BRUSH);
@@ -5326,10 +5371,15 @@ version(Windows) {
 		}
 
 		Size textSize(string text) {
+			bool dummyX;
+			if(text.length == 0) {
+				text = " ";
+				dummyX = true;
+			}
 			RECT rect;
 			WCharzBuffer buffer = WCharzBuffer(text);
 			DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, DT_CALCRECT);
-			return Size(rect.right, rect.bottom);
+			return Size(dummyX ? 0 : rect.right, rect.bottom);
 		}
 
 		void drawText(int x, int y, int x2, int y2, scope const(char)[] text, uint alignment) {
@@ -6214,6 +6264,19 @@ version(X11) {
 			}
 		}
 
+		arsd.color.Rectangle _clipRectangle;
+		void setClipRectangle(int x, int y, int width, int height) {
+			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+			if(width == 0 || height == 0)
+				XSetClipMask(display, gc, None);
+			else {
+				XRectangle[1] rects;
+				rects[0] = XRectangle(cast(short)(x), cast(short)(y), cast(short) width, cast(short) height);
+				XSetClipRectangles(XDisplayConnection.get, gc, 0, 0, rects.ptr, 1, 0);
+			}
+		}
+
+
 		void setFont(OperatingSystemFont font) {
 			if(font && font.font) {
 				this.font = font.font;
@@ -6254,13 +6317,13 @@ version(X11) {
 		bool backgroundIsNotTransparent = true;
 		bool foregroundIsNotTransparent = true;
 
-		Pen _pen;
+		Pen _activePen;
 
 		Color _outlineColor;
 		Color _fillColor;
 
 		@property void pen(Pen p) {
-			_pen = p;
+			_activePen = p;
 			_outlineColor = p.color;
 
 			int style;
@@ -6287,13 +6350,6 @@ version(X11) {
 				cast(uint) p.color.r << 16 |
 				cast(uint) p.color.g << 8 |
 				cast(uint) p.color.b);
-		}
-
-		@property void outlineColor(Color c) {
-			if(_pen.color == c)
-				return; // don't double call for performance
-			_pen.color = c;
-			pen = _pen;
 		}
 
 		@property void rasterOp(RasterOp op) {
@@ -6332,7 +6388,8 @@ version(X11) {
 		void swapColors() {
 			auto tmp = _fillColor;
 			fillColor = _outlineColor;
-			outlineColor = tmp;
+			_activePen.color = tmp;
+			pen(_activePen);
 		}
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
@@ -10940,6 +10997,7 @@ mixin template ExperimentalTextComponent() {
 		}
 
 		void drawInto(ScreenPainter painter, bool focused = false) {
+			painter.setClipRectangle(boundingBox);
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
 			int lastHeight;
@@ -11001,6 +11059,7 @@ mixin template ExperimentalTextComponent() {
 		int caratLastDrawnX, caratLastDrawnY1, caratLastDrawnY2;
 		bool caratShowingOnScreen = false;
 		void drawCarat(ScreenPainter painter) {
+			painter.setClipRectangle(boundingBox);
 			int x, y1, y2;
 			if(carat.inlineElement is null) {
 				x = boundingBox.left;
@@ -11032,6 +11091,7 @@ mixin template ExperimentalTextComponent() {
 		}
 
 		void eraseCarat(ScreenPainter painter) {
+			painter.setClipRectangle(boundingBox);
 			if(!caratShowingOnScreen) return;
 			painter.pen = Pen(Color.white, 1);
 			painter.rasterOp = RasterOp.xor;

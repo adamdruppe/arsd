@@ -1170,20 +1170,12 @@ class Widget {
 	}
 
 	protected void privatePaint(ScreenPainter painter, int lox, int loy) {
+
 		painter.originX = lox + x;
 		painter.originY = loy + y;
 
-		static if(UsingSimpledisplayX11) {
-			XRectangle[1] rects;
-			rects[0] = XRectangle(cast(short)(lox + x), cast(short)(loy + y), cast(short) width, cast(short) height);
-			XSetClipRectangles(XDisplayConnection.get, painter.impl.gc, 0, 0, rects.ptr, 1, 0);
-		} else {
-			version(Windows) {
-				auto region = CreateRectRgn(lox + x, loy + y, lox + x + width, loy + y + height);
-				SelectClipRgn(painter.impl.hdc, region);
-				DeleteObject(region);
-			}
-		}
+		painter.setClipRectangle(Point(0, 0), width, height);
+
 		if(paint !is null)
 			paint(painter);
 		foreach(child; children)
@@ -1345,6 +1337,41 @@ class Window : Widget {
 				skipNextChar = false;
 			}
 		});
+
+		version(win32_widgets)
+		win.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+			if(hwnd !is this.win.impl.hwnd)
+				return 1; // we don't care...
+			switch(msg) {
+				case WM_COMMAND:
+					switch(HIWORD(wParam)) {
+						case 0:
+						// case BN_CLICKED: aka 0
+						case 1:
+							auto idm = LOWORD(wParam);
+							if(auto item = idm in Action.mapping) {
+								foreach(handler; (*item).triggered)
+									handler();
+							/*
+								auto event = new Event("triggered", *item);
+								event.button = idm;
+								event.dispatch();
+							*/
+							} else {
+								auto handle = cast(HWND) lParam;
+								if(auto widgetp = handle in Widget.nativeMapping) {
+									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
+								}
+							}
+						break;
+						default:
+							return 1;
+					}
+				break;
+				default: return 1; // not handled, pass it on
+			}
+			return 0;
+		};
 
 
 		defaultEventHandlers["keydown"] = delegate void(Widget ignored, Event event) {
@@ -1605,41 +1632,6 @@ class MainWindow : Window {
 				this.statusBar.parts[0].content = _this.statusTip; // ~ " " ~ event.target.toString();
 		};
 
-		version(win32_widgets)
-		win.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-			if(hwnd !is this.win.impl.hwnd)
-				return 1; // we don't care...
-			switch(msg) {
-				case WM_COMMAND:
-					switch(HIWORD(wParam)) {
-						case 0:
-						// case BN_CLICKED: aka 0
-						case 1:
-							auto idm = LOWORD(wParam);
-							if(auto item = idm in Action.mapping) {
-								foreach(handler; (*item).triggered)
-									handler();
-							/*
-								auto event = new Event("triggered", *item);
-								event.button = idm;
-								event.dispatch();
-							*/
-							} else {
-								auto handle = cast(HWND) lParam;
-								if(auto widgetp = handle in Widget.nativeMapping) {
-									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
-								}
-							}
-						break;
-						default:
-							return 1;
-					}
-				break;
-				default: return 1; // not handled, pass it on
-			}
-			return 0;
-		};
-
 		_clientArea = new ClientAreaWidget();
 		_clientArea.x = 0;
 		_clientArea.y = 0;
@@ -1811,16 +1803,23 @@ class ToolButton : Button {
 
 						painter.fillColor = Color.white;
 						painter.outlineColor = Color.white;
-						painter.drawRectangle(Point(6, 3) * multiplier, Point(9, 5) * multiplier);
-						painter.drawRectangle(Point(5, 9) * multiplier, Point(10, 12) * multiplier);
+						// the slider
+						painter.drawRectangle(Point(5, 2) * multiplier, Point(10, 5) * multiplier);
+						// the label
+						painter.drawRectangle(Point(4, 8) * multiplier, Point(11, 12) * multiplier);
+
+						painter.fillColor = Color.black;
+						painter.outlineColor = Color.black;
+						// the disc window
+						painter.drawRectangle(Point(8, 3) * multiplier, Point(9, 4) * multiplier);
 					break;
 					case GenericIcons.Open:
 						painter.fillColor = Color.white;
 						painter.drawPolygon(
 							Point(2, 4) * multiplier, Point(2, 12) * multiplier, Point(13, 12) * multiplier, Point(13, 3) * multiplier,
 							Point(9, 3) * multiplier, Point(9, 4) * multiplier, Point(2, 4) * multiplier);
-						painter.drawLine(Point(3, 6) * multiplier, Point(9, 6) * multiplier);
-						painter.drawLine(Point(9, 7) * multiplier, Point(13, 7) * multiplier);
+						painter.drawLine(Point(2, 6) * multiplier, Point(13, 7) * multiplier);
+						//painter.drawLine(Point(9, 6) * multiplier, Point(13, 7) * multiplier);
 					break;
 					case GenericIcons.Copy:
 						painter.fillColor = Color.white;
@@ -1839,7 +1838,7 @@ class ToolButton : Button {
 						painter.drawRectangle(Point(2, 3) * multiplier, Point(11, 11) * multiplier);
 						painter.drawRectangle(Point(6, 8) * multiplier, Point(13, 13) * multiplier);
 						painter.drawLine(Point(6, 2) * multiplier, Point(4, 5) * multiplier);
-						painter.drawLine(Point(7, 2) * multiplier, Point(9, 5) * multiplier);
+						painter.drawLine(Point(6, 2) * multiplier, Point(9, 5) * multiplier);
 						painter.fillColor = Color.black;
 						painter.drawRectangle(Point(4, 5) * multiplier, Point(9, 6) * multiplier);
 					break;
@@ -2025,7 +2024,9 @@ class StatusBar : Widget {
 				int remainingLength = this.width;
 				foreach(idx, part; this.partsArray) {
 					auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
+					painter.setClipRectangle(Point(cpos, 0), partWidth, height);
 					draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk);
+					painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
 					painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
 					cpos += partWidth;
 					remainingLength -= partWidth;

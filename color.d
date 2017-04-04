@@ -1274,6 +1274,49 @@ struct Rectangle {
 	int top; ///
 	int right; ///
 	int bottom; ///
+
+	///
+	this(int left, int top, int right, int bottom) {
+		this.left = left;
+		this.top = top;
+		this.right = right;
+		this.bottom = bottom;
+	}
+
+	///
+	this(Point upperLeft, Point lowerRight) {
+		this(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
+	}
+
+	///
+	this(Point upperLeft, Size size) {
+		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width, upperLeft.y + size.height);
+	}
+
+	///
+	@property Point upperLeft() {
+		return Point(left, top);
+	}
+
+	///
+	@property Point lowerRight() {
+		return Point(right, bottom);
+	}
+
+	///
+	@property Size size() {
+		return Size(width, height);
+	}
+
+	///
+	@property int width() {
+		return right - left;
+	}
+
+	///
+	@property int height() {
+		return bottom - top;
+	}
 }
 
 /++
