@@ -1774,6 +1774,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	 * WARNING! Xlib is multithread-locked when this handles is called! */
 	bool delegate(int x, int y, int width, int height, int eventsLeft) handleExpose;
 
+	//version(Windows)
+	//bool delegate(WPARAM wParam, LPARAM lParam) handleWM_PAINT;
+
 	private {
 		int lastMouseX = int.min;
 		int lastMouseY = int.min;
@@ -3709,7 +3712,8 @@ struct Pen {
 	/// Style of lines drawn
 	enum Style {
 		Solid, /// a solid line
-		Dashed /// a dashed line
+		Dashed, /// a dashed line
+		Dotted, /// a dotted line
 	}
 }
 
@@ -4136,14 +4140,17 @@ struct ScreenPainter {
 		//	writeln("constructed");
 		}
 
-		originalPen = impl._activePen;
-		originalFillColor = impl._fillColor;
-		originalClipRectangle = impl._clipRectangle;
+		copyActiveOriginals();
 	}
 
 	private Pen originalPen;
 	private Color originalFillColor;
 	private arsd.color.Rectangle originalClipRectangle;
+	void copyActiveOriginals() {
+		originalPen = impl._activePen;
+		originalFillColor = impl._fillColor;
+		originalClipRectangle = impl._clipRectangle;
+	}
 
 	~this() {
 		impl.referenceCount--;
@@ -4152,6 +4159,7 @@ struct ScreenPainter {
 			//writeln("destructed");
 			impl.dispose();
 			window.activeScreenPainter = null;
+			//import std.stdio; writeln("paint finished");
 		} else {
 			// there is still an active reference, reset stuff so the
 			// next user doesn't get weirdness via the reference
@@ -4165,6 +4173,8 @@ struct ScreenPainter {
 	this(this) {
 		impl.referenceCount++;
 		//writeln("refcount ++ ", impl.referenceCount);
+
+		copyActiveOriginals();
 	}
 
 	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
@@ -5286,6 +5296,9 @@ version(Windows) {
 					case Pen.Style.Dashed:
 						style = PS_DASH;
 					break;
+					case Pen.Style.Dotted:
+						style = PS_DOT;
+					break;
 				}
 				pen = CreatePen(style, p.width, RGB(p.color.r, p.color.g, p.color.b));
 			}
@@ -6328,16 +6341,25 @@ version(X11) {
 
 			int style;
 
+			byte dashLength;
+
 			final switch(p.style) {
 				case Pen.Style.Solid:
 					style = 0 /*LineSolid*/;
 				break;
 				case Pen.Style.Dashed:
 					style = 1 /*LineOnOffDash*/;
+					dashLength = 4;
+				break;
+				case Pen.Style.Dotted:
+					style = 1 /*LineOnOffDash*/;
+					dashLength = 1;
 				break;
 			}
 
 			XSetLineAttributes(display, gc, p.width, style, 0, 0);
+			if(dashLength)
+				XSetDashes(display, gc, 0, &dashLength, 1);
 
 			if(p.color.a == 0) {
 				foregroundIsNotTransparent = false;
@@ -8453,7 +8475,7 @@ struct XFontStruct {
 	int XTextWidth(XFontStruct*, in char*, int);
 
 	int XSetLineAttributes(Display *display, GC gc, uint line_width, int line_style, int cap_style, int join_style);
-	int XSetDashes(Display *display, GC gc, int dash_offset, in char* dash_list, int n);
+	int XSetDashes(Display *display, GC gc, int dash_offset, in byte* dash_list, int n);
 
 
 
@@ -10843,6 +10865,18 @@ mixin template ExperimentalTextComponent() {
 		BlockElement[] blocks;
 		Rectangle boundingBox;
 
+		Rectangle contentBoundingBox() {
+			Rectangle r;
+			foreach(block; blocks)
+			foreach(ie; block.parts) {
+				if(ie.boundingBox.right > r.right)
+					r.right = ie.boundingBox.right;
+				if(ie.boundingBox.bottom > r.bottom)
+					r.bottom = ie.boundingBox.bottom;
+			}
+			return r;
+		}
+
 		BlockElement[] getBlocks() {
 			return blocks;
 		}
@@ -10996,8 +11030,10 @@ mixin template ExperimentalTextComponent() {
 			carat.offset = result.offset;
 		}
 
+// FIXME: carat can remain sometimes when inserting
+// FIXME: inserting at the beginning once you already have something can eff it up.
 		void drawInto(ScreenPainter painter, bool focused = false) {
-			painter.setClipRectangle(boundingBox);
+			//painter.setClipRectangle(boundingBox);
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
 			int lastHeight;
@@ -11059,7 +11095,7 @@ mixin template ExperimentalTextComponent() {
 		int caratLastDrawnX, caratLastDrawnY1, caratLastDrawnY2;
 		bool caratShowingOnScreen = false;
 		void drawCarat(ScreenPainter painter) {
-			painter.setClipRectangle(boundingBox);
+			//painter.setClipRectangle(boundingBox);
 			int x, y1, y2;
 			if(carat.inlineElement is null) {
 				x = boundingBox.left;
@@ -11091,7 +11127,7 @@ mixin template ExperimentalTextComponent() {
 		}
 
 		void eraseCarat(ScreenPainter painter) {
-			painter.setClipRectangle(boundingBox);
+			//painter.setClipRectangle(boundingBox);
 			if(!caratShowingOnScreen) return;
 			painter.pen = Pen(Color.white, 1);
 			painter.rasterOp = RasterOp.xor;

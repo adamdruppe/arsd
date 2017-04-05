@@ -141,7 +141,7 @@ abstract class ComboboxBase : Widget {
 				if(event.key == Key.Up) {
 					if(selection > -1) { // -1 means select blank
 						selection--;
-						auto t = new Event("change", this);
+						auto t = new Event(EventType.change, this);
 						t.dispatch();
 					}
 					event.preventDefault();
@@ -149,7 +149,7 @@ abstract class ComboboxBase : Widget {
 				if(event.key == Key.Down) {
 					if(selection + 1 < options.length) {
 						selection++;
-						auto t = new Event("change", this);
+						auto t = new Event(EventType.change, this);
 						t.dispatch();
 					}
 					event.preventDefault();
@@ -174,14 +174,14 @@ abstract class ComboboxBase : Widget {
 		version(win32_widgets)
 		SendMessageA(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
-		auto t = new Event("change", this);
+		auto t = new Event(EventType.change, this);
 		t.dispatch();
 	}
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
 		selection = SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
-		auto event = new Event("change", this);
+		auto event = new Event(EventType.change, this);
 		event.dispatch();
 	}
 
@@ -219,7 +219,7 @@ abstract class ComboboxBase : Widget {
 						if(element >= 0 && element <= options.length) {
 							selection = element;
 
-							auto t = new Event("change", this);
+							auto t = new Event(EventType.change, this);
 							t.dispatch();
 						}
 						dropDown.close();
@@ -262,7 +262,7 @@ class DropDownSelection : ComboboxBase {
 
 				if(isFocused()) {
 					painter.fillColor = Color.transparent;
-					painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+					painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
 					painter.drawRectangle(Point(2, 2), width - 4, height - 4);
 					painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
@@ -272,7 +272,7 @@ class DropDownSelection : ComboboxBase {
 
 			addEventListener("focus", &this.redraw);
 			addEventListener("blur", &this.redraw);
-			addEventListener("change", &this.redraw);
+			addEventListener(EventType.change, &this.redraw);
 			addEventListener("mousedown", () { this.focus(); this.popup(); });
 			addEventListener("keydown", (Event event) {
 				if(event.key == Key.Space)
@@ -297,17 +297,17 @@ class FreeEntrySelection : ComboboxBase {
 
 			tabStop = false;
 
-			auto btn = new class Button {
+			auto btn = new class ArrowButton {
 				this() {
-					super("V", hl);
+					super(ArrowDirection.down, hl);
 				}
-				override int maxWidth() {
-					return 16;
+				override int maxHeight() {
+					return int.max;
 				}
 			};
 			//btn.addDirectEventListener("focus", &lineEdit.focus);
 			btn.addEventListener("triggered", &this.popup);
-			addEventListener("change", {
+			addEventListener(EventType.change, {
 				lineEdit.content = (selection == -1 ? "" : options[selection]);
 				lineEdit.focus();
 				redraw();
@@ -333,7 +333,7 @@ class ComboBox : ComboboxBase {
 			lineEdit = new LineEdit(this);
 			listWidget = new ListWidget(this);
 			listWidget.multiSelect = false;
-			listWidget.addEventListener("change", delegate(Widget, Event) {
+			listWidget.addEventListener(EventType.change, delegate(Widget, Event) {
 				string c = null;
 				foreach(option; listWidget.options)
 					if(option.selected) {
@@ -348,7 +348,7 @@ class ComboBox : ComboboxBase {
 			listWidget.addEventListener("focus", &lineEdit.focus);
 			this.addEventListener("focus", &lineEdit.focus);
 
-			addDirectEventListener("change", {
+			addDirectEventListener(EventType.change, {
 				listWidget.setSelection(selection);
 				if(selection != -1)
 					lineEdit.content = options[selection];
@@ -356,7 +356,7 @@ class ComboBox : ComboboxBase {
 				redraw();
 			});
 
-			listWidget.addDirectEventListener("change", {
+			listWidget.addDirectEventListener(EventType.change, {
 				int set = -1;
 				foreach(idx, opt; listWidget.options)
 					if(opt.selected) {
@@ -402,7 +402,7 @@ class ListWidget : Widget {
 		if(y >= 0 && y < options.length)
 			options[y].selected = !options[y].selected;
 
-		auto evt = new Event("change", this);
+		auto evt = new Event(EventType.change, this);
 		evt.dispatch();
 
 		redraw();
@@ -730,6 +730,11 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	int stretchinessSum;
 	int lastMargin = 0;
 	foreach(child; parent.children) {
+		if(cast(StaticPosition) child)
+			continue;
+		if(child.hidden)
+			continue;
+
 		static if(calcingV) {
 			child.width = parent.width -
 				mixin("child.margin"~otherFirstThingy~"()") -
@@ -773,6 +778,10 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		int previousSpaceRemaining = spaceRemaining;
 		stretchinessSum = 0;
 		foreach(child; parent.children) {
+			if(cast(StaticPosition) child)
+				continue;
+			if(child.hidden)
+				continue;
 			static if(calcingV)
 				auto maximum = child.maxHeight();
 			else
@@ -803,6 +812,12 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	lastMargin = 0;
 	int currentPos = mixin("parent.padding"~firstThingy~"()");
 	foreach(child; parent.children) {
+		if(cast(StaticPosition) child) {
+			child.recomputeChildLayout();
+			continue;
+		}
+		if(child.hidden)
+			continue;
 		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
 		int thisMargin = mymax(lastMargin, mixin("child.margin"~firstThingy~"()"));
 		currentPos += thisMargin;
@@ -957,6 +972,19 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 class Widget {
 	mixin EventStuff!();
 	mixin LayoutInfo!();
+
+	bool hidden_;
+	bool hidden() { return hidden_; }
+	void hidden(bool h) {
+		auto o = hidden_;
+		hidden_ = h;
+		if(h && !o) {
+			if(parent) {
+				parent.recomputeChildLayout();
+				parent.redraw();
+			}
+		}
+	}
 
 	static if(UsingSimpledisplayX11) {
 		// see: http://tronche.com/gui/x/xlib/appendix/b/
@@ -1141,6 +1169,8 @@ class Widget {
 		// it goes backward so the last one to show gets picked first
 		// might use z-index later
 		foreach_reverse(child; children) {
+			if(child.hidden)
+				continue;
 			if(child.x <= x && child.y <= y
 				&& ((x - child.x) < child.width)
 				&& ((y - child.y) < child.height))
@@ -1166,10 +1196,13 @@ class Widget {
 		auto painter = parentWindow.win.draw();
 		painter.originX = x;
 		painter.originY = y;
+		painter.setClipRectangle(Point(0, 0), width, height);
 		return painter;
 	}
 
 	protected void privatePaint(ScreenPainter painter, int lox, int loy) {
+		if(hidden)
+			return;
 
 		painter.originX = lox + x;
 		painter.originY = loy + y;
@@ -1208,25 +1241,476 @@ class Widget {
 	SimpleWindow drawableWindow;
 }
 
-///
-class VerticalLayout : Widget {
-	// intentionally blank - widget's default is vertical layout right now
-	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+/// For [ScrollableWidget], determines when to show the scroll bar to the user.
+enum ScrollBarShowPolicy {
+	automatic, /// automatically show the scroll bar if it is necessary
+	never, /// never show the scroll bar (scrolling must be done programmatically)
+	always /// always show the scroll bar, even if it is disabled
+}
+
+/++
++/
+class ScrollableWidget : Widget {
+	this(Widget parent = null) {
+		horizontalScrollbarHolder = new FixedPosition(this);
+		verticalScrollbarHolder = new FixedPosition(this);
+		horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
+		verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
+
+		horizontalScrollbarHolder.hidden_ = true;
+		verticalScrollbarHolder.hidden_ = true;
+
+		super(parent);
+	}
+
+	FixedPosition horizontalScrollbarHolder;
+	FixedPosition verticalScrollbarHolder;
+
+	VerticalScrollbar verticalScrollBar;
+	HorizontalScrollbar horizontalScrollBar;
+
+	override void recomputeChildLayout() {
+		bool both = showingVerticalScroll && showingHorizontalScroll;
+		horizontalScrollbarHolder.width = this.width - (both ? 16 : 0);
+		horizontalScrollbarHolder.height = 16;
+		horizontalScrollbarHolder.x = 0;
+		horizontalScrollbarHolder.y = this.height - 16;
+
+		verticalScrollbarHolder.width = 16;
+		verticalScrollbarHolder.height = this.height - (both ? 16 : 0);
+		verticalScrollbarHolder.x = this.width - 16;
+		verticalScrollbarHolder.y = 0;
+
+		super.recomputeChildLayout();
+	}
+
+	/*
+		Scrolling
+		------------
+
+		You are assigned a width and a height by the layout engine, which
+		is your viewport box. However, you may draw more than that by setting
+		a contentWidth and contentHeight.
+
+		If these can be contained by the viewport, no scrollbar is displayed.
+		If they cannot fit though, it will automatically show scroll as necessary.
+
+		If contentWidth == 0, no horizontal scrolling is performed. If contentHeight
+		is zero, no vertical scrolling is performed.
+
+		If scrolling is necessary, the lib will automatically work with the bars.
+		When you redraw, the origin and clipping info in the painter is set so if
+		you just draw everything, it will work, but you can be more efficient by checking
+		the viewportWidth, viewportHeight, and scrollOrigin members.
+	*/
+
+	@property int viewportWidth() {
+		return width - (showingVerticalScroll ? 16 : 0);
+	}
+	@property int viewportHeight() {
+		return height - (showingHorizontalScroll ? 16 : 0);
+	}
+
+	// FIXME property
+	Point scrollOrigin;
+
+	// the user sets these two
+	private int contentWidth = 0;
+	private int contentHeight = 0;
+
+	void setContentSize(int width, int height) {
+		contentWidth = width;
+		contentHeight = height;
+
+		if(showingVerticalScroll && showingHorizontalScroll) {
+			recomputeChildLayout();
+		}
+
+		{
+			int viewableScrollArea = viewportHeight;
+			int totalScrollArea = contentHeight;
+			int totalScrollBarArea = verticalScrollBar.thumb.height;
+			int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+
+			verticalScrollBar.thumb.thumbHeight = thumbSize;
+			if(showingVerticalScroll())
+				verticalScrollBar.redraw();
+		}
+
+		{
+			int viewableScrollArea = viewportWidth;
+			int totalScrollArea = contentWidth;
+			int totalScrollBarArea = horizontalScrollBar.thumb.width;
+			int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+
+			horizontalScrollBar.thumb.thumbWidth = thumbSize;
+			if(showingHorizontalScroll())
+				horizontalScrollBar.redraw();
+		}
+
+
+		if(showingHorizontalScroll())
+			horizontalScrollbarHolder.hidden = false;
+		else
+			horizontalScrollbarHolder.hidden = true;
+		if(showingVerticalScroll())
+			verticalScrollbarHolder.hidden = false;
+		else
+			verticalScrollbarHolder.hidden = true;
+
+
+	}
+
+	void verticalScroll(int delta) {
+		verticalScrollTo(scrollOrigin.y + delta);
+	}
+	void verticalScrollTo(int pos) {
+		scrollOrigin.y = pos;
+		if(scrollOrigin.y + viewportHeight > contentHeight)
+			scrollOrigin.y = contentHeight - viewportHeight;
+
+		if(scrollOrigin.y < 0)
+			scrollOrigin.y = 0;
+
+
+		int viewableScrollArea = viewportHeight;
+		int totalScrollArea = contentHeight;
+		int totalScrollBarArea = verticalScrollBar.thumb.height;
+		int thumbPosition = scrollOrigin.y * totalScrollBarArea / totalScrollArea;
+		int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+		verticalScrollBar.thumb.positionY = thumbPosition;
+
+		redraw();
+	}
+
+	void horizontalScroll(int delta) {
+		horizontalScrollTo(scrollOrigin.x + delta);
+	}
+	void horizontalScrollTo(int pos) {
+		scrollOrigin.x = pos;
+		if(scrollOrigin.x + viewportWidth > contentWidth)
+			scrollOrigin.x = contentWidth - viewportWidth;
+
+		if(scrollOrigin.x < 0)
+			scrollOrigin.x = 0;
+
+
+		int viewableScrollArea = viewportWidth;
+		int totalScrollArea = contentWidth;
+		int totalScrollBarArea = horizontalScrollBar.thumb.width;
+		int thumbPosition = scrollOrigin.x * totalScrollBarArea / totalScrollArea;
+		int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+		horizontalScrollBar.thumb.positionX = thumbPosition;
+
+		redraw();
+	}
+	void scrollTo(Point p) {
+		verticalScrollTo(p.y);
+		horizontalScrollTo(p.x);
+	}
+
+	bool showingHorizontalScroll() {
+		return contentWidth > width;
+	}
+	bool showingVerticalScroll() {
+		return contentHeight > height;
+	}
+
+	/// This is called before the ordinary paint delegate,
+	/// giving you a chance to draw the window frame, etc,
+	/// before the scroll clip takes effect
+	void paintFrameAndBackground(ScreenPainter painter) {}
+
+	// make space for the scroll bar, and that's it.
+	final override int paddingRight() { return 16; }
+	final override int paddingBottom() { return 16; }
+
+	/*
+		END SCROLLING
+	*/
+
+	override ScreenPainter draw() {
+		int x = this.x, y = this.y;
+		auto parent = this.parent;
+		while(parent) {
+			x += parent.x;
+			y += parent.y;
+			parent = parent.parent;
+		}
+
+		auto painter = parentWindow.win.draw();
+		painter.originX = x;
+		painter.originY = y;
+
+		painter.originX -= scrollOrigin.x;
+		painter.originY -= scrollOrigin.y;
+		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
+
+		return painter;
+	}
+
+	override protected void privatePaint(ScreenPainter painter, int lox, int loy) {
+		if(hidden)
+			return;
+		painter.originX = lox + x;
+		painter.originY = loy + y;
+
+		painter.setClipRectangle(Point(0, 0), width, height);
+		paintFrameAndBackground(painter);
+
+		painter.originX -= scrollOrigin.x;
+		painter.originY -= scrollOrigin.y;
+		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
+
+		if(paint !is null)
+			paint(painter);
+		foreach(child; children) {
+			if(cast(FixedPosition) child)
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y);
+			else
+				child.privatePaint(painter, painter.originX, painter.originY);
+		}
+	}
+
 }
 
 ///
-class StaticLayout : Widget {
-	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
-	override void recomputeChildLayout() {
-		registerMovement();
-		foreach(child; children)
-			child.recomputeChildLayout();
+abstract class ScrollbarBase : Widget {
+	this(Widget parent = null) {
+		super(parent);
+		tabStop = false;
+	}
+
+	int viewableArea;
+	int totalScrollableArea;
+}
+
+///
+class HorizontalScrollbar : ScrollbarBase {
+
+	MouseTrackingWidget thumb;
+
+	this(Widget parent = null) {
+		super(parent);
+		// FIXME win32_widgets
+
+		auto vl = new HorizontalLayout(this);
+		auto leftButton = new ArrowButton(ArrowDirection.left, vl);
+		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.horizontal, vl);
+		auto rightButton = new ArrowButton(ArrowDirection.right, vl);
+
+		ScrollableWidget scrollableParent;
+		Widget p = parent;
+		while(p !is null) {
+			if(auto sw = cast(ScrollableWidget) p) {
+				scrollableParent = sw;
+				break;
+			}
+			p = p.parent;
+		}
+
+		leftButton.addEventListener(EventType.triggered, () {
+			if(scrollableParent)
+				scrollableParent.horizontalScroll(-16);
+		});
+		rightButton.addEventListener(EventType.triggered, () {
+			if(scrollableParent)
+				scrollableParent.horizontalScroll(16);
+		});
+
+		thumb.thumbWidth = this.minWidth;
+		thumb.thumbHeight = 16;
+
+		thumb.addEventListener(EventType.change, () {
+			int viewableScrollArea = scrollableParent.viewportWidth;
+			int totalScrollArea = scrollableParent.contentWidth;
+			int totalScrollBarArea = thumb.width;
+
+			auto sx = thumb.positionX * totalScrollArea / totalScrollBarArea;
+
+			scrollableParent.horizontalScrollTo(sx);
+		});
+
+	}
+
+	override int minHeight() { return 16; }
+	override int maxHeight() { return 16; }
+	override int minWidth() { return 48; }
+}
+
+///
+class VerticalScrollbar : ScrollbarBase {
+
+	MouseTrackingWidget thumb;
+
+	this(Widget parent = null) {
+		super(parent);
+		// FIXME win32_widgets
+
+		auto vl = new VerticalLayout(this);
+		auto upButton = new ArrowButton(ArrowDirection.up, vl);
+		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.vertical, vl);
+		auto downButton = new ArrowButton(ArrowDirection.down, vl);
+
+		ScrollableWidget scrollableParent;
+		Widget p = parent;
+		while(p !is null) {
+			if(auto sw = cast(ScrollableWidget) p) {
+				scrollableParent = sw;
+				break;
+			}
+			p = p.parent;
+		}
+
+		upButton.addEventListener(EventType.triggered, () {
+			if(scrollableParent)
+				scrollableParent.verticalScroll(-16);
+		});
+		downButton.addEventListener(EventType.triggered, () {
+			if(scrollableParent)
+				scrollableParent.verticalScroll(16);
+		});
+
+		thumb.thumbWidth = this.minWidth;
+		thumb.thumbHeight = 16;
+
+		thumb.addEventListener(EventType.change, () {
+			int viewableScrollArea = scrollableParent.viewportHeight;
+			int totalScrollArea = scrollableParent.contentHeight;
+			int totalScrollBarArea = thumb.height;
+
+			auto sy = thumb.positionY * totalScrollArea / totalScrollBarArea;
+
+			scrollableParent.verticalScrollTo(sy);
+		});
+
+	}
+
+	override int minWidth() { return 16; }
+	override int maxWidth() { return 16; }
+	override int minHeight() { return 48; }
+}
+
+/++
+	A mouse tracking widget is one that follows the mouse when dragged inside it.
+
+	Concrete subclasses may include a scrollbar thumb and a volume control.
++/
+class MouseTrackingWidget : Widget {
+	int mouseTrackerPosition;
+
+	int positionX;
+	int positionY;
+
+	///
+	enum Orientation {
+		horizontal, ///
+		vertical, ///
+		twoDimensional, ///
+	}
+
+	int thumbWidth;
+	int thumbHeight;
+
+	this(Orientation orientation, Widget parent = null) {
+		super(parent);
+
+		//assert(parentWindow !is null);
+
+		bool dragging;
+		bool hovering;
+
+		int startMouseX, startMouseY;
+
+		addEventListener(EventType.mousedown, (Event event) {
+			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
+				dragging = true;
+				startMouseX = event.clientX;
+				startMouseY = event.clientY;
+				parentWindow.captureMouse(this);
+			} else {
+				// FIXME
+			}
+		});
+
+		addEventListener(EventType.mouseup, (Event event) {
+			dragging = false;
+			parentWindow.releaseMouseCapture();
+		});
+
+		addEventListener(EventType.mouseout, (Event event) {
+			if(!hovering)
+				return;
+			hovering = false;
+			redraw();
+		});
+
+		addEventListener(EventType.mousemove, (Event event) {
+			auto oh = hovering;
+			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
+				hovering = true;
+			} else {
+				hovering = false;
+			}
+			if(!dragging) {
+				if(hovering != oh)
+					redraw();
+				return;
+			}
+
+			if(orientation == Orientation.horizontal || orientation == Orientation.twoDimensional)
+				positionX = event.clientX - startMouseX;
+			if(orientation == Orientation.vertical || orientation == Orientation.twoDimensional)
+				positionY = event.clientY - startMouseY;
+
+			if(positionX + thumbWidth > this.width)
+				positionX = this.width - thumbWidth;
+			if(positionY + thumbHeight > this.height)
+				positionY = this.height - thumbHeight;
+
+			if(positionX < 0)
+				positionX = 0;
+			if(positionY < 0)
+				positionY = 0;
+
+			auto evt = new Event(EventType.change, this);
+			evt.sendDirectly();
+
+			redraw();
+		});
+
+		this.paint = (ScreenPainter painter) {
+			auto c = lighten(windowBackgroundColor, 0.2);
+			painter.outlineColor = c;
+			painter.fillColor = c;
+			painter.drawRectangle(Point(0, 0), this.width, this.height);
+
+			auto color = hovering ? Color(215, 215, 215) : windowBackgroundColor;
+			draw3dFrame(positionX, positionY, thumbWidth, thumbHeight, painter, FrameStyle.risen, color);
+
+		};
 	}
 }
 
 ///
-class HorizontalLayout : Widget {
-	this(Widget parent = null) { tabStop = false; super(parent); if(parent) this.parentWindow = parent.parentWindow; }
+abstract class Layout : Widget {
+	this(Widget parent = null) {
+		tabStop = false;
+		super(parent);
+		if(parent)
+			this.parentWindow = parent.parentWindow;
+	}
+}
+
+/// Stacks the widgets vertically, taking all the available width for each child.
+class VerticalLayout : Layout {
+	// intentionally blank - widget's default is vertical layout right now
+	this(Widget parent = null) { super(parent); }
+}
+
+/// Stacks the widgets horizontally, taking all the available height for each child.
+class HorizontalLayout : Layout {
+	this(Widget parent = null) { super(parent); }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
@@ -1261,6 +1745,57 @@ class HorizontalLayout : Widget {
 
 }
 
+/++
+	Bypasses automatic layout for its children, using manual positioning and sizing only.
+	While you need to manually position them, you must ensure they are inside the StaticLayout's
+	bounding box to avoid undefined behavior.
+
+	You should almost never use this.
++/
+class StaticLayout : Layout {
+	this(Widget parent = null) { super(parent); }
+	override void recomputeChildLayout() {
+		registerMovement();
+		foreach(child; children)
+			child.recomputeChildLayout();
+	}
+}
+
+/++
+	Bypasses automatic positioning when being laid out. It is your responsibility to make
+	room for this widget in the parent layout.
+
+	Its children are laid out normally, unless there is exactly one, in which case it takes
+	on the full size of the `StaticPosition` object (if you plan to put stuff on the edge, you
+	can do that with `padding`).
++/
+class StaticPosition : Layout {
+	this(Widget parent = null) { super(parent); }
+
+	override void recomputeChildLayout() {
+		registerMovement();
+		if(this.children.length == 1) {
+			auto child = children[0];
+			child.x = 0;
+			child.y = 0;
+			child.width = this.width;
+			child.height = this.height;
+			child.recomputeChildLayout();
+		} else
+		foreach(child; children)
+			child.recomputeChildLayout();
+	}
+
+}
+
+/++
+	FixedPosition is like [StaticPosition], but its coordinates
+	are always relative to the viewport, meaning they do not scroll with
+	the parent content.
++/
+class FixedPosition : StaticPosition {
+	this(Widget parent = null) { super(parent); }
+}
 
 
 ///
@@ -1271,10 +1806,12 @@ class Window : Widget {
 		assert(mouseCapturedBy is null || byWhom is mouseCapturedBy);
 		mouseCaptureCount++;
 		mouseCapturedBy = byWhom;
+		win.grabInput();
 	}
 	void releaseMouseCapture() {
 		mouseCaptureCount--;
 		mouseCapturedBy = null;
+		win.releaseInputGrab();
 	}
 
 	static int lineHeight;
@@ -1382,6 +1919,8 @@ class Window : Widget {
 
 				// FIXME inefficient
 				Widget[] helper(Widget p) {
+					if(p.hidden)
+						return null;
 					Widget[] childOrdering = p.children.dup;
 
 					import std.algorithm;
@@ -1389,7 +1928,7 @@ class Window : Widget {
 
 					Widget[] ret;
 					foreach(child; childOrdering) {
-						if(child.tabStop)
+						if(child.tabStop && !child.hidden)
 							ret ~= child;
 						ret ~= helper(child);
 					}
@@ -1515,6 +2054,11 @@ class Window : Widget {
 		auto eleR = widgetAtPoint(this, ev.x, ev.y);
 		auto ele = eleR.widget;
 
+		if(mouseCapturedBy !is null) {
+			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
+				ele = mouseCapturedBy;
+		}
+
 		// a hack to get it relative to the widget.
 		eleR.x = ev.x;
 		eleR.y = ev.y;
@@ -1523,11 +2067,6 @@ class Window : Widget {
 			eleR.x -= pain.x;
 			eleR.y -= pain.y;
 			pain = pain.parent;
-		}
-
-		if(mouseCapturedBy !is null) {
-			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
-				ele = this;
 		}
 
 		if(ev.type == 1) {
@@ -1608,9 +2147,10 @@ class Window : Widget {
 	}
 
 	static Widget getFirstFocusable(Widget start) {
-		if(start.tabStop)
+		if(start.tabStop && !start.hidden)
 			return start;
 
+		if(!start.hidden)
 		foreach(child; start.children) {
 			auto f = getFirstFocusable(child);
 			if(f !is null)
@@ -2477,7 +3017,7 @@ class Checkbox : MouseActivatedWidget {
 		this.paint = (ScreenPainter painter) {
 
 			if(isFocused()) {
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
 				painter.fillColor = windowBackgroundColor;
 				painter.drawRectangle(Point(0, 0), width, height);
 				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
@@ -2510,7 +3050,7 @@ class Checkbox : MouseActivatedWidget {
 		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
 			isChecked = !isChecked;
 
-			auto event = new Event("change", this);
+			auto event = new Event(EventType.change, this);
 			event.dispatch();
 
 			redraw();
@@ -2556,7 +3096,7 @@ class Radiobox : MouseActivatedWidget {
 		this.paint = (ScreenPainter painter) {
 			if(isFocused) {
 				painter.fillColor = windowBackgroundColor;
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
 			} else {
 				painter.fillColor = windowBackgroundColor;
 				painter.outlineColor = windowBackgroundColor;
@@ -2588,14 +3128,14 @@ class Radiobox : MouseActivatedWidget {
 					if(child is this) continue;
 					if(auto rb = cast(Radiobox) child) {
 						rb.isChecked = false;
-						auto event = new Event("change", rb);
+						auto event = new Event(EventType.change, rb);
 						event.dispatch();
 						rb.redraw();
 					}
 				}
 			}
 
-			auto event = new Event("change", this);
+			auto event = new Event(EventType.change, this);
 			event.dispatch();
 
 			redraw();
@@ -2657,7 +3197,7 @@ class Button : MouseActivatedWidget {
 
 			if(isFocused()) {
 				painter.fillColor = Color.transparent;
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dashed);
+				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
 				painter.drawRectangle(Point(2, 2), width - 4, height - 4);
 				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
@@ -2667,6 +3207,66 @@ class Button : MouseActivatedWidget {
 	else static assert(false);
 
 	override int minHeight() { return Window.lineHeight; }
+}
+
+enum ArrowDirection {
+	left, right, up, down
+}
+
+///
+version(custom_widgets)
+class ArrowButton : Button {
+	this(ArrowDirection direction, Widget parent = null) {
+		super("", parent);
+
+		auto superPainter = this.paint;
+		assert(superPainter !is null);
+		this.paint = (ScreenPainter painter) {
+			superPainter(painter);
+
+			painter.outlineColor = Color.black;
+			painter.fillColor = Color.black;
+
+			auto offset = Point((this.width - 16) / 2, (this.height - 16) / 2);
+
+			final switch(direction) {
+				case ArrowDirection.up:
+					painter.drawPolygon(
+						Point(4, 12) + offset,
+						Point(8, 6) + offset,
+						Point(12, 12) + offset
+					);
+				break;
+				case ArrowDirection.down:
+					painter.drawPolygon(
+						Point(4, 6) + offset,
+						Point(8, 12) + offset,
+						Point(12, 6) + offset
+					);
+				break;
+				case ArrowDirection.left:
+					painter.drawPolygon(
+						Point(12, 4) + offset,
+						Point(6, 8) + offset,
+						Point(12, 12) + offset
+					);
+				break;
+				case ArrowDirection.right:
+					painter.drawPolygon(
+						Point(6, 4) + offset,
+						Point(12, 8) + offset,
+						Point(6, 12) + offset
+					);
+				break;
+			}
+
+		};
+	}
+
+	override int minHeight() { return 16; }
+	override int maxHeight() { return 16; }
+	override int minWidth() { return 16; }
+	override int maxWidth() { return 16; }
 }
 
 int[2] getChildPositionRelativeToParentOrigin(Widget c) nothrow {
@@ -2717,7 +3317,7 @@ version(custom_widgets)
 	mixin ExperimentalTextComponent;
 
 /// Contains the implementation of text editing
-abstract class EditableTextWidget : Widget {
+abstract class EditableTextWidget : ScrollableWidget {
 	this(Widget parent = null) {
 		super(parent);
 	}
@@ -2755,21 +3355,23 @@ abstract class EditableTextWidget : Widget {
 		else static assert(false);
 	}
 
+	version(custom_widgets)
+	override void paintFrameAndBackground(ScreenPainter painter) {
+		this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
+	}
+
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
 	else version(custom_widgets) {
 		// FIXME
 
 		Timer caratTimer;
 		TextLayout textLayout;
-		TextIdentifyResult lastClick;
 
 		void setupCustomTextEditing() {
 			textLayout = new TextLayout(Rectangle(0, 0, width, height));
 
 			this.paint = (ScreenPainter painter) {
 				if(parentWindow.win.closed) return;
-
-				this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
 
 				textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
 
@@ -2825,6 +3427,10 @@ abstract class EditableTextWidget : Widget {
 			defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
 				textLayout.insert(ev.character);
 				redraw();
+
+				// FIXME: too inefficient
+				auto cbb = textLayout.contentBoundingBox();
+				setContentSize(cbb.width, cbb.height);
 			};
 			addEventListener("keydown", delegate (Widget _this, Event ev) {
 				switch(ev.key) {
@@ -3026,6 +3632,8 @@ enum EventType : string {
 	blur = "blur",
 
 	triggered = "triggered",
+
+	change = "change",
 }
 
 ///
@@ -3058,6 +3666,9 @@ class Event {
 	int clientX;
 	int clientY;
 
+	int viewportX;
+	int viewportY;
+
 	int button;
 	Key key;
 	dchar character;
@@ -3068,10 +3679,21 @@ class Event {
 
 	private bool isBubbling;
 
+	private void adjustScrolling() {
+		viewportX = clientX;
+		viewportY = clientY;
+		if(auto se = cast(ScrollableWidget) srcElement) {
+			clientX += se.scrollOrigin.x;
+			clientY += se.scrollOrigin.y;
+		}
+	}
+
 	/// this sends it only to the target. If you want propagation, use dispatch() instead.
 	void sendDirectly() {
 		if(srcElement is null)
 			return;
+
+		adjustScrolling();
 
 		auto e = srcElement;
 
@@ -3089,6 +3711,7 @@ class Event {
 		if(srcElement is null)
 			return;
 
+		adjustScrolling();
 		// first capture, then bubble
 
 		Widget[] chain;
@@ -3160,6 +3783,8 @@ WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 	assert(starting !is null);
 	auto child = starting.getChildAtPosition(x, y);
 	while(child) {
+		if(child.hidden)
+			continue;
 		starting = child;
 		x -= child.x;
 		y -= child.y;
