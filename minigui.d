@@ -52,6 +52,12 @@
 		`<input type="checkbox">` = [Checkbox]
 		`<input type="radio">` = [Radiobox]
 		`<button>` = [Button]
+
+
+	Stretchiness:
+		The default is 4. You can use larger numbers for things that should
+		consume a lot of space, and lower numbers for ones that are better at
+		smaller sizes.
 +/
 module arsd.minigui;
 
@@ -183,13 +189,13 @@ abstract class ComboboxBase : Widget {
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
-		selection = SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+		selection = cast(int) SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
 		auto event = new Event(EventType.change, this);
 		event.dispatch();
 	}
 
-	override int minHeight() { return Window.lineHeight * 4 / 3; }
-	override int maxHeight() { return Window.lineHeight * 4 / 3; }
+	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return Window.lineHeight + 4; }
 
 	version(custom_widgets) {
 		SimpleWindow dropDown;
@@ -374,7 +380,7 @@ class ComboBox : ComboboxBase {
 
 	override int minHeight() { return Window.lineHeight * 3; }
 	override int maxHeight() { return int.max; }
-	override int heightStretchiness() { return 2; }
+	override int heightStretchiness() { return 5; }
 
 	version(custom_widgets) {
 		LineEdit lineEdit;
@@ -391,7 +397,7 @@ class ComboBox : ComboboxBase {
 
 +/
 version(custom_widgets)
-class ListWidget : Widget {
+class ListWidget : ScrollableWidget {
 
 	static struct Option {
 		string label;
@@ -445,8 +451,21 @@ class ListWidget : Widget {
 		};
 	}
 
+	void addOption(string text) {
+		options ~= Option(text);
+		setContentSize(width, cast(int) (options.length * Window.lineHeight));
+		redraw();
+	}
+
+	void clear() {
+		options = null;
+		redraw();
+	}
+
 	Option[] options;
 	bool multiSelect;
+
+	override int heightStretchiness() { return 6; }
 }
 
 
@@ -693,8 +712,8 @@ mixin template LayoutInfo() {
 	}
 	int maxWidth() { return int.max; }
 	int maxHeight() { return int.max; }
-	int widthStretchiness() { return 1; }
-	int heightStretchiness() { return 1; }
+	int widthStretchiness() { return 4; }
+	int heightStretchiness() { return 4; }
 
 	int marginLeft() { return 0; }
 	int marginRight() { return 0; }
@@ -845,20 +864,6 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 int mymax(int a, int b) { return a > b ? a : b; }
 
-/+
-mixin template StyleInfo(string windowType) {
-	version(win32_theming)
-		HTHEME theme;
-	/* ok we need to:
-		open theme
-		close theme (when it is all done)
-		draw background
-		get font
-		respond to theme changed messages
-	*/
-}
-+/
-
 // OK so we need to make getting at the native window stuff possible in simpledisplay.d
 // and here, it must be integrable with the layout, the event system, and not be painted over.
 version(win32_widgets) {
@@ -890,7 +895,7 @@ version(win32_widgets) {
 				lastDefaultPrevented = false;
 				// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
 				if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
-					return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
+					return cast(int) CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
 				else {
 					// it was something we recognized, should only call the window procedure if the default was not prevented
 				}
@@ -1882,6 +1887,16 @@ class HorizontalLayout : Layout {
 		return largest + margins;
 	}
 
+	override int heightStretchiness() {
+		int max;
+		foreach(child; children) {
+			auto c = child.heightStretchiness;
+			if(c > max)
+				c = max;
+		}
+		return max;
+	}
+
 }
 
 /++
@@ -2473,15 +2488,16 @@ class ToolBar : Widget {
 			SendMessageA(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageA(hwnd, TB_ADDBUTTONSA,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
 
-			/* this seems to make it a vertical toolbar on windows xp... don't actually want that
 			SIZE size;
-			SendMessageA(hwnd, TB_GETIDEALSIZE, true, cast(LPARAM) &size);
-			idealHeight = size.cy;
-			*/
+			import core.sys.windows.commctrl;
+			SendMessageA(hwnd, TB_GETMAXSIZE, 0, cast(LPARAM) &size);
+			idealHeight = size.cy + 4; // the plus 4 is a hack
 
+			/*
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
 			idealHeight = rect.bottom - rect.top + 10; // the +10 is a hack since the size right now doesn't look right on a real Windows XP box
+			*/
 
 			assert(idealHeight);
 		} else version(custom_widgets) {
@@ -2932,7 +2948,13 @@ class Fieldset : Widget {
 	}
 
 	override int minHeight() {
-		return super.minHeight() + Window.lineHeight + 4;
+		auto m = paddingTop() + paddingBottom();
+		foreach(child; children) {
+			m += child.minHeight();
+			m += child.marginBottom();
+			m += child.marginTop();
+		}
+		return m + 6;
 	}
 }
 
@@ -3342,6 +3364,9 @@ class Button : MouseActivatedWidget {
 	Color hoverBgColor;
 	Color depressedBgColor;
 
+	override int heightStretchiness() { return 3; }
+	override int widthStretchiness() { return 3; }
+
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
 		auto event = new Event("triggered", this);
@@ -3397,7 +3422,7 @@ class Button : MouseActivatedWidget {
 	}
 	else static assert(false);
 
-	override int minHeight() { return Window.lineHeight; }
+	override int minHeight() { return Window.lineHeight + 4; }
 }
 
 enum ArrowDirection {
@@ -3516,7 +3541,7 @@ abstract class EditableTextWidget : ScrollableWidget {
 
 	override int minWidth() { return 16; }
 	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
-	override int widthStretchiness() { return 3; }
+	override int widthStretchiness() { return 7; }
 
 	@property string content() {
 		version(win32_widgets) {
@@ -3678,6 +3703,10 @@ abstract class EditableTextWidget : ScrollableWidget {
 
 ///
 class LineEdit : EditableTextWidget {
+	// FIXME: hack
+	override bool showingVerticalScroll() { return false; }
+	override bool showingHorizontalScroll() { return false; }
+
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
@@ -3708,7 +3737,7 @@ class TextEdit : EditableTextWidget {
 		} else static assert(false);
 	}
 	override int maxHeight() { return int.max; }
-	override int heightStretchiness() { return 4; }
+	override int heightStretchiness() { return 7; }
 }
 
 
@@ -3994,40 +4023,6 @@ WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 	return WidgetAtPointResponse(starting, x, y);
 }
 
-version(win32_theming) {
-	import std.c.windows.windows;
-
-	alias HANDLE HTHEME;
-
-	// Since dmd doesn't offer uxtheme.lib, I'll load the dll at runtime instead
-	HMODULE uxtheme;
-	static this() {
-		uxtheme = LoadLibraryA("uxtheme.dll");
-		if(uxtheme) {
-			DrawThemeBackground = cast(typeof(DrawThemeBackground)) GetProcAddress(uxtheme, "DrawThemeBackground");
-			OpenThemeData = cast(typeof(OpenThemeData)) GetProcAddress(uxtheme, "OpenThemeData");
-			CloseThemeData = cast(typeof(CloseThemeData)) GetProcAddress(uxtheme, "CloseThemeData");
-			GetThemeSysColorBrush = cast(typeof(GetThemeSysColorBrush)) GetProcAddress(uxtheme, "CloseThemeData");
-		}
-	}
-
-	// everything from here is just win32 headers copy pasta
-private:
-extern(Windows):
-
-	HRESULT function(HTHEME, HDC, int, int, in RECT*, in RECT*) DrawThemeBackground;
-	HTHEME function(HWND, LPCWSTR) OpenThemeData;
-	HRESULT function(HTHEME) CloseThemeData;
-	HBRUSH function(HTHEME, int) GetThemeSysColorBrush;
-
-	HMODULE LoadLibraryA(LPCSTR);
-	BOOL FreeLibrary(HMODULE);
-	FARPROC GetProcAddress(HMODULE, LPCSTR);
-	// pragma(lib, "uxtheme");
-
-	BOOL GetClassInfoA(HINSTANCE, LPCSTR, WNDCLASS*);
-}
-
 version(win32_widgets) {
 	import core.sys.windows.windows;
 	import gdi = core.sys.windows.wingdi;
@@ -4289,6 +4284,111 @@ enum GenericIcons : ushort {
 	Find,
 	Replace,
 	Print,
+}
+
+void getOpenFileName(
+	void delegate(string) onOK = null,
+	string prefilledName = null,
+	string[] filters = null,
+)
+{
+
+	version(win32_widgets) {
+	/*
+	Ofn.lStructSize = sizeof(OPENFILENAME); 
+	Ofn.hwndOwner = hWnd; 
+	Ofn.lpstrFilter = szFilter; 
+	Ofn.lpstrFile= szFile; 
+	Ofn.nMaxFile = sizeof(szFile)/ sizeof(*szFile); 
+	Ofn.lpstrFileTitle = szFileTitle; 
+	Ofn.nMaxFileTitle = sizeof(szFileTitle); 
+	Ofn.lpstrInitialDir = (LPSTR)NULL; 
+	Ofn.Flags = OFN_SHOWHELP | OFN_OVERWRITEPROMPT; 
+	Ofn.lpstrTitle = szTitle; 
+	 */
+
+
+		wchar[1024] file = 0;
+		OPENFILENAME ofn;
+		ofn.lStructSize = ofn.sizeof;
+		ofn.lpstrFile = file.ptr;
+		ofn.nMaxFile = file.length;
+		GetOpenFileName(&ofn);
+	} else version(custom_widgets) {
+		auto picker = new FilePicker();
+		picker.show();
+	}
+}
+
+version(custom_widgets)
+class FilePicker : Dialog {
+	this(Window owner = null) {
+		//import std.file;
+		super(300, 200, "Choose File..."); // owner);
+
+		auto listWidget = new ListWidget(this);
+
+		auto lineEdit = new LineEdit(this);
+		lineEdit.focus();
+		lineEdit.addEventListener("char", (Event event) {
+			if(event.character == '\t' || event.character == '\n')
+				event.preventDefault();
+		});
+
+		listWidget.addEventListener(EventType.change, () {
+			foreach(o; listWidget.options)
+				if(o.selected)
+					lineEdit.content = o.label;
+		});
+
+		lineEdit.addEventListener(EventType.keydown, (Event event) {
+			if(event.key == Key.Tab) {
+				import std.file; // FIXME: so slow building :(
+				listWidget.clear();
+
+				string commonPrefix;
+				auto cnt = lineEdit.content;
+				if(cnt.length >= 2 && cnt[0 ..2] == "./")
+					cnt = cnt[2 .. $];
+				foreach(string name; dirEntries(".", cnt ~ "*", SpanMode.shallow)) {
+					listWidget.addOption(name);
+					if(commonPrefix is null)
+						commonPrefix = name;
+					else {
+						foreach(idx, char i; name) {
+							if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
+								commonPrefix = commonPrefix[0 .. idx];
+								break;
+							}
+						}
+					}
+				}
+				lineEdit.content = commonPrefix;
+				event.preventDefault();
+			}
+		});
+
+		auto hl = new HorizontalLayout(this);
+		auto cancelButton = new Button("Cancel", hl);
+		auto okButton = new Button("OK", hl);
+
+		recomputeChildLayout(); // FIXME hack
+
+		cancelButton.addEventListener(EventType.triggered, &Cancel);
+		okButton.addEventListener(EventType.triggered, &OK);
+
+		this.addEventListener("keydown", (Event event) {
+			if(event.key == Key.Enter)
+				OK();
+			if(event.key == Key.Escape)
+				Cancel();
+		});
+
+	}
+
+	override void OK() {
+		close();
+	}
 }
 
 /*

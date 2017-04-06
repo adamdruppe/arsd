@@ -151,7 +151,7 @@ class ColorPickerDialog : Dialog {
 		this.addEventListener("keydown", (Event event) {
 			if(event.key == Key.Enter)
 				OK();
-			if(event.character == Key.Escape)
+			if(event.key == Key.Escape)
 				Cancel();
 		});
 
