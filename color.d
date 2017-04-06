@@ -168,6 +168,9 @@ struct Color {
 	static Color white() { return Color(255, 255, 255); }
 	/// Ditto
 	nothrow pure @nogc
+	static Color gray() { return Color(128, 128, 128); }
+	/// Ditto
+	nothrow pure @nogc
 	static Color black() { return Color(0, 0, 0); }
 	/// Ditto
 	nothrow pure @nogc
@@ -187,6 +190,9 @@ struct Color {
 	/// Ditto
 	nothrow pure @nogc
 	static Color purple() { return Color(255, 0, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color brown() { return Color(128, 64, 0); }
 
 	/*
 	ubyte[4] toRgbaArray() {
@@ -194,7 +200,7 @@ struct Color {
 	}
 	*/
 
-  /// Return black-and-white color
+	/// Return black-and-white color
 	Color toBW() () {
 		int intens = cast(int)(0.2126*r+0.7152*g+0.0722*b);
 		if (intens < 0) intens = 0; else if (intens > 255) intens = 255;

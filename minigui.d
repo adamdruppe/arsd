@@ -2670,6 +2670,7 @@ class MenuBar : Widget {
 		return item;
 	}
 
+
 	Menu addItem(Menu item) {
 		auto mbItem = new MenuItem(item.label, this.parentWindow);
 
@@ -2988,6 +2989,23 @@ class Fieldset : Widget {
 	}
 }
 
+class HorizontalRule : Widget {
+	mixin Margin!q{ 2 };
+	override int minHeight() { return 2; }
+	override int maxHeight() { return 2; }
+
+	this(Widget parent = null) {
+		super(parent);
+
+		paint = (ScreenPainter painter) {
+			painter.outlineColor = Color(128, 128, 128);
+			painter.drawLine(Point(0, 0), Point(width, 0));
+			painter.outlineColor = Color(223, 223, 223);
+			painter.drawLine(Point(0, 1), Point(width, 1));
+		};
+	}
+}
+
 ///
 class Menu : Window {
 	void remove() {
@@ -3002,6 +3020,18 @@ class Menu : Window {
 		parentWindow.releaseMouseCapture();
 	}
 
+	///
+	void addSeparator() {
+		version(win32_widgets)
+			AppendMenu(handle, MF_SEPARATOR, 0, null);
+		else version(custom_widgets)
+			auto hr = new HorizontalRule(this);
+		else static assert(0);
+	}
+
+	override int paddingTop() { return 4; }
+	override int paddingBottom() { return 4; }
+
 	version(win32_widgets) {}
 	else version(custom_widgets) {
 		SimpleWindow dropDown;
@@ -3010,7 +3040,11 @@ class Menu : Window {
 			this.menuParent = parent;
 
 			auto w = 150;
-			auto h = this.children.length ? cast(int) this.children.length * this.children[0].maxHeight() : 20;
+			auto h = paddingTop + paddingBottom;
+			foreach(child; this.children) {
+				h += child.minHeight();
+				h += mymax(child.marginTop(), child.marginBottom());
+			}
 
 			auto coord = parent.globalCoordinates();
 			dropDown.moveResize(coord.x, coord.y + parent.parentWindow.lineHeight, w, h);
@@ -3047,6 +3081,7 @@ class Menu : Window {
 
 	MenuItem[] items;
 
+	///
 	MenuItem addItem(MenuItem item) {
 		addChild(item);
 		items ~= item;
@@ -3103,6 +3138,7 @@ class MenuItem : MouseActivatedWidget {
 	override int paddingLeft() { return 4; }
 
 	override int maxHeight() { return Window.lineHeight + 4; }
+	override int minHeight() { return Window.lineHeight + 4; }
 	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
 	override int maxWidth() {
 		if(cast(MenuBar) parent)
@@ -4366,7 +4402,6 @@ void getOpenFileName(
 version(custom_widgets)
 class FilePicker : Dialog {
 	this(Window owner = null) {
-		//import std.file;
 		super(300, 200, "Choose File..."); // owner);
 
 		auto listWidget = new ListWidget(this);
