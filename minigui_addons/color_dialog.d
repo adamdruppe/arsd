@@ -124,6 +124,11 @@ class ColorPickerDialog : Dialog {
 		b.content = to!string(current.b);
 		a.content = to!string(current.a);
 
+		r.addEventListener("focus", &r.selectAll);
+		g.addEventListener("focus", &g.selectAll);
+		b.addEventListener("focus", &b.selectAll);
+		a.addEventListener("focus", &a.selectAll);
+
 
 		if(hslImage !is null)
 		wid.addEventListener("mousedown", (Event event) {
@@ -149,7 +154,7 @@ class ColorPickerDialog : Dialog {
 		}
 
 		this.addEventListener("keydown", (Event event) {
-			if(event.key == Key.Enter)
+			if(event.key == Key.Enter || event.key == Key.PadEnter)
 				OK();
 			if(event.key == Key.Escape)
 				Cancel();
@@ -185,6 +190,8 @@ class ColorPickerDialog : Dialog {
 
 		cancelButton.addEventListener(EventType.triggered, &Cancel);
 		okButton.addEventListener(EventType.triggered, &OK);
+
+		r.focus();
 	}
 
 	LabeledLineEdit r;

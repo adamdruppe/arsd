@@ -306,6 +306,8 @@ class FreeEntrySelection : ComboboxBase {
 
 			tabStop = false;
 
+			lineEdit.addEventListener("focus", &lineEdit.selectAll);
+
 			auto btn = new class ArrowButton {
 				this() {
 					super(ArrowDirection.down, hl);
@@ -364,6 +366,8 @@ class ComboBox : ComboboxBase {
 				lineEdit.focus();
 				redraw();
 			});
+
+			lineEdit.addEventListener("focus", &lineEdit.selectAll);
 
 			listWidget.addDirectEventListener(EventType.change, {
 				int set = -1;
@@ -515,13 +519,13 @@ class DataView : Widget {
 /*
 	TextEdit needs:
 
-	* carat manipulation
+	* caret manipulation
 	* selection control
-	* convenience functions for appendText, insertText, insertTextAtCarat, etc.
+	* convenience functions for appendText, insertText, insertTextAtCaret, etc.
 
 	For example:
 
-	connect(paste, &textEdit.insertTextAtCarat);
+	connect(paste, &textEdit.insertTextAtCaret);
 
 	would be nice.
 
@@ -1895,6 +1899,8 @@ class HorizontalLayout : Layout {
 		int lastMargin = 0;
 		foreach(child; children) {
 			auto mh = child.maxHeight();
+			if(mh == int.max)
+				return int.max;
 			if(mh > largest)
 				largest = mh;
 			margins += mymax(lastMargin, child.marginTop());
@@ -1908,7 +1914,7 @@ class HorizontalLayout : Layout {
 		foreach(child; children) {
 			auto c = child.heightStretchiness;
 			if(c > max)
-				c = max;
+				max = c;
 		}
 		return max;
 	}
@@ -2383,6 +2389,10 @@ class LabeledLineEdit : Widget {
 	}
 	void content(string c) {
 		return lineEdit.content(c);
+	}
+
+	void selectAll() {
+		lineEdit.selectAll();
 	}
 }
 
@@ -3563,6 +3573,15 @@ abstract class EditableTextWidget : ScrollableWidget {
 	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 7; }
 
+	void selectAll() {
+		version(win32_widgets)
+			SendMessage(hwnd, EM_SETSEL, 0, -1);
+		else version(custom_widgets) {
+			textLayout.selectAll();
+			redraw();
+		}
+	}
+
 	@property string content() {
 		version(win32_widgets) {
 			char[4096] buffer;
@@ -3602,7 +3621,7 @@ abstract class EditableTextWidget : ScrollableWidget {
 	else version(custom_widgets) {
 		// FIXME
 
-		Timer caratTimer;
+		Timer caretTimer;
 		TextLayout textLayout;
 
 		void setupCustomTextEditing() {
@@ -3616,38 +3635,38 @@ abstract class EditableTextWidget : ScrollableWidget {
 				painter.outlineColor = Color.black;
 				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
 
-				textLayout.caratShowingOnScreen = false;
+				textLayout.caretShowingOnScreen = false;
 
 				textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
 			};
 
 			defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
 				if(parentWindow.win.closed) return;
-				textLayout.moveCaratToPixelCoordinates(ev.clientX, ev.clientY);
+				textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
 				this.focus();
 			};
 
 			defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
 				if(parentWindow.win.closed) return;
 				auto painter = this.draw();
-				textLayout.drawCarat(painter);
+				textLayout.drawCaret(painter);
 
-				if(caratTimer) {
-					caratTimer.destroy();
-					caratTimer = null;
+				if(caretTimer) {
+					caretTimer.destroy();
+					caretTimer = null;
 				}
 
-				caratTimer = new Timer(500, {
+				caretTimer = new Timer(500, {
 					if(parentWindow.win.closed) {
-						caratTimer.destroy();
+						caretTimer.destroy();
 						return;
 					}
 					if(isFocused()) {
 						auto painter = this.draw();
-						textLayout.drawCarat(painter);
-					} else if(textLayout.caratShowingOnScreen) {
+						textLayout.drawCaret(painter);
+					} else if(textLayout.caretShowingOnScreen) {
 						auto painter = this.draw();
-						textLayout.eraseCarat(painter);
+						textLayout.eraseCaret(painter);
 					}
 				});
 
@@ -3655,10 +3674,10 @@ abstract class EditableTextWidget : ScrollableWidget {
 			defaultEventHandlers["blur"] = delegate (Widget _this, Event ev) {
 				if(parentWindow.win.closed) return;
 				auto painter = this.draw();
-				textLayout.eraseCarat(painter);
-				if(caratTimer) {
-					caratTimer.destroy();
-					caratTimer = null;
+				textLayout.eraseCaret(painter);
+				if(caretTimer) {
+					caretTimer.destroy();
+					caretTimer = null;
 				}
 
 				auto evt = new Event(EventType.change, this);
@@ -3680,27 +3699,27 @@ abstract class EditableTextWidget : ScrollableWidget {
 						redraw();
 					break;
 					case Key.Left:
-						textLayout.moveLeft(textLayout.carat);
+						textLayout.moveLeft(textLayout.caret);
 						redraw();
 					break;
 					case Key.Right:
-						textLayout.moveRight(textLayout.carat);
+						textLayout.moveRight(textLayout.caret);
 						redraw();
 					break;
 					case Key.Up:
-						textLayout.moveUp(textLayout.carat);
+						textLayout.moveUp(textLayout.caret);
 						redraw();
 					break;
 					case Key.Down:
-						textLayout.moveDown(textLayout.carat);
+						textLayout.moveDown(textLayout.caret);
 						redraw();
 					break;
 					case Key.Home:
-						textLayout.moveHome(textLayout.carat);
+						textLayout.moveHome(textLayout.caret);
 						redraw();
 					break;
 					case Key.End:
-						textLayout.moveEnd(textLayout.carat);
+						textLayout.moveEnd(textLayout.caret);
 						redraw();
 					break;
 					default:
@@ -3724,8 +3743,10 @@ abstract class EditableTextWidget : ScrollableWidget {
 ///
 class LineEdit : EditableTextWidget {
 	// FIXME: hack
+	version(custom_widgets) {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
+	}
 
 	this(Widget parent = null) {
 		super(parent);
@@ -4050,7 +4071,6 @@ version(win32_widgets) {
 	// import win32.winuser;
 
 	pragma(lib, "comctl32");
-
 	shared static this() {
 		// http://msdn.microsoft.com/en-us/library/windows/desktop/bb775507(v=vs.85).aspx
 		INITCOMMONCONTROLSEX ic;
@@ -4306,6 +4326,9 @@ enum GenericIcons : ushort {
 	Print,
 }
 
+version(win32_widgets)
+	pragma(lib, "comdlg32");
+
 void getOpenFileName(
 	void delegate(string) onOK = null,
 	string prefilledName = null,
@@ -4398,7 +4421,7 @@ class FilePicker : Dialog {
 		okButton.addEventListener(EventType.triggered, &OK);
 
 		this.addEventListener("keydown", (Event event) {
-			if(event.key == Key.Enter)
+			if(event.key == Key.Enter || event.key == Key.PadEnter)
 				OK();
 			if(event.key == Key.Escape)
 				Cancel();

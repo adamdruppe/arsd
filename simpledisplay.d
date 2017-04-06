@@ -8,7 +8,7 @@
 	changed on the painter i guess) like font, color, size, background,
 	etc.
 
-	We can also fetch the carat location from it somehow.
+	We can also fetch the caret location from it somehow.
 
 	Should prolly be an overload of drawText
 
@@ -10922,7 +10922,7 @@ mixin template ExperimentalTextComponent() {
 
 		void clear() {
 			blocks = null;
-			carat = Carat.init;
+			caret = Caret.init;
 		}
 
 		void addText(Args...)(Args args) {
@@ -10957,7 +10957,7 @@ mixin template ExperimentalTextComponent() {
 					ie.text = arg[lastLineIndex .. $];
 					ie.containingBlock = blocks[$-1];
 					blocks[$-1].parts ~= ie.clone;
-					carat = Carat(this, blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length);
+					caret = Caret(this, blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length);
 				}
 			}
 		}
@@ -10980,7 +10980,7 @@ mixin template ExperimentalTextComponent() {
 				}
 			}
 
-			// FIXME: ensure no other carats have a reference to it
+			// FIXME: ensure no other carets have a reference to it
 		}
 
 		/// Call this if the inputs change. It will reflow everything
@@ -11024,13 +11024,13 @@ mixin template ExperimentalTextComponent() {
 			return exact ? TextIdentifyResult.init : inexactMatch.fixupNewline;
 		}
 
-		void moveCaratToPixelCoordinates(int x, int y) {
+		void moveCaretToPixelCoordinates(int x, int y) {
 			auto result = identify(x, y);
-			carat.inlineElement = result.element;
-			carat.offset = result.offset;
+			caret.inlineElement = result.element;
+			caret.offset = result.offset;
 		}
 
-// FIXME: carat can remain sometimes when inserting
+// FIXME: caret can remain sometimes when inserting
 // FIXME: inserting at the beginning once you already have something can eff it up.
 		void drawInto(ScreenPainter painter, bool focused = false) {
 			//painter.setClipRectangle(boundingBox);
@@ -11077,38 +11077,69 @@ mixin template ExperimentalTextComponent() {
 				}
 			}
 
-			// on every redraw, I will force the carat to be
+			// on every redraw, I will force the caret to be
 			// redrawn too, in order to eliminate perceived lag
 			// when moving around with the mouse.
-			eraseCarat(painter);
+			eraseCaret(painter);
 
 			if(focused) {
 				highlightSelection(painter);
-				drawCarat(painter);
+				drawCaret(painter);
 			}
 		}
 
 		void highlightSelection(ScreenPainter painter) {
+			if(selectionStart is selectionEnd)
+				return; // no selection
 
+			assert(selectionStart.inlineElement !is null);
+			assert(selectionEnd.inlineElement !is null);
+
+			painter.rasterOp = RasterOp.xor;
+			painter.outlineColor = Color.transparent;
+			painter.fillColor = Color(255, 255, 127);
+
+			auto at = selectionStart.inlineElement;
+			auto atOffset = selectionStart.offset;
+			bool done;
+			while(at) {
+				auto box = at.boundingBox;
+				if(atOffset < at.letterXs.length)
+					box.left = at.letterXs[atOffset];
+
+				if(at is selectionEnd.inlineElement) {
+					if(selectionEnd.offset < at.letterXs.length)
+						box.right = at.letterXs[selectionEnd.offset];
+					done = true;
+				}
+
+				painter.drawRectangle(box.upperLeft, box.width, box.height);
+
+				if(done)
+					break;
+
+				at = at.getNextInlineElement();
+				atOffset = 0;
+			}
 		}
 
-		int caratLastDrawnX, caratLastDrawnY1, caratLastDrawnY2;
-		bool caratShowingOnScreen = false;
-		void drawCarat(ScreenPainter painter) {
+		int caretLastDrawnX, caretLastDrawnY1, caretLastDrawnY2;
+		bool caretShowingOnScreen = false;
+		void drawCaret(ScreenPainter painter) {
 			//painter.setClipRectangle(boundingBox);
 			int x, y1, y2;
-			if(carat.inlineElement is null) {
+			if(caret.inlineElement is null) {
 				x = boundingBox.left;
 				y1 = boundingBox.top + 2;
 				y2 = boundingBox.top + painter.fontHeight;
 			} else {
-				x = carat.inlineElement.xOfIndex(carat.offset);
-				y1 = carat.inlineElement.boundingBox.top + 2;
-				y2 = carat.inlineElement.boundingBox.bottom - 2;
+				x = caret.inlineElement.xOfIndex(caret.offset);
+				y1 = caret.inlineElement.boundingBox.top + 2;
+				y2 = caret.inlineElement.boundingBox.bottom - 2;
 			}
 
-			if(caratShowingOnScreen && (x != caratLastDrawnX || y1 != caratLastDrawnY1 || y2 != caratLastDrawnY2))
-				eraseCarat(painter);
+			if(caretShowingOnScreen && (x != caretLastDrawnX || y1 != caretLastDrawnY1 || y2 != caretLastDrawnY2))
+				eraseCaret(painter);
 
 			painter.pen = Pen(Color.white, 1);
 			painter.rasterOp = RasterOp.xor;
@@ -11117,117 +11148,181 @@ mixin template ExperimentalTextComponent() {
 				Point(x, y2)
 			);
 			painter.rasterOp = RasterOp.normal;
-			caratShowingOnScreen = !caratShowingOnScreen;
+			caretShowingOnScreen = !caretShowingOnScreen;
 
-			if(caratShowingOnScreen) {
-				caratLastDrawnX = x;
-				caratLastDrawnY1 = y1;
-				caratLastDrawnY2 = y2;
+			if(caretShowingOnScreen) {
+				caretLastDrawnX = x;
+				caretLastDrawnY1 = y1;
+				caretLastDrawnY2 = y2;
 			}
 		}
 
-		void eraseCarat(ScreenPainter painter) {
+		void eraseCaret(ScreenPainter painter) {
 			//painter.setClipRectangle(boundingBox);
-			if(!caratShowingOnScreen) return;
+			if(!caretShowingOnScreen) return;
 			painter.pen = Pen(Color.white, 1);
 			painter.rasterOp = RasterOp.xor;
 			painter.drawLine(
-				Point(caratLastDrawnX, caratLastDrawnY1),
-				Point(caratLastDrawnX, caratLastDrawnY2)
+				Point(caretLastDrawnX, caretLastDrawnY1),
+				Point(caretLastDrawnX, caretLastDrawnY2)
 			);
 
-			caratShowingOnScreen = false;
+			caretShowingOnScreen = false;
 			painter.rasterOp = RasterOp.normal;
 		}
 
-		/// Carat movement api
+		/// Caret movement api
 		/// These should give the user a logical result based on what they see on screen...
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
-		void moveUp(ref Carat carat) {
-			if(carat.inlineElement is null) return;
-			auto x = carat.inlineElement.xOfIndex(carat.offset);
-			auto y = carat.inlineElement.boundingBox.top + 2;
+		void moveUp(ref Caret caret) {
+			if(caret.inlineElement is null) return;
+			auto x = caret.inlineElement.xOfIndex(caret.offset);
+			auto y = caret.inlineElement.boundingBox.top + 2;
 
-			y -= carat.inlineElement.boundingBox.bottom - carat.inlineElement.boundingBox.top;
+			y -= caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
 
 			auto i = identify(x, y);
 
 			if(i.element) {
-				carat.inlineElement = i.element;
-				carat.offset = i.offset;
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
 			}
 		}
-		void moveDown(ref Carat carat) {
-			if(carat.inlineElement is null) return;
-			auto x = carat.inlineElement.xOfIndex(carat.offset);
-			auto y = carat.inlineElement.boundingBox.bottom - 2;
+		void moveDown(ref Caret caret) {
+			if(caret.inlineElement is null) return;
+			auto x = caret.inlineElement.xOfIndex(caret.offset);
+			auto y = caret.inlineElement.boundingBox.bottom - 2;
 
-			y += carat.inlineElement.boundingBox.bottom - carat.inlineElement.boundingBox.top;
+			y += caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
 
 			auto i = identify(x, y);
 			if(i.element) {
-				carat.inlineElement = i.element;
-				carat.offset = i.offset;
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
 			}
 		}
-		void moveLeft(ref Carat carat) {
-			if(carat.inlineElement is null) return;
-			if(carat.offset)
-				carat.offset--;
+		void moveLeft(ref Caret caret) {
+			if(caret.inlineElement is null) return;
+			if(caret.offset)
+				caret.offset--;
 			else {
-				auto p = carat.inlineElement.getPreviousInlineElement();
+				auto p = caret.inlineElement.getPreviousInlineElement();
 				if(p) {
-					carat.inlineElement = p;
+					caret.inlineElement = p;
 					if(p.text.length && p.text[$-1] == '\n')
-						carat.offset = p.text.length - 1;
+						caret.offset = p.text.length - 1;
 					else
-						carat.offset = p.text.length;
+						caret.offset = p.text.length;
 				}
 			}
 		}
-		void moveRight(ref Carat carat) {
-			if(carat.inlineElement is null) return;
-			if(carat.offset < carat.inlineElement.text.length && carat.inlineElement.text[carat.offset] != '\n') {
-				carat.offset++;
+		void moveRight(ref Caret caret) {
+			if(caret.inlineElement is null) return;
+			if(caret.offset < caret.inlineElement.text.length && caret.inlineElement.text[caret.offset] != '\n') {
+				caret.offset++;
 			} else {
-				auto p = carat.inlineElement.getNextInlineElement();
+				auto p = caret.inlineElement.getNextInlineElement();
 				if(p) {
-					carat.inlineElement = p;
-					carat.offset = 0;
+					caret.inlineElement = p;
+					caret.offset = 0;
 				}
 			}
 		}
-		void moveHome(ref Carat carat) {
-			if(carat.inlineElement is null) return;
+		void moveHome(ref Caret caret) {
+			if(caret.inlineElement is null) return;
 			auto x = 0;
-			auto y = carat.inlineElement.boundingBox.top + 2;
+			auto y = caret.inlineElement.boundingBox.top + 2;
 
 			auto i = identify(x, y);
 
 			if(i.element) {
-				carat.inlineElement = i.element;
-				carat.offset = i.offset;
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
 			}
 		}
-		void moveEnd(ref Carat carat) {
-			if(carat.inlineElement is null) return;
+		void moveEnd(ref Caret caret) {
+			if(caret.inlineElement is null) return;
 			auto x = int.max;
-			auto y = carat.inlineElement.boundingBox.top + 2;
+			auto y = caret.inlineElement.boundingBox.top + 2;
 
 			auto i = identify(x, y);
 
 			if(i.element) {
-				carat.inlineElement = i.element;
-				carat.offset = i.offset;
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
 			}
 
 		}
-		void movePageUp(ref Carat carat) {}
-		void movePageDown(ref Carat carat) {}
+		void movePageUp(ref Caret caret) {}
+		void movePageDown(ref Caret caret) {}
 
-		/// Plain text editing api. These work at the current carat inside the selected inline element.
+		void moveDocumentStart(ref Caret caret) {
+			if(blocks.length && blocks[0].parts.length)
+				caret = Caret(this, blocks[0].parts[0], 0);
+			else
+				caret = Caret.init;
+		}
+
+		void moveDocumentEnd(ref Caret caret) {
+			if(blocks.length) {
+				auto parts = blocks[$-1].parts;
+				if(parts.length) {
+					caret = Caret(this, parts[$-1], parts[$-1].text.length);
+				} else {
+					caret = Caret.init;
+				}
+			} else
+				caret = Caret.init;
+		}
+
+		void deleteSelection() {
+			if(selectionStart is selectionEnd)
+				return;
+
+			assert(selectionStart.inlineElement !is null);
+			assert(selectionEnd.inlineElement !is null);
+
+			auto at = selectionStart.inlineElement;
+			auto atOffset = selectionStart.offset;
+			while(at) {
+				at.text = at.text[atOffset .. $];
+
+				if(at is selectionEnd.inlineElement) {
+					selectionEnd.offset -= atOffset;
+					at.text = at.text[selectionEnd.offset .. $];
+					selectionEnd.offset = 0;
+					break;
+				} else {
+					auto cfd = at;
+
+					at = at.getNextInlineElement();
+					if(at)
+						atOffset = at.text.length;
+					if(cfd.text.length == 0) {
+						// and remove cfd
+						for(size_t a = 0; a < cfd.containingBlock.parts.length; a++) {
+							if(cfd.containingBlock.parts[a] is cfd) {
+								for(size_t i = a; i < cfd.containingBlock.parts.length - 1; i++)
+									cfd.containingBlock.parts[i] = cfd.containingBlock.parts[i + 1];
+								cfd.containingBlock.parts = cfd.containingBlock.parts[0 .. $-1];
+
+							}
+						}
+					}
+				}
+			}
+
+			caret = selectionEnd;
+			selectNone();
+
+		}
+
+		/// Plain text editing api. These work at the current caret inside the selected inline element.
 		void insert(string text) {}
 		void insert(dchar ch) {
+
+			deleteSelection();
+
 			if(ch == 127) {
 				delete_();
 				return;
@@ -11237,32 +11332,32 @@ mixin template ExperimentalTextComponent() {
 				return;
 			}
 			if(ch == 13) ch = 10;
-			auto e = carat.inlineElement;
+			auto e = caret.inlineElement;
 			if(e is null) {
 				addText("" ~ cast(char) ch) ; // FIXME
 				return;
 			}
 
-			if(carat.offset == e.text.length) {
+			if(caret.offset == e.text.length) {
 				e.text ~= cast(char) ch; // FIXME
-				carat.offset++;
+				caret.offset++;
 				if(ch == 10) {
-					auto c = carat.inlineElement.clone;
+					auto c = caret.inlineElement.clone;
 					c.text = null;
 					insertPartAfter(c,e);
-					carat = Carat(this, c, 0);
+					caret = Caret(this, c, 0);
 				}
 			} else {
 				// FIXME cast char sucks
 				if(ch == 10) {
-					auto c = carat.inlineElement.clone;
-					c.text = e.text[carat.offset .. $];
-					e.text = e.text[0 .. carat.offset] ~ cast(char) ch;
+					auto c = caret.inlineElement.clone;
+					c.text = e.text[caret.offset .. $];
+					e.text = e.text[0 .. caret.offset] ~ cast(char) ch;
 					insertPartAfter(c,e);
-					carat = Carat(this, c, 0);
+					caret = Caret(this, c, 0);
 				} else {
-					e.text = e.text[0 .. carat.offset] ~ cast(char) ch ~ e.text[carat.offset .. $];
-					carat.offset++;
+					e.text = e.text[0 .. caret.offset] ~ cast(char) ch ~ e.text[caret.offset .. $];
+					caret.offset++;
 				}
 			}
 		}
@@ -11300,48 +11395,53 @@ mixin template ExperimentalTextComponent() {
 
 		void backspace() {
 			try_again:
-			auto e = carat.inlineElement;
+			auto e = caret.inlineElement;
 			if(e is null)
 				return;
-			if(carat.offset == 0) {
+			if(caret.offset == 0) {
 				auto prev = e.getPreviousInlineElement();
 				if(prev is null)
 					return;
 				auto newOffset = prev.text.length;
 				tryMerge(prev, e);
-				carat.inlineElement = prev;
-				carat.offset = prev is null ? 0 : newOffset;
+				caret.inlineElement = prev;
+				caret.offset = prev is null ? 0 : newOffset;
 
 				goto try_again;
-			} else if(carat.offset == e.text.length) {
+			} else if(caret.offset == e.text.length) {
 				e.text = e.text[0 .. $-1];
-				carat.offset--;
+				caret.offset--;
 			} else {
-				e.text = e.text[0 .. carat.offset - 1] ~ e.text[carat.offset .. $];
-				carat.offset--;
+				e.text = e.text[0 .. caret.offset - 1] ~ e.text[caret.offset .. $];
+				caret.offset--;
 			}
 			//cleanupStructures();
 		}
 		void delete_() {
-			auto after = carat;
+			auto after = caret;
 			moveRight(after);
-			if(carat != after) {
-				carat = after;
+			if(caret != after) {
+				caret = after;
 				backspace();
 			}
 		}
 		void overstrike() {}
 
-		/// Selection API. See also: carat movement.
-		void selectAll() {}
-		void selectNone() {}
+		/// Selection API. See also: caret movement.
+		void selectAll() {
+			moveDocumentStart(selectionStart);
+			moveDocumentEnd(selectionEnd);
+		}
+		void selectNone() {
+			selectionStart = selectionEnd = Caret.init;
+		}
 
 		/// Rich text editing api. These allow you to manipulate the meta data of the current element and add new elements.
 		/// They will modify the current selection if there is one and will splice one in if needed.
 		void changeAttributes() {}
 
 
-		/// Text search api. They manipulate the selection and/or carat.
+		/// Text search api. They manipulate the selection and/or caret.
 		void findText(string text) {}
 		void findIndex(size_t textIndex) {}
 
@@ -11362,17 +11462,17 @@ mixin template ExperimentalTextComponent() {
 		}
 
 		bool contentEditable; // can it be edited?
-		bool contentCaratable; // is there a carat/cursor that moves around in there?
+		bool contentCaretable; // is there a caret/cursor that moves around in there?
 		bool contentSelectable; // selectable?
 
-		Carat carat;
-		Carat selectionStart;
-		Carat selectionEnd;
+		Caret caret;
+		Caret selectionStart;
+		Caret selectionEnd;
 
 		bool insertMode;
 	}
 
-	struct Carat {
+	struct Caret {
 		TextLayout layout;
 		InlineElement inlineElement;
 		size_t offset;
