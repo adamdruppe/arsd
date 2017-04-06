@@ -1226,7 +1226,23 @@ class Widget {
 			child.privatePaint(painter, painter.originX, painter.originY);
 	}
 
-	void redraw() {
+	static class RedrawEvent {}
+	__gshared re = new RedrawEvent();
+
+	private bool redrawRequested;
+	final void redraw() {
+		redrawRequested = true;
+
+		if(this.parentWindow) {
+			auto sw = this.parentWindow.win;
+			assert(sw !is null);
+			if(!sw.eventQueued!RedrawEvent)
+				sw.postEvent(re);
+		}
+	}
+
+	void actualRedraw() {
+		redrawRequested = false;
 		if(!showing) return;
 
 		assert(parentWindow !is null);
@@ -1983,6 +1999,10 @@ class Window : Widget {
 		tabStop = false;
 		super(null);
 		this.win = win;
+
+		win.addEventListener((Widget.RedrawEvent) {
+			this.actualRedraw();
+		});
 
 		this.width = win.width;
 		this.height = win.height;
