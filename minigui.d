@@ -67,14 +67,17 @@ version(Windows) {
 	// use native widgets when available unless specifically asked otherwise
 	version(custom_widgets) {
 		enum bool UsingCustomWidgets = true;
+		enum bool UsingWin32Widgets = false;
 	} else {
 		version = win32_widgets;
 		enum bool UsingCustomWidgets = false;
+		enum bool UsingWin32Widgets = true;
 	}
 	// and native theming when needed
 	//version = win32_theming;
 } else {
 	enum bool UsingCustomWidgets = true;
+	enum bool UsingWin32Widgets = false;
 	version=custom_widgets;
 }
 
@@ -729,6 +732,8 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 	int stretchinessSum;
 	int lastMargin = 0;
+
+	// set initial size
 	foreach(child; parent.children) {
 		if(cast(StaticPosition) child)
 			continue;
@@ -748,13 +753,13 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				child.width = child.maxWidth();
 			child.height = child.minHeight();
 		} else {
-			if(child.height < 0)
-				child.height = 0;
 			child.height = parent.height -
 				mixin("child.margin"~firstThingy~"()") -
 				mixin("child.margin"~secondThingy~"()") -
 				mixin("parent.padding"~firstThingy~"()") -
 				mixin("parent.padding"~secondThingy~"()");
+			if(child.height < 0)
+				child.height = 0;
 			if(child.height > child.maxHeight())
 				child.height = child.maxHeight();
 			child.width = child.minWidth();
@@ -769,7 +774,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
 	}
 
-
+	// stretch to fill space
 	while(spaceRemaining > 0 && stretchinessSum) {
 		//import std.stdio; writeln("str ", stretchinessSum);
 		auto spacePerChild = spaceRemaining / stretchinessSum;
@@ -809,6 +814,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			break; // apparently nothing more we can do
 	}
 
+	// position
 	lastMargin = 0;
 	int currentPos = mixin("parent.padding"~firstThingy~"()");
 	foreach(child; parent.children) {
@@ -1250,6 +1256,9 @@ enum ScrollBarShowPolicy {
 
 /++
 +/
+version(win32_widgets)
+class ScrollableWidget : Widget { this(Widget parent = null) { super(parent); } } // TEMPORARY
+else
 class ScrollableWidget : Widget {
 	this(Widget parent = null) {
 		horizontalScrollbarHolder = new FixedPosition(this);
@@ -1271,15 +1280,48 @@ class ScrollableWidget : Widget {
 
 	override void recomputeChildLayout() {
 		bool both = showingVerticalScroll && showingHorizontalScroll;
-		horizontalScrollbarHolder.width = this.width - (both ? 16 : 0);
-		horizontalScrollbarHolder.height = 16;
-		horizontalScrollbarHolder.x = 0;
-		horizontalScrollbarHolder.y = this.height - 16;
+		if(horizontalScrollbarHolder && verticalScrollbarHolder) {
+			horizontalScrollbarHolder.width = this.width - (both ? 16 : 0);
+			horizontalScrollbarHolder.height = 16;
+			horizontalScrollbarHolder.x = 0;
+			horizontalScrollbarHolder.y = this.height - 16;
 
-		verticalScrollbarHolder.width = 16;
-		verticalScrollbarHolder.height = this.height - (both ? 16 : 0);
-		verticalScrollbarHolder.x = this.width - 16;
-		verticalScrollbarHolder.y = 0;
+			verticalScrollbarHolder.width = 16;
+			verticalScrollbarHolder.height = this.height - (both ? 16 : 0);
+			verticalScrollbarHolder.x = this.width - 16;
+			verticalScrollbarHolder.y = 0;
+
+			{
+				int viewableScrollArea = viewportHeight;
+				int totalScrollArea = contentHeight;
+				int totalScrollBarArea = verticalScrollBar.thumb.height;
+				int thumbSize;
+				if(totalScrollArea)
+					thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+				else
+					thumbSize = 0;
+				if(thumbSize < 6)
+					thumbSize = 6;
+
+				verticalScrollBar.thumb.thumbHeight = thumbSize;
+			}
+
+			{
+				int viewableScrollArea = viewportWidth;
+				int totalScrollArea = contentWidth;
+				int totalScrollBarArea = horizontalScrollBar.thumb.width;
+				int thumbSize;
+				if(totalScrollArea)
+					thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
+				else
+					thumbSize = 0;
+				if(thumbSize < 6)
+					thumbSize = 6;
+
+				horizontalScrollBar.thumb.thumbWidth = thumbSize;
+			}
+		}
+
 
 		super.recomputeChildLayout();
 	}
@@ -1322,30 +1364,8 @@ class ScrollableWidget : Widget {
 		contentWidth = width;
 		contentHeight = height;
 
-		if(showingVerticalScroll && showingHorizontalScroll) {
+		if(showingVerticalScroll || showingHorizontalScroll) {
 			recomputeChildLayout();
-		}
-
-		{
-			int viewableScrollArea = viewportHeight;
-			int totalScrollArea = contentHeight;
-			int totalScrollBarArea = verticalScrollBar.thumb.height;
-			int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-
-			verticalScrollBar.thumb.thumbHeight = thumbSize;
-			if(showingVerticalScroll())
-				verticalScrollBar.redraw();
-		}
-
-		{
-			int viewableScrollArea = viewportWidth;
-			int totalScrollArea = contentWidth;
-			int totalScrollBarArea = horizontalScrollBar.thumb.width;
-			int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-
-			horizontalScrollBar.thumb.thumbWidth = thumbSize;
-			if(showingHorizontalScroll())
-				horizontalScrollBar.redraw();
 		}
 
 
@@ -1358,6 +1378,10 @@ class ScrollableWidget : Widget {
 		else
 			verticalScrollbarHolder.hidden = true;
 
+		if(showingVerticalScroll())
+			verticalScrollBar.redraw();
+		if(showingHorizontalScroll())
+			horizontalScrollBar.redraw();
 
 	}
 
@@ -1486,6 +1510,7 @@ abstract class ScrollbarBase : Widget {
 }
 
 ///
+version(custom_widgets)
 class HorizontalScrollbar : ScrollbarBase {
 
 	MouseTrackingWidget thumb;
@@ -1538,7 +1563,8 @@ class HorizontalScrollbar : ScrollbarBase {
 	override int minWidth() { return 48; }
 }
 
-///
+///show
+version(custom_widgets)
 class VerticalScrollbar : ScrollbarBase {
 
 	MouseTrackingWidget thumb;
@@ -1596,6 +1622,7 @@ class VerticalScrollbar : ScrollbarBase {
 
 	Concrete subclasses may include a scrollbar thumb and a volume control.
 +/
+version(custom_widgets)
 class MouseTrackingWidget : Widget {
 	int mouseTrackerPosition;
 
@@ -1625,11 +1652,31 @@ class MouseTrackingWidget : Widget {
 		addEventListener(EventType.mousedown, (Event event) {
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
 				dragging = true;
-				startMouseX = event.clientX;
-				startMouseY = event.clientY;
+				startMouseX = event.clientX - positionX;
+				startMouseY = event.clientY - positionY;
 				parentWindow.captureMouse(this);
 			} else {
-				// FIXME
+				if(orientation == Orientation.horizontal || orientation == Orientation.twoDimensional)
+					positionX = event.clientX - thumbWidth / 2;
+				if(orientation == Orientation.vertical || orientation == Orientation.twoDimensional)
+					positionY = event.clientY - thumbHeight / 2;
+
+				if(positionX + thumbWidth > this.width)
+					positionX = this.width - thumbWidth;
+				if(positionY + thumbHeight > this.height)
+					positionY = this.height - thumbHeight;
+
+				if(positionX < 0)
+					positionX = 0;
+				if(positionY < 0)
+					positionY = 0;
+
+
+				auto evt = new Event(EventType.change, this);
+				evt.sendDirectly();
+
+				redraw();
+
 			}
 		});
 
@@ -1659,7 +1706,7 @@ class MouseTrackingWidget : Widget {
 			}
 
 			if(orientation == Orientation.horizontal || orientation == Orientation.twoDimensional)
-				positionX = event.clientX - startMouseX;
+				positionX = event.clientX - startMouseX; // FIXME: click could be in the middle of it
 			if(orientation == Orientation.vertical || orientation == Orientation.twoDimensional)
 				positionY = event.clientY - startMouseY;
 
@@ -1699,6 +1746,98 @@ abstract class Layout : Widget {
 		super(parent);
 		if(parent)
 			this.parentWindow = parent.parentWindow;
+	}
+}
+
+/++
+	Makes all children minimum width and height, placing them down
+	left to right, top to bottom.
+
+	Useful if you want to make a list of buttons that automatically
+	wrap to a new line when necessary.
++/
+class InlineBlockLayout : Layout {
+	this(Widget parent = null) { super(parent); }
+
+	override void recomputeChildLayout() {
+		registerMovement();
+
+		int x = this.paddingLeft, y = this.paddingTop;
+
+		int lineHeight;
+		int previousMargin = 0;
+		int previousMarginBottom = 0;
+
+		foreach(child; children) {
+			if(child.hidden)
+				continue;
+			if(cast(FixedPosition) child) {
+				child.recomputeChildLayout();
+				continue;
+			}
+			child.width = child.minWidth();
+			if(child.width == 0)
+				child.width = 32;
+			child.height = child.minHeight();
+			if(child.height == 0)
+				child.height = 32;
+
+			if(x + child.width + paddingRight > this.width) {
+				x = this.paddingLeft;
+				y += lineHeight;
+				lineHeight = 0;
+				previousMargin = 0;
+				previousMarginBottom = 0;
+			}
+
+			auto margin = child.marginLeft;
+			if(previousMargin > margin)
+				margin = previousMargin;
+
+			x += margin;
+
+			child.x = x;
+			child.y = y;
+
+			int marginTopApplied;
+			if(child.marginTop > previousMarginBottom) {
+				child.y += child.marginTop;
+				marginTopApplied = child.marginTop;
+			}
+
+			x += child.width;
+			previousMargin = child.marginRight;
+
+			if(child.marginBottom > previousMarginBottom)
+				previousMarginBottom = child.marginBottom;
+
+			auto h = child.height + previousMarginBottom + marginTopApplied;
+			if(h > lineHeight)
+				lineHeight = h;
+
+			child.recomputeChildLayout();
+		}
+
+	}
+
+	override int minWidth() {
+		int min;
+		foreach(child; children) {
+			auto cm = child.minWidth;
+			if(cm > min)
+				min = cm;
+		}
+		return min + paddingLeft + paddingRight;
+	}
+
+	override int minHeight() {
+		int min;
+		foreach(child; children) {
+			auto cm = child.minHeight;
+			if(cm > min)
+				min = cm;
+		}
+		return min + paddingTop + paddingBottom;
 	}
 }
 
@@ -2033,6 +2172,7 @@ class Window : Widget {
 			auto event = new Event(ev.pressed ? "keydown" : "keyup", focusedWidget);
 			event.character = ev.character;
 			event.key = ev.key;
+			event.state = ev.modifierState;
 			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
 			event.dispatch();
 		}
@@ -2146,6 +2286,15 @@ class Window : Widget {
 		win.eventLoop(0);
 	}
 
+	override void show() {
+		win.show();
+		super.show();
+	}
+	override void hide() {
+		win.hide();
+		super.hide();
+	}
+
 	static Widget getFirstFocusable(Widget start) {
 		if(start.tabStop && !start.hidden)
 			return start;
@@ -2157,6 +2306,48 @@ class Window : Widget {
 				return f;
 		}
 		return null;
+	}
+}
+
+/++
+	A dialog is a transient window that intends to get information from
+	the user before being dismissed.
++/
+abstract class Dialog : Window {
+	///
+	this(int width, int height, string title = null) {
+		super(width, height, title);
+	}
+
+	///
+	abstract void OK();
+
+	///
+	void Cancel() {
+		this.close();
+	}
+}
+
+///
+class LabeledLineEdit : Widget {
+	this(string label, Widget parent = null) {
+		super(parent);
+		tabStop = false;
+		auto hl = new HorizontalLayout(this);
+		this.label = new TextLabel(label, hl);
+		this.lineEdit = new LineEdit(hl);
+	}
+	TextLabel label; ///
+	LineEdit lineEdit; ///
+
+	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return Window.lineHeight + 4; }
+
+	string content() {
+		return lineEdit.content;
+	}
+	void content(string c) {
+		return lineEdit.content(c);
 	}
 }
 
@@ -3298,6 +3489,7 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 class TextLabel : Widget {
 	override int maxHeight() { return Window.lineHeight; }
 	override int minHeight() { return Window.lineHeight; }
+	override int minWidth() { return 32; }
 
 	string label;
 	this(string label, Widget parent = null) {
@@ -3322,6 +3514,7 @@ abstract class EditableTextWidget : ScrollableWidget {
 		super(parent);
 	}
 
+	override int minWidth() { return 16; }
 	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 3; }
 
@@ -3422,6 +3615,9 @@ abstract class EditableTextWidget : ScrollableWidget {
 					caratTimer.destroy();
 					caratTimer = null;
 				}
+
+				auto evt = new Event(EventType.change, this);
+				evt.dispatch();
 			};
 
 			defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
@@ -3680,12 +3876,14 @@ class Event {
 	private bool isBubbling;
 
 	private void adjustScrolling() {
+	version(custom_widgets) { // TEMP
 		viewportX = clientX;
 		viewportY = clientY;
 		if(auto se = cast(ScrollableWidget) srcElement) {
 			clientX += se.scrollOrigin.x;
 			clientY += se.scrollOrigin.y;
 		}
+	}
 	}
 
 	/// this sends it only to the target. If you want propagation, use dispatch() instead.

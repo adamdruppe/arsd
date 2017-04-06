@@ -1336,13 +1336,16 @@ struct Rectangle {
 void floodFill(T)(
 	T[] what, int width, int height, // the canvas to inspect
 	T target, T replacement, // fill params
-	int x, int y, bool delegate(int x, int y) additionalCheck) // the node
+	int x, int y, bool delegate(int x, int y) @safe additionalCheck) // the node
 {
 	T node = what[y * width + x];
 
 	if(target == replacement) return;
 
 	if(node != target) return;
+
+	if(additionalCheck is null)
+		additionalCheck = (int, int) => true;
 
 	if(!additionalCheck(x, y))
 		return;
