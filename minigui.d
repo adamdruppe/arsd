@@ -1131,6 +1131,13 @@ class Widget {
 			foreach(child; children)
 				child.discardXConnectionState();
 		}
+
+		void recreateXConnectionState() {
+
+			foreach(child; children)
+				child.discardXConnectionState();
+			redraw();
+		}
 	}
 
 	///
@@ -2482,6 +2489,12 @@ class Window : Widget {
 
 	///
 	this(SimpleWindow win) {
+
+		static if(UsingSimpledisplayX11) {
+			win.discardAdditionalConnectionState = &discardXConnectionState;
+			win.recreateAdditionalConnectionState = &recreateXConnectionState;
+		}
+
 		tabStop = false;
 		super(null);
 		this.win = win;

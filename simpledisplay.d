@@ -1073,15 +1073,29 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			if(_parent !is null && _parent.stateDiscarded)
 				_parent.recreateAfterDisconnect();
 
+			bool wasHidden = hidden;
+
+			activeScreenPainter = null; // should already be done but just to confirm
+
 			impl.createWindow(_width, _height, _title, openglMode, _parent);
+
+			if(recreateAdditionalConnectionState)
+				recreateAdditionalConnectionState();
+
+			hidden = wasHidden;
 		}
 
 		bool stateDiscarded;
 		void discardConnectionState() {
 			if(XDisplayConnection.display)
 				impl.dispose(); // if display is already null, it is hopeless to try to destroy stuff on it anyway
+			if(discardAdditionalConnectionState)
+				discardAdditionalConnectionState();
 			stateDiscarded = true;
 		}
+
+		void delegate() discardAdditionalConnectionState;
+		void delegate() recreateAdditionalConnectionState;
 	}
 
 
