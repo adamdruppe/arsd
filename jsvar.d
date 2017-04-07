@@ -72,7 +72,7 @@ import std.conv;
 import std.json;
 
 // uda for wrapping classes
-enum Scriptable;
+enum scriptable = "arsd_jsvar_compatible";
 
 /*
 	PrototypeObject FIXME:
@@ -836,25 +836,29 @@ struct var {
 							if(no !is null)
 								return no;
 						}
+
+						// FIXME: this is kinda weird.
+						return null;
+					} else {
+
+						// failing that, generic struct or class getting: try to fill in the fields by name
+						T t;
+						bool initialized = true;
+						static if(is(T == class)) {
+							static if(__traits(compiles, new T()))
+								t = new T();
+							else
+								initialized = false;
+						}
+
+
+						if(initialized)
+						foreach(i, a; t.tupleof) {
+							cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
+						}
+
+						return t;
 					}
-
-					// failing that, generic struct or class getting: try to fill in the fields by name
-					T t;
-					bool initialized = true;
-					static if(is(T == class)) {
-						static if(__traits(compiles, new T()))
-							t = new T();
-						else
-							initialized = false;
-					}
-
-
-					if(initialized)
-					foreach(i, a; t.tupleof) {
-						cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
-					}
-
-					return t;
 				} else static if(isSomeString!T) {
 					if(this._object !is null)
 						return this._object.toString();
@@ -1664,6 +1668,7 @@ template helper(alias T) { alias helper = T; }
 ///
 /// That may be done automatically with opAssign in the future.
 WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
+	import std.meta;
 	return new class WrappedNativeObject {
 		override Object getObject() {
 			return obj;
@@ -1674,23 +1679,37 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 			// wrap the other methods
 			// and wrap members as scriptable properties
 
-			foreach(memberName; __traits(allMembers, Class)) {
-				static if(is(typeof(__traits(getMember, obj, memberName)) type))
-				static if(is(typeof(__traits(getMember, obj, memberName)))) {
-					static if(is(type == function)) {
-						_properties[memberName] = &__traits(getMember, obj, memberName);
-					} else {
-						// if it has a type but is not a function, it is prolly a member
-						_properties[memberName] = new PropertyPrototype(
-							() => var(__traits(getMember, obj, memberName)),
-							(var v) {
-								__traits(getMember, obj, memberName) = v.get!(type);
-							});
+			foreach(memberName; __traits(allMembers, Class)) static if(is(typeof(__traits(getMember, obj, memberName)) type)) {
+				static if(is(type == function)) {
+					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
+						auto helper = &__traits(getOverloads, obj, memberName)[idx];
+						_properties[memberName] = (Parameters!helper args) {
+							return __traits(getOverloads, obj, memberName)[idx](args);
+						};
 					}
+				} else {
+					static if(.isScriptable!(__traits(getAttributes, __traits(getMember, Class, memberName)))())
+					// if it has a type but is not a function, it is prolly a member
+					_properties[memberName] = new PropertyPrototype(
+						() => var(__traits(getMember, obj, memberName)),
+						(var v) {
+							__traits(getMember, obj, memberName) = v.get!(type);
+						});
 				}
 			}
 		}
 	};
+}
+
+bool isScriptable(attributes...)() {
+	foreach(attribute; attributes) {
+		static if(is(typeof(attribute) == string)) {
+			static if(attribute == scriptable) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 /// Wraps a struct by reference. The pointer is stored - be sure the struct doesn't get freed or go out of scope!

@@ -58,6 +58,17 @@
 		The default is 4. You can use larger numbers for things that should
 		consume a lot of space, and lower numbers for ones that are better at
 		smaller sizes.
+
+	$(H2 Add ons)
+
+	$(H2 XML definitions)
+		If you use [arsd.minigui_xml], you can create widget trees from XML at runtime.
+
+	$(H3 Scriptability)
+		minigui is compatible with [arsd.script]. If you see `@scriptable` on a method
+		in this documentation, it means you can call it from the script language.
+
+		More to come.
 +/
 module arsd.minigui;
 
@@ -69,6 +80,9 @@ version(Windows)
 
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
+
+/// Methods marked with this are available from scripts
+alias scriptable = arsd_jsvar_compatible;
 
 version(Windows) {
 	// use native widgets when available unless specifically asked otherwise
@@ -504,11 +518,13 @@ class UpDownControl : Widget {
 }
 +/
 
+/+
 class DataView : Widget {
 	// this is the omnibus data viewer
 	// the internal data layout is something like:
 	// string[string][] but also each node can have parents
 }
++/
 
 
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775491(v=vs.85).aspx#PROGRESS_CLASS
@@ -591,11 +607,12 @@ void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fra
 ///
 class Action {
 	version(win32_widgets) {
-		int id;
-		static int lastId = 9000;
-		static Action[int] mapping;
+		private int id;
+		private static int lastId = 9000;
+		private static Action[int] mapping;
 	}
 
+	///
 	this(string label, ushort icon = 0, void delegate() triggered = null) {
 		this.label = label;
 		this.iconId = icon;
@@ -607,8 +624,8 @@ class Action {
 		}
 	}
 
-	string label;
-	ushort iconId;
+	private string label;
+	private ushort iconId;
 	// icon
 
 	// when it is triggered, the triggered event is fired on the window
@@ -734,6 +751,7 @@ mixin template LayoutInfo() {
 	}
 }
 
+private
 void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	enum calcingV = relevantMeasure == "height";
 
@@ -872,6 +890,7 @@ int mymax(int a, int b) { return a > b ? a : b; }
 // and here, it must be integrable with the layout, the event system, and not be painted over.
 version(win32_widgets) {
 	extern(Windows)
+	private
 	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
 		if(auto te = hWnd in Widget.nativeMapping) {
@@ -891,10 +910,8 @@ version(win32_widgets) {
 
 				if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
 					SetBkMode(cast(HDC) wParam, TRANSPARENT);
-					return cast(typeof(return)) 
+					return cast(typeof(return)) GetSysColorBrush(COLOR_3DFACE); // this is the window background color...
 						//GetStockObject(NULL_BRUSH);
-						// this is the window background color...
-						GetSysColorBrush(COLOR_3DFACE);
 				}
 
 
@@ -957,6 +974,7 @@ version(win32_widgets) {
 }
 
 version(win32_widgets)
+private
 extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	if(hwnd is null || hwnd in Widget.nativeMapping)
 		return true;
@@ -988,11 +1006,95 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	Nothing too fancy, just the basics that work.
 */
 class Widget {
-	mixin EventStuff!();
 	mixin LayoutInfo!();
 
+	@scriptable
+	Widget getChildByName(string name) {
+		return getByName(name);
+	}
+	///
+	final WidgetClass getByName(WidgetClass = Widget)(string name) {
+		if(this.name == name)
+			if(auto c = cast(WidgetClass) this)
+				return c;
+		foreach(child; children) {
+			auto w = child.getByName(name);
+			if(auto c = cast(WidgetClass) w)
+				return c;
+		}
+		return null;
+	}
+
+	@scriptable
+	string name; ///
+
+	private EventHandler[][string] bubblingEventHandlers;
+	private EventHandler[][string] capturingEventHandlers;
+	private EventHandler[string] defaultEventHandlers;
+
+	///
+	void addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
+		addEventListener(event, (Widget, Event e) {
+			if(e.srcElement is this)
+				handler();
+		}, useCapture);
+	}
+
+	///
+	@scriptable
+	void addEventListener(string event, void delegate() handler, bool useCapture = false) {
+		addEventListener(event, (Widget, Event) { handler(); }, useCapture);
+	}
+
+	///
+	void addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
+	}
+
+	///
+	void addEventListener(string event, EventHandler handler, bool useCapture = false) {
+		if(event.length > 2 && event[0..2] == "on")
+			event = event[2 .. $];
+
+		if(useCapture)
+			capturingEventHandlers[event] ~= handler;
+		else
+			bubblingEventHandlers[event] ~= handler;
+	}
+
+	///
+	void removeEventListener(string event, void delegate() handler, bool useCapture = false) {
+		removeEventListener(event, (Widget, Event) { handler(); }, useCapture);
+	}
+
+	///
+	void removeEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		removeEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
+	}
+
+	///
+	void removeEventListener(string event, EventHandler handler, bool useCapture = false) {
+		if(event.length > 2 && event[0..2] == "on")
+			event = event[2 .. $];
+
+		if(useCapture) {
+			if(event in capturingEventHandlers)
+			foreach(ref evt; capturingEventHandlers[event])
+				if(evt is handler) evt = null;
+		} else {
+			if(event in bubblingEventHandlers)
+			foreach(ref evt; bubblingEventHandlers[event])
+				if(evt is handler) evt = null;
+		}
+
+	}
+
 	bool hidden_;
+	///
+	@scriptable
 	bool hidden() { return hidden_; }
+	///
+	@scriptable
 	void hidden(bool h) {
 		auto o = hidden_;
 		hidden_ = h;
@@ -1011,6 +1113,7 @@ class Widget {
 		// maybe I can do something similar cross platform
 	}
 
+	///
 	Point globalCoordinates() {
 		int x = this.x;
 		int y = this.y;
@@ -1040,6 +1143,7 @@ class Widget {
 	version(win32_widgets)
 	void handleWmCommand(ushort cmd, ushort id) {}
 
+	@scriptable
 	string statusTip;
 	// string toolTip;
 	// string helpText;
@@ -1065,6 +1169,7 @@ class Widget {
 	Widget[] children;
 	Widget parent;
 
+	protected
 	void registerMovement() {
 		version(win32_widgets) {
 			if(hwnd) {
@@ -1076,17 +1181,24 @@ class Widget {
 
 	Window parentWindow;
 
+	///
 	this(Widget parent = null) {
 		if(parent !is null)
 			parent.addChild(this);
 	}
 
+	///
+	@scriptable
 	bool isFocused() {
 		return parentWindow && parentWindow.focusedWidget is this;
 	}
 
-	bool showing = true;
+	private bool showing = true;
+	///
+	@scriptable
 	void show() { showing = true; redraw(); }
+	///
+	@scriptable
 	void hide() { showing = false; }
 
 	void delegate(MouseEvent) handleMouseEvent;
@@ -1131,7 +1243,8 @@ class Widget {
 		return false;
 	}
 
-
+	///
+	@scriptable
 	void focus() {
 		assert(parentWindow !is null);
 		if(isFocused())
@@ -1204,8 +1317,10 @@ class Widget {
 		return null;
 	}
 
+	///
 	void delegate(ScreenPainter painter) paint;
 
+	///
 	ScreenPainter draw() {
 		int x = this.x, y = this.y;
 		auto parent = this.parent;
@@ -1241,6 +1356,7 @@ class Widget {
 	__gshared re = new RedrawEvent();
 
 	private bool redrawRequested;
+	///
 	final void redraw() {
 		redrawRequested = true;
 
@@ -1287,11 +1403,11 @@ enum ScrollBarShowPolicy {
 }
 
 /++
+FIXME ScrollBarShowPolicy
 +/
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
 	// FIXME: add keyboard controls
-	// FIXME: SB_THUMBTRACK doesn't seem to be working
 	version(win32_widgets) {
 		override int hookedWndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if(msg == WM_VSCROLL || msg == WM_HSCROLL) {
@@ -1349,6 +1465,11 @@ class ScrollableWidget : Widget {
 							horizontalScrollTo(pos);
 						else
 							verticalScrollTo(pos);
+
+						if(m == SB_THUMBTRACK) {
+							// the event loop doesn't seem to carry on with a requested redraw..
+							actualRedraw();
+						}
 					break;
 					default:
 				}
@@ -1356,6 +1477,7 @@ class ScrollableWidget : Widget {
 			return 0;
 		}
 	}
+	///
 	this(Widget parent) {
 		this.parentWindow = parent.parentWindow;
 
@@ -1491,9 +1613,11 @@ class ScrollableWidget : Widget {
 		the viewportWidth, viewportHeight, and scrollOrigin members.
 	*/
 
+	///
 	final @property int viewportWidth() {
 		return width - (showingVerticalScroll ? 16 : 0);
 	}
+	///
 	final @property int viewportHeight() {
 		return height - (showingHorizontalScroll ? 16 : 0);
 	}
@@ -1501,6 +1625,7 @@ class ScrollableWidget : Widget {
 	// FIXME property
 	Point scrollOrigin_;
 
+	///
 	final const(Point) scrollOrigin() {
 		return scrollOrigin_;
 	}
@@ -1509,9 +1634,12 @@ class ScrollableWidget : Widget {
 	private int contentWidth_ = 0;
 	private int contentHeight_ = 0;
 
+	///
 	int contentWidth() { return contentWidth_; }
+	///
 	int contentHeight() { return contentHeight_; }
 
+	///
 	void setContentSize(int width, int height) {
 		contentWidth_ = width;
 		contentHeight_ = height;
@@ -1531,9 +1659,11 @@ class ScrollableWidget : Widget {
 
 	}
 
+	///
 	void verticalScroll(int delta) {
 		verticalScrollTo(scrollOrigin.y + delta);
 	}
+	///
 	void verticalScrollTo(int pos) {
 		scrollOrigin_.y = pos;
 		if(scrollOrigin_.y + viewportHeight > contentHeight)
@@ -1555,9 +1685,11 @@ class ScrollableWidget : Widget {
 		redraw();
 	}
 
+	///
 	void horizontalScroll(int delta) {
 		horizontalScrollTo(scrollOrigin.x + delta);
 	}
+	///
 	void horizontalScrollTo(int pos) {
 		scrollOrigin_.x = pos;
 		if(scrollOrigin_.x + viewportWidth > contentWidth)
@@ -1578,11 +1710,13 @@ class ScrollableWidget : Widget {
 
 		redraw();
 	}
+	///
 	void scrollTo(Point p) {
 		verticalScrollTo(p.y);
 		horizontalScrollTo(p.x);
 	}
 
+	///
 	void ensureVisibleInScroll(Point p) {
 		auto rect = viewportRectangle();
 		if(rect.contains(p))
@@ -1598,18 +1732,22 @@ class ScrollableWidget : Widget {
 			verticalScroll(p.y - rect.bottom);
 	}
 
+	///
 	void ensureVisibleInScroll(Rectangle rect) {
 		ensureVisibleInScroll(rect.upperLeft);
 		ensureVisibleInScroll(rect.lowerRight);
 	}
 
+	///
 	Rectangle viewportRectangle() {
 		return Rectangle(scrollOrigin, Size(viewportWidth, viewportHeight));
 	}
 
+	///
 	bool showingHorizontalScroll() {
 		return contentWidth > width;
 	}
+	///
 	bool showingVerticalScroll() {
 		return contentHeight > height;
 	}
@@ -1617,7 +1755,17 @@ class ScrollableWidget : Widget {
 	/// This is called before the ordinary paint delegate,
 	/// giving you a chance to draw the window frame, etc,
 	/// before the scroll clip takes effect
-	void paintFrameAndBackground(ScreenPainter painter) {}
+	void paintFrameAndBackground(ScreenPainter painter) {
+		version(win32_widgets) {
+			auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+			auto p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
+			// since the pen is null, to fill the whole space, we need the +1 on both.
+			gdi.Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
+			SelectObject(painter.impl.hdc, p);
+			SelectObject(painter.impl.hdc, b);
+		}
+
+	}
 
 	// make space for the scroll bar, and that's it.
 	final override int paddingRight() { return 16; }
@@ -1673,6 +1821,7 @@ class ScrollableWidget : Widget {
 
 ///
 abstract class ScrollbarBase : Widget {
+	///
 	this(Widget parent) {
 		super(parent);
 		tabStop = false;
@@ -1683,24 +1832,31 @@ abstract class ScrollbarBase : Widget {
 	private int step_ = 16;
 	private int position_;
 
+	///
 	void setViewableArea(int a) {
 		viewableArea_ = a;
 	}
+	///
 	void setMax(int a) {
 		max_ = a;
 	}
+	///
 	int max() {
 		return max_;
 	}
+	///
 	void setPosition(int a) {
 		position_ = max ? a : 0;
 	}
+	///
 	int position() {
 		return position_;
 	}
+	///
 	void setStep(int a) {
 		step_ = a;
 	}
+	///
 	int step() {
 		return step_;
 	}
@@ -1748,10 +1904,14 @@ abstract class ScrollbarBase : Widget {
 //version(custom_widgets)
 class MouseTrackingWidget : Widget {
 
+	///
 	int positionX() { return positionX_; }
+	///
 	int positionY() { return positionY_; }
 
+	///
 	void positionX(int p) { positionX_ = p; }
+	///
 	void positionY(int p) { positionY_ = p; }
 
 	private int positionX_;
@@ -1767,11 +1927,16 @@ class MouseTrackingWidget : Widget {
 	private int thumbWidth_;
 	private int thumbHeight_;
 
+	///
 	int thumbWidth() { return thumbWidth_; }
+	///
 	int thumbHeight() { return thumbHeight_; }
+	///
 	int thumbWidth(int a) { return thumbWidth_ = a; }
+	///
 	int thumbHeight(int a) { return thumbHeight_ = a; }
 
+	///
 	this(Orientation orientation, Widget parent = null) {
 		super(parent);
 
@@ -2068,6 +2233,7 @@ abstract class Layout : Widget {
 	wrap to a new line when necessary.
 +/
 class InlineBlockLayout : Layout {
+	///
 	this(Widget parent = null) { super(parent); }
 
 	override void recomputeChildLayout() {
@@ -2155,11 +2321,13 @@ class InlineBlockLayout : Layout {
 /// Stacks the widgets vertically, taking all the available width for each child.
 class VerticalLayout : Layout {
 	// intentionally blank - widget's default is vertical layout right now
+	///
 	this(Widget parent = null) { super(parent); }
 }
 
 /// Stacks the widgets horizontally, taking all the available height for each child.
 class HorizontalLayout : Layout {
+	///
 	this(Widget parent = null) { super(parent); }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
@@ -2215,6 +2383,7 @@ class HorizontalLayout : Layout {
 	You should almost never use this.
 +/
 class StaticLayout : Layout {
+	///
 	this(Widget parent = null) { super(parent); }
 	override void recomputeChildLayout() {
 		registerMovement();
@@ -2232,6 +2401,7 @@ class StaticLayout : Layout {
 	can do that with `padding`).
 +/
 class StaticPosition : Layout {
+	///
 	this(Widget parent = null) { super(parent); }
 
 	override void recomputeChildLayout() {
@@ -2256,6 +2426,7 @@ class StaticPosition : Layout {
 	the parent content.
 +/
 class FixedPosition : StaticPosition {
+	///
 	this(Widget parent) { super(parent); }
 }
 
@@ -2276,17 +2447,20 @@ class Window : Widget {
 		win.releaseInputGrab();
 	}
 
+	///
 	static int lineHeight;
 
 	Widget focusedWidget;
 
 	SimpleWindow win;
 
+	///
 	this(Widget p) {
 		tabStop = false;
 		super(p);
 	}
 
+	///
 	this(SimpleWindow win) {
 		tabStop = false;
 		super(null);
@@ -2486,11 +2660,18 @@ class Window : Widget {
 		else static assert(false);
 	}
 
+	///
 	this(int width = 500, int height = 500, string title = null) {
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
 		this(win);
 	}
 
+	///
+	this(string title) {
+		this(500, 500, title);
+	}
+
+	///
 	void close() {
 		win.close();
 	}
@@ -2606,6 +2787,8 @@ class Window : Widget {
 		return super.dispatchMouseEvent(ev);
 	}
 
+	///
+	@scriptable
 	void loop() {
 		recomputeChildLayout();
 		focusedWidget = getFirstFocusable(this); // FIXME: autofocus?
@@ -2614,10 +2797,12 @@ class Window : Widget {
 		win.eventLoop(0);
 	}
 
+	@scriptable
 	override void show() {
 		win.show();
 		super.show();
 	}
+	@scriptable
 	override void hide() {
 		win.hide();
 		super.hide();
@@ -2658,6 +2843,7 @@ abstract class Dialog : Window {
 
 ///
 class LabeledLineEdit : Widget {
+	///
 	this(string label, Widget parent = null) {
 		super(parent);
 		tabStop = false;
@@ -2671,13 +2857,16 @@ class LabeledLineEdit : Widget {
 	override int minHeight() { return Window.lineHeight + 4; }
 	override int maxHeight() { return Window.lineHeight + 4; }
 
+	///
 	string content() {
 		return lineEdit.content;
 	}
+	///
 	void content(string c) {
 		return lineEdit.content(c);
 	}
 
+	///
 	void selectAll() {
 		lineEdit.selectAll();
 	}
@@ -2685,6 +2874,7 @@ class LabeledLineEdit : Widget {
 
 ///
 class MainWindow : Window {
+	///
 	this(string title = null) {
 		super(500, 500, title);
 
@@ -2712,7 +2902,9 @@ class MainWindow : Window {
 	}
 
 	MenuBar _menu;
+	///
 	MenuBar menu() { return _menu; }
+	///
 	MenuBar menu(MenuBar m) {
 		if(_menu !is null) {
 			// make sure it is sanely removed
@@ -2735,19 +2927,24 @@ class MainWindow : Window {
 		return _menu;
 	}
 	private Widget _clientArea;
+	///
 	@property Widget clientArea() { return _clientArea; }
-	@property void clientArea(Widget wid) {
+	protected @property void clientArea(Widget wid) {
 		_clientArea = wid;
 	}
 
 	private StatusBar _statusBar;
+	///
 	@property StatusBar statusBar() { return _statusBar; }
+	///
 	@property void statusBar(StatusBar bar) {
 		_statusBar = bar;
 		super.addChild(_statusBar);
 	}
 
+	///
 	@property string title() { return parentWindow.win.title; }
+	///
 	@property void title(string title) { parentWindow.win.title = title; }
 }
 
@@ -2778,6 +2975,11 @@ class ToolBar : Widget {
 	version(win32_widgets) 
 		HIMAGELIST imageList;
 
+	this(Widget parent) {
+		this(null, parent);
+	}
+
+	///
 	this(Action[] actions, Widget parent = null) {
 		super(parent);
 
@@ -2829,10 +3031,12 @@ class ToolBar : Widget {
 
 ///
 class ToolButton : Button {
+	///
 	this(string label, Widget parent = null) {
 		super(label, parent);
 		tabStop = false;
 	}
+	///
 	this(Action action, Widget parent = null) {
 		super(action.label, parent);
 		tabStop = false;
@@ -2931,6 +3135,7 @@ class MenuBar : Widget {
 
 	version(win32_widgets) {
 		HMENU handle;
+		///
 		this(Widget parent = null) {
 			super(parent);
 
@@ -2938,6 +3143,7 @@ class MenuBar : Widget {
 			tabStop = false;
 		}
 	} else version(custom_widgets) {
+		///
 		this(Widget parent = null) {
 			tabStop = false; // these are selected some other way
 			super(parent);
@@ -2947,6 +3153,7 @@ class MenuBar : Widget {
 		}
 	} else static assert(false);
 
+	///
 	MenuItem addItem(MenuItem item) {
 		this.addChild(item);
 		items ~= item;
@@ -2957,6 +3164,7 @@ class MenuBar : Widget {
 	}
 
 
+	///
 	Menu addItem(Menu item) {
 		auto mbItem = new MenuItem(item.label, this.parentWindow);
 
@@ -2995,22 +3203,26 @@ class MenuBar : Widget {
 */
 class StatusBar : Widget {
 	private Part[] partsArray;
+	///
 	struct Parts {
 		@disable this();
 		this(StatusBar owner) { this.owner = owner; }
 		//@disable this(this);
+		///
 		@property int length() { return cast(int) owner.partsArray.length; }
 		private StatusBar owner;
 		private this(StatusBar owner, Part[] parts) {
 			this.owner.partsArray = parts;
 			this.owner = owner;
 		}
+		///
 		Part opIndex(int p) {
 			if(owner.partsArray.length == 0)
 				this ~= new StatusBar.Part(300);
 			return owner.partsArray[p];
 		}
 
+		///
 		Part opOpAssign(string op : "~" )(Part p) {
 			assert(owner.partsArray.length < 255);
 			p.owner = this.owner;
@@ -3040,19 +3252,24 @@ class StatusBar : Widget {
 	}
 
 	private Parts _parts;
+	///
 	@property Parts parts() {
 		return _parts;
 	}
 
+	///
 	static class Part {
 		int width;
 		StatusBar owner;
 
+		///
 		this(int w = 100) { width = w; }
 
 		private int idx;
 		private string _content;
+		///
 		@property string content() { return _content; }
+		///
 		@property void content(string s) {
 			version(win32_widgets) {
 				_content = s;
@@ -3069,6 +3286,7 @@ class StatusBar : Widget {
 	bool inSimpleMode;
 
 
+	///
 	this(Widget parent = null) {
 		super(null); // FIXME
 		_parts = Parts(this);
@@ -3123,14 +3341,12 @@ class IndefiniteProgressBar : Widget {
 
 /// A progress bar with a known endpoint and completion amount
 class ProgressBar : Widget {
-	version(win32_widgets)
 	this(Widget parent = null) {
-		super(parent);
-		createWin32Window(this, "msctls_progress32", "", 0);
-		tabStop = false;
-	}
-	else version(custom_widgets) {
-		this(Widget parent = null) {
+		version(win32_widgets) {
+			super(parent);
+			createWin32Window(this, "msctls_progress32", "", 0);
+			tabStop = false;
+		} else version(custom_widgets) {
 			super(parent);
 			max = 100;
 			step = 10;
@@ -3140,14 +3356,16 @@ class ProgressBar : Widget {
 				painter.fillColor = Color.blue;
 				painter.drawRectangle(Point(0, 0), width * current / max, height);
 			};
-		}
+		} else static assert(0);
+	}
 
+	version(custom_widgets) {
 		int current;
 		int max;
 		int step;
 	}
-	else static assert(false);
 
+	///
 	void advanceOneStep() {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_STEPIT, 0, 0);
@@ -3156,6 +3374,7 @@ class ProgressBar : Widget {
 		else static assert(false);
 	}
 
+	///
 	void setStepIncrement(int increment) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETSTEP, increment, 0);
@@ -3164,6 +3383,7 @@ class ProgressBar : Widget {
 		else static assert(false);
 	}
 
+	///
 	void addToPosition(int amount) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_DELTAPOS, amount, 0);
@@ -3172,6 +3392,7 @@ class ProgressBar : Widget {
 		else static assert(false);
 	}
 
+	///
 	void setPosition(int pos) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETPOS, pos, 0);
@@ -3184,6 +3405,7 @@ class ProgressBar : Widget {
 		else static assert(false);
 	}
 
+	///
 	void setRange(ushort min, ushort max) {
 		version(win32_widgets)
 			SendMessageA(hwnd, PBM_SETRANGE, 0, MAKELONG(min, max));
@@ -3216,39 +3438,38 @@ class Fieldset : Widget {
 
 	string legend;
 
-	version(win32_widgets)
+	///
 	this(string legend, Widget parent = null) {
-		super(parent);
-		this.legend = legend;
-		createWin32Window(this, "button", legend, BS_GROUPBOX);
-		tabStop = false;
-	}
-	else version(custom_widgets)
-	this(string legend, Widget parent = null) {
-		super(parent);
-		tabStop = false;
-		this.legend = legend;
-		this.paint = (ScreenPainter painter) {
-			painter.fillColor = Color.transparent;
-			painter.pen = Pen(Color.black, 1);
-			painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
+		version(win32_widgets) {
+			super(parent);
+			this.legend = legend;
+			createWin32Window(this, "button", legend, BS_GROUPBOX);
+			tabStop = false;
+		} else version(custom_widgets) {
+			super(parent);
+			tabStop = false;
+			this.legend = legend;
+			this.paint = (ScreenPainter painter) {
+				painter.fillColor = Color.transparent;
+				painter.pen = Pen(Color.black, 1);
+				painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
 
-			auto tx = painter.textSize(legend);
-			painter.outlineColor = Color.transparent;
+				auto tx = painter.textSize(legend);
+				painter.outlineColor = Color.transparent;
 
-			static if(UsingSimpledisplayX11) {
-				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(8, 0), tx.width, tx.height);
-			} else version(Windows) {
-				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
-				painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
-				SelectObject(painter.impl.hdc, b);
-			} else static assert(0);
-			painter.outlineColor = Color.black;
-			painter.drawText(Point(8, 0), legend);
-		};
+				static if(UsingSimpledisplayX11) {
+					painter.fillColor = windowBackgroundColor;
+					painter.drawRectangle(Point(8, 0), tx.width, tx.height);
+				} else version(Windows) {
+					auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+					painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
+					SelectObject(painter.impl.hdc, b);
+				} else static assert(0);
+				painter.outlineColor = Color.black;
+				painter.drawText(Point(8, 0), legend);
+			};
+		} else static assert(0);
 	}
-	else static assert(false);
 
 	override int maxHeight() {
 		auto m = paddingTop() + paddingBottom();
@@ -3271,11 +3492,13 @@ class Fieldset : Widget {
 	}
 }
 
+///
 class HorizontalRule : Widget {
 	mixin Margin!q{ 2 };
 	override int minHeight() { return 2; }
 	override int maxHeight() { return 2; }
 
+	///
 	this(Widget parent = null) {
 		super(parent);
 
@@ -3377,12 +3600,14 @@ class Menu : Window {
 
 	version(win32_widgets) {
 		HMENU handle;
+		///
 		this(string label, Widget parent = null) {
 			super(parent);
 			this.label = label;
 			handle = CreatePopupMenu();
 		}
 	} else version(custom_widgets) {
+		///
 		this(string label, Widget parent = null) {
 
 			if(dropDown) {
@@ -3427,6 +3652,7 @@ class MenuItem : MouseActivatedWidget {
 			return Window.lineHeight / 2 * cast(int) label.length + 8;
 		return int.max;
 	}
+	///
 	this(string lbl, Widget parent = null) {
 		super(parent);
 		//label = lbl; // FIXME
@@ -3447,6 +3673,7 @@ class MenuItem : MouseActivatedWidget {
 		tabStop = false; // these are selected some other way
 	}
 
+	///
 	this(Action action, Widget parent = null) {
 		assert(action !is null);
 		this(action.label);
@@ -3465,6 +3692,7 @@ class MenuItem : MouseActivatedWidget {
 }
 
 version(win32_widgets)
+///
 class MouseActivatedWidget : Widget {
 	bool isChecked() {
 		assert(hwnd);
@@ -3482,6 +3710,7 @@ class MouseActivatedWidget : Widget {
 	}
 }
 else version(custom_widgets)
+///
 class MouseActivatedWidget : Widget {
 	bool isDepressed = false;
 	bool isHovering = false;
@@ -3565,64 +3794,63 @@ class Checkbox : MouseActivatedWidget {
 
 	override int marginLeft() { return 4; }
 
-	version(win32_widgets)
+	///
 	this(string label, Widget parent = null) {
 		super(parent);
-		createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
+		version(win32_widgets) {
+			createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
+		} else version(custom_widgets) {
+
+			this.paint = (ScreenPainter painter) {
+
+				if(isFocused()) {
+					painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+					painter.fillColor = windowBackgroundColor;
+					painter.drawRectangle(Point(0, 0), width, height);
+					painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+				} else {
+					painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
+					painter.fillColor = windowBackgroundColor;
+					painter.drawRectangle(Point(0, 0), width, height);
+				}
+
+
+				enum buttonSize = 16;
+
+				painter.outlineColor = Color.black;
+				painter.fillColor = Color.white;
+				painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
+
+				if(isChecked) {
+					painter.pen = Pen(Color.black, 2);
+					// I'm using height so the checkbox is square
+					enum padding = 5;
+					painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
+					painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
+
+					painter.pen = Pen(Color.black, 1);
+				}
+
+				painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			};
+
+			defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
+				isChecked = !isChecked;
+
+				auto event = new Event(EventType.change, this);
+				event.dispatch();
+
+				redraw();
+			};
+		} else static assert(0);
 	}
-	else version(custom_widgets)
-	this(string label, Widget parent = null) {
-		super(parent);
-
-		this.paint = (ScreenPainter painter) {
-
-			if(isFocused()) {
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(0, 0), width, height);
-				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-			} else {
-				painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
-				painter.fillColor = windowBackgroundColor;
-				painter.drawRectangle(Point(0, 0), width, height);
-			}
-
-
-			enum buttonSize = 16;
-
-			painter.outlineColor = Color.black;
-			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
-
-			if(isChecked) {
-				painter.pen = Pen(Color.black, 2);
-				// I'm using height so the checkbox is square
-				enum padding = 5;
-				painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
-				painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
-
-				painter.pen = Pen(Color.black, 1);
-			}
-
-			painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
-		};
-
-		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
-			isChecked = !isChecked;
-
-			auto event = new Event(EventType.change, this);
-			event.dispatch();
-
-			redraw();
-		};
-	}
-	else static assert(false);
 }
 
 ///
 class VerticalSpacer : Widget {
 	override int maxHeight() { return 20; }
 	override int minHeight() { return 20; }
+	///
 	this(Widget parent = null) {
 		super(parent);
 	}
@@ -3770,13 +3998,18 @@ class Button : MouseActivatedWidget {
 	override int minHeight() { return Window.lineHeight + 4; }
 }
 
+///
 enum ArrowDirection {
-	left, right, up, down
+	left, ///
+	right, ///
+	up, ///
+	down ///
 }
 
 ///
 version(custom_widgets)
 class ArrowButton : Button {
+	///
 	this(ArrowDirection direction, Widget parent = null) {
 		super("", parent);
 
@@ -3830,6 +4063,7 @@ class ArrowButton : Button {
 	override int maxWidth() { return 16; }
 }
 
+private
 int[2] getChildPositionRelativeToParentOrigin(Widget c) nothrow {
 	int x, y;
 	Widget par = c;
@@ -3842,6 +4076,7 @@ int[2] getChildPositionRelativeToParentOrigin(Widget c) nothrow {
 }
 
 version(win32_widgets)
+private
 int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 	int x, y;
 	Widget par = c;
@@ -3862,6 +4097,7 @@ class TextLabel : Widget {
 	override int minWidth() { return 32; }
 
 	string label;
+	///
 	this(string label, Widget parent = null) {
 		this.label = label;
 		this.tabStop = false;
@@ -3875,7 +4111,7 @@ class TextLabel : Widget {
 }
 
 version(custom_widgets)
-	mixin ExperimentalTextComponent;
+	private mixin ExperimentalTextComponent;
 
 version(win32_widgets)
 	alias EditableTextWidgetParent = Widget; ///
@@ -4069,6 +4305,7 @@ class LineEdit : EditableTextWidget {
 	override bool showingHorizontalScroll() { return false; }
 	}
 
+	///
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
@@ -4087,6 +4324,7 @@ class LineEdit : EditableTextWidget {
 
 ///
 class TextEdit : EditableTextWidget {
+	///
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
@@ -4104,6 +4342,7 @@ class TextEdit : EditableTextWidget {
 
 ///
 class MessageBox : Window {
+	///
 	this(string message) {
 		super(300, 100);
 
@@ -4139,90 +4378,36 @@ class MessageBox : Window {
 
 
 
-/* FIXME: this is mostly copy/pasta'd from dom.d. Would be nice to kill the duplication */
-
-mixin template EventStuff() {
-	EventHandler[][string] bubblingEventHandlers;
-	EventHandler[][string] capturingEventHandlers;
-	EventHandler[string] defaultEventHandlers;
-
-	void addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event e) {
-			if(e.srcElement is this)
-				handler();
-		}, useCapture);
-	}
-
-	void addEventListener(string event, void delegate() handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event) { handler(); }, useCapture);
-	}
-
-	void addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
-	}
-
-	void addEventListener(string event, EventHandler handler, bool useCapture = false) {
-		if(event.length > 2 && event[0..2] == "on")
-			event = event[2 .. $];
-
-		if(useCapture)
-			capturingEventHandlers[event] ~= handler;
-		else
-			bubblingEventHandlers[event] ~= handler;
-	}
-
-	void removeEventListener(string event, void delegate() handler, bool useCapture = false) {
-		removeEventListener(event, (Widget, Event) { handler(); }, useCapture);
-	}
-
-	void removeEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		removeEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
-	}
-
-	void removeEventListener(string event, EventHandler handler, bool useCapture = false) {
-		if(event.length > 2 && event[0..2] == "on")
-			event = event[2 .. $];
-
-		if(useCapture) {
-			if(event in capturingEventHandlers)
-			foreach(ref evt; capturingEventHandlers[event])
-				if(evt is handler) evt = null;
-		} else {
-			if(event in bubblingEventHandlers)
-			foreach(ref evt; bubblingEventHandlers[event])
-				if(evt is handler) evt = null;
-		}
-
-	}
-}
-
+///
 alias void delegate(Widget handlerAttachedTo, Event event) EventHandler;
 
+///
 enum EventType : string {
-	click = "click",
+	click = "click", ///
 
-	mouseenter = "mouseenter",
-	mouseleave = "mouseleave",
-	mousein = "mousein",
-	mouseout = "mouseout",
-	mouseup = "mouseup",
-	mousedown = "mousedown",
-	mousemove = "mousemove",
+	mouseenter = "mouseenter", ///
+	mouseleave = "mouseleave", ///
+	mousein = "mousein", ///
+	mouseout = "mouseout", ///
+	mouseup = "mouseup", ///
+	mousedown = "mousedown", ///
+	mousemove = "mousemove", ///
 
-	keydown = "keydown",
-	keyup = "keyup",
-	// char = "char",
+	keydown = "keydown", ///
+	keyup = "keyup", ///
+	char_ = "char", ///
 
-	focus = "focus",
-	blur = "blur",
+	focus = "focus", ///
+	blur = "blur", ///
 
-	triggered = "triggered",
+	triggered = "triggered", ///
 
-	change = "change",
+	change = "change", ///
 }
 
 ///
 class Event {
+	///
 	this(string eventName, Widget target) {
 		this.eventName = eventName;
 		this.srcElement = target;
@@ -4243,24 +4428,24 @@ class Event {
 	private bool propagationStopped;
 	private string eventName;
 
-	Widget srcElement;
+	Widget srcElement; ///
 	alias srcElement target;
 
-	Widget relatedTarget;
+	Widget relatedTarget; ///
 
-	int clientX;
-	int clientY;
+	int clientX; ///
+	int clientY; ///
 
-	int viewportX;
-	int viewportY;
+	int viewportX; ///
+	int viewportY; ///
 
-	int button;
-	Key key;
-	dchar character;
+	int button; ///
+	Key key; ///
+	dchar character; ///
 
-	int state;
+	int state; ///
 
-	bool shiftKey;
+	bool shiftKey; ///
 
 	private bool isBubbling;
 
@@ -4347,7 +4532,7 @@ class Event {
 	}
 }
 
-bool isAParentOf(Widget a, Widget b) {
+private bool isAParentOf(Widget a, Widget b) {
 	if(a is null || b is null)
 		return false;
 
@@ -4360,13 +4545,13 @@ bool isAParentOf(Widget a, Widget b) {
 	return false;
 }
 
-struct WidgetAtPointResponse {
+private struct WidgetAtPointResponse {
 	Widget widget;
 	int x;
 	int y;
 }
 
-WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
+private WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 	assert(starting !is null);
 	auto child = starting.getChildAtPosition(x, y);
 	while(child) {
@@ -4623,31 +4808,33 @@ enum {
 	enum SB_SETTEXT = WM_USER + 1; // SET TEXT A. It is +11 for W
 }
 
-
-
-enum GenericIcons : ushort {
-	None,
-	// these happen to match the win32 std icons numerically if you just subtract one from the value
-	Cut,
-	Copy,
-	Paste,
-	Undo,
-	Redo,
-	Delete,
-	New,
-	Open,
-	Save,
-	PrintPreview,
-	Properties,
-	Help,
-	Find,
-	Replace,
-	Print,
-}
-
 version(win32_widgets)
 	pragma(lib, "comdlg32");
 
+
+///
+enum GenericIcons : ushort {
+	None, ///
+	// these happen to match the win32 std icons numerically if you just subtract one from the value
+	Cut, ///
+	Copy, ///
+	Paste, ///
+	Undo, ///
+	Redo, ///
+	Delete, ///
+	New, ///
+	Open, ///
+	Save, ///
+	PrintPreview, ///
+	Properties, ///
+	Help, ///
+	Find, ///
+	Replace, ///
+	Print, ///
+}
+
+
+///
 void getOpenFileName(
 	void delegate(string) onOK = null,
 	string prefilledName = null,
@@ -4683,6 +4870,7 @@ void getOpenFileName(
 }
 
 version(custom_widgets)
+private
 class FilePicker : Dialog {
 	this(Window owner = null) {
 		super(300, 200, "Choose File..."); // owner);

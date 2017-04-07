@@ -11195,6 +11195,8 @@ mixin template ExperimentalTextComponent() {
 			auto y = caret.inlineElement.boundingBox.top + 2;
 
 			y -= caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
+			if(y < 0)
+				return;
 
 			auto i = identify(x, y);
 

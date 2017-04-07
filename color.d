@@ -1389,3 +1389,5 @@ void floodFill(T)(
 			x, y + 1, additionalCheck);
 }
 
+// for scripting, so you can tag it without strictly needing to import arsd.jsvar
+enum arsd_jsvar_compatible = "arsd_jsvar_compatible";
