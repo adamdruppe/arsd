@@ -1259,7 +1259,9 @@ struct Point {
 	int x; ///
 	int y; ///
 
-	Point opBinary(string op)(Point rhs) {
+	pure const nothrow @safe:
+
+	Point opBinary(string op)(in Point rhs) {
 		return Point(mixin("x" ~ op ~ "rhs.x"), mixin("y" ~ op ~ "rhs.y"));
 	}
 
@@ -1281,6 +1283,8 @@ struct Rectangle {
 	int right; ///
 	int bottom; ///
 
+	pure const nothrow @safe:
+
 	///
 	this(int left, int top, int right, int bottom) {
 		this.left = left;
@@ -1290,12 +1294,12 @@ struct Rectangle {
 	}
 
 	///
-	this(Point upperLeft, Point lowerRight) {
+	this(in Point upperLeft, in Point lowerRight) {
 		this(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
 	}
 
 	///
-	this(Point upperLeft, Size size) {
+	this(in Point upperLeft, in Size size) {
 		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width, upperLeft.y + size.height);
 	}
 
@@ -1322,6 +1326,16 @@ struct Rectangle {
 	///
 	@property int height() {
 		return bottom - top;
+	}
+
+	///
+	bool contains(in Rectangle r) {
+		return contains(r.upperLeft) && contains(r.lowerRight);
+	}
+
+	///
+	bool contains(in Point p) {
+		return (p.x >= left && p.y < right && p.y >= top && p.y < bottom);
 	}
 }
 

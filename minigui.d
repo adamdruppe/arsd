@@ -62,6 +62,7 @@
 module arsd.minigui;
 
 public import arsd.simpledisplay;
+private alias Rectangle = arsd.color.Rectangle; // I specifically want this in here, not the win32 GDI Rectangle()
 
 version(Windows)
 	import core.sys.windows.windows;
@@ -139,7 +140,6 @@ abstract class ComboboxBase : Widget {
 	version(win32_widgets)
 		this(uint style, Widget parent = null) {
 			super(parent);
-			parentWindow = parent.parentWindow;
 			createWin32Window(this, "ComboBox", null, style);
 		}
 	else version(custom_widgets)
@@ -876,6 +876,9 @@ version(win32_widgets) {
 		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
 		if(auto te = hWnd in Widget.nativeMapping) {
 			try {
+
+				te.hookedWndProc(iMessage, wParam, lParam);
+
 				if(iMessage == WM_SETFOCUS) {
 					auto lol = *te;
 					while(lol !is null && lol.implicitlyCreated)
@@ -1048,6 +1051,10 @@ class Widget {
 		static Widget[HWND] nativeMapping;
 		HWND hwnd;
 		WNDPROC originalWindowProcedure;
+
+		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
+			return 0;
+		}
 	}
 	bool implicitlyCreated;
 
@@ -1281,75 +1288,188 @@ enum ScrollBarShowPolicy {
 
 /++
 +/
-version(win32_widgets)
-class ScrollableWidget : Widget { this(Widget parent = null) { super(parent); } } // TEMPORARY
-else
 class ScrollableWidget : Widget {
-	this(Widget parent = null) {
-		horizontalScrollbarHolder = new FixedPosition(this);
-		verticalScrollbarHolder = new FixedPosition(this);
-		horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
-		verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
+	// FIXME: make line size configurable
+	// FIXME: add keyboard controls
+	// FIXME: SB_THUMBTRACK doesn't seem to be working
+	version(win32_widgets) {
+		override int hookedWndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+			if(msg == WM_VSCROLL || msg == WM_HSCROLL) {
+				auto pos = HIWORD(wParam);
+				auto m = LOWORD(wParam);
 
-		horizontalScrollbarHolder.hidden_ = true;
-		verticalScrollbarHolder.hidden_ = true;
+				// FIXME: I can reintroduce the
+				// scroll bars now by using this
+				// in the top-level window handler
+				// to forward comamnds
+				auto scrollbarHwnd = lParam;
+				switch(m) {
+					case SB_BOTTOM:
+						if(msg == WM_HSCROLL)
+							horizontalScrollTo(contentWidth_);
+						else
+							verticalScrollTo(contentHeight_);
+					break;
+					case SB_TOP:
+						if(msg == WM_HSCROLL)
+							horizontalScrollTo(0);
+						else
+							verticalScrollTo(0);
+					break;
+					case SB_ENDSCROLL:
+						// idk
+					break;
+					case SB_LINEDOWN:
+						if(msg == WM_HSCROLL)
+							horizontalScroll(16);
+						else
+							verticalScroll(16);
+					break;
+					case SB_LINEUP:
+						if(msg == WM_HSCROLL)
+							horizontalScroll(-16);
+						else
+							verticalScroll(-16);
+					break;
+					case SB_PAGEDOWN:
+						if(msg == WM_HSCROLL)
+							horizontalScroll(100);
+						else
+							verticalScroll(100);
+					break;
+					case SB_PAGEUP:
+						if(msg == WM_HSCROLL)
+							horizontalScroll(-100);
+						else
+							verticalScroll(-100);
+					break;
+					case SB_THUMBPOSITION:
+					case SB_THUMBTRACK:
+						if(msg == WM_HSCROLL)
+							horizontalScrollTo(pos);
+						else
+							verticalScrollTo(pos);
+					break;
+					default:
+				}
+			}
+			return 0;
+		}
+	}
+	this(Widget parent) {
+		this.parentWindow = parent.parentWindow;
+
+		version(win32_widgets) {
+			static bool classRegistered = false;
+			if(!classRegistered) {
+				HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+				WNDCLASSEX wc;
+				wc.cbSize = wc.sizeof;
+				wc.hInstance = hInstance;
+				wc.lpfnWndProc = &DefWindowProc;
+				wc.lpszClassName = "arsd_minigui_ScrollableWidget"w.ptr;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+				classRegistered = true;
+			}
+
+			createWin32Window(this, "arsd_minigui_ScrollableWidget", "", 
+				0|WS_CHILD|WS_VISIBLE|WS_HSCROLL|WS_VSCROLL, 0);
+		} else version(custom_widgets) {
+			horizontalScrollbarHolder = new FixedPosition(this);
+			verticalScrollbarHolder = new FixedPosition(this);
+			horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
+			verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
+
+			horizontalScrollbarHolder.hidden_ = true;
+			verticalScrollbarHolder.hidden_ = true;
+
+			horizontalScrollBar.addEventListener(EventType.change, () {
+				horizontalScrollTo(horizontalScrollBar.position);
+			});
+			verticalScrollBar.addEventListener(EventType.change, () {
+				verticalScrollTo(verticalScrollBar.position);
+			});
+		} else static assert(0);
 
 		super(parent);
 	}
 
-	FixedPosition horizontalScrollbarHolder;
-	FixedPosition verticalScrollbarHolder;
+	version(custom_widgets) {
+		FixedPosition horizontalScrollbarHolder;
+		FixedPosition verticalScrollbarHolder;
 
-	VerticalScrollbar verticalScrollBar;
-	HorizontalScrollbar horizontalScrollBar;
+		VerticalScrollbar verticalScrollBar;
+		HorizontalScrollbar horizontalScrollBar;
+	}
 
+	version(custom_widgets)
 	override void recomputeChildLayout() {
 		bool both = showingVerticalScroll && showingHorizontalScroll;
 		if(horizontalScrollbarHolder && verticalScrollbarHolder) {
-			horizontalScrollbarHolder.width = this.width - (both ? 16 : 0);
-			horizontalScrollbarHolder.height = 16;
+			horizontalScrollbarHolder.width = this.width - (both ? verticalScrollBar.minWidth() : 0);
+			horizontalScrollbarHolder.height = horizontalScrollBar.minHeight();
 			horizontalScrollbarHolder.x = 0;
-			horizontalScrollbarHolder.y = this.height - 16;
+			horizontalScrollbarHolder.y = this.height - horizontalScrollBar.minHeight();
 
-			verticalScrollbarHolder.width = 16;
-			verticalScrollbarHolder.height = this.height - (both ? 16 : 0);
-			verticalScrollbarHolder.x = this.width - 16;
+			verticalScrollbarHolder.width = verticalScrollBar.minWidth();
+			verticalScrollbarHolder.height = this.height - (both ? horizontalScrollBar.minHeight() : 0);
+			verticalScrollbarHolder.x = this.width - verticalScrollBar.minWidth();
 			verticalScrollbarHolder.y = 0;
 
-			{
-				int viewableScrollArea = viewportHeight;
-				int totalScrollArea = contentHeight;
-				int totalScrollBarArea = verticalScrollBar.thumb.height;
-				int thumbSize;
-				if(totalScrollArea)
-					thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-				else
-					thumbSize = 0;
-				if(thumbSize < 6)
-					thumbSize = 6;
-
-				verticalScrollBar.thumb.thumbHeight = thumbSize;
-			}
-
-			{
-				int viewableScrollArea = viewportWidth;
-				int totalScrollArea = contentWidth;
-				int totalScrollBarArea = horizontalScrollBar.thumb.width;
-				int thumbSize;
-				if(totalScrollArea)
-					thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-				else
-					thumbSize = 0;
-				if(thumbSize < 6)
-					thumbSize = 6;
-
-				horizontalScrollBar.thumb.thumbWidth = thumbSize;
-			}
+			if(contentWidth_ <= this.width)
+				scrollOrigin_.x = 0;
+			if(contentHeight_ <= this.height)
+				scrollOrigin_.y = 0;
 		}
 
 
 		super.recomputeChildLayout();
-	}
+
+		if(contentWidth_ <= this.width)
+			scrollOrigin_.x = 0;
+		if(contentHeight_ <= this.height)
+			scrollOrigin_.y = 0;
+
+		if(showingHorizontalScroll())
+			horizontalScrollbarHolder.hidden = false;
+		else
+			horizontalScrollbarHolder.hidden = true;
+		if(showingVerticalScroll())
+			verticalScrollbarHolder.hidden = false;
+		else
+			verticalScrollbarHolder.hidden = true;
+
+
+		verticalScrollBar.setViewableArea(this.viewportHeight());
+		verticalScrollBar.setMax(contentHeight);
+		verticalScrollBar.setPosition(this.scrollOrigin.y);
+
+		horizontalScrollBar.setViewableArea(this.viewportWidth());
+		horizontalScrollBar.setMax(contentWidth);
+		horizontalScrollBar.setPosition(this.scrollOrigin.x);
+
+
+	} else version(win32_widgets)
+	override void recomputeChildLayout() {
+		super.recomputeChildLayout();
+		SCROLLINFO info;
+		info.cbSize = info.sizeof;
+		info.nPage = viewportHeight;
+		info.fMask = SIF_PAGE | SIF_RANGE;
+		info.nMin = 0;
+		info.nMax = contentHeight_;
+		SetScrollInfo(hwnd, SB_VERT, &info, true);
+
+		info.cbSize = info.sizeof;
+		info.nPage = viewportWidth;
+		info.fMask = SIF_PAGE | SIF_RANGE;
+		info.nMin = 0;
+		info.nMax = contentWidth_;
+		SetScrollInfo(hwnd, SB_HORZ, &info, true);
+	} else static assert(0);
+
+
 
 	/*
 		Scrolling
@@ -1371,42 +1491,43 @@ class ScrollableWidget : Widget {
 		the viewportWidth, viewportHeight, and scrollOrigin members.
 	*/
 
-	@property int viewportWidth() {
+	final @property int viewportWidth() {
 		return width - (showingVerticalScroll ? 16 : 0);
 	}
-	@property int viewportHeight() {
+	final @property int viewportHeight() {
 		return height - (showingHorizontalScroll ? 16 : 0);
 	}
 
 	// FIXME property
-	Point scrollOrigin;
+	Point scrollOrigin_;
+
+	final const(Point) scrollOrigin() {
+		return scrollOrigin_;
+	}
 
 	// the user sets these two
-	private int contentWidth = 0;
-	private int contentHeight = 0;
+	private int contentWidth_ = 0;
+	private int contentHeight_ = 0;
+
+	int contentWidth() { return contentWidth_; }
+	int contentHeight() { return contentHeight_; }
 
 	void setContentSize(int width, int height) {
-		contentWidth = width;
-		contentHeight = height;
+		contentWidth_ = width;
+		contentHeight_ = height;
 
-		if(showingVerticalScroll || showingHorizontalScroll) {
+		version(custom_widgets) {
+			if(showingVerticalScroll || showingHorizontalScroll) {
+				recomputeChildLayout();
+			}
+
+			if(showingVerticalScroll())
+				verticalScrollBar.redraw();
+			if(showingHorizontalScroll())
+				horizontalScrollBar.redraw();
+		} else version(win32_widgets) {
 			recomputeChildLayout();
-		}
-
-
-		if(showingHorizontalScroll())
-			horizontalScrollbarHolder.hidden = false;
-		else
-			horizontalScrollbarHolder.hidden = true;
-		if(showingVerticalScroll())
-			verticalScrollbarHolder.hidden = false;
-		else
-			verticalScrollbarHolder.hidden = true;
-
-		if(showingVerticalScroll())
-			verticalScrollBar.redraw();
-		if(showingHorizontalScroll())
-			horizontalScrollBar.redraw();
+		} else static assert(0);
 
 	}
 
@@ -1414,20 +1535,22 @@ class ScrollableWidget : Widget {
 		verticalScrollTo(scrollOrigin.y + delta);
 	}
 	void verticalScrollTo(int pos) {
-		scrollOrigin.y = pos;
-		if(scrollOrigin.y + viewportHeight > contentHeight)
-			scrollOrigin.y = contentHeight - viewportHeight;
+		scrollOrigin_.y = pos;
+		if(scrollOrigin_.y + viewportHeight > contentHeight)
+			scrollOrigin_.y = contentHeight - viewportHeight;
 
-		if(scrollOrigin.y < 0)
-			scrollOrigin.y = 0;
+		if(scrollOrigin_.y < 0)
+			scrollOrigin_.y = 0;
 
-
-		int viewableScrollArea = viewportHeight;
-		int totalScrollArea = contentHeight;
-		int totalScrollBarArea = verticalScrollBar.thumb.height;
-		int thumbPosition = scrollOrigin.y * totalScrollBarArea / totalScrollArea;
-		int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-		verticalScrollBar.thumb.positionY = thumbPosition;
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.fMask = SIF_POS;
+			info.nPos = scrollOrigin_.y;
+			SetScrollInfo(hwnd, SB_VERT, &info, true);
+		} else version(custom_widgets) {
+			verticalScrollBar.setPosition(scrollOrigin_.y);
+		} else static assert(0);
 
 		redraw();
 	}
@@ -1436,26 +1559,52 @@ class ScrollableWidget : Widget {
 		horizontalScrollTo(scrollOrigin.x + delta);
 	}
 	void horizontalScrollTo(int pos) {
-		scrollOrigin.x = pos;
-		if(scrollOrigin.x + viewportWidth > contentWidth)
-			scrollOrigin.x = contentWidth - viewportWidth;
+		scrollOrigin_.x = pos;
+		if(scrollOrigin_.x + viewportWidth > contentWidth)
+			scrollOrigin_.x = contentWidth - viewportWidth;
 
-		if(scrollOrigin.x < 0)
-			scrollOrigin.x = 0;
+		if(scrollOrigin_.x < 0)
+			scrollOrigin_.x = 0;
 
-
-		int viewableScrollArea = viewportWidth;
-		int totalScrollArea = contentWidth;
-		int totalScrollBarArea = horizontalScrollBar.thumb.width;
-		int thumbPosition = scrollOrigin.x * totalScrollBarArea / totalScrollArea;
-		int thumbSize = viewableScrollArea * totalScrollBarArea / totalScrollArea;
-		horizontalScrollBar.thumb.positionX = thumbPosition;
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.fMask = SIF_POS;
+			info.nPos = scrollOrigin_.x;
+			SetScrollInfo(hwnd, SB_HORZ, &info, true);
+		} else version(custom_widgets) {
+			horizontalScrollBar.setPosition(scrollOrigin_.x);
+		} else static assert(0);
 
 		redraw();
 	}
 	void scrollTo(Point p) {
 		verticalScrollTo(p.y);
 		horizontalScrollTo(p.x);
+	}
+
+	void ensureVisibleInScroll(Point p) {
+		auto rect = viewportRectangle();
+		if(rect.contains(p))
+			return;
+		if(p.x < rect.left)
+			horizontalScroll(p.x - rect.left);
+		else if(p.x > rect.right)
+			horizontalScroll(p.x - rect.right);
+
+		if(p.y < rect.top)
+			verticalScroll(p.y - rect.top);
+		else if(p.y > rect.bottom)
+			verticalScroll(p.y - rect.bottom);
+	}
+
+	void ensureVisibleInScroll(Rectangle rect) {
+		ensureVisibleInScroll(rect.upperLeft);
+		ensureVisibleInScroll(rect.lowerRight);
+	}
+
+	Rectangle viewportRectangle() {
+		return Rectangle(scrollOrigin, Size(viewportWidth, viewportHeight));
 	}
 
 	bool showingHorizontalScroll() {
@@ -1520,139 +1669,93 @@ class ScrollableWidget : Widget {
 				child.privatePaint(painter, painter.originX, painter.originY);
 		}
 	}
-
 }
 
 ///
 abstract class ScrollbarBase : Widget {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		tabStop = false;
 	}
 
-	int viewableArea;
-	int totalScrollableArea;
-}
+	private int viewableArea_;
+	private int max_;
+	private int step_ = 16;
+	private int position_;
 
-///
-version(custom_widgets)
-class HorizontalScrollbar : ScrollbarBase {
-
-	MouseTrackingWidget thumb;
-
-	this(Widget parent = null) {
-		super(parent);
-		// FIXME win32_widgets
-
-		auto vl = new HorizontalLayout(this);
-		auto leftButton = new ArrowButton(ArrowDirection.left, vl);
-		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.horizontal, vl);
-		auto rightButton = new ArrowButton(ArrowDirection.right, vl);
-
-		ScrollableWidget scrollableParent;
-		Widget p = parent;
-		while(p !is null) {
-			if(auto sw = cast(ScrollableWidget) p) {
-				scrollableParent = sw;
-				break;
-			}
-			p = p.parent;
-		}
-
-		leftButton.addEventListener(EventType.triggered, () {
-			if(scrollableParent)
-				scrollableParent.horizontalScroll(-16);
-		});
-		rightButton.addEventListener(EventType.triggered, () {
-			if(scrollableParent)
-				scrollableParent.horizontalScroll(16);
-		});
-
-		thumb.thumbWidth = this.minWidth;
-		thumb.thumbHeight = 16;
-
-		thumb.addEventListener(EventType.change, () {
-			int viewableScrollArea = scrollableParent.viewportWidth;
-			int totalScrollArea = scrollableParent.contentWidth;
-			int totalScrollBarArea = thumb.width;
-
-			auto sx = thumb.positionX * totalScrollArea / totalScrollBarArea;
-
-			scrollableParent.horizontalScrollTo(sx);
-		});
-
+	void setViewableArea(int a) {
+		viewableArea_ = a;
+	}
+	void setMax(int a) {
+		max_ = a;
+	}
+	int max() {
+		return max_;
+	}
+	void setPosition(int a) {
+		position_ = max ? a : 0;
+	}
+	int position() {
+		return position_;
+	}
+	void setStep(int a) {
+		step_ = a;
+	}
+	int step() {
+		return step_;
 	}
 
-	override int minHeight() { return 16; }
-	override int maxHeight() { return 16; }
-	override int minWidth() { return 48; }
-}
-
-///show
-version(custom_widgets)
-class VerticalScrollbar : ScrollbarBase {
-
-	MouseTrackingWidget thumb;
-
-	this(Widget parent = null) {
-		super(parent);
-		// FIXME win32_widgets
-
-		auto vl = new VerticalLayout(this);
-		auto upButton = new ArrowButton(ArrowDirection.up, vl);
-		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.vertical, vl);
-		auto downButton = new ArrowButton(ArrowDirection.down, vl);
-
-		ScrollableWidget scrollableParent;
-		Widget p = parent;
-		while(p !is null) {
-			if(auto sw = cast(ScrollableWidget) p) {
-				scrollableParent = sw;
-				break;
-			}
-			p = p.parent;
-		}
-
-		upButton.addEventListener(EventType.triggered, () {
-			if(scrollableParent)
-				scrollableParent.verticalScroll(-16);
-		});
-		downButton.addEventListener(EventType.triggered, () {
-			if(scrollableParent)
-				scrollableParent.verticalScroll(16);
-		});
-
-		thumb.thumbWidth = this.minWidth;
-		thumb.thumbHeight = 16;
-
-		thumb.addEventListener(EventType.change, () {
-			int viewableScrollArea = scrollableParent.viewportHeight;
-			int totalScrollArea = scrollableParent.contentHeight;
-			int totalScrollBarArea = thumb.height;
-
-			auto sy = thumb.positionY * totalScrollArea / totalScrollBarArea;
-
-			scrollableParent.verticalScrollTo(sy);
-		});
-
+	protected void informProgramThatUserChangedPosition(int n) {
+		position_ = n;
+		auto evt = new Event(EventType.change, this);
+		evt.dispatch();
 	}
 
-	override int minWidth() { return 16; }
-	override int maxWidth() { return 16; }
-	override int minHeight() { return 48; }
+	version(custom_widgets) {
+		abstract protected int getBarDim();
+		int thumbSize() {
+			int res;
+			if(max_) {
+				res = getBarDim() * viewableArea_ / max_;
+			}
+			if(res < 6)
+				res = 6;
+
+			return res;
+		}
+
+		int thumbPosition() {
+			if(max_) {
+				auto res = position_ * viewableArea_ / max_;
+				if(res + thumbSize() > getBarDim())
+					res = getBarDim() - thumbSize();
+				if(res < 0)
+					res = 0;
+				return res;
+			}
+			return 0;
+		}
+	}
 }
+
+//public import mgt;
 
 /++
 	A mouse tracking widget is one that follows the mouse when dragged inside it.
 
 	Concrete subclasses may include a scrollbar thumb and a volume control.
 +/
-version(custom_widgets)
+//version(custom_widgets)
 class MouseTrackingWidget : Widget {
-	int mouseTrackerPosition;
 
-	int positionX;
-	int positionY;
+	int positionX() { return positionX_; }
+	int positionY() { return positionY_; }
+
+	void positionX(int p) { positionX_ = p; }
+	void positionY(int p) { positionY_ = p; }
+
+	private int positionX_;
+	private int positionY_;
 
 	///
 	enum Orientation {
@@ -1661,8 +1764,13 @@ class MouseTrackingWidget : Widget {
 		twoDimensional, ///
 	}
 
-	int thumbWidth;
-	int thumbHeight;
+	private int thumbWidth_;
+	private int thumbHeight_;
+
+	int thumbWidth() { return thumbWidth_; }
+	int thumbHeight() { return thumbHeight_; }
+	int thumbWidth(int a) { return thumbWidth_ = a; }
+	int thumbHeight(int a) { return thumbHeight_ = a; }
 
 	this(Orientation orientation, Widget parent = null) {
 		super(parent);
@@ -1751,6 +1859,7 @@ class MouseTrackingWidget : Widget {
 			redraw();
 		});
 
+		version(custom_widgets)
 		this.paint = (ScreenPainter painter) {
 			auto c = lighten(windowBackgroundColor, 0.2);
 			painter.outlineColor = c;
@@ -1764,13 +1873,190 @@ class MouseTrackingWidget : Widget {
 	}
 }
 
+version(custom_widgets)
+private
+class HorizontalScrollbar : ScrollbarBase {
+
+	version(custom_widgets) {
+		private MouseTrackingWidget thumb;
+
+		override int getBarDim() {
+			return thumb.width;
+		}
+	}
+
+	override void setViewableArea(int a) {
+		super.setViewableArea(a);
+
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.nPage = a;
+			info.fMask = SIF_PAGE;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			// intentionally blank
+		} else static assert(0);
+
+	}
+
+	override void setMax(int a) {
+		super.setMax(a);
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.nMin = 0;
+			info.nMax = max;
+			info.fMask = SIF_RANGE;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		}
+	}
+
+	override void setPosition(int a) {
+		super.setPosition(a);
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.fMask = SIF_POS;
+			info.nPos = position;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionX = thumbPosition();
+			thumb.thumbWidth = thumbSize;
+			thumb.redraw();
+		} else static assert(0);
+	}
+
+	this(Widget parent) {
+		super(parent);
+
+		version(win32_widgets) {
+			createWin32Window(this, "Scrollbar", "", 
+				0|WS_CHILD|WS_VISIBLE|SBS_HORZ|SBS_BOTTOMALIGN, 0);
+		} else version(custom_widgets) {
+			auto vl = new HorizontalLayout(this);
+			auto leftButton = new ArrowButton(ArrowDirection.left, vl);
+			thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.horizontal, vl);
+			auto rightButton = new ArrowButton(ArrowDirection.right, vl);
+
+			leftButton.addEventListener(EventType.triggered, () {
+				informProgramThatUserChangedPosition(position - step());
+			});
+			rightButton.addEventListener(EventType.triggered, () {
+				informProgramThatUserChangedPosition(position + step());
+			});
+
+			thumb.thumbWidth = this.minWidth;
+			thumb.thumbHeight = 16;
+
+			thumb.addEventListener(EventType.change, () {
+				auto sx = thumb.positionX * max() / thumb.width;
+				informProgramThatUserChangedPosition(sx);
+			});
+		}
+	}
+
+	override int minHeight() { return 16; }
+	override int maxHeight() { return 16; }
+	override int minWidth() { return 48; }
+}
+
+version(custom_widgets)
+private
+class VerticalScrollbar : ScrollbarBase {
+
+	version(custom_widgets) {
+		override int getBarDim() {
+			return thumb.height;
+		}
+
+		private MouseTrackingWidget thumb;
+	}
+
+	override void setViewableArea(int a) {
+		super.setViewableArea(a);
+
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.nPage = a;
+			info.fMask = SIF_PAGE;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			// intentionally blank
+		} else static assert(0);
+
+	}
+
+	override void setMax(int a) {
+		super.setMax(a);
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.nMin = 0;
+			info.nMax = max;
+			info.fMask = SIF_RANGE;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		}
+	}
+
+	override void setPosition(int a) {
+		super.setPosition(a);
+		version(win32_widgets) {
+			SCROLLINFO info;
+			info.cbSize = info.sizeof;
+			info.fMask = SIF_POS;
+			info.nPos = position;
+			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionY = thumbPosition;
+			thumb.thumbHeight = thumbSize;
+			thumb.redraw();
+		} else static assert(0);
+	}
+
+	this(Widget parent) {
+		super(parent);
+
+		version(win32_widgets) {
+			createWin32Window(this, "Scrollbar", "", 
+				0|WS_CHILD|WS_VISIBLE|SBS_VERT|SBS_RIGHTALIGN, 0);
+		} else version(custom_widgets) {
+			auto vl = new VerticalLayout(this);
+			auto upButton = new ArrowButton(ArrowDirection.up, vl);
+			thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.vertical, vl);
+			auto downButton = new ArrowButton(ArrowDirection.down, vl);
+
+			upButton.addEventListener(EventType.triggered, () {
+				informProgramThatUserChangedPosition(position - step());
+			});
+			downButton.addEventListener(EventType.triggered, () {
+				informProgramThatUserChangedPosition(position + step());
+			});
+
+			thumb.thumbWidth = this.minWidth;
+			thumb.thumbHeight = 16;
+
+			thumb.addEventListener(EventType.change, () {
+				auto sy = thumb.positionY * max() / thumb.height;
+
+				informProgramThatUserChangedPosition(sy);
+			});
+		}
+	}
+
+	override int minWidth() { return 16; }
+	override int maxWidth() { return 16; }
+	override int minHeight() { return 48; }
+}
+
+
+
 ///
 abstract class Layout : Widget {
 	this(Widget parent = null) {
 		tabStop = false;
 		super(parent);
-		if(parent)
-			this.parentWindow = parent.parentWindow;
 	}
 }
 
@@ -1970,7 +2256,7 @@ class StaticPosition : Layout {
 	the parent content.
 +/
 class FixedPosition : StaticPosition {
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 }
 
 
@@ -2057,6 +2343,7 @@ class Window : Widget {
 
 		version(win32_widgets)
 		win.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+
 			if(hwnd !is this.win.impl.hwnd)
 				return 1; // we don't care...
 			switch(msg) {
@@ -2497,7 +2784,6 @@ class ToolBar : Widget {
 		tabStop = false;
 
 		version(win32_widgets) {
-			parentWindow = parent.parentWindow;
 			createWin32Window(this, "ToolbarWindow32", "", 0);
 
 			imageList = ImageList_Create(
@@ -2829,7 +3115,6 @@ class IndefiniteProgressBar : Widget {
 	version(win32_widgets)
 	this(Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "msctls_progress32", "", 8 /* PBS_MARQUEE */);
 		tabStop = false;
 	}
@@ -2841,7 +3126,6 @@ class ProgressBar : Widget {
 	version(win32_widgets)
 	this(Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "msctls_progress32", "", 0);
 		tabStop = false;
 	}
@@ -2936,7 +3220,6 @@ class Fieldset : Widget {
 	this(string legend, Widget parent = null) {
 		super(parent);
 		this.legend = legend;
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", legend, BS_GROUPBOX);
 		tabStop = false;
 	}
@@ -2945,7 +3228,6 @@ class Fieldset : Widget {
 		super(parent);
 		tabStop = false;
 		this.legend = legend;
-		parentWindow = parent.parentWindow;
 		this.paint = (ScreenPainter painter) {
 			painter.fillColor = Color.transparent;
 			painter.pen = Pen(Color.black, 1);
@@ -3286,7 +3568,6 @@ class Checkbox : MouseActivatedWidget {
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
 	}
 	else version(custom_widgets)
@@ -3363,7 +3644,6 @@ class Radiobox : MouseActivatedWidget {
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", label, BS_AUTORADIOBUTTON);
 	}
 	else version(custom_widgets)
@@ -3453,7 +3733,6 @@ class Button : MouseActivatedWidget {
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
-		parentWindow = parent.parentWindow;
 		createWin32Window(this, "button", label, BS_PUSHBUTTON);
 
 		// FIXME: use ideal button size instead
@@ -3587,7 +3866,6 @@ class TextLabel : Widget {
 		this.label = label;
 		this.tabStop = false;
 		super(parent);
-		parentWindow = parent.parentWindow;
 		paint = (ScreenPainter painter) {
 			painter.outlineColor = Color.black;
 			painter.drawText(Point(0, 0), this.label, Point(width,height), TextAlignment.Right);
@@ -3599,8 +3877,14 @@ class TextLabel : Widget {
 version(custom_widgets)
 	mixin ExperimentalTextComponent;
 
+version(win32_widgets)
+	alias EditableTextWidgetParent = Widget; ///
+else version(custom_widgets)
+	alias EditableTextWidgetParent = ScrollableWidget; ///
+else static assert(0);
+
 /// Contains the implementation of text editing
-abstract class EditableTextWidget : ScrollableWidget {
+abstract class EditableTextWidget : EditableTextWidgetParent {
 	this(Widget parent = null) {
 		super(parent);
 	}
@@ -3767,6 +4051,7 @@ abstract class EditableTextWidget : ScrollableWidget {
 					redraw();
 				}
 				*/
+				ensureVisibleInScroll(textLayout.caretBoundingBox());
 			});
 
 			static if(UsingSimpledisplayX11)
@@ -3787,7 +4072,6 @@ class LineEdit : EditableTextWidget {
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
-			parentWindow = parent.parentWindow;
 			createWin32Window(this, "edit", "", 
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
@@ -3806,7 +4090,6 @@ class TextEdit : EditableTextWidget {
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
-			parentWindow = parent.parentWindow;
 			createWin32Window(this, "edit", "", 
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 		} else version(custom_widgets) {

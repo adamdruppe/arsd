@@ -11157,6 +11157,21 @@ mixin template ExperimentalTextComponent() {
 			}
 		}
 
+		Rectangle caretBoundingBox() {
+			int x, y1, y2;
+			if(caret.inlineElement is null) {
+				x = boundingBox.left;
+				y1 = boundingBox.top + 2;
+				y2 = boundingBox.top + 16;
+			} else {
+				x = caret.inlineElement.xOfIndex(caret.offset);
+				y1 = caret.inlineElement.boundingBox.top + 2;
+				y2 = caret.inlineElement.boundingBox.bottom - 2;
+			}
+
+			return Rectangle(x, y1, x + 1, y2);
+		}
+
 		void eraseCaret(ScreenPainter painter) {
 			//painter.setClipRectangle(boundingBox);
 			if(!caretShowingOnScreen) return;
