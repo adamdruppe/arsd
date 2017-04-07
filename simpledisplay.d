@@ -1065,6 +1065,27 @@ string sdpyWindowClass () {
 	will need to destroy it yourself.
 +/
 class SimpleWindow : CapableOfHandlingNativeEvent {
+
+	version(X11) {
+		void recreateAfterDisconnect() {
+			if(!stateDiscarded) return;
+
+			if(_parent !is null && _parent.stateDiscarded)
+				_parent.recreateAfterDisconnect();
+
+			impl.createWindow(_width, _height, _title, openglMode, _parent);
+		}
+
+		bool stateDiscarded;
+		void discardConnectionState() {
+			if(XDisplayConnection.display)
+				impl.dispose(); // if display is already null, it is hopeless to try to destroy stuff on it anyway
+			stateDiscarded = true;
+		}
+	}
+
+
+	SimpleWindow _parent;
 	bool beingOpenKeepsAppOpen = true;
 	/++
 		This creates a window with the given options. The window will be visible and able to receive input as soon as you start your event loop. You may draw on it immediately after creating the window, without needing to wait for the event loop to start if you want.
@@ -1093,6 +1114,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		this.windowType = windowType;
 		this.customizationFlags = customizationFlags;
 		this._title = (title is null ? "D Application" : title);
+		this._parent = parent;
 		impl.createWindow(width, height, this._title, opengl, parent);
 
 		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu)
@@ -1423,8 +1445,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			try {
 				return impl.eventLoop(pulseTimeout);
 			} catch(XDisconnectException e) {
-				if(e.userRequested)
+				if(e.userRequested) {
+					foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
+						item.discardConnectionState();
 					XCloseDisplay(XDisplayConnection.display);
+				}
 
 				XDisplayConnection.display = null;
 
@@ -2094,6 +2119,18 @@ private:
 	use the older version.
 +/
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+
+	version(X11) {
+		void recreateAfterDisconnect() {
+			stateDiscarded = false;
+			throw new Exception("NOT IMPLEMENTED");
+		}
+
+		bool stateDiscarded;
+		void discardConnectionState() {
+			stateDiscarded = true;
+		}
+	}
 
 
 	version(X11) {
@@ -2938,11 +2975,14 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 version(X11) {
 	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
 
+	private Atom*[] interredAtoms; // for discardAndRecreate
+
 	/// Platform specific for X11
 	@property Atom GetAtom(string name, bool create = false)(Display* display) {
 		static Atom a;
 		if(!a) {
 			a = XInternAtom(display, name, !create);
+			interredAtoms ~= &a;
 		}
 		if(a == None)
 			throw new Exception("XInternAtom " ~ name ~ " " ~ (create ? "true":"false"));
@@ -3124,6 +3164,15 @@ version(X11) {
 		)
 	+/
 	public class GlobalHotkeyManager : CapableOfHandlingNativeEvent {
+		version(X11) {
+			void recreateAfterDisconnect() {
+				throw new Exception("NOT IMPLEMENTED");
+			}
+			void discardConnectionState() {
+				throw new Exception("NOT IMPLEMENTED");
+			}
+		}
+
 		private static immutable uint[8] masklist = [ 0,
 			KeyOrButtonMask.LockMask,
 			KeyOrButtonMask.Mod2Mask,
@@ -4573,6 +4622,17 @@ interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
 	/*private*//*protected*/ __gshared CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+
+	version(X11) {
+		// if this is impossible, you are allowed to just throw from it
+		// Note: if you call it from another object, set a flag cuz the manger will call you again
+		void recreateAfterDisconnect();
+		// discard any *connection specific* state, but keep enough that you
+		// can be recreated if possible. discardConnectionState() is always called immediately
+		// before recreateAfterDisconnect(), so you can set a flag there to decide if
+		// you need initialization order
+		void discardConnectionState();
+	}
 }
 
 version(X11)
@@ -6605,6 +6665,56 @@ version(X11) {
 	class XDisplayConnection {
 		private __gshared Display* display;
 		private __gshared XIM xim;
+		private __gshared char* displayName;
+
+		// Attempts recreation of state, may require application assistance
+		// You MUST call this OUTSIDE the event loop. Let the exception kill the loop,
+		// then call this, and if successful, reenter the loop.
+		static void discardAndRecreate(string newDisplayString = null) {
+			if(insideXEventLoop)
+				throw new Error("You MUST call discardAndRecreate from OUTSIDE the event loop");
+
+			// auto swnm = SimpleWindow.nativeMapping.dup; // this SHOULD be unnecessary because all simple windows are capable of handling native events, so the latter ought to do it all
+			auto chnenhm = CapableOfHandlingNativeEvent.nativeHandleMapping.dup;
+
+			foreach(handle; chnenhm) {
+				handle.discardConnectionState();
+			}
+
+			discardState();
+
+			if(newDisplayString !is null)
+				setDisplayName(newDisplayString);
+
+			auto display = get();
+
+			foreach(handle; chnenhm) {
+				handle.recreateAfterDisconnect();
+			}
+		}
+
+		static void discardState() {
+			freeImages();
+
+			foreach(atomPtr; interredAtoms)
+				*atomPtr = 0;
+			interredAtoms = null;
+			interredAtoms.assumeSafeAppend();
+
+			ScreenPainterImplementation.fontAttempted = false;
+			ScreenPainterImplementation.defaultfont = null;
+			ScreenPainterImplementation.defaultfontset = null;
+
+			Image.impl.xshmQueryCompleted = false;
+			Image.impl._xshmAvailable = false;
+
+			SimpleWindow.nativeMapping = null;
+			CapableOfHandlingNativeEvent.nativeHandleMapping = null;
+			// GlobalHotkeyManager
+
+			display = null;
+			xim = null;
+		}
 
 		// Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
 		private static void createXIM () {
@@ -6669,7 +6779,7 @@ version(X11) {
 			}
 		}
 
-		static void freeImages () {
+		static void freeImages () { // needed for discardAndRecreate
 			imglistLocked = true;
 			scope(exit) imglistLocked = false;
 			ImgList* cur = imglist;
@@ -6685,10 +6795,21 @@ version(X11) {
 			imglist = null;
 		}
 
+		/// can be used to override normal handling of display name
+		/// from environment and/or command line
+		static setDisplayName(string newDisplayName) {
+			displayName = cast(char*) (newDisplayName ~ '\0');
+		}
+
+		/// resets to the default display string
+		static resetDisplayName() {
+			displayName = null;
+		}
+
 		///
 		static Display* get() {
 			if(display is null) {
-				display = XOpenDisplay(null);
+				display = XOpenDisplay(displayName);
 				if(display is null)
 					throw new Exception("Unable to open X display");
 				XSetIOErrorHandler(&x11ioerrCB);
@@ -7417,8 +7538,11 @@ version(X11) {
 		int eventLoop(long pulseTimeout) {
 			bool done = false;
 
-			version(X11)
+			version(X11) {
 				XFlush(display);
+				insideXEventLoop = true;
+				scope(exit) insideXEventLoop = false;
+			}
 
 			version(linux) {
 				static import ep = core.sys.linux.epoll;
@@ -7607,6 +7731,8 @@ version(X11) {
 			return 0;
 		}
 	}
+
+	bool insideXEventLoop;
 }
 
 version(X11) {

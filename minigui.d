@@ -68,6 +68,20 @@
 		minigui is compatible with [arsd.script]. If you see `@scriptable` on a method
 		in this documentation, it means you can call it from the script language.
 
+		Tip: to allow easy creation of widget trees from script, import [arsd.minigui_xml]
+		and make [arsd.minigui_xml.makeWidgetFromString] available to your script:
+
+		---
+		import arsd.minigui_xml;
+		import arsd.script;
+
+		var globals = var.emptyObject;
+		globals.makeWidgetFromString = &makeWidgetFromString;
+
+		// this now works
+		interpret(`var window = makeWidgetFromString("<MainWindow />");`, globals);
+		---
+
 		More to come.
 +/
 module arsd.minigui;
@@ -1111,6 +1125,12 @@ class Widget {
 		protected Cursor cursor;
 
 		// maybe I can do something similar cross platform
+
+		void discardXConnectionState() {
+			cursor = None;
+			foreach(child; children)
+				child.discardXConnectionState();
+		}
 	}
 
 	///
