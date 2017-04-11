@@ -917,6 +917,11 @@ else version(X11)
 else
 	static assert(0);
 
+version(without_opengl)
+	enum bool OpenGlEnabled = false;
+else
+	enum bool OpenGlEnabled = true;
+
 
 /++
 	After selecting a type from [WindowTypes], you may further customize
@@ -973,6 +978,8 @@ enum WindowTypes : int {
 	dialog,
 	toolbar
 	*/
+	/// a child nested inside the parent. You must pass a parent window to the ctor
+	nestedChild,
 }
 
 
@@ -1044,6 +1051,24 @@ string sdpyWindowClass () {
 	return null;
 }
 
+TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
+	throw new Exception("not implemented");
+	version(none) {
+	version(X11) {
+		auto display = XDisplayConnection.get;
+		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
+
+		// FIXME: copy that shit
+
+		XDestroyImage(image);
+	} else version(Windows) {
+		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
+
+	} else static assert(0);
+	}
+
+	return null;
+}
 
 /++
 	The flagship window class.
@@ -1066,6 +1091,15 @@ string sdpyWindowClass () {
 +/
 class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
+	/// Be warned: this can be a very slow operation
+	/// FIXME NOT IMPLEMENTED
+	TrueColorImage takeScreenshot() {
+		version(Windows)
+			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
+		else
+			return trueColorImageFromNativeHandle(impl.window, width, height);
+	}
+
 	version(X11) {
 		void recreateAfterDisconnect() {
 			if(!stateDiscarded) return;
@@ -1083,6 +1117,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				recreateAdditionalConnectionState();
 
 			hidden = wasHidden;
+			stateDiscarded = false;
 		}
 
 		bool stateDiscarded;
@@ -1131,7 +1166,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		this._parent = parent;
 		impl.createWindow(width, height, this._title, opengl, parent);
 
-		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu)
+		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild)
 			beingOpenKeepsAppOpen = false;
 	}
 
@@ -4653,8 +4688,15 @@ struct ScreenPainter {
 */
 class Sprite : CapableOfBeingDrawnUpon {
 
+	///
 	ScreenPainter draw() {
 		return ScreenPainter(this, handle);
+	}
+
+	/// Be warned: this can be a very slow operation
+	/// FIXME NOT IMPLEMENTED
+	TrueColorImage takeScreenshot() {
+		return trueColorImageFromNativeHandle(handle, width, height);
 	}
 
 	void delegate() paintingFinishedDg() { return null; }
@@ -4790,6 +4832,9 @@ interface CapableOfBeingDrawnUpon {
 	bool closed();
 
 	void delegate() paintingFinishedDg();
+
+	/// Be warned: this can be a very slow operation
+	TrueColorImage takeScreenshot();
 }
 
 /// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
@@ -5875,6 +5920,10 @@ version(Windows) {
 				case WindowTypes.popupMenu:
 				case WindowTypes.notification:
 					style = WS_POPUP;
+				break;
+				case WindowTypes.nestedChild:
+					style = WS_CHILD;
+				break;
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -7252,6 +7301,7 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
+			// FIXME: do we need to set this as the opengl context to do the glViewport change?
 			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 		}
 
@@ -7568,6 +7618,9 @@ version(X11) {
 					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
 					goto hiddenWindow;
 				//break;
+				case WindowTypes.nestedChild:
+
+				break;
 
 				case WindowTypes.dropdownMenu:
 					motifHideDecorations();
@@ -7727,7 +7780,7 @@ version(X11) {
 			if(buffer)
 				XFreePixmap(display, buffer);
 			bufferw = bufferh = 0;
-			if (blankCurPtr) XFreeCursor(display, blankCurPtr);
+			if (blankCurPtr && cursorSequenceNumber == XDisplayConnection.connectionSequenceNumber) XFreeCursor(display, blankCurPtr);
 			XDestroyWindow(display, window);
 			XFlush(display);
 		}

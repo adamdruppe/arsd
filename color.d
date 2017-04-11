@@ -1328,14 +1328,20 @@ struct Rectangle {
 		return bottom - top;
 	}
 
-	///
+	/// Returns true if this rectangle entirely contains the other
 	bool contains(in Rectangle r) {
 		return contains(r.upperLeft) && contains(r.lowerRight);
 	}
 
-	///
+	/// ditto
 	bool contains(in Point p) {
 		return (p.x >= left && p.y < right && p.y >= top && p.y < bottom);
+	}
+
+	/// Returns true of the two rectangles at any point overlap
+	bool overlaps(in Rectangle r) {
+		// the -1 in here are because right and top are exclusive
+		return !((right-1) < r.left || (r.right-1) < left || (bottom-1) < r.top || (r.bottom-1) < top);
 	}
 }
 

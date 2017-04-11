@@ -59,6 +59,12 @@
 		consume a lot of space, and lower numbers for ones that are better at
 		smaller sizes.
 
+	Overlapped_input:
+		COMING SOON:
+		minigui will include a little bit of I/O functionality that just works
+		with the event loop. If you want to get fancy, I suggest spinning up
+		another thread and posting events back and forth.
+
 	$(H2 Add ons)
 
 	$(H2 XML definitions)
@@ -281,31 +287,6 @@ class DropDownSelection : ComboboxBase {
 			super(3 /* CBS_DROPDOWNLIST */, parent);
 		else version(custom_widgets) {
 			super(parent);
-			paint = delegate(ScreenPainter painter) {
-				draw3dFrame(this, painter, FrameStyle.risen);
-				painter.outlineColor = Color.black;
-				painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
-
-				painter.outlineColor = Color.black;
-				painter.fillColor = Color.black;
-				Point[3] triangle;
-				enum padding = 6;
-				enum paddingV = 8;
-				enum triangleWidth = 10;
-				triangle[0] = Point(width - padding - triangleWidth, paddingV);
-				triangle[1] = Point(width - padding - triangleWidth / 2, height - paddingV);
-				triangle[2] = Point(width - padding - 0, paddingV);
-				painter.drawPolygon(triangle[]);
-
-				if(isFocused()) {
-					painter.fillColor = Color.transparent;
-					painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-					painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-					painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-
-				}
-
-			};
 
 			addEventListener("focus", &this.redraw);
 			addEventListener("blur", &this.redraw);
@@ -317,6 +298,34 @@ class DropDownSelection : ComboboxBase {
 			});
 		} else static assert(false);
 	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		draw3dFrame(this, painter, FrameStyle.risen);
+		painter.outlineColor = Color.black;
+		painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
+
+		painter.outlineColor = Color.black;
+		painter.fillColor = Color.black;
+		Point[3] triangle;
+		enum padding = 6;
+		enum paddingV = 8;
+		enum triangleWidth = 10;
+		triangle[0] = Point(width - padding - triangleWidth, paddingV);
+		triangle[1] = Point(width - padding - triangleWidth / 2, height - paddingV);
+		triangle[2] = Point(width - padding - 0, paddingV);
+		painter.drawPolygon(triangle[]);
+
+		if(isFocused()) {
+			painter.fillColor = Color.transparent;
+			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
+			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+
+		}
+
+	}
+
 }
 
 /++
@@ -424,82 +433,6 @@ class ComboBox : ComboboxBase {
 		}
 	}
 }
-
-/++
-
-+/
-version(custom_widgets)
-class ListWidget : ScrollableWidget {
-
-	static struct Option {
-		string label;
-		bool selected;
-	}
-
-	void setSelection(int y) {
-		if(!multiSelect)
-			foreach(ref opt; options)
-				opt.selected = false;
-		if(y >= 0 && y < options.length)
-			options[y].selected = !options[y].selected;
-
-		auto evt = new Event(EventType.change, this);
-		evt.dispatch();
-
-		redraw();
-
-	}
-
-	this(Widget parent = null) {
-		super(parent);
-
-		defaultEventHandlers["click"] = delegate(Widget _this, Event event) {
-			this.focus();
-			auto y = (event.clientY - 4) / Window.lineHeight;
-			if(y >= 0 && y < options.length) {
-				setSelection(y);
-			}
-		};
-
-		paint = delegate(ScreenPainter painter) {
-			draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
-
-			auto pos = Point(4, 4);
-			foreach(idx, option; options) {
-				painter.fillColor = Color.white;
-				painter.outlineColor = Color.white;
-				painter.drawRectangle(pos, width - 8, Window.lineHeight);
-				painter.outlineColor = Color.black;
-				painter.drawText(pos, option.label);
-				if(option.selected) {
-					painter.rasterOp = RasterOp.xor;
-					painter.outlineColor = Color.white;
-					painter.fillColor = Color(255, 255, 0);
-					painter.drawRectangle(pos, width - 8, Window.lineHeight);
-					painter.rasterOp = RasterOp.normal;
-				}
-				pos.y += Window.lineHeight;
-			}
-		};
-	}
-
-	void addOption(string text) {
-		options ~= Option(text);
-		setContentSize(width, cast(int) (options.length * Window.lineHeight));
-		redraw();
-	}
-
-	void clear() {
-		options = null;
-		redraw();
-	}
-
-	Option[] options;
-	bool multiSelect;
-
-	override int heightStretchiness() { return 6; }
-}
-
 
 /+
 class Spinner : Widget {
@@ -1044,7 +977,80 @@ class Widget {
 
 	private EventHandler[][string] bubblingEventHandlers;
 	private EventHandler[][string] capturingEventHandlers;
-	private EventHandler[string] defaultEventHandlers;
+
+	/++
+		Default event handlers. These are called on the appropriate
+		event unless [Event.preventDefault] is called on the event at
+		some point through the bubbling process.
+
+
+		If you are implementing your own widget and want to add custom
+		events, you should follow the same pattern here: create a virtual
+		function named `defaultEventHandler_eventname` with the implementation,
+		then, override [setupDefaultEventHandlers] and add a wrapped caller to
+		`defaultEventHandlers["eventname"]`. It should be wrapped like so:
+		`defaultEventHandlers["eventname"] = (Widget t, Event event) { t.defaultEventHandler_name(event); };`.
+		This ensures virtual dispatch based on the correct subclass.
+
+		Also, don't forget to call `super.setupDefaultEventHandlers();` too in your
+		overridden version.
+
+		You only need to do that on parent classes adding NEW event types. If you
+		just want to change the default behavior of an existing event type in a subclass,
+		you override the function (and optionally call `super.method_name`) like normal.
+
+	+/
+	protected EventHandler[string] defaultEventHandlers;
+
+	/// ditto
+	void setupDefaultEventHandlers() {
+		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(event); };
+		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(event); };
+		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(event); };
+		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(event); };
+		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(event); };
+		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(event); };
+		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(event); };
+		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(event); };
+		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(event); };
+		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(event); };
+		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(event); };
+		defaultEventHandlers["triggered"] = (Widget t, Event event) { t.defaultEventHandler_triggered(event); };
+		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
+		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
+		defaultEventHandlers["blur"] = (Widget t, Event event) { t.defaultEventHandler_blur(event); };
+	}
+
+	/// ditto
+	void defaultEventHandler_click(Event event) {}
+	/// ditto
+	void defaultEventHandler_keydown(Event event) {}
+	/// ditto
+	void defaultEventHandler_keyup(Event event) {}
+	/// ditto
+	void defaultEventHandler_mousedown(Event event) {}
+	/// ditto
+	void defaultEventHandler_mouseover(Event event) {}
+	/// ditto
+	void defaultEventHandler_mouseout(Event event) {}
+	/// ditto
+	void defaultEventHandler_mouseup(Event event) {}
+	/// ditto
+	void defaultEventHandler_mousemove(Event event) {}
+	/// ditto
+	void defaultEventHandler_mouseenter(Event event) {}
+	/// ditto
+	void defaultEventHandler_mouseleave(Event event) {}
+	/// ditto
+	void defaultEventHandler_char(Event event) {}
+	/// ditto
+	void defaultEventHandler_triggered(Event event) {}
+	/// ditto
+	void defaultEventHandler_change(Event event) {}
+	/// ditto
+	void defaultEventHandler_focus(Event event) {}
+	/// ditto
+	void defaultEventHandler_blur(Event event) {}
 
 	///
 	void addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
@@ -1120,22 +1126,19 @@ class Widget {
 		}
 	}
 
+	MouseCursor cursor() {
+		return GenericCursor.Default;
+	}
+
 	static if(UsingSimpledisplayX11) {
-		// see: http://tronche.com/gui/x/xlib/appendix/b/
-		protected Cursor cursor;
-
-		// maybe I can do something similar cross platform
-
 		void discardXConnectionState() {
-			cursor = None;
 			foreach(child; children)
 				child.discardXConnectionState();
 		}
 
 		void recreateXConnectionState() {
-
 			foreach(child; children)
-				child.discardXConnectionState();
+				child.recreateXConnectionState();
 			redraw();
 		}
 	}
@@ -1212,6 +1215,7 @@ class Widget {
 	this(Widget parent = null) {
 		if(parent !is null)
 			parent.addChild(this);
+		setupDefaultEventHandlers();
 	}
 
 	///
@@ -1227,48 +1231,6 @@ class Widget {
 	///
 	@scriptable
 	void hide() { showing = false; }
-
-	void delegate(MouseEvent) handleMouseEvent;
-	void delegate(dchar) handleCharEvent;
-	void delegate(KeyEvent) handleKeyEvent;
-
-	bool dispatchMouseEvent(MouseEvent e) {
-		return eventBase!(MouseEvent, "handleMouseEvent")(e);
-	}
-	bool dispatchKeyEvent(KeyEvent e) {
-		return eventBase!(KeyEvent, "handleKeyEvent")(e);
-	}
-	bool dispatchCharEvent(dchar e) {
-		return eventBase!(dchar, "handleCharEvent")(e);
-	}
-
-	private bool eventBase(EventType, string handler)(EventType e) {
-
-		static if(is(EventType == MouseEvent)) {
-		/*
-			assert(e.x >= 0);
-			assert(e.y >= 0);
-			assert(e.x < width);
-			assert(e.y < height);
-		*/
-
-			auto child = getChildAtPosition(e.x, e.y);
-			if(child !is null) {
-				e.x -= child.x;
-				e.y -= child.y;
-				if(mixin("child." ~ handler) !is null)
-					mixin("child." ~ handler)(e);
-				return true;
-			}
-		}
-
-		if(mixin(handler) !is null) {
-			mixin(handler)(e);
-			return true;
-		}
-
-		return false;
-	}
 
 	///
 	@scriptable
@@ -1345,7 +1307,7 @@ class Widget {
 	}
 
 	///
-	void delegate(ScreenPainter painter) paint;
+	void paint(ScreenPainter painter) {}
 
 	///
 	ScreenPainter draw() {
@@ -1373,8 +1335,7 @@ class Widget {
 
 		painter.setClipRectangle(Point(0, 0), width, height);
 
-		if(paint !is null)
-			paint(painter);
+		paint(painter);
 		foreach(child; children)
 			child.privatePaint(painter, painter.originX, painter.originY);
 	}
@@ -1421,6 +1382,156 @@ class Widget {
 
 	SimpleWindow drawableWindow;
 }
+
+/++
+	Nests an opengl capable window inside this window as a widget.
+
+	You may also just want to create an additional [SimpleWindow] with
+	[OpenGlOptions.yes] yourself.
+
+	An OpenGL widget cannot have child widgets. It will throw if you try.
++/
+static if(OpenGlEnabled)
+class OpenGlWidget : Widget {
+	SimpleWindow win;
+
+	///
+	this(Widget parent) {
+		this.parentWindow = parent.parentWindow;
+		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, this.parentWindow.win);
+		super(parent);
+
+		version(Windows) {
+			Widget.nativeMapping[win.hwnd] = this;
+			this.originalWindowProcedure = cast(WNDPROC) SetWindowLong(win.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+		} else static if(UsingSimpledisplayX11) {
+			win.setEventHandlers(
+				(MouseEvent e) {
+					Widget p = this;
+					while(p ! is parentWindow) {
+						e.x += p.x;
+						e.y += p.y;
+						p = p.parent;
+					}
+					parentWindow.dispatchMouseEvent(e);
+				},
+				(KeyEvent e) {
+					//import std.stdio;
+					//writefln("%x   %s", cast(uint) e.key, e.key);
+					parentWindow.dispatchKeyEvent(e);
+				},
+				(dchar e) {
+					parentWindow.dispatchCharEvent(e);
+				},
+			);
+		}
+	}
+
+	override void paint(ScreenPainter painter) {
+		win.redrawOpenGlSceneNow();
+	}
+
+	void redrawOpenGlScene(void delegate() dg) {
+		win.redrawOpenGlScene = dg;
+	}
+
+	/// OpenGL widgets cannot have child widgets.
+	@disable final override void addChild(Widget, int) {
+		throw new Error("cannot add children to OpenGL widgets");
+	}
+
+	/// When an opengl widget is laid out, it will adjust the glViewport for you automatically.
+	/// Keep in mind that events like mouse coordinates are still relative to your size.
+	override void registerMovement() {
+		//import std.stdio; writefln("%d %d %d %d", x,y,width,height);
+		version(win32_widgets)
+			auto pos = getChildPositionRelativeToParentHwnd(this);
+		else
+			auto pos = getChildPositionRelativeToParentOrigin(this);
+		win.moveResize(pos[0], pos[1], width, height);
+	}
+
+	//void delegate() drawFrame;
+}
+
+/++
+
++/
+version(custom_widgets)
+class ListWidget : ScrollableWidget {
+
+	static struct Option {
+		string label;
+		bool selected;
+	}
+
+	void setSelection(int y) {
+		if(!multiSelect)
+			foreach(ref opt; options)
+				opt.selected = false;
+		if(y >= 0 && y < options.length)
+			options[y].selected = !options[y].selected;
+
+		auto evt = new Event(EventType.change, this);
+		evt.dispatch();
+
+		redraw();
+
+	}
+
+	override void defaultEventHandler_click(Event event) {
+		this.focus();
+		auto y = (event.clientY - 4) / Window.lineHeight;
+		if(y >= 0 && y < options.length) {
+			setSelection(y);
+		}
+		super.defaultEventHandler_click(event);
+	}
+
+	this(Widget parent = null) {
+		super(parent);
+	}
+
+	override void paint(ScreenPainter painter) {
+		draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
+
+		auto pos = Point(4, 4);
+		foreach(idx, option; options) {
+			painter.fillColor = Color.white;
+			painter.outlineColor = Color.white;
+			painter.drawRectangle(pos, width - 8, Window.lineHeight);
+			painter.outlineColor = Color.black;
+			painter.drawText(pos, option.label);
+			if(option.selected) {
+				painter.rasterOp = RasterOp.xor;
+				painter.outlineColor = Color.white;
+				painter.fillColor = Color(255, 255, 0);
+				painter.drawRectangle(pos, width - 8, Window.lineHeight);
+				painter.rasterOp = RasterOp.normal;
+			}
+			pos.y += Window.lineHeight;
+		}
+	}
+
+
+	void addOption(string text) {
+		options ~= Option(text);
+		setContentSize(width, cast(int) (options.length * Window.lineHeight));
+		redraw();
+	}
+
+	void clear() {
+		options = null;
+		redraw();
+	}
+
+	Option[] options;
+	bool multiSelect;
+
+	override int heightStretchiness() { return 6; }
+}
+
+
 
 /// For [ScrollableWidget], determines when to show the scroll bar to the user.
 enum ScrollBarShowPolicy {
@@ -1542,6 +1653,14 @@ class ScrollableWidget : Widget {
 		} else static assert(0);
 
 		super(parent);
+	}
+
+	override void defaultEventHandler_click(Event event) {
+		if(event.button == MouseButton.wheelUp)
+			verticalScroll(-16);
+		if(event.button == MouseButton.wheelDown)
+			verticalScroll(16);
+		super.defaultEventHandler_click(event);
 	}
 
 	version(custom_widgets) {
@@ -1815,8 +1934,8 @@ class ScrollableWidget : Widget {
 		painter.originX = x;
 		painter.originY = y;
 
-		painter.originX -= scrollOrigin.x;
-		painter.originY -= scrollOrigin.y;
+		painter.originX = painter.originX - scrollOrigin.x;
+		painter.originY = painter.originY - scrollOrigin.y;
 		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
 
 		return painter;
@@ -1831,12 +1950,11 @@ class ScrollableWidget : Widget {
 		painter.setClipRectangle(Point(0, 0), width, height);
 		paintFrameAndBackground(painter);
 
-		painter.originX -= scrollOrigin.x;
-		painter.originY -= scrollOrigin.y;
+		painter.originX = painter.originX - scrollOrigin.x;
+		painter.originY = painter.originY - scrollOrigin.y;
 		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
 
-		if(paint !is null)
-			paint(painter);
+		paint(painter);
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
 				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y);
@@ -1963,16 +2081,15 @@ class MouseTrackingWidget : Widget {
 	///
 	int thumbHeight(int a) { return thumbHeight_ = a; }
 
+	private bool dragging;
+	private bool hovering;
+	private int startMouseX, startMouseY;
+
 	///
 	this(Orientation orientation, Widget parent = null) {
 		super(parent);
 
 		//assert(parentWindow !is null);
-
-		bool dragging;
-		bool hovering;
-
-		int startMouseX, startMouseY;
 
 		addEventListener(EventType.mousedown, (Event event) {
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
@@ -2050,18 +2167,17 @@ class MouseTrackingWidget : Widget {
 
 			redraw();
 		});
+	}
 
-		version(custom_widgets)
-		this.paint = (ScreenPainter painter) {
-			auto c = lighten(windowBackgroundColor, 0.2);
-			painter.outlineColor = c;
-			painter.fillColor = c;
-			painter.drawRectangle(Point(0, 0), this.width, this.height);
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		auto c = lighten(windowBackgroundColor, 0.2);
+		painter.outlineColor = c;
+		painter.fillColor = c;
+		painter.drawRectangle(Point(0, 0), this.width, this.height);
 
-			auto color = hovering ? Color(215, 215, 215) : windowBackgroundColor;
-			draw3dFrame(positionX, positionY, thumbWidth, thumbHeight, painter, FrameStyle.risen, color);
-
-		};
+		auto color = hovering ? Color(215, 215, 215) : windowBackgroundColor;
+		draw3dFrame(positionX, positionY, thumbWidth, thumbHeight, painter, FrameStyle.risen, color);
 	}
 }
 
@@ -2487,6 +2603,8 @@ class Window : Widget {
 		super(p);
 	}
 
+	private bool skipNextChar = false;
+
 	///
 	this(SimpleWindow win) {
 
@@ -2539,8 +2657,6 @@ class Window : Widget {
 			},
 		);
 
-		bool skipNextChar = false;
-
 		addEventListener("char", (Widget, Event ev) {
 			if(skipNextChar) {
 				ev.preventDefault();
@@ -2585,113 +2701,113 @@ class Window : Widget {
 		};
 
 
-		defaultEventHandlers["keydown"] = delegate void(Widget ignored, Event event) {
-			Widget _this = event.target;
-
-			if(event.key == Key.Tab) {
-				/* Window tab ordering is a recursive thingy with each group */
-
-				// FIXME inefficient
-				Widget[] helper(Widget p) {
-					if(p.hidden)
-						return null;
-					Widget[] childOrdering = p.children.dup;
-
-					import std.algorithm;
-					sort!((a, b) => a.tabOrder < b.tabOrder)(childOrdering);
-
-					Widget[] ret;
-					foreach(child; childOrdering) {
-						if(child.tabStop && !child.hidden)
-							ret ~= child;
-						ret ~= helper(child);
-					}
-
-					return ret;
-				}
-
-				Widget[] tabOrdering = helper(this);
-
-				Widget recipient;
-
-				if(tabOrdering.length) {
-					bool seenThis = false;
-					Widget previous;
-					foreach(idx, child; tabOrdering) {
-						if(child is focusedWidget) {
-
-							if(event.shiftKey) {
-								if(idx == 0)
-									recipient = tabOrdering[$-1];
-								else
-									recipient = tabOrdering[idx - 1];
-								break;
-							}
-
-							seenThis = true;
-							if(idx + 1 == tabOrdering.length) {
-								// we're at the end, either move to the next group
-								// or start back over
-								recipient = tabOrdering[0];
-							}
-							continue;
-						}
-						if(seenThis) {
-							recipient = child;
-							break;
-						}
-						previous = child;
-					}
-				}
-
-				if(recipient !is null) {
-					// import std.stdio; writeln(typeid(recipient));
-					recipient.focus();
-					/*
-					version(win32_widgets) {
-						if(recipient.hwnd !is null)
-							SetFocus(recipient.hwnd);
-					} else version(custom_widgets) {
-						focusedWidget = recipient;
-					} else static assert(false);
-					*/
-
-					skipNextChar = true;
-				}
-			}
-		};
-
 
 		if(lineHeight == 0) {
 			auto painter = win.draw();
 			lineHeight = painter.fontHeight() * 5 / 4;
 		}
-
-		version(win32_widgets) {
-			this.paint = (ScreenPainter painter) {
-				/*
-				RECT rect;
-				rect.right = this.width;
-				rect.bottom = this.height;
-				DrawThemeBackground(theme, painter.impl.hdc, 4, 1, &rect, null);
-				*/
-				// 3dface is used as window backgrounds by Windows too, so that's why I'm using it here
-				auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
-				auto p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
-				// since the pen is null, to fill the whole space, we need the +1 on both.
-				gdi.Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
-				SelectObject(painter.impl.hdc, p);
-				SelectObject(painter.impl.hdc, b);
-			};
-		}
-		else version(custom_widgets)
-			this.paint = (ScreenPainter painter) {
-				painter.fillColor = windowBackgroundColor;
-				painter.outlineColor = windowBackgroundColor;
-				painter.drawRectangle(Point(0, 0), this.width, this.height);
-			};
-		else static assert(false);
 	}
+
+	version(win32_widgets)
+	override void paint(ScreenPainter painter) {
+		/*
+		RECT rect;
+		rect.right = this.width;
+		rect.bottom = this.height;
+		DrawThemeBackground(theme, painter.impl.hdc, 4, 1, &rect, null);
+		*/
+		// 3dface is used as window backgrounds by Windows too, so that's why I'm using it here
+		auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+		auto p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
+		// since the pen is null, to fill the whole space, we need the +1 on both.
+		gdi.Rectangle(painter.impl.hdc, 0, 0, this.width + 1, this.height + 1);
+		SelectObject(painter.impl.hdc, p);
+		SelectObject(painter.impl.hdc, b);
+	}
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		painter.fillColor = windowBackgroundColor;
+		painter.outlineColor = windowBackgroundColor;
+		painter.drawRectangle(Point(0, 0), this.width, this.height);
+	}
+
+
+	override void defaultEventHandler_keydown(Event event) {
+		Widget _this = event.target;
+
+		if(event.key == Key.Tab) {
+			/* Window tab ordering is a recursive thingy with each group */
+
+			// FIXME inefficient
+			Widget[] helper(Widget p) {
+				if(p.hidden)
+					return null;
+				Widget[] childOrdering = p.children.dup;
+
+				import std.algorithm;
+				sort!((a, b) => a.tabOrder < b.tabOrder)(childOrdering);
+
+				Widget[] ret;
+				foreach(child; childOrdering) {
+					if(child.tabStop && !child.hidden)
+						ret ~= child;
+					ret ~= helper(child);
+				}
+
+				return ret;
+			}
+
+			Widget[] tabOrdering = helper(this);
+
+			Widget recipient;
+
+			if(tabOrdering.length) {
+				bool seenThis = false;
+				Widget previous;
+				foreach(idx, child; tabOrdering) {
+					if(child is focusedWidget) {
+
+						if(event.shiftKey) {
+							if(idx == 0)
+								recipient = tabOrdering[$-1];
+							else
+								recipient = tabOrdering[idx - 1];
+							break;
+						}
+
+						seenThis = true;
+						if(idx + 1 == tabOrdering.length) {
+							// we're at the end, either move to the next group
+							// or start back over
+							recipient = tabOrdering[0];
+						}
+						continue;
+					}
+					if(seenThis) {
+						recipient = child;
+						break;
+					}
+					previous = child;
+				}
+			}
+
+			if(recipient !is null) {
+				// import std.stdio; writeln(typeid(recipient));
+				recipient.focus();
+				/*
+				version(win32_widgets) {
+					if(recipient.hwnd !is null)
+						SetFocus(recipient.hwnd);
+				} else version(custom_widgets) {
+					focusedWidget = recipient;
+				} else static assert(false);
+				*/
+
+				skipNextChar = true;
+			}
+		}
+	}
+
 
 	///
 	this(int width = 500, int height = 500, string title = null) {
@@ -2709,7 +2825,7 @@ class Window : Widget {
 		win.close();
 	}
 
-	override bool dispatchKeyEvent(KeyEvent ev) {
+	bool dispatchKeyEvent(KeyEvent ev) {
 		if(focusedWidget) {
 			auto event = new Event(ev.pressed ? "keydown" : "keyup", focusedWidget);
 			event.character = ev.character;
@@ -2718,21 +2834,21 @@ class Window : Widget {
 			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
 			event.dispatch();
 		}
-		return super.dispatchKeyEvent(ev);
+		return true;
 	}
 
-	override bool dispatchCharEvent(dchar ch) {
+	bool dispatchCharEvent(dchar ch) {
 		if(focusedWidget) {
 			auto event = new Event("char", focusedWidget);
 			event.character = ch;
 			event.dispatch();
 		}
-		return super.dispatchCharEvent(ch);
+		return true;
 	}
 
 	Widget mouseLastOver;
 	Widget mouseLastDownOn;
-	override bool dispatchMouseEvent(MouseEvent ev) {
+	bool dispatchMouseEvent(MouseEvent ev) {
 		auto eleR = widgetAtPoint(this, ev.x, ev.y);
 		auto ele = eleR.widget;
 
@@ -2788,8 +2904,16 @@ class Window : Widget {
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
 
-						static if(UsingSimpledisplayX11)
-							XDefineCursor(XDisplayConnection.get(), ele.parentWindow.win.impl.window, ele.cursor);
+						auto cursor = ele.cursor ? ele.cursor.cursorHandle : cast(typeof(ele.cursor.cursorHandle())) 0;
+						if(ele.parentWindow.win.curHidden <= 0) {
+						static if(UsingSimpledisplayX11) {
+							XDefineCursor(XDisplayConnection.get(), ele.parentWindow.win.impl.window, cursor);
+						} else version(Windows) {
+							// FIXME i don't like this
+							if(cursor !is null)
+								SetCursor(cursor);
+						} else static assert(0);
+						}
 					}
 				}
 
@@ -2817,7 +2941,7 @@ class Window : Widget {
 			}
 		}
 
-		return super.dispatchMouseEvent(ev);
+		return true;
 	}
 
 	///
@@ -2911,13 +3035,6 @@ class MainWindow : Window {
 	this(string title = null) {
 		super(500, 500, title);
 
-		defaultEventHandlers["mouseover"] = delegate void(Widget _this, Event event) {
-			if(this.statusBar !is null && event.target.statusTip.length)
-				this.statusBar.parts[0].content = event.target.statusTip;
-			else if(this.statusBar !is null && _this.statusTip.length)
-				this.statusBar.parts[0].content = _this.statusTip; // ~ " " ~ event.target.toString();
-		};
-
 		_clientArea = new ClientAreaWidget();
 		_clientArea.x = 0;
 		_clientArea.y = 0;
@@ -2928,6 +3045,14 @@ class MainWindow : Window {
 		super.addChild(_clientArea);
 
 		statusBar = new StatusBar(this);
+	}
+
+	override void defaultEventHandler_mouseover(Event event) {
+		super.defaultEventHandler_mouseover(event);
+		if(this.statusBar !is null && event.target.statusTip.length)
+			this.statusBar.parts[0].content = event.target.statusTip;
+		else if(this.statusBar !is null && this.statusTip.length)
+			this.statusBar.parts[0].content = this.statusTip; // ~ " " ~ event.target.toString();
 	}
 
 	override void addChild(Widget c, int position = int.max) {
@@ -3074,83 +3199,12 @@ class ToolButton : Button {
 		super(action.label, parent);
 		tabStop = false;
 		this.action = action;
+	}
 
-		version(win32_widgets) {}
-		else version(custom_widgets) {
-			defaultEventHandlers["click"] = (Widget _this, Event event) {
-				foreach(handler; action.triggered)
-					handler();
-			};
-
-			paint = (ScreenPainter painter) {
-				this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
-
-				painter.outlineColor = Color.black;
-
-				enum iconSize = 32;
-				enum multiplier = iconSize / 16;
-				switch(action.iconId) {
-					case GenericIcons.New:
-						painter.fillColor = Color.white;
-						painter.drawPolygon(
-							Point(3, 2) * multiplier, Point(3, 13) * multiplier, Point(12, 13) * multiplier, Point(12, 6) * multiplier,
-							Point(8, 2) * multiplier, Point(8, 6) * multiplier, Point(12, 6) * multiplier, Point(8, 2) * multiplier
-						);
-					break;
-					case GenericIcons.Save:
-						painter.fillColor = Color.black;
-						painter.drawRectangle(Point(2, 2) * multiplier, Point(13, 13) * multiplier);
-
-						painter.fillColor = Color.white;
-						painter.outlineColor = Color.white;
-						// the slider
-						painter.drawRectangle(Point(5, 2) * multiplier, Point(10, 5) * multiplier);
-						// the label
-						painter.drawRectangle(Point(4, 8) * multiplier, Point(11, 12) * multiplier);
-
-						painter.fillColor = Color.black;
-						painter.outlineColor = Color.black;
-						// the disc window
-						painter.drawRectangle(Point(8, 3) * multiplier, Point(9, 4) * multiplier);
-					break;
-					case GenericIcons.Open:
-						painter.fillColor = Color.white;
-						painter.drawPolygon(
-							Point(2, 4) * multiplier, Point(2, 12) * multiplier, Point(13, 12) * multiplier, Point(13, 3) * multiplier,
-							Point(9, 3) * multiplier, Point(9, 4) * multiplier, Point(2, 4) * multiplier);
-						painter.drawLine(Point(2, 6) * multiplier, Point(13, 7) * multiplier);
-						//painter.drawLine(Point(9, 6) * multiplier, Point(13, 7) * multiplier);
-					break;
-					case GenericIcons.Copy:
-						painter.fillColor = Color.white;
-						painter.drawRectangle(Point(3, 2) * multiplier, Point(9, 10) * multiplier);
-						painter.drawRectangle(Point(6, 5) * multiplier, Point(12, 13) * multiplier);
-					break;
-					case GenericIcons.Cut:
-						painter.fillColor = Color.transparent;
-						painter.drawLine(Point(3, 2) * multiplier, Point(10, 9) * multiplier);
-						painter.drawLine(Point(4, 9) * multiplier, Point(11, 2) * multiplier);
-						painter.drawRectangle(Point(3, 9) * multiplier, Point(5, 13) * multiplier);
-						painter.drawRectangle(Point(9, 9) * multiplier, Point(11, 12) * multiplier);
-					break;
-					case GenericIcons.Paste:
-						painter.fillColor = Color.white;
-						painter.drawRectangle(Point(2, 3) * multiplier, Point(11, 11) * multiplier);
-						painter.drawRectangle(Point(6, 8) * multiplier, Point(13, 13) * multiplier);
-						painter.drawLine(Point(6, 2) * multiplier, Point(4, 5) * multiplier);
-						painter.drawLine(Point(6, 2) * multiplier, Point(9, 5) * multiplier);
-						painter.fillColor = Color.black;
-						painter.drawRectangle(Point(4, 5) * multiplier, Point(9, 6) * multiplier);
-					break;
-					case GenericIcons.Help:
-						painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
-					break;
-					default:
-						painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
-				}
-			};
-		}
-		else static assert(false);
+	version(custom_widgets)
+	override void defaultEventHandler_click(Event event) {
+		foreach(handler; action.triggered)
+			handler();
 	}
 
 	Action action;
@@ -3159,6 +3213,75 @@ class ToolButton : Button {
 	override int minWidth() { return 32; }
 	override int maxHeight() { return 32; }
 	override int minHeight() { return 32; }
+
+	override void paint(ScreenPainter painter) {
+		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
+
+		painter.outlineColor = Color.black;
+
+		enum iconSize = 32;
+		enum multiplier = iconSize / 16;
+		switch(action.iconId) {
+			case GenericIcons.New:
+				painter.fillColor = Color.white;
+				painter.drawPolygon(
+					Point(3, 2) * multiplier, Point(3, 13) * multiplier, Point(12, 13) * multiplier, Point(12, 6) * multiplier,
+					Point(8, 2) * multiplier, Point(8, 6) * multiplier, Point(12, 6) * multiplier, Point(8, 2) * multiplier
+				);
+			break;
+			case GenericIcons.Save:
+				painter.fillColor = Color.black;
+				painter.drawRectangle(Point(2, 2) * multiplier, Point(13, 13) * multiplier);
+
+				painter.fillColor = Color.white;
+				painter.outlineColor = Color.white;
+				// the slider
+				painter.drawRectangle(Point(5, 2) * multiplier, Point(10, 5) * multiplier);
+				// the label
+				painter.drawRectangle(Point(4, 8) * multiplier, Point(11, 12) * multiplier);
+
+				painter.fillColor = Color.black;
+				painter.outlineColor = Color.black;
+				// the disc window
+				painter.drawRectangle(Point(8, 3) * multiplier, Point(9, 4) * multiplier);
+			break;
+			case GenericIcons.Open:
+				painter.fillColor = Color.white;
+				painter.drawPolygon(
+					Point(2, 4) * multiplier, Point(2, 12) * multiplier, Point(13, 12) * multiplier, Point(13, 3) * multiplier,
+					Point(9, 3) * multiplier, Point(9, 4) * multiplier, Point(2, 4) * multiplier);
+				painter.drawLine(Point(2, 6) * multiplier, Point(13, 7) * multiplier);
+				//painter.drawLine(Point(9, 6) * multiplier, Point(13, 7) * multiplier);
+			break;
+			case GenericIcons.Copy:
+				painter.fillColor = Color.white;
+				painter.drawRectangle(Point(3, 2) * multiplier, Point(9, 10) * multiplier);
+				painter.drawRectangle(Point(6, 5) * multiplier, Point(12, 13) * multiplier);
+			break;
+			case GenericIcons.Cut:
+				painter.fillColor = Color.transparent;
+				painter.drawLine(Point(3, 2) * multiplier, Point(10, 9) * multiplier);
+				painter.drawLine(Point(4, 9) * multiplier, Point(11, 2) * multiplier);
+				painter.drawRectangle(Point(3, 9) * multiplier, Point(5, 13) * multiplier);
+				painter.drawRectangle(Point(9, 9) * multiplier, Point(11, 12) * multiplier);
+			break;
+			case GenericIcons.Paste:
+				painter.fillColor = Color.white;
+				painter.drawRectangle(Point(2, 3) * multiplier, Point(11, 11) * multiplier);
+				painter.drawRectangle(Point(6, 8) * multiplier, Point(13, 13) * multiplier);
+				painter.drawLine(Point(6, 2) * multiplier, Point(4, 5) * multiplier);
+				painter.drawLine(Point(6, 2) * multiplier, Point(9, 5) * multiplier);
+				painter.fillColor = Color.black;
+				painter.drawRectangle(Point(4, 5) * multiplier, Point(9, 6) * multiplier);
+			break;
+			case GenericIcons.Help:
+				painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+			break;
+			default:
+				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+		}
+	}
+
 }
 
 
@@ -3180,11 +3303,13 @@ class MenuBar : Widget {
 		this(Widget parent = null) {
 			tabStop = false; // these are selected some other way
 			super(parent);
-			this.paint = (ScreenPainter painter) {
-				draw3dFrame(this, painter, FrameStyle.risen);
-			};
 		}
 	} else static assert(false);
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		draw3dFrame(this, painter, FrameStyle.risen);
+	}
 
 	///
 	MenuItem addItem(MenuItem item) {
@@ -3333,22 +3458,25 @@ class StatusBar : Widget {
 			idealHeight = rect.bottom - rect.top;
 			assert(idealHeight);
 		} else version(custom_widgets) {
-			this.paint = (ScreenPainter painter) {
-				this.draw3dFrame(painter, FrameStyle.sunk);
-				int cpos = 0;
-				int remainingLength = this.width;
-				foreach(idx, part; this.partsArray) {
-					auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
-					painter.setClipRectangle(Point(cpos, 0), partWidth, height);
-					draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk);
-					painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
-					painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
-					cpos += partWidth;
-					remainingLength -= partWidth;
-				}
-			};
 		} else static assert(false);
 	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		this.draw3dFrame(painter, FrameStyle.sunk);
+		int cpos = 0;
+		int remainingLength = this.width;
+		foreach(idx, part; this.partsArray) {
+			auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
+			painter.setClipRectangle(Point(cpos, 0), partWidth, height);
+			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk);
+			painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
+			painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
+			cpos += partWidth;
+			remainingLength -= partWidth;
+		}
+	}
+
 
 	version(win32_widgets) {
 		private const int idealHeight;
@@ -3384,13 +3512,16 @@ class ProgressBar : Widget {
 			max = 100;
 			step = 10;
 			tabStop = false;
-			paint = (ScreenPainter painter) {
-				this.draw3dFrame(painter, FrameStyle.sunk);
-				painter.fillColor = Color.blue;
-				painter.drawRectangle(Point(0, 0), width * current / max, height);
-			};
 		} else static assert(0);
 	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		this.draw3dFrame(painter, FrameStyle.sunk);
+		painter.fillColor = Color.blue;
+		painter.drawRectangle(Point(0, 0), width * current / max, height);
+	}
+
 
 	version(custom_widgets) {
 		int current;
@@ -3482,27 +3613,29 @@ class Fieldset : Widget {
 			super(parent);
 			tabStop = false;
 			this.legend = legend;
-			this.paint = (ScreenPainter painter) {
-				painter.fillColor = Color.transparent;
-				painter.pen = Pen(Color.black, 1);
-				painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
-
-				auto tx = painter.textSize(legend);
-				painter.outlineColor = Color.transparent;
-
-				static if(UsingSimpledisplayX11) {
-					painter.fillColor = windowBackgroundColor;
-					painter.drawRectangle(Point(8, 0), tx.width, tx.height);
-				} else version(Windows) {
-					auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
-					painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
-					SelectObject(painter.impl.hdc, b);
-				} else static assert(0);
-				painter.outlineColor = Color.black;
-				painter.drawText(Point(8, 0), legend);
-			};
 		} else static assert(0);
 	}
+
+	override void paint(ScreenPainter painter) {
+		painter.fillColor = Color.transparent;
+		painter.pen = Pen(Color.black, 1);
+		painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
+
+		auto tx = painter.textSize(legend);
+		painter.outlineColor = Color.transparent;
+
+		static if(UsingSimpledisplayX11) {
+			painter.fillColor = windowBackgroundColor;
+			painter.drawRectangle(Point(8, 0), tx.width, tx.height);
+		} else version(Windows) {
+			auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+			painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
+			SelectObject(painter.impl.hdc, b);
+		} else static assert(0);
+		painter.outlineColor = Color.black;
+		painter.drawText(Point(8, 0), legend);
+	}
+
 
 	override int maxHeight() {
 		auto m = paddingTop() + paddingBottom();
@@ -3534,13 +3667,13 @@ class HorizontalRule : Widget {
 	///
 	this(Widget parent = null) {
 		super(parent);
+	}
 
-		paint = (ScreenPainter painter) {
-			painter.outlineColor = Color(128, 128, 128);
-			painter.drawLine(Point(0, 0), Point(width, 0));
-			painter.outlineColor = Color(223, 223, 223);
-			painter.drawLine(Point(0, 1), Point(width, 1));
-		};
+	override void paint(ScreenPainter painter) {
+		painter.outlineColor = Color(128, 128, 128);
+		painter.drawLine(Point(0, 0), Point(width, 0));
+		painter.outlineColor = Color(223, 223, 223);
+		painter.drawLine(Point(0, 1), Point(width, 1));
 	}
 }
 
@@ -3658,14 +3791,16 @@ class Menu : Window {
 
 			super(dropDown);
 
-			this.paint = delegate (ScreenPainter painter) {
-				this.draw3dFrame(painter, FrameStyle.risen);
-			};
 		}
 	} else static assert(false);
 
 	override int maxHeight() { return Window.lineHeight; }
 	override int minHeight() { return Window.lineHeight; }
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		this.draw3dFrame(painter, FrameStyle.risen);
+	}
 }
 
 ///
@@ -3692,35 +3827,36 @@ class MenuItem : MouseActivatedWidget {
 		foreach(char ch; lbl) // FIXME
 			if(ch != '&') // FIXME
 				label ~= ch; // FIXME
-		version(win32_widgets) {}
-		else version(custom_widgets)
-			this.paint = (ScreenPainter painter) {
-				if(isHovering)
-					painter.outlineColor = Color.blue;
-				else
-					painter.outlineColor = Color.black;
-				painter.fillColor = Color.transparent;
-				painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
-			};
-		else static assert(false);
 		tabStop = false; // these are selected some other way
 	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		if(isHovering)
+			painter.outlineColor = Color.blue;
+		else
+			painter.outlineColor = Color.black;
+		painter.fillColor = Color.transparent;
+		painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
+	}
+
 
 	///
 	this(Action action, Widget parent = null) {
 		assert(action !is null);
 		this(action.label);
 		this.action = action;
-		defaultEventHandlers["triggered"] = (Widget w, Event ev) {
-			//auto event = new Event("triggered", this);
-			//event.dispatch();
-			foreach(handler; action.triggered)
-				handler();
-
-			if(auto pmenu = cast(Menu) this.parent)
-				pmenu.remove();
-		};
 		tabStop = false; // these are selected some other way
+	}
+
+	override void defaultEventHandler_triggered(Event event) {
+		foreach(handler; action.triggered)
+			handler();
+
+		if(auto pmenu = cast(Menu) this.parent)
+			pmenu.remove();
+
+		super.defaultEventHandler_triggered(event);
 	}
 }
 
@@ -3777,39 +3913,43 @@ class MouseActivatedWidget : Widget {
 			isDepressed = false;
 			redraw();
 		});
-
-		defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
-			_this.redraw();
-		};
-		defaultEventHandlers["blur"] = delegate (Widget _this, Event ev) {
-			isDepressed = false;
-			isHovering = false;
-			_this.redraw();
-		};
-		defaultEventHandlers["keydown"] = delegate (Widget _this, Event ev) {
-			if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
-				isDepressed = true;
-				_this.redraw();
-			}
-		};
-		defaultEventHandlers["keyup"] = delegate (Widget _this, Event ev) {
-			if(!isDepressed)
-				return;
-			isDepressed = false;
-			_this.redraw();
-
-			auto event = new Event("triggered", this);
-			event.sendDirectly();
-		};
-
-
-		defaultEventHandlers["click"] = (Widget w, Event ev) {
-			if(this.tabStop)
-				this.focus();
-			auto event = new Event("triggered", this);
-			event.sendDirectly();
-		};
 	}
+
+	override void defaultEventHandler_focus(Event ev) {
+		super.defaultEventHandler_focus(ev);
+		this.redraw();
+	}
+	override void defaultEventHandler_blur(Event ev) {
+		super.defaultEventHandler_blur(ev);
+		isDepressed = false;
+		isHovering = false;
+		this.redraw();
+	}
+	override void defaultEventHandler_keydown(Event ev) {
+		super.defaultEventHandler_keydown(ev);
+		if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
+			isDepressed = true;
+			this.redraw();
+		}
+	}
+	override void defaultEventHandler_keyup(Event ev) {
+		super.defaultEventHandler_keyup(ev);
+		if(!isDepressed)
+			return;
+		isDepressed = false;
+		this.redraw();
+
+		auto event = new Event("triggered", this);
+		event.sendDirectly();
+	}
+	override void defaultEventHandler_click(Event ev) {
+		super.defaultEventHandler_click(ev);
+		if(this.tabStop)
+			this.focus();
+		auto event = new Event("triggered", this);
+		event.sendDirectly();
+	}
+
 }
 else static assert(false);
 
@@ -3827,56 +3967,61 @@ class Checkbox : MouseActivatedWidget {
 
 	override int marginLeft() { return 4; }
 
+	private string label;
+
 	///
 	this(string label, Widget parent = null) {
 		super(parent);
+		this.label = label;
 		version(win32_widgets) {
 			createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
 		} else version(custom_widgets) {
 
-			this.paint = (ScreenPainter painter) {
-
-				if(isFocused()) {
-					painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-					painter.fillColor = windowBackgroundColor;
-					painter.drawRectangle(Point(0, 0), width, height);
-					painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-				} else {
-					painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
-					painter.fillColor = windowBackgroundColor;
-					painter.drawRectangle(Point(0, 0), width, height);
-				}
-
-
-				enum buttonSize = 16;
-
-				painter.outlineColor = Color.black;
-				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
-
-				if(isChecked) {
-					painter.pen = Pen(Color.black, 2);
-					// I'm using height so the checkbox is square
-					enum padding = 5;
-					painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
-					painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
-
-					painter.pen = Pen(Color.black, 1);
-				}
-
-				painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
-			};
-
-			defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
-				isChecked = !isChecked;
-
-				auto event = new Event(EventType.change, this);
-				event.dispatch();
-
-				redraw();
-			};
 		} else static assert(0);
 	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		if(isFocused()) {
+			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+			painter.fillColor = windowBackgroundColor;
+			painter.drawRectangle(Point(0, 0), width, height);
+			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+		} else {
+			painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
+			painter.fillColor = windowBackgroundColor;
+			painter.drawRectangle(Point(0, 0), width, height);
+		}
+
+
+		enum buttonSize = 16;
+
+		painter.outlineColor = Color.black;
+		painter.fillColor = Color.white;
+		painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
+
+		if(isChecked) {
+			painter.pen = Pen(Color.black, 2);
+			// I'm using height so the checkbox is square
+			enum padding = 5;
+			painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
+			painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
+
+			painter.pen = Pen(Color.black, 1);
+		}
+
+		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+	}
+
+	override void defaultEventHandler_triggered(Event ev) {
+		isChecked = !isChecked;
+
+		auto event = new Event(EventType.change, this);
+		event.dispatch();
+
+		redraw();
+	};
+
 }
 
 ///
@@ -3902,66 +4047,73 @@ class Radiobox : MouseActivatedWidget {
 
 	override int marginLeft() { return 4; }
 
+	private string label;
+
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
+		this.label = label;
 		createWin32Window(this, "button", label, BS_AUTORADIOBUTTON);
 	}
 	else version(custom_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
+		this.label = label;
 		height = 16;
 		width = height + 4 + cast(int) label.length * 16;
-
-		this.paint = (ScreenPainter painter) {
-			if(isFocused) {
-				painter.fillColor = windowBackgroundColor;
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-			} else {
-				painter.fillColor = windowBackgroundColor;
-				painter.outlineColor = windowBackgroundColor;
-			}
-			painter.drawRectangle(Point(0, 0), width, height);
-
-			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-
-			enum buttonSize = 16;
-
-			painter.outlineColor = Color.black;
-			painter.fillColor = Color.white;
-			painter.drawEllipse(Point(2, 2), Point(buttonSize - 2, buttonSize - 2));
-			if(isChecked) {
-				painter.outlineColor = Color.black;
-				painter.fillColor = Color.black;
-				// I'm using height so the checkbox is square
-				painter.drawEllipse(Point(5, 5), Point(buttonSize - 5, buttonSize - 5));
-			}
-
-			painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
-		};
-
-		defaultEventHandlers["triggered"] = delegate (Widget _this, Event ev) {
-			isChecked = true;
-
-			if(this.parent) {
-				foreach(child; this.parent.children) {
-					if(child is this) continue;
-					if(auto rb = cast(Radiobox) child) {
-						rb.isChecked = false;
-						auto event = new Event(EventType.change, rb);
-						event.dispatch();
-						rb.redraw();
-					}
-				}
-			}
-
-			auto event = new Event(EventType.change, this);
-			event.dispatch();
-
-			redraw();
-		};
 	}
 	else static assert(false);
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		if(isFocused) {
+			painter.fillColor = windowBackgroundColor;
+			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+		} else {
+			painter.fillColor = windowBackgroundColor;
+			painter.outlineColor = windowBackgroundColor;
+		}
+		painter.drawRectangle(Point(0, 0), width, height);
+
+		painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+
+		enum buttonSize = 16;
+
+		painter.outlineColor = Color.black;
+		painter.fillColor = Color.white;
+		painter.drawEllipse(Point(2, 2), Point(buttonSize - 2, buttonSize - 2));
+		if(isChecked) {
+			painter.outlineColor = Color.black;
+			painter.fillColor = Color.black;
+			// I'm using height so the checkbox is square
+			painter.drawEllipse(Point(5, 5), Point(buttonSize - 5, buttonSize - 5));
+		}
+
+		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+	}
+
+
+	override void defaultEventHandler_triggered(Event ev) {
+		isChecked = true;
+
+		if(this.parent) {
+			foreach(child; this.parent.children) {
+				if(child is this) continue;
+				if(auto rb = cast(Radiobox) child) {
+					rb.isChecked = false;
+					auto event = new Event(EventType.change, rb);
+					event.dispatch();
+					rb.redraw();
+				}
+			}
+		}
+
+		auto event = new Event(EventType.change, this);
+		event.dispatch();
+
+		redraw();
+	}
+
 }
 
 
@@ -3991,6 +4143,8 @@ class Button : MouseActivatedWidget {
 	}
 	else static assert(false);
 
+	private string label;
+
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
 		super(parent);
@@ -3999,6 +4153,7 @@ class Button : MouseActivatedWidget {
 		// FIXME: use ideal button size instead
 		width = 50;
 		height = 30;
+		this.label = label;
 	}
 	else version(custom_widgets)
 	this(string label, Widget parent = null) {
@@ -4009,26 +4164,29 @@ class Button : MouseActivatedWidget {
 
 		width = 50;
 		height = 30;
-
-		this.paint = (ScreenPainter painter) {
-			this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
-
-
-			painter.outlineColor = Color.black;
-			painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
-
-			if(isFocused()) {
-				painter.fillColor = Color.transparent;
-				painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-				painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-				painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-
-			}
-		};
+		this.label = label;
 	}
 	else static assert(false);
 
 	override int minHeight() { return Window.lineHeight + 4; }
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
+
+
+		painter.outlineColor = Color.black;
+		painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+
+		if(isFocused()) {
+			painter.fillColor = Color.transparent;
+			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
+			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+
+		}
+	}
+
 }
 
 ///
@@ -4045,55 +4203,55 @@ class ArrowButton : Button {
 	///
 	this(ArrowDirection direction, Widget parent = null) {
 		super("", parent);
-
-		auto superPainter = this.paint;
-		assert(superPainter !is null);
-		this.paint = (ScreenPainter painter) {
-			superPainter(painter);
-
-			painter.outlineColor = Color.black;
-			painter.fillColor = Color.black;
-
-			auto offset = Point((this.width - 16) / 2, (this.height - 16) / 2);
-
-			final switch(direction) {
-				case ArrowDirection.up:
-					painter.drawPolygon(
-						Point(4, 12) + offset,
-						Point(8, 6) + offset,
-						Point(12, 12) + offset
-					);
-				break;
-				case ArrowDirection.down:
-					painter.drawPolygon(
-						Point(4, 6) + offset,
-						Point(8, 12) + offset,
-						Point(12, 6) + offset
-					);
-				break;
-				case ArrowDirection.left:
-					painter.drawPolygon(
-						Point(12, 4) + offset,
-						Point(6, 8) + offset,
-						Point(12, 12) + offset
-					);
-				break;
-				case ArrowDirection.right:
-					painter.drawPolygon(
-						Point(6, 4) + offset,
-						Point(12, 8) + offset,
-						Point(6, 12) + offset
-					);
-				break;
-			}
-
-		};
+		this.direction = direction;
 	}
+
+	private ArrowDirection direction;
 
 	override int minHeight() { return 16; }
 	override int maxHeight() { return 16; }
 	override int minWidth() { return 16; }
 	override int maxWidth() { return 16; }
+
+	override void paint(ScreenPainter painter) {
+		super.paint(painter);
+
+		painter.outlineColor = Color.black;
+		painter.fillColor = Color.black;
+
+		auto offset = Point((this.width - 16) / 2, (this.height - 16) / 2);
+
+		final switch(direction) {
+			case ArrowDirection.up:
+				painter.drawPolygon(
+					Point(4, 12) + offset,
+					Point(8, 6) + offset,
+					Point(12, 12) + offset
+				);
+			break;
+			case ArrowDirection.down:
+				painter.drawPolygon(
+					Point(4, 6) + offset,
+					Point(8, 12) + offset,
+					Point(12, 6) + offset
+				);
+			break;
+			case ArrowDirection.left:
+				painter.drawPolygon(
+					Point(12, 4) + offset,
+					Point(6, 8) + offset,
+					Point(12, 12) + offset
+				);
+			break;
+			case ArrowDirection.right:
+				painter.drawPolygon(
+					Point(6, 4) + offset,
+					Point(12, 8) + offset,
+					Point(6, 12) + offset
+				);
+			break;
+		}
+	}
 }
 
 private
@@ -4135,10 +4293,11 @@ class TextLabel : Widget {
 		this.label = label;
 		this.tabStop = false;
 		super(parent);
-		paint = (ScreenPainter painter) {
-			painter.outlineColor = Color.black;
-			painter.drawText(Point(0, 0), this.label, Point(width,height), TextAlignment.Right);
-		};
+	}
+
+	override void paint(ScreenPainter painter) {
+		painter.outlineColor = Color.black;
+		painter.drawText(Point(0, 0), this.label, Point(width,height), TextAlignment.Right);
 	}
 
 }
@@ -4191,6 +4350,14 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		else version(custom_widgets) {
 			textLayout.clear();
 			textLayout.addText(s);
+
+			{
+			// FIXME: it should be able to get this info easier
+			auto painter = draw();
+			textLayout.redoLayout(painter);
+			}
+			auto cbb = textLayout.contentBoundingBox();
+			setContentSize(cbb.width, cbb.height);
 			/*
 			textLayout.addText(ForegroundColor.red, s);
 			textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
@@ -4215,119 +4382,148 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 		void setupCustomTextEditing() {
 			textLayout = new TextLayout(Rectangle(0, 0, width, height));
+		}
 
-			this.paint = (ScreenPainter painter) {
-				if(parentWindow.win.closed) return;
+		override void paint(ScreenPainter painter) {
+			if(parentWindow.win.closed) return;
 
-				textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
+			textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
 
-				painter.outlineColor = Color.black;
-				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+			/*
+			painter.outlineColor = Color.white;
+			painter.fillColor = Color.white;
+			painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
+			*/
 
-				textLayout.caretShowingOnScreen = false;
+			painter.outlineColor = Color.black;
+			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
 
-				textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
-			};
+			textLayout.caretShowingOnScreen = false;
 
-			defaultEventHandlers["click"] = delegate (Widget _this, Event ev) {
-				if(parentWindow.win.closed) return;
-				textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
-				this.focus();
-			};
+			textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
+		}
 
-			defaultEventHandlers["focus"] = delegate (Widget _this, Event ev) {
-				if(parentWindow.win.closed) return;
-				auto painter = this.draw();
-				textLayout.drawCaret(painter);
 
-				if(caretTimer) {
-					caretTimer.destroy();
-					caretTimer = null;
-				}
-
-				caretTimer = new Timer(500, {
-					if(parentWindow.win.closed) {
-						caretTimer.destroy();
-						return;
-					}
-					if(isFocused()) {
-						auto painter = this.draw();
-						textLayout.drawCaret(painter);
-					} else if(textLayout.caretShowingOnScreen) {
-						auto painter = this.draw();
-						textLayout.eraseCaret(painter);
-					}
-				});
-
-			};
-			defaultEventHandlers["blur"] = delegate (Widget _this, Event ev) {
-				if(parentWindow.win.closed) return;
-				auto painter = this.draw();
-				textLayout.eraseCaret(painter);
-				if(caretTimer) {
-					caretTimer.destroy();
-					caretTimer = null;
-				}
-
-				auto evt = new Event(EventType.change, this);
-				evt.dispatch();
-			};
-
-			defaultEventHandlers["char"] = delegate (Widget _this, Event ev) {
-				textLayout.insert(ev.character);
-				redraw();
-
-				// FIXME: too inefficient
-				auto cbb = textLayout.contentBoundingBox();
-				setContentSize(cbb.width, cbb.height);
-			};
-			addEventListener("keydown", delegate (Widget _this, Event ev) {
-				switch(ev.key) {
-					case Key.Delete:
-						textLayout.delete_();
-						redraw();
-					break;
-					case Key.Left:
-						textLayout.moveLeft(textLayout.caret);
-						redraw();
-					break;
-					case Key.Right:
-						textLayout.moveRight(textLayout.caret);
-						redraw();
-					break;
-					case Key.Up:
-						textLayout.moveUp(textLayout.caret);
-						redraw();
-					break;
-					case Key.Down:
-						textLayout.moveDown(textLayout.caret);
-						redraw();
-					break;
-					case Key.Home:
-						textLayout.moveHome(textLayout.caret);
-						redraw();
-					break;
-					case Key.End:
-						textLayout.moveEnd(textLayout.caret);
-						redraw();
-					break;
-					default:
-						 {} // intentionally blank, let "char" handle it
-				}
-				/*
-				if(ev.key == Key.Backspace) {
-					textLayout.backspace();
-					redraw();
-				}
-				*/
-				ensureVisibleInScroll(textLayout.caretBoundingBox());
-			});
-
-			static if(UsingSimpledisplayX11)
-				cursor = XCreateFontCursor(XDisplayConnection.get(), 152 /* XC_xterm, a text input thingy */);
+		override MouseCursor cursor() {
+			return GenericCursor.Text;
 		}
 	}
 	else static assert(false);
+
+
+
+	version(custom_widgets)
+	override void defaultEventHandler_click(Event ev) {
+		super.defaultEventHandler_click(ev);
+		if(parentWindow.win.closed) return;
+		if(ev.button == MouseButton.left) {
+			textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
+			this.focus();
+		} else if(ev.button == MouseButton.middle) {
+			static if(UsingSimpledisplayX11) {
+				getPrimarySelection(parentWindow.win, (txt) { textLayout.insert(txt) ; });
+				redraw();
+			}
+		}
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_focus(Event ev) {
+		super.defaultEventHandler_focus(ev);
+		if(parentWindow.win.closed) return;
+		auto painter = this.draw();
+		textLayout.drawCaret(painter);
+
+		if(caretTimer) {
+			caretTimer.destroy();
+			caretTimer = null;
+		}
+
+		caretTimer = new Timer(500, {
+			if(parentWindow.win.closed) {
+				caretTimer.destroy();
+				return;
+			}
+			if(isFocused()) {
+				auto painter = this.draw();
+				textLayout.drawCaret(painter);
+			} else if(textLayout.caretShowingOnScreen) {
+				auto painter = this.draw();
+				textLayout.eraseCaret(painter);
+			}
+		});
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_blur(Event ev) {
+		super.defaultEventHandler_blur(ev);
+		if(parentWindow.win.closed) return;
+		auto painter = this.draw();
+		textLayout.eraseCaret(painter);
+		if(caretTimer) {
+			caretTimer.destroy();
+			caretTimer = null;
+		}
+
+		auto evt = new Event(EventType.change, this);
+		evt.dispatch();
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_char(Event ev) {
+		super.defaultEventHandler_char(ev);
+		textLayout.insert(ev.character);
+		redraw();
+
+		// FIXME: too inefficient
+		auto cbb = textLayout.contentBoundingBox();
+		setContentSize(cbb.width, cbb.height);
+	}
+	version(custom_widgets)
+	override void defaultEventHandler_keydown(Event ev) {
+		super.defaultEventHandler_keydown(ev);
+		switch(ev.key) {
+			case Key.Delete:
+				textLayout.delete_();
+				redraw();
+			break;
+			case Key.Left:
+				textLayout.moveLeft(textLayout.caret);
+				redraw();
+			break;
+			case Key.Right:
+				textLayout.moveRight(textLayout.caret);
+				redraw();
+			break;
+			case Key.Up:
+				textLayout.moveUp(textLayout.caret);
+				redraw();
+			break;
+			case Key.Down:
+				textLayout.moveDown(textLayout.caret);
+				redraw();
+			break;
+			case Key.Home:
+				textLayout.moveHome(textLayout.caret);
+				redraw();
+			break;
+			case Key.End:
+				textLayout.moveEnd(textLayout.caret);
+				redraw();
+			break;
+			default:
+				 {} // intentionally blank, let "char" handle it
+		}
+		/*
+		if(ev.key == Key.Backspace) {
+			textLayout.backspace();
+			redraw();
+		}
+		*/
+		ensureVisibleInScroll(textLayout.caretBoundingBox());
+	}
+
+
 }
 
 ///
@@ -4375,17 +4571,12 @@ class TextEdit : EditableTextWidget {
 
 ///
 class MessageBox : Window {
+	private string message;
 	///
 	this(string message) {
 		super(300, 100);
 
-		auto superPaint = this.paint;
-		this.paint = (ScreenPainter painter) {
-			if(superPaint)
-				superPaint(painter);
-			painter.outlineColor = Color.black;
-			painter.drawText(Point(0, 0), message, Point(width, height / 2), TextAlignment.Center | TextAlignment.VerticalCenter);
-		};
+		this.message = message;
 
 		auto button = new Button("OK", this);
 		button. x = this.width / 2 - button.width / 2;
@@ -4399,6 +4590,12 @@ class MessageBox : Window {
 
 		win.show();
 		redraw();
+	}
+
+	override void paint(ScreenPainter painter) {
+		super.paint(painter);
+		painter.outlineColor = Color.black;
+		painter.drawText(Point(0, 0), message, Point(width, height / 2), TextAlignment.Center | TextAlignment.VerticalCenter);
 	}
 
 	// this one is all fixed position
@@ -4866,10 +5063,127 @@ enum GenericIcons : ushort {
 	Print, ///
 }
 
+/// Represents a mouse cursor (aka the mouse pointer, the image seen on screen that indicates where the mouse is pointing).
+/// See [GenericCursor]
+class MouseCursor {
+	int osId;
+	bool isStockCursor;
+	private this(int osId) {
+		this.osId = osId;
+		this.isStockCursor = true;
+	}
+
+	// https://msdn.microsoft.com/en-us/library/windows/desktop/ms648385(v=vs.85).aspx
+	this(int xHotSpot, int yHotSpot, ubyte[] andMask, ubyte[] xorMask) {}
+
+	version(Windows) {
+		HCURSOR cursor_;
+		HCURSOR cursorHandle() {
+			if(cursor_ is null)
+				cursor_ = LoadCursor(null, MAKEINTRESOURCE(osId));
+			return cursor_;
+		}
+
+	} else static if(UsingSimpledisplayX11) {
+		Cursor cursor_ = None;
+		int xDisplaySequence;
+
+		Cursor cursorHandle() {
+			if(this.osId == None)
+				return None;
+
+			// we need to reload if we on a new X connection
+			if(cursor_ == None || XDisplayConnection.connectionSequenceNumber != xDisplaySequence) {
+				cursor_ = XCreateFontCursor(XDisplayConnection.get(), this.osId);
+				xDisplaySequence = XDisplayConnection.connectionSequenceNumber;
+			}
+			return cursor_;
+		}
+	}
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/CSS/cursor
+// https://tronche.com/gui/x/xlib/appendix/b/
+// https://msdn.microsoft.com/en-us/library/windows/desktop/ms648391(v=vs.85).aspx
+///
+enum GenericCursorType {
+	Default, /// The default arrow pointer.
+	Wait, /// A cursor indicating something is loading and the user must wait.
+	Hand, /// A pointing finger, like the one used hovering over hyperlinks in a web browser.
+	Help, /// A cursor indicating the user can get help about the pointer location.
+	Cross, /// A crosshair.
+	Text, /// An i-beam shape, typically used to indicate text selection is possible.
+	Move, /// Pointer indicating movement is possible.
+	UpArrow, /// An arrow pointing straight up.
+}
+
+/// You get one by `GenericCursor.SomeTime`. See [GenericCursorType] for a list of types.
+static struct GenericCursor {
+	static:
+	///
+	MouseCursor opDispatch(string str)() if(__traits(hasMember, GenericCursorType, str)) {
+		static MouseCursor mc;
+
+		auto type = __traits(getMember, GenericCursorType, str);
+
+		if(mc is null) {
+
+			version(Windows) {
+				int osId;
+				final switch(type) {
+					case GenericCursorType.Default: osId = IDC_ARROW; break;
+					case GenericCursorType.Wait: osId = IDC_WAIT; break;
+					case GenericCursorType.Hand: osId = IDC_HAND; break;
+					case GenericCursorType.Help: osId = IDC_HELP; break;
+					case GenericCursorType.Cross: osId = IDC_CROSS; break;
+					case GenericCursorType.Text: osId = IDC_IBEAM; break;
+					case GenericCursorType.Move: osId = IDC_SIZEALL; break;
+					case GenericCursorType.UpArrow: osId = IDC_UPARROW; break;
+				}
+			} else static if(UsingSimpledisplayX11) {
+				int osId;
+				final switch(type) {
+					case GenericCursorType.Default: osId = None; break;
+					case GenericCursorType.Wait: osId = 150 /* XC_watch */; break;
+					case GenericCursorType.Hand: osId = 60 /* XC_hand2 */; break;
+					case GenericCursorType.Help: osId = 92 /* XC_question_arrow */; break;
+					case GenericCursorType.Cross: osId = 34 /* XC_crosshair */; break;
+					case GenericCursorType.Text: osId = 152 /* XC_xterm */; break;
+					case GenericCursorType.Move: osId = 52 /* XC_fleur */; break;
+					case GenericCursorType.UpArrow: osId = 22 /* XC_center_ptr */; break;
+				}
+
+			} else static assert(0);
+
+			mc = new MouseCursor(osId);
+		}
+		return mc;
+	}
+}
 
 ///
 void getOpenFileName(
-	void delegate(string) onOK = null,
+	void delegate(string) onOK,
+	string prefilledName = null,
+	string[] filters = null
+)
+{
+	return getFileName(true, onOK, prefilledName, filters);
+}
+
+///
+void getSaveFileName(
+	void delegate(string) onOK,
+	string prefilledName = null,
+	string[] filters = null
+)
+{
+	return getFileName(false, onOK, prefilledName, filters);
+}
+
+void getFileName(
+	bool openOrSave,
+	void delegate(string) onOK,
 	string prefilledName = null,
 	string[] filters = null,
 )
@@ -4891,13 +5205,17 @@ void getOpenFileName(
 
 
 		wchar[1024] file = 0;
+		makeWindowsString(prefilledName, file[]);
 		OPENFILENAME ofn;
 		ofn.lStructSize = ofn.sizeof;
 		ofn.lpstrFile = file.ptr;
 		ofn.nMaxFile = file.length;
-		GetOpenFileName(&ofn);
+		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) {
+			onOK(makeUtf8StringFromWindowsString(ofn.lpstrFile));
+		}
 	} else version(custom_widgets) {
-		auto picker = new FilePicker();
+		auto picker = new FilePicker(prefilledName);
+		picker.onOK = onOK;
 		picker.show();
 	}
 }
@@ -4905,12 +5223,14 @@ void getOpenFileName(
 version(custom_widgets)
 private
 class FilePicker : Dialog {
-	this(Window owner = null) {
+	void delegate(string) onOK;
+	LineEdit lineEdit;
+	this(string prefilledName, Window owner = null) {
 		super(300, 200, "Choose File..."); // owner);
 
 		auto listWidget = new ListWidget(this);
 
-		auto lineEdit = new LineEdit(this);
+		lineEdit = new LineEdit(this);
 		lineEdit.focus();
 		lineEdit.addEventListener("char", (Event event) {
 			if(event.character == '\t' || event.character == '\n')
@@ -4950,6 +5270,8 @@ class FilePicker : Dialog {
 			}
 		});
 
+		lineEdit.content = prefilledName;
+
 		auto hl = new HorizontalLayout(this);
 		auto cancelButton = new Button("Cancel", hl);
 		auto okButton = new Button("OK", hl);
@@ -4960,8 +5282,10 @@ class FilePicker : Dialog {
 		okButton.addEventListener(EventType.triggered, &OK);
 
 		this.addEventListener("keydown", (Event event) {
-			if(event.key == Key.Enter || event.key == Key.PadEnter)
+			if(event.key == Key.Enter || event.key == Key.PadEnter) {
+				event.preventDefault();
 				OK();
+			}
 			if(event.key == Key.Escape)
 				Cancel();
 		});
@@ -4969,6 +5293,8 @@ class FilePicker : Dialog {
 	}
 
 	override void OK() {
+		if(onOK)
+			onOK(lineEdit.content);
 		close();
 	}
 }
