@@ -1064,7 +1064,7 @@ string sdpyWindowClass () {
 	though, if you do this, managing the window is still your own responsibility! Notably, you
 	will need to destroy it yourself.
 +/
-class SimpleWindow : CapableOfHandlingNativeEvent {
+class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	version(X11) {
 		void recreateAfterDisconnect() {
@@ -1516,7 +1516,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	private int _height;
 
 	// HACK: making the best of some copy constructor woes with refcounting
-	private ScreenPainterImplementation* activeScreenPainter;
+	private ScreenPainterImplementation* activeScreenPainter_;
+
+	protected ScreenPainterImplementation* activeScreenPainter() { return activeScreenPainter_; }
+	protected void activeScreenPainter(ScreenPainterImplementation* i) { activeScreenPainter_ = i; }
 
 	private OpenGlOptions openglMode;
 	private Resizability resizability;
@@ -1838,6 +1841,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	/// use to redraw child widgets if you use system apis to add stuff
 	void delegate() paintingFinished;
+
+	void delegate() paintingFinishedDg() {
+		return paintingFinished;
+	}
 
 	/// handle a resize, after it happens. You must construct the window with Resizability.allowResizing
 	/// for this to ever happen.
@@ -2953,6 +2960,47 @@ wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = tr
 		buffer[got] = 0;
 	}
 	return buffer[0 .. got];
+}
+
+version(Windows)
+char[] makeUtf8StringFromWindowsString(in wchar[] str, char[] buffer) {
+	if(str.length == 0)
+		return null;
+
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, str.length, buffer.ptr, buffer.length, null, null);
+	if(got == 0) {
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+			throw new Exception("not enough buffer");
+		else
+			throw new Exception("conversion"); // FIXME: GetLastError
+	}
+	return buffer[0 .. got];
+}
+
+version(Windows)
+string makeUtf8StringFromWindowsString(in wchar[] str) {
+	char[] buffer;
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, str.length, null, 0, null, null);
+	buffer.length = got;
+
+	// it is unique because we just allocated it above!
+	return cast(string) makeUtf8StringFromWindowsString(str, buffer);
+}
+
+version(Windows)
+string makeUtf8StringFromWindowsString(wchar* str) {
+	char[] buffer;
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str, -1, null, 0, null, null);
+	buffer.length = got;
+
+	got = WideCharToMultiByte(CP_UTF8, 0, str, -1, buffer.ptr, buffer.length, null, null);
+	if(got == 0) {
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+			throw new Exception("not enough buffer");
+		else
+			throw new Exception("conversion"); // FIXME: GetLastError
+	}
+	return cast(string) buffer[0 .. got];
 }
 
 /// copies some text to the clipboard
@@ -4118,6 +4166,8 @@ class OperatingSystemFont {
 			string sizestr;
 			if(size == 0)
 				sizestr = "*";
+			else if(size < 10)
+				sizestr = "" ~ cast(char)(size % 10 + '0');
 			else
 				sizestr = "" ~ cast(char)(size / 10 + '0') ~ cast(char)(size % 10 + '0');
 			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*";
@@ -4185,11 +4235,12 @@ class OperatingSystemFont {
 	final reference goes out of scope.
 */
 struct ScreenPainter {
-	SimpleWindow window;
-	this(SimpleWindow window, NativeWindowHandle handle) {
+	CapableOfBeingDrawnUpon window;
+	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle) {
 		if(window.closed)
 			throw new Exception("cannot draw on a closed window");
 		this.window = window;
+		currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
 			impl.referenceCount++;
@@ -4210,12 +4261,14 @@ struct ScreenPainter {
 	private Color originalFillColor;
 	private arsd.color.Rectangle originalClipRectangle;
 	void copyActiveOriginals() {
+		if(impl is null) return;
 		originalPen = impl._activePen;
 		originalFillColor = impl._fillColor;
 		originalClipRectangle = impl._clipRectangle;
 	}
 
 	~this() {
+		if(impl is null) return;
 		impl.referenceCount--;
 		//writeln("refcount -- ", impl.referenceCount);
 		if(impl.referenceCount == 0) {
@@ -4234,14 +4287,56 @@ struct ScreenPainter {
 	}
 
 	this(this) {
+		if(impl is null) return;
 		impl.referenceCount++;
 		//writeln("refcount ++ ", impl.referenceCount);
 
 		copyActiveOriginals();
 	}
 
+	private int _originX;
+	private int _originY;
+	@property int originX() { return _originX; }
+	@property int originY() { return _originY; }
+	@property int originX(int a) {
+		//currentClipRectangle.left += a - _originX;
+		//currentClipRectangle.right += a - _originX;
+		_originX = a;
+		return _originX;
+	}
+	@property int originY(int a) {
+		//currentClipRectangle.top += a - _originY;
+		//currentClipRectangle.bottom += a - _originY;
+		_originY = a;
+		return _originY;
+	}
+	arsd.color.Rectangle currentClipRectangle; // set BEFORE doing any transformations
+	private void transform(ref Point p) {
+		if(impl is null) return;
+		p.x += _originX;
+		p.y += _originY;
+	}
+
+	// this needs to be checked BEFORE the originX/Y transformation
+	private bool isClipped(Point p) {
+		return !currentClipRectangle.contains(p);
+	}
+	private bool isClipped(Point p, int width, int height) {
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, Size(width + 1, height + 1)));
+	}
+	private bool isClipped(Point p, Size s) {
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, Size(s.width + 1, s.height + 1)));
+	}
+	private bool isClipped(Point p, Point p2) {
+		// need to ensure the end points are actually included inside, so the +1 does that
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, p2 + Point(1, 1)));
+	}
+
+
 	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
 	void setClipRectangle(Point pt, int width, int height) {
+		if(impl is null) return;
+		currentClipRectangle = arsd.color.Rectangle(pt, Size(width, height));
 		transform(pt);
 
 		impl.setClipRectangle(pt.x, pt.y, width, height);
@@ -4249,32 +4344,34 @@ struct ScreenPainter {
 
 	/// ditto
 	void setClipRectangle(arsd.color.Rectangle rect) {
+		if(impl is null) return;
 		setClipRectangle(rect.upperLeft, rect.width, rect.height);
 	}
 
 	///
 	void setFont(OperatingSystemFont font) {
+		if(impl is null) return;
 		impl.setFont(font);
 	}
 
 	///
 	int fontHeight() {
+		if(impl is null) return 0;
 		return impl.fontHeight();
 	}
 
 	private Pen activePen;
 
-	int originX;
-	int originY;
-
 	///
 	@property void pen(Pen p) {
+		if(impl is null) return;
 		activePen = p;
 		impl.pen(p);
 	}
 
 	///
 	@property void outlineColor(Color c) {
+		if(impl is null) return;
 		if(activePen.color == c)
 			return;
 		activePen.color = c;
@@ -4283,18 +4380,16 @@ struct ScreenPainter {
 
 	///
 	@property void fillColor(Color c) {
+		if(impl is null) return;
 		impl.fillColor(c);
 	}
 
 	///
 	@property void rasterOp(RasterOp op) {
+		if(impl is null) return;
 		impl.rasterOp(op);
 	}
 
-	private void transform(ref Point p) {
-		p.x += originX;
-		p.y += originY;
-	}
 
 	void updateDisplay() {
 		// FIXME this should do what the dtor does
@@ -4302,6 +4397,8 @@ struct ScreenPainter {
 
 	/// Scrolls the contents in the bounding rectangle by dx, dy. Positive dx means scroll left (make space available at the right), positive dy means scroll up (make space available at the bottom)
 	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		version(Windows) {
 			// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
@@ -4320,6 +4417,7 @@ struct ScreenPainter {
 
 	///
 	void clear() {
+		if(impl is null) return;
 		fillColor = Color(255, 255, 255);
 		outlineColor = Color(255, 255, 255);
 		drawRectangle(Point(0, 0), window.width, window.height);
@@ -4327,12 +4425,16 @@ struct ScreenPainter {
 
 	///
 	void drawPixmap(Sprite s, Point upperLeft) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, s.width, s.height)) return;
 		transform(upperLeft);
 		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
 	}
 
 	///
 	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
+		if(impl is null) return;
+		//if(isClipped(upperLeft, w, h)) return; // FIXME
 		transform(upperLeft);
 		if(w == 0 || w > i.width)
 			w = i.width;
@@ -4347,15 +4449,21 @@ struct ScreenPainter {
 	}
 
 	///
-	Size textSize(string text) {
+	Size textSize(in char[] text) {
+		if(impl is null) return Size(0, 0);
 		return impl.textSize(text);
 	}
 
 	///
 	void drawText(Point upperLeft, in char[] text, Point lowerRight = Point(0, 0), uint alignment = 0) {
-		transform(upperLeft);
-		if(lowerRight.x != 0 || lowerRight.y != 0)
+		if(impl is null) return;
+		if(lowerRight.x != 0 || lowerRight.y != 0) {
+			if(isClipped(upperLeft, lowerRight)) return;
 			transform(lowerRight);
+		} else {
+			if(isClipped(upperLeft, textSize(text))) return;
+		}
+		transform(upperLeft);
 		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
 	}
 
@@ -4367,6 +4475,9 @@ struct ScreenPainter {
 		Creating a [DrawableFont] can be tricky and require additional dependencies.
 	+/
 	void drawText(DrawableFont font, Point upperLeft, in char[] text) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, Point(int.max, int.max))) return;
+		transform(upperLeft);
 		font.drawString(this, upperLeft, text);
 	}
 
@@ -4402,11 +4513,14 @@ struct ScreenPainter {
 	}
 
 	void drawText(TextDrawingContext context, in char[] text, uint alignment = 0) {
+		if(impl is null) return;
 		// FIXME
 	}
 
 	/// Drawing an individual pixel is slow. Avoid it if possible.
 	void drawPixel(Point where) {
+		if(impl is null) return;
+		if(isClipped(where)) return;
 		transform(where);
 		impl.drawPixel(where.x, where.y);
 	}
@@ -4414,6 +4528,8 @@ struct ScreenPainter {
 
 	/// Draws a pen using the current pen / outlineColor
 	void drawLine(Point starting, Point ending) {
+		if(impl is null) return;
+		if(isClipped(starting, ending)) return;
 		transform(starting);
 		transform(ending);
 		impl.drawLine(starting.x, starting.y, ending.x, ending.y);
@@ -4423,11 +4539,15 @@ struct ScreenPainter {
 	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
 	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
 	void drawRectangle(Point upperLeft, int width, int height) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
 	}
 
 	void drawRectangle(Point upperLeft, Point lowerRightInclusive) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, lowerRightInclusive + Point(1, 1))) return;
 		transform(upperLeft);
 		transform(lowerRightInclusive);
 		impl.drawRectangle(upperLeft.x, upperLeft.y,
@@ -4436,26 +4556,44 @@ struct ScreenPainter {
 
 	/// Arguments are the points of the bounding rectangle
 	void drawEllipse(Point upperLeft, Point lowerRight) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, lowerRight)) return;
 		transform(upperLeft);
 		transform(lowerRight);
 		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
 	}
 
 	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
+		if(impl is null) return;
 		// FIXME: not actually implemented
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
 	/// .
 	void drawPolygon(Point[] vertexes) {
-		foreach(ref vertex; vertexes)
+		if(impl is null) return;
+		assert(vertexes.length);
+		int minX = int.max, minY = int.max, maxX = int.min, maxY = int.min;
+		foreach(ref vertex; vertexes) {
+			if(vertex.x < minX)
+				minX = vertex.x;
+			if(vertex.y < minY)
+				minY = vertex.y;
+			if(vertex.x > maxX)
+				maxX = vertex.x;
+			if(vertex.y > maxY)
+				maxY = vertex.y;
 			transform(vertex);
+		}
+		if(isClipped(Point(minX, maxY), Point(maxX + 1, maxY + 1))) return;
 		impl.drawPolygon(vertexes);
 	}
 
 	/// ditto
 	void drawPolygon(Point[] vertexes...) {
+		if(impl is null) return;
 		drawPolygon(vertexes);
 	}
 
@@ -4473,7 +4611,7 @@ struct ScreenPainter {
 
 	// HACK: I need a pointer to the implementation so it's separate
 	struct ScreenPainterImplementation {
-		SimpleWindow window;
+		CapableOfBeingDrawnUpon window;
 		int referenceCount;
 		mixin NativeScreenPainterImplementation!();
 	}
@@ -4513,22 +4651,29 @@ struct ScreenPainter {
 	ScreenPainter needs to be refactored to allow that though. So until that is
 	done, consider a `Sprite` to have const contents.
 */
-class Sprite {
-	// FIXME: we should actually be able to draw upon these, same as windows
-	//ScreenPainter drawUpon();
+class Sprite : CapableOfBeingDrawnUpon {
 
-	/// Makes a sprite based on the image with the initial contents from the Image
-	this(SimpleWindow win, Image i) {
-		this._width = i.width;
-		this._height = i.height;
+	ScreenPainter draw() {
+		return ScreenPainter(this, handle);
+	}
+
+	void delegate() paintingFinishedDg() { return null; }
+	bool closed() { return false; }
+	ScreenPainterImplementation* activeScreenPainter_;
+	protected ScreenPainterImplementation* activeScreenPainter() { return activeScreenPainter_; }
+	protected void activeScreenPainter(ScreenPainterImplementation* i) { activeScreenPainter_ = i; }
+
+	version(Windows)
+		private ubyte* rawData;
+	// FIXME: sprites are lost when disconnecting from X! We need some way to invalidate them...
+
+	this(SimpleWindow win, int width, int height) {
+		this._width = width;
+		this._height = height;
 
 		version(X11) {
 			auto display = XDisplayConnection.get();
 			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
-			if(i.usingXshm)
-			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
-			else
-			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
 		} else version(Windows) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
@@ -4537,8 +4682,6 @@ class Sprite {
 			infoheader.bmiHeader.biPlanes = 1;
 			infoheader.bmiHeader.biBitCount = 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
-
-			ubyte* rawData;
 
 			// FIXME: this should prolly be a device dependent bitmap...
 			handle = CreateDIBSection(
@@ -4551,7 +4694,20 @@ class Sprite {
 
 			if(handle is null)
 				throw new Exception("couldn't create pixmap");
+		}
+	}
 
+	/// Makes a sprite based on the image with the initial contents from the Image
+	this(SimpleWindow win, Image i) {
+		this(win, i.width, i.height);
+
+		version(X11) {
+			auto display = XDisplayConnection.get();
+			if(i.usingXshm)
+				XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
+			else
+				XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
+		} else version(Windows) {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
 			auto arrLength = itemsPerLine * height;
 			rawData[0..arrLength] = i.rawData[0..arrLength];
@@ -4619,6 +4775,21 @@ class Sprite {
 	else version(OSXCocoa)
 		CGContextRef context;
 	else static assert(0);
+}
+
+///
+interface CapableOfBeingDrawnUpon {
+	///
+	ScreenPainter draw();
+	///
+	int width();
+	///
+	int height();
+	protected ScreenPainterImplementation* activeScreenPainter();
+	protected void activeScreenPainter(ScreenPainterImplementation*);
+	bool closed();
+
+	void delegate() paintingFinishedDg();
 }
 
 /// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
@@ -5268,15 +5439,24 @@ version(Windows) {
 		HBITMAP oldBmp;
 
 		void create(NativeWindowHandle window) {
-			auto buffer = this.window.impl.buffer;
 			hwnd = window;
-			auto windowHdc = GetDC(hwnd);
 
-			hdc = CreateCompatibleDC(windowHdc);
+			if(auto sw = cast(SimpleWindow) this.window) {
+				// drawing on a window, double buffer
+				auto windowHdc = GetDC(hwnd);
 
-			ReleaseDC(hwnd, windowHdc);
+				auto buffer = sw.impl.buffer;
+				hdc = CreateCompatibleDC(windowHdc);
 
-			oldBmp = SelectObject(hdc, buffer);
+				ReleaseDC(hwnd, windowHdc);
+
+				oldBmp = SelectObject(hdc, buffer);
+			} else {
+				// drawing on something else, draw directly
+				hdc = CreateCompatibleDC(null);
+				SelectObject(hdc, window);
+
+			}
 
 			// X doesn't draw a text background, so neither should we
 			SetBkMode(hdc, TRANSPARENT);
@@ -5331,6 +5511,7 @@ version(Windows) {
 			// ReleaseDC(hwnd, windowHdc);
 
 			// FIXME: it shouldn't invalidate the whole thing in all cases... it would be ideal to do this right
+			if(cast(SimpleWindow) this.window)
 			InvalidateRect(hwnd, cast(RECT*)null, false); // no need to erase bg as the whole thing gets bitblt'd ove
 
 			if(originalPen !is null)
@@ -5346,8 +5527,8 @@ version(Windows) {
 
 			DeleteDC(hdc);
 
-			if(window.paintingFinished !is null)
-				window.paintingFinished();
+			if(window.paintingFinishedDg !is null)
+				window.paintingFinishedDg();
 		}
 
 		HPEN originalPen;
@@ -5457,7 +5638,7 @@ version(Windows) {
 			DeleteDC(hdcMem);
 		}
 
-		Size textSize(string text) {
+		Size textSize(scope const(char)[] text) {
 			bool dummyX;
 			if(text.length == 0) {
 				text = " ";
@@ -5565,6 +5746,10 @@ version(Windows) {
 
 		void showCursor () {
 			--curHidden;
+			if(curHidden == 0) {
+				// FIXME
+				//SetCursor(oldCursor); // show it immediately without waiting for mouse movement
+			}
 		}
 
 
@@ -5660,7 +5845,8 @@ version(Windows) {
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);
-				wc.hCursor = LoadCursorW(null, IDC_ARROW);
+				// I don't *think* I need this... and I know it breaks some stuff like changing cursor in a window... soo....
+				//wc.hCursor = LoadCursorW(null, IDC_ARROW);
 				wc.hIcon = LoadIcon(hInstance, null);
 				wc.hInstance = hInstance;
 				wc.lpfnWndProc = &WndProc;
@@ -6289,7 +6475,8 @@ version(X11) {
 	/// This is the default font used. You might change this before doing anything else with
 	/// the library if you want to try something else. Surround that in `static if(UsingSimpledisplayX11)`
 	/// for cross-platform compatibility.
-	__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	//__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	__gshared string xfontstr = "-*-lucida-medium-r-normal-sans-12-*-*-*-*-*-*-*";
 
 	alias int delegate(XEvent) NativeEventHandler;
 	alias Window NativeWindowHandle;
@@ -6315,10 +6502,16 @@ version(X11) {
 		void create(NativeWindowHandle window) {
 			this.display = XDisplayConnection.get();
 
-			auto buffer = this.window.impl.buffer;
+			Drawable buffer = None;
+			if(auto sw = cast(SimpleWindow) this.window) {
+				buffer = sw.impl.buffer;
+				this.destiny = cast(Drawable) window;
+			} else {
+				buffer = cast(Drawable) window;
+				this.destiny = None;
+			}
 
 			this.d = cast(Drawable) buffer;
-			this.destiny = cast(Drawable) window;
 
 			auto dgc = DefaultGC(display, DefaultScreen(display));
 
@@ -6328,7 +6521,7 @@ version(X11) {
 
 			if(!fontAttempted) {
 				font = XLoadQueryFont(display, xfontstr.ptr);
-				// bitstream is a pretty nice font, but if it fails, fixed is pretty reliable and not bad either
+				// if the user font choice fails, fixed is pretty reliable (required by X to start!) and not bad either
 				if(font is null)
 					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
 
@@ -6377,15 +6570,15 @@ version(X11) {
 		}
 
 		void dispose() {
-			auto buffer = this.window.impl.buffer;
-
 			this.rasterOp = RasterOp.normal;
 
 			// FIXME: this.window.width/height is probably wrong
 
 			// src x,y     then dest x, y
-			XSetClipMask(display, gc, None);
-			XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
+			if(destiny != None) {
+				XSetClipMask(display, gc, None);
+				XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
+			}
 
 			XFreeGC(display, gc);
 
@@ -6397,8 +6590,8 @@ version(X11) {
 				XFreeFontSet(display, fontset);
 			XFlush(display);
 
-			if(window.paintingFinished !is null)
-				window.paintingFinished();
+			if(window.paintingFinishedDg !is null)
+				window.paintingFinishedDg();
 		}
 
 		bool backgroundIsNotTransparent = true;
@@ -6506,7 +6699,7 @@ version(X11) {
 			return 12; // pretty common default...
 		}
 
-		Size textSize(string text) {
+		Size textSize(in char[] text) {
 			auto maxWidth = 0;
 			auto lineHeight = fontHeight;
 			int h = text.length ? 0 : lineHeight + 4; // if text is empty, it still gives the line height
@@ -6516,7 +6709,7 @@ version(X11) {
 					// FIXME: unicode
 					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
 				else
-					textWidth = 12 * cast(int) line.length;
+					textWidth = fontHeight / 2 * cast(int) line.length; // if no font is loaded, it is prolly Fixed, which is a 2:1 ratio
 
 				if(textWidth > maxWidth)
 					maxWidth = textWidth;
@@ -6681,9 +6874,14 @@ version(X11) {
 		private __gshared XIM xim;
 		private __gshared char* displayName;
 
-		// Attempts recreation of state, may require application assistance
-		// You MUST call this OUTSIDE the event loop. Let the exception kill the loop,
-		// then call this, and if successful, reenter the loop.
+		private __gshared int connectionSequence_;
+
+		/// use this for lazy caching when reconnection
+		static int connectionSequenceNumber() { return connectionSequence_; }
+
+		/// Attempts recreation of state, may require application assistance
+		/// You MUST call this OUTSIDE the event loop. Let the exception kill the loop,
+		/// then call this, and if successful, reenter the loop.
 		static void discardAndRecreate(string newDisplayString = null) {
 			if(insideXEventLoop)
 				throw new Error("You MUST call discardAndRecreate from OUTSIDE the event loop");
@@ -6824,6 +7022,7 @@ version(X11) {
 		static Display* get() {
 			if(display is null) {
 				display = XOpenDisplay(displayName);
+				connectionSequence_++;
 				if(display is null)
 					throw new Exception("Unable to open X display");
 				XSetIOErrorHandler(&x11ioerrCB);
@@ -7012,6 +7211,7 @@ version(X11) {
 		XIC xic; // input context
 		int curHidden = 0; // counter
 		Cursor blankCurPtr = 0;
+		int cursorSequenceNumber = 0;
 		int warpEventCount = 0; // number of mouse movement events to eat
 
 		void delegate(XEvent) setSelectionHandler;
@@ -7064,11 +7264,12 @@ version(X11) {
 
 		void hideCursor () {
 			if (curHidden++ == 0) {
-				if (!blankCurPtr) {
+				if (!blankCurPtr || cursorSequenceNumber != XDisplayConnection.connectionSequenceNumber) {
 					static const(char)[1] cmbmp = 0;
 					XColor blackcolor = { 0, 0, 0, 0, 0, 0 };
 					Pixmap pm = XCreateBitmapFromData(display, window, cmbmp.ptr, 1, 1);
 					blankCurPtr = XCreatePixmapCursor(display, pm, pm, &blackcolor, &blackcolor, 0, 0);
+					cursorSequenceNumber = XDisplayConnection.connectionSequenceNumber;
 					XFreePixmap(display, pm);
 				}
 				XDefineCursor(display, window, blankCurPtr);
@@ -7583,6 +7784,16 @@ version(X11) {
 					//import std.conv;
 					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
 						throw new Exception("add x fd");// ~ to!string(epollFd));
+				}
+
+				scope(exit) {
+					// clean up when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
+					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = display.fd;
+					//import std.conv;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, display.fd, &ev);
 				}
 
 				if(pulseTimeout) {
@@ -11100,6 +11311,8 @@ mixin template ExperimentalTextComponent() {
 					caret = Caret(this, blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length);
 				}
 			}
+
+			invalidateLayout();
 		}
 
 		void tryMerge(InlineElement into, InlineElement what) {
@@ -11121,11 +11334,6 @@ mixin template ExperimentalTextComponent() {
 			}
 
 			// FIXME: ensure no other carets have a reference to it
-		}
-
-		/// Call this if the inputs change. It will reflow everything
-		void redoLayout() {
-
 		}
 
 		/// exact = true means return null if no match. otherwise, get the closest one that makes sense for a mouse click.
@@ -11170,9 +11378,8 @@ mixin template ExperimentalTextComponent() {
 			caret.offset = result.offset;
 		}
 
-// FIXME: caret can remain sometimes when inserting
-// FIXME: inserting at the beginning once you already have something can eff it up.
-		void drawInto(ScreenPainter painter, bool focused = false) {
+		/// Call this if the inputs change. It will reflow everything
+		void redoLayout(ScreenPainter painter) {
 			//painter.setClipRectangle(boundingBox);
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
@@ -11184,17 +11391,9 @@ mixin template ExperimentalTextComponent() {
 			foreach(block; blocks) {
 				nl();
 				foreach(part; block.parts) {
-					painter.outlineColor = part.color;
-					painter.fillColor = part.backgroundColor;
 					part.letterXs = null;
 
 					auto size = painter.textSize(part.text);
-
-					painter.drawText(pos, part.text);
-					if(part.styles & TextFormat.underline)
-						painter.drawLine(Point(pos.x, pos.y + size.height - 4), Point(pos.x + size.width, pos.y + size.height - 4));
-					if(part.styles & TextFormat.strikethrough)
-						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
 
 					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
 
@@ -11214,6 +11413,35 @@ mixin template ExperimentalTextComponent() {
 
 					if(part.text.length && part.text[$-1] == '\n')
 						nl();
+				}
+			}
+
+			layoutInvalidated = false;
+		}
+
+		bool layoutInvalidated = true;
+		void invalidateLayout() {
+			layoutInvalidated = true;
+		}
+
+// FIXME: caret can remain sometimes when inserting
+// FIXME: inserting at the beginning once you already have something can eff it up.
+		void drawInto(ScreenPainter painter, bool focused = false) {
+			if(layoutInvalidated)
+				redoLayout(painter);
+			foreach(block; blocks) {
+				foreach(part; block.parts) {
+					painter.outlineColor = part.color;
+					painter.fillColor = part.backgroundColor;
+
+					auto pos = part.boundingBox.upperLeft;
+					auto size = part.boundingBox.size;
+
+					painter.drawText(pos, part.text);
+					if(part.styles & TextFormat.underline)
+						painter.drawLine(Point(pos.x, pos.y + size.height - 4), Point(pos.x + size.width, pos.y + size.height - 4));
+					if(part.styles & TextFormat.strikethrough)
+						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
 				}
 			}
 
@@ -11443,10 +11671,14 @@ mixin template ExperimentalTextComponent() {
 			auto atOffset = selectionStart.offset;
 			while(at) {
 				at.text = at.text[atOffset .. $];
+				if(atOffset < at.letterXs.length)
+					at.letterXs = at.letterXs[atOffset .. $];
 
 				if(at is selectionEnd.inlineElement) {
 					selectionEnd.offset -= atOffset;
 					at.text = at.text[selectionEnd.offset .. $];
+					if(selectionEnd.offset < at.letterXs.length)
+						at.letterXs = at.letterXs[selectionEnd.offset .. $];
 					selectionEnd.offset = 0;
 					break;
 				} else {
@@ -11472,10 +11704,16 @@ mixin template ExperimentalTextComponent() {
 			caret = selectionEnd;
 			selectNone();
 
+			invalidateLayout();
+
 		}
 
 		/// Plain text editing api. These work at the current caret inside the selected inline element.
-		void insert(string text) {}
+		void insert(in char[] text) {
+			foreach(dchar ch; text)
+				insert(ch);
+		}
+		/// ditto
 		void insert(dchar ch) {
 
 			deleteSelection();
@@ -11488,6 +11726,9 @@ mixin template ExperimentalTextComponent() {
 				backspace();
 				return;
 			}
+
+			invalidateLayout();
+
 			if(ch == 13) ch = 10;
 			auto e = caret.inlineElement;
 			if(e is null) {
@@ -11501,6 +11742,7 @@ mixin template ExperimentalTextComponent() {
 				if(ch == 10) {
 					auto c = caret.inlineElement.clone;
 					c.text = null;
+					c.letterXs = null;
 					insertPartAfter(c,e);
 					caret = Caret(this, c, 0);
 				}
@@ -11509,7 +11751,12 @@ mixin template ExperimentalTextComponent() {
 				if(ch == 10) {
 					auto c = caret.inlineElement.clone;
 					c.text = e.text[caret.offset .. $];
+					if(caret.offset < c.letterXs.length)
+						c.letterXs = e.letterXs[caret.offset .. $]; // FIXME boundingBox
 					e.text = e.text[0 .. caret.offset] ~ cast(char) ch;
+					if(caret.offset <= e.letterXs.length) {
+						e.letterXs = e.letterXs[0 .. caret.offset] ~ 0; // FIXME bounding box
+					}
 					insertPartAfter(c,e);
 					caret = Caret(this, c, 0);
 				} else {
@@ -11573,6 +11820,8 @@ mixin template ExperimentalTextComponent() {
 				caret.offset--;
 			}
 			//cleanupStructures();
+
+			invalidateLayout();
 		}
 		void delete_() {
 			auto after = caret;
@@ -11581,6 +11830,8 @@ mixin template ExperimentalTextComponent() {
 				caret = after;
 				backspace();
 			}
+
+			invalidateLayout();
 		}
 		void overstrike() {}
 
