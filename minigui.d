@@ -3,7 +3,8 @@
 /*
 	TODO:
 
-	scrolling
+	TrackBar controls
+
 	event cleanup
 	ScreenPainter dtor stuff. clipping api.
 	Windows radio button sizing and theme text selection
@@ -235,7 +236,7 @@ abstract class ComboboxBase : Widget {
 		SimpleWindow dropDown;
 		void popup() {
 			auto w = width;
-			auto h = this.options.length * Window.lineHeight + 8;
+			auto h = cast(int) this.options.length * Window.lineHeight + 8;
 
 			auto coord = this.globalCoordinates();
 			auto dropDown = new SimpleWindow(
@@ -1661,6 +1662,37 @@ class ScrollableWidget : Widget {
 		if(event.button == MouseButton.wheelDown)
 			verticalScroll(16);
 		super.defaultEventHandler_click(event);
+	}
+
+	override void defaultEventHandler_keydown(Event event) {
+		switch(event.key) {
+			case Key.Left:
+				horizontalScroll(-16);
+			break;
+			case Key.Right:
+				horizontalScroll(16);
+			break;
+			case Key.Up:
+				verticalScroll(-16);
+			break;
+			case Key.Down:
+				verticalScroll(16);
+			break;
+			case Key.Home:
+				verticalScrollTo(0);
+			break;
+			case Key.End:
+				verticalScrollTo(contentHeight);
+			break;
+			case Key.PageUp:
+				verticalScroll(-160);
+			break;
+			case Key.PageDown:
+				verticalScroll(160);
+			break;
+			default:
+		}
+		super.defaultEventHandler_keydown(event);
 	}
 
 	version(custom_widgets) {
@@ -3214,6 +3246,7 @@ class ToolButton : Button {
 	override int maxHeight() { return 32; }
 	override int minHeight() { return 32; }
 
+	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
 		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
 
@@ -3616,6 +3649,7 @@ class Fieldset : Widget {
 		} else static assert(0);
 	}
 
+	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
 		painter.fillColor = Color.transparent;
 		painter.pen = Pen(Color.black, 1);
@@ -3658,7 +3692,7 @@ class Fieldset : Widget {
 	}
 }
 
-///
+/// Draws a line
 class HorizontalRule : Widget {
 	mixin Margin!q{ 2 };
 	override int minHeight() { return 2; }
@@ -3676,6 +3710,26 @@ class HorizontalRule : Widget {
 		painter.drawLine(Point(0, 1), Point(width, 1));
 	}
 }
+
+/// ditto
+class VerticalRule : Widget {
+	mixin Margin!q{ 2 };
+	override int minWidth() { return 2; }
+	override int maxWidth() { return 2; }
+
+	///
+	this(Widget parent = null) {
+		super(parent);
+	}
+
+	override void paint(ScreenPainter painter) {
+		painter.outlineColor = Color(128, 128, 128);
+		painter.drawLine(Point(0, 0), Point(0, height));
+		painter.outlineColor = Color(223, 223, 223);
+		painter.drawLine(Point(1, 0), Point(1, height));
+	}
+}
+
 
 ///
 class Menu : Window {
@@ -4024,7 +4078,7 @@ class Checkbox : MouseActivatedWidget {
 
 }
 
-///
+/// Adds empty space to a layout.
 class VerticalSpacer : Widget {
 	override int maxHeight() { return 20; }
 	override int minHeight() { return 20; }
@@ -4033,6 +4087,17 @@ class VerticalSpacer : Widget {
 		super(parent);
 	}
 }
+
+/// ditto
+class HorizontalSpacer : Widget {
+	override int maxWidth() { return 20; }
+	override int minWidth() { return 20; }
+	///
+	this(Widget parent = null) {
+		super(parent);
+	}
+}
+
 
 ///
 class Radiobox : MouseActivatedWidget {
@@ -4332,12 +4397,17 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	@property string content() {
 		version(win32_widgets) {
-			char[4096] buffer;
-			// FIXME: GetWindowTextW
-			// FIXME: GetWindowTextLength
-			auto l = GetWindowTextA(hwnd, buffer.ptr, buffer.length - 1);
+			wchar[4096] bufferstack;
+			wchar[] buffer;
+			auto len = GetWindowTextLength(hwnd);
+			if(len < bufferstack.length)
+				buffer = bufferstack[0 .. len + 1];
+			else
+				buffer = new wchar[](len + 1);
+
+			auto l = GetWindowTextW(hwnd, buffer.ptr, buffer.length);
 			if(l >= 0)
-				return buffer[0 .. l].idup;
+				return makeUtf8StringFromWindowsString(buffer[0 .. l]);
 			else
 				return null;
 		} else version(custom_widgets) {
@@ -4345,9 +4415,10 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		} else static assert(false);
 	}
 	@property void content(string s) {
-		version(win32_widgets)
-			SetWindowTextA(hwnd, toStringzInternal(s));
-		else version(custom_widgets) {
+		version(win32_widgets) {
+			WCharzBuffer bfr = WCharzBuffer(s);
+			SetWindowTextW(hwnd, bfr.ptr);
+		} else version(custom_widgets) {
 			textLayout.clear();
 			textLayout.addText(s);
 
@@ -4381,7 +4452,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		TextLayout textLayout;
 
 		void setupCustomTextEditing() {
-			textLayout = new TextLayout(Rectangle(0, 0, width, height));
+			textLayout = new TextLayout(Rectangle(4, 2, width - 8, height - 4));
 		}
 
 		override void paint(ScreenPainter painter) {
@@ -4481,7 +4552,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	version(custom_widgets)
 	override void defaultEventHandler_keydown(Event ev) {
-		super.defaultEventHandler_keydown(ev);
+		//super.defaultEventHandler_keydown(ev);
 		switch(ev.key) {
 			case Key.Delete:
 				textLayout.delete_();
@@ -4511,6 +4582,17 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				textLayout.moveEnd(textLayout.caret);
 				redraw();
 			break;
+			case Key.PageUp:
+				foreach(i; 0 .. 32)
+				textLayout.moveUp(textLayout.caret);
+				redraw();
+			break;
+			case Key.PageDown:
+				foreach(i; 0 .. 32)
+				textLayout.moveDown(textLayout.caret);
+				redraw();
+			break;
+
 			default:
 				 {} // intentionally blank, let "char" handle it
 		}
@@ -4549,6 +4631,7 @@ class LineEdit : EditableTextWidget {
 		} else static assert(false);
 	}
 	override int maxHeight() { return Window.lineHeight + 4; }
+	override int minHeight() { return Window.lineHeight + 4; }
 }
 
 ///

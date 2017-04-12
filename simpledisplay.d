@@ -11267,7 +11267,14 @@ mixin template ExperimentalTextComponent() {
 
 	class TextLayout {
 		BlockElement[] blocks;
-		Rectangle boundingBox;
+		Rectangle boundingBox_;
+		Rectangle boundingBox() { return boundingBox_; }
+		void boundingBox(Rectangle r) {
+			if(r != boundingBox_) {
+				boundingBox_ = r;
+				layoutInvalidated = true;
+			}
+		}
 
 		Rectangle contentBoundingBox() {
 			Rectangle r;
@@ -11326,7 +11333,7 @@ mixin template ExperimentalTextComponent() {
 
 		void clear() {
 			blocks = null;
-			caret = Caret.init;
+			selectionStart = selectionEnd = caret = Caret.init;
 		}
 
 		void addText(Args...)(Args args) {
