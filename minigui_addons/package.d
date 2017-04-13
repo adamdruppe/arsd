@@ -20,6 +20,8 @@
 		  `static if(UsingSimpledisplayX11)` to check for X. However, here,
 		  `version(Windows)` also works pretty well.
 
+		* It is not allowed to import any other minigui_addon module. This is to
+		  ensure it remains individual addons, not a webby mess of a library.
 	)
 +/
 module arsd.minigui_addons;

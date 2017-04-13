@@ -2493,6 +2493,14 @@ class InlineBlockLayout : Layout {
 	}
 }
 
+class TabWidget : Widget {
+
+}
+
+class CollapsableSidebar : Widget {
+
+}
+
 /// Stacks the widgets vertically, taking all the available width for each child.
 class VerticalLayout : Layout {
 	// intentionally blank - widget's default is vertical layout right now

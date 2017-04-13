@@ -2888,6 +2888,40 @@ class Timer {
 }
 }
 
+version(linux)
+/// Lets you add files to the event loop for reading. Use at your own risk.
+class PosixFdReader {
+	///
+	this(void delegate() onReady, int fd) {
+		this((int) { onReady(); }, fd);
+	}
+
+	///
+	this(void delegate(int) onReady, int fd) {
+		this.onReady = onReady;
+		this.fd = fd;
+
+		mapping[fd] = this;
+
+		prepareEventLoop();
+
+		static import ep = core.sys.linux.epoll;
+		ep.epoll_event ev = void;
+		ev.events = ep.EPOLLIN;
+		ev.data.fd = fd;
+		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+	}
+
+	void delegate(int) onReady;
+
+	void ready() {
+		onReady(fd);
+	}
+
+	int fd = -1;
+	__gshared PosixFdReader[int] mapping;
+}
+
 // basic functions to access the clipboard
 /+
 
@@ -4205,7 +4239,7 @@ class OperatingSystemFont {
 				sizestr = "" ~ cast(char)(size % 10 + '0');
 			else
 				sizestr = "" ~ cast(char)(size / 10 + '0') ~ cast(char)(size % 10 + '0');
-			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*";
+			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*\0";
 
 			//import std.stdio; writeln(xfontstr);
 
@@ -7953,6 +7987,9 @@ version(X11) {
 
 								if(Timer* t = fd in Timer.mapping)
 									(*t).trigger();
+
+								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+									(*pfr).ready();
 
 								// or i might add support for other FDs too
 								// but for now it is just timer

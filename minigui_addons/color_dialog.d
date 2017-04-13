@@ -99,10 +99,10 @@ class ColorPickerDialog : Dialog {
 			this() { super(t); }
 			override int minHeight() { return hslImage ? hslImage.height : 4; }
 			override int maxHeight() { return hslImage ? hslImage.height : 4; }
-		};
-		wid.paint = (ScreenPainter painter) {
-			if(hslImage)
-				hslImage.drawAt(painter, Point(0, 0));
+			override void paint(ScreenPainter painter) {
+				if(hslImage)
+					hslImage.drawAt(painter, Point(0, 0));
+			}
 		};
 
 		auto vlRgb = new class VerticalLayout {
@@ -164,22 +164,28 @@ class ColorPickerDialog : Dialog {
 			redraw();
 		});
 
-		auto currentColorWidget = new Widget(this);
-		currentColorWidget.paint = (ScreenPainter painter) {
-			auto c = currentColor();
+		auto s = this;
+		auto currentColorWidget = new class Widget {
+			this() {
+				super(s);
+			}
 
-			auto c1 = alphaBlend(c, Color(64, 64, 64));
-			auto c2 = alphaBlend(c, Color(192, 192, 192));
+			override void paint(ScreenPainter painter) {
+				auto c = currentColor();
 
-			painter.outlineColor = c1;
-			painter.fillColor = c1;
-			painter.drawRectangle(Point(0, 0), currentColorWidget.width / 2, currentColorWidget.height / 2);
-			painter.drawRectangle(Point(currentColorWidget.width / 2, currentColorWidget.height / 2), currentColorWidget.width / 2, currentColorWidget.height / 2);
+				auto c1 = alphaBlend(c, Color(64, 64, 64));
+				auto c2 = alphaBlend(c, Color(192, 192, 192));
 
-			painter.outlineColor = c2;
-			painter.fillColor = c2;
-			painter.drawRectangle(Point(currentColorWidget.width / 2, 0), currentColorWidget.width / 2, currentColorWidget.height / 2);
-			painter.drawRectangle(Point(0, currentColorWidget.height / 2), currentColorWidget.width / 2, currentColorWidget.height / 2);
+				painter.outlineColor = c1;
+				painter.fillColor = c1;
+				painter.drawRectangle(Point(0, 0), this.width / 2, this.height / 2);
+				painter.drawRectangle(Point(this.width / 2, this.height / 2), this.width / 2, this.height / 2);
+
+				painter.outlineColor = c2;
+				painter.fillColor = c2;
+				painter.drawRectangle(Point(this.width / 2, 0), this.width / 2, this.height / 2);
+				painter.drawRectangle(Point(0, this.height / 2), this.width / 2, this.height / 2);
+			}
 		};
 
 		auto hl = new HorizontalLayout(this);
