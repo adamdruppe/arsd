@@ -878,7 +878,7 @@ version(Windows) {
 /*
 From MSDN:
 
- You can also use the GET_X_LPARAM or GET_Y_LPARAM macro to extract the x- or y-coordinate.
+You can also use the GET_X_LPARAM or GET_Y_LPARAM macro to extract the x- or y-coordinate.
 
 Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coordinates of the cursor position because these macros return incorrect results on systems with multiple monitors. Systems with multiple monitors can have negative x- and y- coordinates, and LOWORD and HIWORD treat the coordinates as unsigned quantities.
 
@@ -1813,7 +1813,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			}
 		} else
 		version(OSXCocoa) {
-           		draw().drawImage(Point(0, 0), i);
+			draw().drawImage(Point(0, 0), i);
 			setNeedsDisplay(view, true);
 		} else static assert(0);
 	}
@@ -3276,10 +3276,10 @@ version(X11) {
 
 		---
 		 try {
-   GlobalHotkeyManager.register("M-H-A", delegate () { hideShowWindows(); });
- } catch (Exception e) {
-   conwriteln("ERROR registering hotkey!");
- }
+			GlobalHotkeyManager.register("M-H-A", delegate () { hideShowWindows(); });
+		} catch (Exception e) {
+			conwriteln("ERROR registering hotkey!");
+		}
 		---
 
 		The key strings are based on Emacs. In practical terms,
@@ -3638,134 +3638,134 @@ struct KeyEvent {
 
 	SimpleWindow window; /// associated Window
 
-// convert key event to simplified string representation a-la emacs
-const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted {
-  uint dpos = 0;
-  void put (const(char)[] s...) nothrow @trusted {
-    static if (growdest) {
-      foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch; else { dest ~= ch; ++dpos; }
-    } else {
-      foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch;
-    }
-  }
+	// convert key event to simplified string representation a-la emacs
+	const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted {
+		uint dpos = 0;
+		void put (const(char)[] s...) nothrow @trusted {
+			static if (growdest) {
+				foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch; else { dest ~= ch; ++dpos; }
+			} else {
+				foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch;
+			}
+		}
 
-  if (!this.key) return null;
+		if (!this.key) return null;
 
-  // put modifiers
-  if (this.modifierState&ModifierState.ctrl) put("C-");
-  if (this.modifierState&ModifierState.alt) put("M-");
-  if (this.modifierState&ModifierState.windows) put("H-");
-  if (this.modifierState&ModifierState.shift) put("S-");
+		// put modifiers
+		if (this.modifierState&ModifierState.ctrl) put("C-");
+		if (this.modifierState&ModifierState.alt) put("M-");
+		if (this.modifierState&ModifierState.windows) put("H-");
+		if (this.modifierState&ModifierState.shift) put("S-");
 
-  foreach (string kn; __traits(allMembers, Key)) {
-    if (this.key == __traits(getMember, Key, kn)) {
-      put(kn);
-      return dest[0..dpos];
-    }
-  }
+		foreach (string kn; __traits(allMembers, Key)) {
+			if (this.key == __traits(getMember, Key, kn)) {
+				put(kn);
+				return dest[0..dpos];
+			}
+		}
 
-  put("Unknown");
-  return dest[0..dpos];
-}
+		put("Unknown");
+		return dest[0..dpos];
+	}
 
-string toStr() () { return cast(string)toStrBuf!true(null); } // it is safe to cast here
+	string toStr() () { return cast(string)toStrBuf!true(null); } // it is safe to cast here
 
-// sorry for pasta, but i don't want to create new struct in `opEquals()`
-static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
-  KeyEvent res;
-  while (name.length && name.ptr[0] <= ' ') name = name[1..$];
-  while (name.length && name[$-1] <= ' ') name = name[0..$-1];
-  uint mods = 0;
-  while (name.length > 1 && name.ptr[1] == '-') {
-    switch (name.ptr[0]) {
-      case 'C': case 'c': mods |= ModifierState.ctrl; break;
-      case 'M': case 'm': mods |= ModifierState.alt; break;
-      case 'H': case 'h': mods |= ModifierState.windows; break;
-      case 'S': case 's': mods |= ModifierState.shift; break;
-      default: return res; // alas
-    }
-    name = name[2..$];
-  }
-  if (name.length == 0) return res;
-  res.modifierState = mods;
-  //HACK
-  if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
-    final switch (name.ptr[0]) {
-      case '0': name = "N0"; break;
-      case '1': name = "N1"; break;
-      case '2': name = "N2"; break;
-      case '3': name = "N3"; break;
-      case '4': name = "N4"; break;
-      case '5': name = "N5"; break;
-      case '6': name = "N6"; break;
-      case '7': name = "N7"; break;
-      case '8': name = "N8"; break;
-      case '9': name = "N9"; break;
-    }
-  }
-  foreach (string kn; __traits(allMembers, Key)) {
-    if (kn.length == name.length) {
-      // case-insensitive comapre
-      bool ok = true;
-      foreach (immutable ci, char c0; kn) {
-        if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
-        char c1 = name.ptr[ci];
-        if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
-        if (c0 != c1) { ok = false; break; }
-      }
-      if (ok) { res.key = __traits(getMember, Key, kn); return res; }
-    }
-  }
-  return res; // at least modifier state, lol
-}
+	// sorry for pasta, but i don't want to create new struct in `opEquals()`
+	static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
+		KeyEvent res;
+		while (name.length && name.ptr[0] <= ' ') name = name[1..$];
+		while (name.length && name[$-1] <= ' ') name = name[0..$-1];
+		uint mods = 0;
+		while (name.length > 1 && name.ptr[1] == '-') {
+			switch (name.ptr[0]) {
+				case 'C': case 'c': mods |= ModifierState.ctrl; break;
+				case 'M': case 'm': mods |= ModifierState.alt; break;
+				case 'H': case 'h': mods |= ModifierState.windows; break;
+				case 'S': case 's': mods |= ModifierState.shift; break;
+				default: return res; // alas
+			}
+			name = name[2..$];
+		}
+		if (name.length == 0) return res;
+		res.modifierState = mods;
+		//HACK
+		if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
+			final switch (name.ptr[0]) {
+				case '0': name = "N0"; break;
+				case '1': name = "N1"; break;
+				case '2': name = "N2"; break;
+				case '3': name = "N3"; break;
+				case '4': name = "N4"; break;
+				case '5': name = "N5"; break;
+				case '6': name = "N6"; break;
+				case '7': name = "N7"; break;
+				case '8': name = "N8"; break;
+				case '9': name = "N9"; break;
+			}
+		}
+		foreach (string kn; __traits(allMembers, Key)) {
+			if (kn.length == name.length) {
+				// case-insensitive comapre
+				bool ok = true;
+				foreach (immutable ci, char c0; kn) {
+					if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+					char c1 = name.ptr[ci];
+					if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+					if (c0 != c1) { ok = false; break; }
+				}
+				if (ok) { res.key = __traits(getMember, Key, kn); return res; }
+			}
+		}
+		return res; // at least modifier state, lol
+	}
 
-bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
-  while (name.length && name.ptr[0] <= ' ') name = name[1..$];
-  while (name.length && name[$-1] <= ' ') name = name[0..$-1];
-  if (!this.key) return (name.length == 0);
-  uint mods = 0;
-  while (name.length > 1 && name.ptr[1] == '-') {
-    switch (name.ptr[0]) {
-      case 'C': case 'c': mods |= ModifierState.ctrl; break;
-      case 'M': case 'm': mods |= ModifierState.alt; break;
-      case 'H': case 'h': mods |= ModifierState.windows; break;
-      case 'S': case 's': mods |= ModifierState.shift; break;
-      default: return false; // alas
-    }
-    name = name[2..$];
-  }
-  if (name.length == 0) return false;
-  if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) != mods) return false;
-  //HACK
-  if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
-    final switch (name.ptr[0]) {
-      case '0': name = "N0"; break;
-      case '1': name = "N1"; break;
-      case '2': name = "N2"; break;
-      case '3': name = "N3"; break;
-      case '4': name = "N4"; break;
-      case '5': name = "N5"; break;
-      case '6': name = "N6"; break;
-      case '7': name = "N7"; break;
-      case '8': name = "N8"; break;
-      case '9': name = "N9"; break;
-    }
-  }
-  foreach (string kn; __traits(allMembers, Key)) {
-    if (kn.length == name.length) {
-      // case-insensitive comapre
-      bool ok = true;
-      foreach (immutable ci, char c0; kn) {
-        if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
-        char c1 = name.ptr[ci];
-        if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
-        if (c0 != c1) { ok = false; break; }
-      }
-      if (ok && this.key == __traits(getMember, Key, kn)) return true;
-    }
-  }
-  return false;
-}
+	bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
+		while (name.length && name.ptr[0] <= ' ') name = name[1..$];
+		while (name.length && name[$-1] <= ' ') name = name[0..$-1];
+		if (!this.key) return (name.length == 0);
+		uint mods = 0;
+		while (name.length > 1 && name.ptr[1] == '-') {
+			switch (name.ptr[0]) {
+				case 'C': case 'c': mods |= ModifierState.ctrl; break;
+				case 'M': case 'm': mods |= ModifierState.alt; break;
+				case 'H': case 'h': mods |= ModifierState.windows; break;
+				case 'S': case 's': mods |= ModifierState.shift; break;
+				default: return false; // alas
+			}
+			name = name[2..$];
+		}
+		if (name.length == 0) return false;
+		if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) != mods) return false;
+		//HACK
+		if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
+			final switch (name.ptr[0]) {
+				case '0': name = "N0"; break;
+				case '1': name = "N1"; break;
+				case '2': name = "N2"; break;
+				case '3': name = "N3"; break;
+				case '4': name = "N4"; break;
+				case '5': name = "N5"; break;
+				case '6': name = "N6"; break;
+				case '7': name = "N7"; break;
+				case '8': name = "N8"; break;
+				case '9': name = "N9"; break;
+			}
+		}
+		foreach (string kn; __traits(allMembers, Key)) {
+			if (kn.length == name.length) {
+				// case-insensitive comapre
+				bool ok = true;
+				foreach (immutable ci, char c0; kn) {
+					if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+					char c1 = name.ptr[ci];
+					if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+					if (c0 != c1) { ok = false; break; }
+				}
+				if (ok && this.key == __traits(getMember, Key, kn)) return true;
+			}
+		}
+		return false;
+	}
 }
 
 /// Type of a [MouseEvent]
@@ -4793,11 +4793,11 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 			auto colorSpace = CGColorSpaceCreateDeviceRGB();
 			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
-                                            colorSpace,
-                                            kCGImageAlphaPremultipliedLast
-                                                   |kCGBitmapByteOrder32Big);
-            		CGColorSpaceRelease(colorSpace);
-            		rawData = CGBitmapContextGetData(context);
+				colorSpace,
+				kCGImageAlphaPremultipliedLast
+				|kCGBitmapByteOrder32Big);
+			CGColorSpaceRelease(colorSpace);
+			rawData = CGBitmapContextGetData(context);
 
 			auto rdl = (width * height * 4);
 			rawData[0 .. rdl] = i.rawData[0 .. rdl];
@@ -5484,7 +5484,7 @@ version(Windows) {
 
 	extern(Windows)
 	LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
-	    try {
+		try {
 			if(SimpleWindow.handleNativeGlobalEvent !is null) {
 				// it returns zero if the message is handled, so we won't do anything more there
 				// do I like that though?
@@ -5493,22 +5493,22 @@ version(Windows) {
 					return ret;
 			}
 
-            if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
-	    	if(window.getNativeEventHandler !is null) {
-			auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
-			if(ret == 0)
-				return ret;
+			if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+				if(window.getNativeEventHandler !is null) {
+					auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
+					if(ret == 0)
+						return ret;
+				}
+				if(auto w = cast(SimpleWindow) (*window))
+					return w.windowProcedure(hWnd, iMessage, wParam, lParam);
+				else
+					return DefWindowProc(hWnd, iMessage, wParam, lParam);
+			} else {
+				return DefWindowProc(hWnd, iMessage, wParam, lParam);
+			}
+		} catch (Exception e) {
+			assert(false, "Exception caught in WndProc " ~ e.toString());
 		}
-		if(auto w = cast(SimpleWindow) (*window))
-	                return w.windowProcedure(hWnd, iMessage, wParam, lParam);
-		else
-			return DefWindowProc(hWnd, iMessage, wParam, lParam);
-            } else {
-                return DefWindowProc(hWnd, iMessage, wParam, lParam);
-            }
-	    } catch (Exception e) {
-            	assert(false, "Exception caught in WndProc " ~ e.toString());
-	    }
 	}
 
 	mixin template NativeScreenPainterImplementation() {
@@ -8060,18 +8060,18 @@ version(X11) {
 		XEvent e;
 		XNextEvent(display, &e);
 		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
-    // filter out compose events
-    if (XFilterEvent(&e, None)) {
-      //{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
-      //NOTE: we should ungrab keyboard here, but simpledisplay doesn't use keyboard grabbing (yet)
-      return false;
-    }
-    // process keyboard mapping changes
-    if (e.type == EventType.KeymapNotify) {
-      //{ import core.stdc.stdio : printf; printf("KeymapNotify processed!\n"); }
-      XRefreshKeyboardMapping(&e.xmapping);
-      return false;
-    }
+		// filter out compose events
+		if (XFilterEvent(&e, None)) {
+			//{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
+			//NOTE: we should ungrab keyboard here, but simpledisplay doesn't use keyboard grabbing (yet)
+			return false;
+		}
+		// process keyboard mapping changes
+		if (e.type == EventType.KeymapNotify) {
+			//{ import core.stdc.stdio : printf; printf("KeymapNotify processed!\n"); }
+			XRefreshKeyboardMapping(&e.xmapping);
+			return false;
+		}
 
 		version(with_eventloop)
 			import arsd.eventloop;
@@ -8539,33 +8539,27 @@ int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int
 
 char *XKeysymToString(KeySym keysym);
 KeySym XKeycodeToKeysym(
-    Display*		/* display */,
-    KeyCode		/* keycode */,
-    int			/* index */
+	Display*		/* display */,
+	KeyCode		/* keycode */,
+	int			/* index */
 );
 
 
-int XConvertSelection(Display *display, Atom selection, Atom target,
-              Atom property, Window requestor, Time time);
+int XConvertSelection(Display *display, Atom selection, Atom target, Atom property, Window requestor, Time time);
 
 int XFree(void*);
-              int XDeleteProperty(Display *display, Window w, Atom property);
+int XDeleteProperty(Display *display, Window w, Atom property);
 
-    int XChangeProperty(Display *display, Window w, Atom property, Atom
-              type, int format, int mode, in void *data, int nelements);
+int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, in void *data, int nelements);
 
+int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
+	long_offset, arch_long long_length, Bool del, Atom req_type, Atom
+	*actual_type_return, int *actual_format_return, arch_ulong
+	*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
 
+int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
 
-       int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
-              long_offset, arch_long long_length, Bool del, Atom req_type, Atom
-              *actual_type_return, int *actual_format_return, arch_ulong
-              *nitems_return, arch_ulong *bytes_after_return, void** prop_return);
-
-       int XSetSelectionOwner(Display *display, Atom selection, Window owner,
-              Time time);
-
-       Window XGetSelectionOwner(Display *display, Atom selection);
-
+Window XGetSelectionOwner(Display *display, Atom selection);
 
 
 
@@ -8607,15 +8601,15 @@ XIM XIMOfIC(XIC ic);
 
 alias XIMStyle = arch_ulong;
 enum : arch_ulong {
-  XIMPreeditArea      = 0x0001,
-  XIMPreeditCallbacks = 0x0002,
-  XIMPreeditPosition  = 0x0004,
-  XIMPreeditNothing   = 0x0008,
-  XIMPreeditNone      = 0x0010,
-  XIMStatusArea       = 0x0100,
-  XIMStatusCallbacks  = 0x0200,
-  XIMStatusNothing    = 0x0400,
-  XIMStatusNone       = 0x0800,
+	XIMPreeditArea      = 0x0001,
+	XIMPreeditCallbacks = 0x0002,
+	XIMPreeditPosition  = 0x0004,
+	XIMPreeditNothing   = 0x0008,
+	XIMPreeditNone      = 0x0010,
+	XIMStatusArea       = 0x0100,
+	XIMStatusCallbacks  = 0x0200,
+	XIMStatusNothing    = 0x0400,
+	XIMStatusNone       = 0x0800,
 }
 
 
@@ -8868,12 +8862,12 @@ enum ColorMapNotification:int
 	else version(X86) static assert(XImage.sizeof == 88);
 
 struct XCharStruct {
-    short       lbearing;       /* origin to left edge of raster */
-    short       rbearing;       /* origin to right edge of raster */
-    short       width;          /* advance to next char's origin */
-    short       ascent;         /* baseline to top edge of raster */
-    short       descent;        /* baseline to bottom edge of raster */
-    ushort attributes;  /* per char flags (not predefined) */
+	short       lbearing;       /* origin to left edge of raster */
+	short       rbearing;       /* origin to right edge of raster */
+	short       width;          /* advance to next char's origin */
+	short       ascent;         /* baseline to top edge of raster */
+	short       descent;        /* baseline to bottom edge of raster */
+	ushort attributes;  /* per char flags (not predefined) */
 }
 
 /*
@@ -8881,33 +8875,29 @@ struct XCharStruct {
  * returned.
  */
 struct XFontProp {
-    Atom name;
-    arch_ulong card32;
+	Atom name;
+	arch_ulong card32;
 }
 
 alias Atom Font;
 
 struct XFontStruct {
-   XExtData *ext_data;           /* Hook for extension to hang data */
-   Font fid;                     /* Font ID for this font */
-   uint direction;           /* Direction the font is painted */
-   uint min_char_or_byte2;   /* First character */
-   uint max_char_or_byte2;   /* Last character */
-   uint min_byte1;           /* First row that exists (for two-byte
-                                  * fonts) */
-   uint max_byte1;           /* Last row that exists (for two-byte
-                                  * fonts) */
-   Bool all_chars_exist;         /* Flag if all characters have nonzero
-                                  * size */
-   uint default_char;        /* Char to print for undefined character */
-   int n_properties;             /* How many properties there are */
-   XFontProp *properties;        /* Pointer to array of additional
-                                  * properties*/
-   XCharStruct min_bounds;       /* Minimum bounds over all existing char*/
-   XCharStruct max_bounds;       /* Maximum bounds over all existing char*/
-   XCharStruct *per_char;        /* first_char to last_char information */
-   int ascent;                   /* Max extent above baseline for spacing */
-   int descent;                  /* Max descent below baseline for spacing */
+	XExtData *ext_data;           /* Hook for extension to hang data */
+	Font fid;                     /* Font ID for this font */
+	uint direction;           /* Direction the font is painted */
+	uint min_char_or_byte2;   /* First character */
+	uint max_char_or_byte2;   /* Last character */
+	uint min_byte1;           /* First row that exists (for two-byte fonts) */
+	uint max_byte1;           /* Last row that exists (for two-byte fonts) */
+	Bool all_chars_exist;         /* Flag if all characters have nonzero size */
+	uint default_char;        /* Char to print for undefined character */
+	int n_properties;             /* How many properties there are */
+	XFontProp *properties;        /* Pointer to array of additional properties*/
+	XCharStruct min_bounds;       /* Minimum bounds over all existing char*/
+	XCharStruct max_bounds;       /* Maximum bounds over all existing char*/
+	XCharStruct *per_char;        /* first_char to last_char information */
+	int ascent;                   /* Max extent above baseline for spacing */
+	int descent;                  /* Max descent below baseline for spacing */
 }
 
 	XFontStruct *XLoadQueryFont(Display *display, in char *name);
@@ -9021,15 +9011,15 @@ struct XFocusChangeEvent{
 alias XFocusChangeEvent XFocusInEvent;
 alias XFocusChangeEvent XFocusOutEvent;
 Window XCreateSimpleWindow(
-    Display*	/* display */,
-    Window		/* parent */,
-    int			/* x */,
-    int			/* y */,
-    uint		/* width */,
-    uint		/* height */,
-    uint		/* border_width */,
-    uint		/* border */,
-    uint		/* background */
+	Display*	/* display */,
+	Window		/* parent */,
+	int			/* x */,
+	int			/* y */,
+	uint		/* width */,
+	uint		/* height */,
+	uint		/* border_width */,
+	uint		/* border */,
+	uint		/* background */
 );
 Window XCreateWindow(Display *display, Window parent, int x, int y, uint width, uint height, uint border_width, int depth, uint class_, Visual *visual, arch_ulong valuemask, XSetWindowAttributes *attributes);
 
@@ -9039,7 +9029,7 @@ int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
 int XMoveWindow(Display*, Window, int, int);
 int XResizeWindow(Display *display, Window w, uint width, uint height);
 
-       Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
+Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
 enum CWBackPixmap              = (1L<<0);
 enum CWBackPixel               = (1L<<1);
@@ -9109,24 +9099,24 @@ struct XSetWindowAttributes {
 
 
 XImage *XCreateImage(
-    Display*		/* display */,
-    Visual*		/* visual */,
-    uint	/* depth */,
-    int			/* format */,
-    int			/* offset */,
-    ubyte*		/* data */,
-    uint	/* width */,
-    uint	/* height */,
-    int			/* bitmap_pad */,
-    int			/* bytes_per_line */
+	Display*		/* display */,
+	Visual*		/* visual */,
+	uint	/* depth */,
+	int			/* format */,
+	int			/* offset */,
+	ubyte*		/* data */,
+	uint	/* width */,
+	uint	/* height */,
+	int			/* bitmap_pad */,
+	int			/* bytes_per_line */
 );
 
 Status XInitImage (XImage* image);
 
 Atom XInternAtom(
-    Display*		/* display */,
-    const char*	/* atom_name */,
-    Bool		/* only_if_exists */
+	Display*		/* display */,
+	const char*	/* atom_name */,
+	Bool		/* only_if_exists */
 );
 
 alias int Status;
@@ -9163,55 +9153,54 @@ enum EventMask:int
 }
 
 int XPutImage(
-    Display*	/* display */,
-    Drawable	/* d */,
-    GC			/* gc */,
-    XImage*	/* image */,
-    int			/* src_x */,
-    int			/* src_y */,
-    int			/* dest_x */,
-    int			/* dest_y */,
-    uint		/* width */,
-    uint		/* height */
+	Display*	/* display */,
+	Drawable	/* d */,
+	GC			/* gc */,
+	XImage*	/* image */,
+	int			/* src_x */,
+	int			/* src_y */,
+	int			/* dest_x */,
+	int			/* dest_y */,
+	uint		/* width */,
+	uint		/* height */
 );
 
 int XDestroyWindow(
-    Display*	/* display */,
-    Window		/* w */
+	Display*	/* display */,
+	Window		/* w */
 );
 
-int XDestroyImage(
-	XImage*);
+int XDestroyImage(XImage*);
 
 int XSelectInput(
-    Display*	/* display */,
-    Window		/* w */,
-    EventMask	/* event_mask */
+	Display*	/* display */,
+	Window		/* w */,
+	EventMask	/* event_mask */
 );
 
 int XMapWindow(
-    Display*	/* display */,
-    Window		/* w */
+	Display*	/* display */,
+	Window		/* w */
 );
 
 struct MwmHints {
-    int flags;
-    int functions;
-    int decorations;
-    int input_mode;
-    int status;
+	int flags;
+	int functions;
+	int decorations;
+	int input_mode;
+	int status;
 }
 
 enum {
-    MWM_HINTS_FUNCTIONS = (1L << 0),
-    MWM_HINTS_DECORATIONS =  (1L << 1),
+	MWM_HINTS_FUNCTIONS = (1L << 0),
+	MWM_HINTS_DECORATIONS =  (1L << 1),
 
-    MWM_FUNC_ALL = (1L << 0),
-    MWM_FUNC_RESIZE = (1L << 1),
-    MWM_FUNC_MOVE = (1L << 2),
-    MWM_FUNC_MINIMIZE = (1L << 3),
-    MWM_FUNC_MAXIMIZE = (1L << 4),
-    MWM_FUNC_CLOSE = (1L << 5)
+	MWM_FUNC_ALL = (1L << 0),
+	MWM_FUNC_RESIZE = (1L << 1),
+	MWM_FUNC_MOVE = (1L << 2),
+	MWM_FUNC_MINIMIZE = (1L << 3),
+	MWM_FUNC_MAXIMIZE = (1L << 4),
+	MWM_FUNC_CLOSE = (1L << 5)
 }
 
 Status XIconifyWindow(Display*, Window, int);
@@ -9219,61 +9208,55 @@ int XMapRaised(Display*, Window);
 int XMapSubwindows(Display*, Window);
 
 int XNextEvent(
-    Display*	/* display */,
-    XEvent*		/* event_return */
+	Display*	/* display */,
+	XEvent*		/* event_return */
 );
 
 Bool XFilterEvent(XEvent *event, Window window);
 int XRefreshKeyboardMapping(XMappingEvent *event_map);
 
 Status XSetWMProtocols(
-    Display*	/* display */,
-    Window		/* w */,
-    Atom*		/* protocols */,
-    int			/* count */
+	Display*	/* display */,
+	Window		/* w */,
+	Atom*		/* protocols */,
+	int			/* count */
 );
 
 import core.stdc.config : c_long, c_ulong;
 void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
 Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
 
-       /* Size hints mask bits */
+	/* Size hints mask bits */
 
-       enum   USPosition  = (1L << 0)          /* user specified x, y */;
-       enum   USSize      = (1L << 1)          /* user specified width, height
-                                                  */;
-       enum   PPosition   = (1L << 2)          /* program specified position
-                                                  */;
-       enum   PSize       = (1L << 3)          /* program specified size */;
-       enum   PMinSize    = (1L << 4)          /* program specified minimum
-                                                  size */;
-       enum   PMaxSize    = (1L << 5)          /* program specified maximum
-                                                  size */;
-       enum   PResizeInc  = (1L << 6)          /* program specified resize
-                                                  increments */;
-       enum   PAspect     = (1L << 7)          /* program specified min and
-                                                  max aspect ratios */;
-       enum   PBaseSize   = (1L << 8);
-       enum   PWinGravity = (1L << 9);
-       enum   PAllHints   = (PPosition|PSize| PMinSize|PMaxSize| PResizeInc|PAspect);
-       struct XSizeHints {
-            arch_long flags;         /* marks which fields in this structure are defined */
-            int x, y;           /* Obsolete */
-            int width, height;  /* Obsolete */
-            int min_width, min_height;
-            int max_width, max_height;
-            int width_inc, height_inc;
-            struct Aspect {
-                   int x;       /* numerator */
-                   int y;       /* denominator */
-            }
+	enum   USPosition  = (1L << 0)          /* user specified x, y */;
+	enum   USSize      = (1L << 1)          /* user specified width, height */;
+	enum   PPosition   = (1L << 2)          /* program specified position */;
+	enum   PSize       = (1L << 3)          /* program specified size */;
+	enum   PMinSize    = (1L << 4)          /* program specified minimum size */;
+	enum   PMaxSize    = (1L << 5)          /* program specified maximum size */;
+	enum   PResizeInc  = (1L << 6)          /* program specified resize increments */;
+	enum   PAspect     = (1L << 7)          /* program specified min and max aspect ratios */;
+	enum   PBaseSize   = (1L << 8);
+	enum   PWinGravity = (1L << 9);
+	enum   PAllHints   = (PPosition|PSize| PMinSize|PMaxSize| PResizeInc|PAspect);
+	struct XSizeHints {
+		arch_long flags;         /* marks which fields in this structure are defined */
+		int x, y;           /* Obsolete */
+		int width, height;  /* Obsolete */
+		int min_width, min_height;
+		int max_width, max_height;
+		int width_inc, height_inc;
+		struct Aspect {
+			int x;       /* numerator */
+			int y;       /* denominator */
+		}
 
-	    Aspect min_aspect;
-	    Aspect max_aspect;
-            int base_width, base_height;
-            int win_gravity;
-            /* this structure may be extended in the future */
-       }
+		Aspect min_aspect;
+		Aspect max_aspect;
+		int base_width, base_height;
+		int win_gravity;
+		/* this structure may be extended in the future */
+	}
 
 
 
@@ -9628,7 +9611,7 @@ struct XAnyEvent
 }
 
 union XEvent{
-    int type;		/* must not be changed; first element */
+	int type;		/* must not be changed; first element */
 	XAnyEvent xany;
 	XKeyEvent xkey;
 	XButtonEvent xbutton;
@@ -10104,12 +10087,12 @@ struct Visual
 
 	int XGetErrorText(Display*, int, char*, int);
 
-  Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+	Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
 
 
 	int XGrabPointer(Display *display, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor, Time time);
-       int XUngrabPointer(Display *display, Time time);
-       int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
+	int XUngrabPointer(Display *display, Time time);
+	int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
 
 	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
 
@@ -10192,173 +10175,173 @@ struct Visual
 }
 } else version (OSXCocoa) {
 private:
-    alias void* id;
-    alias void* Class;
-    alias void* SEL;
-    alias void* IMP;
-    alias void* Ivar;
-    alias byte BOOL;
-    alias const(void)* CFStringRef;
-    alias const(void)* CFAllocatorRef;
-    alias const(void)* CFTypeRef;
-    alias const(void)* CGContextRef;
-    alias const(void)* CGColorSpaceRef;
-    alias const(void)* CGImageRef;
-    alias uint CGBitmapInfo;
+	alias void* id;
+	alias void* Class;
+	alias void* SEL;
+	alias void* IMP;
+	alias void* Ivar;
+	alias byte BOOL;
+	alias const(void)* CFStringRef;
+	alias const(void)* CFAllocatorRef;
+	alias const(void)* CFTypeRef;
+	alias const(void)* CGContextRef;
+	alias const(void)* CGColorSpaceRef;
+	alias const(void)* CGImageRef;
+	alias uint CGBitmapInfo;
 
-    struct objc_super {
-        id self;
-        Class superclass;
-    }
+	struct objc_super {
+		id self;
+		Class superclass;
+	}
 
-    struct CFRange {
-        int location, length;
-    }
+	struct CFRange {
+		int location, length;
+	}
 
-    struct NSPoint {
-        float x, y;
+	struct NSPoint {
+		float x, y;
 
-        static fromTuple(T)(T tupl) {
-            return NSPoint(tupl.tupleof);
-        }
-    }
-    struct NSSize {
-        float width, height;
-    }
-    struct NSRect {
-        NSPoint origin;
-        NSSize size;
-    }
-    alias NSPoint CGPoint;
-    alias NSSize CGSize;
-    alias NSRect CGRect;
+		static fromTuple(T)(T tupl) {
+			return NSPoint(tupl.tupleof);
+		}
+	}
+	struct NSSize {
+		float width, height;
+	}
+	struct NSRect {
+		NSPoint origin;
+		NSSize size;
+	}
+	alias NSPoint CGPoint;
+	alias NSSize CGSize;
+	alias NSRect CGRect;
 
-    struct CGAffineTransform {
-        float a, b, c, d, tx, ty;
-    }
+	struct CGAffineTransform {
+		float a, b, c, d, tx, ty;
+	}
 
-    enum NSApplicationActivationPolicyRegular = 0;
-    enum NSBackingStoreBuffered = 2;
-    enum kCFStringEncodingUTF8 = 0x08000100;
+	enum NSApplicationActivationPolicyRegular = 0;
+	enum NSBackingStoreBuffered = 2;
+	enum kCFStringEncodingUTF8 = 0x08000100;
 
-    enum : size_t {
-        NSBorderlessWindowMask = 0,
-        NSTitledWindowMask = 1 << 0,
-        NSClosableWindowMask = 1 << 1,
-        NSMiniaturizableWindowMask = 1 << 2,
-        NSResizableWindowMask = 1 << 3,
-        NSTexturedBackgroundWindowMask = 1 << 8
-    }
+	enum : size_t {
+		NSBorderlessWindowMask = 0,
+		NSTitledWindowMask = 1 << 0,
+		NSClosableWindowMask = 1 << 1,
+		NSMiniaturizableWindowMask = 1 << 2,
+		NSResizableWindowMask = 1 << 3,
+		NSTexturedBackgroundWindowMask = 1 << 8
+	}
 
-    enum : uint {
-        kCGImageAlphaNone,
-        kCGImageAlphaPremultipliedLast,
-        kCGImageAlphaPremultipliedFirst,
-        kCGImageAlphaLast,
-        kCGImageAlphaFirst,
-        kCGImageAlphaNoneSkipLast,
-        kCGImageAlphaNoneSkipFirst
-    }
-    enum : uint {
-        kCGBitmapAlphaInfoMask = 0x1F,
-        kCGBitmapFloatComponents = (1 << 8),
-        kCGBitmapByteOrderMask = 0x7000,
-        kCGBitmapByteOrderDefault = (0 << 12),
-        kCGBitmapByteOrder16Little = (1 << 12),
-        kCGBitmapByteOrder32Little = (2 << 12),
-        kCGBitmapByteOrder16Big = (3 << 12),
-        kCGBitmapByteOrder32Big = (4 << 12)
-    }
-    enum CGPathDrawingMode {
-        kCGPathFill,
-        kCGPathEOFill,
-        kCGPathStroke,
-        kCGPathFillStroke,
-        kCGPathEOFillStroke
-    }
-    enum objc_AssociationPolicy : size_t {
-        OBJC_ASSOCIATION_ASSIGN = 0,
-        OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1,
-        OBJC_ASSOCIATION_COPY_NONATOMIC = 3,
-        OBJC_ASSOCIATION_RETAIN = 0x301, //01401,
-        OBJC_ASSOCIATION_COPY = 0x303 //01403
-    }
+	enum : uint {
+		kCGImageAlphaNone,
+		kCGImageAlphaPremultipliedLast,
+		kCGImageAlphaPremultipliedFirst,
+		kCGImageAlphaLast,
+		kCGImageAlphaFirst,
+		kCGImageAlphaNoneSkipLast,
+		kCGImageAlphaNoneSkipFirst
+	}
+	enum : uint {
+		kCGBitmapAlphaInfoMask = 0x1F,
+		kCGBitmapFloatComponents = (1 << 8),
+		kCGBitmapByteOrderMask = 0x7000,
+		kCGBitmapByteOrderDefault = (0 << 12),
+		kCGBitmapByteOrder16Little = (1 << 12),
+		kCGBitmapByteOrder32Little = (2 << 12),
+		kCGBitmapByteOrder16Big = (3 << 12),
+		kCGBitmapByteOrder32Big = (4 << 12)
+	}
+	enum CGPathDrawingMode {
+		kCGPathFill,
+		kCGPathEOFill,
+		kCGPathStroke,
+		kCGPathFillStroke,
+		kCGPathEOFillStroke
+	}
+	enum objc_AssociationPolicy : size_t {
+		OBJC_ASSOCIATION_ASSIGN = 0,
+		OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1,
+		OBJC_ASSOCIATION_COPY_NONATOMIC = 3,
+		OBJC_ASSOCIATION_RETAIN = 0x301, //01401,
+		OBJC_ASSOCIATION_COPY = 0x303 //01403
+	}
 
-    extern(C) {
-        id objc_msgSend(id receiver, SEL selector, ...);
-        id objc_msgSendSuper(objc_super* superStruct, SEL selector, ...);
-        id objc_getClass(const(char)* name);
-        SEL sel_registerName(const(char)* str);
-        Class objc_allocateClassPair(Class superclass, const(char)* name,
-                                     size_t extra_bytes);
-        void objc_registerClassPair(Class cls);
-        BOOL class_addMethod(Class cls, SEL name, IMP imp, const(char)* types);
-        id objc_getAssociatedObject(id object, void* key);
-        void objc_setAssociatedObject(id object, void* key, id value,
-                                      objc_AssociationPolicy policy);
-        Ivar class_getInstanceVariable(Class cls, const(char)* name);
-        id object_getIvar(id object, Ivar ivar);
-        void object_setIvar(id object, Ivar ivar, id value);
-        BOOL class_addIvar(Class cls, const(char)* name,
-                           size_t size, ubyte alignment, const(char)* types);
+	extern(C) {
+		id objc_msgSend(id receiver, SEL selector, ...);
+		id objc_msgSendSuper(objc_super* superStruct, SEL selector, ...);
+		id objc_getClass(const(char)* name);
+		SEL sel_registerName(const(char)* str);
+		Class objc_allocateClassPair(Class superclass, const(char)* name,
+									 size_t extra_bytes);
+		void objc_registerClassPair(Class cls);
+		BOOL class_addMethod(Class cls, SEL name, IMP imp, const(char)* types);
+		id objc_getAssociatedObject(id object, void* key);
+		void objc_setAssociatedObject(id object, void* key, id value,
+									  objc_AssociationPolicy policy);
+		Ivar class_getInstanceVariable(Class cls, const(char)* name);
+		id object_getIvar(id object, Ivar ivar);
+		void object_setIvar(id object, Ivar ivar, id value);
+		BOOL class_addIvar(Class cls, const(char)* name,
+						   size_t size, ubyte alignment, const(char)* types);
 
-        extern __gshared id NSApp;
+		extern __gshared id NSApp;
 
-        void CFRelease(CFTypeRef obj);
+		void CFRelease(CFTypeRef obj);
 
-        CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
-                                            const(char)* bytes, int numBytes,
-                                            int encoding,
-                                            BOOL isExternalRepresentation);
-        int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
-                             char lossByte, bool isExternalRepresentation,
-                             char* buffer, int maxBufLen, int* usedBufLen);
-        int CFStringGetLength(CFStringRef theString);
+		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
+											const(char)* bytes, int numBytes,
+											int encoding,
+											BOOL isExternalRepresentation);
+		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
+							 char lossByte, bool isExternalRepresentation,
+							 char* buffer, int maxBufLen, int* usedBufLen);
+		int CFStringGetLength(CFStringRef theString);
 
-        CGContextRef CGBitmapContextCreate(void* data,
-                                           size_t width, size_t height,
-                                           size_t bitsPerComponent,
-                                           size_t bytesPerRow,
-                                           CGColorSpaceRef colorspace,
-                                           CGBitmapInfo bitmapInfo);
-        void CGContextRelease(CGContextRef c);
-        ubyte* CGBitmapContextGetData(CGContextRef c);
-        CGImageRef CGBitmapContextCreateImage(CGContextRef c);
-        size_t CGBitmapContextGetWidth(CGContextRef c);
-        size_t CGBitmapContextGetHeight(CGContextRef c);
+		CGContextRef CGBitmapContextCreate(void* data,
+										   size_t width, size_t height,
+										   size_t bitsPerComponent,
+										   size_t bytesPerRow,
+										   CGColorSpaceRef colorspace,
+										   CGBitmapInfo bitmapInfo);
+		void CGContextRelease(CGContextRef c);
+		ubyte* CGBitmapContextGetData(CGContextRef c);
+		CGImageRef CGBitmapContextCreateImage(CGContextRef c);
+		size_t CGBitmapContextGetWidth(CGContextRef c);
+		size_t CGBitmapContextGetHeight(CGContextRef c);
 
-        CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
-        void CGColorSpaceRelease(CGColorSpaceRef cs);
+		CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
+		void CGColorSpaceRelease(CGColorSpaceRef cs);
 
-        void CGContextSetRGBStrokeColor(CGContextRef c,
-                                        float red, float green, float blue,
-                                        float alpha);
-        void CGContextSetRGBFillColor(CGContextRef c,
-                                      float red, float green, float blue,
-                                      float alpha);
-        void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
-        void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
-                                      const(char)* str, size_t length);
-        void CGContextStrokeLineSegments(CGContextRef c,
-                                         const(CGPoint)* points, size_t count);
+		void CGContextSetRGBStrokeColor(CGContextRef c,
+										float red, float green, float blue,
+										float alpha);
+		void CGContextSetRGBFillColor(CGContextRef c,
+									  float red, float green, float blue,
+									  float alpha);
+		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
+		void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
+									  const(char)* str, size_t length);
+		void CGContextStrokeLineSegments(CGContextRef c,
+										 const(CGPoint)* points, size_t count);
 
-        void CGContextBeginPath(CGContextRef c);
-        void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
-        void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
-        void CGContextAddArc(CGContextRef c, float x, float y, float radius,
-                             float startAngle, float endAngle, int clockwise);
-        void CGContextAddRect(CGContextRef c, CGRect rect);
-        void CGContextAddLines(CGContextRef c,
-                               const(CGPoint)* points, size_t count);
-        void CGContextSaveGState(CGContextRef c);
-        void CGContextRestoreGState(CGContextRef c);
-        void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
-                                 uint textEncoding);
-        CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
-        void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
+		void CGContextBeginPath(CGContextRef c);
+		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
+		void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
+		void CGContextAddArc(CGContextRef c, float x, float y, float radius,
+							 float startAngle, float endAngle, int clockwise);
+		void CGContextAddRect(CGContextRef c, CGRect rect);
+		void CGContextAddLines(CGContextRef c,
+							   const(CGPoint)* points, size_t count);
+		void CGContextSaveGState(CGContextRef c);
+		void CGContextRestoreGState(CGContextRef c);
+		void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
+								 uint textEncoding);
+		CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
+		void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
 
-        void CGImageRelease(CGImageRef image);
-    }
+		void CGImageRelease(CGImageRef image);
+	}
 
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
@@ -10832,9 +10815,9 @@ version(OSXCocoa) {
 
 version(without_opengl) {} else
 extern(System) nothrow @nogc {
-  enum uint GL_VERSION = 0x1F02;
-  const(char)* glGetString (/*GLenum*/uint);
-  version(X11) {
+	enum uint GL_VERSION = 0x1F02;
+	const(char)* glGetString (/*GLenum*/uint);
+	version(X11) {
 		struct __GLXFBConfigRec {}
 		alias GLXFBConfig = __GLXFBConfigRec*;
 
@@ -10886,25 +10869,25 @@ extern(System) nothrow @nogc {
 		  _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
 		}
 	} else version(Windows) {
-    enum GL_TRUE = 1;
-    enum GL_FALSE = 0;
-    alias int GLint;
+	enum GL_TRUE = 1;
+	enum GL_FALSE = 0;
+	alias int GLint;
 
-    public void* glGetProcAddress (const(char)* name) {
-      void* res = wglGetProcAddress(name);
-      if (res is null) {
-        //{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
-        import core.sys.windows.windef, core.sys.windows.winbase;
-        __gshared HINSTANCE dll = null;
-        if (dll is null) {
-          dll = LoadLibraryA("opengl32.dll");
-          if (dll is null) return null; // <32, but idc
-        }
-        res = GetProcAddress(dll, name);
-      }
-      //{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
-      return res;
-    }
+	public void* glGetProcAddress (const(char)* name) {
+		void* res = wglGetProcAddress(name);
+		if (res is null) {
+			//{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
+			import core.sys.windows.windef, core.sys.windows.winbase;
+			__gshared HINSTANCE dll = null;
+			if (dll is null) {
+				dll = LoadLibraryA("opengl32.dll");
+				if (dll is null) return null; // <32, but idc
+			}
+			res = GetProcAddress(dll, name);
+		}
+		//{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
+		return res;
+	}
 
 		enum WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
 		enum WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
@@ -10981,11 +10964,11 @@ extern(System) nothrow @nogc {
 	void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 	void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
 	void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
-                       /*GLsizei*/int width, /*GLsizei*/int height,
-                       uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		/*GLsizei*/int width, /*GLsizei*/int height,
+		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
-                           /*GLsizei*/int width, /*GLsizei*/int height,
-                           uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		/*GLsizei*/int width, /*GLsizei*/int height,
+		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
 
