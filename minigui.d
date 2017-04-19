@@ -12,6 +12,9 @@
 	api improvements
 
 	margins are kinda broken, they don't collapse like they should. at least.
+
+	a table form btw would be a horizontal layout of vertical layouts holding each column
+	that would give the same width things
 */
 
 /*
@@ -175,7 +178,7 @@ abstract class ComboboxBase : Widget {
 	version(win32_widgets)
 		this(uint style, Widget parent = null) {
 			super(parent);
-			createWin32Window(this, "ComboBox", null, style);
+			createWin32Window(this, "ComboBox"w, null, style);
 		}
 	else version(custom_widgets)
 		this(Widget parent = null) {
@@ -185,16 +188,14 @@ abstract class ComboboxBase : Widget {
 				if(event.key == Key.Up) {
 					if(selection > -1) { // -1 means select blank
 						selection--;
-						auto t = new Event(EventType.change, this);
-						t.dispatch();
+						fireChangeEvent();
 					}
 					event.preventDefault();
 				}
 				if(event.key == Key.Down) {
 					if(selection + 1 < options.length) {
 						selection++;
-						auto t = new Event(EventType.change, this);
-						t.dispatch();
+						fireChangeEvent();
 					}
 					event.preventDefault();
 				}
@@ -219,13 +220,23 @@ abstract class ComboboxBase : Widget {
 		SendMessageA(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
 		auto t = new Event(EventType.change, this);
+		t.intValue = selection;
+		t.stringValue = selection == -1 ? null : options[selection];
 		t.dispatch();
 	}
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
 		selection = cast(int) SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+		fireChangeEvent();
+	}
+
+	private void fireChangeEvent() {
+		if(selection >= options.length)
+			selection = -1;
 		auto event = new Event(EventType.change, this);
+		event.intValue = selection;
+		event.stringValue = selection == -1 ? null : options[selection];
 		event.dispatch();
 	}
 
@@ -263,8 +274,7 @@ abstract class ComboboxBase : Widget {
 						if(element >= 0 && element <= options.length) {
 							selection = element;
 
-							auto t = new Event(EventType.change, this);
-							t.dispatch();
+							fireChangeEvent();
 						}
 						dropDown.close();
 					}
@@ -289,9 +299,9 @@ class DropDownSelection : ComboboxBase {
 		else version(custom_widgets) {
 			super(parent);
 
-			addEventListener("focus", &this.redraw);
-			addEventListener("blur", &this.redraw);
-			addEventListener(EventType.change, &this.redraw);
+			addEventListener("focus", () { this.redraw; });
+			addEventListener("blur", () { this.redraw; });
+			addEventListener(EventType.change, () { this.redraw; });
 			addEventListener("mousedown", () { this.focus(); this.popup(); });
 			addEventListener("keydown", (Event event) {
 				if(event.key == Key.Space)
@@ -356,8 +366,8 @@ class FreeEntrySelection : ComboboxBase {
 			};
 			//btn.addDirectEventListener("focus", &lineEdit.focus);
 			btn.addEventListener("triggered", &this.popup);
-			addEventListener(EventType.change, {
-				lineEdit.content = (selection == -1 ? "" : options[selection]);
+			addEventListener(EventType.change, (Event event) {
+				lineEdit.content = event.stringValue;
 				lineEdit.focus();
 				redraw();
 			});
@@ -455,7 +465,7 @@ class UpDownControl : Widget {
 	this(Widget parent = null) {
 		super(parent);
 		parentWindow = parent.parentWindow;
-		createWin32Window(this, "msctls_updown32", null, 4/*UDS_ALIGNRIGHT*/| 2 /* UDS_SETBUDDYINT */ | 16 /* UDS_AUTOBUDDY */ | 32 /* UDS_ARROWKEYS */);
+		createWin32Window(this, "msctls_updown32"w, null, 4/*UDS_ALIGNRIGHT*/| 2 /* UDS_SETBUDDYINT */ | 16 /* UDS_AUTOBUDDY */ | 32 /* UDS_ARROWKEYS */);
 	}
 
 	override int minHeight() { return Window.lineHeight; }
@@ -881,7 +891,8 @@ version(win32_widgets) {
 		//assert(0, to!string(hWnd) ~ " :: " ~ to!string(TextEdit.nativeMapping)); // not supposed to happen
 	}
 
-	void createWin32Window(Widget p, string className, string windowText, DWORD style, DWORD extStyle = 0) {
+	// className MUST be a string literal
+	void createWin32Window(Widget p, const(wchar)[] className, string windowText, DWORD style, DWORD extStyle = 0) {
 		assert(p.parentWindow !is null);
 		assert(p.parentWindow.win.impl.hwnd !is null);
 
@@ -893,8 +904,10 @@ version(win32_widgets) {
 
 		assert(phwnd !is null);
 
+		WCharzBuffer wt = WCharzBuffer(windowText);
+
 		style |= WS_VISIBLE | WS_CHILD;
-		p.hwnd = CreateWindowExA(extStyle, toStringzInternal(className), toStringzInternal(windowText), style,
+		p.hwnd = CreateWindowExW(extStyle, className.ptr, wt.ptr, style,
 				CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
 				phwnd, null, cast(HINSTANCE) GetModuleHandle(null), null);
 
@@ -918,6 +931,8 @@ version(win32_widgets) {
 		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
 
 		EnumChildWindows(p.hwnd, &childHandler, cast(LPARAM) cast(void*) p);
+
+		p.registerMovement();
 	}
 }
 
@@ -939,13 +954,12 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 
 /**
 	The way this module works is it builds on top of a SimpleWindow
-	from simpledisplay, OR Terminal from terminal to provide some
-	simple controls and such.
+	from simpledisplay to provide simple controls and such.
 
 	Non-native controls suck, but nevertheless, I'm going to do it that
 	way to avoid dependencies on stuff like gtk on X... and since I'll
 	be writing the widgets there, I might as well just use them on Windows
-	too.
+	too if you like, using `-version=custom_widgets`.
 
 	So, by extension, this sucks. But gtkd is just too big for me.
 
@@ -955,6 +969,21 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 */
 class Widget {
 	mixin LayoutInfo!();
+
+	///
+	@scriptable
+	void removeWidget() {
+		auto p = this.parent;
+		if(p) {
+			int item;
+			for(item = 0; item < p.children.length; item++)
+				if(p.children[item] is this)
+					break;
+			for(; item < p.children.length - 1; item++)
+				p.children[item] = p.children[item + 1];
+			p.children = p.children[0 .. $-1];
+		}
+	}
 
 	@scriptable
 	Widget getChildByName(string name) {
@@ -1053,27 +1082,40 @@ class Widget {
 	/// ditto
 	void defaultEventHandler_blur(Event event) {}
 
-	///
-	void addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event e) {
+	/++
+		Events use a Javascript-esque scheme.
+
+		[addEventListener] returns an opaque handle that you can later pass to [removeEventListener].
+	+/
+	EventListener addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) {
 			if(e.srcElement is this)
 				handler();
 		}, useCapture);
 	}
 
 	///
+	EventListener addDirectEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) {
+			if(e.srcElement is this)
+				handler(e);
+		}, useCapture);
+	}
+
+
+	///
 	@scriptable
-	void addEventListener(string event, void delegate() handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event) { handler(); }, useCapture);
+	EventListener addEventListener(string event, void delegate() handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event) { handler(); }, useCapture);
 	}
 
 	///
-	void addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
+	EventListener addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
 	}
 
 	///
-	void addEventListener(string event, EventHandler handler, bool useCapture = false) {
+	EventListener addEventListener(string event, EventHandler handler, bool useCapture = false) {
 		if(event.length > 2 && event[0..2] == "on")
 			event = event[2 .. $];
 
@@ -1081,16 +1123,8 @@ class Widget {
 			capturingEventHandlers[event] ~= handler;
 		else
 			bubblingEventHandlers[event] ~= handler;
-	}
 
-	///
-	void removeEventListener(string event, void delegate() handler, bool useCapture = false) {
-		removeEventListener(event, (Widget, Event) { handler(); }, useCapture);
-	}
-
-	///
-	void removeEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		removeEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
+		return EventListener(this, event, handler, useCapture);
 	}
 
 	///
@@ -1107,24 +1141,11 @@ class Widget {
 			foreach(ref evt; bubblingEventHandlers[event])
 				if(evt is handler) evt = null;
 		}
-
 	}
 
-	bool hidden_;
 	///
-	@scriptable
-	bool hidden() { return hidden_; }
-	///
-	@scriptable
-	void hidden(bool h) {
-		auto o = hidden_;
-		hidden_ = h;
-		if(h && !o) {
-			if(parent) {
-				parent.recomputeChildLayout();
-				parent.redraw();
-			}
-		}
+	void removeEventListener(EventListener listener) {
+		removeEventListener(listener.event, listener.handler, listener.useCapture);
 	}
 
 	MouseCursor cursor() {
@@ -1173,6 +1194,9 @@ class Widget {
 
 	version(win32_widgets)
 	void handleWmCommand(ushort cmd, ushort id) {}
+
+	version(win32_widgets)
+	int handleWmNotify(NMHDR* hdr, int code) { return 0; }
 
 	@scriptable
 	string statusTip;
@@ -1225,13 +1249,37 @@ class Widget {
 		return parentWindow && parentWindow.focusedWidget is this;
 	}
 
-	private bool showing = true;
+	private bool showing_ = true;
+	bool showing() { return showing_; }
+	bool hidden() { return !showing_; }
+	void showing(bool s, bool recalculate = true) {
+		auto so = showing_;
+		showing_ = s;
+		if(s != so) {
+
+			version(win32_widgets)
+			if(hwnd)
+				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
+
+			if(parent && recalculate) {
+				parent.recomputeChildLayout();
+				parent.redraw();
+			}
+
+			foreach(child; children)
+				child.showing(s, false);
+		}
+	}
 	///
 	@scriptable
-	void show() { showing = true; redraw(); }
+	void show() {
+		showing = true;
+	}
 	///
 	@scriptable
-	void hide() { showing = false; }
+	void hide() {
+		showing = false;
+	}
 
 	///
 	@scriptable
@@ -1284,9 +1332,13 @@ class Widget {
 
 		w.addedTo(this);
 
+		if(this.hidden)
+			w.showing = false;
+
 		if(parentWindow !is null) {
 			w.attachedToWindow(parentWindow);
 			parentWindow.recomputeChildLayout();
+			parentWindow.redraw();
 		}
 	}
 
@@ -1310,6 +1362,41 @@ class Widget {
 	///
 	void paint(ScreenPainter painter) {}
 
+	/// I don't actually like the name of this
+	/// this draws a background on it
+	void erase(ScreenPainter painter) {
+		version(win32_widgets)
+			if(hwnd) return; // Windows will do it. I think.
+
+		auto c = backgroundColor;
+		painter.fillColor = c;
+		painter.outlineColor = c;
+
+		version(win32_widgets) {
+			HANDLE b, p;
+			if(c.a == 0) {
+				b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+				p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
+			}
+		}
+		painter.drawRectangle(Point(0, 0), width, height);
+		version(win32_widgets) {
+			if(c.a == 0) {
+				SelectObject(painter.impl.hdc, p);
+				SelectObject(painter.impl.hdc, b);
+			}
+		}
+	}
+
+	///
+	Color backgroundColor() {
+		// the default is a "transparent" background, which means
+		// it goes as far up as it can to get the color
+		if(parent)
+			return parent.backgroundColor();
+		return Color.transparent;
+	}
+
 	///
 	ScreenPainter draw() {
 		int x = this.x, y = this.y;
@@ -1327,18 +1414,27 @@ class Widget {
 		return painter;
 	}
 
-	protected void privatePaint(ScreenPainter painter, int lox, int loy) {
+	protected void privatePaint(ScreenPainter painter, int lox, int loy, bool force = false) {
 		if(hidden)
 			return;
 
 		painter.originX = lox + x;
 		painter.originY = loy + y;
 
-		painter.setClipRectangle(Point(0, 0), width, height);
+		bool actuallyPainted = false;
 
-		paint(painter);
+		if(redrawRequested || force) {
+			painter.setClipRectangle(Point(0, 0), width, height);
+
+			erase(painter);
+			paint(painter);
+
+			redrawRequested = false;
+			actuallyPainted = true;
+		}
+
 		foreach(child; children)
-			child.privatePaint(painter, painter.originX, painter.originY);
+			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
 	}
 
 	static class RedrawEvent {}
@@ -1346,19 +1442,20 @@ class Widget {
 
 	private bool redrawRequested;
 	///
-	final void redraw() {
+	final void redraw(string file = __FILE__, size_t line = __LINE__) {
 		redrawRequested = true;
 
 		if(this.parentWindow) {
 			auto sw = this.parentWindow.win;
 			assert(sw !is null);
-			if(!sw.eventQueued!RedrawEvent)
+			if(!sw.eventQueued!RedrawEvent) {
 				sw.postEvent(re);
+				//import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+			}
 		}
 	}
 
 	void actualRedraw() {
-		redrawRequested = false;
 		if(!showing) return;
 
 		assert(parentWindow !is null);
@@ -1402,10 +1499,10 @@ class OpenGlWidget : Widget {
 		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, this.parentWindow.win);
 		super(parent);
 
-		version(Windows) {
+		version(win32_widgets) {
 			Widget.nativeMapping[win.hwnd] = this;
 			this.originalWindowProcedure = cast(WNDPROC) SetWindowLong(win.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
-		} else static if(UsingSimpledisplayX11) {
+		} else {
 			win.setEventHandlers(
 				(MouseEvent e) {
 					Widget p = this;
@@ -1434,6 +1531,13 @@ class OpenGlWidget : Widget {
 
 	void redrawOpenGlScene(void delegate() dg) {
 		win.redrawOpenGlScene = dg;
+	}
+
+	override void showing(bool s, bool recalc) {
+		auto cur = hidden;
+		win.hidden = !s;
+		if(cur != s && s)
+			redraw();
 	}
 
 	/// OpenGL widgets cannot have child widgets.
@@ -1607,6 +1711,9 @@ class ScrollableWidget : Widget {
 
 						if(m == SB_THUMBTRACK) {
 							// the event loop doesn't seem to carry on with a requested redraw..
+							// so we request it to get our dirty bit set...
+							redraw();
+							// then we need to immediately actually redraw it too for instant feedback to user
 							actualRedraw();
 						}
 					break;
@@ -1634,7 +1741,7 @@ class ScrollableWidget : Widget {
 				classRegistered = true;
 			}
 
-			createWin32Window(this, "arsd_minigui_ScrollableWidget", "", 
+			createWin32Window(this, "arsd_minigui_ScrollableWidget"w, "", 
 				0|WS_CHILD|WS_VISIBLE|WS_HSCROLL|WS_VSCROLL, 0);
 		} else version(custom_widgets) {
 			horizontalScrollbarHolder = new FixedPosition(this);
@@ -1642,8 +1749,8 @@ class ScrollableWidget : Widget {
 			horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
 			verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
 
-			horizontalScrollbarHolder.hidden_ = true;
-			verticalScrollbarHolder.hidden_ = true;
+			horizontalScrollbarHolder.showing_ = false;
+			verticalScrollbarHolder.showing_ = false;
 
 			horizontalScrollBar.addEventListener(EventType.change, () {
 				horizontalScrollTo(horizontalScrollBar.position);
@@ -1732,13 +1839,13 @@ class ScrollableWidget : Widget {
 			scrollOrigin_.y = 0;
 
 		if(showingHorizontalScroll())
-			horizontalScrollbarHolder.hidden = false;
+			horizontalScrollbarHolder.showing = true;
 		else
-			horizontalScrollbarHolder.hidden = true;
+			horizontalScrollbarHolder.showing = false;
 		if(showingVerticalScroll())
-			verticalScrollbarHolder.hidden = false;
+			verticalScrollbarHolder.showing = true;
 		else
-			verticalScrollbarHolder.hidden = true;
+			verticalScrollbarHolder.showing = false;
 
 
 		verticalScrollBar.setViewableArea(this.viewportHeight());
@@ -1973,25 +2080,35 @@ class ScrollableWidget : Widget {
 		return painter;
 	}
 
-	override protected void privatePaint(ScreenPainter painter, int lox, int loy) {
+	override protected void privatePaint(ScreenPainter painter, int lox, int loy, bool force = false) {
 		if(hidden)
 			return;
 		painter.originX = lox + x;
 		painter.originY = loy + y;
 
-		painter.setClipRectangle(Point(0, 0), width, height);
-		paintFrameAndBackground(painter);
+		bool actuallyPainted = false;
+
+		if(force || redrawRequested) {
+			painter.setClipRectangle(Point(0, 0), width, height);
+			paintFrameAndBackground(painter);
+		}
 
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
-		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
+		if(force || redrawRequested) {
+			painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
 
-		paint(painter);
+			//erase(painter); // we paintFrameAndBackground above so no need
+			paint(painter);
+
+			actuallyPainted = true;
+			redrawRequested = false;
+		}
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
-				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y);
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, actuallyPainted);
 			else
-				child.privatePaint(painter, painter.originX, painter.originY);
+				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
 		}
 	}
 }
@@ -2041,6 +2158,7 @@ abstract class ScrollbarBase : Widget {
 	protected void informProgramThatUserChangedPosition(int n) {
 		position_ = n;
 		auto evt = new Event(EventType.change, this);
+		evt.intValue = n;
 		evt.dispatch();
 	}
 
@@ -2271,7 +2389,7 @@ class HorizontalScrollbar : ScrollbarBase {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, "Scrollbar", "", 
+			createWin32Window(this, "Scrollbar"w, "", 
 				0|WS_CHILD|WS_VISIBLE|SBS_HORZ|SBS_BOTTOMALIGN, 0);
 		} else version(custom_widgets) {
 			auto vl = new HorizontalLayout(this);
@@ -2359,7 +2477,7 @@ class VerticalScrollbar : ScrollbarBase {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, "Scrollbar", "", 
+			createWin32Window(this, "Scrollbar"w, "", 
 				0|WS_CHILD|WS_VISIBLE|SBS_VERT|SBS_RIGHTALIGN, 0);
 		} else version(custom_widgets) {
 			auto vl = new VerticalLayout(this);
@@ -2493,10 +2611,309 @@ class InlineBlockLayout : Layout {
 	}
 }
 
+/++
+	A tab widget is a set of clickable tab buttons followed by a content area.
+
+
+	Tabs can change existing content or can be new pages.
+
+	When the user picks a different tab, a `change` message is generated.
++/
 class TabWidget : Widget {
+	this(Widget parent) {
+		super(parent);
+
+		version(win32_widgets) {
+			createWin32Window(this, WC_TABCONTROL, "", 0);
+		} else version(custom_widgets) {
+			tabBarHeight = Window.lineHeight;
+
+			addDirectEventListener(EventType.click, (Event event) {
+				if(event.clientY < tabBarHeight) {
+					auto t = (event.clientX / tabWidth);
+					if(t >= 0 && t < children.length)
+						setCurrentTab(t);
+				}
+			});
+		} else static assert(0);
+	}
+
+	override int minHeight() {
+		int max = 0;
+		foreach(child; children)
+			max = mymax(child.minHeight, max);
+
+
+		version(win32_widgets) {
+			RECT rect;
+			rect.right = this.width;
+			rect.bottom = max;
+			TabCtrl_AdjustRect(hwnd, true, &rect);
+
+			max = rect.bottom;
+		} else {
+			max += Window.lineHeight + 4;
+		}
+
+
+		return max;
+	}
+
+	version(win32_widgets)
+	override int handleWmNotify(NMHDR* hdr, int code) {
+		switch(code) {
+			case TCN_SELCHANGE:
+				auto sel = TabCtrl_GetCurSel(hwnd);
+				showOnly(sel);
+			break;
+			default:
+		}
+		return 0;
+	}
+
+	override void addChild(Widget child, int pos = int.max) {
+		if(auto twp = cast(TabWidgetPage) child) {
+			super.addChild(child, pos);
+			if(pos == int.max)
+				pos = cast(int) this.children.length - 1;
+
+			version(win32_widgets) {
+				TCITEM item;
+				item.mask = TCIF_TEXT;
+				WCharzBuffer buf = WCharzBuffer(twp.title);
+				item.pszText = buf.ptr;
+				SendMessage(hwnd, TCM_INSERTITEM, pos, cast(LPARAM) &item);
+			} else version(custom_widgets) {
+			}
+
+			if(pos != getCurrentTab) {
+				child.showing = false;
+			}
+		} else {
+			assert(0, "Don't add children directly to a tab widget, instead add them to a page (see addPage)");
+		}
+	}
+
+	override void recomputeChildLayout() {
+		this.registerMovement();
+		version(win32_widgets) {
+
+			// Windows doesn't actually parent widgets to the
+			// tab control, so we will temporarily pretend this isn't
+			// a native widget as we do the changes. A bit of a filthy
+			// hack, but a functional one.
+			auto hwnd = this.hwnd;
+			this.hwnd = null;
+			scope(exit) this.hwnd = hwnd;
+
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+
+			auto left = rect.left;
+			auto top = rect.top;
+
+			TabCtrl_AdjustRect(hwnd, false, &rect);
+			foreach(child; children) {
+				child.x = rect.left - left;
+				child.y = rect.top - top;
+				child.width = rect.right - rect.left;
+				child.height = rect.bottom - rect.top;
+				child.recomputeChildLayout();
+			}
+		} else version(custom_widgets) {
+			foreach(child; children) {
+				child.x = 2;
+				child.y = Window.lineHeight;
+				child.width = width - 4; // for the border
+				child.height = height - tabBarHeight;
+				child.recomputeChildLayout();
+			}
+		} else static assert(0);
+	}
+
+	version(custom_widgets) {
+		private int currentTab_;
+		int tabBarHeight;
+		int tabWidth = 80;
+	}
+
+	version(custom_widgets)
+	override void paint(ScreenPainter painter) {
+		int posX = 0;
+		foreach(idx, child; children) {
+			if(auto twp = cast(TabWidgetPage) child) {
+				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, idx == getCurrentTab() ? FrameStyle.risen : FrameStyle.sunk);
+				painter.outlineColor = Color.black;
+				painter.drawText(Point(posX + 4, 2), twp.title);
+				posX += tabWidth - 2;
+			}
+		}
+
+		painter.drawRectangle(Point(0, tabBarHeight - 1), width, height - tabBarHeight);
+	}
+
+	///
+	@scriptable
+	void setCurrentTab(int item) {
+		version(win32_widgets)
+			TabCtrl_SetCurSel(hwnd, item);
+		else version(custom_widgets)
+			currentTab_ = item;
+		else static assert(0);
+
+		showOnly(item);
+	}
+
+	///
+	@scriptable
+	int getCurrentTab() {
+		version(win32_widgets)
+			return TabCtrl_GetCurSel(hwnd);
+		else version(custom_widgets)
+			return currentTab_; // FIXME
+		else static assert(0);
+	}
+
+	///
+	@scriptable
+	void removeTab(int item) {
+		if(item && item == getCurrentTab())
+			setCurrentTab(item - 1);
+
+		version(win32_widgets) {
+			TabCtrl_DeleteItem(hwnd, item);
+		}
+
+		for(int a = item; a < children.length - 1; a++)
+			this.children[a] = this.children[a + 1];
+		this.children = this.children[0 .. $-1];
+	}
+
+	///
+	@scriptable
+	TabWidgetPage addPage(string title) {
+		return new TabWidgetPage(title, this);
+	}
+
+	private void showOnly(int item) {
+		foreach(idx, child; children)
+			if(idx == item) {
+				child.show();
+				recomputeChildLayout();
+			} else {
+				child.hide();
+			}
+	}
+}
+
+/++
+	A page widget is basically a tab widget with hidden tabs.
+
+	You add [TabWidgetPage]s to it.
++/
+class PageWidget : Widget {
+	this(Widget parent) {
+		super(parent);
+	}
+
+	override int minHeight() {
+		int max = 0;
+		foreach(child; children)
+			max = mymax(child.minHeight, max);
+
+		return max;
+	}
+
+
+	override void addChild(Widget child, int pos = int.max) {
+		if(auto twp = cast(TabWidgetPage) child) {
+			super.addChild(child, pos);
+			if(pos == int.max)
+				pos = cast(int) this.children.length - 1;
+
+			if(pos != getCurrentTab) {
+				child.showing = false;
+			}
+		} else {
+			assert(0, "Don't add children directly to a page widget, instead add them to a page (see addPage)");
+		}
+	}
+
+	override void recomputeChildLayout() {
+		this.registerMovement();
+		foreach(child; children) {
+			child.x = 0;
+			child.y = 0;
+			child.width = width;
+			child.height = height;
+			child.recomputeChildLayout();
+		}
+	}
+
+	private int currentTab_;
+
+	///
+	@scriptable
+	void setCurrentTab(int item) {
+		currentTab_ = item;
+
+		showOnly(item);
+	}
+
+	///
+	@scriptable
+	int getCurrentTab() {
+		return currentTab_;
+	}
+
+	///
+	@scriptable
+	void removeTab(int item) {
+		if(item && item == getCurrentTab())
+			setCurrentTab(item - 1);
+
+		for(int a = item; a < children.length - 1; a++)
+			this.children[a] = this.children[a + 1];
+		this.children = this.children[0 .. $-1];
+	}
+
+	///
+	@scriptable
+	TabWidgetPage addPage(string title) {
+		return new TabWidgetPage(title, this);
+	}
+
+	private void showOnly(int item) {
+		foreach(idx, child; children)
+			if(idx == item) {
+				child.show();
+				child.recomputeChildLayout();
+			} else {
+				child.hide();
+			}
+	}
 
 }
 
+/++
+
++/
+class TabWidgetPage : Widget {
+	string title;
+	this(string title, Widget parent) {
+		this.title = title;
+		super(parent);
+	}
+
+	override int minHeight() {
+		int sum = 0;
+		foreach(child; children)
+			sum += child.minHeight();
+		return sum;
+	}
+}
+
+version(none)
 class CollapsableSidebar : Widget {
 
 }
@@ -2505,7 +2922,7 @@ class CollapsableSidebar : Widget {
 class VerticalLayout : Layout {
 	// intentionally blank - widget's default is vertical layout right now
 	///
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 }
 
 /// Stacks the widgets horizontally, taking all the available height for each child.
@@ -2630,6 +3047,14 @@ class Window : Widget {
 		win.releaseInputGrab();
 	}
 
+	override Color backgroundColor() {
+		version(custom_widgets)
+			return windowBackgroundColor;
+		else version(win32_widgets)
+			return Color.transparent;
+		else static assert(0);
+	}
+
 	///
 	static int lineHeight;
 
@@ -2658,6 +3083,7 @@ class Window : Widget {
 		this.win = win;
 
 		win.addEventListener((Widget.RedrawEvent) {
+			//import std.stdio; writeln("redrawing");
 			this.actualRedraw();
 		});
 
@@ -2710,6 +3136,15 @@ class Window : Widget {
 			if(hwnd !is this.win.impl.hwnd)
 				return 1; // we don't care...
 			switch(msg) {
+				case WM_NOTIFY:
+					auto hdr = cast(NMHDR*) lParam;
+					auto hwndFrom = hdr.hwndFrom;
+					auto code = hdr.code;
+
+					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+						return (*widgetp).handleWmNotify(hdr, code);
+					}
+				break;
 				case WM_COMMAND:
 					switch(HIWORD(wParam)) {
 						case 0:
@@ -2846,7 +3281,19 @@ class Window : Widget {
 				skipNextChar = true;
 			}
 		}
+
+		debug if(event.key == Key.F12) {
+			if(devTools) {
+				devTools.close();
+				devTools = null;
+			} else {
+				devTools = new DevToolWindow(this);
+				devTools.show();
+			}
+		}
 	}
+
+	debug DevToolWindow devTools;
 
 
 	///
@@ -2861,6 +3308,7 @@ class Window : Widget {
 	}
 
 	///
+	@scriptable
 	void close() {
 		win.close();
 	}
@@ -3019,6 +3467,74 @@ class Window : Widget {
 	}
 }
 
+debug private class DevToolWindow : Window {
+	Window p;
+
+	TextEdit parentList;
+	TextEdit logWindow;
+	TextLabel clickX, clickY;
+
+	this(Window p) {
+		this.p = p;
+		super(400, 300, "Developer Toolbox");
+
+		logWindow = new TextEdit(this);
+		parentList = new TextEdit(this);
+
+		auto hl = new HorizontalLayout(this);
+		clickX = new TextLabel("", hl);
+		clickY = new TextLabel("", hl);
+
+		parentListeners ~= p.addEventListener(EventType.click, (Event ev) {
+			auto s = ev.srcElement;
+			string list = s.toString();
+			s = s.parent;
+			while(s) {
+				list ~= "\n";
+				list ~= s.toString();
+				s = s.parent;
+			}
+			parentList.content = list;
+
+			import std.conv;
+			clickX.label = to!string(ev.clientX);
+			clickY.label = to!string(ev.clientY);
+		});
+	}
+
+	EventListener[] parentListeners;
+
+	override void close() {
+		assert(p !is null);
+		foreach(p; parentListeners)
+			p.disconnect();
+		parentListeners = null;
+		p.devTools = null;
+		p = null;
+		super.close();
+	}
+
+	override void defaultEventHandler_keydown(Event ev) {
+		if(ev.key == Key.F12) {
+			this.close();
+			p.devTools = null;
+		} else {
+			super.defaultEventHandler_keydown(ev);
+		}
+	}
+
+	void log(T...)(T t) {
+		string str;
+		import std.conv;
+		foreach(i; t)
+			str ~= to!string(i);
+		str ~= "\n";
+		logWindow.addText(str);
+
+		logWindow.ensureVisibleInScroll(logWindow.textLayout.caretBoundingBox());
+	}
+}
+
 /++
 	A dialog is a transient window that intends to get information from
 	the user before being dismissed.
@@ -3085,6 +3601,99 @@ class MainWindow : Window {
 		super.addChild(_clientArea);
 
 		statusBar = new StatusBar(this);
+	}
+
+	/++
+		Adds a menu and toolbar from annotated functions.
+
+	---
+        struct Commands {
+                @menu("File") {
+                        void New() {}
+                        void Open() {}
+                        void Save() {}
+                        @seperator
+                        void eXit() @accelerator("Alt+F4") {
+                                window.close();
+                        }
+                }
+
+                @menu("Edit") {
+                        void Undo() {
+                                undo();
+                        }
+                        @seperator
+                        void Cut() {}
+                        void Copy() {}
+                        void Paste() {}
+                }
+
+                @menu("Help") {
+                        void About() {}
+                }
+        }
+
+        Commands commands;
+
+        window.setMenuAndToolbarFromAnnotatedCode(commands);
+	---
+
+	+/
+	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) {
+		Action[] toolbarActions;
+		auto menuBar = new MenuBar();
+		Menu[string] mcs;
+
+		void delegate() triggering;
+
+		foreach(memberName; __traits(allMembers, T)) {
+			static if(__traits(compiles, triggering = &__traits(getMember, t, memberName))) {
+				.menu menu;
+				.toolbar toolbar;
+				bool seperator;
+				.accelerator accelerator;
+				.icon icon;
+				foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {
+					static if(is(typeof(attr) == .menu))
+						menu = attr;
+					else static if(is(typeof(attr) == .toolbar))
+						toolbar = attr;
+					else static if(is(attr == .seperator))
+						seperator = true;
+					else static if(is(typeof(attr) == .accelerator))
+						accelerator = attr;
+					else static if(is(typeof(attr) == .icon))
+						icon = attr;
+				}
+
+				if(menu !is .menu.init || toolbar !is .toolbar.init) {
+					ushort correctIcon = 0; // FIXME
+					auto action = new Action(memberName, correctIcon, &__traits(getMember, t, memberName));
+
+					if(toolbar !is .toolbar.init)
+						toolbarActions ~= action;
+					if(menu !is .menu.init) {
+						Menu mc;
+						if(menu.name in mcs) {
+							mc = mcs[menu.name];
+						} else {
+							mc = new Menu(menu.name);
+							menuBar.addItem(mc);
+							mcs[menu.name] = mc;
+						}
+
+						if(seperator)
+							mc.addSeparator();
+						mc.addItem(new MenuItem(action));
+					}
+				}
+			}
+		}
+
+		this.menu = menuBar;
+
+		if(toolbarActions.length)
+			auto tb = new ToolBar(toolbarActions, this);
 	}
 
 	override void defaultEventHandler_mouseover(Event event) {
@@ -3184,7 +3793,7 @@ class ToolBar : Widget {
 		tabStop = false;
 
 		version(win32_widgets) {
-			createWin32Window(this, "ToolbarWindow32", "", 0);
+			createWin32Window(this, "ToolbarWindow32"w, "", 0);
 
 			imageList = ImageList_Create(
 				// width, height
@@ -3345,6 +3954,8 @@ class MenuBar : Widget {
 			tabStop = false; // these are selected some other way
 			super(parent);
 		}
+
+		mixin Padding!q{2};
 	} else static assert(false);
 
 	version(custom_widgets)
@@ -3373,7 +3984,7 @@ class MenuBar : Widget {
 		version(win32_widgets) {
 			AppendMenuA(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label)); // XXX
 		} else version(custom_widgets) {
-			mbItem.defaultEventHandlers["click"] = (Widget e, Event ev) {
+			mbItem.defaultEventHandlers["mousedown"] = (Widget e, Event ev) {
 				item.popup(mbItem);
 			};
 		} else static assert(false);
@@ -3387,7 +3998,6 @@ class MenuBar : Widget {
 
 	override int maxHeight() { return Window.lineHeight + 4; }
 	override int minHeight() { return Window.lineHeight + 4; }
-
 }
 
 
@@ -3492,7 +4102,7 @@ class StatusBar : Widget {
 		tabStop = false;
 		version(win32_widgets) {
 			parentWindow = parent.parentWindow;
-			createWin32Window(this, "msctls_statusbar32", "", 0);
+			createWin32Window(this, "msctls_statusbar32"w, "", 0);
 
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
@@ -3535,7 +4145,7 @@ class IndefiniteProgressBar : Widget {
 	version(win32_widgets)
 	this(Widget parent = null) {
 		super(parent);
-		createWin32Window(this, "msctls_progress32", "", 8 /* PBS_MARQUEE */);
+		createWin32Window(this, "msctls_progress32"w, "", 8 /* PBS_MARQUEE */);
 		tabStop = false;
 	}
 	override int minHeight() { return 10; }
@@ -3546,7 +4156,7 @@ class ProgressBar : Widget {
 	this(Widget parent = null) {
 		version(win32_widgets) {
 			super(parent);
-			createWin32Window(this, "msctls_progress32", "", 0);
+			createWin32Window(this, "msctls_progress32"w, "", 0);
 			tabStop = false;
 		} else version(custom_widgets) {
 			super(parent);
@@ -3644,11 +4254,11 @@ class Fieldset : Widget {
 	string legend;
 
 	///
-	this(string legend, Widget parent = null) {
+	this(string legend, Widget parent) {
 		version(win32_widgets) {
 			super(parent);
 			this.legend = legend;
-			createWin32Window(this, "button", legend, BS_GROUPBOX);
+			createWin32Window(this, "button"w, legend, BS_GROUPBOX);
 			tabStop = false;
 		} else version(custom_widgets) {
 			super(parent);
@@ -3749,7 +4359,6 @@ class Menu : Window {
 			}
 		parentWindow.redraw();
 
-		parentWindow.removeEventListener("mousedown", &remove);
 		parentWindow.releaseMouseCapture();
 	}
 
@@ -3764,6 +4373,8 @@ class Menu : Window {
 
 	override int paddingTop() { return 4; }
 	override int paddingBottom() { return 4; }
+	override int paddingLeft() { return 2; }
+	override int paddingRight() { return 2; }
 
 	version(win32_widgets) {}
 	else version(custom_widgets) {
@@ -3794,22 +4405,37 @@ class Menu : Window {
 			dropDown.visibilityChanged = (bool visible) {
 				if(visible) {
 					this.redraw();
-					auto painter = dropDown.draw();
 					dropDown.grabInput();
+				} else {
+					dropDown.releaseInputGrab();
 				}
 			};
 
 			dropDown.show();
+
+			bool firstClick = true;
+
+			clickListener = this.addEventListener(EventType.click, (Event ev) {
+				if(firstClick) {
+					firstClick = false;
+					//return;
+				}
+				//if(ev.clientX < 0 || ev.clientY < 0 || ev.clientX > width || ev.clientY > height)
+					unpopup();
+			});
 		}
+
+		EventListener clickListener;
 	}
 	else static assert(false);
 
 	version(custom_widgets)
 	void unpopup() {
-		dropDown.releaseInputGrab();
+		mouseLastOver = mouseLastDownOn = null;
 		dropDown.hide();
 		if(!menuParent.parentWindow.win.closed)
 			menuParent.parentWindow.win.focus();
+		clickListener.disconnect();
 	}
 
 	MenuItem[] items;
@@ -3847,12 +4473,7 @@ class Menu : Window {
 
 			this.label = label;
 
-			defaultEventHandlers["click"] = delegate(Widget this_, Event ev) {
-				unpopup();
-			};
-
 			super(dropDown);
-
 		}
 	} else static assert(false);
 
@@ -3894,6 +4515,8 @@ class MenuItem : MouseActivatedWidget {
 
 	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
+		if(isDepressed)
+			this.draw3dFrame(painter, FrameStyle.sunk);
 		if(isHovering)
 			painter.outlineColor = Color.blue;
 		else
@@ -3912,6 +4535,7 @@ class MenuItem : MouseActivatedWidget {
 	}
 
 	override void defaultEventHandler_triggered(Event event) {
+		if(action)
 		foreach(handler; action.triggered)
 			handler();
 
@@ -4036,7 +4660,7 @@ class Checkbox : MouseActivatedWidget {
 		super(parent);
 		this.label = label;
 		version(win32_widgets) {
-			createWin32Window(this, "button", label, BS_AUTOCHECKBOX);
+			createWin32Window(this, "button"w, label, BS_AUTOCHECKBOX);
 		} else version(custom_widgets) {
 
 		} else static assert(0);
@@ -4126,7 +4750,7 @@ class Radiobox : MouseActivatedWidget {
 	this(string label, Widget parent = null) {
 		super(parent);
 		this.label = label;
-		createWin32Window(this, "button", label, BS_AUTORADIOBUTTON);
+		createWin32Window(this, "button"w, label, BS_AUTORADIOBUTTON);
 	}
 	else version(custom_widgets)
 	this(string label, Widget parent = null) {
@@ -4220,23 +4844,23 @@ class Button : MouseActivatedWidget {
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
-		super(parent);
-		createWin32Window(this, "button", label, BS_PUSHBUTTON);
-
 		// FIXME: use ideal button size instead
 		width = 50;
 		height = 30;
+		super(parent);
+		createWin32Window(this, "button"w, label, BS_PUSHBUTTON);
+
 		this.label = label;
 	}
 	else version(custom_widgets)
 	this(string label, Widget parent = null) {
+		width = 50;
+		height = 30;
 		super(parent);
 		normalBgColor = Color(192, 192, 192);
 		hoverBgColor = Color(215, 215, 215);
 		depressedBgColor = Color(160, 160, 160);
 
-		width = 50;
-		height = 30;
 		this.label = label;
 	}
 	else static assert(false);
@@ -4360,10 +4984,22 @@ class TextLabel : Widget {
 	override int minHeight() { return Window.lineHeight; }
 	override int minWidth() { return 32; }
 
-	string label;
+	string label_;
+
+	///
+	@scriptable
+	string label() { return label_; }
+
+	///
+	@scriptable
+	void label(string l) {
+		label_ = l;
+		redraw();
+	}
+
 	///
 	this(string label, Widget parent = null) {
-		this.label = label;
+		this.label_ = label;
 		this.tabStop = false;
 		super(parent);
 	}
@@ -4413,7 +5049,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			else
 				buffer = new wchar[](len + 1);
 
-			auto l = GetWindowTextW(hwnd, buffer.ptr, buffer.length);
+			auto l = GetWindowTextW(hwnd, buffer.ptr, cast(int) buffer.length);
 			if(l >= 0)
 				return makeUtf8StringFromWindowsString(buffer[0 .. l]);
 			else
@@ -4445,6 +5081,22 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			redraw();
 		}
 		else static assert(false);
+	}
+
+	void addText(string txt) {
+		version(custom_widgets) {
+			textLayout.addText(txt);
+
+			{
+			// FIXME: it should be able to get this info easier
+			auto painter = draw();
+			textLayout.redoLayout(painter);
+			}
+			auto cbb = textLayout.contentBoundingBox();
+			setContentSize(cbb.width, cbb.height);
+
+		} else
+			content = content ~ txt;
 	}
 
 	version(custom_widgets)
@@ -4492,17 +5144,38 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 
 	version(custom_widgets)
-	override void defaultEventHandler_click(Event ev) {
-		super.defaultEventHandler_click(ev);
+	override void defaultEventHandler_mousedown(Event ev) {
+		super.defaultEventHandler_mousedown(ev);
 		if(parentWindow.win.closed) return;
 		if(ev.button == MouseButton.left) {
 			textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
 			this.focus();
+			this.parentWindow.win.grabInput();
 		} else if(ev.button == MouseButton.middle) {
 			static if(UsingSimpledisplayX11) {
-				getPrimarySelection(parentWindow.win, (txt) { textLayout.insert(txt) ; });
-				redraw();
+				getPrimarySelection(parentWindow.win, (txt) {
+					textLayout.insert(txt);
+					redraw();
+
+					auto cbb = textLayout.contentBoundingBox();
+					setContentSize(cbb.width, cbb.height);
+				});
 			}
+		}
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_mouseup(Event ev) {
+		this.parentWindow.win.releaseInputGrab();
+		super.defaultEventHandler_mouseup(ev);
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_mousemove(Event ev) {
+		super.defaultEventHandler_mousemove(ev);
+		if(ev.state & ModifierState.leftButtonDown) {
+			textLayout.selectToPixelCoordinates(ev.clientX, ev.clientY);
+			redraw();
 		}
 	}
 
@@ -4518,6 +5191,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			caretTimer = null;
 		}
 
+		bool blinkingCaret = true;
+		static if(UsingSimpledisplayX11)
+			if(!Image.impl.xshmAvailable)
+				blinkingCaret = false; // if on a remote connection, don't waste bandwidth on an expendable blink
+
+		if(blinkingCaret)
 		caretTimer = new Timer(500, {
 			if(parentWindow.win.closed) {
 				caretTimer.destroy();
@@ -4567,37 +5246,37 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				redraw();
 			break;
 			case Key.Left:
-				textLayout.moveLeft(textLayout.caret);
+				textLayout.moveLeft();
 				redraw();
 			break;
 			case Key.Right:
-				textLayout.moveRight(textLayout.caret);
+				textLayout.moveRight();
 				redraw();
 			break;
 			case Key.Up:
-				textLayout.moveUp(textLayout.caret);
+				textLayout.moveUp();
 				redraw();
 			break;
 			case Key.Down:
-				textLayout.moveDown(textLayout.caret);
+				textLayout.moveDown();
 				redraw();
 			break;
 			case Key.Home:
-				textLayout.moveHome(textLayout.caret);
+				textLayout.moveHome();
 				redraw();
 			break;
 			case Key.End:
-				textLayout.moveEnd(textLayout.caret);
+				textLayout.moveEnd();
 				redraw();
 			break;
 			case Key.PageUp:
 				foreach(i; 0 .. 32)
-				textLayout.moveUp(textLayout.caret);
+				textLayout.moveUp();
 				redraw();
 			break;
 			case Key.PageDown:
 				foreach(i; 0 .. 32)
-				textLayout.moveDown(textLayout.caret);
+				textLayout.moveDown();
 				redraw();
 			break;
 
@@ -4628,7 +5307,7 @@ class LineEdit : EditableTextWidget {
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
-			createWin32Window(this, "edit", "", 
+			createWin32Window(this, "edit"w, "", 
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
 			setupCustomTextEditing();
@@ -4648,7 +5327,7 @@ class TextEdit : EditableTextWidget {
 	this(Widget parent = null) {
 		super(parent);
 		version(win32_widgets) {
-			createWin32Window(this, "edit", "", 
+			createWin32Window(this, "edit"w, "", 
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 		} else version(custom_widgets) {
 			setupCustomTextEditing();
@@ -4703,6 +5382,19 @@ class MessageBox : Window {
 alias void delegate(Widget handlerAttachedTo, Event event) EventHandler;
 
 ///
+struct EventListener {
+	Widget widget;
+	string event;
+	EventHandler handler;
+	bool useCapture;
+
+	///
+	void disconnect() {
+		widget.removeEventListener(this);
+	}
+}
+
+///
 enum EventType : string {
 	click = "click", ///
 
@@ -4754,6 +5446,7 @@ class Event {
 
 	Widget relatedTarget; ///
 
+	// for mouse events
 	int clientX; ///
 	int clientY; ///
 
@@ -4761,10 +5454,19 @@ class Event {
 	int viewportY; ///
 
 	int button; ///
+
+	// for key events
 	Key key; ///
+
+	// char character events
 	dchar character; ///
 
+	// for several event types
 	int state; ///
+
+	// for change events
+	int intValue; ///
+	string stringValue; ///
 
 	bool shiftKey; ///
 
@@ -4786,6 +5488,9 @@ class Event {
 		if(srcElement is null)
 			return;
 
+		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
+			//target.parentWindow.devTools.log("Event ", eventName, " dispatched directly to ", srcElement);
+
 		adjustScrolling();
 
 		auto e = srcElement;
@@ -4803,6 +5508,9 @@ class Event {
 	void dispatch() {
 		if(srcElement is null)
 			return;
+
+		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
+			//target.parentWindow.devTools.log("Event ", eventName, " dispatched to ", srcElement);
 
 		adjustScrolling();
 		// first capture, then bubble
@@ -4894,6 +5602,7 @@ version(win32_widgets) {
 	import gdi = core.sys.windows.wingdi;
 	// import win32.commctrl;
 	// import win32.winuser;
+	import core.sys.windows.commctrl;
 
 	pragma(lib, "comctl32");
 	shared static this() {
@@ -5404,3 +6113,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/bb760446%28v=vs.85%29.as
 http://msdn.microsoft.com/en-us/library/windows/desktop/bb760443%28v=vs.85%29.aspx
 http://msdn.microsoft.com/en-us/library/windows/desktop/bb760476%28v=vs.85%29.aspx
 */
+
+
+// These are all for setMenuAndToolbarFromAnnotatedCode
+/// This item in the menu will be preceded by a separator line
+struct seperator {}
+/// Program-wide keyboard shortcut to trigger the action
+struct accelerator { string acl; }
+/// tells which menu the action will be on
+struct menu { string name; }
+/// Describes which toolbar section the action appears on
+struct toolbar { string groupName; }
+///
+struct icon {}

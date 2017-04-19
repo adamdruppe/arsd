@@ -406,7 +406,7 @@ class TokenStream(TextStream) {
 			token.lineNumber = lineNumber;
 			token.scriptFilename = scriptFilename;
 
-			if(text[0] == ' ' || text[0] == '\t' || text[0] == '\n') {
+			if(text[0] == ' ' || text[0] == '\t' || text[0] == '\n' || text[0] == '\r') {
 				advance(1);
 				continue;
 			} else if(text[0] >= '0' && text[0] <= '9') {
@@ -600,7 +600,7 @@ class TokenStream(TextStream) {
 						if(symbol == "//") {
 							// one line comment
 							int pos = 0;
-							while(pos < text.length && text[pos] != '\n')
+							while(pos < text.length && text[pos] != '\n' && text[0] != '\r')
 								pos++;
 							advance(pos);
 							continue mainLoop;

@@ -942,6 +942,7 @@ enum WindowFlags : int {
 	alwaysOnTop = 2, ///
 	alwaysOnBottom = 4, ///
 	cannotBeActivated = 8, ///
+	alwaysRequestMouseMotionEvents = 16, /// By default, simpledisplay will attempt to optimize mouse motion event reporting when it detects a remote connection, causing them to only be issued if input is grabbed (see: [SimpleWindow.grabInput]). This means doing hover effects and mouse game control on a remote X connection may not work right. Include this flag to override this optimization and always request the motion events. However btw, if you are doing mouse game control, you probably want to grab input anyway, and hover events are usually expendable! So think before you use this flag.
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
@@ -3036,7 +3037,7 @@ char[] makeUtf8StringFromWindowsString(in wchar[] str, char[] buffer) {
 	if(str.length == 0)
 		return null;
 
-	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, str.length, buffer.ptr, buffer.length, null, null);
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, buffer.ptr, cast(int) buffer.length, null, null);
 	if(got == 0) {
 		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
 			throw new Exception("not enough buffer");
@@ -3049,7 +3050,7 @@ char[] makeUtf8StringFromWindowsString(in wchar[] str, char[] buffer) {
 version(Windows)
 string makeUtf8StringFromWindowsString(in wchar[] str) {
 	char[] buffer;
-	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, str.length, null, 0, null, null);
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, null, 0, null, null);
 	buffer.length = got;
 
 	// it is unique because we just allocated it above!
@@ -3062,7 +3063,7 @@ string makeUtf8StringFromWindowsString(wchar* str) {
 	auto got = WideCharToMultiByte(CP_UTF8, 0, str, -1, null, 0, null, null);
 	buffer.length = got;
 
-	got = WideCharToMultiByte(CP_UTF8, 0, str, -1, buffer.ptr, buffer.length, null, null);
+	got = WideCharToMultiByte(CP_UTF8, 0, str, -1, buffer.ptr, cast(int) buffer.length, null, null);
 	if(got == 0) {
 		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
 			throw new Exception("not enough buffer");
@@ -4306,9 +4307,9 @@ class OperatingSystemFont {
 struct ScreenPainter {
 	CapableOfBeingDrawnUpon window;
 	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle) {
-		if(window.closed)
-			throw new Exception("cannot draw on a closed window");
 		this.window = window;
+		if(window.closed)
+			return; // null painter is now allowed so no need to throw anymore, this likely happens at the end of a program anyway
 		currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
@@ -4405,6 +4406,8 @@ struct ScreenPainter {
 	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
 	void setClipRectangle(Point pt, int width, int height) {
 		if(impl is null) return;
+		if(pt == currentClipRectangle.upperLeft && width == currentClipRectangle.width && height == currentClipRectangle.height)
+			return; // no need to do anything
 		currentClipRectangle = arsd.color.Rectangle(pt, Size(width, height));
 		transform(pt);
 
@@ -6680,12 +6683,17 @@ version(X11) {
 		bool backgroundIsNotTransparent = true;
 		bool foregroundIsNotTransparent = true;
 
+		bool _penInitialized = false;
 		Pen _activePen;
 
 		Color _outlineColor;
 		Color _fillColor;
 
 		@property void pen(Pen p) {
+			if(_penInitialized && p == _activePen) {
+				return;
+			}
+			_penInitialized = true;
 			_activePen = p;
 			_outlineColor = p.color;
 
@@ -6724,7 +6732,13 @@ version(X11) {
 				cast(uint) p.color.b);
 		}
 
+		RasterOp _currentRasterOp;
+		bool _currentRasterOpInitialized = false;
 		@property void rasterOp(RasterOp op) {
+			if(_currentRasterOpInitialized && _currentRasterOp == op)
+				return;
+			_currentRasterOp = op;
+			_currentRasterOpInitialized = true;
 			int mode;
 			final switch(op) {
 				case RasterOp.normal:
@@ -6738,11 +6752,13 @@ version(X11) {
 		}
 
 
+		bool _fillColorInitialized = false;
 
 		@property void fillColor(Color c) {
-			if(_fillColor == c)
+			if(_fillColorInitialized && _fillColor == c)
 				return; // already good, no need to waste time calling it
 			_fillColor = c;
+			_fillColorInitialized = true;
 			if(c.a == 0) {
 				backgroundIsNotTransparent = false;
 				return;
@@ -6760,8 +6776,9 @@ version(X11) {
 		void swapColors() {
 			auto tmp = _fillColor;
 			fillColor = _outlineColor;
-			_activePen.color = tmp;
-			pen(_activePen);
+			auto newPen = _activePen;
+			newPen.color = tmp;
+			pen(newPen);
 		}
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
@@ -7728,18 +7745,8 @@ version(X11) {
 			// What would be ideal here is if they only were
 			// selected if there was actually an event handler
 			// for them...
-			XSelectInput(display, window,
-				EventMask.ExposureMask |
-				EventMask.KeyPressMask |
-				EventMask.KeyReleaseMask |
-				EventMask.PropertyChangeMask |
-				EventMask.FocusChangeMask |
-				EventMask.StructureNotifyMask |
-				EventMask.VisibilityChangeMask
-				| EventMask.PointerMotionMask // FIXME: not efficient
-				| EventMask.ButtonPressMask
-				| EventMask.ButtonReleaseMask
-			);
+
+			selectDefaultInput((customizationFlags & WindowFlags.alwaysRequestMouseMotionEvents)?true:false);
 
 			hiddenWindow:
 
@@ -7765,6 +7772,26 @@ version(X11) {
 				_hidden = true;
 			}
 		}
+
+		void selectDefaultInput(bool forceIncludeMouseMotion) {
+			auto mask = EventMask.ExposureMask |
+				EventMask.KeyPressMask |
+				EventMask.KeyReleaseMask |
+				EventMask.PropertyChangeMask |
+				EventMask.FocusChangeMask |
+				EventMask.StructureNotifyMask |
+				EventMask.VisibilityChangeMask
+				| EventMask.ButtonPressMask
+				| EventMask.ButtonReleaseMask
+			;
+
+			// xshm is our shortcut for local connections
+			if(Image.impl.xshmAvailable || forceIncludeMouseMotion)
+				mask |= EventMask.PointerMotionMask;
+
+			XSelectInput(display, window, mask);
+		}
+
 
 		void setNetWMWindowType(Atom type) {
 			Atom[2] atoms;
@@ -8218,6 +8245,11 @@ version(X11) {
 		  break;
 		  case EventType.Expose:
 		 	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
+				// if it is closing from a popup menu, it can get
+				// an Expose event right by the end and trigger a
+				// BadDrawable error ... we'll just check
+				// closed to handle that.
+				if((*win).closed) break;
 				if((*win).openglMode == OpenGlOptions.no) {
 					bool doCopy = true;
 					if (win.handleExpose !is null) doCopy = !win.handleExpose(e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.count);
@@ -11273,7 +11305,7 @@ mixin template ExperimentalTextComponent() {
 
 	struct TextIdentifyResult {
 		InlineElement element;
-		size_t offset;
+		int offset;
 
 		private TextIdentifyResult fixupNewline() {
 			if(element !is null && offset < element.text.length && element.text[offset] == '\n') {
@@ -11388,7 +11420,7 @@ mixin template ExperimentalTextComponent() {
 					ie.text = arg[lastLineIndex .. $];
 					ie.containingBlock = blocks[$-1];
 					blocks[$-1].parts ~= ie.clone;
-					caret = Caret(this, blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length);
+					caret = Caret(this, blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length);
 				}
 			}
 
@@ -11424,9 +11456,10 @@ mixin template ExperimentalTextComponent() {
 					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
 
 						// FIXME binary search
-						size_t tidx;
+						int tidx;
 						int lastX;
-						foreach_reverse(idx, lx; part.letterXs) {
+						foreach_reverse(idxo, lx; part.letterXs) {
+							int idx = cast(int) idxo;
 							if(lx <= x) {
 								if(lastX && lastX - x < x - lx)
 									tidx = idx + 1;
@@ -11441,13 +11474,13 @@ mixin template ExperimentalTextComponent() {
 					} else if(!exact) {
 						// we're not in the box, but are we on the same line?
 						if(y >= part.boundingBox.top && y < part.boundingBox.bottom)
-							inexactMatch = TextIdentifyResult(part, x == 0 ? 0 : part.text.length);
+							inexactMatch = TextIdentifyResult(part, x == 0 ? 0 : cast(int) part.text.length);
 					}
 				}
 			}
 
 			if(!exact && inexactMatch is TextIdentifyResult.init && blocks.length && blocks[$-1].parts.length)
-				return TextIdentifyResult(blocks[$-1].parts[$-1], blocks[$-1].parts[$-1].text.length).fixupNewline;
+				return TextIdentifyResult(blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length).fixupNewline;
 
 			return exact ? TextIdentifyResult.init : inexactMatch.fixupNewline;
 		}
@@ -11457,6 +11490,33 @@ mixin template ExperimentalTextComponent() {
 			caret.inlineElement = result.element;
 			caret.offset = result.offset;
 		}
+
+		void selectToPixelCoordinates(int x, int y) {
+			auto result = identify(x, y);
+
+			if(y < caretLastDrawnY1) {
+				// on a previous line, carat is selectionEnd
+				selectionEnd = caret;
+
+				selectionStart = Caret(this, result.element, result.offset);
+			} else if(y > caretLastDrawnY2) {
+				// on a later line
+				selectionStart = caret;
+
+				selectionEnd = Caret(this, result.element, result.offset);
+			} else {
+				// on the same line...
+				if(x <= caretLastDrawnX) {
+					selectionEnd = caret;
+					selectionStart = Caret(this, result.element, result.offset);
+				} else {
+					selectionStart = caret;
+					selectionEnd = Caret(this, result.element, result.offset);
+				}
+
+			}
+		}
+
 
 		/// Call this if the inputs change. It will reflow everything
 		void redoLayout(ScreenPainter painter) {
@@ -11637,7 +11697,7 @@ mixin template ExperimentalTextComponent() {
 		/// Caret movement api
 		/// These should give the user a logical result based on what they see on screen...
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
-		void moveUp(ref Caret caret) {
+		void moveUp() {
 			if(caret.inlineElement is null) return;
 			auto x = caret.inlineElement.xOfIndex(caret.offset);
 			auto y = caret.inlineElement.boundingBox.top + 2;
@@ -11653,7 +11713,7 @@ mixin template ExperimentalTextComponent() {
 				caret.offset = i.offset;
 			}
 		}
-		void moveDown(ref Caret caret) {
+		void moveDown() {
 			if(caret.inlineElement is null) return;
 			auto x = caret.inlineElement.xOfIndex(caret.offset);
 			auto y = caret.inlineElement.boundingBox.bottom - 2;
@@ -11666,7 +11726,7 @@ mixin template ExperimentalTextComponent() {
 				caret.offset = i.offset;
 			}
 		}
-		void moveLeft(ref Caret caret) {
+		void moveLeft() {
 			if(caret.inlineElement is null) return;
 			if(caret.offset)
 				caret.offset--;
@@ -11675,13 +11735,13 @@ mixin template ExperimentalTextComponent() {
 				if(p) {
 					caret.inlineElement = p;
 					if(p.text.length && p.text[$-1] == '\n')
-						caret.offset = p.text.length - 1;
+						caret.offset = cast(int) p.text.length - 1;
 					else
-						caret.offset = p.text.length;
+						caret.offset = cast(int) p.text.length;
 				}
 			}
 		}
-		void moveRight(ref Caret caret) {
+		void moveRight() {
 			if(caret.inlineElement is null) return;
 			if(caret.offset < caret.inlineElement.text.length && caret.inlineElement.text[caret.offset] != '\n') {
 				caret.offset++;
@@ -11693,7 +11753,7 @@ mixin template ExperimentalTextComponent() {
 				}
 			}
 		}
-		void moveHome(ref Caret caret) {
+		void moveHome() {
 			if(caret.inlineElement is null) return;
 			auto x = 0;
 			auto y = caret.inlineElement.boundingBox.top + 2;
@@ -11705,7 +11765,7 @@ mixin template ExperimentalTextComponent() {
 				caret.offset = i.offset;
 			}
 		}
-		void moveEnd(ref Caret caret) {
+		void moveEnd() {
 			if(caret.inlineElement is null) return;
 			auto x = int.max;
 			auto y = caret.inlineElement.boundingBox.top + 2;
@@ -11732,7 +11792,7 @@ mixin template ExperimentalTextComponent() {
 			if(blocks.length) {
 				auto parts = blocks[$-1].parts;
 				if(parts.length) {
-					caret = Caret(this, parts[$-1], parts[$-1].text.length);
+					caret = Caret(this, parts[$-1], cast(int) parts[$-1].text.length);
 				} else {
 					caret = Caret.init;
 				}
@@ -11748,33 +11808,42 @@ mixin template ExperimentalTextComponent() {
 			assert(selectionEnd.inlineElement !is null);
 
 			auto at = selectionStart.inlineElement;
-			auto atOffset = selectionStart.offset;
-			while(at) {
-				at.text = at.text[atOffset .. $];
-				if(atOffset < at.letterXs.length)
-					at.letterXs = at.letterXs[atOffset .. $];
 
-				if(at is selectionEnd.inlineElement) {
-					selectionEnd.offset -= atOffset;
-					at.text = at.text[selectionEnd.offset .. $];
-					if(selectionEnd.offset < at.letterXs.length)
-						at.letterXs = at.letterXs[selectionEnd.offset .. $];
-					selectionEnd.offset = 0;
-					break;
-				} else {
-					auto cfd = at;
+			if(selectionEnd.inlineElement is at) {
+				// same element, need to chop out
+				at.text = at.text[0 .. selectionStart.offset] ~ at.text[selectionEnd.offset .. $];
+				at.letterXs = at.letterXs[0 .. selectionStart.offset] ~ at.letterXs[selectionEnd.offset .. $];
+				selectionEnd.offset -= selectionEnd.offset - selectionStart.offset;
+			} else {
+				// different elements, we can do it with slicing
+				at.text = at.text[0 .. selectionStart.offset];
+				if(selectionStart.offset < at.letterXs.length)
+					at.letterXs = at.letterXs[0 .. selectionStart.offset];
 
-					at = at.getNextInlineElement();
-					if(at)
-						atOffset = at.text.length;
-					if(cfd.text.length == 0) {
-						// and remove cfd
-						for(size_t a = 0; a < cfd.containingBlock.parts.length; a++) {
-							if(cfd.containingBlock.parts[a] is cfd) {
-								for(size_t i = a; i < cfd.containingBlock.parts.length - 1; i++)
-									cfd.containingBlock.parts[i] = cfd.containingBlock.parts[i + 1];
-								cfd.containingBlock.parts = cfd.containingBlock.parts[0 .. $-1];
+				at = at.getNextInlineElement();
 
+				while(at) {
+					if(at is selectionEnd.inlineElement) {
+						at.text = at.text[selectionEnd.offset .. $];
+						if(selectionEnd.offset < at.letterXs.length)
+							at.letterXs = at.letterXs[selectionEnd.offset .. $];
+						selectionEnd.offset = 0;
+						break;
+					} else {
+						auto cfd = at;
+						cfd.text = null; // delete the whole thing
+
+						at = at.getNextInlineElement();
+
+						if(cfd.text.length == 0) {
+							// and remove cfd
+							for(size_t a = 0; a < cfd.containingBlock.parts.length; a++) {
+								if(cfd.containingBlock.parts[a] is cfd) {
+									for(size_t i = a; i < cfd.containingBlock.parts.length - 1; i++)
+										cfd.containingBlock.parts[i] = cfd.containingBlock.parts[i + 1];
+									cfd.containingBlock.parts = cfd.containingBlock.parts[0 .. $-1];
+
+								}
 							}
 						}
 					}
@@ -11886,7 +11955,7 @@ mixin template ExperimentalTextComponent() {
 				auto prev = e.getPreviousInlineElement();
 				if(prev is null)
 					return;
-				auto newOffset = prev.text.length;
+				auto newOffset = cast(int) prev.text.length;
 				tryMerge(prev, e);
 				caret.inlineElement = prev;
 				caret.offset = prev is null ? 0 : newOffset;
@@ -11904,11 +11973,14 @@ mixin template ExperimentalTextComponent() {
 			invalidateLayout();
 		}
 		void delete_() {
-			auto after = caret;
-			moveRight(after);
-			if(caret != after) {
-				caret = after;
-				backspace();
+			if(selectionStart !is selectionEnd)
+				deleteSelection();
+			else {
+				auto before = caret;
+				moveRight();
+				if(caret != before) {
+					backspace();
+				}
 			}
 
 			invalidateLayout();
@@ -11963,7 +12035,7 @@ mixin template ExperimentalTextComponent() {
 	struct Caret {
 		TextLayout layout;
 		InlineElement inlineElement;
-		size_t offset;
+		int offset;
 	}
 
 	enum TextFormat : ushort {
