@@ -3653,14 +3653,25 @@ struct KeyEvent {
 		if (!this.key) return null;
 
 		// put modifiers
-		if (this.modifierState&ModifierState.ctrl) put("C-");
-		if (this.modifierState&ModifierState.alt) put("M-");
-		if (this.modifierState&ModifierState.windows) put("H-");
-		if (this.modifierState&ModifierState.shift) put("S-");
+		if (this.modifierState&ModifierState.ctrl) put("Ctrl+");
+		if (this.modifierState&ModifierState.alt) put("Alt+");
+		if (this.modifierState&ModifierState.windows) put("Win+");
+		if (this.modifierState&ModifierState.shift) put("Shift+");
 
 		foreach (string kn; __traits(allMembers, Key)) {
 			if (this.key == __traits(getMember, Key, kn)) {
-				put(kn);
+				// HACK!
+				static if (kn == "N0") put("0");
+				else static if (kn == "N1") put("1");
+				else static if (kn == "N2") put("2");
+				else static if (kn == "N3") put("3");
+				else static if (kn == "N4") put("4");
+				else static if (kn == "N5") put("5");
+				else static if (kn == "N6") put("6");
+				else static if (kn == "N7") put("7");
+				else static if (kn == "N8") put("8");
+				else static if (kn == "N9") put("9");
+				else put(kn);
 				return dest[0..dpos];
 			}
 		}
@@ -3671,101 +3682,92 @@ struct KeyEvent {
 
 	string toStr() () { return cast(string)toStrBuf!true(null); } // it is safe to cast here
 
-	// sorry for pasta, but i don't want to create new struct in `opEquals()`
+	/** Parse string into key name with modifiers. It accepts things like:
+	 *
+	 * C-H-1 -- emacs style (ctrl, and windows, and 1)
+	 *
+	 * Ctrl+Win+1 -- windows style
+	 *
+	 * Ctrl-Win-1 -- '-' is a valid delimiter too
+	 *
+	 * Ctrl Win 1 -- and space
+	 *
+	 * and even "Win + 1 + Ctrl".
+	 */
 	static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
-		KeyEvent res;
-		while (name.length && name.ptr[0] <= ' ') name = name[1..$];
+		auto nanchor = name; // keep it anchored, 'cause `name` may have NO_INTERIOR set
+
+		// remove trailing spaces
 		while (name.length && name[$-1] <= ' ') name = name[0..$-1];
-		uint mods = 0;
-		while (name.length > 1 && name.ptr[1] == '-') {
-			switch (name.ptr[0]) {
-				case 'C': case 'c': mods |= ModifierState.ctrl; break;
-				case 'M': case 'm': mods |= ModifierState.alt; break;
-				case 'H': case 'h': mods |= ModifierState.windows; break;
-				case 'S': case 's': mods |= ModifierState.shift; break;
-				default: return res; // alas
-			}
-			name = name[2..$];
+
+		// tokens delimited by blank, '+', or '-'
+		// null on eol
+		const(char)[] getToken () nothrow @trusted @nogc {
+			// remove leading spaces and delimiters
+			while (name.length && (name[0] <= ' ' || name[0] == '+' || name[0] == '-')) name = name[1..$];
+			if (name.length == 0) return null; // oops, no more tokens
+			// get token
+			size_t epos = 0;
+			while (epos < name.length && name[epos] > ' ' && name[epos] != '+' && name[epos] != '-') ++epos;
+			assert(epos > 0 && epos <= name.length);
+			auto res = name[0..epos];
+			name = name[epos..$];
+			return res;
 		}
-		if (name.length == 0) return res;
-		res.modifierState = mods;
-		//HACK
-		if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
-			final switch (name.ptr[0]) {
-				case '0': name = "N0"; break;
-				case '1': name = "N1"; break;
-				case '2': name = "N2"; break;
-				case '3': name = "N3"; break;
-				case '4': name = "N4"; break;
-				case '5': name = "N5"; break;
-				case '6': name = "N6"; break;
-				case '7': name = "N7"; break;
-				case '8': name = "N8"; break;
-				case '9': name = "N9"; break;
+
+		static bool strEquCI (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
+			if (s0.length != s1.length) return false;
+			foreach (immutable ci, char c0; s0) {
+				if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+				char c1 = s1[ci];
+				if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+				if (c0 != c1) return false;
 			}
+			return true;
 		}
-		foreach (string kn; __traits(allMembers, Key)) {
-			if (kn.length == name.length) {
-				// case-insensitive comapre
-				bool ok = true;
-				foreach (immutable ci, char c0; kn) {
-					if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
-					char c1 = name.ptr[ci];
-					if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
-					if (c0 != c1) { ok = false; break; }
+
+		KeyEvent res;
+		res.key = cast(Key)0; // just in case
+		tokenloop: for (;;) {
+			auto tk = getToken();
+			if (tk is null) break;
+			if (strEquCI(tk, "C") || strEquCI(tk, "Ctrl")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+			if (strEquCI(tk, "M") || strEquCI(tk, "Alt")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+			if (strEquCI(tk, "H") || strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+			if (strEquCI(tk, "S") || strEquCI(tk, "Shift")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+			// try key name
+			if (res.key == 0) {
+				// little hack
+				if (tk.length == 1 && tk[0] >= '0' && tk[0] <= '9') {
+					final switch (tk[0]) {
+						case '0': tk = "N0"; break;
+						case '1': tk = "N1"; break;
+						case '2': tk = "N2"; break;
+						case '3': tk = "N3"; break;
+						case '4': tk = "N4"; break;
+						case '5': tk = "N5"; break;
+						case '6': tk = "N6"; break;
+						case '7': tk = "N7"; break;
+						case '8': tk = "N8"; break;
+						case '9': tk = "N9"; break;
+					}
 				}
-				if (ok) { res.key = __traits(getMember, Key, kn); return res; }
+				foreach (string kn; __traits(allMembers, Key)) {
+					if (strEquCI(tk, kn)) { res.key = __traits(getMember, Key, kn); continue tokenloop; }
+				}
 			}
+			// unknown or duplicate key name, get out of here
+			break;
 		}
-		return res; // at least modifier state, lol
+		return res; // something
 	}
 
 	bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
-		while (name.length && name.ptr[0] <= ' ') name = name[1..$];
-		while (name.length && name[$-1] <= ' ') name = name[0..$-1];
-		if (!this.key) return (name.length == 0);
-		uint mods = 0;
-		while (name.length > 1 && name.ptr[1] == '-') {
-			switch (name.ptr[0]) {
-				case 'C': case 'c': mods |= ModifierState.ctrl; break;
-				case 'M': case 'm': mods |= ModifierState.alt; break;
-				case 'H': case 'h': mods |= ModifierState.windows; break;
-				case 'S': case 's': mods |= ModifierState.shift; break;
-				default: return false; // alas
-			}
-			name = name[2..$];
-		}
-		if (name.length == 0) return false;
-		if ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) != mods) return false;
-		//HACK
-		if (name.length == 1 && name.ptr[0] >= '0' && name.ptr[0] <= '9') {
-			final switch (name.ptr[0]) {
-				case '0': name = "N0"; break;
-				case '1': name = "N1"; break;
-				case '2': name = "N2"; break;
-				case '3': name = "N3"; break;
-				case '4': name = "N4"; break;
-				case '5': name = "N5"; break;
-				case '6': name = "N6"; break;
-				case '7': name = "N7"; break;
-				case '8': name = "N8"; break;
-				case '9': name = "N9"; break;
-			}
-		}
-		foreach (string kn; __traits(allMembers, Key)) {
-			if (kn.length == name.length) {
-				// case-insensitive comapre
-				bool ok = true;
-				foreach (immutable ci, char c0; kn) {
-					if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
-					char c1 = name.ptr[ci];
-					if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
-					if (c0 != c1) { ok = false; break; }
-				}
-				if (ok && this.key == __traits(getMember, Key, kn)) return true;
-			}
-		}
-		return false;
+		auto ke = KeyEvent.parse(name);
+		if (this.key != ke.key) return false;
+		// check modifiers
+		ke.modifierState &= (ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows);
+		return ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) == ke.modifierState);
 	}
 }
 
