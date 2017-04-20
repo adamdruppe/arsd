@@ -2640,6 +2640,9 @@ class TabWidget : Widget {
 		} else static assert(0);
 	}
 
+	override int marginTop() { return 4; }
+	override int marginBottom() { return 4; }
+
 	override int minHeight() {
 		int max = 0;
 		foreach(child; children)
@@ -2725,9 +2728,9 @@ class TabWidget : Widget {
 		} else version(custom_widgets) {
 			foreach(child; children) {
 				child.x = 2;
-				child.y = Window.lineHeight;
+				child.y = tabBarHeight + 2; // for the border
 				child.width = width - 4; // for the border
-				child.height = height - tabBarHeight;
+				child.height = height - tabBarHeight - 2 - 2; // for the border
 				child.recomputeChildLayout();
 			}
 		} else static assert(0);
@@ -2741,17 +2744,34 @@ class TabWidget : Widget {
 
 	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
+
+		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen);
+
 		int posX = 0;
 		foreach(idx, child; children) {
 			if(auto twp = cast(TabWidgetPage) child) {
-				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, idx == getCurrentTab() ? FrameStyle.risen : FrameStyle.sunk);
+				auto isCurrent = idx == getCurrentTab();
+				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? windowBackgroundColor : darken(windowBackgroundColor, 0.1));
 				painter.outlineColor = Color.black;
 				painter.drawText(Point(posX + 4, 2), twp.title);
+
+				if(isCurrent) {
+					painter.outlineColor = windowBackgroundColor;
+					painter.fillColor = Color.transparent;
+					painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
+					painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
+
+					painter.outlineColor = Color.white;
+					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
+					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
+					painter.outlineColor = Color(233, 233, 233);
+	//painter.outlineColor = (style == FrameStyle.sunk) ? Color(128, 128, 128) : Color(223, 223, 223);
+					painter.drawPixel(Point(posX, tabBarHeight - 1));
+				}
+
 				posX += tabWidth - 2;
 			}
 		}
-
-		painter.drawRectangle(Point(0, tabBarHeight - 1), width, height - tabBarHeight);
 	}
 
 	///
@@ -3656,6 +3676,7 @@ class MainWindow : Window {
 				bool seperator;
 				.accelerator accelerator;
 				.icon icon;
+				string label;
 				foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {
 					static if(is(typeof(attr) == .menu))
 						menu = attr;
@@ -3667,14 +3688,20 @@ class MainWindow : Window {
 						accelerator = attr;
 					else static if(is(typeof(attr) == .icon))
 						icon = attr;
+					else static if(is(typeof(attr) == .label))
+						label = attr.label;
 				}
 
 				if(menu !is .menu.init || toolbar !is .toolbar.init) {
-					ushort correctIcon = 0; // FIXME
-					auto action = new Action(memberName, correctIcon, &__traits(getMember, t, memberName));
+					ushort correctIcon = icon.id; // FIXME
+					if(label.length == 0)
+						label = memberName;
+					auto action = new Action(label, correctIcon, &__traits(getMember, t, memberName));
 
 					if(accelerator.keyString.length) {
-						action.accelerator = KeyEvent.parse(accelerator.keyString);
+						auto ke = KeyEvent.parse(accelerator.keyString);
+						action.accelerator = ke;
+						accelerators[ke.toStr] = &__traits(getMember, t, memberName);
 					}
 
 					if(toolbar !is .toolbar.init)
@@ -3699,8 +3726,10 @@ class MainWindow : Window {
 
 		this.menu = menuBar;
 
-		if(toolbarActions.length)
-			auto tb = new ToolBar(toolbarActions, this);
+		if(toolbarActions.length) {
+			auto tb = new ToolBar(toolbarActions);
+			addChild(tb, 0);
+		}
 	}
 
 	void delegate()[string] accelerators;
@@ -3722,6 +3751,20 @@ class MainWindow : Window {
 
 	override void addChild(Widget c, int position = int.max) {
 		clientArea.addChild(c, position);
+	}
+
+	ToolBar _toolBar;
+	///
+	ToolBar toolBar() { return _toolBar; }
+	///
+	ToolBar toolBar(ToolBar t) {
+		_toolBar = t;
+		version(win32_widgets)
+			super.addChild(t, 0);
+		else version(custom_widgets)
+			super.addChild(t, menu ? 1 : 0);
+		else static assert(0);
+		return t;
 	}
 
 	MenuBar _menu;
@@ -3790,8 +3833,8 @@ class ToolBar : Widget {
 		override int minHeight() { return idealHeight; }
 		override int maxHeight() { return idealHeight; }
 	} else version(custom_widgets) {
-		override int minHeight() { return 32; }// Window.lineHeight * 3/2; }
-		override int maxHeight() { return 32; } //Window.lineHeight * 3/2; }
+		override int minHeight() { return toolbarIconSize; }// Window.lineHeight * 3/2; }
+		override int maxHeight() { return toolbarIconSize; } //Window.lineHeight * 3/2; }
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
@@ -3852,6 +3895,8 @@ class ToolBar : Widget {
 	}
 }
 
+enum toolbarIconSize = 24;
+
 ///
 class ToolButton : Button {
 	///
@@ -3874,10 +3919,10 @@ class ToolButton : Button {
 
 	Action action;
 
-	override int maxWidth() { return 32; }
-	override int minWidth() { return 32; }
-	override int maxHeight() { return 32; }
-	override int minHeight() { return 32; }
+	override int maxWidth() { return toolbarIconSize; }
+	override int minWidth() { return toolbarIconSize; }
+	override int maxHeight() { return toolbarIconSize; }
+	override int minHeight() { return toolbarIconSize; }
 
 	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
@@ -3885,60 +3930,62 @@ class ToolButton : Button {
 
 		painter.outlineColor = Color.black;
 
-		enum iconSize = 32;
-		enum multiplier = iconSize / 16;
+		// I want to get from 16 to 24. that's * 3 / 2
+		static assert(toolbarIconSize >= 16);
+		enum multiplier = toolbarIconSize / 8;
+		enum divisor = 2 + ((toolbarIconSize % 8) ? 1 : 0);
 		switch(action.iconId) {
 			case GenericIcons.New:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(3, 2) * multiplier, Point(3, 13) * multiplier, Point(12, 13) * multiplier, Point(12, 6) * multiplier,
-					Point(8, 2) * multiplier, Point(8, 6) * multiplier, Point(12, 6) * multiplier, Point(8, 2) * multiplier
+					Point(3, 2) * multiplier / divisor, Point(3, 13) * multiplier / divisor, Point(12, 13) * multiplier / divisor, Point(12, 6) * multiplier / divisor,
+					Point(8, 2) * multiplier / divisor, Point(8, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor, Point(8, 2) * multiplier / divisor
 				);
 			break;
 			case GenericIcons.Save:
 				painter.fillColor = Color.black;
-				painter.drawRectangle(Point(2, 2) * multiplier, Point(13, 13) * multiplier);
+				painter.drawRectangle(Point(2, 2) * multiplier / divisor, Point(13, 13) * multiplier / divisor);
 
 				painter.fillColor = Color.white;
 				painter.outlineColor = Color.white;
 				// the slider
-				painter.drawRectangle(Point(5, 2) * multiplier, Point(10, 5) * multiplier);
+				painter.drawRectangle(Point(5, 2) * multiplier / divisor, Point(10, 5) * multiplier / divisor);
 				// the label
-				painter.drawRectangle(Point(4, 8) * multiplier, Point(11, 12) * multiplier);
+				painter.drawRectangle(Point(4, 8) * multiplier / divisor, Point(11, 12) * multiplier / divisor);
 
 				painter.fillColor = Color.black;
 				painter.outlineColor = Color.black;
 				// the disc window
-				painter.drawRectangle(Point(8, 3) * multiplier, Point(9, 4) * multiplier);
+				painter.drawRectangle(Point(8, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor);
 			break;
 			case GenericIcons.Open:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(2, 4) * multiplier, Point(2, 12) * multiplier, Point(13, 12) * multiplier, Point(13, 3) * multiplier,
-					Point(9, 3) * multiplier, Point(9, 4) * multiplier, Point(2, 4) * multiplier);
-				painter.drawLine(Point(2, 6) * multiplier, Point(13, 7) * multiplier);
-				//painter.drawLine(Point(9, 6) * multiplier, Point(13, 7) * multiplier);
+					Point(2, 4) * multiplier / divisor, Point(2, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
+					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(2, 4) * multiplier / divisor);
+				painter.drawLine(Point(2, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
+				//painter.drawLine(Point(9, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
 			break;
 			case GenericIcons.Copy:
 				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(3, 2) * multiplier, Point(9, 10) * multiplier);
-				painter.drawRectangle(Point(6, 5) * multiplier, Point(12, 13) * multiplier);
+				painter.drawRectangle(Point(3, 2) * multiplier / divisor, Point(9, 10) * multiplier / divisor);
+				painter.drawRectangle(Point(6, 5) * multiplier / divisor, Point(12, 13) * multiplier / divisor);
 			break;
 			case GenericIcons.Cut:
 				painter.fillColor = Color.transparent;
-				painter.drawLine(Point(3, 2) * multiplier, Point(10, 9) * multiplier);
-				painter.drawLine(Point(4, 9) * multiplier, Point(11, 2) * multiplier);
-				painter.drawRectangle(Point(3, 9) * multiplier, Point(5, 13) * multiplier);
-				painter.drawRectangle(Point(9, 9) * multiplier, Point(11, 12) * multiplier);
+				painter.drawLine(Point(3, 2) * multiplier / divisor, Point(10, 9) * multiplier / divisor);
+				painter.drawLine(Point(4, 9) * multiplier / divisor, Point(11, 2) * multiplier / divisor);
+				painter.drawRectangle(Point(3, 9) * multiplier / divisor, Point(5, 13) * multiplier / divisor);
+				painter.drawRectangle(Point(9, 9) * multiplier / divisor, Point(11, 12) * multiplier / divisor);
 			break;
 			case GenericIcons.Paste:
 				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(2, 3) * multiplier, Point(11, 11) * multiplier);
-				painter.drawRectangle(Point(6, 8) * multiplier, Point(13, 13) * multiplier);
-				painter.drawLine(Point(6, 2) * multiplier, Point(4, 5) * multiplier);
-				painter.drawLine(Point(6, 2) * multiplier, Point(9, 5) * multiplier);
+				painter.drawRectangle(Point(2, 3) * multiplier / divisor, Point(11, 11) * multiplier / divisor);
+				painter.drawRectangle(Point(6, 8) * multiplier / divisor, Point(13, 13) * multiplier / divisor);
+				painter.drawLine(Point(6, 2) * multiplier / divisor, Point(4, 5) * multiplier / divisor);
+				painter.drawLine(Point(6, 2) * multiplier / divisor, Point(9, 5) * multiplier / divisor);
 				painter.fillColor = Color.black;
-				painter.drawRectangle(Point(4, 5) * multiplier, Point(9, 6) * multiplier);
+				painter.drawRectangle(Point(4, 5) * multiplier / divisor, Point(9, 6) * multiplier / divisor);
 			break;
 			case GenericIcons.Help:
 				painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
@@ -4401,10 +4448,15 @@ class Menu : Window {
 
 			auto w = 150;
 			auto h = paddingTop + paddingBottom;
+			Widget previousChild;
 			foreach(child; this.children) {
 				h += child.minHeight();
-				h += mymax(child.marginTop(), child.marginBottom());
+				h += mymax(child.marginTop(), previousChild ? previousChild.marginBottom() : 0);
+				previousChild = child;
 			}
+
+			if(previousChild)
+			h += previousChild.marginBottom();
 
 			auto coord = parent.globalCoordinates();
 			dropDown.moveResize(coord.x, coord.y + parent.parentWindow.lineHeight, w, h);
@@ -4449,8 +4501,14 @@ class Menu : Window {
 	void unpopup() {
 		mouseLastOver = mouseLastDownOn = null;
 		dropDown.hide();
-		if(!menuParent.parentWindow.win.closed)
+		if(!menuParent.parentWindow.win.closed) {
+			if(auto maw = cast(MouseActivatedWidget) menuParent) {
+				maw.isDepressed = false;
+				maw.isHovering = false;
+				maw.redraw();
+			}
 			menuParent.parentWindow.win.focus();
+		}
 		clickListener.disconnect();
 	}
 
@@ -4540,7 +4598,7 @@ class MenuItem : MouseActivatedWidget {
 		painter.fillColor = Color.transparent;
 		painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
 		if(action && action.accelerator !is KeyEvent.init) {
-			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), action.accelerator.toStr(), Point(width, height), TextAlignment.Right);
+			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), action.accelerator.toStr(), Point(width - 4, height), TextAlignment.Right);
 
 		}
 	}
@@ -6147,4 +6205,6 @@ struct menu { string name; }
 /// Describes which toolbar section the action appears on
 struct toolbar { string groupName; }
 ///
-struct icon {}
+struct icon { ushort id; }
+///
+struct label { string label; }
