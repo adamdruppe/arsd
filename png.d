@@ -267,7 +267,7 @@ PNG* pngFromImage(IndexedImage i) {
 		addImageDatastreamToPng(i.data, png);
 	} else {
 		// gotta convert it
-		ubyte[] datastream = new ubyte[i.width * i.height * 8 / h.depth]; // FIXME?
+		ubyte[] datastream = new ubyte[i.width * i.height * h.depth / 8]; // FIXME?
 		int shift = 0;
 
 		switch(h.depth) {
@@ -629,7 +629,7 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 	auto bytesPerLine = h.width * 4;
 	if(h.type == 3)
-		bytesPerLine = h.width * 8 /  h.depth;
+		bytesPerLine = h.width * h.depth / 8;
 	Chunk dat;
 	dat.type = ['I', 'D', 'A', 'T'];
 	int pos = 0;
