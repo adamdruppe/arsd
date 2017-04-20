@@ -570,6 +570,8 @@ class Action {
 		private static Action[int] mapping;
 	}
 
+	KeyEvent accelerator;
+
 	///
 	this(string label, ushort icon = 0, void delegate() triggered = null) {
 		this.label = label;
@@ -3316,6 +3318,7 @@ class Window : Widget {
 	bool dispatchKeyEvent(KeyEvent ev) {
 		if(focusedWidget) {
 			auto event = new Event(ev.pressed ? "keydown" : "keyup", focusedWidget);
+			event.originalKeyEvent = ev;
 			event.character = ev.character;
 			event.key = ev.key;
 			event.state = ev.modifierState;
@@ -3670,6 +3673,10 @@ class MainWindow : Window {
 					ushort correctIcon = 0; // FIXME
 					auto action = new Action(memberName, correctIcon, &__traits(getMember, t, memberName));
 
+					if(accelerator.keyString.length) {
+						action.accelerator = KeyEvent.parse(accelerator.keyString);
+					}
+
 					if(toolbar !is .toolbar.init)
 						toolbarActions ~= action;
 					if(menu !is .menu.init) {
@@ -3694,6 +3701,15 @@ class MainWindow : Window {
 
 		if(toolbarActions.length)
 			auto tb = new ToolBar(toolbarActions, this);
+	}
+
+	void delegate()[string] accelerators;
+
+	override void defaultEventHandler_keydown(Event event) {
+		auto str = event.originalKeyEvent.toStr;
+		if(auto acl = str in accelerators)
+			(*acl)();
+		super.defaultEventHandler_keydown(event);
 	}
 
 	override void defaultEventHandler_mouseover(Event event) {
@@ -4523,6 +4539,10 @@ class MenuItem : MouseActivatedWidget {
 			painter.outlineColor = Color.black;
 		painter.fillColor = Color.transparent;
 		painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
+		if(action && action.accelerator !is KeyEvent.init) {
+			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), action.accelerator.toStr(), Point(width, height), TextAlignment.Right);
+
+		}
 	}
 
 
@@ -5458,6 +5478,8 @@ class Event {
 	// for key events
 	Key key; ///
 
+	KeyEvent originalKeyEvent;
+
 	// char character events
 	dchar character; ///
 
@@ -6119,7 +6141,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/bb760476%28v=vs.85%29.as
 /// This item in the menu will be preceded by a separator line
 struct seperator {}
 /// Program-wide keyboard shortcut to trigger the action
-struct accelerator { string acl; }
+struct accelerator { string keyString; }
 /// tells which menu the action will be on
 struct menu { string name; }
 /// Describes which toolbar section the action appears on

@@ -3650,7 +3650,7 @@ struct KeyEvent {
 			}
 		}
 
-		if (!this.key) return null;
+		if (!this.key && !(this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows))) return null;
 
 		// put modifiers
 		if (this.modifierState&ModifierState.ctrl) put("Ctrl+");
@@ -3658,25 +3658,28 @@ struct KeyEvent {
 		if (this.modifierState&ModifierState.windows) put("Win+");
 		if (this.modifierState&ModifierState.shift) put("Shift+");
 
-		foreach (string kn; __traits(allMembers, Key)) {
-			if (this.key == __traits(getMember, Key, kn)) {
-				// HACK!
-				static if (kn == "N0") put("0");
-				else static if (kn == "N1") put("1");
-				else static if (kn == "N2") put("2");
-				else static if (kn == "N3") put("3");
-				else static if (kn == "N4") put("4");
-				else static if (kn == "N5") put("5");
-				else static if (kn == "N6") put("6");
-				else static if (kn == "N7") put("7");
-				else static if (kn == "N8") put("8");
-				else static if (kn == "N9") put("9");
-				else put(kn);
-				return dest[0..dpos];
+		if (this.key) {
+			foreach (string kn; __traits(allMembers, Key)) {
+				if (this.key == __traits(getMember, Key, kn)) {
+					// HACK!
+					static if (kn == "N0") put("0");
+					else static if (kn == "N1") put("1");
+					else static if (kn == "N2") put("2");
+					else static if (kn == "N3") put("3");
+					else static if (kn == "N4") put("4");
+					else static if (kn == "N5") put("5");
+					else static if (kn == "N6") put("6");
+					else static if (kn == "N7") put("7");
+					else static if (kn == "N8") put("8");
+					else static if (kn == "N9") put("9");
+					else put(kn);
+					return dest[0..dpos];
+				}
 			}
+			put("Unknown");
+		} else {
+			if (dpos && dest[dpos-1] == '+') --dpos;
 		}
-
-		put("Unknown");
 		return dest[0..dpos];
 	}
 
@@ -3728,13 +3731,29 @@ struct KeyEvent {
 
 		KeyEvent res;
 		res.key = cast(Key)0; // just in case
+		const(char)[] tk, tkn; // last token
+		bool allowEmascStyle = true;
 		tokenloop: for (;;) {
-			auto tk = getToken();
-			if (tk is null) break;
-			if (strEquCI(tk, "C") || strEquCI(tk, "Ctrl")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
-			if (strEquCI(tk, "M") || strEquCI(tk, "Alt")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
-			if (strEquCI(tk, "H") || strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
-			if (strEquCI(tk, "S") || strEquCI(tk, "Shift")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+			tk = tkn;
+			tkn = getToken();
+			//k8: yay, i took "Bloody Mess" trait from Fallout!
+			if (tkn.length != 0 && tk.length == 0) { tk = tkn; continue tokenloop; }
+			if (tkn.length == 0 && tk.length == 0) break; // no more tokens
+			if (allowEmascStyle && tkn.length != 0) {
+				if (tkn.length == 1) {
+					if (strEquCI(tk, "C")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+					if (strEquCI(tk, "M")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+					if (strEquCI(tk, "H")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+					if (strEquCI(tk, "S")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+				} else {
+					allowEmascStyle = false;
+				}
+			}
+			if (strEquCI(tk, "Ctrl")) { allowEmascStyle = false; res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+			if (strEquCI(tk, "Alt")) { allowEmascStyle = false; res.modifierState |= ModifierState.alt; continue tokenloop; }
+			if (strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { allowEmascStyle = false; res.modifierState |= ModifierState.windows; continue tokenloop; }
+			if (strEquCI(tk, "Shift")) { allowEmascStyle = false; res.modifierState |= ModifierState.shift; continue tokenloop; }
+			if (tk.length == 0) continue;
 			// try key name
 			if (res.key == 0) {
 				// little hack
