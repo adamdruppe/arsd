@@ -34,7 +34,7 @@
 
 	SPECIFICS
 	$(LIST
-	* Allows identifiers-with-dashes. To do subtraction, put spaces around the minus sign.
+	// * Allows identifiers-with-dashes. To do subtraction, put spaces around the minus sign.
 	* Allows identifiers starting with a dollar sign.
 	* string literals come in "foo" or 'foo', like Javascript, or `raw string` like D. Also come as “nested “double quotes” are an option!”
 	* double quoted string literals can do Ruby-style interpolation: "Hello, #{name}".
@@ -476,7 +476,7 @@ class TokenStream(TextStream) {
 					while(pos < text.length
 						&& ((text[pos] >= 'a' && text[pos] <= 'z') ||
 							(text[pos] == '_') ||
-							(pos != 0 && text[pos] == '-') || // allow mid-identifier dashes for this-kind-of-name. For subtraction, add a space.
+							//(pos != 0 && text[pos] == '-') || // allow mid-identifier dashes for this-kind-of-name. For subtraction, add a space.
 							(text[pos] >= 'A' && text[pos] <= 'Z') ||
 							(text[pos] >= '0' && text[pos] <= '9')))
 					{
