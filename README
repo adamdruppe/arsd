@@ -74,7 +74,7 @@ Desktop app stuff
 ================
 
 simpledisplay.d - gives quick and easy access to a window for drawing and input. Also has some OpenGL capabilities.
-minigui.d - a small widgetset built on top of simpledisplay.d offering buttons, checkboxes, etc.
+minigui.d - a small widgetset built on top of simpledisplay.d offering buttons, checkboxes, etc. Almost done!
 terminal.d - quick and easy access to a text mode console/terminal
 htmlwidget.d - a very small html widget, built on simpledisplay.d
 
