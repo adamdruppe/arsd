@@ -1,13 +1,17 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// FIXME: unify Windows style line endings
+
 /*
 	TODO:
+
+	class Form
+
+	disabled widgets and menu items
 
 	TrackBar controls
 
 	event cleanup
-	ScreenPainter dtor stuff. clipping api.
-	Windows radio button sizing and theme text selection
 	tooltips.
 	api improvements
 
@@ -639,7 +643,7 @@ class Action {
 	MENUS
 
 	auto bar = new MenuBar(window);
-	window.menu = bar;
+	window.menuBar = bar;
 
 	auto fileMenu = bar.addItem(new Menu("&File"));
 	fileMenu.addItem(new MenuItem("&Exit"));
@@ -732,6 +736,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		mixin("parent.padding"~secondThingy~"()");
 
 	int stretchinessSum;
+	int stretchyChildSum;
 	int lastMargin = 0;
 
 	// set initial size
@@ -772,17 +777,29 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
 		lastMargin = margin;
 		spaceRemaining -= thisMargin + margin;
-		stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
+		auto s = mixin("child." ~ relevantMeasure ~ "Stretchiness()");
+		stretchinessSum += s;
+		if(s > 0)
+			stretchyChildSum++;
 	}
 
 	// stretch to fill space
-	while(spaceRemaining > 0 && stretchinessSum) {
+	while(spaceRemaining > 0 && stretchinessSum && stretchyChildSum) {
 		//import std.stdio; writeln("str ", stretchinessSum);
 		auto spacePerChild = spaceRemaining / stretchinessSum;
-		if(spacePerChild <= 0)
-			break;
+		bool spreadEvenly;
+		bool giveToBiggest;
+		if(spacePerChild <= 0) {
+			spacePerChild = spaceRemaining / stretchyChildSum;
+			spreadEvenly = true;
+		}
+		if(spacePerChild <= 0) {
+			giveToBiggest = true;
+		}
 		int previousSpaceRemaining = spaceRemaining;
 		stretchinessSum = 0;
+		Widget mostStretchy;
+		int mostStretchyS;
 		foreach(child; parent.children) {
 			if(cast(StaticPosition) child)
 				continue;
@@ -799,7 +816,10 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				spaceRemaining += adj;
 				continue;
 			}
-			auto spaceAdjustment = spacePerChild * mixin("child." ~ relevantMeasure ~ "Stretchiness()");
+			auto s = mixin("child." ~ relevantMeasure ~ "Stretchiness()");
+			if(s <= 0)
+				continue;
+			auto spaceAdjustment = spacePerChild * (spreadEvenly ? 1 : s);
 			mixin("child." ~ relevantMeasure) += spaceAdjustment;
 			spaceRemaining -= spaceAdjustment;
 			if(mixin("child." ~ relevantMeasure) > maximum) {
@@ -808,6 +828,28 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				spaceRemaining += diff;
 			} else if(mixin("child." ~ relevantMeasure) < maximum) {
 				stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
+				if(mostStretchy is null || s >= mostStretchyS) {
+					mostStretchy = child;
+					mostStretchyS = s;
+				}
+			}
+		}
+
+		if(giveToBiggest && mostStretchy !is null) {
+			auto child = mostStretchy;
+			int spaceAdjustment = spaceRemaining;
+
+			static if(calcingV)
+				auto maximum = child.maxHeight();
+			else
+				auto maximum = child.maxWidth();
+
+			mixin("child." ~ relevantMeasure) += spaceAdjustment;
+			spaceRemaining -= spaceAdjustment;
+			if(mixin("child." ~ relevantMeasure) > maximum) {
+				auto diff = mixin("child." ~ relevantMeasure) - maximum;
+				mixin("child." ~ relevantMeasure) -= diff;
+				spaceRemaining += diff;
 			}
 		}
 
@@ -3662,14 +3704,20 @@ class MainWindow : Window {
 	---
 
 	+/
-	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) {
+	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) if(!is(T == class) && !is(T == interface)) {
+		setMenuAndToolbarFromAnnotatedCode_internal(t);
+	}
+	void setMenuAndToolbarFromAnnotatedCode(T)(T t) if(is(T == class) || is(T == interface)) {
+		setMenuAndToolbarFromAnnotatedCode_internal(t);
+	}
+	void setMenuAndToolbarFromAnnotatedCode_internal(T)(ref T t) {
 		Action[] toolbarActions;
 		auto menuBar = new MenuBar();
 		Menu[string] mcs;
 
 		void delegate() triggering;
 
-		foreach(memberName; __traits(allMembers, T)) {
+		foreach(memberName; __traits(derivedMembers, T)) {
 			static if(__traits(compiles, triggering = &__traits(getMember, t, memberName))) {
 				.menu menu;
 				.toolbar toolbar;
@@ -3724,7 +3772,7 @@ class MainWindow : Window {
 			}
 		}
 
-		this.menu = menuBar;
+		this.menuBar = menuBar;
 
 		if(toolbarActions.length) {
 			auto tb = new ToolBar(toolbarActions);
@@ -3762,16 +3810,16 @@ class MainWindow : Window {
 		version(win32_widgets)
 			super.addChild(t, 0);
 		else version(custom_widgets)
-			super.addChild(t, menu ? 1 : 0);
+			super.addChild(t, menuBar ? 1 : 0);
 		else static assert(0);
 		return t;
 	}
 
 	MenuBar _menu;
 	///
-	MenuBar menu() { return _menu; }
+	MenuBar menuBar() { return _menu; }
 	///
-	MenuBar menu(MenuBar m) {
+	MenuBar menuBar(MenuBar m) {
 		if(_menu !is null) {
 			// make sure it is sanely removed
 			// FIXME
@@ -3818,9 +3866,6 @@ class ClientAreaWidget : Widget {
 	this(Widget parent = null) {
 		super(parent);
 	}
-
-	override int paddingLeft() { return 2; }
-	override int paddingRight() { return 2; }
 }
 
 /**
@@ -3961,9 +4006,11 @@ class ToolButton : Button {
 			case GenericIcons.Open:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(2, 4) * multiplier / divisor, Point(2, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
-					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(2, 4) * multiplier / divisor);
-				painter.drawLine(Point(2, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
+					Point(3, 4) * multiplier / divisor, Point(3, 12) * multiplier / divisor, Point(14, 12) * multiplier / divisor, Point(14, 3) * multiplier / divisor,
+					Point(10, 3) * multiplier / divisor, Point(10, 4) * multiplier / divisor, Point(3, 4) * multiplier / divisor);
+				painter.drawPolygon(
+					Point(1, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor,
+					Point(14, 12) * multiplier / divisor, Point(3, 12) * multiplier / divisor);
 				//painter.drawLine(Point(9, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
 			break;
 			case GenericIcons.Copy:
@@ -4145,7 +4192,8 @@ class StatusBar : Widget {
 		@property void content(string s) {
 			version(win32_widgets) {
 				_content = s;
-				SendMessageA(owner.hwnd, SB_SETTEXT, idx, cast(LPARAM) toStringzInternal(s));
+				WCharzBuffer bfr = WCharzBuffer(s);
+				SendMessageW(owner.hwnd, SB_SETTEXT, idx, cast(LPARAM) bfr.ptr);
 			} else version(custom_widgets) {
 				if(_content != s) {
 					_content = s;
@@ -5915,7 +5963,6 @@ enum {
 }
 
 	enum WM_USER = 1024;
-	enum SB_SETTEXT = WM_USER + 1; // SET TEXT A. It is +11 for W
 }
 
 version(win32_widgets)
