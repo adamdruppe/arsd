@@ -5,7 +5,8 @@
 /*
 	TODO:
 
-	class Form
+	class Form with submit behavior
+	class CommandButton with a consistent size
 
 	disabled widgets and menu items
 
@@ -3648,6 +3649,10 @@ class LabeledLineEdit : Widget {
 	void selectAll() {
 		lineEdit.selectAll();
 	}
+
+	override void focus() {
+		lineEdit.focus();
+	}
 }
 
 ///
@@ -3798,7 +3803,10 @@ class MainWindow : Window {
 	}
 
 	override void addChild(Widget c, int position = int.max) {
-		clientArea.addChild(c, position);
+		if(auto tb = cast(ToolBar) c)
+			super.addChild(c, menuBar ? 1 : 0);
+		else
+			clientArea.addChild(c, position);
 	}
 
 	ToolBar _toolBar;
@@ -3807,6 +3815,9 @@ class MainWindow : Window {
 	///
 	ToolBar toolBar(ToolBar t) {
 		_toolBar = t;
+		foreach(child; this.children)
+			if(child is t)
+				return t;
 		version(win32_widgets)
 			super.addChild(t, 0);
 		else version(custom_widgets)
@@ -5338,18 +5349,20 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		});
 	}
 
-	version(custom_widgets)
 	override void defaultEventHandler_blur(Event ev) {
 		super.defaultEventHandler_blur(ev);
 		if(parentWindow.win.closed) return;
-		auto painter = this.draw();
-		textLayout.eraseCaret(painter);
-		if(caretTimer) {
-			caretTimer.destroy();
-			caretTimer = null;
+		version(custom_widgets) {
+			auto painter = this.draw();
+			textLayout.eraseCaret(painter);
+			if(caretTimer) {
+				caretTimer.destroy();
+				caretTimer = null;
+			}
 		}
 
 		auto evt = new Event(EventType.change, this);
+		evt.stringValue = this.content;
 		evt.dispatch();
 	}
 
@@ -6255,3 +6268,91 @@ struct toolbar { string groupName; }
 struct icon { ushort id; }
 ///
 struct label { string label; }
+
+
+
+/++
+	Creates a dialog based on a data structure.
+
+	dialog((YourStructure value) {
+		// the user filled in the struct and clicked OK,
+		// you can check the members now
+	});
++/
+void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null) {
+	auto dg = new AutomaticDialog!T(onOK, onCancel);
+	dg.show();
+}
+
+private static template I(T...) { alias I = T; }
+
+class AutomaticDialog(T) : Dialog {
+	T t;
+
+	void delegate(T) onOK;
+	void delegate() onCancel;
+
+	this(void delegate(T) onOK, void delegate() onCancel) {
+		static if(is(T == class))
+			t = new T();
+		this.onOK = onOK;
+		this.onCancel = onCancel;
+		super(400, 300, T.stringof);
+
+		foreach(memberName; __traits(allMembers, T)) {
+			alias member = I!(__traits(getMember, t, memberName))[0];
+			alias type = typeof(member);
+			static if(is(type == string)) {
+				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				le.addEventListener(EventType.change, (Event ev) {
+					__traits(getMember, t, memberName) = ev.stringValue;
+				});
+			} else static if(is(type : long)) {
+				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				le.addEventListener("char", (Event ev) {
+					if(ev.character < '0' || ev.character > '9')
+						ev.preventDefault();
+				});
+				le.addEventListener(EventType.change, (Event ev) {
+					import std.conv;
+					try {
+						__traits(getMember, t, memberName) = to!type(ev.stringValue);
+					} catch(Exception e) {
+						// FIXME
+					}
+				});
+			}
+		}
+
+		auto hl = new HorizontalLayout(this);
+		auto ok = new Button("OK", hl);
+		auto cancel = new Button("Cancel", hl);
+		ok.addEventListener(EventType.triggered, &OK);
+		cancel.addEventListener(EventType.triggered, &Cancel);
+
+		this.addEventListener(EventType.keydown, (Event ev) {
+			if(ev.key == Key.Enter || ev.key == Key.PadEnter) {
+				ok.focus();
+				OK();
+				ev.preventDefault();
+			}
+			if(ev.key == Key.Escape) {
+				Cancel();
+				ev.preventDefault();
+			}
+		});
+
+		this.children[0].focus();
+	}
+
+	override void OK() {
+		onOK(t);
+		close();
+	}
+
+	override void Cancel() {
+		if(onCancel)
+			onCancel();
+		close();
+	}
+}
