@@ -3780,8 +3780,7 @@ class MainWindow : Window {
 		this.menuBar = menuBar;
 
 		if(toolbarActions.length) {
-			auto tb = new ToolBar(toolbarActions);
-			addChild(tb, 0);
+			auto tb = new ToolBar(toolbarActions, this);
 		}
 	}
 
