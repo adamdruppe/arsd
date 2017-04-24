@@ -3622,6 +3622,7 @@ enum TextAlignment : uint {
 }
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
+alias Rectangle = arsd.color.Rectangle;
 
 
 /++
@@ -3740,19 +3741,20 @@ struct KeyEvent {
 			if (tkn.length != 0 && tk.length == 0) { tk = tkn; continue tokenloop; }
 			if (tkn.length == 0 && tk.length == 0) break; // no more tokens
 			if (allowEmascStyle && tkn.length != 0) {
-				if (tkn.length == 1) {
-					if (strEquCI(tk, "C")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
-					if (strEquCI(tk, "M")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
-					if (strEquCI(tk, "H")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
-					if (strEquCI(tk, "S")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
-				} else {
-					allowEmascStyle = false;
+				if (tk.length == 1) {
+					char mdc = tk[0];
+					if (mdc >= 'a' && mdc <= 'z') mdc -= 32; // poor man's toupper()
+					if (mdc == 'C' && (res.modifierState&ModifierState.ctrl) == 0) {res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+					if (mdc == 'M' && (res.modifierState&ModifierState.alt) == 0) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+					if (mdc == 'H' && (res.modifierState&ModifierState.windows) == 0) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+					if (mdc == 'S' && (res.modifierState&ModifierState.shift) == 0) { res.modifierState |= ModifierState.shift; continue tokenloop; }
 				}
 			}
-			if (strEquCI(tk, "Ctrl")) { allowEmascStyle = false; res.modifierState |= ModifierState.ctrl; continue tokenloop; }
-			if (strEquCI(tk, "Alt")) { allowEmascStyle = false; res.modifierState |= ModifierState.alt; continue tokenloop; }
-			if (strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { allowEmascStyle = false; res.modifierState |= ModifierState.windows; continue tokenloop; }
-			if (strEquCI(tk, "Shift")) { allowEmascStyle = false; res.modifierState |= ModifierState.shift; continue tokenloop; }
+			allowEmascStyle = false;
+			if (strEquCI(tk, "Ctrl")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+			if (strEquCI(tk, "Alt")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+			if (strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+			if (strEquCI(tk, "Shift")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
 			if (tk.length == 0) continue;
 			// try key name
 			if (res.key == 0) {
@@ -4304,9 +4306,40 @@ class OperatingSystemFont {
 		} else static assert(0);
 	}
 
+	/// FIXME not implemented
+	void loadDefault() {
+
+	}
+
 	///
 	bool isNull() {
 		return font is null;
+	}
+
+	/* Metrics */
+	/+
+		GetFontMetrics
+		GetABCWidth
+		GetKerningPairs
+
+		XLoadQueryFont
+
+		if I do it right, I can size it all here, and match
+		what happens when I draw the full string with the OS functions.
+
+		subclasses might do the same thing while getting the glyphs on images
+	+/
+	struct GlyphInfo {
+		int glyph;
+
+		size_t stringIdxStart;
+		size_t stringIdxEnd;
+
+		Rectangle boundingBox;
+	}
+	GlyphInfo[] getCharBoxes() {
+		return null;
+
 	}
 
 	~this() {
