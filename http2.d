@@ -834,7 +834,7 @@ class HttpRequest {
 							}
 						break;
 						case 2: // reading data
-							auto can = a + bodyReadingState.contentLengthRemaining;
+							size_t can = a + bodyReadingState.contentLengthRemaining;
 							if(can > data.length)
 								can = cast(int) data.length;
 
