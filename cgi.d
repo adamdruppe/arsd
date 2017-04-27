@@ -2649,56 +2649,64 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 						i = addr.sizeof;
 						int s = accept(sock, &addr, &i);
 
-						if(s == -1)
-							throw new Exception("accept");
-						//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
-						auto ir = new BufferedInputRange(s);
-						//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
+						try {
 
-						while(!ir.empty) {
-							ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+							if(s == -1)
+								throw new Exception("accept");
 
-							Cgi cgi;
-							try {
-								cgi = new CustomCgi(ir, &closeConnection);
-								//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
-							} catch(Throwable t) {
-								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
-								// anyway let's kill the connection
-								stderr.writeln(t.toString());
-								sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
-								closeConnection = true;
-								break;
-							}
-							assert(cgi !is null);
-							scope(exit)
-								cgi.dispose();
+							scope(failure) close(s);
+							//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
+							auto ir = new BufferedInputRange(s);
+							//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
 
-							try {
-								fun(cgi);
-								cgi.close();
-							} catch(ConnectionException ce) {
-								closeConnection = true;
-							} catch(Throwable t) {
-								// a processing error can be recovered from
-								stderr.writeln(t.toString);
-								if(!handleException(cgi, t))
+							while(!ir.empty) {
+								ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+
+								Cgi cgi;
+								try {
+									cgi = new CustomCgi(ir, &closeConnection);
+									//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
+								} catch(Throwable t) {
+									// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
+									// anyway let's kill the connection
+									stderr.writeln(t.toString());
+									sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
 									closeConnection = true;
-							}
+									break;
+								}
+								assert(cgi !is null);
+								scope(exit)
+									cgi.dispose();
 
-							if(closeConnection) {
-								ir.source.close();
-								break;
-							} else {
-								if(!ir.empty)
-									ir.popFront(); // get the next
-								else if(ir.sourceClosed) {
+								try {
+									fun(cgi);
+									cgi.close();
+								} catch(ConnectionException ce) {
+									closeConnection = true;
+								} catch(Throwable t) {
+									// a processing error can be recovered from
+									stderr.writeln(t.toString);
+									if(!handleException(cgi, t))
+										closeConnection = true;
+								}
+
+								if(closeConnection) {
 									ir.source.close();
+									break;
+								} else {
+									if(!ir.empty)
+										ir.popFront(); // get the next
+									else if(ir.sourceClosed) {
+										ir.source.close();
+									}
 								}
 							}
-						}
 
-						ir.source.close();
+							ir.source.close();
+						} catch(Throwable t) {
+							debug writeln(t);
+							// most likely cause is a timeout
+						}
 					}
 				} else {
 					processCount++;
@@ -3138,6 +3146,9 @@ class BufferedInputRange {
 	}
 
 	this(Socket source, ubyte[] buffer = null) {
+		// if they connect but never send stuff to us, we don't want it wasting the process
+		// so setting a time out
+		source.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
 		this.source = source;
 		if(buffer is null) {
 			underlyingBuffer = new ubyte[4096];
@@ -3194,10 +3205,11 @@ class BufferedInputRange {
 			if(ret == Socket.ERROR) {
 				version(Posix) {
 					import core.stdc.errno;
-					if(errno == EINTR)
+					if(errno == EINTR) {
 						goto try_again;
+					}
 				}
-				throw new Exception("uh oh " ~ lastSocketError); // FIXME
+				throw new Exception(lastSocketError); // FIXME
 			}
 			if(ret == 0) {
 				sourceClosed = true;
