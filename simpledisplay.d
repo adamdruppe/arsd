@@ -2241,7 +2241,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			};
 		}
 
-		private void hideBalloon() {
+		/* private */ void hideBalloon() {
 			balloon.close();
 			timer.destroy();
 			balloon = null;
@@ -2573,12 +2573,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		a timeout period.
 
 		Params:
-			title = Title of the notification. Must be 40 chars or less.
-			message = The message to pop up. Must be 220 chars or less.
+			title = Title of the notification. Must be 40 chars or less or the OS may truncate it.
+			message = The message to pop up. Must be 220 chars or less or the OS may truncate it.
 			icon = the icon to display with the notification. If null, it uses your existing icon.
 			onclick = delegate called if the user clicks the balloon. (not yet implemented)
+			timeout = your suggested timeout period. The operating system is free to ignore your suggestion.
 	+/
-	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null) {
+	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 10_000) {
 		version(X11) {
 			if(!active) return;
 			if(balloon) {
@@ -2626,16 +2627,24 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 					if(ev.type == MouseEventType.buttonPressed) {
 						if(ev.x > balloon.width - 16 && ev.y < 16)
 							hideBalloon();
+						else if(onclick)
+							onclick();
 					}
 				}
 			);
 			balloon.show();
 
-			timer = new Timer(10_000, &hideBalloon);
+			timer = new Timer(timeout, &hideBalloon);
 		} else version(Windows) {
 			enum NIF_INFO = 0x00000010;
 
 			data.uFlags = NIF_INFO;
+
+			// FIXME: go back to the last valid unicode code point
+			if(title.length > 40)
+				title = title[0 .. 40];
+			if(message.length > 220)
+				message = message[0 .. 220];
 
 			enum NIIF_RESPECT_QUIET_TIME = 0x00000080;
 			enum NIIF_LARGE_ICON  = 0x00000020;
@@ -2904,13 +2913,18 @@ class PosixFdReader {
 
 		mapping[fd] = this;
 
-		prepareEventLoop();
+		version(with_eventloop) {
+			import arsd.eventloop;
+			addFileEventListeners(fd, &ready);
+		} else {
+			prepareEventLoop();
 
-		static import ep = core.sys.linux.epoll;
-		ep.epoll_event ev = void;
-		ev.events = ep.EPOLLIN;
-		ev.data.fd = fd;
-		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+			static import ep = core.sys.linux.epoll;
+			ep.epoll_event ev = void;
+			ev.events = ep.EPOLLIN;
+			ev.data.fd = fd;
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+		}
 	}
 
 	void delegate(int) onReady;
@@ -3198,8 +3212,7 @@ version(X11) {
 
 		window.impl.getSelectionHandler = handler;
 
-		auto target = XA_STRING;
-		//auto target = GetAtom!"UTF8_STRING"(display);
+		auto target = GetAtom!"TARGETS"(display);
 
 		// SDD_DATA is "simpledisplay.d data"
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
@@ -4291,7 +4304,10 @@ class OperatingSystemFont {
 			return;
 
 		version(X11) {
-			auto display = XDisplayConnection.get;
+			auto display = XDisplayConnection.display;
+
+			if(display is null)
+				return;
 
 			if(font)
 				XFreeFont(display, font);
@@ -5981,8 +5997,7 @@ version(Windows) {
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);
-				// I don't *think* I need this... and I know it breaks some stuff like changing cursor in a window... soo....
-				//wc.hCursor = LoadCursorW(null, IDC_ARROW);
+				wc.hCursor = LoadCursorW(null, IDC_ARROW);
 				wc.hIcon = LoadIcon(hInstance, null);
 				wc.hInstance = hInstance;
 				wc.lpfnWndProc = &WndProc;
@@ -8214,13 +8229,38 @@ version(X11) {
 						&target, &format, &length, &bytesafter, &value);
 
 					// FIXME: it might be sent in pieces...
-					// FIXME: or be other formats...
 					// FIXME: I don't have to copy it now since it is in char[] instead of string
 
 					{
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
-						win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+
+						if(target == XA_ATOM) {
+							// initial request, see what they are able to work with and request the best one
+							// we can handle, if available
+
+							Atom[] answer = (cast(Atom*) value)[0 .. length];
+							Atom best = None;
+							foreach(option; answer) {
+								if(option == GetAtom!"UTF8_STRING"(display)) {
+									best = option;
+									break;
+								} else if(option == XA_STRING) {
+									best = option;
+								}
+							}
+
+							//writeln("got ", answer);
+
+							if(best != None) {
+								// actually request the best format
+								XConvertSelection(e.xselection.display, e.xselection.selection, best, GetAtom!("SDD_DATA", true)(display), e.xselection.requestor, 0 /*CurrentTime*/);
+							}
+						} else if(target == GetAtom!"UTF8_STRING"(display) || target == XA_STRING) {
+							win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+						} else {
+							// unsupported type
+						}
 					}
 					XFree(value);
 					XDeleteProperty(
