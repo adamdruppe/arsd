@@ -11,20 +11,23 @@ import arsd.characterencodings;
 
 // SEE ALSO: std.net.curl.SMTP
 
+///
 struct RelayInfo {
-	string server;
-	string username;
-	string password;
+	string server; ///
+	string username; ///
+	string password; ///
 }
 
+///
 struct MimeAttachment {
-	string type;
-	string filename;
-	const(void)[] content;
-	string id;
+	string type; ///
+	string filename; ///
+	const(void)[] content; ///
+	string id; ///
 }
 
 
+/// For OUTGOING email
 class EmailMessage {
 	void setHeader(string name, string value) {
 		headers ~= name ~ ": " ~ value;
@@ -224,6 +227,7 @@ class EmailMessage {
 	}
 }
 
+///
 void email(string to, string subject, string message, string from, RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 	auto msg = new EmailMessage();
 	msg.from = from;
@@ -237,7 +241,7 @@ void email(string to, string subject, string message, string from, RelayInfo mai
 
 import std.conv;
 
-// for reading
+/// for reading
 class MimePart {
 	string[] headers;
 	immutable(ubyte)[] content;
@@ -520,12 +524,15 @@ class MimeContainer {
 }
 
 import std.algorithm : startsWith;
+///
 class IncomingEmailMessage {
+	///
 	this(string[] lines) {
 		auto lns = cast(immutable(ubyte)[][])lines;
 		this(lns, false);
 	}
 
+	///
 	this(ref immutable(ubyte)[][] mboxLines, bool asmbox=true) {
 
 		enum ParseState {
@@ -745,6 +752,14 @@ class IncomingEmailMessage {
 						foreach (char ch; textMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
 						textMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
 					}
+					if(htmlMessageBody.length) {
+						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
+						char[] mmb;
+						mmb.reserve(htmlMessageBody.length);
+						foreach (char ch; htmlMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
+						htmlMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+					}
+
 				break;
 				default:
 					// nothing needed
@@ -758,6 +773,7 @@ class IncomingEmailMessage {
 		}
 	}
 
+	///
 	@property bool hasGPGSignature () const nothrow @trusted @nogc {
 		MimePart mime = cast(MimePart)gpgmime; // sorry
 		if (mime is null) return false;
@@ -768,6 +784,7 @@ class IncomingEmailMessage {
 		return true;
 	}
 
+	///
 	ubyte[] extractGPGData () const nothrow @trusted {
 		if (!hasGPGSignature) return null;
 		MimePart mime = cast(MimePart)gpgmime; // sorry
@@ -800,29 +817,46 @@ class IncomingEmailMessage {
 		return cast(ubyte[])res;
 	}
 
+	///
 	immutable(ubyte)[] extractGPGSignature () const nothrow @safe @nogc {
 		if (!hasGPGSignature) return null;
 		return gpgmime.stuff[1].content;
 	}
 
-	string[string] headers;
+	string[string] headers; ///
 
-	string subject;
+	string subject; ///
 
-	string htmlMessageBody;
-	string textMessageBody;
+	string htmlMessageBody; ///
+	string textMessageBody; ///
 
-	string from;
-	string to;
+	string from; ///
+	string to; ///
 
-	bool textAutoConverted;
+	bool textAutoConverted; ///
 
-	MimeAttachment[] attachments;
+	MimeAttachment[] attachments; ///
 
 	// gpg signature fields
-	string gpgalg;
-	string gpgproto;
-	MimePart gpgmime;
+	string gpgalg; ///
+	string gpgproto; ///
+	MimePart gpgmime; ///
+
+	string fromEmailAddress() {
+		auto i = from.indexOf("<");
+		if(i == -1)
+			return from;
+		auto e = from.indexOf(">");
+		return from[i + 1 .. e];
+	}
+
+	string toEmailAddress() {
+		auto i = to.indexOf("<");
+		if(i == -1)
+			return to;
+		auto e = to.indexOf(">");
+		return to[i + 1 .. e];
+	}
 }
 
 struct MboxMessages {
@@ -851,6 +885,7 @@ struct MboxMessages {
 	}
 }
 
+///
 MboxMessages processMboxData(immutable(ubyte)[] data) {
 	return MboxMessages(data);
 }
