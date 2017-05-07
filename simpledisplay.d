@@ -3664,13 +3664,18 @@ struct KeyEvent {
 			}
 		}
 
+		void putMod (ModifierState mod, Key key, string text) nothrow @trusted {
+			if ((this.modifierState&mod) != 0 && (this.pressed || this.key != key)) put(text);
+		}
+
 		if (!this.key && !(this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows))) return null;
 
 		// put modifiers
-		if (this.modifierState&ModifierState.ctrl) put("Ctrl+");
-		if (this.modifierState&ModifierState.alt) put("Alt+");
-		if (this.modifierState&ModifierState.windows) put("Win+");
-		if (this.modifierState&ModifierState.shift) put("Shift+");
+		// releasing modifier keys can produce bizarre things like "Ctrl+Ctrl", so hack around it
+		putMod(ModifierState.ctrl, Key.Ctrl, "Ctrl+");
+		putMod(ModifierState.alt, Key.Alt, "Alt+");
+		putMod(ModifierState.windows, Key.Shift, "Windows+");
+		putMod(ModifierState.shift, Key.Shift, "Shift+");
 
 		if (this.key) {
 			foreach (string kn; __traits(allMembers, Key)) {
