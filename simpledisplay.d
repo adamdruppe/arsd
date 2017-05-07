@@ -3802,11 +3802,29 @@ struct KeyEvent {
 	}
 
 	bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
+		enum modmask = (ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows);
+		void doModKey (ref uint mask, ref Key kk, Key k, ModifierState mst) {
+			if (kk == k) { mask |= mst; kk = cast(Key)0; }
+		}
 		auto ke = KeyEvent.parse(name);
-		if (this.key != ke.key) return false;
-		// check modifiers
-		ke.modifierState &= (ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows);
-		return ((this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows)) == ke.modifierState);
+		if (this.key != ke.key) {
+			// things like "ctrl+alt" are complicated
+			uint tkm = this.modifierState&modmask;
+			uint kkm = ke.modifierState&modmask;
+			Key tk = this.key;
+			// ke
+			doModKey(kkm, ke.key, Key.Ctrl, ModifierState.ctrl);
+			doModKey(kkm, ke.key, Key.Alt, ModifierState.alt);
+			doModKey(kkm, ke.key, Key.Windows, ModifierState.windows);
+			doModKey(kkm, ke.key, Key.Shift, ModifierState.shift);
+			// this
+			doModKey(tkm, tk, Key.Ctrl, ModifierState.ctrl);
+			doModKey(tkm, tk, Key.Alt, ModifierState.alt);
+			doModKey(tkm, tk, Key.Windows, ModifierState.windows);
+			doModKey(tkm, tk, Key.Shift, ModifierState.shift);
+			return (tk == ke.key && tkm == kkm);
+		}
+		return ((this.modifierState&modmask) == (ke.modifierState&modmask));
 	}
 }
 
