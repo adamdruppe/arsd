@@ -5,6 +5,7 @@ public import arsd.color;
 public import arsd.png;
 public import arsd.jpeg;
 public import arsd.bmp;
+public import arsd.targa;
 
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
 
@@ -27,6 +28,8 @@ enum ImageFileFormat {
   Png, ///
   Bmp, ///
   Jpeg, ///
+  Tga, ///
+  Gif, /// we can't load it yet, but we can at least detect it
 }
 
 
@@ -44,12 +47,15 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
   if (strEquCI(ext, "png")) return ImageFileFormat.Png;
   if (strEquCI(ext, "bmp")) return ImageFileFormat.Bmp;
   if (strEquCI(ext, "jpg") || strEquCI(ext, "jpeg")) return ImageFileFormat.Jpeg;
+  if (strEquCI(ext, "gif")) return ImageFileFormat.Gif;
+  if (strEquCI(ext, "tga")) return ImageFileFormat.Tga;
   return ImageFileFormat.Unknown;
 }
 
 
 /// Try to guess image format by first data bytes.
 public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
+  enum TargaSign = "TRUEVISION-XFILE.\x00";
   auto buf = cast(const(ubyte)[])membuf;
   if (buf.length == 0) return ImageFileFormat.Unknown;
   // detect file format
@@ -64,11 +70,79 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
     uint datasize = buf.ptr[2]|(buf.ptr[3]<<8)|(buf.ptr[4]<<16)|(buf.ptr[5]<<24);
     if (datasize > 6 && datasize <= buf.length) return ImageFileFormat.Bmp;
   }
+  // gif
+  if (buf.length > 5 && buf.ptr[0] == 'G' && buf.ptr[1] == 'I' && buf.ptr[2] == 'F' &&
+      buf.ptr[3] == '8' && (buf.ptr[4] == '7' || buf.ptr[4] == '9'))
+  {
+    return ImageFileFormat.Gif;
+  }
   // jpg
   try {
     int width, height, components;
     if (detect_jpeg_image_from_memory(buf, width, height, components)) return ImageFileFormat.Jpeg;
   } catch (Exception e) {} // sorry
+  // tga (sorry, targas without footer, i don't love you)
+  if (buf.length > TargaSign.length+4*2 && cast(const(char)[])(buf[$-TargaSign.length..$]) == TargaSign) {
+    // more guesswork
+    switch (buf.ptr[2]) {
+      case 1: case 2: case 3: case 9: case 10: case 11: return ImageFileFormat.Tga;
+      default:
+    }
+  }
+  // ok, try to guess targa by validating some header fields
+  bool guessTarga () nothrow @trusted @nogc {
+    if (buf.length < 45) return false; // minimal 1x1 tga
+    immutable ubyte idlength = buf.ptr[0];
+    immutable ubyte bColorMapType = buf.ptr[1];
+    immutable ubyte type = buf.ptr[2];
+    immutable ushort wColorMapFirstEntryIndex = cast(ushort)(buf.ptr[3]|(buf.ptr[4]<<8));
+    immutable ushort wColorMapLength = cast(ushort)(buf.ptr[5]|(buf.ptr[6]<<8));
+    immutable ubyte bColorMapEntrySize = buf.ptr[7];
+    immutable ushort wOriginX = cast(ushort)(buf.ptr[8]|(buf.ptr[9]<<8));
+    immutable ushort wOriginY = cast(ushort)(buf.ptr[10]|(buf.ptr[11]<<8));
+    immutable ushort wImageWidth = cast(ushort)(buf.ptr[12]|(buf.ptr[13]<<8));
+    immutable ushort wImageHeight = cast(ushort)(buf.ptr[14]|(buf.ptr[15]<<8));
+    immutable ubyte bPixelDepth = buf.ptr[16];
+    immutable ubyte bImageDescriptor = buf.ptr[17];
+    if (wImageWidth < 1 || wImageHeight < 1 || wImageWidth > 16384 || wImageHeight > 16384) return false; // arbitrary limit
+    immutable uint pixelsize = (bPixelDepth>>3);
+    switch (type) {
+      case 2: // truecolor, raw
+      case 10: // truecolor, rle
+        switch (pixelsize) {
+          case 2: case 3: case 4: break;
+          default: return false;
+        }
+        break;
+      case 1: // paletted, raw
+      case 9: // paletted, rle
+        if (pixelsize != 1) return false;
+        break;
+      case 3: // b/w, raw
+      case 11: // b/w, rle
+        if (pixelsize != 1 && pixelsize != 2) return false;
+        break;
+      default: // invalid type
+        return false;
+    }
+    // check for valid colormap
+    switch (bColorMapType) {
+      case 0:
+        if (wColorMapFirstEntryIndex != 0 || wColorMapLength != 0 || bColorMapEntrySize != 0) return 0;
+        break;
+      case 1:
+        if (bColorMapEntrySize != 15 && bColorMapEntrySize != 16 && bColorMapEntrySize != 24 && bColorMapEntrySize != 32) return false;
+        if (wColorMapLength == 0) return false;
+        break;
+      default: // invalid colormap type
+        return false;
+    }
+    if (((bImageDescriptor>>6)&3) != 0) return false;
+    // this *looks* like a tga
+    return true;
+  }
+  if (guessTarga()) return ImageFileFormat.Tga;
+  // dunno
   return ImageFileFormat.Unknown;
 }
 
@@ -83,6 +157,8 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
       case ImageFileFormat.Bmp: static if (is(T == string)) return readBmp(filename); else return readBmp(filename.idup);
       case ImageFileFormat.Jpeg: return readJpeg(filename);
+      case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
+      case ImageFileFormat.Tga: import std.stdio; return loadTga(File(filename));
     }
   }
 }
@@ -95,6 +171,8 @@ public MemoryImage loadImageFromMemory (const(void)[] membuf) {
     case ImageFileFormat.Png: return imageFromPng(readPng(cast(const(ubyte)[])membuf));
     case ImageFileFormat.Bmp: return readBmp(cast(const(ubyte)[])membuf);
     case ImageFileFormat.Jpeg: return readJpegFromMemory(cast(const(ubyte)[])membuf);
+    case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
+    case ImageFileFormat.Tga: return loadTgaMem(membuf);
   }
 }
 
