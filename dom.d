@@ -6906,6 +6906,7 @@ void fillForm(T)(Form form, T obj, string name) {
 
 
 /+
+/+
 Syntax:
 
 Tag: tagname#id.class
@@ -6939,7 +6940,7 @@ unittest {
 	auto stringplate = Stringplate("#bar(.foo($foo), .baz($baz))");
 	assert(stringplate.expand.innerHTML == `<div id="bar"><div class="foo">$foo</div><div class="baz">$baz</div></div>`);
 }
-
++/
 /*
 Copyright: Adam D. Ruppe, 2010 - 2017
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
