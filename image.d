@@ -158,7 +158,7 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Bmp: static if (is(T == string)) return readBmp(filename); else return readBmp(filename.idup);
       case ImageFileFormat.Jpeg: return readJpeg(filename);
       case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
-      case ImageFileFormat.Tga: import std.stdio; return loadTga(File(filename));
+      case ImageFileFormat.Tga: return loadTga(filename);
     }
   }
 }
