@@ -7576,12 +7576,10 @@ version(X11) {
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
-					glxInitOtherFunctions(); // load some OpenGL functions; it doesn't hurt to call this repeatedly
-
 					GLXFBConfig fbconf = null;
 					XVisualInfo* vi = null;
 					bool useLegacy = false;
-					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB !is null) {
+					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB_present()) {
 						int[23] visualAttribs = [
 							GLX_X_RENDERABLE , 1/*True*/,
 							GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
@@ -10996,26 +10994,39 @@ extern(System) nothrow @nogc {
 		alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
 		private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
 
-		alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
-		__gshared glXCreateContextAttribsARB_fna glXCreateContextAttribsARB = null; // this made public so we don't have to get it again and again; it will become valid after window creation
+		//k8: ugly code to prevent warnings when sdpy is compiled into .a
+		extern(System) {
+			alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
+		}
+		private __gshared /*glXCreateContextAttribsARB_fna*/void* glXCreateContextAttribsARBFn = cast(void*)1; //HACK!
 
-		void glxInitOtherFunctions () {
-			if (glXCreateContextAttribsARB is null) {
-				glXCreateContextAttribsARB = cast(glXCreateContextAttribsARB_fna)glGetProcAddress("glXCreateContextAttribsARB");
+		// this made public so we don't have to get it again and again
+		public bool glXCreateContextAttribsARB_present () {
+			if (glXCreateContextAttribsARBFn is cast(void*)1) {
+				// get it
+				glXCreateContextAttribsARBFn = cast(void*)glGetProcAddress("glXCreateContextAttribsARB");
+				//{ import core.stdc.stdio; printf("checking glXCreateContextAttribsARB: %shere\n", (glXCreateContextAttribsARBFn !is null ? "".ptr : "not ".ptr)); }
 			}
+			return (glXCreateContextAttribsARBFn !is null);
+		}
+
+		// this made public so we don't have to get it again and again
+		public GLXContext glXCreateContextAttribsARB (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list) {
+			if (!glXCreateContextAttribsARB_present()) assert(0, "glXCreateContextAttribsARB is not present");
+			return (cast(glXCreateContextAttribsARB_fna)glXCreateContextAttribsARBFn)(dpy, config, share_context, direct, attrib_list);
 		}
 
 		void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
-		  if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
-		  if (_glx_swapInterval_fn is null) {
-		    _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
-		    if (_glx_swapInterval_fn is null) {
-		      _glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
-		      return;
-		    }
-		    version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
-		  }
-		  _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+			if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
+			if (_glx_swapInterval_fn is null) {
+				_glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
+				if (_glx_swapInterval_fn is null) {
+					_glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
+					return;
+				}
+				version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
+			}
+			_glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
 		}
 	} else version(Windows) {
 	enum GL_TRUE = 1;
