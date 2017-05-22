@@ -42,7 +42,7 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
   } else {
     while (extpos > 0 && filename.ptr[extpos-1] != '.' && filename.ptr[extpos-1] != '/') --extpos;
   }
-  if (extpos == 0 || filename.ptr[extpos-1] != '.') throw new Exception("cannot determine file format from extension");
+  if (extpos == 0 || filename.ptr[extpos-1] != '.') return ImageFileFormat.Unknown;
   auto ext = filename[extpos..$];
   if (strEquCI(ext, "png")) return ImageFileFormat.Png;
   if (strEquCI(ext, "bmp")) return ImageFileFormat.Bmp;
@@ -128,7 +128,7 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
     // check for valid colormap
     switch (bColorMapType) {
       case 0:
-        if (wColorMapFirstEntryIndex != 0 || wColorMapLength != 0 || bColorMapEntrySize != 0) return 0;
+        if (wColorMapFirstEntryIndex != 0 || wColorMapLength != 0) return 0;
         break;
       case 1:
         if (bColorMapEntrySize != 15 && bColorMapEntrySize != 16 && bColorMapEntrySize != 24 && bColorMapEntrySize != 32) return false;
@@ -153,7 +153,16 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
     throw new Exception("cannot load image from unnamed file");
   } else {
     final switch (guessImageFormatFromExtension(filename)) {
-      case ImageFileFormat.Unknown: throw new Exception("cannot determine file format from extension");
+      case ImageFileFormat.Unknown:
+        //throw new Exception("cannot determine file format from extension");
+        static if (ArsdImageHasIVVFS) auto fl = VFile(filename); else { import std.stdio; auto fl = File(filename); }
+        auto fsz = fl.size-fl.tell;
+        if (fsz < 4) throw new Exception("cannot determine file format");
+        if (fsz > int.max/8) throw new Exception("image data too big");
+        auto data = new ubyte[](cast(uint)fsz);
+        scope(exit) delete data; // this should be safe, as image will copy data to it's internal storage
+        fl.rawReadExact(data);
+        return loadImageFromMemory(data);
       case ImageFileFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
       case ImageFileFormat.Bmp: static if (is(T == string)) return readBmp(filename); else return readBmp(filename.idup);
       case ImageFileFormat.Jpeg: return readJpeg(filename);

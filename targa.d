@@ -287,7 +287,7 @@ private MemoryImage loadTgaImpl(ST) (auto ref ST fl, const(char)[] filename) {
   // check for valid colormap
   switch (hdr.cmapType) {
     case 0:
-      if (hdr.cmapFirstIdx != 0 || hdr.cmapSize != 0 || hdr.cmapElementSize != 0) throw new Exception("invalid tga colormap type");
+      if (hdr.cmapFirstIdx != 0 || hdr.cmapSize != 0) throw new Exception("invalid tga colormap type");
       break;
     case 1:
       if (hdr.cmapElementSize != 15 && hdr.cmapElementSize != 16 && hdr.cmapElementSize != 24 && hdr.cmapElementSize != 32) throw new Exception("invalid tga colormap type");
