@@ -1,5 +1,5 @@
-/// NOTE: If you're using MySQL client library v5.1 or greater,
-///       you must pass this to dmd: -version=MySQL_51
+/// NOTE: If you're using MySQL client library v5.0 or less,
+///       you must pass this to dmd: -version=Less_Than_MySQL_51
 /// This is important - otherwise you will see bizarre segfaults!
 module arsd.mysql;
 
@@ -8,8 +8,13 @@ version(MySQL_51) {
 	// we good
 } else version(Less_Than_MySQL_51) {
 	// we good
-} else
-	pragma(msg, "NOTE: If you are using MySQL 5.1 or newer, specify -version=MySQL_51 to dmd to avoid segfaults. If you are on an older version, you can shut this message up with -version=Less_Than_MySQL_51");
+} else {
+	// default now is mysql 5.1 or up - it has been long
+	// enough that surely most everyone uses it and we don't
+	// need the pragma warning anymore. Of course, the old is
+	// still available if you need to explicitly opt in.
+	version = MySQL_51;
+}
 
 version(Windows) {
 	pragma(lib, "libmysql");
