@@ -1,5 +1,5 @@
 /++
-	A small extension module to [arsd.minigu] that adds
+	A small extension module to [arsd.minigui] that adds
 	functions for creating widgets and windows from short
 	XML descriptions.
 

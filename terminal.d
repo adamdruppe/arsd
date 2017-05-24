@@ -2295,7 +2295,7 @@ struct RealTimeConsoleInput {
 
 					auto cap = terminal.findSequenceInTermcap(thing);
 					if(cap is null) {
-						return charPressAndRelease('\033') ~
+						return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~
 							charPressAndRelease('O') ~
 							charPressAndRelease(thing[2]);
 					} else {
@@ -2303,7 +2303,7 @@ struct RealTimeConsoleInput {
 					}
 				} else {
 					// I don't know, probably unsupported terminal or just quick user input or something
-					return charPressAndRelease('\033') ~ charPressAndRelease(nextChar(c));
+					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ charPressAndRelease(nextChar(c));
 				}
 			} else {
 				// user hit escape (or super slow escape sequence, but meh)

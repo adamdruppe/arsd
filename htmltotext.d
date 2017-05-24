@@ -96,8 +96,11 @@ class HtmlConverter {
 					if(element.href != element.innerText) {
 						sink(' ', false);
 						sink('<', false);
+						// I want the link itself to NOT word wrap
+						// to make for easier double-clicking of it in
+						// the terminal
 						foreach(dchar ch; element.href)
-							sink(ch, false);
+							sink(ch, false, int.max);
 						sink('>', false);
 					}
 				break;
@@ -182,6 +185,7 @@ class HtmlConverter {
 				case "br":
 					sink('\n', true);
 				break;
+				case "tr":
 				case "div":
 					startBlock();
 
@@ -250,7 +254,8 @@ class HtmlConverter {
 	bool justOutputMargin = true;
 	int lineLength;
 
-	void sink(dchar item, bool preformatted) {
+	void sink(dchar item, bool preformatted, int lineWidthOverride = int.min) {
+		int width = lineWidthOverride == int.min ? this.width : lineWidthOverride;
 		if(!preformatted && isWhite(item)) {
 			if(!justOutputWhitespace) {
 				item = ' ';

@@ -1,5 +1,7 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// FIXME: a scroll area event signaling when a thing comes into view might be good
+
 // FIXME: unify Windows style line endings
 
 /*

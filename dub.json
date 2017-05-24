@@ -4,6 +4,7 @@
 	"sourcePaths": ["."],
 	"dependencies": {
 		"arsd-official:simpledisplay":"~master",
+		"arsd-official:minigui":"~master",
 		"arsd-official:dom":"~master",
 		"arsd-official:cgi":"~master",
 		"arsd-official:http":"~master",
@@ -30,6 +31,24 @@
 				}
 			],
 			"sourceFiles": ["simpledisplay.d", "color.d"]
+		},
+		{
+			"name": "minigui",
+			"description": "Small GUI widget library for Windows and Linux",
+			"targetType": "sourceLibrary",
+			"libs-posix": ["X11", "Xext", "GL", "GLU"],
+			"libs-windows": ["gdi32"],
+			"configurations": [
+				{
+					"name": "normal"
+				},
+				{
+					"name": "with-opengl",
+					"versions": ["with_opengl"],
+					"libs-windows": ["opengl32", "glu32"]
+				}
+			],
+			"sourceFiles": ["simpledisplay.d", "color.d", "minigui.d"]
 		},
 		{
 			"name": "dom",

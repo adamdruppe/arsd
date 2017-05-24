@@ -1124,7 +1124,7 @@ class HttpClient {
 	bool acceptGzip = true; ///
 
 	/// Automatically follow a redirection?
-	bool followLocation = false; ///
+	bool followLocation = false; /// NOT IMPLEMENTED
 
 	///
 	@property Uri location() {
