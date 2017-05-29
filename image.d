@@ -104,7 +104,7 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
     immutable ushort wImageHeight = cast(ushort)(buf.ptr[14]|(buf.ptr[15]<<8));
     immutable ubyte bPixelDepth = buf.ptr[16];
     immutable ubyte bImageDescriptor = buf.ptr[17];
-    if (wImageWidth < 1 || wImageHeight < 1 || wImageWidth > 16384 || wImageHeight > 16384) return false; // arbitrary limit
+    if (wImageWidth < 1 || wImageHeight < 1 || wImageWidth > 32000 || wImageHeight > 32000) return false; // arbitrary limit
     immutable uint pixelsize = (bPixelDepth>>3);
     switch (type) {
       case 2: // truecolor, raw

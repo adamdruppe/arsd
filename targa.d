@@ -229,8 +229,8 @@ private MemoryImage loadTgaImpl(ST) (auto ref ST fl, const(char)[] filename) {
   fl.readStruct(hdr);
   // parse header
   // arbitrary size limits
-  if (hdr.width  == 0 || hdr.width > 16384) throw new Exception("invalid tga width");
-  if (hdr.height == 0 || hdr.height > 16384) throw new Exception("invalid tga height");
+  if (hdr.width  == 0 || hdr.width > 32000) throw new Exception("invalid tga width");
+  if (hdr.height == 0 || hdr.height > 32000) throw new Exception("invalid tga height");
   switch (hdr.bpp) {
     case 1: case 2: case 4: case 8: case 15: case 16: case 24: case 32: break;
     default: throw new Exception("invalid tga bpp");
