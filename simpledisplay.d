@@ -1,3 +1,4 @@
+// FIXME: if the taskbar dies, a notification icon is undocked... but never detects a new taskbar spawning
 /*
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
