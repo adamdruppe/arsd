@@ -2997,10 +2997,7 @@ public bool detect_jpeg_image_from_file (const(char)[] filename, out int width, 
 /// read JPEG image header, determine dimensions and number of components.
 /// return `false` if image is not JPEG (i hope).
 public bool detect_jpeg_image_from_memory (const(void)[] buf, out int width, out int height, out int actual_comps) {
-  bool m_eof_flag;
   size_t bufpos;
-  auto b = cast(const(ubyte)*)buf.ptr;
-
   return detect_jpeg_image_from_stream(
     delegate int (void* pBuf, int max_bytes_to_read, bool *pEOF_flag) {
       import core.stdc.string : memcpy;
@@ -3009,8 +3006,8 @@ public bool detect_jpeg_image_from_memory (const(void)[] buf, out int width, out
         return 0;
       }
       if (buf.length-bufpos < max_bytes_to_read) max_bytes_to_read = cast(int)(buf.length-bufpos);
-      memcpy(pBuf, b, max_bytes_to_read);
-      b += max_bytes_to_read;
+      memcpy(pBuf, (cast(const(ubyte)*)buf.ptr)+bufpos, max_bytes_to_read);
+      bufpos += max_bytes_to_read;
       return max_bytes_to_read;
     },
     width, height, actual_comps);
@@ -3160,10 +3157,7 @@ public ubyte[] decompress_jpeg_image_from_file(bool useMalloc=false) (const(char
 /// decompress JPEG image from memory buffer.
 /// you can specify required color components in `req_comps` (3 for RGB or 4 for RGBA), or leave it as is to use image value.
 public ubyte[] decompress_jpeg_image_from_memory(bool useMalloc=false) (const(void)[] buf, out int width, out int height, out int actual_comps, int req_comps=-1) {
-  bool m_eof_flag;
   size_t bufpos;
-  auto b = cast(const(ubyte)*)buf.ptr;
-
   return decompress_jpeg_image_from_stream!useMalloc(
     delegate int (void* pBuf, int max_bytes_to_read, bool *pEOF_flag) {
       import core.stdc.string : memcpy;
@@ -3172,8 +3166,8 @@ public ubyte[] decompress_jpeg_image_from_memory(bool useMalloc=false) (const(vo
         return 0;
       }
       if (buf.length-bufpos < max_bytes_to_read) max_bytes_to_read = cast(int)(buf.length-bufpos);
-      memcpy(pBuf, b, max_bytes_to_read);
-      b += max_bytes_to_read;
+      memcpy(pBuf, (cast(const(ubyte)*)buf.ptr)+bufpos, max_bytes_to_read);
+      bufpos += max_bytes_to_read;
       return max_bytes_to_read;
     },
     width, height, actual_comps, req_comps);
@@ -3346,10 +3340,7 @@ public MemoryImage readJpeg (const(char)[] filename) {
 // ////////////////////////////////////////////////////////////////////////// //
 /// decompress JPEG image from memory buffer.
 public MemoryImage readJpegFromMemory (const(void)[] buf) {
-  bool m_eof_flag;
   size_t bufpos;
-  auto b = cast(const(ubyte)*)buf.ptr;
-
   return readJpegFromStream(
     delegate int (void* pBuf, int max_bytes_to_read, bool *pEOF_flag) {
       import core.stdc.string : memcpy;
@@ -3358,8 +3349,8 @@ public MemoryImage readJpegFromMemory (const(void)[] buf) {
         return 0;
       }
       if (buf.length-bufpos < max_bytes_to_read) max_bytes_to_read = cast(int)(buf.length-bufpos);
-      memcpy(pBuf, b, max_bytes_to_read);
-      b += max_bytes_to_read;
+      memcpy(pBuf, (cast(const(ubyte)*)buf.ptr)+bufpos, max_bytes_to_read);
+      bufpos += max_bytes_to_read;
       return max_bytes_to_read;
     }
   );
