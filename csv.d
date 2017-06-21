@@ -58,3 +58,25 @@ string[][] readCsv(string data) {
 
 	return records;
 }
+
+///
+string toCsv(string[][] rows) {
+	string data;
+
+	foreach(ridx, row; rows) {
+		if(ridx) data ~= "\n";
+		foreach(idx, cell; row) {
+			if(idx) data ~= ",";
+
+			if(cell.indexOf(",") != -1 || cell.indexOf("\"") != -1 || cell.indexOf("\n") != -1) {
+				data ~= "\"";
+				data ~= cell.replace(`"`, `""`);
+				data ~= "\"";
+			} else {
+				data ~= cell;
+			}
+		}
+	}
+
+	return data;
+}
