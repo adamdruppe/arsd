@@ -3878,6 +3878,7 @@ dchar parseEntity(in dchar[] entity) {
 		case "circ": return '\u02C6';
 		case "tilde": return '\u02DC';
 		case "trade": return '\u2122';
+		case "euro": return '\u20AC';
 
 		case "hellip": return '\u2026';
 		case "ndash": return '\u2013';
