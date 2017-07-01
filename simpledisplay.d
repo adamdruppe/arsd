@@ -2212,8 +2212,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 								case 5: mb = MouseButton.wheelDown; break; // scroll down
 								case 6: break; // idk
 								case 7: break; // idk
-								case 8: mouse.button = MouseButton.backButton; break;
-								case 9: mouse.button = MouseButton.forwardButton; break;
+								case 8: mb = MouseButton.backButton; break;
+								case 9: mb = MouseButton.forwardButton; break;
 								default:
 							}
 							if (mb) {
