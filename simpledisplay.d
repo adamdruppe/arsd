@@ -2210,6 +2210,10 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 								case 3: mb = MouseButton.right; break; // right
 								case 4: mb = MouseButton.wheelUp; break; // scroll up
 								case 5: mb = MouseButton.wheelDown; break; // scroll down
+								case 6: break; // idk
+								case 7: break; // idk
+								case 8: mouse.button = MouseButton.backButton; break;
+								case 9: mouse.button = MouseButton.forwardButton; break;
 								default:
 							}
 							if (mb) {
@@ -5040,6 +5044,8 @@ enum MouseButton : int {
 	middle = 4, ///
 	wheelUp = 8, ///
 	wheelDown = 16, ///
+	backButton = 32, /// often found on the thumb and used for back in browsers
+	forwardButton = 64, /// often found on the thumb and used for forward in browsers
 }
 
 version(X11) {
@@ -6281,7 +6287,7 @@ version(Windows) {
 				break;
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) ((HIWORD(wParam) > 120) ? 16 : 8);
+					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
 					mouseEvent();
 				break;
 				case WM_MOUSEMOVE:
@@ -6291,39 +6297,52 @@ version(Windows) {
 				case WM_LBUTTONDOWN:
 				case WM_LBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) 1;
+					mouse.button = MouseButton.left;
 					mouse.doubleClick = msg == WM_LBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_LBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button =cast(MouseButton)  1;
+					mouse.button = MouseButton.left;
 					mouseEvent();
 				break;
 				case WM_RBUTTONDOWN:
 				case WM_RBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button =cast(MouseButton)  2;
+					mouse.button = MouseButton.right;
 					mouse.doubleClick = msg == WM_RBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_RBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button =cast(MouseButton)  2;
+					mouse.button = MouseButton.right;
 					mouseEvent();
 				break;
 				case WM_MBUTTONDOWN:
 				case WM_MBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) 4;
+					mouse.button = MouseButton.middle;
 					mouse.doubleClick = msg == WM_MBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_MBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button = cast(MouseButton) 4;
+					mouse.button = MouseButton.middle;
 					mouseEvent();
 				break;
+				case WM_XBUTTONDOWN:
+				case WM_XBUTTONDBLCLK:
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
+					mouse.doubleClick = msg == WM_XBUTTONDBLCLK;
+					mouseEvent();
+				return 1; // MSDN says special treatment here, return TRUE to bypass simulation programs
+				case WM_XBUTTONUP:
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
+					mouseEvent();
+				return 1; // see: https://msdn.microsoft.com/en-us/library/windows/desktop/ms646246(v=vs.85).aspx
+
 				default: return 1;
 			}
 			return 0;
@@ -8540,6 +8559,10 @@ version(X11) {
 				case 3: mouse.button = MouseButton.right; break; // right
 				case 4: mouse.button = MouseButton.wheelUp; break; // scroll up
 				case 5: mouse.button = MouseButton.wheelDown; break; // scroll down
+				case 6: break; // idk
+				case 7: break; // idk
+				case 8: mouse.button = MouseButton.backButton; break;
+				case 9: mouse.button = MouseButton.forwardButton; break;
 				default:
 			}
 
