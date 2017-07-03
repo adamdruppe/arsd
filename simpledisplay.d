@@ -2264,8 +2264,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				cast(uint) 0 << 16 |
 				cast(uint) 0 << 8 |
 				cast(uint) 0);
-			XFillRectangle(display, nativeHandle,
-				gc, 0, 0, width, height);
+			XFillRectangle(display, nativeHandle, gc, 0, 0, width, height);
 
 			if (img is null) {
 				XSetForeground(display, gc,
@@ -3880,6 +3879,17 @@ struct MouseEvent {
 	MouseButton button; /// See [MouseButton]
 	int modifierState; /// See [ModifierState]
 
+	/// Returns a linear representation of mouse button,
+	/// for use with static arrays. Guaranteed to be >= 0 && <= 15
+	///
+	/// Its implementation is based on range-limiting `core.bitop.bsf(button) + 1`.
+	@property ubyte buttonLinear() const {
+		import core.bitop;
+		if(button == 0)
+			return 0;
+		return (bsf(button) + 1) & 0b1111;
+	}
+
 	bool doubleClick; /// was it a double click? Only set on type == [MouseEventType.buttonPressed]
 
 	SimpleWindow window; /// The window in which the event happened.
@@ -4850,7 +4860,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 		version(X11) {
 			auto display = XDisplayConnection.get();
-			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
+			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
 		} else version(Windows) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
@@ -5010,35 +5020,37 @@ enum ModifierState : uint {
 	shift = 1, ///
 	capsLock = 2, ///
 	ctrl = 4, ///
-	alt = 8, ///
+	alt = 8, /// Not always available on Windows
+	windows = 64, /// ditto
 	numLock = 16, ///
-	windows = 64, ///
 
-	// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
-	leftButtonDown = 256, ///
-	middleButtonDown = 512, ///
-	rightButtonDown = 1024, ///
+	leftButtonDown = 256, /// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	middleButtonDown = 512, /// ditto
+	rightButtonDown = 1024, /// ditto
 }
 else version(Windows)
 enum ModifierState : uint {
-	shift = 4,
-	ctrl = 8,
+	shift = 4, ///
+	ctrl = 8, ///
 
 	// i'm not sure if the next two are available
-	alt = 256,
-	windows = 512,
+	alt = 256, /// not always available on Windows
+	windows = 512, /// ditto
 
-	capsLock = 1024,
-	numLock = 2048,
+	capsLock = 1024, ///
+	numLock = 2048, ///
 
-	// not available on key events
-	leftButtonDown = 1,
-	middleButtonDown = 16,
-	rightButtonDown = 2,
+	leftButtonDown = 1, /// not available on key events
+	middleButtonDown = 16, /// ditto
+	rightButtonDown = 2, /// ditto
+
+	backButtonDown = 0x20, /// not available on X
+	forwardButtonDown = 0x40, /// ditto
 }
 
 /// The names assume a right-handed mouse. These are bitwise combined on the events that use them
 enum MouseButton : int {
+	none = 0,
 	left = 1, ///
 	right = 2, ///
 	middle = 4, ///
@@ -6838,10 +6850,7 @@ version(X11) {
 
 			foregroundIsNotTransparent = true;
 
-			XSetForeground(display, gc,
-				cast(uint) p.color.r << 16 |
-				cast(uint) p.color.g << 8 |
-				cast(uint) p.color.b);
+			XSetForeground(display, gc, colorToX(p.color, display));
 		}
 
 		RasterOp _currentRasterOp;
@@ -6878,10 +6887,7 @@ version(X11) {
 
 			backgroundIsNotTransparent = true;
 
-			XSetBackground(display, gc,
-				cast(uint) c.r << 16 |
-				cast(uint) c.g << 8 |
-				cast(uint) c.b);
+			XSetBackground(display, gc, colorToX(c, display));
 
 		}
 
@@ -6891,6 +6897,40 @@ version(X11) {
 			auto newPen = _activePen;
 			newPen.color = tmp;
 			pen(newPen);
+		}
+
+		uint colorToX(Color c, Display* display) {
+			auto visual = DefaultVisual(display, DefaultScreen(display));
+			import core.bitop;
+			uint color = 0;
+			{
+			auto startBit = bsf(visual.red_mask);
+			auto lastBit = bsr(visual.red_mask);
+			auto r = cast(uint) c.r;
+			r >>= 7 - (lastBit - startBit);
+			r <<= startBit;
+			color |= r;
+			}
+			{
+			auto startBit = bsf(visual.green_mask);
+			auto lastBit = bsr(visual.green_mask);
+			auto g = cast(uint) c.g;
+			g >>= 7 - (lastBit - startBit);
+			g <<= startBit;
+			color |= g;
+			}
+			{
+			auto startBit = bsf(visual.blue_mask);
+			auto lastBit = bsr(visual.blue_mask);
+			auto b = cast(uint) c.b;
+			b >>= 7 - (lastBit - startBit);
+			b <<= startBit;
+			color |= b;
+			}
+
+
+
+			return color;
 		}
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
@@ -7711,7 +7751,7 @@ version(X11) {
 					WhitePixel(display, screen)); // background
 				*/
 
-				buffer = XCreatePixmap(display, cast(Drawable) window, width, height, 24);
+				buffer = XCreatePixmap(display, cast(Drawable) window, width, height, DefaultDepthOfDisplay(display));
 				bufferw = width;
 				bufferh = height;
 
@@ -8325,7 +8365,7 @@ version(X11) {
 						if (win.bufferw < event.width || win.bufferh < event.height) {
 							//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)event.width, cast(int)event.height); }
 							// grow the internal buffer to match the window...
-							auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, event.width, event.height, 24);
+							auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, event.width, event.height, DefaultDepthOfDisplay(display));
 							{
 								GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
 								XCopyGC(win.display, win.gc, 0xffffffff, xgc);
@@ -8808,6 +8848,8 @@ enum : arch_ulong {
 		uint        /* src_height */,
 		Bool                /* send_event */
 	);
+
+	Status XShmQueryExtension(Display*);
 
 	XImage *XShmCreateImage(
 		Display*            /* dpy */,
@@ -9888,7 +9930,7 @@ struct Depth
 }
 
 alias void* GC;
-alias int VisualID;
+alias c_ulong VisualID;
 alias XID Colormap;
 alias XID Cursor;
 alias XID KeySym;
@@ -10027,7 +10069,7 @@ struct Visual
 	XExtData *ext_data;	/* hook for extension to hang data */
 	VisualID visualid;	/* visual id of this visual */
 	int class_;			/* class of screen (monochrome, etc.) */
-	uint red_mask, green_mask, blue_mask;	/* mask values */
+	c_ulong red_mask, green_mask, blue_mask;	/* mask values */
 	int bits_per_rgb;	/* log base 2 of distinct color values */
 	int map_entries;	/* color map entries */
 }
@@ -10096,6 +10138,10 @@ struct Visual
 	enum Time CurrentTime = 0;
 	enum int RevertToPointerRoot = PointerRoot;
 	enum int RevertToParent = 2;
+
+	int DefaultDepthOfDisplay(Display* dpy) {
+		return ScreenOfDisplay(dpy, DefaultScreen(dpy)).root_depth;
+	}
 
 	Visual* DefaultVisual(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).root_visual;
