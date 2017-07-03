@@ -798,6 +798,21 @@ unittest {
 	}
 }
 
+version(without_opengl) {
+	enum SdpyIsUsingIVGLBinds = false;
+} else /*version(Posix)*/ {
+	static if (__traits(compiles, (){import iv.glbinds;})) {
+		enum SdpyIsUsingIVGLBinds = true;
+		public import iv.glbinds;
+		//pragma(msg, "SDPY: using iv.glbinds");
+	} else {
+		enum SdpyIsUsingIVGLBinds = false;
+	}
+//} else {
+//	enum SdpyIsUsingIVGLBinds = false;
+}
+
+
 version(Windows) {
 	import core.sys.windows.windows;
 	static import gdi = core.sys.windows.wingdi;
@@ -1649,6 +1664,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				if(glXMakeCurrent(display, impl.window, impl.glc) == 0)
 					throw new Exception("glXMakeCurrent");
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				if (!wglMakeCurrent(ghDC, ghRC))
 					throw new Exception("wglMakeCurrent"); // let windows users suffer too
 			}
@@ -1661,6 +1677,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			version(X11) {
 				return (glXMakeCurrent(display, impl.window, impl.glc) != 0);
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				return wglMakeCurrent(ghDC, ghRC) ? true : false;
 			}
 		}
@@ -1672,6 +1689,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			version(X11) {
 				return (glXMakeCurrent(display, 0, null) != 0);
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				return wglMakeCurrent(ghDC, null) ? true : false;
 			}
 		}
@@ -3603,11 +3621,15 @@ version(without_opengl) {
 	}
 
 	version(X11) {
-		pragma(lib, "GL");
-		pragma(lib, "GLU");
+		static if (!SdpyIsUsingIVGLBinds) {
+			pragma(lib, "GL");
+			pragma(lib, "GLU");
+		}
 	} else version(Windows) {
-		pragma(lib, "opengl32");
-		pragma(lib, "glu32");
+		static if (!SdpyIsUsingIVGLBinds) {
+			pragma(lib, "opengl32");
+			pragma(lib, "glu32");
+		}
 	} else
 		static assert(0, "OpenGL not supported on your system yet. Try -version=X11 if you have X Windows available, or -version=without_opengl to go without.");
 }
@@ -6090,6 +6112,8 @@ version(Windows) {
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
+					static if (SdpyIsUsingIVGLBinds) {if (glbindGetProcAddress("glHint") is null) assert(0, "GL: error loading OpenGL"); } // loads all necessary functions
+					static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 					ghDC = hdc;
 					PIXELFORMATDESCRIPTOR pfd;
 
@@ -7639,6 +7663,7 @@ version(X11) {
 					GLXFBConfig fbconf = null;
 					XVisualInfo* vi = null;
 					bool useLegacy = false;
+					static if (SdpyIsUsingIVGLBinds) {if (glbindGetProcAddress("glHint") is null) assert(0, "GL: error loading OpenGL"); } // loads all necessary functions
 					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB_present()) {
 						int[23] visualAttribs = [
 							GLX_X_RENDERABLE , 1/*True*/,
@@ -7671,12 +7696,12 @@ version(X11) {
 							fbconf = fbc[bestidx];
 							// Be sure to free the FBConfig list allocated by glXChooseFBConfig()
 							XFree(fbc);
-							vi = glXGetVisualFromFBConfig(display, fbconf);
+							vi = cast(XVisualInfo*)glXGetVisualFromFBConfig(display, fbconf);
 						}
 					}
 					if (vi is null || useLegacy) {
 						static immutable GLint[5] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
-						vi = glXChooseVisual(display, 0, attrs.ptr);
+						vi = cast(XVisualInfo*)glXChooseVisual(cast(void*)display, 0, attrs.ptr);
 						useLegacy = true;
 					}
 					if (vi is null) throw new Exception("no open gl visual found");
@@ -9942,6 +9967,8 @@ version(without_opengl) {}
 else {
 extern(C) nothrow @nogc {
 
+
+/+
 enum GLX_USE_GL=            1;       /* support GLX rendering */
 enum GLX_BUFFER_SIZE=       2;       /* depth of the color buffer */
 enum GLX_LEVEL=             3;       /* level in plane stacking */
@@ -9961,14 +9988,14 @@ enum GLX_ACCUM_BLUE_SIZE=   16;      /* number of blue accum bits */
 enum GLX_ACCUM_ALPHA_SIZE=  17;      /* number of alpha accum bits */
 
 
-
-XVisualInfo* glXChooseVisual(Display *dpy, int screen, in int *attrib_list);
+//XVisualInfo* glXChooseVisual(Display *dpy, int screen, in int *attrib_list);
 
 
 
 enum GL_TRUE = 1;
 enum GL_FALSE = 0;
 alias int GLint;
++/
 
 alias XID GLXContextID;
 alias XID GLXPixmap;
@@ -9978,6 +10005,7 @@ alias XID GLXWindow;
 alias XID GLXFBConfigID;
 alias void* GLXContext;
 
+/+
 	 XVisualInfo* glXChooseVisual(Display *dpy, int screen,
 			int *attrib_list);
 
@@ -10017,7 +10045,7 @@ alias void* GLXContext;
 	 void glXWaitGL();
 
 	 void glXWaitX();
-
++/
 
 
 	struct XVisualInfo {
@@ -11032,9 +11060,10 @@ version(OSXCocoa) {
 
 version(without_opengl) {} else
 extern(System) nothrow @nogc {
-	enum uint GL_VERSION = 0x1F02;
-	const(char)* glGetString (/*GLenum*/uint);
+	//enum uint GL_VERSION = 0x1F02;
+	//const(char)* glGetString (/*GLenum*/uint);
 	version(X11) {
+	static if (!SdpyIsUsingIVGLBinds) {
 		struct __GLXFBConfigRec {}
 		alias GLXFBConfig = __GLXFBConfigRec*;
 
@@ -11058,7 +11087,8 @@ extern(System) nothrow @nogc {
 		char* glXQueryExtensionsString (Display*, int);
 		void* glXGetProcAddress (const(char)*);
 
-		alias glGetProcAddress = glXGetProcAddress;
+		alias glbindGetProcAddress = glXGetProcAddress;
+	}
 
 		// GLX_EXT_swap_control
 		alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
@@ -11074,7 +11104,7 @@ extern(System) nothrow @nogc {
 		public bool glXCreateContextAttribsARB_present () {
 			if (glXCreateContextAttribsARBFn is cast(void*)1) {
 				// get it
-				glXCreateContextAttribsARBFn = cast(void*)glGetProcAddress("glXCreateContextAttribsARB");
+				glXCreateContextAttribsARBFn = cast(void*)glbindGetProcAddress("glXCreateContextAttribsARB");
 				//{ import core.stdc.stdio; printf("checking glXCreateContextAttribsARB: %shere\n", (glXCreateContextAttribsARBFn !is null ? "".ptr : "not ".ptr)); }
 			}
 			return (glXCreateContextAttribsARBFn !is null);
@@ -11099,11 +11129,12 @@ extern(System) nothrow @nogc {
 			_glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
 		}
 	} else version(Windows) {
+	static if (!SdpyIsUsingIVGLBinds) {
 	enum GL_TRUE = 1;
 	enum GL_FALSE = 0;
 	alias int GLint;
 
-	public void* glGetProcAddress (const(char)* name) {
+	public void* glbindGetProcAddress (const(char)* name) {
 		void* res = wglGetProcAddress(name);
 		if (res is null) {
 			//{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
@@ -11117,6 +11148,7 @@ extern(System) nothrow @nogc {
 		}
 		//{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
 		return res;
+	}
 	}
 
 		enum WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
@@ -11136,11 +11168,12 @@ extern(System) nothrow @nogc {
 
 		void wglInitOtherFunctions () {
 			if (wglCreateContextAttribsARB is null) {
-				wglCreateContextAttribsARB = cast(wglCreateContextAttribsARB_fna)glGetProcAddress("wglCreateContextAttribsARB");
+				wglCreateContextAttribsARB = cast(wglCreateContextAttribsARB_fna)glbindGetProcAddress("wglCreateContextAttribsARB");
 			}
 		}
 	}
 
+	static if (!SdpyIsUsingIVGLBinds) {
 	void glGetIntegerv(int, void*);
 	void glMatrixMode(int);
 	void glPushMatrix();
@@ -11271,6 +11304,7 @@ extern(System) nothrow @nogc {
 	enum int GL_QUADS = 7;
 	enum int GL_QUAD_STRIP = 8;
 	enum int GL_POLYGON = 9;
+	}
 }
 
 version(linux) {
