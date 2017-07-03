@@ -7701,7 +7701,7 @@ version(X11) {
 					}
 					if (vi is null || useLegacy) {
 						static immutable GLint[5] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
-						vi = cast(XVisualInfo*)glXChooseVisual(cast(void*)display, 0, attrs.ptr);
+						vi = cast(XVisualInfo*)glXChooseVisual(display, 0, attrs.ptr);
 						useLegacy = true;
 					}
 					if (vi is null) throw new Exception("no open gl visual found");
@@ -9968,7 +9968,7 @@ else {
 extern(C) nothrow @nogc {
 
 
-/+
+static if(!SdpyIsUsingIVGLBinds) {
 enum GLX_USE_GL=            1;       /* support GLX rendering */
 enum GLX_BUFFER_SIZE=       2;       /* depth of the color buffer */
 enum GLX_LEVEL=             3;       /* level in plane stacking */
@@ -9995,7 +9995,7 @@ enum GLX_ACCUM_ALPHA_SIZE=  17;      /* number of alpha accum bits */
 enum GL_TRUE = 1;
 enum GL_FALSE = 0;
 alias int GLint;
-+/
+}
 
 alias XID GLXContextID;
 alias XID GLXPixmap;
@@ -10005,9 +10005,9 @@ alias XID GLXWindow;
 alias XID GLXFBConfigID;
 alias void* GLXContext;
 
-/+
+static if (!SdpyIsUsingIVGLBinds) {
 	 XVisualInfo* glXChooseVisual(Display *dpy, int screen,
-			int *attrib_list);
+			const int *attrib_list);
 
 	 void glXCopyContext(Display *dpy, GLXContext src,
 			GLXContext dst, arch_ulong mask);
@@ -10045,7 +10045,7 @@ alias void* GLXContext;
 	 void glXWaitGL();
 
 	 void glXWaitX();
-+/
+}
 
 
 	struct XVisualInfo {
