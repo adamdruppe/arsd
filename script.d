@@ -1309,6 +1309,10 @@ class IndexExpression : VariableExpression {
 			return this.getVarFrom(sc, *v);
 		}
 	}
+
+	override ref var setVar(PrototypeObject sc, var t, bool recurse = true, bool suppressOverloading = false) {
+        	return getVar(sc,recurse) = t;
+	}
 }
 
 class SliceExpression : Expression {
