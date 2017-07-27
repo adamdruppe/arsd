@@ -839,14 +839,14 @@ class Engine{
 	InputMap[int] keyboardMap;
 	InputMap[int][16] joystickMap; // joystickMap[which][button] = translated val
 
-	int leftStickXAxis[16];
-	int dpadXAxis[16];
-	int leftStickYAxis[16];
-	int dpadYAxis[16];
-	int rightStickXAxis[16];
-	int rightStickYAxis[16];
-	int leftTriggerAxis[16];
-	int rightTriggerAxis[16];
+	int[16] leftStickXAxis;
+	int[16] dpadXAxis;
+	int[16] leftStickYAxis;
+	int[16] dpadYAxis;
+	int[16] rightStickXAxis;
+	int[16] rightStickYAxis;
+	int[16] leftTriggerAxis;
+	int[16] rightTriggerAxis;
 
 
 

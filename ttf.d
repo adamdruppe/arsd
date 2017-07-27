@@ -1,35 +1,44 @@
-/************************
-	This module is no longer maintained, use arsd.ttf instead.
-*************************/
+/++
+	TrueType Font rendering.
 
 
-/// stb_truetype.h - v0.6c - public domain
-/// authored from 2009-2012 by Sean Barrett / RAD Game Tools
+	Started as a copy of stb_truetype by Sean Barrett. It will be changing
+	more later.
++/
+module arsd.ttf;
+
+// stb_truetype.h - v0.6c - public domain
+// authored from 2009-2012 by Sean Barrett / RAD Game Tools
 //
 // http://nothings.org/stb/stb_truetype.h
 //
 // port to D by adam d. ruppe. see the link above for more info about the lib and real author.
 
 // here's some D convenience functions
-module stb_truetype;
 
+
+///
 struct TtfFont {
 	stbtt_fontinfo font;
+	///
 	this(in ubyte[] data) {
 		load(data);
 	}
 
+	///
 	void load(in ubyte[] data) {
    		if(stbtt_InitFont(&font, data.ptr, stbtt_GetFontOffsetForIndex(data.ptr, 0)) == 0)
 			throw new Exception("load font problem");
 	}
 
+	///
 	ubyte[] renderCharacter(dchar c, int size, out int width, out int height, float shift_x = 0.0, float shift_y = 0.0) {
    		auto ptr = stbtt_GetCodepointBitmapSubpixel(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size),
 			shift_x, shift_y, c, &width, &height, null,null);
 		return ptr[0 .. width * height];
 	}
 
+	///
 	void getStringSize(in char[] s, int size, out int width, out int height) {
 		float xpos=0;
 
@@ -61,6 +70,7 @@ struct TtfFont {
 		height = size;
 	}
 
+	///
 	ubyte[] renderString(in char[] s, int size, out int width, out int height) {
 		float xpos=0;
 
@@ -1191,7 +1201,7 @@ static void stbtt__rasterize_sorted_edges(stbtt__bitmap *result, stbtt__edge *e,
       STBTT_free(scanline, userdata);
 }
 
-extern(C) int stbtt__edge_compare(const void *p, const void *q)
+extern(C) int stbtt__edge_compare(scope const void *p, scope const void *q)
 {
    stbtt__edge *a = cast(stbtt__edge *) p;
    stbtt__edge *b = cast(stbtt__edge *) q;

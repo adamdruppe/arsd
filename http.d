@@ -1,3 +1,8 @@
+/++
+	Old version of my http implementation.
+
+	I no longer work on this, use http2.d instead.
++/
 module arsd.http;
 
 import std.socket;

@@ -10,14 +10,16 @@
 */
 
 
-/**
-	jsvar provides a D type called 'var' that works similarly to the same in Javascript.
+/++
+	jsvar provides a D type called [var] that works similarly to the same in Javascript.
 
-	It is weakly and dynamically typed, but interops pretty easily with D itself:
+	It is weakly (even weaker than JS, frequently returning null rather than throwing on
+	an invalid operation) and dynamically typed, but interops pretty easily with D itself:
 
+	---
 	var a = 10;
 	a ~= "20";
-	assert(a == "1020");
+		assert(a == "1020");
 
 	var a = function(int b, int c) { return b+c; };
 	// note the second set of () is because of broken @property
@@ -33,29 +35,32 @@
 	};
 
 	assert(b.bar.hey[1] == 2);
+	---
 
 
-	You can also use var.fromJson, a static method, to quickly and easily
-	read json or var.toJson to write it.
+	You can also use [var.fromJson], a static method, to quickly and easily
+	read json or [var.toJson] to write it.
 
-	Also, if you combine this with my new arsd.script module, you get pretty
+	Also, if you combine this with my [arsd.script] module, you get pretty
 	easy interop with a little scripting language that resembles a cross between
 	D and Javascript - just like you can write in D itself using this type.
 
 
 	Properties:
+	$(LIST
 		* note that @property doesn't work right in D, so the opDispatch properties
 		  will require double parenthesis to call as functions.
 
 		* Properties inside a var itself are set specially:
 			obj.propName._object = new PropertyPrototype(getter, setter);
+	)
 
 	D structs can be turned to vars, but it is a copy.
 
 	Wrapping D native objects is coming later, the current ways suck. I really needed
 	properties to do them sanely at all, and now I have it. A native wrapped object will
 	also need to be set with _object prolly.
-*/
++/
 module arsd.jsvar;
 
 version=new_std_json;
@@ -67,7 +72,7 @@ import std.conv;
 import std.json;
 
 // uda for wrapping classes
-enum Scriptable;
+enum scriptable = "arsd_jsvar_compatible";
 
 /*
 	PrototypeObject FIXME:
@@ -461,7 +466,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 					_this._payload._floating = f;
 				}
 				return _this;
-			} else assert(0);
+			} else static assert(0);
 		} else if(this2.payloadType() == var.Type.String) {
 			static if(op == "&" || op == "|" || op == "^") {
 				long r = cast(long) stringToNumber(this2._payload._string);
@@ -498,6 +503,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 }
 
 
+///
 struct var {
 	public this(T)(T t) {
 		static if(is(T == var))
@@ -694,6 +700,23 @@ struct var {
 		return _op!(this, this, op, T)(t);
 	}
 
+	public var opUnary(string op : "-")() {
+		static assert(op == "-");
+		final switch(payloadType()) {
+			case Type.Object:
+			case Type.Array:
+			case Type.Boolean:
+			case Type.String:
+			case Type.Function:
+				assert(0); // FIXME
+			break;
+			case Type.Integral:
+				return var(-this.get!long);
+			case Type.Floating:
+				return var(-this.get!double);
+		}
+	}
+
 	public var opBinary(string op, T)(T t) {
 		var n;
 		if(payloadType() == Type.Object) {
@@ -723,10 +746,20 @@ struct var {
 
 	public var apply(var _this, var[] args) {
 		if(this.payloadType() == Type.Function) {
-			assert(this._payload._function !is null);
+			if(this._payload._function is null) {
+				version(jsvar_throw)
+					throw new DynamicTypeException(this, Type.Function);
+				else
+					return var(null);
+			}
 			return this._payload._function(_this, args);
 		} else if(this.payloadType() == Type.Object) {
-			assert(this._payload._object !is null, this.toString());
+			if(this._payload._object is null) {
+				version(jsvar_throw)
+					throw new DynamicTypeException(this, Type.Function);
+				else
+					return var(null);
+			}
 			var* operator = this._payload._object._peekMember("opCall", true);
 			if(operator !is null && operator._type == Type.Function)
 				return operator.apply(_this, args);
@@ -735,8 +768,13 @@ struct var {
 		version(jsvar_throw)
 			throw new DynamicTypeException(this, Type.Function);
 
-		var ret;
-		return ret;
+		if(this.payloadType() == Type.Integral || this.payloadType() == Type.Floating) {
+			if(args.length)
+				return var(this.get!double * args[0].get!double);
+		}
+
+		//return this;
+		return var(null);
 	}
 
 	public var call(T...)(var _this, T t) {
@@ -750,6 +788,12 @@ struct var {
 	public var opCall(T...)(T t) {
 		return this.call(this, t);
 	}
+
+	/*
+	public var applyWithMagicLocals(var _this, var[] args, var[string] magicLocals) {
+
+	}
+	*/
 
 	public string toString() {
 		return this.get!string;
@@ -792,25 +836,29 @@ struct var {
 							if(no !is null)
 								return no;
 						}
+
+						// FIXME: this is kinda weird.
+						return null;
+					} else {
+
+						// failing that, generic struct or class getting: try to fill in the fields by name
+						T t;
+						bool initialized = true;
+						static if(is(T == class)) {
+							static if(__traits(compiles, new T()))
+								t = new T();
+							else
+								initialized = false;
+						}
+
+
+						if(initialized)
+						foreach(i, a; t.tupleof) {
+							cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
+						}
+
+						return t;
 					}
-
-					// failing that, generic struct or class getting: try to fill in the fields by name
-					T t;
-					bool initialized = true;
-					static if(is(T == class)) {
-						static if(__traits(compiles, new T()))
-							t = new T();
-						else
-							initialized = false;
-					}
-
-
-					if(initialized)
-					foreach(i, a; t.tupleof) {
-						cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
-					}
-
-					return t;
 				} else static if(isSomeString!T) {
 					if(this._object !is null)
 						return this._object.toString();
@@ -1093,8 +1141,12 @@ struct var {
 			from = pt._payload._object;
 		}
 
-		if(from is null)
-			throw new DynamicTypeException(var(null), Type.Object, file, line);
+		if(from is null) {
+			version(jsvar_throw)
+				throw new DynamicTypeException(var(null), Type.Object, file, line);
+			else
+				return *(new var);
+		}
 		return from._getMember(name, true, false, file, line);
 	}
 
@@ -1293,7 +1345,7 @@ struct var {
 
 	string toJson() {
 		auto v = toJsonValue();
-		return toJSON(&v);
+		return toJSON(v);
 	}
 
 	JSONValue toJsonValue() {
@@ -1408,7 +1460,7 @@ class PrototypeObject {
 				val.object[k] = v.toJsonValue();
 		}
 
-		return toJSON(&val);
+		return toJSON(val);
 	}
 
 	var[string] _properties;
@@ -1616,6 +1668,7 @@ template helper(alias T) { alias helper = T; }
 ///
 /// That may be done automatically with opAssign in the future.
 WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
+	import std.meta;
 	return new class WrappedNativeObject {
 		override Object getObject() {
 			return obj;
@@ -1626,23 +1679,37 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 			// wrap the other methods
 			// and wrap members as scriptable properties
 
-			foreach(memberName; __traits(allMembers, Class)) {
-				static if(is(typeof(__traits(getMember, obj, memberName)) type))
-				static if(is(typeof(__traits(getMember, obj, memberName)))) {
-					static if(is(type == function)) {
-						_properties[memberName] = &__traits(getMember, obj, memberName);
-					} else {
-						// if it has a type but is not a function, it is prolly a member
-						_properties[memberName] = new PropertyPrototype(
-							() => var(__traits(getMember, obj, memberName)),
-							(var v) {
-								__traits(getMember, obj, memberName) = v.get!(type);
-							});
+			foreach(memberName; __traits(allMembers, Class)) static if(is(typeof(__traits(getMember, obj, memberName)) type)) {
+				static if(is(type == function)) {
+					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
+						auto helper = &__traits(getOverloads, obj, memberName)[idx];
+						_properties[memberName] = (Parameters!helper args) {
+							return __traits(getOverloads, obj, memberName)[idx](args);
+						};
 					}
+				} else {
+					static if(.isScriptable!(__traits(getAttributes, __traits(getMember, Class, memberName)))())
+					// if it has a type but is not a function, it is prolly a member
+					_properties[memberName] = new PropertyPrototype(
+						() => var(__traits(getMember, obj, memberName)),
+						(var v) {
+							__traits(getMember, obj, memberName) = v.get!(type);
+						});
 				}
 			}
 		}
 	};
+}
+
+bool isScriptable(attributes...)() {
+	foreach(attribute; attributes) {
+		static if(is(typeof(attribute) == string)) {
+			static if(attribute == scriptable) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 /// Wraps a struct by reference. The pointer is stored - be sure the struct doesn't get freed or go out of scope!

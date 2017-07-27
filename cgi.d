@@ -298,12 +298,15 @@ static:
 
 	static this() {
 		// Set stdin to binary mode
+		version(Win64)
+		_setmode(std.stdio.stdin.fileno(), 0x8000);
+		else
 		setmode(std.stdio.stdin.fileno(), 0x8000);
 	}
 
 	T[] rawRead(T)(T[] buf) {
 		uint bytesRead;
-		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, buf.length * T.sizeof, &bytesRead, null);
+		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, cast(int) (buf.length * T.sizeof), &bytesRead, null);
 
 		if (!result) {
 			auto err = GetLastError();
@@ -1240,6 +1243,7 @@ class Cgi {
 				throw new Exception("wtf is up with such a gigantic form submission????");
 
 			pps.buffer ~= chunk;
+
 			// simple handling, but it works... until someone bombs us with gigabytes of crap at least...
 			if(pps.buffer.length == pps.expectedLength)
 				pps._post = decodeVariables(cast(string) pps.buffer);
@@ -2645,56 +2649,64 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 						i = addr.sizeof;
 						int s = accept(sock, &addr, &i);
 
-						if(s == -1)
-							throw new Exception("accept");
-						//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
-						auto ir = new BufferedInputRange(s);
-						//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
+						try {
 
-						while(!ir.empty) {
-							ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+							if(s == -1)
+								throw new Exception("accept");
 
-							Cgi cgi;
-							try {
-								cgi = new CustomCgi(ir, &closeConnection);
-								//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
-							} catch(Throwable t) {
-								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
-								// anyway let's kill the connection
-								stderr.writeln(t.toString());
-								sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
-								closeConnection = true;
-								break;
-							}
-							assert(cgi !is null);
-							scope(exit)
-								cgi.dispose();
+							scope(failure) close(s);
+							//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
+							auto ir = new BufferedInputRange(s);
+							//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
 
-							try {
-								fun(cgi);
-								cgi.close();
-							} catch(ConnectionException ce) {
-								closeConnection = true;
-							} catch(Throwable t) {
-								// a processing error can be recovered from
-								stderr.writeln(t.toString);
-								if(!handleException(cgi, t))
+							while(!ir.empty) {
+								ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+
+								Cgi cgi;
+								try {
+									cgi = new CustomCgi(ir, &closeConnection);
+									//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
+								} catch(Throwable t) {
+									// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
+									// anyway let's kill the connection
+									stderr.writeln(t.toString());
+									sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
 									closeConnection = true;
-							}
+									break;
+								}
+								assert(cgi !is null);
+								scope(exit)
+									cgi.dispose();
 
-							if(closeConnection) {
-								ir.source.close();
-								break;
-							} else {
-								if(!ir.empty)
-									ir.popFront(); // get the next
-								else if(ir.sourceClosed) {
+								try {
+									fun(cgi);
+									cgi.close();
+								} catch(ConnectionException ce) {
+									closeConnection = true;
+								} catch(Throwable t) {
+									// a processing error can be recovered from
+									stderr.writeln(t.toString);
+									if(!handleException(cgi, t))
+										closeConnection = true;
+								}
+
+								if(closeConnection) {
 									ir.source.close();
+									break;
+								} else {
+									if(!ir.empty)
+										ir.popFront(); // get the next
+									else if(ir.sourceClosed) {
+										ir.source.close();
+									}
 								}
 							}
-						}
 
-						ir.source.close();
+							ir.source.close();
+						} catch(Throwable t) {
+							debug writeln(t);
+							// most likely cause is a timeout
+						}
 					}
 				} else {
 					processCount++;
@@ -3134,6 +3146,9 @@ class BufferedInputRange {
 	}
 
 	this(Socket source, ubyte[] buffer = null) {
+		// if they connect but never send stuff to us, we don't want it wasting the process
+		// so setting a time out
+		source.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
 		this.source = source;
 		if(buffer is null) {
 			underlyingBuffer = new ubyte[4096];
@@ -3190,10 +3205,11 @@ class BufferedInputRange {
 			if(ret == Socket.ERROR) {
 				version(Posix) {
 					import core.stdc.errno;
-					if(errno == EINTR)
+					if(errno == EINTR) {
 						goto try_again;
+					}
 				}
-				throw new Exception("uh oh " ~ lastSocketError); // FIXME
+				throw new Exception(lastSocketError); // FIXME
 			}
 			if(ret == 0) {
 				sourceClosed = true;
@@ -3636,6 +3652,8 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 		}
 
 		override void popFront() {
+			ir.consume(f.length);
+			atMost -= f.length;
 			auto a = ir.front();
 
 			if(a.length <= atMost) {
@@ -3984,12 +4002,27 @@ version(cgi_with_websocket) {
 
 }
 
+
+version(Windows)
+{
+    version(CRuntime_DigitalMars)
+    {
+        extern(C) int setmode(int, int) nothrow @nogc;
+    }
+    else version(CRuntime_Microsoft)
+    {
+        extern(C) int _setmode(int, int) nothrow @nogc;
+        alias setmode = _setmode;
+    }
+    else static assert(0);
+}
+
 /*
-Copyright: Adam D. Ruppe, 2008 - 2015
+Copyright: Adam D. Ruppe, 2008 - 2016
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2015.
+	Copyright Adam D. Ruppe 2008 - 2016.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)

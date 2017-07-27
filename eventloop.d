@@ -559,8 +559,10 @@ version(linux) {
 				throw new Exception("epoll_wait");
 			}
 
+
 			foreach(n; 0 .. nfds) {
 				auto fd = events[n].data.fd;
+
 				if(fd == pipes[0]) {
 					if(readFromEventPipe() == false)
 						break outer_loop;

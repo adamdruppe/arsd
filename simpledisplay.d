@@ -1,11 +1,5 @@
-// Please note when compiling on Win64, you need to explicitly list
-// `-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
-// subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`
-//
-// On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
+// FIXME: if the taskbar dies, a notification icon is undocked... but never detects a new taskbar spawning
 /*
-	FIXME:
-
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
 	update and you can pass it on and get more details out of it.
@@ -15,7 +9,7 @@
 	changed on the painter i guess) like font, color, size, background,
 	etc.
 
-	We can also fetch the carat location from it somehow.
+	We can also fetch the caret location from it somehow.
 
 	Should prolly be an overload of drawText
 
@@ -58,6 +52,30 @@
 	and may add new features and fix bugs, but It do not expect to
 	significantly change the API. It has been stable a few years already now.
 
+	Installation_instructions:
+
+	`simpledisplay.d` does not have any dependencies outside the
+	operating system and `color.d`, so it should just work most the
+	time, but there are a few caveats on some systems:
+
+	Please note when compiling on Win64, you need to explicitly list
+	`-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
+	subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`.
+
+	On Win32, you can pass `-L/subsystem:windows` if you don't want a
+	console to be automatically allocated.
+
+	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
+
+	On Ubuntu, you might need to install X11 development libraries to
+	successfully link.
+
+	$(CONSOLE
+		$ sudo apt-get install libglc-dev
+		$ sudo apt-get install libx11-dev
+	)
+
+
 	Jump_list:
 
 	Don't worry, you don't have to read this whole documentation file!
@@ -78,7 +96,7 @@
 	$(H2 About this documentation)
 
 	The goal here is to give some complete programs as overview examples first, then a look at each major feature with working examples first, then, finally, the inline class and method list will follow.
-	
+
 	Scan for headers for a topic - $(B they will visually stand out) - you're interested in to get started quickly and feel free to copy and paste any example as a starting point for your program. I encourage you to learn the library by experimenting with the examples!
 
 	All examples are provided with no copyright restrictions whatsoever. You do not need to credit me or carry any kind of notice with the source if you copy and paste from them.
@@ -108,7 +126,7 @@
 	import std.conv;
 
 	void main() {
-		auto window = new SimpleWindow(Size(500, 500), "My D App");
+		auto window = new SimpleWindow(Size(500, 500), "Event example - simpledisplay.d");
 
 		int y = 0;
 
@@ -148,126 +166,6 @@
 	}
 	---
 
-	$(H3 Pong-example)
-	This program creates a little Pong-like game. Player one is controlled
-	with the keyboard.  Player two is controlled with the mouse. It demos
-	the pulse timer, event handling, and some basic drawing.
-
-	---
-	// dmd example.d simpledisplay.d color.d
-	import arsd.simpledisplay;
-
-	enum paddleMovementSpeed = 8;
-	enum paddleHeight = 48;
-
-	void main() {
-		auto window = new SimpleWindow(600, 400, "Pong game!");
-
-		int playerOnePosition, playerTwoPosition;
-		int playerOneMovement, playerTwoMovement;
-		int playerOneScore, playerTwoScore;
-
-		int ballX, ballY;
-		int ballDx, ballDy;
-
-		void serve() {
-			import std.random;
-
-			ballX = window.width / 2;
-			ballY = window.height / 2;
-			ballDx = uniform(-4, 4) * 3;
-			ballDy = uniform(-4, 4) * 3;
-			if(ballDx == 0)
-				ballDx = uniform(0, 2) == 0 ? 3 : -3;
-		}
-
-		serve();
-
-		window.eventLoop(50, // set a 50 ms timer pulls
-			// This runs once per timer pulse
-			delegate () {
-				auto painter = window.draw();
-
-				painter.clear();
-
-				// Update everyone's motion
-				playerOnePosition += playerOneMovement;
-				playerTwoPosition += playerTwoMovement;
-
-				ballX += ballDx;
-				ballY += ballDy;
-
-				// Bounce off the top and bottom edges of the window
-				if(ballY + 7 >= window.height)
-					ballDy = -ballDy;
-				if(ballY - 8 <= 0)
-					ballDy = -ballDy;
-
-				// Bounce off the paddle, if it is in position
-				if(ballX - 8 <= 16) {
-					if(ballY + 7 > playerOnePosition && ballY - 8 < playerOnePosition + paddleHeight) {
-						ballDx = -ballDx + 1; // add some speed to keep it interesting
-						ballDy += playerOneMovement; // and y movement based on your controls too
-						ballX = 24; // move it past the paddle so it doesn't wiggle inside
-					} else {
-						// Missed it
-						playerTwoScore ++;
-						serve();
-					}
-				}
-
-				if(ballX + 7 >= window.width - 16) { // do the same thing but for player 1
-					if(ballY + 7 > playerTwoPosition && ballY - 8 < playerTwoPosition + paddleHeight) {
-						ballDx = -ballDx - 1;
-						ballDy += playerTwoMovement;
-						ballX = window.width - 24;
-					} else {
-						// Missed it
-						playerOneScore ++;
-						serve();
-					}
-				}
-
-				// Draw the paddles
-				painter.outlineColor = Color.black;
-				painter.drawLine(Point(16, playerOnePosition), Point(16, playerOnePosition + paddleHeight));
-				painter.drawLine(Point(window.width - 16, playerTwoPosition), Point(window.width - 16, playerTwoPosition + paddleHeight));
-
-				// Draw the ball
-				painter.fillColor = Color.red;
-				painter.outlineColor = Color.yellow;
-				painter.drawEllipse(Point(ballX - 8, ballY - 8), Point(ballX + 7, ballY + 7));
-
-				// Draw the score
-				painter.outlineColor = Color.blue;
-				import std.conv;
-				painter.drawText(Point(64, 4), to!string(playerOneScore));
-				painter.drawText(Point(window.width - 64, 4), to!string(playerTwoScore));
-
-			},
-			delegate (KeyEvent event) {
-				// Player 1's controls are the arrow keys on the keyboard
-				if(event.key == Key.Down)
-					playerOneMovement = event.pressed ? paddleMovementSpeed : 0;
-				if(event.key == Key.Up)
-					playerOneMovement = event.pressed ? -paddleMovementSpeed : 0;
-
-			},
-			delegate (MouseEvent event) {
-				// Player 2's controls are mouse movement while the left button is held down
-				if(event.type == MouseEventType.motion && (event.modifierState & ModifierState.leftButtonDown)) {
-					if(event.dy > 0)
-						playerTwoMovement = paddleMovementSpeed;
-					else if(event.dy < 0)
-						playerTwoMovement = -paddleMovementSpeed;
-				} else {
-					playerTwoMovement = 0;
-				}
-			}
-		);
-	}
-	---
-
 	If you are interested in more game writing with D, check out my gamehelpers.d which builds upon simpledisplay, and its other stand-alone support modules, simpleaudio.d and joystick.d, too.
 
 	This program displays a pie chart. Clicking on a color will increase its share of the pie.
@@ -285,7 +183,7 @@
 		You may create multiple windows, if the underlying platform supports it. You may check
 		`static if(multipleWindowsSupported)` at compile time, or catch exceptions thrown by
 		SimpleWindow's constructor at runtime to handle those cases.
-		
+
 		A single running event loop will handle as many windows as needed.
 
 		setEventHandlers function
@@ -467,6 +365,50 @@
 
 		minigui still needs a lot of work to be finished at this time, but it already offers a number of useful classes.
 
+	$(H2 Platform-specific tips and tricks)
+
+	Windows_tips:
+
+	You can add icons or manifest files to your exe using a resource file.
+
+	To create a Windows .ico file, use the gimp or something. I'll write a helper
+	program later.
+
+	Create `yourapp.rc`:
+
+	```rc
+		1 ICON filename.ico
+		CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "YourApp.exe.manifest"
+	```
+
+	And `yourapp.exe.manifest`:
+
+	```xml
+		<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+		<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+		<assemblyIdentity
+		    version="1.0.0.0"
+		    processorArchitecture="*"
+		    name="CompanyName.ProductName.YourApplication"
+		    type="win32"
+		/>
+		<description>Your application description here.</description>
+		<dependency>
+		    <dependentAssembly>
+			<assemblyIdentity
+			    type="win32"
+			    name="Microsoft.Windows.Common-Controls"
+			    version="6.0.0.0"
+			    processorArchitecture="*"
+			    publicKeyToken="6595b64144ccf1df"
+			    language="*"
+			/>
+		    </dependentAssembly>
+		</dependency>
+		</assembly>
+	```
+
+
 	$(H2 $(ID developer-notes) Developer notes)
 
 	I don't have a Mac, so that code isn't maintained. I would like to have a Cocoa
@@ -506,7 +448,7 @@
 	I live in the eastern United States, so I will most likely not be around at night in
 	that US east timezone.
 
-	License: Copyright Adam D. Ruppe, 2011-2016. Released under the Boost Software License.
+	License: Copyright Adam D. Ruppe, 2011-2017. Released under the Boost Software License.
 
 	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
 	building the documentation for simpledisplay yourself. It will give it a bit more style.
@@ -515,12 +457,372 @@
 +/
 module arsd.simpledisplay;
 
+// FIXME: tetris demo
+// FIXME: space invaders demo
+// FIXME: asteroids demo
+
+/++ $(ID Pong-example)
+	$(H3 Pong)
+
+	This program creates a little Pong-like game. Player one is controlled
+	with the keyboard.  Player two is controlled with the mouse. It demos
+	the pulse timer, event handling, and some basic drawing.
++/
+unittest {
+	// dmd example.d simpledisplay.d color.d
+	import arsd.simpledisplay;
+
+	enum paddleMovementSpeed = 8;
+	enum paddleHeight = 48;
+
+	void main() {
+		auto window = new SimpleWindow(600, 400, "Pong game!");
+
+		int playerOnePosition, playerTwoPosition;
+		int playerOneMovement, playerTwoMovement;
+		int playerOneScore, playerTwoScore;
+
+		int ballX, ballY;
+		int ballDx, ballDy;
+
+		void serve() {
+			import std.random;
+
+			ballX = window.width / 2;
+			ballY = window.height / 2;
+			ballDx = uniform(-4, 4) * 3;
+			ballDy = uniform(-4, 4) * 3;
+			if(ballDx == 0)
+				ballDx = uniform(0, 2) == 0 ? 3 : -3;
+		}
+
+		serve();
+
+		window.eventLoop(50, // set a 50 ms timer pulls
+			// This runs once per timer pulse
+			delegate () {
+				auto painter = window.draw();
+
+				painter.clear();
+
+				// Update everyone's motion
+				playerOnePosition += playerOneMovement;
+				playerTwoPosition += playerTwoMovement;
+
+				ballX += ballDx;
+				ballY += ballDy;
+
+				// Bounce off the top and bottom edges of the window
+				if(ballY + 7 >= window.height)
+					ballDy = -ballDy;
+				if(ballY - 8 <= 0)
+					ballDy = -ballDy;
+
+				// Bounce off the paddle, if it is in position
+				if(ballX - 8 <= 16) {
+					if(ballY + 7 > playerOnePosition && ballY - 8 < playerOnePosition + paddleHeight) {
+						ballDx = -ballDx + 1; // add some speed to keep it interesting
+						ballDy += playerOneMovement; // and y movement based on your controls too
+						ballX = 24; // move it past the paddle so it doesn't wiggle inside
+					} else {
+						// Missed it
+						playerTwoScore ++;
+						serve();
+					}
+				}
+
+				if(ballX + 7 >= window.width - 16) { // do the same thing but for player 1
+					if(ballY + 7 > playerTwoPosition && ballY - 8 < playerTwoPosition + paddleHeight) {
+						ballDx = -ballDx - 1;
+						ballDy += playerTwoMovement;
+						ballX = window.width - 24;
+					} else {
+						// Missed it
+						playerOneScore ++;
+						serve();
+					}
+				}
+
+				// Draw the paddles
+				painter.outlineColor = Color.black;
+				painter.drawLine(Point(16, playerOnePosition), Point(16, playerOnePosition + paddleHeight));
+				painter.drawLine(Point(window.width - 16, playerTwoPosition), Point(window.width - 16, playerTwoPosition + paddleHeight));
+
+				// Draw the ball
+				painter.fillColor = Color.red;
+				painter.outlineColor = Color.yellow;
+				painter.drawEllipse(Point(ballX - 8, ballY - 8), Point(ballX + 7, ballY + 7));
+
+				// Draw the score
+				painter.outlineColor = Color.blue;
+				import std.conv;
+				painter.drawText(Point(64, 4), to!string(playerOneScore));
+				painter.drawText(Point(window.width - 64, 4), to!string(playerTwoScore));
+
+			},
+			delegate (KeyEvent event) {
+				// Player 1's controls are the arrow keys on the keyboard
+				if(event.key == Key.Down)
+					playerOneMovement = event.pressed ? paddleMovementSpeed : 0;
+				if(event.key == Key.Up)
+					playerOneMovement = event.pressed ? -paddleMovementSpeed : 0;
+
+			},
+			delegate (MouseEvent event) {
+				// Player 2's controls are mouse movement while the left button is held down
+				if(event.type == MouseEventType.motion && (event.modifierState & ModifierState.leftButtonDown)) {
+					if(event.dy > 0)
+						playerTwoMovement = paddleMovementSpeed;
+					else if(event.dy < 0)
+						playerTwoMovement = -paddleMovementSpeed;
+				} else {
+					playerTwoMovement = 0;
+				}
+			}
+		);
+	}
+}
+
+/++ $(ID example-minesweeper)
+
+	This minesweeper demo shows how we can implement another classic
+	game with simpledisplay and shows some mouse input and basic output
+	code.
++/
+unittest {
+	import arsd.simpledisplay;
+
+	enum GameSquare {
+		mine = 0,
+		clear,
+		m1, m2, m3, m4, m5, m6, m7, m8
+	}
+
+	enum UserSquare {
+		unknown,
+		revealed,
+		flagged,
+		questioned
+	}
+
+	enum GameState {
+		inProgress,
+		lose,
+		win
+	}
+
+	GameSquare[] board;
+	UserSquare[] userState;
+	GameState gameState;
+	int boardWidth;
+	int boardHeight;
+
+	bool isMine(int x, int y) {
+		if(x < 0 || y < 0 || x >= boardWidth || y >= boardHeight)
+			return false;
+		return board[y * boardWidth + x] == GameSquare.mine;
+	}
+
+	GameState reveal(int x, int y) {
+		if(board[y * boardWidth + x] == GameSquare.clear) {
+			floodFill(userState, boardWidth, boardHeight,
+				UserSquare.unknown, UserSquare.revealed,
+				x, y,
+				(x, y) {
+					if(board[y * boardWidth + x] == GameSquare.clear)
+						return true;
+					else {
+						userState[y * boardWidth + x] = UserSquare.revealed;
+						return false;
+					}
+				});
+		} else {
+			userState[y * boardWidth + x] = UserSquare.revealed;
+			if(isMine(x, y))
+				return GameState.lose;
+		}
+
+		foreach(state; userState) {
+			if(state == UserSquare.unknown || state == UserSquare.questioned)
+				return GameState.inProgress;
+		}
+
+		return GameState.win;
+	}
+
+	void initializeBoard(int width, int height, int numberOfMines) {
+		boardWidth = width;
+		boardHeight = height;
+		board.length = width * height;
+
+		userState.length = width * height;
+		userState[] = UserSquare.unknown; 
+
+		import std.algorithm, std.random, std.range;
+
+		board[] = GameSquare.clear;
+
+		foreach(minePosition; randomSample(iota(0, board.length), numberOfMines))
+			board[minePosition] = GameSquare.mine;
+
+		int x;
+		int y;
+		foreach(idx, ref square; board) {
+			if(square == GameSquare.clear) {
+				int danger = 0;
+				danger += isMine(x-1, y-1)?1:0;
+				danger += isMine(x-1, y)?1:0;
+				danger += isMine(x-1, y+1)?1:0;
+				danger += isMine(x, y-1)?1:0;
+				danger += isMine(x, y+1)?1:0;
+				danger += isMine(x+1, y-1)?1:0;
+				danger += isMine(x+1, y)?1:0;
+				danger += isMine(x+1, y+1)?1:0;
+
+				square = cast(GameSquare) (danger + 1);
+			}
+
+			x++;
+			if(x == width) {
+				x = 0;
+				y++;
+			}
+		}
+	}
+
+	void redraw(SimpleWindow window) {
+		import std.conv;
+
+		auto painter = window.draw();
+
+		painter.clear();
+
+		final switch(gameState) with(GameState) {
+			case inProgress:
+				break;
+			case win:
+				painter.fillColor = Color.green;
+				painter.drawRectangle(Point(0, 0), window.width, window.height);
+				return;
+			case lose:
+				painter.fillColor = Color.red;
+				painter.drawRectangle(Point(0, 0), window.width, window.height);
+				return;
+		}
+
+		int x = 0;
+		int y = 0;
+
+		foreach(idx, square; board) {
+			auto state = userState[idx];
+
+			final switch(state) with(UserSquare) {
+				case unknown:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color(128,128,128);
+
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+				case revealed:
+					if(square == GameSquare.clear) {
+						painter.outlineColor = Color.white;
+						painter.fillColor = Color.white;
+
+						painter.drawRectangle(
+							Point(x * 20, y * 20),
+							20, 20
+						);
+					} else {
+						painter.outlineColor = Color.black;
+						painter.fillColor = Color.white;
+
+						painter.drawText(
+							Point(x * 20, y * 20),
+							to!string(square)[1..2],
+							Point(x * 20 + 20, y * 20 + 20),
+							TextAlignment.Center | TextAlignment.VerticalCenter);
+					}
+				break;
+				case flagged:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color.red;
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+				case questioned:
+					painter.outlineColor = Color.black;
+					painter.fillColor = Color.yellow;
+					painter.drawRectangle(
+						Point(x * 20, y * 20),
+						20, 20
+					);
+				break;
+			}
+
+			x++;
+			if(x == boardWidth) {
+				x = 0;
+				y++;
+			}
+		}
+
+	}
+
+	void main() {
+		auto window = new SimpleWindow(200, 200);
+
+		initializeBoard(10, 10, 10);
+
+		redraw(window);
+		window.eventLoop(0,
+			delegate (MouseEvent me) {
+				if(me.type != MouseEventType.buttonPressed)
+					return;
+				auto x = me.x / 20;
+				auto y = me.y / 20;
+				if(x >= 0 && x < boardWidth && y >= 0 && y < boardHeight) {
+					if(me.button == MouseButton.left) {
+						gameState = reveal(x, y);
+					} else {
+						userState[y*boardWidth+x] = UserSquare.flagged;
+					}
+					redraw(window);
+				}
+			}
+		);
+	}
+}
+
+version(without_opengl) {
+	enum SdpyIsUsingIVGLBinds = false;
+} else /*version(Posix)*/ {
+	static if (__traits(compiles, (){import iv.glbinds;})) {
+		enum SdpyIsUsingIVGLBinds = true;
+		public import iv.glbinds;
+		//pragma(msg, "SDPY: using iv.glbinds");
+	} else {
+		enum SdpyIsUsingIVGLBinds = false;
+	}
+//} else {
+//	enum SdpyIsUsingIVGLBinds = false;
+}
+
+
 version(Windows) {
 	import core.sys.windows.windows;
 	static import gdi = core.sys.windows.wingdi;
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
+} else version (Posix) {
+	//k8: this is hack for rdmd. sorry.
+	static import core.sys.linux.epoll;
+	static import core.sys.linux.timerfd;
 }
 
 
@@ -592,25 +894,23 @@ version(Windows) {
 /*
 From MSDN:
 
- You can also use the GET_X_LPARAM or GET_Y_LPARAM macro to extract the x- or y-coordinate.
+You can also use the GET_X_LPARAM or GET_Y_LPARAM macro to extract the x- or y-coordinate.
 
 Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coordinates of the cursor position because these macros return incorrect results on systems with multiple monitors. Systems with multiple monitors can have negative x- and y- coordinates, and LOWORD and HIWORD treat the coordinates as unsigned quantities.
 
 */
 
-version(html5) {} else {
-	version(linux)
-		version = X11;
-	version(OSX) {
-		version(OSXCocoa) {}
-		else { version = X11; }
-	}
-		//version = OSXCocoa; // this was written by KennyTM
-	version(FreeBSD)
-		version = X11;
-	version(Solaris)
-		version = X11;
+version(linux)
+	version = X11;
+version(OSX) {
+	version(OSXCocoa) {}
+	else { version = X11; }
 }
+	//version = OSXCocoa; // this was written by KennyTM
+version(FreeBSD)
+	version = X11;
+version(Solaris)
+	version = X11;
 
 // these are so the static asserts don't trigger unless you want to
 // add support to it for an OS
@@ -633,6 +933,11 @@ else version(X11)
 else
 	static assert(0);
 
+version(without_opengl)
+	enum bool OpenGlEnabled = false;
+else
+	enum bool OpenGlEnabled = true;
+
 
 /++
 	After selecting a type from [WindowTypes], you may further customize
@@ -643,19 +948,28 @@ else
 	window type already is a good match for what you want to do, you should
 	just use [WindowFlags.normal], the default, which will do the right thing
 	for your users.
+
+	The window flags will not always be honored by the operating system
+	and window managers; they are hints, not commands.
 +/
 enum WindowFlags : int {
-	normal,
-	skipTaskbar,
-	alwaysOnTop,
-	alwaysOnBottom,
-	cannotBeActivated,
+	normal = 0, ///
+	skipTaskbar = 1, ///
+	alwaysOnTop = 2, ///
+	alwaysOnBottom = 4, ///
+	cannotBeActivated = 8, ///
+	alwaysRequestMouseMotionEvents = 16, /// By default, simpledisplay will attempt to optimize mouse motion event reporting when it detects a remote connection, causing them to only be issued if input is grabbed (see: [SimpleWindow.grabInput]). This means doing hover effects and mouse game control on a remote X connection may not work right. Include this flag to override this optimization and always request the motion events. However btw, if you are doing mouse game control, you probably want to grab input anyway, and hover events are usually expendable! So think before you use this flag.
+	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
 /++
 	When creating a window, you can pass a type to SimpleWindow's constructor,
 	then further customize the window by changing `WindowFlags`.
 
+
+	You should mostly only need [normal], [undecorated], and [eventOnly] for normal
+	use. The others are there to build a foundation for a higher level GUI toolkit,
+	but are themselves not as high level as you might think from their names.
 
 	This list is based on the EMWH spec for X11.
 	http://standards.freedesktop.org/wm-spec/1.4/ar01s05.html#idm139704063786896
@@ -665,21 +979,31 @@ enum WindowTypes : int {
 	normal,
 	/// A generic window without a title bar or border. You can draw on the entire area of the screen it takes up and use it as you wish. Remember that users don't really expect these though, so don't use it where a window of any other type is appropriate.
 	undecorated,
+	/// A window that doesn't actually display on screen. You can use it for cases where you need a dummy window handle to communicate with or something.
+	eventOnly,
+	/// A drop down menu, such as from a menu bar
+	dropdownMenu,
+	/// A popup menu, such as from a right click
+	popupMenu,
+	/// A popup bubble notification
+	notification,
 	/*
+	menu, /// a tearable menu bar
 	splashScreen, /// a loading splash screen for your application
 	tooltip, /// A tiny window showing temporary help text or something.
-	notification, /// A popup bubble notification
 	comboBoxDropdown,
-	dropdownMenu,
-	popupMenu,
 	dialog,
 	toolbar
 	*/
+	/// a child nested inside the parent. You must pass a parent window to the ctor
+	nestedChild,
 }
 
 
 private __gshared ushort sdpyOpenGLContextVersion = 0; // default: use legacy call
 private __gshared bool sdpyOpenGLContextCompatible = true; // default: allow "deprecated" features
+private __gshared char* sdpyWindowClassStr = null;
+private __gshared bool sdpyOpenGLContextAllowFallback = false;
 
 /**
 	Set OpenGL context version to use. This has no effect on non-OpenGL windows.
@@ -705,6 +1029,63 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 */
 @property void openGLContextCompatible() (bool v) { sdpyOpenGLContextCompatible = v; }
 
+/**
+	Set to `true` to allow creating OpenGL context with lower version than requested
+	instead of throwing. If fallback was activated (or legacy OpenGL was requested),
+	`openGLContextFallbackActivated()` will return `true`.
+	*/
+@property void openGLContextAllowFallback() (bool v) { sdpyOpenGLContextAllowFallback = v; }
+
+/**
+	After creating OpenGL window, you can check this to see if you got only "legacy" OpenGL context.
+	*/
+@property bool openGLContextFallbackActivated() () { return (sdpyOpenGLContextVersion == 0); }
+
+
+/**
+	Set window class name for all following `new SimpleWindow()` calls.
+
+	WARNING! For Windows, you should set your class name before creating any
+	window, and NEVER change it after that!
+*/
+void sdpyWindowClass (const(char)[] v) {
+	import core.stdc.stdlib : realloc;
+	if (v.length == 0) v = "SimpleDisplayWindow";
+	sdpyWindowClassStr = cast(char*)realloc(sdpyWindowClassStr, v.length+1);
+	if (sdpyWindowClassStr is null) return; // oops
+	sdpyWindowClassStr[0..v.length+1] = 0;
+	sdpyWindowClassStr[0..v.length] = v[];
+}
+
+/**
+	Get current window class name.
+*/
+string sdpyWindowClass () {
+	if (sdpyWindowClassStr is null) return null;
+	foreach (immutable idx; 0..size_t.max-1) {
+		if (sdpyWindowClassStr[idx] == 0) return sdpyWindowClassStr[0..idx].idup;
+	}
+	return null;
+}
+
+TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
+	throw new Exception("not implemented");
+	version(none) {
+	version(X11) {
+		auto display = XDisplayConnection.get;
+		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
+
+		// FIXME: copy that shit
+
+		XDestroyImage(image);
+	} else version(Windows) {
+		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
+
+	} else static assert(0);
+	}
+
+	return null;
+}
 
 /++
 	The flagship window class.
@@ -725,7 +1106,53 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 	though, if you do this, managing the window is still your own responsibility! Notably, you
 	will need to destroy it yourself.
 +/
-class SimpleWindow : CapableOfHandlingNativeEvent {
+class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
+
+	/// Be warned: this can be a very slow operation
+	/// FIXME NOT IMPLEMENTED
+	TrueColorImage takeScreenshot() {
+		version(Windows)
+			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
+		else
+			return trueColorImageFromNativeHandle(impl.window, width, height);
+	}
+
+	version(X11) {
+		void recreateAfterDisconnect() {
+			if(!stateDiscarded) return;
+
+			if(_parent !is null && _parent.stateDiscarded)
+				_parent.recreateAfterDisconnect();
+
+			bool wasHidden = hidden;
+
+			activeScreenPainter = null; // should already be done but just to confirm
+
+			impl.createWindow(_width, _height, _title, openglMode, _parent);
+
+			if(recreateAdditionalConnectionState)
+				recreateAdditionalConnectionState();
+
+			hidden = wasHidden;
+			stateDiscarded = false;
+		}
+
+		bool stateDiscarded;
+		void discardConnectionState() {
+			if(XDisplayConnection.display)
+				impl.dispose(); // if display is already null, it is hopeless to try to destroy stuff on it anyway
+			if(discardAdditionalConnectionState)
+				discardAdditionalConnectionState();
+			stateDiscarded = true;
+		}
+
+		void delegate() discardAdditionalConnectionState;
+		void delegate() recreateAdditionalConnectionState;
+	}
+
+
+	SimpleWindow _parent;
+	bool beingOpenKeepsAppOpen = true;
 	/++
 		This creates a window with the given options. The window will be visible and able to receive input as soon as you start your event loop. You may draw on it immediately after creating the window, without needing to wait for the event loop to start if you want.
 
@@ -737,7 +1164,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		height = the height of the window's client area, in pixels
 		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title\ property.
 		opengl = [OpenGlOptions] are yes and no. If yes, it creates an OpenGL context on the window.
-		resizable = [Resizablity] has three options:
+		resizable = [Resizability] has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
 			$(P `fixedSize` will not allow the user to resize the window.)
 			$(P `automaticallyScaleIfPossible` will allow the user to resize, but will still present the original size to the API user. The contents you draw will be scaled to the size the user chose. If this scaling is not efficient, the window will be fixed size. The `windowResized` event handler will never be called. This is the default.)
@@ -745,18 +1172,23 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined [WindowTypes], given in the `windowType` argument, is a good match for what you need.
 		parent = the parent window, if applicable
 	+/
-	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
 		this._width = width;
 		this._height = height;
 		this.openglMode = opengl;
 		this.resizability = resizable;
 		this.windowType = windowType;
 		this.customizationFlags = customizationFlags;
-		impl.createWindow(width, height, title is null ? "D Application" : title, opengl, parent);
+		this._title = (title is null ? "D Application" : title);
+		this._parent = parent;
+		impl.createWindow(width, height, this._title, opengl, parent);
+
+		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild)
+			beingOpenKeepsAppOpen = false;
 	}
 
 	/// Same as above, except using the `Size` struct instead of separate width and height.
-	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizablity resizable = Resizablity.automaticallyScaleIfPossible) {
+	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible) {
 		this(size.width, size.height, title, opengl, resizable);
 	}
 
@@ -765,7 +1197,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		Creates a window based on the given [Image]. It's client area
 		width and height is equal to the image. (A window's client area
 		is the drawable space inside; it excludes the title bar, etc.)
-	   
+
 		Windows based on images will not be resizable and do not use OpenGL.
 	+/
 	this(Image image, string title = null) {
@@ -793,6 +1225,82 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
+	/// Experimental, do not use yet
+	/++
+		Grabs exclusive input from the user until you release it with
+		[releaseInputGrab].
+
+
+		Note: it is extremely rude to do this without good reason.
+		Reasons may include doing some kind of mouse drag operation
+		or popping up a temporary menu that should get events and will
+		be dismissed at ease by the user clicking away.
+
+		Params:
+			keyboard = do you want to grab keyboard input?
+			mouse = grab mouse input?
+			confine = confine the mouse cursor to inside this window?
+	+/
+	void grabInput(bool keyboard = true, bool mouse = true, bool confine = false) {
+		static if(UsingSimpledisplayX11) {
+			XSync(XDisplayConnection.get, 0);
+			if(keyboard)
+				XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+			if(mouse) {
+			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */, 
+				EventMask.PointerMotionMask // FIXME: not efficient
+				| EventMask.ButtonPressMask
+				| EventMask.ButtonReleaseMask
+			/* event mask */, GrabMode.GrabModeAsync, GrabMode.GrabModeAsync, confine ? this.impl.window : None, None, CurrentTime)
+				)
+			{
+				XSync(XDisplayConnection.get, 0);
+				import core.stdc.stdio;
+				printf("Grab input failed %d\n", res);
+				//throw new Exception("Grab input failed");
+			} else {
+				// cool
+			}
+			}
+
+		} else version(Windows) {
+			// FIXME: keyboard?
+			SetCapture(impl.hwnd);
+			if(confine) {
+				RECT rcClip;
+				//RECT rcOldClip;
+				//GetClipCursor(&rcOldClip); 
+				GetWindowRect(hwnd, &rcClip); 
+				ClipCursor(&rcClip); 
+			}
+		} else static assert(0);
+	}
+
+	/++
+		Releases the grab acquired by [grabInput].
+	+/
+	void releaseInputGrab() {
+		static if(UsingSimpledisplayX11) {
+			XUngrabPointer(XDisplayConnection.get, CurrentTime);
+		} else version(Windows) {
+			ReleaseCapture();
+			ClipCursor(null); 
+		} else static assert(0);
+	}
+
+	/++
+		Sets the input focus to this window.
+
+		You shouldn't call this very often - please let the user control the input focus.
+	+/
+	void focus() {
+		static if(UsingSimpledisplayX11) {
+			XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+		} else version(Windows) {
+			SetFocus(this.impl.hwnd);
+		} else static assert(0);
+	}
+
 	/++
 		Requests attention from the user for this window.
 
@@ -800,7 +1308,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		The typical result of this function is to change the color
 		of the taskbar icon, though it may be tweaked on specific
 		platforms.
-		
+
 		It is meant to unobtrusively tell the user that something
 		relevant to them happened in the background and they should
 		check the window when they get a chance. Upon receiving the
@@ -817,7 +1325,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		atom on X11 and the FlashWindow function on Windows.
 	+/
 	void requestAttention() {
-		if(focused)
+		if(_focused)
 			return;
 
 		version(Windows) {
@@ -835,7 +1343,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		} else static assert(0);
 	}
 
-	private bool focused; // FIXME:I might make a getter for this public later
+	private bool _focused;
 
 	version(X11) private bool demandingAttention;
 
@@ -856,14 +1364,20 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// Returns true if the window has been closed.
 	final @property bool closed() { return _closed; }
 
+	/// Returns true if the window is focused.
+	final @property bool focused() { return _focused; }
+
 	private bool _visible;
 	/// Returns true if the window is visible (mapped).
 	final @property bool visible() { return _visible; }
 
 	/// Closes the window. If there are no more open windows, the event loop will terminate.
 	void close() {
-		impl.closeWindow();
-		_closed = true;
+		if (!_closed) {
+			if (onClosing !is null) onClosing();
+			impl.closeWindow();
+			_closed = true;
+		}
 	}
 
 	/// Alias for `hidden = false`
@@ -885,6 +1399,63 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	void showCursor() {
 		if (!_closed) impl.showCursor();
 	}
+
+	/** "Warp" mouse pointer to coordinates relative to window top-left corner. Return "success" flag.
+	 *
+	 * Currently only supported on X11, so Windows implementation will return `false`.
+	 *
+	 * Note: "warping" pointer will not send any synthesised mouse events, so you probably doesn't want
+	 *       to use it to move mouse pointer to some active GUI area, for example, as your window won't
+	 *       receive "mouse moved here" event.
+	 */
+	bool warpMouse (int x, int y) {
+		version(X11) {
+			if (!_closed) { impl.warpMouse(x, y); return true; }
+		}
+		return false;
+	}
+
+	/// Send dummy window event to ping event loop. Required to process NotificationIcon on X11, for example.
+	void sendDummyEvent () {
+		version(X11) {
+			if (!_closed) { impl.sendDummyEvent(); }
+		}
+	}
+
+	/// Set window minimal size.
+	void setMinSize (int minwidth, int minheight) {
+		if (!_closed) impl.setMinSize(minwidth, minheight);
+	}
+
+	/// Set window maximal size.
+	void setMaxSize (int maxwidth, int maxheight) {
+		if (!_closed) impl.setMaxSize(maxwidth, maxheight);
+	}
+
+	/// Set window resize step (window size will be changed with the given granularity on supported platforms).
+	/// Currently only supported on X11.
+	void setResizeGranularity (int granx, int grany) {
+		if (!_closed) impl.setResizeGranularity(granx, grany);
+	}
+
+	/// Move window.
+	void move(int x, int y) { if (!_closed) impl.move(x, y); }
+
+	/// ditto
+	void move(Point p) { if (!_closed) impl.move(p.x, p.y); }
+
+	/++
+		Resize window.
+
+		Note that the width and height of the window are NOT instantly
+		updated - it waits for the window manager to approve the resize
+		request, which means you must return to the event loop before the
+		width and height are actually changed.
+	+/
+	void resize(int w, int h) { if (!_closed) impl.resize(w, h); }
+
+	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
+	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
 
 	private bool _hidden;
 
@@ -927,13 +1498,43 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	}
 
 	/// The event loop automatically returns when the window is closed
-	/// pulseTimeout is given in milliseconds.
+	/// pulseTimeout is given in milliseconds. If pulseTimeout == 0, no
+	/// pulse timer is created. The event loop will block until an event
+	/// arrives or the pulse timer goes off.
 	final int eventLoop(T...)(
 		long pulseTimeout,    /// set to zero if you don't want a pulse.
 		T eventHandlers) /// delegate list like std.concurrency.receive
 	{
 		setEventHandlers(eventHandlers);
-		return impl.eventLoop(pulseTimeout);
+		version(X11) {
+		keep_trying:
+			try {
+				return impl.eventLoop(pulseTimeout);
+			} catch(XDisconnectException e) {
+				if(e.userRequested) {
+					foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
+						item.discardConnectionState();
+					XCloseDisplay(XDisplayConnection.display);
+				}
+
+				XDisplayConnection.display = null;
+
+				throw e;
+
+				/*
+				auto dpy = XDisplayConnection.get;
+				if(dpy is null)
+					throw new XDisconnectException(false);
+				foreach(Window w, SimpleWindow window; SimpleWindow.nativeMapping) {
+					window.impl.createWindow(window.width, window.height, window.title, OpenGlOptions.no, null); //, window.opengl, window.parent);
+					window.show();
+				}
+				goto keep_trying;
+				*/
+			}
+		} else {
+			return impl.eventLoop(pulseTimeout);
+		}
 	}
 
 	/++
@@ -955,7 +1556,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 
 	// maps native window handles to SimpleWindow instances, if there are any
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
-	public static SimpleWindow[NativeWindowHandle] nativeMapping;
+	public __gshared SimpleWindow[NativeWindowHandle] nativeMapping;
 
 	/// Width of the window's drawable client area, in pixels.
 	final @property int width() { return _width; }
@@ -967,14 +1568,57 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	private int _height;
 
 	// HACK: making the best of some copy constructor woes with refcounting
-	private ScreenPainterImplementation* activeScreenPainter;
+	private ScreenPainterImplementation* activeScreenPainter_;
+
+	protected ScreenPainterImplementation* activeScreenPainter() { return activeScreenPainter_; }
+	protected void activeScreenPainter(ScreenPainterImplementation* i) { activeScreenPainter_ = i; }
 
 	private OpenGlOptions openglMode;
-	private Resizablity resizability;
+	private Resizability resizability;
 	private WindowTypes windowType;
 	private int customizationFlags;
 
+	/// `true` if OpenGL was initialized for this window.
+	@property bool isOpenGL () const pure nothrow @safe @nogc {
+		version(without_opengl)
+			return false;
+		else
+			return (openglMode == OpenGlOptions.yes);
+	}
+	@property Resizability resizingMode () const pure nothrow @safe @nogc { return resizability; } /// Original resizability.
+	@property WindowTypes type () const pure nothrow @safe @nogc { return windowType; } /// Original window type.
+	@property int customFlags () const pure nothrow @safe @nogc { return customizationFlags; } /// Original customization flags.
+
+	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	private shared int lockCount = 0;
+	void mtLock () {
+		version(X11) {
+			XLockDisplay(this.display);
+		}
+	}
+
+	/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	void mtUnlock () {
+		version(X11) {
+			XUnlockDisplay(this.display);
+		}
+	}
+
+	/// Emit a beep to get user's attention.
+	void beep () {
+		version(X11) {
+			XBell(this.display, 100);
+		} else version(Windows) {
+			MessageBeep(0xFFFFFFFF);
+		}
+	}
+
+
+
 	version(without_opengl) {} else {
+
 		/// Put your code in here that you want to be drawn automatically when your window is uncovered. Set a handler here *before* entering your event loop any time you pass `OpenGlOptions.yes` to the constructor. Ideally, you will set this delegate immediately after constructing the `SimpleWindow`.
 		void delegate() redrawOpenGlScene;
 
@@ -985,23 +1629,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 		    setAsCurrentOpenGlContext();
 		    glxSetVSync(display, impl.window, wait);
 		  }
-		}
-
-		/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
-		/// to call this, as it's not recommended to share window between threads.
-		private shared int lockCount = 0;
-		void mtLock () {
-			version(X11) {
-				XLockDisplay(this.display);
-			}
-		}
-
-		/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
-		/// to call this, as it's not recommended to share window between threads.
-		void mtUnlock () {
-			version(X11) {
-				XUnlockDisplay(this.display);
-			}
 		}
 
 		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
@@ -1037,6 +1664,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 				if(glXMakeCurrent(display, impl.window, impl.glc) == 0)
 					throw new Exception("glXMakeCurrent");
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				if (!wglMakeCurrent(ghDC, ghRC))
 					throw new Exception("wglMakeCurrent"); // let windows users suffer too
 			}
@@ -1049,6 +1677,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			version(X11) {
 				return (glXMakeCurrent(display, impl.window, impl.glc) != 0);
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				return wglMakeCurrent(ghDC, ghRC) ? true : false;
 			}
 		}
@@ -1060,6 +1689,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			version(X11) {
 				return (glXMakeCurrent(display, 0, null) != 0);
 			} else version(Windows) {
+				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				return wglMakeCurrent(ghDC, null) ? true : false;
 			}
 		}
@@ -1203,10 +1833,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 			}
 		} else
 		version(OSXCocoa) {
-           		draw().drawImage(Point(0, 0), i);
+			draw().drawImage(Point(0, 0), i);
 			setNeedsDisplay(view, true);
-		} else version(html5) {
-			// FIXME html5
 		} else static assert(0);
 	}
 
@@ -1223,8 +1851,28 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// Handles a timer pulse. Settable through setEventHandlers.
 	void delegate() handlePulse;
 
-	/// called when the focus changes, param is if we have it (true) or are losing it (false)
+	/// Called when the focus changes, param is if we have it (true) or are losing it (false).
 	void delegate(bool) onFocusChange;
+
+	/** Called inside `close()` method. Our window is still alive, and we can free various resources.
+	 * Sometimes it is easier to setup the delegate instead of subclassing. */
+	void delegate() onClosing;
+
+	/** Called when we received destroy notification. At this stage we cannot do much with our window
+	 * (as it is already dead, and it's native handle cannot be used), but we still can do some
+	 * last minute cleanup. */
+	void delegate() onDestroyed;
+
+	static if (UsingSimpledisplayX11)
+	/** Called when Expose event comes. See Xlib manual to understand the arguments.
+	 * Return `false` if you want Simpledisplay to copy backbuffer, or `true` if you did it yourself.
+	 * You will probably never need to setup this handler, it is for very low-level stuff.
+	 *
+	 * WARNING! Xlib is multithread-locked when this handles is called! */
+	bool delegate(int x, int y, int width, int height, int eventsLeft) handleExpose;
+
+	//version(Windows)
+	//bool delegate(WPARAM wParam, LPARAM lParam) handleWM_PAINT;
 
 	private {
 		int lastMouseX = int.min;
@@ -1249,7 +1897,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// use to redraw child widgets if you use system apis to add stuff
 	void delegate() paintingFinished;
 
-	/// handle a resize, after it happens. You must construct the window with Resizablity.allowResizing
+	void delegate() paintingFinishedDg() {
+		return paintingFinished;
+	}
+
+	/// handle a resize, after it happens. You must construct the window with Resizability.allowResizing
 	/// for this to ever happen.
 	void delegate(int width, int height) windowResized;
 
@@ -1269,7 +1921,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
 	/// If you used to use handleNativeEvent depending on it being static, just change it to use
 	/// this instead and it will work the same way.
-	static NativeEventHandler handleNativeGlobalEvent;
+	__gshared NativeEventHandler handleNativeGlobalEvent;
 
 //  private:
 	/// The native implementation is available, but you shouldn't use it unless you are
@@ -1281,7 +1933,821 @@ class SimpleWindow : CapableOfHandlingNativeEvent {
 	/// handles instead of a template mixin at some point because I'm not happy with the
 	/// code duplication here (ironically).
 	mixin NativeSimpleWindowImplementation!() impl;
+
+	/**
+		This is in-process one-way (from anything to window) event sending mechanics.
+		It is thread-safe, so it can be used in multi-threaded applications to send,
+		for example, "wake up and repaint" events when thread completed some operation.
+		This will allow to avoid using timer pulse to check events with synchronization,
+		'cause event handler will be called in UI thread. You can stop guessing which
+		pulse frequency will be enough for your app.
+		Note that events handlers may be called in arbitrary order, i.e. last registered
+		handler can be called first, and vice versa.
+	*/
+public:
+	/** Is our custom event queue empty? Can be used in simple cases to prevent
+	 * "spamming" window with events it can't cope with.
+	 * It is safe to call this from non-UI threads.
+	 */
+	@property bool eventQueueEmpty() () {
+		synchronized(this) {
+			foreach (const ref o; eventQueue[0..eventQueueUsed]) if (!o.doProcess) return true;
+		}
+		return false;
+	}
+
+	/** Does our custom event queue contains at least one with the given type?
+	 * Can be used in simple cases to prevent "spamming" window with events
+	 * it can't cope with.
+	 * It is safe to call this from non-UI threads.
+	 */
+	@property bool eventQueued(ET:Object) () {
+		synchronized(this) {
+			foreach (const ref o; eventQueue[0..eventQueueUsed]) {
+				if (!o.doProcess) {
+					if (cast(ET)(o.evt)) return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/** Add listener for custom event. Can be used like this:
+	 *
+	 * ---------------------
+	 *   auto eid = win.addEventListener((MyStruct evt) { ... });
+	 *   ...
+	 *   win.removeEventListener(eid);
+	 * ---------------------
+	 *
+	 * Returns: 0 on failure (should never happen, so ignore it)
+	 */
+	uint addEventListener(ET:Object) (void delegate (ET) dg) {
+		if (dg is null) return 0; // ignore empty handlers
+		synchronized(this) {
+			//FIXME: abort on overflow?
+			if (++lastUsentHandlerId == 0) { --lastUsentHandlerId; return 0; } // alas, can't register more events. at all.
+			eventHandlers[lastUsentHandlerId] = delegate (Object o) {
+				if (auto co = cast(ET)o) {
+					try {
+						dg(co);
+					} catch (Exception) {
+						// sorry!
+					}
+					return true;
+				}
+				return false;
+			};
+			return lastUsentHandlerId;
+		}
+	}
+
+	/// Remove event listener. It is safe to pass invalid event id here.
+	void removeEventListener() (uint id) {
+		synchronized(this) {
+			if (id) eventHandlers.remove(id);
+		}
+	}
+
+	/// Post event to queue. It is safe to call this from non-UI threads.
+	/// If `timeoutmsecs` is greater than zero, the event will be delayed for at least `timeoutmsecs` milliseconds.
+	bool postTimeout(ET:Object) (ET evt, uint timeoutmsecs) {
+		if (evt is null) return false; // ignore empty events, they can't be handled anyway
+		if (this.closed) return false; // closed windows can't handle events
+		// add events even if no event FD/event object created yet
+		synchronized(this) {
+			if (eventQueueUsed == uint.max) return false; // just in case
+			if (eventQueueUsed < eventQueue.length) {
+				eventQueue[eventQueueUsed++] = QueuedEvent(evt, timeoutmsecs);
+			} else {
+				auto optr = eventQueue.ptr;
+				eventQueue ~= QueuedEvent(evt, timeoutmsecs);
+				++eventQueueUsed;
+				assert(eventQueueUsed == eventQueue.length);
+				if (eventQueue.ptr !is optr) {
+					import core.memory : GC;
+					if (eventQueue.ptr is GC.addrOf(eventQueue.ptr)) GC.setAttr(eventQueue.ptr, GC.BlkAttr.NO_INTERIOR);
+				}
+			}
+			if (!eventWakeUp()) {
+				// can't wake up event processor, so there is no reason to keep the event
+				eventQueue[--eventQueueUsed].evt = null;
+				return false;
+			}
+			return true;
+		}
+	}
+
+	/// Post event to queue. It is safe to call this from non-UI threads.
+	bool postEvent(ET:Object) (ET evt) {
+		return postTimeout!ET(evt, 0);
+	}
+
+private:
+	private import core.time : MonoTime;
+
+	version(X11) {
+		__gshared int customEventFD = -1;
+	} else version(Windows) {
+		__gshared HANDLE customEventH = null;
+	}
+
+	// wake up event processor
+	bool eventWakeUp () {
+		version(X11) {
+			import core.sys.posix.unistd : write;
+			ulong n = 1;
+			if (customEventFD >= 0) write(customEventFD, &n, n.sizeof);
+			return true;
+		} else version(Windows) {
+			if (customEventH !is null) SetEvent(customEventH);
+			return true;
+		} else {
+			// not implemented for other OSes
+			return false;
+		}
+	}
+
+	static struct QueuedEvent {
+		Object evt;
+		bool timed = false;
+		MonoTime hittime = MonoTime.zero;
+		bool doProcess = false; // process event at the current iteration (internal flag)
+
+		this (Object aevt, uint toutmsecs) {
+			evt = aevt;
+			if (toutmsecs > 0) {
+				import core.time : msecs;
+				timed = true;
+				hittime = MonoTime.currTime+toutmsecs.msecs;
+			}
+		}
+	}
+
+	alias CustomEventHandler = bool delegate (Object o) nothrow;
+	uint lastUsentHandlerId;
+	CustomEventHandler[uint] eventHandlers;
+	QueuedEvent[] eventQueue;
+	uint eventQueueUsed; // to avoid `.assumeSafeAppend` and length changes
+
+	// process queued events and call custom event handlers
+	// this will not process events posted from called handlers (such events are postponed for the next iteration)
+	void processCustomEvents () {
+		// don't lock and re-lock on each iteration, or other threads may spam event queue
+		synchronized(this) {
+			uint ecount = eventQueueUsed; // user may want to post new events from an event handler; process 'em on next iteration
+			auto ctt = MonoTime.currTime;
+			// mark events to process (this is required for `eventQueued()`)
+			foreach (ref qe; eventQueue[0..ecount]) {
+				if (qe.timed) {
+					qe.doProcess = (qe.hittime <= ctt);
+				} else {
+					qe.doProcess = true;
+				}
+			}
+			// process marked events
+			uint efree = 0; // non-processed events will be put at this index
+			foreach (immutable eidx; 0..ecount) {
+				import core.stdc.string : memmove;
+				if (!eventQueue[eidx].doProcess) {
+					// skip this event
+					assert(efree <= eidx);
+					if (efree != eidx) {
+						// copy this event to queue start
+						eventQueue[efree] = eventQueue[eidx];
+						eventQueue[eidx].evt = null; // just in case
+					}
+					++efree;
+					continue;
+				}
+				auto evt = eventQueue[eidx].evt;
+				eventQueue[eidx].evt = null; // in case event handler will hit GC
+				if (evt is null) continue; // just in case
+				// try all handlers; this can be slow, but meh...
+				foreach (ref evhan; eventHandlers.byValue) {
+					if (evhan !is null) evhan(evt);
+				}
+			}
+			// move all unprocessed events to queue top; efree holds first "free index"
+			foreach (immutable eidx; ecount..eventQueueUsed) {
+				assert(efree <= eidx);
+				if (efree != eidx) eventQueue[efree] = eventQueue[eidx];
+				++efree;
+			}
+			eventQueueUsed = efree;
+			// wake up event processor on next event loop iteration if we have more queued events
+			foreach (const ref qe; eventQueue[0..eventQueueUsed]) {
+				if (!qe.timed) { eventWakeUp(); break; }
+			}
+		}
+	}
+
+	// for all windows in nativeMapping
+	static void processAllCustomEvents () {
+		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
+			if (sw is null || sw.closed) continue;
+			sw.processCustomEvents();
+		}
+	}
+
+	// 0: infinite (i.e. no scheduled events in queue)
+	uint eventQueueTimeoutMSecs () {
+		synchronized(this) {
+			if (eventQueueUsed == 0) return 0;
+			uint res = int.max;
+			auto ctt = MonoTime.currTime;
+			foreach (const ref qe; eventQueue[0..eventQueueUsed]) {
+				if (qe.evt is null) assert(0, "WUTAFUUUUUUU..."); // the thing that should not be. ABSOLUTELY! (c)
+				if (qe.doProcess) continue; // just in case
+				if (!qe.timed) return 1; // minimal
+				if (qe.hittime <= ctt) return 1; // minimal
+				auto tms = (qe.hittime-ctt).total!"msecs";
+				if (tms < 1) tms = 1; // safety net
+				if (tms >= int.max) tms = int.max-1; // and another safety net
+				if (res > tms) res = cast(uint)tms;
+			}
+			return (res >= int.max ? 0 : res);
+		}
+	}
+
+	// for all windows in nativeMapping
+	static uint eventAllQueueTimeoutMSecs () {
+		uint res = uint.max;
+		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
+			if (sw is null || sw.closed) continue;
+			uint to = sw.eventQueueTimeoutMSecs();
+			if (to && to < res) {
+				res = to;
+				if (to == 1) break; // can't have less than this
+			}
+		}
+		return (res >= int.max ? 0 : res);
+	}
 }
+
+
+/++
+	Provides an icon on the system notification area (also known as the system tray).
+
+
+	NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
+	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
+	use the older version.
++/
+class NotificationAreaIcon : CapableOfHandlingNativeEvent {
+
+	version(X11) {
+		void recreateAfterDisconnect() {
+			stateDiscarded = false;
+			throw new Exception("NOT IMPLEMENTED");
+		}
+
+		bool stateDiscarded;
+		void discardConnectionState() {
+			stateDiscarded = true;
+		}
+	}
+
+
+	version(X11) {
+		Image img;
+
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(XEvent e) {
+				switch(e.type) {
+					case EventType.Expose:
+						redraw();
+					break;
+					case EventType.ButtonPress:
+						auto event = e.xbutton;
+						if (onClick !is null || onClickEx !is null) {
+							MouseButton mb = cast(MouseButton)0;
+							switch (event.button) {
+								case 1: mb = MouseButton.left; break; // left
+								case 2: mb = MouseButton.middle; break; // middle
+								case 3: mb = MouseButton.right; break; // right
+								case 4: mb = MouseButton.wheelUp; break; // scroll up
+								case 5: mb = MouseButton.wheelDown; break; // scroll down
+								case 6: break; // idk
+								case 7: break; // idk
+								case 8: mb = MouseButton.backButton; break;
+								case 9: mb = MouseButton.forwardButton; break;
+								default:
+							}
+							if (mb) {
+								try { onClick()(mb); } catch (Exception) {}
+								if (onClickEx !is null) try { onClickEx(event.x_root, event.y_root, mb, cast(ModifierState)event.state); } catch (Exception) {}
+							}
+						}
+					break;
+					case EventType.EnterNotify:
+						if (onEnter !is null) {
+							onEnter(e.xcrossing.x_root, e.xcrossing.y_root, cast(ModifierState)e.xcrossing.state);
+						}
+						break;
+					case EventType.LeaveNotify:
+						if (onLeave !is null) try { onLeave(); } catch (Exception) {}
+						break;
+					case EventType.DestroyNotify:
+						active = false;
+						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
+					break;
+					case EventType.ConfigureNotify:
+						auto event = e.xconfigure;
+						this.width = event.width;
+						this.height = event.height;
+						redraw();
+					break;
+					default: return 1;
+				}
+				return 1;
+			};
+		}
+
+		/* private */ void hideBalloon() {
+			balloon.close();
+			timer.destroy();
+			balloon = null;
+			timer = null;
+		}
+
+		void redraw() {
+			if (!active) return;
+
+			auto display = XDisplayConnection.get;
+			auto gc = DefaultGC(display, DefaultScreen(display));
+			XClearWindow(display, nativeHandle);
+
+			XSetForeground(display, gc,
+				cast(uint) 0 << 16 |
+				cast(uint) 0 << 8 |
+				cast(uint) 0);
+			XFillRectangle(display, nativeHandle, gc, 0, 0, width, height);
+
+			if (img is null) {
+				XSetForeground(display, gc,
+					cast(uint) 0 << 16 |
+					cast(uint) 127 << 8 |
+					cast(uint) 0);
+				XFillArc(display, nativeHandle,
+					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+			} else {
+				if (img.usingXshm)
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
+				else
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
+			}
+			flushGui();
+		}
+
+		static Window getTrayOwner() {
+			auto display = XDisplayConnection.get;
+			auto i = cast(int) DefaultScreen(display);
+			if(i < 10 && i >= 0) {
+				static Atom atom;
+				if(atom == None)
+					atom = XInternAtom(display, cast(char*) ("_NET_SYSTEM_TRAY_S"~(cast(char) (i + '0')) ~ '\0').ptr, false);
+				return XGetSelectionOwner(display, atom);
+			}
+			return None;
+		}
+
+		static void sendTrayMessage(arch_long message, arch_long d1, arch_long d2, arch_long d3) {
+			auto to = getTrayOwner();
+			auto display = XDisplayConnection.get;
+			XEvent ev;
+			ev.xclient.type = EventType.ClientMessage;
+			ev.xclient.window = to;
+			ev.xclient.message_type = GetAtom!("_NET_SYSTEM_TRAY_OPCODE", true)(display);
+			ev.xclient.format = 32;
+			ev.xclient.data.l[0] = CurrentTime;
+			ev.xclient.data.l[1] = message;
+			ev.xclient.data.l[2] = d1;
+			ev.xclient.data.l[3] = d2;
+			ev.xclient.data.l[4] = d3;
+
+			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
+		}
+
+		private void createXWin () {
+			if(getTrayOwner() == None)
+				throw new Exception("No notification area found");
+			// create window
+			auto display = XDisplayConnection.get;
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
+			assert(nativeWindow);
+
+			nativeHandle = nativeWindow;
+
+			XSelectInput(display, nativeWindow,
+				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
+				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
+
+			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
+			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+			active = true;
+		}
+
+
+		private SimpleWindow balloon;
+		private Timer timer;
+
+		private Window nativeHandle;
+		private int width = 16;
+		private int height = 16;
+		private bool active = false;
+
+		void delegate (int x, int y, MouseButton button, ModifierState mods) onClickEx; /// x and y are globals (relative to root window). X11 only.
+		void delegate (int x, int y, ModifierState mods) onEnter; /// x and y are global window coordinates. X11 only.
+		void delegate () onLeave; /// X11 only.
+
+		@property bool closed () const pure nothrow @safe @nogc { return !active; } ///
+
+		/// X11 only. Get global window coordinates and size. This can be used to show various notifications.
+		void getWindowRect (out int x, out int y, out int width, out int height) {
+			if (!active) { width = 1; height = 1; return; } // 1: just in case
+			Window dummyw;
+			auto dpy = XDisplayConnection.get;
+			//XWindowAttributes xwa;
+			//XGetWindowAttributes(dpy, nativeHandle, &xwa);
+			//XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), xwa.x, xwa.y, &x, &y, &dummyw);
+			XTranslateCoordinates(dpy, nativeHandle, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
+			width = this.width;
+			height = this.height;
+		}
+	}
+
+	/+
+		What I actually want from this:
+
+		* set / change: icon, tooltip
+		* handle: mouse click, right click
+		* show: notification bubble.
+	+/
+
+	version(Windows) {
+		WindowsIcon win32Icon;
+		HWND hwnd;
+
+		NOTIFYICONDATAW data;
+
+		NativeEventHandler getNativeEventHandler() {
+			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+				if(msg == WM_USER) {
+					auto event = LOWORD(lParam);
+					auto iconId = HIWORD(lParam);
+					//auto x = GET_X_LPARAM(wParam);
+					//auto y = GET_Y_LPARAM(wParam);
+					switch(event) {
+						case WM_LBUTTONDOWN:
+							onClick()(MouseButton.left);
+						break;
+						case WM_RBUTTONDOWN:
+							onClick()(MouseButton.right);
+						break;
+						case WM_MBUTTONDOWN:
+							onClick()(MouseButton.middle);
+						break;
+						case WM_MOUSEMOVE:
+							// sent, we could use it.
+						break;
+						case WM_MOUSEWHEEL:
+							// NOT SENT
+						break;
+						//case NIN_KEYSELECT:
+						//case NIN_SELECT:
+						break;
+						default: {}
+					}
+				}
+				return 0;
+			};
+		}
+
+		enum NIF_SHOWTIP = 0x00000080;
+
+		private static struct NOTIFYICONDATAW {
+			DWORD cbSize;
+			HWND  hWnd;
+			UINT  uID;
+			UINT  uFlags;
+			UINT  uCallbackMessage;
+			HICON hIcon;
+			WCHAR[128] szTip;
+			DWORD dwState;
+			DWORD dwStateMask;
+			WCHAR[256] szInfo;
+			union {
+				UINT uTimeout;
+				UINT uVersion;
+			}
+			WCHAR[64] szInfoTitle;
+			DWORD dwInfoFlags;
+			GUID  guidItem;
+			HICON hBalloonIcon;
+		}
+
+	}
+
+	/++
+		Note that on Windows, only left, right, and middle buttons are sent.
+		Mouse wheel buttons are NOT set, so don't rely on those events if your
+		program is meant to be used on Windows too.
+	+/
+	this(string name, MemoryImage icon, void delegate(MouseButton button) onClick) {
+		// The canonical constructor for Windows needs the MemoryImage, so it is here,
+		// but on X, we need an Image, so its canonical ctor is there. They should
+		// forward to each other though.
+		version(X11) {
+			this(name, icon is null ? null : Image.fromMemoryImage(icon), onClick);
+		} else version(Windows) {
+			this.onClick = onClick;
+			this.win32Icon = new WindowsIcon(icon);
+
+			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+
+			static bool registered = false;
+			if(!registered) {
+				WNDCLASSEX wc;
+				wc.cbSize = wc.sizeof;
+				wc.hInstance = hInstance;
+				wc.lpfnWndProc = &WndProc;
+				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+			}
+
+			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
+			if(hwnd is null)
+				throw new Exception("CreateWindow");
+
+			data.cbSize = data.sizeof;
+			data.hWnd = hwnd;
+			data.uID = cast(uint) cast(void*) this;
+			data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP /* use default tooltip, for now. */;
+				// NIF_INFO means show balloon
+			data.uCallbackMessage = WM_USER;
+			data.hIcon = this.win32Icon.hIcon;
+			data.szTip = ""; // FIXME
+			data.dwState = 0; // NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+
+			data.uVersion = 4; // NOTIFYICON_VERSION_4; // Windows Vista and up
+
+
+			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
+
+			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
+		} else static assert(0);
+	}
+
+	/// ditto
+	this(string name, Image icon, void delegate(MouseButton button) onClick) {
+		version(X11) {
+			this.onClick = onClick;
+			this.img = icon;
+			createXWin();
+		} else version(Windows) {
+			this(name, icon is null ? null : icon.toTrueColorImage(), onClick);
+		} else static assert(0);
+	}
+
+	version(X11) {
+		/++
+			X-specific extension (for now at least)
+		+/
+		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			if (icon !is null) this.img = Image.fromMemoryImage(icon);
+			createXWin();
+		}
+
+		/// ditto
+		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
+			this.onClickEx = onClickEx;
+			this.img = icon;
+			createXWin();
+		}
+	}
+
+	private void delegate (MouseButton button) onClick_;
+
+	///
+	@property final void delegate(MouseButton) onClick() {
+		if(onClick_ is null)
+			onClick_ = delegate void(MouseButton) {};
+		return onClick_;
+	}
+
+	/// ditto
+	@property final void onClick(void delegate(MouseButton) handler) {
+		// I made this a property setter so we can wrap smaller arg
+		// delegates and just forward all to onClickEx or something.
+		onClick_ = handler;
+	}
+
+
+	@property void name(string n) {
+	}
+
+	///
+	@property void icon(MemoryImage i) {
+		version(X11) {
+			if (!active) return;
+			if (i !is null) {
+				this.img = Image.fromMemoryImage(i);
+				redraw();
+			} else {
+				if (this.img !is null) {
+					this.img = null;
+					redraw();
+				}
+			}
+		} else version(Windows) {
+			this.win32Icon = new WindowsIcon(i);
+
+			data.uFlags = NIF_ICON;
+			data.hIcon = this.win32Icon.hIcon;
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	/// ditto
+	@property void icon (Image i) {
+		version(X11) {
+			if (!active) return;
+			if (i !is img) {
+				img = i;
+				redraw();
+			}
+		} else version(Windows) {
+			this.icon(i is null ? null : i.toTrueColorImage());
+		} else static assert(0);
+	}
+
+	/++
+		Shows a balloon notification. You can only show one balloon at a time, if you call
+		it twice while one is already up, the first balloon will be replaced.
+		
+		
+		The user is free to block notifications and they will automatically disappear after
+		a timeout period.
+
+		Params:
+			title = Title of the notification. Must be 40 chars or less or the OS may truncate it.
+			message = The message to pop up. Must be 220 chars or less or the OS may truncate it.
+			icon = the icon to display with the notification. If null, it uses your existing icon.
+			onclick = delegate called if the user clicks the balloon. (not yet implemented)
+			timeout = your suggested timeout period. The operating system is free to ignore your suggestion.
+	+/
+	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 10_000) {
+		version(X11) {
+			if(!active) return;
+			if(balloon) {
+				hideBalloon();
+			}
+			// I know there are two specs for this, but one is never
+			// implemented by any window manager I have ever seen, and
+			// the other is a bloated mess and too complicated for simpledisplay...
+			// so doing my own little window instead.
+			balloon = new SimpleWindow(380, 120, null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.notification, WindowFlags.dontAutoShow/*, window*/);
+
+			int x, y, width, height;
+			getWindowRect(x, y, width, height);
+
+			balloon.move(x - balloon.width, y - balloon.height);
+			auto painter = balloon.draw();
+			painter.fillColor = Color(220, 220, 220);
+			painter.outlineColor = Color.black;
+			painter.drawRectangle(Point(0, 0), balloon.width, balloon.height);
+			auto iconWidth = icon is null ? 0 : icon.width;
+			if(icon)
+				painter.drawImage(Point(4, 4), Image.fromMemoryImage(icon));
+			iconWidth += 6; // margin around the icon
+
+			// draw a close button
+			painter.outlineColor = Color(44, 44, 44);
+			painter.fillColor = Color(255, 255, 255);
+			painter.drawRectangle(Point(balloon.width - 15, 3), 13, 13);
+			painter.pen = Pen(Color.black, 3);
+			painter.drawLine(Point(balloon.width - 14, 4), Point(balloon.width - 4, 14));
+			painter.drawLine(Point(balloon.width - 4, 4), Point(balloon.width - 14, 13));
+			painter.pen = Pen(Color.black, 1);
+			painter.fillColor = Color(220, 220, 220);
+
+			// Draw the title and message
+			painter.drawText(Point(4 + iconWidth, 4), title);
+			painter.drawLine(
+				Point(4 + iconWidth, 4 + painter.fontHeight + 1),
+				Point(balloon.width - 4, 4 + painter.fontHeight + 1),
+			);
+			painter.drawText(Point(4 + iconWidth, 4 + painter.fontHeight + 4), message);
+
+			balloon.setEventHandlers(
+				(MouseEvent ev) {
+					if(ev.type == MouseEventType.buttonPressed) {
+						if(ev.x > balloon.width - 16 && ev.y < 16)
+							hideBalloon();
+						else if(onclick)
+							onclick();
+					}
+				}
+			);
+			balloon.show();
+
+			timer = new Timer(timeout, &hideBalloon);
+		} else version(Windows) {
+			enum NIF_INFO = 0x00000010;
+
+			data.uFlags = NIF_INFO;
+
+			// FIXME: go back to the last valid unicode code point
+			if(title.length > 40)
+				title = title[0 .. 40];
+			if(message.length > 220)
+				message = message[0 .. 220];
+
+			enum NIIF_RESPECT_QUIET_TIME = 0x00000080;
+			enum NIIF_LARGE_ICON  = 0x00000020;
+			enum NIIF_NOSOUND = 0x00000010;
+			enum NIIF_USER = 0x00000004;
+			enum NIIF_ERROR = 0x00000003;
+			enum NIIF_WARNING = 0x00000002;
+			enum NIIF_INFO = 0x00000001;
+			enum NIIF_NONE = 0;
+
+			WCharzBuffer t = WCharzBuffer(title);
+			WCharzBuffer m = WCharzBuffer(message);
+
+			t.copyInto(data.szInfoTitle);
+			m.copyInto(data.szInfo);
+			data.dwInfoFlags = NIIF_RESPECT_QUIET_TIME;
+
+			if(icon !is null) {
+				auto i = new WindowsIcon(icon);
+				data.hBalloonIcon = i.hIcon;
+				data.dwInfoFlags |= NIIF_USER;
+			}
+
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	///
+	//version(Windows)
+	void show() {
+		version(X11) {
+			if(!hidden)
+				return;
+			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeHandle, 0, 0);
+			hidden = false;
+		} else version(Windows) {
+			data.uFlags = NIF_STATE;
+			data.dwState = 0; // NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	version(X11)
+		bool hidden = false;
+
+	///
+	//version(Windows)
+	void hide() {
+		version(X11) {
+			if(hidden)
+				return;
+			hidden = true;
+			XUnmapWindow(XDisplayConnection.get, nativeHandle);
+		} else version(Windows) {
+			data.uFlags = NIF_STATE;
+			data.dwState = NIS_HIDDEN; // windows vista
+			data.dwStateMask = NIS_HIDDEN; // windows vista
+			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	///
+	void close () {
+		version(X11) {
+			if (active) {
+				active = false; // event handler will set this too, but meh
+				XUnmapWindow(XDisplayConnection.get, nativeHandle); // 'cause why not; let's be polite
+				XDestroyWindow(XDisplayConnection.get, nativeHandle);
+				flushGui();
+			}
+		} else version(Windows) {
+			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
+		} else static assert(0);
+	}
+
+	~this() {
+		close();
+	}
+}
+
 
 
 // basic functions to make timers
@@ -1314,31 +2780,39 @@ class Timer {
 		this.onPulse = onPulse;
 
 		version(Windows) {
+			/*
 			handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
 			if(handle == 0)
 				throw new Exception("SetTimer fail");
+			*/
+
+			// thanks to Archival 998 for the WaitableTimer blocks
+			handle = CreateWaitableTimer(null, false, null);
+			long initialTime = 0;
+			if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
+				throw new Exception("SetWaitableTimer Failed");
 
 			mapping[handle] = this;
 
 		} else version(linux) {
 			static import ep = core.sys.linux.epoll;
 
-			static import tfd = core.sys.linux.timerfd;
+			import core.sys.linux.timerfd;
 
-			fd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+			fd = timerfd_create(CLOCK_MONOTONIC, 0);
 			if(fd == -1)
 				throw new Exception("timer create failed");
 
 			mapping[fd] = this;
 
-			tfd.itimerspec value;
+			itimerspec value;
 			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
 			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
 
 			value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
 			value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
 
-			if(tfd.timerfd_settime(fd, 0, &value, null) == -1)
+			if(timerfd_settime(fd, 0, &value, null) == -1)
 				throw new Exception("couldn't make pulse timer");
 
 			version(with_eventloop) {
@@ -1359,9 +2833,11 @@ class Timer {
 	void destroy() {
 		version(Windows) {
 			if(handle) {
-				KillTimer(null, handle);
+				// KillTimer(null, handle);
+				CancelWaitableTimer(cast(void*)handle);
 				mapping.remove(handle);
-				handle = 0;
+				CloseHandle(handle);
+				handle = null;
 			}
 		} else version(linux) {
 			if(fd != -1) {
@@ -1389,6 +2865,22 @@ class Timer {
 		destroy();
 	}
 
+
+	void changeTime(int intervalInMilliseconds)
+	{
+		version(Windows)
+		{
+			if(handle)
+			{
+				//handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
+				long initialTime = 0;
+				if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
+					throw new Exception("couldn't change pulse timer");
+			}
+		}
+	}
+
+
 	private:
 
 	void delegate() onPulse;
@@ -1407,7 +2899,8 @@ class Timer {
 
 	version(Windows)
 		extern(Windows)
-		static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
+		//static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
+		static void timerCallback(HANDLE timer, DWORD lowTime, DWORD hiTime) nothrow {
 			if(Timer* t = timer in mapping) {
 				try
 				(*t).trigger();
@@ -1416,13 +2909,54 @@ class Timer {
 		}
 
 	version(Windows) {
-		UINT_PTR handle;
-		static Timer[UINT_PTR] mapping;
+		//UINT_PTR handle;
+		//static Timer[UINT_PTR] mapping;
+		HANDLE handle;
+		__gshared Timer[HANDLE] mapping;
 	} else version(linux) {
 		int fd = -1;
-		static Timer[int] mapping;
+		__gshared Timer[int] mapping;
 	} else static assert(0, "timer not supported");
 }
+}
+
+version(linux)
+/// Lets you add files to the event loop for reading. Use at your own risk.
+class PosixFdReader {
+	///
+	this(void delegate() onReady, int fd) {
+		this((int) { onReady(); }, fd);
+	}
+
+	///
+	this(void delegate(int) onReady, int fd) {
+		this.onReady = onReady;
+		this.fd = fd;
+
+		mapping[fd] = this;
+
+		version(with_eventloop) {
+			import arsd.eventloop;
+			addFileEventListeners(fd, &ready);
+		} else {
+			prepareEventLoop();
+
+			static import ep = core.sys.linux.epoll;
+			ep.epoll_event ev = void;
+			ev.events = ep.EPOLLIN;
+			ev.data.fd = fd;
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+		}
+	}
+
+	void delegate(int) onReady;
+
+	void ready() {
+		onReady(fd);
+	}
+
+	int fd = -1;
+	__gshared PosixFdReader[int] mapping;
 }
 
 // basic functions to access the clipboard
@@ -1439,9 +2973,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 
 +/
 
-/// this does a delegate because it is actually an async call on X...
-/// the receiver may never be called if the clipboard is empty or unavailable
-/// gets plain text from the clipboard
+/++
+	this does a delegate because it is actually an async call on X...
+	the receiver may never be called if the clipboard is empty or unavailable
+	gets plain text from the clipboard
++/
 void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
@@ -1489,6 +3025,17 @@ struct WCharzBuffer {
 		return buffer.ptr;
 	}
 
+	wchar[] slice() {
+		return buffer;
+	}
+
+	void copyInto(R)(ref R r) {
+		static if(is(R == wchar[N], size_t N)) {
+			r[0 .. this.length] = slice[];
+			r[this.length] = 0;
+		} else static assert(0, "can only copy into wchar[n], not " ~ R.stringof);
+	}
+
 	this(in char[] data) {
 		/*
 			I don't think there's any string with a longer length
@@ -1517,9 +3064,49 @@ wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = tr
 	}
 	if(zeroTerminate) {
 		buffer[got] = 0;
-		got++;
 	}
 	return buffer[0 .. got];
+}
+
+version(Windows)
+char[] makeUtf8StringFromWindowsString(in wchar[] str, char[] buffer) {
+	if(str.length == 0)
+		return null;
+
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, buffer.ptr, cast(int) buffer.length, null, null);
+	if(got == 0) {
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+			throw new Exception("not enough buffer");
+		else
+			throw new Exception("conversion"); // FIXME: GetLastError
+	}
+	return buffer[0 .. got];
+}
+
+version(Windows)
+string makeUtf8StringFromWindowsString(in wchar[] str) {
+	char[] buffer;
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, null, 0, null, null);
+	buffer.length = got;
+
+	// it is unique because we just allocated it above!
+	return cast(string) makeUtf8StringFromWindowsString(str, buffer);
+}
+
+version(Windows)
+string makeUtf8StringFromWindowsString(wchar* str) {
+	char[] buffer;
+	auto got = WideCharToMultiByte(CP_UTF8, 0, str, -1, null, 0, null, null);
+	buffer.length = got;
+
+	got = WideCharToMultiByte(CP_UTF8, 0, str, -1, buffer.ptr, cast(int) buffer.length, null, null);
+	if(got == 0) {
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+			throw new Exception("not enough buffer");
+		else
+			throw new Exception("conversion"); // FIXME: GetLastError
+	}
+	return cast(string) buffer[0 .. got];
 }
 
 /// copies some text to the clipboard
@@ -1556,11 +3143,14 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 version(X11) {
 	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
 
+	private Atom*[] interredAtoms; // for discardAndRecreate
+
 	/// Platform specific for X11
 	@property Atom GetAtom(string name, bool create = false)(Display* display) {
 		static Atom a;
 		if(!a) {
 			a = XInternAtom(display, name, !create);
+			interredAtoms ~= &a;
 		}
 		if(a == None)
 			throw new Exception("XInternAtom " ~ name ~ " " ~ (create ? "true":"false"));
@@ -1572,12 +3162,20 @@ version(X11) {
 		setX11Selection!"PRIMARY"(window, text);
 	}
 
+	/// Asserts ownership of SECONDARY and copies the text into a buffer that clients can request later
+	void setSecondarySelection(SimpleWindow window, string text) {
+		setX11Selection!"SECONDARY"(window, text);
+	}
+
 	///
 	void setX11Selection(string atomName)(SimpleWindow window, string text) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
-		XSetSelectionOwner(display, GetAtom!atomName(display), window.impl.window, 0 /* CurrentTime */);
+		static if (atomName == "PRIMARY") Atom a = XA_PRIMARY;
+		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
+		else Atom a = GetAtom!atomName(display);
+		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
 		window.impl.setSelectionHandler = (XEvent ev) {
 			XSelectionRequestEvent* event = &ev.xselectionrequest;
 			XSelectionEvent selectionEvent;
@@ -1590,7 +3188,15 @@ version(X11) {
 
 			if(event.property == None)
 				selectionEvent.property = event.target;
-			if(event.target == XA_STRING) {
+			if(event.target == GetAtom!"TARGETS"(display)) {
+				/* respond with the supported types */
+				Atom[3] tlist;// = [XA_UTF8, XA_STRING, XA_TARGETS];
+				tlist[0] = GetAtom!"UTF8_STRING"(display);
+				tlist[1] = XA_STRING;
+				tlist[2] = GetAtom!"TARGETS"(display);
+				XChangeProperty(display, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, cast(void*)tlist.ptr, 3);
+				selectionEvent.property = event.property;
+			} else if(event.target == XA_STRING) {
 				selectionEvent.property = event.property;
 				XChangeProperty (display,
 					selectionEvent.requestor,
@@ -1628,8 +3234,7 @@ version(X11) {
 
 		window.impl.getSelectionHandler = handler;
 
-		auto target = XA_STRING;
-		//auto target = GetAtom!"UTF8_STRING"(display);
+		auto target = GetAtom!"TARGETS"(display);
 
 		// SDD_DATA is "simpledisplay.d data"
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
@@ -1663,131 +3268,214 @@ version(X11) {
 	enum SYSTEM_TRAY_BEGIN_MESSAGE  = 1;
 	enum SYSTEM_TRAY_CANCEL_MESSAGE = 2;
 
-	///
-	class NotificationAreaIcon : CapableOfHandlingNativeEvent {
-		NativeEventHandler getNativeEventHandler() {
-			return delegate int(XEvent e) {
-				switch(e.type) {
-					case EventType.Expose:
-						redraw();
-					break;
-					case EventType.ButtonPress:
-						auto event = e.xbutton;
-						if(onClick)
-							onClick(event.button);
-					break;
-					case EventType.DestroyNotify:
-						CapableOfHandlingNativeEvent.nativeHandleMapping.remove(nativeHandle);
-					break;
-					case EventType.ConfigureNotify:
-						auto event = e.xconfigure;
-						this.width = event.width;
-						this.height = event.height;
 
-						redraw();
-					break;
-					default: return 1;
+	/** Global hotkey handler. Simpledisplay will usually create one for you, but if you want to use subclassing
+	 * instead of delegates, you can subclass this, and override `doHandle()` method. */
+	public class GlobalHotkey {
+		KeyEvent key;
+		void delegate () handler;
+
+		void doHandle () { if (handler !is null) handler(); } /// this will be called by hotkey manager
+
+		/// Create from initialzed KeyEvent object
+		this (KeyEvent akey, void delegate () ahandler=null) {
+			if (akey.key == 0 || !GlobalHotkeyManager.isGoodModifierMask(akey.modifierState)) throw new Exception("invalid global hotkey");
+			key = akey;
+			handler = ahandler;
+		}
+
+		/// Create from emacs-like key name ("C-M-Y", etc.)
+		this (const(char)[] akey, void delegate () ahandler=null) {
+			key = KeyEvent.parse(akey);
+			if (key.key == 0 || !GlobalHotkeyManager.isGoodModifierMask(key.modifierState)) throw new Exception("invalid global hotkey");
+			handler = ahandler;
+		}
+
+	}
+
+	private extern(C) int XGrabErrorHandler (Display* dpy, XErrorEvent* evt) nothrow @nogc {
+		//conwriteln("failed to grab key");
+		GlobalHotkeyManager.ghfailed = true;
+		return 0;
+	}
+
+	private extern(C) int adrlogger (Display* dpy, XErrorEvent* evt) nothrow @nogc {
+		import core.stdc.stdio;
+		char[265] buffer;
+		XGetErrorText(dpy, evt.error_code, buffer.ptr, cast(int) buffer.length);
+		printf("ERROR: %s\n", buffer.ptr);
+		return 0;
+	}
+
+	/++
+		Global hotkey manager. It contains static methods to manage global hotkeys.
+
+		---
+		 try {
+			GlobalHotkeyManager.register("M-H-A", delegate () { hideShowWindows(); });
+		} catch (Exception e) {
+			conwriteln("ERROR registering hotkey!");
+		}
+		---
+
+		The key strings are based on Emacs. In practical terms,
+		`M` means `alt` and `H` means the Windows logo key. `C`
+		is `ctrl`.
+
+		$(WARNING
+			This is X-specific right now. If you are on
+			Windows, try [registerHotKey] instead.
+
+			We will probably merge these into a single
+			interface later.
+		)
+	+/
+	public class GlobalHotkeyManager : CapableOfHandlingNativeEvent {
+		version(X11) {
+			void recreateAfterDisconnect() {
+				throw new Exception("NOT IMPLEMENTED");
+			}
+			void discardConnectionState() {
+				throw new Exception("NOT IMPLEMENTED");
+			}
+		}
+
+		private static immutable uint[8] masklist = [ 0,
+			KeyOrButtonMask.LockMask,
+			KeyOrButtonMask.Mod2Mask,
+			KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask,
+			KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask,
+		];
+		private __gshared GlobalHotkeyManager ghmanager;
+		private __gshared bool ghfailed = false;
+
+		private static bool isGoodModifierMask (uint modmask) pure nothrow @safe @nogc {
+			if (modmask == 0) return false;
+			if (modmask&(KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask)) return false;
+			if (modmask&~(KeyOrButtonMask.Mod5Mask-1)) return false;
+			return true;
+		}
+
+		private static uint cleanupModifiers (uint modmask) pure nothrow @safe @nogc {
+			modmask &= ~(KeyOrButtonMask.LockMask|KeyOrButtonMask.Mod2Mask|KeyOrButtonMask.Mod3Mask); // remove caps, num, scroll
+			modmask &= (KeyOrButtonMask.Mod5Mask-1); // and other modifiers
+			return modmask;
+		}
+
+		private static uint keyEvent2KeyCode() (in auto ref KeyEvent ke) {
+			uint keycode = cast(uint)ke.key;
+			auto dpy = XDisplayConnection.get;
+			return XKeysymToKeycode(dpy, keycode);
+		}
+
+		private static ulong keyCode2Hash() (uint keycode, uint modstate) pure nothrow @safe @nogc { return ((cast(ulong)modstate)<<32)|keycode; }
+
+		private __gshared GlobalHotkey[ulong] globalHotkeyList;
+
+		NativeEventHandler getNativeEventHandler () {
+			return delegate int (XEvent e) {
+				if (e.type != EventType.KeyPress) return 1;
+				auto kev = cast(const(XKeyEvent)*)&e;
+				auto hash = keyCode2Hash(e.xkey.keycode, cleanupModifiers(e.xkey.state));
+				if (auto ghkp = hash in globalHotkeyList) {
+					try {
+						ghkp.doHandle();
+					} catch (Exception e) {
+						import core.stdc.stdio : stderr, fprintf;
+						stderr.fprintf("HOTKEY HANDLER EXCEPTION: %.*s", cast(uint)e.msg.length, e.msg.ptr);
+					}
 				}
 				return 1;
 			};
 		}
 
-		void redraw() {
-			auto display = XDisplayConnection.get;
-			auto gc = DefaultGC(display, DefaultScreen(display));
-			XClearWindow(display, nativeHandle);
-
-			XSetForeground(display, gc,
-				cast(uint) 0 << 16 |
-				cast(uint) 0 << 8 |
-				cast(uint) 0);
-			XFillRectangle(display, nativeHandle,
-				gc, 0, 0, width, height);
-
-			XSetForeground(display, gc,
-				cast(uint) 0 << 16 |
-				cast(uint) 127 << 8 |
-				cast(uint) 0);
-			XFillArc(display, nativeHandle,
-				gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
+		private this () {
+			auto dpy = XDisplayConnection.get;
+			auto root = RootWindow(dpy, DefaultScreen(dpy));
+			CapableOfHandlingNativeEvent.nativeHandleMapping[root] = this;
+			XSelectInput(dpy, root, EventMask.KeyPressMask);
 		}
 
-		static Window getTrayOwner() {
-			auto display = XDisplayConnection.get;
-			auto i = cast(int) DefaultScreen(display);
-			if(i < 10 && i >= 0) {
-				static Atom atom;
-				if(atom == None)
-					atom = XInternAtom(display, cast(char*) ("_NET_SYSTEM_TRAY_S"~(cast(char) (i + '0')) ~ '\0').ptr, false);
-				return XGetSelectionOwner(display, atom);
+		/// Register new global hotkey with initialized `GlobalHotkey` object.
+		/// This function will throw if it failed to register hotkey (i.e. hotkey is invalid or already taken).
+		static void register (GlobalHotkey gh) {
+			if (gh is null) return;
+			if (gh.key.key == 0 || !isGoodModifierMask(gh.key.modifierState)) throw new Exception("invalid global hotkey");
+
+			auto dpy = XDisplayConnection.get;
+			immutable keycode = keyEvent2KeyCode(gh.key);
+
+			auto hash = keyCode2Hash(keycode, gh.key.modifierState);
+			if (hash in globalHotkeyList) throw new Exception("duplicate global hotkey");
+			if (ghmanager is null) ghmanager = new GlobalHotkeyManager();
+			XSync(dpy, 0/*False*/);
+
+			Window root = RootWindow(dpy, DefaultScreen(dpy));
+			XErrorHandler savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+			ghfailed = false;
+			foreach (immutable uint ormask; masklist[]) {
+				XGrabKey(dpy, keycode, gh.key.modifierState|ormask, /*grab_window*/root, /*owner_events*/0/*False*/, GrabMode.GrabModeAsync, GrabMode.GrabModeAsync);
 			}
-			return None;
+			XSync(dpy, 0/*False*/);
+			XSetErrorHandler(savedErrorHandler);
+
+			if (ghfailed) {
+				savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+				foreach (immutable uint ormask; masklist[]) XUngrabKey(dpy, keycode, gh.key.modifierState|ormask, /*grab_window*/root);
+				XSync(dpy, 0/*False*/);
+				XSetErrorHandler(savedErrorHandler);
+				throw new Exception("cannot register global hotkey");
+			}
+
+			globalHotkeyList[hash] = gh;
 		}
 
-		static void sendTrayMessage(arch_long message, arch_long d1, arch_long d2, arch_long d3) {
-			auto to = getTrayOwner();
-			auto display = XDisplayConnection.get;
-			XEvent ev;
-			ev.xclient.type = EventType.ClientMessage;
-			ev.xclient.window = to;
-			ev.xclient.message_type = GetAtom!("_NET_SYSTEM_TRAY_OPCODE", true)(display);
-			ev.xclient.format = 32;
-			ev.xclient.data.l[0] = CurrentTime;
-			ev.xclient.data.l[1] = message;
-			ev.xclient.data.l[2] = d1;
-			ev.xclient.data.l[3] = d2;
-			ev.xclient.data.l[4] = d3;
-
-			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
+		/// Ditto
+		static void register (const(char)[] akey, void delegate () ahandler) {
+			register(new GlobalHotkey(akey, ahandler));
 		}
 
-		///
-		this(string name, MemoryImage icon, void delegate(int button) onClick) {
-			if(getTrayOwner() == None)
-				throw new Exception("No notification area found");
-			// create window
-			auto display = XDisplayConnection.get;
-			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
-			assert(nativeWindow);
-
-			this.onClick = onClick;
-
-			nativeHandle = nativeWindow;
-
-			XSelectInput(display, nativeWindow,
-				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask);
-
-			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
-			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+		private static void removeByHash (ulong hash) {
+			if (auto ghp = hash in globalHotkeyList) {
+				auto dpy = XDisplayConnection.get;
+				immutable keycode = keyEvent2KeyCode(ghp.key);
+				Window root = RootWindow(dpy, DefaultScreen(dpy));
+				XSync(dpy, 0/*False*/);
+				XErrorHandler savedErrorHandler = XSetErrorHandler(&XGrabErrorHandler);
+				foreach (immutable uint ormask; masklist[]) XUngrabKey(dpy, keycode, ghp.key.modifierState|ormask, /*grab_window*/root);
+				XSync(dpy, 0/*False*/);
+				XSetErrorHandler(savedErrorHandler);
+				globalHotkeyList.remove(hash);
+			}
 		}
 
-		private Window nativeHandle;
-		private int width = 12;
-		private int height = 12;
-
-		void delegate(int) onClick;
-
-		@property void name(string n) {
-
+		/// Register new global hotkey with previously used `GlobalHotkey` object.
+		/// It is safe to unregister unknown or invalid hotkey.
+		static void unregister (GlobalHotkey gh) {
+			//TODO: add second AA for faster search? prolly doesn't worth it.
+			if (gh is null) return;
+			foreach (const ref kv; globalHotkeyList.byKeyValue) {
+				if (kv.value is gh) {
+					removeByHash(kv.key);
+					return;
+				}
+			}
 		}
 
-		@property void icon(MemoryImage i) {
-
+		/// Ditto.
+		static void unregister (const(char)[] key) {
+			auto kev = KeyEvent.parse(key);
+			immutable keycode = keyEvent2KeyCode(kev);
+			removeByHash(keyCode2Hash(keycode, kev.modifierState));
 		}
 	}
 }
 
-version(D_Ddoc) {
-	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
-	void sendSyntheticInput(wstring s);
-	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
-	int registerHotKey(SimpleWindow window, uint modifiers, uint vk, void delegate() handler);
-	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
-	void unregisterHotKey(SimpleWindow window, int id);
-}
-
 version(Windows) {
-	/// Platform-specific
+	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
 	void sendSyntheticInput(wstring s) {
 		INPUT[] inputs;
 		inputs.reserve(s.length * 2);
@@ -1808,16 +3496,19 @@ version(Windows) {
 		}
 	}
 
+
+
+
 	// global hotkey helper function
 
-	/// Platform-specific for Windows
+	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
 	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
-		static int hotkeyId = 0;
+		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
 			throw new Exception("RegisterHotKey failed");
 
-		static void delegate()[WPARAM][HWND] handlers;
+		__gshared void delegate()[WPARAM][HWND] handlers;
 
 		handlers[window.impl.hwnd][id] = handler;
 
@@ -1849,7 +3540,7 @@ version(Windows) {
 		return id;
 	}
 
-	/// Platform-specific for Windows
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
@@ -1905,7 +3596,7 @@ version(without_opengl) {
 		Determines if you want an OpenGL context created on the new window.
 
 
-		See more: <a href="#topics-3d">in the 3d topic</a>.
+		See more: [#topics-3d|in the 3d topic].
 
 		---
 		import arsd.simpledisplay;
@@ -1930,17 +3621,24 @@ version(without_opengl) {
 	}
 
 	version(X11) {
-		pragma(lib, "GL");
-		pragma(lib, "GLU");
+		static if (!SdpyIsUsingIVGLBinds) {
+			pragma(lib, "GL");
+			pragma(lib, "GLU");
+		}
 	} else version(Windows) {
-		pragma(lib, "opengl32");
-		pragma(lib, "glu32");
+		static if (!SdpyIsUsingIVGLBinds) {
+			pragma(lib, "opengl32");
+			pragma(lib, "glu32");
+		}
 	} else
 		static assert(0, "OpenGL not supported on your system yet. Try -version=X11 if you have X Windows available, or -version=without_opengl to go without.");
 }
 
+deprecated("Sorry, I misspelled it in the first version! Use `Resizability` instead.")
+alias Resizablity = Resizability;
+
 /// When you create a SimpleWindow, you can see its resizability to be one of these via the constructor...
-enum Resizablity {
+enum Resizability {
 	fixedSize, /// the window cannot be resized
 	allowResizing, /// the window can be resized. The buffer (if there is one) will automatically adjust size, but not stretch the contents. the windowResized delegate will be called so you can respond to the new size yourself.
 	automaticallyScaleIfPossible, /// if possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size. If this is impossible, it will not allow the user to resize the window at all. Note: window.width and window.height WILL be adjusted, which might throw you off if you draw based on them, so keep track of your expected width and height separately. That way, when it is scaled, things won't be thrown off.
@@ -1963,6 +3661,7 @@ enum TextAlignment : uint {
 }
 
 public import arsd.color; // no longer stand alone... :-( but i need a common type for this to work with images easily.
+alias Rectangle = arsd.color.Rectangle;
 
 
 /++
@@ -1979,6 +3678,180 @@ struct KeyEvent {
 	uint modifierState; /// see enum [ModifierState]. They are bitwise combined together.
 
 	SimpleWindow window; /// associated Window
+
+	// convert key event to simplified string representation a-la emacs
+	const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted {
+		uint dpos = 0;
+		void put (const(char)[] s...) nothrow @trusted {
+			static if (growdest) {
+				foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch; else { dest ~= ch; ++dpos; }
+			} else {
+				foreach (char ch; s) if (dpos < dest.length) dest.ptr[dpos++] = ch;
+			}
+		}
+
+		void putMod (ModifierState mod, Key key, string text) nothrow @trusted {
+			if ((this.modifierState&mod) != 0 && (this.pressed || this.key != key)) put(text);
+		}
+
+		if (!this.key && !(this.modifierState&(ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows))) return null;
+
+		// put modifiers
+		// releasing modifier keys can produce bizarre things like "Ctrl+Ctrl", so hack around it
+		putMod(ModifierState.ctrl, Key.Ctrl, "Ctrl+");
+		putMod(ModifierState.alt, Key.Alt, "Alt+");
+		putMod(ModifierState.windows, Key.Shift, "Windows+");
+		putMod(ModifierState.shift, Key.Shift, "Shift+");
+
+		if (this.key) {
+			foreach (string kn; __traits(allMembers, Key)) {
+				if (this.key == __traits(getMember, Key, kn)) {
+					// HACK!
+					static if (kn == "N0") put("0");
+					else static if (kn == "N1") put("1");
+					else static if (kn == "N2") put("2");
+					else static if (kn == "N3") put("3");
+					else static if (kn == "N4") put("4");
+					else static if (kn == "N5") put("5");
+					else static if (kn == "N6") put("6");
+					else static if (kn == "N7") put("7");
+					else static if (kn == "N8") put("8");
+					else static if (kn == "N9") put("9");
+					else put(kn);
+					return dest[0..dpos];
+				}
+			}
+			put("Unknown");
+		} else {
+			if (dpos && dest[dpos-1] == '+') --dpos;
+		}
+		return dest[0..dpos];
+	}
+
+	string toStr() () { return cast(string)toStrBuf!true(null); } // it is safe to cast here
+
+	/** Parse string into key name with modifiers. It accepts things like:
+	 *
+	 * C-H-1 -- emacs style (ctrl, and windows, and 1)
+	 *
+	 * Ctrl+Win+1 -- windows style
+	 *
+	 * Ctrl-Win-1 -- '-' is a valid delimiter too
+	 *
+	 * Ctrl Win 1 -- and space
+	 *
+	 * and even "Win + 1 + Ctrl".
+	 */
+	static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
+		auto nanchor = name; // keep it anchored, 'cause `name` may have NO_INTERIOR set
+
+		// remove trailing spaces
+		while (name.length && name[$-1] <= ' ') name = name[0..$-1];
+
+		// tokens delimited by blank, '+', or '-'
+		// null on eol
+		const(char)[] getToken () nothrow @trusted @nogc {
+			// remove leading spaces and delimiters
+			while (name.length && (name[0] <= ' ' || name[0] == '+' || name[0] == '-')) name = name[1..$];
+			if (name.length == 0) return null; // oops, no more tokens
+			// get token
+			size_t epos = 0;
+			while (epos < name.length && name[epos] > ' ' && name[epos] != '+' && name[epos] != '-') ++epos;
+			assert(epos > 0 && epos <= name.length);
+			auto res = name[0..epos];
+			name = name[epos..$];
+			return res;
+		}
+
+		static bool strEquCI (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
+			if (s0.length != s1.length) return false;
+			foreach (immutable ci, char c0; s0) {
+				if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man's tolower
+				char c1 = s1[ci];
+				if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man's tolower
+				if (c0 != c1) return false;
+			}
+			return true;
+		}
+
+		KeyEvent res;
+		res.key = cast(Key)0; // just in case
+		const(char)[] tk, tkn; // last token
+		bool allowEmascStyle = true;
+		tokenloop: for (;;) {
+			tk = tkn;
+			tkn = getToken();
+			//k8: yay, i took "Bloody Mess" trait from Fallout!
+			if (tkn.length != 0 && tk.length == 0) { tk = tkn; continue tokenloop; }
+			if (tkn.length == 0 && tk.length == 0) break; // no more tokens
+			if (allowEmascStyle && tkn.length != 0) {
+				if (tk.length == 1) {
+					char mdc = tk[0];
+					if (mdc >= 'a' && mdc <= 'z') mdc -= 32; // poor man's toupper()
+					if (mdc == 'C' && (res.modifierState&ModifierState.ctrl) == 0) {res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+					if (mdc == 'M' && (res.modifierState&ModifierState.alt) == 0) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+					if (mdc == 'H' && (res.modifierState&ModifierState.windows) == 0) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+					if (mdc == 'S' && (res.modifierState&ModifierState.shift) == 0) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+				}
+			}
+			allowEmascStyle = false;
+			if (strEquCI(tk, "Ctrl")) { res.modifierState |= ModifierState.ctrl; continue tokenloop; }
+			if (strEquCI(tk, "Alt")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
+			if (strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
+			if (strEquCI(tk, "Shift")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+			if (tk.length == 0) continue;
+			// try key name
+			if (res.key == 0) {
+				// little hack
+				if (tk.length == 1 && tk[0] >= '0' && tk[0] <= '9') {
+					final switch (tk[0]) {
+						case '0': tk = "N0"; break;
+						case '1': tk = "N1"; break;
+						case '2': tk = "N2"; break;
+						case '3': tk = "N3"; break;
+						case '4': tk = "N4"; break;
+						case '5': tk = "N5"; break;
+						case '6': tk = "N6"; break;
+						case '7': tk = "N7"; break;
+						case '8': tk = "N8"; break;
+						case '9': tk = "N9"; break;
+					}
+				}
+				foreach (string kn; __traits(allMembers, Key)) {
+					if (strEquCI(tk, kn)) { res.key = __traits(getMember, Key, kn); continue tokenloop; }
+				}
+			}
+			// unknown or duplicate key name, get out of here
+			break;
+		}
+		return res; // something
+	}
+
+	bool opEquals() (const(char)[] name) const nothrow @trusted @nogc {
+		enum modmask = (ModifierState.ctrl|ModifierState.alt|ModifierState.shift|ModifierState.windows);
+		void doModKey (ref uint mask, ref Key kk, Key k, ModifierState mst) {
+			if (kk == k) { mask |= mst; kk = cast(Key)0; }
+		}
+		auto ke = KeyEvent.parse(name);
+		if (this.key != ke.key) {
+			// things like "ctrl+alt" are complicated
+			uint tkm = this.modifierState&modmask;
+			uint kkm = ke.modifierState&modmask;
+			Key tk = this.key;
+			// ke
+			doModKey(kkm, ke.key, Key.Ctrl, ModifierState.ctrl);
+			doModKey(kkm, ke.key, Key.Alt, ModifierState.alt);
+			doModKey(kkm, ke.key, Key.Windows, ModifierState.windows);
+			doModKey(kkm, ke.key, Key.Shift, ModifierState.shift);
+			// this
+			doModKey(tkm, tk, Key.Ctrl, ModifierState.ctrl);
+			doModKey(tkm, tk, Key.Alt, ModifierState.alt);
+			doModKey(tkm, tk, Key.Windows, ModifierState.windows);
+			doModKey(tkm, tk, Key.Shift, ModifierState.shift);
+			return (tk == ke.key && tkm == kkm);
+		}
+		return ((this.modifierState&modmask) == (ke.modifierState&modmask));
+	}
 }
 
 /// Type of a [MouseEvent]
@@ -1991,6 +3864,30 @@ enum MouseEventType : int {
 // FIXME: mouse move should be distinct from presses+releases, so we can avoid subscribing to those events in X unnecessarily
 /++
 	Listen for this on your event listeners if you are interested in mouse action.
+
+	Note that [button] is used on mouse press and release events. If you are curious about which button is being held in during motion, use [modifierState] and check the bitmask for [ModifierState.leftButtonDown], etc.
+
+	Examples:
+
+	This will draw boxes on the window with the mouse as you hold the left button.
+	---
+	import arsd.simpledisplay;
+
+	void main() {
+		auto window = new SimpleWindow();
+
+		window.eventLoop(0,
+			(MouseEvent ev) {
+				if(ev.modifierState & ModifierState.leftButtonDown) {
+					auto painter = window.draw();
+					painter.fillColor = Color.red;
+					painter.outlineColor = Color.black;
+					painter.drawRectangle(Point(ev.x / 16 * 16, ev.y / 16 * 16), 16, 16);
+				}
+			}
+		);
+	}
+	---
 +/
 struct MouseEvent {
 	MouseEventType type; /// movement, press, release, double click. See [MouseEventType]
@@ -2004,7 +3901,49 @@ struct MouseEvent {
 	MouseButton button; /// See [MouseButton]
 	int modifierState; /// See [ModifierState]
 
+	/// Returns a linear representation of mouse button,
+	/// for use with static arrays. Guaranteed to be >= 0 && <= 15
+	///
+	/// Its implementation is based on range-limiting `core.bitop.bsf(button) + 1`.
+	@property ubyte buttonLinear() const {
+		import core.bitop;
+		if(button == 0)
+			return 0;
+		return (bsf(button) + 1) & 0b1111;
+	}
+
+	bool doubleClick; /// was it a double click? Only set on type == [MouseEventType.buttonPressed]
+
 	SimpleWindow window; /// The window in which the event happened.
+
+	Point globalCoordinates() {
+		Point p;
+		if(window is null)
+			throw new Exception("wtf");
+		static if(UsingSimpledisplayX11) {
+			Window child;
+			XTranslateCoordinates(
+				XDisplayConnection.get,
+				window.impl.window,
+				RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get)),
+				x, y, &p.x, &p.y, &child);
+			return p;
+		} else version(Windows) {
+			POINT[1] points;
+			points[0].x = x;
+			points[0].y = y;
+			MapWindowPoints(
+				window.impl.hwnd,
+				null,
+				points.ptr,
+				points.length
+			);
+			p.x = points[0].x;
+			p.y = points[0].y;
+
+			return p;
+		} else static assert(0);
+	}
 }
 
 /// This gives a few more options to drawing lines and such
@@ -2047,10 +3986,11 @@ struct Pen {
 
 
 +/
-	/// NOT IMPLEMENTED
+	/// Style of lines drawn
 	enum Style {
-		Solid, ///
-		Dashed ///
+		Solid, /// a solid line
+		Dashed, /// a dashed line
+		Dotted, /// a dotted line
 	}
 }
 
@@ -2074,7 +4014,7 @@ struct Pen {
 	Be sure these are cleaned up properly. simpledisplay will do its best to do the right thing, including cleaning them up in garbage collection sweeps (one of which is run at most normal program terminations) and catching some deadly signals. It will almost always do the right thing. But, this is no substitute for you managing the resource properly yourself. (And try not to segfault, as recovery from them is alway dicey!)
 
 	Please call `destroy(image);` when you are done with it. The easiest way to do this is with scope:
-	
+
 	---
 		auto image = new Image(256, 256);
 		scope(exit) destroy(image);
@@ -2083,7 +4023,7 @@ struct Pen {
 	As long as you don't hold on to it outside the scope.
 
 	I might change it to be an owned pointer at some point in the future.
-	
+
 	)
 
 	Drawing pixels on the image may be simple, using the `opIndexAssign` function, but
@@ -2096,16 +4036,16 @@ struct Pen {
 +/
 final class Image {
 	///
-	this(int width, int height) {
+	this(int width, int height, bool forcexshm=false) {
 		this.width = width;
 		this.height = height;
 
-		impl.createImage(width, height);
+		impl.createImage(width, height, forcexshm);
 	}
 
 	///
-	this(Size size) {
-		this(size.width, size.height);
+	this(Size size, bool forcexshm=false) {
+		this(size.width, size.height, forcexshm);
 	}
 
 	~this() {
@@ -2288,8 +4228,6 @@ final class Image {
 			return 4 * width;
 		else version(OSXCocoa)
 			return 4 * width;
-		else version(html5)
-			return 4 * width;
 		else static assert(0);
 	}
 
@@ -2300,8 +4238,6 @@ final class Image {
 		else version(X11)
 			return 4;
 		else version(OSXCocoa)
-			return 4;
-		else version(html5)
 			return 4;
 		else static assert(0);
 	}
@@ -2335,8 +4271,163 @@ void displayImage(Image image, SimpleWindow win = null) {
 	}
 }
 
+enum FontWeight : int {
+	dontcare = 0,
+	thin = 100,
+	extralight = 200,
+	light = 300,
+	regular = 400,
+	medium = 500,
+	semibold = 600,
+	bold = 700,
+	extrabold = 800,
+	heavy = 900
+}
+
+/++
+	Represents a font loaded off the operating system or the X server.
+
+
+	While the api here is unified cross platform, the fonts are not necessarily
+	available, even across machines of the same platform, so be sure to always check
+	for null (using [isNull]) and have a fallback plan.
+
+	When you have a font you like, use [ScreenPainter.setFont] to load it for drawing.
+
+	Worst case, a null font will automatically fall back to the default font loaded
+	for your system.
++/
+class OperatingSystemFont {
+
+	version(X11) {
+		XFontStruct* font;
+		XFontSet fontset;
+	} else version(Windows) {
+		HFONT font;
+	} else static assert(0);
+
+	///
+	this(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		load(name, size, weight, italic);
+	}
+
+	///
+	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		unload();
+		version(X11) {
+			string weightstr;
+			with(FontWeight)
+			final switch(weight) {
+				case dontcare: weightstr = "*"; break;
+				case thin: weightstr = "extralight"; break;
+				case extralight: weightstr = "extralight"; break;
+				case light: weightstr = "light"; break;
+				case regular: weightstr = "regular"; break;
+				case medium: weightstr = "medium"; break;
+				case semibold: weightstr = "demibold"; break;
+				case bold: weightstr = "bold"; break;
+				case extrabold: weightstr = "demibold"; break;
+				case heavy: weightstr = "black"; break;
+			}
+			string sizestr;
+			if(size == 0)
+				sizestr = "*";
+			else if(size < 10)
+				sizestr = "" ~ cast(char)(size % 10 + '0');
+			else
+				sizestr = "" ~ cast(char)(size / 10 + '0') ~ cast(char)(size % 10 + '0');
+			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*\0";
+
+			//import std.stdio; writeln(xfontstr);
+
+			auto display = XDisplayConnection.get;
+
+			font = XLoadQueryFont(display, xfontstr.ptr);
+			if(font is null)
+				return false;
+
+			char** lol;
+			int lol2;
+			char* lol3;
+			fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
+		} else version(Windows) {
+			WCharzBuffer buffer = WCharzBuffer(name);
+			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+		} else static assert(0);
+
+		return !isNull();
+	}
+
+	///
+	void unload() {
+		if(isNull())
+			return;
+
+		version(X11) {
+			auto display = XDisplayConnection.display;
+
+			if(display is null)
+				return;
+
+			if(font)
+				XFreeFont(display, font);
+			if(fontset)
+				XFreeFontSet(display, fontset);
+
+			font = null;
+			fontset = null;
+		} else version(Windows) {
+			DeleteObject(font);
+			font = null;
+		} else static assert(0);
+	}
+
+	/// FIXME not implemented
+	void loadDefault() {
+
+	}
+
+	///
+	bool isNull() {
+		return font is null;
+	}
+
+	/* Metrics */
+	/+
+		GetFontMetrics
+		GetABCWidth
+		GetKerningPairs
+
+		XLoadQueryFont
+
+		if I do it right, I can size it all here, and match
+		what happens when I draw the full string with the OS functions.
+
+		subclasses might do the same thing while getting the glyphs on images
+	+/
+	struct GlyphInfo {
+		int glyph;
+
+		size_t stringIdxStart;
+		size_t stringIdxEnd;
+
+		Rectangle boundingBox;
+	}
+	GlyphInfo[] getCharBoxes() {
+		return null;
+
+	}
+
+	~this() {
+		unload();
+	}
+}
+
 /**
-	The 2D drawing proxy.
+	The 2D drawing proxy. You acquire one of these with [SimpleWindow.draw] rather
+	than constructing it directly. Then, it is reference counted so you can pass it
+	at around and when the last ref goes out of scope, the buffered drawing activities
+	are all carried out.
 
 
 	Most functions use the outlineColor instead of taking a color themselves.
@@ -2344,9 +4435,12 @@ void displayImage(Image image, SimpleWindow win = null) {
 	final reference goes out of scope.
 */
 struct ScreenPainter {
-	SimpleWindow window;
-	this(SimpleWindow window, NativeWindowHandle handle) {
+	CapableOfBeingDrawnUpon window;
+	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle) {
 		this.window = window;
+		if(window.closed)
+			return; // null painter is now allowed so no need to throw anymore, this likely happens at the end of a program anyway
+		currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
 			impl.referenceCount++;
@@ -2359,57 +4453,145 @@ struct ScreenPainter {
 			window.activeScreenPainter = impl;
 		//	writeln("constructed");
 		}
+
+		copyActiveOriginals();
+	}
+
+	private Pen originalPen;
+	private Color originalFillColor;
+	private arsd.color.Rectangle originalClipRectangle;
+	void copyActiveOriginals() {
+		if(impl is null) return;
+		originalPen = impl._activePen;
+		originalFillColor = impl._fillColor;
+		originalClipRectangle = impl._clipRectangle;
 	}
 
 	~this() {
+		if(impl is null) return;
 		impl.referenceCount--;
 		//writeln("refcount -- ", impl.referenceCount);
 		if(impl.referenceCount == 0) {
 			//writeln("destructed");
 			impl.dispose();
 			window.activeScreenPainter = null;
+			//import std.stdio; writeln("paint finished");
+		} else {
+			// there is still an active reference, reset stuff so the
+			// next user doesn't get weirdness via the reference
+			this.rasterOp = RasterOp.normal;
+			pen = originalPen;
+			fillColor = originalFillColor;
+			impl.setClipRectangle(originalClipRectangle.left, originalClipRectangle.top, originalClipRectangle.width, originalClipRectangle.height);
 		}
 	}
 
-	// @disable this(this) { } // compiler bug? the linker is bitching about it beind defined twice
-
 	this(this) {
+		if(impl is null) return;
 		impl.referenceCount++;
 		//writeln("refcount ++ ", impl.referenceCount);
+
+		copyActiveOriginals();
+	}
+
+	private int _originX;
+	private int _originY;
+	@property int originX() { return _originX; }
+	@property int originY() { return _originY; }
+	@property int originX(int a) {
+		//currentClipRectangle.left += a - _originX;
+		//currentClipRectangle.right += a - _originX;
+		_originX = a;
+		return _originX;
+	}
+	@property int originY(int a) {
+		//currentClipRectangle.top += a - _originY;
+		//currentClipRectangle.bottom += a - _originY;
+		_originY = a;
+		return _originY;
+	}
+	arsd.color.Rectangle currentClipRectangle; // set BEFORE doing any transformations
+	private void transform(ref Point p) {
+		if(impl is null) return;
+		p.x += _originX;
+		p.y += _originY;
+	}
+
+	// this needs to be checked BEFORE the originX/Y transformation
+	private bool isClipped(Point p) {
+		return !currentClipRectangle.contains(p);
+	}
+	private bool isClipped(Point p, int width, int height) {
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, Size(width + 1, height + 1)));
+	}
+	private bool isClipped(Point p, Size s) {
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, Size(s.width + 1, s.height + 1)));
+	}
+	private bool isClipped(Point p, Point p2) {
+		// need to ensure the end points are actually included inside, so the +1 does that
+		return !currentClipRectangle.overlaps(arsd.color.Rectangle(p, p2 + Point(1, 1)));
+	}
+
+
+	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
+	void setClipRectangle(Point pt, int width, int height) {
+		if(impl is null) return;
+		if(pt == currentClipRectangle.upperLeft && width == currentClipRectangle.width && height == currentClipRectangle.height)
+			return; // no need to do anything
+		currentClipRectangle = arsd.color.Rectangle(pt, Size(width, height));
+		transform(pt);
+
+		impl.setClipRectangle(pt.x, pt.y, width, height);
+	}
+
+	/// ditto
+	void setClipRectangle(arsd.color.Rectangle rect) {
+		if(impl is null) return;
+		setClipRectangle(rect.upperLeft, rect.width, rect.height);
+	}
+
+	///
+	void setFont(OperatingSystemFont font) {
+		if(impl is null) return;
+		impl.setFont(font);
 	}
 
 	///
 	int fontHeight() {
+		if(impl is null) return 0;
 		return impl.fontHeight();
 	}
 
+	private Pen activePen;
+
 	///
 	@property void pen(Pen p) {
+		if(impl is null) return;
+		activePen = p;
 		impl.pen(p);
 	}
 
 	///
 	@property void outlineColor(Color c) {
-		impl.outlineColor(c);
+		if(impl is null) return;
+		if(activePen.color == c)
+			return;
+		activePen.color = c;
+		impl.pen(activePen);
 	}
 
 	///
 	@property void fillColor(Color c) {
+		if(impl is null) return;
 		impl.fillColor(c);
 	}
 
 	///
 	@property void rasterOp(RasterOp op) {
+		if(impl is null) return;
 		impl.rasterOp(op);
 	}
 
-	private void transform(ref Point p) {
-		p.x += originX;
-		p.y += originY;
-	}
-
-	int originX;
-	int originY;
 
 	void updateDisplay() {
 		// FIXME this should do what the dtor does
@@ -2417,6 +4599,8 @@ struct ScreenPainter {
 
 	/// Scrolls the contents in the bounding rectangle by dx, dy. Positive dx means scroll left (make space available at the right), positive dy means scroll up (make space available at the bottom)
 	void scrollArea(Point upperLeft, int width, int height, int dx, int dy) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		version(Windows) {
 			// http://msdn.microsoft.com/en-us/library/windows/desktop/bb787589%28v=vs.85%29.aspx
@@ -2435,6 +4619,7 @@ struct ScreenPainter {
 
 	///
 	void clear() {
+		if(impl is null) return;
 		fillColor = Color(255, 255, 255);
 		outlineColor = Color(255, 255, 255);
 		drawRectangle(Point(0, 0), window.width, window.height);
@@ -2442,12 +4627,16 @@ struct ScreenPainter {
 
 	///
 	void drawPixmap(Sprite s, Point upperLeft) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, s.width, s.height)) return;
 		transform(upperLeft);
 		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
 	}
 
 	///
 	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
+		if(impl is null) return;
+		//if(isClipped(upperLeft, w, h)) return; // FIXME
 		transform(upperLeft);
 		if(w == 0 || w > i.width)
 			w = i.width;
@@ -2462,16 +4651,36 @@ struct ScreenPainter {
 	}
 
 	///
-	Size textSize(string text) {
+	Size textSize(in char[] text) {
+		if(impl is null) return Size(0, 0);
 		return impl.textSize(text);
 	}
 
 	///
 	void drawText(Point upperLeft, in char[] text, Point lowerRight = Point(0, 0), uint alignment = 0) {
-		transform(upperLeft);
-		if(lowerRight.x != 0 || lowerRight.y != 0)
+		if(impl is null) return;
+		if(lowerRight.x != 0 || lowerRight.y != 0) {
+			if(isClipped(upperLeft, lowerRight)) return;
 			transform(lowerRight);
+		} else {
+			if(isClipped(upperLeft, textSize(text))) return;
+		}
+		transform(upperLeft);
 		impl.drawText(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y, text, alignment);
+	}
+
+	/++
+		Draws text using a custom font.
+
+		This is still MAJOR work in progress.
+
+		Creating a [DrawableFont] can be tricky and require additional dependencies.
+	+/
+	void drawText(DrawableFont font, Point upperLeft, in char[] text) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, Point(int.max, int.max))) return;
+		transform(upperLeft);
+		font.drawString(this, upperLeft, text);
 	}
 
 	static struct TextDrawingContext {
@@ -2506,11 +4715,14 @@ struct ScreenPainter {
 	}
 
 	void drawText(TextDrawingContext context, in char[] text, uint alignment = 0) {
+		if(impl is null) return;
 		// FIXME
 	}
 
 	/// Drawing an individual pixel is slow. Avoid it if possible.
 	void drawPixel(Point where) {
+		if(impl is null) return;
+		if(isClipped(where)) return;
 		transform(where);
 		impl.drawPixel(where.x, where.y);
 	}
@@ -2518,6 +4730,8 @@ struct ScreenPainter {
 
 	/// Draws a pen using the current pen / outlineColor
 	void drawLine(Point starting, Point ending) {
+		if(impl is null) return;
+		if(isClipped(starting, ending)) return;
 		transform(starting);
 		transform(ending);
 		impl.drawLine(starting.x, starting.y, ending.x, ending.y);
@@ -2527,28 +4741,62 @@ struct ScreenPainter {
 	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
 	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
 	void drawRectangle(Point upperLeft, int width, int height) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		impl.drawRectangle(upperLeft.x, upperLeft.y, width, height);
 	}
 
+	void drawRectangle(Point upperLeft, Point lowerRightInclusive) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, lowerRightInclusive + Point(1, 1))) return;
+		transform(upperLeft);
+		transform(lowerRightInclusive);
+		impl.drawRectangle(upperLeft.x, upperLeft.y,
+			lowerRightInclusive.x - upperLeft.x + 1, lowerRightInclusive.y - upperLeft.y + 1);
+	}
+
 	/// Arguments are the points of the bounding rectangle
 	void drawEllipse(Point upperLeft, Point lowerRight) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, lowerRight)) return;
 		transform(upperLeft);
 		transform(lowerRight);
 		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
 	}
 
 	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
+		if(impl is null) return;
 		// FIXME: not actually implemented
+		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
 	/// .
 	void drawPolygon(Point[] vertexes) {
-		foreach(vertex; vertexes)
+		if(impl is null) return;
+		assert(vertexes.length);
+		int minX = int.max, minY = int.max, maxX = int.min, maxY = int.min;
+		foreach(ref vertex; vertexes) {
+			if(vertex.x < minX)
+				minX = vertex.x;
+			if(vertex.y < minY)
+				minY = vertex.y;
+			if(vertex.x > maxX)
+				maxX = vertex.x;
+			if(vertex.y > maxY)
+				maxY = vertex.y;
 			transform(vertex);
+		}
+		if(isClipped(Point(minX, maxY), Point(maxX + 1, maxY + 1))) return;
 		impl.drawPolygon(vertexes);
+	}
+
+	/// ditto
+	void drawPolygon(Point[] vertexes...) {
+		if(impl is null) return;
+		drawPolygon(vertexes);
 	}
 
 
@@ -2565,7 +4813,7 @@ struct ScreenPainter {
 
 	// HACK: I need a pointer to the implementation so it's separate
 	struct ScreenPainterImplementation {
-		SimpleWindow window;
+		CapableOfBeingDrawnUpon window;
 		int referenceCount;
 		mixin NativeScreenPainterImplementation!();
 	}
@@ -2605,22 +4853,36 @@ struct ScreenPainter {
 	ScreenPainter needs to be refactored to allow that though. So until that is
 	done, consider a `Sprite` to have const contents.
 */
-class Sprite {
-	// FIXME: we should actually be able to draw upon these, same as windows
-	//ScreenPainter drawUpon();
+class Sprite : CapableOfBeingDrawnUpon {
 
-	/// Makes a sprite based on the image with the initial contents from the Image
-	this(SimpleWindow win, Image i) {
-		this._width = i.width;
-		this._height = i.height;
+	///
+	ScreenPainter draw() {
+		return ScreenPainter(this, handle);
+	}
+
+	/// Be warned: this can be a very slow operation
+	/// FIXME NOT IMPLEMENTED
+	TrueColorImage takeScreenshot() {
+		return trueColorImageFromNativeHandle(handle, width, height);
+	}
+
+	void delegate() paintingFinishedDg() { return null; }
+	bool closed() { return false; }
+	ScreenPainterImplementation* activeScreenPainter_;
+	protected ScreenPainterImplementation* activeScreenPainter() { return activeScreenPainter_; }
+	protected void activeScreenPainter(ScreenPainterImplementation* i) { activeScreenPainter_ = i; }
+
+	version(Windows)
+		private ubyte* rawData;
+	// FIXME: sprites are lost when disconnecting from X! We need some way to invalidate them...
+
+	this(SimpleWindow win, int width, int height) {
+		this._width = width;
+		this._height = height;
 
 		version(X11) {
 			auto display = XDisplayConnection.get();
-			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, 24);
-			if(i.usingXshm)
-			XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
-			else
-			XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
+			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
 		} else version(Windows) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
@@ -2629,8 +4891,6 @@ class Sprite {
 			infoheader.bmiHeader.biPlanes = 1;
 			infoheader.bmiHeader.biBitCount = 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
-
-			ubyte* rawData;
 
 			// FIXME: this should prolly be a device dependent bitmap...
 			handle = CreateDIBSection(
@@ -2643,28 +4903,37 @@ class Sprite {
 
 			if(handle is null)
 				throw new Exception("couldn't create pixmap");
+		}
+	}
 
+	/// Makes a sprite based on the image with the initial contents from the Image
+	this(SimpleWindow win, Image i) {
+		this(win, i.width, i.height);
+
+		version(X11) {
+			auto display = XDisplayConnection.get();
+			if(i.usingXshm)
+				XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
+			else
+				XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
+		} else version(Windows) {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
 			auto arrLength = itemsPerLine * height;
 			rawData[0..arrLength] = i.rawData[0..arrLength];
 		} else version(OSXCocoa) {
 			// FIXME: I have no idea if this is even any good
 			ubyte* rawData;
-        
+
 			auto colorSpace = CGColorSpaceCreateDeviceRGB();
 			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
-                                            colorSpace,
-                                            kCGImageAlphaPremultipliedLast
-                                                   |kCGBitmapByteOrder32Big);
-            		CGColorSpaceRelease(colorSpace);
-            		rawData = CGBitmapContextGetData(context);
+				colorSpace,
+				kCGImageAlphaPremultipliedLast
+				|kCGBitmapByteOrder32Big);
+			CGColorSpaceRelease(colorSpace);
+			rawData = CGBitmapContextGetData(context);
 
 			auto rdl = (width * height * 4);
 			rawData[0 .. rdl] = i.rawData[0 .. rdl];
-		} else version(html5) {
-			handle = nextHandle;
-			nextHandle++;
-			Html5.createImage(handle, i);
 		} else static assert(0);
 	}
 
@@ -2690,10 +4959,6 @@ class Sprite {
 			if(context)
 				CGContextRelease(context);
 			context = null;
-		} else version(html5) {
-			if(handle)
-				Html5.freeImage(handle);
-			handle = 0;
 		} else static assert(0);
 
 	}
@@ -2718,11 +4983,25 @@ class Sprite {
 		HBITMAP handle;
 	else version(OSXCocoa)
 		CGContextRef context;
-	else version(html5) {
-		static int nextHandle;
-		int handle;
-	}
 	else static assert(0);
+}
+
+///
+interface CapableOfBeingDrawnUpon {
+	///
+	ScreenPainter draw();
+	///
+	int width();
+	///
+	int height();
+	protected ScreenPainterImplementation* activeScreenPainter();
+	protected void activeScreenPainter(ScreenPainterImplementation*);
+	bool closed();
+
+	void delegate() paintingFinishedDg();
+
+	/// Be warned: this can be a very slow operation
+	TrueColorImage takeScreenshot();
 }
 
 /// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
@@ -2739,7 +5018,18 @@ void flushGui() {
 interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
-	private static CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+	/*private*//*protected*/ __gshared CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
+
+	version(X11) {
+		// if this is impossible, you are allowed to just throw from it
+		// Note: if you call it from another object, set a flag cuz the manger will call you again
+		void recreateAfterDisconnect();
+		// discard any *connection specific* state, but keep enough that you
+		// can be recreated if possible. discardConnectionState() is always called immediately
+		// before recreateAfterDisconnect(), so you can set a flag there to decide if
+		// you need initialization order
+		void discardConnectionState();
+	}
 }
 
 version(X11)
@@ -2752,40 +5042,44 @@ enum ModifierState : uint {
 	shift = 1, ///
 	capsLock = 2, ///
 	ctrl = 4, ///
-	alt = 8, ///
+	alt = 8, /// Not always available on Windows
+	windows = 64, /// ditto
 	numLock = 16, ///
-	windows = 64, ///
 
-	// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
-	leftButtonDown = 256, ///
-	middleButtonDown = 512, ///
-	rightButtonDown = 1024, ///
+	leftButtonDown = 256, /// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	middleButtonDown = 512, /// ditto
+	rightButtonDown = 1024, /// ditto
 }
 else version(Windows)
 enum ModifierState : uint {
-	shift = 4,
-	ctrl = 8,
+	shift = 4, ///
+	ctrl = 8, ///
 
 	// i'm not sure if the next two are available
-	alt = 256,
-	windows = 512,
+	alt = 256, /// not always available on Windows
+	windows = 512, /// ditto
 
-	capsLock = 1024,
-	numLock = 2048,
+	capsLock = 1024, ///
+	numLock = 2048, ///
 
-	// not available on key events
-	leftButtonDown = 1,
-	middleButtonDown = 16,
-	rightButtonDown = 2,
+	leftButtonDown = 1, /// not available on key events
+	middleButtonDown = 16, /// ditto
+	rightButtonDown = 2, /// ditto
+
+	backButtonDown = 0x20, /// not available on X
+	forwardButtonDown = 0x40, /// ditto
 }
 
 /// The names assume a right-handed mouse. These are bitwise combined on the events that use them
 enum MouseButton : int {
+	none = 0,
 	left = 1, ///
 	right = 2, ///
 	middle = 4, ///
 	wheelUp = 8, ///
 	wheelDown = 16, ///
+	backButton = 32, /// often found on the thumb and used for back in browsers
+	forwardButton = 64, /// often found on the thumb and used for forward in browsers
 }
 
 version(X11) {
@@ -3191,6 +5485,7 @@ version(Windows) {
 	// helpers for making HICONs from MemoryImages
 	class WindowsIcon {
 		struct Win32Icon(int colorCount) {
+		align(1):
 			uint biSize;
 			int biWidth;
 			int biHeight;
@@ -3222,9 +5517,9 @@ version(Windows) {
 
 				assert(width %8 == 0); // i don't want padding nor do i want the and mask to get fancy
 				assert(height %4 == 0);
-				
+
 				int icon_plen = height*((width+3)&~3);
-				int icon_mlen = icon_plen / 8; // height*((((width+7)/8)+3)&~3);
+				int icon_mlen = height*((((width+7)/8)+3)&~3);
 				icon_len = 40+icon_plen+icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
 
 				biSize = 40;
@@ -3239,25 +5534,34 @@ version(Windows) {
 				for(int y = height - 1; y >= 0; y--) {
 					int off2 = y * width;
 					foreach(x; 0 .. width) {
-						auto b = indexedImage.data[off2 + x];
+						const b = indexedImage.data[off2 + x];
 						data[offset] = b;
 						offset++;
 
-						auto andBit = andOff % 8;
-						auto andIdx = andOff / 8;
+						const andBit = andOff % 8;
+						const andIdx = andOff / 8;
 						assert(b < indexedImage.palette.length);
 						// this is anded to the destination, since and 0 means erase,
 						// we want that to  be opaque, and 1 for transparent
-						data[andIdx] |= ((indexedImage.palette[b].a < 127) ? (1 << (7-andBit)) : 0);
+						auto transparent = (indexedImage.palette[b].a <= 127);
+						data[andIdx] |= (transparent ? (1 << (7-andBit)) : 0);
 
 						andOff++;
 					}
+
+					andOff += andOff % 32;
 				}
 
 				foreach(idx, entry; indexedImage.palette) {
-					biColors[idx].rgbBlue = entry.b;
-					biColors[idx].rgbGreen = entry.g;
-					biColors[idx].rgbRed = entry.r;
+					if(entry.a > 127) {
+						biColors[idx].rgbBlue = entry.b;
+						biColors[idx].rgbGreen = entry.g;
+						biColors[idx].rgbRed = entry.r;
+					} else {
+						biColors[idx].rgbBlue = 255;
+						biColors[idx].rgbGreen = 255;
+						biColors[idx].rgbRed = 255;
+					}
 				}
 
 				/*
@@ -3317,7 +5621,7 @@ version(Windows) {
 
 	extern(Windows)
 	LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
-	    try {
+		try {
 			if(SimpleWindow.handleNativeGlobalEvent !is null) {
 				// it returns zero if the message is handled, so we won't do anything more there
 				// do I like that though?
@@ -3326,22 +5630,22 @@ version(Windows) {
 					return ret;
 			}
 
-            if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
-	    	if(window.getNativeEventHandler !is null) {
-			auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
-			if(ret == 0)
-				return ret;
+			if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+				if(window.getNativeEventHandler !is null) {
+					auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
+					if(ret == 0)
+						return ret;
+				}
+				if(auto w = cast(SimpleWindow) (*window))
+					return w.windowProcedure(hWnd, iMessage, wParam, lParam);
+				else
+					return DefWindowProc(hWnd, iMessage, wParam, lParam);
+			} else {
+				return DefWindowProc(hWnd, iMessage, wParam, lParam);
+			}
+		} catch (Exception e) {
+			assert(false, "Exception caught in WndProc " ~ e.toString());
 		}
-		if(auto w = cast(SimpleWindow) (*window))
-	                return w.windowProcedure(hWnd, iMessage, wParam, lParam);
-		else
-			return DefWindowProc(hWnd, iMessage, wParam, lParam);
-            } else {
-                return DefWindowProc(hWnd, iMessage, wParam, lParam);
-            }
-	    } catch (Exception e) {
-            	assert(false, "Exception caught in WndProc " ~ e.toString());
-	    }
 	}
 
 	mixin template NativeScreenPainterImplementation() {
@@ -3351,19 +5655,68 @@ version(Windows) {
 		HBITMAP oldBmp;
 
 		void create(NativeWindowHandle window) {
-			auto buffer = this.window.impl.buffer;
 			hwnd = window;
-			auto windowHdc = GetDC(hwnd);
 
-			hdc = CreateCompatibleDC(windowHdc);
+			if(auto sw = cast(SimpleWindow) this.window) {
+				// drawing on a window, double buffer
+				auto windowHdc = GetDC(hwnd);
 
-			ReleaseDC(hwnd, windowHdc);
+				auto buffer = sw.impl.buffer;
+				hdc = CreateCompatibleDC(windowHdc);
 
-			oldBmp = SelectObject(hdc, buffer);
+				ReleaseDC(hwnd, windowHdc);
+
+				oldBmp = SelectObject(hdc, buffer);
+			} else {
+				// drawing on something else, draw directly
+				hdc = CreateCompatibleDC(null);
+				SelectObject(hdc, window);
+
+			}
 
 			// X doesn't draw a text background, so neither should we
 			SetBkMode(hdc, TRANSPARENT);
+
+
+			static bool triedDefaultGuiFont = false;
+			if(!triedDefaultGuiFont) {
+				NONCLIENTMETRICS params;
+				params.cbSize = params.sizeof;
+				if(SystemParametersInfo(SPI_GETNONCLIENTMETRICS, params.sizeof, &params, 0)) {
+					defaultGuiFont = CreateFontIndirect(&params.lfMessageFont);
+				}
+				triedDefaultGuiFont = true;
+			}
+
+			if(defaultGuiFont) {
+				SelectObject(hdc, defaultGuiFont);
+				// DeleteObject(defaultGuiFont);
+			}
 		}
+
+		static HFONT defaultGuiFont;
+
+		void setFont(OperatingSystemFont font) {
+			if(font && font.font)
+				SelectObject(hdc, font.font);
+			else if(defaultGuiFont)
+				SelectObject(hdc, defaultGuiFont);
+		}
+
+		arsd.color.Rectangle _clipRectangle;
+
+		void setClipRectangle(int x, int y, int width, int height) {
+			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+
+			if(width == 0 || height == 0) {
+				SelectClipRgn(hdc, null);
+			} else {
+				auto region = CreateRectRgn(x, y, x + width, y + height);
+				SelectClipRgn(hdc, region);
+				DeleteObject(region);
+			}
+		}
+
 
 		// just because we can on Windows...
 		//void create(Image image);
@@ -3374,6 +5727,7 @@ version(Windows) {
 			// ReleaseDC(hwnd, windowHdc);
 
 			// FIXME: it shouldn't invalidate the whole thing in all cases... it would be ideal to do this right
+			if(cast(SimpleWindow) this.window)
 			InvalidateRect(hwnd, cast(RECT*)null, false); // no need to erase bg as the whole thing gets bitblt'd ove
 
 			if(originalPen !is null)
@@ -3389,8 +5743,8 @@ version(Windows) {
 
 			DeleteDC(hdc);
 
-			if(window.paintingFinished !is null)
-				window.paintingFinished();
+			if(window.paintingFinishedDg !is null)
+				window.paintingFinishedDg();
 		}
 
 		HPEN originalPen;
@@ -3405,7 +5759,19 @@ version(Windows) {
 			if(p.color.a == 0) {
 				pen = GetStockObject(NULL_PEN);
 			} else {
-				pen = CreatePen(PS_SOLID, p.width, RGB(p.color.r, p.color.g, p.color.b));
+				int style = PS_SOLID;
+				final switch(p.style) {
+					case Pen.Style.Solid:
+						style = PS_SOLID;
+					break;
+					case Pen.Style.Dashed:
+						style = PS_DASH;
+					break;
+					case Pen.Style.Dotted:
+						style = PS_DOT;
+					break;
+				}
+				pen = CreatePen(style, p.width, RGB(p.color.r, p.color.g, p.color.b));
 			}
 			auto orig = SelectObject(hdc, pen);
 			if(originalPen is null)
@@ -3419,11 +5785,6 @@ version(Windows) {
 			// the outline is like a foreground since it's done that way on X
 			SetTextColor(hdc, RGB(p.color.r, p.color.g, p.color.b));
 
-		}
-
-		@property void outlineColor(Color c) {
-			_activePen.color = c;
-			pen = _activePen;
 		}
 
 		@property void rasterOp(RasterOp op) {
@@ -3441,9 +5802,11 @@ version(Windows) {
 
 		HBRUSH originalBrush;
 		HBRUSH currentBrush;
+		Color _fillColor = Color(1, 1, 1, 1); // what are the odds that they'd set this??
 		@property void fillColor(Color c) {
-			// FIXME: we probably don't need to call all this if the brush
-			// is already good
+			if(c == _fillColor)
+				return;
+			_fillColor = c;
 			HBRUSH brush;
 			if(c.a == 0) {
 				brush = GetStockObject(HOLLOW_BRUSH);
@@ -3491,14 +5854,22 @@ version(Windows) {
 			DeleteDC(hdcMem);
 		}
 
-		Size textSize(string text) {
+		Size textSize(scope const(char)[] text) {
+			bool dummyX;
+			if(text.length == 0) {
+				text = " ";
+				dummyX = true;
+			}
 			RECT rect;
 			WCharzBuffer buffer = WCharzBuffer(text);
 			DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, DT_CALCRECT);
-			return Size(rect.right, rect.bottom);
+			return Size(dummyX ? 0 : rect.right, rect.bottom);
 		}
 
-		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
+		void drawText(int x, int y, int x2, int y2, scope const(char)[] text, uint alignment) {
+			if(text.length && text[$-1] == '\n')
+				text = text[0 .. $-1]; // tailing newlines are weird on windows...
+
 			WCharzBuffer buffer = WCharzBuffer(text);
 			if(x2 == 0 && y2 == 0)
 				TextOutW(hdc, x, y, buffer.ptr, cast(int) buffer.length);
@@ -3583,6 +5954,7 @@ version(Windows) {
 	// Mix this into the SimpleWindow class
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
+		static bool[string] knownWinClasses;
 
 		void hideCursor () {
 			++curHidden;
@@ -3590,17 +5962,75 @@ version(Windows) {
 
 		void showCursor () {
 			--curHidden;
+			if(curHidden == 0) {
+				// FIXME
+				//SetCursor(oldCursor); // show it immediately without waiting for mouse movement
+			}
 		}
+
+
+		int minWidth = 0, minHeight = 0, maxWidth = int.max, maxHeight = int.max;
+
+		void setMinSize (int minwidth, int minheight) {
+			minWidth = minwidth;
+			minHeight = minheight;
+		}
+		void setMaxSize (int maxwidth, int maxheight) {
+			maxWidth = maxwidth;
+			maxHeight = maxheight;
+		}
+
+		// FIXME i'm not sure that Windows has this functionality
+		// though it is nonessential anyway.
+		void setResizeGranularity (int granx, int grany) {}
 
 		ScreenPainter getPainter() {
 			return ScreenPainter(this, hwnd);
 		}
 
 		HBITMAP buffer;
-		static bool classRegistered;
 
 		void setTitle(string title) {
 			SetWindowTextA(hwnd, toStringz(title));
+		}
+
+		void move(int x, int y) {
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+			// move it while maintaining the same size...
+			MoveWindow(hwnd, x, y, rect.right - rect.left, rect.bottom - rect.top, true);
+		}
+
+		void resize(int w, int h) {
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+
+			RECT client;
+			GetClientRect(hwnd, &client);
+
+			rect.right = rect.right - client.right + w;
+			rect.bottom = rect.bottom - client.bottom + h;
+
+			// same position, new size for the client rectangle
+			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
+
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+		}
+
+		void moveResize (int x, int y, int w, int h) {
+			// what's given is the client rectangle, we need to adjust
+
+			RECT rect;
+			rect.left = x;
+			rect.top = y;
+			rect.right = w + x;
+			rect.bottom = h + y;
+			if(!AdjustWindowRect(&rect, GetWindowLong(hwnd, GWL_STYLE), GetMenu(hwnd) !is null))
+				throw new Exception("AdjustWindowRect");
+
+			MoveWindow(hwnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, true);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+			if (windowResized !is null) windowResized(w, h);
 		}
 
 		version(without_opengl) {} else {
@@ -3609,13 +6039,25 @@ version(Windows) {
 		}
 
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-			wstring cn = "DSimpleWindow"w;
+			import std.conv : to;
+			string cnamec;
+			wstring cn;// = "DSimpleWindow\0"w.dup;
+			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
+			if (sdpyWindowClassStr is null || sdpyWindowClassStr[0] == 0) {
+				cnamec = "DSimpleWindow";
+			} else {
+				cnamec = sdpyWindowClass;
+			}
+			cn = cnamec.to!wstring ~ "\0"; // just in case, lol
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
-			if(!classRegistered) {
-				WNDCLASS wc;
+			if(cnamec !in knownWinClasses) {
+				WNDCLASSEX wc;
 
+				// FIXME: I might be able to use cbWndExtra to hold the pointer back
+				// to the object. Maybe.
+				wc.cbSize = wc.sizeof;
 				wc.cbClsExtra = 0;
 				wc.cbWndExtra = 0;
 				wc.hbrBackground = cast(HBRUSH) (COLOR_WINDOW+1); // GetStockObject(WHITE_BRUSH);
@@ -3624,10 +6066,11 @@ version(Windows) {
 				wc.hInstance = hInstance;
 				wc.lpfnWndProc = &WndProc;
 				wc.lpszClassName = cn.ptr;
-				wc.style = CS_HREDRAW | CS_VREDRAW;
-				if(!RegisterClassW(&wc))
-					throw new Exception("RegisterClass");
-				classRegistered = true;
+				wc.hIconSm = null;
+				wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass " ~ to!string(GetLastError()));
+				knownWinClasses[cnamec] = true;
 			}
 
 			int style;
@@ -3640,6 +6083,17 @@ version(Windows) {
 				case WindowTypes.undecorated:
 					style = WS_POPUP | WS_SYSMENU;
 				break;
+				case WindowTypes.eventOnly:
+					_hidden = true;
+				break;
+				case WindowTypes.dropdownMenu:
+				case WindowTypes.popupMenu:
+				case WindowTypes.notification:
+					style = WS_POPUP;
+				break;
+				case WindowTypes.nestedChild:
+					style = WS_CHILD;
+				break;
 			}
 
 			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
@@ -3649,34 +6103,75 @@ version(Windows) {
 			SimpleWindow.nativeMapping[hwnd] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
 
+			if(windowType == WindowTypes.eventOnly)
+				return;
+
 			HDC hdc = GetDC(hwnd);
 
 
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
+					static if (SdpyIsUsingIVGLBinds) {if (glbindGetProcAddress("glHint") is null) assert(0, "GL: error loading OpenGL"); } // loads all necessary functions
+					static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 					ghDC = hdc;
-					PIXELFORMATDESCRIPTOR pfd; 
+					PIXELFORMATDESCRIPTOR pfd;
 
-					pfd.nSize = PIXELFORMATDESCRIPTOR.sizeof; 
-					pfd.nVersion = 1; 
-					pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |  PFD_DOUBLEBUFFER; 
-					pfd.dwLayerMask = PFD_MAIN_PLANE; 
-					pfd.iPixelType = PFD_TYPE_RGBA; 
-					pfd.cColorBits = 24; 
-					pfd.cDepthBits = 8; 
-					pfd.cAccumBits = 0; 
-					pfd.cStencilBits = 0; 
+					pfd.nSize = PIXELFORMATDESCRIPTOR.sizeof;
+					pfd.nVersion = 1;
+					pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |  PFD_DOUBLEBUFFER;
+					pfd.dwLayerMask = PFD_MAIN_PLANE;
+					pfd.iPixelType = PFD_TYPE_RGBA;
+					pfd.cColorBits = 24;
+					pfd.cDepthBits = 24;
+					pfd.cAccumBits = 0;
+					pfd.cStencilBits = 8; // any reasonable OpenGL implementation should support this anyway
 
-					auto pixelformat = ChoosePixelFormat(hdc, &pfd); 
+					auto pixelformat = ChoosePixelFormat(hdc, &pfd);
 
-					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0) 
+					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0)
 						throw new Exception("ChoosePixelFormat");
 
-					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0) 
+					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0)
 						throw new Exception("SetPixelFormat");
 
-					ghRC = wglCreateContext(ghDC); 
+					if (sdpyOpenGLContextVersion && wglCreateContextAttribsARB is null) {
+						// windoze is idiotic: we have to have OpenGL context to get function addresses
+						// so we will create fake context to get that stupid address
+						auto tmpcc = wglCreateContext(ghDC);
+						if (tmpcc !is null) {
+							scope(exit) { wglMakeCurrent(ghDC, null); wglDeleteContext(tmpcc); }
+							wglMakeCurrent(ghDC, tmpcc);
+							wglInitOtherFunctions();
+						}
+					}
+
+					if (wglCreateContextAttribsARB !is null && sdpyOpenGLContextVersion) {
+						int[9] contextAttribs = [
+							WGL_CONTEXT_MAJOR_VERSION_ARB, (sdpyOpenGLContextVersion>>8),
+							WGL_CONTEXT_MINOR_VERSION_ARB, (sdpyOpenGLContextVersion&0xff),
+							WGL_CONTEXT_PROFILE_MASK_ARB, (sdpyOpenGLContextCompatible ? WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB : WGL_CONTEXT_CORE_PROFILE_BIT_ARB),
+							// for modern context, set "forward compatibility" flag too
+							(sdpyOpenGLContextCompatible ? 0/*None*/ : WGL_CONTEXT_FLAGS_ARB), WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+							0/*None*/,
+						];
+						ghRC = wglCreateContextAttribsARB(ghDC, null, contextAttribs.ptr);
+						if (ghRC is null && sdpyOpenGLContextAllowFallback) {
+							// activate fallback mode
+							// sdpyOpenGLContextVeto-type focus management policy leads to race conditions because the window becoming unviewable may coincide with the window manager deciding to move the focus elsrsion = 0;
+							ghRC = wglCreateContext(ghDC);
+						}
+						if (ghRC is null)
+							throw new Exception("wglCreateContextAttribsARB");
+					} else {
+						// try to do at least something
+						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
+							sdpyOpenGLContextVersion = 0;
+							ghRC = wglCreateContext(ghDC);
+						}
+						if (ghRC is null)
+							throw new Exception("wglCreateContext");
+					}
 				}
 			}
 
@@ -3706,7 +6201,12 @@ version(Windows) {
 			ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
 			MoveWindow(hwnd,rcWindow.left, rcWindow.top, width + ptDiff.x, height + ptDiff.y, true);
 
-			ShowWindow(hwnd, SW_SHOWNORMAL);
+			if ((customizationFlags&WindowFlags.dontAutoShow) == 0) {
+				ShowWindow(hwnd, SW_SHOWNORMAL);
+			} else {
+				_hidden = true;
+			}
+			this._visibleForTheFirstTimeCalled = false; // hack!
 		}
 
 
@@ -3720,8 +6220,7 @@ version(Windows) {
 		}
 
 		// returns zero if it recognized the event
-		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) nothrow {
-		try {
+		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
 
 			void mouseEvent() {
@@ -3742,6 +6241,35 @@ version(Windows) {
 			}
 
 			switch(msg) {
+				case WM_GETMINMAXINFO:
+					MINMAXINFO* mmi = cast(MINMAXINFO*) lParam;
+
+					if(wind.minWidth > 0) {
+						RECT rect;
+						rect.left = 100;
+						rect.top = 100;
+						rect.right = wind.minWidth + 100;
+						rect.bottom = wind.minHeight + 100;
+						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
+							throw new Exception("AdjustWindowRect");
+
+						mmi.ptMinTrackSize.x = rect.right - rect.left;
+						mmi.ptMinTrackSize.y = rect.bottom - rect.top;
+					}
+
+					if(wind.maxWidth < int.max) {
+						RECT rect;
+						rect.left = 100;
+						rect.top = 100;
+						rect.right = wind.maxWidth + 100;
+						rect.bottom = wind.maxHeight + 100;
+						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
+							throw new Exception("AdjustWindowRect");
+
+						mmi.ptMaxTrackSize.x = rect.right - rect.left;
+						mmi.ptMaxTrackSize.y = rect.bottom - rect.top;
+					}
+				break;
 				case WM_CHAR:
 					wchar c = cast(wchar) wParam;
 					if(wind.handleCharEvent)
@@ -3749,15 +6277,17 @@ version(Windows) {
 				break;
 				  case WM_SETFOCUS:
 				  case WM_KILLFOCUS:
-					wind.focused = msg == WM_SETFOCUS;
+					wind._focused = msg == WM_SETFOCUS;
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
+				case WM_SYSKEYDOWN:
+				case WM_SYSKEYUP:
 				case WM_KEYDOWN:
 				case WM_KEYUP:
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
-					ev.pressed = msg == WM_KEYDOWN;
+					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
 					// FIXME
 					// ev.hardwareCode
 
@@ -3793,7 +6323,7 @@ version(Windows) {
 				break;
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) ((HIWORD(wParam) > 120) ? 16 : 8);
+					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
 					mouseEvent();
 				break;
 				case WM_MOUSEMOVE:
@@ -3803,42 +6333,55 @@ version(Windows) {
 				case WM_LBUTTONDOWN:
 				case WM_LBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) 1;
+					mouse.button = MouseButton.left;
+					mouse.doubleClick = msg == WM_LBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_LBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button =cast(MouseButton)  1;
+					mouse.button = MouseButton.left;
 					mouseEvent();
 				break;
 				case WM_RBUTTONDOWN:
 				case WM_RBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button =cast(MouseButton)  2;
+					mouse.button = MouseButton.right;
+					mouse.doubleClick = msg == WM_RBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_RBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button =cast(MouseButton)  2;
+					mouse.button = MouseButton.right;
 					mouseEvent();
 				break;
 				case WM_MBUTTONDOWN:
 				case WM_MBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = cast(MouseButton) 4;
+					mouse.button = MouseButton.middle;
+					mouse.doubleClick = msg == WM_MBUTTONDBLCLK;
 					mouseEvent();
 				break;
 				case WM_MBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button = cast(MouseButton) 4;
+					mouse.button = MouseButton.middle;
 					mouseEvent();
 				break;
+				case WM_XBUTTONDOWN:
+				case WM_XBUTTONDBLCLK:
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
+					mouse.doubleClick = msg == WM_XBUTTONDBLCLK;
+					mouseEvent();
+				return 1; // MSDN says special treatment here, return TRUE to bypass simulation programs
+				case WM_XBUTTONUP:
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
+					mouseEvent();
+				return 1; // see: https://msdn.microsoft.com/en-us/library/windows/desktop/ms646246(v=vs.85).aspx
+
 				default: return 1;
 			}
 			return 0;
-			} catch(Exception e) {
-				return 0;
-			}
 		}
 
 		HWND hwnd;
@@ -3856,9 +6399,17 @@ version(Windows) {
 					DestroyWindow(hwnd);
 				break;
 				case WM_DESTROY:
+					if (this.onDestroyed !is null) try { this.onDestroyed(); } catch (Exception e) {} // sorry
 					SimpleWindow.nativeMapping.remove(hwnd);
 					CapableOfHandlingNativeEvent.nativeHandleMapping.remove(hwnd);
-					if(SimpleWindow.nativeMapping.keys.length == 0)
+
+					bool anyImportant = false;
+					foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+						if(w.beingOpenKeepsAppOpen) {
+							anyImportant = true;
+							break;
+						}
+					if(!anyImportant)
 						PostQuitMessage(0);
 				break;
 				case WM_SIZE:
@@ -3891,7 +6442,7 @@ version(Windows) {
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
-					if(openglMode == OpenGlOptions.no && resizability == Resizablity.allowResizing) {
+					if(openglMode == OpenGlOptions.no) { // && resizability == Resizability.allowResizing) {
 						// gotta get the double buffer bmp to match the window
 					// FIXME: could this be more efficient? It isn't really necessary to make
 					// a new buffer if we're sizing down at least.
@@ -3918,8 +6469,8 @@ version(Windows) {
 						DeleteObject(oldBuffer);
 					}
 
-					version(with_opengl)
-					if(openglMode == OpenGlOptions.yes && resizability == Resizablity.automaticallyScaleIfPossible) {
+					version(without_opengl) {} else
+					if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
 						glViewport(0, 0, width, height);
 					}
 
@@ -3944,6 +6495,11 @@ version(Windows) {
 					if (this.visibilityChanged !is null) this.visibilityChanged(this._visible);
 					break;
 				case WM_PAINT: {
+					if (!this._visibleForTheFirstTimeCalled) {
+						this._visibleForTheFirstTimeCalled = true;
+						if (this.visibleForTheFirstTime !is null) this.visibleForTheFirstTime();
+					}
+
 					BITMAP bm;
 					PAINTSTRUCT ps;
 
@@ -3957,7 +6513,7 @@ version(Windows) {
 						GetObject(buffer, bm.sizeof, &bm);
 
 						// FIXME: only BitBlt the invalidated rectangle, not the whole thing
-						if(resizability == Resizablity.automaticallyScaleIfPossible)
+						if(resizability == Resizability.automaticallyScaleIfPossible)
 						StretchBlt(hdc, 0, 0, this.width, this.height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
 						else
 						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
@@ -3967,7 +6523,7 @@ version(Windows) {
 						EndPaint(hwnd, &ps);
 					} else {
 						EndPaint(hwnd, &ps);
-						version(with_opengl)
+						version(without_opengl) {} else
 							redrawOpenGlSceneNow();
 					}
 				} break;
@@ -3991,18 +6547,39 @@ version(Windows) {
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
 			HANDLE[] handles;
+			if (customEventH is null) {
+				customEventH = CreateEvent(null, FALSE/*autoreset*/, FALSE/*initial state*/, null);
+				if (customEventH !is null) {
+					handles ~= customEventH;
+				} else {
+					// this is something that should not be; better be safe than sorry
+					throw new Exception("can't create eventfd for custom event processing");
+				}
+			}
+			scope(exit) {
+				if (customEventH !is null) {
+					CloseHandle(customEventH);
+					customEventH = null;
+				}
+			}
+
+			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
+
 			while(ret != 0) {
+				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
-					INFINITE, /* timeout */
+					(wto == 0 ? INFINITE : wto), /* timeout */
 					0x04FF, /* QS_ALLINPUT */
 					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
 
+				SimpleWindow.processAllCustomEvents(); // anyway
 				enum WAIT_OBJECT_0 = 0;
 				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
 					// process handles[waitResult - WAIT_OBJECT_0];
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
+					if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it.
 					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
 						if(ret == -1)
 							throw new Exception("GetMessage failed");
@@ -4069,7 +6646,7 @@ version(Windows) {
 					where[idx + 1] = rawData[offset + 1]; // g
 					where[idx + 2] = rawData[offset + 0]; // b
 					where[idx + 3] = 255; // a
-					idx += 4; 
+					idx += 4;
 					offset += 3;
 				}
 
@@ -4091,7 +6668,7 @@ version(Windows) {
 					rawData[offset + 1] = what[idx + 1]; // g
 					rawData[offset + 0] = what[idx + 2]; // b
 					//where[idx + 3] = 255; // a
-					idx += 4; 
+					idx += 4;
 					offset += 3;
 				}
 
@@ -4100,7 +6677,7 @@ version(Windows) {
 		}
 
 
-		void createImage(int width, int height) {
+		void createImage(int width, int height, bool forcexshm=false) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
 			infoheader.bmiHeader.biWidth = width;
@@ -4132,7 +6709,8 @@ version(X11) {
 	/// This is the default font used. You might change this before doing anything else with
 	/// the library if you want to try something else. Surround that in `static if(UsingSimpledisplayX11)`
 	/// for cross-platform compatibility.
-	__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	//__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	__gshared string xfontstr = "-*-lucida-medium-r-normal-sans-12-*-*-*-*-*-*-*";
 
 	alias int delegate(XEvent) NativeEventHandler;
 	alias Window NativeWindowHandle;
@@ -4147,17 +6725,27 @@ version(X11) {
 		// FIXME: should the gc be static too so it isn't recreated every time draw is called?
 		GC gc;
 
-		static XFontStruct* font;
-		static bool fontAttempted;
-		static XFontSet fontset;
+		__gshared bool fontAttempted;
+
+		__gshared XFontStruct* defaultfont;
+		__gshared XFontSet defaultfontset;
+
+		XFontStruct* font;
+		XFontSet fontset;
 
 		void create(NativeWindowHandle window) {
 			this.display = XDisplayConnection.get();
 
-    			auto buffer = this.window.impl.buffer;
+			Drawable buffer = None;
+			if(auto sw = cast(SimpleWindow) this.window) {
+				buffer = sw.impl.buffer;
+				this.destiny = cast(Drawable) window;
+			} else {
+				buffer = cast(Drawable) window;
+				this.destiny = None;
+			}
 
 			this.d = cast(Drawable) buffer;
-			this.destiny = cast(Drawable) window;
 
 			auto dgc = DefaultGC(display, DefaultScreen(display));
 
@@ -4167,7 +6755,7 @@ version(X11) {
 
 			if(!fontAttempted) {
 				font = XLoadQueryFont(display, xfontstr.ptr);
-				// bitstream is a pretty nice font, but if it fails, fixed is pretty reliable and not bad either
+				// if the user font choice fails, fixed is pretty reliable (required by X to start!) and not bad either
 				if(font is null)
 					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
 
@@ -4177,23 +6765,54 @@ version(X11) {
 				fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
 				fontAttempted = true;
+
+				defaultfont = font;
+				defaultfontset = fontset;
 			}
+
+			font = defaultfont;
+			fontset = defaultfontset;
 
 			if(font) {
 				XSetFont(display, gc, font.fid);
 			}
 		}
 
-		void dispose() {
-    			auto buffer = this.window.impl.buffer;
+		arsd.color.Rectangle _clipRectangle;
+		void setClipRectangle(int x, int y, int width, int height) {
+			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+			if(width == 0 || height == 0)
+				XSetClipMask(display, gc, None);
+			else {
+				XRectangle[1] rects;
+				rects[0] = XRectangle(cast(short)(x), cast(short)(y), cast(short) width, cast(short) height);
+				XSetClipRectangles(XDisplayConnection.get, gc, 0, 0, rects.ptr, 1, 0);
+			}
+		}
 
+
+		void setFont(OperatingSystemFont font) {
+			if(font && font.font) {
+				this.font = font.font;
+				this.fontset = font.fontset;
+				XSetFont(display, gc, font.font.fid);
+			} else {
+				this.font = defaultfont;
+				this.fontset = defaultfontset;
+			}
+
+		}
+
+		void dispose() {
 			this.rasterOp = RasterOp.normal;
 
 			// FIXME: this.window.width/height is probably wrong
 
 			// src x,y     then dest x, y
-			XSetClipMask(display, gc, None);
-			XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
+			if(destiny != None) {
+				XSetClipMask(display, gc, None);
+				XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
+			}
 
 			XFreeGC(display, gc);
 
@@ -4205,23 +6824,48 @@ version(X11) {
 				XFreeFontSet(display, fontset);
 			XFlush(display);
 
-			if(window.paintingFinished !is null)
-				window.paintingFinished();
+			if(window.paintingFinishedDg !is null)
+				window.paintingFinishedDg();
 		}
 
 		bool backgroundIsNotTransparent = true;
 		bool foregroundIsNotTransparent = true;
 
-		Pen _pen;
+		bool _penInitialized = false;
+		Pen _activePen;
 
 		Color _outlineColor;
 		Color _fillColor;
 
 		@property void pen(Pen p) {
-			_pen = p;
+			if(_penInitialized && p == _activePen) {
+				return;
+			}
+			_penInitialized = true;
+			_activePen = p;
 			_outlineColor = p.color;
 
-			XSetLineAttributes(display, gc, p.width, 0, 0, 0);
+			int style;
+
+			byte dashLength;
+
+			final switch(p.style) {
+				case Pen.Style.Solid:
+					style = 0 /*LineSolid*/;
+				break;
+				case Pen.Style.Dashed:
+					style = 1 /*LineOnOffDash*/;
+					dashLength = 4;
+				break;
+				case Pen.Style.Dotted:
+					style = 1 /*LineOnOffDash*/;
+					dashLength = 1;
+				break;
+			}
+
+			XSetLineAttributes(display, gc, p.width, style, 0, 0);
+			if(dashLength)
+				XSetDashes(display, gc, 0, &dashLength, 1);
 
 			if(p.color.a == 0) {
 				foregroundIsNotTransparent = false;
@@ -4230,20 +6874,16 @@ version(X11) {
 
 			foregroundIsNotTransparent = true;
 
-			XSetForeground(display, gc,
-				cast(uint) p.color.r << 16 |
-				cast(uint) p.color.g << 8 |
-				cast(uint) p.color.b);
+			XSetForeground(display, gc, colorToX(p.color, display));
 		}
 
-		@property void outlineColor(Color c) {
-			if(_pen.color == c)
-				return; // don't double call for performance
-			_pen.color = c;
-			pen = _pen;
-		}
-
+		RasterOp _currentRasterOp;
+		bool _currentRasterOpInitialized = false;
 		@property void rasterOp(RasterOp op) {
+			if(_currentRasterOpInitialized && _currentRasterOp == op)
+				return;
+			_currentRasterOp = op;
+			_currentRasterOpInitialized = true;
 			int mode;
 			final switch(op) {
 				case RasterOp.normal:
@@ -4257,11 +6897,13 @@ version(X11) {
 		}
 
 
+		bool _fillColorInitialized = false;
 
 		@property void fillColor(Color c) {
-			if(_fillColor == c)
+			if(_fillColorInitialized && _fillColor == c)
 				return; // already good, no need to waste time calling it
 			_fillColor = c;
+			_fillColorInitialized = true;
 			if(c.a == 0) {
 				backgroundIsNotTransparent = false;
 				return;
@@ -4269,17 +6911,50 @@ version(X11) {
 
 			backgroundIsNotTransparent = true;
 
-			XSetBackground(display, gc,
-				cast(uint) c.r << 16 |
-				cast(uint) c.g << 8 |
-				cast(uint) c.b);
+			XSetBackground(display, gc, colorToX(c, display));
 
 		}
 
 		void swapColors() {
 			auto tmp = _fillColor;
 			fillColor = _outlineColor;
-			outlineColor = tmp;
+			auto newPen = _activePen;
+			newPen.color = tmp;
+			pen(newPen);
+		}
+
+		uint colorToX(Color c, Display* display) {
+			auto visual = DefaultVisual(display, DefaultScreen(display));
+			import core.bitop;
+			uint color = 0;
+			{
+			auto startBit = bsf(visual.red_mask);
+			auto lastBit = bsr(visual.red_mask);
+			auto r = cast(uint) c.r;
+			r >>= 7 - (lastBit - startBit);
+			r <<= startBit;
+			color |= r;
+			}
+			{
+			auto startBit = bsf(visual.green_mask);
+			auto lastBit = bsr(visual.green_mask);
+			auto g = cast(uint) c.g;
+			g >>= 7 - (lastBit - startBit);
+			g <<= startBit;
+			color |= g;
+			}
+			{
+			auto startBit = bsf(visual.blue_mask);
+			auto lastBit = bsr(visual.blue_mask);
+			auto b = cast(uint) c.b;
+			b >>= 7 - (lastBit - startBit);
+			b <<= startBit;
+			color |= b;
+			}
+
+
+
+			return color;
 		}
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
@@ -4300,17 +6975,17 @@ version(X11) {
 			return 12; // pretty common default...
 		}
 
-		Size textSize(string text) {
+		Size textSize(in char[] text) {
 			auto maxWidth = 0;
 			auto lineHeight = fontHeight;
-			int h = 0;
+			int h = text.length ? 0 : lineHeight + 4; // if text is empty, it still gives the line height
 			foreach(line; text.split('\n')) {
 				int textWidth;
 				if(font)
 					// FIXME: unicode
 					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
 				else
-					textWidth = 12 * cast(int) line.length;
+					textWidth = fontHeight / 2 * cast(int) line.length; // if no font is loaded, it is prolly Fixed, which is a 2:1 ratio
 
 				if(textWidth > maxWidth)
 					maxWidth = textWidth;
@@ -4365,7 +7040,7 @@ version(X11) {
 				auto h = y2 - y;
 				if(textHeight < h) {
 					cy += (h - textHeight) / 2;
-					cy -= lineHeight / 4;
+					//cy -= lineHeight / 4;
 				}
 			}
 
@@ -4438,8 +7113,12 @@ version(X11) {
 		}
 
 		void drawPolygon(Point[] vertexes) {
+			XPoint[16] pointsBuffer;
 			XPoint[] points;
-			points.length = vertexes.length;
+			if(vertexes.length <= pointsBuffer.length)
+				points = pointsBuffer[0 .. vertexes.length];
+			else
+				points.length = vertexes.length;
 
 			foreach(i, p; vertexes) {
 				points[i].x = cast(short) p.x;
@@ -4457,39 +7136,172 @@ version(X11) {
 		}
 	}
 
+	class XDisconnectException : Exception {
+		bool userRequested;
+		this(bool userRequested = true) {
+			this.userRequested = userRequested;
+			super("X disconnected");
+		}
+	}
 
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
 	class XDisplayConnection {
-		private static Display* display;
-    private static XIM xim;
+		private __gshared Display* display;
+		private __gshared XIM xim;
+		private __gshared char* displayName;
 
-    // Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
-    private static void createXIM () {
-      import core.stdc.locale : setlocale, LC_ALL;
-      import core.stdc.stdio : stderr, fprintf;
-      import core.stdc.stdlib : free;
-      import core.stdc.string : strdup;
+		private __gshared int connectionSequence_;
 
-      static immutable string[] mtry = [ null, "@im=local", "@im=" ];
+		/// use this for lazy caching when reconnection
+		static int connectionSequenceNumber() { return connectionSequence_; }
 
-      auto olocale = strdup(setlocale(LC_ALL, null));
-      setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
-      scope(exit) { setlocale(LC_ALL, olocale); free(olocale); }
+		/// Attempts recreation of state, may require application assistance
+		/// You MUST call this OUTSIDE the event loop. Let the exception kill the loop,
+		/// then call this, and if successful, reenter the loop.
+		static void discardAndRecreate(string newDisplayString = null) {
+			if(insideXEventLoop)
+				throw new Error("You MUST call discardAndRecreate from OUTSIDE the event loop");
 
-      //fprintf(stderr, "opening IM...\n");
-      foreach (string s; mtry) {
-        if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
-        if ((xim = XOpenIM(display, null, null, null)) !is null) return;
-      }
-      fprintf(stderr, "createXIM: XOpenIM failed!\n");
-    }
+			// auto swnm = SimpleWindow.nativeMapping.dup; // this SHOULD be unnecessary because all simple windows are capable of handling native events, so the latter ought to do it all
+			auto chnenhm = CapableOfHandlingNativeEvent.nativeHandleMapping.dup;
+
+			foreach(handle; chnenhm) {
+				handle.discardConnectionState();
+			}
+
+			discardState();
+
+			if(newDisplayString !is null)
+				setDisplayName(newDisplayString);
+
+			auto display = get();
+
+			foreach(handle; chnenhm) {
+				handle.recreateAfterDisconnect();
+			}
+		}
+
+		static void discardState() {
+			freeImages();
+
+			foreach(atomPtr; interredAtoms)
+				*atomPtr = 0;
+			interredAtoms = null;
+			interredAtoms.assumeSafeAppend();
+
+			ScreenPainterImplementation.fontAttempted = false;
+			ScreenPainterImplementation.defaultfont = null;
+			ScreenPainterImplementation.defaultfontset = null;
+
+			Image.impl.xshmQueryCompleted = false;
+			Image.impl._xshmAvailable = false;
+
+			SimpleWindow.nativeMapping = null;
+			CapableOfHandlingNativeEvent.nativeHandleMapping = null;
+			// GlobalHotkeyManager
+
+			display = null;
+			xim = null;
+		}
+
+		// Do you want to know why do we need all this horrible-looking code? See comment at the bottom.
+		private static void createXIM () {
+			import core.stdc.locale : setlocale, LC_ALL;
+			import core.stdc.stdio : stderr, fprintf;
+			import core.stdc.stdlib : free;
+			import core.stdc.string : strdup;
+
+			static immutable string[3] mtry = [ null, "@im=local", "@im=" ];
+
+			auto olocale = strdup(setlocale(LC_ALL, null));
+			setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
+			scope(exit) { setlocale(LC_ALL, olocale); free(olocale); }
+
+			//fprintf(stderr, "opening IM...\n");
+			foreach (string s; mtry) {
+				if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
+				if ((xim = XOpenIM(display, null, null, null)) !is null) return;
+			}
+			fprintf(stderr, "createXIM: XOpenIM failed!\n");
+		}
+
+		// for X11 we will keep all XShm-allocated images in this list, so we can free 'em on connection closing.
+		// we'll use glibc malloc()/free(), 'cause `unregisterImage()` can be called from object dtor.
+		static struct ImgList {
+			size_t img; // class; hide it from GC
+			ImgList* next;
+		}
+
+		static __gshared ImgList* imglist = null;
+		static __gshared bool imglistLocked = false; // true: don't register and unregister images
+
+		static void registerImage (Image img) {
+			if (!imglistLocked && img !is null) {
+				import core.stdc.stdlib : malloc;
+				auto it = cast(ImgList*)malloc(ImgList.sizeof);
+				assert(it !is null); // do proper checks
+				it.img = cast(size_t)cast(void*)img;
+				it.next = imglist;
+				imglist = it;
+				version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("registering image %p\n", cast(void*)img); }
+			}
+		}
+
+		static void unregisterImage (Image img) {
+			if (!imglistLocked && img !is null) {
+				import core.stdc.stdlib : free;
+				ImgList* prev = null;
+				ImgList* cur = imglist;
+				while (cur !is null) {
+					if (cur.img == cast(size_t)cast(void*)img) break; // i found her!
+					prev = cur;
+					cur = cur.next;
+				}
+				if (cur !is null) {
+					if (prev is null) imglist = cur.next; else prev.next = cur.next;
+					free(cur);
+					version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("unregistering image %p\n", cast(void*)img); }
+				} else {
+					version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("trying to unregister unknown image %p\n", cast(void*)img); }
+				}
+			}
+		}
+
+		static void freeImages () { // needed for discardAndRecreate
+			imglistLocked = true;
+			scope(exit) imglistLocked = false;
+			ImgList* cur = imglist;
+			ImgList* next = null;
+			while (cur !is null) {
+				import core.stdc.stdlib : free;
+				next = cur.next;
+				version(sdpy_debug_xshm) { import core.stdc.stdio : printf; printf("disposing image %p\n", cast(void*)cur.img); }
+				(cast(Image)cast(void*)cur.img).dispose();
+				free(cur);
+				cur = next;
+			}
+			imglist = null;
+		}
+
+		/// can be used to override normal handling of display name
+		/// from environment and/or command line
+		static setDisplayName(string newDisplayName) {
+			displayName = cast(char*) (newDisplayName ~ '\0');
+		}
+
+		/// resets to the default display string
+		static resetDisplayName() {
+			displayName = null;
+		}
 
 		///
 		static Display* get() {
 			if(display is null) {
-				display = XOpenDisplay(null);
+				display = XOpenDisplay(displayName);
+				connectionSequence_++;
 				if(display is null)
 					throw new Exception("Unable to open X display");
+				XSetIOErrorHandler(&x11ioerrCB);
 				Bool sup;
 				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released
 				createXIM();
@@ -4502,6 +7314,11 @@ version(X11) {
 			return display;
 		}
 
+		extern(C)
+		static int x11ioerrCB(Display* dpy) {
+			throw new XDisconnectException(false);
+		}
+
 		version(with_eventloop) {
 			import arsd.eventloop;
 			static void eventListener(OsFileHandle fd) {
@@ -4512,6 +7329,9 @@ version(X11) {
 			}
 		}
 
+		// close connection on program exit -- we need this to properly free all images
+		shared static ~this () { close(); }
+
 		///
 		static void close() {
 			if(display is null)
@@ -4521,6 +7341,9 @@ version(X11) {
 				import arsd.eventloop;
 				removeFileEventListeners(display.fd);
 			}
+
+			// now remove all registered images to prevent shared memory leaks
+			freeImages();
 
 			XCloseDisplay(display);
 			display = null;
@@ -4533,8 +7356,8 @@ version(X11) {
 
 		XShmSegmentInfo shminfo;
 
-		static bool xshmQueryCompleted;
-		static bool _xshmAvailable;
+		__gshared bool xshmQueryCompleted;
+		__gshared bool _xshmAvailable;
 		public static @property bool xshmAvailable() {
 			if(!xshmQueryCompleted) {
 				int i1, i2, i3;
@@ -4547,14 +7370,14 @@ version(X11) {
 		bool usingXshm;
 	final:
 
-		void createImage(int width, int height) {
+		void createImage(int width, int height, bool forcexshm=false) {
 			auto display = XDisplayConnection.get();
 			assert(display !is null);
 			auto screen = DefaultScreen(display);
 
 			// it will only use shared memory for somewhat largish images,
 			// since otherwise we risk wasting shared memory handles on a lot of little ones
-			if(xshmAvailable && width > 100 && height > 100) {
+			if (xshmAvailable && (forcexshm || (width > 100 && height > 100))) {
 				usingXshm = true;
 				handle = XShmCreateImage(
 					display,
@@ -4574,8 +7397,9 @@ version(X11) {
 				assert(rawData != cast(ubyte*) -1);
 				shminfo.readOnly = 0;
 				XShmAttach(display, &shminfo);
-
+				XDisplayConnection.registerImage(this);
 			} else {
+				if (forcexshm) throw new Exception("can't create XShm Image");
 				// This actually needs to be malloc to avoid a double free error when XDestroyImage is called
 				import core.stdc.stdlib : malloc;
 				rawData = cast(ubyte*) malloc(width * height * 4);
@@ -4595,11 +7419,14 @@ version(X11) {
 		void dispose() {
 			// note: this calls free(rawData) for us
 			if(handle) {
-				if(usingXshm)
-					XShmDetach(XDisplayConnection.get(), &shminfo);
+				if (usingXshm) {
+					XDisplayConnection.unregisterImage(this);
+					if (XDisplayConnection.get()) XShmDetach(XDisplayConnection.get(), &shminfo);
+				}
 				XDestroyImage(handle);
 				if(usingXshm) {
 					shmdt(shminfo.shmaddr);
+					shmctl(shminfo.shmid, IPC_RMID, null);
 				}
 				handle = null;
 			}
@@ -4656,9 +7483,12 @@ version(X11) {
 		Display* display;
 
 		Pixmap buffer;
+		int bufferw, bufferh; // size of the buffer; can be bigger than window
 		XIC xic; // input context
 		int curHidden = 0; // counter
 		Cursor blankCurPtr = 0;
+		int cursorSequenceNumber = 0;
+		int warpEventCount = 0; // number of mouse movement events to eat
 
 		void delegate(XEvent) setSelectionHandler;
 		void delegate(in char[]) getSelectionHandler;
@@ -4666,17 +7496,57 @@ version(X11) {
 		version(without_opengl) {} else
 		GLXContext glc;
 
+		private void fixFixedSize(bool forced=false) (int width, int height) {
+			if (forced || this.resizability == Resizability.fixedSize) {
+				//{ import core.stdc.stdio; printf("fixing size to: %dx%d\n", width, height); }
+				XSizeHints sh;
+				static if (!forced) {
+					c_long spr;
+					XGetWMNormalHints(display, window, &sh, &spr);
+					sh.flags |= PMaxSize | PMinSize;
+				} else {
+					sh.flags = PMaxSize | PMinSize;
+				}
+				sh.min_width = width;
+				sh.min_height = height;
+				sh.max_width = width;
+				sh.max_height = height;
+				XSetWMNormalHints(display, window, &sh);
+				//XFlush(display);
+			}
+		}
+
 		ScreenPainter getPainter() {
 			return ScreenPainter(this, window);
 		}
 
+		void move(int x, int y) {
+			XMoveWindow(display, window, x, y);
+		}
+
+		void resize(int w, int h) {
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XResizeWindow(display, window, w, h);
+			// FIXME: do we need to set this as the opengl context to do the glViewport change?
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+		}
+
+		void moveResize (int x, int y, int w, int h) {
+			if (w < 1) w = 1;
+			if (h < 1) h = 1;
+			XMoveResizeWindow(display, window, x, y, w, h);
+			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+		}
+
 		void hideCursor () {
 			if (curHidden++ == 0) {
-				if (!blankCurPtr) {
+				if (!blankCurPtr || cursorSequenceNumber != XDisplayConnection.connectionSequenceNumber) {
 					static const(char)[1] cmbmp = 0;
 					XColor blackcolor = { 0, 0, 0, 0, 0, 0 };
 					Pixmap pm = XCreateBitmapFromData(display, window, cmbmp.ptr, 1, 1);
 					blankCurPtr = XCreatePixmapCursor(display, pm, pm, &blackcolor, &blackcolor, 0, 0);
+					cursorSequenceNumber = XDisplayConnection.connectionSequenceNumber;
 					XFreePixmap(display, pm);
 				}
 				XDefineCursor(display, window, blankCurPtr);
@@ -4687,14 +7557,100 @@ version(X11) {
 			if (--curHidden == 0) XUndefineCursor(display, window);
 		}
 
+		void warpMouse (int x, int y) {
+			// here i will send dummy "ignore next mouse motion" event,
+			// 'cause `XWarpPointer()` sends synthesised mouse motion,
+			// and we don't need to report it to the user (as warping is
+			// used when the user needs movement deltas).
+			//XClientMessageEvent xclient;
+			XEvent e;
+			e.xclient.type = EventType.ClientMessage;
+			e.xclient.window = window;
+			e.xclient.message_type = GetAtom!("_X11SDPY_INSMME_FLAG_EVENT_", true)(display); // let's hope nobody else will use such stupid name ;-)
+			e.xclient.format = 32;
+			e.xclient.data.l[0] = 0;
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: sending \"INSMME\"...\n"); }
+			//{ import core.stdc.stdio : printf; printf("*X11 CLIENT: w=%u; type=%u; [0]=%u\n", cast(uint)e.xclient.window, cast(uint)e.xclient.message_type, cast(uint)e.xclient.data.l[0]); }
+			XSendEvent(display, window, false, EventMask.NoEventMask, /*cast(XEvent*)&xclient*/&e);
+			// now warp pointer...
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: sending \"warp\"...\n"); }
+			XWarpPointer(display, None, window, 0, 0, 0, 0, x, y);
+			// ...and flush
+			debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: flushing...\n"); }
+			XFlush(display);
+		}
+
+		void sendDummyEvent () {
+			// here i will send dummy event to ping event queue
+			XEvent e;
+			e.xclient.type = EventType.ClientMessage;
+			e.xclient.window = window;
+			e.xclient.message_type = GetAtom!("_X11SDPY_DUMMY_EVENT_", true)(display); // let's hope nobody else will use such stupid name ;-)
+			e.xclient.format = 32;
+			e.xclient.data.l[0] = 0;
+			XSendEvent(display, window, false, EventMask.NoEventMask, /*cast(XEvent*)&xclient*/&e);
+			XFlush(display);
+		}
+
 		void setTitle(string title) {
+			if (title.ptr is null) title = "";
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
 			XTextProperty windowName;
 			windowName.value = title.ptr;
-			windowName.encoding = XA_STRING;
+			windowName.encoding = XA_UTF8; //XA_STRING;
 			windowName.format = 8;
-			windowName.nitems = cast(uint) title.length;
-
+			windowName.nitems = cast(uint)title.length;
 			XSetWMName(display, window, &windowName);
+			char[1024] namebuf = 0;
+			auto maxlen = namebuf.length-1;
+			if (maxlen > title.length) maxlen = title.length;
+			namebuf[0..maxlen] = title[0..maxlen];
+			XStoreName(display, window, namebuf.ptr);
+			XChangeProperty(display, window, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
+			flushGui(); // without this OpenGL windows has a LONG delay before changing title
+		}
+
+		void setMinSize (int minwidth, int minheight) {
+			import core.stdc.config : c_long;
+			if (minwidth < 1) minwidth = 1;
+			if (minheight < 1) minheight = 1;
+			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
+			sh.min_width = minwidth;
+			sh.min_height = minheight;
+			sh.flags |= PMinSize;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
+		}
+
+		void setMaxSize (int maxwidth, int maxheight) {
+			import core.stdc.config : c_long;
+			if (maxwidth < 1) maxwidth = 1;
+			if (maxheight < 1) maxheight = 1;
+			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
+			sh.max_width = maxwidth;
+			sh.max_height = maxheight;
+			sh.flags |= PMaxSize;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
+		}
+
+		void setResizeGranularity (int granx, int grany) {
+			import core.stdc.config : c_long;
+			if (granx < 1) granx = 1;
+			if (grany < 1) grany = 1;
+			XSizeHints sh;
+			c_long spr;
+			XGetWMNormalHints(display, window, &sh, &spr);
+			sh.width_inc = granx;
+			sh.height_inc = grany;
+			sh.flags |= PResizeInc;
+			XSetWMNormalHints(display, window, &sh);
+			flushGui();
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
@@ -4704,12 +7660,11 @@ version(X11) {
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
-					glxInitOtherFunctions(); // load some OpenGL functions; it doesn't hurt to call this repeatedly
-
 					GLXFBConfig fbconf = null;
 					XVisualInfo* vi = null;
 					bool useLegacy = false;
-					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB !is null) {
+					static if (SdpyIsUsingIVGLBinds) {if (glbindGetProcAddress("glHint") is null) assert(0, "GL: error loading OpenGL"); } // loads all necessary functions
+					if (sdpyOpenGLContextVersion != 0 && glXCreateContextAttribsARB_present()) {
 						int[23] visualAttribs = [
 							GLX_X_RENDERABLE , 1/*True*/,
 							GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
@@ -4741,12 +7696,12 @@ version(X11) {
 							fbconf = fbc[bestidx];
 							// Be sure to free the FBConfig list allocated by glXChooseFBConfig()
 							XFree(fbc);
-							vi = glXGetVisualFromFBConfig(display, fbconf);
+							vi = cast(XVisualInfo*)glXGetVisualFromFBConfig(display, fbconf);
 						}
 					}
 					if (vi is null || useLegacy) {
-						static immutable GLint[] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
-						vi = glXChooseVisual(display, 0, attrs.ptr);
+						static immutable GLint[5] attrs = [ GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None ];
+						vi = cast(XVisualInfo*)glXChooseVisual(display, 0, attrs.ptr);
 						useLegacy = true;
 					}
 					if (vi is null) throw new Exception("no open gl visual found");
@@ -4771,21 +7726,46 @@ version(X11) {
 							0/*None*/,
 						];
 						glc = glXCreateContextAttribsARB(display, fbconf, null, 1/*True*/, contextAttribs.ptr);
+						if (glc is null && sdpyOpenGLContextAllowFallback) {
+							sdpyOpenGLContextVersion = 0;
+							glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						}
 						//{ import core.stdc.stdio; printf("using modern ogl v%d.%d\n", contextAttribs[1], contextAttribs[3]); }
 					} else {
 						// fallback to old GLX call
-					useglxlegacycontext:
-						glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
+							sdpyOpenGLContextVersion = 0;
+							glc = glXCreateContext(display, vi, null, /*GL_TRUE*/1);
+						}
 					}
 					// sync to ensure any errors generated are processed
 					XSync(display, 0/*False*/);
-					{ import core.stdc.stdio; printf("ogl is here\n"); }
+					//{ import core.stdc.stdio; printf("ogl is here\n"); }
 					if(glc is null)
 						throw new Exception("glc");
 				}
 			}
 
 			if(opengl == OpenGlOptions.no) {
+
+				bool overrideRedirect = false;
+				if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.notification)
+					overrideRedirect = true;
+
+				XSetWindowAttributes swa;
+				swa.background_pixel = WhitePixel(display, screen);
+				swa.border_pixel = BlackPixel(display, screen);
+				swa.override_redirect = overrideRedirect;
+				auto root = RootWindow(display, screen);
+				swa.colormap = XCreateColormap(display, root, DefaultVisual(display, screen), AllocNone);
+
+				window = XCreateWindow(display, parent is null ? root : parent.impl.window,
+					0, 0, width, height,
+					0, CopyFromParent, 1 /* InputOutput */, cast(Visual*) CopyFromParent, CWColormap | CWBackPixel | CWBorderPixel | CWOverrideRedirect, &swa);
+
+
+
+				/*
 				window = XCreateSimpleWindow(
 					display,
 					parent is null ? RootWindow(display, screen) : parent.impl.window,
@@ -4794,8 +7774,11 @@ version(X11) {
 					1, // border width
 					BlackPixel(display, screen), // border
 					WhitePixel(display, screen)); // background
+				*/
 
-				buffer = XCreatePixmap(display, cast(Drawable) window, width, height, 24);
+				buffer = XCreatePixmap(display, cast(Drawable) window, width, height, DefaultDepthOfDisplay(display));
+				bufferw = width;
+				bufferh = height;
 
 				gc = DefaultGC(display, screen);
 
@@ -4819,16 +7802,33 @@ version(X11) {
 				}
 			}
 
+			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
+			if (sdpyWindowClassStr is null) sdpyWindowClass = "DSimpleWindow";
+			// window class
+			if (sdpyWindowClassStr !is null && sdpyWindowClassStr[0]) {
+				//{ import core.stdc.stdio; printf("winclass: [%s]\n", sdpyWindowClassStr); }
+				XClassHint klass;
+				XWMHints wh;
+				XSizeHints size;
+				klass.res_name = sdpyWindowClassStr;
+				klass.res_class = sdpyWindowClassStr;
+				XSetWMProperties(display, window, null, null, null, 0, &size, &wh, &klass);
+			}
+
 			setTitle(title);
 			SimpleWindow.nativeMapping[window] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[window] = this;
 
 			// This gives our window a close button
-			Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
-			XSetWMProtocols(display, window, &atom, 1);
+			if (windowType != WindowTypes.eventOnly) {
+				Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
+				XSetWMProtocols(display, window, &atom, 1);
+			}
 
 
 			// FIXME: windowType and customizationFlags
+			Atom[8] wsatoms; // here, due to goto
+			int wmsacount = 0; // here, due to goto
 
 			try
 			final switch(windowType) {
@@ -4836,10 +7836,38 @@ version(X11) {
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 				break;
 				case WindowTypes.undecorated:
-					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
 					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NORMAL"(display));
+				break;
+				case WindowTypes.eventOnly:
+					_hidden = true;
+					XSelectInput(display, window, EventMask.StructureNotifyMask); // without this, we won't get destroy notification
+					goto hiddenWindow;
+				//break;
+				case WindowTypes.nestedChild:
+
+				break;
+
+				case WindowTypes.dropdownMenu:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
+				case WindowTypes.popupMenu:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
+				case WindowTypes.notification:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NOTIFICATION"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
 				/+
+				case WindowTypes.menu:
+					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
+					motifHideDecorations();
+				break;
 				case WindowTypes.desktop:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DESKTOP"(display);
 				break;
@@ -4861,12 +7889,6 @@ version(X11) {
 				case WindowTypes.dialog:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display);
 				break;
-				case WindowTypes.dropdownMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"(display);
-				break;
-				case WindowTypes.popupMenu:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_POPUP_MENU"(display);
-				break;
 				case WindowTypes.tooltip:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display);
 				break;
@@ -4886,35 +7908,65 @@ version(X11) {
 				// that doesn't support these things
 			}
 
+			if (customizationFlags&WindowFlags.skipTaskbar) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_SKIP_TASKBAR", true)(display);
+			// the two following flags may be ignored by WM
+			if (customizationFlags&WindowFlags.alwaysOnTop) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_ABOVE", true)(display);
+			if (customizationFlags&WindowFlags.alwaysOnBottom) wsatoms[wmsacount++] = GetAtom!("_NET_WM_STATE_BELOW", true)(display);
 
+			if (wmsacount != 0) XChangeProperty(display, window, GetAtom!("_NET_WM_STATE", true)(display), XA_ATOM, 32 /* bits */,0 /*PropModeReplace*/, wsatoms.ptr, wmsacount);
 
-			if(this.resizability != Resizablity.allowResizing && opengl == OpenGlOptions.no) {
-				XSizeHints sh;
-				sh.min_width = width;
-				sh.min_height = height;
-				sh.max_width = width;
-				sh.max_height = height;
-				sh.flags = PMaxSize | PMinSize;
-				XSetWMNormalHints(display, window, &sh);
-			}
+			if (this.resizability == Resizability.fixedSize || (opengl == OpenGlOptions.no && this.resizability != Resizability.allowResizing)) fixFixedSize!true(width, height);
 
 			// What would be ideal here is if they only were
 			// selected if there was actually an event handler
 			// for them...
-			XSelectInput(display, window,
-				EventMask.ExposureMask |
+
+			selectDefaultInput((customizationFlags & WindowFlags.alwaysRequestMouseMotionEvents)?true:false);
+
+			hiddenWindow:
+
+			// set the pid property for lookup later by window managers
+			// a standard convenience
+			import core.sys.posix.unistd;
+			uint pid = getpid();
+
+			XChangeProperty(
+				display,
+				impl.window,
+				GetAtom!("_NET_WM_PID", true)(display),
+				XA_CARDINAL,
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				&pid,
+				1);
+
+
+			if(windowType != WindowTypes.eventOnly && (customizationFlags&WindowFlags.dontAutoShow) == 0) {
+				XMapWindow(display, window);
+			} else {
+				_hidden = true;
+			}
+		}
+
+		void selectDefaultInput(bool forceIncludeMouseMotion) {
+			auto mask = EventMask.ExposureMask |
 				EventMask.KeyPressMask |
 				EventMask.KeyReleaseMask |
 				EventMask.PropertyChangeMask |
 				EventMask.FocusChangeMask |
-				EventMask.StructureNotifyMask
-				| EventMask.PointerMotionMask // FIXME: not efficient
+				EventMask.StructureNotifyMask |
+				EventMask.VisibilityChangeMask
 				| EventMask.ButtonPressMask
 				| EventMask.ButtonReleaseMask
-			);
+			;
 
-			XMapWindow(display, window);
+			// xshm is our shortcut for local connections
+			if(Image.impl.xshmAvailable || forceIncludeMouseMotion)
+				mask |= EventMask.PointerMotionMask;
+
+			XSelectInput(display, window, mask);
 		}
+
 
 		void setNetWMWindowType(Atom type) {
 			Atom[2] atoms;
@@ -4956,9 +8008,15 @@ version(X11) {
 		*/
 
 		void closeWindow() {
+			if (customEventFD != -1) {
+				import core.sys.posix.unistd : close;
+				close(customEventFD);
+				customEventFD = -1;
+			}
 			if(buffer)
 				XFreePixmap(display, buffer);
-			if (blankCurPtr) XFreeCursor(display, blankCurPtr);
+			bufferw = bufferh = 0;
+			if (blankCurPtr && cursorSequenceNumber == XDisplayConnection.connectionSequenceNumber) XFreeCursor(display, blankCurPtr);
 			XDestroyWindow(display, window);
 			XFlush(display);
 		}
@@ -4984,15 +8042,18 @@ version(X11) {
 		int eventLoop(long pulseTimeout) {
 			bool done = false;
 
-			version(X11)
+			version(X11) {
 				XFlush(display);
+				insideXEventLoop = true;
+				scope(exit) insideXEventLoop = false;
+			}
 
 			version(linux) {
 				static import ep = core.sys.linux.epoll;
 				static import unix = core.sys.posix.unistd;
 				static import err = core.stdc.errno;
 
-				static import tfd = core.sys.linux.timerfd;
+				import core.sys.linux.timerfd;
 				prepareEventLoop();
 
 				ep.epoll_event[16] events = void;
@@ -5014,21 +8075,31 @@ version(X11) {
 						throw new Exception("add x fd");// ~ to!string(epollFd));
 				}
 
+				scope(exit) {
+					// clean up when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
+					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = display.fd;
+					//import std.conv;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, display.fd, &ev);
+				}
+
 				if(pulseTimeout) {
-					pulseFd = tfd.timerfd_create(tfd.CLOCK_MONOTONIC, 0);
+					pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
 					if(pulseFd == -1)
 						throw new Exception("pulse timer create failed");
 
-					tfd.itimerspec value;
+					itimerspec value;
 					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
 					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
 
 					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
 					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
 
-					if(tfd.timerfd_settime(pulseFd, 0, &value, null) == -1)
+					if(timerfd_settime(pulseFd, 0, &value, null) == -1)
 						throw new Exception("couldn't make pulse timer");
-						
+
 					ep.epoll_event ev = void;
 					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
@@ -5036,8 +8107,39 @@ version(X11) {
 					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
 				}
 
+				// eventfd for custom events
+				if (customEventFD == -1) {
+					customEventFD = eventfd(0, 0);
+					if (customEventFD >= 0) {
+						ep.epoll_event ev = void;
+						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+						ev.events = ep.EPOLLIN;
+						ev.data.fd = customEventFD;
+						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+					} else {
+						// this is something that should not be; better be safe than sorry
+						throw new Exception("can't create eventfd for custom event processing");
+					}
+				}
+
+				SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
+
+				{
+					this.mtLock();
+					scope(exit) this.mtUnlock();
+					XPending(display); // no, really
+				}
 				while(!done) {
-					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, -1);
+					bool forceXPending = false;
+					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
+					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
+					{
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						if (XEventsQueued(this.display, QueueMode.QueuedAlready)) { forceXPending = true; if (wto > 10 || wto <= 0) wto = 10; } // so libX event loop will be able to do it's work
+					}
+					//{ import core.stdc.stdio; printf("*** wto=%d; force=%d\n", wto, (forceXPending ? 1 : 0)); }
+					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, (wto == 0 || wto >= int.max ? -1 : cast(int)wto));
 					if(nfds == -1) {
 						if(err.errno == err.EINTR) {
 							continue; // interrupted by signal, just try again
@@ -5045,6 +8147,7 @@ version(X11) {
 						throw new Exception("epoll wait failure");
 					}
 
+					SimpleWindow.processAllCustomEvents(); // anyway
 					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
 					foreach(idx; 0 .. nfds) {
 						if(done) break;
@@ -5056,8 +8159,10 @@ version(X11) {
 								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
 								this.mtLock();
 								scope(exit) this.mtUnlock();
-								while(!done && XPending(display))
+								while(!done && XPending(display)) {
 									done = doXNextEvent(this.display);
+								}
+								forceXPending = false;
 							} else if(fd == pulseFd) {
 								long expirationCount;
 								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
@@ -5071,12 +8176,22 @@ version(X11) {
 								//
 								// IOW handlePulse happens at most once per pulse interval.
 								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
+							} else if (fd == customEventFD) {
+								// we have some custom events; process 'em
+								import core.sys.posix.unistd : read;
+								ulong n;
+								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
+								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
+								//SimpleWindow.processAllCustomEvents();
 							} else {
 								// some other timer
 								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
 
 								if(Timer* t = fd in Timer.mapping)
 									(*t).trigger();
+
+								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+									(*pfr).ready();
 
 								// or i might add support for other FDs too
 								// but for now it is just timer
@@ -5093,6 +8208,16 @@ version(X11) {
 							// just throw. for now at least
 
 							throw new Exception("epoll did something else");
+						}
+					}
+					// if we won't call `XPending()` here, libX may delay some internal event delivery.
+					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
+					if (!done && forceXPending) {
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
+						while(!done && XPending(display)) {
+							done = doXNextEvent(this.display);
 						}
 					}
 				}
@@ -5123,27 +8248,32 @@ version(X11) {
 			return 0;
 		}
 	}
+
+	bool insideXEventLoop;
 }
 
 version(X11) {
+
+	int mouseDoubleClickTimeout = 350; /// double click timeout. X only, you probably shouldn't change this.
+
 	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
 		bool done;
 		XEvent e;
 		XNextEvent(display, &e);
 		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
-    // filter out compose events
-    if (XFilterEvent(&e, None)) {
-      //{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
-      //NOTE: we should ungrab keyboard here, but simpledisplay doesn't use keyboard grabbing (yet)
-      return false;
-    }
-    // process keyboard mapping changes
-    if (e.type == EventType.KeymapNotify) {
-      //{ import core.stdc.stdio : printf; printf("KeymapNotify processed!\n"); }
-      XRefreshKeyboardMapping(&e.xmapping);
-      return false;
-    }
+		// filter out compose events
+		if (XFilterEvent(&e, None)) {
+			//{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
+			//NOTE: we should ungrab keyboard here, but simpledisplay doesn't use keyboard grabbing (yet)
+			return false;
+		}
+		// process keyboard mapping changes
+		if (e.type == EventType.KeymapNotify) {
+			//{ import core.stdc.stdio : printf; printf("KeymapNotify processed!\n"); }
+			XRefreshKeyboardMapping(&e.xmapping);
+			return false;
+		}
 
 		version(with_eventloop)
 			import arsd.eventloop;
@@ -5205,13 +8335,38 @@ version(X11) {
 						&target, &format, &length, &bytesafter, &value);
 
 					// FIXME: it might be sent in pieces...
-					// FIXME: or be other formats...
 					// FIXME: I don't have to copy it now since it is in char[] instead of string
 
 					{
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
-						win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+
+						if(target == XA_ATOM) {
+							// initial request, see what they are able to work with and request the best one
+							// we can handle, if available
+
+							Atom[] answer = (cast(Atom*) value)[0 .. length];
+							Atom best = None;
+							foreach(option; answer) {
+								if(option == GetAtom!"UTF8_STRING"(display)) {
+									best = option;
+									break;
+								} else if(option == XA_STRING) {
+									best = option;
+								}
+							}
+
+							//writeln("got ", answer);
+
+							if(best != None) {
+								// actually request the best format
+								XConvertSelection(e.xselection.display, e.xselection.selection, best, GetAtom!("SDD_DATA", true)(display), e.xselection.requestor, 0 /*CurrentTime*/);
+							}
+						} else if(target == GetAtom!"UTF8_STRING"(display) || target == XA_STRING) {
+							win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+						} else {
+							// unsupported type
+						}
 					}
 					XFree(value);
 					XDeleteProperty(
@@ -5223,54 +8378,87 @@ version(X11) {
 		  break;
 		  case EventType.ConfigureNotify:
 			auto event = e.xconfigure;
-		  	if(auto win = event.window in SimpleWindow.nativeMapping) {
+		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
 				if(event.width != win.width || event.height != win.height) {
-					auto oldWidth = win.width;
-					auto oldHeight = win.height;
-
 					win._width = event.width;
 					win._height = event.height;
 
-					if(win.openglMode == OpenGlOptions.no && win.resizability == Resizablity.allowResizing) {
-						// FIXME: could this be more efficient? It isn't really necessary to make
-						// a new buffer if we're sizing down at least.
+					if(win.openglMode == OpenGlOptions.no) {
+						// FIXME: could this be more efficient?
 
-						// resize the internal buffer to match the window...
-						auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, win.width, win.height, 24);
-						XFillRectangle(display, newPixmap, (*win).gc, 0, 0, win.width, win.height);
-						XCopyArea(display,
-							cast(Drawable) (*win).buffer,
-							cast(Drawable) newPixmap,
-							(*win).gc, 0, 0,
-							oldWidth < (*win).width ? oldWidth : win.width,
-							oldHeight < (*win).height ? oldHeight : win.height,
-							0, 0);
+						if (win.bufferw < event.width || win.bufferh < event.height) {
+							//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)event.width, cast(int)event.height); }
+							// grow the internal buffer to match the window...
+							auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, event.width, event.height, DefaultDepthOfDisplay(display));
+							{
+								GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+								XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+								scope(exit) XFreeGC(win.display, xgc);
+								XSetClipMask(win.display, xgc, None);
+								XSetForeground(win.display, xgc, 0);
+								XFillRectangle(display, cast(Drawable)newPixmap, xgc, 0, 0, event.width, event.height);
+							}
+							XCopyArea(display,
+								cast(Drawable) (*win).buffer,
+								cast(Drawable) newPixmap,
+								(*win).gc, 0, 0,
+								win.bufferw < event.width ? win.bufferw : win.width,
+								win.bufferh < event.height ? win.bufferh : win.height,
+								0, 0);
 
-						XFreePixmap(display, win.buffer);
-						win.buffer = newPixmap;
+							XFreePixmap(display, win.buffer);
+							win.buffer = newPixmap;
+							win.bufferw = event.width;
+							win.bufferh = event.height;
+						}
+
+						// clear unused parts of the buffer
+						if (win.bufferw > event.width || win.bufferh > event.height) {
+							GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+							XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+							scope(exit) XFreeGC(win.display, xgc);
+							XSetClipMask(win.display, xgc, None);
+							XSetForeground(win.display, xgc, 0);
+							immutable int maxw = (win.bufferw > event.width ? win.bufferw : event.width);
+							immutable int maxh = (win.bufferh > event.height ? win.bufferh : event.height);
+							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, event.width, 0, maxw, maxh); // let X11 do clipping
+							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, 0, event.height, maxw, maxh); // let X11 do clipping
+						}
+
 					}
 
-					version(with_opengl)
-					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizablity.automaticallyScaleIfPossible) {
+					version(without_opengl) {} else
+					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
 						glViewport(0, 0, event.width, event.height);
 					}
 
-					if(win.windowResized !is null)
+					win.fixFixedSize(event.width, event.height); //k8: this does nothing on my FluxBox; wtf?!
+
+					if(win.windowResized !is null) {
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
 						win.windowResized(event.width, event.height);
+					}
 				}
 			}
 		  break;
 		  case EventType.Expose:
-		  	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
-				if((*win).openglMode == OpenGlOptions.no)
-					XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
-				else {
+		 	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
+				// if it is closing from a popup menu, it can get
+				// an Expose event right by the end and trigger a
+				// BadDrawable error ... we'll just check
+				// closed to handle that.
+				if((*win).closed) break;
+				if((*win).openglMode == OpenGlOptions.no) {
+					bool doCopy = true;
+					if (win.handleExpose !is null) doCopy = !win.handleExpose(e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.count);
+					if (doCopy) XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
+				} else {
 					// need to redraw the scene somehow
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
+					version(without_opengl) {} else
 					win.redrawOpenGlSceneNow();
 				}
 			}
@@ -5283,7 +8471,7 @@ version(X11) {
 					if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
 				}
 
-				win.focused = e.type == EventType.FocusIn;
+				win._focused = e.type == EventType.FocusIn;
 
 				if(win.demandingAttention)
 					demandAttention(*win, false);
@@ -5295,16 +8483,41 @@ version(X11) {
 				}
 			}
 		  break;
-		  case EventType.ClientMessage:
-		  	if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
-				// user clicked the close button on the window manager
-				// FIXME: not implemented on Windows
-				if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+		  case EventType.VisibilityNotify:
+				if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
+					if (e.xvisibility.state == VisibilityNotify.VisibilityFullyObscured) {
+						if (win.visibilityChanged !is null) {
+								XUnlockDisplay(display);
+								scope(exit) XLockDisplay(display);
+								win.visibilityChanged(false);
+							}
+					} else {
+						if (win.visibilityChanged !is null) {
+							XUnlockDisplay(display);
+							scope(exit) XLockDisplay(display);
+							win.visibilityChanged(true);
+						}
+					}
 				}
-			}
+				break;
+		  case EventType.ClientMessage:
+				if (e.xclient.message_type == GetAtom!("_X11SDPY_INSMME_FLAG_EVENT_", true)(e.xany.display)) {
+					// "ignore next mouse motion" event, increment ignore counter for teh window
+					if (auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+						++(*win).warpEventCount;
+						debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"INSMME\" message, new count=%d\n", (*win).warpEventCount); }
+					} else {
+						debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"INSMME\" WTF?!!\n"); }
+					}
+				} else if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
+					// user clicked the close button on the window manager
+					// FIXME: not implemented on Windows
+					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+					}
+				}
 		  break;
 		  case EventType.MapNotify:
 				if(auto win = e.xmap.window in SimpleWindow.nativeMapping) {
@@ -5336,6 +8549,7 @@ version(X11) {
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
+				if (win.onDestroyed !is null) try { win.onDestroyed(); } catch (Exception e) {} // sorry
 				win._closed = true; // just in case
 				win.destroyed = true;
 				if (win.xic !is null) {
@@ -5343,7 +8557,13 @@ version(X11) {
 					win.xic = null; // just in calse
 				}
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
-				if(SimpleWindow.nativeMapping.keys.length == 0)
+				bool anyImportant = false;
+				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+					if(w.beingOpenKeepsAppOpen) {
+						anyImportant = true;
+						break;
+					}
+				if(!anyImportant)
 					done = true;
 			}
 			auto window = e.xdestroywindow.window;
@@ -5365,13 +8585,20 @@ version(X11) {
 			mouse.modifierState = event.state;
 
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
-				(*win).mdx(mouse);
-				if((*win).handleMouseEvent) {
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					(*win).handleMouseEvent(mouse);
-				}
 				mouse.window = *win;
+				if (win.warpEventCount > 0) {
+					debug(x11sdpy_warp_debug) { import core.stdc.stdio : printf; printf("X11: got \"warp motion\" message, current count=%d\n", (*win).warpEventCount); }
+					--(*win).warpEventCount;
+					(*win).mdx(mouse); // so deltas will be correctly updated
+				} else {
+					win.warpEventCount = 0; // just in case
+					(*win).mdx(mouse);
+					if((*win).handleMouseEvent) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						(*win).handleMouseEvent(mouse);
+					}
+				}
 			}
 
 		  	version(with_eventloop)
@@ -5386,12 +8613,21 @@ version(X11) {
 			mouse.x = event.x;
 			mouse.y = event.y;
 
+			static Time lastMouseDownTime = 0;
+
+			mouse.doubleClick = e.type == EventType.ButtonPress && (event.time - lastMouseDownTime) < mouseDoubleClickTimeout;
+			if(e.type == EventType.ButtonPress) lastMouseDownTime = event.time;
+
 			switch(event.button) {
 				case 1: mouse.button = MouseButton.left; break; // left
 				case 2: mouse.button = MouseButton.middle; break; // middle
 				case 3: mouse.button = MouseButton.right; break; // right
 				case 4: mouse.button = MouseButton.wheelUp; break; // scroll up
 				case 5: mouse.button = MouseButton.wheelDown; break; // scroll down
+				case 6: break; // idk
+				case 7: break; // idk
+				case 8: mouse.button = MouseButton.backButton; break;
+				case 9: mouse.button = MouseButton.forwardButton; break;
 				default:
 			}
 
@@ -5401,13 +8637,13 @@ version(X11) {
 			//mouse.modifierState = event.detail;
 
 			if(auto win = e.xbutton.window in SimpleWindow.nativeMapping) {
+				mouse.window = *win;
 				(*win).mdx(mouse);
 				if((*win).handleMouseEvent) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
 					(*win).handleMouseEvent(mouse);
 				}
-				mouse.window = *win;
 			}
 			version(with_eventloop)
 				send(mouse);
@@ -5419,7 +8655,7 @@ version(X11) {
 			KeyEvent ke;
 			ke.pressed = e.type == EventType.KeyPress;
 			ke.hardwareCode = e.xkey.keycode;
-			
+
 			auto sym = XKeycodeToKeysym(
 				XDisplayConnection.get(),
 				e.xkey.keycode,
@@ -5468,7 +8704,12 @@ version(X11) {
 
 				// char events are separate since they are on Windows too
 				// also, xcompose can generate long char sequences
-				if (ke.pressed && charbuflen > 0) {
+				// don't send char events if Meta and/or Hyper is pressed
+				// TODO: ctrl+char should only send control chars; not yet
+				if ((e.xkey.state&ModifierState.ctrl) != 0) {
+					if (charbuflen > 1 || charbuf[0] >= ' ') charbuflen = 0;
+				}
+				if (ke.pressed && charbuflen > 0 && (e.xkey.state&(ModifierState.alt|ModifierState.windows)) == 0) {
 					// FIXME: I think Windows sends these on releases... we should try to match that, but idk about repeats.
 					foreach (immutable dchar ch; charbuf[0..charbuflen]) {
 						if (win.handleCharEvent) {
@@ -5497,6 +8738,8 @@ version(X11) {
 // Necessary C library bindings follow
 version(Windows) {} else
 version(X11) {
+
+extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
 
 // X11 bindings needed here
 /*
@@ -5532,33 +8775,27 @@ int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int
 
 char *XKeysymToString(KeySym keysym);
 KeySym XKeycodeToKeysym(
-    Display*		/* display */,
-    KeyCode		/* keycode */,
-    int			/* index */
+	Display*		/* display */,
+	KeyCode		/* keycode */,
+	int			/* index */
 );
 
 
-int XConvertSelection(Display *display, Atom selection, Atom target,
-              Atom property, Window requestor, Time time);
+int XConvertSelection(Display *display, Atom selection, Atom target, Atom property, Window requestor, Time time);
 
 int XFree(void*);
-              int XDeleteProperty(Display *display, Window w, Atom property);
+int XDeleteProperty(Display *display, Window w, Atom property);
 
-    int XChangeProperty(Display *display, Window w, Atom property, Atom
-              type, int format, int mode, in void *data, int nelements);
+int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, in void *data, int nelements);
 
+int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
+	long_offset, arch_long long_length, Bool del, Atom req_type, Atom
+	*actual_type_return, int *actual_format_return, arch_ulong
+	*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
 
+int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
 
-       int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
-              long_offset, arch_long long_length, Bool del, Atom req_type, Atom
-              *actual_type_return, int *actual_format_return, arch_ulong
-              *nitems_return, arch_ulong *bytes_after_return, void** prop_return);
-
-       int XSetSelectionOwner(Display *display, Atom selection, Window owner,
-              Time time);
-
-       Window XGetSelectionOwner(Display *display, Atom selection);
-
+Window XGetSelectionOwner(Display *display, Atom selection);
 
 
 
@@ -5600,15 +8837,15 @@ XIM XIMOfIC(XIC ic);
 
 alias XIMStyle = arch_ulong;
 enum : arch_ulong {
-  XIMPreeditArea      = 0x0001,
-  XIMPreeditCallbacks = 0x0002,
-  XIMPreeditPosition  = 0x0004,
-  XIMPreeditNothing   = 0x0008,
-  XIMPreeditNone      = 0x0010,
-  XIMStatusArea       = 0x0100,
-  XIMStatusCallbacks  = 0x0200,
-  XIMStatusNothing    = 0x0400,
-  XIMStatusNone       = 0x0800,
+	XIMPreeditArea      = 0x0001,
+	XIMPreeditCallbacks = 0x0002,
+	XIMPreeditPosition  = 0x0004,
+	XIMPreeditNothing   = 0x0008,
+	XIMPreeditNone      = 0x0010,
+	XIMStatusArea       = 0x0100,
+	XIMStatusCallbacks  = 0x0200,
+	XIMStatusNothing    = 0x0400,
+	XIMStatusNone       = 0x0800,
 }
 
 
@@ -5637,6 +8874,8 @@ enum : arch_ulong {
 		Bool                /* send_event */
 	);
 
+	Status XShmQueryExtension(Display*);
+
 	XImage *XShmCreateImage(
 		Display*            /* dpy */,
 		Visual*             /* visual */,
@@ -5662,9 +8901,11 @@ enum : arch_ulong {
 	int shmget(int, size_t, int);
 	void* shmat(int, in void*, int);
 	int shmdt(in void*);
+	int shmctl (int shmid, int cmd, void* ptr /*struct shmid_ds *buf*/);
 
 	enum IPC_PRIVATE = 0;
 	enum IPC_CREAT = 512;
+	enum IPC_RMID = 0;
 
 /* MIT-SHM end */
 
@@ -5820,51 +9061,51 @@ enum ColorMapNotification:int
 	alias void ScreenFormat;
 
 	struct XImage {
-	    int width, height;			/* size of image */
-	    int xoffset;				/* number of pixels offset in X direction */
-	    ImageFormat format;		/* XYBitmap, XYPixmap, ZPixmap */
-	    void *data;					/* pointer to image data */
-	    ByteOrder byte_order;		/* data byte order, LSBFirst, MSBFirst */
-	    int bitmap_unit;			/* quant. of scanline 8, 16, 32 */
-	    int bitmap_bit_order;		/* LSBFirst, MSBFirst */
-	    int bitmap_pad;			/* 8, 16, 32 either XY or ZPixmap */
-	    int depth;					/* depth of image */
-	    int bytes_per_line;			/* accelarator to next line */
-	    int bits_per_pixel;			/* bits per pixel (ZPixmap) */
-	    arch_ulong red_mask;	/* bits in z arrangment */
-	    arch_ulong green_mask;
-	    arch_ulong blue_mask;
-	    XPointer obdata;			/* hook for the object routines to hang on */
-	    struct F {				/* image manipulation routines */
+		int width, height;			/* size of image */
+		int xoffset;				/* number of pixels offset in X direction */
+		ImageFormat format;		/* XYBitmap, XYPixmap, ZPixmap */
+		void *data;					/* pointer to image data */
+		ByteOrder byte_order;		/* data byte order, LSBFirst, MSBFirst */
+		int bitmap_unit;			/* quant. of scanline 8, 16, 32 */
+		int bitmap_bit_order;		/* LSBFirst, MSBFirst */
+		int bitmap_pad;			/* 8, 16, 32 either XY or ZPixmap */
+		int depth;					/* depth of image */
+		int bytes_per_line;			/* accelarator to next line */
+		int bits_per_pixel;			/* bits per pixel (ZPixmap) */
+		arch_ulong red_mask;	/* bits in z arrangment */
+		arch_ulong green_mask;
+		arch_ulong blue_mask;
+		XPointer obdata;			/* hook for the object routines to hang on */
+		static struct F {				/* image manipulation routines */
 			XImage* function(
 				XDisplay* 			/* display */,
 				Visual*				/* visual */,
 				uint				/* depth */,
 				int					/* format */,
 				int					/* offset */,
-				byte*				/* data */,
+				ubyte*				/* data */,
 				uint				/* width */,
 				uint				/* height */,
 				int					/* bitmap_pad */,
 				int					/* bytes_per_line */) create_image;
-			int  function(XImage *)destroy_image;
-			arch_ulong function(XImage *, int, int)get_pixel;
-			int  function(XImage *, int, int, uint)put_pixel;
-			XImage function(XImage *, int, int, uint, uint)sub_image;
-			int function(XImage *, int)add_pixel;
+			int function(XImage *) destroy_image;
+			arch_ulong function(XImage *, int, int) get_pixel;
+			int function(XImage *, int, int, arch_ulong) put_pixel;
+			XImage* function(XImage *, int, int, uint, uint) sub_image;
+			int function(XImage *, arch_long) add_pixel;
 		}
-
 		F f;
 	}
 	version(X86_64) static assert(XImage.sizeof == 136);
+	else version(X86) static assert(XImage.sizeof == 88);
 
 struct XCharStruct {
-    short       lbearing;       /* origin to left edge of raster */
-    short       rbearing;       /* origin to right edge of raster */
-    short       width;          /* advance to next char's origin */
-    short       ascent;         /* baseline to top edge of raster */
-    short       descent;        /* baseline to bottom edge of raster */
-    ushort attributes;  /* per char flags (not predefined) */
+	short       lbearing;       /* origin to left edge of raster */
+	short       rbearing;       /* origin to right edge of raster */
+	short       width;          /* advance to next char's origin */
+	short       ascent;         /* baseline to top edge of raster */
+	short       descent;        /* baseline to bottom edge of raster */
+	ushort attributes;  /* per char flags (not predefined) */
 }
 
 /*
@@ -5872,33 +9113,29 @@ struct XCharStruct {
  * returned.
  */
 struct XFontProp {
-    Atom name;
-    arch_ulong card32;
+	Atom name;
+	arch_ulong card32;
 }
 
 alias Atom Font;
 
 struct XFontStruct {
-   XExtData *ext_data;           /* Hook for extension to hang data */
-   Font fid;                     /* Font ID for this font */
-   uint direction;           /* Direction the font is painted */
-   uint min_char_or_byte2;   /* First character */
-   uint max_char_or_byte2;   /* Last character */
-   uint min_byte1;           /* First row that exists (for two-byte
-                                  * fonts) */
-   uint max_byte1;           /* Last row that exists (for two-byte
-                                  * fonts) */
-   Bool all_chars_exist;         /* Flag if all characters have nonzero
-                                  * size */
-   uint default_char;        /* Char to print for undefined character */
-   int n_properties;             /* How many properties there are */
-   XFontProp *properties;        /* Pointer to array of additional
-                                  * properties*/
-   XCharStruct min_bounds;       /* Minimum bounds over all existing char*/
-   XCharStruct max_bounds;       /* Maximum bounds over all existing char*/
-   XCharStruct *per_char;        /* first_char to last_char information */
-   int ascent;                   /* Max extent above baseline for spacing */
-   int descent;                  /* Max descent below baseline for spacing */
+	XExtData *ext_data;           /* Hook for extension to hang data */
+	Font fid;                     /* Font ID for this font */
+	uint direction;           /* Direction the font is painted */
+	uint min_char_or_byte2;   /* First character */
+	uint max_char_or_byte2;   /* Last character */
+	uint min_byte1;           /* First row that exists (for two-byte fonts) */
+	uint max_byte1;           /* Last row that exists (for two-byte fonts) */
+	Bool all_chars_exist;         /* Flag if all characters have nonzero size */
+	uint default_char;        /* Char to print for undefined character */
+	int n_properties;             /* How many properties there are */
+	XFontProp *properties;        /* Pointer to array of additional properties*/
+	XCharStruct min_bounds;       /* Minimum bounds over all existing char*/
+	XCharStruct max_bounds;       /* Maximum bounds over all existing char*/
+	XCharStruct *per_char;        /* first_char to last_char information */
+	int ascent;                   /* Max extent above baseline for spacing */
+	int descent;                  /* Max descent below baseline for spacing */
 }
 
 	XFontStruct *XLoadQueryFont(Display *display, in char *name);
@@ -5907,7 +9144,7 @@ struct XFontStruct {
 	int XTextWidth(XFontStruct*, in char*, int);
 
 	int XSetLineAttributes(Display *display, GC gc, uint line_width, int line_style, int cap_style, int join_style);
-	int XSetDashes(Display *display, GC gc, int dash_offset, in char* dash_list, int n);
+	int XSetDashes(Display *display, GC gc, int dash_offset, in byte* dash_list, int n);
 
 
 
@@ -6012,15 +9249,15 @@ struct XFocusChangeEvent{
 alias XFocusChangeEvent XFocusInEvent;
 alias XFocusChangeEvent XFocusOutEvent;
 Window XCreateSimpleWindow(
-    Display*	/* display */,
-    Window		/* parent */,
-    int			/* x */,
-    int			/* y */,
-    uint		/* width */,
-    uint		/* height */,
-    uint		/* border_width */,
-    uint		/* border */,
-    uint		/* background */
+	Display*	/* display */,
+	Window		/* parent */,
+	int			/* x */,
+	int			/* y */,
+	uint		/* width */,
+	uint		/* height */,
+	uint		/* border_width */,
+	uint		/* border */,
+	uint		/* background */
 );
 Window XCreateWindow(Display *display, Window parent, int x, int y, uint width, uint height, uint border_width, int depth, uint class_, Visual *visual, arch_ulong valuemask, XSetWindowAttributes *attributes);
 
@@ -6028,8 +9265,9 @@ int XReparentWindow(Display*, Window, Window, int, int);
 int XClearWindow(Display*, Window);
 int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
 int XMoveWindow(Display*, Window, int, int);
+int XResizeWindow(Display *display, Window w, uint width, uint height);
 
-       Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
+Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
 enum CWBackPixmap              = (1L<<0);
 enum CWBackPixel               = (1L<<1);
@@ -6099,22 +9337,24 @@ struct XSetWindowAttributes {
 
 
 XImage *XCreateImage(
-    Display*		/* display */,
-    Visual*		/* visual */,
-    uint	/* depth */,
-    int			/* format */,
-    int			/* offset */,
-    ubyte*		/* data */,
-    uint	/* width */,
-    uint	/* height */,
-    int			/* bitmap_pad */,
-    int			/* bytes_per_line */
+	Display*		/* display */,
+	Visual*		/* visual */,
+	uint	/* depth */,
+	int			/* format */,
+	int			/* offset */,
+	ubyte*		/* data */,
+	uint	/* width */,
+	uint	/* height */,
+	int			/* bitmap_pad */,
+	int			/* bytes_per_line */
 );
 
+Status XInitImage (XImage* image);
+
 Atom XInternAtom(
-    Display*		/* display */,
-    const char*	/* atom_name */,
-    Bool		/* only_if_exists */
+	Display*		/* display */,
+	const char*	/* atom_name */,
+	Bool		/* only_if_exists */
 );
 
 alias int Status;
@@ -6151,55 +9391,54 @@ enum EventMask:int
 }
 
 int XPutImage(
-    Display*	/* display */,
-    Drawable	/* d */,
-    GC			/* gc */,
-    XImage*	/* image */,
-    int			/* src_x */,
-    int			/* src_y */,
-    int			/* dest_x */,
-    int			/* dest_y */,
-    uint		/* width */,
-    uint		/* height */
+	Display*	/* display */,
+	Drawable	/* d */,
+	GC			/* gc */,
+	XImage*	/* image */,
+	int			/* src_x */,
+	int			/* src_y */,
+	int			/* dest_x */,
+	int			/* dest_y */,
+	uint		/* width */,
+	uint		/* height */
 );
 
 int XDestroyWindow(
-    Display*	/* display */,
-    Window		/* w */
+	Display*	/* display */,
+	Window		/* w */
 );
 
-int XDestroyImage(
-	XImage*);
+int XDestroyImage(XImage*);
 
 int XSelectInput(
-    Display*	/* display */,
-    Window		/* w */,
-    EventMask	/* event_mask */
+	Display*	/* display */,
+	Window		/* w */,
+	EventMask	/* event_mask */
 );
 
 int XMapWindow(
-    Display*	/* display */,
-    Window		/* w */
+	Display*	/* display */,
+	Window		/* w */
 );
 
 struct MwmHints {
-    int flags;
-    int functions;
-    int decorations;
-    int input_mode;
-    int status;
+	int flags;
+	int functions;
+	int decorations;
+	int input_mode;
+	int status;
 }
 
 enum {
-    MWM_HINTS_FUNCTIONS = (1L << 0),
-    MWM_HINTS_DECORATIONS =  (1L << 1),
+	MWM_HINTS_FUNCTIONS = (1L << 0),
+	MWM_HINTS_DECORATIONS =  (1L << 1),
 
-    MWM_FUNC_ALL = (1L << 0),
-    MWM_FUNC_RESIZE = (1L << 1),
-    MWM_FUNC_MOVE = (1L << 2),
-    MWM_FUNC_MINIMIZE = (1L << 3),
-    MWM_FUNC_MAXIMIZE = (1L << 4),
-    MWM_FUNC_CLOSE = (1L << 5)
+	MWM_FUNC_ALL = (1L << 0),
+	MWM_FUNC_RESIZE = (1L << 1),
+	MWM_FUNC_MOVE = (1L << 2),
+	MWM_FUNC_MINIMIZE = (1L << 3),
+	MWM_FUNC_MAXIMIZE = (1L << 4),
+	MWM_FUNC_CLOSE = (1L << 5)
 }
 
 Status XIconifyWindow(Display*, Window, int);
@@ -6207,59 +9446,55 @@ int XMapRaised(Display*, Window);
 int XMapSubwindows(Display*, Window);
 
 int XNextEvent(
-    Display*	/* display */,
-    XEvent*		/* event_return */
+	Display*	/* display */,
+	XEvent*		/* event_return */
 );
 
 Bool XFilterEvent(XEvent *event, Window window);
 int XRefreshKeyboardMapping(XMappingEvent *event_map);
 
 Status XSetWMProtocols(
-    Display*	/* display */,
-    Window		/* w */,
-    Atom*		/* protocols */,
-    int			/* count */
+	Display*	/* display */,
+	Window		/* w */,
+	Atom*		/* protocols */,
+	int			/* count */
 );
 
+import core.stdc.config : c_long, c_ulong;
 void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
+Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
 
-       /* Size hints mask bits */
+	/* Size hints mask bits */
 
-       enum   USPosition  = (1L << 0)          /* user specified x, y */;
-       enum   USSize      = (1L << 1)          /* user specified width, height
-                                                  */;
-       enum   PPosition   = (1L << 2)          /* program specified position
-                                                  */;
-       enum   PSize       = (1L << 3)          /* program specified size */;
-       enum   PMinSize    = (1L << 4)          /* program specified minimum
-                                                  size */;
-       enum   PMaxSize    = (1L << 5)          /* program specified maximum
-                                                  size */;
-       enum   PResizeInc  = (1L << 6)          /* program specified resize
-                                                  increments */;
-       enum   PAspect     = (1L << 7)          /* program specified min and
-                                                  max aspect ratios */;
-       enum   PBaseSize   = (1L << 8);
-       enum   PWinGravity = (1L << 9);
-       enum   PAllHints   = (PPosition|PSize| PMinSize|PMaxSize| PResizeInc|PAspect);
-       struct XSizeHints {
-            arch_long flags;         /* marks which fields in this structure are defined */
-            int x, y;           /* Obsolete */
-            int width, height;  /* Obsolete */
-            int min_width, min_height;
-            int max_width, max_height;
-            int width_inc, height_inc;
-            struct Aspect {
-                   int x;       /* numerator */
-                   int y;       /* denominator */
-            }
-	    
-	    Aspect min_aspect;
-	    Aspect max_aspect;
-            int base_width, base_height;
-            int win_gravity;
-            /* this structure may be extended in the future */
-       }
+	enum   USPosition  = (1L << 0)          /* user specified x, y */;
+	enum   USSize      = (1L << 1)          /* user specified width, height */;
+	enum   PPosition   = (1L << 2)          /* program specified position */;
+	enum   PSize       = (1L << 3)          /* program specified size */;
+	enum   PMinSize    = (1L << 4)          /* program specified minimum size */;
+	enum   PMaxSize    = (1L << 5)          /* program specified maximum size */;
+	enum   PResizeInc  = (1L << 6)          /* program specified resize increments */;
+	enum   PAspect     = (1L << 7)          /* program specified min and max aspect ratios */;
+	enum   PBaseSize   = (1L << 8);
+	enum   PWinGravity = (1L << 9);
+	enum   PAllHints   = (PPosition|PSize| PMinSize|PMaxSize| PResizeInc|PAspect);
+	struct XSizeHints {
+		arch_long flags;         /* marks which fields in this structure are defined */
+		int x, y;           /* Obsolete */
+		int width, height;  /* Obsolete */
+		int min_width, min_height;
+		int max_width, max_height;
+		int width_inc, height_inc;
+		struct Aspect {
+			int x;       /* numerator */
+			int y;       /* denominator */
+		}
+
+		Aspect min_aspect;
+		Aspect max_aspect;
+		int base_width, base_height;
+		int win_gravity;
+		/* this structure may be extended in the future */
+	}
 
 
 
@@ -6576,7 +9811,7 @@ struct XClientMessageEvent
 		arch_ulong[5] l;
 	}
 	Data data;
-	
+
 }
 version(X86_64) static assert(XClientMessageEvent.sizeof == 96);
 
@@ -6614,7 +9849,7 @@ struct XAnyEvent
 }
 
 union XEvent{
-    int type;		/* must not be changed; first element */
+	int type;		/* must not be changed; first element */
 	XAnyEvent xany;
 	XKeyEvent xkey;
 	XButtonEvent xbutton;
@@ -6720,7 +9955,7 @@ struct Depth
 }
 
 alias void* GC;
-alias int VisualID;
+alias c_ulong VisualID;
 alias XID Colormap;
 alias XID Cursor;
 alias XID KeySym;
@@ -6732,6 +9967,8 @@ version(without_opengl) {}
 else {
 extern(C) nothrow @nogc {
 
+
+static if(!SdpyIsUsingIVGLBinds) {
 enum GLX_USE_GL=            1;       /* support GLX rendering */
 enum GLX_BUFFER_SIZE=       2;       /* depth of the color buffer */
 enum GLX_LEVEL=             3;       /* level in plane stacking */
@@ -6751,14 +9988,14 @@ enum GLX_ACCUM_BLUE_SIZE=   16;      /* number of blue accum bits */
 enum GLX_ACCUM_ALPHA_SIZE=  17;      /* number of alpha accum bits */
 
 
-
-XVisualInfo* glXChooseVisual(Display *dpy, int screen, in int *attrib_list);
+//XVisualInfo* glXChooseVisual(Display *dpy, int screen, in int *attrib_list);
 
 
 
 enum GL_TRUE = 1;
 enum GL_FALSE = 0;
 alias int GLint;
+}
 
 alias XID GLXContextID;
 alias XID GLXPixmap;
@@ -6768,8 +10005,9 @@ alias XID GLXWindow;
 alias XID GLXFBConfigID;
 alias void* GLXContext;
 
+static if (!SdpyIsUsingIVGLBinds) {
 	 XVisualInfo* glXChooseVisual(Display *dpy, int screen,
-			int *attrib_list);
+			const int *attrib_list);
 
 	 void glXCopyContext(Display *dpy, GLXContext src,
 			GLXContext dst, arch_ulong mask);
@@ -6807,9 +10045,9 @@ alias void* GLXContext;
 	 void glXWaitGL();
 
 	 void glXWaitX();
+}
 
 
-	enum AllocNone = 0;
 	struct XVisualInfo {
 		Visual *visual;
 		VisualID visualid;
@@ -6823,6 +10061,14 @@ alias void* GLXContext;
 		int bits_per_rgb;
 	}
 }
+}
+
+enum AllocNone = 0;
+
+extern(C) {
+	/* WARNING, this type not in Xlib spec */
+	extern(C) alias XIOErrorHandler = int function (Display* display);
+	XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
 }
 
 extern(C) nothrow @nogc {
@@ -6851,7 +10097,7 @@ struct Visual
 	XExtData *ext_data;	/* hook for extension to hang data */
 	VisualID visualid;	/* visual id of this visual */
 	int class_;			/* class of screen (monochrome, etc.) */
-	uint red_mask, green_mask, blue_mask;	/* mask values */
+	c_ulong red_mask, green_mask, blue_mask;	/* mask values */
 	int bits_per_rgb;	/* log base 2 of distinct color values */
 	int map_entries;	/* color map entries */
 }
@@ -6891,6 +10137,13 @@ struct Visual
 
 	Status XInternAtoms(Display*, in char**, int, Bool, Atom*);
 
+	int XSetWindowBackground (Display* display, Window w, c_ulong background_pixel);
+	int XSetWindowBackgroundPixmap (Display* display, Window w, Pixmap background_pixmap);
+	//int XSetWindowBorder (Display* display, Window w, c_ulong border_pixel);
+	//int XSetWindowBorderPixmap (Display* display, Window w, Pixmap border_pixmap);
+	//int XSetWindowBorderWidth (Display* display, Window w, uint width);
+
+
 	// this requires -lXpm
 	int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
 
@@ -6913,6 +10166,10 @@ struct Visual
 	enum Time CurrentTime = 0;
 	enum int RevertToPointerRoot = PointerRoot;
 	enum int RevertToParent = 2;
+
+	int DefaultDepthOfDisplay(Display* dpy) {
+		return ScreenOfDisplay(dpy, DefaultScreen(dpy)).root_depth;
+	}
 
 	Visual* DefaultVisual(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).root_visual;
@@ -6947,8 +10204,24 @@ struct Visual
 	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
 
 	int XSetFunction(Display*, GC, int);
-	enum GXcopy = 0x3;
-	enum GXxor = 0x6;
+	enum {
+		GXclear        = 0x0, /* 0 */
+		GXand          = 0x1, /* src AND dst */
+		GXandReverse   = 0x2, /* src AND NOT dst */
+		GXcopy         = 0x3, /* src */
+		GXandInverted  = 0x4, /* NOT src AND dst */
+		GXnoop         = 0x5, /* dst */
+		GXxor          = 0x6, /* src XOR dst */
+		GXor           = 0x7, /* src OR dst */
+		GXnor          = 0x8, /* NOT src AND NOT dst */
+		GXequiv        = 0x9, /* NOT src XOR dst */
+		GXinvert       = 0xa, /* NOT dst */
+		GXorReverse    = 0xb, /* src OR NOT dst */
+		GXcopyInverted = 0xc, /* NOT src */
+		GXorInverted   = 0xd, /* NOT src OR dst */
+		GXnand         = 0xe, /* NOT src OR NOT dst */
+		GXset          = 0xf, /* 1 */
+	}
 
 	GC XCreateGC(Display*, Drawable, uint, void*);
 	int XCopyGC(Display*, GC, uint, GC);
@@ -6958,6 +10231,12 @@ struct Visual
 	bool XCheckMaskEvent(Display*, int, XEvent*);
 
 	int XPending(Display*);
+	int XEventsQueued(Display* display, int mode);
+	enum QueueMode : int {
+		QueuedAlready,
+		QueuedAfterReading,
+		QueuedAfterFlush
+	}
 
 	Pixmap XCreatePixmap(Display*, Drawable, uint, uint, uint);
 	int XFreePixmap(Display*, Pixmap);
@@ -6965,6 +10244,11 @@ struct Visual
 	int XFlush(Display*);
 	int XBell(Display*, int);
 	int XSync(Display*, bool);
+
+	enum GrabMode { GrabModeSync = 0, GrabModeAsync = 1 }
+	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
+	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
+	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
 
 	struct XPoint {
 		short x;
@@ -6997,32 +10281,32 @@ struct Visual
 	}
 
 
-	struct XGCValues { 
-		int function_;           /* logical operation */ 
-		arch_ulong plane_mask;/* plane mask */ 
-		arch_ulong foreground;/* foreground pixel */ 
-		arch_ulong background;/* background pixel */ 
-		int line_width;         /* line width */ 
-		int line_style;         /* LineSolid, LineOnOffDash, LineDoubleDash */ 
-		int cap_style;          /* CapNotLast, CapButt, 
-					   CapRound, CapProjecting */ 
-		int join_style;         /* JoinMiter, JoinRound, JoinBevel */ 
-		int fill_style;         /* FillSolid, FillTiled, 
-					   FillStippled, FillOpaeueStippled */ 
-		int fill_rule;          /* EvenOddRule, WindingRule */ 
-		int arc_mode;           /* ArcChord, ArcPieSlice */ 
-		Pixmap tile;            /* tile pixmap for tiling operations */ 
-		Pixmap stipple;         /* stipple 1 plane pixmap for stipping */ 
-		int ts_x_origin;        /* offset for tile or stipple operations */ 
-		int ts_y_origin; 
-		Font font;              /* default text font for text operations */ 
-		int subwindow_mode;     /* ClipByChildren, IncludeInferiors */ 
-		Bool graphics_exposures;/* boolean, should exposures be generated */ 
-		int clip_x_origin;      /* origin for clipping */ 
-		int clip_y_origin; 
-		Pixmap clip_mask;       /* bitmap clipping; other calls for rects */ 
-		int dash_offset;        /* patterned/dashed line information */ 
-		char dashes; 
+	struct XGCValues {
+		int function_;           /* logical operation */
+		arch_ulong plane_mask;/* plane mask */
+		arch_ulong foreground;/* foreground pixel */
+		arch_ulong background;/* background pixel */
+		int line_width;         /* line width */
+		int line_style;         /* LineSolid, LineOnOffDash, LineDoubleDash */
+		int cap_style;          /* CapNotLast, CapButt,
+					   CapRound, CapProjecting */
+		int join_style;         /* JoinMiter, JoinRound, JoinBevel */
+		int fill_style;         /* FillSolid, FillTiled,
+					   FillStippled, FillOpaeueStippled */
+		int fill_rule;          /* EvenOddRule, WindingRule */
+		int arc_mode;           /* ArcChord, ArcPieSlice */
+		Pixmap tile;            /* tile pixmap for tiling operations */
+		Pixmap stipple;         /* stipple 1 plane pixmap for stipping */
+		int ts_x_origin;        /* offset for tile or stipple operations */
+		int ts_y_origin;
+		Font font;              /* default text font for text operations */
+		int subwindow_mode;     /* ClipByChildren, IncludeInferiors */
+		Bool graphics_exposures;/* boolean, should exposures be generated */
+		int clip_x_origin;      /* origin for clipping */
+		int clip_y_origin;
+		Pixmap clip_mask;       /* bitmap clipping; other calls for rects */
+		int dash_offset;        /* patterned/dashed line information */
+		char dashes;
 	}
 
 	struct XColor {
@@ -7038,16 +10322,22 @@ struct Visual
 	int XLowerWindow(Display*, Window);
 	int XRaiseWindow(Display*, Window);
 
+	int XWarpPointer(Display *display, Window src_w, Window dest_w, int src_x, int src_y, uint src_width, uint src_height, int dest_x, int dest_y);
+	Bool XTranslateCoordinates(Display *display, Window src_w, Window dest_w, int src_x, int src_y, int *dest_x_return, int *dest_y_return, Window *child_return);
+
 	int XGetInputFocus(Display*, Window*, int*);
 	int XSetInputFocus(Display*, Window, int, Time);
 	alias XErrorHandler = int function(Display*, XErrorEvent*);
 	XErrorHandler XSetErrorHandler(XErrorHandler);
 
-  /* WARNING, this type not in Xlib spec */
-  extern(C) alias XIOErrorHandler = int function (Display* display);
-  XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
+	int XGetErrorText(Display*, int, char*, int);
 
-  Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+	Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+
+
+	int XGrabPointer(Display *display, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor, Time time);
+	int XUngrabPointer(Display *display, Time time);
+	int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
 
 	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
 
@@ -7065,10 +10355,13 @@ struct Visual
 	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
+	int XStoreName(Display* display, Window w, const(char)* window_name);
 
 	enum ClipByChildren = 0;
 	enum IncludeInferiors = 1;
 
+	enum Atom XA_PRIMARY = 1;
+	enum Atom XA_SECONDARY = 2;
 	enum Atom XA_STRING = 31;
 	enum Atom XA_CARDINAL = 6;
 	enum Atom XA_WM_NAME = 39;
@@ -7127,181 +10420,181 @@ struct Visual
 }
 } else version (OSXCocoa) {
 private:
-    alias void* id;
-    alias void* Class;
-    alias void* SEL;
-    alias void* IMP;
-    alias void* Ivar;
-    alias byte BOOL;
-    alias const(void)* CFStringRef;
-    alias const(void)* CFAllocatorRef;
-    alias const(void)* CFTypeRef;
-    alias const(void)* CGContextRef;
-    alias const(void)* CGColorSpaceRef;
-    alias const(void)* CGImageRef;
-    alias uint CGBitmapInfo;
-    
-    struct objc_super {
-        id self;
-        Class superclass;
-    }
-    
-    struct CFRange {
-        int location, length;
-    }
+	alias void* id;
+	alias void* Class;
+	alias void* SEL;
+	alias void* IMP;
+	alias void* Ivar;
+	alias byte BOOL;
+	alias const(void)* CFStringRef;
+	alias const(void)* CFAllocatorRef;
+	alias const(void)* CFTypeRef;
+	alias const(void)* CGContextRef;
+	alias const(void)* CGColorSpaceRef;
+	alias const(void)* CGImageRef;
+	alias uint CGBitmapInfo;
 
-    struct NSPoint {
-        float x, y;
-        
-        static fromTuple(T)(T tupl) {
-            return NSPoint(tupl.tupleof);
-        }
-    }
-    struct NSSize {
-        float width, height;
-    }
-    struct NSRect {
-        NSPoint origin;
-        NSSize size;
-    }
-    alias NSPoint CGPoint;
-    alias NSSize CGSize;
-    alias NSRect CGRect;
+	struct objc_super {
+		id self;
+		Class superclass;
+	}
 
-    struct CGAffineTransform {
-        float a, b, c, d, tx, ty;
-    }
+	struct CFRange {
+		int location, length;
+	}
 
-    enum NSApplicationActivationPolicyRegular = 0;
-    enum NSBackingStoreBuffered = 2;
-    enum kCFStringEncodingUTF8 = 0x08000100;
+	struct NSPoint {
+		float x, y;
 
-    enum : size_t {
-        NSBorderlessWindowMask = 0,
-        NSTitledWindowMask = 1 << 0,
-        NSClosableWindowMask = 1 << 1,
-        NSMiniaturizableWindowMask = 1 << 2,
-        NSResizableWindowMask = 1 << 3,
-        NSTexturedBackgroundWindowMask = 1 << 8
-    }
-    
-    enum : uint {
-        kCGImageAlphaNone,
-        kCGImageAlphaPremultipliedLast,
-        kCGImageAlphaPremultipliedFirst,
-        kCGImageAlphaLast,
-        kCGImageAlphaFirst,
-        kCGImageAlphaNoneSkipLast,
-        kCGImageAlphaNoneSkipFirst
-    }
-    enum : uint {
-        kCGBitmapAlphaInfoMask = 0x1F,
-        kCGBitmapFloatComponents = (1 << 8),
-        kCGBitmapByteOrderMask = 0x7000,
-        kCGBitmapByteOrderDefault = (0 << 12),
-        kCGBitmapByteOrder16Little = (1 << 12),
-        kCGBitmapByteOrder32Little = (2 << 12),
-        kCGBitmapByteOrder16Big = (3 << 12),
-        kCGBitmapByteOrder32Big = (4 << 12)
-    }
-    enum CGPathDrawingMode {
-        kCGPathFill,
-        kCGPathEOFill,
-        kCGPathStroke,
-        kCGPathFillStroke,
-        kCGPathEOFillStroke
-    }
-    enum objc_AssociationPolicy : size_t {
-        OBJC_ASSOCIATION_ASSIGN = 0,
-        OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1,
-        OBJC_ASSOCIATION_COPY_NONATOMIC = 3,
-        OBJC_ASSOCIATION_RETAIN = 0x301, //01401,
-        OBJC_ASSOCIATION_COPY = 0x303 //01403
-    }
+		static fromTuple(T)(T tupl) {
+			return NSPoint(tupl.tupleof);
+		}
+	}
+	struct NSSize {
+		float width, height;
+	}
+	struct NSRect {
+		NSPoint origin;
+		NSSize size;
+	}
+	alias NSPoint CGPoint;
+	alias NSSize CGSize;
+	alias NSRect CGRect;
 
-    extern(C) {
-        id objc_msgSend(id receiver, SEL selector, ...);
-        id objc_msgSendSuper(objc_super* superStruct, SEL selector, ...);
-        id objc_getClass(const(char)* name);
-        SEL sel_registerName(const(char)* str);
-        Class objc_allocateClassPair(Class superclass, const(char)* name,
-                                     size_t extra_bytes);
-        void objc_registerClassPair(Class cls);
-        BOOL class_addMethod(Class cls, SEL name, IMP imp, const(char)* types);
-        id objc_getAssociatedObject(id object, void* key);
-        void objc_setAssociatedObject(id object, void* key, id value,
-                                      objc_AssociationPolicy policy);
-        Ivar class_getInstanceVariable(Class cls, const(char)* name);
-        id object_getIvar(id object, Ivar ivar);
-        void object_setIvar(id object, Ivar ivar, id value);
-        BOOL class_addIvar(Class cls, const(char)* name,
-                           size_t size, ubyte alignment, const(char)* types);
+	struct CGAffineTransform {
+		float a, b, c, d, tx, ty;
+	}
 
-        extern __gshared id NSApp;
-            
-        void CFRelease(CFTypeRef obj);
-            
-        CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
-                                            const(char)* bytes, int numBytes,
-                                            int encoding,
-                                            BOOL isExternalRepresentation);
-        int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
-                             char lossByte, bool isExternalRepresentation,
-                             char* buffer, int maxBufLen, int* usedBufLen);
-        int CFStringGetLength(CFStringRef theString);
-        
-        CGContextRef CGBitmapContextCreate(void* data,
-                                           size_t width, size_t height,
-                                           size_t bitsPerComponent,
-                                           size_t bytesPerRow,
-                                           CGColorSpaceRef colorspace,
-                                           CGBitmapInfo bitmapInfo);
-        void CGContextRelease(CGContextRef c);
-        ubyte* CGBitmapContextGetData(CGContextRef c);
-        CGImageRef CGBitmapContextCreateImage(CGContextRef c);
-        size_t CGBitmapContextGetWidth(CGContextRef c);
-        size_t CGBitmapContextGetHeight(CGContextRef c);
-                
-        CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
-        void CGColorSpaceRelease(CGColorSpaceRef cs);
-        
-        void CGContextSetRGBStrokeColor(CGContextRef c,
-                                        float red, float green, float blue,
-                                        float alpha);
-        void CGContextSetRGBFillColor(CGContextRef c,
-                                      float red, float green, float blue,
-                                      float alpha);
-        void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
-        void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
-                                      const(char)* str, size_t length);
-        void CGContextStrokeLineSegments(CGContextRef c,
-                                         const(CGPoint)* points, size_t count);
-        
-        void CGContextBeginPath(CGContextRef c);
-        void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
-        void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
-        void CGContextAddArc(CGContextRef c, float x, float y, float radius,
-                             float startAngle, float endAngle, int clockwise);
-        void CGContextAddRect(CGContextRef c, CGRect rect);
-        void CGContextAddLines(CGContextRef c,
-                               const(CGPoint)* points, size_t count);
-        void CGContextSaveGState(CGContextRef c);
-        void CGContextRestoreGState(CGContextRef c);
-        void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
-                                 uint textEncoding);
-        CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
-        void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
-        
-        void CGImageRelease(CGImageRef image);
-    }
-    
+	enum NSApplicationActivationPolicyRegular = 0;
+	enum NSBackingStoreBuffered = 2;
+	enum kCFStringEncodingUTF8 = 0x08000100;
+
+	enum : size_t {
+		NSBorderlessWindowMask = 0,
+		NSTitledWindowMask = 1 << 0,
+		NSClosableWindowMask = 1 << 1,
+		NSMiniaturizableWindowMask = 1 << 2,
+		NSResizableWindowMask = 1 << 3,
+		NSTexturedBackgroundWindowMask = 1 << 8
+	}
+
+	enum : uint {
+		kCGImageAlphaNone,
+		kCGImageAlphaPremultipliedLast,
+		kCGImageAlphaPremultipliedFirst,
+		kCGImageAlphaLast,
+		kCGImageAlphaFirst,
+		kCGImageAlphaNoneSkipLast,
+		kCGImageAlphaNoneSkipFirst
+	}
+	enum : uint {
+		kCGBitmapAlphaInfoMask = 0x1F,
+		kCGBitmapFloatComponents = (1 << 8),
+		kCGBitmapByteOrderMask = 0x7000,
+		kCGBitmapByteOrderDefault = (0 << 12),
+		kCGBitmapByteOrder16Little = (1 << 12),
+		kCGBitmapByteOrder32Little = (2 << 12),
+		kCGBitmapByteOrder16Big = (3 << 12),
+		kCGBitmapByteOrder32Big = (4 << 12)
+	}
+	enum CGPathDrawingMode {
+		kCGPathFill,
+		kCGPathEOFill,
+		kCGPathStroke,
+		kCGPathFillStroke,
+		kCGPathEOFillStroke
+	}
+	enum objc_AssociationPolicy : size_t {
+		OBJC_ASSOCIATION_ASSIGN = 0,
+		OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1,
+		OBJC_ASSOCIATION_COPY_NONATOMIC = 3,
+		OBJC_ASSOCIATION_RETAIN = 0x301, //01401,
+		OBJC_ASSOCIATION_COPY = 0x303 //01403
+	}
+
+	extern(C) {
+		id objc_msgSend(id receiver, SEL selector, ...);
+		id objc_msgSendSuper(objc_super* superStruct, SEL selector, ...);
+		id objc_getClass(const(char)* name);
+		SEL sel_registerName(const(char)* str);
+		Class objc_allocateClassPair(Class superclass, const(char)* name,
+									 size_t extra_bytes);
+		void objc_registerClassPair(Class cls);
+		BOOL class_addMethod(Class cls, SEL name, IMP imp, const(char)* types);
+		id objc_getAssociatedObject(id object, void* key);
+		void objc_setAssociatedObject(id object, void* key, id value,
+									  objc_AssociationPolicy policy);
+		Ivar class_getInstanceVariable(Class cls, const(char)* name);
+		id object_getIvar(id object, Ivar ivar);
+		void object_setIvar(id object, Ivar ivar, id value);
+		BOOL class_addIvar(Class cls, const(char)* name,
+						   size_t size, ubyte alignment, const(char)* types);
+
+		extern __gshared id NSApp;
+
+		void CFRelease(CFTypeRef obj);
+
+		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
+											const(char)* bytes, int numBytes,
+											int encoding,
+											BOOL isExternalRepresentation);
+		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
+							 char lossByte, bool isExternalRepresentation,
+							 char* buffer, int maxBufLen, int* usedBufLen);
+		int CFStringGetLength(CFStringRef theString);
+
+		CGContextRef CGBitmapContextCreate(void* data,
+										   size_t width, size_t height,
+										   size_t bitsPerComponent,
+										   size_t bytesPerRow,
+										   CGColorSpaceRef colorspace,
+										   CGBitmapInfo bitmapInfo);
+		void CGContextRelease(CGContextRef c);
+		ubyte* CGBitmapContextGetData(CGContextRef c);
+		CGImageRef CGBitmapContextCreateImage(CGContextRef c);
+		size_t CGBitmapContextGetWidth(CGContextRef c);
+		size_t CGBitmapContextGetHeight(CGContextRef c);
+
+		CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
+		void CGColorSpaceRelease(CGColorSpaceRef cs);
+
+		void CGContextSetRGBStrokeColor(CGContextRef c,
+										float red, float green, float blue,
+										float alpha);
+		void CGContextSetRGBFillColor(CGContextRef c,
+									  float red, float green, float blue,
+									  float alpha);
+		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
+		void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
+									  const(char)* str, size_t length);
+		void CGContextStrokeLineSegments(CGContextRef c,
+										 const(CGPoint)* points, size_t count);
+
+		void CGContextBeginPath(CGContextRef c);
+		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
+		void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
+		void CGContextAddArc(CGContextRef c, float x, float y, float radius,
+							 float startAngle, float endAngle, int clockwise);
+		void CGContextAddRect(CGContextRef c, CGRect rect);
+		void CGContextAddLines(CGContextRef c,
+							   const(CGPoint)* points, size_t count);
+		void CGContextSaveGState(CGContextRef c);
+		void CGContextRestoreGState(CGContextRef c);
+		void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
+								 uint textEncoding);
+		CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
+		void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
+
+		void CGImageRelease(CGImageRef image);
+	}
+
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
         return CFStringCreateWithBytes(null, str.ptr, str.length,
                                              kCFStringEncodingUTF8, false);
     }
-    
+
     // Objective-C calls.
     RetType objc_msgSend_specialized(string selector, RetType, T...)(id self, T args) {
         auto _cmd = sel_registerName(selector.ptr);
@@ -7317,7 +10610,7 @@ private:
     RetType objc_msgSend_classMethod(string className, string selector, RetType, T...)(T args) {
         return objc_msgSend_classMethod!(selector, RetType, T)(className.ptr, args);
     }
-    
+
     alias objc_msgSend_specialized!("setNeedsDisplay:", void, BOOL) setNeedsDisplay;
     alias objc_msgSend_classMethod!("alloc", id) alloc;
     alias objc_msgSend_specialized!("initWithContentRect:styleMask:backing:defer:",
@@ -7352,7 +10645,7 @@ private:
     alias objc_msgSend_classMethod!("NSApplication", "sharedApplication",
                                     id) sharedNSApplication;
     alias objc_msgSend_specialized!("setActivationPolicy:", void, ptrdiff_t) setActivationPolicy;
-} else version(html5) {} else static assert(0, "Unsupported operating system");
+} else static assert(0, "Unsupported operating system");
 
 
 version(OSXCocoa) {
@@ -7367,12 +10660,12 @@ version(OSXCocoa) {
     import std.math : PI;
     import std.algorithm : map;
     import std.array : array;
-    
+
     alias SimpleWindow NativeWindowHandle;
     alias void delegate(id) NativeEventHandler;
 
-    static Ivar simpleWindowIvar;
-    
+    __gshared Ivar simpleWindowIvar;
+
     enum KEY_ESCAPE = 27;
 
     mixin template NativeImageImplementation() {
@@ -7425,8 +10718,8 @@ version(OSXCocoa) {
 		}
 	}
 
-        
-        void createImage(int width, int height) {
+
+        void createImage(int width, int height, bool forcexshm=false) {
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             context = CGBitmapContextCreate(null, width, height, 8, 4*width,
                                             colorSpace,
@@ -7438,7 +10731,7 @@ version(OSXCocoa) {
         void dispose() {
             CGContextRelease(context);
         }
-        
+
         void setPixel(int x, int y, Color c) {
             auto offset = (y * width + x) * 4;
             if (c.a == 255) {
@@ -7454,18 +10747,18 @@ version(OSXCocoa) {
             }
         }
     }
-    
+
     mixin template NativeScreenPainterImplementation() {
         CGContextRef context;
         ubyte[4] _outlineComponents;
-        
+
         void create(NativeWindowHandle window) {
             context = window.drawingContext;
         }
-        
+
         void dispose() {
         }
-        
+
         @property void outlineColor(Color color) {
             float alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
@@ -7483,12 +10776,12 @@ version(OSXCocoa) {
                 _outlineComponents[3] = color.a;
             }
         }
-        
+
         @property void fillColor(Color color) {
             CGContextSetRGBFillColor(context,
                                      color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
         }
-        
+
         void drawImage(int x, int y, Image image) {
             auto cgImage = CGBitmapContextCreateImage(image.context);
             auto size = CGSize(CGBitmapContextGetWidth(image.context),
@@ -7496,7 +10789,7 @@ version(OSXCocoa) {
             CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
             CGImageRelease(cgImage);
         }
- 
+
         void drawPixmap(Sprite image, int x, int y) {
 		// FIXME: is this efficient?
             auto cgImage = CGBitmapContextCreateImage(image.context);
@@ -7506,7 +10799,7 @@ version(OSXCocoa) {
             CGImageRelease(cgImage);
         }
 
-        
+
         void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
 		// FIXME: alignment
             if (_outlineComponents[3] != 0) {
@@ -7532,7 +10825,7 @@ version(OSXCocoa) {
             auto offset = ((height - y - 1) * width + x) * 4;
             rawData[offset .. offset+4] = _outlineComponents;
         }
-        
+
         void drawLine(int x1, int y1, int x2, int y2) {
             CGPoint[2] linePoints;
             linePoints[0] = CGPoint(x1, y1);
@@ -7546,14 +10839,14 @@ version(OSXCocoa) {
             CGContextAddRect(context, rect);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawEllipse(int x1, int y1, int x2, int y2) {
             CGContextBeginPath(context);
             auto rect = CGRect(CGPoint(x1, y1), CGSize(x2-x1, y2-y1));
             CGContextAddEllipseInRect(context, rect);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawArc(int x1, int y1, int width, int height, int start, int finish) {
             // @@@BUG@@@ Does not support elliptic arc (width != height).
             CGContextBeginPath(context);
@@ -7561,7 +10854,7 @@ version(OSXCocoa) {
                             start*PI/(180*64), finish*PI/(180*64), 0);
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
-        
+
         void drawPolygon(Point[] intPoints) {
             CGContextBeginPath(context);
             auto points = array(map!(CGPoint.fromTuple)(intPoints));
@@ -7569,15 +10862,15 @@ version(OSXCocoa) {
             CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
         }
     }
-    
+
     mixin template NativeSimpleWindowImplementation() {
         void createWindow(int width, int height, string title) {
             synchronized {
                 if (NSApp == null) initializeApp();
             }
-            
+
             auto contentRect = NSRect(NSPoint(0, 0), NSSize(width, height));
-            
+
             // create the window.
             window = initWithContentRect(alloc("NSWindow"),
                                          contentRect,
@@ -7593,7 +10886,7 @@ version(OSXCocoa) {
             setTitle(window, windowTitle);
             CFRelease(windowTitle);
             center(window);
-            
+
             // create area to draw on.
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             drawingContext = CGBitmapContextCreate(null, width, height,
@@ -7606,7 +10899,7 @@ version(OSXCocoa) {
             matrix.c = -matrix.c;
             matrix.d = -matrix.d;
             CGContextSetTextMatrix(drawingContext, matrix);
-            
+
             // create the subview that things will be drawn on.
             view = initWithFrame(alloc("SDGraphicsView"), contentRect);
             setContentView(window, view);
@@ -7624,29 +10917,29 @@ version(OSXCocoa) {
             invalidate(timer);
             .close(window);
         }
-        
+
         ScreenPainter getPainter() {
 		return ScreenPainter(this, this);
 	}
-        
+
         int eventLoop(long pulseTimeout) {
             if (handlePulse !is null && pulseTimeout != 0) {
                 timer = scheduledTimer(pulseTimeout*1e-3,
                                        view, sel_registerName("simpledisplay_pulse"),
                                        null, true);
             }
-            
+
             setNeedsDisplay(view, true);
             run(NSApp);
             return 0;
         }
-        
+
         id window;
         id timer;
         id view;
         CGContextRef drawingContext;
     }
-    
+
     extern(C) {
     private:
         BOOL returnTrue3(id self, SEL _cmd, id app) {
@@ -7655,7 +10948,7 @@ version(OSXCocoa) {
         BOOL returnTrue2(id self, SEL _cmd) {
             return true;
         }
-        
+
         void pulse(id self, SEL _cmd) {
             auto simpleWindow = cast(SimpleWindow)object_getIvar(self, simpleWindowIvar);
             simpleWindow.handlePulse();
@@ -7689,27 +10982,27 @@ version(OSXCocoa) {
                         simpleWindow.handleKeyEvent(dc, true); // FIXME: what about keyUp?
                 }
             }
-            
+
             // the event's 'keyCode' is hardware-dependent. I don't think people
             // will like it. Let's leave it to the native handler.
-            
+
             // perform the default action.
             auto superData = objc_super(self, superclass(self));
             alias extern(C) void function(objc_super*, SEL, id) T;
             (cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
         }
     }
-    
+
     // initialize the app so that it can be interacted with the user.
     // based on http://cocoawithlove.com/2010/09/minimalist-cocoa-programming.html
     private void initializeApp() {
         // push an autorelease pool to avoid leaking.
         init(alloc("NSAutoreleasePool"));
-        
+
         // create a new NSApp instance
         sharedNSApplication;
         setActivationPolicy(NSApp, NSApplicationActivationPolicyRegular);
-        
+
         // create the "Quit" menu.
         auto menuBar = init(alloc("NSMenu"));
         auto appMenuItem = init(alloc("NSMenuItem"));
@@ -7717,7 +11010,7 @@ version(OSXCocoa) {
         setMainMenu(NSApp, menuBar);
         release(appMenuItem);
         release(menuBar);
-        
+
         auto appMenu = init(alloc("NSMenu"));
         auto quitTitle = createCFString("Quit");
         auto q = createCFString("q");
@@ -7738,7 +11031,7 @@ version(OSXCocoa) {
                         sel_registerName("applicationShouldTerminateAfterLastWindowClosed:"),
                         &returnTrue3, "c@:@");
         objc_registerClassPair(delegateClass);
-    
+
         auto appDelegate = init(alloc("SDWindowCloseDelegate"));
         setDelegate(NSApp, appDelegate);
         activateIgnoringOtherApps(NSApp, true);
@@ -7765,156 +11058,12 @@ version(OSXCocoa) {
     }
 }
 
-version(html5) {
-	import arsd.cgi;
-
-	alias int NativeWindowHandle;
-	alias void delegate() NativeEventHandler;
-
-	mixin template NativeImageImplementation() {
-		static import arsd.image;
-		arsd.image.TrueColorImage handle;
-
-		void createImage(int width, int height) {
-			handle = new arsd.image.TrueColorImage(width, height);
-		}
-
-		void dispose() {
-			handle = null;
-		}
-
-		void setPixel(int x, int y, Color c) {
-			auto offset = (y * width + x) * 4;
-			handle.data[offset + 0] = c.b;
-			handle.data[offset + 1] = c.g;
-			handle.data[offset + 2] = c.r;
-			handle.data[offset + 3] = c.a;
-		}
-
-		void convertToRgbaBytes(ubyte[] where) {
-			if(where is handle.data)
-				return;
-			assert(where.length == this.width * this.height * 4);
-
-			where[] = handle.data[];
-		}
-
-		void setFromRgbaBytes(in ubyte[] where) {
-			if(where is handle.data)
-				return;
-			assert(where.length == this.width * this.height * 4);
-
-			handle.data[] = where[];
-		}
-
-	}
-
-	mixin template NativeScreenPainterImplementation() {
-		void create(NativeWindowHandle window) {
-		}
-
-		void dispose() {
-		}
-		@property void outlineColor(Color c) {
-		}
-
-		@property void fillColor(Color c) {
-		}
-
-		void drawImage(int x, int y, Image i) {
-		}
-
-		void drawPixmap(Sprite s, int x, int y) {
-		}
-
-		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
-		}
-
-		void drawPixel(int x, int y) {
-		}
-
-		void drawLine(int x1, int y1, int x2, int y2) {
-		}
-
-		void drawRectangle(int x, int y, int width, int height) {
-		}
-
-		/// Arguments are the points of the bounding rectangle
-		void drawEllipse(int x1, int y1, int x2, int y2) {
-		}
-
-		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
-			// FIXME: start X, start Y, end X, end Y
-			//Arc(hdc, x1, y1, x1 + width, y1 + height, 0, 0, 0, 0);
-		}
-
-		void drawPolygon(Point[] vertexes) {
-		}
-
-	}
-
-	/// on html5 mode you MUST set this socket up
-	WebSocket socket;
-
-	mixin template NativeSimpleWindowImplementation() {
-		ScreenPainter getPainter() {
-			return ScreenPainter(this, 0);
-		}
-
-		void createWindow(int width, int height, string title) {
-			Html5.createCanvas(width, height);
-		}
-
-		void closeWindow() { /* no need, can just leave it on the page */ }
-
-		void dispose() { }
-
-		bool destroyed = false;
-
-		int eventLoop(long pulseTimeout) {
-			bool done = false;
-			import core.thread;
-
-			while (!done) {
-			while(!done &&
-				(pulseTimeout == 0 || socket.recvAvailable()))
-			{
-			}
-				if(!done && pulseTimeout !=0) {
-					if(handlePulse !is null)
-						handlePulse();
-					Thread.sleep(dur!"msecs"(pulseTimeout));
-				}
-			}
-
-			return 0;
-		}
-	}
-
-	struct JsImpl { string code; }
-
-	struct Html5 {
-		@JsImpl(q{
-
-		})
-		static void createImage(int handle, Image i) {
-
-		}
-
-		static void freeImage(int handle) {
-
-		}
-
-		static void createCanvas(int width, int height) {
-
-		}
-	}
-}
-
-
 version(without_opengl) {} else
 extern(System) nothrow @nogc {
-  version(X11) {
+	//enum uint GL_VERSION = 0x1F02;
+	//const(char)* glGetString (/*GLenum*/uint);
+	version(X11) {
+	static if (!SdpyIsUsingIVGLBinds) {
 		struct __GLXFBConfigRec {}
 		alias GLXFBConfig = __GLXFBConfigRec*;
 
@@ -7938,35 +11087,93 @@ extern(System) nothrow @nogc {
 		char* glXQueryExtensionsString (Display*, int);
 		void* glXGetProcAddress (const(char)*);
 
-		alias glGetProcAddress = glXGetProcAddress;
+		alias glbindGetProcAddress = glXGetProcAddress;
+	}
 
 		// GLX_EXT_swap_control
 		alias glXSwapIntervalEXT = void function (Display* dpy, /*GLXDrawable*/Drawable drawable, int interval);
 		private __gshared glXSwapIntervalEXT _glx_swapInterval_fn = null;
 
-		alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
-		__gshared glXCreateContextAttribsARB_fna glXCreateContextAttribsARB = null; // this made public so we don't have to get it again and again; it will become valid after window creation
-		
-		void glxInitOtherFunctions () {
-			if (glXCreateContextAttribsARB is null) {
-				glXCreateContextAttribsARB = cast(glXCreateContextAttribsARB_fna)glGetProcAddress("glXCreateContextAttribsARB");
+		//k8: ugly code to prevent warnings when sdpy is compiled into .a
+		extern(System) {
+			alias glXCreateContextAttribsARB_fna = GLXContext function (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list);
+		}
+		private __gshared /*glXCreateContextAttribsARB_fna*/void* glXCreateContextAttribsARBFn = cast(void*)1; //HACK!
+
+		// this made public so we don't have to get it again and again
+		public bool glXCreateContextAttribsARB_present () {
+			if (glXCreateContextAttribsARBFn is cast(void*)1) {
+				// get it
+				glXCreateContextAttribsARBFn = cast(void*)glbindGetProcAddress("glXCreateContextAttribsARB");
+				//{ import core.stdc.stdio; printf("checking glXCreateContextAttribsARB: %shere\n", (glXCreateContextAttribsARBFn !is null ? "".ptr : "not ".ptr)); }
 			}
+			return (glXCreateContextAttribsARBFn !is null);
+		}
+
+		// this made public so we don't have to get it again and again
+		public GLXContext glXCreateContextAttribsARB (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list) {
+			if (!glXCreateContextAttribsARB_present()) assert(0, "glXCreateContextAttribsARB is not present");
+			return (cast(glXCreateContextAttribsARB_fna)glXCreateContextAttribsARBFn)(dpy, config, share_context, direct, attrib_list);
 		}
 
 		void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
-		  if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
-		  if (_glx_swapInterval_fn is null) {
-		    _glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
-		    if (_glx_swapInterval_fn is null) {
-		      _glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
-		      return;
-		    }
-		    version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
-		  }
-		  _glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+			if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
+			if (_glx_swapInterval_fn is null) {
+				_glx_swapInterval_fn = cast(glXSwapIntervalEXT)glXGetProcAddress("glXSwapIntervalEXT");
+				if (_glx_swapInterval_fn is null) {
+					_glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
+					return;
+				}
+				version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
+			}
+			_glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
+		}
+	} else version(Windows) {
+	static if (!SdpyIsUsingIVGLBinds) {
+	enum GL_TRUE = 1;
+	enum GL_FALSE = 0;
+	alias int GLint;
+
+	public void* glbindGetProcAddress (const(char)* name) {
+		void* res = wglGetProcAddress(name);
+		if (res is null) {
+			//{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
+			import core.sys.windows.windef, core.sys.windows.winbase;
+			__gshared HINSTANCE dll = null;
+			if (dll is null) {
+				dll = LoadLibraryA("opengl32.dll");
+				if (dll is null) return null; // <32, but idc
+			}
+			res = GetProcAddress(dll, name);
+		}
+		//{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
+		return res;
+	}
+	}
+
+		enum WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
+		enum WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
+		enum WGL_CONTEXT_LAYER_PLANE_ARB = 0x2093;
+		enum WGL_CONTEXT_FLAGS_ARB = 0x2094;
+		enum WGL_CONTEXT_PROFILE_MASK_ARB = 0x9126;
+
+		enum WGL_CONTEXT_DEBUG_BIT_ARB = 0x0001;
+		enum WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB = 0x0002;
+
+		enum WGL_CONTEXT_CORE_PROFILE_BIT_ARB = 0x00000001;
+		enum WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = 0x00000002;
+
+		alias wglCreateContextAttribsARB_fna = HGLRC function (HDC hDC, HGLRC hShareContext, const(int)* attribList);
+		__gshared wglCreateContextAttribsARB_fna wglCreateContextAttribsARB = null;
+
+		void wglInitOtherFunctions () {
+			if (wglCreateContextAttribsARB is null) {
+				wglCreateContextAttribsARB = cast(wglCreateContextAttribsARB_fna)glbindGetProcAddress("wglCreateContextAttribsARB");
+			}
 		}
 	}
 
+	static if (!SdpyIsUsingIVGLBinds) {
 	void glGetIntegerv(int, void*);
 	void glMatrixMode(int);
 	void glPushMatrix();
@@ -8020,11 +11227,11 @@ extern(System) nothrow @nogc {
 	void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 	void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
 	void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
-                       /*GLsizei*/int width, /*GLsizei*/int height,
-                       uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		/*GLsizei*/int width, /*GLsizei*/int height,
+		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
-                           /*GLsizei*/int width, /*GLsizei*/int height,
-                           uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		/*GLsizei*/int width, /*GLsizei*/int height,
+		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
 
@@ -8085,6 +11292,7 @@ extern(System) nothrow @nogc {
 	enum int GL_COLOR_BUFFER_BIT = 0x00004000;
 	enum int GL_ACCUM_BUFFER_BIT = 0x00000200;
 	enum int GL_DEPTH_BUFFER_BIT = 0x00000100;
+	enum uint GL_STENCIL_BUFFER_BIT = 0x00000400;
 
 	enum int GL_POINTS = 0x0000;
 	enum int GL_LINES =  0x0001;
@@ -8096,6 +11304,7 @@ extern(System) nothrow @nogc {
 	enum int GL_QUADS = 7;
 	enum int GL_QUAD_STRIP = 8;
 	enum int GL_POLYGON = 9;
+	}
 }
 
 version(linux) {
@@ -8115,6 +11324,7 @@ version(linux) {
 }
 
 version(X11) {
+	import core.stdc.locale : LC_ALL; // rdmd fix
 	__gshared bool sdx_isUTF8Locale;
 
 	// This whole crap is used to initialize X11 locale, so that you can use XIM methods later.
@@ -8197,8 +11407,10 @@ mixin template ExperimentalTextComponent() {
 		}
 	}
 
-	struct InlineElement {
+	static class InlineElement {
 		string text;
+
+		BlockElement containingBlock;
 
 		Color color = Color.black;
 		Color backgroundColor = Color.transparent;
@@ -8214,12 +11426,89 @@ mixin template ExperimentalTextComponent() {
 		Rectangle boundingBox;
 		int[] letterXs; // FIXME: maybe i should do bounding boxes for every character
 
+		bool isMergeCompatible(InlineElement other) {
+			return
+				containingBlock is other.containingBlock &&
+				color == other.color &&
+				backgroundColor == other.backgroundColor &&
+				styles == other.styles &&
+				font == other.font &&
+				fontSize == other.fontSize &&
+				lineHeight == other.lineHeight &&
+				true;
+		}
+
 		int xOfIndex(size_t index) {
 			if(index < letterXs.length)
 				return letterXs[index];
 			else
 				return boundingBox.right;
 		}
+
+		InlineElement clone() {
+			auto ie = new InlineElement();
+			ie.tupleof = this.tupleof;
+			return ie;
+		}
+
+		InlineElement getPreviousInlineElement() {
+			InlineElement prev = null;
+			foreach(ie; this.containingBlock.parts) {
+				if(ie is this)
+					break;
+				prev = ie;
+			}
+			if(prev is null) {
+				BlockElement pb;
+				BlockElement cb = this.containingBlock;
+				moar:
+				foreach(ie; this.containingBlock.containingLayout.blocks) {
+					if(ie is cb)
+						break;
+					pb = ie;
+				}
+				if(pb is null)
+					return null;
+				if(pb.parts.length == 0) {
+					cb = pb;
+					goto moar;
+				}
+
+				prev = pb.parts[$-1];
+
+			}
+			return prev;
+		}
+
+		InlineElement getNextInlineElement() {
+			InlineElement next = null;
+			foreach(idx, ie; this.containingBlock.parts) {
+				if(ie is this) {
+					if(idx + 1 < this.containingBlock.parts.length)
+						next = this.containingBlock.parts[idx + 1];
+					break;
+				}
+			}
+			if(next is null) {
+				BlockElement n;
+				foreach(idx, ie; this.containingBlock.containingLayout.blocks) {
+					if(ie is this.containingBlock) {
+						if(idx + 1 < this.containingBlock.containingLayout.blocks.length)
+							n = this.containingBlock.containingLayout.blocks[idx + 1];
+						break;
+					}
+				}
+				if(n is null)
+					return null;
+
+				if(n.parts.length)
+					next = n.parts[0];
+				else {} // FIXME
+
+			}
+			return next;
+		}
+
 	}
 
 	// Block elements are used entirely for positioning inline elements,
@@ -8229,6 +11518,8 @@ mixin template ExperimentalTextComponent() {
 		uint alignment;
 
 		int whiteSpace; // pre, pre-wrap, wrap
+
+		TextLayout containingLayout;
 
 		// inputs
 		Point where;
@@ -8245,13 +11536,41 @@ mixin template ExperimentalTextComponent() {
 	}
 
 	struct TextIdentifyResult {
-		InlineElement* element;
-		size_t offset;
+		InlineElement element;
+		int offset;
+
+		private TextIdentifyResult fixupNewline() {
+			if(element !is null && offset < element.text.length && element.text[offset] == '\n') {
+				offset--;
+			} else if(element !is null && offset == element.text.length && element.text.length > 1 && element.text[$-1] == '\n') {
+				offset--;
+			}
+			return this;
+		}
 	}
 
 	class TextLayout {
 		BlockElement[] blocks;
-		Rectangle boundingBox;
+		Rectangle boundingBox_;
+		Rectangle boundingBox() { return boundingBox_; }
+		void boundingBox(Rectangle r) {
+			if(r != boundingBox_) {
+				boundingBox_ = r;
+				layoutInvalidated = true;
+			}
+		}
+
+		Rectangle contentBoundingBox() {
+			Rectangle r;
+			foreach(block; blocks)
+			foreach(ie; block.parts) {
+				if(ie.boundingBox.right > r.right)
+					r.right = ie.boundingBox.right;
+				if(ie.boundingBox.bottom > r.bottom)
+					r.bottom = ie.boundingBox.bottom;
+			}
+			return r;
+		}
 
 		BlockElement[] getBlocks() {
 			return blocks;
@@ -8280,21 +11599,32 @@ mixin template ExperimentalTextComponent() {
 			this.boundingBox = boundingBox;
 		}
 
-		BlockElement addBlock(Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
+		BlockElement addBlock(InlineElement after = null, Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
 			auto be = new BlockElement();
-			blocks ~= be;
+			be.containingLayout = this;
+			if(after is null)
+				blocks ~= be;
+			else {
+				foreach(idx, b; blocks) {
+					if(b is after.containingBlock) {
+						blocks = blocks[0 .. idx + 1] ~  be ~ blocks[idx + 1 .. $];
+						break;
+					}
+				}
+			}
 			return be;
 		}
 
 		void clear() {
 			blocks = null;
+			selectionStart = selectionEnd = caret = Caret.init;
 		}
 
 		void addText(Args...)(Args args) {
 			if(blocks.length == 0)
 				addBlock();
 
-			InlineElement ie;
+			InlineElement ie = new InlineElement();
 			foreach(idx, arg; args) {
 				static if(is(typeof(arg) == ForegroundColor))
 					ie.color = arg;
@@ -8309,72 +11639,136 @@ mixin template ExperimentalTextComponent() {
 					size_t lastLineIndex;
 					foreach(cidx, char a; arg) {
 						if(a == '\n') {
-							ie.text = arg[lastLineIndex .. cidx];
+							ie.text = arg[lastLineIndex .. cidx + 1];
 							lastLineIndex = cidx + 1;
-							blocks[$-1].parts ~= ie;
-							ie.text = "\n";
-							blocks[$-1].parts ~= ie;
-							addBlock();
+							ie.containingBlock = blocks[$-1];
+							blocks[$-1].parts ~= ie.clone;
+							ie.text = null;
 						} else {
 
 						}
 					}
 
 					ie.text = arg[lastLineIndex .. $];
-					blocks[$-1].parts ~= ie;
+					ie.containingBlock = blocks[$-1];
+					blocks[$-1].parts ~= ie.clone;
+					caret = Caret(this, blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length);
 				}
 			}
+
+			invalidateLayout();
 		}
 
-		/// Call this if the inputs change. It will reflow everything
-		void redoLayout() {
+		void tryMerge(InlineElement into, InlineElement what) {
+			if(!into.isMergeCompatible(what)) {
+				return; // cannot merge, different configs
+			}
 
+			// cool, can merge, bring text together...
+			into.text ~= what.text;
+
+			// and remove what
+			for(size_t a = 0; a < what.containingBlock.parts.length; a++) {
+				if(what.containingBlock.parts[a] is what) {
+					for(size_t i = a; i < what.containingBlock.parts.length - 1; i++)
+						what.containingBlock.parts[i] = what.containingBlock.parts[i + 1];
+					what.containingBlock.parts = what.containingBlock.parts[0 .. $-1];
+
+				}
+			}
+
+			// FIXME: ensure no other carets have a reference to it
 		}
 
-		TextIdentifyResult identify(int x, int y) {
+		/// exact = true means return null if no match. otherwise, get the closest one that makes sense for a mouse click.
+		TextIdentifyResult identify(int x, int y, bool exact = false) {
+			TextIdentifyResult inexactMatch;
 			foreach(block; blocks) {
-				foreach(ref part; block.parts) {
+				foreach(part; block.parts) {
 					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
 
 						// FIXME binary search
-						size_t tidx;
-						foreach_reverse(idx, lx; part.letterXs)
+						int tidx;
+						int lastX;
+						foreach_reverse(idxo, lx; part.letterXs) {
+							int idx = cast(int) idxo;
 							if(lx <= x) {
-								tidx = idx;
+								if(lastX && lastX - x < x - lx)
+									tidx = idx + 1;
+								else
+									tidx = idx;
 								break;
 							}
+							lastX = lx;
+						}
 
-						return TextIdentifyResult(&part, tidx);
+						return TextIdentifyResult(part, tidx).fixupNewline;
+					} else if(!exact) {
+						// we're not in the box, but are we on the same line?
+						if(y >= part.boundingBox.top && y < part.boundingBox.bottom)
+							inexactMatch = TextIdentifyResult(part, x == 0 ? 0 : cast(int) part.text.length);
 					}
 				}
 			}
 
-			return TextIdentifyResult(null, 0);
+			if(!exact && inexactMatch is TextIdentifyResult.init && blocks.length && blocks[$-1].parts.length)
+				return TextIdentifyResult(blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length).fixupNewline;
+
+			return exact ? TextIdentifyResult.init : inexactMatch.fixupNewline;
 		}
 
-		void drawInto(ScreenPainter painter) {
+		void moveCaretToPixelCoordinates(int x, int y) {
+			auto result = identify(x, y);
+			caret.inlineElement = result.element;
+			caret.offset = result.offset;
+		}
+
+		void selectToPixelCoordinates(int x, int y) {
+			auto result = identify(x, y);
+
+			if(y < caretLastDrawnY1) {
+				// on a previous line, carat is selectionEnd
+				selectionEnd = caret;
+
+				selectionStart = Caret(this, result.element, result.offset);
+			} else if(y > caretLastDrawnY2) {
+				// on a later line
+				selectionStart = caret;
+
+				selectionEnd = Caret(this, result.element, result.offset);
+			} else {
+				// on the same line...
+				if(x <= caretLastDrawnX) {
+					selectionEnd = caret;
+					selectionStart = Caret(this, result.element, result.offset);
+				} else {
+					selectionStart = caret;
+					selectionEnd = Caret(this, result.element, result.offset);
+				}
+
+			}
+		}
+
+
+		/// Call this if the inputs change. It will reflow everything
+		void redoLayout(ScreenPainter painter) {
+			//painter.setClipRectangle(boundingBox);
 			auto pos = Point(boundingBox.left, boundingBox.top);
 
 			int lastHeight;
-			foreach(block; blocks) {
+			void nl() {
 				pos.x = boundingBox.left;
 				pos.y += lastHeight;
-				foreach(ref part; block.parts) {
-					painter.outlineColor = part.color;
-					painter.fillColor = part.backgroundColor;
-					if(part.text == "\n")
-						continue;
-					auto size = painter.textSize(part.text);
+			}
+			foreach(block; blocks) {
+				nl();
+				foreach(part; block.parts) {
+					part.letterXs = null;
 
-					painter.drawText(pos, part.text);
-					if(part.styles & TextFormat.underline)
-						painter.drawLine(Point(pos.x, pos.y + size.height - 1), Point(pos.x + size.width, pos.y + size.height - 1));
-					if(part.styles & TextFormat.strikethrough)
-						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
+					auto size = painter.textSize(part.text);
 
 					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
 
-					part.letterXs = null;
 					foreach(idx, char c; part.text) {
 							// FIXME: unicode
 						part.letterXs ~= painter.textSize(part.text[0 .. idx]).width + pos.x;
@@ -8388,39 +11782,458 @@ mixin template ExperimentalTextComponent() {
 					} else {
 						lastHeight = size.height;
 					}
+
+					if(part.text.length && part.text[$-1] == '\n')
+						nl();
 				}
 			}
 
+			layoutInvalidated = false;
 		}
 
-		/// Carat movement api
+		bool layoutInvalidated = true;
+		void invalidateLayout() {
+			layoutInvalidated = true;
+		}
+
+// FIXME: caret can remain sometimes when inserting
+// FIXME: inserting at the beginning once you already have something can eff it up.
+		void drawInto(ScreenPainter painter, bool focused = false) {
+			if(layoutInvalidated)
+				redoLayout(painter);
+			foreach(block; blocks) {
+				foreach(part; block.parts) {
+					painter.outlineColor = part.color;
+					painter.fillColor = part.backgroundColor;
+
+					auto pos = part.boundingBox.upperLeft;
+					auto size = part.boundingBox.size;
+
+					painter.drawText(pos, part.text);
+					if(part.styles & TextFormat.underline)
+						painter.drawLine(Point(pos.x, pos.y + size.height - 4), Point(pos.x + size.width, pos.y + size.height - 4));
+					if(part.styles & TextFormat.strikethrough)
+						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
+				}
+			}
+
+			// on every redraw, I will force the caret to be
+			// redrawn too, in order to eliminate perceived lag
+			// when moving around with the mouse.
+			eraseCaret(painter);
+
+			if(focused) {
+				highlightSelection(painter);
+				drawCaret(painter);
+			}
+		}
+
+		void highlightSelection(ScreenPainter painter) {
+			if(selectionStart is selectionEnd)
+				return; // no selection
+
+			assert(selectionStart.inlineElement !is null);
+			assert(selectionEnd.inlineElement !is null);
+
+			painter.rasterOp = RasterOp.xor;
+			painter.outlineColor = Color.transparent;
+			painter.fillColor = Color(255, 255, 127);
+
+			auto at = selectionStart.inlineElement;
+			auto atOffset = selectionStart.offset;
+			bool done;
+			while(at) {
+				auto box = at.boundingBox;
+				if(atOffset < at.letterXs.length)
+					box.left = at.letterXs[atOffset];
+
+				if(at is selectionEnd.inlineElement) {
+					if(selectionEnd.offset < at.letterXs.length)
+						box.right = at.letterXs[selectionEnd.offset];
+					done = true;
+				}
+
+				painter.drawRectangle(box.upperLeft, box.width, box.height);
+
+				if(done)
+					break;
+
+				at = at.getNextInlineElement();
+				atOffset = 0;
+			}
+		}
+
+		int caretLastDrawnX, caretLastDrawnY1, caretLastDrawnY2;
+		bool caretShowingOnScreen = false;
+		void drawCaret(ScreenPainter painter) {
+			//painter.setClipRectangle(boundingBox);
+			int x, y1, y2;
+			if(caret.inlineElement is null) {
+				x = boundingBox.left;
+				y1 = boundingBox.top + 2;
+				y2 = boundingBox.top + painter.fontHeight;
+			} else {
+				x = caret.inlineElement.xOfIndex(caret.offset);
+				y1 = caret.inlineElement.boundingBox.top + 2;
+				y2 = caret.inlineElement.boundingBox.bottom - 2;
+			}
+
+			if(caretShowingOnScreen && (x != caretLastDrawnX || y1 != caretLastDrawnY1 || y2 != caretLastDrawnY2))
+				eraseCaret(painter);
+
+			painter.pen = Pen(Color.white, 1);
+			painter.rasterOp = RasterOp.xor;
+			painter.drawLine(
+				Point(x, y1),
+				Point(x, y2)
+			);
+			painter.rasterOp = RasterOp.normal;
+			caretShowingOnScreen = !caretShowingOnScreen;
+
+			if(caretShowingOnScreen) {
+				caretLastDrawnX = x;
+				caretLastDrawnY1 = y1;
+				caretLastDrawnY2 = y2;
+			}
+		}
+
+		Rectangle caretBoundingBox() {
+			int x, y1, y2;
+			if(caret.inlineElement is null) {
+				x = boundingBox.left;
+				y1 = boundingBox.top + 2;
+				y2 = boundingBox.top + 16;
+			} else {
+				x = caret.inlineElement.xOfIndex(caret.offset);
+				y1 = caret.inlineElement.boundingBox.top + 2;
+				y2 = caret.inlineElement.boundingBox.bottom - 2;
+			}
+
+			return Rectangle(x, y1, x + 1, y2);
+		}
+
+		void eraseCaret(ScreenPainter painter) {
+			//painter.setClipRectangle(boundingBox);
+			if(!caretShowingOnScreen) return;
+			painter.pen = Pen(Color.white, 1);
+			painter.rasterOp = RasterOp.xor;
+			painter.drawLine(
+				Point(caretLastDrawnX, caretLastDrawnY1),
+				Point(caretLastDrawnX, caretLastDrawnY2)
+			);
+
+			caretShowingOnScreen = false;
+			painter.rasterOp = RasterOp.normal;
+		}
+
+		/// Caret movement api
 		/// These should give the user a logical result based on what they see on screen...
 		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
-		void moveUp(ref Carat carat) {}
-		void moveDown(ref Carat carat) {}
-		void moveLeft(ref Carat carat) {}
-		void moveRight(ref Carat carat) {}
-		void moveHome(ref Carat carat) {}
-		void moveEnd(ref Carat carat) {}
-		void movePageUp(ref Carat carat) {}
-		void movePageDown(ref Carat carat) {}
+		void moveUp() {
+			if(caret.inlineElement is null) return;
+			auto x = caret.inlineElement.xOfIndex(caret.offset);
+			auto y = caret.inlineElement.boundingBox.top + 2;
 
-		/// Plain text editing api. These work at the current carat inside the selected inline element.
-		void insertText(string text) {}
-		void backspace() {}
-		void delete_() {}
+			y -= caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
+			if(y < 0)
+				return;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
+			}
+		}
+		void moveDown() {
+			if(caret.inlineElement is null) return;
+			auto x = caret.inlineElement.xOfIndex(caret.offset);
+			auto y = caret.inlineElement.boundingBox.bottom - 2;
+
+			y += caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
+
+			auto i = identify(x, y);
+			if(i.element) {
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
+			}
+		}
+		void moveLeft() {
+			if(caret.inlineElement is null) return;
+			if(caret.offset)
+				caret.offset--;
+			else {
+				auto p = caret.inlineElement.getPreviousInlineElement();
+				if(p) {
+					caret.inlineElement = p;
+					if(p.text.length && p.text[$-1] == '\n')
+						caret.offset = cast(int) p.text.length - 1;
+					else
+						caret.offset = cast(int) p.text.length;
+				}
+			}
+		}
+		void moveRight() {
+			if(caret.inlineElement is null) return;
+			if(caret.offset < caret.inlineElement.text.length && caret.inlineElement.text[caret.offset] != '\n') {
+				caret.offset++;
+			} else {
+				auto p = caret.inlineElement.getNextInlineElement();
+				if(p) {
+					caret.inlineElement = p;
+					caret.offset = 0;
+				}
+			}
+		}
+		void moveHome() {
+			if(caret.inlineElement is null) return;
+			auto x = 0;
+			auto y = caret.inlineElement.boundingBox.top + 2;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
+			}
+		}
+		void moveEnd() {
+			if(caret.inlineElement is null) return;
+			auto x = int.max;
+			auto y = caret.inlineElement.boundingBox.top + 2;
+
+			auto i = identify(x, y);
+
+			if(i.element) {
+				caret.inlineElement = i.element;
+				caret.offset = i.offset;
+			}
+
+		}
+		void movePageUp(ref Caret caret) {}
+		void movePageDown(ref Caret caret) {}
+
+		void moveDocumentStart(ref Caret caret) {
+			if(blocks.length && blocks[0].parts.length)
+				caret = Caret(this, blocks[0].parts[0], 0);
+			else
+				caret = Caret.init;
+		}
+
+		void moveDocumentEnd(ref Caret caret) {
+			if(blocks.length) {
+				auto parts = blocks[$-1].parts;
+				if(parts.length) {
+					caret = Caret(this, parts[$-1], cast(int) parts[$-1].text.length);
+				} else {
+					caret = Caret.init;
+				}
+			} else
+				caret = Caret.init;
+		}
+
+		void deleteSelection() {
+			if(selectionStart is selectionEnd)
+				return;
+
+			assert(selectionStart.inlineElement !is null);
+			assert(selectionEnd.inlineElement !is null);
+
+			auto at = selectionStart.inlineElement;
+
+			if(selectionEnd.inlineElement is at) {
+				// same element, need to chop out
+				at.text = at.text[0 .. selectionStart.offset] ~ at.text[selectionEnd.offset .. $];
+				at.letterXs = at.letterXs[0 .. selectionStart.offset] ~ at.letterXs[selectionEnd.offset .. $];
+				selectionEnd.offset -= selectionEnd.offset - selectionStart.offset;
+			} else {
+				// different elements, we can do it with slicing
+				at.text = at.text[0 .. selectionStart.offset];
+				if(selectionStart.offset < at.letterXs.length)
+					at.letterXs = at.letterXs[0 .. selectionStart.offset];
+
+				at = at.getNextInlineElement();
+
+				while(at) {
+					if(at is selectionEnd.inlineElement) {
+						at.text = at.text[selectionEnd.offset .. $];
+						if(selectionEnd.offset < at.letterXs.length)
+							at.letterXs = at.letterXs[selectionEnd.offset .. $];
+						selectionEnd.offset = 0;
+						break;
+					} else {
+						auto cfd = at;
+						cfd.text = null; // delete the whole thing
+
+						at = at.getNextInlineElement();
+
+						if(cfd.text.length == 0) {
+							// and remove cfd
+							for(size_t a = 0; a < cfd.containingBlock.parts.length; a++) {
+								if(cfd.containingBlock.parts[a] is cfd) {
+									for(size_t i = a; i < cfd.containingBlock.parts.length - 1; i++)
+										cfd.containingBlock.parts[i] = cfd.containingBlock.parts[i + 1];
+									cfd.containingBlock.parts = cfd.containingBlock.parts[0 .. $-1];
+
+								}
+							}
+						}
+					}
+				}
+			}
+
+			caret = selectionEnd;
+			selectNone();
+
+			invalidateLayout();
+
+		}
+
+		/// Plain text editing api. These work at the current caret inside the selected inline element.
+		void insert(in char[] text) {
+			foreach(dchar ch; text)
+				insert(ch);
+		}
+		/// ditto
+		void insert(dchar ch) {
+
+			deleteSelection();
+
+			if(ch == 127) {
+				delete_();
+				return;
+			}
+			if(ch == 8) {
+				backspace();
+				return;
+			}
+
+			invalidateLayout();
+
+			if(ch == 13) ch = 10;
+			auto e = caret.inlineElement;
+			if(e is null) {
+				addText("" ~ cast(char) ch) ; // FIXME
+				return;
+			}
+
+			if(caret.offset == e.text.length) {
+				e.text ~= cast(char) ch; // FIXME
+				caret.offset++;
+				if(ch == 10) {
+					auto c = caret.inlineElement.clone;
+					c.text = null;
+					c.letterXs = null;
+					insertPartAfter(c,e);
+					caret = Caret(this, c, 0);
+				}
+			} else {
+				// FIXME cast char sucks
+				if(ch == 10) {
+					auto c = caret.inlineElement.clone;
+					c.text = e.text[caret.offset .. $];
+					if(caret.offset < c.letterXs.length)
+						c.letterXs = e.letterXs[caret.offset .. $]; // FIXME boundingBox
+					e.text = e.text[0 .. caret.offset] ~ cast(char) ch;
+					if(caret.offset <= e.letterXs.length) {
+						e.letterXs = e.letterXs[0 .. caret.offset] ~ 0; // FIXME bounding box
+					}
+					insertPartAfter(c,e);
+					caret = Caret(this, c, 0);
+				} else {
+					e.text = e.text[0 .. caret.offset] ~ cast(char) ch ~ e.text[caret.offset .. $];
+					caret.offset++;
+				}
+			}
+		}
+
+		void insertPartAfter(InlineElement what, InlineElement where) {
+			foreach(idx, p; where.containingBlock.parts) {
+				if(p is where) {
+					if(idx + 1 == where.containingBlock.parts.length)
+						where.containingBlock.parts ~= what;
+					else
+						where.containingBlock.parts = where.containingBlock.parts[0 .. idx + 1] ~ what ~ where.containingBlock.parts[idx + 1 .. $];
+					return;
+				}
+			}
+		}
+
+		void cleanupStructures() {
+			for(size_t i = 0; i < blocks.length; i++) {
+				auto block = blocks[i];
+				for(size_t a = 0; a < block.parts.length; a++) {
+					auto part = block.parts[a];
+					if(part.text.length == 0) {
+						for(size_t b = a; b < block.parts.length - 1; b++)
+							block.parts[b] = block.parts[b+1];
+						block.parts = block.parts[0 .. $-1];
+					}
+				}
+				if(block.parts.length == 0) {
+					for(size_t a = i; a < blocks.length - 1; a++)
+						blocks[a] = blocks[a+1];
+					blocks = blocks[0 .. $-1];
+				}
+			}
+		}
+
+		void backspace() {
+			try_again:
+			auto e = caret.inlineElement;
+			if(e is null)
+				return;
+			if(caret.offset == 0) {
+				auto prev = e.getPreviousInlineElement();
+				if(prev is null)
+					return;
+				auto newOffset = cast(int) prev.text.length;
+				tryMerge(prev, e);
+				caret.inlineElement = prev;
+				caret.offset = prev is null ? 0 : newOffset;
+
+				goto try_again;
+			} else if(caret.offset == e.text.length) {
+				e.text = e.text[0 .. $-1];
+				caret.offset--;
+			} else {
+				e.text = e.text[0 .. caret.offset - 1] ~ e.text[caret.offset .. $];
+				caret.offset--;
+			}
+			//cleanupStructures();
+
+			invalidateLayout();
+		}
+		void delete_() {
+			if(selectionStart !is selectionEnd)
+				deleteSelection();
+			else {
+				auto before = caret;
+				moveRight();
+				if(caret != before) {
+					backspace();
+				}
+			}
+
+			invalidateLayout();
+		}
 		void overstrike() {}
 
-		/// Selection API. See also: carat movement.
-		void selectAll() {}
-		void selectNone() {}
+		/// Selection API. See also: caret movement.
+		void selectAll() {
+			moveDocumentStart(selectionStart);
+			moveDocumentEnd(selectionEnd);
+		}
+		void selectNone() {
+			selectionStart = selectionEnd = Caret.init;
+		}
 
 		/// Rich text editing api. These allow you to manipulate the meta data of the current element and add new elements.
 		/// They will modify the current selection if there is one and will splice one in if needed.
 		void changeAttributes() {}
 
 
-		/// Text search api. They manipulate the selection and/or carat.
+		/// Text search api. They manipulate the selection and/or caret.
 		void findText(string text) {}
 		void findIndex(size_t textIndex) {}
 
@@ -8441,19 +12254,19 @@ mixin template ExperimentalTextComponent() {
 		}
 
 		bool contentEditable; // can it be edited?
-		bool contentCaratable; // is there a carat/cursor that moves around in there?
+		bool contentCaretable; // is there a caret/cursor that moves around in there?
 		bool contentSelectable; // selectable?
 
-		Carat carat;
-		Carat selectionStart;
-		Carat selectionEnd;
+		Caret caret;
+		Caret selectionStart;
+		Caret selectionEnd;
 
 		bool insertMode;
 	}
 
-	struct Carat {
+	struct Caret {
 		TextLayout layout;
-		InlineElement* inlineElement;
+		InlineElement inlineElement;
 		int offset;
 	}
 
@@ -8563,4 +12376,92 @@ TrueColorImage getWindowNetWmIcon(Window window) {
 	return null;
 }
 
+}
+
+
+void loadBinNameToWindowClassName () {
+	import core.stdc.stdlib : realloc;
+	version(linux) {
+		// args[0] MAY be empty, so we'll just use this
+		import core.sys.posix.unistd : readlink;
+		char[1024] ebuf = void; // 1KB should be enough for everyone!
+		auto len = readlink("/proc/self/exe", ebuf.ptr, ebuf.length);
+		if (len < 1) return;
+	} else /*version(Windows)*/ {
+		import core.runtime : Runtime;
+		if (Runtime.args.length == 0 || Runtime.args[0].length == 0) return;
+		auto ebuf = Runtime.args[0];
+		auto len = ebuf.length;
+	}
+	auto pos = len;
+	while (pos > 0 && ebuf[pos-1] != '/') --pos;
+	sdpyWindowClassStr = cast(char*)realloc(sdpyWindowClassStr, len-pos+1);
+	if (sdpyWindowClassStr is null) return; // oops
+	sdpyWindowClassStr[0..len-pos+1] = 0; // just in case
+	sdpyWindowClassStr[0..len-pos] = ebuf[pos..len];
+}
+
+/++
+	An interface representing a font.
+
+	This is still MAJOR work in progress.
++/
+interface DrawableFont {
+	void drawString(ScreenPainter painter, Point upperLeft, in char[] text);
+}
+
+/++
+	Loads a true type font using [arsd.ttf]. That module must be compiled
+	in if you choose to use this function.
+
+	Be warned: this can be slow and memory hungry, especially on remote connections
+	to the X server.
+
+	This is still MAJOR work in progress.
++/
+DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
+	import arsd.ttf;
+	static class ArsdTtfFont : DrawableFont {
+		TtfFont font;
+		int size;
+		this(in ubyte[] data, int size) {
+			font = TtfFont(data);
+			this.size = size;
+		}
+
+		Sprite[string] cache;
+
+		void drawString(ScreenPainter painter, Point upperLeft, in char[] text) {
+			Sprite sprite = (text in cache) ? *(text in cache) : null;
+
+			auto fg = painter.impl._outlineColor;
+			auto bg = painter.impl._fillColor;
+
+			if(sprite is null) {
+				int width, height;
+				auto data = font.renderString(text, size, width, height);
+				auto image = new TrueColorImage(width, height);
+				int pos = 0;
+				foreach(y; 0 .. height)
+				foreach(x; 0 .. width) {
+					fg.a = data[0];
+					bg.a = 255;
+					auto color = alphaBlend(fg, bg);
+					image.imageData.bytes[pos++] = color.r;
+					image.imageData.bytes[pos++] = color.g;
+					image.imageData.bytes[pos++] = color.b;
+					image.imageData.bytes[pos++] = data[0];
+					data = data[1 .. $];
+				}
+				assert(data.length == 0);
+
+				sprite = new Sprite(painter.window, Image.fromMemoryImage(image));
+				cache[text.idup] = sprite;
+			}
+
+			sprite.drawAt(painter, upperLeft);
+		}
+	}
+
+	return new ArsdTtfFont(data, size);
 }

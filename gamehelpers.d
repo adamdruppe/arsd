@@ -3,7 +3,9 @@
 /++
 	An add-on for simpledisplay.d, joystick.d, and simpleaudio.d
 	that includes helper functions for writing games (and perhaps
-	other multimedia programs).
+	other multimedia programs). Whereas simpledisplay works with
+	an event-driven framework, gamehelpers always uses a consistent
+	timer for updates.
 
 	Usage example:
 
@@ -222,6 +224,8 @@ final class OpenGlTexture {
 	this(TrueColorImage from) {
 		assert(from.width > 0 && from.height > 0);
 
+		import core.stdc.stdlib;
+
 		_width = from.width;
 		_height = from.height;
 
@@ -230,14 +234,18 @@ final class OpenGlTexture {
 		auto _texWidth = _width;
 		auto _texHeight = _height;
 
-		const(ubyte)[] data = from.imageData.bytes;
+		const(ubyte)* data = from.imageData.bytes.ptr;
+		bool freeRequired = false;
 
 		// gotta round them to the nearest power of two which means padding the image
 		if((_texWidth & (_texWidth - 1)) || (_texHeight & (_texHeight - 1))) {
 			_texWidth = nextPowerOfTwo(_texWidth);
 			_texHeight = nextPowerOfTwo(_texHeight);
 
-			auto n = new ubyte[](_texWidth * _texHeight * 4);
+			auto n = cast(ubyte*) malloc(_texWidth * _texHeight * 4);
+			if(n is null) assert(0);
+			scope(failure) free(n);
+
 			auto size = from.width * 4;
 			auto advance = _texWidth * 4;
 			int at = 0;
@@ -248,7 +256,8 @@ final class OpenGlTexture {
 				at2 += size;
 			}
 
-			data = n[];
+			data = n;
+			freeRequired = true;
 
 			// the rest of data will be initialized to zeros automatically which is fine.
 		}
@@ -271,15 +280,18 @@ final class OpenGlTexture {
 			0,
 			GL_RGBA,
 			GL_UNSIGNED_BYTE,
-			data.ptr);
+			data);
 
 		assert(!glGetError());
 
 		_texCoordWidth = cast(float) _width / _texWidth;
 		_texCoordHeight = cast(float) _height / _texHeight;
+
+		if(freeRequired)
+			free(cast(void*) data);
 	}
 
-	/// Generates from text. Requires stb_truetype.d
+	/// Generates from text. Requires ttf.d
 	/// pass a pointer to the TtfFont as the first arg (it is template cuz of lazy importing, not because it actually works with different types)
 	this(T, FONT)(FONT* font, int size, in T[] text) if(is(T == char)) {
 		assert(font !is null);

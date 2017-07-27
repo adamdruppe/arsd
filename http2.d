@@ -1,6 +1,36 @@
-/// HTTP client lib
-// Copyright 2013, Adam D. Ruppe.
+// Copyright 2013-2017, Adam D. Ruppe.
+/++
+	This is version 2 of my http/1.1 client implementation.
+	
+	
+	It has no dependencies for basic operation, but does require OpenSSL
+	libraries (or compatible) to be support HTTPS. Compile with
+	`-version=with_openssl` to enable such support.
+	
+	http2.d, despite its name, does NOT implement HTTP/2.0, but this
+	shouldn't matter for 99.9% of usage, since all servers will continue
+	to support HTTP/1.1 for a very long time.
+
++/
 module arsd.http2;
+
+/++
+	Demonstrates core functionality, using the [HttpClient],
+	[HttpRequest] (returned by [HttpClient.navigateTo|client.navigateTo]),
+	and [HttpResponse] (returned by [HttpRequest.waitForCompletion|request.waitForCompletion]).
+
++/
+unittest {
+	import arsd.http2;
+
+	void main() {
+		auto client = new HttpClient();
+		auto request = client.navigateTo(Uri("http://dlang.org/"));
+		auto response = request.waitForCompletion();
+
+		string returnedHtml = response.contentText;
+	}
+}
 
 // FIXME: multipart encoded file uploads needs implementation
 // future: do web client api stuff
@@ -89,17 +119,137 @@ struct HttpResponse {
 
 	string statusLine; ///
 
-	string contentType; ///
+	string contentType; /// The content type header
 
-	string[string] cookies; ///
+	string[string] cookies; /// Names and values of cookies set in the response.
 
-	string[] headers; ///
+	string[] headers; /// Array of all headers returned.
 	string[string] headersHash; ///
 
-	ubyte[] content; ///
-	string contentText; ///
+	ubyte[] content; /// The raw content returned in the response body.
+	string contentText; /// [content], but casted to string (for convenience)
+
+	/++
+		returns `new Document(this.contentText)`. Requires [arsd.dom].
+	+/
+	auto contentDom()() {
+		import arsd.dom;
+		return new Document(this.contentText);
+
+	}
+
+	/++
+		returns `var.fromJson(this.contentText)`. Requires [arsd.jsvar].
+	+/
+	auto contentJson()() {
+		import arsd.jsvar;
+		return var.fromJson(this.contentText);
+	}
 
 	HttpRequestParameters requestParameters; ///
+
+	LinkHeader[] linksStored;
+	bool linksLazilyParsed;
+
+	/// Returns links header sorted by "rel" attribute.
+	/// It returns a new array on each call.
+	LinkHeader[string] linksHash() {
+		auto links = this.links();
+		LinkHeader[string] ret;
+		foreach(link; links)
+			ret[link.rel] = link;
+		return ret;
+	}
+
+	/// Returns the Link header, parsed.
+	LinkHeader[] links() {
+		if(linksLazilyParsed)
+			return linksStored;
+		linksLazilyParsed = true;
+		LinkHeader[] ret;
+
+		auto hdrPtr = "Link" in headersHash;
+		if(hdrPtr is null)
+			return ret;
+
+		auto header = *hdrPtr;
+
+		LinkHeader current;
+
+		while(header.length) {
+			char ch = header[0];
+
+			if(ch == '<') {
+				// read url
+				header = header[1 .. $];
+				size_t idx;
+				while(idx < header.length && header[idx] != '>')
+					idx++;
+				current.url = header[0 .. idx];
+				header = header[idx .. $];
+			} else if(ch == ';') {
+				// read attribute
+				header = header[1 .. $];
+				header = header.stripLeft;
+
+				size_t idx;
+				while(idx < header.length && header[idx] != '=')
+					idx++;
+
+				string name = header[0 .. idx];
+				header = header[idx + 1 .. $];
+
+				string value;
+
+				if(header.length && header[0] == '"') {
+					// quoted value
+					header = header[1 .. $];
+					idx = 0;
+					while(idx < header.length && header[idx] != '\"')
+						idx++;
+					value = header[0 .. idx];
+					header = header[idx .. $];
+
+				} else if(header.length) {
+					// unquoted value
+					idx = 0;
+					while(idx < header.length && header[idx] != ',' && header[idx] != ' ' && header[idx] != ';')
+						idx++;
+
+					value = header[0 .. idx];
+					header = header[idx .. $].stripLeft;
+				}
+
+				name = name.toLower;
+				if(name == "rel")
+					current.rel = value;
+				else
+					current.attributes[name] = value;
+
+			} else if(ch == ',') {
+				// start another
+				ret ~= current;
+				current = LinkHeader.init;
+			} else if(ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
+				// ignore
+			}
+
+			header = header[1 .. $];
+		}
+
+		ret ~= current;
+
+		linksStored = ret;
+
+		return ret;
+	}
+}
+
+///
+struct LinkHeader {
+	string url; ///
+	string rel; ///
+	string[string] attributes; /// like title, rev, media, whatever attributes
 }
 
 import std.string;
@@ -283,9 +433,9 @@ class HttpRequest {
 		// The key is the *domain name* and the port. Multiple domains on the same address will have separate connections.
 		Socket[][string] socketsPerHost;
 
-		void loseSocket(string host, ushort port, Socket s) {
+		void loseSocket(string host, ushort port, bool ssl, Socket s) {
 			import std.string;
-			auto key = format("%s:%s", host, port);
+			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
 
 			if(auto list = key in socketsPerHost) {
 				for(int a = 0; a < (*list).length; a++) {
@@ -293,7 +443,7 @@ class HttpRequest {
 
 						for(int b = a; b < (*list).length - 1; b++)
 							(*list)[b] = (*list)[b+1];
-						(*list).length = (*list).length - 1;
+						(*list) = (*list)[0 .. $-1];
 						break;
 					}
 				}
@@ -309,7 +459,8 @@ class HttpRequest {
 					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
 
 				socket.connect(new InternetAddress(host, port));
-				debug writeln("opening to ", host, ":", port);
+				debug(arsd_http2) writeln("opening to ", host, ":", port);
+				assert(socket.handle() !is socket_t.init);
 				return socket;
 			}
 
@@ -323,8 +474,11 @@ class HttpRequest {
 						// let's see if it has closed since we last tried
 						// e.g. a server timeout or something. If so, we need
 						// to lose this one and immediately open a new one.
-						SocketSet readSet = new SocketSet();
+						static SocketSet readSet = null;
+						if(readSet is null)
+							readSet = new SocketSet();
 						readSet.reset();
+						assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
 						readSet.add(socket);
 						auto got = Socket.select(readSet, null, null, 5.msecs /* timeout */);
 						if(got > 0) {
@@ -332,7 +486,7 @@ class HttpRequest {
 							// any active requests. Assume it is EOF and open a new one
 
 							socket.close();
-							loseSocket(host, port, socket);
+							loseSocket(host, port, ssl, socket);
 							goto openNew;
 						}
 						return socket;
@@ -424,14 +578,15 @@ class HttpRequest {
 					if(readSet.isSet(sock)) {
 						keep_going:
 						auto got = sock.receive(buffer);
+						debug(arsd_http2) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
 						if(got < 0) {
 							throw new Exception("receive error");
 						} else if(got == 0) {
 							// remote side disconnected
-							debug writeln("remote disconnect");
+							debug(arsd_http2) writeln("remote disconnect");
 							request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
-							loseSocket(request.requestParameters.host, request.requestParameters.port, sock);
+							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else {
 							// data available
 							request.handleIncomingData(buffer[0 .. got]);
@@ -466,7 +621,7 @@ class HttpRequest {
 				}
 
 				foreach(s; inactive[0 .. inactiveCount]) {
-					debug writeln("removing socket from active list");
+					debug(arsd_http2) writeln("removing socket from active list");
 					activeRequestOnSocket.remove(s);
 				}
 			}
@@ -501,6 +656,7 @@ class HttpRequest {
 	UnCompress uncompress;
 
 	void handleIncomingData(scope const ubyte[] dataIn) {
+	debug(arsd_http2) writeln("handleIncomingData, state: ", state);
 		if(state == State.waitingForResponse) {
 			state = State.readingHeaders;
 			headerReadingState = HeaderReadingState.init;
@@ -648,6 +804,7 @@ class HttpRequest {
 							} else {
 								int power = 1;
 								bodyReadingState.contentLengthRemaining = 0;
+								assert(a != 0, cast(string) data);
 								for(int b = a-1; b >= 0; b--) {
 									char cc = data[b];
 									if(cc >= 'a' && cc <= 'z')
@@ -658,9 +815,11 @@ class HttpRequest {
 									else
 										val = cc - 'A' + 10;
 
+									assert(val >= 0 && val <= 15, to!string(val));
 									bodyReadingState.contentLengthRemaining += power * val;
 									power *= 16;
 								}
+								debug(arsd_http2) writeln("Chunk length: ", bodyReadingState.contentLengthRemaining);
 								bodyReadingState.chunkedState++;
 								continue;
 							}
@@ -669,7 +828,7 @@ class HttpRequest {
 							char c = data[a];
 							if(c == '\n') {
 								if(bodyReadingState.contentLengthRemaining == 0)
-									bodyReadingState.chunkedState = 3;
+									bodyReadingState.chunkedState = 5;
 								else
 									bodyReadingState.chunkedState = 2;
 							}
@@ -685,16 +844,26 @@ class HttpRequest {
 								responseData.content ~= data[a .. can];
 
 							bodyReadingState.contentLengthRemaining -= can - a;
+							debug(arsd_http2) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
 							a += can - a;
+							assert(bodyReadingState.contentLengthRemaining >= 0);
 							if(bodyReadingState.contentLengthRemaining == 0) {
-								a += 1; // skipping a 13 10
-								bodyReadingState.chunkedState = 0;
-								data = data[a+1 .. $];
+								bodyReadingState.chunkedState++;
+								data = data[a .. $];
 							} else {
 								data = data[a .. $];
 							}
 							goto start_over;
-						case 3: // reading footers
+						case 3: // reading 13/10
+							assert(data[a] == 13);
+							bodyReadingState.chunkedState++;
+						break;
+						case 4: // reading 10 at end of packet
+							assert(data[a] == 10);
+							data = data[a + 1 .. $];
+							bodyReadingState.chunkedState = 0;
+							goto start_over;
+						case 5: // reading footers
 							//goto done; // FIXME
 							state = State.complete;
 
@@ -833,6 +1002,8 @@ class HttpRequest {
 		headers ~= "Host: "~requestParameters.host~"\r\n";
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
+		if(requestParameters.contentType.length)
+			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
 		if(requestParameters.authorization.length)
 			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
 		if(requestParameters.bodyData.length)
@@ -953,7 +1124,7 @@ class HttpClient {
 	bool acceptGzip = true; ///
 
 	/// Automatically follow a redirection?
-	bool followLocation = false; ///
+	bool followLocation = false; /// NOT IMPLEMENTED
 
 	///
 	@property Uri location() {
@@ -1016,14 +1187,14 @@ interface ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request);
 }
 
-/// Provides caching behavior similar to a real web browser
+// / Provides caching behavior similar to a real web browser
 class HttpCache : ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request) {
 		return null;
 	}
 }
 
-/// Gives simple maximum age caching, ignoring the actual http headers
+// / Gives simple maximum age caching, ignoring the actual http headers
 class SimpleCache : ICache {
 	HttpResponse* getCachedResponse(HttpRequestParameters request) {
 		return null;
@@ -1145,6 +1316,7 @@ version(use_openssl) {
 		
 		@trusted
 		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+		//import std.stdio;writeln(cast(string) buf);
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
@@ -1188,6 +1360,225 @@ version(use_openssl) {
 		~this() {
 			SSL_free(ssl);
 			SSL_CTX_free(ctx);
+		}
+	}
+}
+
+/++
+	An experimental component for working with REST apis. Note that it
+	is a zero-argument template, so to create one, use `new HttpApiClient!()(args..)`
+	or you will get "HttpApiClient is used as a type" compile errors.
+
+	This will probably not work for you yet, and I might change it significantly.
+
+	Requires [arsd.jsvar].
+
+
+	Here's a snippet to create a pull request on GitHub to Phobos:
+
+	---
+	auto github = new HttpApiClient!()("https://api.github.com/", "your personal api token here");
+
+	// create the arguments object
+	// see: https://developer.github.com/v3/pulls/#create-a-pull-request
+	var args = var.emptyObject;
+	args.title = "My Pull Request";
+	args.head = "yourusername:" ~ branchName;
+	args.base = "master";
+	// note it is ["body"] instead of .body because `body` is a D keyword
+	args["body"] = "My cool PR is opened by the API!";
+	args.maintainer_can_modify = true;
+
+	// this translates to `repos/dlang/phobos/pulls` and sends a POST request,
+	// containing `args` as json, then immediately grabs the json result and extracts
+	// the value `html_url` from it. `prUrl` is typed `var`, from arsd.jsvar.
+	auto prUrl = github.rest.repos.dlang.phobos.pulls.POST(args).result.html_url;
+
+	writeln("Created: ", prUrl);
+	---
+
+	Why use this instead of just building the URL? Well, of course you can! This just makes
+	it a bit more convenient than string concatenation and manages a few headers for you.
+
+	Subtypes could potentially add static type checks too.
++/
+class HttpApiClient() {
+	import arsd.jsvar;
+
+	HttpClient httpClient;
+
+	alias HttpApiClientType = typeof(this);
+
+	string urlBase;
+	string oauth2Token;
+	string submittedContentType;
+
+	/++
+		Params:
+
+		urlBase = The base url for the api. Tends to be something like `https://api.example.com/v2/` or similar.
+		oauth2Token = the authorization token for the service. You'll have to get it from somewhere else.
+		submittedContentType = the content-type of POST, PUT, etc. bodies.
+	+/
+	this(string urlBase, string oauth2Token, string submittedContentType = "application/json") {
+		httpClient = new HttpClient();
+
+		assert(urlBase[0] == 'h');
+		assert(urlBase[$-1] == '/');
+
+		this.urlBase = urlBase;
+		this.oauth2Token = oauth2Token;
+		this.submittedContentType = submittedContentType;
+	}
+
+	///
+	static struct HttpRequestWrapper {
+		HttpApiClientType apiClient; ///
+		HttpRequest request; ///
+		HttpResponse _response;
+
+		///
+		this(HttpApiClientType apiClient, HttpRequest request) {
+			this.apiClient = apiClient;
+			this.request = request;
+		}
+
+		/// Returns the full [HttpResponse] object so you can inspect the headers
+		@property HttpResponse response() {
+			if(_response is HttpResponse.init)
+				_response = request.waitForCompletion();
+			return _response;
+		}
+
+		/++
+			Returns the parsed JSON from the body of the response.
+
+			Throws on non-2xx responses.
+		+/
+		var result() {
+			return apiClient.throwOnError(response);
+		}
+
+		alias request this;
+	}
+
+	///
+	HttpRequestWrapper request(string uri, HttpVerb requestMethod = HttpVerb.GET, ubyte[] bodyBytes = null) {
+		if(uri[0] == '/')
+			uri = uri[1 .. $];
+
+		auto u = Uri(uri).basedOn(Uri(urlBase));
+		auto req = httpClient.navigateTo(u, requestMethod);
+
+		if(oauth2Token.length)
+			req.requestParameters.headers ~= "Authorization: Bearer " ~ oauth2Token;
+		req.requestParameters.contentType = submittedContentType;
+		req.requestParameters.bodyData = bodyBytes;
+
+		return HttpRequestWrapper(this, req);
+	}
+
+	///
+	var throwOnError(HttpResponse res) {
+		if(res.code < 200 || res.code >= 300)
+			throw new Exception(res.codeText);
+
+		var response = var.fromJson(res.contentText);
+		if(response.errors) {
+			throw new Exception(response.errors.toJson());
+		}
+
+		return response;
+	}
+
+	///
+	@property RestBuilder rest() {
+		return RestBuilder(this, null, null);
+	}
+
+	// hipchat.rest.room["Tech Team"].history
+        // gives: "/room/Tech%20Team/history"
+	//
+	// hipchat.rest.room["Tech Team"].history("page", "12)
+	///
+	static struct RestBuilder {
+		HttpApiClientType apiClient;
+		string[] pathParts;
+		string[2][] queryParts;
+		this(HttpApiClientType apiClient, string[] pathParts, string[2][] queryParts) {
+			this.apiClient = apiClient;
+			this.pathParts = pathParts;
+			this.queryParts = queryParts;
+		}
+
+		///
+		RestBuilder opDispatch(string str)() {
+			return RestBuilder(apiClient, pathParts ~ str, queryParts);
+		}
+
+		///
+		RestBuilder opIndex(string str) {
+			return RestBuilder(apiClient, pathParts ~ str, queryParts);
+		}
+		///
+		RestBuilder opIndex(var str) {
+			return RestBuilder(apiClient, pathParts ~ str.get!string, queryParts);
+		}
+		///
+		RestBuilder opIndex(int i) {
+			return RestBuilder(apiClient, pathParts ~ to!string(i), queryParts);
+		}
+
+		///
+		RestBuilder opCall(T)(string name, T value) {
+			return RestBuilder(apiClient, pathParts, queryParts ~ [name, to!string(value)]);
+		}
+
+		///
+		string toUri() {
+			import std.uri;
+			string result;
+			foreach(idx, part; pathParts) {
+				if(idx)
+					result ~= "/";
+				result ~= encodeComponent(part);
+			}
+			result ~= "?";
+			foreach(idx, part; queryParts) {
+				if(idx)
+					result ~= "&";
+				result ~= encodeComponent(part[0]);
+				result ~= "=";
+				result ~= encodeComponent(part[1]);
+			}
+			return result;
+		}
+
+		///
+		final HttpRequestWrapper GET() { return _EXECUTE(HttpVerb.GET, this.toUri(), null); }
+		/// ditto
+		final HttpRequestWrapper DELETE() { return _EXECUTE(HttpVerb.DELETE, this.toUri(), null); }
+
+		// need to be able to send: JSON, urlencoded, multipart/form-data, and raw stuff.
+		/// ditto
+		final HttpRequestWrapper POST(T...)(T t) { return _EXECUTE(HttpVerb.POST, this.toUri(), toBytes(t)); }
+		/// ditto
+		final HttpRequestWrapper PATCH(T...)(T t) { return _EXECUTE(HttpVerb.PATCH, this.toUri(), toBytes(t)); }
+		/// ditto
+		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
+
+		private ubyte[] toBytes(T...)(T t) {
+			static if(T.length == 0)
+				return null;
+			else static if(T.length == 1 && is(T[0] == var))
+				return cast(ubyte[]) t[0].toJson(); // FIXME: cast
+			else
+				static assert(0); // FIXME
+
+		}
+
+		HttpRequestWrapper _EXECUTE(HttpVerb verb, string uri, ubyte[] bodyBytes) {
+			return apiClient.request(uri, verb, bodyBytes);
 		}
 	}
 }

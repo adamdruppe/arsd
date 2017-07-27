@@ -144,21 +144,13 @@ struct Color {
 	+/
 	nothrow pure
 	static Color fromIntegers(int red, int green, int blue, int alpha = 255) {
-		if(red < 0) red = 0; if(red > 255) red = 255;
-		if(green < 0) green = 0; if(green > 255) green = 255;
-		if(blue < 0) blue = 0; if(blue > 255) blue = 255;
-		if(alpha < 0) alpha = 0; if(alpha > 255) alpha = 255;
-		return Color(red, green, blue, alpha);
+		return Color(clampToByte(red), clampToByte(green), clampToByte(blue), clampToByte(alpha));
 	}
 
 	/// Construct a color with the given values. They should be in range 0 <= x <= 255, where 255 is maximum intensity and 0 is minimum intensity.
 	nothrow pure @nogc
 	this(int red, int green, int blue, int alpha = 255) {
-		// workaround dmd bug 10937
-		if(__ctfe)
-			this.components[0] = cast(ubyte) red;
-		else
-			this.r = cast(ubyte) red;
+		this.r = cast(ubyte) red;
 		this.g = cast(ubyte) green;
 		this.b = cast(ubyte) blue;
 		this.a = cast(ubyte) alpha;
@@ -170,6 +162,9 @@ struct Color {
 	/// Ditto
 	nothrow pure @nogc
 	static Color white() { return Color(255, 255, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color gray() { return Color(128, 128, 128); }
 	/// Ditto
 	nothrow pure @nogc
 	static Color black() { return Color(0, 0, 0); }
@@ -191,6 +186,9 @@ struct Color {
 	/// Ditto
 	nothrow pure @nogc
 	static Color purple() { return Color(255, 0, 255); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color brown() { return Color(128, 64, 0); }
 
 	/*
 	ubyte[4] toRgbaArray() {
@@ -198,15 +196,14 @@ struct Color {
 	}
 	*/
 
-  /// Return black-and-white color
+	/// Return black-and-white color
 	Color toBW() () {
-		int intens = cast(int)(0.2126*r+0.7152*g+0.0722*b);
-		if (intens < 0) intens = 0; else if (intens > 255) intens = 255;
+		int intens = clampToByte(cast(int)(0.2126*r+0.7152*g+0.0722*b));
 		return Color(intens, intens, intens, a);
 	}
 
 	/// Makes a string that matches CSS syntax for websites
-	string toCssString() {
+	string toCssString() const {
 		if(a == 255)
 			return "#" ~ toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b);
 		else {
@@ -215,7 +212,7 @@ struct Color {
 	}
 
 	/// Makes a hex string RRGGBBAA (aa only present if it is not 255)
-	string toString() {
+	string toString() const {
 		if(a == 255)
 			return toCssString()[1 .. $];
 		else
@@ -223,7 +220,7 @@ struct Color {
 	}
 
 	/// returns RRGGBBAA, even if a== 255
-	string toRgbaHexString() {
+	string toRgbaHexString() const {
 		return toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b) ~ toHexInternal(a);
 	}
 
@@ -269,7 +266,7 @@ struct Color {
 				if(i < 3)
 					hsl[i] = toInternal!real(part.stripInternal);
 				else
-					a = cast(ubyte) (toInternal!real(part.stripInternal) * 255);
+					a = clampToByte(cast(int) (toInternal!real(part.stripInternal) * 255));
 			}
 
 			c = .fromHsl(hsl);
@@ -289,16 +286,16 @@ struct Color {
 				auto v = toInternal!real(part.stripInternal);
 				switch(i) {
 					case 0: // red
-						c.r = cast(ubyte) v;
+						c.r = clampToByte(cast(int) v);
 					break;
 					case 1:
-						c.g = cast(ubyte) v;
+						c.g = clampToByte(cast(int) v);
 					break;
 					case 2:
-						c.b = cast(ubyte) v;
+						c.b = clampToByte(cast(int) v);
 					break;
 					case 3:
-						c.a = cast(ubyte) (v * 255);
+						c.a = clampToByte(cast(int) (v * 255));
 					break;
 					default: // ignore
 				}
@@ -339,6 +336,62 @@ struct Color {
 	/// from hsl
 	static Color fromHsl(real h, real s, real l) {
 		return .fromHsl(h, s, l);
+	}
+
+	// this is actually branch-less for ints on x86, and even for longs on x86_64
+	static ubyte clampToByte(T) (T n) pure nothrow @safe @nogc if (__traits(isIntegral, T)) {
+		static if (__VERSION__ > 2067) pragma(inline, true);
+		static if (T.sizeof == 2 || T.sizeof == 4) {
+			static if (__traits(isUnsigned, T)) {
+				return cast(ubyte)(n&0xff|(255-((-cast(int)(n < 256))>>24)));
+			} else {
+				n &= -cast(int)(n >= 0);
+				return cast(ubyte)(n|((255-cast(int)n)>>31));
+			}
+		} else static if (T.sizeof == 1) {
+			static assert(__traits(isUnsigned, T), "clampToByte: signed byte? no, really?");
+			return cast(ubyte)n;
+		} else static if (T.sizeof == 8) {
+			static if (__traits(isUnsigned, T)) {
+				return cast(ubyte)(n&0xff|(255-((-cast(long)(n < 256))>>56)));
+			} else {
+				n &= -cast(long)(n >= 0);
+				return cast(ubyte)(n|((255-cast(long)n)>>63));
+			}
+		} else {
+			static assert(false, "clampToByte: integer too big");
+		}
+	}
+
+	/** this mixin can be used to alphablend two `uint` colors;
+	 * `colu32name` is variable that holds color to blend,
+	 * `destu32name` is variable that holds "current" color (from surface, for example).
+	 * alpha value of `destu32name` doesn't matter.
+	 * alpha value of `colu32name` means: 255 for replace color, 0 for keep `destu32name`.
+	 *
+	 * WARNING! This function does blending in RGB space, and RGB space is not linear!
+	 */
+	public enum ColorBlendMixinStr(string colu32name, string destu32name) = "{
+		immutable uint a_tmp_ = (256-(255-(("~colu32name~")>>24)))&(-(1-(((255-(("~colu32name~")>>24))+1)>>8))); // to not loose bits, but 255 should become 0
+		immutable uint dc_tmp_ = ("~destu32name~")&0xffffff;
+		immutable uint srb_tmp_ = (("~colu32name~")&0xff00ff);
+		immutable uint sg_tmp_ = (("~colu32name~")&0x00ff00);
+		immutable uint drb_tmp_ = (dc_tmp_&0xff00ff);
+		immutable uint dg_tmp_ = (dc_tmp_&0x00ff00);
+		immutable uint orb_tmp_ = (drb_tmp_+(((srb_tmp_-drb_tmp_)*a_tmp_+0x800080)>>8))&0xff00ff;
+		immutable uint og_tmp_ = (dg_tmp_+(((sg_tmp_-dg_tmp_)*a_tmp_+0x008000)>>8))&0x00ff00;
+		("~destu32name~") = (orb_tmp_|og_tmp_)|0xff000000; /*&0xffffff;*/
+	}";
+
+
+	/// Perform alpha-blending of `fore` to this color, return new color.
+	/// WARNING! This function does blending in RGB space, and RGB space is not linear!
+	Color alphaBlend (Color fore) const pure nothrow @trusted @nogc {
+		static if (__VERSION__ > 2067) pragma(inline, true);
+		Color res;
+		res.asUint = asUint;
+		mixin(ColorBlendMixinStr!("fore.asUint", "res.asUint"));
+		return res;
 	}
 }
 
@@ -438,10 +491,10 @@ Color fromHsl(real h, real s, real l, real a = 255) {
 	b += m;
 
 	return Color(
-		cast(ubyte)(r * 255),
-		cast(ubyte)(g * 255),
-		cast(ubyte)(b * 255),
-		cast(ubyte)(a));
+		cast(int)(r * 255),
+		cast(int)(g * 255),
+		cast(int)(b * 255),
+		cast(int)(a));
 }
 
 /// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
@@ -646,11 +699,7 @@ ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
 	auto backgroundColorf = cast(float) backgroundColor;
 
 	auto answer = (resultingColorf - backgroundColorf + alpha * backgroundColorf) / alpha;
-	if(answer > 255)
-		return 255;
-	if(answer < 0)
-		return 0;
-	return cast(ubyte) answer;
+	return Color.clampToByte(cast(int) answer);
 }
 
 ///
@@ -664,11 +713,7 @@ ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 
 	auto alphaf = 1 - colorYouHave / backgroundColorf;
 	alphaf *= 255;
 
-	if(alphaf < 0)
-		return 0;
-	if(alphaf > 255)
-		return 255;
-	return cast(ubyte) alphaf;
+	return Color.clampToByte(cast(int) alphaf);
 }
 
 
@@ -775,11 +820,47 @@ interface MemoryImage {
 	/// Get image pixel. Slow, but returns valid RGBA color (completely transparent for off-image pixels).
 	Color getPixel(int x, int y) const;
 
-  // Set image pixel.
+  /// Set image pixel.
 	void setPixel(int x, int y, in Color clr);
+
+	/// Load image from file. This will import arsd.png and arsd.jpeg to do the actual work, and cost nothing if you don't use it.
+	static MemoryImage fromImage(T : const(char)[]) (T filename) @trusted {
+		static if (__traits(compiles, {import arsd.jpeg;})) {
+			// yay, we have jpeg loader here, try it!
+			import arsd.jpeg;
+			bool goodJpeg = false;
+			try {
+				int w, h, c;
+				goodJpeg = detect_jpeg_image_from_file(filename, w, h, c);
+				if (goodJpeg && (w < 1 || h < 1)) goodJpeg = false;
+			} catch (Exception) {} // sorry
+			if (goodJpeg) return readJpeg(filename);
+			enum HasJpeg = true;
+		} else {
+			enum HasJpeg = false;
+		}
+		static if (__traits(compiles, {import arsd.png;})) {
+			// yay, we have png loader here, try it!
+			import arsd.png;
+			static if (is(T == string)) {
+				return readPng(filename);
+			} else {
+				// std.stdio sux!
+				return readPng(filename.idup);
+			}
+			enum HasPng = true;
+		} else {
+			enum HasPng = false;
+		}
+		static if (HasJpeg || HasPng) {
+			throw new Exception("cannot load image '"~filename.idup~"' in unknown format");
+		} else {
+			static assert(0, "please provide 'arsd.png', 'arsd.jpeg' or both to load images!");
+		}
+	}
 }
 
-/// An image that consists of indexes into a color palette. Use getAsTrueColorImage() if you don't care about palettes
+/// An image that consists of indexes into a color palette. Use [getAsTrueColorImage]() if you don't care about palettes
 class IndexedImage : MemoryImage {
 	bool hasAlpha;
 
@@ -925,7 +1006,6 @@ class TrueColorImage : MemoryImage {
 	override Color getPixel(int x, int y) const @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
-			if (pos+3 >= imageData.bytes.length/4) return Color(0, 0, 0, 0);
 			return imageData.colors.ptr[pos];
 		} else {
 			return Color(0, 0, 0, 0);
@@ -935,7 +1015,7 @@ class TrueColorImage : MemoryImage {
 	override void setPixel(int x, int y, in Color clr) @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
-			if (pos+3 < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
+			if (pos < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
 		}
 	}
 
@@ -1152,14 +1232,11 @@ img = imageFromPng(readPng(range.range)).getAsTrueColorImage;
 void removeTransparency(IndexedImage img, Color background)
 +/
 
-Color alphaBlend(Color foreground, Color background) {
-	if(foreground.a != 255)
-	foreach(idx, ref part; foreground.components) {
-		part = cast(ubyte) (part * foreground.a / 255 +
-			background.components[idx] * (255 - foreground.a) / 255);
-	}
-
-	return foreground;
+/// Perform alpha-blending of `fore` to this color, return new color.
+/// WARNING! This function does blending in RGB space, and RGB space is not linear!
+Color alphaBlend(Color foreground, Color background) pure nothrow @safe @nogc {
+	static if (__VERSION__ > 2067) pragma(inline, true);
+	return background.alphaBlend(foreground);
 }
 
 /*
@@ -1221,6 +1298,16 @@ void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
 struct Point {
 	int x; ///
 	int y; ///
+
+	pure const nothrow @safe:
+
+	Point opBinary(string op)(in Point rhs) {
+		return Point(mixin("x" ~ op ~ "rhs.x"), mixin("y" ~ op ~ "rhs.y"));
+	}
+
+	Point opBinary(string op)(int rhs) {
+		return Point(mixin("x" ~ op ~ "rhs"), mixin("y" ~ op ~ "rhs"));
+	}
 }
 
 ///
@@ -1235,4 +1322,118 @@ struct Rectangle {
 	int top; ///
 	int right; ///
 	int bottom; ///
+
+	pure const nothrow @safe:
+
+	///
+	this(int left, int top, int right, int bottom) {
+		this.left = left;
+		this.top = top;
+		this.right = right;
+		this.bottom = bottom;
+	}
+
+	///
+	this(in Point upperLeft, in Point lowerRight) {
+		this(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
+	}
+
+	///
+	this(in Point upperLeft, in Size size) {
+		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width, upperLeft.y + size.height);
+	}
+
+	///
+	@property Point upperLeft() {
+		return Point(left, top);
+	}
+
+	///
+	@property Point lowerRight() {
+		return Point(right, bottom);
+	}
+
+	///
+	@property Size size() {
+		return Size(width, height);
+	}
+
+	///
+	@property int width() {
+		return right - left;
+	}
+
+	///
+	@property int height() {
+		return bottom - top;
+	}
+
+	/// Returns true if this rectangle entirely contains the other
+	bool contains(in Rectangle r) {
+		return contains(r.upperLeft) && contains(r.lowerRight);
+	}
+
+	/// ditto
+	bool contains(in Point p) {
+		return (p.x >= left && p.y < right && p.y >= top && p.y < bottom);
+	}
+
+	/// Returns true of the two rectangles at any point overlap
+	bool overlaps(in Rectangle r) {
+		// the -1 in here are because right and top are exclusive
+		return !((right-1) < r.left || (r.right-1) < left || (bottom-1) < r.top || (r.bottom-1) < top);
+	}
 }
+
+/++
+	Implements a flood fill algorithm, like the bucket tool in
+	MS Paint.
+
+	Params:
+		what = the canvas to work with, arranged as top to bottom, left to right elements
+		width = the width of the canvas
+		height = the height of the canvas
+		target = the type to replace. You may pass the existing value if you want to do what Paint does
+		replacement = the replacement value
+		x = the x-coordinate to start the fill (think of where the user clicked in Paint)
+		y = the y-coordinate to start the fill
+		additionalCheck = A custom additional check to perform on each square before continuing. Returning true means keep flooding, returning false means stop.
++/
+void floodFill(T)(
+	T[] what, int width, int height, // the canvas to inspect
+	T target, T replacement, // fill params
+	int x, int y, bool delegate(int x, int y) @safe additionalCheck) // the node
+{
+	T node = what[y * width + x];
+
+	if(target == replacement) return;
+
+	if(node != target) return;
+
+	if(additionalCheck is null)
+		additionalCheck = (int, int) => true;
+
+	if(!additionalCheck(x, y))
+		return;
+
+	what[y * width + x] = replacement;
+
+	if(x)
+		floodFill(what, width, height, target, replacement,
+			x - 1, y, additionalCheck);
+
+	if(x != width - 1)
+		floodFill(what, width, height, target, replacement,
+			x + 1, y, additionalCheck);
+
+	if(y)
+		floodFill(what, width, height, target, replacement,
+			x, y - 1, additionalCheck);
+
+	if(y != height - 1)
+		floodFill(what, width, height, target, replacement,
+			x, y + 1, additionalCheck);
+}
+
+// for scripting, so you can tag it without strictly needing to import arsd.jsvar
+enum arsd_jsvar_compatible = "arsd_jsvar_compatible";

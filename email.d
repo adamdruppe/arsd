@@ -11,20 +11,23 @@ import arsd.characterencodings;
 
 // SEE ALSO: std.net.curl.SMTP
 
+///
 struct RelayInfo {
-	string server;
-	string username;
-	string password;
+	string server; ///
+	string username; ///
+	string password; ///
 }
 
+///
 struct MimeAttachment {
-	string type;
-	string filename;
-	const(void)[] content;
-	string id;
+	string type; ///
+	string filename; ///
+	const(void)[] content; ///
+	string id; ///
 }
 
 
+/// For OUTGOING email
 class EmailMessage {
 	void setHeader(string name, string value) {
 		headers ~= name ~ ": " ~ value;
@@ -224,6 +227,7 @@ class EmailMessage {
 	}
 }
 
+///
 void email(string to, string subject, string message, string from, RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 	auto msg = new EmailMessage();
 	msg.from = from;
@@ -237,10 +241,11 @@ void email(string to, string subject, string message, string from, RelayInfo mai
 
 import std.conv;
 
-// for reading
+/// for reading
 class MimePart {
 	string[] headers;
 	immutable(ubyte)[] content;
+	immutable(ubyte)[] encodedContent; // usually valid only for GPG, and will be cleared by creator; canonical form
 	string textContent;
 	MimePart[] stuff;
 
@@ -251,6 +256,9 @@ class MimePart {
 	string disposition;
 	string id;
 	string filename;
+	// gpg signatures
+	string gpgalg;
+	string gpgproto;
 
 	MimeAttachment toMimeAttachment() {
 		MimeAttachment att;
@@ -265,7 +273,9 @@ class MimePart {
 		string boundary;
 
 		void parseContentType(string content) {
+			//{ import std.stdio; writeln("c=[", content, "]"); }
 			foreach(k, v; breakUpHeaderParts(content)) {
+				//{ import std.stdio; writeln("  k=[", k, "]; v=[", v, "]"); }
 				switch(k) {
 					case "root":
 						type = v;
@@ -280,6 +290,12 @@ class MimePart {
 						boundary = v;
 					break;
 					default:
+					case "micalg":
+						gpgalg = v;
+					break;
+					case "protocol":
+						gpgproto = v;
+					break;
 				}
 			}
 		}
@@ -380,6 +396,9 @@ class MimePart {
 					content ~= '\n';
 			}
 		}
+
+		// store encoded content for GPG (should be cleared by caller if necessary)
+		encodedContent = content;
 
 		// decode the content..
 		switch(transferEncoding) {
@@ -505,8 +524,16 @@ class MimeContainer {
 }
 
 import std.algorithm : startsWith;
+///
 class IncomingEmailMessage {
-	this(ref immutable(ubyte)[][] mboxLines) {
+	///
+	this(string[] lines) {
+		auto lns = cast(immutable(ubyte)[][])lines;
+		this(lns, false);
+	}
+
+	///
+	this(ref immutable(ubyte)[][] mboxLines, bool asmbox=true) {
 
 		enum ParseState {
 			lookingForFrom,
@@ -514,7 +541,7 @@ class IncomingEmailMessage {
 			readingBody
 		}
 
-		auto state = ParseState.lookingForFrom;
+		auto state = (asmbox ? ParseState.lookingForFrom : ParseState.readingHeaders);
 		string contentType;
 
 		bool isMultipart;
@@ -578,6 +605,7 @@ class IncomingEmailMessage {
 		lineLoop: while(mboxLines.length) {
 			// this can needlessly convert headers too, but that won't harm anything since they are 7 bit anyway
 			auto line = convertToUtf8Lossy(mboxLines[0], charset);
+			auto origline = line;
 			line = line.stripRight;
 
 			final switch(state) {
@@ -606,11 +634,13 @@ class IncomingEmailMessage {
 					}
 				break;
 				case ParseState.readingBody:
-					if(line.startsWith("From ")) {
-						break lineLoop; // we're at the beginning of the next messsage
-					}
-					if(line.startsWith(">>From") || line.startsWith(">From")) {
-						line = line[1 .. $];
+					if (asmbox) {
+						if(line.startsWith("From ")) {
+							break lineLoop; // we're at the beginning of the next messsage
+						}
+						if(line.startsWith(">>From") || line.startsWith(">From")) {
+							line = line[1 .. $];
+						}
 					}
 
 					if(isMultipart) {
@@ -620,6 +650,15 @@ class IncomingEmailMessage {
 						htmlMessageBody ~= line ~ "\n";
 					} else {
 						// plain text!
+						// we want trailing spaces for "format=flowed", for example, so...
+						line = origline;
+						size_t epos = line.length;
+						while (epos > 0) {
+							char ch = line.ptr[epos-1];
+							if (ch >= ' ' || ch == '\t') break;
+							--epos;
+						}
+						line = line.ptr[0..epos];
 						textMessageBody ~= line ~ "\n";
 					}
 				break;
@@ -677,6 +716,19 @@ class IncomingEmailMessage {
 				break;
 				case "multipart/signed":
 					// FIXME: it would be cool to actually check the signature
+					if (part.stuff.length) {
+						auto msg = part.stuff[0];
+						//{ import std.stdio; writeln("hdrs: ", part.stuff[0].headers); }
+						gpgalg = part.gpgalg;
+						gpgproto = part.gpgproto;
+						gpgmime = part;
+						foreach (thing; part.stuff[1 .. $]) {
+							attachments ~= thing.toMimeAttachment();
+						}
+						part = msg;
+						goto deeperInTheMimeTree;
+					}
+				break;
 				default:
 					// FIXME: correctly handle more
 					if(part.stuff.length) {
@@ -692,6 +744,23 @@ class IncomingEmailMessage {
 					if(htmlMessageBody.length)
 						htmlMessageBody = convertToUtf8Lossy(decodeQuotedPrintable(htmlMessageBody), charset);
 				break;
+				case "base64":
+					if(textMessageBody.length) {
+						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
+						char[] mmb;
+						mmb.reserve(textMessageBody.length);
+						foreach (char ch; textMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
+						textMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+					}
+					if(htmlMessageBody.length) {
+						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
+						char[] mmb;
+						mmb.reserve(htmlMessageBody.length);
+						foreach (char ch; htmlMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
+						htmlMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+					}
+
+				break;
 				default:
 					// nothing needed
 			}
@@ -704,19 +773,90 @@ class IncomingEmailMessage {
 		}
 	}
 
-	string[string] headers;
+	///
+	@property bool hasGPGSignature () const nothrow @trusted @nogc {
+		MimePart mime = cast(MimePart)gpgmime; // sorry
+		if (mime is null) return false;
+		if (mime.type != "multipart/signed") return false;
+		if (mime.stuff.length != 2) return false;
+		if (mime.stuff[1].type != "application/pgp-signature") return false;
+		if (mime.stuff[0].type.length <= 5 && mime.stuff[0].type[0..5] != "text/") return false;
+		return true;
+	}
 
-	string subject;
+	///
+	ubyte[] extractGPGData () const nothrow @trusted {
+		if (!hasGPGSignature) return null;
+		MimePart mime = cast(MimePart)gpgmime; // sorry
+		char[] res;
+		res.reserve(mime.stuff[0].encodedContent.length); // more, actually
+		foreach (string s; mime.stuff[0].headers[1..$]) {
+			while (s.length && s[$-1] <= ' ') s = s[0..$-1];
+			if (s.length == 0) return null; // wtf?! empty headers?
+			res ~= s;
+			res ~= "\r\n";
+		}
+		res ~= "\r\n";
+		// extract content (see rfc3156)
+		size_t pos = 0;
+		auto ctt = mime.stuff[0].encodedContent;
+		// last CR/LF is a part of mime signature, actually, so remove it
+		if (ctt.length && ctt[$-1] == '\n') {
+			ctt = ctt[0..$-1];
+			if (ctt.length && ctt[$-1] == '\r') ctt = ctt[0..$-1];
+		}
+		while (pos < ctt.length) {
+			auto epos = pos;
+			while (epos < ctt.length && ctt.ptr[epos] != '\n') ++epos;
+			auto xpos = epos;
+			while (xpos > pos && ctt.ptr[xpos-1] <= ' ') --xpos; // according to rfc
+			res ~= ctt[pos..xpos].dup;
+			res ~= "\r\n"; // according to rfc
+			pos = epos+1;
+		}
+		return cast(ubyte[])res;
+	}
 
-	string htmlMessageBody;
-	string textMessageBody;
+	///
+	immutable(ubyte)[] extractGPGSignature () const nothrow @safe @nogc {
+		if (!hasGPGSignature) return null;
+		return gpgmime.stuff[1].content;
+	}
 
-	string from;
-	string to;
+	string[string] headers; ///
 
-	bool textAutoConverted;
+	string subject; ///
 
-	MimeAttachment[] attachments;
+	string htmlMessageBody; ///
+	string textMessageBody; ///
+
+	string from; ///
+	string to; ///
+
+	bool textAutoConverted; ///
+
+	MimeAttachment[] attachments; ///
+
+	// gpg signature fields
+	string gpgalg; ///
+	string gpgproto; ///
+	MimePart gpgmime; ///
+
+	string fromEmailAddress() {
+		auto i = from.indexOf("<");
+		if(i == -1)
+			return from;
+		auto e = from.indexOf(">");
+		return from[i + 1 .. e];
+	}
+
+	string toEmailAddress() {
+		auto i = to.indexOf("<");
+		if(i == -1)
+			return to;
+		auto e = to.indexOf(">");
+		return to[i + 1 .. e];
+	}
 }
 
 struct MboxMessages {
@@ -745,6 +885,7 @@ struct MboxMessages {
 	}
 }
 
+///
 MboxMessages processMboxData(immutable(ubyte)[] data) {
 	return MboxMessages(data);
 }
@@ -825,9 +966,9 @@ string decodeEncodedWord(string data) {
 		}
 
 		immutable(ubyte)[] decodedText;
-		if(encoding == "Q")
+		if(encoding == "Q" || encoding == "q")
 			decodedText = decodeQuotedPrintable(encodedText);
-		else if(encoding == "B")
+		else if(encoding == "B" || encoding == "b")
 			decodedText = cast(typeof(decodedText)) Base64.decode(encodedText);
 		else
 			return originalData; // wtf

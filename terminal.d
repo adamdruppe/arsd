@@ -1,5 +1,5 @@
 /++
-	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input.
+	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
 
 
 	The main interface for this module is the Terminal struct, which
@@ -19,7 +19,7 @@
 	On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
 	work now though.
 
-	ROADMAP:
+	Future_Roadmap:
 	$(LIST
 		* The CharacterEvent and NonCharacterKeyEvent types will be removed. Instead, use KeyboardEvent
 		  on new programs.
@@ -62,6 +62,58 @@
 	)
 +/
 module arsd.terminal;
+
+/++
+	$(H3 Get Line)
+
+	This example will demonstrate the high-level getline interface.
+
+	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter. Then, the final line will be returned to your program, which the example will simply print back to the user.
++/
+unittest {
+	import arsd.terminal;
+
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		string line = terminal.getline();
+		terminal.writeln("You wrote: ", line);
+	}
+}
+
+/++
+	$(H3 Color)
+
+	This example demonstrates color output, using [Terminal.color]
+	and the output functions like [Terminal.writeln].
++/
+unittest {
+	import arsd.terminal;
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		terminal.color(Color.green, Color.black);
+		terminal.writeln("Hello world, in green on black!");
+		terminal.color(Color.DEFAULT, Color.DEFAULT);
+		terminal.writeln("And back to normal.");
+	}
+}
+
+/++
+	$(H3 Single Key)
+
+	This shows how to get one single character press using
+	the [RealTimeConsoleInput] structure.
++/
+unittest {
+	import arsd.terminal;
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw);
+
+		terminal.writeln("Press any key to continue...");
+		auto ch = input.getch();
+		terminal.writeln("You pressed ", ch);
+	}
+}
 
 /*
 	Widgets:
@@ -294,7 +346,7 @@ Eterm|Eterm Terminal Emulator (X11 Window System):\
         :sc=\E7:se=\E[27m:sf=^J:so=\E[7m:sr=\EM:st=\EH:ta=^I:\
         :te=\E[2J\E[?47l\E8:ti=\E7\E[?47h:ue=\E[24m:up=\E[A:\
         :us=\E[4m:vb=\E[?5h\E[?5l:ve=\E[?25h:vi=\E[?25l:\
-        :ac=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~:
+        :ac=aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~:
 
 # DOS terminal emulator such as Telix or TeleMate.
 # This probably also works for the SCO console, though it's incomplete.
@@ -368,6 +420,7 @@ enum ForceOption {
 /// Warning: do not write out escape sequences to the terminal. This won't work
 /// on Windows and will confuse Terminal's internal state on Posix.
 struct Terminal {
+	///
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
@@ -2264,7 +2317,7 @@ struct RealTimeConsoleInput {
 
 					auto cap = terminal.findSequenceInTermcap(thing);
 					if(cap is null) {
-						return charPressAndRelease('\033') ~
+						return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~
 							charPressAndRelease('O') ~
 							charPressAndRelease(thing[2]);
 					} else {
@@ -2272,7 +2325,7 @@ struct RealTimeConsoleInput {
 					}
 				} else {
 					// I don't know, probably unsupported terminal or just quick user input or something
-					return charPressAndRelease('\033') ~ charPressAndRelease(nextChar(c));
+					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ charPressAndRelease(nextChar(c));
 				}
 			} else {
 				// user hit escape (or super slow escape sequence, but meh)
@@ -2290,10 +2343,11 @@ struct RealTimeConsoleInput {
 
 /// The new style of keyboard event
 struct KeyboardEvent {
-	bool pressed;
-	dchar which;
-	uint modifierState;
+	bool pressed; ///
+	dchar which; ///
+	uint modifierState; ///
 
+	///
 	bool isCharacter() {
 		return !(which >= Key.min && which <= Key.max);
 	}
@@ -2331,6 +2385,7 @@ struct KeyboardEvent {
 
 }
 
+/// Deprecated: use KeyboardEvent instead in new programs
 /// Input event for characters
 struct CharacterEvent {
 	/// .
@@ -2344,6 +2399,7 @@ struct CharacterEvent {
 	uint modifierState; /// Don't depend on this to be available for character events
 }
 
+/// Deprecated: use KeyboardEvent instead in new programs
 struct NonCharacterKeyEvent {
 	/// .
 	enum Type {
@@ -2420,7 +2476,7 @@ struct MouseEvent {
 	uint modifierState; /// shift, ctrl, alt, meta, altgr. Not always available. Always check by using modifierState & ModifierState.something
 }
 
-/// .
+/// When you get this, check terminal.width and terminal.height to see the new size and react accordingly.
 struct SizeChangedEvent {
 	int oldWidth;
 	int oldHeight;
@@ -2466,13 +2522,27 @@ enum ModifierState : uint {
 	windows = 512 // only available if you are using my terminal emulator; it isn't actually offered on standard linux ones
 }
 
-/// GetNextEvent returns this. Check the type, then use get to get the more detailed input
+version(DDoc)
+///
+enum ModifierState : uint {
+	///
+	shift = 4,
+	///
+	alt = 2,
+	///
+	control = 16,
+
+}
+
+/++
+	[RealTimeConsoleInput.nextEvent] returns one of these. Check the type, then use the [InputEvent.get|get] method to get the more detailed information about the event.
+++/
 struct InputEvent {
 	/// .
 	enum Type {
-		KeyboardEvent, ///.
-		CharacterEvent, ///.
-		NonCharacterKeyEvent, /// .
+		KeyboardEvent, /// Keyboard key pressed (or released, where supported)
+		CharacterEvent, /// Do not use this in new programs, use KeyboardEvent instead
+		NonCharacterKeyEvent, /// Do not use this in new programs, use KeyboardEvent instead
 		PasteEvent, /// The user pasted some text. Not always available, the pasted text might come as a series of character events instead.
 		MouseEvent, /// only sent if you subscribed to mouse events
 		SizeChangedEvent, /// only sent if you subscribed to size events
@@ -2491,7 +2561,19 @@ struct InputEvent {
 	/// It may be null in the case of program-generated events;
 	@property Terminal* terminal() { return term; }
 
-	/// .
+	/++
+		Gets the specific event instance. First, check the type (such as in a `switch` statement), then extract the correct one from here. Note that the template argument is a $(B value type of the enum above), not a type argument. So to use it, do $(D event.get!(InputEvent.Type.KeyboardEvent)), for example.
+
+		See_Also:
+
+		The event types:
+			[KeyboardEvent], [MouseEvent], [SizeChangedEvent],
+			[PasteEvent], [UserInterruptionEvent], 
+			[EndOfFileEvent], [HangupEvent], [CustomEvent]
+
+		And associated functions:
+			[RealTimeConsoleInput], [ConsoleInputFlags]
+	++/
 	@property auto get(Type T)() {
 		if(type != T)
 			throw new Exception("Wrong event type");
@@ -2518,7 +2600,7 @@ struct InputEvent {
 		else static assert(0, "Type " ~ T.stringof ~ " not added to the get function");
 	}
 
-	// custom event is public because otherwise there's no point at all
+	/// custom event is public because otherwise there's no point at all
 	this(CustomEvent c, Terminal* p = null) {
 		t = Type.CustomEvent;
 		customEvent = c;
@@ -2581,6 +2663,7 @@ struct InputEvent {
 }
 
 version(Demo)
+/// View the source of this!
 void main() {
 	auto terminal = Terminal(ConsoleOutputType.cellular);
 
@@ -3501,13 +3584,48 @@ struct ScrollbackBuffer {
 			scrollbackPosition = 0;
 	}
 
+	void scrollToBottom() {
+		scrollbackPosition = 0;
+	}
+
+	// this needs width and height to know how to word wrap it
+	void scrollToTop(int width, int height) {
+		scrollbackPosition = scrollTopPosition(width, height);
+	}
+
+
 
 
 	struct LineComponent {
 		string text;
-		int color = Color.DEFAULT;
-		int background = Color.DEFAULT;
+		bool isRgb;
+		union {
+			int color;
+			RGB colorRgb;
+		}
+		union {
+			int background;
+			RGB backgroundRgb;
+		}
 		bool delegate() onclick; // return true if you need to redraw
+
+		// 16 color ctor
+		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null) {
+			this.text = text;
+			this.color = color;
+			this.background = background;
+			this.onclick = onclick;
+			this.isRgb = false;
+		}
+
+		// true color ctor
+		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null) {
+			this.text = text;
+			this.colorRgb = colorRgb;
+			this.backgroundRgb = backgroundRgb;
+			this.onclick = onclick;
+			this.isRgb = true;
+		}
 	}
 
 	struct Line {
@@ -3528,6 +3646,34 @@ struct ScrollbackBuffer {
 	int x, y, width, height;
 
 	int scrollbackPosition;
+
+
+	int scrollTopPosition(int width, int height) {
+		int lineCount;
+
+		foreach_reverse(line; lines) {
+			int written = 0;
+			comp_loop: foreach(cidx, component; line.components) {
+				auto towrite = component.text;
+				foreach(idx, dchar ch; towrite) {
+					if(written >= width) {
+						lineCount++;
+						written = 0;
+					}
+
+					if(ch == '\t')
+						written += 8; // FIXME
+					else
+						written++;
+				}
+			}
+			lineCount++;
+		}
+
+		//if(lineCount > height)
+			return lineCount - height;
+		//return 0;
+	}
 
 	void drawInto(Terminal* terminal, in int x = 0, in int y = 0, int width = 0, int height = 0) {
 		if(lines.length == 0)
@@ -3641,7 +3787,10 @@ struct ScrollbackBuffer {
 			}
 
 			foreach(ref component; todo) {
-				terminal.color(component.color, component.background);
+				if(component.isRgb)
+					terminal.setTrueColor(component.colorRgb, component.backgroundRgb);
+				else
+					terminal.color(component.color, component.background);
 				auto towrite = component.text;
 
 				again:
@@ -3960,11 +4109,11 @@ ubyte colorToXTermPaletteIndex(RGB color) {
 	$(TIP You can convert these to and from [arsd.color.Color] using
 	      `.tupleof`:
 
-	      ---
+		---
 	      	RGB rgb;
 		Color c = Color(rgb.tupleof);
+		---
 	)
-	      ---
 +/
 struct RGB {
 	ubyte r; ///
