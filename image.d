@@ -6,6 +6,7 @@ public import arsd.png;
 public import arsd.jpeg;
 public import arsd.bmp;
 public import arsd.targa;
+public import arsd.pcx;
 
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
 
@@ -30,6 +31,7 @@ enum ImageFileFormat {
   Jpeg, ///
   Tga, ///
   Gif, /// we can't load it yet, but we can at least detect it
+  Pcx, /// can load 8BPP and 24BPP pcx images
 }
 
 
@@ -49,6 +51,7 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
   if (strEquCI(ext, "jpg") || strEquCI(ext, "jpeg")) return ImageFileFormat.Jpeg;
   if (strEquCI(ext, "gif")) return ImageFileFormat.Gif;
   if (strEquCI(ext, "tga")) return ImageFileFormat.Tga;
+  if (strEquCI(ext, "pcx")) return ImageFileFormat.Pcx;
   return ImageFileFormat.Unknown;
 }
 
@@ -142,6 +145,58 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
     return true;
   }
   if (guessTarga()) return ImageFileFormat.Tga;
+
+  bool guessPcx() nothrow @trusted @nogc {
+    if (buf.length < 129) return false; // we should have at least header
+
+    ubyte manufacturer = buf.ptr[0];
+    ubyte ver = buf.ptr[1];
+    ubyte encoding = buf.ptr[2];
+    ubyte bitsperpixel = buf.ptr[3];
+    ushort xmin = cast(ushort)(buf.ptr[4]+256*buf.ptr[5]);
+    ushort ymin = cast(ushort)(buf.ptr[6]+256*buf.ptr[7]);
+    ushort xmax = cast(ushort)(buf.ptr[8]+256*buf.ptr[9]);
+    ushort ymax = cast(ushort)(buf.ptr[10]+256*buf.ptr[11]);
+    ubyte reserved = buf.ptr[64];
+    ubyte colorplanes = buf.ptr[65];
+    ushort bytesperline = cast(ushort)(buf.ptr[66]+256*buf.ptr[67]);
+    //ushort palettetype = cast(ushort)(buf.ptr[68]+256*buf.ptr[69]);
+
+    // check some header fields
+    if (manufacturer != 0x0a) return false;
+    if (/*ver != 0 && ver != 2 && ver != 3 &&*/ ver != 5) return false;
+    if (encoding != 0 && encoding != 1) return false;
+
+    int wdt = xmax-xmin+1;
+    int hgt = ymax-ymin+1;
+
+    // arbitrary size limits
+    if (wdt < 1 || wdt > 32000) return false;
+    if (hgt < 1 || hgt > 32000) return false;
+
+    if (bytesperline < wdt) return false;
+
+    // if it's not a 256-color PCX file, and not 24-bit PCX file, gtfo
+    bool bpp24 = false;
+    if (colorplanes == 1) {
+      if (bitsperpixel != 8 && bitsperpixel != 24 && bitsperpixel != 32) return false;
+      bpp24 = (bitsperpixel == 24);
+    } else if (colorplanes == 3 || colorplanes == 4) {
+      if (bitsperpixel != 8) return false;
+      bpp24 = true;
+    }
+
+    // additional checks
+    if (reserved != 0) return false;
+
+    // 8bpp files MUST have palette
+    if (!bpp24 && buf.length < 129+769) return false;
+
+    // it can be pcx
+    return true;
+  }
+  if (guessPcx()) return ImageFileFormat.Pcx;
+
   // dunno
   return ImageFileFormat.Unknown;
 }
@@ -168,6 +223,7 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Jpeg: return readJpeg(filename);
       case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
       case ImageFileFormat.Tga: return loadTga(filename);
+      case ImageFileFormat.Pcx: return loadPcx(filename);
     }
   }
 }
@@ -182,6 +238,7 @@ public MemoryImage loadImageFromMemory (const(void)[] membuf) {
     case ImageFileFormat.Jpeg: return readJpegFromMemory(cast(const(ubyte)[])membuf);
     case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
     case ImageFileFormat.Tga: return loadTgaMem(membuf);
+    case ImageFileFormat.Pcx: return loadPcxMem(membuf);
   }
 }
 

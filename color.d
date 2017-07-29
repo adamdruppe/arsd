@@ -823,41 +823,19 @@ interface MemoryImage {
   /// Set image pixel.
 	void setPixel(int x, int y, in Color clr);
 
-	/// Load image from file. This will import arsd.png and arsd.jpeg to do the actual work, and cost nothing if you don't use it.
+	/// Load image from file. This will import arsd.image to do the actual work, and cost nothing if you don't use it.
 	static MemoryImage fromImage(T : const(char)[]) (T filename) @trusted {
-		static if (__traits(compiles, {import arsd.jpeg;})) {
-			// yay, we have jpeg loader here, try it!
-			import arsd.jpeg;
-			bool goodJpeg = false;
-			try {
-				int w, h, c;
-				goodJpeg = detect_jpeg_image_from_file(filename, w, h, c);
-				if (goodJpeg && (w < 1 || h < 1)) goodJpeg = false;
-			} catch (Exception) {} // sorry
-			if (goodJpeg) return readJpeg(filename);
-			enum HasJpeg = true;
+		static if (__traits(compiles, (){import arsd.image;})) {
+			// yay, we have image loader here, try it!
+			import arsd.image;
+			return loadImageFromFile(filename);
 		} else {
-			enum HasJpeg = false;
-		}
-		static if (__traits(compiles, {import arsd.png;})) {
-			// yay, we have png loader here, try it!
-			import arsd.png;
-			static if (is(T == string)) {
-				return readPng(filename);
-			} else {
-				// std.stdio sux!
-				return readPng(filename.idup);
-			}
-			enum HasPng = true;
-		} else {
-			enum HasPng = false;
-		}
-		static if (HasJpeg || HasPng) {
-			throw new Exception("cannot load image '"~filename.idup~"' in unknown format");
-		} else {
-			static assert(0, "please provide 'arsd.png', 'arsd.jpeg' or both to load images!");
+			static assert(0, "please provide 'arsd.image' to load images!");
 		}
 	}
+
+	/// Convenient alias for `fromImage`
+	alias fromImageFile = fromImage;
 }
 
 /// An image that consists of indexes into a color palette. Use [getAsTrueColorImage]() if you don't care about palettes
