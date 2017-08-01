@@ -145,7 +145,7 @@ private MemoryImage loadPcxImpl(ST) (auto ref ST fl, const(char)[] filename) {
     hasAlpha = (hdr.colorplanes == 4);
   }
 
-  { import core.stdc.stdio; printf("colorplanes=%u; bitsperpixel=%u; bytesperline=%u\n", cast(uint)hdr.colorplanes, cast(uint)hdr.bitsperpixel, cast(uint)hdr.bytesperline); }
+  version(arsd_debug_pcx) { import core.stdc.stdio; printf("colorplanes=%u; bitsperpixel=%u; bytesperline=%u\n", cast(uint)hdr.colorplanes, cast(uint)hdr.bitsperpixel, cast(uint)hdr.bytesperline); }
 
   // additional checks
   if (hdr.reserved != 0) throw new Exception("invalid pcx hdr");
