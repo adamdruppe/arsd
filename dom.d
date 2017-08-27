@@ -1,3 +1,4 @@
+// FIXME: add classList
 /++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond
@@ -1350,6 +1351,24 @@ class Document : FileResource {
 
 /// This represents almost everything in the DOM.
 class Element {
+	/// Returns a collection of elements by selector.
+	/// See: [Document.opIndex]
+	ElementCollection opIndex(string selector) {
+		auto e = ElementCollection(this);
+		return e[selector];
+	}
+
+	/++
+		Returns the child node with the particular index.
+
+		Be aware that child nodes include text nodes, including
+		whitespace-only nodes.
+	+/
+	Element opIndex(size_t index) {
+		if(index >= children.length)
+			return null;
+		return this.children[index];
+	}
 
 	/// Calls getElementById, but throws instead of returning null if the element is not found. You can also ask for a specific subclass of Element to dynamically cast to, which also throws if it cannot be done.
 	final SomeElementType requireElementById(SomeElementType = Element)(string id, string file = __FILE__, size_t line = __LINE__)
