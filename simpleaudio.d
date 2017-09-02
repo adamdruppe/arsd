@@ -42,11 +42,38 @@
 */
 module arsd.simpleaudio;
 
-enum BUFFER_SIZE_FRAMES = 2048;
+enum BUFFER_SIZE_FRAMES = 512;//2048;
 enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 
 version(Demo)
 void main() {
+
+	auto thread = new AudioPcmOutThread();
+	thread.start();
+
+	//Thread.sleep(150.msecs);
+	thread.beep(800, 500);
+	Thread.sleep(500.msecs);
+	thread.beep(366, 500);
+	Thread.sleep(600.msecs);
+	thread.beep(800, 500);
+	thread.beep(366, 500);
+	Thread.sleep(500.msecs);
+	/*
+	Thread.sleep(150.msecs);
+	thread.beep(200);
+	Thread.sleep(150.msecs);
+	thread.beep(100);
+	Thread.sleep(150.msecs);
+	thread.noise();
+	Thread.sleep(150.msecs);
+	*/
+	thread.stop();
+
+	thread.join();
+
+	return;
+
 	/*
 	auto aio = AudioMixer(0);
 
@@ -74,7 +101,7 @@ void main() {
 	int loopCount = 40;
 
 	//import std.stdio;
-	//writeln("Should be about ", loopCount * BUFFER_SIZE_FRAMES * 1000 / 44100, " microseconds");
+	//writeln("Should be about ", loopCount * BUFFER_SIZE_FRAMES * 1000 / SampleRate, " microseconds");
 
 	int loops = 0;
 	// only do simple stuff in here like fill the data, set simple
@@ -110,15 +137,187 @@ void main() {
 	Thread.sleep(dur!"msecs"(500)); // give the last note a chance to finish
 }
 
+import core.thread;
+/++
+	Makes an audio thread for you that you can make
+	various sounds on and it will mix them with good
+	enough latency for simple games.
+
+	---
+		auto audio = new AudioPcmOutThread();
+		audio.start();
+		scope(exit) {
+			audio.stop();
+			audio.join();
+		}
+
+		audio.beep();
+	---
++/
+class AudioPcmOutThread : Thread {
+	///
+	this() {
+		super(&run);
+	}
+
+	///
+	void stop() {
+		if(ao) {
+			ao.stop();
+		}
+	}
+
+	/// Args in hertz and milliseconds
+	void beep(int freq = 900, int dur = 150, int volume = 50) {
+		Sample s;
+		s.operation = 0; // square wave
+		s.frequency = SampleRate / freq;
+		s.duration = dur * SampleRate / 1000;
+		s.volume = volume;
+		addSample(s);
+	}
+
+	///
+	void noise(int dur = 150, int volume = 50) {
+		Sample s;
+		s.operation = 1; // noise
+		s.frequency = 0;
+		s.volume = volume;
+		s.duration = dur * SampleRate / 1000;
+		addSample(s);
+	}
+
+	///
+	void boop() {
+
+	}
+
+	///
+	void blip() {
+
+	}
+
+	struct Sample {
+		int operation;
+		int frequency; /* in samples */
+		int duration; /* in samples */
+		int volume; /* between 1 and 100 */
+
+		int delay; /* in samples */
+	}
+
+	void addSample(Sample currentSample) {
+		synchronized(this) {
+		/*
+			auto spot = playBufferEnd;
+			playBuffer[spot] = s;
+			playBufferEnd = (playBufferEnd + 1) & (playBuffer.length-1);
+		*/
+			int frequencyCounter;
+			short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
+			fillDatas ~= delegate bool (short[] buffer) {
+
+				if(currentSample.duration) {
+					if(currentSample.operation == 0)
+					for(size_t i = 0; i < buffer.length; i++) {
+						buffer[i] = val;
+						// left and right do the same thing so we only count
+						// every other sample
+						if(i & 1) {
+							currentSample.duration--;
+							if(frequencyCounter)
+								frequencyCounter--;
+							if(frequencyCounter == 0) {
+								val = -val;
+								frequencyCounter = currentSample.frequency / 2;
+							}
+
+							if(currentSample.duration == 0) {
+								buffer[i .. $] = 0;
+								return false;
+							}
+						}
+					}
+					else if(currentSample.operation == 1)
+					for(size_t i = 0; i < buffer.length; i++) {
+						import std.random;
+						buffer[i] = uniform(short.min, short.max);
+						if(i & 1) {
+							currentSample.duration--;
+
+							if(currentSample.duration == 0) {
+								buffer = buffer[i .. $];
+								return false;
+							}
+						}
+					}
+
+					return true;
+				} else {
+					return false;
+				}
+			};
+		}
+	}
+
+	private {
+		AudioOutput* ao;
+
+		bool delegate(short[] buffer)[] fillDatas;
+	}
+
+	private void run() {
+		AudioOutput ao = AudioOutput(0);
+		this.ao = &ao;
+		ao.fillData = (short[] buffer) {
+			short[BUFFER_SIZE_SHORT] bfr;
+			bool first = true;
+			if(fillDatas.length) {
+				for(int idx = 0; idx < fillDatas.length; idx++) {
+					auto dg = fillDatas[idx];
+					auto ret = dg(bfr[0 .. buffer.length][]);
+					foreach(i, v; bfr[0 .. buffer.length][]) {
+						int val;
+						if(first)
+							val = 0;
+						else
+							val = buffer[i];
+
+						int a = val + short.max;
+						int b = v + short.max;
+						val = a + b - (a * b)/(short.max*2);
+						val -= short.max;
+						buffer[i] = cast(short) val;
+					}
+					if(!ret) {
+						// it returned false meaning this one is finished...
+						synchronized(this) {
+							fillDatas[idx] = fillDatas[$ - 1];
+							fillDatas = fillDatas[0 .. $-1];
+						}
+						idx--;
+					}
+
+					first = false;
+				}
+			} else {
+				buffer[] = 0;
+			}
+		};
+		ao.play();
+	}
+}
+
 
 import core.stdc.config;
 
 version(linux) version=ALSA;
 version(Windows) version=WinMM;
 
+enum SampleRate = 44100;
+
 version(ALSA) {
 	enum cardName = "plug:default";
-	enum SampleRate = 44100;
 
 	// this is the virtual rawmidi device on my computer at least
 	// maybe later i'll make it probe
@@ -220,8 +419,8 @@ struct AudioOutput {
 			WAVEFORMATEX format;
 			format.wFormatTag = WAVE_FORMAT_PCM;
 			format.nChannels = 2;
-			format.nSamplesPerSec = 44100;
-			format.nAvgBytesPerSec = 44100 * 2 * 2; // two channels, two bytes per sample
+			format.nSamplesPerSec = SampleRate;
+			format.nAvgBytesPerSec = SampleRate * 2 * 2; // two channels, two bytes per sample
 			format.nBlockAlign = 4;
 			format.wBitsPerSample = 16;
 			format.cbSize = 0;
@@ -258,10 +457,11 @@ struct AudioOutput {
 					throw new AlsaException("avail", ready);
 				if(ready > BUFFER_SIZE_FRAMES)
 					ready = BUFFER_SIZE_FRAMES;
+				//import std.stdio; writeln("filling ", ready);
 				fillData(buffer[0 .. ready * 2]);
 				if(playing) {
 					snd_pcm_sframes_t written;
-					auto data = buffer[];
+					auto data = buffer[0 .. ready * 2];
 
 					while(data.length) {
 						written = snd_pcm_writei(handle, data.ptr, data.length / 2);
@@ -797,8 +997,18 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 	if (auto err = snd_pcm_hw_params_set_rate_near(handle, hwParams, &rate, &dir))
 		throw new AlsaException("params rate", err);
 
+	assert(rate == SampleRate); // cheap me
+
 	if (auto err = snd_pcm_hw_params_set_channels(handle, hwParams, 2))
 		throw new AlsaException("params channels", err);
+
+	///+
+	if(snd_pcm_hw_params_set_periods(handle, hwParams, 2, 0) < 0)
+		throw new AlsaException("periods", -1 /* FIXME */);
+
+	snd_pcm_uframes_t sz = (BUFFER_SIZE_FRAMES * 2 /* periods*/);
+	if(snd_pcm_hw_params_set_buffer_size_near(handle, hwParams, &sz) < 0)
+		throw new AlsaException("buffer size", -1 /* FIXME */);
 
 	if (auto err = snd_pcm_hw_params(handle, hwParams))
 		throw new AlsaException("params install", err);
@@ -982,6 +1192,9 @@ extern(C):
 	int snd_pcm_close(snd_pcm_t*);
 	int snd_pcm_prepare(snd_pcm_t*);
 	int snd_pcm_hw_params(snd_pcm_t*, snd_pcm_hw_params_t*);
+	int snd_pcm_hw_params_set_periods(snd_pcm_t*, snd_pcm_hw_params_t*, uint, int);
+	int snd_pcm_hw_params_set_buffer_size(snd_pcm_t*, snd_pcm_hw_params_t*, snd_pcm_uframes_t);
+	int snd_pcm_hw_params_set_buffer_size_near(snd_pcm_t*, snd_pcm_hw_params_t*, snd_pcm_uframes_t*);
 	int snd_pcm_hw_params_set_channels(snd_pcm_t*, snd_pcm_hw_params_t*, uint);
 	int snd_pcm_hw_params_malloc(snd_pcm_hw_params_t**);
 	void snd_pcm_hw_params_free(snd_pcm_hw_params_t*);
