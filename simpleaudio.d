@@ -48,10 +48,43 @@ enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 version(Demo)
 void main() {
 
+	version(none) {
+	import iv.stb.vorbis;
+
+	int channels;
+	short* decoded;
+	auto v = new VorbisDecoder("test.ogg");
+
+	auto ao = AudioOutput(0);
+	ao.fillData = (short[] buffer) {
+		auto got = v.getSamplesShortInterleaved(2, buffer.ptr, buffer.length);
+		if(got == 0) {
+			ao.stop();
+		}
+	};
+
+	ao.play();
+	return;
+	}
+
+
+
+
 	auto thread = new AudioPcmOutThread();
 	thread.start();
 
+	thread.playOgg("test.ogg");
+
+	Thread.sleep(5.seconds);
+
 	//Thread.sleep(150.msecs);
+	thread.beep();
+	Thread.sleep(250.msecs);
+	thread.blip();
+	Thread.sleep(250.msecs);
+	thread.boop();
+	Thread.sleep(1000.msecs);
+	/*
 	thread.beep(800, 500);
 	Thread.sleep(500.msecs);
 	thread.beep(366, 500);
@@ -59,7 +92,6 @@ void main() {
 	thread.beep(800, 500);
 	thread.beep(366, 500);
 	Thread.sleep(500.msecs);
-	/*
 	Thread.sleep(150.msecs);
 	thread.beep(200);
 	Thread.sleep(150.msecs);
@@ -68,6 +100,8 @@ void main() {
 	thread.noise();
 	Thread.sleep(150.msecs);
 	*/
+
+
 	thread.stop();
 
 	thread.join();
@@ -152,9 +186,13 @@ import core.thread;
 		}
 
 		audio.beep();
+
+		// you need to keep the main program alive long enough
+		// to keep this thread going to hear anything
+		Thread.sleep(1.seconds);
 	---
 +/
-class AudioPcmOutThread : Thread {
+final class AudioPcmOutThread : Thread {
 	///
 	this() {
 		super(&run);
@@ -188,82 +226,200 @@ class AudioPcmOutThread : Thread {
 	}
 
 	///
-	void boop() {
-
+	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = 50) {
+		Sample s;
+		s.operation = 5; // custom
+		s.volume = volume;
+		s.duration = dur * SampleRate / 1000;
+		s.f = delegate short(int x) {
+			auto currentFrequency = cast(float) freqBase / (1 + cast(float) x / (cast(float) SampleRate / attack));
+			import std.math;
+			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+		};
+		addSample(s);
 	}
 
 	///
-	void blip() {
-
+	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = 50) {
+		Sample s;
+		s.operation = 5; // custom
+		s.volume = volume;
+		s.duration = dur * SampleRate / 1000;
+		s.f = delegate short(int x) {
+			auto currentFrequency = cast(float) freqBase * (1 + cast(float) x / (cast(float) SampleRate / attack));
+			import std.math;
+			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+		};
+		addSample(s);
 	}
+
+	version(none)
+	void custom(int dur = 150, int volume = 50) {
+		Sample s;
+		s.operation = 5; // custom
+		s.volume = volume;
+		s.duration = dur * SampleRate / 1000;
+		s.f = delegate short(int x) {
+			auto currentFrequency = 500.0 / (1 + cast(float) x / (cast(float) SampleRate / 8));
+			import std.math;
+			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+		};
+		addSample(s);
+	}
+
+	/// Requires vorbis.d to be compiled in (module iv.stb.vorbis)
+	void playOgg()(string filename, bool loop = false) {
+		import iv.stb.vorbis;
+
+		auto v = new VorbisDecoder(filename);
+
+		addChannel(
+			delegate bool(short[] buffer) {
+				auto got = v.getSamplesShortInterleaved(2, buffer.ptr, buffer.length);
+				if(got == 0) {
+					if(loop) {
+						v.seekStart();
+						return true;
+					}
+
+					return false;
+				}
+				return true;
+			}
+		);
+	}
+
 
 	struct Sample {
 		int operation;
 		int frequency; /* in samples */
 		int duration; /* in samples */
 		int volume; /* between 1 and 100 */
-
 		int delay; /* in samples */
+
+		int x;
+		short delegate(int x) f;
 	}
 
-	void addSample(Sample currentSample) {
-		synchronized(this) {
-		/*
-			auto spot = playBufferEnd;
-			playBuffer[spot] = s;
-			playBufferEnd = (playBufferEnd + 1) & (playBuffer.length-1);
-		*/
-			int frequencyCounter;
-			short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
-			fillDatas ~= delegate bool (short[] buffer) {
-
+	final void addSample(Sample currentSample) {
+		int frequencyCounter;
+		short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
+		addChannel(
+			delegate bool (short[] buffer) {
 				if(currentSample.duration) {
-					if(currentSample.operation == 0)
-					for(size_t i = 0; i < buffer.length; i++) {
-						buffer[i] = val;
-						// left and right do the same thing so we only count
-						// every other sample
-						if(i & 1) {
-							currentSample.duration--;
-							if(frequencyCounter)
-								frequencyCounter--;
-							if(frequencyCounter == 0) {
-								val = -val;
-								frequencyCounter = currentSample.frequency / 2;
-							}
-
-							if(currentSample.duration == 0) {
-								buffer[i .. $] = 0;
-								return false;
-							}
+					size_t i = 0;
+					if(currentSample.delay) {
+						if(buffer.length <= currentSample.delay * 2) {
+							// whole buffer consumed by delay
+							buffer[] = 0;
+							currentSample.delay -= buffer.length / 2;
+						} else {
+							i = currentSample.delay * 2;
+							buffer[0 .. i] = 0;
+							currentSample.delay = 0;
 						}
 					}
-					else if(currentSample.operation == 1)
-					for(size_t i = 0; i < buffer.length; i++) {
-						import std.random;
-						buffer[i] = uniform(short.min, short.max);
-						if(i & 1) {
-							currentSample.duration--;
+					if(currentSample.delay > 0)
+						return true;
 
-							if(currentSample.duration == 0) {
-								buffer = buffer[i .. $];
-								return false;
-							}
-						}
+					size_t sampleFinish;
+					if(currentSample.duration * 2 <= buffer.length) {
+						sampleFinish = currentSample.duration * 2;
+						currentSample.duration = 0;
+					} else {
+						sampleFinish = buffer.length;
+						currentSample.duration -= buffer.length / 2;
 					}
 
-					return true;
+					switch(currentSample.operation) {
+						case 0: // square wave
+							for(; i < sampleFinish; i++) {
+								buffer[i] = val;
+								// left and right do the same thing so we only count
+								// every other sample
+								if(i & 1) {
+									if(frequencyCounter)
+										frequencyCounter--;
+									if(frequencyCounter == 0) {
+										val = -val;
+										frequencyCounter = currentSample.frequency / 2;
+									}
+								}
+							}
+						break;
+						case 1: // noise
+							for(; i < sampleFinish; i++) {
+								import std.random;
+								buffer[i] = uniform(short.min, short.max);
+							}
+						break;
+						/+
+						case 2: // triangle wave
+							for(; i < sampleFinish; i++) {
+								buffer[i] = val;
+								// left and right do the same thing so we only count
+								// every other sample
+								if(i & 1) {
+									if(frequencyCounter)
+										frequencyCounter--;
+									if(frequencyCounter == 0) {
+										val = 0;
+										frequencyCounter = currentSample.frequency / 2;
+									}
+								}
+							}
+
+						break;
+						case 3: // sawtooth wave
+						case 4: // sine wave
+						+/
+						case 5: // custom function
+							val = currentSample.f(currentSample.x);
+							for(; i < sampleFinish; i++) {
+								buffer[i] = val;
+								if(i & 1) {
+									currentSample.x++;
+									val = currentSample.f(currentSample.x);
+								}
+							}
+						break;
+						default: // unknown; use silence
+							currentSample.duration = 0;
+					}
+
+					if(i < buffer.length)
+						buffer[i .. $] = 0;
+
+					return currentSample.duration > 0;
 				} else {
 					return false;
 				}
-			};
+			}
+		);
+	}
+
+	/++
+		The delegate returns false when it is finished (true means keep going).
+		It must fill the buffer with waveform data on demand and must be latency
+		sensitive; as fast as possible.
+	+/
+	public void addChannel(bool delegate(short[] buffer) dg) {
+		synchronized(this) {
+			// silently drops info if we don't have room in the buffer...
+			// don't do a lot of long running things lol
+			if(fillDatasLength < fillDatas.length)
+				fillDatas[fillDatasLength++] = dg;
 		}
 	}
 
 	private {
 		AudioOutput* ao;
 
-		bool delegate(short[] buffer)[] fillDatas;
+		bool delegate(short[] buffer)[32] fillDatas;
+		int fillDatasLength = 0;
 	}
 
 	private void run() {
@@ -272,8 +428,8 @@ class AudioPcmOutThread : Thread {
 		ao.fillData = (short[] buffer) {
 			short[BUFFER_SIZE_SHORT] bfr;
 			bool first = true;
-			if(fillDatas.length) {
-				for(int idx = 0; idx < fillDatas.length; idx++) {
+			if(fillDatasLength) {
+				for(int idx = 0; idx < fillDatasLength; idx++) {
 					auto dg = fillDatas[idx];
 					auto ret = dg(bfr[0 .. buffer.length][]);
 					foreach(i, v; bfr[0 .. buffer.length][]) {
@@ -292,8 +448,8 @@ class AudioPcmOutThread : Thread {
 					if(!ret) {
 						// it returned false meaning this one is finished...
 						synchronized(this) {
-							fillDatas[idx] = fillDatas[$ - 1];
-							fillDatas = fillDatas[0 .. $-1];
+							fillDatas[idx] = fillDatas[fillDatasLength - 1];
+							fillDatasLength--;
 						}
 						idx--;
 					}
@@ -340,7 +496,7 @@ version(ALSA) {
 		easier to setup but for now I'm using the rawmidi so you
 		gotta get them connected somehow.
 	*/
-	enum midiName = "hw:2,0";
+	enum midiName = "hw:3,0";
 }
 
 /// Thrown on audio failures.
@@ -585,6 +741,11 @@ struct MidiOutput {
 			if(auto err = midiOutOpen(&handle, 0, 0, 0, CALLBACK_NULL))
 				throw new WinMMException("midi out open", err);
 		} else static assert(0);
+	}
+
+	void silenceAllNotes() {
+		foreach(a; 0 .. 16)
+			writeMidiMessage((0x0b << 4)|a /*MIDI_EVENT_CONTROLLER*/, 123, 0);
 	}
 
 	/// Send a reset message, silencing all notes
