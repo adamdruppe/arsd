@@ -3428,6 +3428,7 @@ class Window : Widget {
 			mouseLastDownOn = ele;
 			auto event = new Event("mousedown", ele);
 			event.button = ev.button;
+			event.buttonLinear = ev.buttonLinear;
 			event.state = ev.modifierState;
 			event.clientX = eleR.x;
 			event.clientY = eleR.y;
@@ -3435,6 +3436,7 @@ class Window : Widget {
 		} else if(ev.type == 2) {
 			auto event = new Event("mouseup", ele);
 			event.button = ev.button;
+			event.buttonLinear = ev.buttonLinear;
 			event.clientX = eleR.x;
 			event.clientY = eleR.y;
 			event.state = ev.modifierState;
@@ -3444,6 +3446,7 @@ class Window : Widget {
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
 				event.button = ev.button;
+				event.buttonLinear = ev.buttonLinear;
 				event.dispatch();
 			}
 		} else if(ev.type == 0) {
@@ -4851,8 +4854,6 @@ class Checkbox : MouseActivatedWidget {
 
 /// Adds empty space to a layout.
 class VerticalSpacer : Widget {
-	override int maxHeight() { return 20; }
-	override int minHeight() { return 20; }
 	///
 	this(Widget parent = null) {
 		super(parent);
@@ -4861,8 +4862,6 @@ class VerticalSpacer : Widget {
 
 /// ditto
 class HorizontalSpacer : Widget {
-	override int maxWidth() { return 20; }
-	override int minWidth() { return 20; }
 	///
 	this(Widget parent = null) {
 		super(parent);
@@ -5139,13 +5138,24 @@ class TextLabel : Widget {
 	///
 	this(string label, Widget parent = null) {
 		this.label_ = label;
+		this.alignment = TextAlignment.Right;
 		this.tabStop = false;
 		super(parent);
 	}
 
+	///
+	this(string label, TextAlignment alignment, Widget parent = null) {
+		this.label_ = label;
+		this.alignment = alignment;
+		this.tabStop = false;
+		super(parent);
+	}
+
+	TextAlignment alignment;
+
 	override void paint(ScreenPainter painter) {
 		painter.outlineColor = Color.black;
-		painter.drawText(Point(0, 0), this.label, Point(width,height), TextAlignment.Right);
+		painter.drawText(Point(0, 0), this.label, Point(width,height), alignment);
 	}
 
 }
@@ -5595,6 +5605,7 @@ class Event {
 	int viewportY; ///
 
 	int button; ///
+	int buttonLinear; ///
 
 	// for key events
 	Key key; ///
