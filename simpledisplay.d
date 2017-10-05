@@ -2285,63 +2285,63 @@ struct EventLoopImpl {
 		}
 
 		version(linux) {
-				{
-					auto display = XDisplayConnection.get;
-					// adding Xlib file
+			{
+				auto display = XDisplayConnection.get;
+				// adding Xlib file
+				ep.epoll_event ev = void;
+				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = display.fd;
+				//import std.conv;
+				if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
+					throw new Exception("add x fd");// ~ to!string(epollFd));
+				displayFd = display.fd;
+			}
+
+			if(pulseTimeout) {
+				pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
+				if(pulseFd == -1)
+					throw new Exception("pulse timer create failed");
+
+				itimerspec value;
+				value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
+				value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+				value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
+				value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+				if(timerfd_settime(pulseFd, 0, &value, null) == -1)
+					throw new Exception("couldn't make pulse timer");
+
+				ep.epoll_event ev = void;
+				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = pulseFd;
+				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
+			}
+
+			// eventfd for custom events
+			if (customEventFD == -1) {
+				customEventFD = eventfd(0, 0);
+				if (customEventFD >= 0) {
 					ep.epoll_event ev = void;
 					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
-					ev.data.fd = display.fd;
-					//import std.conv;
-					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
-						throw new Exception("add x fd");// ~ to!string(epollFd));
-					displayFd = display.fd;
+					ev.data.fd = customEventFD;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+				} else {
+					// this is something that should not be; better be safe than sorry
+					throw new Exception("can't create eventfd for custom event processing");
 				}
+			}
+		}
 
-				if(pulseTimeout) {
-					pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
-					if(pulseFd == -1)
-						throw new Exception("pulse timer create failed");
+		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
 
-					itimerspec value;
-					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
-					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
-
-					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
-					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
-
-					if(timerfd_settime(pulseFd, 0, &value, null) == -1)
-						throw new Exception("couldn't make pulse timer");
-
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = pulseFd;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
-				}
-
-				// eventfd for custom events
-				if (customEventFD == -1) {
-					customEventFD = eventfd(0, 0);
-					if (customEventFD >= 0) {
-						ep.epoll_event ev = void;
-						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-						ev.events = ep.EPOLLIN;
-						ev.data.fd = customEventFD;
-						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
-					} else {
-						// this is something that should not be; better be safe than sorry
-						throw new Exception("can't create eventfd for custom event processing");
-					}
-				}
-
-				SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
-
-				{
-					this.mtLock();
-					scope(exit) this.mtUnlock();
-					XPending(display); // no, really
-				}
+		{
+			this.mtLock();
+			scope(exit) this.mtUnlock();
+			XPending(display); // no, really
 		}
 
 		disposed = false;
@@ -2362,6 +2362,7 @@ struct EventLoopImpl {
 				pulseFd = -1;
 			}
 
+				version(linux)
 				if(displayFd != -1) {
 					// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
 					ep.epoll_event ev = void;
