@@ -1506,34 +1506,32 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		T eventHandlers) /// delegate list like std.concurrency.receive
 	{
 		setEventHandlers(eventHandlers);
-		version(X11) {
-		keep_trying:
-			try {
-				return impl.eventLoop(pulseTimeout);
-			} catch(XDisconnectException e) {
-				if(e.userRequested) {
-					foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
-						item.discardConnectionState();
-					XCloseDisplay(XDisplayConnection.display);
-				}
 
-				XDisplayConnection.display = null;
+		version(with_eventloop) {
+			// delegates event loop to my other module
+			version(X11)
+				XFlush(display);
 
-				throw e;
+			import arsd.eventloop;
+			auto handle = setInterval(handlePulse, cast(int) pulseTimeout);
+			scope(exit) clearInterval(handle);
 
-				/*
-				auto dpy = XDisplayConnection.get;
-				if(dpy is null)
-					throw new XDisconnectException(false);
-				foreach(Window w, SimpleWindow window; SimpleWindow.nativeMapping) {
-					window.impl.createWindow(window.width, window.height, window.title, OpenGlOptions.no, null); //, window.opengl, window.parent);
-					window.show();
-				}
-				goto keep_trying;
-				*/
+			loop();
+			return 0;
+		} else version(OSXCocoa) {
+			// FIXME
+			if (handlePulse !is null && pulseTimeout != 0) {
+				timer = scheduledTimer(pulseTimeout*1e-3,
+					view, sel_registerName("simpledisplay_pulse"),
+					null, true);
 			}
-		} else {
-			return impl.eventLoop(pulseTimeout);
+
+            		setNeedsDisplay(view, true);
+            		run(NSApp);
+            		return 0;
+        	} else {
+			EventLoop el = EventLoop(pulseTimeout, handlePulse);
+			return el.run();
 		}
 	}
 
@@ -1591,7 +1589,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
 	/// to call this, as it's not recommended to share window between threads.
-	private shared int lockCount = 0;
 	void mtLock () {
 		version(X11) {
 			XLockDisplay(this.display);
@@ -2182,6 +2179,428 @@ private:
 			}
 		}
 		return (res >= int.max ? 0 : res);
+	}
+}
+
+/++
+	If you want to get more control over the event loop, you can use this.
+
+	Typically though, you can just call [SimpleWindow.eventLoop].
++/
+struct EventLoop {
+	@disable this();
+
+	static EventLoop get() {
+		return EventLoop(0, null);
+	}
+
+	this(long pulseTimeout, void delegate() handlePulse) {
+		if(impl is null)
+			impl = new EventLoopImpl(pulseTimeout, handlePulse);
+		impl.refcount++;
+	}
+
+	~this() {
+		if(impl is null)
+			return;
+		impl.refcount--;
+		if(impl.refcount == 0)
+			impl.dispose();
+
+	}
+
+	this(this) {
+		if(impl is null)
+			return;
+		impl.refcount++;
+	}
+
+	int run(bool delegate() whileCondition = null) {
+		assert(impl !is null);
+		return impl.run(whileCondition);
+	}
+
+	static EventLoopImpl* impl;
+}
+
+struct EventLoopImpl {
+	int refcount;
+
+	version(linux) {
+		static import ep = core.sys.linux.epoll;
+		static import unix = core.sys.posix.unistd;
+		static import err = core.stdc.errno;
+		import core.sys.linux.timerfd;
+	}
+
+	version(X11) {
+		int pulseFd = -1;
+		version(linux) ep.epoll_event[16] events = void;
+	} else version(Windows) {
+		Timer pulser;
+		HANDLE[] handles;
+	}
+
+
+	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	void mtLock () {
+		version(X11) {
+			XLockDisplay(this.display);
+		}
+	}
+
+	version(X11)
+	auto display() { return XDisplayConnection.get; }
+
+	/// "Unlock" this window handle, to do multithreaded synchronization. You probably won't need
+	/// to call this, as it's not recommended to share window between threads.
+	void mtUnlock () {
+		version(X11) {
+			XUnlockDisplay(this.display);
+		}
+	}
+
+	version(with_eventloop)
+	void initialize(long pulseTimeout) {}
+	else
+	void initialize(long pulseTimeout) {
+		version(X11) {
+			prepareEventLoop();
+		} else version(Windows) {
+			if(pulseTimeout)
+				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
+
+			if (customEventH is null) {
+				customEventH = CreateEvent(null, FALSE/*autoreset*/, FALSE/*initial state*/, null);
+				if (customEventH !is null) {
+					handles ~= customEventH;
+				} else {
+					// this is something that should not be; better be safe than sorry
+					throw new Exception("can't create eventfd for custom event processing");
+				}
+			}
+
+			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
+		}
+
+		version(linux) {
+				{
+					auto display = XDisplayConnection.get;
+					// adding Xlib file
+					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = display.fd;
+					//import std.conv;
+					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
+						throw new Exception("add x fd");// ~ to!string(epollFd));
+					displayFd = display.fd;
+				}
+
+				if(pulseTimeout) {
+					pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
+					if(pulseFd == -1)
+						throw new Exception("pulse timer create failed");
+
+					itimerspec value;
+					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
+					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
+					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
+
+					if(timerfd_settime(pulseFd, 0, &value, null) == -1)
+						throw new Exception("couldn't make pulse timer");
+
+					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = pulseFd;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
+				}
+
+				// eventfd for custom events
+				if (customEventFD == -1) {
+					customEventFD = eventfd(0, 0);
+					if (customEventFD >= 0) {
+						ep.epoll_event ev = void;
+						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+						ev.events = ep.EPOLLIN;
+						ev.data.fd = customEventFD;
+						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+					} else {
+						// this is something that should not be; better be safe than sorry
+						throw new Exception("can't create eventfd for custom event processing");
+					}
+				}
+
+				SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
+
+				{
+					this.mtLock();
+					scope(exit) this.mtUnlock();
+					XPending(display); // no, really
+				}
+		}
+
+		disposed = false;
+	}
+
+	bool disposed = true;
+	version(X11)
+		int displayFd = -1;
+
+	version(with_eventloop)
+	void dispose() {}
+	else
+	void dispose() {
+		disposed = true;
+		version(X11) {
+			if(pulseFd != -1) {
+				unix.close(pulseFd);
+				pulseFd = -1;
+			}
+
+				if(displayFd != -1) {
+					// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
+					ep.epoll_event ev = void;
+					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+					ev.events = ep.EPOLLIN;
+					ev.data.fd = displayFd;
+					//import std.conv;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, displayFd, &ev);
+					displayFd = -1;
+				}
+
+		} else version(Windows) {
+			if(pulser !is null)
+				pulser.destroy();
+			if (customEventH !is null) {
+				CloseHandle(customEventH);
+				customEventH = null;
+			}
+		}
+	}
+
+	this(long pulseTimeout, void delegate() handlePulse) {
+		this.pulseTimeout = pulseTimeout;
+		this.handlePulse = handlePulse;
+		initialize(pulseTimeout);
+	}
+
+	private long pulseTimeout;
+	void delegate() handlePulse;
+
+	~this() {
+		dispose();
+	}
+
+	version(X11)
+	ref int customEventFD() { return SimpleWindow.customEventFD; }
+	version(Windows)
+	ref auto customEventH() { return SimpleWindow.customEventH; }
+
+	version(with_eventloop) {
+		int loopHelper(bool delegate() whileCondition) {
+			// FIXME: whileCondition
+			import arsd.eventloop;
+			loop();
+			return 0;
+		}
+	} else
+	int loopHelper(bool delegate() whileCondition) {
+		version(X11) {
+			bool done = false;
+
+			XFlush(display);
+			insideXEventLoop = true;
+			scope(exit) insideXEventLoop = false;
+
+			version(linux) {
+				while(!done && (whileCondition is null || whileCondition() == true)) {
+					bool forceXPending = false;
+					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
+					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
+					{
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						if (XEventsQueued(this.display, QueueMode.QueuedAlready)) { forceXPending = true; if (wto > 10 || wto <= 0) wto = 10; } // so libX event loop will be able to do it's work
+					}
+					//{ import core.stdc.stdio; printf("*** wto=%d; force=%d\n", wto, (forceXPending ? 1 : 0)); }
+					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, (wto == 0 || wto >= int.max ? -1 : cast(int)wto));
+					if(nfds == -1) {
+						if(err.errno == err.EINTR) {
+							continue; // interrupted by signal, just try again
+						}
+						throw new Exception("epoll wait failure");
+					}
+
+					SimpleWindow.processAllCustomEvents(); // anyway
+					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
+					foreach(idx; 0 .. nfds) {
+						if(done) break;
+						auto fd = events[idx].data.fd;
+						assert(fd != -1); // should never happen cuz the api doesn't do that but better to assert than assume.
+						auto flags = events[idx].events;
+						if(flags & ep.EPOLLIN) {
+							if(fd == display.fd) {
+								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
+								this.mtLock();
+								scope(exit) this.mtUnlock();
+								while(!done && XPending(display)) {
+									done = doXNextEvent(this.display);
+								}
+								forceXPending = false;
+							} else if(fd == pulseFd) {
+								long expirationCount;
+								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
+
+								handlePulse();
+
+								// read just to clear the buffer so poll doesn't trigger again
+								// BTW I read AFTER the pulse because if the pulse handler takes
+								// a lot of time to execute, we don't want the app to get stuck
+								// in a loop of timer hits without a chance to do anything else
+								//
+								// IOW handlePulse happens at most once per pulse interval.
+								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
+							} else if (fd == customEventFD) {
+								// we have some custom events; process 'em
+								import core.sys.posix.unistd : read;
+								ulong n;
+								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
+								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
+								//SimpleWindow.processAllCustomEvents();
+							} else {
+								// some other timer
+								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
+
+								if(Timer* t = fd in Timer.mapping)
+									(*t).trigger();
+
+								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+									(*pfr).ready();
+
+								// or i might add support for other FDs too
+								// but for now it is just timer
+								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
+							}
+						} else {
+							// not interested in OUT, we are just reading here.
+							//
+							// error or hup might also be reported
+							// but it shouldn't here since we are only
+							// using a few types of FD and Xlib will report
+							// if it dies.
+							// so instead of thoughtfully handling it, I'll
+							// just throw. for now at least
+
+							throw new Exception("epoll did something else");
+						}
+					}
+					// if we won't call `XPending()` here, libX may delay some internal event delivery.
+					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
+					if (!done && forceXPending) {
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
+						while(!done && XPending(display)) {
+							done = doXNextEvent(this.display);
+						}
+					}
+				}
+			} else {
+				// Generic fallback: yes to simple pulse support,
+				// but NO timer support!
+
+				// FIXME: we could probably support the POSIX timer_create
+				// signal-based option, but I'm in no rush to write it since
+				// I prefer the fd-based functions.
+				while (!done && (whileCondition is null || whileCondition() == true)) {
+					while(!done &&
+						(pulseTimeout == 0 || (XPending(display) > 0)))
+					{
+						this.mtLock();
+						scope(exit) this.mtUnlock();
+						done = doXNextEvent(this.display);
+					}
+					if(!done && !closed && pulseTimeout !=0) {
+						if(handlePulse !is null)
+							handlePulse();
+						import core.thread;
+						Thread.sleep(dur!"msecs"(pulseTimeout));
+					}
+				}
+			}
+		}
+		
+		version(Windows) {
+			int ret = -1;
+			MSG message;
+			while(ret != 0 && (whileCondition is null || whileCondition() == true)) {
+				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
+				auto waitResult = MsgWaitForMultipleObjectsEx(
+					cast(int) handles.length, handles.ptr,
+					(wto == 0 ? INFINITE : wto), /* timeout */
+					0x04FF, /* QS_ALLINPUT */
+					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
+
+				SimpleWindow.processAllCustomEvents(); // anyway
+				enum WAIT_OBJECT_0 = 0;
+				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
+					// process handles[waitResult - WAIT_OBJECT_0];
+				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
+					// message ready
+					if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it.
+					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
+						if(ret == -1)
+							throw new Exception("GetMessage failed");
+						TranslateMessage(&message);
+						DispatchMessage(&message);
+					}
+				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
+					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
+				} else if(waitResult == 258L /* WAIT_TIMEOUT */) {
+					// timeout, should never happen since we aren't using it
+				} else if(waitResult == 0xFFFFFFFF) {
+						// failed
+						throw new Exception("MsgWaitForMultipleObjectsEx failed");
+				} else {
+					// idk....
+				}
+			}
+
+			// return message.wParam;
+			return 0;
+		}
+
+		return 0;
+	}
+
+	int run(bool delegate() whileCondition = null) {
+		if(disposed)
+			initialize(this.pulseTimeout);
+
+		version(X11) {
+			try {
+				return loopHelper(whileCondition);
+			} catch(XDisconnectException e) {
+				if(e.userRequested) {
+					foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
+						item.discardConnectionState();
+					XCloseDisplay(XDisplayConnection.display);
+				}
+
+				XDisplayConnection.display = null;
+
+				this.dispose();
+
+				throw e;
+			}
+		} else {
+			return loopHelper(whileCondition);
+		}
 	}
 }
 
@@ -3670,7 +4089,7 @@ alias Rectangle = arsd.color.Rectangle;
 struct KeyEvent {
 	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms. See [Key]
 	Key key;
-	uint hardwareCode; /// A platform and hardware specific code for the key
+	ubyte hardwareCode; /// A platform and hardware specific code for the key
 	bool pressed; /// true if the key was just pressed, false if it was just released. note: released events aren't always sent...
 
 	dchar character; ///
@@ -6288,8 +6707,8 @@ version(Windows) {
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
 					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
-					// FIXME
-					// ev.hardwareCode
+
+					ev.hardwareCode = (lParam & 0xff0000) >> 16;
 
 					if(GetKeyState(Key.Shift)&0x8000 || GetKeyState(Key.Shift_r)&0x8000)
 						ev.modifierState |= ModifierState.shift;
@@ -6532,74 +6951,6 @@ version(Windows) {
 			}
 			 return 0;
 
-		}
-
-		int eventLoop(long pulseTimeout) {
-			MSG message;
-			int ret = -1;
-
-			Timer pulser;
-			scope(exit)
-				if(pulser !is null)
-					pulser.destroy();
-
-			if(pulseTimeout)
-				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
-
-			HANDLE[] handles;
-			if (customEventH is null) {
-				customEventH = CreateEvent(null, FALSE/*autoreset*/, FALSE/*initial state*/, null);
-				if (customEventH !is null) {
-					handles ~= customEventH;
-				} else {
-					// this is something that should not be; better be safe than sorry
-					throw new Exception("can't create eventfd for custom event processing");
-				}
-			}
-			scope(exit) {
-				if (customEventH !is null) {
-					CloseHandle(customEventH);
-					customEventH = null;
-				}
-			}
-
-			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
-
-			while(ret != 0) {
-				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
-				auto waitResult = MsgWaitForMultipleObjectsEx(
-					cast(int) handles.length, handles.ptr,
-					(wto == 0 ? INFINITE : wto), /* timeout */
-					0x04FF, /* QS_ALLINPUT */
-					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
-
-				SimpleWindow.processAllCustomEvents(); // anyway
-				enum WAIT_OBJECT_0 = 0;
-				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
-					// process handles[waitResult - WAIT_OBJECT_0];
-				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
-					// message ready
-					if(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it.
-					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
-						if(ret == -1)
-							throw new Exception("GetMessage failed");
-						TranslateMessage(&message);
-						DispatchMessage(&message);
-					}
-				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
-					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
-				} else if(waitResult == 258L /* WAIT_TIMEOUT */) {
-					// timeout, should never happen since we aren't using it
-				} else if(waitResult == 0xFFFFFFFF) {
-						// failed
-						throw new Exception("MsgWaitForMultipleObjectsEx failed");
-				} else {
-					// idk....
-				}
-			}
-
-			// return message.wParam;
-			return 0;
 		}
 	}
 
@@ -8025,228 +8376,6 @@ version(X11) {
 		}
 
 		bool destroyed = false;
-
-		version(with_eventloop)
-		int eventLoop(long pulseTimeout) {
-			version(X11)
-				XFlush(display);
-
-			import arsd.eventloop;
-			auto handle = setInterval(handlePulse, cast(int) pulseTimeout);
-			scope(exit) clearInterval(handle);
-
-			loop();
-			return 0;
-		}
-		else
-		int eventLoop(long pulseTimeout) {
-			bool done = false;
-
-			version(X11) {
-				XFlush(display);
-				insideXEventLoop = true;
-				scope(exit) insideXEventLoop = false;
-			}
-
-			version(linux) {
-				static import ep = core.sys.linux.epoll;
-				static import unix = core.sys.posix.unistd;
-				static import err = core.stdc.errno;
-
-				import core.sys.linux.timerfd;
-				prepareEventLoop();
-
-				ep.epoll_event[16] events = void;
-
-				int pulseFd = -1;
-				scope(exit)
-					if(pulseFd != -1)
-						unix.close(pulseFd);
-
-
-				{
-					// adding Xlib file
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = display.fd;
-					//import std.conv;
-					if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
-						throw new Exception("add x fd");// ~ to!string(epollFd));
-				}
-
-				scope(exit) {
-					// clean up when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = display.fd;
-					//import std.conv;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, display.fd, &ev);
-				}
-
-				if(pulseTimeout) {
-					pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
-					if(pulseFd == -1)
-						throw new Exception("pulse timer create failed");
-
-					itimerspec value;
-					value.it_value.tv_sec = cast(int) (pulseTimeout / 1000);
-					value.it_value.tv_nsec = (pulseTimeout % 1000) * 1000_000;
-
-					value.it_interval.tv_sec = cast(int) (pulseTimeout / 1000);
-					value.it_interval.tv_nsec = (pulseTimeout % 1000) * 1000_000;
-
-					if(timerfd_settime(pulseFd, 0, &value, null) == -1)
-						throw new Exception("couldn't make pulse timer");
-
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = pulseFd;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
-				}
-
-				// eventfd for custom events
-				if (customEventFD == -1) {
-					customEventFD = eventfd(0, 0);
-					if (customEventFD >= 0) {
-						ep.epoll_event ev = void;
-						{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-						ev.events = ep.EPOLLIN;
-						ev.data.fd = customEventFD;
-						ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
-					} else {
-						// this is something that should not be; better be safe than sorry
-						throw new Exception("can't create eventfd for custom event processing");
-					}
-				}
-
-				SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
-
-				{
-					this.mtLock();
-					scope(exit) this.mtUnlock();
-					XPending(display); // no, really
-				}
-				while(!done) {
-					bool forceXPending = false;
-					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
-					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
-					{
-						this.mtLock();
-						scope(exit) this.mtUnlock();
-						if (XEventsQueued(this.display, QueueMode.QueuedAlready)) { forceXPending = true; if (wto > 10 || wto <= 0) wto = 10; } // so libX event loop will be able to do it's work
-					}
-					//{ import core.stdc.stdio; printf("*** wto=%d; force=%d\n", wto, (forceXPending ? 1 : 0)); }
-					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, (wto == 0 || wto >= int.max ? -1 : cast(int)wto));
-					if(nfds == -1) {
-						if(err.errno == err.EINTR) {
-							continue; // interrupted by signal, just try again
-						}
-						throw new Exception("epoll wait failure");
-					}
-
-					SimpleWindow.processAllCustomEvents(); // anyway
-					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
-					foreach(idx; 0 .. nfds) {
-						if(done) break;
-						auto fd = events[idx].data.fd;
-						assert(fd != -1); // should never happen cuz the api doesn't do that but better to assert than assume.
-						auto flags = events[idx].events;
-						if(flags & ep.EPOLLIN) {
-							if(fd == display.fd) {
-								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
-								this.mtLock();
-								scope(exit) this.mtUnlock();
-								while(!done && XPending(display)) {
-									done = doXNextEvent(this.display);
-								}
-								forceXPending = false;
-							} else if(fd == pulseFd) {
-								long expirationCount;
-								// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
-
-								handlePulse();
-
-								// read just to clear the buffer so poll doesn't trigger again
-								// BTW I read AFTER the pulse because if the pulse handler takes
-								// a lot of time to execute, we don't want the app to get stuck
-								// in a loop of timer hits without a chance to do anything else
-								//
-								// IOW handlePulse happens at most once per pulse interval.
-								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
-							} else if (fd == customEventFD) {
-								// we have some custom events; process 'em
-								import core.sys.posix.unistd : read;
-								ulong n;
-								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
-								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
-								//SimpleWindow.processAllCustomEvents();
-							} else {
-								// some other timer
-								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
-
-								if(Timer* t = fd in Timer.mapping)
-									(*t).trigger();
-
-								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
-									(*pfr).ready();
-
-								// or i might add support for other FDs too
-								// but for now it is just timer
-								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
-							}
-						} else {
-							// not interested in OUT, we are just reading here.
-							//
-							// error or hup might also be reported
-							// but it shouldn't here since we are only
-							// using a few types of FD and Xlib will report
-							// if it dies.
-							// so instead of thoughtfully handling it, I'll
-							// just throw. for now at least
-
-							throw new Exception("epoll did something else");
-						}
-					}
-					// if we won't call `XPending()` here, libX may delay some internal event delivery.
-					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
-					if (!done && forceXPending) {
-						this.mtLock();
-						scope(exit) this.mtUnlock();
-						//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
-						while(!done && XPending(display)) {
-							done = doXNextEvent(this.display);
-						}
-					}
-				}
-			} else {
-				// Generic fallback: yes to simple pulse support,
-				// but NO timer support!
-
-				// FIXME: we could probably support the POSIX timer_create
-				// signal-based option, but I'm in no rush to write it since
-				// I prefer the fd-based functions.
-				while (!done) {
-					while(!done &&
-						(pulseTimeout == 0 || (XPending(display) > 0)))
-					{
-						this.mtLock();
-						scope(exit) this.mtUnlock();
-						done = doXNextEvent(this.display);
-					}
-					if(!done && !closed && pulseTimeout !=0) {
-						if(handlePulse !is null)
-							handlePulse();
-						import core.thread;
-						Thread.sleep(dur!"msecs"(pulseTimeout));
-					}
-				}
-			}
-
-			return 0;
-		}
 	}
 
 	bool insideXEventLoop;
@@ -8654,7 +8783,7 @@ version(X11) {
 			//if (e.type == EventType.KeyPress) { import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "X11 keyboard event!\n"); }
 			KeyEvent ke;
 			ke.pressed = e.type == EventType.KeyPress;
-			ke.hardwareCode = e.xkey.keycode;
+			ke.hardwareCode = cast(ubyte) e.xkey.keycode;
 
 			auto sym = XKeycodeToKeysym(
 				XDisplayConnection.get(),
@@ -10921,18 +11050,6 @@ version(OSXCocoa) {
         ScreenPainter getPainter() {
 		return ScreenPainter(this, this);
 	}
-
-        int eventLoop(long pulseTimeout) {
-            if (handlePulse !is null && pulseTimeout != 0) {
-                timer = scheduledTimer(pulseTimeout*1e-3,
-                                       view, sel_registerName("simpledisplay_pulse"),
-                                       null, true);
-            }
-
-            setNeedsDisplay(view, true);
-            run(NSApp);
-            return 0;
-        }
 
         id window;
         id timer;

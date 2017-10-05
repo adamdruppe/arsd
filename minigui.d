@@ -1588,8 +1588,8 @@ class OpenGlWidget : Widget {
 			redraw();
 	}
 
-	/// OpenGL widgets cannot have child widgets.
-	@disable final override void addChild(Widget, int) {
+	/// OpenGL widgets cannot have child widgets. Do not call this.
+	/* @disable */ final override void addChild(Widget, int) {
 		throw new Error("cannot add children to OpenGL widgets");
 	}
 
@@ -5493,21 +5493,35 @@ class TextEdit : EditableTextWidget {
 ///
 class MessageBox : Window {
 	private string message;
+	MessageBoxButton buttonPressed = MessageBoxButton.None;
 	///
-	this(string message) {
+	this(string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
 		super(300, 100);
+
+		assert(buttons.length);
+		assert(buttons.length ==  buttonIds.length);
 
 		this.message = message;
 
-		auto button = new Button("OK", this);
-		button. x = this.width / 2 - button.width / 2;
-		button.y = height - (button.height + 10);
-		button.addEventListener(EventType.triggered, () {
-			win.close();
-		});
+		int buttonsWidth = cast(int) buttons.length * 50 + (cast(int) buttons.length - 1) * 16;
 
-		button.registerMovement();
-		button.focus();
+		int x = this.width / 2 - buttonsWidth / 2;
+
+		foreach(idx, buttonText; buttons) {
+			auto button = new Button(buttonText, this);
+			button.x = x;
+			button.y = height - (button.height + 10);
+			button.addEventListener(EventType.triggered, ((size_t idx) { return () {
+				this.buttonPressed = buttonIds[idx];
+				win.close();
+			}; })(idx));
+
+			button.registerMovement();
+			x += button.width;
+			x += 16;
+			if(idx == 0)
+				button.focus();
+		}
 
 		win.show();
 		redraw();
@@ -5523,9 +5537,112 @@ class MessageBox : Window {
 	override void recomputeChildLayout() {}
 }
 
+///
+enum MessageBoxStyle {
+	OK, ///
+	OKCancel, ///
+	RetryCancel, ///
+	YesNo, ///
+	YesNoCancel, ///
+	RetryCancelContinue /// In a multi-part process, if one part fails, ask the user if you should retry that failed step, cancel the entire process, or just continue with the next step, accepting failure on this step.
+}
+
+///
+enum MessageBoxIcon {
+	None, ///
+	Info, ///
+	Warning, ///
+	Error ///
+}
+
+/// Identifies the button the user pressed on a message box.
+enum MessageBoxButton {
+	None, /// The user closed the message box without clicking any of the buttons.
+	OK, ///
+	Cancel, ///
+	Retry, ///
+	Yes, ///
+	No, ///
+	Continue ///
+}
 
 
+/++
+	Displays a modal message box, blocking until the user dismisses it.
 
+	Returns: the button pressed.
++/
+MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	version(win32_widgets) {
+		WCharzBuffer t = WCharzBuffer(title);
+		WCharzBuffer m = WCharzBuffer(message);
+		UINT type;
+		with(MessageBoxStyle)
+		final switch(style) {
+			case OK: type |= MB_OK; break;
+			case OKCancel: type |= MB_OKCANCEL; break;
+			case RetryCancel: type |= MB_RETRYCANCEL; break;
+			case YesNo: type |= MB_YESNO; break;
+			case YesNoCancel: type |= MB_YESNOCANCEL; break;
+			case RetryCancelContinue: type |= MB_CANCELTRYCONTINUE; break;
+		}
+		with(MessageBoxIcon)
+		final switch(icon) {
+			case None: break;
+			case Info: type |= MB_ICONINFORMATION; break;
+			case Warning: type |= MB_ICONWARNING; break;
+			case Error: type |= MB_ICONERROR; break;
+		}
+		switch(MessageBoxW(null, m.ptr, t.ptr, type)) {
+			case IDOK: return MessageBoxButton.OK;
+			case IDCANCEL: return MessageBoxButton.Cancel;
+			case IDTRYAGAIN, IDRETRY: return MessageBoxButton.Retry;
+			case IDYES: return MessageBoxButton.Yes;
+			case IDNO: return MessageBoxButton.No;
+			case IDCONTINUE: return MessageBoxButton.Continue;
+			default: return MessageBoxButton.None;
+		}
+	} else {
+		string[] buttons;
+		MessageBoxButton[] buttonIds;
+		with(MessageBoxStyle)
+		final switch(style) {
+			case OK:
+				buttons = ["OK"];
+				buttonIds = [MessageBoxButton.OK];
+			break;
+			case OKCancel:
+				buttons = ["OK", "Cancel"];
+				buttonIds = [MessageBoxButton.OK, MessageBoxButton.Cancel];
+			break;
+			case RetryCancel:
+				buttons = ["Retry", "Cancel"];
+				buttonIds = [MessageBoxButton.Retry, MessageBoxButton.Cancel];
+			break;
+			case YesNo:
+				buttons = ["Yes", "No"];
+				buttonIds = [MessageBoxButton.Yes, MessageBoxButton.No];
+			break;
+			case YesNoCancel:
+				buttons = ["Yes", "No", "Cancel"];
+				buttonIds = [MessageBoxButton.Yes, MessageBoxButton.No, MessageBoxButton.Cancel];
+			break;
+			case RetryCancelContinue:
+				buttons = ["Try Again", "Cancel", "Continue"];
+				buttonIds = [MessageBoxButton.Retry, MessageBoxButton.Cancel, MessageBoxButton.Continue];
+			break;
+		}
+		auto mb = new MessageBox(message, buttons, buttonIds);
+		EventLoop el = EventLoop.get;
+		el.run(() { return !mb.win.closed; });
+		return mb.buttonPressed;
+	}
+}
+
+/// ditto
+int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	return messageBox(null, message, style, icon);
+}
 
 
 
