@@ -2338,7 +2338,7 @@ struct EventLoopImpl {
 
 		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
 
-		{
+		version(linux) {
 			this.mtLock();
 			scope(exit) this.mtUnlock();
 			XPending(display); // no, really
