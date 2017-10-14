@@ -394,9 +394,9 @@ private MemoryImage loadTgaImpl(ST) (auto ref ST fl, const(char)[] filename) {
         // premultiplied alpha
         foreach (ref Color clr; tcimg.imageData.colors) {
           if (clr.a != 0) {
-            clr.r = cast(ubyte)(clr.r*255/clr.a);
-            clr.g = cast(ubyte)(clr.g*255/clr.a);
-            clr.b = cast(ubyte)(clr.b*255/clr.a);
+            clr.r = Color.clampToByte(clr.r*255/clr.a);
+            clr.g = Color.clampToByte(clr.g*255/clr.a);
+            clr.b = Color.clampToByte(clr.b*255/clr.a);
           }
         }
       } else if (ext.attrType != 3) {

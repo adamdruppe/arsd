@@ -7,6 +7,7 @@ public import arsd.jpeg;
 public import arsd.bmp;
 public import arsd.targa;
 public import arsd.pcx;
+public import arsd.dds;
 
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
 
@@ -32,6 +33,7 @@ enum ImageFileFormat {
   Tga, ///
   Gif, /// we can't load it yet, but we can at least detect it
   Pcx, /// can load 8BPP and 24BPP pcx images
+  Dds, /// can load ARGB8888, DXT1, DXT3, DXT5 dds images (without mipmaps)
 }
 
 
@@ -52,6 +54,7 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
   if (strEquCI(ext, "gif")) return ImageFileFormat.Gif;
   if (strEquCI(ext, "tga")) return ImageFileFormat.Tga;
   if (strEquCI(ext, "pcx")) return ImageFileFormat.Pcx;
+  if (strEquCI(ext, "dds")) return ImageFileFormat.Dds;
   return ImageFileFormat.Unknown;
 }
 
@@ -79,6 +82,8 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
   {
     return ImageFileFormat.Gif;
   }
+  // dds
+  if (ddsDetect(membuf)) return ImageFileFormat.Dds;
   // jpg
   try {
     int width, height, components;
@@ -224,6 +229,9 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
       case ImageFileFormat.Tga: return loadTga(filename);
       case ImageFileFormat.Pcx: return loadPcx(filename);
+      case ImageFileFormat.Dds:
+        static if (ArsdImageHasIVVFS) auto fl = VFile(filename); else { import std.stdio; auto fl = File(filename); }
+        return ddsLoadFromFile(fl);
     }
   }
 }
@@ -239,6 +247,7 @@ public MemoryImage loadImageFromMemory (const(void)[] membuf) {
     case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
     case ImageFileFormat.Tga: return loadTgaMem(membuf);
     case ImageFileFormat.Pcx: return loadPcxMem(membuf);
+    case ImageFileFormat.Dds: return ddsLoadFromMemory(membuf);
   }
 }
 
