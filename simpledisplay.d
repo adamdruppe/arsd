@@ -3673,7 +3673,15 @@ version(X11) {
 			if(actualFormat == 0)
 				return null;
 			else {
-				auto byteLength = actualItems * actualFormat / 8;
+				int byteLength;
+				if(actualFormat == 32) {
+					// 32 means it is a C long... which is variable length
+					actualFormat = cast(int) arch_long.sizeof * 8;
+				}
+
+				// then it is just a bit count
+				byteLength = cast(int) (actualItems * actualFormat / 8);
+
 				auto d = new ubyte[](byteLength);
 				d[] = cast(ubyte[]) data[0 .. byteLength];
 				XFree(data);
@@ -12462,33 +12470,43 @@ void demandAttention(SimpleWindow window, bool needs = true) {
 TrueColorImage getWindowNetWmIcon(Window window) {
 	auto display = XDisplayConnection.get;
 
-	auto data =  cast(arch_ulong[]) getX11PropertyData (window, GetAtom!"_NET_WM_ICON"(display), XA_CARDINAL);
+	auto data = getX11PropertyData (window, GetAtom!"_NET_WM_ICON"(display), XA_CARDINAL);
 
-	if (data.length > 2) {
+	if (data.length > arch_ulong.sizeof * 2) {
+		auto meta = cast(arch_ulong[]) (data[0 .. arch_ulong.sizeof * 2]);
 		// these are an array of rgba images that we have to convert into pixmaps ourself
 
-		int width = cast(int) data[0];
-		int height = cast(int) data[1];
-		data = data[2 .. 2 + width * height];
+		int width = cast(int) meta[0];
+		int height = cast(int) meta[1];
 
-		auto bytes = cast(ubyte[]) data;
+		auto bytes = cast(ubyte[]) (data[arch_ulong.sizeof * 2 .. $]);
+
+		static if(arch_ulong.sizeof == 4) {
+			bytes = bytes[0 .. width * height * 4];
+			alias imageData = bytes;
+		} else static if(arch_ulong.sizeof == 8) {
+			bytes = bytes[0 .. width * height * 8];
+			auto imageData = new ubyte[](4 * width * height);
+		} else static assert(0);
+
+
 
 		// this returns ARGB. Remember it is little-endian so
 		//                                         we have BGRA
 		// our thing uses RGBA, which in little endian, is ABGR
-		for(int idx = 0; idx < bytes.length; idx += 4) {
+		for(int idx = 0, idx2 = 0; idx < bytes.length; idx += arch_ulong.sizeof, idx2 += 4) {
 			auto r = bytes[idx + 2];
 			auto g = bytes[idx + 1];
 			auto b = bytes[idx + 0];
 			auto a = bytes[idx + 3];
 
-			bytes[idx + 0] = r;
-			bytes[idx + 1] = g;
-			bytes[idx + 2] = b;
-			bytes[idx + 3] = a;
+			imageData[idx2 + 0] = r;
+			imageData[idx2 + 1] = g;
+			imageData[idx2 + 2] = b;
+			imageData[idx2 + 3] = a;
 		}
 
-		return new TrueColorImage(width, height, bytes);
+		return new TrueColorImage(width, height, imageData);
 	}
 
 	return null;
