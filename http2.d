@@ -453,9 +453,12 @@ class HttpRequest {
 		Socket getOpenSocketOnHost(string host, ushort port, bool ssl) {
 			Socket openNewConnection() {
 				Socket socket;
-				if(ssl)
+				if(ssl) {
+					version(with_openssl)
 					socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
-				else
+					else
+						throw new Exception("SSL not compiled in");
+				} else
 					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
 
 				socket.connect(new InternetAddress(host, port));
@@ -600,6 +603,7 @@ class HttpRequest {
 						if(request.onDataReceived)
 							request.onDataReceived(request);
 
+						version(with_openssl)
 						if(auto s = cast(SslClientSocket) sock) {
 							// select doesn't handle the case with stuff
 							// left in the ssl buffer so i'm checking it separately
@@ -1237,6 +1241,8 @@ void main() {
 
 // From sslsocket.d
 
+version(without_openssl) {}
+else
 version=use_openssl;
 
 version(use_openssl) {
