@@ -363,9 +363,11 @@ an|ansi|ansi-bbs|ANSI terminals (emulators):\
 	`;
 }
 
+/// A modifier for [Color]
 enum Bright = 0x08;
 
 /// Defines the list of standard colors understood by Terminal.
+/// See also: [Bright]
 enum Color : ushort {
 	black = 0, /// .
 	red = RED_BIT, /// .
@@ -902,6 +904,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				colorToXTermPaletteIndex(foreground),
 				colorToXTermPaletteIndex(background)
 			));
+
+			/+ // this is the full 24 bit color sequence
+			writeStringRaw(format("\033[38;2;%d;%d;%dm", foreground.r, foreground.g, foreground.b));
+			writeStringRaw(format("\033[48;2;%d;%d;%dm", background.r, background.g, background.b));
+			+/
 
 			return true;
 		}
@@ -1839,7 +1846,7 @@ struct RealTimeConsoleInput {
 		INPUT_RECORD[32] buffer;
 		DWORD actuallyRead;
 			// FIXME: ReadConsoleInputW
-		auto success = ReadConsoleInputA(inputHandle, buffer.ptr, buffer.length, &actuallyRead);
+		auto success = ReadConsoleInputW(inputHandle, buffer.ptr, buffer.length, &actuallyRead);
 		if(success == 0)
 			throw new Exception("ReadConsoleInput");
 
