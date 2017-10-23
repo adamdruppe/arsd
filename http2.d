@@ -14,6 +14,12 @@
 +/
 module arsd.http2;
 
+version(without_openssl) {}
+else
+version=use_openssl;
+
+
+
 /++
 	Demonstrates core functionality, using the [HttpClient],
 	[HttpRequest] (returned by [HttpClient.navigateTo|client.navigateTo]),
@@ -1240,11 +1246,6 @@ void main() {
 
 
 // From sslsocket.d
-
-version(without_openssl) {}
-else
-version=use_openssl;
-
 version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
 
