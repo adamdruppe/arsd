@@ -2265,9 +2265,7 @@ struct EventLoopImpl {
 	void initialize(long pulseTimeout) {}
 	else
 	void initialize(long pulseTimeout) {
-		version(X11) {
-			prepareEventLoop();
-		} else version(Windows) {
+		version(Windows) {
 			if(pulseTimeout)
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
@@ -2285,6 +2283,7 @@ struct EventLoopImpl {
 		}
 
 		version(linux) {
+			prepareEventLoop();
 			{
 				auto display = XDisplayConnection.get;
 				// adding Xlib file
@@ -2358,6 +2357,7 @@ struct EventLoopImpl {
 		disposed = true;
 		version(X11) {
 			if(pulseFd != -1) {
+				import unix = core.sys.posix.unistd;
 				unix.close(pulseFd);
 				pulseFd = -1;
 			}
@@ -2686,9 +2686,11 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 		/* private */ void hideBalloon() {
 			balloon.close();
-			timer.destroy();
+			version(with_timer)
+				timer.destroy();
 			balloon = null;
-			timer = null;
+			version(with_timer)
+				timer = null;
 		}
 
 		void redraw() {
