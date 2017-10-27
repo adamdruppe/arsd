@@ -343,6 +343,26 @@ class Cgi {
 		CommandLine }
 
 
+	/+
+	/++
+		Cgi provides a per-request memory pool
+
+	+/
+	void[] allocateMemory(size_t nBytes) {
+
+	}
+
+	/// ditto
+	void[] reallocateMemory(void[] old, size_t nBytes) {
+
+	}
+
+	/// ditto
+	void freeMemory(void[] memory) {
+
+	}
+	+/
+
 
 /*
 	import core.runtime;

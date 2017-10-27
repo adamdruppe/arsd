@@ -819,7 +819,7 @@ version(Windows) {
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
-} else version (Posix) {
+} else version (linux) {
 	//k8: this is hack for rdmd. sorry.
 	static import core.sys.linux.epoll;
 	static import core.sys.linux.timerfd;
@@ -8288,7 +8288,7 @@ version(X11) {
 			// set the pid property for lookup later by window managers
 			// a standard convenience
 			import core.sys.posix.unistd;
-			uint pid = getpid();
+			arch_ulong pid = getpid();
 
 			XChangeProperty(
 				display,

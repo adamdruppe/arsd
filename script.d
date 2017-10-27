@@ -1,3 +1,16 @@
+/*
+	REPL plan:
+		easy movement to/from a real editor
+		can edit a specific function
+		repl is a different set of globals
+		maybe ctrl+enter to execute vs insert another line
+
+		write state to file
+		read state from file
+			state consists of all variables and source to functions
+
+	Steal Ruby's [regex, capture] maybe
+*/
 /++
 	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
 	two-way interop with the host D program.  The script language it implements is based on a hybrid of D and Javascript.

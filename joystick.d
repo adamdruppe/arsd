@@ -198,7 +198,7 @@ version(linux) {
 							joystickMapping[player] = &xbox360Mapping;
 						}
 					} else if(event.number == 6) {
-						if(event.value == 32767 && joystickMapping[player] is null) {
+						if((event.value == 32767 || event.value == -32767) && joystickMapping[player] is null) {
 							joystickMapping[player] = &ps1Mapping;
 						}
 					}

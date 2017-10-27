@@ -115,7 +115,10 @@ class GameHelperBase {
 	/// The virtual digital controllers are best to use if that model fits you because it
 	/// works with several kinds of controllers as well as keyboards.
 
-	JoystickUpdate joystick1;
+	JoystickUpdate joysticks[4];
+	ref JoystickUpdate joystick1() { return joysticks[0]; }
+
+	bool[256] keyboardState;
 }
 
 /// The max rates are given in executions per second
@@ -135,11 +138,11 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 
 	window.eventLoop(1000 / maxUpdateRate,
 		delegate() {
-			if(joystickPlayers) {
+			foreach(p; 0 .. joystickPlayers) {
 				version(linux)
-					readJoystickEvents(joystickFds[0]);
-				auto update = getJoystickUpdate(0);
-				game.joystick1 = update;
+					readJoystickEvents(joystickFds[p]);
+				auto update = getJoystickUpdate(p);
+				game.joysticks[p] = update;
 			} else assert(0);
 
 			auto now = MonoTime.currTime;
@@ -151,6 +154,7 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 		},
 
 		delegate (KeyEvent ke) {
+			game.keyboardState[ke.hardwareCode] = ke.pressed;
 			// FIXME
 		}
 	);
