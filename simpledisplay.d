@@ -2526,7 +2526,7 @@ struct EventLoopImpl {
 						scope(exit) this.mtUnlock();
 						done = doXNextEvent(this.display);
 					}
-					if(!done && !closed && pulseTimeout !=0) {
+					if(!done && pulseTimeout !=0) {
 						if(handlePulse !is null)
 							handlePulse();
 						import core.thread;
