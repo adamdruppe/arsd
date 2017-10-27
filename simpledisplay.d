@@ -2770,6 +2770,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 
 		private SimpleWindow balloon;
+		version(with_timer)
 		private Timer timer;
 
 		private Window nativeHandle;
@@ -3076,7 +3077,9 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			);
 			balloon.show();
 
+			version(with_timer)
 			timer = new Timer(timeout, &hideBalloon);
+			else {} // FIXME
 		} else version(Windows) {
 			enum NIF_INFO = 0x00000010;
 
