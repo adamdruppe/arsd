@@ -1158,7 +1158,7 @@ CallInfo parseUrl(in ReflectionInfo* reflection, string url, string defaultFunct
 	}
 
 	if(reflection.instantiation !is null)
-		info.postProcessors ~= &(reflection.instantiation._postProcess);
+		info.postProcessors ~= &((cast()(reflection.instantiation))._postProcess);
 
 	if(name in reflection.functions) {
 		info.func = reflection.functions[name];
@@ -1498,7 +1498,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 				// this makes firefox ugly
 				//cgi.setResponseContentType("application/json");
 				auto json = toJsonValue(result);
-				cgi.write(toJSON(&json), true);
+				cgi.write(toJSON(json), true);
 			break;
 			case "script":
 			case "jsonp":
@@ -1547,7 +1547,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					if(result.result.type == JSON_TYPE.STRING) {
 						cgi.write(result.result.str, true);
 					} else {
-						cgi.write(toJSON(&result.result), true);
+						cgi.write(toJSON(result.result), true);
 					}
 				} else {
 					cgi.write(result.errorMessage, true);
@@ -1616,7 +1616,7 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 
 					cgi.write(returned, true);
 				} else
-					cgi.write(htmlEntitiesEncode(toJSON(&result.result)), true);
+					cgi.write(htmlEntitiesEncode(toJSON(result.result)), true);
 			break;
 		}
 
@@ -2110,7 +2110,7 @@ string toHtml(T)(T a) {
 /// TIP: if you're building a Javascript function call by strings, toJson("your string"); will build a nicely escaped string for you of any type.
 string toJson(T)(T a) {
 	auto v = toJsonValue(a);
-	return toJSON(&v);
+	return toJSON(v);
 }
 
 // FIXME: are the explicit instantiations of this necessary?
