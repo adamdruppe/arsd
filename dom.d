@@ -1073,6 +1073,9 @@ class Document : FileResource {
 			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
 			// It's hard to handle above though because my code sucks. So, we'll fix it here.
 
+			// Where to insert based on the parent (for mixed closed/unclosed <p> tags). See #120
+			// Kind of inefficient because we can't detect when we recurse back out of a node.
+			Element[Element] insertLocations;
 			auto iterator = root.tree;
 			foreach(ele; iterator) {
 				if(ele.parentNode is null)
@@ -1081,7 +1084,12 @@ class Document : FileResource {
 				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
 					auto shouldBePreviousSibling = ele.parentNode;
 					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
-					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
+					if (auto p = holder in insertLocations) {
+						shouldBePreviousSibling = *p;
+						assert(shouldBePreviousSibling.parentNode is holder);
+					}
+					ele = holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
+					insertLocations[holder] = ele;
 					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
 				}
 			}
@@ -6971,3 +6979,21 @@ Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)
 */
+
+
+unittest {
+	// Test for issue #120
+	string s = `<html>
+	<body>
+		<P>AN
+		<P>bubbles</P>
+		<P>giggles</P>
+	</body>
+</html>`;
+	auto doc = new Document();
+	doc.parseUtf8(s, false, false);
+	auto s2 = doc.toString();
+	assert(
+			s2.indexOf("bubbles") < s2.indexOf("giggles"),
+			"paragraph order incorrect:\n" ~ s2);
+}
