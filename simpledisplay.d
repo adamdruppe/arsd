@@ -1,4 +1,5 @@
 // FIXME: if the taskbar dies, a notification icon is undocked... but never detects a new taskbar spawning
+// https://dpaste.dzfl.pl/7a77355acaec
 /*
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
@@ -929,6 +930,8 @@ else
 version(Windows)
 	enum multipleWindowsSupported = true;
 else version(X11)
+	enum multipleWindowsSupported = true;
+else version(OSXCocoa)
 	enum multipleWindowsSupported = true;
 else
 	static assert(0);
@@ -4737,6 +4740,8 @@ class OperatingSystemFont {
 		XFontSet fontset;
 	} else version(Windows) {
 		HFONT font;
+	} else version(OSXCocoa) {
+		// FIXME
 	} else static assert(0);
 
 	///
@@ -4786,6 +4791,8 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			WCharzBuffer buffer = WCharzBuffer(name);
 			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+		} else version(OSXCocoa) {
+			// FIXME
 		} else static assert(0);
 
 		return !isNull();
@@ -4812,6 +4819,8 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			DeleteObject(font);
 			font = null;
+		} else version(OSXCocoa) {
+			// FIXME
 		} else static assert(0);
 	}
 
@@ -5898,6 +5907,119 @@ version(X11) {
 		NONAME = 0xFC,
 		PA1 = 0xFD,
 		OEM_CLEAR = 0xFE,
+	}
+
+} else version(OSXCocoa) {
+	// FIXME
+	enum Key {
+		Escape = 0x1b,
+		F1 = 0x70,
+		F2 = 0x71,
+		F3 = 0x72,
+		F4 = 0x73,
+		F5 = 0x74,
+		F6 = 0x75,
+		F7 = 0x76,
+		F8 = 0x77,
+		F9 = 0x78,
+		F10 = 0x79,
+		F11 = 0x7a,
+		F12 = 0x7b,
+		PrintScreen = 0x2c,
+		ScrollLock = -2, // FIXME
+		Pause = -3, // FIXME
+		Grave = 0xc0,
+		// number keys across the top of the keyboard
+		N1 = 0x31,
+		N2 = 0x32,
+		N3 = 0x33,
+		N4 = 0x34,
+		N5 = 0x35,
+		N6 = 0x36,
+		N7 = 0x37,
+		N8 = 0x38,
+		N9 = 0x39,
+		N0 = 0x30,
+		Dash = 0xbd,
+		Equals = 0xbb,
+		Backslash = 0xdc,
+		Backspace = 0x08,
+		Insert = 0x2d,
+		Home = 0x24,
+		PageUp = 0x21,
+		Delete = 0x2e,
+		End = 0x23,
+		PageDown = 0x22,
+		Up = 0x26,
+		Down = 0x28,
+		Left = 0x25,
+		Right = 0x27,
+
+		Tab = 0x09,
+		Q = 0x51,
+		W = 0x57,
+		E = 0x45,
+		R = 0x52,
+		T = 0x54,
+		Y = 0x59,
+		U = 0x55,
+		I = 0x49,
+		O = 0x4f,
+		P = 0x50,
+		LeftBracket = 0xdb,
+		RightBracket = 0xdd,
+		CapsLock = 0x14,
+		A = 0x41,
+		S = 0x53,
+		D = 0x44,
+		F = 0x46,
+		G = 0x47,
+		H = 0x48,
+		J = 0x4a,
+		K = 0x4b,
+		L = 0x4c,
+		Semicolon = 0xba,
+		Apostrophe = 0xde,
+		Enter = 0x0d,
+		Shift = 0x10,
+		Z = 0x5a,
+		X = 0x58,
+		C = 0x43,
+		V = 0x56,
+		B = 0x42,
+		N = 0x4e,
+		M = 0x4d,
+		Comma = 0xbc,
+		Period = 0xbe,
+		Slash = 0xbf,
+		Shift_r = -4, // FIXME Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
+		Ctrl = 0x11,
+		Windows = 0x5b,
+		Alt = -5, // FIXME
+		Space = 0x20,
+		Alt_r = 0xffea, // ditto of shift_r
+		Windows_r = -6, // FIXME
+		Menu = 0x5d,
+		Ctrl_r = -7, // FIXME
+
+		NumLock = 0x90,
+		Divide = 0x6f,
+		Multiply = 0x6a,
+		Minus = 0x6d,
+		Plus = 0x6b,
+		PadEnter = -8, // FIXME
+		// FIXME for the rest of these:
+		Pad1 = 0xff9c,
+		Pad2 = 0xff99,
+		Pad3 = 0xff9b,
+		Pad4 = 0xff96,
+		Pad5 = 0xff9d,
+		Pad6 = 0xff98,
+		Pad7 = 0xff95,
+		Pad8 = 0xff97,
+		Pad9 = 0xff9a,
+		Pad0 = 0xff9e,
+		PadDot = 0xff9f,
 	}
 
 }
