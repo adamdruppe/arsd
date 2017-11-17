@@ -3105,6 +3105,51 @@ class Element {
 		for eyeball debugging.
 	+/
 	string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+
+		// first step is to concatenate any consecutive text nodes to simplify
+		// the white space analysis. this changes the tree! but i'm allowed since
+		// the comment always says it changes the comments
+		//
+		// actually i'm not allowed cuz it is const so i will cheat and lie
+		/+
+		TextNode lastTextChild = null;
+		for(int a = 0; a < this.children.length; a++) {
+			auto child = this.children[a];
+			if(auto tn = cast(TextNode) child) {
+				if(lastTextChild) {
+					lastTextChild.contents ~= tn.contents;
+					for(int b = a; b < this.children.length - 1; b++)
+						this.children[b] = this.children[b + 1];
+					this.children = this.children[0 .. $-1];
+				} else {
+					lastTextChild = tn;
+				}
+			} else {
+				lastTextChild = null;
+			}
+		}
+		+/
+
+		const(Element)[] children;
+
+		TextNode lastTextChild = null;
+		for(int a = 0; a < this.children.length; a++) {
+			auto child = this.children[a];
+			if(auto tn = cast(const(TextNode)) child) {
+				if(lastTextChild !is null) {
+					lastTextChild.contents ~= tn.contents;
+				} else {
+					lastTextChild = new TextNode("");
+					lastTextChild.parentNode = cast(Element) this;
+					lastTextChild.contents ~= tn.contents;
+					children ~= lastTextChild;
+				}
+			} else {
+				lastTextChild = null;
+				children ~= child;
+			}
+		}
+
 		string s = toPrettyStringIndent(insertComments, indentationLevel);
 
 		s ~= "<";
@@ -4306,6 +4351,10 @@ class TextNode : Element {
 			contents = n;
 		}
 
+		if(this.parentNode !is null && this.parentNode.tagName != "p") {
+			contents = contents.strip;
+		}
+
 		auto e = htmlEntitiesEncode(contents);
 		import std.algorithm.iteration : splitter;
 		bool first = true;
@@ -4322,7 +4371,7 @@ class TextNode : Element {
 				if(insertComments)
 					s ~= "-->";
 			}
-			s ~= line;
+			s ~= line.stripRight;
 		}
 		return s;
 	}
