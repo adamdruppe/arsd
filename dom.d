@@ -3127,7 +3127,7 @@ class Element {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(children.length == 1 && children[0].nodeType == NodeType.Text)
+		if(children.length == 1 && children[0].nodeType == NodeType.Text && children[0].nodeValue.strip.length)
 			s ~= children[0].toString();
 		else
 		foreach(child; children) {
@@ -3137,7 +3137,7 @@ class Element {
 		}
 
 		// see comment above
-		if(!(children.length == 1 && children[0].nodeType == NodeType.Text))
+		if(!(children.length == 1 && children[0].nodeType == NodeType.Text && children[0].nodeValue.strip.length))
 			s ~= toPrettyStringIndent(insertComments, indentationLevel);
 
 		s ~= "</";
@@ -4285,6 +4285,27 @@ class TextNode : Element {
 
 	override string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
 		string s;
+
+		string contents = this.contents;
+		// we will first collapse the whitespace per html
+		// sort of. note this can break stuff yo!!!!
+		if(this.parentNode is null || this.parentNode.tagName != "pre") {
+			string n = "";
+			bool lastWasWhitespace = indentationLevel > 0;
+			foreach(char c; contents) {
+				if(c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+					if(!lastWasWhitespace)
+						n ~= ' ';
+					lastWasWhitespace = true;
+				} else {
+					n ~= c;
+					lastWasWhitespace = false;
+				}
+			}
+
+			contents = n;
+		}
+
 		auto e = htmlEntitiesEncode(contents);
 		import std.algorithm.iteration : splitter;
 		bool first = true;
