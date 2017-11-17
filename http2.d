@@ -15,8 +15,10 @@
 module arsd.http2;
 
 version(without_openssl) {}
-else
+else {
 version=use_openssl;
+version=with_openssl;
+}
 
 
 
