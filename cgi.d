@@ -1312,7 +1312,7 @@ class Cgi {
 	/**
 		Initializes it from raw HTTP request data. GenericMain uses this when you compile with -version=embedded_httpd.
 
-		NOTE: If you are behind a reverse proxy, the values here might not be what you expect.... FIXME somehow.
+		NOTE: If you are behind a reverse proxy, the values here might not be what you expect.... it will use X-Forwarded-For for remote IP and X-Forwarded-Host for host
 
 		Params:
 			inputData = the incoming data, including headers and other raw http data.
@@ -1478,6 +1478,10 @@ class Cgi {
 					case "content-length":
 						contentLength = to!size_t(value);
 					break;
+					case "x-forwarded-for":
+						remoteAddress = value;
+					break;
+					case "x-forwarded-host":
 					case "host":
 						host = value;
 					break;
@@ -3225,7 +3229,7 @@ class BufferedInputRange {
 			if(ret == Socket.ERROR) {
 				version(Posix) {
 					import core.stdc.errno;
-					if(errno == EINTR) {
+					if(errno == EINTR || errno == EAGAIN) {
 						goto try_again;
 					}
 				}
