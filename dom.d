@@ -1321,16 +1321,16 @@ class Document : FileResource {
 		Do NOT use for anything other than eyeball debugging,
 		because whitespace may be significant content in XML.
 	+/
-	string toPrettyString(bool insertComments = false) const {
+	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 		string s = prolog;
 
 		if(insertComments) s ~= "<!--";
 		s ~= "\n";
 		if(insertComments) s ~= "-->";
 
-		s ~= root.toPrettyString(insertComments);
+		s ~= root.toPrettyString(insertComments, indentationLevel, indentWith);
 		foreach(a; piecesAfterRoot)
-			s ~= a.toPrettyString(insertComments);
+			s ~= a.toPrettyString(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -3088,13 +3088,13 @@ class Element {
 		return writeToAppender();
 	}
 
-	protected string toPrettyStringIndent(bool insertComments, int indentationLevel) const {
+	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
 		string s;
 
 		if(insertComments) s ~= "<!--";
 		s ~= "\n";
 		foreach(indent; 0 .. indentationLevel)
-			s ~= "\t";
+			s ~= indentWith;
 		if(insertComments) s ~= "-->";
 
 		return s;
@@ -3104,7 +3104,7 @@ class Element {
 		Writes out with formatting. Be warned: formatting changes the contents. Use ONLY
 		for eyeball debugging.
 	+/
-	string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 
 		// first step is to concatenate any consecutive text nodes to simplify
 		// the white space analysis. this changes the tree! but i'm allowed since
@@ -3150,12 +3150,17 @@ class Element {
 			}
 		}
 
-		string s = toPrettyStringIndent(insertComments, indentationLevel);
+		string s = toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 
 		s ~= "<";
 		s ~= tagName;
 
-		foreach(n, v ; attributes) {
+		// i sort these for consistent output. might be more legible
+		// but especially it keeps it the same for diff purposes.
+		import std.algorithm : sort;
+		auto keys = sort(attributes.keys);
+		foreach(n; keys) {
+			auto v = attributes[n];
 			s ~= " ";
 			s ~= n;
 			s ~= "=\"";
@@ -3178,12 +3183,12 @@ class Element {
 		foreach(child; children) {
 			assert(child !is null);
 
-			s ~= child.toPrettyString(insertComments, indentationLevel + 1);
+			s ~= child.toPrettyString(insertComments, indentationLevel + 1, indentWith);
 		}
 
 		// see comment above
 		if(!(children.length == 1 && children[0].nodeType == NodeType.Text && children[0].nodeValue.strip.length))
-			s ~= toPrettyStringIndent(insertComments, indentationLevel);
+			s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 
 		s ~= "</";
 		s ~= tagName;
@@ -3745,10 +3750,10 @@ class DocumentFragment : Element {
 		return this.innerHTML(where);
 	}
 
-	override string toPrettyString(bool insertComments, int indentationLevel) const {
+	override string toPrettyString(bool insertComments, int indentationLevel, string indentWith) const {
 		string s;
 		foreach(child; children)
-			s ~= child.toPrettyString(insertComments, indentationLevel);
+			s ~= child.toPrettyString(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -4112,7 +4117,7 @@ class RawSource : SpecialElement {
 		return source;
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		return source;
 	}
 
@@ -4140,7 +4145,7 @@ abstract class ServerSideCode : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		return "<" ~ source ~ ">";
 	}
 
@@ -4189,7 +4194,7 @@ class BangInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<!";
 		s ~= source;
@@ -4224,7 +4229,7 @@ class QuestionInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<";
 		s ~= source;
@@ -4260,7 +4265,7 @@ class HtmlComment : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<!--";
 		s ~= source;
@@ -4328,7 +4333,7 @@ class TextNode : Element {
 		return s;
 	}
 
-	override string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+	override string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 		string s;
 
 		string contents = this.contents;
@@ -4360,7 +4365,7 @@ class TextNode : Element {
 		bool first = true;
 		foreach(line; splitter(e, "\n")) {
 			if(first) {
-				s ~= toPrettyStringIndent(insertComments, indentationLevel);
+				s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 				first = false;
 			} else {
 				s ~= "\n";
