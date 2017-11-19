@@ -3177,18 +3177,19 @@ class Element {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(children.length == 1 && children[0].nodeType == NodeType.Text && children[0].nodeValue.strip.length)
-			s ~= children[0].toString();
-		else
-		foreach(child; children) {
-			assert(child !is null);
+		if(allAreInlineHtml(children)) {
+			foreach(child; children) {
+				s ~= child.toString();
+			}
+		} else {
+			foreach(child; children) {
+				assert(child !is null);
 
-			s ~= child.toPrettyString(insertComments, indentationLevel + 1, indentWith);
-		}
+				s ~= child.toPrettyString(insertComments, indentationLevel + 1, indentWith);
+			}
 
-		// see comment above
-		if(!(children.length == 1 && children[0].nodeType == NodeType.Text && children[0].nodeValue.strip.length))
 			s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
+		}
 
 		s ~= "</";
 		s ~= tagName;
@@ -5117,11 +5118,16 @@ struct DomMutationEvent {
 }
 
 
-private enum static string[] selfClosedElements = [
+private immutable static string[] selfClosedElements = [
 	// html 4
 	"img", "hr", "input", "br", "col", "link", "meta",
 	// html 5
 	"source" ];
+
+private immutable static string[] inlineElements = [
+	"span", "strong", "em", "b", "i", "a"
+];
+
 
 static import std.conv;
 
@@ -7044,6 +7050,21 @@ unittest {
 	assert(stringplate.expand.innerHTML == `<div id="bar"><div class="foo">$foo</div><div class="baz">$baz</div></div>`);
 }
 +/
+
+bool allAreInlineHtml(const(Element)[] children) {
+	foreach(child; children) {
+		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {
+			// cool
+		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children)) {
+			// cool
+		} else {
+			// prolly block
+			return false;
+		}
+	}
+	return true;
+}
+
 /*
 Copyright: Adam D. Ruppe, 2010 - 2017
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
