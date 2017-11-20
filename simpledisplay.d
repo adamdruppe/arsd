@@ -4700,7 +4700,7 @@ void displayImage(Image image, SimpleWindow win = null) {
 		}
 		win.eventLoop(0,
 			(KeyEvent ev) {
-				win.close();
+				if (ev.pressed) win.close();
 			} );
 	} else {
 		win.image = image;
