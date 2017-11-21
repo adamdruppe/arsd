@@ -6651,7 +6651,7 @@ version(Windows) {
 				break;
 			}
 
-			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
+			hwnd = CreateWindow(cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
