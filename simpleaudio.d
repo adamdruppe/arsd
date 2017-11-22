@@ -344,7 +344,7 @@ final class AudioPcmOutThread : Thread {
 									if(frequencyCounter)
 										frequencyCounter--;
 									if(frequencyCounter == 0) {
-										val = -val;
+										val = -(val);
 										frequencyCounter = currentSample.frequency / 2;
 									}
 								}
@@ -621,8 +621,10 @@ struct AudioOutput {
 
 					while(data.length) {
 						written = snd_pcm_writei(handle, data.ptr, data.length / 2);
-						if(written < 0)
-							throw new AlsaException("pcm write", written);
+						if(written < 0) {
+							written = snd_pcm_recover(handle, cast(int)written, 0);
+							if (written < 0) throw new AlsaException("pcm write", written);
+						}
 						data = data[written * 2 .. $];
 					}
 				}
@@ -1381,6 +1383,16 @@ extern(C):
 	int snd_pcm_wait(snd_pcm_t *pcm, int timeout);
 	snd_pcm_sframes_t snd_pcm_avail(snd_pcm_t *pcm);
 	snd_pcm_sframes_t snd_pcm_avail_update(snd_pcm_t *pcm);
+
+	int snd_pcm_recover (snd_pcm_t* pcm, int err, int silent);
+
+	alias snd_lib_error_handler_t = void function (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...);
+	int snd_lib_error_set_handler (snd_lib_error_handler_t handler);
+
+	private void alsa_message_silencer (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...) {}
+	//k8: ALSAlib loves to trash stderr; shut it up
+	void silence_alsa_messages () { snd_lib_error_set_handler(&alsa_message_silencer); }
+	shared static this () { silence_alsa_messages(); }
 
 	// raw midi
 
