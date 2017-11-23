@@ -537,7 +537,7 @@ struct AudioInput {
 
 			read = snd_pcm_readi(handle, buffer.ptr, buffer.length / 2 /* div number of channels apparently */);
 			if(read < 0)
-				throw new AlsaException("pcm read", read);
+				throw new AlsaException("pcm read", cast(int)read);
 
 			return buffer[0 .. read * 2];
 		} else static assert(0);
@@ -610,7 +610,7 @@ struct AudioOutput {
 
 				auto ready = snd_pcm_avail_update(handle);
 				if(ready < 0)
-					throw new AlsaException("avail", ready);
+					throw new AlsaException("avail", cast(int)ready);
 				if(ready > BUFFER_SIZE_FRAMES)
 					ready = BUFFER_SIZE_FRAMES;
 				//import std.stdio; writeln("filling ", ready);
@@ -623,7 +623,7 @@ struct AudioOutput {
 						written = snd_pcm_writei(handle, data.ptr, data.length / 2);
 						if(written < 0) {
 							written = snd_pcm_recover(handle, cast(int)written, 0);
-							if (written < 0) throw new AlsaException("pcm write", written);
+							if (written < 0) throw new AlsaException("pcm write", cast(int)written);
 						}
 						data = data[written * 2 .. $];
 					}
@@ -950,7 +950,7 @@ struct AudioMixer {
 	int getMasterVolume() {
 		version(ALSA) {
 			auto volume = getMasterVolumeExact();
-			return volume * 100 / (maxVolume - minVolume);
+			return cast(int)(volume * 100 / (maxVolume - minVolume));
 		} else static assert(0);
 	}
 
@@ -959,7 +959,7 @@ struct AudioMixer {
 		version(ALSA) {
 			c_long volume;
 			snd_mixer_selem_get_playback_volume(selem, 0, &volume);
-			return volume;
+			return cast(int)volume;
 		} else static assert(0);
 	}
 
@@ -968,7 +968,7 @@ struct AudioMixer {
 	void setMasterVolume(int volume) {
 		version(ALSA) {
 			assert(volume >= 0 && volume <= 100);
-			setMasterVolumeExact(volume * (maxVolume - minVolume) / 100);
+			setMasterVolumeExact(cast(int)(volume * (maxVolume - minVolume) / 100));
 		} else static assert(0);
 	}
 
