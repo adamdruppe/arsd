@@ -6510,6 +6510,7 @@ version(Windows) {
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
 		static bool[string] knownWinClasses;
+		static bool altPressed = false;
 
 		void hideCursor () {
 			++curHidden;
@@ -6832,7 +6833,8 @@ version(Windows) {
 				break;
 				  case WM_SETFOCUS:
 				  case WM_KILLFOCUS:
-					wind._focused = msg == WM_SETFOCUS;
+					wind._focused = (msg == WM_SETFOCUS);
+					if (msg == WM_SETFOCUS) altPressed = false; //k8: reset alt state on defocus (it is better than nothing...)
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
@@ -6849,8 +6851,11 @@ version(Windows) {
 
 					if(GetKeyState(Key.Shift)&0x8000 || GetKeyState(Key.Shift_r)&0x8000)
 						ev.modifierState |= ModifierState.shift;
-					if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
-						ev.modifierState |= ModifierState.alt;
+					//k8: this doesn't work; thanks for nothing, windows
+					/*if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
+						ev.modifierState |= ModifierState.alt;*/
+					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) altPressed = (msg == WM_SYSKEYDOWN);
+					if (altPressed) ev.modifierState |= ModifierState.alt; else ev.modifierState &= ~ModifierState.alt;
 					if(GetKeyState(Key.Ctrl)&0x8000 || GetKeyState(Key.Ctrl_r)&0x8000)
 						ev.modifierState |= ModifierState.ctrl;
 					if(GetKeyState(Key.Windows)&0x8000 || GetKeyState(Key.Windows_r)&0x8000)
