@@ -6843,6 +6843,7 @@ version(Windows) {
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
 					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) ev.key = Key.Alt; // windows does it this way
 
 					ev.hardwareCode = (lParam & 0xff0000) >> 16;
 
