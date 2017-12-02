@@ -2674,7 +2674,16 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			return delegate int(XEvent e) {
 				switch(e.type) {
 					case EventType.Expose:
+					//case EventType.VisibilityNotify:
 						redraw();
+					break;
+					case EventType.ClientMessage:
+						version(sddddd) {
+						import std.stdio;
+						writeln("\t", e.xclient.message_type == GetAtom!("_XEMBED")(XDisplayConnection.get));
+						writeln("\t", e.xclient.format);
+						writeln("\t", e.xclient.data.l);
+						}
 					break;
 					case EventType.ButtonPress:
 						auto event = e.xbutton;
@@ -2714,6 +2723,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 						auto event = e.xconfigure;
 						this.width = event.width;
 						this.height = event.height;
+						//import std.stdio; writeln(width, " x " , height, " @ ", event.x, " ", event.y);
 						redraw();
 					break;
 					default: return 1;
@@ -2799,6 +2809,67 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 			nativeHandle = nativeWindow;
 
+			///+
+			arch_ulong[2] info;
+			info[0] = 0;
+			info[1] = 1;
+
+			string title = "simpledisplay.d program";
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
+			XChangeProperty(display, nativeWindow, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
+
+			XChangeProperty(
+				display,
+				nativeWindow,
+				GetAtom!("_XEMBED_INFO", true)(display),
+				GetAtom!("_XEMBED_INFO", true)(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				info.ptr,
+				2);
+
+			import core.sys.posix.unistd;
+			arch_ulong pid = getpid();
+
+			XChangeProperty(
+				display,
+				nativeWindow,
+				GetAtom!("_NET_WM_PID", true)(display),
+				XA_CARDINAL,
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				&pid,
+				1);
+
+			updateNetWmIcon();
+
+			if (sdpyWindowClassStr !is null && sdpyWindowClassStr[0]) {
+				//{ import core.stdc.stdio; printf("winclass: [%s]\n", sdpyWindowClassStr); }
+				XClassHint klass;
+				XWMHints wh;
+				XSizeHints size;
+				klass.res_name = sdpyWindowClassStr;
+				klass.res_class = sdpyWindowClassStr;
+				XSetWMProperties(display, nativeWindow, null, null, null, 0, &size, &wh, &klass);
+			}
+
+				// believe it or not, THIS is what xfce needed for the 9999 issue
+				XSizeHints sh;
+					c_long spr;
+					XGetWMNormalHints(display, nativeWindow, &sh, &spr);
+					sh.flags |= PMaxSize | PMinSize;
+				// FIXME maybe nicer resizing
+				sh.min_width = 16;
+				sh.min_height = 16;
+				sh.max_width = 16;
+				sh.max_height = 16;
+				XSetWMNormalHints(display, nativeWindow, &sh);
+
+
+			//+/
+
+
 			XSelectInput(display, nativeWindow,
 				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
 				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
@@ -2807,6 +2878,34 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 			active = true;
 		}
+
+		void updateNetWmIcon() {
+			auto display = XDisplayConnection.get;
+			// FIXME: ensure this is correct
+			arch_ulong[] buffer;
+			auto imgMi = img.toTrueColorImage;
+			buffer ~= imgMi.width;
+			buffer ~= imgMi.height;
+			foreach(c; imgMi.imageData.colors) {
+				arch_ulong b;
+				b |= c.a << 24;
+				b |= c.r << 16;
+				b |= c.g << 8;
+				b |= c.b;
+				buffer ~= b;
+			}
+
+			XChangeProperty(
+				display,
+				nativeHandle,
+				GetAtom!"_NET_WM_ICON"(display),
+				GetAtom!"CARDINAL"(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				buffer.ptr,
+				cast(int) buffer.length);
+		}
+
 
 
 		private SimpleWindow balloon;
@@ -3021,6 +3120,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
+				updateNetWmIcon();
 				redraw();
 			} else {
 				if (this.img !is null) {
@@ -3088,9 +3188,15 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			int bx = x - balloon.width;
 			int by = y - balloon.height;
 			if(bx < 0)
-				bx = x + width + balloon.height;
+				bx = x + width + balloon.width;
 			if(by < 0)
-				by = y + height + balloon.height;
+				by = y + height;
+
+			// just in case, make sure it is actually on scren
+			if(bx < 0)
+				bx = 0;
+			if(by < 0)
+				by = 0;
 
 			balloon.move(bx, by);
 			auto painter = balloon.draw();
@@ -8628,7 +8734,13 @@ version(X11) {
 		bool done;
 		XEvent e;
 		XNextEvent(display, &e);
-		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
+		version(sddddd) {
+			import std.stdio, std.conv : to;
+			if(auto win = e.xany.window in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+				if(typeid(cast(Object) *win) == NotificationAreaIcon.classinfo)
+				writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type));
+			}
+		}
 		// filter out compose events
 		if (XFilterEvent(&e, None)) {
 			//{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
