@@ -66,7 +66,7 @@
 	On Win32, you can pass `-L/subsystem:windows` if you don't want a
 	console to be automatically allocated.
 
-	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
+	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd.
 
 	On Ubuntu, you might need to install X11 development libraries to
 	successfully link.
@@ -1116,6 +1116,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	TrueColorImage takeScreenshot() {
 		version(Windows)
 			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
+		else version(OSXCocoa)
+			throw new NotYetImplementedException();
 		else
 			return trueColorImageFromNativeHandle(impl.window, width, height);
 	}
@@ -1219,6 +1221,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			impl.hwnd = nativeWindow;
 		else version(X11)
 			impl.window = nativeWindow;
+		else version(OSXCocoa)
+			throw new NotYetImplementedException();
 		else static assert(0);
 		// FIXME: set the size correctly
 		_width = 1;
@@ -1276,6 +1280,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				GetWindowRect(hwnd, &rcClip); 
 				ClipCursor(&rcClip); 
 			}
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1288,6 +1294,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(Windows) {
 			ReleaseCapture();
 			ClipCursor(null); 
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1301,6 +1309,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
 		} else version(Windows) {
 			SetFocus(this.impl.hwnd);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1343,6 +1353,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(X11) {
 			demandingAttention = true;
 			demandAttention(this, true);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1395,11 +1407,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Hide cursor when it enters the window.
 	void hideCursor() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.hideCursor();
 	}
 
 	/// Don't hide cursor when it enters the window.
 	void showCursor() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.showCursor();
 	}
 
@@ -1427,25 +1441,34 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Set window minimal size.
 	void setMinSize (int minwidth, int minheight) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setMinSize(minwidth, minheight);
 	}
 
 	/// Set window maximal size.
 	void setMaxSize (int maxwidth, int maxheight) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setMaxSize(maxwidth, maxheight);
 	}
 
 	/// Set window resize step (window size will be changed with the given granularity on supported platforms).
 	/// Currently only supported on X11.
 	void setResizeGranularity (int granx, int grany) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setResizeGranularity(granx, grany);
 	}
 
 	/// Move window.
-	void move(int x, int y) { if (!_closed) impl.move(x, y); }
+	void move(int x, int y) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.move(x, y);
+	}
 
 	/// ditto
-	void move(Point p) { if (!_closed) impl.move(p.x, p.y); }
+	void move(Point p) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.move(p.x, p.y);
+	}
 
 	/++
 		Resize window.
@@ -1455,10 +1478,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		request, which means you must return to the event loop before the
 		width and height are actually changed.
 	+/
-	void resize(int w, int h) { if (!_closed) impl.resize(w, h); }
+	void resize(int w, int h) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.resize(w, h);
+	}
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
-	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
+	void moveResize (int x, int y, int w, int h) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.moveResize(x, y, w, h);
+	}
 
 	private bool _hidden;
 
@@ -1478,6 +1507,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				XWithdrawWindow(impl.display, impl.window, DefaultScreen(impl.display));
 			else
 				XMapWindow(impl.display, impl.window);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1730,6 +1761,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	@property void title(string title) {
 		_title = title;
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		impl.setTitle(title);
 	}
 
@@ -1777,6 +1809,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				0 /*PropModeReplace*/,
 				buffer.ptr,
 				cast(int) buffer.length);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2617,6 +2651,7 @@ struct EventLoopImpl {
 	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
 	use the older version.
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 	version(X11) {
@@ -2924,6 +2959,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
 
 			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2935,6 +2972,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			createXWin();
 		} else version(Windows) {
 			this(name, icon is null ? null : icon.toTrueColorImage(), onClick);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2996,6 +3035,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.hIcon = this.win32Icon.hIcon;
 
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3009,6 +3050,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 		} else version(Windows) {
 			this.icon(i is null ? null : i.toTrueColorImage());
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3042,7 +3085,14 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			int x, y, width, height;
 			getWindowRect(x, y, width, height);
 
-			balloon.move(x - balloon.width, y - balloon.height);
+			int bx = x - balloon.width;
+			int by = y - balloon.height;
+			if(bx < 0)
+				bx = x + width + balloon.height;
+			if(by < 0)
+				by = y + height + balloon.height;
+
+			balloon.move(bx, by);
 			auto painter = balloon.draw();
 			painter.fillColor = Color(220, 220, 220);
 			painter.outlineColor = Color.black;
@@ -3119,6 +3169,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3135,6 +3187,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.dwState = 0; // NIS_HIDDEN; // windows vista
 			data.dwStateMask = NIS_HIDDEN; // windows vista
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3154,6 +3208,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.dwState = NIS_HIDDEN; // windows vista
 			data.dwStateMask = NIS_HIDDEN; // windows vista
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3168,6 +3224,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 		} else version(Windows) {
 			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3437,6 +3495,8 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 		}
 	} else version(X11) {
 		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -3563,6 +3623,8 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 		}
 	} else version(X11) {
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -4378,6 +4440,8 @@ struct MouseEvent {
 			p.y = points[0].y;
 
 			return p;
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 }
@@ -4539,6 +4603,8 @@ final class Image {
 				return 0;
 			} else version(Windows) {
 				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4552,6 +4618,8 @@ final class Image {
 				// remember, bmps are upside down
 				auto offset = itemsPerLine * (height - y - 1) + x * 3;
 				return offset;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4562,6 +4630,8 @@ final class Image {
 			} else version(Windows) {
 				// windows bmps are upside down, so the adjustment is actually negative
 				return -((cast(int) width * 3 + 3) / 4) * 4;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4571,6 +4641,8 @@ final class Image {
 				return 2;
 			} else version(Windows) {
 				return 2;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4580,6 +4652,8 @@ final class Image {
 				return 1;
 			} else version(Windows) {
 				return 1;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4589,6 +4663,8 @@ final class Image {
 				return 0;
 			} else version(Windows) {
 				return 0;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 	}
@@ -4610,6 +4686,7 @@ final class Image {
 		if(y < 0 || y >= height)
 			return Color.transparent;
 
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		return impl.getPixel(x, y);
 	}
 
@@ -4831,6 +4908,7 @@ class OperatingSystemFont {
 
 	///
 	bool isNull() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		return font is null;
 	}
 
@@ -5056,6 +5134,8 @@ struct ScreenPainter {
 		} else version(X11) {
 			// FIXME: clip stuff outside this rectangle
 			XCopyArea(impl.display, impl.d, impl.d, impl.gc, upperLeft.x, upperLeft.y, width, height, upperLeft.x - dx, upperLeft.y - dy);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -5068,6 +5148,7 @@ struct ScreenPainter {
 	}
 
 	///
+	version(OSXCocoa) {} else // NotYetImplementedException
 	void drawPixmap(Sprite s, Point upperLeft) {
 		if(impl is null) return;
 		if(isClipped(upperLeft, s.width, s.height)) return;
@@ -5295,6 +5376,7 @@ struct ScreenPainter {
 	ScreenPainter needs to be refactored to allow that though. So until that is
 	done, consider a `Sprite` to have const contents.
 */
+version(OSXCocoa) {} else // NotYetImplementedException
 class Sprite : CapableOfBeingDrawnUpon {
 
 	///
@@ -5510,6 +5592,20 @@ enum ModifierState : uint {
 
 	backButtonDown = 0x20, /// not available on X
 	forwardButtonDown = 0x40, /// ditto
+}
+else version(OSXCocoa)
+// FIXME FIXME NotYetImplementedException
+enum ModifierState : uint {
+	shift = 1, ///
+	capsLock = 2, ///
+	ctrl = 4, ///
+	alt = 8, /// Not always available on Windows
+	windows = 64, /// ditto
+	numLock = 16, ///
+
+	leftButtonDown = 256, /// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	middleButtonDown = 512, /// ditto
+	rightButtonDown = 1024, /// ditto
 }
 
 /// The names assume a right-handed mouse. These are bitwise combined on the events that use them
@@ -10806,12 +10902,12 @@ private:
 		void CFRelease(CFTypeRef obj);
 
 		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
-											const(char)* bytes, int numBytes,
+											const(char)* bytes, long numBytes,
 											int encoding,
 											BOOL isExternalRepresentation);
 		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
 							 char lossByte, bool isExternalRepresentation,
-							 char* buffer, int maxBufLen, int* usedBufLen);
+							 char* buffer, long maxBufLen, long* usedBufLen);
 		int CFStringGetLength(CFStringRef theString);
 
 		CGContextRef CGBitmapContextCreate(void* data,
@@ -10862,7 +10958,7 @@ private:
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
-        return CFStringCreateWithBytes(null, str.ptr, str.length,
+        return CFStringCreateWithBytes(null, str.ptr, cast(int) str.length,
                                              kCFStringEncodingUTF8, false);
     }
 
@@ -11030,6 +11126,19 @@ version(OSXCocoa) {
         void dispose() {
         }
 
+	// NotYetImplementedException
+	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
+	void pen(Pen p) {}
+	void rasterOp(RasterOp op) {}
+	Pen _activePen;
+	Color _fillColor;
+	Rectangle _clipRectangle;
+	void setClipRectangle(int, int, int, int) {}
+	void setFont(OperatingSystemFont) {}
+	int fontHeight() { return 14; }
+
+	// end
+
         @property void outlineColor(Color color) {
             float alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
@@ -11053,7 +11162,8 @@ version(OSXCocoa) {
                                      color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
         }
 
-        void drawImage(int x, int y, Image image) {
+        void drawImage(int x, int y, Image image, int ulx, int upy, int width, int height) {
+		// NotYetImplementedException for upper left/width/height
             auto cgImage = CGBitmapContextCreateImage(image.context);
             auto size = CGSize(CGBitmapContextGetWidth(image.context),
                                CGBitmapContextGetHeight(image.context));
@@ -11061,6 +11171,7 @@ version(OSXCocoa) {
             CGImageRelease(cgImage);
         }
 
+	version(OSXCocoa) {} else // NotYetImplementedException
         void drawPixmap(Sprite image, int x, int y) {
 		// FIXME: is this efficient?
             auto cgImage = CGBitmapContextCreateImage(image.context);
@@ -11135,7 +11246,7 @@ version(OSXCocoa) {
     }
 
     mixin template NativeSimpleWindowImplementation() {
-        void createWindow(int width, int height, string title) {
+        void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
             synchronized {
                 if (NSApp == null) initializeApp();
             }
@@ -11231,14 +11342,15 @@ version(OSXCocoa) {
                 auto chars = characters(event);
                 auto range = CFRange(0, CFStringGetLength(chars));
                 auto buffer = new char[range.length*3];
-                int actualLength;
+                long actualLength;
                 CFStringGetBytes(chars, range, kCFStringEncodingUTF8, 0, false,
-                                 buffer.ptr, buffer.length, &actualLength);
+                                 buffer.ptr, cast(int) buffer.length, &actualLength);
                 foreach (dchar dc; buffer[0..actualLength]) {
                     if (simpleWindow.handleCharEvent)
                         simpleWindow.handleCharEvent(dc);
-                    if (simpleWindow.handleKeyEvent)
-                        simpleWindow.handleKeyEvent(dc, true); // FIXME: what about keyUp?
+		    // NotYetImplementedException
+                    //if (simpleWindow.handleKeyEvent)
+                        //simpleWindow.handleKeyEvent(KeyEvent(dc)); // FIXME: what about keyUp?
                 }
             }
 
@@ -12733,4 +12845,10 @@ DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
 	}
 
 	return new ArsdTtfFont(data, size);
+}
+
+class NotYetImplementedException : Exception {
+	this(string file = __FILE__, size_t line = __LINE__) {
+		super("Not yet implemented", file, line);
+	}
 }
