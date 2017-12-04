@@ -2657,6 +2657,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	version(X11) {
 		void recreateAfterDisconnect() {
 			stateDiscarded = false;
+			clippixmap = None;
 			throw new Exception("NOT IMPLEMENTED");
 		}
 
@@ -2748,6 +2749,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			auto gc = DefaultGC(display, DefaultScreen(display));
 			XClearWindow(display, nativeHandle);
 
+			XSetClipMask(display, gc, clippixmap);
+
 			XSetForeground(display, gc,
 				cast(uint) 0 << 16 |
 				cast(uint) 0 << 8 |
@@ -2762,10 +2765,18 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				XFillArc(display, nativeHandle,
 					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
 			} else {
+				int dx = 0;
+				int dy = 0;
+				if(width > img.width)
+					dx = (width - img.width) / 2;
+				if(height > img.height)
+					dy = (height - img.height) / 2;
+				XSetClipOrigin(display, gc, dx, dy);
+
 				if (img.usingXshm)
-					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height, false);
 				else
-					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height);
 			}
 			flushGui();
 		}
@@ -2800,12 +2811,41 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		}
 
 		private void createXWin () {
-			if(getTrayOwner() == None)
+			auto trayOwner = getTrayOwner();
+			if(trayOwner == None)
 				throw new Exception("No notification area found");
+
+
 			// create window
 			auto display = XDisplayConnection.get;
-			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
+
+			Visual* v = cast(Visual*) CopyFromParent;
+			/+
+			auto visualProp = getX11PropertyData(trayOwner, GetAtom!("_NET_SYSTEM_TRAY_VISUAL", true)(display));
+			if(visualProp !is null) {
+				c_ulong[] info = cast(c_ulong[]) visualProp;
+				if(info.length == 1) {
+					auto vid = info[0];
+					int returned;
+					XVisualInfo t;
+					t.visualid = vid;
+					auto got = XGetVisualInfo(display, VisualIDMask, &t, &returned);
+					if(got !is null) {
+						if(returned == 1) {
+							v = got.visual;
+							import std.stdio;
+							writeln("using special visual ", *got);
+						}
+						XFree(got);
+					}
+				}
+			}
+			+/
+
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, v, 0, null);
 			assert(nativeWindow);
+
+			XSetWindowBackgroundPixmap(display, nativeWindow, 1 /* ParentRelative */);
 
 			nativeHandle = nativeWindow;
 
@@ -2814,7 +2854,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			info[0] = 0;
 			info[1] = 1;
 
-			string title = "simpledisplay.d program";
+			string title = this.name is null ? "simpledisplay.d program" : this.name;
 			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
 			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
 			XChangeProperty(display, nativeWindow, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
@@ -2880,6 +2920,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		}
 
 		void updateNetWmIcon() {
+			if(img is null) return;
 			auto display = XDisplayConnection.get;
 			// FIXME: ensure this is correct
 			arch_ulong[] buffer;
@@ -2913,6 +2954,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		private Timer timer;
 
 		private Window nativeHandle;
+		private Pixmap clippixmap = None;
 		private int width = 16;
 		private int height = 16;
 		private bool active = false;
@@ -3019,7 +3061,10 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		// but on X, we need an Image, so its canonical ctor is there. They should
 		// forward to each other though.
 		version(X11) {
-			this(name, icon is null ? null : Image.fromMemoryImage(icon), onClick);
+			this.name = name;
+			this.onClick = onClick;
+			createXWin();
+			this.icon = icon;
 		} else version(Windows) {
 			this.onClick = onClick;
 			this.win32Icon = new WindowsIcon(icon);
@@ -3067,8 +3112,9 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	this(string name, Image icon, void delegate(MouseButton button) onClick) {
 		version(X11) {
 			this.onClick = onClick;
-			this.img = icon;
+			this.name = name;
 			createXWin();
+			this.icon = icon;
 		} else version(Windows) {
 			this(name, icon is null ? null : icon.toTrueColorImage(), onClick);
 		} else version(OSXCocoa) {
@@ -3082,15 +3128,15 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		+/
 		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
 			this.onClickEx = onClickEx;
-			if (icon !is null) this.img = Image.fromMemoryImage(icon);
 			createXWin();
+			if (icon !is null) this.icon = icon;
 		}
 
 		/// ditto
 		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
 			this.onClickEx = onClickEx;
-			this.img = icon;
 			createXWin();
+			this.icon = icon;
 		}
 	}
 
@@ -3111,7 +3157,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	}
 
 
+	string name_;
 	@property void name(string n) {
+		name_ = n;
+	}
+
+	@property string name() {
+		return name_;
 	}
 
 	///
@@ -3120,6 +3172,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
+				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
+				//import std.stdio; writeln("using pixmap ", clippixmap);
 				updateNetWmIcon();
 				redraw();
 			} else {
@@ -3336,10 +3390,28 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	}
 
 	~this() {
+		version(X11)
+			if(clippixmap != None)
+				XFreePixmap(XDisplayConnection.get, clippixmap);
 		close();
 	}
 }
 
+version(X11)
+/// call XFreePixmap on the return value
+Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
+	char[] data = new char[](i.width * i.height / 8 + 2);
+	data[] = 0;
+
+	int bitOffset = 0;
+	foreach(c; i.getAsTrueColorImage().imageData.colors) { // FIXME inefficient unnecessary conversion in palette cases
+		ubyte v = c.a > 128 ? 1 : 0;
+		data[bitOffset / 8] |= v << (bitOffset%8);
+		bitOffset++;
+	}
+	auto handle = XCreateBitmapFromData(XDisplayConnection.get, cast(Drawable) window, data.ptr, i.width, i.height);
+	return handle;
+}
 
 
 // basic functions to make timers
@@ -3751,6 +3823,15 @@ version(X11) {
 		if(a == None)
 			throw new Exception("XInternAtom " ~ name ~ " " ~ (create ? "true":"false"));
 		return a;
+	}
+
+	/// Platform specific for X11 - gets atom names as a string
+	string getAtomName(Atom atom, Display* display) {
+		auto got = XGetAtomName(display, atom);
+		scope(exit) XFree(got);
+		import core.stdc.string;
+		string s = got[0 .. strlen(got)].idup;
+		return s;
 	}
 
 	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later
@@ -9276,6 +9357,32 @@ int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time
 
 Window XGetSelectionOwner(Display *display, Atom selection);
 
+struct XVisualInfo {
+	Visual* visual;
+	VisualID visualid;
+	int screen;
+	uint depth;
+	int c_class;
+	c_ulong red_mask;
+	c_ulong green_mask;
+	c_ulong blue_mask;
+	int colormap_size;
+	int bits_per_rgb;
+}
+
+enum VisualNoMask=	0x0;
+enum VisualIDMask=	0x1;
+enum VisualScreenMask=0x2;
+enum VisualDepthMask=	0x4;
+enum VisualClassMask=	0x8;
+enum VisualRedMaskMask=0x10;
+enum VisualGreenMaskMask=0x20;
+enum VisualBlueMaskMask=0x40;
+enum VisualColormapSizeMask=0x80;
+enum VisualBitsPerRGBMask=0x100;
+enum VisualAllMask=	0x1FF;
+
+XVisualInfo* XGetVisualInfo(Display*, c_long, XVisualInfo*, int*);
 
 
 
@@ -9835,6 +9942,10 @@ Atom XInternAtom(
 	const char*	/* atom_name */,
 	Bool		/* only_if_exists */
 );
+
+Status XInternAtoms(Display*, char**, int, Bool);
+char* XGetAtomName(Display*, Atom);
+Status XGetAtomNames(Display*, Atom*, int count, char**);
 
 alias int Status;
 
@@ -10526,19 +10637,6 @@ static if (!SdpyIsUsingIVGLBinds) {
 	 void glXWaitX();
 }
 
-
-	struct XVisualInfo {
-		Visual *visual;
-		VisualID visualid;
-		int screen;
-		int depth;
-		int c_class;                                  /* C++ */
-		arch_ulong red_mask;
-		arch_ulong green_mask;
-		arch_ulong blue_mask;
-		int colormap_size;
-		int bits_per_rgb;
-	}
 }
 }
 
