@@ -2518,12 +2518,18 @@ struct EventLoopImpl {
 									(*t).trigger();
 
 								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
-									(*pfr).ready();
+									(*pfr).ready(flags);
 
 								// or i might add support for other FDs too
 								// but for now it is just timer
 								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
 							}
+						}
+						if(flags & ep.EPOLLIN) {
+							if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+								(*pfr).ready(flags);
+						}
+						/+
 						} else {
 							// not interested in OUT, we are just reading here.
 							//
@@ -2536,6 +2542,7 @@ struct EventLoopImpl {
 
 							throw new Exception("epoll did something else");
 						}
+						+/
 					}
 					// if we won't call `XPending()` here, libX may delay some internal event delivery.
 					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
@@ -3588,14 +3595,21 @@ version(linux)
 /// Lets you add files to the event loop for reading. Use at your own risk.
 class PosixFdReader {
 	///
-	this(void delegate() onReady, int fd) {
-		this((int) { onReady(); }, fd);
+	this(void delegate() onReady, int fd, bool captureReads = true, bool captureWrites = false) {
+		this((int, bool, bool) { onReady(); }, fd, captureReads, captureWrites);
 	}
 
 	///
-	this(void delegate(int) onReady, int fd) {
+	this(void delegate(int) onReady, int fd, bool captureReads = true, bool captureWrites = false) {
+		this((int fd, bool, bool) { onReady(fd); }, fd, captureReads, captureWrites);
+	}
+
+	///
+	this(void delegate(int fd, bool read, bool write) onReady, int fd, bool captureReads = true, bool captureWrites = false) {
 		this.onReady = onReady;
 		this.fd = fd;
+		this.captureWrites = captureWrites;
+		this.captureReads = captureReads;
 
 		mapping[fd] = this;
 
@@ -3603,20 +3617,52 @@ class PosixFdReader {
 			import arsd.eventloop;
 			addFileEventListeners(fd, &ready);
 		} else {
-			prepareEventLoop();
-
-			static import ep = core.sys.linux.epoll;
-			ep.epoll_event ev = void;
-			ev.events = ep.EPOLLIN;
-			ev.data.fd = fd;
-			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+			enable();
 		}
 	}
 
-	void delegate(int) onReady;
+	bool captureReads;
+	bool captureWrites;
 
-	void ready() {
-		onReady(fd);
+	version(with_eventloop) {} else
+	///
+	void enable() {
+		prepareEventLoop();
+
+		static import ep = core.sys.linux.epoll;
+		ep.epoll_event ev = void;
+		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+		//import std.stdio; writeln("enable ", fd, " ", captureReads, " ", captureWrites);
+		ev.data.fd = fd;
+		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+	}
+
+	version(with_eventloop) {} else
+	///
+	void disable() {
+		prepareEventLoop();
+
+		static import ep = core.sys.linux.epoll;
+		ep.epoll_event ev = void;
+		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+		//import std.stdio; writeln("disable ", fd, " ", captureReads, " ", captureWrites);
+		ev.data.fd = fd;
+		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+	}
+
+	version(with_eventloop) {} else
+	///
+	void dispose() {
+		disable();
+		mapping.remove(fd);
+		fd = -1;
+	}
+
+	void delegate(int, bool, bool) onReady;
+
+	void ready(uint flags) {
+		static import ep = core.sys.linux.epoll;
+		onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
 	}
 
 	int fd = -1;
