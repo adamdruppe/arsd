@@ -2254,7 +2254,13 @@ struct EventLoop {
 
 	int run(bool delegate() whileCondition = null) {
 		assert(impl !is null);
+		impl.notExited = true;
 		return impl.run(whileCondition);
+	}
+
+	void exit() {
+		assert(impl !is null);
+		impl.notExited = false;
 	}
 
 	static EventLoopImpl* impl;
@@ -2262,6 +2268,8 @@ struct EventLoop {
 
 struct EventLoopImpl {
 	int refcount;
+
+	bool notExited = true;
 
 	version(linux) {
 		static import ep = core.sys.linux.epoll;
@@ -2456,7 +2464,7 @@ struct EventLoopImpl {
 			scope(exit) insideXEventLoop = false;
 
 			version(linux) {
-				while(!done && (whileCondition is null || whileCondition() == true)) {
+				while(!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					bool forceXPending = false;
 					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
@@ -2562,7 +2570,7 @@ struct EventLoopImpl {
 				// FIXME: we could probably support the POSIX timer_create
 				// signal-based option, but I'm in no rush to write it since
 				// I prefer the fd-based functions.
-				while (!done && (whileCondition is null || whileCondition() == true)) {
+				while (!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					while(!done &&
 						(pulseTimeout == 0 || (XPending(display) > 0)))
 					{
@@ -2583,7 +2591,7 @@ struct EventLoopImpl {
 		version(Windows) {
 			int ret = -1;
 			MSG message;
-			while(ret != 0 && (whileCondition is null || whileCondition() == true)) {
+			while(ret != 0 && (whileCondition is null || whileCondition() == true) && notExited) {
 				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
@@ -4584,6 +4592,23 @@ struct KeyEvent {
 		return ((this.modifierState&modmask) == (ke.modifierState&modmask));
 	}
 }
+
+/// sets the application name.
+@property string ApplicationName(string name) {
+	return _applicationName = name;
+}
+
+string _applicationName;
+
+/// ditto
+@property string ApplicationName() {
+	if(_applicationName is null) {
+		import core.runtime;
+		return Runtime.args[0];
+	}
+	return _applicationName;
+}
+
 
 /// Type of a [MouseEvent]
 enum MouseEventType : int {
