@@ -901,8 +901,57 @@ Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coord
 
 */
 
-version(linux)
+version(linux) {
 	version = X11;
+	version(without_libnotify) {
+		// we cool
+	}
+	else
+		version = libnotify;
+}
+
+version(libnotify) {
+	pragma(lib, "dl");
+	import core.sys.posix.dlfcn;
+
+	void delegate()[int] libnotify_action_delegates;
+	int libnotify_action_delegates_count;
+	extern(C) static void libnotify_action_callback_sdpy(void* notification, char* action, void* user_data) {
+		auto idx = cast(int) user_data;
+		if(auto dgptr = idx in libnotify_action_delegates) {
+			(*dgptr)();
+			libnotify_action_delegates.remove(idx);
+		}
+	}
+
+	struct C_DynamicLibrary {
+		void* handle;
+		this(string name) {
+			handle = dlopen((name ~ "\0").ptr, RTLD_NOW);
+			if(handle is null)
+				throw new Exception("dlopen");
+		}
+
+		void close() {
+			dlclose(handle);
+		}
+
+		~this() {
+			// close
+		}
+
+		template call(string func, Ret, Args...) {
+			extern(C) Ret function(Args) fptr;
+			typeof(fptr) call() {
+				fptr = cast(typeof(fptr)) dlsym(handle, func);
+				return fptr;
+			}
+		}
+	}
+
+	C_DynamicLibrary* libnotify;
+}
+
 version(OSX) {
 	version(OSXCocoa) {}
 	else { version = X11; }
@@ -2793,6 +2842,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				else
 					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height);
 			}
+			XSetClipMask(display, gc, None);
 			flushGui();
 		}
 
@@ -3239,8 +3289,44 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			onclick = delegate called if the user clicks the balloon. (not yet implemented)
 			timeout = your suggested timeout period. The operating system is free to ignore your suggestion.
 	+/
-	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 10_000) {
+	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 2_500) {
+		bool useCustom = true;
+		version(libnotify) {
+			if(onclick is null) // libnotify impl doesn't support callbacks yet because it doesn't do a dbus message loop
+			try {
+				if(!active) return;
+
+				if(libnotify is null) {
+					libnotify = new C_DynamicLibrary("libnotify.so");
+					libnotify.call!("notify_init", int, const char*)()((ApplicationName ~ "\0").ptr);
+				}
+
+				auto n = libnotify.call!("notify_notification_new", void*, const char*, const char*, const char*)()((title~"\0").ptr, (message~"\0").ptr, null /* icon */);
+
+				libnotify.call!("notify_notification_set_timeout", void, void*, int)()(n, timeout);
+
+				if(onclick) {
+					libnotify_action_delegates[libnotify_action_delegates_count] = onclick;
+					libnotify.call!("notify_notification_add_action", void, void*, const char*, const char*, typeof(&libnotify_action_callback_sdpy), void*, void*)()(n, "DEFAULT".ptr, "Go".ptr, &libnotify_action_callback_sdpy, cast(void*) libnotify_action_delegates_count, null);
+					libnotify_action_delegates_count++;
+				}
+
+				// FIXME icon
+
+				// set hint image-data
+				// set default action for onclick
+
+				void* error;
+				libnotify.call!("notify_notification_show", bool, void*, void**)()(n, &error);
+
+				useCustom = false;
+			} catch(Exception e) {
+
+			}
+		}
+		
 		version(X11) {
+		if(useCustom) {
 			if(!active) return;
 			if(balloon) {
 				hideBalloon();
@@ -3310,6 +3396,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			version(with_timer)
 			timer = new Timer(timeout, &hideBalloon);
 			else {} // FIXME
+		}
 		} else version(Windows) {
 			enum NIF_INFO = 0x00000010;
 
