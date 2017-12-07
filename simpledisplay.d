@@ -11494,6 +11494,233 @@ version(X11) {
 	}
 }
 
+mixin template ExperimentalTextComponent2() {
+
+	enum TextFormat : ushort {
+		// decorations
+		underline = 1,
+		strikethrough = 2,
+
+		// font selectors
+
+		bold = 0x4000 | 1, // weight 700
+		light = 0x4000 | 2, // weight 300
+		veryBoldOrLight = 0x4000 | 4, // weight 100 with light, weight 900 with bold
+		// bold | light is really invalid but should give weight 500
+		// veryBoldOrLight without one of the others should just give the default for the font; it should be ignored.
+
+		italic = 0x4000 | 8,
+		smallcaps = 0x4000 | 16,
+	}
+
+
+	struct Decoration {
+		ushort id;
+		Color foreground;
+		Color background;
+		ushort textFormat;
+		void* font;
+	}
+
+	Decoration[] decorations;
+
+	struct TextState {
+		char[] text;
+		int[] x;
+		int[] y;
+		ushort[] decorationId;
+		int length;
+
+		int caret;
+
+		void makeGap(int where, int minLength) {
+			int gapSize = 0;
+			int at = where;
+			while(at < text.length && text[at] == 0xff) {
+				at++;
+				gapSize++;
+			}
+
+			if(gapSize >= minLength)
+				return;
+
+			// try to gather gap from behind us, if any
+			/*
+			at = where - 32;
+			if(at < 0)
+				at = 0;
+
+			while(at < where - 1) {
+				if(text[at] == 0xff) {
+					text[at] = text[at + 1];
+					x[at] = x[at + 1];
+					y[at] = y[at + 1];
+					decorationId[at] = decorationId[at + 1];
+					text[at + 1] = 0xff;
+					gapSize++;
+				}
+				at++;
+			}
+
+			if(gapSize >= minLength)
+				return;
+			*/
+			keep_trying:
+			at = where;
+			while(at + 1 < text.length) {
+			// FIXME it needs to work on a whole block, not just one char
+				if(text[at + 1] == 0xff) {
+					text[at + 1] = text[at];
+					x[at + 1] = x[at];
+					y[at + 1] = y[at];
+					decorationId[at + 1] = decorationId[at];
+					text[at] = 0xff;
+					gapSize++;
+					if(gapSize >= minLength)
+						return;
+				}
+				at++;
+			}
+
+			if(gapSize < minLength) {
+				auto increase = 16;
+				if(minLength - gapSize > 16)
+					increase = minLength - gapSize;
+				text.length += increase;
+				x.length += increase;
+				y.length += increase;
+				decorationId.length += increase;
+				text[$ - increase .. $] = 0xff;
+				goto keep_trying;
+			}
+		}
+
+		void insert(dchar c) {
+			makeGap(caret, 1);
+			text[caret] = cast(char) c;
+			caret++;
+			length++;
+			layout(caret - 1, cast(int) text.length, false);
+		}
+
+		string toPlainText() {
+			string s;
+			s.reserve(length);
+			foreach(char ch; text)
+				if(ch != 0xff)
+					s ~= ch;
+			return s;
+		}
+
+		void resetContents(in char[] to) {
+			if(text.length < to.length * 2) {
+				text.length = to.length * 2;
+				x.length = text.length;
+				y.length = text.length;
+				decorationId.length = text.length;
+			}
+			int textPos = 0;
+			int skipped = 0;
+			foreach(ch; to) {
+				if(ch == 13) {
+					++skipped;
+					continue;
+				}
+				text[textPos++] = ch;
+				text[textPos++] = 0xff;
+			}
+			text[textPos .. $] = 0xff;
+			length = cast(int) to.length - skipped;
+
+			decorationId[0 .. length] = 0;
+
+			layout(0, text.length, true);
+		}
+
+		int lineHeight = 14;
+		int letterWidth = 7;
+		int tabStop = 4;
+
+		void layout(int start, int end, bool forceAll) {
+			int x = 0, y = 0;
+			foreach(idx, char ch; text[start .. end]) {
+				if(ch == 0xff)
+					continue;
+				if(!forceAll && this.x[start + idx] == x && this.y[start + idx] == y)
+					break; // seems to already be done!
+				this.x[start + idx] = x;
+				this.y[start + idx] = y;
+
+				// FIXME unicode
+
+				if(ch == '\n') {
+					x = 0;
+					y += lineHeight;
+				} else if(ch == '\t') {
+					x += x % (letterWidth * tabStop);
+				} else {
+					x += letterWidth;
+				}
+			}
+		}
+
+		void drawInto(ScreenPainter painter, int dx, int dy, int sx, int sy, int width, int height) {
+			//char[6] buffer;
+			// FIXME unicode
+
+			painter.outlineColor = Color.white;
+			painter.fillColor = Color.white;
+			painter.drawRectangle(Point(dx, dy), width, height);
+
+			painter.outlineColor = Color.black;
+
+			if(length == 0)
+				return;
+
+			int startingIdx = 0;
+			if(sx > 0 || sy > 0) {
+				int lastSearched = text.length;
+				// binary search till we get the first visible item
+				startingIdx = text.length / 2;
+				keep_searching:
+				while(startingIdx >= 0 && text[startingIdx] == 0xff)
+					--startingIdx;
+				while(text[startingIdx] == 0xff && startingIdx < text.length)
+					++startingIdx;
+				if(startingIdx == text.length)
+					assert(0); // we're apparently empty! why didn't length == 0?
+
+				if(this.x[startingIdx] > sx || this.y[startingIdx] > sy) {
+					// FIXME
+					// too far ahead, search backward
+					lastSearched = startingIdx;
+					startingIdx = startingIdx / 2;
+					goto keep_searching;
+				} else {
+					// this is probably good enough but let's try to be more precise
+					//startingIdx = (lastSearched - startingIdx) / 2;
+					//goto keep_searching;
+				}
+			}
+
+			foreach(idx, char ch; text[startingIdx .. $]) {
+				if(ch == 0xff)
+					continue;
+				int drawX = dx + this.x[startingIdx + idx] - sx;
+				int drawY = dy + this.y[startingIdx + idx] - sy;
+
+				if(drawX - dx > width)
+					continue;
+				if(drawY - dy > height)
+					break;
+
+				painter.drawText(Point(drawX, drawY), "" ~ ch);
+				import std.stdio; write(ch); stdout.flush;
+			}
+		}
+	}
+}
+
 
 // Don't use this yet. When I'm happy with it, I will move it to the
 // regular module namespace.
