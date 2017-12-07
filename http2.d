@@ -15,8 +15,10 @@
 module arsd.http2;
 
 version(without_openssl) {}
-else
+else {
 version=use_openssl;
+version=with_openssl;
+}
 
 
 
@@ -1518,10 +1520,21 @@ class HttpApiClient() {
 			this.queryParts = queryParts;
 		}
 
+		RestBuilder _SELF() {
+			return this;
+		}
+
+		/// The args are so you can call opCall on the returned
+		/// object, despite @property being broken af in D.
+		RestBuilder opDispatch(string str, T)(string n, T v) {
+			return RestBuilder(apiClient, pathParts ~ str, queryParts ~ [n, to!string(v)]);
+		}
+
 		///
 		RestBuilder opDispatch(string str)() {
 			return RestBuilder(apiClient, pathParts ~ str, queryParts);
 		}
+
 
 		///
 		RestBuilder opIndex(string str) {

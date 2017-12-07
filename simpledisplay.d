@@ -1,4 +1,5 @@
 // FIXME: if the taskbar dies, a notification icon is undocked... but never detects a new taskbar spawning
+// https://dpaste.dzfl.pl/7a77355acaec
 /*
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
@@ -65,7 +66,7 @@
 	On Win32, you can pass `-L/subsystem:windows` if you don't want a
 	console to be automatically allocated.
 
-	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd.
+	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd.
 
 	On Ubuntu, you might need to install X11 development libraries to
 	successfully link.
@@ -900,8 +901,57 @@ Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coord
 
 */
 
-version(linux)
+version(linux) {
 	version = X11;
+	version(without_libnotify) {
+		// we cool
+	}
+	else
+		version = libnotify;
+}
+
+version(libnotify) {
+	pragma(lib, "dl");
+	import core.sys.posix.dlfcn;
+
+	void delegate()[int] libnotify_action_delegates;
+	int libnotify_action_delegates_count;
+	extern(C) static void libnotify_action_callback_sdpy(void* notification, char* action, void* user_data) {
+		auto idx = cast(int) user_data;
+		if(auto dgptr = idx in libnotify_action_delegates) {
+			(*dgptr)();
+			libnotify_action_delegates.remove(idx);
+		}
+	}
+
+	struct C_DynamicLibrary {
+		void* handle;
+		this(string name) {
+			handle = dlopen((name ~ "\0").ptr, RTLD_NOW);
+			if(handle is null)
+				throw new Exception("dlopen");
+		}
+
+		void close() {
+			dlclose(handle);
+		}
+
+		~this() {
+			// close
+		}
+
+		template call(string func, Ret, Args...) {
+			extern(C) Ret function(Args) fptr;
+			typeof(fptr) call() {
+				fptr = cast(typeof(fptr)) dlsym(handle, func);
+				return fptr;
+			}
+		}
+	}
+
+	C_DynamicLibrary* libnotify;
+}
+
 version(OSX) {
 	version(OSXCocoa) {}
 	else { version = X11; }
@@ -929,6 +979,8 @@ else
 version(Windows)
 	enum multipleWindowsSupported = true;
 else version(X11)
+	enum multipleWindowsSupported = true;
+else version(OSXCocoa)
 	enum multipleWindowsSupported = true;
 else
 	static assert(0);
@@ -1113,6 +1165,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	TrueColorImage takeScreenshot() {
 		version(Windows)
 			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
+		else version(OSXCocoa)
+			throw new NotYetImplementedException();
 		else
 			return trueColorImageFromNativeHandle(impl.window, width, height);
 	}
@@ -1216,6 +1270,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			impl.hwnd = nativeWindow;
 		else version(X11)
 			impl.window = nativeWindow;
+		else version(OSXCocoa)
+			throw new NotYetImplementedException();
 		else static assert(0);
 		// FIXME: set the size correctly
 		_width = 1;
@@ -1273,6 +1329,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				GetWindowRect(hwnd, &rcClip); 
 				ClipCursor(&rcClip); 
 			}
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1285,6 +1343,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(Windows) {
 			ReleaseCapture();
 			ClipCursor(null); 
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1298,6 +1358,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
 		} else version(Windows) {
 			SetFocus(this.impl.hwnd);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1340,6 +1402,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(X11) {
 			demandingAttention = true;
 			demandAttention(this, true);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1392,11 +1456,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Hide cursor when it enters the window.
 	void hideCursor() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.hideCursor();
 	}
 
 	/// Don't hide cursor when it enters the window.
 	void showCursor() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.showCursor();
 	}
 
@@ -1424,25 +1490,34 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Set window minimal size.
 	void setMinSize (int minwidth, int minheight) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setMinSize(minwidth, minheight);
 	}
 
 	/// Set window maximal size.
 	void setMaxSize (int maxwidth, int maxheight) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setMaxSize(maxwidth, maxheight);
 	}
 
 	/// Set window resize step (window size will be changed with the given granularity on supported platforms).
 	/// Currently only supported on X11.
 	void setResizeGranularity (int granx, int grany) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.setResizeGranularity(granx, grany);
 	}
 
 	/// Move window.
-	void move(int x, int y) { if (!_closed) impl.move(x, y); }
+	void move(int x, int y) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.move(x, y);
+	}
 
 	/// ditto
-	void move(Point p) { if (!_closed) impl.move(p.x, p.y); }
+	void move(Point p) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.move(p.x, p.y);
+	}
 
 	/++
 		Resize window.
@@ -1452,10 +1527,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		request, which means you must return to the event loop before the
 		width and height are actually changed.
 	+/
-	void resize(int w, int h) { if (!_closed) impl.resize(w, h); }
+	void resize(int w, int h) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.resize(w, h);
+	}
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
-	void moveResize (int x, int y, int w, int h) { if (!_closed) impl.moveResize(x, y, w, h); }
+	void moveResize (int x, int y, int w, int h) {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		if (!_closed) impl.moveResize(x, y, w, h);
+	}
 
 	private bool _hidden;
 
@@ -1475,6 +1556,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				XWithdrawWindow(impl.display, impl.window, DefaultScreen(impl.display));
 			else
 				XMapWindow(impl.display, impl.window);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -1727,6 +1810,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	@property void title(string title) {
 		_title = title;
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		impl.setTitle(title);
 	}
 
@@ -1774,6 +1858,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				0 /*PropModeReplace*/,
 				buffer.ptr,
 				cast(int) buffer.length);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2217,7 +2303,13 @@ struct EventLoop {
 
 	int run(bool delegate() whileCondition = null) {
 		assert(impl !is null);
+		impl.notExited = true;
 		return impl.run(whileCondition);
+	}
+
+	void exit() {
+		assert(impl !is null);
+		impl.notExited = false;
 	}
 
 	static EventLoopImpl* impl;
@@ -2225,6 +2317,8 @@ struct EventLoop {
 
 struct EventLoopImpl {
 	int refcount;
+
+	bool notExited = true;
 
 	version(linux) {
 		static import ep = core.sys.linux.epoll;
@@ -2419,7 +2513,7 @@ struct EventLoopImpl {
 			scope(exit) insideXEventLoop = false;
 
 			version(linux) {
-				while(!done && (whileCondition is null || whileCondition() == true)) {
+				while(!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					bool forceXPending = false;
 					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 					// eh... some events may be queued for "squashing" (or "late delivery"), so we have to do the following magic
@@ -2481,12 +2575,18 @@ struct EventLoopImpl {
 									(*t).trigger();
 
 								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
-									(*pfr).ready();
+									(*pfr).ready(flags);
 
 								// or i might add support for other FDs too
 								// but for now it is just timer
 								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
 							}
+						}
+						if(flags & ep.EPOLLIN) {
+							if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+								(*pfr).ready(flags);
+						}
+						/+
 						} else {
 							// not interested in OUT, we are just reading here.
 							//
@@ -2499,6 +2599,7 @@ struct EventLoopImpl {
 
 							throw new Exception("epoll did something else");
 						}
+						+/
 					}
 					// if we won't call `XPending()` here, libX may delay some internal event delivery.
 					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
@@ -2518,7 +2619,7 @@ struct EventLoopImpl {
 				// FIXME: we could probably support the POSIX timer_create
 				// signal-based option, but I'm in no rush to write it since
 				// I prefer the fd-based functions.
-				while (!done && (whileCondition is null || whileCondition() == true)) {
+				while (!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					while(!done &&
 						(pulseTimeout == 0 || (XPending(display) > 0)))
 					{
@@ -2539,7 +2640,7 @@ struct EventLoopImpl {
 		version(Windows) {
 			int ret = -1;
 			MSG message;
-			while(ret != 0 && (whileCondition is null || whileCondition() == true)) {
+			while(ret != 0 && (whileCondition is null || whileCondition() == true) && notExited) {
 				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
@@ -2614,11 +2715,13 @@ struct EventLoopImpl {
 	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
 	use the older version.
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 	version(X11) {
 		void recreateAfterDisconnect() {
 			stateDiscarded = false;
+			clippixmap = None;
 			throw new Exception("NOT IMPLEMENTED");
 		}
 
@@ -2636,7 +2739,16 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			return delegate int(XEvent e) {
 				switch(e.type) {
 					case EventType.Expose:
+					//case EventType.VisibilityNotify:
 						redraw();
+					break;
+					case EventType.ClientMessage:
+						version(sddddd) {
+						import std.stdio;
+						writeln("\t", e.xclient.message_type == GetAtom!("_XEMBED")(XDisplayConnection.get));
+						writeln("\t", e.xclient.format);
+						writeln("\t", e.xclient.data.l);
+						}
 					break;
 					case EventType.ButtonPress:
 						auto event = e.xbutton;
@@ -2676,6 +2788,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 						auto event = e.xconfigure;
 						this.width = event.width;
 						this.height = event.height;
+						//import std.stdio; writeln(width, " x " , height, " @ ", event.x, " ", event.y);
 						redraw();
 					break;
 					default: return 1;
@@ -2700,6 +2813,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			auto gc = DefaultGC(display, DefaultScreen(display));
 			XClearWindow(display, nativeHandle);
 
+			XSetClipMask(display, gc, clippixmap);
+
 			XSetForeground(display, gc,
 				cast(uint) 0 << 16 |
 				cast(uint) 0 << 8 |
@@ -2714,11 +2829,20 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				XFillArc(display, nativeHandle,
 					gc, width / 4, height / 4, width * 2 / 4, height * 2 / 4, 0 * 64, 360 * 64);
 			} else {
+				int dx = 0;
+				int dy = 0;
+				if(width > img.width)
+					dx = (width - img.width) / 2;
+				if(height > img.height)
+					dy = (height - img.height) / 2;
+				XSetClipOrigin(display, gc, dx, dy);
+
 				if (img.usingXshm)
-					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height, false);
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height, false);
 				else
-					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, 0, 0, img.width, img.height);
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height);
 			}
+			XSetClipMask(display, gc, None);
 			flushGui();
 		}
 
@@ -2752,14 +2876,104 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		}
 
 		private void createXWin () {
-			if(getTrayOwner() == None)
+			auto trayOwner = getTrayOwner();
+			if(trayOwner == None)
 				throw new Exception("No notification area found");
+
+
 			// create window
 			auto display = XDisplayConnection.get;
-			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, cast(Visual*) CopyFromParent, 0, null);
+
+			Visual* v = cast(Visual*) CopyFromParent;
+			/+
+			auto visualProp = getX11PropertyData(trayOwner, GetAtom!("_NET_SYSTEM_TRAY_VISUAL", true)(display));
+			if(visualProp !is null) {
+				c_ulong[] info = cast(c_ulong[]) visualProp;
+				if(info.length == 1) {
+					auto vid = info[0];
+					int returned;
+					XVisualInfo t;
+					t.visualid = vid;
+					auto got = XGetVisualInfo(display, VisualIDMask, &t, &returned);
+					if(got !is null) {
+						if(returned == 1) {
+							v = got.visual;
+							import std.stdio;
+							writeln("using special visual ", *got);
+						}
+						XFree(got);
+					}
+				}
+			}
+			+/
+
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, v, 0, null);
 			assert(nativeWindow);
 
+			XSetWindowBackgroundPixmap(display, nativeWindow, 1 /* ParentRelative */);
+
 			nativeHandle = nativeWindow;
+
+			///+
+			arch_ulong[2] info;
+			info[0] = 0;
+			info[1] = 1;
+
+			string title = this.name is null ? "simpledisplay.d program" : this.name;
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
+			XChangeProperty(display, nativeWindow, XA_NETWM_NAME, XA_UTF8, 8, PropModeReplace, title.ptr, cast(uint)title.length);
+
+			XChangeProperty(
+				display,
+				nativeWindow,
+				GetAtom!("_XEMBED_INFO", true)(display),
+				GetAtom!("_XEMBED_INFO", true)(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				info.ptr,
+				2);
+
+			import core.sys.posix.unistd;
+			arch_ulong pid = getpid();
+
+			XChangeProperty(
+				display,
+				nativeWindow,
+				GetAtom!("_NET_WM_PID", true)(display),
+				XA_CARDINAL,
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				&pid,
+				1);
+
+			updateNetWmIcon();
+
+			if (sdpyWindowClassStr !is null && sdpyWindowClassStr[0]) {
+				//{ import core.stdc.stdio; printf("winclass: [%s]\n", sdpyWindowClassStr); }
+				XClassHint klass;
+				XWMHints wh;
+				XSizeHints size;
+				klass.res_name = sdpyWindowClassStr;
+				klass.res_class = sdpyWindowClassStr;
+				XSetWMProperties(display, nativeWindow, null, null, null, 0, &size, &wh, &klass);
+			}
+
+				// believe it or not, THIS is what xfce needed for the 9999 issue
+				XSizeHints sh;
+					c_long spr;
+					XGetWMNormalHints(display, nativeWindow, &sh, &spr);
+					sh.flags |= PMaxSize | PMinSize;
+				// FIXME maybe nicer resizing
+				sh.min_width = 16;
+				sh.min_height = 16;
+				sh.max_width = 16;
+				sh.max_height = 16;
+				XSetWMNormalHints(display, nativeWindow, &sh);
+
+
+			//+/
+
 
 			XSelectInput(display, nativeWindow,
 				EventMask.ButtonPressMask | EventMask.ExposureMask | EventMask.StructureNotifyMask | EventMask.VisibilityChangeMask |
@@ -2770,12 +2984,42 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			active = true;
 		}
 
+		void updateNetWmIcon() {
+			if(img is null) return;
+			auto display = XDisplayConnection.get;
+			// FIXME: ensure this is correct
+			arch_ulong[] buffer;
+			auto imgMi = img.toTrueColorImage;
+			buffer ~= imgMi.width;
+			buffer ~= imgMi.height;
+			foreach(c; imgMi.imageData.colors) {
+				arch_ulong b;
+				b |= c.a << 24;
+				b |= c.r << 16;
+				b |= c.g << 8;
+				b |= c.b;
+				buffer ~= b;
+			}
+
+			XChangeProperty(
+				display,
+				nativeHandle,
+				GetAtom!"_NET_WM_ICON"(display),
+				GetAtom!"CARDINAL"(display),
+				32 /* bits */,
+				0 /*PropModeReplace*/,
+				buffer.ptr,
+				cast(int) buffer.length);
+		}
+
+
 
 		private SimpleWindow balloon;
 		version(with_timer)
 		private Timer timer;
 
 		private Window nativeHandle;
+		private Pixmap clippixmap = None;
 		private int width = 16;
 		private int height = 16;
 		private bool active = false;
@@ -2882,7 +3126,10 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		// but on X, we need an Image, so its canonical ctor is there. They should
 		// forward to each other though.
 		version(X11) {
-			this(name, icon is null ? null : Image.fromMemoryImage(icon), onClick);
+			this.name = name;
+			this.onClick = onClick;
+			createXWin();
+			this.icon = icon;
 		} else version(Windows) {
 			this.onClick = onClick;
 			this.win32Icon = new WindowsIcon(icon);
@@ -2921,6 +3168,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			Shell_NotifyIcon(NIM_ADD, cast(NOTIFYICONDATA*) &data);
 
 			CapableOfHandlingNativeEvent.nativeHandleMapping[this.hwnd] = this;
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2928,10 +3177,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	this(string name, Image icon, void delegate(MouseButton button) onClick) {
 		version(X11) {
 			this.onClick = onClick;
-			this.img = icon;
+			this.name = name;
 			createXWin();
+			this.icon = icon;
 		} else version(Windows) {
 			this(name, icon is null ? null : icon.toTrueColorImage(), onClick);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2941,15 +3193,15 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		+/
 		this(string name, MemoryImage icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
 			this.onClickEx = onClickEx;
-			if (icon !is null) this.img = Image.fromMemoryImage(icon);
 			createXWin();
+			if (icon !is null) this.icon = icon;
 		}
 
 		/// ditto
 		this(string name, Image icon, void delegate(int x, int y, MouseButton button, ModifierState mods) onClickEx) {
 			this.onClickEx = onClickEx;
-			this.img = icon;
 			createXWin();
+			this.icon = icon;
 		}
 	}
 
@@ -2970,7 +3222,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	}
 
 
+	string name_;
 	@property void name(string n) {
+		name_ = n;
+	}
+
+	@property string name() {
+		return name_;
 	}
 
 	///
@@ -2979,6 +3237,9 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
+				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
+				//import std.stdio; writeln("using pixmap ", clippixmap);
+				updateNetWmIcon();
 				redraw();
 			} else {
 				if (this.img !is null) {
@@ -2993,6 +3254,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.hIcon = this.win32Icon.hIcon;
 
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3006,6 +3269,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 		} else version(Windows) {
 			this.icon(i is null ? null : i.toTrueColorImage());
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3024,8 +3289,44 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			onclick = delegate called if the user clicks the balloon. (not yet implemented)
 			timeout = your suggested timeout period. The operating system is free to ignore your suggestion.
 	+/
-	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 10_000) {
+	void showBalloon(string title, string message, MemoryImage icon = null, void delegate() onclick = null, int timeout = 2_500) {
+		bool useCustom = true;
+		version(libnotify) {
+			if(onclick is null) // libnotify impl doesn't support callbacks yet because it doesn't do a dbus message loop
+			try {
+				if(!active) return;
+
+				if(libnotify is null) {
+					libnotify = new C_DynamicLibrary("libnotify.so");
+					libnotify.call!("notify_init", int, const char*)()((ApplicationName ~ "\0").ptr);
+				}
+
+				auto n = libnotify.call!("notify_notification_new", void*, const char*, const char*, const char*)()((title~"\0").ptr, (message~"\0").ptr, null /* icon */);
+
+				libnotify.call!("notify_notification_set_timeout", void, void*, int)()(n, timeout);
+
+				if(onclick) {
+					libnotify_action_delegates[libnotify_action_delegates_count] = onclick;
+					libnotify.call!("notify_notification_add_action", void, void*, const char*, const char*, typeof(&libnotify_action_callback_sdpy), void*, void*)()(n, "DEFAULT".ptr, "Go".ptr, &libnotify_action_callback_sdpy, cast(void*) libnotify_action_delegates_count, null);
+					libnotify_action_delegates_count++;
+				}
+
+				// FIXME icon
+
+				// set hint image-data
+				// set default action for onclick
+
+				void* error;
+				libnotify.call!("notify_notification_show", bool, void*, void**)()(n, &error);
+
+				useCustom = false;
+			} catch(Exception e) {
+
+			}
+		}
+		
 		version(X11) {
+		if(useCustom) {
 			if(!active) return;
 			if(balloon) {
 				hideBalloon();
@@ -3039,7 +3340,20 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			int x, y, width, height;
 			getWindowRect(x, y, width, height);
 
-			balloon.move(x - balloon.width, y - balloon.height);
+			int bx = x - balloon.width;
+			int by = y - balloon.height;
+			if(bx < 0)
+				bx = x + width + balloon.width;
+			if(by < 0)
+				by = y + height;
+
+			// just in case, make sure it is actually on scren
+			if(bx < 0)
+				bx = 0;
+			if(by < 0)
+				by = 0;
+
+			balloon.move(bx, by);
 			auto painter = balloon.draw();
 			painter.fillColor = Color(220, 220, 220);
 			painter.outlineColor = Color.black;
@@ -3082,6 +3396,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			version(with_timer)
 			timer = new Timer(timeout, &hideBalloon);
 			else {} // FIXME
+		}
 		} else version(Windows) {
 			enum NIF_INFO = 0x00000010;
 
@@ -3116,6 +3431,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3132,6 +3449,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.dwState = 0; // NIS_HIDDEN; // windows vista
 			data.dwStateMask = NIS_HIDDEN; // windows vista
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3151,6 +3470,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			data.dwState = NIS_HIDDEN; // windows vista
 			data.dwStateMask = NIS_HIDDEN; // windows vista
 			Shell_NotifyIcon(NIM_MODIFY, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -3165,14 +3486,34 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			}
 		} else version(Windows) {
 			Shell_NotifyIcon(NIM_DELETE, cast(NOTIFYICONDATA*) &data);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
 	~this() {
+		version(X11)
+			if(clippixmap != None)
+				XFreePixmap(XDisplayConnection.get, clippixmap);
 		close();
 	}
 }
 
+version(X11)
+/// call XFreePixmap on the return value
+Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
+	char[] data = new char[](i.width * i.height / 8 + 2);
+	data[] = 0;
+
+	int bitOffset = 0;
+	foreach(c; i.getAsTrueColorImage().imageData.colors) { // FIXME inefficient unnecessary conversion in palette cases
+		ubyte v = c.a > 128 ? 1 : 0;
+		data[bitOffset / 8] |= v << (bitOffset%8);
+		bitOffset++;
+	}
+	auto handle = XCreateBitmapFromData(XDisplayConnection.get, cast(Drawable) window, data.ptr, i.width, i.height);
+	return handle;
+}
 
 
 // basic functions to make timers
@@ -3349,14 +3690,21 @@ version(linux)
 /// Lets you add files to the event loop for reading. Use at your own risk.
 class PosixFdReader {
 	///
-	this(void delegate() onReady, int fd) {
-		this((int) { onReady(); }, fd);
+	this(void delegate() onReady, int fd, bool captureReads = true, bool captureWrites = false) {
+		this((int, bool, bool) { onReady(); }, fd, captureReads, captureWrites);
 	}
 
 	///
-	this(void delegate(int) onReady, int fd) {
+	this(void delegate(int) onReady, int fd, bool captureReads = true, bool captureWrites = false) {
+		this((int fd, bool, bool) { onReady(fd); }, fd, captureReads, captureWrites);
+	}
+
+	///
+	this(void delegate(int fd, bool read, bool write) onReady, int fd, bool captureReads = true, bool captureWrites = false) {
 		this.onReady = onReady;
 		this.fd = fd;
+		this.captureWrites = captureWrites;
+		this.captureReads = captureReads;
 
 		mapping[fd] = this;
 
@@ -3364,20 +3712,52 @@ class PosixFdReader {
 			import arsd.eventloop;
 			addFileEventListeners(fd, &ready);
 		} else {
-			prepareEventLoop();
-
-			static import ep = core.sys.linux.epoll;
-			ep.epoll_event ev = void;
-			ev.events = ep.EPOLLIN;
-			ev.data.fd = fd;
-			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+			enable();
 		}
 	}
 
-	void delegate(int) onReady;
+	bool captureReads;
+	bool captureWrites;
 
-	void ready() {
-		onReady(fd);
+	version(with_eventloop) {} else
+	///
+	void enable() {
+		prepareEventLoop();
+
+		static import ep = core.sys.linux.epoll;
+		ep.epoll_event ev = void;
+		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+		//import std.stdio; writeln("enable ", fd, " ", captureReads, " ", captureWrites);
+		ev.data.fd = fd;
+		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+	}
+
+	version(with_eventloop) {} else
+	///
+	void disable() {
+		prepareEventLoop();
+
+		static import ep = core.sys.linux.epoll;
+		ep.epoll_event ev = void;
+		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+		//import std.stdio; writeln("disable ", fd, " ", captureReads, " ", captureWrites);
+		ev.data.fd = fd;
+		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+	}
+
+	version(with_eventloop) {} else
+	///
+	void dispose() {
+		disable();
+		mapping.remove(fd);
+		fd = -1;
+	}
+
+	void delegate(int, bool, bool) onReady;
+
+	void ready(uint flags) {
+		static import ep = core.sys.linux.epoll;
+		onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
 	}
 
 	int fd = -1;
@@ -3434,6 +3814,8 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 		}
 	} else version(X11) {
 		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -3560,6 +3942,8 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 		}
 	} else version(X11) {
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -3580,6 +3964,15 @@ version(X11) {
 		if(a == None)
 			throw new Exception("XInternAtom " ~ name ~ " " ~ (create ? "true":"false"));
 		return a;
+	}
+
+	/// Platform specific for X11 - gets atom names as a string
+	string getAtomName(Atom atom, Display* display) {
+		auto got = XGetAtomName(display, atom);
+		scope(exit) XFree(got);
+		import core.stdc.string;
+		string s = got[0 .. strlen(got)].idup;
+		return s;
 	}
 
 	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later
@@ -4287,6 +4680,23 @@ struct KeyEvent {
 	}
 }
 
+/// sets the application name.
+@property string ApplicationName(string name) {
+	return _applicationName = name;
+}
+
+string _applicationName;
+
+/// ditto
+@property string ApplicationName() {
+	if(_applicationName is null) {
+		import core.runtime;
+		return Runtime.args[0];
+	}
+	return _applicationName;
+}
+
+
 /// Type of a [MouseEvent]
 enum MouseEventType : int {
 	motion = 0, /// The mouse moved inside the window
@@ -4375,6 +4785,8 @@ struct MouseEvent {
 			p.y = points[0].y;
 
 			return p;
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 }
@@ -4536,6 +4948,8 @@ final class Image {
 				return 0;
 			} else version(Windows) {
 				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4549,6 +4963,8 @@ final class Image {
 				// remember, bmps are upside down
 				auto offset = itemsPerLine * (height - y - 1) + x * 3;
 				return offset;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4559,6 +4975,8 @@ final class Image {
 			} else version(Windows) {
 				// windows bmps are upside down, so the adjustment is actually negative
 				return -((cast(int) width * 3 + 3) / 4) * 4;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4568,6 +4986,8 @@ final class Image {
 				return 2;
 			} else version(Windows) {
 				return 2;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4577,6 +4997,8 @@ final class Image {
 				return 1;
 			} else version(Windows) {
 				return 1;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -4586,6 +5008,8 @@ final class Image {
 				return 0;
 			} else version(Windows) {
 				return 0;
+			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 	}
@@ -4607,6 +5031,7 @@ final class Image {
 		if(y < 0 || y >= height)
 			return Color.transparent;
 
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		return impl.getPixel(x, y);
 	}
 
@@ -4697,7 +5122,7 @@ void displayImage(Image image, SimpleWindow win = null) {
 		}
 		win.eventLoop(0,
 			(KeyEvent ev) {
-				win.close();
+				if (ev.pressed) win.close();
 			} );
 	} else {
 		win.image = image;
@@ -4737,6 +5162,8 @@ class OperatingSystemFont {
 		XFontSet fontset;
 	} else version(Windows) {
 		HFONT font;
+	} else version(OSXCocoa) {
+		// FIXME
 	} else static assert(0);
 
 	///
@@ -4786,6 +5213,8 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			WCharzBuffer buffer = WCharzBuffer(name);
 			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+		} else version(OSXCocoa) {
+			// FIXME
 		} else static assert(0);
 
 		return !isNull();
@@ -4812,6 +5241,8 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			DeleteObject(font);
 			font = null;
+		} else version(OSXCocoa) {
+			// FIXME
 		} else static assert(0);
 	}
 
@@ -4822,6 +5253,7 @@ class OperatingSystemFont {
 
 	///
 	bool isNull() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
 		return font is null;
 	}
 
@@ -5047,6 +5479,8 @@ struct ScreenPainter {
 		} else version(X11) {
 			// FIXME: clip stuff outside this rectangle
 			XCopyArea(impl.display, impl.d, impl.d, impl.gc, upperLeft.x, upperLeft.y, width, height, upperLeft.x - dx, upperLeft.y - dy);
+		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -5059,6 +5493,7 @@ struct ScreenPainter {
 	}
 
 	///
+	version(OSXCocoa) {} else // NotYetImplementedException
 	void drawPixmap(Sprite s, Point upperLeft) {
 		if(impl is null) return;
 		if(isClipped(upperLeft, s.width, s.height)) return;
@@ -5286,6 +5721,7 @@ struct ScreenPainter {
 	ScreenPainter needs to be refactored to allow that though. So until that is
 	done, consider a `Sprite` to have const contents.
 */
+version(OSXCocoa) {} else // NotYetImplementedException
 class Sprite : CapableOfBeingDrawnUpon {
 
 	///
@@ -5501,6 +5937,20 @@ enum ModifierState : uint {
 
 	backButtonDown = 0x20, /// not available on X
 	forwardButtonDown = 0x40, /// ditto
+}
+else version(OSXCocoa)
+// FIXME FIXME NotYetImplementedException
+enum ModifierState : uint {
+	shift = 1, ///
+	capsLock = 2, ///
+	ctrl = 4, ///
+	alt = 8, /// Not always available on Windows
+	windows = 64, /// ditto
+	numLock = 16, ///
+
+	leftButtonDown = 256, /// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	middleButtonDown = 512, /// ditto
+	rightButtonDown = 1024, /// ditto
 }
 
 /// The names assume a right-handed mouse. These are bitwise combined on the events that use them
@@ -5898,6 +6348,119 @@ version(X11) {
 		NONAME = 0xFC,
 		PA1 = 0xFD,
 		OEM_CLEAR = 0xFE,
+	}
+
+} else version(OSXCocoa) {
+	// FIXME
+	enum Key {
+		Escape = 0x1b,
+		F1 = 0x70,
+		F2 = 0x71,
+		F3 = 0x72,
+		F4 = 0x73,
+		F5 = 0x74,
+		F6 = 0x75,
+		F7 = 0x76,
+		F8 = 0x77,
+		F9 = 0x78,
+		F10 = 0x79,
+		F11 = 0x7a,
+		F12 = 0x7b,
+		PrintScreen = 0x2c,
+		ScrollLock = -2, // FIXME
+		Pause = -3, // FIXME
+		Grave = 0xc0,
+		// number keys across the top of the keyboard
+		N1 = 0x31,
+		N2 = 0x32,
+		N3 = 0x33,
+		N4 = 0x34,
+		N5 = 0x35,
+		N6 = 0x36,
+		N7 = 0x37,
+		N8 = 0x38,
+		N9 = 0x39,
+		N0 = 0x30,
+		Dash = 0xbd,
+		Equals = 0xbb,
+		Backslash = 0xdc,
+		Backspace = 0x08,
+		Insert = 0x2d,
+		Home = 0x24,
+		PageUp = 0x21,
+		Delete = 0x2e,
+		End = 0x23,
+		PageDown = 0x22,
+		Up = 0x26,
+		Down = 0x28,
+		Left = 0x25,
+		Right = 0x27,
+
+		Tab = 0x09,
+		Q = 0x51,
+		W = 0x57,
+		E = 0x45,
+		R = 0x52,
+		T = 0x54,
+		Y = 0x59,
+		U = 0x55,
+		I = 0x49,
+		O = 0x4f,
+		P = 0x50,
+		LeftBracket = 0xdb,
+		RightBracket = 0xdd,
+		CapsLock = 0x14,
+		A = 0x41,
+		S = 0x53,
+		D = 0x44,
+		F = 0x46,
+		G = 0x47,
+		H = 0x48,
+		J = 0x4a,
+		K = 0x4b,
+		L = 0x4c,
+		Semicolon = 0xba,
+		Apostrophe = 0xde,
+		Enter = 0x0d,
+		Shift = 0x10,
+		Z = 0x5a,
+		X = 0x58,
+		C = 0x43,
+		V = 0x56,
+		B = 0x42,
+		N = 0x4e,
+		M = 0x4d,
+		Comma = 0xbc,
+		Period = 0xbe,
+		Slash = 0xbf,
+		Shift_r = -4, // FIXME Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
+		Ctrl = 0x11,
+		Windows = 0x5b,
+		Alt = -5, // FIXME
+		Space = 0x20,
+		Alt_r = 0xffea, // ditto of shift_r
+		Windows_r = -6, // FIXME
+		Menu = 0x5d,
+		Ctrl_r = -7, // FIXME
+
+		NumLock = 0x90,
+		Divide = 0x6f,
+		Multiply = 0x6a,
+		Minus = 0x6d,
+		Plus = 0x6b,
+		PadEnter = -8, // FIXME
+		// FIXME for the rest of these:
+		Pad1 = 0xff9c,
+		Pad2 = 0xff99,
+		Pad3 = 0xff9b,
+		Pad4 = 0xff96,
+		Pad5 = 0xff9d,
+		Pad6 = 0xff98,
+		Pad7 = 0xff95,
+		Pad8 = 0xff97,
+		Pad9 = 0xff9a,
+		Pad0 = 0xff9e,
+		PadDot = 0xff9f,
 	}
 
 }
@@ -6388,6 +6951,7 @@ version(Windows) {
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
 		static bool[string] knownWinClasses;
+		static bool altPressed = false;
 
 		void hideCursor () {
 			++curHidden;
@@ -6529,7 +7093,7 @@ version(Windows) {
 				break;
 			}
 
-			hwnd = CreateWindow(cn.ptr, toWStringz(title), style,
+			hwnd = CreateWindow(cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
@@ -6710,7 +7274,8 @@ version(Windows) {
 				break;
 				  case WM_SETFOCUS:
 				  case WM_KILLFOCUS:
-					wind._focused = msg == WM_SETFOCUS;
+					wind._focused = (msg == WM_SETFOCUS);
+					if (msg == WM_SETFOCUS) altPressed = false; //k8: reset alt state on defocus (it is better than nothing...)
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
@@ -6721,13 +7286,17 @@ version(Windows) {
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
 					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) ev.key = Key.Alt; // windows does it this way
 
 					ev.hardwareCode = (lParam & 0xff0000) >> 16;
 
 					if(GetKeyState(Key.Shift)&0x8000 || GetKeyState(Key.Shift_r)&0x8000)
 						ev.modifierState |= ModifierState.shift;
-					if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
-						ev.modifierState |= ModifierState.alt;
+					//k8: this doesn't work; thanks for nothing, windows
+					/*if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
+						ev.modifierState |= ModifierState.alt;*/
+					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) altPressed = (msg == WM_SYSKEYDOWN);
+					if (altPressed) ev.modifierState |= ModifierState.alt; else ev.modifierState &= ~ModifierState.alt;
 					if(GetKeyState(Key.Ctrl)&0x8000 || GetKeyState(Key.Ctrl_r)&0x8000)
 						ev.modifierState |= ModifierState.ctrl;
 					if(GetKeyState(Key.Windows)&0x8000 || GetKeyState(Key.Windows_r)&0x8000)
@@ -8404,7 +8973,13 @@ version(X11) {
 		bool done;
 		XEvent e;
 		XNextEvent(display, &e);
-		version(sdddd) { import std.stdio, std.conv : to; writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type)); }
+		version(sddddd) {
+			import std.stdio, std.conv : to;
+			if(auto win = e.xany.window in CapableOfHandlingNativeEvent.nativeHandleMapping) {
+				if(typeid(cast(Object) *win) == NotificationAreaIcon.classinfo)
+				writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type));
+			}
+		}
 		// filter out compose events
 		if (XFilterEvent(&e, None)) {
 			//{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
@@ -8940,6 +9515,32 @@ int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time
 
 Window XGetSelectionOwner(Display *display, Atom selection);
 
+struct XVisualInfo {
+	Visual* visual;
+	VisualID visualid;
+	int screen;
+	uint depth;
+	int c_class;
+	c_ulong red_mask;
+	c_ulong green_mask;
+	c_ulong blue_mask;
+	int colormap_size;
+	int bits_per_rgb;
+}
+
+enum VisualNoMask=	0x0;
+enum VisualIDMask=	0x1;
+enum VisualScreenMask=0x2;
+enum VisualDepthMask=	0x4;
+enum VisualClassMask=	0x8;
+enum VisualRedMaskMask=0x10;
+enum VisualGreenMaskMask=0x20;
+enum VisualBlueMaskMask=0x40;
+enum VisualColormapSizeMask=0x80;
+enum VisualBitsPerRGBMask=0x100;
+enum VisualAllMask=	0x1FF;
+
+XVisualInfo* XGetVisualInfo(Display*, c_long, XVisualInfo*, int*);
 
 
 
@@ -9499,6 +10100,10 @@ Atom XInternAtom(
 	const char*	/* atom_name */,
 	Bool		/* only_if_exists */
 );
+
+Status XInternAtoms(Display*, char**, int, Bool);
+char* XGetAtomName(Display*, Atom);
+Status XGetAtomNames(Display*, Atom*, int count, char**);
 
 alias int Status;
 
@@ -10190,19 +10795,6 @@ static if (!SdpyIsUsingIVGLBinds) {
 	 void glXWaitX();
 }
 
-
-	struct XVisualInfo {
-		Visual *visual;
-		VisualID visualid;
-		int screen;
-		int depth;
-		int c_class;                                  /* C++ */
-		arch_ulong red_mask;
-		arch_ulong green_mask;
-		arch_ulong blue_mask;
-		int colormap_size;
-		int bits_per_rgb;
-	}
 }
 }
 
@@ -10678,12 +11270,12 @@ private:
 		void CFRelease(CFTypeRef obj);
 
 		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
-											const(char)* bytes, int numBytes,
+											const(char)* bytes, long numBytes,
 											int encoding,
 											BOOL isExternalRepresentation);
 		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
 							 char lossByte, bool isExternalRepresentation,
-							 char* buffer, int maxBufLen, int* usedBufLen);
+							 char* buffer, long maxBufLen, long* usedBufLen);
 		int CFStringGetLength(CFStringRef theString);
 
 		CGContextRef CGBitmapContextCreate(void* data,
@@ -10734,7 +11326,7 @@ private:
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
-        return CFStringCreateWithBytes(null, str.ptr, str.length,
+        return CFStringCreateWithBytes(null, str.ptr, cast(int) str.length,
                                              kCFStringEncodingUTF8, false);
     }
 
@@ -10902,6 +11494,19 @@ version(OSXCocoa) {
         void dispose() {
         }
 
+	// NotYetImplementedException
+	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
+	void pen(Pen p) {}
+	void rasterOp(RasterOp op) {}
+	Pen _activePen;
+	Color _fillColor;
+	Rectangle _clipRectangle;
+	void setClipRectangle(int, int, int, int) {}
+	void setFont(OperatingSystemFont) {}
+	int fontHeight() { return 14; }
+
+	// end
+
         @property void outlineColor(Color color) {
             float alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
@@ -10925,7 +11530,8 @@ version(OSXCocoa) {
                                      color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
         }
 
-        void drawImage(int x, int y, Image image) {
+        void drawImage(int x, int y, Image image, int ulx, int upy, int width, int height) {
+		// NotYetImplementedException for upper left/width/height
             auto cgImage = CGBitmapContextCreateImage(image.context);
             auto size = CGSize(CGBitmapContextGetWidth(image.context),
                                CGBitmapContextGetHeight(image.context));
@@ -10933,6 +11539,7 @@ version(OSXCocoa) {
             CGImageRelease(cgImage);
         }
 
+	version(OSXCocoa) {} else // NotYetImplementedException
         void drawPixmap(Sprite image, int x, int y) {
 		// FIXME: is this efficient?
             auto cgImage = CGBitmapContextCreateImage(image.context);
@@ -11007,7 +11614,7 @@ version(OSXCocoa) {
     }
 
     mixin template NativeSimpleWindowImplementation() {
-        void createWindow(int width, int height, string title) {
+        void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
             synchronized {
                 if (NSApp == null) initializeApp();
             }
@@ -11103,14 +11710,15 @@ version(OSXCocoa) {
                 auto chars = characters(event);
                 auto range = CFRange(0, CFStringGetLength(chars));
                 auto buffer = new char[range.length*3];
-                int actualLength;
+                long actualLength;
                 CFStringGetBytes(chars, range, kCFStringEncodingUTF8, 0, false,
-                                 buffer.ptr, buffer.length, &actualLength);
+                                 buffer.ptr, cast(int) buffer.length, &actualLength);
                 foreach (dchar dc; buffer[0..actualLength]) {
                     if (simpleWindow.handleCharEvent)
                         simpleWindow.handleCharEvent(dc);
-                    if (simpleWindow.handleKeyEvent)
-                        simpleWindow.handleKeyEvent(dc, true); // FIXME: what about keyUp?
+		    // NotYetImplementedException
+                    //if (simpleWindow.handleKeyEvent)
+                        //simpleWindow.handleKeyEvent(KeyEvent(dc)); // FIXME: what about keyUp?
                 }
             }
 
@@ -12832,4 +13440,10 @@ DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
 	}
 
 	return new ArsdTtfFont(data, size);
+}
+
+class NotYetImplementedException : Exception {
+	this(string file = __FILE__, size_t line = __LINE__) {
+		super("Not yet implemented", file, line);
+	}
 }

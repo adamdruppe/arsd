@@ -3382,15 +3382,17 @@ class Window : Widget {
 	}
 
 	bool dispatchKeyEvent(KeyEvent ev) {
-		if(focusedWidget) {
-			auto event = new Event(ev.pressed ? "keydown" : "keyup", focusedWidget);
-			event.originalKeyEvent = ev;
-			event.character = ev.character;
-			event.key = ev.key;
-			event.state = ev.modifierState;
-			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
-			event.dispatch();
-		}
+		auto wid = focusedWidget;
+		if(wid is null)
+			wid = this;
+		auto event = new Event(ev.pressed ? "keydown" : "keyup", wid);
+		event.originalKeyEvent = ev;
+		event.character = ev.character;
+		event.key = ev.key;
+		event.state = ev.modifierState;
+		event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
+		event.dispatch();
+
 		return true;
 	}
 

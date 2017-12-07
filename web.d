@@ -642,7 +642,7 @@ class ApiProvider : WebDotDBaseType {
 <html>
 <head>
 	<title></title>
-	<link rel=\"stylesheet\" href=\"styles.css?"~compiliationStamp~"\" />
+	<link rel=\"stylesheet\" id=\"webd-styles-css\" href=\"styles.css?"~compiliationStamp~"\" />
 	<script> var delayedExecutionQueue = []; </script> <!-- FIXME do some better separation -->
 	<script>
 		if(document.cookie.indexOf(\"timezone=\") == -1) {
@@ -658,7 +658,7 @@ class ApiProvider : WebDotDBaseType {
 </head>
 <body>
 	<div id=\"body\"></div>
-	<script src=\"functions.js?"~compiliationStamp~"\"></script>
+	<script id=\"webd-functions-js\" src=\"functions.js?"~compiliationStamp~"\"></script>
 	" ~ deqFoot ~ "
 </body>
 </html>");

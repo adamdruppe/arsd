@@ -1073,6 +1073,9 @@ class Document : FileResource {
 			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
 			// It's hard to handle above though because my code sucks. So, we'll fix it here.
 
+			// Where to insert based on the parent (for mixed closed/unclosed <p> tags). See #120
+			// Kind of inefficient because we can't detect when we recurse back out of a node.
+			Element[Element] insertLocations;
 			auto iterator = root.tree;
 			foreach(ele; iterator) {
 				if(ele.parentNode is null)
@@ -1081,7 +1084,12 @@ class Document : FileResource {
 				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
 					auto shouldBePreviousSibling = ele.parentNode;
 					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
-					holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
+					if (auto p = holder in insertLocations) {
+						shouldBePreviousSibling = *p;
+						assert(shouldBePreviousSibling.parentNode is holder);
+					}
+					ele = holder.insertAfter(shouldBePreviousSibling, ele.removeFromTree());
+					insertLocations[holder] = ele;
 					iterator.currentKilled(); // the current branch can be skipped; we'll hit it soon anyway since it's now next up.
 				}
 			}
@@ -1313,16 +1321,16 @@ class Document : FileResource {
 		Do NOT use for anything other than eyeball debugging,
 		because whitespace may be significant content in XML.
 	+/
-	string toPrettyString(bool insertComments = false) const {
+	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 		string s = prolog;
 
 		if(insertComments) s ~= "<!--";
 		s ~= "\n";
 		if(insertComments) s ~= "-->";
 
-		s ~= root.toPrettyString(insertComments);
+		s ~= root.toPrettyString(insertComments, indentationLevel, indentWith);
 		foreach(a; piecesAfterRoot)
-			s ~= a.toPrettyString(insertComments);
+			s ~= a.toPrettyString(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -3080,13 +3088,13 @@ class Element {
 		return writeToAppender();
 	}
 
-	protected string toPrettyStringIndent(bool insertComments, int indentationLevel) const {
+	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
 		string s;
 
 		if(insertComments) s ~= "<!--";
 		s ~= "\n";
 		foreach(indent; 0 .. indentationLevel)
-			s ~= "\t";
+			s ~= indentWith;
 		if(insertComments) s ~= "-->";
 
 		return s;
@@ -3096,13 +3104,63 @@ class Element {
 		Writes out with formatting. Be warned: formatting changes the contents. Use ONLY
 		for eyeball debugging.
 	+/
-	string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
-		string s = toPrettyStringIndent(insertComments, indentationLevel);
+	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
+
+		// first step is to concatenate any consecutive text nodes to simplify
+		// the white space analysis. this changes the tree! but i'm allowed since
+		// the comment always says it changes the comments
+		//
+		// actually i'm not allowed cuz it is const so i will cheat and lie
+		/+
+		TextNode lastTextChild = null;
+		for(int a = 0; a < this.children.length; a++) {
+			auto child = this.children[a];
+			if(auto tn = cast(TextNode) child) {
+				if(lastTextChild) {
+					lastTextChild.contents ~= tn.contents;
+					for(int b = a; b < this.children.length - 1; b++)
+						this.children[b] = this.children[b + 1];
+					this.children = this.children[0 .. $-1];
+				} else {
+					lastTextChild = tn;
+				}
+			} else {
+				lastTextChild = null;
+			}
+		}
+		+/
+
+		const(Element)[] children;
+
+		TextNode lastTextChild = null;
+		for(int a = 0; a < this.children.length; a++) {
+			auto child = this.children[a];
+			if(auto tn = cast(const(TextNode)) child) {
+				if(lastTextChild !is null) {
+					lastTextChild.contents ~= tn.contents;
+				} else {
+					lastTextChild = new TextNode("");
+					lastTextChild.parentNode = cast(Element) this;
+					lastTextChild.contents ~= tn.contents;
+					children ~= lastTextChild;
+				}
+			} else {
+				lastTextChild = null;
+				children ~= child;
+			}
+		}
+
+		string s = toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 
 		s ~= "<";
 		s ~= tagName;
 
-		foreach(n, v ; attributes) {
+		// i sort these for consistent output. might be more legible
+		// but especially it keeps it the same for diff purposes.
+		import std.algorithm : sort;
+		auto keys = sort(attributes.keys);
+		foreach(n; keys) {
+			auto v = attributes[n];
 			s ~= " ";
 			s ~= n;
 			s ~= "=\"";
@@ -3119,18 +3177,19 @@ class Element {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(children.length == 1 && children[0].nodeType == NodeType.Text)
-			s ~= children[0].toString();
-		else
-		foreach(child; children) {
-			assert(child !is null);
+		if(allAreInlineHtml(children)) {
+			foreach(child; children) {
+				s ~= child.toString();
+			}
+		} else {
+			foreach(child; children) {
+				assert(child !is null);
 
-			s ~= child.toPrettyString(insertComments, indentationLevel + 1);
+				s ~= child.toPrettyString(insertComments, indentationLevel + 1, indentWith);
+			}
+
+			s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 		}
-
-		// see comment above
-		if(!(children.length == 1 && children[0].nodeType == NodeType.Text))
-			s ~= toPrettyStringIndent(insertComments, indentationLevel);
 
 		s ~= "</";
 		s ~= tagName;
@@ -3692,10 +3751,10 @@ class DocumentFragment : Element {
 		return this.innerHTML(where);
 	}
 
-	override string toPrettyString(bool insertComments, int indentationLevel) const {
+	override string toPrettyString(bool insertComments, int indentationLevel, string indentWith) const {
 		string s;
 		foreach(child; children)
-			s ~= child.toPrettyString(insertComments, indentationLevel);
+			s ~= child.toPrettyString(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -4059,7 +4118,7 @@ class RawSource : SpecialElement {
 		return source;
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		return source;
 	}
 
@@ -4087,7 +4146,7 @@ abstract class ServerSideCode : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		return "<" ~ source ~ ">";
 	}
 
@@ -4136,7 +4195,7 @@ class BangInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<!";
 		s ~= source;
@@ -4171,7 +4230,7 @@ class QuestionInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<";
 		s ~= source;
@@ -4207,7 +4266,7 @@ class HtmlComment : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int) const {
+	override string toPrettyString(bool, int, string) const {
 		string s;
 		s ~= "<!--";
 		s ~= source;
@@ -4275,14 +4334,39 @@ class TextNode : Element {
 		return s;
 	}
 
-	override string toPrettyString(bool insertComments = false, int indentationLevel = 0) const {
+	override string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 		string s;
+
+		string contents = this.contents;
+		// we will first collapse the whitespace per html
+		// sort of. note this can break stuff yo!!!!
+		if(this.parentNode is null || this.parentNode.tagName != "pre") {
+			string n = "";
+			bool lastWasWhitespace = indentationLevel > 0;
+			foreach(char c; contents) {
+				if(c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+					if(!lastWasWhitespace)
+						n ~= ' ';
+					lastWasWhitespace = true;
+				} else {
+					n ~= c;
+					lastWasWhitespace = false;
+				}
+			}
+
+			contents = n;
+		}
+
+		if(this.parentNode !is null && this.parentNode.tagName != "p") {
+			contents = contents.strip;
+		}
+
 		auto e = htmlEntitiesEncode(contents);
 		import std.algorithm.iteration : splitter;
 		bool first = true;
 		foreach(line; splitter(e, "\n")) {
 			if(first) {
-				s ~= toPrettyStringIndent(insertComments, indentationLevel);
+				s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 				first = false;
 			} else {
 				s ~= "\n";
@@ -4293,7 +4377,7 @@ class TextNode : Element {
 				if(insertComments)
 					s ~= "-->";
 			}
-			s ~= line;
+			s ~= line.stripRight;
 		}
 		return s;
 	}
@@ -5034,11 +5118,16 @@ struct DomMutationEvent {
 }
 
 
-private enum static string[] selfClosedElements = [
+private immutable static string[] selfClosedElements = [
 	// html 4
 	"img", "hr", "input", "br", "col", "link", "meta",
 	// html 5
 	"source" ];
+
+private immutable static string[] inlineElements = [
+	"span", "strong", "em", "b", "i", "a"
+];
+
 
 static import std.conv;
 
@@ -6961,6 +7050,21 @@ unittest {
 	assert(stringplate.expand.innerHTML == `<div id="bar"><div class="foo">$foo</div><div class="baz">$baz</div></div>`);
 }
 +/
+
+bool allAreInlineHtml(const(Element)[] children) {
+	foreach(child; children) {
+		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {
+			// cool
+		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children)) {
+			// cool
+		} else {
+			// prolly block
+			return false;
+		}
+	}
+	return true;
+}
+
 /*
 Copyright: Adam D. Ruppe, 2010 - 2017
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
@@ -6971,3 +7075,21 @@ Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)
 */
+
+
+unittest {
+	// Test for issue #120
+	string s = `<html>
+	<body>
+		<P>AN
+		<P>bubbles</P>
+		<P>giggles</P>
+	</body>
+</html>`;
+	auto doc = new Document();
+	doc.parseUtf8(s, false, false);
+	auto s2 = doc.toString();
+	assert(
+			s2.indexOf("bubbles") < s2.indexOf("giggles"),
+			"paragraph order incorrect:\n" ~ s2);
+}
