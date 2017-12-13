@@ -227,8 +227,8 @@ class SqliteResult :  ResultSet {
 		position++;
 	}
 
-	int length() {
-		return cast(int) rows.length;
+	override size_t length() {
+		return rows.length;
 	}
 
 	this(Variant[][] rows, char[][] columnNames) {

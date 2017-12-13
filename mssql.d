@@ -111,7 +111,7 @@ class MsSqlResult : ResultSet {
 			fetchNext;
 	}
 
-	int length()
+	override size_t length()
 	{
 		return 1; //FIX ME
 	}
