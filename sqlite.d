@@ -325,7 +325,7 @@ struct Statement {
 				Variant v;
 				final switch(sqlite3_column_type(s, a)){
 					case SQLITE_INTEGER:
-						v = sqlite3_column_int(s, a);
+						v = sqlite3_column_int64(s, a);
 					break;
 					case SQLITE_FLOAT:
 						v = sqlite3_column_double(s, a);
@@ -730,6 +730,7 @@ void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
 int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
 double sqlite3_column_double(sqlite3_stmt*, int iCol);
 int sqlite3_column_int(sqlite3_stmt*, int iCol);
+long sqlite3_column_int64(sqlite3_stmt*, int iCol);
 char *sqlite3_column_text(sqlite3_stmt*, int iCol);
 int sqlite3_column_type(sqlite3_stmt*, int iCol);
 char *sqlite3_column_name(sqlite3_stmt*, int N);
