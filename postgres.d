@@ -126,7 +126,7 @@ class PostgresResult : ResultSet {
 			fetchNext();
 	}
 
-	int length() {
+	override size_t length() {
 		return numRows;
 	}
 

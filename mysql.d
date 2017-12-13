@@ -72,7 +72,7 @@ class MySqlResult : ResultSet {
 	}
 
 
-	override int length() {
+	override size_t length() {
 		if(result is null)
 			return 0;
 		return cast(int) mysql_num_rows(result);
