@@ -502,6 +502,11 @@ template extract(A, T, R...){
 			throw new DatabaseException("bind " ~ db.error());
 	}
 	
+	void bind(int col, long value){
+		if(sqlite3_bind_int64(s, col, value) != SQLITE_OK)
+			throw new DatabaseException("bind " ~ db.error());
+	}
+	
 	void bind(int col, const byte[] value){
 		if(value is null) {
 			if(sqlite3_bind_null(s, col) != SQLITE_OK)
@@ -513,6 +518,8 @@ template extract(A, T, R...){
 	}
 
 	void bind(int col, Variant v) {
+		if(v.peek!long)
+			bind(col, v.get!long);
 		if(v.peek!int)
 			bind(col, v.get!int);
 		if(v.peek!string)
@@ -714,6 +721,7 @@ int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void*);
 //int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void(*)(void*));
 int sqlite3_bind_double(sqlite3_stmt*, int, double);
 int sqlite3_bind_int(sqlite3_stmt*, int, int);
+int sqlite3_bind_int64(sqlite3_stmt*, int, long);
 int sqlite3_bind_null(sqlite3_stmt*, int);
 int sqlite3_bind_text(sqlite3_stmt*, int, const(char)*, int n, void*);
 //int sqlite3_bind_text(sqlite3_stmt*, int, char*, int n, void(*)(void*));
