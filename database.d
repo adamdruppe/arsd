@@ -147,7 +147,7 @@ interface ResultSet {
 	bool empty() @property;
 	Row front() @property;
 	void popFront() ;
-	int length() @property;
+	size_t length() @property;
 
 	/* deprecated */ final ResultSet byAssoc() { return this; }
 }
