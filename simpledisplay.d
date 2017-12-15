@@ -195,7 +195,7 @@
 	$(H3 $(ID topic-event-loops) Event loops)
 		The simpledisplay event loop is designed to handle common cases easily while being extensible for more advanced cases, or replaceable by other libraries.
 
-		The most common scenario is creating a window, then calling `window.eventLoop` when setup is complete. You can pass several handlers to the `eventLoop` method right there:
+		The most common scenario is creating a window, then calling [SimpleWindow.eventLoop|window.eventLoop] when setup is complete. You can pass several handlers to the `eventLoop` method right there:
 
 		---
 		// dmd example.d simpledisplay.d color.d
@@ -212,18 +212,18 @@
 
 		On Linux, the event loop is implemented with the `epoll` system call for efficiency an extensibility to other files. On Windows, it runs a traditional `GetMessage` + `DispatchMessage` loop, with a call to `SleepEx` in each iteration to allow the thread to enter an alertable wait state regularly, primarily so Overlapped I/O callbacks will get a chance to run.
 
-		On Linux, simpledisplay also supports my `arsd.eventloop` module. Compile your program, including the eventloop.d file, with the `-version=with_eventloop` switch.
+		On Linux, simpledisplay also supports my [arsd.eventloop] module. Compile your program, including the eventloop.d file, with the `-version=with_eventloop` switch.
 
 		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
 
 	$(H3 $(ID topic-notification-areas) Notification area (aka systray) icons)
-		Notification area icons are currently only implemented on X11 targets. Windows support will come when I need it (or if someone requests it and I have some time to spend on it).
+		Notification area icons are currently implemented on X11 and Windows. On X11, it defaults to using `libnotify` to show bubbles, if available, and will do a custom bubble window if not. You can `version=without_libnotify` to avoid this run-time dependency, if you like.
 
 	$(H3 $(ID topic-input-handling) Input handling)
 		There are event handlers for low-level keyboard and mouse events, and higher level handlers for character events.
 
 	$(H3 $(ID topic-2d-drawing) 2d Drawing)
-		To draw on your window, use the `window.draw` method. It returns a [ScreenPainter] structure with drawing methods.
+		To draw on your window, use the [SimpleWindow.draw] method. It returns a [ScreenPainter] structure with drawing methods.
 
 		Important: `ScreenPainter` double-buffers and will not actually update the window until its destructor is run. Always ensure the painter instance goes out-of-scope before proceeding. You can do this by calling it inside an event handler, a timer callback, or an small scope inside main. For example:
 
@@ -252,13 +252,13 @@
 
 		Note that it is still possible to draw 2d on top of an OpenGL window, using the `draw` method, though I don't recommend it.
 
-		To start, you create a `SimpleWindow` with OpenGL enabled by passing the argument `OpenGlOptions.yes` to the constructor.
+		To start, you create a [SimpleWindow] with OpenGL enabled by passing the argument [OpenGlOptions.yes] to the constructor.
 
-		Next, you set `redrawOpenGlScene` to a delegate which draws your frame.
+		Next, you set [SimpleWindow.redrawOpenGlScene|window.redrawOpenGlScene] to a delegate which draws your frame.
 
-		To force a redraw of the scene, call `window.redrawOpenGlSceneNow()`.
+		To force a redraw of the scene, call [SimpleWindow.redrawOpenGlScene|window.redrawOpenGlSceneNow()].
 
-		Please note that my experience with OpenGL is very out-of-date, and the bindings in simpledisplay reflect that. If you want to use more modern functions, you may have to define the bindings yourself, or import them from another module. However, I believe the OpenGL context creation done in simpledisplay will work for any version.
+		Please note that my experience with OpenGL is very out-of-date, and the bindings in simpledisplay reflect that. If you want to use more modern functions, you may have to define the bindings yourself, or import them from another module. However, the OpenGL context creation done in simpledisplay will work for any version.
 
 		This example program will draw a rectangle on your window:
 
@@ -272,7 +272,7 @@
 		---
 
 	$(H3 $(ID topic-images) Displaying images)
-		You can also load PNG images using my `png.d`.
+		You can also load PNG images using [arsd.png].
 
 		---
 		// dmd example.d simpledisplay.d color.d png.d
@@ -287,7 +287,7 @@
 
 		Compile with `dmd example.d simpledisplay.d png.d`.
 
-		If you find an image file which is a valid png that `arsd.png` fails to load, please let me know. In the mean time of fixing the bug, you can probably convert the file into an easier-to-load format. Be sure to turn OFF png interlacing, as that isn't supported. Other things to try would be making the image smaller, or trying 24 bit truecolor mode with an alpha channel.
+		If you find an image file which is a valid png that [arsd.png] fails to load, please let me know. In the mean time of fixing the bug, you can probably convert the file into an easier-to-load format. Be sure to turn OFF png interlacing, as that isn't supported. Other things to try would be making the image smaller, or trying 24 bit truecolor mode with an alpha channel.
 
 	$(H3 $(ID topic-sprites) Sprites)
 		The [Sprite] class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
