@@ -488,7 +488,10 @@ public:
       decode_start();
       m_ready_flag = true;
       return JPGD_SUCCESS;
-    } catch (Exception) {}
+    } catch (Exception e) {
+      //version(jpegd_test) {{ import core.stdc.stdio; stderr.fprintf("ERROR: %.*s...\n", cast(int)e.msg.length, e.msg.ptr); }}
+      version(jpegd_test) {{ import std.stdio; stderr.writeln(e.toString); }}
+    }
     return JPGD_FAILED;
   }
 
@@ -1002,11 +1005,11 @@ private:
 
   // This method handles all errors. It will never return.
   // It could easily be changed to use C++ exceptions.
-  /*JPGD_NORETURN*/ void stop_decoding (jpgd_status status) {
+  /*JPGD_NORETURN*/ void stop_decoding (jpgd_status status, size_t line=__LINE__) {
     m_error_code = status;
     free_all_blocks();
     //longjmp(m_jmp_state, status);
-    throw new Exception("jpeg decoding error");
+    throw new Exception("jpeg decoding error", __FILE__, line);
   }
 
   void* alloc (size_t nSize, bool zero=false) {
@@ -2480,13 +2483,28 @@ private:
 
     if (m_comps_in_frame == 1)
     {
-      if ((m_comp_h_samp.ptr[0] != 1) || (m_comp_v_samp.ptr[0] != 1))
-        stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
+      version(jpegd_test) {{ import std.stdio; stderr.writeln("m_comp_h_samp=", m_comp_h_samp.ptr[0], "; m_comp_v_samp=", m_comp_v_samp.ptr[0]); }}
 
-      m_scan_type = JPGD_GRAYSCALE;
-      m_max_blocks_per_mcu = 1;
-      m_max_mcu_x_size = 8;
-      m_max_mcu_y_size = 8;
+      //if ((m_comp_h_samp.ptr[0] != 1) || (m_comp_v_samp.ptr[0] != 1))
+      //  stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
+
+      if ((m_comp_h_samp.ptr[0] == 1) && (m_comp_v_samp.ptr[0] == 1))
+      {
+        m_scan_type = JPGD_GRAYSCALE;
+        m_max_blocks_per_mcu = 1;
+        m_max_mcu_x_size = 8;
+        m_max_mcu_y_size = 8;
+      }
+      else if ((m_comp_h_samp.ptr[0] == 2) && (m_comp_v_samp.ptr[0] == 2))
+      {
+        //k8: i added this, and i absolutely don't know what it means; but it decoded two sample images i found
+        m_scan_type = JPGD_GRAYSCALE;
+        m_max_blocks_per_mcu = 4;
+        m_max_mcu_x_size = 8;
+        m_max_mcu_y_size = 8;
+      }
+      else
+        stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
     }
     else if (m_comps_in_frame == 3)
     {
@@ -3227,6 +3245,8 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
   //height = image_height;
   //actual_comps = decoder.num_components;
 
+  version(jpegd_test) {{ import core.stdc.stdio; stderr.fprintf("starting (%dx%d)...\n", image_width, image_height); }}
+
   if (decoder.begin_decoding() != JPGD_SUCCESS || image_width < 1 || image_height < 1) return null;
 
   immutable int dst_bpl = image_width*req_comps;
@@ -3234,6 +3254,8 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
   ubyte* pImage_data = img.imageData.bytes.ptr;
 
   for (int y = 0; y < image_height; ++y) {
+    //version(jpegd_test) {{ import core.stdc.stdio; stderr.fprintf("loading line %d...\n", y); }}
+
     const(ubyte)* pScan_line;
     uint scan_line_len;
     if (decoder.decode(/*(const void**)*/cast(void**)&pScan_line, &scan_line_len) != JPGD_SUCCESS) {
