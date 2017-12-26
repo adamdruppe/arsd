@@ -7051,6 +7051,13 @@ unittest {
 }
 +/
 
+/+
+	so this currently outputs
+	<span>
+	</span>
+
+	for an empty span. idk if i want that.
++/
 bool allAreInlineHtml(const(Element)[] children) {
 	foreach(child; children) {
 		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {

@@ -115,7 +115,7 @@ class GameHelperBase {
 	/// The virtual digital controllers are best to use if that model fits you because it
 	/// works with several kinds of controllers as well as keyboards.
 
-	JoystickUpdate joysticks[4];
+	JoystickUpdate[4] joysticks;
 	ref JoystickUpdate joystick1() { return joysticks[0]; }
 
 	bool[256] keyboardState;
@@ -143,7 +143,7 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 					readJoystickEvents(joystickFds[p]);
 				auto update = getJoystickUpdate(p);
 				game.joysticks[p] = update;
-			} else assert(0);
+			}// else assert(0);
 
 			auto now = MonoTime.currTime;
 			game.update(now - lastUpdate);

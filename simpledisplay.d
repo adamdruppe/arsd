@@ -2876,6 +2876,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		}
 
 		private void createXWin () {
+			// FIXME: check for MANAGER on root window to catch new/changed tray owners
 			auto trayOwner = getTrayOwner();
 			if(trayOwner == None)
 				throw new Exception("No notification area found");
@@ -3710,7 +3711,7 @@ class PosixFdReader {
 
 		version(with_eventloop) {
 			import arsd.eventloop;
-			addFileEventListeners(fd, &ready);
+			addFileEventListeners(fd, &readyel);
 		} else {
 			enable();
 		}
@@ -3754,6 +3755,11 @@ class PosixFdReader {
 	}
 
 	void delegate(int, bool, bool) onReady;
+
+	version(with_eventloop)
+	void readyel() {
+		onReady(fd, true, true);
+	}
 
 	void ready(uint flags) {
 		static import ep = core.sys.linux.epoll;
