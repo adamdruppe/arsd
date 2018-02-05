@@ -59,6 +59,7 @@ version(with_openssl) {
 HttpRequest httpRequest(string method, string url, ubyte[] content, string[string] content) {
 	return null;
 }
++/
 
 /**
 	auto request = get("http://arsdnet.net/");
@@ -67,16 +68,19 @@ HttpRequest httpRequest(string method, string url, ubyte[] content, string[strin
 	auto response = get("http://arsdnet.net/").waitForCompletion();
 */
 HttpRequest get(string url) {
-	auto request = new HttpRequest();
+	auto client = new HttpClient();
+	auto request = client.navigateTo(Uri(url));
 	return request;
 }
 
+/// gets the text off a url. basic operation only.
 string getText(string url) {
 	auto request = get(url);
 	auto response = request.waitForCompletion();
 	return cast(string) response.content;
 }
 
+/+
 ubyte[] getBinary(string url, string[string] cookies = null) {
 	auto hr = httpRequest("GET", url, null, cookies);
 	if(hr.code != 200)
@@ -116,6 +120,7 @@ string post(string url, string[string] args, string[string] cookies = null) {
 
 	return cast(string) hr.content;
 }
+
 +/
 
 ///
@@ -667,6 +672,8 @@ class HttpRequest {
 	import std.zlib;
 	UnCompress uncompress;
 
+	const(ubyte)[] leftoverDataFromLastTime;
+
 	void handleIncomingData(scope const ubyte[] dataIn) {
 	debug(arsd_http2) writeln("handleIncomingData, state: ", state);
 		if(state == State.waitingForResponse) {
@@ -675,7 +682,11 @@ class HttpRequest {
 			bodyReadingState = BodyReadingState.init;
 		}
 
-		const(ubyte)[] data = dataIn[];
+		const(ubyte)[] data;
+		if(leftoverDataFromLastTime.length)
+			data = leftoverDataFromLastTime ~ dataIn[];
+		else
+			data = dataIn[];
 
 		if(state == State.readingHeaders) {
 			void parseLastHeader() {
@@ -832,8 +843,9 @@ class HttpRequest {
 									power *= 16;
 								}
 								debug(arsd_http2) writeln("Chunk length: ", bodyReadingState.contentLengthRemaining);
-								bodyReadingState.chunkedState++;
-								continue;
+								bodyReadingState.chunkedState = 1;
+								data = data[a + 1 .. $];
+								goto start_over;
 							}
 						break;
 						case 1: // reading until end of line
@@ -844,31 +856,36 @@ class HttpRequest {
 								else
 									bodyReadingState.chunkedState = 2;
 							}
+							data = data[a + 1 .. $];
+							goto start_over;
 						break;
 						case 2: // reading data
 							auto can = a + bodyReadingState.contentLengthRemaining;
 							if(can > data.length)
 								can = cast(int) data.length;
 
+							auto newData = data[a .. can];
+							data = data[can .. $];
+
 							//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
 							//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data[a .. can]);
 							//else
-								responseData.content ~= data[a .. can];
+								responseData.content ~= newData;
 
-							bodyReadingState.contentLengthRemaining -= can - a;
+							bodyReadingState.contentLengthRemaining -= newData.length;
 							debug(arsd_http2) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
-							a += can - a;
 							assert(bodyReadingState.contentLengthRemaining >= 0);
 							if(bodyReadingState.contentLengthRemaining == 0) {
-								bodyReadingState.chunkedState++;
-								data = data[a .. $];
+								bodyReadingState.chunkedState = 3;
 							} else {
-								data = data[a .. $];
+								// will continue grabbing more
 							}
 							goto start_over;
 						case 3: // reading 13/10
 							assert(data[a] == 13);
 							bodyReadingState.chunkedState++;
+							data = data[a + 1 .. $];
+							goto start_over;
 						break;
 						case 4: // reading 10 at end of packet
 							assert(data[a] == 10);
@@ -878,6 +895,8 @@ class HttpRequest {
 						case 5: // reading footers
 							//goto done; // FIXME
 							state = State.complete;
+
+							bodyReadingState.chunkedState = 0;
 
 							// skip the tailing chunk of headers
 							// FIXME
@@ -893,6 +912,8 @@ class HttpRequest {
 							//	responseData.content ~= cast(ubyte[]) uncompress.flush();
 
 							responseData.contentText = cast(string) responseData.content;
+
+							goto done;
 					}
 				}
 
@@ -922,6 +943,11 @@ class HttpRequest {
 				}
 			}
 		}
+
+		if(data.length)
+			leftoverDataFromLastTime = data.dup;
+		else
+			leftoverDataFromLastTime = null;
 	}
 
 	this() {
