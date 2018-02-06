@@ -898,10 +898,9 @@ class HttpRequest {
 
 							bodyReadingState.chunkedState = 0;
 
-							// skip the tailing chunk of headers
-							// FIXME
-							if(data.length == 5 && data == [48, 13, 10, 13, 10])
-								a = cast(int) data.length;
+							while(data[a] != 10)
+								a++;
+							data = data[a + 1 .. $];
 
 							if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
 								auto n = uncompress.uncompress(responseData.content);
