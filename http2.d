@@ -925,8 +925,12 @@ class HttpRequest {
 				//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data);
 				//else
 					responseData.content ~= data;
-				assert(data.length <= bodyReadingState.contentLengthRemaining, format("%d <= %d\n%s", data.length, bodyReadingState.contentLengthRemaining, cast(string)data));
-				bodyReadingState.contentLengthRemaining -= data.length;
+				//assert(data.length <= bodyReadingState.contentLengthRemaining, format("%d <= %d\n%s", data.length, bodyReadingState.contentLengthRemaining, cast(string)data));
+				int use = cast(int) data.length;
+				if(use > bodyReadingState.contentLengthRemaining)
+					use = bodyReadingState.contentLengthRemaining;
+				bodyReadingState.contentLengthRemaining -= use;
+				data = data[use .. $];
 				if(bodyReadingState.contentLengthRemaining == 0) {
 					if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
 						auto n = uncompress.uncompress(responseData.content);
