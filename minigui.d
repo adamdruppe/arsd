@@ -4980,7 +4980,18 @@ class Button : MouseActivatedWidget {
 	}
 	else static assert(false);
 
-	private string label;
+	private string label_;
+
+	string label() { return label_; }
+	void label(string l) {
+		label_ = l;
+		version(win32_widgets) {
+			WCharzBuffer bfr = WCharzBuffer(l);
+			SetWindowTextW(hwnd, bfr.ptr);
+		} else version(custom_widgets) {
+			redraw();
+		}
+	}
 
 	version(win32_widgets)
 	this(string label, Widget parent = null) {
