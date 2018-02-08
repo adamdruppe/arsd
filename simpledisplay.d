@@ -2331,7 +2331,7 @@ struct EventLoopImpl {
 		int pulseFd = -1;
 		version(linux) ep.epoll_event[16] events = void;
 	} else version(Windows) {
-		Timer pulser;
+		static Timer pulser; // this is static so the GC doesn't try to reap it; we want to manage it ourselves
 		HANDLE[] handles;
 	}
 
