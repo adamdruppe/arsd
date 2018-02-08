@@ -3177,7 +3177,7 @@ class Element {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(allAreInlineHtml(children)) {
+		if(tagName.isInArray(inlineElements) || allAreInlineHtml(children)) {
 			foreach(child; children) {
 				s ~= child.toString();
 			}
@@ -7051,13 +7051,6 @@ unittest {
 }
 +/
 
-/+
-	so this currently outputs
-	<span>
-	</span>
-
-	for an empty span. idk if i want that.
-+/
 bool allAreInlineHtml(const(Element)[] children) {
 	foreach(child; children) {
 		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {

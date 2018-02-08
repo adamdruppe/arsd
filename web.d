@@ -1464,8 +1464,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 					}
 					auto code = Element.make("div");
 					code.addClass("exception-error-message");
-					code.addChild("p", e.msg);
-					debug code.addChild("pre", e.toString());
+					import arsd.characterencodings;
+					code.addChild("p", convertToUtf8Lossy(cast(immutable(ubyte)[]) e.msg, "utf8"));
+					debug code.addChild("pre", convertToUtf8Lossy(cast(immutable(ubyte)[]) e.toString(), "utf8"));
 
 					result.result.str = (code.toString());
 				}
