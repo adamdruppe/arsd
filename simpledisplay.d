@@ -2469,8 +2469,10 @@ struct EventLoopImpl {
 				}
 
 		} else version(Windows) {
-			if(pulser !is null)
+			if(pulser !is null) {
 				pulser.destroy();
+				pulser = null;
+			}
 			if (customEventH !is null) {
 				CloseHandle(customEventH);
 				customEventH = null;
