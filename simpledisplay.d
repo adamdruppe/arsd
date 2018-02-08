@@ -2331,7 +2331,7 @@ struct EventLoopImpl {
 		int pulseFd = -1;
 		version(linux) ep.epoll_event[16] events = void;
 	} else version(Windows) {
-		static Timer pulser; // this is static so the GC doesn't try to reap it; we want to manage it ourselves
+		Timer pulser;
 		HANDLE[] handles;
 	}
 
@@ -2469,8 +2469,10 @@ struct EventLoopImpl {
 				}
 
 		} else version(Windows) {
-			if(pulser !is null)
+			if(pulser !is null) {
 				pulser.destroy();
+				pulser = null;
+			}
 			if (customEventH !is null) {
 				CloseHandle(customEventH);
 				customEventH = null;
