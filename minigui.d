@@ -5130,6 +5130,51 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 }
 
 ///
+class ImageBox : Widget {
+	private MemoryImage image_;
+
+	/// How to fit the image in the box if they aren't an exact match in size?
+	enum HowToFit {
+		center, /// centers the image, cropping around all the edges as needed
+		crop, /// always draws the image in the upper left, cropping the lower right if needed
+		// stretch, /// not implemented
+	}
+
+	private Sprite sprite;
+	private HowToFit howToFit_;
+
+	private Color backgroundColor_;
+
+	///
+	this(MemoryImage image, HowToFit howToFit, Color backgroundColor = Color.transparent, Widget parent = null) {
+		this.image_ = image;
+		this.tabStop = false;
+		this.howToFit_ = howToFit;
+		this.backgroundColor_ = backgroundColor;
+		super(parent);
+		updateSprite();
+	}
+
+	private void updateSprite() {
+		if(this.parentWindow && this.parentWindow.win)
+			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+	}
+
+	override void paint(ScreenPainter painter) {
+		updateSprite();
+		if(backgroundColor_.a) {
+			painter.fillColor = backgroundColor_;
+			painter.drawRectangle(Point(0, 0), width, height);
+		}
+		if(howToFit_ == HowToFit.crop)
+			sprite.drawAt(painter, Point(0, 0));
+		else if(howToFit_ == HowToFit.center) {
+			sprite.drawAt(painter, Point((width - image_.width) / 2, (height - image_.height) / 2));
+		}
+	}
+}
+
+///
 class TextLabel : Widget {
 	override int maxHeight() { return Window.lineHeight; }
 	override int minHeight() { return Window.lineHeight; }
