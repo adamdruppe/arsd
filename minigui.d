@@ -8,8 +8,7 @@
 /*
 	TODO:
 
-	class Form with submit behavior
-	class CommandButton with a consistent size
+	class Form with submit behavior -- see AutomaticDialog
 
 	disabled widgets and menu items
 
@@ -3811,7 +3810,11 @@ class MainWindow : Window {
 
 	override void addChild(Widget c, int position = int.max) {
 		if(auto tb = cast(ToolBar) c)
-			super.addChild(c, menuBar ? 1 : 0);
+			version(win32_widgets)
+				super.addChild(c, 0);
+			else version(custom_widgets)
+				super.addChild(c, menuBar ? 1 : 0);
+			else static assert(0);
 		else
 			clientArea.addChild(c, position);
 	}
@@ -5035,6 +5038,28 @@ class Button : MouseActivatedWidget {
 		}
 	}
 
+}
+
+/++
+	A button with a consistent size, suitable for user commands like OK and Cancel.
++/
+class CommandButton : Button {
+	this(string label, Widget parent = null) {
+		super(label, parent);
+	}
+
+	override int maxHeight() {
+		return Window.lineHeight + 4;
+	}
+
+	override int maxWidth() {
+		return Window.lineHeight * 4;
+	}
+
+	override int marginLeft() { return 12; }
+	override int marginRight() { return 12; }
+	override int marginTop() { return 12; }
+	override int marginBottom() { return 12; }
 }
 
 ///
@@ -6488,18 +6513,24 @@ class AutomaticDialog(T) : Dialog {
 	void delegate(T) onOK;
 	void delegate() onCancel;
 
+	override int paddingTop() { return Window.lineHeight; }
+	override int paddingBottom() { return Window.lineHeight; }
+	override int paddingRight() { return Window.lineHeight; }
+	override int paddingLeft() { return Window.lineHeight; }
+
 	this(void delegate(T) onOK, void delegate() onCancel) {
 		static if(is(T == class))
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, 300, T.stringof);
+		super(400, (__traits(allMembers, T).length + 5) * Window.lineHeight, T.stringof);
 
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
 			alias type = typeof(member);
 			static if(is(type == string)) {
-				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				import std.string;
+				auto le = new LabeledLineEdit(memberName.capitalize ~ ": ", this);
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = ev.stringValue;
 				});
@@ -6521,8 +6552,9 @@ class AutomaticDialog(T) : Dialog {
 		}
 
 		auto hl = new HorizontalLayout(this);
-		auto ok = new Button("OK", hl);
-		auto cancel = new Button("Cancel", hl);
+		auto stretch = new HorizontalSpacer(hl); // to right align
+		auto ok = new CommandButton("OK", hl);
+		auto cancel = new CommandButton("Cancel", hl);
 		ok.addEventListener(EventType.triggered, &OK);
 		cancel.addEventListener(EventType.triggered, &Cancel);
 
