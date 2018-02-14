@@ -1,3 +1,5 @@
+// FIXME: have a simple function that integrates with sdpy event loop. it can be a template
+// for optional dependency
 /++
 	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
 

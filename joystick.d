@@ -1,4 +1,7 @@
 /**
+
+	FIXME: a simple function to integrate with sdpy event loop. templated function
+
 	HIGH LEVEL NOTES
 
 	This will offer a pollable state of two styles of controller: a PS1 or an XBox 360.
