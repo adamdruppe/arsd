@@ -42,7 +42,7 @@
 */
 module arsd.simpleaudio;
 
-enum BUFFER_SIZE_FRAMES = 512;//2048;
+enum BUFFER_SIZE_FRAMES = 1024;//512;//2048;
 enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 
 version(Demo)
