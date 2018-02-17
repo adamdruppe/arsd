@@ -823,6 +823,9 @@ interface MemoryImage {
   /// Set image pixel.
 	void setPixel(int x, int y, in Color clr);
 
+	/// Returns a copy of the image
+	MemoryImage clone() const;
+
 	/// Load image from file. This will import arsd.image to do the actual work, and cost nothing if you don't use it.
 	static MemoryImage fromImage(T : const(char)[]) (T filename) @trusted {
 		static if (__traits(compiles, (){import arsd.image;})) {
@@ -855,6 +858,15 @@ class IndexedImage : MemoryImage {
 	/// .
 	override int height() const {
 		return _height;
+	}
+
+	/// .
+	override IndexedImage clone() const {
+		auto n = new IndexedImage(width, height);
+		n.data[] = this.data[]; // the data member is already there, so array copy
+		n.palette = this.palette.dup; // and here we need to allocate too, so dup
+		n.hasAlpha = this.hasAlpha;
+		return n;
 	}
 
 	override Color getPixel(int x, int y) const @trusted {
@@ -975,6 +987,13 @@ class TrueColorImage : MemoryImage {
 
 	int _width;
 	int _height;
+
+	/// .
+	override TrueColorImage clone() const {
+		auto n = new TrueColorImage(width, height);
+		n.imageData.bytes[] = this.imageData.bytes[]; // copy into existing array ctor allocated
+		return n;
+	}
 
 	/// .
 	override int width() const { return _width; }

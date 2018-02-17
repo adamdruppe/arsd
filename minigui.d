@@ -5158,6 +5158,14 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 class ImageBox : Widget {
 	private MemoryImage image_;
 
+	///
+	public void setImage(MemoryImage image){
+		this.image_ = image;
+		if(this.parentWindow && this.parentWindow.win)
+			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+		redraw();
+	}
+
 	/// How to fit the image in the box if they aren't an exact match in size?
 	enum HowToFit {
 		center, /// centers the image, cropping around all the edges as needed
@@ -5181,7 +5189,7 @@ class ImageBox : Widget {
 	}
 
 	private void updateSprite() {
-		if(this.parentWindow && this.parentWindow.win)
+		if(sprite is null && this.parentWindow && this.parentWindow.win)
 			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
 	}
 
