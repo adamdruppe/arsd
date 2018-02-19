@@ -4576,7 +4576,7 @@ struct KeyEvent {
 	 *
 	 * and even "Win + 1 + Ctrl".
 	 */
-	static KeyEvent parse (const(char)[] name) nothrow @trusted @nogc {
+	static KeyEvent parse (const(char)[] name, bool* ignoreModsOut=null, int* updown=null) nothrow @trusted @nogc {
 		auto nanchor = name; // keep it anchored, 'cause `name` may have NO_INTERIOR set
 
 		// remove trailing spaces
@@ -4608,10 +4608,13 @@ struct KeyEvent {
 			return true;
 		}
 
+		if (ignoreModsOut !is null) *ignoreModsOut = false;
+		if (updown !is null) *updown = -1;
 		KeyEvent res;
 		res.key = cast(Key)0; // just in case
 		const(char)[] tk, tkn; // last token
 		bool allowEmascStyle = true;
+		bool ignoreModifiers = false;
 		tokenloop: for (;;) {
 			tk = tkn;
 			tkn = getToken();
@@ -4626,6 +4629,9 @@ struct KeyEvent {
 					if (mdc == 'M' && (res.modifierState&ModifierState.alt) == 0) { res.modifierState |= ModifierState.alt; continue tokenloop; }
 					if (mdc == 'H' && (res.modifierState&ModifierState.windows) == 0) { res.modifierState |= ModifierState.windows; continue tokenloop; }
 					if (mdc == 'S' && (res.modifierState&ModifierState.shift) == 0) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+					if (mdc == '*') { ignoreModifiers = true; continue tokenloop; }
+					if (mdc == 'U' || mdc == 'R') { if (updown !is null) *updown = 0; continue tokenloop; }
+					if (mdc == 'D' || mdc == 'P') { if (updown !is null) *updown = 1; continue tokenloop; }
 				}
 			}
 			allowEmascStyle = false;
@@ -4633,6 +4639,9 @@ struct KeyEvent {
 			if (strEquCI(tk, "Alt")) { res.modifierState |= ModifierState.alt; continue tokenloop; }
 			if (strEquCI(tk, "Win") || strEquCI(tk, "Windows")) { res.modifierState |= ModifierState.windows; continue tokenloop; }
 			if (strEquCI(tk, "Shift")) { res.modifierState |= ModifierState.shift; continue tokenloop; }
+			if (strEquCI(tk, "Release")) { if (updown !is null) *updown = 0; continue tokenloop; }
+			if (strEquCI(tk, "Press")) { if (updown !is null) *updown = 1; continue tokenloop; }
+			if (tk == "*") { ignoreModifiers = true; continue tokenloop; }
 			if (tk.length == 0) continue;
 			// try key name
 			if (res.key == 0) {
@@ -4658,6 +4667,7 @@ struct KeyEvent {
 			// unknown or duplicate key name, get out of here
 			break;
 		}
+		if (ignoreModsOut !is null) *ignoreModsOut = ignoreModifiers;
 		return res; // something
 	}
 
@@ -4666,7 +4676,10 @@ struct KeyEvent {
 		void doModKey (ref uint mask, ref Key kk, Key k, ModifierState mst) {
 			if (kk == k) { mask |= mst; kk = cast(Key)0; }
 		}
-		auto ke = KeyEvent.parse(name);
+		bool ignoreMods;
+		int updown;
+		auto ke = KeyEvent.parse(name, &ignoreMods, &updown);
+		if ((updown == 0 && this.pressed) || (updown == 1 && !this.pressed)) return false;
 		if (this.key != ke.key) {
 			// things like "ctrl+alt" are complicated
 			uint tkm = this.modifierState&modmask;
@@ -4684,7 +4697,7 @@ struct KeyEvent {
 			doModKey(tkm, tk, Key.Shift, ModifierState.shift);
 			return (tk == ke.key && tkm == kkm);
 		}
-		return ((this.modifierState&modmask) == (ke.modifierState&modmask));
+		return (ignoreMods || ((this.modifierState&modmask) == (ke.modifierState&modmask)));
 	}
 }
 
@@ -4797,6 +4810,205 @@ struct MouseEvent {
 			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
+
+	bool opEquals() (const(char)[] str) pure nothrow @trusted @nogc { return equStr(this, str); }
+
+	/**
+	can contain emacs-like modifier prefix
+	case-insensitive names:
+		lmbX/leftX
+		rmbX/rightX
+		mmbX/middleX
+		wheelX
+		motion (no prefix allowed)
+	'X' is either "up" or "down" (or "-up"/"-down"); if omited, means "down"
+	*/
+	static bool equStr() (in auto ref MouseEvent event, const(char)[] str) pure nothrow @trusted @nogc {
+		if (str.length == 0) return false; // just in case
+		debug(arsd_mevent_strcmp) { import iv.cmdcon; conwriteln("str=<", str, ">"); }
+		auto anchor = str;
+		uint mods = 0; // uint.max == any
+		uint lastButt = uint.max; // otherwise, bit 31 means "down"
+		while (str.length) {
+			if (str.ptr[0] <= ' ') {
+				while (str.length && str.ptr[0] <= ' ') str = str[1..$];
+				continue;
+			}
+			// one-letter modifier?
+			if (str.length >= 2 && str.ptr[1] == '-') {
+				switch (str.ptr[0]) {
+					case '*': // "any" modifier (cannot be undone)
+						mods = mods.max;
+						break;
+					case 'C': case 'c': // emacs "ctrl"
+						if (mods != mods.max) mods |= ModifierState.ctrl;
+						break;
+					case 'M': case 'm': // emacs "meta"
+						if (mods != mods.max) mods |= ModifierState.alt;
+						break;
+					case 'S': case 's': // emacs "shift"
+						if (mods != mods.max) mods |= ModifierState.shift;
+						break;
+					case 'H': case 'h': // emacs "hyper" (aka winkey)
+						if (mods != mods.max) mods |= ModifierState.windows;
+						break;
+					default:
+						return false; // unknown modifier
+				}
+				str = str[2..$];
+				continue;
+			}
+			// word
+			char[16] buf = void; // locased
+			auto wep = 0;
+			while (str.length) {
+				immutable char ch = str.ptr[0];
+				if (ch <= ' ' || ch == '-') break;
+				str = str[1..$];
+				if (wep > buf.length) return false; // too long
+						 if (ch >= 'A' && ch <= 'Z') buf.ptr[wep++] = cast(char)(ch+32); // poor man tolower
+				else if (ch >= 'a' && ch <= 'z') buf.ptr[wep++] = ch;
+				else return false; // invalid char
+			}
+			if (wep == 0) return false; // just in case
+			uint bnum;
+			enum UpDown { None = -1, Up, Down }
+			auto updown = UpDown.None; // 0: up; 1: down
+			switch (buf[0..wep]) {
+				// left button
+				case "lmbup": case "leftup": updown = UpDown.Up; goto case "lmb";
+				case "lmbdown": case "leftdown": updown = UpDown.Down; goto case "lmb";
+				case "lmb": case "left": bnum = 0; break;
+				// middle button
+				case "mmbup": case "middleup": updown = UpDown.Up; goto case "mmb";
+				case "mmbdown": case "middledown": updown = UpDown.Down; goto case "mmb";
+				case "mmb": case "middle": bnum = 1; break;
+				// right button
+				case "rmbup": case "rightup": updown = UpDown.Up; goto case "rmb";
+				case "rmbdown": case "rightdown": updown = UpDown.Down; goto case "rmb";
+				case "rmb": case "right": bnum = 2; break;
+				// wheel
+				case "wheelup": updown = UpDown.Up; goto case "wheel";
+				case "wheeldown": updown = UpDown.Down; goto case "wheel";
+				case "wheel": bnum = 3; break;
+				// motion
+				case "motion": bnum = 7; break;
+				// unknown
+				default: return false;
+			}
+			debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  0: mods=0x%08x; bnum=%u; updown=%s [%s]", mods, bnum, updown, str); }
+			// parse possible "-up" or "-down"
+			if (updown == UpDown.None && bnum < 7 && str.length > 0 && str.ptr[0] == '-') {
+				wep = 0;
+				foreach (immutable idx, immutable char ch; str[1..$]) {
+					if (ch <= ' ' || ch == '-') break;
+					assert(idx == wep); // for now; trick
+					if (wep > buf.length) { wep = 0; break; } // too long
+							 if (ch >= 'A' && ch <= 'Z') buf.ptr[wep++] = cast(char)(ch+32); // poor man tolower
+					else if (ch >= 'a' && ch <= 'z') buf.ptr[wep++] = ch;
+					else { wep = 0; break; } // invalid char
+				}
+						 if (wep == 2 && buf[0..wep] == "up") updown = UpDown.Up;
+				else if (wep == 4 && buf[0..wep] == "down") updown = UpDown.Down;
+				// remove parsed part
+				if (updown != UpDown.None) str = str[wep+1..$];
+			} else if (updown == UpDown.None) {
+				updown = (bnum < 7 ? UpDown.Down : UpDown.Up);
+			}
+			assert(updown != UpDown.None);
+			debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  1: mods=0x%08x; bnum=%u; updown=%s [%s]", mods, bnum, updown, str); }
+			// if we have a previous button, it goes to modifiers (unless it is a wheel)
+			if (lastButt != lastButt.max) {
+				if ((lastButt&0xff) >= 3) return false; // wheel or motion
+				if (mods != mods.max) {
+					uint butbit = 0;
+					final switch (lastButt&0x03) {
+						case 0: butbit = ModifierState.leftButtonDown; break;
+						case 1: butbit = ModifierState.middleButtonDown; break;
+						case 2: butbit = ModifierState.rightButtonDown; break;
+					}
+					if (lastButt >= 0x8000_0000U) mods |= butbit; else mods &= ~butbit;
+				}
+			}
+			// remember last button
+			lastButt = bnum|(updown == UpDown.Up ? 0 : 0x8000_0000U);
+		}
+		// no button -- nothing to do
+		if (lastButt == lastButt.max) return false;
+		// done parsing, check if something's left
+		foreach (immutable char ch; str) if (ch > ' ') return false; // oops
+		debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  *: mods=0x%08x; lastButt=0x%08x; kmod=0x%08x; type=%s", mods, lastButt, event.modifierState, event.type); }
+		// check modifier state
+		if (mods != mods.max) {
+			enum InterestingMods =
+				ModifierState.shift|
+				ModifierState.ctrl|
+				ModifierState.alt|
+				ModifierState.windows|
+				ModifierState.leftButtonDown|
+				ModifierState.middleButtonDown|
+				ModifierState.rightButtonDown|
+				0;
+			if ((event.modifierState&InterestingMods) != mods) return false;
+		}
+		// now check type
+		if ((lastButt&0xff) == 7) {
+			// motion
+			if (event.type != MouseEventType.motion) return false;
+		} else {
+			// buttions
+			if ((lastButt >= 0x8000_0000U && event.type != MouseEventType.buttonPressed) ||
+					(lastButt < 0x8000_0000U && event.type != MouseEventType.buttonReleased))
+			{
+				return false;
+			}
+			// button number
+			final switch (lastButt&0x03) {
+				case 0: if (event.button != MouseButton.left) return false; break;
+				case 1: if (event.button != MouseButton.middle) return false; break;
+				case 2: if (event.button != MouseButton.right) return false; break;
+			}
+		}
+		return true;
+	}
+}
+
+unittest version(arsd_mevent_strcmp_test) {
+	MouseEvent event;
+	event.type = MouseEventType.buttonPressed;
+	event.button = MouseButton.left;
+	event.modifierState = ModifierState.ctrl;
+	assert(event == "C-LMB");
+	assert(event != "C-LMBUP");
+	assert(event != "C-LMB-UP");
+	assert(event != "C-S-LMB");
+	assert(event == "*-LMB");
+	assert(event != "*-LMB-UP");
+
+	event.type = MouseEventType.buttonReleased;
+	assert(event != "C-LMB");
+	assert(event == "C-LMBUP");
+	assert(event == "C-LMB-UP");
+	assert(event != "C-S-LMB");
+	assert(event != "*-LMB");
+	assert(event == "*-LMB-UP");
+
+	event.button = MouseButton.right;
+	event.modifierState |= ModifierState.shift;
+	event.type = MouseEventType.buttonPressed;
+	assert(event != "C-LMB");
+	assert(event != "C-LMBUP");
+	assert(event != "C-LMB-UP");
+	assert(event != "C-S-LMB");
+	assert(event != "*-LMB");
+	assert(event != "*-LMB-UP");
+
+	assert(event != "C-RMB");
+	assert(event != "C-RMBUP");
+	assert(event != "C-RMB-UP");
+	assert(event == "C-S-RMB");
+	assert(event == "*-RMB");
+	assert(event != "*-RMB-UP");
 }
 
 /// This gives a few more options to drawing lines and such
