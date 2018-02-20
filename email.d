@@ -27,30 +27,49 @@ struct MimeAttachment {
 }
 
 
-/// For OUTGOING email
+/++
+	For OUTGOING email
+
+
+	To use:
+
+	---
+	auto message = new EmailMessage();
+	message.to ~= "someuser@example.com";
+	message.from = "youremail@example.com";
+	message.subject = "My Subject";
+	message.setTextBody("hi there");
+	//message.toString(); // get string to send externally
+	message.send(); // send via some relay
+	// may also set replyTo, etc
+	---
++/
 class EmailMessage {
+	///
 	void setHeader(string name, string value) {
 		headers ~= name ~ ": " ~ value;
 	}
 
-	string[] to;
-	string[] cc;
-	string[] bcc;
-	string from;
-	string replyTo;
-	string inReplyTo;
+	string[] to;  ///
+	string[] cc;  ///
+	string[] bcc;  ///
+	string from;  ///
+	string replyTo;  ///
+	string inReplyTo;  ///
 	string textBody;
 	string htmlBody;
-	string subject;
+	string subject;  ///
 
 	string[] headers;
 
 	private bool isMime = false;
 	private bool isHtml = false;
 
+	///
 	void setTextBody(string text) {
 		textBody = text;
 	}
+	/// automatically sets a text fallback if you haven't already
 	void setHtmlBody(string html) {
 		isMime = true;
 		isHtml = true;
@@ -63,12 +82,13 @@ class EmailMessage {
 
 	const(MimeAttachment)[] attachments;
 
+	///
 	void addAttachment(string mimeType, string filename, in void[] content, string id = null) {
 		isMime = true;
 		attachments ~= MimeAttachment(mimeType, filename, content, id);
 	}
 
-	// in the html, use img src="cid:ID_GIVEN_HERE"
+	/// in the html, use img src="cid:ID_GIVEN_HERE"
 	void addInlineImage(string id, string mimeType, string filename, in void[] content) {
 		assert(isHtml);
 		isMime = true;
@@ -84,6 +104,7 @@ class EmailMessage {
 			alternate
 	*/
 
+	/// Returns the MIME formatted email string, including encoded attachments
 	override string toString() {
 		assert(!isHtml || (isHtml && isMime));
 
@@ -202,6 +223,7 @@ class EmailMessage {
 		return msg;
 	}
 
+	/// Sends via a given SMTP relay
 	void send(RelayInfo mailServer = RelayInfo("smtp://localhost")) {
 		auto smtp = SMTP(mailServer.server);
 

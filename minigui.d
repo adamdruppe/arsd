@@ -6479,6 +6479,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/bb760476%28v=vs.85%29.as
 // These are all for setMenuAndToolbarFromAnnotatedCode
 /// This item in the menu will be preceded by a separator line
 struct separator {}
+deprecated("It was misspelled, use separator instead") alias seperator = separator;
 /// Program-wide keyboard shortcut to trigger the action
 struct accelerator { string keyString; }
 /// tells which menu the action will be on
