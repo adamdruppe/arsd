@@ -12,9 +12,9 @@
 module arsd.mysql;
 
 
-version(MySQL_51) {
+//version(MySQL_51) {
 	// we good
-} else version(Less_Than_MySQL_51) {
+/*} else*/ version(Less_Than_MySQL_51) {
 	// we good
 } else {
 	// default now is mysql 5.1 or up - it has been long
@@ -59,7 +59,7 @@ class MySqlResult : ResultSet {
 
 	this(MYSQL_RES* r, string sql) {
 		result = r;
-		itemsTotal = length();
+		itemsTotal = cast(int) length();
 		itemsUsed = 0;
 
 		this.sql = sql;
@@ -196,13 +196,12 @@ class MySqlResult : ResultSet {
 	---
 +/
 class MySql : Database {
-	///
-	this(string host, string user, string pass, string db) {
+	this(string host, string user, string pass, string db, uint port = 0) {
 		mysql = enforceEx!(DatabaseException)(
 			mysql_init(null),
 			"Couldn't init mysql");
 		enforceEx!(DatabaseException)(
-			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), 0, null, 0),
+			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), port, null, 0),
 			error());
 
 		dbname = db;
