@@ -164,12 +164,12 @@ class MySqlResult : ResultSet {
 
 
 class MySql : Database {
-	this(string host, string user, string pass, string db) {
+	this(string host, string user, string pass, string db,uint port = 0) {
 		mysql = enforceEx!(DatabaseException)(
 			mysql_init(null),
 			"Couldn't init mysql");
 		enforceEx!(DatabaseException)(
-			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), 0, null, 0),
+			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), port, null, 0),
 			error());
 
 		dbname = db;
