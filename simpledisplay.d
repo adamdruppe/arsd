@@ -4973,7 +4973,7 @@ struct MouseEvent {
 	}
 }
 
-unittest version(arsd_mevent_strcmp_test) {
+version(arsd_mevent_strcmp_test) unittest {
 	MouseEvent event;
 	event.type = MouseEventType.buttonPressed;
 	event.button = MouseButton.left;
