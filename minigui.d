@@ -3689,8 +3689,8 @@ class MainWindow : Window {
                         void New() {}
                         void Open() {}
                         void Save() {}
-                        @seperator
-                        void eXit() @accelerator("Alt+F4") {
+                        @separator
+                        void Exit() @accelerator("Alt+F4") {
                                 window.close();
                         }
                 }
@@ -3699,7 +3699,7 @@ class MainWindow : Window {
                         void Undo() {
                                 undo();
                         }
-                        @seperator
+                        @separator
                         void Cut() {}
                         void Copy() {}
                         void Paste() {}
@@ -3733,7 +3733,7 @@ class MainWindow : Window {
 			static if(__traits(compiles, triggering = &__traits(getMember, t, memberName))) {
 				.menu menu;
 				.toolbar toolbar;
-				bool seperator;
+				bool separator;
 				.accelerator accelerator;
 				.icon icon;
 				string label;
@@ -3742,8 +3742,8 @@ class MainWindow : Window {
 						menu = attr;
 					else static if(is(typeof(attr) == .toolbar))
 						toolbar = attr;
-					else static if(is(attr == .seperator))
-						seperator = true;
+					else static if(is(attr == .separator))
+						separator = true;
 					else static if(is(typeof(attr) == .accelerator))
 						accelerator = attr;
 					else static if(is(typeof(attr) == .icon))
@@ -3776,7 +3776,7 @@ class MainWindow : Window {
 							mcs[menu.name] = mc;
 						}
 
-						if(seperator)
+						if(separator)
 							mc.addSeparator();
 						mc.addItem(new MenuItem(action));
 					}
@@ -6478,7 +6478,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/bb760476%28v=vs.85%29.as
 
 // These are all for setMenuAndToolbarFromAnnotatedCode
 /// This item in the menu will be preceded by a separator line
-struct seperator {}
+struct separator {}
 /// Program-wide keyboard shortcut to trigger the action
 struct accelerator { string keyString; }
 /// tells which menu the action will be on
