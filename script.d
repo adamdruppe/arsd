@@ -631,6 +631,7 @@ class TokenStream(TextStream) {
 						} else if(symbol == "/+") {
 							// FIXME: nesting comment
 						}
+						// FIXME: documentation comments
 
 						found = true;
 						token.type = ScriptToken.Type.symbol;

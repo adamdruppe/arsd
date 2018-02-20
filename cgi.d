@@ -129,37 +129,95 @@
 	Guide_for_PHP_users:
 		If you are coming from PHP, here's a quick guide to help you get started:
 
-		```
-		$_GET["var"] == cgi.get["var"]
-		$_POST["var"] == cgi.post["var"]
-		$_COOKIE["var"] == cgi.cookies["var"]
-		```
+		$(SIDE_BY_SIDE
+			$(COLUMN
+				```php
+				<?php
+					$foo = $_POST["foo"];
+					$bar = $_GET["bar"];
+					$baz = $_COOKIE["baz"];
+
+					$user_ip = $_SERVER["REMOTE_ADDR"];
+					$host = $_SERVER["HTTP_HOST"];
+					$path = $_SERVER["PATH_INFO"];
+
+					setcookie("baz", "some value");
+
+					echo "hello!";
+				?>
+				```
+			)
+			$(COLUMN
+				---
+				import arsd.cgi;
+				void app(Cgi cgi) {
+					string foo = cgi.post["foo"];
+					string bar = cgi.get["bar"];
+					string baz = cgi.cookies["baz"];
+
+					string user_ip = cgi.remoteAddress;
+					string host = cgi.host;
+					string path = cgi.pathInfo;
+
+					cgi.setCookie("baz", "some value");
+
+					cgi.write("hello!");
+				}
+
+				mixin GenericMain!app
+				---
+			)
+		)
+
+		$(H3 Array elements)
+
 
 		In PHP, you can give a form element a name like `"something[]"`, and then
 		`$_POST["something"]` gives an array. In D, you can use whatever name
 		you want, and access an array of values with the `cgi.getArray["name"]` and
 		`cgi.postArray["name"]` members.
 
-		```
-		echo("hello"); == cgi.write("hello");
+		$(H3 Databases)
 
-		$_SERVER["REMOTE_ADDR"] == cgi.remoteAddress
-		$_SERVER["HTTP_HOST"] == cgi.host
-		```
+		PHP has a lot of stuff in its standard library. cgi.d doesn't include most
+		of these, but the rest of my arsd repository has much of it. For example,
+		to access a MySQL database, download `database.d` and `mysql.d` from my
+		github repo, and try this code (assuming, of course, your database is
+		set up):
+
+		---
+		import arsd.cgi;
+		import arsd.mysql;
+
+		void app(Cgi cgi) {
+			auto database = new MySql("localhost", "username", "password", "database_name");
+			foreach(row; mysql.query("SELECT count(id) FROM people"))
+				cgi.write(row[0] ~ " people in database");
+		}
+
+		mixin GenericMain!app;
+		---
+
+		Similar modules are available for PostgreSQL, Microsoft SQL Server, and SQLite databases,
+		implementing the same basic interface.
 
 	See_Also:
 
-	You may also want to see dom.d, web.d, and html.d for more code for making
-	web applications. database.d, mysql.d, postgres.d, and sqlite.d can help in
+	You may also want to see [arsd.dom], [arsd.web], and [arsd.html] for more code for making
+	web applications.
+
+	For working with json, try [arsd.jsvar].
+	
+	[arsd.database], [arsd.mysql], [arsd.postgres], [arsd.mssql], and [arsd.sqlite] can help in
 	accessing databases.
 
-	If you are looking to access a web application via HTTP, try curl.d.
+	If you are looking to access a web application via HTTP, try [std.net.curl], [arsd.curl], or [arsd.http2].
 
 	Copyright:
 
-	cgi.d copyright 2008-2016, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2018, Adam D. Ruppe. Provided under the Boost Software License.
 
-	Yes, this file is almost eight years old, and yes, it is still actively maintained and used.
+	Yes, this file is almost ten years old, and yes, it is still actively maintained and used.
 +/
 module arsd.cgi;
 

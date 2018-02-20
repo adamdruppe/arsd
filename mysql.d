@@ -1,6 +1,14 @@
-/// NOTE: If you're using MySQL client library v5.0 or less,
-///       you must pass this to dmd: -version=Less_Than_MySQL_51
-/// This is important - otherwise you will see bizarre segfaults!
+/++
+	Implementation of the `arsd.database.Database|database` interface for
+	accessing MySQL (and MariaDB) databases. Uses the official MySQL client
+	library, and thus needs that installed to compile and run.
+
+	$(PITFALL
+		If you're using MySQL client library v5.0 or less,
+		you must pass this to dmd: `-version=Less_Than_MySQL_51`
+		This is important - otherwise you will see bizarre segfaults!
+	)
++/
 module arsd.mysql;
 
 
@@ -32,6 +40,14 @@ import std.conv;
 import std.typecons;
 import core.stdc.config;
 
+/++
+	Represents a query result. You can loop over this with a
+	`foreach` statement to access individual [Row|rows].
+
+	[Row]s expose both an index and associative array interface,
+	so you can get `row[0]` for the first item, or `row["name"]`
+	to get a column by name from the result set.
++/
 class MySqlResult : ResultSet {
 	private int[string] mapping;
 	private MYSQL_RES* result;
@@ -72,20 +88,25 @@ class MySqlResult : ResultSet {
 	}
 
 
+	/// The number of returned rows
 	override size_t length() {
 		if(result is null)
 			return 0;
 		return cast(int) mysql_num_rows(result);
 	}
 
+	/// Range primitive used by `foreach`
+	/// You may also use this to check if there was any result.
 	override bool empty() {
 		return itemsUsed == itemsTotal;
 	}
 
+	/// Range primitive used by `foreach`
 	override Row front() {
 		return row;
 	}
 
+	/// Range primitive used by `foreach`
 	override void popFront() {
 		itemsUsed++;
 		if(itemsUsed < itemsTotal) {
@@ -160,10 +181,22 @@ class MySqlResult : ResultSet {
 	Row row;
 }
 
+/++
+	The main class for accessing the MySql database.
 
-
-
+	---
+		// connect to database with the constructor
+		auto db = new MySql("localhost", "my_user", "my_password", "my_database_name");
+		// use the query function to execute sql...
+		// use ? for data placeholders...
+		db.query("INSERT INTO people (id, name) VALUES (?, ?)", 10, "My Name");
+		// and use foreach to loop over result sets
+		foreach(row; db.query("SELECT id, name FROM people ORDER BY name LIMIT 10"))
+			writeln(row[0], " ", row["name"]); // index and name supported
+	---
++/
 class MySql : Database {
+	///
 	this(string host, string user, string pass, string db) {
 		mysql = enforceEx!(DatabaseException)(
 			mysql_init(null),
@@ -182,6 +215,7 @@ class MySql : Database {
 
 	string dbname;
 
+	///
 	override void startTransaction() {
 		query("START TRANSACTION");
 	}
@@ -198,12 +232,14 @@ class MySql : Database {
 		close();
 	}
 
+	///
 	int lastInsertId() {
 		return cast(int) mysql_insert_id(mysql);
 	}
 
 
 
+	/// Builds and executes an INERT INTO statement
 	int insert(string table, MySqlResult result, string[string] columnsToModify, string[] columnsToSkip) {
 		assert(!result.empty);
 		string sql = "INSERT INTO `" ~ table ~ "` ";
@@ -308,23 +344,7 @@ class MySql : Database {
 	}
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	/// Gets a minimal ORM object from a query
 	ResultByDataObject!R queryDataObject(R = DataObject, T...)(string sql, T t) {
 		// modify sql for the best data object grabbing
 		sql = fixupSqlForDataObjectUse(sql);
@@ -334,6 +354,7 @@ class MySql : Database {
 	}
 
 
+	/// ditto
 	ResultByDataObject!R queryDataObjectWithCustomKeys(R = DataObject, T...)(string[string] keyMapping, string sql, T t) {
 		sql = fixupSqlForDataObjectUse(sql, keyMapping);
 
@@ -343,9 +364,7 @@ class MySql : Database {
 
 
 
-
-
-
+	///
 	int affectedRows() {
 		return cast(int) mysql_affected_rows(mysql);
 	}
@@ -700,6 +719,7 @@ string fromCstring(cstring c, size_t len = size_t.max) {
 
 
 // FIXME: this should work generically with all database types and them moved to database.d
+///
 Ret queryOneRow(Ret = Row, DB, string file = __FILE__, size_t line = __LINE__, T...)(DB db, string sql, T t) if(
 	(is(DB : Database))
 	// && (is(Ret == Row) || is(Ret : DataObject)))
@@ -718,6 +738,7 @@ Ret queryOneRow(Ret = Row, DB, string file = __FILE__, size_t line = __LINE__, T
 	} else static assert(0, "Unsupported single row query return value, " ~ Ret.stringof);
 }
 
+///
 class EmptyResultException : Exception {
 	this(string message, string file = __FILE__, size_t line = __LINE__) {
 		super(message, file, line);
