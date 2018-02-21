@@ -4870,6 +4870,7 @@ class HorizontalSpacer : Widget {
 	///
 	this(Widget parent = null) {
 		super(parent);
+		this.tabStop = false;
 	}
 }
 
