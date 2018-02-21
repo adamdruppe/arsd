@@ -1439,9 +1439,16 @@ class Widget {
 	Color backgroundColor() {
 		// the default is a "transparent" background, which means
 		// it goes as far up as it can to get the color
-		if(parent)
-			return parent.backgroundColor();
-		return Color.transparent;
+		if (color != Color.transparent) return color;
+		if (parent) return parent.backgroundColor();
+		return color;
+	}
+
+	private Color color = Color.transparent;
+	
+	///
+	void backgroundColor(Color c){
+		this.color = c;
 	}
 
 	///
