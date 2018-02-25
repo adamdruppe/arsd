@@ -14,8 +14,20 @@ import std.exception;
 //
 // SQL: `DEALLOCATE name` is how to dealloc a prepared statement.
 
+/++
+	The PostgreSql implementation of the [Database] interface.
+
+	You should construct this class, but then use it through the
+	interface functions.
+
+	---
+	auto db = new PostgreSql("dbname=name");
+	foreach(row; db.query("SELECT id, data FROM table_name"))
+		writeln(row[0], " = ", row[1]);
+	---
++/
 class PostgreSql : Database {
-	// dbname = name  is probably the most common connection string
+	/// dbname = name  is probably the most common connection string
 	this(string connectionString) {
 		conn = PQconnectdb(toStringz(connectionString));
 		if(conn is null)
@@ -29,7 +41,7 @@ class PostgreSql : Database {
 		PQfinish(conn);
 	}
 
-	/*
+	/**
 		Prepared statement support
 
 		This will be added to the Database interface eventually in some form,
@@ -59,6 +71,7 @@ class PostgreSql : Database {
 
 	}
 
+	///
 	override void startTransaction() {
 		query("START TRANSACTION");
 	}
@@ -85,6 +98,7 @@ class PostgreSql : Database {
 	}
 
 
+	///
 	string error() {
 		return copyCString(PQerrorMessage(conn));
 	}
@@ -93,6 +107,7 @@ class PostgreSql : Database {
 		PGconn* conn;
 }
 
+///
 class PostgresResult : ResultSet {
 	// name for associative array to result index
 	int getFieldIndex(string field) {
