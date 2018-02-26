@@ -470,7 +470,7 @@ void rawWrite(ST, T) (auto ref ST st, in T[] buf) if (isLowLevelStreamW!ST) {
 }
 
 // read exact size or throw error
-T[] rawReadExact(ST, T) (auto ref ST st, T[] buf) if (isReadableStream!ST && !is(T == const) && !is(T == immutable)) {
+package(arsd) T[] rawReadExact(ST, T) (auto ref ST st, T[] buf) if (isReadableStream!ST && !is(T == const) && !is(T == immutable)) {
   if (buf.length == 0) return buf;
   auto left = buf.length*T.sizeof;
   auto dp = cast(ubyte*)buf.ptr;

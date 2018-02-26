@@ -215,7 +215,16 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
     final switch (guessImageFormatFromExtension(filename)) {
       case ImageFileFormat.Unknown:
         //throw new Exception("cannot determine file format from extension");
-        static if (ArsdImageHasIVVFS) auto fl = VFile(filename); else { import std.stdio; auto fl = File(filename); }
+        static if (ArsdImageHasIVVFS) {
+          auto fl = VFile(filename);
+        } else {
+          import std.stdio;
+          static if (is(T == string)) {
+            auto fl = File(filename);
+          } else {
+            auto fl = File(filename.idup);
+          }
+        }
         auto fsz = fl.size-fl.tell;
         if (fsz < 4) throw new Exception("cannot determine file format");
         if (fsz > int.max/8) throw new Exception("image data too big");
@@ -230,7 +239,16 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Tga: return loadTga(filename);
       case ImageFileFormat.Pcx: return loadPcx(filename);
       case ImageFileFormat.Dds:
-        static if (ArsdImageHasIVVFS) auto fl = VFile(filename); else { import std.stdio; auto fl = File(filename); }
+        static if (ArsdImageHasIVVFS) {
+          auto fl = VFile(filename);
+        } else {
+          import std.stdio;
+          static if (is(T == string)) {
+            auto fl = File(filename);
+          } else {
+            auto fl = File(filename.idup);
+          }
+        }
         return ddsLoadFromFile(fl);
     }
   }
