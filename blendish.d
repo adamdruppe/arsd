@@ -1060,38 +1060,46 @@ public __gshared BNDtheme bndTheme = BNDtheme(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// set the current theme all widgets will be drawn with. the default Blender 2.6 theme is set by default.
+/// Sets the current theme all widgets will be drawn with. the default Blender 2.6 theme is set by default.
 public void bndSetTheme (in ref BNDtheme theme) { bndTheme = theme; }
 
 /// Returns the currently set theme
 public BNDtheme* bndGetTheme () { return &bndTheme; }
 
 // the handle to the image containing the icon sheet
-private __gshared int bndIconImage = -1;
+private __gshared NVGImage bndIconImage;
 
-/** designates an image handle as returned by nvgCreateImage*() as the themes'
+//HACK!
+//shared static ~this () { bndIconImage.clear(); }
+
+/** Designates an image handle as returned by nvgCreateImage*() as the themes'
  * icon sheet. The icon sheet format must be compatible to Blender 2.6's icon
  * sheet; the order of icons does not matter.
  *
  * A valid icon sheet is e.g. shown at
  * http://wiki.blender.org/index.php/Dev:2.5/Doc/How_to/Add_an_icon
+ *
+ * $(WARNING Icon sheet image should not outlive it's parent context! Use [bndClearIconImage] before context deletion.
  */
-public void bndSetIconImage (int image) nothrow @trusted @nogc { pragma(inline, true); bndIconImage = image; }
+public void bndSetIconImage() (in auto ref NVGImage image) nothrow @trusted @nogc { version(aliced) pragma(inline, true); bndIconImage = image; }
 
-/// get icon sheet image.
-public int bndGetIconImage () nothrow @trusted @nogc { pragma(inline, true); return bndIconImage; }
+/// Clears current icon image.
+public void bndClearIconImage () nothrow @trusted @nogc { version(aliced) pragma(inline, true); bndIconImage.clear(); }
+
+/// Returns icon sheet image.
+public NVGImage bndGetIconImage () nothrow @trusted @nogc { version(aliced) pragma(inline, true); return bndIconImage; }
 
 // the handle to the UI font
 private __gshared int bndFont = -1;
 
-/** designates an image handle as returned by nvgCreateFont*() as the themes'
+/** Designates an image handle as returned by nvgCreateFont*() as the themes'
  * UI font. Blender's original UI font Droid Sans is perfectly suited and
  * available here:
  * https://svn.blender.org/svnroot/bf-blender/trunk/blender/release/datafiles/fonts/
  */
 public void bndSetFont (int font) nothrow @trusted @nogc { pragma(inline, true); bndFont = font; }
 
-/// get current font.
+/// Returns current font.
 public int bndGetFont () nothrow @trusted @nogc { pragma(inline, true); return bndFont; }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1819,7 +1827,7 @@ public void bndBackground (NVGContext ctx, float x, float y, float w, float h) {
 /// Draw an icon with (x, y) as its upper left coordinate; the iconid selects the icon from the sheet; use the BND_ICONID macro to build icon IDs.
 public void bndIcon (NVGContext ctx, float x, float y, int iconid) {
   int ix, iy, u, v;
-  if (bndIconImage < 0) return; // no icons loaded
+  if (!bndIconImage.valid) return; // no icons loaded
 
   ix = iconid&0xff;
   iy = (iconid>>8)&0xff;
@@ -2053,7 +2061,7 @@ if (is(RT : NVGTextRow!CT, CT))
   usize r = 0;
   //for (r = 0; r < nrows && rows[r].end < caret; ++r) {}
   while (r < rows.length && rows[r].end < caretpos) ++r;
-  if (cr !is null) *cr = cast(int) r;
+  if (cr !is null) *cr = cast(int)r;
   if (cx !is null) *cx = x;
   if (cy !is null) *cy = y-lineHeight-desc+r*lineHeight;
   if (rows.length == 0) return;
