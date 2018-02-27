@@ -2701,7 +2701,7 @@ public int createImage (NVGContext ctx, const(char)[] filename, int imageFlags=N
       //printf("Failed to load %s - %s\n", filename, stbi_failure_reason());
       return 0;
     }
-    image = ctx.createImageRGBA(w, h, imageFlags, img[0..w*h*4]);
+    image = ctx.createImageRGBA(w, h, img[0..w*h*4], imageFlags);
     stbi_image_free(img);
     return image;
   }
