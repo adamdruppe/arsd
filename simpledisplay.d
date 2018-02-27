@@ -1134,9 +1134,9 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
 
 	} else static assert(0);
-	}
 
 	return null;
+	}
 }
 
 /++

@@ -9213,7 +9213,7 @@ public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] pa
     } catch (Exception e) {
       // oops; sorry
     }
-    return FONS_INVALID;
+    //return FONS_INVALID;
   }
 
   // first try direct path
