@@ -9165,6 +9165,7 @@ public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] pa
     }
     // either no such font, or different path
     //{ import core.stdc.stdio; printf("trying font [%.*s] from file [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)path.length, path.ptr); }
+    int xres = FONS_INVALID;
     try {
       import core.stdc.stdlib : free, malloc;
       static if (NanoVegaHasIVVFS) {
@@ -9202,18 +9203,17 @@ public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] pa
       // create font data
       FONSfontData* fdata = fons__createFontData(data, cast(int)dataSize, true); // free data
       fdata.incref();
-      auto xres = fonsAddFontWithData(stash, name, fdata, defAA);
+      xres = fonsAddFontWithData(stash, name, fdata, defAA);
       if (xres == FONS_INVALID) {
         fdata.decref(); // this will free [data] and [fdata]
       } else {
         // remember path
         stash.fonts[xres].setPath(path);
       }
-      return xres;
     } catch (Exception e) {
       // oops; sorry
     }
-    //return FONS_INVALID;
+    return xres;
   }
 
   // first try direct path
