@@ -365,7 +365,7 @@ private MemoryImage loadTgaImpl(ST) (auto ref ST fl, const(char)[] filename) {
   bool premult = false;
 
   auto tcimg = new TrueColorImage(hdr.width, hdr.height);
-  scope(failure) delete tcimg;
+  scope(failure) .destroy(tcimg);
 
   {
     // read image data

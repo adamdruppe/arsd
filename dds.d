@@ -85,7 +85,7 @@ public TrueColorImage ddsLoadFromMemory (const(void)[] buf) {
   const(ddsBuffer_t)* dds = cast(const(ddsBuffer_t)*)buf.ptr;
 
   auto tc = new TrueColorImage(w, h);
-  scope(failure) delete tc;
+  scope(failure) .destroy(tc);
 
   if (!DDSDecompress(dds, tc.imageData.colors)) throw new Exception("invalid dds image");
 

@@ -1,6 +1,8 @@
 /// PNG file handling for color.d's Image interfaces
 module arsd.png;
 
+import core.memory;
+
 /// Easily reads a png file into a MemoryImage
 MemoryImage readPng(string filename) {
 	import std.file;
@@ -471,7 +473,7 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 		fputc((c.checksum & 0x000000ff) >> 0, fp);
 	}
 
-	delete com; // there is a reference to this in the PNG struct, but it is going out of scope here too, so who cares
+	GC.free(com.ptr); // there is a reference to this in the PNG struct, but it is going out of scope here too, so who cares
 	// just wanna make sure this crap doesn't stick around
 }
 

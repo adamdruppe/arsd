@@ -9,6 +9,8 @@ public import arsd.targa;
 public import arsd.pcx;
 public import arsd.dds;
 
+import core.memory;
+
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
 
 
@@ -229,7 +231,7 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
         if (fsz < 4) throw new Exception("cannot determine file format");
         if (fsz > int.max/8) throw new Exception("image data too big");
         auto data = new ubyte[](cast(uint)fsz);
-        scope(exit) delete data; // this should be safe, as image will copy data to it's internal storage
+        scope(exit) GC.free(data.ptr); // this should be safe, as image will copy data to it's internal storage
         fl.rawReadExact(data);
         return loadImageFromMemory(data);
       case ImageFileFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
@@ -277,7 +279,7 @@ public MemoryImage loadImageFromFile (VFile fl) {
   if (fsz < 4) throw new Exception("cannot determine file format");
   if (fsz > int.max/8) throw new Exception("image data too big");
   auto data = new ubyte[](cast(uint)fsz);
-  scope(exit) delete data; // this should be safe, as image will copy data to it's internal storage
+  scope(exit) { GC.free(data.ptr); } // this should be safe, as image will copy data to it's internal storage
   fl.rawReadExact(data);
   return loadImageFromMemory(data);
 }
@@ -365,7 +367,7 @@ public TrueColorImage imageResize(int Components=4) (MemoryImage msrcimg, int ds
   }
   if (dstwdt < 1 || dsthgt < 1 || dstwdt > ImageResizeMaxDimension || dsthgt > ImageResizeMaxDimension) throw new Exception("invalid destination image size");
   auto resimg = new TrueColorImage(dstwdt, dsthgt);
-  scope(failure) delete resimg;
+  scope(failure) .destroy(resimg);
   if (auto tc = cast(TrueColorImage)msrcimg) {
     imageResize!Components(
       delegate (Color[] destrow, int y) { destrow[] = tc.imageData.colors[y*tc.width..(y+1)*tc.width]; },
@@ -438,10 +440,8 @@ public void imageResize(int Components=4) (
   float[][Components] samples;
   Color[] srcrow, dstrow;
   scope(exit) {
-    foreach (ref rsm; resamplers[]) delete rsm;
-    foreach (ref smr; samples[]) delete smr;
-    delete srcrow;
-    delete dstrow;
+    foreach (ref rsm; resamplers[]) .destroy(rsm);
+    foreach (ref smr; samples[]) .destroy(smr);
   }
 
   // now create a ImageResampleWorker instance for each component to process

@@ -190,7 +190,7 @@ private MemoryImage loadPcxImpl(ST) (auto ref ST fl, const(char)[] filename) {
 
   IndexedImage iimg;
   TrueColorImage timg;
-  scope(failure) { delete timg; delete iimg; }
+  scope(failure) { .destroy(timg); .destroy(iimg); }
 
   if (!bpp24) {
     iimg = new IndexedImage(wdt, hgt);
