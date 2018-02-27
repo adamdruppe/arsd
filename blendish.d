@@ -2053,7 +2053,7 @@ if (is(RT : NVGTextRow!CT, CT))
   usize r = 0;
   //for (r = 0; r < nrows && rows[r].end < caret; ++r) {}
   while (r < rows.length && rows[r].end < caretpos) ++r;
-  if (cr !is null) *cr = r;
+  if (cr !is null) *cr = cast(int) r;
   if (cx !is null) *cx = x;
   if (cy !is null) *cy = y-lineHeight-desc+r*lineHeight;
   if (rows.length == 0) return;
