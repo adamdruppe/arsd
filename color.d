@@ -837,6 +837,16 @@ interface MemoryImage {
 		}
 	}
 
+	// ***This method is deliberately not publicly documented.***
+	// What it does is unconditionally frees internal image storage, without any sanity checks.
+	// If you will do this, make sure that you have no references to image data left (like
+	// slices of [data] array, for example). Those references will become invalid, and WILL
+	// lead to Undefined Behavior.
+	// tl;dr: IF YOU HAVE *ANY* QUESTIONS REGARDING THIS COMMENT, DON'T USE THIS!
+	// Note to implementors: it is safe to simply do nothing in this method.
+	// Also, it should be safe to call this method twice or more.
+	void clearInternal () nothrow @system @nogc;
+
 	/// Convenient alias for `fromImage`
 	alias fromImageFile = fromImage;
 }
@@ -849,6 +859,14 @@ class IndexedImage : MemoryImage {
 	Color[] palette;
 	/// the data as indexes into the palette. Stored left to right, top to bottom, no padding.
 	ubyte[] data;
+
+	override void clearInternal () nothrow @system @nogc {
+		import core.memory : GC;
+		// it is safe to call [GC.free] with `null` pointer.
+		GC.free(palette.ptr); palette = null;
+		GC.free(data.ptr); data = null;
+		_width = _height = 0;
+	}
 
 	/// .
 	override int width() const {
@@ -987,6 +1005,13 @@ class TrueColorImage : MemoryImage {
 
 	int _width;
 	int _height;
+
+	override void clearInternal () nothrow @system @nogc {
+		import core.memory : GC;
+		// it is safe to call [GC.free] with `null` pointer.
+		GC.free(imageData.bytes.ptr); imageData.bytes = null;
+		_width = _height = 0;
+	}
 
 	/// .
 	override TrueColorImage clone() const {

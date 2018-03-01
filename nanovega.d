@@ -2968,20 +2968,19 @@ public NVGImage createImage() (NVGContext ctx, const(char)[] filename, const(NVG
   static if (NanoVegaHasArsdImage) {
     import arsd.image;
     // do we have new arsd API to load images?
-    static if (!is(typeof(MemoryImage.fromImageFile))) {
+    static if (!is(typeof(MemoryImage.fromImageFile)) || !is(typeof(MemoryImage.clearInternal))) {
       static assert(0, "Sorry, your ARSD is too old. Please, update it.");
     }
     try {
       auto oimg = MemoryImage.fromImageFile(filename);
       if (auto img = cast(TrueColorImage)oimg) {
-        oimg = null;
-        scope(exit) { delete img.imageData.bytes; delete img; }
+        scope(exit) oimg.clearInternal();
         return ctx.createImageRGBA(img.width, img.height, img.imageData.bytes[], imageFlagsList);
       } else {
         TrueColorImage img = oimg.getAsTrueColorImage;
-        if (auto xi = cast(IndexedImage)oimg) { delete xi.palette; delete xi.data; delete xi; }
+        scope(exit) img.clearInternal();
+        oimg.clearInternal(); // drop original image, as `getAsTrueColorImage()` MUST create a new one here
         oimg = null;
-        scope(exit) { delete img.imageData.bytes; delete img; }
         return ctx.createImageRGBA(img.width, img.height, img.imageData.bytes[], imageFlagsList);
       }
     } catch (Exception) {}
@@ -3013,7 +3012,7 @@ static if (NanoVegaHasArsdImage) {
       return ctx.createImageRGBA(tc.width, tc.height, tc.imageData.bytes[], imageFlagsList);
     } else {
       auto tc = img.getAsTrueColorImage;
-      scope(exit) { delete tc.imageData.bytes; delete tc; }
+      scope(exit) tc.clearInternal(); // here, it is guaranteed that `tc` is newly allocated image, so it is safe to kill it
       return ctx.createImageRGBA(tc.width, tc.height, tc.imageData.bytes[], imageFlagsList);
     }
   }
