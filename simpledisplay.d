@@ -4826,9 +4826,21 @@ struct MouseEvent {
 	static bool equStr() (in auto ref MouseEvent event, const(char)[] str) pure nothrow @trusted @nogc {
 		if (str.length == 0) return false; // just in case
 		debug(arsd_mevent_strcmp) { import iv.cmdcon; conwriteln("str=<", str, ">"); }
+		enum Flag : uint { Up = 0x8000_0000U, Down = 0x4000_0000U, Any = 0x1000_0000U }
 		auto anchor = str;
 		uint mods = 0; // uint.max == any
+		// interesting bits in kmod
+		uint kmodmask =
+			ModifierState.shift|
+			ModifierState.ctrl|
+			ModifierState.alt|
+			ModifierState.windows|
+			ModifierState.leftButtonDown|
+			ModifierState.middleButtonDown|
+			ModifierState.rightButtonDown|
+			0;
 		uint lastButt = uint.max; // otherwise, bit 31 means "down"
+		bool wasButtons = false;
 		while (str.length) {
 			if (str.ptr[0] <= ' ') {
 				while (str.length && str.ptr[0] <= ' ') str = str[1..$];
@@ -4872,24 +4884,28 @@ struct MouseEvent {
 			}
 			if (wep == 0) return false; // just in case
 			uint bnum;
-			enum UpDown { None = -1, Up, Down }
+			enum UpDown { None = -1, Up, Down, Any }
 			auto updown = UpDown.None; // 0: up; 1: down
 			switch (buf[0..wep]) {
 				// left button
 				case "lmbup": case "leftup": updown = UpDown.Up; goto case "lmb";
 				case "lmbdown": case "leftdown": updown = UpDown.Down; goto case "lmb";
+				case "lmbany": case "leftany": updown = UpDown.Any; goto case "lmb";
 				case "lmb": case "left": bnum = 0; break;
 				// middle button
 				case "mmbup": case "middleup": updown = UpDown.Up; goto case "mmb";
 				case "mmbdown": case "middledown": updown = UpDown.Down; goto case "mmb";
+				case "mmbany": case "middleany": updown = UpDown.Any; goto case "mmb";
 				case "mmb": case "middle": bnum = 1; break;
 				// right button
 				case "rmbup": case "rightup": updown = UpDown.Up; goto case "rmb";
 				case "rmbdown": case "rightdown": updown = UpDown.Down; goto case "rmb";
+				case "rmbany": case "rightany": updown = UpDown.Any; goto case "rmb";
 				case "rmb": case "right": bnum = 2; break;
 				// wheel
 				case "wheelup": updown = UpDown.Up; goto case "wheel";
 				case "wheeldown": updown = UpDown.Down; goto case "wheel";
+				case "wheelany": updown = UpDown.Any; goto case "wheel";
 				case "wheel": bnum = 3; break;
 				// motion
 				case "motion": bnum = 7; break;
@@ -4910,14 +4926,17 @@ struct MouseEvent {
 				}
 						 if (wep == 2 && buf[0..wep] == "up") updown = UpDown.Up;
 				else if (wep == 4 && buf[0..wep] == "down") updown = UpDown.Down;
+				else if (wep == 3 && buf[0..wep] == "any") updown = UpDown.Any;
 				// remove parsed part
 				if (updown != UpDown.None) str = str[wep+1..$];
-			} else if (updown == UpDown.None) {
-				updown = (bnum < 7 ? UpDown.Down : UpDown.Up);
 			}
-			assert(updown != UpDown.None);
+			if (updown == UpDown.None) {
+				updown = UpDown.Down;
+			}
+			wasButtons = wasButtons || (bnum <= 2);
+			//assert(updown != UpDown.None);
 			debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  1: mods=0x%08x; bnum=%u; updown=%s [%s]", mods, bnum, updown, str); }
-			// if we have a previous button, it goes to modifiers (unless it is a wheel)
+			// if we have a previous button, it goes to modifiers (unless it is a wheel or motion)
 			if (lastButt != lastButt.max) {
 				if ((lastButt&0xff) >= 3) return false; // wheel or motion
 				if (mods != mods.max) {
@@ -4927,38 +4946,45 @@ struct MouseEvent {
 						case 1: butbit = ModifierState.middleButtonDown; break;
 						case 2: butbit = ModifierState.rightButtonDown; break;
 					}
-					if (lastButt >= 0x8000_0000U) mods |= butbit; else mods &= ~butbit;
+					     if (lastButt&Flag.Down) mods |= butbit;
+					else if (lastButt&Flag.Up) mods &= ~butbit;
+					else if (lastButt&Flag.Any) kmodmask &= ~butbit;
 				}
 			}
 			// remember last button
-			lastButt = bnum|(updown == UpDown.Up ? 0 : 0x8000_0000U);
+			lastButt = bnum|(updown == UpDown.Up ? Flag.Up : updown == UpDown.Any ? Flag.Any : Flag.Down);
 		}
 		// no button -- nothing to do
 		if (lastButt == lastButt.max) return false;
 		// done parsing, check if something's left
 		foreach (immutable char ch; str) if (ch > ' ') return false; // oops
-		debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  *: mods=0x%08x; lastButt=0x%08x; kmod=0x%08x; type=%s", mods, lastButt, event.modifierState, event.type); }
+		// remove action button from mask
+		if ((lastButt&0xff) < 3) {
+			final switch (lastButt&0x03) {
+				case 0: kmodmask &= ~cast(uint)ModifierState.leftButtonDown; break;
+				case 1: kmodmask &= ~cast(uint)ModifierState.middleButtonDown; break;
+				case 2: kmodmask &= ~cast(uint)ModifierState.rightButtonDown; break;
+			}
+		}
+		// special case: "Motion" means "ignore buttons"
+		if ((lastButt&0xff) == 7 && !wasButtons) {
+			debug(arsd_mevent_strcmp) { import iv.cmdcon; conwriteln("  *: special motion"); }
+			kmodmask &= ~cast(uint)(ModifierState.leftButtonDown|ModifierState.middleButtonDown|ModifierState.rightButtonDown);
+		}
+		uint kmod = event.modifierState&kmodmask;
+		debug(arsd_mevent_strcmp) { import iv.cmdcon; conprintfln("  *: mods=0x%08x; lastButt=0x%08x; kmod=0x%08x; type=%s", mods, lastButt, kmod, event.type); }
 		// check modifier state
 		if (mods != mods.max) {
-			enum InterestingMods =
-				ModifierState.shift|
-				ModifierState.ctrl|
-				ModifierState.alt|
-				ModifierState.windows|
-				ModifierState.leftButtonDown|
-				ModifierState.middleButtonDown|
-				ModifierState.rightButtonDown|
-				0;
-			if ((event.modifierState&InterestingMods) != mods) return false;
+			if (kmod != mods) return false;
 		}
 		// now check type
 		if ((lastButt&0xff) == 7) {
 			// motion
 			if (event.type != MouseEventType.motion) return false;
 		} else {
-			// buttions
-			if ((lastButt >= 0x8000_0000U && event.type != MouseEventType.buttonPressed) ||
-					(lastButt < 0x8000_0000U && event.type != MouseEventType.buttonReleased))
+			// buttons
+			if (((lastButt&Flag.Down) != 0 && event.type != MouseEventType.buttonPressed) ||
+			    ((lastButt&Flag.Up) != 0 && event.type != MouseEventType.buttonReleased))
 			{
 				return false;
 			}

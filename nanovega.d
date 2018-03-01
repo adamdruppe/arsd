@@ -1845,6 +1845,9 @@ public void beginFrame (NVGContext ctx, int windowWidth, int windowHeight, float
   ctx.recset = null;
   ctx.recstart = -1;
 
+  ctx.pathPickId = NVGNoPick;
+  ctx.pathPickRegistered = 0;
+
   ctx.drawCallCount = 0;
   ctx.fillTriCount = 0;
   ctx.strokeTriCount = 0;
@@ -5208,6 +5211,8 @@ public void currFillHitId (NVGContext ctx, int id) nothrow @trusted @nogc {
   nvg__pickSceneInsert(ps, pp);
 }
 
+public alias currFillPickId = currFillHitId; /// Ditto.
+
 /// Marks the stroke of the current path as pickable with the specified id.
 /// Note that you can create and mark path without rasterizing it.
 /// Group: picking_api
@@ -5216,6 +5221,8 @@ public void currStrokeHitId (NVGContext ctx, int id) nothrow @trusted @nogc {
   NVGpickPath* pp = nvg__pickPathCreate(ctx, ctx.commands[0..ctx.ncommands], id, /*forStroke:*/true);
   nvg__pickSceneInsert(ps, pp);
 }
+
+public alias currStrokePickId = currStrokeHitId; /// Ditto.
 
 // Marks the saved path set (fill) as pickable with the specified id.
 // $(WARNING this doesn't work right yet (it is using current context transformation and other settings instead of record settings)!)
@@ -5612,6 +5619,7 @@ void nvg__segmentDir (NVGpickScene* ps, NVGpickSubPath* psp, NVGsegment* seg, fl
 }
 
 void nvg__pickSubPathAddFillSupports (NVGpickScene* ps, NVGpickSubPath* psp) {
+  if (psp.firstSegment == -1) return;
   NVGsegment* segments = &ps.segments[psp.firstSegment];
   for (int s = 0; s < psp.nsegments; ++s) {
     NVGsegment* seg = &segments[s];
@@ -5626,6 +5634,7 @@ void nvg__pickSubPathAddFillSupports (NVGpickScene* ps, NVGpickSubPath* psp) {
 }
 
 void nvg__pickSubPathAddStrokeSupports (NVGpickScene* ps, NVGpickSubPath* psp, float strokeWidth, int lineCap, int lineJoin, float miterLimit) {
+  if (psp.firstSegment == -1) return;
   immutable bool closed = psp.closed;
   const(float)* points = ps.points;
   NVGsegment* seg = null;
@@ -5770,7 +5779,7 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
   float[2] start = void;
   int firstPoint;
 
-  int hasHoles = 0;
+  //bool hasHoles = false;
   NVGpickSubPath* prev = null;
 
   float[8] points = void;
@@ -5787,6 +5796,17 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
   if (pp is null) return null;
 
   pp.id = id;
+
+  bool hasPoints = false;
+
+  void closeIt () {
+    if (psp is null || !hasPoints) return;
+    if (ps.points[(ps.npoints-1)*2] != start.ptr[0] || ps.points[(ps.npoints-1)*2+1] != start.ptr[1]) {
+      firstPoint = nvg__pickSceneAddPoints(ps, start.ptr, 1);
+      nvg__pickSubPathAddSegment(ps, psp, firstPoint-1, Command.LineTo, NVGSegmentFlags.Corner);
+    }
+    psp.closed = true;
+  }
 
   while (i < ncommands) {
     int cmd = cast(int)commands[i++];
@@ -5807,12 +5827,14 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
         psp.next = prev;
 
         nvg__pickSceneAddPoints(ps, tfxy, 1);
+        hasPoints = true;
         break;
       case Command.LineTo: // one coordinate pair
         const(float)* tfxy = commands+i;
         i += 2;
         firstPoint = nvg__pickSceneAddPoints(ps, tfxy, 1);
         nvg__pickSubPathAddSegment(ps, psp, firstPoint-1, cmd, NVGSegmentFlags.Corner);
+        hasPoints = true;
         break;
       case Command.BezierTo: // three coordinate pairs
         const(float)* tfxy = commands+i;
@@ -5860,23 +5882,23 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
           firstPoint = nvg__pickSceneAddPoints(ps, tfxy, 3);
           nvg__pickSubPathAddSegment(ps, psp, firstPoint-1, cmd, NVGSegmentFlags.Corner);
         }
+        hasPoints = true;
         break;
       case Command.Close:
-        if (ps.points[(ps.npoints-1)*2] != start.ptr[0] || ps.points[(ps.npoints-1)*2+1] != start.ptr[1]) {
-          firstPoint = nvg__pickSceneAddPoints(ps, start.ptr, 1);
-          nvg__pickSubPathAddSegment(ps, psp, firstPoint-1, Command.LineTo, NVGSegmentFlags.Corner);
-        }
-        psp.closed = true;
+        closeIt();
         break;
       case Command.Winding:
         psp.winding = cast(short)cast(int)commands[i];
-        if (psp.winding == NVGSolidity.Hole) hasHoles = 1;
+        //if (psp.winding == NVGSolidity.Hole) hasHoles = true;
         i += 1;
         break;
       default:
         break;
     }
   }
+
+  // force-close filled pathes
+  if (psp !is null && !forStroke && hasPoints && !psp.closed) closeIt();
 
   pp.flags = (forStroke ? NVGPathFlags.Stroke : NVGPathFlags.Fill);
   pp.subPaths = psp;
@@ -5895,6 +5917,7 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
       nvg__pickSubPathAddFillSupports(ps, curpsp);
     }
 
+    if (curpsp.firstSegment == -1) continue;
     segments = &ps.segments[curpsp.firstSegment];
     nvg__initBounds(curpsp.bounds);
     for (int s = 0; s < curpsp.nsegments; ++s) {
@@ -6388,6 +6411,7 @@ void nvg__closestBezier (const(float)* points, float x, float y, float* closest,
 //  0  If (x,y) is not contained by the path.
 int nvg__pickSubPathStroke (const NVGpickScene* ps, const NVGpickSubPath* psp, float x, float y, float strokeWidth, int lineCap, int lineJoin) {
   if (!nvg__pointInBounds(x, y, psp.bounds)) return 0;
+  if (psp.firstSegment == -1) return 0;
 
   float[2] closest = void;
   float[2] d = void;
@@ -6478,6 +6502,7 @@ int nvg__pickSubPathStroke (const NVGpickScene* ps, const NVGpickSubPath* psp, f
 //   0  If (x,y) is not contained by the path.
 int nvg__pickSubPath (const NVGpickScene* ps, const NVGpickSubPath* psp, float x, float y, bool evenOddMode) {
   if (!nvg__pointInBounds(x, y, psp.bounds)) return 0;
+  if (psp.firstSegment == -1) return 0;
 
   const(NVGsegment)* seg = &ps.segments[psp.firstSegment];
   int nsegments = psp.nsegments;
@@ -6564,10 +6589,10 @@ bool nvg__pickPathTestBounds (NVGContext ctx, const NVGpickScene* ps, const NVGp
   return false;
 }
 
-int nvg__countBitsUsed (int v) {
+int nvg__countBitsUsed (uint v) pure {
   pragma(inline, true);
-  import core.bitop : popcnt;
-  return (v != 0 ? popcnt(cast(uint)v) : 0);
+  import core.bitop : bsr;
+  return (v != 0 ? bsr(v)+1 : 0);
 }
 
 void nvg__pickSceneInsert (NVGpickScene* ps, NVGpickPath* pp) {
@@ -6598,6 +6623,8 @@ void nvg__pickSceneInsert (NVGpickScene* ps, NVGpickPath* pp) {
   // to calculate the level to insert at (the level at which the bounds fit in a single cell)
   level = nvg__min(base-nvg__countBitsUsed(cellbounds.ptr[0]), base-nvg__countBitsUsed(cellbounds.ptr[1]));
   if (level < 0) level = 0;
+  //{ import core.stdc.stdio; printf("LEVEL: %d; bounds=(%g,%g)-(%g,%g)\n", level, pp.bounds[0], pp.bounds[1], pp.bounds[2], pp.bounds[3]); }
+  //level = 0;
 
   // Find the correct cell in the chosen level, clamping to the edges.
   levelwidth = 1<<level;
