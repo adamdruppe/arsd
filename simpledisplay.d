@@ -4981,6 +4981,12 @@ struct MouseEvent {
 		if ((lastButt&0xff) == 7) {
 			// motion
 			if (event.type != MouseEventType.motion) return false;
+		} else if ((lastButt&0xff) == 3) {
+			// wheel
+			if (lastButt&Flag.Up) return (event.type == MouseEventType.buttonPressed && event.button == MouseButton.wheelUp);
+			if (lastButt&Flag.Down) return (event.type == MouseEventType.buttonPressed && event.button == MouseButton.wheelDown);
+			if (lastButt&Flag.Any) return (event.type == MouseEventType.buttonPressed && (event.button == MouseButton.wheelUp || event.button == MouseButton.wheelUp));
+			return false;
 		} else {
 			// buttons
 			if (((lastButt&Flag.Down) != 0 && event.type != MouseEventType.buttonPressed) ||
@@ -4989,10 +4995,11 @@ struct MouseEvent {
 				return false;
 			}
 			// button number
-			final switch (lastButt&0x03) {
+			switch (lastButt&0x03) {
 				case 0: if (event.button != MouseButton.left) return false; break;
 				case 1: if (event.button != MouseButton.middle) return false; break;
 				case 2: if (event.button != MouseButton.right) return false; break;
+				default: return false;
 			}
 		}
 		return true;
