@@ -1420,7 +1420,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// This will be called when window becomes visible for the first time.
 	/// You can do OpenGL initialization here. Note that in X11 you can't call
-	/// `setAsCurrentOpenGlContext()` right after window creation, or X11 may
+	/// [setAsCurrentOpenGlContext] right after window creation, or X11 may
 	/// fail to send reparent and map events (hit that with proprietary NVidia drivers).
 	private bool _visibleForTheFirstTimeCalled;
 	void delegate () visibleForTheFirstTime;
@@ -7725,9 +7725,26 @@ version(Windows) {
 					if(windowResized !is null)
 						windowResized(width, height);
 				break;
-				//case WM_ERASEBKGND:
-					// no need since we double buffer
-				//break;
+				case WM_ERASEBKGND:
+					// call `visibleForTheFirstTime` here, so we can do initialization as early as possible
+					if (!this._visibleForTheFirstTimeCalled) {
+						this._visibleForTheFirstTimeCalled = true;
+						if (this.visibleForTheFirstTime !is null) {
+							version(without_opengl) {} else {
+								if(openglMode == OpenGlOptions.yes) {
+									this.setAsCurrentOpenGlContextNT();
+									glViewport(0, 0, width, height);
+								}
+							}
+							this.visibleForTheFirstTime();
+						}
+					}
+					// block it in OpenGL mode, 'cause no sane person will (or should) draw windows controls over OpenGL scene
+					version(without_opengl) {} else {
+						if (openglMode == OpenGlOptions.yes) return 1;
+					}
+					// call windows default handler, so it can paint standard controls
+					goto default;
 				case WM_CTLCOLORBTN:
 				case WM_CTLCOLORSTATIC:
 					SetBkMode(cast(HDC) wParam, TRANSPARENT);
@@ -7736,16 +7753,32 @@ version(Windows) {
 				break;
 				case WM_SHOWWINDOW:
 					this._visible = (wParam != 0);
-					if (!this._visibleForTheFirstTimeCalled) {
+					if (!this._visibleForTheFirstTimeCalled && this._visible) {
 						this._visibleForTheFirstTimeCalled = true;
-						if (this.visibleForTheFirstTime !is null) this.visibleForTheFirstTime();
+						if (this.visibleForTheFirstTime !is null) {
+							version(without_opengl) {} else {
+								if(openglMode == OpenGlOptions.yes) {
+									this.setAsCurrentOpenGlContextNT();
+									glViewport(0, 0, width, height);
+								}
+							}
+							this.visibleForTheFirstTime();
+						}
 					}
 					if (this.visibilityChanged !is null) this.visibilityChanged(this._visible);
 					break;
 				case WM_PAINT: {
 					if (!this._visibleForTheFirstTimeCalled) {
 						this._visibleForTheFirstTimeCalled = true;
-						if (this.visibleForTheFirstTime !is null) this.visibleForTheFirstTime();
+						if (this.visibleForTheFirstTime !is null) {
+							version(without_opengl) {} else {
+								if(openglMode == OpenGlOptions.yes) {
+									this.setAsCurrentOpenGlContextNT();
+									glViewport(0, 0, width, height);
+								}
+							}
+							this.visibleForTheFirstTime();
+						}
 					}
 
 					BITMAP bm;
@@ -9491,6 +9524,12 @@ version(X11) {
 						if ((*win).visibleForTheFirstTime !is null) {
 							XUnlockDisplay(display);
 							scope(exit) XLockDisplay(display);
+							version(without_opengl) {} else {
+								if((*win).openglMode == OpenGlOptions.yes) {
+									(*win).setAsCurrentOpenGlContextNT();
+									glViewport(0, 0, (*win).width, (*win).height);
+								}
+							}
 							(*win).visibleForTheFirstTime();
 						}
 					}

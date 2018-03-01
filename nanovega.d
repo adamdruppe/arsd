@@ -2035,7 +2035,7 @@ public:
   // Call delegate [dg] for each path under the specified position (in no particular order).
   // Returns the id of the path for which delegate [dg] returned true or -1.
   // dg is: `bool delegate (int id, int order)` -- [order] is path ordering (ascending).
-  int hitTestDG(DG) (in float x, in float y, uint kind, scope DG dg) if (IsGoodHitTestDG!DG || IsGoodHitTestInternalDG!DG) {
+  int hitTestDG(bool bestOrder=false, DG) (in float x, in float y, NVGPickKind kind, scope DG dg) if (IsGoodHitTestDG!DG || IsGoodHitTestInternalDG!DG) {
     if (pickscene is null) return -1;
 
     NVGpickScene* ps = pickscene;
@@ -2079,13 +2079,13 @@ public:
 
   // Fills ids with a list of the top most hit ids under the specified position.
   // Returns the slice of [ids].
-  int[] hitTestAll (in float x, in float y, uint kind, int[] ids) nothrow @trusted @nogc {
+  int[] hitTestAll (in float x, in float y, NVGPickKind kind, int[] ids) nothrow @trusted @nogc {
     if (pickscene is null || ids.length == 0) return ids[0..0];
 
     int npicked = 0;
     NVGpickScene* ps = pickscene;
 
-    hitTestDG(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
+    hitTestDG!false(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
       if (npicked == ps.cpicked) {
         int cpicked = ps.cpicked+ps.cpicked;
         NVGpickPath** picked = cast(NVGpickPath**)realloc(ps.picked, (NVGpickPath*).sizeof*ps.cpicked);
@@ -2108,13 +2108,13 @@ public:
   }
 
   // Returns the id of the pickable shape containing x,y or -1 if no shape was found.
-  int hitTest (in float x, in float y, uint kind) nothrow @trusted @nogc {
+  int hitTest (in float x, in float y, NVGPickKind kind) nothrow @trusted @nogc {
     if (pickscene is null) return -1;
 
     int bestOrder = -1;
     int bestID = -1;
 
-    hitTestDG(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
+    hitTestDG!true(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
       if (pp.order > bestOrder) {
         bestOrder = pp.order;
         bestID = pp.id;
@@ -5267,11 +5267,11 @@ private template IsGoodHitTestInternalDG(DG) {
 }
 
 /// Call delegate [dg] for each path under the specified position (in no particular order).
-/// Returns the id of the path for which delegate [dg] returned true or -1.
+/// Returns the id of the path for which delegate [dg] returned true or [NVGNoPick].
 /// dg is: `bool delegate (int id, int order)` -- [order] is path ordering (ascending).
 /// Group: picking_api
-public int hitTestDG(DG) (NVGContext ctx, in float x, in float y, uint kind, scope DG dg) if (IsGoodHitTestDG!DG || IsGoodHitTestInternalDG!DG) {
-  if (ctx.pickScene is null || ctx.pickScene.npaths == 0) return -1;
+public int hitTestDG(bool bestOrder=false, DG) (NVGContext ctx, in float x, in float y, NVGPickKind kind, scope DG dg) if (IsGoodHitTestDG!DG || IsGoodHitTestInternalDG!DG) {
+  if (ctx.pickScene is null || ctx.pickScene.npaths == 0 || (kind&NVGPickKind.All) == 0) return -1;
 
   NVGpickScene* ps = ctx.pickScene;
   int levelwidth = 1<<(ps.nlevels-1);
@@ -5279,18 +5279,31 @@ public int hitTestDG(DG) (NVGContext ctx, in float x, in float y, uint kind, sco
   int celly = nvg__clamp(cast(int)(y/ps.ydim), 0, levelwidth);
   int npicked = 0;
 
+  // if we are interested only in most-toplevel path, there is no reason to check pathes with worser order.
+  // but we cannot just get out on the first path found, 'cause we are using quad tree to speed up bounds
+  // checking, so path walking order is not guaranteed.
+  static if (bestOrder) {
+    int lastBestOrder = int.min;
+  }
+
   //{ import core.stdc.stdio; printf("npaths=%d\n", ps.npaths); }
   for (int lvl = ps.nlevels-1; lvl >= 0; --lvl) {
-    NVGpickPath* pp = ps.levels[lvl][celly*levelwidth+cellx];
-    while (pp !is null) {
-      //{ import core.stdc.stdio; printf("... pos=(%g,%g); bounds=(%g,%g)-(%g,%g); flags=0x%02x; kind=0x%02x\n", x, y, pp.bounds[0], pp.bounds[1], pp.bounds[2], pp.bounds[3], pp.flags, kind); }
-      if (nvg__pickPathTestBounds(ctx, ps, pp, x, y)) {
+    for (NVGpickPath* pp = ps.levels[lvl][celly*levelwidth+cellx]; pp !is null; pp = pp.next) {
+      //{ import core.stdc.stdio; printf("... pos=(%g,%g); bounds=(%g,%g)-(%g,%g); flags=0x%02x; kind=0x%02x; kpx=0x%02x\n", x, y, pp.bounds[0], pp.bounds[1], pp.bounds[2], pp.bounds[3], pp.flags, kind, kind&pp.flags&3); }
+      static if (bestOrder) {
+        // reject earlier paths
+        if (pp.order <= lastBestOrder) continue; // not interesting
+      }
+      immutable uint kpx = kind&pp.flags&3;
+      if (kpx == 0) continue; // not interesting
+      if (!nvg__pickPathTestBounds(ctx, ps, pp, x, y)) continue; // not interesting
         //{ import core.stdc.stdio; printf("in bounds!\n"); }
         int hit = 0;
-        if ((kind&NVGPickKind.Stroke) && (pp.flags&NVGPathFlags.Stroke)) hit = nvg__pickPathStroke(ps, pp, x, y);
-        if (!hit && (kind&NVGPickKind.Fill) && (pp.flags&NVGPathFlags.Fill)) hit = nvg__pickPath(ps, pp, x, y);
-        if (hit) {
+      if (kpx&NVGPickKind.Stroke) hit = nvg__pickPathStroke(ps, pp, x, y);
+      if (!hit && (kpx&NVGPickKind.Fill)) hit = nvg__pickPath(ps, pp, x, y);
+      if (!hit) continue;
           //{ import core.stdc.stdio; printf("  HIT!\n"); }
+      static if (bestOrder) lastBestOrder = pp.order;
           static if (IsGoodHitTestDG!DG) {
             static if (__traits(compiles, (){ DG dg; bool res = dg(cast(int)42, cast(int)666); })) {
               if (dg(pp.id, cast(int)pp.order)) return pp.id;
@@ -5305,9 +5318,6 @@ public int hitTestDG(DG) (NVGContext ctx, in float x, in float y, uint kind, sco
             }
           }
         }
-      }
-      pp = pp.next;
-    }
     cellx >>= 1;
     celly >>= 1;
     levelwidth >>= 1;
@@ -5316,16 +5326,16 @@ public int hitTestDG(DG) (NVGContext ctx, in float x, in float y, uint kind, sco
   return -1;
 }
 
-/// Fills ids with a list of the top most hit ids under the specified position.
+/// Fills ids with a list of the top most hit ids (from bottom to top) under the specified position.
 /// Returns the slice of [ids].
 /// Group: picking_api
-public int[] hitTestAll (NVGContext ctx, in float x, in float y, uint kind, int[] ids) nothrow @trusted @nogc {
+public int[] hitTestAll (NVGContext ctx, in float x, in float y, NVGPickKind kind, int[] ids) nothrow @trusted @nogc {
   if (ctx.pickScene is null || ids.length == 0) return ids[0..0];
 
   int npicked = 0;
   NVGpickScene* ps = ctx.pickScene;
 
-  ctx.hitTestDG(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
+  ctx.hitTestDG!false(x, y, kind, delegate (NVGpickPath* pp) nothrow @trusted @nogc {
     if (npicked == ps.cpicked) {
       int cpicked = ps.cpicked+ps.cpicked;
       NVGpickPath** picked = cast(NVGpickPath**)realloc(ps.picked, (NVGpickPath*).sizeof*ps.cpicked);
@@ -5347,15 +5357,15 @@ public int[] hitTestAll (NVGContext ctx, in float x, in float y, uint kind, int[
   return ids[0..npicked];
 }
 
-/// Returns the id of the pickable shape containing x,y or -1 if no shape was found.
+/// Returns the id of the pickable shape containing x,y or [NVGNoPick] if no shape was found.
 /// Group: picking_api
-public int hitTest (NVGContext ctx, in float x, in float y, uint kind) nothrow @trusted @nogc {
+public int hitTest (NVGContext ctx, in float x, in float y, NVGPickKind kind=NVGPickKind.All) nothrow @trusted @nogc {
   if (ctx.pickScene is null) return -1;
 
-  int bestOrder = -1;
+  int bestOrder = int.min;
   int bestID = -1;
 
-  ctx.hitTestDG(x, y, kind, delegate (NVGpickPath* pp) {
+  ctx.hitTestDG!true(x, y, kind, delegate (NVGpickPath* pp) {
     if (pp.order > bestOrder) {
       bestOrder = pp.order;
       bestID = pp.id;
@@ -5422,10 +5432,10 @@ enum NVGSegmentFlags {
 }
 
 // Path flags
-enum NVGPathFlags {
-  Scissor = 1,
-  Stroke = 2,
-  Fill = 4,
+enum NVGPathFlags : ushort {
+  Fill = NVGPickKind.Fill,
+  Stroke = NVGPickKind.Stroke,
+  Scissor = 0x80,
 }
 
 struct NVGsegment {
@@ -5674,7 +5684,7 @@ void nvg__pickSubPathAddStrokeSupports (NVGpickScene* ps, NVGpickSubPath* psp, f
     supportingPoints.ptr[ns++] = points[lastPoint]+seg.endDir.ptr[1]*strokeWidth;
     supportingPoints.ptr[ns++] = points[lastPoint+1]-seg.endDir.ptr[0]*strokeWidth;
 
-    if (seg.flags&NVGSegmentFlags.Corner && prevseg !is null) {
+    if ((seg.flags&NVGSegmentFlags.Corner) && prevseg !is null) {
       seg.miterDir.ptr[0] = 0.5f*(-prevseg.endDir.ptr[1]-seg.startDir.ptr[1]);
       seg.miterDir.ptr[1] = 0.5f*(prevseg.endDir.ptr[0]+seg.startDir.ptr[0]);
 
@@ -9464,8 +9474,8 @@ public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] pa
       }
     }
     version(Windows) {
-      // special shitdows check
-      foreach (immutable char ch; path) if (ch == ':') return FONS_INVALID;
+      // special shitdows check: this will reject fontconfig font names (but still allow things like "c:myfont")
+      foreach (immutable char ch; path[(path.length >= 2 && path[1] == ':' ? 2 : 0)..$]) if (ch == ':') return FONS_INVALID;
     }
     // either no such font, or different path
     //{ import core.stdc.stdio; printf("trying font [%.*s] from file [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)path.length, path.ptr); }
