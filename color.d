@@ -845,7 +845,7 @@ interface MemoryImage {
 	// tl;dr: IF YOU HAVE *ANY* QUESTIONS REGARDING THIS COMMENT, DON'T USE THIS!
 	// Note to implementors: it is safe to simply do nothing in this method.
 	// Also, it should be safe to call this method twice or more.
-	void clearInternal () nothrow @system @nogc;
+	void clearInternal () nothrow @system;// @nogc; // nogc is commented right now just because GC.free is only @nogc in newest dmd and i want to stay compatible a few versions back too. it can be added later
 
 	/// Convenient alias for `fromImage`
 	alias fromImageFile = fromImage;
@@ -860,7 +860,7 @@ class IndexedImage : MemoryImage {
 	/// the data as indexes into the palette. Stored left to right, top to bottom, no padding.
 	ubyte[] data;
 
-	override void clearInternal () nothrow @system @nogc {
+	override void clearInternal () nothrow @system {// @nogc {
 		import core.memory : GC;
 		// it is safe to call [GC.free] with `null` pointer.
 		GC.free(palette.ptr); palette = null;
@@ -1006,7 +1006,7 @@ class TrueColorImage : MemoryImage {
 	int _width;
 	int _height;
 
-	override void clearInternal () nothrow @system @nogc {
+	override void clearInternal () nothrow @system {// @nogc {
 		import core.memory : GC;
 		// it is safe to call [GC.free] with `null` pointer.
 		GC.free(imageData.bytes.ptr); imageData.bytes = null;
