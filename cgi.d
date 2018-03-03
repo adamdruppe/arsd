@@ -1,5 +1,6 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
+// FIXME: new ConnectionThread is done a lot, no pooling implemented
 
 // Note: spawn-fcgi can help with fastcgi on nginx
 
@@ -2653,6 +2654,9 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 	}
 }
 
+version(embedded_httpd_processes)
+	int processPoolSize = 8;
+
 mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
 	void cgiMainImpl(string[] args) {
 
@@ -2737,7 +2741,7 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 			int processCount;
 			pid_t newPid;
 			reopen:
-			while(processCount < 8) {
+			while(processCount < processPoolSize) {
 				newPid = fork();
 				if(newPid == 0) {
 					// start serving on the socket
@@ -2765,6 +2769,9 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 								Cgi cgi;
 								try {
 									cgi = new CustomCgi(ir, &closeConnection);
+									// if we have a single process and the browser tries to leave the connection open while concurrently requesting another, it will block everything an deadlock since there's no other server to accept it. By closing after each request in this situation, it tells the browser to serialize for us.
+									if(processPoolSize == 1)
+										closeConnection = true;
 									//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
 								} catch(Throwable t) {
 									// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
