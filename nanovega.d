@@ -12769,7 +12769,12 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
         case GLNVG_CLIP_DDUMP_OFF:
           version(nanovega_debug_clipping) nanovegaClipDebugDump = false;
           break;
-        default: assert(0, "NanoVega: invalid command in OpenGL backend (fatal internal error)");
+        case GLNVG_NONE: break;
+        default:
+          {
+            import core.stdc.stdio; stderr.fprintf("NanoVega FATAL: invalid command in OpenGL backend: %d\n", call.type);
+          }
+          assert(0, "NanoVega: invalid command in OpenGL backend (fatal internal error)");
       }
       // and free texture, why not
       glnvg__deleteTexture(gl, call.image);
@@ -12868,13 +12873,15 @@ void glnvg__vset (NVGvertex* vtx, float x, float y, float u, float v) nothrow @t
 }
 
 void glnvg__renderFill (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, const(float)* bounds, const(NVGpath)* paths, int npaths, bool evenOdd) nothrow @trusted @nogc {
+  if (npaths < 1) return;
+
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
   GLNVGcall* call = glnvg__allocCall(gl);
   NVGvertex* quad;
   GLNVGfragUniforms* frag;
   int maxverts, offset;
 
-  if (call is null || npaths < 1) return;
+  if (call is null) return;
 
   call.type = GLNVG_FILL;
   call.evenOdd = evenOdd;
@@ -12954,11 +12961,13 @@ error:
 }
 
 void glnvg__renderStroke (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, float strokeWidth, const(NVGpath)* paths, int npaths) nothrow @trusted @nogc {
+  if (npaths < 1) return;
+
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
   GLNVGcall* call = glnvg__allocCall(gl);
   int maxverts, offset;
 
-  if (call is null || npaths < 1) return;
+  if (call is null) return;
 
   call.type = GLNVG_STROKE;
   call.clipmode = clipmode;
@@ -13008,6 +13017,8 @@ error:
 }
 
 void glnvg__renderTriangles (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGvertex)* verts, int nverts) nothrow @trusted @nogc {
+  if (nverts < 1) return;
+
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
   GLNVGcall* call = glnvg__allocCall(gl);
   GLNVGfragUniforms* frag;
