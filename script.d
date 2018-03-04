@@ -268,7 +268,7 @@ unittest {
 
 		var a = "cool";
 		assert(test("hey #{a}") == "hey cooltest");
-	}, globals;)
+	}, globals);
 }
 
 public import arsd.jsvar;
