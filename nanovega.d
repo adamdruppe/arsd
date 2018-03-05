@@ -1498,17 +1498,19 @@ public alias NVGContext = NVGcontextinternal*;
 // Returns FontStash context of the given NanoVega context.
 public FONScontext* fonsContext (NVGContext ctx) { return (ctx !is null ? ctx.fs : null); }
 
-/** De Casteljau Bezier tesselator is faster for small number of bezier curves.
- * But if your path has alot of degenerate curves (i.e. straight lines), then
- * AFD tesselator is MUCH faster. */
+/** Bezier curve tesselator.
+ *
+ * De Casteljau Bezier tesselator is faster, but currently rasterizing curves with cusps sligtly wrong.
+ * It doesn't really matter in practice.
+ *
+ * AFD tesselator is somewhat slower, but does cusps better. */
 public enum NVGTesselation {
-  Combined, /// default: this will use AFD tesselator for degenerate Beziers, and DeCasteljau for normal beziers
-  DeCasteljau, /// standard well-known tesselation algorithm
+  DeCasteljau, /// default: standard well-known tesselation algorithm
   AFD, /// adaptive forward differencing
 }
 
 /// Default tesselator for Bezier curves.
-public __gshared NVGTesselation NVG_DEFAULT_TESSELATOR = NVGTesselation.Combined;
+public __gshared NVGTesselation NVG_DEFAULT_TESSELATOR = NVGTesselation.DeCasteljau;
 
 
 // some public info
@@ -1551,7 +1553,7 @@ public void pickmode (NVGContext ctx, uint v) nothrow @trusted @nogc { pragma(in
 
 ///
 /// Group: context_management
-public NVGTesselation tesselation (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null ? ctx.tesselatortype : NVGTesselation.Combined); }
+public NVGTesselation tesselation (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null ? ctx.tesselatortype : NVGTesselation.DeCasteljau); }
 
 ///
 /// Group: context_management
@@ -3826,6 +3828,7 @@ void nvg__tesselateBezier (NVGContext ctx, in float x1, in float y1, in float x2
   if (level > 10) return;
 
   // check for collinear points, and use AFD tesselator on such curves (it is WAY faster for this case)
+  /*
   if (level == 0 && ctx.tesselatortype == NVGTesselation.Combined) {
     static bool collinear (in float v0x, in float v0y, in float v1x, in float v1y, in float v2x, in float v2y) nothrow @trusted @nogc {
       immutable float cz = (v1x-v0x)*(v2y-v0y)-(v2x-v0x)*(v1y-v0y);
@@ -3837,6 +3840,7 @@ void nvg__tesselateBezier (NVGContext ctx, in float x1, in float y1, in float x2
       return;
     }
   }
+  */
 
   immutable float x12 = (x1+x2)*0.5f;
   immutable float y12 = (y1+y2)*0.5f;
@@ -3857,17 +3861,17 @@ void nvg__tesselateBezier (NVGContext ctx, in float x1, in float y1, in float x2
     return;
   }
 
-  /*
-  if (nvg__absf(x1+x3-x2-x2)+nvg__absf(y1+y3-y2-y2)+nvg__absf(x2+x4-x3-x3)+nvg__absf(y2+y4-y3-y3) < ctx.tessTol) {
-    nvg__addPoint(ctx, x4, y4, type);
-    return;
-  }
-  */
-
   immutable float x234 = (x23+x34)*0.5f;
   immutable float y234 = (y23+y34)*0.5f;
   immutable float x1234 = (x123+x234)*0.5f;
   immutable float y1234 = (y123+y234)*0.5f;
+
+
+  // "taxicab" / "manhattan" check for flat curves
+  if (nvg__absf(x1+x3-x2-x2)+nvg__absf(y1+y3-y2-y2)+nvg__absf(x2+x4-x3-x3)+nvg__absf(y2+y4-y3-y3) < ctx.tessTol/4) {
+    nvg__addPoint(ctx, x1234, y1234, type);
+    return;
+  }
 
   nvg__tesselateBezier(ctx, x1, y1, x12, y12, x123, y123, x1234, y1234, level+1, 0);
   nvg__tesselateBezier(ctx, x1234, y1234, x234, y234, x34, y34, x4, y4, level+1, type);
@@ -4010,7 +4014,7 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
           const cp1 = &ctx.commands[i+1];
           const cp2 = &ctx.commands[i+3];
           const p = &ctx.commands[i+5];
-          if (ctx.tesselatortype != NVGTesselation.AFD) {
+          if (ctx.tesselatortype == NVGTesselation.DeCasteljau) {
             nvg__tesselateBezier(ctx, last.x, last.y, cp1[0], cp1[1], cp2[0], cp2[1], p[0], p[1], 0, PointFlag.Corner);
           } else {
             nvg__tesselateBezierAFD(ctx, last.x, last.y, cp1[0], cp1[1], cp2[0], cp2[1], p[0], p[1], PointFlag.Corner);
