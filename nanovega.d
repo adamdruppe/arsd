@@ -1068,7 +1068,9 @@ public struct NVGPaint {
   float radius = 0.0f;
   float feather = 0.0f;
   NVGColor innerColor; /// this can be used to modulate images (fill/font)
+  NVGColor middleColor;
   NVGColor outerColor;
+  float midp = -1; // middle stop for 3-color gradient
   NVGImage image;
   bool simpleColor; /// if `true`, only innerColor is used, and this is solid-color paint
 
@@ -1078,6 +1080,8 @@ public struct NVGPaint {
     radius = p.radius;
     feather = p.feather;
     innerColor = p.innerColor;
+    middleColor = p.middleColor;
+    midp = p.midp;
     outerColor = p.outerColor;
     image = p.image;
     simpleColor = p.simpleColor;
@@ -1089,6 +1093,8 @@ public struct NVGPaint {
     radius = p.radius;
     feather = p.feather;
     innerColor = p.innerColor;
+    middleColor = p.middleColor;
+    midp = p.midp;
     outerColor = p.outerColor;
     image = p.image;
     simpleColor = p.simpleColor;
@@ -1498,15 +1504,21 @@ public alias NVGContext = NVGcontextinternal*;
 // Returns FontStash context of the given NanoVega context.
 public FONScontext* fonsContext (NVGContext ctx) { return (ctx !is null ? ctx.fs : null); }
 
-/** Bezier curve tesselator.
+/** Bezier curve rasterizer.
  *
- * De Casteljau Bezier tesselator is faster, but currently rasterizing curves with cusps sligtly wrong.
+ * De Casteljau Bezier rasterizer is faster, but currently rasterizing curves with cusps sligtly wrong.
  * It doesn't really matter in practice.
  *
- * AFD tesselator is somewhat slower, but does cusps better. */
+ * AFD tesselator is somewhat slower, but does cusps better.
+ *
+ * McSeem rasterizer should have the best quality, bit it is the slowest method. Basically, you will
+ * never notice any visial difference (and this code is not really debugged), so you probably should
+ * not use it. It is there for further experiments.
+ */
 public enum NVGTesselation {
   DeCasteljau, /// default: standard well-known tesselation algorithm
   AFD, /// adaptive forward differencing
+  DeCasteljauMcSeem, /// standard well-known tesselation algorithm, with improvements from Maxim Shemanarev; slowest one, but should give best results
 }
 
 /// Default tesselator for Bezier curves.
@@ -1570,9 +1582,11 @@ private:
   NVGstate[NVG_MAX_STATES] states;
   int nstates;
   NVGpathCache* cache;
-  float tessTol;
+  public float tessTol;
+  public float angleTol; // 0.0f -- angle tolerance for McSeem Bezier rasterizer
+  public float cuspLimit; // 0 -- cusp limit for McSeem Bezier rasterizer (0: real cusps)
   float distTol;
-  float fringeWidth;
+  public float fringeWidth;
   float devicePxRatio;
   FONScontext* fs;
   NVGImage[NVG_MAX_FONTIMAGES] fontImages;
@@ -1725,7 +1739,7 @@ NVGCompositeOperationState nvg__compositeOperationState (NVGCompositeOperation o
     state.dstAlpha = NVGBlendFactor.OneMinusSrcAlpha;
     return state;
   }
-  else { sfactor = NVGBlendFactor.One; dfactor = NVGBlendFactor.OneMinusSrcAlpha;} // default value for invalid op: SourceOver
+  else { sfactor = NVGBlendFactor.One; dfactor = NVGBlendFactor.OneMinusSrcAlpha; } // default value for invalid op: SourceOver
 
   state.simple = true;
   state.srcAlpha = sfactor;
@@ -1744,6 +1758,9 @@ NVGContext createInternal (NVGparams* params) nothrow @trusted @nogc {
   NVGContext ctx = cast(NVGContext)malloc(NVGcontextinternal.sizeof);
   if (ctx is null) goto error;
   memset(ctx, 0, NVGcontextinternal.sizeof);
+
+  ctx.angleTol = 0; // angle tolerance for McSeem Bezier rasterizer
+  ctx.cuspLimit = 0; // cusp limit for McSeem Bezier rasterizer (0: real cusps)
 
   ctx.contextAlive = true;
 
@@ -1804,22 +1821,22 @@ NVGparams* internalParams (NVGContext ctx) nothrow @trusted @nogc {
 void deleteInternal (ref NVGContext ctx) nothrow @trusted @nogc {
   if (ctx is null) return;
   if (ctx.contextAlive) {
-  if (ctx.commands !is null) free(ctx.commands);
-  nvg__deletePathCache(ctx.cache);
+    if (ctx.commands !is null) free(ctx.commands);
+    nvg__deletePathCache(ctx.cache);
 
-  if (ctx.fs) fonsDeleteInternal(ctx.fs);
+    if (ctx.fs) fonsDeleteInternal(ctx.fs);
 
     foreach (uint i; 0..NVG_MAX_FONTIMAGES) ctx.fontImages[i].clear();
 
-  if (ctx.params.renderDelete !is null) ctx.params.renderDelete(ctx.params.userPtr);
+    if (ctx.params.renderDelete !is null) ctx.params.renderDelete(ctx.params.userPtr);
 
-  if (ctx.pickScene !is null) nvg__deletePickScene(ctx.pickScene);
+    if (ctx.pickScene !is null) nvg__deletePickScene(ctx.pickScene);
 
     ctx.contextAlive = false;
 
     if (ctx.imageCount == 0) {
       version(nanovega_debug_image_manager) { import core.stdc.stdio; printf("destroyed context %p\n", ctx); }
-  free(ctx);
+      free(ctx);
     } else {
       version(nanovega_debug_image_manager) { import core.stdc.stdio; printf("context %p is zombie now (%d image refs)\n", ctx, ctx.imageCount); }
     }
@@ -2035,9 +2052,11 @@ private:
 
           // apply global alpha
           fillPaint.innerColor.a *= state.alpha;
+          fillPaint.middleColor.a *= state.alpha;
           fillPaint.outerColor.a *= state.alpha;
 
           fillPaint.innerColor.applyTint(fillTint);
+          fillPaint.middleColor.applyTint(fillTint);
           fillPaint.outerColor.applyTint(fillTint);
 
           ctx.params.renderFill(ctx.params.userPtr, state.compositeOperation, cc.clipmode, &fillPaint, &state.scissor, cc.fringeWidth, cc.bounds.ptr, cc.paths, cc.npaths, cc.evenOddMode);
@@ -2055,13 +2074,16 @@ private:
           NVGPaint strokePaint = node.paint;
 
           strokePaint.innerColor.a *= cc.strokeAlphaMul;
+          strokePaint.middleColor.a *= cc.strokeAlphaMul;
           strokePaint.outerColor.a *= cc.strokeAlphaMul;
 
           // apply global alpha
           strokePaint.innerColor.a *= state.alpha;
+          strokePaint.middleColor.a *= state.alpha;
           strokePaint.outerColor.a *= state.alpha;
 
           strokePaint.innerColor.applyTint(strokeTint);
+          strokePaint.middleColor.applyTint(strokeTint);
           strokePaint.outerColor.applyTint(strokeTint);
 
           ctx.params.renderStroke(ctx.params.userPtr, state.compositeOperation, cc.clipmode, &strokePaint, &state.scissor, cc.fringeWidth, cc.strokeWidth, cc.paths, cc.npaths);
@@ -2754,8 +2776,8 @@ void nvg__setPaintColor() (ref NVGPaint p, in auto ref NVGColor color) nothrow @
   p.xform.identity;
   p.radius = 0.0f;
   p.feather = 1.0f;
-  p.innerColor = color;
-  p.outerColor = color;
+  p.innerColor = p.middleColor = p.outerColor = color;
+  p.midp = -1;
   p.simpleColor = true;
 }
 
@@ -2912,14 +2934,14 @@ public void strokeColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
 
 /// Sets current stroke style to a solid color.
 /// Group: render_styles
-public void strokeColor (NVGContext ctx, NVGColor color) nothrow @trusted @nogc {
+public void strokeColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.stroke, color);
 }
 
 /// Sets current stroke style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
-public void strokePaint (NVGContext ctx, NVGPaint paint) nothrow @trusted @nogc {
+public void strokePaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.stroke = paint;
   //nvgTransformMultiply(state.stroke.xform[], state.xform[]);
@@ -2937,18 +2959,34 @@ public void fillColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
 
 /// Sets current fill style to a solid color.
 /// Group: render_styles
-public void fillColor (NVGContext ctx, NVGColor color) nothrow @trusted @nogc {
+public void fillColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.fill, color);
 }
 
 /// Sets current fill style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
-public void fillPaint (NVGContext ctx, NVGPaint paint) nothrow @trusted @nogc {
+public void fillPaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.fill = paint;
   //nvgTransformMultiply(state.fill.xform[], state.xform[]);
   state.fill.xform.mul(state.xform);
+}
+
+/// Sets current fill style to a multistop linear gradient.
+/// Group: render_styles
+public void fillPaint() (NVGContext ctx, in auto ref NVGLGS lgs) nothrow @trusted @nogc {
+  if (!lgs.valid) {
+    NVGPaint p = void;
+    memset(&p, 0, p.sizeof);
+    nvg__setPaintColor(p, NVGColor.red);
+    ctx.fillPaint = p;
+  } else if (lgs.midp >= -1) {
+    //{ import core.stdc.stdio; printf("SIMPLE! midp=%f\n", cast(double)lgs.midp); }
+    ctx.fillPaint = ctx.linearGradient(lgs.cx, lgs.cy, lgs.dimx, lgs.dimy, lgs.ic, lgs.midp, lgs.mc, lgs.oc);
+  } else {
+    ctx.fillPaint = ctx.imagePattern(lgs.cx, lgs.cy, lgs.dimx, lgs.dimy, lgs.angle, lgs.imgid);
+  }
 }
 
 /// Returns current transformation matrix.
@@ -3164,6 +3202,16 @@ static if (NanoVegaHasArsdColor) {
 public NVGPaint linearGradient (NVGContext ctx, in float sx, in float sy, in float ex, in float ey, in Color icol, in Color ocol) nothrow @trusted @nogc {
   return ctx.linearGradient(sx, sy, ex, ey, NVGColor(icol), NVGColor(ocol));
 }
+/** Creates and returns a linear gradient with middle stop. Parameters `(sx, sy) (ex, ey)` specify the start
+ * and end coordinates of the linear gradient, icol specifies the start color, midp specifies stop point in
+ * range `(0..1)`, and ocol the end color.
+ * The gradient is transformed by the current transform when it is passed to [fillPaint] or [strokePaint].
+ *
+ * Group: paints
+ */
+public NVGPaint linearGradient (NVGContext ctx, in float sx, in float sy, in float ex, in float ey, in Color icol, in float midp, in Color mcol, in Color ocol) nothrow @trusted @nogc {
+  return ctx.linearGradient(sx, sy, ex, ey, NVGColor(icol), midp, NVGColor(mcol), NVGColor(ocol));
+}
 }
 
 /** Creates and returns a linear gradient. Parameters `(sx, sy) (ex, ey)` specify the start and end coordinates
@@ -3172,7 +3220,7 @@ public NVGPaint linearGradient (NVGContext ctx, in float sx, in float sy, in flo
  *
  * Group: paints
  */
-public NVGPaint linearGradient (NVGContext ctx, float sx, float sy, float ex, float ey, NVGColor icol, NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
   enum large = 1e5f;
 
   NVGPaint p = void;
@@ -3202,7 +3250,61 @@ public NVGPaint linearGradient (NVGContext ctx, float sx, float sy, float ex, fl
 
   p.feather = nvg__max(NVG_MIN_FEATHER, d);
 
-  p.innerColor = icol;
+  p.innerColor = p.middleColor = icol;
+  p.outerColor = ocol;
+  p.midp = -1;
+
+  return p;
+}
+
+/** Creates and returns a linear gradient with middle stop. Parameters `(sx, sy) (ex, ey)` specify the start
+ * and end coordinates of the linear gradient, icol specifies the start color, midp specifies stop point in
+ * range `(0..1)`, and ocol the end color.
+ * The gradient is transformed by the current transform when it is passed to [fillPaint] or [strokePaint].
+ *
+ * Group: paints
+ */
+public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, in auto ref NVGColor icol, in float midp, in auto ref NVGColor mcol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
+  enum large = 1e5f;
+
+  NVGPaint p = void;
+  memset(&p, 0, p.sizeof);
+  p.simpleColor = false;
+
+  // Calculate transform aligned to the line
+  float dx = ex-sx;
+  float dy = ey-sy;
+  immutable float d = nvg__sqrtf(dx*dx+dy*dy);
+  if (d > 0.0001f) {
+    dx /= d;
+    dy /= d;
+  } else {
+    dx = 0;
+    dy = 1;
+  }
+
+  p.xform.mat.ptr[0] = dy; p.xform.mat.ptr[1] = -dx;
+  p.xform.mat.ptr[2] = dx; p.xform.mat.ptr[3] = dy;
+  p.xform.mat.ptr[4] = sx-dx*large; p.xform.mat.ptr[5] = sy-dy*large;
+
+  p.extent.ptr[0] = large;
+  p.extent.ptr[1] = large+d*0.5f;
+
+  p.radius = 0.0f;
+
+  p.feather = nvg__max(NVG_MIN_FEATHER, d);
+
+  if (midp <= 0) {
+    p.innerColor = p.middleColor = mcol;
+    p.midp = -1;
+  } else if (midp > 1) {
+    p.innerColor = p.middleColor = icol;
+    p.midp = -1;
+  } else {
+    p.innerColor = icol;
+    p.middleColor = mcol;
+    p.midp = midp;
+  }
   p.outerColor = ocol;
 
   return p;
@@ -3226,7 +3328,7 @@ public NVGPaint radialGradient (NVGContext ctx, in float cx, in float cy, in flo
  *
  * Group: paints
  */
-public NVGPaint radialGradient (NVGContext ctx, float cx, float cy, float inr, float outr, NVGColor icol, NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint radialGradient() (NVGContext ctx, float cx, float cy, float inr, float outr, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
   immutable float r = (inr+outr)*0.5f;
   immutable float f = (outr-inr);
 
@@ -3245,8 +3347,9 @@ public NVGPaint radialGradient (NVGContext ctx, float cx, float cy, float inr, f
 
   p.feather = nvg__max(NVG_MIN_FEATHER, f);
 
-  p.innerColor = icol;
+  p.innerColor = p.middleColor = icol;
   p.outerColor = ocol;
+  p.midp = -1;
 
   return p;
 }
@@ -3273,7 +3376,7 @@ public NVGPaint boxGradient (NVGContext ctx, in float x, in float y, in float w,
  *
  * Group: paints
  */
-public NVGPaint boxGradient (NVGContext ctx, float x, float y, float w, float h, float r, float f, NVGColor icol, NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint boxGradient() (NVGContext ctx, float x, float y, float w, float h, float r, float f, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
   NVGPaint p = void;
   memset(&p, 0, p.sizeof);
   p.simpleColor = false;
@@ -3289,8 +3392,9 @@ public NVGPaint boxGradient (NVGContext ctx, float x, float y, float w, float h,
 
   p.feather = nvg__max(NVG_MIN_FEATHER, f);
 
-  p.innerColor = icol;
+  p.innerColor = p.middleColor = icol;
   p.outerColor = ocol;
+  p.midp = -1;
 
   return p;
 }
@@ -3315,7 +3419,8 @@ public NVGPaint imagePattern() (NVGContext ctx, float cx, float cy, float w, flo
 
   p.image = image;
 
-  p.innerColor = p.outerColor = nvgRGBAf(1, 1, 1, alpha);
+  p.innerColor = p.middleColor = p.outerColor = nvgRGBAf(1, 1, 1, alpha);
+  p.midp = -1;
 
   return p;
 }
@@ -3325,14 +3430,17 @@ public NVGPaint imagePattern() (NVGContext ctx, float cx, float cy, float w, flo
 /// Group: paints
 public struct NVGLGS {
 private:
+  NVGColor ic, mc, oc; // inner, middle, out
+  float midp;
   NVGImage imgid;
   // [imagePattern] arguments
-  float cx, cy, dim, angle;
+  float cx, cy, dimx, dimy; // dimx and dimy are ex and ey for simple gradients
+  public float angle; ///
 
 public:
   @disable this (this); // no copies
-  @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return imgid.valid; } ///
-  void clear ()  nothrow @safe @nogc { pragma(inline, true); imgid.clear(); } ///
+  @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (imgid.valid || midp >= -1); } ///
+  void clear ()  nothrow @safe @nogc { pragma(inline, true); imgid.clear(); midp = float.nan; } ///
 }
 
 /** Returns [NVGPaint] for linear gradient with stops, created with [createLinearGradientWithStops].
@@ -3347,8 +3455,10 @@ public NVGPaint asPaint() (NVGContext ctx, in auto ref NVGLGS lgs) nothrow @trus
     memset(&p, 0, p.sizeof);
     nvg__setPaintColor(p, NVGColor.red);
     return p;
+  } else if (lgs.midp >= -1) {
+    return ctx.linearGradient(lgs.cx, lgs.cy, lgs.dimx, lgs.dimy, lgs.ic, lgs.midp, lgs.mc, lgs.oc);
   } else {
-    return ctx.imagePattern(lgs.cx, lgs.cy, lgs.dim, lgs.dim, lgs.angle, lgs.imgid);
+    return ctx.imagePattern(lgs.cx, lgs.cy, lgs.dimx, lgs.dimy, lgs.angle, lgs.imgid);
   }
 }
 
@@ -3359,9 +3469,10 @@ public struct NVGGradientStop {
   float offset = 0; /// [0..1]
   NVGColor color; ///
 
-  ///
-  this() (in float aofs, in auto ref NVGColor aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = aclr; }
-  this() (in float aofs, in Color aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = NVGColor(aclr); }
+  this() (in float aofs, in auto ref NVGColor aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = aclr; } ///
+  static if (NanoVegaHasArsdColor) {
+    this() (in float aofs, in Color aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = NVGColor(aclr); } ///
+  }
 }
 
 /// Create linear gradient data suitable to use with `linearGradient(res)`.
@@ -3401,31 +3512,50 @@ public NVGLGS createLinearGradientWithStops (NVGContext ctx, in float sx, in flo
   }
 
   NVGLGS res;
-
-  uint[NVG_GRADIENT_SAMPLES] data = void;
-  immutable float w = ex-sx;
-  immutable float h = ey-sy;
-  res.dim = nvg__sqrtf(w*w+h*h);
-
   res.cx = sx;
   res.cy = sy;
-  res.angle =
-    (/*nvg__absf(h) < 0.0001 ? 0 :
-     nvg__absf(w) < 0.0001 ? 90.nvgDegrees :*/
-     nvg__atan2f(h/*ey-sy*/, w/*ex-sx*/));
 
-  if (stops.length > 0) {
-  auto s0 = NVGGradientStop(0, nvgRGBAf(0, 0, 0, 1));
-  auto s1 = NVGGradientStop(1, nvgRGBAf(1, 1, 1, 1));
-  if (stops.length > 64) stops = stops[0..64];
-  if (stops.length) {
-    s0.color = stops[0].color;
-    s1.color = stops[$-1].color;
-  }
-  gradientSpan(data.ptr, &s0, (stops.length ? stops.ptr : &s1));
-    foreach (immutable i; 0..stops.length-1) gradientSpan(data.ptr, stops.ptr+i, stops.ptr+i+1);
-  gradientSpan(data.ptr, (stops.length ? stops.ptr+stops.length-1 : &s0), &s1);
-    res.imgid = ctx.createImageRGBA(NVG_GRADIENT_SAMPLES, 1, data[], NVGImageFlag.RepeatX, NVGImageFlag.RepeatY);
+  if (stops.length == 2 && stops.ptr[0].offset <= 0 && stops.ptr[1].offset >= 1) {
+    // create simple linear gradient
+    res.ic = res.mc = stops.ptr[0].color;
+    res.oc = stops.ptr[1].color;
+    res.midp = -1;
+    res.dimx = ex;
+    res.dimy = ey;
+  } else if (stops.length == 3 && stops.ptr[0].offset <= 0 && stops.ptr[2].offset >= 1) {
+    // create simple linear gradient with middle stop
+    res.ic = stops.ptr[0].color;
+    res.mc = stops.ptr[1].color;
+    res.oc = stops.ptr[2].color;
+    res.midp = stops.ptr[1].offset;
+    res.dimx = ex;
+    res.dimy = ey;
+  } else {
+    // create image gradient
+    uint[NVG_GRADIENT_SAMPLES] data = void;
+    immutable float w = ex-sx;
+    immutable float h = ey-sy;
+    res.dimx = nvg__sqrtf(w*w+h*h);
+    res.dimy = 1; //???
+
+    res.angle =
+      (/*nvg__absf(h) < 0.0001 ? 0 :
+       nvg__absf(w) < 0.0001 ? 90.nvgDegrees :*/
+       nvg__atan2f(h/*ey-sy*/, w/*ex-sx*/));
+
+    if (stops.length > 0) {
+      auto s0 = NVGGradientStop(0, nvgRGBAf(0, 0, 0, 1));
+      auto s1 = NVGGradientStop(1, nvgRGBAf(1, 1, 1, 1));
+      if (stops.length > 64) stops = stops[0..64];
+      if (stops.length) {
+        s0.color = stops[0].color;
+        s1.color = stops[$-1].color;
+      }
+      gradientSpan(data.ptr, &s0, (stops.length ? stops.ptr : &s1));
+      foreach (immutable i; 0..stops.length-1) gradientSpan(data.ptr, stops.ptr+i, stops.ptr+i+1);
+      gradientSpan(data.ptr, (stops.length ? stops.ptr+stops.length-1 : &s0), &s1);
+      res.imgid = ctx.createImageRGBA(NVG_GRADIENT_SAMPLES, 1, data[]/*, NVGImageFlag.RepeatX, NVGImageFlag.RepeatY*/);
+    }
   }
   return res;
 }
@@ -3877,6 +4007,176 @@ void nvg__tesselateBezier (NVGContext ctx, in float x1, in float y1, in float x2
   nvg__tesselateBezier(ctx, x1234, y1234, x234, y234, x34, y34, x4, y4, level+1, type);
 }
 
+// based on the ideas and code of Maxim Shemanarev. Rest in Peace, bro!
+// see http://www.antigrain.com/research/adaptive_bezier/index.html
+void nvg__tesselateBezierMcSeem (NVGContext ctx, in float x1, in float y1, in float x2, in float y2, in float x3, in float y3, in float x4, in float y4, in int level, in int type) nothrow @trusted @nogc {
+  enum CollinearEPS = 0.00000001f; // 0.00001f;
+  enum AngleTolEPS = 0.01f;
+
+  static float distSquared (in float x1, in float y1, in float x2, in float y2) pure nothrow @safe @nogc {
+    pragma(inline, true);
+    immutable float dx = x2-x1;
+    immutable float dy = y2-y1;
+    return dx*dx+dy*dy;
+  }
+
+  if (level == 0) {
+    nvg__addPoint(ctx, x1, y1, 0);
+    nvg__tesselateBezierMcSeem(ctx, x1, y1, x2, y2, x3, y3, x4, y4, 1, type);
+    nvg__addPoint(ctx, x4, y4, type);
+    return;
+  }
+
+  if (level >= 32) return; // recurse limit; practically, it should be never reached, but...
+
+  // calculate all the mid-points of the line segments
+  immutable float x12 = (x1+x2)*0.5f;
+  immutable float y12 = (y1+y2)*0.5f;
+  immutable float x23 = (x2+x3)*0.5f;
+  immutable float y23 = (y2+y3)*0.5f;
+  immutable float x34 = (x3+x4)*0.5f;
+  immutable float y34 = (y3+y4)*0.5f;
+  immutable float x123 = (x12+x23)*0.5f;
+  immutable float y123 = (y12+y23)*0.5f;
+  immutable float x234 = (x23+x34)*0.5f;
+  immutable float y234 = (y23+y34)*0.5f;
+  immutable float x1234 = (x123+x234)*0.5f;
+  immutable float y1234 = (y123+y234)*0.5f;
+
+  // try to approximate the full cubic curve by a single straight line
+  immutable float dx = x4-x1;
+  immutable float dy = y4-y1;
+
+  float d2 = nvg__absf(((x2-x4)*dy-(y2-y4)*dx));
+  float d3 = nvg__absf(((x3-x4)*dy-(y3-y4)*dx));
+  //immutable float da1, da2, k;
+
+  final switch ((cast(int)(d2 > CollinearEPS)<<1)+cast(int)(d3 > CollinearEPS)) {
+    case 0:
+      // all collinear or p1 == p4
+      float k = dx*dx+dy*dy;
+      if (k == 0) {
+        d2 = distSquared(x1, y1, x2, y2);
+        d3 = distSquared(x4, y4, x3, y3);
+      } else {
+        k = 1.0f/k;
+        float da1 = x2-x1;
+        float da2 = y2-y1;
+        d2 = k*(da1*dx+da2*dy);
+        da1 = x3-x1;
+        da2 = y3-y1;
+        d3 = k*(da1*dx+da2*dy);
+        if (d2 > 0 && d2 < 1 && d3 > 0 && d3 < 1) {
+          // Simple collinear case, 1---2---3---4
+          // We can leave just two endpoints
+          return;
+        }
+             if (d2 <= 0) d2 = distSquared(x2, y2, x1, y1);
+        else if (d2 >= 1) d2 = distSquared(x2, y2, x4, y4);
+        else d2 = distSquared(x2, y2, x1+d2*dx, y1+d2*dy);
+
+             if (d3 <= 0) d3 = distSquared(x3, y3, x1, y1);
+        else if (d3 >= 1) d3 = distSquared(x3, y3, x4, y4);
+        else d3 = distSquared(x3, y3, x1+d3*dx, y1+d3*dy);
+      }
+      if (d2 > d3) {
+        if (d2 < ctx.tessTol) {
+          nvg__addPoint(ctx, x2, y2, type);
+          return;
+        }
+      } if (d3 < ctx.tessTol) {
+        nvg__addPoint(ctx, x3, y3, type);
+        return;
+      }
+      break;
+    case 1:
+      // p1,p2,p4 are collinear, p3 is significant
+      if (d3*d3 <= ctx.tessTol*(dx*dx+dy*dy)) {
+        if (ctx.angleTol < AngleTolEPS) {
+          nvg__addPoint(ctx, x23, y23, type);
+          return;
+        } else {
+          // angle condition
+          float da1 = nvg__absf(nvg__atan2f(y4-y3, x4-x3)-nvg__atan2f(y3-y2, x3-x2));
+          if (da1 >= NVG_PI) da1 = 2*NVG_PI-da1;
+          if (da1 < ctx.angleTol) {
+            nvg__addPoint(ctx, x2, y2, type);
+            nvg__addPoint(ctx, x3, y3, type);
+            return;
+          }
+          if (ctx.cuspLimit != 0.0) {
+            if (da1 > ctx.cuspLimit) {
+              nvg__addPoint(ctx, x3, y3, type);
+              return;
+            }
+          }
+        }
+      }
+      break;
+    case 2:
+      // p1,p3,p4 are collinear, p2 is significant
+      if (d2*d2 <= ctx.tessTol*(dx*dx+dy*dy)) {
+        if (ctx.angleTol < AngleTolEPS) {
+          nvg__addPoint(ctx, x23, y23, type);
+          return;
+        } else {
+          // angle condition
+          float da1 = nvg__absf(nvg__atan2f(y3-y2, x3-x2)-nvg__atan2f(y2-y1, x2-x1));
+          if (da1 >= NVG_PI) da1 = 2*NVG_PI-da1;
+          if (da1 < ctx.angleTol) {
+            nvg__addPoint(ctx, x2, y2, type);
+            nvg__addPoint(ctx, x3, y3, type);
+            return;
+          }
+          if (ctx.cuspLimit != 0.0) {
+            if (da1 > ctx.cuspLimit) {
+              nvg__addPoint(ctx, x2, y2, type);
+              return;
+            }
+          }
+        }
+      }
+      break;
+    case 3:
+      // regular case
+      if ((d2+d3)*(d2+d3) <= ctx.tessTol*(dx*dx+dy*dy)) {
+        // if the curvature doesn't exceed the distance tolerance value, we tend to finish subdivisions
+        if (ctx.angleTol < AngleTolEPS) {
+          nvg__addPoint(ctx, x23, y23, type);
+          return;
+        } else {
+          // angle and cusp condition
+          immutable float k = nvg__atan2f(y3-y2, x3-x2);
+          float da1 = nvg__absf(k-nvg__atan2f(y2-y1, x2-x1));
+          float da2 = nvg__absf(nvg__atan2f(y4-y3, x4-x3)-k);
+          if (da1 >= NVG_PI) da1 = 2*NVG_PI-da1;
+          if (da2 >= NVG_PI) da2 = 2*NVG_PI-da2;
+          if (da1+da2 < ctx.angleTol) {
+            // finally we can stop the recursion
+            nvg__addPoint(ctx, x23, y23, type);
+            return;
+          }
+          if (ctx.cuspLimit != 0.0) {
+            if (da1 > ctx.cuspLimit) {
+              nvg__addPoint(ctx, x2, y2, type);
+              return;
+            }
+            if (da2 > ctx.cuspLimit) {
+              nvg__addPoint(ctx, x3, y3, type);
+              return;
+            }
+          }
+        }
+      }
+      break;
+  }
+
+  // continue subdivision
+  nvg__tesselateBezierMcSeem(ctx, x1, y1, x12, y12, x123, y123, x1234, y1234, level+1, 0);
+  nvg__tesselateBezierMcSeem(ctx, x1234, y1234, x234, y234, x34, y34, x4, y4, level+1, type);
+}
+
+
 // Adaptive forward differencing for bezier tesselation.
 // See Lien, Sheue-Ling, Michael Shantz, and Vaughan Pratt.
 // "Adaptive forward differencing for rendering curves and surfaces."
@@ -4016,6 +4316,8 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
           const p = &ctx.commands[i+5];
           if (ctx.tesselatortype == NVGTesselation.DeCasteljau) {
             nvg__tesselateBezier(ctx, last.x, last.y, cp1[0], cp1[1], cp2[0], cp2[1], p[0], p[1], 0, PointFlag.Corner);
+          } else if (ctx.tesselatortype == NVGTesselation.DeCasteljauMcSeem) {
+            nvg__tesselateBezierMcSeem(ctx, last.x, last.y, cp1[0], cp1[1], cp2[0], cp2[1], p[0], p[1], 0, PointFlag.Corner);
           } else {
             nvg__tesselateBezierAFD(ctx, last.x, last.y, cp1[0], cp1[1], cp2[0], cp2[1], p[0], p[1], PointFlag.Corner);
           }
@@ -5214,6 +5516,7 @@ public void fill (NVGContext ctx) nothrow @trusted @nogc {
   // apply global alpha
   NVGPaint fillPaint = state.fill;
   fillPaint.innerColor.a *= state.alpha;
+  fillPaint.middleColor.a *= state.alpha;
   fillPaint.outerColor.a *= state.alpha;
 
   ctx.appendCurrentPathToCache(ctx.recset, state.fill);
@@ -5247,10 +5550,12 @@ public void stroke (NVGContext ctx) nothrow @trusted @nogc {
 
   NVGPaint strokePaint = state.stroke;
   strokePaint.innerColor.a *= cache.strokeAlphaMul;
+  strokePaint.middleColor.a *= cache.strokeAlphaMul;
   strokePaint.outerColor.a *= cache.strokeAlphaMul;
 
   // apply global alpha
   strokePaint.innerColor.a *= state.alpha;
+  strokePaint.middleColor.a *= state.alpha;
   strokePaint.outerColor.a *= state.alpha;
 
   ctx.appendCurrentPathToCache(ctx.recset, state.stroke);
@@ -5289,6 +5594,7 @@ public void clip (NVGContext ctx, NVGClipMode aclipmode=NVGClipMode.Union) nothr
   // apply global alpha
   NVGPaint fillPaint = state.fill;
   fillPaint.innerColor.a *= state.alpha;
+  fillPaint.middleColor.a *= state.alpha;
   fillPaint.outerColor.a *= state.alpha;
 
   //ctx.appendCurrentPathToCache(ctx.recset, state.fill);
@@ -5331,10 +5637,12 @@ public void clipStroke (NVGContext ctx, NVGClipMode aclipmode=NVGClipMode.Union)
 
   NVGPaint strokePaint = state.stroke;
   strokePaint.innerColor.a *= cache.strokeAlphaMul;
+  strokePaint.middleColor.a *= cache.strokeAlphaMul;
   strokePaint.outerColor.a *= cache.strokeAlphaMul;
 
   // apply global alpha
   strokePaint.innerColor.a *= state.alpha;
+  strokePaint.middleColor.a *= state.alpha;
   strokePaint.outerColor.a *= state.alpha;
 
   //ctx.appendCurrentPathToCache(ctx.recset, state.stroke);
@@ -5460,27 +5768,27 @@ public int hitTestDG(bool bestOrder=false, DG) (NVGContext ctx, in float x, in f
       immutable uint kpx = kind&pp.flags&3;
       if (kpx == 0) continue; // not interesting
       if (!nvg__pickPathTestBounds(ctx, ps, pp, x, y)) continue; // not interesting
-        //{ import core.stdc.stdio; printf("in bounds!\n"); }
-        int hit = 0;
+      //{ import core.stdc.stdio; printf("in bounds!\n"); }
+      int hit = 0;
       if (kpx&NVGPickKind.Stroke) hit = nvg__pickPathStroke(ps, pp, x, y);
       if (!hit && (kpx&NVGPickKind.Fill)) hit = nvg__pickPath(ps, pp, x, y);
       if (!hit) continue;
-          //{ import core.stdc.stdio; printf("  HIT!\n"); }
+      //{ import core.stdc.stdio; printf("  HIT!\n"); }
       static if (bestOrder) lastBestOrder = pp.order;
-          static if (IsGoodHitTestDG!DG) {
-            static if (__traits(compiles, (){ DG dg; bool res = dg(cast(int)42, cast(int)666); })) {
-              if (dg(pp.id, cast(int)pp.order)) return pp.id;
-            } else {
-              dg(pp.id, cast(int)pp.order);
-            }
-          } else {
-            static if (__traits(compiles, (){ DG dg; NVGpickPath* pp; bool res = dg(pp); })) {
-              if (dg(pp)) return pp.id;
-            } else {
-              dg(pp);
-            }
-          }
+      static if (IsGoodHitTestDG!DG) {
+        static if (__traits(compiles, (){ DG dg; bool res = dg(cast(int)42, cast(int)666); })) {
+          if (dg(pp.id, cast(int)pp.order)) return pp.id;
+        } else {
+          dg(pp.id, cast(int)pp.order);
         }
+      } else {
+        static if (__traits(compiles, (){ DG dg; NVGpickPath* pp; bool res = dg(pp); })) {
+          if (dg(pp)) return pp.id;
+        } else {
+          dg(pp);
+        }
+      }
+    }
     cellx >>= 1;
     celly >>= 1;
     levelwidth >>= 1;
@@ -7375,6 +7683,7 @@ void nvg__renderText (NVGContext ctx, NVGvertex* verts, int nverts) nothrow @tru
 
   // Apply global alpha
   paint.innerColor.a *= state.alpha;
+  paint.middleColor.a *= state.alpha;
   paint.outerColor.a *= state.alpha;
 
   ctx.params.renderTriangles(ctx.params.userPtr, state.compositeOperation, NVGClipMode.None, &paint, &state.scissor, verts, nverts);
@@ -11271,7 +11580,7 @@ struct GLNVGpath {
 
 align(1) struct GLNVGfragUniforms {
 align(1):
-  enum UNIFORM_ARRAY_SIZE = 12;
+  enum UNIFORM_ARRAY_SIZE = 13;
   // note: after modifying layout or size of uniform array,
   // don't forget to also update the fragment shader source!
   align(1) union {
@@ -11281,6 +11590,7 @@ align(1):
       float[12] scissorMat; // matrices are actually 3 vec4s
       float[12] paintMat;
       NVGColor innerCol;
+      NVGColor middleCol;
       NVGColor outerCol;
       float[2] scissorExt;
       float[2] scissorScale;
@@ -11292,7 +11602,8 @@ align(1):
       float texType;
       float type;
       float doclip;
-      float unused1, unused2, unused3;
+      float midp; // for gradients
+      float unused2, unused3;
     }
     float[4][UNIFORM_ARRAY_SIZE] uniformArray;
   }
@@ -11481,7 +11792,7 @@ void glnvg__resetError(bool force=false) (GLNVGcontext* gl) nothrow @trusted @no
 void glnvg__checkError(bool force=false) (GLNVGcontext* gl, const(char)* str) nothrow @trusted @nogc {
   GLenum err;
   static if (!force) {
-  if ((gl.flags&NVGContextFlag.Debug) == 0) return;
+    if ((gl.flags&NVGContextFlag.Debug) == 0) return;
   }
   err = glGetError();
   if (err != GL_NO_ERROR) {
@@ -11889,17 +12200,19 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
     #define scissorMat mat3(frag[0].xyz, frag[1].xyz, frag[2].xyz)
     #define paintMat mat3(frag[3].xyz, frag[4].xyz, frag[5].xyz)
     #define innerCol frag[6]
-    #define outerCol frag[7]
-    #define scissorExt frag[8].xy
-    #define scissorScale frag[8].zw
-    #define extent frag[9].xy
-    #define radius frag[9].z
-    #define feather frag[9].w
-    #define strokeMult frag[10].x
-    #define strokeThr frag[10].y
-    #define texType int(frag[10].z)
-    #define type int(frag[10].w)
-    #define doclip int(frag[11].x)
+    #define middleCol frag[7]
+    #define outerCol frag[7+1]
+    #define scissorExt frag[8+1].xy
+    #define scissorScale frag[8+1].zw
+    #define extent frag[9+1].xy
+    #define radius frag[9+1].z
+    #define feather frag[9+1].w
+    #define strokeMult frag[10+1].x
+    #define strokeThr frag[10+1].y
+    #define texType int(frag[10+1].z)
+    #define type int(frag[10+1].w)
+    #define doclip int(frag[11+1].x)
+    #define midp frag[11+1].y
 
     float sdroundrect (in vec2 pt, in vec2 ext, in float rad) {
       vec2 ext2 = ext-vec2(rad, rad);
@@ -11946,7 +12259,16 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
         // Calculate gradient color using box gradient
         vec2 pt = (paintMat*vec3(fpos, 1.0)).xy;
         float d = clamp((sdroundrect(pt, extent, radius)+feather*0.5)/feather, 0.0, 1.0);
-        color = mix(innerCol, outerCol, d);
+        if (midp <= 0) {
+          color = mix(innerCol, outerCol, d);
+        } else {
+          midp = min(midp, 1.0);
+          if (d < midp) {
+            color = mix(innerCol, middleCol, d/midp);
+          } else {
+            color = mix(middleCol, outerCol, (d-midp)/midp);
+          }
+        }
         // Combine alpha
         color *= strokeAlpha*scissor;
       } else if (type == 2) { /* NSVG_SHADER_FILLIMG */
@@ -11991,7 +12313,7 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
   enum clipFragShaderFill = q{
     void main (void) {
       gl_FragColor = vec4(1, 1, 1, 1);
-  }
+    }
   };
 
   enum clipVertShaderCopy = q{
@@ -12177,7 +12499,9 @@ bool glnvg__convertPaint (GLNVGcontext* gl, GLNVGfragUniforms* frag, NVGPaint* p
   memset(frag, 0, (*frag).sizeof);
 
   frag.innerCol = glnvg__premulColor(paint.innerColor);
+  frag.middleCol = glnvg__premulColor(paint.middleColor);
   frag.outerCol = glnvg__premulColor(paint.outerColor);
+  frag.midp = paint.midp;
 
   if (scissor.extent.ptr[0] < -0.5f || scissor.extent.ptr[1] < -0.5f) {
     memset(frag.scissorMat.ptr, 0, frag.scissorMat.sizeof);
@@ -12375,52 +12699,52 @@ void glnvg__fill (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
   int npaths = call.pathCount;
 
   if (call.clipmode == NVGClipMode.None) {
-  // Draw shapes
-  glEnable(GL_STENCIL_TEST);
+    // Draw shapes
+    glEnable(GL_STENCIL_TEST);
     glnvg__stencilMask(gl, 0xffU);
     glnvg__stencilFunc(gl, GL_ALWAYS, 0, 0xffU);
 
-  glnvg__setUniforms(gl, call.uniformOffset, 0);
-  glnvg__checkError(gl, "fill simple");
+    glnvg__setUniforms(gl, call.uniformOffset, 0);
+    glnvg__checkError(gl, "fill simple");
 
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-  if (call.evenOdd) {
+    if (call.evenOdd) {
       //glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INVERT);
       //glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_INVERT);
       glStencilOp(GL_KEEP, GL_KEEP, GL_INVERT);
-  } else {
-    glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
-    glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
-  }
-  glDisable(GL_CULL_FACE);
-  foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
-  glEnable(GL_CULL_FACE);
-
-  // Draw anti-aliased pixels
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glnvg__setUniforms(gl, call.uniformOffset+gl.fragSize, call.image);
-  glnvg__checkError(gl, "fill fill");
-
-  if (gl.flags&NVGContextFlag.Antialias) {
-      glnvg__stencilFunc(gl, GL_EQUAL, 0x00, 0xffU);
-    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-    // Draw fringes
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-  }
-
-  // Draw fill
-    glnvg__stencilFunc(gl, GL_NOTEQUAL, 0x0, 0xffU);
-  glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
-  if (call.evenOdd) {
+    } else {
+      glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
+      glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
+    }
     glDisable(GL_CULL_FACE);
-    glDrawArrays(GL_TRIANGLE_STRIP, call.triangleOffset, call.triangleCount);
-    //foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
+    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
     glEnable(GL_CULL_FACE);
-  } else {
-    glDrawArrays(GL_TRIANGLE_STRIP, call.triangleOffset, call.triangleCount);
-  }
 
-  glDisable(GL_STENCIL_TEST);
+    // Draw anti-aliased pixels
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glnvg__setUniforms(gl, call.uniformOffset+gl.fragSize, call.image);
+    glnvg__checkError(gl, "fill fill");
+
+    if (gl.flags&NVGContextFlag.Antialias) {
+      glnvg__stencilFunc(gl, GL_EQUAL, 0x00, 0xffU);
+      glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+      // Draw fringes
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+    }
+
+    // Draw fill
+    glnvg__stencilFunc(gl, GL_NOTEQUAL, 0x0, 0xffU);
+    glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+    if (call.evenOdd) {
+      glDisable(GL_CULL_FACE);
+      glDrawArrays(GL_TRIANGLE_STRIP, call.triangleOffset, call.triangleCount);
+      //foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
+      glEnable(GL_CULL_FACE);
+    } else {
+      glDrawArrays(GL_TRIANGLE_STRIP, call.triangleOffset, call.triangleCount);
+    }
+
+    glDisable(GL_STENCIL_TEST);
   } else {
     glnvg__setClipUniforms(gl, call.uniformOffset/*+gl.fragSize*/, call.clipmode); // this activates our FBO
     glnvg__checkError(gl, "fillclip simple");
@@ -12443,14 +12767,14 @@ void glnvg__convexFill (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nog
   int npaths = call.pathCount;
 
   if (call.clipmode == NVGClipMode.None) {
-  glnvg__setUniforms(gl, call.uniformOffset, call.image);
-  glnvg__checkError(gl, "convex fill");
+    glnvg__setUniforms(gl, call.uniformOffset, call.image);
+    glnvg__checkError(gl, "convex fill");
     if (call.evenOdd) glDisable(GL_CULL_FACE);
-  foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
-  if (gl.flags&NVGContextFlag.Antialias) {
-    // Draw fringes
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-  }
+    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
+    if (gl.flags&NVGContextFlag.Antialias) {
+      // Draw fringes
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+    }
     if (call.evenOdd) glEnable(GL_CULL_FACE);
   } else {
     glnvg__setClipUniforms(gl, call.uniformOffset, call.clipmode); // this activates our FBO
@@ -12469,40 +12793,40 @@ void glnvg__stroke (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
   int npaths = call.pathCount;
 
   if (call.clipmode == NVGClipMode.None) {
-  if (gl.flags&NVGContextFlag.StencilStrokes) {
-    glEnable(GL_STENCIL_TEST);
-    glnvg__stencilMask(gl, 0xff);
+    if (gl.flags&NVGContextFlag.StencilStrokes) {
+      glEnable(GL_STENCIL_TEST);
+      glnvg__stencilMask(gl, 0xff);
 
-    // Fill the stroke base without overlap
-    glnvg__stencilFunc(gl, GL_EQUAL, 0x0, 0xff);
-    glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
-    glnvg__setUniforms(gl, call.uniformOffset+gl.fragSize, call.image);
-    glnvg__checkError(gl, "stroke fill 0");
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+      // Fill the stroke base without overlap
+      glnvg__stencilFunc(gl, GL_EQUAL, 0x0, 0xff);
+      glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+      glnvg__setUniforms(gl, call.uniformOffset+gl.fragSize, call.image);
+      glnvg__checkError(gl, "stroke fill 0");
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
 
-    // Draw anti-aliased pixels.
-    glnvg__setUniforms(gl, call.uniformOffset, call.image);
-    glnvg__stencilFunc(gl, GL_EQUAL, 0x00, 0xff);
-    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+      // Draw anti-aliased pixels.
+      glnvg__setUniforms(gl, call.uniformOffset, call.image);
+      glnvg__stencilFunc(gl, GL_EQUAL, 0x00, 0xff);
+      glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
 
-    // Clear stencil buffer.
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    glnvg__stencilFunc(gl, GL_ALWAYS, 0x0, 0xff);
-    glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
-    glnvg__checkError(gl, "stroke fill 1");
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      // Clear stencil buffer.
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+      glnvg__stencilFunc(gl, GL_ALWAYS, 0x0, 0xff);
+      glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+      glnvg__checkError(gl, "stroke fill 1");
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    glDisable(GL_STENCIL_TEST);
+      glDisable(GL_STENCIL_TEST);
 
-    //glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call.uniformOffset+gl.fragSize), paint, scissor, strokeWidth, fringe, 1.0f-0.5f/255.0f);
-  } else {
-    glnvg__setUniforms(gl, call.uniformOffset, call.image);
-    glnvg__checkError(gl, "stroke fill");
-    // Draw Strokes
-    foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-  }
+      //glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call.uniformOffset+gl.fragSize), paint, scissor, strokeWidth, fringe, 1.0f-0.5f/255.0f);
+    } else {
+      glnvg__setUniforms(gl, call.uniformOffset, call.image);
+      glnvg__checkError(gl, "stroke fill");
+      // Draw Strokes
+      foreach (int i; 0..npaths) glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+    }
   } else {
     glnvg__setClipUniforms(gl, call.uniformOffset/*+gl.fragSize*/, call.clipmode);
     glnvg__checkError(gl, "stroke fill 0");
@@ -12513,9 +12837,9 @@ void glnvg__stroke (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
 
 void glnvg__triangles (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
   if (call.clipmode == NVGClipMode.None) {
-  glnvg__setUniforms(gl, call.uniformOffset, call.image);
-  glnvg__checkError(gl, "triangles fill");
-  glDrawArrays(GL_TRIANGLES, call.triangleOffset, call.triangleCount);
+    glnvg__setUniforms(gl, call.uniformOffset, call.image);
+    glnvg__checkError(gl, "triangles fill");
+    glDrawArrays(GL_TRIANGLES, call.triangleOffset, call.triangleCount);
   } else {
     //TODO(?): use texture as mask?
   }
@@ -12531,7 +12855,7 @@ void glnvg__affine (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
 
 void glnvg__renderCancelInternal (GLNVGcontext* gl, bool clearTextures) nothrow @trusted @nogc {
   if (clearTextures) {
-  foreach (ref GLNVGcall c; gl.calls[0..gl.ncalls]) if (c.image > 0) glnvg__deleteTexture(gl, c.image);
+    foreach (ref GLNVGcall c; gl.calls[0..gl.ncalls]) if (c.image > 0) glnvg__deleteTexture(gl, c.image);
   }
   gl.nverts = 0;
   gl.npaths = 0;
@@ -12572,10 +12896,10 @@ GLNVGblend glnvg__buildBlendFunc (NVGCompositeOperationState op) pure nothrow @t
       res.srcRGB = res.srcAlpha = res.dstRGB = res.dstAlpha = GL_INVALID_ENUM;
     }
   } else {
-  if (res.srcRGB == GL_INVALID_ENUM || res.dstRGB == GL_INVALID_ENUM || res.srcAlpha == GL_INVALID_ENUM || res.dstAlpha == GL_INVALID_ENUM) {
+    if (res.srcRGB == GL_INVALID_ENUM || res.dstRGB == GL_INVALID_ENUM || res.srcAlpha == GL_INVALID_ENUM || res.dstAlpha == GL_INVALID_ENUM) {
       res.simple = true;
-    res.srcRGB = res.srcAlpha = res.dstRGB = res.dstAlpha = GL_INVALID_ENUM;
-  }
+      res.srcRGB = res.srcAlpha = res.dstRGB = res.dstAlpha = GL_INVALID_ENUM;
+    }
   }
   return res;
 }
@@ -12587,7 +12911,7 @@ void glnvg__blendCompositeOperation() (GLNVGcontext* gl, in auto ref GLNVGblend 
       if (op.simple) {
         if (gl.blendFunc.srcAlpha == op.srcAlpha && gl.blendFunc.dstAlpha == op.dstAlpha) return;
       } else {
-    if (gl.blendFunc.srcRGB == op.srcRGB && gl.blendFunc.dstRGB == op.dstRGB && gl.blendFunc.srcAlpha == op.srcAlpha && gl.blendFunc.dstAlpha == op.dstAlpha) return;
+        if (gl.blendFunc.srcRGB == op.srcRGB && gl.blendFunc.dstRGB == op.dstRGB && gl.blendFunc.srcAlpha == op.srcAlpha && gl.blendFunc.dstAlpha == op.dstAlpha) return;
       }
     }
     gl.blendFunc = op;
@@ -12599,12 +12923,12 @@ void glnvg__blendCompositeOperation() (GLNVGcontext* gl, in auto ref GLNVGblend 
       glBlendFunc(op.srcAlpha, op.dstAlpha);
     }
   } else {
-  if (op.srcRGB == GL_INVALID_ENUM || op.dstRGB == GL_INVALID_ENUM || op.srcAlpha == GL_INVALID_ENUM || op.dstAlpha == GL_INVALID_ENUM) {
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-  } else {
-    glBlendFuncSeparate(op.srcRGB, op.dstRGB, op.srcAlpha, op.dstAlpha);
+    if (op.srcRGB == GL_INVALID_ENUM || op.dstRGB == GL_INVALID_ENUM || op.srcAlpha == GL_INVALID_ENUM || op.dstAlpha == GL_INVALID_ENUM) {
+      glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    } else {
+      glBlendFuncSeparate(op.srcRGB, op.dstRGB, op.srcAlpha, op.dstAlpha);
+    }
   }
-}
 }
 
 void glnvg__renderSetAffine (void* uptr, in ref NVGMatrix mat) nothrow @trusted @nogc {
@@ -13096,9 +13420,9 @@ void glnvg__renderDelete (void* uptr) nothrow @trusted @nogc {
  * Group: context_management
  */
 public NVGContext nvgCreateContext (const(NVGContextFlag)[] flagList...) nothrow @trusted @nogc {
-version(aliced) {
+  version(aliced) {
     enum DefaultFlags = NVGContextFlag.Antialias|NVGContextFlag.StencilStrokes|NVGContextFlag.FontNoAA;
-} else {
+  } else {
     enum DefaultFlags = NVGContextFlag.Antialias|NVGContextFlag.StencilStrokes;
   }
   uint flags = 0;
@@ -13106,7 +13430,7 @@ version(aliced) {
     foreach (immutable flg; flagList) flags |= (flg != NVGContextFlag.Default ? flg : DefaultFlags);
   } else {
     flags = DefaultFlags;
-}
+  }
   NVGparams params = void;
   NVGContext ctx = null;
   version(nanovg_builtin_opengl_bindings) nanovgInitOpenGL(); // why not?
