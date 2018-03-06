@@ -1011,6 +1011,7 @@ enum WindowFlags : int {
 	alwaysOnBottom = 4, ///
 	cannotBeActivated = 8, ///
 	alwaysRequestMouseMotionEvents = 16, /// By default, simpledisplay will attempt to optimize mouse motion event reporting when it detects a remote connection, causing them to only be issued if input is grabbed (see: [SimpleWindow.grabInput]). This means doing hover effects and mouse game control on a remote X connection may not work right. Include this flag to override this optimization and always request the motion events. However btw, if you are doing mouse game control, you probably want to grab input anyway, and hover events are usually expendable! So think before you use this flag.
+	extraComposite = 32, /// On windows this will make this a layered windows (not supported for child windows before windows 8) to support transparency and improve animation performance.
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
@@ -1559,6 +1560,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
+	}
+
+	/// Sets the window opacity. On X11 (currently not implemented) this will require a compositor to be running. On windows the WindowFlags.extraComposite must be set at window creation.
+	void opacity(double opacity) @property
+	in {
+		assert(opacity >= 0 && opacity <= 1);
+	} body {
+		version (Windows) {
+			impl.setOpacity(cast(ubyte)(255 * opacity));
+		} else throw new NotYetImplementedException();
 	}
 
 	/++
@@ -2679,7 +2690,7 @@ struct EventLoopImpl {
 			return 0;
 		}
 
-		return 0;
+		//return 0;
 	}
 
 	int run(bool delegate() whileCondition = null) {
@@ -3086,7 +3097,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 						break;
 						//case NIN_KEYSELECT:
 						//case NIN_SELECT:
-						break;
+						//break;
 						default: {}
 					}
 				}
@@ -7346,9 +7357,16 @@ version(Windows) {
 				break;
 			}
 
-			hwnd = CreateWindow(cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
+			uint flags = WS_EX_ACCEPTFILES; // accept drag-drop files
+			if ((customizationFlags & WindowFlags.extraComposite) != 0)
+				flags |= WS_EX_LAYERED; // composite window for better performance and effects support
+
+			hwnd = CreateWindowEx(flags, cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
+
+			if ((customizationFlags & WindowFlags.extraComposite) != 0)
+				setOpacity(255);
 
 			SimpleWindow.nativeMapping[hwnd] = this;
 			CapableOfHandlingNativeEvent.nativeHandleMapping[hwnd] = this;
@@ -7467,6 +7485,10 @@ version(Windows) {
 
 		void closeWindow() {
 			DestroyWindow(hwnd);
+		}
+
+		bool setOpacity(ubyte alpha) {
+			return SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) == TRUE;
 		}
 
 		// returns zero if it recognized the event
@@ -7757,7 +7779,7 @@ version(Windows) {
 					SetBkMode(cast(HDC) wParam, TRANSPARENT);
 					return cast(typeof(return)) //GetStockObject(NULL_BRUSH);
 					GetSysColorBrush(COLOR_3DFACE);
-				break;
+				//break;
 				case WM_SHOWWINDOW:
 					this._visible = (wParam != 0);
 					if (!this._visibleForTheFirstTimeCalled && this._visible) {
