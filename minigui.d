@@ -6534,7 +6534,7 @@ class AutomaticDialog(T) : Dialog {
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, (__traits(allMembers, T).length + 5) * Window.lineHeight, T.stringof);
+		super(400, cast(int)(__traits(allMembers, T).length + 5) * Window.lineHeight, T.stringof);
 
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
