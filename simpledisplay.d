@@ -1562,13 +1562,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else static assert(0);
 	}
 
-	/// Sets the window opacity. On X11 (currently not implemented) this will require a compositor to be running. On windows the WindowFlags.extraComposite must be set at window creation.
+	/// Sets the window opacity. On X11 this requires a compositor to be running. On windows the WindowFlags.extraComposite must be set at window creation.
 	void opacity(double opacity) @property
 	in {
 		assert(opacity >= 0 && opacity <= 1);
 	} body {
 		version (Windows) {
 			impl.setOpacity(cast(ubyte)(255 * opacity));
+		} else version (X11) {
+			impl.setOpacity(cast(uint)(uint.max * opacity));
 		} else throw new NotYetImplementedException();
 	}
 
@@ -8893,6 +8895,14 @@ version(X11) {
 			sh.flags |= PResizeInc;
 			XSetWMNormalHints(display, window, &sh);
 			flushGui();
+		}
+
+		void setOpacity (uint opacity) {
+			if (opacity == uint.max)
+				XDeleteProperty(display, window, XInternAtom(display, "_NET_WM_WINDOW_OPACITY".ptr, false));
+			else
+				XChangeProperty(display, window, XInternAtom(display, "_NET_WM_WINDOW_OPACITY".ptr, false),
+					XA_CARDINAL, 32, PropModeReplace, &opacity, 1);
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
