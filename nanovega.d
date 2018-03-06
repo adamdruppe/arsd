@@ -384,7 +384,7 @@ The following code illustrates the OpenGL state touched by the rendering code:
     You can "untransform" picking coordinates before checking with [gpuUntransformPoint].
 
     $(WARNING Picking API completely ignores clipping. If you want to check for
-              clip regions, you have to manuall register them as fill/stroke pathes,
+              clip regions, you have to manuall register them as fill/stroke paths,
               and perform the necessary logic. See [hitTestForId] function.)
 
   clipping =
@@ -481,7 +481,7 @@ The following code illustrates the OpenGL state touched by the rendering code:
     Calling [startRecording] without commiting or cancelling recoriding will commit.
 
     $(WARNING Text output is not recorded now. Neither is scissor, so if you are using
-              scissoring or text in your pathes (UI, for example), things will not
+              scissoring or text in your paths (UI, for example), things will not
               work as you may expect.)
  */
 module arsd.nanovega;
@@ -5750,7 +5750,7 @@ public int hitTestDG(bool bestOrder=false, DG) (NVGContext ctx, in float x, in f
   int celly = nvg__clamp(cast(int)(y/ps.ydim), 0, levelwidth);
   int npicked = 0;
 
-  // if we are interested only in most-toplevel path, there is no reason to check pathes with worser order.
+  // if we are interested only in most-toplevel path, there is no reason to check paths with worser order.
   // but we cannot just get out on the first path found, 'cause we are using quad tree to speed up bounds
   // checking, so path walking order is not guaranteed.
   static if (bestOrder) {
@@ -6398,7 +6398,7 @@ NVGpickPath* nvg__pickPathCreate (NVGContext context, const(float)[] acommands, 
     }
   }
 
-  // force-close filled pathes
+  // force-close filled paths
   if (psp !is null && !forStroke && hasPoints && !psp.closed) closeIt();
 
   pp.flags = (forStroke ? NVGPathFlags.Stroke : NVGPathFlags.Fill);
@@ -11914,9 +11914,11 @@ bool glnvg__allocFBO (GLNVGcontext* gl, int fidx, bool doclear=true) nothrow @tr
   glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glnvg__checkError(gl, "glnvg__allocFBO: glTexParameterf: GL_TEXTURE_WRAP_T");
   //FIXME: linear or nearest?
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glnvg__checkError(gl, "glnvg__allocFBO: glTexParameterf: GL_TEXTURE_MIN_FILTER");
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glnvg__checkError(gl, "glnvg__allocFBO: glTexParameterf: GL_TEXTURE_MAG_FILTER");
   // empty texture
   //glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gl.fboWidth, gl.fboHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
@@ -12195,6 +12197,7 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
     uniform vec4 frag[UNIFORM_ARRAY_SIZE];
     uniform sampler2D tex;
     uniform sampler2D clipTex;
+    uniform vec2 viewSize;
     varying vec2 ftcoord;
     varying vec2 fpos;
     #define scissorMat mat3(frag[0].xyz, frag[1].xyz, frag[2].xyz)
@@ -12237,7 +12240,8 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
     void main (void) {
       // clipping
       if (doclip != 0) {
-        vec4 clr = texelFetch(clipTex, ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y)), 0);
+        /*vec4 clr = texelFetch(clipTex, ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y)), 0);*/
+        vec4 clr = texture2D(clipTex, vec2(gl_FragCoord.x/viewSize.x, gl_FragCoord.y/viewSize.y));
         if (clr.r == 0.0) discard;
       }
       float scissor = scissorMask(fpos);
@@ -12311,6 +12315,7 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
   };
 
   enum clipFragShaderFill = q{
+    uniform vec2 viewSize;
     void main (void) {
       gl_FragColor = vec4(1, 1, 1, 1);
     }
@@ -12326,8 +12331,10 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
 
   enum clipFragShaderCopy = q{
     uniform sampler2D tex;
+    uniform vec2 viewSize;
     void main (void) {
-      gl_FragColor = texelFetch(tex, ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y)), 0);
+      //gl_FragColor = texelFetch(tex, ivec2(int(gl_FragCoord.x), int(gl_FragCoord.y)), 0);
+      gl_FragColor = texture2D(tex, vec2(gl_FragCoord.x/viewSize.x, gl_FragCoord.y/viewSize.y));
     }
   };
 
