@@ -12263,14 +12263,14 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
         // Calculate gradient color using box gradient
         vec2 pt = (paintMat*vec3(fpos, 1.0)).xy;
         float d = clamp((sdroundrect(pt, extent, radius)+feather*0.5)/feather, 0.0, 1.0);
-        if (midp <= 0) {
+        if (midp <= 0.0) {
           color = mix(innerCol, outerCol, d);
         } else {
-          midp = min(midp, 1.0);
-          if (d < midp) {
-            color = mix(innerCol, middleCol, d/midp);
+          float gdst = min(midp, 1.0);
+          if (d < gdst) {
+            color = mix(innerCol, middleCol, d/gdst);
           } else {
-            color = mix(middleCol, outerCol, (d-midp)/midp);
+            color = mix(middleCol, outerCol, (d-gdst)/gdst);
           }
         }
         // Combine alpha
