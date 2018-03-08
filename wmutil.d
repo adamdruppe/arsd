@@ -73,6 +73,10 @@ struct WindowChildrenIterator {
 }
 
 WindowChildrenIterator iterateWindows(NativeWindowHandle parent = NativeWindowHandle.init) {
+	static if (UsingSimpledisplayX11)
+		if (parent == NativeWindowHandle.init)
+			parent = RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get));
+
 	return WindowChildrenIterator(parent);
 }
 
@@ -153,4 +157,6 @@ unittest {
 	import std.stdio;
 	auto window = findWindowByClass("x-terminal-emulator");
 	writeln("Terminal: ", window.ownerPID);
+	foreach (w; iterateWindows)
+		writeln(w.ownerPID);
 }
