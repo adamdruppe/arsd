@@ -1269,9 +1269,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	this(NativeWindowHandle nativeWindow) {
 		version(Windows)
 			impl.hwnd = nativeWindow;
-		else version(X11)
+		else version(X11) {
 			impl.window = nativeWindow;
-		else version(OSXCocoa)
+			display = XDisplayConnection.get(); // get initial display to not segfault
+		} else version(OSXCocoa)
 			throw new NotYetImplementedException();
 		else static assert(0);
 		// FIXME: set the size correctly
@@ -1831,14 +1832,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Gets the title
 	@property string title() {
-		return _title;
-		/*
-		version(Windows) {
-
-		} else version(X11) {
-
-		} else static assert(0);
-		*/
+		version(OSXCocoa) return _title;
+		else return impl.getTitle();
 	}
 
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
@@ -7257,6 +7252,17 @@ version(Windows) {
 			SetWindowTextA(hwnd, toStringz(title));
 		}
 
+		string getTitle() {
+			auto len = GetWindowTextLengthA(hwnd);
+			if (!len)
+				return null;
+			char[] buffer = new char[len];
+			auto len2 = GetWindowTextA(hwnd, buffer.ptr, buffer.length);
+			if (len != len2)
+				throw new Exception("Window title changed while checking");
+			return cast(string)buffer;
+		}
+
 		void move(int x, int y) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
@@ -8855,6 +8861,24 @@ version(X11) {
 			flushGui(); // without this OpenGL windows has a LONG delay before changing title
 		}
 
+		string[] getTitles() {
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
+			XTextProperty textProp;
+			if (XGetTextProperty(display, window, &textProp, XA_NETWM_NAME) != 0 || XGetWMName(display, window, &textProp) != 0) {
+				if ((textProp.encoding == XA_UTF8 || textProp.encoding == XA_STRING) && textProp.format == 8) {
+					return textProp.value[0 .. textProp.nitems].idup.split('\0');
+				} else
+					return [];
+			} else
+				return null;
+		}
+
+		string getTitle() {
+			auto titles = getTitles();
+			return titles.length ? titles[0] : null;
+		}
+
 		void setMinSize (int minwidth, int minheight) {
 			import core.stdc.config : c_long;
 			if (minwidth < 1) minwidth = 1;
@@ -9834,6 +9858,9 @@ int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
 	long_offset, arch_long long_length, Bool del, Atom req_type, Atom
 	*actual_type_return, int *actual_format_return, arch_ulong
 	*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
+Atom* XListProperties(Display *display, Window w, int *num_prop_return);
+Status XGetTextProperty(Display *display, Window w, XTextProperty *text_prop_return, Atom property);
+Status XQueryTree(Display *display, Window w, Window *root_return, Window *parent_return, Window **children_return, uint *nchildren_return);
 
 int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
 
@@ -11414,6 +11441,7 @@ struct Visual
 	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
+	Status XGetWMName(Display*, Window, XTextProperty*);
 	int XStoreName(Display* display, Window w, const(char)* window_name);
 
 	enum ClipByChildren = 0;
