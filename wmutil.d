@@ -31,7 +31,7 @@ struct WindowChildrenIterator {
 
 			EnumParams params;
 
-			EnumWindows(function (window, lparam) nothrow {
+			EnumChildWindows(parent, function (window, lparam) nothrow {
 				EnumParams* args = cast(EnumParams*)lparam;
 				try {
 					args.result = args.dg(window);
@@ -54,8 +54,7 @@ struct WindowChildrenIterator {
 			Window unusedWindow;
 			Window* children;
 			uint numChildren;
-			Status status = XQueryTree(XDisplayConnection.get(), RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get)),
-				&unusedWindow, &unusedWindow, &children, &numChildren);
+			Status status = XQueryTree(XDisplayConnection.get(), parent, &unusedWindow, &unusedWindow, &children, &numChildren);
 			if (status == 0 || children is null)
 				return 0;
 			scope (exit)
@@ -148,4 +147,10 @@ int ownerPID(NativeWindowHandle window) @property {
 		}
 	}
 	return -1;
+}
+
+unittest {
+	import std.stdio;
+	auto window = findWindowByClass("x-terminal-emulator");
+	writeln("Terminal: ", window.ownerPID);
 }
