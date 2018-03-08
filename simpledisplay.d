@@ -7261,18 +7261,19 @@ version(Windows) {
 		HBITMAP buffer;
 
 		void setTitle(string title) {
-			SetWindowTextA(hwnd, toStringz(title));
+			WCharzBuffer bfr = WCharzBuffer(title);
+			SetWindowTextW(hwnd, bfr.ptr);
 		}
 
 		string getTitle() {
-			auto len = GetWindowTextLengthA(hwnd);
+			auto len = GetWindowTextLengthW(hwnd);
 			if (!len)
 				return null;
-			char[] buffer = new char[len];
-			auto len2 = GetWindowTextA(hwnd, buffer.ptr, cast(int) buffer.length);
-			if (len != len2)
-				throw new Exception("Window title changed while checking");
-			return cast(string)buffer;
+			wchar[256] tmpBuffer;
+			wchar[] buffer = (len <= tmpBuffer.length) ? tmpBuffer[] :  new wchar[len];
+			auto len2 = GetWindowTextW(hwnd, buffer.ptr, cast(int) buffer.length);
+			auto str = buffer[0 .. len2];
+			return makeUtf8StringFromWindowsString(str);
 		}
 
 		void move(int x, int y) {
