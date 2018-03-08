@@ -4419,8 +4419,8 @@ enum RasterOp {
 
 // being phobos-free keeps the size WAY down
 private const(char)* toStringz(string s) { return (s ~ '\0').ptr; }
-private const(wchar)* toWStringz(wstring s) { return (s ~ '\0').ptr; }
-private const(wchar)* toWStringz(string s) {
+package(arsd) const(wchar)* toWStringz(wstring s) { return (s ~ '\0').ptr; }
+package(arsd) const(wchar)* toWStringz(string s) {
 	wstring r;
 	foreach(dchar c; s)
 		r ~= c;
@@ -7269,7 +7269,7 @@ version(Windows) {
 			if (!len)
 				return null;
 			char[] buffer = new char[len];
-			auto len2 = GetWindowTextA(hwnd, buffer.ptr, buffer.length);
+			auto len2 = GetWindowTextA(hwnd, buffer.ptr, cast(int) buffer.length);
 			if (len != len2)
 				throw new Exception("Window title changed while checking");
 			return cast(string)buffer;
