@@ -969,11 +969,23 @@ version(Windows)
 version(linux)
 	version = with_timer;
 
+/// If you have to get down and dirty with implementation details, this helps figure out if Windows is available you can `static if(UsingSimpledisplayWindows) ...` more reliably than `version()` because `version` is module-local.
+version(Windows)
+	enum bool UsingSimpledisplayWindows = true;
+else
+	enum bool UsingSimpledisplayWindows = false;
+
 /// If you have to get down and dirty with implementation details, this helps figure out if X is available you can `static if(UsingSimpledisplayX11) ...` more reliably than `version()` because `version` is module-local.
 version(X11)
 	enum bool UsingSimpledisplayX11 = true;
 else
 	enum bool UsingSimpledisplayX11 = false;
+
+/// If you have to get down and dirty with implementation details, this helps figure out if Cocoa is available you can `static if(UsingSimpledisplayCocoa) ...` more reliably than `version()` because `version` is module-local.
+version(OSXCocoa)
+	enum bool UsingSimpledisplayCocoa = true;
+else
+	enum bool UsingSimpledisplayCocoa = false;
 
 /// Does this platform support multiple windows? If not, trying to create another will cause it to throw an exception.
 version(Windows)
