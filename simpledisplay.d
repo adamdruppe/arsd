@@ -6149,7 +6149,7 @@ void flushGui() {
 	}
 }
 
-// Internal
+/// Used internal to dispatch events to various classes.
 interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
