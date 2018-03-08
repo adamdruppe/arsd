@@ -1269,9 +1269,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	this(NativeWindowHandle nativeWindow) {
 		version(Windows)
 			impl.hwnd = nativeWindow;
-		else version(X11)
+		else version(X11) {
 			impl.window = nativeWindow;
-		else version(OSXCocoa)
+			display = XDisplayConnection.get();
+		} else version(OSXCocoa)
 			throw new NotYetImplementedException();
 		else static assert(0);
 		// FIXME: set the size correctly
@@ -1829,7 +1830,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	private string _title;
 
-	/// Gets the title
+	/// Gets the cached title
 	@property string title() {
 		return _title;
 		/*
@@ -1839,6 +1840,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		} else static assert(0);
 		*/
+	}
+
+	/// Gets the actual title as reported by the OS in case it got updated outside the wrapper.
+	@property string actualTitle() {
+		version(OSXCocoa) throw new NotYetImplementedException(); else
+		return _title = impl.getTitle();
 	}
 
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
@@ -7257,6 +7264,12 @@ version(Windows) {
 			SetWindowTextA(hwnd, toStringz(title));
 		}
 
+		string getTitle() {
+			char[256] title;
+			auto len = GetWindowTextA(hwnd, title.ptr, title.length);
+			return cast(string) title[0 .. len].idup;
+		}
+
 		void move(int x, int y) {
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
@@ -8855,6 +8868,24 @@ version(X11) {
 			flushGui(); // without this OpenGL windows has a LONG delay before changing title
 		}
 
+		string[] getTitles() {
+			auto XA_UTF8 = XInternAtom(display, "UTF8_STRING".ptr, false);
+			auto XA_NETWM_NAME = XInternAtom(display, "_NET_WM_NAME".ptr, false);
+			XTextProperty textProp;
+			if (XGetTextProperty(display, window, &textProp, XA_NETWM_NAME) != 0 || XGetWMName(display, window, &textProp) != 0) {
+				if ((textProp.encoding == XA_UTF8 || textProp.encoding == XA_STRING) && textProp.format == 8) {
+					return textProp.value[0 .. textProp.nitems].idup.split('\0');
+				} else
+					return [];
+			} else
+				return null;
+		}
+
+		string getTitle() {
+			auto titles = getTitles();
+			return titles.length ? titles[0] : null;
+		}
+
 		void setMinSize (int minwidth, int minheight) {
 			import core.stdc.config : c_long;
 			if (minwidth < 1) minwidth = 1;
@@ -9834,6 +9865,11 @@ int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
 	long_offset, arch_long long_length, Bool del, Atom req_type, Atom
 	*actual_type_return, int *actual_format_return, arch_ulong
 	*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
+Atom* XListProperties(Display *display, Window w, int *num_prop_return);
+
+Status XGetTextProperty(Display *display, Window w, XTextProperty *text_prop_return, Atom property);
+
+Status XQueryTree(Display *display, Window w, Window *root_return, Window *parent_return, Window **children_return, uint *nchildren_return);
 
 int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
 
@@ -11414,6 +11450,7 @@ struct Visual
 	}
 
 	void XSetWMName(Display*, Window, XTextProperty*);
+	Status XGetWMName(Display*, Window, XTextProperty*);
 	int XStoreName(Display* display, Window w, const(char)* window_name);
 
 	enum ClipByChildren = 0;
@@ -13770,4 +13807,57 @@ class NotYetImplementedException : Exception {
 	this(string file = __FILE__, size_t line = __LINE__) {
 		super("Not yet implemented", file, line);
 	}
+}
+
+/++
+	Searches for a window with the specified class name and returns the native window handle to it.
+
+	Params:
+		className = the class name to check the window for, case-insensitive.
++/
+version (Windows)
+NativeWindowHandle findWindowByClass(LPCTSTR className) {
+	return FindWindow(className, null);
+}
+
+/// ditto
+version (Windows)
+NativeWindowHandle findWindowByClass(string className) {
+	return findWindowByClass(className.toWStringz);
+}
+
+/// ditto
+version (X11)
+NativeWindowHandle findWindowByClass(string className) {
+	import std.algorithm : splitter;
+	import std.uni : sicmp;
+
+	Window unusedWindow;
+	Window* children;
+	uint numChildren;
+	Status status = XQueryTree(XDisplayConnection.get(), RootWindow(XDisplayConnection.get, DefaultScreen(XDisplayConnection.get)),
+		&unusedWindow, &unusedWindow, &children, &numChildren);
+	if (status == 0 || children is null)
+		return NativeWindowHandle.init;
+	scope (exit)
+		XFree(children);
+
+	auto classAtom = GetAtom!"WM_CLASS"(XDisplayConnection.get());
+	Atom returnType;
+	int returnFormat;
+	arch_ulong numItems, bytesAfter;
+	char* strs;
+	foreach (window; children[0 .. numChildren]) {
+		if (0 == XGetWindowProperty(XDisplayConnection.get(), window, classAtom, 0, 64, false, AnyPropertyType, &returnType, &returnFormat, &numItems, &bytesAfter, cast(void**)&strs)) {
+			scope (exit)
+				XFree(strs);
+			if (returnFormat == 8) {
+				foreach (windowClassName; strs[0 .. numItems].splitter('\0')) {
+					if (sicmp(windowClassName, className) == 0)
+						return window;
+				}
+			}
+		}
+	}
+	return NativeWindowHandle.init;
 }
