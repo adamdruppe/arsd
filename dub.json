@@ -11,6 +11,7 @@
 			"targetType": "sourceLibrary",
 			"libs-posix": ["X11", "Xext", "GL", "GLU"],
 			"libs-windows": ["gdi32", "opengl32", "glu32"],
+			"dependencies": {"arsd-official:color_base":"~master"},
 			"configurations": [
 				{
 					"name": "normal"
@@ -22,14 +23,13 @@
 					"libs-posix": ["X11", "Xext"]
 				}
 			],
-			"sourceFiles": ["simpledisplay.d", "color.d"]
+			"sourceFiles": ["simpledisplay.d"]
 		},
 		{
 			"name": "minigui",
 			"description": "Small GUI widget library for Windows and Linux",
 			"targetType": "sourceLibrary",
-			"libs-posix": ["X11", "Xext", "GL", "GLU"],
-			"libs-windows": ["gdi32", "opengl32", "glu32"],
+			"dependencies": {"arsd-official:simpledisplay":"~master"},
 			"configurations": [
 				{
 					"name": "normal"
@@ -41,20 +41,29 @@
 					"libs-posix": ["X11", "Xext"]
 				}
 			],
-			"sourceFiles": ["simpledisplay.d", "color.d", "minigui.d"]
+			"sourceFiles": ["minigui.d"]
+		},
+		{
+			"name": "nanovega",
+			"description": "Vector graphics library",
+			"targetType": "sourceLibrary",
+			"dependencies": {"arsd-official:simpledisplay":"~master", "arsd-official:image_files":"~master"},
+			"sourceFiles": ["nanovega.d", "blendish.d", "svg.d"]
 		},
 		{
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["email.d", "htmltotext.d", "dom.d", "characterencodings.d"]
+			"dependencies": {"arsd-official:dom":"~master"},
+			"sourceFiles": ["email.d", "htmltotext.d"]
 
 		},
 		{
 			"name": "image_files",
-			"description": "Image file format support - PNG read/write, JPEG, TGA, BMP read.",
+			"description": "Image file format support - PNG read/write, JPEG, TGA, BMP, PCX, TGA, DDS read.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["color.d", "image.d", "png.d", "bmp.d", "jpeg.d", "targa.d"]
+			"dependencies": {"arsd-official:color_base":"~master"},
+			"sourceFiles": ["image.d", "png.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
 		},
 		{
 			"name": "dom",
@@ -72,34 +81,38 @@
 			"name": "mysql",
 			"description": "MySQL client library. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d","mysql.d"]
+			"dependencies": {"arsd-official:database_base":"~master"},
+			"sourceFiles": ["mysql.d"]
 		},
 		{
 			"name": "postgres",
 			"description": "Postgresql client library. Wraps the libpq C library with my database.d interface.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d","postgres.d"]
+			"dependencies": {"arsd-official:database_base":"~master"},
+			"sourceFiles": ["postgres.d"]
 		},
 
 		{
 			"name": "sqlite",
 			"description": "sqlite wrapper. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d","sqlite.d"]
+			"dependencies": {"arsd-official:database_base":"~master"},
+			"sourceFiles": ["sqlite.d"]
 		},
 
 		{
 			"name": "mssql",
 			"description": "Microsoft SQL Server client library. Wraps the official ODBC library with my database.d interface.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d","mssql.d"]
+			"dependencies": {"arsd-official:database_base":"~master"},
+			"sourceFiles": ["mssql.d"]
 		},
 
 		{
 			"name": "http",
-			"description": "HTTP client library",
-			"libs-posix": ["crypto", "ssl"],
-			"versions-posix": ["with_openssl"],
+			"description": "HTTP client library. Depends on OpenSSL right now on all platforms. On 32 bit Windows, you may need to get OMF openssl lib and dlls (ask me if you can't find it)",
+			"libs": ["crypto", "ssl"],
+			"versions": ["with_openssl"],
 			"targetType": "sourceLibrary",
 			"sourceFiles": ["http2.d"]
 		},
@@ -113,14 +126,26 @@
 			"name": "script",
 			"description": "Small Javascript-like script interpreter with easy D API",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["script.d", "jsvar.d"]
+			"dependencies": {"arsd-official:jsvar":"~master"},
+			"sourceFiles": ["script.d"]
 		},
 		{
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
 			"targetType": "sourceLibrary",
 			"sourceFiles": ["terminal.d"]
+		},
+		{
+			"name": "color_base",
+			"description": "Base color, point, image interface definitions",
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["color.d"]
+		},
+		{
+			"name": "database_base",
+			"description": "Basic database interface definitions. Use one (or more) of the drivers like arsd-official:mysql or arsd-official:postgres instead",
+			"targetType": "sourceLibrary",
+			"sourceFiles": ["database.d"]
 		}
-
 	]
 }

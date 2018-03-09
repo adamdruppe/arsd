@@ -1844,8 +1844,19 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Gets the title
 	@property string title() {
-		version(OSXCocoa) return _title;
-		else return impl.getTitle();
+		if(_title is null)
+			_title = impl.getTitle();
+		return _title;
+	}
+
+	/++
+		Get the title as set by the window manager.
+		May not match what you attempted to set.
+	+/
+	string getRealTitle() {
+		static if(is(typeof(impl.getTitle())))
+			return impl.getTitle();
+		return null;
 	}
 
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
