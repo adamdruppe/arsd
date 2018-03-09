@@ -1845,7 +1845,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// Gets the title
 	@property string title() {
 		if(_title is null)
-			_title = impl.getTitle();
+			_title = getRealTitle();
 		return _title;
 	}
 
@@ -1856,7 +1856,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	string getRealTitle() {
 		static if(is(typeof(impl.getTitle())))
 			return impl.getTitle();
-		return null;
+		else
+			return null;
 	}
 
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
