@@ -531,6 +531,8 @@ import core.stdc.stdlib : malloc, realloc, free;
 import core.stdc.string : memset, memcpy, strlen;
 import std.math : PI;
 
+//version = nanovg_force_stb_ttf;
+
 version(Posix) {
   version = nanovg_use_freetype;
 } else {
@@ -1307,7 +1309,8 @@ struct NVGscissor {
   float[2] extent = -1.0f;
 }
 
-struct NVGvertex {
+/// General NanoVega vertex struct. Contains geometry coordinates, and (sometimes unused) texture coordinates.
+public struct NVGVertex {
   float x, y, u, v;
 }
 
@@ -1316,12 +1319,12 @@ struct NVGpath {
   int count;
   bool closed;
   int nbevel;
-  NVGvertex* fill;
+  NVGVertex* fill;
   int nfill;
-  NVGvertex* stroke;
+  NVGVertex* stroke;
   int nstroke;
-  NVGWinding winding;
-  int convex;
+  NVGWinding mWinding;
+  bool convex;
   bool cloned;
 
   @disable this (this); // no copies
@@ -1348,6 +1351,19 @@ struct NVGpath {
     }
     this.cloned = true;
   }
+
+  public @property const(NVGVertex)[] fillVertices () const pure nothrow @trusted @nogc {
+    pragma(inline, true);
+    return (nfill > 0 ? fill[0..nfill] : null);
+  }
+
+  public @property const(NVGVertex)[] strokeVertices () const pure nothrow @trusted @nogc {
+    pragma(inline, true);
+    return (nstroke > 0 ? stroke[0..nstroke] : null);
+  }
+
+  public @property NVGWinding winding () const pure nothrow @trusted @nogc { pragma(inline, true); return mWinding; }
+  public @property bool complex () const pure nothrow @trusted @nogc { pragma(inline, true); return !convex; }
 }
 
 
@@ -1369,7 +1385,7 @@ struct NVGparams {
   void function (void* uptr) nothrow @trusted @nogc renderResetClip; // reset current clip region to `non-clipped`
   void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, const(float)* bounds, const(NVGpath)* paths, int npaths, bool evenOdd) nothrow @trusted @nogc renderFill;
   void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, float strokeWidth, const(NVGpath)* paths, int npaths) nothrow @trusted @nogc renderStroke;
-  void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGvertex)* verts, int nverts) nothrow @trusted @nogc renderTriangles;
+  void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGVertex)* verts, int nverts) nothrow @trusted @nogc renderTriangles;
   void function (void* uptr, in ref NVGMatrix mat) nothrow @trusted @nogc renderSetAffine;
   void function (void* uptr) nothrow @trusted @nogc renderDelete;
 }
@@ -1446,7 +1462,7 @@ struct NVGpathCache {
   NVGpath* paths;
   int npaths;
   int cpaths;
-  NVGvertex* verts;
+  NVGVertex* verts;
   int nverts;
   int cverts;
   float[4] bounds;
@@ -1479,6 +1495,7 @@ struct NVGpathCache {
       this.paths = cast(NVGpath*)malloc(src.npaths*NVGpath.sizeof);
       memset(this.paths, 0, npaths*NVGpath.sizeof);
       foreach (immutable pidx; 0..npaths) this.paths[pidx].copyFrom(&src.paths[pidx]);
+      this.cpaths = src.npaths;
     } else {
       this.npaths = this.cpaths = 0;
     }
@@ -1615,6 +1632,59 @@ private:
   @disable this (this); // no copies
 }
 
+/** Returns number of tesselated pathes in context.
+ *
+ * Tesselated pathes are either triangle strips (for strokes), or
+ * triangle fans (for fills). Note that NanoVega can generate some
+ * surprising pathes (like fringe stroke for antialiasing, for example).
+ *
+ * One render path can contain vertices both for fill, and for stroke triangles.
+ */
+public int renderPathCount (NVGContext ctx) pure nothrow @trusted @nogc {
+  pragma(inline, true);
+  return (ctx !is null && ctx.contextAlive ? ctx.cache.npaths : 0);
+}
+
+/** Get vertices of "fill" triangle fan for the given render path. Can return empty slice.
+ *
+ * $(WARNING Returned slice can be invalidated by any other NanoVega API call
+ *           (except the calls to render path accessors), and using it in such
+ *           case is UB. So copy vertices to freshly allocated array if you want
+ *           to keep them for further processing.)
+ */
+public const(NVGVertex)[] renderPathFillVertices (NVGContext ctx, int pathidx) pure nothrow @trusted @nogc {
+  pragma(inline, true);
+  return (ctx !is null && ctx.contextAlive && pathidx >= 0 && pathidx < ctx.cache.npaths ? ctx.cache.paths[pathidx].fillVertices : null);
+}
+
+/** Get vertices of "stroke" triangle strip for the given render path. Can return empty slice.
+ *
+ * $(WARNING Returned slice can be invalidated by any other NanoVega API call
+ *           (except the calls to render path accessors), and using it in such
+ *           case is UB. So copy vertices to freshly allocated array if you want
+ *           to keep them for further processing.)
+ */
+public const(NVGVertex)[] renderPathStrokeVertices (NVGContext ctx, int pathidx) pure nothrow @trusted @nogc {
+  pragma(inline, true);
+  return (ctx !is null && ctx.contextAlive && pathidx >= 0 && pathidx < ctx.cache.npaths ? ctx.cache.paths[pathidx].strokeVertices : null);
+
+}
+
+/// Returns winding for the given render path.
+public NVGWinding renderPathWinding (NVGContext ctx, int pathidx) pure nothrow @trusted @nogc {
+  pragma(inline, true);
+  return (ctx !is null && ctx.contextAlive && pathidx >= 0 && pathidx < ctx.cache.npaths ? ctx.cache.paths[pathidx].winding : NVGWinding.CCW);
+
+}
+
+/// Returns "complex path" flag for the given render path.
+public bool renderPathComplex (NVGContext ctx, int pathidx) pure nothrow @trusted @nogc {
+  pragma(inline, true);
+  return (ctx !is null && ctx.contextAlive && pathidx >= 0 && pathidx < ctx.cache.npaths ? ctx.cache.paths[pathidx].complex : false);
+
+}
+
+
 void nvg__imageIncRef (NVGContext ctx, int imgid) nothrow @trusted @nogc {
   if (ctx !is null && imgid > 0) {
     ++ctx.imageCount;
@@ -1698,7 +1768,7 @@ NVGpathCache* nvg__allocPathCache () nothrow @trusted @nogc {
   assert(c.npaths == 0);
   c.cpaths = NVG_INIT_PATHS_SIZE;
 
-  c.verts = cast(NVGvertex*)malloc(NVGvertex.sizeof*NVG_INIT_VERTS_SIZE);
+  c.verts = cast(NVGVertex*)malloc(NVGVertex.sizeof*NVG_INIT_VERTS_SIZE);
   if (c.verts is null) goto error;
   assert(c.nverts == 0);
   c.cverts = NVG_INIT_VERTS_SIZE;
@@ -1933,6 +2003,9 @@ public void cancelFrame (NVGContext ctx) nothrow @trusted @nogc {
   ctx.mDeviceRatio = 0;
   // cancel render queue
   ctx.params.renderCancel(ctx.params.userPtr);
+  // clear saved states (this may free some textures)
+  foreach (ref NVGstate st; ctx.states[0..ctx.nstates]) st.clearPaint();
+  ctx.nstates = 0;
 }
 
 /// Ends drawing the current frame (flushing remaining render state). Commits recorded paths.
@@ -1970,6 +2043,9 @@ public void endFrame (NVGContext ctx) nothrow @trusted @nogc {
     // clear all images after j
     ctx.fontImages[j..NVG_MAX_FONTIMAGES] = NVGImage.init;
   }
+  // clear saved states (this may free some textures)
+  foreach (ref NVGstate st; ctx.states[0..ctx.nstates]) st.clearPaint();
+  ctx.nstates = 0;
 }
 
 
@@ -2859,6 +2935,18 @@ public bool canSave (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline
  * Group: state_handling
  */
 public bool canRestore (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx.nstates > 1); }
+
+/// Returns `true` if rendering is currently blocked.
+/// Group: state_handling
+public bool renderBlocked (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null && ctx.contextAlive ? ctx.recblockdraw : false); }
+
+/// Blocks/unblocks rendering
+/// Group: state_handling
+public void renderBlocked (NVGContext ctx, bool v) pure nothrow @trusted @nogc { pragma(inline, true); if (ctx !is null && ctx.contextAlive) ctx.recblockdraw = v; }
+
+/// Blocks/unblocks rendering; returns previous state.
+/// Group: state_handling
+public bool setRenderBlocked (NVGContext ctx, bool v) pure nothrow @trusted @nogc { pragma(inline, true); if (ctx !is null && ctx.contextAlive) { bool res = ctx.recblockdraw; ctx.recblockdraw = v; return res; } else return false; }
 
 
 // ////////////////////////////////////////////////////////////////////////// //
@@ -3849,7 +3937,7 @@ void nvg__addPath (NVGContext ctx) nothrow @trusted @nogc {
   NVGpath* path = &ctx.cache.paths[ctx.cache.npaths++];
   memset(path, 0, NVGpath.sizeof);
   path.first = ctx.cache.npoints;
-  path.winding = NVGWinding.CCW;
+  path.mWinding = NVGWinding.CCW;
 }
 
 NVGpoint* nvg__lastPoint (NVGContext ctx) nothrow @trusted @nogc {
@@ -3895,7 +3983,7 @@ void nvg__closePath (NVGContext ctx) nothrow @trusted @nogc {
 void nvg__pathWinding (NVGContext ctx, NVGWinding winding) nothrow @trusted @nogc {
   NVGpath* path = nvg__lastPath(ctx);
   if (path is null) return;
-  path.winding = winding;
+  path.mWinding = winding;
 }
 
 float nvg__getAverageScale() (in auto ref NVGMatrix t) nothrow @trusted @nogc {
@@ -3904,10 +3992,10 @@ float nvg__getAverageScale() (in auto ref NVGMatrix t) nothrow @trusted @nogc {
   return (sx+sy)*0.5f;
 }
 
-NVGvertex* nvg__allocTempVerts (NVGContext ctx, int nverts) nothrow @trusted @nogc {
+NVGVertex* nvg__allocTempVerts (NVGContext ctx, int nverts) nothrow @trusted @nogc {
   if (nverts > ctx.cache.cverts) {
     int cverts = (nverts+0xff)&~0xff; // Round up to prevent allocations when things change just slightly.
-    NVGvertex* verts = cast(NVGvertex*)realloc(ctx.cache.verts, NVGvertex.sizeof*cverts);
+    NVGVertex* verts = cast(NVGVertex*)realloc(ctx.cache.verts, NVGVertex.sizeof*cverts);
     if (verts is null) return null;
     ctx.cache.verts = verts;
     ctx.cache.cverts = cverts;
@@ -3947,7 +4035,7 @@ void nvg__polyReverse (NVGpoint* pts, int npts) nothrow @trusted @nogc {
   }
 }
 
-void nvg__vset (NVGvertex* vtx, float x, float y, float u, float v) nothrow @trusted @nogc {
+void nvg__vset (NVGVertex* vtx, float x, float y, float u, float v) nothrow @trusted @nogc {
   vtx.x = x;
   vtx.y = y;
   vtx.u = u;
@@ -4365,8 +4453,8 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
     // enforce winding
     if (path.count > 2) {
       immutable float area = nvg__polyArea(pts, path.count);
-      if (path.winding == NVGWinding.CCW && area < 0.0f) nvg__polyReverse(pts, path.count);
-      if (path.winding == NVGWinding.CW && area > 0.0f) nvg__polyReverse(pts, path.count);
+      if (path.mWinding == NVGWinding.CCW && area < 0.0f) nvg__polyReverse(pts, path.count);
+      if (path.mWinding == NVGWinding.CW && area > 0.0f) nvg__polyReverse(pts, path.count);
     }
 
     foreach (immutable _; 0..path.count) {
@@ -4410,7 +4498,7 @@ void nvg__chooseBevel (int bevel, NVGpoint* p0, NVGpoint* p1, float w, float* x0
   }
 }
 
-NVGvertex* nvg__roundJoin (NVGvertex* dst, NVGpoint* p0, NVGpoint* p1, float lw, float rw, float lu, float ru, int ncap, float fringe) nothrow @trusted @nogc {
+NVGVertex* nvg__roundJoin (NVGVertex* dst, NVGpoint* p0, NVGpoint* p1, float lw, float rw, float lu, float ru, int ncap, float fringe) nothrow @trusted @nogc {
   float dlx0 = p0.dy;
   float dly0 = -p0.dx;
   float dlx1 = p1.dy;
@@ -4467,7 +4555,7 @@ NVGvertex* nvg__roundJoin (NVGvertex* dst, NVGpoint* p0, NVGpoint* p1, float lw,
   return dst;
 }
 
-NVGvertex* nvg__bevelJoin (NVGvertex* dst, NVGpoint* p0, NVGpoint* p1, float lw, float rw, float lu, float ru, float fringe) nothrow @trusted @nogc {
+NVGVertex* nvg__bevelJoin (NVGVertex* dst, NVGpoint* p0, NVGpoint* p1, float lw, float rw, float lu, float ru, float fringe) nothrow @trusted @nogc {
   float rx0, ry0, rx1, ry1;
   float lx0, ly0, lx1, ly1;
   float dlx0 = p0.dy;
@@ -4538,7 +4626,7 @@ NVGvertex* nvg__bevelJoin (NVGvertex* dst, NVGpoint* p0, NVGpoint* p1, float lw,
   return dst;
 }
 
-NVGvertex* nvg__buttCapStart (NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, float d, float aa) nothrow @trusted @nogc {
+NVGVertex* nvg__buttCapStart (NVGVertex* dst, NVGpoint* p, float dx, float dy, float w, float d, float aa) nothrow @trusted @nogc {
   immutable float px = p.x-dx*d;
   immutable float py = p.y-dy*d;
   immutable float dlx = dy;
@@ -4550,7 +4638,7 @@ NVGvertex* nvg__buttCapStart (NVGvertex* dst, NVGpoint* p, float dx, float dy, f
   return dst;
 }
 
-NVGvertex* nvg__buttCapEnd (NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, float d, float aa) nothrow @trusted @nogc {
+NVGVertex* nvg__buttCapEnd (NVGVertex* dst, NVGpoint* p, float dx, float dy, float w, float d, float aa) nothrow @trusted @nogc {
   immutable float px = p.x+dx*d;
   immutable float py = p.y+dy*d;
   immutable float dlx = dy;
@@ -4562,7 +4650,7 @@ NVGvertex* nvg__buttCapEnd (NVGvertex* dst, NVGpoint* p, float dx, float dy, flo
   return dst;
 }
 
-NVGvertex* nvg__roundCapStart (NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, int ncap, float aa) nothrow @trusted @nogc {
+NVGVertex* nvg__roundCapStart (NVGVertex* dst, NVGpoint* p, float dx, float dy, float w, int ncap, float aa) nothrow @trusted @nogc {
   immutable float px = p.x;
   immutable float py = p.y;
   immutable float dlx = dy;
@@ -4580,7 +4668,7 @@ NVGvertex* nvg__roundCapStart (NVGvertex* dst, NVGpoint* p, float dx, float dy, 
   return dst;
 }
 
-NVGvertex* nvg__roundCapEnd (NVGvertex* dst, NVGpoint* p, float dx, float dy, float w, int ncap, float aa) nothrow @trusted @nogc {
+NVGVertex* nvg__roundCapEnd (NVGVertex* dst, NVGpoint* p, float dx, float dy, float w, int ncap, float aa) nothrow @trusted @nogc {
   immutable float px = p.x;
   immutable float py = p.y;
   immutable float dlx = dy;
@@ -4657,7 +4745,7 @@ void nvg__calculateJoins (NVGContext ctx, float w, int lineJoin, float miterLimi
       p0 = p1++;
     }
 
-    path.convex = (nleft == path.count) ? 1 : 0;
+    path.convex = (nleft == path.count);
   }
 }
 
@@ -4688,7 +4776,7 @@ void nvg__expandStroke (NVGContext ctx, float w, int lineCap, int lineJoin, floa
     }
   }
 
-  NVGvertex* verts = nvg__allocTempVerts(ctx, cverts);
+  NVGVertex* verts = nvg__allocTempVerts(ctx, cverts);
   if (verts is null) return;
 
   foreach (int i; 0..cache.npaths) {
@@ -4703,7 +4791,7 @@ void nvg__expandStroke (NVGContext ctx, float w, int lineCap, int lineJoin, floa
 
     // Calculate fringe or stroke
     immutable bool loop = path.closed;
-    NVGvertex* dst = verts;
+    NVGVertex* dst = verts;
     path.stroke = dst;
 
     if (loop) {
@@ -4779,7 +4867,7 @@ void nvg__expandFill (NVGContext ctx, float w, int lineJoin, float miterLimit) n
     if (fringe) cverts += (path.count+path.nbevel*5+1)*2; // plus one for loop
   }
 
-  NVGvertex* verts = nvg__allocTempVerts(ctx, cverts);
+  NVGVertex* verts = nvg__allocTempVerts(ctx, cverts);
   if (verts is null) return;
 
   bool convex = (cache.npaths == 1 && cache.paths[0].convex);
@@ -4790,7 +4878,7 @@ void nvg__expandFill (NVGContext ctx, float w, int lineJoin, float miterLimit) n
 
     // Calculate shape vertices.
     immutable float woff = 0.5f*aa;
-    NVGvertex* dst = verts;
+    NVGVertex* dst = verts;
     path.fill = dst;
 
     if (fringe) {
@@ -7523,9 +7611,9 @@ private:
   }
 
 public:
-  float[4] bounds = 0;
+  float[4] bounds = 0; /// glyph outline bounds
 
-  @property int length () const pure { pragma(inline, true); return ccount; }
+  @property int length () const pure { pragma(inline, true); return ccount; } /// number of commands in outline
 
 public:
   /// Returns forward range with all glyph commands.
@@ -7674,7 +7762,7 @@ bool nvg__allocTextAtlas (NVGContext ctx) nothrow @trusted @nogc {
   return true;
 }
 
-void nvg__renderText (NVGContext ctx, NVGvertex* verts, int nverts) nothrow @trusted @nogc {
+void nvg__renderText (NVGContext ctx, NVGVertex* verts, int nverts) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   NVGPaint paint = state.fill;
 
@@ -7698,7 +7786,7 @@ public float text(T) (NVGContext ctx, float x, float y, const(T)[] str) nothrow 
   NVGstate* state = nvg__getState(ctx);
   FONStextIter!T iter, prevIter;
   FONSquad q;
-  NVGvertex* verts;
+  NVGVertex* verts;
   float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   float invscale = 1.0f/scale;
   int cverts = 0;
@@ -8407,21 +8495,28 @@ import core.stdc.stdio : FILE, fopen, fclose, fseek, ftell, fread, SEEK_END, SEE
 
 public:
 // welcome to version hell!
-version(nanovg_force_detect) {} else version(nanovg_use_freetype) { version = nanovg_use_freetype_ii; }
+version(nanovg_force_stb_ttf) {
+} else {
+  version(nanovg_force_detect) {} else version(nanovg_use_freetype) { version = nanovg_use_freetype_ii; }
+}
 version(nanovg_ignore_iv_stb_ttf) enum nanovg_ignore_iv_stb_ttf = true; else enum nanovg_ignore_iv_stb_ttf = false;
 //version(nanovg_ignore_mono);
 
-version (nanovg_builtin_freetype_bindings) {
-  version(Posix) {
-    private enum NanoVegaForceFreeType = true;
-  } else {
-    private enum NanoVegaForceFreeType = false;
-  }
+version(nanovg_force_stb_ttf) {
+  private enum NanoVegaForceFreeType = false;
 } else {
-  version(Posix) {
-    private enum NanoVegaForceFreeType = true;
+  version (nanovg_builtin_freetype_bindings) {
+    version(Posix) {
+      private enum NanoVegaForceFreeType = true;
+    } else {
+      private enum NanoVegaForceFreeType = false;
+    }
   } else {
-    private enum NanoVegaForceFreeType = false;
+    version(Posix) {
+      private enum NanoVegaForceFreeType = true;
+    } else {
+      private enum NanoVegaForceFreeType = false;
+    }
   }
 }
 
@@ -8435,15 +8530,15 @@ version(nanovg_use_freetype_ii) {
     static if (!nanovg_ignore_iv_stb_ttf && __traits(compiles, { import iv.stb.ttf; })) {
       import iv.stb.ttf;
       enum NanoVegaIsUsingSTBTTF = true;
-      //pragma(msg, "iv.stb.ttf");
+      version(nanovg_report_stb_ttf) pragma(msg, "iv.stb.ttf");
     } else static if (__traits(compiles, { import arsd.ttf; })) {
       import arsd.ttf;
       enum NanoVegaIsUsingSTBTTF = true;
-      //pragma(msg, "arsd.ttf");
+      version(nanovg_report_stb_ttf) pragma(msg, "arsd.ttf");
     } else static if (__traits(compiles, { import stb_truetype; })) {
       import stb_truetype;
       enum NanoVegaIsUsingSTBTTF = true;
-      //pragma(msg, "stb_truetype");
+      version(nanovg_report_stb_ttf) pragma(msg, "stb_truetype");
     } else static if (__traits(compiles, { import iv.freetype; })) {
       version (nanovg_builtin_freetype_bindings) {
         enum NanoVegaIsUsingSTBTTF = false;
@@ -8452,7 +8547,7 @@ version(nanovg_use_freetype_ii) {
         import iv.freetype;
         enum NanoVegaIsUsingSTBTTF = false;
       }
-      //pragma(msg, "iv.freetype");
+      version(nanovg_report_stb_ttf) pragma(msg, "freetype");
     } else {
       static assert(0, "no stb_ttf/iv.freetype found!");
     }
@@ -8973,8 +9068,8 @@ extern(C) nothrow @trusted @nogc {
     NVGGlyphOutline* ol;
     FT_BBox outlineBBox;
   nothrow @trusted @nogc:
-    T transx(T) (T v) const pure { pragma(inline, true); return v; }
-    T transy(T) (T v) const pure { pragma(inline, true); return -v; }
+    static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
+    static float transy(T) (T v) pure { pragma(inline, true); return -cast(float)v; }
     void putBytes (const(void)[] b) {
       assert(b.length <= 512);
       if (b.length == 0) return;
@@ -9187,10 +9282,177 @@ void fons__tt_renderGlyphBitmap (FONSttFontImpl* font, ubyte* output, int outWid
 }
 
 float fons__tt_getGlyphKernAdvance (FONSttFontImpl* font, float size, int glyph1, int glyph2) nothrow @trusted @nogc {
+  // FUnits -> pixels: pointSize * resolution / (72 points per inch * units_per_em)
+  // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM02/Chap2.html#converting
   float res = void;
-  forceNoThrowNoGC({ res = stbtt_GetGlyphKernAdvance(&font.font, glyph1, glyph2); });
+  forceNoThrowNoGC({
+    res = stbtt_GetGlyphKernAdvance(&font.font, glyph1, glyph2);
+    res *= stbtt_ScaleForPixelHeight(&font.font, size);
+  });
+  /*
+  if (res != 0) {
+    { import core.stdc.stdio; printf("fres=%g; size=%g; %g (%g); rv=%g\n", res, size, res*stbtt_ScaleForMappingEmToPixels(&font.font, size), stbtt_ScaleForPixelHeight(&font.font, size*100), res*stbtt_ScaleForPixelHeight(&font.font, size*100)); }
+  }
+  */
+  //k8: dunno if this is right; i guess it isn't but...
   return res;
 }
+
+// old arsd.ttf sux! ;-)
+static if (is(typeof(STBTT_vcubic))) {
+
+static struct OutlinerData {
+  @disable this (this);
+  NVGGlyphOutline* ol;
+nothrow @trusted @nogc:
+  static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
+  static float transy(T) (T v) pure { pragma(inline, true); return -cast(float)v; }
+  void putBytes (const(void)[] b) {
+    assert(b.length <= 512);
+    if (b.length == 0) return;
+    if (ol.used+cast(uint)b.length > ol.size) {
+      import core.stdc.stdlib : realloc;
+      uint newsz = (ol.size == 0 ? 2048 : ol.size < 32768 ? ol.size*2 : ol.size+8192);
+      assert(ol.used+cast(uint)b.length <= newsz);
+      auto nd = cast(ubyte*)realloc(ol.data, newsz);
+      if (nd is null) assert(0, "FONS: out of memory");
+      ol.size = newsz;
+      ol.data = nd;
+    }
+    import core.stdc.string : memcpy;
+    memcpy(ol.data+ol.used, b.ptr, b.length);
+    ol.used += cast(uint)b.length;
+  }
+  void newCommand (ubyte cmd) { pragma(inline, true); ++ol.ccount; putBytes((&cmd)[0..1]); }
+  void putArg (float f) { putBytes((&f)[0..1]); }
+}
+
+
+bool fons__nvg__toPath (NVGContext vg, FONSttFontImpl* font, uint glyphidx, float[] bounds=null) nothrow @trusted @nogc {
+  if (bounds.length > 4) bounds = bounds.ptr[0..4];
+
+  bool okflag = false;
+
+  forceNoThrowNoGC({
+    int x0, y0, x1, y1;
+    if (!stbtt_GetGlyphBox(&font.font, glyphidx, &x0, &y0, &x1, &y1)) {
+      bounds[] = 0;
+      return;
+    }
+
+    if (bounds.length > 0) bounds.ptr[0] = x0;
+    if (bounds.length > 1) bounds.ptr[1] = -y1;
+    if (bounds.length > 2) bounds.ptr[2] = x1;
+    if (bounds.length > 3) bounds.ptr[3] = -y0;
+
+    static float transy(T) (T v) pure { pragma(inline, true); return -cast(float)v; }
+
+    stbtt_vertex* verts = null;
+    scope(exit) { import core.stdc.stdlib : free; if (verts !is null) free(verts); }
+    int vcount = stbtt_GetGlyphShape(&font.font, glyphidx, &verts);
+    if (vcount < 1) return;
+
+    foreach (const ref vt; verts[0..vcount]) {
+      switch (vt.type) {
+        case STBTT_vmove: vg.moveTo(vt.x, transy(vt.y)); break;
+        case STBTT_vline: vg.lineTo(vt.x, transy(vt.y)); break;
+        case STBTT_vcurve: vg.quadTo(vt.x, transy(vt.y), vt.cx, transy(vt.cy)); break;
+        case STBTT_vcubic: vg.bezierTo(vt.x, transy(vt.y), vt.cx, transy(vt.cy), vt.cx1, transy(vt.cy1)); break;
+        default:
+      }
+    }
+
+    okflag = true;
+  });
+
+  return okflag;
+}
+
+bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGGlyphOutline* ol) nothrow @trusted @nogc {
+  bool okflag = false;
+
+  forceNoThrowNoGC({
+    int x0, y0, x1, y1;
+
+    if (!stbtt_GetGlyphBox(&font.font, glyphidx, &x0, &y0, &x1, &y1)) {
+      ol.bounds[] = 0;
+      return;
+    }
+
+    ol.bounds.ptr[0] = x0;
+    ol.bounds.ptr[1] = -y1;
+    ol.bounds.ptr[2] = x1;
+    ol.bounds.ptr[3] = -y0;
+
+    stbtt_vertex* verts = null;
+    scope(exit) { import core.stdc.stdlib : free; if (verts !is null) free(verts); }
+    int vcount = stbtt_GetGlyphShape(&font.font, glyphidx, &verts);
+    if (vcount < 1) return;
+
+    OutlinerData odata;
+    odata.ol = ol;
+
+    foreach (const ref vt; verts[0..vcount]) {
+      switch (vt.type) {
+        case STBTT_vmove:
+          odata.newCommand(odata.ol.Command.Kind.MoveTo);
+          odata.putArg(odata.transx(vt.x));
+          odata.putArg(odata.transy(vt.y));
+          break;
+        case STBTT_vline:
+          odata.newCommand(odata.ol.Command.Kind.LineTo);
+          odata.putArg(odata.transx(vt.x));
+          odata.putArg(odata.transy(vt.y));
+          break;
+        case STBTT_vcurve:
+          odata.newCommand(odata.ol.Command.Kind.QuadTo);
+          odata.putArg(odata.transx(vt.x));
+          odata.putArg(odata.transy(vt.y));
+          odata.putArg(odata.transx(vt.cx));
+          odata.putArg(odata.transy(vt.cy));
+          break;
+        case STBTT_vcubic:
+          odata.newCommand(odata.ol.Command.Kind.BezierTo);
+          odata.putArg(odata.transx(vt.x));
+          odata.putArg(odata.transy(vt.y));
+          odata.putArg(odata.transx(vt.cx));
+          odata.putArg(odata.transy(vt.cy));
+          odata.putArg(odata.transx(vt.cx1));
+          odata.putArg(odata.transy(vt.cy1));
+          break;
+        default:
+      }
+    }
+
+    okflag = true;
+  });
+
+  return okflag;
+}
+
+bool fons__nvg__bounds (FONSttFontImpl* font, uint glyphidx, float[] bounds) nothrow @trusted @nogc {
+  if (bounds.length > 4) bounds = bounds.ptr[0..4];
+
+  bool okflag = false;
+
+  forceNoThrowNoGC({
+    int x0, y0, x1, y1;
+    if (stbtt_GetGlyphBox(&font.font, glyphidx, &x0, &y0, &x1, &y1)) {
+      if (bounds.length > 0) bounds.ptr[0] = x0;
+      if (bounds.length > 1) bounds.ptr[1] = -y1;
+      if (bounds.length > 2) bounds.ptr[2] = x1;
+      if (bounds.length > 3) bounds.ptr[3] = -y0;
+      okflag = true;
+    } else {
+      bounds[] = 0;
+    }
+  });
+
+  return okflag;
+}
+
+} // check for old stb_ttf
+
 
 } // version
 
@@ -11645,7 +11907,7 @@ struct GLNVGcontext {
   GLNVGpath* paths;
   int cpaths;
   int npaths;
-  NVGvertex* verts;
+  NVGVertex* verts;
   int cverts;
   int nverts;
   ubyte* uniforms;
@@ -12999,11 +13261,11 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
 
     // Upload vertex data
     glBindBuffer(GL_ARRAY_BUFFER, gl.vertBuf);
-    glBufferData(GL_ARRAY_BUFFER, gl.nverts*NVGvertex.sizeof, gl.verts, GL_STREAM_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, gl.nverts*NVGVertex.sizeof, gl.verts, GL_STREAM_DRAW);
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, NVGvertex.sizeof, cast(const(GLvoid)*)cast(usize)0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, NVGvertex.sizeof, cast(const(GLvoid)*)(0+2*float.sizeof));
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, NVGVertex.sizeof, cast(const(GLvoid)*)cast(usize)0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, NVGVertex.sizeof, cast(const(GLvoid)*)(0+2*float.sizeof));
     glnvg__checkError(gl, "vertex data uploading");
 
     // Set view and texture just once per frame.
@@ -13169,9 +13431,9 @@ int glnvg__allocPaths (GLNVGcontext* gl, int n) nothrow @trusted @nogc {
 int glnvg__allocVerts (GLNVGcontext* gl, int n) nothrow @trusted @nogc {
   int ret = 0;
   if (gl.nverts+n > gl.cverts) {
-    NVGvertex* verts;
+    NVGVertex* verts;
     int cverts = glnvg__maxi(gl.nverts+n, 4096)+gl.cverts/2; // 1.5x Overallocate
-    verts = cast(NVGvertex*)realloc(gl.verts, NVGvertex.sizeof*cverts);
+    verts = cast(NVGVertex*)realloc(gl.verts, NVGVertex.sizeof*cverts);
     if (verts is null) return -1;
     gl.verts = verts;
     gl.cverts = cverts;
@@ -13200,7 +13462,7 @@ GLNVGfragUniforms* nvg__fragUniformPtr (GLNVGcontext* gl, int i) nothrow @truste
   return cast(GLNVGfragUniforms*)&gl.uniforms[i];
 }
 
-void glnvg__vset (NVGvertex* vtx, float x, float y, float u, float v) nothrow @trusted @nogc {
+void glnvg__vset (NVGVertex* vtx, float x, float y, float u, float v) nothrow @trusted @nogc {
   vtx.x = x;
   vtx.y = y;
   vtx.u = u;
@@ -13212,7 +13474,7 @@ void glnvg__renderFill (void* uptr, NVGCompositeOperationState compositeOperatio
 
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
   GLNVGcall* call = glnvg__allocCall(gl);
-  NVGvertex* quad;
+  NVGVertex* quad;
   GLNVGfragUniforms* frag;
   int maxverts, offset;
 
@@ -13247,13 +13509,13 @@ void glnvg__renderFill (void* uptr, NVGCompositeOperationState compositeOperatio
     if (path.nfill > 0) {
       copy.fillOffset = offset;
       copy.fillCount = path.nfill;
-      memcpy(&gl.verts[offset], path.fill, NVGvertex.sizeof*path.nfill);
+      memcpy(&gl.verts[offset], path.fill, NVGVertex.sizeof*path.nfill);
       offset += path.nfill;
     }
     if (path.nstroke > 0) {
       copy.strokeOffset = offset;
       copy.strokeCount = path.nstroke;
-      memcpy(&gl.verts[offset], path.stroke, NVGvertex.sizeof*path.nstroke);
+      memcpy(&gl.verts[offset], path.stroke, NVGVertex.sizeof*path.nstroke);
       offset += path.nstroke;
     }
   }
@@ -13325,7 +13587,7 @@ void glnvg__renderStroke (void* uptr, NVGCompositeOperationState compositeOperat
     if (path.nstroke) {
       copy.strokeOffset = offset;
       copy.strokeCount = path.nstroke;
-      memcpy(&gl.verts[offset], path.stroke, NVGvertex.sizeof*path.nstroke);
+      memcpy(&gl.verts[offset], path.stroke, NVGVertex.sizeof*path.nstroke);
       offset += path.nstroke;
     }
   }
@@ -13351,7 +13613,7 @@ error:
   if (gl.ncalls > 0) --gl.ncalls;
 }
 
-void glnvg__renderTriangles (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGvertex)* verts, int nverts) nothrow @trusted @nogc {
+void glnvg__renderTriangles (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGVertex)* verts, int nverts) nothrow @trusted @nogc {
   if (nverts < 1) return;
 
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
@@ -13371,7 +13633,7 @@ void glnvg__renderTriangles (void* uptr, NVGCompositeOperationState compositeOpe
   if (call.triangleOffset == -1) goto error;
   call.triangleCount = nverts;
 
-  memcpy(&gl.verts[call.triangleOffset], verts, NVGvertex.sizeof*nverts);
+  memcpy(&gl.verts[call.triangleOffset], verts, NVGVertex.sizeof*nverts);
 
   // Fill shader
   call.uniformOffset = glnvg__allocFragUniforms(gl, 1);
