@@ -342,13 +342,13 @@ private enum string[] keywords = [
 private enum string[] symbols = [
 	"//", "/*", "/+",
 	"&&", "||",
-	"+=", "-=", "*=", "/=", "~=",  "==", "<=", ">=","!=",
+	"+=", "-=", "*=", "/=", "~=",  "==", "<=", ">=","!=", "%=",
 	"&=", "|=", "^=",
 	"..",
 	".",",",";",":",
 	"[", "]", "{", "}", "(", ")",
 	"&", "|", "^",
-	"+", "-", "*", "/", "=", "<", ">","~","!",
+	"+", "-", "*", "/", "=", "<", ">","~","!","%"
 ];
 
 // we need reference semantics on this all the time
@@ -1124,7 +1124,7 @@ class BinaryExpression : Expression {
 		//writeln(left, " "~op~" ", right);
 
 		var n;
-		foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^"))
+		foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
 			if(ctOp == op) {
 				n = mixin("left "~ctOp~" right");
 			}
@@ -1159,7 +1159,7 @@ class OpAssignExpression : Expression {
 		//writeln(left, " "~op~"= ", right);
 
 		var n;
-		foreach(ctOp; CtList!("+=", "-=", "*=", "/=", "~=", "&=", "|=", "^="))
+		foreach(ctOp; CtList!("+=", "-=", "*=", "/=", "~=", "&=", "|=", "^=", "%="))
 			if(ctOp[0..1] == op)
 				n = mixin("v.getVar(sc) "~ctOp~" right");
 
@@ -2056,6 +2056,7 @@ Expression parseFactor(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 			switch(peek.str) {
 				case "*":
 				case "/":
+				case "%":
 					tokens.popFront();
 					e1 = new BinaryExpression(peek.str, e1, parsePart(tokens));
 				break;
@@ -2121,6 +2122,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "*=":
 				case "/=":
 				case "~=":
+				case "%=":
 					tokens.popFront();
 					return new OpAssignExpression(peek.str[0..1], e1, parseExpression(tokens));
 				default:
