@@ -1559,7 +1559,11 @@ public int height (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, 
 
 /// valid only inside [beginFrame]/[endFrame]
 /// Group: context_management
-public float devicePixelRatio (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null ? ctx.mDeviceRatio : float.nan); }
+public float devicePixelRatio (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null ? ctx.devicePxRatio : float.nan); }
+
+/// Returns `true` if [beginFrame] was called, and neither [endFrame], nor [cancelFrame] were.
+/// Group: context_management
+public bool inFrame (NVGContext ctx) pure nothrow @trusted @nogc { pragma(inline, true); return (ctx !is null && ctx.contextAlive ? ctx.nstates > 0 : false); }
 
 // path autoregistration
 
@@ -1629,7 +1633,6 @@ private:
   // internals
   NVGMatrix gpuAffine;
   int mWidth, mHeight;
-  float mDeviceRatio;
   // image manager
   int imageCount; // number of alive images in this context
   bool contextAlive; // context can be dead, but still contain some images
@@ -1824,7 +1827,7 @@ NVGCompositeOperationState nvg__compositeOperationState (NVGCompositeOperation o
 
 NVGstate* nvg__getState (NVGContext ctx) pure nothrow @trusted @nogc {
   pragma(inline, true);
-  return &ctx.states.ptr[ctx.nstates-1];
+  return &ctx.states.ptr[ctx.nstates-(ctx.nstates > 0 ? 1 : 0)];
 }
 
 // Constructor called by the render back-end.
@@ -1854,6 +1857,7 @@ NVGContext createInternal (NVGparams* params) nothrow @trusted @nogc {
   ctx.reset();
 
   nvg__setDevicePixelRatio(ctx, 1.0f);
+  ctx.mWidth = ctx.mHeight = 0;
 
   if (!ctx.params.renderCreate(ctx.params.userPtr)) goto error;
 
@@ -1965,6 +1969,7 @@ public void beginFrame (NVGContext ctx, int windowWidth, int windowHeight, float
          ctx.drawCallCount, ctx.fillTriCount, ctx.strokeTriCount, ctx.textTriCount,
          ctx.fillTriCount+ctx.strokeTriCount+ctx.textTriCount);
   */
+  if (ctx.nstates > 0) ctx.cancelFrame();
 
   if (windowWidth < 1) windowWidth = 1;
   if (windowHeight < 1) windowHeight = 1;
@@ -1981,7 +1986,6 @@ public void beginFrame (NVGContext ctx, int windowWidth, int windowHeight, float
   ctx.params.renderViewport(ctx.params.userPtr, windowWidth, windowHeight);
   ctx.mWidth = windowWidth;
   ctx.mHeight = windowHeight;
-  ctx.mDeviceRatio = devicePixelRatio;
 
   ctx.recset = null;
   ctx.recstart = -1;
@@ -2003,9 +2007,8 @@ public void beginFrame (NVGContext ctx, int windowWidth, int windowHeight, float
 /// Group: frame_management
 public void cancelFrame (NVGContext ctx) nothrow @trusted @nogc {
   ctx.cancelRecording();
-  ctx.mWidth = 0;
-  ctx.mHeight = 0;
-  ctx.mDeviceRatio = 0;
+  //ctx.mWidth = 0;
+  //ctx.mHeight = 0;
   // cancel render queue
   ctx.params.renderCancel(ctx.params.userPtr);
   // clear saved states (this may free some textures)
@@ -2018,9 +2021,8 @@ public void cancelFrame (NVGContext ctx) nothrow @trusted @nogc {
 public void endFrame (NVGContext ctx) nothrow @trusted @nogc {
   if (ctx.recset !is null) ctx.recset.takeCurrentPickScene(ctx);
   ctx.stopRecording();
-  ctx.mWidth = 0;
-  ctx.mHeight = 0;
-  ctx.mDeviceRatio = 0;
+  //ctx.mWidth = 0;
+  //ctx.mHeight = 0;
   // flush render queue
   NVGstate* state = nvg__getState(ctx);
   ctx.params.renderFlush(ctx.params.userPtr);
@@ -8392,15 +8394,13 @@ public float textBounds(T) (NVGContext ctx, float x, float y, const(T)[] str, fl
 if (isAnyCharType!T)
 {
   NVGstate* state = nvg__getState(ctx);
-  float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
-  float invscale = 1.0f/scale;
-  float width;
 
   if (state.fontId == FONS_INVALID) {
     bounds[] = 0;
     return 0;
   }
 
+  immutable float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   fonsSetSize(ctx.fs, state.fontSize*scale);
   fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
   fonsSetBlur(ctx.fs, state.fontBlur*scale);
@@ -8408,7 +8408,8 @@ if (isAnyCharType!T)
   fonsSetFont(ctx.fs, state.fontId);
 
   float[4] b = void;
-  width = fonsTextBounds(ctx.fs, x*scale, y*scale, str, b[]);
+  immutable float width = fonsTextBounds(ctx.fs, x*scale, y*scale, str, b[]);
+  immutable float invscale = 1.0f/scale;
   if (bounds.length) {
     // use line bounds for height
     fonsLineBounds(ctx.fs, y*scale, b.ptr+1, b.ptr+3);
@@ -11180,54 +11181,40 @@ if (isAnyCharType!T)
   miny = maxy = y;
   startx = x;
 
-  static if (is(T == char)) {
-    foreach (char ch; str) {
+  foreach (T ch; str) {
+    static if (T.sizeof == 1) {
       //if (fons__decutf8(&utf8state, &codepoint, *cast(const(ubyte)*)str)) continue;
       mixin(DecUtfMixin!("utf8state", "codepoint", "(cast(ubyte)ch)"));
       if (utf8state) continue;
-      glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
-      if (glyph !is null) {
-        fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
-        if (q.x0 < minx) minx = q.x0;
-        if (q.x1 > maxx) maxx = q.x1;
-        if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-          if (q.y0 < miny) miny = q.y0;
-          if (q.y1 > maxy) maxy = q.y1;
-        } else {
-          if (q.y1 < miny) miny = q.y1;
-          if (q.y0 > maxy) maxy = q.y0;
-        }
-        prevGlyphIndex = glyph.index;
-      } else {
-        prevGlyphIndex = -1;
-      }
-    }
-  } else {
-    foreach (T ch; str) {
-      static if (is(T == dchar)) {
+    } else {
+      static if (T.sizeof == 4) {
         if (ch > dchar.max) ch = 0xFFFD;
       }
       codepoint = cast(uint)ch;
-      glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
-      if (glyph !is null) {
-        fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
-        if (q.x0 < minx) minx = q.x0;
-        if (q.x1 > maxx) maxx = q.x1;
-        if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-          if (q.y0 < miny) miny = q.y0;
-          if (q.y1 > maxy) maxy = q.y1;
-        } else {
-          if (q.y1 < miny) miny = q.y1;
-          if (q.y0 > maxy) maxy = q.y0;
-        }
-        prevGlyphIndex = glyph.index;
+    }
+    glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
+    if (glyph !is null) {
+      //{ import core.stdc.stdio; printf("0: x=%g; y=%g\n", cast(double)x, cast(double)y); }
+      fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
+      //{ import core.stdc.stdio; printf("1: x=%g; y=%g\n", cast(double)x, cast(double)y); }
+      if (q.x0 < minx) minx = q.x0;
+      if (q.x1 > maxx) maxx = q.x1;
+      if (stash.params.flags&FONS_ZERO_TOPLEFT) {
+        if (q.y0 < miny) miny = q.y0;
+        if (q.y1 > maxy) maxy = q.y1;
       } else {
-        prevGlyphIndex = -1;
+        if (q.y1 < miny) miny = q.y1;
+        if (q.y0 > maxy) maxy = q.y0;
       }
+      prevGlyphIndex = glyph.index;
+    } else {
+      //{ import core.stdc.stdio; printf("NO GLYPH FOR 0x%04x\n", cast(uint)codepoint); }
+      prevGlyphIndex = -1;
     }
   }
 
   advance = x-startx;
+  //{ import core.stdc.stdio; printf("***: x=%g; startx=%g; advance=%g\n", cast(double)x, cast(double)startx, cast(double)advance); }
 
   // Align horizontally
   if (state.talign.left) {

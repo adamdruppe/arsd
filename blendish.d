@@ -1702,31 +1702,30 @@ public void bndJoinAreaOverlay (NVGContext ctx, float x, float y, float w, float
 
 /// returns the ideal width for a label with given icon and text
 public float bndLabelWidth(T=char) (NVGContext ctx, int iconid, const(T)[] label) if (isAnyCharType!T) {
-  int w = BND_PAD_LEFT+BND_PAD_RIGHT;
+  float w = BND_PAD_LEFT+BND_PAD_RIGHT;
   if (iconid >= 0) w += BND_ICON_SHEET_RES;
-  if (label && bndFont >= 0) {
+  if (label.length && bndFont >= 0) {
     ctx.fontFaceId(bndFont);
     ctx.fontSize(BND_LABEL_FONT_SIZE);
-    w += cast(int)ctx.textBounds(1, 1, label, null);
+    w += ctx.textBounds(1, 1, label, null);
   }
-  //{ import core.stdc.stdio : printf; printf("len=%u; w=%d\n", cast(uint)label.length, cast(int)w); }
-  return w;
+  return cast(float)cast(int)(w+0.5);
 }
 
 /// returns the height for a label with given icon, text and width; this function is primarily useful in conjunction with multiline labels and textboxes
 public float bndLabelHeight(T=char) (NVGContext ctx, int iconid, const(T)[] label, float width) if (isAnyCharType!T) {
-  int h = BND_WIDGET_HEIGHT;
+  float h = BND_WIDGET_HEIGHT;
   width -= BND_TEXT_RADIUS*2;
   if (iconid >= 0) width -= BND_ICON_SHEET_RES;
-  if (label && (bndFont >= 0)) {
+  if (label.length && bndFont >= 0) {
     ctx.fontFaceId(bndFont);
     ctx.fontSize(BND_LABEL_FONT_SIZE);
     float[4] bounds = void;
     ctx.textBoxBounds(1, 1, width, label, bounds[]);
-    int bh = cast(int)(bounds[3]-bounds[1])+BND_TEXT_PAD_DOWN;
+    float bh = (bounds[3]-bounds[1])+BND_TEXT_PAD_DOWN;
     if (bh > h) h = bh;
   }
-  return h;
+  return cast(float)cast(int)(h+0.5);
 }
 
 

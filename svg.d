@@ -4029,6 +4029,12 @@ void nsvg__flattenCubicBez (NSVGrasterizer r, in float x1, in float y1, in float
   immutable x1234 = (x123+x234)*0.5f;
   immutable y1234 = (y123+y234)*0.5f;
 
+  // "taxicab" / "manhattan" check for flat curves
+  if (fabsf(x1+x3-x2-x2)+fabsf(y1+y3-y2-y2)+fabsf(x2+x4-x3-x3)+fabsf(y2+y4-y3-y3) < r.tessTol/4) {
+    nsvg__addPathPoint(r, x1234, y1234, type);
+    return;
+  }
+
   nsvg__flattenCubicBez(r, x1, y1, x12, y12, x123, y123, x1234, y1234, level+1, 0);
   nsvg__flattenCubicBez(r, x1234, y1234, x234, y234, x34, y34, x4, y4, level+1, type);
 }
