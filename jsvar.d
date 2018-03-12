@@ -802,6 +802,8 @@ struct var {
 	public T get(T)() if(!is(T == void)) {
 		static if(is(T == var)) {
 			return this;
+		} else static if(__traits(compiles, T.fromJsVar(var.init))) {
+			return T.fromJsVar(this);
 		} else static if(__traits(compiles, T(this))) {
 			return T(this);
 		} else static if(__traits(compiles, new T(this))) {
@@ -1660,13 +1662,15 @@ class WrappedNativeObject : PrototypeObject {
 
 template helper(alias T) { alias helper = T; }
 
-/// Wraps a class. If you are manually managing the memory, remember the jsvar may keep a reference to the object; don't free it!
-///
-/// To use this: var a = wrapNativeObject(your_d_object); OR var a = your_d_object;
-///
-/// By default, it will wrap all methods and members with a public or greater protection level. The second template parameter can filter things differently. FIXME implement this
-///
-/// That may be done automatically with opAssign in the future.
+/++
+	Wraps a class. If you are manually managing the memory, remember the jsvar may keep a reference to the object; don't free it!
+
+	To use this: `var a = wrapNativeObject(your_d_object);` OR `var a = your_d_object`;
+
+	By default, it will wrap all methods and members with a public or greater protection level. The second template parameter can filter things differently. FIXME implement this
+
+	That may be done automatically with `opAssign` in the future.
++/
 WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 	import std.meta;
 	return new class WrappedNativeObject {
@@ -1693,8 +1697,42 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 					_properties[memberName] = new PropertyPrototype(
 						() => var(__traits(getMember, obj, memberName)),
 						(var v) {
+							// read-only property hack
+							static if(__traits(compiles, __traits(getMember, obj, memberName) = v.get!(type)))
 							__traits(getMember, obj, memberName) = v.get!(type);
 						});
+				}
+			}
+		}
+	};
+}
+
+/**
+	Wraps an opaque struct pointer in a module with ufcs functions
+*/
+WrappedNativeObject wrapUfcs(alias Module, Type)(Type obj) {
+	import std.meta;
+	return new class WrappedNativeObject {
+		override Object getObject() {
+			return null; // not actually an object! but close to
+		}
+
+		this() {
+			wrappedType = typeid(Type);
+			// wrap the other methods
+			// and wrap members as scriptable properties
+
+			foreach(memberName; __traits(allMembers, Module)) static if(is(typeof(__traits(getMember, Module, memberName)) type)) {
+				static if(is(type == function)) {
+					foreach(idx, overload; AliasSeq!(__traits(getOverloads, Module, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
+						auto helper = &__traits(getOverloads, Module, memberName)[idx];
+						static if(Parameters!helper.length >= 1 && is(Parameters!helper[0] == Type)) {
+							// this staticMap is a bit of a hack so it can handle `in float`... liable to break with others, i'm sure
+							_properties[memberName] = (staticMap!(Unqual, Parameters!helper[1 .. $]) args) {
+								return __traits(getOverloads, Module, memberName)[idx](obj, args);
+							};
+						}
+					}
 				}
 			}
 		}

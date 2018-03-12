@@ -1666,9 +1666,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	public __gshared SimpleWindow[NativeWindowHandle] nativeMapping;
 
 	/// Width of the window's drawable client area, in pixels.
+	@scriptable
 	final @property int width() { return _width; }
 
 	/// Height of the window's drawable client area, in pixels.
+	@scriptable
 	final @property int height() { return _height; }
 
 	private int _width;
@@ -13824,3 +13826,5 @@ class NotYetImplementedException : Exception {
 		super("Not yet implemented", file, line);
 	}
 }
+
+private alias scriptable = arsd_jsvar_compatible;

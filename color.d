@@ -119,6 +119,11 @@ private {
 
 /// Represents an RGBA color
 struct Color {
+
+	@system static Color fromJsVar(T)(T v) { // it is a template so i don't have to actually import arsd.jsvar...
+		return Color.fromString(v.get!string);
+	}
+
 @safe:
 	/++
 		The color components are available as a static array, individual bytes, and a uint inside this union.

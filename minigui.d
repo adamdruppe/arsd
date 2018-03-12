@@ -112,7 +112,7 @@ version(Windows)
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
 
-/// Methods marked with this are available from scripts
+/// Methods marked with this are available from scripts if added to the [arsd.script] engine.
 alias scriptable = arsd_jsvar_compatible;
 
 version(Windows) {

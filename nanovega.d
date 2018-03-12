@@ -558,6 +558,11 @@ version(nanovg_disable_fontconfig) {
 
 //version = nanovg_bench_flatten;
 
+/++
+	Annotation to indicate it is compatible with [arsd.script]
++/
+package(arsd) enum scriptable = "arsd_jsvar_compatible";
+
 public:
 alias NVG_PI = PI;
 
@@ -2975,6 +2980,7 @@ public void shapeAntiAlias (NVGContext ctx, bool enabled) {
 
 /// Sets the stroke width of the stroke style.
 /// Group: render_styles
+@scriptable
 public void strokeWidth (NVGContext ctx, float width) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.strokeWidth = width;
@@ -3036,9 +3042,14 @@ public void strokePaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @
   state.stroke.xform.mul(state.xform);
 }
 
+// this is a hack to work around https://issues.dlang.org/show_bug.cgi?id=16206
+// for scriptable reflection. it just needs to be declared first among the overloads
+private void fillColor (NVGContext ctx) nothrow @trusted @nogc { }
+
 static if (NanoVegaHasArsdColor) {
 /// Sets current fill style to a solid color.
 /// Group: render_styles
+@scriptable
 public void fillColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.fill, NVGColor(color));
@@ -3093,6 +3104,7 @@ public void currTransform() (NVGContext ctx, in auto ref NVGMatrix m) nothrow @t
 
 /// Resets current transform to an identity matrix.
 /// Group: render_transformations
+@scriptable
 public void resetTransform (NVGContext ctx) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.xform.identity;
@@ -3108,6 +3120,7 @@ public void transform() (NVGContext ctx, in auto ref NVGMatrix mt) nothrow @trus
 
 /// Translates current coordinate system.
 /// Group: render_transformations
+@scriptable
 public void translate (NVGContext ctx, in float x, in float y) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //NVGMatrix t = void;
@@ -3118,6 +3131,7 @@ public void translate (NVGContext ctx, in float x, in float y) nothrow @trusted 
 
 /// Rotates current coordinate system. Angle is specified in radians.
 /// Group: render_transformations
+@scriptable
 public void rotate (NVGContext ctx, in float angle) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //NVGMatrix t = void;
@@ -3128,6 +3142,7 @@ public void rotate (NVGContext ctx, in float angle) nothrow @trusted @nogc {
 
 /// Skews the current coordinate system along X axis. Angle is specified in radians.
 /// Group: render_transformations
+@scriptable
 public void skewX (NVGContext ctx, in float angle) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //NVGMatrix t = void;
@@ -3138,6 +3153,7 @@ public void skewX (NVGContext ctx, in float angle) nothrow @trusted @nogc {
 
 /// Skews the current coordinate system along Y axis. Angle is specified in radians.
 /// Group: render_transformations
+@scriptable
 public void skewY (NVGContext ctx, in float angle) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //NVGMatrix t = void;
@@ -3148,6 +3164,7 @@ public void skewY (NVGContext ctx, in float angle) nothrow @trusted @nogc {
 
 /// Scales the current coordinate system.
 /// Group: render_transformations
+@scriptable
 public void scale (NVGContext ctx, in float x, in float y) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //NVGMatrix t = void;
@@ -4967,6 +4984,7 @@ void nvg__expandFill (NVGContext ctx, float w, int lineJoin, float miterLimit) n
 
 /// Clears the current path and sub-paths.
 /// Group: paths
+@scriptable
 public void beginPath (NVGContext ctx) nothrow @trusted @nogc {
   ctx.ncommands = 0;
   ctx.pathPickRegistered &= NVGPickKind.All; // reset "registered" flags
@@ -4977,6 +4995,7 @@ public alias newPath = beginPath; /// Ditto.
 
 /// Starts new sub-path with specified point as first point.
 /// Group: paths
+@scriptable
 public void moveTo (NVGContext ctx, in float x, in float y) nothrow @trusted @nogc {
   nvg__appendCommands(ctx, Command.MoveTo, x, y);
 }
@@ -4993,6 +5012,7 @@ public void moveTo (NVGContext ctx, in float[] args) nothrow @trusted @nogc {
 
 /// Adds line segment from the last point in the path to the specified point.
 /// Group: paths
+@scriptable
 public void lineTo (NVGContext ctx, in float x, in float y) nothrow @trusted @nogc {
   nvg__appendCommands(ctx, Command.LineTo, x, y);
 }
@@ -5144,6 +5164,7 @@ public void arcTo (NVGContext ctx, in float[] args) nothrow @trusted @nogc {
 
 /// Closes current sub-path with a line segment.
 /// Group: paths
+@scriptable
 public void closePath (NVGContext ctx) nothrow @trusted @nogc {
   nvg__appendCommands(ctx, Command.Close);
 }
@@ -5277,6 +5298,7 @@ public void arc(string mode="original") (NVGContext ctx, NVGWinding dir, in floa
 
 /// Creates new rectangle shaped sub-path.
 /// Group: paths
+@scriptable
 public void rect (NVGContext ctx, in float x, in float y, in float w, in float h) nothrow @trusted @nogc {
   nvg__appendCommands!false(ctx, Command.MoveTo, // ignore command
     Command.MoveTo, x, y,
@@ -5312,6 +5334,7 @@ public void rect (NVGContext ctx, in float[] args) nothrow @trusted @nogc {
 
 /// Creates new rounded rectangle shaped sub-path.
 /// Group: paths
+@scriptable
 public void roundedRect (NVGContext ctx, in float x, in float y, in float w, in float h, in float radius) nothrow @trusted @nogc {
   ctx.roundedRectVarying(x, y, w, h, radius, radius, radius, radius);
 }
@@ -5336,6 +5359,7 @@ public void roundedRect (NVGContext ctx, in float[] args) nothrow @trusted @nogc
 
 /// Creates new rounded rectangle shaped sub-path. Specify ellipse width and height to round corners according to it.
 /// Group: paths
+@scriptable
 public void roundedRectEllipse (NVGContext ctx, in float x, in float y, in float w, in float h, in float rw, in float rh) nothrow @trusted @nogc {
   if (rw < 0.1f || rh < 0.1f) {
     rect(ctx, x, y, w, h);
@@ -5591,6 +5615,7 @@ void nvg__prepareStroke (NVGContext ctx) nothrow @trusted @nogc {
 
 /// Fills the current path with current fill style.
 /// Group: paths
+@scriptable
 public void fill (NVGContext ctx) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
 
@@ -5624,6 +5649,7 @@ public void fill (NVGContext ctx) nothrow @trusted @nogc {
 
 /// Fills the current path with current stroke style.
 /// Group: paths
+@scriptable
 public void stroke (NVGContext ctx) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
 
