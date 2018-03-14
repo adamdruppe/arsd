@@ -559,9 +559,19 @@ version(nanovg_disable_fontconfig) {
 //version = nanovg_bench_flatten;
 
 /++
-	Annotation to indicate it is compatible with [arsd.script]
+	Annotation to indicate the marked function is compatible with [arsd.script].
+
+
+	Any function that takes a [Color] argument will be passed a string instead.
+
+	Scriptable Functions
+	====================
+
+	$(UDA_USES)
+
+	$(ALWAYS_DOCUMENT)
 +/
-package(arsd) enum scriptable = "arsd_jsvar_compatible";
+private enum scriptable = "arsd_jsvar_compatible";
 
 public:
 alias NVG_PI = PI;
@@ -996,6 +1006,7 @@ public:
  * Group: images
  */
 struct NVGImage {
+	enum isOpaqueStruct = true;
 private:
   NVGContext ctx;
   int id; // backend image id
@@ -1070,6 +1081,8 @@ public:
 /// Paint parameters for various fills. Don't change anything here!
 /// Group: render_styles
 public struct NVGPaint {
+  enum isOpaqueStruct = true;
+
   NVGMatrix xform;
   float[2] extent = 0.0f;
   float radius = 0.0f;
@@ -3019,9 +3032,12 @@ public void globalAlpha (NVGContext ctx, float alpha) nothrow @trusted @nogc {
   state.alpha = alpha;
 }
 
+private void strokeColor() {}
+
 static if (NanoVegaHasArsdColor) {
 /// Sets current stroke style to a solid color.
 /// Group: render_styles
+@scriptable
 public void strokeColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.stroke, NVGColor(color));
@@ -3035,8 +3051,14 @@ public void strokeColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @
   nvg__setPaintColor(state.stroke, color);
 }
 
+@scriptable
+public void strokePaint(NVGContext ctx, in NVGPaint* paint) nothrow @trusted @nogc {
+	strokePaint(ctx, *paint);
+}
+
 /// Sets current stroke style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
+@scriptable
 public void strokePaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.stroke = paint;
@@ -3063,10 +3085,17 @@ public void fillColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
 public void fillColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.fill, color);
+
+}
+
+@scriptable // kinda a hack for bug 16206 but also because jsvar deals in opaque NVGPaint* instead of auto refs (which it doesn't  know how to reflect on)
+public void fillPaint (NVGContext ctx, in NVGPaint* paint) nothrow @trusted @nogc {
+	fillPaint(ctx, *paint);
 }
 
 /// Sets current fill style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
+@scriptable
 public void fillPaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.fill = paint;
@@ -3299,6 +3328,8 @@ public void deleteImage() (NVGContext ctx, ref NVGImage image) nothrow @trusted 
 // ////////////////////////////////////////////////////////////////////////// //
 // Paints
 
+private void linearGradient() {} // hack for dmd bug
+
 static if (NanoVegaHasArsdColor) {
 /** Creates and returns a linear gradient. Parameters `(sx, sy) (ex, ey)` specify the start and end coordinates
  * of the linear gradient, icol specifies the start color and ocol the end color.
@@ -3306,6 +3337,7 @@ static if (NanoVegaHasArsdColor) {
  *
  * Group: paints
  */
+@scriptable
 public NVGPaint linearGradient (NVGContext ctx, in float sx, in float sy, in float ex, in float ey, in Color icol, in Color ocol) nothrow @trusted @nogc {
   return ctx.linearGradient(sx, sy, ex, ey, NVGColor(icol), NVGColor(ocol));
 }
