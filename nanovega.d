@@ -1706,11 +1706,11 @@ public bool renderPathComplex (NVGContext ctx, int pathidx) pure nothrow @truste
 }
 
 
-void nvg__imageIncRef (NVGContext ctx, int imgid) nothrow @trusted @nogc {
+void nvg__imageIncRef (NVGContext ctx, int imgid, bool increfInGL=true) nothrow @trusted @nogc {
   if (ctx !is null && imgid > 0) {
     ++ctx.imageCount;
     version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("image[++]ref: context %p: %d image refs (%d)\n", ctx, ctx.imageCount, imgid); }
-    if (ctx.contextAlive) ctx.params.renderTextureIncRef(ctx.params.userPtr, imgid);
+    if (ctx.contextAlive && increfInGL) ctx.params.renderTextureIncRef(ctx.params.userPtr, imgid);
   }
 }
 
@@ -1840,7 +1840,8 @@ NVGCompositeOperationState nvg__compositeOperationState (NVGCompositeOperation o
 
 NVGstate* nvg__getState (NVGContext ctx) pure nothrow @trusted @nogc {
   pragma(inline, true);
-  return &ctx.states.ptr[ctx.nstates-(ctx.nstates > 0 ? 1 : 0)];
+  if (ctx is null || !ctx.contextAlive || ctx.nstates == 0) assert(0, "NanoVega: cannot perform commands on inactive context");
+  return &ctx.states.ptr[ctx.nstates-1];
 }
 
 // Constructor called by the render back-end.
@@ -1891,7 +1892,7 @@ NVGContext createInternal (NVGparams* params) nothrow @trusted @nogc {
   ctx.fontImages[0].id = ctx.params.renderCreateTexture(ctx.params.userPtr, NVGtexture.Alpha, fontParams.width, fontParams.height, (ctx.params.fontAA ? 0 : NVGImageFlag.NoFiltering), null);
   if (ctx.fontImages[0].id == 0) goto error;
   ctx.fontImages[0].ctx = ctx;
-  ctx.nvg__imageIncRef(ctx.fontImages[0].id);
+  ctx.nvg__imageIncRef(ctx.fontImages[0].id, false); // don't increment driver refcount
   ctx.fontImageIdx = 0;
 
   ctx.pathPickId = -1;
@@ -2010,6 +2011,10 @@ public void beginFrame (NVGContext ctx, int windowWidth, int windowHeight, float
   ctx.fillTriCount = 0;
   ctx.strokeTriCount = 0;
   ctx.textTriCount = 0;
+
+  ctx.ncommands = 0;
+  ctx.pathPickRegistered = 0;
+  nvg__clearPathCache(ctx);
 
   ctx.gpuAffine = NVGMatrix.Identity;
 
@@ -3291,7 +3296,7 @@ public NVGImage createImageRGBA (NVGContext ctx, int w, int h, const(void)[] dat
   res.id = ctx.params.renderCreateTexture(ctx.params.userPtr, NVGtexture.RGBA, w, h, imageFlags, cast(const(ubyte)*)data.ptr);
   if (res.id > 0) {
     res.ctx = ctx;
-    ctx.nvg__imageIncRef(res.id);
+    ctx.nvg__imageIncRef(res.id, false); // don't increment driver refcount
   }
   return res;
 }
@@ -7814,7 +7819,7 @@ bool nvg__allocTextAtlas (NVGContext ctx) nothrow @trusted @nogc {
     ctx.fontImages[ctx.fontImageIdx+1].id = ctx.params.renderCreateTexture(ctx.params.userPtr, NVGtexture.Alpha, iw, ih, (ctx.params.fontAA ? 0 : NVGImageFlag.NoFiltering), null);
     if (ctx.fontImages[ctx.fontImageIdx+1].id > 0) {
       ctx.fontImages[ctx.fontImageIdx+1].ctx = ctx;
-      ctx.nvg__imageIncRef(ctx.fontImages[ctx.fontImageIdx+1].id);
+      ctx.nvg__imageIncRef(ctx.fontImages[ctx.fontImageIdx+1].id, false); // don't increment driver refcount
     }
   }
   ++ctx.fontImageIdx;
@@ -12009,6 +12014,7 @@ void glnvg__stencilFunc (GLNVGcontext* gl, GLenum func, GLint ref_, GLuint mask)
 }
 
 // texture id is never zero
+// sets refcount to one
 GLNVGtexture* glnvg__allocTexture (GLNVGcontext* gl) nothrow @trusted @nogc {
   GLNVGtexture* tex = null;
 
