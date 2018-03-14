@@ -794,7 +794,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 		}
 
-		GetConsoleScreenBufferInfo(hConsole, &originalSbi);
+		if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
+			throw new Exception("not a user-interactive terminal");
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
