@@ -11248,8 +11248,6 @@ struct Visual
 
 	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
 
-	Status XInternAtoms(Display*, in char**, int, Bool, Atom*);
-
 	int XSetWindowBackground (Display* display, Window w, c_ulong background_pixel);
 	int XSetWindowBackgroundPixmap (Display* display, Window w, Pixmap background_pixmap);
 	//int XSetWindowBorder (Display* display, Window w, c_ulong border_pixel);
