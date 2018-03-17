@@ -12022,14 +12022,16 @@ GLNVGtexture* glnvg__allocTexture (GLNVGcontext* gl) nothrow @trusted @nogc {
   if (tid == -1) {
     if (gl.ntextures >= gl.ctextures) {
       assert(gl.ntextures == gl.ctextures);
-      int ctextures = (gl.ctextures == 0 ? 16 : glnvg__maxi(tid+1, 4)+gl.ctextures/2); // 1.5x overallocate
+      //pragma(msg, GLNVGtexture.sizeof*32);
+      int ctextures = (gl.ctextures == 0 ? 32 : gl.ctextures+gl.ctextures/2); // 1.5x overallocate
       GLNVGtexture* textures = cast(GLNVGtexture*)realloc(gl.textures, GLNVGtexture.sizeof*ctextures);
-      if (textures is null) return null;
+      if (textures is null) assert(0, "NanoVega: out of memory for textures");
       memset(&textures[gl.ctextures], 0, (ctextures-gl.ctextures)*GLNVGtexture.sizeof);
       version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("allocated more textures (n=%d; c=%d; nc=%d)\n", gl.ntextures, gl.ctextures, ctextures); }}
       gl.textures = textures;
       gl.ctextures = ctextures;
     }
+    assert(gl.ntextures+1 <= gl.ctextures);
     tid = gl.ntextures++;
     version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("  got next free texture id %d, ntextures=%d\n", tid+1, gl.ntextures); }}
   } else {
