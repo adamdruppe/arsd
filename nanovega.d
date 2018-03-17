@@ -10353,22 +10353,28 @@ public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] pa
   // if loading failed, try fontconfig (if fontconfig is available)
   static if (NanoVegaHasFontConfig) {
     if (res == FONS_INVALID && fontconfigAvailable) {
-      import std.internal.cstring : tempCString;
-      FcPattern* pat = FcNameParse(path.tempCString);
-      if (pat !is null) {
-        scope(exit) FcPatternDestroy(pat);
-        if (FcConfigSubstitute(null, pat, FcMatchPattern)) {
-          FcDefaultSubstitute(pat);
-          // find the font
-          FcResult result;
-          FcPattern* font = FcFontMatch(null, pat, &result);
-          if (font !is null) {
-            scope(exit) FcPatternDestroy(font);
-            char* file = null;
-            if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch) {
-              if (file !is null && file[0]) {
-                import core.stdc.string : strlen;
-                res = loadFontFile(file[0..strlen(file)]);
+      // idiotic fontconfig NEVER fails; let's skip it if `path` looks like a path
+      bool ok = true;
+      if (path.length > 4 && (path[$-4..$] == ".ttf" || path[$-4..$] == ".ttc")) ok = false;
+      if (ok) { foreach (immutable char ch; path) if (ch == '/') { ok = false; break; } }
+      if (ok) {
+        import std.internal.cstring : tempCString;
+        FcPattern* pat = FcNameParse(path.tempCString);
+        if (pat !is null) {
+          scope(exit) FcPatternDestroy(pat);
+          if (FcConfigSubstitute(null, pat, FcMatchPattern)) {
+            FcDefaultSubstitute(pat);
+            // find the font
+            FcResult result;
+            FcPattern* font = FcFontMatch(null, pat, &result);
+            if (font !is null) {
+              scope(exit) FcPatternDestroy(font);
+              char* file = null;
+              if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch) {
+                if (file !is null && file[0]) {
+                  import core.stdc.string : strlen;
+                  res = loadFontFile(file[0..strlen(file)]);
+                }
               }
             }
           }
