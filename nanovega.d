@@ -149,6 +149,13 @@ The drawing context is created using platform specific constructor function.
   NVGContext vg = nvgCreateContext();
   ---
 
+$(WARNING You must use created context ONLY in that thread where you created it.
+          There is no way to "transfer" context between threads. Trying to do so
+          will lead to UB.)
+
+$(WARNING Never issue any commands outside of [beginFrame]/[endFrame]. Trying to
+          do so will lead to UB.)
+
 
 Drawing shapes with NanoVega
 ============================
@@ -1392,7 +1399,7 @@ struct NVGparams {
   bool function (void* uptr) nothrow @trusted @nogc renderCreate;
   int function (void* uptr, NVGtexture type, int w, int h, int imageFlags, const(ubyte)* data) nothrow @trusted @nogc renderCreateTexture;
   bool function (void* uptr, int image) nothrow @trusted @nogc renderTextureIncRef;
-  bool function (void* uptr, int image) nothrow @trusted @nogc renderDeleteTexture;
+  bool function (void* uptr, int image) nothrow @trusted @nogc renderDeleteTexture; // this basically does decref; also, it should be thread-safe, and postpone real deletion to next `renderViewport()` call
   bool function (void* uptr, int image, int x, int y, int w, int h, const(ubyte)* data) nothrow @trusted @nogc renderUpdateTexture;
   bool function (void* uptr, int image, int* w, int* h) nothrow @trusted @nogc renderGetTextureSize;
   void function (void* uptr, int width, int height) nothrow @trusted @nogc renderViewport; // called in [beginFrame]
@@ -1647,7 +1654,7 @@ private:
   NVGMatrix gpuAffine;
   int mWidth, mHeight;
   // image manager
-  int imageCount; // number of alive images in this context
+  shared int imageCount; // number of alive images in this context
   bool contextAlive; // context can be dead, but still contain some images
 
   @disable this (this); // no copies
@@ -1708,7 +1715,8 @@ public bool renderPathComplex (NVGContext ctx, int pathidx) pure nothrow @truste
 
 void nvg__imageIncRef (NVGContext ctx, int imgid, bool increfInGL=true) nothrow @trusted @nogc {
   if (ctx !is null && imgid > 0) {
-    ++ctx.imageCount;
+    import core.atomic : atomicOp;
+    atomicOp!"+="(ctx.imageCount, 1);
     version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("image[++]ref: context %p: %d image refs (%d)\n", ctx, ctx.imageCount, imgid); }
     if (ctx.contextAlive && increfInGL) ctx.params.renderTextureIncRef(ctx.params.userPtr, imgid);
   }
@@ -1716,12 +1724,13 @@ void nvg__imageIncRef (NVGContext ctx, int imgid, bool increfInGL=true) nothrow 
 
 void nvg__imageDecRef (NVGContext ctx, int imgid) nothrow @trusted @nogc {
   if (ctx !is null && imgid > 0) {
-    assert(ctx.imageCount > 0);
-    --ctx.imageCount;
+    import core.atomic : atomicOp;
+    int icnt = atomicOp!"-="(ctx.imageCount, 1);
+    if (icnt < 0) assert(0, "NanoVega: internal image refcounting error");
     version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("image[--]ref: context %p: %d image refs (%d)\n", ctx, ctx.imageCount, imgid); }
     if (ctx.contextAlive) ctx.params.renderDeleteTexture(ctx.params.userPtr, imgid);
     version(nanovega_debug_image_manager) if (!ctx.contextAlive) { import core.stdc.stdio; printf("image[--]ref: zombie context %p: %d image refs (%d)\n", ctx, ctx.imageCount, imgid); }
-    if (!ctx.contextAlive && ctx.imageCount == 0) {
+    if (!ctx.contextAlive && icnt == 0) {
       // it is finally safe to free context memory
       import core.stdc.stdlib : free;
       version(nanovega_debug_image_manager) { import core.stdc.stdio; printf("killed zombie context %p\n", ctx); }
@@ -1927,7 +1936,8 @@ void deleteInternal (ref NVGContext ctx) nothrow @trusted @nogc {
 
     ctx.contextAlive = false;
 
-    if (ctx.imageCount == 0) {
+    import core.atomic : atomicLoad;
+    if (atomicLoad(ctx.imageCount) == 0) {
       version(nanovega_debug_image_manager) { import core.stdc.stdio; printf("destroyed context %p\n", ctx); }
       free(ctx);
     } else {
@@ -11848,7 +11858,7 @@ struct GLNVGtexture {
   int width, height;
   NVGtexture type;
   int flags;
-  int rc;
+  shared int rc; // this can be 0 with tex != 0 -- postponed deletion
   int nextfree;
 }
 
@@ -11934,7 +11944,11 @@ enum GLMaskState {
   JustCleared = 2,
 }
 
+final class GLNVGTextureLocker {}
+
 struct GLNVGcontext {
+  private import core.thread : ThreadID;
+
   GLNVGshader shader;
   GLNVGtexture* textures;
   float[2] view;
@@ -11955,6 +11969,10 @@ struct GLNVGcontext {
   bool doClipUnion; // specal mode
   GLNVGshader shaderFillFBO;
   GLNVGshader shaderCopyFBO;
+
+  bool inFrame; // will be `true` if we can perform OpenGL operations (used in texture deletion)
+  shared bool mustCleanTextures; // will be `true` if we should delete some textures
+  ThreadID mainTID;
 
   // Per frame buffers
   GLNVGcall* calls;
@@ -12071,13 +12089,36 @@ bool glnvg__deleteTexture (GLNVGcontext* gl, ref int id) nothrow @trusted @nogc 
   assert(tx.id == id);
   assert(tx.tex != 0);
   version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("decrefing texture with id %d (%d)\n", tx.id, id); }}
-  if (--tx.rc == 0) {
-    if ((tx.flags&NVGImageFlagsGL.NoDelete) == 0) glDeleteTextures(1, &tx.tex);
-    version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("deleted texture with id %d (%d); glid=%u\n", tx.id, id, tx.tex); }}
-    memset(tx, 0, (*tx).sizeof);
-    //{ import core.stdc.stdio; printf("deleting texture with id %d\n", id); }
-    tx.nextfree = gl.freetexid;
-    gl.freetexid = id-1;
+  import core.atomic : atomicOp;
+  if (atomicOp!"-="(tx.rc, 1) == 0) {
+    import core.thread : ThreadID;
+    ThreadID mytid;
+    try { import core.thread; mytid = Thread.getThis.id; } catch (Exception e) {}
+    if (gl.mainTID == mytid && gl.inFrame) {
+      // can delete it right now
+      if ((tx.flags&NVGImageFlagsGL.NoDelete) == 0) glDeleteTextures(1, &tx.tex);
+      version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** deleted texture with id %d (%d); glid=%u\n", tx.id, id, tx.tex); }}
+      memset(tx, 0, (*tx).sizeof);
+      //{ import core.stdc.stdio; printf("deleting texture with id %d\n", id); }
+      tx.nextfree = gl.freetexid;
+      gl.freetexid = id-1;
+    } else {
+      // alas, we aren't doing frame business, so we should postpone deletion
+      version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** POSTPONED texture deletion with id %d (%d); glid=%u\n", tx.id, id, tx.tex); }}
+      version(aliced) {
+        synchronized(GLNVGTextureLocker.classinfo) {
+          tx.id = 0; // mark it as dead
+          gl.mustCleanTextures = true; // set "need cleanup" flag
+        }
+      } else {
+        try {
+          synchronized(GLNVGTextureLocker.classinfo) {
+            tx.id = 0; // mark it as dead
+            gl.mustCleanTextures = true; // set "need cleanup" flag
+          }
+        } catch (Exception e) {}
+      }
+    }
   }
   id = 0;
   return true;
@@ -12742,7 +12783,8 @@ bool glnvg__renderTextureIncRef (void* uptr, int image) nothrow @trusted @nogc {
     version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("CANNOT incref texture with id %d\n", image); }}
     return false;
   }
-  ++tex.rc;
+  import core.atomic : atomicOp;
+  atomicOp!"+="(tex.rc, 1);
   version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("texture #%d: incref; newref=%d\n", image, tex.rc); }}
   return true;
 }
@@ -13010,6 +13052,7 @@ void glnvg__setClipUniforms (GLNVGcontext* gl, int uniformOffset, NVGClipMode cl
 
 void glnvg__renderViewport (void* uptr, int width, int height) nothrow @trusted @nogc {
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
+  gl.inFrame = true;
   gl.view.ptr[0] = cast(float)width;
   gl.view.ptr[1] = cast(float)height;
   // kill FBOs if we need to create new ones (flushing will recreate 'em if necessary)
@@ -13020,6 +13063,28 @@ void glnvg__renderViewport (void* uptr, int width, int height) nothrow @trusted 
   }
   gl.msp = 1;
   gl.maskStack.ptr[0] = GLMaskState.DontMask;
+  // texture cleanup
+  import core.atomic : atomicLoad;
+  if (atomicLoad(gl.mustCleanTextures)) {
+    try {
+      import core.thread : Thread;
+      if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      synchronized(GLNVGTextureLocker.classinfo) {
+        gl.mustCleanTextures = false;
+        foreach (immutable tidx, ref GLNVGtexture tex; gl.textures[0..gl.ntextures]) {
+          // no need to use atomic ops here, as we're locked
+          if (tex.rc == 0 && tex.tex != 0 && tex.id == 0) {
+            version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** cleaned up texture with glid=%u\n", tex.tex); }}
+            import core.stdc.string : memset;
+            if ((tex.flags&NVGImageFlagsGL.NoDelete) == 0) glDeleteTextures(1, &tex.tex);
+            memset(&tex, 0, tex.sizeof);
+            tex.nextfree = gl.freetexid;
+            gl.freetexid = cast(int)tidx;
+          }
+        }
+      }
+    } catch (Exception e) {}
+  }
 }
 
 void glnvg__fill (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
@@ -13182,7 +13247,12 @@ void glnvg__affine (GLNVGcontext* gl, GLNVGcall* call) nothrow @trusted @nogc {
 }
 
 void glnvg__renderCancelInternal (GLNVGcontext* gl, bool clearTextures) nothrow @trusted @nogc {
-  if (clearTextures) {
+  scope(exit) gl.inFrame = false;
+  if (clearTextures && gl.inFrame) {
+    try {
+      import core.thread : Thread;
+      if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+    } catch (Exception e) {}
     foreach (ref GLNVGcall c; gl.calls[0..gl.ncalls]) if (c.image > 0) glnvg__deleteTexture(gl, c.image);
   }
   gl.nverts = 0;
@@ -13277,6 +13347,12 @@ version(nanovega_debug_clipping) public __gshared bool nanovegaClipDebugDump = f
 
 void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
+  if (!gl.inFrame) assert(0, "NanoVega: internal driver error");
+  try {
+    import core.thread : Thread;
+    if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+  } catch (Exception e) {}
+  scope(exit) gl.inFrame = false;
   enum ShaderType { None, Fill, Clip }
   auto lastShader = ShaderType.None;
   if (gl.ncalls > 0) {
@@ -13797,6 +13873,8 @@ public NVGContext nvgCreateContext (const(NVGContextFlag)[] flagList...) nothrow
 
   ctx = createInternal(&params);
   if (ctx is null) goto error;
+
+  try { import core.thread; gl.mainTID = Thread.getThis.id; } catch (Exception e) {}
 
   return ctx;
 
