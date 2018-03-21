@@ -231,7 +231,7 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
         if (fsz < 4) throw new Exception("cannot determine file format");
         if (fsz > int.max/8) throw new Exception("image data too big");
         auto data = new ubyte[](cast(uint)fsz);
-        scope(exit) GC.free(data.ptr); // this should be safe, as image will copy data to it's internal storage
+        scope(exit) { import core.memory : GC; GC.free(data.ptr); } // this should be safe, as image will copy data to it's internal storage
         fl.rawReadExact(data);
         return loadImageFromMemory(data);
       case ImageFileFormat.Png: static if (is(T == string)) return readPng(filename); else return readPng(filename.idup);
@@ -279,7 +279,7 @@ public MemoryImage loadImageFromFile (VFile fl) {
   if (fsz < 4) throw new Exception("cannot determine file format");
   if (fsz > int.max/8) throw new Exception("image data too big");
   auto data = new ubyte[](cast(uint)fsz);
-  scope(exit) { GC.free(data.ptr); } // this should be safe, as image will copy data to it's internal storage
+  scope(exit) { import core.memory : GC; GC.free(data.ptr); } // this should be safe, as image will copy data to it's internal storage
   fl.rawReadExact(data);
   return loadImageFromMemory(data);
 }
