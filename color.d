@@ -147,7 +147,7 @@ struct Color {
 	/++
 		Like the constructor, but this makes sure they are in range before casting. If they are out of range, it saturates: anything less than zero becomes zero and anything greater than 255 becomes 255.
 	+/
-	nothrow pure
+	nothrow pure @nogc
 	static Color fromIntegers(int red, int green, int blue, int alpha = 255) {
 		return Color(clampToByte(red), clampToByte(green), clampToByte(blue), clampToByte(alpha));
 	}
@@ -202,7 +202,7 @@ struct Color {
 	*/
 
 	/// Return black-and-white color
-	Color toBW() () {
+	Color toBW() () nothrow pure @safe @nogc {
 		int intens = clampToByte(cast(int)(0.2126*r+0.7152*g+0.0722*b));
 		return Color(intens, intens, intens, a);
 	}
@@ -445,12 +445,12 @@ private ubyte fromHexInternal(string s) {
 }
 
 /// Converts hsl to rgb
-Color fromHsl(real[3] hsl) {
+Color fromHsl(real[3] hsl) nothrow pure @safe @nogc {
 	return fromHsl(hsl[0], hsl[1], hsl[2]);
 }
 
 /// Converts hsl to rgb
-Color fromHsl(real h, real s, real l, real a = 255) {
+Color fromHsl(real h, real s, real l, real a = 255) nothrow pure @safe @nogc {
 	h = h % 360;
 
 	real C = (1 - absInternal(2 * l - 1)) * s;
@@ -503,7 +503,7 @@ Color fromHsl(real h, real s, real l, real a = 255) {
 }
 
 /// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
-real[3] toHsl(Color c, bool useWeightedLightness = false) {
+real[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted @nogc {
 	real r1 = cast(real) c.r / 255;
 	real g1 = cast(real) c.g / 255;
 	real b1 = cast(real) c.b / 255;
@@ -543,7 +543,7 @@ real[3] toHsl(Color c, bool useWeightedLightness = false) {
 }
 
 /// .
-Color lighten(Color c, real percentage) {
+Color lighten(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 + percentage);
 	if(hsl[2] > 1)
@@ -552,7 +552,7 @@ Color lighten(Color c, real percentage) {
 }
 
 /// .
-Color darken(Color c, real percentage) {
+Color darken(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 - percentage);
 	return fromHsl(hsl);
@@ -560,7 +560,7 @@ Color darken(Color c, real percentage) {
 
 /// for light colors, call darken. for dark colors, call lighten.
 /// The goal: get toward center grey.
-Color moderate(Color c, real percentage) {
+Color moderate(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	if(hsl[2] > 0.5)
 		hsl[2] *= (1 - percentage);
@@ -576,7 +576,7 @@ Color moderate(Color c, real percentage) {
 }
 
 /// the opposite of moderate. Make darks darker and lights lighter
-Color extremify(Color c, real percentage) {
+Color extremify(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c, true);
 	if(hsl[2] < 0.5)
 		hsl[2] *= (1 - percentage);
@@ -588,7 +588,7 @@ Color extremify(Color c, real percentage) {
 }
 
 /// Move around the lightness wheel, trying not to break on moderate things
-Color oppositeLightness(Color c) {
+Color oppositeLightness(Color c) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 
 	auto original = hsl[2];
@@ -602,7 +602,7 @@ Color oppositeLightness(Color c) {
 }
 
 /// Try to determine a text color - either white or black - based on the input
-Color makeTextColor(Color c) {
+Color makeTextColor(Color c) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c, true); // give green a bonus for contrast
 	if(hsl[2] > 0.71)
 		return Color(0, 0, 0);
@@ -612,7 +612,7 @@ Color makeTextColor(Color c) {
 
 // These provide functional access to hsl manipulation; useful if you need a delegate
 
-Color setLightness(Color c, real lightness) {
+Color setLightness(Color c, real lightness) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] = lightness;
 	return fromHsl(hsl);
@@ -620,28 +620,28 @@ Color setLightness(Color c, real lightness) {
 
 
 ///
-Color rotateHue(Color c, real degrees) {
+Color rotateHue(Color c, real degrees) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[0] += degrees;
 	return fromHsl(hsl);
 }
 
 ///
-Color setHue(Color c, real hue) {
+Color setHue(Color c, real hue) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[0] = hue;
 	return fromHsl(hsl);
 }
 
 ///
-Color desaturate(Color c, real percentage) {
+Color desaturate(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 - percentage);
 	return fromHsl(hsl);
 }
 
 ///
-Color saturate(Color c, real percentage) {
+Color saturate(Color c, real percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 + percentage);
 	if(hsl[1] > 1)
@@ -650,7 +650,7 @@ Color saturate(Color c, real percentage) {
 }
 
 ///
-Color setSaturation(Color c, real saturation) {
+Color setSaturation(Color c, real saturation) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] = saturation;
 	return fromHsl(hsl);
@@ -698,7 +698,7 @@ composited on to it?
 */
 
 ///
-ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
+ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) nothrow pure @safe @nogc {
 	// resultingColor = (1-alpha) * backgroundColor + alpha * answer
 	auto resultingColorf = cast(float) colorYouHave;
 	auto backgroundColorf = cast(float) backgroundColor;
@@ -708,7 +708,7 @@ ubyte unalpha(ubyte colorYouHave, float alpha, ubyte backgroundColor) {
 }
 
 ///
-ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 0x00*/) {
+ubyte makeAlpha(ubyte colorYouHave, ubyte backgroundColor/*, ubyte foreground = 0x00*/) nothrow pure @safe @nogc {
 	//auto foregroundf = cast(float) foreground;
 	auto foregroundf = 0.00f;
 	auto colorYouHavef = cast(float) colorYouHave;
@@ -814,22 +814,22 @@ interface MemoryImage {
 	//TrueColorImage convertToTrueColor() const;
 
 	/// gets it as a TrueColorImage. May return this or may do a conversion and return a new image
-	TrueColorImage getAsTrueColorImage();
+	TrueColorImage getAsTrueColorImage() pure nothrow @safe;
 
 	/// Image width, in pixels
-	int width() const;
+	int width() const pure nothrow @safe @nogc;
 
 	/// Image height, in pixels
-	int height() const;
+	int height() const pure nothrow @safe @nogc;
 
 	/// Get image pixel. Slow, but returns valid RGBA color (completely transparent for off-image pixels).
-	Color getPixel(int x, int y) const;
+	Color getPixel(int x, int y) const pure nothrow @safe @nogc;
 
   /// Set image pixel.
-	void setPixel(int x, int y, in Color clr);
+	void setPixel(int x, int y, in Color clr) nothrow @safe;
 
 	/// Returns a copy of the image
-	MemoryImage clone() const;
+	MemoryImage clone() const pure nothrow @safe;
 
 	/// Load image from file. This will import arsd.image to do the actual work, and cost nothing if you don't use it.
 	static MemoryImage fromImage(T : const(char)[]) (T filename) @trusted {
@@ -874,17 +874,17 @@ class IndexedImage : MemoryImage {
 	}
 
 	/// .
-	override int width() const {
+	override int width() const pure nothrow @safe @nogc {
 		return _width;
 	}
 
 	/// .
-	override int height() const {
+	override int height() const pure nothrow @safe @nogc {
 		return _height;
 	}
 
 	/// .
-	override IndexedImage clone() const {
+	override IndexedImage clone() const pure nothrow @trusted {
 		auto n = new IndexedImage(width, height);
 		n.data[] = this.data[]; // the data member is already there, so array copy
 		n.palette = this.palette.dup; // and here we need to allocate too, so dup
@@ -892,7 +892,7 @@ class IndexedImage : MemoryImage {
 		return n;
 	}
 
-	override Color getPixel(int x, int y) const @trusted {
+	override Color getPixel(int x, int y) const pure nothrow @trusted @nogc {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
 			if (pos >= data.length) return Color(0, 0, 0, 0);
@@ -904,7 +904,7 @@ class IndexedImage : MemoryImage {
 		}
 	}
 
-	override void setPixel(int x, int y, in Color clr) @trusted {
+	override void setPixel(int x, int y, in Color clr) nothrow @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
 			if (pos >= data.length) return;
@@ -922,7 +922,7 @@ class IndexedImage : MemoryImage {
 	private int _height;
 
 	/// .
-	this(int w, int h) {
+	this(int w, int h) pure nothrow @safe {
 		_width = w;
 		_height = h;
 		data = new ubyte[w*h];
@@ -935,12 +935,12 @@ class IndexedImage : MemoryImage {
 	*/
 
 	/// returns a new image
-	override TrueColorImage getAsTrueColorImage() {
+	override TrueColorImage getAsTrueColorImage() pure nothrow @safe {
 		return convertToTrueColor();
 	}
 
 	/// Creates a new TrueColorImage based on this data
-	TrueColorImage convertToTrueColor() const {
+	TrueColorImage convertToTrueColor() const pure nothrow @trusted {
 		auto tci = new TrueColorImage(width, height);
 		foreach(i, b; data) {
 			/*
@@ -958,7 +958,7 @@ class IndexedImage : MemoryImage {
 	}
 
 	/// Gets an exact match, if possible, adds if not. See also: the findNearestColor free function.
-	ubyte getOrAddColor(Color c) {
+	ubyte getOrAddColor(Color c) nothrow @trusted {
 		foreach(i, co; palette) {
 			if(c == co)
 				return cast(ubyte) i;
@@ -968,12 +968,12 @@ class IndexedImage : MemoryImage {
 	}
 
 	/// Number of colors currently in the palette (note: palette entries are not necessarily used in the image data)
-	int numColors() const {
+	int numColors() const pure nothrow @trusted @nogc {
 		return cast(int) palette.length;
 	}
 
-	/// Adds an entry to the palette, returning its inded
-	ubyte addColor(Color c) {
+	/// Adds an entry to the palette, returning its index
+	ubyte addColor(Color c) nothrow @trusted {
 		assert(palette.length < 256);
 		if(c.a != 255)
 			hasAlpha = true;
@@ -997,7 +997,7 @@ class TrueColorImage : MemoryImage {
 		/// the same data as Color structs
 		@trusted // the cast here is typically unsafe, but it is ok
 		// here because I guarantee the layout, note the static assert below
-		@property inout(Color)[] colors() inout {
+		@property inout(Color)[] colors() inout pure nothrow @nogc {
 			return cast(inout(Color)[]) bytes;
 		}
 
@@ -1019,18 +1019,18 @@ class TrueColorImage : MemoryImage {
 	}
 
 	/// .
-	override TrueColorImage clone() const {
+	override TrueColorImage clone() const pure nothrow @trusted {
 		auto n = new TrueColorImage(width, height);
 		n.imageData.bytes[] = this.imageData.bytes[]; // copy into existing array ctor allocated
 		return n;
 	}
 
 	/// .
-	override int width() const { return _width; }
+	override int width() const pure nothrow @trusted @nogc { return _width; }
 	///.
-	override int height() const { return _height; }
+	override int height() const pure nothrow @trusted @nogc { return _height; }
 
-	override Color getPixel(int x, int y) const @trusted {
+	override Color getPixel(int x, int y) const pure nothrow @trusted @nogc {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
 			return imageData.colors.ptr[pos];
@@ -1039,7 +1039,7 @@ class TrueColorImage : MemoryImage {
 		}
 	}
 
-	override void setPixel(int x, int y, in Color clr) @trusted {
+	override void setPixel(int x, int y, in Color clr) nothrow @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
 			uint pos = y*_width+x;
 			if (pos < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
@@ -1047,14 +1047,14 @@ class TrueColorImage : MemoryImage {
 	}
 
 	/// .
-	this(int w, int h) {
+	this(int w, int h) pure nothrow @safe {
 		_width = w;
 		_height = h;
 		imageData.bytes = new ubyte[w*h*4];
 	}
 
 	/// Creates with existing data. The data pointer is stored here.
-	this(int w, int h, ubyte[] data) {
+	this(int w, int h, ubyte[] data) pure nothrow @safe {
 		_width = w;
 		_height = h;
 		assert(data.length == w * h * 4);
@@ -1062,7 +1062,7 @@ class TrueColorImage : MemoryImage {
 	}
 
 	/// Returns this
-	override TrueColorImage getAsTrueColorImage() {
+	override TrueColorImage getAsTrueColorImage() pure nothrow @safe {
 		return this;
 	}
 }
@@ -1175,7 +1175,7 @@ body {
 }
 
 /// Finds the best match for pixel in palette (currently by checking for minimum euclidean distance in rgb colorspace)
-ubyte findNearestColor(in Color[] palette, in Color pixel) {
+ubyte findNearestColor(in Color[] palette, in Color pixel) nothrow pure @trusted @nogc {
 	int best = 0;
 	int bestDistance = int.max;
 	foreach(pe, co; palette) {
@@ -1275,7 +1275,7 @@ void reducePaletteSize(IndexedImage img, int maxColors = 16) {
 
 // I think I did this wrong... but the results aren't too bad so the bug can't be awful.
 /// Dithers img in place to look more like original.
-void floydSteinbergDither(IndexedImage img, in TrueColorImage original) {
+void floydSteinbergDither(IndexedImage img, in TrueColorImage original) nothrow @trusted {
 	assert(img.width == original.width);
 	assert(img.height == original.height);
 
@@ -1328,11 +1328,11 @@ struct Point {
 
 	pure const nothrow @safe:
 
-	Point opBinary(string op)(in Point rhs) {
+	Point opBinary(string op)(in Point rhs) @nogc {
 		return Point(mixin("x" ~ op ~ "rhs.x"), mixin("y" ~ op ~ "rhs.y"));
 	}
 
-	Point opBinary(string op)(int rhs) {
+	Point opBinary(string op)(int rhs) @nogc {
 		return Point(mixin("x" ~ op ~ "rhs"), mixin("y" ~ op ~ "rhs"));
 	}
 }
@@ -1350,7 +1350,7 @@ struct Rectangle {
 	int right; ///
 	int bottom; ///
 
-	pure const nothrow @safe:
+	pure const nothrow @safe @nogc:
 
 	///
 	this(int left, int top, int right, int bottom) {
