@@ -6044,7 +6044,7 @@ public bool hitTestCurrFill (NVGContext ctx, in float x, in float y) nothrow @tr
   return (nvg__pointInBounds(x, y, pp.bounds) ? nvg__pickPath(ps, pp, x, y) : false);
 }
 
-alias isPointInPath = hitTestCurrFill; /// Ditto.
+public alias isPointInPath = hitTestCurrFill; /// Ditto.
 
 /// Returns `true` if the given point is within the stroke of the currently defined path.
 /// This operation can be done before rasterizing the current path.
