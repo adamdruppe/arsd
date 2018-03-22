@@ -391,11 +391,11 @@ The following code illustrates the OpenGL state touched by the rendering code:
     You can "untransform" picking coordinates before checking with [gpuUntransformPoint].
 
     $(WARNING Picking API completely ignores clipping. If you want to check for
-              clip regions, you have to manuall register them as fill/stroke paths,
+              clip regions, you have to manually register them as fill/stroke paths,
               and perform the necessary logic. See [hitTestForId] function.)
 
   clipping =
-    ## Cliping with paths
+    ## Clipping with paths
 
     If scissoring is not enough for you, you can clip rendering with arbitrary path,
     or with combination of paths. Clip region is saved by [save] and restored by
