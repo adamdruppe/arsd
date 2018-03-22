@@ -1079,7 +1079,7 @@ private __gshared NVGImage bndIconImage;
  * A valid icon sheet is e.g. shown at
  * http://wiki.blender.org/index.php/Dev:2.5/Doc/How_to/Add_an_icon
  *
- * $(WARNING Icon sheet image should not outlive it's parent context! Use [bndClearIconImage] before context deletion.
+ * $(WARNING Icon sheet image should not outlive it's parent context! Use [bndClearIconImage] before context deletion.)
  */
 public void bndSetIconImage() (in auto ref NVGImage image) nothrow @trusted @nogc { version(aliced) pragma(inline, true); bndIconImage = image; }
 
@@ -1091,16 +1091,42 @@ public NVGImage bndGetIconImage () nothrow @trusted @nogc { version(aliced) prag
 
 // the handle to the UI font
 private __gshared int bndFont = -1;
+private __gshared string bndFontFace = null;
 
 /** Designates an image handle as returned by nvgCreateFont*() as the themes'
  * UI font. Blender's original UI font Droid Sans is perfectly suited and
  * available here:
  * https://svn.blender.org/svnroot/bf-blender/trunk/blender/release/datafiles/fonts/
  */
-public void bndSetFont (int font) nothrow @trusted @nogc { pragma(inline, true); bndFont = font; }
+public void bndSetFont (int font) nothrow @trusted @nogc { pragma(inline, true); bndFont = font; bndFontFace = null; }
 
-/// Returns current font.
-public int bndGetFont () nothrow @trusted @nogc { pragma(inline, true); return bndFont; }
+/** Designates an image handle as returned by nvgCreateFont*() as the themes'
+ * UI font. Blender's original UI font Droid Sans is perfectly suited and
+ * available here:
+ * https://svn.blender.org/svnroot/bf-blender/trunk/blender/release/datafiles/fonts/
+ */
+public void bndSetFont (string font) nothrow @trusted @nogc { pragma(inline, true); bndFont = -1; bndFontFace = font; }
+
+public struct BndFontSaviour {
+  int bndFont = -1;
+  string bndFontFace = null;
+}
+
+/// Returns opaque object with the current font.
+public BndFontSaviour bndGetFont () nothrow @trusted @nogc { pragma(inline, true); return BndFontSaviour(bndFont, bndFontFace); }
+
+/// Sets current font from the opaque object, returned by [bndGetFont].
+public void bndSetFont (in BndFontSaviour fsv) nothrow @trusted @nogc { pragma(inline, true); bndFont = fsv.bndFont; bndFontFace = fsv.bndFontFace; }
+
+
+// returns `true` if font *looks* like valid
+public bool bndRealizeFont (NVGContext ctx) nothrow @trusted @nogc {
+  if (ctx is null) return false;
+  if (bndFont >= 0) { ctx.fontFaceId = bndFont; return true; }
+  if (bndFontFace.length) { ctx.fontFace = bndFontFace; return true; }
+  return false;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 /// High Level Functions. Use these functions to draw themed widgets with your NVGcontext.
@@ -1405,7 +1431,7 @@ public void bndScrollBar (NVGContext ctx, float x, float y, float w, float h, BN
  *
  * vertical looks best when width is BND_SCROLLBAR_WIDTH
  */
-public void bndScrollSlider (NVGContext ctx, float x, float y, float w, float h, BNDwidgetState state, float offset, float size) {
+public void bndScrollSlider (NVGContext ctx, float x, float y, float w, float h, BNDwidgetState state, float offset, float size=0) {
   bndBevelInset(ctx, x, y, w, h, BND_SCROLLBAR_RADIUS, BND_SCROLLBAR_RADIUS);
   bndInnerBox(ctx, x, y, w, h,
     BND_SCROLLBAR_RADIUS, BND_SCROLLBAR_RADIUS,
@@ -1704,8 +1730,7 @@ public void bndJoinAreaOverlay (NVGContext ctx, float x, float y, float w, float
 public float bndLabelWidth(T=char) (NVGContext ctx, int iconid, const(T)[] label) if (isAnyCharType!T) {
   float w = BND_PAD_LEFT+BND_PAD_RIGHT;
   if (iconid >= 0) w += BND_ICON_SHEET_RES;
-  if (label.length && bndFont >= 0) {
-    ctx.fontFaceId(bndFont);
+  if (label.length && bndRealizeFont(ctx)) {
     ctx.fontSize(BND_LABEL_FONT_SIZE);
     w += ctx.textBounds(1, 1, label, null);
   }
@@ -1717,8 +1742,7 @@ public float bndLabelHeight(T=char) (NVGContext ctx, int iconid, const(T)[] labe
   float h = BND_WIDGET_HEIGHT;
   width -= BND_TEXT_RADIUS*2;
   if (iconid >= 0) width -= BND_ICON_SHEET_RES;
-  if (label.length && bndFont >= 0) {
-    ctx.fontFaceId(bndFont);
+  if (label.length && bndRealizeFont(ctx)) {
     ctx.fontSize(BND_LABEL_FONT_SIZE);
     float[4] bounds = void;
     ctx.textBoxBounds(1, 1, width, label, bounds[]);
@@ -1950,8 +1974,7 @@ if (isAnyCharType!T && isAnyCharType!TV)
       pleft += BND_ICON_SHEET_RES;
     }
 
-    if (bndFont < 0) return;
-    ctx.fontFaceId(bndFont);
+    if (!bndRealizeFont(ctx)) return;
     ctx.fontSize(fontsize);
     ctx.beginPath();
     ctx.fillColor(color);
@@ -1994,8 +2017,7 @@ if (isAnyCharType!T && isAnyCharType!TV)
 public void bndNodeIconLabel(T=char) (NVGContext ctx, float x, float y, float w, float h, int iconid, NVGColor color, NVGColor shadowColor, int align_, float fontsize, const(T)[] label)
 if (isAnyCharType!T)
 {
-  if (label.length && bndFont >= 0) {
-    ctx.fontFaceId(bndFont);
+  if (label.length && bndRealizeFont(ctx)) {
     ctx.fontSize(fontsize);
     ctx.beginPath();
     ctx.textAlign(NVGTextAlign.H.Left, NVGTextAlign.V.Baseline);
@@ -2020,12 +2042,11 @@ if (isAnyCharType!T)
   if (label.length == 0) return -1;
   if (iconid >= 0) pleft += BND_ICON_SHEET_RES;
 
-  if (bndFont < 0) return -1;
+  if (!bndRealizeFont(ctx)) return -1;
 
   x += pleft;
   y += BND_WIDGET_HEIGHT-BND_TEXT_PAD_DOWN;
 
-  ctx.fontFaceId(bndFont);
   ctx.fontSize(fontsize);
   ctx.textAlign(NVGTextAlign.H.Left, NVGTextAlign.V.Baseline);
 
@@ -2094,12 +2115,11 @@ if (isAnyCharType!T)
     pleft += BND_ICON_SHEET_RES;
   }
 
-  if (bndFont < 0) return;
+  if (!bndRealizeFont(ctx)) return;
 
   x += pleft;
   y += BND_WIDGET_HEIGHT-BND_TEXT_PAD_DOWN;
 
-  ctx.fontFaceId(bndFont);
   ctx.fontSize(fontsize);
   ctx.textAlign(NVGTextAlign.H.Left, NVGTextAlign.V.Baseline);
 
