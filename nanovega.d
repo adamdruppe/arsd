@@ -1465,6 +1465,14 @@ struct NVGstate {
   NVGTextAlign textAlign;
   int fontId = 0;
   bool evenOddMode = false; // use even-odd filling rule (required for some svgs); otherwise use non-zero fill
+  // dashing
+  enum MaxDashes = 32; // max 16 dashes
+  float[MaxDashes] dashes;
+  uint dashCount = 0;
+  uint lastFlattenDashCount = 0;
+  float dashStart = 0;
+  // dasher state for flattener
+  bool dasherActive = false;
 
   void clearPaint () nothrow @trusted @nogc {
     fill.clear();
@@ -1528,6 +1536,7 @@ struct NVGpathCache {
 
   void clear () nothrow @trusted @nogc {
     import core.stdc.stdlib : free;
+    import core.stdc.string : memset;
     if (paths !is null) {
       foreach (ref p; paths[0..npaths]) p.clear();
       free(paths);
@@ -1535,7 +1544,7 @@ struct NVGpathCache {
     if (points !is null) free(points);
     if (verts !is null) free(verts);
     if (commands !is null) free(commands);
-    this = this.init;
+    memset(&this, 0, this.sizeof);
   }
 }
 
@@ -2954,6 +2963,10 @@ public void reset (NVGContext ctx) nothrow @trusted @nogc {
   state.textAlign.reset;
   state.fontId = 0;
   state.evenOddMode = false;
+  state.dashCount = 0;
+  state.lastFlattenDashCount = 0;
+  state.dashStart = 0;
+  state.dasherActive = false;
 
   ctx.params.renderResetClip(ctx.params.userPtr);
 }
@@ -3038,6 +3051,57 @@ public void lineJoin (NVGContext ctx, NVGLineCap join) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.lineJoin = join;
 }
+
+/// Sets stroke dashing, using (dash_length, gap_length) pairs.
+/// Current limit is 16 pairs.
+/// Resets dash start to zero.
+/// Group: render_styles
+public void setLineDash (NVGContext ctx, const(float)[] dashdata) nothrow @trusted @nogc {
+  NVGstate* state = nvg__getState(ctx);
+  state.dashCount = 0;
+  state.dashStart = 0;
+  if (dashdata.length >= 2) {
+    foreach (immutable idx, float f; dashdata) {
+      if (f < 0.001) f = 0;
+      if (idx == 0) {
+        // register first dash
+        state.dashes.ptr[state.dashCount++] = f;
+      } else if (f != 0) {
+        if ((idx&1) != (state.dashCount&1)) {
+          // oops, continuation
+          state.dashes[state.dashCount-1] += f;
+        } else {
+          if (state.dashCount == state.dashes.length) break;
+          state.dashes[state.dashCount++] = f;
+        }
+      }
+    }
+    if (state.dashCount&1) {
+      if (state.dashCount == 1) {
+        state.dashCount = 0;
+      } else {
+        assert(state.dashCount < state.dashes.length);
+        state.dashes[state.dashCount++] = 0;
+      }
+    }
+    if (state.lastFlattenDashCount != 0) state.lastFlattenDashCount = uint.max; // force re-flattening
+  }
+}
+
+public alias lineDash = setLineDash; /// Ditto.
+
+/// Sets stroke dashing, using (dash_length, gap_length) pairs.
+/// Current limit is 16 pairs.
+/// Group: render_styles
+public void setLineDashStart (NVGContext ctx, in float dashStart) nothrow @trusted @nogc {
+  NVGstate* state = nvg__getState(ctx);
+  if (state.lastFlattenDashCount != 0 && state.dashStart != dashStart) {
+    state.lastFlattenDashCount = uint.max; // force re-flattening
+  }
+  state.dashStart = dashStart;
+}
+
+public alias lineDashStart = setLineDashStart; /// Ditto.
 
 /// Sets the transparency applied to all rendered shapes.
 /// Already transparent paths will get proportionally more transparent as well.
@@ -4150,7 +4214,6 @@ void nvg__tesselateBezier (NVGContext ctx, in float x1, in float y1, in float x2
   immutable float x1234 = (x123+x234)*0.5f;
   immutable float y1234 = (y123+y234)*0.5f;
 
-
   // "taxicab" / "manhattan" check for flat curves
   if (nvg__absf(x1+x3-x2-x2)+nvg__absf(y1+y3-y2-y2)+nvg__absf(x2+x4-x3-x3)+nvg__absf(y2+y4-y3-y3) < ctx.tessTol/4) {
     nvg__addPoint(ctx, x1234, y1234, type);
@@ -4431,17 +4494,167 @@ void nvg__tesselateBezierAFD (NVGContext ctx, in float x1, in float y1, in float
   }
 }
 
+
+void nvg__dashLastPath (NVGContext ctx) nothrow @trusted @nogc {
+  import core.stdc.stdlib : realloc;
+  import core.stdc.string : memcpy;
+
+  NVGpathCache* cache = ctx.cache;
+  if (cache.npaths == 0) return;
+
+  NVGpath* path = nvg__lastPath(ctx);
+  if (path is null) return;
+
+  NVGstate* state = nvg__getState(ctx);
+  if (!state.dasherActive) return;
+
+  static NVGpoint* pts = null;
+  static uint ptsCount = 0;
+  static uint ptsSize = 0;
+
+  if (path.count < 2) return; // just in case
+
+  // copy path points (reserve one point for closed pathes)
+  if (ptsSize < path.count+1) {
+    ptsSize = cast(uint)(path.count+1);
+    pts = cast(NVGpoint*)realloc(pts, ptsSize*NVGpoint.sizeof);
+    if (pts is null) assert(0, "NanoVega: out of memory");
+  }
+  ptsCount = cast(uint)path.count;
+  memcpy(pts, &cache.points[path.first], ptsCount*NVGpoint.sizeof);
+  // add closing point for closed pathes
+  if (path.closed && !nvg__ptEquals(pts[0].x, pts[0].y, pts[ptsCount-1].x, pts[ptsCount-1].y, ctx.distTol)) {
+    pts[ptsCount++] = pts[0];
+  }
+
+  // remove last path (with its points)
+  --cache.npaths;
+  cache.npoints -= path.count;
+
+  // add stroked pathes
+  const(float)* dashes = state.dashes.ptr;
+  immutable uint dashCount = state.dashCount;
+  float currDashStart = 0;
+  uint currDashIdx = 0;
+
+  // calculate lengthes
+  {
+    NVGpoint* v1 = &pts[0];
+    NVGpoint* v2 = &pts[1];
+    foreach (immutable _; 0..ptsCount) {
+      float dx = v2.x-v1.x;
+      float dy = v2.y-v1.y;
+      v1.len = nvg__normalize(&dx, &dy);
+      v1 = v2++;
+    }
+  }
+
+  void calcDashStart (float ds) {
+    if (ds < 0) {
+      float plen = 0;
+      foreach (float f; dashes[0..dashCount]) plen += f;
+      //{ import core.stdc.stdio; printf("xx=%f\n", ds%plen); }
+      ds = ds%plen;
+      while (ds < 0) ds += plen; //FIXME
+    }
+    currDashIdx = 0;
+    currDashStart = 0;
+    while (ds > 0) {
+      if (ds > dashes[currDashIdx]) {
+        ds -= dashes[currDashIdx];
+        ++currDashIdx;
+        currDashStart = 0;
+        if (currDashIdx >= dashCount) currDashIdx = 0;
+      } else {
+        currDashStart = ds;
+        ds = 0;
+      }
+    }
+  }
+
+  calcDashStart(state.dashStart);
+
+  uint srcPointIdx = 1;
+  const(NVGpoint)* v1 = &pts[0];
+  const(NVGpoint)* v2 = &pts[1];
+  float currRest = v1.len;
+  nvg__addPath(ctx);
+  nvg__addPoint(ctx, v1.x, v1.y, PointFlag.Corner);
+
+  void fixLastPoint () {
+    auto lpt = nvg__lastPath(ctx);
+    if (lpt !is null && lpt.count > 0) {
+      // fix last point
+      if (auto lps = nvg__lastPoint(ctx)) lps.flags = PointFlag.Corner;
+      // fix first point
+      NVGpathCache* cache = ctx.cache;
+      cache.points[lpt.first].flags = PointFlag.Corner;
+    }
+  }
+
+  for (;;) {
+    immutable float dashRest = dashes[currDashIdx]-currDashStart;
+    if (currDashIdx&1) {
+      // this is "moveto" command, so create new path
+      fixLastPoint();
+      nvg__addPath(ctx);
+    }
+    //cmd = (mCurrDash&1 ? PathCommand.MoveTo : PathCommand.LineTo);
+    if (currRest > dashRest) {
+      currRest -= dashRest;
+      ++currDashIdx;
+      if (currDashIdx >= dashCount) currDashIdx = 0;
+      currDashStart = 0;
+      nvg__addPoint(ctx,
+        v2.x-(v2.x-v1.x)*currRest/v1.len,
+        v2.y-(v2.y-v1.y)*currRest/v1.len,
+        PointFlag.Corner
+      );
+    } else {
+      currDashStart += currRest;
+      nvg__addPoint(ctx, v2.x, v2.y, v1.flags); //???
+      ++srcPointIdx;
+      v1 = v2;
+      currRest = v1.len;
+      if (srcPointIdx >= ptsCount) break;
+      v2 = &pts[srcPointIdx];
+    }
+  }
+  fixLastPoint();
+}
+
+
 version(nanovg_bench_flatten) import iv.timer : Timer;
 
-void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
+void nvg__flattenPaths(bool asStroke) (NVGContext ctx) nothrow @trusted @nogc {
   version(nanovg_bench_flatten) {
     Timer timer;
     char[128] tmbuf;
     int bzcount;
   }
   NVGpathCache* cache = ctx.cache;
+  NVGstate* state = nvg__getState(ctx);
 
-  if (cache.npaths > 0) return;
+  // check if we already did flattening
+  static if (asStroke) {
+    if (state.dashCount >= 2) {
+      if (cache.npaths > 0 && state.lastFlattenDashCount == state.dashCount) return; // already flattened
+      state.dasherActive = true;
+      state.lastFlattenDashCount = state.dashCount;
+    } else {
+      if (cache.npaths > 0 && state.lastFlattenDashCount == 0) return; // already flattened
+      state.dasherActive = false;
+      state.lastFlattenDashCount = 0;
+    }
+  } else {
+    if (cache.npaths > 0 && state.lastFlattenDashCount == 0) return; // already flattened
+    state.lastFlattenDashCount = 0; // so next stroke flattening will redo it
+    state.dasherActive = false;
+  }
+
+  // clear path cache
+  cache.npaths = 0;
+  cache.npoints = 0;
 
   // flatten
   version(nanovg_bench_flatten) timer.restart();
@@ -4450,6 +4663,9 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
     final switch (cast(Command)ctx.commands[i]) {
       case Command.MoveTo:
         //assert(i+3 <= ctx.ncommands);
+        static if (asStroke) {
+          if (cache.npaths > 0 && state.dasherActive) nvg__dashLastPath(ctx);
+        }
         nvg__addPath(ctx);
         const p = &ctx.commands[i+1];
         nvg__addPoint(ctx, p[0], p[1], PointFlag.Corner);
@@ -4491,6 +4707,9 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
         break;
     }
   }
+  static if (asStroke) {
+    if (cache.npaths > 0 && state.dasherActive) nvg__dashLastPath(ctx);
+  }
   version(nanovg_bench_flatten) {{
     timer.stop();
     auto xb = timer.toBuffer(tmbuf[]);
@@ -4498,8 +4717,8 @@ void nvg__flattenPaths (NVGContext ctx) nothrow @trusted @nogc {
     printf("flattening time: [%.*s] (%d beziers)\n", cast(uint)xb.length, xb.ptr, bzcount);
   }}
 
-  cache.bounds.ptr[0] = cache.bounds.ptr[1] = 1e6f;
-  cache.bounds.ptr[2] = cache.bounds.ptr[3] = -1e6f;
+  cache.bounds.ptr[0] = cache.bounds.ptr[1] = float.max;
+  cache.bounds.ptr[2] = cache.bounds.ptr[3] = -float.max;
 
   // calculate the direction and length of line segments
   version(nanovg_bench_flatten) timer.restart();
@@ -5614,7 +5833,7 @@ void nvg__prepareFill (NVGContext ctx) nothrow @trusted @nogc {
   NVGpathCache* cache = ctx.cache;
   NVGstate* state = nvg__getState(ctx);
 
-  nvg__flattenPaths(ctx);
+  nvg__flattenPaths!false(ctx);
 
   if (ctx.params.edgeAntiAlias && state.shapeAntiAlias) {
     nvg__expandFill(ctx, ctx.fringeWidth, NVGLineCap.Miter, 2.4f);
@@ -5634,7 +5853,7 @@ void nvg__prepareStroke (NVGContext ctx) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   NVGpathCache* cache = ctx.cache;
 
-  nvg__flattenPaths(ctx);
+  nvg__flattenPaths!true(ctx);
 
   immutable float scale = nvg__getAverageScale(state.xform);
   float strokeWidth = nvg__clamp(state.strokeWidth*scale, 0.0f, 200.0f);
@@ -7371,12 +7590,12 @@ void nvg__pickBeginFrame (NVGContext ctx, int width, int height) {
 
 /// Return outline of the current path. Returned outline is not flattened.
 /// Group: paths
-public NVGPathOutline getCurrPathOutline (NVGContext context) nothrow @trusted @nogc {
-  if (context is null || !context.contextAlive || context.ncommands == 0) return NVGPathOutline.init;
+public NVGPathOutline getCurrPathOutline (NVGContext ctx) nothrow @trusted @nogc {
+  if (ctx is null || !ctx.contextAlive || ctx.ncommands == 0) return NVGPathOutline.init;
 
   auto res = NVGPathOutline.createNew();
 
-  const(float)[] acommands = context.commands[0..context.ncommands];
+  const(float)[] acommands = ctx.commands[0..ctx.ncommands];
   int ncommands = cast(int)acommands.length;
   const(float)* commands = acommands.ptr;
 
@@ -7901,6 +8120,8 @@ public:
 
   // Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
   private NVGPathOutline flattenInternal (scope NVGMatrix* tfm) const {
+    import core.stdc.string : memset;
+
     NVGPathOutline res;
     if (dsaddr == 0 || ds.ccount == 0) { res = this; return res; } // nothing to do
 
@@ -7916,13 +8137,45 @@ public:
       if (!dowork) { res = this; return res; } // nothing to do
     }
 
+    NVGcontextinternal ctx;
+    memset(&ctx, 0, ctx.sizeof);
+    ctx.cache = nvg__allocPathCache();
+    scope(exit) {
+      import core.stdc.stdlib : free;
+      nvg__deletePathCache(ctx.cache);
+    }
+
+    ctx.tessTol = 0.25f;
+    ctx.angleTol = 0; // 0 -- angle tolerance for McSeem Bezier rasterizer
+    ctx.cuspLimit = 0; // 0 -- cusp limit for McSeem Bezier rasterizer (0: real cusps)
+    ctx.distTol = 0.01f;
+    ctx.tesselatortype = NVGTesselation.DeCasteljau;
+
+    nvg__addPath(&ctx); // we need this for `nvg__addPoint()`
+
     // has some curves or transformations, convert path
     res = createNew();
+    float[8] args = void;
+
     res.ds.bounds = [float.max, float.max, -float.max, -float.max];
 
+    float lastX = float.max, lastY = float.max;
+    bool lastWasMove = false;
+
     void addPoint (float x, float y, Command.Kind cmd=Command.Kind.LineTo) nothrow @trusted @nogc {
-      res.ds.putCommand(cmd);
       if (tfm !is null) tfm.point(x, y);
+      bool isMove = (cmd == Command.Kind.MoveTo);
+      if (isMove) {
+        // moveto
+        if (lastWasMove && nvg__ptEquals(lastX, lastY, x, y, ctx.distTol)) return;
+      } else {
+        // lineto
+        if (nvg__ptEquals(lastX, lastY, x, y, ctx.distTol)) return;
+      }
+      lastWasMove = isMove;
+      lastX = x;
+      lastY = y;
+      res.ds.putCommand(cmd);
       res.ds.putArgs(x, y);
       res.ds.bounds.ptr[0] = nvg__min(res.ds.bounds.ptr[0], x);
       res.ds.bounds.ptr[1] = nvg__min(res.ds.bounds.ptr[1], y);
@@ -7932,41 +8185,16 @@ public:
 
     // sorry for this pasta
     void flattenBezier (in float x1, in float y1, in float x2, in float y2, in float x3, in float y3, in float x4, in float y4, in int level) nothrow @trusted @nogc {
-      if (level > 10) return;
-
-      immutable float x12 = (x1+x2)*0.5f;
-      immutable float y12 = (y1+y2)*0.5f;
-      immutable float x23 = (x2+x3)*0.5f;
-      immutable float y23 = (y2+y3)*0.5f;
-      immutable float x34 = (x3+x4)*0.5f;
-      immutable float y34 = (y3+y4)*0.5f;
-      immutable float x123 = (x12+x23)*0.5f;
-      immutable float y123 = (y12+y23)*0.5f;
-
-      immutable float dx = x4-x1;
-      immutable float dy = y4-y1;
-      immutable float d2 = nvg__absf(((x2-x4)*dy-(y2-y4)*dx));
-      immutable float d3 = nvg__absf(((x3-x4)*dy-(y3-y4)*dx));
-
-      if ((d2+d3)*(d2+d3) < /*ctx.tessTol*/0.25f*(dx*dx+dy*dy)) {
-        addPoint(x4, y4);
-        return;
+      ctx.cache.npoints = 0;
+      if (ctx.tesselatortype == NVGTesselation.DeCasteljau) {
+        nvg__tesselateBezier(&ctx, x1, y1, x2, y2, x3, y3, x4, y4, 0, PointFlag.Corner);
+      } else if (ctx.tesselatortype == NVGTesselation.DeCasteljauMcSeem) {
+        nvg__tesselateBezierMcSeem(&ctx, x1, y1, x2, y2, x3, y3, x4, y4, 0, PointFlag.Corner);
+      } else {
+        nvg__tesselateBezierAFD(&ctx, x1, y1, x2, y2, x3, y3, x4, y4, PointFlag.Corner);
       }
-
-      immutable float x234 = (x23+x34)*0.5f;
-      immutable float y234 = (y23+y34)*0.5f;
-      immutable float x1234 = (x123+x234)*0.5f;
-      immutable float y1234 = (y123+y234)*0.5f;
-
-
-      // "taxicab" / "manhattan" check for flat curves
-      if (nvg__absf(x1+x3-x2-x2)+nvg__absf(y1+y3-y2-y2)+nvg__absf(x2+x4-x3-x3)+nvg__absf(y2+y4-y3-y3) < /*ctx.tessTol*/0.25f/4) {
-        addPoint(x1234, y1234);
-        return;
-      }
-
-      flattenBezier(x1, y1, x12, y12, x123, y123, x1234, y1234, level+1);
-      flattenBezier(x1234, y1234, x234, y234, x34, y34, x4, y4, level+1);
+      // add generated points
+      foreach (const ref pt; ctx.cache.points[0..ctx.cache.npoints]) addPoint(pt.x, pt.y);
     }
 
     void flattenQuad (in float x0, in float y0, in float cx, in float cy, in float x, in float y) {
@@ -8055,8 +8283,8 @@ public:
         return res;
       }
       void popFront () {
-        if (cleft == 0) return;
-        if (--cleft == 0) return; // don't waste time skipping last command
+        if (cleft <= 1) { cleft = 0; return; } // don't waste time skipping last command
+        --cleft;
         switch (data[cpos]) {
           case Command.Kind.MoveTo:
           case Command.Kind.LineTo:
