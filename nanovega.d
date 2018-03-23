@@ -7563,7 +7563,7 @@ public bool charPathBounds (NVGContext ctx, dchar dch, float[] bounds) nothrow @
   return fonsPathBounds(ctx.fs, dch, bounds);
 }
 
-/** [charOutline] will return malloced [NVGGlyphOutline].
+/** [charOutline] will return [NVGPathOutline].
 
  some usage samples:
 
@@ -7627,29 +7627,102 @@ public bool charPathBounds (NVGContext ctx, dchar dch, float[] bounds) nothrow @
 
  Group: text_api
  */
-public struct NVGGlyphOutline {
+public struct NVGPathOutline {
+private nothrow @trusted @nogc:
+  struct DataStore {
+    uint rc; // refcount
+    ubyte* data;
+    uint used;
+    uint size;
+    uint ccount; // number of commands
+    float[4] bounds = 0; /// outline bounds
+  nothrow @trusted @nogc:
+    void putBytes (const(void)[] b) {
+      if (b.length == 0) return;
+      if (b.length >= int.max/8) assert(0, "NanoVega: out of memory");
+      if (int.max/8-used < b.length) assert(0, "NanoVega: out of memory");
+      if (used+cast(uint)b.length > size) {
+        import core.stdc.stdlib : realloc;
+        uint newsz = size;
+        while (newsz < used+cast(uint)b.length) newsz = (newsz == 0 ? 2048 : newsz < 32768 ? newsz*2 : newsz+8192);
+        assert(used+cast(uint)b.length <= newsz);
+        data = cast(ubyte*)realloc(data, newsz);
+        if (data is null) assert(0, "NanoVega: out of memory");
+        size = newsz;
+      }
+      import core.stdc.string : memcpy;
+      memcpy(data+used, b.ptr, b.length);
+      used += cast(uint)b.length;
+    }
+    void putCommand (ubyte cmd) { pragma(inline, true); ++ccount; putBytes((&cmd)[0..1]); }
+    void putArgs (const(float)[] f...) { pragma(inline, true); putBytes(f[]); }
+  }
+
+  static void incRef (DataStore* ds) {
+    pragma(inline, true);
+    if (ds !is null) {
+      ++ds.rc;
+      //{ import core.stdc.stdio; printf("ods(%p): incref: newrc=%u\n", ds, ds.rc); }
+    }
+  }
+
+  static void decRef (DataStore* ds) {
+    version(aliced) pragma(inline, true);
+    if (ds !is null) {
+      //{ import core.stdc.stdio; printf("ods(%p): decref: newrc=%u\n", ds, ds.rc-1); }
+      if (--ds.rc == 0) {
+        import core.stdc.stdlib : free;
+        import core.stdc.string : memset;
+        if (ds.data !is null) free(ds.data);
+        memset(ds, 0, DataStore.sizeof); // just in case
+        free(ds);
+        //{ import core.stdc.stdio; printf("  ods(%p): killed.\n"); }
+      }
+    }
+  }
+
+private:
+  static NVGPathOutline createNew () {
+    import core.stdc.stdlib : malloc;
+    import core.stdc.string : memset;
+    auto ds = cast(DataStore*)malloc(DataStore.sizeof);
+    if (ds is null) assert(0, "NanoVega: out of memory");
+    memset(ds, 0, DataStore.sizeof);
+    ds.rc = 1;
+    NVGPathOutline res;
+    res.dsaddr = cast(usize)ds;
+    return res;
+  }
+
+private:
+  usize dsaddr; // fool GC
+
+  @property inout(DataStore)* ds () inout pure { pragma(inline, true); return cast(DataStore*)dsaddr; }
+
 public:
   /// commands
   static struct Command {
+    ///
     enum Kind : ubyte {
       MoveTo, ///
       LineTo, ///
       QuadTo, ///
       BezierTo, ///
+      End, /// no more commands (this command is not `valid`!)
     }
     Kind code; ///
     const(float)[] args; ///
-    @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (code >= 0 && code <= 3 && args.length >= 2); } ///
+    @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (code >= Kind.min && code < Kind.End && args.length >= 2); } ///
 
     /// perform NanoVega command with stored data.
     void perform (NVGContext ctx) const nothrow @trusted @nogc {
       if (ctx is null) return;
-      switch (code) {
+      final switch (code) {
         case Kind.MoveTo: if (args.length > 1) ctx.moveTo(args.ptr[0..2]); break;
         case Kind.LineTo: if (args.length > 1) ctx.lineTo(args.ptr[0..2]); break;
         case Kind.QuadTo: if (args.length > 3) ctx.quadTo(args.ptr[0..4]); break;
         case Kind.BezierTo: if (args.length > 5) ctx.bezierTo(args.ptr[0..6]); break;
-        default: break;
+        case Kind.End: break;
       }
     }
 
@@ -7659,71 +7732,83 @@ public:
       float[6] pts = void;
       pts[0..args.length] = args[];
       foreach (immutable pidx; 0..args.length/2) xform.point(pts.ptr[pidx*2+0], pts.ptr[pidx*2+1]);
-      switch (code) {
+      final switch (code) {
         case Kind.MoveTo: if (args.length > 1) ctx.moveTo(pts.ptr[0..2]); break;
         case Kind.LineTo: if (args.length > 1) ctx.lineTo(pts.ptr[0..2]); break;
         case Kind.QuadTo: if (args.length > 3) ctx.quadTo(pts.ptr[0..4]); break;
         case Kind.BezierTo: if (args.length > 5) ctx.bezierTo(pts.ptr[0..6]); break;
-        default: break;
+        case Kind.End: break;
       }
     }
   }
 
-  @disable this (this); // no copies
+public:
+  this (this) { pragma(inline, true); incRef(cast(DataStore*)dsaddr); }
+  ~this () { pragma(inline, true); decRef(cast(DataStore*)dsaddr); }
 
-private:
-  ubyte* data;
-  uint used;
-  uint size;
-  uint ccount; // number of commands
-
-private:
-  void clear () nothrow @trusted @nogc {
-    import core.stdc.stdlib : free;
-    if (data !is null) { free(data); data = null; }
-    used = size = ccount = 0;
-    bounds[] = 0;
+  void opAssign() (in auto ref NVGPathOutline a) {
+    incRef(cast(DataStore*)a.dsaddr);
+    decRef(cast(DataStore*)dsaddr);
+    dsaddr = a.dsaddr;
   }
 
-public:
-  float[4] bounds = 0; /// glyph outline bounds
+  /// Clear storage.
+  void clear () {
+    pragma(inline, true);
+    decRef(ds);
+    dsaddr = 0;
+  }
 
-  @property int length () const pure { pragma(inline, true); return ccount; } /// number of commands in outline
+  /// Is this outline empty?
+  @property empty () const pure { pragma(inline, true); return (dsaddr == 0 || ds.ccount == 0); }
 
-public:
+  /// Returns umber of commands in outline.
+  @property int length () const pure { pragma(inline, true); return (dsaddr ? ds.ccount : 0); }
+
   /// Returns forward range with all glyph commands.
-  /// $(WARNING returned rande should not outlive parent struct!)
   auto commands () nothrow @trusted @nogc {
     static struct Range {
     private nothrow @trusted @nogc:
-      const(ubyte)* data;
+      usize dsaddr;
+      uint cpos; // current position in data
       uint cleft; // number of commands left
+      @property const(ubyte)* data () inout pure { pragma(inline, true); return (dsaddr ? (cast(DataStore*)dsaddr).data : null); }
     public:
+      this (this) { pragma(inline, true); incRef(cast(DataStore*)dsaddr); }
+      ~this () { pragma(inline, true); decRef(cast(DataStore*)dsaddr); }
+      void opAssign() (in auto ref Range a) {
+        incRef(cast(DataStore*)a.dsaddr);
+        decRef(cast(DataStore*)dsaddr);
+        dsaddr = a.dsaddr;
+        cpos = a.cpos;
+        cleft = a.cleft;
+      }
+      float[4] bounds () const pure { float[4] res = 0; pragma(inline, true); if (dsaddr) res[] = (cast(DataStore*)dsaddr).bounds[]; return res; } /// outline bounds
       @property bool empty () const pure { pragma(inline, true); return (cleft == 0); }
       @property int length () const pure { pragma(inline, true); return cleft; }
-      @property Range save () const pure { pragma(inline, true); Range res = this; return res; }
+      @property Range save () const { pragma(inline, true); Range res = this; return res; }
       @property Command front () const {
         Command res = void;
         if (cleft > 0) {
-          res.code = cast(Command.Kind)data[0];
+          res.code = cast(Command.Kind)data[cpos];
           switch (res.code) {
             case Command.Kind.MoveTo:
             case Command.Kind.LineTo:
-              res.args = (cast(const(float*))(data+1))[0..1*2];
+              res.args = (cast(const(float*))(data+cpos+1))[0..1*2];
               break;
             case Command.Kind.QuadTo:
-              res.args = (cast(const(float*))(data+1))[0..2*2];
+              res.args = (cast(const(float*))(data+cpos+1))[0..2*2];
               break;
             case Command.Kind.BezierTo:
-              res.args = (cast(const(float*))(data+1))[0..3*2];
+              res.args = (cast(const(float*))(data+cpos+1))[0..3*2];
               break;
             default:
-              res.code = cast(Command.Kind)255;
+              res.code = Command.Kind.End;
               res.args = null;
               break;
           }
         } else {
-          res.code = cast(Command.Kind)255;
+          res.code = Command.Kind.End;
           res.args = null;
         }
         return res;
@@ -7731,16 +7816,16 @@ public:
       void popFront () {
         if (cleft == 0) return;
         if (--cleft == 0) return; // don't waste time skipping last command
-        switch (data[0]) {
+        switch (data[cpos]) {
           case Command.Kind.MoveTo:
           case Command.Kind.LineTo:
-            data += 1+1*2*cast(uint)float.sizeof;
+            cpos += 1+1*2*cast(uint)float.sizeof;
             break;
           case Command.Kind.QuadTo:
-            data += 1+2*2*cast(uint)float.sizeof;
+            cpos += 1+2*2*cast(uint)float.sizeof;
             break;
           case Command.Kind.BezierTo:
-            data += 1+3*2*cast(uint)float.sizeof;
+            cpos += 1+3*2*cast(uint)float.sizeof;
             break;
           default:
             cleft = 0;
@@ -7748,19 +7833,22 @@ public:
         }
       }
     }
-    return Range(data, ccount);
+    if (dsaddr) {
+      incRef(cast(DataStore*)dsaddr); // range anchors it
+      return Range(dsaddr, 0, ds.ccount);
+    } else {
+      return Range.init;
+    }
   }
 }
 
+public alias NVGGlyphOutline = NVGPathOutline; /// For backwards compatibility.
+
 /// Destroy glyph outiline and free allocated memory.
 /// Group: text_api
-public void kill (ref NVGGlyphOutline* ol) nothrow @trusted @nogc {
-  if (ol !is null) {
-    import core.stdc.stdlib : free;
-    ol.clear();
-    free(ol);
-    ol = null;
-  }
+public void kill (ref NVGPathOutline ol) nothrow @trusted @nogc {
+  pragma(inline, true);
+  ol.clear();
 }
 
 static if (is(typeof(&fons__nvg__toOutline))) {
@@ -7773,17 +7861,14 @@ static if (is(typeof(&fons__nvg__toOutline))) {
 /// The glyph is not scaled in any way, so you have to use NanoVega transformations instead.
 /// Returns `null` if there is no such glyph, or current font is not scalable.
 /// Group: text_api
-public NVGGlyphOutline* charOutline (NVGContext ctx, dchar dch) nothrow @trusted @nogc {
+public NVGPathOutline charOutline (NVGContext ctx, dchar dch) nothrow @trusted @nogc {
   import core.stdc.stdlib : malloc;
   import core.stdc.string : memcpy;
   NVGstate* state = nvg__getState(ctx);
   fonsSetFont(ctx.fs, state.fontId);
-  NVGGlyphOutline oline;
-  if (!fonsToOutline(ctx.fs, dch, &oline)) { oline.clear(); return null; }
-  auto res = cast(NVGGlyphOutline*)malloc(NVGGlyphOutline.sizeof);
-  if (res is null) { oline.clear(); return null; }
-  memcpy(res, &oline, oline.sizeof);
-  return res;
+  auto oline = NVGPathOutline.createNew();
+  if (!fonsToOutline(ctx.fs, dch, oline.ds)) oline.clear();
+  return oline;
 }
 
 
@@ -9139,38 +9224,20 @@ extern(C) nothrow @trusted @nogc {
   static struct OutlinerData {
     @disable this (this);
     NVGContext vg;
-    NVGGlyphOutline* ol;
+    NVGPathOutline.DataStore* ol;
     FT_BBox outlineBBox;
   nothrow @trusted @nogc:
     static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
     static float transy(T) (T v) pure { pragma(inline, true); return -cast(float)v; }
-    void putBytes (const(void)[] b) {
-      assert(b.length <= 512);
-      if (b.length == 0) return;
-      if (ol.used+cast(uint)b.length > ol.size) {
-        import core.stdc.stdlib : realloc;
-        uint newsz = (ol.size == 0 ? 2048 : ol.size < 32768 ? ol.size*2 : ol.size+8192);
-        assert(ol.used+cast(uint)b.length <= newsz);
-        auto nd = cast(ubyte*)realloc(ol.data, newsz);
-        if (nd is null) assert(0, "FONS: out of memory");
-        ol.size = newsz;
-        ol.data = nd;
-      }
-      import core.stdc.string : memcpy;
-      memcpy(ol.data+ol.used, b.ptr, b.length);
-      ol.used += cast(uint)b.length;
-    }
-    void newCommand (ubyte cmd) { pragma(inline, true); ++ol.ccount; putBytes((&cmd)[0..1]); }
-    void putArg (float f) { putBytes((&f)[0..1]); }
   }
 
   int fons__nvg__moveto_cb (const(FT_Vector)* to, void* user) {
     auto odata = cast(OutlinerData*)user;
     if (odata.vg !is null) odata.vg.moveTo(odata.transx(to.x), odata.transy(to.y));
     if (odata.ol !is null) {
-      odata.newCommand(odata.ol.Command.Kind.MoveTo);
-      odata.putArg(odata.transx(to.x));
-      odata.putArg(odata.transy(to.y));
+      odata.ol.putCommand(NVGPathOutline.Command.Kind.MoveTo);
+      odata.ol.putArgs(odata.transx(to.x));
+      odata.ol.putArgs(odata.transy(to.y));
     }
     return 0;
   }
@@ -9179,9 +9246,9 @@ extern(C) nothrow @trusted @nogc {
     auto odata = cast(OutlinerData*)user;
     if (odata.vg !is null) odata.vg.lineTo(odata.transx(to.x), odata.transy(to.y));
     if (odata.ol !is null) {
-      odata.newCommand(odata.ol.Command.Kind.LineTo);
-      odata.putArg(odata.transx(to.x));
-      odata.putArg(odata.transy(to.y));
+      odata.ol.putCommand(NVGPathOutline.Command.Kind.LineTo);
+      odata.ol.putArgs(odata.transx(to.x));
+      odata.ol.putArgs(odata.transy(to.y));
     }
     return 0;
   }
@@ -9190,11 +9257,11 @@ extern(C) nothrow @trusted @nogc {
     auto odata = cast(OutlinerData*)user;
     if (odata.vg !is null) odata.vg.quadTo(odata.transx(c1.x), odata.transy(c1.y), odata.transx(to.x), odata.transy(to.y));
     if (odata.ol !is null) {
-      odata.newCommand(odata.ol.Command.Kind.QuadTo);
-      odata.putArg(odata.transx(c1.x));
-      odata.putArg(odata.transy(c1.y));
-      odata.putArg(odata.transx(to.x));
-      odata.putArg(odata.transy(to.y));
+      odata.ol.putCommand(NVGPathOutline.Command.Kind.QuadTo);
+      odata.ol.putArgs(odata.transx(c1.x));
+      odata.ol.putArgs(odata.transy(c1.y));
+      odata.ol.putArgs(odata.transx(to.x));
+      odata.ol.putArgs(odata.transy(to.y));
     }
     return 0;
   }
@@ -9203,13 +9270,13 @@ extern(C) nothrow @trusted @nogc {
     auto odata = cast(OutlinerData*)user;
     if (odata.vg !is null) odata.vg.bezierTo(odata.transx(c1.x), odata.transy(c1.y), odata.transx(c2.x), odata.transy(c2.y), odata.transx(to.x), odata.transy(to.y));
     if (odata.ol !is null) {
-      odata.newCommand(odata.ol.Command.Kind.BezierTo);
-      odata.putArg(odata.transx(c1.x));
-      odata.putArg(odata.transy(c1.y));
-      odata.putArg(odata.transx(c2.x));
-      odata.putArg(odata.transy(c2.y));
-      odata.putArg(odata.transx(to.x));
-      odata.putArg(odata.transy(to.y));
+      odata.ol.putCommand(NVGPathOutline.Command.Kind.BezierTo);
+      odata.ol.putArgs(odata.transx(c1.x));
+      odata.ol.putArgs(odata.transy(c1.y));
+      odata.ol.putArgs(odata.transx(c2.x));
+      odata.ol.putArgs(odata.transy(c2.y));
+      odata.ol.putArgs(odata.transx(to.x));
+      odata.ol.putArgs(odata.transy(to.y));
     }
     return 0;
   }
@@ -9243,7 +9310,7 @@ bool fons__nvg__toPath (NVGContext vg, FONSttFontImpl* font, uint glyphidx, floa
   return true;
 }
 
-bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGGlyphOutline* ol) nothrow @trusted @nogc {
+bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGPathOutline.DataStore* ol) nothrow @trusted @nogc {
   FT_Outline_Funcs funcs;
   funcs.move_to = &fons__nvg__moveto_cb;
   funcs.line_to = &fons__nvg__lineto_cb;
@@ -9377,28 +9444,10 @@ static if (is(typeof(STBTT_vcubic))) {
 
 static struct OutlinerData {
   @disable this (this);
-  NVGGlyphOutline* ol;
+  NVGPathOutline.DataStore* ol;
 nothrow @trusted @nogc:
   static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
   static float transy(T) (T v) pure { pragma(inline, true); return -cast(float)v; }
-  void putBytes (const(void)[] b) {
-    assert(b.length <= 512);
-    if (b.length == 0) return;
-    if (ol.used+cast(uint)b.length > ol.size) {
-      import core.stdc.stdlib : realloc;
-      uint newsz = (ol.size == 0 ? 2048 : ol.size < 32768 ? ol.size*2 : ol.size+8192);
-      assert(ol.used+cast(uint)b.length <= newsz);
-      auto nd = cast(ubyte*)realloc(ol.data, newsz);
-      if (nd is null) assert(0, "FONS: out of memory");
-      ol.size = newsz;
-      ol.data = nd;
-    }
-    import core.stdc.string : memcpy;
-    memcpy(ol.data+ol.used, b.ptr, b.length);
-    ol.used += cast(uint)b.length;
-  }
-  void newCommand (ubyte cmd) { pragma(inline, true); ++ol.ccount; putBytes((&cmd)[0..1]); }
-  void putArg (float f) { putBytes((&f)[0..1]); }
 }
 
 
@@ -9442,7 +9491,7 @@ bool fons__nvg__toPath (NVGContext vg, FONSttFontImpl* font, uint glyphidx, floa
   return okflag;
 }
 
-bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGGlyphOutline* ol) nothrow @trusted @nogc {
+bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGPathOutline.DataStore* ol) nothrow @trusted @nogc {
   bool okflag = false;
 
   forceNoThrowNoGC({
@@ -9469,30 +9518,30 @@ bool fons__nvg__toOutline (FONSttFontImpl* font, uint glyphidx, NVGGlyphOutline*
     foreach (const ref vt; verts[0..vcount]) {
       switch (vt.type) {
         case STBTT_vmove:
-          odata.newCommand(odata.ol.Command.Kind.MoveTo);
-          odata.putArg(odata.transx(vt.x));
-          odata.putArg(odata.transy(vt.y));
+          odata.ol.putCommand(NVGPathOutline.Command.Kind.MoveTo);
+          odata.ol.putArgs(odata.transx(vt.x));
+          odata.ol.putArgs(odata.transy(vt.y));
           break;
         case STBTT_vline:
-          odata.newCommand(odata.ol.Command.Kind.LineTo);
-          odata.putArg(odata.transx(vt.x));
-          odata.putArg(odata.transy(vt.y));
+          odata.ol.putCommand(NVGPathOutline.Command.Kind.LineTo);
+          odata.ol.putArgs(odata.transx(vt.x));
+          odata.ol.putArgs(odata.transy(vt.y));
           break;
         case STBTT_vcurve:
-          odata.newCommand(odata.ol.Command.Kind.QuadTo);
-          odata.putArg(odata.transx(vt.x));
-          odata.putArg(odata.transy(vt.y));
-          odata.putArg(odata.transx(vt.cx));
-          odata.putArg(odata.transy(vt.cy));
+          odata.ol.putCommand(NVGPathOutline.Command.Kind.QuadTo);
+          odata.ol.putArgs(odata.transx(vt.x));
+          odata.ol.putArgs(odata.transy(vt.y));
+          odata.ol.putArgs(odata.transx(vt.cx));
+          odata.ol.putArgs(odata.transy(vt.cy));
           break;
         case STBTT_vcubic:
-          odata.newCommand(odata.ol.Command.Kind.BezierTo);
-          odata.putArg(odata.transx(vt.x));
-          odata.putArg(odata.transy(vt.y));
-          odata.putArg(odata.transx(vt.cx));
-          odata.putArg(odata.transy(vt.cy));
-          odata.putArg(odata.transx(vt.cx1));
-          odata.putArg(odata.transy(vt.cy1));
+          odata.ol.putCommand(NVGPathOutline.Command.Kind.BezierTo);
+          odata.ol.putArgs(odata.transx(vt.x));
+          odata.ol.putArgs(odata.transy(vt.y));
+          odata.ol.putArgs(odata.transx(vt.cx));
+          odata.ol.putArgs(odata.transy(vt.cy));
+          odata.ol.putArgs(odata.transx(vt.cx1));
+          odata.ol.putArgs(odata.transy(vt.cy1));
           break;
         default:
       }
@@ -10603,7 +10652,7 @@ public bool fonsToPath (FONScontext* stash, NVGContext vg, dchar dch, float[] bo
   }
 }
 
-public bool fonsToOutline (FONScontext* stash, dchar dch, NVGGlyphOutline* ol) nothrow @trusted @nogc {
+public bool fonsToOutline (FONScontext* stash, dchar dch, NVGPathOutline.DataStore* ol) nothrow @trusted @nogc {
   if (stash is null || ol is null) return false;
   static if (is(typeof(&fons__nvg__toOutline))) {
     FONSstate* state = fons__getState(stash);
