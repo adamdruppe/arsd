@@ -6169,8 +6169,8 @@ struct NVGpickScene {
 
 // bounds utilities
 void nvg__initBounds (ref float[4] bounds) {
-  bounds.ptr[0] = bounds.ptr[1] = 1e6f;
-  bounds.ptr[2] = bounds.ptr[3] = -1e6f;
+  bounds.ptr[0] = bounds.ptr[1] = float.max;
+  bounds.ptr[2] = bounds.ptr[3] = -float.max;
 }
 
 void nvg__expandBounds (ref float[4] bounds, const(float)* points, int npoints) {
@@ -6878,12 +6878,12 @@ void nvg__bezierBounds (const(float)* points, ref float[4] bounds) {
   nvg__expandBounds(bounds, &points[0], 1);
   nvg__expandBounds(bounds, &points[6], 1);
 
-  // Calculate dx==0 and dy==0 inflection points and add then to the bounds
+  // Calculate dx==0 and dy==0 inflection points and add them to the bounds
 
   nvg__bezierInflections(points, 0, &ninflections, inflections.ptr);
   nvg__bezierInflections(points, 1, &ninflections, inflections.ptr);
 
-  for (int i = 0; i < ninflections; ++i) {
+  foreach (immutable int i; 0..ninflections) {
     nvg__bezierEval(points, inflections[i], tpoint);
     nvg__expandBounds(bounds, tpoint.ptr, 1);
   }
@@ -7369,6 +7369,103 @@ void nvg__pickBeginFrame (NVGContext ctx, int width, int height) {
 } // nothrow @trusted @nogc
 
 
+/// Return outline of the current path. Returned outline is not flattened.
+/// Group: paths
+public NVGPathOutline getCurrPathOutline (NVGContext context) nothrow @trusted @nogc {
+  if (context is null || !context.contextAlive || context.ncommands == 0) return NVGPathOutline.init;
+
+  auto res = NVGPathOutline.createNew();
+
+  const(float)[] acommands = context.commands[0..context.ncommands];
+  int ncommands = cast(int)acommands.length;
+  const(float)* commands = acommands.ptr;
+
+  float cx = 0, cy = 0;
+  float[2] start = void;
+  float[4] totalBounds = [float.max, float.max, -float.max, -float.max];
+  float[8] bcp = void; // bezier curve points; used to calculate bounds
+
+  void addToBounds (in float x, in float y) nothrow @trusted @nogc {
+    totalBounds.ptr[0] = nvg__min(totalBounds.ptr[0], x);
+    totalBounds.ptr[1] = nvg__min(totalBounds.ptr[1], y);
+    totalBounds.ptr[2] = nvg__max(totalBounds.ptr[2], x);
+    totalBounds.ptr[3] = nvg__max(totalBounds.ptr[3], y);
+  }
+
+  bool hasPoints = false;
+
+  void closeIt () nothrow @trusted @nogc {
+    if (!hasPoints) return;
+    if (cx != start.ptr[0] || cy != start.ptr[1]) {
+      res.ds.putCommand(NVGPathOutline.Command.Kind.LineTo);
+      res.ds.putArgs(start[]);
+      cx = start.ptr[0];
+      cy = start.ptr[1];
+      addToBounds(cx, cy);
+    }
+  }
+
+  int i = 0;
+  while (i < ncommands) {
+    int cmd = cast(int)commands[i++];
+    switch (cmd) {
+      case Command.MoveTo: // one coordinate pair
+        const(float)* tfxy = commands+i;
+        i += 2;
+        // add command
+        res.ds.putCommand(NVGPathOutline.Command.Kind.MoveTo);
+        res.ds.putArgs(tfxy[0..2]);
+        // new starting point
+        start.ptr[0..2] = tfxy[0..2];
+        cx = tfxy[0];
+        cy = tfxy[0];
+        addToBounds(cx, cy);
+        hasPoints = true;
+        break;
+      case Command.LineTo: // one coordinate pair
+        const(float)* tfxy = commands+i;
+        i += 2;
+        // add command
+        res.ds.putCommand(NVGPathOutline.Command.Kind.LineTo);
+        res.ds.putArgs(tfxy[0..2]);
+        cx = tfxy[0];
+        cy = tfxy[0];
+        addToBounds(cx, cy);
+        hasPoints = true;
+        break;
+      case Command.BezierTo: // three coordinate pairs
+        const(float)* tfxy = commands+i;
+        i += 3*2;
+        // add command
+        res.ds.putCommand(NVGPathOutline.Command.Kind.BezierTo);
+        res.ds.putArgs(tfxy[0..6]);
+        // bounds
+        bcp.ptr[0] = cx;
+        bcp.ptr[1] = cy;
+        bcp.ptr[2..8] = tfxy[0..6];
+        nvg__bezierBounds(bcp.ptr, totalBounds);
+        cx = tfxy[4];
+        cy = tfxy[5];
+        hasPoints = true;
+        break;
+      case Command.Close:
+        closeIt();
+        hasPoints = false;
+        break;
+      case Command.Winding:
+        //psp.winding = cast(short)cast(int)commands[i];
+        i += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  res.ds.bounds[] = totalBounds[];
+  return res;
+}
+
+
 // ////////////////////////////////////////////////////////////////////////// //
 // Text
 
@@ -7805,23 +7902,32 @@ public:
   // Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
   private NVGPathOutline flattenInternal (scope NVGMatrix* tfm) const {
     NVGPathOutline res;
-    if (dsaddr == 0) { res = this; return res; } // nothing to do
-    // check if we need to flatten the path
-    bool dowork = false;
-    foreach (const ref cs; commands) {
-      if (cs.code != Command.Kind.MoveTo && cs.code != Command.Kind.LineTo) {
-        dowork = true;
-        break;
-      }
-    }
-    if (!dowork) { res = this; return res; } // nothing to do
-    // has some curves, convert path
-    res = createNew();
+    if (dsaddr == 0 || ds.ccount == 0) { res = this; return res; } // nothing to do
 
-    void addPoint (float x, float y, Command.Kind cmd=Command.Kind.LineTo) {
+    // check if we need to flatten the path
+    if (tfm is null) {
+      bool dowork = false;
+      foreach (const ref cs; commands) {
+        if (cs.code != Command.Kind.MoveTo && cs.code != Command.Kind.LineTo) {
+          dowork = true;
+          break;
+        }
+      }
+      if (!dowork) { res = this; return res; } // nothing to do
+    }
+
+    // has some curves or transformations, convert path
+    res = createNew();
+    res.ds.bounds = [float.max, float.max, -float.max, -float.max];
+
+    void addPoint (float x, float y, Command.Kind cmd=Command.Kind.LineTo) nothrow @trusted @nogc {
       res.ds.putCommand(cmd);
       if (tfm !is null) tfm.point(x, y);
       res.ds.putArgs(x, y);
+      res.ds.bounds.ptr[0] = nvg__min(res.ds.bounds.ptr[0], x);
+      res.ds.bounds.ptr[1] = nvg__min(res.ds.bounds.ptr[1], y);
+      res.ds.bounds.ptr[2] = nvg__max(res.ds.bounds.ptr[2], x);
+      res.ds.bounds.ptr[3] = nvg__max(res.ds.bounds.ptr[3], y);
     }
 
     // sorry for this pasta
