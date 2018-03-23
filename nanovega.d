@@ -7644,7 +7644,7 @@ private nothrow @trusted @nogc:
       if (used+cast(uint)b.length > size) {
         import core.stdc.stdlib : realloc;
         uint newsz = size;
-        while (newsz < used+cast(uint)b.length) newsz = (newsz == 0 ? 2048 : newsz < 32768 ? newsz*2 : newsz+8192);
+        while (newsz < used+cast(uint)b.length) newsz = (newsz == 0 ? 1024 : newsz < 32768 ? newsz*2 : newsz+8192);
         assert(used+cast(uint)b.length <= newsz);
         data = cast(ubyte*)realloc(data, newsz);
         if (data is null) assert(0, "NanoVega: out of memory");
@@ -7709,10 +7709,20 @@ public:
       QuadTo, ///
       BezierTo, ///
       End, /// no more commands (this command is not `valid`!)
+
     }
     Kind code; ///
     const(float)[] args; ///
     @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (code >= Kind.min && code < Kind.End && args.length >= 2); } ///
+
+    static uint arglen (Kind code) pure nothrow @safe @nogc {
+      pragma(inline, true);
+      return
+        code == Kind.MoveTo || code == Kind.LineTo ? 2 :
+        code == Kind.QuadTo ? 4 :
+        code == Kind.BezierTo ? 6 :
+        0;
+    }
 
     /// perform NanoVega command with stored data.
     void perform (NVGContext ctx) const nothrow @trusted @nogc {
@@ -7743,6 +7753,27 @@ public:
   }
 
 public:
+  /// Create new path with quadratic bezier (first command is MoveTo, second command is QuadTo).
+  static NVGPathOutline createNewQuad (in float x0, in float y0, in float cx, in float cy, in float x, in float y) {
+    auto res = createNew();
+    res.ds.putCommand(Command.Kind.MoveTo);
+    res.ds.putArgs(x0, y0);
+    res.ds.putCommand(Command.Kind.QuadTo);
+    res.ds.putArgs(cx, cy, x, y);
+    return res;
+  }
+
+  /// Create new path with cubic bezier (first command is MoveTo, second command is BezierTo).
+  static NVGPathOutline createNewBezier (in float x1, in float y1, in float x2, in float y2, in float x3, in float y3, in float x4, in float y4) {
+    auto res = createNew();
+    res.ds.putCommand(Command.Kind.MoveTo);
+    res.ds.putArgs(x1, y1);
+    res.ds.putCommand(Command.Kind.BezierTo);
+    res.ds.putArgs(x2, y2, x3, y3, x4, y4);
+    return res;
+  }
+
+public:
   this (this) { pragma(inline, true); incRef(cast(DataStore*)dsaddr); }
   ~this () { pragma(inline, true); decRef(cast(DataStore*)dsaddr); }
 
@@ -7765,8 +7796,112 @@ public:
   /// Returns umber of commands in outline.
   @property int length () const pure { pragma(inline, true); return (dsaddr ? ds.ccount : 0); }
 
+  /// Returns "flattened" path. Flattened path consists of only two commands kinds: MoveTo and LineTo.
+  NVGPathOutline flatten () const { pragma(inline, true); return flattenInternal(null); }
+
+  /// Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
+  NVGPathOutline flatten() (in auto ref NVGMatrix mt) const { pragma(inline, true); return flattenInternal(&mt); }
+
+  // Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
+  private NVGPathOutline flattenInternal (scope NVGMatrix* tfm) const {
+    NVGPathOutline res;
+    if (dsaddr == 0) { res = this; return res; } // nothing to do
+    // check if we need to flatten the path
+    bool dowork = false;
+    foreach (const ref cs; commands) {
+      if (cs.code != Command.Kind.MoveTo && cs.code != Command.Kind.LineTo) {
+        dowork = true;
+        break;
+      }
+    }
+    if (!dowork) { res = this; return res; } // nothing to do
+    // has some curves, convert path
+    res = createNew();
+
+    void addPoint (float x, float y, Command.Kind cmd=Command.Kind.LineTo) {
+      res.ds.putCommand(cmd);
+      if (tfm !is null) tfm.point(x, y);
+      res.ds.putArgs(x, y);
+    }
+
+    // sorry for this pasta
+    void flattenBezier (in float x1, in float y1, in float x2, in float y2, in float x3, in float y3, in float x4, in float y4, in int level) nothrow @trusted @nogc {
+      if (level > 10) return;
+
+      immutable float x12 = (x1+x2)*0.5f;
+      immutable float y12 = (y1+y2)*0.5f;
+      immutable float x23 = (x2+x3)*0.5f;
+      immutable float y23 = (y2+y3)*0.5f;
+      immutable float x34 = (x3+x4)*0.5f;
+      immutable float y34 = (y3+y4)*0.5f;
+      immutable float x123 = (x12+x23)*0.5f;
+      immutable float y123 = (y12+y23)*0.5f;
+
+      immutable float dx = x4-x1;
+      immutable float dy = y4-y1;
+      immutable float d2 = nvg__absf(((x2-x4)*dy-(y2-y4)*dx));
+      immutable float d3 = nvg__absf(((x3-x4)*dy-(y3-y4)*dx));
+
+      if ((d2+d3)*(d2+d3) < /*ctx.tessTol*/0.25f*(dx*dx+dy*dy)) {
+        addPoint(x4, y4);
+        return;
+      }
+
+      immutable float x234 = (x23+x34)*0.5f;
+      immutable float y234 = (y23+y34)*0.5f;
+      immutable float x1234 = (x123+x234)*0.5f;
+      immutable float y1234 = (y123+y234)*0.5f;
+
+
+      // "taxicab" / "manhattan" check for flat curves
+      if (nvg__absf(x1+x3-x2-x2)+nvg__absf(y1+y3-y2-y2)+nvg__absf(x2+x4-x3-x3)+nvg__absf(y2+y4-y3-y3) < /*ctx.tessTol*/0.25f/4) {
+        addPoint(x1234, y1234);
+        return;
+      }
+
+      flattenBezier(x1, y1, x12, y12, x123, y123, x1234, y1234, level+1);
+      flattenBezier(x1234, y1234, x234, y234, x34, y34, x4, y4, level+1);
+    }
+
+    void flattenQuad (in float x0, in float y0, in float cx, in float cy, in float x, in float y) {
+      flattenBezier(
+        x0, y0,
+        x0+2.0f/3.0f*(cx-x0), y0+2.0f/3.0f*(cy-y0),
+        x+2.0f/3.0f*(cx-x), y+2.0f/3.0f*(cy-y),
+        x, y,
+        0,
+      );
+    }
+
+    float cx = 0, cy = 0;
+    foreach (const ref cs; commands) {
+      switch (cs.code) {
+        case Command.Kind.LineTo:
+        case Command.Kind.MoveTo:
+          addPoint(cs.args[0], cs.args[1], cs.code);
+          cx = cs.args[0];
+          cy = cs.args[1];
+          break;
+        case Command.Kind.QuadTo:
+          flattenQuad(cx, cy, cs.args[0], cs.args[1], cs.args[2], cs.args[3]);
+          cx = cs.args[2];
+          cy = cs.args[3];
+          break;
+        case Command.Kind.BezierTo:
+          flattenBezier(cx, cy, cs.args[0], cs.args[1], cs.args[2], cs.args[3], cs.args[4], cs.args[5], 0);
+          cx = cs.args[4];
+          cy = cs.args[5];
+          break;
+        default:
+          break;
+      }
+    }
+
+    return res;
+  }
+
   /// Returns forward range with all glyph commands.
-  auto commands () nothrow @trusted @nogc {
+  auto commands () const nothrow @trusted @nogc {
     static struct Range {
     private nothrow @trusted @nogc:
       usize dsaddr;
