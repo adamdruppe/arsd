@@ -1305,6 +1305,7 @@ public enum NVGImageFlag : uint {
   Premultiplied   = 1<<4, /// Image data has premultiplied alpha.
   NoFiltering     = 1<<8, /// use GL_NEAREST instead of GL_LINEAR
   Nearest = NoFiltering,  /// compatibility with original NanoVG
+  NoDelete        = 1<<16,/// Do not delete GL texture handle.
 }
 
 alias NVGImageFlags = NVGImageFlag; /// Backwards compatibility for [NVGImageFlag].
@@ -1471,6 +1472,8 @@ struct NVGstate {
   uint dashCount = 0;
   uint lastFlattenDashCount = 0;
   float dashStart = 0;
+  float totalDashLen;
+  bool firstDashIsGap = false;
   // dasher state for flattener
   bool dasherActive = false;
 
@@ -2966,6 +2969,7 @@ public void reset (NVGContext ctx) nothrow @trusted @nogc {
   state.dashCount = 0;
   state.lastFlattenDashCount = 0;
   state.dashStart = 0;
+  state.firstDashIsGap = false;
   state.dasherActive = false;
 
   ctx.params.renderResetClip(ctx.params.userPtr);
@@ -3060,14 +3064,18 @@ public void setLineDash (NVGContext ctx, const(float)[] dashdata) nothrow @trust
   NVGstate* state = nvg__getState(ctx);
   state.dashCount = 0;
   state.dashStart = 0;
+  state.firstDashIsGap = false;
   if (dashdata.length >= 2) {
+    bool curFIsGap = true; // trick
     foreach (immutable idx, float f; dashdata) {
-      if (f < 0.001) f = 0;
+      curFIsGap = !curFIsGap;
+      if (f < 0.01f) continue; // skip it
       if (idx == 0) {
         // register first dash
+        state.firstDashIsGap = curFIsGap;
         state.dashes.ptr[state.dashCount++] = f;
-      } else if (f != 0) {
-        if ((idx&1) != (state.dashCount&1)) {
+      } else {
+        if ((idx&1) != ((state.dashCount&1)^cast(uint)state.firstDashIsGap)) {
           // oops, continuation
           state.dashes[state.dashCount-1] += f;
         } else {
@@ -3084,7 +3092,14 @@ public void setLineDash (NVGContext ctx, const(float)[] dashdata) nothrow @trust
         state.dashes[state.dashCount++] = 0;
       }
     }
-    if (state.lastFlattenDashCount != 0) state.lastFlattenDashCount = uint.max; // force re-flattening
+    // calculate total dash path length
+    state.totalDashLen = 0;
+    foreach (float f; state.dashes.ptr[0..state.dashCount]) state.totalDashLen += f;
+    if (state.totalDashLen < 0.01f) {
+      state.dashCount = 0; // nothing to do
+    } else {
+      if (state.lastFlattenDashCount != 0) state.lastFlattenDashCount = uint.max; // force re-flattening
+    }
   }
 }
 
@@ -4536,6 +4551,7 @@ void nvg__dashLastPath (NVGContext ctx) nothrow @trusted @nogc {
   immutable uint dashCount = state.dashCount;
   float currDashStart = 0;
   uint currDashIdx = 0;
+  immutable bool firstIsGap = state.firstDashIsGap;
 
   // calculate lengthes
   {
@@ -4551,11 +4567,8 @@ void nvg__dashLastPath (NVGContext ctx) nothrow @trusted @nogc {
 
   void calcDashStart (float ds) {
     if (ds < 0) {
-      float plen = 0;
-      foreach (float f; dashes[0..dashCount]) plen += f;
-      //{ import core.stdc.stdio; printf("xx=%f\n", ds%plen); }
-      ds = ds%plen;
-      while (ds < 0) ds += plen; //FIXME
+      ds = ds%state.totalDashLen;
+      while (ds < 0) ds += state.totalDashLen;
     }
     currDashIdx = 0;
     currDashStart = 0;
@@ -4593,13 +4606,18 @@ void nvg__dashLastPath (NVGContext ctx) nothrow @trusted @nogc {
   }
 
   for (;;) {
-    immutable float dashRest = dashes[currDashIdx]-currDashStart;
-    if (currDashIdx&1) {
+    immutable float dlen = dashes[currDashIdx];
+    if (dlen == 0) {
+      ++currDashIdx;
+      if (currDashIdx >= dashCount) currDashIdx = 0;
+      continue;
+    }
+    immutable float dashRest = dlen-currDashStart;
+    if ((currDashIdx&1) != firstIsGap) {
       // this is "moveto" command, so create new path
       fixLastPoint();
       nvg__addPath(ctx);
     }
-    //cmd = (mCurrDash&1 ? PathCommand.MoveTo : PathCommand.LineTo);
     if (currRest > dashRest) {
       currRest -= dashRest;
       ++currDashIdx;
@@ -4612,7 +4630,7 @@ void nvg__dashLastPath (NVGContext ctx) nothrow @trusted @nogc {
       );
     } else {
       currDashStart += currRest;
-      nvg__addPoint(ctx, v2.x, v2.y, v1.flags); //???
+      nvg__addPoint(ctx, v2.x, v2.y, v1.flags); //k8:fix flags here?
       ++srcPointIdx;
       v1 = v2;
       currRest = v1.len;
@@ -12324,13 +12342,6 @@ public enum NVGContextFlag : int {
 
 public enum NANOVG_GL_USE_STATE_FILTER = true;
 
-/// These are additional flags on top of [NVGImageFlag].
-/// Group: images
-public enum NVGImageFlagsGL : int {
-  NoDelete = 1<<16,  // Do not delete GL texture handle.
-}
-
-
 /// Returns flags for glClear().
 /// Group: context_management
 public uint glNVGClearFlags () pure nothrow @safe @nogc {
@@ -12614,7 +12625,7 @@ bool glnvg__deleteTexture (GLNVGcontext* gl, ref int id) nothrow @trusted @nogc 
     try { import core.thread; mytid = Thread.getThis.id; } catch (Exception e) {}
     if (gl.mainTID == mytid && gl.inFrame) {
       // can delete it right now
-      if ((tx.flags&NVGImageFlagsGL.NoDelete) == 0) glDeleteTextures(1, &tx.tex);
+      if ((tx.flags&NVGImageFlag.NoDelete) == 0) glDeleteTextures(1, &tx.tex);
       version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** deleted texture with id %d (%d); glid=%u\n", tx.id, id, tx.tex); }}
       memset(tx, 0, (*tx).sizeof);
       //{ import core.stdc.stdio; printf("deleting texture with id %d\n", id); }
@@ -13594,7 +13605,7 @@ void glnvg__renderViewport (void* uptr, int width, int height) nothrow @trusted 
           if (tex.rc == 0 && tex.tex != 0 && tex.id == 0) {
             version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** cleaned up texture with glid=%u\n", tex.tex); }}
             import core.stdc.string : memset;
-            if ((tex.flags&NVGImageFlagsGL.NoDelete) == 0) glDeleteTextures(1, &tex.tex);
+            if ((tex.flags&NVGImageFlag.NoDelete) == 0) glDeleteTextures(1, &tex.tex);
             memset(&tex, 0, tex.sizeof);
             tex.nextfree = gl.freetexid;
             gl.freetexid = cast(int)tidx;
@@ -14315,7 +14326,7 @@ void glnvg__renderDelete (void* uptr) nothrow @trusted @nogc {
   if (gl.vertBuf != 0) glDeleteBuffers(1, &gl.vertBuf);
 
   foreach (ref GLNVGtexture tex; gl.textures[0..gl.ntextures]) {
-    if (tex.id != 0 && (tex.flags&NVGImageFlagsGL.NoDelete) == 0) {
+    if (tex.id != 0 && (tex.flags&NVGImageFlag.NoDelete) == 0) {
       assert(tex.tex != 0);
       glDeleteTextures(1, &tex.tex);
     }
