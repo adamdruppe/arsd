@@ -12121,6 +12121,8 @@ private extern(System) nothrow @nogc {
   enum uint GL_COPY = 0x1503U;
   enum uint GL_XOR = 0x1506U;
 
+  enum uint GL_FRAMEBUFFER_BINDING = 0x8CA6U;
+
   /*
   version(Windows) {
     private void* kglLoad (const(char)* name) {
@@ -12226,6 +12228,9 @@ private extern(System) nothrow @nogc {
   alias glbfn_glBindFramebuffer = void function (GLenum target, GLuint framebuffer);
   __gshared glbfn_glBindFramebuffer glBindFramebuffer_NVGLZ; alias glBindFramebuffer = glBindFramebuffer_NVGLZ;
 
+  alias glbfn_glGetIntegerv = void function (GLenum pname, GLint* data);
+  __gshared glbfn_glGetIntegerv glGetIntegerv_NVGLZ; alias glGetIntegerv = glGetIntegerv_NVGLZ;
+
   private void nanovgInitOpenGL () {
     __gshared bool initialized = false;
     if (initialized) return;
@@ -12314,6 +12319,9 @@ private extern(System) nothrow @nogc {
     if (glCheckFramebufferStatus_NVGLZ is null) assert(0, `OpenGL function 'glCheckFramebufferStatus' not found!`);
     glBindFramebuffer_NVGLZ = cast(glbfn_glBindFramebuffer)glbindGetProcAddress(`glBindFramebuffer`);
     if (glBindFramebuffer_NVGLZ is null) assert(0, `OpenGL function 'glBindFramebuffer' not found!`);
+
+    glGetIntegerv_NVGLZ = cast(glbfn_glGetIntegerv)glbindGetProcAddress(`glGetIntegerv`);
+    if (glGetIntegerv_NVGLZ is null) assert(0, `OpenGL function 'glGetIntegerv' not found!`);
 
     initialized = true;
   }
@@ -12502,6 +12510,7 @@ struct GLNVGcontext {
   bool inFrame; // will be `true` if we can perform OpenGL operations (used in texture deletion)
   shared bool mustCleanTextures; // will be `true` if we should delete some textures
   ThreadID mainTID;
+  uint mainFBO;
 
   // Per frame buffers
   GLNVGcall* calls;
@@ -12899,13 +12908,6 @@ void glnvg__copyFBOToFrom (GLNVGcontext* gl, int didx, int sidx) nothrow @truste
   assert(gl.fbo.ptr[sidx] != 0);
   if (didx == sidx) return;
 
-  /*
-  glBindFramebuffer(GL_FRAMEBUFFER, gl.fbo.ptr[didx]);
-  glClearColor(0, 0, 0, 0);
-  glClear(GL_COLOR_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
-  return;
-  */
-
   version(nanovega_debug_clipping) if (nanovegaClipDebugDump) { import core.stdc.stdio; printf("FBO(%d): copy FBO: %d -> %d\n", gl.msp-1, sidx, didx); }
 
   glUseProgram(gl.shaderCopyFBO.prog);
@@ -12990,8 +12992,6 @@ void glnvg__setFBOClipTexture (GLNVGcontext* gl, GLNVGfragUniforms* frag) nothro
 // returns index in `gl.fbo`, or -1 for "don't mask"
 int glnvg__generateFBOClipTexture (GLNVGcontext* gl) nothrow @trusted @nogc {
   assert(gl.msp > 0 && gl.msp <= gl.maskStack.length);
-  // reset cache
-  //glnvg__resetFBOClipTextureCache(gl);
   // we need initialized FBO, even for "don't mask" case
   // for this, look back in stack, and either copy initialized FBO,
   // or stop at first uninitialized one, and clear it
@@ -13517,7 +13517,7 @@ void glnvg__finishClip (GLNVGcontext* gl, NVGClipMode clipmode) nothrow @trusted
     //glnvg__restoreAffine(gl);
   }
 
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, gl.mainFBO);
   glDisable(GL_COLOR_LOGIC_OP);
   //glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); // done above
   glEnable(GL_BLEND);
@@ -13882,6 +13882,15 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
     if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
   } catch (Exception e) {}
   scope(exit) gl.inFrame = false;
+
+  glnvg__resetError!true(gl);
+  {
+    int vv = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &vv);
+    if (glGetError() || vv < 0) vv = 0;
+    gl.mainFBO = cast(uint)vv;
+  }
+
   enum ShaderType { None, Fill, Clip }
   auto lastShader = ShaderType.None;
   if (gl.ncalls > 0) {
