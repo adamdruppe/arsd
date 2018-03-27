@@ -356,7 +356,7 @@ struct PNG {
 
 	Chunk* getChunk(string what) {
 		foreach(ref c; chunks) {
-			if(cast(string) c.type == what)
+			if(c.stype == what)
 				return &c;
 		}
 		throw new Exception("no such chunk " ~ what);
@@ -364,7 +364,7 @@ struct PNG {
 
 	Chunk* getChunkNullable(string what) {
 		foreach(ref c; chunks) {
-			if(cast(string) c.type == what)
+			if(c.stype == what)
 				return &c;
 		}
 		return null;
@@ -384,7 +384,7 @@ struct PNG {
 				chunks[idx] = *chk;
 				return true;
 			}
-			if (cast(string)cc.type == "IDAT") {
+			if (cc.stype == "IDAT") {
 				// ok, insert it; and don't use phobos
 				chunks.length += 1;
 				foreach_reverse (immutable c; idx+1..chunks.length) chunks.ptr[c] = chunks.ptr[c-1];
@@ -669,7 +669,7 @@ ubyte[] getDatastream(PNG* p) {
 	ubyte[] compressed;
 
 	foreach(c; p.chunks) {
-		if(cast(string) c.type != "IDAT")
+		if(c.stype != "IDAT")
 			continue;
 		compressed ~= c.payload;
 	}
@@ -1576,8 +1576,8 @@ struct Chunk {
 	uint checksum;
 
 	/// returns the type as a string for easier comparison with literals
-	string stype() const {
-		return cast(string) type;
+	const(char)[] stype() return const {
+		return cast(const(char)[]) type;
 	}
 
 	static Chunk* create(string type, ubyte[] payload)
