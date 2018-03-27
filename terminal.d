@@ -36,8 +36,6 @@
 
 		* More advanced terminal features as functions, where available, like cursor changing and full-color functions.
 
-		* The module will eventually be renamed to `arsd.terminal`.
-
 		* More documentation.
 	)
 
