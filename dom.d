@@ -3746,6 +3746,13 @@ class DocumentFragment : Element {
 		super(_parentDocument);
 	}
 
+	///
+	this(Html html) {
+		this(null);
+
+		this.innerHTML = html.source;
+	}
+
 	///.
 	override string writeToAppender(Appender!string where = appender!string()) const {
 		return this.innerHTML(where);
