@@ -2068,9 +2068,9 @@ public:
 	 */
 	@property bool eventQueueEmpty() () {
 		synchronized(this) {
-			foreach (const ref o; eventQueue[0..eventQueueUsed]) if (!o.doProcess) return true;
+			foreach (const ref o; eventQueue[0..eventQueueUsed]) if (!o.doProcess) return false;
 		}
-		return false;
+		return true;
 	}
 
 	/** Does our custom event queue contains at least one with the given type?
@@ -2159,16 +2159,26 @@ public:
 
 		// remove all events of type `ET`
 		void removeAllET () {
-			uint eidx = 0;
-			while (eidx < eventQueueUsed) {
-				if (cast(ET)eventQueue[eidx].evt !is null) {
+			uint eidx = 0, ec = eventQueueUsed;
+			auto eptr = eventQueue.ptr;
+			while (eidx < ec) {
+				if (eptr.doProcess) { ++eidx; ++eptr; continue; }
+				if (cast(ET)eptr.evt !is null) {
 					// i found her!
-					foreach (immutable c; eidx+1..eventQueueUsed) eventQueue[c-1] = eventQueue[c];
-					--eventQueueUsed;
-					// clear last event (it is already copied)
-					eventQueue[eventQueueUsed].evt = null;
+					if (inCustomEventProcessor) {
+						// if we're in custom event processing loop, processor will clear it for us
+						eptr.evt = null;
+						++eidx;
+						++eptr;
+					} else {
+						foreach (immutable c; eidx+1..ec) eventQueue.ptr[c-1] = eventQueue.ptr[c];
+						ec = --eventQueueUsed;
+						// clear last event (it is already copied)
+						eventQueue.ptr[ec].evt = null;
+					}
 				} else {
 					++eidx;
+					++eptr;
 				}
 			}
 		}
@@ -2270,21 +2280,48 @@ private:
 	EventHandlerEntry[] eventHandlers;
 	QueuedEvent[] eventQueue = null;
 	uint eventQueueUsed = 0; // to avoid `.assumeSafeAppend` and length changes
+	bool inCustomEventProcessor = false; // required to properly remove events
 
 	// process queued events and call custom event handlers
 	// this will not process events posted from called handlers (such events are postponed for the next iteration)
 	void processCustomEvents () {
+		bool hasSomethingToDo = false;
 		uint ecount;
+		bool ocep;
 		synchronized(this) {
+			ocep = inCustomEventProcessor;
+			inCustomEventProcessor = true;
 			ecount = eventQueueUsed; // user may want to post new events from an event handler; process 'em on next iteration
 			auto ctt = MonoTime.currTime;
+			bool hasEmpty = false;
 			// mark events to process (this is required for `eventQueued()`)
 			foreach (ref qe; eventQueue[0..ecount]) {
+				if (qe.evt is null) { hasEmpty = true; continue; }
 				if (qe.timed) {
 					qe.doProcess = (qe.hittime <= ctt);
 				} else {
 					qe.doProcess = true;
 				}
+				hasSomethingToDo = (hasSomethingToDo || qe.doProcess);
+			}
+			if (!hasSomethingToDo) {
+				// remove empty events
+				if (hasEmpty) {
+					uint eidx = 0, ec = eventQueueUsed;
+					auto eptr = eventQueue.ptr;
+					while (eidx < ec) {
+						if (eptr.evt is null) {
+							foreach (immutable c; eidx+1..ec) eventQueue.ptr[c-1] = eventQueue.ptr[c];
+							ec = --eventQueueUsed;
+							eventQueue.ptr[ec].evt = null; // make GC life easier
+						} else {
+							++eidx;
+							++eptr;
+						}
+					}
+				}
+				inCustomEventProcessor = ocep;
+				return;
 			}
 		}
 		// process marked events
@@ -2323,9 +2360,22 @@ private:
 			}
 			eventQueueUsed = efree;
 			// wake up event processor on next event loop iteration if we have more queued events
-			foreach (const ref qe; eventQueue[0..eventQueueUsed]) {
-				if (!qe.timed) { eventWakeUp(); break; }
+			// also, remove empty events
+			bool awaken = false;
+			uint eidx = 0, ec = eventQueueUsed;
+			auto eptr = eventQueue.ptr;
+			while (eidx < ec) {
+				if (eptr.evt is null) {
+					foreach (immutable c; eidx+1..ec) eventQueue.ptr[c-1] = eventQueue.ptr[c];
+					ec = --eventQueueUsed;
+					eventQueue.ptr[ec].evt = null; // make GC life easier
+				} else {
+					if (!awaken && !eptr.timed) { eventWakeUp(); awaken = true; }
+					++eidx;
+					++eptr;
+				}
 			}
+			inCustomEventProcessor = ocep;
 		}
 	}
 
@@ -2341,6 +2391,7 @@ private:
 	uint eventQueueTimeoutMSecs () {
 		synchronized(this) {
 			if (eventQueueUsed == 0) return 0;
+			if (inCustomEventProcessor) assert(0, "WUTAFUUUUUUU..."); // the thing that should not be. ABSOLUTELY! (c)
 			uint res = int.max;
 			auto ctt = MonoTime.currTime;
 			foreach (const ref qe; eventQueue[0..eventQueueUsed]) {

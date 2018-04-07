@@ -3066,11 +3066,27 @@ public ubyte[] decompress_jpeg_image_from_stream(bool useMalloc=false) (scope Jp
     auto pImage_data = idata.ptr;
   }
 
+  scope(failure) {
+    static if (useMalloc) {
+      jpgd_free(pImage_data);
+    } else {
+      import core.memory : GC;
+      GC.free(idata.ptr);
+      idata = null;
+    }
+  }
+
   for (int y = 0; y < image_height; ++y) {
     const(ubyte)* pScan_line;
     uint scan_line_len;
     if (decoder.decode(/*(const void**)*/cast(void**)&pScan_line, &scan_line_len) != JPGD_SUCCESS) {
-      jpgd_free(pImage_data);
+      static if (useMalloc) {
+        jpgd_free(pImage_data);
+      } else {
+        import core.memory : GC;
+        GC.free(idata.ptr);
+        idata = null;
+      }
       return null;
     }
 
@@ -3251,6 +3267,7 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
 
   immutable int dst_bpl = image_width*req_comps;
   auto img = new TrueColorImage(image_width, image_height);
+  scope(failure) { img.clearInternal(); img = null; }
   ubyte* pImage_data = img.imageData.bytes.ptr;
 
   for (int y = 0; y < image_height; ++y) {
@@ -3259,7 +3276,9 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
     const(ubyte)* pScan_line;
     uint scan_line_len;
     if (decoder.decode(/*(const void**)*/cast(void**)&pScan_line, &scan_line_len) != JPGD_SUCCESS) {
-      jpgd_free(pImage_data);
+      img.clearInternal();
+      img = null;
+      //jpgd_free(pImage_data);
       return null;
     }
 

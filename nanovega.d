@@ -1021,10 +1021,12 @@ private:
 public:
   ///
   this() (in auto ref NVGImage src) nothrow @trusted @nogc {
-    version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p created from %p (imgid=%d)\n", &this, src, src.id); }
-    ctx = cast(NVGContext)src.ctx;
-    id = src.id;
-    if (ctx !is null) ctx.nvg__imageIncRef(id);
+    version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; if (src.id != 0) printf("NVGImage %p created from %p (imgid=%d)\n", &this, src, src.id); }
+    if (src.id > 0 && src.ctx !is null) {
+      ctx = cast(NVGContext)src.ctx;
+      id = src.id;
+      ctx.nvg__imageIncRef(id);
+    }
   }
 
   ///
@@ -1032,7 +1034,8 @@ public:
 
   ///
   this (this) nothrow @trusted @nogc {
-    if (ctx !is null) {
+    version(aliced) pragma(inline, true);
+    if (id > 0 && ctx !is null) {
       version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p postblit (imgid=%d)\n", &this, id); }
       ctx.nvg__imageIncRef(id);
     }
@@ -1040,17 +1043,31 @@ public:
 
   ///
   void opAssign() (in auto ref NVGImage src) nothrow @trusted @nogc {
-    version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p (imgid=%d) assigned from %p (imgid=%d)\n", &this, id, &src, src.id); }
-    if (src.ctx !is null) (cast(NVGContext)src.ctx).nvg__imageIncRef(src.id);
-    if (ctx !is null) ctx.nvg__imageDecRef(id);
-    ctx = cast(NVGContext)src.ctx;
-    id = src.id;
+    if (src.id <= 0 || src.ctx is null) {
+      clear();
+    } else {
+      version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p (imgid=%d) assigned from %p (imgid=%d)\n", &this, id, &src, src.id); }
+      if (src.id > 0 && src.ctx !is null) (cast(NVGContext)src.ctx).nvg__imageIncRef(src.id);
+      if (id > 0 && ctx !is null) ctx.nvg__imageDecRef(id);
+      ctx = cast(NVGContext)src.ctx;
+      id = src.id;
+    }
+  }
+
+  /// Free this image.
+  void clear () nothrow @trusted @nogc {
+    if (id > 0 && ctx !is null) {
+      version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p cleared (imgid=%d)\n", &this, id); }
+      ctx.nvg__imageDecRef(id);
+    }
+    id = 0;
+    ctx = null;
   }
 
   /// Is this image valid?
   @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (id > 0 && ctx.valid); }
 
-  /// Is this image valid?
+  /// Is the given image valid and comes from the same context?
   @property bool isSameContext (const(NVGContext) actx) const pure nothrow @safe @nogc { pragma(inline, true); return (actx !is null && ctx is actx); }
 
   /// Returns image width, or zero for invalid image.
@@ -1071,16 +1088,6 @@ public:
       ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
     }
     return h;
-  }
-
-  /// Free this image.
-  void clear () nothrow @trusted @nogc {
-    if (ctx !is null) {
-      version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("NVGImage %p cleared (imgid=%d)\n", &this, id); }
-      ctx.nvg__imageDecRef(id);
-      ctx = null;
-      id = 0;
-    }
   }
 }
 
@@ -1429,7 +1436,7 @@ enum NVG_INIT_PATHS_SIZE    = 16;
 enum NVG_INIT_VERTS_SIZE    = 256;
 enum NVG_MAX_STATES         = 32;
 
-enum NVG_KAPPA90 = 0.5522847493f; // Length proportional to radius of a cubic bezier handle for 90deg arcs.
+public enum NVG_KAPPA90 = 0.5522847493f; /// Length proportional to radius of a cubic bezier handle for 90deg arcs.
 enum NVG_MIN_FEATHER = 0.001f; // it should be greater than zero, 'cause it is used in shader for divisions
 
 enum Command {
@@ -1670,6 +1677,12 @@ private:
   bool contextAlive; // context can be dead, but still contain some images
 
   @disable this (this); // no copies
+
+  // debug feature
+  public @property int getImageCount () nothrow @trusted @nogc {
+    import core.atomic;
+    return atomicLoad(imageCount);
+  }
 }
 
 /** Returns number of tesselated pathes in context.
@@ -1775,7 +1788,8 @@ public auto nvg__clamp(T) (T a, T mn, T mx) { pragma(inline, true); return (a < 
 public auto nvg__sign(T) (T a) { pragma(inline, true); return (a >= cast(T)0 ? cast(T)1 : cast(T)(-1)); }
 public float nvg__cross() (float dx0, float dy0, float dx1, float dy1) { pragma(inline, true); return (dx1*dy0-dx0*dy1); }
 
-public import core.stdc.math : nvg__absf = fabsf;
+//public import core.stdc.math : nvg__absf = fabsf;
+public import core.math : nvg__absf = fabs;
 
 
 float nvg__normalize (float* x, float* y) nothrow @safe @nogc {
@@ -3384,6 +3398,7 @@ public NVGImage createImageRGBA (NVGContext ctx, int w, int h, const(void)[] dat
   NVGImage res;
   res.id = ctx.params.renderCreateTexture(ctx.params.userPtr, NVGtexture.RGBA, w, h, imageFlags, cast(const(ubyte)*)data.ptr);
   if (res.id > 0) {
+    version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("createImageRGBA: img=%p; imgid=%d\n", &res, res.id); }
     res.ctx = ctx;
     ctx.nvg__imageIncRef(res.id, false); // don't increment driver refcount
   }
@@ -6544,7 +6559,7 @@ void nvg__pickSubPathAddStrokeSupports (NVGpickScene* ps, NVGpickSubPath* psp, f
   NVGsegment* prevseg = (closed ? &segments[psp.nsegments-1] : null);
 
   int ns = 0; // nsupports
-  float[32] supportingPoints;
+  float[32] supportingPoints = void;
   int firstPoint, lastPoint;
 
   if (!closed) {
@@ -11161,7 +11176,7 @@ enum APREC = 16;
 enum ZPREC = 7;
 
 void fons__blurCols (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
-  foreach (int y; 0..h) {
+  foreach (immutable int y; 0..h) {
     int z = 0; // force zero border
     foreach (int x; 1..w) {
       z += (alpha*((cast(int)(dst[x])<<ZPREC)-z))>>APREC;
@@ -11179,7 +11194,7 @@ void fons__blurCols (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow
 }
 
 void fons__blurRows (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
-  foreach (int x; 0..w) {
+  foreach (immutable int x; 0..w) {
     int z = 0; // force zero border
     for (int y = dstStride; y < h*dstStride; y += dstStride) {
       z += (alpha*((cast(int)(dst[y])<<ZPREC)-z))>>APREC;
@@ -11199,12 +11214,10 @@ void fons__blurRows (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow
 
 void fons__blur (FONScontext* stash, ubyte* dst, int w, int h, int dstStride, int blur) nothrow @trusted @nogc {
   import std.math : expf = exp;
-  int alpha;
-  float sigma;
   if (blur < 1) return;
   // Calculate the alpha such that 90% of the kernel is within the radius. (Kernel extends to infinity)
-  sigma = cast(float)blur*0.57735f; // 1/sqrt(3)
-  alpha = cast(int)((1<<APREC)*(1.0f-expf(-2.3f/(sigma+1.0f))));
+  immutable float sigma = cast(float)blur*0.57735f; // 1/sqrt(3)
+  int alpha = cast(int)((1<<APREC)*(1.0f-expf(-2.3f/(sigma+1.0f))));
   fons__blurRows(dst, w, h, dstStride, alpha);
   fons__blurCols(dst, w, h, dstStride, alpha);
   fons__blurRows(dst, w, h, dstStride, alpha);
@@ -11214,28 +11227,23 @@ void fons__blur (FONScontext* stash, ubyte* dst, int w, int h, int dstStride, in
 }
 
 FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, short isize, short iblur, FONSglyphBitmap bitmapOption) nothrow @trusted @nogc {
-  int i, g, advance, lsb, x0, y0, x1, y1, gw, gh, gx, gy, x, y;
-  float scale;
+  int advance, lsb, x0, y0, x1, y1, gx, gy;
   FONSglyph* glyph = null;
-  uint h;
   float size = isize/10.0f;
-  int pad, added;
-  ubyte* bdst;
-  ubyte* dst;
   FONSfont* renderFont = font;
 
   version(nanovg_kill_font_blur) iblur = 0;
 
   if (isize < 2) return null;
   if (iblur > 20) iblur = 20;
-  pad = iblur+2;
+  int pad = iblur+2;
 
   // Reset allocator.
   stash.nscratch = 0;
 
   // Find code point and size.
-  h = fons__hashint(codepoint)&(FONS_HASH_LUT_SIZE-1);
-  i = font.lut.ptr[h];
+  uint h = fons__hashint(codepoint)&(FONS_HASH_LUT_SIZE-1);
+  int i = font.lut.ptr[h];
   while (i != -1) {
     //if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) return &font.glyphs[i];
     if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) {
@@ -11250,19 +11258,19 @@ FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, s
 
   // Create a new glyph or rasterize bitmap data for a cached glyph.
   //scale = fons__tt_getPixelHeightScale(&font.font, size);
-  g = fons__findGlyphForCP(stash, font, cast(dchar)codepoint, &renderFont);
+  int g = fons__findGlyphForCP(stash, font, cast(dchar)codepoint, &renderFont);
   // It is possible that we did not find a fallback glyph.
   // In that case the glyph index 'g' is 0, and we'll proceed below and cache empty glyph.
 
-  scale = fons__tt_getPixelHeightScale(&renderFont.font, size);
+  float scale = fons__tt_getPixelHeightScale(&renderFont.font, size);
   fons__tt_buildGlyphBitmap(&renderFont.font, g, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
-  gw = x1-x0+pad*2;
-  gh = y1-y0+pad*2;
+  int gw = x1-x0+pad*2;
+  int gh = y1-y0+pad*2;
 
   // Determines the spot to draw glyph in the atlas.
   if (bitmapOption == FONS_GLYPH_BITMAP_REQUIRED) {
     // Find free spot for the rect in the atlas.
-    added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
+    int added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
     if (added == 0 && stash.handleError !is null) {
       // Atlas is full, let the user to resize the atlas (or not), and try again.
       stash.handleError(stash.errorUptr, FONS_ATLAS_FULL, 0);
@@ -11299,16 +11307,16 @@ FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, s
   if (bitmapOption == FONS_GLYPH_BITMAP_OPTIONAL) return glyph;
 
   // Rasterize
-  dst = &stash.texData[(glyph.x0+pad)+(glyph.y0+pad)*stash.params.width];
+  ubyte* dst = &stash.texData[(glyph.x0+pad)+(glyph.y0+pad)*stash.params.width];
   fons__tt_renderGlyphBitmap(&font.font, dst, gw-pad*2, gh-pad*2, stash.params.width, scale, scale, g);
 
   // Make sure there is one pixel empty border.
   dst = &stash.texData[glyph.x0+glyph.y0*stash.params.width];
-  for (y = 0; y < gh; y++) {
+  foreach (immutable int y; 0..gh) {
     dst[y*stash.params.width] = 0;
     dst[gw-1+y*stash.params.width] = 0;
   }
-  for (x = 0; x < gw; x++) {
+  foreach (immutable int x; 0..gw) {
     dst[x] = 0;
     dst[x+(gh-1)*stash.params.width] = 0;
   }
@@ -11327,7 +11335,7 @@ FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, s
   // Blur
   if (iblur > 0) {
     stash.nscratch = 0;
-    bdst = &stash.texData[glyph.x0+glyph.y0*stash.params.width];
+    ubyte* bdst = &stash.texData[glyph.x0+glyph.y0*stash.params.width];
     fons__blur(stash, bdst, gw, gh, stash.params.width, iblur);
   }
 
@@ -11439,7 +11447,6 @@ public bool fonsTextIterInit(T) (FONScontext* stash, FONStextIter!T* iter, float
   if (stash is null || iter is null) return false;
 
   FONSstate* state = fons__getState(stash);
-  float width;
 
   memset(iter, 0, (*iter).sizeof);
 
@@ -11453,6 +11460,7 @@ public bool fonsTextIterInit(T) (FONScontext* stash, FONStextIter!T* iter, float
   iter.scale = fons__tt_getPixelHeightScale(&iter.font.font, cast(float)iter.isize/10.0f);
 
   // Align horizontally
+  float width = void;
   if (state.talign.left) {
     // empty
   } else if (state.talign.right) {
@@ -11751,24 +11759,21 @@ if (isAnyCharType!T)
   int prevGlyphIndex = -1;
   short isize = cast(short)(state.size*10.0f);
   short iblur = cast(short)state.blur;
-  float scale;
   FONSfont* font;
-  float startx, advance;
-  float minx, miny, maxx, maxy;
 
   if (stash is null) return 0;
   if (state.font < 0 || state.font >= stash.nfonts) return 0;
   font = stash.fonts[state.font];
   if (font is null || font.fdata is null) return 0;
 
-  scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
+  float scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
 
   // Align vertically.
   y += fons__getVertAlign(stash, font, state.talign, isize);
 
-  minx = maxx = x;
-  miny = maxy = y;
-  startx = x;
+  float minx = x, maxx = x;
+  float miny = y, maxy = y;
+  float startx = x;
 
   foreach (T ch; str) {
     static if (T.sizeof == 1) {
@@ -11802,7 +11807,7 @@ if (isAnyCharType!T)
     }
   }
 
-  advance = x-startx;
+  float advance = x-startx;
   //{ import core.stdc.stdio; printf("***: x=%g; startx=%g; advance=%g\n", cast(double)x, cast(double)startx, cast(double)advance); }
 
   // Align horizontally
@@ -12020,6 +12025,15 @@ public bool fonsResetAtlas (FONScontext* stash, int width, int height) nothrow @
 // ////////////////////////////////////////////////////////////////////////// //
 import core.stdc.stdlib : malloc, realloc, free;
 import core.stdc.string : memcpy, memset;
+
+static if (__VERSION__ < 2076) {
+  private auto DGNoThrowNoGC(T) (scope T t) /*if (isFunctionPointer!T || isDelegate!T)*/ {
+    import std.traits;
+    enum attrs = functionAttributes!T|FunctionAttribute.nogc|FunctionAttribute.nothrow_;
+    return cast(SetFunctionAttributes!(T, functionLinkage!T, attrs)) t;
+  }
+}
+
 
 //import arsd.simpledisplay;
 version(nanovg_builtin_opengl_bindings) { import arsd.simpledisplay; } else { import iv.glbinds; }
@@ -12631,7 +12645,13 @@ bool glnvg__deleteTexture (GLNVGcontext* gl, ref int id) nothrow @trusted @nogc 
   if (atomicOp!"-="(tx.rc, 1) == 0) {
     import core.thread : ThreadID;
     ThreadID mytid;
-    try { import core.thread; mytid = Thread.getThis.id; } catch (Exception e) {}
+    static if (__VERSION__ < 2076) {
+      DGNoThrowNoGC(() {
+        import core.thread; mytid = Thread.getThis.id;
+      })();
+    } else {
+      try { import core.thread; mytid = Thread.getThis.id; } catch (Exception e) {}
+    }
     if (gl.mainTID == mytid && gl.inFrame) {
       // can delete it right now
       if ((tx.flags&NVGImageFlag.NoDelete) == 0) glDeleteTextures(1, &tx.tex);
@@ -13597,7 +13617,13 @@ void glnvg__renderViewport (void* uptr, int width, int height) nothrow @trusted 
   if (atomicLoad(gl.mustCleanTextures)) {
     try {
       import core.thread : Thread;
-      if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      static if (__VERSION__ < 2076) {
+        DGNoThrowNoGC(() {
+          if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+        })();
+      } else {
+        if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      }
       synchronized(GLNVGTextureLocker.classinfo) {
         gl.mustCleanTextures = false;
         foreach (immutable tidx, ref GLNVGtexture tex; gl.textures[0..gl.ntextures]) {
@@ -13780,7 +13806,13 @@ void glnvg__renderCancelInternal (GLNVGcontext* gl, bool clearTextures) nothrow 
   if (clearTextures && gl.inFrame) {
     try {
       import core.thread : Thread;
-      if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      static if (__VERSION__ < 2076) {
+        DGNoThrowNoGC(() {
+          if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+        })();
+      } else {
+        if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      }
     } catch (Exception e) {}
     foreach (ref GLNVGcall c; gl.calls[0..gl.ncalls]) if (c.image > 0) glnvg__deleteTexture(gl, c.image);
   }
@@ -13879,7 +13911,13 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
   if (!gl.inFrame) assert(0, "NanoVega: internal driver error");
   try {
     import core.thread : Thread;
-    if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+    static if (__VERSION__ < 2076) {
+      DGNoThrowNoGC(() {
+        if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+      })();
+    } else {
+      if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
+    }
   } catch (Exception e) {}
   scope(exit) gl.inFrame = false;
 
@@ -14412,7 +14450,11 @@ public NVGContext nvgCreateContext (const(NVGContextFlag)[] flagList...) nothrow
   ctx = createInternal(&params);
   if (ctx is null) goto error;
 
-  try { import core.thread; gl.mainTID = Thread.getThis.id; } catch (Exception e) {}
+  static if (__VERSION__ < 2076) {
+    DGNoThrowNoGC(() { import core.thread; gl.mainTID = Thread.getThis.id; })();
+  } else {
+    try { import core.thread; gl.mainTID = Thread.getThis.id; } catch (Exception e) {}
+  }
 
   return ctx;
 
