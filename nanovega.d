@@ -1361,14 +1361,16 @@ struct NVGpath {
   bool cloned;
 
   @disable this (this); // no copies
+  void opAssign() (in auto ref NVGpath a) { static assert(0, "no copies!"); }
 
   void clear () nothrow @trusted @nogc {
     import core.stdc.stdlib : free;
+    import core.stdc.string : memset;
     if (cloned) {
       if (stroke !is null && stroke !is fill) free(stroke);
       if (fill !is null) free(fill);
     }
-    this = this.init;
+    memset(&this, 0, this.sizeof);
   }
 
   // won't clear current path
@@ -1522,6 +1524,7 @@ struct NVGpathCache {
   int ncommands;
 
   @disable this (this); // no copies
+  void opAssign() (in auto ref NVGpathCache a) { static assert(0, "no copies!"); }
 
   // won't clear current path
   void copyFrom (const NVGpathCache* src) nothrow @trusted @nogc {
@@ -1562,8 +1565,11 @@ struct NVGpathCache {
 /// Group: context_management
 public alias NVGContext = NVGcontextinternal*;
 
-// Returns FontStash context of the given NanoVega context.
-public FONScontext* fonsContext (NVGContext ctx) { return (ctx !is null ? ctx.fs : null); }
+/// FontStash context
+public alias FONSContext = FONScontextInternal*;
+
+/// Returns FontStash context of the given NanoVega context.
+public FONSContext fonsContext (NVGContext ctx) { return (ctx !is null && ctx.contextAlive ? ctx.fs : null); }
 
 /** Bezier curve rasterizer.
  *
@@ -1653,7 +1659,7 @@ private:
   float distTol;
   public float fringeWidth;
   float devicePxRatio;
-  FONScontext* fs;
+  FONSContext fs;
   NVGImage[NVG_MAX_FONTIMAGES] fontImages;
   int fontImageIdx;
   int drawCallCount;
@@ -1677,6 +1683,7 @@ private:
   bool contextAlive; // context can be dead, but still contain some images
 
   @disable this (this); // no copies
+  void opAssign() (in auto ref NVGcontextinternal a) { static assert(0, "no copies!"); }
 
   // debug feature
   public @property int getImageCount () nothrow @trusted @nogc {
@@ -1736,7 +1743,6 @@ public bool renderPathComplex (NVGContext ctx, int pathidx) pure nothrow @truste
   return (ctx !is null && ctx.contextAlive && pathidx >= 0 && pathidx < ctx.cache.npaths ? ctx.cache.paths[pathidx].complex : false);
 
 }
-
 
 void nvg__imageIncRef (NVGContext ctx, int imgid, bool increfInGL=true) nothrow @trusted @nogc {
   if (ctx !is null && imgid > 0) {
@@ -1881,7 +1887,7 @@ NVGstate* nvg__getState (NVGContext ctx) pure nothrow @trusted @nogc {
 
 // Constructor called by the render back-end.
 NVGContext createInternal (NVGparams* params) nothrow @trusted @nogc {
-  FONSparams fontParams = void;
+  FONSParams fontParams;
   NVGContext ctx = cast(NVGContext)malloc(NVGcontextinternal.sizeof);
   if (ctx is null) goto error;
   memset(ctx, 0, NVGcontextinternal.sizeof);
@@ -1920,7 +1926,7 @@ NVGContext createInternal (NVGparams* params) nothrow @trusted @nogc {
   debug(nanovega) fontParams.renderDraw = null;
   fontParams.renderDelete = null;
   fontParams.userPtr = null;
-  ctx.fs = fonsCreateInternal(&fontParams);
+  ctx.fs = FONSContext.createInternal(fontParams);
   if (ctx.fs is null) goto error;
 
   // create font texture
@@ -1952,7 +1958,7 @@ void deleteInternal (ref NVGContext ctx) nothrow @trusted @nogc {
     if (ctx.commands !is null) free(ctx.commands);
     nvg__deletePathCache(ctx.cache);
 
-    if (ctx.fs) fonsDeleteInternal(ctx.fs);
+    if (ctx.fs) ctx.fs.kill();
 
     foreach (uint i; 0..NVG_MAX_FONTIMAGES) ctx.fontImages[i].clear();
 
@@ -2238,6 +2244,7 @@ private:
 
 public:
   @disable this (this); // no copies
+  void opAssign() (in auto ref NVGPathSetS a) { static assert(0, "no copies!"); }
 
   // pick test
   // Call delegate [dg] for each path under the specified position (in no particular order).
@@ -3686,7 +3693,6 @@ private:
   public float angle; ///
 
 public:
-  @disable this (this); // no copies
   @property bool valid () const pure nothrow @safe @nogc { pragma(inline, true); return (imgid.valid || midp >= -1); } ///
   void clear ()  nothrow @safe @nogc { pragma(inline, true); imgid.clear(); midp = float.nan; } ///
 }
@@ -7731,7 +7737,7 @@ public NVGPathOutline getCurrPathOutline (NVGContext ctx) nothrow @trusted @nogc
  * Group: text_api
  */
 public int createFont (NVGContext ctx, const(char)[] name, const(char)[] path) nothrow @trusted {
-  return fonsAddFont(ctx.fs, name, path, ctx.params.fontAA);
+  return ctx.fs.addFont(name, path, ctx.params.fontAA);
 }
 
 /** Creates font by loading it from the specified memory chunk.
@@ -7741,7 +7747,7 @@ public int createFont (NVGContext ctx, const(char)[] name, const(char)[] path) n
  * Group: text_api
  */
 public int createFontMem (NVGContext ctx, const(char)[] name, ubyte* data, int ndata, bool freeData) nothrow @trusted @nogc {
-  return fonsAddFontMem(ctx.fs, name, data, ndata, freeData, ctx.params.fontAA);
+  return ctx.fs.addFontMem(name, data, ndata, freeData, ctx.params.fontAA);
 }
 
 /// Add fonts from another context.
@@ -7749,14 +7755,14 @@ public int createFontMem (NVGContext ctx, const(char)[] name, ubyte* data, int n
 /// Group: text_api
 public void addFontsFrom (NVGContext ctx, NVGContext source) nothrow @trusted @nogc {
   if (ctx is null || source is null) return;
-  ctx.fs.fonsAddStashFonts(source.fs);
+  ctx.fs.addFontsFrom(source.fs);
 }
 
 /// Finds a loaded font of specified name, and returns handle to it, or FONS_INVALID (aka -1) if the font is not found.
 /// Group: text_api
 public int findFont (NVGContext ctx, const(char)[] name) nothrow @trusted @nogc {
   pragma(inline, true);
-  return (name.length == 0 ? FONS_INVALID : fonsGetFontByName(ctx.fs, name));
+  return (name.length == 0 ? FONS_INVALID : ctx.fs.getFontByName(name));
 }
 
 /// Sets the font size of current text style.
@@ -7877,7 +7883,7 @@ public int fontFaceId (NVGContext ctx) nothrow @trusted @nogc {
  */
 public void fontFace (NVGContext ctx, const(char)[] font) nothrow @trusted @nogc {
   pragma(inline, true);
-  nvg__getState(ctx).fontId = fonsGetFontByName(ctx.fs, font);
+  nvg__getState(ctx).fontId = ctx.fs.getFontByName(font);
 }
 
 static if (is(typeof(&fons__nvg__toPath))) {
@@ -7892,8 +7898,8 @@ static if (is(typeof(&fons__nvg__toPath))) {
 /// Group: text_api
 public bool charToPath (NVGContext ctx, dchar dch, float[] bounds=null) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
-  fonsSetFont(ctx.fs, state.fontId);
-  return fonsToPath(ctx.fs, ctx, dch, bounds);
+  ctx.fs.fontId = state.fontId;
+  return ctx.fs.toPath(ctx, dch, bounds);
 }
 
 static if (is(typeof(&fons__nvg__bounds))) {
@@ -7908,8 +7914,8 @@ static if (is(typeof(&fons__nvg__bounds))) {
 /// Group: text_api
 public bool charPathBounds (NVGContext ctx, dchar dch, float[] bounds) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
-  fonsSetFont(ctx.fs, state.fontId);
-  return fonsPathBounds(ctx.fs, dch, bounds);
+  ctx.fs.fontId = state.fontId;
+  return ctx.fs.getPathBounds(dch, bounds);
 }
 
 /** [charOutline] will return [NVGPathOutline].
@@ -8367,9 +8373,9 @@ public NVGPathOutline charOutline (NVGContext ctx, dchar dch) nothrow @trusted @
   import core.stdc.stdlib : malloc;
   import core.stdc.string : memcpy;
   NVGstate* state = nvg__getState(ctx);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.fontId = state.fontId;
   auto oline = NVGPathOutline.createNew();
-  if (!fonsToOutline(ctx.fs, dch, oline.ds)) oline.clear();
+  if (!ctx.fs.toOutline(dch, oline.ds)) oline.clear();
   return oline;
 }
 
@@ -8386,12 +8392,12 @@ float nvg__getFontScale (NVGstate* state) nothrow @safe @nogc {
 
 void nvg__flushTextTexture (NVGContext ctx) nothrow @trusted @nogc {
   int[4] dirty = void;
-  if (fonsValidateTexture(ctx.fs, dirty.ptr)) {
+  if (ctx.fs.validateTexture(dirty.ptr)) {
     auto fontImage = &ctx.fontImages[ctx.fontImageIdx];
     // Update texture
     if (fontImage.valid) {
       int iw, ih;
-      const(ubyte)* data = fonsGetTextureData(ctx.fs, &iw, &ih);
+      const(ubyte)* data = ctx.fs.getTextureData(&iw, &ih);
       int x = dirty[0];
       int y = dirty[1];
       int w = dirty[2]-dirty[0];
@@ -8420,7 +8426,7 @@ bool nvg__allocTextAtlas (NVGContext ctx) nothrow @trusted @nogc {
     }
   }
   ++ctx.fontImageIdx;
-  fonsResetAtlas(ctx.fs, iw, ih);
+  ctx.fs.resetAtlas(iw, ih);
   return true;
 }
 
@@ -8446,8 +8452,8 @@ void nvg__renderText (NVGContext ctx, NVGVertex* verts, int nverts) nothrow @tru
 /// Group: text_api
 public float text(T) (NVGContext ctx, float x, float y, const(T)[] str) nothrow @trusted @nogc if (isAnyCharType!T) {
   NVGstate* state = nvg__getState(ctx);
-  FONStextIter!T iter, prevIter;
-  FONSquad q;
+  FONSTextIter!T iter, prevIter;
+  FONSQuad q;
   NVGVertex* verts;
   float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   float invscale = 1.0f/scale;
@@ -8457,19 +8463,19 @@ public float text(T) (NVGContext ctx, float x, float y, const(T)[] str) nothrow 
   if (state.fontId == FONS_INVALID) return x;
   if (str.length == 0) return x;
 
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
 
   cverts = nvg__max(2, cast(int)(str.length))*6; // conservative estimate
   verts = nvg__allocTempVerts(ctx, cverts);
   if (verts is null) return x;
 
-  fonsTextIterInit(ctx.fs, &iter, x*scale, y*scale, str, FONS_GLYPH_BITMAP_REQUIRED);
+  if (!iter.setup(ctx.fs, x*scale, y*scale, str, FONS_GLYPH_BITMAP_REQUIRED)) return x;
   prevIter = iter;
-  while (fonsTextIterNext(ctx.fs, &iter, &q)) {
+  while (iter.next(q)) {
     float[4*2] c = void;
     if (iter.prevGlyphIndex < 0) { // can not retrieve glyph?
       if (nverts != 0) {
@@ -8480,20 +8486,20 @@ public float text(T) (NVGContext ctx, float x, float y, const(T)[] str) nothrow 
       }
       if (!nvg__allocTextAtlas(ctx)) break; // no memory :(
       iter = prevIter;
-      fonsTextIterNext(ctx.fs, &iter, &q); // try again
+      iter.next(q); // try again
       if (iter.prevGlyphIndex < 0) {
         // still can not find glyph, try replacement
         iter = prevIter;
-        if (!fonsTextIterGetDummyChar(ctx.fs, &iter, &q)) break;
+        if (!iter.getDummyChar(q)) break;
       }
     }
     prevIter = iter;
-    // Transform corners.
+    // transform corners
     state.xform.point(&c[0], &c[1], q.x0*invscale, q.y0*invscale);
     state.xform.point(&c[2], &c[3], q.x1*invscale, q.y0*invscale);
     state.xform.point(&c[4], &c[5], q.x1*invscale, q.y1*invscale);
     state.xform.point(&c[6], &c[7], q.x0*invscale, q.y1*invscale);
-    // Create triangles
+    // create triangles
     if (nverts+6 <= cverts) {
       nvg__vset(&verts[nverts], c[0], c[1], q.s0, q.t0); ++nverts;
       nvg__vset(&verts[nverts], c[4], c[5], q.s1, q.t1); ++nverts;
@@ -8583,34 +8589,34 @@ if (isAnyCharType!T && isGoodPositionDelegate!DG)
   NVGstate* state = nvg__getState(ctx);
   float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   float invscale = 1.0f/scale;
-  FONStextIter!T iter, prevIter;
-  FONSquad q;
+  FONSTextIter!T iter, prevIter;
+  FONSQuad q;
   int npos = 0;
 
   if (str.length == 0) return 0;
 
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
 
-  fonsTextIterInit(ctx.fs, &iter, x*scale, y*scale, str, FONS_GLYPH_BITMAP_OPTIONAL);
+  if (!iter.setup(ctx.fs, x*scale, y*scale, str, FONS_GLYPH_BITMAP_OPTIONAL)) return npos;
   prevIter = iter;
-  while (fonsTextIterNext(ctx.fs, &iter, &q)) {
+  while (iter.next(q)) {
     if (iter.prevGlyphIndex < 0) { // can not retrieve glyph?
       if (!nvg__allocTextAtlas(ctx)) break; // no memory
       iter = prevIter;
-      fonsTextIterNext(ctx.fs, &iter, &q); // try again
+      iter.next(q); // try again
       if (iter.prevGlyphIndex < 0) {
         // still can not find glyph, try replacement
         iter = prevIter;
-        if (!fonsTextIterGetDummyChar(ctx.fs, &iter, &q)) break;
+        if (!iter.getDummyChar(q)) break;
       }
     }
     prevIter = iter;
     NVGGlyphPosition position = void; //WARNING!
-    position.strpos = cast(usize)(iter.string-str.ptr);
+    position.strpos = cast(usize)(iter.stringp-str.ptr);
     position.x = iter.x*invscale;
     position.minx = nvg__min(iter.x, q.x0)*invscale;
     position.maxx = nvg__max(iter.nextx, q.x1)*invscale;
@@ -8649,7 +8655,13 @@ if (isAnyCharType!T)
   return rows[0..count];
 }
 
-/// Ditto.
+/** Breaks the specified text into lines.
+ * White space is stripped at the beginning of the rows, the text is split at word boundaries or when new-line characters are encountered.
+ * Words longer than the max width are slit at nearest character (i.e. no hyphenation).
+ * Returns number of rows.
+ *
+ * Group: text_api
+ */
 public int textBreakLines(T, DG) (NVGContext ctx, const(T)[] str, float breakRowWidth, scope DG dg)
 if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
 {
@@ -8665,8 +8677,8 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
   NVGstate* state = nvg__getState(ctx);
   float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   float invscale = 1.0f/scale;
-  FONStextIter!T iter, prevIter;
-  FONSquad q;
+  FONSTextIter!T iter, prevIter;
+  FONSQuad q;
   int nrows = 0;
   float rowStartX = 0;
   float rowWidth = 0;
@@ -8686,11 +8698,11 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
   if (state.fontId == FONS_INVALID) return 0;
   if (str.length == 0 || dg is null) return 0;
 
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
 
   breakRowWidth *= scale;
 
@@ -8700,17 +8712,17 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
   }
   Phase phase = Phase.SkipBlanks; // don't skip blanks on first line
 
-  fonsTextIterInit(ctx.fs, &iter, 0, 0, str, FONS_GLYPH_BITMAP_OPTIONAL);
+  if (!iter.setup(ctx.fs, 0, 0, str, FONS_GLYPH_BITMAP_OPTIONAL)) return 0;
   prevIter = iter;
-  while (fonsTextIterNext(ctx.fs, &iter, &q)) {
+  while (iter.next(q)) {
     if (iter.prevGlyphIndex < 0) { // can not retrieve glyph?
       if (!nvg__allocTextAtlas(ctx)) break; // no memory
       iter = prevIter;
-      fonsTextIterNext(ctx.fs, &iter, &q); // try again
+      iter.next(q); // try again
       if (iter.prevGlyphIndex < 0) {
         // still can not find glyph, try replacement
         iter = prevIter;
-        if (!fonsTextIterGetDummyChar(ctx.fs, &iter, &q)) break;
+        if (!iter.getDummyChar(q)) break;
       }
     }
     prevIter = iter;
@@ -8739,7 +8751,7 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
     }
     if (phase == Phase.SkipBlanks) {
       // fix row start
-      rowStart = cast(int)(iter.string-str.ptr);
+      rowStart = cast(int)(iter.stringp-str.ptr);
       rowEnd = rowStart;
       rowStartX = iter.x;
       rowWidth = iter.nextx-rowStartX; // q.x1-rowStartX;
@@ -8777,13 +8789,13 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
       }
       // track last end of a word
       if (ptype == NVGcodepointType.Char && type == NVGcodepointType.Space) {
-        breakEnd = cast(int)(iter.string-str.ptr);
+        breakEnd = cast(int)(iter.stringp-str.ptr);
         breakWidth = rowWidth;
         breakMaxX = rowMaxX;
       }
       // track last beginning of a word
       if (ptype == NVGcodepointType.Space && type == NVGcodepointType.Char) {
-        wordStart = cast(int)(iter.string-str.ptr);
+        wordStart = cast(int)(iter.stringp-str.ptr);
         wordStartX = iter.x;
         wordMinX = q.x0-rowStartX;
       }
@@ -8795,14 +8807,14 @@ if (isAnyCharType!T && isGoodRowDelegate!(T, DG))
         if (breakEnd == rowStart) {
           // the current word is longer than the row length, just break it from here
           row.start = rowStart;
-          row.end = cast(int)(iter.string-str.ptr);
+          row.end = cast(int)(iter.stringp-str.ptr);
           row.width = rowWidth*invscale;
           row.minx = rowMinX*invscale;
           row.maxx = rowMaxX*invscale;
           ++nrows;
           static if (RetBool) { if (!dg(row)) return nrows; } else dg(row);
           rowStartX = iter.x;
-          rowStart = cast(int)(iter.string-str.ptr);
+          rowStart = cast(int)(iter.stringp-str.ptr);
           rowEnd = cast(int)(iter.nextp-str.ptr);
           rowWidth = iter.nextx-rowStartX;
           rowMinX = q.x0-rowStartX;
@@ -8914,11 +8926,11 @@ public:
   /// Restore font settings for the context.
   void restoreFont () nothrow @trusted @nogc {
     if (ctx !is null) {
-      fonsSetSize(ctx.fs, fsSize);
-      fonsSetSpacing(ctx.fs, fsSpacing);
-      fonsSetBlur(ctx.fs, fsBlur);
-      fonsSetAlign(ctx.fs, fsAlign);
-      fonsSetFont(ctx.fs, fsFontId);
+      ctx.fs.size = fsSize;
+      ctx.fs.spacing = fsSpacing;
+      ctx.fs.blur = fsBlur;
+      ctx.fs.textAlign = fsAlign;
+      ctx.fs.fontId = fsFontId;
     }
   }
 
@@ -8935,7 +8947,7 @@ public:
   void getBounds (ref float[4] bounds) nothrow @trusted @nogc {
     if (ctx !is null) {
       fsiter.getBounds(bounds);
-      fonsLineBounds(ctx.fs, yscaled, &bounds[1], &bounds[3]);
+      ctx.fs.getLineBounds(yscaled, &bounds[1], &bounds[3]);
       bounds[0] *= invscale;
       bounds[1] *= invscale;
       bounds[2] *= invscale;
@@ -8958,7 +8970,7 @@ public:
   void getVBounds (out float ymin, out float ymax) nothrow @trusted @nogc {
     if (ctx !is null) {
       //fsiter.getVBounds(ymin, ymax);
-      fonsLineBounds(ctx.fs, yscaled, &ymin, &ymax);
+      ctx.fs.getLineBounds(yscaled, &ymin, &ymax);
       ymin *= invscale;
       ymax *= invscale;
     }
@@ -8997,7 +9009,7 @@ public float textFontDescender (NVGContext ctx) nothrow @trusted @nogc {
 public void textExtents(T) (NVGContext ctx, const(T)[] str, float *w, float *h) nothrow @trusted @nogc if (isAnyCharType!T) {
   float[4] bnd = void;
   ctx.textBounds(0, 0, str, bnd[]);
-  if (!fonsGetFontAA(ctx.fs, nvg__getState(ctx).fontId)) {
+  if (!ctx.fs.getFontAA(nvg__getState(ctx).fontId)) {
     if (w !is null) *w = nvg__lrintf(bnd.ptr[2]-bnd.ptr[0]);
     if (h !is null) *h = nvg__lrintf(bnd.ptr[3]-bnd.ptr[1]);
   } else {
@@ -9035,18 +9047,18 @@ if (isAnyCharType!T)
   }
 
   immutable float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
 
   float[4] b = void;
-  immutable float width = fonsTextBounds(ctx.fs, x*scale, y*scale, str, b[]);
+  immutable float width = ctx.fs.getTextBounds(x*scale, y*scale, str, b[]);
   immutable float invscale = 1.0f/scale;
   if (bounds.length) {
     // use line bounds for height
-    fonsLineBounds(ctx.fs, y*scale, b.ptr+1, b.ptr+3);
+    ctx.fs.getLineBounds(y*scale, b.ptr+1, b.ptr+3);
     if (bounds.length > 0) bounds.ptr[0] = b.ptr[0]*invscale;
     if (bounds.length > 1) bounds.ptr[1] = b.ptr[1]*invscale;
     if (bounds.length > 2) bounds.ptr[2] = b.ptr[2]*invscale;
@@ -9079,12 +9091,12 @@ public void textBoxBounds(T) (NVGContext ctx, float x, float y, float breakRowWi
   minx = maxx = x;
   miny = maxy = y;
 
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
-  fonsLineBounds(ctx.fs, 0, &rminy, &rmaxy);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
+  ctx.fs.getLineBounds(0, &rminy, &rmaxy);
   rminy *= invscale;
   rmaxy *= invscale;
 
@@ -9134,13 +9146,13 @@ public void textMetrics (NVGContext ctx, float* ascender, float* descender, floa
   immutable float scale = nvg__getFontScale(state)*ctx.devicePxRatio;
   immutable float invscale = 1.0f/scale;
 
-  fonsSetSize(ctx.fs, state.fontSize*scale);
-  fonsSetSpacing(ctx.fs, state.letterSpacing*scale);
-  fonsSetBlur(ctx.fs, state.fontBlur*scale);
-  fonsSetAlign(ctx.fs, state.textAlign);
-  fonsSetFont(ctx.fs, state.fontId);
+  ctx.fs.size = state.fontSize*scale;
+  ctx.fs.spacing = state.letterSpacing*scale;
+  ctx.fs.blur = state.fontBlur*scale;
+  ctx.fs.textAlign = state.textAlign;
+  ctx.fs.fontId = state.fontId;
 
-  fonsVertMetrics(ctx.fs, ascender, descender, lineh);
+  ctx.fs.getVertMetrics(ascender, descender, lineh);
   if (ascender !is null) *ascender *= invscale;
   if (descender !is null) *descender *= invscale;
   if (lineh !is null) *lineh *= invscale;
@@ -9215,43 +9227,26 @@ version(nanovg_use_freetype_ii) {
   }
 }
 
-//version = nanovg_kill_font_blur;
-
 
 // ////////////////////////////////////////////////////////////////////////// //
 //version = nanovg_ft_mono;
 
 enum FONS_INVALID = -1;
 
-alias FONSflags = int;
-enum /*FONSflags*/ {
-  FONS_ZERO_TOPLEFT    = 1<<0,
-  FONS_ZERO_BOTTOMLEFT = 1<<1,
+alias FONSflags = uint;
+enum /*FONSflags*/ : uint {
+  FONS_ZERO_TOPLEFT    = 1U<<0,
+  FONS_ZERO_BOTTOMLEFT = 1U<<1,
 }
 
-/+
-alias FONSalign = int;
-enum /*FONSalign*/ {
-  // Horizontal align
-  FONS_ALIGN_LEFT   = 1<<0, // Default
-  FONS_ALIGN_CENTER   = 1<<1,
-  FONS_ALIGN_RIGHT  = 1<<2,
-  // Vertical align
-  FONS_ALIGN_TOP    = 1<<3,
-  FONS_ALIGN_MIDDLE = 1<<4,
-  FONS_ALIGN_BOTTOM = 1<<5,
-  FONS_ALIGN_BASELINE = 1<<6, // Default
-}
-+/
-
-alias FONSglyphBitmap = int;
-enum /*FONSglyphBitmap*/ {
+alias FONSglyphBitmap = uint;
+enum /*FONSglyphBitmap*/ : uint {
   FONS_GLYPH_BITMAP_OPTIONAL = 1,
   FONS_GLYPH_BITMAP_REQUIRED = 2,
 }
 
 alias FONSerrorCode = int;
-enum /*FONSerrorCode*/ {
+enum /*FONSerrorCode*/ : int {
   // Font atlas is full.
   FONS_ATLAS_FULL = 1,
   // Scratch memory used to render glyphs is full, requested size reported in 'val', you may need to bump up FONS_SCRATCH_BUF_SIZE.
@@ -9262,9 +9257,9 @@ enum /*FONSerrorCode*/ {
   FONS_STATES_UNDERFLOW = 4,
 }
 
-struct FONSparams {
+public struct FONSParams {
   int width, height;
-  ubyte flags;
+  FONSflags flags;
   void* userPtr;
   bool function (void* uptr, int width, int height) nothrow @trusted @nogc renderCreate;
   int function (void* uptr, int width, int height) nothrow @trusted @nogc renderResize;
@@ -9275,16 +9270,17 @@ struct FONSparams {
   void function (void* uptr) nothrow @trusted @nogc renderDelete;
 }
 
-struct FONSquad {
+public struct FONSQuad {
   float x0=0, y0=0, s0=0, t0=0;
   float x1=0, y1=0, s1=0, t1=0;
 }
 
-struct FONStextIter(CT) if (isAnyCharType!CT) {
+public struct FONSTextIter(CT) if (isAnyCharType!CT) {
   alias CharType = CT;
   float x=0, y=0, nextx=0, nexty=0, scale=0, spacing=0;
   uint codepoint;
   short isize, iblur;
+  FONSContext stash;
   FONSfont* font;
   int prevGlyphIndex;
   const(CT)* s; // string
@@ -9294,10 +9290,128 @@ struct FONStextIter(CT) if (isAnyCharType!CT) {
   static if (is(CT == char)) {
     uint utf8state;
   }
+
+  this (FONSContext astash, float ax, float ay, const(CharType)[] astr, FONSglyphBitmap abitmapOption) nothrow @trusted @nogc { setup(astash, ax, ay, astr, abitmapOption); }
   ~this () nothrow @trusted @nogc { pragma(inline, true); static if (is(CT == char)) utf8state = 0; s = n = e = null; }
-  @property const(CT)* string () const pure nothrow @nogc { pragma(inline, true); return s; }
-  @property const(CT)* nextp () const pure nothrow @nogc { pragma(inline, true); return n; }
-  @property const(CT)* endp () const pure nothrow @nogc { pragma(inline, true); return e; }
+
+  @property const(CT)* stringp () const pure nothrow @trusted @nogc { pragma(inline, true); return s; }
+  @property const(CT)* nextp () const pure nothrow @trusted @nogc { pragma(inline, true); return n; }
+  @property const(CT)* endp () const pure nothrow @trusted @nogc { pragma(inline, true); return e; }
+
+  bool setup (FONSContext astash, float ax, float ay, const(CharType)[] astr, FONSglyphBitmap abitmapOption) nothrow @trusted @nogc {
+    import core.stdc.string : memset;
+
+    memset(&this, 0, this.sizeof);
+    if (astash is null) return false;
+
+    FONSstate* state = astash.getState;
+
+    if (state.font < 0 || state.font >= astash.nfonts) return false;
+    font = astash.fonts[state.font];
+    if (font is null || font.fdata is null) return false;
+
+    isize = cast(short)(state.size*10.0f);
+    iblur = cast(short)state.blur;
+    scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
+
+    // align horizontally
+    if (state.talign.left) {
+      // empty
+    } else if (state.talign.right) {
+      immutable float width = astash.getTextBounds(ax, ay, astr, null);
+      ax -= width;
+    } else if (state.talign.center) {
+      immutable float width = astash.getTextBounds(ax, ay, astr, null);
+      ax -= width*0.5f;
+    }
+
+    // align vertically
+    ay += fons__getVertAlign(astash, font, state.talign, isize);
+
+    x = nextx = ax;
+    y = nexty = ay;
+    spacing = state.spacing;
+
+    if (astr.ptr is null) {
+           static if (is(CharType == char)) astr = "";
+      else static if (is(CharType == wchar)) astr = ""w;
+      else static if (is(CharType == dchar)) astr = ""d;
+      else static assert(0, "wtf?!");
+    }
+    s = astr.ptr;
+    n = astr.ptr;
+    e = astr.ptr+astr.length;
+
+    codepoint = 0;
+    prevGlyphIndex = -1;
+    bitmapOption = abitmapOption;
+    stash = astash;
+
+    return true;
+  }
+
+  bool getDummyChar (ref FONSQuad quad) nothrow @trusted @nogc {
+    if (stash is null || font is null) return false;
+    // get glyph and quad
+    x = nextx;
+    y = nexty;
+    FONSglyph* glyph = fons__getGlyph(stash, font, 0xFFFD, isize, iblur, bitmapOption);
+    if (glyph !is null) {
+      fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+      prevGlyphIndex = glyph.index;
+      return true;
+    } else {
+      prevGlyphIndex = -1;
+      return false;
+    }
+  }
+
+  bool next (ref FONSQuad quad) nothrow @trusted @nogc {
+    if (stash is null || font is null) return false;
+    FONSglyph* glyph = null;
+    static if (is(CharType == char)) {
+      const(char)* str = this.n;
+      this.s = this.n;
+      if (str is this.e) return false;
+      const(char)* e = this.e;
+      for (; str !is e; ++str) {
+        /*if (fons__decutf8(&utf8state, &codepoint, *cast(const(ubyte)*)str)) continue;*/
+        mixin(DecUtfMixin!("this.utf8state", "this.codepoint", "*cast(const(ubyte)*)str"));
+        if (utf8state) continue;
+        ++str; // 'cause we'll break anyway
+        // get glyph and quad
+        x = nextx;
+        y = nexty;
+        glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, bitmapOption);
+        if (glyph !is null) {
+          fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+          prevGlyphIndex = glyph.index;
+        } else {
+          prevGlyphIndex = -1;
+        }
+        break;
+      }
+      this.n = str;
+    } else {
+      const(CharType)* str = this.n;
+      this.s = this.n;
+      if (str is this.e) return false;
+      codepoint = cast(uint)(*str++);
+      if (codepoint > dchar.max) codepoint = 0xFFFD;
+      // get glyph and quad
+      x = nextx;
+      y = nexty;
+      glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, bitmapOption);
+      if (glyph !is null) {
+        fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+        prevGlyphIndex = glyph.index;
+      } else {
+        prevGlyphIndex = -1;
+      }
+      this.n = str;
+    }
+    return true;
+  }
 }
 
 
@@ -9592,22 +9706,22 @@ struct FONSttFontImpl {
 
 __gshared FT_Library ftLibrary;
 
-int fons__tt_init (FONScontext* context) nothrow @trusted @nogc {
+int fons__tt_init (FONSContext context) nothrow @trusted @nogc {
   FT_Error ftError;
   //FONS_NOTUSED(context);
   ftError = FT_Init_FreeType(&ftLibrary);
   return (ftError == 0);
 }
 
-void fons__tt_setMono (FONScontext* context, FONSttFontImpl* font, bool v) nothrow @trusted @nogc {
+void fons__tt_setMono (FONSContext context, FONSttFontImpl* font, bool v) nothrow @trusted @nogc {
   font.mono = v;
 }
 
-bool fons__tt_getMono (FONScontext* context, FONSttFontImpl* font) nothrow @trusted @nogc {
+bool fons__tt_getMono (FONSContext context, FONSttFontImpl* font) nothrow @trusted @nogc {
   return font.mono;
 }
 
-int fons__tt_loadFont (FONScontext* context, FONSttFontImpl* font, ubyte* data, int dataSize) nothrow @trusted @nogc {
+int fons__tt_loadFont (FONSContext context, FONSttFontImpl* font, ubyte* data, int dataSize) nothrow @trusted @nogc {
   FT_Error ftError;
   //font.font.userdata = stash;
   ftError = FT_New_Memory_Face(ftLibrary, cast(const(FT_Byte)*)data, dataSize, 0, &font.font);
@@ -9725,6 +9839,7 @@ float fons__tt_getGlyphKernAdvance (FONSttFontImpl* font, float size, int glyph1
 extern(C) nothrow @trusted @nogc {
   static struct OutlinerData {
     @disable this (this);
+    void opAssign() (in auto ref OutlinerData a) { static assert(0, "no copies!"); }
     NVGContext vg;
     NVGPathOutline.DataStore* ol;
     FT_BBox outlineBBox;
@@ -9879,19 +9994,19 @@ struct FONSttFontImpl {
   bool mono; // no aa?
 }
 
-int fons__tt_init (FONScontext* context) nothrow @trusted @nogc {
+int fons__tt_init (FONSContext context) nothrow @trusted @nogc {
   return 1;
 }
 
-void fons__tt_setMono (FONScontext* context, FONSttFontImpl* font, bool v) nothrow @trusted @nogc {
+void fons__tt_setMono (FONSContext context, FONSttFontImpl* font, bool v) nothrow @trusted @nogc {
   font.mono = v;
 }
 
-bool fons__tt_getMono (FONScontext* context, FONSttFontImpl* font) nothrow @trusted @nogc {
+bool fons__tt_getMono (FONSContext context, FONSttFontImpl* font) nothrow @trusted @nogc {
   return font.mono;
 }
 
-int fons__tt_loadFont (FONScontext* context, FONSttFontImpl* font, ubyte* data, int dataSize) nothrow @trusted @nogc {
+int fons__tt_loadFont (FONSContext context, FONSttFontImpl* font, ubyte* data, int dataSize) nothrow @trusted @nogc {
   int stbError;
   font.font.userdata = context;
   forceNoThrowNoGC({ stbError = stbtt_InitFont(&font.font, data, 0); });
@@ -9946,6 +10061,7 @@ static if (is(typeof(STBTT_vcubic))) {
 
 static struct OutlinerData {
   @disable this (this);
+  void opAssign() (in auto ref OutlinerData a) { static assert(0, "no copies!"); }
   NVGPathOutline.DataStore* ol;
 nothrow @trusted @nogc:
   static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
@@ -10113,7 +10229,7 @@ uint fons__djbhash (const(void)[] s) pure nothrow @safe @nogc {
   return hash;
 }
 
-private bool fons_strequci (const(char)[] s0, const(char)[] s1) nothrow @trusted @nogc {
+private bool fons_strequci (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
   if (s0.length != s1.length) return false;
   const(char)* sp0 = s0.ptr;
   const(char)* sp1 = s1.ptr;
@@ -10147,6 +10263,7 @@ struct FONSfontData {
   int rc;
 
   @disable this (this); // no copies
+  void opAssign() (in auto ref FONSfontData a) { static assert(0, "no copies!"); }
 }
 
 // won't set rc to 1
@@ -10235,7 +10352,7 @@ struct FONSfont {
   }
 
   // this won't check hash
-  bool nameEqu (const(char)[] aname) nothrow @trusted @nogc {
+  bool nameEqu (const(char)[] aname) const pure nothrow @trusted @nogc {
     //{ import core.stdc.stdio; printf("nameEqu: aname=[%.*s]; namelen=%u; aslen=%u\n", cast(uint)aname.length, aname.ptr, namelen, cast(uint)aname.length); }
     if (namelen != aname.length) return false;
     const(char)* ns = name;
@@ -10253,7 +10370,6 @@ struct FONSstate {
   int font;
   NVGTextAlign talign;
   float size;
-  uint color;
   float blur;
   float spacing;
 }
@@ -10269,8 +10385,10 @@ struct FONSatlas {
   int cnodes;
 }
 
-public struct FONScontext {
-  FONSparams params;
+// ////////////////////////////////////////////////////////////////////////// //
+private struct FONScontextInternal {
+private:
+  FONSParams params;
   float itw, ith;
   ubyte* texData;
   int[4] dirtyRect;
@@ -10290,11 +10408,20 @@ public struct FONScontext {
   int nscratch;
   FONSstate[FONS_MAX_STATES] states;
   int nstates;
-  void function (void* uptr, int error, int val) nothrow @trusted @nogc handleError;
-  void* errorUptr;
+
+  void delegate (int error, int val) nothrow @trusted @nogc handleError;
+
+  @disable this (this);
+  void opAssign() (in auto ref FONScontextInternal ctx) { static assert(0, "FONS copying is not allowed"); }
+
+private:
+  inout(FONSstate)* getState () inout pure nothrow @trusted @nogc {
+    pragma(inline, true);
+    return cast(inout)(&states[(nstates > 0 ? nstates-1 : 0)]);
+  }
 
   // simple linear probing; returns [FONS_INVALID] if not found
-  int findNameInHash (const(char)[] name) nothrow @trusted @nogc {
+  int findNameInHash (const(char)[] name) const pure nothrow @trusted @nogc {
     if (nfonts == 0) return FONS_INVALID;
     auto nhash = fons__djbhash(name);
     //{ import core.stdc.stdio; printf("findinhash: name=[%.*s]; nhash=0x%08x\n", cast(uint)name.length, name.ptr, nhash); }
@@ -10313,7 +10440,7 @@ public struct FONScontext {
   }
 
   // should be called $(B before) freeing `fonts[fidx]`
-  private void removeIndexFromHash (int fidx) nothrow @trusted @nogc {
+  void removeIndexFromHash (int fidx) nothrow @trusted @nogc {
     if (fidx < 0 || fidx >= nfonts) assert(0, "FONS internal error");
     if (fonts[fidx] is null) assert(0, "FONS internal error");
     if (hused != nfonts) assert(0, "FONS internal error");
@@ -10339,7 +10466,7 @@ public struct FONScontext {
 
   // add font with the given index to hash
   // prerequisite: font should not exists in hash
-  private void addIndexToHash (int idx) nothrow @trusted @nogc {
+  void addIndexToHash (int idx) nothrow @trusted @nogc {
     if (idx < 0 || idx >= nfonts) assert(0, "FONS internal error");
     if (fonts[idx] is null) assert(0, "FONS internal error");
     import core.stdc.stdlib : realloc;
@@ -10384,15 +10511,721 @@ public struct FONScontext {
       ++hused;
     }
   }
+
+public:
+  static FONSContext createInternal() (auto ref FONSParams params) nothrow @trusted @nogc {
+    import core.stdc.string : memcpy;
+
+    FONSContext stash = null;
+
+    // allocate memory for the font stash
+    stash = cast(FONSContext)malloc(FONScontextInternal.sizeof);
+    if (stash is null) goto error;
+    memset(stash, 0, FONScontextInternal.sizeof);
+
+    memcpy(&stash.params, &params, params.sizeof);
+
+    // allocate scratch buffer
+    stash.scratch = cast(ubyte*)malloc(FONS_SCRATCH_BUF_SIZE);
+    if (stash.scratch is null) goto error;
+
+    // initialize implementation library
+    if (!fons__tt_init(stash)) goto error;
+
+    if (stash.params.renderCreate !is null) {
+      if (!stash.params.renderCreate(stash.params.userPtr, stash.params.width, stash.params.height)) goto error;
+    }
+
+    stash.atlas = fons__allocAtlas(stash.params.width, stash.params.height, FONS_INIT_ATLAS_NODES);
+    if (stash.atlas is null) goto error;
+
+    // don't allocate space for fonts: hash manager will do that for us later
+    //stash.cfonts = 0;
+    //stash.nfonts = 0;
+
+    // create texture for the cache
+    stash.itw = 1.0f/stash.params.width;
+    stash.ith = 1.0f/stash.params.height;
+    stash.texData = cast(ubyte*)malloc(stash.params.width*stash.params.height);
+    if (stash.texData is null) goto error;
+    memset(stash.texData, 0, stash.params.width*stash.params.height);
+
+    stash.dirtyRect.ptr[0] = stash.params.width;
+    stash.dirtyRect.ptr[1] = stash.params.height;
+    stash.dirtyRect.ptr[2] = 0;
+    stash.dirtyRect.ptr[3] = 0;
+
+    // add white rect at 0, 0 for debug drawing
+    fons__addWhiteRect(stash, 2, 2);
+
+    stash.pushState();
+    stash.clearState();
+
+    return stash;
+
+  error:
+    stash.kill();
+    return null;
+  }
+
+public:
+  private void clear () nothrow @trusted @nogc {
+    import core.stdc.stdlib : free;
+
+    if (params.renderDelete !is null) params.renderDelete(params.userPtr);
+    foreach (immutable int i; 0..nfonts) fons__freeFont(fonts[i]);
+
+    if (atlas !is null) fons__deleteAtlas(atlas);
+    if (fonts !is null) free(fonts);
+    if (texData !is null) free(texData);
+    if (scratch !is null) free(scratch);
+    if (hashidx !is null) free(hashidx);
+  }
+
+  bool addFallbackFont (int base, int fallback) nothrow @trusted @nogc {
+    FONSfont* baseFont = fonts[base];
+    if (baseFont !is null && baseFont.nfallbacks < FONS_MAX_FALLBACKS) {
+      baseFont.fallbacks.ptr[baseFont.nfallbacks++] = fallback;
+      return true;
+    }
+    return false;
+  }
+
+  @property void size (float size) nothrow @trusted @nogc { pragma(inline, true); getState.size = size; }
+  @property float size () const pure nothrow @trusted @nogc { pragma(inline, true); return getState.size; }
+
+  @property void spacing (float spacing) nothrow @trusted @nogc { pragma(inline, true); getState.spacing = spacing; }
+  @property float spacing () const pure nothrow @trusted @nogc { pragma(inline, true); return getState.spacing; }
+
+  @property void blur (float blur) nothrow @trusted @nogc { pragma(inline, true); getState.blur = blur; }
+  @property float blur () const pure nothrow @trusted @nogc { pragma(inline, true); return getState.blur; }
+
+  @property void textAlign (NVGTextAlign talign) nothrow @trusted @nogc { pragma(inline, true); getState.talign = talign; }
+  @property NVGTextAlign textAlign () const pure nothrow @trusted @nogc { pragma(inline, true); return getState.talign; }
+
+  @property void fontId (int font) nothrow @trusted @nogc { pragma(inline, true); getState.font = font; }
+  @property int fontId () const pure nothrow @trusted @nogc { pragma(inline, true); return getState.font; }
+
+  @property void fontId (const(char)[] name) nothrow @trusted @nogc { pragma(inline, true); getState.font = getFontByName(name); }
+
+  bool hasFont (const(char)[] name) const pure nothrow @trusted @nogc { pragma(inline, true); return (getFontByName(name) >= 0); }
+
+  // get AA for current font or for the specified font
+  bool getFontAA (int font=-1) nothrow @trusted @nogc {
+    FONSstate* state = getState;
+    if (font < 0) font = state.font;
+    if (font < 0 || font >= nfonts) return false;
+    FONSfont* f = fonts[font];
+    return (f !is null ? !f.font.mono : false);
+  }
+
+  bool pushState () nothrow @trusted @nogc {
+    if (nstates >= FONS_MAX_STATES) {
+      if (handleError !is null) handleError(FONS_STATES_OVERFLOW, 0);
+      return false;
+    }
+    if (nstates > 0) {
+      import core.stdc.string : memcpy;
+      memcpy(&states[nstates], &states[nstates-1], FONSstate.sizeof);
+    }
+    ++nstates;
+    return true;
+  }
+
+  bool popState () nothrow @trusted @nogc {
+    if (nstates <= 1) {
+      if (handleError !is null) handleError(FONS_STATES_UNDERFLOW, 0);
+      return false;
+    }
+    --nstates;
+    return true;
+  }
+
+  void clearState () nothrow @trusted @nogc {
+    FONSstate* state = getState;
+    state.size = 12.0f;
+    state.font = 0;
+    state.blur = 0;
+    state.spacing = 0;
+    state.talign.reset;
+  }
+
+  private enum NoAlias = ":noaa";
+
+  // defAA: antialias flag for fonts without ":noaa"
+  int addFont (const(char)[] name, const(char)[] path, bool defAA=false) nothrow @trusted {
+    if (path.length == 0 || name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
+    if (path.length > 32768) return FONS_INVALID; // arbitrary limit
+
+    // if font path ends with ":noaa", turn off antialiasing
+    if (path.length >= NoAlias.length && fons_strequci(path[$-NoAlias.length..$], NoAlias)) {
+      path = path[0..$-NoAlias.length];
+      if (path.length == 0) return FONS_INVALID;
+      defAA = false;
+    }
+
+    // if font name ends with ":noaa", turn off antialiasing
+    if (name.length > NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
+      name = name[0..$-NoAlias.length];
+      defAA = false;
+    }
+
+    // find a font with the given name
+    int fidx = findNameInHash(name);
+    //{ import core.stdc.stdio; printf("loading font '%.*s' [%s] (fidx=%d)...\n", cast(uint)path.length, path.ptr, fontnamebuf.ptr, fidx); }
+
+    int loadFontFile (const(char)[] path) {
+      // check if existing font (if any) has the same path
+      if (fidx >= 0) {
+        import core.stdc.string : strlen;
+        auto plen = (fonts[fidx].path !is null ? strlen(fonts[fidx].path) : 0);
+        version(Posix) {
+          //{ import core.stdc.stdio; printf("+++ font [%.*s] was loaded from [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)fonts[fidx].path.length, fonts[fidx].path.ptr); }
+          if (plen == path.length && fonts[fidx].path[0..plen] == path) {
+            //{ import core.stdc.stdio; printf("*** font [%.*s] already loaded from [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)plen, path.ptr); }
+            // i found her!
+            return fidx;
+          }
+        } else {
+          if (plen == path.length && fons_strequci(fonts[fidx].path[0..plen], path)) {
+            // i found her!
+            return fidx;
+          }
+        }
+      }
+      version(Windows) {
+        // special shitdows check: this will reject fontconfig font names (but still allow things like "c:myfont")
+        foreach (immutable char ch; path[(path.length >= 2 && path[1] == ':' ? 2 : 0)..$]) if (ch == ':') return FONS_INVALID;
+      }
+      // either no such font, or different path
+      //{ import core.stdc.stdio; printf("trying font [%.*s] from file [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)path.length, path.ptr); }
+      int xres = FONS_INVALID;
+      try {
+        import core.stdc.stdlib : free, malloc;
+        static if (NanoVegaHasIVVFS) {
+          auto fl = VFile(path);
+          auto dataSize = fl.size;
+          if (dataSize < 16 || dataSize > int.max/32) return FONS_INVALID;
+          ubyte* data = cast(ubyte*)malloc(cast(uint)dataSize);
+          if (data is null) assert(0, "out of memory in NanoVega fontstash");
+          scope(failure) free(data); // oops
+          fl.rawReadExact(data[0..cast(uint)dataSize]);
+          fl.close();
+        } else {
+          import core.stdc.stdio : FILE, fopen, fclose, fread, ftell, fseek;
+          import std.internal.cstring : tempCString;
+          auto fl = fopen(path.tempCString, "rb");
+          if (fl is null) return FONS_INVALID;
+          scope(exit) fclose(fl);
+          if (fseek(fl, 0, 2/*SEEK_END*/) != 0) return FONS_INVALID;
+          auto dataSize = ftell(fl);
+          if (fseek(fl, 0, 0/*SEEK_SET*/) != 0) return FONS_INVALID;
+          if (dataSize < 16 || dataSize > int.max/32) return FONS_INVALID;
+          ubyte* data = cast(ubyte*)malloc(cast(uint)dataSize);
+          if (data is null) assert(0, "out of memory in NanoVega fontstash");
+          scope(failure) free(data); // oops
+          ubyte* dptr = data;
+          auto left = cast(uint)dataSize;
+          while (left > 0) {
+            auto rd = fread(dptr, 1, left, fl);
+            if (rd == 0) { free(data); return FONS_INVALID; } // unexpected EOF or reading error, it doesn't matter
+            dptr += rd;
+            left -= rd;
+          }
+        }
+        scope(failure) free(data); // oops
+        // create font data
+        FONSfontData* fdata = fons__createFontData(data, cast(int)dataSize, true); // free data
+        fdata.incref();
+        xres = addFontWithData(name, fdata, defAA);
+        if (xres == FONS_INVALID) {
+          fdata.decref(); // this will free [data] and [fdata]
+        } else {
+          // remember path
+          fonts[xres].setPath(path);
+        }
+      } catch (Exception e) {
+        // oops; sorry
+      }
+      return xres;
+    }
+
+    // first try direct path
+    auto res = loadFontFile(path);
+    // if loading failed, try fontconfig (if fontconfig is available)
+    static if (NanoVegaHasFontConfig) {
+      if (res == FONS_INVALID && fontconfigAvailable) {
+        // idiotic fontconfig NEVER fails; let's skip it if `path` looks like a path
+        bool ok = true;
+        if (path.length > 4 && (path[$-4..$] == ".ttf" || path[$-4..$] == ".ttc")) ok = false;
+        if (ok) { foreach (immutable char ch; path) if (ch == '/') { ok = false; break; } }
+        if (ok) {
+          import std.internal.cstring : tempCString;
+          FcPattern* pat = FcNameParse(path.tempCString);
+          if (pat !is null) {
+            scope(exit) FcPatternDestroy(pat);
+            if (FcConfigSubstitute(null, pat, FcMatchPattern)) {
+              FcDefaultSubstitute(pat);
+              // find the font
+              FcResult result;
+              FcPattern* font = FcFontMatch(null, pat, &result);
+              if (font !is null) {
+                scope(exit) FcPatternDestroy(font);
+                char* file = null;
+                if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch) {
+                  if (file !is null && file[0]) {
+                    import core.stdc.string : strlen;
+                    res = loadFontFile(file[0..strlen(file)]);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return res;
+  }
+
+  // This will not free data on error!
+  int addFontMem (const(char)[] name, ubyte* data, int dataSize, bool freeData, bool defAA=false) nothrow @trusted @nogc {
+    FONSfontData* fdata = fons__createFontData(data, dataSize, freeData);
+    fdata.incref();
+    auto res = addFontWithData(name, fdata, defAA);
+    if (res == FONS_INVALID) {
+      // we promised to not free data on error
+      fdata.freeData = false;
+      fdata.decref(); // this will free [fdata]
+    }
+    return res;
+  }
+
+  // Add fonts from another font stash.
+  // This is more effective than reloading fonts, 'cause font data will be shared.
+  void addFontsFrom (FONSContext source) nothrow @trusted @nogc {
+    if (source is null) return;
+    foreach (FONSfont* font; source.fonts[0..source.nfonts]) {
+      if (font !is null) {
+        auto newidx = addCookedFont(font);
+        FONSfont* newfont = fonts[newidx];
+        assert(newfont !is null);
+        assert(newfont.path is null);
+        // copy path
+        if (font.path !is null && font.path[0]) {
+          import core.stdc.stdlib : malloc;
+          import core.stdc.string : strcpy, strlen;
+          newfont.path = cast(char*)malloc(strlen(font.path)+1);
+          if (newfont.path is null) assert(0, "FONS: out of memory");
+          strcpy(newfont.path, font.path);
+        }
+      }
+    }
+  }
+
+  // Add font from another fontstash.
+  private int addCookedFont (FONSfont* font) nothrow @trusted @nogc {
+    if (font is null || font.fdata is null) return FONS_INVALID;
+    font.fdata.incref();
+    auto res = addFontWithData(font.name[0..font.namelen], font.fdata, !font.font.mono);
+    if (res == FONS_INVALID) font.fdata.decref(); // oops
+    return res;
+  }
+
+  // fdata refcount must be already increased; it won't be changed
+  private int addFontWithData (const(char)[] name, FONSfontData* fdata, bool defAA) nothrow @trusted @nogc {
+    int i, ascent, descent, fh, lineGap;
+
+    if (name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
+    if (name.length > 32767) return FONS_INVALID;
+    if (fdata is null) return FONS_INVALID;
+
+    // find a font with the given name
+    int newidx;
+    FONSfont* oldfont = null;
+    int oldidx = findNameInHash(name);
+    if (oldidx != FONS_INVALID) {
+      // replacement font
+      oldfont = fonts[oldidx];
+      newidx = oldidx;
+    } else {
+      // new font, allocate new bucket
+      newidx = -1;
+    }
+
+    newidx = fons__allocFontAt(&this, newidx);
+    FONSfont* font = fonts[newidx];
+    font.setName(name);
+    font.lut.ptr[0..FONS_HASH_LUT_SIZE] = -1; // init hash lookup
+    font.fdata = fdata; // set the font data (don't change reference count)
+    fons__tt_setMono(&this, &font.font, !defAA);
+
+    // init font
+    nscratch = 0;
+    if (!fons__tt_loadFont(&this, &font.font, fdata.data, fdata.dataSize)) {
+      // we promised to not free data on error, so just clear the data store (it will be freed by the caller)
+      font.fdata = null;
+      fons__freeFont(font);
+      if (oldidx != FONS_INVALID) {
+        assert(oldidx == newidx);
+        fonts[oldidx] = oldfont;
+      } else {
+        assert(newidx == nfonts-1);
+        fonts[newidx] = null;
+        --nfonts;
+      }
+      return FONS_INVALID;
+    } else {
+      // free old font data, if any
+      if (oldfont) fons__freeFont(oldfont);
+    }
+
+    // add font to name hash
+    if (oldidx == FONS_INVALID) addIndexToHash(newidx);
+
+    // store normalized line height
+    // the real line height is got by multiplying the lineh by font size
+    fons__tt_getFontVMetrics(&font.font, &ascent, &descent, &lineGap);
+    fh = ascent-descent;
+    font.ascender = cast(float)ascent/cast(float)fh;
+    font.descender = cast(float)descent/cast(float)fh;
+    font.lineh = cast(float)(fh+lineGap)/cast(float)fh;
+
+    //{ import core.stdc.stdio; printf("created font [%.*s] (idx=%d)...\n", cast(uint)name.length, name.ptr, idx); }
+    return newidx;
+  }
+
+  // returns `null` on invalid index
+  // $(WARNING copy name, as name buffer can be invalidated by next fontstash API call!)
+  const(char)[] getNameByIndex (int idx) const pure nothrow @trusted @nogc {
+    if (idx < 0 || idx >= nfonts || fonts[idx] is null) return null;
+    return fonts[idx].name[0..fonts[idx].namelen];
+  }
+
+  // allowSubstitutes: check AA variants if exact name wasn't found?
+  // return [FONS_INVALID] if no font was found
+  int getFontByName (const(char)[] name) const pure nothrow @trusted @nogc {
+    //{ import core.stdc.stdio; printf("fonsGetFontByName: [%.*s]\n", cast(uint)name.length, name.ptr); }
+    // remove ":noaa" suffix
+    if (name.length >= NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
+      name = name[0..$-NoAlias.length];
+    }
+    if (name.length == 0) return FONS_INVALID;
+    return findNameInHash(name);
+  }
+
+  float getTextBounds(T) (float x, float y, const(T)[] str, float[] bounds) nothrow @trusted @nogc if (isAnyCharType!T) {
+    FONSstate* state = getState;
+    uint codepoint;
+    uint utf8state = 0;
+    FONSQuad q;
+    FONSglyph* glyph = null;
+    int prevGlyphIndex = -1;
+    short isize = cast(short)(state.size*10.0f);
+    short iblur = cast(short)state.blur;
+    FONSfont* font;
+
+    if (state.font < 0 || state.font >= nfonts) return 0;
+    font = fonts[state.font];
+    if (font is null || font.fdata is null) return 0;
+
+    float scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
+
+    // Align vertically.
+    y += fons__getVertAlign(&this, font, state.talign, isize);
+
+    float minx = x, maxx = x;
+    float miny = y, maxy = y;
+    float startx = x;
+
+    foreach (T ch; str) {
+      static if (T.sizeof == 1) {
+        //if (fons__decutf8(&utf8state, &codepoint, *cast(const(ubyte)*)str)) continue;
+        mixin(DecUtfMixin!("utf8state", "codepoint", "(cast(ubyte)ch)"));
+        if (utf8state) continue;
+      } else {
+        static if (T.sizeof == 4) {
+          if (ch > dchar.max) ch = 0xFFFD;
+        }
+        codepoint = cast(uint)ch;
+      }
+      glyph = fons__getGlyph(&this, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
+      if (glyph !is null) {
+        //{ import core.stdc.stdio; printf("0: x=%g; y=%g\n", cast(double)x, cast(double)y); }
+        fons__getQuad(&this, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
+        //{ import core.stdc.stdio; printf("1: x=%g; y=%g\n", cast(double)x, cast(double)y); }
+        if (q.x0 < minx) minx = q.x0;
+        if (q.x1 > maxx) maxx = q.x1;
+        if (params.flags&FONS_ZERO_TOPLEFT) {
+          if (q.y0 < miny) miny = q.y0;
+          if (q.y1 > maxy) maxy = q.y1;
+        } else {
+          if (q.y1 < miny) miny = q.y1;
+          if (q.y0 > maxy) maxy = q.y0;
+        }
+        prevGlyphIndex = glyph.index;
+      } else {
+        //{ import core.stdc.stdio; printf("NO GLYPH FOR 0x%04x\n", cast(uint)codepoint); }
+        prevGlyphIndex = -1;
+      }
+    }
+
+    float advance = x-startx;
+    //{ import core.stdc.stdio; printf("***: x=%g; startx=%g; advance=%g\n", cast(double)x, cast(double)startx, cast(double)advance); }
+
+    // Align horizontally
+    if (state.talign.left) {
+      // empty
+    } else if (state.talign.right) {
+      minx -= advance;
+      maxx -= advance;
+    } else if (state.talign.center) {
+      minx -= advance*0.5f;
+      maxx -= advance*0.5f;
+    }
+
+    if (bounds.length) {
+      if (bounds.length > 0) bounds.ptr[0] = minx;
+      if (bounds.length > 1) bounds.ptr[1] = miny;
+      if (bounds.length > 2) bounds.ptr[2] = maxx;
+      if (bounds.length > 3) bounds.ptr[3] = maxy;
+    }
+
+    return advance;
+  }
+
+  void getVertMetrics (float* ascender, float* descender, float* lineh) nothrow @trusted @nogc {
+    FONSfont* font;
+    FONSstate* state = getState;
+    short isize;
+
+    if (state.font < 0 || state.font >= nfonts) {
+      if (ascender !is null) *ascender = 0;
+      if (descender !is null) *descender = 0;
+      if (lineh !is null) *lineh = 0;
+      return;
+    }
+    font = fonts[state.font];
+    isize = cast(short)(state.size*10.0f);
+    if (font is null || font.fdata is null) return;
+
+    if (ascender) *ascender = font.ascender*isize/10.0f;
+    if (descender) *descender = font.descender*isize/10.0f;
+    if (lineh) *lineh = font.lineh*isize/10.0f;
+  }
+
+  void getLineBounds (float y, float* minyp, float* maxyp) nothrow @trusted @nogc {
+    FONSfont* font;
+    FONSstate* state = getState;
+    short isize;
+
+    if (minyp !is null) *minyp = 0;
+    if (maxyp !is null) *maxyp = 0;
+
+    if (state.font < 0 || state.font >= nfonts) return;
+    font = fonts[state.font];
+    isize = cast(short)(state.size*10.0f);
+    if (font is null || font.fdata is null) return;
+
+    y += fons__getVertAlign(&this, font, state.talign, isize);
+
+    if (params.flags&FONS_ZERO_TOPLEFT) {
+      immutable float miny = y-font.ascender*cast(float)isize/10.0f;
+      immutable float maxy = miny+font.lineh*isize/10.0f;
+      if (minyp !is null) *minyp = miny;
+      if (maxyp !is null) *maxyp = maxy;
+    } else {
+      immutable float maxy = y+font.descender*cast(float)isize/10.0f;
+      immutable float miny = maxy-font.lineh*isize/10.0f;
+      if (minyp !is null) *minyp = miny;
+      if (maxyp !is null) *maxyp = maxy;
+    }
+  }
+
+  const(ubyte)* getTextureData (int* width, int* height) nothrow @trusted @nogc {
+    if (width !is null) *width = params.width;
+    if (height !is null) *height = params.height;
+    return texData;
+  }
+
+  bool validateTexture (int* dirty) nothrow @trusted @nogc {
+    if (dirtyRect.ptr[0] < dirtyRect.ptr[2] && dirtyRect.ptr[1] < dirtyRect.ptr[3]) {
+      dirty[0] = dirtyRect.ptr[0];
+      dirty[1] = dirtyRect.ptr[1];
+      dirty[2] = dirtyRect.ptr[2];
+      dirty[3] = dirtyRect.ptr[3];
+      // reset dirty rect
+      dirtyRect.ptr[0] = params.width;
+      dirtyRect.ptr[1] = params.height;
+      dirtyRect.ptr[2] = 0;
+      dirtyRect.ptr[3] = 0;
+      return true;
+    }
+    return false;
+  }
+
+  void errorCallback (void delegate (int error, int val) nothrow @trusted @nogc callback) nothrow @trusted @nogc {
+    handleError = callback;
+  }
+
+  void getAtlasSize (int* width, int* height) const pure nothrow @trusted @nogc {
+    if (width !is null) *width = params.width;
+    if (height !is null) *height = params.height;
+  }
+
+  bool expandAtlas (int width, int height) nothrow @trusted @nogc {
+    import core.stdc.stdlib : free;
+    import core.stdc.string : memcpy, memset;
+
+    int maxy = 0;
+    ubyte* data = null;
+
+    width = nvg__max(width, params.width);
+    height = nvg__max(height, params.height);
+
+    if (width == params.width && height == params.height) return true;
+
+    // Flush pending glyphs.
+    fons__flush(&this);
+
+    // Create new texture
+    if (params.renderResize !is null) {
+      if (params.renderResize(params.userPtr, width, height) == 0) return false;
+    }
+    // Copy old texture data over.
+    data = cast(ubyte*)malloc(width*height);
+    if (data is null) return 0;
+    foreach (immutable int i; 0..params.height) {
+      ubyte* dst = &data[i*width];
+      ubyte* src = &texData[i*params.width];
+      memcpy(dst, src, params.width);
+      if (width > params.width) memset(dst+params.width, 0, width-params.width);
+    }
+    if (height > params.height) memset(&data[params.height*width], 0, (height-params.height)*width);
+
+    free(texData);
+    texData = data;
+
+    // Increase atlas size
+    fons__atlasExpand(atlas, width, height);
+
+    // Add existing data as dirty.
+    foreach (immutable int i; 0..atlas.nnodes) maxy = nvg__max(maxy, atlas.nodes[i].y);
+    dirtyRect.ptr[0] = 0;
+    dirtyRect.ptr[1] = 0;
+    dirtyRect.ptr[2] = params.width;
+    dirtyRect.ptr[3] = maxy;
+
+    params.width = width;
+    params.height = height;
+    itw = 1.0f/params.width;
+    ith = 1.0f/params.height;
+
+    return true;
+  }
+
+  bool resetAtlas (int width, int height) nothrow @trusted @nogc {
+    import core.stdc.stdlib : realloc;
+    import core.stdc.string : memcpy, memset;
+
+    // flush pending glyphs
+    fons__flush(&this);
+
+    // create new texture
+    if (params.renderResize !is null) {
+      if (params.renderResize(params.userPtr, width, height) == 0) return false;
+    }
+
+    // reset atlas
+    fons__atlasReset(atlas, width, height);
+
+    // clear texture data
+    texData = cast(ubyte*)realloc(texData, width*height);
+    if (texData is null) assert(0, "FONS: out of memory");
+    memset(texData, 0, width*height);
+
+    // reset dirty rect
+    dirtyRect.ptr[0] = width;
+    dirtyRect.ptr[1] = height;
+    dirtyRect.ptr[2] = 0;
+    dirtyRect.ptr[3] = 0;
+
+    // Reset cached glyphs
+    foreach (FONSfont* font; fonts[0..nfonts]) {
+      if (font !is null) {
+        font.nglyphs = 0;
+        font.lut.ptr[0..FONS_HASH_LUT_SIZE] = -1;
+      }
+    }
+
+    params.width = width;
+    params.height = height;
+    itw = 1.0f/params.width;
+    ith = 1.0f/params.height;
+
+    // Add white rect at 0, 0 for debug drawing.
+    fons__addWhiteRect(&this, 2, 2);
+
+    return true;
+  }
+
+  bool getPathBounds (dchar dch, float[] bounds) nothrow @trusted @nogc {
+    if (bounds.length > 4) bounds = bounds.ptr[0..4];
+    static if (is(typeof(&fons__nvg__bounds))) {
+      FONSstate* state = getState;
+      if (state.font < 0 || state.font >= nfonts) { bounds[] = 0; return false; }
+      FONSfont* font;
+      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      if (g == 0) { bounds[] = 0; return false; }
+      assert(font !is null);
+      return fons__nvg__bounds(&font.font, g, bounds);
+    } else {
+      bounds[] = 0;
+      return false;
+    }
+  }
+
+  bool toPath() (NVGContext vg, dchar dch, float[] bounds=null) nothrow @trusted @nogc {
+    if (bounds.length > 4) bounds = bounds.ptr[0..4];
+    static if (is(typeof(&fons__nvg__toPath))) {
+      if (vg is null) { bounds[] = 0; return false; }
+      FONSstate* state = getState;
+      if (state.font < 0 || state.font >= nfonts) { bounds[] = 0; return false; }
+      FONSfont* font;
+      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      if (g == 0) { bounds[] = 0; return false; }
+      assert(font !is null);
+      return fons__nvg__toPath(vg, &font.font, g, bounds);
+    } else {
+      bounds[] = 0;
+      return false;
+    }
+  }
+
+  bool toOutline (dchar dch, NVGPathOutline.DataStore* ol) nothrow @trusted @nogc {
+    if (ol is null) return false;
+    static if (is(typeof(&fons__nvg__toOutline))) {
+      FONSstate* state = getState;
+      if (state.font < 0 || state.font >= nfonts) return false;
+      FONSfont* font;
+      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      if (g == 0) return false;
+      assert(font !is null);
+      return fons__nvg__toOutline(&font.font, g, ol);
+    } else {
+      return false;
+    }
+  }
 }
 
+
+// ////////////////////////////////////////////////////////////////////////// //
 void* fons__tmpalloc (usize size, void* up) nothrow @trusted @nogc {
   ubyte* ptr;
-  FONScontext* stash = cast(FONScontext*)up;
+  FONSContext stash = cast(FONSContext)up;
   // 16-byte align the returned pointer
   size = (size+0xf)&~0xf;
   if (stash.nscratch+cast(int)size > FONS_SCRATCH_BUF_SIZE) {
-    if (stash.handleError) stash.handleError(stash.errorUptr, FONS_SCRATCH_FULL, stash.nscratch+cast(int)size);
+    if (stash.handleError !is null) stash.handleError(FONS_SCRATCH_FULL, stash.nscratch+cast(int)size);
     return null;
   }
   ptr = stash.scratch+stash.nscratch;
@@ -10609,7 +11442,7 @@ bool fons__atlasAddRect (FONSatlas* atlas, int rw, int rh, int* rx, int* ry) not
   return true;
 }
 
-void fons__addWhiteRect (FONScontext* stash, int w, int h) nothrow @trusted @nogc {
+void fons__addWhiteRect (FONSContext stash, int w, int h) nothrow @trusted @nogc {
   int gx, gy;
   ubyte* dst;
 
@@ -10630,140 +11463,6 @@ void fons__addWhiteRect (FONScontext* stash, int w, int h) nothrow @trusted @nog
   stash.dirtyRect.ptr[3] = nvg__max(stash.dirtyRect.ptr[3], gy+h);
 }
 
-public FONScontext* fonsCreateInternal (FONSparams* params) nothrow @trusted @nogc {
-  FONScontext* stash = null;
-
-  // Allocate memory for the font stash.
-  stash = cast(FONScontext*)malloc(FONScontext.sizeof);
-  if (stash is null) goto error;
-  memset(stash, 0, FONScontext.sizeof);
-
-  stash.params = *params;
-
-  // Allocate scratch buffer.
-  stash.scratch = cast(ubyte*)malloc(FONS_SCRATCH_BUF_SIZE);
-  if (stash.scratch is null) goto error;
-
-  // Initialize implementation library
-  if (!fons__tt_init(stash)) goto error;
-
-  if (stash.params.renderCreate !is null) {
-    if (!stash.params.renderCreate(stash.params.userPtr, stash.params.width, stash.params.height)) goto error;
-  }
-
-  stash.atlas = fons__allocAtlas(stash.params.width, stash.params.height, FONS_INIT_ATLAS_NODES);
-  if (stash.atlas is null) goto error;
-
-  // Don't allocate space for fonts: hash manager will do that for us later.
-  //stash.cfonts = 0;
-  //stash.nfonts = 0;
-
-  // Create texture for the cache.
-  stash.itw = 1.0f/stash.params.width;
-  stash.ith = 1.0f/stash.params.height;
-  stash.texData = cast(ubyte*)malloc(stash.params.width*stash.params.height);
-  if (stash.texData is null) goto error;
-  memset(stash.texData, 0, stash.params.width*stash.params.height);
-
-  stash.dirtyRect.ptr[0] = stash.params.width;
-  stash.dirtyRect.ptr[1] = stash.params.height;
-  stash.dirtyRect.ptr[2] = 0;
-  stash.dirtyRect.ptr[3] = 0;
-
-  // Add white rect at 0, 0 for debug drawing.
-  fons__addWhiteRect(stash, 2, 2);
-
-  fonsPushState(stash);
-  fonsClearState(stash);
-
-  return stash;
-
-error:
-  fonsDeleteInternal(stash);
-  return null;
-}
-
-FONSstate* fons__getState (FONScontext* stash) nothrow @trusted @nogc {
-  pragma(inline, true);
-  return &stash.states[stash.nstates-1];
-}
-
-bool fonsAddFallbackFont (FONScontext* stash, int base, int fallback) nothrow @trusted @nogc {
-  FONSfont* baseFont = stash.fonts[base];
-  if (baseFont !is null && baseFont.nfallbacks < FONS_MAX_FALLBACKS) {
-    baseFont.fallbacks.ptr[baseFont.nfallbacks++] = fallback;
-    return true;
-  }
-  return false;
-}
-
-public void fonsSetSize (FONScontext* stash, float size) nothrow @trusted @nogc {
-  pragma(inline, true);
-  fons__getState(stash).size = size;
-}
-
-public void fonsSetColor (FONScontext* stash, uint color) nothrow @trusted @nogc {
-  pragma(inline, true);
-  fons__getState(stash).color = color;
-}
-
-public void fonsSetSpacing (FONScontext* stash, float spacing) nothrow @trusted @nogc {
-  pragma(inline, true);
-  fons__getState(stash).spacing = spacing;
-}
-
-public void fonsSetBlur (FONScontext* stash, float blur) nothrow @trusted @nogc {
-  pragma(inline, true);
-  version(nanovg_kill_font_blur) blur = 0;
-  fons__getState(stash).blur = blur;
-}
-
-public void fonsSetAlign (FONScontext* stash, NVGTextAlign talign) nothrow @trusted @nogc {
-  pragma(inline, true);
-  fons__getState(stash).talign = talign;
-}
-
-public void fonsSetFont (FONScontext* stash, int font) nothrow @trusted @nogc {
-  pragma(inline, true);
-  fons__getState(stash).font = font;
-}
-
-// get AA for current font or for the specified font
-public bool fonsGetFontAA (FONScontext* stash, int font=-1) nothrow @trusted @nogc {
-  FONSstate* state = fons__getState(stash);
-  if (font < 0) font = state.font;
-  if (font < 0 || font >= stash.nfonts) return false;
-  FONSfont* f = stash.fonts[font];
-  return (f !is null ? !f.font.mono : false);
-}
-
-public void fonsPushState (FONScontext* stash) nothrow @trusted @nogc {
-  if (stash.nstates >= FONS_MAX_STATES) {
-    if (stash.handleError) stash.handleError(stash.errorUptr, FONS_STATES_OVERFLOW, 0);
-    return;
-  }
-  if (stash.nstates > 0) memcpy(&stash.states[stash.nstates], &stash.states[stash.nstates-1], FONSstate.sizeof);
-  ++stash.nstates;
-}
-
-public void fonsPopState (FONScontext* stash) nothrow @trusted @nogc {
-  if (stash.nstates <= 1) {
-    if (stash.handleError) stash.handleError(stash.errorUptr, FONS_STATES_UNDERFLOW, 0);
-    return;
-  }
-  --stash.nstates;
-}
-
-public void fonsClearState (FONScontext* stash) nothrow @trusted @nogc {
-  FONSstate* state = fons__getState(stash);
-  state.size = 12.0f;
-  state.color = 0xffffffff;
-  state.font = 0;
-  state.blur = 0;
-  state.spacing = 0;
-  state.talign.reset; //FONS_ALIGN_LEFT|FONS_ALIGN_BASELINE;
-}
-
 void fons__freeFont (FONSfont* font) nothrow @trusted @nogc {
   if (font is null) return;
   if (font.glyphs) free(font.glyphs);
@@ -10772,7 +11471,7 @@ void fons__freeFont (FONSfont* font) nothrow @trusted @nogc {
 }
 
 // returns fid, not hash slot
-int fons__allocFontAt (FONScontext* stash, int atidx) nothrow @trusted @nogc {
+int fons__allocFontAt (FONSContext stash, int atidx) nothrow @trusted @nogc {
   if (atidx >= 0 && atidx >= stash.nfonts) assert(0, "internal NanoVega fontstash error");
 
   if (atidx < 0) {
@@ -10809,269 +11508,6 @@ int fons__allocFontAt (FONScontext* stash, int atidx) nothrow @trusted @nogc {
   }
 }
 
-private enum NoAlias = ":noaa";
-
-// defAA: antialias flag for fonts without ":noaa"
-public int fonsAddFont (FONScontext* stash, const(char)[] name, const(char)[] path, bool defAA) nothrow @trusted {
-  if (path.length == 0 || name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
-  if (path.length > 32768) return FONS_INVALID; // arbitrary limit
-
-  // if font path ends with ":noaa", turn off antialiasing
-  if (path.length >= NoAlias.length && fons_strequci(path[$-NoAlias.length..$], NoAlias)) {
-    path = path[0..$-NoAlias.length];
-    if (path.length == 0) return FONS_INVALID;
-    defAA = false;
-  }
-
-  // if font name ends with ":noaa", turn off antialiasing
-  if (name.length > NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
-    name = name[0..$-NoAlias.length];
-    defAA = false;
-  }
-
-  // find a font with the given name
-  int fidx = stash.findNameInHash(name);
-  //{ import core.stdc.stdio; printf("loading font '%.*s' [%s] (fidx=%d)...\n", cast(uint)path.length, path.ptr, fontnamebuf.ptr, fidx); }
-
-  int loadFontFile (const(char)[] path) {
-    // check if existing font (if any) has the same path
-    if (fidx >= 0) {
-      import core.stdc.string : strlen;
-      auto plen = (stash.fonts[fidx].path !is null ? strlen(stash.fonts[fidx].path) : 0);
-      version(Posix) {
-        //{ import core.stdc.stdio; printf("+++ font [%.*s] was loaded from [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)stash.fonts[fidx].path.length, stash.fonts[fidx].path.ptr); }
-        if (plen == path.length && stash.fonts[fidx].path[0..plen] == path) {
-          //{ import core.stdc.stdio; printf("*** font [%.*s] already loaded from [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)plen, path.ptr); }
-          // i found her!
-          return fidx;
-        }
-      } else {
-        if (plen == path.length && fons_strequci(stash.fonts[fidx].path[0..plen], path)) {
-          // i found her!
-          return fidx;
-        }
-      }
-    }
-    version(Windows) {
-      // special shitdows check: this will reject fontconfig font names (but still allow things like "c:myfont")
-      foreach (immutable char ch; path[(path.length >= 2 && path[1] == ':' ? 2 : 0)..$]) if (ch == ':') return FONS_INVALID;
-    }
-    // either no such font, or different path
-    //{ import core.stdc.stdio; printf("trying font [%.*s] from file [%.*s]\n", cast(uint)blen, fontnamebuf.ptr, cast(uint)path.length, path.ptr); }
-    int xres = FONS_INVALID;
-    try {
-      import core.stdc.stdlib : free, malloc;
-      static if (NanoVegaHasIVVFS) {
-        auto fl = VFile(path);
-        auto dataSize = fl.size;
-        if (dataSize < 16 || dataSize > int.max/32) return FONS_INVALID;
-        ubyte* data = cast(ubyte*)malloc(cast(uint)dataSize);
-        if (data is null) assert(0, "out of memory in NanoVega fontstash");
-        scope(failure) free(data); // oops
-        fl.rawReadExact(data[0..cast(uint)dataSize]);
-        fl.close();
-      } else {
-        import core.stdc.stdio : FILE, fopen, fclose, fread, ftell, fseek;
-        import std.internal.cstring : tempCString;
-        auto fl = fopen(path.tempCString, "rb");
-        if (fl is null) return FONS_INVALID;
-        scope(exit) fclose(fl);
-        if (fseek(fl, 0, 2/*SEEK_END*/) != 0) return FONS_INVALID;
-        auto dataSize = ftell(fl);
-        if (fseek(fl, 0, 0/*SEEK_SET*/) != 0) return FONS_INVALID;
-        if (dataSize < 16 || dataSize > int.max/32) return FONS_INVALID;
-        ubyte* data = cast(ubyte*)malloc(cast(uint)dataSize);
-        if (data is null) assert(0, "out of memory in NanoVega fontstash");
-        scope(failure) free(data); // oops
-        ubyte* dptr = data;
-        auto left = cast(uint)dataSize;
-        while (left > 0) {
-          auto rd = fread(dptr, 1, left, fl);
-          if (rd == 0) { free(data); return FONS_INVALID; } // unexpected EOF or reading error, it doesn't matter
-          dptr += rd;
-          left -= rd;
-        }
-      }
-      scope(failure) free(data); // oops
-      // create font data
-      FONSfontData* fdata = fons__createFontData(data, cast(int)dataSize, true); // free data
-      fdata.incref();
-      xres = fonsAddFontWithData(stash, name, fdata, defAA);
-      if (xres == FONS_INVALID) {
-        fdata.decref(); // this will free [data] and [fdata]
-      } else {
-        // remember path
-        stash.fonts[xres].setPath(path);
-      }
-    } catch (Exception e) {
-      // oops; sorry
-    }
-    return xres;
-  }
-
-  // first try direct path
-  auto res = loadFontFile(path);
-  // if loading failed, try fontconfig (if fontconfig is available)
-  static if (NanoVegaHasFontConfig) {
-    if (res == FONS_INVALID && fontconfigAvailable) {
-      // idiotic fontconfig NEVER fails; let's skip it if `path` looks like a path
-      bool ok = true;
-      if (path.length > 4 && (path[$-4..$] == ".ttf" || path[$-4..$] == ".ttc")) ok = false;
-      if (ok) { foreach (immutable char ch; path) if (ch == '/') { ok = false; break; } }
-      if (ok) {
-        import std.internal.cstring : tempCString;
-        FcPattern* pat = FcNameParse(path.tempCString);
-        if (pat !is null) {
-          scope(exit) FcPatternDestroy(pat);
-          if (FcConfigSubstitute(null, pat, FcMatchPattern)) {
-            FcDefaultSubstitute(pat);
-            // find the font
-            FcResult result;
-            FcPattern* font = FcFontMatch(null, pat, &result);
-            if (font !is null) {
-              scope(exit) FcPatternDestroy(font);
-              char* file = null;
-              if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch) {
-                if (file !is null && file[0]) {
-                  import core.stdc.string : strlen;
-                  res = loadFontFile(file[0..strlen(file)]);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  return res;
-}
-
-// This will not free data on error!
-public int fonsAddFontMem (FONScontext* stash, const(char)[] name, ubyte* data, int dataSize, bool freeData, bool defAA) nothrow @trusted @nogc {
-  FONSfontData* fdata = fons__createFontData(data, dataSize, freeData);
-  fdata.incref();
-  auto res = fonsAddFontWithData(stash, name, fdata, defAA);
-  if (res == FONS_INVALID) {
-    // we promised to not free data on error
-    fdata.freeData = false;
-    fdata.decref(); // this will free [fdata]
-  }
-  return res;
-}
-
-// Add fonts from another font stash
-// This is more effective than reloading fonts, 'cause font data will be shared.
-public void fonsAddStashFonts (FONScontext* stash, FONScontext* source) nothrow @trusted @nogc {
-  if (stash is null || source is null) return;
-  foreach (FONSfont* font; source.fonts[0..source.nfonts]) {
-    if (font !is null) {
-      auto newidx = fonsAddCookedFont(stash, font);
-      FONSfont* newfont = stash.fonts[newidx];
-      assert(newfont !is null);
-      assert(newfont.path is null);
-      // copy path
-      if (font.path !is null && font.path[0]) {
-        import core.stdc.stdlib : malloc;
-        import core.stdc.string : strcpy, strlen;
-        newfont.path = cast(char*)malloc(strlen(font.path)+1);
-        if (newfont.path is null) assert(0, "FONS: out of memory");
-        strcpy(newfont.path, font.path);
-      }
-    }
-  }
-}
-
-// used to add font from another fontstash
-int fonsAddCookedFont (FONScontext* stash, FONSfont* font) nothrow @trusted @nogc {
-  if (font is null || font.fdata is null) return FONS_INVALID;
-  font.fdata.incref();
-  auto res = fonsAddFontWithData(stash, font.name[0..font.namelen], font.fdata, !font.font.mono);
-  if (res == FONS_INVALID) font.fdata.decref(); // oops
-  return res;
-}
-
-// fdata refcount must be already increased; it won't be changed
-int fonsAddFontWithData (FONScontext* stash, const(char)[] name, FONSfontData* fdata, bool defAA) nothrow @trusted @nogc {
-  int i, ascent, descent, fh, lineGap;
-
-  if (name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
-  if (name.length > 32767) return FONS_INVALID;
-  if (fdata is null) return FONS_INVALID;
-
-  // find a font with the given name
-  int newidx;
-  FONSfont* oldfont = null;
-  int oldidx = stash.findNameInHash(name);
-  if (oldidx != FONS_INVALID) {
-    // replacement font
-    oldfont = stash.fonts[oldidx];
-    newidx = oldidx;
-  } else {
-    // new font, allocate new bucket
-    newidx = -1;
-  }
-
-  newidx = fons__allocFontAt(stash, newidx);
-  FONSfont* font = stash.fonts[newidx];
-  font.setName(name);
-  font.lut.ptr[0..FONS_HASH_LUT_SIZE] = -1; // init hash lookup
-  font.fdata = fdata; // set the font data (don't change reference count)
-  fons__tt_setMono(stash, &font.font, !defAA);
-
-  // init font
-  stash.nscratch = 0;
-  if (!fons__tt_loadFont(stash, &font.font, fdata.data, fdata.dataSize)) {
-    // we promised to not free data on error, so just clear the data store (it will be freed by the caller)
-    font.fdata = null;
-    fons__freeFont(font);
-    if (oldidx != FONS_INVALID) {
-      assert(oldidx == newidx);
-      stash.fonts[oldidx] = oldfont;
-    } else {
-      assert(newidx == stash.nfonts-1);
-      stash.fonts[newidx] = null;
-      --stash.nfonts;
-    }
-    return FONS_INVALID;
-  } else {
-    // free old font data, if any
-    if (oldfont) fons__freeFont(oldfont);
-  }
-
-  // add font to name hash
-  if (oldidx == FONS_INVALID) stash.addIndexToHash(newidx);
-
-  // store normalized line height
-  // the real line height is got by multiplying the lineh by font size
-  fons__tt_getFontVMetrics(&font.font, &ascent, &descent, &lineGap);
-  fh = ascent-descent;
-  font.ascender = cast(float)ascent/cast(float)fh;
-  font.descender = cast(float)descent/cast(float)fh;
-  font.lineh = cast(float)(fh+lineGap)/cast(float)fh;
-
-  //{ import core.stdc.stdio; printf("created font [%.*s] (idx=%d)...\n", cast(uint)name.length, name.ptr, idx); }
-  return newidx;
-}
-
-// returns `null` on invalid index
-// $(WARNING copy name, as name buffer can be invalidated by next fontstash API call!)
-public const(char)[] fonsGetNameByIndex (FONScontext* stash, int idx) nothrow @trusted @nogc {
-  if (idx < 0 || idx >= stash.nfonts || stash.fonts[idx] is null) return null;
-  return stash.fonts[idx].name[0..stash.fonts[idx].namelen];
-}
-
-// allowSubstitutes: check AA variants if exact name wasn't found?
-// return [FONS_INVALID] if no font was found
-public int fonsGetFontByName (FONScontext* stash, const(char)[] name) nothrow @trusted @nogc {
-  //{ import core.stdc.stdio; printf("fonsGetFontByName: [%.*s]\n", cast(uint)name.length, name.ptr); }
-  // remove ":noaa" suffix
-  if (name.length >= NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
-    name = name[0..$-NoAlias.length];
-  }
-  if (name.length == 0) return FONS_INVALID;
-  return stash.findNameInHash(name);
-}
-
 FONSglyph* fons__allocGlyph (FONSfont* font) nothrow @trusted @nogc {
   if (font.nglyphs+1 > font.cglyphs) {
     font.cglyphs = (font.cglyphs == 0 ? 8 : font.cglyphs*2);
@@ -11083,7 +11519,7 @@ FONSglyph* fons__allocGlyph (FONSfont* font) nothrow @trusted @nogc {
 }
 
 // 0: ooops
-int fons__findGlyphForCP (FONScontext* stash, FONSfont *font, dchar dch, FONSfont** renderfont) nothrow @trusted @nogc {
+int fons__findGlyphForCP (FONSContext stash, FONSfont *font, dchar dch, FONSfont** renderfont) nothrow @trusted @nogc {
   if (renderfont !is null) *renderfont = font;
   if (stash is null) return 0;
   if (font is null || font.fdata is null) return 0;
@@ -11120,54 +11556,6 @@ int fons__findGlyphForCP (FONScontext* stash, FONSfont *font, dchar dch, FONSfon
   return g;
 }
 
-public bool fonsPathBounds (FONScontext* stash, dchar dch, float[] bounds) nothrow @trusted @nogc {
-  if (bounds.length > 4) bounds = bounds.ptr[0..4];
-  static if (is(typeof(&fons__nvg__bounds))) {
-    if (stash is null) { bounds[] = 0; return false; }
-    FONSstate* state = fons__getState(stash);
-    if (state.font < 0 || state.font >= stash.nfonts) { bounds[] = 0; return false; }
-    FONSfont* font;
-    auto g = fons__findGlyphForCP(stash, stash.fonts[state.font], dch, &font);
-    if (g == 0) { bounds[] = 0; return false; }
-    assert(font !is null);
-    return fons__nvg__bounds(&font.font, g, bounds);
-  } else {
-    bounds[] = 0;
-    return false;
-  }
-}
-
-public bool fonsToPath (FONScontext* stash, NVGContext vg, dchar dch, float[] bounds=null) nothrow @trusted @nogc {
-  if (bounds.length > 4) bounds = bounds.ptr[0..4];
-  static if (is(typeof(&fons__nvg__toPath))) {
-    if (vg is null || stash is null) { bounds[] = 0; return false; }
-    FONSstate* state = fons__getState(stash);
-    if (state.font < 0 || state.font >= stash.nfonts) { bounds[] = 0; return false; }
-    FONSfont* font;
-    auto g = fons__findGlyphForCP(stash, stash.fonts[state.font], dch, &font);
-    if (g == 0) { bounds[] = 0; return false; }
-    assert(font !is null);
-    return fons__nvg__toPath(vg, &font.font, g, bounds);
-  } else {
-    bounds[] = 0;
-    return false;
-  }
-}
-
-public bool fonsToOutline (FONScontext* stash, dchar dch, NVGPathOutline.DataStore* ol) nothrow @trusted @nogc {
-  if (stash is null || ol is null) return false;
-  static if (is(typeof(&fons__nvg__toOutline))) {
-    FONSstate* state = fons__getState(stash);
-    if (state.font < 0 || state.font >= stash.nfonts) return false;
-    FONSfont* font;
-    auto g = fons__findGlyphForCP(stash, stash.fonts[state.font], dch, &font);
-    if (g == 0) return false;
-    assert(font !is null);
-    return fons__nvg__toOutline(&font.font, g, ol);
-  } else {
-    return false;
-  }
-}
 
 
 // Based on Exponential blur, Jani Huhtanen, 2006
@@ -11212,7 +11600,7 @@ void fons__blurRows (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow
 }
 
 
-void fons__blur (FONScontext* stash, ubyte* dst, int w, int h, int dstStride, int blur) nothrow @trusted @nogc {
+void fons__blur (FONSContext stash, ubyte* dst, int w, int h, int dstStride, int blur) nothrow @trusted @nogc {
   import std.math : expf = exp;
   if (blur < 1) return;
   // Calculate the alpha such that 90% of the kernel is within the radius. (Kernel extends to infinity)
@@ -11226,13 +11614,11 @@ void fons__blur (FONScontext* stash, ubyte* dst, int w, int h, int dstStride, in
   //fons__blurcols(dst, w, h, dstStride, alpha);
 }
 
-FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, short isize, short iblur, FONSglyphBitmap bitmapOption) nothrow @trusted @nogc {
+FONSglyph* fons__getGlyph (FONSContext stash, FONSfont* font, uint codepoint, short isize, short iblur, FONSglyphBitmap bitmapOption) nothrow @trusted @nogc {
   int advance, lsb, x0, y0, x1, y1, gx, gy;
   FONSglyph* glyph = null;
   float size = isize/10.0f;
   FONSfont* renderFont = font;
-
-  version(nanovg_kill_font_blur) iblur = 0;
 
   if (isize < 2) return null;
   if (iblur > 20) iblur = 20;
@@ -11273,7 +11659,7 @@ FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, s
     int added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
     if (added == 0 && stash.handleError !is null) {
       // Atlas is full, let the user to resize the atlas (or not), and try again.
-      stash.handleError(stash.errorUptr, FONS_ATLAS_FULL, 0);
+      stash.handleError(FONS_ATLAS_FULL, 0);
       added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
     }
     if (added == 0) return null;
@@ -11347,7 +11733,7 @@ FONSglyph* fons__getGlyph (FONScontext* stash, FONSfont* font, uint codepoint, s
   return glyph;
 }
 
-void fons__getQuad (FONScontext* stash, FONSfont* font, int prevGlyphIndex, FONSglyph* glyph, float size, float scale, float spacing, float* x, float* y, FONSquad* q) nothrow @trusted @nogc {
+void fons__getQuad (FONSContext stash, FONSfont* font, int prevGlyphIndex, FONSglyph* glyph, float size, float scale, float spacing, float* x, float* y, FONSQuad* q) nothrow @trusted @nogc {
   if (prevGlyphIndex >= 0) {
     immutable float adv = fons__tt_getGlyphKernAdvance(&font.font, size, prevGlyphIndex, glyph.index)/**scale*/; //k8: do we really need scale here?
     //if (adv != 0) { import core.stdc.stdio; printf("adv=%g (scale=%g; spacing=%g)\n", cast(double)adv, cast(double)scale, cast(double)spacing); }
@@ -11395,7 +11781,7 @@ void fons__getQuad (FONScontext* stash, FONSfont* font, int prevGlyphIndex, FONS
   *x += cast(int)(glyph.xadv/10.0f+0.5f);
 }
 
-void fons__flush (FONScontext* stash) nothrow @trusted @nogc {
+void fons__flush (FONSContext stash) nothrow @trusted @nogc {
   // Flush texture
   if (stash.dirtyRect.ptr[0] < stash.dirtyRect.ptr[2] && stash.dirtyRect.ptr[1] < stash.dirtyRect.ptr[3]) {
     if (stash.params.renderUpdate !is null) stash.params.renderUpdate(stash.params.userPtr, stash.dirtyRect.ptr, stash.texData);
@@ -11415,7 +11801,7 @@ void fons__flush (FONScontext* stash) nothrow @trusted @nogc {
   }
 }
 
-debug(nanovega) void fons__vertex (FONScontext* stash, float x, float y, float s, float t, uint c) nothrow @trusted @nogc {
+debug(nanovega) void fons__vertex (FONSContext stash, float x, float y, float s, float t, uint c) nothrow @trusted @nogc {
   stash.verts.ptr[stash.nverts*2+0] = x;
   stash.verts.ptr[stash.nverts*2+1] = y;
   stash.tcoords.ptr[stash.nverts*2+0] = s;
@@ -11424,7 +11810,7 @@ debug(nanovega) void fons__vertex (FONScontext* stash, float x, float y, float s
   ++stash.nverts;
 }
 
-float fons__getVertAlign (FONScontext* stash, FONSfont* font, NVGTextAlign talign, short isize) nothrow @trusted @nogc {
+float fons__getVertAlign (FONSContext stash, FONSfont* font, NVGTextAlign talign, short isize) nothrow @trusted @nogc {
   if (stash.params.flags&FONS_ZERO_TOPLEFT) {
     final switch (talign.vertical) {
       case NVGTextAlign.V.Top: return font.ascender*cast(float)isize/10.0f;
@@ -11443,119 +11829,7 @@ float fons__getVertAlign (FONScontext* stash, FONSfont* font, NVGTextAlign talig
   assert(0);
 }
 
-public bool fonsTextIterInit(T) (FONScontext* stash, FONStextIter!T* iter, float x, float y, const(T)[] str, FONSglyphBitmap bitmapOption) if (isAnyCharType!T) {
-  if (stash is null || iter is null) return false;
-
-  FONSstate* state = fons__getState(stash);
-
-  memset(iter, 0, (*iter).sizeof);
-
-  if (stash is null) return false;
-  if (state.font < 0 || state.font >= stash.nfonts) return false;
-  iter.font = stash.fonts[state.font];
-  if (iter.font is null || iter.font.fdata is null) return false;
-
-  iter.isize = cast(short)(state.size*10.0f);
-  iter.iblur = cast(short)state.blur;
-  iter.scale = fons__tt_getPixelHeightScale(&iter.font.font, cast(float)iter.isize/10.0f);
-
-  // Align horizontally
-  float width = void;
-  if (state.talign.left) {
-    // empty
-  } else if (state.talign.right) {
-    width = fonsTextBounds(stash, x, y, str, null);
-    x -= width;
-  } else if (state.talign.center) {
-    width = fonsTextBounds(stash, x, y, str, null);
-    x -= width*0.5f;
-  }
-  // Align vertically.
-  y += fons__getVertAlign(stash, iter.font, state.talign, iter.isize);
-
-  iter.x = iter.nextx = x;
-  iter.y = iter.nexty = y;
-  iter.spacing = state.spacing;
-  if (str.ptr is null) {
-         static if (is(T == char)) str = "";
-    else static if (is(T == wchar)) str = ""w;
-    else static if (is(T == dchar)) str = ""d;
-    else static assert(0, "wtf?!");
-  }
-  iter.s = str.ptr;
-  iter.n = str.ptr;
-  iter.e = str.ptr+str.length;
-  iter.codepoint = 0;
-  iter.prevGlyphIndex = -1;
-  iter.bitmapOption = bitmapOption;
-
-  return true;
-}
-
-public bool fonsTextIterGetDummyChar(FT) (FONScontext* stash, FT* iter, FONSquad* quad) nothrow @trusted @nogc if (is(FT : FONStextIter!CT, CT)) {
-  if (stash is null || iter is null) return false;
-  // Get glyph and quad
-  iter.x = iter.nextx;
-  iter.y = iter.nexty;
-  FONSglyph* glyph = fons__getGlyph(stash, iter.font, 0xFFFD, iter.isize, iter.iblur, iter.bitmapOption);
-  if (glyph !is null) {
-    fons__getQuad(stash, iter.font, iter.prevGlyphIndex, glyph, iter.isize/10.0f, iter.scale, iter.spacing, &iter.nextx, &iter.nexty, quad);
-    iter.prevGlyphIndex = glyph.index;
-    return true;
-  } else {
-    iter.prevGlyphIndex = -1;
-    return false;
-  }
-}
-
-public bool fonsTextIterNext(FT) (FONScontext* stash, FT* iter, FONSquad* quad) nothrow @trusted @nogc if (is(FT : FONStextIter!CT, CT)) {
-  if (stash is null || iter is null) return false;
-  FONSglyph* glyph = null;
-  static if (is(FT.CharType == char)) {
-    const(char)* str = iter.n;
-    iter.s = iter.n;
-    if (str is iter.e) return false;
-    const(char)* e = iter.e;
-    for (; str !is e; ++str) {
-      /*if (fons__decutf8(&iter.utf8state, &iter.codepoint, *cast(const(ubyte)*)str)) continue;*/
-      mixin(DecUtfMixin!("iter.utf8state", "iter.codepoint", "*cast(const(ubyte)*)str"));
-      if (iter.utf8state) continue;
-      ++str; // 'cause we'll break anyway
-      // get glyph and quad
-      iter.x = iter.nextx;
-      iter.y = iter.nexty;
-      glyph = fons__getGlyph(stash, iter.font, iter.codepoint, iter.isize, iter.iblur, iter.bitmapOption);
-      if (glyph !is null) {
-        fons__getQuad(stash, iter.font, iter.prevGlyphIndex, glyph, iter.isize/10.0f, iter.scale, iter.spacing, &iter.nextx, &iter.nexty, quad);
-        iter.prevGlyphIndex = glyph.index;
-      } else {
-        iter.prevGlyphIndex = -1;
-      }
-      break;
-    }
-    iter.n = str;
-  } else {
-    const(FT.CharType)* str = iter.n;
-    iter.s = iter.n;
-    if (str is iter.e) return false;
-    iter.codepoint = cast(uint)(*str++);
-    if (iter.codepoint > dchar.max) iter.codepoint = 0xFFFD;
-    // Get glyph and quad
-    iter.x = iter.nextx;
-    iter.y = iter.nexty;
-    glyph = fons__getGlyph(stash, iter.font, iter.codepoint, iter.isize, iter.iblur, iter.bitmapOption);
-    if (glyph !is null) {
-      fons__getQuad(stash, iter.font, iter.prevGlyphIndex, glyph, iter.isize/10.0f, iter.scale, iter.spacing, &iter.nextx, &iter.nexty, quad);
-      iter.prevGlyphIndex = glyph.index;
-    } else {
-      iter.prevGlyphIndex = -1;
-    }
-    iter.n = str;
-  }
-  return true;
-}
-
-debug(nanovega) public void fonsDrawDebug (FONScontext* stash, float x, float y) nothrow @trusted @nogc {
+debug(nanovega) public void fonsDrawDebug (FONSContext stash, float x, float y) nothrow @trusted @nogc {
   int i;
   int w = stash.params.width;
   int h = stash.params.height;
@@ -11603,11 +11877,11 @@ debug(nanovega) public void fonsDrawDebug (FONScontext* stash, float x, float y)
 
 public struct FonsTextBoundsIterator {
 private:
-  FONScontext* stash;
+  FONSContext stash;
   FONSstate* state;
   uint codepoint;
   uint utf8state = 0;
-  FONSquad q;
+  FONSQuad q;
   FONSglyph* glyph = null;
   int prevGlyphIndex = -1;
   short isize, iblur;
@@ -11617,13 +11891,14 @@ private:
   float minx, miny, maxx, maxy;
 
 public:
-  this (FONScontext* astash, float ax, float ay) nothrow @trusted @nogc { reset(astash, ax, ay); }
+  this (FONSContext astash, float ax, float ay) nothrow @trusted @nogc { reset(astash, ax, ay); }
 
-  void reset (FONScontext* astash, float ax, float ay) nothrow @trusted @nogc {
+  void reset (FONSContext astash, float ax, float ay) nothrow @trusted @nogc {
     this = this.init;
     if (astash is null) return;
+
     stash = astash;
-    state = fons__getState(stash);
+    state = stash.getState;
     if (state is null) { stash = null; return; } // alas
 
     x = ax;
@@ -11748,275 +12023,13 @@ public:
   }
 }
 
-public float fonsTextBounds(T) (FONScontext* stash, float x, float y, const(T)[] str, float[] bounds) nothrow @trusted @nogc
-if (isAnyCharType!T)
-{
-  FONSstate* state = fons__getState(stash);
-  uint codepoint;
-  uint utf8state = 0;
-  FONSquad q;
-  FONSglyph* glyph = null;
-  int prevGlyphIndex = -1;
-  short isize = cast(short)(state.size*10.0f);
-  short iblur = cast(short)state.blur;
-  FONSfont* font;
-
-  if (stash is null) return 0;
-  if (state.font < 0 || state.font >= stash.nfonts) return 0;
-  font = stash.fonts[state.font];
-  if (font is null || font.fdata is null) return 0;
-
-  float scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
-
-  // Align vertically.
-  y += fons__getVertAlign(stash, font, state.talign, isize);
-
-  float minx = x, maxx = x;
-  float miny = y, maxy = y;
-  float startx = x;
-
-  foreach (T ch; str) {
-    static if (T.sizeof == 1) {
-      //if (fons__decutf8(&utf8state, &codepoint, *cast(const(ubyte)*)str)) continue;
-      mixin(DecUtfMixin!("utf8state", "codepoint", "(cast(ubyte)ch)"));
-      if (utf8state) continue;
-    } else {
-      static if (T.sizeof == 4) {
-        if (ch > dchar.max) ch = 0xFFFD;
-      }
-      codepoint = cast(uint)ch;
-    }
-    glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
-    if (glyph !is null) {
-      //{ import core.stdc.stdio; printf("0: x=%g; y=%g\n", cast(double)x, cast(double)y); }
-      fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
-      //{ import core.stdc.stdio; printf("1: x=%g; y=%g\n", cast(double)x, cast(double)y); }
-      if (q.x0 < minx) minx = q.x0;
-      if (q.x1 > maxx) maxx = q.x1;
-      if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-        if (q.y0 < miny) miny = q.y0;
-        if (q.y1 > maxy) maxy = q.y1;
-      } else {
-        if (q.y1 < miny) miny = q.y1;
-        if (q.y0 > maxy) maxy = q.y0;
-      }
-      prevGlyphIndex = glyph.index;
-    } else {
-      //{ import core.stdc.stdio; printf("NO GLYPH FOR 0x%04x\n", cast(uint)codepoint); }
-      prevGlyphIndex = -1;
-    }
-  }
-
-  float advance = x-startx;
-  //{ import core.stdc.stdio; printf("***: x=%g; startx=%g; advance=%g\n", cast(double)x, cast(double)startx, cast(double)advance); }
-
-  // Align horizontally
-  if (state.talign.left) {
-    // empty
-  } else if (state.talign.right) {
-    minx -= advance;
-    maxx -= advance;
-  } else if (state.talign.center) {
-    minx -= advance*0.5f;
-    maxx -= advance*0.5f;
-  }
-
-  if (bounds.length) {
-    if (bounds.length > 0) bounds.ptr[0] = minx;
-    if (bounds.length > 1) bounds.ptr[1] = miny;
-    if (bounds.length > 2) bounds.ptr[2] = maxx;
-    if (bounds.length > 3) bounds.ptr[3] = maxy;
-  }
-
-  return advance;
-}
-
-public void fonsVertMetrics (FONScontext* stash, float* ascender, float* descender, float* lineh) nothrow @trusted @nogc {
-  FONSfont* font;
-  FONSstate* state = fons__getState(stash);
-  short isize;
-
+//
+public void kill (ref FONSContext stash) nothrow @trusted @nogc {
+  import core.stdc.stdlib : free;
   if (stash is null) return;
-  if (state.font < 0 || state.font >= stash.nfonts) return;
-  font = stash.fonts[state.font];
-  isize = cast(short)(state.size*10.0f);
-  if (font is null || font.fdata is null) return;
-
-  if (ascender) *ascender = font.ascender*isize/10.0f;
-  if (descender) *descender = font.descender*isize/10.0f;
-  if (lineh) *lineh = font.lineh*isize/10.0f;
-}
-
-public void fonsLineBounds (FONScontext* stash, float y, float* minyp, float* maxyp) nothrow @trusted @nogc {
-  FONSfont* font;
-  FONSstate* state = fons__getState(stash);
-  short isize;
-
-  if (minyp !is null) *minyp = 0;
-  if (maxyp !is null) *maxyp = 0;
-
-  if (stash is null) return;
-  if (state.font < 0 || state.font >= stash.nfonts) return;
-  font = stash.fonts[state.font];
-  isize = cast(short)(state.size*10.0f);
-  if (font is null || font.fdata is null) return;
-
-  y += fons__getVertAlign(stash, font, state.talign, isize);
-
-  if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-    immutable float miny = y-font.ascender*cast(float)isize/10.0f;
-    immutable float maxy = miny+font.lineh*isize/10.0f;
-    if (minyp !is null) *minyp = miny;
-    if (maxyp !is null) *maxyp = maxy;
-  } else {
-    immutable float maxy = y+font.descender*cast(float)isize/10.0f;
-    immutable float miny = maxy-font.lineh*isize/10.0f;
-    if (minyp !is null) *minyp = miny;
-    if (maxyp !is null) *maxyp = maxy;
-  }
-}
-
-public const(ubyte)* fonsGetTextureData (FONScontext* stash, int* width, int* height) nothrow @trusted @nogc {
-  if (width !is null) *width = stash.params.width;
-  if (height !is null) *height = stash.params.height;
-  return stash.texData;
-}
-
-public int fonsValidateTexture (FONScontext* stash, int* dirty) nothrow @trusted @nogc {
-  if (stash.dirtyRect.ptr[0] < stash.dirtyRect.ptr[2] && stash.dirtyRect.ptr[1] < stash.dirtyRect.ptr[3]) {
-    dirty[0] = stash.dirtyRect.ptr[0];
-    dirty[1] = stash.dirtyRect.ptr[1];
-    dirty[2] = stash.dirtyRect.ptr[2];
-    dirty[3] = stash.dirtyRect.ptr[3];
-    // Reset dirty rect
-    stash.dirtyRect.ptr[0] = stash.params.width;
-    stash.dirtyRect.ptr[1] = stash.params.height;
-    stash.dirtyRect.ptr[2] = 0;
-    stash.dirtyRect.ptr[3] = 0;
-    return 1;
-  }
-  return 0;
-}
-
-public void fonsDeleteInternal (FONScontext* stash) nothrow @trusted @nogc {
-  if (stash is null) return;
-
-  if (stash.params.renderDelete !is null) stash.params.renderDelete(stash.params.userPtr);
-
-  foreach (int i; 0..stash.nfonts) fons__freeFont(stash.fonts[i]);
-
-  if (stash.atlas) fons__deleteAtlas(stash.atlas);
-  if (stash.fonts) free(stash.fonts);
-  if (stash.texData) free(stash.texData);
-  if (stash.scratch) free(stash.scratch);
-  if (stash.hashidx) free(stash.hashidx);
+  stash.clear();
   free(stash);
-}
-
-public void fonsSetErrorCallback (FONScontext* stash, void function (void* uptr, int error, int val) nothrow @trusted @nogc callback, void* uptr) nothrow @trusted @nogc {
-  if (stash is null) return;
-  stash.handleError = callback;
-  stash.errorUptr = uptr;
-}
-
-public void fonsGetAtlasSize (FONScontext* stash, int* width, int* height) nothrow @trusted @nogc {
-  if (stash is null) return;
-  *width = stash.params.width;
-  *height = stash.params.height;
-}
-
-public int fonsExpandAtlas (FONScontext* stash, int width, int height) nothrow @trusted @nogc {
-  int i, maxy = 0;
-  ubyte* data = null;
-  if (stash is null) return 0;
-
-  width = nvg__max(width, stash.params.width);
-  height = nvg__max(height, stash.params.height);
-
-  if (width == stash.params.width && height == stash.params.height) return 1;
-
-  // Flush pending glyphs.
-  fons__flush(stash);
-
-  // Create new texture
-  if (stash.params.renderResize !is null) {
-    if (stash.params.renderResize(stash.params.userPtr, width, height) == 0) return 0;
-  }
-  // Copy old texture data over.
-  data = cast(ubyte*)malloc(width*height);
-  if (data is null) return 0;
-  for (i = 0; i < stash.params.height; i++) {
-    ubyte* dst = &data[i*width];
-    ubyte* src = &stash.texData[i*stash.params.width];
-    memcpy(dst, src, stash.params.width);
-    if (width > stash.params.width)
-      memset(dst+stash.params.width, 0, width-stash.params.width);
-  }
-  if (height > stash.params.height) memset(&data[stash.params.height*width], 0, (height-stash.params.height)*width);
-
-  free(stash.texData);
-  stash.texData = data;
-
-  // Increase atlas size
-  fons__atlasExpand(stash.atlas, width, height);
-
-  // Add existing data as dirty.
-  for (i = 0; i < stash.atlas.nnodes; i++) maxy = nvg__max(maxy, stash.atlas.nodes[i].y);
-  stash.dirtyRect.ptr[0] = 0;
-  stash.dirtyRect.ptr[1] = 0;
-  stash.dirtyRect.ptr[2] = stash.params.width;
-  stash.dirtyRect.ptr[3] = maxy;
-
-  stash.params.width = width;
-  stash.params.height = height;
-  stash.itw = 1.0f/stash.params.width;
-  stash.ith = 1.0f/stash.params.height;
-
-  return 1;
-}
-
-public bool fonsResetAtlas (FONScontext* stash, int width, int height) nothrow @trusted @nogc {
-  if (stash is null) return false;
-
-  // Flush pending glyphs.
-  fons__flush(stash);
-
-  // Create new texture
-  if (stash.params.renderResize !is null) {
-    if (stash.params.renderResize(stash.params.userPtr, width, height) == 0) return false;
-  }
-
-  // Reset atlas
-  fons__atlasReset(stash.atlas, width, height);
-
-  // Clear texture data.
-  stash.texData = cast(ubyte*)realloc(stash.texData, width*height);
-  if (stash.texData is null) return 0;
-  memset(stash.texData, 0, width*height);
-
-  // Reset dirty rect
-  stash.dirtyRect.ptr[0] = width;
-  stash.dirtyRect.ptr[1] = height;
-  stash.dirtyRect.ptr[2] = 0;
-  stash.dirtyRect.ptr[3] = 0;
-
-  // Reset cached glyphs
-  foreach (FONSfont* font; stash.fonts[0..stash.nfonts]) {
-    if (font !is null) {
-      font.nglyphs = 0;
-      font.lut.ptr[0..FONS_HASH_LUT_SIZE] = -1;
-    }
-  }
-
-  stash.params.width = width;
-  stash.params.height = height;
-  stash.itw = 1.0f/stash.params.width;
-  stash.ith = 1.0f/stash.params.height;
-
-  // Add white rect at 0, 0 for debug drawing.
-  fons__addWhiteRect(stash, 2, 2);
-
-  return true;
+  stash = null;
 }
 
 
