@@ -9264,9 +9264,6 @@ public struct FONSParams {
   bool function (void* uptr, int width, int height) nothrow @trusted @nogc renderCreate;
   int function (void* uptr, int width, int height) nothrow @trusted @nogc renderResize;
   void function (void* uptr, int* rect, const(ubyte)* data) nothrow @trusted @nogc renderUpdate;
-  debug(nanovega) {
-    void function (void* uptr, const(float)* verts, const(float)* tcoords, const(uint)* colors, int nverts) nothrow @trusted @nogc renderDraw;
-  }
   void function (void* uptr) nothrow @trusted @nogc renderDelete;
 }
 
@@ -9326,7 +9323,7 @@ public struct FONSTextIter(CT) if (isAnyCharType!CT) {
     }
 
     // align vertically
-    ay += fons__getVertAlign(astash, font, state.talign, isize);
+    ay += astash.getVertAlign(font, state.talign, isize);
 
     x = nextx = ax;
     y = nexty = ay;
@@ -9355,9 +9352,9 @@ public struct FONSTextIter(CT) if (isAnyCharType!CT) {
     // get glyph and quad
     x = nextx;
     y = nexty;
-    FONSglyph* glyph = fons__getGlyph(stash, font, 0xFFFD, isize, iblur, bitmapOption);
+    FONSglyph* glyph = stash.getGlyph(font, 0xFFFD, isize, iblur, bitmapOption);
     if (glyph !is null) {
-      fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+      stash.getQuad(font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
       prevGlyphIndex = glyph.index;
       return true;
     } else {
@@ -9382,9 +9379,9 @@ public struct FONSTextIter(CT) if (isAnyCharType!CT) {
         // get glyph and quad
         x = nextx;
         y = nexty;
-        glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, bitmapOption);
+        glyph = stash.getGlyph(font, codepoint, isize, iblur, bitmapOption);
         if (glyph !is null) {
-          fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+          stash.getQuad(font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
           prevGlyphIndex = glyph.index;
         } else {
           prevGlyphIndex = -1;
@@ -9401,9 +9398,9 @@ public struct FONSTextIter(CT) if (isAnyCharType!CT) {
       // get glyph and quad
       x = nextx;
       y = nexty;
-      glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, bitmapOption);
+      glyph = stash.getGlyph(font, codepoint, isize, iblur, bitmapOption);
       if (glyph !is null) {
-        fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
+        stash.getQuad(font, prevGlyphIndex, glyph, isize/10.0f, scale, spacing, &nextx, &nexty, &quad);
         prevGlyphIndex = glyph.index;
       } else {
         prevGlyphIndex = -1;
@@ -10209,42 +10206,6 @@ enum FONS_VERTEX_COUNT = 1024;
 enum FONS_MAX_STATES = 20;
 enum FONS_MAX_FALLBACKS = 20;
 
-uint fons__hashint() (uint a) pure nothrow @safe @nogc {
-  pragma(inline, true);
-  a += ~(a<<15);
-  a ^=  (a>>10);
-  a +=  (a<<3);
-  a ^=  (a>>6);
-  a += ~(a<<11);
-  a ^=  (a>>16);
-  return a;
-}
-
-uint fons__djbhash (const(void)[] s) pure nothrow @safe @nogc {
-  uint hash = 5381;
-  foreach (ubyte b; cast(const(ubyte)[])s) {
-    if (b >= 'A' && b <= 'Z') b += 32; // poor man's tolower
-    hash = ((hash<<5)+hash)+b;
-  }
-  return hash;
-}
-
-private bool fons_strequci (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
-  if (s0.length != s1.length) return false;
-  const(char)* sp0 = s0.ptr;
-  const(char)* sp1 = s1.ptr;
-  foreach (immutable _; 0..s0.length) {
-    char c0 = *sp0++;
-    char c1 = *sp1++;
-    if (c0 != c1) {
-      if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man tolower
-      if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man tolower
-      if (c0 != c1) return false;
-    }
-  }
-  return true;
-}
-
 
 struct FONSglyph {
   uint codepoint;
@@ -10317,6 +10278,18 @@ struct FONSfont {
   int[FONS_MAX_FALLBACKS] fallbacks;
   int nfallbacks;
 
+  @disable this (this);
+  void opAssign() (in auto ref FONSfont a) { static assert(0, "no copies"); }
+
+  static uint djbhash (const(void)[] s) pure nothrow @safe @nogc {
+    uint hash = 5381;
+    foreach (ubyte b; cast(const(ubyte)[])s) {
+      if (b >= 'A' && b <= 'Z') b += 32; // poor man's tolower
+      hash = ((hash<<5)+hash)+b;
+    }
+    return hash;
+  }
+
   // except glyphs
   void freeMemory () nothrow @trusted @nogc {
     import core.stdc.stdlib : free;
@@ -10338,7 +10311,7 @@ struct FONSfont {
     name[namelen] = 0;
     // lowercase it
     foreach (ref char ch; name[0..namelen]) if (ch >= 'A' && ch <= 'Z') ch += 32; // poor man's tolower
-    namehash = fons__djbhash(name[0..namelen]);
+    namehash = djbhash(name[0..namelen]);
     //{ import core.stdc.stdio; printf("  [%s] [%.*s] [0x%08x]\n", name, namelen, name, namehash); }
   }
 
@@ -10364,8 +10337,38 @@ struct FONSfont {
     // done (length was checked earlier)
     return true;
   }
+
+  void clear () nothrow @trusted @nogc {
+    import core.stdc.stdlib : free;
+    import core.stdc.string : memset;
+    if (glyphs !is null) free(glyphs);
+    freeMemory();
+    memset(&this, 0, this.sizeof);
+  }
+
+  FONSglyph* allocGlyph () nothrow @trusted @nogc {
+    if (nglyphs+1 > cglyphs) {
+      import core.stdc.stdlib : realloc;
+      cglyphs = (cglyphs == 0 ? 8 : cglyphs*2);
+      glyphs = cast(FONSglyph*)realloc(glyphs, FONSglyph.sizeof*cglyphs);
+      if (glyphs is null) assert(0, "FontStash: out of memory");
+    }
+    ++nglyphs;
+    return &glyphs[nglyphs-1];
+  }
 }
 
+void kill (ref FONSfont* font) nothrow @trusted @nogc {
+  if (font !is null) {
+    import core.stdc.stdlib : free;
+    font.clear();
+    free(font);
+    font = null;
+  }
+}
+
+
+// ////////////////////////////////////////////////////////////////////////// //
 struct FONSstate {
   int font;
   NVGTextAlign talign;
@@ -10374,16 +10377,185 @@ struct FONSstate {
   float spacing;
 }
 
-struct FONSatlasNode {
-  short x, y, width;
-}
 
-struct FONSatlas {
+// ////////////////////////////////////////////////////////////////////////// //
+// atlas based on Skyline Bin Packer by Jukka Jylänki
+alias FONSAtlas = FONSatlasInternal*;
+
+struct FONSatlasInternal {
+  static struct Node {
+    short x, y, width;
+  }
+
   int width, height;
-  FONSatlasNode* nodes;
+  Node* nodes;
   int nnodes;
   int cnodes;
+
+  @disable this (this);
+  void opAssign() (in auto ref FONSatlasInternal a) { static assert(0, "no copies"); }
+
+nothrow @trusted @nogc:
+  static FONSAtlas create (int w, int h, int nnodes) {
+    import core.stdc.stdlib : malloc;
+    import core.stdc.string : memset;
+
+    FONSAtlas atlas = cast(FONSAtlas)malloc(FONSatlasInternal.sizeof);
+    if (atlas is null) assert(0, "FontStash: out of memory");
+    memset(atlas, 0, FONSatlasInternal.sizeof);
+
+    atlas.width = w;
+    atlas.height = h;
+
+    // allocate space for skyline nodes
+    atlas.nodes = cast(Node*)malloc(Node.sizeof*nnodes);
+    if (atlas.nodes is null) assert(0, "FontStash: out of memory");
+    memset(atlas.nodes, 0, Node.sizeof*nnodes);
+    atlas.nnodes = 0;
+    atlas.cnodes = nnodes;
+
+    // init root node
+    atlas.nodes[0].x = 0;
+    atlas.nodes[0].y = 0;
+    atlas.nodes[0].width = cast(short)w;
+    ++atlas.nnodes;
+
+    return atlas;
+  }
+
+  void clear () {
+    import core.stdc.stdlib : free;
+    import core.stdc.string : memset;
+
+    if (nodes !is null) free(nodes);
+    memset(&this, 0, this.sizeof);
+  }
+
+  void insertNode (int idx, int x, int y, int w) {
+    if (nnodes+1 > cnodes) {
+      import core.stdc.stdlib : realloc;
+      cnodes = (cnodes == 0 ? 8 : cnodes*2);
+      nodes = cast(Node*)realloc(nodes, Node.sizeof*cnodes);
+      if (nodes is null) assert(0, "FontStash: out of memory");
+    }
+    for (int i = nnodes; i > idx; --i) nodes[i] = nodes[i-1];
+    nodes[idx].x = cast(short)x;
+    nodes[idx].y = cast(short)y;
+    nodes[idx].width = cast(short)w;
+    ++nnodes;
+  }
+
+  void removeNode (int idx) {
+    if (nnodes == 0) return;
+    foreach (immutable int i; idx+1..nnodes) nodes[i-1] = nodes[i];
+    --nnodes;
+  }
+
+  // insert node for empty space
+  void expand (int w, int h) {
+    if (w > width) insertNode(nnodes, width, 0, w-width);
+    width = w;
+    height = h;
+  }
+
+  void reset (int w, int h) {
+    width = w;
+    height = h;
+    nnodes = 0;
+    // init root node
+    nodes[0].x = 0;
+    nodes[0].y = 0;
+    nodes[0].width = cast(short)w;
+    ++nnodes;
+  }
+
+  void addSkylineLevel (int idx, int x, int y, int w, int h) {
+    insertNode(idx, x, y+h, w);
+
+    // delete skyline segments that fall under the shadow of the new segment
+    for (int i = idx+1; i < nnodes; ++i) {
+      if (nodes[i].x < nodes[i-1].x+nodes[i-1].width) {
+        int shrink = nodes[i-1].x+nodes[i-1].width-nodes[i].x;
+        nodes[i].x += cast(short)shrink;
+        nodes[i].width -= cast(short)shrink;
+        if (nodes[i].width <= 0) {
+          removeNode(i);
+          --i;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    // Merge same height skyline segments that are next to each other
+    for (int i = 0; i < nnodes-1; ++i) {
+      if (nodes[i].y == nodes[i+1].y) {
+        nodes[i].width += nodes[i+1].width;
+        removeNode(i+1);
+        --i;
+      }
+    }
+  }
+
+  // checks if there is enough space at the location of skyline span 'i',
+  // and return the max height of all skyline spans under that at that location,
+  // (think tetris block being dropped at that position); or -1 if no space found
+  int rectFits (int i, int w, int h) {
+    int x = nodes[i].x;
+    int y = nodes[i].y;
+    if (x+w > width) return -1;
+    int spaceLeft = w;
+    while (spaceLeft > 0) {
+      if (i == nnodes) return -1;
+      y = nvg__max(y, nodes[i].y);
+      if (y+h > height) return -1;
+      spaceLeft -= nodes[i].width;
+      ++i;
+    }
+    return y;
+  }
+
+  bool addRect (int rw, int rh, int* rx, int* ry) {
+    int besth = height, bestw = width, besti = -1;
+    int bestx = -1, besty = -1;
+
+    // Bottom left fit heuristic.
+    for (int i = 0; i < nnodes; ++i) {
+      int y = rectFits(i, rw, rh);
+      if (y != -1) {
+        if (y+rh < besth || (y+rh == besth && nodes[i].width < bestw)) {
+          besti = i;
+          bestw = nodes[i].width;
+          besth = y+rh;
+          bestx = nodes[i].x;
+          besty = y;
+        }
+      }
+    }
+
+    if (besti == -1) return false;
+
+    // perform the actual packing
+    addSkylineLevel(besti, bestx, besty, rw, rh);
+
+    *rx = bestx;
+    *ry = besty;
+
+    return true;
+  }
 }
+
+void kill (ref FONSAtlas atlas) nothrow @trusted @nogc {
+  if (atlas !is null) {
+    import core.stdc.stdlib : free;
+    atlas.clear();
+    free(atlas);
+    atlas = null;
+  }
+}
+
 
 // ////////////////////////////////////////////////////////////////////////// //
 private struct FONScontextInternal {
@@ -10397,13 +10569,7 @@ private:
   int nfonts; // used (so we can track hash table stats)
   int* hashidx; // [hsize] items; holds indicies in [fonts] array
   int hused, hsize;// used items and total items in [hashidx]
-  FONSatlas* atlas;
-  debug(nanovega) {
-    float[FONS_VERTEX_COUNT*2] verts;
-    float[FONS_VERTEX_COUNT*2] tcoords;
-    uint[FONS_VERTEX_COUNT] colors;
-    int nverts;
-  }
+  FONSAtlas atlas;
   ubyte* scratch;
   int nscratch;
   FONSstate[FONS_MAX_STATES] states;
@@ -10415,6 +10581,22 @@ private:
   void opAssign() (in auto ref FONScontextInternal ctx) { static assert(0, "FONS copying is not allowed"); }
 
 private:
+  static bool strequci (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
+    if (s0.length != s1.length) return false;
+    const(char)* sp0 = s0.ptr;
+    const(char)* sp1 = s1.ptr;
+    foreach (immutable _; 0..s0.length) {
+      char c0 = *sp0++;
+      char c1 = *sp1++;
+      if (c0 != c1) {
+        if (c0 >= 'A' && c0 <= 'Z') c0 += 32; // poor man tolower
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32; // poor man tolower
+        if (c0 != c1) return false;
+      }
+    }
+    return true;
+  }
+
   inout(FONSstate)* getState () inout pure nothrow @trusted @nogc {
     pragma(inline, true);
     return cast(inout)(&states[(nstates > 0 ? nstates-1 : 0)]);
@@ -10423,7 +10605,7 @@ private:
   // simple linear probing; returns [FONS_INVALID] if not found
   int findNameInHash (const(char)[] name) const pure nothrow @trusted @nogc {
     if (nfonts == 0) return FONS_INVALID;
-    auto nhash = fons__djbhash(name);
+    auto nhash = FONSfont.djbhash(name);
     //{ import core.stdc.stdio; printf("findinhash: name=[%.*s]; nhash=0x%08x\n", cast(uint)name.length, name.ptr, nhash); }
     auto res = nhash%hsize;
     // hash will never be 100% full, so this loop is safe
@@ -10512,6 +10694,102 @@ private:
     }
   }
 
+  void addWhiteRect (int w, int h) nothrow @trusted @nogc {
+    int gx, gy;
+    ubyte* dst;
+
+    if (!atlas.addRect(w, h, &gx, &gy)) return;
+
+    // Rasterize
+    dst = &texData[gx+gy*params.width];
+    foreach (int y; 0..h) {
+      foreach (int x; 0..w) {
+        dst[x] = 0xff;
+      }
+      dst += params.width;
+    }
+
+    dirtyRect.ptr[0] = nvg__min(dirtyRect.ptr[0], gx);
+    dirtyRect.ptr[1] = nvg__min(dirtyRect.ptr[1], gy);
+    dirtyRect.ptr[2] = nvg__max(dirtyRect.ptr[2], gx+w);
+    dirtyRect.ptr[3] = nvg__max(dirtyRect.ptr[3], gy+h);
+  }
+
+  // returns fid, not hash slot
+  int allocFontAt (int atidx) nothrow @trusted @nogc {
+    if (atidx >= 0 && atidx >= nfonts) assert(0, "internal NanoVega fontstash error");
+
+    if (atidx < 0) {
+      if (nfonts >= cfonts) {
+        import core.stdc.stdlib : realloc;
+        import core.stdc.string : memset;
+        assert(nfonts == cfonts);
+        int newsz = cfonts+64;
+        if (newsz > 65535) assert(0, "FONS: too many fonts");
+        auto newlist = cast(FONSfont**)realloc(fonts, newsz*(FONSfont*).sizeof);
+        if (newlist is null) assert(0, "FONS: out of memory");
+        memset(newlist+cfonts, 0, (newsz-cfonts)*(FONSfont*).sizeof);
+        fonts = newlist;
+        cfonts = newsz;
+      }
+      assert(nfonts < cfonts);
+    }
+
+    FONSfont* font = cast(FONSfont*)malloc(FONSfont.sizeof);
+    if (font is null) assert(0, "FONS: out of memory");
+    memset(font, 0, FONSfont.sizeof);
+
+    font.glyphs = cast(FONSglyph*)malloc(FONSglyph.sizeof*FONS_INIT_GLYPHS);
+    if (font.glyphs is null) assert(0, "FONS: out of memory");
+    font.cglyphs = FONS_INIT_GLYPHS;
+    font.nglyphs = 0;
+
+    if (atidx < 0) {
+      fonts[nfonts] = font;
+      return nfonts++;
+    } else {
+      fonts[atidx] = font;
+      return atidx;
+    }
+  }
+
+  // 0: ooops
+  int findGlyphForCP (FONSfont *font, dchar dch, FONSfont** renderfont) nothrow @trusted @nogc {
+    if (renderfont !is null) *renderfont = font;
+    if (font is null || font.fdata is null) return 0;
+    auto g = fons__tt_getGlyphIndex(&font.font, cast(uint)dch);
+    // try to find the glyph in fallback fonts
+    if (g == 0) {
+      foreach (immutable i; 0..font.nfallbacks) {
+        FONSfont* fallbackFont = fonts[font.fallbacks.ptr[i]];
+        if (fallbackFont !is null) {
+          int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, cast(uint)dch);
+          if (fallbackIndex != 0) {
+            if (renderfont !is null) *renderfont = fallbackFont;
+            return g;
+          }
+        }
+      }
+      // no char, try to find replacement one
+      if (dch != 0xFFFD) {
+        g = fons__tt_getGlyphIndex(&font.font, 0xFFFD);
+        if (g == 0) {
+          foreach (immutable i; 0..font.nfallbacks) {
+            FONSfont* fallbackFont = fonts[font.fallbacks.ptr[i]];
+            if (fallbackFont !is null) {
+              int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, 0xFFFD);
+              if (fallbackIndex != 0) {
+                if (renderfont !is null) *renderfont = fallbackFont;
+                return g;
+              }
+            }
+          }
+        }
+      }
+    }
+    return g;
+  }
+
 public:
   static FONSContext createInternal() (auto ref FONSParams params) nothrow @trusted @nogc {
     import core.stdc.string : memcpy;
@@ -10536,7 +10814,7 @@ public:
       if (!stash.params.renderCreate(stash.params.userPtr, stash.params.width, stash.params.height)) goto error;
     }
 
-    stash.atlas = fons__allocAtlas(stash.params.width, stash.params.height, FONS_INIT_ATLAS_NODES);
+    stash.atlas = FONSAtlas.create(stash.params.width, stash.params.height, FONS_INIT_ATLAS_NODES);
     if (stash.atlas is null) goto error;
 
     // don't allocate space for fonts: hash manager will do that for us later
@@ -10556,7 +10834,7 @@ public:
     stash.dirtyRect.ptr[3] = 0;
 
     // add white rect at 0, 0 for debug drawing
-    fons__addWhiteRect(stash, 2, 2);
+    stash.addWhiteRect(2, 2);
 
     stash.pushState();
     stash.clearState();
@@ -10573,9 +10851,9 @@ public:
     import core.stdc.stdlib : free;
 
     if (params.renderDelete !is null) params.renderDelete(params.userPtr);
-    foreach (immutable int i; 0..nfonts) fons__freeFont(fonts[i]);
+    foreach (immutable int i; 0..nfonts) fonts[i].kill();
 
-    if (atlas !is null) fons__deleteAtlas(atlas);
+    if (atlas !is null) atlas.kill();
     if (fonts !is null) free(fonts);
     if (texData !is null) free(texData);
     if (scratch !is null) free(scratch);
@@ -10654,18 +10932,18 @@ public:
 
   // defAA: antialias flag for fonts without ":noaa"
   int addFont (const(char)[] name, const(char)[] path, bool defAA=false) nothrow @trusted {
-    if (path.length == 0 || name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
+    if (path.length == 0 || name.length == 0 || strequci(name, NoAlias)) return FONS_INVALID;
     if (path.length > 32768) return FONS_INVALID; // arbitrary limit
 
     // if font path ends with ":noaa", turn off antialiasing
-    if (path.length >= NoAlias.length && fons_strequci(path[$-NoAlias.length..$], NoAlias)) {
+    if (path.length >= NoAlias.length && strequci(path[$-NoAlias.length..$], NoAlias)) {
       path = path[0..$-NoAlias.length];
       if (path.length == 0) return FONS_INVALID;
       defAA = false;
     }
 
     // if font name ends with ":noaa", turn off antialiasing
-    if (name.length > NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
+    if (name.length > NoAlias.length && strequci(name[$-NoAlias.length..$], NoAlias)) {
       name = name[0..$-NoAlias.length];
       defAA = false;
     }
@@ -10687,7 +10965,7 @@ public:
             return fidx;
           }
         } else {
-          if (plen == path.length && fons_strequci(fonts[fidx].path[0..plen], path)) {
+          if (plen == path.length && strequci(fonts[fidx].path[0..plen], path)) {
             // i found her!
             return fidx;
           }
@@ -10835,7 +11113,7 @@ public:
   private int addFontWithData (const(char)[] name, FONSfontData* fdata, bool defAA) nothrow @trusted @nogc {
     int i, ascent, descent, fh, lineGap;
 
-    if (name.length == 0 || fons_strequci(name, NoAlias)) return FONS_INVALID;
+    if (name.length == 0 || strequci(name, NoAlias)) return FONS_INVALID;
     if (name.length > 32767) return FONS_INVALID;
     if (fdata is null) return FONS_INVALID;
 
@@ -10852,7 +11130,7 @@ public:
       newidx = -1;
     }
 
-    newidx = fons__allocFontAt(&this, newidx);
+    newidx = allocFontAt(newidx);
     FONSfont* font = fonts[newidx];
     font.setName(name);
     font.lut.ptr[0..FONS_HASH_LUT_SIZE] = -1; // init hash lookup
@@ -10864,7 +11142,7 @@ public:
     if (!fons__tt_loadFont(&this, &font.font, fdata.data, fdata.dataSize)) {
       // we promised to not free data on error, so just clear the data store (it will be freed by the caller)
       font.fdata = null;
-      fons__freeFont(font);
+      font.kill();
       if (oldidx != FONS_INVALID) {
         assert(oldidx == newidx);
         fonts[oldidx] = oldfont;
@@ -10876,7 +11154,7 @@ public:
       return FONS_INVALID;
     } else {
       // free old font data, if any
-      if (oldfont) fons__freeFont(oldfont);
+      if (oldfont !is null) oldfont.kill();
     }
 
     // add font to name hash
@@ -10906,7 +11184,7 @@ public:
   int getFontByName (const(char)[] name) const pure nothrow @trusted @nogc {
     //{ import core.stdc.stdio; printf("fonsGetFontByName: [%.*s]\n", cast(uint)name.length, name.ptr); }
     // remove ":noaa" suffix
-    if (name.length >= NoAlias.length && fons_strequci(name[$-NoAlias.length..$], NoAlias)) {
+    if (name.length >= NoAlias.length && strequci(name[$-NoAlias.length..$], NoAlias)) {
       name = name[0..$-NoAlias.length];
     }
     if (name.length == 0) return FONS_INVALID;
@@ -10931,7 +11209,7 @@ public:
     float scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
 
     // Align vertically.
-    y += fons__getVertAlign(&this, font, state.talign, isize);
+    y += getVertAlign(font, state.talign, isize);
 
     float minx = x, maxx = x;
     float miny = y, maxy = y;
@@ -10948,11 +11226,9 @@ public:
         }
         codepoint = cast(uint)ch;
       }
-      glyph = fons__getGlyph(&this, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
+      glyph = getGlyph(font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
       if (glyph !is null) {
-        //{ import core.stdc.stdio; printf("0: x=%g; y=%g\n", cast(double)x, cast(double)y); }
-        fons__getQuad(&this, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
-        //{ import core.stdc.stdio; printf("1: x=%g; y=%g\n", cast(double)x, cast(double)y); }
+        getQuad(font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
         if (q.x0 < minx) minx = q.x0;
         if (q.x1 > maxx) maxx = q.x1;
         if (params.flags&FONS_ZERO_TOPLEFT) {
@@ -11026,7 +11302,7 @@ public:
     isize = cast(short)(state.size*10.0f);
     if (font is null || font.fdata is null) return;
 
-    y += fons__getVertAlign(&this, font, state.talign, isize);
+    y += getVertAlign(font, state.talign, isize);
 
     if (params.flags&FONS_ZERO_TOPLEFT) {
       immutable float miny = y-font.ascender*cast(float)isize/10.0f;
@@ -11085,7 +11361,7 @@ public:
     if (width == params.width && height == params.height) return true;
 
     // Flush pending glyphs.
-    fons__flush(&this);
+    flush();
 
     // Create new texture
     if (params.renderResize !is null) {
@@ -11106,7 +11382,7 @@ public:
     texData = data;
 
     // Increase atlas size
-    fons__atlasExpand(atlas, width, height);
+    atlas.expand(width, height);
 
     // Add existing data as dirty.
     foreach (immutable int i; 0..atlas.nnodes) maxy = nvg__max(maxy, atlas.nodes[i].y);
@@ -11128,7 +11404,7 @@ public:
     import core.stdc.string : memcpy, memset;
 
     // flush pending glyphs
-    fons__flush(&this);
+    flush();
 
     // create new texture
     if (params.renderResize !is null) {
@@ -11136,7 +11412,7 @@ public:
     }
 
     // reset atlas
-    fons__atlasReset(atlas, width, height);
+    atlas.reset(width, height);
 
     // clear texture data
     texData = cast(ubyte*)realloc(texData, width*height);
@@ -11163,7 +11439,7 @@ public:
     ith = 1.0f/params.height;
 
     // Add white rect at 0, 0 for debug drawing.
-    fons__addWhiteRect(&this, 2, 2);
+    addWhiteRect(2, 2);
 
     return true;
   }
@@ -11174,7 +11450,7 @@ public:
       FONSstate* state = getState;
       if (state.font < 0 || state.font >= nfonts) { bounds[] = 0; return false; }
       FONSfont* font;
-      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      auto g = findGlyphForCP(fonts[state.font], dch, &font);
       if (g == 0) { bounds[] = 0; return false; }
       assert(font !is null);
       return fons__nvg__bounds(&font.font, g, bounds);
@@ -11191,7 +11467,7 @@ public:
       FONSstate* state = getState;
       if (state.font < 0 || state.font >= nfonts) { bounds[] = 0; return false; }
       FONSfont* font;
-      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      auto g = findGlyphForCP(fonts[state.font], dch, &font);
       if (g == 0) { bounds[] = 0; return false; }
       assert(font !is null);
       return fons__nvg__toPath(vg, &font.font, g, bounds);
@@ -11207,7 +11483,7 @@ public:
       FONSstate* state = getState;
       if (state.font < 0 || state.font >= nfonts) return false;
       FONSfont* font;
-      auto g = fons__findGlyphForCP(&this, fonts[state.font], dch, &font);
+      auto g = findGlyphForCP(fonts[state.font], dch, &font);
       if (g == 0) return false;
       assert(font !is null);
       return fons__nvg__toOutline(&font.font, g, ol);
@@ -11215,6 +11491,278 @@ public:
       return false;
     }
   }
+
+  FONSglyph* getGlyph (FONSfont* font, uint codepoint, short isize, short iblur, FONSglyphBitmap bitmapOption) nothrow @trusted @nogc {
+    static uint fons__hashint() (uint a) pure nothrow @safe @nogc {
+      pragma(inline, true);
+      a += ~(a<<15);
+      a ^=  (a>>10);
+      a +=  (a<<3);
+      a ^=  (a>>6);
+      a += ~(a<<11);
+      a ^=  (a>>16);
+      return a;
+    }
+
+    // based on Exponential blur, Jani Huhtanen, 2006
+    enum APREC = 16;
+    enum ZPREC = 7;
+
+    static void fons__blurCols (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
+      foreach (immutable int y; 0..h) {
+        int z = 0; // force zero border
+        foreach (int x; 1..w) {
+          z += (alpha*((cast(int)(dst[x])<<ZPREC)-z))>>APREC;
+          dst[x] = cast(ubyte)(z>>ZPREC);
+        }
+        dst[w-1] = 0; // force zero border
+        z = 0;
+        for (int x = w-2; x >= 0; --x) {
+          z += (alpha*((cast(int)(dst[x])<<ZPREC)-z))>>APREC;
+          dst[x] = cast(ubyte)(z>>ZPREC);
+        }
+        dst[0] = 0; // force zero border
+        dst += dstStride;
+      }
+    }
+
+    static void fons__blurRows (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
+      foreach (immutable int x; 0..w) {
+        int z = 0; // force zero border
+        for (int y = dstStride; y < h*dstStride; y += dstStride) {
+          z += (alpha*((cast(int)(dst[y])<<ZPREC)-z))>>APREC;
+          dst[y] = cast(ubyte)(z>>ZPREC);
+        }
+        dst[(h-1)*dstStride] = 0; // force zero border
+        z = 0;
+        for (int y = (h-2)*dstStride; y >= 0; y -= dstStride) {
+          z += (alpha*((cast(int)(dst[y])<<ZPREC)-z))>>APREC;
+          dst[y] = cast(ubyte)(z>>ZPREC);
+        }
+        dst[0] = 0; // force zero border
+        ++dst;
+      }
+    }
+
+    static void fons__blur (ubyte* dst, int w, int h, int dstStride, int blur) nothrow @trusted @nogc {
+      import std.math : expf = exp;
+      if (blur < 1) return;
+      // Calculate the alpha such that 90% of the kernel is within the radius. (Kernel extends to infinity)
+      immutable float sigma = cast(float)blur*0.57735f; // 1/sqrt(3)
+      int alpha = cast(int)((1<<APREC)*(1.0f-expf(-2.3f/(sigma+1.0f))));
+      fons__blurRows(dst, w, h, dstStride, alpha);
+      fons__blurCols(dst, w, h, dstStride, alpha);
+      fons__blurRows(dst, w, h, dstStride, alpha);
+      fons__blurCols(dst, w, h, dstStride, alpha);
+      //fons__blurrows(dst, w, h, dstStride, alpha);
+      //fons__blurcols(dst, w, h, dstStride, alpha);
+    }
+
+    int advance, lsb, x0, y0, x1, y1, gx, gy;
+    FONSglyph* glyph = null;
+    float size = isize/10.0f;
+    FONSfont* renderFont = font;
+
+    if (isize < 2) return null;
+    if (iblur > 20) iblur = 20;
+    int pad = iblur+2;
+
+    // Reset allocator.
+    nscratch = 0;
+
+    // Find code point and size.
+    uint h = fons__hashint(codepoint)&(FONS_HASH_LUT_SIZE-1);
+    int i = font.lut.ptr[h];
+    while (i != -1) {
+      //if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) return &font.glyphs[i];
+      if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) {
+        glyph = &font.glyphs[i];
+        // Negative coordinate indicates there is no bitmap data created.
+        if (bitmapOption == FONS_GLYPH_BITMAP_OPTIONAL || (glyph.x0 >= 0 && glyph.y0 >= 0)) return glyph;
+        // At this point, glyph exists but the bitmap data is not yet created.
+        break;
+      }
+      i = font.glyphs[i].next;
+    }
+
+    // Create a new glyph or rasterize bitmap data for a cached glyph.
+    //scale = fons__tt_getPixelHeightScale(&font.font, size);
+    int g = findGlyphForCP(font, cast(dchar)codepoint, &renderFont);
+    // It is possible that we did not find a fallback glyph.
+    // In that case the glyph index 'g' is 0, and we'll proceed below and cache empty glyph.
+
+    float scale = fons__tt_getPixelHeightScale(&renderFont.font, size);
+    fons__tt_buildGlyphBitmap(&renderFont.font, g, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
+    int gw = x1-x0+pad*2;
+    int gh = y1-y0+pad*2;
+
+    // Determines the spot to draw glyph in the atlas.
+    if (bitmapOption == FONS_GLYPH_BITMAP_REQUIRED) {
+      // Find free spot for the rect in the atlas.
+      bool added = atlas.addRect(gw, gh, &gx, &gy);
+      if (!added && handleError !is null) {
+        // Atlas is full, let the user to resize the atlas (or not), and try again.
+        handleError(FONS_ATLAS_FULL, 0);
+        added = atlas.addRect(gw, gh, &gx, &gy);
+      }
+      if (!added) return null;
+    } else {
+      // Negative coordinate indicates there is no bitmap data created.
+      gx = -1;
+      gy = -1;
+    }
+
+    // Init glyph.
+    if (glyph is null) {
+      glyph = font.allocGlyph();
+      glyph.codepoint = codepoint;
+      glyph.size = isize;
+      glyph.blur = iblur;
+      glyph.next = 0;
+
+      // Insert char to hash lookup.
+      glyph.next = font.lut.ptr[h];
+      font.lut.ptr[h] = font.nglyphs-1;
+    }
+    glyph.index = g;
+    glyph.x0 = cast(short)gx;
+    glyph.y0 = cast(short)gy;
+    glyph.x1 = cast(short)(glyph.x0+gw);
+    glyph.y1 = cast(short)(glyph.y0+gh);
+    glyph.xadv = cast(short)(scale*advance*10.0f);
+    glyph.xoff = cast(short)(x0-pad);
+    glyph.yoff = cast(short)(y0-pad);
+
+    if (bitmapOption == FONS_GLYPH_BITMAP_OPTIONAL) return glyph;
+
+    // Rasterize
+    ubyte* dst = &texData[(glyph.x0+pad)+(glyph.y0+pad)*params.width];
+    fons__tt_renderGlyphBitmap(&font.font, dst, gw-pad*2, gh-pad*2, params.width, scale, scale, g);
+
+    // Make sure there is one pixel empty border.
+    dst = &texData[glyph.x0+glyph.y0*params.width];
+    foreach (immutable int y; 0..gh) {
+      dst[y*params.width] = 0;
+      dst[gw-1+y*params.width] = 0;
+    }
+    foreach (immutable int x; 0..gw) {
+      dst[x] = 0;
+      dst[x+(gh-1)*params.width] = 0;
+    }
+
+    // Debug code to color the glyph background
+    version(none) {
+      foreach (immutable yy; 0..gh) {
+        foreach (immutable xx; 0..gw) {
+          int a = cast(int)dst[xx+yy*params.width]+42;
+          if (a > 255) a = 255;
+          dst[xx+yy*params.width] = cast(ubyte)a;
+        }
+      }
+    }
+
+    // Blur
+    if (iblur > 0) {
+      nscratch = 0;
+      ubyte* bdst = &texData[glyph.x0+glyph.y0*params.width];
+      fons__blur(bdst, gw, gh, params.width, iblur);
+    }
+
+    dirtyRect.ptr[0] = nvg__min(dirtyRect.ptr[0], glyph.x0);
+    dirtyRect.ptr[1] = nvg__min(dirtyRect.ptr[1], glyph.y0);
+    dirtyRect.ptr[2] = nvg__max(dirtyRect.ptr[2], glyph.x1);
+    dirtyRect.ptr[3] = nvg__max(dirtyRect.ptr[3], glyph.y1);
+
+    return glyph;
+  }
+
+  void getQuad (FONSfont* font, int prevGlyphIndex, FONSglyph* glyph, float size, float scale, float spacing, float* x, float* y, FONSQuad* q) nothrow @trusted @nogc {
+    if (prevGlyphIndex >= 0) {
+      immutable float adv = fons__tt_getGlyphKernAdvance(&font.font, size, prevGlyphIndex, glyph.index)/**scale*/; //k8: do we really need scale here?
+      //if (adv != 0) { import core.stdc.stdio; printf("adv=%g (scale=%g; spacing=%g)\n", cast(double)adv, cast(double)scale, cast(double)spacing); }
+      *x += cast(int)(adv+spacing /*+0.5f*/); //k8: for me, it looks better this way (with non-aa fonts)
+    }
+
+    // Each glyph has 2px border to allow good interpolation,
+    // one pixel to prevent leaking, and one to allow good interpolation for rendering.
+    // Inset the texture region by one pixel for correct interpolation.
+    immutable float xoff = cast(short)(glyph.xoff+1);
+    immutable float yoff = cast(short)(glyph.yoff+1);
+    immutable float x0 = cast(float)(glyph.x0+1);
+    immutable float y0 = cast(float)(glyph.y0+1);
+    immutable float x1 = cast(float)(glyph.x1-1);
+    immutable float y1 = cast(float)(glyph.y1-1);
+
+    if (params.flags&FONS_ZERO_TOPLEFT) {
+      immutable float rx = cast(float)cast(int)(*x+xoff);
+      immutable float ry = cast(float)cast(int)(*y+yoff);
+
+      q.x0 = rx;
+      q.y0 = ry;
+      q.x1 = rx+x1-x0;
+      q.y1 = ry+y1-y0;
+
+      q.s0 = x0*itw;
+      q.t0 = y0*ith;
+      q.s1 = x1*itw;
+      q.t1 = y1*ith;
+    } else {
+      immutable float rx = cast(float)cast(int)(*x+xoff);
+      immutable float ry = cast(float)cast(int)(*y-yoff);
+
+      q.x0 = rx;
+      q.y0 = ry;
+      q.x1 = rx+x1-x0;
+      q.y1 = ry-y1+y0;
+
+      q.s0 = x0*itw;
+      q.t0 = y0*ith;
+      q.s1 = x1*itw;
+      q.t1 = y1*ith;
+    }
+
+    *x += cast(int)(glyph.xadv/10.0f+0.5f);
+  }
+
+  void flush () nothrow @trusted @nogc {
+    // flush texture
+    if (dirtyRect.ptr[0] < dirtyRect.ptr[2] && dirtyRect.ptr[1] < dirtyRect.ptr[3]) {
+      if (params.renderUpdate !is null) params.renderUpdate(params.userPtr, dirtyRect.ptr, texData);
+      // reset dirty rect
+      dirtyRect.ptr[0] = params.width;
+      dirtyRect.ptr[1] = params.height;
+      dirtyRect.ptr[2] = 0;
+      dirtyRect.ptr[3] = 0;
+    }
+  }
+
+  float getVertAlign (FONSfont* font, NVGTextAlign talign, short isize) nothrow @trusted @nogc {
+    if (params.flags&FONS_ZERO_TOPLEFT) {
+      final switch (talign.vertical) {
+        case NVGTextAlign.V.Top: return font.ascender*cast(float)isize/10.0f;
+        case NVGTextAlign.V.Middle: return (font.ascender+font.descender)/2.0f*cast(float)isize/10.0f;
+        case NVGTextAlign.V.Baseline: return 0.0f;
+        case NVGTextAlign.V.Bottom: return font.descender*cast(float)isize/10.0f;
+      }
+    } else {
+      final switch (talign.vertical) {
+        case NVGTextAlign.V.Top: return -font.ascender*cast(float)isize/10.0f;
+        case NVGTextAlign.V.Middle: return -(font.ascender+font.descender)/2.0f*cast(float)isize/10.0f;
+        case NVGTextAlign.V.Baseline: return 0.0f;
+        case NVGTextAlign.V.Bottom: return -font.descender*cast(float)isize/10.0f;
+      }
+    }
+    assert(0);
+  }
+}
+
+//
+public void kill (ref FONSContext stash) nothrow @trusted @nogc {
+  import core.stdc.stdlib : free;
+  if (stash is null) return;
+  stash.clear();
+  free(stash);
+  stash = null;
 }
 
 
@@ -11237,6 +11785,8 @@ void fons__tmpfree (void* ptr, void* up) nothrow @trusted @nogc {
   // empty
 }
 
+
+// ////////////////////////////////////////////////////////////////////////// //
 // Copyright (c) 2008-2010 Bjoern Hoehrmann <bjoern@hoehrmann.de>
 // See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
 
@@ -11284,597 +11834,8 @@ uint fons__decutf8 (uint* state, uint* codep, uint byte_) {
 }
 */
 
-// Atlas based on Skyline Bin Packer by Jukka Jylänki
-void fons__deleteAtlas (FONSatlas* atlas) nothrow @trusted @nogc {
-  if (atlas is null) return;
-  if (atlas.nodes !is null) free(atlas.nodes);
-  free(atlas);
-}
 
-FONSatlas* fons__allocAtlas (int w, int h, int nnodes) nothrow @trusted @nogc {
-  FONSatlas* atlas = null;
-
-  // Allocate memory for the font stash.
-  atlas = cast(FONSatlas*)malloc(FONSatlas.sizeof);
-  if (atlas is null) goto error;
-  memset(atlas, 0, FONSatlas.sizeof);
-
-  atlas.width = w;
-  atlas.height = h;
-
-  // Allocate space for skyline nodes
-  atlas.nodes = cast(FONSatlasNode*)malloc(FONSatlasNode.sizeof*nnodes);
-  if (atlas.nodes is null) goto error;
-  memset(atlas.nodes, 0, FONSatlasNode.sizeof*nnodes);
-  atlas.nnodes = 0;
-  atlas.cnodes = nnodes;
-
-  // Init root node.
-  atlas.nodes[0].x = 0;
-  atlas.nodes[0].y = 0;
-  atlas.nodes[0].width = cast(short)w;
-  ++atlas.nnodes;
-
-  return atlas;
-
-error:
-  if (atlas !is null) fons__deleteAtlas(atlas);
-  return null;
-}
-
-bool fons__atlasInsertNode (FONSatlas* atlas, int idx, int x, int y, int w) nothrow @trusted @nogc {
-  // Insert node
-  if (atlas.nnodes+1 > atlas.cnodes) {
-    atlas.cnodes = (atlas.cnodes == 0 ? 8 : atlas.cnodes*2);
-    atlas.nodes = cast(FONSatlasNode*)realloc(atlas.nodes, FONSatlasNode.sizeof*atlas.cnodes);
-    if (atlas.nodes is null) return false;
-  }
-  for (int i = atlas.nnodes; i > idx; --i) atlas.nodes[i] = atlas.nodes[i-1];
-  atlas.nodes[idx].x = cast(short)x;
-  atlas.nodes[idx].y = cast(short)y;
-  atlas.nodes[idx].width = cast(short)w;
-  ++atlas.nnodes;
-  return 1;
-}
-
-void fons__atlasRemoveNode (FONSatlas* atlas, int idx) nothrow @trusted @nogc {
-  if (atlas.nnodes == 0) return;
-  for (int i = idx; i < atlas.nnodes-1; ++i) atlas.nodes[i] = atlas.nodes[i+1];
-  --atlas.nnodes;
-}
-
-void fons__atlasExpand (FONSatlas* atlas, int w, int h) nothrow @trusted @nogc {
-  // Insert node for empty space
-  if (w > atlas.width) fons__atlasInsertNode(atlas, atlas.nnodes, atlas.width, 0, w-atlas.width);
-  atlas.width = w;
-  atlas.height = h;
-}
-
-void fons__atlasReset (FONSatlas* atlas, int w, int h) nothrow @trusted @nogc {
-  atlas.width = w;
-  atlas.height = h;
-  atlas.nnodes = 0;
-  // Init root node.
-  atlas.nodes[0].x = 0;
-  atlas.nodes[0].y = 0;
-  atlas.nodes[0].width = cast(short)w;
-  ++atlas.nnodes;
-}
-
-bool fons__atlasAddSkylineLevel (FONSatlas* atlas, int idx, int x, int y, int w, int h) nothrow @trusted @nogc {
-  // Insert new node
-  if (!fons__atlasInsertNode(atlas, idx, x, y+h, w)) return false;
-
-  // Delete skyline segments that fall under the shadow of the new segment
-  for (int i = idx+1; i < atlas.nnodes; ++i) {
-    if (atlas.nodes[i].x < atlas.nodes[i-1].x+atlas.nodes[i-1].width) {
-      int shrink = atlas.nodes[i-1].x+atlas.nodes[i-1].width-atlas.nodes[i].x;
-      atlas.nodes[i].x += cast(short)shrink;
-      atlas.nodes[i].width -= cast(short)shrink;
-      if (atlas.nodes[i].width <= 0) {
-        fons__atlasRemoveNode(atlas, i);
-        --i;
-      } else {
-        break;
-      }
-    } else {
-      break;
-    }
-  }
-
-  // Merge same height skyline segments that are next to each other
-  for (int i = 0; i < atlas.nnodes-1; ++i) {
-    if (atlas.nodes[i].y == atlas.nodes[i+1].y) {
-      atlas.nodes[i].width += atlas.nodes[i+1].width;
-      fons__atlasRemoveNode(atlas, i+1);
-      --i;
-    }
-  }
-
-  return true;
-}
-
-int fons__atlasRectFits (FONSatlas* atlas, int i, int w, int h) nothrow @trusted @nogc {
-  // Checks if there is enough space at the location of skyline span 'i',
-  // and return the max height of all skyline spans under that at that location,
-  // (think tetris block being dropped at that position). Or -1 if no space found.
-  int x = atlas.nodes[i].x;
-  int y = atlas.nodes[i].y;
-  int spaceLeft;
-  if (x+w > atlas.width) return -1;
-  spaceLeft = w;
-  while (spaceLeft > 0) {
-    if (i == atlas.nnodes) return -1;
-    y = nvg__max(y, atlas.nodes[i].y);
-    if (y+h > atlas.height) return -1;
-    spaceLeft -= atlas.nodes[i].width;
-    ++i;
-  }
-  return y;
-}
-
-bool fons__atlasAddRect (FONSatlas* atlas, int rw, int rh, int* rx, int* ry) nothrow @trusted @nogc {
-  int besth = atlas.height, bestw = atlas.width, besti = -1;
-  int bestx = -1, besty = -1;
-
-  // Bottom left fit heuristic.
-  for (int i = 0; i < atlas.nnodes; ++i) {
-    int y = fons__atlasRectFits(atlas, i, rw, rh);
-    if (y != -1) {
-      if (y+rh < besth || (y+rh == besth && atlas.nodes[i].width < bestw)) {
-        besti = i;
-        bestw = atlas.nodes[i].width;
-        besth = y+rh;
-        bestx = atlas.nodes[i].x;
-        besty = y;
-      }
-    }
-  }
-
-  if (besti == -1) return false;
-
-  // Perform the actual packing.
-  if (!fons__atlasAddSkylineLevel(atlas, besti, bestx, besty, rw, rh)) return false;
-
-  *rx = bestx;
-  *ry = besty;
-
-  return true;
-}
-
-void fons__addWhiteRect (FONSContext stash, int w, int h) nothrow @trusted @nogc {
-  int gx, gy;
-  ubyte* dst;
-
-  if (!fons__atlasAddRect(stash.atlas, w, h, &gx, &gy)) return;
-
-  // Rasterize
-  dst = &stash.texData[gx+gy*stash.params.width];
-  foreach (int y; 0..h) {
-    foreach (int x; 0..w) {
-      dst[x] = 0xff;
-    }
-    dst += stash.params.width;
-  }
-
-  stash.dirtyRect.ptr[0] = nvg__min(stash.dirtyRect.ptr[0], gx);
-  stash.dirtyRect.ptr[1] = nvg__min(stash.dirtyRect.ptr[1], gy);
-  stash.dirtyRect.ptr[2] = nvg__max(stash.dirtyRect.ptr[2], gx+w);
-  stash.dirtyRect.ptr[3] = nvg__max(stash.dirtyRect.ptr[3], gy+h);
-}
-
-void fons__freeFont (FONSfont* font) nothrow @trusted @nogc {
-  if (font is null) return;
-  if (font.glyphs) free(font.glyphs);
-  font.freeMemory();
-  free(font);
-}
-
-// returns fid, not hash slot
-int fons__allocFontAt (FONSContext stash, int atidx) nothrow @trusted @nogc {
-  if (atidx >= 0 && atidx >= stash.nfonts) assert(0, "internal NanoVega fontstash error");
-
-  if (atidx < 0) {
-    if (stash.nfonts >= stash.cfonts) {
-      import core.stdc.stdlib : realloc;
-      import core.stdc.string : memset;
-      assert(stash.nfonts == stash.cfonts);
-      int newsz = stash.cfonts+64;
-      if (newsz > 65535) assert(0, "FONS: too many fonts");
-      auto newlist = cast(FONSfont**)realloc(stash.fonts, newsz*(FONSfont*).sizeof);
-      if (newlist is null) assert(0, "FONS: out of memory");
-      memset(newlist+stash.cfonts, 0, (newsz-stash.cfonts)*(FONSfont*).sizeof);
-      stash.fonts = newlist;
-      stash.cfonts = newsz;
-    }
-    assert(stash.nfonts < stash.cfonts);
-  }
-
-  FONSfont* font = cast(FONSfont*)malloc(FONSfont.sizeof);
-  if (font is null) assert(0, "FONS: out of memory");
-  memset(font, 0, FONSfont.sizeof);
-
-  font.glyphs = cast(FONSglyph*)malloc(FONSglyph.sizeof*FONS_INIT_GLYPHS);
-  if (font.glyphs is null) assert(0, "FONS: out of memory");
-  font.cglyphs = FONS_INIT_GLYPHS;
-  font.nglyphs = 0;
-
-  if (atidx < 0) {
-    stash.fonts[stash.nfonts] = font;
-    return stash.nfonts++;
-  } else {
-    stash.fonts[atidx] = font;
-    return atidx;
-  }
-}
-
-FONSglyph* fons__allocGlyph (FONSfont* font) nothrow @trusted @nogc {
-  if (font.nglyphs+1 > font.cglyphs) {
-    font.cglyphs = (font.cglyphs == 0 ? 8 : font.cglyphs*2);
-    font.glyphs = cast(FONSglyph*)realloc(font.glyphs, FONSglyph.sizeof*font.cglyphs);
-    if (font.glyphs is null) return null;
-  }
-  ++font.nglyphs;
-  return &font.glyphs[font.nglyphs-1];
-}
-
-// 0: ooops
-int fons__findGlyphForCP (FONSContext stash, FONSfont *font, dchar dch, FONSfont** renderfont) nothrow @trusted @nogc {
-  if (renderfont !is null) *renderfont = font;
-  if (stash is null) return 0;
-  if (font is null || font.fdata is null) return 0;
-  auto g = fons__tt_getGlyphIndex(&font.font, cast(uint)dch);
-  // try to find the glyph in fallback fonts
-  if (g == 0) {
-    foreach (immutable i; 0..font.nfallbacks) {
-      FONSfont* fallbackFont = stash.fonts[font.fallbacks.ptr[i]];
-      if (fallbackFont !is null) {
-        int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, cast(uint)dch);
-        if (fallbackIndex != 0) {
-          if (renderfont !is null) *renderfont = fallbackFont;
-          return g;
-        }
-      }
-    }
-    // no char, try to find replacement one
-    if (dch != 0xFFFD) {
-      g = fons__tt_getGlyphIndex(&font.font, 0xFFFD);
-      if (g == 0) {
-        foreach (immutable i; 0..font.nfallbacks) {
-          FONSfont* fallbackFont = stash.fonts[font.fallbacks.ptr[i]];
-          if (fallbackFont !is null) {
-            int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, 0xFFFD);
-            if (fallbackIndex != 0) {
-              if (renderfont !is null) *renderfont = fallbackFont;
-              return g;
-            }
-          }
-        }
-      }
-    }
-  }
-  return g;
-}
-
-
-
-// Based on Exponential blur, Jani Huhtanen, 2006
-
-enum APREC = 16;
-enum ZPREC = 7;
-
-void fons__blurCols (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
-  foreach (immutable int y; 0..h) {
-    int z = 0; // force zero border
-    foreach (int x; 1..w) {
-      z += (alpha*((cast(int)(dst[x])<<ZPREC)-z))>>APREC;
-      dst[x] = cast(ubyte)(z>>ZPREC);
-    }
-    dst[w-1] = 0; // force zero border
-    z = 0;
-    for (int x = w-2; x >= 0; --x) {
-      z += (alpha*((cast(int)(dst[x])<<ZPREC)-z))>>APREC;
-      dst[x] = cast(ubyte)(z>>ZPREC);
-    }
-    dst[0] = 0; // force zero border
-    dst += dstStride;
-  }
-}
-
-void fons__blurRows (ubyte* dst, int w, int h, int dstStride, int alpha) nothrow @trusted @nogc {
-  foreach (immutable int x; 0..w) {
-    int z = 0; // force zero border
-    for (int y = dstStride; y < h*dstStride; y += dstStride) {
-      z += (alpha*((cast(int)(dst[y])<<ZPREC)-z))>>APREC;
-      dst[y] = cast(ubyte)(z>>ZPREC);
-    }
-    dst[(h-1)*dstStride] = 0; // force zero border
-    z = 0;
-    for (int y = (h-2)*dstStride; y >= 0; y -= dstStride) {
-      z += (alpha*((cast(int)(dst[y])<<ZPREC)-z))>>APREC;
-      dst[y] = cast(ubyte)(z>>ZPREC);
-    }
-    dst[0] = 0; // force zero border
-    ++dst;
-  }
-}
-
-
-void fons__blur (FONSContext stash, ubyte* dst, int w, int h, int dstStride, int blur) nothrow @trusted @nogc {
-  import std.math : expf = exp;
-  if (blur < 1) return;
-  // Calculate the alpha such that 90% of the kernel is within the radius. (Kernel extends to infinity)
-  immutable float sigma = cast(float)blur*0.57735f; // 1/sqrt(3)
-  int alpha = cast(int)((1<<APREC)*(1.0f-expf(-2.3f/(sigma+1.0f))));
-  fons__blurRows(dst, w, h, dstStride, alpha);
-  fons__blurCols(dst, w, h, dstStride, alpha);
-  fons__blurRows(dst, w, h, dstStride, alpha);
-  fons__blurCols(dst, w, h, dstStride, alpha);
-  //fons__blurrows(dst, w, h, dstStride, alpha);
-  //fons__blurcols(dst, w, h, dstStride, alpha);
-}
-
-FONSglyph* fons__getGlyph (FONSContext stash, FONSfont* font, uint codepoint, short isize, short iblur, FONSglyphBitmap bitmapOption) nothrow @trusted @nogc {
-  int advance, lsb, x0, y0, x1, y1, gx, gy;
-  FONSglyph* glyph = null;
-  float size = isize/10.0f;
-  FONSfont* renderFont = font;
-
-  if (isize < 2) return null;
-  if (iblur > 20) iblur = 20;
-  int pad = iblur+2;
-
-  // Reset allocator.
-  stash.nscratch = 0;
-
-  // Find code point and size.
-  uint h = fons__hashint(codepoint)&(FONS_HASH_LUT_SIZE-1);
-  int i = font.lut.ptr[h];
-  while (i != -1) {
-    //if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) return &font.glyphs[i];
-    if (font.glyphs[i].codepoint == codepoint && font.glyphs[i].size == isize && font.glyphs[i].blur == iblur) {
-      glyph = &font.glyphs[i];
-      // Negative coordinate indicates there is no bitmap data created.
-      if (bitmapOption == FONS_GLYPH_BITMAP_OPTIONAL || (glyph.x0 >= 0 && glyph.y0 >= 0)) return glyph;
-      // At this point, glyph exists but the bitmap data is not yet created.
-      break;
-    }
-    i = font.glyphs[i].next;
-  }
-
-  // Create a new glyph or rasterize bitmap data for a cached glyph.
-  //scale = fons__tt_getPixelHeightScale(&font.font, size);
-  int g = fons__findGlyphForCP(stash, font, cast(dchar)codepoint, &renderFont);
-  // It is possible that we did not find a fallback glyph.
-  // In that case the glyph index 'g' is 0, and we'll proceed below and cache empty glyph.
-
-  float scale = fons__tt_getPixelHeightScale(&renderFont.font, size);
-  fons__tt_buildGlyphBitmap(&renderFont.font, g, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
-  int gw = x1-x0+pad*2;
-  int gh = y1-y0+pad*2;
-
-  // Determines the spot to draw glyph in the atlas.
-  if (bitmapOption == FONS_GLYPH_BITMAP_REQUIRED) {
-    // Find free spot for the rect in the atlas.
-    int added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
-    if (added == 0 && stash.handleError !is null) {
-      // Atlas is full, let the user to resize the atlas (or not), and try again.
-      stash.handleError(FONS_ATLAS_FULL, 0);
-      added = fons__atlasAddRect(stash.atlas, gw, gh, &gx, &gy);
-    }
-    if (added == 0) return null;
-  } else {
-    // Negative coordinate indicates there is no bitmap data created.
-    gx = -1;
-    gy = -1;
-  }
-
-  // Init glyph.
-  if (glyph is null) {
-    glyph = fons__allocGlyph(font);
-    glyph.codepoint = codepoint;
-    glyph.size = isize;
-    glyph.blur = iblur;
-    glyph.next = 0;
-
-    // Insert char to hash lookup.
-    glyph.next = font.lut.ptr[h];
-    font.lut.ptr[h] = font.nglyphs-1;
-  }
-  glyph.index = g;
-  glyph.x0 = cast(short)gx;
-  glyph.y0 = cast(short)gy;
-  glyph.x1 = cast(short)(glyph.x0+gw);
-  glyph.y1 = cast(short)(glyph.y0+gh);
-  glyph.xadv = cast(short)(scale*advance*10.0f);
-  glyph.xoff = cast(short)(x0-pad);
-  glyph.yoff = cast(short)(y0-pad);
-
-  if (bitmapOption == FONS_GLYPH_BITMAP_OPTIONAL) return glyph;
-
-  // Rasterize
-  ubyte* dst = &stash.texData[(glyph.x0+pad)+(glyph.y0+pad)*stash.params.width];
-  fons__tt_renderGlyphBitmap(&font.font, dst, gw-pad*2, gh-pad*2, stash.params.width, scale, scale, g);
-
-  // Make sure there is one pixel empty border.
-  dst = &stash.texData[glyph.x0+glyph.y0*stash.params.width];
-  foreach (immutable int y; 0..gh) {
-    dst[y*stash.params.width] = 0;
-    dst[gw-1+y*stash.params.width] = 0;
-  }
-  foreach (immutable int x; 0..gw) {
-    dst[x] = 0;
-    dst[x+(gh-1)*stash.params.width] = 0;
-  }
-
-  // Debug code to color the glyph background
-  version(none) {
-    foreach (immutable yy; 0..gh) {
-      foreach (immutable xx; 0..gw) {
-        int a = cast(int)dst[xx+yy*stash.params.width]+42;
-        if (a > 255) a = 255;
-        dst[xx+yy*stash.params.width] = cast(ubyte)a;
-      }
-    }
-  }
-
-  // Blur
-  if (iblur > 0) {
-    stash.nscratch = 0;
-    ubyte* bdst = &stash.texData[glyph.x0+glyph.y0*stash.params.width];
-    fons__blur(stash, bdst, gw, gh, stash.params.width, iblur);
-  }
-
-  stash.dirtyRect.ptr[0] = nvg__min(stash.dirtyRect.ptr[0], glyph.x0);
-  stash.dirtyRect.ptr[1] = nvg__min(stash.dirtyRect.ptr[1], glyph.y0);
-  stash.dirtyRect.ptr[2] = nvg__max(stash.dirtyRect.ptr[2], glyph.x1);
-  stash.dirtyRect.ptr[3] = nvg__max(stash.dirtyRect.ptr[3], glyph.y1);
-
-  return glyph;
-}
-
-void fons__getQuad (FONSContext stash, FONSfont* font, int prevGlyphIndex, FONSglyph* glyph, float size, float scale, float spacing, float* x, float* y, FONSQuad* q) nothrow @trusted @nogc {
-  if (prevGlyphIndex >= 0) {
-    immutable float adv = fons__tt_getGlyphKernAdvance(&font.font, size, prevGlyphIndex, glyph.index)/**scale*/; //k8: do we really need scale here?
-    //if (adv != 0) { import core.stdc.stdio; printf("adv=%g (scale=%g; spacing=%g)\n", cast(double)adv, cast(double)scale, cast(double)spacing); }
-    *x += cast(int)(adv+spacing /*+0.5f*/); //k8: for me, it looks better this way (with non-aa fonts)
-  }
-
-  // Each glyph has 2px border to allow good interpolation,
-  // one pixel to prevent leaking, and one to allow good interpolation for rendering.
-  // Inset the texture region by one pixel for correct interpolation.
-  immutable float xoff = cast(short)(glyph.xoff+1);
-  immutable float yoff = cast(short)(glyph.yoff+1);
-  immutable float x0 = cast(float)(glyph.x0+1);
-  immutable float y0 = cast(float)(glyph.y0+1);
-  immutable float x1 = cast(float)(glyph.x1-1);
-  immutable float y1 = cast(float)(glyph.y1-1);
-
-  if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-    immutable float rx = cast(float)cast(int)(*x+xoff);
-    immutable float ry = cast(float)cast(int)(*y+yoff);
-
-    q.x0 = rx;
-    q.y0 = ry;
-    q.x1 = rx+x1-x0;
-    q.y1 = ry+y1-y0;
-
-    q.s0 = x0*stash.itw;
-    q.t0 = y0*stash.ith;
-    q.s1 = x1*stash.itw;
-    q.t1 = y1*stash.ith;
-  } else {
-    immutable float rx = cast(float)cast(int)(*x+xoff);
-    immutable float ry = cast(float)cast(int)(*y-yoff);
-
-    q.x0 = rx;
-    q.y0 = ry;
-    q.x1 = rx+x1-x0;
-    q.y1 = ry-y1+y0;
-
-    q.s0 = x0*stash.itw;
-    q.t0 = y0*stash.ith;
-    q.s1 = x1*stash.itw;
-    q.t1 = y1*stash.ith;
-  }
-
-  *x += cast(int)(glyph.xadv/10.0f+0.5f);
-}
-
-void fons__flush (FONSContext stash) nothrow @trusted @nogc {
-  // Flush texture
-  if (stash.dirtyRect.ptr[0] < stash.dirtyRect.ptr[2] && stash.dirtyRect.ptr[1] < stash.dirtyRect.ptr[3]) {
-    if (stash.params.renderUpdate !is null) stash.params.renderUpdate(stash.params.userPtr, stash.dirtyRect.ptr, stash.texData);
-    // Reset dirty rect
-    stash.dirtyRect.ptr[0] = stash.params.width;
-    stash.dirtyRect.ptr[1] = stash.params.height;
-    stash.dirtyRect.ptr[2] = 0;
-    stash.dirtyRect.ptr[3] = 0;
-  }
-
-  debug(nanovega) {
-    // Flush triangles
-    if (stash.nverts > 0) {
-      if (stash.params.renderDraw !is null) stash.params.renderDraw(stash.params.userPtr, stash.verts.ptr, stash.tcoords.ptr, stash.colors.ptr, stash.nverts);
-      stash.nverts = 0;
-    }
-  }
-}
-
-debug(nanovega) void fons__vertex (FONSContext stash, float x, float y, float s, float t, uint c) nothrow @trusted @nogc {
-  stash.verts.ptr[stash.nverts*2+0] = x;
-  stash.verts.ptr[stash.nverts*2+1] = y;
-  stash.tcoords.ptr[stash.nverts*2+0] = s;
-  stash.tcoords.ptr[stash.nverts*2+1] = t;
-  stash.colors.ptr[stash.nverts] = c;
-  ++stash.nverts;
-}
-
-float fons__getVertAlign (FONSContext stash, FONSfont* font, NVGTextAlign talign, short isize) nothrow @trusted @nogc {
-  if (stash.params.flags&FONS_ZERO_TOPLEFT) {
-    final switch (talign.vertical) {
-      case NVGTextAlign.V.Top: return font.ascender*cast(float)isize/10.0f;
-      case NVGTextAlign.V.Middle: return (font.ascender+font.descender)/2.0f*cast(float)isize/10.0f;
-      case NVGTextAlign.V.Baseline: return 0.0f;
-      case NVGTextAlign.V.Bottom: return font.descender*cast(float)isize/10.0f;
-    }
-  } else {
-    final switch (talign.vertical) {
-      case NVGTextAlign.V.Top: return -font.ascender*cast(float)isize/10.0f;
-      case NVGTextAlign.V.Middle: return -(font.ascender+font.descender)/2.0f*cast(float)isize/10.0f;
-      case NVGTextAlign.V.Baseline: return 0.0f;
-      case NVGTextAlign.V.Bottom: return -font.descender*cast(float)isize/10.0f;
-    }
-  }
-  assert(0);
-}
-
-debug(nanovega) public void fonsDrawDebug (FONSContext stash, float x, float y) nothrow @trusted @nogc {
-  int i;
-  int w = stash.params.width;
-  int h = stash.params.height;
-  float u = (w == 0 ? 0 : 1.0f/w);
-  float v = (h == 0 ? 0 : 1.0f/h);
-
-  if (stash.nverts+6+6 > FONS_VERTEX_COUNT) fons__flush(stash);
-
-  // Draw background
-  fons__vertex(stash, x+0, y+0, u, v, 0x0fffffff);
-  fons__vertex(stash, x+w, y+h, u, v, 0x0fffffff);
-  fons__vertex(stash, x+w, y+0, u, v, 0x0fffffff);
-
-  fons__vertex(stash, x+0, y+0, u, v, 0x0fffffff);
-  fons__vertex(stash, x+0, y+h, u, v, 0x0fffffff);
-  fons__vertex(stash, x+w, y+h, u, v, 0x0fffffff);
-
-  // Draw texture
-  fons__vertex(stash, x+0, y+0, 0, 0, 0xffffffff);
-  fons__vertex(stash, x+w, y+h, 1, 1, 0xffffffff);
-  fons__vertex(stash, x+w, y+0, 1, 0, 0xffffffff);
-
-  fons__vertex(stash, x+0, y+0, 0, 0, 0xffffffff);
-  fons__vertex(stash, x+0, y+h, 0, 1, 0xffffffff);
-  fons__vertex(stash, x+w, y+h, 1, 1, 0xffffffff);
-
-  // Drawbug draw atlas
-  for (i = 0; i < stash.atlas.nnodes; i++) {
-    FONSatlasNode* n = &stash.atlas.nodes[i];
-
-    if (stash.nverts+6 > FONS_VERTEX_COUNT)
-      fons__flush(stash);
-
-    fons__vertex(stash, x+n.x+0, y+n.y+0, u, v, 0xc00000ff);
-    fons__vertex(stash, x+n.x+n.width, y+n.y+1, u, v, 0xc00000ff);
-    fons__vertex(stash, x+n.x+n.width, y+n.y+0, u, v, 0xc00000ff);
-
-    fons__vertex(stash, x+n.x+0, y+n.y+0, u, v, 0xc00000ff);
-    fons__vertex(stash, x+n.x+0, y+n.y+1, u, v, 0xc00000ff);
-    fons__vertex(stash, x+n.x+n.width, y+n.y+1, u, v, 0xc00000ff);
-  }
-
-  fons__flush(stash);
-}
-
+// ////////////////////////////////////////////////////////////////////////// //
 public struct FonsTextBoundsIterator {
 private:
   FONSContext stash;
@@ -11914,7 +11875,7 @@ public:
     scale = fons__tt_getPixelHeightScale(&font.font, cast(float)isize/10.0f);
 
     // align vertically
-    y += fons__getVertAlign(stash, font, state.talign, isize);
+    y += astash.getVertAlign(font, state.talign, isize);
 
     minx = maxx = x;
     miny = maxy = y;
@@ -11927,9 +11888,9 @@ public:
 
   void put(T) (const(T)[] str...) nothrow @trusted @nogc if (isAnyCharType!T) {
     enum DoCodePointMixin = q{
-      glyph = fons__getGlyph(stash, font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
+      glyph = stash.getGlyph(font, codepoint, isize, iblur, FONS_GLYPH_BITMAP_OPTIONAL);
       if (glyph !is null) {
-        fons__getQuad(stash, font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
+        stash.getQuad(font, prevGlyphIndex, glyph, isize/10.0f, scale, state.spacing, &x, &y, &q);
         if (q.x0 < minx) minx = q.x0;
         if (q.x1 > maxx) maxx = q.x1;
         if (stash.params.flags&FONS_ZERO_TOPLEFT) {
@@ -12021,15 +11982,6 @@ public:
       ymax = maxy;
     }
   }
-}
-
-//
-public void kill (ref FONSContext stash) nothrow @trusted @nogc {
-  import core.stdc.stdlib : free;
-  if (stash is null) return;
-  stash.clear();
-  free(stash);
-  stash = null;
 }
 
 
