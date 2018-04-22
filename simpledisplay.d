@@ -6508,8 +6508,8 @@ version(X11) {
 		F11 = 0x7a,
 		F12 = 0x7b,
 		PrintScreen = 0x2c,
-		ScrollLock = -2, // FIXME
-		Pause = -3, // FIXME
+		ScrollLock = 0x91,
+		Pause = 0x13,
 		Grave = 0xc0,
 		// number keys across the top of the keyboard
 		N1 = 0x31,
@@ -6574,15 +6574,15 @@ version(X11) {
 		Comma = 0xbc,
 		Period = 0xbe,
 		Slash = 0xbf,
-		Shift_r = -4, // FIXME Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
+		Shift_r = 0xa1, // FIXME Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
 		Ctrl = 0x11,
 		Windows = 0x5b,
 		Alt = -5, // FIXME
 		Space = 0x20,
 		Alt_r = 0xffea, // ditto of shift_r
-		Windows_r = -6, // FIXME
+		Windows_r = 0x5c, // ditto of shift_r
 		Menu = 0x5d,
-		Ctrl_r = -7, // FIXME
+		Ctrl_r = 0xa3, // ditto of shift_r
 
 		NumLock = 0x90,
 		Divide = 0x6f,
@@ -6590,18 +6590,17 @@ version(X11) {
 		Minus = 0x6d,
 		Plus = 0x6b,
 		PadEnter = -8, // FIXME
-		// FIXME for the rest of these:
-		Pad1 = 0xff9c,
-		Pad2 = 0xff99,
-		Pad3 = 0xff9b,
-		Pad4 = 0xff96,
-		Pad5 = 0xff9d,
-		Pad6 = 0xff98,
-		Pad7 = 0xff95,
-		Pad8 = 0xff97,
-		Pad9 = 0xff9a,
-		Pad0 = 0xff9e,
-		PadDot = 0xff9f,
+		Pad1 = 0x61,
+		Pad2 = 0x62,
+		Pad3 = 0x63,
+		Pad4 = 0x64,
+		Pad5 = 0x65,
+		Pad6 = 0x66,
+		Pad7 = 0x67,
+		Pad8 = 0x68,
+		Pad9 = 0x69,
+		Pad0 = 0x60,
+		PadDot = 0x6e,
 	}
 
 	// I'm keeping this around for reference purposes
