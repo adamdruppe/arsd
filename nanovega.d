@@ -1060,8 +1060,15 @@ public:
     }
     return h;
   }
-}
 
+  /// Returns image size in w and h if the image is valid and 
+  /// do not change w and h otherwise
+  void size (ref int w, ref int h) const nothrow @trusted @nogc {
+    if (valid) {
+      ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
+    }
+  }
+}
 
 /// Paint parameters for various fills. Don't change anything here!
 /// Group: render_styles
