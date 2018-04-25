@@ -1061,11 +1061,34 @@ public:
     return h;
   }
 
-  /// Returns image size in w and h if the image is valid and 
-  /// do not change w and h otherwise
-  void size (ref int w, ref int h) const nothrow @trusted @nogc {
-    if (valid) {
-      ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
+  static if (NanoVegaHasArsdColor)
+  {
+    /// Returns image size in w and h if the image is valid and 
+    /// do not change w and h otherwise
+    auto size (out int w, out int h) const nothrow @trusted @nogc {
+      if (valid) {
+        ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
+      }
+      return size(w, h);
+    }
+
+    /// Returns image size if image is valid otherwise return zero size
+    auto size () const nothrow @trusted @nogc {
+      int w, h;
+      if (valid) {
+        ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
+      }
+      return size(w, h);
+    }
+  }
+  else
+  {
+    /// Returns image size in w and h if the image is valid and 
+    /// do not change w and h otherwise
+    auto size (out int w, out int h) const nothrow @trusted @nogc {
+      if (valid) {
+        ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, id, &w, &h);
+      }
     }
   }
 }
