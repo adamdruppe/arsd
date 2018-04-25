@@ -1281,6 +1281,8 @@ public enum NVGImageFlag : uint {
   RepeatY         = 1<<2, /// Repeat image in Y direction.
   FlipY           = 1<<3, /// Flips (inverses) image in Y direction when rendered.
   Premultiplied   = 1<<4, /// Image data has premultiplied alpha.
+  ClampToBorderX  = 1<<5, /// Clamp image to border (instead of clamping to edge by default)
+  ClampToBorderY  = 1<<6, /// Clamp image to border (instead of clamping to edge by default)
   NoFiltering     = 1<<8, /// use GL_NEAREST instead of GL_LINEAR
   Nearest = NoFiltering,  /// compatibility with original NanoVG
   NoDelete        = 1<<16,/// Do not delete GL texture handle.
@@ -13405,8 +13407,23 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tfmin);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (imageFlags&NVGImageFlag.NoFiltering ? GL_NEAREST : GL_LINEAR));
 
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (imageFlags&NVGImageFlag.RepeatX ? GL_REPEAT : GL_CLAMP_TO_EDGE));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (imageFlags&NVGImageFlag.RepeatY ? GL_REPEAT : GL_CLAMP_TO_EDGE));
+  int flag;
+  if (imageFlags&NVGImageFlag.RepeatX)
+    flag = GL_REPEAT;
+  else if (imageFlags&NVGImageFlag.ClampToBorderX)
+    flag = GL_CLAMP_TO_BORDER;
+  else 
+    flag = GL_CLAMP_TO_EDGE;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, flag);
+
+
+  if (imageFlags&NVGImageFlag.RepeatY)
+    flag = GL_REPEAT;
+  else if (imageFlags&NVGImageFlag.ClampToBorderY)
+    flag = GL_CLAMP_TO_BORDER;
+  else 
+    flag = GL_CLAMP_TO_EDGE;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, flag);
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
