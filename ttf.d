@@ -1040,7 +1040,6 @@ private stbtt_uint32 stbtt__cff_int(stbtt__buf *b)
    else if (b0 == 28)               return stbtt__buf_get16(b);
    else if (b0 == 29)               return stbtt__buf_get32(b);
    assert(0);
-   return 0;
 }
 
 private void stbtt__cff_skip_operand(stbtt__buf *b) {
@@ -1343,7 +1342,6 @@ public int stbtt_FindGlyphIndex(const(stbtt_fontinfo)* info, int unicode_codepoi
       return 0;
    } else if (format == 2) {
       assert(0); // @TODO: high-byte mapping for japanese/chinese/korean
-      return 0;
    } else if (format == 4) { // standard mapping for windows fonts: binary search collection of ranges
       stbtt_uint16 segcount = ttUSHORT(data+index_map+6) >> 1;
       stbtt_uint16 searchRange = ttUSHORT(data+index_map+8) >> 1;
@@ -1414,7 +1412,6 @@ public int stbtt_FindGlyphIndex(const(stbtt_fontinfo)* info, int unicode_codepoi
    }
    // @TODO
    assert(0);
-   return 0;
 }
 
 public int stbtt_GetCodepointShape(stbtt_fontinfo* info, int unicode_codepoint, stbtt_vertex **vertices)
@@ -2231,7 +2228,7 @@ private stbtt_int32  stbtt__GetCoverageIndex(stbtt_uint8 *coverageTable, int gly
         default: {
             // There are no other cases.
             assert(0);
-        } break;
+        }
     }
 
     return -1;
@@ -2280,7 +2277,7 @@ private stbtt_int32  stbtt__GetGlyphClass(stbtt_uint8 *classDefTable, int glyph)
         default: {
             // There are no other cases.
             assert(0);
-        } break;
+        }
     }
 
     return -1;
@@ -2400,7 +2397,6 @@ private stbtt_int32  stbtt__GetGlyphGPOSInfoAdvance(stbtt_fontinfo* info, int gl
                         default: {
                             // There are no other cases.
                             assert(0);
-                            break;
                         }
                     }
                 }
