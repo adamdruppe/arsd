@@ -59,8 +59,8 @@
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "sourceLibrary",
-			"dependencies": {"arsd-official:dom":"*"},
-			"sourceFiles": ["email.d", "htmltotext.d"]
+			"dependencies": {"arsd-official:htmltotext":"*"},
+			"sourceFiles": ["email.d"]
 
 		},
 		{
@@ -69,6 +69,14 @@
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:color_base":"*"},
 			"sourceFiles": ["image.d", "png.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
+		},
+		{
+			"name": "htmltotext",
+			"description": "HTML to plain text conversion",
+			"targetType": "sourceLibrary",
+			"dependencies": {"arsd-official:dom":"*", "arsd-official:color_base":"*"},
+			"sourceFiles": ["htmltotext.d"]
+
 		},
 		{
 			"name": "dom",
