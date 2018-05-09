@@ -12630,6 +12630,7 @@ extern(System) nothrow @nogc {
 	enum uint GL_REPEAT = 0x2901;
 	enum uint GL_CLAMP = 0x2900;
 	enum uint GL_CLAMP_TO_EDGE = 0x812F;
+	enum uint GL_CLAMP_TO_BORDER = 0x812D;
 	enum uint GL_DECAL = 0x2101;
 	enum uint GL_MODULATE = 0x2100;
 	enum uint GL_TEXTURE_ENV = 0x2300;
