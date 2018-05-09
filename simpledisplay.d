@@ -1970,9 +1970,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			static if(UsingSimpledisplayX11) {
 				XDefineCursor(XDisplayConnection.get(), this.impl.window, ch);
 			} else version(Windows) {
-				// FIXME i don't like this
-				if(cursor !is null)
-					SetCursor(ch);
+				impl.currentCursor = ch;
+				SetCursor(ch); // redraw without waiting for mouse movement to update
 			} else static assert(0);
 		}
 
@@ -2489,7 +2488,7 @@ class MouseCursor {
 // https://developer.mozilla.org/en-US/docs/Web/CSS/cursor
 // https://tronche.com/gui/x/xlib/appendix/b/
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms648391(v=vs.85).aspx
-///
+/// Note that there is no exact appearance guaranteed for any of these items; it may change appearance on different operating systems or future simpledisplay versions
 enum GenericCursorType {
 	Default, /// The default arrow pointer.
 	Wait, /// A cursor indicating something is loading and the user must wait.
@@ -2497,9 +2496,20 @@ enum GenericCursorType {
 	Help, /// A cursor indicating the user can get help about the pointer location.
 	Cross, /// A crosshair.
 	Text, /// An i-beam shape, typically used to indicate text selection is possible.
-	Move, /// Pointer indicating movement is possible.
+	Move, /// Pointer indicating movement is possible. May also be used as SizeAll
 	UpArrow, /// An arrow pointing straight up.
+	Progress, /// The hourglass and arrow, indicating the computer is working but the user can still work. Not great results on X11.
+	NotAllowed, /// Indicates the current operation is not allowed. Not great results on X11.
+	SizeNesw, /// Arrow pointing northeast and southwest (lower-left corner resize indicator)
+	SizeNs, /// Arrow pointing north and south (upper/lower edge resize indicator)
+	SizeNwse, /// Arrow pointing northwest and southeast (upper-left corner resize indicator)
+	SizeWe, /// Arrow pointing west and east (left/right edge resize indicator)
+
 }
+
+/*
+	X_plus == css cell == Windows ?
+*/
 
 /// You get one by `GenericCursor.SomeTime`. See [GenericCursorType] for a list of types.
 static struct GenericCursor {
@@ -2523,6 +2533,12 @@ static struct GenericCursor {
 					case GenericCursorType.Text: osId = IDC_IBEAM; break;
 					case GenericCursorType.Move: osId = IDC_SIZEALL; break;
 					case GenericCursorType.UpArrow: osId = IDC_UPARROW; break;
+					case GenericCursorType.Progress: osId = IDC_APPSTARTING; break;
+					case GenericCursorType.NotAllowed: osId = IDC_NO; break;
+					case GenericCursorType.SizeNesw: osId = IDC_SIZENESW; break;
+					case GenericCursorType.SizeNs: osId = IDC_SIZENS; break;
+					case GenericCursorType.SizeNwse: osId = IDC_SIZENWSE; break;
+					case GenericCursorType.SizeWe: osId = IDC_SIZEWE; break;
 				}
 			} else static if(UsingSimpledisplayX11) {
 				int osId;
@@ -2535,6 +2551,13 @@ static struct GenericCursor {
 					case GenericCursorType.Text: osId = 152 /* XC_xterm */; break;
 					case GenericCursorType.Move: osId = 52 /* XC_fleur */; break;
 					case GenericCursorType.UpArrow: osId = 22 /* XC_center_ptr */; break;
+					case GenericCursorType.Progress: osId = 150 /* XC_watch, best i can do i think */; break;
+
+					case GenericCursorType.NotAllowed: osId = 24 /* XC_circle. not great */; break;
+					case GenericCursorType.SizeNesw: osId = 12 /* XC_bottom_left_corner */ ; break;
+					case GenericCursorType.SizeNs: osId = 116 /* XC_sb_v_double_arrow */; break;
+					case GenericCursorType.SizeNwse: osId = 14 /* XC_bottom_right_corner */; break;
+					case GenericCursorType.SizeWe: osId = 108 /* XC_sb_h_double_arrow */; break;
 				}
 
 			} else static assert(0);
@@ -7483,15 +7506,18 @@ version(Windows) {
 		static bool[string] knownWinClasses;
 		static bool altPressed = false;
 
+		HANDLE oldCursor;
+
 		void hideCursor () {
+			if(curHidden == 0)
+				oldCursor = SetCursor(null);
 			++curHidden;
 		}
 
 		void showCursor () {
 			--curHidden;
 			if(curHidden == 0) {
-				// FIXME
-				//SetCursor(oldCursor); // show it immediately without waiting for mouse movement
+				SetCursor(currentCursor is null ? oldCursor : currentCursor); // show it immediately without waiting for mouse movement
 			}
 		}
 
@@ -7769,6 +7795,8 @@ version(Windows) {
 			return SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) == TRUE;
 		}
 
+		HANDLE currentCursor;
+
 		// returns zero if it recognized the event
 		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
@@ -7782,12 +7810,6 @@ version(Windows) {
 
 				if(wind.handleMouseEvent)
 					wind.handleMouseEvent(mouse);
-			}
-
-			// hide cursor in client area if necessary
-			if (wind.curHidden > 0 && msg == WM_SETCURSOR && cast(ushort)lParam == 1/*HTCLIENT*/) {
-				SetCursor(null);
-				return 1;
 			}
 
 			switch(msg) {
@@ -7950,6 +7972,18 @@ version(Windows) {
 
 			if(triggerEvents(hwnd, msg, wParam, lParam, 0, 0, this))
 			switch(msg) {
+				case WM_SETCURSOR:
+					if(cast(HWND) wParam !is hwnd)
+						return 0; // further processing elsewhere
+
+					if(LOWORD(lParam) == HTCLIENT && (this.curHidden > 0 || currentCursor !is null)) {
+						SetCursor(this.curHidden > 0 ? null : currentCursor);
+						return 1;
+					} else {
+						return DefWindowProc(hwnd, msg, wParam, lParam);
+					}
+				break;
+
 				case WM_CLOSE:
 					DestroyWindow(hwnd);
 				break;
