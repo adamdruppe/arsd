@@ -3474,16 +3474,7 @@ class Window : Widget {
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
 
-						auto cursor = ele.cursor ? ele.cursor.cursorHandle : cast(typeof(ele.cursor.cursorHandle())) 0;
-						if(ele.parentWindow.win.curHidden <= 0) {
-						static if(UsingSimpledisplayX11) {
-							XDefineCursor(XDisplayConnection.get(), ele.parentWindow.win.impl.window, cursor);
-						} else version(Windows) {
-							// FIXME i don't like this
-							if(cursor !is null)
-								SetCursor(cursor);
-						} else static assert(0);
-						}
+						ele.parentWindow.win.cursor = ele.cursor;
 					}
 				}
 
@@ -6232,104 +6223,6 @@ enum GenericIcons : ushort {
 	Find, ///
 	Replace, ///
 	Print, ///
-}
-
-/// Represents a mouse cursor (aka the mouse pointer, the image seen on screen that indicates where the mouse is pointing).
-/// See [GenericCursor]
-class MouseCursor {
-	int osId;
-	bool isStockCursor;
-	private this(int osId) {
-		this.osId = osId;
-		this.isStockCursor = true;
-	}
-
-	// https://msdn.microsoft.com/en-us/library/windows/desktop/ms648385(v=vs.85).aspx
-	this(int xHotSpot, int yHotSpot, ubyte[] andMask, ubyte[] xorMask) {}
-
-	version(Windows) {
-		HCURSOR cursor_;
-		HCURSOR cursorHandle() {
-			if(cursor_ is null)
-				cursor_ = LoadCursor(null, MAKEINTRESOURCE(osId));
-			return cursor_;
-		}
-
-	} else static if(UsingSimpledisplayX11) {
-		Cursor cursor_ = None;
-		int xDisplaySequence;
-
-		Cursor cursorHandle() {
-			if(this.osId == None)
-				return None;
-
-			// we need to reload if we on a new X connection
-			if(cursor_ == None || XDisplayConnection.connectionSequenceNumber != xDisplaySequence) {
-				cursor_ = XCreateFontCursor(XDisplayConnection.get(), this.osId);
-				xDisplaySequence = XDisplayConnection.connectionSequenceNumber;
-			}
-			return cursor_;
-		}
-	}
-}
-
-// https://developer.mozilla.org/en-US/docs/Web/CSS/cursor
-// https://tronche.com/gui/x/xlib/appendix/b/
-// https://msdn.microsoft.com/en-us/library/windows/desktop/ms648391(v=vs.85).aspx
-///
-enum GenericCursorType {
-	Default, /// The default arrow pointer.
-	Wait, /// A cursor indicating something is loading and the user must wait.
-	Hand, /// A pointing finger, like the one used hovering over hyperlinks in a web browser.
-	Help, /// A cursor indicating the user can get help about the pointer location.
-	Cross, /// A crosshair.
-	Text, /// An i-beam shape, typically used to indicate text selection is possible.
-	Move, /// Pointer indicating movement is possible.
-	UpArrow, /// An arrow pointing straight up.
-}
-
-/// You get one by `GenericCursor.SomeTime`. See [GenericCursorType] for a list of types.
-static struct GenericCursor {
-	static:
-	///
-	MouseCursor opDispatch(string str)() if(__traits(hasMember, GenericCursorType, str)) {
-		static MouseCursor mc;
-
-		auto type = __traits(getMember, GenericCursorType, str);
-
-		if(mc is null) {
-
-			version(Windows) {
-				int osId;
-				final switch(type) {
-					case GenericCursorType.Default: osId = IDC_ARROW; break;
-					case GenericCursorType.Wait: osId = IDC_WAIT; break;
-					case GenericCursorType.Hand: osId = IDC_HAND; break;
-					case GenericCursorType.Help: osId = IDC_HELP; break;
-					case GenericCursorType.Cross: osId = IDC_CROSS; break;
-					case GenericCursorType.Text: osId = IDC_IBEAM; break;
-					case GenericCursorType.Move: osId = IDC_SIZEALL; break;
-					case GenericCursorType.UpArrow: osId = IDC_UPARROW; break;
-				}
-			} else static if(UsingSimpledisplayX11) {
-				int osId;
-				final switch(type) {
-					case GenericCursorType.Default: osId = None; break;
-					case GenericCursorType.Wait: osId = 150 /* XC_watch */; break;
-					case GenericCursorType.Hand: osId = 60 /* XC_hand2 */; break;
-					case GenericCursorType.Help: osId = 92 /* XC_question_arrow */; break;
-					case GenericCursorType.Cross: osId = 34 /* XC_crosshair */; break;
-					case GenericCursorType.Text: osId = 152 /* XC_xterm */; break;
-					case GenericCursorType.Move: osId = 52 /* XC_fleur */; break;
-					case GenericCursorType.UpArrow: osId = 22 /* XC_center_ptr */; break;
-				}
-
-			} else static assert(0);
-
-			mc = new MouseCursor(osId);
-		}
-		return mc;
-	}
 }
 
 ///
