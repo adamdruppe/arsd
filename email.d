@@ -82,7 +82,13 @@ class EmailMessage {
 
 	const(MimeAttachment)[] attachments;
 
-	///
+	/++
+		The filename is what is shown to the user, not the file on your sending computer. It should NOT have a path in it.
+
+		---
+			message.addAttachment("text/plain", "something.txt", std.file.read("/path/to/local/something.txt"));
+		---
+	+/
 	void addAttachment(string mimeType, string filename, in void[] content, string id = null) {
 		isMime = true;
 		attachments ~= MimeAttachment(mimeType, filename, content, id);

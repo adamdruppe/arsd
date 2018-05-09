@@ -3746,7 +3746,11 @@ class DocumentFragment : Element {
 		super(_parentDocument);
 	}
 
-	///
+	/++
+		Creates a document fragment from the given HTML. Note that the HTML is assumed to close all tags contained inside it.
+
+		Since: March 29, 2018 (or git tagged v2.1.0)
+	+/
 	this(Html html) {
 		this(null);
 
