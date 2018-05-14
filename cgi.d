@@ -519,59 +519,57 @@ class Cgi {
 			if(arg.startsWith("--")) {
 				nextArgIs = arg[2 .. $];
 			} else if(nextArgIs.length) {
-				switch(nextArgIs) {
-					case "cookie":
-						auto info = breakUp(arg);
-						if(_cookie.length)
-							_cookie ~= "; ";
-						_cookie ~= std.uri.encodeComponent(info[0]) ~ "=" ~ std.uri.encodeComponent(info[1]);
-					break;
-					case "port":
-						port = to!int(arg);
-					break;
-					case "referrer":
-						referrer = arg;
-					break;
-					case "remote-address":
-						remoteAddress = arg;
-					break;
-					case "user-agent":
-						userAgent = arg;
-					break;
-					case "authorization":
-						authorization = arg;
-					break;
-					case "userpass":
-						authorization = "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (arg)).idup;
-					break;
-					case "origin":
-						origin = arg;
-					break;
-					case "accept":
-						accept = arg;
-					break;
-					case "last-event-id":
-						lastEventId = arg;
-					break;
-					case "https":
-						if(arg == "yes")
-							https = true;
-					break;
-					case "header":
-						string thing, other;
-						auto idx = arg.indexOf(":");
-						if(idx == -1)
-							throw new Exception("need a colon in a http header");
-						thing = arg[0 .. idx];
-						other = arg[idx + 1.. $];
-						_headers[thing.strip.toLower()] = other.strip;
-					break;
-					case "host":
-						host = arg;
-					break;
-					default:
-						// skip, we don't know it but that's ok, it might be used elsewhere so no error
+				if (nextArgIs == "cookie") {
+					auto info = breakUp(arg);
+					if(_cookie.length)
+						_cookie ~= "; ";
+					_cookie ~= std.uri.encodeComponent(info[0]) ~ "=" ~ std.uri.encodeComponent(info[1]);
 				}
+				else if (nextArgIs == "port") {
+					port = to!int(arg);
+				}
+				else if (nextArgIs == "referrer") {
+					referrer = arg;
+				}
+				else if (nextArgIs == "remote-address") {
+					remoteAddress = arg;
+				}
+				else if (nextArgIs == "user-agent") {
+					userAgent = arg;
+				}
+				else if (nextArgIs == "authorization") {
+					authorization = arg;
+				}
+				else if (nextArgIs == "userpass") {
+					authorization = "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (arg)).idup;
+				}
+				else if (nextArgIs == "origin") {
+					origin = arg;
+				}
+				else if (nextArgIs == "accept") {
+					accept = arg;
+				}
+				else if (nextArgIs == "last-event-id") {
+					lastEventId = arg;
+				}
+				else if (nextArgIs == "https") {
+					if(arg == "yes")
+						https = true;
+				}
+				else if (nextArgIs == "header") {
+					string thing, other;
+					auto idx = arg.indexOf(":");
+					if(idx == -1)
+						throw new Exception("need a colon in a http header");
+					thing = arg[0 .. idx];
+					other = arg[idx + 1.. $];
+					_headers[thing.strip.toLower()] = other.strip;
+				}
+				else if (nextArgIs == "host") {
+					host = arg;
+				}
+				// else
+				// skip, we don't know it but that's ok, it might be used elsewhere so no error
 
 				nextArgIs = null;
 			} else if(lookingForMethod) {
@@ -1523,58 +1521,55 @@ class Cgi {
 
 				requestHeadersHere[name] = value;
 
-				switch(name) {
-					case "accept":
-						accept = value;
-					break;
-					case "origin":
-						origin = value;
-					break;
-					case "connection":
-						if(value == "close" && closeConnection)
-							*closeConnection = true;
-						if(value.toLower().indexOf("keep-alive") != -1)
-							keepAliveRequested = true;
-					break;
-					case "transfer-encoding":
-						if(value == "chunked")
-							isChunked = true;
-					break;
-					case "last-event-id":
-						lastEventId = value;
-					break;
-					case "authorization":
-						authorization = value;
-					break;
-					case "content-type":
-						contentType = value;
-					break;
-					case "content-length":
-						contentLength = to!size_t(value);
-					break;
-					case "x-forwarded-for":
-						remoteAddress = value;
-					break;
-					case "x-forwarded-host":
-					case "host":
-						host = value;
-					break;
-					case "accept-encoding":
-						if(value.indexOf("gzip") != -1)
-							acceptsGzip = true;
-					break;
-					case "user-agent":
-						userAgent = value;
-					break;
-					case "referer":
-						referrer = value;
-					break;
-					case "cookie":
-						cookie ~= value;
-					break;
-					default:
-						// ignore it
+				if (name == "accept") {
+					accept = value;
 				}
+				else if (name == "origin") {
+					origin = value;
+				}
+				else if (name == "connection") {
+					if(value == "close" && closeConnection)
+						*closeConnection = true;
+					if(value.toLower().indexOf("keep-alive") != -1)
+						keepAliveRequested = true;
+				}
+				else if (name == "transfer-encoding") {
+					if(value == "chunked")
+						isChunked = true;
+				}
+				else if (name == "last-event-id") {
+					lastEventId = value;
+				}
+				else if (name == "authorization") {
+					authorization = value;
+				}
+				else if (name == "content-type") {
+					contentType = value;
+				}
+				else if (name == "content-length") {
+					contentLength = to!size_t(value);
+				}
+				else if (name == "x-forwarded-for") {
+					remoteAddress = value;
+				}
+				else if (name == "x-forwarded-host" || name == "host") {
+					host = value;
+				}
+				else if (name == "accept-encoding") {
+					if(value.indexOf("gzip") != -1)
+						acceptsGzip = true;
+				}
+				else if (name == "user-agent") {
+					userAgent = value;
+				}
+				else if (name == "referer") {
+					referrer = value;
+				}
+				else if (name == "cookie") {
+					cookie ~= value;
+				}
+				// else
+				// ignore it
 
 			}
 		}
