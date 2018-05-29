@@ -12597,6 +12597,11 @@ extern(System) nothrow @nogc {
 	void glColor4f(float, float, float, float);
 	void glTranslatef(float, float, float);
 	void glScalef(float, float, float);
+	void glSecondaryColor3b(byte, byte, byte);
+	void glSecondaryColor3ub(ubyte, ubyte, ubyte);
+	void glSecondaryColor3i(int, int, int);
+	void glSecondaryColor3ui(uint, uint, uint);
+	void glSecondaryColor3f(float, float, float);
 
 	void glDrawElements(int, int, int, void*);
 
