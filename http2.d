@@ -14,6 +14,8 @@
 +/
 module arsd.http2;
 
+import std.uri : encodeComponent;
+
 version(without_openssl) {}
 else {
 version=use_openssl;
@@ -133,6 +135,7 @@ struct HttpResponse {
 	string statusLine; ///
 
 	string contentType; /// The content type header
+	string location; /// The location header
 
 	string[string] cookies; /// Names and values of cookies set in the response.
 
@@ -630,6 +633,7 @@ class HttpRequest {
 					if(writeSet.isSet(sock)) {
 						assert(request.sendBuffer.length);
 						auto sent = sock.send(request.sendBuffer);
+						debug(arsd_http2) writeln(cast(string) request.sendBuffer);
 						if(sent <= 0)
 							throw new Exception("send error " ~ lastSocketError);
 						request.sendBuffer = request.sendBuffer[sent .. $];
@@ -726,6 +730,10 @@ class HttpRequest {
 						case "Content-Type":
 						case "content-type":
 							responseData.contentType = value;
+						break;
+						case "Location":
+						case "location":
+							responseData.location = value;
 						break;
 						case "Content-Length":
 						case "content-length":
@@ -1190,6 +1198,33 @@ class HttpClient {
 		return request;
 	}
 
+	/++
+		Creates a request without updating the current url state
+		(but will still save cookies btw)
+
+	+/
+	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
+		auto request = new HttpRequest(uri, method);
+
+		request.requestParameters.userAgent = userAgent;
+		request.requestParameters.authorization = authorization;
+
+		request.requestParameters.useHttp11 = this.useHttp11;
+		request.requestParameters.acceptGzip = this.acceptGzip;
+
+		request.requestParameters.bodyData = bodyData;
+		request.requestParameters.contentType = contentType;
+
+		return request;
+
+	}
+
+	/// ditto
+	HttpRequest request(Uri uri, FormData fd, HttpVerb method = HttpVerb.POST) {
+		return request(uri, method, fd.toBytes, fd.contentType);
+	}
+
+
 	private Uri currentUrl;
 	private string currentDomain;
 
@@ -1604,9 +1639,9 @@ class HttpApiClient() {
 		}
 
 		///
-		final HttpRequestWrapper GET() { return _EXECUTE(HttpVerb.GET, this.toUri(), null); }
+		final HttpRequestWrapper GET() { return _EXECUTE(HttpVerb.GET, this.toUri(), ToBytesResult.init); }
 		/// ditto
-		final HttpRequestWrapper DELETE() { return _EXECUTE(HttpVerb.DELETE, this.toUri(), null); }
+		final HttpRequestWrapper DELETE() { return _EXECUTE(HttpVerb.DELETE, this.toUri(), ToBytesResult.init); }
 
 		// need to be able to send: JSON, urlencoded, multipart/form-data, and raw stuff.
 		/// ditto
@@ -1616,11 +1651,37 @@ class HttpApiClient() {
 		/// ditto
 		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
 
-		private ubyte[] toBytes(T...)(T t) {
+		struct ToBytesResult {
+			ubyte[] bytes;
+			string contentType;
+		}
+
+		private ToBytesResult toBytes(T...)(T t) {
+			import std.conv : to;
 			static if(T.length == 0)
-				return null;
+				return ToBytesResult(null, null);
 			else static if(T.length == 1 && is(T[0] == var))
-				return cast(ubyte[]) t[0].toJson(); // FIXME: cast
+				return ToBytesResult(cast(ubyte[]) t[0].toJson(), "application/json"); // json data
+			else static if(T.length == 1 && (is(T[0] == string) || is(T[0] == ubyte[])))
+				return ToBytesResult(cast(ubyte[]) t[0], null); // raw data
+			else static if(T.length == 1 && is(T[0] : FormData))
+				return ToBytesResult(t[0].toBytes, t[0].contentType);
+			else static if(T.length > 1 && T.length % 2 == 0 && is(T[0] == string)) {
+				// string -> value pairs for a POST request
+				string answer;
+				foreach(idx, val; t) {
+					static if(idx % 2 == 0) {
+						if(answer.length)
+							answer ~= "&";
+						answer ~= encodeComponent(val); // it had better be a string! lol
+						answer ~= "=";
+					} else {
+						answer ~= encodeComponent(to!string(val));
+					}
+				}
+
+				return ToBytesResult(cast(ubyte[]) answer, "application/x-www-form-urlencoded");
+			}
 			else
 				static assert(0); // FIXME
 
@@ -1629,5 +1690,62 @@ class HttpApiClient() {
 		HttpRequestWrapper _EXECUTE(HttpVerb verb, string uri, ubyte[] bodyBytes) {
 			return apiClient.request(uri, verb, bodyBytes);
 		}
+
+		HttpRequestWrapper _EXECUTE(HttpVerb verb, string uri, ToBytesResult tbr) {
+			auto r = apiClient.request(uri, verb, tbr.bytes);
+			if(tbr.contentType !is null)
+				r.requestParameters.contentType = tbr.contentType;
+			return r;
+		}
 	}
 }
+
+
+// see also: arsd.cgi.encodeVariables
+/// Creates a multipart/form-data object that is suitable for file uploads and other kinds of POST
+class FormData {
+	struct MimePart {
+		string name;
+		const(void)[] data;
+		string contentType;
+		string filename;
+	}
+
+	MimePart[] parts;
+
+	///
+	void append(string key, in void[] value, string contentType = null, string filename = null) {
+		parts ~= MimePart(key, value, contentType, filename);
+	}
+
+	private string boundary = "0016e64be86203dd36047610926a"; // FIXME
+
+	string contentType() {
+		return "multipart/form-data; boundary=" ~ boundary;
+	}
+
+	///
+	ubyte[] toBytes() {
+		string data;
+
+		foreach(part; parts) {
+			data ~= "--" ~ boundary ~ "\r\n";
+			data ~= "Content-Disposition: form-data; name=\""~part.name~"\"";
+			if(part.filename !is null)
+				data ~= "; filename=\""~part.filename~"\"";
+			data ~= "\r\n";
+			if(part.contentType !is null)
+				data ~= "Content-Type: " ~ part.contentType ~ "\r\n";
+			data ~= "\r\n";
+
+			data ~= cast(string) part.data;
+
+			data ~= "\r\n";
+		}
+
+		data ~= "--" ~ boundary ~ "--\r\n";
+
+		return cast(ubyte[]) data;
+	}
+}
+

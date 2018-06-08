@@ -520,6 +520,8 @@ template extract(A, T, R...){
 	void bind(int col, Variant v) {
 		if(v.peek!long)
 			bind(col, v.get!long);
+		if(v.peek!ulong)
+			bind(col, v.get!ulong);
 		if(v.peek!int)
 			bind(col, v.get!int);
 		if(v.peek!string)
