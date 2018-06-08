@@ -976,7 +976,17 @@ class Cgi {
 		immutable(ubyte)[] content; /// The actual content of the file, if contentInMemory == true
 		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
 
+		///
+		ulong fileSize() {
+			if(contentInMemory)
+				return content.length;
+			import std.file;
+			return std.file.getSize(contentFilename);
 
+		}
+
+
+		///
 		void writeToFile(string filenameToSaveTo) {
 			import std.file;
 			if(contentInMemory)
