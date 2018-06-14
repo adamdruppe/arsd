@@ -7982,7 +7982,7 @@ version(Windows) {
 					} else {
 						return DefWindowProc(hwnd, msg, wParam, lParam);
 					}
-				break;
+				//break;
 
 				case WM_CLOSE:
 					DestroyWindow(hwnd);
