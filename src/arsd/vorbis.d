@@ -53,7 +53,7 @@
 //
 // See end of file for full version history.
 // D translation by Ketmar // Invisible Vector
-module iv.stb.vorbis;
+module arsd.vorbis;
 
 import core.stdc.stdio : FILE;
 
