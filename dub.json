@@ -1,7 +1,7 @@
 {
 	"name": "arsd-official",
 	"targetType": "none",
-	"sourcePaths": ["."],
+	"targetType": "sourceLibrary",
 	"description": "A container of various subpackages that do lots of different things. You should use one of the subpackages instead of the main package in most cases, but you can try the complete package if you get duplicated dependency issues.",
 	"license":"BSL-1.0",
 	"subPackages": [
@@ -23,7 +23,7 @@
 					"libs-posix": ["X11", "Xext"]
 				}
 			],
-			"sourceFiles": ["simpledisplay.d"]
+			"sourceFiles": ["src/src/arsd/simpledisplay.d"]
 		},
 		{
 			"name": "minigui",
@@ -41,7 +41,7 @@
 					"libs-posix": ["X11", "Xext"]
 				}
 			],
-			"sourceFiles": ["minigui.d"]
+			"sourceFiles": ["src/arsd/minigui.d"]
 		},
 		{
 			"name": "nanovega",
@@ -60,7 +60,7 @@
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:htmltotext":"*"},
-			"sourceFiles": ["email.d"]
+			"sourceFiles": ["src/arsd/email.d"]
 
 		},
 		{
@@ -68,41 +68,41 @@
 			"description": "Image file format support - PNG read/write, JPEG, TGA, BMP, PCX, TGA, DDS read.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:color_base":"*"},
-			"sourceFiles": ["image.d", "png.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
+			"sourceFiles": ["src/arsd/image.d", "src/arsd/png.d", "src/arsd/bmp.d", "src/arsd/jpeg.d", "src/arsd/targa.d", "src/arsd/pcx.d", "src/arsd/dds.d"]
 		},
 		{
 			"name": "htmltotext",
 			"description": "HTML to plain text conversion",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:dom":"*", "arsd-official:color_base":"*"},
-			"sourceFiles": ["htmltotext.d"]
+			"sourceFiles": ["src/arsd/htmltotext.d"]
 
 		},
 		{
 			"name": "dom",
 			"description": "HTML tag soup DOM library",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["dom.d", "characterencodings.d"]
+			"sourceFiles": ["src/arsd/dom.d", "src/arsd/characterencodings.d"]
 		},
 		{
 			"name": "cgi",
 			"description": "web server library with cgi, fastcgi, scgi, and embedded http server support",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["cgi.d"]
+			"sourceFiles": ["src/arsd/cgi.d"]
 		},
 		{
 			"name": "mysql",
 			"description": "MySQL client library. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
-			"sourceFiles": ["mysql.d"]
+			"sourceFiles": ["src/arsd/mysql.d"]
 		},
 		{
 			"name": "postgres",
 			"description": "Postgresql client library. Wraps the libpq C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
-			"sourceFiles": ["postgres.d"]
+			"sourceFiles": ["src/arsd/postgres.d"]
 		},
 
 		{
@@ -110,7 +110,7 @@
 			"description": "sqlite wrapper. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
-			"sourceFiles": ["sqlite.d"]
+			"sourceFiles": ["src/arsd/sqlite.d"]
 		},
 
 		{
@@ -118,7 +118,7 @@
 			"description": "Microsoft SQL Server client library. Wraps the official ODBC library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
-			"sourceFiles": ["mssql.d"]
+			"sourceFiles": ["src/arsd/mssql.d"]
 		},
 
 		{
@@ -127,44 +127,44 @@
 			"libs": ["crypto", "ssl"],
 			"versions": ["with_openssl"],
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["http2.d"]
+			"sourceFiles": ["src/arsd/http2.d"]
 		},
 		{
 			"name": "jsvar",
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["jsvar.d"]
+			"sourceFiles": ["src/arsd/jsvar.d"]
 		},
 		{
 			"name": "script",
 			"description": "Small Javascript-like script interpreter with easy D API",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:jsvar":"*"},
-			"sourceFiles": ["script.d"]
+			"sourceFiles": ["src/arsd/script.d"]
 		},
 		{
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["terminal.d"]
+			"sourceFiles": ["src/arsd/terminal.d"]
 		},
 		{
 			"name": "ttf",
 			"description": "port of stb_ttf to D",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["ttf.d"]
+			"sourceFiles": ["src/arsd/ttf.d"]
 		},
 		{
 			"name": "color_base",
 			"description": "Base color, point, image interface definitions",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["color.d"]
+			"sourceFiles": ["src/arsd/color.d"]
 		},
 		{
 			"name": "database_base",
 			"description": "Basic database interface definitions. Use one (or more) of the drivers like arsd-official:mysql or arsd-official:postgres instead",
 			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d"]
+			"sourceFiles": ["src/arsd/database.d"]
 		}
 	]
 }
