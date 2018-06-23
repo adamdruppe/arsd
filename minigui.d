@@ -1,5 +1,9 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// FIXME: the menus should be a bit more discoverable, at least a single click to open the others instead of two.
+// and help info about menu items.
+// and search in menus?
+
 // FIXME: a scroll area event signaling when a thing comes into view might be good
 // FIXME: arrow key navigation and accelerators in dialog boxes will be a must
 
