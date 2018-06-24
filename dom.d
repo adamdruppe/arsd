@@ -998,6 +998,9 @@ class Document : FileResource {
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
+									
+									eatWhitespace; 
+									
 									if(pos >= data.length) {
 										if(strict)
 											assert(0, "this should have thrown in readAttributeName");
@@ -1008,7 +1011,12 @@ class Document : FileResource {
 									}
 									if(data[pos] == '=') {
 										pos++;
+
+										eatWhitespace; 
+										
 										attrValue = readAttributeValue();
+										
+										eatWhitespace; 
 									}
 
 									blankValue:
