@@ -406,9 +406,13 @@ class Document : FileResource {
 			throw new MarkupException(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
 		}
 
-		void eatWhitespace() {
-			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t' || data[pos] == '\r'))
+		bool eatWhitespace() {
+			bool ateAny = false;
+			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t' || data[pos] == '\r')) {
 				pos++;
+				ateAny = true;
+			}
+			return ateAny;
 		}
 
 		string readTagName() {
@@ -998,9 +1002,11 @@ class Document : FileResource {
 								default: // it is an attribute
 									string attrName = readAttributeName();
 									string attrValue = attrName;
-									
-									eatWhitespace; 
-									
+
+									bool ateAny = eatWhitespace();
+									if(strict && ateAny)
+										throw new MarkupException("inappropriate whitespace after attribute name");
+
 									if(pos >= data.length) {
 										if(strict)
 											assert(0, "this should have thrown in readAttributeName");
@@ -1012,11 +1018,13 @@ class Document : FileResource {
 									if(data[pos] == '=') {
 										pos++;
 
-										eatWhitespace; 
-										
+										ateAny = eatWhitespace();
+										if(strict && ateAny)
+											throw new MarkupException("inappropriate whitespace after attribute equals");
+
 										attrValue = readAttributeValue();
-										
-										eatWhitespace; 
+
+										eatWhitespace();
 									}
 
 									blankValue:
