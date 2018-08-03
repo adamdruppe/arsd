@@ -2708,6 +2708,7 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 		version(embedded_httpd_processes) {
 			import core.sys.posix.unistd;
 			import core.sys.posix.sys.socket;
+			import core.sys.posix.netinet.in_;
 			//import std.c.linux.socket;
 
 			int sock = socket(AF_INET, SOCK_STREAM, 0);
