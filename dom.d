@@ -408,7 +408,7 @@ class Document : FileResource {
 
 		bool eatWhitespace() {
 			bool ateAny = false;
-			while(pos < data.length && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\t' || data[pos] == '\r')) {
+			while(pos < data.length && data[pos].isSimpleWhite) {
 				pos++;
 				ateAny = true;
 			}
@@ -419,8 +419,7 @@ class Document : FileResource {
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
 			auto start = pos;
-			while(  data[pos] != '>' && data[pos] != '/' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t' && data[pos] != '\r')
+			while(data[pos] != '>' && data[pos] != '/' && !data[pos].isSimpleWhite)
 			{
 				pos++;
 				if(pos == data.length) {
@@ -441,8 +440,7 @@ class Document : FileResource {
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
 			auto start = pos;
-			while(  data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' &&
-				data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t' && data[pos] != '\r')
+			while(data[pos] != '>' && data[pos] != '/'  && data[pos] != '=' && !data[pos].isSimpleWhite)
 			{
 				if(data[pos] == '<') {
 					if(strict)
@@ -489,15 +487,15 @@ class Document : FileResource {
 				default:
 					if(strict)
 						parseError("Attributes must be quoted");
-					// read until whitespace or terminator (/ or >)
+					// read until whitespace or terminator (/> or >)
 					auto start = pos;
 					while(
 						pos < data.length &&
 						data[pos] != '>' &&
 						// unquoted attributes might be urls, so gotta be careful with them and self-closed elements
 						!(data[pos] == '/' && pos + 1 < data.length && data[pos+1] == '>') &&
-						data[pos] != ' ' && data[pos] != '\n' && data[pos] != '\t')
-					      	pos++;
+						!data[pos].isSimpleWhite)
+							pos++;
 
 					string v = htmlEntitiesDecode(data[start..pos], strict);
 					// don't skip the end - we'll need it later
@@ -4371,7 +4369,7 @@ class TextNode : Element {
 			string n = "";
 			bool lastWasWhitespace = indentationLevel > 0;
 			foreach(char c; contents) {
-				if(c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+				if(c.isSimpleWhite) {
 					if(!lastWasWhitespace)
 						n ~= ' ';
 					lastWasWhitespace = true;
@@ -7090,6 +7088,10 @@ bool allAreInlineHtml(const(Element)[] children) {
 		}
 	}
 	return true;
+}
+
+private bool isSimpleWhite(dchar c) {
+	return c == ' ' || c == '\r' || c == '\n' || c == '\t';
 }
 
 /*
