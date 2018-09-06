@@ -557,34 +557,6 @@ template extract(A, T, R...){
 
 	bool executed;
 
-
-
-
-
-
-
-	    new(size_t sz)
-	    {
-		void* p;
-
-		p = core.stdc.stdlib.malloc(sz);
-		if (!p)
-		    throw new OutOfMemoryError(__FILE__, __LINE__);
-		GC.addRange(p, sz);
-		return p;
-	    }
-
-	    delete(void* p)
-	    {
-		if (p)
-		{   GC.removeRange(p);
-		    core.stdc.stdlib.free(p);
-		}
-	    }
-
-
-
-
 }
 
 
