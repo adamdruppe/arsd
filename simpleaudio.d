@@ -344,7 +344,8 @@ final class AudioPcmOutThread : Thread {
 									if(frequencyCounter)
 										frequencyCounter--;
 									if(frequencyCounter == 0) {
-										val = -cast(int)(val);
+										// are you kidding me dmd? random casts suck
+										val = cast(short) -cast(int)(val);
 										frequencyCounter = currentSample.frequency / 2;
 									}
 								}
