@@ -197,10 +197,10 @@ class MySqlResult : ResultSet {
 +/
 class MySql : Database {
 	this(string host, string user, string pass, string db, uint port = 0) {
-		mysql = enforceEx!(DatabaseException)(
+		mysql = enforce!(DatabaseException)(
 			mysql_init(null),
 			"Couldn't init mysql");
-		enforceEx!(DatabaseException)(
+		enforce!(DatabaseException)(
 			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), port, null, 0),
 			error());
 
@@ -371,7 +371,7 @@ class MySql : Database {
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 
-		enforceEx!(DatabaseException)(
+		enforce!(DatabaseException)(
 			!mysql_query(mysql, toCstring(sql)),
 		error() ~ " :::: " ~ sql);
 
