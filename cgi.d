@@ -1520,8 +1520,10 @@ class Cgi {
 				if(header.indexOf("HTTP/1.0") != -1) {
 					http10 = true;
 					autoBuffer = true;
-					if(closeConnection)
+					if(closeConnection) {
+						// on http 1.0, close is assumed (unlike http/1.1 where we assume keep alive)
 						*closeConnection = true;
+					}
 				}
 			} else {
 				// other header
@@ -1542,8 +1544,16 @@ class Cgi {
 				else if (name == "connection") {
 					if(value == "close" && closeConnection)
 						*closeConnection = true;
-					if(value.toLower().indexOf("keep-alive") != -1)
+					if(value.toLower().indexOf("keep-alive") != -1) {
 						keepAliveRequested = true;
+
+						// on http 1.0, the connection is closed by default,
+						// but not if they request keep-alive. then we don't close
+						// anymore - undoing the set above
+						if(http10 && closeConnection) {
+							*closeConnection = false;
+						}
+					}
 				}
 				else if (name == "transfer-encoding") {
 					if(value == "chunked")
@@ -2739,6 +2749,9 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 					throw new Exception("bind");
 				}
 
+				// FIXME: if this queue is full, it will just ignore it
+				// and wait for the client to retransmit it. This is an
+				// obnoxious timeout condition there.
 				if(sock.listen(128) == -1) {
 					close(sock);
 					throw new Exception("listen");
@@ -2970,6 +2983,9 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
 		connection.close();
 	}
+
+	connection.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
+
 	bool closeConnection;
 	auto ir = new BufferedInputRange(connection);
 
@@ -3319,6 +3335,11 @@ class BufferedInputRange {
 			try_again:
 			auto ret = source.receive(freeSpace);
 			if(ret == Socket.ERROR) {
+				if(wouldHaveBlocked()) {
+					// gonna treat a timeout here as a close
+					sourceClosed = true;
+					return;
+				}
 				version(Posix) {
 					import core.stdc.errno;
 					if(errno == EINTR || errno == EAGAIN) {
@@ -3377,33 +3398,6 @@ class BufferedInputRange {
 	bool sourceClosed;
 }
 
-class ConnectionThread2 : Thread {
-	import std.concurrency;
-	this(void function(Socket) handler) {
-		this.handler = handler;
-		super(&run);
-	}
-
-	void run() {
-		tid = thisTid();
-		available = true;
-		while(true)
-		receive(
-			(/*Socket*/ size_t s) {
-				available = false;
-				try {
-					handler(cast(Socket) cast(void*) s);
-				} catch(Throwable t) {}
-				available = true;
-			}
-		);
-	}
-
-	bool available;
-	Tid tid;
-	void function(Socket) handler;
-}
-
 import core.sync.semaphore;
 import core.atomic;
 
@@ -3457,6 +3451,10 @@ class ListeningConnectionManager {
 
 			while(!loopBroken && running) {
 				auto sn = listener.accept();
+				// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+				// on the socket because we do some buffering internally. I think this helps,
+				// certainly does for small requests, and I think it does for larger ones too
+				sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
 				while(queueLength >= queue.length)
 					Thread.sleep(1.msecs);
 				synchronized(this) {
