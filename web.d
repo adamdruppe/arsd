@@ -9,6 +9,11 @@ enum RequirePost;
 enum RequireHttps;
 enum NoAutomaticForm;
 
+///
+struct GenericContainerType {
+	string type; ///
+}
+
 /// Attribute for the default formatting (html, table, json, etc)
 struct DefaultFormat {
 	string format;
@@ -577,7 +582,7 @@ class ApiProvider : WebDotDBaseType {
 	/// Returns a list of links to all functions in this class or sub-classes
 	/// You can expose it publicly with alias: "alias _sitemap sitemap;" for example.
 	Element _sitemap() {
-		auto container = _getGenericContainer();
+		auto container = Element.make("div", "", "sitemap");
 
 		void writeFunctions(Element list, in ReflectionInfo* reflection, string base) {
 			string[string] handled;
@@ -617,7 +622,7 @@ class ApiProvider : WebDotDBaseType {
 			starting = cgi.logicalScriptName ~ cgi.pathInfo; // FIXME
 		writeFunctions(list, reflection, starting ~ "/");
 
-		return list.parentNode.removeChild(list);
+		return container;
 	}
 
 	/// If the user goes to your program without specifying a path, this function is called.
@@ -626,13 +631,18 @@ class ApiProvider : WebDotDBaseType {
 		throw new Exception("no default");
 	}
 
+	/// forwards to [_getGenericContainer]("default")
+	Element _getGenericContainer() {
+		return _getGenericContainer("default");
+	}
+
 	/// When the html document envelope is used, this function is used to get a html element
 	/// where the return value is appended.
 
 	/// It's the main function to override to provide custom HTML templates.
 	///
 	/// The default document provides a default stylesheet, our default javascript, and some timezone cookie handling (which you must handle on the server. Eventually I'll open source my date-time helpers that do this, but the basic idea is it sends an hour offset, and you can add that to any UTC time you have to get a local time).
-	Element _getGenericContainer()
+	Element _getGenericContainer(string containerName)
 	out(ret) {
 		assert(ret !is null);
 	}
@@ -814,6 +824,8 @@ struct FunctionInfo {
 	bool returnTypeIsElement; // internal used when wrapping
 
 	bool requireHttps;
+
+	string genericContainerType = "default";
 
 	Document delegate(in string[string] args) createForm; /// This is used if you want a custom form - normally, on insufficient parameters, an automatic form is created. But if there's a functionName_Form method, it is used instead. FIXME: this used to work but not sure if it still does
 }
@@ -1000,6 +1012,8 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 			f.returnType = ReturnType!(__traits(getMember, Class, member)).stringof;
 			f.returnTypeIsDocument = is(ReturnType!(__traits(getMember, Class, member)) : Document);
 			f.returnTypeIsElement = is(ReturnType!(__traits(getMember, Class, member)) : Element);
+			static if(hasValueAnnotation!(__traits(getMember, Class, member), GenericContainerType))
+				f.genericContainerType = getAnnotation!(__traits(getMember, Class, member), GenericContainerType).type;
 
 			f.parentObject = reflection;
 
@@ -1573,9 +1587,9 @@ void run(Provider)(Cgi cgi, Provider instantiation, size_t pathInfoStartingPoint
 							Element e;
 							auto hack = cast(ApiProvider) realObject;
 							if(hack !is null)
-								e = hack._getGenericContainer();
+								e = hack._getGenericContainer(fun is null ? "default" : fun.genericContainerType);
 							else
-								e = instantiation._getGenericContainer();
+								e = instantiation._getGenericContainer(fun is null ? "default" : fun.genericContainerType);
 
 
 							document = e.parentDocument;
