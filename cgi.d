@@ -1,6 +1,5 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
-// FIXME: new ConnectionThread is done a lot, no pooling implemented
 
 // Note: spawn-fcgi can help with fastcgi on nginx
 
@@ -8,6 +7,26 @@
 // make sure embedded_httpd doesn't send two answers if one writes() then dies
 
 // future direction: websocket as a separate process that you can sendfile to for an async passoff of those long-lived connections
+
+/*
+	Session manager process: it spawns a new process, passing a
+	command line argument, to just be a little key/value store
+	of some serializable struct. On Windows, it CreateProcess.
+	On Linux, it can just fork or maybe fork/exec. The session
+	key is in a cookie.
+
+	Server-side event process: spawns an async manager. You can
+	push stuff out to channel ids and the clients listen to it.
+
+	websocket process: spawns an async handler. They can talk to
+	each other or get info from a cgi request.
+
+	Tempting to put web.d 2.0 in here. It would:
+		* map urls and form generation to functions
+		* have data presentation magic
+		* do the skeleton stuff like 1.0
+		* auto-cache generated stuff in files (at least if pure?)
+*/
 
 /++
 	Provides a uniform server-side API for CGI, FastCGI, SCGI, and HTTP web applications.

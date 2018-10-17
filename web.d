@@ -776,7 +776,7 @@ struct ReflectionInfo {
 
 	// these might go away.
 
-	string defaultOutputFormat = "html";
+	string defaultOutputFormat = "default";
 	int versionOfOutputFormat = 2; // change this in your constructor if you still need the (deprecated) old behavior
 	// bool apiMode = false; // no longer used - if format is json, apiMode behavior is assumed. if format is html, it is not.
 				// FIXME: what if you want the data formatted server side, but still in a json envelope?
@@ -1895,6 +1895,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 
 	auto fmt = Element.make("select");
 	fmt.name = "format";
+	fmt.addChild("option", "Automatic").setAttribute("value", "default");
 	fmt.addChild("option", "html").setAttribute("value", "html");
 	fmt.addChild("option", "table").setAttribute("value", "table");
 	fmt.addChild("option", "json").setAttribute("value", "json");
@@ -2755,6 +2756,15 @@ WrapperFunction generateWrapper(alias ObjectType, string funName, alias f, R)(Re
 
 // FIXME: it's awkward to call manually due to the JSONValue ref thing. Returning a string would be mega nice.
 string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue = null, string formatJsonToStringAs = null) if(is(R : ApiProvider)) {
+
+	if(format == "default") {
+		static if(is(typeof(ret) : K[N][V], size_t N, K, V)) {
+			format = "table";
+		} else {
+			format = "html";
+		}
+	}
+
 	string retstr;
 	if(api !is null) {
 		static if(__traits(compiles, api._customFormat(ret, format))) {
@@ -2817,8 +2827,18 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 					goto badType;
 				gotATable(table);
 				break;
-			}
-			else
+			} else static if(is(typeof(ret) : K[N][V], size_t N, K, V)) {
+				auto table = cast(Table) Element.make("table");
+				table.addClass("data-display");
+				foreach(k, v; ret) {
+					auto row = table.addChild("tr");
+					foreach(cell; v)
+						table.addChild("td", to!string(cell));
+				}
+				gotATable(table);
+				break;
+
+			} else
 				goto badType;
 		default:
 			badType:
