@@ -3933,7 +3933,7 @@ bool checkPassword(string saltedPasswordHash, string userSuppliedPassword) {
 /// implements the "table" format option. Works on structs and associative arrays (string[string][])
 Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) if(isArray!(T) && !isAssociativeArray!(T)) {
 	auto t = cast(Table) document.createElement("table");
-	t.border = "1";
+	t.attrs.border = "1";
 
 	static if(is(T == string[string][])) {
 			string[string] allKeys;
@@ -3963,7 +3963,7 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 
 				odd = !odd;
 			}
-	} else static if(is(typeof(T[0]) == struct)) {
+	} else static if(is(typeof(arr[0]) == struct)) {
 		{
 			auto thead = t.addChild("thead");
 			auto tr = thead.addChild("tr");
@@ -3985,7 +3985,7 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 
 			odd = !odd;
 		}
-	} else static assert(0);
+	} else static assert(0, T.stringof);
 
 	return t;
 }
