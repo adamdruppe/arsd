@@ -224,7 +224,7 @@ abstract class ComboboxBase : Widget {
 	void addOption(string s) {
 		options ~= s;
 		version(win32_widgets)
-		SendMessageA(hwnd, 323 /*CB_ADDSTRING*/, 0, cast(LPARAM) toStringzInternal(s));
+		SendMessageW(hwnd, 323 /*CB_ADDSTRING*/, 0, cast(LPARAM) toWstringzInternal(s));
 	}
 
 	void setSelection(int idx) {
@@ -533,7 +533,6 @@ else version(custom_widgets)
 	enum windowBackgroundColor = Color(192, 192, 192);
 else static assert(false);
 
-private const(char)* toStringzInternal(string s) { return (s ~ '\0').ptr; }
 private const(wchar)* toWstringzInternal(in char[] s) {
 	wchar[] str;
 	str.reserve(s.length + 1);
@@ -3939,7 +3938,7 @@ class ToolBar : Widget {
 
 			// FIXME: I_IMAGENONE is if here is no icon
 			foreach(action; actions)
-				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toStringzInternal(action.label));
+				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toWstringzInternal(action.label));
 
 			SendMessageA(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageA(hwnd, TB_ADDBUTTONSA,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
@@ -4105,7 +4104,7 @@ class MenuBar : Widget {
 		this.addChild(item);
 		items ~= item;
 		version(win32_widgets) {
-			AppendMenuA(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label)); // XXX
+			AppendMenuW(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toWstringzInternal(item.label));
 		}
 		return item;
 	}
@@ -4119,7 +4118,7 @@ class MenuBar : Widget {
 		items ~= mbItem;
 
 		version(win32_widgets) {
-			AppendMenuA(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toStringzInternal(item.label)); // XXX
+			AppendMenuW(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toWstringzInternal(item.label));
 		} else version(custom_widgets) {
 			mbItem.defaultEventHandlers["mousedown"] = (Widget e, Event ev) {
 				item.popup(mbItem);
@@ -4594,7 +4593,7 @@ class Menu : Window {
 		addChild(item);
 		items ~= item;
 		version(win32_widgets) {
-			AppendMenuA(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toStringzInternal(item.label)); // XXX
+			AppendMenuW(handle, MF_STRING, item.action is null ? 9000 : item.action.id, toWstringzInternal(item.label));
 		}
 		return item;
 	}
