@@ -3132,6 +3132,11 @@ class LineGetter {
 
 	private int lastDrawLength = 0;
 	void redraw() {
+		terminal.hideCursor();
+		scope(exit) {
+			terminal.flush();
+			terminal.showCursor();
+		}
 		terminal.moveTo(startOfLineX, startOfLineY);
 
 		auto lineLength = availableLineLength();
