@@ -794,6 +794,14 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
 			throw new Exception("not a user-interactive terminal");
+
+		defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
+		defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
+	}
+
+	version(Windows) {
+		private Color defaultBackgroundColor = Color.black;
+		private Color defaultForegroundColor = Color.white;
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
@@ -930,20 +938,20 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 				// this isn't necessarily right but meh
 				if(background == Color.DEFAULT)
-					setTob = Color.black;
+					setTob = defaultBackgroundColor;
 				if(foreground == Color.DEFAULT)
-					setTof = Color.white;
+					setTof = defaultForegroundColor;
 
 				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
 					flush(); // if we don't do this now, the buffering can screw up the colors...
 					if(reverseVideo) {
 						if(background == Color.DEFAULT)
-							setTof = Color.black;
+							setTof = defaultBackgroundColor;
 						else
 							setTof = cast(ushort) background | (foreground & Bright);
 
 						if(background == Color.DEFAULT)
-							setTob = Color.white;
+							setTob = defaultForegroundColor;
 						else
 							setTob = cast(ushort) (foreground & ~Bright);
 					}
@@ -2703,6 +2711,8 @@ void main() {
 
 	terminal.write("test some long string to see if it wraps or what because i dont really know what it is going to do so i just want to test i think it will wrap but gotta be sure lolololololololol");
 	terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
+
+	terminal.color(Color.DEFAULT, Color.DEFAULT);
 
 	int centerX = terminal.width / 2;
 	int centerY = terminal.height / 2;
