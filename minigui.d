@@ -531,8 +531,18 @@ class DataView : Widget {
 
 //static if(UsingSimpledisplayX11)
 version(win32_widgets) {}
-else version(custom_widgets)
-	enum windowBackgroundColor = Color(192, 192, 192);
+else version(custom_widgets) {
+	enum windowBackgroundColor = Color(212, 212, 212); // used to be 192
+	enum darkAccentColor = Color(172, 172, 172);
+	enum lightAccentColor = Color(223, 223, 223); // used to be 223
+	enum activeTabColor = lightAccentColor;
+	enum activeListXorColor = Color(255, 255, 0);
+	enum hoveringColor = Color(215, 215, 215);
+	enum buttonColor = windowBackgroundColor;
+	enum depressedButtonColor = darkAccentColor;
+	enum progressBarColor = Color.blue;
+	enum activeMenuItemColor = Color.blue;
+}
 else static assert(false);
 
 private const(wchar)* toWstringzInternal(in char[] s) {
@@ -561,13 +571,13 @@ void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fra
 	painter.fillColor = background;
 	painter.drawRectangle(Point(x + 0, y + 0), width, height);
 
-	painter.outlineColor = (style == FrameStyle.sunk) ? Color(128, 128, 128) : Color(223, 223, 223);
+	painter.outlineColor = (style == FrameStyle.sunk) ? darkAccentColor : lightAccentColor;
 	painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
 	painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
 
 	// inner layer
 	//right, bottom
-	painter.outlineColor = (style == FrameStyle.sunk) ? Color(223, 223, 223) : Color(128, 128, 128);
+	painter.outlineColor = (style == FrameStyle.sunk) ? lightAccentColor : darkAccentColor;
 	painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
 	painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
 	// left, top
@@ -1673,7 +1683,7 @@ class ListWidget : ScrollableWidget {
 			if(option.selected) {
 				painter.rasterOp = RasterOp.xor;
 				painter.outlineColor = Color.white;
-				painter.fillColor = Color(255, 255, 0);
+				painter.fillColor = activeListXorColor;
 				painter.drawRectangle(pos, width - 8, Window.lineHeight);
 				painter.rasterOp = RasterOp.normal;
 			}
@@ -2389,7 +2399,7 @@ class MouseTrackingWidget : Widget {
 		painter.fillColor = c;
 		painter.drawRectangle(Point(0, 0), this.width, this.height);
 
-		auto color = hovering ? Color(215, 215, 215) : windowBackgroundColor;
+		auto color = hovering ? hoveringColor : windowBackgroundColor;
 		draw3dFrame(positionX, positionY, thumbWidth, thumbHeight, painter, FrameStyle.risen, color);
 	}
 }
@@ -2825,8 +2835,7 @@ class TabWidget : Widget {
 					painter.outlineColor = Color.white;
 					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
 					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
-					painter.outlineColor = Color(233, 233, 233);
-	//painter.outlineColor = (style == FrameStyle.sunk) ? Color(128, 128, 128) : Color(223, 223, 223);
+					painter.outlineColor = activeTabColor;
 					painter.drawPixel(Point(posX, tabBarHeight - 1));
 				}
 
@@ -4016,29 +4025,31 @@ class ToolButton : Button {
 				);
 			break;
 			case GenericIcons.Save:
-				painter.fillColor = Color.black;
+				painter.fillColor = Color.white;
+				painter.outlineColor = Color.black;
 				painter.drawRectangle(Point(2, 2) * multiplier / divisor, Point(13, 13) * multiplier / divisor);
+
+				// the label
+				painter.drawRectangle(Point(4, 8) * multiplier / divisor, Point(11, 13) * multiplier / divisor);
+
+				// the slider
+				painter.fillColor = Color.black;
+				painter.outlineColor = Color.black;
+				painter.drawRectangle(Point(4, 3) * multiplier / divisor, Point(10, 6) * multiplier / divisor);
 
 				painter.fillColor = Color.white;
 				painter.outlineColor = Color.white;
-				// the slider
-				painter.drawRectangle(Point(5, 2) * multiplier / divisor, Point(10, 5) * multiplier / divisor);
-				// the label
-				painter.drawRectangle(Point(4, 8) * multiplier / divisor, Point(11, 12) * multiplier / divisor);
-
-				painter.fillColor = Color.black;
-				painter.outlineColor = Color.black;
 				// the disc window
-				painter.drawRectangle(Point(8, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor);
+				painter.drawRectangle(Point(5, 3) * multiplier / divisor, Point(6, 5) * multiplier / divisor);
 			break;
 			case GenericIcons.Open:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(3, 4) * multiplier / divisor, Point(3, 12) * multiplier / divisor, Point(14, 12) * multiplier / divisor, Point(14, 3) * multiplier / divisor,
-					Point(10, 3) * multiplier / divisor, Point(10, 4) * multiplier / divisor, Point(3, 4) * multiplier / divisor);
+					Point(3, 4) * multiplier / divisor, Point(3, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
+					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(3, 4) * multiplier / divisor);
 				painter.drawPolygon(
-					Point(1, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor,
-					Point(14, 12) * multiplier / divisor, Point(3, 12) * multiplier / divisor);
+					Point(1, 6) * multiplier / divisor, Point(11, 6) * multiplier / divisor,
+					Point(13, 12) * multiplier / divisor, Point(3, 12) * multiplier / divisor);
 				//painter.drawLine(Point(9, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
 			break;
 			case GenericIcons.Copy:
@@ -4308,7 +4319,7 @@ class ProgressBar : Widget {
 	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
 		this.draw3dFrame(painter, FrameStyle.sunk);
-		painter.fillColor = Color.blue;
+		painter.fillColor = progressBarColor;
 		painter.drawRectangle(Point(0, 0), width * current / max, height);
 	}
 
@@ -4461,9 +4472,9 @@ class HorizontalRule : Widget {
 	}
 
 	override void paint(ScreenPainter painter) {
-		painter.outlineColor = Color(128, 128, 128);
+		painter.outlineColor = darkAccentColor;
 		painter.drawLine(Point(0, 0), Point(width, 0));
-		painter.outlineColor = Color(223, 223, 223);
+		painter.outlineColor = lightAccentColor;
 		painter.drawLine(Point(0, 1), Point(width, 1));
 	}
 }
@@ -4480,9 +4491,9 @@ class VerticalRule : Widget {
 	}
 
 	override void paint(ScreenPainter painter) {
-		painter.outlineColor = Color(128, 128, 128);
+		painter.outlineColor = darkAccentColor;
 		painter.drawLine(Point(0, 0), Point(0, height));
-		painter.outlineColor = Color(223, 223, 223);
+		painter.outlineColor = lightAccentColor;
 		painter.drawLine(Point(1, 0), Point(1, height));
 	}
 }
@@ -4668,7 +4679,7 @@ class MenuItem : MouseActivatedWidget {
 		if(isDepressed)
 			this.draw3dFrame(painter, FrameStyle.sunk);
 		if(isHovering)
-			painter.outlineColor = Color.blue;
+			painter.outlineColor = activeMenuItemColor;
 		else
 			painter.outlineColor = Color.black;
 		painter.fillColor = Color.transparent;
@@ -5019,9 +5030,9 @@ class Button : MouseActivatedWidget {
 		width = 50;
 		height = 30;
 		super(parent);
-		normalBgColor = Color(192, 192, 192);
-		hoverBgColor = Color(215, 215, 215);
-		depressedBgColor = Color(160, 160, 160);
+		normalBgColor = buttonColor;
+		hoverBgColor = hoveringColor;
+		depressedBgColor = depressedButtonColor;
 
 		this.label = label;
 	}
@@ -5787,7 +5798,7 @@ enum EventType : string {
 
 ///
 class Event {
-	///
+	/// Creates an event without populating any members and without sending it. See [dispatch]
 	this(string eventName, Widget target) {
 		this.eventName = eventName;
 		this.srcElement = target;
@@ -5809,19 +5820,19 @@ class Event {
 	private string eventName;
 
 	Widget srcElement; ///
-	alias srcElement target;
+	alias srcElement target; ///
 
 	Widget relatedTarget; ///
 
 	// for mouse events
-	int clientX; ///
-	int clientY; ///
+	int clientX; /// The mouse event location relative to the target widget
+	int clientY; /// ditto
 
-	int viewportX; ///
-	int viewportY; ///
+	int viewportX; /// The mouse event location relative to the window origin
+	int viewportY; /// ditto
 
-	int button; ///
-	int buttonLinear; ///
+	int button; /// [MouseEvent.button]
+	int buttonLinear; /// [MouseEvent.buttonLinear]
 
 	// for key events
 	Key key; ///
@@ -6388,17 +6399,23 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/bb760476%28v=vs.85%29.as
 
 // These are all for setMenuAndToolbarFromAnnotatedCode
 /// This item in the menu will be preceded by a separator line
+/// Group: generating_from_code
 struct separator {}
 deprecated("It was misspelled, use separator instead") alias seperator = separator;
 /// Program-wide keyboard shortcut to trigger the action
+/// Group: generating_from_code
 struct accelerator { string keyString; }
 /// tells which menu the action will be on
+/// Group: generating_from_code
 struct menu { string name; }
 /// Describes which toolbar section the action appears on
+/// Group: generating_from_code
 struct toolbar { string groupName; }
 ///
+/// Group: generating_from_code
 struct icon { ushort id; }
 ///
+/// Group: generating_from_code
 struct label { string label; }
 
 
@@ -6406,11 +6423,14 @@ struct label { string label; }
 /++
 	Creates a dialog based on a data structure.
 
+	---
 	dialog((YourStructure value) {
 		// the user filled in the struct and clicked OK,
 		// you can check the members now
 	});
+	---
 +/
+/// Group: generating_from_code
 void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null) {
 	auto dg = new AutomaticDialog!T(onOK, onCancel);
 	dg.show();
