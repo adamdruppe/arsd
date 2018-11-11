@@ -1,5 +1,7 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// need a viewer widget that works like a web page - arrows scroll down consistently
+
 // FIXME: the menus should be a bit more discoverable, at least a single click to open the others instead of two.
 // and help info about menu items.
 // and search in menus?

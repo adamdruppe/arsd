@@ -2028,7 +2028,36 @@ class Element {
 	@property Element lastChild() {
 		return children.length ? children[$ - 1] : null;
 	}
+	
+	/// UNTESTED
+	/// the next element you would encounter if you were reading it in the source
+	Element nextInSource() {
+		auto n = firstChild;
+		if(n is null)
+			n = nextSibling();
+		if(n is null) {
+			auto p = this.parentNode;
+			while(p !is null && n is null) {
+				n = p.nextSibling;
+			}
+		}
 
+		return n;
+	}
+
+	/// UNTESTED
+	/// ditto
+	Element previousInSource() {
+		auto p = previousSibling;
+		if(p is null) {
+			auto par = parentNode;
+			if(par)
+				p = par.lastChild;
+			if(p is null)
+				p = par;
+		}
+		return p;
+	}
 
 	///.
 	@property Element previousSibling(string tagName = null) {
@@ -4895,6 +4924,12 @@ class Table : Element {
 				foreach(ele; e)
 					a.appendChild(ele);
 				row.appendChild(a);
+			} else static if(is(typeof(e) == string[])) {
+				foreach(ele; e) {
+					Element a = Element.make(innerType);
+					a.innerText = to!string(ele);
+					row.appendChild(a);
+				}
 			} else {
 				Element a = Element.make(innerType);
 				a.innerText = to!string(e);

@@ -31,7 +31,7 @@ struct TtfFont {
 			throw new Exception("load font problem");
 	}
 
-	///
+	/// Note that you must stbtt_FreeBitmap(returnValue.ptr, null); this thing or it will leak!!!!
 	ubyte[] renderCharacter(dchar c, int size, out int width, out int height, float shift_x = 0.0, float shift_y = 0.0) {
    		auto ptr = stbtt_GetCodepointBitmapSubpixel(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size),
 			shift_x, shift_y, c, &width, &height, null,null);

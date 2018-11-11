@@ -211,6 +211,13 @@ struct Text {
 	alias content this;
 }
 
+///
+struct URL {
+	string url; ///
+	string title; ///
+	alias url this;
+}
+
 /// This is the JSON envelope format
 struct Envelope {
 	bool success; /// did the call succeed? false if it threw an exception
@@ -3977,7 +3984,16 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 		foreach(s; arr) {
 			auto tr = tbody.addChild("tr");
 			foreach(member; s.tupleof) {
-				tr.addChild("td", to!string(member));
+				static if(is(typeof(member) == URL[])) {
+					auto td = tr.addChild("td");
+					foreach(i, link; member) {
+						td.addChild("a", link.title.length ? link.title : to!string(i), link.url);
+						td.appendText(" ");
+					}
+
+				} else {
+					tr.addChild("td", to!string(member));
+				}
 			}
 
 			if(odd)
