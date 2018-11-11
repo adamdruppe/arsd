@@ -226,6 +226,23 @@ final class OpenGlTexture {
 
 	/// Make a texture from an image.
 	this(TrueColorImage from) {
+		bindFrom(from);
+	}
+
+	/// Generates from text. Requires ttf.d
+	/// pass a pointer to the TtfFont as the first arg (it is template cuz of lazy importing, not because it actually works with different types)
+	this(T, FONT)(FONT* font, int size, in T[] text) if(is(T == char)) {
+		bindFrom(font, size, text);
+	}
+
+	/// Creates an empty texture class for you to use with [bindFrom] later
+	/// Using it when not bound is undefined behavior.
+	this() {}
+
+
+
+	/// After you delete it with dispose, you may rebind it to something else with this.
+	void bindFrom(TrueColorImage from) {
 		assert(from.width > 0 && from.height > 0);
 
 		import core.stdc.stdlib;
@@ -295,9 +312,8 @@ final class OpenGlTexture {
 			free(cast(void*) data);
 	}
 
-	/// Generates from text. Requires ttf.d
-	/// pass a pointer to the TtfFont as the first arg (it is template cuz of lazy importing, not because it actually works with different types)
-	this(T, FONT)(FONT* font, int size, in T[] text) if(is(T == char)) {
+	/// ditto
+	void bindFrom(T, FONT)(FONT* font, int size, in T[] text) if(is(T == char)) {
 		assert(font !is null);
 		int width, height;
 		auto data = font.renderString(text, size, width, height);
@@ -313,12 +329,24 @@ final class OpenGlTexture {
 		}
 		assert(data.length == 0);
 
-		this(image);
+		bindFrom(image);
+	}
+
+	/// Deletes the texture. Using it after calling this is undefined behavior
+	void dispose() {
+		glDeleteTextures(1, &_tex);
+		_tex = 0;
 	}
 
 	~this() {
-		glDeleteTextures(1, &_tex);
+		if(_tex > 0)
+			dispose();
 	}
+}
+
+///
+void clearOpenGlScreen(SimpleWindow window) {
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_ACCUM_BUFFER_BIT);
 }
 
 

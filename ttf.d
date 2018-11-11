@@ -92,6 +92,7 @@ struct TtfFont {
 			stbtt_GetCodepointHMetrics(&font, ch, &advance, &lsb);
 			int cw, cheight;
 			auto c = renderCharacter(ch, size, cw, cheight, x_shift, 0.0);
+			scope(exit) stbtt_FreeBitmap(c.ptr, null);
 
 			int x0, y0, x1, y1;
 			stbtt_GetCodepointBitmapBoxSubpixel(&font, ch, scale,scale,x_shift,0, &x0,&y0,&x1,&y1);

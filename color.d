@@ -6,7 +6,7 @@ module arsd.color;
 // importing phobos explodes the size of this code 10x, so not doing it.
 
 private {
-	real toInternal(T)(string s) {
+	real toInternal(T)(scope const(char)[] s) {
 		real accumulator = 0.0;
 		size_t i = s.length;
 		foreach(idx, c; s) {
@@ -16,8 +16,11 @@ private {
 			} else if(c == '.') {
 				i = idx + 1;
 				break;
-			} else
-				throw new Exception("bad char to make real from " ~ s);
+			} else {
+				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make real from ";
+				wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute ~= s;
+				throw new Exception(wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute);
+			}
 		}
 
 		real accumulator2 = 0.0;
@@ -27,8 +30,11 @@ private {
 				accumulator2 *= 10;
 				accumulator2 += c - '0';
 				count *= 10;
-			} else
-				throw new Exception("bad char to make real from " ~ s);
+			} else {
+				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make real from ";
+				wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute ~= s;
+				throw new Exception(wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute);
+			}
 		}
 
 		return accumulator + accumulator2 / count;
@@ -80,11 +86,11 @@ private {
 		return m;
 	}
 	nothrow @safe @nogc pure
-	bool startsWithInternal(string a, string b) {
+	bool startsWithInternal(in char[] a, in char[] b) {
 		return (a.length >= b.length && a[0 .. b.length] == b);
 	}
-	string[] splitInternal(string a, char c) {
-		string[] ret;
+	inout(char)[][] splitInternal(inout(char)[] a, char c) {
+		inout(char)[][] ret;
 		size_t previous = 0;
 		foreach(i, char ch; a) {
 			if(ch == c) {
@@ -97,7 +103,7 @@ private {
 		return ret;
 	}
 	nothrow @safe @nogc pure
-	string stripInternal(string s) {
+	inout(char)[] stripInternal(inout(char)[] s) {
 		foreach(i, char c; s)
 			if(c != ' ' && c != '\t' && c != '\n') {
 				s = s[i .. $];
@@ -242,7 +248,7 @@ struct Color {
 	}
 
 	/// Reads a CSS style string to get the color. Understands #rrggbb, rgba(), hsl(), and rrggbbaa
-	static Color fromString(string s) {
+	static Color fromString(scope const(char)[] s) {
 		s = s.stripInternal();
 
 		Color c;
@@ -422,7 +428,7 @@ private string toHexInternal(ubyte b) {
 }
 
 nothrow @safe @nogc pure
-private ubyte fromHexInternal(string s) {
+private ubyte fromHexInternal(in char[] s) {
 	int result = 0;
 
 	int exp = 1;

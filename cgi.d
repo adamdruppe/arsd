@@ -1,11 +1,32 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
-// FIXME: new ConnectionThread is done a lot, no pooling implemented
 
 // Note: spawn-fcgi can help with fastcgi on nginx
 
 // FIXME: to do: add openssl optionally
 // make sure embedded_httpd doesn't send two answers if one writes() then dies
+
+// future direction: websocket as a separate process that you can sendfile to for an async passoff of those long-lived connections
+
+/*
+	Session manager process: it spawns a new process, passing a
+	command line argument, to just be a little key/value store
+	of some serializable struct. On Windows, it CreateProcess.
+	On Linux, it can just fork or maybe fork/exec. The session
+	key is in a cookie.
+
+	Server-side event process: spawns an async manager. You can
+	push stuff out to channel ids and the clients listen to it.
+
+	websocket process: spawns an async handler. They can talk to
+	each other or get info from a cgi request.
+
+	Tempting to put web.d 2.0 in here. It would:
+		* map urls and form generation to functions
+		* have data presentation magic
+		* do the skeleton stuff like 1.0
+		* auto-cache generated stuff in files (at least if pure?)
+*/
 
 /++
 	Provides a uniform server-side API for CGI, FastCGI, SCGI, and HTTP web applications.
@@ -1518,8 +1539,10 @@ class Cgi {
 				if(header.indexOf("HTTP/1.0") != -1) {
 					http10 = true;
 					autoBuffer = true;
-					if(closeConnection)
+					if(closeConnection) {
+						// on http 1.0, close is assumed (unlike http/1.1 where we assume keep alive)
 						*closeConnection = true;
+					}
 				}
 			} else {
 				// other header
@@ -1540,8 +1563,16 @@ class Cgi {
 				else if (name == "connection") {
 					if(value == "close" && closeConnection)
 						*closeConnection = true;
-					if(value.toLower().indexOf("keep-alive") != -1)
+					if(value.toLower().indexOf("keep-alive") != -1) {
 						keepAliveRequested = true;
+
+						// on http 1.0, the connection is closed by default,
+						// but not if they request keep-alive. then we don't close
+						// anymore - undoing the set above
+						if(http10 && closeConnection) {
+							*closeConnection = false;
+						}
+					}
 				}
 				else if (name == "transfer-encoding") {
 					if(value == "chunked")
@@ -2737,6 +2768,9 @@ mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = d
 					throw new Exception("bind");
 				}
 
+				// FIXME: if this queue is full, it will just ignore it
+				// and wait for the client to retransmit it. This is an
+				// obnoxious timeout condition there.
 				if(sock.listen(128) == -1) {
 					close(sock);
 					throw new Exception("listen");
@@ -2968,6 +3002,9 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
 		connection.close();
 	}
+
+	connection.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
+
 	bool closeConnection;
 	auto ir = new BufferedInputRange(connection);
 
@@ -3100,6 +3137,7 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 	try {
 		fun(cgi);
 		cgi.close();
+		connection.close();
 	} catch(Throwable t) {
 		// no std err
 		if(!handleException(cgi, t)) {
@@ -3316,6 +3354,11 @@ class BufferedInputRange {
 			try_again:
 			auto ret = source.receive(freeSpace);
 			if(ret == Socket.ERROR) {
+				if(wouldHaveBlocked()) {
+					// gonna treat a timeout here as a close
+					sourceClosed = true;
+					return;
+				}
 				version(Posix) {
 					import core.stdc.errno;
 					if(errno == EINTR || errno == EAGAIN) {
@@ -3374,32 +3417,8 @@ class BufferedInputRange {
 	bool sourceClosed;
 }
 
-class ConnectionThread2 : Thread {
-	import std.concurrency;
-	this(void function(Socket) handler) {
-		this.handler = handler;
-		super(&run);
-	}
-
-	void run() {
-		tid = thisTid();
-		available = true;
-		while(true)
-		receive(
-			(/*Socket*/ size_t s) {
-				available = false;
-				try {
-					handler(cast(Socket) cast(void*) s);
-				} catch(Throwable t) {}
-				available = true;
-			}
-		);
-	}
-
-	bool available;
-	Tid tid;
-	void function(Socket) handler;
-}
+import core.sync.semaphore;
+import core.atomic;
 
 /**
 	To use this thing:
@@ -3415,38 +3434,61 @@ class ConnectionThread2 : Thread {
 	FIXME: should I offer an event based async thing like netman did too? Yeah, probably.
 */
 class ListeningConnectionManager {
+	Semaphore semaphore;
+	Socket[256] queue;
+	shared(ubyte) nextIndexFront;
+	ubyte nextIndexBack;
+	shared(int) queueLength;
+
 	void listen() {
-		version(cgi_multiple_connections_per_thread) {
-			import std.concurrency;
-			import std.random;
-			ConnectionThread2[16] pool;
-			foreach(ref p; pool) {
-				 p = new ConnectionThread2(handler);
-				 p.start();
-			}
+		running = true;
+		shared(int) loopBroken;
 
-			while(true) {
-				auto connection = listener.accept();
+		version(cgi_no_threads) {
+			// NEVER USE THIS
+			// it exists only for debugging and other special occasions
 
-				bool handled = false;
-				retry:
-				foreach(p; pool)
-					if(p.available) {
-						handled = true;
-						send(p.tid, cast(size_t) cast(void*) connection);
-						break;
-					}
-
-				// none available right now, make it wait a bit then try again
-				if(!handled) {
-					Thread.sleep(dur!"msecs"(25));
-					goto retry;
+			// the thread mode is faster and less likely to stall the whole
+			// thing when a request is slow
+			while(!loopBroken && running) {
+				auto sn = listener.accept();
+				try {
+					handler(sn);
+				} catch(Exception e) {
+					// if a connection goes wrong, we want to just say no, but try to carry on unless it is an Error of some sort (in which case, we'll die. You might want an external helper program to revive the server when it dies)
+					sn.close();
 				}
 			}
 		} else {
-			foreach(connection; this)
-				handler(connection);
-				
+			semaphore = new Semaphore();
+
+			ConnectionThread[16] threads;
+			foreach(ref thread; threads) {
+				thread = new ConnectionThread(this, handler);
+				thread.start();
+			}
+
+			while(!loopBroken && running) {
+				auto sn = listener.accept();
+				// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+				// on the socket because we do some buffering internally. I think this helps,
+				// certainly does for small requests, and I think it does for larger ones too
+				sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+				while(queueLength >= queue.length)
+					Thread.sleep(1.msecs);
+				synchronized(this) {
+					queue[nextIndexBack] = sn;
+					nextIndexBack++;
+					atomicOp!"+="(queueLength, 1);
+				}
+				semaphore.notify();
+
+				foreach(thread; threads) {
+					if(!thread.isRunning) {
+						thread.join();
+					}
+				}
+			}
 		}
 	}
 
@@ -3464,50 +3506,6 @@ class ListeningConnectionManager {
 	bool running;
 	void quit() {
 		running = false;
-	}
-
-	int opApply(scope CMT dg) {
-		running = true;
-		shared(int) loopBroken;
-
-		while(!loopBroken && running) {
-			auto sn = listener.accept();
-			try {
-				version(cgi_no_threads) {
-					// NEVER USE THIS
-					// it exists only for debugging and other special occasions
-
-					// the thread mode is faster and less likely to stall the whole
-					// thing when a request is slow
-					dg(sn);
-				} else {
-					/*
-					version(cgi_multiple_connections_per_thread) {
-						bool foundOne = false;
-						tryAgain:
-						foreach(t; pool)
-							if(t.s is null) {
-								t.s = sn;
-								foundOne = true;
-								break;
-							}
-						Thread.sleep(dur!"msecs"(1));
-						if(!foundOne)
-							goto tryAgain;
-					} else {
-					*/
-						auto thread = new ConnectionThread(sn, &loopBroken, dg);
-						thread.start();
-					//}
-				}
-				// loopBroken = dg(sn);
-			} catch(Exception e) {
-				// if a connection goes wrong, we want to just say no, but try to carry on unless it is an Error of some sort (in which case, we'll die. You might want an external helper program to revive the server when it dies)
-				sn.close();
-			}
-		}
-
-		return loopBroken;
 	}
 }
 
@@ -3532,46 +3530,35 @@ class ConnectionException : Exception {
 	}
 }
 
-alias int delegate(Socket) CMT;
+alias void function(Socket) CMT;
 
 import core.thread;
 class ConnectionThread : Thread {
-	this(Socket s, shared(int)* breakSignifier, CMT dg) {
-		this.s = s;
-	 	this.breakSignifier = breakSignifier;
+	this(ListeningConnectionManager lcm, CMT dg) {
+		this.lcm = lcm;
 		this.dg = dg;
-		super(&runAll);
-	}
-
-	void runAll() {
-		if(s !is null)
-			run();
-		/*
-		version(cgi_multiple_connections_per_thread) {
-			while(1) {
-				while(s is null)
-					sleep(dur!"msecs"(1));
-				run();
-			}
-		}
-		*/
+		super(&run);
 	}
 
 	void run() {
-		scope(exit) {
-			// I don't want to double close it, and it does this on close() according to source
-			// might be fragile, but meh
-			if(s.handle() != socket_t.init)
-				s.close();
-			s = null; // so we know this thread is clear
-		}
-		if(auto result = dg(s)) {
-			*breakSignifier = result;
+		while(true) {
+			lcm.semaphore.wait();
+			Socket socket;
+			synchronized(lcm) {
+				auto idx = lcm.nextIndexFront;
+				socket = lcm.queue[idx];
+				lcm.queue[idx] = null;
+				atomicOp!"+="(lcm.nextIndexFront, 1);
+				atomicOp!"-="(lcm.queueLength, 1);
+			}
+			try
+				dg(socket);
+			catch(Exception e)
+				socket.close();
 		}
 	}
 
-	Socket s;
-	shared(int)* breakSignifier;
+	ListeningConnectionManager lcm;
 	CMT dg;
 }
 

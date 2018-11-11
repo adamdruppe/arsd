@@ -4819,7 +4819,7 @@ class Table : Element {
 		tagName = "table";
 	}
 
-	///.
+	/// Creates an element with the given type and content.
 	Element th(T)(T t) {
 		Element e;
 		if(parentDocument !is null)
@@ -4833,7 +4833,7 @@ class Table : Element {
 		return e;
 	}
 
-	///.
+	/// ditto
 	Element td(T)(T t) {
 		Element e;
 		if(parentDocument !is null)

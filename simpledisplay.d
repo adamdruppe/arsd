@@ -9675,6 +9675,9 @@ version(X11) {
 				win.setSelectionHandler(e);
 			}
 		  break;
+		  case EventType.PropertyNotify:
+
+		  break;
 		  case EventType.SelectionNotify:
 		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
 		  	if(win.getSelectionHandler !is null) {
@@ -9694,11 +9697,11 @@ version(X11) {
 						e.xselection.property,
 						0,
 						100000 /* length */,
-						false,
+						//false, /* don't erase it */
+						true, /* do erase it lol */
 						0 /*AnyPropertyType*/,
 						&target, &format, &length, &bytesafter, &value);
 
-					// FIXME: it might be sent in pieces...
 					// FIXME: I don't have to copy it now since it is in char[] instead of string
 
 					{
@@ -9728,15 +9731,51 @@ version(X11) {
 							}
 						} else if(target == GetAtom!"UTF8_STRING"(display) || target == XA_STRING) {
 							win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
+						} else if(target == GetAtom!"INCR"(display)) {
+							// incremental
+
+							//sdpyGettingPaste = true; // FIXME: should prolly be separate for the different selections
+
+							// FIXME: handle other events while it goes so app doesn't lock up with big pastes
+							// can also be optimized if it chunks to the api somehow
+
+							char[] s;
+
+							do {
+
+								XEvent subevent;
+								do {
+									XMaskEvent(display, EventMask.PropertyChangeMask, &subevent);
+								} while(subevent.type != EventType.PropertyNotify || subevent.xproperty.atom != e.xselection.property || subevent.xproperty.state != PropertyNotification.PropertyNewValue);
+
+								void* subvalue;
+								XGetWindowProperty(
+									e.xselection.display,
+									e.xselection.requestor,
+									e.xselection.property,
+									0,
+									100000 /* length */,
+									true, /* erase it to signal we got it and want more */
+									0 /*AnyPropertyType*/,
+									&target, &format, &length, &bytesafter, &subvalue);
+
+								s ~= (cast(char*) subvalue)[0 .. length];
+
+								XFree(subvalue);
+							} while(length > 0);
+
+							win.getSelectionHandler(s);
 						} else {
 							// unsupported type
 						}
 					}
 					XFree(value);
+					/*
 					XDeleteProperty(
 						e.xselection.display,
 						e.xselection.requestor,
 						e.xselection.property);
+					*/
 				}
 			}
 		  break;
@@ -10852,6 +10891,8 @@ int XNextEvent(
 	Display*	/* display */,
 	XEvent*		/* event_return */
 );
+
+int XMaskEvent(Display*, arch_long, XEvent*);
 
 Bool XFilterEvent(XEvent *event, Window window);
 int XRefreshKeyboardMapping(XMappingEvent *event_map);
