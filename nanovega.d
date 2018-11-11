@@ -13205,7 +13205,7 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
     }
   };
 
-  enum fillFragShader = q{
+  enum fillFragShader = `
     uniform vec4 frag[UNIFORM_ARRAY_SIZE];
     uniform sampler2D tex;
     uniform sampler2D clipTex;
@@ -13311,7 +13311,7 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
       }
       gl_FragColor = color;
     }
-  };
+  `;
 
   enum clipVertShaderFill = q{
     uniform vec2 viewSize;
