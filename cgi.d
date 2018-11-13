@@ -26,6 +26,7 @@
 		* have data presentation magic
 		* do the skeleton stuff like 1.0
 		* auto-cache generated stuff in files (at least if pure?)
+		* introspect functions in json for consumers
 
 
 	https://linux.die.net/man/3/posix_spawn

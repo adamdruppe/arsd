@@ -533,8 +533,6 @@ class DataView : Widget {
 version(win32_widgets) {}
 else version(custom_widgets) {
 	enum windowBackgroundColor = Color(212, 212, 212); // used to be 192
-	enum darkAccentColor = Color(172, 172, 172);
-	enum lightAccentColor = Color(223, 223, 223); // used to be 223
 	enum activeTabColor = lightAccentColor;
 	enum activeListXorColor = Color(255, 255, 0);
 	enum hoveringColor = Color(215, 215, 215);
@@ -544,6 +542,9 @@ else version(custom_widgets) {
 	enum activeMenuItemColor = Color.blue;
 }
 else static assert(false);
+	// these are used by horizontal rule so not just custom_widgets. for now at least.
+	enum darkAccentColor = Color(172, 172, 172);
+	enum lightAccentColor = Color(223, 223, 223); // used to be 223
 
 private const(wchar)* toWstringzInternal(in char[] s) {
 	wchar[] str;
