@@ -1427,7 +1427,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// This will be called when WM wants to close your window (i.e. user clicked "close" icon, for example).
 	/// You'll have to call `close()` manually if you set this delegate.
-	version(X11) void delegate () closeQuery;
+	void delegate () closeQuery;
 
 	/// This will be called when window visibility was changed.
 	void delegate (bool becomesVisible) visibilityChanged;
@@ -7986,7 +7986,7 @@ version(Windows) {
 				//break;
 
 				case WM_CLOSE:
-					DestroyWindow(hwnd);
+					if (this.closeQuery !is null) this.closeQuery(); else this.close();
 				break;
 				case WM_DESTROY:
 					if (this.onDestroyed !is null) try { this.onDestroyed(); } catch (Exception e) {} // sorry
@@ -9915,7 +9915,6 @@ version(X11) {
 					}
 				} else if(e.xclient.data.l[0] == GetAtom!"WM_DELETE_WINDOW"(e.xany.display)) {
 					// user clicked the close button on the window manager
-					// FIXME: not implemented on Windows
 					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
