@@ -3449,6 +3449,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
 				if(!RegisterClassExW(&wc))
 					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+				registered = true;
 			}
 
 			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
