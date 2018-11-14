@@ -7504,7 +7504,7 @@ version(Windows) {
 	// Mix this into the SimpleWindow class
 	mixin template NativeSimpleWindowImplementation() {
 		int curHidden = 0; // counter
-		static bool[string] knownWinClasses;
+		__gshared static bool[string] knownWinClasses;
 		static bool altPressed = false;
 
 		HANDLE oldCursor;
