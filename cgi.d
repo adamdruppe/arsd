@@ -487,7 +487,7 @@ class Cgi {
 
 	  Non-simulation arguments:
 	  	--port xxx listening port for non-cgi things (valid for the cgi interfaces)
-		--listening-host  the ip address the application should listen on (only implemented for fastcgi right now)
+		--listening-host  the ip address the application should listen on
 
 */
 
