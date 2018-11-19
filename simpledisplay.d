@@ -2584,6 +2584,12 @@ struct EventLoop {
 	this(long pulseTimeout, void delegate() handlePulse) {
 		if(impl is null)
 			impl = new EventLoopImpl(pulseTimeout, handlePulse);
+		else {
+			if(pulseTimeout) {
+				impl.pulseTimeout = pulseTimeout;
+				impl.handlePulse = handlePulse;
+			}
+		}
 		impl.refcount++;
 	}
 
@@ -2954,7 +2960,10 @@ struct EventLoopImpl {
 				SimpleWindow.processAllCustomEvents(); // anyway
 				enum WAIT_OBJECT_0 = 0;
 				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
-					// process handles[waitResult - WAIT_OBJECT_0];
+					auto h = handles[waitResult - WAIT_OBJECT_0];
+					if(auto e = h in WindowsHandleReader.mapping) {
+						(*e).ready();
+					}
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
 					while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
@@ -3989,6 +3998,54 @@ class Timer {
 		__gshared Timer[int] mapping;
 	} else static assert(0, "timer not supported");
 }
+}
+
+version(Windows)
+/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.)
+class WindowsHandleReader {
+	///
+	this(void delegate() onReady, HANDLE handle) {
+		this.onReady = onReady;
+		this.handle = handle;
+
+		mapping[handle] = this;
+
+		enable();
+	}
+
+	///
+	void enable() {
+		auto el = EventLoop.get().impl;
+		el.handles ~= handle;
+	}
+
+	///
+	void disable() {
+		auto el = EventLoop.get().impl;
+		for(int i = 0; i < el.handles.length; i++) {
+			if(el.handles[i] is handle) {
+				el.handles[i] = el.handles[$-1];
+				el.handles = el.handles[0 .. $-1];
+				return;
+			}
+		}
+	}
+
+	void dispose() {
+		disable();
+		mapping.remove(handle);
+		handle = null;
+	}
+
+	void ready() {
+		if(onReady)
+			onReady();
+	}
+
+	HANDLE handle;
+	void delegate() onReady;
+
+	__gshared WindowsHandleReader[HANDLE] mapping;
 }
 
 version(linux)

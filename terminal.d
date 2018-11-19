@@ -1579,6 +1579,24 @@ struct RealTimeConsoleInput {
 		}
 	}
 
+	void fdReadyReader() {
+		auto queue = readNextEvents();
+		foreach(event; queue)
+			userEventHandler(event);
+	}
+
+	void delegate(InputEvent) userEventHandler;
+
+	void integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
+		this.userEventHandler = userEventHandler;
+		import arsd.simpledisplay;
+		version(Windows)
+			auto listener = new WindowsHandleReader(&fdReadyReader, terminal.hConsole);
+		else version(linux)
+			auto listener = new PosixFdReader(&fdReadyReader, fdIn);
+		else static assert(0, "sdpy event loop integration not implemented on this platform");
+	}
+
 	version(with_eventloop) {
 		version(Posix)
 		void signalFired(SignalFired) {
