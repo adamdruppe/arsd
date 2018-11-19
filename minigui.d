@@ -1,5 +1,7 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// minigui needs to have a stdout redirection for gui mode on windows writeln
+
 // need a viewer widget that works like a web page - arrows scroll down consistently
 
 // FIXME: the menus should be a bit more discoverable, at least a single click to open the others instead of two.

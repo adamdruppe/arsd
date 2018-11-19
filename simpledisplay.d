@@ -6475,6 +6475,7 @@ enum ModifierState : uint {
 	rightButtonDown = 1024, /// ditto
 }
 else version(Windows)
+/// ditto
 enum ModifierState : uint {
 	shift = 4, ///
 	ctrl = 8, ///
@@ -10795,7 +10796,7 @@ Atom XInternAtom(
 	Bool		/* only_if_exists */
 );
 
-Status XInternAtoms(Display*, char**, int, Bool);
+Status XInternAtoms(Display*, const char**, int, Bool, Atom*);
 char* XGetAtomName(Display*, Atom);
 Status XGetAtomNames(Display*, Atom*, int count, char**);
 
