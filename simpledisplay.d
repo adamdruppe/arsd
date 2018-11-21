@@ -2891,10 +2891,6 @@ struct EventLoopImpl {
 								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
 							}
 						}
-						if(flags & ep.EPOLLIN) {
-							if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
-								(*pfr).ready(flags);
-						}
 						/+
 						} else {
 							// not interested in OUT, we are just reading here.
@@ -3021,6 +3017,10 @@ struct EventLoopImpl {
 
 /++
 	Provides an icon on the system notification area (also known as the system tray).
+
+
+	If a notification area is not available with the NotificationIcon object is created,
+	it will silently succeed and simply attempt to create one when an area becomes available.
 
 
 	NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
@@ -3187,15 +3187,39 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			XSendEvent(XDisplayConnection.get, to, false, EventMask.NoEventMask, &ev);
 		}
 
+		private static NotificationAreaIcon[] activeIcons;
+
+		// FIXME: possible leak with this stuff, should be able to clear it and stuff.
+		private void newManager() {
+			close();
+			createXWin();
+
+			if(this.clippixmap)
+				XFreePixmap(XDisplayConnection.get, clippixmap);
+			if(this.originalMemoryImage)
+				this.icon = this.originalMemoryImage;
+			else if(this.img)
+				this.icon = this.img;
+		}
+
 		private void createXWin () {
-			// FIXME: check for MANAGER on root window to catch new/changed tray owners
-			auto trayOwner = getTrayOwner();
-			if(trayOwner == None)
-				throw new Exception("No notification area found");
-
-
 			// create window
 			auto display = XDisplayConnection.get;
+
+			// to check for MANAGER on root window to catch new/changed tray owners
+			XDisplayConnection.addRootInput(EventMask.StructureNotifyMask);
+			// so if a thing does appear, we can handle it
+			foreach(ai; activeIcons)
+				if(ai is this)
+					goto alreadythere;
+			activeIcons ~= this;
+			alreadythere:
+
+			// and check for an existing tray
+			auto trayOwner = getTrayOwner();
+			if(trayOwner == None)
+				return;
+				//throw new Exception("No notification area found");
 
 			Visual* v = cast(Visual*) CopyFromParent;
 			/+
@@ -3545,9 +3569,12 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		return name_;
 	}
 
+	private MemoryImage originalMemoryImage;
+
 	///
 	@property void icon(MemoryImage i) {
 		version(X11) {
+			this.originalMemoryImage = i;
 			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
@@ -3578,6 +3605,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		version(X11) {
 			if (!active) return;
 			if (i !is img) {
+				originalMemoryImage = null;
 				img = i;
 				redraw();
 			}
@@ -4589,7 +4617,7 @@ version(X11) {
 			auto dpy = XDisplayConnection.get;
 			auto root = RootWindow(dpy, DefaultScreen(dpy));
 			CapableOfHandlingNativeEvent.nativeHandleMapping[root] = this;
-			XSelectInput(dpy, root, EventMask.KeyPressMask);
+			XDisplayConnection.addRootInput(EventMask.KeyPressMask);
 		}
 
 		/// Register new global hotkey with initialized `GlobalHotkey` object.
@@ -8794,6 +8822,24 @@ version(X11) {
 			}
 		}
 
+		private __gshared EventMask rootEventMask;
+
+		/++
+			Requests the specified input from the root window on the connection, in addition to any other request.
+
+			
+			Since plain XSelectInput will replace the existing mask, adding input from multiple locations is tricky. This central function will combine all the masks for you.
+
+			$(WARNING it calls XSelectInput itself, which will override any other root window input you have!)
+		+/
+		static void addRootInput(EventMask mask) {
+			auto old = rootEventMask;
+			rootEventMask |= mask;
+			get(); // to ensure display connected
+			if(display !is null && rootEventMask != old)
+				XSelectInput(display, RootWindow(display, DefaultScreen(display)), rootEventMask);
+		}
+
 		static void discardState() {
 			freeImages();
 
@@ -9464,7 +9510,6 @@ version(X11) {
 				XSetWMProtocols(display, window, &atom, 1);
 			}
 
-
 			// FIXME: windowType and customizationFlags
 			Atom[8] wsatoms; // here, due to goto
 			int wmsacount = 0; // here, due to goto
@@ -9685,6 +9730,7 @@ version(X11) {
 				writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type));
 			}
 		}
+
 		// filter out compose events
 		if (XFilterEvent(&e, None)) {
 			//{ import core.stdc.stdio : printf; printf("XFilterEvent filtered!\n"); }
@@ -9978,6 +10024,9 @@ version(X11) {
 						scope(exit) XLockDisplay(display);
 						if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
 					}
+				} else if(e.xclient.message_type == GetAtom!"MANAGER"(e.xany.display)) {
+					foreach(nai; NotificationAreaIcon.activeIcons)
+						nai.newManager();
 				}
 		  break;
 		  case EventType.MapNotify:
