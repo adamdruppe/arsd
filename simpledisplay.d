@@ -2962,12 +2962,15 @@ struct EventLoopImpl {
 					}
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
-					while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
-					if((ret = GetMessage(&message, null, 0, 0)) != 0) {
+					while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) { // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
+						ret = GetMessage(&message, null, 0, 0);
 						if(ret == -1)
 							throw new Exception("GetMessage failed");
 						TranslateMessage(&message);
 						DispatchMessage(&message);
+
+						if(ret == 0) // WM_QUIT
+							break;
 					}
 				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
 					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
@@ -8085,8 +8088,9 @@ version(Windows) {
 							anyImportant = true;
 							break;
 						}
-					if(!anyImportant)
+					if(!anyImportant) {
 						PostQuitMessage(0);
+					}
 				break;
 				case WM_SIZE:
 					if(wParam == 1 /* SIZE_MINIMIZED */)
