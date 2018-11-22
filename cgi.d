@@ -1,6 +1,18 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
 
+/*
+void foo(int f, @("test") string s) {}
+
+void main() {
+	static if(is(typeof(foo) Params == __parameters))
+		//pragma(msg, __traits(getAttributes, Params[0]));
+		pragma(msg, __traits(getAttributes, Params[1..2]));
+	else
+		pragma(msg, "fail");
+}
+*/
+
 // Note: spawn-fcgi can help with fastcgi on nginx
 
 // FIXME: to do: add openssl optionally

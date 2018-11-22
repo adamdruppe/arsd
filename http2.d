@@ -866,7 +866,6 @@ class HttpRequest {
 							}
 							data = data[a + 1 .. $];
 							goto start_over;
-						break;
 						case 2: // reading data
 							auto can = a + bodyReadingState.contentLengthRemaining;
 							if(can > data.length)
@@ -894,7 +893,6 @@ class HttpRequest {
 							bodyReadingState.chunkedState++;
 							data = data[a + 1 .. $];
 							goto start_over;
-						break;
 						case 4: // reading 10 at end of packet
 							assert(data[a] == 10);
 							data = data[a + 1 .. $];
@@ -1368,7 +1366,7 @@ version(use_openssl) {
 			ssl = SSL_new(ctx);
 			if(!verifyPeer)
 				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
-			SSL_set_fd(ssl, this.handle);
+			SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
 		}
 
 		bool dataPending() {
