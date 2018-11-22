@@ -296,38 +296,141 @@ struct Uri {
 	}
 
 	private void reparse(string uri) {
-		import std.regex;
 		// from RFC 3986
-
 		// the ctRegex triples the compile time and makes ugly errors for no real benefit
 		// it was a nice experiment but just not worth it.
 		// enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
-		auto ctr = regex(r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?");
+		/*
+			Captures:
+				0 = whole url
+				1 = scheme, with :
+				2 = scheme, no :
+				3 = authority, with //
+				4 = authority, no //
+				5 = path
+				6 = query string, with ?
+				7 = query string, no ?
+				8 = anchor, with #
+				9 = anchor, no #
+		*/
+		// Yikes, even regular, non-CT regex is also unacceptably slow to compile. 1.9s on my computer!
+		// instead, I will DIY and cut that down to 0.6s on the same computer.
+		/*
 
-		auto m = match(uri, ctr);
-		if(m) {
-			scheme = m.captures[2];
-			auto authority = m.captures[4];
+				Note that authority is
+					user:password@domain:port
+				where the user:password@ part is optional, and the :port is optional.
 
-			auto idx = authority.indexOf("@");
-			if(idx != -1) {
-				userinfo = authority[0 .. idx];
-				authority = authority[idx + 1 .. $];
+				Regex translation:
+
+				Scheme cannot have :, /, ?, or # in it, and must have one or more chars and end in a :. It is optional, but must be first.
+				Authority must start with //, but cannot have any other /, ?, or # in it. It is optional.
+				Path cannot have any ? or # in it. It is optional.
+				Query must start with ? and must not have # in it. It is optional.
+				Anchor must start with # and can have anything else in it to end of string. It is optional.
+		*/
+
+		this = Uri.init; // reset all state
+
+		// empty uri = nothing special
+		if(uri.length == 0) {
+			return;
+		}
+
+		size_t idx;
+
+		scheme_loop: foreach(char c; uri[idx .. $]) {
+			switch(c) {
+				case ':':
+				case '/':
+				case '?':
+				case '#':
+					break scheme_loop;
+				default:
+			}
+			idx++;
+		}
+
+		if(idx == 0 && uri[idx] == ':') {
+			// this is actually a path! we skip way ahead
+			goto path_loop;
+		}
+
+		if(idx == uri.length) {
+			// the whole thing is a path, apparently
+			path = uri;
+			return;
+		}
+
+		if(idx > 0 && uri[idx] == ':') {
+			scheme = uri[0 .. idx];
+			idx++;
+		}
+
+		if(idx + 2 < uri.length && uri[idx .. idx + 2] == "//") {
+			// we have an authority....
+			idx += 2;
+
+			auto authority_start = idx;
+			authority_loop: foreach(char c; uri[idx .. $]) {
+				switch(c) {
+					case '/':
+					case '?':
+					case '#':
+						break authority_loop;
+					default:
+				}
+				idx++;
 			}
 
-			idx = authority.indexOf(":");
-			if(idx == -1) {
+			auto authority = uri[authority_start .. idx];
+
+			auto idx2 = authority.indexOf("@");
+			if(idx2 != -1) {
+				userinfo = authority[0 .. idx2];
+				authority = authority[idx2 + 1 .. $];
+			}
+
+			idx2 = authority.indexOf(":");
+			if(idx2 == -1) {
 				port = 0; // 0 means not specified; we should use the default for the scheme
 				host = authority;
 			} else {
-				host = authority[0 .. idx];
-				port = to!int(authority[idx + 1 .. $]);
+				host = authority[0 .. idx2];
+				port = to!int(authority[idx2 + 1 .. $]);
 			}
-
-			path = m.captures[5];
-			query = m.captures[7];
-			fragment = m.captures[9];
 		}
+
+		path_loop:
+		auto path_start = idx;
+		
+		foreach(char c; uri[idx .. $]) {
+			if(c == '?' || c == '#')
+				break;
+			idx++;
+		}
+
+		path = uri[path_start .. idx];
+
+		if(idx == uri.length)
+			return; // nothing more to examine...
+
+		if(uri[idx] == '?') {
+			idx++;
+			auto query_start = idx;
+			foreach(char c; uri[idx .. $]) {
+				if(c == '#')
+					break;
+				idx++;
+			}
+			query = uri[query_start .. idx];
+		}
+
+		if(idx < uri.length && uri[idx] == '#') {
+			idx++;
+			fragment = uri[idx .. $];
+		}
+
 		// uriInvalidated = false;
 	}
 
@@ -471,7 +574,7 @@ class HttpRequest {
 				Socket socket;
 				if(ssl) {
 					version(with_openssl)
-					socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
+						socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
 					else
 						throw new Exception("SSL not compiled in");
 				} else
