@@ -5656,6 +5656,14 @@ class TextEdit : EditableTextWidget {
 }
 
 
+/++
+
++/
+version(none)
+class RichTextDisplay : Widget {
+	@property void content(string c) {}
+	void appendContent(string c) {}
+}
 
 ///
 class MessageBox : Window {
