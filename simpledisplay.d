@@ -815,8 +815,15 @@ version(without_opengl) {
 
 
 version(Windows) {
-	import core.sys.windows.windows;
-	static import gdi = core.sys.windows.wingdi;
+	//import core.sys.windows.windows;
+	import core.sys.windows.winnls;
+	import core.sys.windows.windef;
+	import core.sys.windows.basetyps;
+	import core.sys.windows.winbase;
+	import core.sys.windows.winuser;
+	import core.sys.windows.shellapi;
+	import core.sys.windows.wingdi;
+	static import gdi = core.sys.windows.wingdi; // so i
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
@@ -4257,6 +4264,71 @@ struct WCharzBuffer {
 }
 
 version(Windows)
+class WindowsApiException : Exception {
+	char[256] buffer;
+	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		assert(msg.length < 100);
+
+		auto error = GetLastError();
+		buffer[0 .. msg.length] = msg;
+		buffer[msg.length] = ' ';
+
+		int pos = cast(int) msg.length + 1;
+
+		if(error == 0)
+			buffer[pos++] = '0';
+		else {
+			auto init = pos;
+			while(error) {
+				buffer[pos++] = (error % 10) + '0';
+				error /= 10;
+			}
+			for(int i = 0; i < (pos - init) / 2; i++) {
+				char c = buffer[i + init];
+				buffer[i + init] = buffer[pos - (i + init) - 1];
+				buffer[pos - (i + init) - 1] = c;
+			}
+		}
+
+
+		super(cast(string) buffer[0 .. pos], file, line, next);
+	}
+}
+
+class ErrnoApiException : Exception {
+	char[256] buffer;
+	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		assert(msg.length < 100);
+
+		import core.stdc.errno;
+		auto error = errno;
+		buffer[0 .. msg.length] = msg;
+		buffer[msg.length] = ' ';
+
+		int pos = cast(int) msg.length + 1;
+
+		if(error == 0)
+			buffer[pos++] = '0';
+		else {
+			auto init = pos;
+			while(error) {
+				buffer[pos++] = (error % 10) + '0';
+				error /= 10;
+			}
+			for(int i = 0; i < (pos - init) / 2; i++) {
+				char c = buffer[i + init];
+				buffer[i + init] = buffer[pos - (i + init) - 1];
+				buffer[pos - (i + init) - 1] = c;
+			}
+		}
+
+
+		super(cast(string) buffer[0 .. pos], file, line, next);
+	}
+
+}
+
+version(Windows)
 wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = true) {
 	if(str.length == 0)
 		return null;
@@ -4312,6 +4384,19 @@ string makeUtf8StringFromWindowsString(wchar* str) {
 			throw new Exception("conversion"); // FIXME: GetLastError
 	}
 	return cast(string) buffer[0 .. got];
+}
+
+int findIndexOfZero(in wchar[] str) {
+	foreach(idx, wchar ch; str)
+		if(ch == 0)
+			return idx;
+	return cast(int) str.length;
+}
+int findIndexOfZero(in char[] str) {
+	foreach(idx, char ch; str)
+		if(ch == 0)
+			return idx;
+	return cast(int) str.length;
 }
 
 /// copies some text to the clipboard
@@ -5438,7 +5523,7 @@ version(arsd_mevent_strcmp_test) unittest {
 struct Pen {
 	Color color; /// the foreground color
 	int width = 1; /// width of the line
-	Style style; /// See [Style] FIXME: not implemented
+	Style style; /// See [Style]
 /+
 // From X.h
 
@@ -6276,6 +6361,9 @@ struct ScreenPainter {
 		impl.drawEllipse(upperLeft.x, upperLeft.y, lowerRight.x, lowerRight.y);
 	}
 
+	/++
+		start and finish are units of degrees * 64
+	+/
 	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
 		if(impl is null) return;
 		// FIXME: not actually implemented
@@ -7572,8 +7660,19 @@ version(Windows) {
 		}
 
 		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
-			// FIXME: start X, start Y, end X, end Y
-			Arc(hdc, x1, y1, x1 + width, y1 + height, 0, 0, 0, 0);
+			if((start % (360*64)) == (finish % (360*64)))
+				drawEllipse(x1, y1, x1 + width, y1 + height);
+			else {
+				import core.stdc.math;
+				float startAngle = start * 64 * 180 / 3.14159265;
+				float endAngle = finish * 64 * 180 / 3.14159265;
+				Arc(hdc, x1, y1, x1 + width, y1 + height,
+					cast(int)(cos(startAngle) * width / 2 + x1),
+					cast(int)(sin(startAngle) * height / 2 + y1),
+					cast(int)(cos(endAngle) * width / 2 + x1),
+					cast(int)(sin(endAngle) * height / 2 + y1),
+				);
+			}
 		}
 
 		void drawPolygon(Point[] vertexes) {
@@ -13135,7 +13234,6 @@ mixin template ExperimentalTextComponent2() {
 					break;
 
 				painter.drawText(Point(drawX, drawY), "" ~ ch);
-				import std.stdio; write(ch); stdout.flush;
 			}
 		}
 	}
@@ -13147,9 +13245,6 @@ mixin template ExperimentalTextComponent2() {
 mixin template ExperimentalTextComponent() {
 
 	alias Rectangle = arsd.color.Rectangle;
-
-	// FIXME remove this
-	import std.string : split;
 
 	struct ForegroundColor {
 		Color color;

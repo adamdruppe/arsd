@@ -1073,6 +1073,12 @@ class TrueColorImage : MemoryImage {
 	}
 }
 
+alias extern(C) int function(const void*, const void*) @system Comparator;
+@trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
+	import core.stdc.stdlib;
+	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
+}
+
 /// Converts true color to an indexed image. It uses palette as the starting point, adding entries
 /// until maxColors as needed. If palette is null, it creates a whole new palette.
 ///
@@ -1099,6 +1105,9 @@ body {
 		int opCmp(ref const ColorUse co) const {
 			return co.uses - uses;
 		}
+		extern(C) static int comparator(const void* lhs, const void* rhs) {
+			return (cast(ColorUse*)rhs).uses - (cast(ColorUse*)lhs).uses;
+		}
 	}
 
 	ColorUse[] sorted;
@@ -1107,12 +1116,11 @@ body {
 		sorted ~= ColorUse(color, count);
 
 	uses = null;
-	//version(no_phobos)
-		//sorted = sorted.sort;
-	//else {
-		import std.algorithm : sort;
-		sort(sorted);
-	//}
+
+	nonPhobosSort(sorted, &ColorUse.comparator);
+	// or, with phobos, but that adds 70ms to compile time
+	//import std.algorithm.sorting : sort;
+	//sort(sorted);
 
 	ubyte[Color] paletteAssignments;
 	foreach(idx, entry; palette)

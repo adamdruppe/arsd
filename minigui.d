@@ -2,6 +2,8 @@
 
 // minigui needs to have a stdout redirection for gui mode on windows writeln
 
+// I kinda wanna do state reacting. sort of. idk tho
+
 // need a viewer widget that works like a web page - arrows scroll down consistently
 
 // FIXME: the menus should be a bit more discoverable, at least a single click to open the others instead of two.
@@ -116,8 +118,15 @@ module arsd.minigui;
 public import arsd.simpledisplay;
 private alias Rectangle = arsd.color.Rectangle; // I specifically want this in here, not the win32 GDI Rectangle()
 
-version(Windows)
-	import core.sys.windows.windows;
+version(Windows) {
+	import core.sys.windows.winnls;
+	import core.sys.windows.windef;
+	import core.sys.windows.basetyps;
+	import core.sys.windows.winbase;
+	import core.sys.windows.winuser;
+	import core.sys.windows.wingdi;
+	static import gdi = core.sys.windows.wingdi;
+}
 
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
@@ -335,13 +344,14 @@ class DropDownSelection : ComboboxBase {
 
 		painter.outlineColor = Color.black;
 		painter.fillColor = Color.black;
-		Point[3] triangle;
+		Point[4] triangle;
 		enum padding = 6;
-		enum paddingV = 8;
+		enum paddingV = 7;
 		enum triangleWidth = 10;
 		triangle[0] = Point(width - padding - triangleWidth, paddingV);
 		triangle[1] = Point(width - padding - triangleWidth / 2, height - paddingV);
 		triangle[2] = Point(width - padding - 0, paddingV);
+		triangle[3] = triangle[0];
 		painter.drawPolygon(triangle[]);
 
 		if(isFocused()) {
@@ -585,7 +595,7 @@ void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fra
 	painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
 	// left, top
 	painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
-	painter.drawLine(Point(x + 1, y + 1), Point(x + width - 2, y + 1));
+	painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
 	painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
 }
 
@@ -1896,9 +1906,9 @@ class ScrollableWidget : Widget {
 			horizontalScrollbarHolder.y = this.height - horizontalScrollBar.minHeight();
 
 			verticalScrollbarHolder.width = verticalScrollBar.minWidth();
-			verticalScrollbarHolder.height = this.height - (both ? horizontalScrollBar.minHeight() : 0);
+			verticalScrollbarHolder.height = this.height - (both ? horizontalScrollBar.minHeight() : 0) - 2 - 2;
 			verticalScrollbarHolder.x = this.width - verticalScrollBar.minWidth();
-			verticalScrollbarHolder.y = 0;
+			verticalScrollbarHolder.y = 0 + 2;
 
 			if(contentWidth_ <= this.width)
 				scrollOrigin_.x = 0;
@@ -2397,7 +2407,7 @@ class MouseTrackingWidget : Widget {
 
 	version(custom_widgets)
 	override void paint(ScreenPainter painter) {
-		auto c = lighten(windowBackgroundColor, 0.2);
+		auto c = darken(windowBackgroundColor, 0.2);
 		painter.outlineColor = c;
 		painter.fillColor = c;
 		painter.drawRectangle(Point(0, 0), this.width, this.height);
@@ -3312,19 +3322,33 @@ class Window : Widget {
 			Widget[] helper(Widget p) {
 				if(p.hidden)
 					return null;
-				Widget[] childOrdering = p.children.dup;
+				Widget[] childOrdering;
 
-				import std.algorithm;
-				sort!((a, b) => a.tabOrder < b.tabOrder)(childOrdering);
+				auto children = p.children.dup;
 
-				Widget[] ret;
-				foreach(child; childOrdering) {
-					if(child.tabStop && !child.hidden)
-						ret ~= child;
-					ret ~= helper(child);
+				while(true) {
+					// UIs should be generally small, so gonna brute force it a little
+					// note that it must be a stable sort here; if all are index 0, it should be in order of declaration
+
+					Widget smallestTab;
+					foreach(ref c; children) {
+						if(c is null) continue;
+						if(smallestTab is null || c.tabOrder < smallestTab.tabOrder) {
+							smallestTab = c;
+							c = null;
+						}
+					}
+					if(smallestTab !is null) {
+						if(smallestTab.tabStop && !smallestTab.hidden)
+							childOrdering ~= smallestTab;
+						if(!smallestTab.hidden)
+							childOrdering ~= helper(smallestTab);
+					} else
+						break;
+
 				}
 
-				return ret;
+				return childOrdering;
 			}
 
 			Widget[] tabOrdering = helper(this);
@@ -3684,8 +3708,8 @@ class LabeledLineEdit : Widget {
 ///
 class MainWindow : Window {
 	///
-	this(string title = null) {
-		super(500, 500, title);
+	this(string title = null, int initialWidth = 500, int initialHeight = 500) {
+		super(initialWidth, initialHeight, title);
 
 		_clientArea = new ClientAreaWidget();
 		_clientArea.x = 0;
@@ -4024,7 +4048,8 @@ class ToolButton : Button {
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
 					Point(3, 2) * multiplier / divisor, Point(3, 13) * multiplier / divisor, Point(12, 13) * multiplier / divisor, Point(12, 6) * multiplier / divisor,
-					Point(8, 2) * multiplier / divisor, Point(8, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor, Point(8, 2) * multiplier / divisor
+					Point(8, 2) * multiplier / divisor, Point(8, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor, Point(8, 2) * multiplier / divisor,
+					Point(3, 2) * multiplier / divisor, Point(3, 13) * multiplier / divisor
 				);
 			break;
 			case GenericIcons.Save:
@@ -4048,11 +4073,12 @@ class ToolButton : Button {
 			case GenericIcons.Open:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(3, 4) * multiplier / divisor, Point(3, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
-					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(3, 4) * multiplier / divisor);
+					Point(4, 4) * multiplier / divisor, Point(4, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
+					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(4, 4) * multiplier / divisor);
 				painter.drawPolygon(
-					Point(1, 6) * multiplier / divisor, Point(11, 6) * multiplier / divisor,
-					Point(13, 12) * multiplier / divisor, Point(3, 12) * multiplier / divisor);
+					Point(2, 6) * multiplier / divisor, Point(11, 6) * multiplier / divisor,
+					Point(12, 12) * multiplier / divisor, Point(4, 12) * multiplier / divisor,
+					Point(2, 6) * multiplier / divisor);
 				//painter.drawLine(Point(9, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
 			break;
 			case GenericIcons.Copy:
@@ -4078,6 +4104,30 @@ class ToolButton : Button {
 			break;
 			case GenericIcons.Help:
 				painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+			break;
+			case GenericIcons.Undo:
+				painter.fillColor = Color.transparent;
+				painter.drawArc(Point(3, 4) * multiplier / divisor, 9 * multiplier / divisor, 9 * multiplier / divisor, 0, 360 * 64);
+				painter.outlineColor = Color.black;
+				painter.fillColor = Color.black;
+				painter.drawPolygon(
+					Point(4, 4) * multiplier / divisor,
+					Point(8, 2) * multiplier / divisor,
+					Point(8, 6) * multiplier / divisor,
+					Point(4, 4) * multiplier / divisor,
+				);
+			break;
+			case GenericIcons.Redo:
+				painter.fillColor = Color.transparent;
+				painter.drawArc(Point(3, 4) * multiplier / divisor, 9 * multiplier / divisor, 9 * multiplier / divisor, 0, 360 * 64);
+				painter.outlineColor = Color.black;
+				painter.fillColor = Color.black;
+				painter.drawPolygon(
+					Point(10, 4) * multiplier / divisor,
+					Point(6, 2) * multiplier / divisor,
+					Point(6, 6) * multiplier / divisor,
+					Point(10, 4) * multiplier / divisor,
+				);
 			break;
 			default:
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
@@ -5119,30 +5169,34 @@ class ArrowButton : Button {
 		final switch(direction) {
 			case ArrowDirection.up:
 				painter.drawPolygon(
-					Point(4, 12) + offset,
-					Point(8, 6) + offset,
-					Point(12, 12) + offset
+					Point(2, 10) + offset,
+					Point(7, 5) + offset,
+					Point(12, 10) + offset,
+					Point(2, 10) + offset
 				);
 			break;
 			case ArrowDirection.down:
 				painter.drawPolygon(
-					Point(4, 6) + offset,
-					Point(8, 12) + offset,
-					Point(12, 6) + offset
+					Point(2, 6) + offset,
+					Point(7, 11) + offset,
+					Point(12, 6) + offset,
+					Point(2, 6) + offset
 				);
 			break;
 			case ArrowDirection.left:
 				painter.drawPolygon(
-					Point(12, 4) + offset,
-					Point(6, 8) + offset,
-					Point(12, 12) + offset
+					Point(10, 2) + offset,
+					Point(5, 7) + offset,
+					Point(10, 12) + offset,
+					Point(10, 2) + offset
 				);
 			break;
 			case ArrowDirection.right:
 				painter.drawPolygon(
-					Point(6, 4) + offset,
-					Point(12, 8) + offset,
-					Point(6, 12) + offset
+					Point(6, 2) + offset,
+					Point(11, 7) + offset,
+					Point(6, 12) + offset,
+					Point(6, 2) + offset
 				);
 			break;
 		}
@@ -5982,10 +6036,6 @@ private WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 }
 
 version(win32_widgets) {
-	import core.sys.windows.windows;
-	import gdi = core.sys.windows.wingdi;
-	// import win32.commctrl;
-	// import win32.winuser;
 	import core.sys.windows.commctrl;
 
 	pragma(lib, "comctl32");
@@ -6275,6 +6325,7 @@ void getFileName(
 {
 
 	version(win32_widgets) {
+		import core.sys.windows.commdlg;
 	/*
 	Ofn.lStructSize = sizeof(OPENFILENAME); 
 	Ofn.hwndOwner = hWnd; 
@@ -6328,16 +6379,55 @@ class FilePicker : Dialog {
 					lineEdit.content = o.label;
 		});
 
+		//version(none)
 		lineEdit.addEventListener(EventType.keydown, (Event event) {
 			if(event.key == Key.Tab) {
-				import std.file; // FIXME: so slow building :(
 				listWidget.clear();
 
 				string commonPrefix;
 				auto cnt = lineEdit.content;
 				if(cnt.length >= 2 && cnt[0 ..2] == "./")
 					cnt = cnt[2 .. $];
-				foreach(string name; dirEntries(".", cnt ~ "*", SpanMode.shallow)) {
+
+				version(Windows) {
+					WIN32_FIND_DATA data;
+					WCharzBuffer search = WCharzBuffer("./" ~ cnt ~ "*");
+					auto handle = FindFirstFileW(search.ptr, &data);
+					scope(exit) if(handle !is INVALID_HANDLE_VALUE) FindClose(handle);
+					if(handle is INVALID_HANDLE_VALUE) {
+						if(GetLastError() == ERROR_FILE_NOT_FOUND)
+							goto file_not_found;
+						throw new WindowsApiException("FindFirstFileW");
+					}
+				} else version(Posix) {
+					import core.sys.posix.dirent;
+					auto dir = opendir(".");
+					scope(exit)
+						if(dir) closedir(dir);
+					if(dir is null)
+						throw new ErrnoApiException("opendir");
+
+					auto dirent = readdir(dir);
+					if(dirent is null)
+						goto file_not_found;
+					// filter those that don't start with it, since posix doesn't
+					// do the * thing itself
+					while(dirent.d_name[0 .. cnt.length] != cnt[]) {
+						dirent = readdir(dir);
+						if(dirent is null)
+							goto file_not_found;
+					}
+				} else static assert(0);
+
+				while(true) {
+				//foreach(string name; dirEntries(".", cnt ~ "*", SpanMode.shallow)) {
+					version(Windows) {
+						string name = makeUtf8StringFromWindowsString(data.cFileName[0 .. findIndexOfZero(data.cFileName[])]);
+					} else version(Posix) {
+						string name = dirent.d_name[0 .. findIndexOfZero(dirent.d_name[])].idup;
+					} else static assert(0);
+
+
 					listWidget.addOption(name);
 					if(commonPrefix is null)
 						commonPrefix = name;
@@ -6349,8 +6439,33 @@ class FilePicker : Dialog {
 							}
 						}
 					}
+
+					version(Windows) {
+						auto ret = FindNextFileW(handle, &data);
+						if(ret == 0) {
+							if(GetLastError() == ERROR_NO_MORE_FILES)
+								break;
+							throw new WindowsApiException("FindNextFileW");
+						}
+					} else version(Posix) {
+						dirent = readdir(dir);
+						if(dirent is null)
+							break;
+
+						while(dirent.d_name[0 .. cnt.length] != cnt[]) {
+							dirent = readdir(dir);
+							if(dirent is null)
+								break;
+						}
+
+						if(dirent is null)
+							break;
+					} else static assert(0);
 				}
-				lineEdit.content = commonPrefix;
+				if(commonPrefix.length)
+					lineEdit.content = commonPrefix;
+
+				file_not_found:
 				event.preventDefault();
 			}
 		});
@@ -6463,8 +6578,11 @@ class AutomaticDialog(T) : Dialog {
 			alias member = I!(__traits(getMember, t, memberName))[0];
 			alias type = typeof(member);
 			static if(is(type == string)) {
-				import std.string;
-				auto le = new LabeledLineEdit(memberName.capitalize ~ ": ", this);
+				auto show = memberName;
+				// cheap capitalize lol
+				if(show[0] >= 'a' && show[0] <= 'z')
+					show = "" ~ cast(char)(show[0] - 32) ~ show[1 .. $];
+				auto le = new LabeledLineEdit(show ~ ": ", this);
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = ev.stringValue;
 				});
@@ -6475,12 +6593,7 @@ class AutomaticDialog(T) : Dialog {
 						ev.preventDefault();
 				});
 				le.addEventListener(EventType.change, (Event ev) {
-					import std.conv;
-					try {
-						__traits(getMember, t, memberName) = to!type(ev.stringValue);
-					} catch(Exception e) {
-						// FIXME
-					}
+					__traits(getMember, t, memberName) = cast(type) stringToLong(ev.stringValue);
 				});
 			}
 		}
@@ -6517,4 +6630,20 @@ class AutomaticDialog(T) : Dialog {
 			onCancel();
 		close();
 	}
+}
+
+private long stringToLong(string s) {
+	long ret;
+	if(s.length == 0)
+		return ret;
+	bool negative = s[0] == '-';
+	if(negative)
+		s = s[1 .. $];
+	foreach(ch; s) {
+		if(ch >= '0' && ch <= '9') {
+			ret *= 10;
+			ret += ch - '0';
+		}
+	}
+	return ret;
 }
