@@ -243,7 +243,7 @@ abstract class ComboboxBase : Widget {
 	void setSelection(int idx) {
 		selection = idx;
 		version(win32_widgets)
-		SendMessageA(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
+		SendMessageW(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
 		auto t = new Event(EventType.change, this);
 		t.intValue = selection;
@@ -253,7 +253,7 @@ abstract class ComboboxBase : Widget {
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
-		selection = cast(int) SendMessageA(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+		selection = cast(int) SendMessageW(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
 		fireChangeEvent();
 	}
 
@@ -3961,7 +3961,9 @@ class ToolBar : Widget {
 		tabStop = false;
 
 		version(win32_widgets) {
-			createWin32Window(this, "ToolbarWindow32"w, "", 0);
+			createWin32Window(this, "ToolbarWindow32"w, "", TBSTYLE_LIST|TBSTYLE_FLAT|TBSTYLE_TOOLTIPS);
+			
+			SendMessageW(hwnd, TB_SETEXTENDEDSTYLE, 0, 8/*TBSTYLE_EX_MIXEDBUTTONS*/);
 
 			imageList = ImageList_Create(
 				// width, height
@@ -3969,8 +3971,10 @@ class ToolBar : Widget {
 				ILC_COLOR16 | ILC_MASK,
 				16 /*numberOfButtons*/, 0);
 
-			SendMessageA(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) imageList);
-			SendMessageA(hwnd, TB_LOADIMAGES, cast(WPARAM) IDB_STD_SMALL_COLOR, cast(LPARAM) HINST_COMMCTRL);
+			SendMessageW(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) imageList);
+			SendMessageW(hwnd, TB_LOADIMAGES, cast(WPARAM) IDB_STD_SMALL_COLOR, cast(LPARAM) HINST_COMMCTRL);
+			SendMessageW(hwnd, TB_SETMAXTEXTROWS, 0, 0);
+			SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 
 			TBBUTTON[] buttons;
 
@@ -3978,12 +3982,12 @@ class ToolBar : Widget {
 			foreach(action; actions)
 				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toWstringzInternal(action.label));
 
-			SendMessageA(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
-			SendMessageA(hwnd, TB_ADDBUTTONSA,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
+			SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
+			SendMessageW(hwnd, TB_ADDBUTTONSW,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
 
 			SIZE size;
 			import core.sys.windows.commctrl;
-			SendMessageA(hwnd, TB_GETMAXSIZE, 0, cast(LPARAM) &size);
+			SendMessageW(hwnd, TB_GETMAXSIZE, 0, cast(LPARAM) &size);
 			idealHeight = size.cy + 4; // the plus 4 is a hack
 
 			/*
@@ -4253,7 +4257,7 @@ class StatusBar : Widget {
 					else
 						pos[idx] = cpos;
 				}
-				SendMessageA(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(int) pos.ptr);
+				SendMessageW(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(int) pos.ptr);
 			} else version(custom_widgets) {
 				owner.redraw();
 			} else static assert(false);
@@ -4386,7 +4390,7 @@ class ProgressBar : Widget {
 	///
 	void advanceOneStep() {
 		version(win32_widgets)
-			SendMessageA(hwnd, PBM_STEPIT, 0, 0);
+			SendMessageW(hwnd, PBM_STEPIT, 0, 0);
 		else version(custom_widgets)
 			addToPosition(step);
 		else static assert(false);
@@ -4395,7 +4399,7 @@ class ProgressBar : Widget {
 	///
 	void setStepIncrement(int increment) {
 		version(win32_widgets)
-			SendMessageA(hwnd, PBM_SETSTEP, increment, 0);
+			SendMessageW(hwnd, PBM_SETSTEP, increment, 0);
 		else version(custom_widgets)
 			step = increment;
 		else static assert(false);
@@ -4404,7 +4408,7 @@ class ProgressBar : Widget {
 	///
 	void addToPosition(int amount) {
 		version(win32_widgets)
-			SendMessageA(hwnd, PBM_DELTAPOS, amount, 0);
+			SendMessageW(hwnd, PBM_DELTAPOS, amount, 0);
 		else version(custom_widgets)
 			setPosition(current + amount);
 		else static assert(false);
@@ -4413,7 +4417,7 @@ class ProgressBar : Widget {
 	///
 	void setPosition(int pos) {
 		version(win32_widgets)
-			SendMessageA(hwnd, PBM_SETPOS, pos, 0);
+			SendMessageW(hwnd, PBM_SETPOS, pos, 0);
 		else version(custom_widgets) {
 			current = pos;
 			if(current > max)
@@ -4426,7 +4430,7 @@ class ProgressBar : Widget {
 	///
 	void setRange(ushort min, ushort max) {
 		version(win32_widgets)
-			SendMessageA(hwnd, PBM_SETRANGE, 0, MAKELONG(min, max));
+			SendMessageW(hwnd, PBM_SETRANGE, 0, MAKELONG(min, max));
 		else version(custom_widgets) {
 			this.max = max;
 		}
@@ -4769,12 +4773,12 @@ version(win32_widgets)
 class MouseActivatedWidget : Widget {
 	bool isChecked() {
 		assert(hwnd);
-		return SendMessageA(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
+		return SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
 	}
 	void isChecked(bool state) {
 		assert(hwnd);
-		SendMessageA(hwnd, BM_SETCHECK, state ? BST_CHECKED : BST_UNCHECKED, 0);
+		SendMessageW(hwnd, BM_SETCHECK, state ? BST_CHECKED : BST_UNCHECKED, 0);
 
 	}
 
