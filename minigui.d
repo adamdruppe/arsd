@@ -3152,6 +3152,12 @@ class Window : Widget {
 		win.releaseInputGrab();
 	}
 
+	///
+	@scriptable
+	@property bool focused() {
+		return win.focused;
+	}
+
 	override Color backgroundColor() {
 		version(custom_widgets)
 			return windowBackgroundColor;
@@ -3548,18 +3554,24 @@ class Window : Widget {
 		return true;
 	}
 
-	///
+	/// Shows the window and runs the application event loop.
 	@scriptable
 	void loop() {
-		recomputeChildLayout();
-		focusedWidget = getFirstFocusable(this); // FIXME: autofocus?
-		win.show();
-		redraw();
+		show();
 		win.eventLoop(0);
 	}
 
+	private bool firstShow = true;
+
 	@scriptable
 	override void show() {
+		bool rd = false;
+		if(firstShow) {
+			firstShow = false;
+			recomputeChildLayout();
+			focusedWidget = getFirstFocusable(this); // FIXME: autofocus?
+			redraw();
+		}
 		win.show();
 		super.show();
 	}
@@ -6549,6 +6561,56 @@ struct icon { ushort id; }
 struct label { string label; }
 
 
+/++
+	Observes and allows inspection of an object via automatic gui
++/
+/// Group: generating_from_code
+ObjectInspectionWindow objectInspectionWindow(T)(T t) if(is(T == class)) {
+	return new ObjectInspectionWindowImpl!(T)(t);
+}
+
+class ObjectInspectionWindow : Window {
+	this(int a, int b, string c) {
+		super(a, b, c);
+	}
+
+	abstract void readUpdatesFromObject();
+}
+
+class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
+	T t;
+	this(T t) {
+		this.t = t;
+
+		super(300, 400, "ObjectInspectionWindow - " ~ T.stringof);
+
+		static foreach(memberName; __traits(derivedMembers, T)) {{
+			alias member = I!(__traits(getMember, t, memberName))[0];
+			alias type = typeof(member);
+			static if(is(type == int)) {
+				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				le.addEventListener("char", (Event ev) {
+					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
+						ev.preventDefault();
+				});
+				le.addEventListener(EventType.change, (Event ev) {
+					__traits(getMember, t, memberName) = cast(type) stringToLong(ev.stringValue);
+				});
+
+				updateMemberDelegates[memberName] = () {
+					le.content = toInternal!string(__traits(getMember, t, memberName));
+				};
+			}
+		}}
+	}
+
+	void delegate()[string] updateMemberDelegates;
+
+	override void readUpdatesFromObject() {
+		foreach(k, v; updateMemberDelegates)
+			v();
+	}
+};
 
 /++
 	Creates a dialog based on a data structure.
@@ -6601,7 +6663,7 @@ class AutomaticDialog(T) : Dialog {
 			} else static if(is(type : long)) {
 				auto le = new LabeledLineEdit(memberName ~ ": ", this);
 				le.addEventListener("char", (Event ev) {
-					if(ev.character < '0' || ev.character > '9')
+					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
 						ev.preventDefault();
 				});
 				le.addEventListener(EventType.change, (Event ev) {
@@ -6657,5 +6719,7 @@ private long stringToLong(string s) {
 			ret += ch - '0';
 		}
 	}
+	if(negative)
+		ret = -ret;
 	return ret;
 }

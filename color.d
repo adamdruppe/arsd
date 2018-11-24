@@ -40,11 +40,16 @@ private {
 		return accumulator + accumulator2 / count;
 	}
 
-	@trusted
+	package(arsd) @trusted
 	string toInternal(T)(int a) {
 		if(a == 0)
 			return "0";
 		char[] ret;
+		bool neg;
+		if(a < 0) {
+			neg = true;
+			a = -a;
+		}
 		while(a) {
 			ret ~= (a % 10) + '0';
 			a /= 10;
@@ -54,6 +59,9 @@ private {
 			ret[i] = ret[$ - i - 1];
 			ret[$ - i - 1] = c;
 		}
+		if(neg)
+			ret = "-" ~ ret;
+
 		return cast(string) ret;
 	}
 	string toInternal(T)(real a) {
