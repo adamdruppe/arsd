@@ -109,8 +109,14 @@ void loadMiniguiPublicClasses() {
 					Parameters!(__traits(getMember, Member, "__ctor")) params;
 
 					foreach(idx, param; params[0 .. $-1]) {
-						if(auto arg = paramNames[idx] in args)
-							params[idx] = to!(typeof(param))(*arg);
+						if(auto arg = paramNames[idx] in args) {
+							static if(is(typeof(param) == MemoryImage)) {
+
+							} else static if(is(typeof(param) == Color)) {
+								params[idx] = Color.fromString(*arg);
+							} else
+								params[idx] = to!(typeof(param))(*arg);
+						}
 					}
 
 					params[$-1] = parent;

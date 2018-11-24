@@ -1722,7 +1722,7 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 }
 
 import std.traits;
-class WrappedOpaque(T) : PrototypeObject if(isPointer!T) {
+class WrappedOpaque(T) : PrototypeObject if(isPointer!T || is(T == class)) {
 	T wrapped;
 	this(T t) {
 		wrapped = t;
@@ -1731,7 +1731,7 @@ class WrappedOpaque(T) : PrototypeObject if(isPointer!T) {
 		return wrapped;
 	}
 }
-class WrappedOpaque(T) : PrototypeObject if(!isPointer!T) {
+class WrappedOpaque(T) : PrototypeObject if(!isPointer!T && !is(T == class)) {
 	T* wrapped;
 	this(T t) {
 		wrapped = new T;
