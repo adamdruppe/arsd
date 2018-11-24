@@ -4389,13 +4389,13 @@ string makeUtf8StringFromWindowsString(wchar* str) {
 int findIndexOfZero(in wchar[] str) {
 	foreach(idx, wchar ch; str)
 		if(ch == 0)
-			return idx;
+			return cast(int) idx;
 	return cast(int) str.length;
 }
 int findIndexOfZero(in char[] str) {
 	foreach(idx, char ch; str)
 		if(ch == 0)
-			return idx;
+			return cast(int) idx;
 	return cast(int) str.length;
 }
 

@@ -3983,7 +3983,7 @@ class ToolBar : Widget {
 				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toWstringzInternal(action.label));
 
 			SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
-			SendMessageW(hwnd, TB_ADDBUTTONSW,       cast(WPARAM) buttons.length,      cast(LPARAM)buttons.ptr);
+			SendMessageW(hwnd, TB_ADDBUTTONSW, cast(WPARAM) buttons.length, cast(LPARAM)buttons.ptr);
 
 			SIZE size;
 			import core.sys.windows.commctrl;
