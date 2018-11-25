@@ -1835,6 +1835,17 @@ class ScrollableWidget : Widget {
 			horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
 			verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
 
+			// TOTAL HACKS
+			horizontalScrollBar.addEventListener("mousedown", (Event event) { event.preventDefault(); });
+			verticalScrollBar.addEventListener("mousedown", (Event event) { event.preventDefault(); });
+			horizontalScrollBar.addEventListener("mousemove", (Event event) { event.preventDefault(); });
+			verticalScrollBar.addEventListener("mousemove", (Event event) { event.preventDefault(); });
+
+			/*
+			clientAreaHolder = new FixedPosition(this);
+			clientArea = new ScrollableClientWidget(clientAreaHolder);
+			*/
+
 			horizontalScrollbarHolder.showing_ = false;
 			verticalScrollbarHolder.showing_ = false;
 
@@ -1894,6 +1905,11 @@ class ScrollableWidget : Widget {
 
 		VerticalScrollbar verticalScrollBar;
 		HorizontalScrollbar horizontalScrollBar;
+
+		/*
+		FixedPosition clientAreaHolder;
+		Widget clientArea;
+		*/
 	}
 
 	version(custom_widgets)
@@ -1909,6 +1925,13 @@ class ScrollableWidget : Widget {
 			verticalScrollbarHolder.height = this.height - (both ? horizontalScrollBar.minHeight() : 0) - 2 - 2;
 			verticalScrollbarHolder.x = this.width - verticalScrollBar.minWidth();
 			verticalScrollbarHolder.y = 0 + 2;
+
+			/*
+			clientAreaHolder.x = 0;
+			clientAreaHolder.y = 0;
+			clientAreaHolder.width = this.width - verticalScrollBar.width;
+			clientAreaHolder.height = this.height - horizontalScrollBar.height;
+			*/
 
 			if(contentWidth_ <= this.width)
 				scrollOrigin_.x = 0;
@@ -2182,7 +2205,7 @@ class ScrollableWidget : Widget {
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
 		if(force || redrawRequested) {
-			painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
+			painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, viewportWidth() - 4 /* border */, viewportHeight() - 4 /* border */);
 
 			//erase(painter); // we paintFrameAndBackground above so no need
 			paint(painter);
@@ -2198,6 +2221,17 @@ class ScrollableWidget : Widget {
 		}
 	}
 }
+
+/*
+class ScrollableClientWidget : Widget {
+	this(Widget parent) {
+		super(parent);
+	}
+	override void paint(ScreenPainter p) {
+		parent.paint(p);
+	}
+}
+*/
 
 ///
 abstract class ScrollbarBase : Widget {
@@ -5434,6 +5468,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	version(custom_widgets)
 	override void paintFrameAndBackground(ScreenPainter painter) {
 		this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
+		if(horizontalScrollbarHolder.showing && verticalScrollbarHolder.showing) {
+			// just paint over the lower-right corner
+			painter.outlineColor = windowBackgroundColor;
+			painter.fillColor = windowBackgroundColor;
+			painter.drawRectangle(Point(width - 16, height - 16), Size(16, 16));
+		}
 	}
 
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
@@ -5480,9 +5520,11 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		super.defaultEventHandler_mousedown(ev);
 		if(parentWindow.win.closed) return;
 		if(ev.button == MouseButton.left) {
+			if(textLayout.selectNone())
+				redraw();
 			textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
 			this.focus();
-			this.parentWindow.win.grabInput();
+			//this.parentWindow.win.grabInput();
 		} else if(ev.button == MouseButton.middle) {
 			static if(UsingSimpledisplayX11) {
 				getPrimarySelection(parentWindow.win, (txt) {
@@ -5498,7 +5540,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	version(custom_widgets)
 	override void defaultEventHandler_mouseup(Event ev) {
-		this.parentWindow.win.releaseInputGrab();
+		//this.parentWindow.win.releaseInputGrab();
 		super.defaultEventHandler_mouseup(ev);
 	}
 
