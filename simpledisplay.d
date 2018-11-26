@@ -8463,6 +8463,7 @@ version(X11) {
 	/// the library if you want to try something else. Surround that in `static if(UsingSimpledisplayX11)`
 	/// for cross-platform compatibility.
 	//__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
+	//__gshared string xfontstr = "-*-dejavu sans-medium-r-*-*-12-*-*-*-*-*-*-*";
 	__gshared string xfontstr = "-*-lucida-medium-r-normal-sans-12-*-*-*-*-*-*-*";
 	//__gshared string xfontstr = "-*-fixed-medium-r-*-*-14-*-*-*-*-*-*-*";
 
@@ -11851,6 +11852,21 @@ struct Visual
 	XFontSet XCreateFontSet(Display*, const char*, char***, int*, char**);
 	void XFreeFontSet(Display*, XFontSet);
 	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
+	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
+	struct XmbTextItem {
+		char* chars;
+		int nchars;
+		int delta;
+		XFontSet font_set;
+	}
+
+	void XDrawText(Display*, Drawable, GC, int, int, XTextItem*, int);
+	struct XTextItem {
+		char* chars;
+		int nchars;
+		int delta;
+		Font font;
+	}
 
 	int XSetFunction(Display*, GC, int);
 	enum {
