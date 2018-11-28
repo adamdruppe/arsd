@@ -4455,15 +4455,15 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 		scope(exit)
 			CloseClipboard();
 		EmptyClipboard();
-
-		auto handle = GlobalAlloc(GMEM_MOVEABLE, (text.length + 1) * 2); // zero terminated wchars
+		auto sz = sizeOfConvertedWstring(test, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
+		auto handle = GlobalAlloc(GMEM_MOVEABLE, sz * 2); // zero terminated wchars
 		if(handle is null) throw new Exception("GlobalAlloc");
 		if(auto data = cast(wchar*) GlobalLock(handle)) {
-			auto slice = data[0 .. text.length + 1];
+			auto slice = data[0 .. sz];
 			scope(failure)
 				GlobalUnlock(handle);
 
-			auto str = makeWindowsString(text, slice, WindowsStringConversionFlags.convertNewLines);
+			auto str = makeWindowsString(text, slice, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
 
 			GlobalUnlock(handle);
 			SetClipboardData(CF_UNICODETEXT, handle);
