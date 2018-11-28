@@ -4248,19 +4248,56 @@ struct WCharzBuffer {
 		} else static assert(0, "can only copy into wchar[n], not " ~ R.stringof);
 	}
 
-	this(in char[] data) {
+	/++
+		conversionFlags = [WindowsStringConversionFlags]
+	+/
+	this(in char[] data, int conversionFlags = 0) {
+		conversionFlags |= WindowsStringConversionFlags.zeroTerminate; // this ALWAYS zero terminates cuz of its name
+		auto sz = sizeOfConvertedWstring(data, conversionFlags);
+		if(sz > staticBuffer.length)
+			buffer = new wchar[](sz);
+		else
+			buffer = staticBuffer[];
+
+		buffer = makeWindowsString(data, buffer, conversionFlags);
+	}
+}
+
+version(Windows)
+int sizeOfConvertedWstring(in char[] s, int conversionFlags) {
+	int size = 0;
+
+	if(conversionFlags & WindowsStringConversionFlags.convertNewLines) {
+		// need to convert line endings, which means the length will get bigger.
+
+		// BTW I betcha this could be faster with some simd stuff.
+		char last;
+		foreach(char ch; s) {
+			if(ch == 10 && last != 13)
+				size++; // will add a 13 before it...
+			size++;
+			last = ch;
+		}
+	} else {
+		// no conversion necessary, just estimate based on length
 		/*
 			I don't think there's any string with a longer length
 			in code units when encoded in UTF-16 than it has in UTF-8.
 			This will probably over allocate, but that's OK.
 		*/
-		if(data.length + 1 > staticBuffer.length) // +1 cuz of zero terminator
-			buffer = new wchar[](data.length + 1);
-		else
-			buffer = staticBuffer[];
-
-		buffer = makeWindowsString(data, buffer);
+		size = cast(int) s.length;
 	}
+
+	if(conversionFlags & WindowsStringConversionFlags.zeroTerminate)
+		size++;
+
+	return size;
+}
+
+version(Windows)
+enum WindowsStringConversionFlags : int {
+	zeroTerminate = 1,
+	convertNewLines = 2,
 }
 
 version(Windows)
@@ -4329,20 +4366,30 @@ class ErrnoApiException : Exception {
 }
 
 version(Windows)
-wchar[] makeWindowsString(in char[] str, wchar[] buffer, bool zeroTerminate = true) {
+wchar[] makeWindowsString(in char[] str, wchar[] buffer, int conversionFlags = WindowsStringConversionFlags.zeroTerminate) {
 	if(str.length == 0)
 		return null;
-	auto got = MultiByteToWideChar(CP_UTF8, 0, str.ptr, cast(int) str.length, buffer.ptr, cast(int) buffer.length);
-	if(got == 0) {
-		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-			throw new Exception("not enough buffer");
-		else
-			throw new Exception("conversion"); // FIXME: GetLastError
+
+	int pos = 0;
+	dchar last;
+	foreach(dchar c; str) {
+		if(c <= 0xFFFF) {
+			if((conversionFlags & WindowsStringConversionFlags.convertNewLines) && c == 10 && last != 13)
+				buffer[pos++] = 13;
+			buffer[pos++] = cast(wchar) c;
+		} else if(c <= 0x10FFFF) {
+			buffer[pos++] = cast(wchar)((((c - 0x10000) >> 10) & 0x3FF) + 0xD800);
+			buffer[pos++] = cast(wchar)(((c - 0x10000) & 0x3FF) + 0xDC00);
+		}
+
+		last = c;
 	}
-	if(zeroTerminate) {
-		buffer[got] = 0;
+
+	if(conversionFlags & WindowsStringConversionFlags.zeroTerminate) {
+		buffer[pos] = 0;
 	}
-	return buffer[0 .. got];
+
+	return buffer[0 .. pos];
 }
 
 version(Windows)
@@ -4416,9 +4463,7 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 			scope(failure)
 				GlobalUnlock(handle);
 
-			auto str = makeWindowsString(text, slice);
-
-			// FIXME: CR/LF conversions?
+			auto str = makeWindowsString(text, slice, WindowsStringConversionFlags.convertNewLines);
 
 			GlobalUnlock(handle);
 			SetClipboardData(CF_UNICODETEXT, handle);

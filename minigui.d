@@ -5426,7 +5426,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	@property void content(string s) {
 		version(win32_widgets) {
-			WCharzBuffer bfr = WCharzBuffer(s);
+			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
 			SetWindowTextW(hwnd, bfr.ptr);
 		} else version(custom_widgets) {
 			textLayout.clear();
