@@ -1680,6 +1680,7 @@ class ListWidget : ScrollableWidget {
 	}
 
 	this(Widget parent = null) {
+		tabStop = false;
 		super(parent);
 	}
 
@@ -1829,36 +1830,15 @@ class ScrollableWidget : Widget {
 
 			createWin32Window(this, "arsd_minigui_ScrollableWidget"w, "", 
 				0|WS_CHILD|WS_VISIBLE|WS_HSCROLL|WS_VSCROLL, 0);
+			super(parent);
 		} else version(custom_widgets) {
-			horizontalScrollbarHolder = new FixedPosition(this);
-			verticalScrollbarHolder = new FixedPosition(this);
-			horizontalScrollBar = new HorizontalScrollbar(horizontalScrollbarHolder);
-			verticalScrollBar = new VerticalScrollbar(verticalScrollbarHolder);
-
-			// TOTAL HACKS
-			horizontalScrollBar.addEventListener("mousedown", (Event event) { event.preventDefault(); });
-			verticalScrollBar.addEventListener("mousedown", (Event event) { event.preventDefault(); });
-			horizontalScrollBar.addEventListener("mousemove", (Event event) { event.preventDefault(); });
-			verticalScrollBar.addEventListener("mousemove", (Event event) { event.preventDefault(); });
-
-			/*
-			clientAreaHolder = new FixedPosition(this);
-			clientArea = new ScrollableClientWidget(clientAreaHolder);
-			*/
-
-			horizontalScrollbarHolder.showing_ = false;
-			verticalScrollbarHolder.showing_ = false;
-
-			horizontalScrollBar.addEventListener(EventType.change, () {
-				horizontalScrollTo(horizontalScrollBar.position);
-			});
-			verticalScrollBar.addEventListener(EventType.change, () {
-				verticalScrollTo(verticalScrollBar.position);
-			});
+			outerContainer = new ScrollableContainerWidget(this, parent);
+			super(outerContainer);
 		} else static assert(0);
-
-		super(parent);
 	}
+
+	version(custom_widgets)
+		ScrollableContainerWidget outerContainer;
 
 	override void defaultEventHandler_click(Event event) {
 		if(event.button == MouseButton.wheelUp)
@@ -1899,74 +1879,8 @@ class ScrollableWidget : Widget {
 		super.defaultEventHandler_keydown(event);
 	}
 
-	version(custom_widgets) {
-		FixedPosition horizontalScrollbarHolder;
-		FixedPosition verticalScrollbarHolder;
 
-		VerticalScrollbar verticalScrollBar;
-		HorizontalScrollbar horizontalScrollBar;
-
-		/*
-		FixedPosition clientAreaHolder;
-		Widget clientArea;
-		*/
-	}
-
-	version(custom_widgets)
-	override void recomputeChildLayout() {
-		bool both = showingVerticalScroll && showingHorizontalScroll;
-		if(horizontalScrollbarHolder && verticalScrollbarHolder) {
-			horizontalScrollbarHolder.width = this.width - (both ? verticalScrollBar.minWidth() : 0);
-			horizontalScrollbarHolder.height = horizontalScrollBar.minHeight();
-			horizontalScrollbarHolder.x = 0;
-			horizontalScrollbarHolder.y = this.height - horizontalScrollBar.minHeight();
-
-			verticalScrollbarHolder.width = verticalScrollBar.minWidth();
-			verticalScrollbarHolder.height = this.height - (both ? horizontalScrollBar.minHeight() : 0) - 2 - 2;
-			verticalScrollbarHolder.x = this.width - verticalScrollBar.minWidth();
-			verticalScrollbarHolder.y = 0 + 2;
-
-			/*
-			clientAreaHolder.x = 0;
-			clientAreaHolder.y = 0;
-			clientAreaHolder.width = this.width - verticalScrollBar.width;
-			clientAreaHolder.height = this.height - horizontalScrollBar.height;
-			*/
-
-			if(contentWidth_ <= this.width)
-				scrollOrigin_.x = 0;
-			if(contentHeight_ <= this.height)
-				scrollOrigin_.y = 0;
-		}
-
-
-		super.recomputeChildLayout();
-
-		if(contentWidth_ <= this.width)
-			scrollOrigin_.x = 0;
-		if(contentHeight_ <= this.height)
-			scrollOrigin_.y = 0;
-
-		if(showingHorizontalScroll())
-			horizontalScrollbarHolder.showing = true;
-		else
-			horizontalScrollbarHolder.showing = false;
-		if(showingVerticalScroll())
-			verticalScrollbarHolder.showing = true;
-		else
-			verticalScrollbarHolder.showing = false;
-
-
-		verticalScrollBar.setViewableArea(this.viewportHeight());
-		verticalScrollBar.setMax(contentHeight);
-		verticalScrollBar.setPosition(this.scrollOrigin.y);
-
-		horizontalScrollBar.setViewableArea(this.viewportWidth());
-		horizontalScrollBar.setMax(contentWidth);
-		horizontalScrollBar.setPosition(this.scrollOrigin.x);
-
-
-	} else version(win32_widgets)
+	version(win32_widgets)
 	override void recomputeChildLayout() {
 		super.recomputeChildLayout();
 		SCROLLINFO info;
@@ -1983,7 +1897,7 @@ class ScrollableWidget : Widget {
 		info.nMin = 0;
 		info.nMax = contentWidth_;
 		SetScrollInfo(hwnd, SB_HORZ, &info, true);
-	} else static assert(0);
+	}
 
 
 
@@ -2040,13 +1954,13 @@ class ScrollableWidget : Widget {
 
 		version(custom_widgets) {
 			if(showingVerticalScroll || showingHorizontalScroll) {
-				recomputeChildLayout();
+				outerContainer.recomputeChildLayout();
 			}
 
 			if(showingVerticalScroll())
-				verticalScrollBar.redraw();
+				outerContainer.verticalScrollBar.redraw();
 			if(showingHorizontalScroll())
-				horizontalScrollBar.redraw();
+				outerContainer.horizontalScrollBar.redraw();
 		} else version(win32_widgets) {
 			recomputeChildLayout();
 		} else static assert(0);
@@ -2073,7 +1987,7 @@ class ScrollableWidget : Widget {
 			info.nPos = scrollOrigin_.y;
 			SetScrollInfo(hwnd, SB_VERT, &info, true);
 		} else version(custom_widgets) {
-			verticalScrollBar.setPosition(scrollOrigin_.y);
+			outerContainer.verticalScrollBar.setPosition(scrollOrigin_.y);
 		} else static assert(0);
 
 		redraw();
@@ -2099,7 +2013,7 @@ class ScrollableWidget : Widget {
 			info.nPos = scrollOrigin_.x;
 			SetScrollInfo(hwnd, SB_HORZ, &info, true);
 		} else version(custom_widgets) {
-			horizontalScrollBar.setPosition(scrollOrigin_.x);
+			outerContainer.horizontalScrollBar.setPosition(scrollOrigin_.x);
 		} else static assert(0);
 
 		redraw();
@@ -2205,7 +2119,7 @@ class ScrollableWidget : Widget {
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
 		if(force || redrawRequested) {
-			painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, viewportWidth() - 4 /* border */, viewportHeight() - 4 /* border */);
+			painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, width - 4, height - 4);
 
 			//erase(painter); // we paintFrameAndBackground above so no need
 			paint(painter);
@@ -2219,6 +2133,109 @@ class ScrollableWidget : Widget {
 			else
 				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
 		}
+	}
+}
+
+version(custom_widgets)
+private class ScrollableContainerWidget : Widget {
+
+	ScrollableWidget sw;
+
+	VerticalScrollbar verticalScrollBar;
+	HorizontalScrollbar horizontalScrollBar;
+
+	this(ScrollableWidget sw, Widget parent) {
+		this.sw = sw;
+
+		this.tabStop = false;
+
+		horizontalScrollBar = new HorizontalScrollbar(this);
+		verticalScrollBar = new VerticalScrollbar(this);
+
+		horizontalScrollBar.showing_ = false;
+		verticalScrollBar.showing_ = false;
+
+		horizontalScrollBar.addEventListener(EventType.change, () {
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener(EventType.change, () {
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+
+
+		super(parent);
+	}
+
+	// this is supposed to be basically invisible...
+	override int minWidth() { return sw.minWidth; }
+	override int minHeight() { return sw.minHeight; }
+	override int maxWidth() { return sw.maxWidth; }
+	override int maxHeight() { return sw.maxHeight; }
+	override int widthStretchiness() { return sw.widthStretchiness; }
+	override int heightStretchiness() { return sw.heightStretchiness; }
+	override int marginLeft() { return sw.marginLeft; }
+	override int marginRight() { return sw.marginRight; }
+	override int marginTop() { return sw.marginTop; }
+	override int marginBottom() { return sw.marginBottom; }
+	override int paddingLeft() { return sw.paddingLeft; }
+	override int paddingRight() { return sw.paddingRight; }
+	override int paddingTop() { return sw.paddingTop; }
+	override int paddingBottom() { return sw.paddingBottom; }
+	override void focus() { sw.focus(); }
+
+
+	override void recomputeChildLayout() {
+		if(sw is null) return;
+
+		bool both = sw.showingVerticalScroll && sw.showingHorizontalScroll;
+		if(horizontalScrollBar && verticalScrollBar) {
+			horizontalScrollBar.width = this.width - (both ? verticalScrollBar.minWidth() : 0);
+			horizontalScrollBar.height = horizontalScrollBar.minHeight();
+			horizontalScrollBar.x = 0;
+			horizontalScrollBar.y = this.height - horizontalScrollBar.minHeight();
+
+			verticalScrollBar.width = verticalScrollBar.minWidth();
+			verticalScrollBar.height = this.height - (both ? horizontalScrollBar.minHeight() : 0) - 2 - 2;
+			verticalScrollBar.x = this.width - verticalScrollBar.minWidth();
+			verticalScrollBar.y = 0 + 2;
+
+			sw.x = 0;
+			sw.y = 0;
+			sw.width = this.width - (verticalScrollBar.showing ? verticalScrollBar.width : 0);
+			sw.height = this.height - (horizontalScrollBar.showing ? horizontalScrollBar.height : 0);
+
+			if(sw.contentWidth_ <= this.width)
+				sw.scrollOrigin_.x = 0;
+			if(sw.contentHeight_ <= this.height)
+				sw.scrollOrigin_.y = 0;
+
+			horizontalScrollBar.recomputeChildLayout();
+			verticalScrollBar.recomputeChildLayout();
+			sw.recomputeChildLayout();
+		}
+
+		if(sw.contentWidth_ <= this.width)
+			sw.scrollOrigin_.x = 0;
+		if(sw.contentHeight_ <= this.height)
+			sw.scrollOrigin_.y = 0;
+
+		if(sw.showingHorizontalScroll())
+			horizontalScrollBar.showing = true;
+		else
+			horizontalScrollBar.showing = false;
+		if(sw.showingVerticalScroll())
+			verticalScrollBar.showing = true;
+		else
+			verticalScrollBar.showing = false;
+
+
+		verticalScrollBar.setViewableArea(sw.viewportHeight());
+		verticalScrollBar.setMax(sw.contentHeight);
+		verticalScrollBar.setPosition(sw.scrollOrigin.y);
+
+		horizontalScrollBar.setViewableArea(sw.viewportWidth());
+		horizontalScrollBar.setMax(sw.contentWidth);
+		horizontalScrollBar.setPosition(sw.scrollOrigin.x);
 	}
 }
 
@@ -5468,12 +5485,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	version(custom_widgets)
 	override void paintFrameAndBackground(ScreenPainter painter) {
 		this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
-		if(horizontalScrollbarHolder.showing && verticalScrollbarHolder.showing) {
-			// just paint over the lower-right corner
-			painter.outlineColor = windowBackgroundColor;
-			painter.fillColor = windowBackgroundColor;
-			painter.drawRectangle(Point(width - 16, height - 16), Size(16, 16));
-		}
 	}
 
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
