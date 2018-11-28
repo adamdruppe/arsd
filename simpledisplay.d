@@ -4455,7 +4455,7 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 		scope(exit)
 			CloseClipboard();
 		EmptyClipboard();
-		auto sz = sizeOfConvertedWstring(test, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
+		auto sz = sizeOfConvertedWstring(text, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
 		auto handle = GlobalAlloc(GMEM_MOVEABLE, sz * 2); // zero terminated wchars
 		if(handle is null) throw new Exception("GlobalAlloc");
 		if(auto data = cast(wchar*) GlobalLock(handle)) {
