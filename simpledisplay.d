@@ -13829,14 +13829,19 @@ mixin template ExperimentalTextComponent() {
 		/// ditto
 		void insert(dchar ch) {
 
-			deleteSelection();
+			bool selectionDeleted = false;
+			if(selectionStart !is selectionEnd) {
+				deleteSelection();
+				selectionDeleted = true;
+			}
 
 			if(ch == 127) {
 				delete_();
 				return;
 			}
 			if(ch == 8) {
-				backspace();
+				if(!selectionDeleted)
+					backspace();
 				return;
 			}
 

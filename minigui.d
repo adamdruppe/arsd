@@ -552,6 +552,8 @@ else version(custom_widgets) {
 	enum activeListXorColor = Color(255, 255, 127);
 	enum progressBarColor = Color(0, 0, 128);
 	enum activeMenuItemColor = Color(0, 0, 128);
+
+	enum scrollClickRepeatInterval = 50;
 }
 else static assert(false);
 	// these are used by horizontal rule so not just custom_widgets. for now at least.
@@ -565,6 +567,52 @@ private const(wchar)* toWstringzInternal(in char[] s) {
 		str ~= ch;
 	str ~= '\0';
 	return str.ptr;
+}
+
+void setClickRepeat(Widget w, int interval, int delay = 250) {
+	Timer timer;
+	int delayRemaining = delay / interval;
+	if(delayRemaining <= 1)
+		delayRemaining = 2;
+
+	immutable originalDelayRemaining = delayRemaining;
+
+	w.addDirectEventListener("mousedown", (Event ev) {
+		if(ev.srcElement !is w)
+			return;
+		if(timer !is null) {
+			timer.destroy();
+			timer = null;
+		}
+		delayRemaining = originalDelayRemaining;
+		timer = new Timer(interval, () {
+			if(delayRemaining > 0)
+				delayRemaining--;
+			else {
+				auto ev = new Event("click", w);
+				ev.sendDirectly();
+			}
+		});
+	});
+
+	w.addDirectEventListener("mouseup", (Event ev) {
+		if(ev.srcElement !is w)
+			return;
+		if(timer !is null) {
+			timer.destroy();
+			timer = null;
+		}
+	});
+
+	w.addDirectEventListener("mouseleave", (Event ev) {
+		if(ev.srcElement !is w)
+			return;
+		if(timer !is null) {
+			timer.destroy();
+			timer = null;
+		}
+	});
+
 }
 
 enum FrameStyle {
@@ -2537,8 +2585,10 @@ class HorizontalScrollbar : ScrollbarBase {
 		} else version(custom_widgets) {
 			auto vl = new HorizontalLayout(this);
 			auto leftButton = new ArrowButton(ArrowDirection.left, vl);
+			leftButton.setClickRepeat(scrollClickRepeatInterval);
 			thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.horizontal, vl);
 			auto rightButton = new ArrowButton(ArrowDirection.right, vl);
+			rightButton.setClickRepeat(scrollClickRepeatInterval);
 
 			leftButton.addEventListener(EventType.triggered, () {
 				informProgramThatUserChangedPosition(position - step());
@@ -2625,8 +2675,10 @@ class VerticalScrollbar : ScrollbarBase {
 		} else version(custom_widgets) {
 			auto vl = new VerticalLayout(this);
 			auto upButton = new ArrowButton(ArrowDirection.up, vl);
+			upButton.setClickRepeat(scrollClickRepeatInterval);
 			thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.vertical, vl);
 			auto downButton = new ArrowButton(ArrowDirection.down, vl);
+			downButton.setClickRepeat(scrollClickRepeatInterval);
 
 			upButton.addEventListener(EventType.triggered, () {
 				informProgramThatUserChangedPosition(position - step());
