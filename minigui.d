@@ -546,7 +546,7 @@ version(win32_widgets) {}
 else version(custom_widgets) {
 	enum windowBackgroundColor = Color(212, 212, 212); // used to be 192
 	enum activeTabColor = lightAccentColor;
-	enum hoveringColor = Color(215, 215, 215);
+	enum hoveringColor = Color(228, 228, 228);
 	enum buttonColor = windowBackgroundColor;
 	enum depressedButtonColor = darkAccentColor;
 	enum activeListXorColor = Color(255, 255, 127);
@@ -2304,6 +2304,9 @@ abstract class ScrollbarBase : Widget {
 	version(custom_widgets) {
 		abstract protected int getBarDim();
 		int thumbSize() {
+			if(viewableArea_ >= max_)
+				return getBarDim();
+
 			int res;
 			if(max_) {
 				res = getBarDim() * viewableArea_ / max_;
@@ -2315,13 +2318,14 @@ abstract class ScrollbarBase : Widget {
 		}
 
 		int thumbPosition() {
+			/*
+				viewableArea_ is the viewport height/width
+				position_ is where we are
+			*/
 			if(max_) {
-				auto res = position_ * viewableArea_ / max_;
-				if(res + thumbSize() > getBarDim())
-					res = getBarDim() - thumbSize();
-				if(res < 0)
-					res = 0;
-				return res;
+				if(position_ + viewableArea_ >= max_)
+					return getBarDim - thumbSize;
+				return getBarDim * position_ / max_;
 			}
 			return 0;
 		}
