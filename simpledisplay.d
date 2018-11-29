@@ -13498,6 +13498,9 @@ mixin template ExperimentalTextComponent() {
 					part.letterXs = null;
 
 					auto size = painter.textSize(part.text);
+					version(Windows)
+						if(part.text.length && part.text[$-1] == '\n')
+							size.height /= 2; // windows counts the new line at the end, but we don't want that
 
 					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
 
