@@ -3491,7 +3491,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				wc.lpfnWndProc = &WndProc;
 				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
 				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+					throw new WindowsApiException("RegisterClass");
 				registered = true;
 			}
 
@@ -7877,7 +7877,7 @@ version(Windows) {
 				wc.hIconSm = null;
 				wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
 				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass " ~ to!string(GetLastError()));
+					throw new WindowsApiException("RegisterClassExW");
 				knownWinClasses[cnamec] = true;
 			}
 
@@ -7945,10 +7945,10 @@ version(Windows) {
 					auto pixelformat = ChoosePixelFormat(hdc, &pfd);
 
 					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0)
-						throw new Exception("ChoosePixelFormat");
+						throw new WindowsApiException("ChoosePixelFormat");
 
 					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0)
-						throw new Exception("SetPixelFormat");
+						throw new WindowsApiException("SetPixelFormat");
 
 					if (sdpyOpenGLContextVersion && wglCreateContextAttribsARB is null) {
 						// windoze is idiotic: we have to have OpenGL context to get function addresses
@@ -7977,7 +7977,7 @@ version(Windows) {
 							ghRC = wglCreateContext(ghDC);
 						}
 						if (ghRC is null)
-							throw new Exception("wglCreateContextAttribsARB");
+							throw new WindowsApiException("wglCreateContextAttribsARB");
 					} else {
 						// try to do at least something
 						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
@@ -7985,7 +7985,7 @@ version(Windows) {
 							ghRC = wglCreateContext(ghDC);
 						}
 						if (ghRC is null)
-							throw new Exception("wglCreateContext");
+							throw new WindowsApiException("wglCreateContext");
 					}
 				}
 			}
@@ -8066,7 +8066,7 @@ version(Windows) {
 						rect.right = wind.minWidth + 100;
 						rect.bottom = wind.minHeight + 100;
 						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
-							throw new Exception("AdjustWindowRect");
+							throw new WindowsApiException("AdjustWindowRect");
 
 						mmi.ptMinTrackSize.x = rect.right - rect.left;
 						mmi.ptMinTrackSize.y = rect.bottom - rect.top;
@@ -8079,7 +8079,7 @@ version(Windows) {
 						rect.right = wind.maxWidth + 100;
 						rect.bottom = wind.maxHeight + 100;
 						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
-							throw new Exception("AdjustWindowRect");
+							throw new WindowsApiException("AdjustWindowRect");
 
 						mmi.ptMaxTrackSize.x = rect.right - rect.left;
 						mmi.ptMaxTrackSize.y = rect.bottom - rect.top;
@@ -8492,7 +8492,7 @@ version(Windows) {
 				null,
 				0);
 			if(handle is null)
-				throw new Exception("create image failed");
+				throw new WindowsApiException("create image failed");
 
 		}
 

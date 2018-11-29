@@ -546,12 +546,12 @@ version(win32_widgets) {}
 else version(custom_widgets) {
 	enum windowBackgroundColor = Color(212, 212, 212); // used to be 192
 	enum activeTabColor = lightAccentColor;
-	enum activeListXorColor = Color(255, 255, 0);
 	enum hoveringColor = Color(215, 215, 215);
 	enum buttonColor = windowBackgroundColor;
 	enum depressedButtonColor = darkAccentColor;
-	enum progressBarColor = Color.blue;
-	enum activeMenuItemColor = Color.blue;
+	enum activeListXorColor = Color(255, 255, 127);
+	enum progressBarColor = Color(0, 0, 128);
+	enum activeMenuItemColor = Color(0, 0, 128);
 }
 else static assert(false);
 	// these are used by horizontal rule so not just custom_widgets. for now at least.
@@ -1684,9 +1684,11 @@ class ListWidget : ScrollableWidget {
 		super(parent);
 	}
 
-	override void paint(ScreenPainter painter) {
+	override void paintFrameAndBackground(ScreenPainter painter) {
 		draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
+	}
 
+	override void paint(ScreenPainter painter) {
 		auto pos = Point(4, 4);
 		foreach(idx, option; options) {
 			painter.fillColor = Color.white;
@@ -3992,7 +3994,20 @@ class MainWindow : Window {
 class ClientAreaWidget : Widget {
 	this(Widget parent = null) {
 		super(parent);
+		//sa = new ScrollableWidget(this);
 	}
+	/*
+	ScrollableWidget sa;
+	override void addChild(Widget w, int position) {
+		if(sa is null)
+			super.addChild(w, position);
+		else {
+			sa.addChild(w, position);
+			sa.setContentSize(this.minWidth + 1, this.minHeight);
+			import std.stdio; writeln(sa.contentWidth, "x", sa.contentHeight);
+		}
+	}
+	*/
 }
 
 /**
@@ -4024,7 +4039,10 @@ class ToolBar : Widget {
 		tabStop = false;
 
 		version(win32_widgets) {
-			createWin32Window(this, "ToolbarWindow32"w, "", TBSTYLE_LIST|TBSTYLE_FLAT|TBSTYLE_TOOLTIPS);
+			// so i like how the flat thing looks on windows, but not on wine
+			// and eh, with windows visual styles enabled it looks cool anyway soooo gonna
+			// leave it commented
+			createWin32Window(this, "ToolbarWindow32"w, "", TBSTYLE_LIST|/*TBSTYLE_FLAT|*/TBSTYLE_TOOLTIPS);
 			
 			SendMessageW(hwnd, TB_SETEXTENDEDSTYLE, 0, 8/*TBSTYLE_EX_MIXEDBUTTONS*/);
 
