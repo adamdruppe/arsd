@@ -1,5 +1,15 @@
-// FIXME: if the taskbar dies, a notification icon is undocked... but never detects a new taskbar spawning
 // https://dpaste.dzfl.pl/7a77355acaec
+
+/*
+	Event Loop would be nices:
+
+	* add on idle - runs when nothing else happens
+	* send messages without a recipient window
+	* setTimeout
+	* setInterval
+
+*/
+
 /*
 	Text layout needs a lot of work. Plain drawText is useful but too
 	limited. It will need some kind of text context thing which it will
@@ -2629,6 +2639,21 @@ struct EventLoop {
 	static EventLoopImpl* impl;
 }
 
+version(linux)
+	void delegate(int, int) globalHupHandler;
+
+version(linux)
+	void makeNonBlocking(int fd) {
+		import fcntl = core.sys.posix.fcntl;
+		auto flags = fcntl.fcntl(fd, fcntl.F_GETFL, 0);
+		if(flags == -1)
+			throw new Exception("fcntl get");
+		flags |= fcntl.O_NONBLOCK;
+		auto s = fcntl.fcntl(fd, fcntl.F_SETFL, flags);
+		if(s == -1)
+			throw new Exception("fcntl set");
+	}
+
 struct EventLoopImpl {
 	int refcount;
 
@@ -2897,6 +2922,12 @@ struct EventLoopImpl {
 								// but for now it is just timer
 								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
 							}
+						}
+						if(flags & ep.EPOLLHUP) {
+							if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
+								(*pfr).hup(flags);
+							if(globalHupHandler)
+								globalHupHandler(fd, flags);
 						}
 						/+
 						} else {
@@ -4164,6 +4195,13 @@ class PosixFdReader {
 		static import ep = core.sys.linux.epoll;
 		onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
 	}
+
+	void hup(uint flags) {
+		if(onHup)
+			onHup();
+	}
+
+	void delegate() onHup;
 
 	int fd = -1;
 	__gshared PosixFdReader[int] mapping;

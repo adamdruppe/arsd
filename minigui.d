@@ -4998,6 +4998,16 @@ class MouseActivatedWidget : Widget {
 }
 else static assert(false);
 
+/*
+/++
+	Like the tablet thing, it would have a label, a description, and a switch slider thingy.
+
+	Basically the same as a checkbox.
++/
+class OnOffSwitch : MouseActivatedWidget {
+
+}
+*/
 
 ///
 class Checkbox : MouseActivatedWidget {
