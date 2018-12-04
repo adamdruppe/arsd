@@ -1644,12 +1644,7 @@ class HttpApiClient() {
 		if(uri[0] == '/')
 			uri = uri[1 .. $];
 
-import std.stdio; writeln(uri);
-writeln(urlBase);
-
 		auto u = Uri(uri).basedOn(Uri(urlBase));
-
-	writeln(u.toString());
 
 		auto req = httpClient.navigateTo(u, requestMethod);
 
