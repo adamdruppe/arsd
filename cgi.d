@@ -2408,6 +2408,9 @@ struct Uri {
 		if(idx > 0 && uri[idx] == ':') {
 			scheme = uri[0 .. idx];
 			idx++;
+		} else {
+			// we need to rewind; it found a / but no :, so the whole thing is prolly a path...
+			idx = 0;
 		}
 
 		if(idx + 2 < uri.length && uri[idx .. idx + 2] == "//") {
@@ -2545,6 +2548,8 @@ struct Uri {
 	unittest {
 		auto uri = Uri("test.html");
 		assert(uri.path == "test.html");
+		uri = Uri("path/1/lol");
+		assert(uri.path == "path/1/lol");
 		uri = Uri("http://me@example.com");
 		assert(uri.scheme == "http");
 		assert(uri.userinfo == "me");
