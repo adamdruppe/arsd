@@ -1086,8 +1086,8 @@ struct var {
 	}
 
 	public ref var opIndex(string name, string file = __FILE__, size_t line = __LINE__) {
-		// if name is numeric, we should convert to int
-		if(name.length && name[0] >= '0' && name[0] <= '9')
+		// if name is numeric, we should convert to int for arrays
+		if(name.length && name[0] >= '0' && name[0] <= '9' && this.payloadType() == Type.Array)
 			return opIndex(to!size_t(name), file, line);
 
 		if(this.payloadType() != Type.Object && name == "prototype")
@@ -1162,7 +1162,7 @@ struct var {
 	}
 
 	public ref var opIndexAssign(T)(T t, string name, string file = __FILE__, size_t line = __LINE__) {
-		if(name.appearsNumeric()) {
+		if(this.payloadType == Type.Array && name.appearsNumeric()) {
 			try {
 				auto i = to!size_t(name);
 				return opIndexAssign(t, i, file, line);
