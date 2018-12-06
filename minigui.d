@@ -1,5 +1,13 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// On Windows:
+// FIXME: various labels look broken in high contrast mode
+// FIXME: changing themes while the program is upen doesn't trigger a redraw
+
+// add note about manifest to documentation. also icons.
+
+// a pager control is just a horizontal scroll area just with arrows on the sides instead of a scroll bar
+
 // minigui needs to have a stdout redirection for gui mode on windows writeln
 
 // I kinda wanna do state reacting. sort of. idk tho
