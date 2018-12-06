@@ -365,6 +365,9 @@ struct Uri {
 		if(idx > 0 && uri[idx] == ':') {
 			scheme = uri[0 .. idx];
 			idx++;
+		} else {
+			// we need to rewind; it found a / but no :, so the whole thing is prolly a path...
+			idx = 0;
 		}
 
 		if(idx + 2 < uri.length && uri[idx .. idx + 2] == "//") {
@@ -1642,6 +1645,7 @@ class HttpApiClient() {
 			uri = uri[1 .. $];
 
 		auto u = Uri(uri).basedOn(Uri(urlBase));
+
 		auto req = httpClient.navigateTo(u, requestMethod);
 
 		if(oauth2Token.length)
@@ -1736,6 +1740,7 @@ class HttpApiClient() {
 				result ~= "=";
 				result ~= encodeComponent(part[1]);
 			}
+
 			return result;
 		}
 

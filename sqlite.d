@@ -43,14 +43,14 @@ import std.conv;
 	scope(exit))
 */
 
-Sqlite openDBAndCreateIfNotPresent(string filename, string sql, void delegate(Sqlite db) initalize = null){
+Sqlite openDBAndCreateIfNotPresent(string filename, string sql, void delegate(Sqlite db) initialize = null){
 	if(exists(filename))
 		return new Sqlite(filename);
 	else {
 		auto db = new Sqlite(filename);
 		db.exec(sql);
-		if(initalize !is null)
-			initalize(db);
+		if(initialize !is null)
+			initialize(db);
 		return db;
 	}
 }
