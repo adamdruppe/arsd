@@ -1,10 +1,14 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// FIXME: clear the corner of scrollbars if they pop up
+
 // minigui needs to have a stdout redirection for gui mode on windows writeln
 
 // I kinda wanna do state reacting. sort of. idk tho
 
 // need a viewer widget that works like a web page - arrows scroll down consistently
+
+// I want a nanovega widget, and a svg widget with some kind of event handlers attached to the inside.
 
 // FIXME: the menus should be a bit more discoverable, at least a single click to open the others instead of two.
 // and help info about menu items.
@@ -47,7 +51,7 @@
 	on Windows and does its own thing on Linux (Mac is not currently supported but
 	may be later, and should use native controls) to keep size down. The Linux
 	appearance is similar to Windows 95 and avoids using images to maintain network
-	efficiency on remote X connections.
+	efficiency on remote X connections, though you can customize that.
 	
 	minigui's only required dependencies are [arsd.simpledisplay] and [arsd.color].
 
@@ -2024,7 +2028,7 @@ class ScrollableWidget : Widget {
 	///
 	void verticalScrollTo(int pos) {
 		scrollOrigin_.y = pos;
-		if(scrollOrigin_.y + viewportHeight > contentHeight)
+		if(pos == int.max || (scrollOrigin_.y + viewportHeight > contentHeight))
 			scrollOrigin_.y = contentHeight - viewportHeight;
 
 		if(scrollOrigin_.y < 0)
@@ -2050,7 +2054,7 @@ class ScrollableWidget : Widget {
 	///
 	void horizontalScrollTo(int pos) {
 		scrollOrigin_.x = pos;
-		if(scrollOrigin_.x + viewportWidth > contentWidth)
+		if(pos == int.max || (scrollOrigin_.x + viewportWidth > contentWidth))
 			scrollOrigin_.x = contentWidth - viewportWidth;
 
 		if(scrollOrigin_.x < 0)
@@ -5562,8 +5566,22 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			auto cbb = textLayout.contentBoundingBox();
 			setContentSize(cbb.width, cbb.height);
 
-		} else
-			content = content ~ txt;
+		} else version(win32_widgets) {
+			// get the current selection
+			DWORD StartPos, EndPos;
+			SendMessageW( hwnd, EM_GETSEL, cast(WPARAM)(&StartPos), cast(WPARAM)(&EndPos) );
+
+			// move the caret to the end of the text
+			int outLength = GetWindowTextLengthW( hwndOutput );
+			SendMessageW( hwnd, EM_SETSEL, outLength, outLength );
+
+			// insert the text at the new caret position
+			WCharzBuffer bfr = WCharzBuffer(txt, WindowsStringConversionFlags.convertNewLines);
+			SendMessageW( hwnd, EM_REPLACESEL, TRUE, txt );
+
+			// restore the previous selection
+			SendMessageW( hwnd, EM_SETSEL, StartPos, EndPos );
+		} else static assert(0);
 	}
 
 	version(custom_widgets)
