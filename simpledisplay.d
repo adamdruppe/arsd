@@ -979,6 +979,14 @@ version(FreeBSD)
 version(Solaris)
 	version = X11;
 
+
+void featureNotImplemented()() {
+	version(allow_unimplemented_features)
+		throw new NotYetImplementedException();
+	else
+		static assert(0);
+}
+
 // these are so the static asserts don't trigger unless you want to
 // add support to it for an OS
 version(Windows)
@@ -1163,7 +1171,7 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 	} else version(Windows) {
 		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
 
-	} else static assert(0);
+	} else featureNotImplemented();
 
 	return null;
 	}
@@ -1303,7 +1311,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			display = XDisplayConnection.get(); // get initial display to not segfault
 		} else version(OSXCocoa)
 			throw new NotYetImplementedException();
-		else static assert(0);
+		else featureNotImplemented();
 		// FIXME: set the size correctly
 		_width = 1;
 		_height = 1;
@@ -1989,7 +1997,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			} else version(Windows) {
 				impl.currentCursor = ch;
 				SetCursor(ch); // redraw without waiting for mouse movement to update
-			} else static assert(0);
+			} else featureNotImplemented();
 		}
 
 	}
@@ -2577,7 +2585,7 @@ static struct GenericCursor {
 					case GenericCursorType.SizeWe: osId = 108 /* XC_sb_h_double_arrow */; break;
 				}
 
-			} else static assert(0);
+			} else featureNotImplemented();
 
 			mc = new MouseCursor(osId);
 		}
@@ -3975,7 +3983,7 @@ class Timer {
 				ev.data.fd = fd;
 				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
 			}
-		} else static assert(0);
+		} else featureNotImplemented();
 	}
 
 	/// Stop and destroy the timer object.
@@ -4007,7 +4015,7 @@ class Timer {
 				mapping.remove(fd);
 				fd = -1;
 			}
-		} else static assert(0);
+		} else featureNotImplemented();
 	}
 
 	~this() {
@@ -4041,7 +4049,7 @@ class Timer {
 			unix.read(fd, &val, val.sizeof); // gotta clear the pipe
 		} else version(Windows) {
 
-		} else static assert(0);
+		} else featureNotImplemented();
 
 		onPulse();
 	}
@@ -13605,6 +13613,9 @@ mixin template ExperimentalTextComponent() {
 			if(selectionStart is selectionEnd)
 				return; // no selection
 
+			if(selectionStart.inlineElement is null) return;
+			if(selectionEnd.inlineElement is null) return;
+
 			assert(selectionStart.inlineElement !is null);
 			assert(selectionEnd.inlineElement !is null);
 
@@ -13808,6 +13819,9 @@ mixin template ExperimentalTextComponent() {
 		void deleteSelection() {
 			if(selectionStart is selectionEnd)
 				return;
+
+			if(selectionStart.inlineElement is null) return;
+			if(selectionEnd.inlineElement is null) return;
 
 			assert(selectionStart.inlineElement !is null);
 			assert(selectionEnd.inlineElement !is null);
@@ -14081,7 +14095,7 @@ enum _NET_WM_STATE_ADD = 1;
 enum _NET_WM_STATE_REMOVE = 0;
 enum _NET_WM_STATE_TOGGLE = 2;
 
-/// X-specific
+/// X-specific. Use [SimpleWindow.requestAttention] instead for most casesl
 void demandAttention(SimpleWindow window, bool needs = true) {
 	auto display = XDisplayConnection.get();
 	auto atom = XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", true);
