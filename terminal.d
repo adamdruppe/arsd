@@ -1,4 +1,3 @@
-// FIXME: have a simple function that integrates with sdpy event loop. it can be a template
 // for optional dependency
 /++
 	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
@@ -68,7 +67,7 @@ module arsd.terminal;
 
 	This example will demonstrate the high-level getline interface.
 
-	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter. Then, the final line will be returned to your program, which the example will simply print back to the user.
+	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter.  Then, the final line will be returned to your program, which the example will simply print back to the user.
 +/
 unittest {
 	import arsd.terminal;
@@ -78,6 +77,8 @@ unittest {
 		string line = terminal.getline();
 		terminal.writeln("You wrote: ", line);
 	}
+
+	main; // exclude from docs
 }
 
 /++
@@ -88,6 +89,7 @@ unittest {
 +/
 unittest {
 	import arsd.terminal;
+
 	void main() {
 		auto terminal = Terminal(ConsoleOutputType.linear);
 		terminal.color(Color.green, Color.black);
@@ -95,6 +97,8 @@ unittest {
 		terminal.color(Color.DEFAULT, Color.DEFAULT);
 		terminal.writeln("And back to normal.");
 	}
+
+	main; // exclude from docs
 }
 
 /++
@@ -105,6 +109,7 @@ unittest {
 +/
 unittest {
 	import arsd.terminal;
+
 	void main() {
 		auto terminal = Terminal(ConsoleOutputType.linear);
 		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw);
@@ -113,6 +118,8 @@ unittest {
 		auto ch = input.getch();
 		terminal.writeln("You pressed ", ch);
 	}
+
+	main; // exclude from docs
 }
 
 /*
@@ -1587,6 +1594,16 @@ struct RealTimeConsoleInput {
 
 	void delegate(InputEvent) userEventHandler;
 
+	/++
+		If you are using [arsd.simpledisplay] and want terminal interop too, you can call
+		this function to add it to the sdpy event loop and get the callback called on new
+		input.
+
+		Note that you will probably need to call `terminal.flush()` when you are doing doing
+		output, as the sdpy event loop doesn't know to do that (yet). I will probably change
+		that in a future version, but it doesn't hurt to call it twice anyway, so I recommend
+		calling flush yourself in any code you write using this.
+	+/
 	void integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
 		this.userEventHandler = userEventHandler;
 		import arsd.simpledisplay;
