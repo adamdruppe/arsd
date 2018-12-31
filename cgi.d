@@ -354,6 +354,9 @@ public import std.string;
 public import std.stdio;
 public import std.conv;
 import std.uri;
+import std.uni;
+import std.algorithm.comparison;
+import std.algorithm.searching;
 import std.exception;
 import std.base64;
 static import std.algorithm;
@@ -667,7 +670,7 @@ class Cgi {
 				lookingForMethod = false;
 				lookingForUri = true;
 
-				if(arg.toLower() == "commandline")
+				if(arg.asLowerCase().equal("commandline"))
 					requestMethod = RequestMethod.CommandLine;
 				else
 					requestMethod = to!RequestMethod(arg.toUpper());
@@ -869,7 +872,7 @@ class Cgi {
 		lastEventId = getenv("HTTP_LAST_EVENT_ID");
 
 		auto ka = getenv("HTTP_CONNECTION");
-		if(ka.length && ka.toLower().indexOf("keep-alive") != -1)
+		if(ka.length && ka.asLowerCase().canFind("keep-alive"))
 			keepAliveRequested = true;
 
 		auto or = getenv("HTTP_ORIGIN");
@@ -1641,7 +1644,7 @@ class Cgi {
 				else if (name == "connection") {
 					if(value == "close" && closeConnection)
 						*closeConnection = true;
-					if(value.toLower().indexOf("keep-alive") != -1) {
+					if(value.asLowerCase().canFind("keep-alive")) {
 						keepAliveRequested = true;
 
 						// on http 1.0, the connection is closed by default,
@@ -4187,10 +4190,10 @@ version(cgi_with_websocket) {
 			"sec-websocket-key" in cgi.requestHeaders
 			&&
 			"connection" in cgi.requestHeaders &&
-				cgi.requestHeaders["connection"].toLower().indexOf("upgrade") != -1
+				cgi.requestHeaders["connection"].asLowerCase().canFind("upgrade")
 			&&
 			"upgrade" in cgi.requestHeaders &&
-				cgi.requestHeaders["upgrade"].toLower() == "websocket"
+				cgi.requestHeaders["upgrade"].asLowerCase().equal("websocket")
 			;
 	}
 
