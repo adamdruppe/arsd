@@ -2538,7 +2538,7 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 
 					return parseFunctionCall(tokens, new AssertKeyword(token));
 
-				break;
+				//break;
 				// declarations
 				case "var":
 					return parseVariableDeclaration(tokens, ";");

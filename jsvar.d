@@ -709,7 +709,7 @@ struct var {
 			case Type.String:
 			case Type.Function:
 				assert(0); // FIXME
-			break;
+			//break;
 			case Type.Integral:
 				return var(-this.get!long);
 			case Type.Floating:
