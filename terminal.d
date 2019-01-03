@@ -804,11 +804,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
 		defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
+
+		oldCp = GetConsoleOutputCP();
+		SetConsoleOutputCP(65001); // UTF-8
+
+		oldCpIn = GetConsoleCP();
+		SetConsoleCP(65001); // UTF-8
 	}
 
 	version(Windows) {
 		private Color defaultBackgroundColor = Color.black;
 		private Color defaultForegroundColor = Color.white;
+		UINT oldCp;
+		UINT oldCpIn;
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
@@ -842,6 +850,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		if(lineGetter !is null)
 			lineGetter.dispose();
+
+
+		SetConsoleOutputCP(oldCp);
+		SetConsoleCP(oldCpIn);
 
 		auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
 		SetConsoleActiveScreenBuffer(stdo);
