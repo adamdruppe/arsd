@@ -1,5 +1,16 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// So a window needs to have a selection, and that can be represented by a type. This is manipulated by various
+// functions like cut, copy, paste. Widgets can have a selection and that would assert teh selection ownership for
+// the window.
+
+// so what about context menus?
+
+// https://docs.microsoft.com/en-us/windows/desktop/Controls/about-custom-draw
+
+// FIXME: add a command search thingy built in and implement tip.
+// FIXME: omg omg what if menu functions have arguments and it can pop up a gui or command line script them?!
+
 // On Windows:
 // FIXME: various labels look broken in high contrast mode
 // FIXME: changing themes while the program is upen doesn't trigger a redraw
@@ -3910,8 +3921,10 @@ class MainWindow : Window {
 				.toolbar toolbar;
 				bool separator;
 				.accelerator accelerator;
+				.hotkey hotkey;
 				.icon icon;
 				string label;
+				string tip;
 				foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {
 					static if(is(typeof(attr) == .menu))
 						menu = attr;
@@ -3921,10 +3934,14 @@ class MainWindow : Window {
 						separator = true;
 					else static if(is(typeof(attr) == .accelerator))
 						accelerator = attr;
+					else static if(is(typeof(attr) == .hotkey))
+						hotkey = attr;
 					else static if(is(typeof(attr) == .icon))
 						icon = attr;
 					else static if(is(typeof(attr) == .label))
 						label = attr.label;
+					else static if(is(typeof(attr) == .tip))
+						tip = attr.tip;
 				}
 
 				if(menu !is .menu.init || toolbar !is .toolbar.init) {
@@ -5504,6 +5521,15 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		super(parent);
 	}
 
+	bool wordWrapEnabled_ = false;
+	void wordWrapEnabled(bool enabled) {
+		version(win32_widgets) {
+			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
+		} else version(custom_widgets) {
+			wordWrapEnabled_ = enabled; // FIXME
+		} else static assert(false);
+	}
+
 	override int minWidth() { return 16; }
 	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 7; }
@@ -5563,6 +5589,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	void addText(string txt) {
 		version(custom_widgets) {
+
 			textLayout.addText(txt);
 
 			{
@@ -5579,12 +5606,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			SendMessageW( hwnd, EM_GETSEL, cast(WPARAM)(&StartPos), cast(WPARAM)(&EndPos) );
 
 			// move the caret to the end of the text
-			int outLength = GetWindowTextLengthW( hwndOutput );
+			int outLength = GetWindowTextLengthW(hwnd);
 			SendMessageW( hwnd, EM_SETSEL, outLength, outLength );
 
 			// insert the text at the new caret position
 			WCharzBuffer bfr = WCharzBuffer(txt, WindowsStringConversionFlags.convertNewLines);
-			SendMessageW( hwnd, EM_REPLACESEL, TRUE, txt );
+			SendMessageW( hwnd, EM_REPLACESEL, TRUE, cast(int) bfr.ptr );
 
 			// restore the previous selection
 			SendMessageW( hwnd, EM_SETSEL, StartPos, EndPos );
@@ -6721,6 +6748,12 @@ struct icon { ushort id; }
 ///
 /// Group: generating_from_code
 struct label { string label; }
+///
+/// Group: generating_from_code
+struct hotkey { dchar ch; }
+///
+/// Group: generating_from_code
+struct tip { string tip; }
 
 
 /++
