@@ -22,6 +22,29 @@ void writePng(string filename, MemoryImage mi) {
 	std.file.write(filename, writePng(png));
 }
 
+///
+enum PngType {
+	greyscale = 0, /// The data must be `depth` bits per pixel
+	truecolor = 2, /// The data will be RGB triples, so `depth * 3` bits per pixel
+	indexed = 3, /// The data must be `depth` bits per pixel, with a palette attached. Use [writePng] with [IndexedImage] for this mode
+	greyscale_with_alpha = 4, /// The data must be (grey, alpha) byte pairs for each pixel. Thus `depth * 2` bits per pixel
+	truecolor_with_alpha = 6 /// The data must be RGBA quads for each pixel. Thus, `depth * 4` bits per pixel.
+}
+
+/// Saves an image from an existing array. Note that depth other than 8 may not be implemented yet.
+void writePng(string filename, const ubyte[] data, int width, int height, PngType type, ubyte depth = 8) {
+	PngHeader h;
+	h.width = width;
+	h.height = height;
+
+	auto png = blankPNG(h);
+	addImageDatastreamToPng(data, png);
+
+	import std.file;
+	std.file.write(filename, writePng(png));
+}
+
+
 /*
 //Here's a simple test program that shows how to write a quick image viewer with simpledisplay:
 
