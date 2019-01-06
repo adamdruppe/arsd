@@ -28,7 +28,7 @@ class HtmlConverter {
 				// The table stuff is removed right now because while it looks
 				// ok for test tables, it isn't working well for the emails I have
 				// - it handles data ok but not really nested layouts.
-				case "trfixme":
+				case "trlol":
 					auto children = element.childElements;
 
 					auto tdWidth = (width - cast(int)(children.length)*3) / cast(int)(children.length);
@@ -91,6 +91,16 @@ class HtmlConverter {
 						s ~= "\n";
 					}
 				break;
+				case "tr":
+					startBlock(2);
+					sinkChildren();
+					endBlock();
+				break;
+				case "td":
+					startBlock(0);
+					sinkChildren();
+					endBlock();
+				break;
 				case "a":
 					sinkChildren();
 					if(element.href != element.innerText) {
@@ -116,6 +126,8 @@ class HtmlConverter {
 					if(csc.length)
 						s ~= "\033[39m";
 					*/
+
+					sinkChildren();
 				break;
 				case "p":
 					startBlock();
@@ -139,20 +151,28 @@ class HtmlConverter {
 				break;
 				case "ul":
 					ulDepth++;
+					startBlock(2);
 					sinkChildren();
+					endBlock();
 					ulDepth--;
 				break;
 				case "ol":
 					olDepth++;
+					startBlock(2);
 					sinkChildren();
+					endBlock();
 					olDepth--;
 				break;
 				case "li":
 					startBlock();
 
 					//sink('\t', true);
-					sink(' ', true);
-					sink(' ', true);
+					/*
+					foreach(cnt; 0 .. olDepth + ulDepth) {
+						sink(' ', true);
+						sink(' ', true);
+					}
+					*/
 					if(olDepth)
 						sink('*', false);
 					if(ulDepth)
@@ -164,15 +184,33 @@ class HtmlConverter {
 					endBlock();
 				break;
 
-				case "h1", "h2":
+				case "dl":
+				case "dt":
+				case "dd":
+					startBlock(element.tagName == "dd" ? 2 : 0);
+					sinkChildren();
+					endBlock();
+				break;
+
+				case "h1":
+					startBlock();
+					sink('#', true);
+					sink('#', true);
+					sink(' ', true);
+					sinkChildren();
+					sink(' ', true);
+					sink('#', true);
+					sink('#', true);
+					endBlock();
+				break;
+				case "h2", "h3":
 					startBlock();
 					sinkChildren();
 					sink('\n', true);
 					foreach(dchar ch; element.innerText)
-						sink(element.tagName == "h1" ? '=' : '-', false);
+						sink(element.tagName == "h2" ? '=' : '-', false);
 					endBlock();
 				break;
-
 				case "hr":
 					startBlock();
 					foreach(i; 0 .. width / 4)
@@ -185,7 +223,6 @@ class HtmlConverter {
 				case "br":
 					sink('\n', true);
 				break;
-				case "tr":
 				case "div":
 					startBlock();
 
@@ -207,7 +244,7 @@ class HtmlConverter {
 					endBlock();
 				break;
 				case "pre":
-					startBlock();
+					startBlock(4);
 					foreach(child; element.childNodes)
 						htmlToText(child, true, width);
 					endBlock();
@@ -237,6 +274,10 @@ class HtmlConverter {
 		//auto stylesheet = new StyleSheet(readText("/var/www/dpldocs.info/experimental-docs/style.css"));
 		//stylesheet.apply(document);
 
+		return convert(start, wantWordWrap, wrapAmount);
+	}
+
+	string convert(Element start, bool wantWordWrap = true, int wrapAmount = 74) {
 		htmlToText(start, false, wrapAmount);
 		return s;
 	}
@@ -255,6 +296,12 @@ class HtmlConverter {
 	int lineLength;
 
 	void sink(dchar item, bool preformatted, int lineWidthOverride = int.min) {
+
+		if(needsIndent && item != '\n') {
+			lineLength += doIndent();
+			needsIndent = false;
+		}
+
 		int width = lineWidthOverride == int.min ? this.width : lineWidthOverride;
 		if(!preformatted && isWhite(item)) {
 			if(!justOutputWhitespace) {
@@ -282,8 +329,9 @@ class HtmlConverter {
 					auto os = s;
 					s = os[0 .. idx];
 					s ~= '\n';
-					s ~= os[idx + 1 .. $];
 					lineLength = cast(int)(os[idx+1..$].length);
+					lineLength += doIndent();
+					s ~= os[idx + 1 .. $];
 					broken = true;
 					break;
 				}
@@ -295,15 +343,17 @@ class HtmlConverter {
 			if(!broken) {
 				s ~= '\n';
 				lineLength = 0;
+				needsIndent = true;
 				justOutputWhitespace = true;
 			}
 
 		}
 
 
-		if(item == '\n')
+		if(item == '\n') {
 			lineLength = 0;
-		else
+			needsIndent = true;
+		} else
 			lineLength ++;
 
 
@@ -312,22 +362,45 @@ class HtmlConverter {
 			justOutputMargin = false;
 		}
 	}
-	void startBlock() {
+
+	int doIndent() {
+		int cnt = 0;
+		foreach(i; indentStack)
+			foreach(lol; 0 .. i) {
+				s ~= ' ';
+				cnt++;
+			}
+		return cnt;
+	}
+
+	int[] indentStack;
+	bool needsIndent = false;
+
+	void startBlock(int indent = 0) {
+
+		indentStack ~= indent;
+
 		if(!justOutputBlock) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputBlock = true;
 		}
 		if(!justOutputMargin) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputMargin = true;
 		}
 	}
 	void endBlock() {
+		if(indentStack.length)
+			indentStack = indentStack[0 .. $ - 1];
+
 		if(!justOutputMargin) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputMargin = true;
 		}
 	}
@@ -403,13 +476,11 @@ void penis() {
 				ele.innerText = "^" ~ ele.innerText;
 				ele.stripOut();
 			break;
-			/*
 			case "img":
 				string alt = ele.getAttribute("alt");
 				if(alt)
 					result ~= ele.alt;
 			break;
-			*/
 			default:
 				ele.stripOut();
 				goto again;
