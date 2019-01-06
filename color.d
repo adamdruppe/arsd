@@ -1081,6 +1081,79 @@ class TrueColorImage : MemoryImage {
 	}
 }
 
+/+
+/// An RGB array of image data.
+class TrueColorImageWithoutAlpha : MemoryImage {
+	struct Data {
+		ubyte[] bytes; // the data as rgba bytes. Stored left to right, top to bottom, no padding.
+	}
+
+	/// .
+	Data imageData;
+
+	int _width;
+	int _height;
+
+	override void clearInternal () nothrow @system {// @nogc {
+		import core.memory : GC;
+		// it is safe to call [GC.free] with `null` pointer.
+		GC.free(imageData.bytes.ptr); imageData.bytes = null;
+		_width = _height = 0;
+	}
+
+	/// .
+	override TrueColorImageWithoutAlpha clone() const pure nothrow @trusted {
+		auto n = new TrueColorImageWithoutAlpha(width, height);
+		n.imageData.bytes[] = this.imageData.bytes[]; // copy into existing array ctor allocated
+		return n;
+	}
+
+	/// .
+	override int width() const pure nothrow @trusted @nogc { return _width; }
+	///.
+	override int height() const pure nothrow @trusted @nogc { return _height; }
+
+	override Color getPixel(int x, int y) const pure nothrow @trusted @nogc {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = (y*_width+x) * 3;
+			return Color(imageData.bytes[0], imageData.bytes[1], imageData.bytes[2], 255);
+		} else {
+			return Color(0, 0, 0, 0);
+		}
+	}
+
+	override void setPixel(int x, int y, in Color clr) nothrow @trusted {
+		if (x >= 0 && y >= 0 && x < _width && y < _height) {
+			uint pos = y*_width+x;
+			//if (pos < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
+			// FIXME
+		}
+	}
+
+	/// .
+	this(int w, int h) pure nothrow @safe {
+		_width = w;
+		_height = h;
+		imageData.bytes = new ubyte[w*h*3];
+	}
+
+	/// Creates with existing data. The data pointer is stored here.
+	this(int w, int h, ubyte[] data) pure nothrow @safe {
+		_width = w;
+		_height = h;
+		assert(data.length == w * h * 3);
+		imageData.bytes = data;
+	}
+
+	///
+	override TrueColorImage getAsTrueColorImage() pure nothrow @safe {
+		// FIXME
+		//return this;
+	}
+}
++/
+
+
 alias extern(C) int function(const void*, const void*) @system Comparator;
 @trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
 	import core.stdc.stdlib;

@@ -1165,6 +1165,8 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 		auto display = XDisplayConnection.get;
 		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
 
+		// https://github.com/adamdruppe/arsd/issues/98
+
 		// FIXME: copy that shit
 
 		XDestroyImage(image);
