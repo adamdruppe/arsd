@@ -1171,12 +1171,49 @@ float[2] getDpi() {
 		auto display = XDisplayConnection.get;
 		auto screen = DefaultScreen(display);
 
-		// 25.4 millimeters in an inch...
-		dpi[0] = cast(float) DisplayWidth(display, screen) / DisplayWidthMM(display, screen) * 25.4;
-		dpi[1] = cast(float) DisplayHeight(display, screen) / DisplayHeightMM(display, screen) * 25.4;
+		void fallback() {
+			// 25.4 millimeters in an inch...
+			dpi[0] = cast(float) DisplayWidth(display, screen) / DisplayWidthMM(display, screen) * 25.4;
+			dpi[1] = cast(float) DisplayHeight(display, screen) / DisplayHeightMM(display, screen) * 25.4;
+		}
+
+		char* resourceString = XResourceManagerString(display);
+		XrmInitialize();
+
+		auto db = XrmGetStringDatabase(resourceString);
+
+		if (resourceString) {
+			XrmValue value;
+			char* type;
+			if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
+				if (value.addr) {
+					import core.stdc.stdlib;
+					dpi[0] = atof(cast(char*) value.addr);
+					dpi[1] = dpi[0];
+				} else {
+					fallback();
+				}
+			} else {
+				fallback();
+			}
+		} else {
+			fallback();
+		}
 	}
 
 	return dpi;
+}
+
+version(X11) {
+	extern(C) char* XResourceManagerString(Display*);
+	extern(C) void XrmInitialize();
+	extern(C) XrmDatabase XrmGetStringDatabase(char* data);
+	extern(C) bool XrmGetResource(XrmDatabase, const char*, const char*, char**, XrmValue*);
+	alias XrmDatabase = void*;
+	struct XrmValue {
+		uint size;
+		void* addr;
+	}
 }
 
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
