@@ -4698,6 +4698,99 @@ interface EventIoServer {
 	void fileClosed(int fd);
 }
 
+// the sink should buffer it
+private void serialize(T)(scope void delegate(ubyte[]) sink, T t) {
+	static if(is(T == struct)) {
+		foreach(member; __traits(allMembers, T))
+			serialize(sink, __traits(getMember, t, member));
+	} else static if(is(T : int)) {
+		// no need to think of endianness just because this is only used
+		// for local, same-machine stuff anyway. thanks private lol
+		sink((cast(ubyte*) &t)[0 .. t.sizeof]);
+	} else static if(is(T == string) || is(T : const(ubyte)[])) {
+		// these are common enough to optimize
+		int len = cast(int) t.length; // want length consistent size tho, in case 32 bit program sends to 64 bit server, etc.
+		sink((cast(ubyte*) &len)[0 .. int.sizeof]);
+		sink(cast(ubyte[]) t[]);
+	} else static if(is(T : A[], A)) {
+		// generic array is less optimal but still prolly ok
+		static assert(0, T.stringof);
+		int len = cast(int) t.length;
+		sink((cast(ubyte*) &len)[0 .. int.sizeof]);
+		foreach(item; t)
+			serialize(item);
+	} else static assert(0, T.stringof);
+}
+
+private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void delegate(T) dg) {
+	static if(is(T == struct)) {
+		T t;
+		foreach(member; __traits(allMembers, T))
+			deserialize(get, (T mbr) { __traits(getMember, t, member) = mbr; });
+		dg(t);
+	} else static if(is(T : int)) {
+		// no need to think of endianness just because this is only used
+		// for local, same-machine stuff anyway. thanks private lol
+		T t;
+		auto data = get(t.sizeof);
+		t = (cast(T[]) data)[0];
+		dg(t);
+	} else static if(is(T == string) || is(T : const(ubyte)[])) {
+		// these are common enough to optimize
+		int len;
+		auto data = get(len.sizeof);
+		len = (cast(int[]) data)[0];
+
+		/*
+		typeof(T[0])[2000] stackBuffer;
+		T buffer;
+
+		if(len < stackBuffer.length)
+			buffer = stackBuffer[0 .. len];
+		else
+			buffer = new T(len);
+
+		data = get(len * typeof(T[0]).sizeof);
+		*/
+
+		T t = cast(T) get(len * typeof(T[0]).sizeof);
+
+		dg(t);
+
+	} else static assert(0, T.stringof);
+}
+
+unittest {
+	serialize((ubyte[] b) { assert(b == [0, 0, 0, 1]); }, 1);
+}
+
+
+interface MyLocalServer {}
+
+MyLocalServer connectToLocalServer() { return null; } // return an auto-generated version that RPCs to the interface
+
+class MyLocalServerImpl : MyLocalServer {} // handle the calls.
+
+
+/*
+	FIXME:
+		add a version command line arg
+		version data in the library
+		management gui as external program
+
+		at server with event_fd for each run
+		use .mangleof in the at function name
+
+		i think the at server will have to:
+			pipe args to the child
+			collect child output for logging
+			get child return value for logging
+
+			on windows timers work differently. idk how to best combine with the io stuff.
+
+			will have to have dump and restore too, so i can restart without losing stuff.
+*/
+
 final class BasicDataServer : EventIoServer {
 	static struct ClientConnection {
 	/+
@@ -4714,7 +4807,7 @@ final class BasicDataServer : EventIoServer {
 
 	protected:
 
-	void handleLocalConnectionData(IoOp* op, int receivedFd);
+	void handleLocalConnectionData(IoOp* op, int receivedFd) {}
 
 	void handleLocalConnectionClose(IoOp* op) {} // doesn't really matter, this is a fairly stateless go
 	void handleLocalConnectionComplete(IoOp* op) {} // again, irrelevant
@@ -4741,6 +4834,14 @@ final class BasicDataServer : EventIoServer {
 
 		char[16] sessionId;
 		Operation operation;
+
+		ushort dataType;
+		/*
+			int
+			float
+			string
+			ubyte[]
+		*/
 
 		int keyLength;
 		char[128] keyBuffer;

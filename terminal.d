@@ -3606,7 +3606,7 @@ struct ScrollbackBuffer {
 	}
 
 	void clear() {
-		lines = null;
+		lines.clear();
 		clickRegions = null;
 		scrollbackPosition = 0;
 	}
@@ -3708,9 +3708,87 @@ struct ScrollbackBuffer {
 		}
 	}
 
-	// FIXME: limit scrollback lines.length
+	static struct CircularBuffer(T) {
+		T[] backing;
 
-	Line[] lines;
+		enum maxScrollback = 8192; // as a power of 2, i hope the compiler optimizes the % below to a simple bit mask...
+
+		int start;
+		int length_;
+
+		void clear() {
+			backing = null;
+			start = 0;
+			length_ = 0;
+		}
+
+		size_t length() {
+			return length_;
+		}
+
+		void opOpAssign(string op : "~")(T line) {
+			if(length_ < maxScrollback) {
+				backing.assumeSafeAppend();
+				backing ~= line;
+				length_++;
+			} else {
+				backing[start] = line;
+				start++;
+				if(start == maxScrollback)
+					start = 0;
+			}
+		}
+
+		T opIndex(int idx) {
+			return backing[(start + idx) % maxScrollback];
+		}
+		T opIndex(Dollar idx) {
+			return backing[(start + (length + idx.offsetFromEnd)) % maxScrollback];
+		}
+
+		CircularBufferRange opSlice(int startOfIteration, Dollar end) {
+			return CircularBufferRange(&this, startOfIteration, cast(int) length - startOfIteration + end.offsetFromEnd);
+		}
+		CircularBufferRange opSlice(int startOfIteration, int end) {
+			return CircularBufferRange(&this, startOfIteration, end - startOfIteration);
+		}
+		CircularBufferRange opSlice() {
+			return CircularBufferRange(&this, 0, cast(int) length);
+		}
+
+		static struct CircularBufferRange {
+			CircularBuffer* item;
+			int position;
+			int remaining;
+			this(CircularBuffer* item, int startOfIteration, int count) {
+				this.item = item;
+				position = startOfIteration;
+				remaining = count;
+			}
+
+			T front() { return (*item)[position]; }
+			bool empty() { return remaining <= 0; }
+			void popFront() {
+				position++;
+				remaining--;
+			}
+
+			T back() { return (*item)[remaining - 1 - position]; }
+			void popBack() {
+				remaining--;
+			}
+		}
+
+		static struct Dollar {
+			int offsetFromEnd;
+			Dollar opBinary(string op : "-")(int rhs) {
+				return Dollar(offsetFromEnd - rhs);
+			}
+		}
+		Dollar opDollar() { return Dollar(0); }
+	}
+
+	CircularBuffer!Line lines;
 	string name;
 
 	int x, y, width, height;
@@ -3840,7 +3918,7 @@ struct ScrollbackBuffer {
 		// second pass: actually draw it
 		int linePos = remaining;
 
-		foreach(idx, line; lines[start .. start + howMany]) {
+		foreach(line; lines[start .. start + howMany]) {
 			int written = 0;
 
 			if(linePos < 0) {
