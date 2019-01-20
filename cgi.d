@@ -3278,7 +3278,11 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(maxContentLength);
-			cgi._outputFileHandle = 1; // stdout
+			version(Posix)
+				cgi._outputFileHandle = 1; // stdout
+			else version(Windows)
+				cgi._outputFileHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+			else static assert(0);
 		} catch(Throwable t) {
 			stderr.writeln(t.msg);
 			// the real http server will probably handle this;
@@ -4508,7 +4512,7 @@ void sendToWebsocketServer(string content, string group) {
 
 
 void runEventServer()() {
-	runAddonServer("/tmp/arsd_cgi_event_server", new EventSourceServer());
+	runAddonServer("/tmp/arsd_cgi_event_server", new EventSourceServerImplementation());
 }
 
 version(Posix) {
@@ -4579,7 +4583,7 @@ void closeLocalServerConnection(LocalServerConnectionHandle handle) {
 }
 
 void runSessionServer()() {
-	assert(0, "not implemented");
+	runAddonServer("/tmp/arsd_session_server", new BasicDataServerImplementation());
 }
 
 version(Posix)
@@ -4722,11 +4726,12 @@ private void serialize(T)(scope void delegate(ubyte[]) sink, T t) {
 	} else static assert(0, T.stringof);
 }
 
+// all may be stack buffers, so use cautio
 private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void delegate(T) dg) {
 	static if(is(T == struct)) {
 		T t;
 		foreach(member; __traits(allMembers, T))
-			deserialize(get, (T mbr) { __traits(getMember, t, member) = mbr; });
+			deserialize!(typeof(__traits(getMember, T, member)))(get, (mbr) { __traits(getMember, t, member) = mbr; });
 		dg(t);
 	} else static if(is(T : int)) {
 		// no need to think of endianness just because this is only used
@@ -4753,7 +4758,7 @@ private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void deleg
 		data = get(len * typeof(T[0]).sizeof);
 		*/
 
-		T t = cast(T) get(len * typeof(T[0]).sizeof);
+		T t = cast(T) get(len * cast(int) typeof(T.init[0]).sizeof);
 
 		dg(t);
 
@@ -4761,16 +4766,202 @@ private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void deleg
 }
 
 unittest {
-	serialize((ubyte[] b) { assert(b == [0, 0, 0, 1]); }, 1);
+	serialize((ubyte[] b) {
+		deserialize!int( sz => b[0 .. sz], (t) { assert(t == 1); });
+	}, 1);
+	serialize((ubyte[] b) {
+		deserialize!int( sz => b[0 .. sz], (t) { assert(t == 56674); });
+	}, 56674);
+	ubyte[1000] buffer;
+	int bufferPoint;
+	void add(ubyte[] b) {
+		buffer[bufferPoint ..  bufferPoint + b.length] = b[];
+		bufferPoint += b.length;
+	}
+	ubyte[] get(int sz) {
+		auto b = buffer[bufferPoint .. bufferPoint + sz];
+		bufferPoint += sz;
+		return b;
+	}
+	serialize(&add, "test here");
+	bufferPoint = 0;
+	deserialize!string(&get, (t) { assert(t == "test here"); });
+	bufferPoint = 0;
+
+	struct Foo {
+		int a;
+		ubyte c;
+		string d;
+	}
+	serialize(&add, Foo(403, 37, "amazing"));
+	bufferPoint = 0;
+	deserialize!Foo(&get, (t) {
+		assert(t.a == 403);
+		assert(t.c == 37);
+		assert(t.d == "amazing");
+	});
+	bufferPoint = 0;
+}
+
+/*
+	Here's the way the RPC interface works:
+
+	You define the interface that lists the functions you can call on the remote process.
+	The interface may also have static methods for convenience. These forward to a singleton
+	instance of an auto-generated class, which actually sends the args over the pipe.
+
+	An impl class actually implements it. A receiving server deserializes down the pipe and
+	calls methods on the class.
+
+	I went with the interface to get some nice compiler checking and documentation stuff.
+
+	I could have skipped the interface and just implemented it all from the server class definition
+	itself, but then the usage may call the method instead of rpcing it; I just like having the user
+	interface and the implementation separate so you aren't tempted to `new impl` to call the methods.
+
+
+	I fiddled with newlines in the mixin string to ensure the assert line numbers matched up to the source code line number. Idk why dmd didn't do this automatically, but it was important to me.
+
+	Realistically though the bodies would just be
+		connection.call(this.mangleof, args...) sooooo.
+
+	FIXME: overloads aren't supported
+*/
+
+mixin template ImplementRpcClientInterface(T, string serverPath) {
+	static import std.traits;
+
+	// derivedMembers on an interface seems to give exactly what I want: the virtual functions we need to implement. so I am just going to use it directly without more filtering.
+	static foreach(idx, member; __traits(derivedMembers, T)) {
+	static if(__traits(isVirtualFunction, __traits(getMember, T, member)))
+		mixin( q{
+		std.traits.ReturnType!(__traits(getMember, T, member))
+		} ~ member ~ q{(std.traits.Parameters!(__traits(getMember, T, member)) params)
+		{
+			SerializationBuffer buffer;
+			auto i = cast(ushort) idx;
+			serialize(&buffer.sink, i);
+			serialize(&buffer.sink, __traits(getMember, T, member).mangleof);
+			foreach(param; params)
+				serialize(&buffer.sink, param);
+
+			auto sendable = buffer.sendable;
+
+			version(Posix) {{
+				auto ret = send(connectionHandle, sendable.ptr, sendable.length, 0);
+				assert(ret == sendable.length);
+			}} // FIXME Windows impl
+
+			static if(!is(typeof(return) == void)) {
+				// there is a return value; we need to wait for it too
+				version(Posix) {
+					ubyte[3000] revBuffer;
+					auto ret = recv(connectionHandle, revBuffer.ptr, revBuffer.length, 0);
+					auto got = revBuffer[0 .. ret];
+
+					int dataLocation;
+					ubyte[] grab(int sz) {
+						auto d = got[dataLocation .. dataLocation + sz];
+						dataLocation += sz;
+						return d;
+					}
+
+					typeof(return) retu;
+					deserialize!(typeof(return))(&grab, (a) { retu = a; });
+					return retu;
+				} else {
+					// FIXME Windows impl
+					return typeof(return).init;
+				}
+
+			}
+		}});
+	}
+
+	private static typeof(this) singletonInstance;
+	private LocalServerConnectionHandle connectionHandle;
+
+	static typeof(this) connection() {
+		if(singletonInstance is null) {
+			singletonInstance = new typeof(this)();
+			singletonInstance.connect();
+		}
+		return singletonInstance;
+	}
+
+	void connect() {
+		connectionHandle = openLocalServerConnection(serverPath);
+	}
+
+	void disconnect() {
+		closeLocalServerConnection(connectionHandle);
+	}
+}
+
+void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(is(Class : Interface)) {
+	ushort calledIdx;
+	string calledFunction;
+
+	int dataLocation;
+	ubyte[] grab(int sz) {
+		auto d = data[dataLocation .. dataLocation + sz];
+		dataLocation += sz;
+		return d;
+	}
+
+	again:
+
+	deserialize!ushort(&grab, (a) { calledIdx = a; });
+	deserialize!string(&grab, (a) { calledFunction = a; });
+
+	import std.traits;
+
+	sw: switch(calledIdx) {
+		static foreach(idx, memberName; __traits(derivedMembers, Interface))
+		static if(__traits(isVirtualFunction, __traits(getMember, Interface, memberName))) {
+			case idx:
+				assert(calledFunction == __traits(getMember, Interface, memberName).mangleof);
+
+				Parameters!(__traits(getMember, Interface, memberName)) params;
+				foreach(ref param; params)
+					deserialize!(typeof(param))(&grab, (a) { param = a; });
+
+				static if(is(ReturnType!(__traits(getMember, Interface, memberName)) == void)) {
+					__traits(getMember, this_, memberName)(params);
+				} else {
+					auto ret = __traits(getMember, this_, memberName)(params);
+					SerializationBuffer buffer;
+					serialize(&buffer.sink, ret);
+
+					auto sendable = buffer.sendable;
+
+					version(Posix) {
+						auto r = send(fd, sendable.ptr, sendable.length, 0);
+						assert(r == sendable.length);
+					} // FIXME Windows impl
+				}
+			break sw;
+		}
+		default: assert(0);
+	}
+
+	if(dataLocation != data.length)
+		goto again;
 }
 
 
-interface MyLocalServer {}
+private struct SerializationBuffer {
+	ubyte[2048] bufferBacking;
+	int bufferLocation;
+	void sink(scope ubyte[] data) {
+		bufferBacking[bufferLocation .. bufferLocation + data.length] = data[];
+		bufferLocation += data.length;
+	}
 
-MyLocalServer connectToLocalServer() { return null; } // return an auto-generated version that RPCs to the interface
-
-class MyLocalServerImpl : MyLocalServer {} // handle the calls.
-
+	ubyte[] sendable() {
+		return bufferBacking[0 .. bufferLocation];
+	}
+}
 
 /*
 	FIXME:
@@ -4791,68 +4982,80 @@ class MyLocalServerImpl : MyLocalServer {} // handle the calls.
 			will have to have dump and restore too, so i can restart without losing stuff.
 */
 
-final class BasicDataServer : EventIoServer {
-	static struct ClientConnection {
-	/+
-		The session server api should prolly be:
+/++
 
-		setSessionValues
-		getSessionValues
-		changeSessionId
-		createSession
-		destroySesson
-	+/
++/
+interface BasicDataServer {
+	///
+	void createSession(string sessionId, int lifetime);
+	///
+	void renewSession(string sessionId, int lifetime);
+	///
+	void destroySession(string sessionId);
+	///
+	void renameSession(string oldSessionId, string newSessionId);
 
+	///
+	void setSessionData(string sessionId, string dataKey, string dataValue);
+	///
+	string getSessionData(string sessionId, string dataKey);
+
+	///
+	static BasicDataServerConnection connection() {
+		return BasicDataServerConnection.connection();
 	}
+}
+
+class BasicDataServerConnection : BasicDataServer {
+	mixin ImplementRpcClientInterface!(BasicDataServer, "/tmp/arsd_session_server");
+}
+
+final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
+
+	void createSession(string sessionId, int lifetime) {
+		sessions[sessionId.idup] = Session(lifetime);
+	}
+	void destroySession(string sessionId) {
+		sessions.remove(sessionId);
+	}
+	void renewSession(string sessionId, int lifetime) {
+		sessions[sessionId].lifetime = lifetime;
+	}
+	void renameSession(string oldSessionId, string newSessionId) {
+		sessions[newSessionId.idup] = sessions[oldSessionId];
+		sessions.remove(oldSessionId);
+	}
+	void setSessionData(string sessionId, string dataKey, string dataValue) {
+		sessions[sessionId].values[dataKey.idup] = dataValue.idup;
+	}
+	string getSessionData(string sessionId, string dataKey) {
+		return sessions[sessionId].values[dataKey];
+	}
+
 
 	protected:
 
-	void handleLocalConnectionData(IoOp* op, int receivedFd) {}
+	struct Session {
+		int lifetime;
+
+		string[string] values;
+	}
+
+	Session[string] sessions;
+
+	void handleLocalConnectionData(IoOp* op, int receivedFd) {
+		auto data = op.usedBuffer;
+		dispatchRpcServer!BasicDataServer(this, data, op.fd);
+	}
 
 	void handleLocalConnectionClose(IoOp* op) {} // doesn't really matter, this is a fairly stateless go
 	void handleLocalConnectionComplete(IoOp* op) {} // again, irrelevant
 	void wait_timeout() {}
-	void fileClosed(int fd) { assert(0); }
-
-	private:
-
-	static struct SendableDataRequest {
-		enum Operation : ubyte {
-			noop = 0,
-			// on data itself
-			get,
-			set,
-			append,
-			increment,
-			decrement,
-
-			// on the session
-			createSession,
-			changeSessionId,
-			destroySession,
-		}
-
-		char[16] sessionId;
-		Operation operation;
-
-		ushort dataType;
-		/*
-			int
-			float
-			string
-			ubyte[]
-		*/
-
-		int keyLength;
-		char[128] keyBuffer;
-
-		int dataLength;
-		ubyte[1000] dataBuffer;
-	}
+	void fileClosed(int fd) {} // stateless so irrelevant
 }
 
 ///
-final class EventSourceServer : EventIoServer {
+interface EventSourceServer {
 	/++
 		sends this cgi request to the event server so it will be fed events. You should not do anything else with the cgi object after this.
 
@@ -4898,7 +5101,7 @@ final class EventSourceServer : EventIoServer {
 		if(isInvalidHandle(fd))
 			throw new Exception("bad fd from cgi!");
 
-		SendableEventConnection sec;
+		EventSourceServerImplementation.SendableEventConnection sec;
 		sec.populate(cgi.responseChunked, eventUrl, lastEventId);
 
 		version(Posix) {
@@ -4928,7 +5131,7 @@ final class EventSourceServer : EventIoServer {
 		scope(exit)
 			closeLocalServerConnection(s);
 
-		SendableEvent sev;
+		EventSourceServerImplementation.SendableEvent sev;
 		sev.populate(url, event, data, lifetime);
 
 		version(Posix) {
@@ -4939,10 +5142,40 @@ final class EventSourceServer : EventIoServer {
 		}
 	}
 
+	/++
+		Messages sent to `url` will also be sent to anyone listening on `forwardUrl`.
+
+		See_Also: [disconnect]
+	+/
+	void connect(string url, string forwardUrl);
+
+	/++
+		Disconnects `forwardUrl` from `url`
+
+		See_Also: [connect]
+	+/
+	void disconnect(string url, string forwardUrl);
+}
+
+///
+final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 
 	protected:
 
-
+	void connect(string url, string forwardUrl) {
+		pipes[url] ~= forwardUrl;
+	}
+	void disconnect(string url, string forwardUrl) {
+		auto t = url in pipes;
+		if(t is null)
+			return;
+		foreach(idx, n; (*t))
+			if(n == forwardUrl) {
+				(*t)[idx] = (*t)[$-1];
+				(*t) = (*t)[0 .. $-1];
+				break;
+			}
+	}
 
 	void handleLocalConnectionData(IoOp* op, int receivedFd) {
 		if(receivedFd != -1) {
@@ -4960,7 +5193,17 @@ final class EventSourceServer : EventIoServer {
 			auto data = op.usedBuffer;
 			auto event = cast(SendableEvent*) data.ptr;
 
-			handleInputEvent(event);
+			if(event.magic == 0xdeadbeef) {
+				handleInputEvent(event);
+
+				if(event.url in pipes)
+				foreach(pipe; pipes[event.url]) {
+					event.url = pipe;
+					handleInputEvent(event);
+				}
+			} else {
+				dispatchRpcServer!EventSourceServer(this, data, op.fd);
+			}
 		}
 	}
 	void handleLocalConnectionClose(IoOp* op) {}
@@ -5005,6 +5248,10 @@ final class EventSourceServer : EventIoServer {
 		char[] url() {
 			return urlBuffer[0 .. urlLength];
 		}
+		void url(in char[] u) {
+			urlBuffer[0 .. u.length] = u[];
+			urlLength = cast(int) u.length;
+		}
 		char[] lastEventId() {
 			return lastEventIdBuffer[0 .. lastEventIdLength];
 		}
@@ -5024,6 +5271,7 @@ final class EventSourceServer : EventIoServer {
 	}
 
 	struct SendableEvent {
+		int magic = 0xdeadbeef;
 		int urlLength;
 		char[256] urlBuffer = 0;
 		int typeLength;
@@ -5040,6 +5288,10 @@ final class EventSourceServer : EventIoServer {
 		}
 		char[] url() {
 			return urlBuffer[0 .. urlLength];
+		}
+		void url(in char[] u) {
+			urlBuffer[0 .. u.length] = u[];
+			urlLength = cast(int) u.length;
 		}
 		int lifetime() {
 			return _lifetime;
@@ -5070,6 +5322,7 @@ final class EventSourceServer : EventIoServer {
 	}
 
 	private EventConnection[][string] eventConnectionsByUrl;
+	private string[][string] pipes;
 
 	private void handleInputEvent(scope SendableEvent* event) {
 		static int eventId;
