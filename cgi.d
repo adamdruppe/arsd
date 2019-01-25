@@ -4718,11 +4718,10 @@ private void serialize(T)(scope void delegate(ubyte[]) sink, T t) {
 		sink(cast(ubyte[]) t[]);
 	} else static if(is(T : A[], A)) {
 		// generic array is less optimal but still prolly ok
-		static assert(0, T.stringof);
 		int len = cast(int) t.length;
 		sink((cast(ubyte*) &len)[0 .. int.sizeof]);
 		foreach(item; t)
-			serialize(item);
+			serialize(sink, item);
 	} else static assert(0, T.stringof);
 }
 
@@ -5052,6 +5051,66 @@ final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
 	void handleLocalConnectionComplete(IoOp* op) {} // again, irrelevant
 	void wait_timeout() {}
 	void fileClosed(int fd) {} // stateless so irrelevant
+}
+
+/++
+
++/
+struct ScheduledJobHelper {
+	private string func;
+	private string[] args;
+
+	/++
+		Schedules the job to be run at the given time.
+	+/
+	void at(DateTime when, immutable TimeZone timezone = UTC()) {
+
+	}
+
+	/++
+		Schedules the job to run at least after the specified delay.
+	+/
+	void delay(Duration delay) {
+
+	}
+
+	/++
+		Runs the job in the background ASAP.
+
+		$(NOTE It may run in a background thread. Don't segfault!)
+	+/
+	void runNowInBackground() {
+		//delay(0);
+	}
+
+	/++
+		Schedules the job to recur on the given pattern.
+	+/
+	version(none)
+	void recur(string spec) {
+
+	}
+}
+
+/++
+	First step to schedule a job on the scheduled job server.
+
+	You MUST set details on the returned object to actually do anything!
++/
+ScheduledJobHelper schedule(alias fn, T...)(T args) {
+	return ScheduledJobHelper();
+}
+
+///
+interface ScheduledJobServer {
+	///
+	int scheduleJob(int whenIs, int when, string executable, string func, string[] args);
+	///
+	void cancelJob(int jobId);
+}
+
+class ScheduledJobServerConnection : ScheduledJobServer {
+	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server");
 }
 
 ///
