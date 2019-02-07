@@ -289,6 +289,9 @@ module arsd.cgi;
 
 static import std.file;
 
+// for a single thread, linear request thing, use:
+// -version=embedded_httpd_threads -version=cgi_no_threads
+
 version(embedded_httpd) {
 	version(linux)
 		version=embedded_httpd_processes;
@@ -839,9 +842,9 @@ class Cgi {
 		}
 
 
-		get = getGetVariables(queryString);
 		auto ugh = decodeVariables(queryString);
 		getArray = assumeUnique(ugh);
+		get = keepLastOf(getArray);
 
 
 		// NOTE: on shitpache, you need to specifically forward this
@@ -1617,7 +1620,6 @@ class Cgi {
 					pathInfo = requestUri[pathInfoStarts..question];
 				}
 
-				get = cast(string[string]) getGetVariables(queryString);
 				auto ugh = decodeVariables(queryString);
 				getArray = cast(string[][string]) assumeUnique(ugh);
 
@@ -1753,7 +1755,7 @@ class Cgi {
 		this.queryString = queryString;
 
 		this.scriptName = scriptName;
-		this.get = cast(immutable) get;
+		this.get = keepLastOf(getArray);
 		this.getArray = cast(immutable) getArray;
 		this.keepAliveRequested = keepAliveRequested;
 		this.acceptsGzip = acceptsGzip;
@@ -1788,43 +1790,6 @@ class Cgi {
 		return assumeUnique(forTheLoveOfGod);
 	}
 
-	// this function only exists because of the with_cgi_packed thing, which is
-	// a filthy hack I put in here for a work app. Which still depends on it, so it
-	// stays for now. But I want to remove it.
-	private immutable(string[string]) getGetVariables(in string queryString) {
-		if(queryString.length) {
-			auto _get = decodeVariablesSingle(queryString);
-
-			// Some sites are shit and don't let you handle multiple parameters.
-			// If so, compile this in and encode it as a single parameter
-			version(with_cgi_packed) {
-				auto idx = pathInfo.indexOf("PACKED");
-				if(idx != -1) {
-					auto pi = pathInfo[idx + "PACKED".length .. $];
-
-					auto _unpacked = decodeVariables(
-						cast(string) base64UrlDecode(pi));
-
-					foreach(k, v; _unpacked)
-						_get[k] = v[$-1];
-					// possible problem: it used to cut PACKED off the path info
-					// but it doesn't now. I want to kill this crap anyway though.
-				}
-
-				if("arsd_packed_data" in getArray) {
-					auto _unpacked = decodeVariables(
-						cast(string) base64UrlDecode(getArray["arsd_packed_data"][0]));
-
-					foreach(k, v; _unpacked)
-						_get[k] = v[$-1];
-				}
-			}
-
-			return assumeUnique(_get);
-		}
-
-		return null;
-	}
 	/// Very simple method to require a basic auth username and password.
 	/// If the http request doesn't include the required credentials, it throws a
 	/// HTTP 401 error, and an exception.
@@ -3068,7 +3033,7 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 								cgi = new CustomCgi(ir, &closeConnection);
 								cgi._outputFileHandle = s;
 								// if we have a single process and the browser tries to leave the connection open while concurrently requesting another, it will block everything an deadlock since there's no other server to accept it. By closing after each request in this situation, it tells the browser to serialize for us.
-								if(processPoolSize == 1)
+								if(processPoolSize <= 1)
 									closeConnection = true;
 								//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
 							} catch(Throwable t) {
@@ -3468,46 +3433,6 @@ string printDate(DateTime date) {
 		date.hour,
 		date.minute,
 		date.second);
-}
-
-
-version(with_cgi_packed) {
-// This is temporary until Phobos supports base64
-immutable(ubyte)[] base64UrlDecode(string e) {
-	string encoded = e.idup;
-	while (encoded.length % 4) {
-		encoded ~= "="; // add padding
-	}
-
-	// convert base64 URL to standard base 64
-	encoded = encoded.replace("-", "+");
-	encoded = encoded.replace("_", "/");
-
-	return cast(immutable(ubyte)[]) Base64.decode(encoded);
-}
-	// should be set as arsd_packed_data
-	string packedDataEncode(in string[string] variables) {
-		string result;
-
-		bool outputted = false;
-		foreach(k, v; variables) {
-			if(outputted)
-				result ~= "&";
-			else
-				outputted = true;
-
-			result ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
-		}
-
-		result = cast(string) Base64.encode(cast(ubyte[]) result);
-
-		// url variant
-		result.replace("=", "");
-		result.replace("+", "-");
-		result.replace("/", "_");
-
-		return result;
-	}
 }
 
 
@@ -5734,6 +5659,220 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	switch to choose if you want to override.
 */
 
+/+
+struct StaticFile {
+	string path;
+	string file;
+	// the following will be guessed automatically from the file type
+	string contentType;
+	bool gzip;
+	bool cache;
+}
+
+
+with(cgi.urlDispatcher()) {
+
+}
++/
+struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+	alias handler = dispatchHandler;
+	string urlPrefix;
+	bool rejectFurther;
+}
+
+struct CallableFromWeb {
+	Cgi.RequestMethod httpMethod;
+	string path;
+	void delegate(Cgi cgi) callFromCgi;
+	string[] parameters;
+}
+
+private string urlify(string name) {
+	return name;
+}
+
+/+
+	Argument conversions: for the most part, it is to!Thing(string).
+
+	But arrays and structs are a bit different. Arrays come from the cgi array. Thus
+	they are passed
+
+	arr=foo&arr=bar <-- notice the same name.
+
+	Structs are first declared with an empty thing, then have their members set individually,
+	with dot notation. The members are not required, just the initial declaration.
+
+	struct Foo {
+		int a;
+		string b;
+	}
+	void test(Foo foo){}
+
+	foo&foo.a=5&foo.b=str <-- the first foo declares the arg, the others set the members
+
+	Arrays of structs use this declaration.
+
+	void test(Foo[] foo) {}
+
+	foo&foo.a=5&foo.b=bar&foo&foo.a=9
+
+	You can use a hidden input field in HTML forms to achieve this. The value of the naked name
+	declaration is ignored.
+
+	Mind that order matters! The declaration MUST come first in the string.
+
+	Arrays of struct members follow this rule recursively.
+
+	struct Foo {
+		int[] a;
+	}
+
+	foo&foo.a=1&foo.a=2&foo&foo.a=1
++/
+void callFromCgi(alias method, T)(T dg, Cgi cgi) {
+	import std.traits;
+
+	Parameters!method params;
+	static if(is(ReturnType!method == void)) {
+		dg(params);
+	} else {
+		auto ret = dg(params);
+		cgi.write(ret, true);
+	}
+}
+
+class WebObject {
+	Cgi cgi;
+	void initialize(Cgi cgi) {
+		this.cgi = cgi;
+	}
+}
+
+/++
+	Serves a class' methods. To be used with [dispatcher].
+
+	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
+
+	FIXME: explain this better
++/
+auto serveApi(T)(string urlPrefix) {
+	static bool handler(string urlPrefix, Cgi cgi) {
+
+		auto obj = new T();
+		obj.initialize(cgi);
+
+		switch(cgi.pathInfo[urlPrefix.length .. $]) {
+			static foreach(methodName; __traits(derivedMembers, T))
+			//static if(is({
+			{
+				case urlify(methodName):
+					callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+				return true;
+			}
+			default:
+				return false;
+		}
+	
+		assert(0);
+	}
+	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+/++
+	Serves a REST object.
+
+	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
++/
+auto serveRestObject(T)(string urlPrefix) {
+	static bool handler(string urlPrefix, Cgi cgi) {
+		string url = cgi.pathInfo[urlPrefix.length .. $];
+
+		return true;
+	}
+	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+/++
+	Serves a static file. To be used with [dispatcher].
++/
+auto serveStaticFile(string urlPrefix, string filename = null, string contentType = null) {
+	if(filename is null)
+		filename = urlPrefix[1 .. $];
+	if(contentType is null) {
+
+	}
+	static bool handler(string urlPrefix, Cgi cgi) {
+		//cgi.setResponseContentType(contentType);
+		//cgi.write(std.file.read(filename), true);
+		cgi.write(std.file.read(urlPrefix[1 .. $]), true);
+		return true;
+	}
+	return DispatcherDefinition!handler(urlPrefix, true);
+}
+
+auto serveRedirect(string urlPrefix, string redirectTo) {
+
+}
+
+/+
+/++
+	See [serveStaticFile] if you want to serve a file off disk.
++/
+auto serveStaticData(string urlPrefix, const(void)[] data, string contentType) {
+
+}
++/
+
+/++
+	A URL dispatcher.
+
+	---
+	if(cgi.dispatcher!(
+		"/api/".serveApi!MyApiClass,
+		"/objects/lol".serveRestObject!MyRestObject,
+		"/file.js".serveStaticFile,
+	)) return;
+	---
++/
+bool dispatcher(definitions...)(Cgi cgi) {
+	// I can prolly make this more efficient later but meh.
+	foreach(definition; definitions) {
+		if(definition.rejectFurther) {
+			if(cgi.pathInfo == definition.urlPrefix) {
+				auto ret = definition.handler(definition.urlPrefix, cgi);
+				if(ret)
+					return true;
+			}
+		} else if(cgi.pathInfo.startsWith(definition.urlPrefix)) {
+			auto ret = definition.handler(definition.urlPrefix, cgi);
+			if(ret)
+				return true;
+		}
+	}
+	return false;
+}
+
+/+
+/++
+	This is the beginnings of my web.d 2.0 - it dispatches web requests to a class object.
+
+	It relies on jsvar.d and dom.d.
+
+
+	You can get javascript out of it to call. The generated functions need to look
+	like
+
+	function name(a,b,c,d,e) {
+		return _call("name", {"realName":a,"sds":b});
+	}
+
+	And _call returns an object you can call or set up or whatever.
++/
+bool apiDispatcher()(Cgi cgi) {
+	import arsd.jsvar;
+	import arsd.dom;
+}
++/
 /*
 Copyright: Adam D. Ruppe, 2008 - 2019
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
