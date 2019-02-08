@@ -1,4 +1,8 @@
 // FIXME: add classList
+// FIXME: add matchesSelector
+// FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
+// FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
+
 /++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond
@@ -824,6 +828,12 @@ class Document : FileResource {
 
 							while(pos < data.length && data[pos] != '>')
 								pos++;
+
+							if(pos >= data.length) {
+								// the tag never closed
+								assert(data.length != 0);
+								pos = data.length - 1; // rewinding so it hits the end at the bottom..
+							}
 						}
 
 						auto whereThisTagStarted = pos; // for better error messages
@@ -3497,8 +3507,14 @@ struct ElementCollection {
 		return !elements.length;
 	}
 
-	/// Collects strings from the collection, concatenating them together
-	/// Kinda like running reduce and ~= on it.
+	/++
+		Collects strings from the collection, concatenating them together
+		Kinda like running reduce and ~= on it.
+
+		---
+		document["p"].collect!"innerText";
+		---
+	+/
 	string collect(string method)(string separator = "") {
 		string text;
 		foreach(e; elements) {
@@ -3514,6 +3530,17 @@ struct ElementCollection {
 		foreach(e; elements) {
 			mixin("e." ~ name)(t);
 		}
+		return this;
+	}
+
+	/++
+		Calls [Element.wrapIn] on each member of the collection, but clones the argument `what` for each one.
+	+/
+	ElementCollection wrapIn(Element what) {
+		foreach(e; elements) {
+			e.wrapIn(what.cloneNode(false));
+		}
+
 		return this;
 	}
 
