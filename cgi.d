@@ -612,6 +612,9 @@ class Cgi {
 
 		environmentVariables = cast(const) environment.toAA;
 
+		string[] allPostNamesInOrder;
+		string[] allPostValuesInOrder;
+
 		foreach(arg; args[1 .. $]) {
 			if(arg.startsWith("--")) {
 				nextArgIs = arg[2 .. $];
@@ -694,6 +697,8 @@ class Cgi {
 				if(requestMethod == Cgi.RequestMethod.POST) {
 					auto parts = breakUp(arg);
 					_post[parts[0]] ~= parts[1];
+					allPostNamesInOrder ~= parts[0];
+					allPostValuesInOrder ~= parts[1];
 				} else {
 					if(_queryString.length)
 						_queryString ~= "&";
@@ -712,7 +717,7 @@ class Cgi {
 		cookies = keepLastOf(cookiesArray);
 
 		queryString = _queryString;
-		getArray = cast(immutable) decodeVariables(queryString);
+		getArray = cast(immutable) decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 		get = keepLastOf(getArray);
 
 		postArray = cast(immutable) _post;
@@ -739,6 +744,13 @@ class Cgi {
 		this.pathInfo = pathInfo;
 		this.queryString = queryString;
 		this.postJson = null;
+	}
+
+	private {
+		string[] allPostNamesInOrder;
+		string[] allPostValuesInOrder;
+		string[] allGetNamesInOrder;
+		string[] allGetValuesInOrder;
 	}
 
 	CgiConnectionHandle getOutputFileHandle() {
@@ -842,7 +854,7 @@ class Cgi {
 		}
 
 
-		auto ugh = decodeVariables(queryString);
+		auto ugh = decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 		getArray = assumeUnique(ugh);
 		get = keepLastOf(getArray);
 
@@ -1208,8 +1220,15 @@ class Cgi {
 					// I used to not do it, but I think I should, since it is there...
 					pps._post[pps.piece.name] ~= pps.piece.filename;
 					pps._files[pps.piece.name] ~= pps.piece;
-				} else
+
+					allPostNamesInOrder ~= pps.piece.name;
+					allPostValuesInOrder ~= pps.piece.filename;
+				} else {
 					pps._post[pps.piece.name] ~= cast(string) pps.piece.content;
+
+					allPostNamesInOrder ~= pps.piece.name;
+					allPostValuesInOrder ~= cast(string) pps.piece.content;
+				}
 
 				/*
 				stderr.writeln("RECEIVED: ", pps.piece.name, "=", 
@@ -1455,7 +1474,7 @@ class Cgi {
 				if(pps.isJson)
 					pps.postJson = cast(string) pps.buffer;
 				else
-					pps._post = decodeVariables(cast(string) pps.buffer);
+					pps._post = decodeVariables(cast(string) pps.buffer, "&", &allPostNamesInOrder, &allPostValuesInOrder);
 				version(preserveData)
 					originalPostData = pps.buffer;
 			} else {
@@ -1620,7 +1639,7 @@ class Cgi {
 					pathInfo = requestUri[pathInfoStarts..question];
 				}
 
-				auto ugh = decodeVariables(queryString);
+				auto ugh = decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 				getArray = cast(string[][string]) assumeUnique(ugh);
 
 				if(header.indexOf("HTTP/1.0") != -1) {
@@ -2671,18 +2690,28 @@ struct Uri {
 */
 
 /// breaks down a url encoded string
-string[][string] decodeVariables(string data, string separator = "&") {
+string[][string] decodeVariables(string data, string separator = "&", string[]* namesInOrder = null, string[]* valuesInOrder = null) {
 	auto vars = data.split(separator);
 	string[][string] _get;
 	foreach(var; vars) {
 		auto equal = var.indexOf("=");
+		string name;
+		string value;
 		if(equal == -1) {
-			_get[decodeComponent(var)] ~= "";
+			name = decodeComponent(var);
+			value = "";
 		} else {
 			//_get[decodeComponent(var[0..equal])] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
 			// stupid + -> space conversion.
-			_get[decodeComponent(var[0..equal].replace("+", " "))] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
+			name = decodeComponent(var[0..equal].replace("+", " "));
+			value = decodeComponent(var[equal + 1 .. $].replace("+", " "));
 		}
+
+		_get[name] ~= value;
+		if(namesInOrder)
+			(*namesInOrder) ~= name;
+		if(valuesInOrder)
+			(*valuesInOrder) ~= value;
 	}
 	return _get;
 }
@@ -5659,36 +5688,48 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	switch to choose if you want to override.
 */
 
-/+
-struct StaticFile {
-	string path;
-	string file;
-	// the following will be guessed automatically from the file type
-	string contentType;
-	bool gzip;
-	bool cache;
-}
-
-
-with(cgi.urlDispatcher()) {
-
-}
-+/
 struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
 	alias handler = dispatchHandler;
 	string urlPrefix;
 	bool rejectFurther;
 }
 
-struct CallableFromWeb {
-	Cgi.RequestMethod httpMethod;
-	string path;
-	void delegate(Cgi cgi) callFromCgi;
-	string[] parameters;
-}
-
 private string urlify(string name) {
 	return name;
+}
+
+private string beautify(string name) {
+	char[160] buffer;
+	int bufferIndex = 0;
+	bool shouldCap = true;
+	bool shouldSpace;
+	bool lastWasCap;
+	foreach(idx, char ch; name) {
+		if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+
+		if(ch >= 'A' && ch <= 'Z') {
+			if(lastWasCap) {
+				// two caps in a row, don't change. Prolly acronym.
+			} else {
+				if(idx)
+					shouldSpace = true; // new word, add space
+			}
+
+			lastWasCap = true;
+		}
+
+		if(shouldSpace) {
+			buffer[bufferIndex++] = ' ';
+			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+		}
+		if(shouldCap) {
+			if(ch >= 'a' && ch <= 'z')
+				ch -= 32;
+			shouldCap = false;
+		}
+		buffer[bufferIndex++] = ch;
+	}
+	return buffer[0 .. bufferIndex].idup;
 }
 
 /+
@@ -5728,47 +5769,522 @@ private string urlify(string name) {
 	}
 
 	foo&foo.a=1&foo.a=2&foo&foo.a=1
+
+
+	Associative arrays are formatted with brackets, after a declaration, like structs:
+
+	foo&foo[key]=value&foo[other_key]=value
+
+
+	Note: for maximum compatibility with outside code, keep your types simple. Some libraries
+	do not support the strict ordering requirements to work with these struct protocols.
+
+	FIXME: also perhaps accept application/json to better work with outside trash.
+
+
+	Return values are also auto-formatted according to user-requested type:
+		for json, it loops over and converts.
+		for html, basic types are strings. Arrays are <ol>. Structs are <dl>. Arrays of structs are tables!
 +/
-void callFromCgi(alias method, T)(T dg, Cgi cgi) {
+
+// actually returns an arsd.dom.Form
+auto createAutomaticFormForFunction(alias method, T)(T dg) {
+	import arsd.dom;
+
+	auto form = cast(Form) Element.make("form");
+
+	form.addClass("automatic-form");
+
+	form.addChild("h3", beautify(__traits(identifier, method)));
+
 	import std.traits;
 
-	Parameters!method params;
-	static if(is(ReturnType!method == void)) {
-		dg(params);
-	} else {
-		auto ret = dg(params);
-		cgi.write(ret, true);
+	//Parameters!method params;
+	//alias idents = ParameterIdentifierTuple!method;
+	//alias defaults = ParameterDefaults!method;
+
+	static Element elementFor(T)(string displayName, string name) {
+		auto div = Element.make("div");
+		div.addClass("form-field");
+
+		static if(is(T == struct)) {
+			if(displayName !is null)
+				div.addChild("span", displayName, "label-text");
+			auto fieldset = div.addChild("fieldset");
+			fieldset.addChild("legend", beautify(T.stringof)); // FIXME
+			fieldset.addChild("input", name);
+			static foreach(idx, memberName; __traits(allMembers, T))
+			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
+			}
+		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			static if(isSomeString!T)
+				i.attrs.type = "text";
+			else
+				i.attrs.type = "number";
+			i.attrs.value = to!string(T.init);
+		} else static if(is(T == K[], K)) {
+			auto templ = div.addChild("template");
+			templ.appendChild(elementFor!(K)(null, name));
+			if(displayName !is null)
+				div.addChild("span", displayName, "label-text");
+			auto btn = div.addChild("button");
+			btn.addClass("add-array-button");
+			btn.attrs.type = "button";
+			btn.innerText = "Add";
+			btn.attrs.onclick = q{
+				var a = document.importNode(this.parentNode.firstChild.content, true);
+				this.parentNode.insertBefore(a, this);
+			};
+		} else static if(is(T == V[K], K, V)) {
+			div.innerText = "assoc array not implemented for automatic form at this time";
+		} else {
+			static assert(0, "unsupported type for cgi call " ~ T.stringof);
+		}
+
+
+		return div;
+	}
+
+	static if(is(typeof(method) P == __parameters))
+	static foreach(idx, _; P) {{
+		alias param = P[idx .. idx + 1];
+		string displayName = beautify(__traits(identifier, param));
+		static foreach(attr; __traits(getAttributes, param))
+			static if(is(typeof(attr) == DisplayName))
+				displayName = attr.name;
+		form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+	}}
+
+	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+	return form;
+}
+
+/*
+string urlFor(alias func)() {
+	return __traits(identifier, func);
+}
+*/
+
+/++
+	UDA: The name displayed to the user in auto-generated HTML.
+
+	Default is `beautify(identifier)`.
++/
+struct DisplayName {
+	string name;
+}
+
+/++
+	UDA: The name used in the URL or web parameter.
+
+	Default is `urlify(identifier)` for functions and `identifier` for parameters and data members.
++/
+struct UrlName {
+	string name;
+}
+
+class MissingArgumentException : Exception {
+	string functionName;
+	string argumentName;
+	string argumentType;
+
+	this(string functionName, string argumentName, string argumentType, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.functionName = functionName;
+		this.argumentName = argumentName;
+		this.argumentType = argumentType;
+
+		super("Missing Argument", file, line, next);
 	}
 }
 
-class WebObject {
+auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
+
+	// FIXME: think more about checkboxes and bools.
+
+	import std.traits;
+
+	Parameters!method params;
+	alias idents = ParameterIdentifierTuple!method;
+	alias defaults = ParameterDefaults!method;
+
+	const(string)[] names;
+	const(string)[] values;
+
+	// first, check for missing arguments and initialize to defaults if necessary
+	static foreach(idx, param; params) {{
+		auto ident = idents[idx];
+		if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+			if(ident !in cgi.post) {
+				static if(is(defaults[idx] == void))
+					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+				else
+					params[idx] = defaults[idx];
+			}
+		} else {
+			if(ident !in cgi.get) {
+				static if(is(defaults[idx] == void))
+					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+				else
+					params[idx] = defaults[idx];
+			}
+		}
+	}}
+
+	// second, parse the arguments in order to build up arrays, etc.
+
+	static bool setVariable(T)(string name, string paramName, T* what, string value) {
+		static if(is(T == struct)) {
+			if(name == paramName) {
+				*what = T.init;
+				return true;
+			} else {
+				// could be a child
+				if(name[paramName.length] == '.') {
+					paramName = name[paramName.length + 1 .. $];
+					name = paramName;
+					int p = 0;
+					foreach(ch; paramName) {
+						if(ch == '.' || ch == '[')
+							break;
+						p++;
+					}
+
+					// set the child member
+					switch(paramName) {
+						static foreach(idx, memberName; __traits(allMembers, T))
+						static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+							// data member!
+							case memberName:
+								return setVariable(name, paramName, &(__traits(getMember, *what, memberName)), value);
+						}
+						default:
+							// ok, not a member
+					}
+				}
+			}
+		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+			*what = to!T(value);
+			return true;
+		} else static if(is(T == K[], K)) {
+			K tmp;
+			if(name == paramName) {
+				// direct - set and append
+				if(setVariable(name, paramName, &tmp, value)) {
+					(*what) ~= tmp;
+					return true;
+				} else {
+					return false;
+				}
+			} else {
+				// child, append to last element
+				// FIXME: what about range violations???
+				auto ptr = &(*what)[(*what).length - 1];
+				return setVariable(name, paramName, ptr, value);
+
+			}
+		} else static if(is(T == V[K], K, V)) {
+			// assoc array, name[key] is valid
+			if(name == paramName) {
+				// no action necessary
+				return true;
+			} else if(name[paramName.length] == '[') {
+				int count = 1;
+				auto idx = paramName.length + 1;
+				while(idx < name.length && count > 0) {
+					if(name[idx] == '[')
+						count++;
+					else if(name[idx] == ']') {
+						count--;
+						if(count == 0) break;
+					}
+					idx++;
+				}
+				if(idx == name.length)
+					return false; // malformed
+
+				auto insideBrackets = name[paramName.length + 1 .. idx];
+				auto afterName = name[idx + 1 .. $];
+
+				auto k = to!K(insideBrackets);
+				V v;
+
+				name = name[0 .. paramName.length];
+				writeln(name, afterName, " ", paramName);
+
+				auto ret = setVariable(name ~ afterName, paramName, &v, value);
+				if(ret) {
+					(*what)[k] = v;
+					return true;
+				}
+			}
+		} else {
+			static assert(0, "unsupported type for cgi call " ~ T.stringof);
+		}
+
+		return false;
+	}
+
+	void setArgument(string name, string value) {
+		int p;
+		foreach(ch; name) {
+			if(ch == '.' || ch == '[')
+				break;
+			p++;
+		}
+
+		auto paramName = name[0 .. p];
+
+		sw: switch(paramName) {
+			static foreach(idx, param; params) {
+				case idents[idx]:
+					setVariable(name, paramName, &params[idx], value);
+				break sw;
+			}
+			default:
+				// ignore; not relevant argument
+		}
+	}
+
+	if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+		names = cgi.allPostNamesInOrder;
+		values = cgi.allPostValuesInOrder;
+	} else {
+		names = cgi.allGetNamesInOrder;
+		values = cgi.allGetValuesInOrder;
+	}
+
+	foreach(idx, name; names) {
+		setArgument(name, values[idx]);
+	}
+
+	static if(is(ReturnType!method == void)) {
+		typeof(null) ret;
+		dg(params);
+	} else {
+		auto ret = dg(params);
+	}
+
+	// FIXME: format return values
+	// options are: json, html, csv.
+	// also may need to wrap in envelope format: none, html, or json.
+	return ret;
+}
+
+auto formatReturnValueAsHtml(T)(T t) {
+	import arsd.dom;
+	import std.traits;
+
+	static if(is(T == typeof(null))) {
+		return Element.make("span");
+	} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
+		return Element.make("span", to!string(t), "automatic-data-display");
+	} else static if(is(T == V[K], K, V)) {
+		auto dl = Element.make("dl");
+		dl.addClass("automatic-data-display");
+		foreach(k, v; t) {
+			dl.addChild("dt", to!string(k));
+			dl.addChild("dd", formatReturnValueAsHtml(v));
+		}
+		return dl;
+	} else static if(is(T == struct)) {
+		auto dl = Element.make("dl");
+		dl.addClass("automatic-data-display");
+
+		static foreach(idx, memberName; __traits(allMembers, T))
+		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+			dl.addChild("dt", memberName);
+			dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
+		}
+
+		return dl;
+	} else static if(is(T == E[], E)) {
+		static if(is(E == struct)) {
+			// an array of structs is kinda special in that I like
+			// having those formatted as tables.
+			auto table = cast(Table) Element.make("table");
+			table.addClass("automatic-data-display");
+			string[] names;
+			static foreach(idx, memberName; __traits(allMembers, E))
+			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+				names ~= beautify(memberName);
+			}
+			table.appendHeaderRow(names);
+
+			foreach(l; t) {
+				auto tr = table.appendRow();
+				static foreach(idx, memberName; __traits(allMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+				}
+			}
+
+			return table;
+		} else {
+			// otherwise, I will just make a list.
+			auto ol = Element.make("ol");
+			ol.addClass("automatic-data-display");
+			foreach(e; t)
+				ol.addChild("li", formatReturnValueAsHtml(e));
+			return ol;
+		}
+	} else static assert(0, "bad return value for cgi call " ~ T.stringof);
+
+	assert(0);
+}
+
+/++
+	The base class for the [dispatcher] object support.
++/
+class WebObject() {
 	Cgi cgi;
 	void initialize(Cgi cgi) {
 		this.cgi = cgi;
 	}
+
+	string script() {
+		return `
+		`;
+	}
+
+	string style() {
+		return `
+			:root {
+				--mild-border: #ccc;
+				--middle-border: #999;
+			}
+			table.automatic-data-display {
+				border-collapse: collapse;
+				border: solid 1px var(--mild-border);
+			}
+
+			table.automatic-data-display td {
+				vertical-align: top;
+				border: solid 1px var(--mild-border);
+				padding: 2px 4px;
+			}
+
+			table.automatic-data-display th {
+				border: solid 1px var(--mild-border);
+				border-bottom: solid 1px var(--middle-border);
+				padding: 2px 4px;
+			}
+
+			ol.automatic-data-display {
+				margin: 0px;
+				list-style-position: inside;
+				padding: 0px;
+			}
+
+			.automatic-form {
+				max-width: 600px;
+			}
+
+			.form-field {
+				margin: 0.5em;
+				padding-left: 0.5em;
+			}
+
+			.label-text {
+				display: block;
+				font-weight: bold;
+				margin-left: -0.5em;
+			}
+
+			.add-array-button {
+
+			}
+		`;
+	}
+
+	import arsd.dom;
+	Element htmlContainer() {
+		auto document = new Document(`<!DOCTYPE html>
+<html>
+<head>
+	<title>D Application</title>
+	<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<div id="container"></div>
+	<script src="script.js"></script>
+</body>
+</html>`, true, true);
+
+		return document.requireElementById("container");
+	}
 }
 
 /++
-	Serves a class' methods. To be used with [dispatcher].
+	Serves a class' methods, as a kind of low-state RPC over the web. To be used with [dispatcher].
 
 	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
 
 	FIXME: explain this better
 +/
 auto serveApi(T)(string urlPrefix) {
+	import arsd.dom;
+	import arsd.jsvar;
+
 	static bool handler(string urlPrefix, Cgi cgi) {
 
 		auto obj = new T();
 		obj.initialize(cgi);
 
 		switch(cgi.pathInfo[urlPrefix.length .. $]) {
-			static foreach(methodName; __traits(derivedMembers, T))
-			//static if(is({
+			static foreach(methodName; __traits(derivedMembers, T)){{
+			static if(is(typeof(__traits(getMember, T, methodName)) P == __parameters))
 			{
 				case urlify(methodName):
-					callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+					switch(cgi.request("format", "html")) {
+						case "html":
+							auto container = obj.htmlContainer();
+							try {
+								auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+								container.appendChild(formatReturnValueAsHtml(ret));
+							} catch(MissingArgumentException mae) {
+								container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
+								container.appendChild(createAutomaticFormForFunction!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName)));
+							}
+							cgi.write(container.parentDocument.toString(), true);
+						break;
+						case "json":
+							auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+							var json = ret;
+							var envelope = var.emptyObject;
+							envelope.success = true;
+							envelope.result = json;
+							envelope.error = null;
+							cgi.setResponseContentType("application/json");
+							cgi.write(envelope.toJson(), true);
+
+						break;
+						default:
+					}
 				return true;
 			}
+			}}
+			case "script.js":
+				cgi.setResponseContentType("text/javascript");
+				cgi.gzipResponse = true;
+				cgi.write(obj.script(), true);
+				return true;
+			case "style.css":
+				cgi.setResponseContentType("text/css");
+				cgi.gzipResponse = true;
+				cgi.write(obj.style(), true);
+				return true;
 			default:
 				return false;
 		}
@@ -5779,9 +6295,127 @@ auto serveApi(T)(string urlPrefix) {
 }
 
 /++
-	Serves a REST object.
+	Serves a REST object, similar to a Ruby on Rails resource.
+
+	You put data members in your class. cgi.d will automatically make something out of those.
+
+	It will call your constructor with the ID from the URL. This may be null.
+	It will then populate the data members from the request.
+	It will then call a method, if present, telling what happened. You don't need to write these!
+	It finally returns a reply.
+
+	Your methods are passed a list of fields it actually set.
+
+	The URL mapping - despite my general skepticism of the wisdom - matches up with what most REST
+	APIs I have used seem to follow. (I REALLY want to put trailing slashes on it though. Works better
+	with relative linking. But meh.)
+
+	GET /items -> index. all values not set.
+	GET /items/id -> get. only ID will be set, other params ignored.
+	POST /items -> create. values set as given
+	PUT /items/id -> replace. values set as given
+		or POST /items/id with cgi.post["_method"] (thus urlencoded or multipart content-type) set to "PUT" to work around browser/html limitation
+		a GET with cgi.get["_method"] (in the url) set to "PUT" will render a form.
+	PATCH /items/id -> update. values set as given, list of changed fields passed
+		or POST /items/id with cgi.post["_method"] == "PATCH"
+	DELETE /items/id -> destroy. only ID guaranteed to be set
+		or POST /items/id with cgi.post["_method"] == "DELETE"
+
+	Following the stupid convention, there will never be a trailing slash here, and if it is there, it will
+	redirect you away from it.
+
+	API clients should set the `Accept` HTTP header to application/json or the cgi.get["_format"] = "json" var.
+
+	I will also let you change the default, if you must.
+
+	// One add-on is validation. You can issue a HTTP GET to a resource with _method = VALIDATE to check potential changes.
+
+	You can define sub-resources on your object inside the object. These sub-resources are also REST objects
+	that follow the same thing. They may be individual resources or collections themselves.
+
+	Your class is expected to have at least the following methods:
+
+	FIXME: i kinda wanna add a routes object to the initialize call
+
+	create
+		Create returns the new address on success, some code on failure.
+	show
+	index
+	update
+	remove
+
+	You will want to be able to customize the HTTP, HTML, and JSON returns but generally shouldn't have to - the defaults
+	should usually work. The returned JSON will include a field "href" on all returned objects along with "id". Or omething like that.
 
 	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
+
+	NOT IMPLEMENTED
+
+
+	Really, a collection is a resource with a bunch of subresources.
+
+		GET /items
+			index because it is GET on the top resource
+
+		GET /items/foo
+			item but different than items?
+
+		class Items {
+
+		}
+
+	... but meh, a collection can be automated. not worth making it
+	a separate thing, let's look at a real example. Users has many
+	items and a virtual one, /users/current.
+
+	the individual users have properties and two sub-resources:
+	session, which is just one, and comments, a collection.
+
+	class User : RestObject!() { // no parent
+		int id;
+		string name;
+
+		void show() {} // automated! GET of this specific thing
+		void create() {} // POST on a parent collection - this is called from a collection class after the members are updated
+		void replace() {} // this is the PUT; really, it just updates all fields.
+		void update() {} // PATCH, it updates some fields.
+		void remove() {} // DELETE
+
+		void load(string urlId) {} // the default implementation of show() populates the id, then
+
+		this() {}
+
+		mixin Subresource!Session;
+		mixin Subresource!Comment;
+	}
+
+	class Session : RestObject!() {
+		// the parent object may not be fully constructed/loaded
+		this(User parent) {}
+
+	}
+
+	class Comment : CollectionOf!Comment {
+		this(User parent) {}
+	}
+
+	class Users : CollectionOf!User {
+		// but you don't strictly need ANYTHING on a collection; it will just... collect. Implement the subobjects.
+		void index() {} // GET on this specific thing; just like show really, just different name for the different semantics.
+		User create() {} // You MAY implement this, but the default is to create a new object, populate it from args, and then call create() on the child
+	}
+
+	// so CollectionOf will mixin the stuff to forward it
+
+	OK, the underlying functions are actually really low level
+
+		GET(string url)
+		POST(string url)
+		PUT(string url)
+
+	The url starts with the initial thing passed.
+
+	It is the mixins that actually do the work.
 +/
 auto serveRestObject(T)(string urlPrefix) {
 	static bool handler(string urlPrefix, Cgi cgi) {
