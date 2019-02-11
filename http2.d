@@ -75,6 +75,20 @@ HttpRequest get(string url) {
 	return request;
 }
 
+HttpRequest post(string url, string[string] req) {
+	auto client = new HttpClient();
+	ubyte[] bdata;
+	foreach(k, v; req) {
+		if(bdata.length)
+			bdata ~= cast(ubyte[]) "&";
+		bdata ~= cast(ubyte[]) encodeComponent(k);
+		bdata ~= cast(ubyte[]) "=";
+		bdata ~= cast(ubyte[]) encodeComponent(v);
+	}
+	auto request = client.request(Uri(url), HttpVerb.POST, bdata, "application/x-www-form-urlencoded");
+	return request;
+}
+
 /// gets the text off a url. basic operation only.
 string getText(string url) {
 	auto request = get(url);
@@ -1090,7 +1104,6 @@ class HttpRequest {
 	ubyte[] sendBuffer;
 
 	HttpResponse responseData;
-	HttpRequestParameters parameters;
 	private HttpClient parentClient;
 
 	size_t bodyBytesSent;
