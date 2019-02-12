@@ -6147,7 +6147,7 @@ auto formatReturnValueAsHtml(T)(T t) {
 /++
 	The base class for the [dispatcher] object support.
 +/
-class WebObject() {
+class WebObject(Helper = void) {
 	Cgi cgi;
 	void initialize(Cgi cgi) {
 		this.cgi = cgi;
@@ -6234,6 +6234,8 @@ class WebObject() {
 	FIXME: explain this better
 +/
 auto serveApi(T)(string urlPrefix) {
+	assert(urlPrefix[$ - 1] == '/');
+
 	import arsd.dom;
 	import arsd.jsvar;
 
@@ -6292,6 +6294,124 @@ auto serveApi(T)(string urlPrefix) {
 		assert(0);
 	}
 	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+/++
+	The base of all REST objects.
++/
+class RestObject(Helper = void) {
+
+	import arsd.dom;
+	import arsd.jsvar;
+
+	/// Show
+	void show() {}
+	/// ditto
+	void show(string urlId) {
+		load(urlId);
+		show();
+	}
+
+	enum AccessCheck {
+		allowed,
+		denied,
+		nonExistant,
+	}
+
+	enum Operation {
+		show,
+		create,
+		replace,
+		remove,
+		update
+	}
+
+	enum UpdateResult {
+		accessDenied,
+		noSuchResource,
+		success,
+		failure,
+		unnecessary
+	}
+
+	enum ValidationResult {
+		valid,
+		invalid
+	}
+
+	ValidationResult delegate(typeof(this)) validateFromReflection;
+	Element delegate(typeof(this)) toHtmlFromReflection;
+	var delegate(typeof(this)) toJsonFromReflection;
+
+	/// Override this to provide access control to this object.
+	AccessCheck accessCheck(string urlId, Operation operation) {
+		return AccessCheck.allowed;
+	}
+
+	ValidationResult validate() {
+		if(validateFromReflection !is null)
+			return validateFromReflection(this);
+		return ValidationResult.valid;
+	}
+
+	// The functions with more arguments are the low-level ones,
+	// they forward to the ones with fewer arguments by default.
+
+	void create() {} // POST on a parent collection - this is called from a collection class after the members are updated
+
+	void replace() {}
+	void replace(string urlId, scope void delegate() applyChanges) {
+		load(urlId);
+		applyChanges();
+		replace();
+	}
+
+	void update(string[] fieldList) {}
+	void update(string urlId, scope void delegate() applyChanges, string[] fieldList) {
+		load(urlId);
+		applyChanges();
+		update(fieldList);
+	}
+
+	void remove() {}
+
+	void remove(string urlId) {
+		load(urlId);
+		remove();
+	}
+
+	abstract void load(string urlId) {}
+	abstract void save() {}
+
+	Element toHtml() {
+		if(toHtmlFromReflection)
+			return toHtmlFromReflection(this);
+		else
+			assert(0);
+	}
+
+	var toJson() {
+		if(toJsonFromReflection)
+			return toJsonFromReflection(this);
+		else
+			assert(0);
+	}
+}
+
+/++
+	Base class for REST collections.
++/
+class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
+	void index() {}
+	override void create() {}
+	override void load(string urlId) { assert(0); }
+	override void save() { assert(0); }
+	override void show() {
+		index();
+	}
+	override void show(string urlId) {
+		show();
+	}
 }
 
 /++
@@ -6375,11 +6495,17 @@ auto serveApi(T)(string urlPrefix) {
 		int id;
 		string name;
 
-		void show() {} // automated! GET of this specific thing
+		// the default implementations of the urlId ones is to call load(that_id) then call the arg-less one.
+		// but you can override them to do it differently.
+
+		// any member which is of type RestObject can be linked automatically via href btw.
+
+		void show() {}
+		void show(string urlId) {} // automated! GET of this specific thing
 		void create() {} // POST on a parent collection - this is called from a collection class after the members are updated
-		void replace() {} // this is the PUT; really, it just updates all fields.
-		void update() {} // PATCH, it updates some fields.
-		void remove() {} // DELETE
+		void replace(string urlId) {} // this is the PUT; really, it just updates all fields.
+		void update(string urlId, string[] fieldList) {} // PATCH, it updates some fields.
+		void remove(string urlId) {} // DELETE
 
 		void load(string urlId) {} // the default implementation of show() populates the id, then
 
@@ -6405,21 +6531,51 @@ auto serveApi(T)(string urlPrefix) {
 		User create() {} // You MAY implement this, but the default is to create a new object, populate it from args, and then call create() on the child
 	}
 
-	// so CollectionOf will mixin the stuff to forward it
-
-	OK, the underlying functions are actually really low level
-
-		GET(string url)
-		POST(string url)
-		PUT(string url)
-
-	The url starts with the initial thing passed.
-
-	It is the mixins that actually do the work.
 +/
 auto serveRestObject(T)(string urlPrefix) {
+	assert(urlPrefix[$ - 1] != '/', "Do NOT use a trailing slash on REST objects.");
 	static bool handler(string urlPrefix, Cgi cgi) {
 		string url = cgi.pathInfo[urlPrefix.length .. $];
+
+		if(url.length && url[$ - 1] == '/') {
+			// remove the final slash...
+			cgi.setResponseLocation("..");
+			return true;
+		}
+
+		string urlId = null;
+		if(url.length && url[0] == '/') {
+			// asking for a subobject
+			urlId = url[1 .. $];
+			foreach(idx, ch; urlId) {
+				if(ch == '/') {
+					urlId = urlId[0 .. idx];
+					break;
+				}
+			}
+		}
+
+		// FIXME: support precondition failed, if-modified-since, expectation failed, etc.
+
+		auto obj = new T();
+		obj.toHtmlFromReflection = delegate(t) {
+			import arsd.dom;
+			return Element.make("div", T.stringof ~ "/" ~ urlId);
+		};
+		// FIXME: populate reflection info delegates
+
+		switch(cgi.requestMethod) {
+			case Cgi.RequestMethod.GET:
+				obj.show(urlId);
+				cgi.write(obj.toHtml().toString, true);
+			break;
+			case Cgi.RequestMethod.POST:
+			case Cgi.RequestMethod.PUT:
+			case Cgi.RequestMethod.PATCH:
+			case Cgi.RequestMethod.DELETE:
+			default:
+				// FIXME: OPTIONS, HEAD
+		}
 
 		return true;
 	}
@@ -6445,7 +6601,7 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 }
 
 auto serveRedirect(string urlPrefix, string redirectTo) {
-
+	// FIXME
 }
 
 /+
