@@ -1,6 +1,9 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
 
+// FIXME: I might make a cgi proxy class which can change things; the underlying one is still immutable
+// but the later one can edit and simplify the api. You'd have to use the subclass tho!
+
 /*
 void foo(int f, @("test") string s) {}
 
@@ -3031,9 +3034,14 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 					uint i;
 					sockaddr addr;
 					i = addr.sizeof;
-					version(embedded_httpd_processes_accept_after_fork)
+					version(embedded_httpd_processes_accept_after_fork) {
 						int s = accept(sock, &addr, &i);
-					else {
+						int opt = 1;
+						import core.sys.posix.netinet.tcp;
+						// the Cgi class does internal buffering, so disabling this
+						// helps with latency in many cases...
+						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
+					} else {
 						int s;
 						auto readret = read_fd(pipeReadFd, &s, s.sizeof, &s);
 						if(readret != s.sizeof) {
@@ -3147,6 +3155,9 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 						sockaddr addr;
 						i = addr.sizeof;
 						s = accept(sock, &addr, &i);
+						import core.sys.posix.netinet.tcp;
+						int opt = 1;
+						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
 					}
 
 					if(FD_ISSET(pipeWriteFd, &write_fds)) {
@@ -5787,6 +5798,63 @@ private string beautify(string name) {
 		for html, basic types are strings. Arrays are <ol>. Structs are <dl>. Arrays of structs are tables!
 +/
 
+// returns an arsd.dom.Element
+static auto elementFor(T)(string displayName, string name) {
+	import arsd.dom;
+	import std.traits;
+
+	auto div = Element.make("div");
+	div.addClass("form-field");
+
+	static if(is(T == struct)) {
+		if(displayName !is null)
+			div.addChild("span", displayName, "label-text");
+		auto fieldset = div.addChild("fieldset");
+		fieldset.addChild("legend", beautify(T.stringof)); // FIXME
+		fieldset.addChild("input", name);
+		static foreach(idx, memberName; __traits(allMembers, T))
+		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+			fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
+		}
+	} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+		Element lbl;
+		if(displayName !is null) {
+			lbl = div.addChild("label");
+			lbl.addChild("span", displayName, "label-text");
+			lbl.appendText(" ");
+		} else {
+			lbl = div;
+		}
+		auto i = lbl.addChild("input", name);
+		i.attrs.name = name;
+		static if(isSomeString!T)
+			i.attrs.type = "text";
+		else
+			i.attrs.type = "number";
+		i.attrs.value = to!string(T.init);
+	} else static if(is(T == K[], K)) {
+		auto templ = div.addChild("template");
+		templ.appendChild(elementFor!(K)(null, name));
+		if(displayName !is null)
+			div.addChild("span", displayName, "label-text");
+		auto btn = div.addChild("button");
+		btn.addClass("add-array-button");
+		btn.attrs.type = "button";
+		btn.innerText = "Add";
+		btn.attrs.onclick = q{
+			var a = document.importNode(this.parentNode.firstChild.content, true);
+			this.parentNode.insertBefore(a, this);
+		};
+	} else static if(is(T == V[K], K, V)) {
+		div.innerText = "assoc array not implemented for automatic form at this time";
+	} else {
+		static assert(0, "unsupported type for cgi call " ~ T.stringof);
+	}
+
+
+	return div;
+}
+
 // actually returns an arsd.dom.Form
 auto createAutomaticFormForFunction(alias method, T)(T dg) {
 	import arsd.dom;
@@ -5803,59 +5871,6 @@ auto createAutomaticFormForFunction(alias method, T)(T dg) {
 	//alias idents = ParameterIdentifierTuple!method;
 	//alias defaults = ParameterDefaults!method;
 
-	static Element elementFor(T)(string displayName, string name) {
-		auto div = Element.make("div");
-		div.addClass("form-field");
-
-		static if(is(T == struct)) {
-			if(displayName !is null)
-				div.addChild("span", displayName, "label-text");
-			auto fieldset = div.addChild("fieldset");
-			fieldset.addChild("legend", beautify(T.stringof)); // FIXME
-			fieldset.addChild("input", name);
-			static foreach(idx, memberName; __traits(allMembers, T))
-			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
-			}
-		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
-			Element lbl;
-			if(displayName !is null) {
-				lbl = div.addChild("label");
-				lbl.addChild("span", displayName, "label-text");
-				lbl.appendText(" ");
-			} else {
-				lbl = div;
-			}
-			auto i = lbl.addChild("input", name);
-			i.attrs.name = name;
-			static if(isSomeString!T)
-				i.attrs.type = "text";
-			else
-				i.attrs.type = "number";
-			i.attrs.value = to!string(T.init);
-		} else static if(is(T == K[], K)) {
-			auto templ = div.addChild("template");
-			templ.appendChild(elementFor!(K)(null, name));
-			if(displayName !is null)
-				div.addChild("span", displayName, "label-text");
-			auto btn = div.addChild("button");
-			btn.addClass("add-array-button");
-			btn.attrs.type = "button";
-			btn.innerText = "Add";
-			btn.attrs.onclick = q{
-				var a = document.importNode(this.parentNode.firstChild.content, true);
-				this.parentNode.insertBefore(a, this);
-			};
-		} else static if(is(T == V[K], K, V)) {
-			div.innerText = "assoc array not implemented for automatic form at this time";
-		} else {
-			static assert(0, "unsupported type for cgi call " ~ T.stringof);
-		}
-
-
-		return div;
-	}
-
 	static if(is(typeof(method) P == __parameters))
 	static foreach(idx, _; P) {{
 		alias param = P[idx .. idx + 1];
@@ -5865,6 +5880,38 @@ auto createAutomaticFormForFunction(alias method, T)(T dg) {
 				displayName = attr.name;
 		form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
 	}}
+
+	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+	return form;
+}
+
+// actually returns an arsd.dom.Form
+auto createAutomaticFormForObject(T)(T obj) {
+	import arsd.dom;
+
+	auto form = cast(Form) Element.make("form");
+
+	form.addClass("automatic-form");
+
+	form.addChild("h3", beautify(__traits(identifier, T)));
+
+	import std.traits;
+
+	//Parameters!method params;
+	//alias idents = ParameterIdentifierTuple!method;
+	//alias defaults = ParameterDefaults!method;
+
+	static foreach(idx, memberName; __traits(derivedMembers, T)) {{
+	static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+		string displayName = beautify(memberName);
+		static foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
+			static if(is(typeof(attr) == DisplayName))
+				displayName = attr.name;
+		form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
+
+		form.setValue(memberName, to!string(__traits(getMember, obj, memberName)));
+	}}}
 
 	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
 
@@ -5910,6 +5957,8 @@ class MissingArgumentException : Exception {
 }
 
 auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
+
+	// FIXME: any array of structs should also be settable or gettable from csv as well.
 
 	// FIXME: think more about checkboxes and bools.
 
@@ -6110,7 +6159,32 @@ auto formatReturnValueAsHtml(T)(T t) {
 
 		return dl;
 	} else static if(is(T == E[], E)) {
-		static if(is(E == struct)) {
+		static if(is(E : RestObject!Proxy, Proxy)) {
+			// treat RestObject similar to struct
+			auto table = cast(Table) Element.make("table");
+			table.addClass("automatic-data-display");
+			string[] names;
+			static foreach(idx, memberName; __traits(derivedMembers, E))
+			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+				names ~= beautify(memberName);
+			}
+			table.appendHeaderRow(names);
+
+			foreach(l; t) {
+				auto tr = table.appendRow();
+				static foreach(idx, memberName; __traits(derivedMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					static if(memberName == "id") {
+						string val = to!string(__traits(getMember, l, memberName));
+						tr.addChild("td", Element.make("a", val, E.stringof.toLower ~ "s/" ~ val)); // FIXME
+					} else {
+						tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+					}
+				}
+			}
+
+			return table;
+		} else static if(is(E == struct)) {
 			// an array of structs is kinda special in that I like
 			// having those formatted as tables.
 			auto table = cast(Table) Element.make("table");
@@ -6145,7 +6219,19 @@ auto formatReturnValueAsHtml(T)(T t) {
 }
 
 /++
-	The base class for the [dispatcher] object support.
+	A web presenter is responsible for rendering things to HTML to be usable
+	in a web browser.
+
+	They are passed as template arguments to the base classes of [WebObject]
+
+	FIXME
++/
+class WebPresenter() {
+
+}
+
+/++
+	The base class for the [dispatcher] function and object support.
 +/
 class WebObject(Helper = void) {
 	Cgi cgi;
@@ -6163,7 +6249,14 @@ class WebObject(Helper = void) {
 			:root {
 				--mild-border: #ccc;
 				--middle-border: #999;
+				--accent-color: #e8e8e8;
+				--sidebar-color: #f2f2f2;
 			}
+		` ~ genericFormStyling() ~ genericSiteStyling();
+	}
+
+	string genericFormStyling() {
+		return `
 			table.automatic-data-display {
 				border-collapse: collapse;
 				border: solid 1px var(--mild-border);
@@ -6208,6 +6301,39 @@ class WebObject(Helper = void) {
 		`;
 	}
 
+	string genericSiteStyling() {
+		return `
+			* { box-sizing: border-box; }
+			html, body { margin: 0px; }
+			body {
+				font-family: sans-serif;
+			}
+			#header {
+				background: var(--accent-color);
+				height: 64px;
+			}
+			#footer {
+				background: var(--accent-color);
+				height: 64px;
+			}
+			#main-site {
+				display: flex;
+			}
+			#container {
+				flex: 1 1 auto;
+				order: 2;
+				min-height: calc(100vh - 64px - 64px);
+				padding: 4px;
+				padding-left: 1em;
+			}
+			#sidebar {
+				flex: 0 0 16em;
+				order: 1;
+				background: var(--sidebar-color);
+			}
+		`;
+	}
+
 	import arsd.dom;
 	Element htmlContainer() {
 		auto document = new Document(`<!DOCTYPE html>
@@ -6217,7 +6343,12 @@ class WebObject(Helper = void) {
 	<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-	<div id="container"></div>
+	<div id="header"></div>
+	<div id="main-site">
+		<div id="container"></div>
+		<div id="sidebar"></div>
+	</div>
+	<div id="footer"></div>
 	<script src="script.js"></script>
 </body>
 </html>`, true, true);
@@ -6296,21 +6427,6 @@ auto serveApi(T)(string urlPrefix) {
 	return DispatcherDefinition!handler(urlPrefix, false);
 }
 
-/++
-	The base of all REST objects.
-+/
-class RestObject(Helper = void) {
-
-	import arsd.dom;
-	import arsd.jsvar;
-
-	/// Show
-	void show() {}
-	/// ditto
-	void show(string urlId) {
-		load(urlId);
-		show();
-	}
 
 	enum AccessCheck {
 		allowed,
@@ -6339,6 +6455,23 @@ class RestObject(Helper = void) {
 		invalid
 	}
 
+
+/++
+	The base of all REST objects, to be used with [serveRestObject] and [serveRestCollectionOf].
++/
+class RestObject(Helper = void) : WebObject!Helper {
+
+	import arsd.dom;
+	import arsd.jsvar;
+
+	/// Prepare the object to be shown.
+	void show() {}
+	/// ditto
+	void show(string urlId) {
+		load(urlId);
+		show();
+	}
+
 	ValidationResult delegate(typeof(this)) validateFromReflection;
 	Element delegate(typeof(this)) toHtmlFromReflection;
 	var delegate(typeof(this)) toJsonFromReflection;
@@ -6357,7 +6490,14 @@ class RestObject(Helper = void) {
 	// The functions with more arguments are the low-level ones,
 	// they forward to the ones with fewer arguments by default.
 
-	void create() {} // POST on a parent collection - this is called from a collection class after the members are updated
+	// POST on a parent collection - this is called from a collection class after the members are updated
+	/++
+		Given a populated object, this creates a new entry. Returns the url identifier
+		of the new object.
+	+/
+	string create(scope void delegate() applyChanges) {
+		return null;
+	}
 
 	void replace() {}
 	void replace(string urlId, scope void delegate() applyChanges) {
@@ -6380,8 +6520,8 @@ class RestObject(Helper = void) {
 		remove();
 	}
 
-	abstract void load(string urlId) {}
-	abstract void save() {}
+	abstract void load(string urlId);
+	abstract void save();
 
 	Element toHtml() {
 		if(toHtmlFromReflection)
@@ -6396,14 +6536,55 @@ class RestObject(Helper = void) {
 		else
 			assert(0);
 	}
+
+	/+
+	auto structOf(this This) {
+
+	}
+	+/
+}
+
+/++
+	Responsible for displaying stuff as HTML. You can put this into your own aggregate
+	and override it. Use forwarding and specialization to customize it.
++/
+mixin template Presenter() {
+
 }
 
 /++
 	Base class for REST collections.
 +/
 class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
-	void index() {}
-	override void create() {}
+	/// You might subclass this and use the cgi object's query params
+	/// to implement a search filter, for example.
+	///
+	/// FIXME: design a way to auto-generate that form
+	/// (other than using the WebObject thing above lol
+	// it'll prolly just be some searchParams UDA or maybe an enum.
+	//
+	// pagination too perhaps.
+	//
+	// and sorting too
+	IndexResult index() { return IndexResult.init; }
+
+	string[] sortableFields() { return null; }
+	string[] searchableFields() { return null; }
+
+	struct IndexResult {
+		Obj[] results;
+
+		string[] sortableFields;
+
+		string previousPageIdentifier;
+		string nextPageIdentifier;
+		string firstPageIdentifier;
+		string lastPageIdentifier;
+
+		int numberOfPages;
+	}
+
+	override string create(scope void delegate() applyChanges) { assert(0); }
 	override void load(string urlId) { assert(0); }
 	override void save() { assert(0); }
 	override void show() {
@@ -6412,6 +6593,9 @@ class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
 	override void show(string urlId) {
 		show();
 	}
+
+	/// Proxy POST requests (create calls) to the child collection
+	alias PostProxy = Obj;
 }
 
 /++
@@ -6539,47 +6723,263 @@ auto serveRestObject(T)(string urlPrefix) {
 
 		if(url.length && url[$ - 1] == '/') {
 			// remove the final slash...
-			cgi.setResponseLocation("..");
+			cgi.setResponseLocation(cgi.pathInfo[0 .. $ - 1]);
 			return true;
 		}
 
-		string urlId = null;
-		if(url.length && url[0] == '/') {
-			// asking for a subobject
-			urlId = url[1 .. $];
-			foreach(idx, ch; urlId) {
-				if(ch == '/') {
-					urlId = urlId[0 .. idx];
-					break;
-				}
-			}
-		}
+		return restObjectServeHandler!T(cgi, url);
 
-		// FIXME: support precondition failed, if-modified-since, expectation failed, etc.
-
-		auto obj = new T();
-		obj.toHtmlFromReflection = delegate(t) {
-			import arsd.dom;
-			return Element.make("div", T.stringof ~ "/" ~ urlId);
-		};
-		// FIXME: populate reflection info delegates
-
-		switch(cgi.requestMethod) {
-			case Cgi.RequestMethod.GET:
-				obj.show(urlId);
-				cgi.write(obj.toHtml().toString, true);
-			break;
-			case Cgi.RequestMethod.POST:
-			case Cgi.RequestMethod.PUT:
-			case Cgi.RequestMethod.PATCH:
-			case Cgi.RequestMethod.DELETE:
-			default:
-				// FIXME: OPTIONS, HEAD
-		}
-
-		return true;
 	}
 	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+/// Convenience method for serving a collection. It will be named the same
+/// as type T, just with an s at the end. If you need any further, just
+/// write the class yourself.
+auto serveRestCollectionOf(T)(string urlPrefix) {
+	mixin(`static class `~T.stringof~`s : CollectionOf!(T) {}`);
+	return serveRestObject!(mixin(T.stringof ~ "s"))(urlPrefix);
+}
+
+bool restObjectServeHandler(T)(Cgi cgi, string url) {
+	string urlId = null;
+	if(url.length && url[0] == '/') {
+		// asking for a subobject
+		urlId = url[1 .. $];
+		foreach(idx, ch; urlId) {
+			if(ch == '/') {
+				urlId = urlId[0 .. idx];
+				break;
+			}
+		}
+	}
+
+	// FIXME handle other subresources
+
+	static if(is(T : CollectionOf!(C, P), C, P)) {
+		if(urlId !is null) {
+			return restObjectServeHandler!C(cgi, url); // FIXME?  urlId);
+		}
+	}
+
+	// FIXME: support precondition failed, if-modified-since, expectation failed, etc.
+
+	auto obj = new T();
+	obj.toHtmlFromReflection = delegate(t) {
+		import arsd.dom;
+		auto div = Element.make("div");
+		div.addClass("Dclass_" ~ T.stringof);
+		div.dataset.url = urlId;
+		static foreach(idx, memberName; __traits(derivedMembers, T))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			div.appendChild(formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
+		}
+		return div;
+	};
+	obj.toJsonFromReflection = delegate(t) {
+		import arsd.jsvar;
+		var v = var.emptyObject();
+		static foreach(idx, memberName; __traits(derivedMembers, T))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			v[memberName] = __traits(getMember, obj, memberName);
+		}
+		return v;
+	};
+	obj.validateFromReflection = delegate(t) {
+		// FIXME
+		return ValidationResult.valid;
+	};
+	obj.initialize(cgi);
+	// FIXME: populate reflection info delegates
+
+
+	// FIXME: I am not happy with this.
+	switch(urlId) {
+		case "script.js":
+			cgi.setResponseContentType("text/javascript");
+			cgi.gzipResponse = true;
+			cgi.write(obj.script(), true);
+			return true;
+		case "style.css":
+			cgi.setResponseContentType("text/css");
+			cgi.gzipResponse = true;
+			cgi.write(obj.style(), true);
+			return true;
+		default:
+			// intentionally blank
+	}
+
+
+
+
+	static void applyChangesTemplate(Obj)(Cgi cgi, Obj obj) {
+		static foreach(idx, memberName; __traits(derivedMembers, Obj))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			__traits(getMember, obj, memberName) = cgi.request(memberName, __traits(getMember, obj, memberName));
+		}
+	}
+	void applyChanges() {
+		applyChangesTemplate(cgi, obj);
+	}
+
+	string[] modifiedList;
+
+	void writeObject(bool addFormLinks) {
+		if(cgi.request("format") == "json") {
+			cgi.setResponseContentType("application/json");
+			cgi.write(obj.toJson().toString, true);
+		} else {
+			auto container = obj.htmlContainer();
+			if(addFormLinks) {
+				static if(is(T : CollectionOf!(C, P), C, P))
+				container.appendHtml(`
+					<form>
+						<button type="submit" name="_method" value="POST">Create New</button>
+					</form>
+				`);
+				else
+				container.appendHtml(`
+					<form>
+						<button type="submit" name="_method" value="PATCH">Edit</button>
+						<button type="submit" name="_method" value="DELETE">Delete</button>
+					</form>
+				`);
+			}
+			container.appendChild(obj.toHtml());
+			cgi.write(container.parentDocument.toString, true);
+		}
+	}
+
+	// FIXME: I think I need a set type in here....
+	// it will be nice to pass sets of members.
+
+	switch(cgi.requestMethod) {
+		case Cgi.RequestMethod.GET:
+			// I could prolly use template this parameters in the implementation above for some reflection stuff.
+			// sure, it doesn't automatically work in subclasses... but I instantiate here anyway...
+
+			// automatic forms here for usable basic auto site from browser.
+			// even if the format is json, it could actually send out the links and formats, but really there i'ma be meh.
+			switch(cgi.request("_method", "GET")) {
+				case "GET":
+					static if(is(T : CollectionOf!(C, P), C, P)) {
+						auto results = obj.index();
+						if(cgi.request("format", "html") == "html") {
+							auto container = obj.htmlContainer();
+							auto html = formatReturnValueAsHtml(results.results);
+							container.appendHtml(`
+								<form>
+									<button type="submit" name="_method" value="POST">Create New</button>
+								</form>
+							`);
+
+							container.appendChild(html);
+							cgi.write(container.parentDocument.toString, true);
+						} else {
+							cgi.setResponseContentType("application/json");
+							import arsd.jsvar;
+							var json = var.emptyArray;
+							foreach(r; results.results) {
+								var o = var.emptyObject;
+								static foreach(idx, memberName; __traits(derivedMembers, typeof(r)))
+								static if(__traits(compiles, __traits(getMember, r, memberName).offsetof)) {
+									o[memberName] = __traits(getMember, r, memberName);
+								}
+
+								json ~= o;
+							}
+							cgi.write(json.toJson(), true);
+						}
+					} else {
+						obj.show(urlId);
+						writeObject(true);
+					}
+				break;
+				case "PATCH":
+					obj.load(urlId);
+				goto case;
+				case "PUT":
+				case "POST":
+					// an editing form for the object
+					auto container = obj.htmlContainer();
+					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
+						auto form = (cgi.request("_method") == "POST") ? createAutomaticFormForObject(new obj.PostProxy()) : createAutomaticFormForObject(obj);
+					} else {
+						auto form = createAutomaticFormForObject(obj);
+					}
+					form.attrs.method = "POST";
+					form.setValue("_method", cgi.request("_method", "GET"));
+					container.appendChild(form);
+					cgi.write(container.parentDocument.toString(), true);
+				break;
+				case "DELETE":
+					// FIXME: a delete form for the object (can be phrased "are you sure?")
+					auto container = obj.htmlContainer();
+					container.appendHtml(`
+						<form method="POST">
+							Are you sure you want to delete this item?
+							<input type="hidden" name="_method" value="DELETE" />
+							<input type="submit" value="Yes, Delete It" />
+						</form>
+
+					`);
+					cgi.write(container.parentDocument.toString(), true);
+				break;
+				default:
+					cgi.write("bad method\n", true);
+			}
+		break;
+		case Cgi.RequestMethod.POST:
+			// this is to allow compatibility with HTML forms
+			switch(cgi.request("_method", "POST")) {
+				case "PUT":
+					goto PUT;
+				case "PATCH":
+					goto PATCH;
+				case "DELETE":
+					goto DELETE;
+				case "POST":
+					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
+						auto p = new obj.PostProxy();
+						void specialApplyChanges() {
+							applyChangesTemplate(cgi, p);
+						}
+						string n = p.create(&specialApplyChanges);
+					} else {
+						string n = obj.create(&applyChanges);
+					}
+
+					auto newUrl = cgi.pathInfo ~ "/" ~ n;
+					cgi.setResponseLocation(newUrl);
+					cgi.setResponseStatus("201 Created");
+					cgi.write(`The object has been created.`);
+				break;
+				default:
+					cgi.write("bad method\n", true);
+			}
+			// FIXME this should be valid on the collection, but not the child....
+			// 303 See Other
+		break;
+		case Cgi.RequestMethod.PUT:
+		PUT:
+			obj.replace(urlId, &applyChanges);
+			writeObject(false);
+		break;
+		case Cgi.RequestMethod.PATCH:
+		PATCH:
+			obj.update(urlId, &applyChanges, modifiedList);
+			writeObject(false);
+		break;
+		case Cgi.RequestMethod.DELETE:
+		DELETE:
+			obj.remove(urlId);
+			cgi.setResponseStatus("204 No Content");
+		break;
+		default:
+			// FIXME: OPTIONS, HEAD
+	}
+
+	return true;
 }
 
 /++
