@@ -697,7 +697,7 @@ class Cgi {
 				}
 			} else {
 				// it is an argument of some sort
-				if(requestMethod == Cgi.RequestMethod.POST) {
+				if(requestMethod == Cgi.RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
 					auto parts = breakUp(arg);
 					_post[parts[0]] ~= parts[1];
 					allPostNamesInOrder ~= parts[0];
@@ -906,7 +906,7 @@ class Cgi {
 		// FIXME: DOCUMENT_ROOT?
 
 		// FIXME: what about PUT?
-		if(requestMethod == RequestMethod.POST) {
+		if(requestMethod == RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
 			version(preserveData) // a hack to make forwarding simpler
 				immutable(ubyte)[] data;
 			size_t amountReceived = 0;
@@ -6499,14 +6499,18 @@ class RestObject(Helper = void) : WebObject!Helper {
 		return null;
 	}
 
-	void replace() {}
+	void replace() {
+		save();
+	}
 	void replace(string urlId, scope void delegate() applyChanges) {
 		load(urlId);
 		applyChanges();
 		replace();
 	}
 
-	void update(string[] fieldList) {}
+	void update(string[] fieldList) {
+		save();
+	}
 	void update(string urlId, scope void delegate() applyChanges, string[] fieldList) {
 		load(urlId);
 		applyChanges();
@@ -6723,7 +6727,7 @@ auto serveRestObject(T)(string urlPrefix) {
 
 		if(url.length && url[$ - 1] == '/') {
 			// remove the final slash...
-			cgi.setResponseLocation(cgi.pathInfo[0 .. $ - 1]);
+			cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $ - 1]);
 			return true;
 		}
 
@@ -6949,7 +6953,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 						string n = obj.create(&applyChanges);
 					}
 
-					auto newUrl = cgi.pathInfo ~ "/" ~ n;
+					auto newUrl = cgi.scriptName ~ cgi.pathInfo ~ "/" ~ n;
 					cgi.setResponseLocation(newUrl);
 					cgi.setResponseStatus("201 Created");
 					cgi.write(`The object has been created.`);
