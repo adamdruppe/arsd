@@ -3648,7 +3648,7 @@ class BufferedInputRange {
 				return;
 			}
 
-			view = underlyingBuffer[underlyingBuffer.ptr - view.ptr .. view.length + ret];
+			view = underlyingBuffer[view.ptr - underlyingBuffer.ptr .. view.length + ret];
 		} while(view.length < minBytesToSettleFor);
 	}
 
