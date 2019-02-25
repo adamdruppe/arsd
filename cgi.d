@@ -6774,8 +6774,10 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 		auto div = Element.make("div");
 		div.addClass("Dclass_" ~ T.stringof);
 		div.dataset.url = urlId;
+		bool first = true;
 		static foreach(idx, memberName; __traits(derivedMembers, T))
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			if(!first) div.addChild("br"); else first = false;
 			div.appendChild(formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
 		}
 		return div;
@@ -6985,6 +6987,24 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 
 	return true;
 }
+
+/+
+struct SetOfFields(T) {
+	private void[0][string] storage;
+	void set(string what) {
+		//storage[what] = 
+	}
+	void unset(string what) {}
+	void setAll() {}
+	void unsetAll() {}
+	bool isPresent(string what) { return false; }
+}
++/
+
+/+
+enum readonly;
+enum hideonindex;
++/
 
 /++
 	Serves a static file. To be used with [dispatcher].

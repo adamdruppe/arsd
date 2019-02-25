@@ -90,6 +90,8 @@
 		obj.__prop("name", value); // bypasses operator overloading, useful for use inside the opIndexAssign especially
 
 		Note: if opIndex is not overloaded, getting a non-existent member will actually add it to the member. This might be a bug but is needed right now in the D impl for nice chaining. Or is it? FIXME
+
+		FIXME: it doesn't do opIndex with multiple args.
 	* if/else
 	* array slicing, but note that slices are rvalues currently
 	* variables must start with A-Z, a-z, _, or $, then must be [A-Za-z0-9_]*.
@@ -2304,7 +2306,9 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 					auto ident = tokens.requireNextToken(ScriptToken.Type.identifier);
 
 					tokens.requireNextToken(ScriptToken.Type.symbol, "(");
-					auto args = parseVariableDeclaration(tokens, ")");
+					VariableDeclaration args;
+					if(!tokens.peekNextToken(ScriptToken.Type.symbol, ")"))
+						args = parseVariableDeclaration(tokens, ")");
 					tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 					auto bod = parseExpression(tokens);
 
