@@ -434,6 +434,25 @@ struct Terminal {
 	@disable this(this);
 	private ConsoleOutputType type;
 
+	/++
+		Terminal is only valid to use on an actual console device or terminal
+		handle. You should not attempt to construct a Terminal instance if this
+		returns false;
+	+/
+	static bool stdoutIsTerminal() {
+		version(Posix) {
+			import core.sys.posix.unistd;
+			return cast(bool) isatty(1);
+		} else version(Windows) {
+			auto hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			CONSOLE_SCREEN_BUFFER_INFO originalSbi;
+			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
+				return false;
+			else
+				return true;
+		} else static assert(0);
+	}
+
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
