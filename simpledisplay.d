@@ -2662,10 +2662,13 @@ static struct GenericCursor {
 struct EventLoop {
 	@disable this();
 
+	/// Gets a reference to an existing event loop
 	static EventLoop get() {
 		return EventLoop(0, null);
 	}
 
+	/// Construct an application-global event loop for yourself
+	/// See_Also: [SimpleWindow.setEventHandlers]
 	this(long pulseTimeout, void delegate() handlePulse) {
 		if(impl is null)
 			impl = new EventLoopImpl(pulseTimeout, handlePulse);
@@ -2693,12 +2696,14 @@ struct EventLoop {
 		impl.refcount++;
 	}
 
+	/// Runs the event loop until the whileCondition, if present, returns false
 	int run(bool delegate() whileCondition = null) {
 		assert(impl !is null);
 		impl.notExited = true;
 		return impl.run(whileCondition);
 	}
 
+	/// Exits the event loop
 	void exit() {
 		assert(impl !is null);
 		impl.notExited = false;
