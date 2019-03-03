@@ -2050,11 +2050,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	+/
 	@property void cursor(MouseCursor cursor) {
-		auto ch = cursor.cursorHandle;
+		version(OSXCocoa)
+			featureNotImplemented();
+		else
 		if(this.impl.curHidden <= 0) {
 			static if(UsingSimpledisplayX11) {
+				auto ch = cursor.cursorHandle;
 				XDefineCursor(XDisplayConnection.get(), this.impl.window, ch);
 			} else version(Windows) {
+				auto ch = cursor.cursorHandle;
 				impl.currentCursor = ch;
 				SetCursor(ch); // redraw without waiting for mouse movement to update
 			} else featureNotImplemented();
@@ -12256,7 +12260,7 @@ private:
 	alias const(void)* CGContextRef;
 	alias const(void)* CGColorSpaceRef;
 	alias const(void)* CGImageRef;
-	alias uint CGBitmapInfo;
+	alias ulong CGBitmapInfo;
 
 	struct objc_super {
 		id self;
@@ -12264,18 +12268,18 @@ private:
 	}
 
 	struct CFRange {
-		int location, length;
+		long location, length;
 	}
 
 	struct NSPoint {
-		float x, y;
+		double x, y;
 
 		static fromTuple(T)(T tupl) {
 			return NSPoint(tupl.tupleof);
 		}
 	}
 	struct NSSize {
-		float width, height;
+		double width, height;
 	}
 	struct NSRect {
 		NSPoint origin;
@@ -12286,7 +12290,7 @@ private:
 	alias NSRect CGRect;
 
 	struct CGAffineTransform {
-		float a, b, c, d, tx, ty;
+		double a, b, c, d, tx, ty;
 	}
 
 	enum NSApplicationActivationPolicyRegular = 0;
@@ -12302,7 +12306,7 @@ private:
 		NSTexturedBackgroundWindowMask = 1 << 8
 	}
 
-	enum : uint {
+	enum : ulong {
 		kCGImageAlphaNone,
 		kCGImageAlphaPremultipliedLast,
 		kCGImageAlphaPremultipliedFirst,
@@ -12311,7 +12315,7 @@ private:
 		kCGImageAlphaNoneSkipLast,
 		kCGImageAlphaNoneSkipFirst
 	}
-	enum : uint {
+	enum : ulong {
 		kCGBitmapAlphaInfoMask = 0x1F,
 		kCGBitmapFloatComponents = (1 << 8),
 		kCGBitmapByteOrderMask = 0x7000,
@@ -12360,12 +12364,12 @@ private:
 
 		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
 											const(char)* bytes, long numBytes,
-											int encoding,
+											long encoding,
 											BOOL isExternalRepresentation);
-		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
+		long CFStringGetBytes(CFStringRef theString, CFRange range, long encoding,
 							 char lossByte, bool isExternalRepresentation,
 							 char* buffer, long maxBufLen, long* usedBufLen);
-		int CFStringGetLength(CFStringRef theString);
+		long CFStringGetLength(CFStringRef theString);
 
 		CGContextRef CGBitmapContextCreate(void* data,
 										   size_t width, size_t height,
@@ -12383,13 +12387,13 @@ private:
 		void CGColorSpaceRelease(CGColorSpaceRef cs);
 
 		void CGContextSetRGBStrokeColor(CGContextRef c,
-										float red, float green, float blue,
-										float alpha);
+										double red, double green, double blue,
+										double alpha);
 		void CGContextSetRGBFillColor(CGContextRef c,
-									  float red, float green, float blue,
-									  float alpha);
+									  double red, double green, double blue,
+									  double alpha);
 		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
-		void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
+		void CGContextShowTextAtPoint(CGContextRef c, double x, double y,
 									  const(char)* str, size_t length);
 		void CGContextStrokeLineSegments(CGContextRef c,
 										 const(CGPoint)* points, size_t count);
@@ -12397,15 +12401,15 @@ private:
 		void CGContextBeginPath(CGContextRef c);
 		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
 		void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
-		void CGContextAddArc(CGContextRef c, float x, float y, float radius,
-							 float startAngle, float endAngle, int clockwise);
+		void CGContextAddArc(CGContextRef c, double x, double y, double radius,
+							 double startAngle, double endAngle, long clockwise);
 		void CGContextAddRect(CGContextRef c, CGRect rect);
 		void CGContextAddLines(CGContextRef c,
 							   const(CGPoint)* points, size_t count);
 		void CGContextSaveGState(CGContextRef c);
 		void CGContextRestoreGState(CGContextRef c);
-		void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
-								 uint textEncoding);
+		void CGContextSelectFont(CGContextRef c, const(char)* name, double size,
+								 ulong textEncoding);
 		CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
 		void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
 
@@ -12415,7 +12419,7 @@ private:
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
-        return CFStringCreateWithBytes(null, str.ptr, cast(int) str.length,
+        return CFStringCreateWithBytes(null, str.ptr, cast(long) str.length,
                                              kCFStringEncodingUTF8, false);
     }
 
@@ -12502,7 +12506,7 @@ version(OSXCocoa) {
 
 		// if rawData had a length....
 		//assert(rawData.length == where.length);
-		for(int idx = 0; idx < where.length; idx += 4) {
+		for(long idx = 0; idx < where.length; idx += 4) {
 			auto alpha = rawData[idx + 3];
 			if(alpha == 255) {
 				where[idx + 0] = rawData[idx + 0]; // r
@@ -12525,7 +12529,7 @@ version(OSXCocoa) {
 
 		// if rawData had a length....
 		//assert(rawData.length == where.length);
-		for(int idx = 0; idx < where.length; idx += 4) {
+		for(long idx = 0; idx < where.length; idx += 4) {
 			auto alpha = rawData[idx + 3];
 			if(alpha == 255) {
 				rawData[idx + 0] = where[idx + 0]; // r
@@ -12597,7 +12601,7 @@ version(OSXCocoa) {
 	// end
 
         @property void outlineColor(Color color) {
-            float alphaComponent = color.a/255.0f;
+            double alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
                                        color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
 
