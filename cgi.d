@@ -1,6 +1,9 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
 
+// FIXME: I might make a cgi proxy class which can change things; the underlying one is still immutable
+// but the later one can edit and simplify the api. You'd have to use the subclass tho!
+
 /*
 void foo(int f, @("test") string s) {}
 
@@ -65,6 +68,34 @@ void main() {
 	mixin GenericMain!hello;
 	---
 
+
+	Compile_versions:
+
+		-version=plain_cgi
+			The default - a traditional, plain CGI executable will be generated.
+		-version=fastcgi
+			A FastCGI executable will be generated.
+		-version=scgi
+			A SCGI (SimpleCGI) executable will be generated.
+		-version=embedded_httpd
+			A HTTP server will be embedded in the generated executable.
+		-version=embedded_httpd_threads
+			The embedded HTTP server will use a single process with a thread pool.
+		-version=embedded_httpd_processes
+			The embedded HTTP server will use a prefork style process pool.
+
+		-version=cgi_with_websocket
+			The CGI class has websocket server support.
+
+		-version=with_openssl # not currently used
+
+		-version=embedded_httpd_processes_accept_after_fork
+			It will call accept() in each child process, after forking. This is currently the only option, though I am experimenting with other ideas.
+
+		-version=cgi_embedded_sessions
+			The session server will be embedded in the cgi.d server process
+		-version=cgi_session_server_process
+			The session will be provided in a separate process, provided by cgi.d.
 
 	Compile_and_run:
 	
@@ -253,7 +284,7 @@ void main() {
 
 	Copyright:
 
-	cgi.d copyright 2008-2018, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2019, Adam D. Ruppe. Provided under the Boost Software License.
 
 	Yes, this file is almost ten years old, and yes, it is still actively maintained and used.
 +/
@@ -261,11 +292,15 @@ module arsd.cgi;
 
 static import std.file;
 
+// for a single thread, linear request thing, use:
+// -version=embedded_httpd_threads -version=cgi_no_threads
+
 version(embedded_httpd) {
 	version(linux)
 		version=embedded_httpd_processes;
-	else
+	else {
 		version=embedded_httpd_threads;
+	}
 
 	/*
 	version(with_openssl) {
@@ -274,6 +309,31 @@ version(embedded_httpd) {
 	}
 	*/
 }
+
+version(embedded_httpd_processes)
+	version=embedded_httpd_processes_accept_after_fork; // I am getting much better average performance on this, so just keeping it. But the other way MIGHT help keep the variation down so i wanna keep the code to play with later
+
+version(embedded_httpd_threads) {
+	//  unless the user overrides the default..
+	version(cgi_session_server_process)
+		{}
+	else
+		version=cgi_embedded_sessions;
+}
+version(scgi) {
+	//  unless the user overrides the default..
+	version(cgi_session_server_process)
+		{}
+	else
+		version=cgi_embedded_sessions;
+}
+
+// fall back if the other is not defined so we can cleanly version it below
+version(cgi_embedded_sessions) {}
+else version=cgi_session_server_process;
+
+
+version=cgi_with_websocket;
 
 enum long defaultMaxContentLength = 5_000_000;
 
@@ -300,6 +360,9 @@ public import std.string;
 public import std.stdio;
 public import std.conv;
 import std.uri;
+import std.uni;
+import std.algorithm.comparison;
+import std.algorithm.searching;
 import std.exception;
 import std.base64;
 static import std.algorithm;
@@ -552,6 +615,9 @@ class Cgi {
 
 		environmentVariables = cast(const) environment.toAA;
 
+		string[] allPostNamesInOrder;
+		string[] allPostValuesInOrder;
+
 		foreach(arg; args[1 .. $]) {
 			if(arg.startsWith("--")) {
 				nextArgIs = arg[2 .. $];
@@ -613,7 +679,7 @@ class Cgi {
 				lookingForMethod = false;
 				lookingForUri = true;
 
-				if(arg.toLower() == "commandline")
+				if(arg.asLowerCase().equal("commandline"))
 					requestMethod = RequestMethod.CommandLine;
 				else
 					requestMethod = to!RequestMethod(arg.toUpper());
@@ -631,9 +697,11 @@ class Cgi {
 				}
 			} else {
 				// it is an argument of some sort
-				if(requestMethod == Cgi.RequestMethod.POST) {
+				if(requestMethod == Cgi.RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
 					auto parts = breakUp(arg);
 					_post[parts[0]] ~= parts[1];
+					allPostNamesInOrder ~= parts[0];
+					allPostValuesInOrder ~= parts[1];
 				} else {
 					if(_queryString.length)
 						_queryString ~= "&";
@@ -652,7 +720,7 @@ class Cgi {
 		cookies = keepLastOf(cookiesArray);
 
 		queryString = _queryString;
-		getArray = cast(immutable) decodeVariables(queryString);
+		getArray = cast(immutable) decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 		get = keepLastOf(getArray);
 
 		postArray = cast(immutable) _post;
@@ -680,6 +748,19 @@ class Cgi {
 		this.queryString = queryString;
 		this.postJson = null;
 	}
+
+	private {
+		string[] allPostNamesInOrder;
+		string[] allPostValuesInOrder;
+		string[] allGetNamesInOrder;
+		string[] allGetValuesInOrder;
+	}
+
+	CgiConnectionHandle getOutputFileHandle() {
+		return _outputFileHandle;
+	}
+
+	CgiConnectionHandle _outputFileHandle = INVALID_CGI_CONNECTION_HANDLE;
 
 	/** Initializes it using a CGI or CGI-like interface */
 	this(long maxContentLength = defaultMaxContentLength,
@@ -776,9 +857,9 @@ class Cgi {
 		}
 
 
-		get = getGetVariables(queryString);
-		auto ugh = decodeVariables(queryString);
+		auto ugh = decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 		getArray = assumeUnique(ugh);
+		get = keepLastOf(getArray);
 
 
 		// NOTE: on shitpache, you need to specifically forward this
@@ -807,7 +888,7 @@ class Cgi {
 		lastEventId = getenv("HTTP_LAST_EVENT_ID");
 
 		auto ka = getenv("HTTP_CONNECTION");
-		if(ka.length && ka.toLower().indexOf("keep-alive") != -1)
+		if(ka.length && ka.asLowerCase().canFind("keep-alive"))
 			keepAliveRequested = true;
 
 		auto or = getenv("HTTP_ORIGIN");
@@ -825,7 +906,7 @@ class Cgi {
 		// FIXME: DOCUMENT_ROOT?
 
 		// FIXME: what about PUT?
-		if(requestMethod == RequestMethod.POST) {
+		if(requestMethod == RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
 			version(preserveData) // a hack to make forwarding simpler
 				immutable(ubyte)[] data;
 			size_t amountReceived = 0;
@@ -1057,6 +1138,12 @@ class Cgi {
 		} else if(pps.contentType == "multipart/form-data") {
 			pps.isMultipart = true;
 			enforce(pps.boundary.length, "no boundary");
+		} else if(pps.contentType == "text/plain") {
+			pps.isMultipart = false;
+			pps.isJson = true; // FIXME: hack, it isn't actually this
+		} else if(pps.contentType == "text/xml") { // FIXME: what if we used this as a fallback?
+			pps.isMultipart = false;
+			pps.isJson = true; // FIXME: hack, it isn't actually this
 		} else if(pps.contentType == "application/json") {
 			pps.isJson = true;
 			pps.isMultipart = false;
@@ -1136,8 +1223,15 @@ class Cgi {
 					// I used to not do it, but I think I should, since it is there...
 					pps._post[pps.piece.name] ~= pps.piece.filename;
 					pps._files[pps.piece.name] ~= pps.piece;
-				} else
+
+					allPostNamesInOrder ~= pps.piece.name;
+					allPostValuesInOrder ~= pps.piece.filename;
+				} else {
 					pps._post[pps.piece.name] ~= cast(string) pps.piece.content;
+
+					allPostNamesInOrder ~= pps.piece.name;
+					allPostValuesInOrder ~= cast(string) pps.piece.content;
+				}
 
 				/*
 				stderr.writeln("RECEIVED: ", pps.piece.name, "=", 
@@ -1383,7 +1477,7 @@ class Cgi {
 				if(pps.isJson)
 					pps.postJson = cast(string) pps.buffer;
 				else
-					pps._post = decodeVariables(cast(string) pps.buffer);
+					pps._post = decodeVariables(cast(string) pps.buffer, "&", &allPostNamesInOrder, &allPostValuesInOrder);
 				version(preserveData)
 					originalPostData = pps.buffer;
 			} else {
@@ -1548,8 +1642,7 @@ class Cgi {
 					pathInfo = requestUri[pathInfoStarts..question];
 				}
 
-				get = cast(string[string]) getGetVariables(queryString);
-				auto ugh = decodeVariables(queryString);
+				auto ugh = decodeVariables(queryString, "&", &allGetNamesInOrder, &allGetValuesInOrder);
 				getArray = cast(string[][string]) assumeUnique(ugh);
 
 				if(header.indexOf("HTTP/1.0") != -1) {
@@ -1579,7 +1672,7 @@ class Cgi {
 				else if (name == "connection") {
 					if(value == "close" && closeConnection)
 						*closeConnection = true;
-					if(value.toLower().indexOf("keep-alive") != -1) {
+					if(value.asLowerCase().canFind("keep-alive")) {
 						keepAliveRequested = true;
 
 						// on http 1.0, the connection is closed by default,
@@ -1684,7 +1777,7 @@ class Cgi {
 		this.queryString = queryString;
 
 		this.scriptName = scriptName;
-		this.get = cast(immutable) get;
+		this.get = keepLastOf(getArray);
 		this.getArray = cast(immutable) getArray;
 		this.keepAliveRequested = keepAliveRequested;
 		this.acceptsGzip = acceptsGzip;
@@ -1719,43 +1812,6 @@ class Cgi {
 		return assumeUnique(forTheLoveOfGod);
 	}
 
-	// this function only exists because of the with_cgi_packed thing, which is
-	// a filthy hack I put in here for a work app. Which still depends on it, so it
-	// stays for now. But I want to remove it.
-	private immutable(string[string]) getGetVariables(in string queryString) {
-		if(queryString.length) {
-			auto _get = decodeVariablesSingle(queryString);
-
-			// Some sites are shit and don't let you handle multiple parameters.
-			// If so, compile this in and encode it as a single parameter
-			version(with_cgi_packed) {
-				auto idx = pathInfo.indexOf("PACKED");
-				if(idx != -1) {
-					auto pi = pathInfo[idx + "PACKED".length .. $];
-
-					auto _unpacked = decodeVariables(
-						cast(string) base64UrlDecode(pi));
-
-					foreach(k, v; _unpacked)
-						_get[k] = v[$-1];
-					// possible problem: it used to cut PACKED off the path info
-					// but it doesn't now. I want to kill this crap anyway though.
-				}
-
-				if("arsd_packed_data" in getArray) {
-					auto _unpacked = decodeVariables(
-						cast(string) base64UrlDecode(getArray["arsd_packed_data"][0]));
-
-					foreach(k, v; _unpacked)
-						_get[k] = v[$-1];
-				}
-			}
-
-			return assumeUnique(_get);
-		}
-
-		return null;
-	}
 	/// Very simple method to require a basic auth username and password.
 	/// If the http request doesn't include the required credentials, it throws a
 	/// HTTP 401 error, and an exception.
@@ -2637,18 +2693,28 @@ struct Uri {
 */
 
 /// breaks down a url encoded string
-string[][string] decodeVariables(string data, string separator = "&") {
+string[][string] decodeVariables(string data, string separator = "&", string[]* namesInOrder = null, string[]* valuesInOrder = null) {
 	auto vars = data.split(separator);
 	string[][string] _get;
 	foreach(var; vars) {
 		auto equal = var.indexOf("=");
+		string name;
+		string value;
 		if(equal == -1) {
-			_get[decodeComponent(var)] ~= "";
+			name = decodeComponent(var);
+			value = "";
 		} else {
 			//_get[decodeComponent(var[0..equal])] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
 			// stupid + -> space conversion.
-			_get[decodeComponent(var[0..equal].replace("+", " "))] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
+			name = decodeComponent(var[0..equal].replace("+", " "));
+			value = decodeComponent(var[equal + 1 .. $].replace("+", " "));
 		}
+
+		_get[name] ~= value;
+		if(namesInOrder)
+			(*namesInOrder) ~= name;
+		if(valuesInOrder)
+			(*valuesInOrder) ~= value;
 	}
 	return _get;
 }
@@ -2832,314 +2898,413 @@ bool isCgiRequestMethod(string s) {
 /// If you want to use a subclass of Cgi with generic main, use this mixin.
 mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
 	// kinda hacky - the T... is passed to Cgi's constructor in standard cgi mode, and ignored elsewhere
-	mixin CustomCgiMainImpl!(CustomCgi, fun, maxContentLength) customCgiMainImpl_;
-
 	void main(string[] args) {
-		customCgiMainImpl_.cgiMainImpl(args);
+		cgiMainImpl!(fun, CustomCgi, maxContentLength)(args);
 	}
 }
 
 version(embedded_httpd_processes)
 	int processPoolSize = 8;
 
-mixin template CustomCgiMainImpl(CustomCgi, alias fun, long maxContentLength = defaultMaxContentLength) if(is(CustomCgi : Cgi)) {
-	void cgiMainImpl(string[] args) {
-
-
-		// we support command line thing for easy testing everywhere
-		// it needs to be called ./app method uri [other args...]
-		if(args.length >= 3 && isCgiRequestMethod(args[1])) {
-			Cgi cgi = new CustomCgi(args);
-			scope(exit) cgi.dispose();
-			fun(cgi);
-			cgi.close();
-			return;
+void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)(string[] args) if(is(CustomCgi : Cgi)) {
+	if(args.length > 1) {
+		// run the special separate processes if needed
+		switch(args[1]) {
+			case "--websocket-server":
+				runWebsocketServer();
+				return;
+			case "--session-server":
+				runSessionServer();
+				return;
+			case "--event-server":
+				runEventServer();
+				return;
+			default:
+				// intentionally blank - do nothing and carry on to run normally
 		}
+	}
+
+	// we support command line thing for easy testing everywhere
+	// it needs to be called ./app method uri [other args...]
+	if(args.length >= 3 && isCgiRequestMethod(args[1])) {
+		Cgi cgi = new CustomCgi(args);
+		scope(exit) cgi.dispose();
+		fun(cgi);
+		cgi.close();
+		return;
+	}
 
 
-		ushort listeningPort(ushort def) {
-			bool found = false;
-			foreach(arg; args) {
-				if(found)
-					return to!ushort(arg);
-				if(arg == "--port" || arg == "-p" || arg == "/port" || arg == "--listening-port")
-					found = true;
+	ushort listeningPort(ushort def) {
+		bool found = false;
+		foreach(arg; args) {
+			if(found)
+				return to!ushort(arg);
+			if(arg == "--port" || arg == "-p" || arg == "/port" || arg == "--listening-port")
+				found = true;
+		}
+		return def;
+	}
+
+	string listeningHost() {
+		bool found = false;
+		foreach(arg; args) {
+			if(found)
+				return arg;
+			if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
+				found = true;
+		}
+		return "";
+	}
+	version(netman_httpd) {
+		import arsd.httpd;
+		// what about forwarding the other constructor args?
+		// this probably needs a whole redoing...
+		serveHttp!CustomCgi(&fun, listeningPort(8080));//5005);
+		return;
+	} else
+	version(embedded_httpd_processes) {
+		import core.sys.posix.unistd;
+		import core.sys.posix.sys.socket;
+		import core.sys.posix.netinet.in_;
+		//import std.c.linux.socket;
+
+		int sock = socket(AF_INET, SOCK_STREAM, 0);
+		if(sock == -1)
+			throw new Exception("socket");
+
+		{
+			sockaddr_in addr;
+			addr.sin_family = AF_INET;
+			addr.sin_port = htons(listeningPort(8085));
+			auto lh = listeningHost();
+			if(lh.length) {
+				if(inet_pton(AF_INET, lh.toStringz(), &addr.sin_addr.s_addr) != 1)
+					throw new Exception("bad listening host given, please use an IP address.\nExample: --listening-host 127.0.0.1 means listen only on Localhost.\nExample: --listening-host 0.0.0.0 means listen on all interfaces.\nOr you can pass any other single numeric IPv4 address.");
+			} else
+				addr.sin_addr.s_addr = INADDR_ANY;
+
+			// HACKISH
+			int on = 1;
+			setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
+			// end hack
+
+			
+			if(bind(sock, cast(sockaddr*) &addr, addr.sizeof) == -1) {
+				close(sock);
+				throw new Exception("bind");
 			}
-			return def;
-		}
 
-		string listeningHost() {
-			bool found = false;
-			foreach(arg; args) {
-				if(found)
-					return arg;
-				if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
-					found = true;
+			// FIXME: if this queue is full, it will just ignore it
+			// and wait for the client to retransmit it. This is an
+			// obnoxious timeout condition there.
+			if(sock.listen(128) == -1) {
+				close(sock);
+				throw new Exception("listen");
 			}
-			return "";
 		}
-		version(netman_httpd) {
-			import arsd.httpd;
-			// what about forwarding the other constructor args?
-			// this probably needs a whole redoing...
-			serveHttp!CustomCgi(&fun, listeningPort(8080));//5005);
-			return;
-		} else
-		version(embedded_httpd_processes) {
-			import core.sys.posix.unistd;
-			import core.sys.posix.sys.socket;
-			import core.sys.posix.netinet.in_;
-			//import std.c.linux.socket;
 
-			int sock = socket(AF_INET, SOCK_STREAM, 0);
-			if(sock == -1)
-				throw new Exception("socket");
+		version(embedded_httpd_processes_accept_after_fork) {} else {
+			int pipeReadFd;
+			int pipeWriteFd;
 
 			{
-				sockaddr_in addr;
-				addr.sin_family = AF_INET;
-				addr.sin_port = htons(listeningPort(8085));
-				auto lh = listeningHost();
-				if(lh.length) {
-					if(inet_pton(AF_INET, lh.toStringz(), &addr.sin_addr.s_addr) != 1)
-						throw new Exception("bad listening host given, please use an IP address.\nExample: --listening-host 127.0.0.1 means listen only on Localhost.\nExample: --listening-host 0.0.0.0 means listen on all interfaces.\nOr you can pass any other single numeric IPv4 address.");
-				} else
-					addr.sin_addr.s_addr = INADDR_ANY;
-
-				// HACKISH
-				int on = 1;
-				setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, on.sizeof);
-				// end hack
-
-				
-				if(bind(sock, cast(sockaddr*) &addr, addr.sizeof) == -1) {
-					close(sock);
-					throw new Exception("bind");
+				int[2] pipeFd;
+				if(socketpair(AF_UNIX, SOCK_DGRAM, 0, pipeFd)) {
+					import core.stdc.errno;
+					throw new Exception("pipe failed " ~ to!string(errno));
 				}
 
-				// FIXME: if this queue is full, it will just ignore it
-				// and wait for the client to retransmit it. This is an
-				// obnoxious timeout condition there.
-				if(sock.listen(128) == -1) {
-					close(sock);
-					throw new Exception("listen");
-				}
+				pipeReadFd = pipeFd[0];
+				pipeWriteFd = pipeFd[1];
 			}
+		}
 
 
-			int processCount;
-			pid_t newPid;
-			reopen:
-			while(processCount < processPoolSize) {
-				newPid = fork();
-				if(newPid == 0) {
-					// start serving on the socket
-					//ubyte[4096] backingBuffer;
-					for(;;) {
-						bool closeConnection;
+		int processCount;
+		pid_t newPid;
+		reopen:
+		while(processCount < processPoolSize) {
+			newPid = fork();
+			if(newPid == 0) {
+				// start serving on the socket
+				//ubyte[4096] backingBuffer;
+				for(;;) {
+					bool closeConnection;
+					uint i;
+					sockaddr addr;
+					i = addr.sizeof;
+					version(embedded_httpd_processes_accept_after_fork) {
+						int s = accept(sock, &addr, &i);
+						int opt = 1;
+						import core.sys.posix.netinet.tcp;
+						// the Cgi class does internal buffering, so disabling this
+						// helps with latency in many cases...
+						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
+					} else {
+						int s;
+						auto readret = read_fd(pipeReadFd, &s, s.sizeof, &s);
+						if(readret != s.sizeof) {
+							import core.stdc.errno;
+							throw new Exception("pipe read failed " ~ to!string(errno));
+						}
+
+						//writeln("process ", getpid(), " got socket ", s);
+					}
+
+					try {
+
+						if(s == -1)
+							throw new Exception("accept");
+
+						scope(failure) close(s);
+						//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
+						auto ir = new BufferedInputRange(s);
+						//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
+
+						while(!ir.empty) {
+							ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
+
+							Cgi cgi;
+							try {
+								cgi = new CustomCgi(ir, &closeConnection);
+								cgi._outputFileHandle = s;
+								// if we have a single process and the browser tries to leave the connection open while concurrently requesting another, it will block everything an deadlock since there's no other server to accept it. By closing after each request in this situation, it tells the browser to serialize for us.
+								if(processPoolSize <= 1)
+									closeConnection = true;
+								//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
+							} catch(Throwable t) {
+								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
+								// anyway let's kill the connection
+								stderr.writeln(t.toString());
+								sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
+								closeConnection = true;
+								break;
+							}
+							assert(cgi !is null);
+							scope(exit)
+								cgi.dispose();
+
+							try {
+								fun(cgi);
+								cgi.close();
+							} catch(ConnectionException ce) {
+								closeConnection = true;
+							} catch(Throwable t) {
+								// a processing error can be recovered from
+								stderr.writeln(t.toString);
+								if(!handleException(cgi, t))
+									closeConnection = true;
+							}
+
+							if(closeConnection) {
+								ir.source.close();
+								break;
+							} else {
+								if(!ir.empty)
+									ir.popFront(); // get the next
+								else if(ir.sourceClosed) {
+									ir.source.close();
+								}
+							}
+						}
+
+						ir.source.close();
+					} catch(Throwable t) {
+						debug writeln(t);
+						// most likely cause is a timeout
+					}
+				}
+			} else {
+				processCount++;
+			}
+		}
+
+		// the parent should wait for its children...
+		if(newPid) {
+			import core.sys.posix.sys.wait;
+
+			version(embedded_httpd_processes_accept_after_fork) {} else {
+				import core.sys.posix.sys.select;
+				int[] fdQueue;
+				while(true) {
+					// writeln("select call");
+					int nfds = pipeWriteFd;
+					if(sock > pipeWriteFd)
+						nfds = sock;
+					nfds += 1;
+					fd_set read_fds;
+					fd_set write_fds;
+					FD_ZERO(&read_fds);
+					FD_ZERO(&write_fds);
+					FD_SET(sock, &read_fds);
+					if(fdQueue.length)
+						FD_SET(pipeWriteFd, &write_fds);
+					auto ret = select(nfds, &read_fds, &write_fds, null, null);
+					if(ret == -1) {
+						import core.stdc.errno;
+						if(errno == EINTR)
+							goto try_wait;
+						else
+							throw new Exception("wtf select");
+					}
+
+					int s = -1;
+					if(FD_ISSET(sock, &read_fds)) {
 						uint i;
 						sockaddr addr;
 						i = addr.sizeof;
-						int s = accept(sock, &addr, &i);
+						s = accept(sock, &addr, &i);
+						import core.sys.posix.netinet.tcp;
+						int opt = 1;
+						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
+					}
 
-						try {
-
-							if(s == -1)
-								throw new Exception("accept");
-
-							scope(failure) close(s);
-							//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
-							auto ir = new BufferedInputRange(s);
-							//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
-
-							while(!ir.empty) {
-								ubyte[__traits(classInstanceSize, CustomCgi)] cgiContainer;
-
-								Cgi cgi;
-								try {
-									cgi = new CustomCgi(ir, &closeConnection);
-									// if we have a single process and the browser tries to leave the connection open while concurrently requesting another, it will block everything an deadlock since there's no other server to accept it. By closing after each request in this situation, it tells the browser to serialize for us.
-									if(processPoolSize == 1)
-										closeConnection = true;
-									//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
-								} catch(Throwable t) {
-									// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
-									// anyway let's kill the connection
-									stderr.writeln(t.toString());
-									sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
-									closeConnection = true;
-									break;
-								}
-								assert(cgi !is null);
-								scope(exit)
-									cgi.dispose();
-
-								try {
-									fun(cgi);
-									cgi.close();
-								} catch(ConnectionException ce) {
-									closeConnection = true;
-								} catch(Throwable t) {
-									// a processing error can be recovered from
-									stderr.writeln(t.toString);
-									if(!handleException(cgi, t))
-										closeConnection = true;
-								}
-
-								if(closeConnection) {
-									ir.source.close();
-									break;
-								} else {
-									if(!ir.empty)
-										ir.popFront(); // get the next
-									else if(ir.sourceClosed) {
-										ir.source.close();
-									}
-								}
-							}
-
-							ir.source.close();
-						} catch(Throwable t) {
-							debug writeln(t);
-							// most likely cause is a timeout
+					if(FD_ISSET(pipeWriteFd, &write_fds)) {
+						if(s == -1 && fdQueue.length) {
+							s = fdQueue[0];
+							fdQueue = fdQueue[1 .. $]; // FIXME reuse buffer
 						}
-					}
-				} else {
-					processCount++;
+						write_fd(pipeWriteFd, &s, s.sizeof, s);
+						close(s); // we are done with it, let the other process take ownership
+					} else
+						fdQueue ~= s;
 				}
 			}
 
-			// the parent should wait for its children...
-			if(newPid) {
-				import core.sys.posix.sys.wait;
-				int status;
-				// FIXME: maybe we should respawn if one dies unexpectedly
-				while(-1 != wait(&status)) {
+			try_wait:
+
+			int status;
+			while(-1 != wait(&status)) {
 				import std.stdio; writeln("Process died ", status);
-					processCount--;
-					goto reopen;
-				}
-				close(sock);
+				processCount--;
+				goto reopen;
 			}
-		} else
-		version(embedded_httpd_threads) {
-			auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(8085), &doThreadHttpConnection!(CustomCgi, fun));
-			manager.listen();
-		} else
-		version(scgi) {
-			import std.exception;
-			import al = std.algorithm;
-			auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(4000), &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
-			manager.listen();
-		} else
-		version(fastcgi) {
-			//         SetHandler fcgid-script
-			FCGX_Stream* input, output, error;
-			FCGX_ParamArray env;
+			close(sock);
+		}
+	} else
+	version(embedded_httpd_threads) {
+		auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(8085), &doThreadHttpConnection!(CustomCgi, fun));
+		manager.listen();
+	} else
+	version(scgi) {
+		import std.exception;
+		import al = std.algorithm;
+		auto manager = new ListeningConnectionManager(listeningHost(), listeningPort(4000), &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
+		manager.listen();
+	} else
+	version(fastcgi) {
+		//         SetHandler fcgid-script
+		FCGX_Stream* input, output, error;
+		FCGX_ParamArray env;
 
 
 
-			const(ubyte)[] getFcgiChunk() {
-				const(ubyte)[] ret;
-				while(FCGX_HasSeenEOF(input) != -1)
-					ret ~= cast(ubyte) FCGX_GetChar(input);
-				return ret;
-			}
+		const(ubyte)[] getFcgiChunk() {
+			const(ubyte)[] ret;
+			while(FCGX_HasSeenEOF(input) != -1)
+				ret ~= cast(ubyte) FCGX_GetChar(input);
+			return ret;
+		}
 
-			void writeFcgi(const(ubyte)[] data) {
-				FCGX_PutStr(data.ptr, data.length, output);
-			}
+		void writeFcgi(const(ubyte)[] data) {
+			FCGX_PutStr(data.ptr, data.length, output);
+		}
 
-			void doARequest() {
-				string[string] fcgienv;
+		void doARequest() {
+			string[string] fcgienv;
 
-				for(auto e = env; e !is null && *e !is null; e++) {
-					string cur = to!string(*e);
-					auto idx = cur.indexOf("=");
-					string name, value;
-					if(idx == -1)
-						name = cur;
-					else {
-						name = cur[0 .. idx];
-						value = cur[idx + 1 .. $];
-					}
-
-					fcgienv[name] = value;
+			for(auto e = env; e !is null && *e !is null; e++) {
+				string cur = to!string(*e);
+				auto idx = cur.indexOf("=");
+				string name, value;
+				if(idx == -1)
+					name = cur;
+				else {
+					name = cur[0 .. idx];
+					value = cur[idx + 1 .. $];
 				}
 
-				void flushFcgi() {
-					FCGX_FFlush(output);
-				}
-
-				Cgi cgi;
-				try {
-					cgi = new CustomCgi(maxContentLength, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
-				} catch(Throwable t) {
-					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
-					writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
-					return; //continue;
-				}
-				assert(cgi !is null);
-				scope(exit) cgi.dispose();
-				try {
-					fun(cgi);
-					cgi.close();
-				} catch(Throwable t) {
-					// log it to the error stream
-					FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
-					// handle it for the user, if we can
-					if(!handleException(cgi, t))
-						return; // continue;
-				}
+				fcgienv[name] = value;
 			}
 
-			auto lp = listeningPort(0);
-			FCGX_Request request;
-			if(lp) {
-				// if a listening port was specified on the command line, we want to spawn ourself
-				// (needed for nginx without spawn-fcgi, e.g. on Windows)
-				FCGX_Init();
-				auto sock = FCGX_OpenSocket(toStringz(listeningHost() ~ ":" ~ to!string(lp)), 12);
-				if(sock < 0)
-					throw new Exception("Couldn't listen on the port");
-				FCGX_InitRequest(&request, sock, 0);
-				while(FCGX_Accept_r(&request) >= 0) {
-					input = request.inStream;
-					output = request.outStream;
-					error = request.errStream;
-					env = request.envp;
-					doARequest();
-				}
-			} else {
-				// otherwise, assume the httpd is doing it (the case for Apache, IIS, and Lighttpd)
-				// using the version with a global variable since we are separate processes anyway
-				while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
-					doARequest();
-				}
+			void flushFcgi() {
+				FCGX_FFlush(output);
 			}
-		} else {
-			// standard CGI is the default version
+
 			Cgi cgi;
 			try {
-				cgi = new CustomCgi(maxContentLength);
+				cgi = new CustomCgi(maxContentLength, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 			} catch(Throwable t) {
-				stderr.writeln(t.msg);
-				// the real http server will probably handle this;
-				// most likely, this is a bug in Cgi. But, oh well.
-				stdout.write(plainHttpError(true, "400 Bad Request", t));
-				return;
+				FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+				writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
+				return; //continue;
 			}
 			assert(cgi !is null);
 			scope(exit) cgi.dispose();
-
 			try {
 				fun(cgi);
 				cgi.close();
-			} catch (Throwable t) {
-				stderr.writeln(t.msg);
+			} catch(Throwable t) {
+				// log it to the error stream
+				FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+				// handle it for the user, if we can
 				if(!handleException(cgi, t))
-					return;
+					return; // continue;
 			}
+		}
+
+		auto lp = listeningPort(0);
+		FCGX_Request request;
+		if(lp) {
+			// if a listening port was specified on the command line, we want to spawn ourself
+			// (needed for nginx without spawn-fcgi, e.g. on Windows)
+			FCGX_Init();
+			auto sock = FCGX_OpenSocket(toStringz(listeningHost() ~ ":" ~ to!string(lp)), 12);
+			if(sock < 0)
+				throw new Exception("Couldn't listen on the port");
+			FCGX_InitRequest(&request, sock, 0);
+			while(FCGX_Accept_r(&request) >= 0) {
+				input = request.inStream;
+				output = request.outStream;
+				error = request.errStream;
+				env = request.envp;
+				doARequest();
+			}
+		} else {
+			// otherwise, assume the httpd is doing it (the case for Apache, IIS, and Lighttpd)
+			// using the version with a global variable since we are separate processes anyway
+			while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
+				doARequest();
+			}
+		}
+	} else {
+		// standard CGI is the default version
+		Cgi cgi;
+		try {
+			cgi = new CustomCgi(maxContentLength);
+			version(Posix)
+				cgi._outputFileHandle = 1; // stdout
+			else version(Windows)
+				cgi._outputFileHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+			else static assert(0);
+		} catch(Throwable t) {
+			stderr.writeln(t.msg);
+			// the real http server will probably handle this;
+			// most likely, this is a bug in Cgi. But, oh well.
+			stdout.write(plainHttpError(true, "400 Bad Request", t));
+			return;
+		}
+		assert(cgi !is null);
+		scope(exit) cgi.dispose();
+
+		try {
+			fun(cgi);
+			cgi.close();
+		} catch (Throwable t) {
+			stderr.writeln(t.msg);
+			if(!handleException(cgi, t))
+				return;
 		}
 	}
 }
@@ -3161,6 +3326,7 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(ir, &closeConnection);
+			cgi._outputFileHandle = connection.handle;
 		} catch(ConnectionException ce) {
 			// broken pipe or something, just abort the connection
 			closeConnection = true;
@@ -3276,6 +3442,7 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 	Cgi cgi;
 	try {
 		cgi = new CustomCgi(maxContentLength, headers, &getScgiChunk, &writeScgi, &flushScgi);
+		cgi._outputFileHandle = connection.handle;
 	} catch(Throwable t) {
 		sendAll(connection, plainHttpError(true, "400 Bad Request", t));
 		connection.close();
@@ -3306,46 +3473,6 @@ string printDate(DateTime date) {
 		date.hour,
 		date.minute,
 		date.second);
-}
-
-
-version(with_cgi_packed) {
-// This is temporary until Phobos supports base64
-immutable(ubyte)[] base64UrlDecode(string e) {
-	string encoded = e.idup;
-	while (encoded.length % 4) {
-		encoded ~= "="; // add padding
-	}
-
-	// convert base64 URL to standard base 64
-	encoded = encoded.replace("-", "+");
-	encoded = encoded.replace("_", "/");
-
-	return cast(immutable(ubyte)[]) Base64.decode(encoded);
-}
-	// should be set as arsd_packed_data
-	string packedDataEncode(in string[string] variables) {
-		string result;
-
-		bool outputted = false;
-		foreach(k, v; variables) {
-			if(outputted)
-				result ~= "&";
-			else
-				outputted = true;
-
-			result ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
-		}
-
-		result = cast(string) Base64.encode(cast(ubyte[]) result);
-
-		// url variant
-		result.replace("=", "");
-		result.replace("+", "-");
-		result.replace("/", "_");
-
-		return result;
-	}
 }
 
 
@@ -3438,7 +3565,7 @@ import std.socket;
 
 // it is a class primarily for reference semantics
 // I might change this interface
-///
+/// This is NOT ACTUALLY an input range! It is too different. Historical mistake kinda.
 class BufferedInputRange {
 	version(Posix)
 	this(int source, ubyte[] buffer = null) {
@@ -3521,7 +3648,7 @@ class BufferedInputRange {
 				return;
 			}
 
-			view = underlyingBuffer[underlyingBuffer.ptr - view.ptr .. view.length + ret];
+			view = underlyingBuffer[view.ptr - underlyingBuffer.ptr .. view.length + ret];
 		} while(view.length < minBytesToSettleFor);
 	}
 
@@ -4036,10 +4163,10 @@ version(cgi_with_websocket) {
 			"sec-websocket-key" in cgi.requestHeaders
 			&&
 			"connection" in cgi.requestHeaders &&
-				cgi.requestHeaders["connection"].toLower().indexOf("upgrade") != -1
+				cgi.requestHeaders["connection"].asLowerCase().canFind("upgrade")
 			&&
 			"upgrade" in cgi.requestHeaders &&
-				cgi.requestHeaders["upgrade"].toLower() == "websocket"
+				cgi.requestHeaders["upgrade"].asLowerCase().equal("websocket")
 			;
 	}
 
@@ -4051,10 +4178,11 @@ version(cgi_with_websocket) {
 		cgi.header("Connection: upgrade");
 
 		string key = cgi.requestHeaders["sec-websocket-key"];
-		key ~= "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+		key ~= "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; // the defined guid from the websocket spec
 
-		import arsd.sha;
-		auto accept = Base64.encode(SHA1(key));
+		import std.digest.sha;
+		auto hash = sha1Of(key);
+		auto accept = Base64.encode(hash);
 
 		cgi.header(("Sec-WebSocket-Accept: " ~ accept).idup);
 
@@ -4266,12 +4394,2705 @@ version(Windows)
     else static assert(0);
 }
 
+version(Posix)
+private extern(C) int posix_spawn(pid_t*, const char*, void*, void*, const char**, const char**);
+
+
+// FIXME: these aren't quite public yet.
+//private:
+
+// template for laziness
+void startWebsocketServer()() {
+	version(linux) {
+		import core.sys.posix.unistd;
+		pid_t pid;
+		const(char)*[16] args;
+		args[0] = "ARSD_CGI_WEBSOCKET_SERVER";
+		args[1] = "--websocket-server";
+		posix_spawn(&pid, "/proc/self/exe",
+			null,
+			null,
+			args.ptr,
+			null // env
+		);
+	} else version(Windows) {
+		wchar[2048] filename;
+		auto len = GetModuleFileNameW(null, filename.ptr, cast(DWORD) filename.length);
+		if(len == 0 || len == filename.length)
+			throw new Exception("could not get process name to start helper server");
+
+		STARTUPINFOW startupInfo;
+		startupInfo.cb = cast(DWORD) startupInfo.sizeof;
+		PROCESS_INFORMATION processInfo;
+
+		// I *MIGHT* need to run it as a new job or a service...
+		auto ret = CreateProcessW(
+			filename.ptr,
+			"--websocket-server"w,
+			null, // process attributes
+			null, // thread attributes
+			false, // inherit handles
+			0, // creation flags
+			null, // environment
+			null, // working directory
+			&startupInfo,
+			&processInfo
+		);
+
+		if(!ret)
+			throw new Exception("create process failed");
+
+		// when done with those, if we set them
+		/*
+		CloseHandle(hStdInput);
+		CloseHandle(hStdOutput);
+		CloseHandle(hStdError);
+		*/
+
+	} else static assert(0, "Websocket server not implemented on this system yet (email me, i can prolly do it if you need it)");
+}
+
+// template for laziness
 /*
-Copyright: Adam D. Ruppe, 2008 - 2016
+	The websocket server is a single-process, single-thread, event
+	I/O thing. It is passed websockets from other CGI processes
+	and is then responsible for handling their messages and responses.
+	Note that the CGI process is responsible for websocket setup,
+	including authentication, etc.
+
+	It also gets data sent to it by other processes and is responsible
+	for distributing that, as necessary.
+*/
+void runWebsocketServer()() {
+	assert(0, "not implemented");
+}
+
+void sendToWebsocketServer(WebSocket ws, string group) {
+	assert(0, "not implemented");
+}
+
+void sendToWebsocketServer(string content, string group) {
+	assert(0, "not implemented");
+}
+
+
+void runEventServer()() {
+	runAddonServer("/tmp/arsd_cgi_event_server", new EventSourceServerImplementation());
+}
+
+version(Posix) {
+	alias LocalServerConnectionHandle = int;
+	alias CgiConnectionHandle = int;
+	alias SocketConnectionHandle = int;
+
+	enum INVALID_CGI_CONNECTION_HANDLE = -1;
+} else version(Windows) {
+	alias LocalServerConnectionHandle = HANDLE;
+	version(embedded_httpd) {
+		alias CgiConnectionHandle = SOCKET;
+		enum INVALID_CGI_CONNECTION_HANDLE = INVALID_SOCKET;
+	} else version(fastcgi) {
+		alias CgiConnectionHandle = void*; // Doesn't actually work! But I don't want compile to fail pointlessly at this point.
+		enum INVALID_CGI_CONNECTION_HANDLE = null;
+	} else version(scgi) {
+		alias CgiConnectionHandle = HANDLE;
+		enum INVALID_CGI_CONNECTION_HANDLE = null;
+	} else { /* version(plain_cgi) */
+		alias CgiConnectionHandle = HANDLE;
+		enum INVALID_CGI_CONNECTION_HANDLE = null;
+	}
+	alias SocketConnectionHandle = SOCKET;
+}
+
+LocalServerConnectionHandle openLocalServerConnection(string name) {
+	version(Posix) {
+		import core.sys.posix.unistd;
+		import core.sys.posix.sys.un;
+
+		int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+		if(sock == -1)
+			throw new Exception("socket " ~ to!string(errno));
+
+		scope(failure)
+			close(sock);
+
+		// add-on server processes are assumed to be local, and thus will
+		// use unix domain sockets. Besides, I want to pass sockets to them,
+		// so it basically must be local (except for the session server, but meh).
+		sockaddr_un addr;
+		addr.sun_family = AF_UNIX;
+		version(linux) {
+			// on linux, we will use the abstract namespace
+			addr.sun_path[0] = 0;
+			addr.sun_path[1 .. name.length + 1] = cast(typeof(addr.sun_path[])) name[];
+		} else {
+			// but otherwise, just use a file cuz we must.
+			addr.sun_path[0 .. name.length] = cast(typeof(addr.sun_path[])) name[];
+		}
+
+		if(connect(sock, cast(sockaddr*) &addr, addr.sizeof) == -1)
+			throw new Exception("connect " ~ to!string(errno));
+
+		return sock;
+	} else version(Windows) {
+		return null; // FIXME
+	}
+}
+
+void closeLocalServerConnection(LocalServerConnectionHandle handle) {
+	version(Posix) {
+		import core.sys.posix.unistd;
+		close(handle);
+	} else version(Windows)
+		CloseHandle(handle);
+}
+
+void runSessionServer()() {
+	runAddonServer("/tmp/arsd_session_server", new BasicDataServerImplementation());
+}
+
+version(Posix)
+private void makeNonBlocking(int fd) {
+	import core.sys.posix.fcntl;
+	auto flags = fcntl(fd, F_GETFL, 0);
+	if(flags == -1)
+		throw new Exception("fcntl get");
+	flags |= O_NONBLOCK;
+	auto s = fcntl(fd, F_SETFL, flags);
+	if(s == -1)
+		throw new Exception("fcntl set");
+}
+
+import core.stdc.errno;
+
+struct IoOp {
+	@disable this();
+	@disable this(this);
+
+	/*
+		So we want to be able to eventually handle generic sockets too.
+	*/
+
+	enum Read = 1;
+	enum Write = 2;
+	enum Accept = 3;
+	enum ReadSocketHandle = 4;
+
+	// Your handler may be called in a different thread than the one that initiated the IO request!
+	// It is also possible to have multiple io requests being called simultaneously. Use proper thread safety caution.
+	private void delegate(IoOp*, int) handler;
+	private void delegate(IoOp*) closeHandler;
+	private void delegate(IoOp*) completeHandler;
+	private int internalFd;
+	private int operation;
+	private int bufferLengthAllocated;
+	private int bufferLengthUsed;
+	private ubyte[1] internalBuffer; // it can be overallocated!
+
+	ubyte[] allocatedBuffer() {
+		return internalBuffer.ptr[0 .. bufferLengthAllocated];
+	}
+
+	ubyte[] usedBuffer() {
+		return allocatedBuffer[0 .. bufferLengthUsed];
+	}
+
+	void reset() {
+		bufferLengthUsed = 0;
+	}
+
+	int fd() {
+		return internalFd;
+	}
+}
+
+IoOp* allocateIoOp(int fd, int operation, int bufferSize, void delegate(IoOp*, int) handler) {
+	import core.stdc.stdlib;
+
+	auto ptr = malloc(IoOp.sizeof + bufferSize);
+	if(ptr is null)
+		assert(0); // out of memory!
+
+	auto op = cast(IoOp*) ptr;
+
+	op.handler = handler;
+	op.internalFd = fd;
+	op.operation = operation;
+	op.bufferLengthAllocated = bufferSize;
+	op.bufferLengthUsed = 0;
+
+	return op;
+}
+
+void freeIoOp(ref IoOp* ptr) {
+	import core.stdc.stdlib;
+	free(ptr);
+	ptr = null;
+}
+
+version(Posix)
+void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
+	import core.sys.posix.unistd;
+
+	auto ret = write(connection, data.ptr, data.length);
+	if(ret != data.length) {
+		if(ret == 0 || errno == EPIPE) {
+			// the file is closed, remove it
+			eis.fileClosed(connection);
+		} else
+			throw new Exception("alas " ~ to!string(ret) ~ " " ~ to!string(errno)); // FIXME
+	}
+}
+version(Windows)
+void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
+	// FIXME
+}
+
+bool isInvalidHandle(CgiConnectionHandle h) {
+	return h == INVALID_CGI_CONNECTION_HANDLE;
+}
+
+/++
+	You can customize your server by subclassing the appropriate server. Then, register your
+	subclass at compile time with the [registerEventIoServer] template, or implement your own
+	main function and call it yourself.
+	
+	$(TIP If you make your subclass a `final class`, there is a slight performance improvement.)
++/
+interface EventIoServer {
+	void handleLocalConnectionData(IoOp* op, int receivedFd);
+	void handleLocalConnectionClose(IoOp* op);
+	void handleLocalConnectionComplete(IoOp* op);
+	void wait_timeout();
+	void fileClosed(int fd);
+}
+
+// the sink should buffer it
+private void serialize(T)(scope void delegate(ubyte[]) sink, T t) {
+	static if(is(T == struct)) {
+		foreach(member; __traits(allMembers, T))
+			serialize(sink, __traits(getMember, t, member));
+	} else static if(is(T : int)) {
+		// no need to think of endianness just because this is only used
+		// for local, same-machine stuff anyway. thanks private lol
+		sink((cast(ubyte*) &t)[0 .. t.sizeof]);
+	} else static if(is(T == string) || is(T : const(ubyte)[])) {
+		// these are common enough to optimize
+		int len = cast(int) t.length; // want length consistent size tho, in case 32 bit program sends to 64 bit server, etc.
+		sink((cast(ubyte*) &len)[0 .. int.sizeof]);
+		sink(cast(ubyte[]) t[]);
+	} else static if(is(T : A[], A)) {
+		// generic array is less optimal but still prolly ok
+		int len = cast(int) t.length;
+		sink((cast(ubyte*) &len)[0 .. int.sizeof]);
+		foreach(item; t)
+			serialize(sink, item);
+	} else static assert(0, T.stringof);
+}
+
+// all may be stack buffers, so use cautio
+private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void delegate(T) dg) {
+	static if(is(T == struct)) {
+		T t;
+		foreach(member; __traits(allMembers, T))
+			deserialize!(typeof(__traits(getMember, T, member)))(get, (mbr) { __traits(getMember, t, member) = mbr; });
+		dg(t);
+	} else static if(is(T : int)) {
+		// no need to think of endianness just because this is only used
+		// for local, same-machine stuff anyway. thanks private lol
+		T t;
+		auto data = get(t.sizeof);
+		t = (cast(T[]) data)[0];
+		dg(t);
+	} else static if(is(T == string) || is(T : const(ubyte)[])) {
+		// these are common enough to optimize
+		int len;
+		auto data = get(len.sizeof);
+		len = (cast(int[]) data)[0];
+
+		/*
+		typeof(T[0])[2000] stackBuffer;
+		T buffer;
+
+		if(len < stackBuffer.length)
+			buffer = stackBuffer[0 .. len];
+		else
+			buffer = new T(len);
+
+		data = get(len * typeof(T[0]).sizeof);
+		*/
+
+		T t = cast(T) get(len * cast(int) typeof(T.init[0]).sizeof);
+
+		dg(t);
+
+	} else static assert(0, T.stringof);
+}
+
+unittest {
+	serialize((ubyte[] b) {
+		deserialize!int( sz => b[0 .. sz], (t) { assert(t == 1); });
+	}, 1);
+	serialize((ubyte[] b) {
+		deserialize!int( sz => b[0 .. sz], (t) { assert(t == 56674); });
+	}, 56674);
+	ubyte[1000] buffer;
+	int bufferPoint;
+	void add(ubyte[] b) {
+		buffer[bufferPoint ..  bufferPoint + b.length] = b[];
+		bufferPoint += b.length;
+	}
+	ubyte[] get(int sz) {
+		auto b = buffer[bufferPoint .. bufferPoint + sz];
+		bufferPoint += sz;
+		return b;
+	}
+	serialize(&add, "test here");
+	bufferPoint = 0;
+	deserialize!string(&get, (t) { assert(t == "test here"); });
+	bufferPoint = 0;
+
+	struct Foo {
+		int a;
+		ubyte c;
+		string d;
+	}
+	serialize(&add, Foo(403, 37, "amazing"));
+	bufferPoint = 0;
+	deserialize!Foo(&get, (t) {
+		assert(t.a == 403);
+		assert(t.c == 37);
+		assert(t.d == "amazing");
+	});
+	bufferPoint = 0;
+}
+
+/*
+	Here's the way the RPC interface works:
+
+	You define the interface that lists the functions you can call on the remote process.
+	The interface may also have static methods for convenience. These forward to a singleton
+	instance of an auto-generated class, which actually sends the args over the pipe.
+
+	An impl class actually implements it. A receiving server deserializes down the pipe and
+	calls methods on the class.
+
+	I went with the interface to get some nice compiler checking and documentation stuff.
+
+	I could have skipped the interface and just implemented it all from the server class definition
+	itself, but then the usage may call the method instead of rpcing it; I just like having the user
+	interface and the implementation separate so you aren't tempted to `new impl` to call the methods.
+
+
+	I fiddled with newlines in the mixin string to ensure the assert line numbers matched up to the source code line number. Idk why dmd didn't do this automatically, but it was important to me.
+
+	Realistically though the bodies would just be
+		connection.call(this.mangleof, args...) sooooo.
+
+	FIXME: overloads aren't supported
+*/
+
+mixin template ImplementRpcClientInterface(T, string serverPath) {
+	static import std.traits;
+
+	// derivedMembers on an interface seems to give exactly what I want: the virtual functions we need to implement. so I am just going to use it directly without more filtering.
+	static foreach(idx, member; __traits(derivedMembers, T)) {
+	static if(__traits(isVirtualFunction, __traits(getMember, T, member)))
+		mixin( q{
+		std.traits.ReturnType!(__traits(getMember, T, member))
+		} ~ member ~ q{(std.traits.Parameters!(__traits(getMember, T, member)) params)
+		{
+			SerializationBuffer buffer;
+			auto i = cast(ushort) idx;
+			serialize(&buffer.sink, i);
+			serialize(&buffer.sink, __traits(getMember, T, member).mangleof);
+			foreach(param; params)
+				serialize(&buffer.sink, param);
+
+			auto sendable = buffer.sendable;
+
+			version(Posix) {{
+				auto ret = send(connectionHandle, sendable.ptr, sendable.length, 0);
+				assert(ret == sendable.length);
+			}} // FIXME Windows impl
+
+			static if(!is(typeof(return) == void)) {
+				// there is a return value; we need to wait for it too
+				version(Posix) {
+					ubyte[3000] revBuffer;
+					auto ret = recv(connectionHandle, revBuffer.ptr, revBuffer.length, 0);
+					auto got = revBuffer[0 .. ret];
+
+					int dataLocation;
+					ubyte[] grab(int sz) {
+						auto d = got[dataLocation .. dataLocation + sz];
+						dataLocation += sz;
+						return d;
+					}
+
+					typeof(return) retu;
+					deserialize!(typeof(return))(&grab, (a) { retu = a; });
+					return retu;
+				} else {
+					// FIXME Windows impl
+					return typeof(return).init;
+				}
+
+			}
+		}});
+	}
+
+	private static typeof(this) singletonInstance;
+	private LocalServerConnectionHandle connectionHandle;
+
+	static typeof(this) connection() {
+		if(singletonInstance is null) {
+			singletonInstance = new typeof(this)();
+			singletonInstance.connect();
+		}
+		return singletonInstance;
+	}
+
+	void connect() {
+		connectionHandle = openLocalServerConnection(serverPath);
+	}
+
+	void disconnect() {
+		closeLocalServerConnection(connectionHandle);
+	}
+}
+
+void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(is(Class : Interface)) {
+	ushort calledIdx;
+	string calledFunction;
+
+	int dataLocation;
+	ubyte[] grab(int sz) {
+		auto d = data[dataLocation .. dataLocation + sz];
+		dataLocation += sz;
+		return d;
+	}
+
+	again:
+
+	deserialize!ushort(&grab, (a) { calledIdx = a; });
+	deserialize!string(&grab, (a) { calledFunction = a; });
+
+	import std.traits;
+
+	sw: switch(calledIdx) {
+		static foreach(idx, memberName; __traits(derivedMembers, Interface))
+		static if(__traits(isVirtualFunction, __traits(getMember, Interface, memberName))) {
+			case idx:
+				assert(calledFunction == __traits(getMember, Interface, memberName).mangleof);
+
+				Parameters!(__traits(getMember, Interface, memberName)) params;
+				foreach(ref param; params)
+					deserialize!(typeof(param))(&grab, (a) { param = a; });
+
+				static if(is(ReturnType!(__traits(getMember, Interface, memberName)) == void)) {
+					__traits(getMember, this_, memberName)(params);
+				} else {
+					auto ret = __traits(getMember, this_, memberName)(params);
+					SerializationBuffer buffer;
+					serialize(&buffer.sink, ret);
+
+					auto sendable = buffer.sendable;
+
+					version(Posix) {
+						auto r = send(fd, sendable.ptr, sendable.length, 0);
+						assert(r == sendable.length);
+					} // FIXME Windows impl
+				}
+			break sw;
+		}
+		default: assert(0);
+	}
+
+	if(dataLocation != data.length)
+		goto again;
+}
+
+
+private struct SerializationBuffer {
+	ubyte[2048] bufferBacking;
+	int bufferLocation;
+	void sink(scope ubyte[] data) {
+		bufferBacking[bufferLocation .. bufferLocation + data.length] = data[];
+		bufferLocation += data.length;
+	}
+
+	ubyte[] sendable() {
+		return bufferBacking[0 .. bufferLocation];
+	}
+}
+
+/*
+	FIXME:
+		add a version command line arg
+		version data in the library
+		management gui as external program
+
+		at server with event_fd for each run
+		use .mangleof in the at function name
+
+		i think the at server will have to:
+			pipe args to the child
+			collect child output for logging
+			get child return value for logging
+
+			on windows timers work differently. idk how to best combine with the io stuff.
+
+			will have to have dump and restore too, so i can restart without losing stuff.
+*/
+
+/++
+
++/
+interface BasicDataServer {
+	///
+	void createSession(string sessionId, int lifetime);
+	///
+	void renewSession(string sessionId, int lifetime);
+	///
+	void destroySession(string sessionId);
+	///
+	void renameSession(string oldSessionId, string newSessionId);
+
+	///
+	void setSessionData(string sessionId, string dataKey, string dataValue);
+	///
+	string getSessionData(string sessionId, string dataKey);
+
+	///
+	static BasicDataServerConnection connection() {
+		return BasicDataServerConnection.connection();
+	}
+}
+
+class BasicDataServerConnection : BasicDataServer {
+	mixin ImplementRpcClientInterface!(BasicDataServer, "/tmp/arsd_session_server");
+}
+
+final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
+
+	void createSession(string sessionId, int lifetime) {
+		sessions[sessionId.idup] = Session(lifetime);
+	}
+	void destroySession(string sessionId) {
+		sessions.remove(sessionId);
+	}
+	void renewSession(string sessionId, int lifetime) {
+		sessions[sessionId].lifetime = lifetime;
+	}
+	void renameSession(string oldSessionId, string newSessionId) {
+		sessions[newSessionId.idup] = sessions[oldSessionId];
+		sessions.remove(oldSessionId);
+	}
+	void setSessionData(string sessionId, string dataKey, string dataValue) {
+		sessions[sessionId].values[dataKey.idup] = dataValue.idup;
+	}
+	string getSessionData(string sessionId, string dataKey) {
+		return sessions[sessionId].values[dataKey];
+	}
+
+
+	protected:
+
+	struct Session {
+		int lifetime;
+
+		string[string] values;
+	}
+
+	Session[string] sessions;
+
+	void handleLocalConnectionData(IoOp* op, int receivedFd) {
+		auto data = op.usedBuffer;
+		dispatchRpcServer!BasicDataServer(this, data, op.fd);
+	}
+
+	void handleLocalConnectionClose(IoOp* op) {} // doesn't really matter, this is a fairly stateless go
+	void handleLocalConnectionComplete(IoOp* op) {} // again, irrelevant
+	void wait_timeout() {}
+	void fileClosed(int fd) {} // stateless so irrelevant
+}
+
+/++
+
++/
+struct ScheduledJobHelper {
+	private string func;
+	private string[] args;
+
+	/++
+		Schedules the job to be run at the given time.
+	+/
+	void at(DateTime when, immutable TimeZone timezone = UTC()) {
+
+	}
+
+	/++
+		Schedules the job to run at least after the specified delay.
+	+/
+	void delay(Duration delay) {
+
+	}
+
+	/++
+		Runs the job in the background ASAP.
+
+		$(NOTE It may run in a background thread. Don't segfault!)
+	+/
+	void runNowInBackground() {
+		//delay(0);
+	}
+
+	/++
+		Schedules the job to recur on the given pattern.
+	+/
+	version(none)
+	void recur(string spec) {
+
+	}
+}
+
+/++
+	First step to schedule a job on the scheduled job server.
+
+	You MUST set details on the returned object to actually do anything!
++/
+ScheduledJobHelper schedule(alias fn, T...)(T args) {
+	return ScheduledJobHelper();
+}
+
+///
+interface ScheduledJobServer {
+	///
+	int scheduleJob(int whenIs, int when, string executable, string func, string[] args);
+	///
+	void cancelJob(int jobId);
+}
+
+class ScheduledJobServerConnection : ScheduledJobServer {
+	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server");
+}
+
+///
+interface EventSourceServer {
+	/++
+		sends this cgi request to the event server so it will be fed events. You should not do anything else with the cgi object after this.
+
+		$(WARNING This API is extremely unstable. I might change it or remove it without notice.)
+
+		See_Also:
+			[sendEvent]
+	+/
+	public static void adoptConnection(Cgi cgi, in char[] eventUrl) {
+		/*
+			If lastEventId is missing or empty, you just get new events as they come.
+
+			If it is set from something else, it sends all since then (that are still alive)
+			down the pipe immediately.
+
+			The reason it can come from the header is that's what the standard defines for
+			browser reconnects. The reason it can come from a query string is just convenience
+			in catching up in a user-defined manner.
+
+			The reason the header overrides the query string is if the browser tries to reconnect,
+			it will send the header AND the query (it reconnects to the same url), so we just
+			want to do the restart thing.
+
+			Note that if you ask for "0" as the lastEventId, it will get ALL still living events.
+		*/
+		string lastEventId = cgi.lastEventId;
+		if(lastEventId.length == 0 && "lastEventId" in cgi.get)
+			lastEventId = cgi.get["lastEventId"];
+
+		cgi.setResponseContentType("text/event-stream");
+		cgi.write(":\n", false); // to initialize the chunking and send headers before keeping the fd for later
+		cgi.flush();
+
+		cgi.closed = true;
+		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server");
+		scope(exit)
+			closeLocalServerConnection(s);
+
+		version(fastcgi)
+			throw new Exception("sending fcgi connections not supported");
+
+		auto fd = cgi.getOutputFileHandle();
+		if(isInvalidHandle(fd))
+			throw new Exception("bad fd from cgi!");
+
+		EventSourceServerImplementation.SendableEventConnection sec;
+		sec.populate(cgi.responseChunked, eventUrl, lastEventId);
+
+		version(Posix) {
+			auto res = write_fd(s, cast(void*) &sec, sec.sizeof, fd);
+			assert(res == sec.sizeof);
+		} else version(Windows) {
+			// FIXME
+		}
+	}
+
+	/++
+		Sends an event to the event server, starting it if necessary. The event server will distribute it to any listening clients, and store it for `lifetime` seconds for any later listening clients to catch up later.
+
+		$(WARNING This API is extremely unstable. I might change it or remove it without notice.)
+
+		Params:
+			url = A string identifying this event "bucket". Listening clients must also connect to this same string. I called it `url` because I envision it being just passed as the url of the request.
+			event = the event type string, which is used in the Javascript addEventListener API on EventSource
+			data = the event data. Available in JS as `event.data`.
+			lifetime = the amount of time to keep this event for replaying on the event server.
+
+		See_Also:
+			[sendEventToEventServer]
+	+/
+	public static void sendEvent(string url, string event, string data, int lifetime) {
+		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server");
+		scope(exit)
+			closeLocalServerConnection(s);
+
+		EventSourceServerImplementation.SendableEvent sev;
+		sev.populate(url, event, data, lifetime);
+
+		version(Posix) {
+			auto ret = send(s, &sev, sev.sizeof, 0);
+			assert(ret == sev.sizeof);
+		} else version(Windows) {
+			// FIXME
+		}
+	}
+
+	/++
+		Messages sent to `url` will also be sent to anyone listening on `forwardUrl`.
+
+		See_Also: [disconnect]
+	+/
+	void connect(string url, string forwardUrl);
+
+	/++
+		Disconnects `forwardUrl` from `url`
+
+		See_Also: [connect]
+	+/
+	void disconnect(string url, string forwardUrl);
+}
+
+///
+final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
+
+	protected:
+
+	void connect(string url, string forwardUrl) {
+		pipes[url] ~= forwardUrl;
+	}
+	void disconnect(string url, string forwardUrl) {
+		auto t = url in pipes;
+		if(t is null)
+			return;
+		foreach(idx, n; (*t))
+			if(n == forwardUrl) {
+				(*t)[idx] = (*t)[$-1];
+				(*t) = (*t)[0 .. $-1];
+				break;
+			}
+	}
+
+	void handleLocalConnectionData(IoOp* op, int receivedFd) {
+		if(receivedFd != -1) {
+			//writeln("GOT FD ", receivedFd, " -- ", op.usedBuffer);
+
+			//core.sys.posix.unistd.write(receivedFd, "hello".ptr, 5);
+
+			SendableEventConnection* got = cast(SendableEventConnection*) op.usedBuffer.ptr;
+
+			auto url = got.url.idup;
+			eventConnectionsByUrl[url] ~= EventConnection(receivedFd, got.responseChunked > 0 ? true : false);
+
+			// FIXME: catch up on past messages here
+		} else {
+			auto data = op.usedBuffer;
+			auto event = cast(SendableEvent*) data.ptr;
+
+			if(event.magic == 0xdeadbeef) {
+				handleInputEvent(event);
+
+				if(event.url in pipes)
+				foreach(pipe; pipes[event.url]) {
+					event.url = pipe;
+					handleInputEvent(event);
+				}
+			} else {
+				dispatchRpcServer!EventSourceServer(this, data, op.fd);
+			}
+		}
+	}
+	void handleLocalConnectionClose(IoOp* op) {}
+	void handleLocalConnectionComplete(IoOp* op) {}
+
+	void wait_timeout() {
+		// just keeping alive
+		foreach(url, connections; eventConnectionsByUrl)
+		foreach(connection; connections)
+			if(connection.needsChunking)
+				nonBlockingWrite(this, connection.fd, "2\r\n:\n");
+			else
+				nonBlockingWrite(this, connection.fd, ":\n");
+	}
+
+	void fileClosed(int fd) {
+		outer: foreach(url, ref connections; eventConnectionsByUrl) {
+			foreach(idx, conn; connections) {
+				if(fd == conn.fd) {
+					connections[idx] = connections[$-1];
+					connections = connections[0 .. $ - 1];
+					continue outer;
+				}
+			}
+		}
+	}
+
+
+
+	private:
+
+
+	struct SendableEventConnection {
+		ubyte responseChunked;
+
+		int urlLength;
+		char[256] urlBuffer = 0;
+
+		int lastEventIdLength;
+		char[32] lastEventIdBuffer = 0;
+
+		char[] url() {
+			return urlBuffer[0 .. urlLength];
+		}
+		void url(in char[] u) {
+			urlBuffer[0 .. u.length] = u[];
+			urlLength = cast(int) u.length;
+		}
+		char[] lastEventId() {
+			return lastEventIdBuffer[0 .. lastEventIdLength];
+		}
+		void populate(bool responseChunked, in char[] url, in char[] lastEventId)
+		in {
+			assert(url.length < this.urlBuffer.length);
+			assert(lastEventId.length < this.lastEventIdBuffer.length);
+		}
+		do {
+			this.responseChunked = responseChunked ? 1 : 0;
+			this.urlLength = cast(int) url.length;
+			this.lastEventIdLength = cast(int) lastEventId.length;
+
+			this.urlBuffer[0 .. url.length] = url[];
+			this.lastEventIdBuffer[0 .. lastEventId.length] = lastEventId[];
+		}
+	}
+
+	struct SendableEvent {
+		int magic = 0xdeadbeef;
+		int urlLength;
+		char[256] urlBuffer = 0;
+		int typeLength;
+		char[32] typeBuffer = 0;
+		int messageLength;
+		char[2048] messageBuffer = 0;
+		int _lifetime;
+
+		char[] message() {
+			return messageBuffer[0 .. messageLength];
+		}
+		char[] type() {
+			return typeBuffer[0 .. typeLength];
+		}
+		char[] url() {
+			return urlBuffer[0 .. urlLength];
+		}
+		void url(in char[] u) {
+			urlBuffer[0 .. u.length] = u[];
+			urlLength = cast(int) u.length;
+		}
+		int lifetime() {
+			return _lifetime;
+		}
+
+		///
+		void populate(string url, string type, string message, int lifetime)
+		in {
+			assert(url.length < this.urlBuffer.length);
+			assert(type.length < this.typeBuffer.length);
+			assert(message.length < this.messageBuffer.length);
+		}
+		do {
+			this.urlLength = cast(int) url.length;
+			this.typeLength = cast(int) type.length;
+			this.messageLength = cast(int) message.length;
+			this._lifetime = lifetime;
+
+			this.urlBuffer[0 .. url.length] = url[];
+			this.typeBuffer[0 .. type.length] = type[];
+			this.messageBuffer[0 .. message.length] = message[];
+		}
+	}
+
+	struct EventConnection {
+		int fd;
+		bool needsChunking;
+	}
+
+	private EventConnection[][string] eventConnectionsByUrl;
+	private string[][string] pipes;
+
+	private void handleInputEvent(scope SendableEvent* event) {
+		static int eventId;
+
+		static struct StoredEvent {
+			int id;
+			string type;
+			string message;
+			int lifetimeRemaining;
+		}
+
+		StoredEvent[][string] byUrl;
+
+		int thisId = ++eventId;
+
+		if(event.lifetime)
+			byUrl[event.url.idup] ~= StoredEvent(thisId, event.type.idup, event.message.idup, event.lifetime);
+
+		auto connectionsPtr = event.url in eventConnectionsByUrl;
+		EventConnection[] connections;
+		if(connectionsPtr is null)
+			return;
+		else
+			connections = *connectionsPtr;
+
+		char[4096] buffer;
+		char[] formattedMessage;
+
+		void append(const char[] a) {
+			// the 6's here are to leave room for a HTTP chunk header, if it proves necessary
+			buffer[6 + formattedMessage.length .. 6 + formattedMessage.length + a.length] = a[];
+			formattedMessage = buffer[6 .. 6 + formattedMessage.length + a.length];
+		}
+
+		import std.algorithm.iteration;
+
+		if(connections.length) {
+			append("id: ");
+			append(to!string(thisId));
+			append("\n");
+
+			append("event: ");
+			append(event.type);
+			append("\n");
+
+			foreach(line; event.message.splitter("\n")) {
+				append("data: ");
+				append(line);
+				append("\n");
+			}
+
+			append("\n");
+		}
+
+		// chunk it for HTTP!
+		auto len = toHex(formattedMessage.length);
+		buffer[4 .. 6] = "\r\n"[];
+		buffer[4 - len.length .. 4] = len[];
+
+		auto chunkedMessage = buffer[4 - len.length .. 6 + formattedMessage.length];
+		// done
+
+		// FIXME: send back requests when needed
+		// FIXME: send a single ":\n" every 15 seconds to keep alive
+
+		foreach(connection; connections) {
+			if(connection.needsChunking)
+				nonBlockingWrite(this, connection.fd, chunkedMessage);
+			else
+				nonBlockingWrite(this, connection.fd, formattedMessage);
+		}
+	}
+}
+
+void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoServer)) {
+	version(Posix) {
+
+		import core.sys.posix.unistd;
+		import core.sys.posix.fcntl;
+		import core.sys.posix.sys.un;
+
+		import core.sys.posix.signal;
+		signal(SIGPIPE, SIG_IGN);
+
+		int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+		if(sock == -1)
+			throw new Exception("socket " ~ to!string(errno));
+
+		scope(failure)
+			close(sock);
+
+		// add-on server processes are assumed to be local, and thus will
+		// use unix domain sockets. Besides, I want to pass sockets to them,
+		// so it basically must be local (except for the session server, but meh).
+		sockaddr_un addr;
+		addr.sun_family = AF_UNIX;
+		version(linux) {
+			// on linux, we will use the abstract namespace
+			addr.sun_path[0] = 0;
+			addr.sun_path[1 .. localListenerName.length + 1] = cast(typeof(addr.sun_path[])) localListenerName[];
+		} else {
+			// but otherwise, just use a file cuz we must.
+			addr.sun_path[0 .. localListenerName.length] = cast(typeof(addr.sun_path[])) localListenerName[];
+		}
+
+		if(bind(sock, cast(sockaddr*) &addr, addr.sizeof) == -1)
+			throw new Exception("bind " ~ to!string(errno));
+
+		if(listen(sock, 128) == -1)
+			throw new Exception("listen " ~ to!string(errno));
+
+		version(linux) {
+
+			makeNonBlocking(sock);
+
+			import core.sys.linux.epoll;
+			auto epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+			if(epoll_fd == -1)
+				throw new Exception("epoll_create1 " ~ to!string(errno));
+			scope(failure)
+				close(epoll_fd);
+
+			auto acceptOp = allocateIoOp(sock, IoOp.Read, 0, null);
+			scope(exit)
+				freeIoOp(acceptOp);
+
+			epoll_event ev;
+			ev.events = EPOLLIN | EPOLLET;
+			ev.data.ptr = acceptOp;
+			if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sock, &ev) == -1)
+				throw new Exception("epoll_ctl " ~ to!string(errno));
+
+			epoll_event[64] events;
+
+			while(true) {
+
+				// FIXME: it should actually do a timerfd that runs on any thing that hasn't been run recently
+
+				int timeout_milliseconds = 15000; //  -1; // infinite
+				//writeln("waiting for ", name);
+				auto nfds = epoll_wait(epoll_fd, events.ptr, events.length, timeout_milliseconds);
+				if(nfds == -1) {
+					if(errno == EINTR)
+						continue;
+					throw new Exception("epoll_wait " ~ to!string(errno));
+				}
+
+				if(nfds == 0) {
+					eis.wait_timeout();
+				}
+
+				foreach(idx; 0 .. nfds) {
+					auto flags = events[idx].events;
+					auto ioop = cast(IoOp*) events[idx].data.ptr;
+
+					//writeln(flags, " ", ioop.fd);
+
+					if(ioop.fd == sock && (flags & EPOLLIN)) {
+						// on edge triggering, it is important that we get it all
+						while(true) {
+							auto size = cast(uint) addr.sizeof;
+							auto ns = accept(sock, cast(sockaddr*) &addr, &size);
+							if(ns == -1) {
+								if(errno == EAGAIN || errno == EWOULDBLOCK) {
+									// all done, got it all
+									break;
+								}
+								throw new Exception("accept " ~ to!string(errno));
+							}
+
+							makeNonBlocking(ns);
+							epoll_event nev;
+							nev.events = EPOLLIN | EPOLLET;
+							auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096, &eis.handleLocalConnectionData);
+							niop.closeHandler = &eis.handleLocalConnectionClose;
+							niop.completeHandler = &eis.handleLocalConnectionComplete;
+							scope(failure) freeIoOp(niop);
+							nev.data.ptr = niop;
+							if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, ns, &nev) == -1)
+								throw new Exception("epoll_ctl " ~ to!string(errno));
+						}
+					} else if(ioop.operation == IoOp.ReadSocketHandle) {
+						while(true) {
+							int in_fd;
+							auto got = read_fd(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, &in_fd);
+							if(got == -1) {
+								if(errno == EAGAIN || errno == EWOULDBLOCK) {
+									// all done, got it all
+									if(ioop.completeHandler)
+										ioop.completeHandler(ioop);
+									break;
+								}
+								throw new Exception("recv " ~ to!string(errno));
+							}
+
+							if(got == 0) {
+								if(ioop.closeHandler)
+									ioop.closeHandler(ioop);
+								close(ioop.fd);
+								freeIoOp(ioop);
+								break;
+							}
+
+							ioop.bufferLengthUsed = cast(int) got;
+							ioop.handler(ioop, in_fd);
+						}
+					} else if(ioop.operation == IoOp.Read) {
+						while(true) {
+							auto got = recv(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, 0);
+							if(got == -1) {
+								if(errno == EAGAIN || errno == EWOULDBLOCK) {
+									// all done, got it all
+									if(ioop.completeHandler)
+										ioop.completeHandler(ioop);
+									break;
+								}
+								throw new Exception("recv " ~ to!string(errno));
+							}
+
+							if(got == 0) {
+								if(ioop.closeHandler)
+									ioop.closeHandler(ioop);
+								close(ioop.fd);
+								freeIoOp(ioop);
+								break;
+							}
+
+							ioop.bufferLengthUsed = cast(int) got;
+							ioop.handler(ioop, -1);
+						}
+					}
+
+					// EPOLLHUP?
+				}
+			}
+		} else {
+			// this isn't seriously implemented.
+			static assert(0);
+		}
+	} else version(Windows) {
+
+		// set up a named pipe
+		// https://msdn.microsoft.com/en-us/library/windows/desktop/ms724251(v=vs.85).aspx
+		// https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsaduplicatesocketw
+		// https://docs.microsoft.com/en-us/windows/desktop/api/winbase/nf-winbase-getnamedpipeserverprocessid
+
+	} else static assert(0);
+}
+
+
+version(Posix)
+// copied from the web and ported from C
+// see https://stackoverflow.com/questions/2358684/can-i-share-a-file-descriptor-to-another-process-on-linux-or-are-they-local-to-t
+ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
+	msghdr msg;
+	iovec[1] iov;
+
+	union ControlUnion {
+		cmsghdr cm;
+		char[CMSG_SPACE(int.sizeof)] control;
+	}
+
+	ControlUnion control_un;
+	cmsghdr* cmptr;
+
+	msg.msg_control = control_un.control.ptr;
+	msg.msg_controllen = control_un.control.length;
+
+	cmptr = CMSG_FIRSTHDR(&msg);
+	cmptr.cmsg_len = CMSG_LEN(int.sizeof);
+	cmptr.cmsg_level = SOL_SOCKET;
+	cmptr.cmsg_type = SCM_RIGHTS;
+	*(cast(int *) CMSG_DATA(cmptr)) = sendfd;
+
+	msg.msg_name = null;
+	msg.msg_namelen = 0;
+
+	iov[0].iov_base = ptr;
+	iov[0].iov_len = nbytes;
+	msg.msg_iov = iov.ptr;
+	msg.msg_iovlen = 1;
+
+	return sendmsg(fd, &msg, 0);
+}
+
+version(Posix)
+// copied from the web and ported from C
+ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
+	msghdr msg;
+	iovec[1] iov;
+	ssize_t n;
+	int newfd;
+
+	union ControlUnion {
+		cmsghdr cm;
+		char[CMSG_SPACE(int.sizeof)] control;
+	}
+	ControlUnion control_un;
+	cmsghdr* cmptr;
+
+	msg.msg_control = control_un.control.ptr;
+	msg.msg_controllen = control_un.control.length;
+
+	msg.msg_name = null;
+	msg.msg_namelen = 0;
+
+	iov[0].iov_base = ptr;
+	iov[0].iov_len = nbytes;
+	msg.msg_iov = iov.ptr;
+	msg.msg_iovlen = 1;
+
+	if ( (n = recvmsg(fd, &msg, 0)) <= 0)
+		return n;
+
+	if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
+			cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
+		if (cmptr.cmsg_level != SOL_SOCKET)
+			throw new Exception("control level != SOL_SOCKET");
+		if (cmptr.cmsg_type != SCM_RIGHTS)
+			throw new Exception("control type != SCM_RIGHTS");
+		*recvfd = *(cast(int *) CMSG_DATA(cmptr));
+	} else
+		*recvfd = -1;       /* descriptor was not passed */
+
+	return n;
+}
+/* end read_fd */
+
+
+/*
+	Event source stuff
+
+	The api is:
+
+	sendEvent(string url, string type, string data, int timeout = 60*10);
+
+	attachEventListener(string url, int fd, lastId)
+
+
+	It just sends to all attached listeners, and stores it until the timeout
+	for replaying via lastEventId.
+*/
+
+/*
+	Session process stuff
+
+	it stores it all. the cgi object has a session object that can grab it
+
+	session may be done in the same process if possible, there is a version
+	switch to choose if you want to override.
+*/
+
+struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+	alias handler = dispatchHandler;
+	string urlPrefix;
+	bool rejectFurther;
+}
+
+private string urlify(string name) {
+	return name;
+}
+
+private string beautify(string name) {
+	char[160] buffer;
+	int bufferIndex = 0;
+	bool shouldCap = true;
+	bool shouldSpace;
+	bool lastWasCap;
+	foreach(idx, char ch; name) {
+		if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+
+		if(ch >= 'A' && ch <= 'Z') {
+			if(lastWasCap) {
+				// two caps in a row, don't change. Prolly acronym.
+			} else {
+				if(idx)
+					shouldSpace = true; // new word, add space
+			}
+
+			lastWasCap = true;
+		}
+
+		if(shouldSpace) {
+			buffer[bufferIndex++] = ' ';
+			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+		}
+		if(shouldCap) {
+			if(ch >= 'a' && ch <= 'z')
+				ch -= 32;
+			shouldCap = false;
+		}
+		buffer[bufferIndex++] = ch;
+	}
+	return buffer[0 .. bufferIndex].idup;
+}
+
+/+
+	Argument conversions: for the most part, it is to!Thing(string).
+
+	But arrays and structs are a bit different. Arrays come from the cgi array. Thus
+	they are passed
+
+	arr=foo&arr=bar <-- notice the same name.
+
+	Structs are first declared with an empty thing, then have their members set individually,
+	with dot notation. The members are not required, just the initial declaration.
+
+	struct Foo {
+		int a;
+		string b;
+	}
+	void test(Foo foo){}
+
+	foo&foo.a=5&foo.b=str <-- the first foo declares the arg, the others set the members
+
+	Arrays of structs use this declaration.
+
+	void test(Foo[] foo) {}
+
+	foo&foo.a=5&foo.b=bar&foo&foo.a=9
+
+	You can use a hidden input field in HTML forms to achieve this. The value of the naked name
+	declaration is ignored.
+
+	Mind that order matters! The declaration MUST come first in the string.
+
+	Arrays of struct members follow this rule recursively.
+
+	struct Foo {
+		int[] a;
+	}
+
+	foo&foo.a=1&foo.a=2&foo&foo.a=1
+
+
+	Associative arrays are formatted with brackets, after a declaration, like structs:
+
+	foo&foo[key]=value&foo[other_key]=value
+
+
+	Note: for maximum compatibility with outside code, keep your types simple. Some libraries
+	do not support the strict ordering requirements to work with these struct protocols.
+
+	FIXME: also perhaps accept application/json to better work with outside trash.
+
+
+	Return values are also auto-formatted according to user-requested type:
+		for json, it loops over and converts.
+		for html, basic types are strings. Arrays are <ol>. Structs are <dl>. Arrays of structs are tables!
++/
+
+// returns an arsd.dom.Element
+static auto elementFor(T)(string displayName, string name) {
+	import arsd.dom;
+	import std.traits;
+
+	auto div = Element.make("div");
+	div.addClass("form-field");
+
+	static if(is(T == struct)) {
+		if(displayName !is null)
+			div.addChild("span", displayName, "label-text");
+		auto fieldset = div.addChild("fieldset");
+		fieldset.addChild("legend", beautify(T.stringof)); // FIXME
+		fieldset.addChild("input", name);
+		static foreach(idx, memberName; __traits(allMembers, T))
+		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+			fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
+		}
+	} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+		Element lbl;
+		if(displayName !is null) {
+			lbl = div.addChild("label");
+			lbl.addChild("span", displayName, "label-text");
+			lbl.appendText(" ");
+		} else {
+			lbl = div;
+		}
+		auto i = lbl.addChild("input", name);
+		i.attrs.name = name;
+		static if(isSomeString!T)
+			i.attrs.type = "text";
+		else
+			i.attrs.type = "number";
+		i.attrs.value = to!string(T.init);
+	} else static if(is(T == K[], K)) {
+		auto templ = div.addChild("template");
+		templ.appendChild(elementFor!(K)(null, name));
+		if(displayName !is null)
+			div.addChild("span", displayName, "label-text");
+		auto btn = div.addChild("button");
+		btn.addClass("add-array-button");
+		btn.attrs.type = "button";
+		btn.innerText = "Add";
+		btn.attrs.onclick = q{
+			var a = document.importNode(this.parentNode.firstChild.content, true);
+			this.parentNode.insertBefore(a, this);
+		};
+	} else static if(is(T == V[K], K, V)) {
+		div.innerText = "assoc array not implemented for automatic form at this time";
+	} else {
+		static assert(0, "unsupported type for cgi call " ~ T.stringof);
+	}
+
+
+	return div;
+}
+
+// actually returns an arsd.dom.Form
+auto createAutomaticFormForFunction(alias method, T)(T dg) {
+	import arsd.dom;
+
+	auto form = cast(Form) Element.make("form");
+
+	form.addClass("automatic-form");
+
+	form.addChild("h3", beautify(__traits(identifier, method)));
+
+	import std.traits;
+
+	//Parameters!method params;
+	//alias idents = ParameterIdentifierTuple!method;
+	//alias defaults = ParameterDefaults!method;
+
+	static if(is(typeof(method) P == __parameters))
+	static foreach(idx, _; P) {{
+		alias param = P[idx .. idx + 1];
+		string displayName = beautify(__traits(identifier, param));
+		static foreach(attr; __traits(getAttributes, param))
+			static if(is(typeof(attr) == DisplayName))
+				displayName = attr.name;
+		form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+	}}
+
+	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+	return form;
+}
+
+// actually returns an arsd.dom.Form
+auto createAutomaticFormForObject(T)(T obj) {
+	import arsd.dom;
+
+	auto form = cast(Form) Element.make("form");
+
+	form.addClass("automatic-form");
+
+	form.addChild("h3", beautify(__traits(identifier, T)));
+
+	import std.traits;
+
+	//Parameters!method params;
+	//alias idents = ParameterIdentifierTuple!method;
+	//alias defaults = ParameterDefaults!method;
+
+	static foreach(idx, memberName; __traits(derivedMembers, T)) {{
+	static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+		string displayName = beautify(memberName);
+		static foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
+			static if(is(typeof(attr) == DisplayName))
+				displayName = attr.name;
+		form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
+
+		form.setValue(memberName, to!string(__traits(getMember, obj, memberName)));
+	}}}
+
+	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+	return form;
+}
+
+/*
+string urlFor(alias func)() {
+	return __traits(identifier, func);
+}
+*/
+
+/++
+	UDA: The name displayed to the user in auto-generated HTML.
+
+	Default is `beautify(identifier)`.
++/
+struct DisplayName {
+	string name;
+}
+
+/++
+	UDA: The name used in the URL or web parameter.
+
+	Default is `urlify(identifier)` for functions and `identifier` for parameters and data members.
++/
+struct UrlName {
+	string name;
+}
+
+class MissingArgumentException : Exception {
+	string functionName;
+	string argumentName;
+	string argumentType;
+
+	this(string functionName, string argumentName, string argumentType, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.functionName = functionName;
+		this.argumentName = argumentName;
+		this.argumentType = argumentType;
+
+		super("Missing Argument", file, line, next);
+	}
+}
+
+auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
+
+	// FIXME: any array of structs should also be settable or gettable from csv as well.
+
+	// FIXME: think more about checkboxes and bools.
+
+	import std.traits;
+
+	Parameters!method params;
+	alias idents = ParameterIdentifierTuple!method;
+	alias defaults = ParameterDefaults!method;
+
+	const(string)[] names;
+	const(string)[] values;
+
+	// first, check for missing arguments and initialize to defaults if necessary
+	static foreach(idx, param; params) {{
+		auto ident = idents[idx];
+		if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+			if(ident !in cgi.post) {
+				static if(is(defaults[idx] == void))
+					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+				else
+					params[idx] = defaults[idx];
+			}
+		} else {
+			if(ident !in cgi.get) {
+				static if(is(defaults[idx] == void))
+					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+				else
+					params[idx] = defaults[idx];
+			}
+		}
+	}}
+
+	// second, parse the arguments in order to build up arrays, etc.
+
+	static bool setVariable(T)(string name, string paramName, T* what, string value) {
+		static if(is(T == struct)) {
+			if(name == paramName) {
+				*what = T.init;
+				return true;
+			} else {
+				// could be a child
+				if(name[paramName.length] == '.') {
+					paramName = name[paramName.length + 1 .. $];
+					name = paramName;
+					int p = 0;
+					foreach(ch; paramName) {
+						if(ch == '.' || ch == '[')
+							break;
+						p++;
+					}
+
+					// set the child member
+					switch(paramName) {
+						static foreach(idx, memberName; __traits(allMembers, T))
+						static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+							// data member!
+							case memberName:
+								return setVariable(name, paramName, &(__traits(getMember, *what, memberName)), value);
+						}
+						default:
+							// ok, not a member
+					}
+				}
+			}
+		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+			*what = to!T(value);
+			return true;
+		} else static if(is(T == K[], K)) {
+			K tmp;
+			if(name == paramName) {
+				// direct - set and append
+				if(setVariable(name, paramName, &tmp, value)) {
+					(*what) ~= tmp;
+					return true;
+				} else {
+					return false;
+				}
+			} else {
+				// child, append to last element
+				// FIXME: what about range violations???
+				auto ptr = &(*what)[(*what).length - 1];
+				return setVariable(name, paramName, ptr, value);
+
+			}
+		} else static if(is(T == V[K], K, V)) {
+			// assoc array, name[key] is valid
+			if(name == paramName) {
+				// no action necessary
+				return true;
+			} else if(name[paramName.length] == '[') {
+				int count = 1;
+				auto idx = paramName.length + 1;
+				while(idx < name.length && count > 0) {
+					if(name[idx] == '[')
+						count++;
+					else if(name[idx] == ']') {
+						count--;
+						if(count == 0) break;
+					}
+					idx++;
+				}
+				if(idx == name.length)
+					return false; // malformed
+
+				auto insideBrackets = name[paramName.length + 1 .. idx];
+				auto afterName = name[idx + 1 .. $];
+
+				auto k = to!K(insideBrackets);
+				V v;
+
+				name = name[0 .. paramName.length];
+				writeln(name, afterName, " ", paramName);
+
+				auto ret = setVariable(name ~ afterName, paramName, &v, value);
+				if(ret) {
+					(*what)[k] = v;
+					return true;
+				}
+			}
+		} else {
+			static assert(0, "unsupported type for cgi call " ~ T.stringof);
+		}
+
+		return false;
+	}
+
+	void setArgument(string name, string value) {
+		int p;
+		foreach(ch; name) {
+			if(ch == '.' || ch == '[')
+				break;
+			p++;
+		}
+
+		auto paramName = name[0 .. p];
+
+		sw: switch(paramName) {
+			static foreach(idx, param; params) {
+				case idents[idx]:
+					setVariable(name, paramName, &params[idx], value);
+				break sw;
+			}
+			default:
+				// ignore; not relevant argument
+		}
+	}
+
+	if(cgi.requestMethod == Cgi.RequestMethod.POST) {
+		names = cgi.allPostNamesInOrder;
+		values = cgi.allPostValuesInOrder;
+	} else {
+		names = cgi.allGetNamesInOrder;
+		values = cgi.allGetValuesInOrder;
+	}
+
+	foreach(idx, name; names) {
+		setArgument(name, values[idx]);
+	}
+
+	static if(is(ReturnType!method == void)) {
+		typeof(null) ret;
+		dg(params);
+	} else {
+		auto ret = dg(params);
+	}
+
+	// FIXME: format return values
+	// options are: json, html, csv.
+	// also may need to wrap in envelope format: none, html, or json.
+	return ret;
+}
+
+auto formatReturnValueAsHtml(T)(T t) {
+	import arsd.dom;
+	import std.traits;
+
+	static if(is(T == typeof(null))) {
+		return Element.make("span");
+	} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
+		return Element.make("span", to!string(t), "automatic-data-display");
+	} else static if(is(T == V[K], K, V)) {
+		auto dl = Element.make("dl");
+		dl.addClass("automatic-data-display");
+		foreach(k, v; t) {
+			dl.addChild("dt", to!string(k));
+			dl.addChild("dd", formatReturnValueAsHtml(v));
+		}
+		return dl;
+	} else static if(is(T == struct)) {
+		auto dl = Element.make("dl");
+		dl.addClass("automatic-data-display");
+
+		static foreach(idx, memberName; __traits(allMembers, T))
+		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+			dl.addChild("dt", memberName);
+			dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
+		}
+
+		return dl;
+	} else static if(is(T == E[], E)) {
+		static if(is(E : RestObject!Proxy, Proxy)) {
+			// treat RestObject similar to struct
+			auto table = cast(Table) Element.make("table");
+			table.addClass("automatic-data-display");
+			string[] names;
+			static foreach(idx, memberName; __traits(derivedMembers, E))
+			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+				names ~= beautify(memberName);
+			}
+			table.appendHeaderRow(names);
+
+			foreach(l; t) {
+				auto tr = table.appendRow();
+				static foreach(idx, memberName; __traits(derivedMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					static if(memberName == "id") {
+						string val = to!string(__traits(getMember, l, memberName));
+						tr.addChild("td", Element.make("a", val, E.stringof.toLower ~ "s/" ~ val)); // FIXME
+					} else {
+						tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+					}
+				}
+			}
+
+			return table;
+		} else static if(is(E == struct)) {
+			// an array of structs is kinda special in that I like
+			// having those formatted as tables.
+			auto table = cast(Table) Element.make("table");
+			table.addClass("automatic-data-display");
+			string[] names;
+			static foreach(idx, memberName; __traits(allMembers, E))
+			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+				names ~= beautify(memberName);
+			}
+			table.appendHeaderRow(names);
+
+			foreach(l; t) {
+				auto tr = table.appendRow();
+				static foreach(idx, memberName; __traits(allMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+				}
+			}
+
+			return table;
+		} else {
+			// otherwise, I will just make a list.
+			auto ol = Element.make("ol");
+			ol.addClass("automatic-data-display");
+			foreach(e; t)
+				ol.addChild("li", formatReturnValueAsHtml(e));
+			return ol;
+		}
+	} else static assert(0, "bad return value for cgi call " ~ T.stringof);
+
+	assert(0);
+}
+
+/++
+	A web presenter is responsible for rendering things to HTML to be usable
+	in a web browser.
+
+	They are passed as template arguments to the base classes of [WebObject]
+
+	FIXME
++/
+class WebPresenter() {
+
+}
+
+/++
+	The base class for the [dispatcher] function and object support.
++/
+class WebObject(Helper = void) {
+	Cgi cgi;
+	void initialize(Cgi cgi) {
+		this.cgi = cgi;
+	}
+
+	string script() {
+		return `
+		`;
+	}
+
+	string style() {
+		return `
+			:root {
+				--mild-border: #ccc;
+				--middle-border: #999;
+				--accent-color: #e8e8e8;
+				--sidebar-color: #f2f2f2;
+			}
+		` ~ genericFormStyling() ~ genericSiteStyling();
+	}
+
+	string genericFormStyling() {
+		return `
+			table.automatic-data-display {
+				border-collapse: collapse;
+				border: solid 1px var(--mild-border);
+			}
+
+			table.automatic-data-display td {
+				vertical-align: top;
+				border: solid 1px var(--mild-border);
+				padding: 2px 4px;
+			}
+
+			table.automatic-data-display th {
+				border: solid 1px var(--mild-border);
+				border-bottom: solid 1px var(--middle-border);
+				padding: 2px 4px;
+			}
+
+			ol.automatic-data-display {
+				margin: 0px;
+				list-style-position: inside;
+				padding: 0px;
+			}
+
+			.automatic-form {
+				max-width: 600px;
+			}
+
+			.form-field {
+				margin: 0.5em;
+				padding-left: 0.5em;
+			}
+
+			.label-text {
+				display: block;
+				font-weight: bold;
+				margin-left: -0.5em;
+			}
+
+			.add-array-button {
+
+			}
+		`;
+	}
+
+	string genericSiteStyling() {
+		return `
+			* { box-sizing: border-box; }
+			html, body { margin: 0px; }
+			body {
+				font-family: sans-serif;
+			}
+			#header {
+				background: var(--accent-color);
+				height: 64px;
+			}
+			#footer {
+				background: var(--accent-color);
+				height: 64px;
+			}
+			#main-site {
+				display: flex;
+			}
+			#container {
+				flex: 1 1 auto;
+				order: 2;
+				min-height: calc(100vh - 64px - 64px);
+				padding: 4px;
+				padding-left: 1em;
+			}
+			#sidebar {
+				flex: 0 0 16em;
+				order: 1;
+				background: var(--sidebar-color);
+			}
+		`;
+	}
+
+	import arsd.dom;
+	Element htmlContainer() {
+		auto document = new Document(`<!DOCTYPE html>
+<html>
+<head>
+	<title>D Application</title>
+	<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<div id="header"></div>
+	<div id="main-site">
+		<div id="container"></div>
+		<div id="sidebar"></div>
+	</div>
+	<div id="footer"></div>
+	<script src="script.js"></script>
+</body>
+</html>`, true, true);
+
+		return document.requireElementById("container");
+	}
+}
+
+/++
+	Serves a class' methods, as a kind of low-state RPC over the web. To be used with [dispatcher].
+
+	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
+
+	FIXME: explain this better
++/
+auto serveApi(T)(string urlPrefix) {
+	assert(urlPrefix[$ - 1] == '/');
+
+	import arsd.dom;
+	import arsd.jsvar;
+
+	static bool handler(string urlPrefix, Cgi cgi) {
+
+		auto obj = new T();
+		obj.initialize(cgi);
+
+		switch(cgi.pathInfo[urlPrefix.length .. $]) {
+			static foreach(methodName; __traits(derivedMembers, T)){{
+			static if(is(typeof(__traits(getMember, T, methodName)) P == __parameters))
+			{
+				case urlify(methodName):
+					switch(cgi.request("format", "html")) {
+						case "html":
+							auto container = obj.htmlContainer();
+							try {
+								auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+								container.appendChild(formatReturnValueAsHtml(ret));
+							} catch(MissingArgumentException mae) {
+								container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
+								container.appendChild(createAutomaticFormForFunction!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName)));
+							}
+							cgi.write(container.parentDocument.toString(), true);
+						break;
+						case "json":
+							auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
+							var json = ret;
+							var envelope = var.emptyObject;
+							envelope.success = true;
+							envelope.result = json;
+							envelope.error = null;
+							cgi.setResponseContentType("application/json");
+							cgi.write(envelope.toJson(), true);
+
+						break;
+						default:
+					}
+				return true;
+			}
+			}}
+			case "script.js":
+				cgi.setResponseContentType("text/javascript");
+				cgi.gzipResponse = true;
+				cgi.write(obj.script(), true);
+				return true;
+			case "style.css":
+				cgi.setResponseContentType("text/css");
+				cgi.gzipResponse = true;
+				cgi.write(obj.style(), true);
+				return true;
+			default:
+				return false;
+		}
+	
+		assert(0);
+	}
+	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+
+	enum AccessCheck {
+		allowed,
+		denied,
+		nonExistant,
+	}
+
+	enum Operation {
+		show,
+		create,
+		replace,
+		remove,
+		update
+	}
+
+	enum UpdateResult {
+		accessDenied,
+		noSuchResource,
+		success,
+		failure,
+		unnecessary
+	}
+
+	enum ValidationResult {
+		valid,
+		invalid
+	}
+
+
+/++
+	The base of all REST objects, to be used with [serveRestObject] and [serveRestCollectionOf].
++/
+class RestObject(Helper = void) : WebObject!Helper {
+
+	import arsd.dom;
+	import arsd.jsvar;
+
+	/// Prepare the object to be shown.
+	void show() {}
+	/// ditto
+	void show(string urlId) {
+		load(urlId);
+		show();
+	}
+
+	ValidationResult delegate(typeof(this)) validateFromReflection;
+	Element delegate(typeof(this)) toHtmlFromReflection;
+	var delegate(typeof(this)) toJsonFromReflection;
+
+	/// Override this to provide access control to this object.
+	AccessCheck accessCheck(string urlId, Operation operation) {
+		return AccessCheck.allowed;
+	}
+
+	ValidationResult validate() {
+		if(validateFromReflection !is null)
+			return validateFromReflection(this);
+		return ValidationResult.valid;
+	}
+
+	// The functions with more arguments are the low-level ones,
+	// they forward to the ones with fewer arguments by default.
+
+	// POST on a parent collection - this is called from a collection class after the members are updated
+	/++
+		Given a populated object, this creates a new entry. Returns the url identifier
+		of the new object.
+	+/
+	string create(scope void delegate() applyChanges) {
+		return null;
+	}
+
+	void replace() {
+		save();
+	}
+	void replace(string urlId, scope void delegate() applyChanges) {
+		load(urlId);
+		applyChanges();
+		replace();
+	}
+
+	void update(string[] fieldList) {
+		save();
+	}
+	void update(string urlId, scope void delegate() applyChanges, string[] fieldList) {
+		load(urlId);
+		applyChanges();
+		update(fieldList);
+	}
+
+	void remove() {}
+
+	void remove(string urlId) {
+		load(urlId);
+		remove();
+	}
+
+	abstract void load(string urlId);
+	abstract void save();
+
+	Element toHtml() {
+		if(toHtmlFromReflection)
+			return toHtmlFromReflection(this);
+		else
+			assert(0);
+	}
+
+	var toJson() {
+		if(toJsonFromReflection)
+			return toJsonFromReflection(this);
+		else
+			assert(0);
+	}
+
+	/+
+	auto structOf(this This) {
+
+	}
+	+/
+}
+
+/++
+	Responsible for displaying stuff as HTML. You can put this into your own aggregate
+	and override it. Use forwarding and specialization to customize it.
++/
+mixin template Presenter() {
+
+}
+
+/++
+	Base class for REST collections.
++/
+class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
+	/// You might subclass this and use the cgi object's query params
+	/// to implement a search filter, for example.
+	///
+	/// FIXME: design a way to auto-generate that form
+	/// (other than using the WebObject thing above lol
+	// it'll prolly just be some searchParams UDA or maybe an enum.
+	//
+	// pagination too perhaps.
+	//
+	// and sorting too
+	IndexResult index() { return IndexResult.init; }
+
+	string[] sortableFields() { return null; }
+	string[] searchableFields() { return null; }
+
+	struct IndexResult {
+		Obj[] results;
+
+		string[] sortableFields;
+
+		string previousPageIdentifier;
+		string nextPageIdentifier;
+		string firstPageIdentifier;
+		string lastPageIdentifier;
+
+		int numberOfPages;
+	}
+
+	override string create(scope void delegate() applyChanges) { assert(0); }
+	override void load(string urlId) { assert(0); }
+	override void save() { assert(0); }
+	override void show() {
+		index();
+	}
+	override void show(string urlId) {
+		show();
+	}
+
+	/// Proxy POST requests (create calls) to the child collection
+	alias PostProxy = Obj;
+}
+
+/++
+	Serves a REST object, similar to a Ruby on Rails resource.
+
+	You put data members in your class. cgi.d will automatically make something out of those.
+
+	It will call your constructor with the ID from the URL. This may be null.
+	It will then populate the data members from the request.
+	It will then call a method, if present, telling what happened. You don't need to write these!
+	It finally returns a reply.
+
+	Your methods are passed a list of fields it actually set.
+
+	The URL mapping - despite my general skepticism of the wisdom - matches up with what most REST
+	APIs I have used seem to follow. (I REALLY want to put trailing slashes on it though. Works better
+	with relative linking. But meh.)
+
+	GET /items -> index. all values not set.
+	GET /items/id -> get. only ID will be set, other params ignored.
+	POST /items -> create. values set as given
+	PUT /items/id -> replace. values set as given
+		or POST /items/id with cgi.post["_method"] (thus urlencoded or multipart content-type) set to "PUT" to work around browser/html limitation
+		a GET with cgi.get["_method"] (in the url) set to "PUT" will render a form.
+	PATCH /items/id -> update. values set as given, list of changed fields passed
+		or POST /items/id with cgi.post["_method"] == "PATCH"
+	DELETE /items/id -> destroy. only ID guaranteed to be set
+		or POST /items/id with cgi.post["_method"] == "DELETE"
+
+	Following the stupid convention, there will never be a trailing slash here, and if it is there, it will
+	redirect you away from it.
+
+	API clients should set the `Accept` HTTP header to application/json or the cgi.get["_format"] = "json" var.
+
+	I will also let you change the default, if you must.
+
+	// One add-on is validation. You can issue a HTTP GET to a resource with _method = VALIDATE to check potential changes.
+
+	You can define sub-resources on your object inside the object. These sub-resources are also REST objects
+	that follow the same thing. They may be individual resources or collections themselves.
+
+	Your class is expected to have at least the following methods:
+
+	FIXME: i kinda wanna add a routes object to the initialize call
+
+	create
+		Create returns the new address on success, some code on failure.
+	show
+	index
+	update
+	remove
+
+	You will want to be able to customize the HTTP, HTML, and JSON returns but generally shouldn't have to - the defaults
+	should usually work. The returned JSON will include a field "href" on all returned objects along with "id". Or omething like that.
+
+	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
+
+	NOT IMPLEMENTED
+
+
+	Really, a collection is a resource with a bunch of subresources.
+
+		GET /items
+			index because it is GET on the top resource
+
+		GET /items/foo
+			item but different than items?
+
+		class Items {
+
+		}
+
+	... but meh, a collection can be automated. not worth making it
+	a separate thing, let's look at a real example. Users has many
+	items and a virtual one, /users/current.
+
+	the individual users have properties and two sub-resources:
+	session, which is just one, and comments, a collection.
+
+	class User : RestObject!() { // no parent
+		int id;
+		string name;
+
+		// the default implementations of the urlId ones is to call load(that_id) then call the arg-less one.
+		// but you can override them to do it differently.
+
+		// any member which is of type RestObject can be linked automatically via href btw.
+
+		void show() {}
+		void show(string urlId) {} // automated! GET of this specific thing
+		void create() {} // POST on a parent collection - this is called from a collection class after the members are updated
+		void replace(string urlId) {} // this is the PUT; really, it just updates all fields.
+		void update(string urlId, string[] fieldList) {} // PATCH, it updates some fields.
+		void remove(string urlId) {} // DELETE
+
+		void load(string urlId) {} // the default implementation of show() populates the id, then
+
+		this() {}
+
+		mixin Subresource!Session;
+		mixin Subresource!Comment;
+	}
+
+	class Session : RestObject!() {
+		// the parent object may not be fully constructed/loaded
+		this(User parent) {}
+
+	}
+
+	class Comment : CollectionOf!Comment {
+		this(User parent) {}
+	}
+
+	class Users : CollectionOf!User {
+		// but you don't strictly need ANYTHING on a collection; it will just... collect. Implement the subobjects.
+		void index() {} // GET on this specific thing; just like show really, just different name for the different semantics.
+		User create() {} // You MAY implement this, but the default is to create a new object, populate it from args, and then call create() on the child
+	}
+
++/
+auto serveRestObject(T)(string urlPrefix) {
+	assert(urlPrefix[$ - 1] != '/', "Do NOT use a trailing slash on REST objects.");
+	static bool handler(string urlPrefix, Cgi cgi) {
+		string url = cgi.pathInfo[urlPrefix.length .. $];
+
+		if(url.length && url[$ - 1] == '/') {
+			// remove the final slash...
+			cgi.setResponseLocation(cgi.scriptName ~ cgi.pathInfo[0 .. $ - 1]);
+			return true;
+		}
+
+		return restObjectServeHandler!T(cgi, url);
+
+	}
+	return DispatcherDefinition!handler(urlPrefix, false);
+}
+
+/// Convenience method for serving a collection. It will be named the same
+/// as type T, just with an s at the end. If you need any further, just
+/// write the class yourself.
+auto serveRestCollectionOf(T)(string urlPrefix) {
+	mixin(`static class `~T.stringof~`s : CollectionOf!(T) {}`);
+	return serveRestObject!(mixin(T.stringof ~ "s"))(urlPrefix);
+}
+
+bool restObjectServeHandler(T)(Cgi cgi, string url) {
+	string urlId = null;
+	if(url.length && url[0] == '/') {
+		// asking for a subobject
+		urlId = url[1 .. $];
+		foreach(idx, ch; urlId) {
+			if(ch == '/') {
+				urlId = urlId[0 .. idx];
+				break;
+			}
+		}
+	}
+
+	// FIXME handle other subresources
+
+	static if(is(T : CollectionOf!(C, P), C, P)) {
+		if(urlId !is null) {
+			return restObjectServeHandler!C(cgi, url); // FIXME?  urlId);
+		}
+	}
+
+	// FIXME: support precondition failed, if-modified-since, expectation failed, etc.
+
+	auto obj = new T();
+	obj.toHtmlFromReflection = delegate(t) {
+		import arsd.dom;
+		auto div = Element.make("div");
+		div.addClass("Dclass_" ~ T.stringof);
+		div.dataset.url = urlId;
+		bool first = true;
+		static foreach(idx, memberName; __traits(derivedMembers, T))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			if(!first) div.addChild("br"); else first = false;
+			div.appendChild(formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
+		}
+		return div;
+	};
+	obj.toJsonFromReflection = delegate(t) {
+		import arsd.jsvar;
+		var v = var.emptyObject();
+		static foreach(idx, memberName; __traits(derivedMembers, T))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			v[memberName] = __traits(getMember, obj, memberName);
+		}
+		return v;
+	};
+	obj.validateFromReflection = delegate(t) {
+		// FIXME
+		return ValidationResult.valid;
+	};
+	obj.initialize(cgi);
+	// FIXME: populate reflection info delegates
+
+
+	// FIXME: I am not happy with this.
+	switch(urlId) {
+		case "script.js":
+			cgi.setResponseContentType("text/javascript");
+			cgi.gzipResponse = true;
+			cgi.write(obj.script(), true);
+			return true;
+		case "style.css":
+			cgi.setResponseContentType("text/css");
+			cgi.gzipResponse = true;
+			cgi.write(obj.style(), true);
+			return true;
+		default:
+			// intentionally blank
+	}
+
+
+
+
+	static void applyChangesTemplate(Obj)(Cgi cgi, Obj obj) {
+		static foreach(idx, memberName; __traits(derivedMembers, Obj))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			__traits(getMember, obj, memberName) = cgi.request(memberName, __traits(getMember, obj, memberName));
+		}
+	}
+	void applyChanges() {
+		applyChangesTemplate(cgi, obj);
+	}
+
+	string[] modifiedList;
+
+	void writeObject(bool addFormLinks) {
+		if(cgi.request("format") == "json") {
+			cgi.setResponseContentType("application/json");
+			cgi.write(obj.toJson().toString, true);
+		} else {
+			auto container = obj.htmlContainer();
+			if(addFormLinks) {
+				static if(is(T : CollectionOf!(C, P), C, P))
+				container.appendHtml(`
+					<form>
+						<button type="submit" name="_method" value="POST">Create New</button>
+					</form>
+				`);
+				else
+				container.appendHtml(`
+					<form>
+						<button type="submit" name="_method" value="PATCH">Edit</button>
+						<button type="submit" name="_method" value="DELETE">Delete</button>
+					</form>
+				`);
+			}
+			container.appendChild(obj.toHtml());
+			cgi.write(container.parentDocument.toString, true);
+		}
+	}
+
+	// FIXME: I think I need a set type in here....
+	// it will be nice to pass sets of members.
+
+	switch(cgi.requestMethod) {
+		case Cgi.RequestMethod.GET:
+			// I could prolly use template this parameters in the implementation above for some reflection stuff.
+			// sure, it doesn't automatically work in subclasses... but I instantiate here anyway...
+
+			// automatic forms here for usable basic auto site from browser.
+			// even if the format is json, it could actually send out the links and formats, but really there i'ma be meh.
+			switch(cgi.request("_method", "GET")) {
+				case "GET":
+					static if(is(T : CollectionOf!(C, P), C, P)) {
+						auto results = obj.index();
+						if(cgi.request("format", "html") == "html") {
+							auto container = obj.htmlContainer();
+							auto html = formatReturnValueAsHtml(results.results);
+							container.appendHtml(`
+								<form>
+									<button type="submit" name="_method" value="POST">Create New</button>
+								</form>
+							`);
+
+							container.appendChild(html);
+							cgi.write(container.parentDocument.toString, true);
+						} else {
+							cgi.setResponseContentType("application/json");
+							import arsd.jsvar;
+							var json = var.emptyArray;
+							foreach(r; results.results) {
+								var o = var.emptyObject;
+								static foreach(idx, memberName; __traits(derivedMembers, typeof(r)))
+								static if(__traits(compiles, __traits(getMember, r, memberName).offsetof)) {
+									o[memberName] = __traits(getMember, r, memberName);
+								}
+
+								json ~= o;
+							}
+							cgi.write(json.toJson(), true);
+						}
+					} else {
+						obj.show(urlId);
+						writeObject(true);
+					}
+				break;
+				case "PATCH":
+					obj.load(urlId);
+				goto case;
+				case "PUT":
+				case "POST":
+					// an editing form for the object
+					auto container = obj.htmlContainer();
+					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
+						auto form = (cgi.request("_method") == "POST") ? createAutomaticFormForObject(new obj.PostProxy()) : createAutomaticFormForObject(obj);
+					} else {
+						auto form = createAutomaticFormForObject(obj);
+					}
+					form.attrs.method = "POST";
+					form.setValue("_method", cgi.request("_method", "GET"));
+					container.appendChild(form);
+					cgi.write(container.parentDocument.toString(), true);
+				break;
+				case "DELETE":
+					// FIXME: a delete form for the object (can be phrased "are you sure?")
+					auto container = obj.htmlContainer();
+					container.appendHtml(`
+						<form method="POST">
+							Are you sure you want to delete this item?
+							<input type="hidden" name="_method" value="DELETE" />
+							<input type="submit" value="Yes, Delete It" />
+						</form>
+
+					`);
+					cgi.write(container.parentDocument.toString(), true);
+				break;
+				default:
+					cgi.write("bad method\n", true);
+			}
+		break;
+		case Cgi.RequestMethod.POST:
+			// this is to allow compatibility with HTML forms
+			switch(cgi.request("_method", "POST")) {
+				case "PUT":
+					goto PUT;
+				case "PATCH":
+					goto PATCH;
+				case "DELETE":
+					goto DELETE;
+				case "POST":
+					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
+						auto p = new obj.PostProxy();
+						void specialApplyChanges() {
+							applyChangesTemplate(cgi, p);
+						}
+						string n = p.create(&specialApplyChanges);
+					} else {
+						string n = obj.create(&applyChanges);
+					}
+
+					auto newUrl = cgi.scriptName ~ cgi.pathInfo ~ "/" ~ n;
+					cgi.setResponseLocation(newUrl);
+					cgi.setResponseStatus("201 Created");
+					cgi.write(`The object has been created.`);
+				break;
+				default:
+					cgi.write("bad method\n", true);
+			}
+			// FIXME this should be valid on the collection, but not the child....
+			// 303 See Other
+		break;
+		case Cgi.RequestMethod.PUT:
+		PUT:
+			obj.replace(urlId, &applyChanges);
+			writeObject(false);
+		break;
+		case Cgi.RequestMethod.PATCH:
+		PATCH:
+			obj.update(urlId, &applyChanges, modifiedList);
+			writeObject(false);
+		break;
+		case Cgi.RequestMethod.DELETE:
+		DELETE:
+			obj.remove(urlId);
+			cgi.setResponseStatus("204 No Content");
+		break;
+		default:
+			// FIXME: OPTIONS, HEAD
+	}
+
+	return true;
+}
+
+/+
+struct SetOfFields(T) {
+	private void[0][string] storage;
+	void set(string what) {
+		//storage[what] = 
+	}
+	void unset(string what) {}
+	void setAll() {}
+	void unsetAll() {}
+	bool isPresent(string what) { return false; }
+}
++/
+
+/+
+enum readonly;
+enum hideonindex;
++/
+
+/++
+	Serves a static file. To be used with [dispatcher].
++/
+auto serveStaticFile(string urlPrefix, string filename = null, string contentType = null) {
+	if(filename is null)
+		filename = urlPrefix[1 .. $];
+	if(contentType is null) {
+
+	}
+	static bool handler(string urlPrefix, Cgi cgi) {
+		//cgi.setResponseContentType(contentType);
+		//cgi.write(std.file.read(filename), true);
+		cgi.write(std.file.read(urlPrefix[1 .. $]), true);
+		return true;
+	}
+	return DispatcherDefinition!handler(urlPrefix, true);
+}
+
+auto serveRedirect(string urlPrefix, string redirectTo) {
+	// FIXME
+}
+
+/+
+/++
+	See [serveStaticFile] if you want to serve a file off disk.
++/
+auto serveStaticData(string urlPrefix, const(void)[] data, string contentType) {
+
+}
++/
+
+/++
+	A URL dispatcher.
+
+	---
+	if(cgi.dispatcher!(
+		"/api/".serveApi!MyApiClass,
+		"/objects/lol".serveRestObject!MyRestObject,
+		"/file.js".serveStaticFile,
+	)) return;
+	---
++/
+bool dispatcher(definitions...)(Cgi cgi) {
+	// I can prolly make this more efficient later but meh.
+	foreach(definition; definitions) {
+		if(definition.rejectFurther) {
+			if(cgi.pathInfo == definition.urlPrefix) {
+				auto ret = definition.handler(definition.urlPrefix, cgi);
+				if(ret)
+					return true;
+			}
+		} else if(cgi.pathInfo.startsWith(definition.urlPrefix)) {
+			auto ret = definition.handler(definition.urlPrefix, cgi);
+			if(ret)
+				return true;
+		}
+	}
+	return false;
+}
+
+/+
+/++
+	This is the beginnings of my web.d 2.0 - it dispatches web requests to a class object.
+
+	It relies on jsvar.d and dom.d.
+
+
+	You can get javascript out of it to call. The generated functions need to look
+	like
+
+	function name(a,b,c,d,e) {
+		return _call("name", {"realName":a,"sds":b});
+	}
+
+	And _call returns an object you can call or set up or whatever.
++/
+bool apiDispatcher()(Cgi cgi) {
+	import arsd.jsvar;
+	import arsd.dom;
+}
++/
+/*
+Copyright: Adam D. Ruppe, 2008 - 2019
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2016.
+	Copyright Adam D. Ruppe 2008 - 2019.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)

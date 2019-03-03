@@ -3,7 +3,7 @@
 
 	I no longer work on this, use http2.d instead.
 +/
-module arsd.http;
+deprecated module arsd.http;
 
 import std.socket;
 

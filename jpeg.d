@@ -2971,9 +2971,10 @@ public bool detect_jpeg_image_from_file (const(char)[] filename, out int width, 
   bool m_eof_flag, m_error_flag;
 
   if (filename.length == 0) throw new Exception("cannot open unnamed file");
-  if (filename.length < 2048) {
-    import core.stdc.stdlib : alloca;
-    auto tfn = (cast(char*)alloca(filename.length+1))[0..filename.length+1];
+  if (filename.length < 512) {
+    char[513] buffer;
+    //import core.stdc.stdlib : alloca;
+    auto tfn = buffer[0 .. filename.length + 1]; // (cast(char*)alloca(filename.length+1))[0..filename.length+1];
     tfn[0..filename.length] = filename[];
     tfn[filename.length] = 0;
     m_pFile = fopen(tfn.ptr, "rb");
@@ -3147,9 +3148,10 @@ public ubyte[] decompress_jpeg_image_from_file(bool useMalloc=false) (const(char
   bool m_eof_flag, m_error_flag;
 
   if (filename.length == 0) throw new Exception("cannot open unnamed file");
-  if (filename.length < 2048) {
-    import core.stdc.stdlib : alloca;
-    auto tfn = (cast(char*)alloca(filename.length+1))[0..filename.length+1];
+  if (filename.length < 512) {
+	char[513] buffer;
+    //import core.stdc.stdlib : alloca;
+    auto tfn = buffer[0 .. filename.length + 1]; // (cast(char*)alloca(filename.length+1))[0..filename.length+1];
     tfn[0..filename.length] = filename[];
     tfn[filename.length] = 0;
     m_pFile = fopen(tfn.ptr, "rb");
@@ -3338,9 +3340,10 @@ public MemoryImage readJpeg (const(char)[] filename) {
   bool m_eof_flag, m_error_flag;
 
   if (filename.length == 0) throw new Exception("cannot open unnamed file");
-  if (filename.length < 2048) {
-    import core.stdc.stdlib : alloca;
-    auto tfn = (cast(char*)alloca(filename.length+1))[0..filename.length+1];
+  if (filename.length < 512) {
+	char[513] buffer;
+    //import core.stdc.stdlib : alloca;
+    auto tfn = buffer[0 .. filename.length + 1]; // (cast(char*)alloca(filename.length+1))[0..filename.length+1];
     tfn[0..filename.length] = filename[];
     tfn[filename.length] = 0;
     m_pFile = fopen(tfn.ptr, "rb");

@@ -1158,12 +1158,72 @@ string sdpyWindowClass () {
 	return null;
 }
 
+/++
+	Returns the DPI of the default monitor. [0] is width, [1] is height (they are usually the same though). You may wish to round the numbers off.
++/
+float[2] getDpi() {
+	float[2] dpi;
+	version(Windows) {
+		HDC screen = GetDC(null);
+		dpi[0] = GetDeviceCaps(screen, LOGPIXELSX);
+		dpi[1] = GetDeviceCaps(screen, LOGPIXELSY);
+	} else version(X11) {
+		auto display = XDisplayConnection.get;
+		auto screen = DefaultScreen(display);
+
+		void fallback() {
+			// 25.4 millimeters in an inch...
+			dpi[0] = cast(float) DisplayWidth(display, screen) / DisplayWidthMM(display, screen) * 25.4;
+			dpi[1] = cast(float) DisplayHeight(display, screen) / DisplayHeightMM(display, screen) * 25.4;
+		}
+
+		char* resourceString = XResourceManagerString(display);
+		XrmInitialize();
+
+		auto db = XrmGetStringDatabase(resourceString);
+
+		if (resourceString) {
+			XrmValue value;
+			char* type;
+			if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
+				if (value.addr) {
+					import core.stdc.stdlib;
+					dpi[0] = atof(cast(char*) value.addr);
+					dpi[1] = dpi[0];
+				} else {
+					fallback();
+				}
+			} else {
+				fallback();
+			}
+		} else {
+			fallback();
+		}
+	}
+
+	return dpi;
+}
+
+version(X11) {
+	extern(C) char* XResourceManagerString(Display*);
+	extern(C) void XrmInitialize();
+	extern(C) XrmDatabase XrmGetStringDatabase(char* data);
+	extern(C) bool XrmGetResource(XrmDatabase, const char*, const char*, char**, XrmValue*);
+	alias XrmDatabase = void*;
+	struct XrmValue {
+		uint size;
+		void* addr;
+	}
+}
+
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
 	throw new Exception("not implemented");
 	version(none) {
 	version(X11) {
 		auto display = XDisplayConnection.get;
 		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
+
+		// https://github.com/adamdruppe/arsd/issues/98
 
 		// FIXME: copy that shit
 
@@ -11899,6 +11959,8 @@ struct Visual
 	int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
 	int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
 	int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
+	int DisplayWidthMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mwidth; }
+	int DisplayHeightMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mheight; }
 	auto DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
 
 	int ConnectionNumber(Display* dpy) { return dpy.fd; }

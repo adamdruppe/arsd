@@ -155,16 +155,16 @@ class MsSqlResult : ResultSet {
 					string a;
 
 					more:
-				        SQLCHAR[255] buf;
-					if(SQLGetData(statement, cast(ushort)(i+1), SQL_CHAR, buf.ptr, 255, &ptr) != SQL_SUCCESS)
+				        SQLCHAR[1024] buf;
+					if(SQLGetData(statement, cast(ushort)(i+1), SQL_CHAR, buf.ptr, 1024, &ptr) != SQL_SUCCESS)
 						throw new DatabaseException("get data: " ~ getSQLError(SQL_HANDLE_STMT, statement));
 
 					assert(ptr != SQL_NO_TOTAL);
 					if(ptr == SQL_NULL_DATA)
 						a = null;
 					else {
-						a ~= cast(string) buf[0 .. ptr > 255 ? 255 : ptr].idup;
-						ptr -= ptr > 255 ? 255 : ptr;
+						a ~= cast(string) buf[0 .. ptr > 1024 ? 1024 : ptr].idup;
+						ptr -= ptr > 1024 ? 1024 : ptr;
 						if(ptr)
 							goto more;
 					}
@@ -181,11 +181,11 @@ class MsSqlResult : ResultSet {
 		void makeFieldMapping() {
 			for(int i = 0; i < numFields; i++) {
 				SQLSMALLINT len;
-				SQLCHAR[255] buf;
+				SQLCHAR[1024] buf;
 				auto ret = SQLDescribeCol(statement,
 					cast(ushort)(i+1),
 					cast(ubyte*)buf.ptr,
-					255,
+					1024,
 					&len,
 					null, null, null, null);
 				if (ret != SQL_SUCCESS)

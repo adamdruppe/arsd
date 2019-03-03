@@ -95,6 +95,8 @@
 			"description": "MySQL client library. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
+			"libs-posix": ["mysqlclient"],
+			"libs-windows": ["libmysql"],
 			"sourceFiles": ["mysql.d"]
 		},
 		{
@@ -102,6 +104,7 @@
 			"description": "Postgresql client library. Wraps the libpq C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
+			"libs": ["pq"],
 			"sourceFiles": ["postgres.d"]
 		},
 
@@ -110,6 +113,8 @@
 			"description": "sqlite wrapper. Wraps the official C library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
+			"libs": ["sqlite3"],
+			"libs-posix": ["dl"],
 			"sourceFiles": ["sqlite.d"]
 		},
 
@@ -118,6 +123,7 @@
 			"description": "Microsoft SQL Server client library. Wraps the official ODBC library with my database.d interface.",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:database_base":"*"},
+			"libs-windows": ["odbc32"],
 			"sourceFiles": ["mssql.d"]
 		},
 

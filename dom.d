@@ -1,4 +1,8 @@
 // FIXME: add classList
+// FIXME: add matchesSelector
+// FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
+// FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
+
 /++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond
@@ -71,7 +75,7 @@ bool isConvenientAttribute(string name) {
 /// The main document interface, including a html parser.
 class Document : FileResource {
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
-	/// included in the build.
+	/// included in the build as well as [arsd.characterencodings].
 	static Document fromUrl()(string url) {
 		import arsd.http2;
 		auto client = new HttpClient();
@@ -79,7 +83,10 @@ class Document : FileResource {
 		auto req = client.navigateTo(Uri(url), HttpVerb.GET);
 		auto res = req.waitForCompletion();
 
-		return new Document(cast(string) res.content);
+		auto document = new Document();
+		document.parseGarbage(cast(string) res.content);
+
+		return document;
 	}
 
 	///.
@@ -821,6 +828,12 @@ class Document : FileResource {
 
 							while(pos < data.length && data[pos] != '>')
 								pos++;
+
+							if(pos >= data.length) {
+								// the tag never closed
+								assert(data.length != 0);
+								pos = data.length - 1; // rewinding so it hits the end at the bottom..
+							}
 						}
 
 						auto whereThisTagStarted = pos; // for better error messages
@@ -3494,8 +3507,14 @@ struct ElementCollection {
 		return !elements.length;
 	}
 
-	/// Collects strings from the collection, concatenating them together
-	/// Kinda like running reduce and ~= on it.
+	/++
+		Collects strings from the collection, concatenating them together
+		Kinda like running reduce and ~= on it.
+
+		---
+		document["p"].collect!"innerText";
+		---
+	+/
 	string collect(string method)(string separator = "") {
 		string text;
 		foreach(e; elements) {
@@ -3511,6 +3530,17 @@ struct ElementCollection {
 		foreach(e; elements) {
 			mixin("e." ~ name)(t);
 		}
+		return this;
+	}
+
+	/++
+		Calls [Element.wrapIn] on each member of the collection, but clones the argument `what` for each one.
+	+/
+	ElementCollection wrapIn(Element what) {
+		foreach(e; elements) {
+			e.wrapIn(what.cloneNode(false));
+		}
+
 		return this;
 	}
 
@@ -5042,7 +5072,7 @@ class Table : Element {
 			return position;
 		}
 
-		foreach(int i, rowElement; rows) {
+		foreach(i, rowElement; rows) {
 			auto row = cast(TableRow) rowElement;
 			assert(row !is null);
 			assert(i < ret.length);
@@ -5059,7 +5089,7 @@ class Table : Element {
 				foreach(int j; 0 .. cell.colspan) {
 					foreach(int k; 0 .. cell.rowspan)
 						// if the first row, always append.
-						insertCell(k + i, k == 0 ? -1 : position, cell);
+						insertCell(k + cast(int) i, k == 0 ? -1 : position, cell);
 					position++;
 				}
 			}

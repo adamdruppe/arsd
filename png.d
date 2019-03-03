@@ -22,6 +22,31 @@ void writePng(string filename, MemoryImage mi) {
 	std.file.write(filename, writePng(png));
 }
 
+///
+enum PngType {
+	greyscale = 0, /// The data must be `depth` bits per pixel
+	truecolor = 2, /// The data will be RGB triples, so `depth * 3` bits per pixel. Depth must be 8 or 16.
+	indexed = 3, /// The data must be `depth` bits per pixel, with a palette attached. Use [writePng] with [IndexedImage] for this mode. Depth must be <= 8.
+	greyscale_with_alpha = 4, /// The data must be (grey, alpha) byte pairs for each pixel. Thus `depth * 2` bits per pixel. Depth must be 8 or 16.
+	truecolor_with_alpha = 6 /// The data must be RGBA quads for each pixel. Thus, `depth * 4` bits per pixel. Depth must be 8 or 16.
+}
+
+/// Saves an image from an existing array. Note that depth other than 8 may not be implemented yet. Also note depth of 16 must be stored big endian
+void writePng(string filename, const ubyte[] data, int width, int height, PngType type, ubyte depth = 8) {
+	PngHeader h;
+	h.width = width;
+	h.height = height;
+	h.type = cast(ubyte) type;
+	h.depth = depth;
+
+	auto png = blankPNG(h);
+	addImageDatastreamToPng(data, png);
+
+	import std.file;
+	std.file.write(filename, writePng(png));
+}
+
+
 /*
 //Here's a simple test program that shows how to write a quick image viewer with simpledisplay:
 
@@ -629,9 +654,28 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 	PngHeader h = getHeader(png);
 
-	auto bytesPerLine = h.width * 4;
-	if(h.type == 3)
-		bytesPerLine = h.width * h.depth / 8;
+	int bytesPerLine;
+	switch(h.type) {
+		case 0:
+			// FIXME: < 8 depth not supported here but should be
+			bytesPerLine = h.width * 1 * h.depth / 8;
+		break;
+		case 2:
+			bytesPerLine = h.width * 3 * h.depth / 8;
+		break;
+		case 3:
+			bytesPerLine = h.width * 1 * h.depth / 8;
+		break;
+		case 4:
+			// FIXME: < 8 depth not supported here but should be
+			bytesPerLine = h.width * 2 * h.depth / 8;
+		break;
+		case 6:
+			bytesPerLine = h.width * 4 * h.depth / 8;
+		break;
+		default: assert(0);
+	
+	}
 	Chunk dat;
 	dat.type = ['I', 'D', 'A', 'T'];
 	int pos = 0;
