@@ -1416,7 +1416,7 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) getElementById(id);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, file, line);
+			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, this, file, line);
 		return e;
 	}
 
@@ -1431,7 +1431,7 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) querySelector(selector);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, selector, file, line);
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, this, file, line);
 		return e;
 	}
 
@@ -2140,7 +2140,7 @@ class Element {
 		static if(!is(T == Element)) {
 			auto t = cast(T) par;
 			if(t is null)
-				throw new ElementNotFoundException("", tagName ~ " parent not found");
+				throw new ElementNotFoundException("", tagName ~ " parent not found", this);
 		} else
 			auto t = par;
 
@@ -3806,7 +3806,7 @@ T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) i
 body {
 	auto ret = cast(T) e;
 	if(ret is null)
-		throw new ElementNotFoundException(T.stringof, "passed value", file, line);
+		throw new ElementNotFoundException(T.stringof, "passed value", e, file, line);
 	return ret;
 }
 
@@ -5169,9 +5169,12 @@ class MarkupException : Exception {
 class ElementNotFoundException : Exception {
 
 	/// type == kind of element you were looking for and search == a selector describing the search.
-	this(string type, string search, string file = __FILE__, size_t line = __LINE__) {
+	this(string type, string search, Element searchContext, string file = __FILE__, size_t line = __LINE__) {
+		this.searchContext = searchContext;
 		super("Element of type '"~type~"' matching {"~search~"} not found.", file, line);
 	}
+
+	Element searchContext;
 }
 
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
