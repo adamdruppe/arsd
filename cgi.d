@@ -4652,6 +4652,20 @@ bool isInvalidHandle(CgiConnectionHandle h) {
 	return h == INVALID_CGI_CONNECTION_HANDLE;
 }
 
+/+
+https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsarecv
+https://support.microsoft.com/en-gb/help/181611/socket-overlapped-i-o-versus-blocking-nonblocking-mode
+https://stackoverflow.com/questions/18018489/should-i-use-iocps-or-overlapped-wsasend-receive
+https://docs.microsoft.com/en-us/windows/desktop/fileio/i-o-completion-ports
+https://docs.microsoft.com/en-us/windows/desktop/fileio/createiocompletionport
+https://docs.microsoft.com/en-us/windows/desktop/api/mswsock/nf-mswsock-acceptex
+https://docs.microsoft.com/en-us/windows/desktop/Sync/waitable-timer-objects
+https://docs.microsoft.com/en-us/windows/desktop/api/synchapi/nf-synchapi-setwaitabletimer
+https://docs.microsoft.com/en-us/windows/desktop/Sync/using-a-waitable-timer-with-an-asynchronous-procedure-call
+https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsagetoverlappedresult
+
++/
+
 /++
 	You can customize your server by subclassing the appropriate server. Then, register your
 	subclass at compile time with the [registerEventIoServer] template, or implement your own
