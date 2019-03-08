@@ -5134,19 +5134,20 @@ interface EventSourceServer {
 
 		version(fastcgi)
 			throw new Exception("sending fcgi connections not supported");
+		else {
+			auto fd = cgi.getOutputFileHandle();
+			if(isInvalidHandle(fd))
+				throw new Exception("bad fd from cgi!");
 
-		auto fd = cgi.getOutputFileHandle();
-		if(isInvalidHandle(fd))
-			throw new Exception("bad fd from cgi!");
+			EventSourceServerImplementation.SendableEventConnection sec;
+			sec.populate(cgi.responseChunked, eventUrl, lastEventId);
 
-		EventSourceServerImplementation.SendableEventConnection sec;
-		sec.populate(cgi.responseChunked, eventUrl, lastEventId);
-
-		version(Posix) {
-			auto res = write_fd(s, cast(void*) &sec, sec.sizeof, fd);
-			assert(res == sec.sizeof);
-		} else version(Windows) {
-			// FIXME
+			version(Posix) {
+				auto res = write_fd(s, cast(void*) &sec, sec.sizeof, fd);
+				assert(res == sec.sizeof);
+			} else version(Windows) {
+				// FIXME
+			}
 		}
 	}
 
