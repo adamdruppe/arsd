@@ -4488,7 +4488,7 @@ version(Posix) {
 	enum INVALID_CGI_CONNECTION_HANDLE = -1;
 } else version(Windows) {
 	alias LocalServerConnectionHandle = HANDLE;
-	version(embedded_httpd) {
+	version(embedded_httpd_threads) {
 		alias CgiConnectionHandle = SOCKET;
 		enum INVALID_CGI_CONNECTION_HANDLE = INVALID_SOCKET;
 	} else version(fastcgi) {
