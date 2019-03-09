@@ -3752,10 +3752,12 @@ class ListeningConnectionManager {
 
 			while(!loopBroken && running) {
 				auto sn = listener.accept();
-				// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-				// on the socket because we do some buffering internally. I think this helps,
-				// certainly does for small requests, and I think it does for larger ones too
-				sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+				if(tcp) {
+					// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+					// on the socket because we do some buffering internally. I think this helps,
+					// certainly does for small requests, and I think it does for larger ones too
+					sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+				}
 				while(queueLength >= queue.length)
 					Thread.sleep(1.msecs);
 				synchronized(this) {
@@ -3771,14 +3773,49 @@ class ListeningConnectionManager {
 					}
 				}
 			}
+
+			// FIXME: i typically stop this with ctrl+c which never
+			// actually gets here. i need to do a sigint handler.
+			if(cleanup)
+				cleanup();
 		}
 	}
 
+	bool tcp;
+	void delegate() cleanup;
+
 	this(string host, ushort port, void function(Socket) handler) {
 		this.handler = handler;
-		listener = new TcpSocket();
-		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-		listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+
+		if(host.startsWith("unix:")) {
+			version(Posix) {
+				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				string filename = host["unix:".length .. $].idup;
+				listener.bind(new UnixAddress(filename));
+				cleanup = delegate() {
+					import std.file;
+					remove(filename);
+				};
+				tcp = false;
+			} else {
+				throw new Exception("unix sockets not supported on this system");
+			}
+		} else if(host.startsWith("abstract:")) {
+			version(linux) {
+				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				string filename = "\0" ~ host["abstract:".length .. $];
+				listener.bind(new UnixAddress(filename));
+				tcp = false;
+			} else {
+				throw new Exception("abstract unix sockets not supported on this system");
+			}
+		} else {
+			listener = new TcpSocket();
+			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+			listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+			tcp = true;
+		}
+
 		listener.listen(128);
 	}
 
@@ -4501,8 +4538,8 @@ version(Posix) {
 		alias CgiConnectionHandle = void*; // Doesn't actually work! But I don't want compile to fail pointlessly at this point.
 		enum INVALID_CGI_CONNECTION_HANDLE = null;
 	} else version(scgi) {
-		alias CgiConnectionHandle = HANDLE;
-		enum INVALID_CGI_CONNECTION_HANDLE = null;
+		alias CgiConnectionHandle = SOCKET;
+		enum INVALID_CGI_CONNECTION_HANDLE = INVALID_SOCKET;
 	} else { /* version(plain_cgi) */
 		alias CgiConnectionHandle = HANDLE;
 		enum INVALID_CGI_CONNECTION_HANDLE = null;
