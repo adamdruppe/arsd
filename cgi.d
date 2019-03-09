@@ -384,6 +384,12 @@ int locationOf(T)(T[] data, string item) {
 	const(ubyte[]) d = cast(const(ubyte[])) data;
 	const(ubyte[]) i = cast(const(ubyte[])) item;
 
+	// this is a vague sanity check to ensure we aren't getting insanely
+	// sized input that will infinite loop below. it should never happen;
+	// even huge file uploads ought to come in smaller individual pieces.
+	if(d.length > (int.max/2))
+		throw new Exception("excessive block of input");
+
 	for(int a = 0; a < d.length; a++) {
 		if(a + i.length > d.length)
 			return -1;
