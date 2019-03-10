@@ -12574,17 +12574,19 @@ version(OSXCocoa) {
     mixin template NativeScreenPainterImplementation() {
         CGContextRef context;
         ubyte[4] _outlineComponents;
+	id view;
 
         void create(NativeWindowHandle window) {
             context = window.drawingContext;
+	    view = window.view;
         }
 
         void dispose() {
+            	setNeedsDisplay(view, true);
         }
 
 	// NotYetImplementedException
 	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
-	void pen(Pen p) {}
 	void rasterOp(RasterOp op) {}
 	Pen _activePen;
 	Color _fillColor;
@@ -12595,7 +12597,9 @@ version(OSXCocoa) {
 
 	// end
 
-        @property void outlineColor(Color color) {
+        void pen(Pen pen) {
+	    _activePen = pen;
+	    auto color = pen.color; // FIXME
             double alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
                                        color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
@@ -12647,7 +12651,7 @@ version(OSXCocoa) {
                                                   _outlineComponents[1]*invAlpha,
                                                   _outlineComponents[2]*invAlpha,
                                                   _outlineComponents[3]/255.0f);
-                CGContextShowTextAtPoint(context, x, y, text.ptr, text.length);
+                CGContextShowTextAtPoint(context, x, y + 12 /* this is cuz this picks baseline but i want bounding box */, text.ptr, text.length);
 // auto cfstr = cast(id)createCFString(text);
 // objc_msgSend(cfstr, sel_registerName("drawAtPoint:withAttributes:"),
 // NSPoint(x, y), null);
@@ -12814,9 +12818,13 @@ version(OSXCocoa) {
             // will like it. Let's leave it to the native handler.
 
             // perform the default action.
-            auto superData = objc_super(self, superclass(self));
-            alias extern(C) void function(objc_super*, SEL, id) T;
-            (cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
+
+	    // so the default action is to make a bomp sound and i dont want that
+	    // sooooooooo yeah not gonna do that.
+
+            //auto superData = objc_super(self, superclass(self));
+            //alias extern(C) void function(objc_super*, SEL, id) T;
+            //(cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
         }
     }
 
