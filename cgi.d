@@ -384,6 +384,12 @@ int locationOf(T)(T[] data, string item) {
 	const(ubyte[]) d = cast(const(ubyte[])) data;
 	const(ubyte[]) i = cast(const(ubyte[])) item;
 
+	// this is a vague sanity check to ensure we aren't getting insanely
+	// sized input that will infinite loop below. it should never happen;
+	// even huge file uploads ought to come in smaller individual pieces.
+	if(d.length > (int.max/2))
+		throw new Exception("excessive block of input");
+
 	for(int a = 0; a < d.length; a++) {
 		if(a + i.length > d.length)
 			return -1;
@@ -3746,10 +3752,12 @@ class ListeningConnectionManager {
 
 			while(!loopBroken && running) {
 				auto sn = listener.accept();
-				// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-				// on the socket because we do some buffering internally. I think this helps,
-				// certainly does for small requests, and I think it does for larger ones too
-				sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+				if(tcp) {
+					// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+					// on the socket because we do some buffering internally. I think this helps,
+					// certainly does for small requests, and I think it does for larger ones too
+					sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+				}
 				while(queueLength >= queue.length)
 					Thread.sleep(1.msecs);
 				synchronized(this) {
@@ -3765,14 +3773,49 @@ class ListeningConnectionManager {
 					}
 				}
 			}
+
+			// FIXME: i typically stop this with ctrl+c which never
+			// actually gets here. i need to do a sigint handler.
+			if(cleanup)
+				cleanup();
 		}
 	}
 
+	bool tcp;
+	void delegate() cleanup;
+
 	this(string host, ushort port, void function(Socket) handler) {
 		this.handler = handler;
-		listener = new TcpSocket();
-		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-		listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+
+		if(host.startsWith("unix:")) {
+			version(Posix) {
+				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				string filename = host["unix:".length .. $].idup;
+				listener.bind(new UnixAddress(filename));
+				cleanup = delegate() {
+					import std.file;
+					remove(filename);
+				};
+				tcp = false;
+			} else {
+				throw new Exception("unix sockets not supported on this system");
+			}
+		} else if(host.startsWith("abstract:")) {
+			version(linux) {
+				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				string filename = "\0" ~ host["abstract:".length .. $];
+				listener.bind(new UnixAddress(filename));
+				tcp = false;
+			} else {
+				throw new Exception("abstract unix sockets not supported on this system");
+			}
+		} else {
+			listener = new TcpSocket();
+			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+			listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+			tcp = true;
+		}
+
 		listener.listen(128);
 	}
 
@@ -4488,15 +4531,15 @@ version(Posix) {
 	enum INVALID_CGI_CONNECTION_HANDLE = -1;
 } else version(Windows) {
 	alias LocalServerConnectionHandle = HANDLE;
-	version(embedded_httpd) {
+	version(embedded_httpd_threads) {
 		alias CgiConnectionHandle = SOCKET;
 		enum INVALID_CGI_CONNECTION_HANDLE = INVALID_SOCKET;
 	} else version(fastcgi) {
 		alias CgiConnectionHandle = void*; // Doesn't actually work! But I don't want compile to fail pointlessly at this point.
 		enum INVALID_CGI_CONNECTION_HANDLE = null;
 	} else version(scgi) {
-		alias CgiConnectionHandle = HANDLE;
-		enum INVALID_CGI_CONNECTION_HANDLE = null;
+		alias CgiConnectionHandle = SOCKET;
+		enum INVALID_CGI_CONNECTION_HANDLE = INVALID_SOCKET;
 	} else { /* version(plain_cgi) */
 		alias CgiConnectionHandle = HANDLE;
 		enum INVALID_CGI_CONNECTION_HANDLE = null;
@@ -4651,6 +4694,20 @@ void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
 bool isInvalidHandle(CgiConnectionHandle h) {
 	return h == INVALID_CGI_CONNECTION_HANDLE;
 }
+
+/+
+https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsarecv
+https://support.microsoft.com/en-gb/help/181611/socket-overlapped-i-o-versus-blocking-nonblocking-mode
+https://stackoverflow.com/questions/18018489/should-i-use-iocps-or-overlapped-wsasend-receive
+https://docs.microsoft.com/en-us/windows/desktop/fileio/i-o-completion-ports
+https://docs.microsoft.com/en-us/windows/desktop/fileio/createiocompletionport
+https://docs.microsoft.com/en-us/windows/desktop/api/mswsock/nf-mswsock-acceptex
+https://docs.microsoft.com/en-us/windows/desktop/Sync/waitable-timer-objects
+https://docs.microsoft.com/en-us/windows/desktop/api/synchapi/nf-synchapi-setwaitabletimer
+https://docs.microsoft.com/en-us/windows/desktop/Sync/using-a-waitable-timer-with-an-asynchronous-procedure-call
+https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsagetoverlappedresult
+
++/
 
 /++
 	You can customize your server by subclassing the appropriate server. Then, register your
@@ -5120,19 +5177,20 @@ interface EventSourceServer {
 
 		version(fastcgi)
 			throw new Exception("sending fcgi connections not supported");
+		else {
+			auto fd = cgi.getOutputFileHandle();
+			if(isInvalidHandle(fd))
+				throw new Exception("bad fd from cgi!");
 
-		auto fd = cgi.getOutputFileHandle();
-		if(isInvalidHandle(fd))
-			throw new Exception("bad fd from cgi!");
+			EventSourceServerImplementation.SendableEventConnection sec;
+			sec.populate(cgi.responseChunked, eventUrl, lastEventId);
 
-		EventSourceServerImplementation.SendableEventConnection sec;
-		sec.populate(cgi.responseChunked, eventUrl, lastEventId);
-
-		version(Posix) {
-			auto res = write_fd(s, cast(void*) &sec, sec.sizeof, fd);
-			assert(res == sec.sizeof);
-		} else version(Windows) {
-			// FIXME
+			version(Posix) {
+				auto res = write_fd(s, cast(void*) &sec, sec.sizeof, fd);
+				assert(res == sec.sizeof);
+			} else version(Windows) {
+				// FIXME
+			}
 		}
 	}
 
