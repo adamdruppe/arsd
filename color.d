@@ -6,8 +6,8 @@ module arsd.color;
 // importing phobos explodes the size of this code 10x, so not doing it.
 
 private {
-	real toInternal(T)(scope const(char)[] s) {
-		real accumulator = 0.0;
+	double toInternal(T)(scope const(char)[] s) {
+		double accumulator = 0.0;
 		size_t i = s.length;
 		foreach(idx, c; s) {
 			if(c >= '0' && c <= '9') {
@@ -17,21 +17,21 @@ private {
 				i = idx + 1;
 				break;
 			} else {
-				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make real from ";
+				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make double from ";
 				wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute ~= s;
 				throw new Exception(wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute);
 			}
 		}
 
-		real accumulator2 = 0.0;
-		real count = 1;
+		double accumulator2 = 0.0;
+		double count = 1;
 		foreach(c; s[i .. $]) {
 			if(c >= '0' && c <= '9') {
 				accumulator2 *= 10;
 				accumulator2 += c - '0';
 				count *= 10;
 			} else {
-				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make real from ";
+				string wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute = "bad char to make double from ";
 				wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute ~= s;
 				throw new Exception(wtfIsWrongWithThisStupidLanguageWithItsBrokenSafeAttribute);
 			}
@@ -64,8 +64,8 @@ private {
 
 		return cast(string) ret;
 	}
-	string toInternal(T)(real a) {
-		// a simplifying assumption here is the fact that we only use this in one place: toInternal!string(cast(real) a / 255)
+	string toInternal(T)(double a) {
+		// a simplifying assumption here is the fact that we only use this in one place: toInternal!string(cast(double) a / 255)
 		// thus we know this will always be between 0.0 and 1.0, inclusive.
 		if(a <= 0.0)
 			return "0.0";
@@ -78,16 +78,16 @@ private {
 	}
 
 	nothrow @safe @nogc pure
-	real absInternal(real a) { return a < 0 ? -a : a; }
+	double absInternal(double a) { return a < 0 ? -a : a; }
 	nothrow @safe @nogc pure
-	real minInternal(real a, real b, real c) {
+	double minInternal(double a, double b, double c) {
 		auto m = a;
 		if(b < m) m = b;
 		if(c < m) m = c;
 		return m;
 	}
 	nothrow @safe @nogc pure
-	real maxInternal(real a, real b, real c) {
+	double maxInternal(double a, double b, double c) {
 		auto m = a;
 		if(b > m) m = b;
 		if(c > m) m = c;
@@ -226,7 +226,7 @@ struct Color {
 		if(a == 255)
 			return "#" ~ toHexInternal(r) ~ toHexInternal(g) ~ toHexInternal(b);
 		else {
-			return "rgba("~toInternal!string(r)~", "~toInternal!string(g)~", "~toInternal!string(b)~", "~toInternal!string(cast(real)a / 255.0)~")";
+			return "rgba("~toInternal!string(r)~", "~toInternal!string(g)~", "~toInternal!string(b)~", "~toInternal!string(cast(double)a / 255.0)~")";
 		}
 	}
 
@@ -277,15 +277,15 @@ struct Color {
 			assert(s[$-1] == ')');
 			s = s[s.startsWithInternal("hsl(") ? 4 : 5  .. $ - 1]; // the closing paren
 
-			real[3] hsl;
+			double[3] hsl;
 			ubyte a = 255;
 
 			auto parts = s.splitInternal(',');
 			foreach(i, part; parts) {
 				if(i < 3)
-					hsl[i] = toInternal!real(part.stripInternal);
+					hsl[i] = toInternal!double(part.stripInternal);
 				else
-					a = clampToByte(cast(int) (toInternal!real(part.stripInternal) * 255));
+					a = clampToByte(cast(int) (toInternal!double(part.stripInternal) * 255));
 			}
 
 			c = .fromHsl(hsl);
@@ -302,7 +302,7 @@ struct Color {
 			auto parts = s.splitInternal(',');
 			foreach(i, part; parts) {
 				// lol the loop-switch pattern
-				auto v = toInternal!real(part.stripInternal);
+				auto v = toInternal!double(part.stripInternal);
 				switch(i) {
 					case 0: // red
 						c.r = clampToByte(cast(int) v);
@@ -353,7 +353,7 @@ struct Color {
 	}
 
 	/// from hsl
-	static Color fromHsl(real h, real s, real l) {
+	static Color fromHsl(double h, double s, double l) {
 		return .fromHsl(h, s, l);
 	}
 
@@ -460,22 +460,26 @@ private ubyte fromHexInternal(in char[] s) {
 
 /// Converts hsl to rgb
 Color fromHsl(real[3] hsl) nothrow pure @safe @nogc {
+	return fromHsl(cast(double) hsl[0], cast(double) hsl[1], cast(double) hsl[2]);
+}
+
+Color fromHsl(double[3] hsl) nothrow pure @safe @nogc {
 	return fromHsl(hsl[0], hsl[1], hsl[2]);
 }
 
 /// Converts hsl to rgb
-Color fromHsl(real h, real s, real l, real a = 255) nothrow pure @safe @nogc {
+Color fromHsl(double h, double s, double l, double a = 255) nothrow pure @safe @nogc {
 	h = h % 360;
 
-	real C = (1 - absInternal(2 * l - 1)) * s;
+	double C = (1 - absInternal(2 * l - 1)) * s;
 
-	real hPrime = h / 60;
+	double hPrime = h / 60;
 
-	real X = C * (1 - absInternal(hPrime % 2 - 1));
+	double X = C * (1 - absInternal(hPrime % 2 - 1));
 
-	real r, g, b;
+	double r, g, b;
 
-	if(h is real.nan)
+	if(h is double.nan)
 		r = g = b = 0;
 	else if (hPrime >= 0 && hPrime < 1) {
 		r = C;
@@ -503,7 +507,7 @@ Color fromHsl(real h, real s, real l, real a = 255) nothrow pure @safe @nogc {
 		b = X;
 	}
 
-	real m = l - C / 2;
+	double m = l - C / 2;
 
 	r += m;
 	g += m;
@@ -517,22 +521,23 @@ Color fromHsl(real h, real s, real l, real a = 255) nothrow pure @safe @nogc {
 }
 
 /// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
-real[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted @nogc {
-	real r1 = cast(real) c.r / 255;
-	real g1 = cast(real) c.g / 255;
-	real b1 = cast(real) c.b / 255;
+double[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted @nogc {
+	double r1 = cast(double) c.r / 255;
+	double g1 = cast(double) c.g / 255;
+	double b1 = cast(double) c.b / 255;
 
-	real maxColor = maxInternal(r1, g1, b1);
-	real minColor = minInternal(r1, g1, b1);
+	double maxColor = maxInternal(r1, g1, b1);
+	double minColor = minInternal(r1, g1, b1);
 
-	real L = (maxColor + minColor) / 2 ;
+	double L = (maxColor + minColor) / 2 ;
 	if(useWeightedLightness) {
 		// the colors don't affect the eye equally
 		// this is a little more accurate than plain HSL numbers
 		L = 0.2126*r1 + 0.7152*g1 + 0.0722*b1;
+		// maybe a better number is 299, 587, 114
 	}
-	real S = 0;
-	real H = 0;
+	double S = 0;
+	double H = 0;
 	if(maxColor != minColor) {
 		if(L < 0.5) {
 			S = (maxColor - minColor) / (maxColor + minColor);
@@ -557,7 +562,7 @@ real[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted 
 }
 
 /// .
-Color lighten(Color c, real percentage) nothrow pure @safe @nogc {
+Color lighten(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 + percentage);
 	if(hsl[2] > 1)
@@ -566,7 +571,7 @@ Color lighten(Color c, real percentage) nothrow pure @safe @nogc {
 }
 
 /// .
-Color darken(Color c, real percentage) nothrow pure @safe @nogc {
+Color darken(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] *= (1 - percentage);
 	return fromHsl(hsl);
@@ -574,7 +579,7 @@ Color darken(Color c, real percentage) nothrow pure @safe @nogc {
 
 /// for light colors, call darken. for dark colors, call lighten.
 /// The goal: get toward center grey.
-Color moderate(Color c, real percentage) nothrow pure @safe @nogc {
+Color moderate(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	if(hsl[2] > 0.5)
 		hsl[2] *= (1 - percentage);
@@ -590,7 +595,7 @@ Color moderate(Color c, real percentage) nothrow pure @safe @nogc {
 }
 
 /// the opposite of moderate. Make darks darker and lights lighter
-Color extremify(Color c, real percentage) nothrow pure @safe @nogc {
+Color extremify(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c, true);
 	if(hsl[2] < 0.5)
 		hsl[2] *= (1 - percentage);
@@ -626,7 +631,7 @@ Color makeTextColor(Color c) nothrow pure @safe @nogc {
 
 // These provide functional access to hsl manipulation; useful if you need a delegate
 
-Color setLightness(Color c, real lightness) nothrow pure @safe @nogc {
+Color setLightness(Color c, double lightness) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[2] = lightness;
 	return fromHsl(hsl);
@@ -634,28 +639,28 @@ Color setLightness(Color c, real lightness) nothrow pure @safe @nogc {
 
 
 ///
-Color rotateHue(Color c, real degrees) nothrow pure @safe @nogc {
+Color rotateHue(Color c, double degrees) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[0] += degrees;
 	return fromHsl(hsl);
 }
 
 ///
-Color setHue(Color c, real hue) nothrow pure @safe @nogc {
+Color setHue(Color c, double hue) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[0] = hue;
 	return fromHsl(hsl);
 }
 
 ///
-Color desaturate(Color c, real percentage) nothrow pure @safe @nogc {
+Color desaturate(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 - percentage);
 	return fromHsl(hsl);
 }
 
 ///
-Color saturate(Color c, real percentage) nothrow pure @safe @nogc {
+Color saturate(Color c, double percentage) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] *= (1 + percentage);
 	if(hsl[1] > 1)
@@ -664,7 +669,7 @@ Color saturate(Color c, real percentage) nothrow pure @safe @nogc {
 }
 
 ///
-Color setSaturation(Color c, real saturation) nothrow pure @safe @nogc {
+Color setSaturation(Color c, double saturation) nothrow pure @safe @nogc {
 	auto hsl = toHsl(c);
 	hsl[1] = saturation;
 	return fromHsl(hsl);
@@ -785,9 +790,9 @@ void main() {
 	import browser.document;
 	foreach(ele; document.querySelectorAll("input")) {
 		ele.addEventListener("change", {
-			auto h = toInternal!real(document.querySelector("input[name=h]").value);
-			auto s = toInternal!real(document.querySelector("input[name=s]").value);
-			auto l = toInternal!real(document.querySelector("input[name=l]").value);
+			auto h = toInternal!double(document.querySelector("input[name=h]").value);
+			auto s = toInternal!double(document.querySelector("input[name=s]").value);
+			auto l = toInternal!double(document.querySelector("input[name=l]").value);
 
 			Color c = Color.fromHsl(h, s, l);
 
