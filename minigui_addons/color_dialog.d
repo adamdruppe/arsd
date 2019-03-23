@@ -11,7 +11,7 @@ static if(UsingWin32Widgets)
 /++
 
 +/
-void showColorDialog(Window owner, Color current, void delegate(Color choice) onOK, void delegate() onCancel = null) {
+auto showColorDialog(Window owner, Color current, void delegate(Color choice) onOK, void delegate() onCancel = null) {
 	static if(UsingWin32Widgets) {
 		import core.sys.windows.windows;
 		static COLORREF[16] customColors;
@@ -30,6 +30,7 @@ void showColorDialog(Window owner, Color current, void delegate(Color choice) on
 	} else static if(UsingCustomWidgets) {
 		auto cpd = new ColorPickerDialog(current, onOK, owner);
 		cpd.show();
+		return cpd;
 	} else static assert(0);
 }
 
@@ -53,7 +54,7 @@ class ColorPickerDialog : Dialog {
 	void delegate(Color) onOK;
 
 	this(Color current, void delegate(Color) onOK, Window owner) {
-		super(360, 350, "Color picker");
+		super(360, 460, "Color picker");
 
 		this.onOK = onOK;
  
@@ -79,7 +80,7 @@ class ColorPickerDialog : Dialog {
 			canUseImage = true;
 
 		if(hslImage is null && canUseImage) {
-			auto img = new TrueColorImage(180, 128);
+			auto img = new TrueColorImage(360, 255);
 			double h = 0.0, s = 1.0, l = 0.5;
 			foreach(y; 0 .. img.height) {
 				foreach(x; 0 .. img.width) {
@@ -99,18 +100,34 @@ class ColorPickerDialog : Dialog {
 			this() { super(t); }
 			override int minHeight() { return hslImage ? hslImage.height : 4; }
 			override int maxHeight() { return hslImage ? hslImage.height : 4; }
+			override int marginBottom() { return 4; }
 			override void paint(ScreenPainter painter) {
 				if(hslImage)
 					hslImage.drawAt(painter, Point(0, 0));
 			}
 		};
 
+		auto hr = new HorizontalLayout(t);
+
 		auto vlRgb = new class VerticalLayout {
 			this() {
-				super(t);
+				super(hr);
 			}
 			override int maxWidth() { return 150; };
 		};
+
+		auto vlHsl = new class VerticalLayout {
+			this() {
+				super(hr);
+			}
+			override int maxWidth() { return 150; };
+		};
+
+		h = new LabeledLineEdit("Hue:", vlHsl);
+		s = new LabeledLineEdit("Saturation:", vlHsl);
+		l = new LabeledLineEdit("Lightness:", vlHsl);
+
+		css = new LabeledLineEdit("CSS:", vlHsl);
 
 		r = new LabeledLineEdit("Red:", vlRgb);
 		g = new LabeledLineEdit("Green:", vlRgb);
@@ -118,40 +135,76 @@ class ColorPickerDialog : Dialog {
 		a = new LabeledLineEdit("Alpha:", vlRgb);
 
 		import std.conv;
+		import std.format;
 
-		r.content = to!string(current.r);
-		g.content = to!string(current.g);
-		b.content = to!string(current.b);
-		a.content = to!string(current.a);
+		void updateCurrent() {
+			r.content = to!string(current.r);
+			g.content = to!string(current.g);
+			b.content = to!string(current.b);
+			a.content = to!string(current.a);
+
+			auto hsl = current.toHsl;
+
+			h.content = format("%0.2f", hsl[0]);
+			s.content = format("%0.2f", hsl[1]);
+			l.content = format("%0.2f", hsl[2]);
+
+			css.content = current.toCssString();
+		}
+
+		updateCurrent();
 
 		r.addEventListener("focus", &r.selectAll);
 		g.addEventListener("focus", &g.selectAll);
 		b.addEventListener("focus", &b.selectAll);
 		a.addEventListener("focus", &a.selectAll);
 
+		h.addEventListener("focus", &h.selectAll);
+		s.addEventListener("focus", &s.selectAll);
+		l.addEventListener("focus", &l.selectAll);
 
-		if(hslImage !is null)
-		wid.addEventListener("mousedown", (Event event) {
-			auto h = cast(double) event.clientX / hslImage.width * 360.0;
-			auto s = 1.0 - (cast(double) event.clientY / hslImage.height * 1.0);
-			auto l = 0.5;
+		css.addEventListener("focus", &css.selectAll);
 
-			auto color = Color.fromHsl(h, s, l);
-
-			r.content = to!string(color.r);
-			g.content = to!string(color.g);
-			b.content = to!string(color.b);
-			a.content = to!string(color.a);
-
-		});
-
-		Color currentColor() {
+		void convertFromHsl() {
 			try {
-				return Color(to!int(r.content), to!int(g.content), to!int(b.content), to!int(a.content));
+				auto c = Color.fromHsl(h.content.to!double, s.content.to!double, l.content.to!double);
+				c.a = a.content.to!ubyte;
+				current = c;
+				updateCurrent();
 			} catch(Exception e) {
-				return Color.transparent;
 			}
 		}
+
+		h.addEventListener("change", &convertFromHsl);
+		s.addEventListener("change", &convertFromHsl);
+		l.addEventListener("change", &convertFromHsl);
+
+		css.addEventListener("change", () {
+			current = Color.fromString(css.content);
+			updateCurrent();
+		});
+
+		void helper(Event event) {
+			auto h = cast(double) event.clientX / hslImage.width * 360.0;
+			auto s = 1.0 - (cast(double) event.clientY / hslImage.height * 1.0);
+			auto l = this.l.content.to!double;
+
+			current = Color.fromHsl(h, s, l);
+			current.a = a.content.to!ubyte;
+
+			updateCurrent();
+
+			auto e2 = new Event("change", this);
+			e2.dispatch();
+		}
+
+		if(hslImage !is null)
+		wid.addEventListener("mousedown", &helper);
+		if(hslImage !is null)
+		wid.addEventListener("mousemove", (Event event) {
+			if(event.state & ModifierState.leftButtonDown)
+				helper(event);
+		});
 
 		this.addEventListener("keydown", (Event event) {
 			if(event.key == Key.Enter || event.key == Key.PadEnter)
@@ -204,6 +257,22 @@ class ColorPickerDialog : Dialog {
 	LabeledLineEdit g;
 	LabeledLineEdit b;
 	LabeledLineEdit a;
+
+	LabeledLineEdit h;
+	LabeledLineEdit s;
+	LabeledLineEdit l;
+
+	LabeledLineEdit css;
+
+	Color currentColor() {
+		import std.conv;
+		try {
+			return Color(to!int(r.content), to!int(g.content), to!int(b.content), to!int(a.content));
+		} catch(Exception e) {
+			return Color.transparent;
+		}
+	}
+
 
 	override void OK() {
 		import std.conv;
