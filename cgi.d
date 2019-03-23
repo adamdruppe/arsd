@@ -568,7 +568,7 @@ class Cgi {
 
 	  Non-simulation arguments:
 	  	--port xxx listening port for non-cgi things (valid for the cgi interfaces)
-		--listening-host  the ip address the application should listen on
+		--listening-host  the ip address the application should listen on, or if you want to use unix domain sockets, it is here you can set them: `--listening-host unix:filename` or, on Linux, `--listening-host abstract:name`.
 
 */
 
