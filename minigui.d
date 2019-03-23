@@ -5576,15 +5576,15 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		} else version(win32_widgets) {
 			// get the current selection
 			DWORD StartPos, EndPos;
-			SendMessageW( hwnd, EM_GETSEL, cast(WPARAM)(&StartPos), cast(WPARAM)(&EndPos) );
+			SendMessageW( hwnd, EM_GETSEL, cast(WPARAM)(&StartPos), cast(LPARAM)(&EndPos) );
 
 			// move the caret to the end of the text
-			int outLength = GetWindowTextLengthW( hwndOutput );
+			int outLength = GetWindowTextLengthW( hwnd );
 			SendMessageW( hwnd, EM_SETSEL, outLength, outLength );
 
 			// insert the text at the new caret position
 			WCharzBuffer bfr = WCharzBuffer(txt, WindowsStringConversionFlags.convertNewLines);
-			SendMessageW( hwnd, EM_REPLACESEL, TRUE, txt );
+			SendMessageW( hwnd, EM_REPLACESEL, TRUE, cast(LPARAM) bfr.ptr );
 
 			// restore the previous selection
 			SendMessageW( hwnd, EM_SETSEL, StartPos, EndPos );
