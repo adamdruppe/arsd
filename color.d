@@ -217,6 +217,7 @@ struct Color {
 
 	/// Return black-and-white color
 	Color toBW() () nothrow pure @safe @nogc {
+		// FIXME: gamma?
 		int intens = clampToByte(cast(int)(0.2126*r+0.7152*g+0.0722*b));
 		return Color(intens, intens, intens, a);
 	}
@@ -520,6 +521,15 @@ Color fromHsl(double h, double s, double l, double a = 255) nothrow pure @safe @
 		cast(int)(a));
 }
 
+/// Assumes the input `u` is already between 0 and 1 fyi.
+nothrow pure @safe @nogc
+double srgbToLinearRgb(double u) {
+	if(u < 0.4045)
+		return u / 12.92;
+	else
+		return ((u + 0.055) / 1.055) ^^ 2.4;
+}
+
 /// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
 double[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted @nogc {
 	double r1 = cast(double) c.r / 255;
@@ -533,7 +543,7 @@ double[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @truste
 	if(useWeightedLightness) {
 		// the colors don't affect the eye equally
 		// this is a little more accurate than plain HSL numbers
-		L = 0.2126*r1 + 0.7152*g1 + 0.0722*b1;
+		L = 0.2126*srgbToLinearRgb(r1) + 0.7152*srgbToLinearRgb(g1) + 0.0722*srgbToLinearRgb(b1);
 		// maybe a better number is 299, 587, 114
 	}
 	double S = 0;
