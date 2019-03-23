@@ -167,6 +167,8 @@ version(linux) {
 		// I'd just use my xbox controller.
 	);
 
+	/// For Linux only, reads the latest joystick events into the change buffer, if available.
+	/// It is non-blocking
 	void readJoystickEvents(int fd) {
 		js_event event;
 
@@ -312,6 +314,7 @@ int enableJoystickInput(
 	// return 0;
 }
 
+///
 void closeJoysticks() {
 	version(linux) {
 		foreach(ref fd; joystickFds) {
@@ -330,33 +333,36 @@ void closeJoysticks() {
 	} else static assert(0);
 }
 
+///
 struct JoystickUpdate {
+	///
 	int player;
 
 	JoystickState old;
 	JoystickState current;
 
-	// changes from last update
+	/// changes from last update
 	bool buttonWasJustPressed(Button button) {
 		return buttonIsPressed(button) && !oldButtonIsPressed(button);
 	}
 
+	/// ditto
 	bool buttonWasJustReleased(Button button) {
 		return !buttonIsPressed(button) && oldButtonIsPressed(button);
 	}
 
-	// this is normalized down to a 16 step change
-	// and ignores a dead zone near the middle
+	/// this is normalized down to a 16 step change
+	/// and ignores a dead zone near the middle
 	short axisChange(Axis axis) {
 		return cast(short) (axisPosition(axis) - oldAxisPosition(axis));
 	}
 
-	// current state
+	/// current state
 	bool buttonIsPressed(Button button) {
 		return buttonIsPressedHelper(button, &current);
 	}
 
-	// Note: UP is negative!
+	/// Note: UP is negative!
 	short axisPosition(Axis axis, short digitalFallbackValue = short.max) {
 		return axisPositionHelper(axis, &current, digitalFallbackValue);
 	}
@@ -521,6 +527,7 @@ struct JoystickUpdate {
 		}
 }
 
+///
 JoystickUpdate getJoystickUpdate(int player) {
 	static JoystickState[4] previous;
 

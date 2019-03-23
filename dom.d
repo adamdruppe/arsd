@@ -1,4 +1,8 @@
 // FIXME: add classList
+// FIXME: add matchesSelector
+// FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
+// FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
+
 /++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond
@@ -71,7 +75,7 @@ bool isConvenientAttribute(string name) {
 /// The main document interface, including a html parser.
 class Document : FileResource {
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
-	/// included in the build.
+	/// included in the build as well as [arsd.characterencodings].
 	static Document fromUrl()(string url) {
 		import arsd.http2;
 		auto client = new HttpClient();
@@ -79,7 +83,10 @@ class Document : FileResource {
 		auto req = client.navigateTo(Uri(url), HttpVerb.GET);
 		auto res = req.waitForCompletion();
 
-		return new Document(cast(string) res.content);
+		auto document = new Document();
+		document.parseGarbage(cast(string) res.content);
+
+		return document;
 	}
 
 	///.
@@ -821,6 +828,12 @@ class Document : FileResource {
 
 							while(pos < data.length && data[pos] != '>')
 								pos++;
+
+							if(pos >= data.length) {
+								// the tag never closed
+								assert(data.length != 0);
+								pos = data.length - 1; // rewinding so it hits the end at the bottom..
+							}
 						}
 
 						auto whereThisTagStarted = pos; // for better error messages
@@ -1403,7 +1416,7 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) getElementById(id);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, file, line);
+			throw new ElementNotFoundException(SomeElementType.stringof, "id=" ~ id, this, file, line);
 		return e;
 	}
 
@@ -1418,7 +1431,7 @@ class Element {
 	body {
 		auto e = cast(SomeElementType) querySelector(selector);
 		if(e is null)
-			throw new ElementNotFoundException(SomeElementType.stringof, selector, file, line);
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, this, file, line);
 		return e;
 	}
 
@@ -2127,7 +2140,7 @@ class Element {
 		static if(!is(T == Element)) {
 			auto t = cast(T) par;
 			if(t is null)
-				throw new ElementNotFoundException("", tagName ~ " parent not found");
+				throw new ElementNotFoundException("", tagName ~ " parent not found", this);
 		} else
 			auto t = par;
 
@@ -3494,8 +3507,14 @@ struct ElementCollection {
 		return !elements.length;
 	}
 
-	/// Collects strings from the collection, concatenating them together
-	/// Kinda like running reduce and ~= on it.
+	/++
+		Collects strings from the collection, concatenating them together
+		Kinda like running reduce and ~= on it.
+
+		---
+		document["p"].collect!"innerText";
+		---
+	+/
 	string collect(string method)(string separator = "") {
 		string text;
 		foreach(e; elements) {
@@ -3511,6 +3530,17 @@ struct ElementCollection {
 		foreach(e; elements) {
 			mixin("e." ~ name)(t);
 		}
+		return this;
+	}
+
+	/++
+		Calls [Element.wrapIn] on each member of the collection, but clones the argument `what` for each one.
+	+/
+	ElementCollection wrapIn(Element what) {
+		foreach(e; elements) {
+			e.wrapIn(what.cloneNode(false));
+		}
+
 		return this;
 	}
 
@@ -3776,7 +3806,7 @@ T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) i
 body {
 	auto ret = cast(T) e;
 	if(ret is null)
-		throw new ElementNotFoundException(T.stringof, "passed value", file, line);
+		throw new ElementNotFoundException(T.stringof, "passed value", e, file, line);
 	return ret;
 }
 
@@ -5042,7 +5072,7 @@ class Table : Element {
 			return position;
 		}
 
-		foreach(int i, rowElement; rows) {
+		foreach(i, rowElement; rows) {
 			auto row = cast(TableRow) rowElement;
 			assert(row !is null);
 			assert(i < ret.length);
@@ -5059,7 +5089,7 @@ class Table : Element {
 				foreach(int j; 0 .. cell.colspan) {
 					foreach(int k; 0 .. cell.rowspan)
 						// if the first row, always append.
-						insertCell(k + i, k == 0 ? -1 : position, cell);
+						insertCell(k + cast(int) i, k == 0 ? -1 : position, cell);
 					position++;
 				}
 			}
@@ -5139,9 +5169,12 @@ class MarkupException : Exception {
 class ElementNotFoundException : Exception {
 
 	/// type == kind of element you were looking for and search == a selector describing the search.
-	this(string type, string search, string file = __FILE__, size_t line = __LINE__) {
+	this(string type, string search, Element searchContext, string file = __FILE__, size_t line = __LINE__) {
+		this.searchContext = searchContext;
 		super("Element of type '"~type~"' matching {"~search~"} not found.", file, line);
 	}
+
+	Element searchContext;
 }
 
 /// The html struct is used to differentiate between regular text nodes and html in certain functions

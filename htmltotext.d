@@ -7,10 +7,47 @@ import std.string;
 
 import std.uni : isWhite;
 
+///
 class HtmlConverter {
 	int width;
 
+	/++
+		Will enable color output using VT codes. Determines color through dom.d's css support, which means you need to apply a stylesheet first.
+
+		---
+		import arsd.dom;
+
+		auto document = new Document(source_code_for_html);
+		auto stylesheet = new Stylesheet(source_code_for_css);
+		stylesheet.apply(document);
+		---
+	+/
+	bool enableVtOutput;
+
+
+	string color;
+	string backgroundColor;
+
+	///
 	void htmlToText(Element element, bool preformatted, int width) {
+		string color, backgroundColor;
+		if(enableVtOutput) {
+			color = element.computedStyle.getValue("color");
+			backgroundColor = element.computedStyle.getValue("background-color");
+		}
+
+		string originalColor = this.color, originalBackgroundColor = this.backgroundColor;
+
+		this.color = color.length ? color : this.color;
+		this.backgroundColor = backgroundColor.length ? backgroundColor : this.backgroundColor;
+
+		scope(exit) {
+			// the idea is as we pop working back up the tree, it restores what it was here
+			this.color = originalColor;
+			this.backgroundColor = originalBackgroundColor;
+		}
+
+
 		this.width = width;
 		if(auto tn = cast(TextNode) element) {
 			foreach(dchar ch; tn.nodeValue) {
@@ -28,7 +65,7 @@ class HtmlConverter {
 				// The table stuff is removed right now because while it looks
 				// ok for test tables, it isn't working well for the emails I have
 				// - it handles data ok but not really nested layouts.
-				case "trfixme":
+				case "trlol":
 					auto children = element.childElements;
 
 					auto tdWidth = (width - cast(int)(children.length)*3) / cast(int)(children.length);
@@ -91,6 +128,16 @@ class HtmlConverter {
 						s ~= "\n";
 					}
 				break;
+				case "tr":
+					startBlock(2);
+					sinkChildren();
+					endBlock();
+				break;
+				case "td":
+					startBlock(0);
+					sinkChildren();
+					endBlock();
+				break;
 				case "a":
 					sinkChildren();
 					if(element.href != element.innerText) {
@@ -105,17 +152,27 @@ class HtmlConverter {
 					}
 				break;
 				case "span":
-					/*
-					auto csc = element.computedStyle.getValue("color");
-					if(csc.length) {
-						auto c = Color.fromString(csc);
-						s ~= format("\033[38;2;%d;%d;%dm", c.r, c.g, c.b);
-					}
-					sinkChildren();
+					if(enableVtOutput) {
+						auto csc = color; // element.computedStyle.getValue("color");
+						if(csc.length) {
+							auto c = Color.fromString(csc);
+							s ~= format("\033[38;2;%d;%d;%dm", c.r, c.g, c.b);
+						}
 
-					if(csc.length)
-						s ~= "\033[39m";
-					*/
+						bool bold = element.computedStyle.getValue("font-weight") == "bold";
+
+						if(bold)
+							s ~= "\033[1m";
+
+						sinkChildren();
+
+						if(bold)
+							s ~= "\033[0m";
+						if(csc.length)
+							s ~= "\033[39m";
+					} else {
+						sinkChildren();
+					}
 				break;
 				case "p":
 					startBlock();
@@ -126,9 +183,15 @@ class HtmlConverter {
 				case "em", "i":
 					if(element.innerText.length == 0)
 						break;
-					sink('*', false);
-					sinkChildren();
-					sink('*', false);
+					if(enableVtOutput) {
+						s ~= "\033[1m";
+						sinkChildren();
+						s ~= "\033[0m";
+					} else {
+						sink('*', false);
+						sinkChildren();
+						sink('*', false);
+					}
 				break;
 				case "u":
 					if(element.innerText.length == 0)
@@ -139,20 +202,28 @@ class HtmlConverter {
 				break;
 				case "ul":
 					ulDepth++;
+					startBlock(2);
 					sinkChildren();
+					endBlock();
 					ulDepth--;
 				break;
 				case "ol":
 					olDepth++;
+					startBlock(2);
 					sinkChildren();
+					endBlock();
 					olDepth--;
 				break;
 				case "li":
 					startBlock();
 
 					//sink('\t', true);
-					sink(' ', true);
-					sink(' ', true);
+					/*
+					foreach(cnt; 0 .. olDepth + ulDepth) {
+						sink(' ', true);
+						sink(' ', true);
+					}
+					*/
 					if(olDepth)
 						sink('*', false);
 					if(ulDepth)
@@ -164,15 +235,33 @@ class HtmlConverter {
 					endBlock();
 				break;
 
-				case "h1", "h2":
+				case "dl":
+				case "dt":
+				case "dd":
+					startBlock(element.tagName == "dd" ? 2 : 0);
+					sinkChildren();
+					endBlock();
+				break;
+
+				case "h1":
+					startBlock();
+					sink('#', true);
+					sink('#', true);
+					sink(' ', true);
+					sinkChildren();
+					sink(' ', true);
+					sink('#', true);
+					sink('#', true);
+					endBlock();
+				break;
+				case "h2", "h3":
 					startBlock();
 					sinkChildren();
 					sink('\n', true);
 					foreach(dchar ch; element.innerText)
-						sink(element.tagName == "h1" ? '=' : '-', false);
+						sink(element.tagName == "h2" ? '=' : '-', false);
 					endBlock();
 				break;
-
 				case "hr":
 					startBlock();
 					foreach(i; 0 .. width / 4)
@@ -185,7 +274,6 @@ class HtmlConverter {
 				case "br":
 					sink('\n', true);
 				break;
-				case "tr":
 				case "div":
 					startBlock();
 
@@ -207,7 +295,7 @@ class HtmlConverter {
 					endBlock();
 				break;
 				case "pre":
-					startBlock();
+					startBlock(4);
 					foreach(child; element.childNodes)
 						htmlToText(child, true, width);
 					endBlock();
@@ -221,6 +309,7 @@ class HtmlConverter {
 	int olDepth;
 	int ulDepth;
 
+	///
 	string convert(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 		Document document = new Document;
 
@@ -237,10 +326,16 @@ class HtmlConverter {
 		//auto stylesheet = new StyleSheet(readText("/var/www/dpldocs.info/experimental-docs/style.css"));
 		//stylesheet.apply(document);
 
+		return convert(start, wantWordWrap, wrapAmount);
+	}
+
+	///
+	string convert(Element start, bool wantWordWrap = true, int wrapAmount = 74) {
 		htmlToText(start, false, wrapAmount);
 		return s;
 	}
 
+	///
 	void reset() {
 		s = null;
 		justOutputWhitespace = true;
@@ -248,6 +343,7 @@ class HtmlConverter {
 		justOutputMargin = true;
 	}
 
+	///
 	string s;
 	bool justOutputWhitespace = true;
 	bool justOutputBlock = true;
@@ -255,6 +351,12 @@ class HtmlConverter {
 	int lineLength;
 
 	void sink(dchar item, bool preformatted, int lineWidthOverride = int.min) {
+
+		if(needsIndent && item != '\n') {
+			lineLength += doIndent();
+			needsIndent = false;
+		}
+
 		int width = lineWidthOverride == int.min ? this.width : lineWidthOverride;
 		if(!preformatted && isWhite(item)) {
 			if(!justOutputWhitespace) {
@@ -282,8 +384,9 @@ class HtmlConverter {
 					auto os = s;
 					s = os[0 .. idx];
 					s ~= '\n';
-					s ~= os[idx + 1 .. $];
 					lineLength = cast(int)(os[idx+1..$].length);
+					lineLength += doIndent();
+					s ~= os[idx + 1 .. $];
 					broken = true;
 					break;
 				}
@@ -295,15 +398,17 @@ class HtmlConverter {
 			if(!broken) {
 				s ~= '\n';
 				lineLength = 0;
+				needsIndent = true;
 				justOutputWhitespace = true;
 			}
 
 		}
 
 
-		if(item == '\n')
+		if(item == '\n') {
 			lineLength = 0;
-		else
+			needsIndent = true;
+		} else
 			lineLength ++;
 
 
@@ -312,163 +417,53 @@ class HtmlConverter {
 			justOutputMargin = false;
 		}
 	}
-	void startBlock() {
+
+	int doIndent() {
+		int cnt = 0;
+		foreach(i; indentStack)
+			foreach(lol; 0 .. i) {
+				s ~= ' ';
+				cnt++;
+			}
+		return cnt;
+	}
+
+	int[] indentStack;
+	bool needsIndent = false;
+
+	void startBlock(int indent = 0) {
+
+		indentStack ~= indent;
+
 		if(!justOutputBlock) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputBlock = true;
 		}
 		if(!justOutputMargin) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputMargin = true;
 		}
 	}
 	void endBlock() {
+		if(indentStack.length)
+			indentStack = indentStack[0 .. $ - 1];
+
 		if(!justOutputMargin) {
 			s ~= "\n";
 			lineLength = 0;
+			needsIndent = true;
 			justOutputMargin = true;
 		}
 	}
 }
 
+///
 string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	auto converter = new HtmlConverter();
 	return converter.convert(html, true, wrapAmount);
 }
 
-string repeat(string s, ulong num) {
-	string ret;
-	foreach(i; 0 .. num)
-		ret ~= s;
-	return ret;
-}
-
-import std.stdio;
-version(none)
-void penis() {
-
-    again:
-    	string result = "";
-	foreach(ele; start.tree) {
-		if(ele is start) continue;
-		if(ele.nodeType != 1) continue;
-
-		switch(ele.tagName) {
-				goto again;
-			case "h1":
-				ele.innerText = "\r" ~ ele.innerText ~ "\n" ~ repeat("=", ele.innerText.length) ~ "\r";
-				ele.stripOut();
-				goto again;
-			case "h2":
-				ele.innerText = "\r" ~ ele.innerText ~ "\n" ~ repeat("-", ele.innerText.length) ~ "\r";
-				ele.stripOut();
-				goto again;
-			case "h3":
-				ele.innerText = "\r" ~ ele.innerText.toUpper ~ "\r";
-				ele.stripOut();
-				goto again;
-			case "td":
-			case "p":
-			/*
-				if(ele.innerHTML.length > 1)
-					ele.innerHTML = "\r" ~ wrap(ele.innerHTML) ~ "\r";
-				ele.stripOut();
-				goto again;
-			*/
-			break;
-			case "a":
-				string href = ele.getAttribute("href");
-				if(href && !ele.hasClass("no-brackets")) {
-					if(ele.hasClass("href-text"))
-						ele.innerText = href;
-					else {
-						if(ele.innerText != href)
-							ele.innerText = ele.innerText ~ " <" ~ href ~ "> ";
-					}
-				}
-				ele.stripOut();
-				goto again;
-			case "ol":
-			case "ul":
-				ele.innerHTML = "\r" ~ ele.innerHTML ~ "\r";
-			break;
-			case "li":
-				if(!ele.innerHTML.startsWith("* "))
-					ele.innerHTML = "* " ~ ele.innerHTML ~ "\r";
-				// ele.stripOut();
-			break;
-			case "sup":
-				ele.innerText = "^" ~ ele.innerText;
-				ele.stripOut();
-			break;
-			/*
-			case "img":
-				string alt = ele.getAttribute("alt");
-				if(alt)
-					result ~= ele.alt;
-			break;
-			*/
-			default:
-				ele.stripOut();
-				goto again;
-		}
-	}
-
-    again2:
-	//start.innerHTML = start.innerHTML().replace("\u0001", "\n");
-
-	foreach(ele; start.tree) {
-		if(ele.tagName == "td") {
-			if(ele.directText().strip().length) {
-				ele.prependText("\r");
-				ele.appendText("\r");
-			}
-			ele.stripOut();
-			goto again2;
-		} else if(ele.tagName == "p") {
-			if(strip(ele.innerText()).length > 1) {
-				string res = "";
-				string all = ele.innerText().replace("\n \n", "\n\n");
-				foreach(part; all.split("\n\n"))
-					res ~= "\r" ~ strip( wantWordWrap ? wrap(part, /*74*/ wrapAmount) : part ) ~ "\r";
-				ele.innerText = res;
-			} else
-				ele.innerText = strip(ele.innerText);
-			ele.stripOut();
-			goto again2;
-		} else if(ele.tagName == "li") {
-			auto part = ele.innerText;
-			part = strip( wantWordWrap ? wrap(part, wrapAmount - 2) : part );
-			part = "  " ~ part.replace("\n", "\n\v") ~ "\r";
-			ele.innerText = part;
-			ele.stripOut();
-			goto again2;
-		}
-	}
-
-	result = start.innerText();
-	result = squeeze(result, " ");
-
-	result = result.replace("\r ", "\r");
-	result = result.replace(" \r", "\r");
-
-	//result = result.replace("\u00a0", " ");
-
-
-	result = squeeze(result, "\r");
-	result = result.replace("\r", "\n\n");
-
-	result = result.replace("\v", "  ");
-
-	result = result.replace("&#33303;", "'"); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere
-	result = result.replace("&quot;", "\""); // HACK: this shouldn't be needed, but apparently is in practice surely due to a bug elsewhere
-	//result = htmlEntitiesDecode(result);  // for special chars mainly
-
-	result = result.replace("\u0001 ", "\n");
-	result = result.replace("\u0001", "\n");
-
-	//a = std.regex.replace(a, std.regex.regex("(\n\t)+", "g"), "\n"); //\t");
-	return result.strip;
-}

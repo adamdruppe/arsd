@@ -1,4 +1,3 @@
-// FIXME: have a simple function that integrates with sdpy event loop. it can be a template
 // for optional dependency
 /++
 	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
@@ -68,7 +67,7 @@ module arsd.terminal;
 
 	This example will demonstrate the high-level getline interface.
 
-	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter. Then, the final line will be returned to your program, which the example will simply print back to the user.
+	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter.  Then, the final line will be returned to your program, which the example will simply print back to the user.
 +/
 unittest {
 	import arsd.terminal;
@@ -78,6 +77,8 @@ unittest {
 		string line = terminal.getline();
 		terminal.writeln("You wrote: ", line);
 	}
+
+	main; // exclude from docs
 }
 
 /++
@@ -88,6 +89,7 @@ unittest {
 +/
 unittest {
 	import arsd.terminal;
+
 	void main() {
 		auto terminal = Terminal(ConsoleOutputType.linear);
 		terminal.color(Color.green, Color.black);
@@ -95,6 +97,8 @@ unittest {
 		terminal.color(Color.DEFAULT, Color.DEFAULT);
 		terminal.writeln("And back to normal.");
 	}
+
+	main; // exclude from docs
 }
 
 /++
@@ -105,6 +109,7 @@ unittest {
 +/
 unittest {
 	import arsd.terminal;
+
 	void main() {
 		auto terminal = Terminal(ConsoleOutputType.linear);
 		auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw);
@@ -113,6 +118,8 @@ unittest {
 		auto ch = input.getch();
 		terminal.writeln("You pressed ", ch);
 	}
+
+	main; // exclude from docs
 }
 
 /*
@@ -426,6 +433,25 @@ struct Terminal {
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
+
+	/++
+		Terminal is only valid to use on an actual console device or terminal
+		handle. You should not attempt to construct a Terminal instance if this
+		returns false;
+	+/
+	static bool stdoutIsTerminal() {
+		version(Posix) {
+			import core.sys.posix.unistd;
+			return cast(bool) isatty(1);
+		} else version(Windows) {
+			auto hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			CONSOLE_SCREEN_BUFFER_INFO originalSbi;
+			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
+				return false;
+			else
+				return true;
+		} else static assert(0);
+	}
 
 	version(Posix) {
 		private int fdOut;
@@ -797,11 +823,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
 		defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
+
+		oldCp = GetConsoleOutputCP();
+		SetConsoleOutputCP(65001); // UTF-8
+
+		oldCpIn = GetConsoleCP();
+		SetConsoleCP(65001); // UTF-8
 	}
 
 	version(Windows) {
 		private Color defaultBackgroundColor = Color.black;
 		private Color defaultForegroundColor = Color.white;
+		UINT oldCp;
+		UINT oldCpIn;
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
@@ -835,6 +869,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		if(lineGetter !is null)
 			lineGetter.dispose();
+
+
+		SetConsoleOutputCP(oldCp);
+		SetConsoleCP(oldCpIn);
 
 		auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
 		SetConsoleActiveScreenBuffer(stdo);
@@ -1587,6 +1625,16 @@ struct RealTimeConsoleInput {
 
 	void delegate(InputEvent) userEventHandler;
 
+	/++
+		If you are using [arsd.simpledisplay] and want terminal interop too, you can call
+		this function to add it to the sdpy event loop and get the callback called on new
+		input.
+
+		Note that you will probably need to call `terminal.flush()` when you are doing doing
+		output, as the sdpy event loop doesn't know to do that (yet). I will probably change
+		that in a future version, but it doesn't hurt to call it twice anyway, so I recommend
+		calling flush yourself in any code you write using this.
+	+/
 	void integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
 		this.userEventHandler = userEventHandler;
 		import arsd.simpledisplay;
@@ -3577,7 +3625,7 @@ struct ScrollbackBuffer {
 	}
 
 	void clear() {
-		lines = null;
+		lines.clear();
 		clickRegions = null;
 		scrollbackPosition = 0;
 	}
@@ -3679,9 +3727,87 @@ struct ScrollbackBuffer {
 		}
 	}
 
-	// FIXME: limit scrollback lines.length
+	static struct CircularBuffer(T) {
+		T[] backing;
 
-	Line[] lines;
+		enum maxScrollback = 8192; // as a power of 2, i hope the compiler optimizes the % below to a simple bit mask...
+
+		int start;
+		int length_;
+
+		void clear() {
+			backing = null;
+			start = 0;
+			length_ = 0;
+		}
+
+		size_t length() {
+			return length_;
+		}
+
+		void opOpAssign(string op : "~")(T line) {
+			if(length_ < maxScrollback) {
+				backing.assumeSafeAppend();
+				backing ~= line;
+				length_++;
+			} else {
+				backing[start] = line;
+				start++;
+				if(start == maxScrollback)
+					start = 0;
+			}
+		}
+
+		T opIndex(int idx) {
+			return backing[(start + idx) % maxScrollback];
+		}
+		T opIndex(Dollar idx) {
+			return backing[(start + (length + idx.offsetFromEnd)) % maxScrollback];
+		}
+
+		CircularBufferRange opSlice(int startOfIteration, Dollar end) {
+			return CircularBufferRange(&this, startOfIteration, cast(int) length - startOfIteration + end.offsetFromEnd);
+		}
+		CircularBufferRange opSlice(int startOfIteration, int end) {
+			return CircularBufferRange(&this, startOfIteration, end - startOfIteration);
+		}
+		CircularBufferRange opSlice() {
+			return CircularBufferRange(&this, 0, cast(int) length);
+		}
+
+		static struct CircularBufferRange {
+			CircularBuffer* item;
+			int position;
+			int remaining;
+			this(CircularBuffer* item, int startOfIteration, int count) {
+				this.item = item;
+				position = startOfIteration;
+				remaining = count;
+			}
+
+			T front() { return (*item)[position]; }
+			bool empty() { return remaining <= 0; }
+			void popFront() {
+				position++;
+				remaining--;
+			}
+
+			T back() { return (*item)[remaining - 1 - position]; }
+			void popBack() {
+				remaining--;
+			}
+		}
+
+		static struct Dollar {
+			int offsetFromEnd;
+			Dollar opBinary(string op : "-")(int rhs) {
+				return Dollar(offsetFromEnd - rhs);
+			}
+		}
+		Dollar opDollar() { return Dollar(0); }
+	}
+
+	CircularBuffer!Line lines;
 	string name;
 
 	int x, y, width, height;
@@ -3811,7 +3937,7 @@ struct ScrollbackBuffer {
 		// second pass: actually draw it
 		int linePos = remaining;
 
-		foreach(idx, line; lines[start .. start + howMany]) {
+		foreach(line; lines[start .. start + howMany]) {
 			int written = 0;
 
 			if(linePos < 0) {

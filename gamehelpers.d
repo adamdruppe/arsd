@@ -31,9 +31,10 @@
 		}
 
 		int x, y;
-		override void update(Duration deltaTime) {
+		override bool update(Duration deltaTime) {
 			x += 1;
 			y += 1;
+			return true;
 		}
 
 		override SimpleWindow getWindow() {
@@ -100,7 +101,8 @@ class GameHelperBase {
 	abstract void drawFrame();
 
 	/// Implement this to update. The deltaTime tells how much real time has passed since the last update.
-	abstract void update(Duration deltaTime);
+	/// Returns true if anything changed, which will queue up a redraw
+	abstract bool update(Duration deltaTime);
 	//abstract void fillAudioBuffer(short[] buffer);
 
 	/// Returns the main game window. This function will only be
@@ -155,6 +157,14 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 
 		delegate (KeyEvent ke) {
 			game.keyboardState[ke.hardwareCode] = ke.pressed;
+			/*
+			switch(ke.key) {
+				case Key.UpArrow:
+					game.joysticks[0]
+				break;
+				default:
+			}
+			*/
 			// FIXME
 		}
 	);

@@ -6,9 +6,10 @@ import std.array;
 
 ///
 string[][] readCsv(string data) {
+	data = data.replace("\r\n", "\n");
 	data = data.replace("\r", "");
 
-	auto idx = data.indexOf("\n");
+	//auto idx = data.indexOf("\n");
 	//data = data[idx + 1 .. $]; // skip headers
 
 	string[] fields;
@@ -39,9 +40,9 @@ string[][] readCsv(string data) {
 					field ~= c;
 			break;
 			case 1: // in quote
-				if(c == '"')
+				if(c == '"') {
 					state = 2;
-				else
+				} else
 					field ~= c;
 			break;
 			case 2: // is it a closing quote or an escaped one?
@@ -54,6 +55,11 @@ string[][] readCsv(string data) {
 				}
 		}
 	}
+
+	if(field !is null)
+		current ~= field;
+	if(current !is null)
+		records ~= current;
 
 
 	return records;

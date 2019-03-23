@@ -1158,12 +1158,72 @@ string sdpyWindowClass () {
 	return null;
 }
 
+/++
+	Returns the DPI of the default monitor. [0] is width, [1] is height (they are usually the same though). You may wish to round the numbers off.
++/
+float[2] getDpi() {
+	float[2] dpi;
+	version(Windows) {
+		HDC screen = GetDC(null);
+		dpi[0] = GetDeviceCaps(screen, LOGPIXELSX);
+		dpi[1] = GetDeviceCaps(screen, LOGPIXELSY);
+	} else version(X11) {
+		auto display = XDisplayConnection.get;
+		auto screen = DefaultScreen(display);
+
+		void fallback() {
+			// 25.4 millimeters in an inch...
+			dpi[0] = cast(float) DisplayWidth(display, screen) / DisplayWidthMM(display, screen) * 25.4;
+			dpi[1] = cast(float) DisplayHeight(display, screen) / DisplayHeightMM(display, screen) * 25.4;
+		}
+
+		char* resourceString = XResourceManagerString(display);
+		XrmInitialize();
+
+		auto db = XrmGetStringDatabase(resourceString);
+
+		if (resourceString) {
+			XrmValue value;
+			char* type;
+			if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
+				if (value.addr) {
+					import core.stdc.stdlib;
+					dpi[0] = atof(cast(char*) value.addr);
+					dpi[1] = dpi[0];
+				} else {
+					fallback();
+				}
+			} else {
+				fallback();
+			}
+		} else {
+			fallback();
+		}
+	}
+
+	return dpi;
+}
+
+version(X11) {
+	extern(C) char* XResourceManagerString(Display*);
+	extern(C) void XrmInitialize();
+	extern(C) XrmDatabase XrmGetStringDatabase(char* data);
+	extern(C) bool XrmGetResource(XrmDatabase, const char*, const char*, char**, XrmValue*);
+	alias XrmDatabase = void*;
+	struct XrmValue {
+		uint size;
+		void* addr;
+	}
+}
+
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
 	throw new Exception("not implemented");
 	version(none) {
 	version(X11) {
 		auto display = XDisplayConnection.get;
 		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
+
+		// https://github.com/adamdruppe/arsd/issues/98
 
 		// FIXME: copy that shit
 
@@ -1990,11 +2050,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	+/
 	@property void cursor(MouseCursor cursor) {
-		auto ch = cursor.cursorHandle;
+		version(OSXCocoa)
+			featureNotImplemented();
+		else
 		if(this.impl.curHidden <= 0) {
 			static if(UsingSimpledisplayX11) {
+				auto ch = cursor.cursorHandle;
 				XDefineCursor(XDisplayConnection.get(), this.impl.window, ch);
 			} else version(Windows) {
+				auto ch = cursor.cursorHandle;
 				impl.currentCursor = ch;
 				SetCursor(ch); // redraw without waiting for mouse movement to update
 			} else featureNotImplemented();
@@ -2602,10 +2666,13 @@ static struct GenericCursor {
 struct EventLoop {
 	@disable this();
 
+	/// Gets a reference to an existing event loop
 	static EventLoop get() {
 		return EventLoop(0, null);
 	}
 
+	/// Construct an application-global event loop for yourself
+	/// See_Also: [SimpleWindow.setEventHandlers]
 	this(long pulseTimeout, void delegate() handlePulse) {
 		if(impl is null)
 			impl = new EventLoopImpl(pulseTimeout, handlePulse);
@@ -2633,12 +2700,14 @@ struct EventLoop {
 		impl.refcount++;
 	}
 
+	/// Runs the event loop until the whileCondition, if present, returns false
 	int run(bool delegate() whileCondition = null) {
 		assert(impl !is null);
 		impl.notExited = true;
 		return impl.run(whileCondition);
 	}
 
+	/// Exits the event loop
 	void exit() {
 		assert(impl !is null);
 		impl.notExited = false;
@@ -11895,6 +11964,8 @@ struct Visual
 	int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
 	int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
 	int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
+	int DisplayWidthMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mwidth; }
+	int DisplayHeightMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mheight; }
 	auto DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
 
 	int ConnectionNumber(Display* dpy) { return dpy.fd; }
@@ -12189,7 +12260,7 @@ private:
 	alias const(void)* CGContextRef;
 	alias const(void)* CGColorSpaceRef;
 	alias const(void)* CGImageRef;
-	alias uint CGBitmapInfo;
+	alias ulong CGBitmapInfo;
 
 	struct objc_super {
 		id self;
@@ -12197,18 +12268,18 @@ private:
 	}
 
 	struct CFRange {
-		int location, length;
+		long location, length;
 	}
 
 	struct NSPoint {
-		float x, y;
+		double x, y;
 
 		static fromTuple(T)(T tupl) {
 			return NSPoint(tupl.tupleof);
 		}
 	}
 	struct NSSize {
-		float width, height;
+		double width, height;
 	}
 	struct NSRect {
 		NSPoint origin;
@@ -12219,7 +12290,7 @@ private:
 	alias NSRect CGRect;
 
 	struct CGAffineTransform {
-		float a, b, c, d, tx, ty;
+		double a, b, c, d, tx, ty;
 	}
 
 	enum NSApplicationActivationPolicyRegular = 0;
@@ -12235,7 +12306,7 @@ private:
 		NSTexturedBackgroundWindowMask = 1 << 8
 	}
 
-	enum : uint {
+	enum : ulong {
 		kCGImageAlphaNone,
 		kCGImageAlphaPremultipliedLast,
 		kCGImageAlphaPremultipliedFirst,
@@ -12244,7 +12315,7 @@ private:
 		kCGImageAlphaNoneSkipLast,
 		kCGImageAlphaNoneSkipFirst
 	}
-	enum : uint {
+	enum : ulong {
 		kCGBitmapAlphaInfoMask = 0x1F,
 		kCGBitmapFloatComponents = (1 << 8),
 		kCGBitmapByteOrderMask = 0x7000,
@@ -12293,12 +12364,12 @@ private:
 
 		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
 											const(char)* bytes, long numBytes,
-											int encoding,
+											long encoding,
 											BOOL isExternalRepresentation);
-		int CFStringGetBytes(CFStringRef theString, CFRange range, int encoding,
+		long CFStringGetBytes(CFStringRef theString, CFRange range, long encoding,
 							 char lossByte, bool isExternalRepresentation,
 							 char* buffer, long maxBufLen, long* usedBufLen);
-		int CFStringGetLength(CFStringRef theString);
+		long CFStringGetLength(CFStringRef theString);
 
 		CGContextRef CGBitmapContextCreate(void* data,
 										   size_t width, size_t height,
@@ -12316,13 +12387,13 @@ private:
 		void CGColorSpaceRelease(CGColorSpaceRef cs);
 
 		void CGContextSetRGBStrokeColor(CGContextRef c,
-										float red, float green, float blue,
-										float alpha);
+										double red, double green, double blue,
+										double alpha);
 		void CGContextSetRGBFillColor(CGContextRef c,
-									  float red, float green, float blue,
-									  float alpha);
+									  double red, double green, double blue,
+									  double alpha);
 		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
-		void CGContextShowTextAtPoint(CGContextRef c, float x, float y,
+		void CGContextShowTextAtPoint(CGContextRef c, double x, double y,
 									  const(char)* str, size_t length);
 		void CGContextStrokeLineSegments(CGContextRef c,
 										 const(CGPoint)* points, size_t count);
@@ -12330,15 +12401,15 @@ private:
 		void CGContextBeginPath(CGContextRef c);
 		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
 		void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
-		void CGContextAddArc(CGContextRef c, float x, float y, float radius,
-							 float startAngle, float endAngle, int clockwise);
+		void CGContextAddArc(CGContextRef c, double x, double y, double radius,
+							 double startAngle, double endAngle, long clockwise);
 		void CGContextAddRect(CGContextRef c, CGRect rect);
 		void CGContextAddLines(CGContextRef c,
 							   const(CGPoint)* points, size_t count);
 		void CGContextSaveGState(CGContextRef c);
 		void CGContextRestoreGState(CGContextRef c);
-		void CGContextSelectFont(CGContextRef c, const(char)* name, float size,
-								 uint textEncoding);
+		void CGContextSelectFont(CGContextRef c, const(char)* name, double size,
+								 ulong textEncoding);
 		CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
 		void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
 
@@ -12348,7 +12419,7 @@ private:
 private:
     // A convenient method to create a CFString (=NSString) from a D string.
     CFStringRef createCFString(string str) {
-        return CFStringCreateWithBytes(null, str.ptr, cast(int) str.length,
+        return CFStringCreateWithBytes(null, str.ptr, cast(long) str.length,
                                              kCFStringEncodingUTF8, false);
     }
 
@@ -12435,7 +12506,7 @@ version(OSXCocoa) {
 
 		// if rawData had a length....
 		//assert(rawData.length == where.length);
-		for(int idx = 0; idx < where.length; idx += 4) {
+		for(long idx = 0; idx < where.length; idx += 4) {
 			auto alpha = rawData[idx + 3];
 			if(alpha == 255) {
 				where[idx + 0] = rawData[idx + 0]; // r
@@ -12458,7 +12529,7 @@ version(OSXCocoa) {
 
 		// if rawData had a length....
 		//assert(rawData.length == where.length);
-		for(int idx = 0; idx < where.length; idx += 4) {
+		for(long idx = 0; idx < where.length; idx += 4) {
 			auto alpha = rawData[idx + 3];
 			if(alpha == 255) {
 				rawData[idx + 0] = where[idx + 0]; // r
@@ -12508,17 +12579,19 @@ version(OSXCocoa) {
     mixin template NativeScreenPainterImplementation() {
         CGContextRef context;
         ubyte[4] _outlineComponents;
+	id view;
 
         void create(NativeWindowHandle window) {
             context = window.drawingContext;
+	    view = window.view;
         }
 
         void dispose() {
+            	setNeedsDisplay(view, true);
         }
 
 	// NotYetImplementedException
 	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
-	void pen(Pen p) {}
 	void rasterOp(RasterOp op) {}
 	Pen _activePen;
 	Color _fillColor;
@@ -12529,8 +12602,10 @@ version(OSXCocoa) {
 
 	// end
 
-        @property void outlineColor(Color color) {
-            float alphaComponent = color.a/255.0f;
+        void pen(Pen pen) {
+	    _activePen = pen;
+	    auto color = pen.color; // FIXME
+            double alphaComponent = color.a/255.0f;
             CGContextSetRGBStrokeColor(context,
                                        color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
 
@@ -12581,7 +12656,7 @@ version(OSXCocoa) {
                                                   _outlineComponents[1]*invAlpha,
                                                   _outlineComponents[2]*invAlpha,
                                                   _outlineComponents[3]/255.0f);
-                CGContextShowTextAtPoint(context, x, y, text.ptr, text.length);
+                CGContextShowTextAtPoint(context, x, y + 12 /* this is cuz this picks baseline but i want bounding box */, text.ptr, text.length);
 // auto cfstr = cast(id)createCFString(text);
 // objc_msgSend(cfstr, sel_registerName("drawAtPoint:withAttributes:"),
 // NSPoint(x, y), null);
@@ -12748,9 +12823,13 @@ version(OSXCocoa) {
             // will like it. Let's leave it to the native handler.
 
             // perform the default action.
-            auto superData = objc_super(self, superclass(self));
-            alias extern(C) void function(objc_super*, SEL, id) T;
-            (cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
+
+	    // so the default action is to make a bomp sound and i dont want that
+	    // sooooooooo yeah not gonna do that.
+
+            //auto superData = objc_super(self, superclass(self));
+            //alias extern(C) void function(objc_super*, SEL, id) T;
+            //(cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
         }
     }
 
