@@ -1,5 +1,7 @@
 // WORK IN PROGRESS
 
+// register cheat code? or even a fighting game combo..
+
 /++
 	An add-on for simpledisplay.d, joystick.d, and simpleaudio.d
 	that includes helper functions for writing games (and perhaps
@@ -67,6 +69,7 @@ module arsd.gamehelpers;
 
 public import arsd.color;
 public import arsd.simpledisplay;
+public import arsd.simpleaudio;
 
 import std.math;
 public import core.time;
@@ -110,6 +113,19 @@ class GameHelperBase {
 	/// here like one created with `create2dWindow`.
 	abstract SimpleWindow getWindow();
 
+	/// Override this and return true to initialize the audio system.
+	/// Note that trying to use the [audio] member without this will segfault!
+	bool wantAudio() { return false; }
+
+	/// You must override [wantAudio] and return true for this to be valid;
+	AudioPcmOutThread audio;
+
+	this() {
+		if(wantAudio) {
+			audio = new AudioPcmOutThread();
+			audio.start();
+		}
+	}
 
 	/// These functions help you handle user input. It offers polling functions for
 	/// keyboard, mouse, joystick, and virtual controller input.
@@ -121,6 +137,53 @@ class GameHelperBase {
 	ref JoystickUpdate joystick1() { return joysticks[0]; }
 
 	bool[256] keyboardState;
+
+	VirtualController snes;
+}
+
+/++
+	The virtual controller is based on the SNES. If you need more detail, try using
+	the joystick or keyboard and mouse members directly.
+
+	 l          r
+
+	 U          X
+	L R  s  S  Y A
+	 D          B
+
+	For Playstation and XBox controllers plugged into the computer,
+	it picks those buttons based on similar layout on the physical device.
+
+	For keyboard control, arrows and WASD are mapped to the d-pad (ULRD in the diagram),
+	Q and E are mapped to the shoulder buttons (l and r in the diagram).So are U and P.
+
+	Z, X, C, V (for when right hand is on arrows) and K,L,I,O (for left hand on WASD) are mapped to B,A,Y,X buttons.
+
+	G is mapped to select, and H is mapped to start.
+
+	The space bar and enter keys are also set to button A.
+
+
+	Only player 1 is mapped to the keyboard.
++/
+struct VirtualController {
+	ushort state;
+
+	enum Button {
+		Up, Left, Right, Down,
+		X, A, B, Y,
+		Select, Start, L, R
+	}
+
+	bool opIndex(Button idx) {
+		return (state & (1 << (cast(int) idx))) ? true : false;
+	}
+	private void opIndexAssign(bool value, Button idx) {
+		if(value)
+			state |= (1 << (cast(int) idx));
+		else
+			state &= ~(1 << (cast(int) idx));
+	}
 }
 
 /// The max rates are given in executions per second
@@ -147,27 +210,44 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 				game.joysticks[p] = update;
 			}// else assert(0);
 
+			// FIXME: fill in snes too
+
 			auto now = MonoTime.currTime;
-			game.update(now - lastUpdate);
+			bool changed = game.update(now - lastUpdate);
 			lastUpdate = now;
 
 			// FIXME: rate limiting
-			window.redrawOpenGlSceneNow();
+			if(changed)
+				window.redrawOpenGlSceneNow();
 		},
 
 		delegate (KeyEvent ke) {
 			game.keyboardState[ke.hardwareCode] = ke.pressed;
-			/*
+
+			with(VirtualController.Button)
 			switch(ke.key) {
-				case Key.UpArrow:
-					game.joysticks[0]
-				break;
+				case Key.Up, Key.W: game.snes[Up] = ke.pressed; break;
+				case Key.Down, Key.S: game.snes[Down] = ke.pressed; break;
+				case Key.Left, Key.A: game.snes[Left] = ke.pressed; break;
+				case Key.Right, Key.D: game.snes[Right] = ke.pressed; break;
+				case Key.Q, Key.U: game.snes[L] = ke.pressed; break;
+				case Key.E, Key.P: game.snes[R] = ke.pressed; break;
+				case Key.Z, Key.K: game.snes[B] = ke.pressed; break;
+				case Key.Space, Key.Enter, Key.X, Key.L: game.snes[A] = ke.pressed; break;
+				case Key.C, Key.I: game.snes[Y] = ke.pressed; break;
+				case Key.V, Key.O: game.snes[X] = ke.pressed; break;
+				case Key.G: game.snes[Select] = ke.pressed; break;
+				case Key.H: game.snes[Start] = ke.pressed; break;
 				default:
 			}
-			*/
-			// FIXME
 		}
 	);
+
+	// FIXME: what if an exception is thrown above?
+	if(game.audio !is null) {
+		game.audio.stop();
+		game.audio.join();
+	}
 }
 
 /++
@@ -320,6 +400,7 @@ final class OpenGlTexture {
 
 		if(freeRequired)
 			free(cast(void*) data);
+		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
 	/// ditto

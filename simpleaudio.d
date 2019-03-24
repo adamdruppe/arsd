@@ -270,9 +270,9 @@ final class AudioPcmOutThread : Thread {
 		addSample(s);
 	}
 
-	/// Requires vorbis.d to be compiled in (module iv.stb.vorbis)
+	/// Requires vorbis.d to be compiled in (module arsd.vorbis)
 	void playOgg()(string filename, bool loop = false) {
-		import iv.stb.vorbis;
+		import arsd.vorbis;
 
 		auto v = new VorbisDecoder(filename);
 
