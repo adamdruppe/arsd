@@ -45,6 +45,9 @@ module arsd.simpleaudio;
 enum BUFFER_SIZE_FRAMES = 1024;//512;//2048;
 enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 
+///
+enum DEFAULT_VOLUME = 20;
+
 version(Demo)
 void main() {
 
@@ -206,7 +209,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	/// Args in hertz and milliseconds
-	void beep(int freq = 900, int dur = 150, int volume = 50) {
+	void beep(int freq = 900, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 0; // square wave
 		s.frequency = SampleRate / freq;
@@ -216,7 +219,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	///
-	void noise(int dur = 150, int volume = 50) {
+	void noise(int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 1; // noise
 		s.frequency = 0;
@@ -226,7 +229,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	///
-	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = 50) {
+	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 5; // custom
 		s.volume = volume;
@@ -235,13 +238,13 @@ final class AudioPcmOutThread : Thread {
 			auto currentFrequency = cast(float) freqBase / (1 + cast(float) x / (cast(float) SampleRate / attack));
 			import std.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
-			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
 		addSample(s);
 	}
 
 	///
-	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = 50) {
+	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 5; // custom
 		s.volume = volume;
@@ -250,13 +253,13 @@ final class AudioPcmOutThread : Thread {
 			auto currentFrequency = cast(float) freqBase * (1 + cast(float) x / (cast(float) SampleRate / attack));
 			import std.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
-			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
 		addSample(s);
 	}
 
 	version(none)
-	void custom(int dur = 150, int volume = 50) {
+	void custom(int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 5; // custom
 		s.volume = volume;
@@ -265,7 +268,7 @@ final class AudioPcmOutThread : Thread {
 			auto currentFrequency = 500.0 / (1 + cast(float) x / (cast(float) SampleRate / 8));
 			import std.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
-			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * 100 / volume);
+			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
 		addSample(s);
 	}
@@ -297,7 +300,7 @@ final class AudioPcmOutThread : Thread {
 		int operation;
 		int frequency; /* in samples */
 		int duration; /* in samples */
-		int volume; /* between 1 and 100 */
+		int volume; /* between 1 and 100. You should generally shoot for something lowish, like 20. */
 		int delay; /* in samples */
 
 		int x;
@@ -354,7 +357,7 @@ final class AudioPcmOutThread : Thread {
 						case 1: // noise
 							for(; i < sampleFinish; i++) {
 								import std.random;
-								buffer[i] = uniform(short.min, short.max);
+								buffer[i] = uniform(cast(short) -cast(int)val, val);
 							}
 						break;
 						/+
@@ -440,10 +443,12 @@ final class AudioPcmOutThread : Thread {
 						else
 							val = buffer[i];
 
-						int a = val + short.max;
-						int b = v + short.max;
-						val = a + b - (a * b)/(short.max*2);
-						val -= short.max;
+						int a = val;
+						int b = v;
+						int cap = a + b;
+						if(cap > short.max) cap = short.max;
+						else if(cap < short.min) cap = short.min;
+						val = cast(short) cap;
 						buffer[i] = cast(short) val;
 					}
 					if(!ret) {
