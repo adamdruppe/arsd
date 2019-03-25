@@ -145,11 +145,13 @@ class GameHelperBase {
 	The virtual controller is based on the SNES. If you need more detail, try using
 	the joystick or keyboard and mouse members directly.
 
+	```
 	 l          r
 
 	 U          X
 	L R  s  S  Y A
 	 D          B
+	```
 
 	For Playstation and XBox controllers plugged into the computer,
 	it picks those buttons based on similar layout on the physical device.
@@ -159,9 +161,9 @@ class GameHelperBase {
 
 	Z, X, C, V (for when right hand is on arrows) and K,L,I,O (for left hand on WASD) are mapped to B,A,Y,X buttons.
 
-	G is mapped to select, and H is mapped to start.
+	G is mapped to select (s), and H is mapped to start (S).
 
-	The space bar and enter keys are also set to button A.
+	The space bar and enter keys are also set to button A, with shift mapped to button B.
 
 
 	Only player 1 is mapped to the keyboard.
@@ -207,10 +209,62 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 				version(linux)
 					readJoystickEvents(joystickFds[p]);
 				auto update = getJoystickUpdate(p);
-				game.joysticks[p] = update;
-			}// else assert(0);
 
-			// FIXME: fill in snes too
+				if(p == 0) {
+					static if(__traits(isSame, Button, PS1Buttons)) {
+						// PS1 style joystick mapping compiled in
+						with(Button) with(VirtualController.Button) {
+							if(update.buttonWasJustPressed(square)) game.snes[Y] = true;
+							if(update.buttonWasJustPressed(triangle)) game.snes[X] = true;
+							if(update.buttonWasJustPressed(cross)) game.snes[B] = true;
+							if(update.buttonWasJustPressed(circle)) game.snes[A] = true;
+							if(update.buttonWasJustPressed(select)) game.snes[Select] = true;
+							if(update.buttonWasJustPressed(start)) game.snes[Start] = true;
+							if(update.buttonWasJustPressed(l1)) game.snes[L] = true;
+							if(update.buttonWasJustPressed(r1)) game.snes[R] = true;
+							// note: no need to check analog stick here cuz joystick.d already does it for us (per old playstation tradition)
+							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < -20000) game.snes[Left] = true;
+							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > 20000) game.snes[Right] = true;
+							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < -20000) game.snes[Up] = true;
+							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > 20000) game.snes[Down] = true;
+
+							if(update.buttonWasJustReleased(square)) game.snes[Y] = false;
+							if(update.buttonWasJustReleased(triangle)) game.snes[X] = false;
+							if(update.buttonWasJustReleased(cross)) game.snes[B] = false;
+							if(update.buttonWasJustReleased(circle)) game.snes[A] = false;
+							if(update.buttonWasJustReleased(select)) game.snes[Select] = false;
+							if(update.buttonWasJustReleased(start)) game.snes[Start] = false;
+							if(update.buttonWasJustReleased(l1)) game.snes[L] = false;
+							if(update.buttonWasJustReleased(r1)) game.snes[R] = false;
+							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > -20000) game.snes[Left] = false;
+							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < 20000) game.snes[Right] = false;
+							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > -20000) game.snes[Up] = false;
+							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < 20000) game.snes[Down] = false;
+
+						}
+
+					} else static if(__traits(isSame, Button, XBox360Buttons)) {
+						// XBox style mapping
+						// the reason this exists is if the programmer wants to use the xbox details, but
+						// might also want the basic controller in here. joystick.d already does translations
+						// so an xbox controller with the default build actually uses the PS1 branch above.
+						/+
+						case XBox360Buttons.a: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_A) ? true : false;
+						case XBox360Buttons.b: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_B) ? true : false;
+						case XBox360Buttons.x: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_X) ? true : false;
+						case XBox360Buttons.y: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_Y) ? true : false;
+
+						case XBox360Buttons.lb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) ? true : false;
+						case XBox360Buttons.rb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? true : false;
+
+						case XBox360Buttons.back: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) ? true : false;
+						case XBox360Buttons.start: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_START) ? true : false;
+						+/
+					}
+				}
+
+				game.joysticks[p] = update;
+			}
 
 			auto now = MonoTime.currTime;
 			bool changed = game.update(now - lastUpdate);
@@ -238,6 +292,7 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 				case Key.V, Key.O: game.snes[X] = ke.pressed; break;
 				case Key.G: game.snes[Select] = ke.pressed; break;
 				case Key.H: game.snes[Start] = ke.pressed; break;
+				case Key.Shift, Key.Shift_r: game.snes[B] = ke.pressed; break;
 				default:
 			}
 		}
