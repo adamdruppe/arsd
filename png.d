@@ -138,94 +138,100 @@ MemoryImage imageFromPng(PNG* png) {
 	foreach(line; file.rawDatastreamByChunk()) {
 		auto filter = line[0];
 		auto data = unfilter(filter, line[1 .. $], previousLine, bpp);
-		ubyte consumeOne() {
-			ubyte ret = data[0];
-			data = data[1 .. $];
-			return ret;
-		}
 		previousLine = data;
-		import std.conv;
 
-		loop: for(int pixel = 0; pixel < h.width; pixel++)
-			switch(h.type) {
-				case 0: // greyscale
-				case 4: // greyscale with alpha
-					auto value = consumeOne();
-					idata[idataIdx++] = value;
-					idata[idataIdx++] = value;
-					idata[idataIdx++] = value;
-					idata[idataIdx++] = (h.type == 4) ? consumeOne() : 255;
-				break;
-				case 3: // indexed
-					auto b = consumeOne();
-					switch(h.depth) {
-						case 1:
-							idata[idataIdx++] = (b >> 7) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 6) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 5) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 4) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 3) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 2) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 1) & 0x01;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = b & 0x01;
-						break;
-						case 2:
-							idata[idataIdx++] = (b >> 6) & 0x03;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 4) & 0x03;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = (b >> 2) & 0x03;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = b & 0x03;
-						break;
-						case 4:
-							idata[idataIdx++] = (b >> 4) & 0x0f;
-							pixel++; if(pixel == h.width) break loop;
-							idata[idataIdx++] = b & 0x0f;
-						break;
-						case 8:
-							idata[idataIdx++] = b;
-						break;
-						default:
-							assert(0, "bit depth not implemented");
-					}
-				break;
-				case 2: // truecolor
-				case 6: // true with alpha
-					if(h.depth == 8) {
-						idata[idataIdx++] = consumeOne();
-						idata[idataIdx++] = consumeOne();
-						idata[idataIdx++] = consumeOne();
-						idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
-					} else if(h.depth == 16) {
-						idata[idataIdx++] = consumeOne();
-						consumeOne();
-						idata[idataIdx++] = consumeOne();
-						consumeOne();
-						idata[idataIdx++] = consumeOne();
-						consumeOne();
-						idata[idataIdx++] = (h.type == 6) ? consumeOne() : 255;
-						if(h.type == 6)
-							consumeOne();
-
-					} else assert(0, "unsupported truecolor bit depth " ~ to!string(h.depth));
-				break;
-				default: assert(0);
-			}
-		assert(data.length == 0, "not all consumed, wtf " ~ to!string(h));
+		convertPngData(h.type, h.depth, data, h.width, idata, idataIdx);
 	}
 	assert(idataIdx == idata.length, "not all filled, wtf");
 
 	assert(i !is null);
 
 	return i;
+}
+
+// idata needs to be already sized for the image! width * height if indexed, width*height*4 if not.
+void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, ubyte[] idata, ref int idataIdx) {
+	ubyte consumeOne() {
+		ubyte ret = data[0];
+		data = data[1 .. $];
+		return ret;
+	}
+	import std.conv;
+
+	loop: for(int pixel = 0; pixel < width; pixel++)
+		switch(type) {
+			case 0: // greyscale
+			case 4: // greyscale with alpha
+				auto value = consumeOne();
+				idata[idataIdx++] = value;
+				idata[idataIdx++] = value;
+				idata[idataIdx++] = value;
+				idata[idataIdx++] = (type == 4) ? consumeOne() : 255;
+			break;
+			case 3: // indexed
+				auto b = consumeOne();
+				switch(depth) {
+					case 1:
+						idata[idataIdx++] = (b >> 7) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 6) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 5) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 4) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 3) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 2) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 1) & 0x01;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = b & 0x01;
+					break;
+					case 2:
+						idata[idataIdx++] = (b >> 6) & 0x03;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 4) & 0x03;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = (b >> 2) & 0x03;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = b & 0x03;
+					break;
+					case 4:
+						idata[idataIdx++] = (b >> 4) & 0x0f;
+						pixel++; if(pixel == width) break loop;
+						idata[idataIdx++] = b & 0x0f;
+					break;
+					case 8:
+						idata[idataIdx++] = b;
+					break;
+					default:
+						assert(0, "bit depth not implemented");
+				}
+			break;
+			case 2: // truecolor
+			case 6: // true with alpha
+				if(depth == 8) {
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = consumeOne();
+					idata[idataIdx++] = (type == 6) ? consumeOne() : 255;
+				} else if(depth == 16) {
+					idata[idataIdx++] = consumeOne();
+					consumeOne();
+					idata[idataIdx++] = consumeOne();
+					consumeOne();
+					idata[idataIdx++] = consumeOne();
+					consumeOne();
+					idata[idataIdx++] = (type == 6) ? consumeOne() : 255;
+					if(type == 6)
+						consumeOne();
+
+				} else assert(0, "unsupported truecolor bit depth " ~ to!string(depth));
+			break;
+			default: assert(0);
+		}
+	assert(data.length == 0, "not all consumed, wtf ");// ~ to!string(h));
 }
 
 /*
@@ -1467,29 +1473,32 @@ struct LazyPngFile(LazyPngChunksProvider)
 		return .bytesPerPixel(header);
 	}
 
-	// FIXME: doesn't handle interlacing... I think
 	int bytesPerLine() {
-		immutable bitsPerChannel = header.depth;
-
-		int bitsPerPixel = bitsPerChannel;
-		if(header.type & 2 && !(header.type & 1)) // in color, but no palette
-			bitsPerPixel *= 3;
-		if(header.type & 4) // has alpha channel
-			bitsPerPixel += bitsPerChannel;
-
-
-		immutable int sizeInBits = header.width * bitsPerPixel;
-
-		// need to round up to the nearest byte
-		int sizeInBytes = (sizeInBits + 7) / 8;
-
-		return sizeInBytes + 1; // the +1 is for the filter byte that precedes all lines
+		return .bytesPerLineOfPng(header.depth, header.type, header.width);
 	}
 
 	PngHeader header;
 	Color[] palette;
 }
 
+// FIXME: doesn't handle interlacing... I think
+@nogc @safe pure nothrow
+int bytesPerLineOfPng(ubyte depth, ubyte type, uint width) {
+	immutable bitsPerChannel = depth;
+
+	int bitsPerPixel = bitsPerChannel;
+	if(type & 2 && !(type & 1)) // in color, but no palette
+		bitsPerPixel *= 3;
+	if(type & 4) // has alpha channel
+		bitsPerPixel += bitsPerChannel;
+
+	immutable int sizeInBits = width * bitsPerPixel;
+
+	// need to round up to the nearest byte
+	int sizeInBytes = (sizeInBits + 7) / 8;
+
+	return sizeInBytes + 1; // the +1 is for the filter byte that precedes all lines
+}
 
 /**************************************************
  * Buffered input range - generic, non-image code
