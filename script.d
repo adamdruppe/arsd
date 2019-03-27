@@ -2093,11 +2093,13 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "=":
 					tokens.popFront();
 					return new AssignExpression(e1, parseExpression(tokens));
+				case "&&": // thanks to mzfhhhh for fix
+				case "||":
+					tokens.popFront();
+					e1 = new BinaryExpression(peek.str, e1, parseExpression(tokens));
+					break;
 				case "~":
 					// FIXME: make sure this has the right associativity
-
-				case "&&": // FIXME: precedence?
-				case "||":
 
 				case "&":
 				case "|":
