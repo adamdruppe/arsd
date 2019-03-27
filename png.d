@@ -231,7 +231,7 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 			break;
 			default: assert(0);
 		}
-	assert(data.length == 0, "not all consumed, wtf ");// ~ to!string(h));
+	assert(data.length == 0, "not all consumed, wtf " ~ to!string(data));
 }
 
 /*
@@ -1482,6 +1482,7 @@ struct LazyPngFile(LazyPngChunksProvider)
 }
 
 // FIXME: doesn't handle interlacing... I think
+// note it returns the length including the filter byte!!
 @nogc @safe pure nothrow
 int bytesPerLineOfPng(ubyte depth, ubyte type, uint width) {
 	immutable bitsPerChannel = depth;
