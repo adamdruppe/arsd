@@ -45,7 +45,7 @@ module arsd.simpleaudio;
 enum BUFFER_SIZE_FRAMES = 1024;//512;//2048;
 enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 
-///
+/// A reasonable default volume for an individual sample. It doesn't need to be large; in fact it needs to not be large so mixing doesn't clip too much.
 enum DEFAULT_VOLUME = 20;
 
 version(Demo)
