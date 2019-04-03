@@ -6196,6 +6196,10 @@ struct ScreenPainter {
 		currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
+			if(impl.referenceCount == 0) {
+				impl.window = window;
+				impl.create(handle);
+			}
 			impl.referenceCount++;
 		//	writeln("refcount ++ ", impl.referenceCount);
 		} else {
@@ -6227,7 +6231,7 @@ struct ScreenPainter {
 		if(impl.referenceCount == 0) {
 			//writeln("destructed");
 			impl.dispose();
-			window.activeScreenPainter = null;
+			*window.activeScreenPainter = ScreenPainterImplementation.init;
 			//import std.stdio; writeln("paint finished");
 		} else {
 			// there is still an active reference, reset stuff so the
