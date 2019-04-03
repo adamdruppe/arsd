@@ -1109,7 +1109,7 @@ class Cgi {
 
 
 		///
-		void writeToFile(string filenameToSaveTo) {
+		void writeToFile(string filenameToSaveTo) const {
 			import std.file;
 			if(contentInMemory)
 				std.file.write(filenameToSaveTo, content);
@@ -5003,6 +5003,143 @@ private struct SerializationBuffer {
 			will have to have dump and restore too, so i can restart without losing stuff.
 */
 
+
+/++
+	A convenience object for talking to the [BasicDataServer] from a higher level.
+	See: [getSessionObject]
+
+	You pass it a `Data` struct describing the data you want saved in the session.
+	Then, this class will generate getter and setter properties that allow access
+	to that data.
+
+	Note that each load and store will be done as-accessed; it doesn't front-load
+	mutable data nor does it batch updates out of fear of read-modify-write race
+	conditions. (In fact, right now it does this for everything, but in the future,
+	I might batch load `immutable` members of the Data struct.)
+
+	At some point in the future, I might also let it do different backends, like
+	a client-side cookie store too, but idk.
++/
+class Session(Data) {
+	private Cgi cgi;
+	private string sessionId;
+
+	/// You probably don't want to call this directly, see [getSessionObject] instead.
+	this(Cgi cgi) {
+		this.cgi = cgi;
+		if(auto ptr = "sessionId" in cgi.cookies)
+			sessionId = (*ptr).length ? *ptr : null;
+	}
+
+	/++
+		Starts a new session. Note that a session is also
+		implicitly started as soon as you write data to it,
+		so if you need to alter these parameters from their
+		defaults, be sure to explicitly call this BEFORE doing
+		any writes to session data.
+
+		Params:
+			idleLifetime = How long, in seconds, the session
+			should remain in memory when not being read from
+			or written to. The default is one day.
+
+			NOT IMPLEMENTED
+
+			useExtendedLifetimeCookie = The session ID is always
+			stored in a HTTP cookie, and by default, that cookie
+			is discarded when the user closes their browser.
+
+			But if you set this to true, it will use a non-perishable
+			cookie for the given idleLifetime.
+
+			NOT IMPLEMENTED
+	+/
+	void start(int idleLifetime = 2600 * 24, bool useExtendedLifetimeCookie = false) {
+		assert(sessionId is null);
+
+		// FIXME: what if there is a session ID cookie, but no corresponding session on the server?
+
+		import std.random, std.conv;
+		sessionId = to!string(uniform(1, long.max));
+
+		BasicDataServer.connection.createSession(sessionId, idleLifetime);
+		setCookie();
+	}
+
+	private void setCookie() {
+		cgi.setCookie(
+			"sessionId", sessionId,
+			0 /* expiration */,
+			null /* path */,
+			null /* domain */,
+			true /* http only */,
+			cgi.https /* if the session is started on https, keep it there, otherwise, be flexible */);
+	}
+
+	/++
+		Regenerates the session ID and updates the associated
+		cookie.
+
+		This is also your chance to change immutable data
+		(not yet implemented).
+	+/
+	void regenerateId() {
+		if(sessionId is null) {
+			start();
+			return;
+		}
+		import std.random, std.conv;
+		auto oldSessionId = sessionId;
+		sessionId = to!string(uniform(1, long.max));
+		BasicDataServer.connection.renameSession(oldSessionId, sessionId);
+		setCookie();
+	}
+
+	/++
+		Terminates this session, deleting all saved data.
+	+/
+	void terminate() {
+		BasicDataServer.connection.destroySession(sessionId);
+		sessionId = null;
+		setCookie();
+	}
+
+	/++
+		Plain-old-data members of your `Data` struct are wrapped here via
+		the opDispatch property getters and setters.
+
+		If the member is a non-string array, it returns a magical array proxy
+		object which allows for atomic appends and replaces via overloaded operators.
+		You can slice this to get a range representing a $(B const) view of the array.
+		This is to protect you against read-modify-write race conditions.
+	+/
+	@property typeof(__traits(getMember, Data, name)) opDispatch(string name)() {
+		if(sessionId is null)
+			return typeof(return).init;
+
+		auto v = BasicDataServer.connection.getSessionData(sessionId, name);
+		if(v.length == 0)
+			return typeof(return).init;
+		import std.conv;
+		return to!(typeof(return))(v);
+	}
+
+	/// ditto
+	@property void opDispatch(string name)(typeof(__traits(getMember, Data, name)) value) {
+		if(sessionId is null)
+			start();
+		import std.conv;
+		BasicDataServer.connection.setSessionData(sessionId, name, to!string(value));
+	}
+}
+
+/++
+	Gets a session object associated with the `cgi` request.
++/
+Session!Data getSessionObject(Data)(Cgi cgi) {
+	return new Session!Data(cgi);
+}
+
 /++
 
 +/
@@ -5047,10 +5184,20 @@ final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
 		sessions.remove(oldSessionId);
 	}
 	void setSessionData(string sessionId, string dataKey, string dataValue) {
+		if(sessionId !in sessions)
+			createSession(sessionId, 3600); // FIXME?
 		sessions[sessionId].values[dataKey.idup] = dataValue.idup;
 	}
 	string getSessionData(string sessionId, string dataKey) {
-		return sessions[sessionId].values[dataKey];
+		if(auto session = sessionId in sessions) {
+			if(auto data = dataKey in (*session).values)
+				return *data;
+			else
+				return null; // no such data
+
+		} else {
+			return null; // no session
+		}
 	}
 
 
@@ -5757,10 +5904,17 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	switch to choose if you want to override.
 */
 
-struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init, void) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
 	alias handler = dispatchHandler;
 	string urlPrefix;
 	bool rejectFurther;
+	DispatcherDetails details;
+}
+
+// tbh I am really unhappy with this part
+struct DispatcherDetails {
+	string filename;
+	string contentType;
 }
 
 private string urlify(string name) {
@@ -6428,7 +6582,7 @@ auto serveApi(T)(string urlPrefix) {
 	import arsd.dom;
 	import arsd.jsvar;
 
-	static bool handler(string urlPrefix, Cgi cgi) {
+	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
 
 		auto obj = new T();
 		obj.initialize(cgi);
@@ -6780,7 +6934,7 @@ class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
 +/
 auto serveRestObject(T)(string urlPrefix) {
 	assert(urlPrefix[$ - 1] != '/', "Do NOT use a trailing slash on REST objects.");
-	static bool handler(string urlPrefix, Cgi cgi) {
+	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
 		string url = cgi.pathInfo[urlPrefix.length .. $];
 
 		if(url.length && url[$ - 1] == '/') {
@@ -7071,15 +7225,26 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 	if(filename is null)
 		filename = urlPrefix[1 .. $];
 	if(contentType is null) {
-
+		if(filename.endsWith(".png"))
+			contentType = "image/png";
+		if(filename.endsWith(".jpg"))
+			contentType = "image/jpeg";
+		if(filename.endsWith(".html"))
+			contentType = "text/html";
+		if(filename.endsWith(".css"))
+			contentType = "text/css";
+		if(filename.endsWith(".js"))
+			contentType = "application/javascript";
 	}
-	static bool handler(string urlPrefix, Cgi cgi) {
-		//cgi.setResponseContentType(contentType);
-		//cgi.write(std.file.read(filename), true);
-		cgi.write(std.file.read(urlPrefix[1 .. $]), true);
+
+	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
+		if(details.contentType.indexOf("image/") == 0)
+			cgi.setCache(true);
+		cgi.setResponseContentType(details.contentType);
+		cgi.write(std.file.read(details.filename), true);
 		return true;
 	}
-	return DispatcherDefinition!handler(urlPrefix, true);
+	return DispatcherDefinition!handler(urlPrefix, true, DispatcherDetails(filename, contentType));
 }
 
 auto serveRedirect(string urlPrefix, string redirectTo) {
@@ -7108,15 +7273,15 @@ auto serveStaticData(string urlPrefix, const(void)[] data, string contentType) {
 +/
 bool dispatcher(definitions...)(Cgi cgi) {
 	// I can prolly make this more efficient later but meh.
-	foreach(definition; definitions) {
+	static foreach(definition; definitions) {
 		if(definition.rejectFurther) {
 			if(cgi.pathInfo == definition.urlPrefix) {
-				auto ret = definition.handler(definition.urlPrefix, cgi);
+				auto ret = definition.handler(definition.urlPrefix, cgi, definition.details);
 				if(ret)
 					return true;
 			}
 		} else if(cgi.pathInfo.startsWith(definition.urlPrefix)) {
-			auto ret = definition.handler(definition.urlPrefix, cgi);
+			auto ret = definition.handler(definition.urlPrefix, cgi, definition.details);
 			if(ret)
 				return true;
 		}

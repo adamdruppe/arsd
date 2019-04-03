@@ -654,6 +654,10 @@ struct var {
 					static if(is(typeof(__traits(getMember, t, member)) == function)) {
 						// skipping these because the delegate we get isn't going to work anyway; the object may be dead and certainly won't be updated
 						//this[member] = &__traits(getMember, proxyObject, member);
+
+						//but for simple toString, I'll allow it. or maybe not it doesn't work right.
+						//static if(member == "toString" && is(typeof(&__traits(getMember, t, member)) == string delegate()))
+							//this[member] = &__traits(getMember, t, member);
 					} else
 						this[member] = __traits(getMember, t, member);
 				}
@@ -1239,6 +1243,12 @@ struct var {
 		v._payload._object = new PrototypeObject();
 		v._payload._object.prototype = prototype;
 		return v;
+	}
+
+	@property static var emptyObject(var prototype) {
+		if(prototype._type == Type.Object)
+			return var.emptyObject(prototype._payload._object);
+		return var.emptyObject();
 	}
 
 	@property PrototypeObject prototypeObject() {

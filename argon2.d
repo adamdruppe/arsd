@@ -5,6 +5,9 @@
 +/
 module arsd.argon2;
 
+// it is conceivably useful to hash the password with a secret key before passing to this function,
+// but I'm not going to do that automatically here just to keep this thin and simple.
+
 import core.stdc.stdint;
 
 pragma(lib, "argon2");
@@ -43,7 +46,7 @@ enum MediumSecurity = SecurityParameters(4, 256_000, 4);
 /// ditto
 enum LowSecurity = SecurityParameters(2, 128_000, 4);
 
-/// Check's a user's provided password against the saved password, and returns true if they matched.
+/// Check's a user's provided password against the saved password, and returns true if they matched. Neither string can be empty.
 bool verify(string savedPassword, string providedPassword) {
 	return argon2id_verify((savedPassword[$-1] == 0 ? savedPassword : (savedPassword ~ '\0')).ptr, providedPassword.ptr, providedPassword.length) == ARGON2_OK;
 }

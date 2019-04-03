@@ -819,7 +819,7 @@ class Document : FileResource {
 						}
 
 						if(strict)
-						enforce(data[pos] == '>');//, format("got %s when expecting >\nContext:\n%s", data[pos], data[pos - 100 .. pos + 100]));
+						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[pos - 100 .. pos + 100]));
 						else {
 							// if we got here, it's probably because a slash was in an
 							// unquoted attribute - don't trust the selfClosed value

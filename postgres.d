@@ -81,6 +81,8 @@ class PostgreSql : Database {
 
 		auto res = PQexec(conn, toStringz(sql));
 		int ress = PQresultStatus(res);
+		// https://www.postgresql.org/docs/current/libpq-exec.html
+		// FIXME: PQresultErrorField can get a lot more info in a more structured way
 		if(ress != PGRES_TUPLES_OK
 			&& ress != PGRES_COMMAND_OK)
 			throw new DatabaseException(error());
