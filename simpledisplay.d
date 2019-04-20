@@ -2998,7 +2998,22 @@ struct EventLoopImpl {
 						assert(fd != -1); // should never happen cuz the api doesn't do that but better to assert than assume.
 						auto flags = events[idx].events;
 						if(flags & ep.EPOLLIN) {
-							if(fd == display.fd) {
+							if (fd == customSignalFD) {
+								version(linux) {
+									import core.sys.linux.sys.signalfd;
+									import core.sys.posix.unistd : read;
+									signalfd_siginfo info;
+									read(customSignalFD, &info, info.sizeof);
+
+									auto sig = info.ssi_signo;
+
+									if(EventLoop.get.signalHandler !is null) {
+										EventLoop.get.signalHandler()(sig);
+									} else {
+										EventLoop.get.exit();
+									}
+								}
+							} else if(fd == display.fd) {
 								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
 								this.mtLock();
 								scope(exit) this.mtUnlock();
@@ -3026,21 +3041,6 @@ struct EventLoopImpl {
 								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
 								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
 								//SimpleWindow.processAllCustomEvents();
-							} else if (fd == customSignalFD) {
-								version(linux) {
-									import core.sys.linux.sys.signalfd;
-									import core.sys.posix.unistd : read;
-									signalfd_siginfo info;
-									read(customSignalFD, &info, info.sizeof);
-
-									auto sig = info.ssi_signo;
-
-									if(EventLoop.get.signalHandler !is null) {
-										EventLoop.get.signalHandler()(sig);
-									} else {
-										EventLoop.get.exit();
-									}
-								}
 							} else {
 								// some other timer
 								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
