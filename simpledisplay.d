@@ -848,8 +848,6 @@ version(Windows) {
 
 // http://wiki.dlang.org/Simpledisplay.d
 
-// FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
-
 // see : http://www.sbin.org/doc/Xlib/chapt_09.html section on Keyboard Preferences re: scroll lock led
 
 // Cool stuff: I want right alt and scroll lock to do different stuff for personal use. maybe even right ctrl
@@ -2722,6 +2720,7 @@ struct EventLoop {
 		impl.notExited = false;
 	}
 
+	version(linux)
 	ref void delegate(int) signalHandler() {
 		assert(impl !is null);
 		return impl.signalHandler;
