@@ -2533,7 +2533,7 @@ class NoSuchFunctionException : NoSuchPageException {
 type fromUrlParam(type)(in string ofInterest, in string name, in string[][string] all) {
 	type ret;
 
-	static if(isArray!(type) && !isSomeString!(type)) {
+	static if(!is(type == enum) && isArray!(type) && !isSomeString!(type)) {
 		// how do we get an array out of a simple string?
 		// FIXME
 		static assert(0);
@@ -2561,6 +2561,17 @@ type fromUrlParam(type)(in string ofInterest, in string name, in string[][string
 			if(lol in all)
 				ret.tupleof[idx] = fromUrlParam!(typeof(thing))(all[lol], lol, all);
 		}
+	} else static if(is(type == enum)) {
+		sw: switch(ofInterest) {
+			static foreach(N; __traits(allMembers, type)) {
+			case N:
+				ret = __traits(getMember, type, N);
+				break sw;
+			}
+			default:
+				throw new InvalidParameterException(name, ofInterest, "");
+		}
+
 	}
 	/*
 	else static if(is(type : struct)) {
@@ -2568,7 +2579,6 @@ type fromUrlParam(type)(in string ofInterest, in string name, in string[][string
 	}
 	*/
 	else {
-		// enum should be handled by this too
 		ret = to!type(ofInterest);
 	} // FIXME: can we support classes?
 
@@ -2580,7 +2590,7 @@ type fromUrlParam(type)(in string[] ofInterest, in string name, in string[][stri
 	type ret;
 
 	// Arrays in a query string are sent as the name repeating...
-	static if(isArray!(type) && !isSomeString!type) {
+	static if(!is(type == enum) && isArray!(type) && !isSomeString!type) {
 		foreach(a; ofInterest) {
 			ret ~= fromUrlParam!(ElementType!(type))(a, name, all);
 		}
@@ -2770,6 +2780,11 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 		} else {
 			format = "html";
 		}
+
+		static if(is(typeof(ret) : K[], K)) {
+			static if(is(K == struct))
+				format = "table";
+		}
 	}
 
 	string retstr;
@@ -2814,9 +2829,15 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 			void gotATable(Table table) {
 				if(format == "csv") {
 					retstr = tableToCsv(table);
-				} else if(format == "table")
-					retstr = table.toString();
-				else assert(0);
+				} else if(format == "table") {
+					auto div = Element.make("div");
+					if(api !is null) {
+						auto cgi = api.cgi;
+						div.addChild("a", "Download as CSV", cgi.pathInfo ~ "?" ~ cgi.queryString ~ "&format=csv&envelopeFormat=csv");
+					}
+					div.appendChild(table);
+					retstr = div.toString();
+				} else assert(0);
 
 
 				if(returnValue !is null)
@@ -2837,10 +2858,13 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 			} else static if(is(typeof(ret) : K[N][V], size_t N, K, V)) {
 				auto table = cast(Table) Element.make("table");
 				table.addClass("data-display");
+				auto headerRow = table.addChild("tr");
+				foreach(n; 0 .. N)
+					table.addChild("th", "" ~ cast(char)(n  + 'A'));
 				foreach(k, v; ret) {
 					auto row = table.addChild("tr");
 					foreach(cell; v)
-						table.addChild("td", to!string(cell));
+						row.addChild("td", to!string(cell));
 				}
 				gotATable(table);
 				break;
@@ -2936,6 +2960,9 @@ string toUrlName(string name) {
 string beautify(string name) {
 	string n;
 
+	// really if this is cap and the following is lower, we want a space.
+	// or in other words, if this is lower and previous is cap, we want a space injected before previous
+
 				// all caps names shouldn't get spaces
 	if(name.length == 0 || name.toUpper() == name)
 		return name;
@@ -2943,8 +2970,11 @@ string beautify(string name) {
 	n ~= toUpper(name[0..1]);
 
 	dchar last;
-	foreach(dchar c; name[1..$]) {
-		if((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+	foreach(idx, dchar c; name[1..$]) {
+		if(c >= 'A' && c <= 'Z') {
+			if(idx + 1 < name[1 .. $].length && name[1 + idx + 1] >= 'a' && name[1 + idx + 1] <= 'z')
+				n ~= " ";
+		} else if(c >= '0' && c <= '9') {
 			if(last != ' ')
 				n ~= " ";
 		}
@@ -3974,9 +4004,11 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 		{
 			auto thead = t.addChild("thead");
 			auto tr = thead.addChild("tr");
-			auto s = arr[0];
-			foreach(idx, member; s.tupleof)
-				tr.addChild("th", s.tupleof[idx].stringof[2..$]);
+			if(arr.length) {
+				auto s = arr[0];
+				foreach(idx, member; s.tupleof)
+					tr.addChild("th", s.tupleof[idx].stringof[2..$]);
+			}
 		}
 
 		bool odd = true;

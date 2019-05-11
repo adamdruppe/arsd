@@ -1107,7 +1107,6 @@ class Cgi {
 
 		}
 
-
 		///
 		void writeToFile(string filenameToSaveTo) const {
 			import std.file;
@@ -5272,7 +5271,7 @@ ScheduledJobHelper schedule(alias fn, T...)(T args) {
 
 ///
 interface ScheduledJobServer {
-	///
+	/// Use the [schedule] function for a higher-level interface.
 	int scheduleJob(int whenIs, int when, string executable, string func, string[] args);
 	///
 	void cancelJob(int jobId);
@@ -5280,6 +5279,16 @@ interface ScheduledJobServer {
 
 class ScheduledJobServerConnection : ScheduledJobServer {
 	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server");
+}
+
+final class ScheduledJobServerImplementation : ScheduledJobServer {
+	protected int scheduleJob(int whenIs, int when, string executable, string func, string[] args) {
+		return 0;
+	}
+
+	protected void cancelJob(int jobId) {
+
+	}
 }
 
 ///
@@ -6044,6 +6053,18 @@ static auto elementFor(T)(string displayName, string name) {
 		else
 			i.attrs.type = "number";
 		i.attrs.value = to!string(T.init);
+	} else static if(is(T == bool)) {
+		Element lbl;
+		if(displayName !is null) {
+			lbl = div.addChild("label");
+			lbl.addChild("span", displayName, "label-text");
+			lbl.appendText(" ");
+		} else {
+			lbl = div;
+		}
+		auto i = lbl.addChild("input", name);
+		i.attrs.type = "checkbox";
+		i.attrs.name = name;
 	} else static if(is(T == K[], K)) {
 		auto templ = div.addChild("template");
 		templ.appendChild(elementFor!(K)(null, name));
@@ -6370,6 +6391,8 @@ auto formatReturnValueAsHtml(T)(T t) {
 		}
 
 		return dl;
+	} else static if(is(T == bool)) {
+		return Element.make("span", t ? "true" : "false", "automatic-data-display");
 	} else static if(is(T == E[], E)) {
 		static if(is(E : RestObject!Proxy, Proxy)) {
 			// treat RestObject similar to struct
@@ -6439,18 +6462,6 @@ auto formatReturnValueAsHtml(T)(T t) {
 	FIXME
 +/
 class WebPresenter() {
-
-}
-
-/++
-	The base class for the [dispatcher] function and object support.
-+/
-class WebObject(Helper = void) {
-	Cgi cgi;
-	void initialize(Cgi cgi) {
-		this.cgi = cgi;
-	}
-
 	string script() {
 		return `
 		`;
@@ -6570,6 +6581,19 @@ class WebObject(Helper = void) {
 }
 
 /++
+	The base class for the [dispatcher] function and object support.
++/
+class WebObject(Helper = void) {
+	Cgi cgi;
+	WebPresenter!() presenter;
+
+	void initialize(Cgi cgi, WebPresenter!() presenter) {
+		this.cgi = cgi;
+		this.presenter = presenter;
+	}
+}
+
+/++
 	Serves a class' methods, as a kind of low-state RPC over the web. To be used with [dispatcher].
 
 	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
@@ -6582,10 +6606,10 @@ auto serveApi(T)(string urlPrefix) {
 	import arsd.dom;
 	import arsd.jsvar;
 
-	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
+	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
 
 		auto obj = new T();
-		obj.initialize(cgi);
+		obj.initialize(cgi, presenter);
 
 		switch(cgi.pathInfo[urlPrefix.length .. $]) {
 			static foreach(methodName; __traits(derivedMembers, T)){{
@@ -6594,7 +6618,7 @@ auto serveApi(T)(string urlPrefix) {
 				case urlify(methodName):
 					switch(cgi.request("format", "html")) {
 						case "html":
-							auto container = obj.htmlContainer();
+							auto container = obj.presenter.htmlContainer();
 							try {
 								auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
 								container.appendChild(formatReturnValueAsHtml(ret));
@@ -6623,12 +6647,12 @@ auto serveApi(T)(string urlPrefix) {
 			case "script.js":
 				cgi.setResponseContentType("text/javascript");
 				cgi.gzipResponse = true;
-				cgi.write(obj.script(), true);
+				cgi.write(obj.presenter.script(), true);
 				return true;
 			case "style.css":
 				cgi.setResponseContentType("text/css");
 				cgi.gzipResponse = true;
-				cgi.write(obj.style(), true);
+				cgi.write(obj.presenter.style(), true);
 				return true;
 			default:
 				return false;
@@ -6767,6 +6791,9 @@ class RestObject(Helper = void) : WebObject!Helper {
 mixin template Presenter() {
 
 }
+
+// FIXME XSRF token, prolly can just put in a cookie and then it needs to be copied to header or form hidden value
+// https://use-the-index-luke.com/sql/partial-results/fetch-next-page
 
 /++
 	Base class for REST collections.
@@ -6934,7 +6961,7 @@ class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
 +/
 auto serveRestObject(T)(string urlPrefix) {
 	assert(urlPrefix[$ - 1] != '/', "Do NOT use a trailing slash on REST objects.");
-	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
+	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
 		string url = cgi.pathInfo[urlPrefix.length .. $];
 
 		if(url.length && url[$ - 1] == '/') {
@@ -6943,7 +6970,7 @@ auto serveRestObject(T)(string urlPrefix) {
 			return true;
 		}
 
-		return restObjectServeHandler!T(cgi, url);
+		return restObjectServeHandler!T(cgi, presenter, url);
 
 	}
 	return DispatcherDefinition!handler(urlPrefix, false);
@@ -6957,7 +6984,7 @@ auto serveRestCollectionOf(T)(string urlPrefix) {
 	return serveRestObject!(mixin(T.stringof ~ "s"))(urlPrefix);
 }
 
-bool restObjectServeHandler(T)(Cgi cgi, string url) {
+bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 	string urlId = null;
 	if(url.length && url[0] == '/') {
 		// asking for a subobject
@@ -6974,7 +7001,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 
 	static if(is(T : CollectionOf!(C, P), C, P)) {
 		if(urlId !is null) {
-			return restObjectServeHandler!C(cgi, url); // FIXME?  urlId);
+			return restObjectServeHandler!C(cgi, presenter, url); // FIXME?  urlId);
 		}
 	}
 
@@ -7007,7 +7034,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 		// FIXME
 		return ValidationResult.valid;
 	};
-	obj.initialize(cgi);
+	obj.initialize(cgi, presenter);
 	// FIXME: populate reflection info delegates
 
 
@@ -7016,12 +7043,12 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 		case "script.js":
 			cgi.setResponseContentType("text/javascript");
 			cgi.gzipResponse = true;
-			cgi.write(obj.script(), true);
+			cgi.write(obj.presenter.script(), true);
 			return true;
 		case "style.css":
 			cgi.setResponseContentType("text/css");
 			cgi.gzipResponse = true;
-			cgi.write(obj.style(), true);
+			cgi.write(obj.presenter.style(), true);
 			return true;
 		default:
 			// intentionally blank
@@ -7047,7 +7074,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 			cgi.setResponseContentType("application/json");
 			cgi.write(obj.toJson().toString, true);
 		} else {
-			auto container = obj.htmlContainer();
+			auto container = obj.presenter.htmlContainer();
 			if(addFormLinks) {
 				static if(is(T : CollectionOf!(C, P), C, P))
 				container.appendHtml(`
@@ -7083,7 +7110,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 					static if(is(T : CollectionOf!(C, P), C, P)) {
 						auto results = obj.index();
 						if(cgi.request("format", "html") == "html") {
-							auto container = obj.htmlContainer();
+							auto container = obj.presenter.htmlContainer();
 							auto html = formatReturnValueAsHtml(results.results);
 							container.appendHtml(`
 								<form>
@@ -7119,7 +7146,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 				case "PUT":
 				case "POST":
 					// an editing form for the object
-					auto container = obj.htmlContainer();
+					auto container = obj.presenter.htmlContainer();
 					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
 						auto form = (cgi.request("_method") == "POST") ? createAutomaticFormForObject(new obj.PostProxy()) : createAutomaticFormForObject(obj);
 					} else {
@@ -7132,7 +7159,7 @@ bool restObjectServeHandler(T)(Cgi cgi, string url) {
 				break;
 				case "DELETE":
 					// FIXME: a delete form for the object (can be phrased "are you sure?")
-					auto container = obj.htmlContainer();
+					auto container = obj.presenter.htmlContainer();
 					container.appendHtml(`
 						<form method="POST">
 							Are you sure you want to delete this item?
@@ -7237,7 +7264,7 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 			contentType = "application/javascript";
 	}
 
-	static bool handler(string urlPrefix, Cgi cgi, DispatcherDetails details) {
+	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
 		if(details.contentType.indexOf("image/") == 0)
 			cgi.setCache(true);
 		cgi.setResponseContentType(details.contentType);
@@ -7271,17 +7298,19 @@ auto serveStaticData(string urlPrefix, const(void)[] data, string contentType) {
 	)) return;
 	---
 +/
-bool dispatcher(definitions...)(Cgi cgi) {
+bool dispatcher(definitions...)(Cgi cgi, WebPresenter!() presenter = null) {
+	if(presenter is null)
+		presenter = new WebPresenter!();
 	// I can prolly make this more efficient later but meh.
 	static foreach(definition; definitions) {
 		if(definition.rejectFurther) {
 			if(cgi.pathInfo == definition.urlPrefix) {
-				auto ret = definition.handler(definition.urlPrefix, cgi, definition.details);
+				auto ret = definition.handler(definition.urlPrefix, cgi, presenter, definition.details);
 				if(ret)
 					return true;
 			}
 		} else if(cgi.pathInfo.startsWith(definition.urlPrefix)) {
-			auto ret = definition.handler(definition.urlPrefix, cgi, definition.details);
+			auto ret = definition.handler(definition.urlPrefix, cgi, presenter, definition.details);
 			if(ret)
 				return true;
 		}

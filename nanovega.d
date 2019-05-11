@@ -142,6 +142,11 @@ $(SIDE_BY_SIDE
 	)
 )
 
+$(TIP
+	If you are going to use the library with a SDL OpenGL context,
+	try working with a backwards compatible context profile.
+)
+
 
 Creating drawing context
 ========================

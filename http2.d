@@ -1672,7 +1672,7 @@ class HttpApiClient() {
 	///
 	var throwOnError(HttpResponse res) {
 		if(res.code < 200 || res.code >= 300)
-			throw new Exception(res.codeText);
+			throw new Exception(res.codeText ~ " " ~ res.contentText);
 
 		var response = var.fromJson(res.contentText);
 		if(response.errors) {
