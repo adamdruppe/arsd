@@ -26,6 +26,13 @@ struct MimeAttachment {
 	string id; ///
 }
 
+///
+enum ToType {
+	to,
+	cc,
+	bcc
+}
+
 
 /++
 	For OUTGOING email
@@ -66,11 +73,31 @@ class EmailMessage {
 	private bool isHtml = false;
 
 	///
+	void addRecipient(string name, string email, ToType how = ToType.to) {
+		addRecipient(`"`~name~`" <`~email~`>`, how);
+	}
+
+	///
+	void addRecipient(string who, ToType how = ToType.to) {
+		final switch(how) {
+			case ToType.to:
+				to ~= who;
+			break;
+			case ToType.cc:
+				cc ~= who;
+			break;
+			case ToType.bcc:
+				bcc ~= who;
+			break;
+		}
+	}
+
+	///
 	void setTextBody(string text) {
-		textBody = text;
+		textBody = text.strip;
 	}
 	/// automatically sets a text fallback if you haven't already
-	void setHtmlBody(string html) {
+	void setHtmlBody()(string html) {
 		isMime = true;
 		isHtml = true;
 		htmlBody = html;

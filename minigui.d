@@ -8,6 +8,13 @@
 
 // https://docs.microsoft.com/en-us/windows/desktop/Controls/about-custom-draw
 
+// FIXME: make the scroll thing go to bottom when the content changes.
+
+// add a knob slider view... you click and go up and down so basically same as a vertical slider, just presented as a round image
+
+// FIXME: the scroll area MUST be fixed to use the proper apis under the hood.
+
+
 // FIXME: add a command search thingy built in and implement tip.
 // FIXME: omg omg what if menu functions have arguments and it can pop up a gui or command line script them?!
 

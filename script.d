@@ -1976,6 +1976,8 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 			}
 		}
 
+// FIXME: unary ! doesn't work right
+
 		funcLoop: while(!tokens.empty) {
 			auto peek = tokens.front;
 			if(peek.type == ScriptToken.Type.symbol) {

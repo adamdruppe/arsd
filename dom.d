@@ -3,6 +3,9 @@
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
 
+
+// xml entity references?!
+
 /++
 	This is an html DOM implementation, started with cloning
 	what the browser offers in Javascript, but going well beyond

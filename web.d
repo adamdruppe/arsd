@@ -2780,6 +2780,11 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 		} else {
 			format = "html";
 		}
+
+		static if(is(typeof(ret) : K[], K)) {
+			static if(is(K == struct))
+				format = "table";
+		}
 	}
 
 	string retstr;
@@ -3999,9 +4004,11 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 		{
 			auto thead = t.addChild("thead");
 			auto tr = thead.addChild("tr");
-			auto s = arr[0];
-			foreach(idx, member; s.tupleof)
-				tr.addChild("th", s.tupleof[idx].stringof[2..$]);
+			if(arr.length) {
+				auto s = arr[0];
+				foreach(idx, member; s.tupleof)
+					tr.addChild("th", s.tupleof[idx].stringof[2..$]);
+			}
 		}
 
 		bool odd = true;
