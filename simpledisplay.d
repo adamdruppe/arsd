@@ -6010,7 +6010,7 @@ void displayImage(Image image, SimpleWindow win = null) {
 		}
 		win.eventLoop(0,
 			(KeyEvent ev) {
-				if (ev.pressed) win.close();
+				if (ev.pressed && (ev.key == Key.Escape || ev.key == Key.Space)) win.close();
 			} );
 	} else {
 		win.image = image;
