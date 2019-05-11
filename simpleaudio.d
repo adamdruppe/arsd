@@ -198,6 +198,17 @@ import core.thread;
 final class AudioPcmOutThread : Thread {
 	///
 	this() {
+		version(linux) {
+			// this thread has no business intercepting signals from the main thread,
+			// so gonna block a couple of them
+			import core.sys.posix.signal;
+			sigset_t sigset;
+			auto err = sigfillset(&sigset);
+			assert(!err);
+			err = sigprocmask(SIG_BLOCK, &sigset, null);
+			assert(!err);
+		}
+
 		super(&run);
 	}
 

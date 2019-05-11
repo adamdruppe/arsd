@@ -848,8 +848,6 @@ version(Windows) {
 
 // http://wiki.dlang.org/Simpledisplay.d
 
-// FIXME: SIGINT handler is necessary to clean up shared memory handles upon ctrl+c
-
 // see : http://www.sbin.org/doc/Xlib/chapt_09.html section on Keyboard Preferences re: scroll lock led
 
 // Cool stuff: I want right alt and scroll lock to do different stuff for personal use. maybe even right ctrl
@@ -1351,6 +1349,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		is the drawable space inside; it excludes the title bar, etc.)
 
 		Windows based on images will not be resizable and do not use OpenGL.
+
+		It will draw the image in upon creation, but this will be overwritten
+		upon any draws, including the initial window visible event.
+
+		You probably do not want to use this and it may be removed from
+		the library eventually, or I might change it to be a "permanent"
+		background image; one that is automatically drawn on it before any
+		other drawing event. idk.
 	+/
 	this(Image image, string title = null) {
 		this(image.width, image.height, title);
@@ -2345,6 +2351,7 @@ private:
 
 	version(X11) {
 		__gshared int customEventFD = -1;
+		__gshared int customSignalFD = -1;
 	} else version(Windows) {
 		__gshared HANDLE customEventH = null;
 	}
@@ -2713,6 +2720,12 @@ struct EventLoop {
 		impl.notExited = false;
 	}
 
+	version(linux)
+	ref void delegate(int) signalHandler() {
+		assert(impl !is null);
+		return impl.signalHandler;
+	}
+
 	static EventLoopImpl* impl;
 }
 
@@ -2741,6 +2754,8 @@ struct EventLoopImpl {
 		static import unix = core.sys.posix.unistd;
 		static import err = core.stdc.errno;
 		import core.sys.linux.timerfd;
+
+		void delegate(int) signalHandler;
 	}
 
 	version(X11) {
@@ -2843,6 +2858,29 @@ struct EventLoopImpl {
 					throw new Exception("can't create eventfd for custom event processing");
 				}
 			}
+
+			if (customSignalFD == -1) {
+				import core.sys.linux.sys.signalfd;
+
+				sigset_t sigset;
+				auto err = sigemptyset(&sigset);
+				assert(!err);
+				err = sigaddset(&sigset, SIGINT);
+				assert(!err);
+				err = sigaddset(&sigset, SIGHUP);
+				assert(!err);
+				err = sigprocmask(SIG_BLOCK, &sigset, null);
+				assert(!err);
+
+				customSignalFD = signalfd(-1, &sigset, SFD_NONBLOCK);
+				assert(customSignalFD != -1);
+
+				ep.epoll_event ev = void;
+				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = customSignalFD;
+				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customSignalFD, &ev);
+			}
 		}
 
 		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
@@ -2909,8 +2947,10 @@ struct EventLoopImpl {
 		dispose();
 	}
 
-	version(X11)
+	version(linux)
 	ref int customEventFD() { return SimpleWindow.customEventFD; }
+	version(linux)
+	ref int customSignalFD() { return SimpleWindow.customSignalFD; }
 	version(Windows)
 	ref auto customEventH() { return SimpleWindow.customEventH; }
 
@@ -2957,7 +2997,22 @@ struct EventLoopImpl {
 						assert(fd != -1); // should never happen cuz the api doesn't do that but better to assert than assume.
 						auto flags = events[idx].events;
 						if(flags & ep.EPOLLIN) {
-							if(fd == display.fd) {
+							if (fd == customSignalFD) {
+								version(linux) {
+									import core.sys.linux.sys.signalfd;
+									import core.sys.posix.unistd : read;
+									signalfd_siginfo info;
+									read(customSignalFD, &info, info.sizeof);
+
+									auto sig = info.ssi_signo;
+
+									if(EventLoop.get.signalHandler !is null) {
+										EventLoop.get.signalHandler()(sig);
+									} else {
+										EventLoop.get.exit();
+									}
+								}
+							} else if(fd == display.fd) {
 								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
 								this.mtLock();
 								scope(exit) this.mtUnlock();
@@ -4628,8 +4683,8 @@ version(X11) {
 		setX11Selection!"SECONDARY"(window, text);
 	}
 
-	///
-	void setX11Selection(string atomName)(SimpleWindow window, string text) {
+	/// The `after` delegate is called after a client requests the UTF8_STRING thing. it is a mega-hack right now!
+	void setX11Selection(string atomName)(SimpleWindow window, string text, void delegate() after = null) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
@@ -4673,6 +4728,9 @@ version(X11) {
 					event.target,
 					8 /* bits */, 0 /* PropModeReplace */,
 					text.ptr, cast(int) text.length);
+
+				if(after)
+					after();
 			} else {
 				selectionEvent.property = None; // I don't know how to handle this type...
 			}

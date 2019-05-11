@@ -57,6 +57,7 @@ class ApngFrame {
 		auto height = frameControlChunk.height;
 
 		auto bytesPerLine = bytesPerLineOfPng(parent.header.depth, parent.header.type, width);
+		bytesPerLine--; // removing filter byte from this calculation since we handle separtely
 
 		int idataIdx;
 		ubyte[] idata;
@@ -79,11 +80,7 @@ class ApngFrame {
 		this.data = idata;
 	}
 
-	// then need to uncompress it
-	// and unfilter it...
-	// and then convert it to the right format.
-
-	MemoryImage frameData;
+	//MemoryImage frameData;
 }
 
 class ApngAnimation {
@@ -109,15 +106,15 @@ enum APNG_BLEND_OP : byte {
 	OVER = 1
 }
 
-void readApng(in ubyte[] data) {
+ApngAnimation readApng(in ubyte[] data) {
 	auto png = readPng(data);
 	auto header = PngHeader.fromChunk(png.chunks[0]);
-	Color[] palette;
-	if(header.type == 3) {
-		palette = fetchPalette(png);
-	}
 
 	auto obj = new ApngAnimation();
+
+	if(header.type == 3) {
+		obj.palette = fetchPalette(png);
+	}
 
 	bool seenIdat = false;
 	bool seenFctl = false;
@@ -227,11 +224,13 @@ void readApng(in ubyte[] data) {
 				expectedSequenceNumber++;
 
 				// and the rest of it is a datastream...
-				obj.frames[frameNumber - 1].compressedDatastream ~= chunk.payload;
+				obj.frames[frameNumber - 1].compressedDatastream ~= chunk.payload[offset .. $];
 			break;
 			default:
 				// ignore
 		}
 
 	}
+
+	return obj;
 }
