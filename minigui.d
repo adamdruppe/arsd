@@ -1073,6 +1073,8 @@ version(win32_widgets) {
 		if(font)
 			SendMessage(p.hwnd, WM_SETFONT, cast(uint) font, true);
 
+		p.simpleWindowWrappingHwnd = new SimpleWindow(p.hwnd);
+		p.simpleWindowWrappingHwnd.beingOpenKeepsAppOpen = false;
 		Widget.nativeMapping[p.hwnd] = p;
 
 		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
@@ -1358,6 +1360,8 @@ class Widget {
 		HWND hwnd;
 		WNDPROC originalWindowProcedure;
 
+		SimpleWindow simpleWindowWrappingHwnd;
+
 		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			return 0;
 		}
@@ -1589,8 +1593,19 @@ class Widget {
 			actuallyPainted = true;
 		}
 
-		foreach(child; children)
+		foreach(child; children) {
+			version(win32_widgets)
+				if(child.hwnd) continue;
 			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+		}
+
+		version(win32_widgets)
+		foreach(child; children) {
+			if(child.hwnd){
+				painter = child.simpleWindowWrappingHwnd.draw;
+				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+			}
+		}
 	}
 
 	static class RedrawEvent {}
@@ -2164,7 +2179,11 @@ class ScrollableWidget : Widget {
 			parent = parent.parent;
 		}
 
-		auto painter = parentWindow.win.draw();
+		//version(win32_widgets) {
+			//auto painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw() : parentWindow.win.draw();
+		//} else {
+			auto painter = parentWindow.win.draw();
+		//}
 		painter.originX = x;
 		painter.originY = y;
 
@@ -2178,6 +2197,10 @@ class ScrollableWidget : Widget {
 	override protected void privatePaint(ScreenPainter painter, int lox, int loy, bool force = false) {
 		if(hidden)
 			return;
+
+		//version(win32_widgets)
+			//painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw() : parentWindow.win.draw();
+
 		painter.originX = lox + x;
 		painter.originY = loy + y;
 
