@@ -7264,7 +7264,7 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 			contentType = "application/javascript";
 	}
 
-	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
+	static bool handler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
 		if(details.contentType.indexOf("image/") == 0)
 			cgi.setCache(true);
 		cgi.setResponseContentType(details.contentType);
