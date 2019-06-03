@@ -1480,29 +1480,25 @@ struct Rectangle {
 		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width, upperLeft.y + size.height);
 	}
 
-    ///
-    @property Point upperLeft()
-    {
-        return Point(left, top);
-    }
+	///
+	@property Point upperLeft() {
+		return Point(left, top);
+	}
 
-    ///
-    @property Point upperRight()
-    {
-        return Point(right, top);
-    }
+	///
+	@property Point upperRight() {
+		return Point(right, top);
+	}
 
-    ///
-    @property Point lowerLeft()
-    {
-        return Point(left, bottom);
-    }
+	///
+	@property Point lowerLeft() {
+		return Point(left, bottom);
+	}
 
-    ///
-    @property Point lowerRight()
-    {
-        return Point(right, bottom);
-    }
+	///
+	@property Point lowerRight() {
+		return Point(right, bottom);
+	}
 
 	///
 	@property Size size() {
