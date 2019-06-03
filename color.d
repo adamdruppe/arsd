@@ -1512,7 +1512,7 @@ struct Rectangle {
 
 	/// ditto
 	bool contains(in Point p) {
-		return (p.x >= left && p.y < right && p.y >= top && p.y < bottom);
+		return (left <= p.x && p.x < right && top <= p.y && p.y < bottom);
 	}
 
 	/// Returns true of the two rectangles at any point overlap
