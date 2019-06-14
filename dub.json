@@ -1,9 +1,15 @@
 {
 	"name": "arsd-official",
-	"targetType": "none",
-	"sourcePaths": ["."],
+	"targetType": "library",
+	"importPaths": ["."],
+	"sourceFiles": ["package.d"],
 	"description": "A container of various subpackages that do lots of different things. You should use one of the subpackages instead of the main package in most cases, but you can try the complete package if you get duplicated dependency issues.",
 	"license":"BSL-1.0",
+	"dependencies": {
+		":cgi": "*",
+		":http": "*",
+		":terminal": "*"
+	},
 	"subPackages": [
 		{
 			"name": "simpledisplay",
@@ -87,8 +93,10 @@
 		{
 			"name": "cgi",
 			"description": "web server library with cgi, fastcgi, scgi, and embedded http server support",
-			"targetType": "sourceLibrary",
-			"sourceFiles": ["cgi.d"]
+			"targetType": "library",
+			"sourceFiles": ["cgi.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.cgi=cgi.d"]
 		},
 		{
 			"name": "mysql",
@@ -132,8 +140,10 @@
 			"description": "HTTP client library. Depends on OpenSSL right now on all platforms. On 32 bit Windows, you may need to get OMF openssl lib and dlls (ask me if you can't find it)",
 			"libs": ["crypto", "ssl"],
 			"versions": ["with_openssl"],
-			"targetType": "sourceLibrary",
-			"sourceFiles": ["http2.d"]
+			"targetType": "library",
+			"sourceFiles": ["http2.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.http2=http2.d"]
 		},
 		{
 			"name": "jsvar",
@@ -151,8 +161,10 @@
 		{
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
-			"targetType": "sourceLibrary",
-			"sourceFiles": ["terminal.d"]
+			"targetType": "library",
+			"sourceFiles": ["terminal.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.terminal=terminal.d"]
 		},
 		{
 			"name": "ttf",
