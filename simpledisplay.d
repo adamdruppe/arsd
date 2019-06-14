@@ -4050,6 +4050,7 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 */
 version(with_timer) {
 class Timer {
+// FIXME: needs pause and unpause
 	// FIXME: I might add overloads for ones that take a count of
 	// how many elapsed since last time (on Windows, it will divide
 	// the ticks thing given, on Linux it is just available) and
@@ -14234,6 +14235,11 @@ enum _NET_WM_STATE_TOGGLE = 2;
 
 /// X-specific. Use [SimpleWindow.requestAttention] instead for most casesl
 void demandAttention(SimpleWindow window, bool needs = true) {
+	demandAttention(window.impl.window, needs);
+}
+
+/// ditto
+void demandAttention(Window window, bool needs = true) {
 	auto display = XDisplayConnection.get();
 	auto atom = XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", true);
 	if(atom == None)
@@ -14243,7 +14249,7 @@ void demandAttention(SimpleWindow window, bool needs = true) {
 	XClientMessageEvent xclient;
 
 	xclient.type = EventType.ClientMessage;
-	xclient.window = window.impl.window;
+	xclient.window = window;
 	xclient.message_type = GetAtom!"_NET_WM_STATE"(display);
 	xclient.format = 32;
 	xclient.data.l[0] = needs ? _NET_WM_STATE_ADD : _NET_WM_STATE_REMOVE;

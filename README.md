@@ -200,3 +200,7 @@ There's a few other hidden gems in the files themselves, and so much more on my 
 
 
 (Yes, I'm writing a pair of D games again, finally! First time in a long time, but it is moving along well... and I don't need SDL this time!)
+
+# Special Conventions
+
+idl Starting in 2019, I will be adding version info to individual modules.

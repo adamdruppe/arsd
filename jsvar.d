@@ -601,7 +601,9 @@ struct var {
 
 	// if it is var, we'll just blit it over
 	public var opAssign(T)(T t) if(!is(T == var)) {
-		static if(isFloatingPoint!T) {
+		static if(__traits(compiles, this = t.toArsdJsvar())) {
+			this = t.toArsdJsvar();
+		} else static if(isFloatingPoint!T) {
 			this._type = Type.Floating;
 			this._payload._floating = t;
 		} else static if(isIntegral!T) {
@@ -655,9 +657,15 @@ struct var {
 						// skipping these because the delegate we get isn't going to work anyway; the object may be dead and certainly won't be updated
 						//this[member] = &__traits(getMember, proxyObject, member);
 
-						//but for simple toString, I'll allow it. or maybe not it doesn't work right.
-						//static if(member == "toString" && is(typeof(&__traits(getMember, t, member)) == string delegate()))
-							//this[member] = &__traits(getMember, t, member);
+						// but for simple toString, I'll allow it by recreating the object on demand
+						// and then calling the original function. (I might be able to do that for more but
+						// idk, just doing simple thing first)
+						static if(member == "toString" && is(typeof(&__traits(getMember, t, member)) == string delegate())) {
+							this[member]._function =  delegate(var _this, var[] args) {
+								auto val = _this.get!T;
+								return var(val.toString());
+							};
+						}
 					} else
 						this[member] = __traits(getMember, t, member);
 				}

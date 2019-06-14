@@ -363,6 +363,7 @@ struct JoystickUpdate {
 	}
 
 	/// Note: UP is negative!
+	/// Value will actually be -16 to 16 ish.
 	short axisPosition(Axis axis, short digitalFallbackValue = short.max) {
 		return axisPositionHelper(axis, &current, digitalFallbackValue);
 	}
@@ -402,9 +403,9 @@ struct JoystickUpdate {
 	}
 
 	static short normalizeAxis(short value) {
-		if(value > -8000 && value < 8000)
+		if(value > -1600 && value < 1600)
 			return 0; // the deadzone gives too much useless junk
-		return value;
+		return cast(short) (value >>> 11);
 	}
 
 	bool buttonIsPressedHelper(Button button, JoystickState* what) {

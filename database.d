@@ -162,6 +162,68 @@ class DatabaseException : Exception {
 
 abstract class SqlBuilder { }
 
+class InsertBuilder : SqlBuilder {
+	private string table;
+	private string[] fields;
+	private string[] fieldsSetSql;
+	private Variant[] values;
+
+	///
+	void setTable(string table) {
+		this.table = table;
+	}
+
+	/// same as adding the arr as values one by one. assumes DB column name matches AA key.
+	void addVariablesFromAssociativeArray(in string[string] arr, string[] names...) {
+		foreach(name; names) {
+			fields ~= name;
+			if(name in arr) {
+				fieldsSetSql ~= "?";
+				values ~= Variant(arr[name]);
+			} else {
+				fieldsSetSql ~= "null";
+			}
+		}
+	}
+
+	///
+	void addVariable(T)(string name, T value) {
+		fields ~= name;
+		fieldsSetSql ~= "?";
+		values ~= Variant(value);
+	}
+
+	/// if you use a placeholder, be sure to [addValueForHandWrittenPlaceholder] immediately
+	void addFieldWithSql(string name, string sql) {
+		fields ~= name;
+		fieldsSetSql ~= sql;
+	}
+
+	/// for addFieldWithSql that includes a placeholder
+	void addValueForHandWrittenPlaceholder(T)(T value) {
+		values ~= Variant(value);
+	}
+
+	/// executes the query
+	auto execute(Database db, string supplementalSql = null) {
+		return db.queryImpl(this.toSql() ~ supplementalSql, values);
+	}
+
+	string toSql() {
+		string sql = "INSERT INTO\n";
+		sql ~= "\t" ~ table ~ " (\n";
+		foreach(idx, field; fields) {
+			sql ~= "\t\t" ~ field ~ ((idx != fields.length - 1) ? ",\n" : "\n");
+		}
+		sql ~= "\t) VALUES (\n";
+		foreach(idx, field; fieldsSetSql) {
+			sql ~= "\t\t" ~ field ~ ((idx != fieldsSetSql.length - 1) ? ",\n" : "\n");
+		}
+		sql ~= "\t)\n";
+		return sql;
+	}
+}
+
 /// WARNING: this is as susceptible to SQL injections as you would be writing it out by hand
 class SelectBuilder : SqlBuilder {
 	string[] fields;
