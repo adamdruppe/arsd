@@ -96,7 +96,26 @@
 			"targetType": "library",
 			"sourceFiles": ["cgi.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.cgi=cgi.d"]
+			"dflags": ["-mv=arsd.cgi=cgi.d"],
+			"configurations": [
+				{
+					"name": "embedded_httpd",
+					"versions": ["embedded_httpd"]
+				},
+				{
+					"name": "cgi",
+					"versions": [""]
+				},
+				{
+					"name": "fastcgi",
+					"versions": ["fastcgi"],
+					"libs": ["fcgi"]
+				},
+				{
+					"name": "scgi",
+					"versions": ["scgi"]
+				}
+			]
 		},
 		{
 			"name": "mysql",
