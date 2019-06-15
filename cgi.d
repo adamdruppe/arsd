@@ -3770,11 +3770,15 @@ class ListeningConnectionManager {
 				}
 				semaphore.notify();
 
+				bool hasAnyRunning;
 				foreach(thread; threads) {
 					if(!thread.isRunning) {
 						thread.join();
-					}
+					} else hasAnyRunning = true;
 				}
+
+				if(!hasAnyRunning)
+					break;
 			}
 
 			// FIXME: i typically stop this with ctrl+c which never
@@ -3876,7 +3880,7 @@ class ConnectionThread : Thread {
 			}
 			try
 				dg(socket);
-			catch(Exception e)
+			catch(Throwable e)
 				socket.close();
 		}
 	}
@@ -5950,6 +5954,8 @@ private string beautify(string name, char space = ' ', bool allLowerCase = false
 			}
 
 			lastWasCap = true;
+		} else {
+			lastWasCap = false;
 		}
 
 		if(shouldSpace) {
@@ -6260,9 +6266,11 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 	---
 	class MyPresenter : WebPresenter!(MyPresenter) {
+		@Override
 		void presentSuccessfulReturnAsHtml(T : CustomType)(Cgi cgi, T ret) {
 			// present the CustomType
 		}
+		@Override
 		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret) {
 			// handle everything else via the super class, which will call
 			// back to your class when appropriate
@@ -6273,6 +6281,11 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 +/
 class WebPresenter(CRTP) {
+
+	/// A UDA version of the built-in `override`, to be used for static template polymorphism
+	/// If you override a plain method, use `override`. If a template, use `@Override`.
+	enum Override;
+
 	string script() {
 		return `
 		`;
@@ -6290,7 +6303,8 @@ class WebPresenter(CRTP) {
 	}
 
 	string genericFormStyling() {
-		return `
+		return
+q"css
 			table.automatic-data-display {
 				border-collapse: collapse;
 				border: solid 1px var(--mild-border);
@@ -6332,28 +6346,29 @@ class WebPresenter(CRTP) {
 			.add-array-button {
 
 			}
-		`;
+css";
 	}
 
 	string genericSiteStyling() {
-		return `
+		return
+q"css
 			* { box-sizing: border-box; }
 			html, body { margin: 0px; }
 			body {
 				font-family: sans-serif;
 			}
-			#header {
+			header {
 				background: var(--accent-color);
 				height: 64px;
 			}
-			#footer {
+			footer {
 				background: var(--accent-color);
 				height: 64px;
 			}
-			#main-site {
+			#site-container {
 				display: flex;
 			}
-			#container {
+			main {
 				flex: 1 1 auto;
 				order: 2;
 				min-height: calc(100vh - 64px - 64px);
@@ -6365,29 +6380,31 @@ class WebPresenter(CRTP) {
 				order: 1;
 				background: var(--sidebar-color);
 			}
-		`;
+css";
 	}
 
 	import arsd.dom;
 	Element htmlContainer() {
-		auto document = new Document(`<!DOCTYPE html>
+		auto document = new Document(q"html
+<!DOCTYPE html>
 <html>
 <head>
 	<title>D Application</title>
 	<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-	<div id="header"></div>
-	<div id="main-site">
-		<div id="container"></div>
+	<header></header>
+	<div id="site-container">
+		<main></main>
 		<div id="sidebar"></div>
 	</div>
-	<div id="footer"></div>
+	<footer></footer>
 	<script src="script.js"></script>
 </body>
-</html>`, true, true);
+</html>
+html", true, true);
 
-		return document.requireElementById("container");
+		return document.requireSelector("main");
 	}
 
 	/// typeof(null) (which is also used to represent functions returning `void`) do nothing
@@ -6452,10 +6469,9 @@ class WebPresenter(CRTP) {
 	}
 
 	/++
-		returns an arsd.dom.Element
+		Returns an element for a particular type
 	+/
-	auto elementFor(T)(string displayName, string name) {
-		import arsd.dom;
+	Element elementFor(T)(string displayName, string name) {
 		import std.traits;
 
 		auto div = Element.make("div");
@@ -6498,6 +6514,7 @@ class WebPresenter(CRTP) {
 			}
 			auto i = lbl.addChild("input", name);
 			i.attrs.type = "checkbox";
+			i.attrs.value = "true";
 			i.attrs.name = name;
 		} else static if(is(T == K[], K)) {
 			auto templ = div.addChild("template");
@@ -6522,9 +6539,8 @@ class WebPresenter(CRTP) {
 		return div;
 	}
 
-	/// actually returns an arsd.dom.Form
-	auto createAutomaticFormForFunction(alias method, T)(T dg) {
-		import arsd.dom;
+	/// creates a form for gathering the function's arguments
+	Form createAutomaticFormForFunction(alias method, T)(T dg) {
 
 		auto form = cast(Form) Element.make("form");
 
@@ -6555,10 +6571,8 @@ class WebPresenter(CRTP) {
 		return form;
 	}
 
-	/// actually returns an arsd.dom.Form
-	auto createAutomaticFormForObject(T)(T obj) {
-		import arsd.dom;
-
+	/// creates a form for gathering object members (for the REST object thing right now)
+	Form createAutomaticFormForObject(T)(T obj) {
 		auto form = cast(Form) Element.make("form");
 
 		form.addClass("automatic-form");
@@ -6588,8 +6602,7 @@ class WebPresenter(CRTP) {
 	}
 
 	///
-	auto formatReturnValueAsHtml(T)(T t) {
-		import arsd.dom;
+	Element formatReturnValueAsHtml(T)(T t) {
 		import std.traits;
 
 		static if(is(T == typeof(null))) {
@@ -6826,11 +6839,23 @@ auto serveApi(T)(string urlPrefix) {
 		auto obj = new T();
 		obj.initialize(cgi);
 
-		switch(cgi.pathInfo[urlPrefix.length .. $]) {
-			static foreach(methodName; __traits(derivedMembers, T)){{
-			static if(is(typeof(__traits(getMember, T, methodName)) P == __parameters))
+		/+
+			Overload rules:
+				Any unique combination of HTTP verb and url path can be dispatched to function overloads
+				statically.
+
+				Moreover, some args vs no args can be overloaded dynamically.
+		+/
+
+		string hack = to!string(cgi.requestMethod) ~ " " ~ cgi.pathInfo[urlPrefix.length .. $];
+
+		switch(hack) {
+			static foreach(methodName; __traits(derivedMembers, T))
+			static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
+			static if(is(typeof(overload) P == __parameters))
 			{
-				case urlNameForMethod!(__traits(getMember, T, methodName))(urlify(methodName)):
+				case urlNameForMethod!(overload)(urlify(methodName)):
+				/+
 				int zeroArgOverload = -1;
 				int overloadCount = cast(int) __traits(getOverloads, T, methodName).length;
 				bool calledWithZeroArgs = true;
@@ -6902,6 +6927,7 @@ auto serveApi(T)(string urlPrefix) {
 						so the method UDAs are irrelevant.
 					+/
 					if(callFunction)
+				+/
 					switch(cgi.request("format", "html")) {
 						case "html":
 							try {
@@ -6934,7 +6960,7 @@ auto serveApi(T)(string urlPrefix) {
 							cgi.setResponseStatus("406 Not Acceptable"); // not exactly but sort of.
 						return true;
 					}
-				}}
+				//}}
 				cgi.header("Accept: POST"); // FIXME list the real thing
 				cgi.setResponseStatus("405 Method Not Allowed"); // again, not exactly, but sort of. no overload matched our args, almost certainly due to http verb filtering.
 				return true;
@@ -6960,11 +6986,25 @@ auto serveApi(T)(string urlPrefix) {
 }
 
 string urlNameForMethod(alias method)(string def) {
+	auto verb = Cgi.RequestMethod.GET;
+	bool foundVerb = false;
+	bool foundNoun = false;
 	static foreach(attr; __traits(getAttributes, method)) {
-		static if(is(typeof(attr) == UrlName))
-			return attr.name;
+		static if(is(typeof(attr) == Cgi.RequestMethod)) {
+			verb = attr;
+			if(foundVerb)
+				assert(0, "Multiple http verbs on one function is not currently supported");
+			foundVerb = true;
+		}
+		static if(is(typeof(attr) == UrlName)) {
+			if(foundNoun)
+				assert(0, "Multiple url names on one function is not currently supported");
+			foundNoun = true;
+			def = attr.name;
+		}
 	}
-	return def;
+
+	return to!string(verb) ~ " " ~ def;
 }
 
 
