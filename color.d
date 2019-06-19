@@ -1486,6 +1486,16 @@ struct Rectangle {
 	}
 
 	///
+	@property Point upperRight() {
+		return Point(right, top);
+	}
+
+	///
+	@property Point lowerLeft() {
+		return Point(left, bottom);
+	}
+
+	///
 	@property Point lowerRight() {
 		return Point(right, bottom);
 	}
@@ -1512,7 +1522,7 @@ struct Rectangle {
 
 	/// ditto
 	bool contains(in Point p) {
-		return (p.x >= left && p.y < right && p.y >= top && p.y < bottom);
+		return (p.x >= left && p.x < right && p.y >= top && p.y < bottom);
 	}
 
 	/// Returns true of the two rectangles at any point overlap

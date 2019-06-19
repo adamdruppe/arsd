@@ -3148,6 +3148,8 @@ class Element {
 	}
 
 	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
+		if(indentWith is null)
+			return null;
 		string s;
 
 		if(insertComments) s ~= "<!--";
@@ -3238,7 +3240,7 @@ class Element {
 		// just keep them on the same line
 		if(tagName.isInArray(inlineElements) || allAreInlineHtml(children)) {
 			foreach(child; children) {
-				s ~= child.toString();
+				s ~= child.toString();//toPrettyString(false, 0, null);
 			}
 		} else {
 			foreach(child; children) {
@@ -3263,6 +3265,7 @@ class Element {
 	+/
 
 	/// This is the actual implementation used by toString. You can pass it a preallocated buffer to save some time.
+	/// Note: the ordering of attributes in the string is undefined.
 	/// Returns the string it creates.
 	string writeToAppender(Appender!string where = appender!string()) const {
 		assert(tagName !is null);
@@ -3274,8 +3277,10 @@ class Element {
 		where.put("<");
 		where.put(tagName);
 
-		foreach(n, v ; attributes) {
-			assert(n !is null);
+		import std.algorithm : sort;
+		auto keys = sort(attributes.keys);
+		foreach(n; keys) {
+			auto v = attributes[n]; // I am sorting these for convenience with another project. order of AAs is undefined, so I'm allowed to do it.... and it is still undefined, I might change it back later.
 			//assert(v !is null);
 			where.put(" ");
 			where.put(n);
@@ -3861,11 +3866,11 @@ class DocumentFragment : Element {
 
 /// Given text, encode all html entities on it - &, <, >, and ". This function also
 /// encodes all 8 bit characters as entities, thus ensuring the resultant text will work
-/// even if your charset isn't set right.
+/// even if your charset isn't set right. You can suppress with by setting encodeNonAscii = false
 ///
 /// The output parameter can be given to append to an existing buffer. You don't have to
 /// pass one; regardless, the return value will be usable for you, with just the data encoded.
-string htmlEntitiesEncode(string data, Appender!string output = appender!string()) {
+string htmlEntitiesEncode(string data, Appender!string output = appender!string(), bool encodeNonAscii = true) {
 	// if there's no entities, we can save a lot of time by not bothering with the
 	// decoding loop. This check cuts the net toString time by better than half in my test.
 	// let me know if it made your tests worse though, since if you use an entity in just about
@@ -3875,7 +3880,7 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 	bool shortcut = true;
 	foreach(char c; data) {
 		// non ascii chars are always higher than 127 in utf8; we'd better go to the full decoder if we see it.
-		if(c == '<' || c == '>' || c == '"' || c == '&' || cast(uint) c > 127) {
+		if(c == '<' || c == '>' || c == '"' || c == '&' || (encodeNonAscii && cast(uint) c > 127)) {
 			shortcut = false; // there's actual work to be done
 			break;
 		}
@@ -3904,7 +3909,7 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 			// FIXME: should I encode apostrophes too? as &#39;... I could also do space but if your html is so bad that it doesn't
 			// quote attributes at all, maybe you deserve the xss. Encoding spaces will make everything really ugly so meh
 			// idk about apostrophes though. Might be worth it, might not.
-		else if (d < 128 && d > 0)
+		else if (!encodeNonAscii || (d < 128 && d > 0))
 			output.put(d);
 		else
 			output.put("&#" ~ std.conv.to!string(cast(int) d) ~ ";");
@@ -4695,7 +4700,7 @@ class Form : Element {
 					switch(type) {
 						case "checkbox":
 						case "radio":
-							if(value.length)
+							if(value.length && value != "false")
 								e.setAttribute("checked", "checked");
 							else
 								e.removeAttribute("checked");

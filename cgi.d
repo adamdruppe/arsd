@@ -1,6 +1,8 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
 
+// FIXME: cgi per-request arena allocator
+
 // FIXME: I might make a cgi proxy class which can change things; the underlying one is still immutable
 // but the later one can edit and simplify the api. You'd have to use the subclass tho!
 
@@ -620,9 +622,6 @@ class Cgi {
 		scriptFileName = args[0];
 
 		environmentVariables = cast(const) environment.toAA;
-
-		string[] allPostNamesInOrder;
-		string[] allPostValuesInOrder;
 
 		foreach(arg; args[1 .. $]) {
 			if(arg.startsWith("--")) {
@@ -3757,8 +3756,13 @@ class ListeningConnectionManager {
 					// certainly does for small requests, and I think it does for larger ones too
 					sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
 				}
-				while(queueLength >= queue.length)
+				// wait until a slot opens up
+				//int waited = 0;
+				while(queueLength >= queue.length) {
 					Thread.sleep(1.msecs);
+					//waited ++;
+				}
+				//if(waited) {import std.stdio; writeln(waited);}
 				synchronized(this) {
 					queue[nextIndexBack] = sn;
 					nextIndexBack++;
@@ -3766,11 +3770,15 @@ class ListeningConnectionManager {
 				}
 				semaphore.notify();
 
+				bool hasAnyRunning;
 				foreach(thread; threads) {
 					if(!thread.isRunning) {
 						thread.join();
-					}
+					} else hasAnyRunning = true;
 				}
+
+				if(!hasAnyRunning)
+					break;
 			}
 
 			// FIXME: i typically stop this with ctrl+c which never
@@ -3815,6 +3823,7 @@ class ListeningConnectionManager {
 			tcp = true;
 		}
 
+		Thread.getThis.priority = Thread.PRIORITY_MAX;
 		listener.listen(128);
 	}
 
@@ -3871,7 +3880,7 @@ class ConnectionThread : Thread {
 			}
 			try
 				dg(socket);
-			catch(Exception e)
+			catch(Throwable e)
 				socket.close();
 		}
 	}
@@ -5069,7 +5078,7 @@ class Session(Data) {
 		cgi.setCookie(
 			"sessionId", sessionId,
 			0 /* expiration */,
-			null /* path */,
+			"/" /* path */,
 			null /* domain */,
 			true /* http only */,
 			cgi.https /* if the session is started on https, keep it there, otherwise, be flexible */);
@@ -5913,24 +5922,21 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	switch to choose if you want to override.
 */
 
-struct DispatcherDefinition(alias dispatchHandler) {// if(is(typeof(dispatchHandler("str", Cgi.init, void) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+struct DispatcherDefinition(alias dispatchHandler, DispatcherDetails = typeof(null)) {// if(is(typeof(dispatchHandler("str", Cgi.init, void) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
 	alias handler = dispatchHandler;
 	string urlPrefix;
 	bool rejectFurther;
-	DispatcherDetails details;
-}
-
-// tbh I am really unhappy with this part
-struct DispatcherDetails {
-	string filename;
-	string contentType;
+	immutable(DispatcherDetails) details;
 }
 
 private string urlify(string name) {
-	return name;
+	return beautify(name, '-', true);
 }
 
-private string beautify(string name) {
+private string beautify(string name, char space = ' ', bool allLowerCase = false) {
+	if(name == "id")
+		return allLowerCase ? name : "ID";
+
 	char[160] buffer;
 	int bufferIndex = 0;
 	bool shouldCap = true;
@@ -5939,7 +5945,7 @@ private string beautify(string name) {
 	foreach(idx, char ch; name) {
 		if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
 
-		if(ch >= 'A' && ch <= 'Z') {
+		if((ch >= 'A' && ch <= 'Z') || ch == '_') {
 			if(lastWasCap) {
 				// two caps in a row, don't change. Prolly acronym.
 			} else {
@@ -5948,207 +5954,25 @@ private string beautify(string name) {
 			}
 
 			lastWasCap = true;
+		} else {
+			lastWasCap = false;
 		}
 
 		if(shouldSpace) {
-			buffer[bufferIndex++] = ' ';
+			buffer[bufferIndex++] = space;
 			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+			shouldSpace = false;
 		}
 		if(shouldCap) {
 			if(ch >= 'a' && ch <= 'z')
 				ch -= 32;
 			shouldCap = false;
 		}
+		if(allLowerCase && ch >= 'A' && ch <= 'Z')
+			ch += 32;
 		buffer[bufferIndex++] = ch;
 	}
 	return buffer[0 .. bufferIndex].idup;
-}
-
-/+
-	Argument conversions: for the most part, it is to!Thing(string).
-
-	But arrays and structs are a bit different. Arrays come from the cgi array. Thus
-	they are passed
-
-	arr=foo&arr=bar <-- notice the same name.
-
-	Structs are first declared with an empty thing, then have their members set individually,
-	with dot notation. The members are not required, just the initial declaration.
-
-	struct Foo {
-		int a;
-		string b;
-	}
-	void test(Foo foo){}
-
-	foo&foo.a=5&foo.b=str <-- the first foo declares the arg, the others set the members
-
-	Arrays of structs use this declaration.
-
-	void test(Foo[] foo) {}
-
-	foo&foo.a=5&foo.b=bar&foo&foo.a=9
-
-	You can use a hidden input field in HTML forms to achieve this. The value of the naked name
-	declaration is ignored.
-
-	Mind that order matters! The declaration MUST come first in the string.
-
-	Arrays of struct members follow this rule recursively.
-
-	struct Foo {
-		int[] a;
-	}
-
-	foo&foo.a=1&foo.a=2&foo&foo.a=1
-
-
-	Associative arrays are formatted with brackets, after a declaration, like structs:
-
-	foo&foo[key]=value&foo[other_key]=value
-
-
-	Note: for maximum compatibility with outside code, keep your types simple. Some libraries
-	do not support the strict ordering requirements to work with these struct protocols.
-
-	FIXME: also perhaps accept application/json to better work with outside trash.
-
-
-	Return values are also auto-formatted according to user-requested type:
-		for json, it loops over and converts.
-		for html, basic types are strings. Arrays are <ol>. Structs are <dl>. Arrays of structs are tables!
-+/
-
-// returns an arsd.dom.Element
-static auto elementFor(T)(string displayName, string name) {
-	import arsd.dom;
-	import std.traits;
-
-	auto div = Element.make("div");
-	div.addClass("form-field");
-
-	static if(is(T == struct)) {
-		if(displayName !is null)
-			div.addChild("span", displayName, "label-text");
-		auto fieldset = div.addChild("fieldset");
-		fieldset.addChild("legend", beautify(T.stringof)); // FIXME
-		fieldset.addChild("input", name);
-		static foreach(idx, memberName; __traits(allMembers, T))
-		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-			fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
-		}
-	} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
-		Element lbl;
-		if(displayName !is null) {
-			lbl = div.addChild("label");
-			lbl.addChild("span", displayName, "label-text");
-			lbl.appendText(" ");
-		} else {
-			lbl = div;
-		}
-		auto i = lbl.addChild("input", name);
-		i.attrs.name = name;
-		static if(isSomeString!T)
-			i.attrs.type = "text";
-		else
-			i.attrs.type = "number";
-		i.attrs.value = to!string(T.init);
-	} else static if(is(T == bool)) {
-		Element lbl;
-		if(displayName !is null) {
-			lbl = div.addChild("label");
-			lbl.addChild("span", displayName, "label-text");
-			lbl.appendText(" ");
-		} else {
-			lbl = div;
-		}
-		auto i = lbl.addChild("input", name);
-		i.attrs.type = "checkbox";
-		i.attrs.name = name;
-	} else static if(is(T == K[], K)) {
-		auto templ = div.addChild("template");
-		templ.appendChild(elementFor!(K)(null, name));
-		if(displayName !is null)
-			div.addChild("span", displayName, "label-text");
-		auto btn = div.addChild("button");
-		btn.addClass("add-array-button");
-		btn.attrs.type = "button";
-		btn.innerText = "Add";
-		btn.attrs.onclick = q{
-			var a = document.importNode(this.parentNode.firstChild.content, true);
-			this.parentNode.insertBefore(a, this);
-		};
-	} else static if(is(T == V[K], K, V)) {
-		div.innerText = "assoc array not implemented for automatic form at this time";
-	} else {
-		static assert(0, "unsupported type for cgi call " ~ T.stringof);
-	}
-
-
-	return div;
-}
-
-// actually returns an arsd.dom.Form
-auto createAutomaticFormForFunction(alias method, T)(T dg) {
-	import arsd.dom;
-
-	auto form = cast(Form) Element.make("form");
-
-	form.addClass("automatic-form");
-
-	form.addChild("h3", beautify(__traits(identifier, method)));
-
-	import std.traits;
-
-	//Parameters!method params;
-	//alias idents = ParameterIdentifierTuple!method;
-	//alias defaults = ParameterDefaults!method;
-
-	static if(is(typeof(method) P == __parameters))
-	static foreach(idx, _; P) {{
-		alias param = P[idx .. idx + 1];
-		string displayName = beautify(__traits(identifier, param));
-		static foreach(attr; __traits(getAttributes, param))
-			static if(is(typeof(attr) == DisplayName))
-				displayName = attr.name;
-		form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
-	}}
-
-	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
-
-	return form;
-}
-
-// actually returns an arsd.dom.Form
-auto createAutomaticFormForObject(T)(T obj) {
-	import arsd.dom;
-
-	auto form = cast(Form) Element.make("form");
-
-	form.addClass("automatic-form");
-
-	form.addChild("h3", beautify(__traits(identifier, T)));
-
-	import std.traits;
-
-	//Parameters!method params;
-	//alias idents = ParameterIdentifierTuple!method;
-	//alias defaults = ParameterDefaults!method;
-
-	static foreach(idx, memberName; __traits(derivedMembers, T)) {{
-	static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
-		string displayName = beautify(memberName);
-		static foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
-			static if(is(typeof(attr) == DisplayName))
-				displayName = attr.name;
-		form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
-
-		form.setValue(memberName, to!string(__traits(getMember, obj, memberName)));
-	}}}
-
-	form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
-
-	return form;
 }
 
 /*
@@ -6189,6 +6013,7 @@ class MissingArgumentException : Exception {
 	}
 }
 
+// it only looks at query params for GET requests, the rest must be in the body for a function argument.
 auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 	// FIXME: any array of structs should also be settable or gettable from csv as well.
@@ -6206,20 +6031,24 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 	// first, check for missing arguments and initialize to defaults if necessary
 	static foreach(idx, param; params) {{
-		auto ident = idents[idx];
-		if(cgi.requestMethod == Cgi.RequestMethod.POST) {
-			if(ident !in cgi.post) {
-				static if(is(defaults[idx] == void))
-					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
-				else
-					params[idx] = defaults[idx];
-			}
+		static if(is(typeof(param) : Cgi)) {
+			params[idx] = cgi;
 		} else {
-			if(ident !in cgi.get) {
-				static if(is(defaults[idx] == void))
-					throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
-				else
-					params[idx] = defaults[idx];
+			auto ident = idents[idx];
+			if(cgi.requestMethod == Cgi.RequestMethod.GET) {
+				if(ident !in cgi.get) {
+					static if(is(defaults[idx] == void))
+						throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+					else
+						params[idx] = defaults[idx];
+				}
+			} else {
+				if(ident !in cgi.post) {
+					static if(is(defaults[idx] == void))
+						throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+					else
+						params[idx] = defaults[idx];
+				}
 			}
 		}
 	}}
@@ -6330,21 +6159,25 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 		sw: switch(paramName) {
 			static foreach(idx, param; params) {
-				case idents[idx]:
-					setVariable(name, paramName, &params[idx], value);
-				break sw;
+				static if(is(typeof(param) : Cgi)) {
+					// cannot be set from the outside
+				} else {
+					case idents[idx]:
+						setVariable(name, paramName, &params[idx], value);
+					break sw;
+				}
 			}
 			default:
 				// ignore; not relevant argument
 		}
 	}
 
-	if(cgi.requestMethod == Cgi.RequestMethod.POST) {
-		names = cgi.allPostNamesInOrder;
-		values = cgi.allPostValuesInOrder;
-	} else {
+	if(cgi.requestMethod == Cgi.RequestMethod.GET) {
 		names = cgi.allGetNamesInOrder;
 		values = cgi.allGetValuesInOrder;
+	} else {
+		names = cgi.allPostNamesInOrder;
+		values = cgi.allPostValuesInOrder;
 	}
 
 	foreach(idx, name; names) {
@@ -6364,94 +6197,60 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	return ret;
 }
 
-auto formatReturnValueAsHtml(T)(T t) {
-	import arsd.dom;
-	import std.traits;
+/+
+	Argument conversions: for the most part, it is to!Thing(string).
 
-	static if(is(T == typeof(null))) {
-		return Element.make("span");
-	} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
-		return Element.make("span", to!string(t), "automatic-data-display");
-	} else static if(is(T == V[K], K, V)) {
-		auto dl = Element.make("dl");
-		dl.addClass("automatic-data-display");
-		foreach(k, v; t) {
-			dl.addChild("dt", to!string(k));
-			dl.addChild("dd", formatReturnValueAsHtml(v));
-		}
-		return dl;
-	} else static if(is(T == struct)) {
-		auto dl = Element.make("dl");
-		dl.addClass("automatic-data-display");
+	But arrays and structs are a bit different. Arrays come from the cgi array. Thus
+	they are passed
 
-		static foreach(idx, memberName; __traits(allMembers, T))
-		static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-			dl.addChild("dt", memberName);
-			dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
-		}
+	arr=foo&arr=bar <-- notice the same name.
 
-		return dl;
-	} else static if(is(T == bool)) {
-		return Element.make("span", t ? "true" : "false", "automatic-data-display");
-	} else static if(is(T == E[], E)) {
-		static if(is(E : RestObject!Proxy, Proxy)) {
-			// treat RestObject similar to struct
-			auto table = cast(Table) Element.make("table");
-			table.addClass("automatic-data-display");
-			string[] names;
-			static foreach(idx, memberName; __traits(derivedMembers, E))
-			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
-				names ~= beautify(memberName);
-			}
-			table.appendHeaderRow(names);
+	Structs are first declared with an empty thing, then have their members set individually,
+	with dot notation. The members are not required, just the initial declaration.
 
-			foreach(l; t) {
-				auto tr = table.appendRow();
-				static foreach(idx, memberName; __traits(derivedMembers, E))
-				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
-					static if(memberName == "id") {
-						string val = to!string(__traits(getMember, l, memberName));
-						tr.addChild("td", Element.make("a", val, E.stringof.toLower ~ "s/" ~ val)); // FIXME
-					} else {
-						tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
-					}
-				}
-			}
+	struct Foo {
+		int a;
+		string b;
+	}
+	void test(Foo foo){}
 
-			return table;
-		} else static if(is(E == struct)) {
-			// an array of structs is kinda special in that I like
-			// having those formatted as tables.
-			auto table = cast(Table) Element.make("table");
-			table.addClass("automatic-data-display");
-			string[] names;
-			static foreach(idx, memberName; __traits(allMembers, E))
-			static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
-				names ~= beautify(memberName);
-			}
-			table.appendHeaderRow(names);
+	foo&foo.a=5&foo.b=str <-- the first foo declares the arg, the others set the members
 
-			foreach(l; t) {
-				auto tr = table.appendRow();
-				static foreach(idx, memberName; __traits(allMembers, E))
-				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
-					tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
-				}
-			}
+	Arrays of structs use this declaration.
 
-			return table;
-		} else {
-			// otherwise, I will just make a list.
-			auto ol = Element.make("ol");
-			ol.addClass("automatic-data-display");
-			foreach(e; t)
-				ol.addChild("li", formatReturnValueAsHtml(e));
-			return ol;
-		}
-	} else static assert(0, "bad return value for cgi call " ~ T.stringof);
+	void test(Foo[] foo) {}
 
-	assert(0);
-}
+	foo&foo.a=5&foo.b=bar&foo&foo.a=9
+
+	You can use a hidden input field in HTML forms to achieve this. The value of the naked name
+	declaration is ignored.
+
+	Mind that order matters! The declaration MUST come first in the string.
+
+	Arrays of struct members follow this rule recursively.
+
+	struct Foo {
+		int[] a;
+	}
+
+	foo&foo.a=1&foo.a=2&foo&foo.a=1
+
+
+	Associative arrays are formatted with brackets, after a declaration, like structs:
+
+	foo&foo[key]=value&foo[other_key]=value
+
+
+	Note: for maximum compatibility with outside code, keep your types simple. Some libraries
+	do not support the strict ordering requirements to work with these struct protocols.
+
+	FIXME: also perhaps accept application/json to better work with outside trash.
+
+
+	Return values are also auto-formatted according to user-requested type:
+		for json, it loops over and converts.
+		for html, basic types are strings. Arrays are <ol>. Structs are <dl>. Arrays of structs are tables!
++/
 
 /++
 	A web presenter is responsible for rendering things to HTML to be usable
@@ -6459,9 +6258,34 @@ auto formatReturnValueAsHtml(T)(T t) {
 
 	They are passed as template arguments to the base classes of [WebObject]
 
-	FIXME
+	Responsible for displaying stuff as HTML. You can put this into your own aggregate
+	and override it. Use forwarding and specialization to customize it.
+
+	When you inherit from it, pass your own class as the CRTP argument. This lets the base
+	class templates and your overridden templates work with each other.
+
+	---
+	class MyPresenter : WebPresenter!(MyPresenter) {
+		@Override
+		void presentSuccessfulReturnAsHtml(T : CustomType)(Cgi cgi, T ret) {
+			// present the CustomType
+		}
+		@Override
+		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret) {
+			// handle everything else via the super class, which will call
+			// back to your class when appropriate
+			super.presentSuccessfulReturnAsHtml(cgi, ret);
+		}
+	}
+	---
+
 +/
-class WebPresenter() {
+class WebPresenter(CRTP) {
+
+	/// A UDA version of the built-in `override`, to be used for static template polymorphism
+	/// If you override a plain method, use `override`. If a template, use `@Override`.
+	enum Override;
+
 	string script() {
 		return `
 		`;
@@ -6479,7 +6303,8 @@ class WebPresenter() {
 	}
 
 	string genericFormStyling() {
-		return `
+		return
+q"css
 			table.automatic-data-display {
 				border-collapse: collapse;
 				border: solid 1px var(--mild-border);
@@ -6521,28 +6346,29 @@ class WebPresenter() {
 			.add-array-button {
 
 			}
-		`;
+css";
 	}
 
 	string genericSiteStyling() {
-		return `
+		return
+q"css
 			* { box-sizing: border-box; }
 			html, body { margin: 0px; }
 			body {
 				font-family: sans-serif;
 			}
-			#header {
+			header {
 				background: var(--accent-color);
 				height: 64px;
 			}
-			#footer {
+			footer {
 				background: var(--accent-color);
 				height: 64px;
 			}
-			#main-site {
+			#site-container {
 				display: flex;
 			}
-			#container {
+			main {
 				flex: 1 1 auto;
 				order: 2;
 				min-height: calc(100vh - 64px - 64px);
@@ -6554,51 +6380,453 @@ class WebPresenter() {
 				order: 1;
 				background: var(--sidebar-color);
 			}
-		`;
+css";
 	}
 
 	import arsd.dom;
 	Element htmlContainer() {
-		auto document = new Document(`<!DOCTYPE html>
+		auto document = new Document(q"html
+<!DOCTYPE html>
 <html>
 <head>
 	<title>D Application</title>
 	<link rel="stylesheet" href="style.css" />
 </head>
 <body>
-	<div id="header"></div>
-	<div id="main-site">
-		<div id="container"></div>
+	<header></header>
+	<div id="site-container">
+		<main></main>
 		<div id="sidebar"></div>
 	</div>
-	<div id="footer"></div>
+	<footer></footer>
 	<script src="script.js"></script>
 </body>
-</html>`, true, true);
+</html>
+html", true, true);
 
-		return document.requireElementById("container");
+		return document.requireSelector("main");
 	}
+
+	/// typeof(null) (which is also used to represent functions returning `void`) do nothing
+	/// in the default presenter - allowing the function to have full low-level control over the
+	/// response.
+	void presentSuccessfulReturnAsHtml(T : typeof(null))(Cgi cgi, T ret) {
+		// nothing intentionally!
+	}
+
+	/// Redirections are forwarded to [Cgi.setResponseLocation]
+	void presentSuccessfulReturnAsHtml(T : Redirection)(Cgi cgi, T ret) {
+		cgi.setResponseLocation(ret.to, true, getHttpCodeText(ret.code));
+	}
+
+	/// Multiple responses deconstruct the algebraic type and forward to the appropriate handler at runtime
+	void presentSuccessfulReturnAsHtml(T : MultipleResponses!Types, Types...)(Cgi cgi, T ret) {
+		bool outputted = false;
+		static foreach(index, type; Types) {
+			if(ret.contains == index) {
+				assert(!outputted);
+				outputted = true;
+				(cast(CRTP) this).presentSuccessfulReturnAsHtml(cgi, ret.payload[index]);
+			}
+		}
+		if(!outputted)
+			assert(0);
+	}
+
+	/// And the default handler will call [formatReturnValueAsHtml] and place it inside the [htmlContainer].
+	void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret) {
+		auto container = this.htmlContainer();
+		container.appendChild(formatReturnValueAsHtml(ret));
+		cgi.write(container.parentDocument.toString(), true);
+	}
+
+	/++
+		If you override this, you will need to cast the exception type `t` dynamically,
+		but can then use the template arguments here to refer back to the function.
+
+		`func` is an alias to the method itself, and `dg` is a callable delegate to the same
+		method on the live object. You could, in theory, change arguments and retry, but I
+		provide that information mostly with the expectation that you will use them to make
+		useful forms or richer error messages for the user.
+	+/
+	void presentExceptionAsHtml(alias func, T)(Cgi cgi, Throwable t, T dg) {
+		if(auto mae = cast(MissingArgumentException) t) {
+			auto container = this.htmlContainer();
+			container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
+			container.appendChild(createAutomaticFormForFunction!(func)(dg));
+
+			cgi.write(container.parentDocument.toString(), true);
+		} else {
+			auto container = this.htmlContainer();
+
+			// import std.stdio; writeln(t.toString());
+
+			container.addChild("pre", t.toString());
+
+			cgi.setResponseStatus("500 Internal Server Error");
+			cgi.write(container.parentDocument.toString(), true);
+		}
+	}
+
+	/++
+		Returns an element for a particular type
+	+/
+	Element elementFor(T)(string displayName, string name) {
+		import std.traits;
+
+		auto div = Element.make("div");
+		div.addClass("form-field");
+
+		static if(is(T == struct)) {
+			if(displayName !is null)
+				div.addChild("span", displayName, "label-text");
+			auto fieldset = div.addChild("fieldset");
+			fieldset.addChild("legend", beautify(T.stringof)); // FIXME
+			fieldset.addChild("input", name);
+			static foreach(idx, memberName; __traits(allMembers, T))
+			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
+			}
+		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			static if(isSomeString!T)
+				i.attrs.type = "text";
+			else
+				i.attrs.type = "number";
+			i.attrs.value = to!string(T.init);
+		} else static if(is(T == bool)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.type = "checkbox";
+			i.attrs.value = "true";
+			i.attrs.name = name;
+		} else static if(is(T == K[], K)) {
+			auto templ = div.addChild("template");
+			templ.appendChild(elementFor!(K)(null, name));
+			if(displayName !is null)
+				div.addChild("span", displayName, "label-text");
+			auto btn = div.addChild("button");
+			btn.addClass("add-array-button");
+			btn.attrs.type = "button";
+			btn.innerText = "Add";
+			btn.attrs.onclick = q{
+				var a = document.importNode(this.parentNode.firstChild.content, true);
+				this.parentNode.insertBefore(a, this);
+			};
+		} else static if(is(T == V[K], K, V)) {
+			div.innerText = "assoc array not implemented for automatic form at this time";
+		} else {
+			static assert(0, "unsupported type for cgi call " ~ T.stringof);
+		}
+
+
+		return div;
+	}
+
+	/// creates a form for gathering the function's arguments
+	Form createAutomaticFormForFunction(alias method, T)(T dg) {
+
+		auto form = cast(Form) Element.make("form");
+
+		form.addClass("automatic-form");
+
+		form.addChild("h3", beautify(__traits(identifier, method)));
+
+		import std.traits;
+
+		//Parameters!method params;
+		//alias idents = ParameterIdentifierTuple!method;
+		//alias defaults = ParameterDefaults!method;
+
+		static if(is(typeof(method) P == __parameters))
+		static foreach(idx, _; P) {{
+			static if(!is(_ : Cgi)) {
+				alias param = P[idx .. idx + 1];
+				string displayName = beautify(__traits(identifier, param));
+				static foreach(attr; __traits(getAttributes, param))
+					static if(is(typeof(attr) == DisplayName))
+						displayName = attr.name;
+				form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+			}
+		}}
+
+		form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+		return form;
+	}
+
+	/// creates a form for gathering object members (for the REST object thing right now)
+	Form createAutomaticFormForObject(T)(T obj) {
+		auto form = cast(Form) Element.make("form");
+
+		form.addClass("automatic-form");
+
+		form.addChild("h3", beautify(__traits(identifier, T)));
+
+		import std.traits;
+
+		//Parameters!method params;
+		//alias idents = ParameterIdentifierTuple!method;
+		//alias defaults = ParameterDefaults!method;
+
+		static foreach(idx, memberName; __traits(derivedMembers, T)) {{
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			string displayName = beautify(memberName);
+			static foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
+				static if(is(typeof(attr) == DisplayName))
+					displayName = attr.name;
+			form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
+
+			form.setValue(memberName, to!string(__traits(getMember, obj, memberName)));
+		}}}
+
+		form.addChild("div", Html(`<input type="submit" value="Submit" />`), "submit-button-holder");
+
+		return form;
+	}
+
+	///
+	Element formatReturnValueAsHtml(T)(T t) {
+		import std.traits;
+
+		static if(is(T == typeof(null))) {
+			return Element.make("span");
+		} else static if(is(T == MultipleResponses!Types, Types...)) {
+			static foreach(index, type; Types) {
+				if(t.contains == index)
+					return formatReturnValueAsHtml(t.payload[index]);
+			}
+			assert(0);
+		} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
+			return Element.make("span", to!string(t), "automatic-data-display");
+		} else static if(is(T == V[K], K, V)) {
+			auto dl = Element.make("dl");
+			dl.addClass("automatic-data-display");
+			foreach(k, v; t) {
+				dl.addChild("dt", to!string(k));
+				dl.addChild("dd", formatReturnValueAsHtml(v));
+			}
+			return dl;
+		} else static if(is(T == struct)) {
+			auto dl = Element.make("dl");
+			dl.addClass("automatic-data-display");
+
+			static foreach(idx, memberName; __traits(allMembers, T))
+			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+				dl.addChild("dt", memberName);
+				dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
+			}
+
+			return dl;
+		} else static if(is(T == bool)) {
+			return Element.make("span", t ? "true" : "false", "automatic-data-display");
+		} else static if(is(T == E[], E)) {
+			static if(is(E : RestObject!Proxy, Proxy)) {
+				// treat RestObject similar to struct
+				auto table = cast(Table) Element.make("table");
+				table.addClass("automatic-data-display");
+				string[] names;
+				static foreach(idx, memberName; __traits(derivedMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					names ~= beautify(memberName);
+				}
+				table.appendHeaderRow(names);
+
+				foreach(l; t) {
+					auto tr = table.appendRow();
+					static foreach(idx, memberName; __traits(derivedMembers, E))
+					static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+						static if(memberName == "id") {
+							string val = to!string(__traits(getMember, l, memberName));
+							tr.addChild("td", Element.make("a", val, E.stringof.toLower ~ "s/" ~ val)); // FIXME
+						} else {
+							tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+						}
+					}
+				}
+
+				return table;
+			} else static if(is(E == struct)) {
+				// an array of structs is kinda special in that I like
+				// having those formatted as tables.
+				auto table = cast(Table) Element.make("table");
+				table.addClass("automatic-data-display");
+				string[] names;
+				static foreach(idx, memberName; __traits(allMembers, E))
+				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+					names ~= beautify(memberName);
+				}
+				table.appendHeaderRow(names);
+
+				foreach(l; t) {
+					auto tr = table.appendRow();
+					static foreach(idx, memberName; __traits(allMembers, E))
+					static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
+						tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
+					}
+				}
+
+				return table;
+			} else {
+				// otherwise, I will just make a list.
+				auto ol = Element.make("ol");
+				ol.addClass("automatic-data-display");
+				foreach(e; t)
+					ol.addChild("li", formatReturnValueAsHtml(e));
+				return ol;
+			}
+		} else static assert(0, "bad return value for cgi call " ~ T.stringof);
+
+		assert(0);
+	}
+
 }
 
 /++
 	The base class for the [dispatcher] function and object support.
 +/
-class WebObject(Helper = void) {
-	Cgi cgi;
-	WebPresenter!() presenter;
+class WebObject {
+	//protected Cgi cgi;
 
-	void initialize(Cgi cgi, WebPresenter!() presenter) {
-		this.cgi = cgi;
-		this.presenter = presenter;
+	protected void initialize(Cgi cgi) {
+		//this.cgi = cgi;
 	}
+}
+
+/++
+	Can return one of the given types, decided at runtime. The syntax
+	is to declare all the possible types in the return value, then you
+	can `return typeof(return)(...value...)` to construct it.
+
+	It has an auto-generated constructor for each value it can hold.
+
+	---
+	MultipleResponses!(Redirection, string) getData(int how) {
+		if(how & 1)
+			return typeof(return)(Redirection("http://dpldocs.info/"));
+		else
+			return typeof(return)("hi there!");
+	}
+	---
+
+	If you have lots of returns, you could, inside the function, `alias r = typeof(return);` to shorten it a little.
++/
+struct MultipleResponses(T...) {
+	private size_t contains;
+	private union {
+		private T payload;
+	}
+
+	static foreach(index, type; T)
+	public this(type t) {
+		contains = index;
+		payload[index] = t;
+	}
+
+	/++
+		This is primarily for testing. It is your way of getting to the response.
+
+		Let's say you wanted to test that one holding a Redirection and a string actually
+		holds a string, by name of "test":
+
+		---
+			auto valueToTest = your_test_function();
+
+			valueToTest.visit!(
+				(Redirection) { assert(0); }, // got a redirection instead of a string, fail the test
+				(string s) { assert(s == "test"); } // right value, go ahead and test it.
+			);
+		---
+	+/
+	void visit(Handlers...)() {
+		template findHandler(type, HandlersToCheck...) {
+			static if(HandlersToCheck.length == 0)
+				alias findHandler = void;
+			else {
+				static if(is(typeof(HandlersToCheck[0](type.init))))
+					alias findHandler = handler;
+				else
+					alias findHandler = findHandler!(type, HandlersToCheck[1 .. $]);
+			}
+		}
+		static foreach(index, type; T) {{
+			alias handler = findHandler!(type, Handlers);
+			static if(is(handler == void))
+				static assert(0, "Type " ~ type.stringof ~ " was not handled by visitor");
+			else {
+				if(index == contains)
+					handler(payload[index]);
+			}
+		}}
+	}
+
+	/+
+	auto toArsdJsvar()() {
+		import arsd.jsvar;
+		return var(null);
+	}
+	+/
+}
+
+struct RawResponse {
+	int code;
+	string[] headers;
+	const(ubyte)[] responseBody;
+}
+
+/++
+	You can return this from [WebObject] subclasses for redirections.
+
+	(though note the static types means that class must ALWAYS redirect if
+	you return this directly. You might want to return [MultipleResponses] if it
+	can be conditional)
++/
+struct Redirection {
+	string to; /// The URL to redirect to.
+	int code = 303; /// The HTTP code to retrn.
 }
 
 /++
 	Serves a class' methods, as a kind of low-state RPC over the web. To be used with [dispatcher].
 
-	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar].
+	Usage of this function will add a dependency on [arsd.dom] and [arsd.jsvar] unless you have overriden
+	the presenter in the dispatcher.
 
 	FIXME: explain this better
+
+	You can overload functions to a limited extent: you can provide a zero-arg and non-zero-arg function,
+	and non-zero-arg functions can filter via UDAs for various http methods. Do not attempt other overloads,
+	the runtime result of that is undefined.
+
+	A method is assumed to allow any http method unless it lists some in UDAs, in which case it is limited to only those.
+	(this might change, like maybe i will use pure as an indicator GET is ok. idk.)
+
+	$(WARNING
+		---
+		// legal in D, undefined runtime behavior with cgi.d, it may call either method
+		// even if you put different URL udas on it, the current code ignores them.
+		void foo(int a) {}
+		void foo(string a) {}
+		---
+	)
+
+	See_Also: [serveRestObject], [serveStaticFile]
 +/
 auto serveApi(T)(string urlPrefix) {
 	assert(urlPrefix[$ - 1] == '/');
@@ -6606,53 +6834,147 @@ auto serveApi(T)(string urlPrefix) {
 	import arsd.dom;
 	import arsd.jsvar;
 
-	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
+	static bool internalHandler(Presenter)(string urlPrefix, Cgi cgi, Presenter presenter, immutable void* details) {
 
 		auto obj = new T();
-		obj.initialize(cgi, presenter);
+		obj.initialize(cgi);
 
-		switch(cgi.pathInfo[urlPrefix.length .. $]) {
-			static foreach(methodName; __traits(derivedMembers, T)){{
-			static if(is(typeof(__traits(getMember, T, methodName)) P == __parameters))
+		/+
+			Overload rules:
+				Any unique combination of HTTP verb and url path can be dispatched to function overloads
+				statically.
+
+				Moreover, some args vs no args can be overloaded dynamically.
+		+/
+
+		string hack = to!string(cgi.requestMethod) ~ " " ~ cgi.pathInfo[urlPrefix.length .. $];
+
+		switch(hack) {
+			static foreach(methodName; __traits(derivedMembers, T))
+			static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
+			static if(is(typeof(overload) P == __parameters))
 			{
-				case urlify(methodName):
+				case urlNameForMethod!(overload)(urlify(methodName)):
+				/+
+				int zeroArgOverload = -1;
+				int overloadCount = cast(int) __traits(getOverloads, T, methodName).length;
+				bool calledWithZeroArgs = true;
+				foreach(k, v; cgi.get)
+					if(k != "format") {
+						calledWithZeroArgs = false;
+						break;
+					}
+				foreach(k, v; cgi.post)
+					if(k != "format") {
+						calledWithZeroArgs = false;
+						break;
+					}
+
+				// first, we need to go through and see if there is an empty one, since that
+				// changes inside. But otherwise, all the stuff I care about can be done via
+				// simple looping (other improper overloads might be flagged for runtime semantic check)
+				//
+				// an argument of type Cgi is ignored for these purposes
+				static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
+					static if(is(typeof(overload) P == __parameters))
+						static if(P.length == 0)
+							zeroArgOverload = cast(int) idx;
+						else static if(P.length == 1 && is(P[0] : Cgi))
+							zeroArgOverload = cast(int) idx;
+				}}
+				// FIXME: static assert if there are multiple non-zero-arg overloads usable with a single http method.
+				bool overloadHasBeenCalled = false;
+				static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
+					bool callFunction = true;
+					// there is a zero arg overload and this is NOT it, and we have zero args - don't call this
+					if(overloadCount > 1 && zeroArgOverload != -1 && idx != zeroArgOverload && calledWithZeroArgs)
+						callFunction = false;
+					// if this is the zero-arg overload, obviously it cannot be called if we got any args.
+					if(overloadCount > 1 && idx == zeroArgOverload && !calledWithZeroArgs)
+						callFunction = false;
+
+					// FIXME: so if you just add ?foo it will give the error below even when. this might not be a great idea.
+
+					bool hadAnyMethodRestrictions = false;
+					bool foundAcceptableMethod = false;
+					foreach(attr; __traits(getAttributes, overload)) {
+						static if(is(typeof(attr) == Cgi.RequestMethod)) {
+							hadAnyMethodRestrictions = true;
+							if(attr == cgi.requestMethod)
+								foundAcceptableMethod = true;
+						}
+					}
+
+					if(hadAnyMethodRestrictions && !foundAcceptableMethod)
+						callFunction = false;
+
+					/+
+						The overloads we really want to allow are the sane ones
+						from the web perspective. Which is likely on HTTP verbs,
+						for the most part, but might also be potentially based on
+						some args vs zero args, or on argument names. Can't really
+						do argument types very reliable through the web though; those
+						should probably be different URLs.
+
+						Even names I feel is better done inside the function, so I'm not
+						going to support that here. But the HTTP verbs and zero vs some
+						args makes sense - it lets you define custom forms pretty easily.
+
+						Moreover, I'm of the opinion that empty overload really only makes
+						sense on GET for this case. On a POST, it is just a missing argument
+						exception and that should be handled by the presenter. But meh, I'll
+						let the user define that, D only allows one empty arg thing anyway
+						so the method UDAs are irrelevant.
+					+/
+					if(callFunction)
+				+/
 					switch(cgi.request("format", "html")) {
 						case "html":
-							auto container = obj.presenter.htmlContainer();
 							try {
-								auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
-								container.appendChild(formatReturnValueAsHtml(ret));
-							} catch(MissingArgumentException mae) {
-								container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
-								container.appendChild(createAutomaticFormForFunction!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName)));
+								// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
+								auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
+								presenter.presentSuccessfulReturnAsHtml(cgi, ret);
+							} catch(Throwable t) {
+								presenter.presentExceptionAsHtml!(__traits(getOverloads, obj, methodName)[idx])(cgi, t, &(__traits(getOverloads, obj, methodName)[idx]));
 							}
-							cgi.write(container.parentDocument.toString(), true);
-						break;
+						return true;
 						case "json":
-							auto ret = callFromCgi!(__traits(getMember, obj, methodName))(&__traits(getMember, obj, methodName), cgi);
-							var json = ret;
+							auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
+							static if(is(typeof(ret) == MultipleResponses!Types, Types...)) {
+								var json;
+								static foreach(index, type; Types) {
+									if(ret.contains == index)
+										json = ret.payload[index];
+								}
+							} else {
+								var json = ret;
+							}
 							var envelope = var.emptyObject;
 							envelope.success = true;
 							envelope.result = json;
 							envelope.error = null;
 							cgi.setResponseContentType("application/json");
 							cgi.write(envelope.toJson(), true);
-
-						break;
+						return true;
 						default:
+							cgi.setResponseStatus("406 Not Acceptable"); // not exactly but sort of.
+						return true;
 					}
+				//}}
+				cgi.header("Accept: POST"); // FIXME list the real thing
+				cgi.setResponseStatus("405 Method Not Allowed"); // again, not exactly, but sort of. no overload matched our args, almost certainly due to http verb filtering.
 				return true;
 			}
 			}}
 			case "script.js":
 				cgi.setResponseContentType("text/javascript");
 				cgi.gzipResponse = true;
-				cgi.write(obj.presenter.script(), true);
+				cgi.write(presenter.script(), true);
 				return true;
 			case "style.css":
 				cgi.setResponseContentType("text/css");
 				cgi.gzipResponse = true;
-				cgi.write(obj.presenter.style(), true);
+				cgi.write(presenter.style(), true);
 				return true;
 			default:
 				return false;
@@ -6660,7 +6982,29 @@ auto serveApi(T)(string urlPrefix) {
 	
 		assert(0);
 	}
-	return DispatcherDefinition!handler(urlPrefix, false);
+	return DispatcherDefinition!internalHandler(urlPrefix, false);
+}
+
+string urlNameForMethod(alias method)(string def) {
+	auto verb = Cgi.RequestMethod.GET;
+	bool foundVerb = false;
+	bool foundNoun = false;
+	static foreach(attr; __traits(getAttributes, method)) {
+		static if(is(typeof(attr) == Cgi.RequestMethod)) {
+			verb = attr;
+			if(foundVerb)
+				assert(0, "Multiple http verbs on one function is not currently supported");
+			foundVerb = true;
+		}
+		static if(is(typeof(attr) == UrlName)) {
+			if(foundNoun)
+				assert(0, "Multiple url names on one function is not currently supported");
+			foundNoun = true;
+			def = attr.name;
+		}
+	}
+
+	return to!string(verb) ~ " " ~ def;
 }
 
 
@@ -6695,7 +7039,7 @@ auto serveApi(T)(string urlPrefix) {
 /++
 	The base of all REST objects, to be used with [serveRestObject] and [serveRestCollectionOf].
 +/
-class RestObject(Helper = void) : WebObject!Helper {
+class RestObject(CRTP) : WebObject {
 
 	import arsd.dom;
 	import arsd.jsvar;
@@ -6784,21 +7128,13 @@ class RestObject(Helper = void) : WebObject!Helper {
 	+/
 }
 
-/++
-	Responsible for displaying stuff as HTML. You can put this into your own aggregate
-	and override it. Use forwarding and specialization to customize it.
-+/
-mixin template Presenter() {
-
-}
-
 // FIXME XSRF token, prolly can just put in a cookie and then it needs to be copied to header or form hidden value
 // https://use-the-index-luke.com/sql/partial-results/fetch-next-page
 
 /++
 	Base class for REST collections.
 +/
-class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
+class CollectionOf(Obj) : RestObject!(CollectionOf) {
 	/// You might subclass this and use the cgi object's query params
 	/// to implement a search filter, for example.
 	///
@@ -6960,8 +7296,9 @@ class CollectionOf(Obj, Helper = void) : RestObject!(Helper) {
 
 +/
 auto serveRestObject(T)(string urlPrefix) {
+	assert(urlPrefix[0] == '/');
 	assert(urlPrefix[$ - 1] != '/', "Do NOT use a trailing slash on REST objects.");
-	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
+	static bool internalHandler(Presenter)(string urlPrefix, Cgi cgi, Presenter presenter, immutable void* details) {
 		string url = cgi.pathInfo[urlPrefix.length .. $];
 
 		if(url.length && url[$ - 1] == '/') {
@@ -6971,20 +7308,22 @@ auto serveRestObject(T)(string urlPrefix) {
 		}
 
 		return restObjectServeHandler!T(cgi, presenter, url);
-
 	}
-	return DispatcherDefinition!handler(urlPrefix, false);
+	return DispatcherDefinition!internalHandler(urlPrefix, false);
 }
 
+/+
 /// Convenience method for serving a collection. It will be named the same
 /// as type T, just with an s at the end. If you need any further, just
 /// write the class yourself.
 auto serveRestCollectionOf(T)(string urlPrefix) {
+	assert(urlPrefix[0] == '/');
 	mixin(`static class `~T.stringof~`s : CollectionOf!(T) {}`);
 	return serveRestObject!(mixin(T.stringof ~ "s"))(urlPrefix);
 }
++/
 
-bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
+bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string url) {
 	string urlId = null;
 	if(url.length && url[0] == '/') {
 		// asking for a subobject
@@ -6999,9 +7338,9 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 
 	// FIXME handle other subresources
 
-	static if(is(T : CollectionOf!(C, P), C, P)) {
+	static if(is(T : CollectionOf!(C), C)) {
 		if(urlId !is null) {
-			return restObjectServeHandler!C(cgi, presenter, url); // FIXME?  urlId);
+			return restObjectServeHandler!(C, Presenter)(cgi, presenter, url); // FIXME?  urlId);
 		}
 	}
 
@@ -7017,7 +7356,7 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 		static foreach(idx, memberName; __traits(derivedMembers, T))
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			if(!first) div.addChild("br"); else first = false;
-			div.appendChild(formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
+			div.appendChild(presenter.formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
 		}
 		return div;
 	};
@@ -7034,7 +7373,7 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 		// FIXME
 		return ValidationResult.valid;
 	};
-	obj.initialize(cgi, presenter);
+	obj.initialize(cgi);
 	// FIXME: populate reflection info delegates
 
 
@@ -7043,12 +7382,12 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 		case "script.js":
 			cgi.setResponseContentType("text/javascript");
 			cgi.gzipResponse = true;
-			cgi.write(obj.presenter.script(), true);
+			cgi.write(presenter.script(), true);
 			return true;
 		case "style.css":
 			cgi.setResponseContentType("text/css");
 			cgi.gzipResponse = true;
-			cgi.write(obj.presenter.style(), true);
+			cgi.write(presenter.style(), true);
 			return true;
 		default:
 			// intentionally blank
@@ -7074,9 +7413,9 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 			cgi.setResponseContentType("application/json");
 			cgi.write(obj.toJson().toString, true);
 		} else {
-			auto container = obj.presenter.htmlContainer();
+			auto container = presenter.htmlContainer();
 			if(addFormLinks) {
-				static if(is(T : CollectionOf!(C, P), C, P))
+				static if(is(T : CollectionOf!(C), C))
 				container.appendHtml(`
 					<form>
 						<button type="submit" name="_method" value="POST">Create New</button>
@@ -7098,6 +7437,7 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 	// FIXME: I think I need a set type in here....
 	// it will be nice to pass sets of members.
 
+	try
 	switch(cgi.requestMethod) {
 		case Cgi.RequestMethod.GET:
 			// I could prolly use template this parameters in the implementation above for some reflection stuff.
@@ -7107,11 +7447,11 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 			// even if the format is json, it could actually send out the links and formats, but really there i'ma be meh.
 			switch(cgi.request("_method", "GET")) {
 				case "GET":
-					static if(is(T : CollectionOf!(C, P), C, P)) {
+					static if(is(T : CollectionOf!(C), C)) {
 						auto results = obj.index();
 						if(cgi.request("format", "html") == "html") {
-							auto container = obj.presenter.htmlContainer();
-							auto html = formatReturnValueAsHtml(results.results);
+							auto container = presenter.htmlContainer();
+							auto html = presenter.formatReturnValueAsHtml(results.results);
 							container.appendHtml(`
 								<form>
 									<button type="submit" name="_method" value="POST">Create New</button>
@@ -7146,11 +7486,11 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 				case "PUT":
 				case "POST":
 					// an editing form for the object
-					auto container = obj.presenter.htmlContainer();
+					auto container = presenter.htmlContainer();
 					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
-						auto form = (cgi.request("_method") == "POST") ? createAutomaticFormForObject(new obj.PostProxy()) : createAutomaticFormForObject(obj);
+						auto form = (cgi.request("_method") == "POST") ? presenter.createAutomaticFormForObject(new obj.PostProxy()) : presenter.createAutomaticFormForObject(obj);
 					} else {
-						auto form = createAutomaticFormForObject(obj);
+						auto form = presenter.createAutomaticFormForObject(obj);
 					}
 					form.attrs.method = "POST";
 					form.setValue("_method", cgi.request("_method", "GET"));
@@ -7159,7 +7499,7 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 				break;
 				case "DELETE":
 					// FIXME: a delete form for the object (can be phrased "are you sure?")
-					auto container = obj.presenter.htmlContainer();
+					auto container = presenter.htmlContainer();
 					container.appendHtml(`
 						<form method="POST">
 							Are you sure you want to delete this item?
@@ -7223,9 +7563,14 @@ bool restObjectServeHandler(T)(Cgi cgi, WebPresenter!() presenter, string url) {
 		default:
 			// FIXME: OPTIONS, HEAD
 	}
+	catch(Throwable t) {
+		presenter.presentExceptionAsHtml!(DUMMY)(cgi, t, null);
+	}
 
 	return true;
 }
+
+struct DUMMY {}
 
 /+
 struct SetOfFields(T) {
@@ -7247,35 +7592,180 @@ enum hideonindex;
 
 /++
 	Serves a static file. To be used with [dispatcher].
+
+	See_Also: [serveApi], [serveRestObject], [dispatcher], [serveRedirect]
 +/
 auto serveStaticFile(string urlPrefix, string filename = null, string contentType = null) {
+// https://baus.net/on-tcp_cork/
+// man 2 sendfile
+	assert(urlPrefix[0] == '/');
 	if(filename is null)
 		filename = urlPrefix[1 .. $];
 	if(contentType is null) {
-		if(filename.endsWith(".png"))
-			contentType = "image/png";
-		if(filename.endsWith(".jpg"))
-			contentType = "image/jpeg";
-		if(filename.endsWith(".html"))
-			contentType = "text/html";
-		if(filename.endsWith(".css"))
-			contentType = "text/css";
-		if(filename.endsWith(".js"))
-			contentType = "application/javascript";
+		contentType = contentTypeFromFileExtension(filename);
 	}
 
-	static bool handler(string urlPrefix, Cgi cgi, WebPresenter!() presenter, DispatcherDetails details) {
+	static struct DispatcherDetails {
+		string filename;
+		string contentType;
+	}
+
+	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
 		if(details.contentType.indexOf("image/") == 0)
 			cgi.setCache(true);
 		cgi.setResponseContentType(details.contentType);
 		cgi.write(std.file.read(details.filename), true);
 		return true;
 	}
-	return DispatcherDefinition!handler(urlPrefix, true, DispatcherDetails(filename, contentType));
+	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(filename, contentType));
 }
 
-auto serveRedirect(string urlPrefix, string redirectTo) {
-	// FIXME
+string contentTypeFromFileExtension(string filename) {
+		if(filename.endsWith(".png"))
+			return "image/png";
+		if(filename.endsWith(".jpg"))
+			return "image/jpeg";
+		if(filename.endsWith(".html"))
+			return "text/html";
+		if(filename.endsWith(".css"))
+			return "text/css";
+		if(filename.endsWith(".js"))
+			return "application/javascript";
+		if(filename.endsWith(".mp3"))
+			return "audio/mpeg";
+		return null;
+}
+
+/// This serves a directory full of static files, figuring out the content-types from file extensions.
+/// It does not let you to descend into subdirectories (or ascend out of it, of course)
+auto serveStaticFileDirectory(string urlPrefix, string directory = null) {
+	assert(urlPrefix[0] == '/');
+	assert(urlPrefix[$-1] == '/');
+
+	static struct DispatcherDetails {
+		string directory;
+	}
+
+	if(directory is null)
+		directory = urlPrefix[1 .. $];
+
+	assert(directory[$-1] == '/');
+
+	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
+		auto file = cgi.pathInfo[urlPrefix.length .. $];
+		if(file.indexOf("/") != -1 || file.indexOf("\\") != -1)
+			return false;
+
+		auto contentType = contentTypeFromFileExtension(file);
+
+		auto fn = details.directory ~ file;
+		if(std.file.exists(fn)) {
+			if(contentType.indexOf("image/") == 0)
+				cgi.setCache(true);
+			else if(contentType.indexOf("audio/") == 0)
+				cgi.setCache(true);
+			cgi.setResponseContentType(contentType);
+			cgi.write(std.file.read(fn), true);
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, false, DispatcherDetails(directory));
+}
+
+private static string getHttpCodeText(int code) pure nothrow @nogc {
+	switch(code) {
+		case 200: return "200 OK";
+		case 201: return "201 Created";
+		case 202: return "202 Accepted";
+		case 203: return "203 Non-Authoritative Information";
+		case 204: return "204 No Content";
+		case 205: return "205 Reset Content";
+		//
+		case 300: return "300 300 Multiple Choices";
+		case 301: return "301 Moved Permanently";
+		case 302: return "302 Found";
+		case 303: return "303 See Other";
+		case 307: return "307 Temporary Redirect";
+		case 308: return "308 Permanent Redirect";
+		//
+		// FIXME: add more common 400 ones cgi.d might return too
+		case 400: return "400 Bad Request";
+		case 403: return "403 Forbidden";
+		case 404: return "404 Not Found";
+		case 405: return "405 Method Not Allowed";
+		case 406: return "406 Not Acceptable";
+		case 409: return "409 Conflict";
+		case 410: return "410 Gone";
+		//
+		case 500: return "500 Internal Server Error";
+		case 501: return "501 Not Implemented";
+		case 502: return "502 Bad Gateway";
+		case 503: return "503 Service Unavailable";
+		//
+		default: assert(0, "Unsupported http code");
+	}
+}
+
+/++
+	Redirects one url to another
+
+	See_Also: [dispatcher], [serveStaticFile]
++/
+auto serveRedirect(string urlPrefix, string redirectTo, int code = 303) {
+	assert(urlPrefix[0] == '/');
+	static struct DispatcherDetails {
+		string redirectTo;
+		string code;
+	}
+
+	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
+		cgi.setResponseLocation(details.redirectTo, true, details.code);
+		return true;
+	}
+
+
+	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(redirectTo, getHttpCodeText(code)));
+}
+
+/// Used exclusively with `dispatchTo`
+struct DispatcherData(Presenter) {
+	Cgi cgi; /// You can use this cgi object.
+	Presenter presenter; /// This is the presenter from top level, and will be forwarded to the sub-dispatcher.
+	size_t pathInfoStart; /// This is forwarded to the sub-dispatcher. It may be marked private later, or at least read-only.
+}
+
+/++
+	Dispatches the URL (and anything under it) to another dispatcher function. The function should look something like this:
+
+	---
+	bool other(DD)(DD dd) {
+		return dd.dispatcher!(
+			"/whatever".serveRedirect("/success"),
+			"/api/".serveApi!MyClass
+		);
+	}
+	---
+
+	The `DD` in there will be an instance of [DispatcherData] which you can inspect, or forward to another dispatcher
+	here. It is a template to account for any Presenter type, so you can do compile-time analysis in your presenters.
+	Or, of course, you could just use the exact type in your own code.
+
+	You return true if you handle the given url, or false if not. Just returning the result of [dispatcher] will do a
+	good job.
+
+
++/
+auto dispatchTo(alias handler)(string urlPrefix) {
+	assert(urlPrefix[0] == '/');
+	assert(urlPrefix[$-1] != '/');
+	static bool internalHandler(Presenter)(string urlPrefix, Cgi cgi, Presenter presenter, const void* details) {
+		return handler(DispatcherData!Presenter(cgi, presenter, urlPrefix.length));
+	}
+
+	return DispatcherDefinition!(internalHandler)(urlPrefix, false);
 }
 
 /+
@@ -7295,27 +7785,56 @@ auto serveStaticData(string urlPrefix, const(void)[] data, string contentType) {
 		"/api/".serveApi!MyApiClass,
 		"/objects/lol".serveRestObject!MyRestObject,
 		"/file.js".serveStaticFile,
+		"/admin/".dispatchTo!adminHandler
 	)) return;
 	---
+
+
+	You define a series of url prefixes followed by handlers.
+
+	[dispatchTo] will send the request to another function for handling.
+	You may want to do different pre- and post- processing there, for example,
+	an authorization check and different page layout. You can use different
+	presenters and different function chains. NOT IMPLEMENTED
 +/
-bool dispatcher(definitions...)(Cgi cgi, WebPresenter!() presenter = null) {
-	if(presenter is null)
-		presenter = new WebPresenter!();
-	// I can prolly make this more efficient later but meh.
-	static foreach(definition; definitions) {
-		if(definition.rejectFurther) {
-			if(cgi.pathInfo == definition.urlPrefix) {
-				auto ret = definition.handler(definition.urlPrefix, cgi, presenter, definition.details);
+template dispatcher(definitions...) {
+	bool dispatcher(Presenter)(Cgi cgi, Presenter presenterArg = null) {
+		static if(is(Presenter == typeof(null))) {
+			static class GenericWebPresenter : WebPresenter!(GenericWebPresenter) {}
+			auto presenter = new GenericWebPresenter();
+		} else
+			alias presenter = presenterArg;
+
+		return dispatcher(DispatcherData!(typeof(presenter))(cgi, presenter, 0));
+	}
+
+	bool dispatcher(DispatcherData)(DispatcherData dispatcherData) if(!is(DispatcherData : Cgi)) {
+		// I can prolly make this more efficient later but meh.
+		static foreach(definition; definitions) {
+			if(definition.rejectFurther) {
+				if(dispatcherData.cgi.pathInfo[dispatcherData.pathInfoStart .. $] == definition.urlPrefix) {
+					auto ret = definition.handler(
+						dispatcherData.cgi.pathInfo[0 .. dispatcherData.pathInfoStart + definition.urlPrefix.length],
+						dispatcherData.cgi, dispatcherData.presenter, definition.details);
+					if(ret)
+						return true;
+				}
+			} else if(
+				dispatcherData.cgi.pathInfo[dispatcherData.pathInfoStart .. $].startsWith(definition.urlPrefix) &&
+				// cgi.d dispatcher urls must be complete or have a /;
+				// "foo" -> thing should NOT match "foobar", just "foo" or "foo/thing"
+				(definition.urlPrefix[$-1] == '/' || (dispatcherData.pathInfoStart + definition.urlPrefix.length) == dispatcherData.cgi.pathInfo.length
+				|| dispatcherData.cgi.pathInfo[dispatcherData.pathInfoStart + definition.urlPrefix.length] == '/')
+				) {
+				auto ret = definition.handler(
+					dispatcherData.cgi.pathInfo[0 .. dispatcherData.pathInfoStart + definition.urlPrefix.length],
+					dispatcherData.cgi, dispatcherData.presenter, definition.details);
 				if(ret)
 					return true;
 			}
-		} else if(cgi.pathInfo.startsWith(definition.urlPrefix)) {
-			auto ret = definition.handler(definition.urlPrefix, cgi, presenter, definition.details);
-			if(ret)
-				return true;
 		}
+		return false;
 	}
-	return false;
 }
 
 /+

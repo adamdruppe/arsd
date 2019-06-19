@@ -2108,8 +2108,10 @@ string toHtml(T)(T a) {
 		static if(__traits(compiles, typeof(a[0]).makeHtmlArray(a))) {
 			ret = to!string(typeof(a[0]).makeHtmlArray(a));
 		} else {
+			ret ~= "<ul>";
 			foreach(v; a)
-				ret ~= toHtml(v);
+				ret ~= "<li>" ~ toHtml(v) ~ "</li>";
+			ret ~= "</ul>";
 		}
 	} else static if(is(T : Element))
 		ret = a.toString();
@@ -2896,7 +2898,16 @@ string tableToCsv(Table table) {
 			else
 				outputted = true;
 
-			csv ~= toCsv(item.innerText);
+			if(item.firstChild && item.firstChild.tagName == "ul") {
+				string c;
+				foreach(i, node; item.firstChild.childNodes) {
+					if(c.length) c ~= "; ";
+					c ~= node.innerText;
+				}
+				csv ~= toCsv(c);
+			} else {
+				csv ~= toCsv(item.innerText);
+			}
 		}
 	}
 
@@ -4024,7 +4035,7 @@ Table structToTable(T)(Document document, T arr, string[] fieldsToSkip = null) i
 					}
 
 				} else {
-					tr.addChild("td", to!string(member));
+					tr.addChild("td", Html(toHtml(member)));
 				}
 			}
 
