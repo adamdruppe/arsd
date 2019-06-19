@@ -1459,6 +1459,7 @@ version(use_openssl) {
 			void OpenSSL_add_all_ciphers();
 			void OpenSSL_add_all_digests();
 			void SSL_load_error_strings();
+			SSL_METHOD* SSLv23_client_method();
 		}
 		void OPENSSL_init_ssl(ulong, void*);
 		void OPENSSL_init_crypto(ulong, void*);
@@ -1483,7 +1484,6 @@ version(use_openssl) {
 
 		SSL_METHOD* SSLv3_client_method();
 		SSL_METHOD* TLS_client_method();
-		//SSL_METHOD* SSLv23_client_method();
 
 		void ERR_print_errors_fp(FILE*);
 	}
