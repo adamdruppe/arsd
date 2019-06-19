@@ -1433,31 +1433,35 @@ version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
 
 	// macros in the original C
-	void SSL_library_init() {
-		OPENSSL_init_ssl(0, null);
-	}
-	void OpenSSL_add_all_ciphers() {
-		OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_CIPHERS*/, null);
-	}
-	void OpenSSL_add_all_digests() {
-		OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_DIGESTS*/, null);
-	}
+	version(newer_openssl) {
+		void SSL_library_init() {
+			OPENSSL_init_ssl(0, null);
+		}
+		void OpenSSL_add_all_ciphers() {
+			OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_CIPHERS*/, null);
+		}
+		void OpenSSL_add_all_digests() {
+			OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_DIGESTS*/, null);
+		}
 
-	void SSL_load_error_strings() {
-		OPENSSL_init_ssl(0x00200000L, null);
-	}
+		void SSL_load_error_strings() {
+			OPENSSL_init_ssl(0x00200000L, null);
+		}
 
-	SSL_METHOD* SSLv23_client_method() {
-		return TLS_client_method();
+		SSL_METHOD* SSLv23_client_method() {
+			return TLS_client_method();
+		}
 	}
 
 	extern(C) {
-		//int SSL_library_init();
+		version(newer_openssl) {} else {
+			int SSL_library_init();
+			void OpenSSL_add_all_ciphers();
+			void OpenSSL_add_all_digests();
+			void SSL_load_error_strings();
+		}
 		void OPENSSL_init_ssl(ulong, void*);
-		//void OpenSSL_add_all_ciphers();
-		//void OpenSSL_add_all_digests();
 		void OPENSSL_init_crypto(ulong, void*);
-		//void SSL_load_error_strings();
 
 		struct SSL {}
 		struct SSL_CTX {}
