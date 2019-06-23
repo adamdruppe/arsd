@@ -113,8 +113,8 @@ class Sqlite : Database {
 
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		auto s = Statement(this, sql);
-		foreach(int i, arg; args) {
-			s.bind(i + 1, arg);
+		foreach(i, arg; args) {
+			s.bind(cast(int) i + 1, arg);
 		}
 
 		return s.execute();
@@ -195,9 +195,9 @@ class Sqlite : Database {
 
 class SqliteResult :  ResultSet {
 	int getFieldIndex(string field) {
-		foreach(int i, n; columnNames)
+		foreach(i, n; columnNames)
 			if(n == field)
-				return i;
+				return cast(int) i;
 		throw new Exception("no such field " ~ field);
 	}
 
