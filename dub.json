@@ -120,38 +120,46 @@
 		{
 			"name": "mysql",
 			"description": "MySQL client library. Wraps the official C library with my database.d interface.",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:database_base":"*"},
 			"libs-posix": ["mysqlclient"],
 			"libs-windows": ["libmysql"],
-			"sourceFiles": ["mysql.d"]
+			"sourceFiles": ["mysql.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.mysql=mysql.d"]
 		},
 		{
 			"name": "postgres",
 			"description": "Postgresql client library. Wraps the libpq C library with my database.d interface.",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:database_base":"*"},
 			"libs": ["pq"],
-			"sourceFiles": ["postgres.d"]
+			"sourceFiles": ["postgres.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.postgres=postgres.d"]
 		},
 
 		{
 			"name": "sqlite",
 			"description": "sqlite wrapper. Wraps the official C library with my database.d interface.",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:database_base":"*"},
 			"libs": ["sqlite3"],
 			"libs-posix": ["dl"],
-			"sourceFiles": ["sqlite.d"]
+			"sourceFiles": ["sqlite.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.sqlite=sqlite.d"]
 		},
 
 		{
 			"name": "mssql",
 			"description": "Microsoft SQL Server client library. Wraps the official ODBC library with my database.d interface.",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:database_base":"*"},
 			"libs-windows": ["odbc32"],
-			"sourceFiles": ["mssql.d"]
+			"sourceFiles": ["mssql.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.mssql=mssql.d"]
 		},
 
 		{
@@ -200,8 +208,10 @@
 		{
 			"name": "database_base",
 			"description": "Basic database interface definitions. Use one (or more) of the drivers like arsd-official:mysql or arsd-official:postgres instead",
-			"targetType": "sourceLibrary",
-			"sourceFiles": ["database.d"]
+			"targetType": "library",
+			"sourceFiles": ["database.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.database=database.d"]
 		}
 	]
 }
