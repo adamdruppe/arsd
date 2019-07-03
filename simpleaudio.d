@@ -490,7 +490,7 @@ version(Windows) version=WinMM;
 enum SampleRate = 44100;
 
 version(ALSA) {
-	enum cardName = "plug:default";
+	enum cardName = "default";
 
 	// this is the virtual rawmidi device on my computer at least
 	// maybe later i'll make it probe
