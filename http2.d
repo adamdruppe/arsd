@@ -20,6 +20,7 @@ version(without_openssl) {}
 else {
 version=use_openssl;
 version=with_openssl;
+version=newer_openssl;
 }
 
 
