@@ -488,7 +488,7 @@ struct Terminal {
 			import std.stdio;
 			import std.string;
 
-			if(!exists("/etc/termcap"))
+			//if(!exists("/etc/termcap"))
 				useBuiltinTermcap = true;
 
 			string current;

@@ -80,14 +80,11 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 // I don't particularly like this
 void expandTemplate(Element root, var context) {
 	import std.string;
-	foreach(k, v; root.attributes) {
-		if(k == "onrender") {
-			// FIXME
-		}
 
+	string replaceThingInString(string v) {
 		auto idx = v.indexOf("<%=");
 		if(idx == -1)
-			continue;
+			return v;
 		auto n = v[0 .. idx];
 		auto r = v[idx + "<%=".length .. $];
 
@@ -100,7 +97,16 @@ void expandTemplate(Element root, var context) {
 		import arsd.script;
 		auto res = interpret(code, context).get!string;
 
-		v = n ~ res ~ r;
+		return n ~ res ~ replaceThingInString(r);
+	}
+
+	foreach(k, v; root.attributes) {
+		if(k == "onrender") {
+			continue;
+		}
+
+		v = replaceThingInString(v);
+
 		root.setAttribute(k, v);
 	}
 
@@ -178,6 +184,37 @@ void expandTemplate(Element root, var context) {
 			expandTemplate(ele, context);
 		}
 	}
+
+	if(root.hasAttribute("onrender")) {
+		var nc = var.emptyObject(context);
+		nc["this"] = wrapNativeObject(root);
+		nc["this"]["populateFrom"]._function = delegate var(var this_, var[] args) {
+			auto form = cast(Form) root;
+			if(form is null) return this_;
+			foreach(k, v; args[0]) {
+				populateForm(form, v, k.get!string);
+			}
+			return this_;
+		};
+		interpret(root.getAttribute("onrender"), nc);
+
+		root.removeAttribute("onrender");
+	}
+}
+
+void populateForm(Form form, var obj, string name) {
+	import std.string;
+
+	if(obj.payloadType == var.Type.Object) {
+		foreach(k, v; obj) {
+			auto fn = name.replace("%", k.get!string);
+			populateForm(form, v, fn ~ "["~k.get!string~"]");
+		}
+	} else {
+		//import std.stdio; writeln("SET ", name, " ", obj, " ", obj.payloadType);
+		form.setValue(name, obj.get!string);
+	}
+
 }
 
 

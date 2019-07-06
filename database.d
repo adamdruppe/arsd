@@ -238,6 +238,9 @@ class SelectBuilder : SqlBuilder {
 
 	Variant[string] vars;
 	void setVariable(T)(string name, T value) {
+		assert(name.length);
+		if(name[0] == '?')
+			name = name[1 .. $];
 		vars[name] = Variant(value);
 	}
 

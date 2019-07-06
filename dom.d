@@ -3,6 +3,8 @@
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
 
+// FIXME: the scriptable list is quite arbitrary
+
 
 // xml entity references?!
 
@@ -39,7 +41,7 @@ module arsd.dom;
 version(with_arsd_jsvar)
 	import arsd.jsvar;
 else {
-	enum Scriptable;
+	enum scriptable = "arsd_jsvar_compatible";
 }
 
 // this is only meant to be used at compile time, as a filter for opDispatch
@@ -1457,6 +1459,7 @@ class Element {
 	}
 
 	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
+	@scriptable
 	Element addClass(string c) {
 		if(hasClass(c))
 			return this; // don't add it twice
@@ -1473,6 +1476,7 @@ class Element {
 	}
 
 	/// Removes a particular class name.
+	@scriptable
 	Element removeClass(string c) {
 		if(!hasClass(c))
 			return this;
@@ -2162,6 +2166,7 @@ class Element {
 
 	/// Note: you can give multiple selectors, separated by commas.
 	/// It will return the first match it finds.
+	@scriptable
 	Element querySelector(string selector) {
 		// FIXME: inefficient; it gets all results just to discard most of them
 		auto list = getElementsBySelector(selector);
@@ -2258,6 +2263,7 @@ class Element {
 
 		Note that the returned string is decoded, so it no longer contains any xml entities.
 	*/
+	@scriptable
 	string getAttribute(string name) const {
 		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
@@ -2271,6 +2277,7 @@ class Element {
 	/**
 		Sets an attribute. Returns this for easy chaining
 	*/
+	@scriptable
 	Element setAttribute(string name, string value) {
 		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
@@ -2295,6 +2302,7 @@ class Element {
 	/**
 		Returns if the attribute exists.
 	*/
+	@scriptable
 	bool hasAttribute(string name) {
 		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
@@ -2308,6 +2316,7 @@ class Element {
 	/**
 		Removes the given attribute from the element.
 	*/
+	@scriptable
 	Element removeAttribute(string name)
 	out(ret) {
 		assert(ret is this);
@@ -2657,6 +2666,7 @@ class Element {
 		See_Also:
 			[firstInnerText], [directText], [innerText], [appendChild]
 	+/
+	@scriptable
 	Element appendText(string text) {
 		Element e = new TextNode(parentDocument, text);
 		appendChild(e);
@@ -2686,6 +2696,7 @@ class Element {
 
 		This is similar to `element.innerHTML += "html string";` in Javascript.
 	+/
+	@scriptable
 	Element[] appendHtml(string html) {
 		Document d = new Document("<root>" ~ html ~ "</root>");
 		return stealChildren(d.root);
@@ -3028,6 +3039,7 @@ class Element {
 
 		It is more like textContent.
 	*/
+	@scriptable
 	@property string innerText() const {
 		string s;
 		foreach(child; children) {
@@ -3039,10 +3051,14 @@ class Element {
 		return s;
 	}
 
+	///
+	alias textContent = innerText;
+
 	/**
 		Sets the inside text, replacing all children. You don't
 		have to worry about entity encoding.
 	*/
+	@scriptable
 	@property void innerText(string text) {
 		selfClosed = false;
 		Element e = new TextNode(parentDocument, text);
@@ -3069,7 +3085,7 @@ class Element {
 	          Miscellaneous
 	*********************************/
 
-	/// This is a full clone of the element
+	/// This is a full clone of the element. Alias for cloneNode(true) now. Don't extend it.
 	@property Element cloned()
 	/+
 		out(ret) {
@@ -3080,27 +3096,25 @@ class Element {
 	body {
 	+/
 	{
-		auto e = Element.make(this.tagName);
-		e.parentDocument = this.parentDocument;
-		e.attributes = this.attributes.aadup;
-		e.selfClosed = this.selfClosed;
-		foreach(child; children) {
-			e.appendChild(child.cloned);
-		}
-
-		return e;
+		return this.cloneNode(true);
 	}
 
 	/// Clones the node. If deepClone is true, clone all inner tags too. If false, only do this tag (and its attributes), but it will have no contents.
 	Element cloneNode(bool deepClone) {
-		if(deepClone)
-			return this.cloned;
-
-		// shallow clone
 		auto e = Element.make(this.tagName);
 		e.parentDocument = this.parentDocument;
 		e.attributes = this.attributes.aadup;
 		e.selfClosed = this.selfClosed;
+
+		if(deepClone) {
+			foreach(child; children) {
+				e.appendChild(child.cloneNode(true));
+			}
+		}
+		
+
+		return e;
+
 		return e;
 	}
 
@@ -4214,6 +4228,11 @@ class RawSource : SpecialElement {
 		return source;
 	}
 
+
+	override RawSource cloneNode(bool deep) {
+		return new RawSource(parentDocument, source);
+	}
+
 	///.
 	string source;
 }
@@ -4253,6 +4272,10 @@ class PhpCode : ServerSideCode {
 		super(_parentDocument, "php");
 		source = s;
 	}
+
+	override PhpCode cloneNode(bool deep) {
+		return new PhpCode(parentDocument, source);
+	}
 }
 
 ///.
@@ -4261,6 +4284,10 @@ class AspCode : ServerSideCode {
 	this(Document _parentDocument, string s) {
 		super(_parentDocument, "asp");
 		source = s;
+	}
+
+	override AspCode cloneNode(bool deep) {
+		return new AspCode(parentDocument, source);
 	}
 }
 
@@ -4276,6 +4303,10 @@ class BangInstruction : SpecialElement {
 	///.
 	override string nodeValue() const {
 		return this.source;
+	}
+
+	override BangInstruction cloneNode(bool deep) {
+		return new BangInstruction(parentDocument, source);
 	}
 
 	///.
@@ -4306,6 +4337,10 @@ class QuestionInstruction : SpecialElement {
 		super(_parentDocument);
 		source = s;
 		tagName = "#qpi";
+	}
+
+	override QuestionInstruction cloneNode(bool deep) {
+		return new QuestionInstruction(parentDocument, source);
 	}
 
 	///.
@@ -4342,6 +4377,10 @@ class HtmlComment : SpecialElement {
 		super(_parentDocument);
 		source = s;
 		tagName = "#comment";
+	}
+
+	override HtmlComment cloneNode(bool deep) {
+		return new HtmlComment(parentDocument, source);
 	}
 
 	///.
@@ -4399,7 +4438,7 @@ class TextNode : Element {
 	}
 
 	///.
-	override @property Element cloned() {
+	override @property TextNode cloneNode(bool deep) {
 		auto n = new TextNode(parentDocument, contents);
 		return n;
 	}
@@ -7171,11 +7210,11 @@ private bool isSimpleWhite(dchar c) {
 }
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2017
+Copyright: Adam D. Ruppe, 2010 - 2019
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 
-        Copyright Adam D. Ruppe 2010-2017.
+        Copyright Adam D. Ruppe 2010-2019.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)

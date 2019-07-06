@@ -1,4 +1,4 @@
-// Copyright 2013-2017, Adam D. Ruppe.
+// Copyright 2013-2019, Adam D. Ruppe.
 /++
 	This is version 2 of my http/1.1 client implementation.
 	

@@ -666,8 +666,9 @@ struct var {
 								return var(val.toString());
 							};
 						}
-					} else
+					} else static if(is(typeof(__traits(getMember, t, member)))) {
 						this[member] = __traits(getMember, t, member);
+					}
 				}
 			} else {
 				// assoc array
@@ -704,9 +705,11 @@ struct var {
 
 	public var opOpAssign(string op, T)(T t) {
 		if(payloadType() == Type.Object) {
-			var* operator = this._payload._object._peekMember("opOpAssign", true);
-			if(operator !is null && operator._type == Type.Function)
-				return operator.call(this, op, t);
+			if(this._payload._object !is null) {
+				var* operator = this._payload._object._peekMember("opOpAssign", true);
+				if(operator !is null && operator._type == Type.Function)
+					return operator.call(this, op, t);
+			}
 		}
 
 		return _op!(this, this, op, T)(t);
@@ -809,6 +812,17 @@ struct var {
 
 	public string toString() {
 		return this.get!string;
+	}
+
+	public T getWno(T)() {
+		if(payloadType == Type.Object) {
+			if(auto wno = cast(WrappedNativeObject) this._payload._object) {
+				auto no = cast(T) wno.getObject();
+					if(no !is null)
+						return no;
+			}
+		}
+		return null;
 	}
 
 	public T get(T)() if(!is(T == void)) {
@@ -1219,11 +1233,12 @@ struct var {
 
 	public ref var opIndexAssign(T)(T t, size_t idx, string file = __FILE__, size_t line = __LINE__) {
 		if(_type == Type.Array) {
-			alias arr = this._payload._array;
 			if(idx >= this._payload._array.length)
 				this._payload._array.length = idx + 1;
 			this._payload._array[idx] = t;
 			return this._payload._array[idx];
+		} else if(_type == Type.Object) {
+			return opIndexAssign(t, to!string(idx), file, line);
 		}
 		version(jsvar_throw)
 			throw new DynamicTypeException(this, Type.Array, file, line);
@@ -1764,6 +1779,10 @@ class WrappedOpaque(T) : PrototypeObject if(!isPointer!T && !is(T == class)) {
 }
 
 WrappedOpaque!Obj wrapOpaquely(Obj)(Obj obj) {
+	static if(is(Obj == class)) {
+		if(obj is null)
+			return null;
+	}
 	return new WrappedOpaque!Obj(obj);
 }
 

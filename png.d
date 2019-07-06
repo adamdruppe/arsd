@@ -171,7 +171,7 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 						if(depth < 8) {
 							if(p == (1 << depth - 1)) {
 								p <<= 8 - depth;
-								p |= (1 << (1 - depth)) - 1;
+								p |= 1 << depth - 1;
 							} else {
 								p <<= 8 - depth;
 							}

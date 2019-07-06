@@ -575,7 +575,8 @@ class Cgi {
 */
 
 	/** Initializes it with command line arguments (for easy testing) */
-	this(string[] args) {
+	this(string[] args, void delegate(const(ubyte)[]) _rawDataOutput = null) {
+		rawDataOutput = _rawDataOutput;
 		// these are all set locally so the loop works
 		// without triggering errors in dmd 2.064
 		// we go ahead and set them at the end of it to the this version
@@ -2255,6 +2256,29 @@ class Cgi {
 		return closed;
 	}
 
+	/++
+		Gets a session object associated with the `cgi` request. You can use different type throughout your application.
+	+/
+	Session!Data getSessionObject(Data)() {
+		if(testInProcess !is null) {
+			// test mode
+			auto obj = testInProcess.getSessionOverride(typeid(typeof(return)));
+			if(obj !is null)
+				return cast(typeof(return)) obj;
+			else {
+				auto o = new MockSession!Data();
+				testInProcess.setSessionOverride(typeid(typeof(return)), o);
+				return o;
+			}
+		} else {
+			// normal operation
+			return new BasicDataServerSession!Data(this);
+		}
+	}
+
+	// if it is in test mode; triggers mock sessions. Used by CgiTester
+	private CgiTester testInProcess;
+
 	/* Hooks for redirecting input and output */
 	private void delegate(const(ubyte)[]) rawDataOutput = null;
 	private void delegate() flushDelegate = null;
@@ -2343,7 +2367,7 @@ class Cgi {
 	//RequestMethod _requestMethod;
 }
 
-/// use this for testing or other isolated things
+/// use this for testing or other isolated things when you want it to be no-ops
 Cgi dummyCgi(Cgi.RequestMethod method = Cgi.RequestMethod.GET, string url = null, in ubyte[] data = null, void delegate(const(ubyte)[]) outputSink = null) {
 	// we want to ignore, not use stdout
 	if(outputSink is null)
@@ -2361,6 +2385,126 @@ Cgi dummyCgi(Cgi.RequestMethod method = Cgi.RequestMethod.GET, string url = null
 		null);
 
 	return cgi;
+}
+
+/++
+	A helper test class for request handler unittests.
++/
+class CgiTester {
+	private {
+		SessionObject[TypeInfo] mockSessions;
+		SessionObject getSessionOverride(TypeInfo ti) {
+			if(auto o = ti in mockSessions)
+				return *o;
+			else
+				return null;
+		}
+		void setSessionOverride(TypeInfo ti, SessionObject so) {
+			mockSessions[ti] = so;
+		}
+	}
+
+	/++
+		Gets (and creates if necessary) a mock session object for this test. Note
+		it will be the same one used for any test operations through this CgiTester instance.
+	+/
+	Session!Data getSessionObject(Data)() {
+		auto obj = getSessionOverride(typeid(typeof(return)));
+		if(obj !is null)
+			return cast(typeof(return)) obj;
+		else {
+			auto o = new MockSession!Data();
+			setSessionOverride(typeid(typeof(return)), o);
+			return o;
+		}
+	}
+
+	/++
+		Pass a reference to your request handler when creating the tester.
+	+/
+	this(void function(Cgi) requestHandler) {
+		this.requestHandler = requestHandler;
+	}
+
+	/++
+		You can check response information with these methods after you call the request handler.
+	+/
+	struct Response {
+		int code;
+		string[string] headers;
+		string responseText;
+		ubyte[] responseBody;
+	}
+
+	/++
+		Executes a test request on your request handler, and returns the response.
+
+		Params:
+			url = The URL to test. Should be an absolute path, but excluding domain. e.g. `"/test"`.
+			args = additional arguments. Same format as cgi's command line handler.
+	+/
+	Response GET(string url, string[] args = null) {
+		return executeTest("GET", url, args);
+	}
+	/// ditto
+	Response POST(string url, string[] args = null) {
+		return executeTest("POST", url, args);
+	}
+
+	/// ditto
+	Response executeTest(string method, string url, string[] args) {
+		ubyte[] outputtedRawData;
+		void outputSink(const(ubyte)[] data) {
+			outputtedRawData ~= data;
+		}
+		auto cgi = new Cgi(["test", method, url] ~ args, &outputSink);
+		cgi.testInProcess = this;
+		scope(exit) cgi.dispose();
+
+		requestHandler(cgi);
+
+		cgi.close();
+
+		Response response;
+
+		if(outputtedRawData.length) {
+			enum LINE = "\r\n";
+
+			auto idx = outputtedRawData.locationOf(LINE ~ LINE);
+			assert(idx != -1, to!string(outputtedRawData));
+			auto headers = cast(string) outputtedRawData[0 .. idx];
+			response.code = 200;
+			while(headers.length) {
+				auto i = headers.locationOf(LINE);
+				if(i == -1) i = cast(int) headers.length;
+
+				auto header = headers[0 .. i];
+
+				auto c = header.locationOf(":");
+				if(c != -1) {
+					auto name = header[0 .. c];
+					auto value = header[c + 2 ..$];
+
+					if(name == "Status")
+						response.code = value[0 .. value.locationOf(" ")].to!int;
+
+					response.headers[name] = value;
+				} else {
+					assert(0);
+				}
+
+				if(i != headers.length)
+					i += 2;
+				headers = headers[i .. $];
+			}
+			response.responseBody = outputtedRawData[idx + 4 .. $];
+			response.responseText = cast(string) response.responseBody;
+		}
+
+		return response;
+	}
+
+	private void function(Cgi) requestHandler;
 }
 
 
@@ -3321,12 +3465,19 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		connection.close();
 	}
 
-	connection.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
-
 	bool closeConnection;
 	auto ir = new BufferedInputRange(connection);
 
 	while(!ir.empty) {
+
+		if(ir.view.length == 0) {
+			ir.popFront();
+			if(ir.sourceClosed) {
+				connection.close();
+				break;
+			}
+		}
+
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(ir, &closeConnection);
@@ -3364,14 +3515,21 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 			connection.close();
 			break;
 		} else {
-			if(!ir.empty)
-				ir.popFront(); // get the next
-			else if(ir.sourceClosed)
+			if(ir.front.length) {
+				ir.popFront(); // we can't just discard the buffer, so get the next bit and keep chugging along
+			} else if(ir.sourceClosed) {
 				ir.source.close();
+			} else {
+				continue;
+				// break; // this was for a keepalive experiment
+			}
 		}
 	}
 
-	ir.source.close();
+	if(closeConnection)
+		connection.close();
+
+	// I am otherwise NOT closing it here because the parent thread might still be able to make use of the keep-alive connection!
 }
 
 version(scgi)
@@ -3743,41 +3901,109 @@ class ListeningConnectionManager {
 			semaphore = new Semaphore();
 
 			ConnectionThread[16] threads;
-			foreach(ref thread; threads) {
-				thread = new ConnectionThread(this, handler);
+			foreach(i, ref thread; threads) {
+				thread = new ConnectionThread(this, handler, cast(int) i);
 				thread.start();
 			}
 
+			/+
+			version(linux) {
+				import core.sys.linux.epoll;
+				epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+				if(epoll_fd == -1)
+					throw new Exception("epoll_create1 " ~ to!string(errno));
+				scope(exit) {
+					import core.sys.posix.unistd;
+					close(epoll_fd);
+				}
+
+				epoll_event[64] events;
+
+				epoll_event ev;
+				ev.events = EPOLLIN;
+				ev.data.fd = listener.handle;
+				if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
+					throw new Exception("epoll_ctl " ~ to!string(errno));
+			}
+			+/
+
 			while(!loopBroken && running) {
-				auto sn = listener.accept();
-				if(tcp) {
-					// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-					// on the socket because we do some buffering internally. I think this helps,
-					// certainly does for small requests, and I think it does for larger ones too
-					sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-				}
-				// wait until a slot opens up
-				//int waited = 0;
-				while(queueLength >= queue.length) {
-					Thread.sleep(1.msecs);
-					//waited ++;
-				}
-				//if(waited) {import std.stdio; writeln(waited);}
-				synchronized(this) {
-					queue[nextIndexBack] = sn;
-					nextIndexBack++;
-					atomicOp!"+="(queueLength, 1);
-				}
-				semaphore.notify();
+				Socket sn;
 
-				bool hasAnyRunning;
-				foreach(thread; threads) {
-					if(!thread.isRunning) {
-						thread.join();
-					} else hasAnyRunning = true;
+				void accept_new_connection() {
+					sn = listener.accept();
+					if(tcp) {
+						// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+						// on the socket because we do some buffering internally. I think this helps,
+						// certainly does for small requests, and I think it does for larger ones too
+						sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+
+						sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
+					}
 				}
 
-				if(!hasAnyRunning)
+				void existing_connection_new_data() {
+					// wait until a slot opens up
+					//int waited = 0;
+					while(queueLength >= queue.length) {
+						Thread.sleep(1.msecs);
+						//waited ++;
+					}
+					//if(waited) {import std.stdio; writeln(waited);}
+					synchronized(this) {
+						queue[nextIndexBack] = sn;
+						nextIndexBack++;
+						atomicOp!"+="(queueLength, 1);
+					}
+					semaphore.notify();
+				}
+
+				bool crash_check() {
+					bool hasAnyRunning;
+					foreach(thread; threads) {
+						if(!thread.isRunning) {
+							thread.join();
+						} else hasAnyRunning = true;
+					}
+
+					return (!hasAnyRunning);
+				}
+
+
+				/+
+				version(linux) {
+					auto nfds = epoll_wait(epoll_fd, events.ptr, events.length, -1);
+					if(nfds == -1) {
+						if(errno == EINTR)
+							continue;
+						throw new Exception("epoll_wait " ~ to!string(errno));
+					}
+
+					foreach(idx; 0 .. nfds) {
+						auto flags = events[idx].events;
+						auto fd = events[idx].data.fd;
+
+						if(fd == listener.handle) {
+							accept_new_connection();
+							existing_connection_new_data();
+						} else {
+							if(flags & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) {
+								import core.sys.posix.unistd;
+								close(fd);
+							} else {
+								sn = new Socket(cast(socket_t) fd, tcp ? AddressFamily.INET : AddressFamily.UNIX);
+								import std.stdio; writeln("existing_connection_new_data");
+								existing_connection_new_data();
+							}
+						}
+					}
+				} else {
+				+/
+					accept_new_connection();
+					existing_connection_new_data();
+				//}
+
+				if(crash_check())
 					break;
 			}
 
@@ -3787,6 +4013,9 @@ class ListeningConnectionManager {
 				cleanup();
 		}
 	}
+
+	//version(linux)
+		//int epoll_fd;
 
 	bool tcp;
 	void delegate() cleanup;
@@ -3860,15 +4089,61 @@ class ConnectionException : Exception {
 alias void function(Socket) CMT;
 
 import core.thread;
+/+
+	cgi.d now uses a hybrid of event i/o and threads at the top level.
+
+	Top level thread is responsible for accepting sockets and selecting on them.
+
+	It then indicates to a child that a request is pending, and any random worker
+	thread that is free handles it. It goes into blocking mode and handles that
+	http request to completion.
+
+	At that point, it goes back into the waiting queue.
+
+
+	This concept is only implemented on Linux. On all other systems, it still
+	uses the worker threads and semaphores (which is perfectly fine for a lot of
+	things! Just having a great number of keep-alive connections will break that.)
+
+
+	So the algorithm is:
+
+	select(accept, event, pending)
+		if accept -> send socket to free thread, if any. if not, add socket to queue
+		if event -> send the signaling thread a socket from the queue, if not, mark it free
+			- event might block until it can be *written* to. it is a fifo sending socket fds!
+
+	A worker only does one http request at a time, then signals its availability back to the boss.
+
+	The socket the worker was just doing should be added to the one-off epoll read. If it is closed,
+	great, we can get rid of it. Otherwise, it is considered `pending`. The *kernel* manages that; the
+	actual FD will not be kept out here.
+
+	So:
+		queue = sockets we know are ready to read now, but no worker thread is available
+		idle list = worker threads not doing anything else. they signal back and forth
+
+	the workers all read off the event fd. This is the semaphore wait
+
+	the boss waits on accept or other sockets read events (one off! and level triggered). If anything happens wrt ready read,
+	it puts it in the queue and writes to the event fd.
+
+	The child could put the socket back in the epoll thing itself.
+
+	The child needs to be able to gracefully handle being given a socket that just closed with no work.
++/
 class ConnectionThread : Thread {
-	this(ListeningConnectionManager lcm, CMT dg) {
+	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
 		this.lcm = lcm;
 		this.dg = dg;
+		this.myThreadNumber = myThreadNumber;
 		super(&run);
 	}
 
 	void run() {
 		while(true) {
+			// so if there's a bunch of idle keep-alive connections, it can
+			// consume all the worker threads... just sitting there.
 			lcm.semaphore.wait();
 			Socket socket;
 			synchronized(lcm) {
@@ -3878,15 +4153,45 @@ class ConnectionThread : Thread {
 				atomicOp!"+="(lcm.nextIndexFront, 1);
 				atomicOp!"-="(lcm.queueLength, 1);
 			}
-			try
+			try {
+			//import std.stdio; writeln(myThreadNumber, " taking it");
 				dg(socket);
-			catch(Throwable e)
+				/+
+				if(socket.isAlive) {
+					// process it more later
+					version(linux) {
+						import core.sys.linux.epoll;
+						epoll_event ev;
+						ev.events = EPOLLIN | EPOLLONESHOT | EPOLLET;
+						ev.data.fd = socket.handle;
+						import std.stdio; writeln("adding");
+						if(epoll_ctl(lcm.epoll_fd, EPOLL_CTL_ADD, socket.handle, &ev) == -1) {
+							if(errno == EEXIST) {
+								ev.events = EPOLLIN | EPOLLONESHOT | EPOLLET;
+								ev.data.fd = socket.handle;
+								if(epoll_ctl(lcm.epoll_fd, EPOLL_CTL_MOD, socket.handle, &ev) == -1)
+									throw new Exception("epoll_ctl " ~ to!string(errno));
+							} else
+								throw new Exception("epoll_ctl " ~ to!string(errno));
+						}
+						//import std.stdio; writeln("keep alive");
+						// writing to this private member is to prevent the GC from closing my precious socket when I'm trying to use it later
+						__traits(getMember, socket, "sock") = cast(socket_t) -1;
+					} else {
+						continue; // hope it times out in a reasonable amount of time...
+					}
+				}
+				+/
+			} catch(Throwable e) {
+				import std.stdio; writeln(e);
 				socket.close();
+			}
 		}
 	}
 
 	ListeningConnectionManager lcm;
 	CMT dg;
+	int myThreadNumber;
 }
 
 /* Done with network helper */
@@ -5011,10 +5316,12 @@ private struct SerializationBuffer {
 			will have to have dump and restore too, so i can restart without losing stuff.
 */
 
+/// Base for storing sessions in an array. Exists primarily for internal purposes and you should generally not use this.
+interface SessionObject {}
 
 /++
 	A convenience object for talking to the [BasicDataServer] from a higher level.
-	See: [getSessionObject]
+	See: [Cgi.getSessionObject].
 
 	You pass it a `Data` struct describing the data you want saved in the session.
 	Then, this class will generate getter and setter properties that allow access
@@ -5027,17 +5334,14 @@ private struct SerializationBuffer {
 
 	At some point in the future, I might also let it do different backends, like
 	a client-side cookie store too, but idk.
-+/
-class Session(Data) {
-	private Cgi cgi;
-	private string sessionId;
 
-	/// You probably don't want to call this directly, see [getSessionObject] instead.
-	this(Cgi cgi) {
-		this.cgi = cgi;
-		if(auto ptr = "sessionId" in cgi.cookies)
-			sessionId = (*ptr).length ? *ptr : null;
-	}
+	Note that the plain-old-data members of your `Data` struct are wrapped by this
+	interface via a static foreach to make property functions.
+
+	See_Also: [MockSession]
++/
+interface Session(Data) : SessionObject {
+	@property string sessionId() const;
 
 	/++
 		Starts a new session. Note that a session is also
@@ -5062,6 +5366,66 @@ class Session(Data) {
 
 			NOT IMPLEMENTED
 	+/
+	void start(int idleLifetime = 2600 * 24, bool useExtendedLifetimeCookie = false);
+
+	/++
+		Regenerates the session ID and updates the associated
+		cookie.
+
+		This is also your chance to change immutable data
+		(not yet implemented).
+	+/
+	void regenerateId();
+
+	/++
+		Terminates this session, deleting all saved data.
+	+/
+	void terminate();
+
+	/++
+		Plain-old-data members of your `Data` struct are wrapped here via
+		the property getters and setters.
+
+		If the member is a non-string array, it returns a magical array proxy
+		object which allows for atomic appends and replaces via overloaded operators.
+		You can slice this to get a range representing a $(B const) view of the array.
+		This is to protect you against read-modify-write race conditions.
+	+/
+	static foreach(memberName; __traits(allMembers, Data))
+		static if(is(typeof(__traits(getMember, Data, memberName))))
+		mixin(q{
+			@property inout(typeof(__traits(getMember, Data, memberName))) } ~ memberName ~ q{ () inout;
+			@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value);
+		});
+
+}
+
+/++
+	An implementation of [Session] that works on real cgi connections utilizing the
+	[BasicDataServer].
+	
+	As opposed to a [MockSession] which is made for testing purposes.
+
+	You will not construct one of these directly. See [Cgi.getSessionObject] instead.
++/
+class BasicDataServerSession(Data) : Session!Data {
+	private Cgi cgi;
+	private string sessionId_;
+
+	public @property string sessionId() const {
+		return sessionId_;
+	}
+
+	protected @property string sessionId(string s) {
+		return this.sessionId_ = s;
+	}
+
+	private this(Cgi cgi) {
+		this.cgi = cgi;
+		if(auto ptr = "sessionId" in cgi.cookies)
+			sessionId = (*ptr).length ? *ptr : null;
+	}
+
 	void start(int idleLifetime = 2600 * 24, bool useExtendedLifetimeCookie = false) {
 		assert(sessionId is null);
 
@@ -5074,7 +5438,7 @@ class Session(Data) {
 		setCookie();
 	}
 
-	private void setCookie() {
+	protected void setCookie() {
 		cgi.setCookie(
 			"sessionId", sessionId,
 			0 /* expiration */,
@@ -5084,13 +5448,6 @@ class Session(Data) {
 			cgi.https /* if the session is started on https, keep it there, otherwise, be flexible */);
 	}
 
-	/++
-		Regenerates the session ID and updates the associated
-		cookie.
-
-		This is also your chance to change immutable data
-		(not yet implemented).
-	+/
 	void regenerateId() {
 		if(sessionId is null) {
 			start();
@@ -5103,53 +5460,68 @@ class Session(Data) {
 		setCookie();
 	}
 
-	/++
-		Terminates this session, deleting all saved data.
-	+/
 	void terminate() {
 		BasicDataServer.connection.destroySession(sessionId);
 		sessionId = null;
 		setCookie();
 	}
 
-	/++
-		Plain-old-data members of your `Data` struct are wrapped here via
-		the opDispatch property getters and setters.
+	static foreach(memberName; __traits(allMembers, Data))
+		static if(is(typeof(__traits(getMember, Data, memberName))))
+		mixin(q{
+			@property inout(typeof(__traits(getMember, Data, memberName))) } ~ memberName ~ q{ () inout {
+				if(sessionId is null)
+					return typeof(return).init;
 
-		If the member is a non-string array, it returns a magical array proxy
-		object which allows for atomic appends and replaces via overloaded operators.
-		You can slice this to get a range representing a $(B const) view of the array.
-		This is to protect you against read-modify-write race conditions.
-	+/
-	@property typeof(__traits(getMember, Data, name)) opDispatch(string name)() {
-		if(sessionId is null)
-			return typeof(return).init;
-
-		auto v = BasicDataServer.connection.getSessionData(sessionId, name);
-		if(v.length == 0)
-			return typeof(return).init;
-		import std.conv;
-		return to!(typeof(return))(v);
-	}
-
-	/// ditto
-	@property void opDispatch(string name)(typeof(__traits(getMember, Data, name)) value) {
-		if(sessionId is null)
-			start();
-		import std.conv;
-		BasicDataServer.connection.setSessionData(sessionId, name, to!string(value));
-	}
+				import std.traits;
+				auto v = BasicDataServer.connection.getSessionData(sessionId, fullyQualifiedName!Data ~ "." ~ memberName);
+				if(v.length == 0)
+					return typeof(return).init;
+				import std.conv;
+				// why this cast? to doesn't like being given an inout argument. so need to do it without that, then
+				// we need to return it and that needed the cast. It should be fine since we basically respect constness..
+				// basically. Assuming the session is POD this should be fine.
+				return cast(typeof(return)) to!(typeof(__traits(getMember, Data, memberName)))(v);
+			}
+			@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
+				if(sessionId is null)
+					start();
+				import std.conv;
+				import std.traits;
+				BasicDataServer.connection.setSessionData(sessionId, fullyQualifiedName!Data ~ "." ~ memberName, to!string(value));
+			}
+		});
 }
 
 /++
-	Gets a session object associated with the `cgi` request.
+	A mock object that works like the real session, but doesn't actually interact with any actual database or http connection.
+	Simply stores the data in its instance members.
 +/
-Session!Data getSessionObject(Data)(Cgi cgi) {
-	return new Session!Data(cgi);
+class MockSession(Data) : Session!Data {
+	pure {
+		@property string sessionId() const { return "mock"; }
+		void start(int idleLifetime = 2600 * 24, bool useExtendedLifetimeCookie = false) {}
+		void regenerateId() {}
+		void terminate() {}
+
+		private Data store_;
+
+		static foreach(memberName; __traits(allMembers, Data))
+			static if(is(typeof(__traits(getMember, Data, memberName))))
+			mixin(q{
+				@property inout(typeof(__traits(getMember, Data, memberName))) } ~ memberName ~ q{ () inout {
+					return __traits(getMember, store_, memberName);
+				}
+				@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
+					__traits(getMember, store_, memberName) = value;
+				}
+			});
+	}
 }
 
 /++
-
+	Direct interface to the basic data add-on server. You can
+	typically use [Cgi.getSessionObject] as a more convenient interface.
 +/
 interface BasicDataServer {
 	///
@@ -5999,6 +6371,11 @@ struct UrlName {
 	string name;
 }
 
+/++
+	UDA: default format to respond for this method
++/
+struct DefaultFormat { string value; }
+
 class MissingArgumentException : Exception {
 	string functionName;
 	string argumentName;
@@ -6009,9 +6386,26 @@ class MissingArgumentException : Exception {
 		this.argumentName = argumentName;
 		this.argumentType = argumentType;
 
-		super("Missing Argument", file, line, next);
+		super("Missing Argument: " ~ this.argumentName, file, line, next);
 	}
 }
+
+/++
+	This can be attached to any constructor or function called from the cgi system.
+
+	If it is present, the function argument can NOT be set from web params, but instead
+	is set to the return value of the given `func`.
+
+	If `func` can take a parameter of type [Cgi], it will be passed the one representing
+	the current request. Otherwise, it must take zero arguments.
+
+	Any params in your function of type `Cgi` are automatically assumed to take the cgi object
+	for the connection. Any of type [Session] (with an argument) is	also assumed to come from
+	the cgi object.
+
+	const arguments are also supported.
++/
+struct ifCalledFromWeb(alias func) {}
 
 // it only looks at query params for GET requests, the rest must be in the body for a function argument.
 auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
@@ -6030,24 +6424,52 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	const(string)[] values;
 
 	// first, check for missing arguments and initialize to defaults if necessary
-	static foreach(idx, param; params) {{
-		static if(is(typeof(param) : Cgi)) {
-			params[idx] = cgi;
+
+	static if(is(typeof(method) P == __parameters))
+	static foreach(idx, param; P) {{
+		// see: mustNotBeSetFromWebParams
+		static if(is(param : Cgi)) {
+			static assert(!is(param == immutable));
+			cast() params[idx] = cgi;
+		} else static if(is(param == Session!D, D)) {
+			static assert(!is(param == immutable));
+			cast() params[idx] = cgi.getSessionObject!D();
 		} else {
-			auto ident = idents[idx];
-			if(cgi.requestMethod == Cgi.RequestMethod.GET) {
-				if(ident !in cgi.get) {
-					static if(is(defaults[idx] == void))
-						throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
+			bool populated;
+			static foreach(uda; __traits(getAttributes, P[idx .. idx + 1])) {
+				static if(is(uda == ifCalledFromWeb!func, alias func)) {
+					static if(is(typeof(func(cgi))))
+						params[idx] = func(cgi);
 					else
-						params[idx] = defaults[idx];
+						params[idx] = func();
+
+					populated = true;
 				}
-			} else {
-				if(ident !in cgi.post) {
-					static if(is(defaults[idx] == void))
-						throw new MissingArgumentException(__traits(identifier, method), ident, typeof(param).stringof);
-					else
-						params[idx] = defaults[idx];
+			}
+
+			if(!populated) {
+				static if(__traits(compiles, { params[idx] = param.getAutomaticallyForCgi(cgi); } )) {
+					params[idx] = param.getAutomaticallyForCgi(cgi);
+					populated = true;
+				}
+			}
+
+			if(!populated) {
+				auto ident = idents[idx];
+				if(cgi.requestMethod == Cgi.RequestMethod.GET) {
+					if(ident !in cgi.get) {
+						static if(is(defaults[idx] == void))
+							throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						else
+							params[idx] = defaults[idx];
+					}
+				} else {
+					if(ident !in cgi.post) {
+						static if(is(defaults[idx] == void))
+							throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						else
+							params[idx] = defaults[idx];
+					}
 				}
 			}
 		}
@@ -6132,7 +6554,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 				V v;
 
 				name = name[0 .. paramName.length];
-				writeln(name, afterName, " ", paramName);
+				//writeln(name, afterName, " ", paramName);
 
 				auto ret = setVariable(name ~ afterName, paramName, &v, value);
 				if(ret) {
@@ -6158,12 +6580,17 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 		auto paramName = name[0 .. p];
 
 		sw: switch(paramName) {
-			static foreach(idx, param; params) {
-				static if(is(typeof(param) : Cgi)) {
+			static if(is(typeof(method) P == __parameters))
+			static foreach(idx, param; P) {
+				static if(mustNotBeSetFromWebParams!(P[idx], __traits(getAttributes, P[idx .. idx + 1]))) {
 					// cannot be set from the outside
 				} else {
 					case idents[idx]:
-						setVariable(name, paramName, &params[idx], value);
+						static if(is(param == Cgi.UploadedFile)) {
+							params[idx] = cgi.files[name];
+						} else {
+							setVariable(name, paramName, &params[idx], value);
+						}
 					break sw;
 				}
 			}
@@ -6195,6 +6622,28 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	// options are: json, html, csv.
 	// also may need to wrap in envelope format: none, html, or json.
 	return ret;
+}
+
+private bool mustNotBeSetFromWebParams(T, attrs...)() {
+	static if(is(T : const(Cgi))) {
+		return true;
+	} else static if(is(T : const(Session!D), D)) {
+		return true;
+	} else static if(__traits(compiles, T.getAutomaticallyForCgi(Cgi.init))) {
+		return true;
+	} else {
+		static foreach(uda; attrs)
+			static if(is(uda == ifCalledFromWeb!func, alias func))
+				return true;
+		return false;
+	}
+}
+
+private bool hasIfCalledFromWeb(attrs...)() {
+	static foreach(uda; attrs)
+		static if(is(uda == ifCalledFromWeb!func, alias func))
+			return true;
+	return false;
 }
 
 /+
@@ -6407,6 +6856,15 @@ html", true, true);
 		return document.requireSelector("main");
 	}
 
+	/// Renders a response as an HTTP error
+	void renderBasicError(Cgi cgi, int httpErrorCode) {
+		cgi.setResponseStatus(getHttpCodeText(httpErrorCode));
+		auto c = htmlContainer();
+		c.innerText = getHttpCodeText(httpErrorCode);
+		cgi.setResponseContentType("text/html; charset=utf-8");
+		cgi.write(c.parentDocument.toString(), true);
+	}
+
 	/// typeof(null) (which is also used to represent functions returning `void`) do nothing
 	/// in the default presenter - allowing the function to have full low-level control over the
 	/// response.
@@ -6431,6 +6889,13 @@ html", true, true);
 		}
 		if(!outputted)
 			assert(0);
+	}
+
+	/// An instance of the [arsd.dom.FileResource] interface has its own content type; assume it is a download of some sort.
+	void presentSuccessfulReturnAsHtml(T : FileResource)(Cgi cgi, T ret) {
+		cgi.setCache(true); // not necessarily true but meh
+		cgi.setResponseContentType(ret.contentType);
+		cgi.write(ret.getData(), true);
 	}
 
 	/// And the default handler will call [formatReturnValueAsHtml] and place it inside the [htmlContainer].
@@ -6461,11 +6926,58 @@ html", true, true);
 
 			// import std.stdio; writeln(t.toString());
 
-			container.addChild("pre", t.toString());
+			container.appendChild(exceptionToElement(t));
 
-			cgi.setResponseStatus("500 Internal Server Error");
+			container.addChild("h4", "GET");
+			foreach(k, v; cgi.get) {
+				auto deets = container.addChild("details");
+				deets.addChild("summary", k);
+				deets.addChild("div", v);
+			}
+
+			container.addChild("h4", "POST");
+			foreach(k, v; cgi.post) {
+				auto deets = container.addChild("details");
+				deets.addChild("summary", k);
+				deets.addChild("div", v);
+			}
+
+
+			if(!cgi.outputtedResponseData)
+				cgi.setResponseStatus("500 Internal Server Error");
 			cgi.write(container.parentDocument.toString(), true);
 		}
+	}
+
+	Element exceptionToElement(Throwable t) {
+		auto div = Element.make("div");
+		div.addClass("exception-display");
+
+		div.addChild("p", t.msg);
+		div.addChild("p", "Inner code origin: " ~ typeid(t).name ~ "@" ~ t.file ~ ":" ~ to!string(t.line));
+
+		auto pre = div.addChild("pre");
+		string s;
+		s = t.toString();
+		Element currentBox;
+		bool on = false;
+		foreach(line; s.splitLines) {
+			if(!on && line.startsWith("-----"))
+				on = true;
+			if(!on) continue;
+			if(line.indexOf("arsd/") != -1) {
+				if(currentBox is null) {
+					currentBox = pre.addChild("details");
+					currentBox.addChild("summary", "Framework code");
+				}
+				currentBox.addChild("span", line ~ "\n");
+			} else {
+				pre.addChild("span", line ~ "\n");
+				currentBox = null;
+			}
+		}
+
+		return div;
 	}
 
 	/++
@@ -6516,6 +7028,18 @@ html", true, true);
 			i.attrs.type = "checkbox";
 			i.attrs.value = "true";
 			i.attrs.name = name;
+		} else static if(is(T == Cgi.UploadedFile)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			i.attrs.type = "file";
 		} else static if(is(T == K[], K)) {
 			auto templ = div.addChild("template");
 			templ.appendChild(elementFor!(K)(null, name));
@@ -6556,13 +7080,17 @@ html", true, true);
 
 		static if(is(typeof(method) P == __parameters))
 		static foreach(idx, _; P) {{
-			static if(!is(_ : Cgi)) {
-				alias param = P[idx .. idx + 1];
+
+			alias param = P[idx .. idx + 1];
+
+			static if(!mustNotBeSetFromWebParams!(param[0], __traits(getAttributes, param))) {
 				string displayName = beautify(__traits(identifier, param));
 				static foreach(attr; __traits(getAttributes, param))
 					static if(is(typeof(attr) == DisplayName))
 						displayName = attr.name;
-				form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+				auto i = form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+				if(i.querySelector("input[type=file]") !is null)
+					form.setAttribute("enctype", "multipart/form-data");
 			}
 		}}
 
@@ -6607,6 +7135,8 @@ html", true, true);
 
 		static if(is(T == typeof(null))) {
 			return Element.make("span");
+		} else static if(is(T : Element)) {
+			return t;
 		} else static if(is(T == MultipleResponses!Types, Types...)) {
 			static foreach(index, type; Types) {
 				if(t.contains == index)
@@ -6830,13 +7360,111 @@ struct Redirection {
 +/
 auto serveApi(T)(string urlPrefix) {
 	assert(urlPrefix[$ - 1] == '/');
+	return serveApiInternal!T(urlPrefix);
+}
+
+private string nextPieceFromSlash(ref string remainingUrl) {
+	if(remainingUrl.length == 0)
+		return remainingUrl;
+	int slash = 0;
+	while(slash < remainingUrl.length && remainingUrl[slash] != '/') // && remainingUrl[slash] != '.')
+		slash++;
+
+	// I am specifically passing `null` to differentiate it vs empty string
+	// so in your ctor, `items` means new T(null) and `items/` means new T("")
+	auto ident = remainingUrl.length == 0 ? null : remainingUrl[0 .. slash];
+	// so if it is the last item, the dot can be used to load an alternative view
+	// otherwise tho the dot is considered part of the identifier
+	// FIXME
+
+	// again notice "" vs null here!
+	if(slash == remainingUrl.length)
+		remainingUrl = null;
+	else
+		remainingUrl = remainingUrl[slash + 1 .. $];
+
+	return ident;
+}
+
+enum AddTrailingSlash;
+
+private auto serveApiInternal(T)(string urlPrefix) {
 
 	import arsd.dom;
 	import arsd.jsvar;
 
 	static bool internalHandler(Presenter)(string urlPrefix, Cgi cgi, Presenter presenter, immutable void* details) {
+		string remainingUrl = cgi.pathInfo[urlPrefix.length .. $];
 
-		auto obj = new T();
+		try {
+			// see duplicated code below by searching subresource_ctor
+			// also see mustNotBeSetFromWebParams
+
+			static if(is(typeof(T.__ctor) P == __parameters)) {
+				P params;
+
+				static foreach(pidx, param; P) {
+					static if(is(param : Cgi)) {
+						static assert(!is(param == immutable));
+						cast() params[pidx] = cgi;
+					} else static if(is(param == Session!D, D)) {
+						static assert(!is(param == immutable));
+						cast() params[pidx] = cgi.getSessionObject!D();
+
+					} else {
+						static if(hasIfCalledFromWeb!(__traits(getAttributes, P[pidx .. pidx + 1]))) {
+							static foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
+								static if(is(uda == ifCalledFromWeb!func, alias func)) {
+									static if(is(typeof(func(cgi))))
+										params[pidx] = func(cgi);
+									else
+										params[pidx] = func();
+								}
+							}
+						} else {
+
+							static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
+								params[pidx] = param.getAutomaticallyForCgi(cgi);
+							} else static if(is(param == string)) {
+								auto ident = nextPieceFromSlash(remainingUrl);
+								params[pidx] = ident;
+							} else static assert(0, "illegal type for subresource " ~ param.stringof);
+						}
+					}
+				}
+
+				auto obj = new T(params);
+			} else {
+				auto obj = new T();
+			}
+
+			return internalHandlerWithObject(obj, remainingUrl, cgi, presenter);
+		} catch(Throwable t) {
+			switch(cgi.request("format", "html")) {
+				case "html":
+					static void dummy() {}
+					presenter.presentExceptionAsHtml!(dummy)(cgi, t, &dummy);
+				return true;
+				case "json":
+					var envelope = var.emptyObject;
+					envelope.success = false;
+					envelope.result = null;
+					envelope.error = t.toString();
+					cgi.setResponseContentType("application/json");
+					cgi.write(envelope.toJson(), true);
+				return true;
+				default:
+					throw t;
+				return true;
+			}
+			return true;
+		}
+
+		assert(0);
+	}
+
+	static bool internalHandlerWithObject(T, Presenter)(T obj, string remainingUrl, Cgi cgi, Presenter presenter) {
+
 		obj.initialize(cgi);
 
 		/+
@@ -6847,14 +7475,93 @@ auto serveApi(T)(string urlPrefix) {
 				Moreover, some args vs no args can be overloaded dynamically.
 		+/
 
-		string hack = to!string(cgi.requestMethod) ~ " " ~ cgi.pathInfo[urlPrefix.length .. $];
+		auto methodNameFromUrl = nextPieceFromSlash(remainingUrl);
+		/+
+		auto orig = remainingUrl;
+		assert(0,
+			(orig is null ? "__null" : orig)
+			~ " .. " ~
+			(methodNameFromUrl is null ? "__null" : methodNameFromUrl));
+		+/
+
+		if(methodNameFromUrl is null)
+			methodNameFromUrl = "__null";
+
+		string hack = to!string(cgi.requestMethod) ~ " " ~ methodNameFromUrl;
+
+		if(remainingUrl.length)
+			hack ~= "/";
 
 		switch(hack) {
 			static foreach(methodName; __traits(derivedMembers, T))
+			static if(methodName != "__ctor")
 			static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
 			static if(is(typeof(overload) P == __parameters))
+			static if(is(typeof(overload) R == return))
 			{
-				case urlNameForMethod!(overload)(urlify(methodName)):
+			static foreach(urlNameForMethod; urlNamesForMethod!(overload)(urlify(methodName)))
+			case urlNameForMethod:
+
+				static if(is(R : WebObject)) {
+					// if it returns a WebObject, it is considered a subresource. That means the url is dispatched like the ctor above.
+
+					// the only argument it is allowed to take, outside of cgi, session, and set up thingies, is a single string
+
+					// subresource_ctor
+					// also see mustNotBeSetFromWebParams
+
+					P params;
+
+					static foreach(pidx, param; P) {
+						static if(is(param : Cgi)) {
+							static assert(!is(param == immutable));
+							cast() params[pidx] = cgi;
+						} else static if(is(param == Session!D, D)) {
+							static assert(!is(param == immutable));
+							cast() params[pidx] = cgi.getSessionObject!D();
+						} else {
+							static if(hasIfCalledFromWeb!(__traits(getAttributes, P[pidx .. pidx + 1]))) {
+								static foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
+									static if(is(uda == ifCalledFromWeb!func, alias func)) {
+										static if(is(typeof(func(cgi))))
+											params[pidx] = func(cgi);
+										else
+											params[pidx] = func();
+									}
+								}
+							} else {
+
+								static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
+									params[pidx] = param.getAutomaticallyForCgi(cgi);
+								} else static if(is(param == string)) {
+									auto ident = nextPieceFromSlash(remainingUrl);
+									if(ident is null) {
+										// trailing slash mandated on subresources
+										cgi.setResponseLocation(cgi.pathInfo ~ "/");
+										return true;
+									} else {
+										params[pidx] = ident;
+									}
+								} else static assert(0, "illegal type for subresource " ~ param.stringof);
+							}
+						}
+					}
+
+					auto nobj = (__traits(getOverloads, obj, methodName)[idx])(ident);
+					return internalHandlerWithObject!(typeof(nobj), Presenter)(nobj, remainingUrl, cgi, presenter);
+				} else {
+					// 404 it if any url left - not a subresource means we don't get to play with that!
+					if(remainingUrl.length)
+						return false;
+
+					foreach(attr; __traits(getAttributes, overload))
+						static if(is(attr == AddTrailingSlash)) {
+							if(remainingUrl is null) {
+								cgi.setResponseLocation(cgi.pathInfo ~ "/");
+								return true;
+							}
+						}
+				
 				/+
 				int zeroArgOverload = -1;
 				int overloadCount = cast(int) __traits(getOverloads, T, methodName).length;
@@ -6928,10 +7635,10 @@ auto serveApi(T)(string urlPrefix) {
 					+/
 					if(callFunction)
 				+/
-					switch(cgi.request("format", "html")) {
+					switch(cgi.request("format", defaultFormat!overload())) {
 						case "html":
+							// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
 							try {
-								// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
 								auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
 								presenter.presentSuccessfulReturnAsHtml(cgi, ret);
 							} catch(Throwable t) {
@@ -6949,10 +7656,12 @@ auto serveApi(T)(string urlPrefix) {
 							} else {
 								var json = ret;
 							}
-							var envelope = var.emptyObject;
+							var envelope = json; // var.emptyObject;
+							/*
 							envelope.success = true;
 							envelope.result = json;
 							envelope.error = null;
+							*/
 							cgi.setResponseContentType("application/json");
 							cgi.write(envelope.toJson(), true);
 						return true;
@@ -6961,9 +7670,11 @@ auto serveApi(T)(string urlPrefix) {
 						return true;
 					}
 				//}}
-				cgi.header("Accept: POST"); // FIXME list the real thing
-				cgi.setResponseStatus("405 Method Not Allowed"); // again, not exactly, but sort of. no overload matched our args, almost certainly due to http verb filtering.
-				return true;
+
+				//cgi.header("Accept: POST"); // FIXME list the real thing
+				//cgi.setResponseStatus("405 Method Not Allowed"); // again, not exactly, but sort of. no overload matched our args, almost certainly due to http verb filtering.
+				//return true;
+				}
 			}
 			}}
 			case "script.js":
@@ -6985,7 +7696,16 @@ auto serveApi(T)(string urlPrefix) {
 	return DispatcherDefinition!internalHandler(urlPrefix, false);
 }
 
-string urlNameForMethod(alias method)(string def) {
+string defaultFormat(alias method)() {
+	static foreach(attr; __traits(getAttributes, method)) {
+		static if(is(typeof(attr) == DefaultFormat)) {
+			return attr.value;
+		}
+	}
+	return "html";
+}
+
+string[] urlNamesForMethod(alias method)(string def) {
 	auto verb = Cgi.RequestMethod.GET;
 	bool foundVerb = false;
 	bool foundNoun = false;
@@ -7004,7 +7724,22 @@ string urlNameForMethod(alias method)(string def) {
 		}
 	}
 
-	return to!string(verb) ~ " " ~ def;
+	if(def is null)
+		def = "__null";
+
+	string[] ret;
+
+	static if(is(typeof(method) R == return)) {
+		static if(is(R : WebObject)) {
+			def ~= "/";
+			foreach(v; __traits(allMembers, Cgi.RequestMethod))
+				ret ~= v ~ " " ~ def;
+		} else {
+			ret ~= to!string(verb) ~ " " ~ def;
+		}
+	} else static assert(0);
+
+	return ret;
 }
 
 
@@ -7623,6 +8358,8 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 string contentTypeFromFileExtension(string filename) {
 		if(filename.endsWith(".png"))
 			return "image/png";
+		if(filename.endsWith(".svg"))
+			return "image/svg+xml";
 		if(filename.endsWith(".jpg"))
 			return "image/jpeg";
 		if(filename.endsWith(".html"))
@@ -7735,6 +8472,22 @@ struct DispatcherData(Presenter) {
 	Cgi cgi; /// You can use this cgi object.
 	Presenter presenter; /// This is the presenter from top level, and will be forwarded to the sub-dispatcher.
 	size_t pathInfoStart; /// This is forwarded to the sub-dispatcher. It may be marked private later, or at least read-only.
+}
+
+/++
+	Dispatches the URL to a specific function.
++/
+auto handleWith(alias handler)(string urlPrefix) {
+	// cuz I'm too lazy to do it better right now
+	static class Hack : WebObject {
+		static import std.traits;
+		@UrlName("")
+		auto handle(std.traits.Parameters!handler args) {
+			return handler(args);
+		}
+	}
+
+	return urlPrefix.serveApiInternal!Hack;
 }
 
 /++

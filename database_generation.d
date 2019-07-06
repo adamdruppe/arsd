@@ -6,6 +6,10 @@
 module arsd.database_generation;
 
 /*
+
+	FIXME: support partial indexes and maybe "using"
+	FIXME: support views
+
 	Let's put indexes in there too and make index functions be the preferred way of doing a query
 	by making them convenient af.
 */
@@ -22,7 +26,9 @@ private enum UDA;
 
 @UDA struct Unique { }
 
-@UDA struct ForeignKey(alias toWhat, string behavior) {}
+@UDA struct ForeignKey(alias toWhat, string behavior) {
+	alias ReferencedTable = __traits(parent, toWhat);
+}
 
 enum CASCADE = "ON UPDATE CASCADE ON DELETE CASCADE";
 enum NULLIFY = "ON UPDATE CASCADE ON DELETE SET NULL";
@@ -94,12 +100,12 @@ string generateCreateTableFor(alias O)() {
 			outputted = true;
 		} else static if(is(typeof(member) == Index!Fields, Fields...)) {
 			string fields = "";
-			foreach(field; Fields) {
+			static foreach(field; Fields) {
 				if(fields.length)
 					fields ~= ", ";
 				fields ~= __traits(identifier, field);
 			}
-			addAfterTableSql("CREATE INDEX " ~ memberName ~ " ON " ~ tableName ~ "("~fields~")");
+			addAfterTableSql("CREATE INDEX " ~ tableName ~ "_" ~ memberName ~ " ON " ~ tableName ~ "("~fields~")");
 		} else static if(is(typeof(member) == UniqueIndex!Fields, Fields...)) {
 			string fields = "";
 			static foreach(field; Fields) {
@@ -107,7 +113,7 @@ string generateCreateTableFor(alias O)() {
 					fields ~= ", ";
 				fields ~= __traits(identifier, field);
 			}
-			addAfterTableSql("CREATE UNIQUE INDEX " ~ memberName ~ " ON " ~ tableName ~ "("~fields~")");
+			addAfterTableSql("CREATE UNIQUE INDEX " ~ tableName ~ "_" ~ memberName ~ " ON " ~ tableName ~ "("~fields~")");
 		} else static if(is(typeof(member) T)) {
 			if(outputted) {
 				sql ~= ",";
@@ -237,7 +243,17 @@ private string beautify(string name, char space = ' ', bool allLowerCase = false
 }
 
 import arsd.database;
+/++
+
++/
 void save(O)(ref O t, Database db) {
+	t.insert(db);
+}
+
+/++
+
++/
+void insert(O)(ref O t, Database db) {
 	auto builder = new InsertBuilder;
 	builder.setTable(toTableName(O.stringof));
 
@@ -253,9 +269,14 @@ void save(O)(ref O t, Database db) {
 					builder.addVariable(memberName, v.value);
 			} else static if(is(T == int))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
-			else static if(is(T == Serial))
-				{} // skip, let it auto-fill
-			else static if(is(T == string))
+			else static if(is(T == Serial)) {
+				auto v = __traits(getMember, t, memberName).value;
+				if(v) {
+					builder.addVariable(memberName, v);
+				} else {
+					// skip and let it auto-fill
+				}
+			} else static if(is(T == string))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
 			else static if(is(T == double))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
@@ -273,44 +294,42 @@ void save(O)(ref O t, Database db) {
 		t.id.value = to!int(row[0]);
 }
 
+///
 class RecordNotFoundException : Exception {
 	this() { super("RecordNotFoundException"); }
 }
 
 /++
 	Returns a given struct populated from the database. Assumes types known to this module.
+
+	MyItem item = db.find!(MyItem.id)(3);
+
+	If you just give a type, it assumes the relevant index is "id".
+
 +/
-T find(T)(Database db, int id) {
-	import std.conv;
+auto find(alias T)(Database db, int id) {
+
+	// FIXME: if T is an index, search by it.
+	// if it is unique, return an individual item.
+	// if not, return the array
+
 	foreach(record; db.query("SELECT * FROM " ~ toTableName(T.stringof) ~ " WHERE id = ?", id)) {
-	T t;
+		T t;
+		populateFromDbRow(t, record);
+
+		return t;
+		// if there is ever a second record, that's a wtf, but meh.
+	}
+	throw new RecordNotFoundException();
+}
+
+private void populateFromDbRow(T)(ref T t, Row record) {
 	foreach(field, value; record) {
 		sw: switch(field) {
 			static foreach(memberName; __traits(allMembers, T)) {
 				case memberName:
 					static if(is(typeof(__traits(getMember, T, memberName)))) {
-						typeof(__traits(getMember, t, memberName)) val;
-						alias V = typeof(val);
-
-						static if(is(V == Constraint!constraintSql, string constraintSql)) {
-
-						} else static if(is(V == Nullable!P, P)) {
-							// FIXME
-							if(value.length) {
-								val.isNull = false;
-								val.value = to!P(value);
-							}
-						} else static if(is(V == int) || is(V == string) || is(V == bool) || is(V == double)) {
-							val = to!V(value);
-						} else static if(is(V == enum)) {
-							val = cast(V) to!int(value);
-						} else static if(is(T == Timestamp)) {
-							// FIXME
-						} else static if(is(V == Serial)) {
-							val.value = to!int(value);
-						}
-
-						__traits(getMember, t, memberName) = val;
+						populateFromDbVal(__traits(getMember, t, memberName), value);
 					}
 				break sw;
 			}
@@ -318,8 +337,240 @@ T find(T)(Database db, int id) {
 				// intentionally blank
 		}
 	}
-	return t;
-	// if there is ever a second record, that's a wtf, but meh.
+}
+
+private void populateFromDbVal(V)(ref V val, string value) {
+	import std.conv;
+	static if(is(V == Constraint!constraintSql, string constraintSql)) {
+
+	} else static if(is(V == Nullable!P, P)) {
+		// FIXME
+		if(value.length) {
+			val.isNull = false;
+			val.value = to!P(value);
+		}
+	} else static if(is(V == bool)) {
+		val = value == "true" || value == "1";
+	} else static if(is(V == int) || is(V == string) || is(V == double)) {
+		val = to!V(value);
+	} else static if(is(V == enum)) {
+		val = cast(V) to!int(value);
+	} else static if(is(T == Timestamp)) {
+		// FIXME
+	} else static if(is(V == Serial)) {
+		val.value = to!int(value);
 	}
-	throw new RecordNotFoundException();
+}
+
+/++
+	Gets all the children of that type. Specifically, it looks in T for a ForeignKey referencing B and queries on that.
+
+	To do a join through a many-to-many relationship, you could get the children of the join table, then get the children of that...
+	Or better yet, use real sql. This is more intended to get info where there is one parent row and then many child
+	rows, not for a combined thing.
++/
+QueryBuilderHelper!(T[]) children(T, B)(B base) {
+	int countOfAssociations() {
+		int count = 0;
+		static foreach(memberName; __traits(allMembers, T))
+		static foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {{
+			static if(is(attr == ForeignKey!(K, policy), alias K, string policy)) {
+				static if(is(attr.ReferencedTable == B))
+					count++;
+			}
+		}}
+		return count;
+	}
+	static assert(countOfAssociations() == 1, T.stringof ~ " does not have exactly one foreign key of type " ~ B.stringof);
+	string keyName() {
+		static foreach(memberName; __traits(allMembers, T))
+		static foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {{
+			static if(is(attr == ForeignKey!(K, policy), alias K, string policy)) {
+				static if(is(attr.ReferencedTable == B))
+					return memberName;
+			}
+		}}
+	}
+
+	return QueryBuilderHelper!(T[])(toTableName(T.stringof)).where!(mixin(keyName ~ " => base.id"));
+}
+
+/++
+	Finds the single row associated with a foreign key in `base`.
+
+	`T` is used to find the key, unless ambiguous, in which case you must pass `key`.
+
+	To do a join through a many-to-many relationship, go to [children] or use real sql.
++/
+T associated(B, T, string key = null)(B base, Database db) {
+	int countOfAssociations() {
+		int count = 0;
+		static foreach(memberName; __traits(allMembers, B))
+		static foreach(attr; __traits(getAttributes, __traits(getMember, B, memberName))) {
+			static if(is(attr == ForeignKey!(K, policy), alias K, string policy)) {
+				static if(is(attr.ReferencedTable == T))
+					static if(key is null || key == memberName)
+						count++;
+			}
+		}
+		return count;
+	}
+
+	static if(key is null) {
+		enum coa = countOfAssociations();
+		static assert(coa != 0, B.stringof ~ " has no association of type " ~ T);
+		static assert(coa == 1, B.stringof ~ " has multiple associations of type " ~ T ~ "; please specify the key you want");
+		static foreach(memberName; __traits(allMembers, B))
+		static foreach(attr; __traits(getAttributes, __traits(getMember, B, memberName))) {
+			static if(is(attr == ForeignKey!(K, policy), alias K, string policy)) {
+				static if(is(attr.ReferencedTable == T))
+					return db.find!T(__traits(getMember, base, memberName));
+			}
+		}
+	} else {
+		static assert(countOfAssociations() == 1, B.stringof ~ " does not have a key named " ~ key ~ " of type " ~ T);
+		static foreach(attr; __traits(getAttributes, __traits(getMember, B, memberName))) {
+			static if(is(attr == ForeignKey!(K, policy), alias K, string policy)) {
+				static if(is(attr.ReferencedTable == T)) {
+					return db.find!T(__traits(getMember, base, key));
+				}
+			}
+		}
+		assert(0);
+	}
+}
+
+
+/++
+	It will return an aggregate row with a member of type of each table in the join.
+
+	Could do an anonymous object for other things in the sql...
++/
+auto join(TableA, TableB, ThroughTable = void)() {}
+
+/++
+
++/
+struct QueryBuilderHelper(T) {
+	static if(is(T == R[], R))
+		alias TType = R;
+	else
+		alias TType = T;
+
+	SelectBuilder selectBuilder;
+
+	this(string tableName) {
+		selectBuilder = new SelectBuilder();
+		selectBuilder.table = tableName;
+		selectBuilder.fields = ["*"];
+	}
+
+	T execute(Database db) {
+		selectBuilder.db = db;
+		static if(is(T == R[], R)) {
+
+		} else {
+			selectBuilder.limit = 1;
+		}
+
+		T ret;
+		bool first = true;
+		foreach(row; db.query(selectBuilder.toString())) {
+			TType t;
+			populateFromDbRow(t, row);
+
+			static if(is(T == R[], R))
+				ret ~= t;
+			else {
+				if(first) {
+					ret = t;
+					first = false;
+				} else {
+					assert(0);
+				}
+			}
+		}
+		return ret;
+	}
+
+	///
+	typeof(this) orderBy(string criterion)() {
+		string name() {
+			int idx = 0;
+			while(idx < criterion.length && criterion[idx] != ' ')
+				idx++;
+			return criterion[0 .. idx];
+		}
+
+		string direction() {
+			int idx = 0;
+			while(idx < criterion.length && criterion[idx] != ' ')
+				idx++;
+			import std.string;
+			return criterion[idx .. $].strip;
+		}
+
+		static assert(is(typeof(__traits(getMember, TType, name()))), TType.stringof ~ " has no field " ~ name());
+		static assert(direction().length == 0 || direction() == "ASC" || direction() == "DESC", "sort direction must be empty, ASC, or DESC");
+
+		selectBuilder.orderBys ~= criterion;
+		return this;
+	}
+}
+
+QueryBuilderHelper!(T[]) from(T)() {
+	return QueryBuilderHelper!(T[])(toTableName(T.stringof));
+}
+
+/// ditto
+template where(conditions...) {
+	Qbh where(Qbh)(Qbh this_, string[] sqlCondition...) {
+		assert(this_.selectBuilder !is null);
+
+		static string extractName(string s) {
+			if(s.length == 0) assert(0);
+			auto i = s.length - 1;
+			while(i) {
+				if(s[i] == ')') {
+					// got to close paren, now backward to non-identifier char to get name
+					auto end = i;
+					while(i) {
+						if(s[i] == ' ')
+							return s[i + 1 .. end];
+						i--;
+					}
+					assert(0);
+				}
+				i--;
+			}
+			assert(0);
+		}
+
+		static foreach(idx, cond; conditions) {{
+			// I hate this but __parameters doesn't work here for some reason
+			// see my old thread: https://forum.dlang.org/post/awjuoemsnmxbfgzhgkgx@forum.dlang.org
+			enum name = extractName(typeof(cond!int).stringof);
+			auto value = cond(null);
+
+			// FIXME: convert the value as necessary
+			static if(is(typeof(value) == Serial))
+				auto dbvalue = value.value;
+			else
+				auto dbvalue = value;
+
+			import std.conv;
+			auto placeholder = "?_internal" ~ to!string(idx);
+			this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
+			this_.selectBuilder.setVariable(placeholder, dbvalue);
+
+			static assert(is(typeof(__traits(getMember, Qbh.TType, name))), Qbh.TType.stringof ~ " has no member " ~ name);
+			static if(is(typeof(__traits(getMember, Qbh.TType, name)) == int))
+				static assert(is(typeof(value) == int) || is(typeof(value) == Serial), Qbh.TType.stringof ~ " is a integer key, but you passed an incompatible " ~ typeof(value));
+			else
+				static assert(is(typeof(__traits(getMember, Qbh.TType, name)) == typeof(value)), Qbh.TType.stringof ~ "." ~ name ~ " is not of type " ~ typeof(value).stringof);
+		}}
+
+		this_.selectBuilder.wheres ~= sqlCondition;
+		return this_;
+	}
 }

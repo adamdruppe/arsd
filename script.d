@@ -347,7 +347,7 @@ private enum string[] symbols = [
 	"+=", "-=", "*=", "/=", "~=",  "==", "<=", ">=","!=", "%=",
 	"&=", "|=", "^=",
 	"..",
-	".",",",";",":",
+	"?", ".",",",";",":",
 	"[", "]", "{", "}", "(", ")",
 	"&", "|", "^",
 	"+", "-", "*", "/", "=", "<", ">","~","!","%"
@@ -1596,6 +1596,39 @@ class IfExpression : Expression {
 	}
 }
 
+class TernaryExpression : Expression {
+	Expression condition;
+	Expression ifTrue;
+	Expression ifFalse;
+
+	this() {}
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		InterpretResult result;
+		assert(condition !is null);
+
+		auto ifScope = new PrototypeObject();
+		ifScope.prototype = sc;
+
+		if(condition.interpret(ifScope).value) {
+			result = ifTrue.interpret(ifScope);
+		} else {
+			result = ifFalse.interpret(ifScope);
+		}
+		return InterpretResult(result.value, sc, result.flowControl);
+	}
+
+	override string toString() {
+		string code = "";
+		code ~= condition.toString();
+		code ~= " ? ";
+		code ~= ifTrue.toString();
+		code ~= " : ";
+		code ~= ifFalse.toString();
+		return code;
+	}
+}
+
 // this is kinda like a placement new, and currently isn't exposed inside the language,
 // but is used for class inheritance
 class ShallowCopyExpression : Expression {
@@ -1814,7 +1847,7 @@ ScriptToken requireNextToken(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Sc
 		throw new ScriptCompileException("script ended prematurely", 0, file, line);
 	auto next = tokens.front;
 	if(next.type != type || (str !is null && next.str != str))
-		throw new ScriptCompileException("unexpected '"~next.str~"'", next.lineNumber, file, line);
+		throw new ScriptCompileException("unexpected '"~next.str~"' while expecting " ~ to!string(type) ~ " " ~ str, next.lineNumber, file, line);
 
 	tokens.popFront();
 	return next;
@@ -2086,6 +2119,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "}": // possible FIXME
 				case ",": // possible FIXME these are passed on to the next thing
 				case ";":
+				case ":": // idk
 					return e1;
 
 				case ".":
@@ -2099,6 +2133,15 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "||":
 					tokens.popFront();
 					e1 = new BinaryExpression(peek.str, e1, parseExpression(tokens));
+					break;
+				case "?": // is this the right precedence?
+					auto e = new TernaryExpression();
+					e.condition = e1;
+					tokens.requireNextToken(ScriptToken.Type.symbol, "?");
+					e.ifTrue = parseExpression(tokens);
+					tokens.requireNextToken(ScriptToken.Type.symbol, ":");
+					e.ifFalse = parseExpression(tokens);
+					e1 = e;
 					break;
 				case "~":
 					// FIXME: make sure this has the right associativity
