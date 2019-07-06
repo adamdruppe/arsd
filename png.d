@@ -168,13 +168,14 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 					if(type == 3) {
 						idata[idataIdx++] = p;
 					} else {
-						if(depth < 8) {
-							if(p == (1 << depth - 1)) {
-								p <<= 8 - depth;
-								p |= 1 << depth - 1;
-							} else {
-								p <<= 8 - depth;
-							}
+						if(depth == 1) {
+							p = p ? 0xff : 0;
+						} else if (depth == 2) {
+							p |= p << 2;
+							p |= p << 4;
+						}
+						else if (depth == 4) {
+							p |= p << 4;
 						}
 						idata[idataIdx++] = p;
 						idata[idataIdx++] = p;
