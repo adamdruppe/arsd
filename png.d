@@ -162,52 +162,75 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 		switch(type) {
 			case 0: // greyscale
 			case 4: // greyscale with alpha
-				auto value = consumeOne();
-				idata[idataIdx++] = value;
-				idata[idataIdx++] = value;
-				idata[idataIdx++] = value;
-				idata[idataIdx++] = (type == 4) ? consumeOne() : 255;
-			break;
 			case 3: // indexed
+
+				void acceptPixel(ubyte p) {
+					if(type == 3) {
+						idata[idataIdx++] = p;
+					} else {
+						if(depth < 8) {
+							if(p == (1 << depth - 1)) {
+								p <<= 8 - depth;
+								p |= (1 << (1 - depth)) - 1;
+							} else {
+								p <<= 8 - depth;
+							}
+						}
+						idata[idataIdx++] = p;
+						idata[idataIdx++] = p;
+						idata[idataIdx++] = p;
+					}
+				}
+
 				auto b = consumeOne();
 				switch(depth) {
 					case 1:
-						idata[idataIdx++] = (b >> 7) & 0x01;
+						acceptPixel((b >> 7) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 6) & 0x01;
+						acceptPixel((b >> 6) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 5) & 0x01;
+						acceptPixel((b >> 5) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 4) & 0x01;
+						acceptPixel((b >> 4) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 3) & 0x01;
+						acceptPixel((b >> 3) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 2) & 0x01;
+						acceptPixel((b >> 2) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 1) & 0x01;
+						acceptPixel((b >> 1) & 0x01);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = b & 0x01;
+						acceptPixel(b & 0x01);
 					break;
 					case 2:
-						idata[idataIdx++] = (b >> 6) & 0x03;
+						acceptPixel((b >> 6) & 0x03);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 4) & 0x03;
+						acceptPixel((b >> 4) & 0x03);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = (b >> 2) & 0x03;
+						acceptPixel((b >> 2) & 0x03);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = b & 0x03;
+						acceptPixel(b & 0x03);
 					break;
 					case 4:
-						idata[idataIdx++] = (b >> 4) & 0x0f;
+						acceptPixel((b >> 4) & 0x0f);
 						pixel++; if(pixel == width) break loop;
-						idata[idataIdx++] = b & 0x0f;
+						acceptPixel(b & 0x0f);
 					break;
 					case 8:
-						idata[idataIdx++] = b;
+						acceptPixel(b);
+					break;
+					case 16:
+						assert(type != 3); // 16 bit indexed isn't supported per png spec
+						acceptPixel(b);
+						consumeOne(); // discarding the least significant byte as we can't store it anyway
 					break;
 					default:
 						assert(0, "bit depth not implemented");
 				}
+
+				if(type == 0)
+					idata[idataIdx++] = 255;
+				else if(type == 4)
+					idata[idataIdx++] = consumeOne();
 			break;
 			case 2: // truecolor
 			case 6: // true with alpha
