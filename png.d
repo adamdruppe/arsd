@@ -179,6 +179,11 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 						idata[idataIdx++] = p;
 						idata[idataIdx++] = p;
 						idata[idataIdx++] = p;
+
+						if(type == 0)
+							idata[idataIdx++] = 255;
+						else if(type == 4)
+							idata[idataIdx++] = consumeOne();
 					}
 				}
 
@@ -226,11 +231,6 @@ void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, uby
 					default:
 						assert(0, "bit depth not implemented");
 				}
-
-				if(type == 0)
-					idata[idataIdx++] = 255;
-				else if(type == 4)
-					idata[idataIdx++] = consumeOne();
 			break;
 			case 2: // truecolor
 			case 6: // true with alpha
