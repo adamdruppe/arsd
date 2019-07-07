@@ -9,6 +9,7 @@
 	manually without the extended metadata.)
 */
 module arsd.sqlite;
+version(static_sqlite) {} else
 pragma(lib, "sqlite3");
 version(linux)
 pragma(lib, "dl"); // apparently sqlite3 depends on this
