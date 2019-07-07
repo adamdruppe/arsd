@@ -51,7 +51,7 @@ struct Nullable(T) {
 }
 
 struct Timestamp {
-
+	string value;
 }
 
 struct Constraint(string sql) {}
@@ -350,13 +350,13 @@ private void populateFromDbVal(V)(ref V val, string value) {
 			val.value = to!P(value);
 		}
 	} else static if(is(V == bool)) {
-		val = value == "true" || value == "1";
+		val = value == "t" || value == "1" || value == "true";
 	} else static if(is(V == int) || is(V == string) || is(V == double)) {
 		val = to!V(value);
 	} else static if(is(V == enum)) {
 		val = cast(V) to!int(value);
-	} else static if(is(T == Timestamp)) {
-		// FIXME
+	} else static if(is(V == Timestamp)) {
+		val.value = value;
 	} else static if(is(V == Serial)) {
 		val.value = to!int(value);
 	}
@@ -555,19 +555,68 @@ template where(conditions...) {
 			// FIXME: convert the value as necessary
 			static if(is(typeof(value) == Serial))
 				auto dbvalue = value.value;
+			else static if(is(typeof(value) == enum))
+				auto dbvalue = cast(int) value;
 			else
 				auto dbvalue = value;
 
 			import std.conv;
-			auto placeholder = "?_internal" ~ to!string(idx);
-			this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
-			this_.selectBuilder.setVariable(placeholder, dbvalue);
 
 			static assert(is(typeof(__traits(getMember, Qbh.TType, name))), Qbh.TType.stringof ~ " has no member " ~ name);
-			static if(is(typeof(__traits(getMember, Qbh.TType, name)) == int))
-				static assert(is(typeof(value) == int) || is(typeof(value) == Serial), Qbh.TType.stringof ~ " is a integer key, but you passed an incompatible " ~ typeof(value));
-			else
+			static if(is(typeof(__traits(getMember, Qbh.TType, name)) == int)) {
+				static if(is(typeof(value) : const(int)[])) {
+					string s;
+					foreach(v; value) {
+						if(s.length) s ~= ", ";
+						s ~= to!string(v);
+					}
+					this_.selectBuilder.wheres ~= name ~ " IN (" ~ s ~ ")";
+				} else {
+					static assert(is(typeof(value) : const(int)) || is(typeof(value) == Serial), Qbh.TType.stringof ~ " is a integer key, but you passed an incompatible " ~ typeof(value).stringof);
+
+					auto placeholder = "?_internal" ~ to!string(idx);
+					this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
+					this_.selectBuilder.setVariable(placeholder, dbvalue);
+				}
+			} else static if(is(typeof(__traits(getMember, Qbh.TType, name)) == Nullable!int)) {
+				static if(is(typeof(value) : const(int)[])) {
+					string s;
+					foreach(v; value) {
+						if(s.length) s ~= ", ";
+						s ~= to!string(v);
+					}
+					this_.selectBuilder.wheres ~= name ~ " IN (" ~ s ~ ")";
+				} else {
+					static assert(is(typeof(value) : const(int)) || is(typeof(value) == Serial), Qbh.TType.stringof ~ " is a integer key, but you passed an incompatible " ~ typeof(value).stringof);
+
+					auto placeholder = "?_internal" ~ to!string(idx);
+					this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
+					this_.selectBuilder.setVariable(placeholder, dbvalue);
+				}
+			} else static if(is(typeof(__traits(getMember, Qbh.TType, name)) == Serial)) {
+				static if(is(typeof(value) : const(int)[])) {
+					string s;
+					foreach(v; value) {
+						if(s.length) s ~= ", ";
+						s ~= to!string(v);
+					}
+					this_.selectBuilder.wheres ~= name ~ " IN (" ~ s ~ ")";
+				} else {
+					static assert(is(typeof(value) : const(int)) || is(typeof(value) == Serial), Qbh.TType.stringof ~ " is a integer key, but you passed an incompatible " ~ typeof(value).stringof);
+
+					auto placeholder = "?_internal" ~ to!string(idx);
+					this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
+					this_.selectBuilder.setVariable(placeholder, dbvalue);
+				}
+
+
+			} else {
 				static assert(is(typeof(__traits(getMember, Qbh.TType, name)) == typeof(value)), Qbh.TType.stringof ~ "." ~ name ~ " is not of type " ~ typeof(value).stringof);
+
+				auto placeholder = "?_internal" ~ to!string(idx);
+				this_.selectBuilder.wheres ~= name ~ " = " ~ placeholder;
+				this_.selectBuilder.setVariable(placeholder, dbvalue);
+			}
 		}}
 
 		this_.selectBuilder.wheres ~= sqlCondition;

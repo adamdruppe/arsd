@@ -7498,6 +7498,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
 			static if(is(typeof(overload) P == __parameters))
 			static if(is(typeof(overload) R == return))
+			static if(__traits(getProtection, overload) == "public" || __traits(getProtection, overload) == "export")
 			{
 			static foreach(urlNameForMethod; urlNamesForMethod!(overload)(urlify(methodName)))
 			case urlNameForMethod:
