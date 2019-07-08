@@ -6267,22 +6267,27 @@ ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
 	msghdr msg;
 	iovec[1] iov;
 
-	union ControlUnion {
-		cmsghdr cm;
-		char[CMSG_SPACE(int.sizeof)] control;
+	version(OSX) {
+		msg.msg_accrights = cast(cattr_t) &sendfd;
+		msg.msg_accrightslen = int.sizeof;
+	} else {
+		union ControlUnion {
+			cmsghdr cm;
+			char[CMSG_SPACE(int.sizeof)] control;
+		}
+
+		ControlUnion control_un;
+		cmsghdr* cmptr;
+
+		msg.msg_control = control_un.control.ptr;
+		msg.msg_controllen = control_un.control.length;
+
+		cmptr = CMSG_FIRSTHDR(&msg);
+		cmptr.cmsg_len = CMSG_LEN(int.sizeof);
+		cmptr.cmsg_level = SOL_SOCKET;
+		cmptr.cmsg_type = SCM_RIGHTS;
+		*(cast(int *) CMSG_DATA(cmptr)) = sendfd;
 	}
-
-	ControlUnion control_un;
-	cmsghdr* cmptr;
-
-	msg.msg_control = control_un.control.ptr;
-	msg.msg_controllen = control_un.control.length;
-
-	cmptr = CMSG_FIRSTHDR(&msg);
-	cmptr.cmsg_len = CMSG_LEN(int.sizeof);
-	cmptr.cmsg_level = SOL_SOCKET;
-	cmptr.cmsg_type = SCM_RIGHTS;
-	*(cast(int *) CMSG_DATA(cmptr)) = sendfd;
 
 	msg.msg_name = null;
 	msg.msg_namelen = 0;
@@ -6303,15 +6308,20 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	ssize_t n;
 	int newfd;
 
-	union ControlUnion {
-		cmsghdr cm;
-		char[CMSG_SPACE(int.sizeof)] control;
-	}
-	ControlUnion control_un;
-	cmsghdr* cmptr;
+	version(OSX) {
+		msg.msg_accrights = cast(cattr_t) recvfd;
+		msg.msg_accrightslen = int.sizeof;
+	} else {
+		union ControlUnion {
+			cmsghdr cm;
+			char[CMSG_SPACE(int.sizeof)] control;
+		}
+		ControlUnion control_un;
+		cmsghdr* cmptr;
 
-	msg.msg_control = control_un.control.ptr;
-	msg.msg_controllen = control_un.control.length;
+		msg.msg_control = control_un.control.ptr;
+		msg.msg_controllen = control_un.control.length;
+	}
 
 	msg.msg_name = null;
 	msg.msg_namelen = 0;
@@ -6324,15 +6334,20 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	if ( (n = recvmsg(fd, &msg, 0)) <= 0)
 		return n;
 
-	if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
-			cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
-		if (cmptr.cmsg_level != SOL_SOCKET)
-			throw new Exception("control level != SOL_SOCKET");
-		if (cmptr.cmsg_type != SCM_RIGHTS)
-			throw new Exception("control type != SCM_RIGHTS");
-		*recvfd = *(cast(int *) CMSG_DATA(cmptr));
-	} else
-		*recvfd = -1;       /* descriptor was not passed */
+	version(OSX) {
+		if(msg.msg_accrightslen != int.sizeof)
+			*recvfd = -1;
+	} else {
+		if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
+				cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
+			if (cmptr.cmsg_level != SOL_SOCKET)
+				throw new Exception("control level != SOL_SOCKET");
+			if (cmptr.cmsg_type != SCM_RIGHTS)
+				throw new Exception("control type != SCM_RIGHTS");
+			*recvfd = *(cast(int *) CMSG_DATA(cmptr));
+		} else
+			*recvfd = -1;       /* descriptor was not passed */
+	}
 
 	return n;
 }
