@@ -121,7 +121,6 @@ class Sqlite : Database {
 		foreach(i, arg; args) {
 			s.bind(cast(int) i + 1, arg);
 		}
-
 		return s.execute();
 	}
 
@@ -263,6 +262,12 @@ struct Statement {
 	Sqlite db;
 
 	this(Sqlite db, string sql) {
+		// the arsd convention is zero based ?, but sqlite insists on one based. so this is stupid but still
+		if(sql.indexOf("?0") != -1) {
+			foreach_reverse(i; 0 .. 10)
+				sql = sql.replace("?" ~ to!string(i), "?" ~ to!string(i + 1));
+		}
+
 		this.db = db;
 		if(sqlite3_prepare_v2(db.db, toStringz(sql), cast(int) sql.length, &s, null) != SQLITE_OK)
 			throw new DatabaseException(db.error());
@@ -487,14 +492,13 @@ template extract(A, T, R...){
 		void bind (const char[] name, float value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, const byte[] value){ bind(bindNameLookUp(name), value); }
 
+	void bind(int col, typeof(null) value){
+		if(sqlite3_bind_null(s, col) != SQLITE_OK)
+			throw new DatabaseException("bind " ~ db.error());
+	}
 	void bind(int col, const char[] value){
-		if(value is null) {
-			if(sqlite3_bind_null(s, col) != SQLITE_OK)
-				throw new DatabaseException("bind " ~ db.error());
-		} else {
-			if(sqlite3_bind_text(s, col, value.ptr, cast(int) value.length, cast(void*)-1) != SQLITE_OK)
-				throw new DatabaseException("bind " ~ db.error());
-		}
+		if(sqlite3_bind_text(s, col, value.ptr is null ? "" : value.ptr, cast(int) value.length, cast(void*)-1) != SQLITE_OK)
+			throw new DatabaseException("bind " ~ db.error());
 	}
 
 	void bind(int col, float value){
@@ -525,18 +529,27 @@ template extract(A, T, R...){
 	void bind(int col, Variant v) {
 		if(v.peek!long)
 			bind(col, v.get!long);
-		if(v.peek!ulong)
+		else if(v.peek!ulong)
 			bind(col, v.get!ulong);
-		if(v.peek!int)
+		else if(v.peek!int)
 			bind(col, v.get!int);
-		if(v.peek!string)
+		else if(v.peek!(const(int)))
+			bind(col, v.get!(const(int)));
+		else if(v.peek!bool)
+			bind(col, v.get!bool ? 1 : 0);
+		else if(v.peek!DateTime)
+			bind(col, v.get!DateTime.toISOExtString());
+		else if(v.peek!string)
 			bind(col, v.get!string);
-		if(v.peek!float)
+		else if(v.peek!float)
 			bind(col, v.get!float);
-		if(v.peek!(byte[]))
+		else if(v.peek!(byte[]))
 			bind(col, v.get!(byte[]));
-		if(v.peek!(void*) && v.get!(void*) is null)
-			bind(col, cast(string) null);
+		else if(v.peek!(void*) && v.get!(void*) is null)
+			bind(col, null);
+		else
+			bind(col, v.coerce!string);
+		//assert(0, v.type.toString ~ " " ~ v.coerce!string);
 	}
 
 	~this(){

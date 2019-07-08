@@ -376,8 +376,8 @@ string toSql(Database db, Variant a) {
 
 // just for convenience; "str".toSql(db);
 string toSql(string s, Database db) {
-	if(s is null)
-		return "NULL";
+	//if(s is null)
+		//return "NULL";
 	return '\'' ~ db.escape(s) ~ '\'';
 }
 

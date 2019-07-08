@@ -6076,21 +6076,24 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 		if(listen(sock, 128) == -1)
 			throw new Exception("listen " ~ to!string(errno));
 
+		makeNonBlocking(sock);
+
 		version(linux) {
-
-			makeNonBlocking(sock);
-
 			import core.sys.linux.epoll;
 			auto epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 			if(epoll_fd == -1)
 				throw new Exception("epoll_create1 " ~ to!string(errno));
 			scope(failure)
 				close(epoll_fd);
+		} else {
+			import core.sys.posix.poll;
+		}
 
-			auto acceptOp = allocateIoOp(sock, IoOp.Read, 0, null);
-			scope(exit)
-				freeIoOp(acceptOp);
+		auto acceptOp = allocateIoOp(sock, IoOp.Read, 0, null);
+		scope(exit)
+			freeIoOp(acceptOp);
 
+		version(linux) {
 			epoll_event ev;
 			ev.events = EPOLLIN | EPOLLET;
 			ev.data.ptr = acceptOp;
@@ -6098,111 +6101,153 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 				throw new Exception("epoll_ctl " ~ to!string(errno));
 
 			epoll_event[64] events;
+		} else {
+			pollfd[] pollfds;
+			pollfds ~= pollfd(sock, POLLIN);
+			IoOp*[int] ioops;
+		}
 
-			while(true) {
+		while(true) {
 
-				// FIXME: it should actually do a timerfd that runs on any thing that hasn't been run recently
+			// FIXME: it should actually do a timerfd that runs on any thing that hasn't been run recently
 
-				int timeout_milliseconds = 15000; //  -1; // infinite
-				//writeln("waiting for ", name);
+			int timeout_milliseconds = 15000; //  -1; // infinite
+			//writeln("waiting for ", name);
+
+			version(linux) {
 				auto nfds = epoll_wait(epoll_fd, events.ptr, events.length, timeout_milliseconds);
 				if(nfds == -1) {
 					if(errno == EINTR)
 						continue;
 					throw new Exception("epoll_wait " ~ to!string(errno));
 				}
+			} else {
+				int nfds = poll(pollfds.ptr, pollfds.length, timeout_milliseconds);
+			}
 
-				if(nfds == 0) {
-					eis.wait_timeout();
-				}
+			if(nfds == 0) {
+				eis.wait_timeout();
+			}
 
-				foreach(idx; 0 .. nfds) {
+			foreach(idx; 0 .. nfds) {
+				version(linux) {
 					auto flags = events[idx].events;
 					auto ioop = cast(IoOp*) events[idx].data.ptr;
+				} else {
+					auto ioop = ioops[pollfds[idx].fd];
+				}
 
-					//writeln(flags, " ", ioop.fd);
+				//writeln(flags, " ", ioop.fd);
 
-					if(ioop.fd == sock && (flags & EPOLLIN)) {
-						// on edge triggering, it is important that we get it all
-						while(true) {
-							auto size = cast(uint) addr.sizeof;
-							auto ns = accept(sock, cast(sockaddr*) &addr, &size);
-							if(ns == -1) {
-								if(errno == EAGAIN || errno == EWOULDBLOCK) {
-									// all done, got it all
-									break;
-								}
-								throw new Exception("accept " ~ to!string(errno));
+				void newConnection() {
+					// on edge triggering, it is important that we get it all
+					while(true) {
+						auto size = cast(uint) addr.sizeof;
+						auto ns = accept(sock, cast(sockaddr*) &addr, &size);
+						if(ns == -1) {
+							if(errno == EAGAIN || errno == EWOULDBLOCK) {
+								// all done, got it all
+								break;
 							}
+							throw new Exception("accept " ~ to!string(errno));
+						}
 
-							makeNonBlocking(ns);
+						makeNonBlocking(ns);
+						auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096, &eis.handleLocalConnectionData);
+						niop.closeHandler = &eis.handleLocalConnectionClose;
+						niop.completeHandler = &eis.handleLocalConnectionComplete;
+						scope(failure) freeIoOp(niop);
+
+						version(linux) {
 							epoll_event nev;
 							nev.events = EPOLLIN | EPOLLET;
-							auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096, &eis.handleLocalConnectionData);
-							niop.closeHandler = &eis.handleLocalConnectionClose;
-							niop.completeHandler = &eis.handleLocalConnectionComplete;
-							scope(failure) freeIoOp(niop);
 							nev.data.ptr = niop;
 							if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, ns, &nev) == -1)
 								throw new Exception("epoll_ctl " ~ to!string(errno));
-						}
-					} else if(ioop.operation == IoOp.ReadSocketHandle) {
-						while(true) {
-							int in_fd;
-							auto got = read_fd(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, &in_fd);
-							if(got == -1) {
-								if(errno == EAGAIN || errno == EWOULDBLOCK) {
-									// all done, got it all
-									if(ioop.completeHandler)
-										ioop.completeHandler(ioop);
-									break;
+						} else {
+							bool found = false;
+							foreach(ref pfd; pollfds) {
+								if(pfd.fd < 0) {
+									pfd.fd = ns;
+									found = true;
 								}
-								throw new Exception("recv " ~ to!string(errno));
 							}
-
-							if(got == 0) {
-								if(ioop.closeHandler)
-									ioop.closeHandler(ioop);
-								close(ioop.fd);
-								freeIoOp(ioop);
-								break;
-							}
-
-							ioop.bufferLengthUsed = cast(int) got;
-							ioop.handler(ioop, in_fd);
-						}
-					} else if(ioop.operation == IoOp.Read) {
-						while(true) {
-							auto got = recv(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, 0);
-							if(got == -1) {
-								if(errno == EAGAIN || errno == EWOULDBLOCK) {
-									// all done, got it all
-									if(ioop.completeHandler)
-										ioop.completeHandler(ioop);
-									break;
-								}
-								throw new Exception("recv " ~ to!string(errno));
-							}
-
-							if(got == 0) {
-								if(ioop.closeHandler)
-									ioop.closeHandler(ioop);
-								close(ioop.fd);
-								freeIoOp(ioop);
-								break;
-							}
-
-							ioop.bufferLengthUsed = cast(int) got;
-							ioop.handler(ioop, -1);
+							if(!found)
+								pollfds ~= pollfd(ns, POLLIN);
 						}
 					}
-
-					// EPOLLHUP?
 				}
+
+				bool newConnectionCondition() {
+					version(linux)
+						return ioop.fd == sock && (flags & EPOLLIN);
+					else
+						return pollfds[idx].fd == sock && (pollfds[idx].revents & POLLIN);
+				}
+
+				if(newConnectionCondition()) {
+					newConnection();
+				} else if(ioop.operation == IoOp.ReadSocketHandle) {
+					while(true) {
+						int in_fd;
+						auto got = read_fd(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, &in_fd);
+						if(got == -1) {
+							if(errno == EAGAIN || errno == EWOULDBLOCK) {
+								// all done, got it all
+								if(ioop.completeHandler)
+									ioop.completeHandler(ioop);
+								break;
+							}
+							throw new Exception("recv " ~ to!string(errno));
+						}
+
+						if(got == 0) {
+							if(ioop.closeHandler) {
+								ioop.closeHandler(ioop);
+								version(linux) {} // nothing needed
+								else {
+									foreach(ref pfd; pollfds) {
+										if(pfd.fd == ioop.fd)
+											pfd.fd = -1;
+									}
+								}
+							}
+							close(ioop.fd);
+							freeIoOp(ioop);
+							break;
+						}
+
+						ioop.bufferLengthUsed = cast(int) got;
+						ioop.handler(ioop, in_fd);
+					}
+				} else if(ioop.operation == IoOp.Read) {
+					while(true) {
+						auto got = recv(ioop.fd, ioop.allocatedBuffer.ptr, ioop.allocatedBuffer.length, 0);
+						if(got == -1) {
+							if(errno == EAGAIN || errno == EWOULDBLOCK) {
+								// all done, got it all
+								if(ioop.completeHandler)
+									ioop.completeHandler(ioop);
+								break;
+							}
+							throw new Exception("recv " ~ to!string(errno));
+						}
+
+						if(got == 0) {
+							if(ioop.closeHandler)
+								ioop.closeHandler(ioop);
+							close(ioop.fd);
+							freeIoOp(ioop);
+							break;
+						}
+
+						ioop.bufferLengthUsed = cast(int) got;
+						ioop.handler(ioop, -1);
+					}
+				}
+
+				// EPOLLHUP?
 			}
-		} else {
-			// this isn't seriously implemented.
-			static assert(0);
 		}
 	} else version(Windows) {
 

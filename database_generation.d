@@ -112,6 +112,7 @@ string generateCreateTableFor(alias O)() {
 	static foreach(memberName; __traits(allMembers, O)) {{
 		alias member = __traits(getMember, O, memberName);
 		static if(is(typeof(member) == Constraint!constraintSql, string constraintSql)) {
+		version(dbgenerate_sqlite) {} else { // FIXME: make it work here too, it is the specifics of the constraint strings
 			if(outputted) {
 				sql ~= ",";
 			}
@@ -120,6 +121,7 @@ string generateCreateTableFor(alias O)() {
 			sql ~= " ";
 			sql ~= constraintSql;
 			outputted = true;
+		}
 		} else static if(is(typeof(member) == Index!Fields, Fields...)) {
 			string fields = "";
 			static foreach(field; Fields) {
@@ -155,27 +157,42 @@ string generateCreateTableFor(alias O)() {
 				else static assert(0, P.stringof);
 			} else static if(is(T == int))
 				sql ~= " INTEGER NOT NULL";
-			else static if(is(T == Serial))
-				sql ~= " SERIAL"; // FIXME postgresism
-			else static if(is(T == string))
+			else static if(is(T == Serial)) {
+				version(dbgenerate_sqlite)
+					sql ~= " INTEGER PRIMARY KEY AUTOINCREMENT";
+				else
+					sql ~= " SERIAL"; // FIXME postgresism
+			} else static if(is(T == string))
 				sql ~= " TEXT NOT NULL";
 			else static if(is(T == double))
 				sql ~= " FLOAT NOT NULL";
 			else static if(is(T == bool))
 				sql ~= " BOOLEAN NOT NULL";
-			else static if(is(T == Timestamp))
-				sql ~= " TIMESTAMPTZ NOT NULL"; // FIXME: postgresism
-			else static if(is(T == enum))
+			else static if(is(T == Timestamp)) {
+				version(dbgenerate_sqlite)
+					sql ~= " TEXT NOT NULL";
+				else
+					sql ~= " TIMESTAMPTZ NOT NULL"; // FIXME: postgresism
+			} else static if(is(T == enum))
 				sql ~= " INTEGER NOT NULL"; // potentially crap but meh
 
 			static foreach(attr; __traits(getAttributes, member)) {
 				static if(is(typeof(attr) == Default)) {
 					// FIXME: postgresism there, try current_timestamp in sqlite
-					sql ~= " DEFAULT " ~ attr.sql;
+					version(dbgenerate_sqlite) {
+						import std.string;
+						sql ~= " DEFAULT " ~ std.string.replace(attr.sql, "now()", "current_timestamp");
+					} else
+						sql ~= " DEFAULT " ~ attr.sql;
 				} else static if(is(attr == Unique)) {
 					sql ~= " UNIQUE";
 				} else static if(is(attr == PrimaryKey)) {
-					addPostSql("PRIMARY KEY(" ~ memberName ~ ")");
+					version(dbgenerate_sqlite) {
+						static if(is(T == Serial)) {} // skip, it is done above
+						else
+						addPostSql("PRIMARY KEY(" ~ memberName ~ ")");
+					} else
+						addPostSql("PRIMARY KEY(" ~ memberName ~ ")");
 				} else static if(is(attr == ForeignKey!(to, sqlPolicy), alias to, string sqlPolicy)) {
 					string refTable = toTableName(__traits(parent, to).stringof);
 					string refField = to.stringof;
@@ -299,9 +316,9 @@ void insert(O)(ref O t, Database db) {
 				} else {
 					// skip and let it auto-fill
 				}
-			} else static if(is(T == string))
+			} else static if(is(T == string)) {
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
-			else static if(is(T == double))
+			} else static if(is(T == double))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
 			else static if(is(T == bool))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
@@ -315,8 +332,14 @@ void insert(O)(ref O t, Database db) {
 	}}
 
 	import std.conv;
-	foreach(row; builder.execute(db, "RETURNING id")) // FIXME: postgres-ism
-		t.id.value = to!int(row[0]);
+	version(dbgenerate_sqlite) {
+		builder.execute(db);
+		foreach(row; db.query("SELECT max(id) FROM " ~ toTableName(O.stringof)))
+			t.id.value = to!int(row[0]);
+	} else {
+		foreach(row; builder.execute(db, "RETURNING id")) // FIXME: postgres-ism
+			t.id.value = to!int(row[0]);
+	}
 }
 
 ///
@@ -370,7 +393,7 @@ private void populateFromDbVal(V)(ref V val, string value) {
 
 	} else static if(is(V == Nullable!P, P)) {
 		// FIXME
-		if(value.length) {
+		if(value.length && value != "null") {
 			val.isNull = false;
 			val.value = to!P(value);
 		}
