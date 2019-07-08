@@ -447,7 +447,7 @@ string escapedVariants(Database db, in string sql, Variant[] t) {
 				if((i + 1) < sql.length) {
 					auto n = sql[i + 1];
 					if(n >= '0' && n <= '9') {
-						currentStart = i + 2;
+						currentStart = cast(int) i + 2;
 						idx = n - '0';
 					}
 				}
