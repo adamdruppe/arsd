@@ -393,11 +393,11 @@ string escapedVariants(Database db, in string sql, Variant[string] t) {
 	string fixedup;
 	int currentStart = 0;
 // FIXME: let's make ?? render as ? so we have some escaping capability
-	foreach(int i, dchar c; sql) {
+	foreach(i, dchar c; sql) {
 		if(c == '?') {
 			fixedup ~= sql[currentStart .. i];
 
-			int idxStart = i + 1;
+			int idxStart = cast(int) i + 1;
 			int idxLength;
 
 			bool isFirst = true;
@@ -420,7 +420,7 @@ string escapedVariants(Database db, in string sql, Variant[string] t) {
 				currentStart = idxStart + idxLength;
 			} else {
 				// just leave it there, it might be done on another layer
-				currentStart = i;
+				currentStart = cast(int) i;
 			}
 		}
 	}
@@ -438,12 +438,12 @@ string escapedVariants(Database db, in string sql, Variant[] t) {
 		string fixedup;
 		int currentIndex;
 		int currentStart = 0;
-		foreach(int i, dchar c; sql) {
+		foreach(i, dchar c; sql) {
 			if(c == '?') {
 				fixedup ~= sql[currentStart .. i];
 
 				int idx = -1;
-				currentStart = i + 1;
+				currentStart = cast(int) i + 1;
 				if((i + 1) < sql.length) {
 					auto n = sql[i + 1];
 					if(n >= '0' && n <= '9') {

@@ -1353,38 +1353,38 @@ struct var {
 		var ret;
 
 		final switch(v.type) {
-			case JSON_TYPE.STRING:
+			case JSONType.string:
 				ret = v.str;
 			break;
-			case JSON_TYPE.UINTEGER:
+			case JSONType.uinteger:
 				ret = v.uinteger;
 			break;
-			case JSON_TYPE.INTEGER:
+			case JSONType.integer:
 				ret = v.integer;
 			break;
-			case JSON_TYPE.FLOAT:
+			case JSONType.float_:
 				ret = v.floating;
 			break;
-			case JSON_TYPE.OBJECT:
+			case JSONType.object:
 				ret = var.emptyObject;
 				foreach(k, val; v.object) {
 					ret[k] = var.fromJsonValue(val);
 				}
 			break;
-			case JSON_TYPE.ARRAY:
+			case JSONType.array:
 				ret = var.emptyArray;
 				ret._payload._array.length = v.array.length;
 				foreach(idx, item; v.array) {
 					ret._payload._array[idx] = var.fromJsonValue(item);
 				}
 			break;
-			case JSON_TYPE.TRUE:
+			case JSONType.true_:
 				ret = true;
 			break;
-			case JSON_TYPE.FALSE:
+			case JSONType.false_:
 				ret = false;
 			break;
-			case JSON_TYPE.NULL:
+			case JSONType.null_:
 				ret = null;
 			break;
 		}
@@ -1405,9 +1405,9 @@ struct var {
 					val = this._payload._boolean;
 				else {
 					if(this._payload._boolean)
-						val.type = JSON_TYPE.TRUE;
+						val.type = JSONType.true_;
 					else
-						val.type = JSON_TYPE.FALSE;
+						val.type = JSONType.false_;
 				}
 			break;
 			case Type.Object:
@@ -1419,9 +1419,9 @@ struct var {
 					}
 				} else {
 					if(_payload._object is null) {
-						val.type = JSON_TYPE.NULL;
+						val.type = JSONType.null_;
 					} else {
-						val.type = JSON_TYPE.OBJECT;
+						val.type = JSONType.object;
 						foreach(k, v; _payload._object._properties)
 							val.object[k] = v.toJsonValue();
 					}
@@ -1429,19 +1429,19 @@ struct var {
 			break;
 			case Type.String:
 				version(new_std_json) { } else {
-					val.type = JSON_TYPE.STRING;
+					val.type = JSONType.string;
 				}
 				val.str = _payload._string;
 			break;
 			case Type.Integral:
 				version(new_std_json) { } else {
-					val.type = JSON_TYPE.INTEGER;
+					val.type = JSONType.integer;
 				}
 				val.integer = _payload._integral;
 			break;
 			case Type.Floating:
 				version(new_std_json) { } else {
-					val.type = JSON_TYPE.FLOAT;
+					val.type = JSONType.float_;
 				}
 				val.floating = _payload._floating;
 			break;
@@ -1456,7 +1456,7 @@ struct var {
 				version(new_std_json) {
 					val = tmp;
 				} else {
-					val.type = JSON_TYPE.ARRAY;
+					val.type = JSONType.array;
 					val.array = tmp;
 				}
 			break;
@@ -1464,7 +1464,7 @@ struct var {
 				version(new_std_json)
 					val = null;
 				else
-					val.type = JSON_TYPE.NULL; // ideally we would just skip it entirely...
+					val.type = JSONType.null_; // ideally we would just skip it entirely...
 			break;
 		}
 		return val;
@@ -1504,7 +1504,7 @@ class PrototypeObject {
 				tmp[k] = v.toJsonValue();
 			val.object = tmp;
 		} else {
-			val.type = JSON_TYPE.OBJECT;
+			val.type = JSONType.object;
 			foreach(k, v; this._properties)
 				val.object[k] = v.toJsonValue();
 		}
