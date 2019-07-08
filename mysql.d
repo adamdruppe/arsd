@@ -74,6 +74,9 @@ class MySqlResult : ResultSet {
 			mysql_free_result(result);
 	}
 
+	string sysTimeToValue(SysTime s) {
+		return "cast('" ~ escape(s.toISOExtString()) ~ "' as datetime)";
+	}
 
 	MYSQL_FIELD[] fields() {
 		int numFields = mysql_num_fields(result);

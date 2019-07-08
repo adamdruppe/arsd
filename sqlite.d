@@ -91,6 +91,10 @@ class Sqlite : Database {
 			throw new DatabaseException(error());
 	}
 
+	string sysTimeToValue(SysTime s) {
+		return "datetime('" ~ escape(s.toISOExtString()) ~ "')";
+	}
+
 	// my extension for easier editing
 	version(sqlite_extended_metadata_available) {
 		ResultByDataObject queryDataObject(T...)(string sql, T t) {

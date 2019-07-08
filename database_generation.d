@@ -48,10 +48,29 @@ struct Nullable(T) {
 		isNull = false;
 		value = v;
 	}
+
+	T toArsdJsvar() { return value; }
 }
 
 struct Timestamp {
 	string value;
+	string toArsdJsvar() { return value; }
+
+	// FIXME: timezone
+	static Timestamp fromStrings(string date, string time) {
+	        if(time.length < 6)
+			time ~= ":00";
+		import std.datetime;
+		return Timestamp(SysTime.fromISOExtString(date ~ "T" ~ time).toISOExtString());
+	}
+}
+
+SysTime parseDbTimestamp(string s) {
+	if(s.length == 0) return SysTime.init;
+	auto date = s[0 .. 10];
+	auto time = s[11 .. 20];
+	auto tz = s[20 .. $];
+	return SysTime.fromISOExtString(date ~ "T" ~ time ~ tz);
 }
 
 struct Constraint(string sql) {}
@@ -61,6 +80,9 @@ struct UniqueIndex(Fields...) {}
 
 struct Serial {
 	int value;
+	int toArsdJsvar() { return value; }
+	int getValue() { return value; }
+	alias getValue this;
 }
 
 
@@ -148,6 +170,7 @@ string generateCreateTableFor(alias O)() {
 
 			static foreach(attr; __traits(getAttributes, member)) {
 				static if(is(typeof(attr) == Default)) {
+					// FIXME: postgresism there, try current_timestamp in sqlite
 					sql ~= " DEFAULT " ~ attr.sql;
 				} else static if(is(attr == Unique)) {
 					sql ~= " UNIQUE";
@@ -282,9 +305,11 @@ void insert(O)(ref O t, Database db) {
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
 			else static if(is(T == bool))
 				builder.addVariable(memberName, __traits(getMember, t, memberName));
-			else static if(is(T == Timestamp))
-				{} // skipping... for now at least
-			else static if(is(T == enum))
+			else static if(is(T == Timestamp)) {
+				auto v = __traits(getMember, t, memberName).value;
+				if(v.length)
+					builder.addVariable(memberName, v);
+			} else static if(is(T == enum))
 				builder.addVariable(memberName, cast(int) __traits(getMember, t, memberName));
 		}
 	}}

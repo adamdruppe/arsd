@@ -3,6 +3,7 @@ module arsd.database;
 
 public import std.variant;
 import std.string;
+public import std.datetime;
 
 /*
 	Database 2.0 plan, WIP:
@@ -47,6 +48,9 @@ interface Database {
 		}
 		return queryImpl(sql, args);
 	}
+
+	/// turns a systime into a value understandable by the target database as a timestamp to be concated into a query. so it should be quoted and escaped etc as necessary
+	string sysTimeToValue(SysTime);
 
 	/// Prepared statement api
 	/*
@@ -355,9 +359,14 @@ class SelectBuilder : SqlBuilder {
 // used in the internal placeholder thing
 string toSql(Database db, Variant a) {
 	auto v = a.peek!(void*);
-	if(v && (*v is null))
+	if(v && (*v is null)) {
 		return "NULL";
-	else {
+	} else if(auto t = a.peek!(SysTime)) {
+		return db.sysTimeToValue(*t);
+	} else if(auto t = a.peek!(DateTime)) {
+		// FIXME: this might be broken cuz of timezones!
+		return db.sysTimeToValue(cast(SysTime) *t);
+	} else {
 		string str = to!string(a);
 		return '\'' ~ db.escape(str) ~ '\'';
 	}

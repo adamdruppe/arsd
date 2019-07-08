@@ -2746,7 +2746,26 @@ struct Uri {
 			}
 		}
 
+		n.removeDots();
+
 		return n;
+	}
+
+	void removeDots() {
+		auto parts = this.path.split("/");
+		string[] toKeep;
+		foreach(part; parts) {
+			if(part == ".") {
+				continue;
+			} else if(part == "..") {
+				toKeep = toKeep[0 .. $-1];
+				continue;
+			} else {
+				toKeep ~= part;
+			}
+		}
+
+		this.path = toKeep.join("/");
 	}
 
 	unittest {
@@ -2809,6 +2828,10 @@ struct Uri {
 		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d")) == "http://test.com/what/test.html?query=answer");
 		assert(url.basedOn(Uri("http://test.com/what/test.html?a=b&c=d#what")) == "http://test.com/what/test.html?query=answer");
 		assert(url.basedOn(Uri("http://test.com")) == "http://test.com?query=answer");
+
+		url = Uri("/test/bar");
+		assert(Uri("./").basedOn(url) == "/test/", Uri("./").basedOn(url));
+		assert(Uri("../").basedOn(url) == "/");
 
 		//auto uriBefore = url;
 		url = Uri("#anchor"); // everything should remain the same except the anchor
@@ -6458,16 +6481,22 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 				auto ident = idents[idx];
 				if(cgi.requestMethod == Cgi.RequestMethod.GET) {
 					if(ident !in cgi.get) {
-						static if(is(defaults[idx] == void))
-							throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
-						else
+						static if(is(defaults[idx] == void)) {
+							static if(is(param == bool))
+								params[idx] = false;
+							else
+								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						} else
 							params[idx] = defaults[idx];
 					}
 				} else {
 					if(ident !in cgi.post) {
-						static if(is(defaults[idx] == void))
-							throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
-						else
+						static if(is(defaults[idx] == void)) {
+							static if(is(param == bool))
+								params[idx] = false;
+							else
+								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						} else
 							params[idx] = defaults[idx];
 					}
 				}
@@ -6509,6 +6538,9 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 			}
 		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
 			*what = to!T(value);
+			return true;
+		} else static if(is(T == bool)) {
+			*what = value == "1" || value == "yes" || value == "t" || value == "true" || value == "on";
 			return true;
 		} else static if(is(T == K[], K)) {
 			K tmp;
@@ -6552,6 +6584,8 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 				auto k = to!K(insideBrackets);
 				V v;
+				if(auto ptr = k in *what)
+					v = *ptr;
 
 				name = name[0 .. paramName.length];
 				//writeln(name, afterName, " ", paramName);

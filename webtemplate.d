@@ -39,6 +39,30 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 			return encodeComponent(f.get!string);
 		};
 
+		context.formatDate = function string(string s) {
+			if(s.length < 10)
+				return s;
+			auto year = s[0 .. 4];
+			auto month = s[5 .. 7];
+			auto day = s[8 .. 10];
+
+			return month ~ "/" ~ day ~ "/" ~ year;
+		};
+
+		context.formatTime = function string(string s) {
+			if(s.length < 20)
+				return s;
+			auto hour = s[11 .. 13].to!int;
+			auto minutes = s[14 .. 16].to!int;
+			auto seconds = s[17 .. 19].to!int;
+
+			auto am = (hour >= 12) ? "PM" : "AM";
+			if(hour > 12)
+				hour -= 12;
+
+			return hour.to!string ~ (minutes < 10 ? ":0" : ":") ~ minutes.to!string ~ " " ~ am;
+		};
+
 		auto skeleton = new Document(readText("templates/skeleton.html"), true, true);
 		auto document = new Document();
 		document.parseSawAspCode = (string) => true; // enable adding <% %> to the dom

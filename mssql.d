@@ -49,6 +49,11 @@ class MsSql : Database {
 		query("START TRANSACTION");
 	}
 
+	// possible fixme, idk if this is right
+	override string sysTimeToValue(SysTime s) {
+		return "'" ~ escape(s.toISOExtString()) ~ "'";
+	}
+
 	ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 

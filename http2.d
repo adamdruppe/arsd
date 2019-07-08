@@ -514,8 +514,28 @@ struct Uri {
 			}
 		}
 
+		n.removeDots();
+
 		return n;
 	}
+
+	void removeDots() {
+		auto parts = this.path.split("/");
+		string[] toKeep;
+		foreach(part; parts) {
+			if(part == ".") {
+				continue;
+			} else if(part == "..") {
+				toKeep = toKeep[0 .. $-1];
+				continue;
+			} else {
+				toKeep ~= part;
+			}
+		}
+
+		this.path = toKeep.join("/");
+	}
+
 }
 
 /*

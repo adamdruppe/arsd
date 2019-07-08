@@ -41,6 +41,10 @@ class PostgreSql : Database {
 		PQfinish(conn);
 	}
 
+	string sysTimeToValue(SysTime s) {
+		return "'" ~ escape(s.toISOExtString()) ~ "'::timestamptz";
+	}
+
 	/**
 		Prepared statement support
 
