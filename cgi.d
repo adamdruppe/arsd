@@ -6268,8 +6268,8 @@ ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
 	iovec[1] iov;
 
 	version(OSX) {
-		msg.msg_accrights = cast(cattr_t) &sendfd;
-		msg.msg_accrightslen = int.sizeof;
+		//msg.msg_accrights = cast(cattr_t) &sendfd;
+		//msg.msg_accrightslen = int.sizeof;
 	} else {
 		union ControlUnion {
 			cmsghdr cm;
@@ -6309,8 +6309,8 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	int newfd;
 
 	version(OSX) {
-		msg.msg_accrights = cast(cattr_t) recvfd;
-		msg.msg_accrightslen = int.sizeof;
+		//msg.msg_accrights = cast(cattr_t) recvfd;
+		//msg.msg_accrightslen = int.sizeof;
 	} else {
 		union ControlUnion {
 			cmsghdr cm;
@@ -6335,8 +6335,8 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 		return n;
 
 	version(OSX) {
-		if(msg.msg_accrightslen != int.sizeof)
-			*recvfd = -1;
+		//if(msg.msg_accrightslen != int.sizeof)
+			//*recvfd = -1;
 	} else {
 		if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
 				cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
