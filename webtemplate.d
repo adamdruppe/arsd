@@ -50,6 +50,7 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 		};
 
 		context.dayOfWeek = function string(string s) {
+			import std.datetime;
 			return daysOfWeekFullNames[DateTime.fromISOExtString(s).dayOfWeek];
 		};
 
