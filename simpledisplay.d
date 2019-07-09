@@ -6604,12 +6604,11 @@ struct ScreenPainter {
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
-    //this function draws a circle using the drawArc() function above, it requires you to pass the point it
-    //will be drawn at as a Point struct and the radius as an int
-    void drawCircle(Point upperLeft, int radius)
-    {
-        this.drawArc(upperLeft, radius, radius, 0, 0);
-    }
+	//this function draws a circle using the drawArc() function above, it requires you to pass the point it
+	//will be drawn at as a Point struct and the radius as an int
+	void drawCircle(Point upperLeft, int radius) {
+		this.drawArc(upperLeft, radius, radius, 0, 0);
+	}
 
 	/// .
 	void drawPolygon(Point[] vertexes) {
