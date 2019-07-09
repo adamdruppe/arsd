@@ -65,6 +65,10 @@ struct Timestamp {
 	}
 }
 
+SysTime parseDbTimestamp(Timestamp s) {
+	return parseDbTimestamp(s.value);
+}
+
 SysTime parseDbTimestamp(string s) {
 	if(s.length == 0) return SysTime.init;
 	auto date = s[0 .. 10];

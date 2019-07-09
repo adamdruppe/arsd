@@ -49,6 +49,10 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 			return month ~ "/" ~ day ~ "/" ~ year;
 		};
 
+		context.dayOfWeek = function string(string s) {
+			return daysOfWeekFullNames[DateTime.fromISOExtString(s).dayOfWeek];
+		};
+
 		context.formatTime = function string(string s) {
 			if(s.length < 20)
 				return s;
@@ -240,6 +244,16 @@ void populateForm(Form form, var obj, string name) {
 	}
 
 }
+
+immutable daysOfWeekFullNames = [
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday"
+];
 
 
 /+
