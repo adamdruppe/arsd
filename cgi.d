@@ -6103,8 +6103,9 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 			epoll_event[64] events;
 		} else {
 			pollfd[] pollfds;
-			pollfds ~= pollfd(sock, POLLIN);
 			IoOp*[int] ioops;
+			pollfds ~= pollfd(sock, POLLIN);
+			ioops[sock] = acceptOp;
 		}
 
 		while(true) {
@@ -6123,6 +6124,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 				}
 			} else {
 				int nfds = poll(pollfds.ptr, cast(int) pollfds.length, timeout_milliseconds);
+				size_t lastIdx = 0;
 			}
 
 			if(nfds == 0) {
@@ -6134,7 +6136,14 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 					auto flags = events[idx].events;
 					auto ioop = cast(IoOp*) events[idx].data.ptr;
 				} else {
-					auto ioop = ioops[pollfds[idx].fd];
+					IoOp* ioop;
+					foreach(tidx, thing; pollfds[lastIdx .. $]) {
+						if(thing.revents) {
+							ioop = ioops[thing.fd];
+							lastIdx += tidx + 1;
+							break;
+						}
+					}
 				}
 
 				//writeln(flags, " ", ioop.fd);
@@ -6174,6 +6183,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 							}
 							if(!found)
 								pollfds ~= pollfd(ns, POLLIN);
+							ioops[ns] = niop;
 						}
 					}
 				}
