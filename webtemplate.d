@@ -51,7 +51,7 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 
 		context.dayOfWeek = function string(string s) {
 			import std.datetime;
-			return daysOfWeekFullNames[DateTime.fromISOExtString(s).dayOfWeek];
+			return daysOfWeekFullNames[Date.fromISOExtString(s[0 .. 10]).dayOfWeek];
 		};
 
 		context.formatTime = function string(string s) {
