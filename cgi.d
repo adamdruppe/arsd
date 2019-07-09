@@ -6122,7 +6122,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 					throw new Exception("epoll_wait " ~ to!string(errno));
 				}
 			} else {
-				int nfds = poll(pollfds.ptr, pollfds.length, timeout_milliseconds);
+				int nfds = poll(pollfds.ptr, cast(int) pollfds.length, timeout_milliseconds);
 			}
 
 			if(nfds == 0) {
