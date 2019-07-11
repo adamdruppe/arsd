@@ -1302,7 +1302,7 @@ public enum NVGImageFlag : uint {
   Premultiplied   = 1<<4, /// Image data has premultiplied alpha.
   ClampToBorderX  = 1<<5, /// Clamp image to border (instead of clamping to edge by default)
   ClampToBorderY  = 1<<6, /// Clamp image to border (instead of clamping to edge by default)
-  NoFiltering     = 1<<8, /// use GL_NEAREST instead of GL_LINEAR
+  NoFiltering     = 1<<8, /// use GL_NEAREST instead of GL_LINEAR. Only affects upscaling if GenerateMipmaps is active.
   Nearest = NoFiltering,  /// compatibility with original NanoVG
   NoDelete        = 1<<16,/// Do not delete GL texture handle.
 }
@@ -13473,12 +13473,12 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
   glTexImage2D(GL_TEXTURE_2D, 0, ttype, w, h, 0, ttype, GL_UNSIGNED_BYTE, data);
   // GL 3.0 and later have support for a dedicated function for generating mipmaps
   // it needs to be called after the glTexImage2D call
-  if ((imageFlags&(NVGImageFlag.GenerateMipmaps|NVGImageFlag.NoFiltering)) == NVGImageFlag.GenerateMipmaps)
+  if (imageFlags & NVGImageFlag.GenerateMipmaps)
     glGenerateMipmap(GL_TEXTURE_2D);
 
   immutable tfmin =
-    (imageFlags&NVGImageFlag.NoFiltering ? GL_NEAREST :
-     imageFlags&NVGImageFlag.GenerateMipmaps ? GL_LINEAR_MIPMAP_LINEAR :
+    (imageFlags & NVGImageFlag.GenerateMipmaps ? GL_LINEAR_MIPMAP_LINEAR :
+     imageFlags & NVGImageFlag.NoFiltering ? GL_NEAREST :
      GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tfmin);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (imageFlags&NVGImageFlag.NoFiltering ? GL_NEAREST : GL_LINEAR));
