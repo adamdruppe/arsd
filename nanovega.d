@@ -12283,6 +12283,8 @@ version(bindbc){
 
     enum uint GL_FRAMEBUFFER_BINDING = 0x8CA6U;
 
+    enum uint GL_TEXTURE_LOD_BIAS = 0x8501;
+
     /*
     version(Windows) {
       private void* kglLoad (const(char)* name) {
@@ -13480,6 +13482,7 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
     (imageFlags & NVGImageFlag.GenerateMipmaps ? GL_LINEAR_MIPMAP_LINEAR :
      imageFlags & NVGImageFlag.NoFiltering ? GL_NEAREST :
      GL_LINEAR);
+  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -1.0);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tfmin);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (imageFlags&NVGImageFlag.NoFiltering ? GL_NEAREST : GL_LINEAR));
 
