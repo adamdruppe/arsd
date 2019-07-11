@@ -147,12 +147,6 @@ $(TIP
     Former are used by default, latter can be activated by passing the `bindbc` version specifier to the compiler.
 )
 
-$(TIP
-	If you are going to use the library with a SDL OpenGL context,
-	try working with a backwards compatible context profile.
-)
-
-
 Creating drawing context
 ========================
 
@@ -12308,6 +12302,15 @@ version(bindbc){
     }
     */
 
+    alias glbfn_glGenVertexArrays = void function(GLsizei, GLuint*);
+    __gshared glbfn_glGenVertexArrays glGenVertexArrays_NVGLZ; alias glGenVertexArrays = glGenVertexArrays_NVGLZ;
+    alias glbfn_glBindVertexArray = void function(GLuint);
+    __gshared glbfn_glBindVertexArray glBindVertexArray_NVGLZ; alias glBindVertexArray = glBindVertexArray_NVGLZ;
+    alias glbfn_glDeleteVertexArrays = void function(GLsizei, const(GLuint)*);
+    __gshared glbfn_glDeleteVertexArrays glDeleteVertexArrays_NVGLZ; alias glDeleteVertexArrays = glDeleteVertexArrays_NVGLZ;
+    alias glbfn_glGenerateMipmap = void function(GLenum);
+    __gshared glbfn_glGenerateMipmap glGenerateMipmap_NVGLZ; alias glGenerateMipmap = glGenerateMipmap_NVGLZ;
+
     alias glbfn_glStencilMask = void function(GLuint);
     __gshared glbfn_glStencilMask glStencilMask_NVGLZ; alias glStencilMask = glStencilMask_NVGLZ;
     alias glbfn_glStencilFunc = void function(GLenum, GLint, GLuint);
@@ -12400,6 +12403,15 @@ version(bindbc){
     private void nanovgInitOpenGL () {
       __gshared bool initialized = false;
       if (initialized) return;
+      glGenVertexArrays_NVGLZ = cast(glbfn_glGenVertexArrays)glbindGetProcAddress(`glGenVertexArrays`);
+      if (glGenVertexArrays_NVGLZ is null) assert(0, `OpenGL function 'glGenVertexArrays' not found!`);
+      glBindVertexArray_NVGLZ = cast(glbfn_glBindVertexArray)glbindGetProcAddress(`glBindVertexArray`);
+      if (glBindVertexArray_NVGLZ is null) assert(0, `OpenGL function 'glBindVertexArray' not found!`);
+      glDeleteVertexArrays_NVGLZ = cast(glbfn_glDeleteVertexArrays)glbindGetProcAddress(`glDeleteVertexArrays`);
+      if (glDeleteVertexArrays_NVGLZ is null) assert(0, `OpenGL function 'glDeleteVertexArrays' not found!`);
+      glGenerateMipmap_NVGLZ = cast(glbfn_glGenerateMipmap)glbindGetProcAddress(`glGenerateMipmap`);
+      if (glGenerateMipmap_NVGLZ is null) assert(0, `OpenGL function 'glGenerateMipmap' not found!`);
+
       glStencilMask_NVGLZ = cast(glbfn_glStencilMask)glbindGetProcAddress(`glStencilMask`);
       if (glStencilMask_NVGLZ is null) assert(0, `OpenGL function 'glStencilMask' not found!`);
       glStencilFunc_NVGLZ = cast(glbfn_glStencilFunc)glbindGetProcAddress(`glStencilFunc`);
@@ -13095,12 +13107,21 @@ void glnvg__copyFBOToFrom (GLNVGcontext* gl, int didx, int sidx) nothrow @truste
   enum y = 0;
   immutable int w = gl.fboWidth;
   immutable int h = gl.fboHeight;
-  glBegin(GL_QUADS);
-    glVertex2i(x, y); // top-left
-    glVertex2i(w, y); // top-right
-    glVertex2i(w, h); // bottom-right
-    glVertex2i(x, h); // bottom-left
-  glEnd();
+  immutable(int[8]) vertices =
+   [x, y, // top-left
+    w, y, // top-right
+    w, h, // bottom-right
+    x, h]; // bottom-left
+  uint vbo;
+  glGenBuffers(1, &vbo); //TODO: figure out if allocating a new buffer each time is a good idea
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, vertices.sizeof, &vertices, GL_STREAM_DRAW);
+  uint vao;
+  glGenVertexArrays(1, &vao);
+  glBindVertexArray(vao);
+  glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
+  glDeleteBuffers(1, &vbo);
+  glDeleteVertexArrays(1, &vao);
 
   // restore state (but don't unbind FBO)
   static if (NANOVG_GL_USE_STATE_FILTER) glBindTexture(GL_TEXTURE_2D, gl.boundTexture);
@@ -13446,11 +13467,14 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 
-  // GL 1.4 and later has support for generating mipmaps using a tex parameter.
-  if ((imageFlags&(NVGImageFlag.GenerateMipmaps|NVGImageFlag.NoFiltering)) == NVGImageFlag.GenerateMipmaps) glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+
 
   immutable ttype = (type == NVGtexture.RGBA ? GL_RGBA : GL_RED);
   glTexImage2D(GL_TEXTURE_2D, 0, ttype, w, h, 0, ttype, GL_UNSIGNED_BYTE, data);
+  // GL 3.0 and later have support for a dedicated function for generating mipmaps
+  // it needs to be called after the glTexImage2D call
+  if ((imageFlags&(NVGImageFlag.GenerateMipmaps|NVGImageFlag.NoFiltering)) == NVGImageFlag.GenerateMipmaps)
+    glGenerateMipmap(GL_TEXTURE_2D);
 
   immutable tfmin =
     (imageFlags&NVGImageFlag.NoFiltering ? GL_NEAREST :
@@ -13696,12 +13720,22 @@ void glnvg__finishClip (GLNVGcontext* gl, NVGClipMode clipmode) nothrow @trusted
       glnvg__stencilFunc(gl, GL_NOTEQUAL, 0x00, 0xff);
       glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
     }
-    glBegin(GL_QUADS);
-      glVertex2i(0, 0);
-      glVertex2i(0, gl.fboHeight);
-      glVertex2i(gl.fboWidth, gl.fboHeight);
-      glVertex2i(gl.fboWidth, 0);
-    glEnd();
+    immutable(int[8]) vertices =
+     [0, 0,
+      0, gl.fboHeight,
+      gl.fboWidth, gl.fboHeight,
+      gl.fboWidth, 0];
+    uint vbo;
+    glGenBuffers(1, &vbo); //TODO: figure out if allocating a new buffer each time is a good idea
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.sizeof, &vertices, GL_STREAM_DRAW);
+    uint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
+    glDeleteBuffers(1, &vbo);
+    glDeleteVertexArrays(1, &vao);
+
     //glnvg__restoreAffine(gl);
   }
 
