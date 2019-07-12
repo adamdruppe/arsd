@@ -13109,21 +13109,14 @@ void glnvg__copyFBOToFrom (GLNVGcontext* gl, int didx, int sidx) nothrow @truste
   enum y = 0;
   immutable int w = gl.fboWidth;
   immutable int h = gl.fboHeight;
-  immutable(int[8]) vertices =
-   [x, y, // top-left
-    w, y, // top-right
-    w, h, // bottom-right
-    x, h]; // bottom-left
-  uint vbo;
-  glGenBuffers(1, &vbo); //TODO: figure out if allocating a new buffer each time is a good idea
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, vertices.sizeof, &vertices, GL_STREAM_DRAW);
-  uint vao;
-  glGenVertexArrays(1, &vao);
-  glBindVertexArray(vao);
-  glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
-  glDeleteBuffers(1, &vbo);
-  glDeleteVertexArrays(1, &vao);
+  immutable(NVGVertex[4]) vertices =
+   [NVGVertex(x, y), // top-left
+    NVGVertex(w, y), // top-right
+    NVGVertex(w, h), // bottom-right
+    NVGVertex(x, h)]; // bottom-left
+
+  glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.sizeof, &vertices);
+  glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
   // restore state (but don't unbind FBO)
   static if (NANOVG_GL_USE_STATE_FILTER) glBindTexture(GL_TEXTURE_2D, gl.boundTexture);
@@ -13723,21 +13716,15 @@ void glnvg__finishClip (GLNVGcontext* gl, NVGClipMode clipmode) nothrow @trusted
       glnvg__stencilFunc(gl, GL_NOTEQUAL, 0x00, 0xff);
       glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
     }
-    immutable(int[8]) vertices =
-     [0, 0,
-      0, gl.fboHeight,
-      gl.fboWidth, gl.fboHeight,
-      gl.fboWidth, 0];
-    uint vbo;
-    glGenBuffers(1, &vbo); //TODO: figure out if allocating a new buffer each time is a good idea
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.sizeof, &vertices, GL_STREAM_DRAW);
-    uint vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
-    glDeleteBuffers(1, &vbo);
-    glDeleteVertexArrays(1, &vao);
+
+    immutable(NVGVertex[4]) vertices =
+     [NVGVertex(0, 0, 0, 0),
+      NVGVertex(0, gl.fboHeight, 0, 0),
+      NVGVertex(gl.fboWidth, gl.fboHeight, 0, 0),
+      NVGVertex(gl.fboWidth, 0, 0, 0)];
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.sizeof, &vertices);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
     //glnvg__restoreAffine(gl);
   }
@@ -14177,7 +14164,8 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
 
     // Upload vertex data
     glBindBuffer(GL_ARRAY_BUFFER, gl.vertBuf);
-    glBufferData(GL_ARRAY_BUFFER, gl.nverts*NVGVertex.sizeof, gl.verts, GL_STREAM_DRAW);
+    // ensure that there's space for at least 4 vertices in case we need to draw a quad (e. g. framebuffer copy)
+    glBufferData(GL_ARRAY_BUFFER, (gl.nverts < 4 ? 4 : gl.nverts) * NVGVertex.sizeof, gl.verts, GL_STREAM_DRAW);
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, NVGVertex.sizeof, cast(const(GLvoid)*)cast(usize)0);
