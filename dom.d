@@ -3114,8 +3114,6 @@ class Element {
 		
 
 		return e;
-
-		return e;
 	}
 
 	/// W3C DOM interface. Only really meaningful on [TextNode] instances, but the interface is present on the base class.
