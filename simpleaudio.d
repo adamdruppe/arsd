@@ -1413,7 +1413,7 @@ extern(C):
 
 	// raw midi
 
-	static if(is(ssize_t == uint))
+	static if(is(size_t == uint))
 		alias ssize_t = int;
 	else
 		alias ssize_t = long;
