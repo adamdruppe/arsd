@@ -104,7 +104,7 @@
 				},
 				{
 					"name": "cgi",
-					"versions": [""]
+					"versions": ["traditional_cgi"]
 				},
 				{
 					"name": "fastcgi",
