@@ -5807,9 +5807,9 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 			ev.data.ptr = op;
 			if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) == -1)
 				throw new Exception("epoll_ctl " ~ to!string(errno));
-		}
 
-		jobs[nj] = job;
+			jobs[nj] = job;
+		} else assert(0);
 		return nj;
 	}
 
