@@ -1477,7 +1477,7 @@ struct Rectangle {
 
 	///
 	this(in Point upperLeft, in Size size) {
-		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width, upperLeft.y + size.height);
+		this(upperLeft.x, upperLeft.y, upperLeft.x + size.width - 1, upperLeft.y + size.height - 1);
 	}
 
 	///
@@ -1507,12 +1507,12 @@ struct Rectangle {
 
 	///
 	@property int width() {
-		return right - left;
+		return right - left + 1;
 	}
 
 	///
 	@property int height() {
-		return bottom - top;
+		return bottom - top + 1;
 	}
 
 	/// Returns true if this rectangle entirely contains the other
