@@ -923,7 +923,7 @@ class IndexedImage : MemoryImage {
 
 	override Color getPixel(int x, int y) const pure nothrow @trusted @nogc {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
-			uint pos = y*_width+x;
+			size_t pos = cast(size_t)y*_width+x;
 			if (pos >= data.length) return Color(0, 0, 0, 0);
 			ubyte b = data.ptr[pos];
 			if (b >= palette.length) return Color(0, 0, 0, 0);
@@ -935,7 +935,7 @@ class IndexedImage : MemoryImage {
 
 	override void setPixel(int x, int y, in Color clr) nothrow @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
-			uint pos = y*_width+x;
+			size_t pos = cast(size_t)y*_width+x;
 			if (pos >= data.length) return;
 			ubyte pidx = findNearestColor(palette, clr);
 			if (palette.length < 255 &&
@@ -954,7 +954,11 @@ class IndexedImage : MemoryImage {
 	this(int w, int h) pure nothrow @safe {
 		_width = w;
 		_height = h;
-		data = new ubyte[w*h];
+
+        // ensure that the computed size does not exceed basic address space limits
+        assert(cast(ulong)w * h  <= size_t.max);
+        // upcast to avoid overflow for images larger than 536 Mpix
+		data = new ubyte[cast(size_t)w*h];
 	}
 
 	/*
@@ -1061,7 +1065,7 @@ class TrueColorImage : MemoryImage {
 
 	override Color getPixel(int x, int y) const pure nothrow @trusted @nogc {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
-			uint pos = y*_width+x;
+			size_t pos = cast(size_t)y*_width+x;
 			return imageData.colors.ptr[pos];
 		} else {
 			return Color(0, 0, 0, 0);
@@ -1070,7 +1074,7 @@ class TrueColorImage : MemoryImage {
 
 	override void setPixel(int x, int y, in Color clr) nothrow @trusted {
 		if (x >= 0 && y >= 0 && x < _width && y < _height) {
-			uint pos = y*_width+x;
+			size_t pos = cast(size_t)y*_width+x;
 			if (pos < imageData.bytes.length/4) imageData.colors.ptr[pos] = clr;
 		}
 	}
@@ -1079,14 +1083,19 @@ class TrueColorImage : MemoryImage {
 	this(int w, int h) pure nothrow @safe {
 		_width = w;
 		_height = h;
-		imageData.bytes = new ubyte[w*h*4];
+
+		// ensure that the computed size does not exceed basic address space limits
+        assert(cast(ulong)w * h * 4 <= size_t.max);
+        // upcast to avoid overflow for images larger than 536 Mpix
+		imageData.bytes = new ubyte[cast(size_t)w * h * 4];
 	}
 
 	/// Creates with existing data. The data pointer is stored here.
 	this(int w, int h, ubyte[] data) pure nothrow @safe {
 		_width = w;
 		_height = h;
-		assert(data.length == w * h * 4);
+		assert(cast(ulong)w * h * 4 <= size_t.max);
+		assert(data.length == cast(size_t)w * h * 4);
 		imageData.bytes = data;
 	}
 

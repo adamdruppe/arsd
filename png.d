@@ -130,7 +130,7 @@ MemoryImage imageFromPng(PNG* png) {
 			assert(0, "invalid png");
 	}
 
-	auto idataIdx = 0;
+	size_t idataIdx = 0;
 
 	auto file = LazyPngFile!(Chunk[])(png.chunks);
 	immutable(ubyte)[] previousLine;
@@ -150,7 +150,7 @@ MemoryImage imageFromPng(PNG* png) {
 }
 
 // idata needs to be already sized for the image! width * height if indexed, width*height*4 if not.
-void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, ubyte[] idata, ref int idataIdx) {
+void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, ubyte[] idata, ref size_t idataIdx) {
 	ubyte consumeOne() {
 		ubyte ret = data[0];
 		data = data[1 .. $];
@@ -300,7 +300,7 @@ PNG* pngFromImage(IndexedImage i) {
 	Chunk alpha;
 	if(i.hasAlpha) {
 		alpha.type = ['t', 'R', 'N', 'S'];
-		alpha.size = cast(int) i.palette.length;
+		alpha.size = cast(uint) i.palette.length;
 		alpha.payload.length = alpha.size;
 	}
 
@@ -324,7 +324,7 @@ PNG* pngFromImage(IndexedImage i) {
 		addImageDatastreamToPng(i.data, png);
 	} else {
 		// gotta convert it
-		ubyte[] datastream = new ubyte[i.width * i.height * h.depth / 8]; // FIXME?
+		ubyte[] datastream = new ubyte[cast(size_t)i.width * i.height * h.depth / 8]; // FIXME?
 		int shift = 0;
 
 		switch(h.depth) {
@@ -334,8 +334,8 @@ PNG* pngFromImage(IndexedImage i) {
 			case 4: shift = 4; break;
 			case 8: shift = 0; break;
 		}
-		int dsp = 0;
-		int dpos = 0;
+		size_t dsp = 0;
+		size_t dpos = 0;
 		bool justAdvanced;
 		for(int y = 0; y < i.height; y++) {
 		for(int x = 0; x < i.width; x++) {
@@ -467,12 +467,12 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	h.height = image.height;
 	png = blankPNG(h);
 
-	auto bytesPerLine = h.width * 4;
+	size_t bytesPerLine = cast(size_t)h.width * 4;
 	if(h.type == 3)
-		bytesPerLine = h.width * 8 /  h.depth;
+		bytesPerLine = cast(size_t)h.width * 8 / h.depth;
 	Chunk dat;
 	dat.type = ['I', 'D', 'A', 'T'];
-	int pos = 0;
+	size_t pos = 0;
 
 	auto compressor = new Compress();
 
@@ -489,7 +489,8 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 
 	com ~= cast(ubyte[]) compressor.flush();
 
-	dat.size = cast(int) com.length;
+	assert(com.length <= uint.max);
+	dat.size = cast(uint) com.length;
 	dat.payload = com;
 	dat.checksum = crc("IDAT", dat.payload);
 
@@ -541,7 +542,7 @@ ubyte[] writePng(PNG* p) {
 		foreach(c; p.chunks)
 			a.length += c.size + 12;
 	}
-	uint pos;
+	size_t pos;
 
 	a[0..8] = p.header[0..8];
 	pos = 8;
@@ -576,8 +577,8 @@ PngHeader getHeaderFromFile(string filename) {
 	if(data[0..8] != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 		throw new Exception("file " ~ filename ~ " is not a png");
 
-	auto pos = 8;
-	uint size;
+	size_t pos = 8;
+	size_t size;
 	size |= data[pos++] << 24;
 	size |= data[pos++] << 16;
 	size |= data[pos++] << 8;
@@ -609,7 +610,7 @@ PNG* readPng(in ubyte[] data) {
 	if(p.header != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 		throw new Exception("not a png, header wrong");
 
-	uint pos = 8;
+	size_t pos = 8;
 
 	while(pos < data.length) {
 		Chunk n;
@@ -648,7 +649,7 @@ PNG* blankPNG(PngHeader h) {
 	c.type = ['I', 'H', 'D', 'R'];
 
 	c.payload.length = 13;
-	int pos = 0;
+	size_t pos = 0;
 
 	c.payload[pos++] = h.width >> 24;
 	c.payload[pos++] = (h.width >> 16) & 0xff;
@@ -684,31 +685,31 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 	PngHeader h = getHeader(png);
 
-	int bytesPerLine;
+	size_t bytesPerLine;
 	switch(h.type) {
 		case 0:
 			// FIXME: < 8 depth not supported here but should be
-			bytesPerLine = h.width * 1 * h.depth / 8;
+			bytesPerLine = cast(size_t)h.width * 1 * h.depth / 8;
 		break;
 		case 2:
-			bytesPerLine = h.width * 3 * h.depth / 8;
+			bytesPerLine = cast(size_t)h.width * 3 * h.depth / 8;
 		break;
 		case 3:
-			bytesPerLine = h.width * 1 * h.depth / 8;
+			bytesPerLine = cast(size_t)h.width * 1 * h.depth / 8;
 		break;
 		case 4:
 			// FIXME: < 8 depth not supported here but should be
-			bytesPerLine = h.width * 2 * h.depth / 8;
+			bytesPerLine = cast(size_t)h.width * 2 * h.depth / 8;
 		break;
 		case 6:
-			bytesPerLine = h.width * 4 * h.depth / 8;
+			bytesPerLine = cast(size_t)h.width * 4 * h.depth / 8;
 		break;
 		default: assert(0);
 	
 	}
 	Chunk dat;
 	dat.type = ['I', 'D', 'A', 'T'];
-	int pos = 0;
+	size_t pos = 0;
 
 	const(ubyte)[] output;
 	while(pos+bytesPerLine <= data.length) {
