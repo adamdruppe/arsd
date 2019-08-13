@@ -1708,7 +1708,8 @@ class Cgi {
 					remoteAddress = value;
 				}
 				else if (name == "x-forwarded-host" || name == "host") {
-					host = value;
+					if(name != "host" || host is null)
+						host = value;
 				}
 				else if (name == "accept-encoding") {
 					if(value.indexOf("gzip") != -1)
