@@ -12198,6 +12198,7 @@ version(bindbc){
     alias GLchar = char;
     alias GLsizei = int;
     alias GLfloat = float;
+    alias GLintptr = size_t;
     alias GLsizeiptr = ptrdiff_t;
 
     enum uint GL_STENCIL_BUFFER_BIT = 0x00000400;
@@ -12312,6 +12313,8 @@ version(bindbc){
     __gshared glbfn_glDeleteVertexArrays glDeleteVertexArrays_NVGLZ; alias glDeleteVertexArrays = glDeleteVertexArrays_NVGLZ;
     alias glbfn_glGenerateMipmap = void function(GLenum);
     __gshared glbfn_glGenerateMipmap glGenerateMipmap_NVGLZ; alias glGenerateMipmap = glGenerateMipmap_NVGLZ;
+    alias glbfn_glBufferSubData = void function(GLenum, GLintptr, GLsizeiptr, const(GLvoid)*);
+    __gshared glbfn_glBufferSubData glBufferSubData_NVGLZ; alias glBufferSubData = glBufferSubData_NVGLZ;
 
     alias glbfn_glStencilMask = void function(GLuint);
     __gshared glbfn_glStencilMask glStencilMask_NVGLZ; alias glStencilMask = glStencilMask_NVGLZ;
@@ -12413,6 +12416,8 @@ version(bindbc){
       if (glDeleteVertexArrays_NVGLZ is null) assert(0, `OpenGL function 'glDeleteVertexArrays' not found!`);
       glGenerateMipmap_NVGLZ = cast(glbfn_glGenerateMipmap)glbindGetProcAddress(`glGenerateMipmap`);
       if (glGenerateMipmap_NVGLZ is null) assert(0, `OpenGL function 'glGenerateMipmap' not found!`);
+      glBufferSubData_NVGLZ = cast(glbfn_glBufferSubData)glbindGetProcAddress(`glBufferSubData`);
+      if (glBufferSubData_NVGLZ is null) assert(0, `OpenGL function 'glBufferSubData' not found!`);
 
       glStencilMask_NVGLZ = cast(glbfn_glStencilMask)glbindGetProcAddress(`glStencilMask`);
       if (glStencilMask_NVGLZ is null) assert(0, `OpenGL function 'glStencilMask' not found!`);
