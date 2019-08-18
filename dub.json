@@ -14,13 +14,15 @@
 		{
 			"name": "simpledisplay",
 			"description": "Window creation and basic drawing",
-			"targetType": "sourceLibrary",
-			"libs-posix": ["X11", "Xext", "GL", "GLU"],
-			"libs-windows": ["gdi32", "opengl32", "glu32"],
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.simpledisplay=simpledisplay.d"],
 			"dependencies": {"arsd-official:color_base":"*"},
 			"configurations": [
 				{
-					"name": "normal"
+					"name": "normal",
+					"libs-posix": ["X11", "Xext", "GL", "GLU"],
+					"libs-windows": ["gdi32", "opengl32", "glu32"],
 				},
 				{
 					"name": "without-opengl",
@@ -34,19 +36,10 @@
 		{
 			"name": "minigui",
 			"description": "Small GUI widget library for Windows and Linux",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.minigui=minigui.d"],
 			"dependencies": {"arsd-official:simpledisplay":"*"},
-			"configurations": [
-				{
-					"name": "normal"
-				},
-				{
-					"name": "without-opengl",
-					"versions": ["without_opengl"],
-					"libs-windows": ["gdi32"],
-					"libs-posix": ["X11", "Xext"]
-				}
-			],
 			"sourceFiles": ["minigui.d"]
 		},
 		{
@@ -202,7 +195,9 @@
 		{
 			"name": "color_base",
 			"description": "Base color, point, image interface definitions",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.color=color.d"],
 			"sourceFiles": ["color.d"]
 		},
 		{
