@@ -1708,6 +1708,19 @@ struct RealTimeConsoleInput {
 
 	/// Check for input, waiting no longer than the number of milliseconds
 	bool timedCheckForInput(int milliseconds) {
+		if(inputQueue.length || timedCheckForInput_bypassingBuffer(timeout))
+			return true;
+		version(Posix)
+			if(interrupted || windowSizeChanged || hangedUp)
+				return true;
+		return false;
+	}
+
+	/* private */ bool anyInput_internal(int timeout = 0) {
+		return timedCheckForInput(timeout);
+	}
+
+	bool timedCheckForInput_bypassingBuffer(int milliseconds) {
 		version(Windows) {
 			auto response = WaitForSingleObject(terminal.hConsole, milliseconds);
 			if(response  == 0)
@@ -1731,15 +1744,6 @@ struct RealTimeConsoleInput {
 
 			return FD_ISSET(fdIn, &fs);
 		}
-	}
-
-	/* private */ bool anyInput_internal() {
-		if(inputQueue.length || timedCheckForInput(0))
-			return true;
-		version(Posix)
-			if(interrupted || windowSizeChanged || hangedUp)
-				return true;
-		return false;
 	}
 
 	private dchar getchBuffer;

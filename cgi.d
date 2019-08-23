@@ -1708,7 +1708,8 @@ class Cgi {
 					remoteAddress = value;
 				}
 				else if (name == "x-forwarded-host" || name == "host") {
-					host = value;
+					if(name != "host" || host is null)
+						host = value;
 				}
 				else if (name == "accept-encoding") {
 					if(value.indexOf("gzip") != -1)
@@ -5662,7 +5663,13 @@ final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
 }
 
 /++
+	See [schedule] to make one of these. You then call one of the methods here to set it up:
 
+	---
+		schedule!fn(args).at(DateTime(2019, 8, 7, 12, 00, 00)); // run the function at August 7, 2019, 12 noon UTC
+		schedule!fn(args).delay(6.seconds); // run it after waiting 6 seconds
+		schedule!fn(args).asap(); // run it in the background as soon as the event loop gets around to it
+	---
 +/
 struct ScheduledJobHelper {
 	private string func;
@@ -5684,6 +5691,10 @@ struct ScheduledJobHelper {
 	void at(DateTime when, immutable TimeZone timezone = UTC()) {
 		consumed = true;
 
+		auto conn = ScheduledJobServerConnection.connection;
+		import std.file;
+		auto st = SysTime(when, timezone);
+		auto jobId = conn.scheduleJob(1, cast(int) st.toUnixTime(), thisExePath, func, args);
 	}
 
 	/++
@@ -5692,6 +5703,9 @@ struct ScheduledJobHelper {
 	void delay(Duration delay) {
 		consumed = true;
 
+		auto conn = ScheduledJobServerConnection.connection;
+		import std.file;
+		auto jobId = conn.scheduleJob(0, cast(int) delay.total!"seconds", thisExePath, func, args);
 	}
 
 	/++
@@ -5701,19 +5715,20 @@ struct ScheduledJobHelper {
 	+/
 	void asap() {
 		consumed = true;
-		//delay(0);
+
 		auto conn = ScheduledJobServerConnection.connection;
 		import std.file;
 		auto jobId = conn.scheduleJob(0, 1, thisExePath, func, args);
 	}
 
+	/+
 	/++
 		Schedules the job to recur on the given pattern.
 	+/
-	version(none)
 	void recur(string spec) {
 
 	}
+	+/
 }
 
 private immutable void delegate(string[])[string] scheduledJobHandlers;
