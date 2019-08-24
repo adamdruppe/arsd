@@ -1620,17 +1620,24 @@ class Widget {
 
 		foreach(child; children) {
 			version(win32_widgets)
-				if(child.hwnd) continue;
+				if(child.useNativeDrawing()) continue;
 			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
 		}
 
 		version(win32_widgets)
 		foreach(child; children) {
-			if(child.hwnd){
+			if(child.useNativeDrawing) {
 				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw);
 				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
 			}
 		}
+	}
+
+	bool useNativeDrawing() nothrow {
+		version(win32_widgets)
+			return hwnd !is null;
+		else
+			return false;
 	}
 
 	static class RedrawEvent {}
@@ -3080,13 +3087,16 @@ class TabWidget : Widget {
 	}
 
 	private void showOnly(int item) {
-		foreach(idx, child; children)
+		foreach(idx, child; children) {
+			child.hide();
+		}
+
+		foreach(idx, child; children) {
 			if(idx == item) {
 				child.show();
 				recomputeChildLayout();
-			} else {
-				child.hide();
 			}
+		}
 	}
 }
 
@@ -5451,7 +5461,7 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 		x += par.x;
 		y += par.y;
 		par = par.parent;
-		if(par !is null && par.hwnd !is null)
+		if(par !is null && par.useNativeDrawing())
 			break;
 	}
 	return [x, y];
@@ -5549,7 +5559,7 @@ class TextLabel : Widget {
 
 	override void paint(WidgetPainter painter) {
 		painter.outlineColor = Color.black;
-		painter.drawText(Point(0, 0), this.label, Point(width,height), alignment);
+		painter.drawText(Point(0, 0), this.label, Point(width, height), alignment);
 	}
 
 }
