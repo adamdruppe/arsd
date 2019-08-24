@@ -1,5 +1,5 @@
 // FIXME: add classList
-// FIXME: add matchesSelector
+// FIXME: add matchesSelector - standard name is `matches`. also `closest` walks up to find the parent that matches
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
 
