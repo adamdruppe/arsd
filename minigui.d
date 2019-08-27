@@ -3079,6 +3079,10 @@ class TabWidget : Widget {
 				recomputeChildLayout();
 			}
 		}
+
+		version(win32_widgets) {
+			InvalidateRect(parentWindow.hwnd, null, true);
+		}
 	}
 }
 
