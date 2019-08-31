@@ -3097,6 +3097,10 @@ class TabWidget : Widget {
 				recomputeChildLayout();
 			}
 		}
+
+		version(win32_widgets) {
+			InvalidateRect(parentWindow.hwnd, null, true);
+		}
 	}
 }
 
@@ -3197,6 +3201,26 @@ class TabWidgetPage : Widget {
 	this(string title, Widget parent) {
 		this.title = title;
 		super(parent);
+
+		/*
+		version(win32_widgets) {
+			static bool classRegistered = false;
+			if(!classRegistered) {
+				HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+				WNDCLASSEX wc;
+				wc.cbSize = wc.sizeof;
+				wc.hInstance = hInstance;
+				wc.lpfnWndProc = &DefWindowProc;
+				wc.lpszClassName = "arsd_minigui_TabWidgetPage"w.ptr;
+				if(!RegisterClassExW(&wc))
+					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+				classRegistered = true;
+			}
+
+
+			createWin32Window(this, "arsd_minigui_TabWidgetPage"w, "", 0);
+		}
+		*/
 	}
 
 	override int minHeight() {
@@ -3395,6 +3419,8 @@ class Window : Widget {
 			this.width = w;
 			this.height = h;
 			recomputeChildLayout();
+			version(win32_widgets)
+				InvalidateRect(hwnd, null, true);
 			redraw();
 		};
 
@@ -5536,15 +5562,16 @@ class TextLabel : Widget {
 	@scriptable
 	void label(string l) {
 		label_ = l;
-		redraw();
+		version(win32_widgets) {
+			WCharzBuffer bfr = WCharzBuffer(l);
+			SetWindowTextW(hwnd, bfr.ptr);
+		} else version(custom_widgets)
+			redraw();
 	}
 
 	///
 	this(string label, Widget parent = null) {
-		this.label_ = label;
-		this.alignment = TextAlignment.Right;
-		this.tabStop = false;
-		super(parent);
+		this(label, TextAlignment.Right, parent);
 	}
 
 	///
@@ -5553,10 +5580,14 @@ class TextLabel : Widget {
 		this.alignment = alignment;
 		this.tabStop = false;
 		super(parent);
+
+		version(win32_widgets)
+		createWin32Window(this, "static"w, label, 0, alignment == TextAlignment.Right ? WS_EX_RIGHT : WS_EX_LEFT);
 	}
 
 	TextAlignment alignment;
 
+	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		painter.outlineColor = Color.black;
 		painter.drawText(Point(0, 0), this.label, Point(width, height), alignment);
