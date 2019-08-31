@@ -1708,7 +1708,7 @@ struct RealTimeConsoleInput {
 
 	/// Check for input, waiting no longer than the number of milliseconds
 	bool timedCheckForInput(int milliseconds) {
-		if(inputQueue.length || timedCheckForInput_bypassingBuffer(timeout))
+		if(inputQueue.length || timedCheckForInput_bypassingBuffer(milliseconds))
 			return true;
 		version(Posix)
 			if(interrupted || windowSizeChanged || hangedUp)
