@@ -308,7 +308,7 @@ vs|xterm|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window Syst
 
 
 #rxvt, added by me
-rxvt|rxvt-unicode:\
+rxvt|rxvt-unicode|rxvt-unicode-256color:\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:ct=\E[3k:ue=\E[m:\
