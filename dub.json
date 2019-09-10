@@ -80,8 +80,19 @@
 		{
 			"name": "dom",
 			"description": "HTML tag soup DOM library",
-			"targetType": "sourceLibrary",
-			"sourceFiles": ["dom.d", "characterencodings.d"]
+			"targetType": "library",
+			"dependencies": {"arsd-official:characterencodings":"*"},
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.dom=dom.d"],
+			"sourceFiles": ["dom.d"]
+		},
+		{
+			"name": "characterencodings",
+			"description": "Character encodings to UTF-8",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.characterencodings=characterencodings.d"],
+			"sourceFiles": ["characterencodings.d"]
 		},
 		{
 			"name": "cgi",
