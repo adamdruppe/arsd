@@ -350,7 +350,7 @@ abstract class ComboboxBase : Widget {
 class DropDownSelection : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
-			super(3 /* CBS_DROPDOWNLIST */, parent);
+			super(3 /* CBS_DROPDOWNLIST */ | WS_VSCROLL, parent);
 		else version(custom_widgets) {
 			super(parent);
 
