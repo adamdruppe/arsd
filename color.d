@@ -1510,6 +1510,10 @@ struct Rectangle {
 	}
 
 	///
+	@property Point center() {
+		return Point(left + width / 2 - 1, top + height / 2 - 1);
+	}
+	///
 	@property Size size() {
 		return Size(width, height);
 	}
