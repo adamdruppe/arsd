@@ -123,7 +123,6 @@ class GameHelperBase {
 	this() {
 		if(wantAudio) {
 			audio = new AudioPcmOutThread();
-			audio.start();
 		}
 	}
 
@@ -193,6 +192,18 @@ struct VirtualController {
 void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRate = 0) {
 	// this is a template btw because then it can statically dispatch
 	// the members instead of going through the virtual interface.
+	if(game.audio !is null) {
+		game.audio.start();
+	}
+
+	scope(exit)
+	if(game.audio !is null) {
+		import std.stdio;
+		game.audio.stop();
+		game.audio.join();
+		game.audio = null;
+	}
+
 
 	int joystickPlayers = enableJoystickInput();
 	scope(exit) closeJoysticks();
@@ -297,12 +308,6 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 			}
 		}
 	);
-
-	// FIXME: what if an exception is thrown above?
-	if(game.audio !is null) {
-		game.audio.stop();
-		game.audio.join();
-	}
 }
 
 /++

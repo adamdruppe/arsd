@@ -5,6 +5,8 @@
 +/
 module arsd.argon2;
 
+// a password length limitation might legit make sense here cuz of the hashing function can get slow
+
 // it is conceivably useful to hash the password with a secret key before passing to this function,
 // but I'm not going to do that automatically here just to keep this thin and simple.
 

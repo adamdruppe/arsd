@@ -1711,6 +1711,7 @@ class Cgi {
 					if(name != "host" || host is null)
 						host = value;
 				}
+				// FIXME: https://tools.ietf.org/html/rfc7239
 				else if (name == "accept-encoding") {
 					if(value.indexOf("gzip") != -1)
 						acceptsGzip = true;

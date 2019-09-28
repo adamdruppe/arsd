@@ -198,6 +198,7 @@ import core.thread;
 final class AudioPcmOutThread : Thread {
 	///
 	this() {
+		this.isDaemon = true;
 		version(linux) {
 			// this thread has no business intercepting signals from the main thread,
 			// so gonna block a couple of them
@@ -292,7 +293,9 @@ final class AudioPcmOutThread : Thread {
 
 		addChannel(
 			delegate bool(short[] buffer) {
-				auto got = v.getSamplesShortInterleaved(2, buffer.ptr, buffer.length);
+				if(cast(int) buffer.length != buffer.length)
+					throw new Exception("eeeek");
+				auto got = v.getSamplesShortInterleaved(2, buffer.ptr, cast(int) buffer.length);
 				if(got == 0) {
 					if(loop) {
 						v.seekStart();
@@ -1406,6 +1409,7 @@ extern(C):
 	alias snd_lib_error_handler_t = void function (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...);
 	int snd_lib_error_set_handler (snd_lib_error_handler_t handler);
 
+	import core.stdc.stdarg;
 	private void alsa_message_silencer (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...) {}
 	//k8: ALSAlib loves to trash stderr; shut it up
 	void silence_alsa_messages () { snd_lib_error_set_handler(&alsa_message_silencer); }

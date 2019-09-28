@@ -59,7 +59,7 @@ class ApngFrame {
 		auto bytesPerLine = bytesPerLineOfPng(parent.header.depth, parent.header.type, width);
 		bytesPerLine--; // removing filter byte from this calculation since we handle separtely
 
-		int idataIdx;
+		size_t idataIdx;
 		ubyte[] idata;
 
 		idata.length = width * height * (parent.header.type == 3 ? 1 : 4);

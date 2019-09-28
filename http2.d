@@ -747,6 +747,7 @@ class HttpRequest {
 							debug(arsd_http2) writeln("remote disconnect");
 							request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
+							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else {
 							// data available
@@ -1496,6 +1497,7 @@ version(use_openssl) {
 		int SSL_connect(SSL*);
 		int SSL_write(SSL*, const void*, int);
 		int SSL_read(SSL*, void*, int);
+		@trusted nothrow @nogc int SSL_shutdown(SSL*);
 		void SSL_free(SSL*);
 		void SSL_CTX_free(SSL_CTX*);
 
@@ -1589,6 +1591,11 @@ version(use_openssl) {
 			initSsl(verifyPeer);
 		}
 
+		override void close() {
+			if(ssl) SSL_shutdown(ssl);
+			super.close();
+		}
+
 		this(socket_t sock, AddressFamily af) {
 			super(sock, af);
 			initSsl(true);
@@ -1597,6 +1604,7 @@ version(use_openssl) {
 		~this() {
 			SSL_free(ssl);
 			SSL_CTX_free(ctx);
+			ssl = null;
 		}
 	}
 }
