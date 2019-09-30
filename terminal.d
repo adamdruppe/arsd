@@ -2049,7 +2049,7 @@ struct RealTimeConsoleInput {
 		// it is the simplest thing that can possibly work. The alternative would be
 		// doing non-blocking reads and buffering in the nextRaw function (not a bad idea
 		// btw, just a bit more of a hassle).
-		while(timedCheckForInput(0)) {
+		while(timedCheckForInput_bypassingBuffer(0)) {
 			auto ne = readNextEventsHelper();
 			initial ~= ne;
 			foreach(n; ne)
