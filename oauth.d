@@ -752,19 +752,19 @@ Variant jsonValueToVariant(JSONValue v) {
 	Variant ret;
 
 	final switch(v.type) {
-		case JSON_TYPE.STRING:
+		case JSONType.string:
 			ret = v.str;
 		break;
-		case JSON_TYPE.UINTEGER:
+		case JSONType.uinteger:
 			ret = v.uinteger;
 		break;
-		case JSON_TYPE.INTEGER:
+		case JSONType.integer:
 			ret = v.integer;
 		break;
-		case JSON_TYPE.FLOAT:
+		case JSONType.float_:
 			ret = v.floating;
 		break;
-		case JSON_TYPE.OBJECT:
+		case JSONType.object:
 			Variant[string] obj;
 			foreach(k, val; v.object) {
 				obj[k] = jsonValueToVariant(val);
@@ -772,7 +772,7 @@ Variant jsonValueToVariant(JSONValue v) {
 
 			ret = obj;
 		break;
-		case JSON_TYPE.ARRAY:
+		case JSONType.array:
 			Variant[] arr;
 			foreach(i; v.array) {
 				arr ~= jsonValueToVariant(i);
@@ -780,13 +780,13 @@ Variant jsonValueToVariant(JSONValue v) {
 
 			ret = arr;
 		break;
-		case JSON_TYPE.TRUE:
+		case JSONType.true_:
 			ret = true;
 		break;
-		case JSON_TYPE.FALSE:
+		case JSONType.false_:
 			ret = false;
 		break;
-		case JSON_TYPE.NULL:
+		case JSONType.null_:
 			ret = null;
 		break;
 	}

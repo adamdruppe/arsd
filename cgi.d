@@ -5781,6 +5781,7 @@ class ScheduledJobServerConnection : ScheduledJobServer {
 }
 
 final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer {
+	// FIXME: we need to handle SIGCHLD in this somehow
 	// whenIs is 0 for relative, 1 for absolute
 	protected int scheduleJob(int whenIs, int when, string executable, string func, string[] args) {
 		auto nj = nextJobId;
