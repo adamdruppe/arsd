@@ -57,7 +57,7 @@
 		{
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:htmltotext":"*"},
 			"dflags": ["-mv=arsd.email=email.d"],
 			"sourceFiles": ["email.d"]
