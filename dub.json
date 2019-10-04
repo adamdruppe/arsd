@@ -73,8 +73,9 @@
 		{
 			"name": "htmltotext",
 			"description": "HTML to plain text conversion",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:dom":"*", "arsd-official:color_base":"*"},
+			"dflags": ["-mv=arsd.htmltotext=htmltotext.d"],
 			"sourceFiles": ["htmltotext.d"]
 
 		},
