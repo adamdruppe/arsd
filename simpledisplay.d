@@ -6436,10 +6436,10 @@ struct ScreenPainter {
 	}
 
 	///
-	void clear() {
+	void clear(Color color = Color.black()) {
 		if(impl is null) return;
-		fillColor = Color(255, 255, 255);
-		outlineColor = Color(255, 255, 255);
+		fillColor = color;
+		outlineColor = color;
 		drawRectangle(Point(0, 0), window.width, window.height);
 	}
 
