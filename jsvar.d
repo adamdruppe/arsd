@@ -391,7 +391,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 			return _op!(_this, this2, op)(t._payload._floating);
 		if(t.payloadType() == var.Type.String)
 			return _op!(_this, this2, op)(t._payload._string);
-		assert(0, to!string(t.payloadType()));
+		throw new Exception("Attempted invalid operator `" ~ op ~ "` on variable of type " ~ to!string(t.payloadType()));
 	} else {
 		if(this2.payloadType() == var.Type.Integral) {
 			auto l = this2._payload._integral;

@@ -10,6 +10,8 @@
 			state consists of all variables and source to functions
 
 	Steal Ruby's [regex, capture] maybe
+
+	and the => operator too
 */
 /++
 	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
@@ -99,6 +101,7 @@
 		Variable names that start with __ are reserved and you shouldn't use them.
 	* int, float, string, array, bool, and json!q{} literals
 	* var.prototype, var.typeof. prototype works more like Mozilla's __proto__ than standard javascript prototype.
+	* the |> pipeline operator
 	* classes:
 		// inheritance works
 		class Foo : bar {
@@ -347,6 +350,9 @@ private enum string[] symbols = [
 	"+=", "-=", "*=", "/=", "~=",  "==", "<=", ">=","!=", "%=",
 	"&=", "|=", "^=",
 	"..",
+	"<<", ">>", // FIXME
+	"|>",
+	"=>", // FIXME
 	"?", ".",",",";",":",
 	"[", "]", "{", "}", "(", ")",
 	"&", "|", "^",
@@ -1126,10 +1132,15 @@ class BinaryExpression : Expression {
 		//writeln(left, " "~op~" ", right);
 
 		var n;
-		foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
-			if(ctOp == op) {
+		sw: switch(op) {
+			static foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
+			case ctOp: {
 				n = mixin("left "~ctOp~" right");
+				break sw;
 			}
+			default:
+				assert(0, op);
+		}
 
 		return InterpretResult(n, sc);
 	}
@@ -1169,6 +1180,31 @@ class OpAssignExpression : Expression {
 
 		return InterpretResult(n, sc);
 
+	}
+}
+
+class PipelineExpression : Expression {
+	Expression e1;
+	Expression e2;
+	CallExpression ce;
+
+	this(Expression e1, Expression e2) {
+		this.e1 = e1;
+		this.e2 = e2;
+
+		if(auto ce = cast(CallExpression) e2) {
+			this.ce = new CallExpression(ce.func);
+			this.ce.arguments = [e1] ~ ce.arguments;
+		} else {
+			this.ce = new CallExpression(e2);
+			this.ce.arguments ~= e1;
+		}
+	}
+
+	override string toString() { return e1.toString() ~ " |> " ~ e2.toString(); }
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		return ce.interpret(sc);
 	}
 }
 
@@ -2122,6 +2158,10 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case ":": // idk
 					return e1;
 
+				case "|>":
+					tokens.popFront();
+					e1 = new PipelineExpression(e1, parseFactor(tokens));
+				break;
 				case ".":
 					tokens.popFront();
 					e1 = new DotVarExpression(e1, parseVariableName(tokens));
