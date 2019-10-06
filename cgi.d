@@ -2104,13 +2104,24 @@ class Cgi {
 		foreach(h; hd) {
 			if(rawDataOutput !is null)
 				rawDataOutput(cast(const(ubyte)[]) (h ~ "\r\n"));
-			else
-				writeln(h);
+			else {
+				version(CRuntime_Musl) {
+					stdout.rawWrite(h);
+					stdout.rawWrite("\n");
+				} else {
+					writeln(h);
+				}
+			}
 		}
 		if(rawDataOutput !is null)
 			rawDataOutput(cast(const(ubyte)[]) ("\r\n"));
-		else
-			writeln("");
+		else {
+			version(CRuntime_Musl) {
+				stdout.rawWrite("\n");
+			} else {
+				writeln("");
+			}
+		}
 
 		outputtedResponseData = true;
 	}
