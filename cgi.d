@@ -3755,19 +3755,19 @@ string printDate(DateTime date) {
 // to actually put the symbol in the object file. I guess the immutable
 // assoc array array isn't actually included in druntime
 void hackAroundLinkerError() {
-      stdout.rawWrite(typeid(const(immutable(char)[][])[immutable(char)[]]));
-      stdout.rawWrite(typeid(immutable(char)[][][immutable(char)[]]));
-      stdout.rawWrite(typeid(Cgi.UploadedFile[immutable(char)[]]));
-      stdout.rawWrite(typeid(Cgi.UploadedFile[][immutable(char)[]]));
-      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
-      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]));
-      stdout.rawWrite(typeid(immutable(char[])[immutable(char)[]]));
+      stdout.rawWrite(typeid(const(immutable(char)[][])[immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(immutable(char)[][][immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(Cgi.UploadedFile[immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(Cgi.UploadedFile[][immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]).toString());
+      stdout.rawWrite(typeid(immutable(char[])[immutable(char)[]]).toString());
       // this is getting kinda ridiculous btw. Moving assoc arrays
       // to the library is the pain that keeps on coming.
 
       // eh this broke the build on the work server
       // stdout.rawWrite(typeid(immutable(char)[][immutable(string[])]));
-      stdout.rawWrite(typeid(immutable(string[])[immutable(char)[]]));
+      stdout.rawWrite(typeid(immutable(string[])[immutable(char)[]]).toString());
 }
 
 
