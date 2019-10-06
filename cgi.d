@@ -5114,6 +5114,7 @@ void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
 	}
 }
 version(Windows)
+version(with_addon_servers_connections)
 void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
 	// FIXME
 }
