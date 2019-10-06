@@ -3102,28 +3102,29 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 				version(with_addon_servers)
 					runWebsocketServer();
 				else
-					writeln("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.");
 				return;
 			case "--session-server":
 				version(with_addon_servers)
 					runSessionServer();
 				else
-					writeln("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.");
 				return;
 			case "--event-server":
 				version(with_addon_servers)
 					runEventServer();
 				else
-					writeln("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.");
 				return;
 			case "--timer-server":
 				version(with_addon_servers)
 					runTimerServer();
 				else
-					writeln("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.");
 				return;
 			case "--timed-jobs":
 				import core.demangle;
+				version(with_addon_servers_connections)
 				foreach(k, v; scheduledJobHandlers)
 					writeln(k, "\t", demangle(k));
 				return;
@@ -3287,7 +3288,14 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 							} catch(Throwable t) {
 								// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 								// anyway let's kill the connection
-								stderr.writeln(t.toString());
+								version(CRuntime_Musl) {
+									// LockingTextWriter fails here
+									// so working around it
+									auto s = t.toString();
+									stderr.rawWrite(s);
+									stderr.rawWrite("\n");
+								} else
+									stderr.writeln(t.toString());
 								sendAll(ir.source, plainHttpError(false, "400 Bad Request", t));
 								closeConnection = true;
 								break;
@@ -3303,7 +3311,14 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 								closeConnection = true;
 							} catch(Throwable t) {
 								// a processing error can be recovered from
-								stderr.writeln(t.toString);
+								version(CRuntime_Musl) {
+									// LockingTextWriter fails here
+									// so working around it
+									auto s = t.toString();
+									stderr.rawWrite(s);
+								} else {
+									stderr.writeln(t.toString);
+								}
 								if(!handleException(cgi, t))
 									closeConnection = true;
 							}
@@ -3387,7 +3402,9 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 
 			int status;
 			while(-1 != wait(&status)) {
+				version(CRuntime_Musl) {} else {
 				import std.stdio; writeln("Process died ", status);
+				}
 				processCount--;
 				goto reopen;
 			}
@@ -3500,10 +3517,18 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 				cgi._outputFileHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 			else static assert(0);
 		} catch(Throwable t) {
-			stderr.writeln(t.msg);
-			// the real http server will probably handle this;
-			// most likely, this is a bug in Cgi. But, oh well.
-			stdout.write(plainHttpError(true, "400 Bad Request", t));
+			version(CRuntime_Musl) {
+				// LockingTextWriter fails here
+				// so working around it
+				auto s = t.toString();
+				stderr.rawWrite(s);
+				stdout.rawWrite(plainHttpError(true, "400 Bad Request", t));
+			} else {
+				stderr.writeln(t.msg);
+				// the real http server will probably handle this;
+				// most likely, this is a bug in Cgi. But, oh well.
+				stdout.write(plainHttpError(true, "400 Bad Request", t));
+			}
 			return;
 		}
 		assert(cgi !is null);
