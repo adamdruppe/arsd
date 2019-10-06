@@ -6868,7 +6868,7 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 
 		super(300, 400, "ObjectInspectionWindow - " ~ T.stringof);
 
-		static foreach(memberName; __traits(derivedMembers, T)) {{
+		foreach(memberName; __traits(derivedMembers, T)) {{
 			alias member = I!(__traits(getMember, t, memberName))[0];
 			alias type = typeof(member);
 			static if(is(type == int)) {
