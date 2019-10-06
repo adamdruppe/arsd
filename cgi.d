@@ -297,6 +297,21 @@ static import std.file;
 // for a single thread, linear request thing, use:
 // -version=embedded_httpd_threads -version=cgi_no_threads
 
+version(Posix) {
+	version(CRuntime_Musl) {
+
+	} else version(minimal) {
+
+	} else {
+		version=with_sendfd;
+		version=with_addon_servers;
+	}
+}
+
+// the servers must know about the connections to talk to them; the interfaces are vital
+version(with_addon_servers)
+	version=with_addon_servers_connections;
+
 version(embedded_httpd) {
 	version(linux)
 		version=embedded_httpd_processes;
@@ -3084,16 +3099,28 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 		// run the special separate processes if needed
 		switch(args[1]) {
 			case "--websocket-server":
-				runWebsocketServer();
+				version(with_addon_servers)
+					runWebsocketServer();
+				else
+					writeln("Add-on servers not compiled in.");
 				return;
 			case "--session-server":
-				runSessionServer();
+				version(with_addon_servers)
+					runSessionServer();
+				else
+					writeln("Add-on servers not compiled in.");
 				return;
 			case "--event-server":
-				runEventServer();
+				version(with_addon_servers)
+					runEventServer();
+				else
+					writeln("Add-on servers not compiled in.");
 				return;
 			case "--timer-server":
-				runTimerServer();
+				version(with_addon_servers)
+					runTimerServer();
+				else
+					writeln("Add-on servers not compiled in.");
 				return;
 			case "--timed-jobs":
 				import core.demangle;
@@ -4900,6 +4927,7 @@ version(Posix) {
 	alias SocketConnectionHandle = SOCKET;
 }
 
+version(with_addon_servers_connections)
 LocalServerConnectionHandle openLocalServerConnection(string name) {
 	version(Posix) {
 		import core.sys.posix.unistd;
@@ -4935,6 +4963,7 @@ LocalServerConnectionHandle openLocalServerConnection(string name) {
 	}
 }
 
+version(with_addon_servers_connections)
 void closeLocalServerConnection(LocalServerConnectionHandle handle) {
 	version(Posix) {
 		import core.sys.posix.unistd;
@@ -5035,6 +5064,7 @@ void freeIoOp(ref IoOp* ptr) {
 }
 
 version(Posix)
+version(with_addon_servers_connections)
 void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
 	import core.sys.posix.unistd;
 
@@ -5077,6 +5107,7 @@ https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsaget
 	
 	$(TIP If you make your subclass a `final class`, there is a slight performance improvement.)
 +/
+version(with_addon_servers_connections)
 interface EventIoServer {
 	bool handleLocalConnectionData(IoOp* op, int receivedFd);
 	void handleLocalConnectionClose(IoOp* op);
@@ -5582,6 +5613,7 @@ class MockSession(Data) : Session!Data {
 	Direct interface to the basic data add-on server. You can
 	typically use [Cgi.getSessionObject] as a more convenient interface.
 +/
+version(with_addon_servers_connections)
 interface BasicDataServer {
 	///
 	void createSession(string sessionId, int lifetime);
@@ -5603,10 +5635,12 @@ interface BasicDataServer {
 	}
 }
 
+version(with_addon_servers_connections)
 class BasicDataServerConnection : BasicDataServer {
 	mixin ImplementRpcClientInterface!(BasicDataServer, "/tmp/arsd_session_server");
 }
 
+version(with_addon_servers)
 final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
 
 	void createSession(string sessionId, int lifetime) {
@@ -5672,6 +5706,7 @@ final class BasicDataServerImplementation : BasicDataServer, EventIoServer {
 		schedule!fn(args).asap(); // run it in the background as soon as the event loop gets around to it
 	---
 +/
+version(with_addon_servers_connections)
 struct ScheduledJobHelper {
 	private string func;
 	private string[] args;
@@ -5776,10 +5811,12 @@ interface ScheduledJobServer {
 	void cancelJob(int jobId);
 }
 
+version(with_addon_servers_connections)
 class ScheduledJobServerConnection : ScheduledJobServer {
 	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server");
 }
 
+version(with_addon_servers)
 final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer {
 	// FIXME: we need to handle SIGCHLD in this somehow
 	// whenIs is 0 for relative, 1 for absolute
@@ -5877,6 +5914,7 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 }
 
 ///
+version(with_addon_servers_connections)
 interface EventSourceServer {
 	/++
 		sends this cgi request to the event server so it will be fed events. You should not do anything else with the cgi object after this.
@@ -5981,6 +6019,7 @@ interface EventSourceServer {
 }
 
 ///
+version(with_addon_servers)
 final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 
 	protected:
@@ -6459,7 +6498,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 }
 
 
-version(Posix)
+version(with_sendfd)
 // copied from the web and ported from C
 // see https://stackoverflow.com/questions/2358684/can-i-share-a-file-descriptor-to-another-process-on-linux-or-are-they-local-to-t
 ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
@@ -6499,7 +6538,7 @@ ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
 	return sendmsg(fd, &msg, 0);
 }
 
-version(Posix)
+version(with_sendfd)
 // copied from the web and ported from C
 ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	msghdr msg;
