@@ -3348,6 +3348,7 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 
 						ir.source.close();
 					} catch(Throwable t) {
+						version(CRuntime_Musl) {} else
 						debug writeln(t);
 						// most likely cause is a timeout
 					}
@@ -3549,7 +3550,14 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 			fun(cgi);
 			cgi.close();
 		} catch (Throwable t) {
-			stderr.writeln(t.msg);
+			version(CRuntime_Musl) {
+				// LockingTextWriter fails here
+				// so working around it
+				auto s = t.msg;
+				stderr.rawWrite(s);
+			} else {
+				stderr.writeln(t.msg);
+			}
 			if(!handleException(cgi, t))
 				return;
 		}
@@ -3588,7 +3596,12 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		} catch(Throwable t) {
 			// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 			// anyway let's kill the connection
-			stderr.writeln(t.toString());
+			version(CRuntime_Musl) {
+				stderr.rawWrite(t.toString());
+				stderr.rawWrite("\n");
+			} else {
+				stderr.writeln(t.toString());
+			}
 			sendAll(connection, plainHttpError(false, "400 Bad Request", t));
 			closeConnection = true;
 			break;
@@ -3605,6 +3618,7 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 			closeConnection = true;
 		} catch(Throwable t) {
 			// a processing error can be recovered from
+			version(CRuntime_Musl) {} else
 			stderr.writeln(t.toString);
 			if(!handleException(cgi, t))
 				closeConnection = true;
@@ -3741,19 +3755,19 @@ string printDate(DateTime date) {
 // to actually put the symbol in the object file. I guess the immutable
 // assoc array array isn't actually included in druntime
 void hackAroundLinkerError() {
-      writeln(typeid(const(immutable(char)[][])[immutable(char)[]]));
-      writeln(typeid(immutable(char)[][][immutable(char)[]]));
-      writeln(typeid(Cgi.UploadedFile[immutable(char)[]]));
-      writeln(typeid(Cgi.UploadedFile[][immutable(char)[]]));
-      writeln(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
-      writeln(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]));
-      writeln(typeid(immutable(char[])[immutable(char)[]]));
+      stdout.rawWrite(typeid(const(immutable(char)[][])[immutable(char)[]]));
+      stdout.rawWrite(typeid(immutable(char)[][][immutable(char)[]]));
+      stdout.rawWrite(typeid(Cgi.UploadedFile[immutable(char)[]]));
+      stdout.rawWrite(typeid(Cgi.UploadedFile[][immutable(char)[]]));
+      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile)[immutable(char)[]]));
+      stdout.rawWrite(typeid(immutable(Cgi.UploadedFile[])[immutable(char)[]]));
+      stdout.rawWrite(typeid(immutable(char[])[immutable(char)[]]));
       // this is getting kinda ridiculous btw. Moving assoc arrays
       // to the library is the pain that keeps on coming.
 
       // eh this broke the build on the work server
-      // writeln(typeid(immutable(char)[][immutable(string[])]));
-      writeln(typeid(immutable(string[])[immutable(char)[]]));
+      // stdout.rawWrite(typeid(immutable(char)[][immutable(string[])]));
+      stdout.rawWrite(typeid(immutable(string[])[immutable(char)[]]));
 }
 
 
@@ -4282,7 +4296,7 @@ class ConnectionThread : Thread {
 				}
 				+/
 			} catch(Throwable e) {
-				import std.stdio; writeln(e);
+				import std.stdio; stderr.rawWrite(e.toString); stderr.rawWrite("\n");
 				socket.close();
 			}
 		}
