@@ -5914,8 +5914,8 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 				throw new Exception("epoll_ctl " ~ to!string(errno));
 
 			jobs[nj] = job;
+			return nj;
 		} else assert(0);
-		return nj;
 	}
 
 	protected void cancelJob(int jobId) {
