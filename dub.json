@@ -190,6 +190,8 @@
 			"name": "jsvar",
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
 			"targetType": "sourceLibrary",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.jsvar=jsvar.d"],
 			"sourceFiles": ["jsvar.d"]
 		},
 		{
@@ -197,6 +199,8 @@
 			"description": "Small Javascript-like script interpreter with easy D API",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:jsvar":"*"},
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.script=script.d"],
 			"sourceFiles": ["script.d"]
 		},
 		{
