@@ -22,7 +22,7 @@
 				{
 					"name": "normal",
 					"libs-posix": ["X11", "Xext", "GL", "GLU"],
-					"libs-windows": ["gdi32", "opengl32", "glu32"],
+					"libs-windows": ["gdi32", "opengl32", "glu32"]
 				},
 				{
 					"name": "without-opengl",
@@ -61,7 +61,6 @@
 			"dependencies": {"arsd-official:htmltotext":"*"},
 			"dflags": ["-mv=arsd.email=email.d"],
 			"sourceFiles": ["email.d"]
-
 		},
 		{
 			"name": "image_files",
@@ -185,11 +184,13 @@
 				"name": "without_openssl",
 				"versions": ["without_openssl"]
 			}
+         ]
 		},
 		{
 			"name": "jsvar",
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
 			"targetType": "sourceLibrary",
+			"importPaths": ["."],
 			"sourceFiles": ["jsvar.d"]
 		},
 		{
@@ -197,6 +198,7 @@
 			"description": "Small Javascript-like script interpreter with easy D API",
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:jsvar":"*"},
+			"importPaths": ["."],
 			"sourceFiles": ["script.d"]
 		},
 		{
