@@ -191,6 +191,7 @@
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
 			"targetType": "sourceLibrary",
 			"importPaths": ["."],
+			"dflags": ["-mv=arsd.jsvar=jsvar.d"],
 			"sourceFiles": ["jsvar.d"]
 		},
 		{
@@ -199,6 +200,7 @@
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:jsvar":"*"},
 			"importPaths": ["."],
+			"dflags": ["-mv=arsd.script=script.d"],
 			"sourceFiles": ["script.d"]
 		},
 		{
