@@ -171,12 +171,20 @@
 		{
 			"name": "http",
 			"description": "HTTP client library. Depends on OpenSSL right now on all platforms. On 32 bit Windows, you may need to get OMF openssl lib and dlls (ask me if you can't find it)",
-			"libs": ["crypto", "ssl"],
-			"versions": ["with_openssl"],
 			"targetType": "library",
 			"sourceFiles": ["http2.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.http2=http2.d"]
+			"dflags": ["-mv=arsd.http2=http2.d"],
+			"configurations": [
+			{
+				"name": "with_openssl",
+				"versions": ["with_openssl"],
+				"libs": ["crypto", "ssl"]
+			},
+			{
+				"name": "without_openssl",
+				"versions": ["without_openssl"]
+			}
 		},
 		{
 			"name": "jsvar",
