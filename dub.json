@@ -6,9 +6,26 @@
 	"description": "A container of various subpackages that do lots of different things. You should use one of the subpackages instead of the main package in most cases, but you can try the complete package if you get duplicated dependency issues.",
 	"license":"BSL-1.0",
 	"dependencies": {
+		":simpledisplay": "*",
+		":minigui": "*",
+		":nanovega": "*",
+		":email": "*",
+		":image_files": "*",
+		":htmltotext": "*",
+		":dom": "*",
+		":characterencodings": "*",
 		":cgi": "*",
+		":mysql": "*",
+		":postgres": "*",
+		":sqlite": "*",
+		":mssql": "*",
 		":http": "*",
-		":terminal": "*"
+		":jsvar": "*",
+		":script": "*",
+		":terminal": "*",
+		":ttf": "*",
+		":color_base": "*",
+		":database_base": "*"
 	},
 	"subPackages": [
 		{
