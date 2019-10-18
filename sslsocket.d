@@ -81,7 +81,7 @@ version(use_openssl) {
 			ssl = SSL_new(ctx);
 			if(!verifyPeer)
 				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
-			SSL_set_fd(ssl, this.handle);
+			SSL_set_fd(ssl, cast(int) this.handle);
 		}
 
 		bool dataPending() {

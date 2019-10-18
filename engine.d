@@ -152,21 +152,21 @@ Callable[] objs;
 		up2 = 17, down2 = 18, left2 = 19, right2 = 20}; // right stick
 	const int NUM_BUTTONS = 21;
 class Engine{
-	const int NoVideo = 0;
-	const int Video1024x768 = 1;
-	const int Video640x480 = 2;
-	const int Video800x600 = 3;
-	const int Video320x200 = 4;
-	const int Video512x512 = 5;
+	static const int NoVideo = 0;
+	static const int Video1024x768 = 1;
+	static const int Video640x480 = 2;
+	static const int Video800x600 = 3;
+	static const int Video320x200 = 4;
+	static const int Video512x512 = 5;
 
-	const int VideoFullScreen = 32;
+	static const int VideoFullScreen = 32;
 
 
 	alias int Direction;
 	alias int Buttons;
 
-	const int MAX_NET = 8;
-	const int NET_PORT = 7777;
+	static const int MAX_NET = 8;
+	static const int NET_PORT = 7777;
 
 	// For being a network server.....
 	bool isServer;
@@ -856,30 +856,30 @@ class Engine{
 
 	bool wantToQuit;
 
-	bool buttonsDown[NUM_BUTTONS][16];
-	bool buttonsChecked[NUM_BUTTONS][16];
+	bool[NUM_BUTTONS][16] buttonsDown;
+	bool[NUM_BUTTONS][16] buttonsChecked;
 
 	const int LAG_QUEUE_SIZE = 10;
 	// This lag is used for network games. It sends you old data until the lag time is up,
 	// to try and keep all the players synchronized.
-	int buttonLagRemaining[NUM_BUTTONS][16][LAG_QUEUE_SIZE];
+	int[NUM_BUTTONS][16][LAG_QUEUE_SIZE] buttonLagRemaining;
 
 	// This way we can queue up activities happening while the lag is waiting
-	int buttonLagQueueStart[NUM_BUTTONS][16];
-	int buttonLagQueueEnd[NUM_BUTTONS][16];
-	int buttonLagQueueLength[NUM_BUTTONS][16];
+	int[NUM_BUTTONS][16] buttonLagQueueStart;
+	int[NUM_BUTTONS][16] buttonLagQueueEnd;
+	int[NUM_BUTTONS][16] buttonLagQueueLength;
 
 	// These store what the state was before the lag began; it is what is returned while
 	// waiting on the lag to complete
-	bool lagbuttonsDown[NUM_BUTTONS][16][LAG_QUEUE_SIZE];
+	bool[NUM_BUTTONS][16][LAG_QUEUE_SIZE] lagbuttonsDown;
 
 
 
-	int stickX[3][16];
-	int stickY[3][16];
+	int[3][16] stickX;
+	int[3][16] stickY;
 
-	bool mouseButtonsDown[8];
-	bool mouseButtonsChecked[8];
+	bool[8] mouseButtonsDown;
+	bool[8] mouseButtonsChecked;
 	const int LEFT = SDL_BUTTON_LEFT;//1;
 	const int MIDDLE = SDL_BUTTON_MIDDLE;//2;
 	const int RIGHT = SDL_BUTTON_RIGHT;//3;

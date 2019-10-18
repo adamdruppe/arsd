@@ -1032,7 +1032,7 @@ void addEventListener(string event, Element what, EventHandler handler, bool bub
 		l.capturingEventHandlers[event] ~= handler;
 }
 
-void addEventListener(string event, Element what[], EventHandler handler, bool bubble = true) {
+void addEventListener(string event, Element[] what, EventHandler handler, bool bubble = true) {
 	foreach(w; what)
 		addEventListener(event, w, handler, bubble);
 }

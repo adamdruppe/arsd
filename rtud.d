@@ -90,8 +90,13 @@ class UpdateStream {
 		if("close-time" in message)
 +/
 
-static import linux = std.c.linux.linux;
-static import sock = std.c.linux.socket;
+version(D_Version2) {
+	static import linux = core.sys.posix.unistd;
+	static import sock = core.sys.posix.sys.socket;
+} else {
+	static import linux = std.c.linux.linux;
+	static import sock = std.c.linux.socket;
+}
 
 int openNetworkFd(string host, ushort port) {
 	import std.exception;

@@ -498,7 +498,7 @@ struct JoystickUpdate {
 			final switch(axis) {
 				case PS1AnalogAxes.horizontalDpad:
 				case PS1AnalogAxes.horizontalLeftStick:
-					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? -digitalFallbackValue :
+					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? cast(short)-cast(int)digitalFallbackValue :
 					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? digitalFallbackValue :
 					       0;
 					if(got == 0)
@@ -508,10 +508,10 @@ struct JoystickUpdate {
 				case PS1AnalogAxes.verticalDpad:
 				case PS1AnalogAxes.verticalLeftStick:
 					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? digitalFallbackValue :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? cast(short)-cast(int)digitalFallbackValue :
 						what.Gamepad.sThumbLY;
 
-					return normalizeAxis(-got);
+					return normalizeAxis(cast(short)-cast(int)got);
 				case PS1AnalogAxes.horizontalRightStick:
 					return normalizeAxis(what.Gamepad.sThumbRX);
 				case PS1AnalogAxes.verticalRightStick:
