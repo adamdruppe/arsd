@@ -62,12 +62,14 @@
 		{
 			"name": "nanovega",
 			"description": "Vector graphics library",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.nanovega=nanovega.d"],
 			"dependencies": {
 				"arsd-official:simpledisplay":"*",
 				"arsd-official:image_files":"*",
 				"arsd-official:ttf":"*"
 			},
+			"importPaths": ["."],
 			"libs-posix": ["freetype", "fontconfig"],
 			"sourceFiles": ["nanovega.d", "blendish.d", "svg.d"]
 		},
@@ -75,6 +77,7 @@
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "library",
+			"importPaths": ["."],
 			"dependencies": {"arsd-official:htmltotext":"*"},
 			"dflags": ["-mv=arsd.email=email.d"],
 			"sourceFiles": ["email.d"]
@@ -82,6 +85,7 @@
 		{
 			"name": "image_files",
 			"description": "Image file format support - PNG read/write, JPEG, TGA, BMP, PCX, TGA, DDS read.",
+			"importPaths": ["."],
 			"targetType": "sourceLibrary",
 			"dependencies": {"arsd-official:color_base":"*"},
 			"sourceFiles": ["image.d", "png.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
@@ -89,6 +93,7 @@
 		{
 			"name": "htmltotext",
 			"description": "HTML to plain text conversion",
+			"importPaths": ["."],
 			"targetType": "library",
 			"dependencies": {"arsd-official:dom":"*", "arsd-official:color_base":"*"},
 			"dflags": ["-mv=arsd.htmltotext=htmltotext.d"],
@@ -206,7 +211,7 @@
 		{
 			"name": "jsvar",
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.jsvar=jsvar.d"],
 			"sourceFiles": ["jsvar.d"]
@@ -214,7 +219,7 @@
 		{
 			"name": "script",
 			"description": "Small Javascript-like script interpreter with easy D API",
-			"targetType": "sourceLibrary",
+			"targetType": "library",
 			"dependencies": {"arsd-official:jsvar":"*"},
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.script=script.d"],
@@ -231,7 +236,9 @@
 		{
 			"name": "ttf",
 			"description": "port of stb_ttf to D",
-			"targetType": "sourceLibrary",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.ttf=ttf.d"],
 			"sourceFiles": ["ttf.d"]
 		},
 		{

@@ -69,7 +69,7 @@ module arsd.terminal;
 
 	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter.  Then, the final line will be returned to your program, which the example will simply print back to the user.
 +/
-unittest {
+version(demos) unittest {
 	import arsd.terminal;
 
 	void main() {
@@ -87,7 +87,7 @@ unittest {
 	This example demonstrates color output, using [Terminal.color]
 	and the output functions like [Terminal.writeln].
 +/
-unittest {
+version(demos) unittest {
 	import arsd.terminal;
 
 	void main() {
@@ -107,7 +107,7 @@ unittest {
 	This shows how to get one single character press using
 	the [RealTimeConsoleInput] structure.
 +/
-unittest {
+version(demos) unittest {
 	import arsd.terminal;
 
 	void main() {
