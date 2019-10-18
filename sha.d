@@ -7,6 +7,20 @@ module arsd.sha;
 */
 import std.stdio;
 
+version(GNU) {
+	immutable(ubyte)[] SHA1(T)(T data) {
+		import std.digest.sha;
+		auto i = sha1Of(data);
+		return i.idup;
+	}
+
+	immutable(ubyte)[] SHA256(T)(T data) {
+		import std.digest.sha;
+		auto i = sha256Of(data);
+		return i.idup;
+	}
+} else {
+
 immutable(ubyte)[/*20*/] SHA1(T)(T data) if(isInputRange!(T)) /*const(ubyte)[] data)*/ {
 	uint[5] h = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
 
@@ -367,6 +381,8 @@ immutable(ubyte)[] SHA256(T)(T data) if ( isInputRange!(T)) {
 	}
 
 	return hash.idup;
+}
+
 }
 
 import std.exception;

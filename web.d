@@ -1,6 +1,24 @@
 /// magic web wrapper
 module arsd.web;
 
+
+static if(__VERSION__ <= 2076) {
+	// compatibility shims with gdc
+	enum JSONType {
+		object = JSON_TYPE.OBJECT,
+		null_ = JSON_TYPE.NULL,
+		false_ = JSON_TYPE.FALSE,
+		true_ = JSON_TYPE.TRUE,
+		integer = JSON_TYPE.INTEGER,
+		float_ = JSON_TYPE.FLOAT,
+		array = JSON_TYPE.ARRAY,
+		string = JSON_TYPE.STRING,
+		uinteger = JSON_TYPE.UINTEGER
+	}
+}
+
+
+
 // it would be nice to be able to add meta info to a returned envelope
 
 // with cookie sessions, you must commit your session yourself before writing any content
@@ -2565,7 +2583,7 @@ type fromUrlParam(type)(in string ofInterest, in string name, in string[][string
 		}
 	} else static if(is(type == enum)) {
 		sw: switch(ofInterest) {
-			static foreach(N; __traits(allMembers, type)) {
+			/*static*/ foreach(N; __traits(allMembers, type)) {
 			case N:
 				ret = __traits(getMember, type, N);
 				break sw;

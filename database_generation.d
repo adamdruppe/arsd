@@ -444,7 +444,10 @@ QueryBuilderHelper!(T[]) children(T, B)(B base) {
 		}}
 	}
 
-	return QueryBuilderHelper!(T[])(toTableName(T.stringof)).where!(mixin(keyName ~ " => base.id"));
+	// return QueryBuilderHelper!(T[])(toTableName(T.stringof)).where!(mixin(keyName ~ " => base.id"));
+
+	// changing mixin cuz of regression in dmd 2.088
+	mixin("return QueryBuilderHelper!(T[])(toTableName(T.stringof)).where!("~keyName ~ " => base.id);");
 }
 
 /++

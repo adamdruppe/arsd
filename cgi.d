@@ -303,8 +303,13 @@ version(Posix) {
 	} else version(minimal) {
 
 	} else {
-		version=with_sendfd;
-		version=with_addon_servers;
+		version(GNU) {
+			// GDC doesn't support static foreach so I had to cheat on it :(
+		} else {
+			version=with_breaking_cgi_features;
+			version=with_sendfd;
+			version=with_addon_servers;
+		}
 	}
 }
 
@@ -2305,6 +2310,7 @@ class Cgi {
 	}
 
 	// if it is in test mode; triggers mock sessions. Used by CgiTester
+	version(with_breaking_cgi_features)
 	private CgiTester testInProcess;
 
 	/* Hooks for redirecting input and output */
@@ -2418,6 +2424,7 @@ Cgi dummyCgi(Cgi.RequestMethod method = Cgi.RequestMethod.GET, string url = null
 /++
 	A helper test class for request handler unittests.
 +/
+version(with_breaking_cgi_features)
 class CgiTester {
 	private {
 		SessionObject[TypeInfo] mockSessions;
@@ -4863,8 +4870,12 @@ version(Windows)
     else static assert(0);
 }
 
-version(Posix)
-private extern(C) int posix_spawn(pid_t*, const char*, void*, void*, const char**, const char**);
+version(Posix) {
+	version(CRuntime_Musl) {} else {
+		import core.sys.posix.unistd;
+		private extern(C) int posix_spawn(pid_t*, const char*, void*, void*, const char**, const char**);
+	}
+}
 
 
 // FIXME: these aren't quite public yet.
@@ -5303,6 +5314,12 @@ unittest {
 	FIXME: overloads aren't supported
 */
 
+/// Base for storing sessions in an array. Exists primarily for internal purposes and you should generally not use this.
+interface SessionObject {}
+
+version(with_breaking_cgi_features)
+mixin(q{
+
 mixin template ImplementRpcClientInterface(T, string serverPath) {
 	static import std.traits;
 
@@ -5456,9 +5473,6 @@ private struct SerializationBuffer {
 
 			will have to have dump and restore too, so i can restart without losing stuff.
 */
-
-/// Base for storing sessions in an array. Exists primarily for internal purposes and you should generally not use this.
-interface SessionObject {}
 
 /++
 	A convenience object for talking to the [BasicDataServer] from a higher level.
@@ -6885,6 +6899,8 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 					}
 				}
 			}
+
+			return false;
 		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
 			*what = to!T(value);
 			return true;
@@ -6945,11 +6961,13 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 					return true;
 				}
 			}
+
+			return false;
 		} else {
 			static assert(0, "unsupported type for cgi call " ~ T.stringof);
 		}
 
-		return false;
+		//return false;
 	}
 
 	void setArgument(string name, string value) {
@@ -7838,9 +7856,9 @@ private auto serveApiInternal(T)(string urlPrefix) {
 				return true;
 				default:
 					throw t;
-				return true;
+				// return true;
 			}
-			return true;
+			// return true;
 		}
 
 		assert(0);
@@ -8081,9 +8099,11 @@ private auto serveApiInternal(T)(string urlPrefix) {
 }
 
 string defaultFormat(alias method)() {
+	bool nonConstConditionForWorkingAroundASpuriousDmdWarning = true;
 	static foreach(attr; __traits(getAttributes, method)) {
 		static if(is(typeof(attr) == DefaultFormat)) {
-			return attr.value;
+			if(nonConstConditionForWorkingAroundASpuriousDmdWarning)
+				return attr.value;
 		}
 	}
 	return "html";
@@ -8973,6 +8993,8 @@ template dispatcher(definitions...) {
 		return false;
 	}
 }
+
+});
 
 /+
 /++

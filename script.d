@@ -1133,7 +1133,9 @@ class BinaryExpression : Expression {
 
 		var n;
 		sw: switch(op) {
-			static foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
+			// I would actually kinda prefer this to be static foreach, but normal
+			// tuple foreach here has broaded compiler compatibility.
+			foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
 			case ctOp: {
 				n = mixin("left "~ctOp~" right");
 				break sw;

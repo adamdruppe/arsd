@@ -14,6 +14,21 @@ import std.exception;
 import std.datetime;
 
 
+static if(__VERSION__ <= 2076) {
+	// compatibility shims with gdc
+	enum JSONType {
+		object = JSON_TYPE.OBJECT,
+		null_ = JSON_TYPE.NULL,
+		false_ = JSON_TYPE.FALSE,
+		true_ = JSON_TYPE.TRUE,
+		integer = JSON_TYPE.INTEGER,
+		float_ = JSON_TYPE.FLOAT,
+		array = JSON_TYPE.ARRAY,
+		string = JSON_TYPE.STRING,
+		uinteger = JSON_TYPE.UINTEGER
+	}
+}
+
 
 ///////////////////////////////////////
 
