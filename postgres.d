@@ -29,6 +29,7 @@ import std.exception;
 class PostgreSql : Database {
 	/// dbname = name  is probably the most common connection string
 	this(string connectionString) {
+		this.connectionString = connectionString;
 		conn = PQconnectdb(toStringz(connectionString));
 		if(conn is null)
 			throw new DatabaseException("Unable to allocate PG connection object");
@@ -36,6 +37,8 @@ class PostgreSql : Database {
 			throw new DatabaseException(error());
 		query("SET NAMES 'utf8'"); // D does everything with utf8
 	}
+
+	string connectionString;
 
 	~this() {
 		PQfinish(conn);
@@ -83,13 +86,30 @@ class PostgreSql : Database {
 	ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 
+		bool first_retry = true;
+
+		retry:
+
 		auto res = PQexec(conn, toStringz(sql));
 		int ress = PQresultStatus(res);
 		// https://www.postgresql.org/docs/current/libpq-exec.html
 		// FIXME: PQresultErrorField can get a lot more info in a more structured way
 		if(ress != PGRES_TUPLES_OK
 			&& ress != PGRES_COMMAND_OK)
+		{
+			if(first_retry && error() == "no connection to the server\n") {
+				first_retry = false;
+				// try to reconnect...
+				PQfinish(conn);
+				conn = PQconnectdb(toStringz(connectionString));
+				if(conn is null)
+					throw new DatabaseException("Unable to allocate PG connection object");
+				if(PQstatus(conn) != CONNECTION_OK)
+					throw new DatabaseException(error());
+				goto retry;
+			}
 			throw new DatabaseException(error());
+		}
 
 		return new PostgresResult(res);
 	}

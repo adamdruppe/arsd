@@ -727,10 +727,10 @@ class HttpRequest {
 			}
 
 			tryAgain:
-			auto got = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */);
-			if(got == 0) { /* timeout */
+			auto selectGot = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */);
+			if(selectGot == 0) { /* timeout */
 				// timeout
-			} else if(got == -1) /* interrupted */
+			} else if(selectGot == -1) /* interrupted */
 				goto tryAgain;
 			else { /* ready */
 				Socket[16] inactive;
