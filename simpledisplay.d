@@ -6436,7 +6436,7 @@ struct ScreenPainter {
 	}
 
 	///
-	void clear(Color color = Color.black()) {
+	void clear(Color color = Color.white()) {
 		if(impl is null) return;
 		fillColor = color;
 		outlineColor = color;
