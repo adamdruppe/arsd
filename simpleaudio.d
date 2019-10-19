@@ -1161,13 +1161,15 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 	scope(failure)
 		snd_pcm_close(handle);
 
+
 	if (auto err = snd_pcm_hw_params_malloc(&hwParams))
 		throw new AlsaException("params malloc", err);
 	scope(exit)
 		snd_pcm_hw_params_free(hwParams);
 			 
 	if (auto err = snd_pcm_hw_params_any(handle, hwParams))
-		throw new AlsaException("params init", err);
+		// can actually survive a failure here, we will just move forward
+		{} // throw new AlsaException("params init", err);
 
 	if (auto err = snd_pcm_hw_params_set_access(handle, hwParams, snd_pcm_access_t.SND_PCM_ACCESS_RW_INTERLEAVED))
 		throw new AlsaException("params access", err);
@@ -1185,13 +1187,17 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 	if (auto err = snd_pcm_hw_params_set_channels(handle, hwParams, 2))
 		throw new AlsaException("params channels", err);
 
-	///+
-	if(snd_pcm_hw_params_set_periods(handle, hwParams, 2, 0) < 0)
-		throw new AlsaException("periods", -1 /* FIXME */);
+	uint periods = 2;
+	{
+	auto err = snd_pcm_hw_params_set_periods_near(handle, hwParams, &periods, 0);
+	if(err < 0)
+		throw new AlsaException("periods", err);
 
-	snd_pcm_uframes_t sz = (BUFFER_SIZE_FRAMES * 2 /* periods*/);
-	if(snd_pcm_hw_params_set_buffer_size_near(handle, hwParams, &sz) < 0)
-		throw new AlsaException("buffer size", -1 /* FIXME */);
+	snd_pcm_uframes_t sz = (BUFFER_SIZE_FRAMES * periods);
+	err = snd_pcm_hw_params_set_buffer_size_near(handle, hwParams, &sz);
+	if(err < 0)
+		throw new AlsaException("buffer size", err);
+	}
 
 	if (auto err = snd_pcm_hw_params(handle, hwParams))
 		throw new AlsaException("params install", err);
@@ -1376,6 +1382,7 @@ extern(C):
 	int snd_pcm_prepare(snd_pcm_t*);
 	int snd_pcm_hw_params(snd_pcm_t*, snd_pcm_hw_params_t*);
 	int snd_pcm_hw_params_set_periods(snd_pcm_t*, snd_pcm_hw_params_t*, uint, int);
+	int snd_pcm_hw_params_set_periods_near(snd_pcm_t*, snd_pcm_hw_params_t*, uint*, int);
 	int snd_pcm_hw_params_set_buffer_size(snd_pcm_t*, snd_pcm_hw_params_t*, snd_pcm_uframes_t);
 	int snd_pcm_hw_params_set_buffer_size_near(snd_pcm_t*, snd_pcm_hw_params_t*, snd_pcm_uframes_t*);
 	int snd_pcm_hw_params_set_channels(snd_pcm_t*, snd_pcm_hw_params_t*, uint);
