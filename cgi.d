@@ -5317,6 +5317,8 @@ unittest {
 /// Base for storing sessions in an array. Exists primarily for internal purposes and you should generally not use this.
 interface SessionObject {}
 
+private immutable void delegate(string[])[string] scheduledJobHandlers;
+
 version(with_breaking_cgi_features)
 mixin(q{
 
@@ -5831,8 +5833,6 @@ struct ScheduledJobHelper {
 	}
 	+/
 }
-
-private immutable void delegate(string[])[string] scheduledJobHandlers;
 
 /++
 	First step to schedule a job on the scheduled job server.
