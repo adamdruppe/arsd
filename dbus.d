@@ -532,7 +532,7 @@ struct DBusAny {
       valueStr = boolean ? "true" : "false";
       break;
     case 'a':
-      import std.digest.digest : toHexString;
+      import std.digest : toHexString;
 
       if(signature == ['y'])
         valueStr = "binary(" ~ binaryData.toHexString ~ ')';
@@ -1002,7 +1002,7 @@ struct MessagePattern {
     return hash;
   }
 
-  bool opEquals(ref const this s) const @safe pure nothrow {
+  bool opEquals(ref const typeof(this) s) const @safe pure nothrow {
     return (path == s.path) && (iface == s.iface) && (method == s.method) && (signal == s.signal);
   }
 }
