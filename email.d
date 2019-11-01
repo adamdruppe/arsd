@@ -9,6 +9,9 @@ import std.string;
 
 import arsd.characterencodings;
 
+//         import std.uuid;
+// smtpMessageBoundary = randomUUID().toString();
+
 // SEE ALSO: std.net.curl.SMTP
 
 ///
@@ -22,7 +25,7 @@ struct RelayInfo {
 struct MimeAttachment {
 	string type; ///
 	string filename; ///
-	const(void)[] content; ///
+	const(ubyte)[] content; ///
 	string id; ///
 }
 
@@ -116,16 +119,16 @@ class EmailMessage {
 			message.addAttachment("text/plain", "something.txt", std.file.read("/path/to/local/something.txt"));
 		---
 	+/
-	void addAttachment(string mimeType, string filename, in void[] content, string id = null) {
+	void addAttachment(string mimeType, string filename, const void[] content, string id = null) {
 		isMime = true;
-		attachments ~= MimeAttachment(mimeType, filename, content, id);
+		attachments ~= MimeAttachment(mimeType, filename, cast(const(ubyte)[]) content, id);
 	}
 
 	/// in the html, use img src="cid:ID_GIVEN_HERE"
-	void addInlineImage(string id, string mimeType, string filename, in void[] content) {
+	void addInlineImage(string id, string mimeType, string filename, const void[] content) {
 		assert(isHtml);
 		isMime = true;
-		inlineImages ~= MimeAttachment(mimeType, filename, content, id);
+		inlineImages ~= MimeAttachment(mimeType, filename, cast(const(ubyte)[]) content, id);
 	}
 
 	const(MimeAttachment)[] inlineImages;
