@@ -5,13 +5,20 @@
 		repl is a different set of globals
 		maybe ctrl+enter to execute vs insert another line
 
+
 		write state to file
 		read state from file
-			state consists of all variables and source to functions
+			state consists of all variables and source to functions.
+			maybe need @retained for a variable that is meant to keep
+			its value between loads?
+
+		ddoc????
 
 	Steal Ruby's [regex, capture] maybe
 
 	and the => operator too
+
+	I kinda like the javascript foo`blargh` template literals too.
 */
 /++
 	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
@@ -983,7 +990,8 @@ class FunctionLiteralExpression : Expression {
 
 	override string toString() {
 		string s = (isMacro ? "macro" : "function") ~ " (";
-		s ~= arguments.toString();
+		if(arguments !is null)
+			s ~= arguments.toString();
 
 		s ~= ") ";
 		s ~= functionBody.toString();
@@ -1010,6 +1018,7 @@ class FunctionLiteralExpression : Expression {
 	override InterpretResult interpret(PrototypeObject sc) {
 		assert(DefaultArgumentDummyObject !is null);
 		var v;
+		v._metadata = new ScriptFunctionMetadata(this);
 		v._function = (var _this, var[] args) {
 			auto argumentsScope = new PrototypeObject();
 			PrototypeObject scToUse;
@@ -1308,6 +1317,14 @@ class DotVarExpression : VariableExpression {
 			assert(0);
 		}
 
+		if(e2.identifier == "__source") {
+			auto val = e1.interpret(sc).value;
+			if(auto meta = cast(ScriptFunctionMetadata) val._metadata)
+				return *(new var(meta.convertToString()));
+			else
+				return *(new var(val.toJson()));
+		}
+
 		if(auto ve = cast(VariableExpression) e1)
 			return this.getVarFrom(sc, ve.getVar(sc, recurse));
 		else if(cast(StringLiteralExpression) e1 && e2.identifier == "interpolate") {
@@ -1489,6 +1506,10 @@ class ForeachExpression : Expression {
 	Expression subject;
 	Expression loopBody;
 
+	override string toString() {
+		return "foreach(" ~ decl.toString() ~ "; " ~ subject.toString() ~ ") " ~ loopBody.toString();
+	}
+
 	override InterpretResult interpret(PrototypeObject sc) {
 		var result;
 
@@ -1621,9 +1642,9 @@ class IfExpression : Expression {
 	}
 
 	override string toString() {
-		string code = "if(";
+		string code = "if ";
 		code ~= condition.toString();
-		code ~= ") ";
+		code ~= " ";
 		if(ifTrue !is null)
 			code ~= ifTrue.toString();
 		else
@@ -1786,6 +1807,10 @@ class ParentheticalExpression : Expression {
 	Expression inside;
 	this(Expression inside) {
 		this.inside = inside;
+	}
+
+	override string toString() {
+		return "(" ~ inside.toString() ~ ")";
 	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
@@ -2534,9 +2559,9 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 		} else
 			ret = parseAddend(tokens);
 	} else {
-		assert(0);
+		//assert(0);
 		// return null;
-	//	throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", token.lineNumber);
+		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", 0);//token.lineNumber);
 	}
 
 	//writeln("parsed expression ", ret.toString());
@@ -2922,5 +2947,16 @@ void repl(var globals) {
 		} catch(Exception e) {
 			writeln("*** ", e.msg);
 		}
+	}
+}
+
+class ScriptFunctionMetadata : VarMetadata {
+	FunctionLiteralExpression fle;
+	this(FunctionLiteralExpression fle) {
+		this.fle = fle;
+	}
+
+	string convertToString() {
+		return fle.toString();
 	}
 }

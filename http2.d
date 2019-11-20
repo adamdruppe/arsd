@@ -16,6 +16,10 @@ module arsd.http2;
 
 import std.uri : encodeComponent;
 
+debug(arsd_http2_verbose) debug=arsd_http2;
+
+debug(arsd_http2) import std.stdio : writeln;
+
 version(without_openssl) {}
 else {
 version=use_openssl;
@@ -77,6 +81,9 @@ HttpRequest get(string url) {
 	return request;
 }
 
+/**
+	Do not forget to call `waitForCompletion()` on the returned object!
+*/
 HttpRequest post(string url, string[string] req) {
 	auto client = new HttpClient();
 	ubyte[] bdata;
@@ -678,7 +685,7 @@ class HttpRequest {
 		SocketSet writeSet;
 
 
-		void advanceConnections() {
+		int advanceConnections() {
 			if(readSet is null)
 				readSet = new SocketSet();
 			if(writeSet is null)
@@ -717,29 +724,45 @@ class HttpRequest {
 			readSet.reset();
 			writeSet.reset();
 
+			bool hadOne = false;
+
 			// active requests need to be read or written to
 			foreach(sock, request; activeRequestOnSocket) {
 				// check the other sockets just for EOF, if they close, take them out of our list,
 				// we'll reopen if needed upon request.
 				readSet.add(sock);
-				if(request.state == State.sendingHeaders || request.state == State.sendingBody)
+				hadOne = true;
+				if(request.state == State.sendingHeaders || request.state == State.sendingBody) {
 					writeSet.add(sock);
+					hadOne = true;
+				}
 			}
+
+			if(!hadOne)
+				return 1; // automatic timeout, nothing to do
 
 			tryAgain:
 			auto selectGot = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */);
 			if(selectGot == 0) { /* timeout */
 				// timeout
-			} else if(selectGot == -1) /* interrupted */
+				return 1;
+			} else if(selectGot == -1) { /* interrupted */
+				/*
+				version(Posix) {
+					import core.stdc.errno;
+					if(errno != EINTR)
+						throw new Exception("select error: " ~ to!string(errno));
+				}
+				*/
 				goto tryAgain;
-			else { /* ready */
+			} else { /* ready */
 				Socket[16] inactive;
 				int inactiveCount = 0;
 				foreach(sock, request; activeRequestOnSocket) {
 					if(readSet.isSet(sock)) {
 						keep_going:
 						auto got = sock.receive(buffer);
-						debug(arsd_http2) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
+						debug(arsd_http2_verbose) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
 						if(got < 0) {
 							throw new Exception("receive error");
 						} else if(got == 0) {
@@ -753,7 +776,7 @@ class HttpRequest {
 							// data available
 							request.handleIncomingData(buffer[0 .. got]);
 
-							if(request.state == HttpRequest.State.complete) {
+							if(request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
 								inactive[inactiveCount++] = sock;
 							// reuse the socket for another pending request, if we can
 							}
@@ -776,7 +799,7 @@ class HttpRequest {
 					if(writeSet.isSet(sock)) {
 						assert(request.sendBuffer.length);
 						auto sent = sock.send(request.sendBuffer);
-						debug(arsd_http2) writeln(cast(string) request.sendBuffer);
+						debug(arsd_http2_verbose) writeln(cast(string) request.sendBuffer);
 						if(sent <= 0)
 							throw new Exception("send error " ~ lastSocketError);
 						request.sendBuffer = request.sendBuffer[sent .. $];
@@ -791,7 +814,16 @@ class HttpRequest {
 			}
 
 			// we've completed a request, are there any more pending connection? if so, send them now
+
+			return 0;
 		}
+	}
+
+	public static void resetInternals() {
+		socketsPerHost = null;
+		activeRequestOnSocket = null;
+		pending = null;
+
 	}
 
 	struct HeaderReadingState {
@@ -993,7 +1025,7 @@ class HttpRequest {
 									bodyReadingState.contentLengthRemaining += power * val;
 									power *= 16;
 								}
-								debug(arsd_http2) writeln("Chunk length: ", bodyReadingState.contentLengthRemaining);
+								debug(arsd_http2_verbose) writeln("Chunk length: ", bodyReadingState.contentLengthRemaining);
 								bodyReadingState.chunkedState = 1;
 								data = data[a + 1 .. $];
 								goto start_over;
@@ -1023,7 +1055,7 @@ class HttpRequest {
 								responseData.content ~= newData;
 
 							bodyReadingState.contentLengthRemaining -= newData.length;
-							debug(arsd_http2) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
+							debug(arsd_http2_verbose) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
 							assert(bodyReadingState.contentLengthRemaining >= 0);
 							if(bodyReadingState.contentLengthRemaining == 0) {
 								bodyReadingState.chunkedState = 3;
@@ -1219,12 +1251,13 @@ class HttpRequest {
 	}
 
 
-	/// Waits for the request to finish or timeout, whichever comes furst.
+	/// Waits for the request to finish or timeout, whichever comes first.
 	HttpResponse waitForCompletion() {
 		while(state != State.aborted && state != State.complete) {
 			if(state == State.unsent)
 				send();
-			HttpRequest.advanceConnections();
+			if(auto err = HttpRequest.advanceConnections())
+				throw new Exception("waitForCompletion got err " ~ to!string(err));
 		}
 
 		return responseData;
@@ -1554,7 +1587,7 @@ version(use_openssl) {
 		}
 		
 		@trusted
-		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 		//import std.stdio;writeln(cast(string) buf);
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
@@ -1567,11 +1600,11 @@ version(use_openssl) {
 			return retval;
 
 		}
-		override ptrdiff_t send(const(void)[] buf) {
+		override ptrdiff_t send(scope const(void)[] buf) {
 			return send(buf, SocketFlags.NONE);
 		}
 		@trusted
-		override ptrdiff_t receive(void[] buf, SocketFlags flags) {
+		override ptrdiff_t receive(scope void[] buf, SocketFlags flags) {
 			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
@@ -1582,7 +1615,7 @@ version(use_openssl) {
 			}
 			return retval;
 		}
-		override ptrdiff_t receive(void[] buf) {
+		override ptrdiff_t receive(scope void[] buf) {
 			return receive(buf, SocketFlags.NONE);
 		}
 

@@ -1,16 +1,6 @@
 # About
 
-This is a collection of modules that I've released over the years. Most of them stand alone, or have just one or two dependencies in here, so you don't have to download this whole repo. You may find some ddoc here:http://arsdnet.net/ddoc/ or you can always ask me for help. http://dpldocs.info/
-
-
-# Documentation
-
-I know I'm pretty light on this. There's some ddocs but for the most part, I kinda expect you to use it the way I do: hoping things are logical and looking
-at the source to fill in the gaps.
-
-You can always catch me on email though: destructionator@gmail.com. That's
-the most reliable way to reach me.
-
+This is a collection of modules that I've released over the years. Most of them stand alone, or have just one or two dependencies in here, so you don't have to download this whole repo. Ddoc available at http://arsd-official.dpldocs.info/ and you can also email me, destructionator@gmail.com or ping me as `adam_d_ruppe` on the #d IRC channel.
 
 # Basic idea
 
@@ -18,29 +8,15 @@ Modules are usually independent; you don't need this whole directory
 but it doesn't hurt to grab it all either.
 
 I like to compile by just passing all the modules to the command line
-at once. For example: dmd `yourapp.d` cgi.d. That's why I don't bother
-with a separate arsd/ directory nor with dub packages. Passing the files
-is faster to compile and easier to use!
+at once. For example: `dmd yourapp.d cgi.d`.
 
-Read more about the modules at these links (docs are still works in process):
+You can also use the dub subpackages. See a list here:
+http://code.dlang.org/packages/arsd-official
 
-`cgi.d` info: http://arsdnet.net/web.d/cgi.d.html
+Not all modules in the source are in dub subpackages. If you want to use them,
+I recommend you simply copy the file into your project.
 
-`web.d` info: http://arsdnet.net/web.d/web.d.html
-
-
-# 64 Bit
-
-Believe it or not, but I still mostly use 32 bit programs myself. I try
-to keep things working on 64 bit, but don't always test it. If something
-doesn't compile or work on 64 bit, email me and I'll see about fixing it.
-
-I also tend to run a version behind bleeding-edge dmd, so sometimes things
-break there too. Again, if that's a problem, just email me and I can typically
-get you a fix in about an hour.
-
-Currently included are:
-
+# Module overview
 
 # Web related
 
@@ -48,13 +24,13 @@ Currently included are:
 | --- | --- |
 | `cgi.d` | base module for making webapps in D. Supports cgi, fastcgi, scgi, and embedded_httpd via -version=xxxx |
 | `dom.d` | an xml/html DOM based on what Javascript provides in browsers |
-| `web.d` | a fancier way to write web apps. Uses reflection to make functions accessible via url with minimal boilerplate in your code |
 | `email.d` | gives read and write support for emails, sending via SMTP and reading mbox files |
-| `web.d.php` | a PHP library meant to ease integration of php components with `web.d` apps. Gives (read) access to the session, and full access to your D ApiProviders. |
-| `html.d` | functions to manipulate HTML documents, and now css and javascript with DOM functions, nested css statements, and macros for css and js. |
+| `html.d` | functions to manipulate HTML documents, and now css and javascript with DOM functions, nested css statements, and macros for css and js. Usually NOT needed as the bulk of the functionality is in dom.d! |
 | `oauth.d` | Oauth 1.0 implementation with some helper functions for facebook, twitter, etc. |
 | `htmltotext.d` | converts html into plain text |
-| `rtud.d` | a real time update helper for HTML5 EventSource. Kinda buggy. |
+| `web.d.php` | a PHP library meant to ease integration of php components with `web.d` apps. Gives (read) access to the session, and full access to your D ApiProviders. |
+| `rtud.d` | OLD: a real time update helper for HTML5 EventSource. Kinda buggy. |
+| `web.d` | OLD: a fancier way to write web apps. Uses reflection to make functions accessible via url with minimal boilerplate in your code |
 
 
 # Database related
@@ -67,6 +43,7 @@ Currently included are:
 | `sqlite.d` | a sqlite engine for database.d |
 | `mssql.d` | a (super crappy) mssql engine for `database.d` (uses ODBC) |
 | `querygenerator.d` | a user submission for generating sql queries |
+| `database_generation.d` | experimental module for generating database code from D code (similar to ActiveRecord) |
 
 
 # Desktop app stuff
@@ -76,18 +53,21 @@ Currently included are:
 | `simpledisplay.d` | gives quick and easy access to a window for drawing and input. Also has some OpenGL capabilities. |
 | `minigui.d` | a small widgetset built on top of `simpledisplay.d` offering buttons, checkboxes, etc. Almost done! |
 | `terminal.d` | quick and easy access to a text mode console/terminal |
-| `htmlwidget.d` | a very small html widget, built on simpledisplay.d |
+| `htmlwidget.d` | OLD: a very small, 100% custom (and super incomplete) html widget, built on simpledisplay.d |
 
 
 # Game stuff
 
-`engine.d`, `screen.d`, `audio.d` - a quick wrapper to SDL and OpenGL I used
+`engine.d`, `screen.d`, `audio.d` - OLD a quick wrapper to SDL and OpenGL I used
 in the pre D1 days, now updated so it compiles as both D1 and
 D2 (use the -d switch to dmd)
 
 Requires some SDL bindings.
 
 Eventually I'll redo it.
+
+The newer files `simpleaudio.d`, `joystick.d`, and `gamehelpers.d` are the new version but
+I'm still changing it.
 
 
 # Reading Common Files
@@ -96,8 +76,9 @@ Eventually I'll redo it.
 | --- | --- |
 | `bmp.d` | basic .bmp file read/write support |
 | `png.d` | provides some png read/write support |
-| `jpg.d` | just reading jpg header right now |
+| `jpeg.d` | jpeg file reading |
 | `csv.d` | gives read support to csv files |
+| `jpg.d` | OLD just reading jpg header right now |
 
 
 # Cool stuff
@@ -112,13 +93,13 @@ Eventually I'll redo it.
 
 | Module | Description |
 | --- | --- |
-| `stb_truetype.d` | a port of the nice little C library `stb_truetype.h` to D for drawing text without external dependencies |
-| `eventloop.d` | first draft of a generic event loop that can be reused by several libraries try it with `terminal.d` or `simpledisplay.d` with -version=with_eventloop. Only works on Linux right now. |
-| `sha.d` | implementations of the SHA1 and SHA256 algorithms |
-| `curl.d` | a small wrapper around the curl library |
-| `http.d` | a lighterweight alternative to curl.d |
+| `http2.d` | a lighterweight alternative to curl.d |
 | `color.d` | a basic color struct and some HSL functions. Also includes really basic image classes on which `png.d`, `bmp.d`, and others depend, and now some quantization and dithering algorithms. |
 | `characterencodings.d` | conversion to UTF8 of various encodings |
+| `ttf.d` | a port of the nice little C library `stb_truetype.h` to D for drawing text without external dependencies |
+| `eventloop.d` | OLD first draft of a generic event loop that can be reused by several libraries try it with `terminal.d` or `simpledisplay.d` with -version=with_eventloop. Only works on Linux right now. |
+| `sha.d` | OLD implementations of the SHA1 and SHA256 algorithms |
+| `curl.d` | a small wrapper around the curl library |
 
 
 # Obsolete
@@ -146,7 +127,7 @@ Things I'll add when I get the time:
 
 ### Authors:
 
-Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, and maartenvd for input and patches.
+Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, ketmar, and maartenvd for input and patches.
 
 
 # Newer writeup:
@@ -203,4 +184,4 @@ There's a few other hidden gems in the files themselves, and so much more on my 
 
 # Special Conventions
 
-idl Starting in 2019, I will be adding version info to individual modules.
+idl Starting in 2020, I will be adding version info to individual modules.

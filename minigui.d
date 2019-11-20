@@ -1,5 +1,11 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// would be cool for a scroll bar to have marking capabilities
+// kinda like vim's marks just on clicks etc and visual representation
+// generically. may be cool to add an up arrow to the bottom too
+//
+// leave a shadow of where you last were for going back easily
+
 // So a window needs to have a selection, and that can be represented by a type. This is manipulated by various
 // functions like cut, copy, paste. Widgets can have a selection and that would assert teh selection ownership for
 // the window.

@@ -3,6 +3,8 @@
 
 // FIXME: cgi per-request arena allocator
 
+// i need to add a bunch of type templates for validations... mayne @NotNull or NotNull!
+
 // FIXME: I might make a cgi proxy class which can change things; the underlying one is still immutable
 // but the later one can edit and simplify the api. You'd have to use the subclass tho!
 
@@ -3670,7 +3672,13 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 	// waiting for colon for header length
 	auto idx = indexOf(cast(string) chunk, ':');
 	if(idx == -1) {
-		range.popFront();
+		try {
+			range.popFront();
+		} catch(Exception e) {
+			// it is just closed, no big deal
+			connection.close();
+			return;
+		}
 		goto more_data;
 	}
 

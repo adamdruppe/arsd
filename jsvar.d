@@ -342,18 +342,18 @@ var varObject(T...)(T t) {
 }
 
 
-private real stringToNumber(string s) {
-	real r;
+private double stringToNumber(string s) {
+	double r;
 	try {
-		r = to!real(s);
+		r = to!double(s);
 	} catch (Exception e) {
-		r = real.nan;
+		r = double.nan;
 	}
 
 	return r;
 }
 
-private bool realIsInteger(real r) {
+private bool doubleIsInteger(double r) {
 	return (r == cast(long) r);
 }
 
@@ -424,7 +424,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 					_this._payload._integral = f;
 				} else {
 					this2._type = var.Type.Floating;
-					real f = l;
+					double f = l;
 					mixin("f "~op~"= t;");
 					_this._type = var.Type.Floating;
 					_this._payload._floating = f;
@@ -432,7 +432,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 				return _this;
 			} else static if(isSomeString!T) {
 				auto rhs = stringToNumber(t);
-				if(realIsInteger(rhs)) {
+				if(doubleIsInteger(rhs)) {
 					mixin("l "~op~"= cast(long) rhs;");
 					_this._type = var.Type.Integral;
 					_this._payload._integral = l;
@@ -443,7 +443,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 						_this._type = var.Type.Integral;
 						_this._payload._integral = f;
 					} else {
-						real f = l;
+						double f = l;
 						mixin("f "~op~"= rhs;");
 						_this._type = var.Type.Floating;
 						_this._payload._floating = f;
@@ -487,8 +487,8 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 				long r = cast(long) stringToNumber(this2._payload._string);
 				long rhs;
 			} else {
-				real r = stringToNumber(this2._payload._string);
-				real rhs;
+				double r = stringToNumber(this2._payload._string);
+				double rhs;
 			}
 
 			static if(isSomeString!T) {
@@ -499,7 +499,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 
 			mixin("r " ~ op ~ "= rhs;");
 
-			static if(is(typeof(r) == real)) {
+			static if(is(typeof(r) == double)) {
 				_this._type = var.Type.Floating;
 				_this._payload._floating = r;
 			} else static if(is(typeof(r) == long)) {
@@ -957,9 +957,9 @@ struct var {
 					return T.init;
 				// is it sane to translate anything else?
 			case Type.Function:
-				static if(isSomeString!T)
+				static if(isSomeString!T) {
 					return "<function>";
-				else static if(isDelegate!T) {
+				} else static if(isDelegate!T) {
 					// making a local copy because otherwise the delegate might refer to a struct on the stack and get corrupted later or something
 					auto func = this._payload._function;
 
@@ -993,9 +993,9 @@ struct var {
 	}
 
 	public int opCmp(T)(T t) {
-		auto f = this.get!real;
+		auto f = this.get!double;
 		static if(is(T == var))
-			auto r = t.get!real;
+			auto r = t.get!double;
 		else
 			auto r = t;
 		return cast(int)(f - r);
@@ -1042,11 +1042,13 @@ struct var {
 		PrototypeObject _object;
 		var[] _array;
 		long _integral;
-		real _floating;
+		double _floating;
 		string _string;
 		bool _boolean;
 		var delegate(var _this, var[] args) _function;
 	}
+
+	package VarMetadata _metadata;
 
 	public void _function(var delegate(var, var[]) f) {
 		this._payload._function = f;
@@ -1715,6 +1717,8 @@ template makeAscii() {
 
 	enum makeAscii = helper();
 }
+
+package interface VarMetadata { }
 
 // just a base class we can reference when looking for native objects
 class WrappedNativeObject : PrototypeObject {
