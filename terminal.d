@@ -288,7 +288,7 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:cl=\E[H\E[J:\
@@ -824,11 +824,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
 		defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
 
+		// this is unnecessary since I use the W versions of other functions
+		// and can cause weird font bugs, so I'm commenting unless some other
+		// need comes up.
+		/*
 		oldCp = GetConsoleOutputCP();
 		SetConsoleOutputCP(65001); // UTF-8
 
 		oldCpIn = GetConsoleCP();
 		SetConsoleCP(65001); // UTF-8
+		*/
 	}
 
 	version(Windows) {
