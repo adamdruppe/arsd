@@ -590,6 +590,10 @@ struct BasicAuth {
 
 */
 class HttpRequest {
+
+	/// Automatically follow a redirection?
+	bool followLocation = false;
+
 	private static {
 		// we manage the actual connections. When a request is made on a particular
 		// host, we try to reuse connections. We may open more than one connection per
@@ -627,7 +631,7 @@ class HttpRequest {
 					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
 
 				socket.connect(new InternetAddress(host, port));
-				debug(arsd_http2) writeln("opening to ", host, ":", port);
+				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket);
 				assert(socket.handle() !is socket_t.init);
 				return socket;
 			}
@@ -774,10 +778,12 @@ class HttpRequest {
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else {
 							// data available
-							request.handleIncomingData(buffer[0 .. got]);
+							auto stillAlive = request.handleIncomingData(buffer[0 .. got]);
 
-							if(request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
+							if(!stillAlive || request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
+								//import std.stdio; writeln(cast(void*) sock, " ", stillAlive, " ", request.state);
 								inactive[inactiveCount++] = sock;
+								continue;
 							// reuse the socket for another pending request, if we can
 							}
 						}
@@ -799,16 +805,18 @@ class HttpRequest {
 					if(writeSet.isSet(sock)) {
 						assert(request.sendBuffer.length);
 						auto sent = sock.send(request.sendBuffer);
-						debug(arsd_http2_verbose) writeln(cast(string) request.sendBuffer);
+						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
 						if(sent <= 0)
 							throw new Exception("send error " ~ lastSocketError);
 						request.sendBuffer = request.sendBuffer[sent .. $];
-						request.state = State.waitingForResponse;
+						if(request.sendBuffer.length == 0) {
+							request.state = State.waitingForResponse;
+						}
 					}
 				}
 
 				foreach(s; inactive[0 .. inactiveCount]) {
-					debug(arsd_http2) writeln("removing socket from active list");
+					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
 					activeRequestOnSocket.remove(s);
 				}
 			}
@@ -853,8 +861,9 @@ class HttpRequest {
 
 	const(ubyte)[] leftoverDataFromLastTime;
 
-	void handleIncomingData(scope const ubyte[] dataIn) {
-	debug(arsd_http2) writeln("handleIncomingData, state: ", state);
+	bool handleIncomingData(scope const ubyte[] dataIn) {
+		bool stillAlive = true;
+		debug(arsd_http2) writeln("handleIncomingData, state: ", state);
 		if(state == State.waitingForResponse) {
 			state = State.readingHeaders;
 			headerReadingState = HeaderReadingState.init;
@@ -1119,11 +1128,25 @@ class HttpRequest {
 						responseData.content = cast(ubyte[]) n;
 						//responseData.content ~= cast(ubyte[]) uncompress.flush();
 					}
-					state = State.complete;
-					responseData.contentText = cast(string) responseData.content;
-					// FIXME
-					//if(closeSocketWhenComplete)
-						//socket.close();
+					if(followLocation && responseData.location.length) {
+						static bool first = true;
+						if(!first) asm { int 3; }
+						populateFromInfo(Uri(responseData.location), HttpVerb.GET);
+						import std.stdio; writeln("redirected to ", responseData.location);
+						first = false;
+						responseData = HttpResponse.init;
+						headerReadingState = HeaderReadingState.init;
+						bodyReadingState = BodyReadingState.init;
+						state = State.unsent;
+						stillAlive = false;
+						sendPrivate(false);
+					} else {
+						state = State.complete;
+						responseData.contentText = cast(string) responseData.content;
+						// FIXME
+						//if(closeSocketWhenComplete)
+							//socket.close();
+					}
 				}
 			}
 		}
@@ -1132,6 +1155,8 @@ class HttpRequest {
 			leftoverDataFromLastTime = data.dup;
 		else
 			leftoverDataFromLastTime = null;
+
+		return stillAlive;
 	}
 
 	this() {
@@ -1139,7 +1164,15 @@ class HttpRequest {
 
 	///
 	this(Uri where, HttpVerb method) {
+		populateFromInfo(where, method);
+	}
+
+	/// Final url after any redirections
+	string finalUrl;
+
+	void populateFromInfo(Uri where, HttpVerb method) {
 		auto parts = where;
+		finalUrl = where.toString();
 		requestParameters.method = method;
 		requestParameters.host = parts.host;
 		requestParameters.port = cast(ushort) parts.port;
@@ -1211,6 +1244,10 @@ class HttpRequest {
 
 	/// Sends the request asynchronously.
 	void send() {
+		sendPrivate(true);
+	}
+
+	private void sendPrivate(bool advance) {
 		if(state != State.unsent && state != State.aborted)
 			return; // already sent
 		string headers;
@@ -1239,15 +1276,26 @@ class HttpRequest {
 
 		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
 
+		// import std.stdio; writeln("******* ", sendBuffer);
+
 		responseData = HttpResponse.init;
 		responseData.requestParameters = requestParameters;
 		bodyBytesSent = 0;
 		bodyBytesReceived = 0;
 		state = State.pendingAvailableConnection;
 
-		pending ~= this;
+		bool alreadyPending = false;
+		foreach(req; pending)
+			if(req is this) {
+				alreadyPending = true;
+				break;
+			}
+		if(!alreadyPending) {
+			pending ~= this;
+		}
 
-		HttpRequest.advanceConnections();
+		if(advance)
+			HttpRequest.advanceConnections();
 	}
 
 
@@ -1345,9 +1393,6 @@ class HttpClient {
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
 
-	/// Automatically follow a redirection?
-	bool followLocation = false; /// NOT IMPLEMENTED
-
 	///
 	@property Uri location() {
 		return currentUrl;
@@ -1361,6 +1406,8 @@ class HttpClient {
 		currentUrl = where.basedOn(currentUrl);
 		currentDomain = where.host;
 		auto request = new HttpRequest(currentUrl, method);
+
+		request.followLocation = true;
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
