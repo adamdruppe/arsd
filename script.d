@@ -2724,6 +2724,10 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 				case "try":
 				case "throw":
 
+				// evals
+				case "eval":
+				case "mixin":
+
 				// flow
 				case "continue":
 				case "break":
