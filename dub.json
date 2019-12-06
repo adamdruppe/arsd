@@ -134,6 +134,15 @@
 			"sourceFiles": ["dom.d"]
 		},
 		{
+			"name": "rss",
+			"description": "RSS/Atom parsing",
+			"targetType": "library",
+			"dependencies": {"arsd-official:dom":"*"},
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.rss=rss.d"],
+			"sourceFiles": ["rss.d"]
+		},
+		{
 			"name": "characterencodings",
 			"description": "Character encodings to UTF-8",
 			"targetType": "library",
