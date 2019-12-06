@@ -5193,8 +5193,7 @@ class Checkbox : MouseActivatedWidget {
 		event.dispatch();
 
 		redraw();
-	};
-
+	}
 }
 
 /// Adds empty space to a layout.
@@ -6900,7 +6899,7 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 		foreach(k, v; updateMemberDelegates)
 			v();
 	}
-};
+}
 
 /++
 	Creates a dialog based on a data structure.

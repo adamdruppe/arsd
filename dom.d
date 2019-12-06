@@ -1,4 +1,5 @@
 // FIXME: add classList
+// FIXME: xml namespace support???
 // FIXME: add matchesSelector - standard name is `matches`. also `closest` walks up to find the parent that matches
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
@@ -3544,7 +3545,7 @@ struct ElementCollection {
 		return text;
 	}
 
-	/// Forward method calls to each individual element of the collection
+	/// Forward method calls to each individual [Element|element] of the collection
 	/// returns this so it can be chained.
 	ElementCollection opDispatch(string name, T...)(T t) {
 		foreach(e; elements) {
