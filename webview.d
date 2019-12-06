@@ -52,7 +52,7 @@ void main() {
 	auto wv = new WebView(true, null);
 	wv.navigate("http://dpldocs.info/");
 	wv.setTitle("omg a D webview");
-	wv.set_size(500, 500, true);
+	wv.setSize(500, 500, true);
 	wv.eval("console.log('just testing');");
 	wv.run();
 }
@@ -99,7 +99,7 @@ class WebView : browser_engine {
 	/// Returns a native window handle pointer. When using GTK backend the pointer
 	/// is GtkWindow pointer, when using Cocoa backend the pointer is NSWindow
 	/// pointer, when using Win32 backend the pointer is HWND pointer.
-	void *get_window() { return m_window; }
+	void* getWindow() { return m_window; }
 
 	/// Updates the title of the native window. Must be called from the UI thread.
 	override void setTitle(const char *title) { super.setTitle(title); }
@@ -249,109 +249,97 @@ version(WEBVIEW_GTK) {
 		void gtk_widget_set_size_request(GtkWidget*, int, int);
 	}
 
-//
-// ====================================================================
-//
-// This implementation uses webkit2gtk backend. It requires gtk+3.0 and
-// webkit2gtk-4.0 libraries. Proper compiler flags can be retrieved via:
-//
-//   pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0
-//
-// ====================================================================
-//
-private class browser_engine {
+	private class browser_engine {
 
-
-	static extern(C)
-	void ondestroy (GtkWidget *w, void* arg) {
-		(cast(browser_engine) arg).terminate();
-	}
-
-	static extern(C)
-	void smr(WebKitUserContentManager* m, WebKitJavascriptResult* r, void* arg) {
-		auto w = cast(browser_engine) arg;
-		JSCValue *value = webkit_javascript_result_get_js_value(r);
-		auto s = jsc_value_to_string(value);
-		w.m_cb(s);
-		g_free(s);
-	}
-
-	this(msg_cb_t cb, bool dbg, void* window) {
-		m_cb = cb;
-
-		gtk_init_check(null, null);
-		m_window = cast(GtkWidget*) window;
-		if (m_window == null)
-			m_window = gtk_window_new(GtkWindowType.GTK_WINDOW_TOPLEVEL);
-
-		g_signal_connect_data(m_window, "destroy", &ondestroy, cast(void*) this, null, 0);
-
-		m_webview = webkit_web_view_new();
-		WebKitUserContentManager* manager = webkit_web_view_get_user_content_manager(m_webview);
-
-		g_signal_connect_data(manager, "script-message-received::external", &smr, cast(void*) this, null, 0);
-		webkit_user_content_manager_register_script_message_handler(manager, "external");
-		init("window.external={invoke:function(s){window.webkit.messageHandlers.external.postMessage(s);}}");
-
-		gtk_container_add(m_window, m_webview);
-		gtk_widget_grab_focus(m_webview);
-
-		if (dbg) {
-			WebKitSettings *settings = webkit_web_view_get_settings(m_webview);
-			webkit_settings_set_enable_write_console_messages_to_stdout(settings, true);
-			webkit_settings_set_enable_developer_extras(settings, true);
+		static extern(C)
+		void ondestroy (GtkWidget *w, void* arg) {
+			(cast(browser_engine) arg).terminate();
 		}
 
-		gtk_widget_show_all(m_window);
-	}
-	void run() { gtk_main(); }
-	void terminate() { gtk_main_quit(); }
-
-	void navigate(const char *url) {
-		webkit_web_view_load_uri(m_webview, url);
-	}
-
-	void setTitle(const char* title) {
-		gtk_window_set_title(m_window, title);
-	}
-
-
-	/+
-		void dispatch(std::function<void()> f) {
-			g_idle_add_full(G_PRIORITY_HIGH_IDLE, (GSourceFunc)([](void *f) -> int {
-						(*static_cast<dispatch_fn_t *>(f))();
-						return G_SOURCE_REMOVE;
-						}),
-					new std::function<void()>(f),
-					[](void *f) { delete static_cast<dispatch_fn_t *>(f); });
-		}
-	+/
-
-	void set_size(int width, int height, bool resizable) {
-		gtk_window_set_resizable(m_window, resizable);
-		if (resizable) {
-			gtk_window_set_default_size(m_window, width, height);
-		}
-		gtk_widget_set_size_request(m_window, width, height);
-	}
-
-	void init(const char *js) {
-		WebKitUserContentManager *manager = webkit_web_view_get_user_content_manager(m_webview);
-		webkit_user_content_manager_add_script(
-			manager, webkit_user_script_new(
-				js, WebKitUserContentInjectedFrames.WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
-				WebKitUserScriptInjectionTime.WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, null, null));
+		static extern(C)
+		void smr(WebKitUserContentManager* m, WebKitJavascriptResult* r, void* arg) {
+			auto w = cast(browser_engine) arg;
+			JSCValue *value = webkit_javascript_result_get_js_value(r);
+			auto s = jsc_value_to_string(value);
+			w.m_cb(s);
+			g_free(s);
 		}
 
-	void eval(const char *js) {
-		webkit_web_view_run_javascript(m_webview, js, null, null, null);
-	}
+		this(msg_cb_t cb, bool dbg, void* window) {
+			m_cb = cb;
 
-	protected:
-	GtkWidget* m_window;
-	GtkWidget* m_webview;
-	msg_cb_t m_cb;
-}
+			gtk_init_check(null, null);
+			m_window = cast(GtkWidget*) window;
+			if (m_window == null)
+				m_window = gtk_window_new(GtkWindowType.GTK_WINDOW_TOPLEVEL);
+
+			g_signal_connect_data(m_window, "destroy", &ondestroy, cast(void*) this, null, 0);
+
+			m_webview = webkit_web_view_new();
+			WebKitUserContentManager* manager = webkit_web_view_get_user_content_manager(m_webview);
+
+			g_signal_connect_data(manager, "script-message-received::external", &smr, cast(void*) this, null, 0);
+			webkit_user_content_manager_register_script_message_handler(manager, "external");
+			init("window.external={invoke:function(s){window.webkit.messageHandlers.external.postMessage(s);}}");
+
+			gtk_container_add(m_window, m_webview);
+			gtk_widget_grab_focus(m_webview);
+
+			if (dbg) {
+				WebKitSettings *settings = webkit_web_view_get_settings(m_webview);
+				webkit_settings_set_enable_write_console_messages_to_stdout(settings, true);
+				webkit_settings_set_enable_developer_extras(settings, true);
+			}
+
+			gtk_widget_show_all(m_window);
+		}
+		void run() { gtk_main(); }
+		void terminate() { gtk_main_quit(); }
+
+		void navigate(const char *url) {
+			webkit_web_view_load_uri(m_webview, url);
+		}
+
+		void setTitle(const char* title) {
+			gtk_window_set_title(m_window, title);
+		}
+
+		/+
+			void dispatch(std::function<void()> f) {
+				g_idle_add_full(G_PRIORITY_HIGH_IDLE, (GSourceFunc)([](void *f) -> int {
+							(*static_cast<dispatch_fn_t *>(f))();
+							return G_SOURCE_REMOVE;
+							}),
+						new std::function<void()>(f),
+						[](void *f) { delete static_cast<dispatch_fn_t *>(f); });
+			}
+		+/
+
+		void setSize(int width, int height, bool resizable) {
+			gtk_window_set_resizable(m_window, resizable);
+			if (resizable) {
+				gtk_window_set_default_size(m_window, width, height);
+			}
+			gtk_widget_set_size_request(m_window, width, height);
+		}
+
+		void init(const char *js) {
+			WebKitUserContentManager *manager = webkit_web_view_get_user_content_manager(m_webview);
+			webkit_user_content_manager_add_script(
+				manager, webkit_user_script_new(
+					js, WebKitUserContentInjectedFrames.WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+					WebKitUserScriptInjectionTime.WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, null, null));
+			}
+
+		void eval(const char *js) {
+			webkit_web_view_run_javascript(m_webview, js, null, null, null);
+		}
+
+		protected:
+		GtkWidget* m_window;
+		GtkWidget* m_webview;
+		msg_cb_t m_cb;
+	}
 } else version(WEBVIEW_COCOA) {
 /+
 
@@ -427,7 +415,7 @@ public:
       m_window = objc_msgSend(
           m_window, "initWithContentRect:styleMask:backing:defer:"_sel,
           CGRectMake(0, 0, 0, 0), 0, NSBackingStoreBuffered, 0);
-      set_size(480, 320, true);
+      setSize(480, 320, true);
     } else {
       m_window = (id)window;
     }
@@ -474,7 +462,7 @@ public:
         m_window, "setTitle:"_sel,
         objc_msgSend("NSString"_cls, "stringWithUTF8String:"_sel, title));
   }
-  void set_size(int width, int height, bool resizable) {
+  void setSize(int width, int height, bool resizable) {
     auto style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                  NSWindowStyleMaskMiniaturizable;
     if (resizable) {
@@ -601,7 +589,7 @@ protected:
 
 	  void setTitle(const char *title) { SetWindowText(m_window, title); }
 
-	  void set_size(int width, int height, bool resizable) {
+	  void setSize(int width, int height, bool resizable) {
 	    RECT r;
 	    r.left = 50;
 	    r.top = 50;
