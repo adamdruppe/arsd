@@ -72,34 +72,77 @@ void main() {
 	mixin GenericMain!hello;
 	---
 
+	Test on console (works in any interface mode):
+	$(CONSOLE
+		$ ./cgi_hello GET / name=whatever
+	)
+
+	If using http version (default on `dub` builds, or on custom builds when passing `-version=embedded_httpd` to dmd):
+	$(CONSOLE
+		$ ./cgi_hello --port 8080
+		# now you can go to http://localhost:8080/?name=whatever
+	)
+
 
 	Compile_versions:
 
-		-version=plain_cgi
-			The default - a traditional, plain CGI executable will be generated.
-		-version=fastcgi
-			A FastCGI executable will be generated.
-		-version=scgi
-			A SCGI (SimpleCGI) executable will be generated.
-		-version=embedded_httpd
-			A HTTP server will be embedded in the generated executable.
-		-version=embedded_httpd_threads
-			The embedded HTTP server will use a single process with a thread pool.
-		-version=embedded_httpd_processes
-			The embedded HTTP server will use a prefork style process pool.
+	If you are using `dub`, use:
 
-		-version=cgi_with_websocket
-			The CGI class has websocket server support.
+	```sdlang
+	subConfiguration "arsd-official:cgi" "VALUE_HERE"
+	```
 
-		-version=with_openssl # not currently used
+	or to dub.json:
 
-		-version=embedded_httpd_processes_accept_after_fork
-			It will call accept() in each child process, after forking. This is currently the only option, though I am experimenting with other ideas.
+	```json
+        	"subConfigurations": {"arsd-official:cgi": "VALUE_HERE"}
+	```
 
-		-version=cgi_embedded_sessions
-			The session server will be embedded in the cgi.d server process
-		-version=cgi_session_server_process
-			The session will be provided in a separate process, provided by cgi.d.
+	to change versions. The possible options for `VALUE_HERE` are:
+
+	$(LIST
+		* `embedded_httpd` for the embedded httpd version (built-in web server). This is the default.
+		* `cgi` for traditional cgi binaries.
+		* `fastcgi` for FastCGI builds.
+		* `scgi` for SCGI builds.
+	)
+
+	With dmd, use:
+
+	$(TABLE_ROWS
+
+		* + Interfaces
+		  + (mutually exclusive)
+
+		* - `-version=plain_cgi`
+			- The default building the module alone without dub - a traditional, plain CGI executable will be generated.
+		* - `-version=embedded_httpd`
+			- A HTTP server will be embedded in the generated executable. This is default when building with dub.
+		* - `-version=fastcgi`
+			- A FastCGI executable will be generated.
+		* - `-version=scgi`
+			- A SCGI (SimpleCGI) executable will be generated.
+
+		* - `-version=embedded_httpd_threads`
+			- The embedded HTTP server will use a single process with a thread pool. (use instead of plain `embedded_httpd` if you want this specific implementation)
+		* - `-version=embedded_httpd_processes`
+			- The embedded HTTP server will use a prefork style process pool. (use instead of plain `embedded_httpd` if you want this specific implementation)
+		* - `-version=embedded_httpd_processes_accept_after_fork`
+			- It will call accept() in each child process, after forking. This is currently the only option, though I am experimenting with other ideas. You probably should NOT specify this right now.
+
+		* + Tweaks
+		  + (can be used together with others)
+
+		* - `-version=cgi_with_websocket`
+			- The CGI class has websocket server support.
+
+		* - `-version=with_openssl`
+			- not currently used
+		* - `-version=cgi_embedded_sessions`
+			- The session server will be embedded in the cgi.d server process
+		* - `-version=cgi_session_server_process`
+			- The session will be provided in a separate process, provided by cgi.d.
+	)
 
 	Compile_and_run:
 	
