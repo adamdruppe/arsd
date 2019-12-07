@@ -1,3 +1,4 @@
+/// Part of my old D1 game library along with [arsd.screen] and [arsd.engine]. Do not use in new projects.
 module arsd.audio;
 
 import sdl.SDL;
