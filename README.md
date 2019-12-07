@@ -8,7 +8,7 @@ See the full list of (at least slightly) documented module here: http://arsd-off
 
 ## Links
 
-I have [a patron](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly blog](http://dpldocs.info/this-week-in-d/) you can check out if you'd like to financially support this work or see the updates and tips I write about.
+I have [a patreon](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly blog](http://dpldocs.info/this-week-in-d/) you can check out if you'd like to financially support this work or see the updates and tips I write about.
 
 ## Credits
 
