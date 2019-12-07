@@ -1,4 +1,20 @@
-///
+/++
+	Generic interface for RDBMS access. Use with one of the implementations in [arsd.mysql], [arsd.sqlite], [arsd.postgres], or [arsd.mssql]. I'm sorry the docs are not good, but a little bit goes a long way:
+
+	---
+	auto db = new Sqlite("file.db"); // see the implementations for constructors
+	// then the interface, for any impl can be as simple as:
+
+	foreach(row; db.query("SELECT id, name FROM people")) {
+             string id = row[0];
+	     string name = row[1];
+	}
+
+	db.query("INSERT INTO people (id, name) VALUES (?, ?)", 5, "Adam");
+	---
+
+	To convert to other types, just use [std.conv.to] since everything comes out of this as simple strings.
++/
 module arsd.database;
 
 // I should do a prepared statement as a template string arg

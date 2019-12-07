@@ -1,4 +1,4 @@
-/// curl wrapper, it sux
+/// My old curl wrapper. Use [arsd.http2] instead on newer projects, or [std.net.curl] in Phobos if you don't trust my homemade implementations :)
 module arsd.curl;
 
 // see this for info on making a curl.lib on windows:
