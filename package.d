@@ -45,8 +45,8 @@
 
 		* [#web|Web]
 		* [#desktop|Desktop]
-		* [#terminal|Terminals]
-		* [#database|Databases]
+		* [#terminals|Terminals]
+		* [#databases|Databases]
 		* [#scripting|Scripting]
 		* [#email|Email]
 	)
