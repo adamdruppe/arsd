@@ -1,5 +1,5 @@
 ///
-module cidr;
+module arsd.cidr;
 
 ///
 uint addressToUint(string address) {

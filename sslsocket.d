@@ -1,4 +1,9 @@
-/**
+/* *
+
+	Don't use this file anymore. The maintained version is in http2.d, just use that.
+
+	Old docs below:
+
 	This is CLIENT only at this point. Don't try to
 	bind/accept with these.
 

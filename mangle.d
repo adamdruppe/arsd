@@ -1,5 +1,5 @@
-/// a D mangler
-module mangle;
+/// a D name mangler. You probably do not need this, use the language's built in `.mangleof` property instead. I don't even remember why I wrote it.
+module arsd.mangle;
 
 import std.conv;
 

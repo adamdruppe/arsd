@@ -4,6 +4,7 @@
 	"importPaths": ["."],
 	"sourceFiles": ["package.d"],
 	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more.",
+	"authors": ["Adam D. Ruppe"],
 	"license":"BSL-1.0",
 	"dependencies": {
 		":simpledisplay": "*",

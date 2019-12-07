@@ -1542,7 +1542,7 @@ void main() {
 }
 
 
-// From sslsocket.d
+// From sslsocket.d, but this is the maintained version!
 version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
 
