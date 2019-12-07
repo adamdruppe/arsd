@@ -6,7 +6,11 @@ I'm always adding to it, but my policy on dependencies means you can ignore what
 
 See the full list of (at least slightly) documented module here: http://arsd-official.dpldocs.info/arsd.html and refer to https://code.dlang.org/packages/arsd-official for the list of `dub`-enabled subpackages.
 
-## Credits:
+## Links
+
+I have a patron at https://www.patreon.com/adam_d_ruppe and my (almost) weekly blog at http://dpldocs.info/this-week-in-d/ where you can see what crazy stuff I'm up to, and give me your money if you would like to show your support financially.
+
+## Credits
 
 Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, ketmar, maartenvd, and many others over the years for input and patches.
 
