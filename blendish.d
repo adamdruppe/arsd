@@ -25,10 +25,6 @@ THE SOFTWARE.
 // Ketmar // Invisible Vector <ketmar@ketmar.no-ip.org>
 /**
 
-Revision 6 (2014-09-21)
-
-Summary
-
 Blendish is a small collection of drawing functions for NanoVega, designed to
 replicate the look of the Blender 2.5+ User Interface. You can use these
 functions to theme your UI library. Several metric constants for faithful
@@ -54,6 +50,9 @@ to the equivalent of 72 dpi in the Blender system settings.
 
 Support for label truncation is missing. Text rendering breaks when widgets are
 too short to contain their labels.
+
+Version:
+	Revision 6 (2014-09-21)
 */
 module arsd.blendish;
 private:

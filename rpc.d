@@ -1,3 +1,4 @@
+/// I never finished this. The idea is to use CT reflection to make calling another process feel as simple as calling in-process objects. Will come eventually but no promises.
 module arsd.rpc;
 
 /*

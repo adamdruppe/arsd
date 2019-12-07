@@ -1,7 +1,8 @@
-/// Small wrapper for libssh2
-/// just link with it on Linux
-/// it'll need a couple dlls and a lib on windows.
+/++
+	Minimal bindings for libssh2. (just what I needed for my terminal emulator, but I'd accept more, and even wrappers if you wanted to.)
 
+	Just link with it on Linux, but it'll need a couple dlls and a lib on windows.
++/
 module arsd.libssh2;
 
 version(libssh_example)

@@ -1,4 +1,4 @@
-///
+/// Reads a jpg header without reading the rest of the file. Use [arsd.jpeg] for an actual image loader if you need actual data, but this is kept around for times when you only care about basic info like image dimensions.
 module arsd.jpg;
 
 import std.typecons;

@@ -1,4 +1,7 @@
-/// bmp impl for MemoryImage
+/++
+	Basic .bmp file format implementation for [arsd.color.MemoryImage].
+	Compare with [arsd.png] basic functionality.
++/
 module arsd.bmp;
 
 import arsd.color;
@@ -6,6 +9,7 @@ import arsd.color;
 //version = arsd_debug_bitmap_loader;
 
 
+/// Reads a .bmp file from the given `filename`
 MemoryImage readBmp(string filename) {
 	import core.stdc.stdio;
 
@@ -22,6 +26,7 @@ MemoryImage readBmp(string filename) {
 	return readBmpIndirect(&specialFread);
 }
 
+/// Reads a bitmap out of an in-memory array of data. For example, that returned from [std.file.read].
 MemoryImage readBmp(in ubyte[] data) {
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
@@ -37,6 +42,7 @@ MemoryImage readBmp(in ubyte[] data) {
 	return readBmpIndirect(&specialFread);
 }
 
+/// Reads using a delegate to read instead of assuming a direct file
 MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
 	ushort read2(){ ushort what; fread(&what, 2); return what; }
@@ -358,6 +364,8 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread) {
 	assert(0);
 }
 
+/// Writes the `img` out to `filename`, in .bmp format. Writes [TrueColorImage] out
+/// as a 24 bmp and [IndexedImage] out as an 8 bit bmp. Drops transparency information.
 void writeBmp(MemoryImage img, string filename) {
 	import core.stdc.stdio;
 	FILE* fp = fopen((filename ~ "\0").ptr, "wb".ptr);

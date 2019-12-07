@@ -1,9 +1,9 @@
 /++
-	TrueType Font rendering.
+	TrueType Font rendering. Meant to be used with [arsd.simpledisplay], but it doesn't actually require that. Port of stb_truetype plus D wrappers for convenience.
 
 
-	Started as a copy of stb_truetype by Sean Barrett. It will be changing
-	more later.
+	Credits: Started as a copy of stb_truetype by Sean Barrett and ketmar helped
+	with expansions.
 +/
 module arsd.ttf;
 

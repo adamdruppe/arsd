@@ -1,5 +1,13 @@
-/**
+/++
 
+	Provides a polling-based API to use gamepads/joysticks on Linux and Windows.
+
+	Pass `-version=ps1_style` or `-version=xbox_style` to pick your API style - the constants will use the names of the buttons on those controllers and attempt to emulate the other. ps1_style is compatible with more hardware and thus the default. XBox controllers work with either, though.
+
+	The docs for this file are quite weak, I suggest you view source of [arsd.gamehelers] for an example of how it might be used.
++/
+
+/*
 	FIXME: a simple function to integrate with sdpy event loop. templated function
 
 	HIGH LEVEL NOTES

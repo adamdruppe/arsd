@@ -1,4 +1,4 @@
-/// minimal libpq wrapper
+/// Uses libpq implement the [arsd.database.Database] interface.
 module arsd.postgres;
 pragma(lib, "pq");
 

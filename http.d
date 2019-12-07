@@ -1,9 +1,9 @@
 /++
-	Old version of my http implementation.
+	OBSOLETE: Old version of my http implementation. Do not use this, instead use [arsd.http2].
 
 	I no longer work on this, use http2.d instead.
 +/
-deprecated module arsd.http;
+/*deprecated*/ module arsd.http; // adrdox apparently loses the comment above with deprecated, i need to fix that over there.
 
 import std.socket;
 

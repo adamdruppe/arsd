@@ -1,7 +1,7 @@
 // This code is D 1.0
 
-/***
-	The base class from which a game engine should inherit.
+/**
+	Part of my old D 1.0 game helper code that used SDL. I keep it compiling on new D compilers too, but it is not meant to be used in new projects.
 
 	Version: 1.0
 	License: GNU General Public License

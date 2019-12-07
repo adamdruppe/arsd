@@ -1,4 +1,6 @@
-/// magic web wrapper
+/++
+	Old magic web wrapper - one of my first applications of CT reflection. Given a class of fairly ordinary C code, it automatically creates HTML pages and forms, a Javascript file to access the functions from the client, and JSON based api responses. I do $(I not) recommend it for new projects though, as a replacement is now built into [arsd.cgi].
++/
 module arsd.web;
 
 

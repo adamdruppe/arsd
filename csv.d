@@ -1,10 +1,10 @@
-///
+/// My old csv code. Extremely basic functionality.
 module arsd.csv;
 
 import std.string;
 import std.array;
 
-///
+/// Returns the array of csv rows from the given in-memory data (the argument is NOT a filename).
 string[][] readCsv(string data) {
 	data = data.replace("\r\n", "\n");
 	data = data.replace("\r", "");
@@ -65,7 +65,7 @@ string[][] readCsv(string data) {
 	return records;
 }
 
-///
+/// Formats the given rows into csv format. Use like `std.file.write(toCsv(...));`
 string toCsv(string[][] rows) {
 	string data;
 

@@ -36,6 +36,7 @@
 // http://vision.ai.uiuc.edu/~dugad/research/dct/index.html
 /**
  * Loads a JPEG image from a memory buffer or a file.
+ *
  * req_comps can be 1 (grayscale), 3 (RGB), or 4 (RGBA).
  * On return, width/height will be set to the image's dimensions, and actual_comps will be set to the either 1 (grayscale) or 3 (RGB).
  * Requesting a 8 or 32bpp image is currently a little faster than 24bpp because the jpeg_decoder class itself currently always unpacks to either 8 or 32bpp.

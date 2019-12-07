@@ -1,4 +1,4 @@
-///
+/// Some helper functions for using CIDR format network ranges.
 module arsd.cidr;
 
 ///

@@ -1,8 +1,9 @@
-///
+/// Implementation of the HMAC algorithm. Do not use on new things because [std.digest.hmac] now exists in Phobos.
 module arsd.hmac;
 
 // FIXME: the blocksize is correct for MD5, SHA1, and SHA256 but not generally
 // it should really be gotten from the hash
+///
 auto hmac(alias hash, size_t blocksize = 64)(in void[] keyv, in void[] messagev) {
 
 	const(ubyte)[] key = cast(const(ubyte)[]) keyv;

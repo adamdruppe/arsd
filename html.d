@@ -1,5 +1,5 @@
 /**
-	This module includes functions to work with HTML and CSS.
+	This module includes functions to work with HTML and CSS in a more specialized manner than [arsd.dom]. Most of this is obsolete from my really old D web stuff, but there's still some useful stuff. View source before you decide to use it, as the implementations may suck more than you want to use.
 
 	It publically imports the DOM module to get started.
 	Then it adds a number of functions to enhance html
@@ -178,6 +178,7 @@ Element sanitizedHtml(/*in*/ Element userContent, string idPrefix = null, HtmlFe
 	return div;
 }
 
+///
 Element sanitizedHtml(in Html userContent, string idPrefix = null, HtmlFeatures allow = HtmlFeatures.links | HtmlFeatures.images | HtmlFeatures.css) {
 	auto div = Element.make("div");
 	div.innerHTML = userContent.source;
@@ -190,6 +191,7 @@ string sanitizeCss(string css) {
 	return css.replace("expression", "");
 }
 
+///
 string sanitizeUrl(string url) {
 	// FIXME: support other options; this is more restrictive than it has to be
 	if(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//"))
@@ -211,6 +213,9 @@ string recommendedBasicCssForUserContent = `
 	}
 `;
 
+/++
+	Given arbitrary user input, find links and add `<a href>` wrappers, otherwise just escaping the rest of it for HTML display.
++/
 Html linkify(string text) {
 	auto div = Element.make("div");
 
@@ -243,7 +248,7 @@ Html linkify(string text) {
 	return Html(div.innerHTML);
 }
 
-// your things should already be encoded
+/// Given existing encoded HTML, turns \n\n into `<p>`.
 Html paragraphsToP(Html html) {
 	auto text = html.source;
 	string total;
@@ -261,6 +266,7 @@ Html paragraphsToP(Html html) {
 	return Html(total);
 }
 
+/// Given user text, converts newlines to `<br>` and encodes the rest.
 Html nl2br(string text) {
 	auto div = Element.make("div");
 
@@ -283,6 +289,7 @@ bool appearsToBeHtml(string src) {
 	return cast(bool) match(src, `.*\<[A-Za-z]+>.*`);
 }
 
+/// Get the favicon out of a document, or return the default a browser would attempt if it isn't there.
 string favicon(Document document) {
 	auto item = document.querySelector("link[rel~=icon]");
 	if(item !is null)
@@ -290,6 +297,7 @@ string favicon(Document document) {
 	return "/favicon.ico"; // it pisses me off that the fucking browsers do this.... but they do, so I will too.
 }
 
+///
 Element checkbox(string name, string value, string label, bool checked = false) {
 	auto lbl = Element.make("label");
 	auto input = lbl.addChild("input");

@@ -1,4 +1,6 @@
-/// this file imports all available image decoders, and provides convenient functions to load image regardless of it's format.
+/++
+	This file imports all available image decoders in the arsd library, and provides convenient functions to load image regardless of it's format. Main functions: [loadImageFromFile] and [loadImageFromMemory].
++/
 module arsd.image;
 
 public import arsd.color;

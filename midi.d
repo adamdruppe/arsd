@@ -1,5 +1,5 @@
 /**
-	This file is a port of some old C code I had.
+	This file is a port of some old C code I had for reading and writing .mid files. Not much docs, but viewing the source may be helpful.
 
 	I'll eventually refactor it into something more D-like
 */

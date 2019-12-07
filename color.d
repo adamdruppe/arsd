@@ -1,4 +1,6 @@
-///
+/++
+	Base module for working with colors and in-memory image pixmaps.
++/
 module arsd.color;
 
 @safe:

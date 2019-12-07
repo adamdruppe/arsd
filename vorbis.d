@@ -54,6 +54,9 @@
 // See end of file for full version history.
 // D translation by Ketmar // Invisible Vector
 // stolen by adam and module renamed.
+/++
+	Port of stb_vorbis to D. Provides .ogg audio file reading capabilities. See [arsd.simpleaudio] for code that can use this to actually load and play the file.
++/
 module arsd.vorbis;
 
 import core.stdc.stdio : FILE;

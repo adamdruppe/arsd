@@ -1,4 +1,6 @@
-///
+/++
+	Create MIME emails with things like HTML, attachments, and send with convenience wrappers around std.net.curl's SMTP function, or read email from an mbox file.
++/
 module arsd.email;
 
 import std.net.curl;

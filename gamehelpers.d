@@ -4,7 +4,7 @@
 
 /++
 	An add-on for simpledisplay.d, joystick.d, and simpleaudio.d
-	that includes helper functions for writing games (and perhaps
+	that includes helper functions for writing simple games (and perhaps
 	other multimedia programs). Whereas simpledisplay works with
 	an event-driven framework, gamehelpers always uses a consistent
 	timer for updates.

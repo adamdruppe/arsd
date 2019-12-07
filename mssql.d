@@ -1,6 +1,9 @@
 // NOTE: I haven't even tried to use this for a test yet!
 // It's probably godawful, if it works at all.
-///
+/++
+	Implementation of [arsd.database.Database] interface for
+	Microsoft SQL Server, via ODBC.
++/
 module arsd.mssql;
 
 version(Windows):
@@ -15,8 +18,9 @@ import std.exception;
 import core.sys.windows.sql;
 import core.sys.windows.sqlext;
 
+///
 class MsSql : Database {
-	// dbname = name  is probably the most common connection string
+	/// auto db = new MsSql("Driver={SQL Server Native Client 10.0};Server=<host>[\\<optional-instance-name>];Database=dbtest;Trusted_Connection=Yes")
 	this(string connectionString) {
 		SQLAllocHandle(SQL_HANDLE_ENV, cast(void*)SQL_NULL_HANDLE, &env);
 		enforce(env !is null);

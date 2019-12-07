@@ -1,4 +1,4 @@
-/// PNG file handling for color.d's Image interfaces
+/// PNG file read and write. Leverages color.d's Image interfaces for interop.
 module arsd.png;
 
 import core.memory;

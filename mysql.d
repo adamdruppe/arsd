@@ -1,5 +1,5 @@
 /++
-	Implementation of the `arsd.database.Database|database` interface for
+	Implementation of the [arsd.database.Database] interface for
 	accessing MySQL (and MariaDB) databases. Uses the official MySQL client
 	library, and thus needs that installed to compile and run.
 

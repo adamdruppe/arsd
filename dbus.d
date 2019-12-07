@@ -1,5 +1,5 @@
 /++
-	A module mostly copied from https://github.com/trishume/ddbus
+	A module mostly copied from https://github.com/trishume/ddbus to help access the C dbus library on Linux.
 +/
 module arsd.dbus;
 

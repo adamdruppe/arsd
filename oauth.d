@@ -1,4 +1,4 @@
-///
+/// Implementations of OAuth 1.0 server and client. You probably don't need this anymore; I haven't used it for years.
 module arsd.oauth;
 
 import arsd.curl;

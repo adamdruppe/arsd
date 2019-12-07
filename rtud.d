@@ -1,6 +1,7 @@
 /**
-	This provides a kind of real time updates that can be consumed
-	by javascript (and probably other things eventually).
+	OBSOLETE: This provides a kind of real time updates that can be consumed
+	by javascript (and probably other things eventually). Superseded by
+	new functionality built into [arsd.cgi].
 
 	First, you compile the server app. dmd -version=standalone_rtud -version=rtud_daemon
 

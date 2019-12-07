@@ -1,6 +1,11 @@
-///
+/// A few helper functions for manipulating English words. Extremely basic.
 module arsd.english;
 
+/++
+	Given a non-one `count` argument, will attempt to return the plural version of `word`. Only handles basic cases. If count is one, simply returns the word.
+
+	I originally wrote this for cases like `You have {n} {messages|plural(n)}` in web templates.
++/
 string plural(int count, string word, string pluralWord = null) {
 	if(count == 1 || word.length == 0)
 		return word; // it isn't actually plural
@@ -21,6 +26,7 @@ string plural(int count, string word, string pluralWord = null) {
 	}
 }
 
+/// Given an integer, tries to write out the long form number. For example, -5 becomes "negative five".
 string numberToEnglish(long number) {
 	string word;
 	if(number == 0)

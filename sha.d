@@ -1,4 +1,4 @@
-/// homemade sha 1 and sha2 impls. beware of bugs.
+/// Homemade SHA 1 and SHA 2 implementations. Beware of bugs - you should probably use [std.net.digest] instead. Kept more for historical curiosity than anything else.
 module arsd.sha;
 
 /*

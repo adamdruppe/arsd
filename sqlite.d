@@ -1,4 +1,6 @@
 /**
+	SQLite implementation of the [arsd.database.Database] interface.
+
 	Compile with version=sqlite_extended_metadata_available
 	if your sqlite is compiled with the
 	 SQLITE_ENABLE_COLUMN_METADATA C-preprocessor symbol.
@@ -71,8 +73,10 @@ void main() {
 }
 */
 
+///
 class Sqlite : Database {
   public:
+	///
 	this(string filename, int flags = SQLITE_OPEN_READWRITE) {
 	/+
 		int error = sqlite3_open_v2(toStringz(filename), &db, flags, null);
@@ -112,6 +116,7 @@ class Sqlite : Database {
 		}
 	}
 
+	///
 	override void startTransaction() {
 		query("BEGIN TRANSACTION");
 	}
@@ -152,10 +157,12 @@ class Sqlite : Database {
 		return assumeUnique(m);
 	}
 
+	///
 	int affectedRows(){
 		return sqlite3_changes(db);
 	}
 
+	///
 	int lastInsertId(){
 		return cast(int) sqlite3_last_insert_rowid(db);
 	}

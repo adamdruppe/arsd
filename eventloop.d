@@ -1,4 +1,4 @@
-/// crappy event loop for linux
+/// My old event loop helper library for Linux. Not recommended for new projects.
 module arsd.eventloop;
 
 version(linux):
