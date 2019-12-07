@@ -82,7 +82,7 @@ bool isConvenientAttribute(string name) {
 class Document : FileResource {
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
 	/// included in the build as well as [arsd.characterencodings].
-	static Document fromUrl()(string url) {
+	static Document fromUrl()(string url, bool strictMode = false) {
 		import arsd.http2;
 		auto client = new HttpClient();
 
@@ -90,7 +90,11 @@ class Document : FileResource {
 		auto res = req.waitForCompletion();
 
 		auto document = new Document();
-		document.parseGarbage(cast(string) res.content);
+		if(strictMode) {
+			document.parse(cast(string) res.content, true, true, res.contentTypeCharset);
+		} else {
+			document.parseGarbage(cast(string) res.content);
+		}
 
 		return document;
 	}

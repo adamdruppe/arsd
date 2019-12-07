@@ -440,10 +440,15 @@ auto test1 = `<?xml version="1.0" encoding="ISO-8859-1"?>
 
 	{
 		auto e = parseRss(test1);
-		assert(e.items.length = 6);
+		assert(e.items.length == 6);
 		assert(e.items[$-1].title == "Yournamehere.com more important than anything", e.items[$-1].title);
 		assert(e.items[0].title == "Giving the world a pluggable Gnutella");
+		assert(e.items[0].link == "http://writetheweb.com/read.php?item=24");
 		assert(e.image.url == "http://writetheweb.com/images/mynetscape88.gif");
+
+		auto df = e.toGenericFeed();
+		assert(df.items.length == 6);
+		assert(df.items[0].link == "http://writetheweb.com/read.php?item=24");
 	}
 
 auto test2 = `<?xml version="1.0"?>
@@ -642,6 +647,61 @@ auto testAtom1 = `<?xml version="1.0" encoding="utf-8"?>
 		assert(e.entries[0].summary.html.length == 0);
 		assert(e.entries[0].content.text.length == 0);
 		assert(e.entries[0].content.html.length > 10);
+	}
+
+	{
+		auto xml = `<rss version="2.0">
+			<channel>
+			<title>NYT > World News</title>
+			<link>
+			https://www.nytimes.com/section/world?emc=rss&amp;partner=rss
+			</link>
+			<atom:link href="https://rss.nytimes.com/services/xml/rss/nyt/World.xml" rel="self" type="application/rss+xml"/>
+			<description/>
+			<language>en-us</language>
+			<copyright>Copyright 2019 The New York Times Company</copyright>
+			<lastBuildDate>Sat, 07 Dec 2019 00:15:41 +0000</lastBuildDate>
+			<image>
+			<title>NYT > World News</title>
+			<url>
+			https://static01.nyt.com/images/misc/NYT_logo_rss_250x40.png
+			</url>
+			<link>
+			https://www.nytimes.com/section/world?emc=rss&amp;partner=rss
+			</link>
+			</image>
+			<item>
+			<title>
+			France Is Hit by Second Day of Pension Strikes as Unions Dig In
+			</title>
+			<link>https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html?emc=rss&amp;partner=rss</link>
+			<guid isPermaLink="true">
+			https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html
+			</guid>
+			<atom:link href="https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html?emc=rss&amp;partner=rss" rel="standout"/>
+			<description>
+			Transportation was severely disrupted in Paris and other cities, a day after huge protests over government plans to overhaul pensions. Unions are planning more protests next week.
+			</description>
+			<dc:creator>Aurelien Breeden</dc:creator>
+			<pubDate>Fri, 06 Dec 2019 18:02:13 +0000</pubDate>
+			<category domain="http://www.nytimes.com/namespaces/keywords/nyt_geo">France</category>
+			<category domain="http://www.nytimes.com/namespaces/keywords/des">Demonstrations, Protests and Riots</category>
+			<category domain="http://www.nytimes.com/namespaces/keywords/des">Pensions and Retirement Plans</category>
+			<category domain="http://www.nytimes.com/namespaces/keywords/des">Politics and Government</category>
+			<category domain="http://www.nytimes.com/namespaces/keywords/des">Strikes</category>
+			<category domain="http://www.nytimes.com/namespaces/keywords/nyt_per">Macron, Emmanuel (1977- )</category>
+			<media:content height="151" medium="image" url="https://static01.nyt.com/images/2019/12/06/world/06france-strikes/merlin_165509820_476d5340-3717-4fbb-b187-097ae7718e48-moth.jpg" width="151"/>
+			<media:credit>Rafael Yaghobzadeh/Associated Press</media:credit>
+			<media:description>
+			A deserted Gare de Lyon train station in Paris on Friday. Unions are aiming for a protracted strike.
+			</media:description>
+			</item></channel></rss>`;
+
+			auto e = parseRss(xml);
+			assert(e.items[0].link == "https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html?emc=rss&partner=rss", e.items[0].link);
+
+			auto gf = e.toGenericFeed();
+			assert(gf.items[0].link == "https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html?emc=rss&partner=rss", e.items[0].link);
 	}
 
 }

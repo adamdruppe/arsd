@@ -160,6 +160,17 @@ struct HttpResponse {
 	string contentType; /// The content type header
 	string location; /// The location header
 
+	/// the charset out of content type, if present. `null` if not.
+	string contentTypeCharset() {
+		auto idx = contentType.indexOf("charset=");
+		if(idx == -1)
+			return null;
+		auto c = contentType[idx + "charset=".length .. $].strip;
+		if(c.length)
+			return c;
+		return null;
+	}
+
 	string[string] cookies; /// Names and values of cookies set in the response.
 
 	string[] headers; /// Array of all headers returned.
