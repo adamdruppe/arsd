@@ -231,16 +231,16 @@
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.http2=http2.d"],
 			"configurations": [
-			{
-				"name": "with_openssl",
-				"versions": ["with_openssl"],
-				"libs": ["crypto", "ssl"]
-			},
-			{
-				"name": "without_openssl",
-				"versions": ["without_openssl"]
-			}
-         ]
+				{
+					"name": "with_openssl",
+					"versions": ["with_openssl"],
+					"libs": ["crypto", "ssl"]
+				},
+				{
+					"name": "without_openssl",
+					"versions": ["without_openssl"]
+				}
+			]
 		},
 		{
 			"name": "jsvar",
@@ -249,6 +249,14 @@
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.jsvar=jsvar.d"],
 			"sourceFiles": ["jsvar.d"]
+		},
+		{
+			"name": "jni",
+			"description": "Provides easy interop with Java via JNI.",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.jni=jni.d"],
+			"sourceFiles": ["jni.d"]
 		},
 		{
 			"name": "script",
