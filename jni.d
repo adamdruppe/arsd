@@ -1,6 +1,7 @@
 /++
 	Provides easy interoperability with Java code through JNI.
 
+	Given this Java:
 	```java
 		class Hello {
 			public native void hi(String s);
@@ -23,6 +24,7 @@
 		}
 	```
 
+	And this D:
 	---
 		import arsd.jni;
 
@@ -49,6 +51,7 @@
 		}
 	---
 
+	We can:
 	$(CONSOLE
 		$ javac Hello.java
 		$ dmd -shared myjni.d jni.d # compile into a shared lib
@@ -77,6 +80,8 @@
 
 	Calling Java methods from D coming later.
 
+
+	While you can write pretty ordinary looking D code, there's some things to keep in mind for safety and efficiency.
 
 	$(WARNING
 		ALL references passed to you through Java, including
@@ -108,9 +113,14 @@
 
 	You may choose to only import JavaClass from here to minimize the 
 	namespace pollution.
+
+	Constructing Java objects works and it will pin it. Just remember
+	that `this` inside a method is still subject to escaping restrictions!
 	
 +/
 module arsd.jni;
+
+// FIXME: in general i didn't handle overloads at all
 
 // see: https://developer.android.com/training/articles/perf-jni.html
 
@@ -132,20 +142,261 @@ void uninitializeDRuntime() {
 	Runtime.terminate();
 }
 
-// FIXME make a start JVM function
+/+
+extern(C)
+jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+	// can also return JNI_ERR
+/+
 
-private mixin template JavaImportImpl(T, alias method) {
-	static assert(0, "@Import not yet implemented"); // FIXME
-	import std.traits;
-	pragma(mangle, method.mangleof)
-	private static ReturnType!method implementation(Parameters!method args, T this_) {
-	// FIXME. need to get the jni env to this somehow, remembering it gets invalidated easily
-		static if(is(typeof(return) == void))
-			{}
-		else
-			return typeof(return);
+    JNIEnv* env;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+
+    // Find your class. JNI_OnLoad is called from the correct class loader context for this to work.
+    jclass c = env->FindClass("com/example/app/package/MyClass");
+    if (c == nullptr) return JNI_ERR;
+
+    // Register your class' native methods.
+    static const JNINativeMethod methods[] = {
+        {"nativeFoo", "()V", reinterpret_cast(nativeFoo)},
+        {"nativeBar", "(Ljava/lang/String;I)Z", reinterpret_cast(nativeBar)},
+    };
+    int rc = env->RegisterNatives(c, methods, sizeof(methods)/sizeof(JNINativeMethod));
+    if (rc != JNI_OK) return rc;
+
++/
+
+	return JNI_VERSION_1_6;
+}
+extern(C)
+void JNI_OnUnload(JavaVM* vm, void* reserved) {
+	// FIXME: the cached _jmethodIDs need to all be cleared out too
+}
++/
+
+// need this for Import functions
+JNIEnv* activeEnv;
+struct ActivateJniEnv {
+	// this will put it on a call stack so it will be
+	// sane through re-entrant situations 
+	JNIEnv* old;
+	this(JNIEnv* e) {
+		old = activeEnv;
+		activeEnv = e;
+	}
+
+	~this() {
+		activeEnv = old;
 	}
 }
+
+// FIXME make a start JVM function and figure out threads...
+
+
+private void exceptionCheck(JNIEnv* env) {
+	if((*env).ExceptionCheck(env)) {
+		// ExceptionDescribe // prints it to stderr, not that interesting
+		jthrowable thrown = (*env).ExceptionOccurred(env);
+		// do I need to free thrown?
+		(*env).ExceptionClear(env);
+
+		throw new Exception("Java threw");
+	}
+}
+
+private enum ImportImplementationString = q{
+		static if(is(typeof(return) == void)) {
+			(*env).CallSTATICVoidMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+		} else static if(is(typeof(return) == int)) {
+			auto ret = (*env).CallSTATICIntMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == long)) {
+			auto ret = (*env).CallSTATICLongMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == float)) {
+			auto ret = (*env).CallSTATICFloatMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == double)) {
+			auto ret = (*env).CallSTATICDoubleMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == bool)) {
+			auto ret = (*env).CallSTATICBooleanMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == byte)) {
+			auto ret = (*env).CallSTATICByteMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else static if(is(typeof(return) == wchar)) {
+			auto ret = (*env).CallSTATICCharMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
+		} else {
+			static assert(0, "Unsupported return type for JNI " ~ typeof(return).stringof);
+				//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+		}
+};
+
+private mixin template JavaImportImpl(T, alias method) {
+	import std.traits;
+
+	private static jmethodID _jmethodID;
+
+	static if(__traits(identifier, method) == "__ctor")
+	pragma(mangle, method.mangleof)
+	private static T implementation(Parameters!method args, T this_) {
+		auto env = activeEnv;
+		if(env is null)
+			throw new Exception("JNI not active in this thread");
+
+		if(!_jmethodID) {
+			jclass jc;
+			if(!internalJavaClassHandle_) {
+				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
+				if(!jc)
+					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
+				internalJavaClassHandle_ = jc;
+			} else {
+				jc = internalJavaClassHandle_;
+			}
+			_jmethodID = (*env).GetMethodID(env, jc,
+				"<init>",
+				// java method string is (args)ret
+				("(" ~ DTypesToJniString!(typeof(args)) ~ ")V\0").ptr
+			);
+
+			if(!_jmethodID)
+				throw new Exception("Cannot find static Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
+		}
+
+		auto o = (*env).NewObject(env, internalJavaClassHandle_, _jmethodID, DDataToJni(env, args).args);
+		this_.internalJavaHandle_ = o;
+		return this_;
+	}
+	else static if(__traits(isStaticFunction, method))
+	pragma(mangle, method.mangleof)
+	private static ReturnType!method implementation(Parameters!method args) {
+		auto env = activeEnv;
+		if(env is null)
+			throw new Exception("JNI not active in this thread");
+
+		if(!_jmethodID) {
+			jclass jc;
+			if(!internalJavaClassHandle_) {
+				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
+				if(!jc)
+					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
+				internalJavaClassHandle_ = jc;
+			} else {
+				jc = internalJavaClassHandle_;
+			}
+			_jmethodID = (*env).GetStaticMethodID(env, jc,
+				__traits(identifier, method).ptr,
+				// java method string is (args)ret
+				("(" ~ DTypesToJniString!(typeof(args)) ~ ")" ~ DTypesToJniString!(typeof(return)) ~ "\0").ptr
+			);
+
+			if(!_jmethodID)
+				throw new Exception("Cannot find static Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
+		}
+
+		auto jobj = internalJavaClassHandle_;
+
+		import std.string;
+		mixin(ImportImplementationString.replace("STATIC", "Static"));
+	}
+	else
+	pragma(mangle, method.mangleof)
+	private static ReturnType!method implementation(Parameters!method args, T this_) {
+		auto env = activeEnv;
+		if(env is null)
+			throw new Exception("JNI not active in this thread");
+
+		auto jobj = this_.getJavaHandle();
+		if(!_jmethodID) {
+			auto jc = (*env).GetObjectClass(env, jobj);
+			_jmethodID = (*env).GetMethodID(env, jc,
+				__traits(identifier, method).ptr,
+				// java method string is (args)ret
+				("(" ~ DTypesToJniString!(typeof(args)) ~ ")" ~ DTypesToJniString!(typeof(return)) ~ "\0").ptr
+			);
+
+			if(!_jmethodID)
+				throw new Exception("Cannot find Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
+		}
+
+		import std.string;
+		mixin(ImportImplementationString.replace("STATIC", ""));
+	}
+}
+
+private template DTypesToJniString(Types...) {
+	static if(Types.length == 0)
+		string DTypesToJniString = "";
+	else static if(Types.length == 1) {
+		alias T = Types[0];
+
+		static if(is(T == void))
+			string DTypesToJniString = "V";
+		else static if(is(T == string))
+			string DTypesToJniString = "Ljava/lang/String;";
+		else static if(is(T == wstring))
+			string DTypesToJniString = "Ljava/lang/String;";
+		else static if(is(T == int))
+			string DTypesToJniString = "I";
+		else static if(is(T == bool))
+			string DTypesToJniString = "Z";
+		else static if(is(T == byte))
+			string DTypesToJniString = "B";
+		else static if(is(T == wchar))
+			string DTypesToJniString = "C";
+		else static if(is(T == short))
+			string DTypesToJniString = "S";
+		else static if(is(T == long))
+			string DTypesToJniString = "J";
+		else static if(is(T == float))
+			string DTypesToJniString = "F";
+		else static if(is(T == double))
+			string DTypesToJniString = "D";
+		else static if(is(T == size_t))
+			string DTypesToJniString = "I"; // possible FIXME...
+		else static if(is(T == IJavaObject))
+			string DTypesToJniString = "LObject;"; // FIXME?
+		else static if(is(T : IJavaObject)) // child of this but a concrete type
+			string DTypesToJniString = T._javaParameterString;
+		/+ // FIXME they are just "[" ~ element type string
+		else static if(is(T == IJavaObject[]))
+			string DTypesToJniString = jobjectArray;
+		else static if(is(T == bool[]))
+			string DTypesToJniString = jbooleanArray;
+		else static if(is(T == byte[]))
+			string DTypesToJniString = jbyteArray;
+		else static if(is(T == wchar[]))
+			string DTypesToJniString = jcharArray;
+		else static if(is(T == short[]))
+			string DTypesToJniString = jshortArray;
+		else static if(is(T == int[]))
+			string DTypesToJniString = jintArray;
+		else static if(is(T == long[]))
+			string DTypesToJniString = jlongArray;
+		else static if(is(T == float[]))
+			string DTypesToJniString = jfloatArray;
+		else static if(is(T == double[]))
+			string DTypesToJniString = jdoubleArray;
+		+/
+		else static assert(0, "Unsupported type for JNI call " ~ T.stringof);
+	} else {
+		import std.typecons;
+		string DTypesToJni = DTypesToJni!(Types[0]) ~ DTypesToJni(Types[1 .. $]);
+	}
+}
+
 
 private template DTypesToJni(Types...) {
 	static if(Types.length == 0)
@@ -177,8 +428,8 @@ private template DTypesToJni(Types...) {
 			alias DTypesToJni = jdouble;
 		else static if(is(T == size_t))
 			alias DTypesToJni = jsize;
-		else static if(is(T == jobject))
-			alias DTypesToJni = IJavaObject;
+		else static if(is(T : IJavaObject))
+			alias DTypesToJni = jobject;
 		else static if(is(T == IJavaObject[]))
 			alias DTypesToJni = jobjectArray;
 		else static if(is(T == bool[]))
@@ -204,7 +455,19 @@ private template DTypesToJni(Types...) {
 	}
 }
 
-auto DDataToJni(T)(JNIEnv* env, T data) {
+auto DDataToJni(T...)(JNIEnv* env, T data) {
+	import std.meta;
+	struct Tmp {
+		AliasSeq!(DTypesToJni!(T)) args;
+	}
+
+	Tmp t;
+	foreach(idx, ref arg; t.args)
+		arg = DDatumToJni(env, data[idx]);
+	return t;
+}
+
+auto DDatumToJni(T)(JNIEnv* env, T data) {
 	static if(is(T == void))
 		static assert(0);
 	else static if(is(T == string)) {
@@ -236,7 +499,7 @@ auto DDataToJni(T)(JNIEnv* env, T data) {
 	else static if(is(T == size_t)) return cast(int) data;
 	else static if(is(T : IJavaObject)) return data.getJavaHandle();
 	else static assert(0, "Unsupported type " ~ T.stringof);
-	/* // FIXME: finish these
+	/* // FIXME: finish these.
 	else static if(is(T == IJavaObject[]))
 		alias DTypesToJni = jobjectArray;
 	else static if(is(T == bool[]))
@@ -348,7 +611,11 @@ private mixin template JavaExportImpl(T, alias method) {
 	import std.traits;
 	import std.string;
 
+	static if(__traits(identifier, method) == "__ctor")
+		static assert(0, "Cannot export D constructors");
+
 	static private string JniMangle() {
+		// this actually breaks with -betterC though so does a lot more so meh.
 		static if(is(T : JavaClass!(JP, P), string JP, P))
 			return "Java_" ~replace(JP, ".", "_") ~ (JP.length ? "_" : "") ~ P.stringof ~ "_" ~ __traits(identifier, method);
 		else static assert(0);
@@ -358,8 +625,17 @@ private mixin template JavaExportImpl(T, alias method) {
 	pragma(mangle, JniMangle())
 	// I need it in the DLL, but want it to be not accessible from outside... alas.
 	export /*private*/ static DTypesToJni!(ReturnType!method) privateJniImplementation(JNIEnv* env, jobject obj, DTypesToJni!(Parameters!method) args) {
-		// FIXME: efficiency and possibly pull the same object again if possible
-		auto dobj = new T();
+		// set it up in the thread for future calls
+		ActivateJniEnv thing = ActivateJniEnv(env);
+
+		// FIXME: pull the same D object again if possible... though idk
+		ubyte[__traits(classInstanceSize, T)] byteBuffer;
+		byteBuffer[] = (cast(const(ubyte)[]) typeid(T).initializer())[];
+
+		// I specifically do NOT call the constructor here, since those may forward to Java and make things ugly!
+		// The init value is cool as-is.
+
+		auto dobj = cast(T) byteBuffer.ptr;
 		dobj.internalJavaHandle_ = obj;
 
 		// getMember(identifer) is weird but i want to get the method on this
@@ -373,7 +649,7 @@ private mixin template JavaExportImpl(T, alias method) {
 			}
 		} else {
 			try {
-				return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+				return DDatumToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
 			} catch(Throwable t) {
 				jniRethrow(env, t);
 				return typeof(return).init; // still required to return...
@@ -404,6 +680,9 @@ interface IJavaObject {
 	associating it back with Java across calls may be impossible.
 +/
 class JavaClass(string javaPackage, CRTP) : IJavaObject {
+
+	static assert(__traits(isFinalClass, CRTP), "Java classes must be final on the D side and " ~ CRTP.stringof ~ " is not");
+
 	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods.
 	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these.
 
@@ -413,10 +692,20 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 			mixin JavaImportImpl!(CRTP, __traits(getMember, CRTP, memberName));
 		else static if(is(attr == Export))
 			mixin JavaExportImpl!(CRTP, __traits(getMember, CRTP, memberName));
+		else static if(memberName == "__ctor")
+			static assert("JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
 	}
 
 	protected jobject internalJavaHandle_;
 	protected jobject getJavaHandle() { return internalJavaHandle_; }
+
+	protected static jclass internalJavaClassHandle_;
+
+	static import std.string;
+	static if(javaPackage.length)
+		public static immutable string _javaParameterString = "L" ~ std.string.replace(javaPackage, ".", "/") ~ "/" ~ CRTP.stringof ~ ";";
+	else
+		public static immutable string _javaParameterString = "L" ~ CRTP.stringof ~ ";";
 }
 
 
@@ -801,6 +1090,3 @@ union jvalue
     jdouble d;
     jobject l;
 }
-
-jint JNI_OnLoad(JavaVM* vm, void* reserved);
-void JNI_OnUnload(JavaVM* vm, void* reserved);
