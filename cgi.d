@@ -3354,8 +3354,8 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 								version(CRuntime_Musl) {
 									// LockingTextWriter fails here
 									// so working around it
-									auto s = t.toString();
-									stderr.rawWrite(s);
+									auto estr = t.toString();
+									stderr.rawWrite(estr);
 									stderr.rawWrite("\n");
 								} else
 									stderr.writeln(t.toString());
@@ -3377,8 +3377,8 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 								version(CRuntime_Musl) {
 									// LockingTextWriter fails here
 									// so working around it
-									auto s = t.toString();
-									stderr.rawWrite(s);
+									auto estr = t.toString();
+									stderr.rawWrite(estr);
 								} else {
 									stderr.writeln(t.toString);
 								}
