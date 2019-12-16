@@ -904,6 +904,11 @@ version(WEBVIEW_MSHTML) {
 	};
 +/
 } else version(WEBVIEW_EDGE) {
+
+	// NOTE: this will prolly only work on Win 10 and maybe win 8.
+	// but def not older ones. Will have to version it or dynamically
+	// load. Should prolly make it opt-in to the old style, default to new w. multi-threading
+
 /+
 	#include <objbase.h>
 	#include <winrt/Windows.Foundation.h>

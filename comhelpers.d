@@ -11,8 +11,9 @@ public import core.stdc.string;
 import core.atomic;
 
 pragma(lib, "advapi32");
-pragma(lib, "ole32");
 pragma(lib, "uuid");
+pragma(lib, "ole32");
+pragma(lib, "oleaut32");
 
 
 /* Attributes that help with automation */
@@ -230,7 +231,6 @@ mixin template IDispatchImpl() {
 		return DISP_E_MEMBERNOTFOUND;
 	}
 }
-pragma(lib, "oleaut32");
 
 mixin template ComObjectImpl() {
 protected:
