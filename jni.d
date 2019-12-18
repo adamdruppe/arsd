@@ -305,10 +305,14 @@ struct ActivateJniEnv {
 
 	$(CONSOLE
 		export LD_LIBRARY_PATH=/home/me/jdk-13.0.1/bin/server
+		--- or maybe ---
+		LD_LIBRARY_PATH=/opt/android/android-studio/jre/jre/lib/amd64/server ./myjvm
 	)
 
 	Failure to do this will throw an exception along the lines of
-	"no jvm dll" in the message.
+	"no jvm dll" in the message. That error can also be thrown if
+	you have a 32 bit program but try to load a 64 bit JVM, or vice
+	versa.
 +/
 auto createJvm()() {
 	version(Windows)
@@ -358,7 +362,7 @@ auto createJvm()() {
 	version(Windows)
 		auto jvmdll = LoadLibraryW("jvm.dll"w.ptr);
 	else
-		auto jvmdll = dlopen("libjvm.so");
+		auto jvmdll = dlopen("libjvm.so", RTLD_LAZY);
 
 	if(jvmdll is null)
 		throw new Exception("no jvm dll");
