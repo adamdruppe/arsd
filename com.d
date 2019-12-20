@@ -1,7 +1,52 @@
 /++
-	My old com helper code. I haven't used it for years.
+	Code for COM interop on Windows. You can use it to consume
+	COM objects (including several objects from .net assemblies)
+	and to create COM servers with a natural D interface.
+
+	This code is not well tested, don't rely on it yet. But even
+	in its incomplete state it might help in some cases.
+
+	```c#
+	namespace Cool {
+		public class Test {
+
+			static void Main() {
+				System.Console.WriteLine("hello!");
+			}
+
+			public int test() { return 4; }
+			public int test2(int a) { return 10 + a; }
+			public string hi(string s) { return "hello, " + s; }
+		}
+	}
+	```
+
+	Compile it into a library like normal, then `regasm` it to register the
+	assembly... then the following D code will work:
+
+	---
+	import arsd.com;
+
+	interface CsharpTest {
+		int test();
+		int test2(int a);
+		string hi(string s);
+	}
+
+	void main() {
+		auto obj = createComObject!CsharpTest("Cool.Test"); // early-bind dynamic version
+		//auto obj = createComObject("Cool.Test"); // late-bind dynamic version
+
+		import std.stdio;
+		writeln(obj.test()); // early-bind already knows the signature
+		writeln(obj.test2(12));
+		writeln(obj.hi("D"));
+		//writeln(obj.test!int()); // late-bind needs help
+		//writeln(obj.opDispatch!("test", int)());
+	}
+	---
 +/
-module arsd.comhelpers;
+module arsd.com;
 
 /+
 	see: program\comtest.d on the laptop.
@@ -28,26 +73,36 @@ import core.sys.windows.windows;
 import core.sys.windows.com;
 import core.sys.windows.oaidl;
 
-public import core.stdc.string;
+import core.stdc.string;
 import core.atomic;
 
 pragma(lib, "advapi32");
 pragma(lib, "uuid");
 pragma(lib, "ole32");
 pragma(lib, "oleaut32");
-
+pragma(lib, "user32");
 
 /* Attributes that help with automation */
 
+///
 static immutable struct ComGuid {
+	///
+	this(GUID g) { this.guid = g; }
+	///
+	this(string g) { guid = stringToGuid(g); }
 	GUID guid;
 }
 
+GUID stringToGuid(string g) {
+	return GUID.init; // FIXME
+}
+
 bool hasGuidAttribute(T)() {
+	bool has = false;
 	foreach(attr; __traits(getAttributes, T))
 		static if(is(typeof(attr) == ComGuid))
-			return true;
-	return false;
+			has = true;
+	return has;
 }
 
 template getGuidAttribute(T) {
@@ -71,38 +126,141 @@ static ~this() {
 		coInitializeCalled--;
 	}
 }
-void initializeCom() {
+
+///
+void initializeClassicCom() {
 	if(coInitializeCalled)
 		return;
 
-	/*
-	// Make sure COM is the right version
-	auto dwVer = CoBuildVersion();
-
-	if (rmm != HIWORD(dwVer))
-		throw new Exception("Incorrect OLE 2 version number\n");
-	*/
-
-	auto hr = CoInitialize(null);
-
-	if (FAILED(hr))
-		throw new Exception("OLE 2 failed to initialize\n");
+	ComCheck(CoInitialize(null), "COM initialization failed");
 
 	coInitializeCalled++;
 }
 
-struct AutoComPtr(T) {
-	T t;
-	this(T t) {
-		this.t = t;
+///
+bool ComCheck(HRESULT hr, string desc) {
+	if(FAILED(hr))
+		throw new ComException(hr, desc);
+	return true;
+}
+
+///
+class ComException : Exception {
+	this(HRESULT hr, string desc, string file = __FILE__, size_t line = __LINE__) {
+		this.hr = hr;
+		import std.format;
+		super(desc ~ format(" %08x", hr), file, line);
+	}
+
+	HRESULT hr;
+}
+
+template Dify(T) {
+	static if(is(T : IUnknown)) {
+		// FIXME
+		static assert(0);
+	} else {
+		alias Dify = T;
+	}
+}
+
+import std.traits;
+
+///
+struct ComClient(DVersion, ComVersion) {
+	ComVersion innerComObject_;
+	this(ComVersion t) {
+		this.innerComObject_ = t;
 	}
 	this(this) {
-		t.AddRef();
+		innerComObject_.AddRef();
 	}
 	~this() {
-		t.Release();
+		innerComObject_.Release();
 	}
-	alias t this;
+
+	// note that COM doesn't really support overloading so this
+	// don't even attempt it. C# will export as name_N where N
+	// is the index of the overload (except for 1) but...
+
+	static if(is(DVersion == Dynamic))
+	template opDispatch(string name) {
+		template opDispatch(Ret = void) {
+			Ret opDispatch(Args...)(Args args) {
+				return dispatchMethodImpl!(name, Ret)(args);
+			}
+		}
+	}
+
+	static if(is(ComVersion == IDispatch))
+	template dispatchMethodImpl(string memberName, Ret = void) {
+		Ret dispatchMethodImpl(Args...)(Args args) {
+			static if(is(ComVersion == IDispatch)) {
+
+				// FIXME: this can be cached and reused, even done ahead of time
+				DISPID dispid;
+
+				import std.conv;
+				wchar*[1] names = [(to!wstring(memberName) ~ "\0"w).dup.ptr];
+				ComCheck(innerComObject_.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name");
+				
+				DISPPARAMS disp_params;
+
+				static if(args.length) {
+					VARIANT[args.length] vargs;
+					foreach(idx, arg; args) {
+						vargs[idx] = toComVariant(arg);
+					}
+
+					disp_params.rgvarg = vargs.ptr;
+					disp_params.cArgs = cast(int) args.length;
+				}
+
+				VARIANT result;
+
+				ComCheck(innerComObject_.Invoke(
+					dispid,
+					&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
+					DISPATCH_METHOD,
+					&disp_params,
+					&result,
+					null, // exception info
+					null // arg error
+				), "Invoke");
+
+				return getFromVariant!(typeof(return))(result);
+			} else {
+				static assert(0); // FIXME
+			}
+
+		}
+	}
+
+	// so note that if I were to just make this a class, it'd inherit
+	// attributes from the D interface... but I want the RAII struct...
+	// could do a class with a wrapper and alias this though. but meh.
+	static foreach(memberName; __traits(allMembers, DVersion)) {
+	static foreach(idx, overload; __traits(getOverloads, DVersion, memberName)) {
+		mixin(q{ReturnType!overload }~memberName~q{(Parameters!overload args) {
+			return dispatchMethodImpl!(memberName, typeof(return))(args);
+		}
+		});
+	}
+	}
+}
+
+VARIANT toComVariant(T)(T arg) {
+	VARIANT ret;
+	static if(is(T : int)) {
+		ret.vt = 3;
+		ret.intVal = arg;
+	} else static if(is(T == string)) {
+		ret.vt = 8;
+		import std.utf;
+		ret.bstrVal = SysAllocString(toUTFz!(wchar*)(arg));
+	} else static assert(0, "Unsupported type (yet) " ~ T.stringof);
+
+	return ret;
 }
 
 /*
@@ -117,26 +275,54 @@ struct AutoComPtr(T) {
 
 // note that HKEY_CLASSES_ROOT\pretty name\CLSID has the guid
 
-/// Create a COM object. the string params are GUID literals that i mixin (this sux i know)
-/// or if the interface has no IID it will try to IDispatch it
-/// or you can request a fully dynamic version via opDispatch.
-/// note i can try `import core.sys.windows.uuid; IID_IDispatch` for example to generically look up ones from the system if they are not attached and come from the windows namespace
-AutoComPtr!T createObject(T, string iidStr = null)(GUID classId) {
-	initializeCom();
+// note: https://en.wikipedia.org/wiki/Component_Object_Model#Registration-free_COM
 
-	static if(iidStr == null) {
+GUID guidForClassName(wstring c) {
+	GUID id;
+	ComCheck(CLSIDFromProgID((c ~ "\0").ptr, &id), "Name lookup failed");
+	return id;
+}
+
+interface Dynamic {}
+
+/++
+	Create a COM object. The passed interface should be a child of IUnknown and from core.sys.windows or have a ComGuid UDA, or be something else entirely and you get dynamic binding.
+
+	The string version can take a GUID in the form of {xxxxx-xx-xxxx-xxxxxxxx} or a name it looks up in the registry.
+	The overload takes a GUID object (e.g. CLSID_XXXX from the Windows headers or one you write in yourself).
+
+	It will return a wrapper to the COM object that conforms to a D translation of the COM interface with automatic refcounting.
++/
+// FIXME: or you can request a fully dynamic version via opDispatch. That will have to be a thing
+auto createComObject(T = Dynamic)(wstring c) {
+	return createComObject!(T)(guidForClassName(c));
+}
+/// ditto
+auto createComObject(T = Dynamic)(GUID classId) {
+	initializeClassicCom();
+
+	static if(is(T : IUnknown) && hasGuidAttribute!T) {
+		enum useIDispatch = false;
 		auto iid = getGuidAttribute!(T).guid;
-	} else
-		auto iid = mixin(iidStr);
+	// FIXME the below condition is just woof
+	} else static if(is(T : IUnknown) && is(typeof(mixin("core.sys.windows.IID_" ~ T.stringof)))) {
+		enum useIDispatch = false;
+		auto iid = mixin("core.sys.windows.IID_" ~ T.stringof);
+	} else {
+		enum useIDispatch = true;
+		auto iid = IID_IDispatch;
+	}
 
-	T obj;
+	static if(useIDispatch) {
+		IDispatch obj;
+	} else {
+		static assert(is(T : IUnknown));
+		T obj;
+	}
 
-	auto hr = CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER, &iid, cast(void**) &obj);
-	import std.format;
-	if(FAILED(hr))
-		throw new Exception("Failed to create object " ~ format("%08x", hr));
+	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER, &iid, cast(void**) &obj), "Failed to create object");
 
-	return AutoComPtr!T(obj);
+	return ComClient!(Dify!T, typeof(obj))(obj);
 }
 
 
@@ -165,6 +351,7 @@ T getFromVariant(T)(VARIANT arg) {
 	assert(0);
 }
 
+/// Mixin to a low-level COM implementation class
 mixin template IDispatchImpl() {
 	override HRESULT GetIDsOfNames( REFIID riid, OLECHAR ** rgszNames, UINT cNames, LCID lcid, DISPID * rgDispId) {
 		if(cNames == 0)
@@ -259,6 +446,7 @@ mixin template IDispatchImpl() {
 	}
 }
 
+/// Mixin to a low-level COM implementation class
 mixin template ComObjectImpl() {
 protected:
 	IUnknown m_pUnkOuter;       // Controlling unknown
@@ -560,6 +748,7 @@ mixin template ComServerMain(Class, string progId, string ver) {
 	 *  HRESULT         NOERROR on success, otherwise an error code.
 	 */
 	pragma(mangle, "DllGetClassObject")
+	export
 	extern(Windows)
 	HRESULT DllGetClassObject(CLSID* rclsid, IID* riid, LPVOID* ppv) {
 		HRESULT hr;
@@ -848,6 +1037,58 @@ struct TmpStr {
 	}
 }
 
+/+
+        Goals:
+
+        * Use RoInitialize if present, OleInitialize or CoInitializeEx if not.
+                (if RoInitialize is present, webview can use Edge too, otherwise
+                gonna go single threaded for MSHTML. maybe you can require it via
+                a version switch)
+
+                or i could say this is simply not compatible with webview but meh.
+
+        * idl2d ready to rock
+        * RAII objects in use with natural auto-gen wrappers
+        * Natural implementations type-checking the interface
+
+        so like given
+
+        interface Foo : IUnknown {
+                HRESULT test(BSTR a, out int b);
+        }
+
+        you can
+
+        alias EasyCom!Foo Foo;
+        Foo f = Foo.make; // or whatever
+        int b = f.test("cool"); // throws if it doesn't return OK
+
+        class MyFoo : ImplementsCom!(Foo) {
+                int test(string a) { return 5; }
+        }
+
+        and then you still use it through the interface.
+
+        ImplementsCom takes the interface and translates it into
+        a regular D interface for type checking.
+        and then makes a proxy class to forward stuff. unless i can
+        rig it with abstract methods
+
+        class MyNewThing : IsCom!(MyNewThing) {
+                // indicates this implementation ought to
+                // become the interface
+        }
+
+        (basically in either case it converts the class to a COM
+        wrapper, then asserts it actually implements the required
+        interface)
+
+
+
+        or what if i had a private implementation of the interface
+        in the base class, auto-generated. then abstract hooks for
+        the other things.
++/
 
 /++
 
