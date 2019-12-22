@@ -94,6 +94,7 @@ module arsd.com;
 
 import core.sys.windows.windows;
 import core.sys.windows.com;
+import core.sys.windows.wtypes;
 import core.sys.windows.oaidl;
 
 import core.stdc.string;
@@ -399,6 +400,7 @@ T getFromVariant(T)(VARIANT arg) {
 	} else static if(is(T == string)) {
 		if(arg.vt == 8) {
 			auto str = arg.bstrVal;
+			scope(exit) SysFreeString(str);
 			return to!string(str[0 .. SysStringLen(str)]);
 		}
 	} else static if(is(T == IDispatch)) {
@@ -410,6 +412,45 @@ T getFromVariant(T)(VARIANT arg) {
 	} else static if(is(T == ComClient!(D, I), D, I)) {
 		if(arg.vt == 9)
 			return ComClient!(D, I)(arg.pdispVal);
+	} else static if(is(T == E[], E)) {
+		if(arg.vt & 0x2000) {
+			auto elevt = arg.vt & ~0x2000;
+			auto a = arg.parray;
+			scope(exit) SafeArrayDestroy(a);
+
+			auto bounds = a.rgsabound.ptr[0 .. a.cDims];
+
+			auto hr = SafeArrayLock(a);
+			if(SUCCEEDED(hr)) {
+				scope(exit) SafeArrayUnlock(a);
+
+				// BTW this is where things get interesting with the 
+				// mid-level wrapper. it can avoid these copies
+
+				// maybe i should check bounds.lLbound too.....
+
+				static if(is(E == int)) {
+					if(elevt == 3) {
+						assert(a.cbElements == E.sizeof);
+						return (cast(E*)a.pvData)[0 .. bounds[0].cElements].dup;
+					}
+				} else static if(is(E == string)) {
+					if(elevt == 8) {
+						//assert(a.cbElements == E.sizeof);
+						//return (cast(E*)a.pvData)[0 .. bounds[0].cElements].dup;
+
+						string[] ret;
+						foreach(item; (cast(BSTR*) a.pvData)[0 .. bounds[0].cElements]) {
+							auto str = item;
+							scope(exit) SysFreeString(str);
+							ret ~= to!string(str[0 .. SysStringLen(str)]);
+						}
+						return ret;
+					}
+				}
+
+			}
+		}
 	}
 	throw new Exception("Type mismatch, needed "~ T.stringof ~"got " ~ to!string(arg.vt));
 	assert(0);
