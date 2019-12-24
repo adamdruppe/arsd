@@ -194,6 +194,7 @@ private string getJavaName(alias a)() {
 /+ Java class file definitions { +/
 // see: https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6
 
+version(WithClassLoadSupport) {
 import arsd.declarativeloader;
 
 struct cp_info {
@@ -408,6 +409,8 @@ struct ClassFile {
 	@NumElements!methods_count method_info[]    methods;
 	ushort         attributes_count;
 	@NumElements!attributes_count attribute_info[] attributes;
+}
+
 }
 
 /+ } end java class file definitions +/
