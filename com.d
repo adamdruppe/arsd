@@ -45,14 +45,27 @@
 		//writeln(obj.opDispatch!("test", int)());
 	}
 	---
+
+	I'll show a COM server example later. It is cool to call D objects
+	from JScript and such.
 +/
 module arsd.com;
 
+// for arrays to/from IDispatch use SAFEARRAY
+// see https://stackoverflow.com/questions/295067/passing-an-array-using-com
+
+// for exceptions
+// see: https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/705fb797-2175-4a90-b5a3-3918024b10b8
+// see: https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/0c0bcf55-277e-4120-b5dc-f6115fc8dc38
+
 /+
-	see: program\comtest.d on the laptop.
+	see: program\cs\comtest.d on the laptop.
 
 	as administrator: from program\cs
 	c:\Windows\Microsoft.NEt\Framework64\v4.0.30319\regasm.exe /regfile /codebase test.dll
+
+	note: use the 64 bit register for 64 bit programs (Framework64)
+	use 32 for 32 bit program (\Framework\)
 
 	sn -k key.snk
 	program\cs\makefile
@@ -69,8 +82,19 @@ module arsd.com;
 	and then fully dynamic can be done with opDispatch for teh lulz.
 +/
 
+/+
+	createComObject returns the wrapped one
+		wrapping can go dynamic if it is wrapping IDispatch
+		some other IUnknown gets minimal wrapping (Translate formats)
+		all wrappers can return lower level stuff on demand. like LL!string maybe is actually an RAII BSTR.
+
+		i also want variant to jsvar and stuff like that.
+	createRawComObject returns the IUnknown raw one
++/
+
 import core.sys.windows.windows;
 import core.sys.windows.com;
+import core.sys.windows.wtypes;
 import core.sys.windows.oaidl;
 
 import core.stdc.string;
@@ -167,7 +191,7 @@ template Dify(T) {
 import std.traits;
 
 ///
-struct ComClient(DVersion, ComVersion) {
+struct ComClient(DVersion, ComVersion = IDispatch) {
 	ComVersion innerComObject_;
 	this(ComVersion t) {
 		this.innerComObject_ = t;
@@ -209,7 +233,8 @@ struct ComClient(DVersion, ComVersion) {
 				static if(args.length) {
 					VARIANT[args.length] vargs;
 					foreach(idx, arg; args) {
-						vargs[idx] = toComVariant(arg);
+						// lol it is put in backwards way to explain MSFT
+						vargs[$ - 1 - idx] = toComVariant(arg);
 					}
 
 					disp_params.rgvarg = vargs.ptr;
@@ -217,16 +242,47 @@ struct ComClient(DVersion, ComVersion) {
 				}
 
 				VARIANT result;
+				EXCEPINFO einfo;
+				uint argError;
 
-				ComCheck(innerComObject_.Invoke(
+				//ComCheck(innerComObject_.Invoke(
+				auto hr =innerComObject_.Invoke(
 					dispid,
 					&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
 					DISPATCH_METHOD,
 					&disp_params,
 					&result,
-					null, // exception info
-					null // arg error
-				), "Invoke");
+					&einfo, // exception info
+					&argError // arg error
+				);//, "Invoke");
+
+				import std.conv;
+				if(FAILED(hr)) {
+					if(hr == DISP_E_EXCEPTION) {
+						auto code = einfo.scode ? einfo.scode : einfo.wCode;
+						string source;
+						string description;
+						if(einfo.bstrSource) {
+							// this is really a wchar[] but it needs to be freed so....
+							source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+							SysFreeString(einfo.bstrSource);
+						}
+						if(einfo.bstrDescription) {
+							description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+							SysFreeString(einfo.bstrDescription);
+						}
+						if(einfo.bstrHelpFile) {
+							// FIXME: we could prolly use this too
+							SysFreeString(einfo.bstrHelpFile);
+							// and dwHelpContext
+						}
+
+						throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+					} else {
+						throw new ComException(hr, "Call failed");
+					}
+				}
 
 				return getFromVariant!(typeof(return))(result);
 			} else {
@@ -338,14 +394,63 @@ T getFromVariant(T)(VARIANT arg) {
 	static if(is(T == int)) {
 		if(arg.vt == 3)
 			return arg.intVal;
+	} else static if(is(T == bool)) {
+		if(arg.vt == 11)
+			return arg.boolVal ? true : false;
 	} else static if(is(T == string)) {
 		if(arg.vt == 8) {
 			auto str = arg.bstrVal;
+			scope(exit) SysFreeString(str);
 			return to!string(str[0 .. SysStringLen(str)]);
 		}
 	} else static if(is(T == IDispatch)) {
 		if(arg.vt == 9)
 			return arg.pdispVal;
+	} else static if(is(T : IUnknown)) {
+		// if(arg.vt == 13)
+		static assert(0);
+	} else static if(is(T == ComClient!(D, I), D, I)) {
+		if(arg.vt == 9)
+			return ComClient!(D, I)(arg.pdispVal);
+	} else static if(is(T == E[], E)) {
+		if(arg.vt & 0x2000) {
+			auto elevt = arg.vt & ~0x2000;
+			auto a = arg.parray;
+			scope(exit) SafeArrayDestroy(a);
+
+			auto bounds = a.rgsabound.ptr[0 .. a.cDims];
+
+			auto hr = SafeArrayLock(a);
+			if(SUCCEEDED(hr)) {
+				scope(exit) SafeArrayUnlock(a);
+
+				// BTW this is where things get interesting with the 
+				// mid-level wrapper. it can avoid these copies
+
+				// maybe i should check bounds.lLbound too.....
+
+				static if(is(E == int)) {
+					if(elevt == 3) {
+						assert(a.cbElements == E.sizeof);
+						return (cast(E*)a.pvData)[0 .. bounds[0].cElements].dup;
+					}
+				} else static if(is(E == string)) {
+					if(elevt == 8) {
+						//assert(a.cbElements == E.sizeof);
+						//return (cast(E*)a.pvData)[0 .. bounds[0].cElements].dup;
+
+						string[] ret;
+						foreach(item; (cast(BSTR*) a.pvData)[0 .. bounds[0].cElements]) {
+							auto str = item;
+							scope(exit) SysFreeString(str);
+							ret ~= to!string(str[0 .. SysStringLen(str)]);
+						}
+						return ret;
+					}
+				}
+
+			}
+		}
 	}
 	throw new Exception("Type mismatch, needed "~ T.stringof ~"got " ~ to!string(arg.vt));
 	assert(0);
@@ -432,7 +537,7 @@ mixin template IDispatchImpl() {
 				} catch(Throwable e) {
 					// FIXME: fill in the exception info
 					if(except !is null) {
-						except.wCode = 1;
+						except.sCode = 1;
 						import std.utf;
 						except.bstrDescription = SysAllocString(toUTFz!(wchar*)(e.toString()));
 						except.bstrSource = SysAllocString("amazing"w.ptr);

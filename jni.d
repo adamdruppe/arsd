@@ -191,35 +191,115 @@ private string getJavaName(alias a)() {
 	return name;
 }
 
-/+
 /+ Java class file definitions { +/
 // see: https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6
+
+version(WithClassLoadSupport) {
+import arsd.declarativeloader;
 
 struct cp_info {
 
 	enum CONSTANT_Class = 7; // sizeof = 2
+	struct CONSTANT_Class_info {
+		@BigEndian:
+		ushort name_index;
+	}
 	enum CONSTANT_Fieldref = 9; // sizeof = 4
+	struct CONSTANT_Fieldref_info {
+		@BigEndian:
+		ushort class_index;
+		ushort name_and_type_index;
+	}
 	enum CONSTANT_Methodref = 10; // sizeof = 4
+	struct CONSTANT_Methodref_info {
+		@BigEndian:
+		ushort class_index;
+		ushort name_and_type_index;
+	}
 	enum CONSTANT_InterfaceMethodref = 11; // sizeof = 4
+	struct CONSTANT_InterfaceMethodref_info {
+		@BigEndian:
+		ushort class_index;
+		ushort name_and_type_index;
+	}
 	enum CONSTANT_String = 8; // sizeof = 2
+	struct CONSTANT_String_info {
+		@BigEndian:
+		ushort string_index;
+	}
 	enum CONSTANT_Integer = 3; // sizeof = 4
+	struct CONSTANT_Integer_info {
+		@BigEndian:
+		int bytes;
+	}
 	enum CONSTANT_Float = 4; // sizeof = 4
+	struct CONSTANT_Float_info {
+		@BigEndian:
+		float bytes;
+	}
 	enum CONSTANT_Long = 5; // sizeof = 8, but eats two slots
+	struct CONSTANT_Long_info {
+		@BigEndian:
+		long bytes;
+	}
 	enum CONSTANT_Double = 6; // sizeof = 8, but eats two slots
+	struct CONSTANT_Double_info {
+		@BigEndian:
+		double bytes;
+	}
 	enum CONSTANT_NameAndType = 12; // sizeof = 2
+	struct CONSTANT_NameAndType_info {
+		@BigEndian:
+		ushort name_index;
+		ushort descriptor_index;
+	}
 	enum CONSTANT_Utf8 = 1; // sizeof = 2 + length
+	struct CONSTANT_Utf8_info {
+		@BigEndian:
+		ushort length;
+		@NumElements!length char[] bytes; // actually modified UTF-8 but meh
+	}
 	enum CONSTANT_MethodHandle = 15; // sizeof = 3
+	struct CONSTANT_MethodHandle_info {
+		@BigEndian:
+		ubyte reference_kind;
+		ushort reference_index;
+	}
 	enum CONSTANT_MethodType = 16; // sizeof = 2; descriptor index
+	struct CONSTANT_MethodType_info {
+		@BigEndian:
+		ushort descriptor_index;
+	}
 	enum CONSTANT_InvokeDynamic = 18; // sizeof = 4
+	struct CONSTANT_InvokeDynamic_info {
+		@BigEndian:
+		ushort bootstrap_method_attr_index;
+		ushort name_and_type_index;
+	}
 
 	ubyte   tag;
-	union {
-
+	@Tagged!(tag)
+	union Info {
+		@Tag(CONSTANT_Class) CONSTANT_Class_info class_info;
+		@Tag(CONSTANT_Fieldref) CONSTANT_Fieldref_info fieldref_info;
+		@Tag(CONSTANT_Methodref) CONSTANT_Methodref_info methodref_info;
+		@Tag(CONSTANT_InterfaceMethodref) CONSTANT_InterfaceMethodref_info interfaceMethodref_info;
+		@Tag(CONSTANT_String) CONSTANT_String_info string_info;
+		@Tag(CONSTANT_Integer) CONSTANT_Integer_info integer_info;
+		@Tag(CONSTANT_Float) CONSTANT_Float_info float_info;
+		@Tag(CONSTANT_Long) CONSTANT_Long_info long_info;
+		@Tag(CONSTANT_Double) CONSTANT_Double_info double_info;
+		@Tag(CONSTANT_NameAndType) CONSTANT_NameAndType_info nameAndType_info;
+		@Tag(CONSTANT_Utf8) CONSTANT_Utf8_info utf8_info;
+		@Tag(CONSTANT_MethodHandle) CONSTANT_MethodHandle_info methodHandle_info;
+		@Tag(CONSTANT_MethodType) CONSTANT_MethodType_info methodType_info;
+		@Tag(CONSTANT_InvokeDynamic) CONSTANT_InvokeDynamic_info invokeDynamic_info;
 	}
-	ubyte[] info;
+	Info info;
 }
 
 struct field_info {
+	@BigEndian:
 
 	enum ACC_PUBLIC = 0x0001;
 	enum ACC_PRIVATE = 0x0002;
@@ -235,15 +315,16 @@ struct field_info {
 	ushort name_index;
 	ushort descriptor_index;
 	ushort attributes_count;
-	attribute_info attributes[attributes_count];
+	@NumElements!attributes_count attribute_info[] attributes;
 }
 
 struct method_info {
+	@BigEndian:
 	ushort access_flags;
 	ushort name_index;
 	ushort descriptor_index;
 	ushort attributes_count;
-	attribute_info attributes[attributes_count];
+	@NumElements!attributes_count attribute_info[] attributes;
 
 	enum ACC_PUBLIC = 0x0001;
 	enum ACC_PRIVATE = 0x0002;
@@ -260,12 +341,14 @@ struct method_info {
 }
 
 struct attribute_info {
+	@BigEndian:
 	ushort attribute_name_index;
 	uint attribute_length;
-	ubyte[attribute_length] info;
+	@NumBytes!attribute_length ubyte[] info;
 }
 
 struct ClassFile {
+	@BigEndian:
 
 
 	enum ACC_PUBLIC     = 0x0001;
@@ -277,27 +360,60 @@ struct ClassFile {
 	enum ACC_ANNOTATION = 0x2000;
 	enum ACC_ENUM       = 0x4000;
 
+	const(char)[] className() {
+		return this.constant(this.constant(this.this_class).info.class_info.name_index).info.utf8_info.bytes;
+	}
 
-	uint           magic;
+	const(char)[] superclassName() {
+		return this.constant(this.constant(this.super_class).info.class_info.name_index).info.utf8_info.bytes;
+	}
+
+	Method[] methodsListing() {
+		Method[] ms;
+		foreach(met; this.methods) {
+			Method m;
+			m.name = this.constant(met.name_index).info.utf8_info.bytes;
+			m.signature = this.constant(met.descriptor_index).info.utf8_info.bytes;
+			m.flags = met.access_flags;
+			ms ~= m;
+		}
+		return ms;
+	}
+
+	static struct Method {
+		const(char)[] name;
+		const(char)[] signature;
+		ushort flags;
+	}
+
+
+	@MustBe(0xcafebabe) uint           magic;
 	ushort         minor_version;
 	ushort         major_version;
-	ushort         constant_pool_count;
-	cp_info        constant_pool[constant_pool_count-1];
+	ushort         constant_pool_count_;
+	// the zeroth item of the constant pool is null, but not actually in the file.
+	ushort constant_pool_count() { return cast(ushort)(constant_pool_count_ - 1); }
+	auto constant(ushort number) {
+		if(number == 0) throw new Exception("invalid");
+		return constant_pool[number - 1];
+	}
+	@NumElements!constant_pool_count cp_info[]        constant_pool;
 	ushort         access_flags;
 	ushort         this_class;
 	ushort         super_class;
 	ushort         interfaces_count;
-	ushort         interfaces[interfaces_count];
+	@NumElements!interfaces_count ushort[]         interfaces;
 	ushort         fields_count;
-	field_info     fields[fields_count];
+	@NumElements!fields_count field_info[]     fields;
 	ushort         methods_count;
-	method_info    methods[methods_count];
+	@NumElements!methods_count method_info[]    methods;
 	ushort         attributes_count;
-	attribute_info attributes[attributes_count];
+	@NumElements!attributes_count attribute_info[] attributes;
+}
+
 }
 
 /+ } end java class file definitions +/
-+/
 
 // semi-FIXME: java.lang.CharSequence is the interface for String. We should support that just as well.
 // possibly other boxed types too, like Integer. 
@@ -560,6 +676,10 @@ private enum ImportImplementationString = q{
 			auto ret = (*env).CallSTATICIntMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
 			return ret;
+		} else static if(is(typeof(return) : IJavaObject)) {
+			auto ret = (*env).CallSTATICObjectMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return typeof(return).fromExistingJavaObject(ret);
 		} else static if(is(typeof(return) == long)) {
 			auto ret = (*env).CallSTATICLongMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
@@ -1085,6 +1205,15 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods.
 	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these.
 
+	static CRTP fromExistingJavaObject(jobject o) {
+		import core.memory;
+		auto ptr = GC.malloc(__traits(classInstanceSize, CRTP));
+		ptr[0 .. __traits(classInstanceSize, CRTP)] = typeid(CRTP).initializer[];
+		auto obj = cast(CRTP) ptr;
+		obj.internalJavaHandle_ = o;
+		return obj;
+	}
+
 	/+
 	/++
 		D constructors on Java objects don't work right, so this is disabled to ensure
@@ -1120,8 +1249,20 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 
 		import core.stdc.stdio;
 		auto internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
+
+		/+
 		if(!internalJavaClassHandle_) {
-			fprintf(stderr, ("Cannot find Java class for " ~ CRTP.stringof));
+			static if(CRTP.stringof == "ssTest2") {
+			import std.file;
+			auto bytes = cast(byte[]) read("Test2.class");
+			auto loader = ClassLoader.getSystemClassLoader().getJavaHandle();
+			internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test2", loader, bytes.ptr, cast(int) bytes.length);
+			}
+		}
+		+/
+
+		if(!internalJavaClassHandle_) {
+			fprintf(stderr, ("Cannot find Java class for " ~ CRTP.stringof ~ "\n"));
 			return 1;
 		}
 
@@ -1145,6 +1286,12 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 
 __gshared /* immutable */ int function(JNIEnv* env)[] classInitializers_;
 
+
+/+
+final class ClassLoader : JavaClass!("java.lang", ClassLoader) {
+	@Import static ClassLoader getSystemClassLoader();
+}
++/
 
 
 
