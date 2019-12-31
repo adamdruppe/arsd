@@ -896,7 +896,7 @@ private enum ImportImplementationString = q{
 		} else static if(is(typeof(return) : IJavaObject)) {
 			auto ret = (*env).CallSTATICObjectMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
-			return typeof(return).fromExistingJavaObject(ret);
+			return fromExistingJavaObject!(typeof(return))(ret);
 		} else static if(is(typeof(return) == long)) {
 			auto ret = (*env).CallSTATICLongMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
@@ -1402,7 +1402,40 @@ private mixin template JavaExportImpl(T, alias method, size_t overloadIndex) {
 interface IJavaObject {
 	/// Remember the returned object is a TEMPORARY local reference!
 	protected jobject getJavaHandle();
+
+	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods. Only put these on implementation classes, not interfaces.
+	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these. Only put these on implementation classes, not interfaces.
+
 }
+
+static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject)) {
+	import core.memory;
+	auto ptr = GC.malloc(__traits(classInstanceSize, T));
+	ptr[0 .. __traits(classInstanceSize, T)] = typeid(T).initializer[];
+	auto obj = cast(T) ptr;
+	obj.internalJavaHandle_ = o;
+	return obj;
+}
+
+mixin template ImportExportImpl(Class) {
+	static foreach(memberName; __traits(derivedMembers, Class)) {
+		// validations
+		static if(is(typeof(__traits(getMember, Class, memberName).offsetof)))
+			static assert(0, "Data members in D on Java classes are not reliable because they cannot be consistently associated back to their corresponding Java classes through JNI without major runtime expense.");
+		else static if(memberName == "__ctor")
+			static assert("JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
+
+		// implementations
+		static foreach(oi, overload; __traits(getOverloads, Class, memberName))
+		static foreach(attr; __traits(getAttributes, overload)) {
+			static if(is(attr == Import))
+				mixin JavaImportImpl!(Class, overload, oi);
+			else static if(is(attr == Export))
+				mixin JavaExportImpl!(Class, overload, oi);
+		}
+	}
+}
+
 
 /++
 	This is the base class you inherit from in D classes that represent Java classes.
@@ -1419,18 +1452,6 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 
 	static assert(__traits(isFinalClass, CRTP), "Java classes must be final on the D side and " ~ CRTP.stringof ~ " is not");
 
-	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods.
-	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these.
-
-	static CRTP fromExistingJavaObject(jobject o) {
-		import core.memory;
-		auto ptr = GC.malloc(__traits(classInstanceSize, CRTP));
-		ptr[0 .. __traits(classInstanceSize, CRTP)] = typeid(CRTP).initializer[];
-		auto obj = cast(CRTP) ptr;
-		obj.internalJavaHandle_ = o;
-		return obj;
-	}
-
 	/+
 	/++
 		D constructors on Java objects don't work right, so this is disabled to ensure
@@ -1440,23 +1461,8 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 	@disable this(){}
 	+/
 
-	//version(none)
-	static foreach(memberName; __traits(derivedMembers, CRTP)) {
-		// validations
-		static if(is(typeof(__traits(getMember, CRTP, memberName).offsetof)))
-			static assert(0, "Data members in D on Java classes are not reliable because they cannot be consistently associated back to their corresponding Java classes through JNI without major runtime expense.");
-		else static if(memberName == "__ctor")
-			static assert("JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
+	mixin ImportExportImpl!CRTP;
 
-		// implementations
-		static foreach(oi, overload; __traits(getOverloads, CRTP, memberName))
-		static foreach(attr; __traits(getAttributes, overload)) {
-			static if(is(attr == Import))
-				mixin JavaImportImpl!(CRTP, overload, oi);
-			else static if(is(attr == Export))
-				mixin JavaExportImpl!(CRTP, overload, oi);
-		}
-	}
 
 	protected jobject internalJavaHandle_;
 	protected jobject getJavaHandle() { return internalJavaHandle_; }
@@ -1484,6 +1490,7 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 			return 1;
 		}
 
+		if(nativeMethodsData_.length)
 		if((*env).RegisterNatives(env, internalJavaClassHandle_, nativeMethodsData_.ptr, cast(int) nativeMethodsData_.length)) {
 			fprintf(stderr, ("RegisterNatives failed for " ~ CRTP.stringof));
 			return 1;
