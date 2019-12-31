@@ -189,13 +189,13 @@ interface CharSequence : JavaInterface!("java.lang", CharSequence) {
 			translated = to!wstring(data);
 		}
 		// Java copies the buffer so it is perfectly fine to return here now
-		return dummyClass((*env).NewString(env, translated.ptr, cast(jsize) translated.length));
+		return dummyClass!(typeof(this))((*env).NewString(env, translated.ptr, cast(jsize) translated.length));
 	}
 	///
 	static CharSequence fromDString(wstring data) {
 		auto env = activeEnv;
 		assert(env !is null);
-		return dummyClass((*env).NewString(env, data.ptr, cast(jsize) data.length));
+		return dummyClass!(typeof(this))((*env).NewString(env, data.ptr, cast(jsize) data.length));
 	}
 }
 
@@ -221,16 +221,17 @@ interface CharSequence : JavaInterface!("java.lang", CharSequence) {
 +/
 interface JavaInterface(string javaPackage, CRTP) : IJavaObject {
 	mixin JavaPackageId!(javaPackage, CRTP);
-
-	/// I may not keep this. But for now if you need a dummy class in D
-	/// to represent some object that implements this interface in Java,
-	/// you can use this. The dummy class assumes all interface methods are @Imported.
-	static CRTP dummyClass(jobject obj) {
-		return new class CRTP {
-			jobject getJavaHandle() { return obj; }
-		};
-	}
 }
+
+/// I may not keep this. But for now if you need a dummy class in D
+/// to represent some object that implements this interface in Java,
+/// you can use this. The dummy class assumes all interface methods are @Imported.
+static T dummyClass(T)(jobject obj) {
+	return new class T {
+		jobject getJavaHandle() { return obj; }
+	};
+}
+
 
 /++
 	Can be used as a UDA for methods or classes where the D name
@@ -279,9 +280,10 @@ void jarToD()(string jarPath, string dPackagePrefix, string outputDirectory, Jav
 
 inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
 	import std.string;
+	s ~= "."; // lol i suck
 	s = s.replace(".function.", ".function_.");
 	s = s.replace(".ref.", ".ref_.");
-	return s;
+	return s[0 .. $-1]; // god i am such a bad programmer
 }
 
 inout(char)[] fixupJavaClassName(inout(char)[] s) {
@@ -308,20 +310,28 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	const(char)[] javaPackage;
 	const(char)[] lastClassName;
 
+	const(char)[] originalJavaPackage;
+	const(char)[] originalClassName;
+
 	const(char)[] cn = cf.className;
 	auto idx = cn.lastIndexOf("/");
 	if(idx != -1) {
-		javaPackage = cn[0 .. idx];
+		javaPackage = cn[0 .. idx].replace("$", "_").replace("/", ".").fixupKeywordsInJavaPackageName;
 		lastClassName = cn[idx + 1 .. $];
+		originalJavaPackage = cn[0 .. idx].replace("/", ".");
+		originalClassName = lastClassName;
 	} else {
 		lastClassName = cn;
+		originalJavaPackage = "";
+		originalClassName = lastClassName;
 	}
 
-	auto originalClassName = lastClassName;
 	lastClassName = lastClassName.replace("$", "_"); // NOTE rughs strings in this file
 	lastClassName = fixupJavaClassName(lastClassName);
 
-	auto filename = (outputDirectory.length ? (outputDirectory ~ "/") : "") ~ (dPackagePrefix.length ? (dPackagePrefix.replace(".", "/") ~ "/") : "") ~ javaPackage;
+	auto filename = (outputDirectory.length ? (outputDirectory ~ "/") : "")
+		~ (dPackagePrefix.length ? (dPackagePrefix.replace(".", "/") ~ "/") : "")
+		~ javaPackage.replace(".", "/");
 	mkdirRecurse(filename);
 	if(filename.length)
 		filename ~= "/";
@@ -330,10 +340,13 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 
 	string dco;
 
-	auto thisModule = cast(string)((dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ cn.replace("$", "_").replace("/", ".").fixupKeywordsInJavaPackageName);
+	auto thisModule = cast(string)((dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ javaPackage);
+	if(thisModule.length && thisModule[$-1] != '.')
+		thisModule ~= ".";
+	thisModule ~= lastClassName;
 
 	dco = "module " ~ thisModule ~ ";\n\n";
-	dco ~= "import arsd.jni : JavaClass, JavaName, IJavaObject;\n\n";
+	dco ~= "import arsd.jni : IJavaObjectImplementation, JavaPackageId, ImportExportImpl, JavaName, IJavaObject;\n\n";
 
 	string[string] javaPackages;
 
@@ -343,7 +356,7 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 
 	// FIXME: what if it is an interface?
 
-	dc ~= "final class " ~ lastClassName ~ " : JavaClass!(\""~javaPackage.replace("/", ".")~"\", "~lastClassName~") {\n";
+	dc ~= "final class " ~ lastClassName ~ " : IJavaObject {\n";// JavaClass!(\""~javaPackage.replace("/", ".")~"\", "~lastClassName~") {\n";
 	foreach(method; cf.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
 		if(native && !jtc.doExports)
@@ -386,7 +399,7 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 
 	// FIXME what if there is a name conflict? the prefix kinda handles it but i dont like how ugly it is
 	foreach(pkg, prefix; javaPackages) {
-		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg.fixupKeywordsInJavaPackageName;
+		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
 		// keeping thisModule because of the prefix nonsense
 		//if(m == thisModule)
 			//continue;
@@ -395,7 +408,13 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	if(javaPackages.keys.length)
 		dco ~= "\n";
 	dco ~= dc;
+
+	dco ~= "\tmixin IJavaObjectImplementation!(false);\n";
+	dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
+
 	dco ~= "}\n";
+
+	dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
 
 	std.file.write(filename, dco);
 }
@@ -419,28 +438,36 @@ string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaP
 
 				if(type == "java/lang/String") {
 					type = "string"; // or could be wstring...
+				} else if(type == "java/lang/Object") {
+					type = "IJavaObject"; // or could be wstring...
 				} else { 
 					// NOTE rughs strings in this file
 					type = type.replace("$", "_");
 
-					string jp = type.replace("/", ".");
+					string jp, cn, dm;
+
+					idx = type.lastIndexOf("/");
+					if(idx != -1) {
+						jp = type[0 .. idx].replace("/", ".").fixupKeywordsInJavaPackageName;
+						cn = type[idx + 1 .. $].fixupJavaClassName;
+						dm = jp ~ "." ~ cn;
+					} else {
+						cn = type;
+						dm = jp;
+					}
 
 					string prefix;
-					if(auto n = jp in javaPackages) {
+					if(auto n = dm in javaPackages) {
 						prefix = *n;
 					} else {
 						import std.conv;
 						// FIXME: this scheme sucks, would prefer something deterministic
 						prefix = "import" ~ to!string(javaPackages.keys.length);
 
-						javaPackages[jp] = prefix;
+						javaPackages[dm] = prefix;
 					}
 
-					idx = type.lastIndexOf("/");
-					if(idx != -1)
-						type = type[idx + 1 .. $];
-
-					type = prefix ~ (prefix.length ? ".":"") ~ fixupJavaClassName(type);
+					type = prefix ~ (prefix.length ? ".":"") ~ cn;
 				}
 			break;
 			case 'V': js = js[1 .. $]; type = "void"; break;
@@ -954,6 +981,10 @@ private enum ImportImplementationString = q{
 			auto ret = (*env).CallSTATICIntMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
 			return ret;
+		} else static if(is(typeof(return) == short)) {
+			auto ret = (*env).CallSTATICShortMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
+			exceptionCheck(env);
+			return ret;
 		} else static if(is(typeof(return) : IJavaObject)) {
 			auto ret = (*env).CallSTATICObjectMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
@@ -1020,14 +1051,23 @@ private enum ImportImplementationString = q{
 				auto eles = (*env).GetByteArrayElements(env, jarr, null);
 				auto res = eles[0 .. len];
 				(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
+			} else static if(is(E == string)) {
+				/*
+				auto eles = (*env).GetByteArrayElements(env, jarr, null);
+				auto res = eles[0 .. len];
+				(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
+				*/
+				string[] res; // FIXME
 			} else static if(is(E : IJavaObject)) {
 				// FIXME: implement this
 				typeof(return) res = null;
+			} else static if(true) {
+				E[] res; // FIXME FIXME
 			} else static assert(0, E.stringof ~ " not supported array element type yet"); // FIXME handle object arrays too. which would also prolly include arrays of arrays.
 
 			return res;
 		} else {
-			static assert(0, "Unsupported return type for JNI " ~ typeof(return).stringof);
+			static assert(0, "Unsupported return type for JNI: " ~ typeof(return).stringof);
 				//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
 		}
 };
@@ -1046,13 +1086,13 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 
 		if(!_jmethodID) {
 			jclass jc;
-			if(!internalJavaClassHandle_) {
+			if(!T.internalJavaClassHandle_) {
 				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
 				if(!jc)
 					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
-				internalJavaClassHandle_ = jc;
+				T.internalJavaClassHandle_ = jc;
 			} else {
-				jc = internalJavaClassHandle_;
+				jc = T.internalJavaClassHandle_;
 			}
 			_jmethodID = (*env).GetMethodID(env, jc,
 				"<init>",
@@ -1064,7 +1104,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 				throw new Exception("Cannot find static Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
 		}
 
-		auto o = (*env).NewObject(env, internalJavaClassHandle_, _jmethodID, DDataToJni(env, args).args);
+		auto o = (*env).NewObject(env, T.internalJavaClassHandle_, _jmethodID, DDataToJni(env, args).args);
 		this_.internalJavaHandle_ = o;
 		return this_;
 	}
@@ -1077,13 +1117,13 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 
 		if(!_jmethodID) {
 			jclass jc;
-			if(!internalJavaClassHandle_) {
+			if(!T.internalJavaClassHandle_) {
 				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
 				if(!jc)
 					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
-				internalJavaClassHandle_ = jc;
+				T.internalJavaClassHandle_ = jc;
 			} else {
-				jc = internalJavaClassHandle_;
+				jc = T.internalJavaClassHandle_;
 			}
 			_jmethodID = (*env).GetStaticMethodID(env, jc,
 				getJavaName!method.ptr,
@@ -1095,7 +1135,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 				throw new Exception("Cannot find static Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
 		}
 
-		auto jobj = internalJavaClassHandle_;
+		auto jobj = T.internalJavaClassHandle_;
 
 		import std.string;
 		mixin(ImportImplementationString.replace("STATIC", "Static"));
@@ -1226,7 +1266,11 @@ private template DTypesToJni(Types...) {
 			alias DTypesToJni = jfloatArray;
 		else static if(is(T == double[]))
 			alias DTypesToJni = jdoubleArray;
-		else static assert(0, "Unsupported type for JNI " ~ T.stringof);
+		else static if(is(T == string[])) // prolly FIXME
+			alias DTypesToJni = jobjectArray;
+		else static if(is(T == E[], E)) // FIXME!!!!!!!
+			alias DTypesToJni = jobjectArray;
+		else static assert(0, "Unsupported type for JNI: " ~ T.stringof);
 	} else {
 		import std.meta;
 		// FIXME: write about this later if you forget the ! on the final DTypesToJni, dmd
@@ -1276,8 +1320,25 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 	else static if(is(T == long)) return data;
 	else static if(is(T == float)) return data;
 	else static if(is(T == double)) return data;
+
 	else static if(is(T == size_t)) return cast(int) data;
 	else static if(is(T : IJavaObject)) return data is null ? null : data.getJavaHandle();
+
+
+	else static if(is(T == string[])) return null; // FIXME!!!
+
+	else static if(is(T == IJavaObject[])) return null; // FIXME!!!
+	else static if(is(T == bool[])) return null; // FIXME!!!
+	else static if(is(T == byte[])) return null; // FIXME!!!
+	else static if(is(T == wchar[])) return null; // FIXME!!!
+	else static if(is(T == short[])) return null; // FIXME!!!
+	else static if(is(T == int[])) return null; // FIXME!!!
+	else static if(is(T == long[])) return null; // FIXME!!!
+	else static if(is(T == float[])) return null; // FIXME!!!
+	else static if(is(T == double[])) return null; // FIXME!!!
+	else static if(is(T == E[], E)) return null; // FIXME!!!
+
+
 	else static assert(0, "Unsupported type " ~ T.stringof);
 	/* // FIXME: finish these.
 	else static if(is(T == IJavaObject[]))
@@ -1372,9 +1433,7 @@ private struct JavaParamsToD(Spec...) {
 				}
 			// FIXME other types of arrays
 			} else static if(is(T : IJavaObject)) {
-				auto dobj = new T();
-				dobj.internalJavaHandle_ = jarg;
-				arg = dobj;
+				arg = fromExistingJavaObject!T(jarg);
 			}
 			else static assert(0, "Unimplemented/unsupported type " ~ T.stringof);
 
@@ -1396,15 +1455,6 @@ private mixin template JavaExportImpl(T, alias method, size_t overloadIndex) {
 
 	static if(__traits(identifier, method) == "__ctor")
 		static assert(0, "Cannot export D constructors");
-
-	/+
-	static private string JniMangle() {
-		// this actually breaks with -betterC though so does a lot more so meh.
-		static if(is(T : JavaClass!(JP, P), string JP, P))
-			return "Java_" ~replace(JP, ".", "_") ~ (JP.length ? "_" : "") ~ P.stringof ~ "_" ~ __traits(identifier, method);
-		else static assert(0);
-	}
-	+/
 
 	extern(System)
 	private static DTypesToJni!(ReturnType!method) privateJniImplementation(JNIEnv* env, jobject obj, DTypesToJni!(Parameters!method) args) {
@@ -1447,7 +1497,7 @@ private mixin template JavaExportImpl(T, alias method, size_t overloadIndex) {
 
 
 	shared static this() {
-		nativeMethodsData_ ~= JNINativeMethod(
+		T.nativeMethodsData_ ~= JNINativeMethod(
 			getJavaName!method.ptr,
 			("(" ~ DTypesToJniString!(Parameters!method) ~ ")" ~ DTypesToJniString!(ReturnType!method) ~ "\0").ptr,
 			&privateJniImplementation
@@ -1470,7 +1520,7 @@ interface IJavaObject {
 
 }
 
-static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject)) {
+static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == IJavaObject)) {
 	import core.memory;
 	auto ptr = GC.malloc(__traits(classInstanceSize, T));
 	ptr[0 .. __traits(classInstanceSize, T)] = typeid(T).initializer[];
@@ -1479,20 +1529,34 @@ static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject)) {
 	return obj;
 }
 
+static auto fromExistingJavaObject(T)(jobject o) if(is(T == IJavaObject)) {
+	static class Dummy : IJavaObject {
+		mixin IJavaObjectImplementation!(false);
+		mixin JavaPackageId!("java.lang", "Object");
+	}
+	return fromExistingJavaObject!Dummy(o);
+}
+
+
 mixin template ImportExportImpl(Class) {
+	static import arsd.jni;
+	private static arsd.jni.JavaBridge!(Class) _javaDBridge;
+}
+
+class JavaBridge(Class) {
 	static foreach(memberName; __traits(derivedMembers, Class)) {
 		// validations
 		static if(is(typeof(__traits(getMember, Class, memberName).offsetof)))
-			static assert(0, "Data members in D on Java classes are not reliable because they cannot be consistently associated back to their corresponding Java classes through JNI without major runtime expense.");
+			static assert(1, "Data members in D on Java classes are not reliable because they cannot be consistently associated back to their corresponding Java classes through JNI without major runtime expense."); // FIXME
 		else static if(memberName == "__ctor")
 			static assert("JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
 
 		// implementations
 		static foreach(oi, overload; __traits(getOverloads, Class, memberName))
 		static foreach(attr; __traits(getAttributes, overload)) {
-			static if(is(attr == Import))
+			static if(is(attr == IJavaObject.Import))
 				mixin JavaImportImpl!(Class, overload, oi);
-			else static if(is(attr == Export))
+			else static if(is(attr == IJavaObject.Export))
 				mixin JavaExportImpl!(Class, overload, oi);
 		}
 	}
@@ -1524,35 +1588,40 @@ class JavaClass(string javaPackage, CRTP, Parent = void, bool isNewClass = false
 	+/
 
 	mixin ImportExportImpl!CRTP;
+	mixin IJavaObjectImplementation!(isNewClass);
+	mixin JavaPackageId!(javaPackage, CRTP);
+}
 
+mixin template IJavaObjectImplementation(bool isNewClass) {
+	static import arsd.jni;
 
-	protected jobject internalJavaHandle_;
-	protected jobject getJavaHandle() { return internalJavaHandle_; }
+	/*protected*/ arsd.jni.jobject internalJavaHandle_;
+	/*protected*/ arsd.jni.jobject getJavaHandle() { return internalJavaHandle_; }
 
-	__gshared static protected /*immutable*/ JNINativeMethod[] nativeMethodsData_;
-	protected static jclass internalJavaClassHandle_;
-	protected static int initializeInJvm_(JNIEnv* env) {
+	__gshared static /*protected*/ /*immutable*/ arsd.jni.JNINativeMethod[] nativeMethodsData_;
+	/*protected*/ static arsd.jni.jclass internalJavaClassHandle_;
+	protected static int initializeInJvm_(arsd.jni.JNIEnv* env) {
 
 		import core.stdc.stdio;
 
 		static if(isNewClass) {
-			ActivateJniEnv aje = ActivateJniEnv(env);
+			auto aje = arsd.jni.ActivateJniEnv(env);
 
 			import std.file;
 			auto bytes = cast(byte[]) read("Test2.class");
 			import std.array;
 			bytes = bytes.replace(cast(byte[]) "Test2", cast(byte[]) "Test3");
-			auto loader = ClassLoader.getSystemClassLoader().getJavaHandle();
+			auto loader = arsd.jni.ClassLoader.getSystemClassLoader().getJavaHandle();
 
-			auto internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test3", loader, bytes.ptr, cast(int) bytes.length);
+			internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test3", loader, bytes.ptr, cast(int) bytes.length);
 		} else {
-			auto internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
+			internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
 		}
 
 		if(!internalJavaClassHandle_) {
 			(*env).ExceptionDescribe(env);
 			(*env).ExceptionClear(env);
-			fprintf(stderr, "Cannot %s Java class for %s\n", isNewClass ? "create".ptr : "find".ptr, CRTP.stringof.ptr);
+			fprintf(stderr, "Cannot %s Java class for %s\n", isNewClass ? "create".ptr : "find".ptr, typeof(this).stringof.ptr);
 			return 1;
 		}
 
@@ -1560,19 +1629,17 @@ class JavaClass(string javaPackage, CRTP, Parent = void, bool isNewClass = false
 		if((*env).RegisterNatives(env, internalJavaClassHandle_, nativeMethodsData_.ptr, cast(int) nativeMethodsData_.length)) {
 			(*env).ExceptionDescribe(env);
 			(*env).ExceptionClear(env);
-			fprintf(stderr, ("RegisterNatives failed for " ~ CRTP.stringof));
+			fprintf(stderr, ("RegisterNatives failed for " ~ typeof(this).stringof));
 			return 1;
 		}
 		return 0;
 	}
 	shared static this() {
 		static if(isNewClass)
-			newClassInitializers_ ~= &initializeInJvm_;
+			arsd.jni.newClassInitializers_ ~= &initializeInJvm_;
 		else
-			classInitializers_ ~= &initializeInJvm_;
+			arsd.jni.classInitializers_ ~= &initializeInJvm_;
 	}
-
-	mixin JavaPackageId!(javaPackage, CRTP);
 }
 
 mixin template JavaPackageId(string javaPackage, CRTP) {
@@ -1582,6 +1649,15 @@ mixin template JavaPackageId(string javaPackage, CRTP) {
 	else
 		public static immutable string _javaParameterString = "L" ~ getJavaName!CRTP ~ ";";
 }
+
+mixin template JavaPackageId(string javaPackage, string javaClassName) {
+	static import std.string;
+	static if(javaPackage.length)
+		public static immutable string _javaParameterString = "L" ~ std.string.replace(javaPackage, ".", "/") ~ "/" ~ javaClassName ~ ";";
+	else
+		public static immutable string _javaParameterString = "L" ~ javaClassName ~ ";";
+}
+
 
 
 __gshared /* immutable */ int function(JNIEnv* env)[] classInitializers_;
