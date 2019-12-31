@@ -125,6 +125,17 @@ module arsd.jni;
 // e.g. @Import Manual!(int[]) getJavaArray();
 
 /+
+	So in Java, a lambda expression is turned into an anonymous class
+	that implements the one abstract method in the required interface.
+
+	In D, they are a different type. And with no implicit construction I
+	can't convert automatically.
+
+	But I could prolly do something like javaLambda!Interface(x => foo)
+	but woof that isn't so much different than an anonymous class anymore.
++/
+
+/+
 final class CharSequence : JavaClass!("java.lang", CharSequence) {
 	@Import string toString(); // this triggers a dmd segfault! whoa. FIXME dmd
 }
@@ -196,6 +207,208 @@ private string getJavaName(alias a)() {
 
 version(WithClassLoadSupport) {
 import arsd.declarativeloader;
+
+void jarToD()(string jarPath, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc, bool delegate(string className) classFilter = null) {
+	import std.zip;
+	import std.file;
+	import std.algorithm;
+
+	auto zip = new ZipArchive(read(jarPath));
+
+	foreach(name, am; zip.directory) {
+		if(name.endsWith(".class")) {
+			// FIXME: use classFilter
+			zip.expand(am);
+			rawClassBytesToD(cast(ubyte[]) am.expandedData, dPackagePrefix, outputDirectory, jtc);
+			am.expandedData = null; // let the GC take it if it wants
+		}
+	}
+}
+
+inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
+	import std.string;
+	s = s.replace(".function.", ".function_.");
+	s = s.replace(".ref.", ".ref_.");
+	return s;
+}
+
+inout(char)[] fixupJavaClassName(inout(char)[] s) {
+	if(s == "Throwable" || s == "Object" || s == "Exception" || s == "Error" || s == "TypeInfo")
+		s = cast(typeof(s)) "Java" ~ s;
+	return s;
+}
+
+struct JavaTranslationConfig {
+	bool doImports;
+	bool doExports;
+}
+
+void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc) {
+	import std.file;
+	import std.path;
+	import std.algorithm;
+	import std.array;
+	import std.string;
+
+	ClassFile cf;
+	cf.loadFrom!ClassFile(classBytes);
+
+	const(char)[] javaPackage;
+	const(char)[] lastClassName;
+
+	const(char)[] cn = cf.className;
+	auto idx = cn.lastIndexOf("/");
+	if(idx != -1) {
+		javaPackage = cn[0 .. idx];
+		lastClassName = cn[idx + 1 .. $];
+	} else {
+		lastClassName = cn;
+	}
+
+	auto originalClassName = lastClassName;
+	lastClassName = lastClassName.replace("$", "_"); // NOTE rughs strings in this file
+	lastClassName = fixupJavaClassName(lastClassName);
+
+	auto filename = (outputDirectory.length ? (outputDirectory ~ "/") : "") ~ (dPackagePrefix.length ? (dPackagePrefix.replace(".", "/") ~ "/") : "") ~ javaPackage;
+	mkdirRecurse(filename);
+	if(filename.length)
+		filename ~= "/";
+	filename ~= lastClassName ~ ".d";
+
+
+	string dco;
+
+	auto thisModule = cast(string)((dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ cn.replace("$", "_").replace("/", ".").fixupKeywordsInJavaPackageName);
+
+	dco = "module " ~ thisModule ~ ";\n\n";
+	dco ~= "import arsd.jni : JavaClass, JavaName, IJavaObject;\n\n";
+
+	string[string] javaPackages;
+
+	string dc;
+	if(lastClassName != originalClassName)
+		dc ~= "@JavaName(\""~originalClassName~"\")\n";
+
+	// FIXME: what if it is an interface?
+
+	dc ~= "final class " ~ lastClassName ~ " : JavaClass!(\""~javaPackage.replace("/", ".")~"\", "~lastClassName~") {\n";
+	foreach(method; cf.methodsListing) {
+		bool native = (method.flags & 0x0100) ? true : false;
+		if(native && !jtc.doExports)
+			continue;
+		if(!native && !jtc.doImports)
+			continue;
+		auto port = native ? "@Export" : "@Import";
+		if(method.flags & 1) { // public
+
+			if(method.flags & 0x0008)
+				port ~= " static";
+
+			auto name = method.name;
+
+			// FIXME: maybe check name for other D keywords but since so many overlap with java I think we will be ok most the time for now
+			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString") {
+				// toString is special btw in order to avoid a dmd bug
+				port ~= " @JavaName(\""~name~"\")";
+				name ~= "_";
+			}
+
+			// NOTE rughs strings in this file
+			name = name.replace("$", "_");
+
+			bool ctor = name == "<init>";
+
+			auto sig = method.signature;
+
+			auto lidx = sig.lastIndexOf(")");
+			assert(lidx != -1);
+			auto retJava = sig[lidx + 1 .. $];
+			auto argsJava = sig[1 .. lidx];
+
+			string ret = ctor ? "" : javaSignatureToDTypeString(retJava, javaPackages);
+			string args = javaSignatureToDTypeString(argsJava, javaPackages);
+
+			dc ~= "\t"~port~" " ~ ret ~ (ret.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args~")"~(native ? " {}" : ";")~"\n";
+		}
+	}
+
+	// FIXME what if there is a name conflict? the prefix kinda handles it but i dont like how ugly it is
+	foreach(pkg, prefix; javaPackages) {
+		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg.fixupKeywordsInJavaPackageName;
+		// keeping thisModule because of the prefix nonsense
+		//if(m == thisModule)
+			//continue;
+		dco ~= "import " ~ prefix ~ " = " ~ m ~ ";\n";
+	}
+	if(javaPackages.keys.length)
+		dco ~= "\n";
+	dco ~= dc;
+	dco ~= "}\n";
+
+	std.file.write(filename, dco);
+}
+
+string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaPackages) {
+	string all;
+
+	while(js.length) {
+		string type;
+		switch(js[0]) {
+			case '[':
+				js = js[1 .. $];
+				type = javaSignatureToDTypeString(js, javaPackages);
+				type ~= "[]";
+			break;
+			case 'L':
+				import std.string;
+				auto idx = js.indexOf(";");
+				type = js[1 .. idx].idup;
+				js = js[idx + 1 .. $];
+
+				if(type == "java/lang/String") {
+					type = "string"; // or could be wstring...
+				} else { 
+					// NOTE rughs strings in this file
+					type = type.replace("$", "_");
+
+					string jp = type.replace("/", ".");
+
+					string prefix;
+					if(auto n = jp in javaPackages) {
+						prefix = *n;
+					} else {
+						import std.conv;
+						// FIXME: this scheme sucks, would prefer something deterministic
+						prefix = "import" ~ to!string(javaPackages.keys.length);
+
+						javaPackages[jp] = prefix;
+					}
+
+					idx = type.lastIndexOf("/");
+					if(idx != -1)
+						type = type[idx + 1 .. $];
+
+					type = prefix ~ (prefix.length ? ".":"") ~ fixupJavaClassName(type);
+				}
+			break;
+			case 'V': js = js[1 .. $]; type = "void"; break;
+			case 'Z': js = js[1 .. $]; type = "bool"; break;
+			case 'B': js = js[1 .. $]; type = "byte"; break;
+			case 'C': js = js[1 .. $]; type = "wchar"; break;
+			case 'S': js = js[1 .. $]; type = "short"; break;
+			case 'J': js = js[1 .. $]; type = "long"; break;
+			case 'F': js = js[1 .. $]; type = "float"; break;
+			case 'D': js = js[1 .. $]; type = "double"; break;
+			case 'I': js = js[1 .. $]; type = "int"; break;
+			default: assert(0);
+		}
+
+		if(all.length) all ~= ", ";
+		all ~= type;
+	}
+
+	return all;
+}
 
 struct cp_info {
 
@@ -296,6 +509,10 @@ struct cp_info {
 		@Tag(CONSTANT_InvokeDynamic) CONSTANT_InvokeDynamic_info invokeDynamic_info;
 	}
 	Info info;
+
+	bool takesTwoSlots() {
+		return (tag == CONSTANT_Long || tag == CONSTANT_Double);
+	}
 }
 
 struct field_info {
@@ -1223,6 +1440,7 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 	@disable this(){}
 	+/
 
+	//version(none)
 	static foreach(memberName; __traits(derivedMembers, CRTP)) {
 		// validations
 		static if(is(typeof(__traits(getMember, CRTP, memberName).offsetof)))
