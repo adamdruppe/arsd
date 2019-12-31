@@ -120,6 +120,30 @@
 +/
 module arsd.jni;
 
+/+
+	For interfaces:
+
+	Java interfaces should just inherit from IJavaObject. Otherwise they
+	work as normal in D. The final class is responsible for setting @Import
+	and @Export on the methods and declaring they are implemented.
+
+	Note that you can define D interfaces as well, that are not necessarily
+	known to Java. If your interface uses IJavaObject though, it assumes
+	that there is some kind of relationship. (mismatching this is not
+	necessarily fatal, but may cause runtime exceptions or compile errors.)
+
+	For parent classes:
+
+	The CRTP limits this. May switch to mixin template... but right now
+	the third argument to JavaClass declares the parent. It will alias this
+	to a thing that returns the casted (well, realistically, reconstructed) version.
++/
+
+/+
+	FIXME: D lambdas might be automagically wrapped in a Java class... will
+	need to know what parent class Java expects and which method to override.
++/
+
 // FIXME: if user defines an interface with the appropriate RAII return values,
 // it should let them do that for more efficiency
 // e.g. @Import Manual!(int[]) getJavaArray();
@@ -142,20 +166,14 @@ final class CharSequence : JavaClass!("java.lang", CharSequence) {
 +/
 
 /++
-	This is an interface in Java that the built in String class
-	implements. In D, our string is not an object at all, and
-	overloading an auto-generated method with a user-defined one
-	is a bit awkward and not automatic, so I'm instead cheating
-	here and pretending it is a class we can construct in a D
-	overload.
-
-	This is not a great solution. I'm also considering a UDA
-	on the param to indicate Java actually expects the interface,
-	or even a runtime lookup to disambiguate, but meh for now
-	I'm just sticking with this slightly wasteful overload/construct.
+	Java's String class implements its CharSequence interface. D's
+	string is not a class at all, so it cannot directly do that. Instead,
+	this translation of the interface has static methods to return a dummy
+	class wrapping D's string.
 +/
-final class CharSequence : JavaClass!("java.lang", CharSequence) {
-	this(string data) {
+interface CharSequence : JavaInterface!("java.lang", CharSequence) {
+	///
+	static CharSequence fromDString(string data) {
 		auto env = activeEnv;
 		assert(env !is null);
 
@@ -171,12 +189,46 @@ final class CharSequence : JavaClass!("java.lang", CharSequence) {
 			translated = to!wstring(data);
 		}
 		// Java copies the buffer so it is perfectly fine to return here now
-		internalJavaHandle_ = (*env).NewString(env, translated.ptr, cast(jsize) translated.length);
+		return dummyClass((*env).NewString(env, translated.ptr, cast(jsize) translated.length));
 	}
-	this(wstring data) {
+	///
+	static CharSequence fromDString(wstring data) {
 		auto env = activeEnv;
 		assert(env !is null);
-		internalJavaHandle_ = (*env).NewString(env, data.ptr, cast(jsize) data.length);
+		return dummyClass((*env).NewString(env, data.ptr, cast(jsize) data.length));
+	}
+}
+
+/++
+	Indicates that your interface represents an interface in Java.
+
+	Use this on the declaration, then your other classes can implement
+	it fairly normally (just with the @Import and @Export annotations added
+	in the appropriate places). D will require something be filled in on the
+	child classes so be sure to copy the @Import declarations there.
+
+	---
+	interface IFoo : JavaInterface!("com.example", IFoo) {
+		string whatever();
+	}
+
+	final class Foo : IFoo, JavaClass!("com.example", Foo) {
+		// need to tell D that the implementation exists, just in Java.
+		// (This actually generates the D implementation that just forwards to the existing java method)
+		@Import string whatever();
+	}
+	---
++/
+interface JavaInterface(string javaPackage, CRTP) : IJavaObject {
+	mixin JavaPackageId!(javaPackage, CRTP);
+
+	/// I may not keep this. But for now if you need a dummy class in D
+	/// to represent some object that implements this interface in Java,
+	/// you can use this. The dummy class assumes all interface methods are @Imported.
+	static CRTP dummyClass(jobject obj) {
+		return new class CRTP {
+			jobject getJavaHandle() { return obj; }
+		};
 	}
 }
 
@@ -686,9 +738,18 @@ export jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 		return JNI_ERR;
 	}
 
-	foreach(init; classInitializers_)
-		if(init(env) != 0)
-			return JNI_ERR;
+	try {
+		foreach(init; classInitializers_)
+			if(init(env) != 0)
+				return JNI_ERR;
+		foreach(init; newClassInitializers_)
+			if(init(env) != 0)
+				return JNI_ERR;
+	} catch(Throwable t) {
+		import core.stdc.stdio;
+		fprintf(stderr, "%s", (t.toString ~ "\n").ptr);
+		return JNI_ERR;
+	}
 
 	return JNI_VERSION_1_6;
 }
@@ -850,7 +911,7 @@ final class StackTraceElement : JavaClass!("java.lang", StackTraceElement) {
 
 private void exceptionCheck(JNIEnv* env) {
 	if((*env).ExceptionCheck(env)) {
-		// ExceptionDescribe // prints it to stderr, not that interesting
+		(*env).ExceptionDescribe(env); // prints it to stderr, not that interesting
 		jthrowable thrown = (*env).ExceptionOccurred(env);
 		// do I need to free thrown?
 		(*env).ExceptionClear(env);
@@ -1397,7 +1458,8 @@ private mixin template JavaExportImpl(T, alias method, size_t overloadIndex) {
 /++
 	This is really used by the [JavaClass] class below to give a base for all Java classes.
 	You can use it for that too, but you really shouldn't try to implement it yourself
-	(it doesn't do much anyway).
+	(it doesn't do much anyway and the other code in here assumes the presence of IJavaObject
+	on an object also means various internal static members of JavaClass are present too).
 +/
 interface IJavaObject {
 	/// Remember the returned object is a TEMPORARY local reference!
@@ -1448,7 +1510,7 @@ mixin template ImportExportImpl(Class) {
 	You should not expect any instance data on these to survive function calls, since
 	associating it back with Java across calls may be impossible.
 +/
-class JavaClass(string javaPackage, CRTP) : IJavaObject {
+class JavaClass(string javaPackage, CRTP, Parent = void, bool isNewClass = false) : IJavaObject {
 
 	static assert(__traits(isFinalClass, CRTP), "Java classes must be final on the D side and " ~ CRTP.stringof ~ " is not");
 
@@ -1472,35 +1534,48 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 	protected static int initializeInJvm_(JNIEnv* env) {
 
 		import core.stdc.stdio;
-		auto internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
 
-		/+
-		if(!internalJavaClassHandle_) {
-			static if(CRTP.stringof == "ssTest2") {
+		static if(isNewClass) {
+			ActivateJniEnv aje = ActivateJniEnv(env);
+
 			import std.file;
 			auto bytes = cast(byte[]) read("Test2.class");
+			import std.array;
+			bytes = bytes.replace(cast(byte[]) "Test2", cast(byte[]) "Test3");
 			auto loader = ClassLoader.getSystemClassLoader().getJavaHandle();
-			internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test2", loader, bytes.ptr, cast(int) bytes.length);
-			}
+
+			auto internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test3", loader, bytes.ptr, cast(int) bytes.length);
+		} else {
+			auto internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
 		}
-		+/
 
 		if(!internalJavaClassHandle_) {
-			fprintf(stderr, ("Cannot find Java class for " ~ CRTP.stringof ~ "\n"));
+			(*env).ExceptionDescribe(env);
+			(*env).ExceptionClear(env);
+			fprintf(stderr, "Cannot %s Java class for %s\n", isNewClass ? "create".ptr : "find".ptr, CRTP.stringof.ptr);
 			return 1;
 		}
 
 		if(nativeMethodsData_.length)
 		if((*env).RegisterNatives(env, internalJavaClassHandle_, nativeMethodsData_.ptr, cast(int) nativeMethodsData_.length)) {
+			(*env).ExceptionDescribe(env);
+			(*env).ExceptionClear(env);
 			fprintf(stderr, ("RegisterNatives failed for " ~ CRTP.stringof));
 			return 1;
 		}
 		return 0;
 	}
 	shared static this() {
-		classInitializers_ ~= &initializeInJvm_;
+		static if(isNewClass)
+			newClassInitializers_ ~= &initializeInJvm_;
+		else
+			classInitializers_ ~= &initializeInJvm_;
 	}
 
+	mixin JavaPackageId!(javaPackage, CRTP);
+}
+
+mixin template JavaPackageId(string javaPackage, CRTP) {
 	static import std.string;
 	static if(javaPackage.length)
 		public static immutable string _javaParameterString = "L" ~ std.string.replace(javaPackage, ".", "/") ~ "/" ~ getJavaName!CRTP ~ ";";
@@ -1510,13 +1585,11 @@ class JavaClass(string javaPackage, CRTP) : IJavaObject {
 
 
 __gshared /* immutable */ int function(JNIEnv* env)[] classInitializers_;
+__gshared /* immutable */ int function(JNIEnv* env)[] newClassInitializers_;
 
-
-/+
 final class ClassLoader : JavaClass!("java.lang", ClassLoader) {
 	@Import static ClassLoader getSystemClassLoader();
 }
-+/
 
 
 
