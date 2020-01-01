@@ -1,8 +1,7 @@
-// FIXME: add classList
+// FIXME: add classList. it is a live list and removes whitespace and duplicates when you use it.
 // FIXME: xml namespace support???
-// FIXME: add matchesSelector - standard name is `matches`. also `closest` walks up to find the parent that matches
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
-// FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
+// FIXME: parentElement is parentNode that skips DocumentFragment etc but will be hard to work in with my compatibility...
 
 // FIXME: the scriptable list is quite arbitrary
 
@@ -1194,28 +1193,57 @@ class Document : FileResource {
 		return root.optionSelector!(SomeElementType)(selector, file, line);
 	}
 
-
 	/// ditto
+	@scriptable
 	Element querySelector(string selector) {
-		return root.querySelector(selector);
+		// see comment below on Document.querySelectorAll
+		auto s = Selector(selector);//, !loose);
+		foreach(ref comp; s.components)
+			if(comp.parts.length && comp.parts[0].separation == 0)
+				comp.parts[0].separation = -1;
+		foreach(e; s.getMatchingElementsLazy(this.root))
+			return e;
+		return null;
+
 	}
 
 	/// ditto
+	@scriptable
 	Element[] querySelectorAll(string selector) {
-		return root.querySelectorAll(selector);
+		// In standards-compliant code, the document is slightly magical
+		// in that it is a pseudoelement at top level. It should actually
+		// match the root as one of its children.
+		//
+		// In versions of dom.d before Dec 29 2019, this worked because
+		// querySelectorAll was willing to return itself. With that bug fix
+		// (search "arbitrary id asduiwh" in this file for associated unittest)
+		// this would have failed. Hence adding back the root if it matches the
+		// selector itself.
+		//
+		// I'd love to do this better later.
+
+		auto s = Selector(selector);//, !loose);
+		foreach(ref comp; s.components)
+			if(comp.parts.length && comp.parts[0].separation == 0)
+				comp.parts[0].separation = -1;
+		return s.getMatchingElements(this.root);
 	}
 
 	/// ditto
+	@scriptable
+	deprecated("use querySelectorAll instead")
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
 	}
 
 	/// ditto
+	@scriptable
 	Element[] getElementsByTagName(string tag) {
 		return root.getElementsByTagName(tag);
 	}
 
 	/// ditto
+	@scriptable
 	Element[] getElementsByClassName(string tag) {
 		return root.getElementsByClassName(tag);
 	}
@@ -2181,8 +2209,35 @@ class Element {
 	}
 
 	/// a more standards-compliant alias for getElementsBySelector
+	@scriptable
 	Element[] querySelectorAll(string selector) {
 		return getElementsBySelector(selector);
+	}
+
+	/// If the element matches the given selector. Previously known as `matchesSelector`.
+	@scriptable
+	bool matches(string selector) {
+		/+
+		bool caseSensitiveTags = true;
+		if(parentDocument && parentDocument.loose)
+			caseSensitiveTags = false;
+		+/
+
+		Selector s = Selector(selector);
+		return s.matchesElement(this);
+	}
+
+	/// Returns itself or the closest parent that matches the given selector, or null if none found
+	/// See_also: https://developer.mozilla.org/en-US/docs/Web/API/Element/closest
+	@scriptable
+	Element closest(string selector) {
+		Element e = this;
+		while(e !is null) {
+			if(e.matches(selector))
+				return e;
+			e = e.parentNode;
+		}
+		return null;
 	}
 
 	/**
@@ -2543,11 +2598,17 @@ class Element {
 	}
 
 
-    	/// Appends the given element to this one. The given element must not have a parent already.
+    	/++
+		Appends the given element to this one. If it already has a parent, it is removed from that tree and moved to this one.
+
+		See_also: https://developer.mozilla.org/en-US/docs/Web/API/Node/appendChild
+
+		History:
+			Prior to 1 Jan 2020 (git tag v4.4.1 and below), it required that the given element must not have a parent already. This was in violation of standard, so it changed the behavior to remove it from the existing parent and instead move it here.
+	+/
 	Element appendChild(Element e)
 		in {
 			assert(e !is null);
-			assert(e.parentNode is null, e.parentNode.toString);
 		}
 		out (ret) {
 			assert((cast(DocumentFragment) this !is null) || (e.parentNode is this), e.toString);// e.parentNode ? e.parentNode.toString : "null");
@@ -2555,6 +2616,9 @@ class Element {
 			assert(e is ret);
 		}
 	body {
+		if(e.parentNode !is null)
+			e.parentNode.removeChild(e);
+
 		selfClosed = false;
 		e.parentNode = this;
 		e.parentDocument = this.parentDocument;
@@ -7160,6 +7224,7 @@ int intFromHex(string hex) {
 		}
 
 		auto part = parts[0];
+		//writeln("checking ", part, " against ", start, " with ", part.separation);
 		switch(part.separation) {
 			default: assert(0);
 			case -1:
@@ -7336,9 +7401,25 @@ int intFromHex(string hex) {
 			if(e is null) return false;
 			Element where = e;
 			int lastSeparation = -1;
-			foreach(part; retro(parts)) {
 
-				// writeln("matching ", where, " with ", part, " via ", lastSeparation);
+			auto lparts = parts;
+
+			if(parts.length && parts[0].separation > 0) {
+				// if it starts with a non-trivial separator, inject
+				// a "*" matcher to act as a root. for cases like document.querySelector("> body")
+				// which implies html
+
+				// there is probably a MUCH better way to do this.
+				auto dummy = SelectorPart.init;
+				dummy.tagNameFilter = "*";
+				dummy.separation = 0;
+				lparts = dummy ~ lparts;
+			}
+
+			foreach(part; retro(lparts)) {
+
+				 // writeln("matching ", where, " with ", part, " via ", lastSeparation);
+				 // writeln(parts);
 
 				if(lastSeparation == -1) {
 					if(!part.matchElement(where))
@@ -7346,6 +7427,7 @@ int intFromHex(string hex) {
 				} else if(lastSeparation == 0) { // generic parent
 					// need to go up the whole chain
 					where = where.parentNode;
+
 					while(where !is null) {
 						if(part.matchElement(where))
 							break;
@@ -7476,6 +7558,8 @@ int intFromHex(string hex) {
 
 						if(current.isCleanSlateExceptSeparation()) {
 							current.tagNameFilter = token;
+							// default thing, see comment under "*" below
+							if(current.separation == -1) current.separation = 0;
 						} else {
 							// if it was already set, we must see two thingies
 							// separated by whitespace...
@@ -7488,6 +7572,10 @@ int intFromHex(string hex) {
 						switch(token) {
 							case "*":
 								current.tagNameFilter = "*";
+								// the idea here is if we haven't actually set a separation
+								// yet (e.g. the > operator), it should assume the generic
+								// whitespace (descendant) mode to avoid matching self with -1
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case " ":
 								// If some other separation has already been set,
@@ -7520,16 +7608,20 @@ int intFromHex(string hex) {
 							break;
 							case "[":
 								state = State.ReadingAttributeSelector;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case ".":
 								state = State.ReadingClass;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case "#":
 								state = State.ReadingId;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case ":":
 							case "::":
 								state = State.ReadingPseudoClass;
+								if(current.separation == -1) current.separation = 0;
 							break;
 
 							default:
@@ -8542,18 +8634,6 @@ private bool isSimpleWhite(dchar c) {
 	return c == ' ' || c == '\r' || c == '\n' || c == '\t';
 }
 
-/*
-Copyright: Adam D. Ruppe, 2010 - 2019
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
-
-        Copyright Adam D. Ruppe 2010-2019.
-Distributed under the Boost Software License, Version 1.0.
-   (See accompanying file LICENSE_1_0.txt or copy at
-        http://www.boost.org/LICENSE_1_0.txt)
-*/
-
-
 unittest {
 	// Test for issue #120
 	string s = `<html>
@@ -8570,3 +8650,73 @@ unittest {
 			s2.indexOf("bubbles") < s2.indexOf("giggles"),
 			"paragraph order incorrect:\n" ~ s2);
 }
+
+unittest {
+	// test for suncarpet email dec 24 2019
+	// arbitrary id asduiwh
+	auto document = new Document("<html>
+        <head>
+                <meta charset=\"utf-8\"></meta>
+                <title>Element.querySelector Test</title>
+        </head>
+        <body>
+                <div id=\"foo\">
+                        <div>Foo</div>
+                        <div>Bar</div>
+                </div>
+        </body>
+</html>");
+
+	auto doc = document;
+
+	assert(doc.querySelectorAll("div div").length == 2);
+	assert(doc.querySelector("div").querySelectorAll("div").length == 2);
+	assert(doc.querySelectorAll("> html").length == 0);
+	assert(doc.querySelector("head").querySelectorAll("> title").length == 1);
+	assert(doc.querySelector("head").querySelectorAll("> meta[charset]").length == 1);
+
+
+	assert(doc.root.matches("html"));
+	assert(!doc.root.matches("nothtml"));
+	assert(doc.querySelector("#foo > div").matches("div"));
+	assert(doc.querySelector("body > #foo").matches("#foo"));
+
+	assert(doc.root.querySelectorAll(":root > body").length == 0); // the root has no CHILD root!
+	assert(doc.querySelectorAll(":root > body").length == 1); // but the DOCUMENT does
+	assert(doc.querySelectorAll(" > body").length == 1); //  should mean the same thing
+	assert(doc.root.querySelectorAll(" > body").length == 1); // the root of HTML has this
+	assert(doc.root.querySelectorAll(" > html").length == 0); // but not this
+}
+
+unittest {
+	// based on https://developer.mozilla.org/en-US/docs/Web/API/Element/closest example
+	auto document = new Document(`<article>
+  <div id="div-01">Here is div-01
+    <div id="div-02">Here is div-02
+      <div id="div-03">Here is div-03</div>
+    </div>
+  </div>
+</article>`, true, true);
+
+	auto el = document.getElementById("div-03");
+	assert(el.closest("#div-02").id == "div-02");
+	assert(el.closest("div div").id == "div-03");
+	assert(el.closest("article > div").id == "div-01");
+	assert(el.closest(":not(div)").tagName == "article");
+
+	assert(el.closest("p") is null);
+	assert(el.closest("p, div") is el);
+}
+
+/*
+Copyright: Adam D. Ruppe, 2010 - 2019
+License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
+
+        Copyright Adam D. Ruppe 2010-2019.
+Distributed under the Boost Software License, Version 1.0.
+   (See accompanying file LICENSE_1_0.txt or copy at
+        http://www.boost.org/LICENSE_1_0.txt)
+*/
+
+
