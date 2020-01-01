@@ -293,8 +293,12 @@ inout(char)[] fixupJavaClassName(inout(char)[] s) {
 }
 
 struct JavaTranslationConfig {
+	/// List the Java methods, imported to D.
 	bool doImports;
+	/// List the native methods, assuming they should be exported from D
 	bool doExports;
+	/// Put implementations inline. If false, this separates interface from impl for quicker builds with dmd -i.
+	bool inlineImplementations;
 }
 
 void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc) {
@@ -345,8 +349,15 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 		thisModule ~= ".";
 	thisModule ~= lastClassName;
 
-	dco = "module " ~ thisModule ~ ";\n\n";
-	dco ~= "import arsd.jni : IJavaObjectImplementation, JavaPackageId, ImportExportImpl, JavaName, IJavaObject;\n\n";
+	bool isInterface = (cf.access_flags & 0x0200) ? true : false;
+
+	if(jtc.inlineImplementations) {
+		dco = "module " ~ thisModule ~ ";\n\n";
+	} else {
+		dco ~= "module " ~ thisModule ~ "_d_interface;\n";
+	}
+
+	dco ~= "import arsd.jni : IJavaObjectImplementation, JavaPackageId, JavaName, IJavaObject, ImportExportImpl;\n\n";
 
 	string[string] javaPackages;
 
@@ -354,9 +365,9 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	if(lastClassName != originalClassName)
 		dc ~= "@JavaName(\""~originalClassName~"\")\n";
 
-	// FIXME: what if it is an interface?
-
-	dc ~= "final class " ~ lastClassName ~ " : IJavaObject {\n";// JavaClass!(\""~javaPackage.replace("/", ".")~"\", "~lastClassName~") {\n";
+	// so overriding Java classes from D is iffy and with separate implementation
+	// non final leads to linker errors anyway...
+	dc ~= (isInterface ? "interface " : "final class ") ~ lastClassName ~ " : IJavaObject {\n";
 	foreach(method; cf.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
 		if(native && !jtc.doExports)
@@ -393,30 +404,51 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 			string ret = ctor ? "" : javaSignatureToDTypeString(retJava, javaPackages);
 			string args = javaSignatureToDTypeString(argsJava, javaPackages);
 
+			if(!jtc.inlineImplementations) {
+				if(ctor && args.length == 0)
+					continue; // FIXME skipping default ctor to avoid factory from trying to get to it in separate compilation
+			}
+
 			dc ~= "\t"~port~" " ~ ret ~ (ret.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args~")"~(native ? " {}" : ";")~"\n";
 		}
 	}
 
-	// FIXME what if there is a name conflict? the prefix kinda handles it but i dont like how ugly it is
 	foreach(pkg, prefix; javaPackages) {
 		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
 		// keeping thisModule because of the prefix nonsense
 		//if(m == thisModule)
 			//continue;
-		dco ~= "import " ~ prefix ~ " = " ~ m ~ ";\n";
+		if(jtc.inlineImplementations)
+			dco ~= "import " ~ prefix ~ " = " ~ m ~ ";\n";
+		else
+			dco ~= "import " ~ prefix ~ " = " ~ m ~ "_d_interface;\n";
 	}
 	if(javaPackages.keys.length)
 		dco ~= "\n";
 	dco ~= dc;
 
-	dco ~= "\tmixin IJavaObjectImplementation!(false);\n";
+	if(!isInterface)
+		dco ~= "\tmixin IJavaObjectImplementation!(false);\n";
 	dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
 
 	dco ~= "}\n";
 
-	dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
+	if(jtc.inlineImplementations) {
+		if(!isInterface)
+			dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
+		std.file.write(filename, dco);
+	} else {
+		string impl;
+		impl ~= "module " ~ thisModule ~ ";\n";
+		impl ~= "public import " ~ thisModule ~ "_d_interface;\n\n";
+		if(!isInterface) {
+			impl ~= "import arsd.jni : ImportExportImpl;\n";
+			impl ~= "mixin ImportExportImpl!"~lastClassName~";\n";
+		}
 
-	std.file.write(filename, dco);
+		std.file.write(filename, impl);
+		std.file.write(filename[0 .. $-2] ~ "_d_interface.d", dco);
+	}
 }
 
 string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaPackages) {
@@ -439,7 +471,7 @@ string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaP
 				if(type == "java/lang/String") {
 					type = "string"; // or could be wstring...
 				} else if(type == "java/lang/Object") {
-					type = "IJavaObject"; // or could be wstring...
+					type = "IJavaObject";
 				} else { 
 					// NOTE rughs strings in this file
 					type = type.replace("$", "_");
@@ -1520,7 +1552,7 @@ interface IJavaObject {
 
 }
 
-static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == IJavaObject)) {
+static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == interface)) {
 	import core.memory;
 	auto ptr = GC.malloc(__traits(classInstanceSize, T));
 	ptr[0 .. __traits(classInstanceSize, T)] = typeid(T).initializer[];
@@ -1529,12 +1561,12 @@ static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T ==
 	return obj;
 }
 
-static auto fromExistingJavaObject(T)(jobject o) if(is(T == IJavaObject)) {
+static auto fromExistingJavaObject(T)(jobject o) if(is(T == interface)) {
 	static class Dummy : IJavaObject {
 		mixin IJavaObjectImplementation!(false);
 		mixin JavaPackageId!("java.lang", "Object");
 	}
-	return fromExistingJavaObject!Dummy(o);
+	return cast(T) cast(void*) fromExistingJavaObject!Dummy(o); // FIXME this is so wrong
 }
 
 

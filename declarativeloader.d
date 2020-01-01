@@ -5,26 +5,27 @@ module arsd.declarativeloader;
 
 import std.range;
 
-// @VariableLength indicates the value is saved in a MIDI like format
-// @BigEndian, @LittleEndian
-// @NumBytes!Field or @NumElements!Field controls length of embedded arrays
-// @Tagged!Field indicates a tagged union. Each struct within should have @Tag(X) which is a value of Field
-// @MustBe() causes it to throw if not the given value
-
-// @NotSaved indicates a struct member that is not actually saved in the file
-
+///
 enum BigEndian;
+///
 enum LittleEndian;
+/// @VariableLength indicates the value is saved in a MIDI like format
 enum VariableLength;
+/// @NumBytes!Field or @NumElements!Field controls length of embedded arrays
 struct NumBytes(alias field) {}
+/// ditto
 struct NumElements(alias field) {}
+/// @Tagged!Field indicates a tagged union. Each struct within should have @Tag(X) which is a value of Field
 struct Tagged(alias field) {}
-struct TagStruct(T) { T t; }
+/// ditto
 auto Tag(T)(T t) {
 	return TagStruct!T(t);
 }
-enum NotSaved;
+struct TagStruct(T) { T t; }
 struct MustBeStruct(T) { T t; }
+/// The marked field is not in the actual file
+enum NotSaved;
+/// Insists the field must be a certain value, like for magic numbers
 auto MustBe(T)(T t) {
 	return MustBeStruct!T(t);
 }
@@ -65,7 +66,7 @@ union N(ty) {
 	ubyte[ty.sizeof] bytes;
 }
 
-// input range of ubytes...
+/// input range of ubytes...
 int loadFrom(T, Range)(ref T t, auto ref Range r, bool assumeBigEndian = false) {
 	int bytesConsumed;
 	ubyte next() {
@@ -160,9 +161,19 @@ int loadFrom(T, Range)(ref T t, auto ref Range r, bool assumeBigEndian = false) 
 						}
 					} else {
 						while(numElementsRemaining) {
+							//import std.stdio; writeln(memberName);
 							E piece;
 							auto by = loadFrom(piece, r, endianness);
 							numElementsRemaining--;
+
+							// such a filthy hack, needed for Java's mistake though :(
+							static if(__traits(compiles, piece.takesTwoSlots())) {
+								if(piece.takesTwoSlots()) {
+									__traits(getMember, t, memberName) ~= piece;
+									numElementsRemaining--;
+								}
+							}
+
 							bytesConsumed += by;
 							__traits(getMember, t, memberName) ~= piece;
 						}
