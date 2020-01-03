@@ -459,7 +459,7 @@
 	I live in the eastern United States, so I will most likely not be around at night in
 	that US east timezone.
 
-	License: Copyright Adam D. Ruppe, 2011-2017. Released under the Boost Software License.
+	License: Copyright Adam D. Ruppe, 2011-2020. Released under the Boost Software License.
 
 	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
 	building the documentation for simpledisplay yourself. It will give it a bit more style.

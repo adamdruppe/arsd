@@ -120,6 +120,24 @@
 +/
 module arsd.jni;
 
+/*
+	New Java classes:
+
+	class Foo : extends!Bar {
+
+		mixin stuff;
+	}
+	mixin stuff;
+
+	The `extends` template creates a wrapper that calls the nonvirtual
+	methods, so `super()` just works.
+
+	receiving an object should perhaps always give a subclass that is javafied;
+	calls the virtuals, unless of course it is final.
+
+	dynamic downcasts of java objects will probably never work.
+*/
+
 /+
 	For interfaces:
 
@@ -261,6 +279,7 @@ private string getJavaName(alias a)() {
 version(WithClassLoadSupport) {
 import arsd.declarativeloader;
 
+/// translator.
 void jarToD()(string jarPath, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc, bool delegate(string className) classFilter = null) {
 	import std.zip;
 	import std.file;
@@ -278,7 +297,7 @@ void jarToD()(string jarPath, string dPackagePrefix, string outputDirectory, Jav
 	}
 }
 
-inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
+private inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
 	import std.string;
 	s ~= "."; // lol i suck
 	s = s.replace(".function.", ".function_.");
@@ -286,12 +305,13 @@ inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
 	return s[0 .. $-1]; // god i am such a bad programmer
 }
 
-inout(char)[] fixupJavaClassName(inout(char)[] s) {
+private inout(char)[] fixupJavaClassName(inout(char)[] s) {
 	if(s == "Throwable" || s == "Object" || s == "Exception" || s == "Error" || s == "TypeInfo")
 		s = cast(typeof(s)) "Java" ~ s;
 	return s;
 }
 
+/// For the translator
 struct JavaTranslationConfig {
 	/// List the Java methods, imported to D.
 	bool doImports;
@@ -299,8 +319,11 @@ struct JavaTranslationConfig {
 	bool doExports;
 	/// Put implementations inline. If false, this separates interface from impl for quicker builds with dmd -i.
 	bool inlineImplementations;
+	/// Treat native functions as imports, otherwise fills in as exports. Make sure doImports == true.
+	bool nativesAreImports = true;
 }
 
+/// translator.
 void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc) {
 	import std.file;
 	import std.path;
@@ -370,10 +393,15 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	dc ~= (isInterface ? "interface " : "final class ") ~ lastClassName ~ " : IJavaObject {\n";
 	foreach(method; cf.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
-		if(native && !jtc.doExports)
-			continue;
-		if(!native && !jtc.doImports)
-			continue;
+		if(jtc.nativesAreImports) {
+			if(!jtc.doImports)
+				continue;
+		} else {
+			if(native && !jtc.doExports)
+				continue;
+			if(!native && !jtc.doImports)
+				continue;
+		}
 		auto port = native ? "@Export" : "@Import";
 		if(method.flags & 1) { // public
 
@@ -2084,3 +2112,9 @@ union jvalue
     jdouble d;
     jobject l;
 }
+
+/*
+	Copyright 2019-2020, Adam D. Ruppe.
+	Boost license. or whatever.
+	Most work done in December 2019.
+*/

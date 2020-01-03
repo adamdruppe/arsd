@@ -1,4 +1,4 @@
-// Copyright 2013-2019, Adam D. Ruppe.
+// Copyright 2013-2020, Adam D. Ruppe.
 /++
 	This is version 2 of my http/1.1 client implementation.
 	
@@ -20,12 +20,20 @@ debug(arsd_http2_verbose) debug=arsd_http2;
 
 debug(arsd_http2) import std.stdio : writeln;
 
+version=arsd_http_internal_implementation;
+
 version(without_openssl) {}
 else {
 version=use_openssl;
 version=with_openssl;
 version(older_openssl) {} else
 version=newer_openssl;
+}
+
+version(arsd_http_winhttp_implementation) {
+	pragma(lib, "winhttp")
+	import core.sys.windows.winhttp;
+	// FIXME: alter the dub package file too
 }
 
 
@@ -605,6 +613,176 @@ class HttpRequest {
 	/// Automatically follow a redirection?
 	bool followLocation = false;
 
+	this() {
+	}
+
+	///
+	this(Uri where, HttpVerb method) {
+		populateFromInfo(where, method);
+	}
+
+	/// Final url after any redirections
+	string finalUrl;
+
+	void populateFromInfo(Uri where, HttpVerb method) {
+		auto parts = where;
+		finalUrl = where.toString();
+		requestParameters.method = method;
+		requestParameters.host = parts.host;
+		requestParameters.port = cast(ushort) parts.port;
+		requestParameters.ssl = parts.scheme == "https";
+		if(parts.port == 0)
+			requestParameters.port = requestParameters.ssl ? 443 : 80;
+		requestParameters.uri = parts.path.length ? parts.path : "/";
+		if(parts.query.length) {
+			requestParameters.uri ~= "?";
+			requestParameters.uri ~= parts.query;
+		}
+	}
+
+	~this() {
+	}
+
+	ubyte[] sendBuffer;
+
+	HttpResponse responseData;
+	private HttpClient parentClient;
+
+	size_t bodyBytesSent;
+	size_t bodyBytesReceived;
+
+	State state_;
+	State state() { return state_; }
+	State state(State s) {
+		assert(state_ != State.complete);
+		return state_ = s;
+	}
+	/// Called when data is received. Check the state to see what data is available.
+	void delegate(HttpRequest) onDataReceived;
+
+	enum State {
+		/// The request has not yet been sent
+		unsent,
+
+		/// The send() method has been called, but no data is
+		/// sent on the socket yet because the connection is busy.
+		pendingAvailableConnection,
+
+		/// The headers are being sent now
+		sendingHeaders,
+
+		/// The body is being sent now
+		sendingBody,
+
+		/// The request has been sent but we haven't received any response yet
+		waitingForResponse,
+
+		/// We have received some data and are currently receiving headers
+		readingHeaders,
+
+		/// All headers are available but we're still waiting on the body
+		readingBody,
+
+		/// The request is complete.
+		complete,
+
+		/// The request is aborted, either by the abort() method, or as a result of the server disconnecting
+		aborted
+	}
+
+	/// Sends now and waits for the request to finish, returning the response.
+	HttpResponse perform() {
+		send();
+		return waitForCompletion();
+	}
+
+	/// Sends the request asynchronously.
+	void send() {
+		sendPrivate(true);
+	}
+
+	private void sendPrivate(bool advance) {
+		if(state != State.unsent && state != State.aborted)
+			return; // already sent
+		string headers;
+
+		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
+		if(requestParameters.useHttp11)
+			headers ~= " HTTP/1.1\r\n";
+		else
+			headers ~= " HTTP/1.0\r\n";
+		headers ~= "Host: "~requestParameters.host~"\r\n";
+		if(requestParameters.userAgent.length)
+			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
+		if(requestParameters.contentType.length)
+			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
+		if(requestParameters.authorization.length)
+			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
+		if(requestParameters.bodyData.length)
+			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
+		if(requestParameters.acceptGzip)
+			headers ~= "Accept-Encoding: gzip\r\n";
+
+		foreach(header; requestParameters.headers)
+			headers ~= header ~ "\r\n";
+
+		headers ~= "\r\n";
+
+		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
+
+		// import std.stdio; writeln("******* ", sendBuffer);
+
+		responseData = HttpResponse.init;
+		responseData.requestParameters = requestParameters;
+		bodyBytesSent = 0;
+		bodyBytesReceived = 0;
+		state = State.pendingAvailableConnection;
+
+		bool alreadyPending = false;
+		foreach(req; pending)
+			if(req is this) {
+				alreadyPending = true;
+				break;
+			}
+		if(!alreadyPending) {
+			pending ~= this;
+		}
+
+		if(advance)
+			HttpRequest.advanceConnections();
+	}
+
+
+	/// Waits for the request to finish or timeout, whichever comes first.
+	HttpResponse waitForCompletion() {
+		while(state != State.aborted && state != State.complete) {
+			if(state == State.unsent)
+				send();
+			if(auto err = HttpRequest.advanceConnections())
+				throw new Exception("waitForCompletion got err " ~ to!string(err));
+		}
+
+		return responseData;
+	}
+
+	/// Aborts this request.
+	void abort() {
+		this.state = State.aborted;
+		// FIXME
+	}
+
+	HttpRequestParameters requestParameters; ///
+
+	version(arsd_http_winhttp_implementation) {
+		public static void resetInternals() {
+
+		}
+
+		static assert(0, "implementation not finished");
+	}
+
+
+	version(arsd_http_internal_implementation) {
 	private static {
 		// we manage the actual connections. When a request is made on a particular
 		// host, we try to reuse connections. We may open more than one connection per
@@ -1170,165 +1348,7 @@ class HttpRequest {
 		return stillAlive;
 	}
 
-	this() {
 	}
-
-	///
-	this(Uri where, HttpVerb method) {
-		populateFromInfo(where, method);
-	}
-
-	/// Final url after any redirections
-	string finalUrl;
-
-	void populateFromInfo(Uri where, HttpVerb method) {
-		auto parts = where;
-		finalUrl = where.toString();
-		requestParameters.method = method;
-		requestParameters.host = parts.host;
-		requestParameters.port = cast(ushort) parts.port;
-		requestParameters.ssl = parts.scheme == "https";
-		if(parts.port == 0)
-			requestParameters.port = requestParameters.ssl ? 443 : 80;
-		requestParameters.uri = parts.path.length ? parts.path : "/";
-		if(parts.query.length) {
-			requestParameters.uri ~= "?";
-			requestParameters.uri ~= parts.query;
-		}
-	}
-
-	~this() {
-	}
-
-	ubyte[] sendBuffer;
-
-	HttpResponse responseData;
-	private HttpClient parentClient;
-
-	size_t bodyBytesSent;
-	size_t bodyBytesReceived;
-
-	State state_;
-	State state() { return state_; }
-	State state(State s) {
-		assert(state_ != State.complete);
-		return state_ = s;
-	}
-	/// Called when data is received. Check the state to see what data is available.
-	void delegate(HttpRequest) onDataReceived;
-
-	enum State {
-		/// The request has not yet been sent
-		unsent,
-
-		/// The send() method has been called, but no data is
-		/// sent on the socket yet because the connection is busy.
-		pendingAvailableConnection,
-
-		/// The headers are being sent now
-		sendingHeaders,
-
-		/// The body is being sent now
-		sendingBody,
-
-		/// The request has been sent but we haven't received any response yet
-		waitingForResponse,
-
-		/// We have received some data and are currently receiving headers
-		readingHeaders,
-
-		/// All headers are available but we're still waiting on the body
-		readingBody,
-
-		/// The request is complete.
-		complete,
-
-		/// The request is aborted, either by the abort() method, or as a result of the server disconnecting
-		aborted
-	}
-
-	/// Sends now and waits for the request to finish, returning the response.
-	HttpResponse perform() {
-		send();
-		return waitForCompletion();
-	}
-
-	/// Sends the request asynchronously.
-	void send() {
-		sendPrivate(true);
-	}
-
-	private void sendPrivate(bool advance) {
-		if(state != State.unsent && state != State.aborted)
-			return; // already sent
-		string headers;
-
-		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
-		if(requestParameters.useHttp11)
-			headers ~= " HTTP/1.1\r\n";
-		else
-			headers ~= " HTTP/1.0\r\n";
-		headers ~= "Host: "~requestParameters.host~"\r\n";
-		if(requestParameters.userAgent.length)
-			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
-		if(requestParameters.contentType.length)
-			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
-		if(requestParameters.authorization.length)
-			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
-		if(requestParameters.bodyData.length)
-			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
-		if(requestParameters.acceptGzip)
-			headers ~= "Accept-Encoding: gzip\r\n";
-
-		foreach(header; requestParameters.headers)
-			headers ~= header ~ "\r\n";
-
-		headers ~= "\r\n";
-
-		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
-
-		// import std.stdio; writeln("******* ", sendBuffer);
-
-		responseData = HttpResponse.init;
-		responseData.requestParameters = requestParameters;
-		bodyBytesSent = 0;
-		bodyBytesReceived = 0;
-		state = State.pendingAvailableConnection;
-
-		bool alreadyPending = false;
-		foreach(req; pending)
-			if(req is this) {
-				alreadyPending = true;
-				break;
-			}
-		if(!alreadyPending) {
-			pending ~= this;
-		}
-
-		if(advance)
-			HttpRequest.advanceConnections();
-	}
-
-
-	/// Waits for the request to finish or timeout, whichever comes first.
-	HttpResponse waitForCompletion() {
-		while(state != State.aborted && state != State.complete) {
-			if(state == State.unsent)
-				send();
-			if(auto err = HttpRequest.advanceConnections())
-				throw new Exception("waitForCompletion got err " ~ to!string(err));
-		}
-
-		return responseData;
-	}
-
-	/// Aborts this request.
-	void abort() {
-		this.state = State.aborted;
-		// FIXME
-	}
-
-	HttpRequestParameters requestParameters; ///
 }
 
 ///

@@ -33,6 +33,21 @@
 
 	If you want it to stand alone, just always use the `Document.parseUtf8`
 	function or the constructor that takes a string.
+
+	Symbol_groups:
+
+	core_functionality =
+
+	These members provide core functionality. The members on these classes
+	will provide most your direct interaction.
+
+	bonus_functionality =
+
+	These provide additional functionality for special use cases.
+
+	implementations =
+
+	These provide implementations of other functionality.
 +/
 module arsd.dom;
 
@@ -78,6 +93,7 @@ bool isConvenientAttribute(string name) {
 
 
 /// The main document interface, including a html parser.
+/// Group: core_functionality
 class Document : FileResource {
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
 	/// included in the build as well as [arsd.characterencodings].
@@ -1423,6 +1439,7 @@ class Document : FileResource {
 }
 
 /// This represents almost everything in the DOM.
+/// Group: core_functionality
 class Element {
 	/// Returns a collection of elements by selector.
 	/// See: [Document.opIndex]
@@ -3474,6 +3491,7 @@ class Element {
 
 // FIXME: since Document loosens the input requirements, it should probably be the sub class...
 /// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+/// Group: core_functionality
 class XmlDocument : Document {
 	this(string data) {
 		contentType = "text/xml; charset=utf-8";
@@ -3491,6 +3509,7 @@ import std.string;
 /* domconvenience follows { */
 
 /// finds comments that match the given txt. Case insensitive, strips whitespace.
+/// Group: core_functionality
 Element[] findComments(Document document, string txt) {
 	return findComments(document.root, txt);
 }
@@ -3510,6 +3529,7 @@ Element[] findComments(Element element, string txt) {
 }
 
 /// An option type that propagates null. See: [Element.optionSelector]
+/// Group: implementations
 struct MaybeNullElement(SomeElementType) {
 	this(SomeElementType ele) {
 		this.element = ele;
@@ -3543,6 +3563,7 @@ struct MaybeNullElement(SomeElementType) {
 /++
 	A collection of elements which forwards methods to the children.
 +/
+/// Group: implementations
 struct ElementCollection {
 	///
 	this(Element e) {
@@ -3641,6 +3662,7 @@ struct ElementCollection {
 
 
 /// this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
+/// Group: implementations
 mixin template JavascriptStyleDispatch() {
 	///
 	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
@@ -3668,6 +3690,7 @@ mixin template JavascriptStyleDispatch() {
 /// A proxy object to do the Element class' dataset property. See Element.dataset for more info.
 ///
 /// Do not create this object directly.
+/// Group: implementations
 struct DataSet {
 	///
 	this(Element e) {
@@ -3691,6 +3714,7 @@ struct DataSet {
 }
 
 /// Proxy object for attributes which will replace the main opDispatch eventually
+/// Group: implementations
 struct AttributeSet {
 	///
 	this(Element e) {
@@ -3718,6 +3742,7 @@ struct AttributeSet {
 /// for style, i want to be able to set it with a string like a plain attribute,
 /// but also be able to do properties Javascript style.
 
+/// Group: implementations
 struct ElementStyle {
 	this(Element parent) {
 		_element = parent;
@@ -3874,6 +3899,7 @@ import std.range;
 	Document implements this interface with type = text/html (see Document.contentType for more info)
 	and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
 +/
+/// Group: bonus_functionality
 interface FileResource {
 	/// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
 	@property string contentType() const;
@@ -3885,10 +3911,12 @@ interface FileResource {
 
 
 ///.
+/// Group: bonus_functionality
 enum NodeType { Text = 3 }
 
 
 /// You can use this to do an easy null check or a dynamic cast+null check on any element.
+/// Group: core_functionality
 T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) if(is(T : Element))
 	in {}
 	out(ret) { assert(ret !is null); }
@@ -3901,6 +3929,7 @@ body {
 
 
 ///.
+/// Group: core_functionality
 class DocumentFragment : Element {
 	///.
 	this(Document _parentDocument) {
@@ -3951,6 +3980,7 @@ class DocumentFragment : Element {
 ///
 /// The output parameter can be given to append to an existing buffer. You don't have to
 /// pass one; regardless, the return value will be usable for you, with just the data encoded.
+/// Group: core_functionality
 string htmlEntitiesEncode(string data, Appender!string output = appender!string(), bool encodeNonAscii = true) {
 	// if there's no entities, we can save a lot of time by not bothering with the
 	// decoding loop. This check cuts the net toString time by better than half in my test.
@@ -4003,11 +4033,13 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 }
 
 /// An alias for htmlEntitiesEncode; it works for xml too
+/// Group: core_functionality
 string xmlEntitiesEncode(string data) {
 	return htmlEntitiesEncode(data);
 }
 
 /// This helper function is used for decoding html entities. It has a hard-coded list of entities and characters.
+/// Group: core_functionality
 dchar parseEntity(in dchar[] entity) {
 	switch(entity[1..$-1]) {
 		case "quot":
@@ -5505,6 +5537,7 @@ import std.stdio;
 /// This takes a string of raw HTML and decodes the entities into a nice D utf-8 string.
 /// By default, it uses loose mode - it will try to return a useful string from garbage input too.
 /// Set the second parameter to true if you'd prefer it to strictly throw exceptions on garbage input.
+/// Group: core_functionality
 string htmlEntitiesDecode(string data, bool strict = false) {
 	// this check makes a *big* difference; about a 50% improvement of parse speed on my test.
 	if(data.indexOf("&") == -1) // all html entities begin with &
@@ -5585,6 +5618,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	return cast(string) a; // assumeUnique is actually kinda slow, lol
 }
 
+/// Group: implementations
 abstract class SpecialElement : Element {
 	this(Document _parentDocument) {
 		super(_parentDocument);
@@ -5602,6 +5636,7 @@ abstract class SpecialElement : Element {
 }
 
 ///.
+/// Group: implementations
 class RawSource : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5634,6 +5669,7 @@ class RawSource : SpecialElement {
 	string source;
 }
 
+/// Group: implementations
 abstract class ServerSideCode : SpecialElement {
 	this(Document _parentDocument, string type) {
 		super(_parentDocument);
@@ -5663,6 +5699,7 @@ abstract class ServerSideCode : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class PhpCode : ServerSideCode {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5676,6 +5713,7 @@ class PhpCode : ServerSideCode {
 }
 
 ///.
+/// Group: implementations
 class AspCode : ServerSideCode {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5689,6 +5727,7 @@ class AspCode : ServerSideCode {
 }
 
 ///.
+/// Group: implementations
 class BangInstruction : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5728,6 +5767,7 @@ class BangInstruction : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class QuestionInstruction : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5768,6 +5808,7 @@ class QuestionInstruction : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class HtmlComment : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5811,6 +5852,7 @@ class HtmlComment : SpecialElement {
 
 
 ///.
+/// Group: implementations
 class TextNode : Element {
   public:
 	///.
@@ -5926,6 +5968,7 @@ class TextNode : Element {
 */
 
 ///.
+/// Group: implementations
 class Link : Element {
 
 	///.
@@ -6064,6 +6107,7 @@ class Link : Element {
 }
 
 ///.
+/// Group: implementations
 class Form : Element {
 
 	///.
@@ -6314,6 +6358,7 @@ class Form : Element {
 import std.conv;
 
 ///.
+/// Group: implementations
 class Table : Element {
 
 	///.
@@ -6553,6 +6598,7 @@ class Table : Element {
 }
 
 /// Represents a table row element - a <tr>
+/// Group: implementations
 class TableRow : Element {
 	///.
 	this(Document _parentDocument) {
@@ -6565,6 +6611,7 @@ class TableRow : Element {
 }
 
 /// Represents anything that can be a table cell - <td> or <th> html.
+/// Group: implementations
 class TableCell : Element {
 	///.
 	this(Document _parentDocument, string _tagName) {
@@ -6601,6 +6648,7 @@ class TableCell : Element {
 
 
 ///.
+/// Group: implementations
 class MarkupException : Exception {
 
 	///.
@@ -6610,6 +6658,7 @@ class MarkupException : Exception {
 }
 
 /// This is used when you are using one of the require variants of navigation, and no matching element can be found in the tree.
+/// Group: implementations
 class ElementNotFoundException : Exception {
 
 	/// type == kind of element you were looking for and search == a selector describing the search.
@@ -6624,6 +6673,7 @@ class ElementNotFoundException : Exception {
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
 ///
 /// Easiest way to construct it is like this: `auto html = Html("<p>hello</p>");`
+/// Group: core_functionality
 struct Html {
 	/// This string holds the actual html. Use it to retrieve the contents.
 	string source;
@@ -7294,19 +7344,24 @@ int intFromHex(string hex) {
 	}
 
 	/++
-		Represents a parsed CSS selector.
+		Represents a parsed CSS selector. You never have to use this directly, but you can if you know it is going to be reused a lot to avoid a bit of repeat parsing.
 
 		See_Also:
-			[Element.querySelector]
-			[Element.querySelectorAll]
-			[Document.querySelector]
-			[Document.querySelectorAll]
+			$(LIST
+				* [Element.querySelector]
+				* [Element.querySelectorAll]
+				* [Element.matches]
+				* [Element.closest]
+				* [Document.querySelector]
+				* [Document.querySelectorAll]
+			)
 	+/
+	/// Group: core_functionality
 	struct Selector {
 		SelectorComponent[] components;
 		string original;
 		/++
-			Parses the selector string and returns the usable structure.
+			Parses the selector string and constructs the usable structure.
 		+/
 		this(string cssSelector) {
 			components = parseSelectorString(cssSelector);
@@ -8709,11 +8764,11 @@ unittest {
 }
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2019
+Copyright: Adam D. Ruppe, 2010 - 2020
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 
-        Copyright Adam D. Ruppe 2010-2019.
+        Copyright Adam D. Ruppe 2010-2020.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)

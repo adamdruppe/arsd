@@ -3,7 +3,7 @@
 	"targetType": "library",
 	"importPaths": ["."],
 	"sourceFiles": ["package.d"],
-	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more.",
+	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability.",
 	"authors": ["Adam D. Ruppe"],
 	"license":"BSL-1.0",
 	"dependencies": {

@@ -113,7 +113,7 @@ bool processTar(
 	if(*bytesRemainingOnCurrentFile) {
 		bool isNew = *bytesRemainingOnCurrentFile == header.size();
 		if(*bytesRemainingOnCurrentFile < 512) {
-			handleData(header, isNew, true, dataBuffer[0 .. *bytesRemainingOnCurrentFile]);
+			handleData(header, isNew, true, dataBuffer[0 .. cast(size_t) *bytesRemainingOnCurrentFile]);
 			*bytesRemainingOnCurrentFile = 0;
 		} else {
 			handleData(header, isNew, false, dataBuffer[]);
