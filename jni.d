@@ -1132,6 +1132,10 @@ private enum ImportImplementationString = q{
 		}
 };
 
+import std.string;
+static immutable ImportImplementationString_static = ImportImplementationString.replace("STATIC", "Static");
+static immutable ImportImplementationString_not = ImportImplementationString.replace("STATIC", "");
+
 private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 	import std.traits;
 
@@ -1197,8 +1201,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 
 		auto jobj = T.internalJavaClassHandle_;
 
-		import std.string;
-		mixin(ImportImplementationString.replace("STATIC", "Static"));
+		mixin(ImportImplementationString_static);
 	}
 	else
 	pragma(mangle, method.mangleof)
@@ -1222,8 +1225,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 				throw new Exception("Cannot find Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
 		}
 
-		import std.string;
-		mixin(ImportImplementationString.replace("STATIC", ""));
+		mixin(ImportImplementationString_not);
 	}
 }
 
