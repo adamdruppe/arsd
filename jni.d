@@ -394,6 +394,7 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	foreach(method; cf.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
 		if(jtc.nativesAreImports) {
+			native = false; // kinda hacky but meh
 			if(!jtc.doImports)
 				continue;
 		} else {
@@ -411,7 +412,7 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 			auto name = method.name;
 
 			// FIXME: maybe check name for other D keywords but since so many overlap with java I think we will be ok most the time for now
-			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString") {
+			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString" || name == "init") {
 				// toString is special btw in order to avoid a dmd bug
 				port ~= " @JavaName(\""~name~"\")";
 				name ~= "_";
@@ -457,7 +458,9 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 
 	if(!isInterface)
 		dco ~= "\tmixin IJavaObjectImplementation!(false);\n";
-	dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
+	//dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
+	// the following saves some compile time of the bindings; might as well do some calculations ahead of time
+	dco ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ "\";\n";
 
 	dco ~= "}\n";
 
@@ -1605,7 +1608,7 @@ mixin template ImportExportImpl(Class) {
 	private static arsd.jni.JavaBridge!(Class) _javaDBridge;
 }
 
-class JavaBridge(Class) {
+final class JavaBridge(Class) {
 	static foreach(memberName; __traits(derivedMembers, Class)) {
 		// validations
 		static if(is(typeof(__traits(getMember, Class, memberName).offsetof)))
