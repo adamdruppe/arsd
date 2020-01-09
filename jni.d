@@ -120,6 +120,11 @@
 +/
 module arsd.jni;
 
+// I need to figure out some way that users can set this. maybe. or dynamically fall back from newest to oldest we can handle
+__gshared auto JNI_VERSION_DESIRED = JNI_VERSION_1_6;
+
+// i could perhaps do a struct to bean thingy
+
 /*
 	New Java classes:
 
@@ -176,6 +181,9 @@ module arsd.jni;
 	But I could prolly do something like javaLambda!Interface(x => foo)
 	but woof that isn't so much different than an anonymous class anymore.
 +/
+
+/// hack used by the translator for default constructors not really being a default constructor
+struct Default {}
 
 /+
 final class CharSequence : JavaClass!("java.lang", CharSequence) {
@@ -239,6 +247,7 @@ interface CharSequence : JavaInterface!("java.lang", CharSequence) {
 +/
 interface JavaInterface(string javaPackage, CRTP) : IJavaObject {
 	mixin JavaPackageId!(javaPackage, CRTP);
+	mixin JavaInterfaceMembers!(null);
 }
 
 /// I may not keep this. But for now if you need a dummy class in D
@@ -273,8 +282,14 @@ private string getJavaName(alias a)() {
 	return name;
 }
 
+/+
+	to benchmark build stats
+	cd ~/Android/d_android/java_bindings/android/java
+	/usr/bin/time -f "%E %M"  dmd -o- -c `find . | grep -E  '\.d$'` ~/arsd/jni.d -I../..
++/
+
 /+ Java class file definitions { +/
-// see: https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6
+// see: https://docs.oracle.com/javase/specs/jvms/se13/html/jvms-4.html
 
 version(WithClassLoadSupport) {
 import arsd.declarativeloader;
@@ -287,14 +302,37 @@ void jarToD()(string jarPath, string dPackagePrefix, string outputDirectory, Jav
 
 	auto zip = new ZipArchive(read(jarPath));
 
+	ClassFile[string] allClasses;
+
 	foreach(name, am; zip.directory) {
 		if(name.endsWith(".class")) {
-			// FIXME: use classFilter
 			zip.expand(am);
-			rawClassBytesToD(cast(ubyte[]) am.expandedData, dPackagePrefix, outputDirectory, jtc);
-			am.expandedData = null; // let the GC take it if it wants
+
+			ClassFile cf;
+
+			auto classBytes = cast(ubyte[]) am.expandedData;
+			auto originalClassBytes = classBytes;
+
+			debug try {
+				cf.loadFrom!ClassFile(classBytes);
+			} catch(Exception e) {
+				std.file.write("spam.bin", originalClassBytes);
+				throw e;
+			} else
+				cf.loadFrom!ClassFile(classBytes);
+
+			string className = cf.className.idup;
+
+			if(classFilter is null || classFilter(className))
+				allClasses[className] = cf;
+
+			//rawClassBytesToD(cast(ubyte[]) am.expandedData, dPackagePrefix, outputDirectory, jtc);
+			//am.expandedData = null; // let the GC take it if it wants
 		}
 	}
+
+	foreach(name, cf; allClasses)
+		rawClassStructToD(cf, dPackagePrefix, outputDirectory, jtc, allClasses);
 }
 
 private inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
@@ -323,16 +361,22 @@ struct JavaTranslationConfig {
 	bool nativesAreImports = true;
 }
 
+/// translator
+void rawClassBytesToD()(ubyte[] bytes, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc) {
+	ClassFile f;
+	f.loadFrom(bytes);
+	rawClassStructToD(f, dPackagePrefix, outputDirectory, jtc, null);
+}
+
 /// translator.
-void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc) {
+void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputDirectory, JavaTranslationConfig jtc, ClassFile[string] allClasses) {
 	import std.file;
 	import std.path;
 	import std.algorithm;
 	import std.array;
 	import std.string;
 
-	ClassFile cf;
-	cf.loadFrom!ClassFile(classBytes);
+	string importPrefix = "import";
 
 	const(char)[] javaPackage;
 	const(char)[] lastClassName;
@@ -364,6 +408,9 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 		filename ~= "/";
 	filename ~= lastClassName ~ ".d";
 
+	if(filename.indexOf("-") != -1)
+		return;
+
 
 	string dco;
 
@@ -373,6 +420,7 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	thisModule ~= lastClassName;
 
 	bool isInterface = (cf.access_flags & 0x0200) ? true : false;
+	bool isAbstract = (cf.access_flags & ClassFile.ACC_ABSTRACT) ? true : false;
 
 	if(jtc.inlineImplementations) {
 		dco = "module " ~ thisModule ~ ";\n\n";
@@ -380,17 +428,109 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 		dco ~= "module " ~ thisModule ~ "_d_interface;\n";
 	}
 
-	dco ~= "import arsd.jni : IJavaObjectImplementation, JavaPackageId, JavaName, IJavaObject, ImportExportImpl;\n\n";
+	dco ~= "import arsd.jni : IJavaObjectImplementation, JavaPackageId, JavaName, IJavaObject, ImportExportImpl, JavaInterfaceMembers;\n";
+	dco ~= "static import arsd.jni;\n\n";
 
 	string[string] javaPackages;
+	string[string] javaPackagesReturn;
+	string[string] javaPackagesArguments;
 
 	string dc;
 	if(lastClassName != originalClassName)
 		dc ~= "@JavaName(\""~originalClassName~"\")\n";
 
+	bool outputMixinTemplate = false;
+
+	string mainThing;
+	string helperThing;
+
 	// so overriding Java classes from D is iffy and with separate implementation
 	// non final leads to linker errors anyway...
-	dc ~= (isInterface ? "interface " : "final class ") ~ lastClassName ~ " : IJavaObject {\n";
+	//mainThing ~= (isInterface ? "interface " : (jtc.inlineImplementations ? "class " : isAbstract ? "abstract class " : "final class ")) ~ lastClassName ~ " : ";
+
+	// not putting super class on inline implementations since that forces vtable...
+	if(jtc.inlineImplementations) {
+		auto scn = cf.superclassName;
+		//if(!scn.startsWith("java/")) {
+			// superclasses need the implementation too so putting it in the return list lol
+			if(scn.length && scn != "java/lang/Object") { // && scn in allClasses) {
+				mainThing ~= javaObjectToDTypeString(scn, javaPackages, javaPackagesReturn, importPrefix);
+				mainThing ~= ", ";
+			}
+		//}
+	}
+
+	foreach(name; cf.interfacesNames) {
+		//if(name.startsWith("java/"))
+			//continue; // these probably aren't important to D and can really complicate version management
+		//if(name !in allClasses)
+			//continue;
+		mainThing ~= javaObjectToDTypeString(name, javaPackages, javaPackagesReturn, importPrefix);
+		mainThing ~= ", ";
+	}
+
+	mainThing ~= "arsd.jni.IJavaObject";
+
+	mainThing ~= " {\n";
+
+	//mainThing ~= "\talias _d_helper this;\n";
+	mainThing ~= "\tfinal auto opDispatch(string name, Args...)(Args args) if(name != \"opCall\") { auto local = _d_helper(); return __traits(getMember, local, name)(args); }\n";
+	if(isInterface)
+		mainThing ~= "\tfinal auto _d_helper()() { return getDProxy(); }\n";
+	else {
+		mainThing ~= "\t" ~ lastClassName ~ "_d_methods _d_proxy_;\n";
+		mainThing ~= "\tfinal auto _d_helper()() {\n";
+		mainThing ~= "\t\tif(getDProxy() is null) _d_proxy_ = arsd.jni.createDProxy!("~lastClassName~"_d_methods)(this);\n";
+		mainThing ~= "\t\treturn getDProxy();\n";
+		mainThing ~= "\t}\n";
+		mainThing ~= "\toverride " ~ lastClassName ~ "_d_methods getDProxy() { return _d_proxy_; }\n";
+	}
+
+
+	helperThing ~= "interface " ~ lastClassName ~ "_d_methods : ";
+
+	// not putting super class on inline implementations since that forces vtable...
+	if(jtc.inlineImplementations) {
+		auto scn = cf.superclassName;
+		//if(!scn.startsWith("java/")) {
+			// superclasses need the implementation too so putting it in the return list lol
+			if(scn.length && scn != "java/lang/Object") { // && scn in allClasses) {
+				helperThing ~= javaObjectToDTypeString(scn, javaPackages, javaPackagesReturn, importPrefix);
+				helperThing ~= "_d_methods, ";
+			}
+		//}
+	}
+
+	foreach(name; cf.interfacesNames) {
+		//if(name.startsWith("java/"))
+			//continue; // these probably aren't important to D and can really complicate version management
+		//if(name !in allClasses)
+			//continue;
+		helperThing ~= javaObjectToDTypeString(name, javaPackages, javaPackagesReturn, importPrefix);
+		helperThing ~= "_d_methods, ";
+	}
+
+	helperThing ~= "IJavaObject";
+
+	helperThing ~= " {\n";
+
+	helperThing ~= "\tmixin JavaInterfaceMembers!(\"L" ~ cn ~ ";\");\n";
+
+
+
+
+
+
+
+
+
+	string tm;
+	string[string] tmpackages;
+	string[string] tmpackagesr;
+	string[string] tmpackagesa;
+
+
+	string[string] mentioned;
 	foreach(method; cf.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
 		if(jtc.nativesAreImports) {
@@ -406,13 +546,36 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 		auto port = native ? "@Export" : "@Import";
 		if(method.flags & 1) { // public
 
-			if(method.flags & 0x0008)
+			bool addToMixinTemplate;
+
+			bool wasStatic;
+
+			bool maybeOverride = false;// !isInterface;
+			if(method.flags & 0x0008) {
 				port ~= " static";
+				maybeOverride = false;
+				wasStatic = true;
+			}
+			if(method.flags & method_info.ACC_ABSTRACT) {
+				maybeOverride = false;
+				//if(!isInterface)
+					port ~= " abstract";
+			} else {
+				// this represents a default implementation in a Java interface
+				// D cannot express this... so I need to add it to the mixin template
+				// associated with this interface as well.
+				if(isInterface && (!(method.flags & 0x0008))) {
+					addToMixinTemplate = true;
+				}
+			}
+
+			if(maybeOverride && method.isOverride(allClasses))
+				port ~= " override";
 
 			auto name = method.name;
 
 			// FIXME: maybe check name for other D keywords but since so many overlap with java I think we will be ok most the time for now
-			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString" || name == "init") {
+			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString" || name == "init" || name == "lazy" || name == "immutable" || name == "is" || name == "function" || name == "delegate" || name == "template") {
 				// toString is special btw in order to avoid a dmd bug
 				port ~= " @JavaName(\""~name~"\")";
 				name ~= "_";
@@ -422,6 +585,10 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 			name = name.replace("$", "_");
 
 			bool ctor = name == "<init>";
+			if(ctor && isInterface) {
+				ctor = false;
+				name = "CONSTRUCTOR";
+			}
 
 			auto sig = method.signature;
 
@@ -429,18 +596,69 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 			assert(lidx != -1);
 			auto retJava = sig[lidx + 1 .. $];
 			auto argsJava = sig[1 .. lidx];
+			auto retJava2 = retJava;
+			auto argsJava2 = argsJava;
 
-			string ret = ctor ? "" : javaSignatureToDTypeString(retJava, javaPackages);
-			string args = javaSignatureToDTypeString(argsJava, javaPackages);
+			string ret = ctor ? "" : javaSignatureToDTypeString(retJava, javaPackages, javaPackagesReturn, importPrefix);
+			string args = javaSignatureToDTypeString(argsJava, javaPackages, javaPackagesArguments, importPrefix);
 
 			if(!jtc.inlineImplementations) {
 				if(ctor && args.length == 0)
-					continue; // FIXME skipping default ctor to avoid factory from trying to get to it in separate compilation
+					args = "arsd.jni.Default";
 			}
 
-			dc ~= "\t"~port~" " ~ ret ~ (ret.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args~")"~(native ? " {}" : ";")~"\n";
+			string men = cast(immutable) (name ~ "(" ~ args ~ ")");
+			if(men in mentioned)
+				continue; // avoid duplicate things. idk why this is there though
+			mentioned[men] = men;
+
+			string proto = cast(string) ("\t"~port~" " ~ ret ~ (ret.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args~")"~(native ? " { assert(0); }" : ";")~"\n");
+			if(wasStatic || ctor)
+				mainThing ~= proto;
+			else
+				helperThing ~= proto;
+
+			if(addToMixinTemplate) {
+				string pfx = "tmimport";
+				string ret1 = ctor ? "" : javaSignatureToDTypeString(retJava2, tmpackages, tmpackagesr, pfx);
+				string args1 = javaSignatureToDTypeString(argsJava2, tmpackages, tmpackagesa, pfx);
+				tm ~= "\t\t"~port~" " ~ ret1 ~ (ret1.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args1~"){ assert(0); }\n";
+			}
 		}
 	}
+
+	if(!isInterface) {
+		mainThing ~= "\tmixin IJavaObjectImplementation!(false);\n";
+		mainThing ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ ";\";\n";
+	} else {
+		mainThing ~= "\tmixin JavaInterfaceMembers!(\"L" ~ cn ~ ";\");\n";
+		if(outputMixinTemplate && tm.length) {
+			mainThing ~= "\tmixin template JavaDefaultImplementations() {\n";
+
+			foreach(pkg, prefix; tmpackages) {
+				auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
+				if(jtc.inlineImplementations)
+					tm ~= "\t\timport " ~ prefix ~ " = " ~ m ~ ";\n";
+				else
+					tm ~= "\t\timport " ~ prefix ~ " = " ~ m ~ "_d_interface;\n";
+			}
+			if(!jtc.inlineImplementations)
+			foreach(pkg, prefix; tmpackagesr) {
+				auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
+				tm ~= "\t\timport impl_" ~ prefix ~ " = " ~ m ~ ";\n";
+			}
+
+			mainThing ~= tm;
+			mainThing ~= "\t}\n";
+		}
+	}
+
+
+	mainThing ~= "}\n\n";
+	helperThing ~= "}\n\n";
+	dc ~= mainThing;
+	dc ~= "\n\n";
+	dc ~= helperThing;
 
 	foreach(pkg, prefix; javaPackages) {
 		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
@@ -456,25 +674,26 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 		dco ~= "\n";
 	dco ~= dc;
 
-	if(!isInterface)
-		dco ~= "\tmixin IJavaObjectImplementation!(false);\n";
 	//dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
 	// the following saves some compile time of the bindings; might as well do some calculations ahead of time
-	dco ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ "\";\n";
-
-	dco ~= "}\n";
+	//dco ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ ";\";\n";
 
 	if(jtc.inlineImplementations) {
-		if(!isInterface)
-			dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
+		dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
 		std.file.write(filename, dco);
 	} else {
 		string impl;
 		impl ~= "module " ~ thisModule ~ ";\n";
 		impl ~= "public import " ~ thisModule ~ "_d_interface;\n\n";
-		if(!isInterface) {
-			impl ~= "import arsd.jni : ImportExportImpl;\n";
-			impl ~= "mixin ImportExportImpl!"~lastClassName~";\n";
+
+		impl ~= "import arsd.jni : ImportExportImpl;\n";
+		impl ~= "mixin ImportExportImpl!"~lastClassName~";\n";
+
+		impl ~= "\n";
+		foreach(pkg, prefix; javaPackagesReturn) {
+			// I also need to import implementations of return values so they just work
+			auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
+			impl ~= "import " ~ prefix ~ " = " ~ m ~ ";\n";
 		}
 
 		std.file.write(filename, impl);
@@ -482,7 +701,50 @@ void rawClassBytesToD()(ubyte[] classBytes, string dPackagePrefix, string output
 	}
 }
 
-string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaPackages) {
+string javaObjectToDTypeString(const(char)[] input, ref string[string] javaPackages, ref string[string] detailedPackages, string importPrefix) {
+
+	string ret;
+
+	if(input == "java/lang/String") {
+		ret = "string"; // or could be wstring...
+	} else if(input == "java/lang/Object") {
+		ret = "IJavaObject";
+	} else { 
+		// NOTE rughs strings in this file
+		string type = input.replace("$", "_").idup;
+
+		string jp, cn, dm;
+
+		auto idx = type.lastIndexOf("/");
+		if(idx != -1) {
+			jp = type[0 .. idx].replace("/", ".").fixupKeywordsInJavaPackageName;
+			cn = type[idx + 1 .. $].fixupJavaClassName;
+			dm = jp ~ "." ~ cn;
+		} else {
+			cn = type;
+			dm = jp;
+		}
+
+		string prefix;
+		if(auto n = dm in javaPackages) {
+			prefix = *n;
+		} else {
+			import std.conv;
+			// FIXME: this scheme sucks, would prefer something deterministic
+			prefix = importPrefix ~ to!string(javaPackages.keys.length);
+			//prefix = dm.replace(".", "0");
+
+			javaPackages[dm] = prefix;
+			detailedPackages[dm] = prefix;
+		}
+
+		ret = prefix ~ (prefix.length ? ".":"") ~ cn;
+	}
+
+	return ret;
+}
+
+string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaPackages, ref string[string] detailedPackages, string importPrefix) {
 	string all;
 
 	while(js.length) {
@@ -490,7 +752,7 @@ string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaP
 		switch(js[0]) {
 			case '[':
 				js = js[1 .. $];
-				type = javaSignatureToDTypeString(js, javaPackages);
+				type = javaSignatureToDTypeString(js, javaPackages, detailedPackages, importPrefix);
 				type ~= "[]";
 			break;
 			case 'L':
@@ -499,39 +761,7 @@ string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaP
 				type = js[1 .. idx].idup;
 				js = js[idx + 1 .. $];
 
-				if(type == "java/lang/String") {
-					type = "string"; // or could be wstring...
-				} else if(type == "java/lang/Object") {
-					type = "IJavaObject";
-				} else { 
-					// NOTE rughs strings in this file
-					type = type.replace("$", "_");
-
-					string jp, cn, dm;
-
-					idx = type.lastIndexOf("/");
-					if(idx != -1) {
-						jp = type[0 .. idx].replace("/", ".").fixupKeywordsInJavaPackageName;
-						cn = type[idx + 1 .. $].fixupJavaClassName;
-						dm = jp ~ "." ~ cn;
-					} else {
-						cn = type;
-						dm = jp;
-					}
-
-					string prefix;
-					if(auto n = dm in javaPackages) {
-						prefix = *n;
-					} else {
-						import std.conv;
-						// FIXME: this scheme sucks, would prefer something deterministic
-						prefix = "import" ~ to!string(javaPackages.keys.length);
-
-						javaPackages[dm] = prefix;
-					}
-
-					type = prefix ~ (prefix.length ? ".":"") ~ cn;
-				}
+				type = javaObjectToDTypeString(type, javaPackages, detailedPackages, importPrefix);
 			break;
 			case 'V': js = js[1 .. $]; type = "void"; break;
 			case 'Z': js = js[1 .. $]; type = "bool"; break;
@@ -542,7 +772,7 @@ string javaSignatureToDTypeString(ref const(char)[] js, ref string[string] javaP
 			case 'F': js = js[1 .. $]; type = "float"; break;
 			case 'D': js = js[1 .. $]; type = "double"; break;
 			case 'I': js = js[1 .. $]; type = "int"; break;
-			default: assert(0);
+			default: assert(0, js);
 		}
 
 		if(all.length) all ~= ", ";
@@ -602,7 +832,7 @@ struct cp_info {
 		@BigEndian:
 		double bytes;
 	}
-	enum CONSTANT_NameAndType = 12; // sizeof = 2
+	enum CONSTANT_NameAndType = 12; // sizeof = 4
 	struct CONSTANT_NameAndType_info {
 		@BigEndian:
 		ushort name_index;
@@ -631,6 +861,18 @@ struct cp_info {
 		ushort bootstrap_method_attr_index;
 		ushort name_and_type_index;
 	}
+	enum CONSTANT_Module = 19;
+	struct CONSTANT_Module_info {
+		@BigEndian:
+		ushort name_index;
+	}
+	enum CONSTANT_Package = 20;
+	struct CONSTANT_Package_info {
+		@BigEndian:
+		ushort name_index;
+	}
+
+
 
 	ubyte   tag;
 	@Tagged!(tag)
@@ -649,11 +891,20 @@ struct cp_info {
 		@Tag(CONSTANT_MethodHandle) CONSTANT_MethodHandle_info methodHandle_info;
 		@Tag(CONSTANT_MethodType) CONSTANT_MethodType_info methodType_info;
 		@Tag(CONSTANT_InvokeDynamic) CONSTANT_InvokeDynamic_info invokeDynamic_info;
+		@Tag(CONSTANT_Module) CONSTANT_Module_info module_info;
+		@Tag(CONSTANT_Package) CONSTANT_Package_info package_info;
 	}
 	Info info;
 
 	bool takesTwoSlots() {
 		return (tag == CONSTANT_Long || tag == CONSTANT_Double);
+	}
+
+	string toString() {
+		if(tag == CONSTANT_Utf8)
+			return cast(string) info.utf8_info.bytes;
+		import std.format;
+		return format("cp_info(%s)", tag);
 	}
 }
 
@@ -724,7 +975,17 @@ struct ClassFile {
 	}
 
 	const(char)[] superclassName() {
-		return this.constant(this.constant(this.super_class).info.class_info.name_index).info.utf8_info.bytes;
+		if(this.super_class)
+			return this.constant(this.constant(this.super_class).info.class_info.name_index).info.utf8_info.bytes;
+		return null;
+	}
+
+	const(char)[][] interfacesNames() {
+		typeof(return) ret;
+		foreach(iface; interfaces) {
+			ret ~= this.constant(this.constant(iface).info.class_info.name_index).info.utf8_info.bytes;
+		}
+		return ret;
 	}
 
 	Method[] methodsListing() {
@@ -734,15 +995,40 @@ struct ClassFile {
 			m.name = this.constant(met.name_index).info.utf8_info.bytes;
 			m.signature = this.constant(met.descriptor_index).info.utf8_info.bytes;
 			m.flags = met.access_flags;
+			m.cf = &this;
 			ms ~= m;
 		}
 		return ms;
+	}
+
+	bool hasConcreteMethod(const(char)[] name, const(char)[] signature, ClassFile[string] allClasses) {
+		// I don't really care cuz I don't use the same root in D
+		if(this.className == "java/lang/Object")
+			return false;
+
+		foreach(m; this.methodsListing) {
+			if(m.name == name)// && m.signature == signature)
+				return true;
+				//return (m.flags & method_info.ACC_ABSTRACT) ? false : true; // abstract impls do not count as methods as far as overrides are concerend...
+		}
+
+		if(auto s = this.superclassName in allClasses)
+			return s.hasConcreteMethod(name, signature, allClasses);
+		return false;
 	}
 
 	static struct Method {
 		const(char)[] name;
 		const(char)[] signature;
 		ushort flags;
+		ClassFile* cf;
+		bool isOverride(ClassFile[string] allClasses) {
+			if(name == "<init>")
+				return false;
+			if(auto s = cf.superclassName in allClasses)
+				return s.hasConcreteMethod(name, signature, allClasses);
+			return false;
+		}
 	}
 
 
@@ -824,14 +1110,14 @@ export jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 	activeJvm = vm;
 
 	JNIEnv* env;
-	if ((*vm).GetEnv(vm, cast(void**) &env, JNI_VERSION_1_6) != JNI_OK) {
+	if ((*vm).GetEnv(vm, cast(void**) &env, JNI_VERSION_DESIRED) != JNI_OK) {
 		return JNI_ERR;
 	}
 
 	try {
 		foreach(init; classInitializers_)
 			if(init(env) != 0)
-				return JNI_ERR;
+				{}//return JNI_ERR;
 		foreach(init; newClassInitializers_)
 			if(init(env) != 0)
 				return JNI_ERR;
@@ -841,7 +1127,7 @@ export jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 		return JNI_ERR;
 	}
 
-	return JNI_VERSION_1_6;
+	return JNI_VERSION_DESIRED;
 }
 extern(System)
 export void JNI_OnUnload(JavaVM* vm, void* reserved) {
@@ -947,7 +1233,7 @@ auto createJvm()() {
 	//options[1].optionString = `-Djava.class.path=c:\Users\me\program\jni\`; /* user classes */
 	//options[2].optionString = `-Djava.library.path=c:\Users\me\program\jdk-13.0.1\lib\`;  /* set native library path */
 
-	vm_args.version_ = JNI_VERSION_1_6;
+	vm_args.version_ = JNI_VERSION_DESIRED;
 	vm_args.options = options.ptr;
 	vm_args.nOptions = cast(int) options.length;
 	vm_args.ignoreUnrecognized = true;
@@ -1161,17 +1447,27 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 			} else {
 				jc = T.internalJavaClassHandle_;
 			}
-			_jmethodID = (*env).GetMethodID(env, jc,
-				"<init>",
-				// java method string is (args)ret
-				("(" ~ DTypesToJniString!(typeof(args)) ~ ")V\0").ptr
-			);
+			static if(args.length == 1 && is(typeof(args[0]) == arsd.jni.Default))
+				_jmethodID = (*env).GetMethodID(env, jc,
+					"<init>",
+					// java method string is (args)ret
+					("()V\0").ptr
+				);
+			else
+				_jmethodID = (*env).GetMethodID(env, jc,
+					"<init>",
+					// java method string is (args)ret
+					("(" ~ DTypesToJniString!(typeof(args)) ~ ")V\0").ptr
+				);
 
 			if(!_jmethodID)
 				throw new Exception("Cannot find static Java method " ~ T.stringof ~ "." ~ __traits(identifier, method));
 		}
 
-		auto o = (*env).NewObject(env, T.internalJavaClassHandle_, _jmethodID, DDataToJni(env, args).args);
+		static if(args.length == 1 && is(typeof(args[0]) == arsd.jni.Default))
+			auto o = (*env).NewObject(env, T.internalJavaClassHandle_, _jmethodID);
+		else
+			auto o = (*env).NewObject(env, T.internalJavaClassHandle_, _jmethodID, DDataToJni(env, args).args);
 		this_.internalJavaHandle_ = o;
 		return this_;
 	}
@@ -1582,7 +1878,6 @@ interface IJavaObject {
 
 	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods. Only put these on implementation classes, not interfaces.
 	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these. Only put these on implementation classes, not interfaces.
-
 }
 
 static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == interface)) {
@@ -1595,17 +1890,51 @@ static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T ==
 }
 
 static auto fromExistingJavaObject(T)(jobject o) if(is(T == interface)) {
-	static class Dummy : IJavaObject {
+	import std.traits;
+	static class Dummy : T {
+		static foreach(memberName; __traits(allMembers, T)) {
+			static foreach(idx, overload; __traits(getOverloads, T, memberName))
+			static if(!__traits(isStaticFunction, overload))
+				static foreach(attr; __traits(getAttributes, overload)) {
+			//static if(!__traits(isStaticFunction, __traits(getMember, T, memberName)))
+				//static foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {
+					static if(is(attr == IJavaObject.Import)) {
+						//mixin("@Import override ReturnType!(__traits(getMember, T, memberName)) " ~ memberName ~ "(Parameters!(__traits(getMember, T, memberName)));");
+						mixin("@Import override ReturnType!overload " ~ memberName ~ "(Parameters!overload);");
+					}
+				}
+		}
+
 		mixin IJavaObjectImplementation!(false);
-		mixin JavaPackageId!("java.lang", "Object");
+
+		static if(!__traits(compiles, T._javaParameterString))
+			mixin JavaPackageId!("java.lang", "Object");
 	}
-	return cast(T) cast(void*) fromExistingJavaObject!Dummy(o); // FIXME this is so wrong
+	JavaBridge!Dummy bridge; // just to instantiate the impl template
+	return fromExistingJavaObject!Dummy(o);
 }
 
 
-mixin template ImportExportImpl(Class) {
+mixin template ImportExportImpl(Class) if(is(Class == class)) {
 	static import arsd.jni;
 	private static arsd.jni.JavaBridge!(Class) _javaDBridge;
+}
+
+mixin template ImportExportImpl(Interface) if(is(Interface == interface)) {
+	static import arsd.jni;
+	private static arsd.jni.JavaBridgeForInterface!(Interface) _javaDBridge;
+}
+
+final class JavaBridgeForInterface(Interface) {
+	// for interfaces, we do need to implement static members, but nothing else
+	static foreach(memberName; __traits(derivedMembers, Interface)) {
+		static foreach(oi, overload; __traits(getOverloads, Interface, memberName))
+		static if(__traits(isStaticFunction, overload))
+		static foreach(attr; __traits(getAttributes, overload)) {
+			static if(is(attr == IJavaObject.Import))
+				mixin JavaImportImpl!(Interface, overload, oi);
+		}
+	}
 }
 
 final class JavaBridge(Class) {
@@ -1657,19 +1986,48 @@ class JavaClass(string javaPackage, CRTP, Parent = void, bool isNewClass = false
 	mixin JavaPackageId!(javaPackage, CRTP);
 }
 
+mixin template JavaInterfaceMembers(string javaName) {
+	static import arsd.jni;
+	/*protected*/ static arsd.jni.jclass internalJavaClassHandle_;
+	static if(javaName !is null) {
+		static assert(javaName[0] == 'L' && javaName[$-1] == ';');
+		static immutable string _javaParameterString = javaName;
+	}
+}
+
 mixin template IJavaObjectImplementation(bool isNewClass) {
 	static import arsd.jni;
 
-	/*protected*/ arsd.jni.jobject internalJavaHandle_;
-	/*protected*/ arsd.jni.jobject getJavaHandle() { return internalJavaHandle_; }
+	/+
+	import arsd.jni : IJavaObjectSeperate; // WTF the FQN in the is expression didn't work
+	static if(is(typeof(this) : IJavaObjectSeperate!(ImplInterface), ImplInterface)) {
+		ImplInterface _d_helper_;
+		override ImplInterface _d_helper() { return _d_helper_; }
+		override void _d_helper(ImplInterface i) { _d_helper_ = i; }
+	}
+	+/
 
-	__gshared static /*protected*/ /*immutable*/ arsd.jni.JNINativeMethod[] nativeMethodsData_;
+	/+
+	static if(is(typeof(this) S == super))
+	static foreach(_superInterface; S)
+	static if(is(_superInterface == interface))
+	static if(__traits(compiles, _superInterface.JavaDefaultImplementations)) {
+		//pragma(msg, "here");
+		mixin _superInterface.JavaDefaultImplementations;
+	}
+	+/
+
+	/*protected*/ arsd.jni.jobject internalJavaHandle_;
+	/*protected*/ override arsd.jni.jobject getJavaHandle() { return internalJavaHandle_; }
+
 	/*protected*/ static arsd.jni.jclass internalJavaClassHandle_;
+	__gshared static /*protected*/ /*immutable*/ arsd.jni.JNINativeMethod[] nativeMethodsData_;
 	protected static int initializeInJvm_(arsd.jni.JNIEnv* env) {
 
 		import core.stdc.stdio;
 
 		static if(isNewClass) {
+			static assert(0, "not really implemented");
 			auto aje = arsd.jni.ActivateJniEnv(env);
 
 			import std.file;
@@ -1678,6 +2036,7 @@ mixin template IJavaObjectImplementation(bool isNewClass) {
 			bytes = bytes.replace(cast(byte[]) "Test2", cast(byte[]) "Test3");
 			auto loader = arsd.jni.ClassLoader.getSystemClassLoader().getJavaHandle();
 
+			// doesn't actually work on Android, they didn't implement this function :( :( :(
 			internalJavaClassHandle_ = (*env).DefineClass(env, "wtf/Test3", loader, bytes.ptr, cast(int) bytes.length);
 		} else {
 			internalJavaClassHandle_ = (*env).FindClass(env, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
@@ -1686,7 +2045,7 @@ mixin template IJavaObjectImplementation(bool isNewClass) {
 		if(!internalJavaClassHandle_) {
 			(*env).ExceptionDescribe(env);
 			(*env).ExceptionClear(env);
-			fprintf(stderr, "Cannot %s Java class for %s\n", isNewClass ? "create".ptr : "find".ptr, typeof(this).stringof.ptr);
+			fprintf(stderr, "Cannot %s Java class for %s [%s]\n", isNewClass ? "create".ptr : "find".ptr, typeof(this).stringof.ptr, (_javaParameterString[1 .. $-1] ~ "\0").ptr);
 			return 1;
 		}
 
