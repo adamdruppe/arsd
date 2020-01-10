@@ -69,7 +69,15 @@ union N(ty) {
 /// input range of ubytes...
 int loadFrom(T, Range)(ref T t, auto ref Range r, bool assumeBigEndian = false) {
 	int bytesConsumed;
+	string currentItem;
+
+	import std.conv;
+	scope(failure)
+		throw new Exception(T.stringof ~ "." ~ currentItem ~ " trouble " ~ to!string(t));
+
 	ubyte next() {
+		if(r.empty)
+			throw new Exception(T.stringof ~ "." ~ currentItem ~ " trouble " ~ to!string(t));
 		auto bfr = r.front;
 		r.popFront;
 		bytesConsumed++;
@@ -78,6 +86,7 @@ int loadFrom(T, Range)(ref T t, auto ref Range r, bool assumeBigEndian = false) 
 
 	bool endianness = bigEndian!T(assumeBigEndian);
 	static foreach(memberName; __traits(allMembers, T)) {{
+	currentItem = memberName;
 	static if(is(typeof(__traits(getMember, T, memberName)))) {
 		alias f = __traits(getMember, T, memberName);
 		alias ty = typeof(f);
@@ -115,10 +124,16 @@ int loadFrom(T, Range)(ref T t, auto ref Range r, bool assumeBigEndian = false) 
 
 				auto tag = __traits(getMember, t, tagField);
 				// find the child of the union matching the tag...
+				bool found = false;
 				static foreach(um; __traits(allMembers, ty)) {
 					if(tag == getTag!(__traits(getMember, ty, um))) {
 						bytesConsumed += loadFrom(__traits(getMember, __traits(getMember, t, memberName), um), r, endianness);
+						found = true;
 					}
+				}
+				if(!found) {
+					import std.format;
+					throw new Exception(format("found unknown union tag %s at %s", tag, t));
 				}
 			} else static if(is(ty == E[], E)) {
 				static foreach(attr; __traits(getAttributes, f)) {

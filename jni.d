@@ -442,15 +442,24 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 	bool outputMixinTemplate = false;
 
 	string mainThing;
-	string helperThing;
+	//string helperThing;
 
 	// so overriding Java classes from D is iffy and with separate implementation
 	// non final leads to linker errors anyway...
 	//mainThing ~= (isInterface ? "interface " : (jtc.inlineImplementations ? "class " : isAbstract ? "abstract class " : "final class ")) ~ lastClassName ~ " : ";
 
+	mainThing ~= "final class " ~ lastClassName ~ " : IJavaObject {\n";
+	mainThing ~= "\tstatic immutable string[] _d_canCastTo = [\n";
+
 	// not putting super class on inline implementations since that forces vtable...
 	if(jtc.inlineImplementations) {
 		auto scn = cf.superclassName;
+
+		if(scn.length) {
+			mainThing ~= "\t\t\"" ~ scn ~ "\",\n";
+		}
+
+		/+
 		//if(!scn.startsWith("java/")) {
 			// superclasses need the implementation too so putting it in the return list lol
 			if(scn.length && scn != "java/lang/Object") { // && scn in allClasses) {
@@ -458,6 +467,7 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 				mainThing ~= ", ";
 			}
 		//}
+		+/
 	}
 
 	foreach(name; cf.interfacesNames) {
@@ -465,73 +475,25 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			//continue; // these probably aren't important to D and can really complicate version management
 		//if(name !in allClasses)
 			//continue;
-		mainThing ~= javaObjectToDTypeString(name, javaPackages, javaPackagesReturn, importPrefix);
-		mainThing ~= ", ";
+		//mainThing ~= javaObjectToDTypeString(name, javaPackages, javaPackagesReturn, importPrefix);
+		//mainThing ~= ", ";
+
+		mainThing ~= "\t\t\"" ~ name ~ "\",\n";
 	}
 
-	mainThing ~= "arsd.jni.IJavaObject";
+	mainThing ~= "\t];\n";
 
-	mainThing ~= " {\n";
-
-	//mainThing ~= "\talias _d_helper this;\n";
-	mainThing ~= "\tfinal auto opDispatch(string name, Args...)(Args args) if(name != \"opCall\") { auto local = _d_helper(); return __traits(getMember, local, name)(args); }\n";
-	if(isInterface)
-		mainThing ~= "\tfinal auto _d_helper()() { return getDProxy(); }\n";
-	else {
-		mainThing ~= "\t" ~ lastClassName ~ "_d_methods _d_proxy_;\n";
-		mainThing ~= "\tfinal auto _d_helper()() {\n";
-		mainThing ~= "\t\tif(getDProxy() is null) _d_proxy_ = arsd.jni.createDProxy!("~lastClassName~"_d_methods)(this);\n";
-		mainThing ~= "\t\treturn getDProxy();\n";
-		mainThing ~= "\t}\n";
-		mainThing ~= "\toverride " ~ lastClassName ~ "_d_methods getDProxy() { return _d_proxy_; }\n";
-	}
-
-
-	helperThing ~= "interface " ~ lastClassName ~ "_d_methods : ";
-
-	// not putting super class on inline implementations since that forces vtable...
-	if(jtc.inlineImplementations) {
-		auto scn = cf.superclassName;
-		//if(!scn.startsWith("java/")) {
-			// superclasses need the implementation too so putting it in the return list lol
-			if(scn.length && scn != "java/lang/Object") { // && scn in allClasses) {
-				helperThing ~= javaObjectToDTypeString(scn, javaPackages, javaPackagesReturn, importPrefix);
-				helperThing ~= "_d_methods, ";
-			}
-		//}
-	}
-
-	foreach(name; cf.interfacesNames) {
-		//if(name.startsWith("java/"))
-			//continue; // these probably aren't important to D and can really complicate version management
-		//if(name !in allClasses)
-			//continue;
-		helperThing ~= javaObjectToDTypeString(name, javaPackages, javaPackagesReturn, importPrefix);
-		helperThing ~= "_d_methods, ";
-	}
-
-	helperThing ~= "IJavaObject";
-
-	helperThing ~= " {\n";
-
-	helperThing ~= "\tmixin JavaInterfaceMembers!(\"L" ~ cn ~ ";\");\n";
-
-
-
-
-
-
-
-
-
-	string tm;
-	string[string] tmpackages;
-	string[string] tmpackagesr;
-	string[string] tmpackagesa;
+	//helperThing ~= "interface " ~ lastClassName ~ "_d_methods : ";
 
 
 	string[string] mentioned;
-	foreach(method; cf.methodsListing) {
+
+	string[string] processed;
+
+	void addMethods(ClassFile* current, bool isTopLevel) {
+		if(current is null) return;
+		if(current.className in processed) return;
+	foreach(method; current.methodsListing) {
 		bool native = (method.flags & 0x0100) ? true : false;
 		if(jtc.nativesAreImports) {
 			native = false; // kinda hacky but meh
@@ -545,32 +507,27 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 		}
 		auto port = native ? "@Export" : "@Import";
 		if(method.flags & 1) { // public
-
-			bool addToMixinTemplate;
-
-			bool wasStatic;
+			if(!isTopLevel && method.name == "<init>")
+				continue;
 
 			bool maybeOverride = false;// !isInterface;
 			if(method.flags & 0x0008) {
 				port ~= " static";
-				maybeOverride = false;
-				wasStatic = true;
 			}
 			if(method.flags & method_info.ACC_ABSTRACT) {
-				maybeOverride = false;
 				//if(!isInterface)
-					port ~= " abstract";
+					//port ~= " abstract";
 			} else {
 				// this represents a default implementation in a Java interface
 				// D cannot express this... so I need to add it to the mixin template
 				// associated with this interface as well.
-				if(isInterface && (!(method.flags & 0x0008))) {
-					addToMixinTemplate = true;
-				}
+				//if(isInterface && (!(method.flags & 0x0008))) {
+					//addToMixinTemplate = true;
+				//}
 			}
 
-			if(maybeOverride && method.isOverride(allClasses))
-				port ~= " override";
+			//if(maybeOverride && method.isOverride(allClasses))
+				//port ~= " override";
 
 			auto name = method.name;
 
@@ -585,10 +542,6 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			name = name.replace("$", "_");
 
 			bool ctor = name == "<init>";
-			if(ctor && isInterface) {
-				ctor = false;
-				name = "CONSTRUCTOR";
-			}
 
 			auto sig = method.signature;
 
@@ -596,11 +549,10 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			assert(lidx != -1);
 			auto retJava = sig[lidx + 1 .. $];
 			auto argsJava = sig[1 .. lidx];
-			auto retJava2 = retJava;
-			auto argsJava2 = argsJava;
 
 			string ret = ctor ? "" : javaSignatureToDTypeString(retJava, javaPackages, javaPackagesReturn, importPrefix);
 			string args = javaSignatureToDTypeString(argsJava, javaPackages, javaPackagesArguments, importPrefix);
+			auto oargs = args;
 
 			if(!jtc.inlineImplementations) {
 				if(ctor && args.length == 0)
@@ -613,52 +565,32 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			mentioned[men] = men;
 
 			string proto = cast(string) ("\t"~port~" " ~ ret ~ (ret.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args~")"~(native ? " { assert(0); }" : ";")~"\n");
-			if(wasStatic || ctor)
-				mainThing ~= proto;
-			else
-				helperThing ~= proto;
+			mainThing ~= proto;
 
-			if(addToMixinTemplate) {
-				string pfx = "tmimport";
-				string ret1 = ctor ? "" : javaSignatureToDTypeString(retJava2, tmpackages, tmpackagesr, pfx);
-				string args1 = javaSignatureToDTypeString(argsJava2, tmpackages, tmpackagesa, pfx);
-				tm ~= "\t\t"~port~" " ~ ret1 ~ (ret1.length ? " " : "") ~ (ctor ? "this" : name) ~ "("~args1~"){ assert(0); }\n";
-			}
+			if(oargs.length == 0 && name == "toString_" && !(method.flags & 0x0008))
+				mainThing ~= "\toverride string toString() { return toString_(); }\n";
 		}
 	}
 
-	if(!isInterface) {
-		mainThing ~= "\tmixin IJavaObjectImplementation!(false);\n";
-		mainThing ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ ";\";\n";
-	} else {
-		mainThing ~= "\tmixin JavaInterfaceMembers!(\"L" ~ cn ~ ";\");\n";
-		if(outputMixinTemplate && tm.length) {
-			mainThing ~= "\tmixin template JavaDefaultImplementations() {\n";
-
-			foreach(pkg, prefix; tmpackages) {
-				auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
-				if(jtc.inlineImplementations)
-					tm ~= "\t\timport " ~ prefix ~ " = " ~ m ~ ";\n";
-				else
-					tm ~= "\t\timport " ~ prefix ~ " = " ~ m ~ "_d_interface;\n";
-			}
-			if(!jtc.inlineImplementations)
-			foreach(pkg, prefix; tmpackagesr) {
-				auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
-				tm ~= "\t\timport impl_" ~ prefix ~ " = " ~ m ~ ";\n";
-			}
-
-			mainThing ~= tm;
-			mainThing ~= "\t}\n";
+		processed[current.className.idup] = "done";
+		if(current.superclassName.length) {
+			auto c = current.superclassName in allClasses;
+			addMethods(c, false);
+		}
+		foreach(iface; current.interfacesNames) {
+			auto c = iface in allClasses;
+			addMethods(c, false);
 		}
 	}
 
+	addMethods(&cf, true);
+
+	mainThing ~= "\tmixin IJavaObjectImplementation!(false);\n";
+	mainThing ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ ";\";\n";
 
 	mainThing ~= "}\n\n";
-	helperThing ~= "}\n\n";
 	dc ~= mainThing;
 	dc ~= "\n\n";
-	dc ~= helperThing;
 
 	foreach(pkg, prefix; javaPackages) {
 		auto m = (dPackagePrefix.length ? (dPackagePrefix ~ ".") : "") ~ pkg;
@@ -673,10 +605,6 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 	if(javaPackages.keys.length)
 		dco ~= "\n";
 	dco ~= dc;
-
-	//dco ~= "\tmixin JavaPackageId!(\""~originalJavaPackage.replace("/", ".")~"\", \""~originalClassName~"\");\n";
-	// the following saves some compile time of the bindings; might as well do some calculations ahead of time
-	//dco ~= "\tpublic static immutable string _javaParameterString = \"L" ~ cn ~ ";\";\n";
 
 	if(jtc.inlineImplementations) {
 		dco ~= "\nmixin ImportExportImpl!"~lastClassName~";\n";
