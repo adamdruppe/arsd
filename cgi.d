@@ -6444,6 +6444,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 			import core.sys.posix.poll;
 		}
 
+		version(linux)
 		eis.epoll_fd = epoll_fd;
 
 		auto acceptOp = allocateIoOp(sock, IoOp.Read, 0, null);
