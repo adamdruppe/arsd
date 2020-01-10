@@ -568,7 +568,7 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			mainThing ~= proto;
 
 			if(oargs.length == 0 && name == "toString_" && !(method.flags & 0x0008))
-				mainThing ~= "\toverride string toString() { return toString_(); }\n";
+				mainThing ~= "\toverride string toString() { return arsd.jni.javaObjectToString(this); }\n";
 		}
 	}
 
@@ -1807,6 +1807,11 @@ interface IJavaObject {
 	enum Import; /// UDA to indicate you are importing the method from Java. Do NOT put a body on these methods. Only put these on implementation classes, not interfaces.
 	enum Export; /// UDA to indicate you are exporting the method to Java. Put a D implementation body on these. Only put these on implementation classes, not interfaces.
 }
+
+string javaObjectToString(IJavaObject i) {
+	return "FIXME";
+}
+
 
 static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == interface)) {
 	import core.memory;
