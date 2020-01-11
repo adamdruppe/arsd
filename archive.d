@@ -1877,7 +1877,7 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
 {
   switch(p.state)
   {
-    default: assert(0);
+    default: return ELzma2State.LZMA2_STATE_ERROR;
     case ELzma2State.LZMA2_STATE_CONTROL:
       p.control = b;
       if (p.control == 0)
@@ -1928,7 +1928,6 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
       return ELzma2State.LZMA2_STATE_DATA;
     }
   }
-  return ELzma2State.LZMA2_STATE_ERROR;
 }
 
 static void LzmaDec_UpdateWithUncompressed(CLzmaDec *p, Byte *src, SizeT size)
