@@ -722,6 +722,8 @@ class HttpRequest {
 			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
 		if(requestParameters.acceptGzip)
 			headers ~= "Accept-Encoding: gzip\r\n";
+		if(requestParameters.keepAlive)
+			headers ~= "Connection: keep-alive\r\n";
 
 		foreach(header; requestParameters.headers)
 			headers ~= header ~ "\r\n";
@@ -1358,6 +1360,7 @@ struct HttpRequestParameters {
 	// debugging
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
+	bool keepAlive = true; ///
 
 	// the request itself
 	HttpVerb method; ///
@@ -1423,6 +1426,7 @@ class HttpClient {
 	/* Protocol restrictions, useful to disable when debugging servers */
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
+	bool keepAlive = true; ///
 
 	///
 	@property Uri location() {
@@ -1445,6 +1449,7 @@ class HttpClient {
 
 		request.requestParameters.useHttp11 = this.useHttp11;
 		request.requestParameters.acceptGzip = this.acceptGzip;
+		request.requestParameters.keepAlive = this.keepAlive;
 
 		return request;
 	}
@@ -1462,6 +1467,7 @@ class HttpClient {
 
 		request.requestParameters.useHttp11 = this.useHttp11;
 		request.requestParameters.acceptGzip = this.acceptGzip;
+		request.requestParameters.keepAlive = this.keepAlive;
 
 		request.requestParameters.bodyData = bodyData;
 		request.requestParameters.contentType = contentType;
