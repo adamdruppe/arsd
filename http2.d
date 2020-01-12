@@ -2583,7 +2583,7 @@ wss://echo.websocket.org
 						throw new Exception("message size exceeded");
 
 					continuingData ~= m.data;
-					if(fin) {
+					if(m.fin) {
 						if(ontextmessage)
 							ontextmessage(cast(char[]) continuingData);
 						if(onbinarymessage)
@@ -2856,9 +2856,16 @@ private {
 
 		static WebSocketFrame read(ref ubyte[] d) {
 			WebSocketFrame msg;
-			assert(d.length >= 2);
 
 			auto orig = d;
+
+			WebSocketFrame needsMoreData() {
+				d = orig;
+				return WebSocketFrame.init;
+			}
+
+			if(d.length < 2)
+				return needsMoreData();
 
 			ubyte b = d[0];
 
@@ -2884,6 +2891,8 @@ private {
 				// 16 bit length
 				msg.realLength = 0;
 
+				if(d.length < 2) return needsMoreData();
+
 				foreach(i; 0 .. 2) {
 					msg.realLength |= d[0] << ((1-i) * 8);
 					d = d[1 .. $];
@@ -2891,6 +2900,8 @@ private {
 			} else if(msg.lengthIndicator == 0x7f) {
 				// 64 bit length
 				msg.realLength = 0;
+
+				if(d.length < 8) return needsMoreData();
 
 				foreach(i; 0 .. 8) {
 					msg.realLength |= d[0] << ((7-i) * 8);
@@ -2902,13 +2913,15 @@ private {
 			}
 
 			if(msg.masked) {
+
+				if(d.length < 4) return needsMoreData();
+
 				msg.maskingKey = d[0 .. 4];
 				d = d[4 .. $];
 			}
 
 			if(msg.realLength > d.length) {
-				d = orig;
-				return WebSocketFrame.init;
+				return needsMoreData();
 			}
 
 			msg.data = d[0 .. msg.realLength];
