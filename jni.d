@@ -1812,6 +1812,11 @@ string javaObjectToString(IJavaObject i) {
 	return "FIXME";
 }
 
+T as(T, R)(R obj) {
+	// FIXME: this will have to do downcasts to interfaces
+	return T.init;
+}
+
 
 static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == interface)) {
 	import core.memory;

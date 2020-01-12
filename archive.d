@@ -129,6 +129,8 @@ bool processTar(
 		*header = *(cast(TarFileHeader*) dataBuffer.ptr);
 		auto s = header.size();
 		*bytesRemainingOnCurrentFile = s;
+		if(header.type() == TarFileType.directory)
+			handleData(header, true, false, null);
 		if(s == 0 && header.type == TarFileType.normal)
 			return false;
 	}
