@@ -27,6 +27,12 @@ struct TarFile {
 }
 +/
 
+inout(char)[] upToZero(inout(char)[] a) {
+	int i = 0;
+	while(i < a.length && a[i]) i++;
+	return a[0 .. i];
+}
+
 
 /++
 	A header of a file in the archive. This represents the
@@ -56,8 +62,8 @@ struct TarFileHeader {
 	const(char)[] filename() {
 		import core.stdc.string;
 		if(filenamePrefix_[0])
-			return filenamePrefix_[0 .. strlen(filenamePrefix_.ptr)] ~ fileName_[0 .. strlen(fileName_.ptr)];
-		return fileName_[0 .. strlen(fileName_.ptr)];
+			return upToZero(filenamePrefix_[]) ~ upToZero(fileName_[]);
+		return upToZero(fileName_[]);
 	}
 
 	///
