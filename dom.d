@@ -1200,13 +1200,17 @@ class Document : FileResource {
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
 	body {
-		return root.requireSelector!(SomeElementType)(selector, file, line);
+		auto e = cast(SomeElementType) querySelector(selector);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, this.root, file, line);
+		return e;
 	}
 
 	final MaybeNullElement!SomeElementType optionSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
 		if(is(SomeElementType : Element))
 	{
-		return root.optionSelector!(SomeElementType)(selector, file, line);
+		auto e = cast(SomeElementType) querySelector(selector);
+		return MaybeNullElement!SomeElementType(e);
 	}
 
 	/// ditto
