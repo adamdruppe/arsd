@@ -185,7 +185,10 @@ version(Posix) {
 // capabilities.
 //version = Demo
 
-version(Windows) {
+version(Windows)
+	version=Win32Console;
+
+version(Win32Console) {
 	import core.sys.windows.windows;
 	import std.string : toStringz;
 	private {
@@ -407,6 +410,8 @@ enum ConsoleInputFlags {
 
 	allInputEvents = 8|4|2, /// subscribe to all input events. Note: in previous versions, this also returned release events. It no longer does, use allInputEventsWithRelease if you want them.
 	allInputEventsWithRelease = allInputEvents|releasedKeys, /// subscribe to all input events, including (unreliable on Posix) key release events.
+
+	noEolWrap = 128,
 }
 
 /// Defines how terminal output should be handled.
@@ -440,19 +445,34 @@ struct Terminal {
 	/++
 		Terminal is only valid to use on an actual console device or terminal
 		handle. You should not attempt to construct a Terminal instance if this
-		returns false;
+		returns false. Real time input is similarly impossible if `!stdinIsTerminal`.
 	+/
 	static bool stdoutIsTerminal() {
 		version(Posix) {
 			import core.sys.posix.unistd;
 			return cast(bool) isatty(1);
-		} else version(Windows) {
+		} else version(Win32Console) {
+			auto hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			return GetFileType(hConsole) == FILE_TYPE_CHAR;
+			/+
 			auto hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 			CONSOLE_SCREEN_BUFFER_INFO originalSbi;
 			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
 				return false;
 			else
 				return true;
+			+/
+		} else static assert(0);
+	}
+
+	///
+	static bool stdinIsTerminal() {
+		version(Posix) {
+			import core.sys.posix.unistd;
+			return cast(bool) isatty(0);
+		} else version(Win32Console) {
+			auto hConsole = GetStdHandle(STD_INPUT_HANDLE);
+			return GetFileType(hConsole) == FILE_TYPE_CHAR;
 		} else static assert(0);
 	}
 
@@ -783,12 +803,12 @@ struct Terminal {
 		}
 	}
 
-	version(Windows) {
+	version(Win32Console) {
 		HANDLE hConsole;
 		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
 	}
 
-	version(Windows)
+	version(Win32Console)
 	/// ditto
 	this(ConsoleOutputType type) {
 		if(type == ConsoleOutputType.cellular) {
@@ -839,7 +859,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		*/
 	}
 
-	version(Windows) {
+	version(Win32Console) {
 		private Color defaultBackgroundColor = Color.black;
 		private Color defaultForegroundColor = Color.white;
 		UINT oldCp;
@@ -1062,7 +1082,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		version(Windows)
+		version(Win32Console)
 			SetConsoleTextAttribute(
 				hConsole,
 				originalSbi.wAttributes);
@@ -1096,7 +1116,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			executeAutoHideCursor();
 			version(Posix) {
 				doTermcap("cm", y, x);
-			} else version(Windows) {
+			} else version(Win32Console) {
 
 				flush(); // if we don't do this now, the buffering can screw up the position
 				COORD coord = {cast(short) x, cast(short) y};
@@ -1144,7 +1164,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	private void executeAutoHideCursor() {
 		if(autoHidingCursor) {
-			version(Windows)
+			version(Win32Console)
 				hideCursor();
 			else version(Posix) {
 				// prepend the hide cursor command so it is the first thing flushed
@@ -1178,7 +1198,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Changes the terminal's title
 	void setTitle(string t) {
-		version(Windows) {
+		version(Win32Console) {
+			// FIXME: use the W version
 			SetConsoleTitleA(toStringz(t));
 		} else {
 			import std.string;
@@ -1206,7 +1227,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					writeBuffer = writeBuffer[written .. $];
 				}
 			}
-		} else version(Windows) {
+		} else version(Win32Console) {
 			import std.conv;
 			// FIXME: I'm not sure I'm actually happy with this allocation but
 			// it probably isn't a big deal. At least it has unicode support now.
@@ -1222,7 +1243,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	int[] getSize() {
-		version(Windows) {
+		version(Win32Console) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo( hConsole, &info );
         
@@ -1374,7 +1395,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		// FIXME: make sure all the data is sent, check for errors
 		version(Posix) {
 			writeBuffer ~= s; // buffer it to do everything at once in flush() calls
-		} else version(Windows) {
+		} else version(Win32Console) {
 			writeBuffer ~= s;
 		} else static assert(0);
 	}
@@ -1383,7 +1404,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void clear() {
 		version(Posix) {
 			doTermcap("cl");
-		} else version(Windows) {
+		} else version(Win32Console) {
 			// http://support.microsoft.com/kb/99261
 			flush();
 
@@ -1474,7 +1495,7 @@ struct RealTimeConsoleInput {
 		// so this hack is just to give some room for that to happen without destroying the rest of the world
 	}
 
-	version(Windows) {
+	version(Win32Console) {
 		private DWORD oldInput;
 		private DWORD oldOutput;
 		HANDLE inputHandle;
@@ -1489,7 +1510,7 @@ struct RealTimeConsoleInput {
 		this.flags = flags;
 		this.terminal = terminal;
 
-		version(Windows) {
+		version(Win32Console) {
 			inputHandle = GetStdHandle(STD_INPUT_HANDLE);
 
 			GetConsoleMode(inputHandle, &oldInput);
@@ -1512,11 +1533,10 @@ struct RealTimeConsoleInput {
 			mode = 0;
 			// we want this to match linux too
 			mode |= ENABLE_PROCESSED_OUTPUT; /* 0x01 */
-			mode |= ENABLE_WRAP_AT_EOL_OUTPUT; /* 0x02 */
+			if(!(flags & ConsoleInputFlags.noEolWrap))
+				mode |= ENABLE_WRAP_AT_EOL_OUTPUT; /* 0x02 */
 			SetConsoleMode(terminal.hConsole, mode);
 			destructor ~= { SetConsoleMode(terminal.hConsole, oldOutput); };
-
-			// FIXME: change to UTF8 as well
 		}
 
 		version(Posix) {
@@ -1607,7 +1627,7 @@ struct RealTimeConsoleInput {
 
 		version(with_eventloop) {
 			import arsd.eventloop;
-			version(Windows)
+			version(Win32Console)
 				auto listenTo = inputHandle;
 			else version(Posix)
 				auto listenTo = this.fdIn;
@@ -1646,7 +1666,7 @@ struct RealTimeConsoleInput {
 	void integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
 		this.userEventHandler = userEventHandler;
 		import arsd.simpledisplay;
-		version(Windows)
+		version(Win32Console)
 			auto listener = new WindowsHandleReader(&fdReadyReader, terminal.hConsole);
 		else version(linux)
 			auto listener = new PosixFdReader(&fdReadyReader, fdIn);
@@ -1729,7 +1749,7 @@ struct RealTimeConsoleInput {
 	}
 
 	bool timedCheckForInput_bypassingBuffer(int milliseconds) {
-		version(Windows) {
+		version(Win32Console) {
 			auto response = WaitForSingleObject(terminal.hConsole, milliseconds);
 			if(response  == 0)
 				return true; // the object is ready
@@ -1926,7 +1946,7 @@ struct RealTimeConsoleInput {
 
 	InputEvent[] inputQueue;
 
-	version(Windows)
+	version(Win32Console)
 	InputEvent[] readNextEvents() {
 		terminal.flush(); // make sure all output is sent out before waiting for anything
 
@@ -2591,7 +2611,7 @@ struct EndOfFileEvent {}
 
 interface CustomEvent {}
 
-version(Windows)
+version(Win32Console)
 enum ModifierState : uint {
 	shift = 0x10,
 	control = 0x8 | 0x4, // 8 == left ctrl, 4 == right ctrl
@@ -2967,9 +2987,11 @@ class LineGetter {
 
 	/// You can customize the colors here. You should set these after construction, but before
 	/// calling startGettingLine or getline.
-	Color suggestionForeground;
-	Color regularForeground; /// .
-	Color background; /// .
+	Color suggestionForeground = Color.blue;
+	Color regularForeground = Color.DEFAULT; /// ditto
+	Color background = Color.DEFAULT; /// ditto
+	Color promptColor = Color.DEFAULT; /// ditto
+	Color specialCharBackground = Color.green; /// ditto
 	//bool reverseVideo;
 
 	/// Set this if you want a prompt to be drawn with the line. It does NOT support color in string.
@@ -3071,6 +3093,8 @@ class LineGetter {
 		}
 	}
 
+	//private RealTimeConsoleInput* rtci;
+
 	/// One-call shop for the main workhorse
 	/// If you already have a RealTimeConsoleInput ready to go, you
 	/// should pass a pointer to yours here. Otherwise, LineGetter will
@@ -3078,10 +3102,15 @@ class LineGetter {
 	public string getline(RealTimeConsoleInput* input = null) {
 		startGettingLine();
 		if(input is null) {
-			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents | ConsoleInputFlags.noEolWrap);
+			//rtci = &i;
+			//scope(exit) rtci = null;
 			while(workOnLine(i.nextEvent())) {}
-		} else
+		} else {
+			//rtci = input;
+			//scope(exit) rtci = null;
 			while(workOnLine(input.nextEvent())) {}
+		}
 		return finishGettingLine();
 	}
 
@@ -3231,19 +3260,53 @@ class LineGetter {
 		if(lineLength < 0)
 			throw new Exception("too narrow terminal to draw");
 
+		terminal.color(promptColor, background);
 		terminal.write(prompt);
+		terminal.color(regularForeground, background);
 
 		auto towrite = line[horizontalScrollPosition .. $];
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
 
-		if(towrite.length > lineLength) {
-			towrite = towrite[0 .. lineLength];
+		int written = cast(int) prompt.length;
+
+		void specialChar(char c) {
+			terminal.color(regularForeground, specialCharBackground);
+			terminal.write(c);
+			terminal.color(regularForeground, background);
+
+			written++;
+			lineLength--;
 		}
 
-		terminal.write(towrite);
+		void regularChar(dchar ch) {
+			import std.utf;
+			char[4] buffer;
+			auto l = encode(buffer, ch);
+			// note the Terminal buffers it so meh
+			terminal.write(buffer[0 .. l]);
 
-		lineLength -= towrite.length;
+			written++;
+			lineLength--;
+		}
+
+		// FIXME: if there is a color at the end of the line it messes up as you scroll
+		// FIXME: need a way to go to multi-line editing
+
+		foreach(dchar ch; towrite) {
+			if(lineLength == 0)
+				break;
+			switch(ch) {
+				case '\n': specialChar('n'); break;
+				case '\r': specialChar('r'); break;
+				case '\a': specialChar('a'); break;
+				case '\t': specialChar('t'); break;
+				case '\b': specialChar('b'); break;
+				case '\033': specialChar('e'); break;
+				default:
+					regularChar(ch);
+			}
+		}
 
 		string suggestion;
 
@@ -3251,13 +3314,16 @@ class LineGetter {
 			suggestion = ((cursorPosition == towrite.length) && autoSuggest) ? this.suggestion() : null;
 			if(suggestion.length) {
 				terminal.color(suggestionForeground, background);
-				terminal.write(suggestion);
+				foreach(dchar ch; suggestion) {
+					if(lineLength == 0)
+						break;
+					regularChar(ch);
+				}
 				terminal.color(regularForeground, background);
 			}
 		}
 
 		// FIXME: graphemes and utf-8 on suggestion/prompt
-		auto written = cast(int) (towrite.length + suggestion.length + prompt.length);
 
 		if(written < lastDrawLength)
 		foreach(i; written .. lastDrawLength)
@@ -3282,10 +3348,40 @@ class LineGetter {
 			line.assumeSafeAppend();
 		}
 
-		updateCursorPosition();
-		terminal.showCursor();
+		initializeWithSize(true);
 
-		lastDrawLength = availableLineLength();
+		terminal.showCursor();
+	}
+
+	private void positionCursor() {
+		if(cursorPosition == 0)
+			horizontalScrollPosition = 0;
+		else if(cursorPosition == line.length)
+			scrollToEnd();
+		else {
+			// otherwise just try to center it in the screen
+			horizontalScrollPosition = cursorPosition;
+			horizontalScrollPosition -= terminal.width / 2;
+			// align on a code point boundary
+			while(horizontalScrollPosition > 0 && (line[horizontalScrollPosition] & 0x80))
+				horizontalScrollPosition--;
+			if(horizontalScrollPosition < 0)
+				horizontalScrollPosition = 0;
+		}
+	}
+
+	private void initializeWithSize(bool firstEver = false) {
+		auto x = startOfLineX;
+
+		updateCursorPosition();
+
+		if(!firstEver) {
+			startOfLineX = x;
+			positionCursor();
+		}
+
+		lastDrawLength = terminal.width;
+
 		redraw();
 	}
 
@@ -3293,7 +3389,7 @@ class LineGetter {
 		terminal.flush();
 
 		// then get the current cursor position to start fresh
-		version(Windows) {
+		version(Win32Console) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
 			startOfLineX = info.dwCursorPosition.X;
@@ -3306,6 +3402,13 @@ class LineGetter {
 
 			// We also can't use RealTimeConsoleInput here because it also does event loop stuff
 			// which would be broken by the child destructor :( (maybe that should be a FIXME)
+
+			/+
+			if(rtci !is null) {
+				while(rtci.timedCheckForInput_bypassingBuffer(1000))
+					rtci.inputQueue ~= rtci.readNextEvents();
+			}
+			+/
 
 			ubyte[128] hack2;
 			termios old;
@@ -3321,20 +3424,38 @@ class LineGetter {
 			terminal.writeStringRaw("\033[6n");
 			terminal.flush();
 
+			import std.conv;
+			import core.stdc.errno;
+
 			import core.sys.posix.unistd;
 			// reading directly to bypass any buffering
+			int retries = 16;
 			ubyte[16] buffer;
+			try_again:
 			auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
-			if(len <= 0)
-				throw new Exception("Couldn't get cursor position to initialize get line");
+			if(len <= 0) {
+				if(len == -1) {
+					if(errno == EINTR)
+						goto try_again;
+					if(errno == EAGAIN || errno == EWOULDBLOCK) {
+						import core.thread;
+						Thread.sleep(10.msecs);
+						goto try_again;
+					}
+				}
+				throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
+			}
 			auto got = buffer[0 .. len];
 			if(got.length < 6)
 				throw new Exception("not enough cursor reply answer");
-			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R')
-				throw new Exception("wrong answer for cursor position");
+			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R') {
+				retries--;
+				if(retries > 0)
+					goto try_again;
+				throw new Exception("wrong answer for cursor position " ~ cast(string) got[1 .. $]);
+			}
 			auto gots = cast(char[]) got[2 .. $-1];
 
-			import std.conv;
 			import std.string;
 
 			auto pieces = split(gots, ";");
@@ -3350,6 +3471,14 @@ class LineGetter {
 	}
 
 	private bool justHitTab;
+	private bool eof;
+
+	///
+	string delegate(string s) pastePreprocessor;
+
+	string defaultPastePreprocessor(string s) {
+		return s;
+	}
 
 	/// for integrating into another event loop
 	/// you can pass individual events to this and
@@ -3360,6 +3489,7 @@ class LineGetter {
 		switch(e.type) {
 			case InputEvent.Type.EndOfFileEvent:
 				justHitTab = false;
+				eof = true;
 				// FIXME: this should be distinct from an empty line when hit at the beginning
 				return false;
 			//break;
@@ -3371,6 +3501,9 @@ class LineGetter {
 				auto ch = ev.which;
 				switch(ch) {
 					case 4: // ctrl+d will also send a newline-equivalent 
+						if(line.length == 0)
+							eof = true;
+						goto case;
 					case '\r':
 					case '\n':
 						justHitTab = false;
@@ -3425,6 +3558,10 @@ class LineGetter {
 						justHitTab = false;
 						if(cursorPosition)
 							cursorPosition--;
+						if(ev.modifierState & ModifierState.control) {
+							while(cursorPosition && line[cursorPosition - 1] != ' ')
+								cursorPosition--;
+						}
 						if(!multiLineMode) {
 							if(cursorPosition < horizontalScrollPosition)
 								horizontalScrollPosition--;
@@ -3436,6 +3573,14 @@ class LineGetter {
 						justHitTab = false;
 						if(cursorPosition < line.length)
 							cursorPosition++;
+
+						if(ev.modifierState & ModifierState.control) {
+							while(cursorPosition + 1 < line.length && line[cursorPosition + 1] != ' ')
+								cursorPosition++;
+							cursorPosition += 2;
+							if(cursorPosition > line.length)
+								cursorPosition = cast(int) line.length;
+						}
 						if(!multiLineMode) {
 							if(cursorPosition >= horizontalScrollPosition + availableLineLength())
 								horizontalScrollPosition++;
@@ -3479,9 +3624,22 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.Insert:
 						justHitTab = false;
-						insertMode = !insertMode;
-						// FIXME: indicate this on the UI somehow
-						// like change the cursor or something
+						if(ev.modifierState & ModifierState.shift) {
+							// shift+insert = request paste
+							// ctrl+insert = request copy. but that needs a selection
+
+							// those work on Windows!!!!o
+
+							/*
+								change cursor capabilitiy
+								figure out windows alt+codes
+							*/
+
+						} else {
+							insertMode = !insertMode;
+							// FIXME: indicate this on the UI somehow
+							// like change the cursor or something
+						}
 					break;
 					case KeyboardEvent.Key.Delete:
 						justHitTab = false;
@@ -3505,7 +3663,10 @@ class LineGetter {
 			break;
 			case InputEvent.Type.PasteEvent:
 				justHitTab = false;
-				addString(e.pasteEvent.pastedText);
+				if(pastePreprocessor)
+					addString(pastePreprocessor(e.pasteEvent.pastedText));
+				else
+					addString(defaultPastePreprocessor(e.pasteEvent.pastedText));
 				redraw();
 			break;
 			case InputEvent.Type.MouseEvent:
@@ -3531,6 +3692,7 @@ class LineGetter {
 				/* We'll adjust the bounding box. If you don't like this, handle SizeChangedEvent
 				   yourself and then don't pass it to this function. */
 				// FIXME
+				initializeWithSize();
 			break;
 			case InputEvent.Type.UserInterruptionEvent:
 				/* I'll take this as canceling the line. */
@@ -3555,7 +3717,7 @@ class LineGetter {
 			this.history ~= history;
 
 		// FIXME: we should hide the cursor if it was hidden in the call to startGettingLine
-		return f;
+		return eof ? null : f.length ? f : "";
 	}
 }
 
