@@ -430,6 +430,13 @@ enum ForceOption {
 	alwaysSend = 1, /// always send the data, even if it doesn't seem necessary
 }
 
+///
+enum TerminalCursor {
+	DEFAULT = 0, ///
+	insert = 1, ///
+	block = 2 ///
+}
+
 // we could do it with termcap too, getenv("TERMCAP") then split on : and replace \E with \033 and get the pieces
 
 /// Encapsulates the I/O capabilities of a terminal.
@@ -441,6 +448,60 @@ struct Terminal {
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
+
+	private TerminalCursor currentCursor_;
+	version(Windows) private CONSOLE_CURSOR_INFO originalCursorInfo;
+
+	/++
+		Changes the current cursor.
+	+/
+	void cursor(TerminalCursor what, ForceOption force = ForceOption.automatic) {
+		if(force == ForceOption.neverSend) {
+			currentCursor_ = what;
+			return;
+		} else {
+			if(what != currentCursor_ || force == ForceOption.alwaysSend) {
+				currentCursor_ = what;
+				version(Win32Console) {
+					final switch(what) {
+						case TerminalCursor.DEFAULT:
+							SetConsoleCursorInfo(hConsole, &originalCursorInfo);
+						break;
+						case TerminalCursor.insert:
+						case TerminalCursor.block:
+							CONSOLE_CURSOR_INFO info;
+							GetConsoleCursorInfo(hConsole, &info);
+							info.dwSize = what == TerminalCursor.insert ? 1 : 100;
+							SetConsoleCursorInfo(hConsole, &info);
+						break;
+					}
+				} else {
+					final switch(what) {
+						case TerminalCursor.DEFAULT:
+							if(terminalInFamily("linux"))
+								writeStringRaw("\033[?0c");
+							else
+								writeStringRaw("\033[0 q");
+						break;
+						case TerminalCursor.insert:
+							if(terminalInFamily("linux"))
+								writeStringRaw("\033[?2c");
+							else if(terminalInFamily("xterm"))
+								writeStringRaw("\033[6 q");
+							else
+								writeStringRaw("\033[4 q");
+						break;
+						case TerminalCursor.block:
+							if(terminalInFamily("linux"))
+								writeStringRaw("\033[?6c");
+							else
+								writeStringRaw("\033[2 q");
+						break;
+					}
+				}
+			}
+		}
+	}
 
 	/++
 		Terminal is only valid to use on an actual console device or terminal
@@ -836,6 +897,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			//size.Y = 24;
 			//SetConsoleScreenBufferSize(hConsole, size);
 
+			GetConsoleCursorInfo(hConsole, &originalCursorInfo);
+
 			clear();
 		} else {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -881,6 +944,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(terminalInFamily("xterm", "rxvt", "screen")) {
 			writeStringRaw("\033[23;0t"); // restore window title from the stack
 		}
+		cursor = TerminalCursor.DEFAULT;
 		showCursor();
 		reset();
 		flush();
@@ -3357,6 +3421,7 @@ class LineGetter {
 
 		initializeWithSize(true);
 
+		terminal.cursor = TerminalCursor.insert;
 		terminal.showCursor();
 	}
 
@@ -3507,6 +3572,8 @@ class LineGetter {
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
 				auto ch = ev.which;
 				switch(ch) {
+					version(Windows) case 26: // and this is really for Windows
+						goto case;
 					case 4: // ctrl+d will also send a newline-equivalent 
 						if(line.length == 0)
 							eof = true;
@@ -3632,6 +3699,8 @@ class LineGetter {
 					case KeyboardEvent.Key.Insert:
 						justHitTab = false;
 						if(ev.modifierState & ModifierState.shift) {
+							// paste
+
 							// shift+insert = request paste
 							// ctrl+insert = request copy. but that needs a selection
 
@@ -3639,13 +3708,17 @@ class LineGetter {
 
 							/*
 								change cursor capabilitiy
-								figure out windows alt+codes
 							*/
 
+						} else if(ev.modifierState & ModifierState.control) {
+							// copy
 						} else {
 							insertMode = !insertMode;
-							// FIXME: indicate this on the UI somehow
-							// like change the cursor or something
+
+							if(insertMode)
+								terminal.cursor = TerminalCursor.insert;
+							else
+								terminal.cursor = TerminalCursor.block;
 						}
 					break;
 					case KeyboardEvent.Key.Delete:
