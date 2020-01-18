@@ -2033,6 +2033,7 @@ struct RealTimeConsoleInput {
 					ke.pressed = ev.bKeyDown ? true : false;
 
 					// only send released events when specifically requested
+					// terminal.writefln("got %s %s", ev.UnicodeChar, ev.bKeyDown);
 					if(ev.UnicodeChar && ev.wVirtualKeyCode == VK_MENU && ev.bKeyDown == 0) {
 						// this indicates Windows is actually sending us
 						// an alt+xxx key sequence, may also be a unicode paste.
@@ -2875,7 +2876,7 @@ void main() {
 	//
 
 	terminal.setTitle("Basic I/O");
-	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents);
+	auto input = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEventsWithRelease);
 	terminal.color(Color.green | Bright, Color.black);
 
 	terminal.write("test some long string to see if it wraps or what because i dont really know what it is going to do so i just want to test i think it will wrap but gotta be sure lolololololololol");
