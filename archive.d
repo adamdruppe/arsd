@@ -27,6 +27,12 @@ struct TarFile {
 }
 +/
 
+inout(char)[] upToZero(inout(char)[] a) {
+	int i = 0;
+	while(i < a.length && a[i]) i++;
+	return a[0 .. i];
+}
+
 
 /++
 	A header of a file in the archive. This represents the
@@ -56,8 +62,8 @@ struct TarFileHeader {
 	const(char)[] filename() {
 		import core.stdc.string;
 		if(filenamePrefix_[0])
-			return filenamePrefix_[0 .. strlen(filenamePrefix_.ptr)] ~ fileName_[0 .. strlen(fileName_.ptr)];
-		return fileName_[0 .. strlen(fileName_.ptr)];
+			return upToZero(filenamePrefix_[]) ~ upToZero(fileName_[]);
+		return upToZero(fileName_[]);
 	}
 
 	///
@@ -112,8 +118,8 @@ bool processTar(
 
 	if(*bytesRemainingOnCurrentFile) {
 		bool isNew = *bytesRemainingOnCurrentFile == header.size();
-		if(*bytesRemainingOnCurrentFile < 512) {
-			handleData(header, isNew, true, dataBuffer[0 .. *bytesRemainingOnCurrentFile]);
+		if(*bytesRemainingOnCurrentFile <= 512) {
+			handleData(header, isNew, true, dataBuffer[0 .. cast(size_t) *bytesRemainingOnCurrentFile]);
 			*bytesRemainingOnCurrentFile = 0;
 		} else {
 			handleData(header, isNew, false, dataBuffer[]);
@@ -123,6 +129,8 @@ bool processTar(
 		*header = *(cast(TarFileHeader*) dataBuffer.ptr);
 		auto s = header.size();
 		*bytesRemainingOnCurrentFile = s;
+		if(header.type() == TarFileType.directory)
+			handleData(header, true, false, null);
 		if(s == 0 && header.type == TarFileType.normal)
 			return false;
 	}
@@ -1877,7 +1885,7 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
 {
   switch(p.state)
   {
-    default: assert(0);
+    default: return ELzma2State.LZMA2_STATE_ERROR;
     case ELzma2State.LZMA2_STATE_CONTROL:
       p.control = b;
       if (p.control == 0)
@@ -1928,7 +1936,6 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
       return ELzma2State.LZMA2_STATE_DATA;
     }
   }
-  return ELzma2State.LZMA2_STATE_ERROR;
 }
 
 static void LzmaDec_UpdateWithUncompressed(CLzmaDec *p, Byte *src, SizeT size)

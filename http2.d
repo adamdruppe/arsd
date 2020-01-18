@@ -1,4 +1,4 @@
-// Copyright 2013-2019, Adam D. Ruppe.
+// Copyright 2013-2020, Adam D. Ruppe.
 /++
 	This is version 2 of my http/1.1 client implementation.
 	
@@ -14,11 +14,15 @@
 +/
 module arsd.http2;
 
+// FIXME: I think I want to disable sigpipe here too.
+
 import std.uri : encodeComponent;
 
 debug(arsd_http2_verbose) debug=arsd_http2;
 
 debug(arsd_http2) import std.stdio : writeln;
+
+version=arsd_http_internal_implementation;
 
 version(without_openssl) {}
 else {
@@ -26,6 +30,12 @@ version=use_openssl;
 version=with_openssl;
 version(older_openssl) {} else
 version=newer_openssl;
+}
+
+version(arsd_http_winhttp_implementation) {
+	pragma(lib, "winhttp")
+	import core.sys.windows.winhttp;
+	// FIXME: alter the dub package file too
 }
 
 
@@ -605,6 +615,178 @@ class HttpRequest {
 	/// Automatically follow a redirection?
 	bool followLocation = false;
 
+	this() {
+	}
+
+	///
+	this(Uri where, HttpVerb method) {
+		populateFromInfo(where, method);
+	}
+
+	/// Final url after any redirections
+	string finalUrl;
+
+	void populateFromInfo(Uri where, HttpVerb method) {
+		auto parts = where;
+		finalUrl = where.toString();
+		requestParameters.method = method;
+		requestParameters.host = parts.host;
+		requestParameters.port = cast(ushort) parts.port;
+		requestParameters.ssl = parts.scheme == "https";
+		if(parts.port == 0)
+			requestParameters.port = requestParameters.ssl ? 443 : 80;
+		requestParameters.uri = parts.path.length ? parts.path : "/";
+		if(parts.query.length) {
+			requestParameters.uri ~= "?";
+			requestParameters.uri ~= parts.query;
+		}
+	}
+
+	~this() {
+	}
+
+	ubyte[] sendBuffer;
+
+	HttpResponse responseData;
+	private HttpClient parentClient;
+
+	size_t bodyBytesSent;
+	size_t bodyBytesReceived;
+
+	State state_;
+	State state() { return state_; }
+	State state(State s) {
+		assert(state_ != State.complete);
+		return state_ = s;
+	}
+	/// Called when data is received. Check the state to see what data is available.
+	void delegate(HttpRequest) onDataReceived;
+
+	enum State {
+		/// The request has not yet been sent
+		unsent,
+
+		/// The send() method has been called, but no data is
+		/// sent on the socket yet because the connection is busy.
+		pendingAvailableConnection,
+
+		/// The headers are being sent now
+		sendingHeaders,
+
+		/// The body is being sent now
+		sendingBody,
+
+		/// The request has been sent but we haven't received any response yet
+		waitingForResponse,
+
+		/// We have received some data and are currently receiving headers
+		readingHeaders,
+
+		/// All headers are available but we're still waiting on the body
+		readingBody,
+
+		/// The request is complete.
+		complete,
+
+		/// The request is aborted, either by the abort() method, or as a result of the server disconnecting
+		aborted
+	}
+
+	/// Sends now and waits for the request to finish, returning the response.
+	HttpResponse perform() {
+		send();
+		return waitForCompletion();
+	}
+
+	/// Sends the request asynchronously.
+	void send() {
+		sendPrivate(true);
+	}
+
+	private void sendPrivate(bool advance) {
+		if(state != State.unsent && state != State.aborted)
+			return; // already sent
+		string headers;
+
+		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
+		if(requestParameters.useHttp11)
+			headers ~= " HTTP/1.1\r\n";
+		else
+			headers ~= " HTTP/1.0\r\n";
+		headers ~= "Host: "~requestParameters.host~"\r\n";
+		if(requestParameters.userAgent.length)
+			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
+		if(requestParameters.contentType.length)
+			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
+		if(requestParameters.authorization.length)
+			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
+		if(requestParameters.bodyData.length)
+			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
+		if(requestParameters.acceptGzip)
+			headers ~= "Accept-Encoding: gzip\r\n";
+		if(requestParameters.keepAlive)
+			headers ~= "Connection: keep-alive\r\n";
+
+		foreach(header; requestParameters.headers)
+			headers ~= header ~ "\r\n";
+
+		headers ~= "\r\n";
+
+		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
+
+		// import std.stdio; writeln("******* ", sendBuffer);
+
+		responseData = HttpResponse.init;
+		responseData.requestParameters = requestParameters;
+		bodyBytesSent = 0;
+		bodyBytesReceived = 0;
+		state = State.pendingAvailableConnection;
+
+		bool alreadyPending = false;
+		foreach(req; pending)
+			if(req is this) {
+				alreadyPending = true;
+				break;
+			}
+		if(!alreadyPending) {
+			pending ~= this;
+		}
+
+		if(advance)
+			HttpRequest.advanceConnections();
+	}
+
+
+	/// Waits for the request to finish or timeout, whichever comes first.
+	HttpResponse waitForCompletion() {
+		while(state != State.aborted && state != State.complete) {
+			if(state == State.unsent)
+				send();
+			if(auto err = HttpRequest.advanceConnections())
+				throw new Exception("waitForCompletion got err " ~ to!string(err));
+		}
+
+		return responseData;
+	}
+
+	/// Aborts this request.
+	void abort() {
+		this.state = State.aborted;
+		// FIXME
+	}
+
+	HttpRequestParameters requestParameters; ///
+
+	version(arsd_http_winhttp_implementation) {
+		public static void resetInternals() {
+
+		}
+
+		static assert(0, "implementation not finished");
+	}
+
+
+	version(arsd_http_internal_implementation) {
 	private static {
 		// we manage the actual connections. When a request is made on a particular
 		// host, we try to reuse connections. We may open more than one connection per
@@ -914,6 +1096,9 @@ class HttpRequest {
 					if(colon == -1)
 						return;
 					auto name = header[0 .. colon];
+					if(colon + 1 == header.length)
+						return; // empty header, idk
+					assert(colon + 2 < header.length, header);
 					auto value = header[colon + 2 .. $]; // skipping the colon itself and the following space
 
 					switch(name) {
@@ -1170,165 +1355,7 @@ class HttpRequest {
 		return stillAlive;
 	}
 
-	this() {
 	}
-
-	///
-	this(Uri where, HttpVerb method) {
-		populateFromInfo(where, method);
-	}
-
-	/// Final url after any redirections
-	string finalUrl;
-
-	void populateFromInfo(Uri where, HttpVerb method) {
-		auto parts = where;
-		finalUrl = where.toString();
-		requestParameters.method = method;
-		requestParameters.host = parts.host;
-		requestParameters.port = cast(ushort) parts.port;
-		requestParameters.ssl = parts.scheme == "https";
-		if(parts.port == 0)
-			requestParameters.port = requestParameters.ssl ? 443 : 80;
-		requestParameters.uri = parts.path.length ? parts.path : "/";
-		if(parts.query.length) {
-			requestParameters.uri ~= "?";
-			requestParameters.uri ~= parts.query;
-		}
-	}
-
-	~this() {
-	}
-
-	ubyte[] sendBuffer;
-
-	HttpResponse responseData;
-	private HttpClient parentClient;
-
-	size_t bodyBytesSent;
-	size_t bodyBytesReceived;
-
-	State state_;
-	State state() { return state_; }
-	State state(State s) {
-		assert(state_ != State.complete);
-		return state_ = s;
-	}
-	/// Called when data is received. Check the state to see what data is available.
-	void delegate(HttpRequest) onDataReceived;
-
-	enum State {
-		/// The request has not yet been sent
-		unsent,
-
-		/// The send() method has been called, but no data is
-		/// sent on the socket yet because the connection is busy.
-		pendingAvailableConnection,
-
-		/// The headers are being sent now
-		sendingHeaders,
-
-		/// The body is being sent now
-		sendingBody,
-
-		/// The request has been sent but we haven't received any response yet
-		waitingForResponse,
-
-		/// We have received some data and are currently receiving headers
-		readingHeaders,
-
-		/// All headers are available but we're still waiting on the body
-		readingBody,
-
-		/// The request is complete.
-		complete,
-
-		/// The request is aborted, either by the abort() method, or as a result of the server disconnecting
-		aborted
-	}
-
-	/// Sends now and waits for the request to finish, returning the response.
-	HttpResponse perform() {
-		send();
-		return waitForCompletion();
-	}
-
-	/// Sends the request asynchronously.
-	void send() {
-		sendPrivate(true);
-	}
-
-	private void sendPrivate(bool advance) {
-		if(state != State.unsent && state != State.aborted)
-			return; // already sent
-		string headers;
-
-		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
-		if(requestParameters.useHttp11)
-			headers ~= " HTTP/1.1\r\n";
-		else
-			headers ~= " HTTP/1.0\r\n";
-		headers ~= "Host: "~requestParameters.host~"\r\n";
-		if(requestParameters.userAgent.length)
-			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
-		if(requestParameters.contentType.length)
-			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
-		if(requestParameters.authorization.length)
-			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
-		if(requestParameters.bodyData.length)
-			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
-		if(requestParameters.acceptGzip)
-			headers ~= "Accept-Encoding: gzip\r\n";
-
-		foreach(header; requestParameters.headers)
-			headers ~= header ~ "\r\n";
-
-		headers ~= "\r\n";
-
-		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
-
-		// import std.stdio; writeln("******* ", sendBuffer);
-
-		responseData = HttpResponse.init;
-		responseData.requestParameters = requestParameters;
-		bodyBytesSent = 0;
-		bodyBytesReceived = 0;
-		state = State.pendingAvailableConnection;
-
-		bool alreadyPending = false;
-		foreach(req; pending)
-			if(req is this) {
-				alreadyPending = true;
-				break;
-			}
-		if(!alreadyPending) {
-			pending ~= this;
-		}
-
-		if(advance)
-			HttpRequest.advanceConnections();
-	}
-
-
-	/// Waits for the request to finish or timeout, whichever comes first.
-	HttpResponse waitForCompletion() {
-		while(state != State.aborted && state != State.complete) {
-			if(state == State.unsent)
-				send();
-			if(auto err = HttpRequest.advanceConnections())
-				throw new Exception("waitForCompletion got err " ~ to!string(err));
-		}
-
-		return responseData;
-	}
-
-	/// Aborts this request.
-	void abort() {
-		this.state = State.aborted;
-		// FIXME
-	}
-
-	HttpRequestParameters requestParameters; ///
 }
 
 ///
@@ -1338,6 +1365,7 @@ struct HttpRequestParameters {
 	// debugging
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
+	bool keepAlive = true; ///
 
 	// the request itself
 	HttpVerb method; ///
@@ -1403,6 +1431,7 @@ class HttpClient {
 	/* Protocol restrictions, useful to disable when debugging servers */
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
+	bool keepAlive = true; ///
 
 	///
 	@property Uri location() {
@@ -1425,6 +1454,7 @@ class HttpClient {
 
 		request.requestParameters.useHttp11 = this.useHttp11;
 		request.requestParameters.acceptGzip = this.acceptGzip;
+		request.requestParameters.keepAlive = this.keepAlive;
 
 		return request;
 	}
@@ -1442,6 +1472,7 @@ class HttpClient {
 
 		request.requestParameters.useHttp11 = this.useHttp11;
 		request.requestParameters.acceptGzip = this.acceptGzip;
+		request.requestParameters.keepAlive = this.keepAlive;
 
 		request.requestParameters.bodyData = bodyData;
 		request.requestParameters.contentType = contentType;
@@ -1638,8 +1669,8 @@ version(use_openssl) {
 			if(SSL_connect(ssl) == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
-				printf("wtf\n");
-				scanf("%d\n", i);
+				//printf("wtf\n");
+				//scanf("%d\n", i);
 				throw new Exception("ssl connect");
 			}
 		}
@@ -1651,8 +1682,8 @@ version(use_openssl) {
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
-				printf("wtf\n");
-				scanf("%d\n", i);
+				//printf("wtf\n");
+				//scanf("%d\n", i);
 				throw new Exception("ssl send");
 			}
 			return retval;
@@ -1667,8 +1698,8 @@ version(use_openssl) {
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
-				printf("wtf\n");
-				scanf("%d\n", i);
+				//printf("wtf\n");
+				//scanf("%d\n", i);
 				throw new Exception("ssl send");
 			}
 			return retval;
@@ -2014,3 +2045,905 @@ class FormData {
 	}
 }
 
+private bool bicmp(in ubyte[] item, in char[] search) {
+	if(item.length != search.length) return false;
+
+	foreach(i; 0 .. item.length) {
+		ubyte a = item[i];
+		ubyte b = search[i];
+		if(a >= 'A' && a <= 'Z')
+			a += 32;
+		//if(b >= 'A' && b <= 'Z')
+			//b += 32;
+		if(a != b)
+			return false;
+	}
+
+	return true;
+}
+
+/++
+	WebSocket client, based on the browser api, though also with other api options.
+
+	---
+		auto ws = new WebSocket(URI("ws://...."));
+
+		ws.onmessage = (in char[] msg) {
+			ws.send("a reply");
+		};
+
+		ws.connect();
+
+		WebSocket.eventLoop();
+	---
+
+	Symbol_groups:
+		foundational =
+			Used with all API styles.
+
+		browser_api =
+			API based on the standard in the browser.
+
+		event_loop_integration =
+			Integrating with external event loops is done through static functions. You should
+			call these BEFORE doing anything else with the WebSocket module or class.
+
+			$(PITFALL NOT IMPLEMENTED)
+			---
+				WebSocket.setEventLoopProxy(arsd.simpledisplay.EventLoop.proxy.tupleof);
+				// or something like that. it is not implemented yet.
+			---
+			$(PITFALL NOT IMPLEMENTED)
+
+		blocking_api =
+			The blocking API is best used when you only need basic functionality with a single connection.
+
+			---
+			WebSocketFrame msg;
+			do {
+				// FIXME good demo
+			} while(msg);
+			---
+
+			Or to check for blocks before calling:
+
+			---
+			try_to_process_more:
+			while(ws.isMessageBuffered()) {
+				auto msg = ws.waitForNextMessage();
+				// process msg
+			}
+			if(ws.isDataPending()) {
+				ws.lowLevelReceive();
+				goto try_to_process_more;
+			} else {
+				// nothing ready, you can do other things
+				// or at least sleep a while before trying
+				// to process more.
+				if(ws.readyState == WebSocket.OPEN) {
+					Thread.sleep(1.seconds);
+					goto try_to_process_more;
+				}
+			}
+			---
+			
++/
+class WebSocket {
+	private Uri uri;
+	private string[string] cookies;
+	private string origin;
+
+	private string host;
+	private ushort port;
+	private bool ssl;
+
+	private int readyState_;
+
+	private Socket socket;
+	private ubyte[] receiveBuffer;
+	private size_t receiveBufferUsedLength;
+
+	private Config config;
+
+	enum CONNECTING = 0; /// Socket has been created. The connection is not yet open.
+	enum OPEN = 1; /// The connection is open and ready to communicate.
+	enum CLOSING = 2; /// The connection is in the process of closing.
+	enum CLOSED = 3; /// The connection is closed or couldn't be opened.
+
+	/++
+
+	+/
+	/// Group: foundational
+	static struct Config {
+		/++
+			These control the size of the receive buffer.
+
+			It starts at the initial size, will temporarily
+			balloon up to the maximum size, and will reuse
+			a buffer up to the likely size.
+
+			Anything larger than the maximum size will cause
+			the connection to be aborted and an exception thrown.
+			This is to protect you against a peer trying to
+			exhaust your memory, while keeping the user-level
+			processing simple.
+		+/
+		size_t initialReceiveBufferSize = 4096;
+		size_t likelyReceiveBufferSize = 4096; /// ditto
+		size_t maximumReceiveBufferSize = 10 * 1024 * 1024; /// ditto
+
+		/++
+			Maximum combined size of a message.
+		+/
+		size_t maximumMessageSize = 10 * 1024 * 1024;
+
+		string[string] cookies; /// Cookies to send with the initial request. cookies[name] = value;
+		string origin; /// Origin URL to send with the handshake, if desired.
+		string protocol; /// the protocol header, if desired.
+
+		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
+	}
+
+	/++
+		Returns one of [CONNECTING], [OPEN], [CLOSING], or [CLOSED].
+	+/
+	int readyState() {
+		return readyState_;
+	}
+
+	/++
+wss://echo.websocket.org
+	+/
+	/// Group: foundational
+	this(Uri uri, Config config = Config.init)
+		in (uri.scheme == "ws" || uri.scheme == "wss")
+	{
+		this.uri = uri;
+		this.config = config;
+
+		this.receiveBuffer = new ubyte[](config.initialReceiveBufferSize);
+
+		host = uri.host;
+		ssl = uri.scheme == "wss";
+		port = cast(ushort) (uri.port ? uri.port : ssl ? 443 : 80);
+
+		if(ssl) {
+			version(with_openssl)
+				socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
+			else
+				throw new Exception("SSL not compiled in");
+		} else
+			socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+
+	}
+
+	/++
+
+	+/
+	/// Group: foundational
+	void connect() {
+		socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
+		// FIXME: websocket handshake could and really should be async too.
+
+		auto uri = this.uri.path.length ? this.uri.path : "/";
+		if(this.uri.query.length) {
+			uri ~= "?";
+			uri ~= this.uri.query;
+		}
+
+		// the headers really shouldn't be bigger than this, at least
+		// the chunks i need to process
+		ubyte[4096] buffer;
+		size_t pos;
+
+		void append(in char[][] items...) {
+			foreach(what; items) {
+				buffer[pos .. pos + what.length] = cast(ubyte[]) what[];
+				pos += what.length;
+			}
+		}
+
+		append("GET ", uri, " HTTP/1.1\r\n");
+		append("Host: ", this.uri.host, "\r\n");
+
+		append("Upgrade: websocket\r\n");
+		append("Connection: Upgrade\r\n");
+		append("Sec-WebSocket-Version: 13\r\n");
+
+		// FIXME: randomize this
+		append("Sec-WebSocket-Key: x3JEHMbDL1EzLkh9GBhXDw==\r\n");
+
+		if(config.protocol.length)
+			append("Sec-WebSocket-Protocol: ", config.protocol, "\r\n");
+		if(config.origin.length)
+			append("Origin: ", origin, "\r\n");
+
+		append("\r\n");
+
+		auto remaining = buffer[0 .. pos];
+		//import std.stdio; writeln(host, " " , port, " ", cast(string) remaining);
+		while(remaining.length) {
+			auto r = socket.send(remaining);
+			if(r < 0)
+				throw new Exception(lastSocketError());
+			if(r == 0)
+				throw new Exception("unexpected connection termination");
+			remaining = remaining[r .. $];
+		}
+
+		// the response shouldn't be especially large at this point, just
+		// headers for the most part. gonna try to get it in the stack buffer.
+		// then copy stuff after headers, if any, to the frame buffer.
+		ubyte[] used;
+
+		void more() {
+			auto r = socket.receive(buffer[used.length .. $]);
+
+			if(r < 0)
+				throw new Exception(lastSocketError());
+			if(r == 0)
+				throw new Exception("unexpected connection termination");
+			//import std.stdio;writef("%s", cast(string) buffer[used.length .. used.length + r]);
+
+			used = buffer[0 .. used.length + r];
+		}
+
+		more();
+
+		import std.algorithm;
+		if(!used.startsWith(cast(ubyte[]) "HTTP/1.1 101"))
+			throw new Exception("didn't get a websocket answer");
+		// skip the status line
+		while(used.length && used[0] != '\n')
+			used = used[1 .. $];
+
+		if(used.length == 0)
+			throw new Exception("wtf");
+
+		if(used.length < 1)
+			more();
+
+		used = used[1 .. $]; // skip the \n
+
+		if(used.length == 0)
+			more();
+
+		// checks on the protocol from ehaders
+		bool isWebsocket;
+		bool isUpgrade;
+		const(ubyte)[] protocol;
+		const(ubyte)[] accept;
+
+		while(used.length) {
+			if(used.length >= 2 && used[0] == '\r' && used[1] == '\n') {
+				used = used[2 .. $];
+				break; // all done
+			}
+			int idxColon;
+			while(idxColon < used.length && used[idxColon] != ':')
+				idxColon++;
+			if(idxColon == used.length)
+				more();
+			auto idxStart = idxColon + 1;
+			while(idxStart < used.length && used[idxStart] == ' ')
+				idxStart++;
+			if(idxStart == used.length)
+				more();
+			auto idxEnd = idxStart;
+			while(idxEnd < used.length && used[idxEnd] != '\r')
+				idxEnd++;
+			if(idxEnd == used.length)
+				more();
+
+			auto headerName = used[0 .. idxColon];
+			auto headerValue = used[idxStart .. idxEnd];
+
+			// move past this header
+			used = used[idxEnd .. $];
+			// and the \r\n
+			if(2 <= used.length)
+				used = used[2 .. $];
+
+			if(headerName.bicmp("upgrade")) {
+				if(headerValue.bicmp("websocket"))
+					isWebsocket = true;
+			} else if(headerName.bicmp("connection")) {
+				if(headerValue.bicmp("upgrade"))
+					isUpgrade = true;
+			} else if(headerName.bicmp("sec-websocket-accept")) {
+				accept = headerValue;
+			} else if(headerName.bicmp("sec-websocket-protocol")) {
+				protocol = headerValue;
+			}
+
+			if(!used.length) {
+				more();
+			}
+		}
+
+
+		if(!isWebsocket)
+			throw new Exception("didn't answer as websocket");
+		if(!isUpgrade)
+			throw new Exception("didn't answer as upgrade");
+
+
+		// FIXME: check protocol if config requested one
+		// FIXME: check accept for the right hash
+
+		receiveBuffer[0 .. used.length] = used[];
+		receiveBufferUsedLength = used.length;
+
+		readyState_ = OPEN;
+
+		if(onopen)
+			onopen();
+
+		registerActiveSocket(this);
+	}
+
+	/++
+		Closes the connection, sending a graceful teardown message to the other side.
+	+/
+	/// Group: foundational
+	void close(int code = 0, string reason = null)
+		in (reason.length < 123)
+	{
+		if(readyState_ != OPEN)
+			return; // it cool, we done
+		WebSocketFrame wss;
+		wss.fin = true;
+		wss.opcode = WebSocketOpcode.close;
+		wss.data = cast(ubyte[]) reason;
+		wss.send(&llsend);
+
+		readyState_ = CLOSING;
+
+		socket.shutdown(SocketShutdown.SEND);
+	}
+
+	/++
+		Sends a ping message to the server. This is done automatically by the library if you set a non-zero [Config.pingFrequency], but you can also send extra pings explicitly as well with this function.
+	+/
+	/// Group: foundational
+	void ping() {
+		WebSocketFrame wss;
+		wss.fin = true;
+		wss.opcode = WebSocketOpcode.ping;
+		wss.send(&llsend);
+	}
+
+	// automatically handled....
+	void pong() {
+		WebSocketFrame wss;
+		wss.fin = true;
+		wss.opcode = WebSocketOpcode.pong;
+		wss.send(&llsend);
+	}
+
+	/++
+		Sends a text message through the websocket.
+	+/
+	/// Group: foundational
+	void send(in char[] textData) {
+		WebSocketFrame wss;
+		wss.fin = true;
+		wss.opcode = WebSocketOpcode.text;
+		wss.data = cast(ubyte[]) textData;
+		wss.send(&llsend);
+	}
+
+	/++
+		Sends a binary message through the websocket.
+	+/
+	/// Group: foundational
+	void send(in ubyte[] binaryData) {
+		WebSocketFrame wss;
+		wss.fin = true;
+		wss.opcode = WebSocketOpcode.binary;
+		wss.data = cast(ubyte[]) binaryData;
+		wss.send(&llsend);
+	}
+
+
+	private void llsend(ubyte[] d) {
+		while(d.length) {
+			auto r = socket.send(d);
+			if(r <= 0) throw new Exception("wtf");
+			d = d[r .. $];
+		}
+	}
+
+	/++
+		Waits for more data off the low-level socket and adds it to the pending buffer.
+
+		Returns `true` if the connection is still active.
+	+/
+	/// Group: blocking_api
+	public bool lowLevelReceive() {
+		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
+		if(r == 0)
+			return false;
+		if(r <= 0)
+			throw new Exception("wtf");
+		receiveBufferUsedLength += r;
+		return true;
+	}
+
+	/++
+		Waits for and returns the next complete message on the socket.
+
+		Note that the onmessage function is still called, right before
+		this returns.
+	+/
+	/// Group: blocking_api
+	public WebSocketFrame waitForNextMessage() {
+		do {
+			auto m = processOnce();
+			if(m.populated)
+				return m;
+		} while(lowLevelReceive());
+
+		return WebSocketFrame.init; // FIXME? maybe.
+	}
+
+	/++
+		Tells if [waitForNextMessage] would block.
+	+/
+	/// Group: blocking_api
+	public bool waitForNextMessageWouldBlock() {
+		checkAgain:
+		if(isMessageBuffered())
+			return false;
+		if(!isDataPending())
+			return true;
+		while(isDataPending())
+			lowLevelReceive();
+		goto checkAgain;
+	}
+
+	/++
+		Is there a message in the buffer already?
+		If `true`, [waitForNextMessage] is guaranteed to return immediately.
+		If `false`, check [isDataPending] as the next step.
+	+/
+	/// Group: blocking_api
+	public bool isMessageBuffered() {
+		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
+		auto s = d;
+		if(d.length) {
+			auto orig = d;
+			auto m = WebSocketFrame.read(d);
+			// that's how it indicates that it needs more data
+			if(d !is orig)
+				return true;
+		}
+
+		return false;
+	}
+
+	/++
+		Is data pending on the socket? Also check [isMessageBuffered] to see if there
+		is already a message in memory too.
+
+		If this returns `true`, you can call [lowLevelReceive], then try [isMessageBuffered]
+		again.
+	+/
+	/// Group: blocking_api
+	public bool isDataPending() {
+		static SocketSet readSet;
+		if(readSet is null)
+			readSet = new SocketSet();
+
+		version(with_openssl)
+		if(auto s = cast(SslClientSocket) socket) {
+			// select doesn't handle the case with stuff
+			// left in the ssl buffer so i'm checking it separately
+			if(s.dataPending()) {
+				return true;
+			}
+		}
+
+		readSet.add(socket);
+
+		//tryAgain:
+		auto selectGot = Socket.select(readSet, null, null, 0.seconds /* timeout */);
+		if(selectGot == 0) { /* timeout */
+			// timeout
+			return false;
+		} else if(selectGot == -1) { /* interrupted */
+			return false;
+		} else { /* ready */
+			if(readSet.isSet(socket)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private ubyte continuingType;
+	private ubyte[] continuingData;
+	//private size_t continuingDataLength;
+
+	private WebSocketFrame processOnce() {
+		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
+		auto s = d;
+		// FIXME: handle continuation frames more efficiently. it should really just reuse the receive buffer.
+		WebSocketFrame m;
+		if(d.length) {
+			auto orig = d;
+			m = WebSocketFrame.read(d);
+			// that's how it indicates that it needs more data
+			if(d is orig)
+				return WebSocketFrame.init;
+			switch(m.opcode) {
+				case WebSocketOpcode.continuation:
+					if(continuingData.length + m.data.length > config.maximumMessageSize)
+						throw new Exception("message size exceeded");
+
+					continuingData ~= m.data;
+					if(m.fin) {
+						if(ontextmessage)
+							ontextmessage(cast(char[]) continuingData);
+						if(onbinarymessage)
+							onbinarymessage(continuingData);
+
+						continuingData = null;
+					}
+				break;
+				case WebSocketOpcode.text:
+					if(m.fin) {
+						if(ontextmessage)
+							ontextmessage(m.textData);
+					} else {
+						continuingType = m.opcode;
+						//continuingDataLength = 0;
+						continuingData = null;
+						continuingData ~= m.data;
+					}
+				break;
+				case WebSocketOpcode.binary:
+					if(m.fin) {
+						if(onbinarymessage)
+							onbinarymessage(m.data);
+					} else {
+						continuingType = m.opcode;
+						//continuingDataLength = 0;
+						continuingData = null;
+						continuingData ~= m.data;
+					}
+				break;
+				case WebSocketOpcode.close:
+					readyState_ = CLOSED;
+					if(onclose)
+						onclose();
+
+					unregisterActiveSocket(this);
+				break;
+				case WebSocketOpcode.ping:
+					pong();
+				break;
+				case WebSocketOpcode.pong:
+					// just really references it is still alive, nbd.
+				break;
+				default: // ignore though i could and perhaps should throw too
+			}
+		}
+		receiveBufferUsedLength -= s.length - d.length;
+
+		return m;
+	}
+
+	private void autoprocess() {
+		// FIXME
+		do {
+			processOnce();
+		} while(lowLevelReceive());
+	}
+
+
+	void delegate() onclose; ///
+	void delegate() onerror; ///
+	void delegate(in char[]) ontextmessage; ///
+	void delegate(in ubyte[]) onbinarymessage; ///
+	void delegate() onopen; ///
+
+	/++
+
+	+/
+	/// Group: browser_api
+	void onmessage(void delegate(in char[]) dg) {
+		ontextmessage = dg;
+	}
+
+	/// ditto
+	void onmessage(void delegate(in ubyte[]) dg) {
+		onbinarymessage = dg;
+	}
+
+	/*
+	const int bufferedAmount // amount pending
+	const string extensions
+
+	const string protocol
+	const string url
+	*/
+
+	static {
+		/++
+
+		+/
+		void eventLoop() {
+
+			static SocketSet readSet;
+
+			if(readSet is null)
+				readSet = new SocketSet();
+
+			outermost: while(!loopExited) {
+				readSet.reset();
+
+				bool hadAny;
+				foreach(sock; activeSockets) {
+					readSet.add(sock.socket);
+					hadAny = true;
+				}
+
+				if(!hadAny)
+					return;
+
+				tryAgain:
+				auto selectGot = Socket.select(readSet, null, null, 10.seconds /* timeout */);
+				if(selectGot == 0) { /* timeout */
+					// timeout
+					goto tryAgain;
+				} else if(selectGot == -1) { /* interrupted */
+					goto tryAgain;
+				} else {
+					foreach(sock; activeSockets) {
+						if(readSet.isSet(sock.socket)) {
+							if(!sock.lowLevelReceive()) {
+								sock.readyState_ = CLOSED;
+								unregisterActiveSocket(sock);
+								continue outermost;
+							}
+							while(sock.processOnce().populated) {}
+							selectGot--;
+							if(selectGot <= 0)
+								break;
+						}
+					}
+				}
+			}
+		}
+
+		private bool loopExited;
+		/++
+
+		+/
+		void exitEventLoop() {
+			loopExited = true;
+		}
+
+		WebSocket[] activeSockets;
+		void registerActiveSocket(WebSocket s) {
+			activeSockets ~= s;
+		}
+		void unregisterActiveSocket(WebSocket s) {
+			foreach(i, a; activeSockets)
+				if(s is a) {
+					activeSockets[i] = activeSockets[$-1];
+					activeSockets = activeSockets[0 .. $-1];
+					break;
+				}
+		}
+	}
+}
+
+/* copy/paste from cgi.d */
+private {
+	enum WebSocketOpcode : ubyte {
+		continuation = 0,
+		text = 1,
+		binary = 2,
+		// 3, 4, 5, 6, 7 RESERVED
+		close = 8,
+		ping = 9,
+		pong = 10,
+		// 11,12,13,14,15 RESERVED
+	}
+
+	public struct WebSocketFrame {
+		private bool populated;
+		bool fin;
+		bool rsv1;
+		bool rsv2;
+		bool rsv3;
+		WebSocketOpcode opcode; // 4 bits
+		bool masked;
+		ubyte lengthIndicator; // don't set this when building one to send
+		ulong realLength; // don't use when sending
+		ubyte[4] maskingKey; // don't set this when sending
+		ubyte[] data;
+
+		static WebSocketFrame simpleMessage(WebSocketOpcode opcode, void[] data) {
+			WebSocketFrame msg;
+			msg.fin = true;
+			msg.opcode = opcode;
+			msg.data = cast(ubyte[]) data;
+
+			return msg;
+		}
+
+		private void send(scope void delegate(ubyte[]) llsend) {
+			ubyte[64] headerScratch;
+			int headerScratchPos = 0;
+
+			realLength = data.length;
+
+			{
+				ubyte b1;
+				b1 |= cast(ubyte) opcode;
+				b1 |= rsv3 ? (1 << 4) : 0;
+				b1 |= rsv2 ? (1 << 5) : 0;
+				b1 |= rsv1 ? (1 << 6) : 0;
+				b1 |= fin  ? (1 << 7) : 0;
+
+				headerScratch[0] = b1;
+				headerScratchPos++;
+			}
+
+			{
+				headerScratchPos++; // we'll set header[1] at the end of this
+				auto rlc = realLength;
+				ubyte b2;
+				b2 |= masked ? (1 << 7) : 0;
+
+				assert(headerScratchPos == 2);
+
+				if(realLength > 65535) {
+					// use 64 bit length
+					b2 |= 0x7f;
+
+					// FIXME: double check endinaness
+					foreach(i; 0 .. 8) {
+						headerScratch[2 + 7 - i] = rlc & 0x0ff;
+						rlc >>>= 8;
+					}
+
+					headerScratchPos += 8;
+				} else if(realLength > 127) {
+					// use 16 bit length
+					b2 |= 0x7e;
+
+					// FIXME: double check endinaness
+					foreach(i; 0 .. 2) {
+						headerScratch[2 + 1 - i] = rlc & 0x0ff;
+						rlc >>>= 8;
+					}
+
+					headerScratchPos += 2;
+				} else {
+					// use 7 bit length
+					b2 |= realLength & 0b_0111_1111;
+				}
+
+				headerScratch[1] = b2;
+			}
+
+			//assert(!masked, "masking key not properly implemented");
+			if(masked) {
+				// FIXME: randomize this
+				headerScratch[headerScratchPos .. headerScratchPos + 4] = maskingKey[];
+				headerScratchPos += 4;
+
+				// we'll just mask it in place...
+				int keyIdx = 0;
+				foreach(i; 0 .. data.length) {
+					data[i] = data[i] ^ maskingKey[keyIdx];
+					if(keyIdx == 3)
+						keyIdx = 0;
+					else
+						keyIdx++;
+				}
+			}
+
+			//writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
+			llsend(headerScratch[0 .. headerScratchPos]);
+			llsend(data);
+		}
+
+		static WebSocketFrame read(ref ubyte[] d) {
+			WebSocketFrame msg;
+
+			auto orig = d;
+
+			WebSocketFrame needsMoreData() {
+				d = orig;
+				return WebSocketFrame.init;
+			}
+
+			if(d.length < 2)
+				return needsMoreData();
+
+			ubyte b = d[0];
+
+			msg.populated = true;
+
+			msg.opcode = cast(WebSocketOpcode) (b & 0x0f);
+			b >>= 4;
+			msg.rsv3 = b & 0x01;
+			b >>= 1;
+			msg.rsv2 = b & 0x01;
+			b >>= 1;
+			msg.rsv1 = b & 0x01;
+			b >>= 1;
+			msg.fin = b & 0x01;
+
+			b = d[1];
+			msg.masked = (b & 0b1000_0000) ? true : false;
+			msg.lengthIndicator = b & 0b0111_1111;
+
+			d = d[2 .. $];
+
+			if(msg.lengthIndicator == 0x7e) {
+				// 16 bit length
+				msg.realLength = 0;
+
+				if(d.length < 2) return needsMoreData();
+
+				foreach(i; 0 .. 2) {
+					msg.realLength |= d[0] << ((1-i) * 8);
+					d = d[1 .. $];
+				}
+			} else if(msg.lengthIndicator == 0x7f) {
+				// 64 bit length
+				msg.realLength = 0;
+
+				if(d.length < 8) return needsMoreData();
+
+				foreach(i; 0 .. 8) {
+					msg.realLength |= d[0] << ((7-i) * 8);
+					d = d[1 .. $];
+				}
+			} else {
+				// 7 bit length
+				msg.realLength = msg.lengthIndicator;
+			}
+
+			if(msg.masked) {
+
+				if(d.length < 4) return needsMoreData();
+
+				msg.maskingKey = d[0 .. 4];
+				d = d[4 .. $];
+			}
+
+			if(msg.realLength > d.length) {
+				return needsMoreData();
+			}
+
+			msg.data = d[0 .. msg.realLength];
+			d = d[msg.realLength .. $];
+
+			if(msg.masked) {
+				// let's just unmask it now
+				int keyIdx = 0;
+				foreach(i; 0 .. msg.data.length) {
+					msg.data[i] = msg.data[i] ^ msg.maskingKey[keyIdx];
+					if(keyIdx == 3)
+						keyIdx = 0;
+					else
+						keyIdx++;
+				}
+			}
+
+			return msg;
+		}
+
+		char[] textData() {
+			return cast(char[]) data;
+		}
+	}
+}

@@ -468,6 +468,6 @@ class HtmlConverter {
 ///
 string htmlToText(string html, bool wantWordWrap = true, int wrapAmount = 74) {
 	auto converter = new HtmlConverter();
-	return converter.convert(html, true, wrapAmount);
+	return converter.convert(html, wantWordWrap, wrapAmount);
 }
 

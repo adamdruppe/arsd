@@ -6,6 +6,11 @@ module arsd.rpc;
 		1) integrate with arsd.eventloop
 		2) make it easy to use with other processes; pipe to a process and talk to it that way. perhaps with shared memory too?
 		3) extend the serialization capabilities
+
+
+	@Throws!(List, Of, Exceptions)
+	classes are also RPC proxied
+	stdin/out/err also redirected
 */
 
 ///+ //example usage

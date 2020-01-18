@@ -1,8 +1,7 @@
-// FIXME: add classList
+// FIXME: add classList. it is a live list and removes whitespace and duplicates when you use it.
 // FIXME: xml namespace support???
-// FIXME: add matchesSelector - standard name is `matches`. also `closest` walks up to find the parent that matches
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
-// FIXME: appendChild should not fail if the thing already has a parent; it should just automatically remove it per standard.
+// FIXME: parentElement is parentNode that skips DocumentFragment etc but will be hard to work in with my compatibility...
 
 // FIXME: the scriptable list is quite arbitrary
 
@@ -34,6 +33,21 @@
 
 	If you want it to stand alone, just always use the `Document.parseUtf8`
 	function or the constructor that takes a string.
+
+	Symbol_groups:
+
+	core_functionality =
+
+	These members provide core functionality. The members on these classes
+	will provide most your direct interaction.
+
+	bonus_functionality =
+
+	These provide additional functionality for special use cases.
+
+	implementations =
+
+	These provide implementations of other functionality.
 +/
 module arsd.dom;
 
@@ -79,6 +93,7 @@ bool isConvenientAttribute(string name) {
 
 
 /// The main document interface, including a html parser.
+/// Group: core_functionality
 class Document : FileResource {
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
 	/// included in the build as well as [arsd.characterencodings].
@@ -1185,37 +1200,70 @@ class Document : FileResource {
 		if( is(SomeElementType : Element))
 		out(ret) { assert(ret !is null); }
 	body {
-		return root.requireSelector!(SomeElementType)(selector, file, line);
+		auto e = cast(SomeElementType) querySelector(selector);
+		if(e is null)
+			throw new ElementNotFoundException(SomeElementType.stringof, selector, this.root, file, line);
+		return e;
 	}
 
 	final MaybeNullElement!SomeElementType optionSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
 		if(is(SomeElementType : Element))
 	{
-		return root.optionSelector!(SomeElementType)(selector, file, line);
+		auto e = cast(SomeElementType) querySelector(selector);
+		return MaybeNullElement!SomeElementType(e);
 	}
 
-
 	/// ditto
+	@scriptable
 	Element querySelector(string selector) {
-		return root.querySelector(selector);
+		// see comment below on Document.querySelectorAll
+		auto s = Selector(selector);//, !loose);
+		foreach(ref comp; s.components)
+			if(comp.parts.length && comp.parts[0].separation == 0)
+				comp.parts[0].separation = -1;
+		foreach(e; s.getMatchingElementsLazy(this.root))
+			return e;
+		return null;
+
 	}
 
 	/// ditto
+	@scriptable
 	Element[] querySelectorAll(string selector) {
-		return root.querySelectorAll(selector);
+		// In standards-compliant code, the document is slightly magical
+		// in that it is a pseudoelement at top level. It should actually
+		// match the root as one of its children.
+		//
+		// In versions of dom.d before Dec 29 2019, this worked because
+		// querySelectorAll was willing to return itself. With that bug fix
+		// (search "arbitrary id asduiwh" in this file for associated unittest)
+		// this would have failed. Hence adding back the root if it matches the
+		// selector itself.
+		//
+		// I'd love to do this better later.
+
+		auto s = Selector(selector);//, !loose);
+		foreach(ref comp; s.components)
+			if(comp.parts.length && comp.parts[0].separation == 0)
+				comp.parts[0].separation = -1;
+		return s.getMatchingElements(this.root);
 	}
 
 	/// ditto
+	@scriptable
+	deprecated("use querySelectorAll instead")
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
 	}
 
 	/// ditto
+	@scriptable
 	Element[] getElementsByTagName(string tag) {
 		return root.getElementsByTagName(tag);
 	}
 
 	/// ditto
+	@scriptable
 	Element[] getElementsByClassName(string tag) {
 		return root.getElementsByClassName(tag);
 	}
@@ -1395,6 +1443,7 @@ class Document : FileResource {
 }
 
 /// This represents almost everything in the DOM.
+/// Group: core_functionality
 class Element {
 	/// Returns a collection of elements by selector.
 	/// See: [Document.opIndex]
@@ -2181,8 +2230,35 @@ class Element {
 	}
 
 	/// a more standards-compliant alias for getElementsBySelector
+	@scriptable
 	Element[] querySelectorAll(string selector) {
 		return getElementsBySelector(selector);
+	}
+
+	/// If the element matches the given selector. Previously known as `matchesSelector`.
+	@scriptable
+	bool matches(string selector) {
+		/+
+		bool caseSensitiveTags = true;
+		if(parentDocument && parentDocument.loose)
+			caseSensitiveTags = false;
+		+/
+
+		Selector s = Selector(selector);
+		return s.matchesElement(this);
+	}
+
+	/// Returns itself or the closest parent that matches the given selector, or null if none found
+	/// See_also: https://developer.mozilla.org/en-US/docs/Web/API/Element/closest
+	@scriptable
+	Element closest(string selector) {
+		Element e = this;
+		while(e !is null) {
+			if(e.matches(selector))
+				return e;
+			e = e.parentNode;
+		}
+		return null;
 	}
 
 	/**
@@ -2543,11 +2619,17 @@ class Element {
 	}
 
 
-    	/// Appends the given element to this one. The given element must not have a parent already.
+    	/++
+		Appends the given element to this one. If it already has a parent, it is removed from that tree and moved to this one.
+
+		See_also: https://developer.mozilla.org/en-US/docs/Web/API/Node/appendChild
+
+		History:
+			Prior to 1 Jan 2020 (git tag v4.4.1 and below), it required that the given element must not have a parent already. This was in violation of standard, so it changed the behavior to remove it from the existing parent and instead move it here.
+	+/
 	Element appendChild(Element e)
 		in {
 			assert(e !is null);
-			assert(e.parentNode is null, e.parentNode.toString);
 		}
 		out (ret) {
 			assert((cast(DocumentFragment) this !is null) || (e.parentNode is this), e.toString);// e.parentNode ? e.parentNode.toString : "null");
@@ -2555,6 +2637,9 @@ class Element {
 			assert(e is ret);
 		}
 	body {
+		if(e.parentNode !is null)
+			e.parentNode.removeChild(e);
+
 		selfClosed = false;
 		e.parentNode = this;
 		e.parentDocument = this.parentDocument;
@@ -3410,6 +3495,7 @@ class Element {
 
 // FIXME: since Document loosens the input requirements, it should probably be the sub class...
 /// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+/// Group: core_functionality
 class XmlDocument : Document {
 	this(string data) {
 		contentType = "text/xml; charset=utf-8";
@@ -3427,6 +3513,7 @@ import std.string;
 /* domconvenience follows { */
 
 /// finds comments that match the given txt. Case insensitive, strips whitespace.
+/// Group: core_functionality
 Element[] findComments(Document document, string txt) {
 	return findComments(document.root, txt);
 }
@@ -3446,6 +3533,7 @@ Element[] findComments(Element element, string txt) {
 }
 
 /// An option type that propagates null. See: [Element.optionSelector]
+/// Group: implementations
 struct MaybeNullElement(SomeElementType) {
 	this(SomeElementType ele) {
 		this.element = ele;
@@ -3479,6 +3567,7 @@ struct MaybeNullElement(SomeElementType) {
 /++
 	A collection of elements which forwards methods to the children.
 +/
+/// Group: implementations
 struct ElementCollection {
 	///
 	this(Element e) {
@@ -3577,6 +3666,7 @@ struct ElementCollection {
 
 
 /// this puts in operators and opDispatch to handle string indexes and properties, forwarding to get and set functions.
+/// Group: implementations
 mixin template JavascriptStyleDispatch() {
 	///
 	string opDispatch(string name)(string v = null) if(name != "popFront") { // popFront will make this look like a range. Do not want.
@@ -3604,6 +3694,7 @@ mixin template JavascriptStyleDispatch() {
 /// A proxy object to do the Element class' dataset property. See Element.dataset for more info.
 ///
 /// Do not create this object directly.
+/// Group: implementations
 struct DataSet {
 	///
 	this(Element e) {
@@ -3627,6 +3718,7 @@ struct DataSet {
 }
 
 /// Proxy object for attributes which will replace the main opDispatch eventually
+/// Group: implementations
 struct AttributeSet {
 	///
 	this(Element e) {
@@ -3654,6 +3746,7 @@ struct AttributeSet {
 /// for style, i want to be able to set it with a string like a plain attribute,
 /// but also be able to do properties Javascript style.
 
+/// Group: implementations
 struct ElementStyle {
 	this(Element parent) {
 		_element = parent;
@@ -3810,6 +3903,7 @@ import std.range;
 	Document implements this interface with type = text/html (see Document.contentType for more info)
 	and data = document.toString, so you can return Documents anywhere web.d expects FileResources.
 +/
+/// Group: bonus_functionality
 interface FileResource {
 	/// the content-type of the file. e.g. "text/html; charset=utf-8" or "image/png"
 	@property string contentType() const;
@@ -3821,10 +3915,12 @@ interface FileResource {
 
 
 ///.
+/// Group: bonus_functionality
 enum NodeType { Text = 3 }
 
 
 /// You can use this to do an easy null check or a dynamic cast+null check on any element.
+/// Group: core_functionality
 T require(T = Element, string file = __FILE__, int line = __LINE__)(Element e) if(is(T : Element))
 	in {}
 	out(ret) { assert(ret !is null); }
@@ -3837,6 +3933,7 @@ body {
 
 
 ///.
+/// Group: core_functionality
 class DocumentFragment : Element {
 	///.
 	this(Document _parentDocument) {
@@ -3887,6 +3984,7 @@ class DocumentFragment : Element {
 ///
 /// The output parameter can be given to append to an existing buffer. You don't have to
 /// pass one; regardless, the return value will be usable for you, with just the data encoded.
+/// Group: core_functionality
 string htmlEntitiesEncode(string data, Appender!string output = appender!string(), bool encodeNonAscii = true) {
 	// if there's no entities, we can save a lot of time by not bothering with the
 	// decoding loop. This check cuts the net toString time by better than half in my test.
@@ -3939,11 +4037,13 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 }
 
 /// An alias for htmlEntitiesEncode; it works for xml too
+/// Group: core_functionality
 string xmlEntitiesEncode(string data) {
 	return htmlEntitiesEncode(data);
 }
 
 /// This helper function is used for decoding html entities. It has a hard-coded list of entities and characters.
+/// Group: core_functionality
 dchar parseEntity(in dchar[] entity) {
 	switch(entity[1..$-1]) {
 		case "quot":
@@ -5441,6 +5541,7 @@ import std.stdio;
 /// This takes a string of raw HTML and decodes the entities into a nice D utf-8 string.
 /// By default, it uses loose mode - it will try to return a useful string from garbage input too.
 /// Set the second parameter to true if you'd prefer it to strictly throw exceptions on garbage input.
+/// Group: core_functionality
 string htmlEntitiesDecode(string data, bool strict = false) {
 	// this check makes a *big* difference; about a 50% improvement of parse speed on my test.
 	if(data.indexOf("&") == -1) // all html entities begin with &
@@ -5521,6 +5622,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	return cast(string) a; // assumeUnique is actually kinda slow, lol
 }
 
+/// Group: implementations
 abstract class SpecialElement : Element {
 	this(Document _parentDocument) {
 		super(_parentDocument);
@@ -5538,6 +5640,7 @@ abstract class SpecialElement : Element {
 }
 
 ///.
+/// Group: implementations
 class RawSource : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5570,6 +5673,7 @@ class RawSource : SpecialElement {
 	string source;
 }
 
+/// Group: implementations
 abstract class ServerSideCode : SpecialElement {
 	this(Document _parentDocument, string type) {
 		super(_parentDocument);
@@ -5599,6 +5703,7 @@ abstract class ServerSideCode : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class PhpCode : ServerSideCode {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5612,6 +5717,7 @@ class PhpCode : ServerSideCode {
 }
 
 ///.
+/// Group: implementations
 class AspCode : ServerSideCode {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5625,6 +5731,7 @@ class AspCode : ServerSideCode {
 }
 
 ///.
+/// Group: implementations
 class BangInstruction : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5664,6 +5771,7 @@ class BangInstruction : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class QuestionInstruction : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5704,6 +5812,7 @@ class QuestionInstruction : SpecialElement {
 }
 
 ///.
+/// Group: implementations
 class HtmlComment : SpecialElement {
 	///.
 	this(Document _parentDocument, string s) {
@@ -5747,6 +5856,7 @@ class HtmlComment : SpecialElement {
 
 
 ///.
+/// Group: implementations
 class TextNode : Element {
   public:
 	///.
@@ -5862,6 +5972,7 @@ class TextNode : Element {
 */
 
 ///.
+/// Group: implementations
 class Link : Element {
 
 	///.
@@ -6000,6 +6111,7 @@ class Link : Element {
 }
 
 ///.
+/// Group: implementations
 class Form : Element {
 
 	///.
@@ -6250,6 +6362,7 @@ class Form : Element {
 import std.conv;
 
 ///.
+/// Group: implementations
 class Table : Element {
 
 	///.
@@ -6489,6 +6602,7 @@ class Table : Element {
 }
 
 /// Represents a table row element - a <tr>
+/// Group: implementations
 class TableRow : Element {
 	///.
 	this(Document _parentDocument) {
@@ -6501,6 +6615,7 @@ class TableRow : Element {
 }
 
 /// Represents anything that can be a table cell - <td> or <th> html.
+/// Group: implementations
 class TableCell : Element {
 	///.
 	this(Document _parentDocument, string _tagName) {
@@ -6537,6 +6652,7 @@ class TableCell : Element {
 
 
 ///.
+/// Group: implementations
 class MarkupException : Exception {
 
 	///.
@@ -6546,6 +6662,7 @@ class MarkupException : Exception {
 }
 
 /// This is used when you are using one of the require variants of navigation, and no matching element can be found in the tree.
+/// Group: implementations
 class ElementNotFoundException : Exception {
 
 	/// type == kind of element you were looking for and search == a selector describing the search.
@@ -6560,6 +6677,7 @@ class ElementNotFoundException : Exception {
 /// The html struct is used to differentiate between regular text nodes and html in certain functions
 ///
 /// Easiest way to construct it is like this: `auto html = Html("<p>hello</p>");`
+/// Group: core_functionality
 struct Html {
 	/// This string holds the actual html. Use it to retrieve the contents.
 	string source;
@@ -7160,6 +7278,7 @@ int intFromHex(string hex) {
 		}
 
 		auto part = parts[0];
+		//writeln("checking ", part, " against ", start, " with ", part.separation);
 		switch(part.separation) {
 			default: assert(0);
 			case -1:
@@ -7229,19 +7348,24 @@ int intFromHex(string hex) {
 	}
 
 	/++
-		Represents a parsed CSS selector.
+		Represents a parsed CSS selector. You never have to use this directly, but you can if you know it is going to be reused a lot to avoid a bit of repeat parsing.
 
 		See_Also:
-			[Element.querySelector]
-			[Element.querySelectorAll]
-			[Document.querySelector]
-			[Document.querySelectorAll]
+			$(LIST
+				* [Element.querySelector]
+				* [Element.querySelectorAll]
+				* [Element.matches]
+				* [Element.closest]
+				* [Document.querySelector]
+				* [Document.querySelectorAll]
+			)
 	+/
+	/// Group: core_functionality
 	struct Selector {
 		SelectorComponent[] components;
 		string original;
 		/++
-			Parses the selector string and returns the usable structure.
+			Parses the selector string and constructs the usable structure.
 		+/
 		this(string cssSelector) {
 			components = parseSelectorString(cssSelector);
@@ -7336,9 +7460,25 @@ int intFromHex(string hex) {
 			if(e is null) return false;
 			Element where = e;
 			int lastSeparation = -1;
-			foreach(part; retro(parts)) {
 
-				// writeln("matching ", where, " with ", part, " via ", lastSeparation);
+			auto lparts = parts;
+
+			if(parts.length && parts[0].separation > 0) {
+				// if it starts with a non-trivial separator, inject
+				// a "*" matcher to act as a root. for cases like document.querySelector("> body")
+				// which implies html
+
+				// there is probably a MUCH better way to do this.
+				auto dummy = SelectorPart.init;
+				dummy.tagNameFilter = "*";
+				dummy.separation = 0;
+				lparts = dummy ~ lparts;
+			}
+
+			foreach(part; retro(lparts)) {
+
+				 // writeln("matching ", where, " with ", part, " via ", lastSeparation);
+				 // writeln(parts);
 
 				if(lastSeparation == -1) {
 					if(!part.matchElement(where))
@@ -7346,6 +7486,7 @@ int intFromHex(string hex) {
 				} else if(lastSeparation == 0) { // generic parent
 					// need to go up the whole chain
 					where = where.parentNode;
+
 					while(where !is null) {
 						if(part.matchElement(where))
 							break;
@@ -7476,6 +7617,8 @@ int intFromHex(string hex) {
 
 						if(current.isCleanSlateExceptSeparation()) {
 							current.tagNameFilter = token;
+							// default thing, see comment under "*" below
+							if(current.separation == -1) current.separation = 0;
 						} else {
 							// if it was already set, we must see two thingies
 							// separated by whitespace...
@@ -7488,6 +7631,10 @@ int intFromHex(string hex) {
 						switch(token) {
 							case "*":
 								current.tagNameFilter = "*";
+								// the idea here is if we haven't actually set a separation
+								// yet (e.g. the > operator), it should assume the generic
+								// whitespace (descendant) mode to avoid matching self with -1
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case " ":
 								// If some other separation has already been set,
@@ -7520,16 +7667,20 @@ int intFromHex(string hex) {
 							break;
 							case "[":
 								state = State.ReadingAttributeSelector;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case ".":
 								state = State.ReadingClass;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case "#":
 								state = State.ReadingId;
+								if(current.separation == -1) current.separation = 0;
 							break;
 							case ":":
 							case "::":
 								state = State.ReadingPseudoClass;
+								if(current.separation == -1) current.separation = 0;
 							break;
 
 							default:
@@ -8542,18 +8693,6 @@ private bool isSimpleWhite(dchar c) {
 	return c == ' ' || c == '\r' || c == '\n' || c == '\t';
 }
 
-/*
-Copyright: Adam D. Ruppe, 2010 - 2019
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
-Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
-
-        Copyright Adam D. Ruppe 2010-2019.
-Distributed under the Boost Software License, Version 1.0.
-   (See accompanying file LICENSE_1_0.txt or copy at
-        http://www.boost.org/LICENSE_1_0.txt)
-*/
-
-
 unittest {
 	// Test for issue #120
 	string s = `<html>
@@ -8570,3 +8709,73 @@ unittest {
 			s2.indexOf("bubbles") < s2.indexOf("giggles"),
 			"paragraph order incorrect:\n" ~ s2);
 }
+
+unittest {
+	// test for suncarpet email dec 24 2019
+	// arbitrary id asduiwh
+	auto document = new Document("<html>
+        <head>
+                <meta charset=\"utf-8\"></meta>
+                <title>Element.querySelector Test</title>
+        </head>
+        <body>
+                <div id=\"foo\">
+                        <div>Foo</div>
+                        <div>Bar</div>
+                </div>
+        </body>
+</html>");
+
+	auto doc = document;
+
+	assert(doc.querySelectorAll("div div").length == 2);
+	assert(doc.querySelector("div").querySelectorAll("div").length == 2);
+	assert(doc.querySelectorAll("> html").length == 0);
+	assert(doc.querySelector("head").querySelectorAll("> title").length == 1);
+	assert(doc.querySelector("head").querySelectorAll("> meta[charset]").length == 1);
+
+
+	assert(doc.root.matches("html"));
+	assert(!doc.root.matches("nothtml"));
+	assert(doc.querySelector("#foo > div").matches("div"));
+	assert(doc.querySelector("body > #foo").matches("#foo"));
+
+	assert(doc.root.querySelectorAll(":root > body").length == 0); // the root has no CHILD root!
+	assert(doc.querySelectorAll(":root > body").length == 1); // but the DOCUMENT does
+	assert(doc.querySelectorAll(" > body").length == 1); //  should mean the same thing
+	assert(doc.root.querySelectorAll(" > body").length == 1); // the root of HTML has this
+	assert(doc.root.querySelectorAll(" > html").length == 0); // but not this
+}
+
+unittest {
+	// based on https://developer.mozilla.org/en-US/docs/Web/API/Element/closest example
+	auto document = new Document(`<article>
+  <div id="div-01">Here is div-01
+    <div id="div-02">Here is div-02
+      <div id="div-03">Here is div-03</div>
+    </div>
+  </div>
+</article>`, true, true);
+
+	auto el = document.getElementById("div-03");
+	assert(el.closest("#div-02").id == "div-02");
+	assert(el.closest("div div").id == "div-03");
+	assert(el.closest("article > div").id == "div-01");
+	assert(el.closest(":not(div)").tagName == "article");
+
+	assert(el.closest("p") is null);
+	assert(el.closest("p, div") is el);
+}
+
+/*
+Copyright: Adam D. Ruppe, 2010 - 2020
+License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
+
+        Copyright Adam D. Ruppe 2010-2020.
+Distributed under the Boost Software License, Version 1.0.
+   (See accompanying file LICENSE_1_0.txt or copy at
+        http://www.boost.org/LICENSE_1_0.txt)
+*/
+
+
