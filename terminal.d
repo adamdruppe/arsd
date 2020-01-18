@@ -1946,14 +1946,21 @@ struct RealTimeConsoleInput {
 					CharacterEvent e;
 					NonCharacterKeyEvent ne;
 
-					e.eventType = ev.bKeyDown ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
-					ne.eventType = ev.bKeyDown ? NonCharacterKeyEvent.Type.Pressed : NonCharacterKeyEvent.Type.Released;
-
 					ke.pressed = ev.bKeyDown ? true : false;
 
 					// only send released events when specifically requested
-					if(!(flags & ConsoleInputFlags.releasedKeys) && !ev.bKeyDown)
-						break;
+					if(ev.UnicodeChar && ev.wVirtualKeyCode == VK_MENU && ev.bKeyDown == 0) {
+						// this indicates Windows is actually sending us
+						// an alt+xxx key sequence, may also be a unicode paste.
+						// either way, it cool.
+						ke.pressed = true;
+					} else {
+						if(!(flags & ConsoleInputFlags.releasedKeys) && !ev.bKeyDown)
+							break;
+					}
+
+					e.eventType = ke.pressed ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
+					ne.eventType = ke.pressed ? NonCharacterKeyEvent.Type.Pressed : NonCharacterKeyEvent.Type.Released;
 
 					e.modifierState = ev.dwControlKeyState;
 					ne.modifierState = ev.dwControlKeyState;
