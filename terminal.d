@@ -955,6 +955,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	version(Windows)
 	~this() {
+		if(_suppressDestruction) {
+			flush();
+			return;
+		}
 		flush(); // make sure user data is all flushed before resetting
 		reset();
 		showCursor();
@@ -1411,7 +1415,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		// assert(s.indexOf("\033") == -1);
 
 		// tracking cursor position
-		foreach(ch; s) {
+		// FIXME: by grapheme?
+		foreach(dchar ch; s) {
 			switch(ch) {
 				case '\n':
 					_cursorX = 0;
@@ -1425,8 +1430,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					_cursorX += _cursorX % 8; // FIXME: get the actual tabstop, if possible
 				break;
 				default:
-					if(ch <= 127) // way of only advancing once per dchar instead of per code unit
-						_cursorX++;
+					_cursorX++;
 			}
 
 			if(_wrapAround && _cursorX > width) {
@@ -1760,7 +1764,12 @@ struct RealTimeConsoleInput {
 		}
 	}
 
+	bool _suppressDestruction;
+
 	~this() {
+		if(_suppressDestruction)
+			return;
+
 		// the delegate thing doesn't actually work for this... for some reason
 		version(Posix)
 			if(fdIn != -1)
@@ -2198,6 +2207,23 @@ struct RealTimeConsoleInput {
 			];
 		}
 
+		InputEvent[] keyPressAndRelease2(dchar c, uint modifiers = 0) {
+			if((flags & ConsoleInputFlags.releasedKeys))
+				return [
+					InputEvent(KeyboardEvent(true, c, modifiers), terminal),
+					InputEvent(KeyboardEvent(false, c, modifiers), terminal),
+					// old style event
+					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, c, modifiers), terminal),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Released, c, modifiers), terminal),
+				];
+			else return [
+				InputEvent(KeyboardEvent(true, c, modifiers), terminal),
+				// old style event
+				InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, c, modifiers), terminal)
+			];
+
+		}
+
 		char[30] sequenceBuffer;
 
 		// this assumes you just read "\033["
@@ -2285,7 +2311,7 @@ struct RealTimeConsoleInput {
 				default:
 					// don't know it, just ignore
 					//import std.stdio;
-					//writeln(cap);
+					//terminal.writeln(cap);
 			}
 
 			return null;
@@ -2388,92 +2414,110 @@ struct RealTimeConsoleInput {
 
 					return [InputEvent(m, terminal)];
 				default:
-					// look it up in the termcap key database
-					auto cap = terminal.findSequenceInTermcap(sequence);
-					if(cap !is null) {
-						return translateTermcapName(cap);
-					} else {
-						if(terminal.terminalInFamily("xterm")) {
-							import std.conv, std.string;
-							auto terminator = sequence[$ - 1];
-							auto parts = sequence[2 .. $ - 1].split(";");
-							// parts[0] and terminator tells us the key
-							// parts[1] tells us the modifierState
+					// screen doesn't actually do the modifiers, but
+					// it uses the same format so this branch still works fine.
+					if(terminal.terminalInFamily("xterm", "screen")) {
+						import std.conv, std.string;
+						auto terminator = sequence[$ - 1];
+						auto parts = sequence[2 .. $ - 1].split(";");
+						// parts[0] and terminator tells us the key
+						// parts[1] tells us the modifierState
 
-							uint modifierState;
+						uint modifierState;
 
-							int modGot;
-							if(parts.length > 1)
-								modGot = to!int(parts[1]);
-							mod_switch: switch(modGot) {
-								case 2: modifierState |= ModifierState.shift; break;
-								case 3: modifierState |= ModifierState.alt; break;
-								case 4: modifierState |= ModifierState.shift | ModifierState.alt; break;
-								case 5: modifierState |= ModifierState.control; break;
-								case 6: modifierState |= ModifierState.shift | ModifierState.control; break;
-								case 7: modifierState |= ModifierState.alt | ModifierState.control; break;
-								case 8: modifierState |= ModifierState.shift | ModifierState.alt | ModifierState.control; break;
-								case 9:
-								..
-								case 16:
-									modifierState |= ModifierState.meta;
-									if(modGot != 9) {
-										modGot -= 8;
-										goto mod_switch;
-									}
-								break;
-
-								// this is an extension in my own terminal emulator
-								case 20:
-								..
-								case 36:
-									modifierState |= ModifierState.windows;
-									modGot -= 20;
+						int modGot;
+						if(parts.length > 1)
+							modGot = to!int(parts[1]);
+						mod_switch: switch(modGot) {
+							case 2: modifierState |= ModifierState.shift; break;
+							case 3: modifierState |= ModifierState.alt; break;
+							case 4: modifierState |= ModifierState.shift | ModifierState.alt; break;
+							case 5: modifierState |= ModifierState.control; break;
+							case 6: modifierState |= ModifierState.shift | ModifierState.control; break;
+							case 7: modifierState |= ModifierState.alt | ModifierState.control; break;
+							case 8: modifierState |= ModifierState.shift | ModifierState.alt | ModifierState.control; break;
+							case 9:
+							..
+							case 16:
+								modifierState |= ModifierState.meta;
+								if(modGot != 9) {
+									modGot -= 8;
 									goto mod_switch;
-								default:
-							}
+								}
+							break;
 
-							switch(terminator) {
-								case 'A': return keyPressAndRelease(NonCharacterKeyEvent.Key.UpArrow, modifierState);
-								case 'B': return keyPressAndRelease(NonCharacterKeyEvent.Key.DownArrow, modifierState);
-								case 'C': return keyPressAndRelease(NonCharacterKeyEvent.Key.RightArrow, modifierState);
-								case 'D': return keyPressAndRelease(NonCharacterKeyEvent.Key.LeftArrow, modifierState);
+							// this is an extension in my own terminal emulator
+							case 20:
+							..
+							case 36:
+								modifierState |= ModifierState.windows;
+								modGot -= 20;
+								goto mod_switch;
+							default:
+						}
 
-								case 'H': return keyPressAndRelease(NonCharacterKeyEvent.Key.Home, modifierState);
-								case 'F': return keyPressAndRelease(NonCharacterKeyEvent.Key.End, modifierState);
+						switch(terminator) {
+							case 'A': return keyPressAndRelease(NonCharacterKeyEvent.Key.UpArrow, modifierState);
+							case 'B': return keyPressAndRelease(NonCharacterKeyEvent.Key.DownArrow, modifierState);
+							case 'C': return keyPressAndRelease(NonCharacterKeyEvent.Key.RightArrow, modifierState);
+							case 'D': return keyPressAndRelease(NonCharacterKeyEvent.Key.LeftArrow, modifierState);
 
-								case 'P': return keyPressAndRelease(NonCharacterKeyEvent.Key.F1, modifierState);
-								case 'Q': return keyPressAndRelease(NonCharacterKeyEvent.Key.F2, modifierState);
-								case 'R': return keyPressAndRelease(NonCharacterKeyEvent.Key.F3, modifierState);
-								case 'S': return keyPressAndRelease(NonCharacterKeyEvent.Key.F4, modifierState);
+							case 'H': return keyPressAndRelease(NonCharacterKeyEvent.Key.Home, modifierState);
+							case 'F': return keyPressAndRelease(NonCharacterKeyEvent.Key.End, modifierState);
 
-								case '~': // others
-									switch(parts[0]) {
-										case "5": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageUp, modifierState);
-										case "6": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageDown, modifierState);
-										case "2": return keyPressAndRelease(NonCharacterKeyEvent.Key.Insert, modifierState);
-										case "3": return keyPressAndRelease(NonCharacterKeyEvent.Key.Delete, modifierState);
+							case 'P': return keyPressAndRelease(NonCharacterKeyEvent.Key.F1, modifierState);
+							case 'Q': return keyPressAndRelease(NonCharacterKeyEvent.Key.F2, modifierState);
+							case 'R': return keyPressAndRelease(NonCharacterKeyEvent.Key.F3, modifierState);
+							case 'S': return keyPressAndRelease(NonCharacterKeyEvent.Key.F4, modifierState);
 
-										case "15": return keyPressAndRelease(NonCharacterKeyEvent.Key.F5, modifierState);
-										case "17": return keyPressAndRelease(NonCharacterKeyEvent.Key.F6, modifierState);
-										case "18": return keyPressAndRelease(NonCharacterKeyEvent.Key.F7, modifierState);
-										case "19": return keyPressAndRelease(NonCharacterKeyEvent.Key.F8, modifierState);
-										case "20": return keyPressAndRelease(NonCharacterKeyEvent.Key.F9, modifierState);
-										case "21": return keyPressAndRelease(NonCharacterKeyEvent.Key.F10, modifierState);
-										case "23": return keyPressAndRelease(NonCharacterKeyEvent.Key.F11, modifierState);
-										case "24": return keyPressAndRelease(NonCharacterKeyEvent.Key.F12, modifierState);
-										default:
-									}
-								break;
+							case '~': // others
+								switch(parts[0]) {
+									case "1": return keyPressAndRelease(NonCharacterKeyEvent.Key.Home, modifierState);
+									case "4": return keyPressAndRelease(NonCharacterKeyEvent.Key.End, modifierState);
+									case "5": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageUp, modifierState);
+									case "6": return keyPressAndRelease(NonCharacterKeyEvent.Key.PageDown, modifierState);
+									case "2": return keyPressAndRelease(NonCharacterKeyEvent.Key.Insert, modifierState);
+									case "3": return keyPressAndRelease(NonCharacterKeyEvent.Key.Delete, modifierState);
 
-								default:
-							}
-						} else if(terminal.terminalInFamily("rxvt")) {
-							// FIXME: figure these out. rxvt seems to just change the terminator while keeping the rest the same
-							// though it isn't consistent. ugh.
-						} else {
-							// maybe we could do more terminals, but linux doesn't even send it and screen just seems to pass through, so i don't think so; xterm prolly covers most them anyway
-							// so this space is semi-intentionally left blank
+									case "15": return keyPressAndRelease(NonCharacterKeyEvent.Key.F5, modifierState);
+									case "17": return keyPressAndRelease(NonCharacterKeyEvent.Key.F6, modifierState);
+									case "18": return keyPressAndRelease(NonCharacterKeyEvent.Key.F7, modifierState);
+									case "19": return keyPressAndRelease(NonCharacterKeyEvent.Key.F8, modifierState);
+									case "20": return keyPressAndRelease(NonCharacterKeyEvent.Key.F9, modifierState);
+									case "21": return keyPressAndRelease(NonCharacterKeyEvent.Key.F10, modifierState);
+									case "23": return keyPressAndRelease(NonCharacterKeyEvent.Key.F11, modifierState);
+									case "24": return keyPressAndRelease(NonCharacterKeyEvent.Key.F12, modifierState);
+
+									// starting at 70 i do some magic for like shift+enter etc.
+									// this only happens on my own terminal emulator.
+									case "78": return keyPressAndRelease2('\b', modifierState);
+									case "79": return keyPressAndRelease2('\t', modifierState);
+									case "83": return keyPressAndRelease2('\n', modifierState);
+									default:
+								}
+							break;
+
+							default:
+						}
+					} else if(terminal.terminalInFamily("rxvt")) {
+						// look it up in the termcap key database
+						string cap = terminal.findSequenceInTermcap(sequence);
+						if(cap !is null) {
+						//terminal.writeln("found in termcap " ~ cap);
+							return translateTermcapName(cap);
+						}
+						// FIXME: figure these out. rxvt seems to just change the terminator while keeping the rest the same
+						// though it isn't consistent. ugh.
+					} else {
+						// maybe we could do more terminals, but linux doesn't even send it and screen just seems to pass through, so i don't think so; xterm prolly covers most them anyway
+						// so this space is semi-intentionally left blank
+						//terminal.writeln("wtf ", sequence[1..$]);
+
+						// look it up in the termcap key database
+						string cap = terminal.findSequenceInTermcap(sequence);
+						if(cap !is null) {
+						//terminal.writeln("found in termcap " ~ cap);
+							return translateTermcapName(cap);
 						}
 					}
 			}
@@ -3067,7 +3111,21 @@ class LineGetter {
 	//bool reverseVideo;
 
 	/// Set this if you want a prompt to be drawn with the line. It does NOT support color in string.
-	string prompt;
+	@property void prompt(string p) {
+		this.prompt_ = p;
+
+		promptLength = 0;
+		foreach(dchar c; p)
+			promptLength++;
+	}
+
+	/// ditto
+	@property string prompt() {
+		return this.prompt_;
+	}
+
+	private string prompt_;
+	private int promptLength;
 
 	/// Turn on auto suggest if you want a greyed thing of what tab
 	/// would be able to fill in as you type.
@@ -3316,7 +3374,7 @@ class LineGetter {
 	}
 
 	int availableLineLength() {
-		return terminal.width - startOfLineX - cast(int) prompt.length - 1;
+		return terminal.width - startOfLineX - promptLength - 1;
 	}
 
 	private int lastDrawLength = 0;
@@ -3340,7 +3398,7 @@ class LineGetter {
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
 
-		int written = cast(int) prompt.length;
+		int written = promptLength;
 
 		void specialChar(char c) {
 			terminal.color(regularForeground, specialCharBackground);
@@ -3395,14 +3453,14 @@ class LineGetter {
 			}
 		}
 
-		// FIXME: graphemes and utf-8 on suggestion/prompt
+		// FIXME: graphemes
 
 		if(written < lastDrawLength)
 		foreach(i; written .. lastDrawLength)
 			terminal.write(" ");
 		lastDrawLength = written;
 
-		terminal.moveTo(startOfLineX + cursorPositionToDrawX + cast(int) prompt.length, startOfLineY + cursorPositionToDrawY);
+		terminal.moveTo(startOfLineX + cursorPositionToDrawX + promptLength, startOfLineY + cursorPositionToDrawY);
 	}
 
 	/// Starts getting a new line. Call workOnLine and finishGettingLine afterward.
@@ -3436,11 +3494,19 @@ class LineGetter {
 			horizontalScrollPosition = cursorPosition;
 			horizontalScrollPosition -= terminal.width / 2;
 			// align on a code point boundary
-			while(horizontalScrollPosition > 0 && (line[horizontalScrollPosition] & 0x80))
-				horizontalScrollPosition--;
+			aligned(horizontalScrollPosition, -1);
 			if(horizontalScrollPosition < 0)
 				horizontalScrollPosition = 0;
 		}
+	}
+
+	private void aligned(ref int what, int direction) {
+		// whereas line is right now dchar[] no need for this
+		// at least until we go by grapheme...
+		/*
+		while(what > 0 && what < line.length && ((line[what] & 0b1100_0000) == 0b1000_0000))
+			what += direction;
+		*/
 	}
 
 	private void initializeWithSize(bool firstEver = false) {
@@ -3454,6 +3520,8 @@ class LineGetter {
 		}
 
 		lastDrawLength = terminal.width;
+		version(Win32Console)
+			lastDrawLength -= 1; // I don't like this but Windows resizing is different anyway and it is liable to scroll if i go over..
 
 		redraw();
 	}
@@ -3518,9 +3586,17 @@ class LineGetter {
 				}
 				throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 			}
+			regot:
 			auto got = buffer[0 .. len];
-			if(got.length < 6)
-				throw new Exception("not enough cursor reply answer");
+			if(got.length < 6) {
+				auto len2 = read(terminal.fdIn, &buffer[len], buffer.length - len);
+				if(len2 <= 0)
+					throw new Exception("not enough cursor reply answer");
+				else {
+					len += len2;
+					goto regot;
+				}
+			}
 			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R') {
 				retries--;
 				if(retries > 0)
@@ -3637,9 +3713,12 @@ class LineGetter {
 							while(cursorPosition && line[cursorPosition - 1] != ' ')
 								cursorPosition--;
 						}
+						aligned(cursorPosition, -1);
 						if(!multiLineMode) {
-							if(cursorPosition < horizontalScrollPosition)
+							if(cursorPosition < horizontalScrollPosition) {
 								horizontalScrollPosition--;
+								aligned(horizontalScrollPosition, -1);
+							}
 						}
 
 						redraw();
@@ -3656,9 +3735,12 @@ class LineGetter {
 							if(cursorPosition > line.length)
 								cursorPosition = cast(int) line.length;
 						}
+						aligned(cursorPosition, 1);
 						if(!multiLineMode) {
-							if(cursorPosition >= horizontalScrollPosition + availableLineLength())
+							if(cursorPosition >= horizontalScrollPosition + availableLineLength()) {
 								horizontalScrollPosition++;
+								aligned(horizontalScrollPosition, 1);
+							}
 						}
 
 						redraw();
@@ -3705,12 +3787,8 @@ class LineGetter {
 							// shift+insert = request paste
 							// ctrl+insert = request copy. but that needs a selection
 
-							// those work on Windows!!!!o
-
-							/*
-								change cursor capabilitiy
-							*/
-
+							// those work on Windows!!!! and many linux TEs too.
+							// but if it does make it here, we'll attempt it at this level
 						} else if(ev.modifierState & ModifierState.control) {
 							// copy
 						} else {
@@ -3758,8 +3836,7 @@ class LineGetter {
 				if(me.eventType == MouseEvent.Type.Pressed) {
 					if(me.buttons & MouseEvent.Button.Left) {
 						if(me.y == startOfLineY) {
-							// FIXME: prompt.length should be graphemes or at least code poitns
-							int p = me.x - startOfLineX - cast(int) prompt.length + horizontalScrollPosition;
+							int p = me.x - startOfLineX - promptLength + horizontalScrollPosition;
 							if(p >= 0 && p < line.length) {
 								justHitTab = false;
 								cursorPosition = p;
