@@ -8943,6 +8943,10 @@ version(X11) {
 
 		void drawImage(int x, int y, Image i, int ix, int iy, int w, int h) {
 			// source x, source y
+			if(ix >= i.width) return;
+			if(iy >= i.height) return;
+			if(ix + w > i.width) w = i.width - ix;
+			if(iy + h > i.height) h = i.height - iy;
 			if(i.usingXshm)
 				XShmPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h, false);
 			else
