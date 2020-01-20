@@ -294,7 +294,7 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|tmux|tmux-256color|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:cl=\E[H\E[J:\
@@ -859,7 +859,7 @@ struct Terminal {
 			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
 		}
 
-		if(terminalInFamily("xterm", "rxvt", "screen")) {
+		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
 		}
 	}
@@ -941,7 +941,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("te");
 		}
-		if(terminalInFamily("xterm", "rxvt", "screen")) {
+		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[23;0t"); // restore window title from the stack
 		}
 		cursor = TerminalCursor.DEFAULT;
@@ -1271,7 +1271,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			SetConsoleTitleA(toStringz(t));
 		} else {
 			import std.string;
-			if(terminalInFamily("xterm", "rxvt", "screen"))
+			if(terminalInFamily("xterm", "rxvt", "screen", "tmux"))
 				writeStringRaw(format("\033]0;%s\007", t));
 		}
 	}
@@ -1672,20 +1672,20 @@ struct RealTimeConsoleInput {
 					// this is vt200 mouse with full motion tracking, supported by xterm
 					terminal.writeStringRaw("\033[?1003h");
 					destructor ~= { terminal.writeStringRaw("\033[?1003l"); };
-				} else if(terminal.terminalInFamily("rxvt", "screen") || environment.get("MOUSE_HACK") == "1002") {
+				} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 					destructor ~= { terminal.writeStringRaw("\033[?1002l"); };
 				}
 			}
 			if(flags & ConsoleInputFlags.paste) {
-				if(terminal.terminalInFamily("xterm", "rxvt", "screen")) {
+				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 					terminal.writeStringRaw("\033[?2004h"); // bracketed paste mode
 					destructor ~= { terminal.writeStringRaw("\033[?2004l"); };
 				}
 			}
 
 			// try to ensure the terminal is in UTF-8 mode
-			if(terminal.terminalInFamily("xterm", "screen", "linux") && !terminal.isMacTerminal()) {
+			if(terminal.terminalInFamily("xterm", "screen", "linux", "tmux") && !terminal.isMacTerminal()) {
 				terminal.writeStringRaw("\033%G");
 			}
 
@@ -2416,7 +2416,7 @@ struct RealTimeConsoleInput {
 				default:
 					// screen doesn't actually do the modifiers, but
 					// it uses the same format so this branch still works fine.
-					if(terminal.terminalInFamily("xterm", "screen")) {
+					if(terminal.terminalInFamily("xterm", "screen", "tmux")) {
 						import std.conv, std.string;
 						auto terminator = sequence[$ - 1];
 						auto parts = sequence[2 .. $ - 1].split(";");
