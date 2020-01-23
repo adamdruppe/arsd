@@ -560,6 +560,8 @@ struct Terminal {
 		// work the way they're advertised. I just have to best-guess hack and hope it
 		// doesn't break anything else. (If you know a better way, let me know!)
 		bool isMacTerminal() {
+			// it gives 1,2 in getTerminalCapabilities...
+			// FIXME
 			import std.process;
 			import std.string;
 			auto term = environment.get("TERM");
@@ -852,6 +854,9 @@ struct Terminal {
 			_suppressDestruction = true;
 			return;
 		}
+
+		auto info = getTerminalCapabilities(fdIn, fdOut);
+		//writeln(info);
 
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
@@ -1618,6 +1623,8 @@ struct RealTimeConsoleInput {
 				auto f = ICANON;
 				if(!(flags & ConsoleInputFlags.echo))
 					f |= ECHO;
+
+				// \033Z or \033[c
 
 				n.c_lflag &= ~f;
 				tcsetattr(fdIn, TCSANOW, &n);
@@ -2490,6 +2497,7 @@ struct RealTimeConsoleInput {
 
 									// starting at 70 i do some magic for like shift+enter etc.
 									// this only happens on my own terminal emulator.
+									case "70": return keyPressAndRelease(NonCharacterKeyEvent.Key.ScrollLock, modifierState);
 									case "78": return keyPressAndRelease2('\b', modifierState);
 									case "79": return keyPressAndRelease2('\t', modifierState);
 									case "83": return keyPressAndRelease2('\n', modifierState);
@@ -2610,6 +2618,7 @@ struct KeyboardEvent {
 		End = 0x23 + 0xF0000, /// .
 		PageUp = 0x21 + 0xF0000, /// .
 		PageDown = 0x22 + 0xF0000, /// .
+		ScrollLock = 0x91 + 0xF0000, /// unlikely to work outside my custom terminal emulator
 	}
 
 
@@ -2665,6 +2674,7 @@ struct NonCharacterKeyEvent {
 		End = 0x23, /// .
 		PageUp = 0x21, /// .
 		PageDown = 0x22, /// .
+		ScrollLock = 0x91, /// unlikely to work outside my terminal emulator
 		}
 	Key key; /// .
 
@@ -3009,6 +3019,127 @@ void main() {
 				break loop;
 		}
 	}
+}
+
+version(Posix)
+private int[] getTerminalCapabilities(int fdIn, int fdOut) {
+	if(fdIn == -1 || fdOut == -1)
+		return null;
+
+	import std.conv;
+	import core.stdc.errno;
+	import core.sys.posix.unistd;
+
+	ubyte[128] hack2;
+	termios old;
+	ubyte[128] hack;
+	tcgetattr(fdIn, &old);
+	auto n = old;
+	n.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(fdIn, TCSANOW, &n);
+	scope(exit)
+		tcsetattr(fdIn, TCSANOW, &old);
+
+	// drain the buffer? meh
+
+	string cmd = "\033[c";
+	auto err = write(fdOut, cmd.ptr, cmd.length);
+	if(err != cmd.length) {
+		throw new Exception("couldn't ask terminal for ID");
+	}
+
+	// reading directly to bypass any buffering
+	int retries = 16;
+	int len;
+	ubyte[96] buffer;
+	try_again:
+
+
+	timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 10 * 1000;
+
+	fd_set fs;
+	FD_ZERO(&fs);
+
+	FD_SET(fdIn, &fs);
+	if(select(fdIn + 1, &fs, null, null, &tv) == -1) {
+		goto try_again;
+	}
+
+	if(FD_ISSET(fdIn, &fs)) {
+		auto len2 = read(fdIn, &buffer[len], buffer.length - len);
+		if(len2 <= 0) {
+			retries--;
+			if(retries > 0)
+				goto try_again;
+			throw new Exception("can't get terminal id");
+		} else {
+			len += len2;
+		}
+	} else {
+		// no data... assume terminal doesn't support giving an answer
+		return null;
+	}
+
+	ubyte[] answer;
+	bool hasAnswer(ubyte[] data) {
+		if(data.length < 4)
+			return false;
+		answer = null;
+		size_t start;
+		int position = 0;
+		foreach(idx, ch; data) {
+			switch(position) {
+				case 0:
+					if(ch == '\033') {
+						start = idx;
+						position++;
+					}
+				break;
+				case 1:
+					if(ch == '[')
+						position++;
+					else
+						position = 0;
+				break;
+				case 2:
+					if(ch == '?')
+						position++;
+					else
+						position = 0;
+				break;
+				case 3:
+					// body
+					if(ch == 'c') {
+						answer = data[start .. idx + 1];
+						return true;
+					} else if(ch == ';' || (ch >= '0' && ch <= '9')) {
+						// good, keep going
+					} else {
+						// invalid, drop it
+						position = 0;
+					}
+				break;
+				default: assert(0);
+			}
+		}
+		return false;
+	}
+
+	auto got = buffer[0 .. len];
+	if(!hasAnswer(got)) {
+		goto try_again;
+	}
+	auto gots = cast(char[]) answer[3 .. $-1];
+
+	import std.string;
+
+	auto pieces = split(gots, ";");
+	int[] ret;
+	foreach(p; pieces)
+		ret ~= p.to!int;
+	return ret;
 }
 
 /**
