@@ -318,8 +318,25 @@ import std.conv;
 import std.range;
 
 
+private AddressFamily family(string unixSocketPath) {
+	if(unixSocketPath.length)
+		return AddressFamily.UNIX;
+	else // FIXME: what about ipv6?
+		return AddressFamily.INET;
+}
 
-// Copy pasta from cgi.d, then stripped down
+version(Windows)
+private class UnixAddress : Address {
+	this(string) {
+		throw new Exception("No unix address support on this system in lib yet :(");
+	}
+	override sockaddr* name() { assert(0); }
+	override const(sockaddr)* name() const { assert(0); }
+	override int nameLen() const { assert(0); }
+}
+
+
+// Copy pasta from cgi.d, then stripped down. unix path thing added tho
 ///
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
@@ -337,6 +354,18 @@ struct Uri {
 	/// Breaks down a uri string to its components
 	this(string uri) {
 		reparse(uri);
+	}
+
+	private string unixSocketPath = null;
+	/// Indicates it should be accessed through a unix socket instead of regular tcp
+	void viaUnixSocket(string path) {
+		unixSocketPath = path;
+	}
+
+	/// Goes through a unix socket in the abstract namespace (linux only)
+	version(linux)
+	void viaAbstractSocket(string path) {
+		unixSocketPath = "\0" ~ path;
 	}
 
 	private void reparse(string uri) {
@@ -545,6 +574,11 @@ struct Uri {
 
 		n.removeDots();
 
+		// if still basically talking to the same thing, we should inherit the unix path
+		// too since basically the unix path is saying for this service, always use this override.
+		if(n.host == baseUrl.host && n.scheme == baseUrl.scheme && n.port == baseUrl.port)
+			n.unixSocketPath = baseUrl.unixSocketPath;
+
 		return n;
 	}
 
@@ -630,6 +664,7 @@ class HttpRequest {
 		auto parts = where;
 		finalUrl = where.toString();
 		requestParameters.method = method;
+		requestParameters.unixSocketPath = where.unixSocketPath;
 		requestParameters.host = parts.host;
 		requestParameters.port = cast(ushort) parts.port;
 		requestParameters.ssl = parts.scheme == "https";
@@ -812,18 +847,25 @@ class HttpRequest {
 			}
 		}
 
-		Socket getOpenSocketOnHost(string host, ushort port, bool ssl) {
+		Socket getOpenSocketOnHost(string host, ushort port, bool ssl, string unixSocketPath) {
+
 			Socket openNewConnection() {
 				Socket socket;
 				if(ssl) {
 					version(with_openssl)
-						socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
+						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM);
 					else
 						throw new Exception("SSL not compiled in");
 				} else
-					socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
 
-				socket.connect(new InternetAddress(host, port));
+				if(unixSocketPath) {
+					socket.connect(new UnixAddress(unixSocketPath));
+				} else {
+					// FIXME: i should prolly do ipv6 if available too.
+					socket.connect(new InternetAddress(host, port));
+				}
+
 				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket);
 				assert(socket.handle() !is socket_t.init);
 				return socket;
@@ -903,7 +945,7 @@ class HttpRequest {
 					continue;
 				}
 
-				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl);
+				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
 
 				if(socket !is null) {
 					activeRequestOnSocket[socket] = pc;
@@ -1384,6 +1426,8 @@ struct HttpRequestParameters {
 
 	string contentType; ///
 	ubyte[] bodyData; ///
+
+	string unixSocketPath;
 }
 
 interface IHttpClient {
@@ -2209,11 +2253,11 @@ wss://echo.websocket.org
 
 		if(ssl) {
 			version(with_openssl)
-				socket = new SslClientSocket(AddressFamily.INET, SocketType.STREAM);
+				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM);
 			else
 				throw new Exception("SSL not compiled in");
 		} else
-			socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+			socket = new Socket(family(uri.unixSocketPath), SocketType.STREAM);
 
 	}
 
@@ -2222,7 +2266,10 @@ wss://echo.websocket.org
 	+/
 	/// Group: foundational
 	void connect() {
-		socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
+		if(uri.unixSocketPath)
+			socket.connect(new UnixAddress(uri.unixSocketPath));
+		else
+			socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
 		// FIXME: websocket handshake could and really should be async too.
 
 		auto uri = this.uri.path.length ? this.uri.path : "/";
@@ -2924,8 +2971,8 @@ private {
 				return needsMoreData();
 			}
 
-			msg.data = d[0 .. msg.realLength];
-			d = d[msg.realLength .. $];
+			msg.data = d[0 .. cast(size_t) msg.realLength];
+			d = d[cast(size_t) msg.realLength .. $];
 
 			if(msg.masked) {
 				// let's just unmask it now

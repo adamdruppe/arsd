@@ -190,7 +190,6 @@ version(Windows)
 
 version(Win32Console) {
 	import core.sys.windows.windows;
-	import std.string : toStringz;
 	private {
 		enum RED_BIT = 4;
 		enum GREEN_BIT = 2;
@@ -1272,8 +1271,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	/// Changes the terminal's title
 	void setTitle(string t) {
 		version(Win32Console) {
-			// FIXME: use the W version
-			SetConsoleTitleA(toStringz(t));
+			wchar[256] buffer;
+			size_t bufferLength;
+			foreach(wchar ch; t)
+				if(bufferLength < buffer.length)
+					buffer[bufferLength++] = ch;
+			if(bufferLength < buffer.length)
+				buffer[bufferLength++] = 0;
+			else
+				buffer[$-1] = 0;
+			SetConsoleTitleW(buffer.ptr);
 		} else {
 			import std.string;
 			if(terminalInFamily("xterm", "rxvt", "screen", "tmux"))
