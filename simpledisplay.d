@@ -4203,7 +4203,7 @@ class Timer {
 }
 
 version(Windows)
-/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.)
+/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.) Only works on certain types of handles! see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex
 class WindowsHandleReader {
 	///
 	this(void delegate() onReady, HANDLE handle) {
