@@ -36,6 +36,11 @@ version(arsd_http_winhttp_implementation) {
 	pragma(lib, "winhttp")
 	import core.sys.windows.winhttp;
 	// FIXME: alter the dub package file too
+
+	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpreaddata
+	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpsendrequest
+	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpopenrequest
+	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpconnect
 }
 
 
@@ -357,15 +362,19 @@ struct Uri {
 	}
 
 	private string unixSocketPath = null;
-	/// Indicates it should be accessed through a unix socket instead of regular tcp
-	void viaUnixSocket(string path) {
-		unixSocketPath = path;
+	/// Indicates it should be accessed through a unix socket instead of regular tcp. Returns new version without modifying this object.
+	Uri viaUnixSocket(string path) const {
+		Uri copy = this;
+		copy.unixSocketPath = path;
+		return copy;
 	}
 
-	/// Goes through a unix socket in the abstract namespace (linux only)
+	/// Goes through a unix socket in the abstract namespace (linux only). Returns new version without modifying this object.
 	version(linux)
-	void viaAbstractSocket(string path) {
-		unixSocketPath = "\0" ~ path;
+	Uri viaAbstractSocket(string path) const {
+		Uri copy = this;
+		copy.unixSocketPath = "\0" ~ path;
+		return copy;
 	}
 
 	private void reparse(string uri) {
@@ -860,6 +869,7 @@ class HttpRequest {
 					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
 
 				if(unixSocketPath) {
+					import std.stdio; writeln(cast(ubyte[]) unixSocketPath);
 					socket.connect(new UnixAddress(unixSocketPath));
 				} else {
 					// FIXME: i should prolly do ipv6 if available too.

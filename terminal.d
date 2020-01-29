@@ -63,7 +63,7 @@
 module arsd.terminal;
 
 // FIXME: needs to support VT output on Windows too in certain situations
-// FIXME: paste on Windows and alt+NNNN codes in getline function
+// detect VT on windows by trying to set the flag. if this succeeds, ask it for caps. if this replies with my code we good to do extended output.
 
 /++
 	$(H3 Get Line)
