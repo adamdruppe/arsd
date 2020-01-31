@@ -1991,7 +1991,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			XChangeProperty(
 				display,
 				impl.window,
-				GetAtom!"_NET_WM_ICON"(display),
+				GetAtom!("_NET_WM_ICON", true)(display),
 				GetAtom!"CARDINAL"(display),
 				32 /* bits */,
 				0 /*PropModeReplace*/,
@@ -4217,7 +4217,7 @@ class Timer {
 }
 
 version(Windows)
-/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.)
+/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.) Only works on certain types of handles! see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex
 class WindowsHandleReader {
 	///
 	this(void delegate() onReady, HANDLE handle) {
@@ -6618,10 +6618,9 @@ struct ScreenPainter {
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
-	//this function draws a circle using the drawArc() function above, it requires you to pass the point it
-	//will be drawn at as a Point struct and the radius as an int
+	//this function draws a circle with the drawEllipse() function above, it requires the upper left point and the radius
 	void drawCircle(Point upperLeft, int radius) {
-		this.drawArc(upperLeft, radius, radius, 0, 0);
+		drawEllipse(upperLeft, Point(upperLeft.x + radius, upperLeft.y + radius));
 	}
 
 	/// .
@@ -9382,7 +9381,15 @@ version(X11) {
 			if(!xshmQueryCompleted) {
 				int i1, i2, i3;
 				xshmQueryCompleted = true;
-				_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3) != 0;
+
+				auto str = XDisplayConnection.get().display_name;
+				// only if we are actually on the same machine does this
+				// have any hope, and the query extension only asks if
+				// the server can in theory, not in practice.
+				if(str is null || str[0] != ':')
+					_xshmAvailable = false;
+				else
+					_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3) != 0;
 			}
 			return _xshmAvailable;
 		}
@@ -14309,51 +14316,55 @@ void demandAttention(Window window, bool needs = true) {
 
 /// X-specific
 TrueColorImage getWindowNetWmIcon(Window window) {
-	auto display = XDisplayConnection.get;
+	try {
+		auto display = XDisplayConnection.get;
 
-	auto data = getX11PropertyData (window, GetAtom!"_NET_WM_ICON"(display), XA_CARDINAL);
+		auto data = getX11PropertyData (window, GetAtom!"_NET_WM_ICON"(display), XA_CARDINAL);
 
-	if (data.length > arch_ulong.sizeof * 2) {
-		auto meta = cast(arch_ulong[]) (data[0 .. arch_ulong.sizeof * 2]);
-		// these are an array of rgba images that we have to convert into pixmaps ourself
+		if (data.length > arch_ulong.sizeof * 2) {
+			auto meta = cast(arch_ulong[]) (data[0 .. arch_ulong.sizeof * 2]);
+			// these are an array of rgba images that we have to convert into pixmaps ourself
 
-		int width = cast(int) meta[0];
-		int height = cast(int) meta[1];
+			int width = cast(int) meta[0];
+			int height = cast(int) meta[1];
 
-		auto bytes = cast(ubyte[]) (data[arch_ulong.sizeof * 2 .. $]);
+			auto bytes = cast(ubyte[]) (data[arch_ulong.sizeof * 2 .. $]);
 
-		static if(arch_ulong.sizeof == 4) {
-			bytes = bytes[0 .. width * height * 4];
-			alias imageData = bytes;
-		} else static if(arch_ulong.sizeof == 8) {
-			bytes = bytes[0 .. width * height * 8];
-			auto imageData = new ubyte[](4 * width * height);
-		} else static assert(0);
+			static if(arch_ulong.sizeof == 4) {
+				bytes = bytes[0 .. width * height * 4];
+				alias imageData = bytes;
+			} else static if(arch_ulong.sizeof == 8) {
+				bytes = bytes[0 .. width * height * 8];
+				auto imageData = new ubyte[](4 * width * height);
+			} else static assert(0);
 
 
 
-		// this returns ARGB. Remember it is little-endian so
-		//                                         we have BGRA
-		// our thing uses RGBA, which in little endian, is ABGR
-		for(int idx = 0, idx2 = 0; idx < bytes.length; idx += arch_ulong.sizeof, idx2 += 4) {
-			auto r = bytes[idx + 2];
-			auto g = bytes[idx + 1];
-			auto b = bytes[idx + 0];
-			auto a = bytes[idx + 3];
+			// this returns ARGB. Remember it is little-endian so
+			//                                         we have BGRA
+			// our thing uses RGBA, which in little endian, is ABGR
+			for(int idx = 0, idx2 = 0; idx < bytes.length; idx += arch_ulong.sizeof, idx2 += 4) {
+				auto r = bytes[idx + 2];
+				auto g = bytes[idx + 1];
+				auto b = bytes[idx + 0];
+				auto a = bytes[idx + 3];
 
-			imageData[idx2 + 0] = r;
-			imageData[idx2 + 1] = g;
-			imageData[idx2 + 2] = b;
-			imageData[idx2 + 3] = a;
+				imageData[idx2 + 0] = r;
+				imageData[idx2 + 1] = g;
+				imageData[idx2 + 2] = b;
+				imageData[idx2 + 3] = a;
+			}
+
+			return new TrueColorImage(width, height, imageData);
 		}
 
-		return new TrueColorImage(width, height, imageData);
+		return null;
+	} catch(Exception e) {
+		return null;
 	}
-
-	return null;
 }
 
-}
+} /* UsingSimpledisplayX11 */
 
 
 void loadBinNameToWindowClassName () {

@@ -1590,7 +1590,11 @@ class Cgi {
 			sendAll(ir.source, d);
 		}
 
-		this(ir, ir.source.remoteAddress().toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
+		auto ira = ir.source.remoteAddress();
+
+		// that check for UnixAddress is to work around a Phobos bug
+		// see: https://github.com/dlang/phobos/pull/7383
+		this(ir, cast(UnixAddress) ira ? "unix:" : ira.toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
 	}
 
 	/**
@@ -4219,6 +4223,7 @@ class ListeningConnectionManager {
 			version(linux) {
 				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
 				string filename = "\0" ~ host["abstract:".length .. $];
+				import std.stdio; stderr.writeln("Listening to abstract unix domain socket: ", host["abstract:".length .. $]);
 				listener.bind(new UnixAddress(filename));
 				tcp = false;
 			} else {

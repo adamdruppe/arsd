@@ -116,7 +116,17 @@
 			},
 			"sourceFiles": ["png.d"]
 		},
-
+		{
+			"name": "bmp",
+			"description": "BMP file format support",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.bmp=bmp.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			},
+			"sourceFiles": ["bmp.d"]
+		},
 		{
 			"name": "htmltotext",
 			"description": "HTML to plain text conversion",
@@ -300,6 +310,25 @@
 			"sourceFiles": ["database.d"],
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.database=database.d"]
+		},
+		{
+			"name": "libssh2_bindings",
+			"description": "My bindings to libssh2",
+			"targetType": "library",
+			"sourceFiles": ["libssh2.d"],
+			"importPaths": ["."],
+			"libs": ["ssh2"],
+			"dflags": ["-mv=arsd.libssh2=libssh2.d"]
+		},
+		{
+			"name": "eventloop",
+			"description": "My DEPRECATED event loop. Do NOT use in new programs, only offered here because I use it in a lot of old programs.",
+			"targetType": "sourceLibrary",
+			"versions": ["with_eventloop"],
+			"sourceFiles": ["eventloop.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.eventloop=eventloop.d"]
 		}
+
 	]
 }

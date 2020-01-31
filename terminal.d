@@ -63,7 +63,7 @@
 module arsd.terminal;
 
 // FIXME: needs to support VT output on Windows too in certain situations
-// FIXME: paste on Windows and alt+NNNN codes in getline function
+// detect VT on windows by trying to set the flag. if this succeeds, ask it for caps. if this replies with my code we good to do extended output.
 
 /++
 	$(H3 Get Line)
@@ -190,7 +190,6 @@ version(Windows)
 
 version(Win32Console) {
 	import core.sys.windows.windows;
-	import std.string : toStringz;
 	private {
 		enum RED_BIT = 4;
 		enum GREEN_BIT = 2;
@@ -294,7 +293,7 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|tmux|tmux-256color|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:cl=\E[H\E[J:\
@@ -560,6 +559,8 @@ struct Terminal {
 		// work the way they're advertised. I just have to best-guess hack and hope it
 		// doesn't break anything else. (If you know a better way, let me know!)
 		bool isMacTerminal() {
+			// it gives 1,2 in getTerminalCapabilities...
+			// FIXME
 			import std.process;
 			import std.string;
 			auto term = environment.get("TERM");
@@ -853,13 +854,16 @@ struct Terminal {
 			return;
 		}
 
+		auto info = getTerminalCapabilities(fdIn, fdOut);
+		//writeln(info);
+
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
 			clear();
 			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
 		}
 
-		if(terminalInFamily("xterm", "rxvt", "screen")) {
+		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
 		}
 	}
@@ -941,7 +945,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("te");
 		}
-		if(terminalInFamily("xterm", "rxvt", "screen")) {
+		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[23;0t"); // restore window title from the stack
 		}
 		cursor = TerminalCursor.DEFAULT;
@@ -1267,11 +1271,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	/// Changes the terminal's title
 	void setTitle(string t) {
 		version(Win32Console) {
-			// FIXME: use the W version
-			SetConsoleTitleA(toStringz(t));
+			wchar[256] buffer;
+			size_t bufferLength;
+			foreach(wchar ch; t)
+				if(bufferLength < buffer.length)
+					buffer[bufferLength++] = ch;
+			if(bufferLength < buffer.length)
+				buffer[bufferLength++] = 0;
+			else
+				buffer[$-1] = 0;
+			SetConsoleTitleW(buffer.ptr);
 		} else {
 			import std.string;
-			if(terminalInFamily("xterm", "rxvt", "screen"))
+			if(terminalInFamily("xterm", "rxvt", "screen", "tmux"))
 				writeStringRaw(format("\033]0;%s\007", t));
 		}
 	}
@@ -1619,6 +1631,8 @@ struct RealTimeConsoleInput {
 				if(!(flags & ConsoleInputFlags.echo))
 					f |= ECHO;
 
+				// \033Z or \033[c
+
 				n.c_lflag &= ~f;
 				tcsetattr(fdIn, TCSANOW, &n);
 			}
@@ -1672,20 +1686,20 @@ struct RealTimeConsoleInput {
 					// this is vt200 mouse with full motion tracking, supported by xterm
 					terminal.writeStringRaw("\033[?1003h");
 					destructor ~= { terminal.writeStringRaw("\033[?1003l"); };
-				} else if(terminal.terminalInFamily("rxvt", "screen") || environment.get("MOUSE_HACK") == "1002") {
+				} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 					destructor ~= { terminal.writeStringRaw("\033[?1002l"); };
 				}
 			}
 			if(flags & ConsoleInputFlags.paste) {
-				if(terminal.terminalInFamily("xterm", "rxvt", "screen")) {
+				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 					terminal.writeStringRaw("\033[?2004h"); // bracketed paste mode
 					destructor ~= { terminal.writeStringRaw("\033[?2004l"); };
 				}
 			}
 
 			// try to ensure the terminal is in UTF-8 mode
-			if(terminal.terminalInFamily("xterm", "screen", "linux") && !terminal.isMacTerminal()) {
+			if(terminal.terminalInFamily("xterm", "screen", "linux", "tmux") && !terminal.isMacTerminal()) {
 				terminal.writeStringRaw("\033%G");
 			}
 
@@ -2416,7 +2430,7 @@ struct RealTimeConsoleInput {
 				default:
 					// screen doesn't actually do the modifiers, but
 					// it uses the same format so this branch still works fine.
-					if(terminal.terminalInFamily("xterm", "screen")) {
+					if(terminal.terminalInFamily("xterm", "screen", "tmux")) {
 						import std.conv, std.string;
 						auto terminator = sequence[$ - 1];
 						auto parts = sequence[2 .. $ - 1].split(";");
@@ -2490,6 +2504,7 @@ struct RealTimeConsoleInput {
 
 									// starting at 70 i do some magic for like shift+enter etc.
 									// this only happens on my own terminal emulator.
+									case "70": return keyPressAndRelease(NonCharacterKeyEvent.Key.ScrollLock, modifierState);
 									case "78": return keyPressAndRelease2('\b', modifierState);
 									case "79": return keyPressAndRelease2('\t', modifierState);
 									case "83": return keyPressAndRelease2('\n', modifierState);
@@ -2610,6 +2625,7 @@ struct KeyboardEvent {
 		End = 0x23 + 0xF0000, /// .
 		PageUp = 0x21 + 0xF0000, /// .
 		PageDown = 0x22 + 0xF0000, /// .
+		ScrollLock = 0x91 + 0xF0000, /// unlikely to work outside my custom terminal emulator
 	}
 
 
@@ -2665,6 +2681,7 @@ struct NonCharacterKeyEvent {
 		End = 0x23, /// .
 		PageUp = 0x21, /// .
 		PageDown = 0x22, /// .
+		ScrollLock = 0x91, /// unlikely to work outside my terminal emulator
 		}
 	Key key; /// .
 
@@ -3009,6 +3026,127 @@ void main() {
 				break loop;
 		}
 	}
+}
+
+version(Posix)
+private int[] getTerminalCapabilities(int fdIn, int fdOut) {
+	if(fdIn == -1 || fdOut == -1)
+		return null;
+
+	import std.conv;
+	import core.stdc.errno;
+	import core.sys.posix.unistd;
+
+	ubyte[128] hack2;
+	termios old;
+	ubyte[128] hack;
+	tcgetattr(fdIn, &old);
+	auto n = old;
+	n.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(fdIn, TCSANOW, &n);
+	scope(exit)
+		tcsetattr(fdIn, TCSANOW, &old);
+
+	// drain the buffer? meh
+
+	string cmd = "\033[c";
+	auto err = write(fdOut, cmd.ptr, cmd.length);
+	if(err != cmd.length) {
+		throw new Exception("couldn't ask terminal for ID");
+	}
+
+	// reading directly to bypass any buffering
+	int retries = 16;
+	int len;
+	ubyte[96] buffer;
+	try_again:
+
+
+	timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 10 * 1000;
+
+	fd_set fs;
+	FD_ZERO(&fs);
+
+	FD_SET(fdIn, &fs);
+	if(select(fdIn + 1, &fs, null, null, &tv) == -1) {
+		goto try_again;
+	}
+
+	if(FD_ISSET(fdIn, &fs)) {
+		auto len2 = read(fdIn, &buffer[len], buffer.length - len);
+		if(len2 <= 0) {
+			retries--;
+			if(retries > 0)
+				goto try_again;
+			throw new Exception("can't get terminal id");
+		} else {
+			len += len2;
+		}
+	} else {
+		// no data... assume terminal doesn't support giving an answer
+		return null;
+	}
+
+	ubyte[] answer;
+	bool hasAnswer(ubyte[] data) {
+		if(data.length < 4)
+			return false;
+		answer = null;
+		size_t start;
+		int position = 0;
+		foreach(idx, ch; data) {
+			switch(position) {
+				case 0:
+					if(ch == '\033') {
+						start = idx;
+						position++;
+					}
+				break;
+				case 1:
+					if(ch == '[')
+						position++;
+					else
+						position = 0;
+				break;
+				case 2:
+					if(ch == '?')
+						position++;
+					else
+						position = 0;
+				break;
+				case 3:
+					// body
+					if(ch == 'c') {
+						answer = data[start .. idx + 1];
+						return true;
+					} else if(ch == ';' || (ch >= '0' && ch <= '9')) {
+						// good, keep going
+					} else {
+						// invalid, drop it
+						position = 0;
+					}
+				break;
+				default: assert(0);
+			}
+		}
+		return false;
+	}
+
+	auto got = buffer[0 .. len];
+	if(!hasAnswer(got)) {
+		goto try_again;
+	}
+	auto gots = cast(char[]) answer[3 .. $-1];
+
+	import std.string;
+
+	auto pieces = split(gots, ";");
+	int[] ret;
+	foreach(p; pieces)
+		ret ~= p.to!int;
+	return ret;
 }
 
 /**

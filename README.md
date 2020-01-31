@@ -15,3 +15,23 @@ I have [a patreon](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly
 Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, ketmar, maartenvd, and many others over the years for input and patches.
 
 Several of the modules are also ports of other C code, see the comments in those files for their original authors.
+
+# Conventions
+
+Many http-based functions in the lib also support unix sockets as an alternative to tcp.
+
+With cgi.d, use
+
+	--host unix:/path/here
+
+or, on Linux:
+
+	--host abstract:/path/here
+
+after compiling with `-version=embedded_httpd_thread` to serve http on the given socket. (`abstract:` does a unix socket in the Linux-specific abstract namespace).
+
+With http2.d, use
+
+	Uri("http://whatever_host/path?args").viaUnixSocket("/path/here")
+
+any time you are constructing a client. Note that `navigateTo` may lose the unix socket unless you specify it again.
