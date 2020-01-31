@@ -5721,7 +5721,8 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	else version(custom_widgets) {
 		// FIXME
 
-		Timer caretTimer;
+		static if(SimpledisplayTimerAvailable)
+			Timer caretTimer;
 		TextLayout textLayout;
 
 		void setupCustomTextEditing() {
@@ -5801,6 +5802,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		auto painter = this.draw();
 		textLayout.drawCaret(painter);
 
+		static if(SimpledisplayTimerAvailable)
 		if(caretTimer) {
 			caretTimer.destroy();
 			caretTimer = null;
@@ -5812,6 +5814,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				blinkingCaret = false; // if on a remote connection, don't waste bandwidth on an expendable blink
 
 		if(blinkingCaret)
+		static if(SimpledisplayTimerAvailable)
 		caretTimer = new Timer(500, {
 			if(parentWindow.win.closed) {
 				caretTimer.destroy();
@@ -5833,6 +5836,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		version(custom_widgets) {
 			auto painter = this.draw();
 			textLayout.eraseCaret(painter);
+			static if(SimpledisplayTimerAvailable)
 			if(caretTimer) {
 				caretTimer.destroy();
 				caretTimer = null;

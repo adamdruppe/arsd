@@ -36,6 +36,8 @@
 			"targetType": "library",
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.simpledisplay=simpledisplay.d"],
+			"versions-osx": [ "OSXCocoa", "allow_unimplemented_features", "without_opengl" ],
+			"lflags-osx": ["-framework", "Cocoa"],
 			"dependencies": {"arsd-official:color_base":"*"},
 			"configurations": [
 				{

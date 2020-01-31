@@ -809,6 +809,15 @@ unittest {
 	}
 }
 
+/*
+version(OSX) {
+	version=without_opengl;
+	version=allow_unimplemented_features;
+	version=OSXCocoa;
+	pragma(linkerDirective, "-framework Cocoa");
+}
+*/
+
 version(without_opengl) {
 	enum SdpyIsUsingIVGLBinds = false;
 } else /*version(Posix)*/ {
@@ -991,6 +1000,11 @@ version(Windows)
 	version = with_timer;
 version(linux)
 	version = with_timer;
+
+version(with_timer)
+	enum bool SimpledisplayTimerAvailable = true;
+else
+	enum bool SimpledisplayTimerAvailable = false;
 
 /// If you have to get down and dirty with implementation details, this helps figure out if Windows is available you can `static if(UsingSimpledisplayWindows) ...` more reliably than `version()` because `version` is module-local.
 version(Windows)
