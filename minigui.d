@@ -604,6 +604,7 @@ private const(wchar)* toWstringzInternal(in char[] s) {
 	return str.ptr;
 }
 
+static if(SimpledisplayTimerAvailable)
 void setClickRepeat(Widget w, int interval, int delay = 250) {
 	Timer timer;
 	int delayRemaining = delay / interval;
@@ -649,6 +650,8 @@ void setClickRepeat(Widget w, int interval, int delay = 250) {
 	});
 
 }
+else
+void setClickRepeat(Widget w, int interval, int delay = 250) {}
 
 enum FrameStyle {
 	risen,
