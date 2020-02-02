@@ -1969,6 +1969,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			return null;
 	}
 
+	// don't use this generally it is not yet really released
+	version(X11)
+	@property Image secret_icon() {
+		return secret_icon_inner;
+	}
+	private Image secret_icon_inner;
+
+
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
 	@property void icon(MemoryImage icon) {
 		auto tci = icon.getAsTrueColorImage();
@@ -1976,6 +1984,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			winIcon = new WindowsIcon(icon);
 			 SendMessageA(impl.hwnd, 0x0080 /*WM_SETICON*/, 0 /*ICON_SMALL*/, cast(LPARAM) winIcon.hIcon); // there is also 1 == ICON_BIG
 		} else version(X11) {
+			secret_icon_inner = Image.fromMemoryImage(icon);
 			// FIXME: ensure this is correct
 			auto display = XDisplayConnection.get;
 			arch_ulong[] buffer;
