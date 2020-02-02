@@ -1,5 +1,7 @@
 // https://dpaste.dzfl.pl/7a77355acaec
 
+// on Mac with X11: -L-L/usr/X11/lib 
+
 /*
 	Event Loop would be nices:
 
@@ -809,6 +811,15 @@ unittest {
 	}
 }
 
+/*
+version(OSX) {
+	version=without_opengl;
+	version=allow_unimplemented_features;
+	version=OSXCocoa;
+	pragma(linkerDirective, "-framework Cocoa");
+}
+*/
+
 version(without_opengl) {
 	enum SdpyIsUsingIVGLBinds = false;
 } else /*version(Posix)*/ {
@@ -991,6 +1002,11 @@ version(Windows)
 	version = with_timer;
 version(linux)
 	version = with_timer;
+
+version(with_timer)
+	enum bool SimpledisplayTimerAvailable = true;
+else
+	enum bool SimpledisplayTimerAvailable = false;
 
 /// If you have to get down and dirty with implementation details, this helps figure out if Windows is available you can `static if(UsingSimpledisplayWindows) ...` more reliably than `version()` because `version` is module-local.
 version(Windows)
@@ -1953,6 +1969,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			return null;
 	}
 
+	// don't use this generally it is not yet really released
+	version(X11)
+	@property Image secret_icon() {
+		return secret_icon_inner;
+	}
+	private Image secret_icon_inner;
+
+
 	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
 	@property void icon(MemoryImage icon) {
 		auto tci = icon.getAsTrueColorImage();
@@ -1960,6 +1984,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			winIcon = new WindowsIcon(icon);
 			 SendMessageA(impl.hwnd, 0x0080 /*WM_SETICON*/, 0 /*ICON_SMALL*/, cast(LPARAM) winIcon.hIcon); // there is also 1 == ICON_BIG
 		} else version(X11) {
+			secret_icon_inner = Image.fromMemoryImage(icon);
 			// FIXME: ensure this is correct
 			auto display = XDisplayConnection.get;
 			arch_ulong[] buffer;
@@ -2350,7 +2375,8 @@ private:
 	private import core.time : MonoTime;
 
 	version(X11) {
-		__gshared int customEventFD = -1;
+		__gshared int customEventFDRead = -1;
+		__gshared int customEventFDWrite = -1;
 		__gshared int customSignalFD = -1;
 	} else version(Windows) {
 		__gshared HANDLE customEventH = null;
@@ -2361,7 +2387,7 @@ private:
 		version(X11) {
 			import core.sys.posix.unistd : write;
 			ulong n = 1;
-			if (customEventFD >= 0) write(customEventFD, &n, n.sizeof);
+			if (customEventFDWrite >= 0) write(customEventFDWrite, &n, n.sizeof);
 			return true;
 		} else version(Windows) {
 			if (customEventH !is null) SetEvent(customEventH);
@@ -2732,7 +2758,7 @@ struct EventLoop {
 version(linux)
 	void delegate(int, int) globalHupHandler;
 
-version(linux)
+version(Posix)
 	void makeNonBlocking(int fd) {
 		import fcntl = core.sys.posix.fcntl;
 		auto flags = fcntl.fcntl(fd, fcntl.F_GETFL, 0);
@@ -2845,14 +2871,15 @@ struct EventLoopImpl {
 			}
 
 			// eventfd for custom events
-			if (customEventFD == -1) {
-				customEventFD = eventfd(0, 0);
-				if (customEventFD >= 0) {
+			if (customEventFDWrite == -1) {
+				customEventFDWrite = eventfd(0, 0);
+				customEventFDRead = customEventFDWrite;
+				if (customEventFDRead >= 0) {
 					ep.epoll_event ev = void;
 					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
-					ev.data.fd = customEventFD;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFD, &ev);
+					ev.data.fd = customEventFDRead;
+					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFDRead, &ev);
 				} else {
 					// this is something that should not be; better be safe than sorry
 					throw new Exception("can't create eventfd for custom event processing");
@@ -2881,6 +2908,17 @@ struct EventLoopImpl {
 				ev.data.fd = customSignalFD;
 				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customSignalFD, &ev);
 			}
+		} else version(Posix) {
+			prepareEventLoop();
+			if (customEventFDRead == -1) {
+				int[2] bfr;
+				import core.sys.posix.unistd;
+				auto ret = pipe(bfr);
+				if(ret == -1) throw new Exception("pipe");
+				customEventFDRead = bfr[0];
+				customEventFDWrite = bfr[1];
+			}
+
 		}
 
 		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
@@ -2947,8 +2985,10 @@ struct EventLoopImpl {
 		dispose();
 	}
 
-	version(linux)
-	ref int customEventFD() { return SimpleWindow.customEventFD; }
+	version(Posix)
+	ref int customEventFDRead() { return SimpleWindow.customEventFDRead; }
+	version(Posix)
+	ref int customEventFDWrite() { return SimpleWindow.customEventFDWrite; }
 	version(linux)
 	ref int customSignalFD() { return SimpleWindow.customSignalFD; }
 	version(Windows)
@@ -3033,11 +3073,11 @@ struct EventLoopImpl {
 								//
 								// IOW handlePulse happens at most once per pulse interval.
 								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
-							} else if (fd == customEventFD) {
+							} else if (fd == customEventFDRead) {
 								// we have some custom events; process 'em
 								import core.sys.posix.unistd : read;
 								ulong n;
-								read(customEventFD, &n, n.sizeof); // reset counter value to zero again
+								read(customEventFDRead, &n, n.sizeof); // reset counter value to zero again
 								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
 								//SimpleWindow.processAllCustomEvents();
 							} else {
@@ -3095,18 +3135,76 @@ struct EventLoopImpl {
 				// signal-based option, but I'm in no rush to write it since
 				// I prefer the fd-based functions.
 				while (!done && (whileCondition is null || whileCondition() == true) && notExited) {
-					while(!done &&
-						(pulseTimeout == 0 || (XPending(display) > 0)))
-					{
-						this.mtLock();
-						scope(exit) this.mtUnlock();
-						done = doXNextEvent(this.display);
+
+					import core.sys.posix.poll;
+
+					pollfd[] pfds;
+					pollfd[32] pfdsBuffer;
+					auto len = PosixFdReader.mapping.length + 2;
+					// FIXME: i should just reuse the buffer
+					if(len < pfdsBuffer.length)
+						pfds = pfdsBuffer[0 .. len];
+					else
+						pfds = new pollfd[](len);
+
+					pfds[0].fd = display.fd;
+					pfds[0].events = POLLIN;
+					pfds[0].revents = 0;
+
+					int slot = 1;
+
+					if(customEventFDRead != -1) {
+						pfds[slot].fd = customEventFDRead;
+						pfds[slot].events = POLLIN;
+						pfds[slot].revents = 0;
+
+						slot++;
 					}
-					if(!done && pulseTimeout !=0) {
+
+					foreach(fd, obj; PosixFdReader.mapping) {
+						if(!obj.enabled) continue;
+						pfds[slot].fd = fd;
+						pfds[slot].events = POLLIN;
+						pfds[slot].revents = 0;
+
+						slot++;
+					}
+
+					auto ret = poll(pfds.ptr, slot, pulseTimeout > 0 ? cast(int) pulseTimeout : -1);
+					if(ret == -1) throw new Exception("poll");
+
+					if(ret == 0) {
+						// FIXME it may not necessarily time out if events keep coming
 						if(handlePulse !is null)
 							handlePulse();
-						import core.thread;
-						Thread.sleep(dur!"msecs"(pulseTimeout));
+					} else {
+						foreach(s; 0 .. slot) {
+							if(pfds[s].revents == 0) continue;
+
+							if(pfds[s].fd == display.fd) {
+								while(!done && XPending(display)) {
+									this.mtLock();
+									scope(exit) this.mtUnlock();
+									done = doXNextEvent(this.display);
+								}
+							} else if(customEventFDRead != -1 && pfds[s].fd == customEventFDRead) {
+
+								import core.sys.posix.unistd : read;
+								ulong n;
+								read(customEventFDRead, &n, n.sizeof);
+								SimpleWindow.processAllCustomEvents();
+							} else {
+								auto obj = PosixFdReader.mapping[pfds[s].fd];
+								if(pfds[s].revents & POLLNVAL) {
+									obj.dispose();
+								} else {
+									obj.ready(pfds[s].revents);
+								}
+							}
+
+							ret--;
+							if(ret == 0) break;
+						}
 					}
 				}
 			}
@@ -4250,7 +4348,7 @@ class WindowsHandleReader {
 	__gshared WindowsHandleReader[HANDLE] mapping;
 }
 
-version(linux)
+version(Posix)
 /// Lets you add files to the event loop for reading. Use at your own risk.
 class PosixFdReader {
 	///
@@ -4288,12 +4386,18 @@ class PosixFdReader {
 	void enable() {
 		prepareEventLoop();
 
-		static import ep = core.sys.linux.epoll;
-		ep.epoll_event ev = void;
-		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-		//import std.stdio; writeln("enable ", fd, " ", captureReads, " ", captureWrites);
-		ev.data.fd = fd;
-		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+		enabled = true;
+
+		version(linux) {
+			static import ep = core.sys.linux.epoll;
+			ep.epoll_event ev = void;
+			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+			//import std.stdio; writeln("enable ", fd, " ", captureReads, " ", captureWrites);
+			ev.data.fd = fd;
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
+		} else {
+
+		}
 	}
 
 	version(with_eventloop) {} else
@@ -4301,12 +4405,16 @@ class PosixFdReader {
 	void disable() {
 		prepareEventLoop();
 
-		static import ep = core.sys.linux.epoll;
-		ep.epoll_event ev = void;
-		ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-		//import std.stdio; writeln("disable ", fd, " ", captureReads, " ", captureWrites);
-		ev.data.fd = fd;
-		ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+		enabled = false;
+
+		version(linux) {
+			static import ep = core.sys.linux.epoll;
+			ep.epoll_event ev = void;
+			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
+			//import std.stdio; writeln("disable ", fd, " ", captureReads, " ", captureWrites);
+			ev.data.fd = fd;
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+		}
 	}
 
 	version(with_eventloop) {} else
@@ -4325,8 +4433,13 @@ class PosixFdReader {
 	}
 
 	void ready(uint flags) {
-		static import ep = core.sys.linux.epoll;
-		onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
+		version(linux) {
+			static import ep = core.sys.linux.epoll;
+			onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
+		} else {
+			import core.sys.posix.poll;
+			onReady(fd, (flags & POLLIN) ? true : false, (flags & POLLOUT) ? true : false);
+		}
 	}
 
 	void hup(uint flags) {
@@ -4337,6 +4450,7 @@ class PosixFdReader {
 	void delegate() onHup;
 
 	int fd = -1;
+	private bool enabled;
 	__gshared PosixFdReader[int] mapping;
 }
 
@@ -9372,7 +9486,7 @@ version(X11) {
 				// only if we are actually on the same machine does this
 				// have any hope, and the query extension only asks if
 				// the server can in theory, not in practice.
-				if(str is null || str[0] != ':')
+				if(str is null || (str[0] != ':' && str[0] != '/'))
 					_xshmAvailable = false;
 				else
 					_xshmAvailable = XQueryExtension(XDisplayConnection.get(), "MIT-SHM", &i1, &i2, &i3) != 0;
@@ -10046,10 +10160,15 @@ version(X11) {
 		*/
 
 		void closeWindow() {
-			if (customEventFD != -1) {
+			if (customEventFDRead != -1) {
 				import core.sys.posix.unistd : close;
-				close(customEventFD);
-				customEventFD = -1;
+				auto same = customEventFDRead == customEventFDWrite;
+
+				close(customEventFDRead);
+				if(!same)
+					close(customEventFDWrite);
+				customEventFDRead = -1;
+				customEventFDWrite = -1;
 			}
 			if(buffer)
 				XFreePixmap(display, buffer);
@@ -13246,7 +13365,8 @@ version(linux) {
 				throw new Exception("epoll create failure");
 		}
 	}
-
+} else version(Posix) {
+	void prepareEventLoop() {}
 }
 
 version(X11) {

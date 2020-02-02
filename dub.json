@@ -36,6 +36,7 @@
 			"targetType": "library",
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.simpledisplay=simpledisplay.d"],
+			"lflags-osx": ["-L/usr/X11/lib"],
 			"dependencies": {"arsd-official:color_base":"*"},
 			"configurations": [
 				{
@@ -48,6 +49,11 @@
 					"versions": ["without_opengl"],
 					"libs-windows": ["gdi32"],
 					"libs-posix": ["X11", "Xext"]
+				},
+				{
+					"name": "cocoa",
+					"versions-osx": [ "OSXCocoa", "allow_unimplemented_features", "without_opengl" ],
+					"lflags-osx": ["-framework", "Cocoa"],
 				}
 			],
 			"sourceFiles": ["simpledisplay.d"]
