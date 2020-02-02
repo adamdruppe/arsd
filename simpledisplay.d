@@ -3186,7 +3186,11 @@ struct EventLoopImpl {
 								SimpleWindow.processAllCustomEvents();
 							} else {
 								auto obj = PosixFdReader.mapping[pfds[s].fd];
-								obj.ready(pfds[s].revents);
+								if(pfds[s].revents & POLLNVAL) {
+									obj.dispose();
+								} else {
+									obj.ready(pfds[s].revents);
+								}
 							}
 
 							ret--;
