@@ -5,6 +5,8 @@
 
 // FIXME: the scriptable list is quite arbitrary
 
+// FIXME: https://developer.mozilla.org/en-US/docs/Web/CSS/:is
+
 
 // xml entity references?!
 

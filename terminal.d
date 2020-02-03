@@ -868,6 +868,14 @@ struct Terminal {
 		}
 	}
 
+	// EXPERIMENTAL do not use yet
+	Terminal alternateScreen() {
+		assert(this.type != ConsoleOutputType.cellular);
+
+		this.flush();
+		return Terminal(ConsoleOutputType.cellular);
+	}
+
 	version(Win32Console) {
 		HANDLE hConsole;
 		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
@@ -3064,7 +3072,7 @@ private int[] getTerminalCapabilities(int fdIn, int fdOut) {
 
 	timeval tv;
 	tv.tv_sec = 0;
-	tv.tv_usec = 10 * 1000;
+	tv.tv_usec = 100 * 1000;
 
 	fd_set fs;
 	FD_ZERO(&fs);
@@ -3148,6 +3156,8 @@ private int[] getTerminalCapabilities(int fdIn, int fdOut) {
 		ret ~= p.to!int;
 	return ret;
 }
+
+private extern(C) int mkstemp(char *templ);
 
 /**
 	FIXME: support lines that wrap
@@ -3271,6 +3281,13 @@ class LineGetter {
 	/// You might want to turn it off if generating a completion list is slow.
 	bool autoSuggest = true;
 
+	/++
+		Returns true if there was any input in the buffer. Can be
+		checked in the case of a [UserInterruptionException].
+	+/
+	bool hadInput() {
+		return line.length > 0;
+	}
 
 	/// Override this if you don't want all lines added to the history.
 	/// You can return null to not add it at all, or you can transform it.
@@ -3290,9 +3307,17 @@ class LineGetter {
 			file.writeln(item);
 	}
 
+	/++
+		History:
+			Introduced on January 31, 2020
+	+/
+	/* virtual */ string historyFileExtension() {
+		return ".history";
+	}
+
 	private string historyPath() {
 		import std.path;
-		auto filename = historyFileDirectory() ~ dirSeparator ~ historyFilename ~ ".history";
+		auto filename = historyFileDirectory() ~ dirSeparator ~ historyFilename ~ historyFileExtension();
 		return filename;
 	}
 
@@ -3309,21 +3334,85 @@ class LineGetter {
 		}
 	}
 
-	/**
+	/++
 		Override this to provide tab completion. You may use the candidate
 		argument to filter the list, but you don't have to (LineGetter will
-		do it for you on the values you return).
+		do it for you on the values you return). This means you can ignore
+		the arguments if you like.
 
 		Ideally, you wouldn't return more than about ten items since the list
 		gets difficult to use if it is too long.
 
+		Tab complete cannot modify text before or after the cursor at this time.
+		I *might* change that later to allow tab complete to fuzzy search and spell
+		check fix before. But right now it ONLY inserts.
+
 		Default is to provide recent command history as autocomplete.
-	*/
-	/* virtual */ protected string[] tabComplete(in dchar[] candidate) {
+
+		Returns:
+			This function should return the full string to replace
+			`candidate[tabCompleteStartPoint(args) .. $]`.
+			For example, if your user wrote `wri<tab>` and you want to complete
+			it to `write` or `writeln`, you should return `["write", "writeln"]`.
+
+			If you offer different tab complete in different places, you still
+			need to return the whole string. For example, a file competition of
+			a second argument, when the user writes `terminal.d term<tab>` and you
+			want it to complete to an additional `terminal.d`, you should return
+			`["terminal.d terminal.d"]`; in other words, `candidate ~ completion`
+			for each completion.
+
+			It does this so you can simply return an array of words without having
+			to rebuild that array for each combination.
+
+			To choose the word separator, override [tabCompleteStartPoint].
+
+		Params:
+			candidate = the text of the line up to the text cursor, after
+			which the completed text would be inserted
+
+			afterCursor = the remaining text after the cursor. You can inspect
+			this, but cannot change it - this will be appended to the line
+			after completion, keeping the cursor in the same relative location.
+
+		History:
+			Prior to January 30, 2020, this method took only one argument,
+			`candidate`. It now takes `afterCursor` as well, to allow you to
+			make more intelligent completions with full context.
+	+/
+	/* virtual */ protected string[] tabComplete(in dchar[] candidate, in dchar[] afterCursor) {
 		return history.length > 20 ? history[0 .. 20] : history;
 	}
 
-	private string[] filterTabCompleteList(string[] list) {
+	/++
+		Override this to provide a different tab competition starting point. The default
+		is `0`, always completing the complete line, but you may return the index of another
+		character of `candidate` to provide a new split.
+
+		Returns:
+			The index of `candidate` where we should start the slice to keep in [tabComplete].
+			It must be `>= 0 && <= candidate.length`.
+
+		History:
+			Added on February 1, 2020. Initial default is to return 0 to maintain
+			old behavior.
+	+/
+	/* virtual */ protected size_t tabCompleteStartPoint(in dchar[] candidate, in dchar[] afterCursor) {
+		return 0;
+	}
+
+	/++
+		This gives extra information for an item when displaying tab competition details.
+
+		History:
+			Added January 31, 2020.
+
+	+/
+	/* virtual */ protected string tabCompleteHelp(string candidate) {
+		return null;
+	}
+
+	private string[] filterTabCompleteList(string[] list, size_t start) {
 		if(list.length == 0)
 			return list;
 
@@ -3332,17 +3421,26 @@ class LineGetter {
 
 		foreach(item; list) {
 			import std.algorithm;
-			if(startsWith(item, line[0 .. cursorPosition]))
+			if(startsWith(item, line[start .. cursorPosition]))
 				f ~= item;
 		}
 
 		return f;
 	}
 
-	/// Override this to provide a custom display of the tab completion list
+	/++
+		Override this to provide a custom display of the tab completion list.
+
+		History:
+			Prior to January 31, 2020, it only displayed the list. After
+			that, it would call [tabCompleteHelp] for each candidate and display
+			that string (if present) as well.
+	+/
 	protected void showTabCompleteList(string[] list) {
 		if(list.length) {
 			// FIXME: allow mouse clicking of an item, that would be cool
+
+			auto start = tabCompleteStartPoint(line[0 .. cursorPosition], line[cursorPosition .. $]);
 
 			// FIXME: scroll
 			//if(terminal.type == ConsoleOutputType.linear) {
@@ -3350,15 +3448,103 @@ class LineGetter {
 				foreach(item; list) {
 					terminal.color(suggestionForeground, background);
 					import std.utf;
-					auto idx = codeLength!char(line[0 .. cursorPosition]);
+					auto idx = codeLength!char(line[start .. cursorPosition]);
 					terminal.write("  ", item[0 .. idx]);
 					terminal.color(regularForeground, background);
-					terminal.writeln(item[idx .. $]);
+					terminal.write(item[idx .. $]);
+					auto help = tabCompleteHelp(item);
+					if(help !is null) {
+						terminal.write("\t\t");
+						int remaining = terminal.width - terminal.cursorX;
+						remaining -= 2;
+						if(remaining > 8)
+							terminal.write(remaining < help.length ? help[0 .. remaining] : help);
+					}
+					terminal.writeln();
+
 				}
 				updateCursorPosition();
 				redraw();
 			//}
 		}
+	}
+
+	/++
+		Called by the default event loop when the user presses F1. Override
+		`showHelp` to change the UI, override [helpMessage] if you just want
+		to change the message.
+
+		History:
+			Introduced on January 30, 2020
+	+/
+	protected void showHelp() {
+		terminal.writeln();
+		terminal.writeln(helpMessage);
+		updateCursorPosition();
+		redraw();
+	}
+
+	/++
+		History:
+			Introduced on January 30, 2020
+	+/
+	protected string helpMessage() {
+		return "Press F2 to edit current line in your editor. F3 searches. F9 runs current line while maintaining current edit state.";
+	}
+
+	/++
+		History:
+			Introduced on January 30, 2020
+	+/
+	protected dchar[] editLineInEditor(in dchar[] line, in size_t cursorPosition) {
+		import std.conv;
+		import std.process;
+		import std.file;
+
+		char[] tmpName;
+
+		version(Windows) {
+			import core.stdc.string;
+			char[280] path;
+			auto l = GetTempPathA(cast(DWORD) path.length, path.ptr);
+			if(l == 0) throw new Exception("GetTempPathA");
+			path[l] = 0;
+			char[280] name;
+			auto r = GetTempFileNameA(path.ptr, "adr", 0, name.ptr);
+			if(r == 0) throw new Exception("GetTempFileNameA");
+			tmpName = name[0 .. strlen(name.ptr)];
+			scope(exit)
+				std.file.remove(tmpName);
+			std.file.write(tmpName, to!string(line));
+
+			string editor = environment.get("EDITOR", "notepad.exe");
+		} else {
+			import core.stdc.stdlib;
+			import core.sys.posix.unistd;
+			char[120] name;
+			string p = "/tmp/adrXXXXXX";
+			name[0 .. p.length] = p[];
+			name[p.length] = 0;
+			auto fd = mkstemp(name.ptr);
+			tmpName = name[0 .. p.length];
+			if(fd == -1) throw new Exception("mkstemp");
+			scope(exit)
+				close(fd);
+			scope(exit)
+				std.file.remove(tmpName);
+
+			string s = to!string(line);
+			while(s.length) {
+				auto x = write(fd, s.ptr, s.length);
+				if(x == -1) throw new Exception("write");
+				s = s[x .. $];
+			}
+			string editor = environment.get("EDITOR", "vi");
+		}
+
+		spawnProcess([editor, tmpName]).wait;
+		import std.string;
+		return to!(dchar[])(cast(char[]) std.file.read(tmpName)).chomp;
 	}
 
 	//private RealTimeConsoleInput* rtci;
@@ -3447,9 +3633,11 @@ class LineGetter {
 	private string suggestion(string[] list = null) {
 		import std.algorithm, std.utf;
 		auto relevantLineSection = line[0 .. cursorPosition];
+		auto start = tabCompleteStartPoint(relevantLineSection, line[cursorPosition .. $]);
+		relevantLineSection = relevantLineSection[start .. $];
 		// FIXME: see about caching the list if we easily can
 		if(list is null)
-			list = filterTabCompleteList(tabComplete(relevantLineSection));
+			list = filterTabCompleteList(tabComplete(relevantLineSection, line[cursorPosition .. $]), start);
 
 		if(list.length) {
 			string commonality = list[0];
@@ -3607,14 +3795,18 @@ class LineGetter {
 	/// function or else you might lose events or get exceptions from this.
 	void startGettingLine() {
 		// reset from any previous call first
-		cursorPosition = 0;
-		horizontalScrollPosition = 0;
-		justHitTab = false;
-		currentHistoryViewPosition = 0;
-		if(line.length) {
-			line = line[0 .. 0];
-			line.assumeSafeAppend();
+		if(!maintainBuffer) {
+			cursorPosition = 0;
+			horizontalScrollPosition = 0;
+			justHitTab = false;
+			currentHistoryViewPosition = 0;
+			if(line.length) {
+				line = line[0 .. 0];
+				line.assumeSafeAppend();
+			}
 		}
+
+		maintainBuffer = false;
 
 		initializeWithSize(true);
 
@@ -3657,7 +3849,7 @@ class LineGetter {
 			positionCursor();
 		}
 
-		lastDrawLength = terminal.width;
+		lastDrawLength = terminal.width - terminal.cursorX;
 		version(Win32Console)
 			lastDrawLength -= 1; // I don't like this but Windows resizing is different anyway and it is liable to scroll if i go over..
 
@@ -3767,6 +3959,13 @@ class LineGetter {
 		return s;
 	}
 
+	void showIndividualHelp(string help) {
+		terminal.writeln();
+		terminal.writeln(help);
+	}
+
+	private bool maintainBuffer;
+
 	/// for integrating into another event loop
 	/// you can pass individual events to this and
 	/// the line getter will work on it
@@ -3799,7 +3998,9 @@ class LineGetter {
 						return false;
 					case '\t':
 						auto relevantLineSection = line[0 .. cursorPosition];
-						auto possibilities = filterTabCompleteList(tabComplete(relevantLineSection));
+						auto start = tabCompleteStartPoint(relevantLineSection, line[cursorPosition .. $]);
+						relevantLineSection = relevantLineSection[start .. $];
+						auto possibilities = filterTabCompleteList(tabComplete(relevantLineSection, line[cursorPosition .. $]), start);
 						import std.utf;
 
 						if(possibilities.length == 1) {
@@ -3807,6 +4008,13 @@ class LineGetter {
 							if(toFill.length) {
 								addString(toFill);
 								redraw();
+							} else {
+								auto help = this.tabCompleteHelp(possibilities[0]);
+								if(help.length) {
+									showIndividualHelp(help);
+									updateCursorPosition();
+									redraw();
+								}
 							}
 							justHitTab = false;
 						} else {
@@ -3842,6 +4050,38 @@ class LineGetter {
 
 							redraw();
 						}
+					break;
+					case KeyboardEvent.Key.F1:
+						justHitTab = false;
+						showHelp();
+					break;
+					case KeyboardEvent.Key.F2:
+						justHitTab = false;
+						line = editLineInEditor(line, cursorPosition);
+						if(cursorPosition > line.length)
+							cursorPosition = cast(int) line.length;
+						positionCursor();
+						redraw();
+					break;
+					case KeyboardEvent.Key.F3:
+					// case 'r' - 'a' + 1: // ctrl+r
+						justHitTab = false;
+						// search in history
+						// FIXME: what about search in completion too?
+					break;
+					case KeyboardEvent.Key.F4:
+						justHitTab = false;
+						// FIXME: clear line
+					break;
+					case KeyboardEvent.Key.F9:
+						justHitTab = false;
+						// compile and run analog; return the current string
+						// but keep the buffer the same
+						maintainBuffer = true;
+						return false;
+					case 0x1d: // ctrl+5, because of vim % shortcut
+						justHitTab = false;
+						// FIXME: find matching delimiter
 					break;
 					case KeyboardEvent.Key.LeftArrow:
 						justHitTab = false;
@@ -4033,21 +4273,19 @@ class FileLineGetter : LineGetter {
 	/// to complete.
 	string searchDirectory = ".";
 
-	override protected string[] tabComplete(in dchar[] candidate) {
+	override size_t tabCompleteStartPoint(in dchar[] candidate, in dchar[] afterCursor) {
+		import std.string;
+		return candidate.lastIndexOf(" ") + 1;
+	}
+
+	override protected string[] tabComplete(in dchar[] candidate, in dchar[] afterCursor) {
 		import std.file, std.conv, std.algorithm, std.string;
-		const(dchar)[] soFar = candidate;
-		auto idx = candidate.lastIndexOf(" ");
-		if(idx != -1)
-			soFar = candidate[idx + 1 .. $];
 
 		string[] list;
 		foreach(string name; dirEntries(searchDirectory, SpanMode.breadth)) {
-			// try without the ./
-			if(startsWith(name[2..$], soFar))
-				list ~= text(candidate, name[searchDirectory.length + 1 + soFar.length .. $]);
-			else // and with
-			if(startsWith(name, soFar))
-				list ~= text(candidate, name[soFar.length .. $]);
+			// both with and without the (searchDirectory ~ "/")
+			list ~= name[searchDirectory.length + 1 .. $];
+			list ~= name[0 .. $];
 		}
 
 		return list;
