@@ -833,6 +833,34 @@ struct Terminal {
 
 	uint tcaps;
 
+	bool inlineImagesSupported() {
+		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
+	}
+	bool clipboardSupported() {
+		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
+	}
+
+	// stubs that are dependent on tcaps
+	void displayInlineImage(ubyte[] imageData) {
+
+	}
+
+	void requestCopyToClipboard(string data) {
+
+	}
+
+	void requestPasteFromClipboard() {
+
+	}
+
+	void requestCopyToPrimary(string data) {
+
+	}
+
+	void requestPasteFromPrimary() {
+
+	}
+
 	version(Posix)
 	/**
 	 * Constructs an instance of Terminal representing the capabilities of
