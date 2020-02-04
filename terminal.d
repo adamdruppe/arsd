@@ -831,6 +831,8 @@ struct Terminal {
 		}
 	}
 
+	uint tcaps;
+
 	version(Posix)
 	/**
 	 * Constructs an instance of Terminal representing the capabilities of
@@ -854,8 +856,8 @@ struct Terminal {
 			return;
 		}
 
-		auto info = getTerminalCapabilities(fdIn, fdOut);
-		//writeln(info);
+		tcaps = getTerminalCapabilities(fdIn, fdOut);
+		//writeln(tcaps);
 
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
@@ -3036,10 +3038,19 @@ void main() {
 	}
 }
 
+enum TerminalCapabilities : uint {
+	minimal = 0,
+	vt100 = 1 << 0,
+
+	// my special terminal emulator extensions
+	arsdClipboard = 1 << 15, // 90 in caps
+	arsdImage = 1 << 16, // 91 in caps
+}
+
 version(Posix)
-private int[] getTerminalCapabilities(int fdIn, int fdOut) {
+private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn, int fdOut) {
 	if(fdIn == -1 || fdOut == -1)
-		return null;
+		return TerminalCapabilities.minimal;
 
 	import std.conv;
 	import core.stdc.errno;
@@ -3072,7 +3083,7 @@ private int[] getTerminalCapabilities(int fdIn, int fdOut) {
 
 	timeval tv;
 	tv.tv_sec = 0;
-	tv.tv_usec = 100 * 1000;
+	tv.tv_usec = 250 * 1000; // 250 ms
 
 	fd_set fs;
 	FD_ZERO(&fs);
@@ -3094,7 +3105,7 @@ private int[] getTerminalCapabilities(int fdIn, int fdOut) {
 		}
 	} else {
 		// no data... assume terminal doesn't support giving an answer
-		return null;
+		return TerminalCapabilities.minimal;
 	}
 
 	ubyte[] answer;
@@ -3151,9 +3162,17 @@ private int[] getTerminalCapabilities(int fdIn, int fdOut) {
 	import std.string;
 
 	auto pieces = split(gots, ";");
-	int[] ret;
+	uint ret = TerminalCapabilities.vt100;
 	foreach(p; pieces)
-		ret ~= p.to!int;
+		switch(p) {
+			case "90":
+				ret |= TerminalCapabilities.arsdClipboard;
+			break;
+			case "91":
+				ret |= TerminalCapabilities.arsdImage;
+			break;
+			default:
+		}
 	return ret;
 }
 
