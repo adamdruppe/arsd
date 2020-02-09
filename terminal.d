@@ -840,25 +840,118 @@ struct Terminal {
 		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
 	}
 
-	// stubs that are dependent on tcaps
-	void displayInlineImage(ubyte[] imageData) {
+	// only supported on my custom terminal emulator. guarded behind if(inlineImagesSupported)
+	// though that isn't even 100% accurate but meh
+	void changeWindowIcon()(string filename) {
+		if(inlineImagesSupported()) {
+		        import arsd.png;
+			auto image = readPng(filename);
+			auto ii = cast(IndexedImage) image;
+			assert(ii !is null);
 
+			// copy/pasted from my terminalemulator.d
+			string encodeSmallTextImage(IndexedImage ii) {
+				char encodeNumeric(int c) {
+					if(c < 10)
+						return cast(char)(c + '0');
+					if(c < 10 + 26)
+						return cast(char)(c - 10 + 'a');
+					assert(0);
+				}
+
+				string s;
+				s ~= encodeNumeric(ii.width);
+				s ~= encodeNumeric(ii.height);
+
+				foreach(entry; ii.palette)
+					s ~= entry.toRgbaHexString();
+				s ~= "Z";
+
+				ubyte rleByte;
+				int rleCount;
+
+				void rleCommit() {
+					if(rleByte >= 26)
+						assert(0); // too many colors for us to handle
+					if(rleCount == 0)
+						goto finish;
+					if(rleCount == 1) {
+						s ~= rleByte + 'a';
+						goto finish;
+					}
+
+					import std.conv;
+					s ~= to!string(rleCount);
+					s ~= rleByte + 'a';
+
+					finish:
+						rleByte = 0;
+						rleCount = 0;
+				}
+
+				foreach(b; ii.data) {
+					if(b == rleByte)
+						rleCount++;
+					else {
+						rleCommit();
+						rleByte = b;
+						rleCount = 1;
+					}
+				}
+
+				rleCommit();
+
+				return s;
+			}
+
+			this.writeStringRaw("\033]5000;"~encodeSmallTextImage(ii)~"\007");
+		}
 	}
 
-	void requestCopyToClipboard(string data) {
+	// stubs that are dependent on tcaps
+	void displayInlineImage()(ubyte[] imageData) {
+		if(inlineImagesSupported) {
+			import std.base64;
 
+			// I might change this protocol later!
+			enum extensionMagicIdentifier = "ARSD Terminal Emulator binary extension data follows:";
+
+			this.writeStringRaw("\000");
+			this.writeStringRaw(extensionMagicIdentifier);
+			this.writeStringRaw(Base64.encode(imageData));
+			this.writeStringRaw("\000");
+		}
+	}
+
+	void demandUserAttention() {
+		if(!terminalInFamily("linux"))
+			writeStringRaw("\033]5001;1\007");
+	}
+
+	void requestCopyToClipboard(string text) {
+		if(clipboardSupported) {
+			import std.base64;
+			writeStringRaw("\033]52;c;"~Base64.encode(cast(ubyte[])text)~"\007");
+		}
 	}
 
 	void requestPasteFromClipboard() {
-
+		if(clipboardSupported) {
+			writeStringRaw("\033]52;c;?\007");
+		}
 	}
 
-	void requestCopyToPrimary(string data) {
-
+	void requestCopyToPrimary(string text) {
+		if(clipboardSupported) {
+			import std.base64;
+			writeStringRaw("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
+		}
 	}
 
 	void requestPasteFromPrimary() {
-
+		if(clipboardSupported) {
+			writeStringRaw("\033]52;p;?\007");
+		}
 	}
 
 	version(Posix)
