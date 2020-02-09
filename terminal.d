@@ -924,8 +924,10 @@ struct Terminal {
 	}
 
 	void demandUserAttention() {
-		if(!terminalInFamily("linux"))
-			writeStringRaw("\033]5001;1\007");
+		version(Posix) {
+			if(!terminalInFamily("linux"))
+				writeStringRaw("\033]5001;1\007");
+		}
 	}
 
 	void requestCopyToClipboard(string text) {
