@@ -1595,7 +1595,10 @@ class Cgi {
 		// that check for UnixAddress is to work around a Phobos bug
 		// see: https://github.com/dlang/phobos/pull/7383
 		// but this might be more useful anyway tbh for this case
+		version(Posix)
 		this(ir, cast(UnixAddress) ira ? "unix:" : ira.toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
+		else
+		this(ir, ira.toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
 	}
 
 	/**
@@ -4902,8 +4905,8 @@ version(cgi_with_websocket) {
 			//if(d.length < msg.realLength) {
 
 			//}
-			msg.data = d[0 .. msg.realLength];
-			d = d[msg.realLength .. $];
+			msg.data = d[0 .. cast(size_t) msg.realLength];
+			d = d[cast(size_t) msg.realLength .. $];
 
 			if(msg.masked) {
 				// let's just unmask it now
