@@ -293,7 +293,7 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|tmux|tmux-256color|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|tmux|tmux-256color|xterm-kitty|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:cl=\E[H\E[J:\
@@ -644,14 +644,24 @@ struct Terminal {
 		}
 
 		string[string] termcap;
-		void readTermcap() {
+		void readTermcap(string t = null) {
 			import std.process;
 			import std.string;
 			import std.array;
 
 			string termcapData = environment.get("TERMCAP");
 			if(termcapData.length == 0) {
-				termcapData = getTermcapDatabase(environment.get("TERM"));
+				if(t is null) {
+					t = environment.get("TERM");
+				}
+
+				// loosen the check so any xterm variety gets
+				// the same termcap. odds are this is right
+				// almost always
+				if(t.indexOf("xterm") != -1)
+					t = "xterm";
+
+				termcapData = getTermcapDatabase(t);
 			}
 
 			auto e = replace(termcapData, "\\\n", "\n");
