@@ -967,7 +967,7 @@ struct Terminal {
 
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
-			return !(defaultBackgroundColor & 0xf0);
+			return !(defaultBackgroundColor & 0xf);
 		} else {
 			// FIXME: there is probably a better way to do this
 			// but like idk how reliable it is.
