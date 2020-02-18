@@ -1017,7 +1017,8 @@ class HttpRequest {
 						} else if(got == 0) {
 							// remote side disconnected
 							debug(arsd_http2) writeln("remote disconnect");
-							request.state = State.aborted;
+							if(request.state != State.complete)
+								request.state = State.aborted;
 							inactive[inactiveCount++] = sock;
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
