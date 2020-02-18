@@ -4490,6 +4490,10 @@ class LineGetter {
 							}
 						}
 					}
+					if(me.buttons & MouseEvent.Button.Middle) {
+						if(rtti)
+							rtti.requestPasteFromPrimary();
+					}
 				}
 			break;
 			case InputEvent.Type.SizeChangedEvent:
