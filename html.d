@@ -515,7 +515,7 @@ void translateDateInputs(Document document) {
 /// finds class="striped" and adds class="odd"/class="even" to the relevant
 /// children
 void translateStriping(Document document) {
-	foreach(item; document.getElementsBySelector(".striped")) {
+	foreach(item; document.querySelectorAll(".striped")) {
 		bool odd = false;
 		string selector;
 		switch(item.tagName) {
@@ -545,7 +545,7 @@ void translateStriping(Document document) {
 
 /// tries to make an input to filter a list. it kinda sucks.
 void translateFiltering(Document document) {
-	foreach(e; document.getElementsBySelector("input[filter_what]")) {
+	foreach(e; document.querySelectorAll("input[filter_what]")) {
 		auto filterWhat = e.attrs.filter_what;
 		if(filterWhat[0] == '#')
 			filterWhat = filterWhat[1..$];

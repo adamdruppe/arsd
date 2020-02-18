@@ -1378,7 +1378,7 @@ class HttpRequest {
 					}
 					if(followLocation && responseData.location.length) {
 						static bool first = true;
-						if(!first) asm { int 3; }
+						version(DigitalMars) if(!first) asm { int 3; }
 						populateFromInfo(Uri(responseData.location), HttpVerb.GET);
 						import std.stdio; writeln("redirected to ", responseData.location);
 						first = false;
@@ -2250,7 +2250,8 @@ wss://echo.websocket.org
 	+/
 	/// Group: foundational
 	this(Uri uri, Config config = Config.init)
-		in (uri.scheme == "ws" || uri.scheme == "wss")
+		//in (uri.scheme == "ws" || uri.scheme == "wss")
+		in { assert(uri.scheme == "ws" || uri.scheme == "wss"); } do
 	{
 		this.uri = uri;
 		this.config = config;
@@ -2444,7 +2445,8 @@ wss://echo.websocket.org
 	+/
 	/// Group: foundational
 	void close(int code = 0, string reason = null)
-		in (reason.length < 123)
+		//in (reason.length < 123)
+		in { assert(reason.length < 123); } do
 	{
 		if(readyState_ != OPEN)
 			return; // it cool, we done
