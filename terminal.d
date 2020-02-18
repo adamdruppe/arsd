@@ -1764,14 +1764,16 @@ struct RealTimeConsoleInput {
 			}
 		} else
 		if(terminal.clipboardSupported) {
-			terminal.writeStringRaw("\033]52;c;?\007");
+			if(UseVtSequences)
+				terminal.writeStringRaw("\033]52;c;?\007");
 		}
 	}
 
 	/// ditto
 	void requestPasteFromPrimary() {
 		if(terminal.clipboardSupported) {
-			terminal.writeStringRaw("\033]52;p;?\007");
+			if(UseVtSequences)
+				terminal.writeStringRaw("\033]52;p;?\007");
 		}
 	}
 
