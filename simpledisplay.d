@@ -9655,6 +9655,13 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
+
+			// calling this now to avoid waiting for the server to
+			// acknowledge the resize; draws without returning to the
+			// event loop will thus actually work. the server's event
+			// btw might overrule this and resize it again
+			recordX11Resize(display, this, w, h);
+
 			// FIXME: do we need to set this as the opengl context to do the glViewport change?
 			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 		}
@@ -10191,6 +10198,71 @@ version(X11) {
 
 	int mouseDoubleClickTimeout = 350; /// double click timeout. X only, you probably shouldn't change this.
 
+	void recordX11Resize(Display* display, SimpleWindow win, int width, int height) {
+		if(width != win.width || height != win.height) {
+			win._width = width;
+			win._height = height;
+
+			if(win.openglMode == OpenGlOptions.no) {
+				// FIXME: could this be more efficient?
+
+				if (win.bufferw < width || win.bufferh < height) {
+					//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)width, cast(int)height); }
+					// grow the internal buffer to match the window...
+					auto newPixmap = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
+					{
+						GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+						XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+						scope(exit) XFreeGC(win.display, xgc);
+						XSetClipMask(win.display, xgc, None);
+						XSetForeground(win.display, xgc, 0);
+						XFillRectangle(display, cast(Drawable)newPixmap, xgc, 0, 0, width, height);
+					}
+					XCopyArea(display,
+						cast(Drawable) win.buffer,
+						cast(Drawable) newPixmap,
+						win.gc, 0, 0,
+						win.bufferw < width ? win.bufferw : win.width,
+						win.bufferh < height ? win.bufferh : win.height,
+						0, 0);
+
+					XFreePixmap(display, win.buffer);
+					win.buffer = newPixmap;
+					win.bufferw = width;
+					win.bufferh = height;
+				}
+
+				// clear unused parts of the buffer
+				if (win.bufferw > width || win.bufferh > height) {
+					GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+					XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+					scope(exit) XFreeGC(win.display, xgc);
+					XSetClipMask(win.display, xgc, None);
+					XSetForeground(win.display, xgc, 0);
+					immutable int maxw = (win.bufferw > width ? win.bufferw : width);
+					immutable int maxh = (win.bufferh > height ? win.bufferh : height);
+					XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, width, 0, maxw, maxh); // let X11 do clipping
+					XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, 0, height, maxw, maxh); // let X11 do clipping
+				}
+
+			}
+
+			version(without_opengl) {} else
+			if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
+				glViewport(0, 0, width, height);
+			}
+
+			win.fixFixedSize(width, height); //k8: this does nothing on my FluxBox; wtf?!
+
+			if(win.windowResized !is null) {
+				XUnlockDisplay(display);
+				scope(exit) XLockDisplay(display);
+				win.windowResized(width, height);
+			}
+		}
+	}
+
+
 	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
 		bool done;
@@ -10361,67 +10433,8 @@ version(X11) {
 			auto event = e.xconfigure;
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
-				if(event.width != win.width || event.height != win.height) {
-					win._width = event.width;
-					win._height = event.height;
 
-					if(win.openglMode == OpenGlOptions.no) {
-						// FIXME: could this be more efficient?
-
-						if (win.bufferw < event.width || win.bufferh < event.height) {
-							//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)event.width, cast(int)event.height); }
-							// grow the internal buffer to match the window...
-							auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, event.width, event.height, DefaultDepthOfDisplay(display));
-							{
-								GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
-								XCopyGC(win.display, win.gc, 0xffffffff, xgc);
-								scope(exit) XFreeGC(win.display, xgc);
-								XSetClipMask(win.display, xgc, None);
-								XSetForeground(win.display, xgc, 0);
-								XFillRectangle(display, cast(Drawable)newPixmap, xgc, 0, 0, event.width, event.height);
-							}
-							XCopyArea(display,
-								cast(Drawable) (*win).buffer,
-								cast(Drawable) newPixmap,
-								(*win).gc, 0, 0,
-								win.bufferw < event.width ? win.bufferw : win.width,
-								win.bufferh < event.height ? win.bufferh : win.height,
-								0, 0);
-
-							XFreePixmap(display, win.buffer);
-							win.buffer = newPixmap;
-							win.bufferw = event.width;
-							win.bufferh = event.height;
-						}
-
-						// clear unused parts of the buffer
-						if (win.bufferw > event.width || win.bufferh > event.height) {
-							GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
-							XCopyGC(win.display, win.gc, 0xffffffff, xgc);
-							scope(exit) XFreeGC(win.display, xgc);
-							XSetClipMask(win.display, xgc, None);
-							XSetForeground(win.display, xgc, 0);
-							immutable int maxw = (win.bufferw > event.width ? win.bufferw : event.width);
-							immutable int maxh = (win.bufferh > event.height ? win.bufferh : event.height);
-							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, event.width, 0, maxw, maxh); // let X11 do clipping
-							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, 0, event.height, maxw, maxh); // let X11 do clipping
-						}
-
-					}
-
-					version(without_opengl) {} else
-					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
-						glViewport(0, 0, event.width, event.height);
-					}
-
-					win.fixFixedSize(event.width, event.height); //k8: this does nothing on my FluxBox; wtf?!
-
-					if(win.windowResized !is null) {
-						XUnlockDisplay(display);
-						scope(exit) XLockDisplay(display);
-						win.windowResized(event.width, event.height);
-					}
-				}
+				recordX11Resize(display, *win, event.width, event.height);
 			}
 		  break;
 		  case EventType.Expose:
