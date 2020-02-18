@@ -1,4 +1,6 @@
 // for optional dependency
+// for VT on Windows P s = 1 8 → Report the size of the text area in characters as CSI 8 ; height ; width t
+// could be used to have the TE volunteer the size
 /++
 	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
 
@@ -17,8 +19,8 @@
 
 	As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
 
-	On Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
-	work now though.
+	On old Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
+	work now with newer Mac OS versions though.
 
 	Future_Roadmap:
 	$(LIST
@@ -185,8 +187,10 @@ version(Posix) {
 // capabilities.
 //version = Demo
 
-version(Windows)
+version(Windows) {
+	version(VtEscapeCodes) {} // cool
 	version=Win32Console;
+}
 
 version(Win32Console) {
 	import core.sys.windows.windows;
@@ -198,26 +202,29 @@ version(Win32Console) {
 }
 
 version(Posix) {
+
+	version=VtEscapeCodes;
+
 	import core.sys.posix.termios;
 	import core.sys.posix.unistd;
 	import unix = core.sys.posix.unistd;
 	import core.sys.posix.sys.types;
 	import core.sys.posix.sys.time;
 	import core.stdc.stdio;
+
+	import core.sys.posix.sys.ioctl;
+}
+
+version(VtEscapeCodes) {
+
+	enum UseVtSequences = true;
+
+	version(Windows) {} else
 	private {
 		enum RED_BIT = 1;
 		enum GREEN_BIT = 2;
 		enum BLUE_BIT = 4;
 	}
-
-	version(linux) {
-		extern(C) int ioctl(int, int, ...);
-		enum int TIOCGWINSZ = 0x5413;
-	} else version(OSX) {
-		import core.stdc.config;
-		extern(C) int ioctl(int, c_ulong, ...);
-		enum TIOCGWINSZ = 1074295912;
-	} else static assert(0, "confirm the value of tiocgwinsz");
 
 	struct winsize {
 		ushort ws_row;
@@ -373,6 +380,8 @@ an|ansi|ansi-bbs|ANSI terminals (emulators):\
 	:tc=vt-generic:
 
 	`;
+} else {
+	enum UseVtSequences = false;
 }
 
 /// A modifier for [Color]
@@ -543,18 +552,18 @@ struct Terminal {
 		void delegate(in void[]) _writeDelegate; // used to override the unix write() system call, set it magically
 	}
 
+	bool terminalInFamily(string[] terms...) {
+		import std.process;
+		import std.string;
+		auto term = environment.get("TERM");
+		foreach(t; terms)
+			if(indexOf(term, t) != -1)
+				return true;
+
+		return false;
+	}
+
 	version(Posix) {
-		bool terminalInFamily(string[] terms...) {
-			import std.process;
-			import std.string;
-			auto term = environment.get("TERM");
-			foreach(t; terms)
-				if(indexOf(term, t) != -1)
-					return true;
-
-			return false;
-		}
-
 		// This is a filthy hack because Terminal.app and OS X are garbage who don't
 		// work the way they're advertised. I just have to best-guess hack and hope it
 		// doesn't break anything else. (If you know a better way, let me know!)
@@ -566,279 +575,280 @@ struct Terminal {
 			auto term = environment.get("TERM");
 			return term == "xterm-256color";
 		}
+	}
 
-		static string[string] termcapDatabase;
-		static void readTermcapFile(bool useBuiltinTermcap = false) {
-			import std.file;
-			import std.stdio;
-			import std.string;
+	static string[string] termcapDatabase;
+	static void readTermcapFile(bool useBuiltinTermcap = false) {
+		import std.file;
+		import std.stdio;
+		import std.string;
 
-			//if(!exists("/etc/termcap"))
-				useBuiltinTermcap = true;
+		//if(!exists("/etc/termcap"))
+			useBuiltinTermcap = true;
 
-			string current;
+		string current;
 
-			void commitCurrentEntry() {
-				if(current is null)
-					return;
+		void commitCurrentEntry() {
+			if(current is null)
+				return;
 
-				string names = current;
-				auto idx = indexOf(names, ":");
-				if(idx != -1)
-					names = names[0 .. idx];
+			string names = current;
+			auto idx = indexOf(names, ":");
+			if(idx != -1)
+				names = names[0 .. idx];
 
-				foreach(name; split(names, "|"))
-					termcapDatabase[name] = current;
+			foreach(name; split(names, "|"))
+				termcapDatabase[name] = current;
 
-				current = null;
-			}
-
-			void handleTermcapLine(in char[] line) {
-				if(line.length == 0) { // blank
-					commitCurrentEntry();
-					return; // continue
-				}
-				if(line[0] == '#') // comment
-					return; // continue
-				size_t termination = line.length;
-				if(line[$-1] == '\\')
-					termination--; // cut off the \\
-				current ~= strip(line[0 .. termination]);
-				// termcap entries must be on one logical line, so if it isn't continued, we know we're done
-				if(line[$-1] != '\\')
-					commitCurrentEntry();
-			}
-
-			if(useBuiltinTermcap) {
-				foreach(line; splitLines(builtinTermcap)) {
-					handleTermcapLine(line);
-				}
-			} else {
-				foreach(line; File("/etc/termcap").byLine()) {
-					handleTermcapLine(line);
-				}
-			}
+			current = null;
 		}
 
-		static string getTermcapDatabase(string terminal) {
-			import std.string;
+		void handleTermcapLine(in char[] line) {
+			if(line.length == 0) { // blank
+				commitCurrentEntry();
+				return; // continue
+			}
+			if(line[0] == '#') // comment
+				return; // continue
+			size_t termination = line.length;
+			if(line[$-1] == '\\')
+				termination--; // cut off the \\
+			current ~= strip(line[0 .. termination]);
+			// termcap entries must be on one logical line, so if it isn't continued, we know we're done
+			if(line[$-1] != '\\')
+				commitCurrentEntry();
+		}
 
-			if(termcapDatabase is null)
-				readTermcapFile();
+		if(useBuiltinTermcap) {
+			version(VtEscapeCodes)
+			foreach(line; splitLines(builtinTermcap)) {
+				handleTermcapLine(line);
+			}
+		} else {
+			foreach(line; File("/etc/termcap").byLine()) {
+				handleTermcapLine(line);
+			}
+		}
+	}
 
-			auto data = terminal in termcapDatabase;
-			if(data is null)
+	static string getTermcapDatabase(string terminal) {
+		import std.string;
+
+		if(termcapDatabase is null)
+			readTermcapFile();
+
+		auto data = terminal in termcapDatabase;
+		if(data is null)
+			return null;
+
+		auto tc = *data;
+		auto more = indexOf(tc, ":tc=");
+		if(more != -1) {
+			auto tcKey = tc[more + ":tc=".length .. $];
+			auto end = indexOf(tcKey, ":");
+			if(end != -1)
+				tcKey = tcKey[0 .. end];
+			tc = getTermcapDatabase(tcKey) ~ tc;
+		}
+
+		return tc;
+	}
+
+	string[string] termcap;
+	void readTermcap(string t = null) {
+		import std.process;
+		import std.string;
+		import std.array;
+
+		string termcapData = environment.get("TERMCAP");
+		if(termcapData.length == 0) {
+			if(t is null) {
+				t = environment.get("TERM");
+			}
+
+			// loosen the check so any xterm variety gets
+			// the same termcap. odds are this is right
+			// almost always
+			if(t.indexOf("xterm") != -1)
+				t = "xterm";
+
+			termcapData = getTermcapDatabase(t);
+		}
+
+		auto e = replace(termcapData, "\\\n", "\n");
+		termcap = null;
+
+		foreach(part; split(e, ":")) {
+			// FIXME: handle numeric things too
+
+			auto things = split(part, "=");
+			if(things.length)
+				termcap[things[0]] =
+					things.length > 1 ? things[1] : null;
+		}
+	}
+
+	string findSequenceInTermcap(in char[] sequenceIn) {
+		char[10] sequenceBuffer;
+		char[] sequence;
+		if(sequenceIn.length > 0 && sequenceIn[0] == '\033') {
+			if(!(sequenceIn.length < sequenceBuffer.length - 1))
 				return null;
-
-			auto tc = *data;
-			auto more = indexOf(tc, ":tc=");
-			if(more != -1) {
-				auto tcKey = tc[more + ":tc=".length .. $];
-				auto end = indexOf(tcKey, ":");
-				if(end != -1)
-					tcKey = tcKey[0 .. end];
-				tc = getTermcapDatabase(tcKey) ~ tc;
-			}
-
-			return tc;
+			sequenceBuffer[1 .. sequenceIn.length + 1] = sequenceIn[];
+			sequenceBuffer[0] = '\\';
+			sequenceBuffer[1] = 'E';
+			sequence = sequenceBuffer[0 .. sequenceIn.length + 1];
+		} else {
+			sequence = sequenceBuffer[1 .. sequenceIn.length + 1];
 		}
 
-		string[string] termcap;
-		void readTermcap(string t = null) {
-			import std.process;
+		import std.array;
+		foreach(k, v; termcap)
+			if(v == sequence)
+				return k;
+		return null;
+	}
+
+	string getTermcap(string key) {
+		auto k = key in termcap;
+		if(k !is null) return *k;
+		return null;
+	}
+
+	// Looks up a termcap item and tries to execute it. Returns false on failure
+	bool doTermcap(T...)(string key, T t) {
+		import std.conv;
+		auto fs = getTermcap(key);
+		if(fs is null)
+			return false;
+
+		int swapNextTwo = 0;
+
+		R getArg(R)(int idx) {
+			if(swapNextTwo == 2) {
+				idx ++;
+				swapNextTwo--;
+			} else if(swapNextTwo == 1) {
+				idx --;
+				swapNextTwo--;
+			}
+
+			foreach(i, arg; t) {
+				if(i == idx)
+					return to!R(arg);
+			}
+			assert(0, to!string(idx) ~ " is out of bounds working " ~ fs);
+		}
+
+		char[256] buffer;
+		int bufferPos = 0;
+
+		void addChar(char c) {
+			import std.exception;
+			enforce(bufferPos < buffer.length);
+			buffer[bufferPos++] = c;
+		}
+
+		void addString(in char[] c) {
+			import std.exception;
+			enforce(bufferPos + c.length < buffer.length);
+			buffer[bufferPos .. bufferPos + c.length] = c[];
+			bufferPos += c.length;
+		}
+
+		void addInt(int c, int minSize) {
 			import std.string;
-			import std.array;
-
-			string termcapData = environment.get("TERMCAP");
-			if(termcapData.length == 0) {
-				if(t is null) {
-					t = environment.get("TERM");
-				}
-
-				// loosen the check so any xterm variety gets
-				// the same termcap. odds are this is right
-				// almost always
-				if(t.indexOf("xterm") != -1)
-					t = "xterm";
-
-				termcapData = getTermcapDatabase(t);
-			}
-
-			auto e = replace(termcapData, "\\\n", "\n");
-			termcap = null;
-
-			foreach(part; split(e, ":")) {
-				// FIXME: handle numeric things too
-
-				auto things = split(part, "=");
-				if(things.length)
-					termcap[things[0]] =
-						things.length > 1 ? things[1] : null;
-			}
+			auto str = format("%0"~(minSize ? to!string(minSize) : "")~"d", c);
+			addString(str);
 		}
 
-		string findSequenceInTermcap(in char[] sequenceIn) {
-			char[10] sequenceBuffer;
-			char[] sequence;
-			if(sequenceIn.length > 0 && sequenceIn[0] == '\033') {
-				if(!(sequenceIn.length < sequenceBuffer.length - 1))
-					return null;
-				sequenceBuffer[1 .. sequenceIn.length + 1] = sequenceIn[];
-				sequenceBuffer[0] = '\\';
-				sequenceBuffer[1] = 'E';
-				sequence = sequenceBuffer[0 .. sequenceIn.length + 1];
+		bool inPercent;
+		int argPosition = 0;
+		int incrementParams = 0;
+		bool skipNext;
+		bool nextIsChar;
+		bool inBackslash;
+
+		foreach(char c; fs) {
+			if(inBackslash) {
+				if(c == 'E')
+					addChar('\033');
+				else
+					addChar(c);
+				inBackslash = false;
+			} else if(nextIsChar) {
+				if(skipNext)
+					skipNext = false;
+				else
+					addChar(cast(char) (c + getArg!int(argPosition) + (incrementParams ? 1 : 0)));
+				if(incrementParams) incrementParams--;
+				argPosition++;
+				inPercent = false;
+			} else if(inPercent) {
+				switch(c) {
+					case '%':
+						addChar('%');
+						inPercent = false;
+					break;
+					case '2':
+					case '3':
+					case 'd':
+						if(skipNext)
+							skipNext = false;
+						else
+							addInt(getArg!int(argPosition) + (incrementParams ? 1 : 0),
+								c == 'd' ? 0 : (c - '0')
+							);
+						if(incrementParams) incrementParams--;
+						argPosition++;
+						inPercent = false;
+					break;
+					case '.':
+						if(skipNext)
+							skipNext = false;
+						else
+							addChar(cast(char) (getArg!int(argPosition) + (incrementParams ? 1 : 0)));
+						if(incrementParams) incrementParams--;
+						argPosition++;
+					break;
+					case '+':
+						nextIsChar = true;
+						inPercent = false;
+					break;
+					case 'i':
+						incrementParams = 2;
+						inPercent = false;
+					break;
+					case 's':
+						skipNext = true;
+						inPercent = false;
+					break;
+					case 'b':
+						argPosition--;
+						inPercent = false;
+					break;
+					case 'r':
+						swapNextTwo = 2;
+						inPercent = false;
+					break;
+					// FIXME: there's more
+					// http://www.gnu.org/software/termutils/manual/termcap-1.3/html_mono/termcap.html
+
+					default:
+						assert(0, "not supported " ~ c);
+				}
 			} else {
-				sequence = sequenceBuffer[1 .. sequenceIn.length + 1];
+				if(c == '%')
+					inPercent = true;
+				else if(c == '\\')
+					inBackslash = true;
+				else
+					addChar(c);
 			}
-
-			import std.array;
-			foreach(k, v; termcap)
-				if(v == sequence)
-					return k;
-			return null;
 		}
 
-		string getTermcap(string key) {
-			auto k = key in termcap;
-			if(k !is null) return *k;
-			return null;
-		}
-
-		// Looks up a termcap item and tries to execute it. Returns false on failure
-		bool doTermcap(T...)(string key, T t) {
-			import std.conv;
-			auto fs = getTermcap(key);
-			if(fs is null)
-				return false;
-
-			int swapNextTwo = 0;
-
-			R getArg(R)(int idx) {
-				if(swapNextTwo == 2) {
-					idx ++;
-					swapNextTwo--;
-				} else if(swapNextTwo == 1) {
-					idx --;
-					swapNextTwo--;
-				}
-
-				foreach(i, arg; t) {
-					if(i == idx)
-						return to!R(arg);
-				}
-				assert(0, to!string(idx) ~ " is out of bounds working " ~ fs);
-			}
-
-			char[256] buffer;
-			int bufferPos = 0;
-
-			void addChar(char c) {
-				import std.exception;
-				enforce(bufferPos < buffer.length);
-				buffer[bufferPos++] = c;
-			}
-
-			void addString(in char[] c) {
-				import std.exception;
-				enforce(bufferPos + c.length < buffer.length);
-				buffer[bufferPos .. bufferPos + c.length] = c[];
-				bufferPos += c.length;
-			}
-
-			void addInt(int c, int minSize) {
-				import std.string;
-				auto str = format("%0"~(minSize ? to!string(minSize) : "")~"d", c);
-				addString(str);
-			}
-
-			bool inPercent;
-			int argPosition = 0;
-			int incrementParams = 0;
-			bool skipNext;
-			bool nextIsChar;
-			bool inBackslash;
-
-			foreach(char c; fs) {
-				if(inBackslash) {
-					if(c == 'E')
-						addChar('\033');
-					else
-						addChar(c);
-					inBackslash = false;
-				} else if(nextIsChar) {
-					if(skipNext)
-						skipNext = false;
-					else
-						addChar(cast(char) (c + getArg!int(argPosition) + (incrementParams ? 1 : 0)));
-					if(incrementParams) incrementParams--;
-					argPosition++;
-					inPercent = false;
-				} else if(inPercent) {
-					switch(c) {
-						case '%':
-							addChar('%');
-							inPercent = false;
-						break;
-						case '2':
-						case '3':
-						case 'd':
-							if(skipNext)
-								skipNext = false;
-							else
-								addInt(getArg!int(argPosition) + (incrementParams ? 1 : 0),
-									c == 'd' ? 0 : (c - '0')
-								);
-							if(incrementParams) incrementParams--;
-							argPosition++;
-							inPercent = false;
-						break;
-						case '.':
-							if(skipNext)
-								skipNext = false;
-							else
-								addChar(cast(char) (getArg!int(argPosition) + (incrementParams ? 1 : 0)));
-							if(incrementParams) incrementParams--;
-							argPosition++;
-						break;
-						case '+':
-							nextIsChar = true;
-							inPercent = false;
-						break;
-						case 'i':
-							incrementParams = 2;
-							inPercent = false;
-						break;
-						case 's':
-							skipNext = true;
-							inPercent = false;
-						break;
-						case 'b':
-							argPosition--;
-							inPercent = false;
-						break;
-						case 'r':
-							swapNextTwo = 2;
-							inPercent = false;
-						break;
-						// FIXME: there's more
-						// http://www.gnu.org/software/termutils/manual/termcap-1.3/html_mono/termcap.html
-
-						default:
-							assert(0, "not supported " ~ c);
-					}
-				} else {
-					if(c == '%')
-						inPercent = true;
-					else if(c == '\\')
-						inBackslash = true;
-					else
-						addChar(c);
-				}
-			}
-
-			writeStringRaw(buffer[0 .. bufferPos]);
-			return true;
-		}
+		writeStringRaw(buffer[0 .. bufferPos]);
+		return true;
 	}
 
 	uint tcaps;
@@ -847,7 +857,8 @@ struct Terminal {
 		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
 	}
 	bool clipboardSupported() {
-		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
+		version(Win32Console) return true;
+		else return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
 	}
 
 	// only supported on my custom terminal emulator. guarded behind if(inlineImagesSupported)
@@ -918,7 +929,7 @@ struct Terminal {
 		}
 	}
 
-	// stubs that are dependent on tcaps
+	// dependent on tcaps...
 	void displayInlineImage()(ubyte[] imageData) {
 		if(inlineImagesSupported) {
 			import std.base64;
@@ -934,7 +945,7 @@ struct Terminal {
 	}
 
 	void demandUserAttention() {
-		version(Posix) {
+		if(UseVtSequences) {
 			if(!terminalInFamily("linux"))
 				writeStringRaw("\033]5001;1\007");
 		}
@@ -947,12 +958,6 @@ struct Terminal {
 		}
 	}
 
-	void requestPasteFromClipboard() {
-		if(clipboardSupported) {
-			writeStringRaw("\033]52;c;?\007");
-		}
-	}
-
 	void requestCopyToPrimary(string text) {
 		if(clipboardSupported) {
 			import std.base64;
@@ -960,9 +965,16 @@ struct Terminal {
 		}
 	}
 
-	void requestPasteFromPrimary() {
-		if(clipboardSupported) {
-			writeStringRaw("\033]52;p;?\007");
+	bool hasDefaultDarkBackground() {
+		version(Win32Console) {
+			return !(defaultBackgroundColor & 0xf0);
+		} else {
+			// FIXME: there is probably a better way to do this
+			// but like idk how reliable it is.
+			if(terminalInFamily("linux"))
+				return true;
+			else
+				return false;
 		}
 	}
 
@@ -982,8 +994,6 @@ struct Terminal {
 		this.getSizeOverride = getSizeOverride;
 		this.type = type;
 
-		readTermcap();
-
 		if(type == ConsoleOutputType.minimalProcessing) {
 			_suppressDestruction = true;
 			return;
@@ -991,6 +1001,12 @@ struct Terminal {
 
 		tcaps = getTerminalCapabilities(fdIn, fdOut);
 		//writeln(tcaps);
+
+		initializeVt();
+	}
+
+	void initializeVt() {
+		readTermcap();
 
 		if(type == ConsoleOutputType.cellular) {
 			doTermcap("ti");
@@ -1001,6 +1017,7 @@ struct Terminal {
 		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
 		}
+
 	}
 
 	// EXPERIMENTAL do not use yet
@@ -1019,54 +1036,59 @@ struct Terminal {
 	version(Win32Console)
 	/// ditto
 	this(ConsoleOutputType type) {
-		if(type == ConsoleOutputType.cellular) {
-			hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
-			if(hConsole == INVALID_HANDLE_VALUE) {
-				import std.conv;
-				throw new Exception(to!string(GetLastError()));
+		if(UseVtSequences) {
+			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			initializeVt();
+		} else {
+			if(type == ConsoleOutputType.cellular) {
+				hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
+				if(hConsole == INVALID_HANDLE_VALUE) {
+					import std.conv;
+					throw new Exception(to!string(GetLastError()));
+				}
+
+				SetConsoleActiveScreenBuffer(hConsole);
+				/*
+	http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
+	http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
+				*/
+				COORD size;
+				/*
+				CONSOLE_SCREEN_BUFFER_INFO sbi;
+				GetConsoleScreenBufferInfo(hConsole, &sbi);
+				size.X = cast(short) GetSystemMetrics(SM_CXMIN);
+				size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
+				*/
+
+				// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
+				//size.X = 80;
+				//size.Y = 24;
+				//SetConsoleScreenBufferSize(hConsole, size);
+
+				GetConsoleCursorInfo(hConsole, &originalCursorInfo);
+
+				clear();
+			} else {
+				hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 			}
 
-			SetConsoleActiveScreenBuffer(hConsole);
+			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
+				throw new Exception("not a user-interactive terminal");
+
+			defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
+			defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
+
+			// this is unnecessary since I use the W versions of other functions
+			// and can cause weird font bugs, so I'm commenting unless some other
+			// need comes up.
 			/*
-http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
-http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
+			oldCp = GetConsoleOutputCP();
+			SetConsoleOutputCP(65001); // UTF-8
+
+			oldCpIn = GetConsoleCP();
+			SetConsoleCP(65001); // UTF-8
 			*/
-			COORD size;
-			/*
-			CONSOLE_SCREEN_BUFFER_INFO sbi;
-			GetConsoleScreenBufferInfo(hConsole, &sbi);
-			size.X = cast(short) GetSystemMetrics(SM_CXMIN);
-			size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
-			*/
-
-			// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
-			//size.X = 80;
-			//size.Y = 24;
-			//SetConsoleScreenBufferSize(hConsole, size);
-
-			GetConsoleCursorInfo(hConsole, &originalCursorInfo);
-
-			clear();
-		} else {
-			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 		}
-
-		if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
-			throw new Exception("not a user-interactive terminal");
-
-		defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
-		defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
-
-		// this is unnecessary since I use the W versions of other functions
-		// and can cause weird font bugs, so I'm commenting unless some other
-		// need comes up.
-		/*
-		oldCp = GetConsoleOutputCP();
-		SetConsoleOutputCP(65001); // UTF-8
-
-		oldCpIn = GetConsoleCP();
-		SetConsoleCP(65001); // UTF-8
-		*/
 	}
 
 	version(Win32Console) {
@@ -1079,48 +1101,44 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
 	bool _suppressDestruction;
 
-	version(Posix)
 	~this() {
 		if(_suppressDestruction) {
 			flush();
 			return;
 		}
-		if(type == ConsoleOutputType.cellular) {
-			doTermcap("te");
-		}
-		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
-			writeStringRaw("\033[23;0t"); // restore window title from the stack
-		}
-		cursor = TerminalCursor.DEFAULT;
-		showCursor();
-		reset();
-		flush();
 
-		if(lineGetter !is null)
-			lineGetter.dispose();
-	}
-
-	version(Windows)
-	~this() {
-		if(_suppressDestruction) {
+		if(UseVtSequences) {
+			if(type == ConsoleOutputType.cellular) {
+				doTermcap("te");
+			}
+			if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
+				writeStringRaw("\033[23;0t"); // restore window title from the stack
+			}
+			cursor = TerminalCursor.DEFAULT;
+			showCursor();
+			reset();
 			flush();
-			return;
+
+			if(lineGetter !is null)
+				lineGetter.dispose();
+		} else version(Windows) {
+			flush(); // make sure user data is all flushed before resetting
+			reset();
+			showCursor();
+
+			if(lineGetter !is null)
+				lineGetter.dispose();
+
+
+			SetConsoleOutputCP(oldCp);
+			SetConsoleCP(oldCpIn);
+
+			auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
+			SetConsoleActiveScreenBuffer(stdo);
+			if(hConsole !is stdo)
+				CloseHandle(hConsole);
+
 		}
-		flush(); // make sure user data is all flushed before resetting
-		reset();
-		showCursor();
-
-		if(lineGetter !is null)
-			lineGetter.dispose();
-
-
-		SetConsoleOutputCP(oldCp);
-		SetConsoleCP(oldCpIn);
-
-		auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
-		SetConsoleActiveScreenBuffer(stdo);
-		if(hConsole !is stdo)
-			CloseHandle(hConsole);
 	}
 
 	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
@@ -1285,7 +1303,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void underline(bool set, ForceOption force = ForceOption.automatic) {
 		if(set == _underlined && force != ForceOption.alwaysSend)
 			return;
-		version(Posix) {
+		if(UseVtSequences) {
 			if(set)
 				writeStringRaw("\033[4m");
 			else
@@ -1329,14 +1347,14 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void moveTo(int x, int y, ForceOption force = ForceOption.automatic) {
 		if(force != ForceOption.neverSend && (force == ForceOption.alwaysSend || x != _cursorX || y != _cursorY)) {
 			executeAutoHideCursor();
-			version(Posix) {
+			if(UseVtSequences) {
 				doTermcap("cm", y, x);
 			} else version(Win32Console) {
 
 				flush(); // if we don't do this now, the buffering can screw up the position
 				COORD coord = {cast(short) x, cast(short) y};
 				SetConsoleCursorPosition(hConsole, coord);
-			} else static assert(0);
+			}
 		}
 
 		_cursorX = x;
@@ -1345,9 +1363,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// shows the cursor
 	void showCursor() {
-		version(Posix)
+		if(UseVtSequences)
 			doTermcap("ve");
-		else {
+		else version(Win32Console) {
 			CONSOLE_CURSOR_INFO info;
 			GetConsoleCursorInfo(hConsole, &info);
 			info.bVisible = true;
@@ -1357,9 +1375,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// hides the cursor
 	void hideCursor() {
-		version(Posix) {
+		if(UseVtSequences) {
 			doTermcap("vi");
-		} else {
+		} else version(Win32Console) {
 			CONSOLE_CURSOR_INFO info;
 			GetConsoleCursorInfo(hConsole, &info);
 			info.bVisible = false;
@@ -1466,7 +1484,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	int[] getSize() {
-		version(Win32Console) {
+		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo( hConsole, &info );
         
@@ -1615,17 +1633,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
-		// FIXME: make sure all the data is sent, check for errors
-		version(Posix) {
-			writeBuffer ~= s; // buffer it to do everything at once in flush() calls
-		} else version(Win32Console) {
-			writeBuffer ~= s;
-		} else static assert(0);
+		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
 	}
 
 	/// Clears the screen.
 	void clear() {
-		version(Posix) {
+		if(UseVtSequences) {
 			doTermcap("cl");
 		} else version(Win32Console) {
 			// http://support.microsoft.com/kb/99261
@@ -1705,6 +1718,64 @@ struct RealTimeConsoleInput {
 	@disable this();
 	@disable this(this);
 
+	/++
+		Requests the system to send paste data as a [PasteEvent] to this stream, if possible.
+
+		See_Also:
+			[Terminal.requestCopyToPrimary]
+			[Terminal.requestCopyToClipboard]
+			[Terminal.clipboardSupported]
+
+		History:
+			Added February 17, 2020.
+
+			It was in Terminal briefly during an undocumented period, but it had to be moved here to have the context needed to send the real time paste event.
+	+/
+	void requestPasteFromClipboard() {
+		version(Win32Console) {
+			HWND hwndOwner = null;
+			if(OpenClipboard(hwndOwner) == 0)
+				throw new Exception("OpenClipboard");
+			scope(exit)
+				CloseClipboard();
+			if(auto dataHandle = GetClipboardData(CF_UNICODETEXT)) {
+
+				if(auto data = cast(wchar*) GlobalLock(dataHandle)) {
+					scope(exit)
+						GlobalUnlock(dataHandle);
+
+					int len = 0;
+					auto d = data;
+					while(*d) {
+						d++;
+						len++;
+					}
+					string s;
+					s.reserve(len);
+					foreach(idx, dchar ch; data[0 .. len]) {
+						// CR/LF -> LF
+						if(ch == '\r' && idx + 1 < len && data[idx + 1] == '\n')
+							continue;
+						s ~= ch;
+					}
+
+					injectEvent(InputEvent(PasteEvent(s), terminal), InjectionPosition.tail);
+				}
+			}
+		} else
+		if(terminal.clipboardSupported) {
+			terminal.writeStringRaw("\033]52;c;?\007");
+		}
+	}
+
+	/// ditto
+	void requestPasteFromPrimary() {
+		if(terminal.clipboardSupported) {
+			terminal.writeStringRaw("\033]52;p;?\007");
+		}
+	}
+
+
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
@@ -1739,7 +1810,7 @@ struct RealTimeConsoleInput {
 			GetConsoleMode(inputHandle, &oldInput);
 
 			DWORD mode = 0;
-			mode |= ENABLE_PROCESSED_INPUT /* 0x01 */; // this gives Ctrl+C which we probably want to be similar to linux
+			//mode |= ENABLE_PROCESSED_INPUT /* 0x01 */; // this gives Ctrl+C and automatic paste... which we probably want to be similar to linux
 			//if(flags & ConsoleInputFlags.size)
 			mode |= ENABLE_WINDOW_INPUT /* 0208 */; // gives size etc
 			if(flags & ConsoleInputFlags.echo)
@@ -1980,7 +2051,7 @@ struct RealTimeConsoleInput {
 
 	bool timedCheckForInput_bypassingBuffer(int milliseconds) {
 		version(Win32Console) {
-			auto response = WaitForSingleObject(terminal.hConsole, milliseconds);
+			auto response = WaitForSingleObject(inputHandle, milliseconds);
 			if(response  == 0)
 				return true; // the object is ready
 			return false;
@@ -2039,40 +2110,48 @@ struct RealTimeConsoleInput {
 
 	//char[128] inputBuffer;
 	//int inputBufferPosition;
-	version(Posix)
 	int nextRaw(bool interruptable = false) {
-		if(fdIn == -1)
-			return 0;
+		version(Posix) {
+			if(fdIn == -1)
+				return 0;
 
-		char[1] buf;
-		try_again:
-		auto ret = read(fdIn, buf.ptr, buf.length);
-		if(ret == 0)
-			return 0; // input closed
-		if(ret == -1) {
-			import core.stdc.errno;
-			if(errno == EINTR)
-				// interrupted by signal call, quite possibly resize or ctrl+c which we want to check for in the event loop
-				if(interruptable)
-					return -1;
+			char[1] buf;
+			try_again:
+			auto ret = read(fdIn, buf.ptr, buf.length);
+			if(ret == 0)
+				return 0; // input closed
+			if(ret == -1) {
+				import core.stdc.errno;
+				if(errno == EINTR)
+					// interrupted by signal call, quite possibly resize or ctrl+c which we want to check for in the event loop
+					if(interruptable)
+						return -1;
+					else
+						goto try_again;
 				else
-					goto try_again;
+					throw new Exception("read failed");
+			}
+
+			//terminal.writef("RAW READ: %d\n", buf[0]);
+
+			if(ret == 1)
+				return inputPrefilter ? inputPrefilter(buf[0]) : buf[0];
 			else
-				throw new Exception("read failed");
+				assert(0); // read too much, should be impossible
+		} else version(Windows) {
+			char[8] buf;
+			DWORD d;
+			import std.conv;
+			if(!ReadFile(inputHandle, buf.ptr, cast(int) buf.length, &d, null))
+				throw new Exception("ReadFile " ~ to!string(GetLastError()));
+			return buf[0];
 		}
-
-		//terminal.writef("RAW READ: %d\n", buf[0]);
-
-		if(ret == 1)
-			return inputPrefilter ? inputPrefilter(buf[0]) : buf[0];
-		else
-			assert(0); // read too much, should be impossible
 	}
 
 	version(Posix)
 		int delegate(char) inputPrefilter;
 
-	version(Posix)
+	// for VT
 	dchar nextChar(int starting) {
 		if(starting <= 127)
 			return cast(dchar) starting;
@@ -2176,8 +2255,17 @@ struct RealTimeConsoleInput {
 
 	InputEvent[] inputQueue;
 
-	version(Win32Console)
 	InputEvent[] readNextEvents() {
+		if(UseVtSequences)
+			return readNextEventsVt();
+		else version(Windows)
+			return readNextEventsWin32();
+		else
+			assert(0);
+	}
+
+	version(Windows)
+	InputEvent[] readNextEventsWin32() {
 		terminal.flush(); // make sure all output is sent out before waiting for anything
 
 		INPUT_RECORD[32] buffer;
@@ -2219,12 +2307,26 @@ struct RealTimeConsoleInput {
 
 					if(ev.UnicodeChar) {
 						// new style event goes first
-						ke.which = cast(dchar) cast(wchar) ev.UnicodeChar;
-						newEvents ~= InputEvent(ke, terminal);
 
-						// old style event then follows as the fallback
-						e.character = cast(dchar) cast(wchar) ev.UnicodeChar;
-						newEvents ~= InputEvent(e, terminal);
+						if(ev.UnicodeChar == 3) {
+							// handling this internally for linux compat too
+							newEvents ~= InputEvent(UserInterruptionEvent(), terminal);
+						} else if(ev.UnicodeChar == '\r') {
+							// translating \r to \n for same result as linux...
+							ke.which = cast(dchar) cast(wchar) '\n';
+							newEvents ~= InputEvent(ke, terminal);
+
+							// old style event then follows as the fallback
+							e.character = cast(dchar) cast(wchar) '\n';
+							newEvents ~= InputEvent(e, terminal);
+						} else {
+							ke.which = cast(dchar) cast(wchar) ev.UnicodeChar;
+							newEvents ~= InputEvent(ke, terminal);
+
+							// old style event then follows as the fallback
+							e.character = cast(dchar) cast(wchar) ev.UnicodeChar;
+							newEvents ~= InputEvent(e, terminal);
+						}
 					} else {
 						// old style event
 						ne.key = cast(NonCharacterKeyEvent.Key) ev.wVirtualKeyCode;
@@ -2302,8 +2404,8 @@ struct RealTimeConsoleInput {
 		return newEvents;
 	}
 
-	version(Posix)
-	InputEvent[] readNextEvents() {
+	// for UseVtSequences....
+	InputEvent[] readNextEventsVt() {
 		terminal.flush(); // make sure all output is sent out before we try to get input
 
 		// we want to starve the read, especially if we're called from an edge-triggered
@@ -2327,7 +2429,7 @@ struct RealTimeConsoleInput {
 	}
 
 	// The helper reads just one actual event from the pipe...
-	version(Posix)
+	// for UseVtSequences....
 	InputEvent[] readNextEventsHelper() {
 		InputEvent[] charPressAndRelease(dchar character) {
 			if((flags & ConsoleInputFlags.releasedKeys))
@@ -3711,11 +3813,11 @@ class LineGetter {
 			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents | ConsoleInputFlags.noEolWrap);
 			//rtci = &i;
 			//scope(exit) rtci = null;
-			while(workOnLine(i.nextEvent())) {}
+			while(workOnLine(i.nextEvent(), &i)) {}
 		} else {
 			//rtci = input;
 			//scope(exit) rtci = null;
-			while(workOnLine(input.nextEvent())) {}
+			while(workOnLine(input.nextEvent(), input)) {}
 		}
 		return finishGettingLine();
 	}
@@ -4118,12 +4220,19 @@ class LineGetter {
 
 	private bool maintainBuffer;
 
-	/// for integrating into another event loop
-	/// you can pass individual events to this and
-	/// the line getter will work on it
-	///
-	/// returns false when there's nothing more to do
-	bool workOnLine(InputEvent e) {
+	/++
+		for integrating into another event loop
+		you can pass individual events to this and
+		the line getter will work on it
+
+		returns false when there's nothing more to do
+
+		History:
+			On February 17, 2020, it was changed to take
+			a new argument which should be the input source
+			where the event came from.
+	+/
+	bool workOnLine(InputEvent e, RealTimeConsoleInput* rtti = null) {
 		switch(e.type) {
 			case InputEvent.Type.EndOfFileEvent:
 				justHitTab = false;
@@ -4309,6 +4418,10 @@ class LineGetter {
 						scrollToEnd();
 						redraw();
 					break;
+					case ('v' - 'a' + 1):
+						if(rtti)
+							rtti.requestPasteFromClipboard();
+					break;
 					case KeyboardEvent.Key.Insert:
 						justHitTab = false;
 						if(ev.modifierState & ModifierState.shift) {
@@ -4319,8 +4432,11 @@ class LineGetter {
 
 							// those work on Windows!!!! and many linux TEs too.
 							// but if it does make it here, we'll attempt it at this level
+							if(rtti)
+								rtti.requestPasteFromClipboard();
 						} else if(ev.modifierState & ModifierState.control) {
 							// copy
+							// FIXME
 						} else {
 							insertMode = !insertMode;
 
