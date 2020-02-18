@@ -3949,8 +3949,10 @@ class LineGetter {
 
 	///
 	void deleteToEndOfLine() {
-		while(cursorPosition < line.length)
-			deleteChar();
+		line = line[0 .. cursorPosition];
+		line.assumeSafeAppend();
+		//while(cursorPosition < line.length)
+			//deleteChar();
 	}
 
 	int availableLineLength() {
