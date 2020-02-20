@@ -73,10 +73,37 @@
     // Allocate memory for image
     ubyte* img = malloc(w*h*4);
     // Rasterize
-    nsvgRasterize(rast, image, 0, 0, 1, img, w, h, w*4);
+    rasterize(rast, image, 0, 0, 1, img, w, h, w*4);
 
     // Delete
     image.kill();
+  ---
+
+  To turn a SVG into a png:
+  ---
+	import arsd.svg;
+	import arsd.png;
+
+	void main() {
+	    // Load
+	    NSVG* image = nsvgParseFromFile("test.svg", "px", 96);
+
+	    int w = 200;
+	    int h = 200;
+
+	    NSVGrasterizer rast = nsvgCreateRasterizer();
+	    // Allocate memory for image
+	    auto img = new TrueColorImage(w, h);
+	    // Rasterize
+	    rasterize(rast, image, 0, 0, 1, img.imageData.bytes.ptr, w, h, w*4);
+
+	    // Delete
+	    image.kill();
+
+	    writePng("test.png", img);
+
+
+	}
   ---
  */
 module arsd.svg;
