@@ -2069,9 +2069,20 @@ struct RealTimeConsoleInput {
 			FD_ZERO(&fs);
 
 			FD_SET(fdIn, &fs);
-			if(select(fdIn + 1, &fs, null, null, &tv) == -1) {
+			int tries = 0;
+			try_again:
+			auto ret = select(fdIn + 1, &fs, null, null, &tv);
+			if(ret == -1) {
+				import core.stdc.errno;
+				if(errno == EINTR) {
+					tries++;
+					if(tries < 3)
+						goto try_again;
+				}
 				return false;
 			}
+			if(ret == 0)
+				return false;
 
 			return FD_ISSET(fdIn, &fs);
 		}
@@ -2141,7 +2152,7 @@ struct RealTimeConsoleInput {
 			else
 				assert(0); // read too much, should be impossible
 		} else version(Windows) {
-			char[8] buf;
+			char[1] buf;
 			DWORD d;
 			import std.conv;
 			if(!ReadFile(inputHandle, buf.ptr, cast(int) buf.length, &d, null))
@@ -2432,7 +2443,7 @@ struct RealTimeConsoleInput {
 
 	// The helper reads just one actual event from the pipe...
 	// for UseVtSequences....
-	InputEvent[] readNextEventsHelper() {
+	InputEvent[] readNextEventsHelper(int remainingFromLastTime = int.max) {
 		InputEvent[] charPressAndRelease(dchar character) {
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
@@ -2787,13 +2798,13 @@ struct RealTimeConsoleInput {
 			return null;
 		}
 
-		auto c = nextRaw(true);
+		auto c = remainingFromLastTime == int.max ? nextRaw(true) : remainingFromLastTime;
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
 		if(c == 0)
 			return [InputEvent(EndOfFileEvent(), terminal)];
 		if(c == '\033') {
-			if(timedCheckForInput(50)) {
+			if(timedCheckForInput_bypassingBuffer(50)) {
 				// escape sequence
 				c = nextRaw();
 				if(c == '[') { // CSI, ends on anything >= 'A'
@@ -2815,6 +2826,9 @@ struct RealTimeConsoleInput {
 					} else {
 						return translateTermcapName(cap);
 					}
+				} else if(c == '\033') {
+					// could be escape followed by an escape sequence!
+					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
 				} else {
 					// I don't know, probably unsupported terminal or just quick user input or something
 					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ charPressAndRelease(nextChar(c));
