@@ -995,6 +995,7 @@ struct Terminal {
 		this.type = type;
 
 		if(type == ConsoleOutputType.minimalProcessing) {
+			readTermcap();
 			_suppressDestruction = true;
 			return;
 		}

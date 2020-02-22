@@ -1328,7 +1328,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		width = the width of the window's client area, in pixels
 		height = the height of the window's client area, in pixels
-		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title\ property.
+		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title] property.
 		opengl = [OpenGlOptions] are yes and no. If yes, it creates an OpenGL context on the window.
 		resizable = [Resizability] has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
