@@ -3725,9 +3725,13 @@ class LineGetter {
 					terminal.write(item[idx .. $]);
 					auto help = tabCompleteHelp(item);
 					if(help !is null) {
+						import std.string;
+						help = help.replace("\t", " ").replace("\n", " ").replace("\r", " ");
 						terminal.write("\t\t");
-						int remaining = terminal.width - terminal.cursorX;
-						remaining -= 2;
+						int remaining;
+						if(terminal.cursorX + 2 < terminal.width) {
+							remaining = terminal.width - terminal.cursorX - 2;
+						}
 						if(remaining > 8)
 							terminal.write(remaining < help.length ? help[0 .. remaining] : help);
 					}
