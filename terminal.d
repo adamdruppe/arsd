@@ -2852,6 +2852,7 @@ struct RealTimeConsoleInput {
 struct KeyboardEvent {
 	bool pressed; ///
 	dchar which; ///
+	alias key = which; /// I often use this when porting old to new so i took it
 	uint modifierState; ///
 
 	///
@@ -3059,6 +3060,11 @@ struct InputEvent {
 		EndOfFileEvent, /// stdin has received an end of file
 		HangupEvent, /// the terminal hanged up - for example, if the user closed a terminal emulator
 		CustomEvent /// .
+	}
+
+	/// If this event is deprecated, you should filter it out in new programs
+	bool isDeprecated() {
+		return type == Type.CharacterEvent || type == Type.NonCharacterKeyEvent;
 	}
 
 	/// .
@@ -3816,6 +3822,8 @@ class LineGetter {
 			}
 			string editor = environment.get("EDITOR", "vi");
 		}
+
+		// FIXME the spawned process changes terminal state!
 
 		spawnProcess([editor, tmpName]).wait;
 		import std.string;
