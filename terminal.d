@@ -2333,6 +2333,12 @@ struct RealTimeConsoleInput {
 							// old style event then follows as the fallback
 							e.character = cast(dchar) cast(wchar) '\n';
 							newEvents ~= InputEvent(e, terminal);
+						} else if(ev.wVirtualKeyCode == 0x1b) {
+							ke.which = cast(KeyboardEvent.Key) (ev.wVirtualKeyCode + 0xF0000);
+							newEvents ~= InputEvent(ke, terminal);
+
+							ne.key = cast(NonCharacterKeyEvent.Key) ev.wVirtualKeyCode;
+							newEvents ~= InputEvent(ne, terminal);
 						} else {
 							ke.which = cast(dchar) cast(wchar) ev.UnicodeChar;
 							newEvents ~= InputEvent(ke, terminal);
