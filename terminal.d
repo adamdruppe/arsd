@@ -2853,6 +2853,7 @@ struct KeyboardEvent {
 	bool pressed; ///
 	dchar which; ///
 	alias key = which; /// I often use this when porting old to new so i took it
+	alias character = which; /// I often use this when porting old to new so i took it
 	uint modifierState; ///
 
 	///
@@ -4343,6 +4344,13 @@ class LineGetter {
 							redraw();
 						}
 					break;
+					case KeyboardEvent.Key.escape:
+						justHitTab = false;
+						cursorPosition = 0;
+						line = line[0 .. 0];
+						line.assumeSafeAppend();
+						redraw();
+					break;
 					case KeyboardEvent.Key.F1:
 						justHitTab = false;
 						showHelp();
@@ -4769,10 +4777,10 @@ struct ScrollbackBuffer {
 			}
 		}
 
-		T opIndex(int idx) {
+		ref T opIndex(int idx) {
 			return backing[(start + idx) % maxScrollback];
 		}
-		T opIndex(Dollar idx) {
+		ref T opIndex(Dollar idx) {
 			return backing[(start + (length + idx.offsetFromEnd)) % maxScrollback];
 		}
 
@@ -4796,14 +4804,14 @@ struct ScrollbackBuffer {
 				remaining = count;
 			}
 
-			T front() { return (*item)[position]; }
+			ref T front() { return (*item)[position]; }
 			bool empty() { return remaining <= 0; }
 			void popFront() {
 				position++;
 				remaining--;
 			}
 
-			T back() { return (*item)[remaining - 1 - position]; }
+			ref T back() { return (*item)[remaining - 1 - position]; }
 			void popBack() {
 				remaining--;
 			}
