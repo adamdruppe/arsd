@@ -1379,7 +1379,7 @@ class HttpRequest {
 					}
 					if(followLocation && responseData.location.length) {
 						static bool first = true;
-						version(DigitalMars) if(!first) asm { int 3; }
+						//version(DigitalMars) if(!first) asm { int 3; }
 						populateFromInfo(Uri(responseData.location), HttpVerb.GET);
 						import std.stdio; writeln("redirected to ", responseData.location);
 						first = false;
