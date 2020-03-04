@@ -4353,6 +4353,7 @@ class LineGetter {
 					case KeyboardEvent.Key.escape:
 						justHitTab = false;
 						cursorPosition = 0;
+						horizontalScrollPosition = 0;
 						line = line[0 .. 0];
 						line.assumeSafeAppend();
 						redraw();
@@ -4366,6 +4367,8 @@ class LineGetter {
 						line = editLineInEditor(line, cursorPosition);
 						if(cursorPosition > line.length)
 							cursorPosition = cast(int) line.length;
+						if(horizontalScrollPosition > line.length)
+							horizontalScrollPosition = cast(int) line.length;
 						positionCursor();
 						redraw();
 					break;
