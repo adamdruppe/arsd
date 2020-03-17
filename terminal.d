@@ -1781,6 +1781,44 @@ struct Terminal {
 
 }
 
+/++
+	Removes terminal color, bold, etc. sequences from a string,
+	making it plain text suitable for output to a normal .txt
+	file.
++/
+inout(char)[] removeTerminalGraphicsSequences(inout(char)[] s) {
+	import std.string;
+
+	auto at = s.indexOf("\033[");
+	if(at == -1)
+		return s;
+
+	inout(char)[] ret;
+
+	do {
+		ret ~= s[0 .. at];
+		s = s[at + 2 .. $];
+		while(s.length && !((s[0] >= 'a' && s[0] <= 'z') || s[0] >= 'A' && s[0] <= 'Z')) {
+			s = s[1 .. $];
+		}
+		if(s.length)
+			s = s[1 .. $]; // skip the terminator
+		at = s.indexOf("\033[");
+	} while(at != -1);
+
+	ret ~= s;
+
+	return ret;
+}
+
+unittest {
+	assert("foo".removeTerminalGraphicsSequences == "foo");
+	assert("\033[34mfoo".removeTerminalGraphicsSequences == "foo");
+	assert("\033[34mfoo\033[39m".removeTerminalGraphicsSequences == "foo");
+	assert("\033[34m\033[45mfoo\033[39mbar\033[49m".removeTerminalGraphicsSequences == "foobar");
+}
+
+
 /+
 struct ConsoleBuffer {
 	int cursorX;
