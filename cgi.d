@@ -1999,9 +1999,20 @@ class Cgi {
 		setCache(true); // need to enable caching so the date has meaning
 
 		responseIsPublic = isPublic;
+		responseExpiresRelative = false;
+	}
+
+	/// Sets a cache-control max-age header for whenFromNow, in seconds.
+	void setResponseExpiresRelative(int whenFromNow, bool isPublic = false) {
+		responseExpires = whenFromNow;
+		setCache(true); // need to enable caching so the date has meaning
+
+		responseIsPublic = isPublic;
+		responseExpiresRelative = true;
 	}
 	private long responseExpires = long.min;
 	private bool responseIsPublic = false;
+	private bool responseExpiresRelative = false;
 
 	/// This is like setResponseExpires, but it can be called multiple times. The setting most in the past is the one kept.
 	/// If you have multiple functions, they all might call updateResponseExpires about their own return value. The program
@@ -2112,11 +2123,15 @@ class Cgi {
 			hd ~= "Location: " ~ responseLocation;
 		}
 		if(!noCache && responseExpires != long.min) { // an explicit expiration date is set
-			auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)), UTC());
-			hd ~= "Expires: " ~ printDate(
-				cast(DateTime) expires);
-			// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
-			hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie, set-cookie2\"";
+			if(responseExpiresRelative) {
+				hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", max-age="~to!string(responseExpires)~", no-cache=\"set-cookie, set-cookie2\"";
+			} else {
+				auto expires = SysTime(unixTimeToStdTime(cast(int)(responseExpires / 1000)), UTC());
+				hd ~= "Expires: " ~ printDate(
+					cast(DateTime) expires);
+				// FIXME: assuming everything is private unless you use nocache - generally right for dynamic pages, but not necessarily
+				hd ~= "Cache-Control: "~(responseIsPublic ? "public" : "private")~", no-cache=\"set-cookie, set-cookie2\"";
+			}
 		}
 		if(responseCookies !is null && responseCookies.length > 0) {
 			foreach(c; responseCookies)
