@@ -14663,7 +14663,7 @@ error:
   return null;
 }
 
-/// Create NanoVega OpenGL image from texture id.
+/// Using  OpenGL texture id creates GLNVGtexture and return its id.
 /// Group: images
 public int glCreateImageFromHandleGL2 (NVGContext ctx, GLuint textureId, int w, int h, int imageFlags) nothrow @trusted @nogc {
   GLNVGcontext* gl = cast(GLNVGcontext*)ctx.internalParams().userPtr;
@@ -14678,6 +14678,21 @@ public int glCreateImageFromHandleGL2 (NVGContext ctx, GLuint textureId, int w, 
   tex.height = h;
 
   return tex.id;
+}
+
+/// Create NVGImage from OpenGL texture id.
+/// Group: images
+public NVGImage glCreateImageFromOpenGLTexture(NVGContext ctx, GLuint textureId, int w, int h, int imageFlags) nothrow @trusted @nogc {
+  auto id = glCreateImageFromHandleGL2(ctx, textureId, w, h, imageFlags);
+
+  NVGImage res;
+  if (id > 0) {
+    res.id = id;
+    version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; printf("createImageRGBA: img=%p; imgid=%d\n", &res, res.id); }
+    res.ctx = ctx;
+    ctx.nvg__imageIncRef(res.id, false); // don't increment driver refcount
+  }
+  return res;
 }
 
 /// Returns OpenGL texture id for NanoVega image.
