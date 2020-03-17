@@ -75,11 +75,12 @@
 			"dependencies": {
 				"arsd-official:simpledisplay":"*",
 				"arsd-official:image_files":"*",
+				"arsd-official:svg":"*",
 				"arsd-official:ttf":"*"
 			},
 			"importPaths": ["."],
 			"libs-posix": ["freetype", "fontconfig"],
-			"sourceFiles": ["nanovega.d", "blendish.d", "svg.d"]
+			"sourceFiles": ["nanovega.d", "blendish.d"]
 		},
 		{
 			"name": "email",
@@ -108,6 +109,17 @@
 				"-mv=arsd.dds=dds.d"
 			],
 			"sourceFiles": ["image.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
+		},
+		{
+			"name": "svg",
+			"description": "Dependency-free partial SVG file format read support",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.svg=svg.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			},
+			"sourceFiles": ["svg.d"]
 		},
 		{
 			"name": "png",
@@ -332,6 +344,14 @@
 			"sourceFiles": ["eventloop.d"],
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.eventloop=eventloop.d"]
+		},
+		{
+			"name": "archive",
+			"description": "Archive file support - tar, tar.xz decoders, and custom format \"arcz\" encoding and decoding. Self-contained.",
+			"targetType": "library",
+			"sourceFiles": ["archive.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.archive=archive.d"]
 		}
 
 	]
