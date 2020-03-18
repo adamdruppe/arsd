@@ -3975,12 +3975,13 @@ class BufferedInputRange {
 		// we might have to grow the buffer
 		if(minBytesToSettleFor > underlyingBuffer.length || view.length == underlyingBuffer.length) {
 			if(allowGrowth) {
-			import std.stdio; writeln("growth");
+			//import std.stdio; writeln("growth");
 				auto viewStart = view.ptr - underlyingBuffer.ptr;
 				size_t growth = 4096;
 				// make sure we have enough for what we're being asked for
-				if(minBytesToSettleFor - underlyingBuffer.length > growth)
+				if(minBytesToSettleFor > 0 && minBytesToSettleFor - underlyingBuffer.length > growth)
 					growth = minBytesToSettleFor - underlyingBuffer.length;
+				//import std.stdio; writeln(underlyingBuffer.length, " ", viewStart, " ", view.length, " ", growth,  " ", minBytesToSettleFor, " ", minBytesToSettleFor - underlyingBuffer.length);
 				underlyingBuffer.length += growth;
 				view = underlyingBuffer[viewStart .. view.length];
 			} else
@@ -4762,6 +4763,7 @@ version(cgi_with_websocket) {
 	}
 
 	struct WebSocketMessage {
+		private bool populated;
 		bool fin;
 		bool rsv1;
 		bool rsv2;
@@ -4861,19 +4863,22 @@ version(cgi_with_websocket) {
 			cgi.flush();
 		}
 
-		static WebSocketMessage read(BufferedInputRange ir) {
-
-			auto d = ir.front();
-			while(d.length < 2) {
-				ir.popFront();
-				d = ir.front();
-			}
-			auto start = d;
-
+		static WebSocketMessage read(ref ubyte[] d) {
 			WebSocketMessage msg;
-			assert(d.length >= 2);
+
+			auto orig = d;
+
+			WebSocketMessage needsMoreData() {
+				d = orig;
+				return WebSocketMessage.init;
+			}
+
+			if(d.length < 2)
+				return needsMoreData();
 
 			ubyte b = d[0];
+
+			msg.populated = true;
 
 			msg.opcode = cast(WebSocketOpcode) (b & 0x0f);
 			b >>= 4;
@@ -4895,6 +4900,8 @@ version(cgi_with_websocket) {
 				// 16 bit length
 				msg.realLength = 0;
 
+				if(d.length < 2) return needsMoreData();
+
 				foreach(i; 0 .. 2) {
 					msg.realLength |= d[0] << ((1-i) * 8);
 					d = d[1 .. $];
@@ -4902,6 +4909,8 @@ version(cgi_with_websocket) {
 			} else if(msg.lengthIndicator == 0x7f) {
 				// 64 bit length
 				msg.realLength = 0;
+
+				if(d.length < 8) return needsMoreData();
 
 				foreach(i; 0 .. 8) {
 					msg.realLength |= d[0] << ((7-i) * 8);
@@ -4913,13 +4922,17 @@ version(cgi_with_websocket) {
 			}
 
 			if(msg.masked) {
+
+				if(d.length < 4) return needsMoreData();
+
 				msg.maskingKey = d[0 .. 4];
 				d = d[4 .. $];
 			}
 
-			//if(d.length < msg.realLength) {
+			if(msg.realLength > d.length) {
+				return needsMoreData();
+			}
 
-			//}
 			msg.data = d[0 .. cast(size_t) msg.realLength];
 			d = d[cast(size_t) msg.realLength .. $];
 
@@ -4935,9 +4948,18 @@ version(cgi_with_websocket) {
 				}
 			}
 
-			ir.consume(start.length - d.length);
-
 			return msg;
+		}
+
+		static WebSocketMessage read(BufferedInputRange ir) {
+			readmore:
+			auto d = ir.front();
+			auto m = read(d);
+			if(m is WebSocketMessage.init) {
+				ir.popFront();
+				goto readmore;
+			}
+			return m;
 		}
 
 		char[] textData() {
