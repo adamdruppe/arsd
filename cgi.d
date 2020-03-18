@@ -495,6 +495,12 @@ mixin template ForwardCgiConstructors() {
 	this(BufferedInputRange ir, bool* closeConnection) { super(ir, closeConnection); }
 }
 
+/// thrown when a connection is closed remotely while we waiting on data from it
+class ConnectionClosedException : Exception {
+	this(string message, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		super(message, file, line, next);
+	}
+}
 
  
 version(Windows) {
@@ -3968,7 +3974,7 @@ class BufferedInputRange {
 	*/
 	void popFront(size_t maxBytesToConsume = 0 /*size_t.max*/, size_t minBytesToSettleFor = 0, bool skipConsume = false) {
 		if(sourceClosed)
-			throw new Exception("can't get any more data from a closed source");
+			throw new ConnectionClosedException("can't get any more data from a closed source");
 		if(!skipConsume)
 			consume(maxBytesToConsume);
 
