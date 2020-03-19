@@ -7775,8 +7775,11 @@ version(Windows) {
 		static HFONT defaultGuiFont;
 
 		void setFont(OperatingSystemFont font) {
-			if(font && font.font)
-				SelectObject(hdc, font.font);
+			if(font && font.font) {
+				if(SelectObject(hdc, font.font) == HGDI_ERROR) {
+					// error... how to handle tho?
+				}
+			}
 			else if(defaultGuiFont)
 				SelectObject(hdc, defaultGuiFont);
 		}
@@ -8341,9 +8344,20 @@ version(Windows) {
 		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
 
-			void mouseEvent() {
-				mouse.x = LOWORD(lParam) + offsetX;
-				mouse.y = HIWORD(lParam) + offsetY;
+			void mouseEvent(bool isScreen = false) {
+				auto x = LOWORD(lParam);
+				auto y = HIWORD(lParam);
+				if(isScreen) {
+					POINT p;
+					p.x = x;
+					p.y = y;
+					ScreenToClient(hwnd, &p);
+					x = cast(ushort) p.x;
+					y = cast(ushort) p.y;
+				}
+				mouse.x = x + offsetX;
+				mouse.y = y + offsetY;
+
 				wind.mdx(mouse);
 				mouse.modifierState = cast(int) wParam;
 				mouse.window = wind;
@@ -8441,7 +8455,7 @@ version(Windows) {
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
-					mouseEvent();
+					mouseEvent(true);
 				break;
 				case WM_MOUSEMOVE:
 					mouse.type = cast(MouseEventType) 0;
