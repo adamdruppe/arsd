@@ -1240,7 +1240,7 @@ private enum ImportImplementationString = q{
 
 			auto len = (*env).GetStringLength(env, jret);
 			auto ptr = (*env).GetStringChars(env, jret, null);
-			static if(is(T == wstring)) {
+			static if(is(typeof(return) == wstring)) {
 				if(ptr !is null) {
 					ret = ptr[0 .. len].idup;
 					(*env).ReleaseStringChars(env, jret, ptr);
