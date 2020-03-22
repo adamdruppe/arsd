@@ -1862,6 +1862,7 @@ enum ScrollBarShowPolicy {
 
 /++
 FIXME ScrollBarShowPolicy
+FIXME: use the ScrollMessageWidget in here now that it exists
 +/
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
@@ -2291,13 +2292,53 @@ private class ScrollableContainerWidget : Widget {
 		horizontalScrollBar.showing_ = false;
 		verticalScrollBar.showing_ = false;
 
-		horizontalScrollBar.addEventListener(EventType.change, () {
+		horizontalScrollBar.addEventListener("scrolltonextline", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position + 1);
 			sw.horizontalScrollTo(horizontalScrollBar.position);
 		});
-		verticalScrollBar.addEventListener(EventType.change, () {
+		horizontalScrollBar.addEventListener("scrolltopreviousline", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position - 1);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltonextline", {
+			verticalScrollBar.setPosition(verticalScrollBar.position + 1);
 			sw.verticalScrollTo(verticalScrollBar.position);
 		});
-
+		verticalScrollBar.addEventListener("scrolltopreviousline", {
+			verticalScrollBar.setPosition(verticalScrollBar.position - 1);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltonextpage", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position + horizontalScrollBar.step_);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltopreviouspage", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position - horizontalScrollBar.step_);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltonextpage", {
+			verticalScrollBar.setPosition(verticalScrollBar.position + verticalScrollBar.step_);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltopreviouspage", {
+			verticalScrollBar.setPosition(verticalScrollBar.position - verticalScrollBar.step_);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltoposition", (Event event) {
+			horizontalScrollBar.setPosition(event.intValue);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltoposition", (Event event) {
+			verticalScrollBar.setPosition(event.intValue);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltrack", (Event event) {
+			horizontalScrollBar.setPosition(event.intValue);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltrack", (Event event) {
+			verticalScrollBar.setPosition(event.intValue);
+		});
 
 		super(parent);
 	}
@@ -2402,10 +2443,14 @@ abstract class ScrollbarBase : Widget {
 	///
 	void setViewableArea(int a) {
 		viewableArea_ = a;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	void setMax(int a) {
 		max_ = a;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	int max() {
@@ -2413,7 +2458,15 @@ abstract class ScrollbarBase : Widget {
 	}
 	///
 	void setPosition(int a) {
+		if(a == int.max)
+			a = max;
 		position_ = max ? a : 0;
+		if(position_ + viewableArea_ > max)
+			position_ = max - viewableArea_;
+		if(position_ < 0)
+			position_ = 0;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	int position() {
@@ -2428,6 +2481,7 @@ abstract class ScrollbarBase : Widget {
 		return step_;
 	}
 
+	// FIXME: remove this.... maybe
 	protected void informProgramThatUserChangedPosition(int n) {
 		position_ = n;
 		auto evt = new Event(EventType.change, this);
@@ -2561,6 +2615,8 @@ class MouseTrackingWidget : Widget {
 			redraw();
 		});
 
+		int lpx, lpy;
+
 		addEventListener(EventType.mousemove, (Event event) {
 			auto oh = hovering;
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
@@ -2589,8 +2645,13 @@ class MouseTrackingWidget : Widget {
 			if(positionY < 0)
 				positionY = 0;
 
-			auto evt = new Event(EventType.change, this);
-			evt.sendDirectly();
+			if(positionX != lpx || positionY != lpy) {
+				auto evt = new Event(EventType.change, this);
+				evt.sendDirectly();
+
+				lpx = positionX;
+				lpy = positionY;
+			}
 
 			redraw();
 		});
@@ -2608,8 +2669,8 @@ class MouseTrackingWidget : Widget {
 	}
 }
 
-version(custom_widgets)
-private
+//version(custom_widgets)
+//private
 class HorizontalScrollbar : ScrollbarBase {
 
 	version(custom_widgets) {
@@ -2644,6 +2705,10 @@ class HorizontalScrollbar : ScrollbarBase {
 			info.nMax = max;
 			info.fMask = SIF_RANGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionX = thumbPosition;
+			thumb.thumbWidth = thumbSize;
+			thumb.redraw();
 		}
 	}
 
@@ -2676,11 +2741,19 @@ class HorizontalScrollbar : ScrollbarBase {
 			auto rightButton = new ArrowButton(ArrowDirection.right, vl);
 			rightButton.setClickRepeat(scrollClickRepeatInterval);
 
+			leftButton.tabStop = false;
+			rightButton.tabStop = false;
+			thumb.tabStop = false;
+
 			leftButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position - step());
+				auto ev = new Event("scrolltopreviousline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position - step());
 			});
 			rightButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position + step());
+				auto ev = new Event("scrolltonextline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position + step());
 			});
 
 			thumb.thumbWidth = this.minWidth;
@@ -2688,7 +2761,11 @@ class HorizontalScrollbar : ScrollbarBase {
 
 			thumb.addEventListener(EventType.change, () {
 				auto sx = thumb.positionX * max() / thumb.width;
-				informProgramThatUserChangedPosition(sx);
+				//informProgramThatUserChangedPosition(sx);
+
+				auto ev = new Event("scrolltoposition", this);
+				ev.intValue = sx;
+				ev.dispatch();
 			});
 		}
 	}
@@ -2698,8 +2775,8 @@ class HorizontalScrollbar : ScrollbarBase {
 	override int minWidth() { return 48; }
 }
 
-version(custom_widgets)
-private
+//version(custom_widgets)
+//private
 class VerticalScrollbar : ScrollbarBase {
 
 	version(custom_widgets) {
@@ -2734,6 +2811,10 @@ class VerticalScrollbar : ScrollbarBase {
 			info.nMax = max;
 			info.fMask = SIF_RANGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionY = thumbPosition;
+			thumb.thumbHeight = thumbSize;
+			thumb.redraw();
 		}
 	}
 
@@ -2767,10 +2848,14 @@ class VerticalScrollbar : ScrollbarBase {
 			downButton.setClickRepeat(scrollClickRepeatInterval);
 
 			upButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position - step());
+				auto ev = new Event("scrolltopreviousline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position - step());
 			});
 			downButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position + step());
+				auto ev = new Event("scrolltonextline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position + step());
 			});
 
 			thumb.thumbWidth = this.minWidth;
@@ -2779,8 +2864,16 @@ class VerticalScrollbar : ScrollbarBase {
 			thumb.addEventListener(EventType.change, () {
 				auto sy = thumb.positionY * max() / thumb.height;
 
-				informProgramThatUserChangedPosition(sy);
+				auto ev = new Event("scrolltoposition", this);
+				ev.intValue = sy;
+				ev.dispatch();
+
+				//informProgramThatUserChangedPosition(sy);
 			});
+
+			upButton.tabStop = false;
+			downButton.tabStop = false;
+			thumb.tabStop = false;
 		}
 	}
 
@@ -3303,6 +3396,138 @@ class HorizontalLayout : Layout {
 }
 
 /++
+	A widget that takes your widget, puts scroll bars around it, and sends
+	messages to it when the user scrolls. Unlike [ScrollableWidget], it makes
+	no effort to automatically scroll or clip its child widgets - it just sends
+	the messages.
++/
+class ScrollMessageWidget : Widget {
+	this(Widget parent = null) {
+		super(parent);
+
+		container = new Widget(this);
+		hsb = new HorizontalScrollbar(this);
+		vsb = new VerticalScrollbar(this);
+
+		hsb.addEventListener("scrolltonextline", {
+			hsb.setPosition(hsb.position + 1);
+			notify();
+		});
+		hsb.addEventListener("scrolltopreviousline", {
+			hsb.setPosition(hsb.position - 1);
+			notify();
+		});
+		vsb.addEventListener("scrolltonextline", {
+			vsb.setPosition(vsb.position + 1);
+			notify();
+		});
+		vsb.addEventListener("scrolltopreviousline", {
+			vsb.setPosition(vsb.position - 1);
+			notify();
+		});
+		hsb.addEventListener("scrolltonextpage", {
+			hsb.setPosition(hsb.position + hsb.step_);
+			notify();
+		});
+		hsb.addEventListener("scrolltopreviouspage", {
+			hsb.setPosition(hsb.position - hsb.step_);
+			notify();
+		});
+		vsb.addEventListener("scrolltonextpage", {
+			vsb.setPosition(vsb.position + vsb.step_);
+			notify();
+		});
+		vsb.addEventListener("scrolltopreviouspage", {
+			vsb.setPosition(vsb.position - vsb.step_);
+			notify();
+		});
+		hsb.addEventListener("scrolltoposition", (Event event) {
+			hsb.setPosition(event.intValue);
+			notify();
+		});
+		vsb.addEventListener("scrolltoposition", (Event event) {
+			vsb.setPosition(event.intValue);
+			notify();
+		});
+
+
+		tabStop = false;
+		container.tabStop = false;
+		magic = true;
+	}
+
+	void notify() {
+		auto event = new Event("scroll", this);
+		event.dispatch();
+	}
+
+	///
+	Point position() {
+		return Point(hsb.position, vsb.position);
+	}
+
+	///
+	void setPosition(int x, int y) {
+		hsb.setPosition(x);
+		vsb.setPosition(y);
+	}
+
+	///
+	void setPageSize(int unitsX, int unitsY) {
+		hsb.setStep(unitsX);
+		vsb.setStep(unitsY);
+	}
+
+	///
+	void setTotalArea(int width, int height) {
+		hsb.setMax(width);
+		vsb.setMax(height);
+	}
+
+	///
+	void setViewableArea(int width, int height) {
+		hsb.setViewableArea(width);
+		vsb.setViewableArea(height);
+	}
+
+	private bool magic;
+	override void addChild(Widget w, int position = int.max) {
+		if(magic)
+			container.addChild(w, position);
+		else
+			super.addChild(w, position);
+	}
+
+	override void recomputeChildLayout() {
+		if(hsb is null || vsb is null || container is null) return;
+
+		registerMovement();
+
+		hsb.height = 16; // FIXME? are tese 16s sane?
+		hsb.x = 0;
+		hsb.y = this.height - hsb.height;
+		hsb.width = this.width - 16;
+		hsb.recomputeChildLayout();
+
+		vsb.width = 16; // FIXME?
+		vsb.x = this.width - vsb.width;
+		vsb.y = 0;
+		vsb.height = this.height - 16;
+		vsb.recomputeChildLayout();
+
+		container.x = 0;
+		container.y = 0;
+		container.width = this.width - vsb.width;
+		container.height = this.height - hsb.height;
+		container.recomputeChildLayout();
+	}
+
+	HorizontalScrollbar hsb;
+	VerticalScrollbar vsb;
+	Widget container;
+}
+
+/++
 	Bypasses automatic layout for its children, using manual positioning and sizing only.
 	While you need to manually position them, you must ensure they are inside the StaticLayout's
 	bounding box to avoid undefined behavior.
@@ -3471,6 +3696,97 @@ class Window : Widget {
 			if(hwnd !is this.win.impl.hwnd)
 				return 1; // we don't care...
 			switch(msg) {
+
+				case WM_VSCROLL, WM_HSCROLL:
+					auto pos = HIWORD(wParam);
+					auto m = LOWORD(wParam);
+
+					auto scrollbarHwnd = cast(HWND) lParam;
+
+
+					if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
+
+						//auto smw = cast(ScrollMessageWidget) widgetp.parent;
+
+						switch(m) {
+							/+
+							// I don't think those messages are ever actually sent normally by the widget itself,
+							// they are more used for the keyboard interface. methinks.
+							case SB_BOTTOM:
+								import std.stdio; writeln("end");
+								auto event = new Event("scrolltoend", *widgetp);
+								event.dispatch();
+								//if(!event.defaultPrevented)
+							break;
+							case SB_TOP:
+								import std.stdio; writeln("top");
+								auto event = new Event("scrolltobeginning", *widgetp);
+								event.dispatch();
+							break;
+							case SB_ENDSCROLL:
+								// idk
+							break;
+							+/
+							case SB_LINEDOWN:
+								auto event = new Event("scrolltonextline", *widgetp);
+								event.dispatch();
+							break;
+							case SB_LINEUP:
+								auto event = new Event("scrolltopreviousline", *widgetp);
+								event.dispatch();
+							break;
+							case SB_PAGEDOWN:
+								auto event = new Event("scrolltonextpage", *widgetp);
+								event.dispatch();
+							break;
+							case SB_PAGEUP:
+								auto event = new Event("scrolltopreviouspage", *widgetp);
+								event.dispatch();
+							break;
+							case SB_THUMBPOSITION:
+								auto event = new Event("scrolltoposition", *widgetp);
+								event.intValue = pos;
+								event.dispatch();
+							break;
+							case SB_THUMBTRACK:
+								auto event = new Event("scrolltrack", *widgetp);
+								event.intValue = pos;
+								event.dispatch();
+								/+
+								if(m == SB_THUMBTRACK) {
+									// the event loop doesn't seem to carry on with a requested redraw..
+									// so we request it to get our dirty bit set...
+									redraw();
+									// then we need to immediately actually redraw it too for instant feedback to user
+									actualRedraw();
+								}
+								+/
+							break;
+							default:
+						}
+					} else {
+						return 1;
+					}
+				break;
+
+				case WM_CONTEXTMENU:
+					auto hwndFrom = cast(HWND) wParam;
+
+					/+
+					auto xPos = GET_X_LPARAM(lParam); 
+					auto yPos = GET_Y_LPARAM(lParam); 
+
+					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+						// FIXME: translate screen coordinates to widget coordinates
+						auto menu = (*widgetp).contextMenu(xPos, yPos);
+						if(menu is null)
+							return 1; // pass it on
+
+						//TrackContextMenuEx
+					}
+					+/
+				break;
+
 				case WM_NOTIFY:
 					auto hdr = cast(NMHDR*) lParam;
 					auto hwndFrom = hdr.hwndFrom;
