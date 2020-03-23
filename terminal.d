@@ -447,6 +447,8 @@ enum ConsoleOutputType {
 	minimalProcessing = 255, /// do the least possible work, skips most construction and desturction tasks. Only use if you know what you're doing here
 }
 
+alias ConsoleOutputMode = ConsoleOutputType;
+
 /// Some methods will try not to send unnecessary commands to the screen. You can override their judgement using a ForceOption parameter, if present
 enum ForceOption {
 	automatic = 0, /// automatically decide what to do (best, unless you know for sure it isn't right)
@@ -1044,7 +1046,7 @@ struct Terminal {
 		import core.thread;
 
 		auto thread = new Thread( {
-			auto window = new TerminalEmulatorWindow();
+			auto window = new TerminalEmulatorWindow(&this);
 			tew = window.tew;
 			window.loop();
 		});
@@ -1387,6 +1389,69 @@ struct Terminal {
 	}
 
 	private bool _underlined = false;
+
+	/++
+		Outputs a hyperlink to my custom terminal (v0.0.7 or later) or to version
+		`TerminalDirectToEmulator`.  The way it works is a bit strange...
+
+
+		If using a terminal that supports it, it outputs the given text with the
+		given identifier attached (one bit of identifier per grapheme of text!). When
+		the user clicks on it, it will send a [LinkEvent] with the text and the identifier
+		for you to respond, if in real-time input mode, or a simple paste event with the
+		text if not (you will not be able to distinguish this from a user pasting the
+		same text).
+
+		If the user's terminal does not support my feature, it writes plain text instead.
+
+		It is important that you make sure your program still works even if the hyperlinks
+		never work - ideally, make them out of text the user can type manually or copy/paste
+		into your command line somehow too.
+
+		Hyperlinks may not work correctly after your program exits or if you are capturing
+		mouse input (the user will have to hold shift in that case). It is really designed
+		for linear mode with direct to emulator mode. If you are using cellular mode with
+		full input capturing, you should manage the clicks yourself.
+
+		Similarly, if it horizontally scrolls off the screen, it can be corrupted since it
+		packs your text and identifier into free bits in the screen buffer itself. I may be
+		able to fix that later.
+
+		Params:
+			text = text displayed in the terminal
+			identifier = an additional number attached to the text and returned to you in a [LinkEvent]
+			autoStyle = set to `false` to suppress the automatic color and underlining of the text.
+
+		Bugs:
+			there's no keyboard interaction with it at all right now. i might make the terminal
+			emulator offer the ids or something through a hold ctrl or something interface. idk.
+			or tap ctrl twice to turn that on.
+
+		History:
+			Added March 18, 2020
+	+/
+	void hyperlink(string text, ushort identifier = 0, bool autoStyle = true) {
+		if((tcaps & TerminalCapabilities.arsdHyperlinks)) {
+			bool previouslyUnderlined = _underlined;
+			int fg = _currentForeground, bg = _currentBackground;
+			if(autoStyle) {
+				color(Color.blue, Color.white);
+				underline = true;
+			}
+
+			import std.conv;
+			writeStringRaw("\033[?" ~ to!string(65536 + identifier) ~ "h");
+			write(text);
+			writeStringRaw("\033[?65536l");
+
+			if(autoStyle) {
+				underline = previouslyUnderlined;
+				color(fg, bg);
+			}
+		} else {
+			write(text); // graceful degrade  
+		}
+	}
 
 	/// Note: the Windows console does not support underlining
 	void underline(bool set, ForceOption force = ForceOption.automatic) {
@@ -2046,6 +2111,11 @@ struct RealTimeConsoleInput {
 					terminal.writeStringRaw("\033[?2004h"); // bracketed paste mode
 					destructor ~= { terminal.writeStringRaw("\033[?2004l"); };
 				}
+			}
+
+			if(terminal.tcaps & TerminalCapabilities.arsdHyperlinks) {
+				terminal.writeStringRaw("\033[?3004h"); // bracketed link mode
+				destructor ~= { terminal.writeStringRaw("\033[?3004l"); };
 			}
 
 			// try to ensure the terminal is in UTF-8 mode
@@ -2794,6 +2864,41 @@ struct RealTimeConsoleInput {
 						}
 					}
 					return [InputEvent(PasteEvent(data), terminal)];
+				case "\033[220~":
+					// bracketed hyperlink begin (arsd extension)
+
+					string data;
+					for(;;) {
+						auto n = nextRaw();
+						if(n == '\033') {
+							n = nextRaw();
+							if(n == '[') {
+								auto esc = readEscapeSequence(sequenceBuffer);
+								if(esc == "\033[221~") {
+									// complete!
+									break;
+								} else {
+									// was something else apparently, but it is pasted, so keep it
+									data ~= esc;
+								}
+							} else {
+								data ~= '\033';
+								data ~= cast(char) n;
+							}
+						} else {
+							data ~= cast(char) n;
+						}
+					}
+
+					import std.string, std.conv;
+					auto idx = data.indexOf(";");
+					auto id = data[0 .. idx].to!ushort;
+					data = data[idx + 1 .. $];
+					idx = data.indexOf(";");
+					auto cmd = data[0 .. idx].to!ushort;
+					data = data[idx + 1 .. $];
+
+					return [InputEvent(LinkEvent(data, id, cmd), terminal)];
 				case "\033[M":
 					// mouse event
 					auto buttonCode = nextRaw() - 32;
@@ -3129,6 +3234,22 @@ struct PasteEvent {
 	string pastedText; /// .
 }
 
+/++
+	Indicates a hyperlink was clicked in my custom terminal emulator
+	or with version `TerminalDirectToEmulator`.
+
+	You can simply ignore this event in a `final switch` if you aren't
+	using the feature.
+
+	History:
+		Added March 18, 2020
++/
+struct LinkEvent {
+	string text; ///
+	ushort identifier; ///
+	ushort command; /// set by the terminal to indicate how it was clicked. values tbd
+}
+
 /// .
 struct MouseEvent {
 	// these match simpledisplay.d numerically as well
@@ -3226,6 +3347,7 @@ struct InputEvent {
 		CharacterEvent, /// Do not use this in new programs, use KeyboardEvent instead
 		NonCharacterKeyEvent, /// Do not use this in new programs, use KeyboardEvent instead
 		PasteEvent, /// The user pasted some text. Not always available, the pasted text might come as a series of character events instead.
+		LinkEvent, /// User clicked a hyperlink you created. Simply ignore if you are not using that feature.
 		MouseEvent, /// only sent if you subscribed to mouse events
 		SizeChangedEvent, /// only sent if you subscribed to size events
 		UserInterruptionEvent, /// the user hit ctrl+c
@@ -3272,6 +3394,8 @@ struct InputEvent {
 			return nonCharacterKeyEvent;
 		else static if(T == Type.PasteEvent)
 			return pasteEvent;
+		else static if(T == Type.LinkEvent)
+			return linkEvent;
 		else static if(T == Type.MouseEvent)
 			return mouseEvent;
 		else static if(T == Type.SizeChangedEvent)
@@ -3310,6 +3434,10 @@ struct InputEvent {
 			t = Type.PasteEvent;
 			pasteEvent = c;
 		}
+		this(LinkEvent c, Terminal* p) {
+			t = Type.LinkEvent;
+			linkEvent = c;
+		}
 		this(MouseEvent c, Terminal* p) {
 			t = Type.MouseEvent;
 			mouseEvent = c;
@@ -3344,6 +3472,7 @@ struct InputEvent {
 			UserInterruptionEvent userInterruptionEvent;
 			HangupEvent hangupEvent;
 			EndOfFileEvent endOfFileEvent;
+			LinkEvent linkEvent;
 			CustomEvent customEvent;
 		}
 	}
@@ -3390,9 +3519,16 @@ void main() {
 
 	bool timeToBreak = false;
 
+	terminal.hyperlink("test", 4);
+	terminal.hyperlink("another", 7);
+
 	void handleEvent(InputEvent event) {
-		terminal.writef("%s\n", event.type);
+		//terminal.writef("%s\n", event.type);
 		final switch(event.type) {
+			case InputEvent.Type.LinkEvent:
+				auto ev = event.get!(InputEvent.Type.LinkEvent);
+				terminal.writeln(ev);
+			break;
 			case InputEvent.Type.UserInterruptionEvent:
 			case InputEvent.Type.HangupEvent:
 			case InputEvent.Type.EndOfFileEvent:
@@ -3433,13 +3569,13 @@ void main() {
 				terminal.writef("\t%s\n", event.get!(InputEvent.Type.PasteEvent));
 			break;
 			case InputEvent.Type.MouseEvent:
-				terminal.writef("\t%s\n", event.get!(InputEvent.Type.MouseEvent));
+				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.MouseEvent));
 			break;
 			case InputEvent.Type.CustomEvent:
 			break;
 		}
 
-		terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
+		//terminal.writefln("%d %d", terminal.cursorX, terminal.cursorY);
 
 		/*
 		if(input.kbhit()) {
@@ -3475,6 +3611,7 @@ enum TerminalCapabilities : uint {
 	// my special terminal emulator extensions
 	arsdClipboard = 1 << 15, // 90 in caps
 	arsdImage = 1 << 16, // 91 in caps
+	arsdHyperlinks = 1 << 17, // 92 in caps
 }
 
 version(Posix)
@@ -3600,6 +3737,9 @@ private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn
 			break;
 			case "91":
 				ret |= TerminalCapabilities.arsdImage;
+			break;
+			case "92":
+				ret |= TerminalCapabilities.arsdHyperlinks;
 			break;
 			default:
 		}
@@ -5247,6 +5387,9 @@ struct ScrollbackBuffer {
 	/// Returns true if it should be redrawn
 	bool handleEvent(InputEvent e) {
 		final switch(e.type) {
+			case InputEvent.Type.LinkEvent:
+				// meh
+			break;
 			case InputEvent.Type.KeyboardEvent:
 				auto ev = e.keyboardEvent;
 
@@ -5599,20 +5742,83 @@ version(TerminalDirectToEmulator) {
 	import arsd.minigui;
 
 	private class TerminalEmulatorWindow : MainWindow {
-		this() {
+		this(Terminal* term) {
 			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * 7, integratedTerminalEmulatorConfiguration.initialHeight * 14);
 
-			tew = new TerminalEmulatorWidget(this);
+			smw = new ScrollMessageWidget(this);
+			tew = new TerminalEmulatorWidget(term, smw);
+
+			smw.addEventListener("scroll", () {
+				// import std.stdio; writeln(smw.position.x, " ", smw.position.y);
+				tew.terminalEmulator.scrollbackTo(smw.position.x, smw.position.y + tew.terminalEmulator.height);
+				redraw();
+			});
+
+			smw.setTotalArea(1, 1);
 
 			setMenuAndToolbarFromAnnotatedCode(this);
 		}
 
 		TerminalEmulatorWidget tew;
+		ScrollMessageWidget smw;
 
-		@menu("&File") {
+		@menu("&History") {
 			@tip("Saves the currently visible content to a file")
 			void Save() {
+				getSaveFileName((string name) {
+					tew.terminalEmulator.writeScrollbackToFile(name);
+				});
+			}
 
+			// FIXME
+			version(FIXME)
+			void Save_HTML() {
+
+			}
+
+			@separator
+			/*
+			void Find() {
+				// FIXME
+				// jump to the previous instance in the scrollback
+
+			}
+			*/
+
+			void Filter() {
+				// open a new window that just shows items that pass the filter
+
+				static struct FilterParams {
+					string searchTerm;
+					bool caseSensitive;
+				}
+
+				dialog((FilterParams p) {
+					// FIXME: this should update in real time... somehow.
+					auto nw = new TerminalEmulatorWindow(null);
+					nw.tew.terminalEmulator.toggleScrollLock();
+					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
+						import std.algorithm;
+						import std.uni;
+						// omg autodecoding being kinda useful for once LOL
+						if(line.map!(c => c.hasNonCharacterData ? dchar(0) : (p.caseSensitive ? c.ch : c.ch.toLower)).
+							canFind(p.searchTerm))
+							nw.tew.terminalEmulator.addScrollbackLine(line);
+					}
+					nw.tew.terminalEmulator.drawScrollback();
+					nw.title = "Filter Display";
+					nw.show();
+				});
+
+			}
+
+			@separator
+			void Clear() {
+				tew.terminalEmulator.clearScrollbackHistory();
+				//tew.terminalEmulator.cls();
+				// FIXME: move cursor back to 0,0
+				// tell the application to redraw too (maybe signal size changed)
+				tew.redraw();
 			}
 
 			@separator
@@ -5642,11 +5848,33 @@ version(TerminalDirectToEmulator) {
 	}
 
 	private class TerminalEmulatorWidget : Widget {
-		this(Widget parent) {
+
+		Menu ctx;
+
+		override Menu contextMenu(int x, int y) {
+			if(ctx is null) {
+				ctx = new Menu("");
+				auto i = ctx.addItem(new MenuItem("Copy"));
+				i.addEventListener("triggered", {
+					terminalEmulator.copyToClipboard(terminalEmulator.getSelectedText());
+
+				});
+				i = ctx.addItem(new MenuItem("Paste"));
+				i.addEventListener("triggered", {
+					terminalEmulator.pasteFromClipboard(&terminalEmulator.sendPasteData);
+				});
+			}
+			return ctx;
+		}
+
+		this(Terminal* term, ScrollMessageWidget parent) {
+			this.smw = parent;
+			this.term = term;
 			terminalEmulator = new TerminalEmulatorInsideWidget(this);
 			super(parent);
 			this.parentWindow.win.onClosing = {
-				hangedUp = true;
+				if(term)
+					hangedUp = true;
 				terminalEmulator.outgoingSignal.notify();
 				terminalEmulator.incomingSignal.notify();
 			};
@@ -5657,6 +5885,9 @@ version(TerminalDirectToEmulator) {
 				terminalEmulator.incomingSignal.notify();
 			});
 		}
+
+		ScrollMessageWidget smw;
+		Terminal* term;
 
 		void sendRawInput(const(ubyte)[] data) {
 			if(this.parentWindow) {
@@ -5698,24 +5929,44 @@ version(TerminalDirectToEmulator) {
 
 	private class TerminalEmulatorInsideWidget : TerminalEmulator {
 
+		private ScrollbackBuffer sbb() { return scrollbackBuffer; }
+
 		void resized(int w, int h) {
 			this.resizeTerminal(w / fontWidth, h / fontHeight);
+			if(widget && widget.smw) {
+				widget.smw.setViewableArea(this.width, this.height);
+				widget.smw.setPageSize(this.width / 2, this.height / 2);
+			}
 			clearScreenRequested = true;
-			windowSizeChanged = true;
+			if(widget && widget.term)
+				windowSizeChanged = true;
 			outgoingSignal.notify();
 			redraw();
+		}
+
+		override void notifyScrollbackAdded() {
+			if(this.scrollbackLength > this.height)
+				widget.smw.setTotalArea(this.scrollbackWidth, this.scrollbackLength);
+			else
+				widget.smw.setTotalArea(this.width, this.height);
+		}
+
+		override void notifyScrollbarPosition(int x, int y) {
+			widget.smw.setPosition(x, y);
+			widget.redraw();
+		}
+
+		override void notifyScrollbarRelevant(bool isRelevantHorizontally, bool isRelevantVertically) {
+			if(isRelevantVertically)
+				notifyScrollbackAdded();
+			else
+				widget.smw.setTotalArea(width, height);
 		}
 
 		override @property public int cursorX() { return super.cursorX; }
 		override @property public int cursorY() { return super.cursorY; }
 
 		protected override void changeCursorStyle(CursorStyle s) { }
-
-		version(none)
-		override void sendPasteData(scope const(char)[] data) {
-			super.sendPasteData(data);
-			redraw();
-		}
 
 		string currentTitle;
 		protected override void changeWindowTitle(string t) {
@@ -5791,7 +6042,8 @@ version(TerminalDirectToEmulator) {
 					send(crlf[]);
 					last = idx + 1;
 				} else if(ch == 3) {
-					interrupted = true;
+					if(widget && widget.term)
+						interrupted = true;
 				}
 			}
 
@@ -5849,14 +6101,17 @@ version(TerminalDirectToEmulator) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
-				if(sendMouseInputToApplication(termX, termY,
-					arsd.terminalemulator.MouseEventType.buttonPressed,
-					cast(arsd.terminalemulator.MouseButton) ev.button,
-					(ev.state & ModifierState.shift) ? true : false,
-					(ev.state & ModifierState.ctrl) ? true : false,
-					(ev.state & ModifierState.alt) ? true : false
-				))
-					redraw();
+				if((!mouseButtonTracking || (ev.state & ModifierState.shift)) && ev.button == MouseButton.right)
+					widget.showContextMenu(ev.clientX, ev.clientY);
+				else
+					if(sendMouseInputToApplication(termX, termY,
+						arsd.terminalemulator.MouseEventType.buttonPressed,
+						cast(arsd.terminalemulator.MouseButton) ev.button,
+						(ev.state & ModifierState.shift) ? true : false,
+						(ev.state & ModifierState.ctrl) ? true : false,
+						(ev.state & ModifierState.alt) ? true : false
+					))
+						redraw();
 			});
 
 			widget.addEventListener("mouseup", (Event ev) {
@@ -5953,4 +6208,42 @@ void main() {
 	terminal.setTrueColor(RGB(255, 0, 255), RGB(255, 255, 255));
 	terminal.writeln("Hello, world!");
 }
+*/
+
+
+/*
+	ONLY SUPPORTED ON MY TERMINAL EMULATOR IN GENERAL
+
+	bracketed section can collapse and scroll independently in the TE. may also pop out into a window (possibly with a comparison window)
+
+	hyperlink can either just indicate something to the TE to handle externally
+	OR
+	indicate a certain input sequence be triggered when it is clicked (prolly wrapped up as a paste event). this MAY also be a custom event.
+
+	internally it can set two bits: one indicates it is a hyperlink, the other just flips each use to separate consecutive sequences.
+
+	it might require the content of the paste event to be the visible word but it would bne kinda cool if it could be some secret thing elsewhere.
+
+
+	I could spread a unique id number across bits, one bit per char so the memory isn't too bad.
+	so it would set a number and a word. this is sent back to the application to handle internally.
+
+	1) turn on special input
+	2) turn off special input
+	3) special input sends a paste event with a number and the text
+	4) to make a link, you write out the begin sequence, the text, and the end sequence. including the magic number somewhere.
+		magic number is allowed to have one bit per char. the terminal discards anything else. terminal.d api will enforce.
+
+	if magic number is zero, it is not sent in the paste event. maybe.
+
+	or if it is like 255, it is handled as a url and opened externally
+		tho tbh a url could just be detected by regex pattern
+
+
+	NOTE: if your program requests mouse input, the TE does not process it! Thus the user will have to shift+click for it.
+
+	mode 3004 for bracketed hyperlink
+
+	hyperlink sequence: \033[?220hnum;text\033[?220l~
+
 */
