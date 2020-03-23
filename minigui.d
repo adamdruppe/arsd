@@ -1153,6 +1153,39 @@ class Widget {
 	deprecated("Change ScreenPainter to WidgetPainter")
 	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
 
+	Menu contextMenu(int x, int y) { return null; }
+
+	final bool showContextMenu(int x, int y, int screenX = -2, int screenY = -2) {
+		if(parentWindow is null || parentWindow.win is null) return false;
+
+		auto menu = this.contextMenu(x, y);
+		if(menu is null)
+			return false;
+
+		version(win32_widgets) {
+			// FIXME: if it is -1, -1, do it at the current selection location instead
+			// tho the corner of the window, whcih it does now, isn't the literal worst.
+
+			if(screenX < 0 && screenY < 0) {
+				auto p = this.globalCoordinates();
+				if(screenX == -2)
+					p.x += x;
+				if(screenY == -2)
+					p.y += y;
+
+				screenX = p.x;
+				screenY = p.y;
+			}
+
+			if(!TrackPopupMenuEx(menu.handle, 0, screenX, screenY, parentWindow.win.impl.hwnd, null))
+				throw new Exception("TrackContextMenuEx");
+		} else version(custom_widgets) {
+			menu.popup(this, x, y);
+		}
+
+		return true;
+	}
+
 	///
 	@scriptable
 	void removeWidget() {
@@ -2691,7 +2724,9 @@ class HorizontalScrollbar : ScrollbarBase {
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
-			// intentionally blank
+			thumb.positionX = thumbPosition;
+			thumb.thumbWidth = thumbSize;
+			thumb.redraw();
 		} else static assert(0);
 
 	}
@@ -2797,7 +2832,9 @@ class VerticalScrollbar : ScrollbarBase {
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
-			// intentionally blank
+			thumb.positionY = thumbPosition;
+			thumb.thumbHeight = thumbSize;
+			thumb.redraw();
 		} else static assert(0);
 
 	}
@@ -3772,19 +3809,22 @@ class Window : Widget {
 				case WM_CONTEXTMENU:
 					auto hwndFrom = cast(HWND) wParam;
 
-					/+
-					auto xPos = GET_X_LPARAM(lParam); 
-					auto yPos = GET_Y_LPARAM(lParam); 
+					auto xPos = cast(short) LOWORD(lParam); 
+					auto yPos = cast(short) HIWORD(lParam); 
 
 					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
-						// FIXME: translate screen coordinates to widget coordinates
-						auto menu = (*widgetp).contextMenu(xPos, yPos);
-						if(menu is null)
-							return 1; // pass it on
+						POINT p;
+						p.x = xPos;
+						p.y = yPos;
+						ScreenToClient(hwnd, &p);
+						auto clientX = cast(ushort) p.x;
+						auto clientY = cast(ushort) p.y;
 
-						//TrackContextMenuEx
+						auto wap = widgetAtPoint(*widgetp, clientX, clientY);
+
+						if(!wap.widget.showContextMenu(wap.x, wap.y, xPos, yPos))
+							return 1; // it didn't show above, pass message on
 					}
-					+/
 				break;
 
 				case WM_NOTIFY:
@@ -5161,7 +5201,7 @@ class Menu : Window {
 	else version(custom_widgets) {
 		SimpleWindow dropDown;
 		Widget menuParent;
-		void popup(Widget parent) {
+		void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
 			this.menuParent = parent;
 
 			auto w = 150;
@@ -5176,8 +5216,11 @@ class Menu : Window {
 			if(previousChild)
 			h += previousChild.marginBottom();
 
+			if(offsetY == int.min)
+				offsetY = parent.parentWindow.lineHeight;
+
 			auto coord = parent.globalCoordinates();
-			dropDown.moveResize(coord.x, coord.y + parent.parentWindow.lineHeight, w, h);
+			dropDown.moveResize(coord.x + offsetX, coord.y + offsetY, w, h);
 			this.x = 0;
 			this.y = 0;
 			this.width = dropDown.width;
@@ -7242,6 +7285,51 @@ void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null) {
 
 private static template I(T...) { alias I = T; }
 
+
+private string beautify(string name, char space = ' ', bool allLowerCase = false) {
+	if(name == "id")
+		return allLowerCase ? name : "ID";
+
+	char[160] buffer;
+	int bufferIndex = 0;
+	bool shouldCap = true;
+	bool shouldSpace;
+	bool lastWasCap;
+	foreach(idx, char ch; name) {
+		if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+
+		if((ch >= 'A' && ch <= 'Z') || ch == '_') {
+			if(lastWasCap) {
+				// two caps in a row, don't change. Prolly acronym.
+			} else {
+				if(idx)
+					shouldSpace = true; // new word, add space
+			}
+
+			lastWasCap = true;
+		} else {
+			lastWasCap = false;
+		}
+
+		if(shouldSpace) {
+			buffer[bufferIndex++] = space;
+			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+			shouldSpace = false;
+		}
+		if(shouldCap) {
+			if(ch >= 'a' && ch <= 'z')
+				ch -= 32;
+			shouldCap = false;
+		}
+		if(allLowerCase && ch >= 'A' && ch <= 'Z')
+			ch += 32;
+		buffer[bufferIndex++] = ch;
+	}
+	return buffer[0 .. bufferIndex].idup;
+}
+
+
+
 class AutomaticDialog(T) : Dialog {
 	T t;
 
@@ -7253,6 +7341,7 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingRight() { return Window.lineHeight; }
 	override int paddingLeft() { return Window.lineHeight; }
 
+
 	this(void delegate(T) onOK, void delegate() onCancel) {
 		static if(is(T == class))
 			t = new T();
@@ -7263,17 +7352,18 @@ class AutomaticDialog(T) : Dialog {
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
 			alias type = typeof(member);
-			static if(is(type == string)) {
-				auto show = memberName;
-				// cheap capitalize lol
-				if(show[0] >= 'a' && show[0] <= 'z')
-					show = "" ~ cast(char)(show[0] - 32) ~ show[1 .. $];
-				auto le = new LabeledLineEdit(show ~ ": ", this);
+			static if(is(type == bool)) {
+				auto box = new Checkbox(memberName.beautify, this);
+				box.addEventListener(EventType.change, (Event ev) {
+					__traits(getMember, t, memberName) = box.isChecked;
+				});
+			} else static if(is(type == string)) {
+				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = ev.stringValue;
 				});
 			} else static if(is(type : long)) {
-				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
 				le.addEventListener("char", (Event ev) {
 					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
 						ev.preventDefault();
