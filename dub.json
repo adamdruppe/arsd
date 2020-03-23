@@ -318,7 +318,7 @@
 					"name": "builtin_emulator",
 					"versions": ["TerminalDirectToEmulator"],
 					"dependencies": {
-						"adr-terminalemulator:core": ">=0.0.7",
+						"adr-terminalemulator:core": ">=0.0.8",
 						"arsd-official:minigui": "*"
 					}
 				}
