@@ -2192,62 +2192,8 @@ class WebSocket {
 	private ushort port;
 	private bool ssl;
 
-	private int readyState_;
-
-	private Socket socket;
-	private ubyte[] receiveBuffer;
-	private size_t receiveBufferUsedLength;
-
-	private Config config;
-
-	enum CONNECTING = 0; /// Socket has been created. The connection is not yet open.
-	enum OPEN = 1; /// The connection is open and ready to communicate.
-	enum CLOSING = 2; /// The connection is in the process of closing.
-	enum CLOSED = 3; /// The connection is closed or couldn't be opened.
-
 	/++
-
-	+/
-	/// Group: foundational
-	static struct Config {
-		/++
-			These control the size of the receive buffer.
-
-			It starts at the initial size, will temporarily
-			balloon up to the maximum size, and will reuse
-			a buffer up to the likely size.
-
-			Anything larger than the maximum size will cause
-			the connection to be aborted and an exception thrown.
-			This is to protect you against a peer trying to
-			exhaust your memory, while keeping the user-level
-			processing simple.
-		+/
-		size_t initialReceiveBufferSize = 4096;
-		size_t likelyReceiveBufferSize = 4096; /// ditto
-		size_t maximumReceiveBufferSize = 10 * 1024 * 1024; /// ditto
-
-		/++
-			Maximum combined size of a message.
-		+/
-		size_t maximumMessageSize = 10 * 1024 * 1024;
-
-		string[string] cookies; /// Cookies to send with the initial request. cookies[name] = value;
-		string origin; /// Origin URL to send with the handshake, if desired.
-		string protocol; /// the protocol header, if desired.
-
-		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
-	}
-
-	/++
-		Returns one of [CONNECTING], [OPEN], [CLOSING], or [CLOSED].
-	+/
-	int readyState() {
-		return readyState_;
-	}
-
-	/++
-wss://echo.websocket.org
+		wss://echo.websocket.org
 	+/
 	/// Group: foundational
 	this(Uri uri, Config config = Config.init)
@@ -2442,6 +2388,130 @@ wss://echo.websocket.org
 	}
 
 	/++
+		Is data pending on the socket? Also check [isMessageBuffered] to see if there
+		is already a message in memory too.
+
+		If this returns `true`, you can call [lowLevelReceive], then try [isMessageBuffered]
+		again.
+	+/
+	/// Group: blocking_api
+	public bool isDataPending(Duration timeout = 0.seconds) {
+		static SocketSet readSet;
+		if(readSet is null)
+			readSet = new SocketSet();
+
+		version(with_openssl)
+		if(auto s = cast(SslClientSocket) socket) {
+			// select doesn't handle the case with stuff
+			// left in the ssl buffer so i'm checking it separately
+			if(s.dataPending()) {
+				return true;
+			}
+		}
+
+		readSet.add(socket);
+
+		//tryAgain:
+		auto selectGot = Socket.select(readSet, null, null, timeout);
+		if(selectGot == 0) { /* timeout */
+			// timeout
+			return false;
+		} else if(selectGot == -1) { /* interrupted */
+			return false;
+		} else { /* ready */
+			if(readSet.isSet(socket)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private void llsend(ubyte[] d) {
+		while(d.length) {
+			auto r = socket.send(d);
+			if(r <= 0) throw new Exception("wtf");
+			d = d[r .. $];
+		}
+	}
+
+	private void llclose() {
+		socket.shutdown(SocketShutdown.SEND);
+	}
+
+	/++
+		Waits for more data off the low-level socket and adds it to the pending buffer.
+
+		Returns `true` if the connection is still active.
+	+/
+	/// Group: blocking_api
+	public bool lowLevelReceive() {
+		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
+		if(r == 0)
+			return false;
+		if(r <= 0)
+			throw new Exception("wtf");
+		receiveBufferUsedLength += r;
+		return true;
+	}
+
+	private Socket socket;
+
+	/* copy/paste section { */
+
+	private int readyState_;
+	private ubyte[] receiveBuffer;
+	private size_t receiveBufferUsedLength;
+
+	private Config config;
+
+	enum CONNECTING = 0; /// Socket has been created. The connection is not yet open.
+	enum OPEN = 1; /// The connection is open and ready to communicate.
+	enum CLOSING = 2; /// The connection is in the process of closing.
+	enum CLOSED = 3; /// The connection is closed or couldn't be opened.
+
+	/++
+
+	+/
+	/// Group: foundational
+	static struct Config {
+		/++
+			These control the size of the receive buffer.
+
+			It starts at the initial size, will temporarily
+			balloon up to the maximum size, and will reuse
+			a buffer up to the likely size.
+
+			Anything larger than the maximum size will cause
+			the connection to be aborted and an exception thrown.
+			This is to protect you against a peer trying to
+			exhaust your memory, while keeping the user-level
+			processing simple.
+		+/
+		size_t initialReceiveBufferSize = 4096;
+		size_t likelyReceiveBufferSize = 4096; /// ditto
+		size_t maximumReceiveBufferSize = 10 * 1024 * 1024; /// ditto
+
+		/++
+			Maximum combined size of a message.
+		+/
+		size_t maximumMessageSize = 10 * 1024 * 1024;
+
+		string[string] cookies; /// Cookies to send with the initial request. cookies[name] = value;
+		string origin; /// Origin URL to send with the handshake, if desired.
+		string protocol; /// the protocol header, if desired.
+
+		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
+	}
+
+	/++
+		Returns one of [CONNECTING], [OPEN], [CLOSING], or [CLOSED].
+	+/
+	int readyState() {
+		return readyState_;
+	}
+
+	/++
 		Closes the connection, sending a graceful teardown message to the other side.
 	+/
 	/// Group: foundational
@@ -2459,7 +2529,7 @@ wss://echo.websocket.org
 
 		readyState_ = CLOSING;
 
-		socket.shutdown(SocketShutdown.SEND);
+		llclose();
 	}
 
 	/++
@@ -2503,31 +2573,6 @@ wss://echo.websocket.org
 		wss.opcode = WebSocketOpcode.binary;
 		wss.data = cast(ubyte[]) binaryData;
 		wss.send(&llsend);
-	}
-
-
-	private void llsend(ubyte[] d) {
-		while(d.length) {
-			auto r = socket.send(d);
-			if(r <= 0) throw new Exception("wtf");
-			d = d[r .. $];
-		}
-	}
-
-	/++
-		Waits for more data off the low-level socket and adds it to the pending buffer.
-
-		Returns `true` if the connection is still active.
-	+/
-	/// Group: blocking_api
-	public bool lowLevelReceive() {
-		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
-		if(r == 0)
-			return false;
-		if(r <= 0)
-			throw new Exception("wtf");
-		receiveBufferUsedLength += r;
-		return true;
 	}
 
 	/++
@@ -2577,46 +2622,6 @@ wss://echo.websocket.org
 			// that's how it indicates that it needs more data
 			if(d !is orig)
 				return true;
-		}
-
-		return false;
-	}
-
-	/++
-		Is data pending on the socket? Also check [isMessageBuffered] to see if there
-		is already a message in memory too.
-
-		If this returns `true`, you can call [lowLevelReceive], then try [isMessageBuffered]
-		again.
-	+/
-	/// Group: blocking_api
-	public bool isDataPending() {
-		static SocketSet readSet;
-		if(readSet is null)
-			readSet = new SocketSet();
-
-		version(with_openssl)
-		if(auto s = cast(SslClientSocket) socket) {
-			// select doesn't handle the case with stuff
-			// left in the ssl buffer so i'm checking it separately
-			if(s.dataPending()) {
-				return true;
-			}
-		}
-
-		readSet.add(socket);
-
-		//tryAgain:
-		auto selectGot = Socket.select(readSet, null, null, 0.seconds /* timeout */);
-		if(selectGot == 0) { /* timeout */
-			// timeout
-			return false;
-		} else if(selectGot == -1) { /* interrupted */
-			return false;
-		} else { /* ready */
-			if(readSet.isSet(socket)) {
-				return true;
-			}
 		}
 
 		return false;
@@ -2722,6 +2727,8 @@ wss://echo.websocket.org
 		onbinarymessage = dg;
 	}
 
+	/* } end copy/paste */
+
 	/*
 	const int bufferedAmount // amount pending
 	const string extensions
@@ -2802,7 +2809,7 @@ wss://echo.websocket.org
 }
 
 /* copy/paste from cgi.d */
-private {
+public {
 	enum WebSocketOpcode : ubyte {
 		continuation = 0,
 		text = 1,
@@ -3007,3 +3014,36 @@ private {
 		}
 	}
 }
+
+/+
+	so the url params are arguments. it knows the request
+	internally. other params are properties on the req
+
+	names may have different paths... those will just add ForSomething i think.
+
+	auto req = api.listMergeRequests
+	req.page = 10;
+
+	or
+		req.page(1)
+		.bar("foo")
+
+	req.execute();
+
+
+	everything in the response is nullable access through the
+	dynamic object, just with property getters there. need to make
+	it static generated tho
+
+	other messages may be: isPresent and getDynamic
+
+
+	AND/OR what about doing it like the rails objects
+
+	BroadcastMessage.get(4)
+	// various properties
+
+	// it lists what you updated
+
+	BroadcastMessage.foo().bar().put(5)
++/
