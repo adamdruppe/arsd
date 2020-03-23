@@ -98,17 +98,17 @@
 			"targetType": "library",
 			"dependencies": {
 				"arsd-official:color_base":"*",
-				"arsd-official:png":"*"
+				"arsd-official:png":"*",
+				"arsd-official:bmp":"*",
+				"arsd-official:jpeg":"*"
 			},
 			"dflags": [
 				"-mv=arsd.image=image.d",
-				"-mv=arsd.bmp=bmp.d",
-				"-mv=arsd.jpeg=jpeg.d",
 				"-mv=arsd.targa=targa.d",
 				"-mv=arsd.pcx=pcx.d",
 				"-mv=arsd.dds=dds.d"
 			],
-			"sourceFiles": ["image.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
+			"sourceFiles": ["image.d", "targa.d", "pcx.d", "dds.d"]
 		},
 		{
 			"name": "svg",
@@ -116,10 +116,18 @@
 			"importPaths": ["."],
 			"targetType": "library",
 			"dflags": ["-mv=arsd.svg=svg.d"],
+			"sourceFiles": ["svg.d"]
+		},
+		{
+			"name": "jpeg",
+			"description": "Dependency-free partial JPEG file format read support",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.jpeg=jpeg.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*"
 			},
-			"sourceFiles": ["svg.d"]
+			"sourceFiles": ["jpeg.d"]
 		},
 		{
 			"name": "png",
