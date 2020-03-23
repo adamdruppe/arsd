@@ -309,7 +309,20 @@
 			"targetType": "library",
 			"sourceFiles": ["terminal.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.terminal=terminal.d"]
+			"dflags": ["-mv=arsd.terminal=terminal.d"],
+			"configurations": [
+				{
+					"name": "normal"
+				},
+				{
+					"name": "builtin_emulator",
+					"versions": ["TerminalDirectToEmulator"],
+					"dependencies": {
+						"adr-terminalemulator:core": ">=0.0.7",
+						"arsd-official:minigui": "*"
+					}
+				}
+			]
 		},
 		{
 			"name": "ttf",
