@@ -1015,6 +1015,8 @@ struct Terminal {
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
 			return !(defaultBackgroundColor & 0xf);
+		} version(TerminalDirectToEmulator) {
+			return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 		} else {
 			// FIXME: there is probably a better way to do this
 			// but like idk how reliable it is.
@@ -5717,9 +5719,14 @@ version(TerminalDirectToEmulator) {
 		/// Default background color of the terminal.
 		Color defaultBackground = Color.white;
 
-		/// Font to use in the window. It should be a monospace font,
-		/// and your selection may not actually be used if not available on
-		/// the user's system, in which case it will fallback to one.
+		/++
+			Font to use in the window. It should be a monospace font,
+			and your selection may not actually be used if not available on
+			the user's system, in which case it will fallback to one.
+
+			History:
+				Implemented March 26, 2020
+		+/
 		string fontName;
 		/// ditto
 		int fontSize = 14;
@@ -5735,15 +5742,16 @@ version(TerminalDirectToEmulator) {
 		if scroll lock is on...
 	+/
 
-	/// You can set this in a static module constructor.
-	immutable IntegratedTerminalEmulatorConfiguration integratedTerminalEmulatorConfiguration;
+	/// You can set this in a static module constructor. (`shared static this() {}`)
+	__gshared IntegratedTerminalEmulatorConfiguration integratedTerminalEmulatorConfiguration;
 
 	import arsd.terminalemulator;
 	import arsd.minigui;
 
 	private class TerminalEmulatorWindow : MainWindow {
+
 		this(Terminal* term) {
-			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * 7, integratedTerminalEmulatorConfiguration.initialHeight * 14);
+			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
 
 			smw = new ScrollMessageWidget(this);
 			tew = new TerminalEmulatorWidget(term, smw);
@@ -6085,12 +6093,17 @@ version(TerminalDirectToEmulator) {
 
 			this.widget = widget;
 
-			loadDefaultFont();
+			if(integratedTerminalEmulatorConfiguration.fontName.length) {
+				this.font = new OperatingSystemFont(integratedTerminalEmulatorConfiguration.fontName, integratedTerminalEmulatorConfiguration.fontSize, FontWeight.medium);
+				this.fontWidth = font.averageWidth;
+				this.fontHeight = font.height;
+			}
 
-			auto desiredWidth = 80;
-			auto desiredHeight = 24;
 
-			super(desiredWidth, desiredHeight);
+			if(this.font is null || this.font.isNull)
+				loadDefaultFont(integratedTerminalEmulatorConfiguration.fontSize);
+
+			super(integratedTerminalEmulatorConfiguration.initialWidth, integratedTerminalEmulatorConfiguration.initialHeight);
 
 			defaultForeground = integratedTerminalEmulatorConfiguration.defaultForeground;
 			defaultBackground = integratedTerminalEmulatorConfiguration.defaultBackground;
@@ -6184,8 +6197,6 @@ version(TerminalDirectToEmulator) {
 					sendToApplication(data);
 			});
 		}
-
-		static int fontSize = 14;
 
 		bool clearScreenRequested = true;
 		void redraw() {

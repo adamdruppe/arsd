@@ -6223,6 +6223,8 @@ class OperatingSystemFont {
 		XFontSet fontset;
 	} else version(Windows) {
 		HFONT font;
+		int width_;
+		int height_;
 	} else version(OSXCocoa) {
 		// FIXME
 	} else static assert(0);
@@ -6274,6 +6276,15 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			WCharzBuffer buffer = WCharzBuffer(name);
 			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+
+			TEXTMETRIC tm;
+			auto dc = GetDC(null);
+			SelectObject(dc, font);
+			GetTextMetrics(dc, &tm);
+			ReleaseDC(null, dc);
+
+			width_ = tm.tmAveCharWidth;
+			height_ = tm.tmHeight;
 		} else version(OSXCocoa) {
 			// FIXME
 		} else static assert(0);
@@ -6307,6 +6318,26 @@ class OperatingSystemFont {
 		} else static assert(0);
 	}
 
+	// Assuming monospace!!!!!
+	// added March 26, 2020
+	int averageWidth() {
+		version(X11)
+			return font.max_bounds.width;
+		else version(Windows)
+			return width_;
+		else assert(0);
+	}
+
+	// Assuming monospace!!!!!
+	// added March 26, 2020
+	int height() {
+		version(X11)
+			return font.max_bounds.ascent + font.max_bounds.descent;
+		else version(Windows)
+			return height_;
+		else assert(0);
+	}
+
 	/// FIXME not implemented
 	void loadDefault() {
 
@@ -6320,11 +6351,8 @@ class OperatingSystemFont {
 
 	/* Metrics */
 	/+
-		GetFontMetrics
 		GetABCWidth
 		GetKerningPairs
-
-		XLoadQueryFont
 
 		if I do it right, I can size it all here, and match
 		what happens when I draw the full string with the OS functions.

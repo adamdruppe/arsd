@@ -5204,17 +5204,18 @@ class Menu : Window {
 		void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
 			this.menuParent = parent;
 
-			auto w = 150;
-			auto h = paddingTop + paddingBottom;
-			Widget previousChild;
-			foreach(child; this.children) {
-				h += child.minHeight();
-				h += mymax(child.marginTop(), previousChild ? previousChild.marginBottom() : 0);
-				previousChild = child;
-			}
+			int w = 150;
+			int h = paddingTop + paddingBottom;
+			if(this.children.length) {
+				// hacking it to get the ideal height out of recomputeChildLayout
+				this.width = w;
+				this.height = h;
+				this.recomputeChildLayout();
+				h = this.children[$-1].y + this.children[$-1].height + this.children[$-1].marginBottom;
+				h += paddingBottom;
 
-			if(previousChild)
-			h += previousChild.marginBottom();
+				h -= 2; // total hack, i just like the way it looks a bit tighter even though technically MenuItem reserves some space to center in normal circumstances
+			}
 
 			if(offsetY == int.min)
 				offsetY = parent.parentWindow.lineHeight;

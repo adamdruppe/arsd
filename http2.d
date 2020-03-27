@@ -1149,7 +1149,7 @@ class HttpRequest {
 					if(colon == -1)
 						return;
 					auto name = header[0 .. colon];
-					if(colon + 1 == header.length)
+					if(colon + 1 == header.length || colon + 2 == header.length) // assuming a space there
 						return; // empty header, idk
 					assert(colon + 2 < header.length, header);
 					auto value = header[colon + 2 .. $]; // skipping the colon itself and the following space

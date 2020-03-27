@@ -318,11 +318,28 @@
 					"name": "builtin_emulator",
 					"versions": ["TerminalDirectToEmulator"],
 					"dependencies": {
-						"adr-terminalemulator:core": ">=0.0.8",
-						"arsd-official:minigui": "*"
+						"arsd-official:terminalemulator": "*",
+						"arsd-official:minigui": "*",
+
+						"arsd-official:png":"*",
+						"arsd-official:jpeg":"*",
+						"arsd-official:svg":"*",
+						"arsd-official:bmp":"*"
 					}
 				}
 			]
+		},
+		{
+			"name": "terminalemulator",
+			"description": "A terminal emulation core as an in-memory library. Also includes mixin templates to assist with creating UIs, etc.",
+			"targetType": "library",
+			"importPaths": ["."],
+			"libs-posix": ["util"],
+			"sourceFiles": ["terminalemulator.d"],
+			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			}
 		},
 		{
 			"name": "ttf",
