@@ -1093,7 +1093,7 @@ version(win32_widgets) {
 		p.simpleWindowWrappingHwnd.beingOpenKeepsAppOpen = false;
 		Widget.nativeMapping[p.hwnd] = p;
 
-		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+		p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 
 		EnumChildWindows(p.hwnd, &childHandler, cast(LPARAM) cast(void*) p);
 
@@ -1113,7 +1113,7 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	p.hwnd = hwnd;
 	p.implicitlyCreated = true;
 	Widget.nativeMapping[p.hwnd] = p;
-	p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+	p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 	return true;
 }
 
@@ -1746,7 +1746,7 @@ class OpenGlWidget : Widget {
 
 		version(win32_widgets) {
 			Widget.nativeMapping[win.hwnd] = this;
-			this.originalWindowProcedure = cast(WNDPROC) SetWindowLong(win.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+			this.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(win.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 		} else {
 			win.setEventHandlers(
 				(MouseEvent e) {
