@@ -138,11 +138,36 @@ version(demos) unittest {
 
 // FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
 
+
+/++
+	A function the sigint handler will call (if overridden - which is the
+	case when [RealTimeConsoleInput] is active on Posix or if you compile with
+	`TerminalDirectToEmulator` version on any platform at this time) in addition
+	to the library's default handling, which is to set a flag for the event loop
+	to inform you.
+
+	Remember, this is called from a signal handler and/or from a separate thread,
+	so you are not allowed to do much with it and need care when setting TLS variables.
+
+	I suggest you only set a `__gshared bool` flag as many other operations will risk
+	undefined behavior.
+
+	$(WARNING
+		This function is never called on the default Windows console
+		configuration in the current implementation. You can use
+		`-version=TerminalDirectToEmulator` to guarantee it is called there
+		too by causing the library to pop up a gui window for your application.
+	)
+
+	History:
+		Added March 30, 2020. Included in release v7.1.0.
+
++/
+__gshared void delegate() nothrow @nogc sigIntExtension;
+
+
 version(TerminalDirectToEmulator) {
-	__gshared bool windowSizeChanged = false;
-	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
-	__gshared bool hangedUp = false; /// similar to interrupted.
-	version=WithSignals;
+	version=WithEncapsulatedSignals;
 } else version(Posix) {
 	enum SIGWINCH = 28;
 	__gshared bool windowSizeChanged = false;
@@ -172,6 +197,9 @@ version(TerminalDirectToEmulator) {
 				send(SignalFired());
 			catch(Exception) {}
 		}
+
+		if(sigIntExtension)
+			sigIntExtension();
 	}
 	extern(C)
 	void hangupSignalHandler(int sigNumber) nothrow {
@@ -183,7 +211,6 @@ version(TerminalDirectToEmulator) {
 			catch(Exception) {}
 		}
 	}
-
 }
 
 // parts of this were taken from Robik's ConsoleD
@@ -474,6 +501,12 @@ struct Terminal {
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
+
+	version(TerminalDirectToEmulator) {
+		private bool windowSizeChanged = false;
+		private bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
+		private bool hangedUp = false; /// similar to interrupted.
+	}
 
 	private TerminalCursor currentCursor_;
 	version(Windows) private CONSOLE_CURSOR_INFO originalCursorInfo;
@@ -1029,6 +1062,20 @@ struct Terminal {
 
 	version(TerminalDirectToEmulator) {
 		TerminalEmulatorWidget tew;
+		private __gshared Window mainWindow;
+		import core.thread;
+		version(Posix)
+			ThreadID threadId;
+		else version(Windows)
+			HANDLE threadId;
+		private __gshared Thread guiThread;
+
+		private static class NewTerminalEvent {
+			Terminal* t;
+			this(Terminal* t) {
+				this.t = t;
+			}
+		}
 	}
 
 	version(TerminalDirectToEmulator)
@@ -1043,17 +1090,39 @@ struct Terminal {
 			return;
 		}
 
-
 		tcaps = uint.max; // all capabilities
 		import core.thread;
 
-		auto thread = new Thread( {
-			auto window = new TerminalEmulatorWindow(&this);
-			tew = window.tew;
-			window.loop();
-		});
+		version(Posix)
+			threadId = Thread.getThis.id;
+		else version(Windows)
+			threadId = GetCurrentThread();
 
-		thread.start();
+		if(guiThread is null) {
+			guiThread = new Thread( {
+				auto window = new TerminalEmulatorWindow(&this);
+				mainWindow = window;
+				mainWindow.win.addEventListener((NewTerminalEvent t) {
+					auto nw = new TerminalEmulatorWindow(t.t);
+					t.t.tew = nw.tew;
+					t.t = null;
+					nw.show();
+				});
+				tew = window.tew;
+				window.loop();
+			});
+			guiThread.start();
+			guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
+		} else {
+			// FIXME: 64 bit builds on linux segfault with multiple terminals
+			// so that isn't really supported as of yet.
+			while(cast(shared) mainWindow is null) {
+				import core.thread;
+				Thread.sleep(5.msecs);
+			}
+			mainWindow.win.postEvent(new NewTerminalEvent(&this));
+		}
+
 		// need to wait until it is properly initialized
 		while(cast(shared) tew is null) {
 			import core.thread;
@@ -1202,6 +1271,7 @@ struct Terminal {
 			version(TerminalDirectToEmulator) {
 				writeln("\n\n<exited>");
 				setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
+				tew.term = null;
 			} else
 			if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 				writeStringRaw("\033[23;0t"); // restore window title from the stack
@@ -1229,7 +1299,6 @@ struct Terminal {
 			SetConsoleActiveScreenBuffer(stdo);
 			if(hConsole !is stdo)
 				CloseHandle(hConsole);
-
 		}
 	}
 
@@ -2250,6 +2319,9 @@ struct RealTimeConsoleInput {
 	bool timedCheckForInput(int milliseconds) {
 		if(inputQueue.length || timedCheckForInput_bypassingBuffer(milliseconds))
 			return true;
+		version(WithEncapsulatedSignals)
+			if(terminal.interrupted || terminal.windowSizeChanged || terminal.hangedUp)
+				return true;
 		version(WithSignals)
 			if(interrupted || windowSizeChanged || hangedUp)
 				return true;
@@ -2269,7 +2341,7 @@ struct RealTimeConsoleInput {
 				// it was notified, but it could be left over from stuff we
 				// already processed... so gonna check the blocking conditions here too
 				// (FIXME: this sucks and is surely a race condition of pain)
-				return terminal.tew.terminalEmulator.pendingForApplication.length || interrupted || windowSizeChanged || hangedUp;
+				return terminal.tew.terminalEmulator.pendingForApplication.length || terminal.interrupted || terminal.windowSizeChanged || terminal.hangedUp;
 			else
 				return false;
 		} else version(Win32Console) {
@@ -2432,7 +2504,9 @@ struct RealTimeConsoleInput {
 		auto oldHeight = terminal.height;
 		terminal.updateSize();
 		version(WithSignals)
-		windowSizeChanged = false;
+			windowSizeChanged = false;
+		version(WithEncapsulatedSignals)
+			terminal.windowSizeChanged = false;
 		return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height), terminal);
 	}
 
@@ -2452,21 +2526,36 @@ struct RealTimeConsoleInput {
 		terminal.flush();
 
 		wait_for_more:
-		version(WithSignals)
-		if(interrupted) {
-			interrupted = false;
-			return InputEvent(UserInterruptionEvent(), terminal);
+		version(WithSignals) {
+			if(interrupted) {
+				interrupted = false;
+				return InputEvent(UserInterruptionEvent(), terminal);
+			}
+
+			if(hangedUp) {
+				hangedUp = false;
+				return InputEvent(HangupEvent(), terminal);
+			}
+
+			if(windowSizeChanged) {
+				return checkWindowSizeChanged();
+			}
 		}
 
-		version(WithSignals)
-		if(hangedUp) {
-			hangedUp = false;
-			return InputEvent(HangupEvent(), terminal);
-		}
+		version(WithEncapsulatedSignals) {
+			if(terminal.interrupted) {
+				terminal.interrupted = false;
+				return InputEvent(UserInterruptionEvent(), terminal);
+			}
 
-		version(WithSignals)
-		if(windowSizeChanged) {
-			return checkWindowSizeChanged();
+			if(terminal.hangedUp) {
+				terminal.hangedUp = false;
+				return InputEvent(HangupEvent(), terminal);
+			}
+
+			if(terminal.windowSizeChanged) {
+				return checkWindowSizeChanged();
+			}
 		}
 
 		if(inputQueue.length) {
@@ -5707,6 +5796,8 @@ version(TerminalDirectToEmulator) {
 
 		Test for its presence before using with `static if(arsd.terminal.IntegratedEmulator)`.
 
+		All settings here must be set BEFORE you construct any [Terminal] instances.
+
 		History:
 			Added March 7, 2020.
 	+/
@@ -5735,6 +5826,37 @@ version(TerminalDirectToEmulator) {
 		int initialWidth = 80;
 		/// ditto
 		int initialHeight = 40;
+
+		/++
+			Gives you a chance to modify the window as it is constructed. Intended
+			to let you add custom menu options.
+
+			---
+			import arsd.terminal;
+			integratedTerminalEmulatorConfiguration.menuExtensionsConstructor = (TerminalEmulatorWindow window) {
+				import arsd.minigui; // for the menu related UDAs
+				class Commands {
+					@menu("Help") {
+						void Topics() {
+							auto window = new Window(); // make a help window of some sort
+							window.show();
+						}
+
+						@separator
+
+						void About() {
+							messageBox("My Application v 1.0");
+						}
+					}
+				}
+				window.setMenuAndToolbarFromAnnotatedCode(new Commands());
+			};
+			---
+
+			History:
+				Added March 29, 2020. Included in release v7.1.0.
+		+/
+		void delegate(TerminalEmulatorWindow) menuExtensionsConstructor;
 	}
 
 	/+
@@ -5748,9 +5870,19 @@ version(TerminalDirectToEmulator) {
 	import arsd.terminalemulator;
 	import arsd.minigui;
 
-	private class TerminalEmulatorWindow : MainWindow {
+	/++
+		Represents the window that the library pops up for you.
+	+/
+	final class TerminalEmulatorWindow : MainWindow {
 
-		this(Terminal* term) {
+		/++
+			Gives access to the underlying terminal emulation object.
+		+/
+		TerminalEmulator terminalEmulator() {
+			return tew.terminalEmulator;
+		}
+
+		private this(Terminal* term) {
 			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
 
 			smw = new ScrollMessageWidget(this);
@@ -5765,10 +5897,12 @@ version(TerminalDirectToEmulator) {
 			smw.setTotalArea(1, 1);
 
 			setMenuAndToolbarFromAnnotatedCode(this);
+			if(integratedTerminalEmulatorConfiguration.menuExtensionsConstructor)
+				integratedTerminalEmulatorConfiguration.menuExtensionsConstructor(this);
 		}
 
-		TerminalEmulatorWidget tew;
-		ScrollMessageWidget smw;
+		private TerminalEmulatorWidget tew;
+		private ScrollMessageWidget smw;
 
 		@menu("&History") {
 			@tip("Saves the currently visible content to a file")
@@ -5838,12 +5972,10 @@ version(TerminalDirectToEmulator) {
 		@menu("&Edit") {
 			void Copy() {
 				tew.terminalEmulator.copyToClipboard(tew.terminalEmulator.getSelectedText());
-				//messageBox("copy", tew.terminalEmulator.getSelectedText());
 			}
 
 			void Paste() {
 				tew.terminalEmulator.pasteFromClipboard(&tew.terminalEmulator.sendPasteData);
-				//messageBox("paste", "idk");
 			}
 		}
 	}
@@ -5862,15 +5994,15 @@ version(TerminalDirectToEmulator) {
 		override Menu contextMenu(int x, int y) {
 			if(ctx is null) {
 				ctx = new Menu("");
-				auto i = ctx.addItem(new MenuItem("Copy"));
-				i.addEventListener("triggered", {
+				ctx.addItem(new MenuItem(new Action("Copy", 0, {
 					terminalEmulator.copyToClipboard(terminalEmulator.getSelectedText());
-
-				});
-				i = ctx.addItem(new MenuItem("Paste"));
-				i.addEventListener("triggered", {
+				})));
+				 ctx.addItem(new MenuItem(new Action("Paste", 0, {
 					terminalEmulator.pasteFromClipboard(&terminalEmulator.sendPasteData);
-				});
+				})));
+				 ctx.addItem(new MenuItem(new Action("Toggle Scroll Lock", 0, {
+				 	terminalEmulator.toggleScrollLock();
+				})));
 			}
 			return ctx;
 		}
@@ -5882,7 +6014,12 @@ version(TerminalDirectToEmulator) {
 			super(parent);
 			this.parentWindow.win.onClosing = {
 				if(term)
-					hangedUp = true;
+					term.hangedUp = true;
+
+				// try to get it to terminate slightly more forcibly too, if possible
+				if(sigIntExtension)
+					sigIntExtension();
+
 				terminalEmulator.outgoingSignal.notify();
 				terminalEmulator.incomingSignal.notify();
 			};
@@ -5947,7 +6084,7 @@ version(TerminalDirectToEmulator) {
 			}
 			clearScreenRequested = true;
 			if(widget && widget.term)
-				windowSizeChanged = true;
+				widget.term.windowSizeChanged = true;
 			outgoingSignal.notify();
 			redraw();
 		}
@@ -6036,6 +6173,8 @@ version(TerminalDirectToEmulator) {
 
 		override void sendRawInput(in ubyte[] data) {
 			void send(in ubyte[] data) {
+				if(data.length == 0)
+					return;
 				super.sendRawInput(data);
 				if(echo)
 				sendToApplication(data);
@@ -6049,9 +6188,6 @@ version(TerminalDirectToEmulator) {
 					send(data[last .. idx]);
 					send(crlf[]);
 					last = idx + 1;
-				} else if(ch == 3) {
-					if(widget && widget.term)
-						interrupted = true;
 				}
 			}
 
@@ -6192,9 +6328,34 @@ version(TerminalDirectToEmulator) {
 				if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
 				auto data = str[0 .. encode(str, c)];
 
-				// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
-				if(c != 127)
+
+				if(c == 0x1c) /* ctrl+\, force quit */ {
+					version(Posix) {
+						import core.sys.posix.signal;
+						pthread_kill(widget.term.threadId, SIGQUIT); // or SIGKILL even?
+
+						assert(0);
+						//import core.sys.posix.pthread;
+						//pthread_cancel(widget.term.threadId);
+						//widget.term = null;
+					} else version(Windows) {
+						import core.sys.windows.windows;
+						auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
+						TerminateProcess(hnd, -1);
+						assert(0);
+					}
+				} else if(c == 3) /* ctrl+c, interrupt */ {
+					if(sigIntExtension)
+						sigIntExtension();
+
+					if(widget && widget.term) {
+						widget.term.interrupted = true;
+						outgoingSignal.notify();
+					}
+				} else if(c != 127) {
+					// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
 					sendToApplication(data);
+				}
 			});
 		}
 

@@ -4359,8 +4359,12 @@ class MainWindow : Window {
 	}
 	void setMenuAndToolbarFromAnnotatedCode_internal(T)(ref T t) {
 		Action[] toolbarActions;
-		auto menuBar = new MenuBar();
+		auto menuBar = this.menuBar is null ? new MenuBar() : this.menuBar;
 		Menu[string] mcs;
+
+		foreach(menu; menuBar.subMenus) {
+			mcs[menu.label] = menu;
+		}
 
 		void delegate() triggering;
 
@@ -4482,6 +4486,12 @@ class MainWindow : Window {
 	MenuBar menuBar() { return _menu; }
 	///
 	MenuBar menuBar(MenuBar m) {
+		if(m is _menu) {
+			version(custom_widgets)
+				recomputeChildLayout();
+			return m;
+		}
+
 		if(_menu !is null) {
 			// make sure it is sanely removed
 			// FIXME
@@ -4758,6 +4768,7 @@ class ToolButton : Button {
 ///
 class MenuBar : Widget {
 	MenuItem[] items;
+	Menu[] subMenus;
 
 	version(win32_widgets) {
 		HMENU handle;
@@ -4796,7 +4807,10 @@ class MenuBar : Widget {
 
 	///
 	Menu addItem(Menu item) {
-		auto mbItem = new MenuItem(item.label, this.parentWindow);
+
+		subMenus ~= item;
+
+		auto mbItem = new MenuItem(item.label, null);// this.parentWindow); // I'ma add the child down below so hopefully this isn't too insane
 
 		addChild(mbItem);
 		items ~= mbItem;
@@ -5335,8 +5349,9 @@ class MenuItem : MouseActivatedWidget {
 	override int minHeight() { return Window.lineHeight + 4; }
 	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
 	override int maxWidth() {
-		if(cast(MenuBar) parent)
+		if(cast(MenuBar) parent) {
 			return Window.lineHeight / 2 * cast(int) label.length + 8;
+		}
 		return int.max;
 	}
 	///
