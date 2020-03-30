@@ -2748,6 +2748,8 @@ class WebSocket {
 			if(readSet is null)
 				readSet = new SocketSet();
 
+			loopExited = false;
+
 			outermost: while(!loopExited) {
 				readSet.reset();
 
