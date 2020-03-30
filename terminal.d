@@ -1048,7 +1048,7 @@ struct Terminal {
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
 			return !(defaultBackgroundColor & 0xf);
-		} version(TerminalDirectToEmulator) {
+		} else version(TerminalDirectToEmulator) {
 			return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 		} else {
 			// FIXME: there is probably a better way to do this
