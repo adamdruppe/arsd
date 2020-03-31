@@ -1234,7 +1234,7 @@ class TerminalEmulator {
 	private int scrollbackWidth_;
 	int scrollbackWidth() {
 		return screenWidth;
-		//return scrollbackWidth_; // FIME
+		//return scrollbackWidth_; // FIXME
 	}
 
 	/* virtual */ void notifyScrollbackAdded() {}
@@ -1310,7 +1310,7 @@ class TerminalEmulator {
 		else {
 			cls();
 			showScrollbackOnScreen(alternateScreen, currentScrollback, scrollbackReflow, currentScrollbackX);
-			notifyScrollbarPosition(currentScrollbackX, max - currentScrollback);
+			notifyScrollbarPosition(currentScrollbackX, scrollbackLength - currentScrollback - screenHeight);
 		}
 	}
 
