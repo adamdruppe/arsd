@@ -2126,7 +2126,6 @@ class ScrollableWidget : Widget {
 		} else version(win32_widgets) {
 			recomputeChildLayout();
 		} else static assert(0);
-
 	}
 
 	///
@@ -2474,6 +2473,16 @@ abstract class ScrollbarBase : Widget {
 	private int position_;
 
 	///
+	bool atEnd() {
+		return position_ + viewableArea_ >= max_;
+	}
+
+	///
+	bool atStart() {
+		return position_ == 0;
+	}
+
+	///
 	void setViewableArea(int a) {
 		viewableArea_ = a;
 		version(custom_widgets)
@@ -2720,7 +2729,7 @@ class HorizontalScrollbar : ScrollbarBase {
 		version(win32_widgets) {
 			SCROLLINFO info;
 			info.cbSize = info.sizeof;
-			info.nPage = a;
+			info.nPage = a + 1;
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
@@ -2828,7 +2837,7 @@ class VerticalScrollbar : ScrollbarBase {
 		version(win32_widgets) {
 			SCROLLINFO info;
 			info.cbSize = info.sizeof;
-			info.nPage = a;
+			info.nPage = a + 1;
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
@@ -3493,6 +3502,11 @@ class ScrollMessageWidget : Widget {
 		magic = true;
 	}
 
+	///
+	VerticalScrollbar verticalScrollBar() { return vsb; }
+	///
+	HorizontalScrollbar horizontalScrollBar() { return hsb; }
+
 	void notify() {
 		auto event = new Event("scroll", this);
 		event.dispatch();
@@ -3786,18 +3800,15 @@ class Window : Widget {
 								event.dispatch();
 							break;
 							case SB_THUMBTRACK:
-								auto event = new Event("scrolltrack", *widgetp);
+								// eh kinda lying but i like the real time update display
+								auto event = new Event("scrolltoposition", *widgetp);
 								event.intValue = pos;
 								event.dispatch();
-								/+
-								if(m == SB_THUMBTRACK) {
-									// the event loop doesn't seem to carry on with a requested redraw..
-									// so we request it to get our dirty bit set...
-									redraw();
-									// then we need to immediately actually redraw it too for instant feedback to user
+								// the event loop doesn't seem to carry on with a requested redraw..
+								// so we request it to get our dirty bit set...
+								// then we need to immediately actually redraw it too for instant feedback to user
+								if(redrawRequested)
 									actualRedraw();
-								}
-								+/
 							break;
 							default:
 						}

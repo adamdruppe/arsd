@@ -1100,10 +1100,10 @@ struct Terminal {
 
 		if(guiThread is null) {
 			guiThread = new Thread( {
-				auto window = new TerminalEmulatorWindow(&this);
+				auto window = new TerminalEmulatorWindow(&this, null);
 				mainWindow = window;
 				mainWindow.win.addEventListener((NewTerminalEvent t) {
-					auto nw = new TerminalEmulatorWindow(t.t);
+					auto nw = new TerminalEmulatorWindow(t.t, null);
 					t.t.tew = nw.tew;
 					t.t = null;
 					nw.show();
@@ -3582,7 +3582,6 @@ void main() {
 	getter.prompt = "> ";
 	getter.history = ["abcdefghijklmnopqrstuvwzyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 	terminal.writeln("\n" ~ getter.getline());
-
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	getter.dispose();
@@ -5906,14 +5905,28 @@ version(TerminalDirectToEmulator) {
 			return tew.terminalEmulator;
 		}
 
-		private this(Terminal* term) {
+		private TerminalEmulatorWindow parent;
+		private TerminalEmulatorWindow[] children;
+		private void childClosing(TerminalEmulatorWindow t) {
+			foreach(idx, c; children)
+				if(c is t)
+					children = children[0 .. idx] ~ children[idx + 1 .. $];
+		}
+		private void registerChild(TerminalEmulatorWindow t) {
+			children ~= t;
+		}
+
+		private this(Terminal* term, TerminalEmulatorWindow parent) {
+
+			this.parent = parent;
+			scope(success) if(parent) parent.registerChild(this);
+
 			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
 
 			smw = new ScrollMessageWidget(this);
 			tew = new TerminalEmulatorWidget(term, smw);
 
 			smw.addEventListener("scroll", () {
-				// import std.stdio; writeln(smw.position.x, " ", smw.position.y);
 				tew.terminalEmulator.scrollbackTo(smw.position.x, smw.position.y + tew.terminalEmulator.height);
 				redraw();
 			});
@@ -5923,6 +5936,27 @@ version(TerminalDirectToEmulator) {
 			setMenuAndToolbarFromAnnotatedCode(this);
 			if(integratedTerminalEmulatorConfiguration.menuExtensionsConstructor)
 				integratedTerminalEmulatorConfiguration.menuExtensionsConstructor(this);
+		}
+
+		TerminalEmulator.TerminalCell[] delegate(TerminalEmulator.TerminalCell[] i) parentFilter;
+
+		private void addScrollbackLineFromParent(TerminalEmulator.TerminalCell[] lineIn) {
+			if(parentFilter is null)
+				return;
+
+			auto line = parentFilter(lineIn);
+			if(line is null) return;
+
+			if(tew && tew.terminalEmulator) {
+				bool atBottom = smw.verticalScrollBar.atEnd && smw.horizontalScrollBar.atStart;
+				tew.terminalEmulator.addScrollbackLine(line);
+				tew.terminalEmulator.notifyScrollbackAdded();
+				if(atBottom) {
+					tew.terminalEmulator.notifyScrollbarPosition(0, int.max);
+					tew.terminalEmulator.scrollbackTo(0, int.max);
+					tew.redraw();
+				}
+			}
 		}
 
 		private TerminalEmulatorWidget tew;
@@ -5960,17 +5994,26 @@ version(TerminalDirectToEmulator) {
 				}
 
 				dialog((FilterParams p) {
-					// FIXME: this should update in real time... somehow.
-					auto nw = new TerminalEmulatorWindow(null);
-					nw.tew.terminalEmulator.toggleScrollLock();
-					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
+					auto nw = new TerminalEmulatorWindow(null, this);
+
+					nw.parentFilter = (TerminalEmulator.TerminalCell[] line) {
 						import std.algorithm;
 						import std.uni;
 						// omg autodecoding being kinda useful for once LOL
 						if(line.map!(c => c.hasNonCharacterData ? dchar(0) : (p.caseSensitive ? c.ch : c.ch.toLower)).
 							canFind(p.searchTerm))
-							nw.tew.terminalEmulator.addScrollbackLine(line);
+						{
+							// I might highlight the match too, but meh for now
+							return line;
+						}
+						return null;
+					};
+
+					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
+						if(auto l = nw.parentFilter(line))
+							nw.tew.terminalEmulator.addScrollbackLine(l);
 					}
+					nw.tew.terminalEmulator.toggleScrollLock();
 					nw.tew.terminalEmulator.drawScrollback();
 					nw.title = "Filter Display";
 					nw.show();
@@ -5981,9 +6024,12 @@ version(TerminalDirectToEmulator) {
 			@separator
 			void Clear() {
 				tew.terminalEmulator.clearScrollbackHistory();
-				//tew.terminalEmulator.cls();
-				// FIXME: move cursor back to 0,0
-				// tell the application to redraw too (maybe signal size changed)
+				tew.terminalEmulator.cls();
+				tew.terminalEmulator.moveCursor(0, 0);
+				if(tew.term) {
+					tew.term.windowSizeChanged = true;
+					tew.terminalEmulator.outgoingSignal.notify();
+				}
 				tew.redraw();
 			}
 
@@ -6039,6 +6085,11 @@ version(TerminalDirectToEmulator) {
 			this.parentWindow.win.onClosing = {
 				if(term)
 					term.hangedUp = true;
+
+				if(auto wi = cast(TerminalEmulatorWindow) this.parentWindow) {
+					if(wi.parent)
+						wi.parent.childClosing(wi);
+				}
 
 				// try to get it to terminate slightly more forcibly too, if possible
 				if(sigIntExtension)
@@ -6113,11 +6164,17 @@ version(TerminalDirectToEmulator) {
 			redraw();
 		}
 
+		override void addScrollbackLine(TerminalCell[] line) {
+			super.addScrollbackLine(line);
+			if(widget)
+			if(auto p = cast(TerminalEmulatorWindow) widget.parentWindow) {
+				foreach(child; p.children)
+					child.addScrollbackLineFromParent(line);
+			}
+		}
+
 		override void notifyScrollbackAdded() {
-			if(this.scrollbackLength > this.height)
-				widget.smw.setTotalArea(this.scrollbackWidth, this.scrollbackLength);
-			else
-				widget.smw.setTotalArea(this.width, this.height);
+			widget.smw.setTotalArea(this.scrollbackWidth > this.width ? this.scrollbackWidth : this.width, this.scrollbackLength > this.height ? this.scrollbackLength : this.height);
 		}
 
 		override void notifyScrollbarPosition(int x, int y) {
