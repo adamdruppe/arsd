@@ -3582,6 +3582,7 @@ void main() {
 	getter.prompt = "> ";
 	getter.history = ["abcdefghijklmnopqrstuvwzyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 	terminal.writeln("\n" ~ getter.getline());
+
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	getter.dispose();
@@ -4609,49 +4610,72 @@ class LineGetter {
 			import core.stdc.errno;
 
 			import core.sys.posix.unistd;
-			// reading directly to bypass any buffering
-			int retries = 16;
-			ubyte[16] buffer;
-			try_again:
-			auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
-			if(len <= 0) {
+
+			ubyte readOne() {
+				ubyte[1] buffer;
+				int tries = 0;
+				try_again:
+				if(tries > 30)
+					throw new Exception("terminal reply timed out");
+				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
 				if(len == -1) {
 					if(errno == EINTR)
 						goto try_again;
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
 						import core.thread;
 						Thread.sleep(10.msecs);
+						tries++;
 						goto try_again;
 					}
+				} else if(len == 0) {
+					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 				}
-				throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
-			}
-			regot:
-			auto got = buffer[0 .. len];
-			if(got.length < 6) {
-				auto len2 = read(terminal.fdIn, &buffer[len], buffer.length - len);
-				if(len2 <= 0)
-					throw new Exception("not enough cursor reply answer");
-				else {
-					len += len2;
-					goto regot;
-				}
-			}
-			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R') {
-				retries--;
-				if(retries > 0)
-					goto try_again;
-				throw new Exception("wrong answer for cursor position " ~ cast(string) got[1 .. $]);
-			}
-			auto gots = cast(char[]) got[2 .. $-1];
 
-			import std.string;
+				return buffer[0];
+			}
 
-			auto pieces = split(gots, ";");
-			if(pieces.length != 2) throw new Exception("wtf wrong answer on cursor position");
+			nextEscape:
+			while(readOne() != '\033') {}
+			if(readOne() != '[')
+				goto nextEscape;
 
-			startOfLineX = to!int(pieces[1]) - 1;
-			startOfLineY = to!int(pieces[0]) - 1;
+			int x, y;
+
+			// now we should have some numbers being like yyy;xxxR
+			// but there may be a ? in there too; DEC private mode format
+			// of the very same data.
+
+			x = 0;
+			y = 0;
+
+			auto b = readOne();
+
+			if(b == '?')
+				b = readOne(); // no big deal, just ignore and continue
+
+			nextNumberY:
+			if(b >= '0' || b <= '9') {
+				y *= 10;
+				y += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			if(b != ';')
+				goto nextNumberY;
+
+			nextNumberX:
+			b = readOne();
+			if(b >= '0' || b <= '9') {
+				x *= 10;
+				x += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			if(b != 'R')
+				goto nextEscape; // it wasn't the right thing it after all
+
+			startOfLineX = x - 1;
+			startOfLineY = y - 1;
 		}
 
 		// updating these too because I can with the more accurate info from above
