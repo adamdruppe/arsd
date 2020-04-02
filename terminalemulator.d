@@ -362,6 +362,9 @@ class TerminalEmulator {
 						start = idx;
 						end = selectionEnd;
 					}
+					if(start < 0 || end >= ((alternateScreenActive ? alternateScreen.length : normalScreen.length)))
+						return false;
+
 					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end]) {
 						cell.invalidated = true;
 						cell.selected = false;
@@ -1477,10 +1480,12 @@ class TerminalEmulator {
 			bool overflowed;
 			foreach(cell; line) {
 				cell.invalidated = true;
-				if(overflowed)
+				if(overflowed) {
 					screen[cursorY * screenWidth + cursorX] = overflowCell;
-				else
+					break;
+				} else {
 					screen[cursorY * screenWidth + cursorX] = cell;
+				}
 
 				if(cursorX == screenWidth-1) {
 					if(scrollbackReflow) {
@@ -1665,7 +1670,11 @@ class TerminalEmulator {
 			void clear() {
 				start = 0;
 				length_ = 0;
+				backing = null;
 			}
+
+			// FIXME: if scrollback hits limits the scroll bar needs
+			// to understand the circular buffer
 
 			void opOpAssign(string op : "~")(TerminalCell[] line) {
 				if(length_ < maxScrollback) {
@@ -1900,15 +1909,30 @@ class TerminalEmulator {
 			}
 		}
 
+		private int recalculationThreshold = 0;
 		public void addScrollbackLine(TerminalCell[] line) {
 			scrollbackBuffer ~= line;
 
-			if(!scrollbackReflow && line.length > scrollbackWidth_)
-				scrollbackWidth_ = cast(int) line.length;
-			scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
-			notifyScrollbackAdded();
+			if(scrollbackBuffer.length_ == ScrollbackBuffer.maxScrollback) {
+				recalculationThreshold++;
+				if(recalculationThreshold > 100) {
+					recalculateScrollbackLength();
+					notifyScrollbackAdded();
+					recalculationThreshold = 0;
+				}
+			} else {
+				if(!scrollbackReflow && line.length > scrollbackWidth_)
+					scrollbackWidth_ = cast(int) line.length;
+				scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
+				notifyScrollbackAdded();
+			}
+
 			if(!alternateScreenActive)
 				notifyScrollbarPosition(0, int.max);
+		}
+
+		protected int maxScrollbackLength() pure const @nogc nothrow {
+			return 1024;
 		}
 
 		bool insertMode = false;
@@ -1916,10 +1940,10 @@ class TerminalEmulator {
 			if(!alternateScreenActive && commitScrollback) {
 				// I am limiting this because obscenely long lines are kinda useless anyway and
 				// i don't want it to eat excessive memory when i spam some thing accidentally
-				if(currentScrollbackLine.length < 1024)
+				if(currentScrollbackLine.length < maxScrollbackLength())
 					addScrollbackLine(currentScrollbackLine.sliceTrailingWhitespace);
 				else
-					addScrollbackLine(currentScrollbackLine[0 .. 1024].sliceTrailingWhitespace);
+					addScrollbackLine(currentScrollbackLine[0 .. maxScrollbackLength()].sliceTrailingWhitespace);
 
 				currentScrollbackLine = null;
 				currentScrollbackLine.reserve(64);

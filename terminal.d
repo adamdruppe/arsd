@@ -1109,7 +1109,15 @@ struct Terminal {
 					nw.show();
 				});
 				tew = window.tew;
-				window.loop();
+				//try
+					window.loop();
+				/*
+				catch(Throwable t) {
+					import std.stdio;
+					stdout.writeln(t);
+					stdout.flush();
+				}
+				*/
 			});
 			guiThread.start();
 			guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
@@ -1813,9 +1821,12 @@ struct Terminal {
 	}
 	+/
 
-	void writePrintableString(in char[] s, ForceOption force = ForceOption.automatic) {
+	void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
 		// an escape character is going to mess things up. Actually any non-printable character could, but meh
 		// assert(s.indexOf("\033") == -1);
+
+		if(s.length == 0)
+			return;
 
 		// tracking cursor position
 		// FIXME: by grapheme?
@@ -1852,7 +1863,26 @@ struct Terminal {
 			+/
 		}
 
-		writeStringRaw(s);
+		version(TerminalDirectToEmulator) {
+			// this breaks up extremely long output a little as an aid to the
+			// gui thread; by breaking it up, it helps to avoid monopolizing the
+			// event loop. Easier to do here than in the thread itself because
+			// this one doesn't have escape sequences to break up so it avoids work.
+			while(s.length) {
+				auto len = s.length;
+				if(len > 1024 * 32) {
+					len = 1024 * 32;
+					// get to the start of a utf-8 sequence. kidna sorta.
+					while(len && (s[len] & 0x1000_0000))
+						len--;
+				}
+				auto next = s[0 .. len];
+				s = s[len .. $];
+				writeStringRaw(next);
+			}
+		} else {
+			writeStringRaw(s);
+		}
 	}
 
 	/* private */ bool _wrapAround = true;
@@ -1864,6 +1894,8 @@ struct Terminal {
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
 		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
+		if(writeBuffer.length >  1024 * 32)
+			flush();
 	}
 
 	/// Clears the screen.
@@ -6214,11 +6246,16 @@ version(TerminalDirectToEmulator) {
 		}
 
 		protected override void demandAttention() {
-			//window.requestAttention();
+			if(widget && widget.parentWindow)
+				widget.parentWindow.win.requestAttention();
 		}
 
 		protected override void copyToClipboard(string text) {
 			setClipboardText(widget.parentWindow.win, text);
+		}
+
+		override int maxScrollbackLength() const {
+			return int.max; // no scrollback limit for custom programs
 		}
 
 		protected override void pasteFromClipboard(void delegate(in char[]) dg) {
