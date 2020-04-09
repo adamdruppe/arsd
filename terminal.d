@@ -4146,6 +4146,37 @@ class LineGetter {
 				f ~= item;
 		}
 
+		/+
+		// if it is excessively long, let's trim it down by trying to
+		// group common sub-sequences together.
+		if(f.length > terminal.height * 3 / 4) {
+			import std.algorithm;
+			f.sort();
+
+			// see how many can be saved by just keeping going until there is
+			// no more common prefix. then commit that and keep on down the list.
+			// since it is sorted, if there is a commonality, it should appear quickly
+			string[] n;
+			string commonality = f[0];
+			size_t idx = 1;
+			while(idx < f.length) {
+				auto c = commonPrefix(commonality, f[idx]);
+				if(c.length > cursorPosition - start) {
+					commonality = c;
+				} else {
+					n ~= commonality;
+					commonality = f[idx];
+				}
+				idx++;
+			}
+			if(commonality.length)
+				n ~= commonality;
+
+			if(n.length)
+				f = n;
+		}
+		+/
+
 		return f;
 	}
 

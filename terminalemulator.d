@@ -210,7 +210,11 @@ class TerminalEmulator {
 		if(bracketedPasteMode)
 			sendToApplication("\033[200~");
 
-		enum MAX_PASTE_CHUNK = 4000;
+		version(use_libssh2)
+			enum MAX_PASTE_CHUNK = 4000;
+		else
+			enum MAX_PASTE_CHUNK = 1024 * 1024 * 10;
+
 		if(data.length > MAX_PASTE_CHUNK) {
 			// need to chunk it in order to receive echos, etc,
 			// to avoid deadlocks
