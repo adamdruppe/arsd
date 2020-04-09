@@ -4905,12 +4905,9 @@ class LineGetter {
 								cursorPosition--;
 						}
 						aligned(cursorPosition, -1);
-						if(!multiLineMode) {
-							if(cursorPosition < horizontalScrollPosition) {
-								horizontalScrollPosition--;
-								aligned(horizontalScrollPosition, -1);
-							}
-						}
+
+						if(cursorPosition < horizontalScrollPosition)
+							positionCursor();
 
 						redraw();
 					break;
@@ -4927,12 +4924,9 @@ class LineGetter {
 								cursorPosition = cast(int) line.length;
 						}
 						aligned(cursorPosition, 1);
-						if(!multiLineMode) {
-							if(cursorPosition >= horizontalScrollPosition + availableLineLength()) {
-								horizontalScrollPosition++;
-								aligned(horizontalScrollPosition, 1);
-							}
-						}
+
+						if(cursorPosition > horizontalScrollPosition + availableLineLength())
+							positionCursor();
 
 						redraw();
 					break;
