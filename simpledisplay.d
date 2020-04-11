@@ -105,6 +105,14 @@
 
 	See the examples and topics list below to learn more.
 
+	$(WARNING
+		There should only be one GUI thread per application,
+		and all windows should be created in it and your
+		event loop should run there.
+
+		To do otherwise is undefined behavior and has no
+		cross platform guarantees.
+	)
 
 	$(H2 About this documentation)
 
@@ -1339,6 +1347,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		parent = the parent window, if applicable
 	+/
 	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+		claimGuiThread();
+		version(sdpy_thread_checks) assert(thisIsGuiThread);
 		this._width = width;
 		this._height = height;
 		this.openglMode = opengl;
@@ -2383,7 +2393,7 @@ private:
 	}
 
 	// wake up event processor
-	bool eventWakeUp () {
+	static bool eventWakeUp () {
 		version(X11) {
 			import core.sys.posix.unistd : write;
 			ulong n = 1;
@@ -2528,6 +2538,31 @@ private:
 		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
 			if (sw is null || sw.closed) continue;
 			sw.processCustomEvents();
+		}
+
+		// run pending [runInGuiThread] delegates
+		more:
+		RunQueueMember* next;
+		synchronized(runInGuiThreadLock) {
+			if(runInGuiThreadQueue.length) {
+				next = runInGuiThreadQueue[0];
+				runInGuiThreadQueue = runInGuiThreadQueue[1 .. $];
+			} else {
+				next = null;
+			}
+		}
+
+		if(next) {
+			try {
+				next.dg();
+				next.thrown = null;
+			} catch(Throwable t) {
+				next.thrown = t;
+			}
+
+			next.signal.notify();
+
+			goto more;
 		}
 	}
 
@@ -2704,18 +2739,24 @@ struct EventLoop {
 		return EventLoop(0, null);
 	}
 
+	__gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
+
 	/// Construct an application-global event loop for yourself
 	/// See_Also: [SimpleWindow.setEventHandlers]
 	this(long pulseTimeout, void delegate() handlePulse) {
-		if(impl is null)
-			impl = new EventLoopImpl(pulseTimeout, handlePulse);
-		else {
-			if(pulseTimeout) {
-				impl.pulseTimeout = pulseTimeout;
-				impl.handlePulse = handlePulse;
+		synchronized(monitor) {
+			if(impl is null) {
+				claimGuiThread();
+				version(sdpy_thread_checks) assert(thisIsGuiThread);
+				impl = new EventLoopImpl(pulseTimeout, handlePulse);
+			} else {
+				if(pulseTimeout) {
+					impl.pulseTimeout = pulseTimeout;
+					impl.handlePulse = handlePulse;
+				}
 			}
+			impl.refcount++;
 		}
-		impl.refcount++;
 	}
 
 	~this() {
@@ -2752,7 +2793,7 @@ struct EventLoop {
 		return impl.signalHandler;
 	}
 
-	static EventLoopImpl* impl;
+	__gshared static EventLoopImpl* impl;
 }
 
 version(linux)
@@ -6992,6 +7033,81 @@ void flushGui() {
 		XFlush(dpy);
 	}
 }
+
+/++
+	Runs the given code in the GUI thread when its event loop
+	is available, blocking until it completes. This allows you
+	to create and manipulate windows from another thread without
+	invoking undefined behavior.
+
+	If this is the gui thread, it runs the code immediately.
+
+	If no gui thread exists yet, the current thread is assumed
+	to be it. Attempting to create windows or run the event loop
+	in any other thread will cause an assertion failure.
+
+
+	$(TIP
+		Did you know you can use UFCS on delegate literals?
+
+		() {
+			// code here
+		}.runInGuiThread;
+	)
+
+	History:
+		Added April 10, 2020 (v7.2.0)
++/
+void runInGuiThread(scope void delegate() dg) @trusted {
+	claimGuiThread();
+
+	if(thisIsGuiThread) {
+		dg();
+		return;
+	}
+
+	import core.sync.semaphore;
+	static Semaphore sc;
+	if(sc is null)
+		sc = new Semaphore();
+
+	static RunQueueMember* rqm;
+	if(rqm is null)
+		rqm = new RunQueueMember;
+	rqm.dg = cast(typeof(rqm.dg)) dg;
+	rqm.signal = sc;
+	rqm.thrown = null;
+
+	synchronized(runInGuiThreadLock) {
+		runInGuiThreadQueue ~= rqm;
+	}
+
+	if(!SimpleWindow.eventWakeUp())
+		throw new Error("runInGuiThread impossible; eventWakeUp failed");
+
+	rqm.signal.wait();
+
+	if(rqm.thrown)
+		throw rqm.thrown;
+}
+
+private void claimGuiThread() {
+	import core.atomic;
+	if(cas(&guiThreadExists, false, true))
+		thisIsGuiThread = true;
+}
+
+private struct RunQueueMember {
+	void delegate() dg;
+	import core.sync.semaphore;
+	Semaphore signal;
+	Throwable thrown;
+}
+
+private __gshared RunQueueMember*[] runInGuiThreadQueue;
+private __gshared Object runInGuiThreadLock = new Object; // intentional CTFE
+private bool thisIsGuiThread = false;
+private shared bool guiThreadExists = false;
 
 /// Used internal to dispatch events to various classes.
 interface CapableOfHandlingNativeEvent {

@@ -1280,6 +1280,9 @@ struct Terminal {
 				writeln("\n\n<exited>");
 				setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
 				tew.term = null;
+
+				if(integratedTerminalEmulatorConfiguration.closeOnExit)
+					tew.parentWindow.close();
 			} else
 			if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 				writeStringRaw("\033[23;0t"); // restore window title from the stack
@@ -5866,7 +5869,17 @@ int approximate16Color(RGB color) {
 
 version(TerminalDirectToEmulator) {
 
-	///
+	/++
+		Indicates the TerminalDirectToEmulator features
+		are present. You can check this with `static if`.
+
+		$(WARNING
+			This will cause the [Terminal] constructor to spawn a GUI thread with [arsd.minigui]/[arsd.simpledisplay].
+
+			This means you can NOT use those libraries in your
+			own thing without using the [arsd.simpledisplay.runInGuiThread] helper since otherwise the main thread is inaccessible, since having two different threads creating event loops or windows is undefined behavior with those libraries.
+		)
+	+/
 	enum IntegratedEmulator = true;
 
 	/++
@@ -5902,10 +5915,22 @@ version(TerminalDirectToEmulator) {
 		/// ditto
 		int fontSize = 14;
 
-		/// Requested initial terminal size in character cells. You may not actually get exactly this.
+		/++
+			Requested initial terminal size in character cells. You may not actually get exactly this.
+		+/
 		int initialWidth = 80;
 		/// ditto
 		int initialHeight = 40;
+
+		/++
+			If `true`, the window will close automatically when the main thread exits.
+			Otherwise, the window will remain open so the user can work with output before
+			it disappears.
+
+			History:
+				Added April 10, 2020 (v7.2.0)
+		+/
+		bool closeOnExit = false;
 
 		/++
 			Gives you a chance to modify the window as it is constructed. Intended
