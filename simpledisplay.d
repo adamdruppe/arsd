@@ -2387,7 +2387,7 @@ public:
 private:
 	private import core.time : MonoTime;
 
-	version(X11) {
+	version(Posix) {
 		__gshared int customEventFDRead = -1;
 		__gshared int customEventFDWrite = -1;
 		__gshared int customSignalFD = -1;
