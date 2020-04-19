@@ -101,7 +101,7 @@ class ColorPickerDialog : Dialog {
 			override int minHeight() { return hslImage ? hslImage.height : 4; }
 			override int maxHeight() { return hslImage ? hslImage.height : 4; }
 			override int marginBottom() { return 4; }
-			override void paint(ScreenPainter painter) {
+			override void paint(WidgetPainter painter) {
 				if(hslImage)
 					hslImage.drawAt(painter, Point(0, 0));
 			}
@@ -223,7 +223,7 @@ class ColorPickerDialog : Dialog {
 				super(s);
 			}
 
-			override void paint(ScreenPainter painter) {
+			override void paint(WidgetPainter painter) {
 				auto c = currentColor();
 
 				auto c1 = alphaBlend(c, Color(64, 64, 64));

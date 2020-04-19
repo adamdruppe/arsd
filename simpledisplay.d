@@ -78,7 +78,7 @@
 	On Win32, you can pass `-L/subsystem:windows` if you don't want a
 	console to be automatically allocated.
 
-	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd.
+	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd. For OpenGL, add `-L-framework -LOpenGL` to the build command.
 
 	On Ubuntu, you might need to install X11 development libraries to
 	successfully link.
@@ -1408,6 +1408,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		_width = 1;
 		_height = 1;
 		nativeMapping[nativeWindow] = this;
+
+		beingOpenKeepsAppOpen = false;
+
 		CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 		_suppressDestruction = true; // so it doesn't try to close
 	}
@@ -8326,6 +8329,7 @@ version(Windows) {
 			}
 
 			int style;
+			uint flags = WS_EX_ACCEPTFILES; // accept drag-drop files
 
 			// FIXME: windowType and customizationFlags
 			final switch(windowType) {
@@ -8342,17 +8346,17 @@ version(Windows) {
 				case WindowTypes.popupMenu:
 				case WindowTypes.notification:
 					style = WS_POPUP;
+					flags |= WS_EX_NOACTIVATE;
 				break;
 				case WindowTypes.nestedChild:
 					style = WS_CHILD;
 				break;
 			}
 
-			uint flags = WS_EX_ACCEPTFILES; // accept drag-drop files
 			if ((customizationFlags & WindowFlags.extraComposite) != 0)
 				flags |= WS_EX_LAYERED; // composite window for better performance and effects support
 
-			hwnd = CreateWindowEx(flags, cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
+			hwnd = CreateWindowEx(flags, cn.ptr, toWStringz(title), style | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, // the clip children helps avoid flickering in minigui and doesn't seem to harm other use (mostly, sdpy is no child windows anyway) sooo i think it is ok
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
@@ -8488,7 +8492,7 @@ version(Windows) {
 		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
 
-			void mouseEvent(bool isScreen = false) {
+			void mouseEvent(bool isScreen, ulong mods) {
 				auto x = LOWORD(lParam);
 				auto y = HIWORD(lParam);
 				if(isScreen) {
@@ -8503,7 +8507,7 @@ version(Windows) {
 				mouse.y = y + offsetY;
 
 				wind.mdx(mouse);
-				mouse.modifierState = cast(int) wParam;
+				mouse.modifierState = cast(int) mods;
 				mouse.window = wind;
 
 				if(wind.handleMouseEvent)
@@ -8597,61 +8601,67 @@ version(Windows) {
 						wind.handleKeyEvent(ev);
 				break;
 				case 0x020a /*WM_MOUSEWHEEL*/:
+					// send click
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
-					mouseEvent(true);
+					mouseEvent(true, LOWORD(wParam));
+
+					// also send release
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
+					mouseEvent(true, LOWORD(wParam));
 				break;
 				case WM_MOUSEMOVE:
 					mouse.type = cast(MouseEventType) 0;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_LBUTTONDOWN:
 				case WM_LBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = MouseButton.left;
 					mouse.doubleClick = msg == WM_LBUTTONDBLCLK;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_LBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
 					mouse.button = MouseButton.left;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_RBUTTONDOWN:
 				case WM_RBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = MouseButton.right;
 					mouse.doubleClick = msg == WM_RBUTTONDBLCLK;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_RBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
 					mouse.button = MouseButton.right;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_MBUTTONDOWN:
 				case WM_MBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = MouseButton.middle;
 					mouse.doubleClick = msg == WM_MBUTTONDBLCLK;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_MBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
 					mouse.button = MouseButton.middle;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				break;
 				case WM_XBUTTONDOWN:
 				case WM_XBUTTONDBLCLK:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
 					mouse.doubleClick = msg == WM_XBUTTONDBLCLK;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				return 1; // MSDN says special treatment here, return TRUE to bypass simulation programs
 				case WM_XBUTTONUP:
 					mouse.type = cast(MouseEventType) 2;
 					mouse.button = HIWORD(wParam) == 1 ? MouseButton.backButton : MouseButton.forwardButton;
-					mouseEvent();
+					mouseEvent(false, wParam);
 				return 1; // see: https://msdn.microsoft.com/en-us/library/windows/desktop/ms646246(v=vs.85).aspx
 
 				default: return 1;

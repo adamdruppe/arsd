@@ -89,5 +89,7 @@ unittest {
 		assert(mvd!foo(new DerivedClass, new DerivedClass) == 3);
 		assert(mvd!foo(new OtherClass, new OtherClass) == 1);
 		assert(mvd!foo(new OtherClass, new MyClass) == 1);
+		assert(mvd!foo(new DerivedClass, new DerivedClass) == 3);
+		assert(mvd!foo(new OtherClass, new MyClass) == 1);
 	}
 }

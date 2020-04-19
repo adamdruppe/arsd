@@ -1,5 +1,7 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// osx style menu search.
+
 // would be cool for a scroll bar to have marking capabilities
 // kinda like vim's marks just on clicks etc and visual representation
 // generically. may be cool to add an up arrow to the bottom too
@@ -301,13 +303,19 @@ abstract class ComboboxBase : Widget {
 		event.dispatch();
 	}
 
-	override int minHeight() { return Window.lineHeight + 4; }
-	override int maxHeight() { return Window.lineHeight + 4; }
+	version(win32_widgets) {
+		override int minHeight() { return Window.lineHeight + 6; }
+		override int maxHeight() { return Window.lineHeight + 6; }
+	} else {
+		override int minHeight() { return Window.lineHeight + 4; }
+		override int maxHeight() { return Window.lineHeight + 4; }
+	}
 
 	version(custom_widgets) {
 		SimpleWindow dropDown;
 		void popup() {
 			auto w = width;
+			// FIXME: suggestedDropdownHeight see below
 			auto h = cast(int) this.options.length * Window.lineHeight + 8;
 
 			auto coord = this.globalCoordinates();
@@ -396,7 +404,21 @@ class DropDownSelection : ComboboxBase {
 			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 
 		}
+	}
 
+	version(win32_widgets)
+	override void registerMovement() {
+		version(win32_widgets) {
+			if(hwnd) {
+				auto pos = getChildPositionRelativeToParentHwnd(this);
+				// the height given to this from Windows' perspective is supposed
+				// to include the drop down's height. so I add to it to give some
+				// room for that.
+				// FIXME: maybe make the subclass provide a suggestedDropdownHeight thing
+				MoveWindow(hwnd, pos[0], pos[1], width, height + 200, true);
+			}
+		}
+		sendResizeEvent();
 	}
 
 }
@@ -448,7 +470,7 @@ class FreeEntrySelection : ComboboxBase {
 class ComboBox : ComboboxBase {
 	this(Widget parent = null) {
 		version(win32_widgets)
-			super(1 /* CBS_SIMPLE */, parent);
+			super(1 /* CBS_SIMPLE */ | CBS_NOINTEGRALHEIGHT, parent);
 		else version(custom_widgets) {
 			super(parent);
 			lineEdit = new LineEdit(this);
@@ -1054,15 +1076,44 @@ version(win32_widgets) {
 		//assert(0, to!string(hWnd) ~ " :: " ~ to!string(TextEdit.nativeMapping)); // not supposed to happen
 	}
 
+	extern(Windows)
+	private
+	int HookedWndProcBSGROUPBOX_HACK(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+		if(iMessage == WM_ERASEBKGND) {
+			auto dc = GetDC(hWnd);
+			auto b = SelectObject(dc, GetSysColorBrush(COLOR_3DFACE));
+			auto p = SelectObject(dc, GetStockObject(NULL_PEN));
+			RECT r;
+			GetWindowRect(hWnd, &r);
+			// since the pen is null, to fill the whole space, we need the +1 on both.
+			gdi.Rectangle(dc, 0, 0, r.right - r.left + 1, r.bottom - r.top + 1);
+			SelectObject(dc, p);
+			SelectObject(dc, b);
+			ReleaseDC(hWnd, dc);
+			return 1;
+		}
+		return HookedWndProc(hWnd, iMessage, wParam, lParam);
+	}
+
 	// className MUST be a string literal
 	void createWin32Window(Widget p, const(wchar)[] className, string windowText, DWORD style, DWORD extStyle = 0) {
 		assert(p.parentWindow !is null);
 		assert(p.parentWindow.win.impl.hwnd !is null);
 
+		auto bsgroupbox = style == BS_GROUPBOX;
+
 		HWND phwnd;
-		if(p.parent !is null && p.parent.hwnd !is null)
-			phwnd = p.parent.hwnd;
-		else
+
+		auto wtf = p.parent;
+		while(wtf) {
+			if(wtf.hwnd !is null) {
+				phwnd = wtf.hwnd;
+				break;
+			}
+			wtf = wtf.parent;
+		}
+
+		if(phwnd is null)
 			phwnd = p.parentWindow.win.impl.hwnd;
 
 		assert(phwnd !is null);
@@ -1070,6 +1121,8 @@ version(win32_widgets) {
 		WCharzBuffer wt = WCharzBuffer(windowText);
 
 		style |= WS_VISIBLE | WS_CHILD;
+		//if(className != WC_TABCONTROL)
+			style |= WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 		p.hwnd = CreateWindowExW(extStyle, className.ptr, wt.ptr, style,
 				CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
 				phwnd, null, cast(HINSTANCE) GetModuleHandle(null), null);
@@ -1093,6 +1146,9 @@ version(win32_widgets) {
 		p.simpleWindowWrappingHwnd.beingOpenKeepsAppOpen = false;
 		Widget.nativeMapping[p.hwnd] = p;
 
+		if(bsgroupbox)
+		p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProcBSGROUPBOX_HACK);
+		else
 		p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 
 		EnumChildWindows(p.hwnd, &childHandler, cast(LPARAM) cast(void*) p);
@@ -1149,6 +1205,11 @@ struct WidgetPainter {
 */
 class Widget {
 	mixin LayoutInfo!();
+
+	protected void sendResizeEvent() {
+		auto event = new Event("resize", this);
+		event.sendDirectly();
+	}
 
 	deprecated("Change ScreenPainter to WidgetPainter")
 	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
@@ -1450,6 +1511,7 @@ class Widget {
 				MoveWindow(hwnd, pos[0], pos[1], width, height, true);
 			}
 		}
+		sendResizeEvent();
 	}
 
 	Window parentWindow;
@@ -1741,8 +1803,34 @@ class OpenGlWidget : Widget {
 	///
 	this(Widget parent) {
 		this.parentWindow = parent.parentWindow;
-		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, this.parentWindow.win);
+
+		SimpleWindow pwin = this.parentWindow.win;
+
+
+		version(win32_widgets) {
+			HWND phwnd;
+			auto wtf = parent;
+			while(wtf) {
+				if(wtf.hwnd) {
+					phwnd = wtf.hwnd;
+					break;
+				}
+				wtf = wtf.parent;
+			}
+			// kinda a hack here just because the ctor below just needs a SimpleWindow wrapper....
+			if(phwnd)
+				pwin = new SimpleWindow(phwnd);
+		}
+
+		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, pwin);
 		super(parent);
+
+		/*
+		win.onFocusChange = (bool getting) {
+			if(getting)
+				this.focus();
+		};
+		*/
 
 		version(win32_widgets) {
 			Widget.nativeMapping[win.hwnd] = this;
@@ -1799,6 +1887,9 @@ class OpenGlWidget : Widget {
 		else
 			auto pos = getChildPositionRelativeToParentOrigin(this);
 		win.moveResize(pos[0], pos[1], width, height);
+
+		win.setAsCurrentOpenGlContext();
+		sendResizeEvent();
 	}
 
 	//void delegate() drawFrame;
@@ -3118,16 +3209,8 @@ class TabWidget : Widget {
 	}
 
 	override void recomputeChildLayout() {
-		this.registerMovement();
 		version(win32_widgets) {
-
-			// Windows doesn't actually parent widgets to the
-			// tab control, so we will temporarily pretend this isn't
-			// a native widget as we do the changes. A bit of a filthy
-			// hack, but a functional one.
-			auto hwnd = this.hwnd;
-			this.hwnd = null;
-			scope(exit) this.hwnd = hwnd;
+			this.registerMovement();
 
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
@@ -3144,6 +3227,7 @@ class TabWidget : Widget {
 				child.recomputeChildLayout();
 			}
 		} else version(custom_widgets) {
+			this.registerMovement();
 			foreach(child; children) {
 				child.x = 2;
 				child.y = tabBarHeight + 2; // for the border
@@ -3350,7 +3434,7 @@ class TabWidgetPage : Widget {
 		this.title = title;
 		super(parent);
 
-		/*
+		///*
 		version(win32_widgets) {
 			static bool classRegistered = false;
 			if(!classRegistered) {
@@ -3358,6 +3442,7 @@ class TabWidgetPage : Widget {
 				WNDCLASSEX wc;
 				wc.cbSize = wc.sizeof;
 				wc.hInstance = hInstance;
+				wc.hbrBackground = cast(HBRUSH) (COLOR_3DFACE+1); // GetStockObject(WHITE_BRUSH);
 				wc.lpfnWndProc = &DefWindowProc;
 				wc.lpszClassName = "arsd_minigui_TabWidgetPage"w.ptr;
 				if(!RegisterClassExW(&wc))
@@ -3368,7 +3453,7 @@ class TabWidgetPage : Widget {
 
 			createWin32Window(this, "arsd_minigui_TabWidgetPage"w, "", 0);
 		}
-		*/
+		//*/
 	}
 
 	override int minHeight() {
@@ -3500,6 +3585,17 @@ class ScrollMessageWidget : Widget {
 		tabStop = false;
 		container.tabStop = false;
 		magic = true;
+	}
+
+	///
+	void scrollUp() {
+		vsb.setPosition(vsb.position - 1);
+		notify();
+	}
+	/// Ditto
+	void scrollDown() {
+		vsb.setPosition(vsb.position + 1);
+		notify();
 	}
 
 	///
@@ -4039,6 +4135,8 @@ class Window : Widget {
 		event.key = ev.key;
 		event.state = ev.modifierState;
 		event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
+		event.altKey = (ev.modifierState & ModifierState.alt) ? true : false;
+		event.ctrlKey = (ev.modifierState & ModifierState.ctrl) ? true : false;
 		event.dispatch();
 
 		return true;
@@ -4095,6 +4193,7 @@ class Window : Widget {
 				event = new Event("click", ele);
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
+				event.state = ev.modifierState;
 				event.button = ev.button;
 				event.buttonLinear = ev.buttonLinear;
 				event.dispatch();
@@ -6607,6 +6706,16 @@ class Event {
 	string stringValue; ///
 
 	bool shiftKey; ///
+	/++
+		NOTE: only set on key events right now
+
+		History:
+			Added April 15, 2020
+	+/
+	bool ctrlKey;
+
+	/// ditto
+	bool altKey;
 
 	private bool isBubbling;
 

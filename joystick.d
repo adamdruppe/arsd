@@ -117,6 +117,10 @@ version(Windows) {
 	WindowsXInput wxi;
 }
 
+version(OSX) {
+	struct JoystickState {}
+}
+
 JoystickState[4] joystickState;
 
 version(linux) {

@@ -234,10 +234,10 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 							if(update.buttonWasJustPressed(l1)) game.snes[L] = true;
 							if(update.buttonWasJustPressed(r1)) game.snes[R] = true;
 							// note: no need to check analog stick here cuz joystick.d already does it for us (per old playstation tradition)
-							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < -20000) game.snes[Left] = true;
-							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > 20000) game.snes[Right] = true;
-							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < -20000) game.snes[Up] = true;
-							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > 20000) game.snes[Down] = true;
+							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < -8) game.snes[Left] = true;
+							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > 8) game.snes[Right] = true;
+							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < -8) game.snes[Up] = true;
+							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > 8) game.snes[Down] = true;
 
 							if(update.buttonWasJustReleased(square)) game.snes[Y] = false;
 							if(update.buttonWasJustReleased(triangle)) game.snes[X] = false;
@@ -247,14 +247,15 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 							if(update.buttonWasJustReleased(start)) game.snes[Start] = false;
 							if(update.buttonWasJustReleased(l1)) game.snes[L] = false;
 							if(update.buttonWasJustReleased(r1)) game.snes[R] = false;
-							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > -20000) game.snes[Left] = false;
-							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < 20000) game.snes[Right] = false;
-							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > -20000) game.snes[Up] = false;
-							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < 20000) game.snes[Down] = false;
+							if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > -8) game.snes[Left] = false;
+							if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < 8) game.snes[Right] = false;
+							if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > -8) game.snes[Up] = false;
+							if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < 8) game.snes[Down] = false;
 
 						}
 
 					} else static if(__traits(isSame, Button, XBox360Buttons)) {
+					static assert(0);
 						// XBox style mapping
 						// the reason this exists is if the programmer wants to use the xbox details, but
 						// might also want the basic controller in here. joystick.d already does translations

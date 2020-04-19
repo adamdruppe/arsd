@@ -617,7 +617,13 @@ struct var {
 	// if it is var, we'll just blit it over
 	public var opAssign(T)(T t) if(!is(T == var)) {
 		static if(__traits(compiles, this = t.toArsdJsvar())) {
-			this = t.toArsdJsvar();
+			static if(__traits(compiles, t is null)) {
+				if(t is null)
+					this = null;
+				else
+					this = t.toArsdJsvar();
+			} else
+				this = t.toArsdJsvar();
 		} else static if(isFloatingPoint!T) {
 			this._type = Type.Floating;
 			this._payload._floating = t;
@@ -943,7 +949,15 @@ struct var {
 				auto pl = this._payload._array;
 				static if(isSomeString!T) {
 					return to!string(pl);
-				} else static if(isArray!T) {
+				} else static if(is(T == E[N], E, size_t N)) {
+					T ret;
+					foreach(i; 0 .. N) {
+						if(i >= pl.length)
+							break;
+						ret[i] = pl[i].get!E;
+					}
+					return ret;
+				} else static if(is(T == E[], E)) {
 					T ret;
 					static if(is(ElementType!T == void)) {
 						static assert(0, "try wrapping the function to get rid of void[] args");
@@ -1364,6 +1378,11 @@ struct var {
 	static var fromJson(string json) {
 		auto decoded = parseJSON(json);
 		return var.fromJsonValue(decoded);
+	}
+
+	static var fromJsonFile(string filename) {
+		import std.file;
+		return var.fromJson(readText(filename));
 	}
 
 	static var fromJsonValue(JSONValue v) {
