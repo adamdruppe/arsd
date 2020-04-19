@@ -685,6 +685,11 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 	PngHeader h = getHeader(png);
 
+	if(h.depth == 0)
+		throw new Exception("depth of zero makes no sense");
+	if(h.width == 0)
+		throw new Exception("width zero?!!?!?!");
+
 	size_t bytesPerLine;
 	switch(h.type) {
 		case 0:

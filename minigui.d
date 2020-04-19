@@ -1093,7 +1093,7 @@ version(win32_widgets) {
 		p.simpleWindowWrappingHwnd.beingOpenKeepsAppOpen = false;
 		Widget.nativeMapping[p.hwnd] = p;
 
-		p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+		p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 
 		EnumChildWindows(p.hwnd, &childHandler, cast(LPARAM) cast(void*) p);
 
@@ -1113,7 +1113,7 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	p.hwnd = hwnd;
 	p.implicitlyCreated = true;
 	Widget.nativeMapping[p.hwnd] = p;
-	p.originalWindowProcedure = cast(WNDPROC) SetWindowLong(p.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+	p.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(p.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 	return true;
 }
 
@@ -1152,6 +1152,39 @@ class Widget {
 
 	deprecated("Change ScreenPainter to WidgetPainter")
 	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
+
+	Menu contextMenu(int x, int y) { return null; }
+
+	final bool showContextMenu(int x, int y, int screenX = -2, int screenY = -2) {
+		if(parentWindow is null || parentWindow.win is null) return false;
+
+		auto menu = this.contextMenu(x, y);
+		if(menu is null)
+			return false;
+
+		version(win32_widgets) {
+			// FIXME: if it is -1, -1, do it at the current selection location instead
+			// tho the corner of the window, whcih it does now, isn't the literal worst.
+
+			if(screenX < 0 && screenY < 0) {
+				auto p = this.globalCoordinates();
+				if(screenX == -2)
+					p.x += x;
+				if(screenY == -2)
+					p.y += y;
+
+				screenX = p.x;
+				screenY = p.y;
+			}
+
+			if(!TrackPopupMenuEx(menu.handle, 0, screenX, screenY, parentWindow.win.impl.hwnd, null))
+				throw new Exception("TrackContextMenuEx");
+		} else version(custom_widgets) {
+			menu.popup(this, x, y);
+		}
+
+		return true;
+	}
 
 	///
 	@scriptable
@@ -1713,7 +1746,7 @@ class OpenGlWidget : Widget {
 
 		version(win32_widgets) {
 			Widget.nativeMapping[win.hwnd] = this;
-			this.originalWindowProcedure = cast(WNDPROC) SetWindowLong(win.hwnd, GWL_WNDPROC, cast(LONG) &HookedWndProc);
+			this.originalWindowProcedure = cast(WNDPROC) SetWindowLongPtr(win.hwnd, GWL_WNDPROC, cast(size_t) &HookedWndProc);
 		} else {
 			win.setEventHandlers(
 				(MouseEvent e) {
@@ -1862,6 +1895,7 @@ enum ScrollBarShowPolicy {
 
 /++
 FIXME ScrollBarShowPolicy
+FIXME: use the ScrollMessageWidget in here now that it exists
 +/
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
@@ -2092,7 +2126,6 @@ class ScrollableWidget : Widget {
 		} else version(win32_widgets) {
 			recomputeChildLayout();
 		} else static assert(0);
-
 	}
 
 	///
@@ -2291,13 +2324,53 @@ private class ScrollableContainerWidget : Widget {
 		horizontalScrollBar.showing_ = false;
 		verticalScrollBar.showing_ = false;
 
-		horizontalScrollBar.addEventListener(EventType.change, () {
+		horizontalScrollBar.addEventListener("scrolltonextline", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position + 1);
 			sw.horizontalScrollTo(horizontalScrollBar.position);
 		});
-		verticalScrollBar.addEventListener(EventType.change, () {
+		horizontalScrollBar.addEventListener("scrolltopreviousline", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position - 1);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltonextline", {
+			verticalScrollBar.setPosition(verticalScrollBar.position + 1);
 			sw.verticalScrollTo(verticalScrollBar.position);
 		});
-
+		verticalScrollBar.addEventListener("scrolltopreviousline", {
+			verticalScrollBar.setPosition(verticalScrollBar.position - 1);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltonextpage", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position + horizontalScrollBar.step_);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltopreviouspage", {
+			horizontalScrollBar.setPosition(horizontalScrollBar.position - horizontalScrollBar.step_);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltonextpage", {
+			verticalScrollBar.setPosition(verticalScrollBar.position + verticalScrollBar.step_);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltopreviouspage", {
+			verticalScrollBar.setPosition(verticalScrollBar.position - verticalScrollBar.step_);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltoposition", (Event event) {
+			horizontalScrollBar.setPosition(event.intValue);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltoposition", (Event event) {
+			verticalScrollBar.setPosition(event.intValue);
+			sw.verticalScrollTo(verticalScrollBar.position);
+		});
+		horizontalScrollBar.addEventListener("scrolltrack", (Event event) {
+			horizontalScrollBar.setPosition(event.intValue);
+			sw.horizontalScrollTo(horizontalScrollBar.position);
+		});
+		verticalScrollBar.addEventListener("scrolltrack", (Event event) {
+			verticalScrollBar.setPosition(event.intValue);
+		});
 
 		super(parent);
 	}
@@ -2400,12 +2473,26 @@ abstract class ScrollbarBase : Widget {
 	private int position_;
 
 	///
+	bool atEnd() {
+		return position_ + viewableArea_ >= max_;
+	}
+
+	///
+	bool atStart() {
+		return position_ == 0;
+	}
+
+	///
 	void setViewableArea(int a) {
 		viewableArea_ = a;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	void setMax(int a) {
 		max_ = a;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	int max() {
@@ -2413,7 +2500,15 @@ abstract class ScrollbarBase : Widget {
 	}
 	///
 	void setPosition(int a) {
+		if(a == int.max)
+			a = max;
 		position_ = max ? a : 0;
+		if(position_ + viewableArea_ > max)
+			position_ = max - viewableArea_;
+		if(position_ < 0)
+			position_ = 0;
+		version(custom_widgets)
+			redraw();
 	}
 	///
 	int position() {
@@ -2428,6 +2523,7 @@ abstract class ScrollbarBase : Widget {
 		return step_;
 	}
 
+	// FIXME: remove this.... maybe
 	protected void informProgramThatUserChangedPosition(int n) {
 		position_ = n;
 		auto evt = new Event(EventType.change, this);
@@ -2561,6 +2657,8 @@ class MouseTrackingWidget : Widget {
 			redraw();
 		});
 
+		int lpx, lpy;
+
 		addEventListener(EventType.mousemove, (Event event) {
 			auto oh = hovering;
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
@@ -2589,8 +2687,13 @@ class MouseTrackingWidget : Widget {
 			if(positionY < 0)
 				positionY = 0;
 
-			auto evt = new Event(EventType.change, this);
-			evt.sendDirectly();
+			if(positionX != lpx || positionY != lpy) {
+				auto evt = new Event(EventType.change, this);
+				evt.sendDirectly();
+
+				lpx = positionX;
+				lpy = positionY;
+			}
 
 			redraw();
 		});
@@ -2608,8 +2711,8 @@ class MouseTrackingWidget : Widget {
 	}
 }
 
-version(custom_widgets)
-private
+//version(custom_widgets)
+//private
 class HorizontalScrollbar : ScrollbarBase {
 
 	version(custom_widgets) {
@@ -2626,11 +2729,13 @@ class HorizontalScrollbar : ScrollbarBase {
 		version(win32_widgets) {
 			SCROLLINFO info;
 			info.cbSize = info.sizeof;
-			info.nPage = a;
+			info.nPage = a + 1;
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
-			// intentionally blank
+			thumb.positionX = thumbPosition;
+			thumb.thumbWidth = thumbSize;
+			thumb.redraw();
 		} else static assert(0);
 
 	}
@@ -2644,6 +2749,10 @@ class HorizontalScrollbar : ScrollbarBase {
 			info.nMax = max;
 			info.fMask = SIF_RANGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionX = thumbPosition;
+			thumb.thumbWidth = thumbSize;
+			thumb.redraw();
 		}
 	}
 
@@ -2676,11 +2785,19 @@ class HorizontalScrollbar : ScrollbarBase {
 			auto rightButton = new ArrowButton(ArrowDirection.right, vl);
 			rightButton.setClickRepeat(scrollClickRepeatInterval);
 
+			leftButton.tabStop = false;
+			rightButton.tabStop = false;
+			thumb.tabStop = false;
+
 			leftButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position - step());
+				auto ev = new Event("scrolltopreviousline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position - step());
 			});
 			rightButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position + step());
+				auto ev = new Event("scrolltonextline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position + step());
 			});
 
 			thumb.thumbWidth = this.minWidth;
@@ -2688,7 +2805,11 @@ class HorizontalScrollbar : ScrollbarBase {
 
 			thumb.addEventListener(EventType.change, () {
 				auto sx = thumb.positionX * max() / thumb.width;
-				informProgramThatUserChangedPosition(sx);
+				//informProgramThatUserChangedPosition(sx);
+
+				auto ev = new Event("scrolltoposition", this);
+				ev.intValue = sx;
+				ev.dispatch();
 			});
 		}
 	}
@@ -2698,8 +2819,8 @@ class HorizontalScrollbar : ScrollbarBase {
 	override int minWidth() { return 48; }
 }
 
-version(custom_widgets)
-private
+//version(custom_widgets)
+//private
 class VerticalScrollbar : ScrollbarBase {
 
 	version(custom_widgets) {
@@ -2716,11 +2837,13 @@ class VerticalScrollbar : ScrollbarBase {
 		version(win32_widgets) {
 			SCROLLINFO info;
 			info.cbSize = info.sizeof;
-			info.nPage = a;
+			info.nPage = a + 1;
 			info.fMask = SIF_PAGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
 		} else version(custom_widgets) {
-			// intentionally blank
+			thumb.positionY = thumbPosition;
+			thumb.thumbHeight = thumbSize;
+			thumb.redraw();
 		} else static assert(0);
 
 	}
@@ -2734,6 +2857,10 @@ class VerticalScrollbar : ScrollbarBase {
 			info.nMax = max;
 			info.fMask = SIF_RANGE;
 			SetScrollInfo(hwnd, SB_CTL, &info, true);
+		} else version(custom_widgets) {
+			thumb.positionY = thumbPosition;
+			thumb.thumbHeight = thumbSize;
+			thumb.redraw();
 		}
 	}
 
@@ -2767,10 +2894,14 @@ class VerticalScrollbar : ScrollbarBase {
 			downButton.setClickRepeat(scrollClickRepeatInterval);
 
 			upButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position - step());
+				auto ev = new Event("scrolltopreviousline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position - step());
 			});
 			downButton.addEventListener(EventType.triggered, () {
-				informProgramThatUserChangedPosition(position + step());
+				auto ev = new Event("scrolltonextline", this);
+				ev.dispatch();
+				//informProgramThatUserChangedPosition(position + step());
 			});
 
 			thumb.thumbWidth = this.minWidth;
@@ -2779,8 +2910,16 @@ class VerticalScrollbar : ScrollbarBase {
 			thumb.addEventListener(EventType.change, () {
 				auto sy = thumb.positionY * max() / thumb.height;
 
-				informProgramThatUserChangedPosition(sy);
+				auto ev = new Event("scrolltoposition", this);
+				ev.intValue = sy;
+				ev.dispatch();
+
+				//informProgramThatUserChangedPosition(sy);
 			});
+
+			upButton.tabStop = false;
+			downButton.tabStop = false;
+			thumb.tabStop = false;
 		}
 	}
 
@@ -3303,6 +3442,143 @@ class HorizontalLayout : Layout {
 }
 
 /++
+	A widget that takes your widget, puts scroll bars around it, and sends
+	messages to it when the user scrolls. Unlike [ScrollableWidget], it makes
+	no effort to automatically scroll or clip its child widgets - it just sends
+	the messages.
++/
+class ScrollMessageWidget : Widget {
+	this(Widget parent = null) {
+		super(parent);
+
+		container = new Widget(this);
+		hsb = new HorizontalScrollbar(this);
+		vsb = new VerticalScrollbar(this);
+
+		hsb.addEventListener("scrolltonextline", {
+			hsb.setPosition(hsb.position + 1);
+			notify();
+		});
+		hsb.addEventListener("scrolltopreviousline", {
+			hsb.setPosition(hsb.position - 1);
+			notify();
+		});
+		vsb.addEventListener("scrolltonextline", {
+			vsb.setPosition(vsb.position + 1);
+			notify();
+		});
+		vsb.addEventListener("scrolltopreviousline", {
+			vsb.setPosition(vsb.position - 1);
+			notify();
+		});
+		hsb.addEventListener("scrolltonextpage", {
+			hsb.setPosition(hsb.position + hsb.step_);
+			notify();
+		});
+		hsb.addEventListener("scrolltopreviouspage", {
+			hsb.setPosition(hsb.position - hsb.step_);
+			notify();
+		});
+		vsb.addEventListener("scrolltonextpage", {
+			vsb.setPosition(vsb.position + vsb.step_);
+			notify();
+		});
+		vsb.addEventListener("scrolltopreviouspage", {
+			vsb.setPosition(vsb.position - vsb.step_);
+			notify();
+		});
+		hsb.addEventListener("scrolltoposition", (Event event) {
+			hsb.setPosition(event.intValue);
+			notify();
+		});
+		vsb.addEventListener("scrolltoposition", (Event event) {
+			vsb.setPosition(event.intValue);
+			notify();
+		});
+
+
+		tabStop = false;
+		container.tabStop = false;
+		magic = true;
+	}
+
+	///
+	VerticalScrollbar verticalScrollBar() { return vsb; }
+	///
+	HorizontalScrollbar horizontalScrollBar() { return hsb; }
+
+	void notify() {
+		auto event = new Event("scroll", this);
+		event.dispatch();
+	}
+
+	///
+	Point position() {
+		return Point(hsb.position, vsb.position);
+	}
+
+	///
+	void setPosition(int x, int y) {
+		hsb.setPosition(x);
+		vsb.setPosition(y);
+	}
+
+	///
+	void setPageSize(int unitsX, int unitsY) {
+		hsb.setStep(unitsX);
+		vsb.setStep(unitsY);
+	}
+
+	///
+	void setTotalArea(int width, int height) {
+		hsb.setMax(width);
+		vsb.setMax(height);
+	}
+
+	///
+	void setViewableArea(int width, int height) {
+		hsb.setViewableArea(width);
+		vsb.setViewableArea(height);
+	}
+
+	private bool magic;
+	override void addChild(Widget w, int position = int.max) {
+		if(magic)
+			container.addChild(w, position);
+		else
+			super.addChild(w, position);
+	}
+
+	override void recomputeChildLayout() {
+		if(hsb is null || vsb is null || container is null) return;
+
+		registerMovement();
+
+		hsb.height = 16; // FIXME? are tese 16s sane?
+		hsb.x = 0;
+		hsb.y = this.height - hsb.height;
+		hsb.width = this.width - 16;
+		hsb.recomputeChildLayout();
+
+		vsb.width = 16; // FIXME?
+		vsb.x = this.width - vsb.width;
+		vsb.y = 0;
+		vsb.height = this.height - 16;
+		vsb.recomputeChildLayout();
+
+		container.x = 0;
+		container.y = 0;
+		container.width = this.width - vsb.width;
+		container.height = this.height - hsb.height;
+		container.recomputeChildLayout();
+	}
+
+	HorizontalScrollbar hsb;
+	VerticalScrollbar vsb;
+	Widget container;
+}
+
+/++
 	Bypasses automatic layout for its children, using manual positioning and sizing only.
 	While you need to manually position them, you must ensure they are inside the StaticLayout's
 	bounding box to avoid undefined behavior.
@@ -3471,6 +3747,97 @@ class Window : Widget {
 			if(hwnd !is this.win.impl.hwnd)
 				return 1; // we don't care...
 			switch(msg) {
+
+				case WM_VSCROLL, WM_HSCROLL:
+					auto pos = HIWORD(wParam);
+					auto m = LOWORD(wParam);
+
+					auto scrollbarHwnd = cast(HWND) lParam;
+
+
+					if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
+
+						//auto smw = cast(ScrollMessageWidget) widgetp.parent;
+
+						switch(m) {
+							/+
+							// I don't think those messages are ever actually sent normally by the widget itself,
+							// they are more used for the keyboard interface. methinks.
+							case SB_BOTTOM:
+								import std.stdio; writeln("end");
+								auto event = new Event("scrolltoend", *widgetp);
+								event.dispatch();
+								//if(!event.defaultPrevented)
+							break;
+							case SB_TOP:
+								import std.stdio; writeln("top");
+								auto event = new Event("scrolltobeginning", *widgetp);
+								event.dispatch();
+							break;
+							case SB_ENDSCROLL:
+								// idk
+							break;
+							+/
+							case SB_LINEDOWN:
+								auto event = new Event("scrolltonextline", *widgetp);
+								event.dispatch();
+							break;
+							case SB_LINEUP:
+								auto event = new Event("scrolltopreviousline", *widgetp);
+								event.dispatch();
+							break;
+							case SB_PAGEDOWN:
+								auto event = new Event("scrolltonextpage", *widgetp);
+								event.dispatch();
+							break;
+							case SB_PAGEUP:
+								auto event = new Event("scrolltopreviouspage", *widgetp);
+								event.dispatch();
+							break;
+							case SB_THUMBPOSITION:
+								auto event = new Event("scrolltoposition", *widgetp);
+								event.intValue = pos;
+								event.dispatch();
+							break;
+							case SB_THUMBTRACK:
+								// eh kinda lying but i like the real time update display
+								auto event = new Event("scrolltoposition", *widgetp);
+								event.intValue = pos;
+								event.dispatch();
+								// the event loop doesn't seem to carry on with a requested redraw..
+								// so we request it to get our dirty bit set...
+								// then we need to immediately actually redraw it too for instant feedback to user
+								if(redrawRequested)
+									actualRedraw();
+							break;
+							default:
+						}
+					} else {
+						return 1;
+					}
+				break;
+
+				case WM_CONTEXTMENU:
+					auto hwndFrom = cast(HWND) wParam;
+
+					auto xPos = cast(short) LOWORD(lParam); 
+					auto yPos = cast(short) HIWORD(lParam); 
+
+					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+						POINT p;
+						p.x = xPos;
+						p.y = yPos;
+						ScreenToClient(hwnd, &p);
+						auto clientX = cast(ushort) p.x;
+						auto clientY = cast(ushort) p.y;
+
+						auto wap = widgetAtPoint(*widgetp, clientX, clientY);
+
+						if(!wap.widget.showContextMenu(wap.x, wap.y, xPos, yPos))
+							return 1; // it didn't show above, pass message on
+					}
+				break;
+
 				case WM_NOTIFY:
 					auto hdr = cast(NMHDR*) lParam;
 					auto hwndFrom = hdr.hwndFrom;
@@ -4003,8 +4370,12 @@ class MainWindow : Window {
 	}
 	void setMenuAndToolbarFromAnnotatedCode_internal(T)(ref T t) {
 		Action[] toolbarActions;
-		auto menuBar = new MenuBar();
+		auto menuBar = this.menuBar is null ? new MenuBar() : this.menuBar;
 		Menu[string] mcs;
+
+		foreach(menu; menuBar.subMenus) {
+			mcs[menu.label] = menu;
+		}
 
 		void delegate() triggering;
 
@@ -4126,6 +4497,12 @@ class MainWindow : Window {
 	MenuBar menuBar() { return _menu; }
 	///
 	MenuBar menuBar(MenuBar m) {
+		if(m is _menu) {
+			version(custom_widgets)
+				recomputeChildLayout();
+			return m;
+		}
+
 		if(_menu !is null) {
 			// make sure it is sanely removed
 			// FIXME
@@ -4402,6 +4779,7 @@ class ToolButton : Button {
 ///
 class MenuBar : Widget {
 	MenuItem[] items;
+	Menu[] subMenus;
 
 	version(win32_widgets) {
 		HMENU handle;
@@ -4440,7 +4818,10 @@ class MenuBar : Widget {
 
 	///
 	Menu addItem(Menu item) {
-		auto mbItem = new MenuItem(item.label, this.parentWindow);
+
+		subMenus ~= item;
+
+		auto mbItem = new MenuItem(item.label, null);// this.parentWindow); // I'ma add the child down below so hopefully this isn't too insane
 
 		addChild(mbItem);
 		items ~= mbItem;
@@ -4845,23 +5226,27 @@ class Menu : Window {
 	else version(custom_widgets) {
 		SimpleWindow dropDown;
 		Widget menuParent;
-		void popup(Widget parent) {
+		void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
 			this.menuParent = parent;
 
-			auto w = 150;
-			auto h = paddingTop + paddingBottom;
-			Widget previousChild;
-			foreach(child; this.children) {
-				h += child.minHeight();
-				h += mymax(child.marginTop(), previousChild ? previousChild.marginBottom() : 0);
-				previousChild = child;
+			int w = 150;
+			int h = paddingTop + paddingBottom;
+			if(this.children.length) {
+				// hacking it to get the ideal height out of recomputeChildLayout
+				this.width = w;
+				this.height = h;
+				this.recomputeChildLayout();
+				h = this.children[$-1].y + this.children[$-1].height + this.children[$-1].marginBottom;
+				h += paddingBottom;
+
+				h -= 2; // total hack, i just like the way it looks a bit tighter even though technically MenuItem reserves some space to center in normal circumstances
 			}
 
-			if(previousChild)
-			h += previousChild.marginBottom();
+			if(offsetY == int.min)
+				offsetY = parent.parentWindow.lineHeight;
 
 			auto coord = parent.globalCoordinates();
-			dropDown.moveResize(coord.x, coord.y + parent.parentWindow.lineHeight, w, h);
+			dropDown.moveResize(coord.x + offsetX, coord.y + offsetY, w, h);
 			this.x = 0;
 			this.y = 0;
 			this.width = dropDown.width;
@@ -4975,8 +5360,9 @@ class MenuItem : MouseActivatedWidget {
 	override int minHeight() { return Window.lineHeight + 4; }
 	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
 	override int maxWidth() {
-		if(cast(MenuBar) parent)
+		if(cast(MenuBar) parent) {
 			return Window.lineHeight / 2 * cast(int) label.length + 8;
+		}
 		return int.max;
 	}
 	///
@@ -6926,6 +7312,51 @@ void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null) {
 
 private static template I(T...) { alias I = T; }
 
+
+private string beautify(string name, char space = ' ', bool allLowerCase = false) {
+	if(name == "id")
+		return allLowerCase ? name : "ID";
+
+	char[160] buffer;
+	int bufferIndex = 0;
+	bool shouldCap = true;
+	bool shouldSpace;
+	bool lastWasCap;
+	foreach(idx, char ch; name) {
+		if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+
+		if((ch >= 'A' && ch <= 'Z') || ch == '_') {
+			if(lastWasCap) {
+				// two caps in a row, don't change. Prolly acronym.
+			} else {
+				if(idx)
+					shouldSpace = true; // new word, add space
+			}
+
+			lastWasCap = true;
+		} else {
+			lastWasCap = false;
+		}
+
+		if(shouldSpace) {
+			buffer[bufferIndex++] = space;
+			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
+			shouldSpace = false;
+		}
+		if(shouldCap) {
+			if(ch >= 'a' && ch <= 'z')
+				ch -= 32;
+			shouldCap = false;
+		}
+		if(allLowerCase && ch >= 'A' && ch <= 'Z')
+			ch += 32;
+		buffer[bufferIndex++] = ch;
+	}
+	return buffer[0 .. bufferIndex].idup;
+}
+
+
+
 class AutomaticDialog(T) : Dialog {
 	T t;
 
@@ -6937,6 +7368,7 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingRight() { return Window.lineHeight; }
 	override int paddingLeft() { return Window.lineHeight; }
 
+
 	this(void delegate(T) onOK, void delegate() onCancel) {
 		static if(is(T == class))
 			t = new T();
@@ -6947,17 +7379,18 @@ class AutomaticDialog(T) : Dialog {
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
 			alias type = typeof(member);
-			static if(is(type == string)) {
-				auto show = memberName;
-				// cheap capitalize lol
-				if(show[0] >= 'a' && show[0] <= 'z')
-					show = "" ~ cast(char)(show[0] - 32) ~ show[1 .. $];
-				auto le = new LabeledLineEdit(show ~ ": ", this);
+			static if(is(type == bool)) {
+				auto box = new Checkbox(memberName.beautify, this);
+				box.addEventListener(EventType.change, (Event ev) {
+					__traits(getMember, t, memberName) = box.isChecked;
+				});
+			} else static if(is(type == string)) {
+				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = ev.stringValue;
 				});
 			} else static if(is(type : long)) {
-				auto le = new LabeledLineEdit(memberName ~ ": ", this);
+				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
 				le.addEventListener("char", (Event ev) {
 					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
 						ev.preventDefault();

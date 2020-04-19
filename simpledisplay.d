@@ -105,6 +105,14 @@
 
 	See the examples and topics list below to learn more.
 
+	$(WARNING
+		There should only be one GUI thread per application,
+		and all windows should be created in it and your
+		event loop should run there.
+
+		To do otherwise is undefined behavior and has no
+		cross platform guarantees.
+	)
 
 	$(H2 About this documentation)
 
@@ -1328,7 +1336,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		width = the width of the window's client area, in pixels
 		height = the height of the window's client area, in pixels
-		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title\ property.
+		title = the title of the window (seen in the title bar, taskbar, etc.). You can change it after construction with the [SimpleWindow.title] property.
 		opengl = [OpenGlOptions] are yes and no. If yes, it creates an OpenGL context on the window.
 		resizable = [Resizability] has three options:
 			$(P `allowResizing`, which allows the window to be resized by the user. The `windowResized` delegate will be called when the size is changed.)
@@ -1339,6 +1347,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		parent = the parent window, if applicable
 	+/
 	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+		claimGuiThread();
+		version(sdpy_thread_checks) assert(thisIsGuiThread);
 		this._width = width;
 		this._height = height;
 		this.openglMode = opengl;
@@ -2383,7 +2393,7 @@ private:
 	}
 
 	// wake up event processor
-	bool eventWakeUp () {
+	static bool eventWakeUp () {
 		version(X11) {
 			import core.sys.posix.unistd : write;
 			ulong n = 1;
@@ -2528,6 +2538,31 @@ private:
 		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
 			if (sw is null || sw.closed) continue;
 			sw.processCustomEvents();
+		}
+
+		// run pending [runInGuiThread] delegates
+		more:
+		RunQueueMember* next;
+		synchronized(runInGuiThreadLock) {
+			if(runInGuiThreadQueue.length) {
+				next = runInGuiThreadQueue[0];
+				runInGuiThreadQueue = runInGuiThreadQueue[1 .. $];
+			} else {
+				next = null;
+			}
+		}
+
+		if(next) {
+			try {
+				next.dg();
+				next.thrown = null;
+			} catch(Throwable t) {
+				next.thrown = t;
+			}
+
+			next.signal.notify();
+
+			goto more;
 		}
 	}
 
@@ -2704,18 +2739,24 @@ struct EventLoop {
 		return EventLoop(0, null);
 	}
 
+	__gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
+
 	/// Construct an application-global event loop for yourself
 	/// See_Also: [SimpleWindow.setEventHandlers]
 	this(long pulseTimeout, void delegate() handlePulse) {
-		if(impl is null)
-			impl = new EventLoopImpl(pulseTimeout, handlePulse);
-		else {
-			if(pulseTimeout) {
-				impl.pulseTimeout = pulseTimeout;
-				impl.handlePulse = handlePulse;
+		synchronized(monitor) {
+			if(impl is null) {
+				claimGuiThread();
+				version(sdpy_thread_checks) assert(thisIsGuiThread);
+				impl = new EventLoopImpl(pulseTimeout, handlePulse);
+			} else {
+				if(pulseTimeout) {
+					impl.pulseTimeout = pulseTimeout;
+					impl.handlePulse = handlePulse;
+				}
 			}
+			impl.refcount++;
 		}
-		impl.refcount++;
 	}
 
 	~this() {
@@ -2752,7 +2793,7 @@ struct EventLoop {
 		return impl.signalHandler;
 	}
 
-	static EventLoopImpl* impl;
+	__gshared static EventLoopImpl* impl;
 }
 
 version(linux)
@@ -6223,6 +6264,8 @@ class OperatingSystemFont {
 		XFontSet fontset;
 	} else version(Windows) {
 		HFONT font;
+		int width_;
+		int height_;
 	} else version(OSXCocoa) {
 		// FIXME
 	} else static assert(0);
@@ -6274,6 +6317,15 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			WCharzBuffer buffer = WCharzBuffer(name);
 			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+
+			TEXTMETRIC tm;
+			auto dc = GetDC(null);
+			SelectObject(dc, font);
+			GetTextMetrics(dc, &tm);
+			ReleaseDC(null, dc);
+
+			width_ = tm.tmAveCharWidth;
+			height_ = tm.tmHeight;
 		} else version(OSXCocoa) {
 			// FIXME
 		} else static assert(0);
@@ -6307,6 +6359,26 @@ class OperatingSystemFont {
 		} else static assert(0);
 	}
 
+	// Assuming monospace!!!!!
+	// added March 26, 2020
+	int averageWidth() {
+		version(X11)
+			return font.max_bounds.width;
+		else version(Windows)
+			return width_;
+		else assert(0);
+	}
+
+	// Assuming monospace!!!!!
+	// added March 26, 2020
+	int height() {
+		version(X11)
+			return font.max_bounds.ascent + font.max_bounds.descent;
+		else version(Windows)
+			return height_;
+		else assert(0);
+	}
+
 	/// FIXME not implemented
 	void loadDefault() {
 
@@ -6320,11 +6392,8 @@ class OperatingSystemFont {
 
 	/* Metrics */
 	/+
-		GetFontMetrics
 		GetABCWidth
 		GetKerningPairs
-
-		XLoadQueryFont
 
 		if I do it right, I can size it all here, and match
 		what happens when I draw the full string with the OS functions.
@@ -6964,6 +7033,81 @@ void flushGui() {
 		XFlush(dpy);
 	}
 }
+
+/++
+	Runs the given code in the GUI thread when its event loop
+	is available, blocking until it completes. This allows you
+	to create and manipulate windows from another thread without
+	invoking undefined behavior.
+
+	If this is the gui thread, it runs the code immediately.
+
+	If no gui thread exists yet, the current thread is assumed
+	to be it. Attempting to create windows or run the event loop
+	in any other thread will cause an assertion failure.
+
+
+	$(TIP
+		Did you know you can use UFCS on delegate literals?
+
+		() {
+			// code here
+		}.runInGuiThread;
+	)
+
+	History:
+		Added April 10, 2020 (v7.2.0)
++/
+void runInGuiThread(scope void delegate() dg) @trusted {
+	claimGuiThread();
+
+	if(thisIsGuiThread) {
+		dg();
+		return;
+	}
+
+	import core.sync.semaphore;
+	static Semaphore sc;
+	if(sc is null)
+		sc = new Semaphore();
+
+	static RunQueueMember* rqm;
+	if(rqm is null)
+		rqm = new RunQueueMember;
+	rqm.dg = cast(typeof(rqm.dg)) dg;
+	rqm.signal = sc;
+	rqm.thrown = null;
+
+	synchronized(runInGuiThreadLock) {
+		runInGuiThreadQueue ~= rqm;
+	}
+
+	if(!SimpleWindow.eventWakeUp())
+		throw new Error("runInGuiThread impossible; eventWakeUp failed");
+
+	rqm.signal.wait();
+
+	if(rqm.thrown)
+		throw rqm.thrown;
+}
+
+private void claimGuiThread() {
+	import core.atomic;
+	if(cas(&guiThreadExists, false, true))
+		thisIsGuiThread = true;
+}
+
+private struct RunQueueMember {
+	void delegate() dg;
+	import core.sync.semaphore;
+	Semaphore signal;
+	Throwable thrown;
+}
+
+private __gshared RunQueueMember*[] runInGuiThreadQueue;
+private __gshared Object runInGuiThreadLock = new Object; // intentional CTFE
+private bool thisIsGuiThread = false;
+private shared bool guiThreadExists = false;
 
 /// Used internal to dispatch events to various classes.
 interface CapableOfHandlingNativeEvent {
@@ -7775,8 +7919,11 @@ version(Windows) {
 		static HFONT defaultGuiFont;
 
 		void setFont(OperatingSystemFont font) {
-			if(font && font.font)
-				SelectObject(hdc, font.font);
+			if(font && font.font) {
+				if(SelectObject(hdc, font.font) == HGDI_ERROR) {
+					// error... how to handle tho?
+				}
+			}
 			else if(defaultGuiFont)
 				SelectObject(hdc, defaultGuiFont);
 		}
@@ -8341,9 +8488,20 @@ version(Windows) {
 		static int triggerEvents(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam, int offsetX, int offsetY, SimpleWindow wind) {
 			MouseEvent mouse;
 
-			void mouseEvent() {
-				mouse.x = LOWORD(lParam) + offsetX;
-				mouse.y = HIWORD(lParam) + offsetY;
+			void mouseEvent(bool isScreen = false) {
+				auto x = LOWORD(lParam);
+				auto y = HIWORD(lParam);
+				if(isScreen) {
+					POINT p;
+					p.x = x;
+					p.y = y;
+					ScreenToClient(hwnd, &p);
+					x = cast(ushort) p.x;
+					y = cast(ushort) p.y;
+				}
+				mouse.x = x + offsetX;
+				mouse.y = y + offsetY;
+
 				wind.mdx(mouse);
 				mouse.modifierState = cast(int) wParam;
 				mouse.window = wind;
@@ -8441,7 +8599,7 @@ version(Windows) {
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					mouse.type = cast(MouseEventType) 1;
 					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
-					mouseEvent();
+					mouseEvent(true);
 				break;
 				case WM_MOUSEMOVE:
 					mouse.type = cast(MouseEventType) 0;
@@ -9655,6 +9813,13 @@ version(X11) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XResizeWindow(display, window, w, h);
+
+			// calling this now to avoid waiting for the server to
+			// acknowledge the resize; draws without returning to the
+			// event loop will thus actually work. the server's event
+			// btw might overrule this and resize it again
+			recordX11Resize(display, this, w, h);
+
 			// FIXME: do we need to set this as the opengl context to do the glViewport change?
 			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
 		}
@@ -10191,6 +10356,71 @@ version(X11) {
 
 	int mouseDoubleClickTimeout = 350; /// double click timeout. X only, you probably shouldn't change this.
 
+	void recordX11Resize(Display* display, SimpleWindow win, int width, int height) {
+		if(width != win.width || height != win.height) {
+			win._width = width;
+			win._height = height;
+
+			if(win.openglMode == OpenGlOptions.no) {
+				// FIXME: could this be more efficient?
+
+				if (win.bufferw < width || win.bufferh < height) {
+					//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)width, cast(int)height); }
+					// grow the internal buffer to match the window...
+					auto newPixmap = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
+					{
+						GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+						XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+						scope(exit) XFreeGC(win.display, xgc);
+						XSetClipMask(win.display, xgc, None);
+						XSetForeground(win.display, xgc, 0);
+						XFillRectangle(display, cast(Drawable)newPixmap, xgc, 0, 0, width, height);
+					}
+					XCopyArea(display,
+						cast(Drawable) win.buffer,
+						cast(Drawable) newPixmap,
+						win.gc, 0, 0,
+						win.bufferw < width ? win.bufferw : win.width,
+						win.bufferh < height ? win.bufferh : win.height,
+						0, 0);
+
+					XFreePixmap(display, win.buffer);
+					win.buffer = newPixmap;
+					win.bufferw = width;
+					win.bufferh = height;
+				}
+
+				// clear unused parts of the buffer
+				if (win.bufferw > width || win.bufferh > height) {
+					GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
+					XCopyGC(win.display, win.gc, 0xffffffff, xgc);
+					scope(exit) XFreeGC(win.display, xgc);
+					XSetClipMask(win.display, xgc, None);
+					XSetForeground(win.display, xgc, 0);
+					immutable int maxw = (win.bufferw > width ? win.bufferw : width);
+					immutable int maxh = (win.bufferh > height ? win.bufferh : height);
+					XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, width, 0, maxw, maxh); // let X11 do clipping
+					XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, 0, height, maxw, maxh); // let X11 do clipping
+				}
+
+			}
+
+			version(without_opengl) {} else
+			if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
+				glViewport(0, 0, width, height);
+			}
+
+			win.fixFixedSize(width, height); //k8: this does nothing on my FluxBox; wtf?!
+
+			if(win.windowResized !is null) {
+				XUnlockDisplay(display);
+				scope(exit) XLockDisplay(display);
+				win.windowResized(width, height);
+			}
+		}
+	}
+
+
 	/// Platform-specific, you might use it when doing a custom event loop
 	bool doXNextEvent(Display* display) {
 		bool done;
@@ -10361,67 +10591,8 @@ version(X11) {
 			auto event = e.xconfigure;
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
-				if(event.width != win.width || event.height != win.height) {
-					win._width = event.width;
-					win._height = event.height;
 
-					if(win.openglMode == OpenGlOptions.no) {
-						// FIXME: could this be more efficient?
-
-						if (win.bufferw < event.width || win.bufferh < event.height) {
-							//{ import core.stdc.stdio; printf("new buffer; old size: %dx%d; new size: %dx%d\n", win.bufferw, win.bufferh, cast(int)event.width, cast(int)event.height); }
-							// grow the internal buffer to match the window...
-							auto newPixmap = XCreatePixmap(display, cast(Drawable) event.window, event.width, event.height, DefaultDepthOfDisplay(display));
-							{
-								GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
-								XCopyGC(win.display, win.gc, 0xffffffff, xgc);
-								scope(exit) XFreeGC(win.display, xgc);
-								XSetClipMask(win.display, xgc, None);
-								XSetForeground(win.display, xgc, 0);
-								XFillRectangle(display, cast(Drawable)newPixmap, xgc, 0, 0, event.width, event.height);
-							}
-							XCopyArea(display,
-								cast(Drawable) (*win).buffer,
-								cast(Drawable) newPixmap,
-								(*win).gc, 0, 0,
-								win.bufferw < event.width ? win.bufferw : win.width,
-								win.bufferh < event.height ? win.bufferh : win.height,
-								0, 0);
-
-							XFreePixmap(display, win.buffer);
-							win.buffer = newPixmap;
-							win.bufferw = event.width;
-							win.bufferh = event.height;
-						}
-
-						// clear unused parts of the buffer
-						if (win.bufferw > event.width || win.bufferh > event.height) {
-							GC xgc = XCreateGC(win.display, cast(Drawable)win.window, 0, null);
-							XCopyGC(win.display, win.gc, 0xffffffff, xgc);
-							scope(exit) XFreeGC(win.display, xgc);
-							XSetClipMask(win.display, xgc, None);
-							XSetForeground(win.display, xgc, 0);
-							immutable int maxw = (win.bufferw > event.width ? win.bufferw : event.width);
-							immutable int maxh = (win.bufferh > event.height ? win.bufferh : event.height);
-							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, event.width, 0, maxw, maxh); // let X11 do clipping
-							XFillRectangle(win.display, cast(Drawable)win.buffer, xgc, 0, event.height, maxw, maxh); // let X11 do clipping
-						}
-
-					}
-
-					version(without_opengl) {} else
-					if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
-						glViewport(0, 0, event.width, event.height);
-					}
-
-					win.fixFixedSize(event.width, event.height); //k8: this does nothing on my FluxBox; wtf?!
-
-					if(win.windowResized !is null) {
-						XUnlockDisplay(display);
-						scope(exit) XLockDisplay(display);
-						win.windowResized(event.width, event.height);
-					}
-				}
+				recordX11Resize(display, *win, event.width, event.height);
 			}
 		  break;
 		  case EventType.Expose:

@@ -258,7 +258,12 @@ struct Color {
 		throw new Exception("Unknown color " ~ s);
 	}
 
-	/// Reads a CSS style string to get the color. Understands #rrggbb, rgba(), hsl(), and rrggbbaa
+	/++
+		Reads a CSS style string to get the color. Understands #rrggbb, rgba(), hsl(), and rrggbbaa
+
+		History:
+			The short-form hex string parsing (`#fff`) was added on April 10, 2020. (v7.2.0)
+	+/
 	static Color fromString(scope const(char)[] s) {
 		s = s.stripInternal();
 
@@ -333,6 +338,17 @@ struct Color {
 
 		if(s.length && s[0] == '#')
 			s = s[1 .. $];
+
+		// support short form #fff for example
+		if(s.length == 3 || s.length == 4) {
+			string n;
+			n.reserve(8);
+			foreach(ch; s) {
+				n ~= ch;
+				n ~= ch;
+			}
+			s = n;
+		}
 
 		// not a built in... do it as a hex string
 		if(s.length >= 2) {
@@ -415,6 +431,15 @@ struct Color {
 		mixin(ColorBlendMixinStr!("fore.asUint", "res.asUint"));
 		return res;
 	}
+}
+
+unittest {
+	Color c = Color.fromString("#fff");
+	assert(c == Color.white);
+	assert(c == Color.fromString("#ffffff"));
+
+	c = Color.fromString("#f0f");
+	assert(c == Color.fromString("rgb(255, 0, 255)"));
 }
 
 nothrow @safe

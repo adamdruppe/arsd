@@ -75,11 +75,12 @@
 			"dependencies": {
 				"arsd-official:simpledisplay":"*",
 				"arsd-official:image_files":"*",
+				"arsd-official:svg":"*",
 				"arsd-official:ttf":"*"
 			},
 			"importPaths": ["."],
 			"libs-posix": ["freetype", "fontconfig"],
-			"sourceFiles": ["nanovega.d", "blendish.d", "svg.d"]
+			"sourceFiles": ["nanovega.d", "blendish.d"]
 		},
 		{
 			"name": "email",
@@ -97,17 +98,36 @@
 			"targetType": "library",
 			"dependencies": {
 				"arsd-official:color_base":"*",
-				"arsd-official:png":"*"
+				"arsd-official:png":"*",
+				"arsd-official:bmp":"*",
+				"arsd-official:jpeg":"*"
 			},
 			"dflags": [
 				"-mv=arsd.image=image.d",
-				"-mv=arsd.bmp=bmp.d",
-				"-mv=arsd.jpeg=jpeg.d",
 				"-mv=arsd.targa=targa.d",
 				"-mv=arsd.pcx=pcx.d",
 				"-mv=arsd.dds=dds.d"
 			],
-			"sourceFiles": ["image.d", "bmp.d", "jpeg.d", "targa.d", "pcx.d", "dds.d"]
+			"sourceFiles": ["image.d", "targa.d", "pcx.d", "dds.d"]
+		},
+		{
+			"name": "svg",
+			"description": "Dependency-free partial SVG file format read support",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.svg=svg.d"],
+			"sourceFiles": ["svg.d"]
+		},
+		{
+			"name": "jpeg",
+			"description": "Dependency-free partial JPEG file format read support",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.jpeg=jpeg.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			},
+			"sourceFiles": ["jpeg.d"]
 		},
 		{
 			"name": "png",
@@ -289,7 +309,37 @@
 			"targetType": "library",
 			"sourceFiles": ["terminal.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.terminal=terminal.d"]
+			"dflags": ["-mv=arsd.terminal=terminal.d"],
+			"configurations": [
+				{
+					"name": "normal"
+				},
+				{
+					"name": "builtin_emulator",
+					"versions": ["TerminalDirectToEmulator"],
+					"dependencies": {
+						"arsd-official:terminalemulator": "*",
+						"arsd-official:minigui": "*",
+
+						"arsd-official:png":"*",
+						"arsd-official:jpeg":"*",
+						"arsd-official:svg":"*",
+						"arsd-official:bmp":"*"
+					}
+				}
+			]
+		},
+		{
+			"name": "terminalemulator",
+			"description": "A terminal emulation core as an in-memory library. Also includes mixin templates to assist with creating UIs, etc.",
+			"targetType": "library",
+			"importPaths": ["."],
+			"libs-posix": ["util"],
+			"sourceFiles": ["terminalemulator.d"],
+			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			}
 		},
 		{
 			"name": "ttf",
@@ -332,6 +382,14 @@
 			"sourceFiles": ["eventloop.d"],
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.eventloop=eventloop.d"]
+		},
+		{
+			"name": "archive",
+			"description": "Archive file support - tar, tar.xz decoders, and custom format \"arcz\" encoding and decoding. Self-contained.",
+			"targetType": "library",
+			"sourceFiles": ["archive.d"],
+			"importPaths": ["."],
+			"dflags": ["-mv=arsd.archive=archive.d"]
 		}
 
 	]
