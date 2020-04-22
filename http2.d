@@ -74,8 +74,8 @@ import core.time;
 // FIXME: check Transfer-Encoding: gzip always
 
 version(with_openssl) {
-	pragma(lib, "crypto");
-	pragma(lib, "ssl");
+	//pragma(lib, "crypto");
+	//pragma(lib, "ssl");
 }
 
 /+
@@ -1633,73 +1633,217 @@ version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
 
 	// macros in the original C
-	version(newer_openssl) {
-		void SSL_library_init() {
-			OPENSSL_init_ssl(0, null);
-		}
-		void OpenSSL_add_all_ciphers() {
-			OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_CIPHERS*/, null);
-		}
-		void OpenSSL_add_all_digests() {
-			OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_DIGESTS*/, null);
-		}
+	SSL_METHOD* SSLv23_client_method() {
+		if(ossllib.SSLv23_client_method)
+			return ossllib.SSLv23_client_method();
+		else
+			return ossllib.TLS_client_method();
+	}
 
-		void SSL_load_error_strings() {
-			OPENSSL_init_ssl(0x00200000L, null);
-		}
+	struct SSL {}
+	struct SSL_CTX {}
+	struct SSL_METHOD {}
+	enum SSL_VERIFY_NONE = 0;
 
-		SSL_METHOD* SSLv23_client_method() {
-			return TLS_client_method();
+	struct ossllib {
+		__gshared static extern(C) {
+			/* these are only on older openssl versions { */
+				int function() SSL_library_init;
+				void function() SSL_load_error_strings;
+				SSL_METHOD* function() SSLv23_client_method;
+			/* } */
+
+			void function(ulong, void*) OPENSSL_init_ssl;
+
+			SSL_CTX* function(const SSL_METHOD*) SSL_CTX_new;
+			SSL* function(SSL_CTX*) SSL_new;
+			int function(SSL*, int) SSL_set_fd;
+			int function(SSL*) SSL_connect;
+			int function(SSL*, const void*, int) SSL_write;
+			int function(SSL*, void*, int) SSL_read;
+			@trusted nothrow @nogc int function(SSL*) SSL_shutdown;
+			void function(SSL*) SSL_free;
+			void function(SSL_CTX*) SSL_CTX_free;
+
+			int function(const SSL*) SSL_pending;
+
+			void function(SSL*, int, void*) SSL_set_verify;
+
+			SSL_METHOD* function() SSLv3_client_method;
+			SSL_METHOD* function() TLS_client_method;
+
 		}
 	}
 
-	extern(C) {
-		version(newer_openssl) {} else {
-			int SSL_library_init();
-			void OpenSSL_add_all_ciphers();
-			void OpenSSL_add_all_digests();
-			void SSL_load_error_strings();
-			SSL_METHOD* SSLv23_client_method();
+	struct eallib {
+		__gshared static extern(C) {
+			/* these are only on older openssl versions { */
+				void function() OpenSSL_add_all_ciphers;
+				void function() OpenSSL_add_all_digests;
+			/* } */
+
+			void function(ulong, void*) OPENSSL_init_crypto;
+
+			void function(FILE*) ERR_print_errors_fp;
 		}
-		void OPENSSL_init_ssl(ulong, void*);
-		void OPENSSL_init_crypto(ulong, void*);
-
-		struct SSL {}
-		struct SSL_CTX {}
-		struct SSL_METHOD {}
-
-		SSL_CTX* SSL_CTX_new(const SSL_METHOD* method);
-		SSL* SSL_new(SSL_CTX*);
-		int SSL_set_fd(SSL*, int);
-		int SSL_connect(SSL*);
-		int SSL_write(SSL*, const void*, int);
-		int SSL_read(SSL*, void*, int);
-		@trusted nothrow @nogc int SSL_shutdown(SSL*);
-		void SSL_free(SSL*);
-		void SSL_CTX_free(SSL_CTX*);
-
-		int SSL_pending(const SSL*);
-
-		void SSL_set_verify(SSL*, int, void*);
-		enum SSL_VERIFY_NONE = 0;
-
-		SSL_METHOD* SSLv3_client_method();
-		SSL_METHOD* TLS_client_method();
-
-		void ERR_print_errors_fp(FILE*);
 	}
+
+
+	SSL_CTX* SSL_CTX_new(const SSL_METHOD* a) {
+		if(ossllib.SSL_CTX_new)
+			return ossllib.SSL_CTX_new(a);
+		else throw new Exception("SSL_CTX_new not loaded");
+	}
+	SSL* SSL_new(SSL_CTX* a) {
+		if(ossllib.SSL_new)
+			return ossllib.SSL_new(a);
+		else throw new Exception("SSL_new not loaded");
+	}
+	int SSL_set_fd(SSL* a, int b) {
+		if(ossllib.SSL_set_fd)
+			return ossllib.SSL_set_fd(a, b);
+		else throw new Exception("SSL_set_fd not loaded");
+	}
+	int SSL_connect(SSL* a) {
+		if(ossllib.SSL_connect)
+			return ossllib.SSL_connect(a);
+		else throw new Exception("SSL_connect not loaded");
+	}
+	int SSL_write(SSL* a, const void* b, int c) {
+		if(ossllib.SSL_write)
+			return ossllib.SSL_write(a, b, c);
+		else throw new Exception("SSL_write not loaded");
+	}
+	int SSL_read(SSL* a, void* b, int c) {
+		if(ossllib.SSL_read)
+			return ossllib.SSL_read(a, b, c);
+		else throw new Exception("SSL_read not loaded");
+	}
+	@trusted nothrow @nogc int SSL_shutdown(SSL* a) {
+		if(ossllib.SSL_shutdown)
+			return ossllib.SSL_shutdown(a);
+		assert(0);
+	}
+	void SSL_free(SSL* a) {
+		if(ossllib.SSL_free)
+			return ossllib.SSL_free(a);
+		else throw new Exception("SSL_free not loaded");
+	}
+	void SSL_CTX_free(SSL_CTX* a) {
+		if(ossllib.SSL_CTX_free)
+			return ossllib.SSL_CTX_free(a);
+		else throw new Exception("SSL_CTX_free not loaded");
+	}
+
+	int SSL_pending(const SSL* a) {
+		if(ossllib.SSL_pending)
+			return ossllib.SSL_pending(a);
+		else throw new Exception("SSL_pending not loaded");
+	}
+	void SSL_set_verify(SSL* a, int b, void* c) {
+		if(ossllib.SSL_set_verify)
+			return ossllib.SSL_set_verify(a, b, c);
+		else throw new Exception("SSL_set_verify not loaded");
+	}
+	SSL_METHOD* SSLv3_client_method() {
+		if(ossllib.SSLv3_client_method)
+			return ossllib.SSLv3_client_method();
+		else throw new Exception("SSLv3_client_method not loaded");
+	}
+	SSL_METHOD* TLS_client_method() {
+		if(ossllib.TLS_client_method)
+			return ossllib.TLS_client_method();
+		else throw new Exception("TLS_client_method not loaded");
+	}
+	void ERR_print_errors_fp(FILE* a) {
+		if(eallib.ERR_print_errors_fp)
+			return eallib.ERR_print_errors_fp(a);
+		else throw new Exception("ERR_print_errors_fp not loaded");
+	}
+
+
+	private __gshared void* ossllib_handle;
+	version(Windows)
+		private __gshared void* oeaylib_handle;
+	else
+		alias oeaylib_handle = ossllib_handle;
+	version(Posix)
+		private import core.sys.posix.dlfcn;
+	else version(Windows)
+		private import core.sys.windows.windows;
 
 	import core.stdc.stdio;
 
 	shared static this() {
-		SSL_library_init();
-		OpenSSL_add_all_ciphers();
-		OpenSSL_add_all_digests();
-		SSL_load_error_strings();
+		version(Posix)
+			ossllib_handle = dlopen("libssl.so", RTLD_NOW);
+		else version(Windows) {
+			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
+			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+		}
+
+		if(ossllib_handle is null)
+			throw new Exception("ssl fail open");
+
+		foreach(memberName; __traits(allMembers, ossllib)) {
+			alias t = typeof(__traits(getMember, ossllib, memberName));
+			version(Posix)
+				__traits(getMember, ossllib, memberName) = cast(t) dlsym(ossllib_handle, memberName);
+			else version(Windows) {
+				__traits(getMember, ossllib, memberName) = cast(t) GetProcAddress(ossllib_handle, memberName);
+			}
+		}
+
+		foreach(memberName; __traits(allMembers, eallib)) {
+			alias t = typeof(__traits(getMember, eallib, memberName));
+			version(Posix)
+				__traits(getMember, eallib, memberName) = cast(t) dlsym(oeaylib_handle, memberName);
+			else version(Windows) {
+				__traits(getMember, eallib, memberName) = cast(t) GetProcAddress(oeaylib_handle, memberName);
+			}
+		}
+
+
+		if(ossllib.SSL_library_init)
+			ossllib.SSL_library_init();
+		else if(ossllib.OPENSSL_init_ssl)
+			ossllib.OPENSSL_init_ssl(0, null);
+		else throw new Exception("couldn't init openssl");
+
+		if(eallib.OpenSSL_add_all_ciphers) {
+			eallib.OpenSSL_add_all_ciphers();
+			if(eallib.OpenSSL_add_all_digests is null)
+				throw new Exception("no add digests");
+			eallib.OpenSSL_add_all_digests();
+		} else if(eallib.OPENSSL_init_crypto)
+			eallib.OPENSSL_init_crypto(0 /*OPENSSL_INIT_ADD_ALL_CIPHERS and ALL_DIGESTS together*/, null);
+		else throw new Exception("couldn't init crypto openssl");
+
+		if(ossllib.SSL_load_error_strings)
+			ossllib.SSL_load_error_strings();
+		else if(ossllib.OPENSSL_init_ssl)
+			ossllib.OPENSSL_init_ssl(0x00200000L, null);
+		else throw new Exception("couldn't load openssl errors");
 	}
 
-	pragma(lib, "crypto");
-	pragma(lib, "ssl");
+	/+
+		// I'm just gonna let the OS clean this up on process termination because otherwise SSL_free
+		// might have trouble being run from the GC after this module is unloaded.
+	shared static ~this() {
+		if(ossllib_handle) {
+			version(Windows) {
+				FreeLibrary(oeaylib_handle);
+				FreeLibrary(ossllib_handle);
+			} else version(Posix)
+				dlclose(ossllib_handle);
+			ossllib_handle = null;
+		}
+		ossllib.tupleof = ossllib.tupleof.init;
+	}
+	+/
+
+	//pragma(lib, "crypto");
+	//pragma(lib, "ssl");
 
 	class OpenSslSocket : Socket {
 		private SSL* ssl;
