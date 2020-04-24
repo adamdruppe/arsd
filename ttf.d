@@ -16,6 +16,8 @@ module arsd.ttf;
 
 // here's some D convenience functions
 
+// need to do some print glyphs t it....
+
 
 ///
 struct TtfFont {

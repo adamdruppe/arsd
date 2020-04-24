@@ -394,6 +394,7 @@ final class OpenGlTexture {
 
 	/// After you delete it with dispose, you may rebind it to something else with this.
 	void bindFrom(TrueColorImage from) {
+		assert(from !is null);
 		assert(from.width > 0 && from.height > 0);
 
 		import core.stdc.stdlib;

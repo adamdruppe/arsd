@@ -1577,6 +1577,8 @@ struct Rectangle {
 	Implements a flood fill algorithm, like the bucket tool in
 	MS Paint.
 
+	Note it assumes `what.length == width*height`.
+
 	Params:
 		what = the canvas to work with, arranged as top to bottom, left to right elements
 		width = the width of the canvas
@@ -1585,13 +1587,17 @@ struct Rectangle {
 		replacement = the replacement value
 		x = the x-coordinate to start the fill (think of where the user clicked in Paint)
 		y = the y-coordinate to start the fill
-		additionalCheck = A custom additional check to perform on each square before continuing. Returning true means keep flooding, returning false means stop.
+		additionalCheck = A custom additional check to perform on each square before continuing. Returning true means keep flooding, returning false means stop. If null, it is not used.
 +/
 void floodFill(T)(
 	T[] what, int width, int height, // the canvas to inspect
 	T target, T replacement, // fill params
 	int x, int y, bool delegate(int x, int y) @safe additionalCheck) // the node
+
+	// in(what.length == width * height) // gdc doesn't support this syntax yet so not gonna use it until that comes out.
 {
+	assert(what.length == width * height); // will use the contract above when gdc supports it
+
 	T node = what[y * width + x];
 
 	if(target == replacement) return;
@@ -1604,6 +1610,44 @@ void floodFill(T)(
 	if(!additionalCheck(x, y))
 		return;
 
+	Point[] queue;
+
+	queue ~= Point(x, y);
+
+	while(queue.length) {
+		auto n = queue[0];
+		queue = queue[1 .. $];
+		//queue.assumeSafeAppend(); // lol @safe breakage
+
+		auto w = n;
+		int offset = cast(int) (n.y * width + n.x);
+		auto e = n;
+		auto eoffset = offset;
+		w.x--;
+		offset--;
+		while(w.x >= 0 && what[offset] == target && additionalCheck(w.x, w.y)) {
+			w.x--;
+			offset--;
+		}
+		while(e.x < width && what[eoffset] == target && additionalCheck(e.x, e.y)) {
+			e.x++;
+			eoffset++;
+		}
+
+		// to make it inclusive again
+		w.x++;
+		offset++;
+		foreach(o ; offset .. eoffset) {
+			what[o] = replacement;
+			if(w.y && what[o - width] == target && additionalCheck(w.x, w.y))
+				queue ~= Point(w.x, w.y - 1);
+			if(w.y + 1 < height && what[o + width] == target && additionalCheck(w.x, w.y))
+				queue ~= Point(w.x, w.y + 1);
+			w.x++;
+		}
+	}
+
+	/+
 	what[y * width + x] = replacement;
 
 	if(x)
@@ -1621,6 +1665,7 @@ void floodFill(T)(
 	if(y != height - 1)
 		floodFill(what, width, height, target, replacement,
 			x, y + 1, additionalCheck);
+	+/
 }
 
 // for scripting, so you can tag it without strictly needing to import arsd.jsvar

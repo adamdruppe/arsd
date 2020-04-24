@@ -13459,6 +13459,8 @@ extern(System) nothrow @nogc {
 		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
+	void glLineWidth(int);
+
 
 	void glTexCoord2f(float, float);
 	void glVertex2i(int, int);

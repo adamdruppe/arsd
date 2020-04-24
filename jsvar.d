@@ -549,6 +549,7 @@ struct var {
 		}
 	}
 
+	/// `if(some_var)` will call this and give behavior based on the dynamic type. Shouldn't be too surprising.
 	public bool opCast(T:bool)() {
 		final switch(this._type) {
 			case Type.Object:
@@ -568,6 +569,7 @@ struct var {
 		}
 	}
 
+	/// You can foreach over a var.
 	public int opApply(scope int delegate(ref var) dg) {
 		foreach(i, item; this)
 			if(auto result = dg(item))
@@ -575,6 +577,7 @@ struct var {
 		return 0;
 	}
 
+	/// ditto
 	public int opApply(scope int delegate(var, ref var) dg) {
 		if(this.payloadType() == Type.Array) {
 			foreach(i, ref v; this._payload._array)
@@ -606,15 +609,30 @@ struct var {
 	}
 
 
+	/// Alias for [get]. e.g. `string s = cast(string) v;`
 	public T opCast(T)() {
 		return this.get!T;
 	}
 
+	/// Calls [get] for a type automatically. `int a; var b; b.putInto(a);` will auto-convert to `int`.
 	public auto ref putInto(T)(ref T t) {
 		return t = this.get!T;
 	}
 
-	// if it is var, we'll just blit it over
+	/++
+		Assigns a value to the var. It will do necessary implicit conversions
+		and wrapping.
+
+		You can make a method `toArsdJsvar` on your own objects to override this
+		default. It should return a [var].
+
+		History:
+			On April 20, 2020, I changed the default mode for class assignment
+			to [wrapNativeObject]. Previously it was [wrapOpaquely].
+
+			With the new [wrapNativeObject] behavior, you can mark methods
+			@[scriptable] to expose them to the script.
+	+/
 	public var opAssign(T)(T t) if(!is(T == var)) {
 		static if(__traits(compiles, this = t.toArsdJsvar())) {
 			static if(__traits(compiles, t is null)) {
@@ -661,7 +679,10 @@ struct var {
 			// so prewrapped stuff can be easily passed.
 			this._type = Type.Object;
 			this._payload._object = t;
-		} else static if(is(T == class) || .isScriptableOpaque!T) {
+		} else static if(is(T == class)) {
+			this._type = Type.Object;
+			this._payload._object = wrapNativeObject(t);
+		} else static if(.isScriptableOpaque!T) {
 			// auto-wrap other classes with reference semantics
 			this._type = Type.Object;
 			this._payload._object = wrapOpaquely(t);
@@ -846,6 +867,31 @@ struct var {
 		return null;
 	}
 
+	/++
+		Gets the var converted to type `T` as best it can. `T` may be constructed
+		from `T.fromJsVar`, or through type conversions (coercing as needed). If
+		`T` happens to be a struct, it will automatically introspect to convert
+		the var object member-by-member.
+
+		History:
+			On April 21, 2020, I changed the behavior of
+
+			---
+			var a = null;
+			string b = a.get!string;
+			---
+
+			Previously, `b == "null"`, which would print the word
+			when writeln'd. Now, `b is null`, which prints the empty string,
+			which is a bit less user-friendly, but more consistent with
+			converting to/from D strings in general.
+
+			If you are printing, you can check `a.get!string is null` and print
+			null at that point if you like.
+
+			I also wrote the first draft of this documentation at that time,
+			even though the function has been public since the beginning.
+	+/
 	public T get(T)() if(!is(T == void)) {
 		static if(is(T == var)) {
 			return this;
@@ -920,7 +966,7 @@ struct var {
 				} else static if(isSomeString!T) {
 					if(this._object !is null)
 						return this._object.toString();
-					return "null";
+					return null;// "null";
 				} else
 					return T.init;
 			case Type.Integral:
@@ -1126,18 +1172,22 @@ struct var {
 		return var(null);
 	}
 
+	/// Forwards to [opIndex]
 	public @property ref var opDispatch(string name, string file = __FILE__, size_t line = __LINE__)() {
 		return this[name];
 	}
 
+	/// Forwards to [opIndexAssign]
 	public @property ref var opDispatch(string name, string file = __FILE__, size_t line = __LINE__, T)(T r) {
 		return this.opIndexAssign!T(r, name);
 	}
 
+	/// Looks up a sub-property of the object
 	public ref var opIndex(var name, string file = __FILE__, size_t line = __LINE__) {
 		return opIndex(name.get!string, file, line);
 	}
 
+	/// Sets a sub-property of the object
 	public ref var opIndexAssign(T)(T t, var name, string file = __FILE__, size_t line = __LINE__) {
 		return opIndexAssign(t, name.get!string, file, line);
 	}

@@ -3150,7 +3150,7 @@ class TabWidget : Widget {
 	}
 
 	override int marginTop() { return 4; }
-	override int marginBottom() { return 4; }
+	override int paddingBottom() { return 4; }
 
 	override int minHeight() {
 		int max = 0;
