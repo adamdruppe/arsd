@@ -862,7 +862,7 @@ class HttpRequest {
 				Socket socket;
 				if(ssl) {
 					version(with_openssl)
-						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM);
+						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host);
 					else
 						throw new Exception("SSL not compiled in");
 				} else
@@ -1669,11 +1669,15 @@ version(use_openssl) {
 
 			void function(SSL*, int, void*) SSL_set_verify;
 
+			void function(SSL*, int, c_long, void*) SSL_ctrl;
+
 			SSL_METHOD* function() SSLv3_client_method;
 			SSL_METHOD* function() TLS_client_method;
 
 		}
 	}
+
+	import core.stdc.config;
 
 	struct eallib {
 		__gshared static extern(C) {
@@ -1745,6 +1749,12 @@ version(use_openssl) {
 			return ossllib.SSL_set_verify(a, b, c);
 		else throw new Exception("SSL_set_verify not loaded");
 	}
+	void SSL_set_tlsext_host_name(SSL* a, const char* b) {
+		if(ossllib.SSL_ctrl)
+			return ossllib.SSL_ctrl(a, 55 /*SSL_CTRL_SET_TLSEXT_HOSTNAME*/, 0 /*TLSEXT_NAMETYPE_host_name*/, cast(void*) b);
+		else throw new Exception("SSL_set_tlsext_host_name not loaded");
+	}
+
 	SSL_METHOD* SSLv3_client_method() {
 		if(ossllib.SSLv3_client_method)
 			return ossllib.SSLv3_client_method();
@@ -1848,11 +1858,15 @@ version(use_openssl) {
 	class OpenSslSocket : Socket {
 		private SSL* ssl;
 		private SSL_CTX* ctx;
-		private void initSsl(bool verifyPeer) {
+		private void initSsl(bool verifyPeer, string hostname) {
 			ctx = SSL_CTX_new(SSLv23_client_method());
 			assert(ctx !is null);
 
 			ssl = SSL_new(ctx);
+
+			if(hostname.length)
+			SSL_set_tlsext_host_name(ssl, toStringz(hostname));
+
 			if(!verifyPeer)
 				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
 			SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
@@ -1907,9 +1921,9 @@ version(use_openssl) {
 			return receive(buf, SocketFlags.NONE);
 		}
 
-		this(AddressFamily af, SocketType type = SocketType.STREAM, bool verifyPeer = true) {
+		this(AddressFamily af, SocketType type = SocketType.STREAM, string hostname = null, bool verifyPeer = true) {
 			super(af, type);
-			initSsl(verifyPeer);
+			initSsl(verifyPeer, hostname);
 		}
 
 		override void close() {
@@ -1917,9 +1931,9 @@ version(use_openssl) {
 			super.close();
 		}
 
-		this(socket_t sock, AddressFamily af) {
+		this(socket_t sock, AddressFamily af, string hostname) {
 			super(sock, af);
-			initSsl(true);
+			initSsl(true, hostname);
 		}
 
 		~this() {
@@ -2355,7 +2369,7 @@ class WebSocket {
 
 		if(ssl) {
 			version(with_openssl)
-				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM);
+				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host);
 			else
 				throw new Exception("SSL not compiled in");
 		} else
