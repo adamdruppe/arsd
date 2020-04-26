@@ -22,6 +22,7 @@
 */
 
 // FIXME: add switch!!!!!!!!!!!!!!!
+// FIXME: process super keyword.
 // FIXME: maybe some kind of splat operator too. choose([1,2,3]...) expands to choose(1,2,3)
 
 /++
@@ -366,7 +367,8 @@ private enum string[] keywords = [
 	"__FILE__", "__LINE__", // these two are special to the lexer
 	"foreach", "json!q{", "default", "finally",
 	"return", "static", "struct", "import", "module", "assert", "switch",
-	"while", "catch", "throw", "scope", "break", "super", "class", "false", "mixin", "super", "macro",
+	"while", "catch", "throw", "scope", "break", "class", "false", "mixin", "macro",
+	// "this" and "super" are treated as just a magic identifier.....
 	"auto", // provided as an alias for var right now, may change later
 	"null", "else", "true", "eval", "goto", "enum", "case", "cast",
 	"var", "for", "try", "new",
@@ -1053,6 +1055,7 @@ class FunctionLiteralExpression : Expression {
 			argumentsScope.prototype = scToUse;
 
 			argumentsScope._getMember("this", false, false) = _this;
+			//argumentsScope._getMember("super", false, false) = _this.prototype.prototype.prototype;
 			argumentsScope._getMember("_arguments", false, false) = args;
 			argumentsScope._getMember("_thisfunc", false, false) = v;
 
@@ -2255,7 +2258,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "<":
 				case ">":
 					tokens.popFront();
-					e1 = new BinaryExpression(peek.str, e1, parseFactor(tokens));
+					e1 = new BinaryExpression(peek.str, e1, parseAddend(tokens));
 					break;
 				case "+=":
 				case "-=":
