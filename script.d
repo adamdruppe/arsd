@@ -20,6 +20,10 @@
 
 	I kinda like the javascript foo`blargh` template literals too.
 */
+
+// FIXME: add switch!!!!!!!!!!!!!!!
+// FIXME: maybe some kind of splat operator too. choose([1,2,3]...) expands to choose(1,2,3)
+
 /++
 	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
 	two-way interop with the host D program.  The script language it implements is based on a hybrid of D and Javascript.
@@ -296,6 +300,23 @@ import std.range;
 /* **************************************
   script to follow
 ****************************************/
+
+/++
+	A base class for exceptions that can never be caught by scripts;
+	throwing it from a function called from a script is guaranteed to
+	bubble all the way up to your [interpret] call..
+	(scripts can also never catch Error btw)
+
+	History:
+		Added on April 24, 2020 (v7.3.0)
++/
+class NonScriptCatchableException : Exception {
+	import std.exception;
+	///
+	mixin basicExceptionCtors;
+}
+
+//class TEST : Throwable {this() { super("lol"); }}
 
 /// Thrown on script syntax errors and the sort.
 class ScriptCompileException : Exception {
@@ -1770,6 +1791,9 @@ class ExceptionBlockExpression : Expression {
 		if(catchExpressions.length || (catchExpressions.length == 0 && finallyExpressions.length == 0))
 			try {
 				result = tryExpression.interpret(sc);
+			} catch(NonScriptCatchableException e) {
+				// the script cannot catch these so it continues up regardless
+				throw e;
 			} catch(Exception e) {
 				var ex = var.emptyObject;
 				ex.type = typeid(e).name;

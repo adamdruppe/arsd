@@ -932,13 +932,24 @@ struct var {
 						return wno.wrapping();
 					}
 					throw new DynamicTypeException(this, Type.Object); // FIXME: could be better
-				} else static if(is(T == struct) || is(T == class)) {
+				} else static if(is(T == struct) || is(T == class) || is(T == interface)) {
 					// first, we'll try to give them back the native object we have, if we have one
-					static if(is(T : Object)) {
-						if(auto wno = cast(WrappedNativeObject) this._payload._object) {
-							auto no = cast(T) wno.getObject();
-							if(no !is null)
-								return no;
+					static if(is(T : Object) || is(T == interface)) {
+						auto t = this;
+						// need to walk up the prototype chain to 
+						while(t != null) {
+							if(auto wno = cast(WrappedNativeObject) t._payload._object) {
+								auto no = cast(T) wno.getObject();
+
+								if(no !is null) {
+									auto sc = cast(ScriptableSubclass) no;
+									if(sc !is null)
+										sc.setScriptVar(this);
+
+									return no;
+								}
+							}
+							t = t.prototype;
 						}
 
 						// FIXME: this is kinda weird.
@@ -949,10 +960,11 @@ struct var {
 						T t;
 						bool initialized = true;
 						static if(is(T == class)) {
-							static if(__traits(compiles, new T()))
+							static if(__traits(compiles, new T())) {
 								t = new T();
-							else
+							} else {
 								initialized = false;
+							}
 						}
 
 
@@ -1789,6 +1801,198 @@ template makeAscii() {
 
 package interface VarMetadata { }
 
+interface ScriptableSubclass {
+	void setScriptVar(var);
+	var  getScriptVar();
+	final bool methodOverriddenByScript(string name) {
+		PrototypeObject t = getScriptVar().get!PrototypeObject;
+		// the top one is the native object from subclassable so we don't want to go all the way there to avoid endless recursion
+		if(t !is null)
+		while(t.prototype !is null) {
+			if(t._peekMember(name, false) !is null)
+				return true;
+			t = t.prototype;
+		}
+		return false;
+	}
+}
+
+/++
+	EXPERIMENTAL
+
+	Allows you to make a class available to the script rather than just class objects.
+	You can subclass it in script and then call the methods again through the original
+	D interface. With caveats...
+
+
+	Assumes ALL $(I virtual) methods and constructors are scriptable, but requires
+	`@scriptable` to be present on final or static methods. This may change in the future.
+
+	Note that it has zero support for `@safe`, `pure`, `nothrow`, and other attributes
+	at this time and will not compile classes that use those. I may be able to loosen
+	this in the future as well.
+
+	Its behavior on overloads is currently undefined - it may keep only any random
+	overload as the only one and do dynamic type conversions to cram data into it.
+	This is likely to change in the future but for now try not to use this on classes
+	with overloaded methods.
+
+	It also does not wrap member variables unless explicitly marked `@scriptable`; it
+	is meant to communicate via methods.
+
+	History:
+	Added April 25, 2020
++/
+var subclassable(T)() if(is(T == class) || is(T == interface)) {
+	import std.traits;
+
+	static final class ScriptableT : T, ScriptableSubclass {
+		var _this;
+		void setScriptVar(var v) { _this = v; }
+		var getScriptVar() { return _this; }
+		bool _next_devirtualized;
+
+		static if(__traits(compiles,  __traits(getOverloads, T, "__ctor")))
+		static foreach(ctor; __traits(getOverloads, T, "__ctor"))
+			@scriptable this(Parameters!ctor p) { super(p); }
+
+		static foreach(memberName; __traits(allMembers, T)) {
+		static if(__traits(isVirtualMethod, __traits(getMember, T, memberName)))
+		static if(memberName != "toHash")
+		mixin(q{
+			@scriptable
+			override ReturnType!(__traits(getMember, T, memberName))
+			}~memberName~q{
+			(Parameters!(__traits(getMember, T, memberName)) p)
+			{
+				if(_next_devirtualized || !methodOverriddenByScript(memberName))
+					return __traits(getMember, super, memberName)(p);
+				return _this[memberName](p).get!(typeof(return));
+			}
+		});
+		}
+	}
+
+	// I don't want to necessarily call a constructor but I need an object t use as the prototype
+	// hence this faked one. hopefully the new operator will see void[] and assume it can have GC ptrs...
+	void[] store = new void[](__traits(classInstanceSize, ScriptableT));
+	store[] = typeid(ScriptableT).initializer[];
+	ScriptableT dummy = cast(ScriptableT) store.ptr;
+
+	var proto = wrapNativeObject!(ScriptableT, true)(dummy);
+
+	var f = var.emptyObject;
+	f.prototype = proto;
+
+	return f;
+}
+
+/// Demonstrates tested capabilities of [subclassable]
+version(with_arsd_script)
+unittest {
+	interface IFoo {
+		string method();
+		int method2();
+		int args(int, int);
+	}
+	// note the static is just here because this
+	// is written in a unittest; it shouldn't actually
+	// be necessary under normal circumstances.
+	static class Foo : IFoo {
+		string method() { return "Foo"; }
+		int method2() { return 10; }
+		int args(int a, int b) { return a+b; }
+
+		int member_;
+		@property int member(int i) { return member_ = i; }
+		@property int member() { return member_; }
+
+		@scriptable final int fm() { return 56; }
+	}
+	static class Bar : Foo {
+		override string method() { return "Bar"; }
+	}
+	static class Baz : Bar {
+		override int method2() { return 20; }
+	}
+
+	static class WithCtor {
+		// constructors work but are iffy with overloads....
+		this(int arg) { this.arg = arg; }
+		@scriptable int arg; // this is accessible cuz it is @scriptable
+		int getValue() { return arg; }
+	}
+
+	var globals = var.emptyObject;
+	globals.Foo = subclassable!Foo;
+	globals.Bar = subclassable!Bar;
+	globals.Baz = subclassable!Baz;
+	globals.WithCtor = subclassable!WithCtor;
+
+	import arsd.script;
+
+	interpret(q{
+		// can instantiate D classes added via subclassable
+		var foo = new Foo();
+		// and call its methods...
+		assert(foo.method() == "Foo");
+		assert(foo.method2() == 10);
+
+		foo.member(55);
+
+		var bar = new Bar();
+		assert(bar.method() == "Bar");
+		assert(bar.method2() == 10);
+
+		// this final member is accessible because it was marked @scriptable
+		assert(bar.fm() == 56);
+
+		// the script can even subclass D classes!
+		class Amazing : Bar {
+			// and override its methods
+			function method() {
+				return "Amazing";
+			}
+
+			function args(a, b) {
+				// calling parent class method still possible
+				// (the script may get the `super` keyword soon btw)
+				return Bar.args(a*2, b*2);
+			}
+		}
+
+		var amazing = new Amazing();
+		assert(amazing.method() == "Amazing");
+		assert(amazing.method2() == 10); // calls back to the parent class
+		assert(amazing.args(2, 4) == 12);
+
+		var wc = new WithCtor(5); // argument passed to constructor
+		assert(wc.getValue() == 5);
+
+		// confirm the property read works too
+		assert(wc.arg == 5);
+
+		// but property WRITING is currently not working though.
+	}, globals);
+
+	Foo foo = globals.foo.get!Foo; // get the native object back out
+	assert(foo.member == 55); // and see mutation via properties proving object mutability
+	assert(globals.foo.get!Bar is null); // cannot get the wrong class out of it
+	assert(globals.foo.get!Object !is null); // but can do parent classes / interfaces
+	assert(globals.foo.get!IFoo !is null);
+	assert(globals.bar.get!Foo !is null); // the Bar can also be a Foo
+
+	Bar amazing = globals.amazing.get!Bar; // instance of the script's class is still accessible through parent D class or interface
+	assert(amazing !is null); // object exists
+	assert(amazing.method() == "Amazing"); // calls the override from the script
+	assert(amazing.method2() == 10); // non-overridden function works as expected
+
+	IFoo iamazing = globals.amazing.get!IFoo; // and through just the interface works the same way
+	assert(iamazing !is null);
+	assert(iamazing.method() == "Amazing");
+	assert(iamazing.method2() == 10);
+}
+
 // just a base class we can reference when looking for native objects
 class WrappedNativeObject : PrototypeObject {
 	TypeInfo wrappedType;
@@ -1806,7 +2010,7 @@ template helper(alias T) { alias helper = T; }
 
 	That may be done automatically with `opAssign` in the future.
 +/
-WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
+WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(is(Class == class)) {
 	import std.meta;
 	return new class WrappedNativeObject {
 		override Object getObject() {
@@ -1823,6 +2027,10 @@ WrappedNativeObject wrapNativeObject(Class)(Class obj) if(is(Class == class)) {
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
 						auto helper = &__traits(getOverloads, obj, memberName)[idx];
 						_properties[memberName] = (Parameters!helper args) {
+							static if(special) {
+								obj._next_devirtualized = true;
+								scope(exit) obj._next_devirtualized = false;
+							}
 							return __traits(getOverloads, obj, memberName)[idx](args);
 						};
 					}
