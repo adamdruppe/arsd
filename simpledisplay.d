@@ -13445,6 +13445,11 @@ extern(System) nothrow @nogc {
 	void glClearColor(float, float, float, float);
 
 
+	void glPixelStorei(uint, int);
+
+	enum GL_RED = 0x1903;
+	enum GL_ALPHA = 0x1906;
+	enum GL_UNPACK_ALIGNMENT = 0x0CF5;
 
 	void glGenTextures(uint, uint*);
 	void glBindTexture(int, int);

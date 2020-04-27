@@ -21,10 +21,6 @@
 	I kinda like the javascript foo`blargh` template literals too.
 */
 
-// FIXME: add switch!!!!!!!!!!!!!!!
-// FIXME: process super keyword.
-// FIXME: maybe some kind of splat operator too. choose([1,2,3]...) expands to choose(1,2,3)
-
 /++
 	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
 	two-way interop with the host D program.  The script language it implements is based on a hybrid of D and Javascript.
@@ -34,6 +30,17 @@
 	your existing knowledge from Javascript will carry over, making it hopefully easy to use right out of the box.
 	See the [#examples] to quickly get the feel of the script language as well as the interop.
 
+
+	$(TIP
+		A goal of this language is to blur the line between D and script, but
+		in the examples below, which are generated from D unit tests,
+		the non-italics code is D, and the italics is the script. Notice
+		how it is a string passed to the [interpret] function.
+
+		In some smaller, stand-alone code samples, there will be a tag "adrscript"
+		in the upper right of the box to indicate it is script. Otherwise, it
+		is D.
+	)
 
 	Installation_instructions:
 	This script interpreter is contained entirely in two files: jsvar.d and script.d. Download both of them
@@ -71,8 +78,10 @@
 	* try/catch/finally/throw
 		You can use try as an expression without any following catch to return the exception:
 
+		```adrscript
 		var a = try throw "exception";; // the double ; is because one closes the try, the second closes the var
 		// a is now the thrown exception
+		```
 	* for/while/foreach
 	* D style operators: +-/* on all numeric types, ~ on strings and arrays, |&^ on integers.
 		Operators can coerce types as needed: 10 ~ "hey" == "10hey". 10 + "3" == 13.
@@ -81,17 +90,21 @@
 
 		So you can do some type coercion like this:
 
+		```adrscript
 		a = a|0; // forces to int
 		a = "" ~ a; // forces to string
 		a = a+0.0; // coerces to float
+		```
 
 		Though casting is probably better.
 	* Type coercion via cast, similarly to D.
+		```adrscript
 		var a = "12";
 		a.typeof == "String";
 		a = cast(int) a;
 		a.typeof == "Integral";
 		a == 12;
+		```
 
 		Supported types for casting to: int/long (both actually an alias for long, because of how var works), float/double/real, string, char/dchar (these return *integral* types), and arrays, int[], string[], and float[].
 
@@ -113,8 +126,9 @@
 		Variable names that start with __ are reserved and you shouldn't use them.
 	* int, float, string, array, bool, and json!q{} literals
 	* var.prototype, var.typeof. prototype works more like Mozilla's __proto__ than standard javascript prototype.
-	* the |> pipeline operator
+	* the `|>` pipeline operator
 	* classes:
+		```adrscript
 		// inheritance works
 		class Foo : bar {
 			// constructors, D style
@@ -138,6 +152,7 @@
 		var foo = new Foo(12);
 
 		foo.newFunc = function() { this.derived = 0; }; // this is ok too, and scoping, including 'this', works like in Javascript
+		```
 
 		You can also use 'new' on another object to get a copy of it.
 	* return, break, continue, but currently cannot do labeled breaks and continues
@@ -171,12 +186,16 @@
 	)
 
 
-	FIXME:
-		* make sure superclass ctors are called
+	Todo_list:
+
+	I also have a wishlist here that I may do in the future, but don't expect them any time soon.
+
+FIXME: maybe some kind of splat operator too. choose([1,2,3]...) expands to choose(1,2,3)
+
+make sure superclass ctors are called
 
    FIXME: prettier stack trace when sent to D
 
-   FIXME: interpolated string: "$foo" or "#{expr}" or something.
    FIXME: support more escape things in strings like \n, \t etc.
 
    FIXME: add easy to use premade packages for the global object.
@@ -185,15 +204,22 @@
 
    FIXME: the debugger statement from javascript might be cool to throw in too.
 
-   FIXME: add continuations or something too
+   FIXME: add continuations or something too - actually doing it with fibers works pretty well
 
    FIXME: Also ability to get source code for function something so you can mixin.
-   FIXME: add COM support on Windows
+
+   FIXME: add COM support on Windows ????
 
 
 	Might be nice:
 		varargs
 		lambdas - maybe without function keyword and the x => foo syntax from D.
+
+
+	History:
+		April 26, 2020: added `switch`, fixed precedence bug, fixed doc issues and added some unittests
+
+		Started writing it in July 2013. Yes, a basic precedence issue was there for almost SEVEN YEARS. You can use this as a toy but please don't use it for anything too serious, it really is very poorly written and not intelligently designed at all.
 +/
 module arsd.script;
 
@@ -288,6 +314,113 @@ unittest {
 	}, globals);
 }
 
+/++
+	$(H3 Classes demo)
+
+	See also: [arsd.jsvar.subclassable] for more interop with D classes.
++/
+unittest {
+	var globals = var.emptyObject;
+	interpret(q{
+		class Base {
+			function foo() { return "Base"; }
+			function set() { this.a = 10; }
+			function get() { return this.a; } // this MUST be used for instance variables though as they do not exist in static lookup
+			function test() { return foo(); } // I did NOT use `this` here which means it does STATIC lookup!
+							// kinda like mixin templates in D lol.
+			var a = 5;
+			static var b = 10; // static vars are attached to the class specifically
+		}
+		class Child : Base {
+			function foo() {
+				assert(super.foo() == "Base");
+				return "Child";
+			};
+			function set() { this.a = 7; }
+			function get2() { return this.a; }
+			var a = 9;
+		}
+
+		var c = new Child();
+		assert(c.foo() == "Child");
+
+		assert(c.test() == "Base"); // static lookup of methods if you don't use `this`
+
+		/*
+		// these would pass in D, but do NOT pass here because of dynamic variable lookup in script.
+		assert(c.get() == 5);
+		assert(c.get2() == 9);
+		c.set();
+		assert(c.get() == 5); // parent instance is separate
+		assert(c.get2() == 7);
+		*/
+
+		// showing the shared vars now.... I personally prefer the D way but meh, this lang
+		// is an unholy cross of D and Javascript so that means it sucks sometimes.
+		assert(c.get() == c.get2());
+		c.set();
+		assert(c.get2() == 7);
+		assert(c.get() == c.get2());
+
+		// super, on the other hand, must always be looked up statically, or else this
+		// next example with infinite recurse and smash the stack.
+		class Third : Child { }
+		var t = new Third();
+		assert(t.foo() == "Child");
+	}, globals);
+}
+
+/++
+	$(H3 Properties from D)
+
+	Note that it is not possible yet to define a property function from the script language.
++/
+unittest {
+	static class Test {
+		// the @scriptable is required to make it accessible
+		@scriptable int a;
+
+		@scriptable @property int ro() { return 30; }
+
+		int _b = 20;
+		@scriptable @property int b() { return _b; }
+		@scriptable @property int b(int val) { return _b = val; }
+	}
+
+	Test test = new Test;
+
+	test.a = 15;
+
+	var globals = var.emptyObject;
+	globals.test = test;
+	// but once it is @scriptable, both read and write works from here:
+	interpret(q{
+		assert(test.a == 15);
+		test.a = 10;
+		assert(test.a == 10);
+
+		assert(test.ro == 30); // @property functions from D wrapped too
+		test.ro = 40;
+		assert(test.ro == 30); // setting it does nothing though
+
+		assert(test.b == 20); // reader still works if read/write available too
+		test.b = 25;
+		assert(test.b == 25); // writer action reflected
+
+		// however other opAssign operators are not implemented correctly on properties at this time so this fails!
+		//test.b *= 2;
+		//assert(test.b == 50);
+	}, globals);
+
+	// and update seen back in D
+	assert(test.a == 10); // on the original native object
+	assert(test.b == 25);
+
+	assert(globals.test.a == 10); // and via the var accessor for member var
+	assert(globals.test.b == 25); // as well as @property func
+}
+
+
 public import arsd.jsvar;
 
 import std.stdio;
@@ -367,8 +500,8 @@ private enum string[] keywords = [
 	"__FILE__", "__LINE__", // these two are special to the lexer
 	"foreach", "json!q{", "default", "finally",
 	"return", "static", "struct", "import", "module", "assert", "switch",
-	"while", "catch", "throw", "scope", "break", "class", "false", "mixin", "macro",
-	// "this" and "super" are treated as just a magic identifier.....
+	"while", "catch", "throw", "scope", "break", "class", "false", "mixin", "macro", "super",
+	// "this" is just treated as just a magic identifier.....
 	"auto", // provided as an alias for var right now, may change later
 	"null", "else", "true", "eval", "goto", "enum", "case", "cast",
 	"var", "for", "try", "new",
@@ -1055,7 +1188,6 @@ class FunctionLiteralExpression : Expression {
 			argumentsScope.prototype = scToUse;
 
 			argumentsScope._getMember("this", false, false) = _this;
-			//argumentsScope._getMember("super", false, false) = _this.prototype.prototype.prototype;
 			argumentsScope._getMember("_arguments", false, false) = args;
 			argumentsScope._getMember("_thisfunc", false, false) = v;
 
@@ -1310,6 +1442,41 @@ class VariableExpression : Expression {
 	}
 }
 
+class SuperExpression : Expression {
+	VariableExpression dot;
+	string origDot;
+	this(VariableExpression dot) {
+		if(dot !is null) {
+			origDot = dot.identifier;
+			//dot.identifier = "__super_" ~ dot.identifier; // omg this is so bad
+		}
+		this.dot = dot;
+	}
+
+	override string toString() {
+		if(dot is null)
+			return "super";
+		else
+			return "super." ~ origDot;
+	}
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		var a = sc._getMember("super", true, true);
+		if(a._object is null)
+			throw new Exception("null proto for super");
+		PrototypeObject proto = a._object.prototype;
+		if(proto is null)
+			throw new Exception("no super");
+		//proto = proto.prototype;
+
+		if(dot !is null)
+			a = proto._getMember(dot.identifier, true, true);
+		else
+			a = proto._getMember("__ctor", true, true);
+		return InterpretResult(a, sc);
+	}
+}
+
 class DotVarExpression : VariableExpression {
 	Expression e1;
 	VariableExpression e2;
@@ -1349,9 +1516,9 @@ class DotVarExpression : VariableExpression {
 				return *(new var(val.toJson()));
 		}
 
-		if(auto ve = cast(VariableExpression) e1)
+		if(auto ve = cast(VariableExpression) e1) {
 			return this.getVarFrom(sc, ve.getVar(sc, recurse));
-		else if(cast(StringLiteralExpression) e1 && e2.identifier == "interpolate") {
+		} else if(cast(StringLiteralExpression) e1 && e2.identifier == "interpolate") {
 			auto se = cast(StringLiteralExpression) e1;
 			var* functor = new var;
 			//if(!se.allowInterpolation)
@@ -1378,6 +1545,10 @@ class DotVarExpression : VariableExpression {
 
 	override ref var getVarFrom(PrototypeObject sc, ref var v) {
 		return e2.getVarFrom(sc, v);
+	}
+
+	override string toInterpretedString(PrototypeObject sc) {
+		return getVar(sc).get!string;
 	}
 }
 
@@ -1523,6 +1694,143 @@ class ScopeExpression : Expression {
 		}
 		return InterpretResult(ret, sc);
 	}
+}
+
+class SwitchExpression : Expression {
+	Expression expr;
+	CaseExpression[] cases;
+	CaseExpression default_;
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		auto e = expr.interpret(sc);
+
+		bool hitAny;
+		bool fallingThrough;
+		bool secondRun;
+
+		var last;
+
+		again:
+		foreach(c; cases) {
+			if(!secondRun && !fallingThrough && c is default_) continue;
+			if(fallingThrough || (secondRun && c is default_) || c.condition.interpret(sc) == e) {
+				fallingThrough = false;
+				if(!secondRun)
+					hitAny = true;
+				InterpretResult ret;
+				expr_loop: foreach(exp; c.expressions) {
+					ret = exp.interpret(sc);
+					with(InterpretResult.FlowControl)
+					final switch(ret.flowControl) {
+						case Normal:
+							last = ret.value;
+						break;
+						case Return:
+						case Goto:
+							return ret;
+						case Continue:
+							fallingThrough = true;
+							break expr_loop;
+						case Break:
+							return InterpretResult(last, sc);
+					}
+				}
+
+				if(!fallingThrough)
+					break;
+			}
+		}
+
+		if(!hitAny && !secondRun) {
+			secondRun = true;
+			goto again;
+		}
+
+		return InterpretResult(last, sc);
+	}
+}
+
+class CaseExpression : Expression {
+	this(Expression condition) {
+		this.condition = condition;
+	}
+	Expression condition;
+	Expression[] expressions;
+
+	override string toString() {
+		string code;
+		if(condition is null)
+			code = "default:";
+		else
+			code = "case " ~ condition.toString() ~ ":";
+
+		foreach(expr; expressions)
+			code ~= "\n" ~ expr.toString() ~ ";";
+
+		return code;
+	}
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		// I did this inline up in the SwitchExpression above. maybe insane?!
+		assert(0);
+	}
+}
+
+unittest {
+	interpret(q{
+		var a = 10;
+		// case and break should work
+		var brk;
+
+		// var brk = switch doesn't parse, but this will.....
+		// (I kinda went everything is an expression but not all the way. this code SUX.)
+		brk = switch(a) {
+			case 10:
+				a = 30;
+			break;
+			case 30:
+				a = 40;
+			break;
+			default:
+				a = 0;
+		}
+
+		assert(a == 30);
+		assert(brk == 30); // value of switch set to last expression evaled inside
+
+		// so should default
+		switch(a) {
+			case 20:
+				a = 40;
+			break;
+			default:
+				a = 40;
+		}
+
+		assert(a == 40);
+
+		switch(a) {
+			case 40:
+				a = 50;
+			case 60: // no implicit fallthrough in this lang...
+				a = 60;
+		}
+
+		assert(a == 50);
+
+		var ret;
+
+		ret = switch(a) {
+			case 50:
+				a = 60;
+				continue; // request fallthrough. D uses "goto case", but I haven't implemented any goto yet so continue is best fit
+			case 90:
+				a = 70;
+		}
+
+		assert(a == 70); // the explicit `continue` requests fallthrough behavior
+		assert(ret == 70);
+	});
 }
 
 class ForeachExpression : Expression {
@@ -1750,7 +2058,7 @@ class NewExpression : Expression {
 			args ~= arg.interpret(sc).value;
 
 		var original = what.interpret(sc).value;
-		var n = original._copy;
+		var n = original._copy_new;
 		if(n.payloadType() == var.Type.Object) {
 			var ctor = original.prototype ? original.prototype._getOwnProperty("__ctor") : var(null);
 			if(ctor)
@@ -1885,6 +2193,10 @@ class CallExpression : Expression {
 		this.func = func;
 	}
 
+	override string toInterpretedString(PrototypeObject sc) {
+		return interpret(sc).value.get!string;
+	}
+
 	override InterpretResult interpret(PrototypeObject sc) {
 		if(auto asrt = cast(AssertKeyword) func) {
 			auto assertExpression = arguments[0];
@@ -1926,6 +2238,10 @@ class CallExpression : Expression {
 			_this = dve.e1.interpret(sc).value;
 		} else if(auto ide = cast(IndexExpression) func) {
 			_this = ide.interpret(sc).value;
+		} else if(auto se = cast(SuperExpression) func) {
+			// super things are passed this object despite looking things up on the prototype
+			// so it calls the correct instance
+			_this = sc._getMember("this", true, true);
 		}
 
 		return InterpretResult(f.apply(_this, args), sc);
@@ -1967,7 +2283,17 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 		auto token = tokens.front;
 
 		Expression e;
-		if(token.type == ScriptToken.Type.identifier)
+
+		if(token.str == "super") {
+			tokens.popFront();
+			VariableExpression dot;
+			if(!tokens.empty && tokens.front.str == ".") {
+				tokens.popFront();
+				dot = parseVariableName(tokens);
+			}
+			e = new SuperExpression(dot);
+		}
+		else if(token.type == ScriptToken.Type.identifier)
 			e = parseVariableName(tokens);
 		else if(token.type == ScriptToken.Type.symbol && (token.str == "-" || token.str == "+")) {
 			auto op = token.str;
@@ -2391,6 +2717,11 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 					new DotVarExpression(new VariableExpression("__proto"), new VariableExpression("prototype")),
 					new DotVarExpression(new VariableExpression(inheritFrom.str), new VariableExpression("prototype")));
 
+				expressions ~= new AssignExpression(
+					new DotVarExpression(new VariableExpression("__proto"), new VariableExpression("super")),
+					new VariableExpression(inheritFrom.str)
+				);
+
 				// and copying the instance initializer from the parent
 				expressions ~= new ShallowCopyExpression(new VariableExpression("__obj"), new VariableExpression(inheritFrom.str));
 			}
@@ -2486,6 +2817,51 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 				e.ifFalse = parseExpression(tokens);
 			}
 			ret = e;
+		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "switch")) {
+			tokens.popFront();
+			auto e = new SwitchExpression();
+			tokens.requireNextToken(ScriptToken.Type.symbol, "(");
+			e.expr = parseExpression(tokens);
+			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
+
+			tokens.requireNextToken(ScriptToken.Type.symbol, "{");
+
+			while(!tokens.peekNextToken(ScriptToken.Type.symbol, "}")) {
+
+				if(tokens.peekNextToken(ScriptToken.Type.keyword, "case")) {
+					auto start = tokens.front;
+					tokens.popFront();
+					auto c = new CaseExpression(parseExpression(tokens));
+					e.cases ~= c;
+					tokens.requireNextToken(ScriptToken.Type.symbol, ":");
+
+					while(!tokens.peekNextToken(ScriptToken.Type.keyword, "default") && !tokens.peekNextToken(ScriptToken.Type.keyword, "case") && !tokens.peekNextToken(ScriptToken.Type.symbol, "}")) {
+						c.expressions ~= parseStatement(tokens);
+						while(tokens.peekNextToken(ScriptToken.Type.symbol, ";"))
+							tokens.popFront();
+					}
+				} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "default")) {
+					tokens.popFront();
+					tokens.requireNextToken(ScriptToken.Type.symbol, ":");
+
+					auto c = new CaseExpression(null);
+
+					while(!tokens.peekNextToken(ScriptToken.Type.keyword, "case") && !tokens.peekNextToken(ScriptToken.Type.symbol, "}")) {
+						c.expressions ~= parseStatement(tokens);
+						while(tokens.peekNextToken(ScriptToken.Type.symbol, ";"))
+							tokens.popFront();
+					}
+
+					e.cases ~= c;
+					e.default_ = c;
+				} else throw new ScriptCompileException("A switch statement must consists of cases and a default, nothing else ", tokens.front.lineNumber);
+			}
+
+			tokens.requireNextToken(ScriptToken.Type.symbol, "}");
+			expectedEnd = "";
+
+			ret = e;
+
 		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "foreach")) {
 			tokens.popFront();
 			auto e = new ForeachExpression();
@@ -2741,11 +3117,14 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 				case "class":
 				case "new":
 
+				case "super":
+
 				// flow control
 				case "if":
 				case "while":
 				case "for":
 				case "foreach":
+				case "switch":
 
 				// exceptions
 				case "try":
@@ -2953,15 +3332,38 @@ var interpretFile(File file, var globals) {
 		(globals.payloadType() == var.Type.Object && globals._payload._object !is null) ? globals._payload._object : new PrototypeObject());
 }
 
-///
-void repl(var globals) {
-	import std.stdio;
+/// Enhanced repl uses arsd.terminal for better ux. Added April 26, 2020. Default just uses std.stdio.
+void repl(bool enhanced = false)(var globals) {
+	static if(enhanced) {
+		import arsd.terminal;
+		Terminal terminal = Terminal(ConsoleOutputMode.linear);
+		auto lines() {
+			struct Range {
+				string line;
+				string front() { return line; }
+				bool empty() { return line is null; }
+				void popFront() { line = terminal.getline(": "); terminal.writeln(); }
+			}
+			Range r;
+			r.popFront();
+			return r;
+			
+		}
+
+		void writeln(T...)(T t) {
+			terminal.writeln(t);
+			terminal.flush();
+		}
+	} else {
+		import std.stdio;
+		auto lines() { return stdin.byLine; }
+	}
 	import std.algorithm;
 	auto variables = (globals.payloadType() == var.Type.Object && globals._payload._object !is null) ? globals._payload._object : new PrototypeObject();
 
 	// we chain to ensure the priming popFront succeeds so we don't throw here
 	auto tokens = lexScript(
-		chain(["var __skipme = 0;"], map!((a) => a.idup)(stdin.byLine))
+		chain(["var __skipme = 0;"], map!((a) => a.idup)(lines))
 	, "stdin");
 	auto expressions = parseScript(tokens);
 

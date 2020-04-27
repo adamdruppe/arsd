@@ -527,6 +527,21 @@ struct var {
 			this.opAssign(t);
 	}
 
+	public var _copy_new() {
+		if(payloadType() == Type.Object) {
+			var cp;
+			if(this._payload._object !is null)
+				cp._object = this._payload._object.new_;
+			return cp;
+		} else if(payloadType() == Type.Array) {
+			var cp;
+			cp = this._payload._array.dup;
+			return cp;
+		} else {
+			return this._copy();
+		}
+	}
+
 	public var _copy() {
 		final switch(payloadType()) {
 			case Type.Integral:
@@ -1622,6 +1637,50 @@ class PrototypeObject {
 		return n;
 	}
 
+	bool isSpecial() { return false; }
+
+	PrototypeObject new_() {
+		// if any of the prototypes are D objects, we need to try to copy them.
+		auto p = prototype;
+
+		PrototypeObject[32] stack;
+		PrototypeObject[] fullStack = stack[];
+		int stackPos;
+
+		while(p !is null) {
+
+			if(p.isSpecial()) {
+				auto proto = p.new_();
+
+				while(stackPos) {
+					stackPos--;
+					auto pr = fullStack[stackPos].copy();
+					pr.prototype = proto;
+					proto = pr;
+				}
+
+				auto n = new PrototypeObject();
+				n.prototype = proto;
+				n.name = this.name;
+				foreach(k, v; _properties) {
+					n._properties[k] = v._copy;
+				}
+
+				return n;
+			}
+
+			if(stackPos >= fullStack.length)
+				fullStack ~= p;
+			else
+				fullStack[stackPos] = p;
+			stackPos++;
+
+			p = p.prototype;
+		}
+
+		return copy();
+	}
+
 	PrototypeObject copyPropertiesFrom(PrototypeObject p) {
 		foreach(k, v; p._properties) {
 			this._properties[k] = v._copy;
@@ -1871,13 +1930,19 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 			}
 		});
 		}
+
+		// I don't want to necessarily call a constructor but I need an object t use as the prototype
+		// hence this faked one. hopefully the new operator will see void[] and assume it can have GC ptrs...
+		static ScriptableT _allocate_() {
+			void[] store = new void[](__traits(classInstanceSize, ScriptableT));
+			store[] = typeid(ScriptableT).initializer[];
+			ScriptableT dummy = cast(ScriptableT) store.ptr;
+			//import std.stdio; writeln("Allocating new ", cast(ulong) store.ptr);
+			return dummy;
+		}
 	}
 
-	// I don't want to necessarily call a constructor but I need an object t use as the prototype
-	// hence this faked one. hopefully the new operator will see void[] and assume it can have GC ptrs...
-	void[] store = new void[](__traits(classInstanceSize, ScriptableT));
-	store[] = typeid(ScriptableT).initializer[];
-	ScriptableT dummy = cast(ScriptableT) store.ptr;
+	ScriptableT dummy = ScriptableT._allocate_();
 
 	var proto = wrapNativeObject!(ScriptableT, true)(dummy);
 
@@ -1899,9 +1964,12 @@ unittest {
 	// is written in a unittest; it shouldn't actually
 	// be necessary under normal circumstances.
 	static class Foo : IFoo {
+		ulong handle() { return cast(ulong) cast(void*) this; }
 		string method() { return "Foo"; }
 		int method2() { return 10; }
-		int args(int a, int b) { return a+b; }
+		int args(int a, int b) {
+			//import std.stdio; writeln(a, " + ", b, " + ", member_, " on ", cast(ulong) cast(void*) this);
+			return member_+a+b; }
 
 		int member_;
 		@property int member(int i) { return member_ = i; }
@@ -1940,6 +2008,14 @@ unittest {
 
 		foo.member(55);
 
+		// proves the new operator actually creates new D
+		// objects as well to avoid sharing instance state.
+		var foo2 = new Foo();
+		assert(foo2.handle() != foo.handle());
+
+		// passing arguments works
+		assert(foo.args(2, 4) == 6 + 55); // (and sanity checks operator precedence)
+
 		var bar = new Bar();
 		assert(bar.method() == "Bar");
 		assert(bar.method2() == 10);
@@ -1950,21 +2026,34 @@ unittest {
 		// the script can even subclass D classes!
 		class Amazing : Bar {
 			// and override its methods
+			var inst = 99;
 			function method() {
 				return "Amazing";
 			}
 
+			// note: to access instance members or virtual call lookup you MUST use the `this` keyword
+			// otherwise the function will be called with scope limited to this class itself (similar to javascript)
+			function other() {
+				// this.inst is needed to get the instance variable (otherwise it would only look for a static var)
+				// and this.method triggers dynamic lookup there, so it will get children's overridden methods if there is one
+				return this.inst ~ this.method();
+			}
+
 			function args(a, b) {
 				// calling parent class method still possible
-				// (the script may get the `super` keyword soon btw)
-				return Bar.args(a*2, b*2);
+				return super.args(a*2, b*2);
 			}
 		}
 
 		var amazing = new Amazing();
 		assert(amazing.method() == "Amazing");
 		assert(amazing.method2() == 10); // calls back to the parent class
-		assert(amazing.args(2, 4) == 12);
+		amazing.member(5);
+
+		// this line I can paste down to interactively debug the test btw.
+		//}, globals); repl!true(globals); interpret(q{
+
+		assert(amazing.args(2, 4) == 12+5);
 
 		var wc = new WithCtor(5); // argument passed to constructor
 		assert(wc.getValue() == 5);
@@ -1973,6 +2062,20 @@ unittest {
 		assert(wc.arg == 5);
 
 		// but property WRITING is currently not working though.
+
+
+		class DoubleChild : Amazing {
+			function method() {
+				return "DoubleChild";
+			}
+		}
+
+		// can also do a child of a child class
+		var dc = new DoubleChild();
+		assert(dc.method() == "DoubleChild");
+		assert(dc.other() == "99DoubleChild"); // the `this.method` means it uses the replacement now
+		assert(dc.method2() == 10); // back to the D grandparent
+		assert(dc.args(2, 4) == 12); // but the args impl from above
 	}, globals);
 
 	Foo foo = globals.foo.get!Foo; // get the native object back out
@@ -2008,16 +2111,27 @@ template helper(alias T) { alias helper = T; }
 
 	By default, it will wrap all methods and members with a public or greater protection level. The second template parameter can filter things differently. FIXME implement this
 
-	That may be done automatically with `opAssign` in the future.
+	History:
+		This became the default after April 24, 2020. Previously, [var.opAssign] would [wrapOpaquely] instead.
 +/
 WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(is(Class == class)) {
 	import std.meta;
-	return new class WrappedNativeObject {
+	static class WrappedNativeObjectImpl : WrappedNativeObject {
 		override Object getObject() {
 			return obj;
 		}
 
-		this() {
+		override bool isSpecial() { return special; }
+
+		static if(special)
+		override WrappedNativeObject new_() {
+			return new WrappedNativeObjectImpl(obj._allocate_());
+		}
+
+		Class obj;
+
+		this(Class objIn) {
+			this.obj = objIn;
 			wrappedType = typeid(obj);
 			// wrap the other methods
 			// and wrap members as scriptable properties
@@ -2025,14 +2139,42 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 			foreach(memberName; __traits(allMembers, Class)) static if(is(typeof(__traits(getMember, obj, memberName)) type)) {
 				static if(is(type == function)) {
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
-						auto helper = &__traits(getOverloads, obj, memberName)[idx];
-						_properties[memberName] = (Parameters!helper args) {
+						var gen;
+						gen._function = delegate (var vthis_, var[] vargs) {
+							Parameters!(__traits(getOverloads, Class, memberName)) args;
+
+							foreach(idx, ref arg; args)
+								if(idx < vargs.length)
+									arg = vargs[idx].get!(typeof(arg));
+
+							static if(special) {
+								Class obj;
+								if(vthis_.payloadType() != var.Type.Object) { import std.stdio; writeln("getwno on ", vthis_); }
+								while(vthis_ != null) {
+									obj = vthis_.getWno!Class;
+									if(obj !is null)
+										break;
+									vthis_ = vthis_.prototype;
+								}
+
+								if(obj is null) throw new Exception("null native object");
+							}
+
 							static if(special) {
 								obj._next_devirtualized = true;
 								scope(exit) obj._next_devirtualized = false;
 							}
-							return __traits(getOverloads, obj, memberName)[idx](args);
+
+							var ret;
+
+							static if(!is(typeof(__traits(getOverloads, obj, memberName)[idx](args)) == void))
+								ret = __traits(getOverloads, obj, memberName)[idx](args);
+							else
+								__traits(getOverloads, obj, memberName)[idx](args);
+
+							return ret;
 						};
+						_properties[memberName] = gen;
 					}
 				} else {
 					static if(.isScriptable!(__traits(getAttributes, __traits(getMember, Class, memberName)))())
@@ -2047,7 +2189,9 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 				}
 			}
 		}
-	};
+	}
+
+	return new WrappedNativeObjectImpl(obj);
 }
 
 import std.traits;

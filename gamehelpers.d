@@ -126,6 +126,13 @@ class GameHelperBase {
 		}
 	}
 
+	protected bool redrawForced;
+
+	/// Forces a redraw even if update returns false
+	final public void forceRedraw() {
+		redrawForced = true;
+	}
+
 	/// These functions help you handle user input. It offers polling functions for
 	/// keyboard, mouse, joystick, and virtual controller input.
 	///
@@ -281,6 +288,11 @@ void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRa
 			auto now = MonoTime.currTime;
 			bool changed = game.update(now - lastUpdate);
 			lastUpdate = now;
+
+			if(game.redrawForced) {
+				changed = true;
+				game.redrawForced = false;
+			}
 
 			// FIXME: rate limiting
 			if(changed)
@@ -496,6 +508,12 @@ final class OpenGlTexture {
 			dispose();
 	}
 }
+
+/+
+	FIXME: i want to do stbtt_GetBakedQuad for ASCII and use that
+	for simple cases especially numbers. for other stuff you can
+	create the texture for the text above.
++/
 
 ///
 void clearOpenGlScreen(SimpleWindow window) {

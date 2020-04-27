@@ -1252,7 +1252,6 @@ class Document : FileResource {
 	}
 
 	/// ditto
-	@scriptable
 	deprecated("use querySelectorAll instead")
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
@@ -1598,8 +1597,8 @@ class Element {
 			assert(tagName !is null);
 		}
 		out(e) {
-			assert(e.parentNode is this);
-			assert(e.parentDocument is this.parentDocument);
+			//assert(e.parentNode is this);
+			//assert(e.parentDocument is this.parentDocument);
 		}
 	body {
 		auto e = Element.make(tagName, childInfo, childInfo2);
