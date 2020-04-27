@@ -350,10 +350,11 @@ class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
 		const int ph;
 		const float ipw;
 		const float iph;
-		const int lineHeight;
 	}
 
-	public const int ascent; /// metrics
+	public const int lineHeight; /// metrics
+
+	public const int ascent; /// ditto
 	public const int descent; /// ditto
 	public const int line_gap; /// ditto;
 

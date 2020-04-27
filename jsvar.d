@@ -527,11 +527,14 @@ struct var {
 			this.opAssign(t);
 	}
 
+	// used by the script interpreter... does a .dup on array, new on class if possible, otherwise copies members.
 	public var _copy_new() {
 		if(payloadType() == Type.Object) {
 			var cp;
-			if(this._payload._object !is null)
-				cp._object = this._payload._object.new_;
+			if(this._payload._object !is null) {
+				auto po = this._payload._object.new_(null);
+				cp._object = po;
+			}
 			return cp;
 		} else if(payloadType() == Type.Array) {
 			var cp;
@@ -843,6 +846,8 @@ struct var {
 		if(this.payloadType() == Type.Integral || this.payloadType() == Type.Floating) {
 			if(args.length)
 				return var(this.get!double * args[0].get!double);
+			else
+				return this;
 		}
 
 		//return this;
@@ -875,8 +880,8 @@ struct var {
 		if(payloadType == Type.Object) {
 			if(auto wno = cast(WrappedNativeObject) this._payload._object) {
 				auto no = cast(T) wno.getObject();
-					if(no !is null)
-						return no;
+				if(no !is null)
+					return no;
 			}
 		}
 		return null;
@@ -1072,6 +1077,8 @@ struct var {
 			//break;
 		}
 	}
+
+	public T get(T)() if(is(T == void)) {}
 
 	public T nullCoalesce(T)(T t) {
 		if(_type == Type.Object && _payload._object is null)
@@ -1639,7 +1646,7 @@ class PrototypeObject {
 
 	bool isSpecial() { return false; }
 
-	PrototypeObject new_() {
+	PrototypeObject new_(PrototypeObject newThis) {
 		// if any of the prototypes are D objects, we need to try to copy them.
 		auto p = prototype;
 
@@ -1650,7 +1657,9 @@ class PrototypeObject {
 		while(p !is null) {
 
 			if(p.isSpecial()) {
-				auto proto = p.new_();
+				auto n = new PrototypeObject();
+
+				auto proto = p.new_(n);
 
 				while(stackPos) {
 					stackPos--;
@@ -1659,7 +1668,6 @@ class PrototypeObject {
 					proto = pr;
 				}
 
-				auto n = new PrototypeObject();
 				n.prototype = proto;
 				n.name = this.name;
 				foreach(k, v; _properties) {
@@ -1866,8 +1874,9 @@ interface ScriptableSubclass {
 	final bool methodOverriddenByScript(string name) {
 		PrototypeObject t = getScriptVar().get!PrototypeObject;
 		// the top one is the native object from subclassable so we don't want to go all the way there to avoid endless recursion
+		//import std.stdio; writeln("checking ", name , " ...", "wtf");
 		if(t !is null)
-		while(t.prototype !is null) {
+		while(!t.isSpecial) {
 			if(t._peekMember(name, false) !is null)
 				return true;
 			t = t.prototype;
@@ -1888,8 +1897,12 @@ interface ScriptableSubclass {
 	`@scriptable` to be present on final or static methods. This may change in the future.
 
 	Note that it has zero support for `@safe`, `pure`, `nothrow`, and other attributes
-	at this time and will not compile classes that use those. I may be able to loosen
-	this in the future as well.
+	at this time and will skip that use those. I may be able to loosen this in the
+	future as well but I have no concrete plan to at this time. You can still mark
+	them as `@scriptable` to call them from the script, but they can never be overridden
+	by script code because it cannot verify those guarantees hold true.
+
+	Ditto on `const` and `immutable`.
 
 	Its behavior on overloads is currently undefined - it may keep only any random
 	overload as the only one and do dynamic type conversions to cram data into it.
@@ -1911,6 +1924,8 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 		var getScriptVar() { return _this; }
 		bool _next_devirtualized;
 
+		// @scriptable size_t _nativeHandle_() { return cast(size_t) cast(void*) this;}
+
 		static if(__traits(compiles,  __traits(getOverloads, T, "__ctor")))
 		static foreach(ctor; __traits(getOverloads, T, "__ctor"))
 			@scriptable this(Parameters!ctor p) { super(p); }
@@ -1918,12 +1933,16 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 		static foreach(memberName; __traits(allMembers, T)) {
 		static if(__traits(isVirtualMethod, __traits(getMember, T, memberName)))
 		static if(memberName != "toHash")
+		// note: overload behavior undefined
+		static if(!(functionAttributes!(__traits(getMember, T, memberName)) & (FunctionAttribute.pure_ | FunctionAttribute.safe | FunctionAttribute.trusted | FunctionAttribute.nothrow_)))
 		mixin(q{
 			@scriptable
 			override ReturnType!(__traits(getMember, T, memberName))
 			}~memberName~q{
 			(Parameters!(__traits(getMember, T, memberName)) p)
 			{
+			//pragma(msg, T,".",memberName, " ", typeof(__traits(getMember, super, memberName)).stringof);
+			//import std.stdio; writeln("calling ", T.stringof, ".", memberName, " - ", methodOverriddenByScript(memberName), "/", _next_devirtualized, " on ", cast(size_t) cast(void*) this);
 				if(_next_devirtualized || !methodOverriddenByScript(memberName))
 					return __traits(getMember, super, memberName)(p);
 				return _this[memberName](p).get!(typeof(return));
@@ -1933,16 +1952,17 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 
 		// I don't want to necessarily call a constructor but I need an object t use as the prototype
 		// hence this faked one. hopefully the new operator will see void[] and assume it can have GC ptrs...
-		static ScriptableT _allocate_() {
+		static ScriptableT _allocate_(PrototypeObject newThis) {
 			void[] store = new void[](__traits(classInstanceSize, ScriptableT));
 			store[] = typeid(ScriptableT).initializer[];
 			ScriptableT dummy = cast(ScriptableT) store.ptr;
+			dummy._this = var(newThis);
 			//import std.stdio; writeln("Allocating new ", cast(ulong) store.ptr);
 			return dummy;
 		}
 	}
 
-	ScriptableT dummy = ScriptableT._allocate_();
+	ScriptableT dummy = ScriptableT._allocate_(null);
 
 	var proto = wrapNativeObject!(ScriptableT, true)(dummy);
 
@@ -2124,8 +2144,8 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 		override bool isSpecial() { return special; }
 
 		static if(special)
-		override WrappedNativeObject new_() {
-			return new WrappedNativeObjectImpl(obj._allocate_());
+		override WrappedNativeObject new_(PrototypeObject newThis) {
+			return new WrappedNativeObjectImpl(obj._allocate_(newThis));
 		}
 
 		Class obj;
@@ -2141,7 +2161,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
 						var gen;
 						gen._function = delegate (var vthis_, var[] vargs) {
-							Parameters!(__traits(getOverloads, Class, memberName)) args;
+							Parameters!(__traits(getOverloads, Class, memberName)[idx]) args;
 
 							foreach(idx, ref arg; args)
 								if(idx < vargs.length)
