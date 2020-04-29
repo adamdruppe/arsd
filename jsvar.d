@@ -795,6 +795,8 @@ struct var {
 	public var opBinary(string op, T)(T t) {
 		var n;
 		if(payloadType() == Type.Object) {
+			if(this._payload._object is null)
+				return var(null);
 			var* operator = this._payload._object._peekMember("opBinary", true);
 			if(operator !is null && operator._type == Type.Function) {
 				return operator.call(this, op, t);
@@ -1945,7 +1947,7 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 			//import std.stdio; writeln("calling ", T.stringof, ".", memberName, " - ", methodOverriddenByScript(memberName), "/", _next_devirtualized, " on ", cast(size_t) cast(void*) this);
 				if(_next_devirtualized || !methodOverriddenByScript(memberName))
 					return __traits(getMember, super, memberName)(p);
-				return _this[memberName](p).get!(typeof(return));
+				return _this[memberName].call(_this, p).get!(typeof(return));
 			}
 		});
 		}
@@ -2169,7 +2171,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 							static if(special) {
 								Class obj;
-								if(vthis_.payloadType() != var.Type.Object) { import std.stdio; writeln("getwno on ", vthis_); }
+								//if(vthis_.payloadType() != var.Type.Object) { import std.stdio; writeln("getwno on ", vthis_); }
 								while(vthis_ != null) {
 									obj = vthis_.getWno!Class;
 									if(obj !is null)

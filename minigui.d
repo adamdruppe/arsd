@@ -953,7 +953,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 			if(mixin("child." ~ relevantMeasure) >= maximum) {
 				auto adj = mixin("child." ~ relevantMeasure) - maximum;
-				mixin("child." ~ relevantMeasure) -= adj;
+				mixin("child._" ~ relevantMeasure) -= adj;
 				spaceRemaining += adj;
 				continue;
 			}
@@ -961,13 +961,13 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			if(s <= 0)
 				continue;
 			auto spaceAdjustment = spacePerChild * (spreadEvenly ? 1 : s);
-			mixin("child." ~ relevantMeasure) += spaceAdjustment;
+			mixin("child._" ~ relevantMeasure) += spaceAdjustment;
 			spaceRemaining -= spaceAdjustment;
 			if(mixin("child." ~ relevantMeasure) > maximum) {
 				auto diff = mixin("child." ~ relevantMeasure) - maximum;
-				mixin("child." ~ relevantMeasure) -= diff;
+				mixin("child._" ~ relevantMeasure) -= diff;
 				spaceRemaining += diff;
-			} else if(mixin("child." ~ relevantMeasure) < maximum) {
+			} else if(mixin("child._" ~ relevantMeasure) < maximum) {
 				stretchinessSum += mixin("child." ~ relevantMeasure ~ "Stretchiness()");
 				if(mostStretchy is null || s >= mostStretchyS) {
 					mostStretchy = child;
@@ -985,11 +985,11 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			else
 				auto maximum = child.maxWidth();
 
-			mixin("child." ~ relevantMeasure) += spaceAdjustment;
+			mixin("child._" ~ relevantMeasure) += spaceAdjustment;
 			spaceRemaining -= spaceAdjustment;
-			if(mixin("child." ~ relevantMeasure) > maximum) {
+			if(mixin("child._" ~ relevantMeasure) > maximum) {
 				auto diff = mixin("child." ~ relevantMeasure) - maximum;
-				mixin("child." ~ relevantMeasure) -= diff;
+				mixin("child._" ~ relevantMeasure) -= diff;
 				spaceRemaining += diff;
 			}
 		}
@@ -1184,8 +1184,47 @@ struct WidgetPainter {
 
 	/++
 		This is the list of rectangles that actually need to be redrawn.
+
+		Not actually implemented yet.
 	+/
 	Rectangle[] invalidatedRectangles;
+
+
+	// all this stuff is a dangerous experiment....
+	static class ScriptableVersion {
+		ScreenPainterImplementation* p;
+		int originX, originY;
+
+		@scriptable:
+		void drawRectangle(int x, int y, int width, int height) {
+			p.drawRectangle(x + originX, y + originY, width, height);
+		}
+		void drawLine(int x1, int y1, int x2, int y2) {
+			p.drawLine(x1 + originX, y1 + originY, x2 + originX, y2 + originY);
+		}
+		void drawText(int x, int y, string text) {
+			p.drawText(x + originX, y + originY, 100000, 100000, text, 0);
+		}
+		void setOutlineColor(int r, int g, int b) {
+			p.pen = Pen(Color(r,g,b), 1);
+		}
+		void setFillColor(int r, int g, int b) {
+			p.fillColor = Color(r,g,b);
+		}
+	}
+
+	ScriptableVersion toArsdJsvar() {
+		auto sv = new ScriptableVersion;
+		sv.p = this.screenPainter.impl;
+		sv.originX = this.screenPainter.originX;
+		sv.originY = this.screenPainter.originY;
+		return sv;
+	}
+
+	static WidgetPainter fromJsVar(T)(T t) {
+		return WidgetPainter.init;
+	}
+	// done..........
 }
 
 /**
@@ -1210,9 +1249,6 @@ class Widget {
 		auto event = new Event("resize", this);
 		event.sendDirectly();
 	}
-
-	deprecated("Change ScreenPainter to WidgetPainter")
-	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
 
 	Menu contextMenu(int x, int y) { return null; }
 
@@ -1498,10 +1534,16 @@ class Widget {
 
 	int x; // relative to the parent's origin
 	int y; // relative to the parent's origin
-	int width;
-	int height;
+	int _width;
+	int _height;
 	Widget[] children;
 	Widget parent;
+
+	public @property int width() { return _width; }
+	public @property int height() { return _height; }
+
+	protected @property int width(int a) { return _width = a; }
+	protected @property int height(int a) { return _height = a; }
 
 	protected
 	void registerMovement() {
@@ -1641,6 +1683,9 @@ class Widget {
 
 	///
 	void paint(WidgetPainter painter) {}
+
+	deprecated("Change ScreenPainter to WidgetPainter")
+	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
 
 	/// I don't actually like the name of this
 	/// this draws a background on it
@@ -5813,7 +5858,9 @@ class Button : MouseActivatedWidget {
 
 	private string label_;
 
+	///
 	string label() { return label_; }
+	///
 	void label(string l) {
 		label_ = l;
 		version(win32_widgets) {

@@ -6574,6 +6574,7 @@ struct ScreenPainter {
 	}
 
 	///
+	@scriptable
 	@property void outlineColor(Color c) {
 		if(impl is null) return;
 		if(activePen.color == c)
@@ -6583,6 +6584,7 @@ struct ScreenPainter {
 	}
 
 	///
+	@scriptable
 	@property void fillColor(Color c) {
 		if(impl is null) return;
 		impl.fillColor(c);
@@ -6662,6 +6664,7 @@ struct ScreenPainter {
 	}
 
 	///
+	@scriptable
 	void drawText(Point upperLeft, in char[] text, Point lowerRight = Point(0, 0), uint alignment = 0) {
 		if(impl is null) return;
 		if(lowerRight.x != 0 || lowerRight.y != 0) {
@@ -6734,6 +6737,7 @@ struct ScreenPainter {
 
 
 	/// Draws a pen using the current pen / outlineColor
+	@scriptable
 	void drawLine(Point starting, Point ending) {
 		if(impl is null) return;
 		if(isClipped(starting, ending)) return;
@@ -6745,6 +6749,7 @@ struct ScreenPainter {
 	/// Draws a rectangle using the current pen/outline color for the border and brush/fill color for the insides
 	/// The outer lines, inclusive of x = 0, y = 0, x = width - 1, and y = height - 1 are drawn with the outlineColor
 	/// The rest of the pixels are drawn with the fillColor. If fillColor is transparent, those pixels are not drawn.
+	@scriptable
 	void drawRectangle(Point upperLeft, int width, int height) {
 		if(impl is null) return;
 		if(isClipped(upperLeft, width, height)) return;

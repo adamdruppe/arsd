@@ -19,6 +19,7 @@
 	and the => operator too
 
 	I kinda like the javascript foo`blargh` template literals too.
+
 */
 
 /++
@@ -124,7 +125,7 @@
 	* variables must start with A-Z, a-z, _, or $, then must be [A-Za-z0-9_]*.
 		(The $ can also stand alone, and this is a special thing when slicing, so you probably shouldn't use it at all.).
 		Variable names that start with __ are reserved and you shouldn't use them.
-	* int, float, string, array, bool, and json!q{} literals
+	* int, float, string, array, bool, and `#{}` (previously known as `json!q{}` aka object) literals
 	* var.prototype, var.typeof. prototype works more like Mozilla's __proto__ than standard javascript prototype.
 	* the `|>` pipeline operator
 	* classes:
@@ -200,8 +201,6 @@ make sure superclass ctors are called
 
    FIXME: add easy to use premade packages for the global object.
 
-   FIXME: maybe simplify the json!q{ } thing a bit.
-
    FIXME: the debugger statement from javascript might be cool to throw in too.
 
    FIXME: add continuations or something too - actually doing it with fibers works pretty well
@@ -217,6 +216,8 @@ make sure superclass ctors are called
 
 
 	History:
+		April 28, 2020: added `#{}` as an alternative to the `json!q{}` syntax for object literals. Also fixed unary `!` operator.
+
 		April 26, 2020: added `switch`, fixed precedence bug, fixed doc issues and added some unittests
 
 		Started writing it in July 2013. Yes, a basic precedence issue was there for almost SEVEN YEARS. You can use this as a toy but please don't use it for anything too serious, it really is very poorly written and not intelligently designed at all.
@@ -454,16 +455,30 @@ class NonScriptCatchableException : Exception {
 
 /// Thrown on script syntax errors and the sort.
 class ScriptCompileException : Exception {
-	this(string msg, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
+	string s;
+	int lineNumber;
+	this(string msg, string s, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
+		this.s = s;
+		this.lineNumber = lineNumber;
 		super(to!string(lineNumber) ~ ": " ~ msg, file, line);
 	}
 }
 
 /// Thrown on things like interpretation failures.
 class ScriptRuntimeException : Exception {
-	this(string msg, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
+	string s;
+	int lineNumber;
+	this(string msg, string s, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
+		this.s = s;
+		this.lineNumber = lineNumber;
 		super(to!string(lineNumber) ~ ": " ~ msg, file, line);
 	}
+}
+
+///
+struct ScriptLocation {
+	string scriptFilename; ///
+	int lineNumber; ///
 }
 
 /// This represents an exception thrown by `throw x;` inside the script as it is interpreted.
@@ -471,16 +486,25 @@ class ScriptException : Exception {
 	///
 	var payload;
 	///
-	int lineNumber;
-	this(var payload, int lineNumber, string file = __FILE__, size_t line = __LINE__) {
+	ScriptLocation loc;
+	///
+	ScriptLocation[] callStack;
+	this(var payload, ScriptLocation loc, string file = __FILE__, size_t line = __LINE__) {
 		this.payload = payload;
-		this.lineNumber = lineNumber;
-		super("script@" ~ to!string(lineNumber) ~ ": " ~ to!string(payload), file, line);
+		if(loc.scriptFilename.length == 0)
+			loc.scriptFilename = "user_script";
+		this.loc = loc;
+		super(loc.scriptFilename ~ "@" ~ to!string(loc.lineNumber) ~ ": " ~ to!string(payload), file, line);
 	}
 
+	/*
 	override string toString() {
-		return "script@" ~ to!string(lineNumber) ~ ": " ~ payload.get!string;
+		return loc.scriptFilename ~ "@" ~ to!string(loc.lineNumber) ~ ": " ~ payload.get!string ~ to!string(callStack);
 	}
+	*/
+
+	// might be nice to take a D exception and put a script stack trace in there too......
+	// also need toString to show the callStack
 }
 
 struct ScriptToken {
@@ -508,10 +532,12 @@ private enum string[] keywords = [
 	"if", "do",
 ];
 private enum string[] symbols = [
+	">>>", // FIXME
 	"//", "/*", "/+",
 	"&&", "||",
 	"+=", "-=", "*=", "/=", "~=",  "==", "<=", ">=","!=", "%=",
 	"&=", "|=", "^=",
+	"#{",
 	"..",
 	"<<", ">>", // FIXME
 	"|>",
@@ -736,7 +762,7 @@ class TokenStream(TextStream) {
 				}
 
 				if(pos == text.length && (escaped || inInterpolate || !atEnd()))
-					throw new ScriptCompileException("Unclosed string literal", token.lineNumber);
+					throw new ScriptCompileException("Unclosed string literal", token.scriptFilename, token.lineNumber);
 
 				if(mustCopy) {
 					// there must be something escaped in there, so we need
@@ -758,7 +784,7 @@ class TokenStream(TextStream) {
 								case '"': copy ~= "\""; break;
 								case '\'': copy ~= "'"; break;
 								default:
-									throw new ScriptCompileException("Unknown escape char " ~ cast(char) ch, token.lineNumber);
+									throw new ScriptCompileException("Unknown escape char " ~ cast(char) ch, token.scriptFilename, token.lineNumber);
 							}
 							continue;
 						} else if(ch == '\\') {
@@ -794,13 +820,32 @@ class TokenStream(TextStream) {
 								pos++;
 
 							if(pos + 1 == text.length)
-								throw new ScriptCompileException("unclosed /* */ comment", lineNumber);
+								throw new ScriptCompileException("unclosed /* */ comment", token.scriptFilename, lineNumber);
 
 							advance(pos + 2);
 							continue mainLoop;
 
 						} else if(symbol == "/+") {
-							// FIXME: nesting comment
+							int open = 0;
+							int pos = 0;
+							while(pos + 1 < text.length) {
+								if(text[pos..pos+2] == "/+") {
+									open++;
+									pos++;
+								} else if(text[pos..pos+2] == "+/") {
+									open--;
+									pos++;
+									if(open == 0)
+										break;
+								}
+								pos++;
+							}
+
+							if(pos + 1 == text.length)
+								throw new ScriptCompileException("unclosed /+ +/ comment", token.scriptFilename, lineNumber);
+
+							advance(pos + 1);
+							continue mainLoop;
 						}
 						// FIXME: documentation comments
 
@@ -813,7 +858,7 @@ class TokenStream(TextStream) {
 
 				if(!found) {
 					// FIXME: make sure this gives a valid utf-8 sequence
-					throw new ScriptCompileException("unknown token " ~ text[0], lineNumber);
+					throw new ScriptCompileException("unknown token " ~ text[0], token.scriptFilename, lineNumber);
 				}
 			}
 
@@ -990,7 +1035,7 @@ class StringLiteralExpression : Expression {
 					idx++;
 				}
 				if(open != 0)
-					throw new ScriptRuntimeException("Unclosed interpolation thing", token.lineNumber);
+					throw new ScriptRuntimeException("Unclosed interpolation thing", token.scriptFilename, token.lineNumber);
 				auto code = c[0 .. idx];
 
 				var result = .interpret(code, sc);
@@ -1071,6 +1116,28 @@ class NegationExpression : Expression {
 		return InterpretResult(-n, sc);
 	}
 }
+class NotExpression : Expression {
+	Expression e;
+	this(Expression e) { this.e = e;}
+	override string toString() { return "!" ~ e.toString(); }
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		var n = e.interpret(sc).value;
+		return InterpretResult(var(!n), sc);
+	}
+}
+class BitFlipExpression : Expression {
+	Expression e;
+	this(Expression e) { this.e = e;}
+	override string toString() { return "~" ~ e.toString(); }
+
+	override InterpretResult interpret(PrototypeObject sc) {
+		var n = e.interpret(sc).value;
+		// possible FIXME given the size. but it is fuzzy when dynamic..
+		return InterpretResult(var(~(n.get!long)), sc);
+	}
+}
+
 class ArrayLiteralExpression : Expression {
 	this() {}
 
@@ -1096,7 +1163,7 @@ class ObjectLiteralExpression : Expression {
 	Expression[string] elements;
 
 	override string toString() {
-		string s = "json!q{";
+		string s = "#{";
 		bool first = true;
 		foreach(k, e; elements) {
 			if(first)
@@ -1300,7 +1367,7 @@ class BinaryExpression : Expression {
 		sw: switch(op) {
 			// I would actually kinda prefer this to be static foreach, but normal
 			// tuple foreach here has broaded compiler compatibility.
-			foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%"))
+			foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%")) //, ">>", "<<", ">>>")) // FIXME
 			case ctOp: {
 				n = mixin("left "~ctOp~" right");
 				break sw;
@@ -1332,7 +1399,7 @@ class OpAssignExpression : Expression {
 
 		auto v = cast(VariableExpression) e1;
 		if(v is null)
-			throw new ScriptRuntimeException("not an lvalue", 0 /* FIXME */);
+			throw new ScriptRuntimeException("not an lvalue", null, 0 /* FIXME */);
 
 		var right = e2.interpret(sc).value;
 
@@ -1354,16 +1421,18 @@ class PipelineExpression : Expression {
 	Expression e1;
 	Expression e2;
 	CallExpression ce;
+	ScriptLocation loc;
 
-	this(Expression e1, Expression e2) {
+	this(ScriptLocation loc, Expression e1, Expression e2) {
+		this.loc = loc;
 		this.e1 = e1;
 		this.e2 = e2;
 
 		if(auto ce = cast(CallExpression) e2) {
-			this.ce = new CallExpression(ce.func);
+			this.ce = new CallExpression(loc, ce.func);
 			this.ce.arguments = [e1] ~ ce.arguments;
 		} else {
-			this.ce = new CallExpression(e2);
+			this.ce = new CallExpression(loc, e2);
 			this.ce.arguments ~= e1;
 		}
 	}
@@ -1391,25 +1460,13 @@ class AssignExpression : Expression {
 	override InterpretResult interpret(PrototypeObject sc) {
 		auto v = cast(VariableExpression) e1;
 		if(v is null)
-			throw new ScriptRuntimeException("not an lvalue", 0 /* FIXME */);
+			throw new ScriptRuntimeException("not an lvalue", null, 0 /* FIXME */);
 
 		auto ret = v.setVar(sc, e2.interpret(sc).value, false, suppressOverloading);
 
 		return InterpretResult(ret, sc);
 	}
 }
-
-
-class UnaryExpression : Expression {
-	string op;
-	Expression e;
-	// FIXME
-
-	override InterpretResult interpret(PrototypeObject sc) {
-		return InterpretResult();
-	}
-}
-
 class VariableExpression : Expression {
 	string identifier;
 
@@ -2034,7 +2091,7 @@ class ShallowCopyExpression : Expression {
 	override InterpretResult interpret(PrototypeObject sc) {
 		auto v = cast(VariableExpression) e1;
 		if(v is null)
-			throw new ScriptRuntimeException("not an lvalue", 0 /* FIXME */);
+			throw new ScriptRuntimeException("not an lvalue", null, 0 /* FIXME */);
 
 		v.getVar(sc, false)._object.copyPropertiesFrom(e2.interpret(sc).value._object);
 
@@ -2080,7 +2137,7 @@ class ThrowExpression : Expression {
 
 	override InterpretResult interpret(PrototypeObject sc) {
 		assert(whatToThrow !is null);
-		throw new ScriptException(whatToThrow.interpret(sc).value, where.lineNumber);
+		throw new ScriptException(whatToThrow.interpret(sc).value, ScriptLocation(where.scriptFilename, where.lineNumber));
 		assert(0);
 	}
 }
@@ -2177,6 +2234,7 @@ PrototypeObject DefaultArgumentDummyObject;
 class CallExpression : Expression {
 	Expression func;
 	Expression[] arguments;
+	ScriptLocation loc;
 
 	override string toString() {
 		string s = func.toString() ~ "(";
@@ -2189,7 +2247,8 @@ class CallExpression : Expression {
 		return s;
 	}
 
-	this(Expression func) {
+	this(ScriptLocation loc, Expression func) {
+		this.loc = loc;
 		this.func = func;
 	}
 
@@ -2209,7 +2268,7 @@ class CallExpression : Expression {
 			if(!v)
 				throw new ScriptException(
 					var(this.toString() ~ " failed, got: " ~ assertExpression.toInterpretedString(sc)),
-					asrt.token.lineNumber);
+					ScriptLocation(asrt.token.scriptFilename, asrt.token.lineNumber));
 
 			return InterpretResult(v, sc);
 		}
@@ -2244,16 +2303,21 @@ class CallExpression : Expression {
 			_this = sc._getMember("this", true, true);
 		}
 
-		return InterpretResult(f.apply(_this, args), sc);
+		try {
+			return InterpretResult(f.apply(_this, args), sc);
+		} catch(ScriptException se) {
+			se.callStack ~= loc;
+			throw se;
+		}
 	}
 }
 
 ScriptToken requireNextToken(MyTokenStreamHere)(ref MyTokenStreamHere tokens, ScriptToken.Type type, string str = null, string file = __FILE__, size_t line = __LINE__) {
 	if(tokens.empty)
-		throw new ScriptCompileException("script ended prematurely", 0, file, line);
+		throw new ScriptCompileException("script ended prematurely", null, 0, file, line);
 	auto next = tokens.front;
 	if(next.type != type || (str !is null && next.str != str))
-		throw new ScriptCompileException("unexpected '"~next.str~"' while expecting " ~ to!string(type) ~ " " ~ str, next.lineNumber, file, line);
+		throw new ScriptCompileException("unexpected '"~next.str~"' while expecting " ~ to!string(type) ~ " " ~ str, next.scriptFilename, next.lineNumber, file, line);
 
 	tokens.popFront();
 	return next;
@@ -2275,7 +2339,7 @@ VariableExpression parseVariableName(MyTokenStreamHere)(ref MyTokenStreamHere to
 		tokens.popFront();
 		return new VariableExpression(token.str);
 	}
-	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.lineNumber);
+	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.scriptFilename, token.lineNumber);
 }
 
 Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
@@ -2295,13 +2359,17 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 		}
 		else if(token.type == ScriptToken.Type.identifier)
 			e = parseVariableName(tokens);
-		else if(token.type == ScriptToken.Type.symbol && (token.str == "-" || token.str == "+")) {
+		else if(token.type == ScriptToken.Type.symbol && (token.str == "-" || token.str == "+" || token.str == "!" || token.str == "~")) {
 			auto op = token.str;
 			tokens.popFront();
 
 			e = parsePart(tokens);
 			if(op == "-")
 				e = new NegationExpression(e);
+			else if(op == "!")
+				e = new NotExpression(e);
+			else if(op == "~")
+				e = new BitFlipExpression(e);
 		} else {
 			tokens.popFront();
 
@@ -2333,7 +2401,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						bool first = true;
 						moreElements:
 						if(tokens.empty)
-							throw new ScriptCompileException("unexpected end of file when reading array literal", token.lineNumber);
+							throw new ScriptCompileException("unexpected end of file when reading array literal", token.scriptFilename, token.lineNumber);
 
 						auto peek = tokens.front;
 						if(peek.type == ScriptToken.Type.symbol && peek.str == "]") {
@@ -2350,6 +2418,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 						goto moreElements;
 					case "json!q{":
+					case "#{":
 						// json object literal
 						auto obj = new ObjectLiteralExpression();
 						/*
@@ -2365,7 +2434,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						*/
 
 						if(tokens.empty)
-							throw new ScriptCompileException("unexpected end of file when reading object literal", token.lineNumber);
+							throw new ScriptCompileException("unexpected end of file when reading object literal", token.scriptFilename, token.lineNumber);
 
 						moreKeys:
 						auto key = tokens.front;
@@ -2376,7 +2445,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 							break;
 						}
 						if(key.type != ScriptToken.Type.string && key.type != ScriptToken.Type.identifier) {
-							throw new ScriptCompileException("unexpected '"~key.str~"' when reading object literal", key.lineNumber);
+							throw new ScriptCompileException("unexpected '"~key.str~"' when reading object literal", key.scriptFilename, key.lineNumber);
 
 						}
 
@@ -2384,7 +2453,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 						auto value = parseExpression(tokens);
 						if(tokens.empty)
-							throw new ScriptCompileException("unclosed object literal", key.lineNumber);
+							throw new ScriptCompileException("unclosed object literal", key.scriptFilename, key.lineNumber);
 
 						if(tokens.peekNextToken(ScriptToken.Type.symbol, ","))
 							tokens.popFront();
@@ -2421,11 +2490,9 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				}
 			} else {
 				unknown:
-				throw new ScriptCompileException("unexpected '"~token.str~"' when reading ident", token.lineNumber);
+				throw new ScriptCompileException("unexpected '"~token.str~"' when reading ident", token.scriptFilename, token.lineNumber);
 			}
 		}
-
-// FIXME: unary ! doesn't work right
 
 		funcLoop: while(!tokens.empty) {
 			auto peek = tokens.front;
@@ -2456,7 +2523,8 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 		}
 		return e;
 	}
-	assert(0, to!string(tokens));
+
+	throw new ScriptCompileException("Ran out of tokens when trying to parsePart", null, 0);
 }
 
 Expression parseArguments(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Expression exp, ref Expression[] where) {
@@ -2477,7 +2545,7 @@ Expression parseArguments(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Expre
 	}
 
 	if(tokens.empty)
-		throw new ScriptCompileException("unexpected end of file when parsing call expression", peek.lineNumber);
+		throw new ScriptCompileException("unexpected end of file when parsing call expression", peek.scriptFilename, peek.lineNumber);
 	peek = tokens.front;
 	if(peek.type == ScriptToken.Type.symbol && peek.str == ",") {
 		tokens.popFront();
@@ -2486,17 +2554,17 @@ Expression parseArguments(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Expre
 		tokens.popFront();
 		return exp;
 	} else
-		throw new ScriptCompileException("unexpected '"~peek.str~"' when reading argument list", peek.lineNumber);
+		throw new ScriptCompileException("unexpected '"~peek.str~"' when reading argument list", peek.scriptFilename, peek.lineNumber);
 
 }
 
 Expression parseFunctionCall(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Expression e) {
 	assert(!tokens.empty);
 	auto peek = tokens.front;
-	auto exp = new CallExpression(e);
+	auto exp = new CallExpression(ScriptLocation(peek.scriptFilename, peek.lineNumber), e);
 	tokens.popFront();
 	if(tokens.empty)
-		throw new ScriptCompileException("unexpected end of file when parsing call expression", peek.lineNumber);
+		throw new ScriptCompileException("unexpected end of file when parsing call expression", peek.scriptFilename, peek.lineNumber);
 	return parseArguments(tokens, exp, exp.arguments);
 }
 
@@ -2540,7 +2608,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 				case "|>":
 					tokens.popFront();
-					e1 = new PipelineExpression(e1, parseFactor(tokens));
+					e1 = new PipelineExpression(ScriptLocation(peek.scriptFilename, peek.lineNumber), e1, parseFactor(tokens));
 				break;
 				case ".":
 					tokens.popFront();
@@ -2595,12 +2663,12 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 					tokens.popFront();
 					return new OpAssignExpression(peek.str[0..1], e1, parseExpression(tokens));
 				default:
-					throw new ScriptCompileException("Parse error, unexpected " ~ peek.str ~ " when looking for operator", peek.lineNumber);
+					throw new ScriptCompileException("Parse error, unexpected " ~ peek.str ~ " when looking for operator", peek.scriptFilename, peek.lineNumber);
 			}
 		//} else if(peek.type == ScriptToken.Type.identifier || peek.type == ScriptToken.Type.number) {
 			//return parseFactor(tokens);
 		} else
-			throw new ScriptCompileException("Parse error, unexpected '" ~ peek.str ~ "'", peek.lineNumber);
+			throw new ScriptCompileException("Parse error, unexpected '" ~ peek.str ~ "'", peek.scriptFilename, peek.lineNumber);
 	}
 
 	return e1;
@@ -2635,7 +2703,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 				case "exit":
 				break;
 				default:
-					throw new ScriptCompileException("unexpected " ~ ident.str ~ ". valid scope(idents) are success, failure, and exit", ident.lineNumber);
+					throw new ScriptCompileException("unexpected " ~ ident.str ~ ". valid scope(idents) are success, failure, and exit", ident.scriptFilename, ident.lineNumber);
 			}
 
 			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
@@ -2790,7 +2858,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 							new VariableExpression(ident.str),
 							false),
 						new FunctionLiteralExpression(args, bod, staticScopeBacking));
-				} else throw new ScriptCompileException("Unexpected " ~ tokens.front.str ~ " when reading class decl", tokens.front.lineNumber);
+				} else throw new ScriptCompileException("Unexpected " ~ tokens.front.str ~ " when reading class decl", tokens.front.scriptFilename, tokens.front.lineNumber);
 			}
 
 			tokens.requireNextToken(ScriptToken.Type.symbol, "}");
@@ -2854,7 +2922,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 
 					e.cases ~= c;
 					e.default_ = c;
-				} else throw new ScriptCompileException("A switch statement must consists of cases and a default, nothing else ", tokens.front.lineNumber);
+				} else throw new ScriptCompileException("A switch statement must consists of cases and a default, nothing else ", tokens.front.scriptFilename, tokens.front.lineNumber);
 			}
 
 			tokens.requireNextToken(ScriptToken.Type.symbol, "}");
@@ -2938,7 +3006,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 			bool hadSomething = false;
 			while(tokens.peekNextToken(ScriptToken.Type.keyword, "catch")) {
 				if(hadSomething)
-					throw new ScriptCompileException("Only one catch block is allowed currently ", tokens.front.lineNumber);
+					throw new ScriptCompileException("Only one catch block is allowed currently ", tokens.front.scriptFilename, tokens.front.lineNumber);
 				hadSomething = true;
 				tokens.popFront();
 				tokens.requireNextToken(ScriptToken.Type.symbol, "(");
@@ -2964,13 +3032,13 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 	} else {
 		//assert(0);
 		// return null;
-		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", 0);//token.lineNumber);
+		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression", null, 0);//token.lineNumber);
 	}
 
 	//writeln("parsed expression ", ret.toString());
 
 	if(expectedEnd.length && tokens.empty && consumeEnd) // going loose on final ; at the end of input for repl convenience
-		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression, expecting " ~ expectedEnd, first.lineNumber);
+		throw new ScriptCompileException("Parse error, unexpected end of input when reading expression, expecting " ~ expectedEnd, first.scriptFilename, first.lineNumber);
 
 	if(expectedEnd.length && consumeEnd) {
 		 if(tokens.peekNextToken(ScriptToken.Type.symbol, expectedEnd))
@@ -2998,24 +3066,24 @@ VariableDeclaration parseVariableDeclaration(MyTokenStreamHere)(ref MyTokenStrea
 
 	equalOk= true;
 	if(tokens.empty)
-		throw new ScriptCompileException("Parse error, dangling var at end of file", firstToken.lineNumber);
+		throw new ScriptCompileException("Parse error, dangling var at end of file", firstToken.scriptFilename, firstToken.lineNumber);
 
 	Expression initializer;
 	auto identifier = tokens.front;
 	if(identifier.type != ScriptToken.Type.identifier)
-		throw new ScriptCompileException("Parse error, found '"~identifier.str~"' when expecting var identifier", identifier.lineNumber);
+		throw new ScriptCompileException("Parse error, found '"~identifier.str~"' when expecting var identifier", identifier.scriptFilename, identifier.lineNumber);
 
 	tokens.popFront();
 
 	tryTermination:
 	if(tokens.empty)
-		throw new ScriptCompileException("Parse error, missing ; after var declaration at end of file", firstToken.lineNumber);
+		throw new ScriptCompileException("Parse error, missing ; after var declaration at end of file", firstToken.scriptFilename, firstToken.lineNumber);
 
 	auto peek = tokens.front;
 	if(peek.type == ScriptToken.Type.symbol) {
 		if(peek.str == "=") {
 			if(!equalOk)
-				throw new ScriptCompileException("Parse error, unexpected '"~identifier.str~"' after reading var initializer", peek.lineNumber);
+				throw new ScriptCompileException("Parse error, unexpected '"~identifier.str~"' after reading var initializer", peek.scriptFilename, peek.lineNumber);
 			equalOk = false;
 			tokens.popFront();
 			initializer = parseExpression(tokens);
@@ -3031,9 +3099,9 @@ VariableDeclaration parseVariableDeclaration(MyTokenStreamHere)(ref MyTokenStrea
 			//tokens = tokens[1 .. $];
 			// we're done!
 		} else
-			throw new ScriptCompileException("Parse error, unexpected '"~peek.str~"' when reading var declaration", peek.lineNumber);
+			throw new ScriptCompileException("Parse error, unexpected '"~peek.str~"' when reading var declaration", peek.scriptFilename, peek.lineNumber);
 	} else
-		throw new ScriptCompileException("Parse error, unexpected '"~peek.str~"' when reading var declaration", peek.lineNumber);
+		throw new ScriptCompileException("Parse error, unexpected '"~peek.str~"' when reading var declaration", peek.scriptFilename, peek.lineNumber);
 
 	return decl;
 }
@@ -3103,6 +3171,7 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 						goto case; // handle it like any other expression
 					}
 				case "json!{":
+				case "#{":
 				case "[":
 				case "(":
 				case "null":
@@ -3143,13 +3212,14 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 				case "!":
 				case "~":
 				case "-":
+					return parseExpression(tokens);
 
 				// BTW add custom object operator overloading to struct var
 				// and custom property overloading to PrototypeObject
 
 				default:
 					// whatever else keyword or operator related is actually illegal here
-					throw new ScriptCompileException("Parse error, unexpected " ~ token.str, token.lineNumber);
+					throw new ScriptCompileException("Parse error, unexpected " ~ token.str, token.scriptFilename, token.lineNumber);
 			}
 		// break;
 		case ScriptToken.Type.identifier:
@@ -3196,7 +3266,7 @@ struct CompoundStatementRange(MyTokenStreamHere) {
 		}
 
 		if(tokens.empty && terminatingSymbol !is null) {
-			throw new ScriptCompileException("Reached end of file while trying to reach matching " ~ terminatingSymbol, startingLine);
+			throw new ScriptCompileException("Reached end of file while trying to reach matching " ~ terminatingSymbol, null, startingLine);
 		}
 
 		if(terminatingSymbol !is null) {
