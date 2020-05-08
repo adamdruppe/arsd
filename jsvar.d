@@ -675,16 +675,26 @@ struct var {
 				var ret;
 
 				ParameterTypeTuple!T fargs;
+
+				// FIXME: default args?
+				enum lol = static_foreach(fargs.length, 1, -1,
+					`t(`,
+						``, ` < args.length ? args[`,`].get!(typeof(fargs[`,`])) : typeof(fargs[`,`]).init,`,
+					`)`);
+				/+
 				foreach(idx, a; fargs) {
 					if(idx == args.length)
 						break;
 					cast(Unqual!(typeof(a))) fargs[idx] = args[idx].get!(typeof(a));
 				}
+				+/
 
 				static if(is(ReturnType!t == void)) {
-					t(fargs);
+					//t(fargs);
+					mixin(lol ~ ";");
 				} else {
-					ret = t(fargs);
+					//ret = t(fargs);
+					ret = mixin(lol);
 				}
 
 				return ret;
@@ -2321,4 +2331,62 @@ bool appearsNumeric(string n) {
 /// BTW: structs by value can be put in vars with var.opAssign and var.get. It will generate an object with the same fields. The difference is changes to the jsvar won't be reflected in the original struct and native methods won't work if you do it that way.
 WrappedNativeObject wrapNativeObject(Struct)(Struct* obj) if(is(Struct == struct)) {
 	return null; // FIXME
+}
+
+private
+string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t...) pure {
+	assert(__ctfe);
+	int slen;
+	int tlen;
+	foreach(idx, i; t[0 .. t_start_idx])
+		slen += i.length;
+	foreach(idx, i; t[t_start_idx .. $ + t_end_idx]) {
+		if(idx)
+			tlen += 5;
+		tlen += i.length;
+	}
+	foreach(idx, i; t[$ + t_end_idx .. $])
+		slen += i.length;
+
+	char[] a = new char[](tlen * length + slen);
+
+	int loc;
+	char[5] stringCounter;
+	stringCounter[] = "00000"[];
+
+	foreach(part; t[0 .. t_start_idx]) {
+		a[loc .. loc + part.length] = part[];
+		loc += part.length;
+	}
+
+	foreach(i; 0 .. length) {
+		foreach(idx, part; t[t_start_idx .. $ + t_end_idx]) {
+			if(idx) {
+				a[loc .. loc + stringCounter.length] = stringCounter[];
+				loc += stringCounter.length;
+			}
+			a[loc .. loc + part.length] = part[];
+			loc += part.length;
+		}
+
+		auto pos = stringCounter.length;
+		while(pos) {
+			pos--;
+			if(stringCounter[pos] == '9') {
+				stringCounter[pos] = '0';
+			} else {
+				stringCounter[pos] ++;
+				break;
+			}
+		}
+		while(pos)
+			stringCounter[--pos] = ' ';
+	}
+
+	foreach(part; t[$ + t_end_idx .. $]) {
+		a[loc .. loc + part.length] = part[];
+		loc += part.length;
+	}
+
+	return a;
 }
