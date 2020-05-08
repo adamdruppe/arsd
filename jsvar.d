@@ -2165,6 +2165,9 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 						gen._function = delegate (var vthis_, var[] vargs) {
 							Parameters!(__traits(getOverloads, Class, memberName)[idx]) args;
 
+							// FIXME: what if there are multiple @scriptable overloads?!
+							// FIXME: what about @properties?
+
 							foreach(idx, ref arg; args)
 								if(idx < vargs.length)
 									arg = vargs[idx].get!(typeof(arg));
@@ -2172,6 +2175,8 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 							static if(special) {
 								Class obj;
 								//if(vthis_.payloadType() != var.Type.Object) { import std.stdio; writeln("getwno on ", vthis_); }
+								// the native object might be a step or two up the prototype
+								// chain due to script subclasses, need to find it...
 								while(vthis_ != null) {
 									obj = vthis_.getWno!Class;
 									if(obj !is null)
@@ -2296,7 +2301,8 @@ bool isScriptable(attributes...)() {
 bool isScriptableOpaque(T)() {
 	static if(is(typeof(T.isOpaqueStruct) == bool))
 		return T.isOpaqueStruct == true;
-	return false;
+	else
+		return false;
 }
 
 bool appearsNumeric(string n) {
