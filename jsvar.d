@@ -45,6 +45,11 @@
 	easy interop with a little scripting language that resembles a cross between
 	D and Javascript - just like you can write in D itself using this type.
 
+	Please note that function default arguments are NOT likely to work in the script.
+	You'd have to use a helper thing that I haven't written yet. opAssign can never
+	do it because that information is lost when it becomes a pointer. ParamDefault
+	is thus commented out for now.
+
 
 	Properties:
 	$(LIST
@@ -676,11 +681,10 @@ struct var {
 
 				ParameterTypeTuple!T fargs;
 
-				// FIXME: default args?
+				// default args? nope they can't work cuz it is assigning a function pointer by here. alas.
 				enum lol = static_foreach(fargs.length, 1, -1,
-					`t(`,
-						``, ` < args.length ? args[`,`].get!(typeof(fargs[`,`])) : typeof(fargs[`,`]).init,`,
-					`)`);
+					`t(`,``,` < args.length ? args[`,`].get!(typeof(fargs[`,`])) : typeof(fargs[`,`]).init,`,`)`);
+					//`t(`,``,` < args.length ? args[`,`].get!(typeof(fargs[`,`])) : ParamDefault!(T, `,`)(),`,`)`);
 				/+
 				foreach(idx, a; fargs) {
 					if(idx == args.length)
@@ -2173,14 +2177,19 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
 						var gen;
 						gen._function = delegate (var vthis_, var[] vargs) {
-							Parameters!(__traits(getOverloads, Class, memberName)[idx]) args;
+							Parameters!(__traits(getOverloads, Class, memberName)[idx]) fargs;
+
+
+							/*
+							enum lol = static_foreach(fargs.length, 1, -1,
+								`__traits(getOverloads, obj, memberName)[idx](`,``,` < vargs.length ? vargs[`,`].get!(typeof(fargs[`,`])) : ParamDefault!(__traits(getOverloads, Class, memberName)[idx], `,`)(),`,`)`);
+							*/
+							enum lol = static_foreach(fargs.length, 1, -1,
+								`__traits(getOverloads, obj, memberName)[idx](`,``,` < vargs.length ? vargs[`,`].get!(typeof(fargs[`,`])) :
+								typeof(fargs[`,`]).init,`,`)`);
 
 							// FIXME: what if there are multiple @scriptable overloads?!
 							// FIXME: what about @properties?
-
-							foreach(idx, ref arg; args)
-								if(idx < vargs.length)
-									arg = vargs[idx].get!(typeof(arg));
 
 							static if(special) {
 								Class obj;
@@ -2204,10 +2213,10 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 							var ret;
 
-							static if(!is(typeof(__traits(getOverloads, obj, memberName)[idx](args)) == void))
-								ret = __traits(getOverloads, obj, memberName)[idx](args);
+							static if(!is(typeof(__traits(getOverloads, obj, memberName)[idx](fargs)) == void))
+								ret = mixin(lol);
 							else
-								__traits(getOverloads, obj, memberName)[idx](args);
+								mixin(lol ~ ";");
 
 							return ret;
 						};
@@ -2389,4 +2398,19 @@ string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t.
 	}
 
 	return a;
+}
+
+// LOL this can't work because function pointers drop the default :(
+private
+auto ParamDefault(alias T, size_t idx)() {
+	static if(is(typeof(T) Params == __parameters)) {
+		auto fn(Params[idx .. idx + 1] args) {
+			return args[0];
+		}
+		static if(__traits(compiles, fn())) {
+			return fn();
+		} else {
+			return Params[idx].init;
+		}
+	} else static assert(0);
 }
