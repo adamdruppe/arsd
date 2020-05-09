@@ -415,6 +415,14 @@ struct JoystickUpdate {
 	}
 
 	static short normalizeAxis(short value) {
+	/+
+		auto v = normalizeAxisHack(value);
+		import std.stdio;
+		writeln(value, " :: ", v);
+		return v;
+	}
+	static short normalizeAxisHack(short value) {
+	+/
 		if(value > -1600 && value < 1600)
 			return 0; // the deadzone gives too much useless junk
 		return cast(short) (value >>> 11);
@@ -522,6 +530,9 @@ struct JoystickUpdate {
 					short got = (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? digitalFallbackValue :
 					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? cast(short)-cast(int)digitalFallbackValue :
 						what.Gamepad.sThumbLY;
+
+					if(got == short.min)
+						got++; // to avoid overflow on the axis inversion below
 
 					return normalizeAxis(cast(short)-cast(int)got);
 				case PS1AnalogAxes.horizontalRightStick:
