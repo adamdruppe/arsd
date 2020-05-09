@@ -20,6 +20,8 @@
 
 	I kinda like the javascript foo`blargh` template literals too.
 
+	++ and -- are not implemented.
+
 */
 
 /++
@@ -473,12 +475,6 @@ class ScriptRuntimeException : Exception {
 		this.lineNumber = lineNumber;
 		super(to!string(lineNumber) ~ ": " ~ msg, file, line);
 	}
-}
-
-///
-struct ScriptLocation {
-	string scriptFilename; ///
-	int lineNumber; ///
 }
 
 /// This represents an exception thrown by `throw x;` inside the script as it is interpreted.
@@ -1469,9 +1465,11 @@ class AssignExpression : Expression {
 }
 class VariableExpression : Expression {
 	string identifier;
+	ScriptLocation loc;
 
-	this(string identifier) {
+	this(string identifier, ScriptLocation loc = ScriptLocation.init) {
 		this.identifier = identifier;
+		this.loc = loc;
 	}
 
 	override string toString() {
@@ -1483,7 +1481,12 @@ class VariableExpression : Expression {
 	}
 
 	ref var getVar(PrototypeObject sc, bool recurse = true) {
-		return sc._getMember(identifier, true /* FIXME: recurse?? */, true);
+		try {
+			return sc._getMember(identifier, true /* FIXME: recurse?? */, true);
+		} catch(DynamicTypeException dte) {
+			dte.callStack ~= loc;
+			throw dte;
+		}
 	}
 
 	ref var setVar(PrototypeObject sc, var t, bool recurse = true, bool suppressOverloading = false) {
@@ -2305,6 +2308,9 @@ class CallExpression : Expression {
 
 		try {
 			return InterpretResult(f.apply(_this, args), sc);
+		} catch(DynamicTypeException dte) {
+			dte.callStack ~= loc;
+			throw dte;
 		} catch(ScriptException se) {
 			se.callStack ~= loc;
 			throw se;
@@ -2337,7 +2343,7 @@ VariableExpression parseVariableName(MyTokenStreamHere)(ref MyTokenStreamHere to
 	auto token = tokens.front;
 	if(token.type == ScriptToken.Type.identifier) {
 		tokens.popFront();
-		return new VariableExpression(token.str);
+		return new VariableExpression(token.str, ScriptLocation(token.scriptFilename, token.lineNumber));
 	}
 	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.scriptFilename, token.lineNumber);
 }
@@ -3389,7 +3395,9 @@ var interpret(string code, PrototypeObject variables, string scriptFilename = nu
 	Returns:
 		the result of the last expression evaluated by the script engine
 +/
-var interpret(string code, var variables = null, string scriptFilename = null) {
+var interpret(string code, var variables = null, string scriptFilename = null, string file = __FILE__, size_t line = __LINE__) {
+	if(scriptFilename is null)
+		scriptFilename = file ~ "@" ~ to!string(line);
 	return interpretStream(
 		lexScript(repeat(code, 1), scriptFilename),
 		(variables.payloadType() == var.Type.Object && variables._payload._object !is null) ? variables._payload._object : new PrototypeObject());

@@ -76,6 +76,16 @@ import std.traits;
 import std.conv;
 import std.json;
 
+version(jsvar_throw)
+	/++
+		Variable to decide if jsvar throws on certain invalid
+		operations or continues on propagating null vars.
+	+/
+	bool jsvar_throw = true;
+else
+	/// ditto
+	bool jsvar_throw = false;
+
 // uda for wrapping classes
 enum scriptable = "arsd_jsvar_compatible";
 
@@ -838,7 +848,7 @@ struct var {
 	public var apply(var _this, var[] args) {
 		if(this.payloadType() == Type.Function) {
 			if(this._payload._function is null) {
-				version(jsvar_throw)
+				if(jsvar_throw)
 					throw new DynamicTypeException(this, Type.Function);
 				else
 					return var(null);
@@ -846,7 +856,7 @@ struct var {
 			return this._payload._function(_this, args);
 		} else if(this.payloadType() == Type.Object) {
 			if(this._payload._object is null) {
-				version(jsvar_throw)
+				if(jsvar_throw)
 					throw new DynamicTypeException(this, Type.Function);
 				else
 					return var(null);
@@ -856,14 +866,13 @@ struct var {
 				return operator.apply(_this, args);
 		}
 
-		version(jsvar_throw)
-			throw new DynamicTypeException(this, Type.Function);
-
 		if(this.payloadType() == Type.Integral || this.payloadType() == Type.Floating) {
 			if(args.length)
 				return var(this.get!double * args[0].get!double);
 			else
 				return this;
+		} else if(jsvar_throw) {
+			throw new DynamicTypeException(this, Type.Function);
 		}
 
 		//return this;
@@ -1310,7 +1319,7 @@ struct var {
 		}
 
 		if(from is null) {
-			version(jsvar_throw)
+			if(jsvar_throw)
 				throw new DynamicTypeException(var(null), Type.Object, file, line);
 			else
 				return *(new var);
@@ -1356,10 +1365,12 @@ struct var {
 				*n = this["opIndex"](idx);
 			return *n;
 		}
-		version(jsvar_throw)
+		if(jsvar_throw) {
 			throw new DynamicTypeException(this, Type.Array, file, line);
-		var* n = new var();
-		return *n;
+		} else {
+			var* n = new var();
+			return *n;
+		}
 	}
 
 	public ref var opIndexAssign(T)(T t, size_t idx, string file = __FILE__, size_t line = __LINE__) {
@@ -1371,10 +1382,12 @@ struct var {
 		} else if(_type == Type.Object) {
 			return opIndexAssign(t, to!string(idx), file, line);
 		}
-		version(jsvar_throw)
+		if(jsvar_throw) {
 			throw new DynamicTypeException(this, Type.Array, file, line);
-		var* n = new var();
-		return *n;
+		} else {
+			var* n = new var();
+			return *n;
+		}
 	}
 
 	ref var _getOwnProperty(string name, string file = __FILE__, size_t line = __LINE__) {
@@ -1385,8 +1398,8 @@ struct var {
 					return *peek;
 			}
 		}
-		version(jsvar_throw)
-			throw new DynamicTypeException(this, Type.Object, file, line);
+		//if(jsvar_throw)
+			//throw new DynamicTypeException(this, Type.Object, file, line);
 		var* n = new var();
 		return *n;
 	}
@@ -1772,7 +1785,7 @@ class PrototypeObject {
 
 		// if we're here, the property was not found, so let's implicitly create it
 		if(throwOnFailure)
-			throw new Exception("no such property " ~ name, file, line);
+			throw new DynamicTypeException("no such property " ~ name, file, line);
 		var n;
 		this._properties[name] = n;
 		return this._properties[name];
@@ -1803,7 +1816,7 @@ class PrototypeObject {
 
 		// if we're here, the property was not found, so let's implicitly create it
 		if(throwOnFailure)
-			throw new Exception("no such property " ~ name, file, line);
+			throw new DynamicTypeException("no such property " ~ name, file, line);
 		this._properties[name] = t;
 		return this._properties[name];
 	}
@@ -1860,15 +1873,62 @@ class PropertyPrototype : PrototypeObject {
 	}
 }
 
+///
+struct ScriptLocation {
+	string scriptFilename; ///
+	int lineNumber; ///
+}
 
 class DynamicTypeException : Exception {
+	this(string msg, string file = __FILE__, size_t line = __LINE__) {
+		super(msg, file, line);
+	}
 	this(var v, var.Type required, string file = __FILE__, size_t line = __LINE__) {
 		import std.string;
 		if(v.payloadType() == required)
 			super(format("Tried to use null as a %s", required), file, line);
-		else
-			super(format("Tried to use %s as a %s", v.payloadType(), required), file, line);
+		else {
+			super(format("Tried to use %s%s as a %s", v == null ? "null ": "", v.payloadType(), required), file, line);
+		}
 	}
+
+	override void toString(scope void delegate(in char[]) sink) const {
+		import std.format;
+		if(varName.length)
+			sink(varName);
+		if(callStack.length) {
+			sink("arsd.jsvar.DynamicTypeException@");
+			sink(file);
+			sink("(");
+			sink(to!string(line));
+			sink("): ");
+			sink(msg);
+			foreach(cs; callStack)
+				sink(format("\n\t%s:%s", cs.scriptFilename, cs.lineNumber));
+
+			bool found;
+			void hiddenSink(in char[] str) {
+				// I just want to hide the call stack until the interpret call...
+				// since the script stack above is more meaningful to users.
+				//
+				// but then I will go back to the D functions once on the outside.
+				import std.string;
+				if(found)
+					sink(str);
+				else if(str.indexOf("arsd.script.interpret(") != -1)
+					found = true;
+			}
+
+			sink("\n--------");
+
+			super.toString(&hiddenSink);
+		} else {
+			super.toString(sink);
+		}
+	}
+
+	ScriptLocation[] callStack;
+	string varName;
 }
 
 template makeAscii() {
@@ -1957,7 +2017,6 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 			}~memberName~q{
 			(Parameters!(__traits(getMember, T, memberName)) p)
 			{
-			//pragma(msg, T,".",memberName, " ", typeof(__traits(getMember, super, memberName)).stringof);
 			//import std.stdio; writeln("calling ", T.stringof, ".", memberName, " - ", methodOverriddenByScript(memberName), "/", _next_devirtualized, " on ", cast(size_t) cast(void*) this);
 				if(_next_devirtualized || !methodOverriddenByScript(memberName))
 					return __traits(getMember, super, memberName)(p);
