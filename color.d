@@ -1487,6 +1487,8 @@ struct Point {
 struct Size {
 	int width; ///
 	int height; ///
+
+	int area() pure nothrow @safe const @nogc { return width * height; }
 }
 
 ///

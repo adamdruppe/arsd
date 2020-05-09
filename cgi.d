@@ -5801,7 +5801,7 @@ void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(i
 	import std.traits;
 
 	sw: switch(calledIdx) {
-		static foreach(idx, memberName; __traits(derivedMembers, Interface))
+		foreach(idx, memberName; __traits(derivedMembers, Interface))
 		static if(__traits(isVirtualFunction, __traits(getMember, Interface, memberName))) {
 			case idx:
 				assert(calledFunction == __traits(getMember, Interface, memberName).mangleof);
@@ -7203,7 +7203,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	// first, check for missing arguments and initialize to defaults if necessary
 
 	static if(is(typeof(method) P == __parameters))
-	static foreach(idx, param; P) {{
+	foreach(idx, param; P) {{
 		// see: mustNotBeSetFromWebParams
 		static if(is(param : Cgi)) {
 			static assert(!is(param == immutable));
@@ -7213,7 +7213,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 			cast() params[idx] = cgi.getSessionObject!D();
 		} else {
 			bool populated;
-			static foreach(uda; __traits(getAttributes, P[idx .. idx + 1])) {
+			foreach(uda; __traits(getAttributes, P[idx .. idx + 1])) {
 				static if(is(uda == ifCalledFromWeb!func, alias func)) {
 					static if(is(typeof(func(cgi))))
 						params[idx] = func(cgi);
@@ -7279,7 +7279,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 					// set the child member
 					switch(paramName) {
-						static foreach(idx, memberName; __traits(allMembers, T))
+						foreach(idx, memberName; __traits(allMembers, T))
 						static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
 							// data member!
 							case memberName:
@@ -7373,7 +7373,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 
 		sw: switch(paramName) {
 			static if(is(typeof(method) P == __parameters))
-			static foreach(idx, param; P) {
+			foreach(idx, param; P) {
 				static if(mustNotBeSetFromWebParams!(P[idx], __traits(getAttributes, P[idx .. idx + 1]))) {
 					// cannot be set from the outside
 				} else {
@@ -7424,7 +7424,7 @@ private bool mustNotBeSetFromWebParams(T, attrs...)() {
 	} else static if(__traits(compiles, T.getAutomaticallyForCgi(Cgi.init))) {
 		return true;
 	} else {
-		static foreach(uda; attrs)
+		foreach(uda; attrs)
 			static if(is(uda == ifCalledFromWeb!func, alias func))
 				return true;
 		return false;
@@ -7432,7 +7432,7 @@ private bool mustNotBeSetFromWebParams(T, attrs...)() {
 }
 
 private bool hasIfCalledFromWeb(attrs...)() {
-	static foreach(uda; attrs)
+	foreach(uda; attrs)
 		static if(is(uda == ifCalledFromWeb!func, alias func))
 			return true;
 	return false;
@@ -7672,7 +7672,7 @@ html", true, true);
 	/// Multiple responses deconstruct the algebraic type and forward to the appropriate handler at runtime
 	void presentSuccessfulReturnAsHtml(T : MultipleResponses!Types, Types...)(Cgi cgi, T ret) {
 		bool outputted = false;
-		static foreach(index, type; Types) {
+		foreach(index, type; Types) {
 			if(ret.contains == index) {
 				assert(!outputted);
 				outputted = true;
@@ -7787,7 +7787,7 @@ html", true, true);
 			auto fieldset = div.addChild("fieldset");
 			fieldset.addChild("legend", beautify(T.stringof)); // FIXME
 			fieldset.addChild("input", name);
-			static foreach(idx, memberName; __traits(allMembers, T))
+			foreach(idx, memberName; __traits(allMembers, T))
 			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
 				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
 			}
@@ -7871,13 +7871,13 @@ html", true, true);
 		//alias defaults = ParameterDefaults!method;
 
 		static if(is(typeof(method) P == __parameters))
-		static foreach(idx, _; P) {{
+		foreach(idx, _; P) {{
 
 			alias param = P[idx .. idx + 1];
 
 			static if(!mustNotBeSetFromWebParams!(param[0], __traits(getAttributes, param))) {
 				string displayName = beautify(__traits(identifier, param));
-				static foreach(attr; __traits(getAttributes, param))
+				foreach(attr; __traits(getAttributes, param))
 					static if(is(typeof(attr) == DisplayName))
 						displayName = attr.name;
 				auto i = form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
@@ -7905,10 +7905,10 @@ html", true, true);
 		//alias idents = ParameterIdentifierTuple!method;
 		//alias defaults = ParameterDefaults!method;
 
-		static foreach(idx, memberName; __traits(derivedMembers, T)) {{
+		foreach(idx, memberName; __traits(derivedMembers, T)) {{
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			string displayName = beautify(memberName);
-			static foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
+			foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
 				static if(is(typeof(attr) == DisplayName))
 					displayName = attr.name;
 			form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
@@ -7930,7 +7930,7 @@ html", true, true);
 		} else static if(is(T : Element)) {
 			return t;
 		} else static if(is(T == MultipleResponses!Types, Types...)) {
-			static foreach(index, type; Types) {
+			foreach(index, type; Types) {
 				if(t.contains == index)
 					return formatReturnValueAsHtml(t.payload[index]);
 			}
@@ -7949,7 +7949,7 @@ html", true, true);
 			auto dl = Element.make("dl");
 			dl.addClass("automatic-data-display");
 
-			static foreach(idx, memberName; __traits(allMembers, T))
+			foreach(idx, memberName; __traits(allMembers, T))
 			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
 				dl.addChild("dt", memberName);
 				dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
@@ -7964,7 +7964,7 @@ html", true, true);
 				auto table = cast(Table) Element.make("table");
 				table.addClass("automatic-data-display");
 				string[] names;
-				static foreach(idx, memberName; __traits(derivedMembers, E))
+				foreach(idx, memberName; __traits(derivedMembers, E))
 				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
 					names ~= beautify(memberName);
 				}
@@ -7972,7 +7972,7 @@ html", true, true);
 
 				foreach(l; t) {
 					auto tr = table.appendRow();
-					static foreach(idx, memberName; __traits(derivedMembers, E))
+					foreach(idx, memberName; __traits(derivedMembers, E))
 					static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
 						static if(memberName == "id") {
 							string val = to!string(__traits(getMember, l, memberName));
@@ -7990,7 +7990,7 @@ html", true, true);
 				auto table = cast(Table) Element.make("table");
 				table.addClass("automatic-data-display");
 				string[] names;
-				static foreach(idx, memberName; __traits(allMembers, E))
+				foreach(idx, memberName; __traits(allMembers, E))
 				static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
 					names ~= beautify(memberName);
 				}
@@ -7998,7 +7998,7 @@ html", true, true);
 
 				foreach(l; t) {
 					auto tr = table.appendRow();
-					static foreach(idx, memberName; __traits(allMembers, E))
+					foreach(idx, memberName; __traits(allMembers, E))
 					static if(__traits(compiles, __traits(getMember, E, memberName).offsetof)) {
 						tr.addChild("td", formatReturnValueAsHtml(__traits(getMember, l, memberName)));
 					}
@@ -8087,7 +8087,7 @@ struct MultipleResponses(T...) {
 					alias findHandler = findHandler!(type, HandlersToCheck[1 .. $]);
 			}
 		}
-		static foreach(index, type; T) {{
+		foreach(index, type; T) {
 			alias handler = findHandler!(type, Handlers);
 			static if(is(handler == void))
 				static assert(0, "Type " ~ type.stringof ~ " was not handled by visitor");
@@ -8095,7 +8095,7 @@ struct MultipleResponses(T...) {
 				if(index == contains)
 					handler(payload[index]);
 			}
-		}}
+		}
 	}
 
 	/+
@@ -8195,7 +8195,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			static if(is(typeof(T.__ctor) P == __parameters)) {
 				P params;
 
-				static foreach(pidx, param; P) {
+				foreach(pidx, param; P) {
 					static if(is(param : Cgi)) {
 						static assert(!is(param == immutable));
 						cast() params[pidx] = cgi;
@@ -8205,7 +8205,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 
 					} else {
 						static if(hasIfCalledFromWeb!(__traits(getAttributes, P[pidx .. pidx + 1]))) {
-							static foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
+							foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
 								static if(is(uda == ifCalledFromWeb!func, alias func)) {
 									static if(is(typeof(func(cgi))))
 										params[pidx] = func(cgi);
@@ -8285,9 +8285,9 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			hack ~= "/";
 
 		switch(hack) {
-			static foreach(methodName; __traits(derivedMembers, T))
+			foreach(methodName; __traits(derivedMembers, T))
 			static if(methodName != "__ctor")
-			static foreach(idx, overload; __traits(getOverloads, T, methodName)) {{
+			foreach(idx, overload; __traits(getOverloads, T, methodName)) {
 			static if(is(typeof(overload) P == __parameters))
 			static if(is(typeof(overload) R == return))
 			static if(__traits(getProtection, overload) == "public" || __traits(getProtection, overload) == "export")
@@ -8305,7 +8305,9 @@ private auto serveApiInternal(T)(string urlPrefix) {
 
 					P params;
 
-					static foreach(pidx, param; P) {
+					string ident;
+
+					foreach(pidx, param; P) {
 						static if(is(param : Cgi)) {
 							static assert(!is(param == immutable));
 							cast() params[pidx] = cgi;
@@ -8314,7 +8316,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 							cast() params[pidx] = cgi.getSessionObject!D();
 						} else {
 							static if(hasIfCalledFromWeb!(__traits(getAttributes, P[pidx .. pidx + 1]))) {
-								static foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
+								foreach(uda; __traits(getAttributes, P[pidx .. pidx + 1])) {
 									static if(is(uda == ifCalledFromWeb!func, alias func)) {
 										static if(is(typeof(func(cgi))))
 											params[pidx] = func(cgi);
@@ -8327,7 +8329,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 								static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
 									params[pidx] = param.getAutomaticallyForCgi(cgi);
 								} else static if(is(param == string)) {
-									auto ident = nextPieceFromSlash(remainingUrl);
+									ident = nextPieceFromSlash(remainingUrl);
 									if(ident is null) {
 										// trailing slash mandated on subresources
 										cgi.setResponseLocation(cgi.pathInfo ~ "/");
@@ -8442,7 +8444,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 							auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
 							static if(is(typeof(ret) == MultipleResponses!Types, Types...)) {
 								var json;
-								static foreach(index, type; Types) {
+								foreach(index, type; Types) {
 									if(ret.contains == index)
 										json = ret.payload[index];
 								}
@@ -8469,7 +8471,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 				//return true;
 				}
 			}
-			}}
+			}
 			case "script.js":
 				cgi.setResponseContentType("text/javascript");
 				cgi.gzipResponse = true;
@@ -8491,7 +8493,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 
 string defaultFormat(alias method)() {
 	bool nonConstConditionForWorkingAroundASpuriousDmdWarning = true;
-	static foreach(attr; __traits(getAttributes, method)) {
+	foreach(attr; __traits(getAttributes, method)) {
 		static if(is(typeof(attr) == DefaultFormat)) {
 			if(nonConstConditionForWorkingAroundASpuriousDmdWarning)
 				return attr.value;
@@ -8504,7 +8506,7 @@ string[] urlNamesForMethod(alias method)(string def) {
 	auto verb = Cgi.RequestMethod.GET;
 	bool foundVerb = false;
 	bool foundNoun = false;
-	static foreach(attr; __traits(getAttributes, method)) {
+	foreach(attr; __traits(getAttributes, method)) {
 		static if(is(typeof(attr) == Cgi.RequestMethod)) {
 			verb = attr;
 			if(foundVerb)
@@ -8883,7 +8885,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 		div.addClass("Dclass_" ~ T.stringof);
 		div.dataset.url = urlId;
 		bool first = true;
-		static foreach(idx, memberName; __traits(derivedMembers, T))
+		foreach(idx, memberName; __traits(derivedMembers, T))
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			if(!first) div.addChild("br"); else first = false;
 			div.appendChild(presenter.formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
@@ -8893,7 +8895,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 	obj.toJsonFromReflection = delegate(t) {
 		import arsd.jsvar;
 		var v = var.emptyObject();
-		static foreach(idx, memberName; __traits(derivedMembers, T))
+		foreach(idx, memberName; __traits(derivedMembers, T))
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			v[memberName] = __traits(getMember, obj, memberName);
 		}
@@ -8927,7 +8929,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 
 
 	static void applyChangesTemplate(Obj)(Cgi cgi, Obj obj) {
-		static foreach(idx, memberName; __traits(derivedMembers, Obj))
+		foreach(idx, memberName; __traits(derivedMembers, Obj))
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			__traits(getMember, obj, memberName) = cgi.request(memberName, __traits(getMember, obj, memberName));
 		}
@@ -8996,7 +8998,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 							var json = var.emptyArray;
 							foreach(r; results.results) {
 								var o = var.emptyObject;
-								static foreach(idx, memberName; __traits(derivedMembers, typeof(r)))
+								foreach(idx, memberName; __traits(derivedMembers, typeof(r)))
 								static if(__traits(compiles, __traits(getMember, r, memberName).offsetof)) {
 									o[memberName] = __traits(getMember, r, memberName);
 								}
@@ -9358,7 +9360,7 @@ template dispatcher(definitions...) {
 
 	bool dispatcher(DispatcherData)(DispatcherData dispatcherData) if(!is(DispatcherData : Cgi)) {
 		// I can prolly make this more efficient later but meh.
-		static foreach(definition; definitions) {
+		foreach(definition; definitions) {
 			if(definition.rejectFurther) {
 				if(dispatcherData.cgi.pathInfo[dispatcherData.pathInfoStart .. $] == definition.urlPrefix) {
 					auto ret = definition.handler(
