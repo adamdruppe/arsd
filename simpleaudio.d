@@ -199,18 +199,22 @@ final class AudioPcmOutThread : Thread {
 	///
 	this() {
 		this.isDaemon = true;
-		version(linux) {
-			// this thread has no business intercepting signals from the main thread,
-			// so gonna block a couple of them
-			import core.sys.posix.signal;
-			sigset_t sigset;
-			auto err = sigfillset(&sigset);
-			assert(!err);
-			err = sigprocmask(SIG_BLOCK, &sigset, null);
-			assert(!err);
-		}
 
 		super(&run);
+	}
+
+	///
+	void pause() {
+		if(ao) {
+			ao.pause();
+		}
+	}
+
+	///
+	void unpause() {
+		if(ao) {
+			ao.unpause();
+		}
 	}
 
 	///
@@ -441,8 +445,25 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	private void run() {
+
+		version(linux) {
+			// this thread has no business intercepting signals from the main thread,
+			// so gonna block a couple of them
+			import core.sys.posix.signal;
+			sigset_t sigset;
+			auto err = sigemptyset(&sigset);
+			assert(!err);
+
+			err = sigaddset(&sigset, SIGINT); assert(!err);
+			err = sigaddset(&sigset, SIGCHLD); assert(!err);
+
+			err = sigprocmask(SIG_BLOCK, &sigset, null);
+			assert(!err);
+		}
+
 		AudioOutput ao = AudioOutput(0);
 		this.ao = &ao;
+		auto omg = this;
 		ao.fillData = (short[] buffer) {
 			short[BUFFER_SIZE_SHORT] bfr;
 			bool first = true;
@@ -467,7 +488,7 @@ final class AudioPcmOutThread : Thread {
 					}
 					if(!ret) {
 						// it returned false meaning this one is finished...
-						synchronized(this) {
+						synchronized(omg) {
 							fillDatas[idx] = fillDatas[fillDatasLength - 1];
 							fillDatasLength--;
 						}
@@ -712,6 +733,23 @@ struct AudioOutput {
 	/// Breaks the play loop
 	void stop() {
 		playing = false;
+	}
+
+	///
+	void pause() {
+		version(WinMM)
+			waveOutPause(handle);
+		else version(ALSA)
+			snd_pcm_pause(handle, 1);
+	}
+
+	///
+	void unpause() {
+		version(WinMM)
+			waveOutRestart(handle);
+		else version(ALSA)
+			snd_pcm_pause(handle, 0);
+
 	}
 
 	version(WinMM) {
@@ -1379,6 +1417,7 @@ extern(C):
 
 	int snd_pcm_open(snd_pcm_t**, const char*, snd_pcm_stream_t, int);
 	int snd_pcm_close(snd_pcm_t*);
+	int snd_pcm_pause(snd_pcm_t*, int);
 	int snd_pcm_prepare(snd_pcm_t*);
 	int snd_pcm_hw_params(snd_pcm_t*, snd_pcm_hw_params_t*);
 	int snd_pcm_hw_params_set_periods(snd_pcm_t*, snd_pcm_hw_params_t*, uint, int);
