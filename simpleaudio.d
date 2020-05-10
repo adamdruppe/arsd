@@ -50,6 +50,7 @@ enum DEFAULT_VOLUME = 20;
 
 version(Demo)
 void main() {
+/+
 
 	version(none) {
 	import iv.stb.vorbis;
@@ -153,7 +154,7 @@ void main() {
 	ao.play();
 
 	return;
-
++/
 	// Play a C major scale on the piano to demonstrate midi
 	auto midi = MidiOutput(0);
 
@@ -315,6 +316,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	///
+	@scriptable
 	void pause() {
 		if(ao) {
 			ao.pause();
@@ -322,6 +324,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	///
+	@scriptable
 	void unpause() {
 		if(ao) {
 			ao.unpause();
@@ -664,12 +667,19 @@ class AudioException : Exception {
 	}
 }
 
-/// Gives PCM input access (such as a microphone).
-version(ALSA) // FIXME
+/++
+	Gives PCM input access (such as a microphone).
+
+	History:
+		Windows support added May 10, 2020 and the API got overhauled too.
++/
 struct AudioInput {
 	version(ALSA) {
 		snd_pcm_t* handle;
-	}
+	} else version(WinMM) {
+		HWAVEIN handle;
+		HANDLE event;
+	} else static assert(0);
 
 	@disable this();
 	@disable this(this);
@@ -680,6 +690,20 @@ struct AudioInput {
 
 		version(ALSA) {
 			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_CAPTURE);
+		} else version(WinMM) {
+			event = CreateEvent(null, false /* manual reset */, false /* initially triggered */, null);
+
+			WAVEFORMATEX format;
+			format.wFormatTag = WAVE_FORMAT_PCM;
+			format.nChannels = 2;
+			format.nSamplesPerSec = SampleRate;
+			format.nAvgBytesPerSec = SampleRate * 2 * 2; // two channels, two bytes per sample
+			format.nBlockAlign = 4;
+			format.wBitsPerSample = 16;
+			format.cbSize = 0;
+			if(auto err = waveInOpen(&handle, WAVE_MAPPER, &format, cast(DWORD_PTR) event, cast(DWORD_PTR) &this, CALLBACK_EVENT))
+				throw new WinMMException("wave in open", err);
+
 		} else static assert(0);
 	}
 
@@ -688,23 +712,124 @@ struct AudioInput {
 	/// and it takes a total of 88,200 items to make one second of sound.
 	///
 	/// Returns the slice of the buffer actually read into
+	///
+	/// LINUX ONLY. You should prolly use [record] instead
+	version(ALSA)
 	short[] read(short[] buffer) {
+		snd_pcm_sframes_t read;
+
+		read = snd_pcm_readi(handle, buffer.ptr, buffer.length / 2 /* div number of channels apparently */);
+		if(read < 0)
+			throw new AlsaException("pcm read", cast(int)read);
+
+		return buffer[0 .. read * 2];
+	}
+
+	/// passes a buffer of data to fill
+	///
+	/// Data is delivered as interleaved stereo, LE 16 bit, 44.1 kHz
+	/// Each item in the array thus alternates between left and right channel
+	/// and it takes a total of 88,200 items to make one second of sound.
+	void delegate(short[]) receiveData;
+
+	///
+	void stop() {
+		recording = false;
+	}
+
+	/// First, set [receiveData], then call this.
+	void record() {
+		assert(receiveData !is null);
+		recording = true;
+
 		version(ALSA) {
-			snd_pcm_sframes_t read;
+			short[BUFFER_SIZE_SHORT] buffer;
+			while(recording) {
+				auto got = read(buffer);
+				receiveData(got);
+			}
+		} else version(WinMM) {
 
-			read = snd_pcm_readi(handle, buffer.ptr, buffer.length / 2 /* div number of channels apparently */);
-			if(read < 0)
-				throw new AlsaException("pcm read", cast(int)read);
+			enum numBuffers = 2; // use a lot of buffers to get smooth output with Sleep, see below
+			short[BUFFER_SIZE_SHORT][numBuffers] buffers;
 
-			return buffer[0 .. read * 2];
+			WAVEHDR[numBuffers] headers;
+
+			foreach(i, ref header; headers) {
+				auto buffer = buffers[i][];
+				header.lpData = cast(char*) buffer.ptr;
+				header.dwBufferLength = cast(int) buffer.length * cast(int) short.sizeof;
+				header.dwFlags = 0;// WHDR_BEGINLOOP | WHDR_ENDLOOP;
+				header.dwLoops = 0;
+
+				if(auto err = waveInPrepareHeader(handle, &header, header.sizeof))
+					throw new WinMMException("prepare header", err);
+
+				header.dwUser = 1; // mark that the driver is using it
+				if(auto err = waveInAddBuffer(handle, &header, header.sizeof))
+					throw new WinMMException("wave in read", err);
+			}
+
+			waveInStart(handle);
+			scope(failure) waveInReset(handle);
+
+			while(recording) {
+				if(auto err = WaitForSingleObject(event, INFINITE))
+					throw new Exception("WaitForSingleObject");
+				if(!recording)
+					break;
+
+				foreach(ref header; headers) {
+					if(!(header.dwFlags & WHDR_DONE)) continue;
+
+					receiveData((cast(short*) header.lpData)[0 .. header.dwBytesRecorded / short.sizeof]);
+					if(!recording) break;
+					header.dwUser = 1; // mark that the driver is using it
+					if(auto err = waveInAddBuffer(handle, &header, header.sizeof)) {
+                                                throw new WinMMException("waveInAddBuffer", err);
+                                        }
+				}
+			}
+
+			/*
+			if(auto err = waveInStop(handle))
+				throw new WinMMException("wave in stop", err);
+			*/
+
+			if(auto err = waveInReset(handle)) {
+				throw new WinMMException("wave in reset", err);
+			}
+
+			still_in_use:
+			foreach(idx, header; headers)
+				if(!(header.dwFlags & WHDR_DONE)) {
+					Sleep(1);
+					goto still_in_use;
+				}
+
+			foreach(ref header; headers)
+				if(auto err = waveInUnprepareHeader(handle, &header, header.sizeof)) {
+					throw new WinMMException("unprepare header", err);
+				}
+
+			ResetEvent(event);
 		} else static assert(0);
 	}
 
-	// FIXME: add async function hooks
+	private bool recording;
 
 	~this() {
+		receiveData = null;
 		version(ALSA) {
 			snd_pcm_close(handle);
+		} else version(WinMM) {
+			if(auto err = waveInClose(handle))
+				throw new WinMMException("close", err);
+
+			CloseHandle(event);
+			// in wine (though not Windows nor winedbg as far as I can tell)
+			// this randomly segfaults. the sleep prevents it. idk why.
+			Sleep(5);
 		} else static assert(0);
 	}
 }
@@ -737,7 +862,7 @@ struct AudioOutput {
 			format.nBlockAlign = 4;
 			format.wBitsPerSample = 16;
 			format.cbSize = 0;
-			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, &mmCallback, &this, CALLBACK_FUNCTION))
+			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
 				throw new WinMMException("wave out open", err);
 		} else static assert(0);
 	}
@@ -796,7 +921,7 @@ struct AudioOutput {
 			foreach(i, ref header; headers) {
 				// since this is wave out, it promises not to write...
 				auto buffer = buffers[i][];
-				header.lpData = cast(void*) buffer.ptr;
+				header.lpData = cast(char*) buffer.ptr;
 				header.dwBufferLength = cast(int) buffer.length * cast(int) short.sizeof;
 				header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
 				header.dwLoops = 1;
@@ -870,10 +995,9 @@ struct AudioOutput {
 
 	version(WinMM) {
 		extern(Windows)
-		static void mmCallback(HWAVEOUT handle, UINT msg, void* userData, DWORD param1, DWORD param2) {
+		static void mmCallback(HWAVEOUT handle, UINT msg, void* userData, WAVEHDR* header, DWORD_PTR param2) {
 			AudioOutput* ao = cast(AudioOutput*) userData;
 			if(msg == WOM_DONE) {
-				auto header = cast(WAVEHDR*) param1;
 				// we want to bounce back and forth between two buffers
 				// to keep the sound going all the time
 				if(ao.playing) {
@@ -893,6 +1017,134 @@ struct AudioOutput {
 			waveOutClose(handle);
 		} else static assert(0);
 	}
+}
+
+/++
+	For reading midi events from hardware, for example, an electronic piano keyboard
+	attached to the computer.
++/
+struct MidiInput {
+	// reading midi devices...
+	version(ALSA) {
+		snd_rawmidi_t* handle;
+	} else version(WinMM) {
+		HMIDIIN handle;
+	}
+
+	@disable this();
+	@disable this(this);
+
+	/+
+B0 40 7F # pedal on
+B0 40 00 # sustain pedal off
+	+/
+
+	/// Always pass card == 0.
+	this(int card) {
+		assert(card == 0);
+
+		version(ALSA) {
+			if(auto err = snd_rawmidi_open(&handle, null, "hw:4,0", 0)) // FIXME
+				throw new AlsaException("rawmidi open", err);
+		} else version(WinMM) {
+			if(auto err = midiInOpen(&handle, 0, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
+				throw new WinMMException("midi in open", err);
+		} else static assert(0);
+	}
+
+	private bool recording = false;
+
+	///
+	void stop() {
+		recording = false;
+	}
+
+	/++
+		Records raw midi input data from the device.
+
+		The timestamp is given in milliseconds since recording
+		began (if you keep this program running for 23ish days
+		it might overflow! so... don't do that.). The other bytes
+		are the midi messages.
+
+		$(PITFALL Do not call any other multimedia functions from the callback!)
+	+/
+	void record(void delegate(uint timestamp, ubyte b1, ubyte b2, ubyte b3) dg) {
+		version(ALSA) {
+			recording = true;
+			ubyte[1024] data;
+			import core.time;
+			auto start = MonoTime.currTime;
+			while(recording) {
+				auto read = snd_rawmidi_read(handle, data.ptr, data.length);
+				if(read < 0)
+					throw new AlsaException("midi read", cast(int) read);
+
+				auto got = data[0 .. read];
+				while(got.length) {
+					// FIXME some messages are fewer bytes....
+					dg(cast(uint) (MonoTime.currTime - start).total!"msecs", got[0], got[1], got[2]);
+					got = got[3 .. $];
+				}
+			}
+		} else version(WinMM) {
+			recording = true;
+			this.dg = dg;
+			scope(exit)
+				this.dg = null;
+			midiInStart(handle);
+			scope(exit)
+				midiInReset(handle);
+
+			while(recording) {
+				Sleep(1);
+			}
+		} else static assert(0);
+	}
+
+	version(WinMM)
+	private void delegate(uint timestamp, ubyte b1, ubyte b2, ubyte b3) dg;
+
+
+	version(WinMM)
+	extern(Windows)
+	static
+	void mmCallback(HMIDIIN handle, UINT msg, DWORD_PTR user, DWORD_PTR param1, DWORD_PTR param2) {
+		MidiInput* mi = cast(MidiInput*) user;
+		if(msg == MIM_DATA) {
+			mi.dg(
+				cast(uint) param2,
+				param1 & 0xff,
+				(param1 >> 8) & 0xff,
+				(param1 >> 16) & 0xff
+			);
+		}
+	}
+
+	~this() {
+		version(ALSA) {
+			snd_rawmidi_close(handle);
+		} else version(WinMM) {
+			midiInClose(handle);
+		} else static assert(0);
+	}
+}
+
+// plays a midi file in the background with methods to tweak song as it plays
+struct MidiOutputThread {
+	void injectCommand() {}
+	void pause() {}
+	void unpause() {}
+
+	void trackEnabled(bool on) {}
+	void channelEnabled(bool on) {}
+
+	void loopEnabled(bool on) {}
+
+	// stops the current song, pushing its position to the stack for later
+	void pushSong() {}
+	// restores a popped song from where it was.
+	void popSong() {}
 }
 
 /// Gives MIDI output access.
@@ -1647,7 +1899,7 @@ extern(Windows):
 	// pcm
 
 	// midi
-
+/+
 	alias HMIDIOUT = HANDLE;
 	alias MMRESULT = UINT;
 
@@ -1755,6 +2007,8 @@ extern(Windows):
 
 
 	uint mciSendStringA(in char*,char*,uint,void*);
+
++/
 }
 
 private enum scriptable = "arsd_jsvar_compatible";
