@@ -3436,6 +3436,12 @@ void repl(bool enhanced = false)(var globals) {
 		import std.stdio;
 		auto lines() { return stdin.byLine; }
 	}
+
+	bool exited;
+	if(globals == null)
+		globals = var.emptyObject;
+	globals.exit = () { exited = true; };
+
 	import std.algorithm;
 	auto variables = (globals.payloadType() == var.Type.Object && globals._payload._object !is null) ? globals._payload._object : new PrototypeObject();
 
@@ -3445,7 +3451,7 @@ void repl(bool enhanced = false)(var globals) {
 	, "stdin");
 	auto expressions = parseScript(tokens);
 
-	while(!expressions.empty) {
+	while(!exited && !expressions.empty) {
 		try {
 			expressions.popFront;
 			auto expression = expressions.front;

@@ -99,11 +99,43 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_TEXTURE_2D);
 
+	window.windowResized = (newWidth, newHeight) {
+		int x, y, w, h;
+
+		// FIXME: this works for only square original sizes
+		if(newWidth < newHeight) {
+			w = newWidth;
+			h = newWidth * height / width;
+			x = 0;
+			y = (newHeight - h) / 2;
+		} else {
+			w = newHeight * width / height;
+			h = newHeight;
+			x = (newWidth - w) / 2;
+			y = 0;
+		}
+
+		glViewport(x, y, w, h);
+		window.redrawOpenGlSceneNow();
+	};
+
 	return window;
 }
 
-/// This is the base class for your game.
-class GameHelperBase {
+/++
+	This is the base class for your game.
+
+	You should destroy this explicitly. Easiest
+	way is to do this in your `main` function:
+
+	---
+		auto game = new MyGameSubclass();
+		scope(exit) .destroy(game);
+
+		runGame(game);
+	---
++/
+abstract class GameHelperBase {
 	/// Implement this to draw.
 	abstract void drawFrame();
 
@@ -125,12 +157,10 @@ class GameHelperBase {
 	bool wantAudio() { return false; }
 
 	/// You must override [wantAudio] and return true for this to be valid;
-	AudioPcmOutThread audio;
+	AudioOutputThread audio;
 
 	this() {
-		if(wantAudio) {
-			audio = new AudioPcmOutThread();
-		}
+		audio = AudioOutputThread(wantAudio());
 	}
 
 	protected bool redrawForced;
@@ -202,6 +232,8 @@ struct VirtualController {
 		Select, Start, L, R
 	}
 
+	@nogc pure nothrow @safe:
+
 	/++
 		History: Added April 30, 2020
 	+/
@@ -231,23 +263,43 @@ struct VirtualController {
 	}
 }
 
-/// The max rates are given in executions per second
-/// Redraw will never be called unless there has been at least one update
-void runGame(T : GameHelperBase)(T game, int maxUpdateRate = 20, int maxRedrawRate = 0) {
+/++
+	Deprecated, use the other overload instead.
+
+	History:
+		Deprecated on May 9, 2020. Instead of calling
+		`runGame(your_instance);` run `runGame!YourClass();`
+		instead. If you needed to change something in the game
+		ctor, make a default constructor in your class to do that
+		instead.
++/
+deprecated("Use runGame!YourGameType(updateRate, redrawRate); instead now.")
+void runGame()(GameHelperBase game, int maxUpdateRate = 20, int maxRedrawRate = 0) { assert(0, "this overload is deprecated, use runGame!YourClass instead"); }
+
+/++
+	Runs your game. It will construct the given class and destroy it at end of scope.
+	Your class must have a default constructor and must implement [GameHelperBase].
+	Your class should also probably be `final` for performance reasons.
+
+	$(TIP
+		If you need to pass parameters to your game class, you can define
+		it as a nested class in your `main` function and access the local
+		variables that way instead of passing them explicitly through the
+		constructor.
+	)
+
+	Params:
+	maxUpdateRate = The max rates are given in executions per second
+	maxRedrawRate = Redraw will never be called unless there has been at least one update
++/
+void runGame(T : GameHelperBase)(int maxUpdateRate = 20, int maxRedrawRate = 0) {
+
+
+	auto game = new T();
+	scope(exit) .destroy(game);
+
 	// this is a template btw because then it can statically dispatch
 	// the members instead of going through the virtual interface.
-	if(game.audio !is null) {
-		game.audio.start();
-	}
-
-	scope(exit)
-	if(game.audio !is null) {
-		import std.stdio;
-		game.audio.stop();
-		game.audio.join();
-		game.audio = null;
-	}
-
 
 	int joystickPlayers = enableJoystickInput();
 	scope(exit) closeJoysticks();

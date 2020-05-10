@@ -174,20 +174,120 @@ void main() {
 	Thread.sleep(dur!"msecs"(500)); // give the last note a chance to finish
 }
 
+/++
+	Wraps [AudioPcmOutThreadImplementation] with RAII semantics for better
+	error handling and disposal than the old way.
+
+	DO NOT USE THE `new` OPERATOR ON THIS! Just construct it inline:
+
+	---
+		auto audio = AudioOutputThread(true);
+		audio.beep();
+	---
+
+	History:
+		Added May 9, 2020 to replace the old [AudioPcmOutThread] class
+		that proved pretty difficult to use correctly.
++/
+struct AudioOutputThread {
+	@disable this();
+
+	/++
+		Pass `true` to enable the audio thread. Otherwise, it will
+		just live as a dummy mock object that you should not actually
+		try to use.
+	+/
+	this(bool enable) {
+		if(enable) {
+			impl = new AudioPcmOutThreadImplementation();
+			impl.refcount++;
+			impl.start();
+			impl.waitForInitialization();
+		}
+	}
+
+	/// Keeps an internal refcount.
+	this(this) {
+		if(impl)
+			impl.refcount++;
+	}
+
+	/// When the internal refcount reaches zero, it stops the audio and rejoins the thread, throwing any pending exception (yes the dtor can throw! extremely unlikely though).
+	~this() {
+		if(impl) {
+			impl.refcount--;
+			if(impl.refcount == 0) {
+				impl.stop();
+				impl.join();
+			}
+		}
+	}
+
+	/++
+		This allows you to check `if(audio)` to see if it is enabled.
+	+/
+	bool opCast(T : bool)() {
+		return impl !is null;
+	}
+
+	/++
+		Other methods are forwarded to the implementation of type
+		[AudioPcmOutThreadImplementation]. See that for more information
+		on what you can do.
+
+		This opDispatch template will forward all other methods directly
+		to that [AudioPcmOutThreadImplementation] if this is live, otherwise
+		it does nothing.
+	+/
+	template opDispatch(string name) {
+		static if(is(typeof(__traits(getMember, impl, name)) Params == __parameters))
+		auto opDispatch(Params params) {
+			if(impl)
+				return __traits(getMember, impl, name)(params);
+			static if(!is(typeof(return) == void))
+				return typeof(return).init;
+		}
+		else static assert(0);
+	}
+
+
+	/// provides automatic [arsd.jsvar] script wrapping capability. Make sure the
+	/// script also finishes before this goes out of scope or it may end up talking
+	/// to a dead object....
+	auto toArsdJsvar() {
+		return impl;
+	}
+
+	/+
+	alias getImpl this;
+	AudioPcmOutThreadImplementation getImpl() {
+		assert(impl !is null);
+		return impl;
+	}
+	+/
+	private AudioPcmOutThreadImplementation impl;
+}
+
+/++
+	Old thread implementation. I decided to deprecate it in favor of [AudioOutputThread] because
+	RAII semantics make it easier to get right at the usage point. See that to go forward.
+
+	History:
+		Deprecated on May 9, 2020.
++/
+deprecated("Use AudioOutputThread instead.") class AudioPcmOutThread {}
+
 import core.thread;
 /++
 	Makes an audio thread for you that you can make
 	various sounds on and it will mix them with good
 	enough latency for simple games.
 
-	---
-		auto audio = new AudioPcmOutThread();
-		audio.start();
-		scope(exit) {
-			audio.stop();
-			audio.join();
-		}
+	DO NOT USE THIS DIRECTLY. Instead, access it through
+	[AudioOutputThread].
 
+	---
+		auto audio = AudioOutputThread(true);
 		audio.beep();
 
 		// you need to keep the main program alive long enough
@@ -195,12 +295,23 @@ import core.thread;
 		Thread.sleep(1.seconds);
 	---
 +/
-final class AudioPcmOutThread : Thread {
-	///
-	this() {
+final class AudioPcmOutThreadImplementation : Thread {
+	private this() {
 		this.isDaemon = true;
 
 		super(&run);
+	}
+
+	private int refcount;
+
+	private void waitForInitialization() {
+		shared(AudioOutput*)* ao = cast(shared(AudioOutput*)*) &this.ao;
+		while(isRunning && *ao is null) {
+			Thread.sleep(5.msecs);
+		}
+
+		if(*ao is null)
+			join(); // it couldn't initialize, just rethrow the exception
 	}
 
 	///
@@ -225,6 +336,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	/// Args in hertz and milliseconds
+	@scriptable
 	void beep(int freq = 900, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 0; // square wave
@@ -235,6 +347,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	///
+	@scriptable
 	void noise(int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 1; // noise
@@ -245,6 +358,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	///
+	@scriptable
 	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 5; // custom
@@ -260,6 +374,7 @@ final class AudioPcmOutThread : Thread {
 	}
 
 	///
+	@scriptable
 	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = DEFAULT_VOLUME) {
 		Sample s;
 		s.operation = 5; // custom
@@ -463,6 +578,7 @@ final class AudioPcmOutThread : Thread {
 
 		AudioOutput ao = AudioOutput(0);
 		this.ao = &ao;
+		scope(exit) this.ao = null;
 		auto omg = this;
 		ao.fillData = (short[] buffer) {
 			short[BUFFER_SIZE_SHORT] bfr;
@@ -1640,3 +1756,5 @@ extern(Windows):
 
 	uint mciSendStringA(in char*,char*,uint,void*);
 }
+
+private enum scriptable = "arsd_jsvar_compatible";

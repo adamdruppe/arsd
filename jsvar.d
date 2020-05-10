@@ -2239,13 +2239,13 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 							Parameters!(__traits(getOverloads, Class, memberName)[idx]) fargs;
 
 
-							/*
 							enum lol = static_foreach(fargs.length, 1, -1,
 								`__traits(getOverloads, obj, memberName)[idx](`,``,` < vargs.length ? vargs[`,`].get!(typeof(fargs[`,`])) : ParamDefault!(__traits(getOverloads, Class, memberName)[idx], `,`)(),`,`)`);
-							*/
+							/*
 							enum lol = static_foreach(fargs.length, 1, -1,
 								`__traits(getOverloads, obj, memberName)[idx](`,``,` < vargs.length ? vargs[`,`].get!(typeof(fargs[`,`])) :
 								typeof(fargs[`,`]).init,`,`)`);
+							*/
 
 							// FIXME: what if there are multiple @scriptable overloads?!
 							// FIXME: what about @properties?
@@ -2400,6 +2400,18 @@ bool appearsNumeric(string n) {
 WrappedNativeObject wrapNativeObject(Struct)(Struct* obj) if(is(Struct == struct)) {
 	return null; // FIXME
 }
+
+/+
+	_IDX_
+
+	static_foreach(T.length, q{
+		mixin(q{
+		void
+		} ~ __traits(identifier, T[_IDX_]) ~ q{
+
+		}
+	});
++/
 
 private
 string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t...) pure {
