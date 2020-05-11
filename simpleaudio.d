@@ -657,6 +657,12 @@ version(ALSA) {
 		gotta get them connected somehow.
 	*/
 	enum midiName = "hw:3,0";
+
+	enum midiCaptureName = "hw:4,0";
+
+	// fyi raw midi dump:  amidi -d --port hw:4,0
+	// connect my midi out to fluidsynth: aconnect 28:0 128:0
+	// and my keyboard to it: aconnect 32:0 128:0
 }
 
 /// Thrown on audio failures.
@@ -1044,7 +1050,7 @@ B0 40 00 # sustain pedal off
 		assert(card == 0);
 
 		version(ALSA) {
-			if(auto err = snd_rawmidi_open(&handle, null, "hw:4,0", 0)) // FIXME
+			if(auto err = snd_rawmidi_open(&handle, null, midiCaptureName, 0))
 				throw new AlsaException("rawmidi open", err);
 		} else version(WinMM) {
 			if(auto err = midiInOpen(&handle, 0, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
