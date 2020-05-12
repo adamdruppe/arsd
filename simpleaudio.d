@@ -198,9 +198,9 @@ struct AudioOutputThread {
 		just live as a dummy mock object that you should not actually
 		try to use.
 	+/
-	this(bool enable) {
+	this(bool enable, int SampleRate = 44100, int channels = 2) {
 		if(enable) {
-			impl = new AudioPcmOutThreadImplementation();
+			impl = new AudioPcmOutThreadImplementation(SampleRate, channels);
 			impl.refcount++;
 			impl.start();
 			impl.waitForInitialization();
@@ -297,12 +297,17 @@ import core.thread;
 	---
 +/
 final class AudioPcmOutThreadImplementation : Thread {
-	private this() {
+	private this(int SampleRate, int channels) {
 		this.isDaemon = true;
+
+		this.SampleRate = SampleRate;
+		this.channels = channels;
 
 		super(&run);
 	}
 
+	private int SampleRate;
+	private int channels;
 	private int refcount;
 
 	private void waitForInitialization() {
@@ -630,8 +635,6 @@ import core.stdc.config;
 version(linux) version=ALSA;
 version(Windows) version=WinMM;
 
-enum SampleRate = 44100;
-
 version(ALSA) {
 	enum cardName = "default";
 
@@ -690,12 +693,20 @@ struct AudioInput {
 	@disable this();
 	@disable this(this);
 
+	int channels;
+	int SampleRate;
+
 	/// Always pass card == 0.
-	this(int card) {
+	this(int card, int SampleRate = 44100, int channels = 2) {
 		assert(card == 0);
 
+		assert(channels == 1 || channels == 2);
+
+		this.channels = channels;
+		this.SampleRate = SampleRate;
+
 		version(ALSA) {
-			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_CAPTURE);
+			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_CAPTURE, SampleRate, channels);
 		} else version(WinMM) {
 			event = CreateEvent(null, false /* manual reset */, false /* initially triggered */, null);
 
@@ -703,7 +714,7 @@ struct AudioInput {
 			format.wFormatTag = WAVE_FORMAT_PCM;
 			format.nChannels = 2;
 			format.nSamplesPerSec = SampleRate;
-			format.nAvgBytesPerSec = SampleRate * 2 * 2; // two channels, two bytes per sample
+			format.nAvgBytesPerSec = SampleRate * channels * 2; // two channels, two bytes per sample
 			format.nBlockAlign = 4;
 			format.wBitsPerSample = 16;
 			format.cbSize = 0;
@@ -724,11 +735,11 @@ struct AudioInput {
 	short[] read(short[] buffer) {
 		snd_pcm_sframes_t read;
 
-		read = snd_pcm_readi(handle, buffer.ptr, buffer.length / 2 /* div number of channels apparently */);
+		read = snd_pcm_readi(handle, buffer.ptr, buffer.length / channels /* div number of channels apparently */);
 		if(read < 0)
 			throw new AlsaException("pcm read", cast(int)read);
 
-		return buffer[0 .. read * 2];
+		return buffer[0 .. read * channels];
 	}
 
 	/// passes a buffer of data to fill
@@ -840,6 +851,9 @@ struct AudioInput {
 	}
 }
 
+///
+enum SampleRateFull = 44100;
+
 /// Gives PCM output access (such as the speakers).
 struct AudioOutput {
 	version(ALSA) {
@@ -853,18 +867,26 @@ struct AudioOutput {
 	// be passed to a device driver and stored!
 	@disable this(this);
 
+	private int SampleRate;
+	private int channels;
+
 	/// Always pass card == 0.
-	this(int card) {
+	this(int card, int SampleRate = 44100, int channels = 2) {
 		assert(card == 0);
 
+		assert(channels == 1 || channels == 2);
+
+		this.SampleRate = SampleRate;
+		this.channels = channels;
+
 		version(ALSA) {
-			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK);
+			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK, SampleRate, channels);
 		} else version(WinMM) {
 			WAVEFORMATEX format;
 			format.wFormatTag = WAVE_FORMAT_PCM;
-			format.nChannels = 2;
+			format.nChannels = cast(ushort) channels;
 			format.nSamplesPerSec = SampleRate;
-			format.nAvgBytesPerSec = SampleRate * 2 * 2; // two channels, two bytes per sample
+			format.nAvgBytesPerSec = SampleRate * channels * 2; // two channels, two bytes per sample
 			format.nBlockAlign = 4;
 			format.wBitsPerSample = 16;
 			format.cbSize = 0;
@@ -875,8 +897,8 @@ struct AudioOutput {
 
 	/// passes a buffer of data to fill
 	///
-	/// Data is assumed to be interleaved stereo, LE 16 bit, 44.1 kHz
-	/// Each item in the array thus alternates between left and right channel
+	/// Data is assumed to be interleaved stereo, LE 16 bit, 44.1 kHz (unless you change that in the ctor)
+	/// Each item in the array thus alternates between left and right channel (unless you change that in the ctor)
 	/// and it takes a total of 88,200 items to make one second of sound.
 	void delegate(short[]) fillData;
 
@@ -902,18 +924,18 @@ struct AudioOutput {
 				if(ready > BUFFER_SIZE_FRAMES)
 					ready = BUFFER_SIZE_FRAMES;
 				//import std.stdio; writeln("filling ", ready);
-				fillData(buffer[0 .. ready * 2]);
+				fillData(buffer[0 .. ready * channels]);
 				if(playing) {
 					snd_pcm_sframes_t written;
-					auto data = buffer[0 .. ready * 2];
+					auto data = buffer[0 .. ready * channels];
 
 					while(data.length) {
-						written = snd_pcm_writei(handle, data.ptr, data.length / 2);
+						written = snd_pcm_writei(handle, data.ptr, data.length / channels);
 						if(written < 0) {
 							written = snd_pcm_recover(handle, cast(int)written, 0);
 							if (written < 0) throw new AlsaException("pcm write", cast(int)written);
 						}
-						data = data[written * 2 .. $];
+						data = data[written * channels .. $];
 					}
 				}
 			}
@@ -1562,7 +1584,7 @@ Pitch Bend Change. 0mmmmmmm This message is sent to indicate a change in the pit
 
 version(ALSA)
 // Opens the PCM device with default settings: stereo, 16 bit, 44.1 kHz, interleaved R/W.
-snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
+snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels) {
 	snd_pcm_t* handle;
 	snd_pcm_hw_params_t* hwParams;
 
@@ -1596,7 +1618,7 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction) {
 
 	assert(rate == SampleRate); // cheap me
 
-	if (auto err = snd_pcm_hw_params_set_channels(handle, hwParams, 2))
+	if (auto err = snd_pcm_hw_params_set_channels(handle, hwParams, channels))
 		throw new AlsaException("params channels", err);
 
 	uint periods = 2;
