@@ -1056,3 +1056,19 @@ version(linux) {
 		}
 	}
 
+version (linux)
+{
+	//this function moves the arrow by as much as you specify with x and y
+	void moveArrowBy(int x, int y)
+	{
+		XWarpPointer(XDisplayConnection.get(), None, None, 0, 0, 0, 0, x, y);
+		XFlush(XDisplayConnection.get());
+	}
+
+	//this function uses the above function to move the arrow to a specific x,y on the screen
+	void moveArrowTo(int x, int y)
+	{
+		moveArrowBy(-10000, -10000);
+		moveArrowBy(0, 0);
+	}
+}
