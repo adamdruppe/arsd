@@ -14760,3 +14760,18 @@ class NotYetImplementedException : Exception {
 }
 
 private alias scriptable = arsd_jsvar_compatible;
+
+version (linux)
+{
+    void moveArrowBy(int x, int y)
+    {
+        XWarpPointer(XDisplayConnection.get(), None, None, 0, 0, 0, 0, x, y);
+        XFlush(XDisplayConnection.get());
+    }
+    
+    void moveArrowTo(int x, int y)
+    {
+        moveArrowBy(-10000, -10000);
+        moveArrowBy(0, 0);
+    }
+}
