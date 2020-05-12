@@ -489,6 +489,7 @@ module arsd.simpledisplay;
 	with the keyboard.  Player two is controlled with the mouse. It demos
 	the pulse timer, event handling, and some basic drawing.
 +/
+version(demos)
 unittest {
 	// dmd example.d simpledisplay.d color.d
 	import arsd.simpledisplay;
@@ -610,6 +611,7 @@ unittest {
 	game with simpledisplay and shows some mouse input and basic output
 	code.
 +/
+version(demos)
 unittest {
 	import arsd.simpledisplay;
 
