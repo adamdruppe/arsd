@@ -1971,6 +1971,8 @@ class TerminalEmulator {
 					} else {
 						if(idx + screenWidth * 2 > normalScreen.length)
 							break;
+						// range violation in apt on debian
+						// FIXME
 						normalScreen[idx .. idx + screenWidth] = normalScreen[idx + screenWidth .. idx + screenWidth * 2];
 					}
 					idx += screenWidth;
