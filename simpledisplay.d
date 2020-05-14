@@ -8301,16 +8301,15 @@ version(Windows) {
 		}
 
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-			import std.conv : to;
 			string cnamec;
-			wstring cn;// = "DSimpleWindow\0"w.dup;
 			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
 			if (sdpyWindowClassStr is null || sdpyWindowClassStr[0] == 0) {
 				cnamec = "DSimpleWindow";
 			} else {
 				cnamec = sdpyWindowClass;
 			}
-			cn = cnamec.to!wstring ~ "\0"; // just in case, lol
+
+			WCharzBuffer cn = WCharzBuffer(cnamec);
 
 			HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
 
@@ -8399,7 +8398,7 @@ version(Windows) {
 
 					auto pixelformat = ChoosePixelFormat(hdc, &pfd);
 
-					if ((pixelformat = ChoosePixelFormat(hdc, &pfd)) == 0)
+					if (pixelformat == 0)
 						throw new WindowsApiException("ChoosePixelFormat");
 
 					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0)
