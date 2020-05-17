@@ -5185,8 +5185,6 @@ version(Windows) {
 	}
 
 
-
-
 	// global hotkey helper function
 
 	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
@@ -5232,6 +5230,123 @@ version(Windows) {
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
+	}
+}
+
+version (X11) {
+	pragma(lib, "dl");
+	import core.sys.posix.dlfcn;
+
+	/++
+		Allows for sending synthetic input to the X server via the Xtst
+		extension.
+
+		Please remember user input is meant to be user - don't use this
+		if you have some other alternative!
+
+		If you need this on Windows btw, the top-level [sendSyntheticInput] shows
+		the Win32 api to start it, but I only did basics there, PR welcome if you like,
+		it is an easy enough function to use.
+
+		History: Added May 17, 2020.
+	+/
+	struct SyntheticInput {
+		@disable this();
+
+		private void* lib;
+		private int* refcount;
+
+		private extern(C) {
+			void function(Display*, uint keycode, bool press, arch_ulong delay) XTestFakeKeyEvent;
+			void function(Display*, uint button, bool press, arch_ulong delay) XTestFakeButtonEvent;
+		}
+
+		/// The dummy param must be 0.
+		this(int dummy) {
+			lib = dlopen("libXtst.so", RTLD_NOW);
+			if(lib is null)
+				throw new Exception("cannot load xtest lib extension");
+			scope(failure)
+				dlclose(lib);
+
+			XTestFakeButtonEvent = cast(typeof(XTestFakeButtonEvent)) dlsym(lib, "XTestFakeButtonEvent");
+			XTestFakeKeyEvent = cast(typeof(XTestFakeKeyEvent)) dlsym(lib, "XTestFakeKeyEvent");
+
+			if(XTestFakeKeyEvent is null)
+				throw new Exception("No XTestFakeKeyEvent");
+			if(XTestFakeButtonEvent is null)
+				throw new Exception("No XTestFakeButtonEvent");
+
+			refcount = new int;
+			*refcount = 1;
+		}
+
+		this(this) {
+			if(refcount)
+				*refcount += 1;
+		}
+
+		~this() {
+			if(refcount) {
+				*refcount -= 1;
+				if(*refcount == 0)
+					// I commented this because if I close the lib before
+					// XCloseDisplay, it is liable to segfault... so just
+					// gonna keep it loaded if it is loaded, no big deal
+					// anyway.
+					{} // dlclose(lib);
+			}
+		}
+
+		/// This ONLY works with basic ascii!
+		void sendSyntheticInput(string s) {
+			int delay = 0;
+			foreach(ch; s) {
+				pressKey(cast(Key) ch, true, delay);
+				pressKey(cast(Key) ch, false, delay);
+				delay += 5;
+			}
+		}
+
+		///
+		void pressKey(Key key, bool pressed, int delay = 0) {
+			XTestFakeKeyEvent(XDisplayConnection.get, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
+		}
+
+		///
+		void pressMouseButton(MouseButton button, bool pressed, int delay = 0) {
+			int btn;
+
+			switch(button) {
+				case MouseButton.left: btn = 1; break;
+				case MouseButton.middle: btn = 2; break;
+				case MouseButton.right: btn = 3; break;
+				case MouseButton.wheelUp: btn = 4; break;
+				case MouseButton.wheelDown: btn = 5; break;
+				case MouseButton.backButton: btn = 8; break;
+				case MouseButton.forwardButton: btn = 9; break;
+				default:
+			}
+
+			assert(btn);
+
+			XTestFakeButtonEvent(XDisplayConnection.get, btn, pressed, delay);
+		}
+
+		///
+		static void moveMouseArrowBy(int dx, int dy) {
+			auto disp = XDisplayConnection.get();
+			XWarpPointer(disp, None, None, 0, 0, 0, 0, dx, dy);
+			XFlush(disp);
+		}
+
+		///
+		static void moveMouseArrowTo(int x, int y) {
+			auto disp = XDisplayConnection.get();
+			auto root = RootWindow(disp, DefaultScreen(disp));
+			XWarpPointer(disp, None, root, 0, 0, 0, 0, x, y);
+			XFlush(disp);
+		}
 	}
 }
 
@@ -14761,18 +14876,3 @@ class NotYetImplementedException : Exception {
 }
 
 private alias scriptable = arsd_jsvar_compatible;
-
-version (linux)
-{
-    void moveArrowBy(int x, int y)
-    {
-        XWarpPointer(XDisplayConnection.get(), None, None, 0, 0, 0, 0, x, y);
-        XFlush(XDisplayConnection.get());
-    }
-    
-    void moveArrowTo(int x, int y)
-    {
-        moveArrowBy(-10000, -10000);
-        moveArrowBy(0, 0);
-    }
-}
