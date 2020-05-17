@@ -808,7 +808,6 @@ class Document : FileResource {
 						parseError("bad markup - improperly placed <");
 					else
 						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
-				break;
 				default:
 
 					if(!strict) {
