@@ -804,9 +804,10 @@ class Document : FileResource {
 
 				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
-					if(strict)
+					if(strict) {
 						parseError("bad markup - improperly placed <");
-					else
+						assert(0); // parseError always throws
+					} else
 						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
 				default:
 
