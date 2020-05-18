@@ -1051,7 +1051,7 @@ export jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 				return JNI_ERR;
 	} catch(Throwable t) {
 		import core.stdc.stdio;
-		fprintf(stderr, "%s", (t.toString ~ "\n").ptr);
+		fprintf(stderr, "%s", (t.toString ~ "\n\0").ptr);
 		return JNI_ERR;
 	}
 
@@ -1991,7 +1991,7 @@ mixin template IJavaObjectImplementation(bool isNewClass) {
 		if((*env).RegisterNatives(env, internalJavaClassHandle_, nativeMethodsData_.ptr, cast(int) nativeMethodsData_.length)) {
 			(*env).ExceptionDescribe(env);
 			(*env).ExceptionClear(env);
-			fprintf(stderr, ("RegisterNatives failed for " ~ typeof(this).stringof));
+			fprintf(stderr, ("RegisterNatives failed for " ~ typeof(this).stringof ~ "\0"));
 			return 1;
 		}
 		return 0;
