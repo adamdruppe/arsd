@@ -4910,6 +4910,7 @@ version(cgi_with_websocket) {
 				// that's how it indicates that it needs more data
 				if(d is orig)
 					return WebSocketFrame.init;
+				m.unmaskInPlace();
 				switch(m.opcode) {
 					case WebSocketOpcode.continuation:
 						if(continuingData.length + m.data.length > config.maximumMessageSize)
@@ -5109,7 +5110,7 @@ version(cgi_with_websocket) {
 					}
 
 					headerScratchPos += 8;
-				} else if(realLength > 127) {
+				} else if(realLength > 125) {
 					// use 16 bit length
 					b2 |= 0x7e;
 
@@ -5223,19 +5224,20 @@ version(cgi_with_websocket) {
 			msg.data = d[0 .. cast(size_t) msg.realLength];
 			d = d[cast(size_t) msg.realLength .. $];
 
-			if(msg.masked) {
-				// let's just unmask it now
+			return msg;
+		}
+
+		void unmaskInPlace() {
+			if(this.masked) {
 				int keyIdx = 0;
-				foreach(i; 0 .. msg.data.length) {
-					msg.data[i] = msg.data[i] ^ msg.maskingKey[keyIdx];
+				foreach(i; 0 .. this.data.length) {
+					this.data[i] = this.data[i] ^ this.maskingKey[keyIdx];
 					if(keyIdx == 3)
 						keyIdx = 0;
 					else
 						keyIdx++;
 				}
 			}
-
-			return msg;
 		}
 
 		char[] textData() {
@@ -5465,11 +5467,11 @@ struct IoOp {
 	private int bufferLengthUsed;
 	private ubyte[1] internalBuffer; // it can be overallocated!
 
-	ubyte[] allocatedBuffer() {
+	ubyte[] allocatedBuffer() return {
 		return internalBuffer.ptr[0 .. bufferLengthAllocated];
 	}
 
-	ubyte[] usedBuffer() {
+	ubyte[] usedBuffer() return {
 		return allocatedBuffer[0 .. bufferLengthUsed];
 	}
 
@@ -5842,7 +5844,7 @@ private struct SerializationBuffer {
 		bufferLocation += data.length;
 	}
 
-	ubyte[] sendable() {
+	ubyte[] sendable() return {
 		return bufferBacking[0 .. bufferLocation];
 	}
 }
@@ -6564,14 +6566,14 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		int lastEventIdLength;
 		char[32] lastEventIdBuffer = 0;
 
-		char[] url() {
+		char[] url() return {
 			return urlBuffer[0 .. urlLength];
 		}
 		void url(in char[] u) {
 			urlBuffer[0 .. u.length] = u[];
 			urlLength = cast(int) u.length;
 		}
-		char[] lastEventId() {
+		char[] lastEventId() return {
 			return lastEventIdBuffer[0 .. lastEventIdLength];
 		}
 		void populate(bool responseChunked, in char[] url, in char[] lastEventId)
@@ -6599,13 +6601,13 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		char[2048] messageBuffer = 0;
 		int _lifetime;
 
-		char[] message() {
+		char[] message() return {
 			return messageBuffer[0 .. messageLength];
 		}
-		char[] type() {
+		char[] type() return {
 			return typeBuffer[0 .. typeLength];
 		}
-		char[] url() {
+		char[] url() return {
 			return urlBuffer[0 .. urlLength];
 		}
 		void url(in char[] u) {

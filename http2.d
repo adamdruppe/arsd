@@ -2800,6 +2800,7 @@ class WebSocket {
 			// that's how it indicates that it needs more data
 			if(d is orig)
 				return WebSocketFrame.init;
+			m.unmaskInPlace();
 			switch(m.opcode) {
 				case WebSocketOpcode.continuation:
 					if(continuingData.length + m.data.length > config.maximumMessageSize)
@@ -3040,7 +3041,7 @@ public {
 					}
 
 					headerScratchPos += 8;
-				} else if(realLength > 127) {
+				} else if(realLength > 125) {
 					// use 16 bit length
 					b2 |= 0x7e;
 
@@ -3154,19 +3155,20 @@ public {
 			msg.data = d[0 .. cast(size_t) msg.realLength];
 			d = d[cast(size_t) msg.realLength .. $];
 
-			if(msg.masked) {
-				// let's just unmask it now
+			return msg;
+		}
+
+		void unmaskInPlace() {
+			if(this.masked) {
 				int keyIdx = 0;
-				foreach(i; 0 .. msg.data.length) {
-					msg.data[i] = msg.data[i] ^ msg.maskingKey[keyIdx];
+				foreach(i; 0 .. this.data.length) {
+					this.data[i] = this.data[i] ^ this.maskingKey[keyIdx];
 					if(keyIdx == 3)
 						keyIdx = 0;
 					else
 						keyIdx++;
 				}
 			}
-
-			return msg;
 		}
 
 		char[] textData() {
