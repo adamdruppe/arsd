@@ -1,5 +1,8 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// FIXME: slider widget.
+// FIXME: number widget
+
 // osx style menu search.
 
 // would be cool for a scroll bar to have marking capabilities
@@ -1527,6 +1530,35 @@ class Widget {
 		SimpleWindow simpleWindowWrappingHwnd;
 
 		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
+			switch(iMessage) {
+				case WM_COMMAND:
+					switch(HIWORD(wParam)) {
+						case 0:
+						// case BN_CLICKED: aka 0
+						case 1:
+							auto idm = LOWORD(wParam);
+							if(auto item = idm in Action.mapping) {
+								foreach(handler; (*item).triggered)
+									handler();
+							/*
+								auto event = new Event("triggered", *item);
+								event.button = idm;
+								event.dispatch();
+							*/
+							} else {
+								auto handle = cast(HWND) lParam;
+								if(auto widgetp = handle in Widget.nativeMapping) {
+									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
+								}
+							}
+						break;
+						default:
+							return 0;
+					}
+				break;
+				default:
+			}
+
 			return 0;
 		}
 	}
@@ -4359,9 +4391,8 @@ debug private class DevToolWindow : Window {
 			}
 			parentList.content = list;
 
-			import std.conv;
-			clickX.label = to!string(ev.clientX);
-			clickY.label = to!string(ev.clientY);
+			clickX.label = toInternal!string(ev.clientX);
+			clickY.label = toInternal!string(ev.clientY);
 		});
 	}
 
@@ -5570,6 +5601,11 @@ class MouseActivatedWidget : Widget {
 
 	}
 
+	override void handleWmCommand(ushort cmd, ushort id) {
+		auto event = new Event("triggered", this);
+		event.dispatch();
+	}
+
 	this(Widget parent = null) {
 		super(parent);
 	}
@@ -5680,7 +5716,7 @@ class Checkbox : MouseActivatedWidget {
 		super(parent);
 		this.label = label;
 		version(win32_widgets) {
-			createWin32Window(this, "button"w, label, BS_AUTOCHECKBOX);
+			createWin32Window(this, "button"w, label, BS_CHECKBOX);
 		} else version(custom_widgets) {
 
 		} else static assert(0);
@@ -7427,10 +7463,10 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 			alias type = typeof(member);
 			static if(is(type == int)) {
 				auto le = new LabeledLineEdit(memberName ~ ": ", this);
-				le.addEventListener("char", (Event ev) {
-					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
-						ev.preventDefault();
-				});
+				//le.addEventListener("char", (Event ev) {
+					//if((ev.character < '0' || ev.character > '9') && ev.character != '-')
+						//ev.preventDefault();
+				//});
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = cast(type) stringToLong(ev.stringValue);
 				});
