@@ -5,8 +5,6 @@
 
 // FIXME: the scriptable list is quite arbitrary
 
-// FIXME: https://developer.mozilla.org/en-US/docs/Web/CSS/:is
-
 
 // xml entity references?!
 
@@ -6940,6 +6938,9 @@ int intFromHex(string hex) {
 		string[] hasSelectors; /// :has(this)
 		string[] notSelectors; /// :not(this)
 
+		string[] isSelectors; /// :is(this)
+		string[] whereSelectors; /// :where(this)
+
 		ParsedNth[] nthOfType; /// .
 		ParsedNth[] nthLastOfType; /// .
 		ParsedNth[] nthChild; /// .
@@ -6989,6 +6990,9 @@ int intFromHex(string hex) {
 
 			foreach(a; notSelectors) ret ~= ":not(" ~ a ~ ")";
 			foreach(a; hasSelectors) ret ~= ":has(" ~ a ~ ")";
+
+			foreach(a; isSelectors) ret ~= ":is(" ~ a ~ ")";
+			foreach(a; whereSelectors) ret ~= ":where(" ~ a ~ ")";
 
 			foreach(a; nthChild) ret ~= ":nth-child(" ~ a.toString ~ ")";
 			foreach(a; nthOfType) ret ~= ":nth-of-type(" ~ a.toString ~ ")";
@@ -7126,6 +7130,16 @@ int intFromHex(string hex) {
 			foreach(a; notSelectors) {
 				auto sel = Selector(a);
 				if(sel.matchesElement(e))
+					return false;
+			}
+			foreach(a; isSelectors) {
+				auto sel = Selector(a);
+				if(!sel.matchesElement(e))
+					return false;
+			}
+			foreach(a; whereSelectors) {
+				auto sel = Selector(a);
+				if(!sel.matchesElement(e))
 					return false;
 			}
 
@@ -7548,9 +7562,14 @@ int intFromHex(string hex) {
 		SelectorComponent[] ret;
 		auto tokens = lexSelector(selector); // this will parse commas too
 		// and now do comma-separated slices (i haz phobosophobia!)
+		int parensCount = 0;
 		while (tokens.length > 0) {
 			size_t end = 0;
-			while (end < tokens.length && tokens[end] != ",") ++end;
+			while (end < tokens.length && (parensCount > 0 || tokens[end] != ",")) {
+				if(tokens[end] == "(") parensCount++;
+				if(tokens[end] == ")") parensCount--;
+				++end;
+			}
 			if (end > 0) ret ~= parseSelector(tokens[0..end], caseSensitiveTags);
 			if (tokens.length-end < 2) break;
 			tokens = tokens[end+1..$];
@@ -7744,6 +7763,14 @@ int intFromHex(string hex) {
 							current.nthLastOfType ~= ParsedNth(readFunctionalSelector());
 							state = State.SkippingFunctionalSelector;
 						continue;
+						case "is":
+							state = State.SkippingFunctionalSelector;
+							current.isSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
+						case "where":
+							state = State.SkippingFunctionalSelector;
+							current.whereSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
 						case "not":
 							state = State.SkippingFunctionalSelector;
 							current.notSelectors ~= readFunctionalSelector();
@@ -7763,10 +7790,6 @@ int intFromHex(string hex) {
 						case "visited", "active", "hover", "target", "focus", "selected":
 							current.attributesPresent ~= "nothing";
 							// FIXME
-						/*
-						// defined in the standard, but I don't implement it
-						case "not":
-						*/
 						/+
 						// extensions not implemented
 						//case "text": // takes the text in the element and wraps it in an element, returning it
@@ -8766,6 +8789,17 @@ unittest {
 
 	assert(el.closest("p") is null);
 	assert(el.closest("p, div") is el);
+}
+
+unittest {
+	// https://developer.mozilla.org/en-US/docs/Web/CSS/:is
+	auto document = new Document(`<test>
+		<div class="foo"><p>cool</p><span>bar</span></div>
+		<main><p>two</p></main>
+	</test>`);
+
+	assert(document.querySelectorAll(":is(.foo, main) p").length == 2);
+	assert(document.querySelector("div:where(.foo)") !is null);
 }
 
 /*
