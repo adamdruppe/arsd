@@ -2225,15 +2225,19 @@ class Element {
 		return null;
 	}
 
-	/// Note: you can give multiple selectors, separated by commas.
-	/// It will return the first match it finds.
+	/++
+		Returns a child element that matches the given `selector`.
+
+		Note: you can give multiple selectors, separated by commas.
+	 	It will return the first match it finds.
+	+/
 	@scriptable
 	Element querySelector(string selector) {
-		// FIXME: inefficient; it gets all results just to discard most of them
-		auto list = getElementsBySelector(selector);
-		if(list.length == 0)
-			return null;
-		return list[0];
+		Selector s = Selector(selector);
+		foreach(ele; tree)
+			if(s.matchesElement(ele))
+				return ele;
+		return null;
 	}
 
 	/// a more standards-compliant alias for getElementsBySelector
@@ -8802,6 +8806,15 @@ unittest {
 	assert(doc.querySelectorAll(" > body").length == 1); //  should mean the same thing
 	assert(doc.root.querySelectorAll(" > body").length == 1); // the root of HTML has this
 	assert(doc.root.querySelectorAll(" > html").length == 0); // but not this
+
+	// also confirming the querySelector works via the mdn definition
+	auto foo = doc.requireSelector("#foo");
+	assert(foo.querySelector("#foo > div") !is null);
+	assert(foo.querySelector("body #foo > div") !is null);
+
+	// this is SUPPOSED to work according to the spec but never has in dom.d since it limits the scope.
+	// the new css :scope thing is designed to bring this in. and meh idk if i even care.
+	//assert(foo.querySelectorAll("#foo > div").length == 2);
 }
 
 unittest {
