@@ -2133,6 +2133,11 @@ class Element {
 	}
 
 	///.
+	@property Element previousElementSibling() {
+		return previousSibling("*");
+	}
+
+	///.
 	@property Element previousSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -2142,13 +2147,16 @@ class Element {
 				break;
 			if(tagName == "*" && e.nodeType != NodeType.Text) {
 				ps = e;
-				break;
-			}
-			if(tagName is null || e.tagName == tagName)
+			} else if(tagName is null || e.tagName == tagName)
 				ps = e;
 		}
 
 		return ps;
+	}
+
+	///.
+	@property Element nextElementSibling() {
+		return nextSibling("*");
 	}
 
 	///.
@@ -2615,6 +2623,18 @@ class Element {
 		}
 	body {
 		children = null;
+	}
+
+	/// History: added June 13, 2020
+	Element appendSibling(Element e) {
+		parentNode.insertAfter(this, e);
+		return e;
+	}
+
+	/// History: added June 13, 2020
+	Element prependSibling(Element e) {
+		parentNode.insertBefore(this, e);
+		return e;
 	}
 
 
@@ -6956,6 +6976,8 @@ int intFromHex(string hex) {
 		bool oddChild; ///.
 		bool evenChild; ///.
 
+		bool scopeElement; /// the css :scope thing; matches just the `this` element. NOT IMPLEMENTED
+
 		bool rootElement; ///.
 
 		int separation = -1; /// -1 == only itself; the null selector, 0 == tree, 1 == childNodes, 2 == childAfter, 3 == youngerSibling, 4 == parentOf
@@ -7007,6 +7029,7 @@ int intFromHex(string hex) {
 			if(oddChild) ret ~= ":odd-child";
 			if(evenChild) ret ~= ":even-child";
 			if(rootElement) ret ~= ":root";
+			if(scopeElement) ret ~= ":scope";
 
 			return ret;
 		}
@@ -7061,6 +7084,12 @@ int intFromHex(string hex) {
 					}
 				}
 			}
+			/+
+			if(scopeElement) {
+				if(e !is this_)
+					return false;
+			}
+			+/
 			if(emptyElement) {
 				if(e.children.length)
 					return false;
@@ -7520,6 +7549,7 @@ int intFromHex(string hex) {
 					if(!part.matchElement(where))
 						return false;
 				} else if(lastSeparation == 2) { // the + operator
+				//writeln("WHERE", where, " ", part);
 					where = where.previousSibling("*");
 
 					if(!part.matchElement(where))
@@ -7737,6 +7767,9 @@ int intFromHex(string hex) {
 						case "only-child":
 							current.firstChild = true;
 							current.lastChild = true;
+						break;
+						case "scope":
+							current.scopeElement = true;
 						break;
 						case "empty":
 							// one with no children
