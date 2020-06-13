@@ -8835,6 +8835,49 @@ unittest {
 	assert(document.querySelector("div:where(.foo)") !is null);
 }
 
+unittest {
+immutable string html = q{
+<root>
+<div class="roundedbox">
+ <table>
+  <caption class="boxheader">Recent Reviews</caption>
+  <tr>
+   <th>Game</th>
+   <th>User</th>
+   <th>Rating</th>
+   <th>Created</th>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 15:10</td>
+   <td><a href="/reviews/8833">[Show]</a></td>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 15:02</td>
+   <td><a href="/reviews/8832">[Show]</a></td>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 14:41</td>
+   <td><a href="/reviews/8831">[Show]</a></td>
+  </tr>
+ </table>
+</div>
+</root>
+};
+
+  auto doc = new Document(cast(string)html);
+  // this should select the second table row, but...
+  auto rd = doc.root.querySelector(`div.roundedbox > table > caption.boxheader + tr + tr + tr > td > a[href^=/reviews/]`);
+  assert(rd !is null);
+  assert(rd.href == "/reviews/8832");
+
+  rd = doc.querySelector(`div.roundedbox > table > caption.boxheader + tr + tr + tr > td > a[href^=/reviews/]`);
+  assert(rd !is null);
+  assert(rd.href == "/reviews/8832");
+}
+
 /*
 Copyright: Adam D. Ruppe, 2010 - 2020
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
