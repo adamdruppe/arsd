@@ -751,6 +751,8 @@ struct Terminal {
 			// almost always
 			if(t.indexOf("xterm") != -1)
 				t = "xterm";
+			if(t.indexOf("putty") != -1)
+				t = "xterm";
 			if(t.indexOf("tmux") != -1)
 				t = "tmux";
 			if(t.indexOf("screen") != -1)

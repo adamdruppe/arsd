@@ -91,6 +91,11 @@
 		XInput is only supported on newer operating systems (Vista I think),
 		so I'm going to dynamically load it all and fallback on the old one if
 		it fails.
+
+
+
+	Other fancy joysticks work low level on linux at least but the high level api reduces them to boredom but like
+	hey the events are still there and it still basically works, you'd just have to give a custom mapping.
 */
 module arsd.joystick;
 
@@ -883,7 +888,7 @@ version(linux) {
 		printf("\n");
 
 		while(true) {
-			int r = read(fd, &event, event.sizeof);
+			auto r = read(fd, &event, event.sizeof);
 			assert(r == event.sizeof);
 
 			// writef("\r%12s", event);
@@ -891,7 +896,7 @@ version(linux) {
 				axes[event.number] = event.value >> 12;
 			}
 			if(event.type & JS_EVENT_BUTTON) {
-				buttons[event.number] = event.value;
+				buttons[event.number] = cast(ubyte) event.value;
 			}
 			writef("\r%6s %1s", axes[0..8], buttons[0 .. 16]);
 			stdout.flush();

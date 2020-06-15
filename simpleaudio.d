@@ -251,6 +251,15 @@ struct AudioOutputThread {
 		else static assert(0);
 	}
 
+	void playOgg()(string filename, bool loop = false) {
+		if(impl)
+		impl.playOgg(filename, loop);
+	}
+	void playMp3()(string filename) {
+		if(impl)
+		impl.playMp3(filename);
+	}
+
 
 	/// provides automatic [arsd.jsvar] script wrapping capability. Make sure the
 	/// script also finishes before this goes out of scope or it may end up talking
@@ -436,6 +445,55 @@ final class AudioPcmOutThreadImplementation : Thread {
 		);
 	}
 
+	/// Requires mp3.d to be compiled in (module arsd.mp3) which is LGPL licensed.
+	void playMp3()(string filename) {
+		import arsd.mp3;
+
+		import std.stdio;
+		auto fi = File(filename);
+		scope auto reader = delegate(void[] buf) {
+			return cast(int) fi.rawRead(buf[]).length;
+		};
+
+		auto mp3 = new MP3Decoder(reader);
+		if(!mp3.valid)
+			throw new Exception("no file");
+
+		auto next = mp3.frameSamples;
+
+		addChannel(
+			delegate bool(short[] buffer) {
+				if(cast(int) buffer.length != buffer.length)
+					throw new Exception("eeeek");
+
+				more:
+				if(next.length >= buffer.length) {
+					buffer[] = next[0 .. buffer.length];
+					next = next[buffer.length .. $];
+				} else {
+					buffer[0 .. next.length] = next[];
+					buffer = buffer[next.length .. $];
+
+					next = next[$..$];
+
+					if(buffer.length) {
+						if(mp3.valid) {
+							mp3.decodeNextFrame(reader);
+							next = mp3.frameSamples;
+							goto more;
+						} else {
+							buffer[] = 0;
+							return false;
+						}
+					}
+				}
+
+				return true;
+			}
+		);
+	}
+
+
 
 	struct Sample {
 		int operation;
@@ -503,6 +561,28 @@ final class AudioPcmOutThreadImplementation : Thread {
 						break;
 						/+
 						case 2: // triangle wave
+
+		short[] tone;
+		tone.length = 22050 * len / 1000;
+
+		short valmax = cast(short) (cast(int) volume * short.max / 100);
+		int wavelength = 22050 / freq;
+		wavelength /= 2;
+		int da = valmax / wavelength;
+		int val = 0;
+
+		for(int a = 0; a < tone.length; a++){
+			tone[a] = cast(short) val;
+			val+= da;
+			if(da > 0 && val >= valmax)
+				da *= -1;
+			if(da < 0 && val <= -valmax)
+				da *= -1;
+		}
+
+		data ~= tone;
+
+
 							for(; i < sampleFinish; i++) {
 								buffer[i] = val;
 								// left and right do the same thing so we only count
@@ -519,7 +599,41 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 						break;
 						case 3: // sawtooth wave
+		short[] tone;
+		tone.length = 22050 * len / 1000;
+
+		int valmax = volume * short.max / 100;
+		int wavelength = 22050 / freq;
+		int da = valmax / wavelength;
+		short val = 0;
+
+		for(int a = 0; a < tone.length; a++){
+			tone[a] = val;
+			val+= da;
+			if(val >= valmax)
+				val = 0;
+		}
+
+		data ~= tone;
 						case 4: // sine wave
+		short[] tone;
+		tone.length = 22050 * len / 1000;
+
+		int valmax = volume * short.max / 100;
+		int val = 0;
+
+		float i = 2*PI / (22050/freq);
+
+		float f = 0;
+		for(int a = 0; a < tone.length; a++){
+			tone[a] = cast(short) (valmax * sin(f));
+			f += i;
+			if(f>= 2*PI)
+				f -= 2*PI;
+		}
+
+		data ~= tone;
+
 						+/
 						case 5: // custom function
 							val = currentSample.f(currentSample.x);
@@ -1175,6 +1289,29 @@ struct MidiOutputThread {
 	void popSong() {}
 }
 
+version(Posix) {
+	import core.sys.posix.signal;
+	private sigaction_t oldSigIntr;
+	void setSigIntHandler() {
+		sigaction_t n;
+		n.sa_handler = &interruptSignalHandler;
+		n.sa_mask = cast(sigset_t) 0;
+		n.sa_flags = 0;
+		sigaction(SIGINT, &n, &oldSigIntr);
+	}
+	void restoreSigIntHandler() {
+		sigaction(SIGINT, &oldSigIntr, null);
+	}
+
+	__gshared bool interrupted;
+
+	private
+	extern(C)
+	void interruptSignalHandler(int sigNumber) nothrow {
+		interrupted = true;
+	}
+}
+
 /// Gives MIDI output access.
 struct MidiOutput {
 	version(ALSA) {
@@ -1210,6 +1347,8 @@ struct MidiOutput {
 			static immutable ubyte[3] resetSequence = [0x0b << 4, 123, 0];
 			// send a controller event to reset it
 			writeRawMessageData(resetSequence[]);
+			static immutable ubyte[1] resetCmd = [0xff];
+			writeRawMessageData(resetCmd[]);
 			// and flush it immediately
 			snd_rawmidi_drain(handle);
 		} else version(WinMM) {
@@ -1248,6 +1387,8 @@ struct MidiOutput {
 	/// Timing and sending sane data is your responsibility!
 	/// The data should NOT include any timestamp bytes - each midi message should be 2 or 3 bytes.
 	void writeRawMessageData(scope const(ubyte)[] data) {
+		if(data.length == 0)
+			return;
 		version(ALSA) {
 			ssize_t written;
 

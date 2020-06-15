@@ -1,5 +1,15 @@
 /*
 	FIXME:
+		overloads can be done as an object representing the overload set
+		tat opCall does the dispatch. Then other overloads can actually
+		be added more sanely.
+	
+	FIXME:
+		instantiate template members when reflection with certain
+		arguments if marked right...
+
+
+	FIXME:
 		pointer to member functions can give a way to wrap things
 
 		we'll pass it an opaque object as this and it will unpack and call the method

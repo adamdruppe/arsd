@@ -1,4 +1,7 @@
 /*
+
+	FIXME: i kinda do want a catch type filter.
+
 	REPL plan:
 		easy movement to/from a real editor
 		can edit a specific function

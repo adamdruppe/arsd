@@ -3,7 +3,7 @@
 	"targetType": "library",
 	"importPaths": ["."],
 	"sourceFiles": ["package.d"],
-	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability.",
+	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability. Use individual subpackages instead of the overall package to avoid bringing in things you don't need/want!",
 	"authors": ["Adam D. Ruppe"],
 	"license":"BSL-1.0",
 	"dependencies": {
@@ -27,6 +27,7 @@
 		":terminal": "*",
 		":ttf": "*",
 		":color_base": "*",
+		"svg":"*",
 		":database_base": "*"
 	},
 	"subPackages": [

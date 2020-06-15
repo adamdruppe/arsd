@@ -9,7 +9,12 @@
 	* send messages without a recipient window
 	* setTimeout
 	* setInterval
+*/
 
+/*
+	Classic games I want to add:
+		* my tetris clone
+		* pac man
 */
 
 /*
@@ -74,6 +79,9 @@
 	Please note when compiling on Win64, you need to explicitly list
 	`-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
 	subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`.
+
+	If using ldc instead of dmd, use `-L/entry:wmainCRTstartup` instead of `mainCRTStartup`;
+	note the "w".
 
 	On Win32, you can pass `-L/subsystem:windows` if you don't want a
 	console to be automatically allocated.
@@ -6913,8 +6921,8 @@ struct ScreenPainter {
 	}
 
 	//this function draws a circle with the drawEllipse() function above, it requires the upper left point and the radius
-	void drawCircle(Point upperLeft, int radius) {
-		drawEllipse(upperLeft, Point(upperLeft.x + radius, upperLeft.y + radius));
+	void drawCircle(Point upperLeft, int diameter) {
+		drawEllipse(upperLeft, Point(upperLeft.x + diameter, upperLeft.y + diameter));
 	}
 
 	/// .
@@ -8184,6 +8192,7 @@ version(Windows) {
 
 			GetObject(i.handle, bm.sizeof, &bm);
 
+			// or should I AlphaBlend!??!?!
 			BitBlt(hdc, x, y, w /* bm.bmWidth */, /*bm.bmHeight*/ h, hdcMem, ix, iy, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
@@ -8198,6 +8207,7 @@ version(Windows) {
 
 			GetObject(s.handle, bm.sizeof, &bm);
 
+			// or should I AlphaBlend!??!?!
 			BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
