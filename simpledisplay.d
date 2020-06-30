@@ -5482,6 +5482,9 @@ version(without_opengl) {
 			}
 			}
 
+			version(OSX)
+			mixin DynamicLoad!(GLX, "GL", true) glx;
+			else
 			mixin DynamicLoad!(GLX, "GLX", true) glx;
 			shared static this() {
 				glx.loadDynamicLibrary();
@@ -14999,7 +15002,7 @@ private mixin template DynamicLoad(Iface, string library, bool openGLRelated = f
                 version(Posix) {
                         import core.sys.posix.dlfcn;
 			version(OSX) {
-				if(!openGLRelated)
+				version(X11)
                         		libHandle = dlopen("/usr/X11/lib/lib" ~ library ~ ".dylib", RTLD_NOW);
 				else
                         		libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
