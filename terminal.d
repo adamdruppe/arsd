@@ -168,7 +168,9 @@ __gshared void delegate() nothrow @nogc sigIntExtension;
 
 version(TerminalDirectToEmulator) {
 	version=WithEncapsulatedSignals;
-} else version(Posix) {
+}
+
+version(Posix) {
 	enum SIGWINCH = 28;
 	__gshared bool windowSizeChanged = false;
 	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
@@ -236,6 +238,8 @@ version(Win32Console) {
 		enum GREEN_BIT = 2;
 		enum BLUE_BIT = 1;
 	}
+
+	pragma(lib, "user32");
 }
 
 version(Posix) {
@@ -735,6 +739,7 @@ struct Terminal {
 	string[string] termcap;
 	void readTermcap(string t = null) {
 		version(TerminalDirectToEmulator)
+		if(usingDirectEmulator)
 			t = "xterm";
 		import std.process;
 		import std.string;
@@ -1054,9 +1059,10 @@ struct Terminal {
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
 			return !(defaultBackgroundColor & 0xf);
-		} else version(TerminalDirectToEmulator) {
-			return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 		} else {
+			version(TerminalDirectToEmulator)
+			if(usingDirectEmulator)
+				return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 			// FIXME: there is probably a better way to do this
 			// but like idk how reliable it is.
 			if(terminalInFamily("linux"))
@@ -1082,6 +1088,8 @@ struct Terminal {
 				this.t = t;
 			}
 		}
+
+		bool usingDirectEmulator;
 	}
 
 	version(TerminalDirectToEmulator)
@@ -1093,6 +1101,32 @@ struct Terminal {
 		if(type == ConsoleOutputType.minimalProcessing) {
 			readTermcap("xterm");
 			_suppressDestruction = true;
+			return;
+		}
+
+		import arsd.simpledisplay;
+		static if(UsingSimpledisplayX11) {
+			try {
+				if(arsd.simpledisplay.librariesSuccessfullyLoaded) {
+					XDisplayConnection.get();
+					this.usingDirectEmulator = true;
+				} else if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal) {
+					throw new Exception("Unable to load X libraries to create custom terminal.");
+				}
+			} catch(Exception e) {
+				if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal)
+					throw e;
+
+			}
+		} else {
+			this.usingDirectEmulator = true;
+		}
+
+		if(!usingDirectEmulator) {
+			version(Posix)
+				posixInitialize(type, 0, 1, null);
+			else
+				throw new Exception("Total wtf - are you on a windows system without a gui?!?");
 			return;
 		}
 
@@ -1159,6 +1193,11 @@ struct Terminal {
 	 * ditto on getSizeOverride. That's there so you can do something instead of ioctl.
 	 */
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		posixInitialize(type, fdIn, fdOut, getSizeOverride);
+	}
+
+	version(Posix)
+	private void posixInitialize(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
 		this.fdIn = fdIn;
 		this.fdOut = fdOut;
 		this.getSizeOverride = getSizeOverride;
@@ -1199,7 +1238,7 @@ struct Terminal {
 		return Terminal(ConsoleOutputType.cellular);
 	}
 
-	version(Win32Console) {
+	version(Windows) {
 		HANDLE hConsole;
 		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
 	}
@@ -1283,12 +1322,18 @@ struct Terminal {
 				doTermcap("te");
 			}
 			version(TerminalDirectToEmulator) {
-				writeln("\n\n<exited>");
-				setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
-				tew.term = null;
+				if(usingDirectEmulator) {
+					writeln("\n\n<exited>");
+					setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
+					tew.term = null;
 
-				if(integratedTerminalEmulatorConfiguration.closeOnExit)
-					tew.parentWindow.close();
+					if(integratedTerminalEmulatorConfiguration.closeOnExit)
+						tew.parentWindow.close();
+				} else {
+					if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
+						writeStringRaw("\033[23;0t"); // restore window title from the stack
+					}
+				}
 			} else
 			if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 				writeStringRaw("\033[23;0t"); // restore window title from the stack
@@ -1371,7 +1416,10 @@ struct Terminal {
 			// fallback to 16 color for term that i know don't take it well
 			import std.process;
 			import std.string;
-			version(TerminalDirectToEmulator) {} else
+			version(TerminalDirectToEmulator)
+			if(usingDirectEmulator)
+				goto skip_approximation;
+
 			if(environment.get("TERM") == "rxvt" || environment.get("TERM") == "linux") {
 				// not likely supported, use 16 color fallback
 				auto setTof = approximate16Color(foreground);
@@ -1385,6 +1433,8 @@ struct Terminal {
 
 				return false;
 			}
+
+			skip_approximation:
 
 			// otherwise, assume it is probably supported and give it a try
 			writeStringRaw(format("\033[38;5;%dm\033[48;5;%dm",
@@ -1698,9 +1748,19 @@ struct Terminal {
 			return;
 
 		version(TerminalDirectToEmulator) {
-			tew.sendRawInput(cast(ubyte[]) writeBuffer);
-			writeBuffer = null;
-		} else version(Posix) {
+			if(usingDirectEmulator) {
+				tew.sendRawInput(cast(ubyte[]) writeBuffer);
+				writeBuffer = null;
+			} else {
+				interiorFlush();
+			}
+		} else {
+			interiorFlush();
+		}
+	}
+
+	private void interiorFlush() {
+		version(Posix) {
 			if(_writeDelegate !is null) {
 				_writeDelegate(writeBuffer);
 			} else {
@@ -1730,8 +1790,17 @@ struct Terminal {
 
 	int[] getSize() {
 		version(TerminalDirectToEmulator) {
-			return [tew.terminalEmulator.width, tew.terminalEmulator.height];
-		} else version(Windows) {
+			if(usingDirectEmulator)
+				return [tew.terminalEmulator.width, tew.terminalEmulator.height];
+			else
+				return getSizeInternal();
+		} else {
+			return getSizeInternal();
+		}
+	}
+
+	private int[] getSizeInternal() {
+		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo( hConsole, &info );
         
@@ -2100,7 +2169,7 @@ struct RealTimeConsoleInput {
 		// so this hack is just to give some room for that to happen without destroying the rest of the world
 	}
 
-	version(Win32Console) {
+	version(Windows) {
 		private DWORD oldInput;
 		private DWORD oldOutput;
 		HANDLE inputHandle;
@@ -2115,8 +2184,12 @@ struct RealTimeConsoleInput {
 		this.flags = flags;
 		this.terminal = terminal;
 
-		version(Win32Console) {
+		version(Windows) {
 			inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+
+		}
+
+		version(Win32Console) {
 
 			GetConsoleMode(inputHandle, &oldInput);
 
@@ -2145,54 +2218,12 @@ struct RealTimeConsoleInput {
 		}
 
 		version(TerminalDirectToEmulator) {
-			terminal.tew.terminalEmulator.echo = (flags & ConsoleInputFlags.echo) ? true : false;
+			if(terminal.usingDirectEmulator)
+				terminal.tew.terminalEmulator.echo = (flags & ConsoleInputFlags.echo) ? true : false;
+			else version(Posix)
+				posixInit();
 		} else version(Posix) {
-			this.fdIn = terminal.fdIn;
-			this.fdOut = terminal.fdOut;
-
-			if(fdIn != -1) {
-				tcgetattr(fdIn, &old);
-				auto n = old;
-
-				auto f = ICANON;
-				if(!(flags & ConsoleInputFlags.echo))
-					f |= ECHO;
-
-				// \033Z or \033[c
-
-				n.c_lflag &= ~f;
-				tcsetattr(fdIn, TCSANOW, &n);
-			}
-
-			// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
-			//destructor ~= { tcsetattr(fdIn, TCSANOW, &old); };
-
-			if(flags & ConsoleInputFlags.size) {
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &sizeSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGWINCH, &n, &oldSigWinch);
-			}
-
-			{
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &interruptSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGINT, &n, &oldSigIntr);
-			}
-
-			{
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &hangupSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGHUP, &n, &oldHupIntr);
-			}
+			posixInit();
 		}
 
 		if(UseVtSequences) {
@@ -2259,6 +2290,56 @@ struct RealTimeConsoleInput {
 		}
 	}
 
+	version(Posix)
+	private void posixInit() {
+		this.fdIn = terminal.fdIn;
+		this.fdOut = terminal.fdOut;
+
+		if(fdIn != -1) {
+			tcgetattr(fdIn, &old);
+			auto n = old;
+
+			auto f = ICANON;
+			if(!(flags & ConsoleInputFlags.echo))
+				f |= ECHO;
+
+			// \033Z or \033[c
+
+			n.c_lflag &= ~f;
+			tcsetattr(fdIn, TCSANOW, &n);
+		}
+
+		// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
+		//destructor ~= { tcsetattr(fdIn, TCSANOW, &old); };
+
+		if(flags & ConsoleInputFlags.size) {
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &sizeSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGWINCH, &n, &oldSigWinch);
+		}
+
+		{
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &interruptSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGINT, &n, &oldSigIntr);
+		}
+
+		{
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &hangupSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGHUP, &n, &oldHupIntr);
+		}
+	}
+
 	void fdReadyReader() {
 		auto queue = readNextEvents();
 		foreach(event; queue)
@@ -2318,13 +2399,15 @@ struct RealTimeConsoleInput {
 
 		// the delegate thing doesn't actually work for this... for some reason
 
-		version(TerminalDirectToEmulator) { } else
-		version(Posix)
+		version(TerminalDirectToEmulator) {
+			if(terminal && terminal.usingDirectEmulator)
+				goto skip_extra;
+		}
+
+		version(Posix) {
 			if(fdIn != -1)
 				tcsetattr(fdIn, TCSANOW, &old);
 
-		version(TerminalDirectToEmulator) { } else
-		version(Posix) {
 			if(flags & ConsoleInputFlags.size) {
 				// restoration
 				sigaction(SIGWINCH, &oldSigWinch, null);
@@ -2332,6 +2415,8 @@ struct RealTimeConsoleInput {
 			sigaction(SIGINT, &oldSigIntr, null);
 			sigaction(SIGHUP, &oldHupIntr, null);
 		}
+
+		skip_extra:
 
 		// we're just undoing everything the constructor did, in reverse order, same criteria
 		foreach_reverse(d; destructor)
@@ -2375,6 +2460,9 @@ struct RealTimeConsoleInput {
 
 	bool timedCheckForInput_bypassingBuffer(int milliseconds) {
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return timedCheckForInput_bypassingBuffer_impl(milliseconds);
+
 			import core.time;
 			if(terminal.tew.terminalEmulator.pendingForApplication.length)
 				return true;
@@ -2385,7 +2473,12 @@ struct RealTimeConsoleInput {
 				return terminal.tew.terminalEmulator.pendingForApplication.length || terminal.interrupted || terminal.windowSizeChanged || terminal.hangedUp;
 			else
 				return false;
-		} else version(Win32Console) {
+		} else
+			return timedCheckForInput_bypassingBuffer_impl(milliseconds);
+	}
+
+	private bool timedCheckForInput_bypassingBuffer_impl(int milliseconds) {
+		version(Windows) {
 			auto response = WaitForSingleObject(inputHandle, milliseconds);
 			if(response  == 0)
 				return true; // the object is ready
@@ -2458,6 +2551,8 @@ struct RealTimeConsoleInput {
 	//int inputBufferPosition;
 	int nextRaw(bool interruptable = false) {
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return nextRaw_impl(interruptable);
 			moar:
 			//if(interruptable && inputQueue.length)
 				//return -1;
@@ -2474,7 +2569,11 @@ struct RealTimeConsoleInput {
 				terminal.tew.terminalEmulator.pendingForApplication = terminal.tew.terminalEmulator.pendingForApplication[1 .. $];
 				return a;
 			}
-		} else version(Posix) {
+		} else
+			return nextRaw_impl(interruptable);
+	}
+	private int nextRaw_impl(bool interruptable = false) {
+		version(Posix) {
 			if(fdIn == -1)
 				return 0;
 
@@ -4640,14 +4739,20 @@ class LineGetter {
 
 		// then get the current cursor position to start fresh
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return updateCursorPosition_impl();
 			startOfLineX = terminal.tew.terminalEmulator.cursorX;
 			startOfLineY = terminal.tew.terminalEmulator.cursorY;
-		} else version(Win32Console) {
+		} else
+			updateCursorPosition_impl();
+	}
+	private void updateCursorPosition_impl() {
+		version(Win32Console) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
 			startOfLineX = info.dwCursorPosition.X;
 			startOfLineY = info.dwCursorPosition.Y;
-		} else {
+		} else version(Posix) {
 			// request current cursor position
 
 			// we have to turn off cooked mode to get this answer, otherwise it will all
@@ -5968,6 +6073,25 @@ version(TerminalDirectToEmulator) {
 				Added March 29, 2020. Included in release v7.1.0.
 		+/
 		void delegate(TerminalEmulatorWindow) menuExtensionsConstructor;
+
+		/++
+			Set this to true if you want [Terminal] to fallback to the user's
+			existing native terminal in the event that creating the custom terminal
+			is impossible for whatever reason.
+
+			If your application must have all advanced features, set this to `false`.
+			Otherwise, be sure you handle the absence of advanced features in your
+			application by checking methods like [Terminal.inlineImagesSupported],
+			etc., and only use things you can gracefully degrade without.
+
+			If this is set to false, `Terminal`'s constructor will throw if the gui fails
+			instead of carrying on with the stdout terminal (if possible).
+
+			History:
+				Added June 28, 2020. Included in release v8.1.0.
+
+		+/
+		bool fallbackToDegradedTerminal = true;
 	}
 
 	/+

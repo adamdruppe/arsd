@@ -821,7 +821,7 @@ class TerminalEmulator {
 			hasNonCharacterData = false;
 			chStore = c;
 		}
-		ref TextAttributes attributes() {
+		ref TextAttributes attributes() return {
 			assert(!hasNonCharacterData);
 			return attributesStore;
 		}

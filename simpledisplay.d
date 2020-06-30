@@ -984,6 +984,7 @@ version(libnotify) {
 			// close
 		}
 
+		// FIXME: this looks up by name every time.... 
 		template call(string func, Ret, Args...) {
 			extern(C) Ret function(Args) fptr;
 			typeof(fptr) call() {
@@ -1234,18 +1235,6 @@ float[2] getDpi() {
 	}
 
 	return dpi;
-}
-
-version(X11) {
-	extern(C) char* XResourceManagerString(Display*);
-	extern(C) void XrmInitialize();
-	extern(C) XrmDatabase XrmGetStringDatabase(char* data);
-	extern(C) bool XrmGetResource(XrmDatabase, const char*, const char*, char**, XrmValue*);
-	alias XrmDatabase = void*;
-	struct XrmValue {
-		uint size;
-		void* addr;
-	}
 }
 
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
@@ -5433,14 +5422,75 @@ version(without_opengl) {
 
 	version(X11) {
 		static if (!SdpyIsUsingIVGLBinds) {
-			pragma(lib, "GL");
-			pragma(lib, "GLU");
+
+
+			struct __GLXFBConfigRec {}
+			alias GLXFBConfig = __GLXFBConfigRec*;
+
+			//pragma(lib, "GL");
+			//pragma(lib, "GLU");
+			interface GLX {
+			extern(C) nothrow @nogc {
+				 XVisualInfo* glXChooseVisual(Display *dpy, int screen,
+						const int *attrib_list);
+
+				 void glXCopyContext(Display *dpy, GLXContext src,
+						GLXContext dst, arch_ulong mask);
+
+				 GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis,
+						GLXContext share_list, Bool direct);
+
+				 GLXPixmap glXCreateGLXPixmap(Display *dpy, XVisualInfo *vis,
+						Pixmap pixmap);
+
+				 void glXDestroyContext(Display *dpy, GLXContext ctx);
+
+				 void glXDestroyGLXPixmap(Display *dpy, GLXPixmap pix);
+
+				 int glXGetConfig(Display *dpy, XVisualInfo *vis,
+						int attrib, int *value);
+
+				 GLXContext glXGetCurrentContext();
+
+				 GLXDrawable glXGetCurrentDrawable();
+
+				 Bool glXIsDirect(Display *dpy, GLXContext ctx);
+
+				 Bool glXMakeCurrent(Display *dpy, GLXDrawable drawable,
+						GLXContext ctx);
+
+				 Bool glXQueryExtension(Display *dpy, int *error_base, int *event_base);
+
+				 Bool glXQueryVersion(Display *dpy, int *major, int *minor);
+
+				 void glXSwapBuffers(Display *dpy, GLXDrawable drawable);
+
+				 void glXUseXFont(Font font, int first, int count, int list_base);
+
+				 void glXWaitGL();
+
+				 void glXWaitX();
+
+
+				GLXFBConfig* glXChooseFBConfig (Display*, int, int*, int*);
+				int glXGetFBConfigAttrib (Display*, GLXFBConfig, int, int*);
+				XVisualInfo* glXGetVisualFromFBConfig (Display*, GLXFBConfig);
+
+				char* glXQueryExtensionsString (Display*, int);
+				void* glXGetProcAddress (const(char)*);
+
+			}
+			}
+
+			mixin DynamicLoad!(GLX, "GLX") glx;
+			shared static this() {
+				glx.loadDynamicLibrary();
+			}
+
+			alias glbindGetProcAddress = glXGetProcAddress;
 		}
 	} else version(Windows) {
-		static if (!SdpyIsUsingIVGLBinds) {
-			pragma(lib, "opengl32");
-			pragma(lib, "glu32");
-		}
+		/* it is done below by interface GL */
 	} else
 		static assert(0, "OpenGL not supported on your system yet. Try -version=X11 if you have X Windows available, or -version=without_opengl to go without.");
 }
@@ -9715,6 +9765,8 @@ version(X11) {
 		///
 		static Display* get() {
 			if(display is null) {
+				if(!librariesSuccessfullyLoaded)
+					throw new Exception("Unable to load X11 client libraries");
 				display = XOpenDisplay(displayName);
 				connectionSequence_++;
 				if(display is null)
@@ -11056,138 +11108,297 @@ extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
 	This isn't complete, just took what I needed for myself.
 */
 
-pragma(lib, "X11");
-pragma(lib, "Xext");
 import core.stdc.stddef : wchar_t;
 
+interface XLib {
 extern(C) nothrow @nogc {
+	char* XResourceManagerString(Display*);
+	void XrmInitialize();
+	XrmDatabase XrmGetStringDatabase(char* data);
+	bool XrmGetResource(XrmDatabase, const char*, const char*, char**, XrmValue*);
 
-Cursor XCreateFontCursor(Display*, uint shape);
-int XDefineCursor(Display* display, Window w, Cursor cursor);
-int XUndefineCursor(Display* display, Window w);
+	Cursor XCreateFontCursor(Display*, uint shape);
+	int XDefineCursor(Display* display, Window w, Cursor cursor);
+	int XUndefineCursor(Display* display, Window w);
 
-Pixmap XCreateBitmapFromData(Display* display, Drawable d, const(char)* data, uint width, uint height);
-Cursor XCreatePixmapCursor(Display* display, Pixmap source, Pixmap mask, XColor* foreground_color, XColor* background_color, uint x, uint y);
-int XFreeCursor(Display* display, Cursor cursor);
+	Pixmap XCreateBitmapFromData(Display* display, Drawable d, const(char)* data, uint width, uint height);
+	Cursor XCreatePixmapCursor(Display* display, Pixmap source, Pixmap mask, XColor* foreground_color, XColor* background_color, uint x, uint y);
+	int XFreeCursor(Display* display, Cursor cursor);
 
-int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
+	int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
 
-int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int wchars_buffer, KeySym* keysym_return, Status* status_return);
+	int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int wchars_buffer, KeySym* keysym_return, Status* status_return);
 
-char *XKeysymToString(KeySym keysym);
-KeySym XKeycodeToKeysym(
-	Display*		/* display */,
-	KeyCode		/* keycode */,
-	int			/* index */
-);
+	char *XKeysymToString(KeySym keysym);
+	KeySym XKeycodeToKeysym(
+		Display*		/* display */,
+		KeyCode		/* keycode */,
+		int			/* index */
+	);
+
+	int XConvertSelection(Display *display, Atom selection, Atom target, Atom property, Window requestor, Time time);
+
+	int XFree(void*);
+	int XDeleteProperty(Display *display, Window w, Atom property);
+
+	int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, in void *data, int nelements);
+
+	int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
+		long_offset, arch_long long_length, Bool del, Atom req_type, Atom
+		*actual_type_return, int *actual_format_return, arch_ulong
+		*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
+	Atom* XListProperties(Display *display, Window w, int *num_prop_return);
+	Status XGetTextProperty(Display *display, Window w, XTextProperty *text_prop_return, Atom property);
+	Status XQueryTree(Display *display, Window w, Window *root_return, Window *parent_return, Window **children_return, uint *nchildren_return);
+
+	int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
+
+	Window XGetSelectionOwner(Display *display, Atom selection);
+
+	XVisualInfo* XGetVisualInfo(Display*, c_long, XVisualInfo*, int*);
+
+	Display* XOpenDisplay(const char*);
+	int XCloseDisplay(Display*);
+
+	Bool XQueryExtension(Display*, const char*, int*, int*, int*);
+
+	Bool XSupportsLocale();
+	char* XSetLocaleModifiers(const(char)* modifier_list);
+	XOM XOpenOM(Display* display, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
+	Status XCloseOM(XOM om);
+
+	XIM XOpenIM(Display* dpy, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
+	Status XCloseIM(XIM im);
+
+	char* XGetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
+	char* XSetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
+	Display* XDisplayOfIM(XIM im);
+	char* XLocaleOfIM(XIM im);
+	XIC XCreateIC(XIM im, ...) /*_X_SENTINEL(0)*/;
+	void XDestroyIC(XIC ic);
+	void XSetICFocus(XIC ic);
+	void XUnsetICFocus(XIC ic);
+	//wchar_t* XwcResetIC(XIC ic);
+	char* XmbResetIC(XIC ic);
+	char* Xutf8ResetIC(XIC ic);
+	char* XSetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
+	char* XGetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
+	XIM XIMOfIC(XIC ic);
+
+	uint XSendEvent(Display* display, Window w, Bool propagate, arch_long event_mask, XEvent* event_send);
 
 
-int XConvertSelection(Display *display, Atom selection, Atom target, Atom property, Window requestor, Time time);
+	XFontStruct *XLoadQueryFont(Display *display, in char *name);
+	int XFreeFont(Display *display, XFontStruct *font_struct);
+	int XSetFont(Display* display, GC gc, Font font);
+	int XTextWidth(XFontStruct*, in char*, int);
 
-int XFree(void*);
-int XDeleteProperty(Display *display, Window w, Atom property);
+	int XSetLineAttributes(Display *display, GC gc, uint line_width, int line_style, int cap_style, int join_style);
+	int XSetDashes(Display *display, GC gc, int dash_offset, in byte* dash_list, int n);
 
-int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, in void *data, int nelements);
+	Window XCreateSimpleWindow(
+		Display*	/* display */,
+		Window		/* parent */,
+		int			/* x */,
+		int			/* y */,
+		uint		/* width */,
+		uint		/* height */,
+		uint		/* border_width */,
+		uint		/* border */,
+		uint		/* background */
+	);
+	Window XCreateWindow(Display *display, Window parent, int x, int y, uint width, uint height, uint border_width, int depth, uint class_, Visual *visual, arch_ulong valuemask, XSetWindowAttributes *attributes);
 
-int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
-	long_offset, arch_long long_length, Bool del, Atom req_type, Atom
-	*actual_type_return, int *actual_format_return, arch_ulong
-	*nitems_return, arch_ulong *bytes_after_return, void** prop_return);
-Atom* XListProperties(Display *display, Window w, int *num_prop_return);
-Status XGetTextProperty(Display *display, Window w, XTextProperty *text_prop_return, Atom property);
-Status XQueryTree(Display *display, Window w, Window *root_return, Window *parent_return, Window **children_return, uint *nchildren_return);
+	int XReparentWindow(Display*, Window, Window, int, int);
+	int XClearWindow(Display*, Window);
+	int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
+	int XMoveWindow(Display*, Window, int, int);
+	int XResizeWindow(Display *display, Window w, uint width, uint height);
 
-int XSetSelectionOwner(Display *display, Atom selection, Window owner, Time time);
+	Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
-Window XGetSelectionOwner(Display *display, Atom selection);
+	Status XGetWindowAttributes(Display*, Window, XWindowAttributes*);
 
-struct XVisualInfo {
-	Visual* visual;
-	VisualID visualid;
-	int screen;
-	uint depth;
-	int c_class;
-	c_ulong red_mask;
-	c_ulong green_mask;
-	c_ulong blue_mask;
-	int colormap_size;
-	int bits_per_rgb;
+	XImage *XCreateImage(
+		Display*		/* display */,
+		Visual*		/* visual */,
+		uint	/* depth */,
+		int			/* format */,
+		int			/* offset */,
+		ubyte*		/* data */,
+		uint	/* width */,
+		uint	/* height */,
+		int			/* bitmap_pad */,
+		int			/* bytes_per_line */
+	);
+
+	Status XInitImage (XImage* image);
+
+	Atom XInternAtom(
+		Display*		/* display */,
+		const char*	/* atom_name */,
+		Bool		/* only_if_exists */
+	);
+
+	Status XInternAtoms(Display*, const char**, int, Bool, Atom*);
+	char* XGetAtomName(Display*, Atom);
+	Status XGetAtomNames(Display*, Atom*, int count, char**);
+
+	int XPutImage(
+		Display*	/* display */,
+		Drawable	/* d */,
+		GC			/* gc */,
+		XImage*	/* image */,
+		int			/* src_x */,
+		int			/* src_y */,
+		int			/* dest_x */,
+		int			/* dest_y */,
+		uint		/* width */,
+		uint		/* height */
+	);
+
+	int XDestroyWindow(
+		Display*	/* display */,
+		Window		/* w */
+	);
+
+	int XDestroyImage(XImage*);
+
+	int XSelectInput(
+		Display*	/* display */,
+		Window		/* w */,
+		EventMask	/* event_mask */
+	);
+
+	int XMapWindow(
+		Display*	/* display */,
+		Window		/* w */
+	);
+
+	Status XIconifyWindow(Display*, Window, int);
+	int XMapRaised(Display*, Window);
+	int XMapSubwindows(Display*, Window);
+
+	int XNextEvent(
+		Display*	/* display */,
+		XEvent*		/* event_return */
+	);
+
+	int XMaskEvent(Display*, arch_long, XEvent*);
+
+	Bool XFilterEvent(XEvent *event, Window window);
+	int XRefreshKeyboardMapping(XMappingEvent *event_map);
+
+	Status XSetWMProtocols(
+		Display*	/* display */,
+		Window		/* w */,
+		Atom*		/* protocols */,
+		int			/* count */
+	);
+
+	void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
+	Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
+
+
+	Status XInitThreads();
+	void XLockDisplay (Display* display);
+	void XUnlockDisplay (Display* display);
+
+	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
+
+	int XSetWindowBackground (Display* display, Window w, c_ulong background_pixel);
+	int XSetWindowBackgroundPixmap (Display* display, Window w, Pixmap background_pixmap);
+	//int XSetWindowBorder (Display* display, Window w, c_ulong border_pixel);
+	//int XSetWindowBorderPixmap (Display* display, Window w, Pixmap border_pixmap);
+	//int XSetWindowBorderWidth (Display* display, Window w, uint width);
+
+
+	// check out Xft too: http://www.keithp.com/~keithp/render/Xft.tutorial
+	int XDrawString(Display*, Drawable, GC, int, int, in char*, int);
+	int XDrawLine(Display*, Drawable, GC, int, int, int, int);
+	int XDrawRectangle(Display*, Drawable, GC, int, int, uint, uint);
+	int XDrawArc(Display*, Drawable, GC, int, int, uint, uint, int, int);
+	int XFillRectangle(Display*, Drawable, GC, int, int, uint, uint);
+	int XFillArc(Display*, Drawable, GC, int, int, uint, uint, int, int);
+	int XDrawPoint(Display*, Drawable, GC, int, int);
+	int XSetForeground(Display*, GC, uint);
+	int XSetBackground(Display*, GC, uint);
+
+	XFontSet XCreateFontSet(Display*, const char*, char***, int*, char**);
+	void XFreeFontSet(Display*, XFontSet);
+	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
+	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
+
+	void XDrawText(Display*, Drawable, GC, int, int, XTextItem*, int);
+	int XSetFunction(Display*, GC, int);
+
+	GC XCreateGC(Display*, Drawable, uint, void*);
+	int XCopyGC(Display*, GC, uint, GC);
+	int XFreeGC(Display*, GC);
+
+	bool XCheckWindowEvent(Display*, Window, int, XEvent*);
+	bool XCheckMaskEvent(Display*, int, XEvent*);
+
+	int XPending(Display*);
+	int XEventsQueued(Display* display, int mode);
+
+	Pixmap XCreatePixmap(Display*, Drawable, uint, uint, uint);
+	int XFreePixmap(Display*, Pixmap);
+	int XCopyArea(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int);
+	int XFlush(Display*);
+	int XBell(Display*, int);
+	int XSync(Display*, bool);
+
+	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
+	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
+	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
+
+	int XDrawLines(Display*, Drawable, GC, XPoint*, int, CoordMode);
+	int XFillPolygon(Display*, Drawable, GC, XPoint*, int, PolygonShape, CoordMode);
+
+	Status XAllocColor(Display*, Colormap, XColor*);
+
+	int XWithdrawWindow(Display*, Window, int);
+	int XUnmapWindow(Display*, Window);
+	int XLowerWindow(Display*, Window);
+	int XRaiseWindow(Display*, Window);
+
+	int XWarpPointer(Display *display, Window src_w, Window dest_w, int src_x, int src_y, uint src_width, uint src_height, int dest_x, int dest_y);
+	Bool XTranslateCoordinates(Display *display, Window src_w, Window dest_w, int src_x, int src_y, int *dest_x_return, int *dest_y_return, Window *child_return);
+
+	int XGetInputFocus(Display*, Window*, int*);
+	int XSetInputFocus(Display*, Window, int, Time);
+
+	XErrorHandler XSetErrorHandler(XErrorHandler);
+
+	int XGetErrorText(Display*, int, char*, int);
+
+	Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
+
+
+	int XGrabPointer(Display *display, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor, Time time);
+	int XUngrabPointer(Display *display, Time time);
+	int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
+
+	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
+
+	Status XGetGeometry(Display*, Drawable, Window*, int*, int*, uint*, uint*, uint*, uint*);
+	int XSetClipMask(Display*, GC, Pixmap);
+	int XSetClipOrigin(Display*, GC, int, int);
+
+	void XSetClipRectangles(Display*, GC, int, int, XRectangle*, int, int);
+
+	void XSetWMName(Display*, Window, XTextProperty*);
+	Status XGetWMName(Display*, Window, XTextProperty*);
+	int XStoreName(Display* display, Window w, const(char)* window_name);
+
+	XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
+
+}
 }
 
-enum VisualNoMask=	0x0;
-enum VisualIDMask=	0x1;
-enum VisualScreenMask=0x2;
-enum VisualDepthMask=	0x4;
-enum VisualClassMask=	0x8;
-enum VisualRedMaskMask=0x10;
-enum VisualGreenMaskMask=0x20;
-enum VisualBlueMaskMask=0x40;
-enum VisualColormapSizeMask=0x80;
-enum VisualBitsPerRGBMask=0x100;
-enum VisualAllMask=	0x1FF;
-
-XVisualInfo* XGetVisualInfo(Display*, c_long, XVisualInfo*, int*);
-
-
-
-Display* XOpenDisplay(const char*);
-int XCloseDisplay(Display*);
-
-Bool XQueryExtension(Display*, const char*, int*, int*, int*);
-
-// XIM and other crap
-struct _XOM {}
-struct _XIM {}
-struct _XIC {}
-alias XOM = _XOM*;
-alias XIM = _XIM*;
-alias XIC = _XIC*;
-Bool XSupportsLocale();
-char* XSetLocaleModifiers(const(char)* modifier_list);
-XOM XOpenOM(Display* display, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
-Status XCloseOM(XOM om);
-
-XIM XOpenIM(Display* dpy, _XrmHashBucketRec* rdb, const(char)* res_name, const(char)* res_class);
-Status XCloseIM(XIM im);
-
-char* XGetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
-char* XSetIMValues(XIM im, ...) /*_X_SENTINEL(0)*/;
-Display* XDisplayOfIM(XIM im);
-char* XLocaleOfIM(XIM im);
-XIC XCreateIC(XIM im, ...) /*_X_SENTINEL(0)*/;
-void XDestroyIC(XIC ic);
-void XSetICFocus(XIC ic);
-void XUnsetICFocus(XIC ic);
-//wchar_t* XwcResetIC(XIC ic);
-char* XmbResetIC(XIC ic);
-char* Xutf8ResetIC(XIC ic);
-char* XSetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
-char* XGetICValues(XIC ic, ...) /*_X_SENTINEL(0)*/;
-XIM XIMOfIC(XIC ic);
-
-alias XIMStyle = arch_ulong;
-enum : arch_ulong {
-	XIMPreeditArea      = 0x0001,
-	XIMPreeditCallbacks = 0x0002,
-	XIMPreeditPosition  = 0x0004,
-	XIMPreeditNothing   = 0x0008,
-	XIMPreeditNone      = 0x0010,
-	XIMStatusArea       = 0x0100,
-	XIMStatusCallbacks  = 0x0200,
-	XIMStatusNothing    = 0x0400,
-	XIMStatusNone       = 0x0800,
-}
-
-
-/* X Shared Memory Extension functions */
-	//pragma(lib, "Xshm");
-	alias arch_ulong ShmSeg;
-	struct XShmSegmentInfo {
-		ShmSeg shmseg;
-		int shmid;
-		ubyte* shmaddr;
-		Bool readOnly;
-	}
+interface Xext {
+extern(C) nothrow @nogc {
 	Status XShmAttach(Display*, XShmSegmentInfo*);
 	Status XShmDetach(Display*, XShmSegmentInfo*);
 	Status XShmPutImage(
@@ -11227,6 +11438,87 @@ enum : arch_ulong {
 		uint        /* depth */
 	);
 
+}
+}
+
+	// this requires -lXpm
+	//int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
+
+
+mixin DynamicLoad!(XLib, "X11") xlib;
+mixin DynamicLoad!(Xext, "Xext") xext;
+shared static this() {
+	xlib.loadDynamicLibrary();
+	xext.loadDynamicLibrary();
+}
+
+
+extern(C) nothrow @nogc {
+
+alias XrmDatabase = void*;
+struct XrmValue {
+	uint size;
+	void* addr;
+}
+
+struct XVisualInfo {
+	Visual* visual;
+	VisualID visualid;
+	int screen;
+	uint depth;
+	int c_class;
+	c_ulong red_mask;
+	c_ulong green_mask;
+	c_ulong blue_mask;
+	int colormap_size;
+	int bits_per_rgb;
+}
+
+enum VisualNoMask=	0x0;
+enum VisualIDMask=	0x1;
+enum VisualScreenMask=0x2;
+enum VisualDepthMask=	0x4;
+enum VisualClassMask=	0x8;
+enum VisualRedMaskMask=0x10;
+enum VisualGreenMaskMask=0x20;
+enum VisualBlueMaskMask=0x40;
+enum VisualColormapSizeMask=0x80;
+enum VisualBitsPerRGBMask=0x100;
+enum VisualAllMask=	0x1FF;
+
+
+// XIM and other crap
+struct _XOM {}
+struct _XIM {}
+struct _XIC {}
+alias XOM = _XOM*;
+alias XIM = _XIM*;
+alias XIC = _XIC*;
+
+alias XIMStyle = arch_ulong;
+enum : arch_ulong {
+	XIMPreeditArea      = 0x0001,
+	XIMPreeditCallbacks = 0x0002,
+	XIMPreeditPosition  = 0x0004,
+	XIMPreeditNothing   = 0x0008,
+	XIMPreeditNone      = 0x0010,
+	XIMStatusArea       = 0x0100,
+	XIMStatusCallbacks  = 0x0200,
+	XIMStatusNothing    = 0x0400,
+	XIMStatusNone       = 0x0800,
+}
+
+
+/* X Shared Memory Extension functions */
+	//pragma(lib, "Xshm");
+	alias arch_ulong ShmSeg;
+	struct XShmSegmentInfo {
+		ShmSeg shmseg;
+		int shmid;
+		ubyte* shmaddr;
+		Bool readOnly;
+	}
+
 	// and the necessary OS functions
 	int shmget(int, size_t, int);
 	void* shmat(int, in void*, int);
@@ -11238,8 +11530,6 @@ enum : arch_ulong {
 	enum IPC_RMID = 0;
 
 /* MIT-SHM end */
-
-uint XSendEvent(Display* display, Window w, Bool propagate, arch_long event_mask, XEvent* event_send);
 
 
 enum MappingType:int {
@@ -11468,15 +11758,6 @@ struct XFontStruct {
 	int descent;                  /* Max descent below baseline for spacing */
 }
 
-	XFontStruct *XLoadQueryFont(Display *display, in char *name);
-	int XFreeFont(Display *display, XFontStruct *font_struct);
-	int XSetFont(Display* display, GC gc, Font font);
-	int XTextWidth(XFontStruct*, in char*, int);
-
-	int XSetLineAttributes(Display *display, GC gc, uint line_width, int line_style, int cap_style, int join_style);
-	int XSetDashes(Display *display, GC gc, int dash_offset, in byte* dash_list, int n);
-
-
 
 /*
  * Definitions of specific events.
@@ -11578,26 +11859,6 @@ struct XFocusChangeEvent{
 }
 alias XFocusChangeEvent XFocusInEvent;
 alias XFocusChangeEvent XFocusOutEvent;
-Window XCreateSimpleWindow(
-	Display*	/* display */,
-	Window		/* parent */,
-	int			/* x */,
-	int			/* y */,
-	uint		/* width */,
-	uint		/* height */,
-	uint		/* border_width */,
-	uint		/* border */,
-	uint		/* background */
-);
-Window XCreateWindow(Display *display, Window parent, int x, int y, uint width, uint height, uint border_width, int depth, uint class_, Visual *visual, arch_ulong valuemask, XSetWindowAttributes *attributes);
-
-int XReparentWindow(Display*, Window, Window, int, int);
-int XClearWindow(Display*, Window);
-int XMoveResizeWindow(Display*, Window, int, int, uint, uint);
-int XMoveWindow(Display*, Window, int, int);
-int XResizeWindow(Display *display, Window w, uint width, uint height);
-
-Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
 enum CWBackPixmap              = (1L<<0);
 enum CWBackPixel               = (1L<<1);
@@ -11643,8 +11904,6 @@ enum IsUnmapped = 0;
 enum IsUnviewable = 1;
 enum IsViewable = 2;
 
-Status XGetWindowAttributes(Display*, Window, XWindowAttributes*);
-
 struct XSetWindowAttributes {
 	Pixmap background_pixmap;/* background, None, or ParentRelative */
 	arch_ulong background_pixel;/* background pixel */
@@ -11663,33 +11922,6 @@ struct XSetWindowAttributes {
 	Cursor cursor;           /* cursor to be displayed (or None) */
 }
 
-
-
-
-XImage *XCreateImage(
-	Display*		/* display */,
-	Visual*		/* visual */,
-	uint	/* depth */,
-	int			/* format */,
-	int			/* offset */,
-	ubyte*		/* data */,
-	uint	/* width */,
-	uint	/* height */,
-	int			/* bitmap_pad */,
-	int			/* bytes_per_line */
-);
-
-Status XInitImage (XImage* image);
-
-Atom XInternAtom(
-	Display*		/* display */,
-	const char*	/* atom_name */,
-	Bool		/* only_if_exists */
-);
-
-Status XInternAtoms(Display*, const char**, int, Bool, Atom*);
-char* XGetAtomName(Display*, Atom);
-Status XGetAtomNames(Display*, Atom*, int count, char**);
 
 alias int Status;
 
@@ -11724,37 +11956,6 @@ enum EventMask:int
 	OwnerGrabButtonMask		=1<<24
 }
 
-int XPutImage(
-	Display*	/* display */,
-	Drawable	/* d */,
-	GC			/* gc */,
-	XImage*	/* image */,
-	int			/* src_x */,
-	int			/* src_y */,
-	int			/* dest_x */,
-	int			/* dest_y */,
-	uint		/* width */,
-	uint		/* height */
-);
-
-int XDestroyWindow(
-	Display*	/* display */,
-	Window		/* w */
-);
-
-int XDestroyImage(XImage*);
-
-int XSelectInput(
-	Display*	/* display */,
-	Window		/* w */,
-	EventMask	/* event_mask */
-);
-
-int XMapWindow(
-	Display*	/* display */,
-	Window		/* w */
-);
-
 struct MwmHints {
 	int flags;
 	int functions;
@@ -11775,30 +11976,7 @@ enum {
 	MWM_FUNC_CLOSE = (1L << 5)
 }
 
-Status XIconifyWindow(Display*, Window, int);
-int XMapRaised(Display*, Window);
-int XMapSubwindows(Display*, Window);
-
-int XNextEvent(
-	Display*	/* display */,
-	XEvent*		/* event_return */
-);
-
-int XMaskEvent(Display*, arch_long, XEvent*);
-
-Bool XFilterEvent(XEvent *event, Window window);
-int XRefreshKeyboardMapping(XMappingEvent *event_map);
-
-Status XSetWMProtocols(
-	Display*	/* display */,
-	Window		/* w */,
-	Atom*		/* protocols */,
-	int			/* count */
-);
-
 import core.stdc.config : c_long, c_ulong;
-void XSetWMNormalHints(Display *display, Window w, XSizeHints *hints);
-Status XGetWMNormalHints(Display *display, Window w, XSizeHints *hints, c_long* supplied_return);
 
 	/* Size hints mask bits */
 
@@ -12341,48 +12519,6 @@ alias XID GLXWindow;
 alias XID GLXFBConfigID;
 alias void* GLXContext;
 
-static if (!SdpyIsUsingIVGLBinds) {
-	 XVisualInfo* glXChooseVisual(Display *dpy, int screen,
-			const int *attrib_list);
-
-	 void glXCopyContext(Display *dpy, GLXContext src,
-			GLXContext dst, arch_ulong mask);
-
-	 GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis,
-			GLXContext share_list, Bool direct);
-
-	 GLXPixmap glXCreateGLXPixmap(Display *dpy, XVisualInfo *vis,
-			Pixmap pixmap);
-
-	 void glXDestroyContext(Display *dpy, GLXContext ctx);
-
-	 void glXDestroyGLXPixmap(Display *dpy, GLXPixmap pix);
-
-	 int glXGetConfig(Display *dpy, XVisualInfo *vis,
-			int attrib, int *value);
-
-	 GLXContext glXGetCurrentContext();
-
-	 GLXDrawable glXGetCurrentDrawable();
-
-	 Bool glXIsDirect(Display *dpy, GLXContext ctx);
-
-	 Bool glXMakeCurrent(Display *dpy, GLXDrawable drawable,
-			GLXContext ctx);
-
-	 Bool glXQueryExtension(Display *dpy, int *error_base, int *event_base);
-
-	 Bool glXQueryVersion(Display *dpy, int *major, int *minor);
-
-	 void glXSwapBuffers(Display *dpy, GLXDrawable drawable);
-
-	 void glXUseXFont(Font font, int first, int count, int list_base);
-
-	 void glXWaitGL();
-
-	 void glXWaitX();
-}
-
 }
 }
 
@@ -12391,7 +12527,6 @@ enum AllocNone = 0;
 extern(C) {
 	/* WARNING, this type not in Xlib spec */
 	extern(C) alias XIOErrorHandler = int function (Display* display);
-	XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
 }
 
 extern(C) nothrow @nogc {
@@ -12452,22 +12587,6 @@ struct Visual
 		char* res_class;
 	}
 
-	Status XInitThreads();
-	void XLockDisplay (Display* display);
-	void XUnlockDisplay (Display* display);
-
-	void XSetWMProperties(Display*, Window, XTextProperty*, XTextProperty*, char**, int, XSizeHints*, XWMHints*, XClassHint*);
-
-	int XSetWindowBackground (Display* display, Window w, c_ulong background_pixel);
-	int XSetWindowBackgroundPixmap (Display* display, Window w, Pixmap background_pixmap);
-	//int XSetWindowBorder (Display* display, Window w, c_ulong border_pixel);
-	//int XSetWindowBorderPixmap (Display* display, Window w, Pixmap border_pixmap);
-	//int XSetWindowBorderWidth (Display* display, Window w, uint width);
-
-
-	// this requires -lXpm
-	int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
-
 	int DefaultScreen(Display *dpy) {
 		return dpy.default_screen;
 	}
@@ -12510,22 +12629,7 @@ struct Visual
 		return ScreenOfDisplay(dpy,scr).white_pixel;
 	}
 
-	// check out Xft too: http://www.keithp.com/~keithp/render/Xft.tutorial
-	int XDrawString(Display*, Drawable, GC, int, int, in char*, int);
-	int XDrawLine(Display*, Drawable, GC, int, int, int, int);
-	int XDrawRectangle(Display*, Drawable, GC, int, int, uint, uint);
-	int XDrawArc(Display*, Drawable, GC, int, int, uint, uint, int, int);
-	int XFillRectangle(Display*, Drawable, GC, int, int, uint, uint);
-	int XFillArc(Display*, Drawable, GC, int, int, uint, uint, int, int);
-	int XDrawPoint(Display*, Drawable, GC, int, int);
-	int XSetForeground(Display*, GC, uint);
-	int XSetBackground(Display*, GC, uint);
-
 	alias void* XFontSet; // i think
-	XFontSet XCreateFontSet(Display*, const char*, char***, int*, char**);
-	void XFreeFontSet(Display*, XFontSet);
-	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
-	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
 	struct XmbTextItem {
 		char* chars;
 		int nchars;
@@ -12533,7 +12637,6 @@ struct Visual
 		XFontSet font_set;
 	}
 
-	void XDrawText(Display*, Drawable, GC, int, int, XTextItem*, int);
 	struct XTextItem {
 		char* chars;
 		int nchars;
@@ -12541,7 +12644,6 @@ struct Visual
 		Font font;
 	}
 
-	int XSetFunction(Display*, GC, int);
 	enum {
 		GXclear        = 0x0, /* 0 */
 		GXand          = 0x1, /* src AND dst */
@@ -12560,41 +12662,18 @@ struct Visual
 		GXnand         = 0xe, /* NOT src OR NOT dst */
 		GXset          = 0xf, /* 1 */
 	}
-
-	GC XCreateGC(Display*, Drawable, uint, void*);
-	int XCopyGC(Display*, GC, uint, GC);
-	int XFreeGC(Display*, GC);
-
-	bool XCheckWindowEvent(Display*, Window, int, XEvent*);
-	bool XCheckMaskEvent(Display*, int, XEvent*);
-
-	int XPending(Display*);
-	int XEventsQueued(Display* display, int mode);
 	enum QueueMode : int {
 		QueuedAlready,
 		QueuedAfterReading,
 		QueuedAfterFlush
 	}
 
-	Pixmap XCreatePixmap(Display*, Drawable, uint, uint, uint);
-	int XFreePixmap(Display*, Pixmap);
-	int XCopyArea(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int);
-	int XFlush(Display*);
-	int XBell(Display*, int);
-	int XSync(Display*, bool);
-
 	enum GrabMode { GrabModeSync = 0, GrabModeAsync = 1 }
-	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
-	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
-	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
 
 	struct XPoint {
 		short x;
 		short y;
 	}
-
-	int XDrawLines(Display*, Drawable, GC, XPoint*, int, CoordMode);
-	int XFillPolygon(Display*, Drawable, GC, XPoint*, int, PolygonShape, CoordMode);
 
 	enum CoordMode:int {
 		CoordModeOrigin = 0,
@@ -12653,37 +12732,8 @@ struct Visual
 		byte flags;
 		byte pad;
 	}
-	Status XAllocColor(Display*, Colormap, XColor*);
 
-	int XWithdrawWindow(Display*, Window, int);
-	int XUnmapWindow(Display*, Window);
-	int XLowerWindow(Display*, Window);
-	int XRaiseWindow(Display*, Window);
-
-	int XWarpPointer(Display *display, Window src_w, Window dest_w, int src_x, int src_y, uint src_width, uint src_height, int dest_x, int dest_y);
-	Bool XTranslateCoordinates(Display *display, Window src_w, Window dest_w, int src_x, int src_y, int *dest_x_return, int *dest_y_return, Window *child_return);
-
-	int XGetInputFocus(Display*, Window*, int*);
-	int XSetInputFocus(Display*, Window, int, Time);
 	alias XErrorHandler = int function(Display*, XErrorEvent*);
-	XErrorHandler XSetErrorHandler(XErrorHandler);
-
-	int XGetErrorText(Display*, int, char*, int);
-
-	Bool XkbSetDetectableAutoRepeat(Display* dpy, Bool detectable, Bool* supported);
-
-
-	int XGrabPointer(Display *display, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor, Time time);
-	int XUngrabPointer(Display *display, Time time);
-	int XChangeActivePointerGrab(Display *display, uint event_mask, Cursor cursor, Time time);
-
-	int XCopyPlane(Display*, Drawable, Drawable, GC, int, int, uint, uint, int, int, arch_ulong);
-
-	Status XGetGeometry(Display*, Drawable, Window*, int*, int*, uint*, uint*, uint*, uint*);
-	int XSetClipMask(Display*, GC, Pixmap);
-	int XSetClipOrigin(Display*, GC, int, int);
-
-	void XSetClipRectangles(Display*, GC, int, int, XRectangle*, int, int);
 
 	struct XRectangle {
 		short x;
@@ -12691,10 +12741,6 @@ struct Visual
 		ushort width;
 		ushort height;
 	}
-
-	void XSetWMName(Display*, Window, XTextProperty*);
-	Status XGetWMName(Display*, Window, XTextProperty*);
-	int XStoreName(Display* display, Window w, const(char)* window_name);
 
 	enum ClipByChildren = 0;
 	enum IncludeInferiors = 1;
@@ -13415,8 +13461,6 @@ extern(System) nothrow @nogc {
 	//const(char)* glGetString (/*GLenum*/uint);
 	version(X11) {
 	static if (!SdpyIsUsingIVGLBinds) {
-		struct __GLXFBConfigRec {}
-		alias GLXFBConfig = __GLXFBConfigRec*;
 
 		enum GLX_X_RENDERABLE = 0x8012;
 		enum GLX_DRAWABLE_TYPE = 0x8010;
@@ -13430,15 +13474,6 @@ extern(System) nothrow @nogc {
 		enum GLX_SAMPLES = 0x186a1;
 		enum GLX_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
 		enum GLX_CONTEXT_MINOR_VERSION_ARB = 0x2092;
-
-		GLXFBConfig* glXChooseFBConfig (Display*, int, int*, int*);
-		int glXGetFBConfigAttrib (Display*, GLXFBConfig, int, int*);
-		XVisualInfo* glXGetVisualFromFBConfig (Display*, GLXFBConfig);
-
-		char* glXQueryExtensionsString (Display*, int);
-		void* glXGetProcAddress (const(char)*);
-
-		alias glbindGetProcAddress = glXGetProcAddress;
 	}
 
 		// GLX_EXT_swap_control
@@ -13488,6 +13523,7 @@ extern(System) nothrow @nogc {
 	public void* glbindGetProcAddress (const(char)* name) {
 		void* res = wglGetProcAddress(name);
 		if (res is null) {
+			/+
 			//{ import core.stdc.stdio; printf("GL: '%s' not found (0)\n", name); }
 			import core.sys.windows.windef, core.sys.windows.winbase;
 			__gshared HINSTANCE dll = null;
@@ -13496,6 +13532,8 @@ extern(System) nothrow @nogc {
 				if (dll is null) return null; // <32, but idc
 			}
 			res = GetProcAddress(dll, name);
+			+/
+			res = GetProcAddress(gl.libHandle, name);
 		}
 		//{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
 		return res;
@@ -13525,92 +13563,129 @@ extern(System) nothrow @nogc {
 	}
 
 	static if (!SdpyIsUsingIVGLBinds) {
-	void glGetIntegerv(int, void*);
-	void glMatrixMode(int);
-	void glPushMatrix();
-	void glLoadIdentity();
-	void glOrtho(double, double, double, double, double, double);
-	void glFrustum(double, double, double, double, double, double);
 
-	void gluLookAt(double, double, double, double, double, double, double, double, double);
-	void gluPerspective(double, double, double, double);
+	interface GL {
+	extern(System) @nogc nothrow {
 
-	void glPopMatrix();
-	void glEnable(int);
-	void glDisable(int);
-	void glClear(int);
-	void glBegin(int);
-	void glVertex2f(float, float);
-	void glVertex3f(float, float, float);
-	void glEnd();
-	void glColor3b(byte, byte, byte);
-	void glColor3ub(ubyte, ubyte, ubyte);
-	void glColor4b(byte, byte, byte, byte);
-	void glColor4ub(ubyte, ubyte, ubyte, ubyte);
-	void glColor3i(int, int, int);
-	void glColor3ui(uint, uint, uint);
-	void glColor4i(int, int, int, int);
-	void glColor4ui(uint, uint, uint, uint);
-	void glColor3f(float, float, float);
-	void glColor4f(float, float, float, float);
-	void glTranslatef(float, float, float);
-	void glScalef(float, float, float);
-	void glSecondaryColor3b(byte, byte, byte);
-	void glSecondaryColor3ub(ubyte, ubyte, ubyte);
-	void glSecondaryColor3i(int, int, int);
-	void glSecondaryColor3ui(uint, uint, uint);
-	void glSecondaryColor3f(float, float, float);
+		void glGetIntegerv(int, void*);
+		void glMatrixMode(int);
+		void glPushMatrix();
+		void glLoadIdentity();
+		void glOrtho(double, double, double, double, double, double);
+		void glFrustum(double, double, double, double, double, double);
 
-	void glDrawElements(int, int, int, void*);
+		void glPopMatrix();
+		void glEnable(int);
+		void glDisable(int);
+		void glClear(int);
+		void glBegin(int);
+		void glVertex2f(float, float);
+		void glVertex3f(float, float, float);
+		void glEnd();
+		void glColor3b(byte, byte, byte);
+		void glColor3ub(ubyte, ubyte, ubyte);
+		void glColor4b(byte, byte, byte, byte);
+		void glColor4ub(ubyte, ubyte, ubyte, ubyte);
+		void glColor3i(int, int, int);
+		void glColor3ui(uint, uint, uint);
+		void glColor4i(int, int, int, int);
+		void glColor4ui(uint, uint, uint, uint);
+		void glColor3f(float, float, float);
+		void glColor4f(float, float, float, float);
+		void glTranslatef(float, float, float);
+		void glScalef(float, float, float);
+		version(X11) {
+			void glSecondaryColor3b(byte, byte, byte);
+			void glSecondaryColor3ub(ubyte, ubyte, ubyte);
+			void glSecondaryColor3i(int, int, int);
+			void glSecondaryColor3ui(uint, uint, uint);
+			void glSecondaryColor3f(float, float, float);
+		}
 
-	void glRotatef(float, float, float, float);
+		void glDrawElements(int, int, int, void*);
 
-	uint glGetError();
+		void glRotatef(float, float, float, float);
 
-	void glDeleteTextures(int, uint*);
+		uint glGetError();
 
-	char* gluErrorString(uint);
-
-	void glRasterPos2i(int, int);
-	void glDrawPixels(int, int, uint, uint, void*);
-	void glClearColor(float, float, float, float);
+		void glDeleteTextures(int, uint*);
 
 
-	void glPixelStorei(uint, int);
+		void glRasterPos2i(int, int);
+		void glDrawPixels(int, int, uint, uint, void*);
+		void glClearColor(float, float, float, float);
+
+
+		void glPixelStorei(uint, int);
+
+		void glGenTextures(uint, uint*);
+		void glBindTexture(int, int);
+		void glTexParameteri(uint, uint, int);
+		void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
+		void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
+		void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
+			/*GLsizei*/int width, /*GLsizei*/int height,
+			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		version(X11)
+		void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
+			/*GLsizei*/int width, /*GLsizei*/int height,
+			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+		void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
+
+		void glLineWidth(int);
+
+
+		void glTexCoord2f(float, float);
+		void glVertex2i(int, int);
+		void glBlendFunc (int, int);
+		void glDepthFunc (int);
+		void glViewport(int, int, int, int);
+
+		void glClearDepth(double);
+
+		void glReadBuffer(uint);
+		void glReadPixels(int, int, int, int, int, int, void*);
+
+		void glFlush();
+		void glFinish();
+
+		version(Windows) {
+			BOOL wglCopyContext(HGLRC, HGLRC, UINT);
+			HGLRC wglCreateContext(HDC);
+			HGLRC wglCreateLayerContext(HDC, int);
+			BOOL wglDeleteContext(HGLRC);
+			BOOL wglDescribeLayerPlane(HDC, int, int, UINT, LPLAYERPLANEDESCRIPTOR);
+			HGLRC wglGetCurrentContext();
+			HDC wglGetCurrentDC();
+			int wglGetLayerPaletteEntries(HDC, int, int, int, COLORREF*);
+			PROC wglGetProcAddress(LPCSTR);
+			BOOL wglMakeCurrent(HDC, HGLRC);
+			BOOL wglRealizeLayerPalette(HDC, int, BOOL);
+			int wglSetLayerPaletteEntries(HDC, int, int, int, const(COLORREF)*);
+			BOOL wglShareLists(HGLRC, HGLRC);
+			BOOL wglSwapLayerBuffers(HDC, UINT);
+			BOOL wglUseFontBitmapsA(HDC, DWORD, DWORD, DWORD);
+			BOOL wglUseFontBitmapsW(HDC, DWORD, DWORD, DWORD);
+			BOOL wglUseFontOutlinesA(HDC, DWORD, DWORD, DWORD, FLOAT, FLOAT, int, LPGLYPHMETRICSFLOAT);
+			BOOL wglUseFontOutlinesW(HDC, DWORD, DWORD, DWORD, FLOAT, FLOAT, int, LPGLYPHMETRICSFLOAT);
+		}
+
+	}
+	}
+
+	interface GLU {
+	extern(System) @nogc nothrow {
+		void gluLookAt(double, double, double, double, double, double, double, double, double);
+		void gluPerspective(double, double, double, double);
+
+		char* gluErrorString(uint);
+	}
+	}
+
 
 	enum GL_RED = 0x1903;
 	enum GL_ALPHA = 0x1906;
 	enum GL_UNPACK_ALIGNMENT = 0x0CF5;
-
-	void glGenTextures(uint, uint*);
-	void glBindTexture(int, int);
-	void glTexParameteri(uint, uint, int);
-	void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
-	void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
-	void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
-		/*GLsizei*/int width, /*GLsizei*/int height,
-		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
-	void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
-		/*GLsizei*/int width, /*GLsizei*/int height,
-		uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
-	void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
-
-	void glLineWidth(int);
-
-
-	void glTexCoord2f(float, float);
-	void glVertex2i(int, int);
-	void glBlendFunc (int, int);
-	void glDepthFunc (int);
-	void glViewport(int, int, int, int);
-
-	void glClearDepth(double);
-
-	void glReadBuffer(uint);
-	void glReadPixels(int, int, int, int, int, int, void*);
-
-	void glFlush();
-	void glFinish();
 
 	enum uint GL_FRONT = 0x0404;
 
@@ -13671,6 +13746,23 @@ extern(System) nothrow @nogc {
 	}
 }
 
+version(without_opengl) {} else {
+static if(!SdpyIsUsingIVGLBinds) {
+	version(Windows) {
+		mixin DynamicLoad!(GL, "opengl32") gl;
+		mixin DynamicLoad!(GLU, "glu32") glu;
+	} else {
+		mixin DynamicLoad!(GL, "GL") gl;
+		mixin DynamicLoad!(GLU, "GLU") glu;
+	}
+
+	shared static this() {
+		gl.loadDynamicLibrary();
+		glu.loadDynamicLibrary();
+	}
+}
+}
+
 version(linux) {
 	version(with_eventloop) {} else {
 		private int epollFd = -1;
@@ -13699,7 +13791,12 @@ version(X11) {
 	// We will use `sdx_isUTF8Locale` on XIM creation to enforce UTF-8 locale, so XCompose will
 	// always return correct unicode symbols. The detection is here 'cause user can change locale
 	// later.
+
+	// NOTE: IT IS VERY IMPORTANT THAT THIS BE THE LAST STATIC CTOR OF THE FILE since it tests librariesSuccessfullyLoaded
 	shared static this () {
+		if(!librariesSuccessfullyLoaded)
+			return;
+
 		import core.stdc.locale : setlocale, LC_ALL, LC_CTYPE;
 
 		// this doesn't hurt; it may add some locking, but the speed is still
@@ -14883,6 +14980,60 @@ class NotYetImplementedException : Exception {
 	this(string file = __FILE__, size_t line = __LINE__) {
 		super("Not yet implemented", file, line);
 	}
+}
+
+///
+__gshared bool librariesSuccessfullyLoaded = true;
+
+private mixin template DynamicLoad(Iface, string library) {
+        static foreach(name; __traits(derivedMembers, Iface))
+                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+
+        private void* libHandle;
+
+        void loadDynamicLibrary() {
+                version(Posix) {
+                        import core.sys.posix.dlfcn;
+                        libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+
+			static void* loadsym(void* l, const char* name) {
+				import core.stdc.stdlib;
+				if(l is null)
+					return &abort;
+				return dlsym(l, name);
+			}
+                } else version(Windows) {
+                        import core.sys.windows.windows;
+                        libHandle = LoadLibrary(library ~ ".dll");
+			static void* loadsym(void* l, const char* name) {
+				import core.stdc.stdlib;
+				if(l is null)
+					return &abort;
+				return GetProcAddress(l, name);
+			}
+                }
+                if(libHandle is null) {
+			librariesSuccessfullyLoaded = false;
+                        //throw new Exception("load failure of library " ~ library);
+		}
+                foreach(name; __traits(derivedMembers, Iface)) {
+                        alias tmp = mixin(name);
+                        tmp = cast(typeof(tmp)) loadsym(libHandle, name);
+                        if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from " ~ library);
+                }
+        }
+
+        void unloadDynamicLibrary() {
+                version(Posix) {
+                        import core.sys.posix.dlfcn;
+                        dlclose(libHandle);
+                } else version(Windows) {
+                        import core.sys.windows.windows;
+                        FreeLibrary(libHandle);
+                }
+                foreach(name; __traits(derivedMembers, Iface))
+                        mixin(name ~ " = null;");
+        }
 }
 
 private alias scriptable = arsd_jsvar_compatible;

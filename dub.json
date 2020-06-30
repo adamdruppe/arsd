@@ -42,14 +42,12 @@
 			"configurations": [
 				{
 					"name": "normal",
-					"libs-posix": ["X11", "Xext", "GL", "GLU"],
-					"libs-windows": ["gdi32", "opengl32", "glu32"]
+					"libs-windows": ["gdi32"]
 				},
 				{
 					"name": "without-opengl",
 					"versions": ["without_opengl"],
-					"libs-windows": ["gdi32"],
-					"libs-posix": ["X11", "Xext"]
+					"libs-windows": ["gdi32"]
 				},
 				{
 					"name": "cocoa",
@@ -308,6 +306,7 @@
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
 			"targetType": "library",
+			"libs-windows": ["user32"],
 			"sourceFiles": ["terminal.d"],
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.terminal=terminal.d"],

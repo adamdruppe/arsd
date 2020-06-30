@@ -2706,7 +2706,7 @@ public nothrow @trusted @nogc:
 
   /// Inverts this matrix.
   /// If inverted matrix cannot be calculated, `this.valid` fill be `false`.
-  ref NVGMatrix invert () {
+  ref NVGMatrix invert () return {
     float[6] inv = void;
     immutable double det = cast(double)mat.ptr[0]*mat.ptr[3]-cast(double)mat.ptr[2]*mat.ptr[1];
     if (det > -1e-6 && det < 1e-6) {
@@ -2725,40 +2725,40 @@ public nothrow @trusted @nogc:
   }
 
   /// Sets this matrix to identity matrix.
-  ref NVGMatrix identity () { version(aliced) pragma(inline, true); mat[] = IdentityMat[]; return this; }
+  ref NVGMatrix identity () return { version(aliced) pragma(inline, true); mat[] = IdentityMat[]; return this; }
 
   /// Translate this matrix.
-  ref NVGMatrix translate (in float tx, in float ty) {
+  ref NVGMatrix translate (in float tx, in float ty) return {
     version(aliced) pragma(inline, true);
     return this.mul(Translated(tx, ty));
   }
 
   /// Scale this matrix.
-  ref NVGMatrix scale (in float sx, in float sy) {
+  ref NVGMatrix scale (in float sx, in float sy) return {
     version(aliced) pragma(inline, true);
     return this.mul(Scaled(sx, sy));
   }
 
   /// Rotate this matrix.
-  ref NVGMatrix rotate (in float a) {
+  ref NVGMatrix rotate (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(Rotated(a));
   }
 
   /// Skew this matrix by X axis.
-  ref NVGMatrix skewX (in float a) {
+  ref NVGMatrix skewX (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedX(a));
   }
 
   /// Skew this matrix by Y axis.
-  ref NVGMatrix skewY (in float a) {
+  ref NVGMatrix skewY (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedY(a));
   }
 
   /// Skew this matrix by both axes.
-  ref NVGMatrix skewY (in float ax, in float ay) {
+  ref NVGMatrix skewY (in float ax, in float ay) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedXY(ax, ay));
   }
@@ -2826,15 +2826,15 @@ public nothrow @trusted @nogc:
   float tx () const { pragma(inline, true); return mat.ptr[4]; } /// Returns x translation of this matrix.
   float ty () const { pragma(inline, true); return mat.ptr[5]; } /// Returns y translation of this matrix.
 
-  ref NVGMatrix scaleX (in float v) { pragma(inline, true); return scaleRotateTransform(v, scaleY, rotation, tx, ty); } /// Sets x scaling of this matrix.
-  ref NVGMatrix scaleY (in float v) { pragma(inline, true); return scaleRotateTransform(scaleX, v, rotation, tx, ty); } /// Sets y scaling of this matrix.
-  ref NVGMatrix rotation (in float v) { pragma(inline, true); return scaleRotateTransform(scaleX, scaleY, v, tx, ty); } /// Sets rotation of this matrix.
-  ref NVGMatrix tx (in float v) { pragma(inline, true); mat.ptr[4] = v; return this; } /// Sets x translation of this matrix.
-  ref NVGMatrix ty (in float v) { pragma(inline, true); mat.ptr[5] = v; return this; } /// Sets y translation of this matrix.
+  ref NVGMatrix scaleX (in float v) return { pragma(inline, true); return scaleRotateTransform(v, scaleY, rotation, tx, ty); } /// Sets x scaling of this matrix.
+  ref NVGMatrix scaleY (in float v) return { pragma(inline, true); return scaleRotateTransform(scaleX, v, rotation, tx, ty); } /// Sets y scaling of this matrix.
+  ref NVGMatrix rotation (in float v) return { pragma(inline, true); return scaleRotateTransform(scaleX, scaleY, v, tx, ty); } /// Sets rotation of this matrix.
+  ref NVGMatrix tx (in float v) return { pragma(inline, true); mat.ptr[4] = v; return this; } /// Sets x translation of this matrix.
+  ref NVGMatrix ty (in float v) return { pragma(inline, true); mat.ptr[5] = v; return this; } /// Sets y translation of this matrix.
 
   /// Utility function to be used in `setXXX()`.
   /// This is the same as doing: `mat.identity.rotate(a).scale(xs, ys).translate(tx, ty)`, only faster
-  ref NVGMatrix scaleRotateTransform (in float xscale, in float yscale, in float a, in float tx, in float ty) {
+  ref NVGMatrix scaleRotateTransform (in float xscale, in float yscale, in float a, in float tx, in float ty) return {
     immutable float cs = nvg__cosf(a), sn = nvg__sinf(a);
     mat.ptr[0] = xscale*cs; mat.ptr[1] = yscale*sn;
     mat.ptr[2] = xscale*-sn; mat.ptr[3] = yscale*cs;
@@ -2843,7 +2843,7 @@ public nothrow @trusted @nogc:
   }
 
   /// This is the same as doing: `mat.identity.rotate(a).translate(tx, ty)`, only faster
-  ref NVGMatrix rotateTransform (in float a, in float tx, in float ty) {
+  ref NVGMatrix rotateTransform (in float a, in float tx, in float ty) return {
     immutable float cs = nvg__cosf(a), sn = nvg__sinf(a);
     mat.ptr[0] = cs; mat.ptr[1] = sn;
     mat.ptr[2] = -sn; mat.ptr[3] = cs;
