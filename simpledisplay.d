@@ -5482,7 +5482,7 @@ version(without_opengl) {
 			}
 			}
 
-			mixin DynamicLoad!(GLX, "GLX") glx;
+			mixin DynamicLoad!(GLX, "GLX", true) glx;
 			shared static this() {
 				glx.loadDynamicLibrary();
 			}
@@ -8556,6 +8556,7 @@ version(Windows) {
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
+					if(!openGlLibrariesSuccessfullyLoaded) throw new Exception("OpenGL libraries did not load");
 					static if (SdpyIsUsingIVGLBinds) {if (glbindGetProcAddress("glHint") is null) assert(0, "GL: error loading OpenGL"); } // loads all necessary functions
 					static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 					ghDC = hdc;
@@ -10165,6 +10166,7 @@ version(X11) {
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
+			version(without_opengl) {} else if(opengl == OpenGlOptions.yes && !openGlLibrariesSuccessfullyLoaded) throw new Exception("OpenGL libraries did not load");
 			display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
 
@@ -13626,7 +13628,7 @@ extern(System) nothrow @nogc {
 		void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
 			/*GLsizei*/int width, /*GLsizei*/int height,
 			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
-		version(X11)
+		version(linux)
 		void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
 			/*GLsizei*/int width, /*GLsizei*/int height,
 			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
@@ -13749,11 +13751,11 @@ extern(System) nothrow @nogc {
 version(without_opengl) {} else {
 static if(!SdpyIsUsingIVGLBinds) {
 	version(Windows) {
-		mixin DynamicLoad!(GL, "opengl32") gl;
-		mixin DynamicLoad!(GLU, "glu32") glu;
+		mixin DynamicLoad!(GL, "opengl32", true) gl;
+		mixin DynamicLoad!(GLU, "glu32", true) glu;
 	} else {
-		mixin DynamicLoad!(GL, "GL") gl;
-		mixin DynamicLoad!(GLU, "GLU") glu;
+		mixin DynamicLoad!(GL, "GL", true) gl;
+		mixin DynamicLoad!(GLU, "GLU", true) glu;
 	}
 
 	shared static this() {
@@ -14984,8 +14986,10 @@ class NotYetImplementedException : Exception {
 
 ///
 __gshared bool librariesSuccessfullyLoaded = true;
+///
+__gshared bool openGlLibrariesSuccessfullyLoaded = true;
 
-private mixin template DynamicLoad(Iface, string library) {
+private mixin template DynamicLoad(Iface, string library, bool openGLRelated = false) {
         static foreach(name; __traits(derivedMembers, Iface))
                 mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
@@ -14994,7 +14998,13 @@ private mixin template DynamicLoad(Iface, string library) {
         void loadDynamicLibrary() {
                 version(Posix) {
                         import core.sys.posix.dlfcn;
-                        libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+			version(OSX) {
+				if(!openGLRelated)
+                        		libHandle = dlopen("/usr/X11/lib/lib" ~ library ~ ".dylib", RTLD_NOW);
+				else
+                        		libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
+			} else
+                        	libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
 
 			static void* loadsym(void* l, const char* name) {
 				import core.stdc.stdlib;
@@ -15013,11 +15023,14 @@ private mixin template DynamicLoad(Iface, string library) {
 			}
                 }
                 if(libHandle is null) {
-			librariesSuccessfullyLoaded = false;
+			if(openGLRelated)
+				openGlLibrariesSuccessfullyLoaded = false;
+			else
+				librariesSuccessfullyLoaded = false;
                         //throw new Exception("load failure of library " ~ library);
 		}
                 foreach(name; __traits(derivedMembers, Iface)) {
-                        alias tmp = mixin(name);
+                        mixin("alias tmp = " ~ name ~ ";");
                         tmp = cast(typeof(tmp)) loadsym(libHandle, name);
                         if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from " ~ library);
                 }
