@@ -1123,11 +1123,13 @@ struct Terminal {
 		}
 
 		if(!usingDirectEmulator) {
-			version(Posix)
+			version(Posix) {
 				posixInitialize(type, 0, 1, null);
-			else
+				return;
+			} else {
 				throw new Exception("Total wtf - are you on a windows system without a gui?!?");
-			return;
+			}
+			assert(0);
 		}
 
 		tcaps = uint.max; // all capabilities
