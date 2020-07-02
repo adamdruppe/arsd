@@ -1,5 +1,6 @@
 // https://dpaste.dzfl.pl/7a77355acaec
 
+
 // on Mac with X11: -L-L/usr/X11/lib 
 
 /*
@@ -10478,6 +10479,8 @@ version(X11) {
 			// xshm is our shortcut for local connections
 			if(Image.impl.xshmAvailable || forceIncludeMouseMotion)
 				mask |= EventMask.PointerMotionMask;
+			else
+				mask |= EventMask.ButtonMotionMask;
 
 			XSelectInput(display, window, mask);
 		}
