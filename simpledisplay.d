@@ -8071,11 +8071,16 @@ version(Windows) {
 				auto windowHdc = GetDC(hwnd);
 
 				auto buffer = sw.impl.buffer;
-				hdc = CreateCompatibleDC(windowHdc);
+				if(buffer is null) {
+					hdc = windowHdc;
+					windowDc = true;
+				} else {
+					hdc = CreateCompatibleDC(windowHdc);
 
-				ReleaseDC(hwnd, windowHdc);
+					ReleaseDC(hwnd, windowHdc);
 
-				oldBmp = SelectObject(hdc, buffer);
+					oldBmp = SelectObject(hdc, buffer);
+				}
 			} else {
 				// drawing on something else, draw directly
 				hdc = CreateCompatibleDC(null);
@@ -8153,12 +8158,16 @@ version(Windows) {
 
 			SelectObject(hdc, oldBmp);
 
-			DeleteDC(hdc);
+			if(windowDc)
+				ReleaseDC(hwnd, hdc);
+			else
+				DeleteDC(hdc);
 
 			if(window.paintingFinishedDg !is null)
 				window.paintingFinishedDg();
 		}
 
+		bool windowDc;
 		HPEN originalPen;
 		HPEN currentPen;
 
