@@ -1,4 +1,7 @@
 // Copyright 2013-2020, Adam D. Ruppe.
+
+// FIXME: eaders are supposed to be case insensitive. ugh.
+
 /++
 	This is version 2 of my http/1.1 client implementation.
 	
@@ -193,6 +196,9 @@ struct HttpResponse {
 
 	ubyte[] content; /// The raw content returned in the response body.
 	string contentText; /// [content], but casted to string (for convenience)
+
+	alias responseText = contentText; // just cuz I do this so often.
+	//alias body = content;
 
 	/++
 		returns `new Document(this.contentText)`. Requires [arsd.dom].
@@ -1381,7 +1387,7 @@ class HttpRequest {
 						static bool first = true;
 						//version(DigitalMars) if(!first) asm { int 3; }
 						populateFromInfo(Uri(responseData.location), HttpVerb.GET);
-						import std.stdio; writeln("redirected to ", responseData.location);
+						//import std.stdio; writeln("redirected to ", responseData.location);
 						first = false;
 						responseData = HttpResponse.init;
 						headerReadingState = HeaderReadingState.init;

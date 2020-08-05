@@ -6180,7 +6180,12 @@ version(TerminalDirectToEmulator) {
 			@tip("Saves the currently visible content to a file")
 			void Save() {
 				getSaveFileName((string name) {
-					tew.terminalEmulator.writeScrollbackToFile(name);
+					if(name.length) {
+						try
+							tew.terminalEmulator.writeScrollbackToFile(name);
+						catch(Exception e)
+							messageBox("Save failed: " ~ e.msg);
+					}
 				});
 			}
 
@@ -6592,6 +6597,18 @@ version(TerminalDirectToEmulator) {
 			});
 
 			widget.addEventListener("keydown", (Event ev) {
+
+				if(ev.key == Key.C && (ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
+					// ctrl+c is cancel so ctrl+shift+c ends up doing copy.
+					copyToClipboard(getSelectedText());
+					skipNextChar = true;
+					return;
+				}
+				if(ev.key == Key.Insert && (ev.state & ModifierState.ctrl)) {
+					copyToClipboard(getSelectedText());
+					return;
+				}
+
 				static string magic() {
 					string code;
 					foreach(member; __traits(allMembers, TerminalKey))

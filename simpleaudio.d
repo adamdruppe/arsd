@@ -1996,7 +1996,7 @@ extern(C):
 	private void alsa_message_silencer (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...) {}
 	//k8: ALSAlib loves to trash stderr; shut it up
 	void silence_alsa_messages () { snd_lib_error_set_handler(&alsa_message_silencer); }
-	shared static this () { silence_alsa_messages(); }
+	extern(D) shared static this () { silence_alsa_messages(); }
 
 	// raw midi
 

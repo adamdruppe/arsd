@@ -6104,8 +6104,9 @@ class ImageBox : Widget {
 	}
 
 	private void updateSprite() {
-		if(sprite is null && this.parentWindow && this.parentWindow.win)
+		if(sprite is null && this.parentWindow && this.parentWindow.win) {
 			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+		}
 	}
 
 	override void paint(WidgetPainter painter) {

@@ -1,6 +1,8 @@
 // FIXME: if an exception is thrown, we shouldn't necessarily cache...
 // FIXME: there's some annoying duplication of code in the various versioned mains
 
+// add the Range header in there too. should return 206
+
 // FIXME: cgi per-request arena allocator
 
 // i need to add a bunch of type templates for validations... mayne @NotNull or NotNull!

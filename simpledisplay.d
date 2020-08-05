@@ -1,5 +1,9 @@
 // https://dpaste.dzfl.pl/7a77355acaec
 
+// https://freedesktop.org/wiki/Specifications/XDND/
+
+// https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
+
 
 // on Mac with X11: -L-L/usr/X11/lib 
 
@@ -4524,6 +4528,7 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 			throw new Exception("OpenClipboard");
 		scope(exit)
 			CloseClipboard();
+		// see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getpriorityclipboardformat
 		if(auto dataHandle = GetClipboardData(CF_UNICODETEXT)) {
 
 			if(auto data = cast(wchar*) GlobalLock(dataHandle)) {
@@ -4544,6 +4549,41 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 					s ~= ch;
 				}
 				receiver(s);
+			}
+		}
+	} else version(X11) {
+		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
+	} else static assert(0);
+}
+
+// FIXME: a clipboard listener might be cool btw
+
+/++
+	this does a delegate because it is actually an async call on X...
+	the receiver may never be called if the clipboard is empty or unavailable
+	gets image from the clipboard
+
+	templated because it introduces an optional dependency on arsd.bmp
++/
+void getClipboardImage()(SimpleWindow clipboardOwner, void delegate(MemoryImage) receiver) {
+	version(Windows) {
+		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
+		if(OpenClipboard(hwndOwner) == 0)
+			throw new Exception("OpenClipboard");
+		scope(exit)
+			CloseClipboard();
+		if(auto dataHandle = GetClipboardData(CF_DIBV5)) {
+			if(auto data = cast(ubyte*) GlobalLock(dataHandle)) {
+				scope(exit)
+					GlobalUnlock(dataHandle);
+
+				auto len = GlobalSize(dataHandle);
+
+				import arsd.bmp;
+				auto img = readBmp(data[0 .. len], false);
+				receiver(img);
 			}
 		}
 	} else version(X11) {
@@ -4804,7 +4844,85 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 	} else static assert(0);
 }
 
-// FIXME: functions for doing images would be nice too - CF_DIB and whatever it is on X would be ok if we took the MemoryImage from color.d, or an Image from here. hell it might even be a variadic template that sets all the formats in one call. that might be cool.
+void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
+	assert(clipboardOwner !is null);
+	version(Windows) {
+		if(OpenClipboard(clipboardOwner.impl.hwnd) == 0)
+			throw new Exception("OpenClipboard");
+		scope(exit)
+			CloseClipboard();
+		EmptyClipboard();
+
+
+		import arsd.bmp;
+		ubyte[] mdata;
+		mdata.reserve(img.width * img.height);
+		void sink(ubyte b) {
+			mdata ~= b;
+		}
+		writeBmpIndirect(img, &sink, false);
+
+		auto handle = GlobalAlloc(GMEM_MOVEABLE, mdata.length);
+		if(handle is null) throw new Exception("GlobalAlloc");
+		if(auto data = cast(ubyte*) GlobalLock(handle)) {
+			auto slice = data[0 .. mdata.length];
+			scope(failure)
+				GlobalUnlock(handle);
+
+			slice[] = mdata[];
+
+			GlobalUnlock(handle);
+			SetClipboardData(CF_DIB, handle);
+		}
+	} else version(X11) {
+		static class X11SetSelectionHandler_Image : X11SetSelectionHandler {
+			mixin X11SetSelectionHandler_Basics;
+			private const(ubyte)[] mdata;
+			private const(ubyte)[] mdata_original;
+			this(MemoryImage img) {
+				import arsd.bmp;
+
+				mdata.reserve(img.width * img.height);
+				void sink(ubyte b) {
+					mdata ~= b;
+				}
+				writeBmpIndirect(img, &sink, true);
+
+				mdata_original = mdata;
+			}
+
+			Atom[] availableFormats() {
+				auto display = XDisplayConnection.get;
+				return [
+					GetAtom!"image/bmp"(display),
+					GetAtom!"TARGETS"(display)
+				];
+			}
+
+			ubyte[] getData(Atom format, return scope ubyte[] data) {
+				if(mdata.length < data.length) {
+					data[0 .. mdata.length] = mdata[];
+					auto ret = data[0 .. mdata.length];
+					mdata = mdata[$..$];
+					return ret;
+				} else {
+					data[] = mdata[0 .. data.length];
+					mdata = mdata[data.length .. $];
+					return data[];
+				}
+			}
+
+			void done() {
+				mdata = mdata_original;
+			}
+		}
+
+		setX11Selection!"CLIPBOARD"(clipboardOwner, new X11SetSelectionHandler_Image(img));
+	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
+	} else static assert(0);
+}
+
 
 version(X11) {
 	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
@@ -4842,16 +4960,55 @@ version(X11) {
 		setX11Selection!"SECONDARY"(window, text);
 	}
 
-	/// The `after` delegate is called after a client requests the UTF8_STRING thing. it is a mega-hack right now!
-	void setX11Selection(string atomName)(SimpleWindow window, string text, void delegate() after = null) {
-		assert(window !is null);
+	interface X11SetSelectionHandler {
+		// should include TARGETS right now
+		Atom[] availableFormats();
+		// Return the slice of data you filled, empty slice if done.
+		// this is to support the incremental thing
+		ubyte[] getData(Atom format, return scope ubyte[] data);
 
-		auto display = XDisplayConnection.get();
-		static if (atomName == "PRIMARY") Atom a = XA_PRIMARY;
-		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
-		else Atom a = GetAtom!atomName(display);
-		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
-		window.impl.setSelectionHandler = (XEvent ev) {
+		void done();
+
+		void handleRequest(XEvent);
+
+		bool matchesIncr(Window, Atom);
+		void sendMoreIncr(XPropertyEvent*);
+	}
+
+	mixin template X11SetSelectionHandler_Basics() {
+		Window incrWindow;
+		Atom incrAtom;
+		Atom selectionAtom;
+		Atom formatAtom;
+		ubyte[] toSend;
+		bool matchesIncr(Window w, Atom a) {
+			return incrAtom && incrAtom == a && w == incrWindow;
+		}
+		void sendMoreIncr(XPropertyEvent* event) {
+			auto display = XDisplayConnection.get;
+
+			XChangeProperty (display,
+				incrWindow,
+				incrAtom,
+				formatAtom,
+				8 /* bits */, PropModeReplace,
+				toSend.ptr, cast(int) toSend.length);
+
+			if(toSend.length != 0) {
+				toSend = this.getData(formatAtom, toSend[]);
+			} else {
+				this.done();
+				incrWindow = None;
+				incrAtom = None;
+				selectionAtom = None;
+				formatAtom = None;
+				toSend = null;
+			}
+		}
+		void handleRequest(XEvent ev) {
+
+			auto display = XDisplayConnection.get;
+
 			XSelectionRequestEvent* event = &ev.xselectionrequest;
 			XSelectionEvent selectionEvent;
 			selectionEvent.type = EventType.SelectionNotify;
@@ -4861,46 +5018,163 @@ version(X11) {
 			selectionEvent.time = event.time;
 			selectionEvent.target = event.target;
 
-			if(event.property == None)
+			if(event.property == None) {
 				selectionEvent.property = event.target;
-			if(event.target == GetAtom!"TARGETS"(display)) {
-				/* respond with the supported types */
-				Atom[3] tlist;// = [XA_UTF8, XA_STRING, XA_TARGETS];
-				tlist[0] = GetAtom!"UTF8_STRING"(display);
-				tlist[1] = XA_STRING;
-				tlist[2] = GetAtom!"TARGETS"(display);
-				XChangeProperty(display, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, cast(void*)tlist.ptr, 3);
-				selectionEvent.property = event.property;
-			} else if(event.target == XA_STRING) {
-				selectionEvent.property = event.property;
-				XChangeProperty (display,
-					selectionEvent.requestor,
-					selectionEvent.property,
-					event.target,
-					8 /* bits */, 0 /* PropModeReplace */,
-					text.ptr, cast(int) text.length);
-			} else if(event.target == GetAtom!"UTF8_STRING"(display)) {
-				selectionEvent.property = event.property;
-				XChangeProperty (display,
-					selectionEvent.requestor,
-					selectionEvent.property,
-					event.target,
-					8 /* bits */, 0 /* PropModeReplace */,
-					text.ptr, cast(int) text.length);
 
-				if(after)
-					after();
+				XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+			} if(event.target == GetAtom!"TARGETS"(display)) {
+				/* respond with the supported types */
+				auto tlist = this.availableFormats();
+				XChangeProperty(display, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, cast(void*)tlist.ptr, cast(int) tlist.length);
+				selectionEvent.property = event.property;
+
+				XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
 			} else {
-				selectionEvent.property = None; // I don't know how to handle this type...
+				auto buffer = new ubyte[](1024 * 64);
+				auto toSend = this.getData(event.target, buffer[]);
+
+				if(toSend.length < 32 * 1024) {
+					// small enough to send directly...
+					selectionEvent.property = event.property;
+					XChangeProperty (display,
+						selectionEvent.requestor,
+						selectionEvent.property,
+						event.target,
+						8 /* bits */, 0 /* PropModeReplace */,
+						toSend.ptr, cast(int) toSend.length);
+
+					XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+				} else {
+					// large, let's send incrementally
+					arch_ulong l = toSend.length;
+
+					// if I wanted other events from this window don't want to clear that out....
+					XWindowAttributes xwa;
+					XGetWindowAttributes(display, selectionEvent.requestor, &xwa);
+
+					XSelectInput(display, selectionEvent.requestor, cast(EventMask) (xwa.your_event_mask | EventMask.PropertyChangeMask));
+
+					incrWindow = event.requestor;
+					incrAtom = event.property;
+					formatAtom = event.target;
+					selectionAtom = event.selection;
+					this.toSend = toSend;
+
+					selectionEvent.property = event.property;
+					XChangeProperty (display,
+						selectionEvent.requestor,
+						selectionEvent.property,
+						GetAtom!"INCR"(display),
+						32 /* bits */, PropModeReplace,
+						&l, 1);
+
+					XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+					XFlush(display);
+				}
+				//if(after)
+					//after();
 			}
 
+			/+
+			// FIXME
+			if(unsupported) {
+				selectionEvent.property = None; // I don't know how to handle this type...
 			XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
-		};
+			}
+			+/
+		}
+	}
+
+	class X11SetSelectionHandler_Text : X11SetSelectionHandler {
+		mixin X11SetSelectionHandler_Basics;
+		private const(ubyte)[] text;
+		private const(ubyte)[] text_original;
+		this(string text) {
+			this.text = cast(const ubyte[]) text;
+			this.text_original = this.text;
+		}
+		Atom[] availableFormats() {
+			auto display = XDisplayConnection.get;
+			return [
+				GetAtom!"UTF8_STRING"(display),
+				XA_STRING,
+				GetAtom!"TARGETS"(display)
+			];
+		}
+
+		ubyte[] getData(Atom format, return scope ubyte[] data) {
+			if(text.length < data.length) {
+				data[0 .. text.length] = text[];
+				return data[0 .. text.length];
+			} else {
+				data[] = text[];
+				text = text[data.length .. $];
+				return data[];
+			}
+		}
+
+		void done() {
+			text = text_original;
+		}
+	}
+
+	/// The `after` delegate is called after a client requests the UTF8_STRING thing. it is a mega-hack right now! (note to self july 2020... why did i do that?!)
+	void setX11Selection(string atomName)(SimpleWindow window, string text, void delegate() after = null) {
+		setX11Selection!atomName(window, new X11SetSelectionHandler_Text(text), after);
+	}
+
+	void setX11Selection(string atomName)(SimpleWindow window, X11SetSelectionHandler data, void delegate() after = null) {
+		assert(window !is null);
+
+		auto display = XDisplayConnection.get();
+		static if (atomName == "PRIMARY") Atom a = XA_PRIMARY;
+		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
+		else Atom a = GetAtom!atomName(display);
+
+		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
+
+		window.impl.setSelectionHandlers[a] = data;
 	}
 
 	///
 	void getPrimarySelection(SimpleWindow window, void delegate(in char[]) handler) {
 		getX11Selection!"PRIMARY"(window, handler);
+	}
+
+	// added July 28, 2020
+	// undocumented as experimental tho
+	interface X11GetSelectionHandler {
+		void handleData(Atom target, in ubyte[] data);
+		Atom findBestFormat(Atom[] answer);
+
+		void prepareIncremental(Window, Atom);
+		bool matchesIncr(Window, Atom);
+		void handleIncrData(Atom, in ubyte[] data);
+	}
+
+	mixin template X11GetSelectionHandler_Basics() {
+		Window incrWindow;
+		Atom incrAtom;
+
+		void prepareIncremental(Window w, Atom a) {
+			incrWindow = w;
+			incrAtom = a;
+		}
+		bool matchesIncr(Window w, Atom a) {
+			return incrWindow == w && incrAtom == a;
+		}
+
+		Atom incrFormatAtom;
+		ubyte[] incrData;
+		void handleIncrData(Atom format, in ubyte[] data) {
+			incrFormatAtom = format;
+
+			if(data.length)
+				incrData ~= data;
+			else
+				handleData(incrFormatAtom, incrData);
+
+		}
 	}
 
 	///
@@ -4910,13 +5184,86 @@ version(X11) {
 		auto display = XDisplayConnection.get();
 		auto atom = GetAtom!atomName(display);
 
-		window.impl.getSelectionHandler = handler;
+		static class X11GetSelectionHandler_Text : X11GetSelectionHandler {
+			this(void delegate(in char[]) handler) {
+				this.handler = handler;
+			}
+
+			mixin X11GetSelectionHandler_Basics;
+
+			void delegate(in char[]) handler;
+
+			void handleData(Atom target, in ubyte[] data) {
+				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING)
+					handler(cast(const char[]) data);
+			}
+
+			Atom findBestFormat(Atom[] answer) {
+				Atom best = None;
+				foreach(option; answer) {
+					if(option == GetAtom!"UTF8_STRING"(XDisplayConnection.get)) {
+						best = option;
+						break;
+					} else if(option == XA_STRING) {
+						best = option;
+					}
+				}
+				return best;
+			}
+		}
+
+		window.impl.getSelectionHandler = new X11GetSelectionHandler_Text(handler);
 
 		auto target = GetAtom!"TARGETS"(display);
 
 		// SDD_DATA is "simpledisplay.d data"
 		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
 	}
+
+	/// Gets the image on the clipboard, if there is one. Added July 2020.
+	void getX11Selection(string atomName)(SimpleWindow window, void delegate(MemoryImage) handler) {
+		assert(window !is null);
+
+		auto display = XDisplayConnection.get();
+		auto atom = GetAtom!atomName(display);
+
+		static class X11GetSelectionHandler_Image : X11GetSelectionHandler {
+			this(void delegate(MemoryImage) handler) {
+				this.handler = handler;
+			}
+
+			mixin X11GetSelectionHandler_Basics;
+
+			void delegate(MemoryImage) handler;
+
+			void handleData(Atom target, in ubyte[] data) {
+				if(target == GetAtom!"image/bmp"(XDisplayConnection.get)) {
+					import arsd.bmp;
+					handler(readBmp(data));
+				}
+			}
+
+			Atom findBestFormat(Atom[] answer) {
+				Atom best = None;
+				foreach(option; answer) {
+					if(option == GetAtom!"image/bmp"(XDisplayConnection.get)) {
+						best = option;
+					}
+				}
+				return best;
+			}
+
+		}
+
+
+		window.impl.getSelectionHandler = new X11GetSelectionHandler_Image(handler);
+
+		auto target = GetAtom!"TARGETS"(display);
+
+		// SDD_DATA is "simpledisplay.d data"
+		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
+	}
+
 
 	///
 	void[] getX11PropertyData(Window window, Atom property, Atom type = AnyPropertyType) {
@@ -9982,8 +10329,8 @@ version(X11) {
 		int cursorSequenceNumber = 0;
 		int warpEventCount = 0; // number of mouse movement events to eat
 
-		void delegate(XEvent) setSelectionHandler;
-		void delegate(in char[]) getSelectionHandler;
+		__gshared X11SetSelectionHandler[Atom] setSelectionHandlers;
+		X11GetSelectionHandler getSelectionHandler;
 
 		version(without_opengl) {} else
 		GLXContext glc;
@@ -10171,11 +10518,12 @@ version(X11) {
 		}
 
 		void setOpacity (uint opacity) {
+			arch_ulong o = opacity;
 			if (opacity == uint.max)
 				XDeleteProperty(display, window, XInternAtom(display, "_NET_WM_WINDOW_OPACITY".ptr, false));
 			else
 				XChangeProperty(display, window, XInternAtom(display, "_NET_WM_WINDOW_OPACITY".ptr, false),
-					XA_CARDINAL, 32, PropModeReplace, &opacity, 1);
+					XA_CARDINAL, 32, PropModeReplace, &o, 1);
 		}
 
 		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
@@ -10535,6 +10883,10 @@ version(X11) {
 		*/
 
 		void closeWindow() {
+			// I can't close this or a child window closing will
+			// break events for everyone. So I'm just leaking it right
+			// now and that is probably perfectly fine...
+			version(none)
 			if (customEventFDRead != -1) {
 				import core.sys.posix.unistd : close;
 				auto same = customEventFDRead == customEventFDWrite;
@@ -10682,19 +11034,61 @@ version(X11) {
 
 		switch(e.type) {
 		  case EventType.SelectionClear:
-		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping)
-				{ /* FIXME??????? */ }
+		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping) {
+				// FIXME so it is supposed to finish any in progress transfers... but idk...
+				//import std.stdio; writeln("SelectionClear");
+				SimpleWindow.impl.setSelectionHandlers.remove(e.xselectionclear.selection);
+			}
 		  break;
 		  case EventType.SelectionRequest:
 		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
-			if(win.setSelectionHandler !is null) {
+			if(auto ssh = e.xselectionrequest.selection in SimpleWindow.impl.setSelectionHandlers) {
+				// import std.stdio; printf("SelectionRequest %s\n", XGetAtomName(e.xselectionrequest.display, e.xselectionrequest.target));
 				XUnlockDisplay(display);
 				scope(exit) XLockDisplay(display);
-				win.setSelectionHandler(e);
+				(*ssh).handleRequest(e);
 			}
 		  break;
 		  case EventType.PropertyNotify:
+			// import std.stdio; printf("PropertyNotify %s %d\n", XGetAtomName(e.xproperty.display, e.xproperty.atom), e.xproperty.state);
 
+			foreach(ssh; SimpleWindow.impl.setSelectionHandlers) {
+				if(ssh.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyDelete)
+					ssh.sendMoreIncr(&e.xproperty);
+			}
+
+
+		  	if(auto win = e.xproperty.window in SimpleWindow.nativeMapping)
+		  	if(win.getSelectionHandler !is null) {
+				if(win.getSelectionHandler.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyNewValue) {
+					Atom target;
+					int format;
+					arch_ulong bytesafter, length;
+					void* value;
+
+					ubyte[] s;
+					Atom targetToKeep;
+
+					XGetWindowProperty(
+						e.xproperty.display,
+						e.xproperty.window,
+						e.xproperty.atom,
+						0,
+						100000 /* length */,
+						true, /* erase it to signal we got it and want more */
+						0 /*AnyPropertyType*/,
+						&target, &format, &length, &bytesafter, &value);
+
+					if(!targetToKeep)
+						targetToKeep = target;
+
+					auto id = (cast(ubyte*) value)[0 .. length];
+
+					win.getSelectionHandler.handleIncrData(targetToKeep, id);
+
+					XFree(value);
+				}
+			}
 		  break;
 		  case EventType.SelectionNotify:
 		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
@@ -10703,7 +11097,7 @@ version(X11) {
 				if(e.xselection.property == None) { // || e.xselection.property == GetAtom!("NULL", true)(e.xselection.display)) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
-					win.getSelectionHandler(null);
+					win.getSelectionHandler.handleData(None, null);
 				} else {
 					Atom target;
 					int format;
@@ -10731,15 +11125,7 @@ version(X11) {
 							// we can handle, if available
 
 							Atom[] answer = (cast(Atom*) value)[0 .. length];
-							Atom best = None;
-							foreach(option; answer) {
-								if(option == GetAtom!"UTF8_STRING"(display)) {
-									best = option;
-									break;
-								} else if(option == XA_STRING) {
-									best = option;
-								}
-							}
+							Atom best = win.getSelectionHandler.findBestFormat(answer);
 
 							//writeln("got ", answer);
 
@@ -10747,44 +11133,20 @@ version(X11) {
 								// actually request the best format
 								XConvertSelection(e.xselection.display, e.xselection.selection, best, GetAtom!("SDD_DATA", true)(display), e.xselection.requestor, 0 /*CurrentTime*/);
 							}
-						} else if(target == GetAtom!"UTF8_STRING"(display) || target == XA_STRING) {
-							win.getSelectionHandler((cast(char[]) value[0 .. length]).idup);
 						} else if(target == GetAtom!"INCR"(display)) {
 							// incremental
 
-							//sdpyGettingPaste = true; // FIXME: should prolly be separate for the different selections
+							win.getSelectionHandler.prepareIncremental(e.xselection.requestor, e.xselection.property);
 
-							// FIXME: handle other events while it goes so app doesn't lock up with big pastes
-							// can also be optimized if it chunks to the api somehow
-
-							char[] s;
-
-							do {
-
-								XEvent subevent;
-								do {
-									XMaskEvent(display, EventMask.PropertyChangeMask, &subevent);
-								} while(subevent.type != EventType.PropertyNotify || subevent.xproperty.atom != e.xselection.property || subevent.xproperty.state != PropertyNotification.PropertyNewValue);
-
-								void* subvalue;
-								XGetWindowProperty(
-									e.xselection.display,
-									e.xselection.requestor,
-									e.xselection.property,
-									0,
-									100000 /* length */,
-									true, /* erase it to signal we got it and want more */
-									0 /*AnyPropertyType*/,
-									&target, &format, &length, &bytesafter, &subvalue);
-
-								s ~= (cast(char*) subvalue)[0 .. length];
-
-								XFree(subvalue);
-							} while(length > 0);
-
-							win.getSelectionHandler(s);
+							// signal the sending program that we see
+							// the incr and are ready to receive more.
+							XDeleteProperty(
+								e.xselection.display,
+								e.xselection.requestor,
+								e.xselection.property);
 						} else {
-							// unsupported type
+							// unsupported type... maybe, forward
+							win.getSelectionHandler.handleData(target, cast(ubyte[]) value[0 .. length]);
 						}
 					}
 					XFree(value);
