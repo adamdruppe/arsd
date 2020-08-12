@@ -5655,7 +5655,9 @@ version (X11) {
 
 		///
 		void pressKey(Key key, bool pressed, int delay = 0) {
-			XTestFakeKeyEvent(XDisplayConnection.get, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
+			auto screen = XDisplayConnection.get();
+			XTestFakeKeyEvent(screen, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
+			XFlush(screen);
 		}
 
 		///
