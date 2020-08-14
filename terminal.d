@@ -4832,7 +4832,7 @@ class LineGetter {
 				b = readOne(); // no big deal, just ignore and continue
 
 			nextNumberY:
-			if(b >= '0' || b <= '9') {
+			if(b >= '0' && b <= '9') {
 				y *= 10;
 				y += b - '0';
 			} else goto nextEscape;
@@ -4841,14 +4841,18 @@ class LineGetter {
 			if(b != ';')
 				goto nextNumberY;
 
-			nextNumberX:
 			b = readOne();
-			if(b >= '0' || b <= '9') {
+			nextNumberX:
+			if(b >= '0' && b <= '9') {
 				x *= 10;
 				x += b - '0';
 			} else goto nextEscape;
 
 			b = readOne();
+			// another digit
+			if(b >= '0' && b <= '9')
+				goto nextNumberX;
+
 			if(b != 'R')
 				goto nextEscape; // it wasn't the right thing it after all
 
