@@ -27,7 +27,7 @@
 		":terminal": "*",
 		":ttf": "*",
 		":color_base": "*",
-		"svg":"*",
+		":svg":"*",
 		":database_base": "*"
 	},
 	"subPackages": [
