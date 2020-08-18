@@ -99,6 +99,7 @@
 				"arsd-official:color_base":"*",
 				"arsd-official:png":"*",
 				"arsd-official:bmp":"*",
+				"arsd-official:svg":"*",
 				"arsd-official:jpeg":"*"
 			},
 			"dflags": [

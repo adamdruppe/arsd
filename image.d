@@ -10,10 +10,34 @@ public import arsd.bmp;
 public import arsd.targa;
 public import arsd.pcx;
 public import arsd.dds;
+public import arsd.svg;
 
 import core.memory;
 
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
+
+MemoryImage readSvg(string filename) {
+	import std.file;
+	return readSvg(cast(const(ubyte)[]) readText(filename));
+}
+
+MemoryImage readSvg(const(ubyte)[] rawData) {
+    // Load
+    NSVG* image = nsvgParse(cast(const(char)[]) rawData);
+
+    if(image is null)
+    	return null;
+
+    int w = cast(int) image.width + 1;
+    int h = cast(int) image.height + 1;
+
+    NSVGrasterizer rast = nsvgCreateRasterizer();
+    auto img = new TrueColorImage(w, h);
+    rasterize(rast, image, 0, 0, 1, img.imageData.bytes.ptr, w, h, w*4);
+    image.kill();
+
+    return img;
+}
 
 
 private bool strEquCI (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
@@ -38,6 +62,7 @@ enum ImageFileFormat {
   Gif, /// we can't load it yet, but we can at least detect it
   Pcx, /// can load 8BPP and 24BPP pcx images
   Dds, /// can load ARGB8888, DXT1, DXT3, DXT5 dds images (without mipmaps)
+  Svg, /// will rasterize simple svg images
 }
 
 
@@ -59,6 +84,7 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
   if (strEquCI(ext, "tga")) return ImageFileFormat.Tga;
   if (strEquCI(ext, "pcx")) return ImageFileFormat.Pcx;
   if (strEquCI(ext, "dds")) return ImageFileFormat.Dds;
+  if (strEquCI(ext, "svg")) return ImageFileFormat.Svg;
   return ImageFileFormat.Unknown;
 }
 
@@ -206,6 +232,11 @@ public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
   }
   if (guessPcx()) return ImageFileFormat.Pcx;
 
+  // kinda lame svg detection but don't want to parse too much of it here
+  if (buf.length > 6 && buf.ptr[0] == '<') {
+      return ImageFileFormat.Svg;
+  }
+
   // dunno
   return ImageFileFormat.Unknown;
 }
@@ -242,6 +273,7 @@ public MemoryImage loadImageFromFile(T:const(char)[]) (T filename) {
       case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
       case ImageFileFormat.Tga: return loadTga(filename);
       case ImageFileFormat.Pcx: return loadPcx(filename);
+      case ImageFileFormat.Svg: static if (is(T == string)) return readSvg(filename); else return readSvg(filename.idup);
       case ImageFileFormat.Dds:
         static if (ArsdImageHasIVVFS) {
           auto fl = VFile(filename);
@@ -269,6 +301,7 @@ public MemoryImage loadImageFromMemory (const(void)[] membuf) {
     case ImageFileFormat.Gif: throw new Exception("arsd has no GIF loader yet");
     case ImageFileFormat.Tga: return loadTgaMem(membuf);
     case ImageFileFormat.Pcx: return loadPcxMem(membuf);
+    case ImageFileFormat.Svg: return readSvg(cast(const(ubyte)[]) membuf);
     case ImageFileFormat.Dds: return ddsLoadFromMemory(membuf);
   }
 }

@@ -2,6 +2,8 @@
 
 // FIXME: eaders are supposed to be case insensitive. ugh.
 
+// FIXME: need timeout controls
+
 /++
 	This is version 2 of my http/1.1 client implementation.
 	

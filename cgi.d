@@ -9169,6 +9169,8 @@ string contentTypeFromFileExtension(string filename) {
 			return "text/css";
 		if(filename.endsWith(".js"))
 			return "application/javascript";
+		if(filename.endsWith(".wasm"))
+			return "application/wasm";
 		if(filename.endsWith(".mp3"))
 			return "audio/mpeg";
 		return null;
