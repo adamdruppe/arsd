@@ -8400,6 +8400,9 @@ version(Windows) {
 				return DefWindowProc(hWnd, iMessage, wParam, lParam);
 			}
 		} catch (Exception e) {
+			//try {
+			//MessageBoxA(null, (e.toString() ~ "\0").ptr, "Exception caught in WndProc", 0);
+			//} catch(Exception e) {}
 			assert(false, "Exception caught in WndProc " ~ e.toString());
 		}
 	}
@@ -13944,7 +13947,7 @@ extern(System) nothrow @nogc {
 	static if (!SdpyIsUsingIVGLBinds) {
 
 	interface GL {
-	extern(System) @nogc nothrow {
+		extern(System) @nogc nothrow:
 
 		void glGetIntegerv(int, void*);
 		void glMatrixMode(int);
@@ -14050,31 +14053,78 @@ extern(System) nothrow @nogc {
 		}
 
 	}
+
+	interface GL3 {
+		extern(System) @nogc nothrow:
+
+		void glGenVertexArrays(GLsizei, GLuint*);
+		void glBindVertexArray(GLuint);
+		void glDeleteVertexArrays(GLsizei, const(GLuint)*);
+		void glGenerateMipmap(GLenum);
+		void glBufferSubData(GLenum, GLintptr, GLsizeiptr, const(GLvoid)*);
+		void glStencilMask(GLuint);
+		void glStencilFunc(GLenum, GLint, GLuint);
+		void glGetShaderInfoLog(GLuint, GLsizei, GLsizei*, GLchar*);
+		void glGetProgramInfoLog(GLuint, GLsizei, GLsizei*, GLchar*);
+		GLuint glCreateProgram();
+		GLuint glCreateShader(GLenum);
+		void glShaderSource(GLuint, GLsizei, const(GLchar*)*, const(GLint)*);
+		void glCompileShader(GLuint);
+		void glGetShaderiv(GLuint, GLenum, GLint*);
+		void glAttachShader(GLuint, GLuint);
+		void glBindAttribLocation(GLuint, GLuint, const(GLchar)*);
+		void glLinkProgram(GLuint);
+		void glGetProgramiv(GLuint, GLenum, GLint*);
+		void glDeleteProgram(GLuint);
+		void glDeleteShader(GLuint);
+		GLint glGetUniformLocation(GLuint, const(GLchar)*);
+		void glGenBuffers(GLsizei, GLuint*);
+		void glUniform4fv(GLint, GLsizei, const(GLfloat)*);
+		void glUniform4f(GLint, float, float, float, float);
+		void glColorMask(GLboolean, GLboolean, GLboolean, GLboolean);
+		void glStencilOpSeparate(GLenum, GLenum, GLenum, GLenum);
+		void glDrawArrays(GLenum, GLint, GLsizei);
+		void glStencilOp(GLenum, GLenum, GLenum);
+		void glUseProgram(GLuint);
+		void glCullFace(GLenum);
+		void glFrontFace(GLenum);
+		void glActiveTexture(GLenum);
+		void glBindBuffer(GLenum, GLuint);
+		void glBufferData(GLenum, GLsizeiptr, const(void)*, GLenum);
+		void glEnableVertexAttribArray(GLuint);
+		void glVertexAttribPointer(GLuint, GLint, GLenum, GLboolean, GLsizei, const(void)*);
+		void glUniform1i(GLint, GLint);
+		void glUniform2fv(GLint, GLsizei, const(GLfloat)*);
+		void glDisableVertexAttribArray(GLuint);
+		void glDeleteBuffers(GLsizei, const(GLuint)*);
+		void glBlendFuncSeparate(GLenum, GLenum, GLenum, GLenum);
+		void glLogicOp (GLenum opcode);
+		void glFramebufferTexture2D (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+		void glDeleteFramebuffers (GLsizei n, const(GLuint)* framebuffers);
+		void glGenFramebuffers (GLsizei n, GLuint* framebuffers);
+		GLenum glCheckFramebufferStatus (GLenum target);
+		void glBindFramebuffer (GLenum target, GLuint framebuffer);
 	}
 
 	interface GLU {
-	extern(System) @nogc nothrow {
+		extern(System) @nogc nothrow:
+
 		void gluLookAt(double, double, double, double, double, double, double, double, double);
 		void gluPerspective(double, double, double, double);
 
 		char* gluErrorString(uint);
 	}
-	}
 
 
 	enum GL_RED = 0x1903;
 	enum GL_ALPHA = 0x1906;
-	enum GL_UNPACK_ALIGNMENT = 0x0CF5;
 
 	enum uint GL_FRONT = 0x0404;
 
 	enum uint GL_BLEND = 0x0be2;
-	enum uint GL_SRC_ALPHA = 0x0302;
-	enum uint GL_ONE_MINUS_SRC_ALPHA = 0x0303;
 	enum uint GL_LEQUAL = 0x0203;
 
 
-	enum uint GL_UNSIGNED_BYTE = 0x1401;
 	enum uint GL_RGB = 0x1907;
 	enum uint GL_BGRA = 0x80e1;
 	enum uint GL_RGBA = 0x1908;
@@ -14122,6 +14172,113 @@ extern(System) nothrow @nogc {
 	enum int GL_QUADS = 7;
 	enum int GL_QUAD_STRIP = 8;
 	enum int GL_POLYGON = 9;
+
+	alias GLvoid = void;
+	alias GLboolean = ubyte;
+	alias GLuint = uint;
+	alias GLenum = uint;
+	alias GLchar = char;
+	alias GLsizei = int;
+	alias GLfloat = float;
+	alias GLintptr = size_t;
+	alias GLsizeiptr = ptrdiff_t;
+
+
+	enum uint GL_INVALID_ENUM = 0x0500;
+
+	enum uint GL_ZERO = 0;
+	enum uint GL_ONE = 1;
+
+	enum uint GL_BYTE = 0x1400;
+	enum uint GL_UNSIGNED_BYTE = 0x1401;
+	enum uint GL_SHORT = 0x1402;
+	enum uint GL_UNSIGNED_SHORT = 0x1403;
+	enum uint GL_INT = 0x1404;
+	enum uint GL_UNSIGNED_INT = 0x1405;
+	enum uint GL_FLOAT = 0x1406;
+	enum uint GL_2_BYTES = 0x1407;
+	enum uint GL_3_BYTES = 0x1408;
+	enum uint GL_4_BYTES = 0x1409;
+	enum uint GL_DOUBLE = 0x140A;
+
+	enum uint GL_STREAM_DRAW = 0x88E0;
+
+	enum uint GL_CCW = 0x0901;
+
+	enum uint GL_STENCIL_TEST = 0x0B90;
+	enum uint GL_SCISSOR_TEST = 0x0C11;
+
+	enum uint GL_EQUAL = 0x0202;
+	enum uint GL_NOTEQUAL = 0x0205;
+
+	enum uint GL_ALWAYS = 0x0207;
+	enum uint GL_KEEP = 0x1E00;
+
+	enum uint GL_INCR = 0x1E02;
+
+	enum uint GL_INCR_WRAP = 0x8507;
+	enum uint GL_DECR_WRAP = 0x8508;
+
+	enum uint GL_CULL_FACE = 0x0B44;
+	enum uint GL_BACK = 0x0405;
+
+	enum uint GL_FRAGMENT_SHADER = 0x8B30;
+	enum uint GL_VERTEX_SHADER = 0x8B31;
+
+	enum uint GL_COMPILE_STATUS = 0x8B81;
+	enum uint GL_LINK_STATUS = 0x8B82;
+
+	enum uint GL_ELEMENT_ARRAY_BUFFER = 0x8893;
+
+	enum uint GL_STATIC_DRAW = 0x88E4;
+
+	enum uint GL_UNPACK_ALIGNMENT = 0x0CF5;
+	enum uint GL_UNPACK_ROW_LENGTH = 0x0CF2;
+	enum uint GL_UNPACK_SKIP_PIXELS = 0x0CF4;
+	enum uint GL_UNPACK_SKIP_ROWS = 0x0CF3;
+
+	enum uint GL_GENERATE_MIPMAP = 0x8191;
+	enum uint GL_LINEAR_MIPMAP_LINEAR = 0x2703;
+
+	enum uint GL_TEXTURE0 = 0x84C0U;
+	enum uint GL_TEXTURE1 = 0x84C1U;
+
+	enum uint GL_ARRAY_BUFFER = 0x8892;
+
+	enum uint GL_SRC_COLOR = 0x0300;
+	enum uint GL_ONE_MINUS_SRC_COLOR = 0x0301;
+	enum uint GL_SRC_ALPHA = 0x0302;
+	enum uint GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+	enum uint GL_DST_ALPHA = 0x0304;
+	enum uint GL_ONE_MINUS_DST_ALPHA = 0x0305;
+	enum uint GL_DST_COLOR = 0x0306;
+	enum uint GL_ONE_MINUS_DST_COLOR = 0x0307;
+	enum uint GL_SRC_ALPHA_SATURATE = 0x0308;
+
+	enum uint GL_INVERT = 0x150AU;
+
+	enum uint GL_DEPTH_STENCIL = 0x84F9U;
+	enum uint GL_UNSIGNED_INT_24_8 = 0x84FAU;
+
+	enum uint GL_FRAMEBUFFER = 0x8D40U;
+	enum uint GL_COLOR_ATTACHMENT0 = 0x8CE0U;
+	enum uint GL_DEPTH_STENCIL_ATTACHMENT = 0x821AU;
+
+	enum uint GL_FRAMEBUFFER_COMPLETE = 0x8CD5U;
+	enum uint GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT = 0x8CD6U;
+	enum uint GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT = 0x8CD7U;
+	enum uint GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS = 0x8CD9U;
+	enum uint GL_FRAMEBUFFER_UNSUPPORTED = 0x8CDDU;
+
+	enum uint GL_COLOR_LOGIC_OP = 0x0BF2U;
+	enum uint GL_CLEAR = 0x1500U;
+	enum uint GL_COPY = 0x1503U;
+	enum uint GL_XOR = 0x1506U;
+
+	enum uint GL_FRAMEBUFFER_BINDING = 0x8CA6U;
+
+	enum uint GL_TEXTURE_LOD_BIAS = 0x8501;
+
 	}
 }
 
@@ -14134,12 +14291,149 @@ static if(!SdpyIsUsingIVGLBinds) {
 		mixin DynamicLoad!(GL, "GL", true) gl;
 		mixin DynamicLoad!(GLU, "GLU", true) glu;
 	}
+	mixin DynamicLoadSupplementalOpenGL!(GL3) gl3;
+
 
 	shared static this() {
 		gl.loadDynamicLibrary();
 		glu.loadDynamicLibrary();
 	}
 }
+}
+
+/++
+	Convenience method for converting D arrays to opengl buffer data
+
+	I would LOVE to overload it with the original glBufferData, but D won't
+	let me since glBufferData is a function pointer :(
++/
+void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
+	glBufferData(target, data.length, data.ptr, usage);
+}
+
+/++
+	Convenience class for using opengl shaders.
+
+	Ensure that you've loaded opengl 3+ and set your active
+	context before trying to use this.
+
+	Added: August 25, 2020 (version 8.5)
++/
+final class OpenGlShader {
+	private int shaderProgram_;
+	private @property void shaderProgram(int a) {
+		shaderProgram_ = a;
+	}
+	/// Get the program ID for use in OpenGL functions.
+	public @property int shaderProgram() {
+		return shaderProgram_;
+	}
+
+	/++
+
+	+/
+	static struct Source {
+		uint type; /// GL_FRAGMENT_SHADER, GL_VERTEX_SHADER, etc.
+		string code; ///
+	}
+
+	/++
+		Constructs the shader object by calling `glCreateProgram`, then
+		compiling each given [Source], and finally, linking them together.
+
+		Throws: on compile or link failure.
+	+/
+	this(Source[] codes...) {
+		shaderProgram = glCreateProgram();
+
+		int[16] shadersBufferStack;
+
+		int[] shadersBuffer = codes.length <= shadersBufferStack.length ? 
+			shadersBufferStack[0 .. codes.length] :
+			new int[](codes.length);
+
+		foreach(idx, code; codes) {
+			shadersBuffer[idx] = glCreateShader(code.type);
+			const(char)*[1] buffer;
+			int[1] lengthBuffer;
+
+			buffer[0] = code.code.ptr;
+			lengthBuffer[0] = cast(int) code.code.length;
+
+			glShaderSource(shadersBuffer[idx], 1, buffer.ptr, lengthBuffer.ptr);
+			glCompileShader(shadersBuffer[idx]);
+
+			int success;
+			glGetShaderiv(shadersBuffer[idx], GL_COMPILE_STATUS, &success);
+			if(!success) {
+				char[512] info;
+				int len;
+				glGetShaderInfoLog(shadersBuffer[idx], info.length, &len, info.ptr);
+
+				throw new Exception("Shader compile failure: " ~ cast(immutable) info[0 .. len]);
+			}
+
+			glAttachShader(shaderProgram, shadersBuffer[idx]);
+		}
+
+		glLinkProgram(shaderProgram);
+		int success;
+		glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+		if(!success) {
+			char[512] info;
+			int len;
+			glGetProgramInfoLog(shaderProgram, info.length, &len, info.ptr);
+
+			throw new Exception("Shader link failure: " ~ cast(immutable) info[0 .. len]);
+		}
+
+		foreach(s; shadersBuffer)
+			glDeleteShader(s);
+	}
+
+	/// Calls `glUseProgram(this.shaderProgram)`
+	void use() {
+		glUseProgram(this.shaderProgram);
+	}
+
+	/// Deletes the program.
+	void delete_() {
+		glDeleteProgram(shaderProgram);
+		shaderProgram = 0;
+	}
+
+	/++
+		[OpenGlShader.uniforms].name gives you one of these.
+
+		You can get the id out of it or just assign
+	+/
+	static struct Uniform {
+		/// the id passed to glUniform*
+		int id;
+
+		/// Assigns the 4 floats. You will probably have to call this via the .opAssign name
+		void opAssign(float x, float y, float z, float a) {
+			glUniform4f(id, x, y, z, a);
+		}
+	}
+
+	static struct UniformsHelper {
+		OpenGlShader _shader;
+
+		Uniform opDispatch(string name)() {
+			auto i = glGetUniformLocation(_shader.shaderProgram, name.ptr);
+			if(i == -1)
+				throw new Exception("Could not find uniform " ~ name);
+			return Uniform(i);
+		}
+	}
+
+	/++
+		Gives access to the uniforms through dot access.
+		`OpenGlShader.Uniform = shader.uniforms.foo; // calls glGetUniformLocation(this, "foo");
+	+/
+	@property UniformsHelper uniforms() { return UniformsHelper(this); }
+
 }
 
 version(linux) {
@@ -15366,13 +15660,34 @@ __gshared bool librariesSuccessfullyLoaded = true;
 ///
 __gshared bool openGlLibrariesSuccessfullyLoaded = true;
 
+private mixin template DynamicLoadSupplementalOpenGL(Iface) {
+        static foreach(name; __traits(derivedMembers, Iface))
+                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+
+	void loadDynamicLibrary() @nogc {
+		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
+	}
+
+        void loadDynamicLibraryForReal() {
+                foreach(name; __traits(derivedMembers, Iface)) {
+                        mixin("alias tmp = " ~ name ~ ";");
+                        tmp = cast(typeof(tmp)) glbindGetProcAddress(name);
+                        if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from supplemental OpenGL");
+                }
+        }
+}
+
 private mixin template DynamicLoad(Iface, string library, bool openGLRelated = false) {
         static foreach(name; __traits(derivedMembers, Iface))
                 mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
         private void* libHandle;
 
-        void loadDynamicLibrary() {
+        void loadDynamicLibrary() @nogc {
+		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
+	}
+
+        void loadDynamicLibraryForReal() {
                 version(Posix) {
                         import core.sys.posix.dlfcn;
 			version(OSX) {
