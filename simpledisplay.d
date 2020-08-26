@@ -4439,7 +4439,7 @@ class Timer {
 			if(Timer* t = timer in mapping) {
 				try
 				(*t).trigger();
-				catch(Exception e) { throw new Error(e.msg, e.file, e.line); }
+				catch(Exception e) { sdpy_abort(e); assert(0); }
 			}
 		}
 
@@ -4791,16 +4791,19 @@ class WindowsApiException : Exception {
 		if(error == 0)
 			buffer[pos++] = '0';
 		else {
+
+			auto ec = error;
 			auto init = pos;
-			while(error) {
-				buffer[pos++] = (error % 10) + '0';
-				error /= 10;
+			while(ec) {
+				buffer[pos++] = (ec % 10) + '0';
+				ec /= 10;
 			}
-			for(int i = 0; i < (pos - init) / 2; i++) {
-				char c = buffer[i + init];
-				buffer[i + init] = buffer[pos - (i + init) - 1];
-				buffer[pos - (i + init) - 1] = c;
-			}
+
+			buffer[pos++] = ' ';
+
+			size_t size = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, null, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), &(buffer[pos]), buffer.length - pos, null);
+
+			pos += size;
 		}
 
 
@@ -8507,11 +8510,19 @@ version(Windows) {
 				return DefWindowProc(hWnd, iMessage, wParam, lParam);
 			}
 		} catch (Exception e) {
-			//try {
-			//MessageBoxA(null, (e.toString() ~ "\0").ptr, "Exception caught in WndProc", 0);
-			//} catch(Exception e) {}
-			assert(false, "Exception caught in WndProc " ~ e.toString());
+			try {
+				sdpy_abort(e);
+				return 0;
+			} catch(Exception e) { assert(0); }
 		}
+	}
+
+	void sdpy_abort(Throwable e) nothrow {
+		try
+			MessageBoxA(null, (e.toString() ~ "\0").ptr, "Exception caught in WndProc", 0);
+		catch(Exception e)
+			MessageBoxA(null, "Exception.toString threw too!", "Exception caught in WndProc", 0);
+		ExitProcess(1);
 	}
 
 	mixin template NativeScreenPainterImplementation() {
