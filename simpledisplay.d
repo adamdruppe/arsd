@@ -303,6 +303,113 @@
 
 		}
 		---
+	$(H3 $(ID topic-modern-opengl) Modern OpenGL)
+		simpledisplay's opengl support, by default, is for "legacy" opengl. To use "modern" functions, you must opt-into them with a little more setup. But the library providers helpers for this too.
+
+		This example program shows how you can set up a shader to draw a rectangle:
+
+		---
+module opengl3test;
+import arsd.simpledisplay;
+
+// based on https://learnopengl.com/Getting-started/Hello-Triangle
+
+void main() {
+	// First thing we do, before creating the window, is declare what version we want.
+	setOpenGLContextVersion(3, 3);
+	// turning off legacy compat is required to use version 3.3 and newer
+	openGLContextCompatible = false;
+
+	uint VAO;
+	OpenGlShader shader;
+
+	// then we can create the window.
+	auto window = new SimpleWindow(800, 600, "opengl 3", OpenGlOptions.yes, Resizability.allowResizing);
+
+	// additional setup needs to be done when it is visible, simpledisplay offers a property
+	// for exactly that:
+	window.visibleForTheFirstTime = delegate() {
+		// now with the window loaded, we can start loading the modern opengl functions.
+
+		// you MUST set the context first.
+		window.setAsCurrentOpenGlContext;
+		// then load the remainder of the library
+  		gl3.loadDynamicLibrary();
+
+		// now you can create the shaders, etc.
+		shader = new OpenGlShader(
+			OpenGlShader.Source(GL_VERTEX_SHADER, `
+				#version 330 core
+				layout (location = 0) in vec3 aPos;
+				void main() {
+					gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+				}
+			`),
+			OpenGlShader.Source(GL_FRAGMENT_SHADER, `
+				#version 330 core
+				out vec4 FragColor;
+				uniform vec4 mycolor;
+				void main() {
+					FragColor = mycolor;
+				}
+			`),
+		);
+
+		// and do whatever other setup you want.
+
+		float[] vertices = [
+			0.5f,  0.5f, 0.0f,  // top right
+			0.5f, -0.5f, 0.0f,  // bottom right
+			-0.5f, -0.5f, 0.0f,  // bottom left
+			-0.5f,  0.5f, 0.0f   // top left 
+		];
+		uint[] indices = [  // note that we start from 0!
+			0, 1, 3,  // first Triangle
+			1, 2, 3   // second Triangle
+		];
+		uint VBO, EBO;
+		glGenVertexArrays(1, &VAO);
+		// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
+		glBindVertexArray(VAO);
+
+		glGenBuffers(1, &VBO);
+		glGenBuffers(1, &EBO);
+
+		glBindBuffer(GL_ARRAY_BUFFER, VBO);
+		glBufferDataSlice(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+		glBufferDataSlice(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, null);
+		glEnableVertexAttribArray(0);
+
+		// the library will set the initial viewport and trigger our first draw,
+		// so these next two lines are NOT needed. they are just here as comments
+		// to show what would happen next.
+
+		// glViewport(0, 0, window.width, window.height);
+		// window.redrawOpenGlSceneNow();
+	};
+
+	// this delegate is called any time the window needs to be redrawn or if you call `window.redrawOpenGlSceneNow;`
+	// it is our render method.
+	window.redrawOpenGlScene = delegate() {
+		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		glUseProgram(shader.shaderProgram);
+
+		// the shader helper class has methods to set uniforms too
+		shader.uniforms.mycolor.opAssign(1.0, 1.0, 0, 1.0);
+
+		glBindVertexArray(VAO);
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, null);
+	};
+
+	window.eventLoop(0);
+}
+		---
 
 	$(H3 $(ID topic-images) Displaying images)
 		You can also load PNG images using [arsd.png].
@@ -14338,6 +14445,53 @@ final class OpenGlShader {
 	}
 
 	/++
+		Helper method to just compile some shader code and check for errors
+		while you do glCreateShader, etc. on the outside yourself.
+
+		This just does `glShaderSource` and `glCompileShader` for the given code.
+
+		If you the OpenGlShader class constructor, you never need to call this yourself.
+	+/
+	static void compile(int sid, Source code) {
+		const(char)*[1] buffer;
+		int[1] lengthBuffer;
+
+		buffer[0] = code.code.ptr;
+		lengthBuffer[0] = cast(int) code.code.length;
+
+		glShaderSource(sid, 1, buffer.ptr, lengthBuffer.ptr);
+		glCompileShader(sid);
+
+		int success;
+		glGetShaderiv(sid, GL_COMPILE_STATUS, &success);
+		if(!success) {
+			char[512] info;
+			int len;
+			glGetShaderInfoLog(sid, info.length, &len, info.ptr);
+
+			throw new Exception("Shader compile failure: " ~ cast(immutable) info[0 .. len]);
+		}
+	}
+
+	/++
+		Calls `glLinkProgram` and throws if error a occurs.
+
+		If you the OpenGlShader class constructor, you never need to call this yourself.
+	+/
+	static void link(int shaderProgram) {
+		glLinkProgram(shaderProgram);
+		int success;
+		glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+		if(!success) {
+			char[512] info;
+			int len;
+			glGetProgramInfoLog(shaderProgram, info.length, &len, info.ptr);
+
+			throw new Exception("Shader link failure: " ~ cast(immutable) info[0 .. len]);
+		}
+	}
+
+	/++
 		Constructs the shader object by calling `glCreateProgram`, then
 		compiling each given [Source], and finally, linking them together.
 
@@ -14354,38 +14508,13 @@ final class OpenGlShader {
 
 		foreach(idx, code; codes) {
 			shadersBuffer[idx] = glCreateShader(code.type);
-			const(char)*[1] buffer;
-			int[1] lengthBuffer;
 
-			buffer[0] = code.code.ptr;
-			lengthBuffer[0] = cast(int) code.code.length;
-
-			glShaderSource(shadersBuffer[idx], 1, buffer.ptr, lengthBuffer.ptr);
-			glCompileShader(shadersBuffer[idx]);
-
-			int success;
-			glGetShaderiv(shadersBuffer[idx], GL_COMPILE_STATUS, &success);
-			if(!success) {
-				char[512] info;
-				int len;
-				glGetShaderInfoLog(shadersBuffer[idx], info.length, &len, info.ptr);
-
-				throw new Exception("Shader compile failure: " ~ cast(immutable) info[0 .. len]);
-			}
+			compile(shadersBuffer[idx], code);
 
 			glAttachShader(shaderProgram, shadersBuffer[idx]);
 		}
 
-		glLinkProgram(shaderProgram);
-		int success;
-		glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-		if(!success) {
-			char[512] info;
-			int len;
-			glGetProgramInfoLog(shaderProgram, info.length, &len, info.ptr);
-
-			throw new Exception("Shader link failure: " ~ cast(immutable) info[0 .. len]);
-		}
+		link(shaderProgram);
 
 		foreach(s; shadersBuffer)
 			glDeleteShader(s);
