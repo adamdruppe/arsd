@@ -14424,10 +14424,13 @@ static if(!SdpyIsUsingIVGLBinds) {
 
 	I would LOVE to overload it with the original glBufferData, but D won't
 	let me since glBufferData is a function pointer :(
+
+	Added: August 25, 2020 (version 8.5)
 +/
 void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
 	glBufferData(target, data.length, data.ptr, usage);
 }
+
 
 /++
 	Convenience class for using opengl shaders.
@@ -14552,15 +14555,15 @@ final class OpenGlShader {
 		int id;
 
 		/// Assigns the 4 floats. You will probably have to call this via the .opAssign name
-		void opAssign(float x, float y, float z, float a) {
-			glUniform4f(id, x, y, z, a);
+		void opAssign(float x, float y, float z, float w) {
+			glUniform4f(id, x, y, z, w);
 		}
 	}
 
 	static struct UniformsHelper {
 		OpenGlShader _shader;
 
-		Uniform opDispatch(string name)() {
+		@property Uniform opDispatch(string name)() {
 			auto i = glGetUniformLocation(_shader.shaderProgram, name.ptr);
 			if(i == -1)
 				throw new Exception("Could not find uniform " ~ name);
@@ -14573,7 +14576,6 @@ final class OpenGlShader {
 		`OpenGlShader.Uniform = shader.uniforms.foo; // calls glGetUniformLocation(this, "foo");
 	+/
 	@property UniformsHelper uniforms() { return UniformsHelper(this); }
-
 }
 
 version(linux) {
@@ -15801,8 +15803,7 @@ __gshared bool librariesSuccessfullyLoaded = true;
 __gshared bool openGlLibrariesSuccessfullyLoaded = true;
 
 private mixin template DynamicLoadSupplementalOpenGL(Iface) {
-        static foreach(name; __traits(derivedMembers, Iface))
-                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+	mixin(staticForeachReplacement!Iface);
 
 	void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
@@ -15817,9 +15818,38 @@ private mixin template DynamicLoadSupplementalOpenGL(Iface) {
         }
 }
 
-private mixin template DynamicLoad(Iface, string library, bool openGLRelated = false) {
+private const(char)[] staticForeachReplacement(Iface)() pure {
+/*
+	// just this for gdc 9....
+	// when i drop support for it and switch to gdc10, we can put this original back for a slight compile time ram decrease
+
         static foreach(name; __traits(derivedMembers, Iface))
                 mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+*/
+
+	char[] code = new char[](__traits(derivedMembers, Iface).length * 64);
+	size_t pos;
+
+	void append(in char[] what) {
+		if(pos + what.length > code.length)
+			code.length = (code.length * 3) / 2;
+		code[pos .. pos + what.length] = what[];
+		pos += what.length;
+	}
+
+        foreach(name; __traits(derivedMembers, Iface)) {
+                append(`__gshared typeof(&__traits(getMember, Iface, "`);
+		append(name);
+		append(`")) `);
+		append(name);
+		append(";");
+	}
+
+	return code[0 .. pos];
+}
+
+private mixin template DynamicLoad(Iface, string library, bool openGLRelated = false) {
+	mixin(staticForeachReplacement!Iface);
 
         private void* libHandle;
 
