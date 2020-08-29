@@ -14431,6 +14431,52 @@ void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
 	glBufferData(target, data.length, data.ptr, usage);
 }
 
+/++
+	A matrix for simple uses that easily integrates with [OpenGlShader].
+
+	Might not be useful to you since it only as some simple functions and
+	probably isn't that fast.
+
+	Note it uses an inline static array for its storage, so copying it
+	may be expensive.
++/
+struct BasicMatrix(int columns, int rows, T = float) {
+	import core.stdc.math;
+
+	T[columns * rows] data = 0.0;
+
+	/++
+		Basic operations that operate *in place*.
+	+/
+	void translate() {
+
+	}
+
+	/// ditto
+	void scale() {
+
+	}
+
+	/// ditto
+	void rotate() {
+
+	}
+
+	/++
+
+	+/
+	static if(columns == rows)
+	static BasicMatrix identity() {
+		BasicMatrix m;
+		foreach(i; 0 .. columns)
+			data[0 + i + i * columns] = 1.0;
+		return m;
+	}
+
+	static BasicMatrix ortho() {
+		return BasicMatrix.init;
+	}
+}
 
 /++
 	Convenience class for using opengl shaders.
