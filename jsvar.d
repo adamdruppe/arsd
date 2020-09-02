@@ -685,6 +685,11 @@ struct var {
 					this = t.toArsdJsvar();
 			} else
 				this = t.toArsdJsvar();
+		} else static if(is(T : PrototypeObject)) {
+			// support direct assignment of pre-made implementation objects
+			// so prewrapped stuff can be easily passed.
+			this._type = Type.Object;
+			this._payload._object = t;
 		} else static if(isFloatingPoint!T) {
 			this._type = Type.Floating;
 			this._payload._floating = t;
@@ -726,14 +731,9 @@ struct var {
 		} else static if(isSomeString!T) {
 			this._type = Type.String;
 			this._payload._string = to!string(t);
-		} else static if(is(T : PrototypeObject)) {
-			// support direct assignment of pre-made implementation objects
-			// so prewrapped stuff can be easily passed.
-			this._type = Type.Object;
-			this._payload._object = t;
 		} else static if(is(T == class)) {
 			this._type = Type.Object;
-			this._payload._object = wrapNativeObject(t);
+			this._payload._object = t is null ? null : wrapNativeObject(t);
 		} else static if(.isScriptableOpaque!T) {
 			// auto-wrap other classes with reference semantics
 			this._type = Type.Object;
@@ -1121,13 +1121,13 @@ struct var {
 		return this.get!T;
 	}
 
-	public int opCmp(T)(T t) {
+	public double opCmp(T)(T t) {
 		auto f = this.get!double;
 		static if(is(T == var))
 			auto r = t.get!double;
 		else
 			auto r = t;
-		return cast(int)(f - r);
+		return f - r;
 	}
 
 	public bool opEquals(T)(T t) {
@@ -1135,7 +1135,15 @@ struct var {
 	}
 
 	public bool opEquals(T:var)(T t) const {
+		// int and float can implicitly convert
+		if(this._type == Type.Integral && t._type == Type.Floating)
+			return _payload._integral == t._payload._floating;
+		if(t._type == Type.Integral && this._type == Type.Floating)
+			return t._payload._integral == this._payload._floating;
+
+		// but the others are kinda strict
 		// FIXME: should this be == or === ?
+
 		if(this._type != t._type)
 			return false;
 		final switch(this._type) {
@@ -2017,15 +2025,16 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 			@scriptable this(Parameters!ctor p) { super(p); }
 
 		static foreach(memberName; __traits(allMembers, T)) {
-		static if(__traits(isVirtualMethod, __traits(getMember, T, memberName)))
 		static if(memberName != "toHash")
+		static foreach(overload; __traits(getOverloads, T, memberName))
+		static if(__traits(isVirtualMethod, overload))
 		// note: overload behavior undefined
-		static if(!(functionAttributes!(__traits(getMember, T, memberName)) & (FunctionAttribute.pure_ | FunctionAttribute.safe | FunctionAttribute.trusted | FunctionAttribute.nothrow_)))
+		static if(!(functionAttributes!(overload) & (FunctionAttribute.pure_ | FunctionAttribute.safe | FunctionAttribute.trusted | FunctionAttribute.nothrow_)))
 		mixin(q{
 			@scriptable
-			override ReturnType!(__traits(getMember, T, memberName))
+			override ReturnType!(overload)
 			}~memberName~q{
-			(Parameters!(__traits(getMember, T, memberName)) p)
+			(Parameters!(overload) p)
 			{
 			//import std.stdio; writeln("calling ", T.stringof, ".", memberName, " - ", methodOverriddenByScript(memberName), "/", _next_devirtualized, " on ", cast(size_t) cast(void*) this);
 				if(_next_devirtualized || !methodOverriddenByScript(memberName))
@@ -2243,6 +2252,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 			foreach(memberName; __traits(allMembers, Class)) static if(is(typeof(__traits(getMember, obj, memberName)) type)) {
 				static if(is(type == function)) {
+					auto os = new OverloadSet();
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
 						var gen;
 						gen._function = delegate (var vthis_, var[] vargs) {
@@ -2289,8 +2299,19 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 							return ret;
 						};
-						_properties[memberName] = gen;
+
+						Parameters!(overload) fargs;
+						// FIXME: if an argument type is a class, we need to actually look it up in the script context somehow
+						var[] definition;
+						foreach(arg; fargs) {
+							definition ~= var(arg);
+						}
+
+						//import std.stdio; writeln(Class.stringof, ".", memberName, " ", definition);
+						os.addOverload(OverloadSet.Overload(definition, gen));
 					}
+
+					_properties[memberName] = var(os);
 				} else {
 					static if(.isScriptable!(__traits(getAttributes, __traits(getMember, Class, memberName)))())
 					// if it has a type but is not a function, it is prolly a member
@@ -2391,6 +2412,180 @@ bool isScriptableOpaque(T)() {
 		return T.isOpaqueStruct == true;
 	else
 		return false;
+}
+
+int typeCompatibilityScore(var arg, var type) {
+	int thisScore = 0;
+
+	if(type.payloadType == var.Type.Object && type._payload._object is null) {
+		thisScore += 1; // generic match
+		return thisScore;
+	}
+	if(arg.payloadType == var.Type.Integral && type.payloadType == var.Type.Floating) {
+		thisScore += 2; // match with implicit conversion
+	// FIXME: want to support implicit from whatever to bool?
+	} else if(arg.payloadType != type.payloadType) {
+		thisScore = 0;
+		return thisScore;
+	} else {
+		// exact type category match
+		if(type.payloadType == var.Type.Array) {
+			// arrays not supported here....
+			thisScore = 0;
+			return thisScore;
+		} else if(type.payloadType == var.Type.Object) {
+			// objects are the interesting one...
+			// want to see if it matches by seeing if the
+			// given type is identical or its prototype is one of the given type's prototype chain
+
+			int depth = 0;
+			PrototypeObject pt = type._payload._object;
+			while(pt !is null) {
+				depth++;
+				pt = pt.prototype;
+			}
+
+			if(type._payload._object is arg._payload._object)
+				thisScore += 2 + depth;
+			else {
+				if(arg._payload._object is null)
+					return 0; // null sucks.
+
+				auto test = type._payload._object.prototype;
+				// generic object compared against generic object matches
+				if(test is null && type._payload._object.prototype is null)
+					thisScore += 1;
+				else {
+					pt = arg._payload._object;
+					while(pt !is null) {
+						if(pt is test) {
+							thisScore += 1 + depth;
+							break;
+						}
+						pt = pt.prototype;
+					}
+				}
+			}
+		} else {
+			thisScore += 3; // exact match without implicit conversion
+		}
+	}
+
+	return thisScore;
+}
+
+/++
+	Does dynamic dispatch to overloads in a jsvar function set.
+
+	History:
+		Added September 1, 2020.
++/
+class OverloadSet : PrototypeObject {
+	this() {
+		_properties["opCall"] = &opCall;
+		_properties["apply"] = &apply;
+	}
+
+	///
+	void addIndividualOverload(alias f)() {
+		var func = &f;
+		var[] argTypes;
+		static if(is(typeof(f) Params == __parameters))
+		foreach(param; Params)
+			argTypes ~= var(param.init);
+		//import std.stdio; writeln("registered ", argTypes);
+		overloads ~= Overload(argTypes, func);
+	}
+
+	///
+	void addOverloadsOf(alias what)() {
+		foreach(alias f; __traits(getOverloads, __traits(parent, what), __traits(identifier, what)))
+			addIndividualOverload!f;
+	}
+
+	static struct Overload {
+		// I don't even store the arity of a function object
+		// so argTypes is the nest best thing.
+		var[] argTypes;
+		var func;
+	}
+	Overload[] overloads;
+
+	private bool exactMatch(var[] a, var[] b) {
+		if(a.length != b.length)
+			return false;
+		foreach(i; 0 .. a.length) {
+			if(a[i] !is b[i])
+				return false;
+		}
+		return true;
+	}
+
+	void addOverload(Overload o) {
+		foreach(ref ov; overloads)
+			if(exactMatch(ov.argTypes, o.argTypes)) {
+				ov.func = o.func;
+				return;
+			}
+		overloads ~= o;
+	}
+
+	/*
+		I might have to add Object, Exception, and others to jsvar to represent types.
+		maybe even int and such.
+
+		An object should probably have a secret property that gives its name...
+	*/
+	var apply(var this_, var[] arguments) {
+		return opCall(arguments[0], arguments[1].get!(var[]));
+	}
+
+	var opCall(var this_, var[] arguments) {
+		// remember script.d supports default args too.
+		int bestScore = int.min;
+		Overload bestMatch;
+		foreach(overload; overloads) {
+			if(overload.argTypes.length == 0) {
+				if(bestScore < 0) {
+					bestScore = 0;
+					bestMatch = overload;
+					continue;
+				}
+			}
+
+			int thisScore = 0;
+			foreach(idx, arg; arguments) {
+				if(idx >= overload.argTypes.length) {
+					thisScore = 0;
+					break;
+				}
+
+				// now if it is an object, if we can match, add score based on how derived the specified type is.
+				// if it is the very same object, that's the best match possible. (prototype chain length + 1. and the one base point for matching at all.)
+				// then if not, if the arg given can implicitly convert to the arg specified, give points based on how many prototypes the arg specified has. (plus one base point for matching at all)
+
+				// otherwise just give one point.
+
+				auto s = typeCompatibilityScore(arg, overload.argTypes[idx]);
+				if(s == 0) {
+					thisScore = 0;
+					break;
+				}
+				thisScore += s;
+			}
+
+			if(thisScore > 0 && thisScore > bestScore) {
+				bestScore = thisScore;
+				bestMatch = overload;
+			}
+		}
+
+		if(bestScore < 0)
+			throw new Exception("no matching overload found");
+			
+
+		return bestMatch.func.apply(this_, arguments);
+	}
 }
 
 bool appearsNumeric(string n) {
