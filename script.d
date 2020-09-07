@@ -49,6 +49,9 @@
 	your existing knowledge from Javascript will carry over, making it hopefully easy to use right out of the box.
 	See the [#examples] to quickly get the feel of the script language as well as the interop.
 
+	I haven't benchmarked it, but I expect it is pretty slow. My goal is to see what is possible for easy interoperability
+	with dynamic functionality and D rather than speed.
+
 
 	$(TIP
 		A goal of this language is to blur the line between D and script, but
@@ -79,6 +82,7 @@
 
 	OVERVIEW
 	$(LIST
+	* Can subclass D objects in script. See [http://dpldocs.info/this-week-in-d/Blog.Posted_2020_04_27.html#subclasses-in-script
 	* easy interop with D thanks to arsd.jsvar. When interpreting, pass a var object to use as globals.
 		This object also contains the global state when interpretation is done.
 	* mostly familiar syntax, hybrid of D and Javascript
@@ -2564,6 +2568,7 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						//tokens.popFront();
 						auto parenthetical = new ParentheticalExpression(parseExpression(tokens));
 						tokens.requireNextToken(ScriptToken.Type.symbol, ")");
+
 						return parenthetical;
 					case "[":
 						// array literal
@@ -2775,6 +2780,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case ",": // possible FIXME these are passed on to the next thing
 				case ";":
 				case ":": // idk
+				case "?":
 					return e1;
 
 				case "|>":
@@ -2792,15 +2798,6 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "||":
 					tokens.popFront();
 					e1 = new BinaryExpression(peek.str, e1, parseExpression(tokens));
-					break;
-				case "?": // is this the right precedence?
-					auto e = new TernaryExpression();
-					e.condition = e1;
-					tokens.requireNextToken(ScriptToken.Type.symbol, "?");
-					e.ifTrue = parseExpression(tokens);
-					tokens.requireNextToken(ScriptToken.Type.symbol, ":");
-					e.ifFalse = parseExpression(tokens);
-					e1 = e;
 					break;
 				case "~":
 					// FIXME: make sure this has the right associativity
@@ -3217,8 +3214,19 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 				//throw new ScriptCompileException("Parse error, missing finally or catch after try", tryToken.lineNumber);
 
 			ret = e;
-		} else
+		} else {
 			ret = parseAddend(tokens);
+		}
+
+		if(!tokens.empty && tokens.peekNextToken(ScriptToken.Type.symbol, "?")) {
+			auto e = new TernaryExpression();
+			e.condition = ret;
+			tokens.requireNextToken(ScriptToken.Type.symbol, "?");
+			e.ifTrue = parseExpression(tokens);
+			tokens.requireNextToken(ScriptToken.Type.symbol, ":");
+			e.ifFalse = parseExpression(tokens);
+			ret = e;
+		}
 	} else {
 		//assert(0);
 		// return null;
@@ -3423,6 +3431,7 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 				case "continue":
 				case "break":
 				case "return":
+
 					return parseExpression(tokens);
 				// unary prefix operators
 				case "!":
