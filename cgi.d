@@ -360,6 +360,20 @@ version(Posix) {
 	}
 }
 
+void cloexec(int fd) {
+	version(Posix) {
+		import core.sys.posix.fcntl;
+		fcntl(fd, F_SETFD, FD_CLOEXEC);
+	}
+}
+
+void cloexec(Socket s) {
+	version(Posix) {
+		import core.sys.posix.fcntl;
+		fcntl(s.handle, F_SETFD, FD_CLOEXEC);
+	}
+}
+
 // the servers must know about the connections to talk to them; the interfaces are vital
 version(with_addon_servers)
 	version=with_addon_servers_connections;
@@ -1250,6 +1264,8 @@ class Cgi {
 			// multipart/form-data
 
 
+			// FIXME: this might want to be factored out and factorized
+			// need to make sure the stream hooks actually work.
 			void pieceHasNewContent() {
 				// we just grew the piece's buffer. Do we have to switch to file backing?
 				if(pps.piece.contentInMemory) {
@@ -3197,25 +3213,25 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 				version(with_addon_servers)
 					runWebsocketServer();
 				else
-					printf("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.\n");
 				return;
 			case "--session-server":
 				version(with_addon_servers)
 					runSessionServer();
 				else
-					printf("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.\n");
 				return;
 			case "--event-server":
 				version(with_addon_servers)
 					runEventServer();
 				else
-					printf("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.\n");
 				return;
 			case "--timer-server":
 				version(with_addon_servers)
 					runTimerServer();
 				else
-					printf("Add-on servers not compiled in.");
+					printf("Add-on servers not compiled in.\n");
 				return;
 			case "--timed-jobs":
 				import core.demangle;
@@ -3279,6 +3295,8 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 		int sock = socket(AF_INET, SOCK_STREAM, 0);
 		if(sock == -1)
 			throw new Exception("socket");
+
+		cloexec(sock);
 
 		{
 			sockaddr_in addr;
@@ -3348,6 +3366,7 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 						// the Cgi class does internal buffering, so disabling this
 						// helps with latency in many cases...
 						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
+						cloexec(s);
 					} else {
 						int s;
 						auto readret = read_fd(pipeReadFd, &s, s.sizeof, &s);
@@ -3479,6 +3498,7 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 						sockaddr addr;
 						i = addr.sizeof;
 						s = accept(sock, &addr, &i);
+						cloexec(s);
 						import core.sys.posix.netinet.tcp;
 						int opt = 1;
 						setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
@@ -4101,6 +4121,7 @@ class ListeningConnectionManager {
 			// thing when a request is slow
 			while(!loopBroken && running) {
 				auto sn = listener.accept();
+				cloexec(sn);
 				try {
 					handler(sn);
 				} catch(Exception e) {
@@ -4143,6 +4164,7 @@ class ListeningConnectionManager {
 
 				void accept_new_connection() {
 					sn = listener.accept();
+					cloexec(sn);
 					if(tcp) {
 						// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
 						// on the socket because we do some buffering internally. I think this helps,
@@ -4237,6 +4259,7 @@ class ListeningConnectionManager {
 		if(host.startsWith("unix:")) {
 			version(Posix) {
 				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				cloexec(listener);
 				string filename = host["unix:".length .. $].idup;
 				listener.bind(new UnixAddress(filename));
 				cleanup = delegate() {
@@ -4250,6 +4273,7 @@ class ListeningConnectionManager {
 		} else if(host.startsWith("abstract:")) {
 			version(linux) {
 				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+				cloexec(listener);
 				string filename = "\0" ~ host["abstract:".length .. $];
 				import std.stdio; stderr.writeln("Listening to abstract unix domain socket: ", host["abstract:".length .. $]);
 				listener.bind(new UnixAddress(filename));
@@ -4259,6 +4283,7 @@ class ListeningConnectionManager {
 			}
 		} else {
 			listener = new TcpSocket();
+			cloexec(listener);
 			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
 			listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
 			tcp = true;
@@ -5276,13 +5301,13 @@ version(Posix) {
 //private:
 
 // template for laziness
-void startWebsocketServer()() {
+void startAddonServer()(string arg) {
 	version(linux) {
 		import core.sys.posix.unistd;
 		pid_t pid;
 		const(char)*[16] args;
 		args[0] = "ARSD_CGI_WEBSOCKET_SERVER";
-		args[1] = "--websocket-server";
+		args[1] = arg.ptr;
 		posix_spawn(&pid, "/proc/self/exe",
 			null,
 			null,
@@ -5299,10 +5324,12 @@ void startWebsocketServer()() {
 		startupInfo.cb = cast(DWORD) startupInfo.sizeof;
 		PROCESS_INFORMATION processInfo;
 
+		import std.utf;
+
 		// I *MIGHT* need to run it as a new job or a service...
 		auto ret = CreateProcessW(
 			filename.ptr,
-			"--websocket-server"w,
+			toUTF16z(arg),
 			null, // process attributes
 			null, // thread attributes
 			false, // inherit handles
@@ -5383,7 +5410,7 @@ version(Posix) {
 }
 
 version(with_addon_servers_connections)
-LocalServerConnectionHandle openLocalServerConnection(string name) {
+LocalServerConnectionHandle openLocalServerConnection()(string name, string arg) {
 	version(Posix) {
 		import core.sys.posix.unistd;
 		import core.sys.posix.sys.un;
@@ -5394,6 +5421,8 @@ LocalServerConnectionHandle openLocalServerConnection(string name) {
 
 		scope(failure)
 			close(sock);
+
+		cloexec(sock);
 
 		// add-on server processes are assumed to be local, and thus will
 		// use unix domain sockets. Besides, I want to pass sockets to them,
@@ -5409,8 +5438,21 @@ LocalServerConnectionHandle openLocalServerConnection(string name) {
 			addr.sun_path[0 .. name.length] = cast(typeof(addr.sun_path[])) name[];
 		}
 
-		if(connect(sock, cast(sockaddr*) &addr, addr.sizeof) == -1)
-			throw new Exception("connect " ~ to!string(errno));
+		bool alreadyTried;
+
+		try_again:
+
+		if(connect(sock, cast(sockaddr*) &addr, addr.sizeof) == -1) {
+			if(!alreadyTried && errno == ECONNREFUSED) {
+				// try auto-spawning the server, then attempt connection again
+				startAddonServer(arg);
+				import core.thread;
+				Thread.sleep(50.msecs);
+				alreadyTried = true;
+				goto try_again;
+			} else
+				throw new Exception("connect " ~ to!string(errno));
+		}
 
 		return sock;
 	} else version(Windows) {
@@ -5716,7 +5758,7 @@ private immutable void delegate(string[])[string] scheduledJobHandlers;
 version(with_breaking_cgi_features)
 mixin(q{
 
-mixin template ImplementRpcClientInterface(T, string serverPath) {
+mixin template ImplementRpcClientInterface(T, string serverPath, string cmdArg) {
 	static import std.traits;
 
 	// derivedMembers on an interface seems to give exactly what I want: the virtual functions we need to implement. so I am just going to use it directly without more filtering.
@@ -5778,7 +5820,7 @@ mixin template ImplementRpcClientInterface(T, string serverPath) {
 	}
 
 	void connect() {
-		connectionHandle = openLocalServerConnection(serverPath);
+		connectionHandle = openLocalServerConnection(serverPath, cmdArg);
 	}
 
 	void disconnect() {
@@ -5946,7 +5988,7 @@ interface Session(Data) : SessionObject {
 		static if(is(typeof(__traits(getMember, Data, memberName))))
 		mixin(q{
 			@property inout(typeof(__traits(getMember, Data, memberName))) } ~ memberName ~ q{ () inout;
-			@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value);
+			@property typeof(__traits(getMember, Data, memberName)) } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value);
 		});
 
 }
@@ -6034,12 +6076,13 @@ class BasicDataServerSession(Data) : Session!Data {
 				// basically. Assuming the session is POD this should be fine.
 				return cast(typeof(return)) to!(typeof(__traits(getMember, Data, memberName)))(v);
 			}
-			@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
+			@property typeof(__traits(getMember, Data, memberName)) } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
 				if(sessionId is null)
 					start();
 				import std.conv;
 				import std.traits;
 				BasicDataServer.connection.setSessionData(sessionId, fullyQualifiedName!Data ~ "." ~ memberName, to!string(value));
+				return value;
 			}
 		});
 }
@@ -6063,8 +6106,8 @@ class MockSession(Data) : Session!Data {
 				@property inout(typeof(__traits(getMember, Data, memberName))) } ~ memberName ~ q{ () inout {
 					return __traits(getMember, store_, memberName);
 				}
-				@property void } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
-					__traits(getMember, store_, memberName) = value;
+				@property typeof(__traits(getMember, Data, memberName)) } ~ memberName ~ q{ (typeof(__traits(getMember, Data, memberName)) value) {
+					return __traits(getMember, store_, memberName) = value;
 				}
 			});
 	}
@@ -6098,7 +6141,7 @@ interface BasicDataServer {
 
 version(with_addon_servers_connections)
 class BasicDataServerConnection : BasicDataServer {
-	mixin ImplementRpcClientInterface!(BasicDataServer, "/tmp/arsd_session_server");
+	mixin ImplementRpcClientInterface!(BasicDataServer, "/tmp/arsd_session_server", "--session-server");
 }
 
 version(with_addon_servers)
@@ -6272,7 +6315,7 @@ interface ScheduledJobServer {
 
 version(with_addon_servers_connections)
 class ScheduledJobServerConnection : ScheduledJobServer {
-	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server");
+	mixin ImplementRpcClientInterface!(ScheduledJobServer, "/tmp/arsd_scheduled_job_server", "--timer-server");
 }
 
 version(with_addon_servers)
@@ -6409,7 +6452,7 @@ interface EventSourceServer {
 		cgi.flush();
 
 		cgi.closed = true;
-		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server");
+		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server", "--event-server");
 		scope(exit)
 			closeLocalServerConnection(s);
 
@@ -6447,7 +6490,7 @@ interface EventSourceServer {
 			[sendEventToEventServer]
 	+/
 	public static void sendEvent(string url, string event, string data, int lifetime) {
-		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server");
+		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server", "--event-server");
 		scope(exit)
 			closeLocalServerConnection(s);
 
@@ -6737,6 +6780,8 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 		scope(failure)
 			close(sock);
 
+		cloexec(sock);
+
 		// add-on server processes are assumed to be local, and thus will
 		// use unix domain sockets. Besides, I want to pass sockets to them,
 		// so it basically must be local (except for the session server, but meh).
@@ -6844,6 +6889,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 							}
 							throw new Exception("accept " ~ to!string(errno));
 						}
+						cloexec(ns);
 
 						makeNonBlocking(ns);
 						auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096, &eis.handleLocalConnectionData);
@@ -7082,11 +7128,11 @@ struct DispatcherDefinition(alias dispatchHandler, DispatcherDetails = typeof(nu
 	immutable(DispatcherDetails) details;
 }
 
-private string urlify(string name) {
+private string urlify(string name) pure {
 	return beautify(name, '-', true);
 }
 
-private string beautify(string name, char space = ' ', bool allLowerCase = false) {
+private string beautify(string name, char space = ' ', bool allLowerCase = false) pure {
 	if(name == "id")
 		return allLowerCase ? name : "ID";
 
@@ -7512,17 +7558,19 @@ private bool hasIfCalledFromWeb(attrs...)() {
 	---
 	class MyPresenter : WebPresenter!(MyPresenter) {
 		@Override
-		void presentSuccessfulReturnAsHtml(T : CustomType)(Cgi cgi, T ret) {
+		void presentSuccessfulReturnAsHtml(T : CustomType)(Cgi cgi, T ret, typeof(null) meta) {
 			// present the CustomType
 		}
 		@Override
-		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret) {
+		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, typeof(null) meta) {
 			// handle everything else via the super class, which will call
 			// back to your class when appropriate
 			super.presentSuccessfulReturnAsHtml(cgi, ret);
 		}
 	}
 	---
+
+	The meta argument in there can be overridden by your own facility.
 
 +/
 class WebPresenter(CRTP) {
@@ -7661,26 +7709,30 @@ html", true, true);
 		cgi.write(c.parentDocument.toString(), true);
 	}
 
+	template methodMeta(alias method) {
+		enum methodMeta = null;
+	}
+
 	/// typeof(null) (which is also used to represent functions returning `void`) do nothing
 	/// in the default presenter - allowing the function to have full low-level control over the
 	/// response.
-	void presentSuccessfulReturnAsHtml(T : typeof(null))(Cgi cgi, T ret) {
+	void presentSuccessfulReturnAsHtml(T : typeof(null))(Cgi cgi, T ret, typeof(null) meta) {
 		// nothing intentionally!
 	}
 
 	/// Redirections are forwarded to [Cgi.setResponseLocation]
-	void presentSuccessfulReturnAsHtml(T : Redirection)(Cgi cgi, T ret) {
+	void presentSuccessfulReturnAsHtml(T : Redirection)(Cgi cgi, T ret, typeof(null) meta) {
 		cgi.setResponseLocation(ret.to, true, getHttpCodeText(ret.code));
 	}
 
 	/// Multiple responses deconstruct the algebraic type and forward to the appropriate handler at runtime
-	void presentSuccessfulReturnAsHtml(T : MultipleResponses!Types, Types...)(Cgi cgi, T ret) {
+	void presentSuccessfulReturnAsHtml(T : MultipleResponses!Types, Types...)(Cgi cgi, T ret, typeof(null) meta) {
 		bool outputted = false;
 		foreach(index, type; Types) {
 			if(ret.contains == index) {
 				assert(!outputted);
 				outputted = true;
-				(cast(CRTP) this).presentSuccessfulReturnAsHtml(cgi, ret.payload[index]);
+				(cast(CRTP) this).presentSuccessfulReturnAsHtml(cgi, ret.payload[index], meta);
 			}
 		}
 		if(!outputted)
@@ -7688,14 +7740,14 @@ html", true, true);
 	}
 
 	/// An instance of the [arsd.dom.FileResource] interface has its own content type; assume it is a download of some sort.
-	void presentSuccessfulReturnAsHtml(T : FileResource)(Cgi cgi, T ret) {
+	void presentSuccessfulReturnAsHtml(T : FileResource)(Cgi cgi, T ret, typeof(null) meta) {
 		cgi.setCache(true); // not necessarily true but meh
 		cgi.setResponseContentType(ret.contentType);
 		cgi.write(ret.getData(), true);
 	}
 
 	/// And the default handler will call [formatReturnValueAsHtml] and place it inside the [htmlContainer].
-	void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret) {
+	void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, typeof(null) meta) {
 		auto container = this.htmlContainer();
 		container.appendChild(formatReturnValueAsHtml(ret));
 		cgi.write(container.parentDocument.toString(), true);
@@ -7866,7 +7918,11 @@ html", true, true);
 
 		form.addClass("automatic-form");
 
-		form.addChild("h3", beautify(__traits(identifier, method)));
+		string formDisplayName = beautify(__traits(identifier, method));
+		foreach(attr; __traits(getAttributes, method))
+			static if(is(typeof(attr) == DisplayName))
+				formDisplayName = attr.name;
+		form.addChild("h3", formDisplayName);
 
 		import std.traits;
 
@@ -7939,6 +7995,12 @@ html", true, true);
 					return formatReturnValueAsHtml(t.payload[index]);
 			}
 			assert(0);
+		} else static if(is(T == Paginated!E, E)) {
+			auto e = Element.make("div").addClass("paginated-result");
+			e.appendChild(formatReturnValueAsHtml(t.items));
+			if(t.nextPageUrl.length)
+				e.appendChild(Element.make("a", "Next Page", t.nextPageUrl));
+			return e;
 		} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
 			return Element.make("span", to!string(t), "automatic-data-display");
 		} else static if(is(T == V[K], K, V)) {
@@ -8439,7 +8501,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 							// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
 							try {
 								auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
-								presenter.presentSuccessfulReturnAsHtml(cgi, ret);
+								presenter.presentSuccessfulReturnAsHtml(cgi, ret, presenter.methodMeta!(__traits(getOverloads, obj, methodName)[idx]));
 							} catch(Throwable t) {
 								presenter.presentExceptionAsHtml!(__traits(getOverloads, obj, methodName)[idx])(cgi, t, &(__traits(getOverloads, obj, methodName)[idx]));
 							}
@@ -8504,6 +8566,11 @@ string defaultFormat(alias method)() {
 		}
 	}
 	return "html";
+}
+
+struct Paginated(T) {
+	T[] items;
+	string nextPageUrl;
 }
 
 string[] urlNamesForMethod(alias method)(string def) {

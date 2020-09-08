@@ -1870,7 +1870,7 @@ void writePngLazy(OutputRange, InputRange)(ref OutputRange where, InputRange ima
 
 // bKGD - palette entry for background or the RGB (16 bits each) for that. or 16 bits of grey
 
-uint crcPng(in string chunkName, in ubyte[] buf){
+uint crcPng(in char[] chunkName, in ubyte[] buf){
 	uint c = update_crc(0xffffffffL, cast(ubyte[]) chunkName);
 	return update_crc(c, buf) ^ 0xffffffffL;
 }

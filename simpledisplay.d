@@ -2972,7 +2972,7 @@ struct EventLoopImpl {
 	else
 	void initialize(long pulseTimeout) {
 		version(Windows) {
-			if(pulseTimeout)
+			if(pulseTimeout && handlePulse !is null)
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
 			if (customEventH is null) {
@@ -3003,7 +3003,7 @@ struct EventLoopImpl {
 				displayFd = display.fd;
 			}
 
-			if(pulseTimeout) {
+			if(pulseTimeout && handlePulse !is null) {
 				pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
 				if(pulseFd == -1)
 					throw new Exception("pulse timer create failed");
@@ -14431,6 +14431,7 @@ void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
 	glBufferData(target, data.length, data.ptr, usage);
 }
 
+/+
 /++
 	A matrix for simple uses that easily integrates with [OpenGlShader].
 
@@ -14477,6 +14478,7 @@ struct BasicMatrix(int columns, int rows, T = float) {
 		return BasicMatrix.init;
 	}
 }
++/
 
 /++
 	Convenience class for using opengl shaders.

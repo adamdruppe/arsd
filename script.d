@@ -2024,6 +2024,16 @@ unittest {
 	});
 }
 
+unittest {
+	// ternary precedence
+	interpret(q{
+		assert(0 == 0 ? true : false == true);
+		assert((0 == 0) ? true : false == true);
+		// lol FIXME
+		//assert(((0 == 0) ? true : false) == true);
+	});
+}
+
 class ForeachExpression : Expression {
 	VariableDeclaration decl;
 	Expression subject;

@@ -1,5 +1,8 @@
 /++
 	Base module for working with colors and in-memory image pixmaps.
+
+	Also has various basic data type definitions that are generally
+	useful with images like [Point], [Size], and [Rectangle].
 +/
 module arsd.color;
 

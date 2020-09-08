@@ -1,5 +1,31 @@
 /++
 	This provides a kind of web template support, built on top of [arsd.dom] and [arsd.script], in support of [arsd.cgi].
+
+	```html
+		<main>
+			<%=HTML some_var_with_html %>
+			<%= some_var %>
+
+			<if-true cond="whatever">
+				whatever == true
+			</if-true>
+			<or-else>
+				whatever == false
+			</or-else>
+
+			<for-each over="some_array" as="item">
+				<%= item %>
+			</for-each>
+			<or-else>
+				there were no items.
+			</or-else>
+
+			<render-template file="partial.html" />
+		</main>
+	```
+
+	Functions available:
+		`encodeURIComponent`, `formatDate`, `dayOfWeek`, `formatTime`
 +/
 module arsd.webtemplate;
 
@@ -9,12 +35,6 @@ import arsd.script;
 import arsd.dom;
 
 public import arsd.jsvar : var;
-
-struct RenderTemplate {
-	string name;
-	var context = var.emptyObject;
-	var skeletonContext = var.emptyObject;
-}
 
 class TemplateException : Exception {
 	string templateName;
@@ -103,6 +123,7 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 		return skeleton;
 	} catch(Exception e) {
 		throw new TemplateException(templateName, context, e);
+		//throw e;
 	}
 }
 
@@ -145,7 +166,7 @@ void expandTemplate(Element root, var context) {
 		if(ele.tagName == "if-true") {
 			auto fragment = new DocumentFragment(null);
 			import arsd.script;
-			auto got = interpret(ele.attrs.cond, context).get!bool;
+			auto got = interpret(ele.attrs.cond, context).opCast!bool;
 			if(got) {
 				ele.tagName = "root";
 				expandTemplate(ele, context);
@@ -256,9 +277,85 @@ immutable daysOfWeekFullNames = [
 	"Saturday"
 ];
 
+/++
+	UDA to put on a method when using [WebPresenterWithTemplateSupport]. Overrides default generic element formatting and instead uses the specified template name to render the return value.
 
-/+
-mixin template WebTemplatePresenterSupport() {
-
-}
+	Inside the template, the value returned by the function will be available in the context as the variable `data`.
 +/
+struct Template {
+	string name;
+}
+/++
+	UDA to put on a method when using [WebPresenterWithTemplateSupport]. Overrides the default template skeleton file name.
++/
+struct Skeleton {
+	string name;
+}
+/++
+	Can be used as a return value from one of your own methods when rendering websites with [WebPresenterWithTemplateSupport].
++/
+struct RenderTemplate {
+	string name;
+	var context = var.emptyObject;
+	var skeletonContext = var.emptyObject;
+}
+
+
+/++
+	Make a class that inherits from this with your further customizations, or minimally:
+	---
+	class MyPresenter : WebPresenterWithTemplateSupport!MyPresenter { }
+	---
++/
+template WebPresenterWithTemplateSupport(CTRP) {
+	import arsd.cgi;
+	class WebPresenterWithTemplateSupport : WebPresenter!(CTRP) {
+		override Element htmlContainer() {
+			auto skeleton = renderTemplate("generic.html");
+			return skeleton.requireSelector("main");
+		}
+
+		static struct Meta {
+			typeof(null) at;
+			string templateName;
+			string skeletonName;
+			alias at this;
+		}
+		template methodMeta(alias method) {
+			static Meta helper() {
+				Meta ret;
+
+				// ret.at = typeof(super).methodMeta!method;
+
+				foreach(attr; __traits(getAttributes, method))
+					static if(is(typeof(attr) == Template))
+						ret.templateName = attr.name;
+					else static if(is(typeof(attr) == Skeleton))
+						ret.skeletonName = attr.name;
+
+				return ret;
+			}
+			enum methodMeta = helper();
+		}
+
+		/// You can override this
+		void addContext(Cgi cgi, var ctx) {}
+
+		void presentSuccessfulReturnAsHtml(T : RenderTemplate)(Cgi cgi, T ret, Meta meta) {
+			addContext(cgi, ret.context);
+			auto skeleton = renderTemplate(ret.name, ret.context, ret.skeletonContext);
+			cgi.setResponseContentType("text/html; charset=utf8");
+			cgi.gzipResponse = true;
+			cgi.write(skeleton.toString(), true);
+		}
+
+		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, Meta meta) {
+			if(meta.templateName.length) {
+				var obj = var.emptyObject;
+				obj.data = ret;
+				presentSuccessfulReturnAsHtml(cgi, RenderTemplate(meta.templateName, obj), meta);
+			} else
+				super.presentSuccessfulReturnAsHtml(cgi, ret, meta);
+		}
+	}
+}

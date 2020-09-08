@@ -80,7 +80,6 @@ module arsd.jsvar;
 
 version=new_std_json;
 
-import std.stdio;
 static import std.array;
 import std.traits;
 import std.conv;
@@ -1589,8 +1588,9 @@ struct var {
 						val.type = JSONType.null_;
 					} else {
 						val.type = JSONType.object;
-						foreach(k, v; _payload._object._properties)
+						foreach(k, v; _payload._object._properties) {
 							val.object[k] = v.toJsonValue();
+						}
 					}
 				}
 			break;
@@ -1842,8 +1842,28 @@ class PrototypeObject {
 	JSONValue toJsonValue() {
 		JSONValue val;
 		JSONValue[string] tmp;
-		foreach(k, v; this._properties)
+		foreach(k, v; this._properties) {
+			// if it is an overload set and/or a function, just skip it.
+			// or really if it is a wrapped native object it should prolly just be skipped anyway
+			// unless it actually defines a toJson.
+			if(v.payloadType == var.Type.Function)
+				continue;
+			if(v.payloadType == var.Type.Object) {
+				// I'd love to get the json value out but idk. FIXME
+				if(auto wno = cast(WrappedNativeObject) v._payload._object) {
+					auto obj = wno.getObject();
+					if(obj is null)
+						tmp[k] = null;
+					else
+						tmp[k] = obj.toString();
+					continue;
+				} else if(typeid(PrototypeObject) !is typeid(v._payload._object))
+					continue;
+			}
+
 			tmp[k] = v.toJsonValue();
+		}
+
 		val = tmp;
 		return val;
 	}
@@ -2544,8 +2564,18 @@ class OverloadSet : PrototypeObject {
 		// remember script.d supports default args too.
 		int bestScore = int.min;
 		Overload bestMatch;
+
+		if(overloads.length == 0) {
+			return var(null);
+		}
+
 		foreach(overload; overloads) {
 			if(overload.argTypes.length == 0) {
+				if(arguments.length == 0) {
+					bestScore = 0;
+					bestMatch = overload;
+					break;
+				}
 				if(bestScore < 0) {
 					bestScore = 0;
 					bestMatch = overload;
@@ -2581,7 +2611,7 @@ class OverloadSet : PrototypeObject {
 		}
 
 		if(bestScore < 0)
-			throw new Exception("no matching overload found");
+			throw new Exception("no matching overload found");// " ~ to!string(arguments) ~ " " ~ to!string(overloads));
 			
 
 		return bestMatch.func.apply(this_, arguments);

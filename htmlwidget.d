@@ -22,7 +22,7 @@
 module arsd.htmlwidget;
 
 public import arsd.simpledisplay;
-import arsd.png;
+import arsd.image;
 
 public import arsd.dom;
 
@@ -122,32 +122,24 @@ class LayoutData {
 		// legitimate attributes FIXME: do these belong here?
 
 		if(element.hasAttribute("colspan"))
-			tableColspan = to!int(element.colspan);
+			tableColspan = to!int(element.attrs.colspan);
 		else
 			tableColspan = 1;
 		if(element.hasAttribute("rowspan"))
-			tableRowspan = to!int(element.rowspan);
+			tableRowspan = to!int(element.attrs.rowspan);
 		else
 			tableRowspan = 1;
 
 
-		if(element.tagName == "img" && element.src().indexOf(".png") != -1) { // HACK
+		if(element.tagName == "img") {
 			try {
 				auto bytes = cast(ubyte[]) curl(absolutizeUrl(element.src, _contextHack.currentUrl));
-				auto bytesArr = [bytes];
-				auto png = pngFromBytes(bytesArr);
-				image = new Image(png.header.width, png.header.height);
+				auto i = loadImageFromMemory(bytes);
+				image = Image.fromMemoryImage(i);
 
 				width = CssSize(to!string(image.width) ~ "px");
 				height = CssSize(to!string(image.height) ~ "px");
 
-				int y;
-				foreach(line; png.byRgbaScanline) {
-					foreach(x, color; line.pixels) 
-						image[x, y] = color;
-
-					y++;
-				}
 			} catch (Throwable t) {
 				writeln(t.toString);
 				image = null;
@@ -248,6 +240,7 @@ class LayoutData {
 						break;
 						case "table":
 							renderInline = false;
+						goto case;
 						case "inline-table":
 							tableDisplay = TableDisplay.table;
 						break;
@@ -473,7 +466,7 @@ int longestLine(string a) {
 	int longest = 0;
 	foreach(l; a.split("\n"))
 		if(l.length > longest)
-			longest = l.length;
+			longest = cast(int) l.length;
 	return longest;
 }
 
@@ -658,7 +651,7 @@ bool layout(Element element, int containerWidth, int containerHeight, int cx, in
 		}
 
 		if(changed) {
-			skip = i;
+			skip = cast(int) i;
 			writeln("dom changed");
 			goto startAgain;
 		}
@@ -671,24 +664,32 @@ bool layout(Element element, int containerWidth, int containerHeight, int cx, in
 
 	// And finally, layout this element itself
 	if(element.nodeType == 3) {
-		l.textToRender = replace(element.nodeValue,"\n", " ").replace("\t", " ").replace("\r", " ").squeeze(" ");
+		bool wrapIt;
+		if(element.computedStyle.getValue("white-space") == "pre") {
+			l.textToRender = element.nodeValue;
+		} else {
+			l.textToRender = replace(element.nodeValue,"\n", " ").replace("\t", " ").replace("\r", " ");//.squeeze(" "); // FIXME
+			wrapIt = true;
+		}
 		if(l.textToRender.length == 0) {
 			l.doNotRender = true;
 			return false;
 		}
 
-		auto lineWidth = containerWidth / 6;
+		if(wrapIt) {
+			auto lineWidth = containerWidth / 6;
 
-		bool startedWithSpace = l.textToRender[0] == ' ';
+			bool startedWithSpace = l.textToRender[0] == ' ';
 
-		if(l.textToRender.length > lineWidth)
-			l.textToRender = wrap(l.textToRender, lineWidth);
+			if(l.textToRender.length > lineWidth)
+				l.textToRender = wrap(l.textToRender, lineWidth);
 
-		if(l.textToRender[$-1] == '\n')
-			l.textToRender = l.textToRender[0 .. $-1];
+			if(l.textToRender[$-1] == '\n')
+				l.textToRender = l.textToRender[0 .. $-1];
 
-		if(startedWithSpace && l.textToRender[0] != ' ')
-			l.textToRender = " " ~ l.textToRender;
+			if(startedWithSpace && l.textToRender[0] != ' ')
+				l.textToRender = " " ~ l.textToRender;
+		}
 
 		bool contentChanged = false;
 		// we can wrap so let's do it
@@ -710,7 +711,7 @@ bool layout(Element element, int containerWidth, int containerHeight, int cx, in
 		*/
 
 		if(l.textToRender.length != 0) {
-			l.offsetHeight = count(l.textToRender, "\n") * 16 + 16; // lines * line-height
+			l.offsetHeight = cast(int) count(l.textToRender, "\n") * 16 + 16; // lines * line-height
 			l.offsetWidth = l.textToRender.longestLine * 6; // inline
 		} else {
 			l.offsetWidth = 0;
@@ -1192,7 +1193,7 @@ Document gotoSite(SimpleWindow win, BrowsingContext context, string url, string 
 	string styleSheetText = import("default.css");
 
 	foreach(ele; document.querySelectorAll("head link[rel=stylesheet]")) {
-		if(!ele.hasAttribute("media") || ele.media().indexOf("screen") != -1)
+		if(!ele.hasAttribute("media") || ele.attrs.media().indexOf("screen") != -1)
 			styleSheetText ~= curl(ele.href.absolutizeUrl(context.currentUrl));
 	}
 
@@ -1213,6 +1214,6 @@ Document gotoSite(SimpleWindow win, BrowsingContext context, string url, string 
 
 string impossible() {
 	assert(0);
-	return null;
+	//return null;
 }
 
