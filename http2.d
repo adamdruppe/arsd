@@ -1793,15 +1793,19 @@ version(use_openssl) {
 	import core.stdc.stdio;
 
 	shared static this() {
-		version(Posix)
-			ossllib_handle = dlopen("libssl.so", RTLD_NOW);
-		else version(Windows) {
+		version(Posix) {
+			ossllib_handle = dlopen("libssl.so.1.1", RTLD_NOW);
+			if(ossllib_handle is null)
+				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
+		} else version(Windows) {
 			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
 			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
 		}
 
 		if(ossllib_handle is null)
-			throw new Exception("ssl fail open");
+			throw new Exception("libssl library not found");
+		if(oeaylib_handle is null)
+			throw new Exception("libeay32 library not found");
 
 		foreach(memberName; __traits(allMembers, ossllib)) {
 			alias t = typeof(__traits(getMember, ossllib, memberName));
