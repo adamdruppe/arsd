@@ -269,8 +269,7 @@
 			"configurations": [
 				{
 					"name": "with_openssl",
-					"versions": ["with_openssl"],
-					"libs": ["crypto", "ssl"]
+					"versions": ["with_openssl"]
 				},
 				{
 					"name": "without_openssl",
