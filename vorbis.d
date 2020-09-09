@@ -756,7 +756,7 @@ private float float32_unpack (uint x) {
   uint sign = x&0x80000000;
   uint exp = (x&0x7fe00000)>>21;
   double res = (sign ? -cast(double)mantissa : cast(double)mantissa);
-  return cast(float)ldexp(cast(float)res, exp-788);
+  return cast(float)ldexp(cast(float)res, cast(int)exp-788);
 }
 
 // zlib & jpeg huffman tables assume that the output symbols
