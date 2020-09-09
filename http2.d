@@ -765,7 +765,17 @@ class HttpRequest {
 			headers ~= " HTTP/1.1\r\n";
 		else
 			headers ~= " HTTP/1.0\r\n";
-		headers ~= "Host: "~requestParameters.host~"\r\n";
+
+		// the whole authority section is supposed to be there, but curl doesn't send if default port
+		// so I'll copy what they do
+		headers ~= "Host: ";
+		headers ~= requestParameters.host;
+		if(requestParameters.port != 80 && requestParameters.port != 443) {
+			headers ~= ":";
+			headers ~= to!string(requestParameters.port);
+		}
+		headers ~= "\r\n";
+
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
 		if(requestParameters.contentType.length)
