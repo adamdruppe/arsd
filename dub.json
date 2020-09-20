@@ -200,6 +200,14 @@
 					"versions": ["embedded_httpd"]
 				},
 				{
+					"name": "embedded_httpd_threads",
+					"versions": ["embedded_httpd_threads"]
+				},
+				{
+					"name": "embedded_httpd_processes",
+					"versions": ["embedded_httpd_processes"]
+				},
+				{
 					"name": "cgi",
 					"versions": ["traditional_cgi"]
 				},
