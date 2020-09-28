@@ -806,10 +806,13 @@ class TerminalEmulator {
 	static struct TerminalCell {
 	align(1):
 		private union {
+			// OMG the top 11 bits of a dchar are always 0
+			// and i can reuse them!!!
 			struct {
 				dchar chStore = ' '; /// the character
 				TextAttributes attributesStore; /// color, etc.
 			}
+			// 64 bit pointer also has unused 16 bits but meh.
 			NonCharacterData nonCharacterDataStore; /// iff hasNonCharacterData
 		}
 

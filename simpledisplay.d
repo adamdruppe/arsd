@@ -6587,6 +6587,8 @@ struct Pen {
 
 	On Windows, this means a device-independent bitmap. On X11, it is an XImage.
 
+	$(WARNING On X, do not create an Image in an application without an event loop. You may create images before running the event loop, but the event loop must run at some point before you try to actually draw the image to screen or before you exit your program.)
+
 	$(NOTE If you are writing platform-aware code and need to know low-level details, uou may check `if(Image.impl.xshmAvailable)` to see if MIT-SHM is used on X11 targets to draw `Image`s and `Sprite`s. Use `static if(UsingSimpledisplayX11)` to determine if you are compiling for an X11 target.)
 
 	Drawing an image to screen is not necessarily fast, but applying algorithms to draw to the image itself should be fast. An `Image` is also the first step in loading and displaying images loaded from files.
