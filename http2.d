@@ -2813,6 +2813,7 @@ class WebSocket {
 
 	private WebSocketFrame processOnce() {
 		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
+		//import std.stdio; writeln(d);
 		auto s = d;
 		// FIXME: handle continuation frames more efficiently. it should really just reuse the receive buffer.
 		WebSocketFrame m;
@@ -2876,7 +2877,10 @@ class WebSocket {
 				default: // ignore though i could and perhaps should throw too
 			}
 		}
-		receiveBufferUsedLength -= s.length - d.length;
+
+		import core.stdc.string;
+		memmove(receiveBuffer.ptr, d.ptr, d.length);
+		receiveBufferUsedLength = d.length;
 
 		return m;
 	}
