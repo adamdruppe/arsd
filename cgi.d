@@ -374,6 +374,12 @@ void cloexec(Socket s) {
 	}
 }
 
+version(embedded_httpd_hybrid) {
+	version=embedded_httpd_threads;
+	version=cgi_use_fork;
+	version=cgi_use_fiber;
+}
+
 // the servers must know about the connections to talk to them; the interfaces are vital
 version(with_addon_servers)
 	version=with_addon_servers_connections;
@@ -3854,6 +3860,7 @@ class CgiFiber : Fiber {
 
 version(embedded_httpd_threads)
 void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
+	assert(connection !is null);
 	version(cgi_use_fiber) {
 		auto fiber = new CgiFiber(&doThreadHttpConnectionGuts!(CustomCgi, fun));
 		import core.memory;
@@ -4224,16 +4231,19 @@ private void registerEventWakeup(bool* registered, Socket source, WakeupEvent e)
 				throw new Exception("epoll_ctl");
 		} else {
 			// initial registration
+			*registered = true ;
+			int fd = source.handle;
 			epoll_event evt;
 			evt.events = e | EPOLLONESHOT;
 			evt.data.ptr = cast(void*) f;
-			if(epoll_ctl(epfd, EPOLL_CTL_ADD, source.handle, &evt) == -1)
+			if(epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &evt) == -1)
 				throw new Exception("epoll_ctl");
-			*registered = true ;
 		}
 	};
 
 	Fiber.yield();
+
+	f.setPostYield(null);
 }
 
 version(cgi_use_fiber)
@@ -4451,10 +4461,12 @@ class ListeningConnectionManager {
 				}
 			}
 		} else {
-			semaphore = new Semaphore();
-
 			import std.parallelism;
 
+			version(cgi_use_fork) {
+				//asm { int 3; }
+				fork();
+			}
 
 			version(cgi_use_fiber) {
 				import core.sys.linux.epoll;
@@ -4472,7 +4484,7 @@ class ListeningConnectionManager {
 				if(epoll_ctl(epfd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
 					throw new Exception("epoll_ctl " ~ to!string(errno));
 
-				WorkerThread[] threads = new WorkerThread[](totalCPUs * 2 + 1);
+				WorkerThread[] threads = new WorkerThread[](totalCPUs * 1 + 1);
 				foreach(i, ref thread; threads) {
 					thread = new WorkerThread(this, handler, cast(int) i);
 					thread.start();
@@ -4497,6 +4509,8 @@ class ListeningConnectionManager {
 				}
 
 			} else {
+				semaphore = new Semaphore();
+
 				// I times 4 here because there's a good chance some will be blocked on i/o.
 				ConnectionThread[] threads = new ConnectionThread[](totalCPUs * 4);
 				foreach(i, ref thread; threads) {
@@ -4606,8 +4620,13 @@ class ListeningConnectionManager {
 			tcp = true;
 		}
 
-		Thread.getThis.priority = Thread.PRIORITY_MAX;
 		listener.listen(128);
+
+		version(cgi_use_fiber) version(cgi_use_fork)
+			listener.blocking = false;
+
+		// this is the UI control thread and thus gets more priority
+		Thread.getThis.priority = Thread.PRIORITY_MAX;
 	}
 
 	Socket listener;
@@ -4782,7 +4801,18 @@ class WorkerThread : Thread {
 				auto flags = events[idx].events;
 
 				if(cast(size_t) events[idx].data.ptr == cast(size_t) lcm.listener.handle) {
-					sn = lcm.listener.accept();
+					// this try/catch is because it is set to non-blocking mode
+					// and Phobos' stupid api throws an exception instead of returning
+					// if it would block. Why would it block? because a forked process
+					// might have beat us to it, but the wakeup event thundered our herds.
+					version(cgi_use_fork) {
+						try
+						sn = lcm.listener.accept();
+						catch(SocketAcceptException e) { continue; }
+					} else {
+						sn = lcm.listener.accept();
+					}
+
 					cloexec(sn);
 					if(lcm.tcp) {
 						// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
@@ -5091,6 +5121,9 @@ version(cgi_with_websocket) {
 				return true;
 			}
 
+			if(bfr.sourceClosed)
+				return false;
+
 			bfr.popFront(0);
 			if(bfr.sourceClosed)
 				return false;
@@ -5368,7 +5401,10 @@ version(cgi_with_websocket) {
 					default: // ignore though i could and perhaps should throw too
 				}
 			}
-			receiveBufferUsedLength -= s.length - d.length;
+
+			import core.stdc.string;
+			memmove(receiveBuffer.ptr, d.ptr, d.length);
+			receiveBufferUsedLength = d.length;
 
 			return m;
 		}

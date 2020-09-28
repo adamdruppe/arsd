@@ -208,6 +208,10 @@
 					"versions": ["embedded_httpd_processes"]
 				},
 				{
+					"name": "embedded_httpd_hybrid",
+					"versions": ["embedded_httpd_hybrid"]
+				},
+				{
 					"name": "cgi",
 					"versions": ["traditional_cgi"]
 				},
