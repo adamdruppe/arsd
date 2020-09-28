@@ -4472,7 +4472,7 @@ class ListeningConnectionManager {
 				if(epoll_ctl(epfd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
 					throw new Exception("epoll_ctl " ~ to!string(errno));
 
-				WorkerThread[] threads = new WorkerThread[](totalCPUs + 1);
+				WorkerThread[] threads = new WorkerThread[](totalCPUs * 2 + 1);
 				foreach(i, ref thread; threads) {
 					thread = new WorkerThread(this, handler, cast(int) i);
 					thread.start();
@@ -9851,6 +9851,7 @@ private struct StackBuffer {
 
 	this(int a) {
 		buffer = initial[];
+		position = 0;
 	}
 
 	void add(in char[] what) {
