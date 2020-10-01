@@ -267,7 +267,19 @@ class EmailMessage {
 
 		smtp.verifyHost = false;
 		smtp.verifyPeer = false;
-		// smtp.verbose = true;
+		//smtp.verbose = true;
+
+		{
+			// std.net.curl doesn't work well with STARTTLS if you don't
+			// put smtps://... and if you do, it errors if you can't start
+			// with a TLS connection from the beginning.
+
+			// This change allows ssl if it can.
+			import std.net.curl;
+			import etc.c.curl;
+			smtp.handle.set(CurlOption.use_ssl, CurlUseSSL.tryssl);
+		}
+
 		if(mailServer.username.length)
 			smtp.setAuthentication(mailServer.username, mailServer.password);
 		const(char)[][] allRecipients = cast(const(char)[][]) (to ~ cc ~ bcc); // WTF cast

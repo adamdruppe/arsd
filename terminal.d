@@ -138,12 +138,39 @@ version(demos) unittest {
 
 // FIXME: http://msdn.microsoft.com/en-us/library/windows/desktop/ms686016%28v=vs.85%29.aspx
 
+
+/++
+	A function the sigint handler will call (if overridden - which is the
+	case when [RealTimeConsoleInput] is active on Posix or if you compile with
+	`TerminalDirectToEmulator` version on any platform at this time) in addition
+	to the library's default handling, which is to set a flag for the event loop
+	to inform you.
+
+	Remember, this is called from a signal handler and/or from a separate thread,
+	so you are not allowed to do much with it and need care when setting TLS variables.
+
+	I suggest you only set a `__gshared bool` flag as many other operations will risk
+	undefined behavior.
+
+	$(WARNING
+		This function is never called on the default Windows console
+		configuration in the current implementation. You can use
+		`-version=TerminalDirectToEmulator` to guarantee it is called there
+		too by causing the library to pop up a gui window for your application.
+	)
+
+	History:
+		Added March 30, 2020. Included in release v7.1.0.
+
++/
+__gshared void delegate() nothrow @nogc sigIntExtension;
+
+
 version(TerminalDirectToEmulator) {
-	__gshared bool windowSizeChanged = false;
-	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
-	__gshared bool hangedUp = false; /// similar to interrupted.
-	version=WithSignals;
-} else version(Posix) {
+	version=WithEncapsulatedSignals;
+}
+
+version(Posix) {
 	enum SIGWINCH = 28;
 	__gshared bool windowSizeChanged = false;
 	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
@@ -172,6 +199,9 @@ version(TerminalDirectToEmulator) {
 				send(SignalFired());
 			catch(Exception) {}
 		}
+
+		if(sigIntExtension)
+			sigIntExtension();
 	}
 	extern(C)
 	void hangupSignalHandler(int sigNumber) nothrow {
@@ -183,7 +213,6 @@ version(TerminalDirectToEmulator) {
 			catch(Exception) {}
 		}
 	}
-
 }
 
 // parts of this were taken from Robik's ConsoleD
@@ -209,6 +238,8 @@ version(Win32Console) {
 		enum GREEN_BIT = 2;
 		enum BLUE_BIT = 1;
 	}
+
+	pragma(lib, "user32");
 }
 
 version(Posix) {
@@ -316,7 +347,7 @@ vt|vt100|DEC vt100 compatible:\
 
 
 # Entry for an xterm. Insert mode has been disabled.
-vs|xterm|tmux|tmux-256color|xterm-kitty|screen|screen.xterm|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
+vs|xterm|tmux|tmux-256color|xterm-kitty|screen|screen.xterm|screen-256color|screen.xterm-256color|xterm-color|xterm-256color|vs100|xterm terminal emulator (X Window System):\
 	:am:bs:mi@:km:co#80:li#55:\
 	:im@:ei@:\
 	:cl=\E[H\E[J:\
@@ -474,6 +505,12 @@ struct Terminal {
 	@disable this();
 	@disable this(this);
 	private ConsoleOutputType type;
+
+	version(TerminalDirectToEmulator) {
+		private bool windowSizeChanged = false;
+		private bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
+		private bool hangedUp = false; /// similar to interrupted.
+	}
 
 	private TerminalCursor currentCursor_;
 	version(Windows) private CONSOLE_CURSOR_INFO originalCursorInfo;
@@ -702,6 +739,7 @@ struct Terminal {
 	string[string] termcap;
 	void readTermcap(string t = null) {
 		version(TerminalDirectToEmulator)
+		if(usingDirectEmulator)
 			t = "xterm";
 		import std.process;
 		import std.string;
@@ -718,6 +756,12 @@ struct Terminal {
 			// almost always
 			if(t.indexOf("xterm") != -1)
 				t = "xterm";
+			if(t.indexOf("putty") != -1)
+				t = "xterm";
+			if(t.indexOf("tmux") != -1)
+				t = "tmux";
+			if(t.indexOf("screen") != -1)
+				t = "screen";
 
 			termcapData = getTermcapDatabase(t);
 		}
@@ -1015,9 +1059,10 @@ struct Terminal {
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
 			return !(defaultBackgroundColor & 0xf);
-		} version(TerminalDirectToEmulator) {
-			return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 		} else {
+			version(TerminalDirectToEmulator)
+			if(usingDirectEmulator)
+				return integratedTerminalEmulatorConfiguration.defaultBackground.g < 100;
 			// FIXME: there is probably a better way to do this
 			// but like idk how reliable it is.
 			if(terminalInFamily("linux"))
@@ -1029,6 +1074,22 @@ struct Terminal {
 
 	version(TerminalDirectToEmulator) {
 		TerminalEmulatorWidget tew;
+		private __gshared Window mainWindow;
+		import core.thread;
+		version(Posix)
+			ThreadID threadId;
+		else version(Windows)
+			HANDLE threadId;
+		private __gshared Thread guiThread;
+
+		private static class NewTerminalEvent {
+			Terminal* t;
+			this(Terminal* t) {
+				this.t = t;
+			}
+		}
+
+		bool usingDirectEmulator;
 	}
 
 	version(TerminalDirectToEmulator)
@@ -1044,17 +1105,75 @@ struct Terminal {
 			return;
 		}
 
+		import arsd.simpledisplay;
+		static if(UsingSimpledisplayX11) {
+			try {
+				if(arsd.simpledisplay.librariesSuccessfullyLoaded) {
+					XDisplayConnection.get();
+					this.usingDirectEmulator = true;
+				} else if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal) {
+					throw new Exception("Unable to load X libraries to create custom terminal.");
+				}
+			} catch(Exception e) {
+				if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal)
+					throw e;
+
+			}
+		} else {
+			this.usingDirectEmulator = true;
+		}
+
+		if(!usingDirectEmulator) {
+			version(Posix) {
+				posixInitialize(type, 0, 1, null);
+				return;
+			} else {
+				throw new Exception("Total wtf - are you on a windows system without a gui?!?");
+			}
+			assert(0);
+		}
 
 		tcaps = uint.max; // all capabilities
 		import core.thread;
 
-		auto thread = new Thread( {
-			auto window = new TerminalEmulatorWindow(&this);
-			tew = window.tew;
-			window.loop();
-		});
+		version(Posix)
+			threadId = Thread.getThis.id;
+		else version(Windows)
+			threadId = GetCurrentThread();
 
-		thread.start();
+		if(guiThread is null) {
+			guiThread = new Thread( {
+				auto window = new TerminalEmulatorWindow(&this, null);
+				mainWindow = window;
+				mainWindow.win.addEventListener((NewTerminalEvent t) {
+					auto nw = new TerminalEmulatorWindow(t.t, null);
+					t.t.tew = nw.tew;
+					t.t = null;
+					nw.show();
+				});
+				tew = window.tew;
+				//try
+					window.loop();
+				/*
+				catch(Throwable t) {
+					import std.stdio;
+					stdout.writeln(t);
+					stdout.flush();
+				}
+				*/
+			});
+			guiThread.start();
+			guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
+		} else {
+			// FIXME: 64 bit builds on linux segfault with multiple terminals
+			// so that isn't really supported as of yet.
+			while(cast(shared) mainWindow is null) {
+				import core.thread;
+				Thread.sleep(5.msecs);
+			}
+			mainWindow.win.postEvent(new NewTerminalEvent(&this));
+		}
+
 		// need to wait until it is properly initialized
 		while(cast(shared) tew is null) {
 			import core.thread;
@@ -1078,6 +1197,11 @@ struct Terminal {
 	 */
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
 		createLock();
+		posixInitialize(type, fdIn, fdOut, getSizeOverride);
+	}
+
+	version(Posix)
+	private void posixInitialize(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
 		this.fdIn = fdIn;
 		this.fdOut = fdOut;
 		this.getSizeOverride = getSizeOverride;
@@ -1118,7 +1242,7 @@ struct Terminal {
 		return Terminal(ConsoleOutputType.cellular);
 	}
 
-	version(Win32Console) {
+	version(Windows) {
 		HANDLE hConsole;
 		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
 	}
@@ -1203,8 +1327,18 @@ struct Terminal {
 				doTermcap("te");
 			}
 			version(TerminalDirectToEmulator) {
-				writeln("\n\n<exited>");
-				setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
+				if(usingDirectEmulator) {
+					writeln("\n\n<exited>");
+					setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
+					tew.term = null;
+
+					if(integratedTerminalEmulatorConfiguration.closeOnExit)
+						tew.parentWindow.close();
+				} else {
+					if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
+						writeStringRaw("\033[23;0t"); // restore window title from the stack
+					}
+				}
 			} else
 			if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 				writeStringRaw("\033[23;0t"); // restore window title from the stack
@@ -1232,7 +1366,6 @@ struct Terminal {
 			SetConsoleActiveScreenBuffer(stdo);
 			if(hConsole !is stdo)
 				CloseHandle(hConsole);
-
 		}
 	}
 
@@ -1288,7 +1421,10 @@ struct Terminal {
 			// fallback to 16 color for term that i know don't take it well
 			import std.process;
 			import std.string;
-			version(TerminalDirectToEmulator) {} else
+			version(TerminalDirectToEmulator)
+			if(usingDirectEmulator)
+				goto skip_approximation;
+
 			if(environment.get("TERM") == "rxvt" || environment.get("TERM") == "linux") {
 				// not likely supported, use 16 color fallback
 				auto setTof = approximate16Color(foreground);
@@ -1302,6 +1438,8 @@ struct Terminal {
 
 				return false;
 			}
+
+			skip_approximation:
 
 			// otherwise, assume it is probably supported and give it a try
 			writeStringRaw(format("\033[38;5;%dm\033[48;5;%dm",
@@ -1617,9 +1755,19 @@ struct Terminal {
 		lock(); scope(exit) unlock();
 
 		version(TerminalDirectToEmulator) {
-			tew.sendRawInput(cast(ubyte[]) writeBuffer);
-			writeBuffer = null;
-		} else version(Posix) {
+			if(usingDirectEmulator) {
+				tew.sendRawInput(cast(ubyte[]) writeBuffer);
+				writeBuffer = null;
+			} else {
+				interiorFlush();
+			}
+		} else {
+			interiorFlush();
+		}
+	}
+
+	private void interiorFlush() {
+		version(Posix) {
 			if(_writeDelegate !is null) {
 				_writeDelegate(writeBuffer);
 			} else {
@@ -1649,8 +1797,17 @@ struct Terminal {
 
 	int[] getSize() {
 		version(TerminalDirectToEmulator) {
-			return [tew.terminalEmulator.width, tew.terminalEmulator.height];
-		} else version(Windows) {
+			if(usingDirectEmulator)
+				return [tew.terminalEmulator.width, tew.terminalEmulator.height];
+			else
+				return getSizeInternal();
+		} else {
+			return getSizeInternal();
+		}
+	}
+
+	private int[] getSizeInternal() {
+		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo( hConsole, &info );
         
@@ -1749,10 +1906,13 @@ struct Terminal {
 	}
 	+/
 
-	void writePrintableString(in char[] s, ForceOption force = ForceOption.automatic) {
+	void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
 		lock(); scope(exit) unlock();
 		// an escape character is going to mess things up. Actually any non-printable character could, but meh
 		// assert(s.indexOf("\033") == -1);
+
+		if(s.length == 0)
+			return;
 
 		// tracking cursor position
 		// FIXME: by grapheme?
@@ -1789,7 +1949,26 @@ struct Terminal {
 			+/
 		}
 
-		writeStringRaw(s);
+		version(TerminalDirectToEmulator) {
+			// this breaks up extremely long output a little as an aid to the
+			// gui thread; by breaking it up, it helps to avoid monopolizing the
+			// event loop. Easier to do here than in the thread itself because
+			// this one doesn't have escape sequences to break up so it avoids work.
+			while(s.length) {
+				auto len = s.length;
+				if(len > 1024 * 32) {
+					len = 1024 * 32;
+					// get to the start of a utf-8 sequence. kidna sorta.
+					while(len && (s[len] & 0x1000_0000))
+						len--;
+				}
+				auto next = s[0 .. len];
+				s = s[len .. $];
+				writeStringRaw(next);
+			}
+		} else {
+			writeStringRaw(s);
+		}
 	}
 
 	/* private */ bool _wrapAround = true;
@@ -1802,6 +1981,8 @@ struct Terminal {
 	/*private*/ void writeStringRaw(in char[] s) {
 		lock(); scope(exit) unlock();
 		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
+		if(writeBuffer.length >  1024 * 32)
+			flush();
 	}
 
 	import core.sync.mutex;
@@ -2014,7 +2195,7 @@ struct RealTimeConsoleInput {
 		// so this hack is just to give some room for that to happen without destroying the rest of the world
 	}
 
-	version(Win32Console) {
+	version(Windows) {
 		private DWORD oldInput;
 		private DWORD oldOutput;
 		HANDLE inputHandle;
@@ -2029,8 +2210,12 @@ struct RealTimeConsoleInput {
 		this.flags = flags;
 		this.terminal = terminal;
 
-		version(Win32Console) {
+		version(Windows) {
 			inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+
+		}
+
+		version(Win32Console) {
 
 			GetConsoleMode(inputHandle, &oldInput);
 
@@ -2059,54 +2244,12 @@ struct RealTimeConsoleInput {
 		}
 
 		version(TerminalDirectToEmulator) {
-			terminal.tew.terminalEmulator.echo = (flags & ConsoleInputFlags.echo) ? true : false;
+			if(terminal.usingDirectEmulator)
+				terminal.tew.terminalEmulator.echo = (flags & ConsoleInputFlags.echo) ? true : false;
+			else version(Posix)
+				posixInit();
 		} else version(Posix) {
-			this.fdIn = terminal.fdIn;
-			this.fdOut = terminal.fdOut;
-
-			if(fdIn != -1) {
-				tcgetattr(fdIn, &old);
-				auto n = old;
-
-				auto f = ICANON;
-				if(!(flags & ConsoleInputFlags.echo))
-					f |= ECHO;
-
-				// \033Z or \033[c
-
-				n.c_lflag &= ~f;
-				tcsetattr(fdIn, TCSANOW, &n);
-			}
-
-			// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
-			//destructor ~= { tcsetattr(fdIn, TCSANOW, &old); };
-
-			if(flags & ConsoleInputFlags.size) {
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &sizeSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGWINCH, &n, &oldSigWinch);
-			}
-
-			{
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &interruptSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGINT, &n, &oldSigIntr);
-			}
-
-			{
-				import core.sys.posix.signal;
-				sigaction_t n;
-				n.sa_handler = &hangupSignalHandler;
-				n.sa_mask = cast(sigset_t) 0;
-				n.sa_flags = 0;
-				sigaction(SIGHUP, &n, &oldHupIntr);
-			}
+			posixInit();
 		}
 
 		if(UseVtSequences) {
@@ -2173,6 +2316,56 @@ struct RealTimeConsoleInput {
 		}
 	}
 
+	version(Posix)
+	private void posixInit() {
+		this.fdIn = terminal.fdIn;
+		this.fdOut = terminal.fdOut;
+
+		if(fdIn != -1) {
+			tcgetattr(fdIn, &old);
+			auto n = old;
+
+			auto f = ICANON;
+			if(!(flags & ConsoleInputFlags.echo))
+				f |= ECHO;
+
+			// \033Z or \033[c
+
+			n.c_lflag &= ~f;
+			tcsetattr(fdIn, TCSANOW, &n);
+		}
+
+		// some weird bug breaks this, https://github.com/robik/ConsoleD/issues/3
+		//destructor ~= { tcsetattr(fdIn, TCSANOW, &old); };
+
+		if(flags & ConsoleInputFlags.size) {
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &sizeSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGWINCH, &n, &oldSigWinch);
+		}
+
+		{
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &interruptSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGINT, &n, &oldSigIntr);
+		}
+
+		{
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &hangupSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGHUP, &n, &oldHupIntr);
+		}
+	}
+
 	void fdReadyReader() {
 		auto queue = readNextEvents();
 		foreach(event; queue)
@@ -2232,13 +2425,15 @@ struct RealTimeConsoleInput {
 
 		// the delegate thing doesn't actually work for this... for some reason
 
-		version(TerminalDirectToEmulator) { } else
-		version(Posix)
+		version(TerminalDirectToEmulator) {
+			if(terminal && terminal.usingDirectEmulator)
+				goto skip_extra;
+		}
+
+		version(Posix) {
 			if(fdIn != -1)
 				tcsetattr(fdIn, TCSANOW, &old);
 
-		version(TerminalDirectToEmulator) { } else
-		version(Posix) {
 			if(flags & ConsoleInputFlags.size) {
 				// restoration
 				sigaction(SIGWINCH, &oldSigWinch, null);
@@ -2246,6 +2441,8 @@ struct RealTimeConsoleInput {
 			sigaction(SIGINT, &oldSigIntr, null);
 			sigaction(SIGHUP, &oldHupIntr, null);
 		}
+
+		skip_extra:
 
 		// we're just undoing everything the constructor did, in reverse order, same criteria
 		foreach_reverse(d; destructor)
@@ -2274,6 +2471,9 @@ struct RealTimeConsoleInput {
 	bool timedCheckForInput(int milliseconds) {
 		if(inputQueue.length || timedCheckForInput_bypassingBuffer(milliseconds))
 			return true;
+		version(WithEncapsulatedSignals)
+			if(terminal.interrupted || terminal.windowSizeChanged || terminal.hangedUp)
+				return true;
 		version(WithSignals)
 			if(interrupted || windowSizeChanged || hangedUp)
 				return true;
@@ -2286,6 +2486,9 @@ struct RealTimeConsoleInput {
 
 	bool timedCheckForInput_bypassingBuffer(int milliseconds) {
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return timedCheckForInput_bypassingBuffer_impl(milliseconds);
+
 			import core.time;
 			if(terminal.tew.terminalEmulator.pendingForApplication.length)
 				return true;
@@ -2293,10 +2496,15 @@ struct RealTimeConsoleInput {
 				// it was notified, but it could be left over from stuff we
 				// already processed... so gonna check the blocking conditions here too
 				// (FIXME: this sucks and is surely a race condition of pain)
-				return terminal.tew.terminalEmulator.pendingForApplication.length || interrupted || windowSizeChanged || hangedUp;
+				return terminal.tew.terminalEmulator.pendingForApplication.length || terminal.interrupted || terminal.windowSizeChanged || terminal.hangedUp;
 			else
 				return false;
-		} else version(Win32Console) {
+		} else
+			return timedCheckForInput_bypassingBuffer_impl(milliseconds);
+	}
+
+	private bool timedCheckForInput_bypassingBuffer_impl(int milliseconds) {
+		version(Windows) {
 			auto response = WaitForSingleObject(inputHandle, milliseconds);
 			if(response  == 0)
 				return true; // the object is ready
@@ -2369,6 +2577,8 @@ struct RealTimeConsoleInput {
 	//int inputBufferPosition;
 	int nextRaw(bool interruptable = false) {
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return nextRaw_impl(interruptable);
 			moar:
 			//if(interruptable && inputQueue.length)
 				//return -1;
@@ -2385,7 +2595,11 @@ struct RealTimeConsoleInput {
 				terminal.tew.terminalEmulator.pendingForApplication = terminal.tew.terminalEmulator.pendingForApplication[1 .. $];
 				return a;
 			}
-		} else version(Posix) {
+		} else
+			return nextRaw_impl(interruptable);
+	}
+	private int nextRaw_impl(bool interruptable = false) {
+		version(Posix) {
 			if(fdIn == -1)
 				return 0;
 
@@ -2456,7 +2670,9 @@ struct RealTimeConsoleInput {
 		auto oldHeight = terminal.height;
 		terminal.updateSize();
 		version(WithSignals)
-		windowSizeChanged = false;
+			windowSizeChanged = false;
+		version(WithEncapsulatedSignals)
+			terminal.windowSizeChanged = false;
 		return InputEvent(SizeChangedEvent(oldWidth, oldHeight, terminal.width, terminal.height), terminal);
 	}
 
@@ -2476,21 +2692,36 @@ struct RealTimeConsoleInput {
 		terminal.flush();
 
 		wait_for_more:
-		version(WithSignals)
-		if(interrupted) {
-			interrupted = false;
-			return InputEvent(UserInterruptionEvent(), terminal);
+		version(WithSignals) {
+			if(interrupted) {
+				interrupted = false;
+				return InputEvent(UserInterruptionEvent(), terminal);
+			}
+
+			if(hangedUp) {
+				hangedUp = false;
+				return InputEvent(HangupEvent(), terminal);
+			}
+
+			if(windowSizeChanged) {
+				return checkWindowSizeChanged();
+			}
 		}
 
-		version(WithSignals)
-		if(hangedUp) {
-			hangedUp = false;
-			return InputEvent(HangupEvent(), terminal);
-		}
+		version(WithEncapsulatedSignals) {
+			if(terminal.interrupted) {
+				terminal.interrupted = false;
+				return InputEvent(UserInterruptionEvent(), terminal);
+			}
 
-		version(WithSignals)
-		if(windowSizeChanged) {
-			return checkWindowSizeChanged();
+			if(terminal.hangedUp) {
+				terminal.hangedUp = false;
+				return InputEvent(HangupEvent(), terminal);
+			}
+
+			if(terminal.windowSizeChanged) {
+				return checkWindowSizeChanged();
+			}
 		}
 
 		if(inputQueue.length) {
@@ -4049,6 +4280,37 @@ class LineGetter {
 				f ~= item;
 		}
 
+		/+
+		// if it is excessively long, let's trim it down by trying to
+		// group common sub-sequences together.
+		if(f.length > terminal.height * 3 / 4) {
+			import std.algorithm;
+			f.sort();
+
+			// see how many can be saved by just keeping going until there is
+			// no more common prefix. then commit that and keep on down the list.
+			// since it is sorted, if there is a commonality, it should appear quickly
+			string[] n;
+			string commonality = f[0];
+			size_t idx = 1;
+			while(idx < f.length) {
+				auto c = commonPrefix(commonality, f[idx]);
+				if(c.length > cursorPosition - start) {
+					commonality = c;
+				} else {
+					n ~= commonality;
+					commonality = f[idx];
+				}
+				idx++;
+			}
+			if(commonality.length)
+				n ~= commonality;
+
+			if(n.length)
+				f = n;
+		}
+		+/
+
 		return f;
 	}
 
@@ -4503,14 +4765,20 @@ class LineGetter {
 
 		// then get the current cursor position to start fresh
 		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return updateCursorPosition_impl();
 			startOfLineX = terminal.tew.terminalEmulator.cursorX;
 			startOfLineY = terminal.tew.terminalEmulator.cursorY;
-		} else version(Win32Console) {
+		} else
+			updateCursorPosition_impl();
+	}
+	private void updateCursorPosition_impl() {
+		version(Win32Console) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
 			startOfLineX = info.dwCursorPosition.X;
 			startOfLineY = info.dwCursorPosition.Y;
-		} else {
+		} else version(Posix) {
 			// request current cursor position
 
 			// we have to turn off cooked mode to get this answer, otherwise it will all
@@ -4544,49 +4812,76 @@ class LineGetter {
 			import core.stdc.errno;
 
 			import core.sys.posix.unistd;
-			// reading directly to bypass any buffering
-			int retries = 16;
-			ubyte[16] buffer;
-			try_again:
-			auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
-			if(len <= 0) {
+
+			ubyte readOne() {
+				ubyte[1] buffer;
+				int tries = 0;
+				try_again:
+				if(tries > 30)
+					throw new Exception("terminal reply timed out");
+				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
 				if(len == -1) {
 					if(errno == EINTR)
 						goto try_again;
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
 						import core.thread;
 						Thread.sleep(10.msecs);
+						tries++;
 						goto try_again;
 					}
+				} else if(len == 0) {
+					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 				}
-				throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
-			}
-			regot:
-			auto got = buffer[0 .. len];
-			if(got.length < 6) {
-				auto len2 = read(terminal.fdIn, &buffer[len], buffer.length - len);
-				if(len2 <= 0)
-					throw new Exception("not enough cursor reply answer");
-				else {
-					len += len2;
-					goto regot;
-				}
-			}
-			if(got[0] != '\033' || got[1] != '[' || got[$-1] != 'R') {
-				retries--;
-				if(retries > 0)
-					goto try_again;
-				throw new Exception("wrong answer for cursor position " ~ cast(string) got[1 .. $]);
-			}
-			auto gots = cast(char[]) got[2 .. $-1];
 
-			import std.string;
+				return buffer[0];
+			}
 
-			auto pieces = split(gots, ";");
-			if(pieces.length != 2) throw new Exception("wtf wrong answer on cursor position");
+			nextEscape:
+			while(readOne() != '\033') {}
+			if(readOne() != '[')
+				goto nextEscape;
 
-			startOfLineX = to!int(pieces[1]) - 1;
-			startOfLineY = to!int(pieces[0]) - 1;
+			int x, y;
+
+			// now we should have some numbers being like yyy;xxxR
+			// but there may be a ? in there too; DEC private mode format
+			// of the very same data.
+
+			x = 0;
+			y = 0;
+
+			auto b = readOne();
+
+			if(b == '?')
+				b = readOne(); // no big deal, just ignore and continue
+
+			nextNumberY:
+			if(b >= '0' && b <= '9') {
+				y *= 10;
+				y += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			if(b != ';')
+				goto nextNumberY;
+
+			b = readOne();
+			nextNumberX:
+			if(b >= '0' && b <= '9') {
+				x *= 10;
+				x += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			// another digit
+			if(b >= '0' && b <= '9')
+				goto nextNumberX;
+
+			if(b != 'R')
+				goto nextEscape; // it wasn't the right thing it after all
+
+			startOfLineX = x - 1;
+			startOfLineY = y - 1;
 		}
 
 		// updating these too because I can with the more accurate info from above
@@ -4754,12 +5049,9 @@ class LineGetter {
 								cursorPosition--;
 						}
 						aligned(cursorPosition, -1);
-						if(!multiLineMode) {
-							if(cursorPosition < horizontalScrollPosition) {
-								horizontalScrollPosition--;
-								aligned(horizontalScrollPosition, -1);
-							}
-						}
+
+						if(cursorPosition < horizontalScrollPosition)
+							positionCursor();
 
 						redraw();
 					break;
@@ -4776,12 +5068,9 @@ class LineGetter {
 								cursorPosition = cast(int) line.length;
 						}
 						aligned(cursorPosition, 1);
-						if(!multiLineMode) {
-							if(cursorPosition >= horizontalScrollPosition + availableLineLength()) {
-								horizontalScrollPosition++;
-								aligned(horizontalScrollPosition, 1);
-							}
-						}
+
+						if(cursorPosition > horizontalScrollPosition + availableLineLength())
+							positionCursor();
 
 						redraw();
 					break;
@@ -5721,7 +6010,17 @@ int approximate16Color(RGB color) {
 
 version(TerminalDirectToEmulator) {
 
-	///
+	/++
+		Indicates the TerminalDirectToEmulator features
+		are present. You can check this with `static if`.
+
+		$(WARNING
+			This will cause the [Terminal] constructor to spawn a GUI thread with [arsd.minigui]/[arsd.simpledisplay].
+
+			This means you can NOT use those libraries in your
+			own thing without using the [arsd.simpledisplay.runInGuiThread] helper since otherwise the main thread is inaccessible, since having two different threads creating event loops or windows is undefined behavior with those libraries.
+		)
+	+/
 	enum IntegratedEmulator = true;
 
 	/++
@@ -5730,6 +6029,8 @@ version(TerminalDirectToEmulator) {
 		of GUI integration.
 
 		Test for its presence before using with `static if(arsd.terminal.IntegratedEmulator)`.
+
+		All settings here must be set BEFORE you construct any [Terminal] instances.
 
 		History:
 			Added March 7, 2020.
@@ -5755,10 +6056,72 @@ version(TerminalDirectToEmulator) {
 		/// ditto
 		int fontSize = 14;
 
-		/// Requested initial terminal size in character cells. You may not actually get exactly this.
+		/++
+			Requested initial terminal size in character cells. You may not actually get exactly this.
+		+/
 		int initialWidth = 80;
 		/// ditto
 		int initialHeight = 40;
+
+		/++
+			If `true`, the window will close automatically when the main thread exits.
+			Otherwise, the window will remain open so the user can work with output before
+			it disappears.
+
+			History:
+				Added April 10, 2020 (v7.2.0)
+		+/
+		bool closeOnExit = false;
+
+		/++
+			Gives you a chance to modify the window as it is constructed. Intended
+			to let you add custom menu options.
+
+			---
+			import arsd.terminal;
+			integratedTerminalEmulatorConfiguration.menuExtensionsConstructor = (TerminalEmulatorWindow window) {
+				import arsd.minigui; // for the menu related UDAs
+				class Commands {
+					@menu("Help") {
+						void Topics() {
+							auto window = new Window(); // make a help window of some sort
+							window.show();
+						}
+
+						@separator
+
+						void About() {
+							messageBox("My Application v 1.0");
+						}
+					}
+				}
+				window.setMenuAndToolbarFromAnnotatedCode(new Commands());
+			};
+			---
+
+			History:
+				Added March 29, 2020. Included in release v7.1.0.
+		+/
+		void delegate(TerminalEmulatorWindow) menuExtensionsConstructor;
+
+		/++
+			Set this to true if you want [Terminal] to fallback to the user's
+			existing native terminal in the event that creating the custom terminal
+			is impossible for whatever reason.
+
+			If your application must have all advanced features, set this to `false`.
+			Otherwise, be sure you handle the absence of advanced features in your
+			application by checking methods like [Terminal.inlineImagesSupported],
+			etc., and only use things you can gracefully degrade without.
+
+			If this is set to false, `Terminal`'s constructor will throw if the gui fails
+			instead of carrying on with the stdout terminal (if possible).
+
+			History:
+				Added June 28, 2020. Included in release v8.1.0.
+
+		+/
+		bool fallbackToDegradedTerminal = true;
 	}
 
 	/+
@@ -5772,16 +6135,40 @@ version(TerminalDirectToEmulator) {
 	import arsd.terminalemulator;
 	import arsd.minigui;
 
-	private class TerminalEmulatorWindow : MainWindow {
+	/++
+		Represents the window that the library pops up for you.
+	+/
+	final class TerminalEmulatorWindow : MainWindow {
 
-		this(Terminal* term) {
+		/++
+			Gives access to the underlying terminal emulation object.
+		+/
+		TerminalEmulator terminalEmulator() {
+			return tew.terminalEmulator;
+		}
+
+		private TerminalEmulatorWindow parent;
+		private TerminalEmulatorWindow[] children;
+		private void childClosing(TerminalEmulatorWindow t) {
+			foreach(idx, c; children)
+				if(c is t)
+					children = children[0 .. idx] ~ children[idx + 1 .. $];
+		}
+		private void registerChild(TerminalEmulatorWindow t) {
+			children ~= t;
+		}
+
+		private this(Terminal* term, TerminalEmulatorWindow parent) {
+
+			this.parent = parent;
+			scope(success) if(parent) parent.registerChild(this);
+
 			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
 
 			smw = new ScrollMessageWidget(this);
 			tew = new TerminalEmulatorWidget(term, smw);
 
 			smw.addEventListener("scroll", () {
-				// import std.stdio; writeln(smw.position.x, " ", smw.position.y);
 				tew.terminalEmulator.scrollbackTo(smw.position.x, smw.position.y + tew.terminalEmulator.height);
 				redraw();
 			});
@@ -5789,16 +6176,44 @@ version(TerminalDirectToEmulator) {
 			smw.setTotalArea(1, 1);
 
 			setMenuAndToolbarFromAnnotatedCode(this);
+			if(integratedTerminalEmulatorConfiguration.menuExtensionsConstructor)
+				integratedTerminalEmulatorConfiguration.menuExtensionsConstructor(this);
 		}
 
-		TerminalEmulatorWidget tew;
-		ScrollMessageWidget smw;
+		TerminalEmulator.TerminalCell[] delegate(TerminalEmulator.TerminalCell[] i) parentFilter;
+
+		private void addScrollbackLineFromParent(TerminalEmulator.TerminalCell[] lineIn) {
+			if(parentFilter is null)
+				return;
+
+			auto line = parentFilter(lineIn);
+			if(line is null) return;
+
+			if(tew && tew.terminalEmulator) {
+				bool atBottom = smw.verticalScrollBar.atEnd && smw.horizontalScrollBar.atStart;
+				tew.terminalEmulator.addScrollbackLine(line);
+				tew.terminalEmulator.notifyScrollbackAdded();
+				if(atBottom) {
+					tew.terminalEmulator.notifyScrollbarPosition(0, int.max);
+					tew.terminalEmulator.scrollbackTo(0, int.max);
+					tew.redraw();
+				}
+			}
+		}
+
+		private TerminalEmulatorWidget tew;
+		private ScrollMessageWidget smw;
 
 		@menu("&History") {
 			@tip("Saves the currently visible content to a file")
 			void Save() {
 				getSaveFileName((string name) {
-					tew.terminalEmulator.writeScrollbackToFile(name);
+					if(name.length) {
+						try
+							tew.terminalEmulator.writeScrollbackToFile(name);
+						catch(Exception e)
+							messageBox("Save failed: " ~ e.msg);
+					}
 				});
 			}
 
@@ -5826,17 +6241,26 @@ version(TerminalDirectToEmulator) {
 				}
 
 				dialog((FilterParams p) {
-					// FIXME: this should update in real time... somehow.
-					auto nw = new TerminalEmulatorWindow(null);
-					nw.tew.terminalEmulator.toggleScrollLock();
-					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
+					auto nw = new TerminalEmulatorWindow(null, this);
+
+					nw.parentFilter = (TerminalEmulator.TerminalCell[] line) {
 						import std.algorithm;
 						import std.uni;
 						// omg autodecoding being kinda useful for once LOL
 						if(line.map!(c => c.hasNonCharacterData ? dchar(0) : (p.caseSensitive ? c.ch : c.ch.toLower)).
 							canFind(p.searchTerm))
-							nw.tew.terminalEmulator.addScrollbackLine(line);
+						{
+							// I might highlight the match too, but meh for now
+							return line;
+						}
+						return null;
+					};
+
+					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
+						if(auto l = nw.parentFilter(line))
+							nw.tew.terminalEmulator.addScrollbackLine(l);
 					}
+					nw.tew.terminalEmulator.toggleScrollLock();
 					nw.tew.terminalEmulator.drawScrollback();
 					nw.title = "Filter Display";
 					nw.show();
@@ -5847,9 +6271,12 @@ version(TerminalDirectToEmulator) {
 			@separator
 			void Clear() {
 				tew.terminalEmulator.clearScrollbackHistory();
-				//tew.terminalEmulator.cls();
-				// FIXME: move cursor back to 0,0
-				// tell the application to redraw too (maybe signal size changed)
+				tew.terminalEmulator.cls();
+				tew.terminalEmulator.moveCursor(0, 0);
+				if(tew.term) {
+					tew.term.windowSizeChanged = true;
+					tew.terminalEmulator.outgoingSignal.notify();
+				}
 				tew.redraw();
 			}
 
@@ -5862,12 +6289,10 @@ version(TerminalDirectToEmulator) {
 		@menu("&Edit") {
 			void Copy() {
 				tew.terminalEmulator.copyToClipboard(tew.terminalEmulator.getSelectedText());
-				//messageBox("copy", tew.terminalEmulator.getSelectedText());
 			}
 
 			void Paste() {
 				tew.terminalEmulator.pasteFromClipboard(&tew.terminalEmulator.sendPasteData);
-				//messageBox("paste", "idk");
 			}
 		}
 	}
@@ -5886,15 +6311,15 @@ version(TerminalDirectToEmulator) {
 		override Menu contextMenu(int x, int y) {
 			if(ctx is null) {
 				ctx = new Menu("");
-				auto i = ctx.addItem(new MenuItem("Copy"));
-				i.addEventListener("triggered", {
+				ctx.addItem(new MenuItem(new Action("Copy", 0, {
 					terminalEmulator.copyToClipboard(terminalEmulator.getSelectedText());
-
-				});
-				i = ctx.addItem(new MenuItem("Paste"));
-				i.addEventListener("triggered", {
+				})));
+				 ctx.addItem(new MenuItem(new Action("Paste", 0, {
 					terminalEmulator.pasteFromClipboard(&terminalEmulator.sendPasteData);
-				});
+				})));
+				 ctx.addItem(new MenuItem(new Action("Toggle Scroll Lock", 0, {
+				 	terminalEmulator.toggleScrollLock();
+				})));
 			}
 			return ctx;
 		}
@@ -5906,7 +6331,17 @@ version(TerminalDirectToEmulator) {
 			super(parent);
 			this.parentWindow.win.onClosing = {
 				if(term)
-					hangedUp = true;
+					term.hangedUp = true;
+
+				if(auto wi = cast(TerminalEmulatorWindow) this.parentWindow) {
+					if(wi.parent)
+						wi.parent.childClosing(wi);
+				}
+
+				// try to get it to terminate slightly more forcibly too, if possible
+				if(sigIntExtension)
+					sigIntExtension();
+
 				terminalEmulator.outgoingSignal.notify();
 				terminalEmulator.incomingSignal.notify();
 			};
@@ -5971,16 +6406,22 @@ version(TerminalDirectToEmulator) {
 			}
 			clearScreenRequested = true;
 			if(widget && widget.term)
-				windowSizeChanged = true;
+				widget.term.windowSizeChanged = true;
 			outgoingSignal.notify();
 			redraw();
 		}
 
+		override void addScrollbackLine(TerminalCell[] line) {
+			super.addScrollbackLine(line);
+			if(widget)
+			if(auto p = cast(TerminalEmulatorWindow) widget.parentWindow) {
+				foreach(child; p.children)
+					child.addScrollbackLineFromParent(line);
+			}
+		}
+
 		override void notifyScrollbackAdded() {
-			if(this.scrollbackLength > this.height)
-				widget.smw.setTotalArea(this.scrollbackWidth, this.scrollbackLength);
-			else
-				widget.smw.setTotalArea(this.width, this.height);
+			widget.smw.setTotalArea(this.scrollbackWidth > this.width ? this.scrollbackWidth : this.width, this.scrollbackLength > this.height ? this.scrollbackLength : this.height);
 		}
 
 		override void notifyScrollbarPosition(int x, int y) {
@@ -6020,11 +6461,16 @@ version(TerminalDirectToEmulator) {
 		}
 
 		protected override void demandAttention() {
-			//window.requestAttention();
+			if(widget && widget.parentWindow)
+				widget.parentWindow.win.requestAttention();
 		}
 
 		protected override void copyToClipboard(string text) {
 			setClipboardText(widget.parentWindow.win, text);
+		}
+
+		override int maxScrollbackLength() const {
+			return int.max; // no scrollback limit for custom programs
 		}
 
 		protected override void pasteFromClipboard(void delegate(in char[]) dg) {
@@ -6060,6 +6506,8 @@ version(TerminalDirectToEmulator) {
 
 		override void sendRawInput(in ubyte[] data) {
 			void send(in ubyte[] data) {
+				if(data.length == 0)
+					return;
 				super.sendRawInput(data);
 				if(echo)
 				sendToApplication(data);
@@ -6073,9 +6521,6 @@ version(TerminalDirectToEmulator) {
 					send(data[last .. idx]);
 					send(crlf[]);
 					last = idx + 1;
-				} else if(ch == 3) {
-					if(widget && widget.term)
-						interrupted = true;
 				}
 			}
 
@@ -6180,6 +6625,18 @@ version(TerminalDirectToEmulator) {
 			});
 
 			widget.addEventListener("keydown", (Event ev) {
+
+				if(ev.key == Key.C && (ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
+					// ctrl+c is cancel so ctrl+shift+c ends up doing copy.
+					copyToClipboard(getSelectedText());
+					skipNextChar = true;
+					return;
+				}
+				if(ev.key == Key.Insert && (ev.state & ModifierState.ctrl)) {
+					copyToClipboard(getSelectedText());
+					return;
+				}
+
 				static string magic() {
 					string code;
 					foreach(member; __traits(allMembers, TerminalKey))
@@ -6216,9 +6673,34 @@ version(TerminalDirectToEmulator) {
 				if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
 				auto data = str[0 .. encode(str, c)];
 
-				// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
-				if(c != 127)
+
+				if(c == 0x1c) /* ctrl+\, force quit */ {
+					version(Posix) {
+						import core.sys.posix.signal;
+						pthread_kill(widget.term.threadId, SIGQUIT); // or SIGKILL even?
+
+						assert(0);
+						//import core.sys.posix.pthread;
+						//pthread_cancel(widget.term.threadId);
+						//widget.term = null;
+					} else version(Windows) {
+						import core.sys.windows.windows;
+						auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
+						TerminateProcess(hnd, -1);
+						assert(0);
+					}
+				} else if(c == 3) /* ctrl+c, interrupt */ {
+					if(sigIntExtension)
+						sigIntExtension();
+
+					if(widget && widget.term) {
+						widget.term.interrupted = true;
+						outgoingSignal.notify();
+					}
+				} else if(c != 127) {
+					// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
 					sendToApplication(data);
+				}
 			});
 		}
 

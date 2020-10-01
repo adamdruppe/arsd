@@ -68,7 +68,7 @@ struct CurlOptions {
 
 string getDigestString(string s) {
 	import std.digest.md;
-	import std.digest.digest;
+	import std.digest;
 	auto hash = md5Of(s);
 	auto a = toHexString(hash);
 	return a.idup;

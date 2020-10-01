@@ -158,10 +158,10 @@ class MsSqlResult : ResultSet {
 				r.resultSet = this;
 				string[] row;
 
-				SQLLEN ptr;
-
 				for(int i = 0; i < numFields; i++) {
 					string a;
+
+					SQLLEN ptr;
 
 					more:
 				        SQLCHAR[1024] buf;

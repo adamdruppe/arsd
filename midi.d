@@ -2,73 +2,689 @@
 	This file is a port of some old C code I had for reading and writing .mid files. Not much docs, but viewing the source may be helpful.
 
 	I'll eventually refactor it into something more D-like
+
+	History:
+		Written in C in August 2008
+
+		Minimally ported to D in September 2017
+
+		Updated May 2020 with significant changes.
 */
 module arsd.midi;
 
+import core.time;
+
+version(NewMidiDemo)
+void main(string[] args) {
+	auto f = new MidiFile();
+
+	import std.file;
+
+	//f.loadFromBytes(cast(ubyte[]) read("test.mid"));
+	f.loadFromBytes(cast(ubyte[]) read(args[1]));
+
+	import arsd.simpleaudio;
+	import core.thread;
+
+	auto o = MidiOutput(0);
+	setSigIntHandler();
+	scope(exit) {
+		o.silenceAllNotes();
+		o.reset();
+		restoreSigIntHandler();
+	}
+
+	import std.stdio : writeln;
+	foreach(item; f.playbackStream) {
+		if(interrupted) return;
+
+		Thread.sleep(item.wait);
+		if(!item.event.isMeta)
+			o.writeMidiMessage(item.event.status, item.event.data1, item.event.data2);
+		else
+			writeln(item);
+	}
+
+	return;
+
+	auto t = new MidiTrack();
+	auto t2 = new MidiTrack();
+
+	f.tracks ~= t;
+	f.tracks ~= t2;
+
+	t.events ~= MidiEvent(0, 0x90, C, 127);
+	t.events ~= MidiEvent(256, 0x90, C, 0);
+	t.events ~= MidiEvent(256, 0x90, D, 127);
+	t.events ~= MidiEvent(256, 0x90, D, 0);
+	t.events ~= MidiEvent(256, 0x90, E, 127);
+	t.events ~= MidiEvent(256, 0x90, E, 0);
+	t.events ~= MidiEvent(256, 0x90, F, 127);
+	t.events ~= MidiEvent(0, 0xff, 0x05, 0 /* unused */, ['h', 'a', 'm']);
+	t.events ~= MidiEvent(256, 0x90, F, 0);
+
+	t2.events ~= MidiEvent(0, (MIDI_EVENT_PROGRAM_CHANGE << 4) | 0x01, 68);
+	t2.events ~= MidiEvent(128, 0x91, E, 127);
+	t2.events ~= MidiEvent(0, 0xff, 0x05, 0 /* unused */, ['a', 'd', 'r']);
+	t2.events ~= MidiEvent(1024, 0x91, E, 0);
+
+	write("test.mid", f.toBytes());
+}
+
+@safe:
+
+class MidiFile {
+	///
+	ubyte[] toBytes() {
+		MidiWriteBuffer buf;
+
+		buf.write("MThd");
+		buf.write4(6);
+
+		buf.write2(format);
+		buf.write2(cast(ushort) tracks.length);
+		buf.write2(timing);
+
+		foreach(track; tracks) {
+			auto data = track.toBytes();
+			buf.write("MTrk");
+			buf.write4(cast(int) data.length);
+			buf.write(data);
+		}
+
+		return buf.bytes;
+	}
+
+	///
+	void loadFromBytes(ubyte[] bytes) {
+		// FIXME: actually read the riff header to skip properly
+		if(bytes.length && bytes[0] == 'R')
+			bytes = bytes[0x14 .. $];
+
+		MidiReadBuffer buf = MidiReadBuffer(bytes);
+		if(buf.readChars(4) != "MThd")
+			throw new Exception("not midi");
+		if(buf.read4() != 6)
+			throw new Exception("idk what this even is");
+		this.format = buf.read2();
+		this.tracks = new MidiTrack[](buf.read2());
+		this.timing = buf.read2();
+
+		foreach(ref track; tracks) {
+			track = new MidiTrack();
+			track.loadFromBuffer(buf);
+		}
+	}
+
+	// when I read, I plan to cut the end of track marker off.
+
+	// 0 == combined into one track
+	// 1 == multiple tracks
+	// 2 == multiple one-track patterns
+	ushort format = 1;
+
+	// FIXME
+	ushort timing = 0x80; // 128 ticks per quarter note
+
+	MidiTrack[] tracks;
+
+	/++
+		Returns a forward range for playback. Each item is a command, which
+		is like the midi event but with some more annotations and control methods.
+
+		Modifying this MidiFile object or any of its children during playback
+		may cause trouble.
+
+		Note that you do not need to handle any meta events, it keeps the
+		tempo internally, but you can look at it if you like.
+	+/
+	PlayStream playbackStream() {
+		return PlayStream(this);
+	}
+}
+
+struct PlayStream {
+	static struct Event {
+		/// This is how long you wait until triggering this event.
+		/// Note it may be zero.
+		Duration wait;
+
+		/// And this is the event.
+		MidiEvent event;
+
+		string toString() {
+			return event.toString();
+		}
+
+		/// informational
+		MidiFile file;
+		/// ditto
+		MidiTrack track;
+	}
+
+	PlayStream save() {
+		auto copy = this;
+		copy.trackPositions = this.trackPositions.dup;
+		return copy;
+	}
+
+	MidiFile file;
+	this(MidiFile file) {
+		this.file = file;
+		this.trackPositions.length = file.tracks.length;
+		foreach(idx, ref tp; this.trackPositions) {
+			tp.remaining = file.tracks[idx].events[];
+			tp.track = file.tracks[idx];
+		}
+
+		this.currentTrack = -1;
+		this.tempo = 500000;
+		popFront();
+	}
+
+	//@nogc:
+
+	void popFront() {
+		done = true;
+		for(auto c = currentTrack + 1; c < trackPositions.length; c++) {
+			auto tp = trackPositions[c];
+
+			if(tp.remaining.length && tp.remaining[0].deltaTime == tp.clock) {
+				auto f = tp.remaining[0];
+				trackPositions[c].remaining = tp.remaining[1 .. $];
+				trackPositions[c].clock = 0;
+				if(tp.remaining.length == 0 || tp.remaining[0].deltaTime > 0) {
+					currentTrack += 1;
+				}
+
+				pending = Event(0.seconds, f, file, tp.track);
+				processPending();
+				done = false;
+				return;
+			}
+		}
+
+		// if nothing happened there, time to advance the clock
+		int minWait = int.max;
+		int minWaitTrack = -1;
+		foreach(idx, track; trackPositions) {
+			if(track.remaining.length) {
+				auto dt = track.remaining[0].deltaTime - track.clock;
+				if(dt < minWait) {
+					minWait = dt;
+					minWaitTrack = cast(int) idx;
+				}
+			}
+		}
+
+		if(minWaitTrack == -1) {
+			done = true;
+			return;
+		}
+
+		foreach(ref tp; trackPositions) {
+			tp.clock += minWait;
+		}
+
+		done = false;
+
+		// file.timing, if high bit clear, is ticks per quarter note
+		// if high bit set... idk it is different.
+		//
+		// then the temp is microseconds per quarter note.
+		auto time = (minWait * tempo / file.timing).usecs;
+
+		pending = Event(time, trackPositions[minWaitTrack].remaining[0], file, trackPositions[minWaitTrack].track);
+		processPending();
+		trackPositions[minWaitTrack].remaining = trackPositions[minWaitTrack].remaining[1 .. $];
+		trackPositions[minWaitTrack].clock = 0;
+		currentTrack = minWaitTrack;
+
+		return;
+	}
+
+	private struct TrackPosition {
+		MidiEvent[] remaining;
+		int clock;
+		MidiTrack track;
+	}
+	private TrackPosition[] trackPositions;
+	private int currentTrack;
+
+	private void processPending() {
+		if(pending.event.status == 0xff && pending.event.data1 == MetaEvent.Tempo) {
+			this.tempo = 0;
+			foreach(i; pending.event.meta) {
+				this.tempo <<= 8;
+				this.tempo |= i;
+			}
+		}
+	}
+
+	@property
+	Event front() {
+		return pending;
+	}
+
+	private uint tempo;
+	private Event pending;
+	private bool done;
+
+	@property
+	bool empty() {
+		return done;
+	}
+}
+
+class MidiTrack {
+	ubyte[] toBytes() {
+		MidiWriteBuffer buf;
+		foreach(event; events)
+			event.writeToBuffer(buf);
+
+		MidiEvent end;
+		end.status = 0xff;
+		end.data1 = 0x2f;
+		end.meta = null;
+
+		end.writeToBuffer(buf);
+
+		return buf.bytes;
+	}
+
+	void loadFromBuffer(ref MidiReadBuffer buf) {
+		if(buf.readChars(4) != "MTrk")
+			throw new Exception("wtf no track header");
+
+		auto trackLength = buf.read4();
+		auto begin = buf.bytes.length;
+
+		ubyte runningStatus;
+
+		while(buf.bytes.length) {
+			MidiEvent newEvent = MidiEvent.fromBuffer(buf, runningStatus);
+			if(newEvent.status == 0xff && newEvent.data1 == MetaEvent.EndOfTrack) {
+				break;
+			}
+			events ~= newEvent;
+		}
+		//assert(begin - trackLength == buf.bytes.length);
+	}
+
+	MidiEvent[] events;
+
+	override string toString() const {
+		string s;
+		foreach(event; events)
+			s ~= event.toString ~ "\n";
+		return s;
+	}
+}
+
+enum MetaEvent {
+	SequenceNumber = 0,
+	// these take a text param
+	Text = 1,
+	Copyright = 2,
+	Name = 3,
+	Instrument = 4,
+	Lyric = 5,
+	Marker = 6,
+	CuePoint = 7,
+	PatchName = 8,
+	DeviceName = 9,
+
+	// no param
+	EndOfTrack = 0x2f,
+
+	// different ones
+	Tempo = 0x51, // 3 bytes form big-endian micro-seconds per quarter note. 120 BPM default.
+	SMPTEOffset = 0x54, // 5 bytes. I don't get this one....
+	TimeSignature = 0x58, // 4 bytes: numerator, denominator, clocks per click, 32nd notes per quarter note. (8 == quarter note gets the beat)
+	KeySignature = 0x59, // 2 bytes: first byte is signed offset from C in semitones, second byte is 0 for major, 1 for minor
+
+	// arbitrary length custom param
+	Proprietary = 0x7f,
+
+}
+
+struct MidiEvent {
+	int deltaTime;
+
+	ubyte status;
+
+	ubyte data1; // if meta, this is the identifier
+
+	//union {
+		//struct {
+			ubyte data2;
+		//}
+
+		const(ubyte)[] meta; // iff status == 0xff
+	//}
+
+	invariant () {
+		assert(status & 0x80);
+		assert(!(data1 & 0x80));
+		assert(!(data2 & 0x80));
+		assert(status == 0xff || meta is null);
+	}
+
+	/// Convenience factories for various meta-events
+	static MidiEvent Text(string t) { return MidiEvent(0, 0xff, MetaEvent.Text, 0, cast(const(ubyte)[]) t); }
+	/// ditto
+	static MidiEvent Copyright(string t) { return MidiEvent(0, 0xff, MetaEvent.Copyright, 0, cast(const(ubyte)[]) t); }
+	/// ditto
+	static MidiEvent Name(string t) { return MidiEvent(0, 0xff, MetaEvent.Name, 0, cast(const(ubyte)[]) t); }
+	/// ditto
+	static MidiEvent Lyric(string t) { return MidiEvent(0, 0xff, MetaEvent.Lyric, 0, cast(const(ubyte)[]) t); }
+	/// ditto
+	static MidiEvent Marker(string t) { return MidiEvent(0, 0xff, MetaEvent.Marker, 0, cast(const(ubyte)[]) t); }
+	/// ditto
+	static MidiEvent CuePoint(string t) { return MidiEvent(0, 0xff, MetaEvent.CuePoint, 0, cast(const(ubyte)[]) t); }
+
+	///
+	bool isMeta() const {
+		return status == 0xff;
+	}
+
+	///
+	ubyte event() const {
+		return status >> 4;
+	}
+
+	///
+	ubyte channel() const {
+		return status & 0x0f;
+	}
+
+	///
+	string toString() const {
+
+		static string tos(int a) {
+			char[16] buffer;
+			auto bufferPos = buffer.length;
+			do {
+				buffer[--bufferPos] = a % 10 + '0';
+				a /= 10;
+			} while(a);
+
+			return buffer[bufferPos .. $].idup;
+		}
+
+		static string toh(ubyte b) {
+			char[2] buffer;
+			buffer[0] = (b >> 4) & 0x0f;
+			if(buffer[0] < 10)
+				buffer[0] += '0';
+			else
+				buffer[0] += 'A' - 10;
+			buffer[1] = b & 0x0f;
+			if(buffer[1] < 10)
+				buffer[1] += '0';
+			else
+				buffer[1] += 'A' - 10;
+
+			return buffer.idup;
+		}
+
+		string s;
+		s ~= tos(deltaTime);
+		s ~= ": ";
+		s ~= toh(status);
+		s ~= " ";
+		s ~= toh(data1);
+		s ~= " ";
+		if(isMeta) {
+			switch(data1) {
+				case MetaEvent.Text:
+				case MetaEvent.Copyright:
+				case MetaEvent.Name:
+				case MetaEvent.Instrument:
+				case MetaEvent.Lyric:
+				case MetaEvent.Marker:
+				case MetaEvent.CuePoint:
+				case MetaEvent.PatchName:
+				case MetaEvent.DeviceName:
+					s ~= cast(const(char)[]) meta;
+				break;
+				case MetaEvent.TimeSignature:
+					ubyte numerator = meta[0];
+					ubyte denominator = meta[1];
+					ubyte clocksPerClick = meta[2];
+					ubyte notesPerQuarter = meta[3]; // 32nd notes / Q so 8 = quarter note gets the beat
+
+					s ~= tos(numerator);
+					s ~= "/";
+					s ~= tos(denominator);
+					s ~= " ";
+					s ~= tos(clocksPerClick);
+					s ~= " ";
+					s ~= tos(notesPerQuarter);
+				break;
+				case MetaEvent.KeySignature:
+					byte offset = meta[0];
+					ubyte minor = meta[1];
+
+					if(offset < 0) {
+						s ~= "-";
+						s ~= tos(-cast(int) offset);
+					} else {
+						s ~= tos(offset);
+					}
+					s ~= minor ? " minor" : " major";
+				break;
+				// case MetaEvent.Tempo:
+					// could process this but idk if it needs to be shown
+				// break;
+				case MetaEvent.Proprietary:
+					foreach(m; meta) {
+						s ~= toh(m);
+						s ~= " ";
+					}
+				break;
+				default:
+					s ~= cast(const(char)[]) meta;
+			}
+		} else {
+			s ~= toh(data2);
+		}
+
+		return s;
+	}
+
+	static MidiEvent fromBuffer(ref MidiReadBuffer buf, ref ubyte runningStatus) {
+		MidiEvent event;
+
+		start_over:
+
+		event.deltaTime = buf.readv();
+
+		auto nb = buf.read1();
+
+		if(nb == 0xff) {
+			// meta...
+			event.status = 0xff;
+			event.data1 = buf.read1(); // the type
+			int len = buf.readv();
+			auto meta = new ubyte[](len);
+			foreach(idx; 0 .. len)
+				meta[idx] = buf.read1();
+			event.meta = meta;
+		} else if(nb >= 0xf0) {
+			// FIXME I'm just skipping this entirely but there might be value in here
+			nb = buf.read1();
+			while(nb < 0xf0)
+				nb = buf.read1();
+			goto start_over;
+		} else if(nb & 0b1000_0000) {
+			event.status = nb;
+			runningStatus = nb;
+			event.data1 = buf.read1();
+
+			if(event.event != MIDI_EVENT_CHANNEL_AFTERTOUCH &&
+				event.event != MIDI_EVENT_PROGRAM_CHANGE)
+			{
+				event.data2 = buf.read1();
+			}
+		} else {
+			event.status = runningStatus;
+			event.data1 = nb;
+
+			if(event.event != MIDI_EVENT_CHANNEL_AFTERTOUCH &&
+				event.event != MIDI_EVENT_PROGRAM_CHANGE)
+			{
+				event.data2 = buf.read1();
+			}
+		}
+
+		return event;
+	}
+
+	void writeToBuffer(ref MidiWriteBuffer buf) const {
+		buf.writev(deltaTime);
+		buf.write1(status);
+		// FIXME: what about other sysex stuff?
+		if(meta) {
+			buf.write1(data1);
+			buf.writev(cast(int) meta.length);
+			buf.write(meta);
+		} else {
+			buf.write1(data1);
+
+			if(event != MIDI_EVENT_CHANNEL_AFTERTOUCH &&
+				event != MIDI_EVENT_PROGRAM_CHANGE)
+			{
+				buf.write1(data2);
+			}
+		}
+	}
+}
+
+struct MidiReadBuffer {
+	ubyte[] bytes;
+
+	char[] readChars(int len) {
+		auto c = bytes[0 .. len];
+		bytes = bytes[len .. $];
+		return cast(char[]) c;
+	}
+	ubyte[] readBytes(int len) {
+		auto c = bytes[0 .. len];
+		bytes = bytes[len .. $];
+		return c;
+	}
+	int read4() {
+		int i;
+		foreach(a; 0 .. 4) {
+			i <<= 8;
+			i |= bytes[0];
+			bytes = bytes[1 .. $];
+		}
+		return i;
+	}
+	ushort read2() {
+		ushort i;
+		foreach(a; 0 .. 2) {
+			i <<= 8;
+			i |= bytes[0];
+			bytes = bytes[1 .. $];
+		}
+		return i;
+	}
+	ubyte read1() {
+		auto b = bytes[0];
+		bytes = bytes[1 .. $];
+		return b;
+	}
+	int readv() {
+		int value = read1();
+		ubyte c;
+		if(value & 0x80) {
+			value &= 0x7f;
+			do
+				value = (value << 7) | ((c = read1) & 0x7f);
+			while(c & 0x80);
+		}
+		return value;
+	}
+}
+
+struct MidiWriteBuffer {
+	ubyte[] bytes;
+
+	void write(const char[] a) {
+		bytes ~= a;
+	}
+
+	void write(const ubyte[] a) {
+		bytes ~= a;
+	}
+
+	void write4(int v) {
+		// big endian
+		bytes ~= (v >> 24) & 0xff;
+		bytes ~= (v >> 16) & 0xff;
+		bytes ~= (v >> 8) & 0xff;
+		bytes ~= v & 0xff;
+	}
+
+	void write2(ushort v) {
+		// big endian
+		bytes ~= v >> 8;
+		bytes ~= v & 0xff;
+	}
+
+	void write1(ubyte v) {
+		bytes ~= v;
+	}
+
+	void writev(int v) {
+		// variable
+		uint buffer = v & 0x7f;
+		while((v >>= 7)) {
+			buffer <<= 8;
+			buffer |= ((v & 0x7f) | 0x80);
+		}
+
+		while(true) {
+			bytes ~= buffer & 0xff;
+			if(buffer & 0x80)
+				buffer >>= 8;
+			else
+				break;
+		}
+	}
+}
 
 import core.stdc.stdio;
 import core.stdc.stdlib;
 
-/* NOTE: MIDI files are BIG ENDIAN! */
-
-struct MidiChunk {
-	int timeStamp; // this is encoded my way. real file is msb == 1, more ubytes
-	ubyte event; 	// Event << 8 | channel is how it is actually stored
-
-	// for channel events
-	ubyte channel; 	// see above - it is stored with event!
-			// channel == track btw
-	ubyte param1; 	// pitch (usually)
-	ubyte param2; 	// volume  - not necessarily present
-
-	ubyte status; // event << 4 | channel
-
-	// for meta events (event = f, channel = f
-	ubyte type;
-	int length; // stored as variable length
-	ubyte* data; // only allocated if event == 255
-
-	MidiChunk* next; // next in the track
-
-	// This stuff is just for playing help and such
-	// It is only set if you call recalculateMidiAbsolutes, and probably
-	// not maintained if you do edits
-	int track;
-	uint absoluteTime;
-	uint absoluteTimeInMilliSeconds; // for convenience
-	int absoluteWait;
-	MidiChunk* nextAbsolute;
+int freq(int note){
+	import std.math;
+	float r = note - 69;
+	r /= 12;
+	r = pow(2, r);
+	r*= 440;
+	return cast(int) r;
 }
 
-/*
-	Meta event
-	timeStamp = 0
-	event = 255
-	channel = event
-	param1 param2 = not in gile
-	length = variable
-	data[length]
-*/
+enum A =  69; // 440 hz per midi spec
+enum As = 70;
+enum B =  71;
+enum C =  72; // middle C + 1 octave
+enum Cs = 73;
+enum D =  74;
+enum Ds = 75;
+enum E =  76;
+enum F =  77;
+enum Fs = 78;
+enum G =  79;
+enum Gs = 80;
 
-struct MidiTrack {
-	// MTrk header
-	int lengthInBytes;
-	MidiChunk* chunks; // linked list
-		// the linked list should NOT hold the track ending chunk
-		// just hold a null instead
-}
-
-struct Midi {
-	// headers go here
-	short type;
-	short numTracks;
-	short speed;
-	MidiTrack* tracks; /* Array of numTracks size */
-
-	// only set if you call recalculateMidiAbsolutes
-	MidiChunk* firstAbsolute;
-}
-
+immutable string[] noteNames = [ // just do note % 12 to index this
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+];
 
 enum MIDI_EVENT_NOTE_OFF =		0x08;
 enum MIDI_EVENT_NOTE_ON =		0x09;
@@ -79,9 +695,34 @@ enum MIDI_EVENT_CHANNEL_AFTERTOUCH =	0x0d;// only one param
 enum MIDI_EVENT_PITCH_BEND =		0x0e;
 
 
+ /+
+ 35   Acoustic Bass Drum     59   Ride Cymbal 2
+ 36   Bass Drum 1            60   Hi Bongo
+ 37   Side Stick             61   Low Bongo
+ 38   Acoustic Snare         62   Mute Hi Conga
+ 39   Hand Clap              63   Open Hi Conga
+ 40   Electric Snare         64   Low Conga
+ 41   Low Floor Tom          65   High Timbale
+ 42   Closed Hi-Hat          66   Low Timbale
+ 43   High Floor Tom         67   High Agogo
+ 44   Pedal Hi-Hat           68   Low Agogo
+ 45   Low Tom                69   Cabasa
+ 46   Open Hi-Hat            70   Maracas
+ 47   Low-Mid Tom            71   Short Whistle
+ 48   Hi-Mid Tom             72   Long Whistle
+ 49   Crash Cymbal 1         73   Short Guiro
+ 50   High Tom               74   Long Guiro
+ 51   Ride Cymbal 1          75   Claves
+ 52   Chinese Cymbal         76   Hi Wood Block
+ 53   Ride Bell              77   Low Wood Block
+ 54   Tambourine             78   Mute Cuica
+ 55   Splash Cymbal          79   Open Cuica
+ 56   Cowbell                80   Mute Triangle
+ 57   Crash Cymbal 2         81   Open Triangle
+ 58   Vibraslap
+ +/
 
-/*
-static char[][] instrumentNames = {
+static immutable string[] instrumentNames = [
 "", // 0 is nothing
 // Piano:
 "Acoustic Grand Piano",
@@ -242,784 +883,10 @@ static char[][] instrumentNames = {
 "Helicopter",
 "Applause",
 "Gunshot"
-};
-*/
-
-
-int addMidiTrack(Midi* mid){
-	int trackNum;
-	MidiTrack* tracks;
-	tracks = cast(MidiTrack*) realloc(mid.tracks, MidiTrack.sizeof * (mid.numTracks + 1));
-	if(tracks is null)
-		return -1;
-	
-	mid.tracks = tracks;
-	trackNum = mid.numTracks;
-	mid.numTracks++;
-
-	mid.tracks[trackNum].lengthInBytes = 0;
-	mid.tracks[trackNum].chunks = null;
-
-	return trackNum;
-}
-
-int addMidiEvent(Midi* mid, int track, int deltatime, int event, int channel, int value1, int value2){
-	int length = 2;
-	MidiChunk* c;
-	MidiChunk* current, previous;
-	if(track >= mid.numTracks)
-		return -1;
-
-	c = cast(MidiChunk*) malloc(MidiChunk.sizeof);
-	if(c is null)
-		return -1;
-
-	c.timeStamp = deltatime;
-	c.event = cast(ubyte) event;
-	c.channel = cast(ubyte) channel;
-	c.param1 = cast(ubyte) value1;
-	c.param2 = cast(ubyte) value2;
-
-	c.status = cast(ubyte) ((event << 4) | channel);
-
-	c.type = 0;
-	c.length = 0;
-	c.data = null;
-
-	c.next = null;
-
-
-	previous = null;
-	current = mid.tracks[track].chunks;
-	while(current != null){
-		previous = current;
-		current = current . next;
-	}
-
-	if(previous){
-		previous.next = c;
-	} else {
-		mid.tracks[track].chunks = c;
-	}
-
-	length += getvldLength(deltatime);
-	if(event != MIDI_EVENT_CHANNEL_AFTERTOUCH &&
-	   event != MIDI_EVENT_PROGRAM_CHANGE)
-	   	length++; // param2
-	mid.tracks[track].lengthInBytes += length;
-
-	return 0;
-}
-
-int addMidiMetaEvent(Midi* mid, int track, int dt, int type, int length, ubyte* data){
-	int len = 2;
-	int a;
-	MidiChunk* c;
-	MidiChunk* current, previous;
-
-	if(track >= mid.numTracks)
-		return -1;
-
-	c = cast(MidiChunk*) malloc(MidiChunk.sizeof);
-	if(c == null)
-		return -1;
-
-	c.timeStamp = dt;
-	c.event = 0xff;
-	c.channel = 0;
-	c.param1 = 0;
-	c.param2 = 0;
-
-	c.type = cast(ubyte) type;
-	c.length = length;
-	// copy data in
-	c.data = cast(typeof(c.data)) malloc(length);
-	if(c.data == null){
-		free(c);
-		return -1;
-	}
-	for(a = 0; a < length; a++)
-		c.data[a] = data[a];
-
-
-	c.next = null;
-
-
-	previous = null;
-	current = mid.tracks[track].chunks;
-	while(current != null){
-		previous = current;
-		current = current . next;
-	}
-
-	if(previous){
-		previous.next = c;
-	} else {
-		mid.tracks[track].chunks = c;
-	}
-
-	len += getvldLength(dt);
-	len += length;
-
-	mid.tracks[track].lengthInBytes += len;
-
-	return 0;
-}
-
-int createMidi(Midi** midWhere){
-	Midi* mid;
-
-	mid = cast(Midi*) malloc(Midi.sizeof);
-	if(mid == null)
-		return 1;
-	
-	mid.type = 1;
-	mid.numTracks = 0;
-	mid.speed = 0x80; // 128 ticks per quarter note - potential FIXME
-	mid.tracks = null;
-
-	*midWhere = mid;
-	return 0;
-}
-
-void freeChunkList(MidiChunk* c){
-	if(c == null)
-		return;
-	freeChunkList(c.next);
-	if(c.event == 255)
-		free(c.data);
-	free(c);
-}
-
-void freeMidi(Midi** mid){
-	int a;
-	Midi* m = *mid;
-
-	for(a = 0; a < m.numTracks; a++)
-		freeChunkList(m.tracks[a].chunks);
-	free(m.tracks);
-	free(m);
-	*mid = null;
-}
-
-// FIXME: these fail on big endian machines
-void write4(int v, FILE* fp){
-	fputc(*(cast(ubyte*)&v + 3), fp);
-	fputc(*(cast(ubyte*)&v + 2), fp);
-	fputc(*(cast(ubyte*)&v + 1), fp);
-	fputc(*(cast(ubyte*)&v + 0), fp);
-}
-
-void write2(short v, FILE* fp){
-	fputc(*(cast(ubyte*)&v + 1), fp);
-	fputc(*(cast(ubyte*)&v + 0), fp);
-}
-
-void writevld(uint v, FILE* fp){
-	uint omg = v;
-	ubyte a;
-	ubyte[4] ubytes;
-	int c = 0;
-  more:
-	a = cast(ubyte) (omg&(~(1 << 7)));
-	omg >>= 7;
-	if(omg){
-		ubytes[c++]  = a;
-		goto more;
-	}
-
-	ubytes[c] = a;
-
-	for(; c >= 0; c--)
-		fputc(ubytes[c] | (c ? (1<<7):0), fp);
-}
-
-
-int read4(FILE* fp){
-	int v;
-
-	*(cast(ubyte*)&v + 3) = cast(ubyte) fgetc(fp);
-	*(cast(ubyte*)&v + 2) = cast(ubyte) fgetc(fp);
-	*(cast(ubyte*)&v + 1) = cast(ubyte) fgetc(fp);
-	*(cast(ubyte*)&v + 0) = cast(ubyte) fgetc(fp);
-
-	return v;
-}
-
-short read2(FILE* fp){
-	short v;
-	*(cast(ubyte*)&v + 1) = cast(ubyte) fgetc(fp);
-	*(cast(ubyte*)&v + 0) = cast(ubyte) fgetc(fp);
-
-	return v;
-}
-
-uint readvld(FILE* fp){
-	uint omg = 0;
-	ubyte a;
-  more:
-	a = cast(ubyte) fgetc(fp);
-	if(a & (1<<7)){
-		a &= ~(1<<7);
-		omg <<= 7;
-		omg |= a;
-		goto more;
-	}
-
-	omg <<= 7;
-	omg |= a;
-
-	return omg;
-}
-
-
-
-int getvldLength(uint v){
-	int count = 0;
-	uint omg = v;
-	ubyte a;
-  more:
-	a = omg&((1 << 7)-1); //
-	omg >>= 7;
-	if(omg){
-		a &= 1<<7;
-		count++;
-		goto more;
-	}
-	count++;
-	return count;
-}
-
-// END: big endian fixme
-
-int loadMidi(Midi** midWhere, const char* filename){
-	int error = 0;
-	FILE* fp;
-	Midi* mid = null;
-	int runningStatus;
-	int t, a;
-	int numtrk;
-
-	int timestamp;
-	int event;
-	int channel;
-	int param1;
-	int type;
-	int length;
-	int param2;
-	ubyte* data;
-
-	int done;
-
-	fp = fopen(filename, "rb");
-	if(fp == null){
-		fprintf(stderr, "Cannot load file %s.\n", filename);
-		error = 1;
-		goto cleanup1;
-	}
-
-
-	if(fgetc(fp) != 'M') goto badfile;
-	if(fgetc(fp) != 'T') goto badfile;
-	if(fgetc(fp) != 'h') goto badfile;
-	if(fgetc(fp) != 'd') goto badfile;
-	if(read4(fp) !=   6) goto badfile;
-
-	if(createMidi(&mid) != 0){
-		fprintf(stderr, "Could not allocate struct\n");
-		error = 3;
-		goto cleanup3;
-	}
-
-	mid.type = read2(fp);
-	numtrk = read2(fp);
-	mid.speed = read2(fp);
-
-	for(t = 0; t < numtrk; t++){
-		if(fgetc(fp) != 'M') goto badfile;
-		if(fgetc(fp) != 'T') goto badfile;
-		if(fgetc(fp) != 'r') goto badfile;
-		if(fgetc(fp) != 'k') goto badfile;
-
-		if(addMidiTrack(mid) < 0){
-			fprintf(stderr, "add midi track failed \n");
-			error = 3;
-			goto cleanup3;
-		}
-
-//		mid.tracks[t].lengthInBytes = read4(fp) - 4;
-		read4(fp); // ignoring it for now FIXME?
-
-		done = 0;
-		do{
-			timestamp = readvld(fp);
-			event = fgetc(fp);
-			if(event == 0xff){
-				type = fgetc(fp);
-				length = readvld(fp);
-
-				// potential optimization for malloc
-				if(length){
-					data = cast(typeof(data)) malloc(length);
-					for(a = 0; a < length; a++)
-						data[a] = cast(ubyte) fgetc(fp);
-				} else
-					data = null;
-
-
-				if(type == 0x2f){
-					done = 1;
-				} else {
-					// add the event to the list here
-					// FIXME: error check
-					addMidiMetaEvent(mid, t, timestamp,
-						type, length, data);
-				}
-				if(data)
-					free(data);
-			} else {
-				if(event < 0x80){
-					param1 = event;
-					event = runningStatus;
-				} else {
-					runningStatus = event;
-					param1 = fgetc(fp);
-				}
-
-				channel = event&0x0f;
-				event = event >> 4;
-				if(event != MIDI_EVENT_PROGRAM_CHANGE
-			 	&& event != MIDI_EVENT_CHANNEL_AFTERTOUCH)
-					param2 = fgetc(fp);
-
-				// add the event
-				// FIXME: error check
-				addMidiEvent(mid, t, timestamp, event, channel, param1, param2);
-			}
-		} while(!done);
-	}
-
-	goto success;
-  badfile:
-	fprintf(stderr, "The file is not in the right format. %c\n", fgetc(fp));
-	error = 2;
-  cleanup3:
-  	if(mid != null)
-		freeMidi(&mid);
-  success:
-	fclose(fp);
-	*midWhere = mid;
-  cleanup1:
-	return error;
-}
-
-
-
-
-
-
-int saveMidi(Midi* mid, char* filename){
-	int error = 0;
-	FILE* fp;
-	int t, a;
-	int runningStatus = -1;
-	int status;
-	
-	fp = fopen(filename, "wb");
-	if(fp == null){
-		fprintf(stderr, "Unable to open midi file (%s) for writing.\n", filename);
-		error = 1;
-		goto cleanup1;
-	}
-
-	fputc('M', fp);
-	fputc('T', fp);
-	fputc('h', fp);
-	fputc('d', fp);
-
-	write4(6, fp);
-	write2(mid.type, fp);
-	write2(mid.numTracks, fp);
-	write2(mid.speed, fp);
-
-	for(t = 0; t < mid.numTracks; t++){
-		fputc('M', fp);
-		fputc('T', fp);
-		fputc('r', fp);
-		fputc('k', fp);
-
-		runningStatus = -1;
-
-		write4(mid.tracks[t].lengthInBytes + 4, fp);
-		MidiChunk* current;
-		current = mid.tracks[t].chunks;
-		while(current != null){
-			writevld(current.timeStamp, fp);
-			if(current.event == 0xff){
-				fputc(current.event, fp);
-				fputc(current.type, fp);
-				writevld(current.length, fp);
-				for(a = 0; a < current.length; a++)
-					fputc(current.data[a], fp);
-			} else {
-				// FIXME: add support for writing running status
-				status = current.event << 4 | current.channel;
-
-			//	if(status != runningStatus){
-					runningStatus = status;
-					fputc(status, fp);
-			//	}
-
-				fputc(current.param1, fp);
-				if(current.event != MIDI_EVENT_PROGRAM_CHANGE
-			 &&current.event != MIDI_EVENT_CHANNEL_AFTERTOUCH)
-					fputc(current.param2, fp);
-			}
-			current = current.next;
-		}
-		/* the end of track chunk */
-		fputc(0, fp);
-		fputc(0xff, fp);
-		fputc(0x2f, fp);
-		fputc(0x00, fp);
-	}
-/*  cleanup2:*/
-	fclose(fp);
-  cleanup1:
-	return error;
-}
-
-
-int removeMidiTrack(Midi* m, int track){
-	int a;
-	if(track >= m.numTracks)
-		return -1;
-
-	for(a = track; a < m.numTracks-1; a++){
-		m.tracks[a] = m.tracks[a+1];
-	}
-
-	m.numTracks--;
-
-	return 0;
-}
-
-void printMidiEvent(MidiChunk* c){
-	int e = c.event;
-	printf("%d %s %d %d\n", c.timeStamp,
-		 e == MIDI_EVENT_NOTE_OFF ? "Note off".ptr
-		:e == MIDI_EVENT_NOTE_ON  ? "Note on".ptr
-		:e == MIDI_EVENT_PROGRAM_CHANGE ? "Program change".ptr
-		:e == MIDI_EVENT_NOTE_AFTERTOUCH ? "Aftertouch".ptr
-		: "I dunno".ptr
-	, c.param1, c.param2);
-}
-
-MidiChunk* getTrackNameChunk(Midi* m, int track){
-	MidiChunk* c;
-
-	if(track >= m.numTracks)
-		return null;
-
-	c = m.tracks[track].chunks;
-	while(c){
-		if(c.event == 0xff && c.type == 3)
-			return c;
-
-		c = c.next;
-	}
-
-	return c;
-}
-
-int getMidiTempo(Midi* m){
-	int a;
-	MidiChunk* c;
-	for(a = 0; a < m.numTracks; a++){
-		c = m.tracks[a].chunks;
-		while(c){
-			if(c.event == 0xff)
-			if(c.type == 0x51){
-				int p = 0;
-				p |= cast(int)(c.data[0]) << 16;
-				p |= cast(int)(c.data[1]) << 8;
-				p |= cast(int)(c.data[2]) << 0;
-				
-				return 60000000 / p;
-			}
-			c = c.next;
-		}
-	}
-
-	return 120;
-}
-
-int getTempoFromTempoEvent(MidiChunk* c){
-	int tempo = -1;
-	if(c.event == 0xff && c.type == 0x51){
-		int p = 0;
-		p |= cast(int)(c.data[0]) << 16;
-		p |= cast(int)(c.data[1]) << 8;
-		p |= cast(int)(c.data[2]) << 0;
-		tempo = 60000000 / p;
-	}
-	return tempo;
-}
-
-// returns milliseconds to wait given the params
-int getMidiWaitTime(Midi* mid, int timeStamp, int tempo){
-	return (timeStamp * 60000) / (tempo * mid.speed);
-}
-
-// sets absolute values and links up, useful for playing or editing
-// but remember you must recalculate them yourself if you change anything
-// Returns the final absolute time in seconds
-int recalculateMidiAbsolutes(Midi* mid){
-	MidiChunk*[128] c;
-	int[128] trackWaits;
-	int playing;
-	int waited;
-	int minWait = 100000;
-	int a;
-	uint absoluteTime = 0;
-	int tempo = 120;
-	uint absoluteTimeInMilliSeconds = 0;
-	int t;
-	int timeOfLastEvent = 0;
-
-	MidiChunk* absoulteCurrent;
-
-	mid.firstAbsolute = null;
-	absoulteCurrent = null;
-
-	playing = mid.numTracks;
-	for(a = 0; a < mid.numTracks; a++){
-		c[a] = mid.tracks[a].chunks;
-		if(c[a]){
-		trackWaits[a] = c[a].timeStamp;
-		if(trackWaits[a] < minWait)
-			minWait = trackWaits[a];
-		} else
-			playing--;
-	}
-
-	while(playing){
-		waited = minWait;
-		minWait = 1000000;
-		absoluteTime += waited;
-		absoluteTimeInMilliSeconds += getMidiWaitTime(mid, waited, tempo);
-	for(a = 0; a < mid.numTracks; a++){
-		if(!c[a])
-			continue;
-		trackWaits[a] -= waited;
-		if(trackWaits[a] == 0){
-
-		t = getTempoFromTempoEvent(c[a]);
-		if(t != -1)
-			tempo = t;
-
-		// append it to the list
-		if(absoulteCurrent == null){
-			mid.firstAbsolute = c[a];
-			absoulteCurrent = c[a];
-		} else {
-			absoulteCurrent.nextAbsolute = c[a];
-			absoulteCurrent = absoulteCurrent.nextAbsolute;
-		}
-			absoulteCurrent.nextAbsolute = null;
-			absoulteCurrent.absoluteTime = absoluteTime;
-			absoulteCurrent.absoluteTimeInMilliSeconds = absoluteTimeInMilliSeconds;
-			absoulteCurrent.track = a;
-			absoulteCurrent.absoluteWait = absoluteTime - timeOfLastEvent;
-
-		timeOfLastEvent = absoluteTime;
-		c[a] = c[a].next;
-		if(c[a] == null){
-			playing --;
-			trackWaits[a] = 1000000;
-		}
-		else
-			trackWaits[a] = c[a].timeStamp;
-		}
-		if(trackWaits[a] < minWait )
-			minWait = trackWaits[a];
-	}
-	}
-
-
-	return absoluteTimeInMilliSeconds / 1000;
-}
-
-// returns approximate seconds
-int getMidiLength(Midi* mid){
-	return recalculateMidiAbsolutes(mid);
-}
-
-
-
-
-
-
-import arsd.simpleaudio;
-
-struct PlayingMidi {
-	ushort channelMask; /* The channels that will be played */
-	int[128] playtracks;
-
-	// Callbacks
-	// onPlayedNote. Args: this, note, midi ticks waited since last message
-	// This is intended for tablature creation
-	void function(void*, int, int) onPlayedNote;
-	// onMidiEvent. Args: this, event being executed
-	// This can be used to print it or whatever
-	// If you return 1, it skips the event. Return 0 for normal operation
-	int function(void*, MidiChunk*) onMidiEvent;
-
-	Midi* mid;
-	MidiOutput* dev;
-
-	int transpose;
-	float tempoMultiplier;
-
-	/* This stuff is state for the midi in progress */
-	int tempo;
-
-	MidiChunk* current;
-
-	int wait;
-}
-
-
-// the main loop for the first time
-int resetPlayingMidi(PlayingMidi* pmid){
-	pmid.current = pmid.mid.firstAbsolute;
-	pmid.tempo = 120;
-	pmid.wait = 0;
-	if(pmid.current)
-		return getMidiWaitTime(pmid.mid, pmid.current.absoluteWait, cast(int) (pmid.tempo * pmid.tempoMultiplier));
-	return 0;
-}
-
-void setPlayingMidiDefaults(PlayingMidi* pmid){
-	int a;
-	pmid.channelMask =0xffff;
-	for(a = 0; a < 128; a++)
-		pmid.playtracks[a] = 1;
-
-	pmid.onPlayedNote = null;
-	pmid.onMidiEvent = null;
-
-	pmid.mid = null;
-	pmid.dev = null;
-
-	pmid.transpose = 0;
-	pmid.tempoMultiplier = 1.0;
-
-}
-
-
-void seekPlayingMidi(PlayingMidi* pmid, int sec){
-	pmid.dev.silenceAllNotes();
-	pmid.dev.reset();
-
-	pmid.current = pmid.mid.firstAbsolute;
-	while(pmid.current){
-		if(pmid.current.absoluteTimeInMilliSeconds >= sec * 1000)
-			break;
-		pmid.current = pmid.current.next;
-	}
-}
-
-
-// This is the main loop. Returns how many milliseconds to wait before
-// calling it again. If zero, then the song is over.
-int advancePlayingMidi(PlayingMidi* pmid){
-	MidiChunk* c;
-	if(pmid.current == null)
-		return 0;
-  more:
-	c = pmid.current;
-  	pmid.wait += c.absoluteWait;
-
-	if(pmid.onMidiEvent){
-		if(pmid.onMidiEvent(pmid, c))
-			goto skip;
-	}
-
-	if(c.event != 0xff){
-		if(pmid.playtracks[c.track]){
-			if(pmid.channelMask & (1 << c.channel)){
-				int note = c.param1;
-				if(c.event == MIDI_EVENT_NOTE_ON
-				  || c.event == MIDI_EVENT_NOTE_AFTERTOUCH
-				  || c.event == MIDI_EVENT_NOTE_OFF){
-					note += pmid.transpose;
-					//skipCounter = SKIP_MAX;
-				}
-
-				if(pmid.dev)
-					pmid.dev.writeMidiMessage(c.status, note, c.param2);
-				if(pmid.onPlayedNote)
-					if(c.event == MIDI_EVENT_NOTE_ON
-							&& c.param2 != 0){
-						pmid.onPlayedNote(pmid,
-							note,
-							(pmid.wait * 4) / (pmid.mid.speed));
-						pmid.wait = 0;
-					}
-			}
-		}
-	} else {
-		if(c.type == 0x51)
-			pmid.tempo = getTempoFromTempoEvent(c);
-	}
-
-  skip:
-	pmid.current = pmid.current.nextAbsolute;
-	if(pmid.current)
-		if(pmid.current.absoluteWait == 0)
-			goto more;
-		else
-			return getMidiWaitTime(
-				pmid.mid,
-				pmid.current.absoluteWait,
-				cast(int) (pmid.tempo * pmid.tempoMultiplier));
-	else return 0;
-}
-
-
-
+];
 
 version(MidiDemo) {
 
-
-
-
-
-MidiOutput* globaldev;
-
-version(Windows)
-	import core.sys.windows.windows;
-else {
-	import core.sys.posix.unistd;
-	void Sleep(int ms){
-		usleep(ms*1000);
-	}
-
-	import core.stdc.signal;
-	// FIXME: this sucks.
-	extern(C)
-	alias fuckyou = void function(int) @nogc nothrow @system;
-	extern(C)
-	void sigint(){
-		if(globaldev){
-			globaldev.silenceAllNotes();
-			globaldev.reset();
-			destroy(*globaldev);
-		}
-		exit(1);
-	}
-}
 
 enum SKIP_MAX = 3000; // allow no more than about 3 seconds of silence
 			 // if the -k option is set
@@ -1033,44 +900,6 @@ void awesome(void* midiptr, int note, int wait) {
 
 // FIXME: add support for displaying lyrics
 extern(C) int main(int argc, char** argv){
-	int a, b;
-
-	PlayingMidi pmid;
-
-	int tempo = 120;
-	Midi* mid;
-	MidiOutput midiout = MidiOutput(0);
-	MidiChunk*[128] c;
-
-	int minWait = 10000, waited;
-	int playing;
-
-	int wait = 0;
-	int num;
-
-	char* filename = null;
-
-	int verbose = 0;
-	float tempoMultiplier = 1;
-	int transpose = 0;
-	int displayinfo = 0;
-	int play = 1;
-	int tracing = 0;
-	int skip = 0;
-	int[128] playtracks;
-	int skipCounter = SKIP_MAX;
-
-	ushort channelMask = 0xffff;
-
-	int sleepTime = 0;
-
-	version(Posix) {
-		signal(SIGINT, cast(fuckyou) &sigint);
-	}
-
-	for(a = 0; a< 128; a++)
-		playtracks[a] = 1;
-
 
 	for(a = 1; a < argc; a++){
 		if(argv[a][0] == '-')
@@ -1182,12 +1011,6 @@ extern(C) int main(int argc, char** argv){
 		return 1;
 	}
 
-
-
-
-
-
-
 	loadMidi(&mid, filename);
 	if(mid == null){
 		printf("%s: unable to read file %s\n", argv[0], filename);
@@ -1214,121 +1037,6 @@ extern(C) int main(int argc, char** argv){
 		freeMidi(&mid);
 		return 0;
 	}
-
-
-
-	if(play){
-		globaldev = &midiout;
-	} else
-		globaldev = null;
-
-
-	recalculateMidiAbsolutes(mid);
-	setPlayingMidiDefaults(&pmid);
-
-	if(tracing)
-		pmid.onPlayedNote = &awesome;
-	pmid.mid = mid;
-	pmid.dev = &midiout;
-
-	for(a = 0; a < 127; a++)
-		pmid.playtracks[a] = playtracks[a];
-	
-	pmid.channelMask = channelMask;
-	pmid.transpose = transpose;
-	pmid.tempoMultiplier = tempoMultiplier;
-
-
-	sleepTime = resetPlayingMidi(&pmid);
-	do {
-	//printf("%d\n", sleepTime);
-		if(play) {
-			if(skip && sleepTime > 1000)
-				 sleepTime = 1000;
-			Sleep(sleepTime);
-		}
-		sleepTime = advancePlayingMidi(&pmid);
-	} while(sleepTime);
-
-
-/*
-	playing = mid.numTracks;
-
-	// prepare!
-	for(a = 0; a < mid.numTracks; a++){
-		c[a] = mid.tracks[a].chunks;
-		if(c[a]){
-		trackWaits[a] = c[a].timeStamp;
-		if(trackWaits[a] < minWait)
-			minWait = trackWaits[a];
-		} else
-			playing--;
-	}
-
-	while(playing){
-		if(play && (!skip || skipCounter > 100)){
-			Sleep(getMidiWaitTime(mid, minWait, (int)(tempo * tempoMultiplier)));
-			if(skip)
-			skipCounter -= getMidiWaitTime(mid, minWait, (int)(tempo*tempoMultiplier));
-		}
-		waited = minWait;
-		minWait = 1000000;
-		wait += waited;
-	for(a = 0; a < mid.numTracks; a++){
-		if(!c[a])
-			continue;
-		trackWaits[a] -= waited;
-		if(trackWaits[a] == 0){
-			if(c[a].event != 0xff){
-				if(playtracks[a]){
-				if(playchannels[c[a].channel]){
-					int note = c[a].param1;
-					if(c[a].event == MIDI_EVENT_NOTE_ON
-					|| c[a].event == MIDI_EVENT_NOTE_AFTERTOUCH
-					|| c[a].event == MIDI_EVENT_NOTE_OFF){
-						note += transpose;
-						skipCounter = SKIP_MAX;
-					}
-
-				if(play)
-					writeMidiMessage(dev, c[a].status, note, c[a].param2);
-				if(tracing)
-				if(c[a].event == MIDI_EVENT_NOTE_ON
-					&& c[a].param2 != 0){
-					printf("%d %d ",
-						(wait * 4) / (mid.speed),
-						note);
-					fflush(stdout);
-					wait = 0;
-				}
-				}
-				}
-				// data output:
-				// waittime note
-				// waittime is in 1/16 notes
-			} else {
-				if(c[a].type == 0x51){
-					tempo = getTempoFromTempoEvent(c[a]);
-					if(verbose)
-						printf("Tempo change: %d\n", tempo);
-				}
-			}
-			c[a] = c[a].next;
-			if(c[a] == null){
-				playing --;
-				trackWaits[a] = 1000000;
-			}
-			else
-				trackWaits[a] = c[a].timeStamp;
-		}
-
-		if(trackWaits[a] < minWait )
-			minWait = trackWaits[a];
-	}
-	}
-*/
-
-	freeMidi(&mid);
 
 	return 0;
 }

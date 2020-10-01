@@ -2706,7 +2706,7 @@ public nothrow @trusted @nogc:
 
   /// Inverts this matrix.
   /// If inverted matrix cannot be calculated, `this.valid` fill be `false`.
-  ref NVGMatrix invert () {
+  ref NVGMatrix invert () return {
     float[6] inv = void;
     immutable double det = cast(double)mat.ptr[0]*mat.ptr[3]-cast(double)mat.ptr[2]*mat.ptr[1];
     if (det > -1e-6 && det < 1e-6) {
@@ -2725,40 +2725,40 @@ public nothrow @trusted @nogc:
   }
 
   /// Sets this matrix to identity matrix.
-  ref NVGMatrix identity () { version(aliced) pragma(inline, true); mat[] = IdentityMat[]; return this; }
+  ref NVGMatrix identity () return { version(aliced) pragma(inline, true); mat[] = IdentityMat[]; return this; }
 
   /// Translate this matrix.
-  ref NVGMatrix translate (in float tx, in float ty) {
+  ref NVGMatrix translate (in float tx, in float ty) return {
     version(aliced) pragma(inline, true);
     return this.mul(Translated(tx, ty));
   }
 
   /// Scale this matrix.
-  ref NVGMatrix scale (in float sx, in float sy) {
+  ref NVGMatrix scale (in float sx, in float sy) return {
     version(aliced) pragma(inline, true);
     return this.mul(Scaled(sx, sy));
   }
 
   /// Rotate this matrix.
-  ref NVGMatrix rotate (in float a) {
+  ref NVGMatrix rotate (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(Rotated(a));
   }
 
   /// Skew this matrix by X axis.
-  ref NVGMatrix skewX (in float a) {
+  ref NVGMatrix skewX (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedX(a));
   }
 
   /// Skew this matrix by Y axis.
-  ref NVGMatrix skewY (in float a) {
+  ref NVGMatrix skewY (in float a) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedY(a));
   }
 
   /// Skew this matrix by both axes.
-  ref NVGMatrix skewY (in float ax, in float ay) {
+  ref NVGMatrix skewY (in float ax, in float ay) return {
     version(aliced) pragma(inline, true);
     return this.mul(SkewedXY(ax, ay));
   }
@@ -2826,15 +2826,15 @@ public nothrow @trusted @nogc:
   float tx () const { pragma(inline, true); return mat.ptr[4]; } /// Returns x translation of this matrix.
   float ty () const { pragma(inline, true); return mat.ptr[5]; } /// Returns y translation of this matrix.
 
-  ref NVGMatrix scaleX (in float v) { pragma(inline, true); return scaleRotateTransform(v, scaleY, rotation, tx, ty); } /// Sets x scaling of this matrix.
-  ref NVGMatrix scaleY (in float v) { pragma(inline, true); return scaleRotateTransform(scaleX, v, rotation, tx, ty); } /// Sets y scaling of this matrix.
-  ref NVGMatrix rotation (in float v) { pragma(inline, true); return scaleRotateTransform(scaleX, scaleY, v, tx, ty); } /// Sets rotation of this matrix.
-  ref NVGMatrix tx (in float v) { pragma(inline, true); mat.ptr[4] = v; return this; } /// Sets x translation of this matrix.
-  ref NVGMatrix ty (in float v) { pragma(inline, true); mat.ptr[5] = v; return this; } /// Sets y translation of this matrix.
+  ref NVGMatrix scaleX (in float v) return { pragma(inline, true); return scaleRotateTransform(v, scaleY, rotation, tx, ty); } /// Sets x scaling of this matrix.
+  ref NVGMatrix scaleY (in float v) return { pragma(inline, true); return scaleRotateTransform(scaleX, v, rotation, tx, ty); } /// Sets y scaling of this matrix.
+  ref NVGMatrix rotation (in float v) return { pragma(inline, true); return scaleRotateTransform(scaleX, scaleY, v, tx, ty); } /// Sets rotation of this matrix.
+  ref NVGMatrix tx (in float v) return { pragma(inline, true); mat.ptr[4] = v; return this; } /// Sets x translation of this matrix.
+  ref NVGMatrix ty (in float v) return { pragma(inline, true); mat.ptr[5] = v; return this; } /// Sets y translation of this matrix.
 
   /// Utility function to be used in `setXXX()`.
   /// This is the same as doing: `mat.identity.rotate(a).scale(xs, ys).translate(tx, ty)`, only faster
-  ref NVGMatrix scaleRotateTransform (in float xscale, in float yscale, in float a, in float tx, in float ty) {
+  ref NVGMatrix scaleRotateTransform (in float xscale, in float yscale, in float a, in float tx, in float ty) return {
     immutable float cs = nvg__cosf(a), sn = nvg__sinf(a);
     mat.ptr[0] = xscale*cs; mat.ptr[1] = yscale*sn;
     mat.ptr[2] = xscale*-sn; mat.ptr[3] = yscale*cs;
@@ -2843,7 +2843,7 @@ public nothrow @trusted @nogc:
   }
 
   /// This is the same as doing: `mat.identity.rotate(a).translate(tx, ty)`, only faster
-  ref NVGMatrix rotateTransform (in float a, in float tx, in float ty) {
+  ref NVGMatrix rotateTransform (in float a, in float tx, in float ty) return {
     immutable float cs = nvg__cosf(a), sn = nvg__sinf(a);
     mat.ptr[0] = cs; mat.ptr[1] = sn;
     mat.ptr[2] = -sn; mat.ptr[3] = cs;
@@ -12190,325 +12190,16 @@ version(bindbc){
       assert(0, "OpenGL initialization failed: a context needs to be created prior to initialization");
   }
 } else { // OpenGL API missing from simpledisplay
-  private extern(System) nothrow @nogc {
-    alias GLvoid = void;
-    alias GLboolean = ubyte;
-    alias GLuint = uint;
-    alias GLenum = uint;
-    alias GLchar = char;
-    alias GLsizei = int;
-    alias GLfloat = float;
-    alias GLintptr = size_t;
-    alias GLsizeiptr = ptrdiff_t;
-
-    enum uint GL_STENCIL_BUFFER_BIT = 0x00000400;
-
-    enum uint GL_INVALID_ENUM = 0x0500;
-
-    enum uint GL_ZERO = 0;
-    enum uint GL_ONE = 1;
-
-    enum uint GL_FLOAT = 0x1406;
-
-    enum uint GL_STREAM_DRAW = 0x88E0;
-
-    enum uint GL_CCW = 0x0901;
-
-    enum uint GL_STENCIL_TEST = 0x0B90;
-    enum uint GL_SCISSOR_TEST = 0x0C11;
-
-    enum uint GL_EQUAL = 0x0202;
-    enum uint GL_NOTEQUAL = 0x0205;
-
-    enum uint GL_ALWAYS = 0x0207;
-    enum uint GL_KEEP = 0x1E00;
-
-    enum uint GL_INCR = 0x1E02;
-
-    enum uint GL_INCR_WRAP = 0x8507;
-    enum uint GL_DECR_WRAP = 0x8508;
-
-    enum uint GL_CULL_FACE = 0x0B44;
-    enum uint GL_BACK = 0x0405;
-
-    enum uint GL_FRAGMENT_SHADER = 0x8B30;
-    enum uint GL_VERTEX_SHADER = 0x8B31;
-
-    enum uint GL_COMPILE_STATUS = 0x8B81;
-    enum uint GL_LINK_STATUS = 0x8B82;
-
-    enum uint GL_UNPACK_ALIGNMENT = 0x0CF5;
-    enum uint GL_UNPACK_ROW_LENGTH = 0x0CF2;
-    enum uint GL_UNPACK_SKIP_PIXELS = 0x0CF4;
-    enum uint GL_UNPACK_SKIP_ROWS = 0x0CF3;
-
-    enum uint GL_GENERATE_MIPMAP = 0x8191;
-    enum uint GL_LINEAR_MIPMAP_LINEAR = 0x2703;
-
-    enum uint GL_RED = 0x1903;
-
-    enum uint GL_TEXTURE0 = 0x84C0U;
-    enum uint GL_TEXTURE1 = 0x84C1U;
-
-    enum uint GL_ARRAY_BUFFER = 0x8892;
-
-    enum uint GL_SRC_COLOR = 0x0300;
-    enum uint GL_ONE_MINUS_SRC_COLOR = 0x0301;
-    enum uint GL_SRC_ALPHA = 0x0302;
-    enum uint GL_ONE_MINUS_SRC_ALPHA = 0x0303;
-    enum uint GL_DST_ALPHA = 0x0304;
-    enum uint GL_ONE_MINUS_DST_ALPHA = 0x0305;
-    enum uint GL_DST_COLOR = 0x0306;
-    enum uint GL_ONE_MINUS_DST_COLOR = 0x0307;
-    enum uint GL_SRC_ALPHA_SATURATE = 0x0308;
-
-    enum uint GL_INVERT = 0x150AU;
-
-    enum uint GL_DEPTH_STENCIL = 0x84F9U;
-    enum uint GL_UNSIGNED_INT_24_8 = 0x84FAU;
-
-    enum uint GL_FRAMEBUFFER = 0x8D40U;
-    enum uint GL_COLOR_ATTACHMENT0 = 0x8CE0U;
-    enum uint GL_DEPTH_STENCIL_ATTACHMENT = 0x821AU;
-
-    enum uint GL_FRAMEBUFFER_COMPLETE = 0x8CD5U;
-    enum uint GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT = 0x8CD6U;
-    enum uint GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT = 0x8CD7U;
-    enum uint GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS = 0x8CD9U;
-    enum uint GL_FRAMEBUFFER_UNSUPPORTED = 0x8CDDU;
-
-    enum uint GL_COLOR_LOGIC_OP = 0x0BF2U;
-    enum uint GL_CLEAR = 0x1500U;
-    enum uint GL_COPY = 0x1503U;
-    enum uint GL_XOR = 0x1506U;
-
-    enum uint GL_FRAMEBUFFER_BINDING = 0x8CA6U;
-
-    enum uint GL_TEXTURE_LOD_BIAS = 0x8501;
-
-    /*
-    version(Windows) {
-      private void* kglLoad (const(char)* name) {
-        void* res = glGetProcAddress(name);
-        if (res is null) {
-          import core.sys.windows.windef, core.sys.windows.winbase;
-          static HINSTANCE dll = null;
-          if (dll is null) {
-            dll = LoadLibraryA("opengl32.dll");
-            if (dll is null) return null; // <32, but idc
-            return GetProcAddress(dll, name);
-          }
-        }
-      }
-    } else {
-      alias kglLoad = glGetProcAddress;
-    }
-    */
-
-    alias glbfn_glGenVertexArrays = void function(GLsizei, GLuint*);
-    __gshared glbfn_glGenVertexArrays glGenVertexArrays_NVGLZ; alias glGenVertexArrays = glGenVertexArrays_NVGLZ;
-    alias glbfn_glBindVertexArray = void function(GLuint);
-    __gshared glbfn_glBindVertexArray glBindVertexArray_NVGLZ; alias glBindVertexArray = glBindVertexArray_NVGLZ;
-    alias glbfn_glDeleteVertexArrays = void function(GLsizei, const(GLuint)*);
-    __gshared glbfn_glDeleteVertexArrays glDeleteVertexArrays_NVGLZ; alias glDeleteVertexArrays = glDeleteVertexArrays_NVGLZ;
-    alias glbfn_glGenerateMipmap = void function(GLenum);
-    __gshared glbfn_glGenerateMipmap glGenerateMipmap_NVGLZ; alias glGenerateMipmap = glGenerateMipmap_NVGLZ;
-    alias glbfn_glBufferSubData = void function(GLenum, GLintptr, GLsizeiptr, const(GLvoid)*);
-    __gshared glbfn_glBufferSubData glBufferSubData_NVGLZ; alias glBufferSubData = glBufferSubData_NVGLZ;
-
-    alias glbfn_glStencilMask = void function(GLuint);
-    __gshared glbfn_glStencilMask glStencilMask_NVGLZ; alias glStencilMask = glStencilMask_NVGLZ;
-    alias glbfn_glStencilFunc = void function(GLenum, GLint, GLuint);
-    __gshared glbfn_glStencilFunc glStencilFunc_NVGLZ; alias glStencilFunc = glStencilFunc_NVGLZ;
-    alias glbfn_glGetShaderInfoLog = void function(GLuint, GLsizei, GLsizei*, GLchar*);
-    __gshared glbfn_glGetShaderInfoLog glGetShaderInfoLog_NVGLZ; alias glGetShaderInfoLog = glGetShaderInfoLog_NVGLZ;
-    alias glbfn_glGetProgramInfoLog = void function(GLuint, GLsizei, GLsizei*, GLchar*);
-    __gshared glbfn_glGetProgramInfoLog glGetProgramInfoLog_NVGLZ; alias glGetProgramInfoLog = glGetProgramInfoLog_NVGLZ;
-    alias glbfn_glCreateProgram = GLuint function();
-    __gshared glbfn_glCreateProgram glCreateProgram_NVGLZ; alias glCreateProgram = glCreateProgram_NVGLZ;
-    alias glbfn_glCreateShader = GLuint function(GLenum);
-    __gshared glbfn_glCreateShader glCreateShader_NVGLZ; alias glCreateShader = glCreateShader_NVGLZ;
-    alias glbfn_glShaderSource = void function(GLuint, GLsizei, const(GLchar*)*, const(GLint)*);
-    __gshared glbfn_glShaderSource glShaderSource_NVGLZ; alias glShaderSource = glShaderSource_NVGLZ;
-    alias glbfn_glCompileShader = void function(GLuint);
-    __gshared glbfn_glCompileShader glCompileShader_NVGLZ; alias glCompileShader = glCompileShader_NVGLZ;
-    alias glbfn_glGetShaderiv = void function(GLuint, GLenum, GLint*);
-    __gshared glbfn_glGetShaderiv glGetShaderiv_NVGLZ; alias glGetShaderiv = glGetShaderiv_NVGLZ;
-    alias glbfn_glAttachShader = void function(GLuint, GLuint);
-    __gshared glbfn_glAttachShader glAttachShader_NVGLZ; alias glAttachShader = glAttachShader_NVGLZ;
-    alias glbfn_glBindAttribLocation = void function(GLuint, GLuint, const(GLchar)*);
-    __gshared glbfn_glBindAttribLocation glBindAttribLocation_NVGLZ; alias glBindAttribLocation = glBindAttribLocation_NVGLZ;
-    alias glbfn_glLinkProgram = void function(GLuint);
-    __gshared glbfn_glLinkProgram glLinkProgram_NVGLZ; alias glLinkProgram = glLinkProgram_NVGLZ;
-    alias glbfn_glGetProgramiv = void function(GLuint, GLenum, GLint*);
-    __gshared glbfn_glGetProgramiv glGetProgramiv_NVGLZ; alias glGetProgramiv = glGetProgramiv_NVGLZ;
-    alias glbfn_glDeleteProgram = void function(GLuint);
-    __gshared glbfn_glDeleteProgram glDeleteProgram_NVGLZ; alias glDeleteProgram = glDeleteProgram_NVGLZ;
-    alias glbfn_glDeleteShader = void function(GLuint);
-    __gshared glbfn_glDeleteShader glDeleteShader_NVGLZ; alias glDeleteShader = glDeleteShader_NVGLZ;
-    alias glbfn_glGetUniformLocation = GLint function(GLuint, const(GLchar)*);
-    __gshared glbfn_glGetUniformLocation glGetUniformLocation_NVGLZ; alias glGetUniformLocation = glGetUniformLocation_NVGLZ;
-    alias glbfn_glGenBuffers = void function(GLsizei, GLuint*);
-    __gshared glbfn_glGenBuffers glGenBuffers_NVGLZ; alias glGenBuffers = glGenBuffers_NVGLZ;
-    alias glbfn_glPixelStorei = void function(GLenum, GLint);
-    __gshared glbfn_glPixelStorei glPixelStorei_NVGLZ; alias glPixelStorei = glPixelStorei_NVGLZ;
-    alias glbfn_glUniform4fv = void function(GLint, GLsizei, const(GLfloat)*);
-    __gshared glbfn_glUniform4fv glUniform4fv_NVGLZ; alias glUniform4fv = glUniform4fv_NVGLZ;
-    alias glbfn_glColorMask = void function(GLboolean, GLboolean, GLboolean, GLboolean);
-    __gshared glbfn_glColorMask glColorMask_NVGLZ; alias glColorMask = glColorMask_NVGLZ;
-    alias glbfn_glStencilOpSeparate = void function(GLenum, GLenum, GLenum, GLenum);
-    __gshared glbfn_glStencilOpSeparate glStencilOpSeparate_NVGLZ; alias glStencilOpSeparate = glStencilOpSeparate_NVGLZ;
-    alias glbfn_glDrawArrays = void function(GLenum, GLint, GLsizei);
-    __gshared glbfn_glDrawArrays glDrawArrays_NVGLZ; alias glDrawArrays = glDrawArrays_NVGLZ;
-    alias glbfn_glStencilOp = void function(GLenum, GLenum, GLenum);
-    __gshared glbfn_glStencilOp glStencilOp_NVGLZ; alias glStencilOp = glStencilOp_NVGLZ;
-    alias glbfn_glUseProgram = void function(GLuint);
-    __gshared glbfn_glUseProgram glUseProgram_NVGLZ; alias glUseProgram = glUseProgram_NVGLZ;
-    alias glbfn_glCullFace = void function(GLenum);
-    __gshared glbfn_glCullFace glCullFace_NVGLZ; alias glCullFace = glCullFace_NVGLZ;
-    alias glbfn_glFrontFace = void function(GLenum);
-    __gshared glbfn_glFrontFace glFrontFace_NVGLZ; alias glFrontFace = glFrontFace_NVGLZ;
-    alias glbfn_glActiveTexture = void function(GLenum);
-    __gshared glbfn_glActiveTexture glActiveTexture_NVGLZ; alias glActiveTexture = glActiveTexture_NVGLZ;
-    alias glbfn_glBindBuffer = void function(GLenum, GLuint);
-    __gshared glbfn_glBindBuffer glBindBuffer_NVGLZ; alias glBindBuffer = glBindBuffer_NVGLZ;
-    alias glbfn_glBufferData = void function(GLenum, GLsizeiptr, const(void)*, GLenum);
-    __gshared glbfn_glBufferData glBufferData_NVGLZ; alias glBufferData = glBufferData_NVGLZ;
-    alias glbfn_glEnableVertexAttribArray = void function(GLuint);
-    __gshared glbfn_glEnableVertexAttribArray glEnableVertexAttribArray_NVGLZ; alias glEnableVertexAttribArray = glEnableVertexAttribArray_NVGLZ;
-    alias glbfn_glVertexAttribPointer = void function(GLuint, GLint, GLenum, GLboolean, GLsizei, const(void)*);
-    __gshared glbfn_glVertexAttribPointer glVertexAttribPointer_NVGLZ; alias glVertexAttribPointer = glVertexAttribPointer_NVGLZ;
-    alias glbfn_glUniform1i = void function(GLint, GLint);
-    __gshared glbfn_glUniform1i glUniform1i_NVGLZ; alias glUniform1i = glUniform1i_NVGLZ;
-    alias glbfn_glUniform2fv = void function(GLint, GLsizei, const(GLfloat)*);
-    __gshared glbfn_glUniform2fv glUniform2fv_NVGLZ; alias glUniform2fv = glUniform2fv_NVGLZ;
-    alias glbfn_glDisableVertexAttribArray = void function(GLuint);
-    __gshared glbfn_glDisableVertexAttribArray glDisableVertexAttribArray_NVGLZ; alias glDisableVertexAttribArray = glDisableVertexAttribArray_NVGLZ;
-    alias glbfn_glDeleteBuffers = void function(GLsizei, const(GLuint)*);
-    __gshared glbfn_glDeleteBuffers glDeleteBuffers_NVGLZ; alias glDeleteBuffers = glDeleteBuffers_NVGLZ;
-    alias glbfn_glBlendFuncSeparate = void function(GLenum, GLenum, GLenum, GLenum);
-    __gshared glbfn_glBlendFuncSeparate glBlendFuncSeparate_NVGLZ; alias glBlendFuncSeparate = glBlendFuncSeparate_NVGLZ;
-
-    alias glbfn_glLogicOp = void function (GLenum opcode);
-    __gshared glbfn_glLogicOp glLogicOp_NVGLZ; alias glLogicOp = glLogicOp_NVGLZ;
-    alias glbfn_glFramebufferTexture2D = void function (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
-    __gshared glbfn_glFramebufferTexture2D glFramebufferTexture2D_NVGLZ; alias glFramebufferTexture2D = glFramebufferTexture2D_NVGLZ;
-    alias glbfn_glDeleteFramebuffers = void function (GLsizei n, const(GLuint)* framebuffers);
-    __gshared glbfn_glDeleteFramebuffers glDeleteFramebuffers_NVGLZ; alias glDeleteFramebuffers = glDeleteFramebuffers_NVGLZ;
-    alias glbfn_glGenFramebuffers = void function (GLsizei n, GLuint* framebuffers);
-    __gshared glbfn_glGenFramebuffers glGenFramebuffers_NVGLZ; alias glGenFramebuffers = glGenFramebuffers_NVGLZ;
-    alias glbfn_glCheckFramebufferStatus = GLenum function (GLenum target);
-    __gshared glbfn_glCheckFramebufferStatus glCheckFramebufferStatus_NVGLZ; alias glCheckFramebufferStatus = glCheckFramebufferStatus_NVGLZ;
-    alias glbfn_glBindFramebuffer = void function (GLenum target, GLuint framebuffer);
-    __gshared glbfn_glBindFramebuffer glBindFramebuffer_NVGLZ; alias glBindFramebuffer = glBindFramebuffer_NVGLZ;
-
-    alias glbfn_glGetIntegerv = void function (GLenum pname, GLint* data);
-    __gshared glbfn_glGetIntegerv glGetIntegerv_NVGLZ; alias glGetIntegerv = glGetIntegerv_NVGLZ;
-
-    private void nanovgInitOpenGL () {
+    private void nanovgInitOpenGL () @nogc nothrow {
       __gshared bool initialized = false;
       if (initialized) return;
-      glGenVertexArrays_NVGLZ = cast(glbfn_glGenVertexArrays)glbindGetProcAddress(`glGenVertexArrays`);
-      if (glGenVertexArrays_NVGLZ is null) assert(0, `OpenGL function 'glGenVertexArrays' not found!`);
-      glBindVertexArray_NVGLZ = cast(glbfn_glBindVertexArray)glbindGetProcAddress(`glBindVertexArray`);
-      if (glBindVertexArray_NVGLZ is null) assert(0, `OpenGL function 'glBindVertexArray' not found!`);
-      glDeleteVertexArrays_NVGLZ = cast(glbfn_glDeleteVertexArrays)glbindGetProcAddress(`glDeleteVertexArrays`);
-      if (glDeleteVertexArrays_NVGLZ is null) assert(0, `OpenGL function 'glDeleteVertexArrays' not found!`);
-      glGenerateMipmap_NVGLZ = cast(glbfn_glGenerateMipmap)glbindGetProcAddress(`glGenerateMipmap`);
-      if (glGenerateMipmap_NVGLZ is null) assert(0, `OpenGL function 'glGenerateMipmap' not found!`);
-      glBufferSubData_NVGLZ = cast(glbfn_glBufferSubData)glbindGetProcAddress(`glBufferSubData`);
-      if (glBufferSubData_NVGLZ is null) assert(0, `OpenGL function 'glBufferSubData' not found!`);
 
-      glStencilMask_NVGLZ = cast(glbfn_glStencilMask)glbindGetProcAddress(`glStencilMask`);
-      if (glStencilMask_NVGLZ is null) assert(0, `OpenGL function 'glStencilMask' not found!`);
-      glStencilFunc_NVGLZ = cast(glbfn_glStencilFunc)glbindGetProcAddress(`glStencilFunc`);
-      if (glStencilFunc_NVGLZ is null) assert(0, `OpenGL function 'glStencilFunc' not found!`);
-      glGetShaderInfoLog_NVGLZ = cast(glbfn_glGetShaderInfoLog)glbindGetProcAddress(`glGetShaderInfoLog`);
-      if (glGetShaderInfoLog_NVGLZ is null) assert(0, `OpenGL function 'glGetShaderInfoLog' not found!`);
-      glGetProgramInfoLog_NVGLZ = cast(glbfn_glGetProgramInfoLog)glbindGetProcAddress(`glGetProgramInfoLog`);
-      if (glGetProgramInfoLog_NVGLZ is null) assert(0, `OpenGL function 'glGetProgramInfoLog' not found!`);
-      glCreateProgram_NVGLZ = cast(glbfn_glCreateProgram)glbindGetProcAddress(`glCreateProgram`);
-      if (glCreateProgram_NVGLZ is null) assert(0, `OpenGL function 'glCreateProgram' not found!`);
-      glCreateShader_NVGLZ = cast(glbfn_glCreateShader)glbindGetProcAddress(`glCreateShader`);
-      if (glCreateShader_NVGLZ is null) assert(0, `OpenGL function 'glCreateShader' not found!`);
-      glShaderSource_NVGLZ = cast(glbfn_glShaderSource)glbindGetProcAddress(`glShaderSource`);
-      if (glShaderSource_NVGLZ is null) assert(0, `OpenGL function 'glShaderSource' not found!`);
-      glCompileShader_NVGLZ = cast(glbfn_glCompileShader)glbindGetProcAddress(`glCompileShader`);
-      if (glCompileShader_NVGLZ is null) assert(0, `OpenGL function 'glCompileShader' not found!`);
-      glGetShaderiv_NVGLZ = cast(glbfn_glGetShaderiv)glbindGetProcAddress(`glGetShaderiv`);
-      if (glGetShaderiv_NVGLZ is null) assert(0, `OpenGL function 'glGetShaderiv' not found!`);
-      glAttachShader_NVGLZ = cast(glbfn_glAttachShader)glbindGetProcAddress(`glAttachShader`);
-      if (glAttachShader_NVGLZ is null) assert(0, `OpenGL function 'glAttachShader' not found!`);
-      glBindAttribLocation_NVGLZ = cast(glbfn_glBindAttribLocation)glbindGetProcAddress(`glBindAttribLocation`);
-      if (glBindAttribLocation_NVGLZ is null) assert(0, `OpenGL function 'glBindAttribLocation' not found!`);
-      glLinkProgram_NVGLZ = cast(glbfn_glLinkProgram)glbindGetProcAddress(`glLinkProgram`);
-      if (glLinkProgram_NVGLZ is null) assert(0, `OpenGL function 'glLinkProgram' not found!`);
-      glGetProgramiv_NVGLZ = cast(glbfn_glGetProgramiv)glbindGetProcAddress(`glGetProgramiv`);
-      if (glGetProgramiv_NVGLZ is null) assert(0, `OpenGL function 'glGetProgramiv' not found!`);
-      glDeleteProgram_NVGLZ = cast(glbfn_glDeleteProgram)glbindGetProcAddress(`glDeleteProgram`);
-      if (glDeleteProgram_NVGLZ is null) assert(0, `OpenGL function 'glDeleteProgram' not found!`);
-      glDeleteShader_NVGLZ = cast(glbfn_glDeleteShader)glbindGetProcAddress(`glDeleteShader`);
-      if (glDeleteShader_NVGLZ is null) assert(0, `OpenGL function 'glDeleteShader' not found!`);
-      glGetUniformLocation_NVGLZ = cast(glbfn_glGetUniformLocation)glbindGetProcAddress(`glGetUniformLocation`);
-      if (glGetUniformLocation_NVGLZ is null) assert(0, `OpenGL function 'glGetUniformLocation' not found!`);
-      glGenBuffers_NVGLZ = cast(glbfn_glGenBuffers)glbindGetProcAddress(`glGenBuffers`);
-      if (glGenBuffers_NVGLZ is null) assert(0, `OpenGL function 'glGenBuffers' not found!`);
-      glPixelStorei_NVGLZ = cast(glbfn_glPixelStorei)glbindGetProcAddress(`glPixelStorei`);
-      if (glPixelStorei_NVGLZ is null) assert(0, `OpenGL function 'glPixelStorei' not found!`);
-      glUniform4fv_NVGLZ = cast(glbfn_glUniform4fv)glbindGetProcAddress(`glUniform4fv`);
-      if (glUniform4fv_NVGLZ is null) assert(0, `OpenGL function 'glUniform4fv' not found!`);
-      glColorMask_NVGLZ = cast(glbfn_glColorMask)glbindGetProcAddress(`glColorMask`);
-      if (glColorMask_NVGLZ is null) assert(0, `OpenGL function 'glColorMask' not found!`);
-      glStencilOpSeparate_NVGLZ = cast(glbfn_glStencilOpSeparate)glbindGetProcAddress(`glStencilOpSeparate`);
-      if (glStencilOpSeparate_NVGLZ is null) assert(0, `OpenGL function 'glStencilOpSeparate' not found!`);
-      glDrawArrays_NVGLZ = cast(glbfn_glDrawArrays)glbindGetProcAddress(`glDrawArrays`);
-      if (glDrawArrays_NVGLZ is null) assert(0, `OpenGL function 'glDrawArrays' not found!`);
-      glStencilOp_NVGLZ = cast(glbfn_glStencilOp)glbindGetProcAddress(`glStencilOp`);
-      if (glStencilOp_NVGLZ is null) assert(0, `OpenGL function 'glStencilOp' not found!`);
-      glUseProgram_NVGLZ = cast(glbfn_glUseProgram)glbindGetProcAddress(`glUseProgram`);
-      if (glUseProgram_NVGLZ is null) assert(0, `OpenGL function 'glUseProgram' not found!`);
-      glCullFace_NVGLZ = cast(glbfn_glCullFace)glbindGetProcAddress(`glCullFace`);
-      if (glCullFace_NVGLZ is null) assert(0, `OpenGL function 'glCullFace' not found!`);
-      glFrontFace_NVGLZ = cast(glbfn_glFrontFace)glbindGetProcAddress(`glFrontFace`);
-      if (glFrontFace_NVGLZ is null) assert(0, `OpenGL function 'glFrontFace' not found!`);
-      glActiveTexture_NVGLZ = cast(glbfn_glActiveTexture)glbindGetProcAddress(`glActiveTexture`);
-      if (glActiveTexture_NVGLZ is null) assert(0, `OpenGL function 'glActiveTexture' not found!`);
-      glBindBuffer_NVGLZ = cast(glbfn_glBindBuffer)glbindGetProcAddress(`glBindBuffer`);
-      if (glBindBuffer_NVGLZ is null) assert(0, `OpenGL function 'glBindBuffer' not found!`);
-      glBufferData_NVGLZ = cast(glbfn_glBufferData)glbindGetProcAddress(`glBufferData`);
-      if (glBufferData_NVGLZ is null) assert(0, `OpenGL function 'glBufferData' not found!`);
-      glEnableVertexAttribArray_NVGLZ = cast(glbfn_glEnableVertexAttribArray)glbindGetProcAddress(`glEnableVertexAttribArray`);
-      if (glEnableVertexAttribArray_NVGLZ is null) assert(0, `OpenGL function 'glEnableVertexAttribArray' not found!`);
-      glVertexAttribPointer_NVGLZ = cast(glbfn_glVertexAttribPointer)glbindGetProcAddress(`glVertexAttribPointer`);
-      if (glVertexAttribPointer_NVGLZ is null) assert(0, `OpenGL function 'glVertexAttribPointer' not found!`);
-      glUniform1i_NVGLZ = cast(glbfn_glUniform1i)glbindGetProcAddress(`glUniform1i`);
-      if (glUniform1i_NVGLZ is null) assert(0, `OpenGL function 'glUniform1i' not found!`);
-      glUniform2fv_NVGLZ = cast(glbfn_glUniform2fv)glbindGetProcAddress(`glUniform2fv`);
-      if (glUniform2fv_NVGLZ is null) assert(0, `OpenGL function 'glUniform2fv' not found!`);
-      glDisableVertexAttribArray_NVGLZ = cast(glbfn_glDisableVertexAttribArray)glbindGetProcAddress(`glDisableVertexAttribArray`);
-      if (glDisableVertexAttribArray_NVGLZ is null) assert(0, `OpenGL function 'glDisableVertexAttribArray' not found!`);
-      glDeleteBuffers_NVGLZ = cast(glbfn_glDeleteBuffers)glbindGetProcAddress(`glDeleteBuffers`);
-      if (glDeleteBuffers_NVGLZ is null) assert(0, `OpenGL function 'glDeleteBuffers' not found!`);
-      glBlendFuncSeparate_NVGLZ = cast(glbfn_glBlendFuncSeparate)glbindGetProcAddress(`glBlendFuncSeparate`);
-      if (glBlendFuncSeparate_NVGLZ is null) assert(0, `OpenGL function 'glBlendFuncSeparate' not found!`);
+      try
+        gl3.loadDynamicLibrary();
+      catch(Exception)
+      	assert(0, "GL 3 failed to load");
 
-      glLogicOp_NVGLZ = cast(glbfn_glLogicOp)glbindGetProcAddress(`glLogicOp`);
-      if (glLogicOp_NVGLZ is null) assert(0, `OpenGL function 'glLogicOp' not found!`);
-      glFramebufferTexture2D_NVGLZ = cast(glbfn_glFramebufferTexture2D)glbindGetProcAddress(`glFramebufferTexture2D`);
-      if (glFramebufferTexture2D_NVGLZ is null) assert(0, `OpenGL function 'glFramebufferTexture2D' not found!`);
-      glDeleteFramebuffers_NVGLZ = cast(glbfn_glDeleteFramebuffers)glbindGetProcAddress(`glDeleteFramebuffers`);
-      if (glDeleteFramebuffers_NVGLZ is null) assert(0, `OpenGL function 'glDeleteFramebuffers' not found!`);
-      glGenFramebuffers_NVGLZ = cast(glbfn_glGenFramebuffers)glbindGetProcAddress(`glGenFramebuffers`);
-      if (glGenFramebuffers_NVGLZ is null) assert(0, `OpenGL function 'glGenFramebuffers' not found!`);
-      glCheckFramebufferStatus_NVGLZ = cast(glbfn_glCheckFramebufferStatus)glbindGetProcAddress(`glCheckFramebufferStatus`);
-      if (glCheckFramebufferStatus_NVGLZ is null) assert(0, `OpenGL function 'glCheckFramebufferStatus' not found!`);
-      glBindFramebuffer_NVGLZ = cast(glbfn_glBindFramebuffer)glbindGetProcAddress(`glBindFramebuffer`);
-      if (glBindFramebuffer_NVGLZ is null) assert(0, `OpenGL function 'glBindFramebuffer' not found!`);
-
-      glGetIntegerv_NVGLZ = cast(glbfn_glGetIntegerv)glbindGetProcAddress(`glGetIntegerv`);
-      if (glGetIntegerv_NVGLZ is null) assert(0, `OpenGL function 'glGetIntegerv' not found!`);
       initialized = true;
-    }
   }
 }
 

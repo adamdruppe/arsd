@@ -3,7 +3,7 @@
 	"targetType": "library",
 	"importPaths": ["."],
 	"sourceFiles": ["package.d"],
-	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability.",
+	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability. Use individual subpackages instead of the overall package to avoid bringing in things you don't need/want!",
 	"authors": ["Adam D. Ruppe"],
 	"license":"BSL-1.0",
 	"dependencies": {
@@ -27,6 +27,7 @@
 		":terminal": "*",
 		":ttf": "*",
 		":color_base": "*",
+		":svg":"*",
 		":database_base": "*"
 	},
 	"subPackages": [
@@ -41,14 +42,12 @@
 			"configurations": [
 				{
 					"name": "normal",
-					"libs-posix": ["X11", "Xext", "GL", "GLU"],
-					"libs-windows": ["gdi32", "opengl32", "glu32"]
+					"libs-windows": ["gdi32"]
 				},
 				{
 					"name": "without-opengl",
 					"versions": ["without_opengl"],
-					"libs-windows": ["gdi32"],
-					"libs-posix": ["X11", "Xext"]
+					"libs-windows": ["gdi32"]
 				},
 				{
 					"name": "cocoa",
@@ -100,6 +99,7 @@
 				"arsd-official:color_base":"*",
 				"arsd-official:png":"*",
 				"arsd-official:bmp":"*",
+				"arsd-official:svg":"*",
 				"arsd-official:jpeg":"*"
 			},
 			"dflags": [
@@ -200,6 +200,18 @@
 					"versions": ["embedded_httpd"]
 				},
 				{
+					"name": "embedded_httpd_threads",
+					"versions": ["embedded_httpd_threads"]
+				},
+				{
+					"name": "embedded_httpd_processes",
+					"versions": ["embedded_httpd_processes"]
+				},
+				{
+					"name": "embedded_httpd_hybrid",
+					"versions": ["embedded_httpd_hybrid"]
+				},
+				{
 					"name": "cgi",
 					"versions": ["traditional_cgi"]
 				},
@@ -269,8 +281,7 @@
 			"configurations": [
 				{
 					"name": "with_openssl",
-					"versions": ["with_openssl"],
-					"libs": ["crypto", "ssl"]
+					"versions": ["with_openssl"]
 				},
 				{
 					"name": "without_openssl",
@@ -307,6 +318,7 @@
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
 			"targetType": "library",
+			"libs-windows": ["user32"],
 			"sourceFiles": ["terminal.d"],
 			"importPaths": ["."],
 			"dflags": ["-mv=arsd.terminal=terminal.d"],

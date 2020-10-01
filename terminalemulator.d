@@ -210,7 +210,11 @@ class TerminalEmulator {
 		if(bracketedPasteMode)
 			sendToApplication("\033[200~");
 
-		enum MAX_PASTE_CHUNK = 4000;
+		version(use_libssh2)
+			enum MAX_PASTE_CHUNK = 4000;
+		else
+			enum MAX_PASTE_CHUNK = 1024 * 1024 * 10;
+
 		if(data.length > MAX_PASTE_CHUNK) {
 			// need to chunk it in order to receive echos, etc,
 			// to avoid deadlocks
@@ -362,6 +366,9 @@ class TerminalEmulator {
 						start = idx;
 						end = selectionEnd;
 					}
+					if(start < 0 || end >= ((alternateScreenActive ? alternateScreen.length : normalScreen.length)))
+						return false;
+
 					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[start .. end]) {
 						cell.invalidated = true;
 						cell.selected = false;
@@ -530,7 +537,7 @@ class TerminalEmulator {
 
 		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.ScrollLock) {
 			toggleScrollLock();
-			return false;
+			return true;
 		}
 
 		// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
@@ -799,10 +806,13 @@ class TerminalEmulator {
 	static struct TerminalCell {
 	align(1):
 		private union {
+			// OMG the top 11 bits of a dchar are always 0
+			// and i can reuse them!!!
 			struct {
 				dchar chStore = ' '; /// the character
 				TextAttributes attributesStore; /// color, etc.
 			}
+			// 64 bit pointer also has unused 16 bits but meh.
 			NonCharacterData nonCharacterDataStore; /// iff hasNonCharacterData
 		}
 
@@ -814,7 +824,7 @@ class TerminalEmulator {
 			hasNonCharacterData = false;
 			chStore = c;
 		}
-		ref TextAttributes attributes() {
+		ref TextAttributes attributes() return {
 			assert(!hasNonCharacterData);
 			return attributesStore;
 		}
@@ -1233,8 +1243,7 @@ class TerminalEmulator {
 
 	private int scrollbackWidth_;
 	int scrollbackWidth() {
-		return screenWidth;
-		//return scrollbackWidth_; // FIME
+		return scrollbackWidth_ > screenWidth ? scrollbackWidth_ : screenWidth;
 	}
 
 	/* virtual */ void notifyScrollbackAdded() {}
@@ -1246,8 +1255,9 @@ class TerminalEmulator {
 		if(alternateScreenActive && !scrollingBack)
 			return;
 
-		if(!scrollingBack)
+		if(!scrollingBack) {
 			startScrollback();
+		}
 
 		if(y < 0)
 			y = 0;
@@ -1259,10 +1269,12 @@ class TerminalEmulator {
 
 		if(currentScrollback < 0)
 			currentScrollback = 0;
+		if(currentScrollbackX < 0)
+			currentScrollbackX = 0;
 
-		if(currentScrollback == 0)
+		if(!scrollLock && currentScrollback == 0 && currentScrollbackX == 0) {
 			endScrollback();
-		else {
+		} else {
 			cls();
 			showScrollbackOnScreen(alternateScreen, currentScrollback, false, currentScrollbackX);
 		}
@@ -1273,19 +1285,20 @@ class TerminalEmulator {
 			return;
 
 		if(!scrollingBack) {
-			if(delta <= 0)
+			if(delta <= 0 && deltaX == 0)
 				return; // it does nothing to scroll down when not scrolling back
 			startScrollback();
 		}
 		currentScrollback += delta;
-		if(deltaX) {
+		if(!scrollbackReflow && deltaX) {
 			currentScrollbackX += deltaX;
-			if(currentScrollbackX < 0) {
+			int max = scrollbackWidth - screenWidth;
+			if(max < 0)
+				max = 0;
+			if(currentScrollbackX > max)
+				currentScrollbackX = max;
+			if(currentScrollbackX < 0)
 				currentScrollbackX = 0;
-				if(!scrollLock)
-					scrollbackReflow = true;
-			} else
-				scrollbackReflow = false;
 		}
 
 		int max = cast(int) scrollbackBuffer.length - screenHeight;
@@ -1304,13 +1317,15 @@ class TerminalEmulator {
 
 		if(currentScrollback > max)
 			currentScrollback = max;
+		if(currentScrollback < 0)
+			currentScrollback = 0;
 
-		if(currentScrollback <= 0)
+		if(!scrollLock && currentScrollback <= 0 && currentScrollbackX <= 0)
 			endScrollback();
 		else {
 			cls();
 			showScrollbackOnScreen(alternateScreen, currentScrollback, scrollbackReflow, currentScrollbackX);
-			notifyScrollbarPosition(currentScrollbackX, max - currentScrollback);
+			notifyScrollbarPosition(currentScrollbackX, scrollbackLength - currentScrollback - screenHeight);
 		}
 	}
 
@@ -1330,6 +1345,8 @@ class TerminalEmulator {
 	}
 
 	bool endScrollback() {
+		//if(scrollLock)
+		//	return false;
 		if(!scrollingBack)
 			return false;
 		scrollingBack = false;
@@ -1342,20 +1359,62 @@ class TerminalEmulator {
 		currentScrollback = 0;
 		currentScrollbackX = 0;
 
+		if(!scrollLock) {
+			scrollbackReflow = true;
+			recalculateScrollbackLength();
+		}
+
 		notifyScrollbarPosition(0, int.max);
 
 		return true;
 	}
 
 	private bool scrollbackReflow = true;
+	/* deprecated? */
 	public void toggleScrollbackWrap() {
 		scrollbackReflow = !scrollbackReflow;
+		recalculateScrollbackLength();
 	}
 
 	private bool scrollLock = false;
 	public void toggleScrollLock() {
 		scrollLock = !scrollLock;
 		scrollbackReflow = !scrollLock;
+		recalculateScrollbackLength();
+
+		if(scrollLock) {
+			startScrollback();
+
+			cls();
+			currentScrollback = 0;
+			currentScrollbackX = 0;
+			showScrollbackOnScreen(alternateScreen, currentScrollback, scrollbackReflow, currentScrollbackX);
+			notifyScrollbarPosition(currentScrollbackX, scrollbackLength - currentScrollback - screenHeight);
+		} else {
+			endScrollback();
+		}
+
+		//cls();
+		//drawScrollback();
+	}
+
+	private void recalculateScrollbackLength() {
+		int count = cast(int) scrollbackBuffer.length;
+		int max;
+		if(scrollbackReflow) {
+			foreach(line; scrollbackBuffer[]) {
+				count += cast(int) line.length / screenWidth;
+			}
+		} else {
+			foreach(line; scrollbackBuffer[]) {
+				if(line.length > max)
+					max = cast(int) line.length;
+			}
+		}
+		scrollbackWidth_ = max;
+		scrollbackLength = count;
+		notifyScrollbackAdded();
+		notifyScrollbarPosition(currentScrollbackX, currentScrollback ? scrollbackLength - currentScrollback : int.max);
 	}
 
 	public void writeScrollbackToFile(string filename) {
@@ -1368,8 +1427,8 @@ class TerminalEmulator {
 		}
 	}
 
-	public void drawScrollback() {
-		showScrollbackOnScreen(normalScreen, 0, true, 0);
+	public void drawScrollback(bool useAltScreen = false) {
+		showScrollbackOnScreen(useAltScreen ? alternateScreen : normalScreen, 0, true, 0);
 	}
 
 	private void showScrollbackOnScreen(ref TerminalCell[] screen, int howFar, bool reflow, int howFarX) {
@@ -1428,10 +1487,12 @@ class TerminalEmulator {
 			bool overflowed;
 			foreach(cell; line) {
 				cell.invalidated = true;
-				if(overflowed)
+				if(overflowed) {
 					screen[cursorY * screenWidth + cursorX] = overflowCell;
-				else
+					break;
+				} else {
 					screen[cursorY * screenWidth + cursorX] = cell;
+				}
 
 				if(cursorX == screenWidth-1) {
 					if(scrollbackReflow) {
@@ -1459,6 +1520,10 @@ class TerminalEmulator {
 	public void resizeTerminal(int w, int h) {
 		if(w == screenWidth && h == screenHeight)
 			return; // we're already good, do nothing to avoid wasting time and possibly losing a line (bash doesn't seem to like being told it "resized" to the same size)
+
+		// do i like this?
+		if(scrollLock)
+			toggleScrollLock();
 
 		endScrollback(); // FIXME: hack
 
@@ -1492,15 +1557,7 @@ class TerminalEmulator {
 		cursorY = cursorY;
 		cursorX = cursorX;
 
-
-		int count = cast(int) scrollbackBuffer.length;
-		if(scrollbackReflow) {
-			foreach(line; scrollbackBuffer[])
-				count += cast(int) line.length / screenWidth;
-		}
-		scrollbackLength = count;
-		notifyScrollbackAdded();
-		notifyScrollbarPosition(currentScrollbackX, currentScrollback ? scrollbackLength - currentScrollback : int.max);
+		recalculateScrollbackLength();
 	}
 
 	private CursorPosition popSavedCursor() {
@@ -1538,6 +1595,11 @@ class TerminalEmulator {
 		scrollbackWidth_ = 0;
 
 		notifyScrollbackAdded();
+	}
+
+	public void moveCursor(int x, int y) {
+		cursorX = x;
+		cursorY = y;
 	}
 
 	/* FIXME: i want these to be private */
@@ -1615,7 +1677,11 @@ class TerminalEmulator {
 			void clear() {
 				start = 0;
 				length_ = 0;
+				backing = null;
 			}
+
+			// FIXME: if scrollback hits limits the scroll bar needs
+			// to understand the circular buffer
 
 			void opOpAssign(string op : "~")(TerminalCell[] line) {
 				if(length_ < maxScrollback) {
@@ -1850,13 +1916,30 @@ class TerminalEmulator {
 			}
 		}
 
+		private int recalculationThreshold = 0;
 		public void addScrollbackLine(TerminalCell[] line) {
 			scrollbackBuffer ~= line;
 
-			scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
-			notifyScrollbackAdded();
+			if(scrollbackBuffer.length_ == ScrollbackBuffer.maxScrollback) {
+				recalculationThreshold++;
+				if(recalculationThreshold > 100) {
+					recalculateScrollbackLength();
+					notifyScrollbackAdded();
+					recalculationThreshold = 0;
+				}
+			} else {
+				if(!scrollbackReflow && line.length > scrollbackWidth_)
+					scrollbackWidth_ = cast(int) line.length;
+				scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
+				notifyScrollbackAdded();
+			}
+
 			if(!alternateScreenActive)
 				notifyScrollbarPosition(0, int.max);
+		}
+
+		protected int maxScrollbackLength() pure const @nogc nothrow {
+			return 1024;
 		}
 
 		bool insertMode = false;
@@ -1864,10 +1947,10 @@ class TerminalEmulator {
 			if(!alternateScreenActive && commitScrollback) {
 				// I am limiting this because obscenely long lines are kinda useless anyway and
 				// i don't want it to eat excessive memory when i spam some thing accidentally
-				if(currentScrollbackLine.length < 1024)
+				if(currentScrollbackLine.length < maxScrollbackLength())
 					addScrollbackLine(currentScrollbackLine.sliceTrailingWhitespace);
 				else
-					addScrollbackLine(currentScrollbackLine[0 .. 1024].sliceTrailingWhitespace);
+					addScrollbackLine(currentScrollbackLine[0 .. maxScrollbackLength()].sliceTrailingWhitespace);
 
 				currentScrollbackLine = null;
 				currentScrollbackLine.reserve(64);
@@ -1891,6 +1974,8 @@ class TerminalEmulator {
 					} else {
 						if(idx + screenWidth * 2 > normalScreen.length)
 							break;
+						// range violation in apt on debian
+						// FIXME
 						normalScreen[idx .. idx + screenWidth] = normalScreen[idx + screenWidth .. idx + screenWidth * 2];
 					}
 					idx += screenWidth;

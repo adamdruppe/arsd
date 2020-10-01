@@ -27,7 +27,7 @@ MemoryImage readBmp(string filename) {
 }
 
 /// Reads a bitmap out of an in-memory array of data. For example, that returned from [std.file.read].
-MemoryImage readBmp(in ubyte[] data) {
+MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true) {
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
 		while(size) {
@@ -39,11 +39,16 @@ MemoryImage readBmp(in ubyte[] data) {
 		}
 	}
 
-	return readBmpIndirect(&specialFread);
+	return readBmpIndirect(&specialFread, lookForFileHeader);
 }
 
-/// Reads using a delegate to read instead of assuming a direct file
-MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread) {
+/++
+	Reads using a delegate to read instead of assuming a direct file
+
+	History:
+		The `lookForFileHeader` param was added in July 2020.
++/
+MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
 	ushort read2(){ ushort what; fread(&what, 2); return what; }
 	ubyte read1(){ ubyte what; fread(&what, 1); return what; }
@@ -63,15 +68,17 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread) {
 			throw new Exception("didn't get expected int value " /*~ to!string(got)*/, __FILE__, line);
 	}
 
-	require1('B');
-	require1('M');
+	if(lookForFileHeader) {
+		require1('B');
+		require1('M');
 
-	auto fileSize = read4(); // size of file in bytes
-	require2(0); // reserved
-	require2(0); 	// reserved
+		auto fileSize = read4(); // size of file in bytes
+		require2(0); // reserved
+		require2(0); 	// reserved
 
-	auto offsetToBits = read4();
-	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("pixel data offset: 0x%08x\n", cast(uint)offsetToBits); }
+		auto offsetToBits = read4();
+		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("pixel data offset: 0x%08x\n", cast(uint)offsetToBits); }
+	}
 
 	auto sizeOfBitmapInfoHeader = read4();
 	if (sizeOfBitmapInfoHeader < 12) throw new Exception("invalid bitmap header size");
@@ -373,9 +380,39 @@ void writeBmp(MemoryImage img, string filename) {
 		throw new Exception("can't open save file");
 	scope(exit) fclose(fp);
 
-	void write4(uint what)  { fwrite(&what, 4, 1, fp); }
-	void write2(ushort what){ fwrite(&what, 2, 1, fp); }
-	void write1(ubyte what) { fputc(what, fp); }
+	void my_fwrite(ubyte b) {
+		fputc(b, fp);
+	}
+
+	writeBmpIndirect(img, &my_fwrite, true);
+}
+
+/+
+void main() {
+	import arsd.simpledisplay;
+	//import std.file;
+	//auto img = readBmp(cast(ubyte[]) std.file.read("/home/me/test2.bmp"));
+	auto img = readBmp("/home/me/test2.bmp");
+	import std.stdio;
+	writeln((cast(Object)img).toString());
+	displayImage(Image.fromMemoryImage(img));
+	//img.writeBmp("/home/me/test2.bmp");
+}
++/
+
+void writeBmpIndirect(MemoryImage img, scope void delegate(ubyte) fwrite, bool prependFileHeader) {
+
+	void write4(uint what){
+		fwrite(what & 0xff);
+		fwrite((what >> 8) & 0xff);
+		fwrite((what >> 16) & 0xff);
+		fwrite((what >> 24) & 0xff);
+	}
+	void write2(ushort what){
+		fwrite(what & 0xff);
+		fwrite(what >> 8);
+	}
+	void write1(ubyte what) { fwrite(what); }
 
 	int width = img.width;
 	int height = img.height;
@@ -420,13 +457,15 @@ void writeBmp(MemoryImage img, string filename) {
 		fileSize += height * ((width * 3) + (!((width*3)%4) ? 0 : 4-((width*3)%4)));
 	else assert(0, "not implemented"); // FIXME
 
-	write1('B');
-	write1('M');
+	if(prependFileHeader) {
+		write1('B');
+		write1('M');
 
-	write4(fileSize); // size of file in bytes
-	write2(0); 	// reserved
-	write2(0); 	// reserved
-	write4(offsetToBits); // offset to the bitmap data
+		write4(fileSize); // size of file in bytes
+		write2(0); 	// reserved
+		write2(0); 	// reserved
+		write4(offsetToBits); // offset to the bitmap data
+	}
 
 	write4(40); // size of BITMAPINFOHEADER
 
@@ -484,16 +523,3 @@ void writeBmp(MemoryImage img, string filename) {
 			write1(0); // pad until divisible by four
 	}
 }
-
-/+
-void main() {
-	import arsd.simpledisplay;
-	//import std.file;
-	//auto img = readBmp(cast(ubyte[]) std.file.read("/home/me/test2.bmp"));
-	auto img = readBmp("/home/me/test2.bmp");
-	import std.stdio;
-	writeln((cast(Object)img).toString());
-	displayImage(Image.fromMemoryImage(img));
-	//img.writeBmp("/home/me/test2.bmp");
-}
-+/

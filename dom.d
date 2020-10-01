@@ -5,8 +5,6 @@
 
 // FIXME: the scriptable list is quite arbitrary
 
-// FIXME: https://developer.mozilla.org/en-US/docs/Web/CSS/:is
-
 
 // xml entity references?!
 
@@ -804,11 +802,11 @@ class Document : FileResource {
 
 				return Ele(1, null, tname); // closing tag reports itself here
 				case ' ': // assume it isn't a real element...
-					if(strict)
+					if(strict) {
 						parseError("bad markup - improperly placed <");
-					else
+						assert(0); // parseError always throws
+					} else
 						return Ele(0, TextNode.fromUndecodedString(this, "<"), null);
-				break;
 				default:
 
 					if(!strict) {
@@ -1252,7 +1250,6 @@ class Document : FileResource {
 	}
 
 	/// ditto
-	@scriptable
 	deprecated("use querySelectorAll instead")
 	Element[] getElementsBySelector(string selector) {
 		return root.getElementsBySelector(selector);
@@ -1598,8 +1595,8 @@ class Element {
 			assert(tagName !is null);
 		}
 		out(e) {
-			assert(e.parentNode is this);
-			assert(e.parentDocument is this.parentDocument);
+			//assert(e.parentNode is this);
+			//assert(e.parentDocument is this.parentDocument);
 		}
 	body {
 		auto e = Element.make(tagName, childInfo, childInfo2);
@@ -2136,6 +2133,11 @@ class Element {
 	}
 
 	///.
+	@property Element previousElementSibling() {
+		return previousSibling("*");
+	}
+
+	///.
 	@property Element previousSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -2145,13 +2147,16 @@ class Element {
 				break;
 			if(tagName == "*" && e.nodeType != NodeType.Text) {
 				ps = e;
-				break;
-			}
-			if(tagName is null || e.tagName == tagName)
+			} else if(tagName is null || e.tagName == tagName)
 				ps = e;
 		}
 
 		return ps;
+	}
+
+	///.
+	@property Element nextElementSibling() {
+		return nextSibling("*");
 	}
 
 	///.
@@ -2220,15 +2225,19 @@ class Element {
 		return null;
 	}
 
-	/// Note: you can give multiple selectors, separated by commas.
-	/// It will return the first match it finds.
+	/++
+		Returns a child element that matches the given `selector`.
+
+		Note: you can give multiple selectors, separated by commas.
+	 	It will return the first match it finds.
+	+/
 	@scriptable
 	Element querySelector(string selector) {
-		// FIXME: inefficient; it gets all results just to discard most of them
-		auto list = getElementsBySelector(selector);
-		if(list.length == 0)
-			return null;
-		return list[0];
+		Selector s = Selector(selector);
+		foreach(ele; tree)
+			if(s.matchesElement(ele))
+				return ele;
+		return null;
 	}
 
 	/// a more standards-compliant alias for getElementsBySelector
@@ -2618,6 +2627,18 @@ class Element {
 		}
 	body {
 		children = null;
+	}
+
+	/// History: added June 13, 2020
+	Element appendSibling(Element e) {
+		parentNode.insertAfter(this, e);
+		return e;
+	}
+
+	/// History: added June 13, 2020
+	Element prependSibling(Element e) {
+		parentNode.insertBefore(this, e);
+		return e;
 	}
 
 
@@ -6941,6 +6962,9 @@ int intFromHex(string hex) {
 		string[] hasSelectors; /// :has(this)
 		string[] notSelectors; /// :not(this)
 
+		string[] isSelectors; /// :is(this)
+		string[] whereSelectors; /// :where(this)
+
 		ParsedNth[] nthOfType; /// .
 		ParsedNth[] nthLastOfType; /// .
 		ParsedNth[] nthChild; /// .
@@ -6955,6 +6979,8 @@ int intFromHex(string hex) {
 		bool whitespaceOnly; ///
 		bool oddChild; ///.
 		bool evenChild; ///.
+
+		bool scopeElement; /// the css :scope thing; matches just the `this` element. NOT IMPLEMENTED
 
 		bool rootElement; ///.
 
@@ -6991,6 +7017,9 @@ int intFromHex(string hex) {
 			foreach(a; notSelectors) ret ~= ":not(" ~ a ~ ")";
 			foreach(a; hasSelectors) ret ~= ":has(" ~ a ~ ")";
 
+			foreach(a; isSelectors) ret ~= ":is(" ~ a ~ ")";
+			foreach(a; whereSelectors) ret ~= ":where(" ~ a ~ ")";
+
 			foreach(a; nthChild) ret ~= ":nth-child(" ~ a.toString ~ ")";
 			foreach(a; nthOfType) ret ~= ":nth-of-type(" ~ a.toString ~ ")";
 			foreach(a; nthLastOfType) ret ~= ":nth-last-of-type(" ~ a.toString ~ ")";
@@ -7004,6 +7033,7 @@ int intFromHex(string hex) {
 			if(oddChild) ret ~= ":odd-child";
 			if(evenChild) ret ~= ":even-child";
 			if(rootElement) ret ~= ":root";
+			if(scopeElement) ret ~= ":scope";
 
 			return ret;
 		}
@@ -7058,6 +7088,12 @@ int intFromHex(string hex) {
 					}
 				}
 			}
+			/+
+			if(scopeElement) {
+				if(e !is this_)
+					return false;
+			}
+			+/
 			if(emptyElement) {
 				if(e.children.length)
 					return false;
@@ -7127,6 +7163,16 @@ int intFromHex(string hex) {
 			foreach(a; notSelectors) {
 				auto sel = Selector(a);
 				if(sel.matchesElement(e))
+					return false;
+			}
+			foreach(a; isSelectors) {
+				auto sel = Selector(a);
+				if(!sel.matchesElement(e))
+					return false;
+			}
+			foreach(a; whereSelectors) {
+				auto sel = Selector(a);
+				if(!sel.matchesElement(e))
 					return false;
 			}
 
@@ -7507,6 +7553,7 @@ int intFromHex(string hex) {
 					if(!part.matchElement(where))
 						return false;
 				} else if(lastSeparation == 2) { // the + operator
+				//writeln("WHERE", where, " ", part);
 					where = where.previousSibling("*");
 
 					if(!part.matchElement(where))
@@ -7549,9 +7596,14 @@ int intFromHex(string hex) {
 		SelectorComponent[] ret;
 		auto tokens = lexSelector(selector); // this will parse commas too
 		// and now do comma-separated slices (i haz phobosophobia!)
+		int parensCount = 0;
 		while (tokens.length > 0) {
 			size_t end = 0;
-			while (end < tokens.length && tokens[end] != ",") ++end;
+			while (end < tokens.length && (parensCount > 0 || tokens[end] != ",")) {
+				if(tokens[end] == "(") parensCount++;
+				if(tokens[end] == ")") parensCount--;
+				++end;
+			}
 			if (end > 0) ret ~= parseSelector(tokens[0..end], caseSensitiveTags);
 			if (tokens.length-end < 2) break;
 			tokens = tokens[end+1..$];
@@ -7720,6 +7772,9 @@ int intFromHex(string hex) {
 							current.firstChild = true;
 							current.lastChild = true;
 						break;
+						case "scope":
+							current.scopeElement = true;
+						break;
 						case "empty":
 							// one with no children
 							current.emptyElement = true;
@@ -7745,6 +7800,14 @@ int intFromHex(string hex) {
 							current.nthLastOfType ~= ParsedNth(readFunctionalSelector());
 							state = State.SkippingFunctionalSelector;
 						continue;
+						case "is":
+							state = State.SkippingFunctionalSelector;
+							current.isSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
+						case "where":
+							state = State.SkippingFunctionalSelector;
+							current.whereSelectors ~= readFunctionalSelector();
+						continue; // now the rest of the parser skips past the parens we just handled
 						case "not":
 							state = State.SkippingFunctionalSelector;
 							current.notSelectors ~= readFunctionalSelector();
@@ -7764,10 +7827,6 @@ int intFromHex(string hex) {
 						case "visited", "active", "hover", "target", "focus", "selected":
 							current.attributesPresent ~= "nothing";
 							// FIXME
-						/*
-						// defined in the standard, but I don't implement it
-						case "not":
-						*/
 						/+
 						// extensions not implemented
 						//case "text": // takes the text in the element and wraps it in an element, returning it
@@ -8747,6 +8806,15 @@ unittest {
 	assert(doc.querySelectorAll(" > body").length == 1); //  should mean the same thing
 	assert(doc.root.querySelectorAll(" > body").length == 1); // the root of HTML has this
 	assert(doc.root.querySelectorAll(" > html").length == 0); // but not this
+
+	// also confirming the querySelector works via the mdn definition
+	auto foo = doc.requireSelector("#foo");
+	assert(foo.querySelector("#foo > div") !is null);
+	assert(foo.querySelector("body #foo > div") !is null);
+
+	// this is SUPPOSED to work according to the spec but never has in dom.d since it limits the scope.
+	// the new css :scope thing is designed to bring this in. and meh idk if i even care.
+	//assert(foo.querySelectorAll("#foo > div").length == 2);
 }
 
 unittest {
@@ -8767,6 +8835,60 @@ unittest {
 
 	assert(el.closest("p") is null);
 	assert(el.closest("p, div") is el);
+}
+
+unittest {
+	// https://developer.mozilla.org/en-US/docs/Web/CSS/:is
+	auto document = new Document(`<test>
+		<div class="foo"><p>cool</p><span>bar</span></div>
+		<main><p>two</p></main>
+	</test>`);
+
+	assert(document.querySelectorAll(":is(.foo, main) p").length == 2);
+	assert(document.querySelector("div:where(.foo)") !is null);
+}
+
+unittest {
+immutable string html = q{
+<root>
+<div class="roundedbox">
+ <table>
+  <caption class="boxheader">Recent Reviews</caption>
+  <tr>
+   <th>Game</th>
+   <th>User</th>
+   <th>Rating</th>
+   <th>Created</th>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 15:10</td>
+   <td><a href="/reviews/8833">[Show]</a></td>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 15:02</td>
+   <td><a href="/reviews/8832">[Show]</a></td>
+  </tr>
+
+  <tr>
+   <td>June 13, 2020 14:41</td>
+   <td><a href="/reviews/8831">[Show]</a></td>
+  </tr>
+ </table>
+</div>
+</root>
+};
+
+  auto doc = new Document(cast(string)html);
+  // this should select the second table row, but...
+  auto rd = doc.root.querySelector(`div.roundedbox > table > caption.boxheader + tr + tr + tr > td > a[href^=/reviews/]`);
+  assert(rd !is null);
+  assert(rd.href == "/reviews/8832");
+
+  rd = doc.querySelector(`div.roundedbox > table > caption.boxheader + tr + tr + tr > td > a[href^=/reviews/]`);
+  assert(rd !is null);
+  assert(rd.href == "/reviews/8832");
 }
 
 /*
