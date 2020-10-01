@@ -4801,7 +4801,7 @@ class WindowsApiException : Exception {
 
 			buffer[pos++] = ' ';
 
-			size_t size = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, null, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), &(buffer[pos]), buffer.length - pos, null);
+			size_t size = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, null, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), &(buffer[pos]), cast(DWORD) buffer.length - pos, null);
 
 			pos += size;
 		}
