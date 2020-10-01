@@ -1035,6 +1035,7 @@ struct Terminal {
 	/++
 	+/
 	this(ConsoleOutputType type) {
+		createLock();
 		this.type = type;
 
 		if(type == ConsoleOutputType.minimalProcessing) {
@@ -1076,6 +1077,7 @@ struct Terminal {
 	 * ditto on getSizeOverride. That's there so you can do something instead of ioctl.
 	 */
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		createLock();
 		this.fdIn = fdIn;
 		this.fdOut = fdOut;
 		this.getSizeOverride = getSizeOverride;
@@ -1124,6 +1126,7 @@ struct Terminal {
 	version(Win32Console)
 	/// ditto
 	this(ConsoleOutputType type) {
+		createLock();
 		if(UseVtSequences) {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 			initializeVt();
@@ -1557,6 +1560,7 @@ struct Terminal {
 				hideCursor();
 			else if(UseVtSequences) {
 				// prepend the hide cursor command so it is the first thing flushed
+				lock(); scope(exit) unlock();
 				writeBuffer = "\033[?25l" ~ writeBuffer;
 			}
 
@@ -1610,6 +1614,7 @@ struct Terminal {
 	void flush() {
 		if(writeBuffer.length == 0)
 			return;
+		lock(); scope(exit) unlock();
 
 		version(TerminalDirectToEmulator) {
 			tew.sendRawInput(cast(ubyte[]) writeBuffer);
@@ -1745,6 +1750,7 @@ struct Terminal {
 	+/
 
 	void writePrintableString(in char[] s, ForceOption force = ForceOption.automatic) {
+		lock(); scope(exit) unlock();
 		// an escape character is going to mess things up. Actually any non-printable character could, but meh
 		// assert(s.indexOf("\033") == -1);
 
@@ -1794,7 +1800,25 @@ struct Terminal {
 
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
+		lock(); scope(exit) unlock();
 		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
+	}
+
+	import core.sync.mutex;
+	private shared(Mutex) mutex;
+
+	private void createLock() {
+		if(mutex is null)
+			mutex = new shared Mutex;
+	}
+
+	void lock() {
+		if(mutex)
+			mutex.lock();
+	}
+	void unlock() {
+		if(mutex)
+			mutex.unlock();
 	}
 
 	/// Clears the screen.
