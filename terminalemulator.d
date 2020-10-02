@@ -3219,7 +3219,7 @@ version(Windows) {
 	extern(Windows)
 		BOOL GetOverlappedResult(HANDLE,OVERLAPPED*,LPDWORD,BOOL);
 	extern(Windows)
-		BOOL ReadFileEx(HANDLE, LPVOID, DWORD, OVERLAPPED*, void*);
+		private BOOL ReadFileEx(HANDLE, LPVOID, DWORD, OVERLAPPED*, void*);
 	extern(Windows)
 		BOOL PostMessageA(HWND hWnd,UINT Msg,WPARAM wParam,LPARAM lParam);
 

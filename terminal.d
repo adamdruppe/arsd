@@ -64,6 +64,8 @@
 +/
 module arsd.terminal;
 
+import core.stdc.stdio;
+
 // FIXME: needs to support VT output on Windows too in certain situations
 // detect VT on windows by trying to set the flag. if this succeeds, ask it for caps. if this replies with my code we good to do extended output.
 
@@ -1750,6 +1752,11 @@ struct Terminal {
 	/// Flushes your updates to the terminal.
 	/// It is important to call this when you are finished writing for now if you are using the version=with_eventloop
 	void flush() {
+		if(pipeThroughStdOut) {
+			fflush(stdout);
+			return;
+		}
+
 		if(writeBuffer.length == 0)
 			return;
 		lock(); scope(exit) unlock();
@@ -1976,10 +1983,16 @@ struct Terminal {
 	deprecated alias writePrintableString writeString; /// use write() or writePrintableString instead
 
 	private string writeBuffer;
+	private bool pipeThroughStdOut = true;
 
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
+		if(pipeThroughStdOut) {
+			fwrite(s.ptr, 1, s.length, stdout);
+			return;
+		}
 		lock(); scope(exit) unlock();
+
 		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
 		if(writeBuffer.length >  1024 * 32)
 			flush();
@@ -6178,6 +6191,95 @@ version(TerminalDirectToEmulator) {
 			setMenuAndToolbarFromAnnotatedCode(this);
 			if(integratedTerminalEmulatorConfiguration.menuExtensionsConstructor)
 				integratedTerminalEmulatorConfiguration.menuExtensionsConstructor(this);
+
+
+
+			version(Posix) {
+				import unix = core.sys.posix.unistd;
+				import core.stdc.stdio;
+
+				auto fp = stdout;
+
+				int[2] fds;
+				auto ret = pipe(fds);
+
+				auto fd = fileno(fp);
+
+				dup2(fds[1], fd);
+				unix.close(fds[1]);
+				auto listener = new PosixFdReader(() {
+					ubyte[1024] buffer;
+					auto ret = read(fds[0], buffer.ptr, buffer.length);
+					if(ret <= 0) return;
+					tew.terminalEmulator.sendRawInput(buffer[0 .. ret]);
+					tew.terminalEmulator.redraw();
+				}, fds[0]);
+			}
+
+			version(Windows) {
+
+				CHAR[MAX_PATH] PipeNameBuffer;
+
+				static shared(int) PipeSerialNumber = 0;
+
+				import core.atomic;
+
+				import core.stdc.string;
+
+				// we need a unique name in the universal filesystem
+				// so it can be freopen'd. When the process terminates,
+				// this is auto-closed too, so the pid is good enough, just
+				// with the shared number
+				sprintf(PipeNameBuffer.ptr,
+					"\\\\.\\Pipe\\SilPipe.%08x.%08x".ptr,
+					GetCurrentProcessId(),
+					atomicOp!"+="(PipeSerialNumber, 1)
+			       );
+
+				readPipe = CreateNamedPipeA(
+					PipeNameBuffer.ptr,
+					1/*PIPE_ACCESS_INBOUND*/ | FILE_FLAG_OVERLAPPED,
+					0 /*PIPE_TYPE_BYTE*/ | 0/*PIPE_WAIT*/,
+					1,         // Number of pipes
+					0,         // Out buffer size
+					0,         // In buffer size
+					0,//120 * 1000,    // Timeout in ms
+					null
+				);
+
+				if (!readPipe) {
+					throw new Exception("CreateNamedPipeA");
+				}
+
+				if(freopen(PipeNameBuffer.ptr, "wb", stdout) is null)
+					throw new Exception("freopen");
+
+				setvbuf(stdout, null, _IONBF, 0); // I'd prefer to line buffer it, but that doesn't seem to work for some reason.
+
+				ConnectNamedPipe(readPipe, null);
+
+				this.overlapped = new OVERLAPPED();
+				this.overlapped.hEvent = cast(void*) this;
+				this.overlappedBuffer = new ubyte[](4096);
+				WindowsRead(0, 0, this.overlapped);
+			}
+		}
+
+		version(Windows) {
+			HANDLE readPipe;
+			private ubyte[] overlappedBuffer;
+			private OVERLAPPED* overlapped;
+			static final private extern(Windows) void WindowsRead(DWORD errorCode, DWORD numberOfBytes, OVERLAPPED* overlapped) {
+				TerminalEmulatorWindow w = cast(TerminalEmulatorWindow) overlapped.hEvent;
+				if(numberOfBytes) {
+					w.tew.terminalEmulator.sendRawInput(w.overlappedBuffer[0 .. numberOfBytes]);
+					w.tew.terminalEmulator.redraw();
+				}
+				import std.conv;
+				if(!ReadFileEx(w.readPipe, w.overlappedBuffer.ptr, w.overlappedBuffer.length, overlapped, &WindowsRead))
+					if(GetLastError() == 997) {}
+					else throw new Exception("ReadFileEx " ~ to!string(GetLastError()));
+			}
 		}
 
 		TerminalEmulator.TerminalCell[] delegate(TerminalEmulator.TerminalCell[] i) parentFilter;
@@ -6726,6 +6828,23 @@ void main() {
 	terminal.writeln("Hello, world!");
 }
 */
+
+private version(Windows) {
+	pragma(lib, "user32");
+	import core.sys.windows.windows;
+
+	extern(Windows)
+	HANDLE CreateNamedPipeA(
+		const(char)* lpName,
+		DWORD dwOpenMode,
+		DWORD dwPipeMode,
+		DWORD nMaxInstances,
+		DWORD nOutBufferSize,
+		DWORD nInBufferSize,
+		DWORD nDefaultTimeOut,
+		LPSECURITY_ATTRIBUTES lpSecurityAttributes
+	);
+}
 
 
 /*
