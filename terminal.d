@@ -1145,24 +1145,20 @@ struct Terminal {
 
 		if(guiThread is null) {
 			guiThread = new Thread( {
-				auto window = new TerminalEmulatorWindow(&this, null);
-				mainWindow = window;
-				mainWindow.win.addEventListener((NewTerminalEvent t) {
-					auto nw = new TerminalEmulatorWindow(t.t, null);
-					t.t.tew = nw.tew;
-					t.t = null;
-					nw.show();
-				});
-				tew = window.tew;
-				//try
+				try {
+					auto window = new TerminalEmulatorWindow(&this, null);
+					mainWindow = window;
+					mainWindow.win.addEventListener((NewTerminalEvent t) {
+						auto nw = new TerminalEmulatorWindow(t.t, null);
+						t.t.tew = nw.tew;
+						t.t = null;
+						nw.show();
+					});
+					tew = window.tew;
 					window.loop();
-				/*
-				catch(Throwable t) {
-					import std.stdio;
-					stdout.writeln(t);
-					stdout.flush();
+				} catch(Throwable t) {
+					guiAbortProcess(t.toString());
 				}
-				*/
 			});
 			guiThread.start();
 			guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
@@ -2003,7 +1999,27 @@ struct Terminal {
 		Added October 2, 2020.
 	+/
 	version(TerminalDirectToEmulator)
-	static bool pipeThroughStdOut = false;
+	static shared(bool) pipeThroughStdOut = false;
+
+	/++
+		Options for [stderrBehavior]. Only applied if [pipeThroughStdOut] is set to `true` and its redirection actually is performed.
+	+/
+	version(TerminalDirectToEmulator)
+	enum StderrBehavior {
+		sendToWindowIfNotAlreadyRedirected, /// If stderr does not exist or is pointing at a parent terminal, change it to point at the window alongside stdout (if stdout is changed by [pipeThroughStdOut]).
+		neverSendToWindow, /// Tell this library to never redirect stderr. It will leave it alone.
+		alwaysSendToWindow /// Always redirect stderr to the window through stdout if [pipeThroughStdOut] is set, even if it has already been redirected by the shell or code previously in your program.
+	}
+
+	/++
+		If [pipeThroughStdOut] is set, this decides what happens to stderr.
+		See: [StderrBehavior].
+
+		History:
+		Added October 3, 2020.
+	+/
+	version(TerminalDirectToEmulator)
+	static shared(StderrBehavior) stderrBehavior = StderrBehavior.sendToWindowIfNotAlreadyRedirected;
 
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
@@ -2020,18 +2036,22 @@ struct Terminal {
 	}
 
 	import core.sync.mutex;
+	version(none)
 	private shared(Mutex) mutex;
 
 	private void createLock() {
+		version(none)
 		if(mutex is null)
 			mutex = new shared Mutex;
 	}
 
 	void lock() {
+		version(none)
 		if(mutex)
 			mutex.lock();
 	}
 	void unlock() {
+		version(none)
 		if(mutex)
 			mutex.unlock();
 	}
@@ -5827,7 +5847,7 @@ class UserInterruptionException : Exception {
 	this() { super("Ctrl+C"); }
 }
 class HangupException : Exception {
-	this() { super("Hup"); }
+	this() { super("Terminal disconnected"); }
 }
 
 
@@ -6482,6 +6502,12 @@ version(TerminalDirectToEmulator) {
 				if(auto wi = cast(TerminalEmulatorWindow) this.parentWindow) {
 					if(wi.parent)
 						wi.parent.childClosing(wi);
+
+					// if I don't close the redirected pipe, the other thread
+					// will get stuck indefinitely as it tries to flush its stderr
+					version(Windows)
+						CloseHandle(wi.readPipe);
+					// FIXME: should I close it on Linux too?
 				}
 
 				// try to get it to terminate slightly more forcibly too, if possible
@@ -6490,6 +6516,7 @@ version(TerminalDirectToEmulator) {
 
 				terminalEmulator.outgoingSignal.notify();
 				terminalEmulator.incomingSignal.notify();
+				terminalEmulator.syncSignal.notify();
 			};
 
 			this.parentWindow.win.addEventListener((InputEventInternal ie) {

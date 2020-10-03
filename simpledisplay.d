@@ -15961,4 +15961,18 @@ private mixin template DynamicLoad(Iface, string library, bool openGLRelated = f
         }
 }
 
+void guiAbortProcess(string msg) {
+	import core.stdc.stdlib;
+	version(Windows) {
+		WCharzBuffer t = WCharzBuffer(msg);
+		MessageBoxW(null, t.ptr, "Program Termination"w.ptr, 0);
+	} else {
+		import std.stdio;
+		stderr.writeln(msg);
+		stderr.flush();
+	}
+
+	abort();
+}
+
 private alias scriptable = arsd_jsvar_compatible;
