@@ -1754,6 +1754,7 @@ struct Terminal {
 	void flush() {
 		if(pipeThroughStdOut) {
 			fflush(stdout);
+			fflush(stderr);
 			return;
 		}
 
@@ -4780,6 +4781,14 @@ class LineGetter {
 		version(TerminalDirectToEmulator) {
 			if(!terminal.usingDirectEmulator)
 				return updateCursorPosition_impl();
+
+			if(terminal.pipeThroughStdOut) {
+				terminal.tew.terminalEmulator.waitingForInboundSync = true;
+				terminal.writeStringRaw("\xff");
+				terminal.flush();
+				terminal.tew.terminalEmulator.syncSignal.wait();
+			}
+
 			startOfLineX = terminal.tew.terminalEmulator.cursorX;
 			startOfLineY = terminal.tew.terminalEmulator.cursorY;
 		} else
@@ -6194,74 +6203,89 @@ version(TerminalDirectToEmulator) {
 
 
 
-			version(Posix) {
-				import unix = core.sys.posix.unistd;
-				import core.stdc.stdio;
+			if(term.pipeThroughStdOut) {
+				version(Posix) {
+					import unix = core.sys.posix.unistd;
+					import core.stdc.stdio;
 
-				auto fp = stdout;
+					auto fp = stdout;
 
-				int[2] fds;
-				auto ret = pipe(fds);
+					int[2] fds;
+					auto ret = pipe(fds);
 
-				auto fd = fileno(fp);
+					auto fd = fileno(fp);
 
-				dup2(fds[1], fd);
-				unix.close(fds[1]);
-				auto listener = new PosixFdReader(() {
-					ubyte[1024] buffer;
-					auto ret = read(fds[0], buffer.ptr, buffer.length);
-					if(ret <= 0) return;
-					tew.terminalEmulator.sendRawInput(buffer[0 .. ret]);
-					tew.terminalEmulator.redraw();
-				}, fds[0]);
-			}
-
-			version(Windows) {
-
-				CHAR[MAX_PATH] PipeNameBuffer;
-
-				static shared(int) PipeSerialNumber = 0;
-
-				import core.atomic;
-
-				import core.stdc.string;
-
-				// we need a unique name in the universal filesystem
-				// so it can be freopen'd. When the process terminates,
-				// this is auto-closed too, so the pid is good enough, just
-				// with the shared number
-				sprintf(PipeNameBuffer.ptr,
-					"\\\\.\\Pipe\\SilPipe.%08x.%08x".ptr,
-					GetCurrentProcessId(),
-					atomicOp!"+="(PipeSerialNumber, 1)
-			       );
-
-				readPipe = CreateNamedPipeA(
-					PipeNameBuffer.ptr,
-					1/*PIPE_ACCESS_INBOUND*/ | FILE_FLAG_OVERLAPPED,
-					0 /*PIPE_TYPE_BYTE*/ | 0/*PIPE_WAIT*/,
-					1,         // Number of pipes
-					0,         // Out buffer size
-					0,         // In buffer size
-					0,//120 * 1000,    // Timeout in ms
-					null
-				);
-
-				if (!readPipe) {
-					throw new Exception("CreateNamedPipeA");
+					dup2(fds[1], fd);
+					unix.close(fds[1]);
+					if(isatty(2))
+						dup2(1, 2);
+					auto listener = new PosixFdReader(() {
+						ubyte[1024] buffer;
+						auto ret = read(fds[0], buffer.ptr, buffer.length);
+						if(ret <= 0) return;
+						tew.terminalEmulator.sendRawInput(buffer[0 .. ret]);
+						tew.terminalEmulator.redraw();
+					}, fds[0]);
 				}
 
-				if(freopen(PipeNameBuffer.ptr, "wb", stdout) is null)
-					throw new Exception("freopen");
+				version(Windows) {
 
-				setvbuf(stdout, null, _IONBF, 0); // I'd prefer to line buffer it, but that doesn't seem to work for some reason.
+					CHAR[MAX_PATH] PipeNameBuffer;
 
-				ConnectNamedPipe(readPipe, null);
+					static shared(int) PipeSerialNumber = 0;
 
-				this.overlapped = new OVERLAPPED();
-				this.overlapped.hEvent = cast(void*) this;
-				this.overlappedBuffer = new ubyte[](4096);
-				WindowsRead(0, 0, this.overlapped);
+					import core.atomic;
+
+					import core.stdc.string;
+
+					// we need a unique name in the universal filesystem
+					// so it can be freopen'd. When the process terminates,
+					// this is auto-closed too, so the pid is good enough, just
+					// with the shared number
+					sprintf(PipeNameBuffer.ptr,
+						`\\.\pipe\arsd.terminal.pipe.%08x.%08x`.ptr,
+						GetCurrentProcessId(),
+						atomicOp!"+="(PipeSerialNumber, 1)
+				       );
+
+					readPipe = CreateNamedPipeA(
+						PipeNameBuffer.ptr,
+						1/*PIPE_ACCESS_INBOUND*/ | FILE_FLAG_OVERLAPPED,
+						0 /*PIPE_TYPE_BYTE*/ | 0/*PIPE_WAIT*/,
+						1,         // Number of pipes
+						1024,         // Out buffer size
+						1024,         // In buffer size
+						0,//120 * 1000,    // Timeout in ms
+						null
+					);
+					if (!readPipe) {
+						throw new Exception("CreateNamedPipeA");
+					}
+
+					this.overlapped = new OVERLAPPED();
+					this.overlapped.hEvent = cast(void*) this;
+					this.overlappedBuffer = new ubyte[](4096);
+
+					import std.conv;
+					import core.stdc.errno;
+					if(freopen(PipeNameBuffer.ptr, "wb", stdout) is null)
+						//MessageBoxA(null, ("excep " ~ to!string(errno) ~ "\0").ptr, "asda", 0);
+						throw new Exception("freopen");
+
+					setvbuf(stdout, null, _IOLBF, 128); // I'd prefer to line buffer it, but that doesn't seem to work for some reason.
+
+					ConnectNamedPipe(readPipe, this.overlapped);
+
+					// also send stderr to stdout if it isn't already redirected somewhere else
+					if(_fileno(stderr) < 0) {
+						freopen("nul", "wb", stderr);
+
+						_dup2(_fileno(stdout), _fileno(stderr));
+						setvbuf(stderr, null, _IOLBF, 128); // if I don't unbuffer this it can really confuse things
+					}
+
+					WindowsRead(0, 0, this.overlapped);
+				}
 			}
 		}
 
@@ -6276,9 +6300,9 @@ version(TerminalDirectToEmulator) {
 					w.tew.terminalEmulator.redraw();
 				}
 				import std.conv;
-				if(!ReadFileEx(w.readPipe, w.overlappedBuffer.ptr, w.overlappedBuffer.length, overlapped, &WindowsRead))
+				if(!ReadFileEx(w.readPipe, w.overlappedBuffer.ptr, cast(DWORD) w.overlappedBuffer.length, overlapped, &WindowsRead))
 					if(GetLastError() == 997) {}
-					else throw new Exception("ReadFileEx " ~ to!string(GetLastError()));
+					//else throw new Exception("ReadFileEx " ~ to!string(GetLastError()));
 			}
 		}
 
@@ -6619,6 +6643,13 @@ version(TerminalDirectToEmulator) {
 			size_t last = 0;
 			const ubyte[2] crlf = [13, 10];
 			foreach(idx, ch; data) {
+				if(waitingForInboundSync && ch == 255) {
+					send(data[last .. idx]);
+					last = idx + 1;
+					waitingForInboundSync = false;
+					syncSignal.notify();
+					continue;
+				}
 				if(ch == 10) {
 					send(data[last .. idx]);
 					send(crlf[]);
@@ -6642,8 +6673,11 @@ version(TerminalDirectToEmulator) {
 		alias fromHsl = arsd.color.fromHsl;
 
 		const(ubyte)[] pendingForApplication;
+		Semaphore syncSignal;
 		Semaphore outgoingSignal;
 		Semaphore incomingSignal;
+
+		private shared(bool) waitingForInboundSync;
 
 		override void sendToApplication(scope const(void)[] what) {
 			synchronized(this) {
@@ -6659,6 +6693,7 @@ version(TerminalDirectToEmulator) {
 
 		private this(TerminalEmulatorWidget widget) {
 
+			this.syncSignal = new Semaphore();
 			this.outgoingSignal = new Semaphore();
 			this.incomingSignal = new Semaphore();
 
@@ -6844,6 +6879,9 @@ private version(Windows) {
 		DWORD nDefaultTimeOut,
 		LPSECURITY_ATTRIBUTES lpSecurityAttributes
 	);
+
+	extern(C) int _dup2(int, int);
+	extern(C) int _fileno(FILE*);
 }
 
 
