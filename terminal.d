@@ -1752,6 +1752,7 @@ struct Terminal {
 	/// Flushes your updates to the terminal.
 	/// It is important to call this when you are finished writing for now if you are using the version=with_eventloop
 	void flush() {
+		version(TerminalDirectToEmulator)
 		if(pipeThroughStdOut) {
 			fflush(stdout);
 			fflush(stderr);
@@ -1984,10 +1985,29 @@ struct Terminal {
 	deprecated alias writePrintableString writeString; /// use write() or writePrintableString instead
 
 	private string writeBuffer;
-	private bool pipeThroughStdOut = true;
+	/++
+		Set this before you create any `Terminal`s if you want it to merge the C
+		stdout and stderr streams into the GUI terminal window. It will always
+		redirect stdout if this is set (you may want to check for existing redirections
+		first before setting this, see [Terminal.stdoutIsTerminal]), and will redirect
+		stderr as well if it is invalid or points to the parent terminal.
+
+		You must opt into this since it is globally invasive (changing the C handle
+		can affect things across the program) and possibly buggy. It also will likely
+		hurt the efficiency of embedded terminal output.
+
+		Please note that this is currently only available in with `TerminalDirectToEmulator`
+		version enabled.
+
+		History:
+		Added October 2, 2020.
+	+/
+	version(TerminalDirectToEmulator)
+	static bool pipeThroughStdOut = false;
 
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
+		version(TerminalDirectToEmulator)
 		if(pipeThroughStdOut) {
 			fwrite(s.ptr, 1, s.length, stdout);
 			return;
