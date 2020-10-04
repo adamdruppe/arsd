@@ -76,6 +76,8 @@
 			at Hello.main(Hello.java:17)
 	)
 
+	Please note: on Windows, use `-m32mscoff` or `-m64` when compiling with dmd.
+
 	Exact details subject to change, especially of how I pass the exceptions over.
 
 	It is also possible to call Java methods and create Java objects from D with the `@Import` uda.
