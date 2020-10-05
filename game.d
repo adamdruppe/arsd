@@ -67,6 +67,15 @@
 +/
 module arsd.game;
 
+/+
+	Networking helper: just send/receive messages and manage some connections
+
+	It might offer a controller queue you can put local and network events in to get fair lag and transparent ultiplayer
+
+	split screen?!?!
+
++/
+
 public import arsd.gamehelpers;
 public import arsd.color;
 public import arsd.simpledisplay;
