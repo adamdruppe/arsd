@@ -6266,6 +6266,8 @@ version(TerminalDirectToEmulator) {
 						tew.terminalEmulator.sendRawInput(buffer[0 .. ret]);
 						tew.terminalEmulator.redraw();
 					}, fds[0]);
+
+					readFd = fds[0];
 				}
 
 				version(Windows) {
@@ -6344,6 +6346,10 @@ version(TerminalDirectToEmulator) {
 					if(GetLastError() == 997) {}
 					//else throw new Exception("ReadFileEx " ~ to!string(GetLastError()));
 			}
+		}
+
+		version(Posix) {
+			int readFd = -1;
 		}
 
 		TerminalEmulator.TerminalCell[] delegate(TerminalEmulator.TerminalCell[] i) parentFilter;
@@ -6507,7 +6513,10 @@ version(TerminalDirectToEmulator) {
 					// will get stuck indefinitely as it tries to flush its stderr
 					version(Windows)
 						CloseHandle(wi.readPipe);
-					// FIXME: should I close it on Linux too?
+					version(Posix) {
+						import unix = core.sys.posix.unistd;
+						unix.close(wi.readFd);
+					}
 				}
 
 				// try to get it to terminate slightly more forcibly too, if possible
