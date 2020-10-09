@@ -1344,6 +1344,8 @@ class Document : FileResource {
 
 	///.
 	Element findFirst(bool delegate(Element) doesItMatch) {
+		if(root is null)
+			return null;
 		Element result;
 
 		bool goThroughElement(Element e) {
