@@ -2102,6 +2102,9 @@ enum JNI_VERSION_1_2 = 0x00010002;
 enum JNI_VERSION_1_4 = 0x00010004;
 enum JNI_VERSION_1_6 = 0x00010006;
 enum JNI_VERSION_1_8 = 0x00010008;
+enum JNI_VERSION_9   = 0x00090000;
+enum JNI_VERSION_10  = 0x000a0000;
+enum JNI_VERSION_10_Plus = JNI_VERSION_10; // same version used beyond, see https://docs.oracle.com/en/java/javase/15/docs/specs/jni/functions.html
 
 enum JNI_OK = 0;
 enum JNI_ERR = -1;
@@ -2351,7 +2354,8 @@ struct JNINativeInterface
     jobject function(JNIEnv*, void*, jlong) NewDirectByteBuffer;
     void* function(JNIEnv*, jobject) GetDirectBufferAddress;
     jlong function(JNIEnv*, jobject) GetDirectBufferCapacity;
-    jobjectRefType function(JNIEnv*, jobject) GetObjectRefType;
+    jobjectRefType function(JNIEnv*, jobject) GetObjectRefType; // since version 6
+    jobject GetModule(JNIEnv *env, jclass clazz); // since version 9
 }
 
 struct _JNIEnv
