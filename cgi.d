@@ -1621,14 +1621,22 @@ class Cgi {
 		}
 
 		auto ira = ir.source.remoteAddress();
+		auto irLocalAddress = ir.source.localAddress();
+
+		ushort port = 80;
+		if(auto ia = cast(InternetAddress) irLocalAddress) {
+			port = ia.port;
+		} else if(auto ia = cast(Internet6Address) irLocalAddress) {
+			port = ia.port;
+		}
 
 		// that check for UnixAddress is to work around a Phobos bug
 		// see: https://github.com/dlang/phobos/pull/7383
 		// but this might be more useful anyway tbh for this case
 		version(Posix)
-		this(ir, cast(UnixAddress) ira ? "unix:" : ira.toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
+		this(ir, cast(UnixAddress) ira ? "unix:" : ira.toString(), port, 0, false, &rdo, null, closeConnection);
 		else
-		this(ir, ira.toString(), 80 /* FIXME */, 0, false, &rdo, null, closeConnection);
+		this(ir, ira.toString(), port, 0, false, &rdo, null, closeConnection);
 	}
 
 	/**
@@ -3297,6 +3305,12 @@ struct RequestServer {
 	ushort listeningPort = defaultListeningPort();
 
 	///
+	this(string defaultHost, ushort defaultPort) {
+		this.listeningHost = defaultHost;
+		this.listeningPort = defaultPort;
+	}
+
+	///
 	this(ushort defaultPort) {
 		listeningPort = defaultPort;
 	}
@@ -3319,6 +3333,41 @@ struct RequestServer {
 			else if(arg == "--port" || arg == "-p" || arg == "/port" || arg == "--listening-port")
 				foundPort = true;
 		}
+	}
+
+	/++
+		Serves a single request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
+
+		History:
+			Added Oct 10, 2020.
+		Example:
+
+		---
+		import arsd.cgi;
+		void main() {
+			RequestServer server = RequestServer("127.0.0.1", 6789);
+			string oauthCode;
+			string oauthScope;
+			server.serveOnce!((cgi) {
+				oauthCode = cgi.request("code");
+				oauthScope = cgi.request("scope");
+				cgi.write("Thank you, please return to the application.");
+			});
+			// use the code and scope given
+		}
+		---
+	+/
+	void serveOnce(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		import std.socket;
+
+		bool tcp;
+		void delegate() cleanup;
+		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1);
+		auto connection = socket.accept();
+		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection);
+
+		if(cleanup)
+			cleanup();
 	}
 
 	/++
@@ -3858,7 +3907,6 @@ class CgiFiber : Fiber {
 	}
 }
 
-version(embedded_httpd_threads)
 void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 	assert(connection !is null);
 	version(cgi_use_fiber) {
@@ -3872,15 +3920,14 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 	}
 }
 
-version(embedded_httpd_threads)
-void doThreadHttpConnectionGuts(CustomCgi, alias fun)(Socket connection) {
+void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection) {
 	scope(failure) {
 		// catch all for other errors
 		sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
 		connection.close();
 	}
 
-	bool closeConnection;
+	bool closeConnection = alwaysCloseConnection;
 
 	/+
 	ubyte[4096] inputBuffer = void;
@@ -3900,6 +3947,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun)(Socket connection) {
 			ir.popFront();
 			if(ir.sourceClosed) {
 				connection.close();
+				closeConnection = true;
 				break;
 			}
 		}
@@ -3945,9 +3993,10 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun)(Socket connection) {
 				closeConnection = true;
 		}
 
-		if(closeConnection) {
+		if(closeConnection || alwaysCloseConnection) {
 			connection.close();
 			ir.dispose();
+			closeConnection = false; // don't reclose after loop
 			break;
 		} else {
 			if(ir.front.length) {
@@ -3955,6 +4004,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun)(Socket connection) {
 			} else if(ir.sourceClosed) {
 				ir.source.close();
 				ir.dispose();
+				closeConnection = false;
 			} else {
 				continue;
 				// break; // this was for a keepalive experiment
@@ -4587,40 +4637,7 @@ class ListeningConnectionManager {
 	this(string host, ushort port, void function(Socket) handler) {
 		this.handler = handler;
 
-		if(host.startsWith("unix:")) {
-			version(Posix) {
-				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
-				cloexec(listener);
-				string filename = host["unix:".length .. $].idup;
-				listener.bind(new UnixAddress(filename));
-				cleanup = delegate() {
-					import std.file;
-					remove(filename);
-				};
-				tcp = false;
-			} else {
-				throw new Exception("unix sockets not supported on this system");
-			}
-		} else if(host.startsWith("abstract:")) {
-			version(linux) {
-				listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
-				cloexec(listener);
-				string filename = "\0" ~ host["abstract:".length .. $];
-				import std.stdio; stderr.writeln("Listening to abstract unix domain socket: ", host["abstract:".length .. $]);
-				listener.bind(new UnixAddress(filename));
-				tcp = false;
-			} else {
-				throw new Exception("abstract unix sockets not supported on this system");
-			}
-		} else {
-			listener = new TcpSocket();
-			cloexec(listener);
-			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-			listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
-			tcp = true;
-		}
-
-		listener.listen(128);
+		listener = startListening(host, port, tcp, cleanup, 128);
 
 		version(cgi_use_fiber) version(cgi_use_fork)
 			listener.blocking = false;
@@ -4636,6 +4653,49 @@ class ListeningConnectionManager {
 	void quit() {
 		running = false;
 	}
+}
+
+Socket startListening(string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue) {
+	Socket listener;
+	if(host.startsWith("unix:")) {
+		version(Posix) {
+			listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+			cloexec(listener);
+			string filename = host["unix:".length .. $].idup;
+			listener.bind(new UnixAddress(filename));
+			cleanup = delegate() {
+				listener.close();
+				import std.file;
+				remove(filename);
+			};
+			tcp = false;
+		} else {
+			throw new Exception("unix sockets not supported on this system");
+		}
+	} else if(host.startsWith("abstract:")) {
+		version(linux) {
+			listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+			cloexec(listener);
+			string filename = "\0" ~ host["abstract:".length .. $];
+			import std.stdio; stderr.writeln("Listening to abstract unix domain socket: ", host["abstract:".length .. $]);
+			listener.bind(new UnixAddress(filename));
+			tcp = false;
+		} else {
+			throw new Exception("abstract unix sockets not supported on this system");
+		}
+	} else {
+		listener = new TcpSocket();
+		cloexec(listener);
+		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+		listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+		cleanup = delegate() {
+			listener.close();
+		};
+		tcp = true;
+	}
+
+	listener.listen(backQueue);
+	return listener;
 }
 
 // helper function to send a lot to a socket. Since this blocks for the buffer (possibly several times), you should probably call it in a separate thread or something.
