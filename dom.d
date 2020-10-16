@@ -1410,11 +1410,14 @@ class Document : FileResource {
 		because whitespace may be significant content in XML.
 	+/
 	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
-		string s = prolog;
+		import std.string;
+		string s = prolog.strip;
 
+		/*
 		if(insertComments) s ~= "<!--";
 		s ~= "\n";
 		if(insertComments) s ~= "-->";
+		*/
 
 		s ~= root.toPrettyString(insertComments, indentationLevel, indentWith);
 		foreach(a; piecesAfterRoot)
@@ -8898,6 +8901,7 @@ immutable string html = q{
 unittest {
 	try {
 		auto doc = new XmlDocument("<testxmlns:foo=\"/\"></test>");
+		assert(0);
 	} catch(Exception e) {
 		// good; it should throw an exception, not an error.
 	}
