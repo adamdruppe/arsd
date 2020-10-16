@@ -843,9 +843,11 @@ class Document : FileResource {
 									selfClosed = true;
 						}
 
-						if(strict)
-						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[pos - 100 .. pos + 100]));
-						else {
+						import std.algorithm.comparison;
+
+						if(strict) {
+						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[max(0, pos - 100) .. min(data.length, pos + 100)]));
+						} else {
 							// if we got here, it's probably because a slash was in an
 							// unquoted attribute - don't trust the selfClosed value
 							if(!selfClosed)
@@ -8891,6 +8893,14 @@ immutable string html = q{
   rd = doc.querySelector(`div.roundedbox > table > caption.boxheader + tr + tr + tr > td > a[href^=/reviews/]`);
   assert(rd !is null);
   assert(rd.href == "/reviews/8832");
+}
+
+unittest {
+	try {
+		auto doc = new XmlDocument("<testxmlns:foo=\"/\"></test>");
+	} catch(Exception e) {
+		// good; it should throw an exception, not an error.
+	}
 }
 
 /*
