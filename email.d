@@ -282,7 +282,25 @@ class EmailMessage {
 
 		if(mailServer.username.length)
 			smtp.setAuthentication(mailServer.username, mailServer.password);
-		const(char)[][] allRecipients = cast(const(char)[][]) (to ~ cc ~ bcc); // WTF cast
+
+		const(char)[][] allRecipients;
+		void processPerson(string person) {
+			auto idx = person.indexOf("<");
+			if(idx == -1)
+				allRecipients ~= person;
+			else {
+				person = person[idx + 1 .. $];
+				idx = person.indexOf(">");
+				if(idx != -1)
+					person = person[0 .. idx];
+
+				allRecipients ~= person;
+			}
+		}
+		foreach(person; to) processPerson(person);
+		foreach(person; cc) processPerson(person);
+		foreach(person; bcc) processPerson(person);
+
 		smtp.mailTo(allRecipients);
 
 		auto mailFrom = from;
