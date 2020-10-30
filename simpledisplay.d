@@ -7003,9 +7003,12 @@ class OperatingSystemFont {
 	// Assuming monospace!!!!!
 	// added March 26, 2020
 	int averageWidth() {
-		version(X11)
-			return font.max_bounds.width;
-		else version(Windows)
+		version(X11) {
+			if(font is null)
+				return 0;
+			else
+				return font.max_bounds.width;
+		} else version(Windows)
 			return width_;
 		else assert(0);
 	}
@@ -12100,7 +12103,7 @@ enum NotifyModes:int
 	NotifyUngrab		=2,
 	NotifyWhileGrabbed	=3
 }
-const int NotifyHint	=1;	/* for MotionNotify events */
+enum NotifyHint = 1;	/* for MotionNotify events */
 
 /* Notify detail */
 enum NotifyDetail:int
