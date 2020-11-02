@@ -64,8 +64,6 @@
 
 	disabled widgets and menu items
 
-	TrackBar controls
-
 	event cleanup
 	tooltips.
 	api improvements
@@ -423,7 +421,6 @@ class DropDownSelection : ComboboxBase {
 		}
 		sendResizeEvent();
 	}
-
 }
 
 /++
@@ -1228,6 +1225,240 @@ struct WidgetPainter {
 		return WidgetPainter.init;
 	}
 	// done..........
+}
+
+/++
+	History:
+		Added Oct 28, 2020
++/
+struct ControlledBy_(T, Args...) {
+	Args args;
+	this(Args args) {
+		this.args = args;
+	}
+
+	private T construct(Widget parent) {
+		return new T(args, parent);
+	}
+}
+
+/++
+	History:
+		Added Oct 28, 2020
++/
+auto ControlledBy(T, Args...)(Args args) {
+	return ControlledBy_!(T, Args)(args);
+}
+
+struct ContainerMeta {
+	string name;
+	ContainerMeta[] children;
+	Widget function(Widget parent) factory;
+
+	Widget instantiate(Widget parent) {
+		auto n = factory(parent);
+		n.name = name;
+		foreach(child; children)
+			child.instantiate(n);
+		return n;
+	}
+}
+
+template Container(CArgs...) {
+	static if(CArgs.length && is(CArgs[0] : Widget)) {
+		private alias Super = CArgs[0];
+		private alias CArgs2 = CArgs[1 .. $];
+	} else {
+		private alias Super = Layout;
+		private alias CArgs2 = CArgs;
+	}
+
+	class Container : Super {
+		this(Widget parent) { super(parent); }
+
+		// just to partially support old gdc versions
+		version(GNU) {
+			static if(CArgs2.length >= 1) { enum tmp0 = CArgs2[0]; mixin typeof(tmp0).MethodOverride!(CArgs2[0]); }
+			static if(CArgs2.length >= 2) { enum tmp1 = CArgs2[1]; mixin typeof(tmp1).MethodOverride!(CArgs2[1]); }
+			static if(CArgs2.length >= 3) { enum tmp2 = CArgs2[2]; mixin typeof(tmp2).MethodOverride!(CArgs2[2]); }
+			static if(CArgs2.length > 3) static assert(0, "only a few overrides like this supported on your compiler version at this time");
+		} else mixin(q{
+			static foreach(Arg; CArgs2) {
+				mixin Arg.MethodOverride!(Arg);
+			}
+		});
+
+		static ContainerMeta opCall(string name, ContainerMeta[] children...) {
+			return ContainerMeta(
+				name,
+				children.dup,
+				function (Widget parent) { return new typeof(this)(parent); }
+			);
+		}
+
+		static ContainerMeta opCall(ContainerMeta[] children...) {
+			return opCall(null, children);
+		}
+	}
+}
+
+struct Style {
+	static struct helper(string m, T) {
+		enum method = m;
+		T v;
+
+		mixin template MethodOverride(typeof(this) v) {
+			mixin("override typeof(v.v) "~v.method~"() { return v.v; }");
+		}
+	}
+
+	static auto opDispatch(string method, T)(T value) {
+		return helper!(method, T)(value);
+	}
+}
+
+/++
+	The data controller widget is created by reflecting over the given
+	data type. You can use [ControlledBy] as a UDA on a struct or
+	just let it create things automatically.
+
+	Unlike [dialog], this uses real-time updating of the data and
+	you add it to another window yourself.
+
+	---
+		struct Test {
+			int x;
+			int y;
+		}
+
+		auto window = new Window();
+		auto dcw = new DataControllerWidget!Test(new Test, window);
+	---
+
+	The way it works is any public members are given a widget based
+	on their data type, and public methods trigger an action button
+	if no relevant parameters or a dialog action if it does have
+	parameters, similar to the [menu] facility.
+
+	If you change data programmatically, without going through the
+	DataControllerWidget methods, you will have to tell it something
+	has changed and it needs to redraw. This is done with the `invalidate`
+	method.
+
+	History:
+		Added Oct 28, 2020
++/
+/// Group: generating_from_code
+class DataControllerWidget(T) : Widget {
+	static if(is(T == class) || is(T : const E[], E))
+		private alias Tref = T;
+	else
+		private alias Tref = T*;
+
+	Tref datum;
+
+	/++
+		See_also: [addDataControllerWidget]
+	+/
+	this(Tref datum, Widget parent) {
+		this.datum = datum;
+
+		Widget cp = this;
+
+		super(parent);
+
+		foreach(attr; __traits(getAttributes, T))
+			static if(is(typeof(attr) == ContainerMeta)) {
+				cp = attr.instantiate(this);
+			}
+
+		auto def = this.getByName("default");
+		if(def !is null)
+			cp = def;
+
+		Widget helper(string name) {
+			auto maybe = this.getByName(name);
+			if(maybe is null)
+				return cp;
+			return maybe;
+
+		}
+
+		foreach(member; __traits(allMembers, T))
+		static if(member != "this") // wtf
+		static if(__traits(getProtection, __traits(getMember, this.datum, member)) == "public") {
+			auto w = widgetFor!(__traits(getMember, T, member))(&__traits(getMember, this.datum, member), helper(member));
+			static if(is(typeof(__traits(getMember, this.datum, member)) == function))
+				w.addEventListener("triggered", &__traits(getMember, this.datum, member));
+			else static if(is(w : DropDownSelection))
+				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.stringValue); } );
+			else
+				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
+		}
+	}
+
+	Widget[string] memberWidgets;
+}
+
+void genericSetValue(T, W)(T* where, W what) {
+	import std.conv;
+	*where = to!T(what);
+	//*where = cast(T) stringToLong(what);
+}
+
+// FIXME: integrate with AutomaticDialog
+static auto widgetFor(alias tt, P)(P valptr, Widget parent) {
+	static if(controlledByCount!tt == 1) {
+		foreach(i, attr; __traits(getAttributes, tt)) {
+			static if(is(typeof(attr) == ControlledBy_!(T, Args), T, Args...)) {
+				auto w = attr.construct(parent);
+				static if(__traits(compiles, w.setPosition(*valptr)))
+					w.setPosition(*valptr);
+				else static if(__traits(compiles, w.setValue(*valptr)))
+					w.setValue(*valptr);
+				return w;
+			}
+		}
+	} else static if(controlledByCount!tt == 0) {
+		static if(is(typeof(tt) == enum)) {
+			auto dds = new DropDownSelection(parent);
+			foreach(idx, option; __traits(allMembers, typeof(tt))) {
+				dds.addOption(option);
+				if(__traits(getMember, typeof(tt), option) == *valptr)
+					dds.setSelection(cast(int) idx);
+			}
+			return dds;
+		} else static if(is(typeof(tt) : const long)) {
+			static assert(0);
+		} else static if(is(typeof(tt) : const string)) {
+			static assert(0);
+		}
+	} else static assert(0, "multiple controllers not yet supported");
+}
+
+private template controlledByCount(alias tt) {
+	static int helper() {
+		int count;
+		foreach(i, attr; __traits(getAttributes, tt))
+			static if(is(typeof(attr) == ControlledBy_!(T, Args), T, Args...))
+				count++;
+		return count;
+	}
+
+	enum controlledByCount = helper;
+}
+
+/++
+	Intended for UFCS action like `window.addDataControllerWidget(new MyObject());`
+
++/
+DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t) if(is(T == class)) {
+	return new DataControllerWidget!T(t, parent);
+}
+
+/// ditto
+DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T* t) if(is(T == struct)) {
+	return new DataControllerWidget!T(t, parent);
 }
 
 /**
@@ -2626,6 +2857,308 @@ class ScrollableClientWidget : Widget {
 	}
 }
 */
+
+/++
+	A slider, also known as a trackbar control, is commonly used in applications like volume controls where you want the user to select a value between a min and a max without needing a specific value or otherwise precise input.
++/
+abstract class Slider : Widget {
+	this(int min, int max, int step, Widget parent) {
+		min_ = min;
+		max_ = max;
+		step_ = step;
+		page_ = step;
+		super(parent);
+	}
+
+	private int min_;
+	private int max_;
+	private int step_;
+	private int position_;
+	private int page_;
+
+	// selection start and selection end
+	// tics
+	// tooltip?
+	// some way to see and just type the value
+	// win32 buddy controls are labels
+
+	///
+	void setMin(int a) {
+		min_ = a;
+		version(custom_widgets)
+			redraw();
+		version(win32_widgets)
+			SendMessage(hwnd, TBM_SETRANGEMIN, true, a);
+	}
+	///
+	int min() {
+		return min_;
+	}
+	///
+	void setMax(int a) {
+		max_ = a;
+		version(custom_widgets)
+			redraw();
+		version(win32_widgets)
+			SendMessage(hwnd, TBM_SETRANGEMAX, true, a);
+	}
+	///
+	int max() {
+		return max_;
+	}
+	///
+	void setPosition(int a) {
+		if(a > max)
+			a = max;
+		if(a < min)
+			a = min;
+		position_ = a;
+		version(custom_widgets)
+			setPositionCustom(a);
+
+		version(win32_widgets)
+			setPositionWindows(a);
+	}
+	version(win32_widgets) {
+		protected abstract void setPositionWindows(int a);
+	}
+
+	protected abstract int win32direction();
+
+	///
+	int position() {
+		return position_;
+	}
+	///
+	void setStep(int a) {
+		step_ = a;
+		version(win32_widgets)
+			SendMessage(hwnd, TBM_SETLINESIZE, 0, a);
+	}
+	///
+	int step() {
+		return step_;
+	}
+	///
+	void setPageSize(int a) {
+		page_ = a;
+		version(win32_widgets)
+			SendMessage(hwnd, TBM_SETPAGESIZE, 0, a);
+	}
+	///
+	int pageSize() {
+		return page_;
+	}
+
+	private void notify() {
+		auto event = new Event("change", this);
+		event.intValue = this.position;
+		event.dispatch();
+	}
+
+	version(win32_widgets)
+	void win32Setup(int style) {
+		createWin32Window(this, TRACKBAR_CLASS, "", 
+			0|WS_CHILD|WS_VISIBLE|style|TBS_TOOLTIPS, 0);
+
+		// the trackbar sends the same messages as scroll, which
+		// our other layer sends as these... just gonna translate
+		// here
+		this.addDirectEventListener("scrolltoposition", (Event event) {
+			event.stopPropagation();
+			this.setPosition(this.win32direction > 0 ? event.intValue : max - event.intValue);
+			notify();
+		});
+		this.addDirectEventListener("scrolltonextline", (Event event) {
+			event.stopPropagation();
+			this.setPosition(this.position + this.step_ * this.win32direction);
+			notify();
+		});
+		this.addDirectEventListener("scrolltopreviousline", (Event event) {
+			event.stopPropagation();
+			this.setPosition(this.position - this.step_ * this.win32direction);
+			notify();
+		});
+		this.addDirectEventListener("scrolltonextpage", (Event event) {
+			event.stopPropagation();
+			this.setPosition(this.position + this.page_ * this.win32direction);
+			notify();
+		});
+		this.addDirectEventListener("scrolltopreviouspage", (Event event) {
+			event.stopPropagation();
+			this.setPosition(this.position - this.page_ * this.win32direction);
+			notify();
+		});
+
+		setMin(min_);
+		setMax(max_);
+		setStep(step_);
+		setPageSize(page_);
+	}
+
+	version(custom_widgets) {
+		protected MouseTrackingWidget thumb;
+
+		protected abstract void setPositionCustom(int a);
+
+		override void defaultEventHandler_keydown(Event event) {
+			switch(event.key) {
+				case Key.Up:
+				case Key.Right:
+					setPosition(position() - step() * win32direction);
+					changed();
+				break;
+				case Key.Down:
+				case Key.Left:
+					setPosition(position() + step() * win32direction);
+					changed();
+				break;
+				case Key.Home:
+					setPosition(win32direction > 0 ? min() : max());
+					changed();
+				break;
+				case Key.End:
+					setPosition(win32direction > 0 ? max() : min());
+					changed();
+				break;
+				case Key.PageUp:
+					setPosition(position() - pageSize() * win32direction);
+					changed();
+				break;
+				case Key.PageDown:
+					setPosition(position() + pageSize() * win32direction);
+					changed();
+				break;
+				default:
+			}
+			super.defaultEventHandler_keydown(event);
+		}
+
+		protected void changed() {
+			auto ev = new Event("change", this);
+			ev.intValue = position_;
+			ev.dispatch();
+		}
+
+
+	}
+}
+
+/++
+
++/
+class VerticalSlider : Slider {
+	this(int min, int max, int step, Widget parent) {
+		version(custom_widgets)
+			initialize();
+
+		super(min, max, step, parent);
+
+		version(win32_widgets)
+			win32Setup(TBS_VERT | TBS_REVERSED);
+	}
+
+	protected override int win32direction() {
+		return -1;
+	}
+
+	version(win32_widgets)
+	protected override void setPositionWindows(int a) {
+		// the windows thing makes the top 0 and i don't like that.
+		SendMessage(hwnd, TBM_SETPOS, true, max - a);
+	}
+
+	version(custom_widgets)
+	private void initialize() {
+		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.vertical, this);
+
+		thumb.tabStop = false;
+
+		thumb.thumbWidth = width;
+		thumb.thumbHeight = 16;
+
+		thumb.addEventListener(EventType.change, () {
+			auto sx = thumb.positionY * max() / (thumb.height - 16);
+			sx = max - sx;
+			//informProgramThatUserChangedPosition(sx);
+
+			position_ = sx;
+
+			changed();
+		});
+	}
+
+	version(custom_widgets)
+	override void recomputeChildLayout() {
+		thumb.thumbWidth = this.width;
+		super.recomputeChildLayout();
+		setPositionCustom(position_);
+	}
+
+	version(custom_widgets)
+	protected override void setPositionCustom(int a) {
+		if(max())
+			thumb.positionY = (max - a) * (thumb.height - 16) / max();
+		redraw();
+	}
+}
+
+/++
+
++/
+class HorizontalSlider : Slider {
+	this(int min, int max, int step, Widget parent) {
+		version(custom_widgets)
+			initialize();
+
+		super(min, max, step, parent);
+
+		version(win32_widgets)
+			win32Setup(TBS_HORZ);
+	}
+
+	version(win32_widgets)
+	protected override void setPositionWindows(int a) {
+		SendMessage(hwnd, TBM_SETPOS, true, a);
+	}
+
+	protected override int win32direction() {
+		return 1;
+	}
+
+	version(custom_widgets)
+	private void initialize() {
+		thumb = new MouseTrackingWidget(MouseTrackingWidget.Orientation.horizontal, this);
+
+		thumb.tabStop = false;
+
+		thumb.thumbWidth = 16;
+		thumb.thumbHeight = height;
+
+		thumb.addEventListener(EventType.change, () {
+			auto sx = thumb.positionX * max() / (thumb.width - 16);
+			//informProgramThatUserChangedPosition(sx);
+
+			position_ = sx;
+
+			changed();
+		});
+	}
+
+	version(custom_widgets)
+	override void recomputeChildLayout() {
+		thumb.thumbHeight = this.height;
+		super.recomputeChildLayout();
+		setPositionCustom(position_);
+	}
+
+	version(custom_widgets)
+	protected override void setPositionCustom(int a) {
+		if(max())
+			thumb.positionX = a * (thumb.width - 16) / max();
+	}
+}
+
 
 ///
 abstract class ScrollbarBase : Widget {
@@ -7584,10 +8117,12 @@ class AutomaticDialog(T) : Dialog {
 				});
 			} else static if(is(type : long)) {
 				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
+				/+
 				le.addEventListener("char", (Event ev) {
 					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
 						ev.preventDefault();
 				});
+				+/
 				le.addEventListener(EventType.change, (Event ev) {
 					__traits(getMember, t, memberName) = cast(type) stringToLong(ev.stringValue);
 				});

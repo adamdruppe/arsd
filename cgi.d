@@ -3336,7 +3336,7 @@ struct RequestServer {
 	}
 
 	/++
-		Serves a single request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
+		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
 
 		History:
 			Added Oct 10, 2020.
@@ -3348,7 +3348,7 @@ struct RequestServer {
 			RequestServer server = RequestServer("127.0.0.1", 6789);
 			string oauthCode;
 			string oauthScope;
-			server.serveOnce!((cgi) {
+			server.serveHttpOnce!((cgi) {
 				oauthCode = cgi.request("code");
 				oauthScope = cgi.request("scope");
 				cgi.write("Thank you, please return to the application.");
@@ -3357,7 +3357,7 @@ struct RequestServer {
 		}
 		---
 	+/
-	void serveOnce(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+	void serveHttpOnce(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
 		import std.socket;
 
 		bool tcp;
@@ -3387,12 +3387,10 @@ struct RequestServer {
 			serveEmbeddedHttpdProcesses!(fun, CustomCgi)(this);
 		} else
 		version(embedded_httpd_threads) {
-			auto manager = new ListeningConnectionManager(listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, fun));
-			manager.listen();
+			serveEmbeddedHttp!(fun, CustomCgi, maxContentLength)();
 		} else
 		version(scgi) {
-			auto manager = new ListeningConnectionManager(listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
-			manager.listen();
+			serveScgi!(fun, CustomCgi, maxContentLength)();
 		} else
 		version(fastcgi) {
 			serveFastCgi!(fun, CustomCgi, maxContentLength)(this);
@@ -3402,8 +3400,17 @@ struct RequestServer {
 		}
 	}
 
-	void stop() {
+	void serveEmbeddedHttp(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		auto manager = new ListeningConnectionManager(listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, fun));
+		manager.listen();
+	}
+	void serveScgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		auto manager = new ListeningConnectionManager(listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
+		manager.listen();
+	}
 
+	void stop() {
+		// FIXME
 	}
 }
 
@@ -4020,7 +4027,6 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	// I am otherwise NOT closing it here because the parent thread might still be able to make use of the keep-alive connection!
 }
 
-version(scgi)
 void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket connection) {
 	// and now we can buffer
 	scope(failure)
@@ -5460,6 +5466,11 @@ version(cgi_with_websocket) {
 					break;
 					default: // ignore though i could and perhaps should throw too
 				}
+			}
+
+			// the recv thing can be invalidated so gotta copy it over ugh
+			if(d.length) {
+				m.data = m.data.dup();
 			}
 
 			import core.stdc.string;
@@ -8194,12 +8205,12 @@ html", true, true);
 	/// typeof(null) (which is also used to represent functions returning `void`) do nothing
 	/// in the default presenter - allowing the function to have full low-level control over the
 	/// response.
-	void presentSuccessfulReturn(T : typeof(null))(Cgi cgi, T ret, typeof(null) meta, string format) {
+	void presentSuccessfulReturn(T : typeof(null), Meta)(Cgi cgi, T ret, Meta meta, string format) {
 		// nothing intentionally!
 	}
 
 	/// Redirections are forwarded to [Cgi.setResponseLocation]
-	void presentSuccessfulReturn(T : Redirection)(Cgi cgi, T ret, typeof(null) meta, string format) {
+	void presentSuccessfulReturn(T : Redirection, Meta)(Cgi cgi, T ret, Meta meta, string format) {
 		cgi.setResponseLocation(ret.to, true, getHttpCodeText(ret.code));
 	}
 
@@ -8218,7 +8229,7 @@ html", true, true);
 	}
 
 	/// An instance of the [arsd.dom.FileResource] interface has its own content type; assume it is a download of some sort.
-	void presentSuccessfulReturn(T : FileResource)(Cgi cgi, T ret, typeof(null) meta, string format) {
+	void presentSuccessfulReturn(T : FileResource, Meta)(Cgi cgi, T ret, Meta meta, string format) {
 		cgi.setCache(true); // not necessarily true but meh
 		cgi.setResponseContentType(ret.contentType);
 		cgi.write(ret.getData(), true);
@@ -8241,10 +8252,14 @@ html", true, true);
 		useful forms or richer error messages for the user.
 	+/
 	void presentExceptionAsHtml(alias func, T)(Cgi cgi, Throwable t, T dg) {
+		presentExceptionAsHtmlImpl(cgi, t, createAutomaticFormForFunction!(func)(dg));
+	}
+
+	void presentExceptionAsHtmlImpl(Cgi cgi, Throwable t, Form automaticForm) {
 		if(auto mae = cast(MissingArgumentException) t) {
 			auto container = this.htmlContainer();
 			container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
-			container.appendChild(createAutomaticFormForFunction!(func)(dg));
+			container.appendChild(automaticForm);
 
 			cgi.write(container.parentDocument.toString(), true);
 		} else {
@@ -8836,7 +8851,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			static if(is(typeof(overload) R == return))
 			static if(__traits(getProtection, overload) == "public" || __traits(getProtection, overload) == "export")
 			{
-			static foreach(urlNameForMethod; urlNamesForMethod!(overload)(urlify(methodName)))
+			static foreach(urlNameForMethod; urlNamesForMethod!(overload, urlify(methodName)))
 			case urlNameForMethod:
 
 				static if(is(R : WebObject)) {
@@ -9051,41 +9066,47 @@ struct Paginated(T) {
 	string nextPageUrl;
 }
 
-string[] urlNamesForMethod(alias method)(string def) {
-	auto verb = Cgi.RequestMethod.GET;
-	bool foundVerb = false;
-	bool foundNoun = false;
-	foreach(attr; __traits(getAttributes, method)) {
-		static if(is(typeof(attr) == Cgi.RequestMethod)) {
-			verb = attr;
-			if(foundVerb)
-				assert(0, "Multiple http verbs on one function is not currently supported");
-			foundVerb = true;
+template urlNamesForMethod(alias method, string default_) {
+	string[] helper() {
+		auto verb = Cgi.RequestMethod.GET;
+		bool foundVerb = false;
+		bool foundNoun = false;
+
+		string def = default_;
+
+		foreach(attr; __traits(getAttributes, method)) {
+			static if(is(typeof(attr) == Cgi.RequestMethod)) {
+				verb = attr;
+				if(foundVerb)
+					assert(0, "Multiple http verbs on one function is not currently supported");
+				foundVerb = true;
+			}
+			static if(is(typeof(attr) == UrlName)) {
+				if(foundNoun)
+					assert(0, "Multiple url names on one function is not currently supported");
+				foundNoun = true;
+				def = attr.name;
+			}
 		}
-		static if(is(typeof(attr) == UrlName)) {
-			if(foundNoun)
-				assert(0, "Multiple url names on one function is not currently supported");
-			foundNoun = true;
-			def = attr.name;
-		}
+
+		if(def is null)
+			def = "__null";
+
+		string[] ret;
+
+		static if(is(typeof(method) R == return)) {
+			static if(is(R : WebObject)) {
+				def ~= "/";
+				foreach(v; __traits(allMembers, Cgi.RequestMethod))
+					ret ~= v ~ " " ~ def;
+			} else {
+				ret ~= to!string(verb) ~ " " ~ def;
+			}
+		} else static assert(0);
+
+		return ret;
 	}
-
-	if(def is null)
-		def = "__null";
-
-	string[] ret;
-
-	static if(is(typeof(method) R == return)) {
-		static if(is(R : WebObject)) {
-			def ~= "/";
-			foreach(v; __traits(allMembers, Cgi.RequestMethod))
-				ret ~= v ~ " " ~ def;
-		} else {
-			ret ~= to!string(verb) ~ " " ~ def;
-		}
-	} else static assert(0);
-
-	return ret;
+	enum urlNamesForMethod = helper();
 }
 
 

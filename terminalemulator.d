@@ -4004,8 +4004,15 @@ mixin template SdpyDraw() {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
 		}
 
-		fontWidth = font.averageWidth;
-		fontHeight = font.height;
+		if(font.isNull) {
+			// no way to really tell... just guess so it doesn't crash but like eeek.
+			fontWidth = size / 2;
+			fontHeight = size;
+
+		} else {
+			fontWidth = font.averageWidth;
+			fontHeight = font.height;
+		}
 	}
 
 	bool lastDrawAlternativeScreen;

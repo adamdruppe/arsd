@@ -2878,6 +2878,10 @@ class WebSocket {
 			}
 		}
 
+		if(d.length) {
+			m.data = m.data.dup();
+		}
+
 		import core.stdc.string;
 		memmove(receiveBuffer.ptr, d.ptr, d.length);
 		receiveBufferUsedLength = d.length;
