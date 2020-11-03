@@ -229,7 +229,10 @@ class MySql : Database {
 	}
 
 	void close() {
-		mysql_close(mysql);
+		if(mysql) {
+			mysql_close(mysql);
+			mysql = null;
+		}
 	}
 
 	~this() {
