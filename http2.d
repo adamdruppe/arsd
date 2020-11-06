@@ -484,7 +484,20 @@ struct Uri {
 				authority = authority[idx2 + 1 .. $];
 			}
 
-			idx2 = authority.indexOf(":");
+			if(authority.length && authority[0] == '[') {
+				// ipv6 address special casing
+				idx2 = authority.indexOf(']');
+				if(idx2 != -1) {
+					auto end = authority[idx2 + 1 .. $];
+					if(end.length && end[0] == ':')
+						idx2 = idx2 + 1;
+					else
+						idx2 = -1;
+				}
+			} else {
+				idx2 = authority.indexOf(":");
+			}
+
 			if(idx2 == -1) {
 				port = 0; // 0 means not specified; we should use the default for the scheme
 				host = authority;

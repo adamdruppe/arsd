@@ -2797,7 +2797,20 @@ struct Uri {
 				authority = authority[idx2 + 1 .. $];
 			}
 
-			idx2 = authority.indexOf(":");
+			if(authority.length && authority[0] == '[') {
+				// ipv6 address special casing
+				idx2 = authority.indexOf(']');
+				if(idx2 != -1) {
+					auto end = authority[idx2 + 1 .. $];
+					if(end.length && end[0] == ':')
+						idx2 = idx2 + 1;
+					else
+						idx2 = -1;
+				}
+			} else {
+				idx2 = authority.indexOf(":");
+			}
+
 			if(idx2 == -1) {
 				port = 0; // 0 means not specified; we should use the default for the scheme
 				host = authority;
@@ -2946,6 +2959,21 @@ struct Uri {
 		uri = Uri("?lol#foo");
 		assert(uri.fragment == "foo");
 		assert(uri.query == "lol");
+
+		uri = Uri("http://127.0.0.1/");
+		assert(uri.host == "127.0.0.1");
+		assert(uri.port == 0);
+
+		uri = Uri("http://127.0.0.1:123/");
+		assert(uri.host == "127.0.0.1");
+		assert(uri.port == 123);
+
+		uri = Uri("http://[ff:ff::0]/");
+		assert(uri.host == "[ff:ff::0]");
+
+		uri = Uri("http://[ff:ff::0]:123/");
+		assert(uri.host == "[ff:ff::0]");
+		assert(uri.port == 123);
 	}
 
 	// This can sometimes be a big pain in the butt for me, so lots of copy/paste here to cover
