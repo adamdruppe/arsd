@@ -1208,7 +1208,7 @@ class TrueColorImageWithoutAlpha : MemoryImage {
 +/
 
 
-alias extern(C) int function(const void*, const void*) @system Comparator;
+alias extern(C) int function(scope const void*, scope const void*) @system Comparator;
 @trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
 	import core.stdc.stdlib;
 	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
@@ -1240,7 +1240,7 @@ body {
 		int opCmp(ref const ColorUse co) const {
 			return co.uses - uses;
 		}
-		extern(C) static int comparator(const void* lhs, const void* rhs) {
+		extern(C) static int comparator(scope const void* lhs, scope const void* rhs) {
 			return (cast(ColorUse*)rhs).uses - (cast(ColorUse*)lhs).uses;
 		}
 	}

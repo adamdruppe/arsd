@@ -90,23 +90,34 @@ TerminalEmulator.TerminalCell[] sliceTrailingWhitespace(TerminalEmulator.Termina
 	return t;
 }
 
-struct ScopeBuffer(T, size_t maxSize) {
-	T[maxSize] buffer;
+struct ScopeBuffer(T, size_t maxSize, bool allowGrowth = false) {
+	T[maxSize] bufferInternal;
+	T[] buffer;
 	size_t length;
 	bool isNull = true;
 	T[] opSlice() { return isNull ? null : buffer[0 .. length]; }
 	void opOpAssign(string op : "~")(in T rhs) {
+		if(buffer is null) buffer = bufferInternal[];
 		isNull = false;
-		if(this.length < buffer.length) // i am silently discarding more crap
+		static if(allowGrowth) {
+			if(this.length == buffer.length)
+				buffer.length = buffer.length * 2;
+
 			buffer[this.length++] = rhs;
+		} else {
+			if(this.length < buffer.length) // i am silently discarding more crap
+				buffer[this.length++] = rhs;
+		}
 	}
 	void opOpAssign(string op : "~")(in T[] rhs) {
+		if(buffer is null) buffer = bufferInternal[];
 		isNull = false;
 		buffer[this.length .. this.length + rhs.length] = rhs[];
 		this.length += rhs.length;
 	}
 	void opAssign(in T[] rhs) {
 		isNull = rhs is null;
+		if(buffer is null) buffer = bufferInternal[];
 		buffer[0 .. rhs.length] = rhs[];
 		this.length = rhs.length;
 	}
@@ -999,7 +1010,7 @@ class TerminalEmulator {
 	immutable(dchar[dchar])* characterSet = null; // null means use regular UTF-8
 
 	bool readingEsc = false;
-	ScopeBuffer!(ubyte, 1024) esc;
+	ScopeBuffer!(ubyte, 1024, true) esc;
 	/// sends raw input data to the terminal as if the application printf()'d it or it echoed or whatever
 	void sendRawInput(in ubyte[] datain) {
 		const(ubyte)[] data = datain;
@@ -3707,20 +3718,24 @@ mixin template PtySupport(alias resizeHelper) {
 				throw new Exception("WriteFile " ~ to!string(GetLastError()));
 		} else version(Posix) {
 			import core.sys.posix.unistd;
+			int frozen;
 			while(data.length) {
 				enum MAX_SEND = 1024 * 20;
 				auto sent = write(master, data.ptr, data.length > MAX_SEND ? MAX_SEND : cast(int) data.length);
 				//import std.stdio; writeln("ROFL ", sent, " ", data.length);
 
 				import core.stdc.errno;
-				/*
 				if(sent == -1 && errno == 11) {
 					import core.thread;
-					Thread.sleep(100.msecs);
+					if(frozen == 50)
+						throw new Exception("write froze up");
+					frozen++;
+					Thread.sleep(10.msecs);
 					//import std.stdio; writeln("lol");
 					continue; // just try again
 				}
-				*/
+
+				frozen = 0;
 
 				import std.conv;
 				if(sent < 0)

@@ -5217,7 +5217,7 @@ version(X11) {
 				data[0 .. text.length] = text[];
 				return data[0 .. text.length];
 			} else {
-				data[] = text[];
+				data[] = text[0 .. data.length];
 				text = text[data.length .. $];
 				return data[];
 			}
@@ -14432,6 +14432,7 @@ static if(!SdpyIsUsingIVGLBinds) {
 
 	Added: August 25, 2020 (version 8.5)
 +/
+version(without_opengl) {} else
 void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
 	glBufferData(target, data.length, data.ptr, usage);
 }
@@ -14493,6 +14494,7 @@ struct BasicMatrix(int columns, int rows, T = float) {
 
 	Added: August 25, 2020 (version 8.5)
 +/
+version(without_opengl) {} else
 final class OpenGlShader {
 	private int shaderProgram_;
 	private @property void shaderProgram(int a) {
@@ -15918,8 +15920,11 @@ private mixin template DynamicLoad(Iface, string library, bool openGLRelated = f
                         		libHandle = dlopen("/usr/X11/lib/lib" ~ library ~ ".dylib", RTLD_NOW);
 				else
                         		libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
-			} else
+			} else {
                         	libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+				if(libHandle is null && library[0] == 'X') // some systems require the version number and we using X11R6 so just hardcoding special case.
+                        		libHandle = dlopen("lib" ~ library ~ ".so.6", RTLD_NOW);
+			}
 
 			static void* loadsym(void* l, const char* name) {
 				import core.stdc.stdlib;
