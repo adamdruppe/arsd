@@ -440,9 +440,6 @@ enum long defaultMaxContentLength = 5_000_000;
 // somehow in here and dom.d.
 
 
-// FIXME: 100 Continue in the nph section? Probably belongs on the
-// httpd class though.
-
 // these are public so you can mixin GenericMain.
 // FIXME: use a function level import instead!
 public import std.string;
@@ -1836,6 +1833,16 @@ class Cgi {
 				}
 				else if (name == "cookie") {
 					cookie ~= value;
+				} else if(name == "expect") {
+					if(value == "100-continue") {
+						// FIXME we should probably give user code a chance
+						// to process and reject but that needs to be virtual,
+						// perhaps part of the CGI redesign.
+
+						// FIXME: if size is > max content length it should
+						// also fail at this point.
+						_rawDataOutput(cast(ubyte[]) "HTTP/1.1 100 Continue\r\n\r\n");
+					}
 				}
 				// else
 				// ignore it
