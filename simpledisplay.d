@@ -1683,9 +1683,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// Closes the window. If there are no more open windows, the event loop will terminate.
 	void close() {
 		if (!_closed) {
-			if (onClosing !is null) onClosing();
-			impl.closeWindow();
-			_closed = true;
+			runInGuiThread( {
+				if (onClosing !is null) onClosing();
+				impl.closeWindow();
+				_closed = true;
+			} );
 		}
 	}
 
