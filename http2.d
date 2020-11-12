@@ -42,6 +42,10 @@ version(arsd_http_winhttp_implementation) {
 	import core.sys.windows.winhttp;
 	// FIXME: alter the dub package file too
 
+	// https://github.com/curl/curl/blob/master/lib/vtls/schannel.c
+	// https://docs.microsoft.com/en-us/windows/win32/secauthn/creating-an-schannel-security-context
+
+
 	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpreaddata
 	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpsendrequest
 	// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpopenrequest
@@ -926,6 +930,7 @@ class HttpRequest {
 						if(readSet is null)
 							readSet = new SocketSet();
 						readSet.reset();
+						assert(socket !is null);
 						assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
 						readSet.add(socket);
 						auto got = Socket.select(readSet, null, null, 5.msecs /* timeout */);

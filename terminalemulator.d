@@ -304,7 +304,7 @@ class TerminalEmulator {
 				auto text = getSelectedText();
 				if(text.length) {
 					copyToPrimary(text);
-				} else if(!mouseButtonReleaseTracking || shift) {
+				} else if(!mouseButtonReleaseTracking || shift || (selectiveMouseTracking && termY != 0 && termY != cursorY)) {
 					// hyperlink check
 					int idx = termY * screenWidth + termX;
 					auto screen = (alternateScreenActive ? alternateScreen : normalScreen);
@@ -422,6 +422,13 @@ class TerminalEmulator {
 			// end dbl click
 
 			if(!(shift) && mouseButtonTracking) {
+				if(selectiveMouseTracking && termY != 0 && termY != cursorY) {
+					if(button == MouseButton.left || button == MouseButton.right)
+						goto do_default_behavior;
+					if(!alternateScreenActive && (button == MouseButton.wheelUp || button.MouseButton.wheelDown))
+						goto do_default_behavior;
+				}
+
 				int b = baseEventCode;
 
 				int x = termX;
@@ -436,6 +443,7 @@ class TerminalEmulator {
 
 				sendToApplication(buffer[]);
 			} else {
+				do_default_behavior:
 				if(button == MouseButton.middle) {
 					pasteFromPrimary(&sendPasteData);
 				}
@@ -1636,6 +1644,7 @@ class TerminalEmulator {
 		private bool _mouseMotionTracking;
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
+		bool selectiveMouseTracking;
 
 		bool mouseMotionTracking() {
 			return _mouseMotionTracking;
@@ -1646,6 +1655,7 @@ class TerminalEmulator {
 		}
 
 		void allMouseTrackingOff() {
+			selectiveMouseTracking = false;
 			mouseMotionTracking = false;
 			mouseButtonTracking = false;
 			mouseButtonReleaseTracking = false;
@@ -2816,6 +2826,18 @@ SGR (1006)
           ings.
 								*/
 								break;
+								case 1014:
+									// ARSD extension: it is 1002 but selective, only
+									// on top row, row with cursor, or else if middle click/wheel.
+									//
+									// Quite specifically made for my getline function!
+									allMouseTrackingOff();
+
+									mouseButtonMotionTracking = true;
+									mouseButtonTracking = true;
+									mouseButtonReleaseTracking = true;
+									selectiveMouseTracking = true;
+								break;
 								case 1015:
 								/*
 URXVT (1015)
@@ -2928,6 +2950,7 @@ URXVT (1015)
 								case 1000:
 								case 1002:
 								case 1003:
+								case 1014: // arsd extension
 									allMouseTrackingOff();
 								break;
 								case 1005:

@@ -469,6 +469,7 @@ enum ConsoleInputFlags {
 	allInputEventsWithRelease = allInputEvents|releasedKeys, /// subscribe to all input events, including (unreliable on Posix) key release events.
 
 	noEolWrap = 128,
+	selectiveMouse = 256, /// Uses arsd terminal emulator's proprietary extension to select mouse input only for special cases, intended to enhance getline while keeping default terminal mouse behavior in other places. If it is set, it overrides [mouse] event flag. If not using the arsd terminal emulator, this will disable application mouse input.
 }
 
 /// Defines how terminal output should be handled.
@@ -2092,7 +2093,7 @@ struct Terminal {
 		if(prompt !is null)
 			lineGetter.prompt = prompt;
 
-		auto input = RealTimeConsoleInput(&this, ConsoleInputFlags.raw);
+		auto input = RealTimeConsoleInput(&this, ConsoleInputFlags.raw | ConsoleInputFlags.selectiveMouse | ConsoleInputFlags.paste | ConsoleInputFlags.size | ConsoleInputFlags.noEolWrap);
 		auto line = lineGetter.getline(&input);
 
 		// lineGetter leaves us exactly where it was when the user hit enter, giving best
@@ -2307,7 +2308,13 @@ struct RealTimeConsoleInput {
 		}
 
 		if(UseVtSequences) {
-			if(flags & ConsoleInputFlags.mouse) {
+
+
+			if(flags & ConsoleInputFlags.selectiveMouse) {
+				// arsd terminal extension, but harmless on most other terminals
+				terminal.writeStringRaw("\033[?1014h");
+				destructor ~= { terminal.writeStringRaw("\033[?1014l"); };
+			} else if(flags & ConsoleInputFlags.mouse) {
 				// basic button press+release notification
 
 				// FIXME: try to get maximum capabilities from all terminals
@@ -2320,6 +2327,7 @@ struct RealTimeConsoleInput {
 				// doesn't work there, breaking mouse support entirely. So by setting
 				// MOUSE_HACK=1002 it tells us to use the other mode for a fallback.
 				import std.process : environment;
+
 				if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
 					// this is vt200 mouse with full motion tracking, supported by xterm
 					terminal.writeStringRaw("\033[?1003h");
@@ -4502,7 +4510,7 @@ class LineGetter {
 	public string getline(RealTimeConsoleInput* input = null) {
 		startGettingLine();
 		if(input is null) {
-			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents | ConsoleInputFlags.noEolWrap);
+			auto i = RealTimeConsoleInput(terminal, ConsoleInputFlags.raw | ConsoleInputFlags.allInputEvents | ConsoleInputFlags.selectiveMouse | ConsoleInputFlags.noEolWrap);
 			//rtci = &i;
 			//scope(exit) rtci = null;
 			while(workOnLine(i.nextEvent(), &i)) {}

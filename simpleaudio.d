@@ -16,12 +16,21 @@
 	being able to get/set the volume.
 
 	TODO:
+		* pre-resampler that loads a clip and prepares it for repeated fast use
+		* controls so you can tell a particular thing to keep looping until you tell it to stop, or stop after the next loop, etc (think a phaser sound as long as you hold the button down)
+		* playFile function that detects automatically. basically:
+			        if(args[1].endsWith("ogg"))
+					a.playOgg(args[1]);
+				else if(args[1].endsWith("wav"))
+					a.playWav(args[1]);
+				else if(mp3)
+					a.playMp3(args[1]);
+
+
 		* play audio high level with options to wait until completion or return immediately
-		* midi mid-level stuff
+		* midi mid-level stuff but see [arsd.midi]!
 
-		* Windows support for mixer.
-
-		* I'll also write .mid and .wav functions at least eventually. Maybe in separate modules but probably here since they aren't that complex.
+		* some kind of encoder???????
 
 	I will probably NOT do OSS anymore, since my computer doesn't even work with it now.
 	Ditto for Macintosh, as I don't have one and don't really care about them.
