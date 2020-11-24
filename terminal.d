@@ -3015,21 +3015,36 @@ struct RealTimeConsoleInput {
 	// The helper reads just one actual event from the pipe...
 	// for UseVtSequences....
 	InputEvent[] readNextEventsHelper(int remainingFromLastTime = int.max) {
-		InputEvent[] charPressAndRelease(dchar character) {
+		bool maybeTranslateCtrl(ref dchar c) {
+			import std.algorithm : canFind;
+			// map anything in the range of [1, 31] to C-lowercase character
+			// except backspace (^h), tab (^i), linefeed (^j), carriage return (^m), and esc (^[)
+			// \a, \v (lol), and \f are also 'special', but not worthwhile to special-case here
+			if(1 <= c && c <= 31
+			   && !"\b\t\n\r\x1b"d.canFind(c)) {
+				c += 'a' - 1;
+				return true;
+			}
+
+			return false;
+		}
+		InputEvent[] charPressAndRelease(dchar character, uint modifiers = 0) {
+			if(maybeTranslateCtrl(character))
+				modifiers |= ModifierState.control;
 			if((flags & ConsoleInputFlags.releasedKeys))
 				return [
 					// new style event
-					InputEvent(KeyboardEvent(true, character, 0), terminal),
-					InputEvent(KeyboardEvent(false, character, 0), terminal),
+					InputEvent(KeyboardEvent(true, character, modifiers), terminal),
+					InputEvent(KeyboardEvent(false, character, modifiers), terminal),
 					// old style event
-					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal),
-					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, 0), terminal),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, modifiers), terminal),
+					InputEvent(CharacterEvent(CharacterEvent.Type.Released, character, modifiers), terminal),
 				];
 			else return [
 				// new style event
-				InputEvent(KeyboardEvent(true, character, 0), terminal),
+				InputEvent(KeyboardEvent(true, character, modifiers), terminal),
 				// old style event
-				InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, 0), terminal)
+				InputEvent(CharacterEvent(CharacterEvent.Type.Pressed, character, modifiers), terminal)
 			];
 		}
 		InputEvent[] keyPressAndRelease(NonCharacterKeyEvent.Key key, uint modifiers = 0) {
@@ -3418,38 +3433,37 @@ struct RealTimeConsoleInput {
 		//if(c == 0)
 			//return [InputEvent(EndOfFileEvent(), terminal)];
 		if(c == '\033') {
-			if(timedCheckForInput_bypassingBuffer(50)) {
-				// escape sequence
-				c = nextRaw();
-				if(c == '[') { // CSI, ends on anything >= 'A'
-					return doEscapeSequence(readEscapeSequence(sequenceBuffer));
-				} else if(c == 'O') {
-					// could be xterm function key
-					auto n = nextRaw();
-
-					char[3] thing;
-					thing[0] = '\033';
-					thing[1] = 'O';
-					thing[2] = cast(char) n;
-
-					auto cap = terminal.findSequenceInTermcap(thing);
-					if(cap is null) {
-						return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~
-							charPressAndRelease('O') ~
-							charPressAndRelease(thing[2]);
-					} else {
-						return translateTermcapName(cap);
-					}
-				} else if(c == '\033') {
-					// could be escape followed by an escape sequence!
-					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
-				} else {
-					// I don't know, probably unsupported terminal or just quick user input or something
-					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ charPressAndRelease(nextChar(c));
-				}
-			} else {
+			if(!timedCheckForInput_bypassingBuffer(50)) {
 				// user hit escape (or super slow escape sequence, but meh)
 				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape);
+			}
+			// escape sequence
+			c = nextRaw();
+			if(c == '[') { // CSI, ends on anything >= 'A'
+				return doEscapeSequence(readEscapeSequence(sequenceBuffer));
+			} else if(c == 'O') {
+				// could be xterm function key
+				auto n = nextRaw();
+
+				char[3] thing;
+				thing[0] = '\033';
+				thing[1] = 'O';
+				thing[2] = cast(char) n;
+
+				auto cap = terminal.findSequenceInTermcap(thing);
+				if(cap is null) {
+					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~
+						charPressAndRelease('O') ~
+						charPressAndRelease(thing[2]);
+				} else {
+					return translateTermcapName(cap);
+				}
+			} else if(c == '\033') {
+				// could be escape followed by an escape sequence!
+				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
+			} else {
+				// I don't know, probably unsupported terminal or just quick user input or something
+				return charPressAndRelease(nextChar(c), cast(uint)ModifierState.alt);
 			}
 		} else {
 			// FIXME: what if it is neither? we should check the termcap
@@ -4675,12 +4689,82 @@ class LineGetter {
 		line.assumeSafeAppend();
 	}
 
+	private void killText(dchar[] text) {
+		if(!text.length)
+			return;
+
+		if(justKilled)
+			killBuffer = text ~ killBuffer;
+		else
+			killBuffer = text;
+	}
+
 	///
 	void deleteToEndOfLine() {
+		killText(line[cursorPosition .. $]);
 		line = line[0 .. cursorPosition];
 		line.assumeSafeAppend();
 		//while(cursorPosition < line.length)
 			//deleteChar();
+	}
+
+	void wordForward() {
+		import std.uni : isWhite;
+		if(cursorPosition == line.length)
+			return;
+		while(cursorPosition + 1 < line.length && isWhite(line[cursorPosition]))
+			cursorPosition++;
+		while(cursorPosition + 1 < line.length && !isWhite(line[cursorPosition + 1]))
+			cursorPosition++;
+		cursorPosition += 2;
+		if(cursorPosition > line.length)
+			cursorPosition = cast(int) line.length;
+		aligned(cursorPosition, 1);
+		maybePositionCursor();
+	}
+	private int wordBackIdx() {
+		import std.uni : isWhite;
+		if(!line.length || !cursorPosition)
+			return cursorPosition;
+		int ret = cursorPosition - 1;
+		while(ret && isWhite(line[ret]))
+			ret--;
+		while(ret && !isWhite(line[ret - 1]))
+			ret--;
+		return ret;
+	}
+	void wordBack() {
+		cursorPosition = wordBackIdx();
+		aligned(cursorPosition, -1);
+		maybePositionCursor();
+	}
+	void killWord() {
+		int from = wordBackIdx(), to = cursorPosition;
+		killText(line[from .. to]);
+		line = line[0 .. from] ~ line[to .. $];
+		cursorPosition = cast(int)from;
+		maybePositionCursor();
+	}
+
+	private void maybePositionCursor() {
+		if(cursorPosition < horizontalScrollPosition || cursorPosition > horizontalScrollPosition + availableLineLength()) {
+			positionCursor();
+		}
+	}
+
+	private void charBack() {
+		if(!cursorPosition)
+			return;
+		cursorPosition--;
+		aligned(cursorPosition, -1);
+		maybePositionCursor();
+	}
+	private void charForward() {
+		if(cursorPosition >= line.length)
+			return;
+		cursorPosition++;
+		aligned(cursorPosition, 1);
+		maybePositionCursor();
 	}
 
 	int availableLineLength() {
@@ -4987,6 +5071,15 @@ class LineGetter {
 		terminal._cursorY = startOfLineY;
 	}
 
+	// Text killed with C-w/C-u/C-k/C-backspace, to be restored by C-y
+	private dchar[] killBuffer;
+
+	// Given 'a b c d|', C-w C-w C-y should kill c and d, and then restore both
+	// But given 'a b c d|', C-w M-b C-w C-y should kill d, kill b, and then restore only b
+	// So we need this extra bit of state to decide whether to append to or replace the kill buffer
+	// when the user kills some text
+	private bool justKilled;
+
 	private bool justHitTab;
 	private bool eof;
 
@@ -5031,17 +5124,23 @@ class LineGetter {
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
 				auto ch = ev.which;
 				switch(ch) {
-					version(Windows) case 26: // and this is really for Windows
+					version(Windows) case 'z': // and this is really for Windows
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
 						goto case;
-					case 4: // ctrl+d will also send a newline-equivalent 
+					case 'd': // ctrl+d will also send a newline-equivalent 
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
 						if(line.length == 0)
 							eof = true;
 						goto case;
 					case '\r':
 					case '\n':
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						return false;
 					case '\t':
+						justKilled = false;
+
 						auto relevantLineSection = line[0 .. cursorPosition];
 						auto start = tabCompleteStartPoint(relevantLineSection, line[cursorPosition .. $]);
 						relevantLineSection = relevantLineSection[start .. $];
@@ -5079,7 +5178,12 @@ class LineGetter {
 					break;
 					case '\b':
 						justHitTab = false;
-						if(cursorPosition) {
+						if(ev.modifierState & ModifierState.control) {
+							killWord();
+							justKilled = true;
+							redraw();
+						} else if(cursorPosition) {
+							justKilled = false;
 							cursorPosition--;
 							for(int i = cursorPosition; i < line.length - 1; i++)
 								line[i] = line[i + 1];
@@ -5097,7 +5201,7 @@ class LineGetter {
 						}
 					break;
 					case KeyboardEvent.Key.escape:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						cursorPosition = 0;
 						horizontalScrollPosition = 0;
 						line = line[0 .. 0];
@@ -5105,11 +5209,11 @@ class LineGetter {
 						redraw();
 					break;
 					case KeyboardEvent.Key.F1:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						showHelp();
 					break;
 					case KeyboardEvent.Key.F2:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						line = editLineInEditor(line, cursorPosition);
 						if(cursorPosition > line.length)
 							cursorPosition = cast(int) line.length;
@@ -5118,24 +5222,37 @@ class LineGetter {
 						positionCursor();
 						redraw();
 					break;
+					case 'r':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
 					case KeyboardEvent.Key.F3:
-					// case 'r' - 'a' + 1: // ctrl+r
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						// search in history
 						// FIXME: what about search in completion too?
 					break;
+					case 'u':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
 					case KeyboardEvent.Key.F4:
+						killText(line);
+						line = [];
+						cursorPosition = 0;
 						justHitTab = false;
-						// FIXME: clear line
+						justKilled = true;
+						redraw();
 					break;
 					case KeyboardEvent.Key.F9:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						// compile and run analog; return the current string
 						// but keep the buffer the same
 						maintainBuffer = true;
 						return false;
-					case 0x1d: // ctrl+5, because of vim % shortcut
-						justHitTab = false;
+					case '5': // ctrl+5, because of vim % shortcut
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						justHitTab = justKilled = false;
 						// FIXME: find matching delimiter
 					break;
 					// FIXME: emacs style keys
@@ -5145,80 +5262,100 @@ class LineGetter {
 					// FIXME: should be able to update the selection with shift+arrows as well as mouse
 					// if terminal emulator supports this, it can formally select it to the buffer for copy
 					// and sending to primary on X11 (do NOT do it on Windows though!!!)
+					case 'b':
+						if(ev.modifierState & ModifierState.alt)
+							wordBack();
+						else if(ev.modifierState & ModifierState.control)
+							charBack();
+						else
+							goto default;
+						justHitTab = justKilled = false;
+						redraw();
+					break;
+					case 'f':
+						if(ev.modifierState & ModifierState.alt)
+							wordForward();
+						else if(ev.modifierState & ModifierState.control)
+							charForward();
+						else
+							goto default;
+						justHitTab = justKilled = false;
+						redraw();
+					break;
 					case KeyboardEvent.Key.LeftArrow:
-						justHitTab = false;
-						if(cursorPosition)
-							cursorPosition--;
-						if(ev.modifierState & ModifierState.control) {
-							while(cursorPosition && line[cursorPosition - 1] != ' ')
-								cursorPosition--;
-						}
-						aligned(cursorPosition, -1);
-
-						if(cursorPosition < horizontalScrollPosition)
-							positionCursor();
+						justHitTab = justKilled = false;
+						if(ev.modifierState & ModifierState.control)
+							wordBack();
+						else if(cursorPosition)
+							charBack();
 
 						redraw();
 					break;
 					case KeyboardEvent.Key.RightArrow:
-						justHitTab = false;
-						if(cursorPosition < line.length)
-							cursorPosition++;
-
-						if(ev.modifierState & ModifierState.control) {
-							while(cursorPosition + 1 < line.length && line[cursorPosition + 1] != ' ')
-								cursorPosition++;
-							cursorPosition += 2;
-							if(cursorPosition > line.length)
-								cursorPosition = cast(int) line.length;
-						}
-						aligned(cursorPosition, 1);
-
-						if(cursorPosition > horizontalScrollPosition + availableLineLength())
-							positionCursor();
-
+						justHitTab = justKilled = false;
+						if(ev.modifierState & ModifierState.control)
+							wordForward();
+						else
+							charForward();
 						redraw();
 					break;
+					case 'p':
+						if(ev.modifierState & ModifierState.control)
+							goto case;
+						goto default;
 					case KeyboardEvent.Key.UpArrow:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						loadFromHistory(currentHistoryViewPosition + 1);
 						redraw();
 					break;
+					case 'n':
+						if(ev.modifierState & ModifierState.control)
+							goto case;
+						goto default;
 					case KeyboardEvent.Key.DownArrow:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						loadFromHistory(currentHistoryViewPosition - 1);
 						redraw();
 					break;
 					case KeyboardEvent.Key.PageUp:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						loadFromHistory(cast(int) history.length);
 						redraw();
 					break;
 					case KeyboardEvent.Key.PageDown:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						loadFromHistory(0);
 						redraw();
 					break;
-					case 1: // ctrl+a does home too in the emacs keybindings
+					case 'a':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
 					case KeyboardEvent.Key.Home:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						cursorPosition = 0;
 						horizontalScrollPosition = 0;
 						redraw();
 					break;
-					case 5: // ctrl+e from emacs
+					case 'e':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
 					case KeyboardEvent.Key.End:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						cursorPosition = cast(int) line.length;
 						scrollToEnd();
 						redraw();
 					break;
-					case ('v' - 'a' + 1):
+					case 'v':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						justKilled = false;
 						if(rtti)
 							rtti.requestPasteFromClipboard();
 					break;
 					case KeyboardEvent.Key.Insert:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						if(ev.modifierState & ModifierState.shift) {
 							// paste
 
@@ -5243,19 +5380,41 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.Delete:
 						justHitTab = false;
-						if(ev.modifierState & ModifierState.control)
+						if(ev.modifierState & ModifierState.control) {
 							deleteToEndOfLine();
-						else
+							justKilled = true;
+						} else {
 							deleteChar();
+							justKilled = false;
+						}
 						redraw();
 					break;
-					case 11: // ctrl+k is delete to end of line from emacs
-						justHitTab = false;
+					case 'k':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
 						deleteToEndOfLine();
+						justHitTab = false;
+						justKilled = true;
+						redraw();
+					break;
+					case 'w':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						killWord();
+						justHitTab = false;
+						justKilled = true;
+						redraw();
+					break;
+					case 'y':
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						justHitTab = justKilled = false;
+						foreach(c; killBuffer)
+							addChar(c);
 						redraw();
 					break;
 					default:
-						justHitTab = false;
+						justHitTab = justKilled = false;
 						if(e.keyboardEvent.isCharacter)
 							addChar(ch);
 						redraw();
