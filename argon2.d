@@ -69,10 +69,15 @@ string encode(string password, SecurityParameters params = MediumSecurity) {
 		auto ret = read(fd, salt.ptr, salt.length);
 		assert(ret == salt.length);
 		close(fd);
+	}} else version(Windows) {{
+		// https://docs.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgenrandom
+		static assert(0);
 	}} else {
 		import std.random;
 		foreach(ref s; salt)
 			s = cast(ubyte) uniform(0, 256);
+
+		static assert(0, "csrng not implemented");
 	}
 
 	auto ret = argon2id_hash_encoded(

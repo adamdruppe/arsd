@@ -559,6 +559,13 @@ class TerminalEmulator {
 			return true;
 		}
 
+		/*
+			So ctrl + A-Z, [, \, ], ^, and _ are all chars 1-31
+			ctrl+5 send ^]
+
+			FIXME: for alt+keys and the other ctrl+them, send the xterm ascii magc thing terminal.d knows how to use
+		*/
+
 		// scrollback controls. Unlike xterm, I only want to do this on the normal screen, since alt screen
 		// doesn't have scrollback anyway. Thus the key will be forwarded to the application.
 		if((!alternateScreenActive || scrollingBack) && key == TerminalKey.PageUp && (shift || scrollLock)) {
@@ -1552,6 +1559,8 @@ class TerminalEmulator {
 		normalScreen.length = screenWidth * screenHeight;
 		alternateScreen.length = screenWidth * screenHeight;
 		scrollZoneBottom = screenHeight - 1;
+		if(scrollZoneTop < 0 || scrollZoneTop >= scrollZoneBottom)
+			scrollZoneTop = 0;
 
 		// we need to make sure the state is sane all across the board, so first we'll clear everything...
 		TerminalCell plain;
@@ -1993,10 +2002,10 @@ class TerminalEmulator {
 							break;
 						alternateScreen[idx .. idx + screenWidth] = alternateScreen[idx + screenWidth .. idx + screenWidth * 2];
 					} else {
+						if(screenWidth <= 0)
+							break;
 						if(idx + screenWidth * 2 > normalScreen.length)
 							break;
-						// range violation in apt on debian
-						// FIXME
 						normalScreen[idx .. idx + screenWidth] = normalScreen[idx + screenWidth .. idx + screenWidth * 2];
 					}
 					idx += screenWidth;
@@ -2694,6 +2703,11 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// FIXME: these are supposed to be per-buffer
 							scrollZoneTop = args[0] - 1;
 							scrollZoneBottom = args[1] - 1;
+
+							if(scrollZoneTop < 0)
+								scrollZoneTop = 0;
+							if(scrollZoneBottom > screenHeight)
+								scrollZoneBottom = screenHeight - 1;
 						} else {
 							// restore... something FIXME
 						}
@@ -4032,11 +4046,12 @@ mixin template SdpyDraw() {
 
 	void loadDefaultFont(int size = 14) {
 		static if(UsingSimpledisplayX11) {
-			font = new OperatingSystemFont("fixed", size, FontWeight.medium);
+			font = new OperatingSystemFont("core:fixed", size, FontWeight.medium);
+			//font = new OperatingSystemFont("monospace", size, FontWeight.medium);
 			if(font.isNull) {
 				// didn't work, it is using a
 				// fallback, prolly fixed-13 is best
-				font = new OperatingSystemFont("fixed", 13, FontWeight.medium);
+				font = new OperatingSystemFont("core:fixed", 13, FontWeight.medium);
 			}
 		} else version(Windows) {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
@@ -4046,7 +4061,6 @@ mixin template SdpyDraw() {
 			// no way to really tell... just guess so it doesn't crash but like eeek.
 			fontWidth = size / 2;
 			fontHeight = size;
-
 		} else {
 			fontWidth = font.averageWidth;
 			fontHeight = font.height;

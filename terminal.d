@@ -2657,8 +2657,11 @@ struct RealTimeConsoleInput {
 				terminal.tew.terminalEmulator.pendingForApplication = terminal.tew.terminalEmulator.pendingForApplication[1 .. $];
 				return a;
 			}
-		} else
-			return nextRaw_impl(interruptable);
+		} else {
+			auto got = nextRaw_impl(interruptable);
+			// import std.stdio; writeln(cast(int) got);
+			return got;
+		}
 	}
 	private int nextRaw_impl(bool interruptable = false) {
 		version(Posix) {
@@ -2838,8 +2841,8 @@ struct RealTimeConsoleInput {
 
 		INPUT_RECORD[32] buffer;
 		DWORD actuallyRead;
-			// FIXME: ReadConsoleInputW
 		auto success = ReadConsoleInputW(inputHandle, buffer.ptr, buffer.length, &actuallyRead);
+		import std.stdio; writeln(buffer[0 .. actuallyRead][0].KeyEvent, cast(int) buffer[0].KeyEvent.UnicodeChar);
 		if(success == 0)
 			throw new Exception("ReadConsoleInput");
 
@@ -2864,6 +2867,13 @@ struct RealTimeConsoleInput {
 					} else {
 						if(!(flags & ConsoleInputFlags.releasedKeys) && !ev.bKeyDown)
 							break;
+					}
+
+					if(ev.UnicodeChar == 0 && ev.wVirtualKeyCode == VK_SPACE && ev.bKeyDown == 1) {
+						ke.which = 0;
+						ke.modifierState = ev.dwControlKeyState;
+						newEvents ~= InputEvent(ke, terminal);
+						continue;
 					}
 
 					e.eventType = ke.pressed ? CharacterEvent.Type.Pressed : CharacterEvent.Type.Released;
@@ -3293,9 +3303,13 @@ struct RealTimeConsoleInput {
 
 						uint modifierState;
 
+						int keyGot;
+
 						int modGot;
 						if(parts.length > 1)
 							modGot = to!int(parts[1]);
+						if(parts.length > 2)
+							keyGot = to!int(parts[2]);
 						mod_switch: switch(modGot) {
 							case 2: modifierState |= ModifierState.shift; break;
 							case 3: modifierState |= ModifierState.alt; break;
@@ -3356,6 +3370,9 @@ struct RealTimeConsoleInput {
 									case "23": return keyPressAndRelease(NonCharacterKeyEvent.Key.F11, modifierState);
 									case "24": return keyPressAndRelease(NonCharacterKeyEvent.Key.F12, modifierState);
 
+									// xterm extension for arbitrary keys with arbitrary modifiers
+									case "27": return keyPressAndRelease2(keyGot, modifierState);
+
 									// starting at 70 i do some magic for like shift+enter etc.
 									// this only happens on my own terminal emulator.
 									case "70": return keyPressAndRelease(NonCharacterKeyEvent.Key.ScrollLock, modifierState);
@@ -3397,8 +3414,9 @@ struct RealTimeConsoleInput {
 		auto c = remainingFromLastTime == int.max ? nextRaw(true) : remainingFromLastTime;
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
-		if(c == 0)
-			return [InputEvent(EndOfFileEvent(), terminal)];
+		// this conflicted with ctrl+space idk why it was ever there tbh
+		//if(c == 0)
+			//return [InputEvent(EndOfFileEvent(), terminal)];
 		if(c == '\033') {
 			if(timedCheckForInput_bypassingBuffer(50)) {
 				// escape sequence
@@ -3443,7 +3461,17 @@ struct RealTimeConsoleInput {
 	}
 }
 
-/// The new style of keyboard event
+/++
+	The new style of keyboard event
+
+	Worth noting some special cases terminals tend to do:
+
+	$(LIST
+		* Ctrl+space bar sends char 0.
+		* Ctrl+ascii characters send char 1 - 26 as chars on all systems.
+		* Other modifier+key combinations may send random other things or not be detected as it is configuration-specific with no way to detect. It is reasonably reliable for the non-character keys (arrows, F1-F12, Home/End, etc.) but not perfectly so. Some systems just don't send them.
+	)
++/
 struct KeyboardEvent {
 	bool pressed; ///
 	dchar which; ///
@@ -5110,6 +5138,13 @@ class LineGetter {
 						justHitTab = false;
 						// FIXME: find matching delimiter
 					break;
+					// FIXME: emacs style keys
+					//  alt-f/b navigates by word. ctrl-f/b navigates by char. history storing original pastes as blocks.
+
+					// FIXME: on tab complete let it filter by prefix
+					// FIXME: should be able to update the selection with shift+arrows as well as mouse
+					// if terminal emulator supports this, it can formally select it to the buffer for copy
+					// and sending to primary on X11 (do NOT do it on Windows though!!!)
 					case KeyboardEvent.Key.LeftArrow:
 						justHitTab = false;
 						if(cursorPosition)
@@ -6276,9 +6311,7 @@ version(TerminalDirectToEmulator) {
 					}, fds[0]);
 
 					readFd = fds[0];
-				}
-
-				version(Windows) {
+				} else version(CRuntime_Microsoft) {
 
 					CHAR[MAX_PATH] PipeNameBuffer;
 
@@ -6335,7 +6368,7 @@ version(TerminalDirectToEmulator) {
 					}
 
 					WindowsRead(0, 0, this.overlapped);
-				}
+				} else throw new Exception("pipeThroughStdOut not supported on this system currently. Use -m32mscoff instead.");
 			}
 		}
 
@@ -6765,8 +6798,10 @@ version(TerminalDirectToEmulator) {
 
 			if(integratedTerminalEmulatorConfiguration.fontName.length) {
 				this.font = new OperatingSystemFont(integratedTerminalEmulatorConfiguration.fontName, integratedTerminalEmulatorConfiguration.fontSize, FontWeight.medium);
-				this.fontWidth = font.averageWidth;
-				this.fontHeight = font.height;
+				if(!this.font.isNull) {
+					this.fontWidth = font.averageWidth;
+					this.fontHeight = font.height;
+				}
 			}
 
 
@@ -6944,8 +6979,10 @@ private version(Windows) {
 		LPSECURITY_ATTRIBUTES lpSecurityAttributes
 	);
 
-	extern(C) int _dup2(int, int);
-	extern(C) int _fileno(FILE*);
+	version(CRuntime_Microsoft) {
+		extern(C) int _dup2(int, int);
+		extern(C) int _fileno(FILE*);
+	}
 }
 
 

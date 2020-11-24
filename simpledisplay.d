@@ -1119,6 +1119,10 @@ version(FreeBSD)
 version(Solaris)
 	version = X11;
 
+version(X11) {
+	version(without_xft) {}
+	else version=with_xft;
+}
 
 void featureNotImplemented()() {
 	version(allow_unimplemented_features)
@@ -5943,9 +5947,9 @@ version(without_opengl) {
 			}
 
 			version(OSX)
-			mixin DynamicLoad!(GLX, "GL", true) glx;
+			mixin DynamicLoad!(GLX, "GL", 0, true) glx;
 			else
-			mixin DynamicLoad!(GLX, "GLX", true) glx;
+			mixin DynamicLoad!(GLX, "GLX", 0, true) glx;
 			shared static this() {
 				glx.loadDynamicLibrary();
 			}
@@ -5972,7 +5976,7 @@ enum Resizability {
 
 
 /++
-	Alignment for $(ScreenPainter.drawText). Left, Center, or Right may be combined with VerticalTop, VerticalCenter, or VerticalBottom via bitwise or.
+	Alignment for [ScreenPainter.drawText]. Left, Center, or Right may be combined with VerticalTop, VerticalCenter, or VerticalBottom via bitwise or.
 +/
 enum TextAlignment : uint {
 	Left = 0, ///
@@ -6901,10 +6905,17 @@ enum FontWeight : int {
 	for your system.
 +/
 class OperatingSystemFont {
+	// FIXME: when the X Connection is lost, these need to be invalidated!
+	// that means I need to store the original stuff again to reconstruct it too.
 
 	version(X11) {
 		XFontStruct* font;
 		XFontSet fontset;
+
+		version(with_xft) {
+			XftFont* xftFont;
+			bool isXft;
+		}
 	} else version(Windows) {
 		HFONT font;
 		int width_;
@@ -6913,67 +6924,183 @@ class OperatingSystemFont {
 		// FIXME
 	} else static assert(0);
 
-	///
+	/++
+		Constructs the class and immediately calls [load].
+	+/
 	this(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
 		load(name, size, weight, italic);
 	}
 
-	///
-	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+	/++
+		Loads specifically with the Xft library - a freetype font from a fontconfig string.
+
+		History:
+			Added November 13, 2020.
+	+/
+	version(with_xft)
+	bool loadXft(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
 		unload();
-		version(X11) {
-			string weightstr;
-			with(FontWeight)
-			final switch(weight) {
-				case dontcare: weightstr = "*"; break;
-				case thin: weightstr = "extralight"; break;
-				case extralight: weightstr = "extralight"; break;
-				case light: weightstr = "light"; break;
-				case regular: weightstr = "regular"; break;
-				case medium: weightstr = "medium"; break;
-				case semibold: weightstr = "demibold"; break;
-				case bold: weightstr = "bold"; break;
-				case extrabold: weightstr = "demibold"; break;
-				case heavy: weightstr = "black"; break;
-			}
+
+		if(!XftLibrary.attempted) {
+			XftLibrary.loadDynamicLibrary();
+		}
+
+		if(!XftLibrary.loadSuccessful)
+			return loadCoreX(name, size, weight, italic);
+
+		auto display = XDisplayConnection.get;
+
+		char[256] nameBuffer = void;
+		int nbp = 0;
+
+		void add(in char[] a) {
+			nameBuffer[nbp .. nbp + a.length] = a[];
+			nbp += a.length;
+		}
+		add(name);
+
+		if(size) {
+			add(":size=");
+			add(toInternal!string(size));
+		}
+		if(weight != FontWeight.dontcare) {
+			add(":weight=");
+			add(weightToString(weight));
+		}
+		if(italic)
+			add(":slant=100");
+
+		nameBuffer[nbp] = 0;
+
+		this.xftFont = XftFontOpenName(
+			display,
+			DefaultScreen(display),
+			nameBuffer.ptr
+		);
+
+		this.isXft = true;
+
+		return !isNull();
+	}
+
+	private string weightToString(FontWeight weight) {
+		with(FontWeight)
+		final switch(weight) {
+			case dontcare: return "*";
+			case thin: return "extralight";
+			case extralight: return "extralight";
+			case light: return "light";
+			case regular: return "regular";
+			case medium: return "medium";
+			case semibold: return "demibold";
+			case bold: return "bold";
+			case extrabold: return "demibold";
+			case heavy: return "black";
+		}
+	}
+
+	/++
+		Loads specifically a Core X font - rendered on the X server without antialiasing. Best performance.
+
+		History:
+			Added November 13, 2020. Before then, this code was integrated in the [load] function.
+	+/
+	version(X11)
+	bool loadCoreX(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		unload();
+
+		string xfontstr;
+
+		if(name.length > 3 && name[0 .. 3] == "-*-") {
+			// this is kinda a disgusting hack but if the user sends an exact
+			// string I'd like to honor it...
+			xfontstr = name;
+		} else {
+			string weightstr = weightToString(weight);
 			string sizestr;
 			if(size == 0)
 				sizestr = "*";
-			else if(size < 10)
-				sizestr = "" ~ cast(char)(size % 10 + '0');
 			else
-				sizestr = "" ~ cast(char)(size / 10 + '0') ~ cast(char)(size % 10 + '0');
-			auto xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*\0";
+				sizestr = toInternal!string(size);
+			xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*\0";
+		}
 
-			//import std.stdio; writeln(xfontstr);
+		//import std.stdio; writeln(xfontstr);
 
-			auto display = XDisplayConnection.get;
+		auto display = XDisplayConnection.get;
 
-			font = XLoadQueryFont(display, xfontstr.ptr);
-			if(font is null)
-				return false;
+		font = XLoadQueryFont(display, xfontstr.ptr);
+		if(font is null)
+			return false;
 
-			char** lol;
-			int lol2;
-			char* lol3;
-			fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
-		} else version(Windows) {
-			WCharzBuffer buffer = WCharzBuffer(name);
-			font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
-
-			TEXTMETRIC tm;
-			auto dc = GetDC(null);
-			SelectObject(dc, font);
-			GetTextMetrics(dc, &tm);
-			ReleaseDC(null, dc);
-
-			width_ = tm.tmAveCharWidth;
-			height_ = tm.tmHeight;
-		} else version(OSXCocoa) {
-			// FIXME
-		} else static assert(0);
+		char** lol;
+		int lol2;
+		char* lol3;
+		fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
 		return !isNull();
+	}
+
+	/++
+		Loads a Windows font. You probably want to use [load] instead to be more generic.
+
+		History:
+			Added November 13, 2020. Before then, this code was integrated in the [load] function.
+	+/
+	version(Windows)
+	bool loadWin32(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		unload();
+
+		WCharzBuffer buffer = WCharzBuffer(name);
+		font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
+
+		TEXTMETRIC tm;
+		auto dc = GetDC(null);
+		SelectObject(dc, font);
+		GetTextMetrics(dc, &tm);
+		ReleaseDC(null, dc);
+
+		width_ = tm.tmAveCharWidth;
+		height_ = tm.tmHeight;
+
+		return !isNull();
+	}
+
+
+	/++
+		`name` is a font name, but it can also be a more complicated string parsed in an OS-specific way.
+
+		On X, you may prefix a name with `core:` to bypass the freetype engine and call [loadCoreX]. Otherwise,
+		it calls [loadXft] if the library is available. If the library is not available, it falls back on [loadCoreX].
+
+		On Windows, it forwards directly to [loadWin32].
+
+		History:
+			Xft support was added on November 13, 2020. It would only load core fonts.
+	+/
+	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		version(X11) {
+			version(with_xft) {
+				if(name.length > 5 && name[0 .. 5] == "core:") {
+					goto core;
+				}
+
+				return loadXft(name, size, weight, italic);
+			}
+
+			core:
+
+			if(name.length > 5 && name[0 .. 5] == "core:") {
+				name = name[5 .. $];
+			}
+
+			return loadCoreX(name, size, weight, italic);
+		} else version(Windows) {
+			return loadWin32(name, size, weight, italic);
+		} else version(OSXCocoa) {
+			// FIXME
+			return false;
+		} else static assert(0);
 	}
 
 	///
@@ -6986,6 +7113,16 @@ class OperatingSystemFont {
 
 			if(display is null)
 				return;
+
+			version(with_xft) {
+				if(isXft) {
+					if(xftFont)
+						XftFontClose(display, xftFont);
+					isXft = false;
+					xftFont = null;
+					return;
+				}
+			}
 
 			if(font)
 				XFreeFont(display, font);
@@ -7006,6 +7143,14 @@ class OperatingSystemFont {
 	// added March 26, 2020
 	int averageWidth() {
 		version(X11) {
+			version(with_xft)
+				if(isXft && xftFont !is null) {
+					//return xftFont.max_advance_width;
+					XGlyphInfo extents;
+					XftTextExtentsUtf8(XDisplayConnection.get, xftFont, "M", 1, &extents);
+					//import std.stdio; writeln(extents);
+					return extents.xOff;
+				}
 			if(font is null)
 				return 0;
 			else
@@ -7018,9 +7163,14 @@ class OperatingSystemFont {
 	// Assuming monospace!!!!!
 	// added March 26, 2020
 	int height() {
-		version(X11)
+		version(X11) {
+			version(with_xft)
+				if(isXft && xftFont !is null)
+					return xftFont.height;
+			if(font is null)
+				return 0;
 			return font.max_bounds.ascent + font.max_bounds.descent;
-		else version(Windows)
+		} else version(Windows)
 			return height_;
 		else assert(0);
 	}
@@ -7032,8 +7182,12 @@ class OperatingSystemFont {
 
 	///
 	bool isNull() {
-		version(OSXCocoa) throw new NotYetImplementedException(); else
-		return font is null;
+		version(OSXCocoa) throw new NotYetImplementedException(); else {
+			version(with_xft)
+				if(isXft)
+					return xftFont is null;
+			return font is null;
+		}
 	}
 
 	/* Metrics */
@@ -7055,6 +7209,7 @@ class OperatingSystemFont {
 		Rectangle boundingBox;
 	}
 	GlyphInfo[] getCharBoxes() {
+		// XftTextExtentsUtf8
 		return null;
 
 	}
@@ -7655,6 +7810,114 @@ class Sprite : CapableOfBeingDrawnUpon {
 	else version(OSXCocoa)
 		CGContextRef context;
 	else static assert(0);
+}
+
+/++
+	A display-stored image optimized for relatively quick drawing, like
+	[Sprite], but this one supports alpha channel blending and does NOT
+	support direct drawing upon it with a [ScreenPainter].
+
+	You can think of it as an [arsd.game.OpenGlTexture] for usage with a
+	plain [ScreenPainter]... sort of.
+
+	On X11, it requires the Xrender extension and library. This is available
+	almost everywhere though.
+
+	History:
+		Added November 14, 2020.
++/
+version(none)
+class AlphaSprite {
+	/++
+		Copies the given image into it.
+	+/
+	this(MemoryImage img) {
+
+		if(!XRenderLibrary.loadAttempted) {
+			XRenderLibrary.loadDynamicLibrary();
+
+			// FIXME: this needs to be reconstructed when the X server changes
+			repopulateX();
+		}
+		if(!XRenderLibrary.loadSuccessful)
+			throw new Exception("XRender library load failure");
+
+		// I probably need to put the alpha mask in a separate Picture
+		// ugh
+		// maybe the Sprite itself can have an alpha bitmask anyway
+
+
+		auto display = XDisplayConnection.get();
+		pixmap = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
+
+
+		XRenderPictureAttributes attrs;
+
+		handle = XRenderCreatePicture(
+			XDisplayConnection.get,
+			pixmap,
+			RGBA,
+			0,
+			&attrs
+		);
+
+	}
+
+	// maybe i'll use the create gradient functions too with static factories..
+
+	void drawAt(ScreenPainter painter, Point where) {
+		//painter.drawPixmap(this, where);
+
+		XRenderPictureAttributes attrs;
+
+		auto pic = XRenderCreatePicture(
+			XDisplayConnection.get,
+			painter.impl.d,
+			RGB,
+			0,
+			&attrs
+		);
+
+		XRenderComposite(
+			XDisplayConnection.get,
+			3, // PictOpOver
+			handle,
+			None,
+			pic,
+			0, // src
+			0,
+			0, // mask
+			0,
+			10, // dest
+			10,
+			100, // width
+			100
+		);
+
+		/+
+		XRenderFreePicture(
+			XDisplayConnection.get,
+			pic
+		);
+
+		XRenderFreePicture(
+			XDisplayConnection.get,
+			fill
+		);
+		+/
+		// on Windows you can stretch but Xrender still can't :(
+	}
+
+	static XRenderPictFormat* RGB;
+	static XRenderPictFormat* RGBA;
+	static void repopulateX() {
+		auto display = XDisplayConnection.get;
+		RGB  = XRenderFindStandardFormat(display, PictStandardRGB24);
+		RGBA = XRenderFindStandardFormat(display, PictStandardARGB24);
+	}
+
+	XPixmap pixmap;
+	Picture handle;
 }
 
 ///
@@ -8745,7 +9008,7 @@ version(Windows) {
 
 			GetObject(s.handle, bm.sizeof, &bm);
 
-			// or should I AlphaBlend!??!?!
+			// or should I AlphaBlend!??!?! note it is supposed to be premultiplied  http://www.fengyuan.com/article/alphablend.html
 			BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
@@ -9725,8 +9988,52 @@ version(X11) {
 			}
 		}
 
+		version(with_xft) {
+			XftFont* xftFont;
+			XftDraw* xftDraw;
+
+			XftColor xftColor;
+
+			void updateXftColor() {
+				if(xftFont is null)
+					return;
+
+				// not bothering with XftColorFree since p sure i don't need it on 24 bit displays....
+				XRenderColor colorIn = XRenderColor(_outlineColor.r * 255, _outlineColor.g * 255, _outlineColor.b * 255, _outlineColor.a * 255);
+
+				XftColorAllocValue(
+					display,
+					DefaultVisual(display, DefaultScreen(display)),
+					DefaultColormap(display, 0),
+					&colorIn,
+					&xftColor
+				);
+			}
+		}
 
 		void setFont(OperatingSystemFont font) {
+			version(with_xft) {
+				if(font && font.isXft && font.xftFont)
+					this.xftFont = font.xftFont;
+				else
+					this.xftFont = null;
+
+				if(this.xftFont) {
+					if(xftDraw is null) {
+						xftDraw = XftDrawCreate(
+							display,
+							d,
+							DefaultVisual(display, DefaultScreen(display)),
+							DefaultColormap(display, 0)
+						);
+
+						updateXftColor();
+					}
+
+					return;
+				}
+			}
+
 			if(font && font.font) {
 				this.font = font.font;
 				this.fontset = font.fontset;
@@ -9750,6 +10057,12 @@ version(X11) {
 			}
 
 			XFreeGC(display, gc);
+
+			version(with_xft)
+			if(xftDraw) {
+				XftDrawDestroy(xftDraw);
+				xftDraw = null;
+			}
 
 			version(none) // we don't want to free it because we can use it later
 			if(font)
@@ -9810,6 +10123,9 @@ version(X11) {
 			foregroundIsNotTransparent = true;
 
 			XSetForeground(display, gc, colorToX(p.color, display));
+
+			version(with_xft)
+				updateXftColor();
 		}
 
 		RasterOp _currentRasterOp;
@@ -9909,9 +10225,29 @@ version(X11) {
 		}
 
 		int fontHeight() {
+			version(with_xft)
+				if(xftFont !is null)
+					return xftFont.height;
 			if(font)
 				return font.max_bounds.ascent + font.max_bounds.descent;
 			return 12; // pretty common default...
+		}
+
+		int textWidth(in char[] line) {
+			version(with_xft)
+			if(xftFont) {
+				if(line.length == 0)
+					return 0;
+				XGlyphInfo extents;
+				XftTextExtentsUtf8(display, xftFont, line.ptr, cast(int) line.length, &extents);
+				return extents.width;
+			}
+
+			if(font)
+				// FIXME: unicode
+				return XTextWidth( font, line.ptr, cast(int) line.length);
+			else
+				return fontHeight / 2 * cast(int) line.length; // if no font is loaded, it is prolly Fixed, which is a 2:1 ratio
 		}
 
 		Size textSize(in char[] text) {
@@ -9919,13 +10255,7 @@ version(X11) {
 			auto lineHeight = fontHeight;
 			int h = text.length ? 0 : lineHeight + 4; // if text is empty, it still gives the line height
 			foreach(line; text.split('\n')) {
-				int textWidth;
-				if(font)
-					// FIXME: unicode
-					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
-				else
-					textWidth = fontHeight / 2 * cast(int) line.length; // if no font is loaded, it is prolly Fixed, which is a 2:1 ratio
-
+				int textWidth = this.textWidth(line);
 				if(textWidth > maxWidth)
 					maxWidth = textWidth;
 				h += lineHeight + 4;
@@ -9934,8 +10264,13 @@ version(X11) {
 		}
 
 		void drawText(in int x, in int y, in int x2, in int y2, in char[] originalText, in uint alignment) {
-			// FIXME: we should actually draw unicode.. but until then, I'm going to strip out multibyte chars
 			const(char)[] text;
+			version(with_xft)
+			if(xftFont) {
+				text = originalText;
+				goto loaded;
+			}
+
 			if(fontset)
 				text = originalText;
 			else {
@@ -9948,21 +10283,16 @@ version(X11) {
 					else
 						text ~= 191; // FIXME: using a random character to fill the space
 			}
+			loaded:
 			if(text.length == 0)
 				return;
 
-
-			int textHeight = 12;
-
 			// FIXME: should we clip it to the bounding box?
-
-			if(font) {
-				textHeight = font.max_bounds.ascent + font.max_bounds.descent;
-			}
+			int textHeight = fontHeight;
 
 			auto lines = text.split('\n');
 
-			auto lineHeight = textHeight;
+			const lineHeight = textHeight;
 			textHeight *= lines.length;
 
 			int cy = y;
@@ -9984,12 +10314,7 @@ version(X11) {
 			}
 
 			foreach(line; text.split('\n')) {
-				int textWidth;
-				if(font)
-					// FIXME: unicode
-					textWidth = XTextWidth( font, line.ptr, cast(int) line.length);
-				else
-					textWidth = 12 * cast(int) line.length;
+				int textWidth = this.textWidth(line);
 
 				int px = x, py = cy;
 
@@ -10005,11 +10330,19 @@ version(X11) {
 						px = pos;
 				}
 
+				version(with_xft)
+				if(xftFont) {
+					XftDrawStringUtf8(xftDraw, &xftColor, xftFont, px, py + xftFont.ascent, line.ptr, cast(int) line.length);
+
+					goto carry_on;
+				}
+
 				if(fontset)
 					Xutf8DrawString(display, d, fontset, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
 
 				else
 					XDrawString(display, d, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
+				carry_on:
 				cy += lineHeight + 4;
 			}
 		}
@@ -10074,6 +10407,754 @@ version(X11) {
 			}
 		}
 	}
+
+	/* XRender { */
+
+	struct XRenderColor {
+		ushort red;
+		ushort green;
+		ushort blue;
+		ushort alpha;
+	}
+
+	alias Picture = XID;
+	alias PictFormat = XID;
+
+	struct XGlyphInfo {
+		ushort width;
+		ushort height;
+		short x;
+		short y;
+		short xOff;
+		short yOff;
+	}
+
+struct XRenderDirectFormat {
+    short   red;
+    short   redMask;
+    short   green;
+    short   greenMask;
+    short   blue;
+    short   blueMask;
+    short   alpha;
+    short   alphaMask;
+}
+
+struct XRenderPictFormat {
+    PictFormat		id;
+    int			type;
+    int			depth;
+    XRenderDirectFormat	direct;
+    Colormap		colormap;
+}
+
+enum PictFormatID	=   (1 << 0);
+enum PictFormatType	=   (1 << 1);
+enum PictFormatDepth	=   (1 << 2);
+enum PictFormatRed	=   (1 << 3);
+enum PictFormatRedMask  =(1 << 4);
+enum PictFormatGreen	=   (1 << 5);
+enum PictFormatGreenMask=(1 << 6);
+enum PictFormatBlue	=   (1 << 7);
+enum PictFormatBlueMask =(1 << 8);
+enum PictFormatAlpha	=   (1 << 9);
+enum PictFormatAlphaMask=(1 << 10);
+enum PictFormatColormap =(1 << 11);
+
+struct XRenderPictureAttributes {
+	int 		repeat;
+	Picture		alpha_map;
+	int			alpha_x_origin;
+	int			alpha_y_origin;
+	int			clip_x_origin;
+	int			clip_y_origin;
+	Pixmap		clip_mask;
+	Bool		graphics_exposures;
+	int			subwindow_mode;
+	int			poly_edge;
+	int			poly_mode;
+	Atom		dither;
+	Bool		component_alpha;
+}
+
+alias int XFixed;
+
+struct XPointFixed {
+    XFixed  x, y;
+}
+
+struct XCircle {
+    XFixed x;
+    XFixed y;
+    XFixed radius;
+}
+
+struct XTransform {
+    XFixed[3][3]  matrix;
+}
+
+struct XFilters {
+    int	    nfilter;
+    char    **filter;
+    int	    nalias;
+    short   *alias_;
+}
+
+struct XIndexValue {
+    c_ulong    pixel;
+    ushort   red, green, blue, alpha;
+}
+
+struct XAnimCursor {
+    Cursor	    cursor;
+    c_ulong   delay;
+}
+
+struct XLinearGradient {
+    XPointFixed p1;
+    XPointFixed p2;
+}
+
+struct XRadialGradient {
+    XCircle inner;
+    XCircle outer;
+}
+
+struct XConicalGradient {
+    XPointFixed center;
+    XFixed angle; /* in degrees */
+}
+
+enum PictStandardARGB32  = 0;
+enum PictStandardRGB24   = 1;
+enum PictStandardA8	 =  2;
+enum PictStandardA4	 =  3;
+enum PictStandardA1	 =  4;
+enum PictStandardNUM	 =  5;
+
+interface XRender {
+extern(C) @nogc:
+
+	Bool XRenderQueryExtension (Display *dpy, int *event_basep, int *error_basep);
+
+	Status XRenderQueryVersion (Display *dpy,
+			int     *major_versionp,
+			int     *minor_versionp);
+
+	Status XRenderQueryFormats (Display *dpy);
+
+	int XRenderQuerySubpixelOrder (Display *dpy, int screen);
+
+	Bool XRenderSetSubpixelOrder (Display *dpy, int screen, int subpixel);
+
+	XRenderPictFormat *
+		XRenderFindVisualFormat (Display *dpy, const Visual *visual);
+
+	XRenderPictFormat *
+		XRenderFindFormat (Display			*dpy,
+				c_ulong		mask,
+				const XRenderPictFormat	*templ,
+				int				count);
+	XRenderPictFormat *
+		XRenderFindStandardFormat (Display		*dpy,
+				int			format);
+
+	XIndexValue *
+		XRenderQueryPictIndexValues(Display			*dpy,
+				const XRenderPictFormat	*format,
+				int				*num);
+
+	Picture XRenderCreatePicture(
+		Display *dpy,
+		Drawable drawable,
+		const XRenderPictFormat *format,
+		c_ulong valuemask,
+		const XRenderPictureAttributes *attributes);
+
+	void XRenderChangePicture (Display				*dpy,
+				Picture				picture,
+				c_ulong			valuemask,
+				const XRenderPictureAttributes  *attributes);
+
+	void
+		XRenderSetPictureClipRectangles (Display	    *dpy,
+				Picture	    picture,
+				int		    xOrigin,
+				int		    yOrigin,
+				const XRectangle *rects,
+				int		    n);
+
+	void
+		XRenderSetPictureClipRegion (Display	    *dpy,
+				Picture	    picture,
+				Region	    r);
+
+	void
+		XRenderSetPictureTransform (Display	    *dpy,
+				Picture	    picture,
+				XTransform	    *transform);
+
+	void
+		XRenderFreePicture (Display                   *dpy,
+				Picture                   picture);
+
+	void
+		XRenderComposite (Display   *dpy,
+				int	    op,
+				Picture   src,
+				Picture   mask,
+				Picture   dst,
+				int	    src_x,
+				int	    src_y,
+				int	    mask_x,
+				int	    mask_y,
+				int	    dst_x,
+				int	    dst_y,
+				uint	width,
+				uint	height);
+
+
+	Picture XRenderCreateSolidFill (Display *dpy,
+			const XRenderColor *color);
+
+	Picture XRenderCreateLinearGradient (Display *dpy,
+			const XLinearGradient *gradient,
+			const XFixed *stops,
+			const XRenderColor *colors,
+			int nstops);
+
+	Picture XRenderCreateRadialGradient (Display *dpy,
+			const XRadialGradient *gradient,
+			const XFixed *stops,
+			const XRenderColor *colors,
+			int nstops);
+
+	Picture XRenderCreateConicalGradient (Display *dpy,
+			const XConicalGradient *gradient,
+			const XFixed *stops,
+			const XRenderColor *colors,
+			int nstops);
+
+
+
+	Cursor
+		XRenderCreateCursor (Display	    *dpy,
+				Picture	    source,
+				uint   x,
+				uint   y);
+
+	XFilters *
+		XRenderQueryFilters (Display *dpy, Drawable drawable);
+
+	void
+		XRenderSetPictureFilter (Display    *dpy,
+				Picture    picture,
+				const char *filter,
+				XFixed	    *params,
+				int	    nparams);
+
+	Cursor
+		XRenderCreateAnimCursor (Display	*dpy,
+				int		ncursor,
+				XAnimCursor	*cursors);
+}
+
+mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
+
+
+
+	/* XRender } */
+
+	/* Xft { */
+
+	// actually freetype
+	alias void FT_Face;
+
+	// actually fontconfig
+	private alias FcBool = int;
+	alias void FcCharSet;
+	alias void FcPattern;
+	alias void FcResult;
+	enum FcEndian { FcEndianBig, FcEndianLittle }
+	struct FcFontSet {
+		int nfont;
+		int sfont;
+		FcPattern** fonts;
+	}
+
+	// actually XRegion
+	struct BOX {
+		short x1, x2, y1, y2;
+	}
+	struct Region {
+		c_long size;
+		c_long numRects;
+		BOX* rects;
+		BOX extents;
+	}
+
+	// ok actually Xft
+
+	struct XftFontInfo;
+
+	struct XftFont {
+		int         ascent;
+		int         descent;
+		int         height;
+		int         max_advance_width;
+		FcCharSet*  charset;
+		FcPattern*  pattern;
+	}
+
+	struct XftDraw;
+
+	struct XftColor {
+		c_ulong pixel;
+		XRenderColor color;
+	}
+
+	struct XftCharSpec {
+		dchar           ucs4;
+		short           x;
+		short           y;
+	}
+
+	struct XftCharFontSpec {
+		XftFont         *font;
+		dchar           ucs4;
+		short           x;
+		short           y;
+	}
+
+	struct XftGlyphSpec {
+		uint            glyph;
+		short           x;
+		short           y;
+	}
+
+	struct XftGlyphFontSpec {
+		XftFont         *font;
+		uint            glyph;
+		short           x;
+		short           y;
+	}
+
+	interface Xft {
+	extern(C) @nogc pure:
+
+	Bool XftColorAllocName (Display  *dpy,
+				const Visual   *visual,
+				Colormap cmap,
+				const char     *name,
+				XftColor *result);
+
+	Bool XftColorAllocValue (Display         *dpy,
+				Visual          *visual,
+				Colormap        cmap,
+				const XRenderColor    *color,
+				XftColor        *result);
+
+	void XftColorFree (Display   *dpy,
+				Visual    *visual,
+				Colormap  cmap,
+				XftColor  *color);
+
+	Bool XftDefaultHasRender (Display *dpy);
+
+	Bool XftDefaultSet (Display *dpy, FcPattern *defaults);
+
+	void XftDefaultSubstitute (Display *dpy, int screen, FcPattern *pattern);
+
+	XftDraw * XftDrawCreate (Display   *dpy,
+		       Drawable  drawable,
+		       Visual    *visual,
+		       Colormap  colormap);
+
+	XftDraw * XftDrawCreateBitmap (Display  *dpy,
+			     Pixmap   bitmap);
+
+	XftDraw * XftDrawCreateAlpha (Display *dpy,
+			    Pixmap  pixmap,
+			    int     depth);
+
+	void XftDrawChange (XftDraw  *draw,
+		       Drawable drawable);
+
+	Display * XftDrawDisplay (XftDraw *draw);
+
+	Drawable XftDrawDrawable (XftDraw *draw);
+
+	Colormap XftDrawColormap (XftDraw *draw);
+
+	Visual * XftDrawVisual (XftDraw *draw);
+
+	void XftDrawDestroy (XftDraw *draw);
+
+	Picture XftDrawPicture (XftDraw *draw);
+
+	Picture XftDrawSrcPicture (XftDraw *draw, const XftColor *color);
+
+	void XftDrawGlyphs (XftDraw          *draw,
+				const XftColor *color,
+				XftFont          *pub,
+				int              x,
+				int              y,
+				const uint  *glyphs,
+				int              nglyphs);
+
+	void XftDrawString8 (XftDraw             *draw,
+				const XftColor    *color,
+				XftFont             *pub,
+				int                 x,
+				int                 y,
+				const char     *string,
+				int                 len);
+
+	void XftDrawString16 (XftDraw            *draw,
+				const XftColor   *color,
+				XftFont            *pub,
+				int                x,
+				int                y,
+				const wchar   *string,
+				int                len);
+
+	void XftDrawString32 (XftDraw            *draw,
+				const XftColor   *color,
+				XftFont            *pub,
+				int                x,
+				int                y,
+				const dchar   *string,
+				int                len);
+
+	void XftDrawStringUtf8 (XftDraw          *draw,
+				const XftColor *color,
+				XftFont          *pub,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+	void XftDrawStringUtf16 (XftDraw             *draw,
+				const XftColor    *color,
+				XftFont             *pub,
+				int                 x,
+				int                 y,
+				const char     *string,
+				FcEndian            endian,
+				int                 len);
+
+	void XftDrawCharSpec (XftDraw                *draw,
+				const XftColor       *color,
+				XftFont                *pub,
+				const XftCharSpec    *chars,
+				int                    len);
+
+	void XftDrawCharFontSpec (XftDraw                    *draw,
+				const XftColor           *color,
+				const XftCharFontSpec    *chars,
+				int                        len);
+
+	void XftDrawGlyphSpec (XftDraw               *draw,
+				const XftColor      *color,
+				XftFont               *pub,
+				const XftGlyphSpec  *glyphs,
+				int                   len);
+
+	void XftDrawGlyphFontSpec (XftDraw                   *draw,
+				const XftColor          *color,
+				const XftGlyphFontSpec  *glyphs,
+				int                       len);
+
+	void XftDrawRect (XftDraw            *draw,
+				const XftColor   *color,
+				int                x,
+				int                y,
+				uint       width,
+				uint       height);
+
+	Bool XftDrawSetClip (XftDraw     *draw,
+				Region      r);
+
+
+	Bool XftDrawSetClipRectangles (XftDraw               *draw,
+				int                   xOrigin,
+				int                   yOrigin,
+				const XRectangle    *rects,
+				int                   n);
+
+	void XftDrawSetSubwindowMode (XftDraw    *draw,
+				int        mode);
+
+	void XftGlyphExtents (Display            *dpy,
+				XftFont            *pub,
+				const uint    *glyphs,
+				int                nglyphs,
+				XGlyphInfo         *extents);
+
+	void XftTextExtents8 (Display            *dpy,
+				XftFont            *pub,
+				const char    *string,
+				int                len,
+				XGlyphInfo         *extents);
+
+	void XftTextExtents16 (Display           *dpy,
+				XftFont           *pub,
+				const wchar  *string,
+				int               len,
+				XGlyphInfo        *extents);
+
+	void XftTextExtents32 (Display           *dpy,
+				XftFont           *pub,
+				const dchar  *string,
+				int               len,
+				XGlyphInfo        *extents);
+
+	void XftTextExtentsUtf8 (Display         *dpy,
+				XftFont         *pub,
+				const char *string,
+				int             len,
+				XGlyphInfo      *extents);
+
+	void XftTextExtentsUtf16 (Display            *dpy,
+				XftFont            *pub,
+				const char    *string,
+				FcEndian           endian,
+				int                len,
+				XGlyphInfo         *extents);
+
+	FcPattern * XftFontMatch (Display           *dpy,
+				int               screen,
+				const FcPattern *pattern,
+				FcResult          *result);
+
+	XftFont * XftFontOpen (Display *dpy, int screen, ...);
+
+	XftFont * XftFontOpenName (Display *dpy, int screen, const char *name);
+
+	XftFont * XftFontOpenXlfd (Display *dpy, int screen, const char *xlfd);
+
+	FT_Face XftLockFace (XftFont *pub);
+
+	void XftUnlockFace (XftFont *pub);
+
+	XftFontInfo * XftFontInfoCreate (Display *dpy, const FcPattern *pattern);
+
+	void XftFontInfoDestroy (Display *dpy, XftFontInfo *fi);
+
+	dchar XftFontInfoHash (const XftFontInfo *fi);
+
+	FcBool XftFontInfoEqual (const XftFontInfo *a, const XftFontInfo *b);
+
+	XftFont * XftFontOpenInfo (Display        *dpy,
+				FcPattern      *pattern,
+				XftFontInfo    *fi);
+
+	XftFont * XftFontOpenPattern (Display *dpy, FcPattern *pattern);
+
+	XftFont * XftFontCopy (Display *dpy, XftFont *pub);
+
+	void XftFontClose (Display *dpy, XftFont *pub);
+
+	FcBool XftInitFtLibrary();
+	void XftFontLoadGlyphs (Display          *dpy,
+				XftFont          *pub,
+				FcBool           need_bitmaps,
+				const uint  *glyphs,
+				int              nglyph);
+
+	void XftFontUnloadGlyphs (Display            *dpy,
+				XftFont            *pub,
+				const uint    *glyphs,
+				int                nglyph);
+
+	FcBool XftFontCheckGlyph (Display  *dpy,
+				XftFont  *pub,
+				FcBool   need_bitmaps,
+				uint  glyph,
+				uint  *missing,
+				int      *nmissing);
+
+	FcBool XftCharExists (Display      *dpy,
+				XftFont      *pub,
+				dchar    ucs4);
+
+	uint XftCharIndex (Display       *dpy,
+				XftFont       *pub,
+				dchar      ucs4);
+	FcBool XftInit (const char *config);
+
+	int XftGetVersion ();
+
+
+	FcFontSet * XftListFonts (Display   *dpy,
+				int       screen,
+				...);
+
+	FcPattern *XftNameParse (const char *name);
+
+	void XftGlyphRender (Display         *dpy,
+				int             op,
+				Picture         src,
+				XftFont         *pub,
+				Picture         dst,
+				int             srcx,
+				int             srcy,
+				int             x,
+				int             y,
+				const uint *glyphs,
+				int             nglyphs);
+
+	void XftGlyphSpecRender (Display                 *dpy,
+				int                     op,
+				Picture                 src,
+				XftFont                 *pub,
+				Picture                 dst,
+				int                     srcx,
+				int                     srcy,
+				const XftGlyphSpec    *glyphs,
+				int                     nglyphs);
+
+	void XftCharSpecRender (Display              *dpy,
+				int                  op,
+				Picture              src,
+				XftFont              *pub,
+				Picture              dst,
+				int                  srcx,
+				int                  srcy,
+				const XftCharSpec  *chars,
+				int                  len);
+	void XftGlyphFontSpecRender (Display                     *dpy,
+				int                         op,
+				Picture                     src,
+				Picture                     dst,
+				int                         srcx,
+				int                         srcy,
+				const XftGlyphFontSpec    *glyphs,
+				int                         nglyphs);
+
+	void XftCharFontSpecRender (Display                  *dpy,
+				int                      op,
+				Picture                  src,
+				Picture                  dst,
+				int                      srcx,
+				int                      srcy,
+				const XftCharFontSpec  *chars,
+				int                      len);
+
+	void XftTextRender8 (Display         *dpy,
+				int             op,
+				Picture         src,
+				XftFont         *pub,
+				Picture         dst,
+				int             srcx,
+				int             srcy,
+				int             x,
+				int             y,
+				const char *string,
+				int             len);
+	void XftTextRender16 (Display            *dpy,
+				int                op,
+				Picture            src,
+				XftFont            *pub,
+				Picture            dst,
+				int                srcx,
+				int                srcy,
+				int                x,
+				int                y,
+				const wchar   *string,
+				int                len);
+
+	void XftTextRender16BE (Display          *dpy,
+				int              op,
+				Picture          src,
+				XftFont          *pub,
+				Picture          dst,
+				int              srcx,
+				int              srcy,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+
+	void XftTextRender16LE (Display          *dpy,
+				int              op,
+				Picture          src,
+				XftFont          *pub,
+				Picture          dst,
+				int              srcx,
+				int              srcy,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+
+	void XftTextRender32 (Display            *dpy,
+				int                op,
+				Picture            src,
+				XftFont            *pub,
+				Picture            dst,
+				int                srcx,
+				int                srcy,
+				int                x,
+				int                y,
+				const dchar   *string,
+				int                len);
+
+	void XftTextRender32BE (Display          *dpy,
+				int              op,
+				Picture          src,
+				XftFont          *pub,
+				Picture          dst,
+				int              srcx,
+				int              srcy,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+
+	void XftTextRender32LE (Display          *dpy,
+				int              op,
+				Picture          src,
+				XftFont          *pub,
+				Picture          dst,
+				int              srcx,
+				int              srcy,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+
+	void XftTextRenderUtf8 (Display          *dpy,
+				int              op,
+				Picture          src,
+				XftFont          *pub,
+				Picture          dst,
+				int              srcx,
+				int              srcy,
+				int              x,
+				int              y,
+				const char  *string,
+				int              len);
+
+	void XftTextRenderUtf16 (Display         *dpy,
+				int             op,
+				Picture         src,
+				XftFont         *pub,
+				Picture         dst,
+				int             srcx,
+				int             srcy,
+				int             x,
+				int             y,
+				const char *string,
+				FcEndian        endian,
+				int             len);
+	FcPattern * XftXlfdParse (const char *xlfd_orig, Bool ignore_scalable, Bool complete);
+
+	}
+
+	mixin DynamicLoad!(Xft, "Xft", 2) XftLibrary;
+
+
+	/* Xft } */
 
 	class XDisconnectException : Exception {
 		bool userRequested;
@@ -11952,8 +13033,8 @@ extern(C) nothrow @nogc {
 	//int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
 
 
-mixin DynamicLoad!(XLib, "X11") xlib;
-mixin DynamicLoad!(Xext, "Xext") xext;
+mixin DynamicLoad!(XLib, "X11", 6) xlib;
+mixin DynamicLoad!(Xext, "Xext", 6) xext;
 shared static this() {
 	xlib.loadDynamicLibrary();
 	xext.loadDynamicLibrary();
@@ -14410,11 +15491,11 @@ extern(System) nothrow @nogc {
 version(without_opengl) {} else {
 static if(!SdpyIsUsingIVGLBinds) {
 	version(Windows) {
-		mixin DynamicLoad!(GL, "opengl32", true) gl;
-		mixin DynamicLoad!(GLU, "glu32", true) glu;
+		mixin DynamicLoad!(GL, "opengl32", 1, true) gl;
+		mixin DynamicLoad!(GLU, "glu32", 1, true) glu;
 	} else {
-		mixin DynamicLoad!(GL, "GL", true) gl;
-		mixin DynamicLoad!(GLU, "GLU", true) glu;
+		mixin DynamicLoad!(GL, "GL", 1, true) gl;
+		mixin DynamicLoad!(GLU, "GLU", 3, true) glu;
 	}
 	mixin DynamicLoadSupplementalOpenGL!(GL3) gl3;
 
@@ -15905,16 +16986,25 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 	return code[0 .. pos];
 }
 
-private mixin template DynamicLoad(Iface, string library, bool openGLRelated = false) {
+private mixin template DynamicLoad(Iface, string library, int majorVersion, bool openGLRelated = false, bool optional = false) {
 	mixin(staticForeachReplacement!Iface);
 
         private void* libHandle;
+	private bool attempted;
 
         void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
 	}
 
+	bool loadAttempted() {
+		return attempted;
+	}
+	bool loadSuccessful() {
+		return libHandle !is null;
+	}
+
         void loadDynamicLibraryForReal() {
+		attempted = true;
                 version(Posix) {
                         import core.sys.posix.dlfcn;
 			version(OSX) {
@@ -15924,8 +17014,8 @@ private mixin template DynamicLoad(Iface, string library, bool openGLRelated = f
                         		libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
 			} else {
                         	libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
-				if(libHandle is null && library[0] == 'X') // some systems require the version number and we using X11R6 so just hardcoding special case.
-                        		libHandle = dlopen("lib" ~ library ~ ".so.6", RTLD_NOW);
+				if(libHandle is null)
+                        		libHandle = dlopen(("lib" ~ library ~ ".so." ~ toInternal!string(majorVersion) ~ "\0").ptr, RTLD_NOW);
 			}
 
 			static void* loadsym(void* l, const char* name) {
@@ -15944,7 +17034,7 @@ private mixin template DynamicLoad(Iface, string library, bool openGLRelated = f
 				return GetProcAddress(l, name);
 			}
                 }
-                if(libHandle is null) {
+                if(libHandle is null && !optional) {
 			if(openGLRelated)
 				openGlLibrariesSuccessfullyLoaded = false;
 			else

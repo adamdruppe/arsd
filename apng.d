@@ -1,5 +1,5 @@
 /++
-	Support for [animated png|https://wiki.mozilla.org/APNG_Specification] files.
+	Support for [https://wiki.mozilla.org/APNG_Specification|animated png] files.
 +/
 module arsd.apng;
 

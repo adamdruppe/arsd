@@ -3017,6 +3017,28 @@ class WebSocket {
 	}
 }
 
+template addToSimpledisplayEventLoop() {
+	import arsd.simpledisplay;
+	void addToSimpledisplayEventLoop(WebSocket ws, SimpleWindow window) {
+
+		void midprocess() {
+			if(!ws.lowLevelReceive()) {
+				ws.readyState_ = WebSocket.CLOSED;
+				WebSocket.unregisterActiveSocket(ws);
+				return;
+			}
+			while(ws.processOnce().populated) {}
+		}
+
+		version(linux) {
+			auto reader = new PosixFdReader(&midprocess, ws.socket.handle);
+		} else version(Windows) {
+			auto reader = new WindowsHandleReader(&midprocess, ws.socket.handle);
+		} else static assert(0, "unsupported OS");
+	}
+}
+
+
 /* copy/paste from cgi.d */
 public {
 	enum WebSocketOpcode : ubyte {

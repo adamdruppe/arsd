@@ -376,7 +376,8 @@ void cloexec(Socket s) {
 
 version(embedded_httpd_hybrid) {
 	version=embedded_httpd_threads;
-	version=cgi_use_fork;
+	version(cgi_no_fork) {} else
+		version=cgi_use_fork;
 	version=cgi_use_fiber;
 }
 
@@ -3266,7 +3267,7 @@ mixin template CustomCgiMain(CustomCgi, alias fun, long maxContentLength = defau
 }
 
 version(embedded_httpd_processes)
-	int processPoolSize = 8;
+	__gshared int processPoolSize = 8;
 
 // Returns true if run. You should exit the program after that.
 bool tryAddonServers(string[] args) {
@@ -3275,9 +3276,15 @@ bool tryAddonServers(string[] args) {
 		switch(args[1]) {
 			case "--websocket-server":
 				version(with_addon_servers)
-					runWebsocketServer();
+					websocketServers[args[2]](args[3 .. $]);
 				else
 					printf("Add-on servers not compiled in.\n");
+				return true;
+			case "--websocket-servers":
+				import core.demangle;
+				version(with_addon_servers_connections)
+				foreach(k, v; websocketServers)
+					writeln(k, "\t", demangle(k));
 				return true;
 			case "--session-server":
 				version(with_addon_servers)
@@ -3335,7 +3342,7 @@ bool trySimulatedRequest(alias fun, CustomCgi = Cgi)(string[] args) if(is(Custom
 +/
 struct RequestServer {
 	///
-	string listeningHost;
+	string listeningHost = defaultListeningHost();
 	///
 	ushort listeningPort = defaultListeningPort();
 
@@ -3796,6 +3803,21 @@ ushort defaultListeningPort() {
 		return 4000;
 	else
 		return 0;
+}
+
+/// Default host for listening. 127.0.0.1 for scgi, null (aka all interfaces) for all others. If you want the server directly accessible from other computers on the network, normally use null. If not, 127.0.0.1 is a bit better. Settable with default handlers with --listening-host command line argument.
+string defaultListeningHost() {
+	version(netman_httpd)
+		return null;
+	else version(embedded_httpd_processes)
+		return null;
+	else version(embedded_httpd_threads)
+		return null;
+	else version(scgi)
+		return "127.0.0.1";
+	else
+		return null;
+
 }
 
 /++
@@ -6273,6 +6295,7 @@ unittest {
 interface SessionObject {}
 
 private immutable void delegate(string[])[string] scheduledJobHandlers;
+private immutable void delegate(string[])[string] websocketServers;
 
 version(with_breaking_cgi_features)
 mixin(q{
