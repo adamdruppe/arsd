@@ -3021,11 +3021,14 @@ struct RealTimeConsoleInput {
 			// except backspace (^h), tab (^i), linefeed (^j), carriage return (^m), and esc (^[)
 			// \a, \v (lol), and \f are also 'special', but not worthwhile to special-case here
 			if(1 <= c && c <= 31
-			   && !"\b\t\n\r\x1b"d.canFind(c)) {
-				c += 'a' - 1;
+			   && !"\b\t\n\r\x1b"d.canFind(c))
+			{
+				// I'm versioning this out because it is a breaking change. Maybe can come back to it later.
+				version(terminal_translate_ctl) {
+					c += 'a' - 1;
+				}
 				return true;
 			}
-
 			return false;
 		}
 		InputEvent[] charPressAndRelease(dchar character, uint modifiers = 0) {
@@ -3462,7 +3465,7 @@ struct RealTimeConsoleInput {
 				// could be escape followed by an escape sequence!
 				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
 			} else {
-				// I don't know, probably unsupported terminal or just quick user input or something
+				// exceedingly quick esc followed by char is also what many terminals do for alt
 				return charPressAndRelease(nextChar(c), cast(uint)ModifierState.alt);
 			}
 		} else {
@@ -5124,11 +5127,11 @@ class LineGetter {
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
 				auto ch = ev.which;
 				switch(ch) {
-					version(Windows) case 'z': // and this is really for Windows
+					version(Windows) case 'z', 26: // and this is really for Windows
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
-					case 'd': // ctrl+d will also send a newline-equivalent 
+					case 'd', 4: // ctrl+d will also send a newline-equivalent 
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						if(line.length == 0)
@@ -5231,7 +5234,7 @@ class LineGetter {
 						// search in history
 						// FIXME: what about search in completion too?
 					break;
-					case 'u':
+					case 'u', 21:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
@@ -5249,20 +5252,19 @@ class LineGetter {
 						// but keep the buffer the same
 						maintainBuffer = true;
 						return false;
-					case '5': // ctrl+5, because of vim % shortcut
+					case '5', 0x1d: // ctrl+5, because of vim % shortcut
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						justHitTab = justKilled = false;
 						// FIXME: find matching delimiter
 					break;
-					// FIXME: emacs style keys
-					//  alt-f/b navigates by word. ctrl-f/b navigates by char. history storing original pastes as blocks.
 
-					// FIXME: on tab complete let it filter by prefix
+					// FIXME: history should store original paste as blobs in the history file
+					// FIXME: on history let it filter by prefix if desired
 					// FIXME: should be able to update the selection with shift+arrows as well as mouse
 					// if terminal emulator supports this, it can formally select it to the buffer for copy
 					// and sending to primary on X11 (do NOT do it on Windows though!!!)
-					case 'b':
+					case 'b', 2:
 						if(ev.modifierState & ModifierState.alt)
 							wordBack();
 						else if(ev.modifierState & ModifierState.control)
@@ -5272,7 +5274,7 @@ class LineGetter {
 						justHitTab = justKilled = false;
 						redraw();
 					break;
-					case 'f':
+					case 'f', 6:
 						if(ev.modifierState & ModifierState.alt)
 							wordForward();
 						else if(ev.modifierState & ModifierState.control)
@@ -5299,7 +5301,7 @@ class LineGetter {
 							charForward();
 						redraw();
 					break;
-					case 'p':
+					case 'p', 16:
 						if(ev.modifierState & ModifierState.control)
 							goto case;
 						goto default;
@@ -5308,7 +5310,7 @@ class LineGetter {
 						loadFromHistory(currentHistoryViewPosition + 1);
 						redraw();
 					break;
-					case 'n':
+					case 'n', 14:
 						if(ev.modifierState & ModifierState.control)
 							goto case;
 						goto default;
@@ -5327,7 +5329,7 @@ class LineGetter {
 						loadFromHistory(0);
 						redraw();
 					break;
-					case 'a':
+					case 'a', 1: // this one conflicts with Windows-style select all...
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
@@ -5337,7 +5339,7 @@ class LineGetter {
 						horizontalScrollPosition = 0;
 						redraw();
 					break;
-					case 'e':
+					case 'e', 5:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
@@ -5347,7 +5349,7 @@ class LineGetter {
 						scrollToEnd();
 						redraw();
 					break;
-					case 'v':
+					case 'v', 22:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						justKilled = false;
@@ -5389,7 +5391,7 @@ class LineGetter {
 						}
 						redraw();
 					break;
-					case 'k':
+					case 'k', 11:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						deleteToEndOfLine();
@@ -5397,7 +5399,7 @@ class LineGetter {
 						justKilled = true;
 						redraw();
 					break;
-					case 'w':
+					case 'w', 23:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						killWord();
@@ -5405,7 +5407,7 @@ class LineGetter {
 						justKilled = true;
 						redraw();
 					break;
-					case 'y':
+					case 'y', 25:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						justHitTab = justKilled = false;
