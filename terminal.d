@@ -4671,6 +4671,8 @@ class LineGetter {
 
 		if(cursorPosition >= horizontalScrollPosition + availableLineLength())
 			horizontalScrollPosition++;
+
+		lineChanged = true;
 	}
 
 	/// .
@@ -4690,7 +4692,10 @@ class LineGetter {
 			line[i] = line[i + 1];
 		line = line[0 .. $-1];
 		line.assumeSafeAppend();
+		lineChanged = true;
 	}
+
+	protected bool lineChanged;
 
 	private void killText(dchar[] text) {
 		if(!text.length)
@@ -4774,8 +4779,109 @@ class LineGetter {
 		return terminal.width - startOfLineX - promptLength - 1;
 	}
 
+
+	protected static struct Drawer {
+		LineGetter lg;
+
+		this(LineGetter lg) {
+			this.lg = lg;
+		}
+
+		int written;
+		int lineLength;
+
+		void specialChar(char c) {
+			lg.terminal.color(lg.regularForeground, lg.specialCharBackground);
+			lg.terminal.write(c);
+			lg.terminal.color(lg.regularForeground, lg.background);
+
+			written++;
+			lineLength--;
+		}
+
+		void regularChar(dchar ch) {
+			import std.utf;
+			char[4] buffer;
+			auto l = encode(buffer, ch);
+			// note the Terminal buffers it so meh
+			lg.terminal.write(buffer[0 .. l]);
+
+			written++;
+			lineLength--;
+		}
+
+		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0) {
+			// FIXME: if there is a color at the end of the line it messes up as you scroll
+			// FIXME: need a way to go to multi-line editing
+
+			bool highlightOn = false;
+			void highlightOff() {
+				lg.terminal.color(lg.regularForeground, lg.background);
+				highlightOn = false;
+			}
+
+			foreach(idx, dchar ch; towrite) {
+				if(lineLength <= 0)
+					break;
+				switch(ch) {
+					case '\n': specialChar('n'); break;
+					case '\r': specialChar('r'); break;
+					case '\a': specialChar('a'); break;
+					case '\t': specialChar('t'); break;
+					case '\b': specialChar('b'); break;
+					case '\033': specialChar('e'); break;
+					default:
+						if(highlightEnd) {
+							if(idx == highlightBegin) {
+								lg.terminal.color(lg.regularForeground, Color.yellow);
+								highlightOn = true;
+							}
+							if(idx == highlightEnd) {
+								highlightOff();
+							}
+						}
+
+						regularChar(ch);
+				}
+			}
+			if(highlightOn)
+				highlightOff();
+		}
+
+	}
+
 	private int lastDrawLength = 0;
 	void redraw() {
+		finalizeRedraw(coreRedraw());
+	}
+
+	void finalizeRedraw(CoreRedrawInfo cdi) {
+		if(!cdi.populated)
+			return;
+
+		if(UseVtSequences) {
+			terminal.writeStringRaw("\033[K");
+		} else {
+			// FIXME: graphemes
+			if(cdi.written < lastDrawLength)
+			foreach(i; cdi.written .. lastDrawLength)
+				terminal.write(" ");
+			lastDrawLength = cdi.written;
+		}
+
+		terminal.moveTo(startOfLineX + cdi.cursorPositionToDrawX + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
+	}
+
+	static struct CoreRedrawInfo {
+		bool populated;
+		int written;
+		int cursorPositionToDrawX;
+		int cursorPositionToDrawY;
+	}
+
+	final CoreRedrawInfo coreRedraw() {
+		if(supplementalGetter)
+			return CoreRedrawInfo.init; // the supplementalGetter will be drawing instead...
 		terminal.hideCursor();
 		scope(exit) {
 			version(Win32Console) {
@@ -4793,8 +4899,10 @@ class LineGetter {
 		}
 		terminal.moveTo(startOfLineX, startOfLineY);
 
-		auto lineLength = availableLineLength();
-		if(lineLength < 0)
+		Drawer drawer = Drawer(this);
+
+		drawer.lineLength = availableLineLength();
+		if(drawer.lineLength < 0)
 			throw new Exception("too narrow terminal to draw");
 
 		terminal.color(promptColor, background);
@@ -4805,69 +4913,30 @@ class LineGetter {
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
 
-		int written = promptLength;
-
-		void specialChar(char c) {
-			terminal.color(regularForeground, specialCharBackground);
-			terminal.write(c);
-			terminal.color(regularForeground, background);
-
-			written++;
-			lineLength--;
-		}
-
-		void regularChar(dchar ch) {
-			import std.utf;
-			char[4] buffer;
-			auto l = encode(buffer, ch);
-			// note the Terminal buffers it so meh
-			terminal.write(buffer[0 .. l]);
-
-			written++;
-			lineLength--;
-		}
-
-		// FIXME: if there is a color at the end of the line it messes up as you scroll
-		// FIXME: need a way to go to multi-line editing
-
-		foreach(dchar ch; towrite) {
-			if(lineLength == 0)
-				break;
-			switch(ch) {
-				case '\n': specialChar('n'); break;
-				case '\r': specialChar('r'); break;
-				case '\a': specialChar('a'); break;
-				case '\t': specialChar('t'); break;
-				case '\b': specialChar('b'); break;
-				case '\033': specialChar('e'); break;
-				default:
-					regularChar(ch);
-			}
-		}
+		drawer.drawContent(towrite);
 
 		string suggestion;
 
-		if(lineLength >= 0) {
+		if(drawer.lineLength >= 0) {
 			suggestion = ((cursorPosition == towrite.length) && autoSuggest) ? this.suggestion() : null;
 			if(suggestion.length) {
 				terminal.color(suggestionForeground, background);
 				foreach(dchar ch; suggestion) {
-					if(lineLength == 0)
+					if(drawer.lineLength == 0)
 						break;
-					regularChar(ch);
+					drawer.regularChar(ch);
 				}
 				terminal.color(regularForeground, background);
 			}
 		}
 
-		// FIXME: graphemes
+		CoreRedrawInfo cri;
+		cri.populated = true;
+		cri.written = drawer.written;
+		cri.cursorPositionToDrawX = cursorPositionToDrawX;
+		cri.cursorPositionToDrawY = cursorPositionToDrawY;
 
-		if(written < lastDrawLength)
-		foreach(i; written .. lastDrawLength)
-			terminal.write(" ");
-		lastDrawLength = written;
-
-		terminal.moveTo(startOfLineX + cursorPositionToDrawX + promptLength, startOfLineY + cursorPositionToDrawY);
+		return cri;
 	}
 
 	/// Starts getting a new line. Call workOnLine and finishGettingLine afterward.
@@ -4920,7 +4989,7 @@ class LineGetter {
 		*/
 	}
 
-	private void initializeWithSize(bool firstEver = false) {
+	protected void initializeWithSize(bool firstEver = false) {
 		auto x = startOfLineX;
 
 		updateCursorPosition();
@@ -4937,7 +5006,7 @@ class LineGetter {
 		redraw();
 	}
 
-	private void updateCursorPosition() {
+	protected void updateCursorPosition() {
 		terminal.flush();
 
 		// then get the current cursor position to start fresh
@@ -5100,6 +5169,8 @@ class LineGetter {
 
 	private bool maintainBuffer;
 
+	private LineGetter supplementalGetter;
+
 	/++
 		for integrating into another event loop
 		you can pass individual events to this and
@@ -5113,6 +5184,18 @@ class LineGetter {
 			where the event came from.
 	+/
 	bool workOnLine(InputEvent e, RealTimeConsoleInput* rtti = null) {
+		if(supplementalGetter) {
+			if(!supplementalGetter.workOnLine(e, rtti)) {
+				auto got = supplementalGetter.finishGettingLine();
+				// the supplementalGetter will poke our own state directly
+				// so i can ignore the return value here...
+
+				supplementalGetter = null;
+				redraw();
+			}
+			return true;
+		}
+
 		switch(e.type) {
 			case InputEvent.Type.EndOfFileEvent:
 				justHitTab = false;
@@ -5182,10 +5265,12 @@ class LineGetter {
 					case '\b':
 						justHitTab = false;
 						if(ev.modifierState & ModifierState.control) {
+							lineChanged = true;
 							killWord();
 							justKilled = true;
 							redraw();
 						} else if(cursorPosition) {
+							lineChanged = true;
 							justKilled = false;
 							cursorPosition--;
 							for(int i = cursorPosition; i < line.length - 1; i++)
@@ -5225,7 +5310,7 @@ class LineGetter {
 						positionCursor();
 						redraw();
 					break;
-					case 'r':
+					case 'r', 18:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
@@ -5233,6 +5318,9 @@ class LineGetter {
 						justHitTab = justKilled = false;
 						// search in history
 						// FIXME: what about search in completion too?
+						supplementalGetter = new HistorySearchLineGetter(this);
+						supplementalGetter.startGettingLine();
+						supplementalGetter.redraw();
 					break;
 					case 'u', 21:
 						if(!(ev.modifierState & ModifierState.control))
@@ -5473,6 +5561,43 @@ class LineGetter {
 		return true;
 	}
 
+	/++
+		Replaces the line currently being edited with the given line and positions the cursor inside it.
+
+		History:
+			Added November 27, 2020.
+	+/
+	void replaceLine(const scope dchar[] line) {
+		if(this.line.length < line.length)
+			this.line.length = line.length;
+		else
+			this.line = this.line[0 .. line.length];
+		this.line.assumeSafeAppend();
+		this.line[] = line[];
+		if(cursorPosition > line.length)
+			cursorPosition = cast(int) line.length;
+		if(horizontalScrollPosition > line.length)
+			horizontalScrollPosition = cast(int) line.length;
+		positionCursor();
+	}
+
+	/// ditto
+	void replaceLine(const scope char[] line) {
+		if(line.length >= 255) {
+			import std.conv;
+			replaceLine(to!dstring(line));
+			return;
+		}
+		dchar[255] tmp;
+		size_t idx;
+		foreach(dchar c; line) {
+			tmp[idx++] = c;
+		}
+
+		replaceLine(tmp[0 .. idx]);
+	}
+
+	///
 	string finishGettingLine() {
 		import std.conv;
 		auto f = to!string(line);
@@ -5482,6 +5607,151 @@ class LineGetter {
 
 		// FIXME: we should hide the cursor if it was hidden in the call to startGettingLine
 		return eof ? null : f.length ? f : "";
+	}
+}
+
+class HistorySearchLineGetter : LineGetter {
+	LineGetter basedOn;
+	string sideDisplay;
+	this(LineGetter basedOn) {
+		this.basedOn = basedOn;
+		super(basedOn.terminal);
+	}
+
+	override void updateCursorPosition() {
+		super.updateCursorPosition();
+		startOfLineX = basedOn.startOfLineX;
+		startOfLineY = basedOn.startOfLineY;
+	}
+
+	override void initializeWithSize(bool firstEver = false) {
+		if(terminal.width > 60)
+			this.prompt = "(history search): \"";
+		else
+			this.prompt = "(hs): \"";
+		super.initializeWithSize(firstEver);
+	}
+
+	override int availableLineLength() {
+		return terminal.width / 2 - startOfLineX - promptLength - 1;
+	}
+
+	override void loadFromHistory(int howFarBack) {
+		currentHistoryViewPosition = howFarBack;
+		reloadSideDisplay();
+	}
+
+	int highlightBegin;
+	int highlightEnd;
+
+	void reloadSideDisplay() {
+		import std.string;
+		import std.range;
+		int counter = currentHistoryViewPosition;
+
+		string lastHit;
+		int hb, he;
+		if(line.length)
+		foreach_reverse(item; basedOn.history) {
+			auto idx = item.indexOf(line);
+			if(idx != -1) {
+				hb = cast(int) idx;
+				he = cast(int) (idx + line.walkLength);
+				lastHit = item;
+				if(counter)
+					counter--;
+				else
+					break;
+			}
+		}
+		sideDisplay = lastHit;
+		highlightBegin = hb;
+		highlightEnd = he;
+		redraw();
+	}
+
+
+	bool redrawQueued = false;
+	override void redraw() {
+		redrawQueued = true;
+	}
+
+	void actualRedraw() {
+		auto cri = coreRedraw();
+		terminal.write("\" ");
+
+		int available = terminal.width / 2 - 1;
+		auto used = prompt.length + cri.written + 3 /* the write above plus a space */;
+		if(used < available)
+			available += available - used;
+
+		//terminal.moveTo(terminal.width / 2, startOfLineY);
+		Drawer drawer = Drawer(this);
+		drawer.lineLength = available;
+		drawer.drawContent(sideDisplay, highlightBegin, highlightEnd);
+
+		cri.written += drawer.written;
+
+		finalizeRedraw(cri);
+	}
+
+	override bool workOnLine(InputEvent e, RealTimeConsoleInput* rtti = null) {
+		scope(exit) {
+			if(redrawQueued) {
+				actualRedraw();
+				redrawQueued = false;
+			}
+		}
+		if(e.type == InputEvent.Type.KeyboardEvent) {
+			auto ev = e.keyboardEvent;
+			if(ev.pressed == false)
+				return true;
+			/* Insert the character (unless it is backspace, tab, or some other control char) */
+			auto ch = ev.which;
+			switch(ch) {
+				// modification being the search through history commands
+				// should just keep searching, not endlessly nest.
+				case 'r', 18:
+					if(!(ev.modifierState & ModifierState.control))
+						goto default;
+					goto case;
+				case KeyboardEvent.Key.F3:
+					e.keyboardEvent.which = KeyboardEvent.Key.UpArrow;
+				break;
+				case KeyboardEvent.Key.escape:
+					sideDisplay = null;
+					return false; // cancel
+				default:
+			}
+		}
+		if(super.workOnLine(e, rtti)) {
+			if(lineChanged) {
+				currentHistoryViewPosition = 0;
+				reloadSideDisplay();
+				lineChanged = false;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	override void startGettingLine() {
+		super.startGettingLine();
+		this.line = basedOn.line.dup;
+		cursorPosition = cast(int) this.line.length;
+		startOfLineX = basedOn.startOfLineX;
+		startOfLineY = basedOn.startOfLineY;
+		positionCursor();
+		reloadSideDisplay();
+	}
+
+	override string finishGettingLine() {
+		auto got = super.finishGettingLine();
+
+		if(sideDisplay.length)
+			basedOn.replaceLine(sideDisplay);
+
+		return got;
 	}
 }
 
