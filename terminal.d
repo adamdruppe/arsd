@@ -4567,8 +4567,55 @@ class LineGetter {
 		return finishGettingLine();
 	}
 
+	/++
+		Set in [historyRecallFilterMethod].
+
+		History:
+			Added November 27, 2020.
+	+/
+	enum HistoryRecallFilterMethod {
+		/++
+			Goes through history in simple chronological order.
+			Your existing command entry is not considered as a filter.
+		+/
+		chronological,
+		/++
+			Goes through history filtered with only those that begin with your current command entry.
+
+			So, if you entered "animal", "and", "bad", "cat" previously, then enter
+			"a" and pressed up, it would jump to "and", then up again would go to "animal".
+		+/
+		prefixed,
+		/++
+			Goes through history filtered with only those that $(B contain) your current command entry.
+
+			So, if you entered "animal", "and", "bad", "cat" previously, then enter
+			"n" and pressed up, it would jump to "and", then up again would go to "animal".
+		+/
+		containing,
+		/++
+			Goes through history to fill in your command at the cursor. It filters to only entries
+			that start with the text before your cursor and ends with text after your cursor.
+
+			So, if you entered "animal", "and", "bad", "cat" previously, then enter
+			"ad" and pressed left to position the cursor between the a and d, then pressed up
+			it would jump straight to "and".
+		+/
+		sandwiched,
+	}
+	/++
+		Controls what happens when the user presses the up key, etc., to recall history entries. See [HistoryRecallMethod] for the options.
+
+		This has no effect on the history search user control (default key: F3 or ctrl+r), which always searches through a "containing" method.
+
+		History:
+			Added November 27, 2020.
+	+/
+	HistoryRecallFilterMethod historyRecallFilterMethod = HistoryRecallFilterMethod.chronological;
+
 	private int currentHistoryViewPosition = 0;
 	private dchar[] uncommittedHistoryCandidate;
+	private int uncommitedHistoryCursorPosition;
 	void loadFromHistory(int howFarBack) {
 		if(howFarBack < 0)
 			howFarBack = 0;
@@ -4585,21 +4632,76 @@ class LineGetter {
 			uncommittedHistoryCandidate[0 .. line.length] = line[];
 			uncommittedHistoryCandidate = uncommittedHistoryCandidate[0 .. line.length];
 			uncommittedHistoryCandidate.assumeSafeAppend();
+			uncommitedHistoryCursorPosition = cursorPosition;
 		}
 
-		currentHistoryViewPosition = howFarBack;
-
 		if(howFarBack == 0) {
+		zero:
 			line.length = uncommittedHistoryCandidate.length;
 			line.assumeSafeAppend();
 			line[] = uncommittedHistoryCandidate[];
 		} else {
 			line = line[0 .. 0];
 			line.assumeSafeAppend();
-			foreach(dchar ch; history[$ - howFarBack])
-				line ~= ch;
+
+			string selection;
+
+			final switch(historyRecallFilterMethod) with(HistoryRecallFilterMethod) {
+				case chronological:
+					selection = history[$ - howFarBack];
+				break;
+				case prefixed:
+				case containing:
+					import std.algorithm;
+					int count;
+					foreach_reverse(item; history) {
+						if(
+							(historyRecallFilterMethod == prefixed && item.startsWith(uncommittedHistoryCandidate))
+							||
+							(historyRecallFilterMethod == containing && item.canFind(uncommittedHistoryCandidate))
+						)
+						{
+							selection = item;
+							count++;
+							if(count == howFarBack)
+								break;
+						}
+					}
+					howFarBack = count;
+				break;
+				case sandwiched:
+					import std.algorithm;
+					int count;
+					foreach_reverse(item; history) {
+						if(
+							(item.startsWith(uncommittedHistoryCandidate[0 .. uncommitedHistoryCursorPosition]))
+							&&
+							(item.endsWith(uncommittedHistoryCandidate[uncommitedHistoryCursorPosition .. $]))
+						)
+						{
+							selection = item;
+							count++;
+							if(count == howFarBack)
+								break;
+						}
+					}
+					howFarBack = count;
+
+				break;
+			}
+
+			if(howFarBack == 0)
+				goto zero;
+
+			int i;
+			line.length = selection.length;
+			foreach(dchar ch; selection)
+				line[i++] = ch;
+			line = line[0 .. i];
+			line.assumeSafeAppend();
 		}
 
+		currentHistoryViewPosition = howFarBack;
 		cursorPosition = cast(int) line.length;
 		scrollToEnd();
 	}
