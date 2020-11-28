@@ -15214,10 +15214,6 @@ extern(System) nothrow @nogc {
 		void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
 			/*GLsizei*/int width, /*GLsizei*/int height,
 			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
-		version(linux)
-		void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
-			/*GLsizei*/int width, /*GLsizei*/int height,
-			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 		void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
 		void glLineWidth(int);
@@ -15310,6 +15306,14 @@ extern(System) nothrow @nogc {
 		void glGenFramebuffers (GLsizei n, GLuint* framebuffers);
 		GLenum glCheckFramebufferStatus (GLenum target);
 		void glBindFramebuffer (GLenum target, GLuint framebuffer);
+	}
+
+	interface GL4 {
+		extern(System) @nogc nothrow:
+
+		void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
+			/*GLsizei*/int width, /*GLsizei*/int height,
+			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
 	}
 
 	interface GLU {
