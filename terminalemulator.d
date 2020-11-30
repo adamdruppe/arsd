@@ -304,7 +304,7 @@ class TerminalEmulator {
 				auto text = getSelectedText();
 				if(text.length) {
 					copyToPrimary(text);
-				} else if(!mouseButtonReleaseTracking || shift || (selectiveMouseTracking && termY != 0 && termY != cursorY)) {
+				} else if(!mouseButtonReleaseTracking || shift || (selectiveMouseTracking && (!alternateScreenActive || termY != 0) && termY != cursorY)) {
 					// hyperlink check
 					int idx = termY * screenWidth + termX;
 					auto screen = (alternateScreenActive ? alternateScreen : normalScreen);
@@ -428,6 +428,9 @@ class TerminalEmulator {
 					if(!alternateScreenActive && (button == MouseButton.wheelUp || button.MouseButton.wheelDown))
 						goto do_default_behavior;
 				}
+				// top line only gets special cased on full screen apps
+				if(selectiveMouseTracking && !alternateScreenActive && termY == 0 && cursorY != 0)
+					goto do_default_behavior;
 
 				int b = baseEventCode;
 
