@@ -242,7 +242,20 @@ class TerminalEmulator {
 			sendToApplication("\033[201~");
 	}
 
+	private string overriddenSelection;
+	protected void cancelOverriddenSelection() {
+		if(overriddenSelection.length == 0)
+			return;
+		overriddenSelection = null;
+		sendToApplication("\033[27;0;987136~"); // fake "select none" key, see terminal.d's ProprietaryPseudoKeys for values.
+
+		// The reason that proprietary thing is ok is setting the selection is itself a proprietary extension
+		// so if it was ever set, it implies the user code is familiar with our magic.
+	}
+
 	public string getSelectedText() {
+		if(overriddenSelection.length)
+			return overriddenSelection;
 		return getPlainText(selectionStart, selectionEnd);
 	}
 
@@ -385,6 +398,7 @@ class TerminalEmulator {
 						cell.selected = false;
 					}
 
+					cancelOverriddenSelection();
 					selectionEnd = idx;
 
 					// and the freshly selected portion needs to be invalidated
@@ -464,6 +478,8 @@ class TerminalEmulator {
 					// we invalidate the old selection since it should no longer be highlighted...
 					makeSelectionOffsetsSane(selectionStart, selectionEnd);
 
+					cancelOverriddenSelection();
+
 					auto activeScreen = (alternateScreenActive ? &alternateScreen : &normalScreen);
 					foreach(ref cell; (*activeScreen)[selectionStart .. selectionEnd]) {
 						cell.invalidated = true;
@@ -504,6 +520,8 @@ class TerminalEmulator {
 
 					int changed1;
 					int changed2;
+
+					cancelOverriddenSelection();
 
 					auto click = termY * screenWidth + termX;
 					if(click < selectionStart) {
@@ -553,6 +571,150 @@ class TerminalEmulator {
 	private int selectionStart; // an offset into the screen buffer
 	private int selectionEnd; // ditto
 
+	void requestRedraw() {}
+
+
+	private bool skipNextChar;
+	// assuming Key is an enum with members just like the one in simpledisplay.d
+	// returns true if it was handled here
+	protected bool defaultKeyHandler(Key)(Key key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+		enum bool KeyHasNamedAscii = is(typeof(Key.A));
+
+		static string magic() {
+			string code;
+			foreach(member; __traits(allMembers, TerminalKey))
+				if(member != "Escape")
+					code ~= "case Key." ~ member ~ ": if(sendKeyToApplication(TerminalKey." ~ member ~ "
+						, shift ?true:false
+						, alt ?true:false
+						, ctrl ?true:false
+						, windows ?true:false
+					)) requestRedraw(); return true;";
+			return code;
+		}
+
+		void specialAscii(dchar what) {
+			if(!alt)
+				skipNextChar = true;
+			if(sendKeyToApplication(
+				cast(TerminalKey) what
+				, shift ? true:false
+				, alt ? true:false
+				, ctrl ? true:false
+				, windows ? true:false
+			)) requestRedraw();
+		}
+
+		static if(KeyHasNamedAscii) {
+			enum Space = Key.Space;
+			enum Enter = Key.Enter;
+			enum Backspace = Key.Backspace;
+			enum Tab = Key.Tab;
+			enum Escape = Key.Escape;
+		} else {
+			enum Space = ' ';
+			enum Enter = '\n';
+			enum Backspace = '\b';
+			enum Tab = '\t';
+			enum Escape = '\033';
+		}
+
+
+		switch(key) {
+			//// I want the escape key to send twice to differentiate it from
+			//// other escape sequences easily.
+			//case Key.Escape: sendToApplication("\033"); break;
+
+			/*
+			case Key.V:
+			case Key.C:
+				if(shift && ctrl) {
+					skipNextChar = true;
+					if(key == Key.V)
+						pasteFromClipboard(&sendPasteData);
+					else if(key == Key.C)
+						copyToClipboard(getSelectedText());
+				}
+			break;
+			*/
+
+			// expansion of my own for like shift+enter to terminal.d users
+			case Enter, Backspace, Tab, Escape:
+				if(shift || alt || ctrl) {
+					static if(KeyHasNamedAscii) {
+						specialAscii(
+							cast(TerminalKey) (
+								key == Key.Enter ? '\n' :
+								key == Key.Tab ? '\t' :
+								key == Key.Backspace ? '\b' :
+								key == Key.Escape ? '\033' :
+									0 /* assert(0) */
+							)
+						);
+					} else {
+						specialAscii(key);
+					}
+					return true;
+				}
+			break;
+			case Space:
+				if(shift || alt) {
+					// ctrl+space sends 0 per normal translation char rules
+					specialAscii(' ');
+					return true;
+				}
+			break;
+
+			mixin(magic());
+
+			static if(is(typeof(Key.Shift))) {
+				// modifiers are not ascii, ignore them here
+				case Key.Shift, Key.Ctrl, Key.Alt, Key.Windows, Key.Alt_r, Key.Shift_r, Key.Ctrl_r, Key.CapsLock, Key.NumLock:
+				// nor are these special keys that don't return characters
+				case Key.Menu, Key.Pause, Key.PrintScreen:
+					return false;
+			}
+
+			default:
+				// alt basically always get special treatment, since it doesn't
+				// generate anything from the char handler. but shift and ctrl
+				// do, so we'll just use that unless both are pressed, in which
+				// case I want to go custom to differentiate like ctrl+c from ctrl+shift+c and such.
+
+				// FIXME: xterm offers some control on this, see: https://invisible-island.net/xterm/xterm.faq.html#xterm_modother
+				if(alt || (shift && ctrl)) {
+					if(key >= 'A' && key <= 'Z')
+						key += 32; // always use lowercase for as much consistency as we can since the shift modifier need not apply here. Windows' keysyms are uppercase while X's are lowercase too
+					specialAscii(key);
+					if(!alt)
+						skipNextChar = true;
+					return true;
+				}
+		}
+
+		return true;
+	}
+	protected bool defaultCharHandler(dchar c) {
+		if(skipNextChar) {
+			skipNextChar = false;
+			return true;
+		}
+
+		endScrollback();
+		char[4] str;
+		char[5] send;
+
+		import std.utf;
+		//if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
+		auto data = str[0 .. encode(str, c)];
+
+		// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
+		if(c != 127)
+			sendToApplication(data);
+
+		return true;
+	}
+
 	/// Send a non-character key sequence
 	public bool sendKeyToApplication(TerminalKey key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
 		bool redrawRequired = false;
@@ -596,7 +758,7 @@ class TerminalEmulator {
 
 
 
-		void sendToApplicationModified(string s) {
+		void sendToApplicationModified(string s, int key = 0) {
 			bool anyModifier = shift || alt || ctrl || windows;
 			if(!anyModifier || applicationCursorKeys)
 				sendToApplication(s); // FIXME: applicationCursorKeys can still be shifted i think but meh
@@ -643,6 +805,11 @@ class TerminalEmulator {
 				if(otherModifier)
 					buffer ~= otherModifier;
 				buffer ~= modifierNumber[];
+				if(key) {
+					buffer ~= ";";
+					import std.conv;
+					buffer ~= to!string(key);
+				}
 				buffer ~= terminator;
 				// the xterm style is last bit tell us what it is
 				sendToApplication(buffer[]);
@@ -652,7 +819,7 @@ class TerminalEmulator {
 		alias TerminalKey Key;
 		import std.stdio;
 		// writefln("Key: %x", cast(int) key);
-		final switch(key) {
+		switch(key) {
 			case Key.Left: sendToApplicationModified(applicationCursorKeys ? "\033OD" : "\033[D"); break;
 			case Key.Up: sendToApplicationModified(applicationCursorKeys ? "\033OA" : "\033[A"); break;
 			case Key.Down: sendToApplicationModified(applicationCursorKeys ? "\033OB" : "\033[B"); break;
@@ -683,13 +850,12 @@ class TerminalEmulator {
 
 			case Key.Escape: sendToApplicationModified("\033"); break;
 
-			// my extensions
+			// my extensions, see terminator.d for the other side of it
 			case Key.ScrollLock: sendToApplicationModified("\033[70~"); break;
 
-			// see terminal.d for the other side of this
-			case cast(TerminalKey) '\n': sendToApplicationModified("\033[83~"); break;
-			case cast(TerminalKey) '\b': sendToApplicationModified("\033[78~"); break;
-			case cast(TerminalKey) '\t': sendToApplicationModified("\033[79~"); break;
+			// xterm extension for arbitrary modified unicode chars
+			default:
+				sendToApplicationModified("\033[27~", key);
 		}
 
 		return redrawRequired;
@@ -2061,6 +2227,11 @@ class TerminalEmulator {
 		protected bool invalidateAll;
 
 		void clearSelection() {
+			clearSelectionInternal();
+			cancelOverriddenSelection();
+		}
+
+		private void clearSelectionInternal() {
 			foreach(ref tc; alternateScreenActive ? alternateScreen : normalScreen)
 				if(tc.selected) {
 					tc.selected = false;
@@ -2252,6 +2423,10 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// copy/paste control
 							// echo -e "\033]52;p;?\007"
 							// the p == primary
+							// c == clipboard
+							// q == secondary 
+							// s == selection
+							// 0-7, cut buffers
 							// the data after it is either base64 stuff to copy or ? to request a paste
 
 							if(arg == "p;?") {
@@ -2280,6 +2455,16 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 								} catch(Exception e)  {}
 							}
 
+							// selection
+							if(arg.length > 2 && arg[0 .. 2] == "s;") {
+								auto info = arg[2 .. $];
+								try {
+									import std.base64;
+									auto data = Base64.decode(info);
+									clearSelectionInternal();
+									overriddenSelection = cast(string) data;
+								} catch(Exception e)  {}
+							}
 						break;
 						case "4":
 							// palette change or query
@@ -3066,30 +3251,30 @@ URXVT (1015)
 // These match the numbers in terminal.d, so you can just cast it back and forth
 // and the names match simpledisplay.d so you can convert that automatically too
 enum TerminalKey : int {
-	Escape = 0x1b,// + 0xF0000, /// .
-	F1 = 0x70,// + 0xF0000, /// .
-	F2 = 0x71,// + 0xF0000, /// .
-	F3 = 0x72,// + 0xF0000, /// .
-	F4 = 0x73,// + 0xF0000, /// .
-	F5 = 0x74,// + 0xF0000, /// .
-	F6 = 0x75,// + 0xF0000, /// .
-	F7 = 0x76,// + 0xF0000, /// .
-	F8 = 0x77,// + 0xF0000, /// .
-	F9 = 0x78,// + 0xF0000, /// .
-	F10 = 0x79,// + 0xF0000, /// .
-	F11 = 0x7A,// + 0xF0000, /// .
-	F12 = 0x7B,// + 0xF0000, /// .
-	Left = 0x25,// + 0xF0000, /// .
-	Right = 0x27,// + 0xF0000, /// .
-	Up = 0x26,// + 0xF0000, /// .
-	Down = 0x28,// + 0xF0000, /// .
-	Insert = 0x2d,// + 0xF0000, /// .
-	Delete = 0x2e,// + 0xF0000, /// .
-	Home = 0x24,// + 0xF0000, /// .
-	End = 0x23,// + 0xF0000, /// .
-	PageUp = 0x21,// + 0xF0000, /// .
-	PageDown = 0x22,// + 0xF0000, /// .
-	ScrollLock = 0x91, 
+	Escape = 0x1b + 0xF0000, /// .
+	F1 = 0x70 + 0xF0000, /// .
+	F2 = 0x71 + 0xF0000, /// .
+	F3 = 0x72 + 0xF0000, /// .
+	F4 = 0x73 + 0xF0000, /// .
+	F5 = 0x74 + 0xF0000, /// .
+	F6 = 0x75 + 0xF0000, /// .
+	F7 = 0x76 + 0xF0000, /// .
+	F8 = 0x77 + 0xF0000, /// .
+	F9 = 0x78 + 0xF0000, /// .
+	F10 = 0x79 + 0xF0000, /// .
+	F11 = 0x7A + 0xF0000, /// .
+	F12 = 0x7B + 0xF0000, /// .
+	Left = 0x25 + 0xF0000, /// .
+	Right = 0x27 + 0xF0000, /// .
+	Up = 0x26 + 0xF0000, /// .
+	Down = 0x28 + 0xF0000, /// .
+	Insert = 0x2d + 0xF0000, /// .
+	Delete = 0x2e + 0xF0000, /// .
+	Home = 0x24 + 0xF0000, /// .
+	End = 0x23 + 0xF0000, /// .
+	PageUp = 0x21 + 0xF0000, /// .
+	PageDown = 0x22 + 0xF0000, /// .
+	ScrollLock = 0x91 + 0xF0000, 
 }
 
 /* These match simpledisplay.d which match terminal.d, so you can just cast them */

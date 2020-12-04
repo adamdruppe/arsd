@@ -952,7 +952,7 @@ struct Terminal {
 	}
 	bool clipboardSupported() {
 		version(Win32Console) return true;
-		else return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
+		else return (tcaps & TerminalCapabilities.arsdClipboard) ? true : false;
 	}
 
 	// only supported on my custom terminal emulator. guarded behind if(inlineImagesSupported)
@@ -1058,6 +1058,16 @@ struct Terminal {
 			writeStringRaw("\033]52;p;"~Base64.encode(cast(ubyte[])text)~"\007");
 		}
 	}
+
+	// it sets the internal selection, you are still responsible for showing to users if need be
+	// may not work though, check `clipboardSupported` or have some alternate way for the user to use the selection
+	void requestSetTerminalSelection(string text) {
+		if(clipboardSupported) {
+			import std.base64;
+			writeStringRaw("\033]52;s;"~Base64.encode(cast(ubyte[])text)~"\007");
+		}
+	}
+
 
 	bool hasDefaultDarkBackground() {
 		version(Win32Console) {
@@ -3389,14 +3399,10 @@ struct RealTimeConsoleInput {
 									case "24": return keyPressAndRelease(NonCharacterKeyEvent.Key.F12, modifierState);
 
 									// xterm extension for arbitrary keys with arbitrary modifiers
-									case "27": return keyPressAndRelease2(keyGot, modifierState);
+									case "27": return keyPressAndRelease2(keyGot == '\x1b' ? KeyboardEvent.Key.escape : keyGot, modifierState);
 
-									// starting at 70 i do some magic for like shift+enter etc.
-									// this only happens on my own terminal emulator.
+									// starting at 70  im free to do my own but i rolled all but ScrollLock into 27 as of Dec 3, 2020
 									case "70": return keyPressAndRelease(NonCharacterKeyEvent.Key.ScrollLock, modifierState);
-									case "78": return keyPressAndRelease2('\b', modifierState);
-									case "79": return keyPressAndRelease2('\t', modifierState);
-									case "83": return keyPressAndRelease2('\n', modifierState);
 									default:
 								}
 							break;
@@ -3485,8 +3491,12 @@ struct RealTimeConsoleInput {
 
 	$(LIST
 		* Ctrl+space bar sends char 0.
-		* Ctrl+ascii characters send char 1 - 26 as chars on all systems.
-		* Other modifier+key combinations may send random other things or not be detected as it is configuration-specific with no way to detect. It is reasonably reliable for the non-character keys (arrows, F1-F12, Home/End, etc.) but not perfectly so. Some systems just don't send them.
+		* Ctrl+ascii characters send char 1 - 26 as chars on all systems. Ctrl+shift+ascii is generally not recognizable on Linux, but works on Windows and with my terminal emulator on all systems. Alt+ctrl+ascii, for example Alt+Ctrl+F, is sometimes sent as modifierState = alt|ctrl, key = 'f'. Sometimes modifierState = alt|ctrl, key = 'F'. Sometimes modifierState = ctrl|alt, key = 6. Which one you get depends on the system/terminal and the user's caps lock state. You're probably best off checking all three and being aware it might not work at all.
+		* Some combinations like ctrl+i are indistinguishable from other keys like tab.
+		* Other modifier+key combinations may send random other things or not be detected as it is configuration-specific with no way to detect. It is reasonably reliable for the non-character keys (arrows, F1-F12, Home/End, etc.) but not perfectly so. Some systems just don't send them. If they do though, terminal will try to set `modifierState`.
+		* Alt+key combinations do not generally work on Windows since the operating system uses that combination for something else.
+		* Shift is sometimes applied to the character, sometimes set in modifierState, sometimes both, sometimes neither.
+		* On some systems, the return key sends \r and some sends \n.
 	)
 +/
 struct KeyboardEvent {
@@ -3496,15 +3506,73 @@ struct KeyboardEvent {
 	alias character = which; /// I often use this when porting old to new so i took it
 	uint modifierState; ///
 
-	///
+	// filter irrelevant modifiers...
+	uint modifierStateFiltered() const {
+		uint ms = modifierState;
+		if(which < 32 && which != 9 && which != 8 && which != '\n')
+			ms &= ~ModifierState.control;
+		return ms;
+	}
+
+	/++
+		Returns true if the event was a normal typed character.
+
+		You may also want to check modifiers if you want to process things differently when alt, ctrl, or shift is pressed.
+		[modifierStateFiltered] returns only modifiers that are special in some way for the typed character. You can bitwise
+		and that against [ModifierState]'s members to test.
+
+		[isUnmodifiedCharacter] does such a check for you.
+
+		$(NOTE
+			Please note that enter, tab, and backspace count as characters.
+		)
+	+/
 	bool isCharacter() {
-		return !(which >= Key.min && which <= Key.max);
+		return !isNonCharacterKey() && !isProprietary();
+	}
+
+	/++
+		Returns true if this keyboard event represents a normal character keystroke, with no extraordinary modifier keys depressed.
+
+		Shift is considered an ordinary modifier except in the cases of tab, backspace, enter, and the space bar, since it is a normal
+		part of entering many other characters.
+
+		History:
+			Added December 4, 2020.
+	+/
+	bool isUnmodifiedCharacter() {
+		uint modsInclude = ModifierState.control | ModifierState.alt | ModifierState.meta;
+		if(which == '\b' || which == '\t' || which == '\n' || which == '\r' || which == ' ' || which == 0)
+			modsInclude |= ModifierState.shift;
+		return isCharacter() && (modifierStateFiltered() & modsInclude) == 0;
+	}
+
+	/++
+		Returns true if the key represents one of the range named entries in the [Key] enum.
+		This does not necessarily mean it IS one of the named entries, just that it is in the
+		range. Checking more precisely would require a loop in here and you are better off doing
+		that in your own `switch` statement, with a do-nothing `default`.
+
+		Remember that users can create synthetic input of any character value.
+
+		History:
+			While this function was present before, it was undocumented until December 4, 2020.
+	+/
+	bool isNonCharacterKey() {
+		return which >= Key.min && which <= Key.max;
+	}
+
+	///
+	bool isProprietary() {
+		return which >= ProprietaryPseudoKeys.min && which <= ProprietaryPseudoKeys.max;
 	}
 
 	// these match Windows virtual key codes numerically for simplicity of translation there
 	// but are plus a unicode private use area offset so i can cram them in the dchar
 	// http://msdn.microsoft.com/en-us/library/windows/desktop/dd375731%28v=vs.85%29.aspx
-	/// .
+	/++
+		Represents non-character keys.
+	+/
 	enum Key : dchar {
 		escape = 0x1b + 0xF0000, /// .
 		F1 = 0x70 + 0xF0000, /// .
@@ -3530,9 +3598,33 @@ struct KeyboardEvent {
 		PageUp = 0x21 + 0xF0000, /// .
 		PageDown = 0x22 + 0xF0000, /// .
 		ScrollLock = 0x91 + 0xF0000, /// unlikely to work outside my custom terminal emulator
+
+		/*
+		Enter = '\n',
+		Backspace = '\b',
+		Tab = '\t',
+		*/
 	}
 
+	/++
+		These are extensions added for better interop with the embedded emulator.
+		As characters inside the unicode private-use area, you shouldn't encounter
+		them unless you opt in by using some other proprietary feature.
 
+		History:
+			Added December 4, 2020.
+	+/
+	enum ProprietaryPseudoKeys : dchar {
+		/++
+			If you use [Terminal.requestSetTerminalSelection], you should also process
+			this pseudo-key to clear the selection when the terminal tells you do to keep
+			you UI in sync.
+
+			History:
+				Added December 4, 2020.
+		+/
+		SelectNone = 0x0 + 0xF1000, // 987136
+	}
 }
 
 /// Deprecated: use KeyboardEvent instead in new programs
@@ -3853,7 +3945,7 @@ void main() {
 	///*
 	auto getter = new FileLineGetter(&terminal, "test");
 	getter.prompt = "> ";
-	getter.history = ["abcdefghijklmnopqrstuvwzyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+	//getter.history = ["abcdefghijklmnopqrstuvwzyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
 	terminal.writeln("\n" ~ getter.getline());
@@ -3908,6 +4000,7 @@ void main() {
 			break;
 			case InputEvent.Type.KeyboardEvent:
 				auto ev = event.get!(InputEvent.Type.KeyboardEvent);
+				if(!ev.pressed) break;
 					terminal.writef("\t%s", ev);
 				terminal.writef(" (%s)", cast(KeyboardEvent.Key) ev.which);
 				terminal.writeln();
@@ -3924,10 +4017,10 @@ void main() {
 			break;
 			case InputEvent.Type.CharacterEvent: // obsolete
 				auto ev = event.get!(InputEvent.Type.CharacterEvent);
-				terminal.writef("\t%s\n", ev);
+				//terminal.writef("\t%s\n", ev);
 			break;
 			case InputEvent.Type.NonCharacterKeyEvent: // obsolete
-				terminal.writef("\t%s\n", event.get!(InputEvent.Type.NonCharacterKeyEvent));
+				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.NonCharacterKeyEvent));
 			break;
 			case InputEvent.Type.PasteEvent:
 				terminal.writef("\t%s\n", event.get!(InputEvent.Type.PasteEvent));
@@ -4112,7 +4205,7 @@ private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn
 
 private extern(C) int mkstemp(char *templ);
 
-/**
+/*
 	FIXME: support lines that wrap
 	FIXME: better controls maybe
 
@@ -4121,11 +4214,19 @@ private extern(C) int mkstemp(char *templ);
 	       hits "class foo { \n" and the app says "that line needs continuation" automatically.
 
 	FIXME: fix lengths on prompt and suggestion
+*/
+/**
+	A user-interactive line editor class, used by [Terminal.getline]. It is similar to
+	GNU readline, offering comparable features like tab completion, history, and graceful
+	degradation to adapt to the user's terminal.
+
 
 	A note on history:
 
-	To save history, you must call LineGetter.dispose() when you're done with it.
-	History will not be automatically saved without that call!
+	$(WARNING
+		To save history, you must call LineGetter.dispose() when you're done with it.
+		History will not be automatically saved without that call!
+	)
 
 	The history saving and loading as a trivially encountered race condition: if you
 	open two programs that use the same one at the same time, the one that closes second
@@ -4264,9 +4365,44 @@ class LineGetter {
 			mkdir(historyFileDirectory);
 		auto fn = historyPath();
 		import std.stdio;
-		auto file = File(fn, "wt");
+		auto file = File(fn, "wb");
+		file.write("// getline history file\r\n");
 		foreach(item; history)
-			file.writeln(item);
+			file.writeln(item, "\r");
+	}
+
+	/// You may override this to do nothing
+	/* virtual */ void loadSettingsAndHistoryFromFile() {
+		import std.file;
+		history = null;
+		auto fn = historyPath();
+		if(exists(fn)) {
+			import std.stdio, std.algorithm, std.string;
+			string cur;
+
+			auto file = File(fn, "rb");
+			auto first = file.readln();
+			if(first.startsWith("// getline history file")) {
+				foreach(chunk; file.byChunk(1024)) {
+					auto idx = (cast(char[]) chunk).indexOf(cast(char) '\r');
+					while(idx != -1) {
+						cur ~= cast(char[]) chunk[0 .. idx];
+						history ~= cur;
+						cur = null;
+						chunk = chunk[idx + 2 .. $]; // skipping \r\n
+						idx = (cast(char[]) chunk).indexOf(cast(char) '\r');
+					}
+					cur ~= cast(char[]) chunk;
+				}
+				if(cur.length)
+					history ~= cur;
+			} else {
+				// old-style plain file
+				history ~= first;
+				foreach(line; file.byLine())
+					history ~= line.idup;
+			}
+		}
 	}
 
 	/++
@@ -4277,23 +4413,11 @@ class LineGetter {
 		return ".history";
 	}
 
-	private string historyPath() {
+	/// semi-private, do not rely upon yet
+	final string historyPath() {
 		import std.path;
 		auto filename = historyFileDirectory() ~ dirSeparator ~ historyFilename ~ historyFileExtension();
 		return filename;
-	}
-
-	/// You may override this to do nothing
-	/* virtual */ void loadSettingsAndHistoryFromFile() {
-		import std.file;
-		history = null;
-		auto fn = historyPath();
-		if(exists(fn)) {
-			import std.stdio;
-			foreach(line; File(fn, "rt").byLine)
-				history ~= line.idup;
-
-		}
 	}
 
 	/++
@@ -4539,11 +4663,26 @@ class LineGetter {
 			string editor = environment.get("EDITOR", "vi");
 		}
 
-		// FIXME the spawned process changes terminal state!
+		// FIXME the spawned process changes even more terminal state than set up here!
 
-		spawnProcess([editor, tmpName]).wait;
-		import std.string;
-		return to!(dchar[])(cast(char[]) std.file.read(tmpName)).chomp;
+		try {
+			version(none)
+			if(UseVtSequences) {
+				if(terminal.type == ConsoleOutputType.cellular) {
+					terminal.doTermcap("te");
+				}
+			}
+			spawnProcess([editor, tmpName]).wait;
+			if(UseVtSequences) {
+				if(terminal.type == ConsoleOutputType.cellular)
+					terminal.doTermcap("ti");
+			}
+			import std.string;
+			return to!(dchar[])(cast(char[]) std.file.read(tmpName)).chomp;
+		} catch(Exception e) {
+			// edit failed, we should prolly tell them but idk how....
+			return null;
+		}
 	}
 
 	//private RealTimeConsoleInput* rtci;
@@ -4912,13 +5051,13 @@ class LineGetter {
 			lineLength--;
 		}
 
-		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0) {
+		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0, bool inverted = false) {
 			// FIXME: if there is a color at the end of the line it messes up as you scroll
 			// FIXME: need a way to go to multi-line editing
 
 			bool highlightOn = false;
 			void highlightOff() {
-				lg.terminal.color(lg.regularForeground, lg.background);
+				lg.terminal.color(lg.regularForeground, lg.background, ForceOption.automatic, inverted);
 				highlightOn = false;
 			}
 
@@ -4935,7 +5074,7 @@ class LineGetter {
 					default:
 						if(highlightEnd) {
 							if(idx == highlightBegin) {
-								lg.terminal.color(lg.regularForeground, Color.yellow);
+								lg.terminal.color(lg.regularForeground, Color.yellow, ForceOption.automatic, inverted);
 								highlightOn = true;
 							}
 							if(idx == highlightEnd) {
@@ -5015,7 +5154,21 @@ class LineGetter {
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
 
-		drawer.drawContent(towrite);
+		if(selectionStart != selectionEnd) {
+			dchar[] beforeSelection, selection, afterSelection;
+
+			beforeSelection = line[0 .. selectionStart];
+			selection = line[selectionStart .. selectionEnd];
+			afterSelection = line[selectionEnd .. $];
+
+			drawer.drawContent(beforeSelection);
+			terminal.color(regularForeground, background, ForceOption.automatic, true);
+			drawer.drawContent(selection, 0, 0, true);
+			terminal.color(regularForeground, background);
+			drawer.drawContent(afterSelection);
+		} else {
+			drawer.drawContent(towrite);
+		}
 
 		string suggestion;
 
@@ -5273,6 +5426,54 @@ class LineGetter {
 
 	private LineGetter supplementalGetter;
 
+	/* selection helpers */
+	protected {
+		// make sure you set the anchor first
+		void extendSelectionToCursor() {
+			if(cursorPosition < selectionStart)
+				selectionStart = cursorPosition;
+			else if(cursorPosition > selectionEnd)
+				selectionEnd = cursorPosition;
+
+			terminal.requestSetTerminalSelection(getSelection());
+		}
+		void setSelectionAnchorToCursor() {
+			if(selectionStart == -1)
+				selectionStart = selectionEnd = cursorPosition;
+		}
+		void sanitizeSelection() {
+			if(selectionStart == selectionEnd)
+				return;
+
+			if(selectionStart < 0 || selectionEnd < 0 || selectionStart > line.length || selectionEnd > line.length)
+				selectNone();
+		}
+	}
+	public {
+		// redraw after calling this
+		void selectAll() {
+			selectionStart = 0;
+			selectionEnd = cast(int) line.length;
+		}
+
+		// redraw after calling this
+		void selectNone() {
+			selectionStart = selectionEnd = -1;
+		}
+
+		string getSelection() {
+			sanitizeSelection();
+			if(selectionStart == selectionEnd)
+				return null;
+			import std.conv;
+			return to!string(line[selectionStart .. selectionEnd]);
+		}
+	}
+	private {
+		int selectionStart = -1;
+		int selectionEnd = -1;
+	}
+
 	/++
 		for integrating into another event loop
 		you can pass individual events to this and
@@ -5316,6 +5517,10 @@ class LineGetter {
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						goto case;
+					case KeyboardEvent.ProprietaryPseudoKeys.SelectNone:
+						selectNone();
+						redraw();
+					break;
 					case 'd', 4: // ctrl+d will also send a newline-equivalent 
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
@@ -5325,9 +5530,21 @@ class LineGetter {
 					case '\r':
 					case '\n':
 						justHitTab = justKilled = false;
+						if(ev.modifierState & ModifierState.shift) {
+							addChar('\n');
+							redraw();
+							break;
+						}
 						return false;
 					case '\t':
 						justKilled = false;
+
+						if(ev.modifierState & ModifierState.shift) {
+							justHitTab = false;
+							addChar('\t');
+							redraw();
+							break;
+						}
 
 						auto relevantLineSection = line[0 .. cursorPosition];
 						auto start = tabCompleteStartPoint(relevantLineSection, line[cursorPosition .. $]);
@@ -5404,13 +5621,16 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.F2:
 						justHitTab = justKilled = false;
-						line = editLineInEditor(line, cursorPosition);
-						if(cursorPosition > line.length)
-							cursorPosition = cast(int) line.length;
-						if(horizontalScrollPosition > line.length)
-							horizontalScrollPosition = cast(int) line.length;
-						positionCursor();
-						redraw();
+						auto got = editLineInEditor(line, cursorPosition);
+						if(got !is null) {
+							line = got;
+							if(cursorPosition > line.length)
+								cursorPosition = cast(int) line.length;
+							if(horizontalScrollPosition > line.length)
+								horizontalScrollPosition = cast(int) line.length;
+							positionCursor();
+							redraw();
+						}
 					break;
 					case 'r', 18:
 						if(!(ev.modifierState & ModifierState.control))
@@ -5446,11 +5666,39 @@ class LineGetter {
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						justHitTab = justKilled = false;
-						// FIXME: find matching delimiter
+						// FIXME: would be cool if this worked with quotes and such too
+						if(cursorPosition >= 0 && cursorPosition < line.length) {
+							dchar at = line[cursorPosition];
+							int direction;
+							dchar lookFor;
+							switch(at) {
+								case '(': direction = 1; lookFor = ')'; break;
+								case '[': direction = 1; lookFor = ']'; break;
+								case '{': direction = 1; lookFor = '}'; break;
+								case ')': direction = -1; lookFor = '('; break;
+								case ']': direction = -1; lookFor = '['; break;
+								case '}': direction = -1; lookFor = '{'; break;
+								default:
+							}
+							if(direction) {
+								int pos = cursorPosition;
+								int count;
+								while(pos >= 0 && pos < line.length) {
+									if(line[pos] == at)
+										count++;
+									if(line[pos] == lookFor)
+										count--;
+									if(count == 0) {
+										cursorPosition = pos;
+										redraw();
+										break;
+									}
+									pos += direction;
+								}
+							}
+						}
 					break;
 
-					// FIXME: history should store original paste as blobs in the history file
-					// FIXME: on history let it filter by prefix if desired
 					// FIXME: should be able to update the selection with shift+arrows as well as mouse
 					// if terminal emulator supports this, it can formally select it to the buffer for copy
 					// and sending to primary on X11 (do NOT do it on Windows though!!!)
@@ -5476,10 +5724,21 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.LeftArrow:
 						justHitTab = justKilled = false;
+
+						/*
+						if(ev.modifierState & ModifierState.shift)
+							setSelectionAnchorToCursor();
+						*/
+
 						if(ev.modifierState & ModifierState.control)
 							wordBack();
 						else if(cursorPosition)
 							charBack();
+
+						/*
+						if(ev.modifierState & ModifierState.shift)
+							extendSelectionToCursor();
+						*/
 
 						redraw();
 					break;
@@ -5522,6 +5781,13 @@ class LineGetter {
 					case 'a', 1: // this one conflicts with Windows-style select all...
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
+						if(ev.modifierState & ModifierState.shift) {
+							// ctrl+shift+a will select all...
+							// for now I will have it just copy to clipboard but later once I get the time to implement full selection handling, I'll change it
+							import std.conv;
+							terminal.requestCopyToClipboard(to!string(line));
+							break;
+						}
 						goto case;
 					case KeyboardEvent.Key.Home:
 						justHitTab = justKilled = false;
@@ -5560,7 +5826,7 @@ class LineGetter {
 								rtti.requestPasteFromClipboard();
 						} else if(ev.modifierState & ModifierState.control) {
 							// copy
-							// FIXME
+							// FIXME we could try requesting it though this control unlikely to even come
 						} else {
 							insertMode = !insertMode;
 
@@ -7230,17 +7496,14 @@ version(TerminalDirectToEmulator) {
 		}
 
 		protected override void pasteFromClipboard(void delegate(in char[]) dg) {
-			static if(UsingSimpledisplayX11)
-				getPrimarySelection(widget.parentWindow.win, dg);
-			else
-				getClipboardText(widget.parentWindow.win, (in char[] dataIn) {
-					char[] data;
-					// change Windows \r\n to plain \n
-					foreach(char ch; dataIn)
-						if(ch != 13)
-							data ~= ch;
-					dg(data);
-				});
+			getClipboardText(widget.parentWindow.win, (in char[] dataIn) {
+				char[] data;
+				// change Windows \r\n to plain \n
+				foreach(char ch; dataIn)
+					if(ch != 13)
+						data ~= ch;
+				dg(data);
+			});
 		}
 
 		protected override void copyToPrimary(string text) {
@@ -7406,42 +7669,19 @@ version(TerminalDirectToEmulator) {
 					return;
 				}
 
-				static string magic() {
-					string code;
-					foreach(member; __traits(allMembers, TerminalKey))
-						if(member != "Escape")
-							code ~= "case Key." ~ member ~ ": if(sendKeyToApplication(TerminalKey." ~ member ~ "
-								, (ev.state & ModifierState.shift)?true:false
-								, (ev.state & ModifierState.alt)?true:false
-								, (ev.state & ModifierState.ctrl)?true:false
-								, (ev.state & ModifierState.windows)?true:false
-							)) redraw(); break;";
-					return code;
-				}
-
-
-				switch(ev.key) {
-					mixin(magic());
-					default:
-						// keep going, not special
-				}
+				defaultKeyHandler!(typeof(ev.key))(
+					ev.key
+					, (ev.state & ModifierState.shift)?true:false
+					, (ev.state & ModifierState.alt)?true:false
+					, (ev.state & ModifierState.ctrl)?true:false
+					, (ev.state & ModifierState.windows)?true:false
+				);
 
 				return; // the character event handler will do others
 			});
 
 			widget.addEventListener("char", (Event ev) {
 				dchar c = ev.character;
-				if(skipNextChar) {
-					skipNextChar = false;
-					return;
-				}
-
-				endScrollback();
-				char[4] str;
-				import std.utf;
-				if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
-				auto data = str[0 .. encode(str, c)];
-
 
 				if(c == 0x1c) /* ctrl+\, force quit */ {
 					version(Posix) {
@@ -7466,9 +7706,8 @@ version(TerminalDirectToEmulator) {
 						widget.term.interrupted = true;
 						outgoingSignal.notify();
 					}
-				} else if(c != 127) {
-					// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
-					sendToApplication(data);
+				} else {
+					defaultCharHandler(c);
 				}
 			});
 		}
