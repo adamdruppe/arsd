@@ -4178,6 +4178,9 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 		if(!handleException(cgi, t)) {
 			connection.close();
 			return;
+		} else {
+			connection.close();
+			return;
 		}
 	}
 }

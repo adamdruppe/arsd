@@ -3,6 +3,7 @@
 // FIXME: eaders are supposed to be case insensitive. ugh.
 
 // FIXME: need timeout controls
+// FIXME: 100 continue. tho we never Expect it so should never happen, never kno,
 
 /++
 	This is version 2 of my http/1.1 client implementation.
@@ -1508,13 +1509,20 @@ enum HttpVerb {
 /**
 	Usage:
 
+	---
 	auto client = new HttpClient("localhost", 80);
 	// relative links work based on the current url
-	client.get("foo/bar");
-	client.get("baz"); // gets foo/baz
+	HttpRequest request = client.get("foo/bar");
+	request = client.get("baz"); // gets foo/baz
 
-	auto request = client.get("rofl");
-	auto response = request.waitForCompletion();
+	// requests are not sent until you tell them to;
+	// they are just objects representing potential.
+	// to realize it and fetch the response, use waitForCompletion:
+
+	HttpResponse response = request.waitForCompletion();
+
+	// now you can use response.headers, response.contentText, etc
+	---
 */
 
 /// HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.

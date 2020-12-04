@@ -6946,7 +6946,7 @@ class OperatingSystemFont {
 		}
 
 		if(!XftLibrary.loadSuccessful)
-			return loadCoreX(name, size, weight, italic);
+			return false;
 
 		auto display = XDisplayConnection.get;
 
@@ -7070,13 +7070,19 @@ class OperatingSystemFont {
 	/++
 		`name` is a font name, but it can also be a more complicated string parsed in an OS-specific way.
 
-		On X, you may prefix a name with `core:` to bypass the freetype engine and call [loadCoreX]. Otherwise,
-		it calls [loadXft] if the library is available. If the library is not available, it falls back on [loadCoreX].
+		On X, you may prefix a name with `core:` to bypass the freetype engine causing this function to forward to [loadCoreX]. Otherwise,
+		it calls [loadXft] if the library is available. If the library or font is not available on Xft, it falls back on [loadCoreX].
 
 		On Windows, it forwards directly to [loadWin32].
 
+		Params:
+			name = font name. This is looked up by the operating system and may be interpreted differently across platforms or user machines and their preferences.
+			size = font size. This may be interpreted differently by different systems and different fonts. Size 0 means load a default, which may not exist and cause [isNull] to become true.
+			weight = approximate boldness, results may vary.
+			italic = try to get a slanted version of the given font.
+
 		History:
-			Xft support was added on November 13, 2020. It would only load core fonts.
+			Xft support was added on November 13, 2020. It would only load core fonts. Xft inclusion changed font lookup and interpretation of the `size` parameter, requiring a major version bump. This caused release v9.0.
 	+/
 	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
 		version(X11) {
@@ -7085,7 +7091,10 @@ class OperatingSystemFont {
 					goto core;
 				}
 
-				return loadXft(name, size, weight, italic);
+				if(loadXft(name, size, weight, italic))
+					return true;
+				// if xft fails, fallback to core to avoid breaking
+				// code that already depended on this.
 			}
 
 			core:

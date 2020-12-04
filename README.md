@@ -10,6 +10,12 @@ See the full list of (at least slightly) documented module here: http://arsd-off
 
 I have [a patreon](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly blog](http://dpldocs.info/this-week-in-d/) you can check out if you'd like to financially support this work or see the updates and tips I write about.
 
+# Breaking Changelog
+
+This only lists changes that broke things and got a major version bump. I didn't start keeping track here until 9.0.
+
+9.0 - simpledisplay's OperatingSystemFont, which is also used by terminalemulator.d (which is used by terminal.d's -version=TerminalDirectToEmulator function) would previously only load X Core Fonts. It now prefers TrueType fonts via Xft. This loads potentially different fonts and the sizes are interpreted differently, so you may need to adjust your preferences there. To restore previous behavior, prefix your font name strings with "core:".
+
 ## Credits
 
 Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, ketmar, maartenvd, and many others over the years for input and patches.
@@ -35,3 +41,4 @@ With http2.d, use
 	Uri("http://whatever_host/path?args").viaUnixSocket("/path/here")
 
 any time you are constructing a client. Note that `navigateTo` may lose the unix socket unless you specify it again.
+
