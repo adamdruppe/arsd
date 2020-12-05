@@ -3494,7 +3494,7 @@ struct RealTimeConsoleInput {
 		* Ctrl+ascii characters send char 1 - 26 as chars on all systems. Ctrl+shift+ascii is generally not recognizable on Linux, but works on Windows and with my terminal emulator on all systems. Alt+ctrl+ascii, for example Alt+Ctrl+F, is sometimes sent as modifierState = alt|ctrl, key = 'f'. Sometimes modifierState = alt|ctrl, key = 'F'. Sometimes modifierState = ctrl|alt, key = 6. Which one you get depends on the system/terminal and the user's caps lock state. You're probably best off checking all three and being aware it might not work at all.
 		* Some combinations like ctrl+i are indistinguishable from other keys like tab.
 		* Other modifier+key combinations may send random other things or not be detected as it is configuration-specific with no way to detect. It is reasonably reliable for the non-character keys (arrows, F1-F12, Home/End, etc.) but not perfectly so. Some systems just don't send them. If they do though, terminal will try to set `modifierState`.
-		* Alt+key combinations do not generally work on Windows since the operating system uses that combination for something else.
+		* Alt+key combinations do not generally work on Windows since the operating system uses that combination for something else. The events may come to you, but it may also go to the window menu or some other operation too. In fact, it might do both!
 		* Shift is sometimes applied to the character, sometimes set in modifierState, sometimes both, sometimes neither.
 		* On some systems, the return key sends \r and some sends \n.
 	)
@@ -5493,6 +5493,9 @@ class LineGetter {
 				// the supplementalGetter will poke our own state directly
 				// so i can ignore the return value here...
 
+				// but i do need to ensure we clear any
+				// stuff left on the screen from it.
+				lastDrawLength = terminal.width - 1;
 				supplementalGetter = null;
 				redraw();
 			}
@@ -5530,6 +5533,9 @@ class LineGetter {
 					case '\r':
 					case '\n':
 						justHitTab = justKilled = false;
+						if(ev.modifierState & ModifierState.control) {
+							goto case KeyboardEvent.Key.F9;
+						}
 						if(ev.modifierState & ModifierState.shift) {
 							addChar('\n');
 							redraw();
@@ -7657,7 +7663,6 @@ version(TerminalDirectToEmulator) {
 			});
 
 			widget.addEventListener("keydown", (Event ev) {
-
 				if(ev.key == Key.C && (ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
 					// ctrl+c is cancel so ctrl+shift+c ends up doing copy.
 					copyToClipboard(getSelectedText());
