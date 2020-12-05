@@ -2852,7 +2852,7 @@ struct RealTimeConsoleInput {
 		INPUT_RECORD[32] buffer;
 		DWORD actuallyRead;
 		auto success = ReadConsoleInputW(inputHandle, buffer.ptr, buffer.length, &actuallyRead);
-		import std.stdio; writeln(buffer[0 .. actuallyRead][0].KeyEvent, cast(int) buffer[0].KeyEvent.UnicodeChar);
+		//import std.stdio; writeln(buffer[0 .. actuallyRead][0].KeyEvent, cast(int) buffer[0].KeyEvent.UnicodeChar);
 		if(success == 0)
 			throw new Exception("ReadConsoleInput");
 
@@ -5656,6 +5656,7 @@ class LineGetter {
 						justKilled = true;
 						redraw();
 					break;
+					// btw alt+enter could be alias for F9?
 					case KeyboardEvent.Key.F9:
 						justHitTab = justKilled = false;
 						// compile and run analog; return the current string
@@ -7039,6 +7040,9 @@ version(TerminalDirectToEmulator) {
 	import arsd.terminalemulator;
 	import arsd.minigui;
 
+	version(Posix)
+		private extern(C) int openpty(int* master, int* slave, char*, const void*, const void*);
+
 	/++
 		Represents the window that the library pops up for you.
 	+/
@@ -7091,6 +7095,8 @@ version(TerminalDirectToEmulator) {
 					import core.stdc.stdio;
 
 					auto fp = stdout;
+
+					//  FIXME: openpty
 
 					int[2] fds;
 					auto ret = pipe(fds);
