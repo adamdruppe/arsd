@@ -9499,13 +9499,20 @@ version(Windows) {
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
 				case WM_SYSKEYDOWN:
+					goto case;
 				case WM_SYSKEYUP:
+					if(lParam & (1 << 29)) {
+						goto case;
+					} else {
+						// no window has keyboard focus
+						goto default;
+					}
 				case WM_KEYDOWN:
 				case WM_KEYUP:
 					KeyEvent ev;
 					ev.key = cast(Key) wParam;
 					ev.pressed = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
-					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) ev.key = Key.Alt; // windows does it this way
+					if (wParam == 0x12) ev.key = Key.Alt; // windows does it this way
 
 					ev.hardwareCode = (lParam & 0xff0000) >> 16;
 
@@ -9514,7 +9521,7 @@ version(Windows) {
 					//k8: this doesn't work; thanks for nothing, windows
 					/*if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
 						ev.modifierState |= ModifierState.alt;*/
-					if ((msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) && wParam == 0x12) altPressed = (msg == WM_SYSKEYDOWN);
+					if (wParam == 0x12) altPressed = (msg == WM_SYSKEYDOWN);
 					if (altPressed) ev.modifierState |= ModifierState.alt; else ev.modifierState &= ~ModifierState.alt;
 					if(GetKeyState(Key.Ctrl)&0x8000 || GetKeyState(Key.Ctrl_r)&0x8000)
 						ev.modifierState |= ModifierState.ctrl;
