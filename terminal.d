@@ -4672,7 +4672,15 @@ class LineGetter {
 					terminal.doTermcap("te");
 				}
 			}
-			spawnProcess([editor, tmpName]).wait;
+			version(Posix) {
+				import std.stdio;
+				// need to go to the parent terminal jic we're in an embedded terminal with redirection
+				terminal.write(" !! Editor may be in parent terminal !!");
+				terminal.flush();
+				spawnProcess([editor, tmpName], File("/dev/tty", "rb"), File("/dev/tty", "wb")).wait;
+			} else {
+				spawnProcess([editor, tmpName]).wait;
+			}
 			if(UseVtSequences) {
 				if(terminal.type == ConsoleOutputType.cellular)
 					terminal.doTermcap("ti");
@@ -7102,7 +7110,7 @@ version(TerminalDirectToEmulator) {
 
 					auto fp = stdout;
 
-					//  FIXME: openpty
+					//  FIXME: openpty? child processes can get a lil borked.
 
 					int[2] fds;
 					auto ret = pipe(fds);
