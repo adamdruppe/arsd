@@ -1340,7 +1340,10 @@ class HttpRequest {
 						// done with headers
 						if(data[position] == '\r' && (position + 1) < data.length && data[position + 1] == '\n')
 							position++;
-						state = State.readingBody;
+						if(this.requestParameters.method == HttpVerb.HEAD)
+							state = State.complete;
+						else
+							state = State.readingBody;
 						position++; // skip the newline
 						break;
 					} else if(data[position] == ' ' || data[position] == '\t') {
