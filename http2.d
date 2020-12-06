@@ -175,7 +175,19 @@ string post(string url, string[string] args, string[string] cookies = null) {
 
 ///
 struct HttpResponse {
-	int code; ///
+	/++
+		The HTTP response code, if the response was completed, or some value < 100 if it was aborted or failed.
+
+		Code 0 - initial value, nothing happened
+		Code 1 - you called request.abort
+		Code 2 - connection refused
+		Code 3 - connection succeeded, but server disconnected early
+		Code 4 - server sent corrupted response (or this code has a bug and processed it wrong)
+		Code 5 - request timed out
+
+		Code >= 100 - a HTTP response
+	+/
+	int code;
 	string codeText; ///
 
 	string httpVersion; ///
@@ -184,6 +196,15 @@ struct HttpResponse {
 
 	string contentType; /// The content type header
 	string location; /// The location header
+
+	/++
+
+		History:
+			Added December 5, 2020 (version 9.1)
+	+/
+	bool wasSuccessful() {
+		return code >= 200 && code < 400;
+	}
 
 	/// the charset out of content type, if present. `null` if not.
 	string contentTypeCharset() {
@@ -840,10 +861,17 @@ class HttpRequest {
 	/// Waits for the request to finish or timeout, whichever comes first.
 	HttpResponse waitForCompletion() {
 		while(state != State.aborted && state != State.complete) {
-			if(state == State.unsent)
+			if(state == State.unsent) {
 				send();
-			if(auto err = HttpRequest.advanceConnections())
-				throw new Exception("waitForCompletion got err " ~ to!string(err));
+				continue;
+			}
+			if(auto err = HttpRequest.advanceConnections()) {
+				switch(err) {
+					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
+					case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
+					default: throw new Exception("HttpRequest.advanceConnections got err " ~ to!string(err));
+				}
+			}
 		}
 
 		return responseData;
@@ -852,7 +880,9 @@ class HttpRequest {
 	/// Aborts this request.
 	void abort() {
 		this.state = State.aborted;
-		// FIXME
+		this.responseData.code = 1;
+		this.responseData.codeText = "request.abort called";
+		// FIXME actually cancel it?
 	}
 
 	HttpRequestParameters requestParameters; ///
@@ -982,6 +1012,8 @@ class HttpRequest {
 			HttpRequest[16] removeFromPending;
 			size_t removeFromPendingCount = 0;
 
+			bool hadAbortion;
+
 			// are there pending requests? let's try to send them
 			foreach(idx, pc; pending) {
 				if(removeFromPendingCount == removeFromPending.length)
@@ -989,10 +1021,26 @@ class HttpRequest {
 
 				if(pc.state == HttpRequest.State.aborted) {
 					removeFromPending[removeFromPendingCount++] = pc;
+					hadAbortion = true;
 					continue;
 				}
 
-				auto socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
+				Socket socket;
+
+				try {
+					socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
+				} catch(SocketException e) {
+					// connection refused or timed out (I should disambiguate somehow)...
+					pc.state = HttpRequest.State.aborted;
+
+					pc.responseData.code = 2;
+					pc.responseData.codeText = "connection failed";
+
+					hadAbortion = true;
+
+					removeFromPending[removeFromPendingCount++] = pc;
+					continue;
+				}
 
 				if(socket !is null) {
 					activeRequestOnSocket[socket] = pc;
@@ -1024,14 +1072,39 @@ class HttpRequest {
 				}
 			}
 
-			if(!hadOne)
-				return 1; // automatic timeout, nothing to do
+			if(!hadOne) {
+				if(hadAbortion)
+					return 0; // something got aborted, that's progress
+				return 2; // automatic timeout, nothing to do
+			}
 
 			tryAgain:
-			auto selectGot = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */);
+
+
+			Socket[16] inactive;
+			int inactiveCount = 0;
+			void killInactives() {
+				foreach(s; inactive[0 .. inactiveCount]) {
+					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
+					activeRequestOnSocket.remove(s);
+				}
+			}
+
+			auto selectGot = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */); // FIXME: adjust timeout based on the individual requests
 			if(selectGot == 0) { /* timeout */
-				// timeout
-				return 1;
+				// FIXME: individual requests should have different time outs...
+				foreach(sock, request; activeRequestOnSocket) {
+					request.state = HttpRequest.State.aborted;
+					request.responseData.code = 5;
+					request.responseData.codeText = "Request timed out";
+
+					inactive[inactiveCount++] = sock;
+					sock.close();
+					loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+				}
+				killInactives();
+				return 0;
+				// return 1; was an error to time out but now im making it on the individual request
 			} else if(selectGot == -1) { /* interrupted */
 				/*
 				version(Posix) {
@@ -1042,8 +1115,6 @@ class HttpRequest {
 				*/
 				goto tryAgain;
 			} else { /* ready */
-				Socket[16] inactive;
-				int inactiveCount = 0;
 				foreach(sock, request; activeRequestOnSocket) {
 					if(readSet.isSet(sock)) {
 						keep_going:
@@ -1054,14 +1125,31 @@ class HttpRequest {
 						} else if(got == 0) {
 							// remote side disconnected
 							debug(arsd_http2) writeln("remote disconnect");
-							if(request.state != State.complete)
+							if(request.state != State.complete) {
 								request.state = State.aborted;
+
+								request.responseData.code = 3;
+								request.responseData.codeText = "server disconnected";
+							}
 							inactive[inactiveCount++] = sock;
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else {
 							// data available
-							auto stillAlive = request.handleIncomingData(buffer[0 .. got]);
+							bool stillAlive;
+
+							try {
+								stillAlive = request.handleIncomingData(buffer[0 .. got]);
+							} catch (Exception e) {
+								request.state = HttpRequest.State.aborted;
+								request.responseData.code = 4;
+								request.responseData.codeText = e.msg;
+
+								inactive[inactiveCount++] = sock;
+								sock.close();
+								loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+								continue;
+							}
 
 							if(!stillAlive || request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
 								//import std.stdio; writeln(cast(void*) sock, " ", stillAlive, " ", request.state);
@@ -1097,12 +1185,9 @@ class HttpRequest {
 						}
 					}
 				}
-
-				foreach(s; inactive[0 .. inactiveCount]) {
-					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
-					activeRequestOnSocket.remove(s);
-				}
 			}
+
+			killInactives();
 
 			// we've completed a request, are there any more pending connection? if so, send them now
 
@@ -1168,6 +1253,8 @@ class HttpRequest {
 					auto parts = responseData.statusLine.splitter(" ");
 					responseData.httpVersion = parts.front;
 					parts.popFront();
+					if(parts.empty)
+						throw new Exception("Corrupted response, bad status line");
 					responseData.code = to!int(parts.front());
 					parts.popFront();
 					responseData.codeText = "";
