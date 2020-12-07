@@ -1540,7 +1540,9 @@ class HttpRequest {
 
 ///
 struct HttpRequestParameters {
-	// Duration timeout;
+	// FIXME: implement these
+	//Duration timeoutTotal; // the whole request must finish in this time or else it fails,even if data is still trickling in
+	//Duration timeoutFromInactivity; // if there's no activity in this time it dies. basically the socket receive timeout
 
 	// debugging
 	bool useHttp11 = true; ///
