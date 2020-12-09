@@ -3375,6 +3375,7 @@ struct EventLoopImpl {
 			int ret = -1;
 			MSG message;
 			while(ret != 0 && (whileCondition is null || whileCondition() == true) && notExited) {
+				eventLoopRound++;
 				auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
@@ -4318,6 +4319,7 @@ class Timer {
 	this(int intervalInMilliseconds, void delegate() onPulse) {
 		assert(onPulse !is null);
 
+		this.intervalInMilliseconds = intervalInMilliseconds;
 		this.onPulse = onPulse;
 
 		version(Windows) {
@@ -4329,7 +4331,7 @@ class Timer {
 
 			// thanks to Archival 998 for the WaitableTimer blocks
 			handle = CreateWaitableTimer(null, false, null);
-			long initialTime = 0;
+			long initialTime = -intervalInMilliseconds;
 			if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
 				throw new Exception("SetWaitableTimer Failed");
 
@@ -4370,6 +4372,8 @@ class Timer {
 		} else featureNotImplemented();
 	}
 
+	private int intervalInMilliseconds;
+
 	/// Stop and destroy the timer object.
 	void destroy() {
 		version(Windows) {
@@ -4409,12 +4413,13 @@ class Timer {
 
 	void changeTime(int intervalInMilliseconds)
 	{
+		this.intervalInMilliseconds = intervalInMilliseconds;
 		version(Windows)
 		{
 			if(handle)
 			{
 				//handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
-				long initialTime = 0;
+				long initialTime = -intervalInMilliseconds;
 				if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
 					throw new Exception("couldn't change pulse timer");
 			}
@@ -4426,16 +4431,25 @@ class Timer {
 
 	void delegate() onPulse;
 
+	int lastEventLoopRoundTriggered;
+
 	void trigger() {
 		version(linux) {
 			import unix = core.sys.posix.unistd;
 			long val;
 			unix.read(fd, &val, val.sizeof); // gotta clear the pipe
 		} else version(Windows) {
-
+			if(this.lastEventLoopRoundTriggered == eventLoopRound)
+				return; // never try to actually run faster than the event loop
+			lastEventLoopRoundTriggered = eventLoopRound;
 		} else featureNotImplemented();
 
 		onPulse();
+	}
+
+	version(Windows)
+	void rearm() {
+
 	}
 
 	version(Windows)
@@ -4460,6 +4474,9 @@ class Timer {
 	} else static assert(0, "timer not supported");
 }
 }
+
+version(Windows)
+private int eventLoopRound;
 
 version(Windows)
 /// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.) Only works on certain types of handles! see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex
