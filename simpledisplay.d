@@ -411,6 +411,9 @@ void main() {
 }
 		---
 
+	This program only draws the image once because that's all that is necessary, since it is static. If you want to do animation, you might set a pulse timer (which would be a fixed max fps, not necessarily consistent) or use a render loop in a separate thread.
+
+
 	$(H3 $(ID topic-images) Displaying images)
 		You can also load PNG images using [arsd.png].
 
@@ -4306,7 +4309,14 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 	auto timer = new Timer(50, { it happened!; });
 	timer.destroy();
 
-	Timers can only be expected to fire when the event loop is running.
+	Timers can only be expected to fire when the event loop is running and only
+	once per iteration through the event loop.
+
+	History:
+		Prior to December 9, 2020, a timer pulse set too high with a handler too
+		slow could lock up the event loop. It now guarantees other things will
+		get a chance to run between timer calls, even if that means not keeping up
+		with the requested interval.
 */
 version(with_timer) {
 class Timer {
