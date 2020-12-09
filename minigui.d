@@ -1034,7 +1034,7 @@ int mymax(int a, int b) { return a > b ? a : b; }
 version(win32_widgets) {
 	extern(Windows)
 	private
-	int HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+	LRESULT HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
 		if(auto te = hWnd in Widget.nativeMapping) {
 			try {
@@ -1062,7 +1062,7 @@ version(win32_widgets) {
 				lastDefaultPrevented = false;
 				// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
 				if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
-					return cast(int) CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
+					return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
 				else {
 					// it was something we recognized, should only call the window procedure if the default was not prevented
 				}
@@ -1078,7 +1078,7 @@ version(win32_widgets) {
 
 	extern(Windows)
 	private
-	int HookedWndProcBSGROUPBOX_HACK(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+	LRESULT HookedWndProcBSGROUPBOX_HACK(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		if(iMessage == WM_ERASEBKGND) {
 			auto dc = GetDC(hWnd);
 			auto b = SelectObject(dc, GetSysColorBrush(COLOR_3DFACE));
@@ -5323,7 +5323,15 @@ class ToolBar : Widget {
 
 			// FIXME: I_IMAGENONE is if here is no icon
 			foreach(action; actions)
-				buttons ~= TBBUTTON(MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0), action.id, TBSTATE_ENABLED, 0, 0, 0, cast(int) toWstringzInternal(action.label));
+				buttons ~= TBBUTTON(
+					MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0),
+					action.id,
+					TBSTATE_ENABLED, // state
+					0, // style
+					0, // reserved array, just zero it out
+					0, // dwData
+					cast(size_t) toWstringzInternal(action.label) // INT_PTR
+				);
 
 			SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageW(hwnd, TB_ADDBUTTONSW, cast(WPARAM) buttons.length, cast(LPARAM)buttons.ptr);
@@ -5604,7 +5612,7 @@ class StatusBar : Widget {
 					else
 						pos[idx] = cpos;
 				}
-				SendMessageW(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(int) pos.ptr);
+				SendMessageW(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(size_t) pos.ptr);
 			} else version(custom_widgets) {
 				owner.redraw();
 			} else static assert(false);
@@ -7533,9 +7541,12 @@ struct TBBUTTON {
 	int   idCommand;
 	BYTE  fsState;
 	BYTE  fsStyle;
-	BYTE[2]  bReserved; // FIXME: isn't that different on 64 bit?
+	version(Win64)
+	BYTE[6] bReserved;
+	else
+	BYTE[2]  bReserved;
 	DWORD dwData;
-	int   iString;
+	INT_PTR   iString;
 }
 
 	enum {
