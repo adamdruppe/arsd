@@ -166,6 +166,15 @@ version(Windows) {
 	static import gdi = core.sys.windows.wingdi;
 }
 
+import std.container.dlist;
+
+alias DelegateCallLater = void delegate();
+__gshared DList!DelegateCallLater callLaterQueue;
+
+__gshared void callLater(T)(T fun){
+	callLaterQueue.insertFront(fun);
+}
+
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
 
@@ -4858,7 +4867,13 @@ class Window : Widget {
 	@scriptable
 	void loop() {
 		show();
-		win.eventLoop(0);
+		win.eventLoop(1, delegate(){
+			if(!callLaterQueue.empty){
+				auto fun = callLaterQueue.back;
+				fun();
+				callLaterQueue.removeBack();
+			}
+		});
 	}
 
 	private bool firstShow = true;
