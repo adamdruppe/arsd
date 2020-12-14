@@ -11,6 +11,7 @@
 	Event Loop would be nices:
 
 	* add on idle - runs when nothing else happens
+		* which can specify how long to yield for
 	* send messages without a recipient window
 	* setTimeout
 	* setInterval
@@ -3188,6 +3189,7 @@ struct EventLoopImpl {
 					auto nfds = ep.epoll_wait(epollFd, events.ptr, events.length, (wto == 0 || wto >= int.max ? -1 : cast(int)wto));
 					if(nfds == -1) {
 						if(err.errno == err.EINTR) {
+							//if(forceXPending) goto xpending;
 							continue; // interrupted by signal, just try again
 						}
 						throw new Exception("epoll wait failure");
@@ -3237,6 +3239,7 @@ struct EventLoopImpl {
 								//
 								// IOW handlePulse happens at most once per pulse interval.
 								unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
+								forceXPending = true; // some events might have been added while the pulse was going off and xlib already read it from the fd (like as a result of a draw done in the timer handler). if so we need to flush that separately to ensure it is not delayed
 							} else if (fd == customEventFDRead) {
 								// we have some custom events; process 'em
 								import core.sys.posix.unistd : read;
@@ -3282,6 +3285,7 @@ struct EventLoopImpl {
 					}
 					// if we won't call `XPending()` here, libX may delay some internal event delivery.
 					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
+					xpending:
 					if (!done && forceXPending) {
 						this.mtLock();
 						scope(exit) this.mtUnlock();
