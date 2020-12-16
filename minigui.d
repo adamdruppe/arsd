@@ -5854,11 +5854,17 @@ class Fieldset : Widget {
 	override int maxHeight() {
 		auto m = paddingTop() + paddingBottom();
 		foreach(child; children) {
-			m += child.maxHeight();
+			auto mh = child.maxHeight();
+			if(mh == int.max)
+				return int.max;
+			m += mh;
 			m += child.marginBottom();
 			m += child.marginTop();
 		}
-		return m + 6;
+		m += 6;
+		if(m < minHeight)
+			return minHeight;
+		return m;
 	}
 
 	override int minHeight() {
