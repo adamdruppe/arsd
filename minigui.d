@@ -1,5 +1,13 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+/*
+
+im tempted to add some css kind of thing to minigui. i've not done in the past cuz i have a lot of virtual functins i use but i think i have an evil plan
+
+the virtual functions remain as the default calculated values. then the reads go through some proxy object that can override it...
+*/
+
+
 // FIXME: slider widget.
 // FIXME: number widget
 
@@ -1459,6 +1467,40 @@ DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t) if(is(T ==
 /// ditto
 DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T* t) if(is(T == struct)) {
 	return new DataControllerWidget!T(t, parent);
+}
+
+/+
+	styleClass = "";
+
+	widget.computedStyle
++/
+version(none)
+private class Style {
+	this(Widget w) {
+
+	}
+
+	T getProperty(T)(string name, T default_) {
+		return default_;
+	}
+
+	int paddingLeft() { return getProperty("padding-left", w.paddingLeft()); }
+	int paddingRight() { return getProperty("padding-right", w.paddingRight()); }
+	int paddingTop() { return getProperty("padding-top", w.paddingTop()); }
+	int paddingBottom() { return getProperty("padding-bottom", w.paddingBottom()); }
+
+	int marginLeft() { return getProperty("margin-left", w.marginLeft()); }
+	int marginRight() { return getProperty("margin-right", w.marginRight()); }
+	int marginTop() { return getProperty("margin-top", w.marginTop()); }
+	int marginBottom() { return getProperty("margin-bottom", w.marginBottom()); }
+
+	int maxHeight() { return getProperty("max-height", w.maxHeight()); }
+	int minHeight() { return getProperty("min-height", w.minHeight()); }
+
+	int maxWidth() { return getProperty("max-width", w.maxWidth()); }
+	int minWidth() { return getProperty("min-width", w.minWidth()); }
+
+	Color backgroundColor() { return getProperty("background-color", getProperty("--bg", windowBackgroundColor)); }
 }
 
 /**

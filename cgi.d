@@ -3630,6 +3630,8 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 					// most likely cause is a timeout
 				}
 			}
+		} else if(newPid < 0) {
+			throw new Exception("fork failed");
 		} else {
 			processCount++;
 		}

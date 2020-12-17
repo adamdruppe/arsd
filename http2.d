@@ -670,9 +670,10 @@ struct BasicAuth {
 }
 
 /**
-	When you send something, it creates a request
-	and sends it asynchronously. The request object
+	Represents a HTTP request. You usually create these through a [HttpClient].
 
+
+	---
 	auto request = new HttpRequest();
 	// set any properties here
 
@@ -686,7 +687,6 @@ struct BasicAuth {
 	// wait until the first one is done, with the second one still in-flight
 	auto response = request.waitForCompletion();
 
-
 	// async usage, type 2:
 	request.onDataReceived = (HttpRequest hr) {
 		if(hr.state == HttpRequest.State.complete) {
@@ -698,7 +698,7 @@ struct BasicAuth {
 	// before terminating, be sure you wait for your requests to finish!
 
 	request.waitForCompletion();
-
+	---
 */
 class HttpRequest {
 

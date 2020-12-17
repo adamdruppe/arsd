@@ -7635,7 +7635,7 @@ version(TerminalDirectToEmulator) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
-				if((!mouseButtonTracking || (ev.state & ModifierState.shift)) && ev.button == MouseButton.right)
+				if((!mouseButtonTracking || selectiveMouseTracking || (ev.state & ModifierState.shift)) && ev.button == MouseButton.right)
 					widget.showContextMenu(ev.clientX, ev.clientY);
 				else
 					if(sendMouseInputToApplication(termX, termY,

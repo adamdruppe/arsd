@@ -29,6 +29,7 @@
 			its value between loads?
 
 		ddoc????
+		udas?!?!?!
 
 	Steal Ruby's [regex, capture] maybe
 
@@ -1552,7 +1553,7 @@ class AssignExpression : Expression {
 		if(v is null)
 			throw new ScriptRuntimeException("not an lvalue", null, 0 /* FIXME */);
 
-		auto ret = v.setVar(sc, e2.interpret(sc).value, false, suppressOverloading);
+		auto ret = v.setVar(sc, e2 is null ? var(null) : e2.interpret(sc).value, false, suppressOverloading);
 
 		return InterpretResult(ret, sc);
 	}
