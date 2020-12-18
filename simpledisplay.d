@@ -1908,11 +1908,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/// Width of the window's drawable client area, in pixels.
 	@scriptable
-	final @property int width() { return _width; }
+	final @property int width() const pure nothrow @safe @nogc { return _width; }
 
 	/// Height of the window's drawable client area, in pixels.
 	@scriptable
-	final @property int height() { return _height; }
+	final @property int height() const pure nothrow @safe @nogc { return _height; }
 
 	private int _width;
 	private int _height;
