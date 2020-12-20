@@ -1850,6 +1850,7 @@ class PrototypeObject {
 				continue;
 			if(v.payloadType == var.Type.Object) {
 				// I'd love to get the json value out but idk. FIXME
+				if(v._payload._object is null) continue;
 				if(auto wno = cast(WrappedNativeObject) v._payload._object) {
 					auto obj = wno.getObject();
 					if(obj is null)

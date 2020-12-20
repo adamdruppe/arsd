@@ -2556,6 +2556,20 @@ VariableExpression parseVariableName(MyTokenStreamHere)(ref MyTokenStreamHere to
 	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.scriptFilename, token.lineNumber);
 }
 
+Expression parseDottedVariableName(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
+	assert(!tokens.empty);
+
+	auto ve = parseVariableName(tokens);
+
+	auto token = tokens.front;
+	if(token.type == ScriptToken.Type.symbol && token.str == ".") {
+		tokens.popFront();
+		return new DotVarExpression(ve, parseVariableName(tokens));
+	}
+	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.scriptFilename, token.lineNumber);
+}
+
+
 Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 	if(!tokens.empty) {
 		auto token = tokens.front;
@@ -2935,7 +2949,7 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 			auto start = tokens.front;
 			tokens.popFront();
 
-			auto expr = parseVariableName(tokens);
+			auto expr = parseDottedVariableName(tokens);
 			auto ne = new NewExpression(expr);
 			if(tokens.peekNextToken(ScriptToken.Type.symbol, "(")) {
 				tokens.popFront();
