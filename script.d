@@ -1,6 +1,9 @@
 // dmd -g -ofscripttest -unittest -main script.d jsvar.d && ./scripttest
 /*
 
+FIXME: fix `(new A()).b`
+
+
 	FIXME: i kinda do want a catch type filter e.g. catch(Exception f)
 		and perhaps overloads
 
@@ -2035,6 +2038,17 @@ unittest {
 	});
 }
 
+unittest {
+	// new nested class
+	interpret(q{
+		class A {}
+		A.b = class B { var c; this(a) { this.c = a; } }
+		var c = new A.b(5);
+		assert(A.b.c == null);
+		assert(c.c == 5);
+	});
+}
+
 class ForeachExpression : Expression {
 	VariableDeclaration decl;
 	Expression subject;
@@ -2566,7 +2580,7 @@ Expression parseDottedVariableName(MyTokenStreamHere)(ref MyTokenStreamHere toke
 		tokens.popFront();
 		return new DotVarExpression(ve, parseVariableName(tokens));
 	}
-	throw new ScriptCompileException("Found "~token.str~" when expecting identifier", token.scriptFilename, token.lineNumber);
+	return ve;
 }
 
 
