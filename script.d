@@ -2038,10 +2038,11 @@ unittest {
 class ForeachExpression : Expression {
 	VariableDeclaration decl;
 	Expression subject;
+	Expression subject2;
 	Expression loopBody;
 
 	override string toString() {
-		return "foreach(" ~ decl.toString() ~ "; " ~ subject.toString() ~ ") " ~ loopBody.toString();
+		return "foreach(" ~ decl.toString() ~ "; " ~ subject.toString() ~ ((subject2 is null) ? "" : (".." ~ subject2.toString)) ~ ") " ~ loopBody.toString();
 	}
 
 	override InterpretResult interpret(PrototypeObject sc) {
@@ -2074,8 +2075,35 @@ class ForeachExpression : Expression {
 		};}
 
 		var what = subject.interpret(sc).value;
-		foreach(i, item; what) {
-			mixin(doLoopBody());
+		var termination = subject2 is null ? var(null) : subject2.interpret(sc).value;
+		if(what.payloadType == var.Type.Integral && subject2 is null) {
+			// loop from 0 to what
+			int end = what.get!int;
+			foreach(item; 0 .. end) {
+				auto i = item;
+				mixin(doLoopBody());
+			}
+		} else if(what.payloadType == var.Type.Integral && termination.payloadType == var.Type.Integral) {
+			// loop what .. termination
+			int start = what.get!int;
+			int end = termination.get!int;
+			int stride;
+			if(end < start) {
+				stride = -1;
+			} else {
+				stride = 1;
+			}
+			int i = -1;
+			for(int item = start; item != end; item += stride) {
+				i++;
+				mixin(doLoopBody());
+			}
+		} else {
+			if(subject2 !is null)
+				throw new ScriptRuntimeException("foreach( a .. b ) invalid unless a is an integer", null, 0); // FIXME
+			foreach(i, item; what) {
+				mixin(doLoopBody());
+			}
 		}
 
 		if(flowControl != InterpretResult.FlowControl.Return)
@@ -3118,6 +3146,12 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 			e.decl = parseVariableDeclaration(tokens, ";");
 			tokens.requireNextToken(ScriptToken.Type.symbol, ";");
 			e.subject = parseExpression(tokens);
+
+			if(tokens.peekNextToken(ScriptToken.Type.symbol, "..")) {
+				tokens.popFront;
+				e.subject2 = parseExpression(tokens);
+			}
+
 			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 			e.loopBody = parseExpression(tokens);
 			ret = e;
