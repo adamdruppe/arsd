@@ -48,8 +48,22 @@ MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true) {
 	History:
 		The `lookForFileHeader` param was added in July 2020.
 +/
-MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true) {
+MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true, bool hackAround64BitLongs = false) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
+	uint readLONG()  {
+		auto le = read4();
+		/++
+			A user on discord encountered a file in the wild that wouldn't load
+			by any other bmp viewer. After looking at the raw bytes, it appeared it
+			wrote out the LONG fields on the bitmap info header as 64 bit values when
+			they are supposed to always be 32 bit values. This hack gives a chance to work
+			around that and load the file anyway.
+		+/
+		if(hackAround64BitLongs)
+			if(read4() != 0)
+				throw new Exception("hackAround64BitLongs is true, but the file doesn't appear to use 64 bit longs");
+		return le;
+	}
 	ushort read2(){ ushort what; fread(&what, 2); return what; }
 	ubyte read1(){ ubyte what; fread(&what, 1); return what; }
 
@@ -58,8 +72,11 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 			throw new Exception("didn't get expected byte value", __FILE__, line);
 	}
 	void require2(ushort t) {
-		if(read2() != t)
+		auto got = read2();
+		if(got != t) {
+			version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("expected: %d, got %d\n", cast(int) t, cast(int) got); }
 			throw new Exception("didn't get expected short value");
+		}
 	}
 	void require4(uint t, size_t line = __LINE__) {
 		auto got = read4();
@@ -83,6 +100,8 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 	auto sizeOfBitmapInfoHeader = read4();
 	if (sizeOfBitmapInfoHeader < 12) throw new Exception("invalid bitmap header size");
 
+	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("size of bitmap info header: %d\n", cast(uint)sizeOfBitmapInfoHeader); }
+
 	int width, height, rdheight;
 
 	if (sizeOfBitmapInfoHeader == 12) {
@@ -91,13 +110,14 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 	} else {
 		if (sizeOfBitmapInfoHeader < 16) throw new Exception("invalid bitmap header size");
 		sizeOfBitmapInfoHeader -= 4; // hack!
-		width = read4();
-		rdheight = cast(int)read4();
+		width = readLONG();
+		rdheight = cast(int)readLONG();
 	}
 
 	height = (rdheight < 0 ? -rdheight : rdheight);
 	rdheight = (rdheight < 0 ? 1 : -1); // so we can use it as delta (note the inverted sign)
 
+	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("size: %dx%d\n", cast(int)width, cast(int) height); }
 	if (width < 1 || height < 1) throw new Exception("invalid bitmap dimensions");
 
 	require2(1); // planes
@@ -127,8 +147,8 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		sizeOfBitmapInfoHeader -= 6*4;
 		compression = read4();
 		sizeOfUncompressedData = read4();
-		xPixelsPerMeter = read4();
-		yPixelsPerMeter = read4();
+		xPixelsPerMeter = readLONG();
+		yPixelsPerMeter = readLONG();
 		colorsUsed = read4();
 		colorsImportant = read4();
 	}
