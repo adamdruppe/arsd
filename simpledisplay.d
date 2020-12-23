@@ -1723,7 +1723,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/** "Warp" mouse pointer to coordinates relative to window top-left corner. Return "success" flag.
 	 *
-	 * Currently only supported on X11, so Windows implementation will return `false`.
+	 * Please remember that the cursor is a shared resource that should usually be left to the user's
+	 * control. Try to think for other approaches before using this function.
 	 *
 	 * Note: "warping" pointer will not send any synthesised mouse events, so you probably doesn't want
 	 *       to use it to move mouse pointer to some active GUI area, for example, as your window won't
@@ -1732,6 +1733,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	bool warpMouse (int x, int y) {
 		version(X11) {
 			if (!_closed) { impl.warpMouse(x, y); return true; }
+		} else version(Windows) {
+			if (!_closed) {
+				POINT point;
+				point.x = x;
+				point.y = y;
+				if(ClientToScreen(impl.hwnd, &point)) {
+					SetCursorPos(point.x, point.y);
+					return true;
+				}
+			}
 		}
 		return false;
 	}
@@ -1977,6 +1988,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		  version(X11) {
 		    setAsCurrentOpenGlContext();
 		    glxSetVSync(display, impl.window, wait);
+		  } else version(Windows) {
+		    setAsCurrentOpenGlContext();
+                    wglSetVSync(wait);
 		  }
 		}
 
@@ -15137,6 +15151,9 @@ extern(System) nothrow @nogc {
 			return (cast(glXCreateContextAttribsARB_fna)glXCreateContextAttribsARBFn)(dpy, config, share_context, direct, attrib_list);
 		}
 
+		// extern(C) private __gshared int function(int) glXSwapIntervalSGI; // seems totally redundant to the tohers
+		extern(C) private __gshared int function(int) glXSwapIntervalMESA;
+
 		void glxSetVSync (Display* dpy, /*GLXDrawable*/Drawable drawable, bool wait) {
 			if (cast(void*)_glx_swapInterval_fn is cast(void*)1) return;
 			if (_glx_swapInterval_fn is null) {
@@ -15145,8 +15162,20 @@ extern(System) nothrow @nogc {
 					_glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
 					return;
 				}
-				version(sdddd) { import std.stdio; writeln("glXSwapIntervalEXT found!"); }
+				version(sdddd) { import std.stdio; debug writeln("glXSwapIntervalEXT found!"); }
 			}
+
+			if(glXSwapIntervalMESA is null) {
+				// it seems to require both to actually take effect on many computers
+				// idk why
+				glXSwapIntervalMESA = cast(typeof(glXSwapIntervalMESA)) glXGetProcAddress("glXSwapIntervalMESA");
+				if(glXSwapIntervalMESA is null)
+					glXSwapIntervalMESA = cast(typeof(glXSwapIntervalMESA)) 1;
+			}
+
+			if(cast(void*) glXSwapIntervalMESA > cast(void*) 1)
+				glXSwapIntervalMESA(wait ? 1 : 0);
+
 			_glx_swapInterval_fn(dpy, drawable, (wait ? 1 : 0));
 		}
 	} else version(Windows) {
@@ -15173,6 +15202,20 @@ extern(System) nothrow @nogc {
 		//{ import core.stdc.stdio; printf(" GL: '%s' is 0x%08x\n", name, cast(uint)res); }
 		return res;
 	}
+	}
+
+ 
+ 	private __gshared extern(System) BOOL function(int) wglSwapIntervalEXT;
+        void wglSetVSync(bool wait) {
+		if(wglSwapIntervalEXT is null) {
+			wglSwapIntervalEXT = cast(typeof(wglSwapIntervalEXT)) wglGetProcAddress("wglSwapIntervalEXT");
+			if(wglSwapIntervalEXT is null)
+				wglSwapIntervalEXT = cast(typeof(wglSwapIntervalEXT)) 1;
+		}
+		if(cast(void*) wglSwapIntervalEXT is cast(void*) 1)
+			return;
+
+		wglSwapIntervalEXT(wait ? 1 : 0);
 	}
 
 		enum WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
