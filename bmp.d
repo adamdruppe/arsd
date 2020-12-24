@@ -26,8 +26,16 @@ MemoryImage readBmp(string filename) {
 	return readBmpIndirect(&specialFread);
 }
 
-/// Reads a bitmap out of an in-memory array of data. For example, that returned from [std.file.read].
-MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true) {
+/++
+	Reads a bitmap out of an in-memory array of data. For example, from the data returned from [std.file.read].
+
+	It forwards the arguments to [readBmpIndirect], so see that for more details.
+
+	If you are given a raw pointer to some data, you might just slice it: bytes 2-6 of the file header (if present)
+	are a little-endian uint giving the file size. You might slice only to that, or you could slice right to `int.max`
+	and trust the library to bounds check for you based on data integrity checks.
++/
+MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAround64BitLongs = false) {
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
 		while(size) {
@@ -39,14 +47,16 @@ MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true) {
 		}
 	}
 
-	return readBmpIndirect(&specialFread, lookForFileHeader);
+	return readBmpIndirect(&specialFread, lookForFileHeader, hackAround64BitLongs);
 }
 
 /++
-	Reads using a delegate to read instead of assuming a direct file
+	Reads using a delegate to read instead of assuming a direct file. View the source of `readBmp`'s overloads for fairly simple examples of how you can use it
 
 	History:
 		The `lookForFileHeader` param was added in July 2020.
+
+		The `hackAround64BitLongs` param was added December 21, 2020. You should probably never use this unless you know for sure you have a file corrupted in this specific way. View the source to see a comment inside the file to describe it a bit more.
 +/
 MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true, bool hackAround64BitLongs = false) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
@@ -65,7 +75,19 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		return le;
 	}
 	ushort read2(){ ushort what; fread(&what, 2); return what; }
-	ubyte read1(){ ubyte what; fread(&what, 1); return what; }
+
+	bool headerRead = false;
+	int hackCounter;
+
+	ubyte read1() {
+		if(hackAround64BitLongs && headerRead && hackCounter < 16) {
+			hackCounter++;
+			return 0;
+		}
+		ubyte what;
+		fread(&what, 1);
+		return what;
+	}
 
 	void require1(ubyte t, size_t line = __LINE__) {
 		if(read1() != t)
@@ -177,12 +199,15 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("header bytes left: %u\n", cast(uint)sizeOfBitmapInfoHeader); }
 	foreach (skip; 0..sizeOfBitmapInfoHeader) read1();
 
+	headerRead = true;
+
 	if(bitsPerPixel <= 8) {
 		// indexed image
 		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("colorsUsed=%u; colorsImportant=%u\n", colorsUsed, colorsImportant); }
 		if (colorsUsed == 0 || colorsUsed > (1 << bitsPerPixel)) colorsUsed = (1 << bitsPerPixel);
 		auto img = new IndexedImage(width, height);
 		img.palette.reserve(1 << bitsPerPixel);
+
 		foreach(idx; 0 .. /*(1 << bitsPerPixel)*/colorsUsed) {
 			auto b = read1();
 			auto g = read1();
@@ -260,6 +285,7 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 					++bytesRead;
 				}
 				bytesRead = 0;
+
 				for(int x = 0; x < width; x++) {
 					auto b = read1();
 					++bytesRead;
@@ -400,7 +426,9 @@ void writeBmp(MemoryImage img, string filename) {
 		throw new Exception("can't open save file");
 	scope(exit) fclose(fp);
 
+	int written;
 	void my_fwrite(ubyte b) {
+		written++;
 		fputc(b, fp);
 	}
 
@@ -465,15 +493,15 @@ void writeBmpIndirect(MemoryImage img, scope void delegate(ubyte) fwrite, bool p
 	ushort offsetToBits;
 	if(bitsPerPixel == 8)
 		offsetToBits = 1078;
-	if (bitsPerPixel == 24 || bitsPerPixel == 16)
+	else if (bitsPerPixel == 24 || bitsPerPixel == 16)
 		offsetToBits = 54;
 	else
-		offsetToBits = cast(ushort)(54 + 4 * 1 << bitsPerPixel); // room for the palette...
+		offsetToBits = cast(ushort)(54 * (1 << bitsPerPixel)); // room for the palette...
 
 	uint fileSize = offsetToBits;
-	if(bitsPerPixel == 8)
+	if(bitsPerPixel == 8) {
 		fileSize += height * (width + width%4);
-	else if(bitsPerPixel == 24)
+	} else if(bitsPerPixel == 24)
 		fileSize += height * ((width * 3) + (!((width*3)%4) ? 0 : 4-((width*3)%4)));
 	else assert(0, "not implemented"); // FIXME
 
