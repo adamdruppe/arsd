@@ -184,6 +184,44 @@ void main() {
 }
 
 /++
+	Provides an interface to control a sound.
+
+	History:
+		Added December 23, 2020
++/
+interface SampleController {
+	/++
+		Pauses playback, keeping its position. Use [resume] to pick up where it left off.
+	+/
+	void pause();
+	/++
+		Resumes playback after a call to [pause].
+	+/
+	void resume();
+	/++
+		Stops playback. Once stopped, it cannot be restarted
+		except by creating a new sample from the [AudioOutputThread]
+		object.
+	+/
+	void stop();
+}
+
+class DummySample : SampleController {
+	void pause() {}
+	void resume() {}
+	void stop() {}
+}
+
+class SampleControlFlags : SampleController {
+	void pause() { paused = true; }
+	void resume() { paused = false; }
+	void stop() { stopped = true; }
+
+	bool paused;
+	bool stopped;
+}
+
+/++
 	Wraps [AudioPcmOutThreadImplementation] with RAII semantics for better
 	error handling and disposal than the old way.
 
@@ -267,17 +305,20 @@ struct AudioOutputThread {
 		else static assert(0);
 	}
 
-	void playOgg()(string filename, bool loop = false) {
+	SampleController playOgg()(string filename, bool loop = false) {
 		if(impl)
-		impl.playOgg(filename, loop);
+			return impl.playOgg(filename, loop);
+		return new DummySample;
 	}
-	void playMp3()(string filename) {
+	SampleController playMp3()(string filename) {
 		if(impl)
-		impl.playMp3(filename);
+			return impl.playMp3(filename);
+		return new DummySample;
 	}
-	void playWav()(string filename) {
+	SampleController playWav()(string filename) {
 		if(impl)
-		impl.playWav(filename);
+			return impl.playWav(filename);
+		return new DummySample;
 	}
 
 
@@ -449,10 +490,12 @@ final class AudioPcmOutThreadImplementation : Thread {
 		History:
 			Automatic resampling support added Nov 7, 2020.
 	+/
-	void playOgg()(string filename, bool loop = false) {
+	SampleController playOgg()(string filename, bool loop = false) {
 		import arsd.vorbis;
 
 		auto v = new VorbisDecoder(filename);
+
+		auto scf = new SampleControlFlags;
 
 		/+
 			If you want 2 channels:
@@ -467,6 +510,10 @@ final class AudioPcmOutThreadImplementation : Thread {
 			plain_fallback:
 			addChannel(
 				delegate bool(short[] buffer) {
+					if(scf.paused) {
+						buffer[] = 0;
+						return true;
+					}
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
@@ -480,15 +527,14 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 						return false;
 					}
-					return true;
+					return !scf.stopped;
 				}
 			);
-			return;
 		} else {
 			version(with_resampler) {
 				auto resampleContext = new class ResamplingContext {
 					this() {
-						super(v.sampleRate, SampleRate, v.chans, channels);
+						super(scf, v.sampleRate, SampleRate, v.chans, channels);
 					}
 
 					override void loadMoreSamples() {
@@ -507,6 +553,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 				addChannel(&resampleContext.fillBuffer);
 			} else goto plain_fallback;
 		}
+
+		return scf;
 	}
 
 	/++
@@ -515,7 +563,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		History:
 			Automatic resampling support added Nov 7, 2020.
 	+/
-	void playMp3()(string filename) {
+	SampleControlFlags playMp3()(string filename) {
 		import arsd.mp3;
 
 		import std.stdio;
@@ -528,6 +576,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 		if(!mp3.valid)
 			throw new Exception("no file");
 
+		auto scf = new SampleControlFlags;
+
 		if(mp3.sampleRate == SampleRate && mp3.channels == channels) {
 			plain_fallback:
 
@@ -535,6 +585,11 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 			addChannel(
 				delegate bool(short[] buffer) {
+					if(scf.paused) {
+						buffer[] = 0;
+						return true;
+					}
+
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
@@ -560,7 +615,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 						}
 					}
 
-					return true;
+					return !scf.stopped;
 				}
 			);
 		} else {
@@ -569,7 +624,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 				auto resampleContext = new class ResamplingContext {
 					this() {
-						super(mp3.sampleRate, SampleRate, mp3.channels, channels);
+						super(scf, mp3.sampleRate, SampleRate, mp3.channels, channels);
 					}
 
 					override void loadMoreSamples() {
@@ -616,6 +671,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 			} else goto plain_fallback;
 		}
+
+		return scf;
 	}
 
 	/++
@@ -626,7 +683,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 		History:
 			Added Nov 8, 2020.
 	+/
-	void playWav()(string filename) {
+	SampleController playWav()(string filename) {
+		auto scf = new SampleControlFlags;
 		version(with_resampler) {
 			auto resampleContext = new class ResamplingContext {
 				import arsd.wav;
@@ -634,7 +692,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 				this() {
 					reader = wavReader(filename);
 
-					super(reader.sampleRate, SampleRate, reader.numberOfChannels, channels);
+					super(scf, reader.sampleRate, SampleRate, reader.numberOfChannels, channels);
 				}
 
 				WavReader!CFileChunks reader;
@@ -718,6 +776,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			addChannel(&resampleContext.fillBuffer);
 
 		} else static assert(0, "I was lazy and didn't implement straight-through playing");
+
+		return scf;
 	}
 
 
@@ -3577,8 +3637,10 @@ abstract class ResamplingContext {
 
 	float[][2] dataReady;
 
+	SampleControlFlags scflags;
 
-	this(int inputSampleRate, int outputSampleRate, int inputChannels, int outputChannels) {
+	this(SampleControlFlags scflags, int inputSampleRate, int outputSampleRate, int inputChannels, int outputChannels) {
+		this.scflags = scflags;
 		this.inputSampleRate = inputSampleRate;
 		this.outputSampleRate = outputSampleRate;
 		this.inputChannels = inputChannels;
@@ -3644,6 +3706,11 @@ abstract class ResamplingContext {
 		if(cast(int) buffer.length != buffer.length)
 			throw new Exception("eeeek");
 
+		if(scflags.paused) {
+			buffer[] = 0;
+			return true;
+		}
+
 		if(outputChannels == 1) {
 			foreach(ref s; buffer) {
 				if(resamplerDataLeft.dataOut.length == 0) {
@@ -3684,7 +3751,7 @@ abstract class ResamplingContext {
 			}
 		} else assert(0);
 
-		return true;
+		return !scflags.stopped;
 	}
 }
 
