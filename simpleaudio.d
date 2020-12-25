@@ -204,21 +204,30 @@ interface SampleController {
 		object.
 	+/
 	void stop();
+	/++
+		Reports the current stream position, in seconds, if available (NaN if not).
+	+/
+	float position();
 }
 
-class DummySample : SampleController {
+private class DummySample : SampleController {
 	void pause() {}
 	void resume() {}
 	void stop() {}
+	float position() { return float.init; }
 }
 
-class SampleControlFlags : SampleController {
+private class SampleControlFlags : SampleController {
 	void pause() { paused = true; }
 	void resume() { paused = false; }
 	void stop() { stopped = true; }
 
 	bool paused;
 	bool stopped;
+
+	float position() { return currentPosition; }
+
+	float currentPosition = 0.0;
 }
 
 /++
@@ -246,6 +255,8 @@ struct AudioOutputThread {
 
 		History:
 			Parameter `default` added on Nov 8, 2020.
+
+			The sample rate parameter was not correctly applied to the device on Linux until December 24, 2020.
 	+/
 	this(bool enable, int SampleRate = 44100, int channels = 2, string device = "default") {
 		if(enable) {
@@ -303,6 +314,12 @@ struct AudioOutputThread {
 				return typeof(return).init;
 		}
 		else static assert(0);
+	}
+
+	SampleController playEmulatedOpl3Midi()(string filename) {
+		if(impl)
+			return impl.playEmulatedOpl3Midi(filename);
+		return new DummySample;
 	}
 
 	SampleController playOgg()(string filename, bool loop = false) {
@@ -485,10 +502,60 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	/++
-		Requires vorbis.d to be compiled in (module arsd.vorbis)
+		Plays the given midi files with the nuked opl3 emulator.
+
+		Requires nukedopl3.d (module [arsd.nukedopl3]) to be compiled in, which is GPL.
 
 		History:
+			Added December 24, 2020.
+		License:
+			If you use this function, you are opting into the GPL version 2 or later.
+		Authors:
+			Based on ketmar's code.
+	+/
+	SampleController playEmulatedOpl3Midi()(string filename, bool loop = false) {
+		import arsd.nukedopl3;
+		auto scf = new SampleControlFlags;
+
+		import std.file;
+		auto bytes = cast(ubyte[]) std.file.read(filename);
+		auto player = new OPLPlayer(this.SampleRate, true, channels == 2);
+		player.looped = loop;
+		player.load(bytes);
+		player.play();
+
+		addChannel(
+			delegate bool(short[] buffer) {
+				if(scf.paused) {
+					buffer[] = 0;
+					return true;
+				}
+
+				if(!player.playing)
+					return false;
+
+				auto pos = player.generate(buffer[]);
+				scf.currentPosition += cast(float) buffer.length / SampleRate/ channels;
+				if(pos == 0)
+					return false;
+				return !scf.stopped;
+			}
+		);
+
+		return scf;
+	}
+
+	/++
+		Requires vorbis.d to be compiled in (module arsd.vorbis)
+
+		Returns:
+			An implementation of [SampleController] which lets you pause, etc., the file.
+
+			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+		History:
 			Automatic resampling support added Nov 7, 2020.
+
+			Return value changed from `void` to a sample control object on December 23, 2020.
 	+/
 	SampleController playOgg()(string filename, bool loop = false) {
 		import arsd.vorbis;
@@ -522,10 +589,13 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(got == 0) {
 						if(loop) {
 							v.seekStart();
+							scf.currentPosition = 0;
 							return true;
 						}
 
 						return false;
+					} else {
+						scf.currentPosition += cast(float) got / v.sampleRate;
 					}
 					return !scf.stopped;
 				}
@@ -558,12 +628,20 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	/++
-		Requires mp3.d to be compiled in (module arsd.mp3) which is LGPL licensed.
+		Requires mp3.d to be compiled in (module [arsd.mp3]) which is LGPL licensed.
+		That LGPL license will extend to your code.
+
+		Returns:
+			An implementation of [SampleController] which lets you pause, etc., the file.
+
+			Please note that the static type may change in the future. It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playOgg] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
 
 		History:
 			Automatic resampling support added Nov 7, 2020.
+
+			Return value changed from `void` to a sample control object on December 23, 2020.
 	+/
-	SampleControlFlags playMp3()(string filename) {
+	SampleController playMp3()(string filename) {
 		import arsd.mp3;
 
 		import std.stdio;
@@ -597,9 +675,13 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(next.length >= buffer.length) {
 						buffer[] = next[0 .. buffer.length];
 						next = next[buffer.length .. $];
+
+						scf.currentPosition += cast(float) buffer.length / mp3.sampleRate / mp3.channels;
 					} else {
 						buffer[0 .. next.length] = next[];
 						buffer = buffer[next.length .. $];
+
+						scf.currentPosition += cast(float) next.length / mp3.sampleRate / mp3.channels;
 
 						next = next[$..$];
 
@@ -680,8 +762,14 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 		Also requires the resampler to be compiled in at this time, but that may change in the future, I was just lazy.
 
+		Returns:
+			An implementation of [SampleController] which lets you pause, etc., the file.
+
+			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playOgg], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
 		History:
 			Added Nov 8, 2020.
+
+			Return value changed from `void` to a sample control object on December 23, 2020.
 	+/
 	SampleController playWav()(string filename) {
 		auto scf = new SampleControlFlags;
@@ -984,7 +1072,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 			assert(!err);
 		}
 
-		AudioOutput ao = AudioOutput(0);
+		AudioOutput ao = AudioOutput(device, SampleRate, channels);
 		this.ao = &ao;
 		scope(exit) this.ao = null;
 		auto omg = this;
@@ -1610,7 +1698,7 @@ version(Posix) {
 	private sigaction_t oldSigIntr;
 	void setSigIntHandler() {
 		sigaction_t n;
-		n.sa_handler = &interruptSignalHandler;
+		n.sa_handler = &interruptSignalHandlerSAudio;
 		n.sa_mask = cast(sigset_t) 0;
 		n.sa_flags = 0;
 		sigaction(SIGINT, &n, &oldSigIntr);
@@ -1623,7 +1711,7 @@ version(Posix) {
 
 	private
 	extern(C)
-	void interruptSignalHandler(int sigNumber) nothrow {
+	void interruptSignalHandlerSAudio(int sigNumber) nothrow {
 		interrupted = true;
 	}
 }
@@ -3728,6 +3816,8 @@ abstract class ResamplingContext {
 					resamplerDataRight.dataOut = resamplerDataRight.dataOut[1 .. $];
 				}
 			}
+
+			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels;
 		} else if(outputChannels == 2) {
 			foreach(idx, ref s; buffer) {
 				if(resamplerDataLeft.dataOut.length == 0) {
@@ -3749,6 +3839,8 @@ abstract class ResamplingContext {
 					}
 				}
 			}
+
+			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels;
 		} else assert(0);
 
 		return !scflags.stopped;
