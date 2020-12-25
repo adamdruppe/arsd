@@ -2126,7 +2126,9 @@ struct Terminal {
 inout(char)[] removeTerminalGraphicsSequences(inout(char)[] s) {
 	import std.string;
 
-	auto at = s.indexOf("\033[");
+	// on old compilers, inout index of fails, but const works, so i'll just
+	// cast it, this is ok since inout and const work the same regardless
+	auto at = (cast(const(char)[])s).indexOf("\033[");
 	if(at == -1)
 		return s;
 
@@ -2140,7 +2142,7 @@ inout(char)[] removeTerminalGraphicsSequences(inout(char)[] s) {
 		}
 		if(s.length)
 			s = s[1 .. $]; // skip the terminator
-		at = s.indexOf("\033[");
+		at = (cast(const(char)[])s).indexOf("\033[");
 	} while(at != -1);
 
 	ret ~= s;

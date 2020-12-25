@@ -2030,6 +2030,8 @@ interface ScriptableSubclass {
 	History:
 	Added April 25, 2020
 +/
+static if(__traits(compiles, mixin(q{  () { static foreach(i; [1,2]) {} } }) ))
+mixin(q{
 var subclassable(T)() if(is(T == class) || is(T == interface)) {
 	import std.traits;
 
@@ -2086,6 +2088,7 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 
 	return f;
 }
+});
 
 /// Demonstrates tested capabilities of [subclassable]
 version(with_arsd_script)
@@ -2519,10 +2522,13 @@ class OverloadSet : PrototypeObject {
 	}
 
 	///
+	static if(__traits(compiles, mixin(q{  () { static foreach(i; [1,2]) {} } }) ))
+	mixin(q{
 	void addOverloadsOf(alias what)() {
 		foreach(alias f; __traits(getOverloads, __traits(parent, what), __traits(identifier, what)))
 			addIndividualOverload!f;
 	}
+	});
 
 	static struct Overload {
 		// I don't even store the arity of a function object

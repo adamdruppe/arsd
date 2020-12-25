@@ -100,7 +100,7 @@ version(use_openssl) {
 				ERR_print_errors_fp(stderr);
 				int i;
 				printf("wtf\n");
-				scanf("%d\n", i);
+				scanf("%d\n", &i);
 				throw new Exception("ssl connect");
 			}
 		}
@@ -112,7 +112,7 @@ version(use_openssl) {
 				ERR_print_errors_fp(stderr);
 				int i;
 				printf("wtf\n");
-				scanf("%d\n", i);
+				scanf("%d\n", &i);
 				throw new Exception("ssl send");
 			}
 			return retval;
@@ -128,7 +128,7 @@ version(use_openssl) {
 				ERR_print_errors_fp(stderr);
 				int i;
 				printf("wtf\n");
-				scanf("%d\n", i);
+				scanf("%d\n", &i);
 				throw new Exception("ssl send");
 			}
 			return retval;

@@ -160,6 +160,10 @@ class Document : FileResource {
 
 	/// implementing the FileResource interface, useful for sending via
 	/// http automatically.
+	@property string filename() const { return null; }
+
+	/// implementing the FileResource interface, useful for sending via
+	/// http automatically.
 	override @property string contentType() const {
 		return _contentType;
 	}
@@ -3939,6 +3943,13 @@ interface FileResource {
 	@property string contentType() const;
 	/// the data
 	immutable(ubyte)[] getData() const;
+	/++
+		filename, return null if none
+
+		History:
+			Added December 25, 2020
+	+/
+	@property string filename() const;
 }
 
 

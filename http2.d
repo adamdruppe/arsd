@@ -250,6 +250,16 @@ struct HttpResponse {
 	LinkHeader[] linksStored;
 	bool linksLazilyParsed;
 
+	HttpResponse deepCopy() const {
+		HttpResponse h = cast(HttpResponse) this;
+		h.cookies = h.cookies.dup;
+		h.headers = h.headers.dup;
+		h.headersHash = h.headersHash.dup;
+		h.content = h.content.dup;
+		h.linksStored = h.linksStored.dup;
+		return h;
+	}
+
 	/// Returns links header sorted by "rel" attribute.
 	/// It returns a new array on each call.
 	LinkHeader[string] linksHash() {
@@ -709,9 +719,12 @@ class HttpRequest {
 	}
 
 	///
-	this(Uri where, HttpVerb method) {
+	this(Uri where, HttpVerb method, ICache cache = null) {
 		populateFromInfo(where, method);
+		this.cache = cache;
 	}
+
+	private ICache cache;
 
 	/// Final url after any redirections
 	string finalUrl;
@@ -797,6 +810,16 @@ class HttpRequest {
 	private void sendPrivate(bool advance) {
 		if(state != State.unsent && state != State.aborted)
 			return; // already sent
+
+		if(cache !is null) {
+			auto res = cache.getCachedResponse(this.requestParameters);
+			if(res !is null) {
+				state = State.complete;
+				responseData = (*res).deepCopy();
+				return;
+			}
+		}
+
 		string headers;
 
 		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
@@ -873,6 +896,10 @@ class HttpRequest {
 				}
 			}
 		}
+
+		if(state == State.complete && responseData.code >= 200)
+			if(cache !is null)
+				cache.cacheResponse(this.requestParameters, this.responseData);
 
 		return responseData;
 	}
@@ -1636,27 +1663,19 @@ class HttpClient {
 	HttpRequest navigateTo(Uri where, HttpVerb method = HttpVerb.GET) {
 		currentUrl = where.basedOn(currentUrl);
 		currentDomain = where.host;
-		auto request = new HttpRequest(currentUrl, method);
 
+		auto request = this.request(currentUrl, method);
 		request.followLocation = true;
-
-		request.requestParameters.userAgent = userAgent;
-		request.requestParameters.authorization = authorization;
-
-		request.requestParameters.useHttp11 = this.useHttp11;
-		request.requestParameters.acceptGzip = this.acceptGzip;
-		request.requestParameters.keepAlive = this.keepAlive;
 
 		return request;
 	}
 
 	/++
 		Creates a request without updating the current url state
-		(but will still save cookies btw)
-
+		(but will still save cookies btw... when that is implemented)
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
-		auto request = new HttpRequest(uri, method);
+		auto request = new HttpRequest(uri, method, cache);
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
@@ -1680,8 +1699,10 @@ class HttpClient {
 
 	private Uri currentUrl;
 	private string currentDomain;
+	private ICache cache;
 
 	this(ICache cache = null) {
+		this.cache = cache;
 
 	}
 
@@ -1713,21 +1734,114 @@ class HttpClient {
 }
 
 interface ICache {
-	HttpResponse* getCachedResponse(HttpRequestParameters request);
+	/++
+		The client is about to make the given `request`. It will ALWAYS pass it to the cache object first so you can decide if you want to and can provide a response. You should probably check the appropriate headers to see if you should even attempt to look up on the cache (HttpClient does NOT do this to give maximum flexibility to the cache implementor).
+
+		Return null if the cache does not provide.
+	+/
+	const(HttpResponse)* getCachedResponse(HttpRequestParameters request);
+
+	/++
+		The given request has received the given response. The implementing class needs to decide if it wants to cache or not. Return true if it was added, false if you chose not to.
+
+		You may wish to examine headers, etc., in making the decision. The HttpClient will ALWAYS pass a request/response to this.
+	+/
+	bool cacheResponse(HttpRequestParameters request, HttpResponse response);
 }
 
+/+
 // / Provides caching behavior similar to a real web browser
 class HttpCache : ICache {
-	HttpResponse* getCachedResponse(HttpRequestParameters request) {
+	const(HttpResponse)* getCachedResponse(HttpRequestParameters request) {
 		return null;
 	}
 }
-
+ 
 // / Gives simple maximum age caching, ignoring the actual http headers
 class SimpleCache : ICache {
-	HttpResponse* getCachedResponse(HttpRequestParameters request) {
+	const(HttpResponse)* getCachedResponse(HttpRequestParameters request) {
 		return null;
 	}
+}
++/
+
+/++
+	A pseudo-cache to provide a mock server. Construct one of these,
+	populate it with test responses, and pass it to [HttpClient] to
+	do a network-free test.
+
+	You should populate it with the [populate] method. Any request not
+	pre-populated will return a "server refused connection" response.
++/
+class HttpMockProvider : ICache {
+	/++
+
+	+/
+	this(Uri baseUrl, string defaultResponseContentType) {
+
+	}
+
+	this() {}
+
+	HttpResponse defaultResponse;
+
+	const(HttpResponse)* getCachedResponse(HttpRequestParameters request) {
+		import std.conv;
+		auto defaultPort = request.ssl ? 443 : 80;
+		string identifier = text(
+			request.method, " ",
+			request.ssl ? "https" : "http", "://",
+			request.host,
+			(request.port && request.port != defaultPort) ? (":" ~ to!string(request.port)) : "",
+			request.uri
+		);
+
+		if(auto res = identifier in population)
+			return res;
+		return &defaultResponse;
+	}
+
+	// we never actually cache anything here since it is all about mock responses
+	bool cacheResponse(HttpRequestParameters request, HttpResponse response) {
+		return false;
+	}
+
+	/++
+		Convenience method to populate simple responses. For more complex
+		work, use one of the other overloads where you build complete objects
+		yourself.
+
+		Params:
+			request = a verb and complete URL to mock as one string.
+			For example "GET http://example.com/". If you provide only
+			a partial URL, it will be based on the `baseUrl` you gave
+			in the `HttpMockProvider` constructor.
+
+			responseCode = the HTTP response code, like 200 or 404.
+
+			response = the response body as a string. It is assumed
+			to be of the `defaultResponseContentType` you passed in the
+			`HttpMockProvider` constructor.
+	+/
+	void populate(string request, int responseCode, string response) {
+
+		// FIXME: absolute-ize the URL in the request
+
+		HttpResponse r;
+		r.code = responseCode;
+		r.codeText = "Mocked"; // FIXME
+
+		r.content = cast(ubyte[]) response;
+		r.contentText = response;
+
+		population[request] = r;
+	}
+
+	void populate(string method, string url, HttpResponse response) {
+		// FIXME
+	}
+
+	private HttpResponse[string] population;
 }
 
 ///
@@ -2601,7 +2715,7 @@ class WebSocket {
 			used = used[1 .. $];
 
 		if(used.length == 0)
-			throw new Exception("wtf");
+			throw new Exception("Remote server disconnected or didn't send enough information");
 
 		if(used.length < 1)
 			more();
@@ -2726,9 +2840,12 @@ class WebSocket {
 	}
 
 	private void llsend(ubyte[] d) {
+		if(readyState == CONNECTING)
+			throw new Exception("WebSocket not connected when trying to send. Did you forget to call connect(); ?");
+			//connect();
 		while(d.length) {
 			auto r = socket.send(d);
-			if(r <= 0) throw new Exception("wtf");
+			if(r <= 0) throw new Exception("Socket send failed");
 			d = d[r .. $];
 		}
 	}
@@ -2744,11 +2861,13 @@ class WebSocket {
 	+/
 	/// Group: blocking_api
 	public bool lowLevelReceive() {
+		if(readyState == CONNECTING)
+			throw new Exception("WebSocket not connected when trying to receive. Did you forget to call connect(); ?");
 		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
 		if(r == 0)
 			return false;
 		if(r <= 0)
-			throw new Exception("wtf");
+			throw new Exception("Socket receive failed");
 		receiveBufferUsedLength += r;
 		return true;
 	}

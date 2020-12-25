@@ -5848,7 +5848,9 @@ version(Posix) {
 
 // template for laziness
 void startAddonServer()(string arg) {
-	version(linux) {
+	version(OSX) {
+		assert(0, "Not implemented");
+	} else version(linux) {
 		import core.sys.posix.unistd;
 		pid_t pid;
 		const(char)*[16] args;

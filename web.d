@@ -779,6 +779,8 @@ class DataFile : FileResource {
 		return _contentType;
 	}
 
+	@property string filename() const { return null; }
+
 	immutable(ubyte)[] getData() const {
 		return cast(immutable(ubyte)[]) _content;
 	}
