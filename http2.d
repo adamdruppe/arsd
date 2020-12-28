@@ -1774,9 +1774,10 @@ class SimpleCache : ICache {
 	pre-populated will return a "server refused connection" response.
 +/
 class HttpMockProvider : ICache {
-	/++
+	/+ +
 
 	+/
+	version(none)
 	this(Uri baseUrl, string defaultResponseContentType) {
 
 	}
@@ -1785,6 +1786,7 @@ class HttpMockProvider : ICache {
 
 	HttpResponse defaultResponse;
 
+	/// Implementation of the ICache interface. Hijacks all requests to return a pre-populated response or "server disconnected".
 	const(HttpResponse)* getCachedResponse(HttpRequestParameters request) {
 		import std.conv;
 		auto defaultPort = request.ssl ? 443 : 80;
@@ -1801,7 +1803,7 @@ class HttpMockProvider : ICache {
 		return &defaultResponse;
 	}
 
-	// we never actually cache anything here since it is all about mock responses
+	/// Implementation of the ICache interface. We never actually cache anything here since it is all about mock responses, not actually caching real data.
 	bool cacheResponse(HttpRequestParameters request, HttpResponse response) {
 		return false;
 	}
@@ -1829,7 +1831,7 @@ class HttpMockProvider : ICache {
 
 		HttpResponse r;
 		r.code = responseCode;
-		r.codeText = "Mocked"; // FIXME
+		r.codeText = getHttpCodeText(r.code);
 
 		r.content = cast(ubyte[]) response;
 		r.contentText = response;
@@ -1837,12 +1839,61 @@ class HttpMockProvider : ICache {
 		population[request] = r;
 	}
 
+	version(none)
 	void populate(string method, string url, HttpResponse response) {
 		// FIXME
 	}
 
 	private HttpResponse[string] population;
 }
+
+// modified from the one in cgi.d to just have the text
+private static string getHttpCodeText(int code) pure nothrow @nogc {
+	switch(code) {
+		// this module's proprietary extensions
+		case 0: return null;
+		case 1: return "request.abort called";
+		case 2: return "connection failed";
+		case 3: return "server disconnected";
+		case 4: return "exception thrown"; // actually should be some other thing
+		case 5: return "Request timed out";
+
+		// * * * standard ones * * *
+
+		// 1xx skipped since they shouldn't happen
+
+		//
+		case 200: return "OK";
+		case 201: return "Created";
+		case 202: return "Accepted";
+		case 203: return "Non-Authoritative Information";
+		case 204: return "No Content";
+		case 205: return "Reset Content";
+		//
+		case 300: return "Multiple Choices";
+		case 301: return "Moved Permanently";
+		case 302: return "Found";
+		case 303: return "See Other";
+		case 307: return "Temporary Redirect";
+		case 308: return "Permanent Redirect";
+		//
+		case 400: return "Bad Request";
+		case 403: return "Forbidden";
+		case 404: return "Not Found";
+		case 405: return "Method Not Allowed";
+		case 406: return "Not Acceptable";
+		case 409: return "Conflict";
+		case 410: return "Gone";
+		//
+		case 500: return "Internal Server Error";
+		case 501: return "Not Implemented";
+		case 502: return "Bad Gateway";
+		case 503: return "Service Unavailable";
+		//
+		default: assert(0, "Unsupported http code");
+	}
+}
+
 
 ///
 struct HttpCookie {
@@ -2198,6 +2249,7 @@ version(use_openssl) {
 	}
 }
 
+
 /++
 	An experimental component for working with REST apis. Note that it
 	is a zero-argument template, so to create one, use `new HttpApiClient!()(args..)`
@@ -2222,6 +2274,20 @@ version(use_openssl) {
 	// note it is ["body"] instead of .body because `body` is a D keyword
 	args["body"] = "My cool PR is opened by the API!";
 	args.maintainer_can_modify = true;
+
+	/+
+		Fun fact, you can also write that:
+
+		var args = [
+			"title": "My Pull Request".var,
+			"head": "yourusername:" ~ branchName.var,
+			"base" : "master".var,
+			"body" : "My cool PR is opened by the API!".var,
+			"maintainer_can_modify": true.var
+		];
+
+		Note the .var constructor calls in there. If everything is the same type, you actually don't need that, but here since there's strings and bools, D won't allow the literal without explicit constructors to align them all.
+	+/
 
 	// this translates to `repos/dlang/phobos/pulls` and sends a POST request,
 	// containing `args` as json, then immediately grabs the json result and extracts
@@ -2253,9 +2319,16 @@ class HttpApiClient() {
 		urlBase = The base url for the api. Tends to be something like `https://api.example.com/v2/` or similar.
 		oauth2Token = the authorization token for the service. You'll have to get it from somewhere else.
 		submittedContentType = the content-type of POST, PUT, etc. bodies.
+		httpClient = an injected http client, or null if you want to use a default-constructed one
+
+		History:
+			The `httpClient` param was added on December 26, 2020.
 	+/
-	this(string urlBase, string oauth2Token, string submittedContentType = "application/json") {
-		httpClient = new HttpClient();
+	this(string urlBase, string oauth2Token, string submittedContentType = "application/json", HttpClient httpClient = null) {
+		if(httpClient is null)
+			this.httpClient = new HttpClient();
+		else
+			this.httpClient = httpClient;
 
 		assert(urlBase[0] == 'h');
 		assert(urlBase[$-1] == '/');

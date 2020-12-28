@@ -208,6 +208,11 @@ interface SampleController {
 		Reports the current stream position, in seconds, if available (NaN if not).
 	+/
 	float position();
+
+	/++
+		If the sample has finished playing. Happens when it runs out or if it is stopped.
+	+/
+	bool finished();
 }
 
 private class DummySample : SampleController {
@@ -215,17 +220,20 @@ private class DummySample : SampleController {
 	void resume() {}
 	void stop() {}
 	float position() { return float.init; }
+	bool finished() { return true; }
 }
 
 private class SampleControlFlags : SampleController {
 	void pause() { paused = true; }
 	void resume() { paused = false; }
-	void stop() { stopped = true; }
+	void stop() { paused = false; stopped = true; }
 
 	bool paused;
 	bool stopped;
+	bool finished_;
 
 	float position() { return currentPosition; }
+	bool finished() { return finished_; }
 
 	float currentPosition = 0.0;
 }
@@ -531,13 +539,17 @@ final class AudioPcmOutThreadImplementation : Thread {
 					return true;
 				}
 
-				if(!player.playing)
+				if(!player.playing) {
+					scf.finished_ = true;
 					return false;
+				}
 
 				auto pos = player.generate(buffer[]);
 				scf.currentPosition += cast(float) buffer.length / SampleRate/ channels;
-				if(pos == 0)
+				if(pos == 0 || scf.stopped) {
+					scf.finished_ = true;
 					return false;
+				}
 				return !scf.stopped;
 			}
 		);
@@ -593,10 +605,13 @@ final class AudioPcmOutThreadImplementation : Thread {
 							return true;
 						}
 
+						scf.finished_ = true;
 						return false;
 					} else {
 						scf.currentPosition += cast(float) got / v.sampleRate;
 					}
+					if(scf.stopped)
+						scf.finished_ = true;
 					return !scf.stopped;
 				}
 			);
@@ -692,11 +707,14 @@ final class AudioPcmOutThreadImplementation : Thread {
 								goto more;
 							} else {
 								buffer[] = 0;
+								scf.finished_ = true;
 								return false;
 							}
 						}
 					}
 
+					if(scf.stopped)
+						scf.finished_ = true;
 					return !scf.stopped;
 				}
 			);
@@ -3802,8 +3820,10 @@ abstract class ResamplingContext {
 		if(outputChannels == 1) {
 			foreach(ref s; buffer) {
 				if(resamplerDataLeft.dataOut.length == 0) {
-					if(loadMore())
+					if(loadMore()) {
+						scflags.finished_ = true;
 						return false;
+					}
 				}
 
 				if(inputChannels == 1) {
@@ -3821,8 +3841,10 @@ abstract class ResamplingContext {
 		} else if(outputChannels == 2) {
 			foreach(idx, ref s; buffer) {
 				if(resamplerDataLeft.dataOut.length == 0) {
-					if(loadMore())
+					if(loadMore()) {
+						scflags.finished_ = true;
 						return false;
+					}
 				}
 
 				if(inputChannels == 1) {
@@ -3843,6 +3865,8 @@ abstract class ResamplingContext {
 			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels;
 		} else assert(0);
 
+		if(scflags.stopped)
+			scflags.finished_ = true;
 		return !scflags.stopped;
 	}
 }

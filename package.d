@@ -5,6 +5,8 @@
 	You can usually use them independently, with few or no dependencies,
 	so it is easy to use raw, or you can use dub packages as well.
 
+	See [arsd.docs] for top-level documents in addition to what is below.
+
 	What are you working with? (minimal starting points now but im working on it)
 
 	${RAW_HTML

@@ -7515,7 +7515,15 @@ struct ScreenPainter {
 		return impl.textSize(text);
 	}
 
-	///
+	/++
+		Draws a string in the window with the set font (see [setFont] to change it).
+
+		Params:
+			upperLeft = the upper left point of the bounding box of the text
+			text = the string to draw
+			lowerRight = the lower right point of the bounding box of the text. If 0, 0, there is no lower right bound.
+			alignment = A [arsd.docs.general_concepts#bitflags|combination] of [TextAlignment] flags
+	+/
 	@scriptable
 	void drawText(Point upperLeft, in char[] text, Point lowerRight = Point(0, 0), uint alignment = 0) {
 		if(impl is null) return;

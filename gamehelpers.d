@@ -416,6 +416,9 @@ foreach(y; 0 .. size.height)
 		Point[4] neighborsBuffer;
 		int neighborsBufferLength = 0;
 
+
+		// FIXME: would be kinda cool to make this a more generic graph traversal like for subway routes too
+
 		if(current.x + 1 < size.width && isPassable(current + Point(1, 0)))
 			neighborsBuffer[neighborsBufferLength++] = current + Point(1, 0);
 		if(current.x && isPassable(current + Point(-1, 0)))

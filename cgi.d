@@ -333,11 +333,16 @@ void main() {
 
 	Copyright:
 
-	cgi.d copyright 2008-2019, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2020, Adam D. Ruppe. Provided under the Boost Software License.
 
-	Yes, this file is almost ten years old, and yes, it is still actively maintained and used.
+	Yes, this file is old, and yes, it is still actively maintained and used.
 +/
 module arsd.cgi;
+
+version(Demo)
+unittest {
+
+}
 
 static import std.file;
 
@@ -8037,6 +8042,16 @@ private bool hasIfCalledFromWeb(attrs...)() {
 	return false;
 }
 
+/++
+	Implies POST path for the thing itself, then GET will get the automatic form.
+
+	The given customizer, if present, will be called as a filter on the Form object.
+
+	History:
+		Added December 27, 2020
++/
+template AutomaticForm(alias customizer) { }
+
 /+
 	Argument conversions: for the most part, it is to!Thing(string).
 
@@ -8170,6 +8185,10 @@ q"css
 				padding: 0px;
 			}
 
+			dl.automatic-data-display {
+
+			}
+
 			.automatic-form {
 				max-width: 600px;
 			}
@@ -8183,6 +8202,10 @@ q"css
 				display: block;
 				font-weight: bold;
 				margin-left: -0.5em;
+			}
+
+			.submit-button-holder {
+				padding-left: 2em;
 			}
 
 			.add-array-button {
@@ -8323,7 +8346,8 @@ html", true, true);
 	void presentExceptionAsHtmlImpl(Cgi cgi, Throwable t, Form automaticForm) {
 		if(auto mae = cast(MissingArgumentException) t) {
 			auto container = this.htmlContainer();
-			container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
+			if(cgi.requestMethod == Cgi.RequestMethod.POST)
+				container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
 			container.appendChild(automaticForm);
 
 			cgi.write(container.parentDocument.toString(), true);
@@ -8474,6 +8498,8 @@ html", true, true);
 
 		auto form = cast(Form) Element.make("form");
 
+		form.method = "POST"; // FIXME
+
 		form.addClass("automatic-form");
 
 		string formDisplayName = beautify(__traits(identifier, method));
@@ -8563,7 +8589,7 @@ html", true, true);
 			return Element.make("span", to!string(t), "automatic-data-display");
 		} else static if(is(T == V[K], K, V)) {
 			auto dl = Element.make("dl");
-			dl.addClass("automatic-data-display");
+			dl.addClass("automatic-data-display associative-array");
 			foreach(k, v; t) {
 				dl.addChild("dt", to!string(k));
 				dl.addChild("dd", formatReturnValueAsHtml(v));
@@ -8571,12 +8597,12 @@ html", true, true);
 			return dl;
 		} else static if(is(T == struct)) {
 			auto dl = Element.make("dl");
-			dl.addClass("automatic-data-display");
+			dl.addClass("automatic-data-display struct");
 
 			foreach(idx, memberName; __traits(allMembers, T))
 			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-				dl.addChild("dt", memberName);
-				dl.addChild("dt", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
+				dl.addChild("dt", beautify(memberName));
+				dl.addChild("dd", formatReturnValueAsHtml(__traits(getMember, t, memberName)));
 			}
 
 			return dl;
@@ -8935,6 +8961,8 @@ private auto serveApiInternal(T)(string urlPrefix) {
 						static if(is(param : Cgi)) {
 							static assert(!is(param == immutable));
 							cast() params[pidx] = cgi;
+						} else static if(is(param == typeof(presenter))) {
+							cast() param[pidx] = presenter;
 						} else static if(is(param == Session!D, D)) {
 							static assert(!is(param == immutable));
 							cast() params[pidx] = cgi.getSessionObject!D();
@@ -8973,12 +9001,16 @@ private auto serveApiInternal(T)(string urlPrefix) {
 					if(remainingUrl.length)
 						return false;
 
+					bool automaticForm;
+
 					foreach(attr; __traits(getAttributes, overload))
 						static if(is(attr == AddTrailingSlash)) {
 							if(remainingUrl is null) {
 								cgi.setResponseLocation(cgi.pathInfo ~ "/");
 								return true;
 							}
+						} else static if(__traits(isSame, AutomaticForm, attr)) {
+							automaticForm = true;
 						}
 				
 				/+
@@ -9054,10 +9086,18 @@ private auto serveApiInternal(T)(string urlPrefix) {
 					+/
 					if(callFunction)
 				+/
+
+					if(automaticForm && cgi.requestMethod == Cgi.RequestMethod.GET) {
+						// Should I still show the form on a json thing? idk...
+						auto ret = presenter.createAutomaticFormForFunction!((__traits(getOverloads, obj, methodName)[idx]))(&(__traits(getOverloads, obj, methodName)[idx]));
+						presenter.presentSuccessfulReturn(cgi, ret, presenter.methodMeta!(__traits(getOverloads, obj, methodName)[idx]), "html");
+						return true;
+					}
 					switch(cgi.request("format", defaultFormat!overload())) {
 						case "html":
 							// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
 							try {
+
 								auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
 								presenter.presentSuccessfulReturn(cgi, ret, presenter.methodMeta!(__traits(getOverloads, obj, methodName)[idx]), "html");
 							} catch(Throwable t) {
@@ -9096,12 +9136,12 @@ private auto serveApiInternal(T)(string urlPrefix) {
 				}
 			}
 			}
-			case "script.js":
+			case "GET script.js":
 				cgi.setResponseContentType("text/javascript");
 				cgi.gzipResponse = true;
 				cgi.write(presenter.script(), true);
 				return true;
-			case "style.css":
+			case "GET style.css":
 				cgi.setResponseContentType("text/css");
 				cgi.gzipResponse = true;
 				cgi.write(presenter.style(), true);
@@ -9139,6 +9179,8 @@ template urlNamesForMethod(alias method, string default_) {
 
 		string def = default_;
 
+		bool hasAutomaticForm = false;
+
 		foreach(attr; __traits(getAttributes, method)) {
 			static if(is(typeof(attr) == Cgi.RequestMethod)) {
 				verb = attr;
@@ -9151,6 +9193,9 @@ template urlNamesForMethod(alias method, string default_) {
 					assert(0, "Multiple url names on one function is not currently supported");
 				foundNoun = true;
 				def = attr.name;
+			}
+			static if(__traits(isSame, attr, AutomaticForm)) {
+				hasAutomaticForm = true;
 			}
 		}
 
@@ -9165,7 +9210,12 @@ template urlNamesForMethod(alias method, string default_) {
 				foreach(v; __traits(allMembers, Cgi.RequestMethod))
 					ret ~= v ~ " " ~ def;
 			} else {
-				ret ~= to!string(verb) ~ " " ~ def;
+				if(hasAutomaticForm) {
+					ret ~= "GET " ~ def;
+					ret ~= "POST " ~ def;
+				} else {
+					ret ~= to!string(verb) ~ " " ~ def;
+				}
 			}
 		} else static assert(0);
 
@@ -9846,6 +9896,7 @@ auto serveStaticFileDirectory(string urlPrefix, string directory = null) {
 	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, false, DispatcherDetails(directory));
 }
 
+// duplicated in http2.d
 private static string getHttpCodeText(int code) pure nothrow @nogc {
 	switch(code) {
 		case 200: return "200 OK";
@@ -9855,7 +9906,7 @@ private static string getHttpCodeText(int code) pure nothrow @nogc {
 		case 204: return "204 No Content";
 		case 205: return "205 Reset Content";
 		//
-		case 300: return "300 300 Multiple Choices";
+		case 300: return "300 Multiple Choices";
 		case 301: return "301 Moved Permanently";
 		case 302: return "302 Found";
 		case 303: return "303 See Other";

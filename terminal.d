@@ -64,19 +64,17 @@
 +/
 module arsd.terminal;
 
-import core.stdc.stdio;
-
 // FIXME: needs to support VT output on Windows too in certain situations
 // detect VT on windows by trying to set the flag. if this succeeds, ask it for caps. if this replies with my code we good to do extended output.
 
 /++
 	$(H3 Get Line)
 
-	This example will demonstrate the high-level getline interface.
+	This example will demonstrate the high-level [Terminal.getline] interface.
 
 	The user will be able to type a line and navigate around it with cursor keys and even the mouse on some systems, as well as perform editing as they expect (e.g. the backspace and delete keys work normally) until they press enter.  Then, the final line will be returned to your program, which the example will simply print back to the user.
 +/
-version(demos) unittest {
+unittest {
 	import arsd.terminal;
 
 	void main() {
@@ -85,7 +83,7 @@ version(demos) unittest {
 		terminal.writeln("You wrote: ", line);
 	}
 
-	main; // exclude from docs
+	version(demos) main; // exclude from docs
 }
 
 /++
@@ -94,7 +92,7 @@ version(demos) unittest {
 	This example demonstrates color output, using [Terminal.color]
 	and the output functions like [Terminal.writeln].
 +/
-version(demos) unittest {
+unittest {
 	import arsd.terminal;
 
 	void main() {
@@ -105,7 +103,7 @@ version(demos) unittest {
 		terminal.writeln("And back to normal.");
 	}
 
-	main; // exclude from docs
+	version(demos) main; // exclude from docs
 }
 
 /++
@@ -114,7 +112,7 @@ version(demos) unittest {
 	This shows how to get one single character press using
 	the [RealTimeConsoleInput] structure.
 +/
-version(demos) unittest {
+unittest {
 	import arsd.terminal;
 
 	void main() {
@@ -126,7 +124,7 @@ version(demos) unittest {
 		terminal.writeln("You pressed ", ch);
 	}
 
-	main; // exclude from docs
+	version(demos) main; // exclude from docs
 }
 
 /*
@@ -167,6 +165,7 @@ version(demos) unittest {
 +/
 __gshared void delegate() nothrow @nogc sigIntExtension;
 
+import core.stdc.stdio;
 
 version(TerminalDirectToEmulator) {
 	version=WithEncapsulatedSignals;
@@ -1380,7 +1379,13 @@ struct Terminal {
 
 	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
 	// and some history storage.
-	LineGetter lineGetter;
+	/++
+		The cached object used by [getline]. You can set it yourself if you like.
+
+		History:
+			Documented `public` on December 25, 2020.
+	+/
+	public LineGetter lineGetter;
 
 	int _currentForeground = Color.DEFAULT;
 	int _currentBackground = Color.DEFAULT;
@@ -1465,7 +1470,7 @@ struct Terminal {
 		}
 	}
 
-	/// Changes the current color. See enum Color for the values.
+	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
 		if(force != ForceOption.neverSend) {
 			version(Win32Console) {
@@ -2090,9 +2095,23 @@ struct Terminal {
 		_cursorY = 0;
 	}
 
-	/// gets a line, including user editing. Convenience method around the LineGetter class and RealTimeConsoleInput facilities - use them if you need more control.
-	/// You really shouldn't call this if stdin isn't actually a user-interactive terminal! So if you expect people to pipe data to your app, check for that or use something else.
-	// FIXME: add a method to make it easy to check if stdin is actually a tty and use other methods there.
+	/++
+		Gets a line, including user editing. Convenience method around the [LineGetter] class and [RealTimeConsoleInput] facilities - use them if you need more control.
+
+
+		$(TIP
+			You can set the [lineGetter] member directly if you want things like stored history.
+
+			---
+			Terminal terminal = Terminal(ConsoleOutputType.linear);
+			terminal.lineGetter = new LineGetter(&terminal, "my_history");
+
+			auto line = terminal.getline("$ ");
+			terminal.writeln(line);
+			---
+		)
+		You really shouldn't call this if stdin isn't actually a user-interactive terminal! So if you expect people to pipe data to your app, check for that or use something else. See [stdinIsTerminal].
+	+/
 	string getline(string prompt = null) {
 		if(lineGetter is null)
 			lineGetter = new LineGetter(&this);

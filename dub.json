@@ -82,6 +82,31 @@
 			"sourceFiles": ["nanovega.d", "blendish.d"]
 		},
 		{
+			"name": "gamehelpers",
+			"description": "Assorted game-related structs and algorithms",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.gamehelpers=gamehelpers.d"],
+			"importPaths": ["."],
+			"sourceFiles": ["gamehelpers.d"]
+		},
+		{
+			"name": "joystick",
+			"description": "joystick reading for Windows XInput and Linux",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.joystick=joystick.d"],
+			"importPaths": ["."],
+			"sourceFiles": ["joystick.d"]
+		},
+		{
+			"name": "fibersocket",
+			"description": "Phobos-based fiber socket async i/o subclass",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.fibersocket=fibersocket.d"],
+			"importPaths": ["."],
+			"sourceFiles": ["fibersocket.d"]
+		},
+
+		{
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "library",
@@ -89,6 +114,15 @@
 			"dependencies": {"arsd-official:htmltotext":"*"},
 			"dflags": ["-mv=arsd.email=email.d"],
 			"sourceFiles": ["email.d"]
+		},
+		{
+			"name": "mailserver",
+			"description": "Bare-bones incoming-only smtp server",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dependencies": {"arsd-official:email":"*"},
+			"dflags": ["-mv=arsd.mailserver=mailserver.d"],
+			"sourceFiles": ["mailserver.d"]
 		},
 		{
 			"name": "image_files",
@@ -100,7 +134,8 @@
 				"arsd-official:png":"*",
 				"arsd-official:bmp":"*",
 				"arsd-official:svg":"*",
-				"arsd-official:jpeg":"*"
+				"arsd-official:jpeg":"*",
+				"arsd-official:imageresize":"*"
 			},
 			"dflags": [
 				"-mv=arsd.image=image.d",
@@ -109,6 +144,67 @@
 				"-mv=arsd.dds=dds.d"
 			],
 			"sourceFiles": ["image.d", "targa.d", "pcx.d", "dds.d"]
+		},
+		{
+			"name": "imageresize",
+			"description": "Image resizer for color.d's MemoryImage",
+			"importPaths": ["."],
+			"dependencies": {
+				"arsd-official:color_base":"*"
+			},
+			"targetType": "library",
+			"dflags": ["-mv=arsd.imageresize=imageresize.d"],
+			"sourceFiles": ["imageresize.d"]
+		},
+		{
+			"name": "simpleaudio",
+			"description": "Simple audio+midi playback and capture for Windows and Linux",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.simpleaudio=simpleaudio.d"],
+			"sourceFiles": ["simpleaudio.d"]
+		},
+		{
+			"name": "midi",
+			"description": "midi file format classes",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.midi=midi.d"],
+			"sourceFiles": ["midi.d"]
+		},
+		{
+			"name": "nukedopl3",
+			"description": "nukedopl3 emulator port, required by simpleaudio's playEmulatedOpl3Midi functio",
+			"license": "GPL",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.nukedopl3=nukedopl3.d"],
+			"sourceFiles": ["nukedopl3.d"]
+		},
+		{
+			"name": "mp3",
+			"license": "GPL",
+			"description": "MP3 decoder. Required if you use simpleaudio's playMp3 function",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.mp3=mp3.d"],
+			"sourceFiles": ["mp3.d"]
+		},
+		{
+			"name": "vorbis",
+			"description": "Ogg vorbis decoder. Required if you use simpleaudio's playOgg function",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.vorbis=vorbis.d"],
+			"sourceFiles": ["vorbis.d"]
+		},
+		{
+			"name": "wav",
+			"description": "wav file format read and write",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.wav=wav.d"],
+			"sourceFiles": ["wav.d"]
 		},
 		{
 			"name": "svg",
@@ -188,6 +284,15 @@
 			"sourceFiles": ["characterencodings.d"]
 		},
 		{
+			"name": "argon2",
+			"description": "Binding to the argon2 password hashing C library",
+			"targetType": "library",
+			"importPaths": ["."],
+			"libs": ["argon2"],
+			"dflags": ["-mv=arsd.argon2=argon2.d"],
+			"sourceFiles": ["argon2.d"]
+		},
+		{
 			"name": "cgi",
 			"description": "web server library with cgi, fastcgi, scgi, and embedded http server support",
 			"targetType": "library",
@@ -228,6 +333,7 @@
 		},
 		{
 			"name": "mysql",
+			"license":"GPL-2.0 or later",
 			"description": "MySQL client library. Wraps the official C library with my database.d interface.",
 			"targetType": "library",
 			"dependencies": {"arsd-official:database_base":"*"},
