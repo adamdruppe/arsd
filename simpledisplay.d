@@ -6638,15 +6638,13 @@ struct Pen {
 
 	On Windows, this means a device-independent bitmap. On X11, it is an XImage.
 
-	$(WARNING On X, do not create an Image in an application without an event loop. You may create images before running the event loop, but the event loop must run at some point before you try to actually draw the image to screen or before you exit your program.)
-
 	$(NOTE If you are writing platform-aware code and need to know low-level details, uou may check `if(Image.impl.xshmAvailable)` to see if MIT-SHM is used on X11 targets to draw `Image`s and `Sprite`s. Use `static if(UsingSimpledisplayX11)` to determine if you are compiling for an X11 target.)
 
 	Drawing an image to screen is not necessarily fast, but applying algorithms to draw to the image itself should be fast. An `Image` is also the first step in loading and displaying images loaded from files.
 
 	If you intend to draw an image to screen several times, you will want to convert it into a [Sprite].
 
-	$(IMPORTANT `Image` may represent a scarce, shared resource that persists across process termination, and should be disposed of properly. On X11, it uses the MIT-SHM extension, if available, which uses shared memory handles with the X server, which is a long-lived process that holds onto them after your program terminates if you don't free it.
+	$(PITFALL `Image` may represent a scarce, shared resource that persists across process termination, and should be disposed of properly. On X11, it uses the MIT-SHM extension, if available, which uses shared memory handles with the X server, which is a long-lived process that holds onto them after your program terminates if you don't free it.
 
 	It is possible for your user's system to run out of these handles over time, forcing them to clean it up with extraordinary measures - their GUI is liable to stop working!
 
@@ -7860,6 +7858,11 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 	///
 	final @property int height() { return _height; }
+
+	///
+	static Sprite fromMemoryImage(SimpleWindow win, MemoryImage img) {
+		return new Sprite(win, Image.fromMemoryImage(img));
+	}
 
 	private:
 
@@ -11515,6 +11518,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				shminfo.readOnly = 0;
 				XShmAttach(display, &shminfo);
 				XDisplayConnection.registerImage(this);
+				// if I don't flush here there's a chance the dtor will run before the
+				// ctor and lead to a bad value X error. While this hurts the efficiency
+				// it is local anyway so prolly better to keep it simple
+				XFlush(display);
 			} else {
 				if (forcexshm) throw new Exception("can't create XShm Image");
 				// This actually needs to be malloc to avoid a double free error when XDestroyImage is called

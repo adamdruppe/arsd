@@ -413,7 +413,7 @@ struct Color {
 	 * WARNING! This function does blending in RGB space, and RGB space is not linear!
 	 */
 	public enum ColorBlendMixinStr(string colu32name, string destu32name) = "{
-		immutable uint a_tmp_ = (256-(255-(("~colu32name~")>>24)))&(-(1-(((255-(("~colu32name~")>>24))+1)>>8))); // to not loose bits, but 255 should become 0
+		immutable uint a_tmp_ = (256-(255-(("~colu32name~")>>24)))&(-(1-(((255-(("~colu32name~")>>24))+1)>>8))); // to not lose bits, but 255 should become 0
 		immutable uint dc_tmp_ = ("~destu32name~")&0xffffff;
 		immutable uint srb_tmp_ = (("~colu32name~")&0xff00ff);
 		immutable uint sg_tmp_ = (("~colu32name~")&0x00ff00);
@@ -428,11 +428,19 @@ struct Color {
 	/// Perform alpha-blending of `fore` to this color, return new color.
 	/// WARNING! This function does blending in RGB space, and RGB space is not linear!
 	Color alphaBlend (Color fore) const pure nothrow @trusted @nogc {
-		static if (__VERSION__ > 2067) pragma(inline, true);
-		Color res;
-		res.asUint = asUint;
-		mixin(ColorBlendMixinStr!("fore.asUint", "res.asUint"));
-		return res;
+		version(LittleEndian) {
+			static if (__VERSION__ > 2067) pragma(inline, true);
+			Color res;
+			res.asUint = asUint;
+			mixin(ColorBlendMixinStr!("fore.asUint", "res.asUint"));
+			return res;
+		} else {
+			alias foreground = fore;
+			alias background = this;
+			foreach(idx, ref part; foreground.components)
+				part = cast(ubyte) (part * foreground.a / 255 +  background.components[idx] * (255 - foreground.a) / 255);
+			return foreground;
+		}
 	}
 }
 
@@ -1006,15 +1014,6 @@ class IndexedImage : MemoryImage {
 	TrueColorImage convertToTrueColor() const pure nothrow @trusted {
 		auto tci = new TrueColorImage(width, height);
 		foreach(i, b; data) {
-			/*
-			if(b >= palette.length) {
-				string fuckyou;
-				fuckyou ~= b + '0';
-				fuckyou ~= " ";
-				fuckyou ~= palette.length + '0';
-				assert(0, fuckyou);
-			}
-			*/
 			tci.imageData.colors[i] = palette[b];
 		}
 		return tci;
@@ -1411,6 +1410,11 @@ void removeTransparency(IndexedImage img, Color background)
 /// Perform alpha-blending of `fore` to this color, return new color.
 /// WARNING! This function does blending in RGB space, and RGB space is not linear!
 Color alphaBlend(Color foreground, Color background) pure nothrow @safe @nogc {
+	//if(foreground.a == 255)
+		//return foreground;
+	if(foreground.a == 0)
+		return background; // the other blend function always returns alpha 255, but if the foreground has nothing, we should keep the background the same so its antialiasing doesn't get smashed (assuming this is blending in like a png instead of on a framebuffer)
+
 	static if (__VERSION__ > 2067) pragma(inline, true);
 	return background.alphaBlend(foreground);
 }

@@ -1,7 +1,67 @@
 /++
 	Support for [https://wiki.mozilla.org/APNG_Specification|animated png] files.
+
+	History:
+		Originally written March 2019 with read support.
+
+		Render support added December 28, 2020.
 +/
 module arsd.apng;
+
+///
+unittest {
+	import arsd.simpledisplay;
+	import arsd.game;
+	import arsd.apng;
+
+	void main(string[] args) {
+		import std.file;
+		auto a = readApng(cast(ubyte[]) std.file.read(args[1]));
+
+		auto window = create2dWindow("Animated PNG viewer", a.header.width, a.header.height);
+
+		auto render = a.renderer();
+		OpenGlTexture[] frames;
+		int[] waits;
+		foreach(frame; a.frames) {
+			waits ~= render.nextFrame();
+			// this would be the raw data for the frame
+			//frames ~= new OpenGlTexture(frame.frameData.getAsTrueColorImage);
+			// or the current rendered ersion
+			frames ~= new OpenGlTexture(render.buffer);
+		}
+
+		int pos;
+		int currentWait;
+
+		void update() {
+			currentWait += waits[pos];
+			pos++;
+			if(pos == frames.length)
+				pos = 0;
+		}
+
+		window.redrawOpenGlScene = () {
+			glClear(GL_COLOR_BUFFER_BIT);
+			frames[pos].draw(0, 0);
+		};
+
+		auto tick = 50;
+		window.eventLoop(tick, delegate() {
+			currentWait -= tick;
+			auto updateNeeded = currentWait <= 0;
+			while(currentWait <= 0)
+				update();
+			if(updateNeeded)
+				window.redrawOpenGlSceneNow();
+		//},
+		//(KeyEvent ev) {
+		//if(ev.pressed)
+		});
+	}
+
+	version(Demo) main(["", "/home/me/test/apngexample.apng"]); // remove from docs
+}
 
 import arsd.png;
 
@@ -44,6 +104,7 @@ class ApngFrame {
 	ubyte[] compressedDatastream;
 
 	ubyte[] data;
+	MemoryImage frameData;
 	void populateData() {
 		if(data !is null)
 			return;
@@ -57,14 +118,24 @@ class ApngFrame {
 		auto height = frameControlChunk.height;
 
 		auto bytesPerLine = bytesPerLineOfPng(parent.header.depth, parent.header.type, width);
-		bytesPerLine--; // removing filter byte from this calculation since we handle separtely
+		bytesPerLine--; // removing filter byte from this calculation since we handle separately
 
 		size_t idataIdx;
 		ubyte[] idata;
 
-		idata.length = width * height * (parent.header.type == 3 ? 1 : 4);
+		MemoryImage img;
+		if(parent.header.type == 3) {
+			auto i = new IndexedImage(width, height);
+			img = i;
+			i.palette = parent.palette;
+			idata = i.data;
+		} else {
+			auto i = new TrueColorImage(width, height);
+			img = i;
+			idata = i.imageData.bytes;
+		}
 
-		ubyte[] previousLine;
+		immutable(ubyte)[] previousLine;
 		foreach(y; 0 .. height) {
 			auto filter = raw[0];
 			raw = raw[1 .. $];
@@ -72,15 +143,104 @@ class ApngFrame {
 			raw = raw[bytesPerLine .. $];
 
 			auto unfiltered = unfilter(filter, line, previousLine, bpp);
-			previousLine = line;
+			previousLine = unfiltered;
 
 			convertPngData(parent.header.type, parent.header.depth, unfiltered, width, idata, idataIdx);
 		}
 
 		this.data = idata;
+		this.frameData = img;
 	}
+}
 
-	//MemoryImage frameData;
+struct ApngRenderBuffer {
+	ApngAnimation animation;
+
+	public TrueColorImage buffer;
+	public int frameNumber;
+
+	private FrameControlChunk prevFcc;
+	private TrueColorImage[] convertedFrames;
+	private TrueColorImage previousFrame;
+
+	/++
+		Returns number of millisecond to wait until the next frame.
+	+/
+	int nextFrame() {
+		if(frameNumber == animation.frames.length) {
+			frameNumber = 0;
+			prevFcc = FrameControlChunk.init;
+		}
+
+		auto frame = animation.frames[frameNumber];
+		auto fcc = frame.frameControlChunk;
+		if(convertedFrames is null) {
+			convertedFrames = new TrueColorImage[](animation.frames.length);
+		}
+		if(convertedFrames[frameNumber] is null) {
+			frame.populateData();
+			convertedFrames[frameNumber] = frame.frameData.getAsTrueColorImage();
+		}
+
+		final switch(prevFcc.dispose_op) {
+			case APNG_DISPOSE_OP.NONE:
+				break;
+			case APNG_DISPOSE_OP.BACKGROUND:
+				// clear area to 0
+				foreach(y; prevFcc.y_offset .. prevFcc.y_offset + prevFcc.height)
+					buffer.imageData.bytes[
+						4 * (prevFcc.x_offset + y * buffer.width)
+						..
+						4 * (prevFcc.x_offset + prevFcc.width + y * buffer.width)
+					] = 0;
+				break;
+			case APNG_DISPOSE_OP.PREVIOUS:
+				// put the buffer back in
+
+				// this could prolly be more efficient, it only really cares about the prevFcc bounding box
+				buffer.imageData.bytes[] = previousFrame.imageData.bytes[];
+				break;
+		}
+
+		prevFcc = fcc;
+		// should copy the buffer at this point for a PREVIOUS case happening
+		if(fcc.dispose_op == APNG_DISPOSE_OP.PREVIOUS) {
+			// this could prolly be more efficient, it only really cares about the prevFcc bounding box
+			if(previousFrame is null){
+				previousFrame = buffer.clone();
+			} else {
+				previousFrame.imageData.bytes[] = buffer.imageData.bytes[];
+			}
+		}
+
+		size_t foff;
+		foreach(y; fcc.y_offset .. fcc.y_offset + fcc.height) {
+			final switch(fcc.blend_op) {
+				case APNG_BLEND_OP.SOURCE:
+					buffer.imageData.bytes[
+						4 * (fcc.x_offset + y * buffer.width)
+						..
+						4 * (fcc.x_offset + y * buffer.width + fcc.width)
+					] = convertedFrames[frameNumber].imageData.bytes[foff .. foff + fcc.width * 4];
+					foff += fcc.width * 4;
+				break;
+				case APNG_BLEND_OP.OVER:
+					foreach(x; fcc.x_offset .. fcc.x_offset + fcc.width) {
+						buffer.imageData.colors[y * buffer.width + x] =
+							alphaBlend(
+								convertedFrames[frameNumber].imageData.colors[foff],
+								buffer.imageData.colors[y * buffer.width + x]
+							);
+						foff++;
+					}
+				break;
+			}
+		}
+
+		frameNumber++;
+
+		return fcc.delay_num * 1000 / fcc.delay_den;
+	}
 }
 
 class ApngAnimation {
@@ -90,8 +250,8 @@ class ApngAnimation {
 	ApngFrame[] frames;
 	// default image? tho i can just load it as a png for that too.
 
-	MemoryImage render() {
-		return null;
+	ApngRenderBuffer renderer() {
+		return ApngRenderBuffer(this, new TrueColorImage(header.width, header.height), 0);
 	}
 }
 
@@ -111,6 +271,7 @@ ApngAnimation readApng(in ubyte[] data) {
 	auto header = PngHeader.fromChunk(png.chunks[0]);
 
 	auto obj = new ApngAnimation();
+	obj.header = header;
 
 	if(header.type == 3) {
 		obj.palette = fetchPalette(png);
@@ -133,6 +294,7 @@ ApngAnimation readApng(in ubyte[] data) {
 				if(!seenFctl)
 					continue;
 
+				assert(frameNumber == 1); // we work on frame 0 but fcTL advances it
 				assert(obj.frames[0]);
 
 				obj.frames[0].compressedDatastream ~= chunk.payload;

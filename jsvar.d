@@ -1429,6 +1429,7 @@ struct var {
 		return v;
 	}
 
+	///
 	@property static var emptyObject(var prototype) {
 		if(prototype._type == Type.Object)
 			return var.emptyObject(prototype._payload._object);
@@ -1499,22 +1500,26 @@ struct var {
 		return *v;
 	}
 
+	///
 	@property static var emptyArray() {
 		var v;
 		v._type = Type.Array;
 		return v;
 	}
 
+	///
 	static var fromJson(string json) {
 		auto decoded = parseJSON(json);
 		return var.fromJsonValue(decoded);
 	}
 
+	///
 	static var fromJsonFile(string filename) {
 		import std.file;
 		return var.fromJson(readText(filename));
 	}
 
+	///
 	static var fromJsonValue(JSONValue v) {
 		var ret;
 
@@ -1558,11 +1563,13 @@ struct var {
 		return ret;
 	}
 
+	///
 	string toJson() {
 		auto v = toJsonValue();
 		return toJSON(v);
 	}
 
+	///
 	JSONValue toJsonValue() {
 		JSONValue val;
 		final switch(payloadType()) {
@@ -2623,6 +2630,28 @@ class OverloadSet : PrototypeObject {
 
 		return bestMatch.func.apply(this_, arguments);
 	}
+}
+
+unittest {
+	struct A {
+		static:
+		string foo(var arg) { return "generic"; }
+		string foo(string s) { return "string"; }
+		string foo(int i) { return "int"; }
+		string foo(float i) { return "float"; }
+	}
+
+        auto os = new OverloadSet();
+        os.addOverloadsOf!(A.foo);
+        var g = var.emptyObject;
+        g.foo = os;
+
+        //g.foo()();
+        assert(g.foo()("for me") == "string");
+        //g.foo()("for me", "lol");
+        assert(g.foo()(1) == "int");
+        assert(g.foo()(5.4) == "float");
+        assert(g.foo()(new Object) == "generic");
 }
 
 bool appearsNumeric(string n) {
