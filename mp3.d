@@ -3004,7 +3004,7 @@ int mp3_decode_frame (mp3_context_t *s, int16_t *out_samples, int *data_size, ui
   int extra_bytes = 0;
 
 retry:
-  if (buf_size < HEADER_SIZE) return -1;
+  if (buf_size < HEADER_SIZE) { return -1; }
 
   header = (buf[0]<<24)|(buf[1]<<16)|(buf[2]<<8)|buf[3];
   if (mp3_check_header(header) < 0){

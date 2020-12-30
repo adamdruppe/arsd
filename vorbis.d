@@ -4141,7 +4141,18 @@ public:
   this () {}
   ~this () { close(); }
 
-  this (int asize, readCB rcb) { assert(rcb !is null); stend = (asize > 0 ? asize : 0); stmread = rcb; }
+  this (int asize, readCB rcb) {
+  	assert(rcb !is null);
+	stend = (asize > 0 ? asize : 0);
+	stmread = rcb;
+	isOpened = true;
+	eof = false;
+	read_comments = true;
+	if (start_decoder(this)) {
+		vorbis_pump_first_frame(this);
+		return;
+	}
+  }
   this (FILE* fl, bool doclose=true) { open(fl, doclose); }
   this (const(char)[] filename) { open(filename); }
 

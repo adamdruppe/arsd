@@ -329,10 +329,19 @@ struct AudioOutputThread {
 			return impl.playEmulatedOpl3Midi(filename);
 		return new DummySample;
 	}
-
+	SampleController playEmulatedOpl3Midi()(immutable(ubyte)[] data) {
+		if(impl)
+			return impl.playEmulatedOpl3Midi(data);
+		return new DummySample;
+	}
 	SampleController playOgg()(string filename, bool loop = false) {
 		if(impl)
 			return impl.playOgg(filename, loop);
+		return new DummySample;
+	}
+	SampleController playOgg()(immutable(ubyte)[] data, bool loop = false) {
+		if(impl)
+			return impl.playOgg(data, loop);
 		return new DummySample;
 	}
 	SampleController playMp3()(string filename) {
@@ -340,9 +349,19 @@ struct AudioOutputThread {
 			return impl.playMp3(filename);
 		return new DummySample;
 	}
+	SampleController playMp3()(immutable(ubyte)[] data) {
+		if(impl)
+			return impl.playMp3(data);
+		return new DummySample;
+	}
 	SampleController playWav()(string filename) {
 		if(impl)
 			return impl.playWav(filename);
+		return new DummySample;
+	}
+	SampleController playWav()(immutable(ubyte)[] data) {
+		if(impl)
+			return impl.playWav(data);
 		return new DummySample;
 	}
 
@@ -522,14 +541,20 @@ final class AudioPcmOutThreadImplementation : Thread {
 			Based on ketmar's code.
 	+/
 	SampleController playEmulatedOpl3Midi()(string filename, bool loop = false) {
+		import std.file;
+		auto bytes = cast(immutable(ubyte)[]) std.file.read(filename);
+
+		return playEmulatedOpl3Midi(bytes);
+	}
+
+	/// ditto
+	SampleController playEmulatedOpl3Midi()(immutable(ubyte)[] data, bool loop = false) {
 		import arsd.nukedopl3;
 		auto scf = new SampleControlFlags;
 
-		import std.file;
-		auto bytes = cast(ubyte[]) std.file.read(filename);
 		auto player = new OPLPlayer(this.SampleRate, true, channels == 2);
 		player.looped = loop;
-		player.load(bytes);
+		player.load(data);
 		player.play();
 
 		addChannel(
@@ -571,8 +596,31 @@ final class AudioPcmOutThreadImplementation : Thread {
 	+/
 	SampleController playOgg()(string filename, bool loop = false) {
 		import arsd.vorbis;
-
 		auto v = new VorbisDecoder(filename);
+		return playOgg(v, loop);
+	}
+
+	/// ditto
+	SampleController playOgg()(immutable(ubyte)[] data, bool loop = false) {
+		import arsd.vorbis;
+		auto v = new VorbisDecoder(cast(int) data.length, delegate int(void[] buffer, uint ofs, VorbisDecoder vb) nothrow @nogc {
+			if(buffer is null)
+				return 0;
+			ubyte[] buf = cast(ubyte[]) buffer;
+
+			if(ofs + buf.length <= data.length) {
+				buf[] = data[ofs .. ofs + buf.length];
+				return cast(int) buf.length;
+			} else {
+				buf[0 .. data.length - ofs] = data[ofs .. $];
+				return cast(int) data.length - ofs;
+			}
+		});
+		return playOgg(v, loop);
+	}
+
+	// no compatibility guarantees, I can change this overload at any time!
+	/* private */ SampleController playOgg(VorbisDecoder)(VorbisDecoder v, bool loop = false) {
 
 		auto scf = new SampleControlFlags;
 
@@ -655,15 +703,40 @@ final class AudioPcmOutThreadImplementation : Thread {
 			Automatic resampling support added Nov 7, 2020.
 
 			Return value changed from `void` to a sample control object on December 23, 2020.
+
+			The `immutable(ubyte)[]` overload was added December 30, 2020.
 	+/
 	SampleController playMp3()(string filename) {
-		import arsd.mp3;
-
 		import std.stdio;
 		auto fi = new File(filename); // just let the GC close it... otherwise random segfaults happen... blargh
 		scope auto reader = delegate(void[] buf) {
 			return cast(int) fi.rawRead(buf[]).length;
 		};
+
+		return playMp3(reader);
+	}
+
+	/// ditto
+	SampleController playMp3()(immutable(ubyte)[] data) {
+		return playMp3( (void[] buffer) {
+			ubyte[] buf = cast(ubyte[]) buffer;
+			if(data.length >= buf.length) {
+				buf[] = data[0 .. buf.length];
+				data = data[buf.length .. $];
+				return cast(int) buf.length;
+			} else {
+				auto it = data.length;
+				buf[0 .. data.length] = data[];
+				buf[data.length .. $] = 0;
+				data = data[$ .. $];
+				return cast(int) it;
+			}
+		});
+	}
+
+	// no compatibility guarantees, I can change this overload at any time!
+	/* private */ SampleController playMp3()(int delegate(void[]) reader) {
+		import arsd.mp3;
 
 		auto mp3 = new MP3Decoder(reader);
 		if(!mp3.valid)
@@ -789,19 +862,20 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 			Return value changed from `void` to a sample control object on December 23, 2020.
 	+/
-	SampleController playWav()(string filename) {
+	SampleController playWav(R)(R filename_or_data) if(is(R == string) /* filename */ || is(R == immutable(ubyte)[]) /* data */ ) {
 		auto scf = new SampleControlFlags;
 		version(with_resampler) {
 			auto resampleContext = new class ResamplingContext {
 				import arsd.wav;
 
 				this() {
-					reader = wavReader(filename);
+					reader = wavReader(filename_or_data);
+					next = reader.front;
 
 					super(scf, reader.sampleRate, SampleRate, reader.numberOfChannels, channels);
 				}
 
-				WavReader!CFileChunks reader;
+				typeof(wavReader(filename_or_data)) reader;
 				const(ubyte)[] next;
 
 				override void loadMoreSamples() {
