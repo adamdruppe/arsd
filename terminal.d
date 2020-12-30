@@ -61,6 +61,11 @@
 		* Do a full TUI widget set. I might do some basics and lay a little groundwork, but a full TUI
 		  is outside the scope of this module (unless I can do it really small.)
 	)
+
+	History:
+		On December 29, 2020 the structs and their destructors got more protection against in-GC finalization errors and duplicate executions.
+
+		This should not affect your code.
 +/
 module arsd.terminal;
 
@@ -1108,6 +1113,7 @@ struct Terminal {
 	/++
 	+/
 	this(ConsoleOutputType type) {
+		_initialized = true;
 		createLock();
 		this.type = type;
 
@@ -1204,6 +1210,7 @@ struct Terminal {
 	 * ditto on getSizeOverride. That's there so you can do something instead of ioctl.
 	 */
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		_initialized = true;
 		createLock();
 		posixInitialize(type, fdIn, fdOut, getSizeOverride);
 	}
@@ -1258,6 +1265,7 @@ struct Terminal {
 	version(Win32Console)
 	/// ditto
 	this(ConsoleOutputType type) {
+		_initialized = true;
 		createLock();
 		if(UseVtSequences) {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -1322,9 +1330,19 @@ struct Terminal {
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
-	bool _suppressDestruction;
+	bool _suppressDestruction = false;
+
+	bool _initialized = false; // set to true for Terminal.init purposes, but ctors will set it to false initially, then might reset to true if needed
 
 	~this() {
+		if(!_initialized)
+			return;
+
+		import core.memory;
+		static if(is(typeof(GC.inFinalizer)))
+			if(GC.inFinalizer)
+				return;
+
 		if(_suppressDestruction) {
 			flush();
 			return;
@@ -2289,10 +2307,11 @@ struct RealTimeConsoleInput {
 
 	private ConsoleInputFlags flags;
 	private Terminal* terminal;
-	private void delegate()[] destructor;
+	private void function(RealTimeConsoleInput*)[] destructor;
 
 	/// To capture input, you need to provide a terminal and some flags.
 	public this(Terminal* terminal, ConsoleInputFlags flags) {
+		_initialized = true;
 		this.flags = flags;
 		this.terminal = terminal;
 
@@ -2316,7 +2335,7 @@ struct RealTimeConsoleInput {
 			// if(flags & ConsoleInputFlags.raw) // FIXME: maybe that should be a separate flag for ENABLE_LINE_INPUT
 
 			SetConsoleMode(inputHandle, mode);
-			destructor ~= { SetConsoleMode(inputHandle, oldInput); };
+			destructor ~= (this_) { SetConsoleMode(this_.inputHandle, this_.oldInput); };
 
 
 			GetConsoleMode(terminal.hConsole, &oldOutput);
@@ -2326,7 +2345,7 @@ struct RealTimeConsoleInput {
 			if(!(flags & ConsoleInputFlags.noEolWrap))
 				mode |= ENABLE_WRAP_AT_EOL_OUTPUT; /* 0x02 */
 			SetConsoleMode(terminal.hConsole, mode);
-			destructor ~= { SetConsoleMode(terminal.hConsole, oldOutput); };
+			destructor ~= (this_) { SetConsoleMode(this_.terminal.hConsole, this_.oldOutput); };
 		}
 
 		version(TerminalDirectToEmulator) {
@@ -2344,7 +2363,7 @@ struct RealTimeConsoleInput {
 			if(flags & ConsoleInputFlags.selectiveMouse) {
 				// arsd terminal extension, but harmless on most other terminals
 				terminal.writeStringRaw("\033[?1014h");
-				destructor ~= { terminal.writeStringRaw("\033[?1014l"); };
+				destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1014l"); };
 			} else if(flags & ConsoleInputFlags.mouse) {
 				// basic button press+release notification
 
@@ -2352,7 +2371,7 @@ struct RealTimeConsoleInput {
 				// right now this works well on xterm but rxvt isn't sending movements...
 
 				terminal.writeStringRaw("\033[?1000h");
-				destructor ~= { terminal.writeStringRaw("\033[?1000l"); };
+				destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1000l"); };
 				// the MOUSE_HACK env var is for the case where I run screen
 				// but set TERM=xterm (which I do from putty). The 1003 mouse mode
 				// doesn't work there, breaking mouse support entirely. So by setting
@@ -2362,22 +2381,22 @@ struct RealTimeConsoleInput {
 				if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
 					// this is vt200 mouse with full motion tracking, supported by xterm
 					terminal.writeStringRaw("\033[?1003h");
-					destructor ~= { terminal.writeStringRaw("\033[?1003l"); };
+					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1003l"); };
 				} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
-					destructor ~= { terminal.writeStringRaw("\033[?1002l"); };
+					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1002l"); };
 				}
 			}
 			if(flags & ConsoleInputFlags.paste) {
 				if(terminal.terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 					terminal.writeStringRaw("\033[?2004h"); // bracketed paste mode
-					destructor ~= { terminal.writeStringRaw("\033[?2004l"); };
+					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?2004l"); };
 				}
 			}
 
 			if(terminal.tcaps & TerminalCapabilities.arsdHyperlinks) {
 				terminal.writeStringRaw("\033[?3004h"); // bracketed link mode
-				destructor ~= { terminal.writeStringRaw("\033[?3004l"); };
+				destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?3004l"); };
 			}
 
 			// try to ensure the terminal is in UTF-8 mode
@@ -2402,10 +2421,10 @@ struct RealTimeConsoleInput {
 
 			if(listenTo != -1) {
 				addFileEventListeners(listenTo, &eventListener, null, null);
-				destructor ~= { removeFileEventListeners(listenTo); };
+				destructor ~= (this_) { this_.removeFileEventListeners(listenTo); };
 			}
 			addOnIdle(&terminal.flush);
-			destructor ~= { removeOnIdle(&terminal.flush); };
+			destructor ~= (this_) { this_.removeOnIdle(&terminal.flush); };
 		}
 	}
 
@@ -2477,7 +2496,7 @@ struct RealTimeConsoleInput {
 		that in a future version, but it doesn't hurt to call it twice anyway, so I recommend
 		calling flush yourself in any code you write using this.
 	+/
-	void integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
+	auto integrateWithSimpleDisplayEventLoop()(void delegate(InputEvent) userEventHandler) {
 		this.userEventHandler = userEventHandler;
 		import arsd.simpledisplay;
 		version(Win32Console)
@@ -2485,6 +2504,8 @@ struct RealTimeConsoleInput {
 		else version(linux)
 			auto listener = new PosixFdReader(&fdReadyReader, fdIn);
 		else static assert(0, "sdpy event loop integration not implemented on this platform");
+
+		return listener;
 	}
 
 	version(with_eventloop) {
@@ -2511,8 +2532,16 @@ struct RealTimeConsoleInput {
 	}
 
 	bool _suppressDestruction;
+	bool _initialized = false;
 
 	~this() {
+		if(!_initialized)
+			return;
+		import core.memory;
+		static if(is(typeof(GC.inFinalizer)))
+			if(GC.inFinalizer)
+				return;
+
 		if(_suppressDestruction)
 			return;
 
@@ -2539,7 +2568,7 @@ struct RealTimeConsoleInput {
 
 		// we're just undoing everything the constructor did, in reverse order, same criteria
 		foreach_reverse(d; destructor)
-			d();
+			d(&this);
 	}
 
 	/**
@@ -7795,6 +7824,120 @@ private version(Windows) {
 		extern(C) int _dup2(int, int);
 		extern(C) int _fileno(FILE*);
 	}
+}
+
+/++
+	Convenience object to forward terminal keys to a [arsd.simpledisplay.SimpleWindow]. Meant for cases when you have a gui window as the primary mode of interaction, but also want keys to the parent terminal to be usable too by the window.
+
+	Please note that not all keys may be accurately forwarded. It is not meant to be 100% comprehensive; that's for the window.
+
+	History:
+		Added December 29, 2020.
++/
+auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
+	struct impl {
+		static import sdpy = arsd.simpledisplay;
+		Terminal* terminal;
+		RealTimeConsoleInput* rtti;
+		typeof(RealTimeConsoleInput.init.integrateWithSimpleDisplayEventLoop(null)) listener;
+		this(sdpy.SimpleWindow window) {
+			terminal = new Terminal(ConsoleOutputType.linear);
+			rtti = new RealTimeConsoleInput(terminal, ConsoleInputFlags.releasedKeys);
+			listener = rtti.integrateWithSimpleDisplayEventLoop(delegate(InputEvent ie) {
+				if(ie.type != InputEvent.Type.KeyboardEvent)
+					return;
+				auto kbd = ie.get!(InputEvent.Type.KeyboardEvent);
+				if(window.handleKeyEvent !is null) {
+					sdpy.KeyEvent ke;
+					ke.pressed = kbd.pressed;
+					if(kbd.modifierState & ModifierState.control)
+						ke.modifierState |= sdpy.ModifierState.ctrl;
+					if(kbd.modifierState & ModifierState.alt)
+						ke.modifierState |= sdpy.ModifierState.alt;
+					if(kbd.modifierState & ModifierState.shift)
+						ke.modifierState |= sdpy.ModifierState.shift;
+
+					sw: switch(kbd.which) {
+						case KeyboardEvent.Key.escape: ke.key = sdpy.Key.Escape; break;
+						case KeyboardEvent.Key.F1: ke.key = sdpy.Key.F1; break;
+						case KeyboardEvent.Key.F2: ke.key = sdpy.Key.F2; break;
+						case KeyboardEvent.Key.F3: ke.key = sdpy.Key.F3; break;
+						case KeyboardEvent.Key.F4: ke.key = sdpy.Key.F4; break;
+						case KeyboardEvent.Key.F5: ke.key = sdpy.Key.F5; break;
+						case KeyboardEvent.Key.F6: ke.key = sdpy.Key.F6; break;
+						case KeyboardEvent.Key.F7: ke.key = sdpy.Key.F7; break;
+						case KeyboardEvent.Key.F8: ke.key = sdpy.Key.F8; break;
+						case KeyboardEvent.Key.F9: ke.key = sdpy.Key.F9; break;
+						case KeyboardEvent.Key.F10: ke.key = sdpy.Key.F10; break;
+						case KeyboardEvent.Key.F11: ke.key = sdpy.Key.F11; break;
+						case KeyboardEvent.Key.F12: ke.key = sdpy.Key.F12; break;
+						case KeyboardEvent.Key.LeftArrow: ke.key = sdpy.Key.Left; break;
+						case KeyboardEvent.Key.RightArrow: ke.key = sdpy.Key.Right; break;
+						case KeyboardEvent.Key.UpArrow: ke.key = sdpy.Key.Up; break;
+						case KeyboardEvent.Key.DownArrow: ke.key = sdpy.Key.Down; break;
+						case KeyboardEvent.Key.Insert: ke.key = sdpy.Key.Insert; break;
+						case KeyboardEvent.Key.Delete: ke.key = sdpy.Key.Delete; break;
+						case KeyboardEvent.Key.Home: ke.key = sdpy.Key.Home; break;
+						case KeyboardEvent.Key.End: ke.key = sdpy.Key.End; break;
+						case KeyboardEvent.Key.PageUp: ke.key = sdpy.Key.PageUp; break;
+						case KeyboardEvent.Key.PageDown: ke.key = sdpy.Key.PageDown; break;
+						case KeyboardEvent.Key.ScrollLock: ke.key = sdpy.Key.ScrollLock; break;
+
+						case '\r', '\n': ke.key = sdpy.Key.Enter; break;
+						case '\t': ke.key = sdpy.Key.Tab; break;
+						case ' ': ke.key = sdpy.Key.Space; break;
+						case '\b': ke.key = sdpy.Key.Backspace; break;
+
+						case '`': ke.key = sdpy.Key.Grave; break;
+						case '-': ke.key = sdpy.Key.Dash; break;
+						case '=': ke.key = sdpy.Key.Equals; break;
+						case '[': ke.key = sdpy.Key.LeftBracket; break;
+						case ']': ke.key = sdpy.Key.RightBracket; break;
+						case '\\': ke.key = sdpy.Key.Backslash; break;
+						case ';': ke.key = sdpy.Key.Semicolon; break;
+						case '\'': ke.key = sdpy.Key.Apostrophe; break;
+						case ',': ke.key = sdpy.Key.Comma; break;
+						case '.': ke.key = sdpy.Key.Period; break;
+						case '/': ke.key = sdpy.Key.Slash; break;
+
+						static foreach(ch; 'A' .. ('Z' + 1)) {
+							case ch, ch + 32:
+								version(Windows)
+									ke.key = cast(sdpy.Key) ch;
+								else
+									ke.key = cast(sdpy.Key) (ch + 32);
+							break sw;
+						}
+						static foreach(ch; '0' .. ('9' + 1)) {
+							case ch:
+								ke.key = cast(sdpy.Key) ch;
+							break sw;
+						}
+
+						default:
+					}
+
+					// I'm tempted to leave the window null since it didn't originate from here
+					// or maybe set a ModifierState....
+					//ke.window = window;
+
+					window.handleKeyEvent(ke);
+				}
+				if(window.handleCharEvent !is null) {
+					if(kbd.isCharacter)
+						window.handleCharEvent(kbd.which);
+				}
+			});
+		}
+		~this() {
+			listener.dispose();
+			.destroy(*rtti);
+			.destroy(*terminal);
+			rtti = null;
+			terminal = null;
+		}
+	}
+	return impl(window);
 }
 
 
