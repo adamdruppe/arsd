@@ -256,6 +256,8 @@ private class SampleControlFlags : SampleController {
 struct AudioOutputThread {
 	@disable this();
 
+	@disable new(size_t); // gdc9 requires the arg fyi
+
 	/++
 		Pass `true` to enable the audio thread. Otherwise, it will
 		just live as a dummy mock object that you should not actually
@@ -324,6 +326,8 @@ struct AudioOutputThread {
 		else static assert(0);
 	}
 
+	// since these are templates, the opDispatch won't trigger them, so I have to do it differently.
+	// the dummysample is good anyway.
 	SampleController playEmulatedOpl3Midi()(string filename) {
 		if(impl)
 			return impl.playEmulatedOpl3Midi(filename);
@@ -709,7 +713,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	SampleController playMp3()(string filename) {
 		import std.stdio;
 		auto fi = new File(filename); // just let the GC close it... otherwise random segfaults happen... blargh
-		scope auto reader = delegate(void[] buf) {
+		auto reader = delegate(void[] buf) {
 			return cast(int) fi.rawRead(buf[]).length;
 		};
 
@@ -740,7 +744,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 		auto mp3 = new MP3Decoder(reader);
 		if(!mp3.valid)
-			throw new Exception("no file");
+			throw new Exception("file not valid");
 
 		auto scf = new SampleControlFlags;
 
@@ -1511,8 +1515,14 @@ struct AudioOutput {
 			short[BUFFER_SIZE_SHORT] buffer;
 			while(playing) {
 				auto err = snd_pcm_wait(handle, 500);
-				if(err < 0)
-					throw new AlsaException("uh oh", err);
+				if(err < 0) {
+					// see: https://stackoverflow.com/a/59400592/1457000
+					err = snd_pcm_recover(handle, err, 0);
+					if(err)
+						throw new AlsaException("pcm recover failed after pcm_wait did ", err);
+					//throw new AlsaException("uh oh", err);
+					continue;
+				}
 				// err == 0 means timeout
 				// err == 1 means ready
 

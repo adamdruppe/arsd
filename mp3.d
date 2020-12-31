@@ -301,8 +301,8 @@ private:
               removeBytes(left);
               sz -= left;
             }
-            if (eofhit) { curFrameIsOk = false; return false; }
-            continue;
+            if (!eofhit)
+              continue;
           }
         }
       } else {
@@ -316,8 +316,8 @@ private:
             removeBytes(left);
             sz -= left;
           }
-          if (eofhit) { curFrameIsOk = false; return false; }
-          continue;
+          if (!eofhit)
+            continue;
         }
       }
 
