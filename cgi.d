@@ -333,7 +333,7 @@ void main() {
 
 	Copyright:
 
-	cgi.d copyright 2008-2020, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2021, Adam D. Ruppe. Provided under the Boost Software License.
 
 	Yes, this file is old, and yes, it is still actively maintained and used.
 +/
@@ -848,7 +848,7 @@ class Cgi {
 		this.requestUri = requestUri;
 		this.pathInfo = pathInfo;
 		this.queryString = queryString;
-		this.postJson = null;
+		this.postBody = null;
 	}
 
 	private {
@@ -1070,7 +1070,7 @@ class Cgi {
 				filesArray = assumeUnique(pps._files);
 				files = keepLastOf(filesArray);
 				post = keepLastOf(postArray);
-				this.postJson = pps.postJson;
+				this.postBody = pps.postBody;
 				cleanUpPostDataState();
 			}
 
@@ -1115,7 +1115,7 @@ class Cgi {
 			string boundary;
 			string localBoundary; // the ones used at the end or something lol
 			bool isMultipart;
-			bool isJson;
+			bool needsSavedBody;
 
 			ulong expectedLength;
 			ulong contentConsumed;
@@ -1127,7 +1127,7 @@ class Cgi {
 			string[] thisOnesHeaders;
 			immutable(ubyte)[] thisOnesData;
 
-			string postJson;
+			string postBody;
 
 			UploadedFile piece;
 			bool isFile = false;
@@ -1236,23 +1236,22 @@ class Cgi {
 		// but it seems to me that this only happens when it is urlencoded.
 		if(pps.contentType == "application/x-www-form-urlencoded" || pps.contentType == "") {
 			pps.isMultipart = false;
+			pps.needsSavedBody = false;
 		} else if(pps.contentType == "multipart/form-data") {
 			pps.isMultipart = true;
 			enforce(pps.boundary.length, "no boundary");
-		} else if(pps.contentType == "text/plain") {
+		} else if(pps.contentType == "text/xml") { // FIXME: could this be special and load the post params
+			// save the body so the application can handle it
 			pps.isMultipart = false;
-			pps.isJson = true; // FIXME: hack, it isn't actually this
-		} else if(pps.contentType == "text/xml") { // FIXME: what if we used this as a fallback?
+			pps.needsSavedBody = true;
+		} else if(pps.contentType == "application/json") { // FIXME: this could prolly try to load post params too
+			// save the body so the application can handle it
+			pps.needsSavedBody = true;
 			pps.isMultipart = false;
-			pps.isJson = true; // FIXME: hack, it isn't actually this
-		} else if(pps.contentType == "application/json") {
-			pps.isJson = true;
-			pps.isMultipart = false;
-		//} else if(pps.contentType == "application/json") {
-			//pps.isJson = true;
 		} else {
-			// FIXME: should set a http error code too
-			throw new Exception("unknown request content type: " ~ pps.contentType);
+			// the rest is 100% handled by the application. just save the body and send it to them
+			pps.needsSavedBody = true;
+			pps.isMultipart = false;
 		}
 	}
 
@@ -1577,8 +1576,8 @@ class Cgi {
 
 			// simple handling, but it works... until someone bombs us with gigabytes of crap at least...
 			if(pps.buffer.length == pps.expectedLength) {
-				if(pps.isJson)
-					pps.postJson = cast(string) pps.buffer;
+				if(pps.needsSavedBody)
+					pps.postBody = cast(string) pps.buffer;
 				else
 					pps._post = decodeVariables(cast(string) pps.buffer, "&", &allPostNamesInOrder, &allPostValuesInOrder);
 				version(preserveData)
@@ -1889,7 +1888,7 @@ class Cgi {
 			filesArray = assumeUnique(pps._files);
 			files = keepLastOf(filesArray);
 			post = keepLastOf(postArray);
-			postJson = pps.postJson;
+			postBody = pps.postBody;
 			cleanUpPostDataState();
 		}
 
@@ -2460,7 +2459,8 @@ class Cgi {
 	version(preserveData) // note: this can eat lots of memory; don't use unless you're sure you need it.
 	immutable(ubyte)[] originalPostData;
 
-	public immutable string postJson;
+	public immutable string postBody;
+	alias postJson = postBody; // old name
 
 	/* Internal state flags */
 	private bool outputtedResponseData;
@@ -10148,11 +10148,11 @@ bool apiDispatcher()(Cgi cgi) {
 }
 +/
 /*
-Copyright: Adam D. Ruppe, 2008 - 2020
+Copyright: Adam D. Ruppe, 2008 - 2021
 License:   [http://www.boost.org/LICENSE_1_0.txt|Boost License 1.0].
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2020.
+	Copyright Adam D. Ruppe 2008 - 2021.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
