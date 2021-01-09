@@ -5,6 +5,67 @@
 +/
 module arsd.libssh2;
 
+// some day: https://libssh2.org/examples/x11.html
+// and https://stackoverflow.com/questions/1580750/example-code-of-libssh2-being-used-for-port-forwarding#_=_
+
+version(libssh_sftp_example)
+void main() {
+	import std.socket;
+
+	if(libssh2_init(0))
+		throw new Exception("libssh2_init");
+	scope(exit)
+		libssh2_exit();
+
+	auto socket = new Socket(AddressFamily.INET, SocketType.STREAM);
+	socket.connect(new InternetAddress("localhost", 22));
+	scope(exit) socket.close();
+
+	auto session = libssh2_session_init_ex(null, null, null, null);
+	if(session is null) throw new Exception("init session");
+	scope(exit)
+		libssh2_session_disconnect_ex(session, 0, "normal", "EN");
+
+	if(libssh2_session_handshake(session, socket.handle))
+		throw new Exception("handshake");
+
+	auto fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
+
+	if(auto err = libssh2_userauth_publickey_fromfile_ex(session, "me".ptr, "me".length, "/home/me/.ssh/id_rsa.pub", "/home/me/.ssh/id_rsa", null))
+		throw new Exception("auth");
+
+
+	auto channel = libssh2_channel_open_ex(session, "session".ptr, "session".length, LIBSSH2_CHANNEL_WINDOW_DEFAULT, LIBSSH2_CHANNEL_PACKET_DEFAULT, null, 0);
+
+	if(channel is null)
+		throw new Exception("channel open");
+
+	scope(exit)
+		libssh2_channel_free(channel);
+
+	auto sftp_session = libssh2_sftp_init(session);
+	if(sftp_session is null)
+		throw new Exception("no sftp");
+	scope(exit) libssh2_sftp_shutdown(sftp_session);
+
+	libssh2_session_set_blocking(session, 1);
+
+	auto filename = "/home/me/arsd/libssh2.d";
+	auto handle = libssh2_sftp_open_ex(sftp_session, filename.ptr, cast(int) filename.length, LIBSSH2_FXF_READ, 0, LIBSSH2_SFTP_OPENFILE);
+	if(handle is null) throw new Exception("no file");
+	scope(exit) libssh2_sftp_close_handle(handle);
+
+	char[1024] buffer;
+	again:
+	auto got = libssh2_sftp_read(handle, buffer.ptr, cast(int) buffer.length);
+
+	import std.stdio;
+	writeln(buffer[0 .. got]);
+	if(got > 0)
+		goto again;
+}
+
+
 version(libssh_example)
 void main() {
 	import std.socket;
@@ -94,6 +155,8 @@ version(X86)
 else version(X86_64)
 	alias ssize_t = long;
 
+import core.stdc.config;
+
 extern(C) {
 	struct LIBSSH2_SESSION {}
 	LIBSSH2_SESSION* libssh2_session_init_ex(void* myalloc, void* myfree, void* myrealloc, void* abstract_);
@@ -104,6 +167,108 @@ extern(C) {
 	enum int LIBSSH2_HOSTKEY_HASH_SHA1 = 2;
 	const(char)* libssh2_hostkey_hash(LIBSSH2_SESSION*, int hash_type);
 
+	/* sftp */
+	struct LIBSSH2_SFTP {}
+	struct LIBSSH2_SFTP_HANDLE {}
+	LIBSSH2_SFTP* libssh2_sftp_init(LIBSSH2_SESSION *session);
+	int libssh2_sftp_shutdown(LIBSSH2_SFTP *sftp); 
+	c_ulong libssh2_sftp_last_error(LIBSSH2_SFTP *sftp); 
+	int libssh2_sftp_close_handle(LIBSSH2_SFTP_HANDLE *handle);
+	int libssh2_sftp_shutdown(LIBSSH2_SFTP *sftp);
+
+	enum LIBSSH2_SFTP_OPENFILE = 0;
+	enum LIBSSH2_SFTP_OPENDIR = 1;
+
+	/* Flags for rename_ex() */
+	enum LIBSSH2_SFTP_RENAME_OVERWRITE = 0x00000001;
+	enum LIBSSH2_SFTP_RENAME_ATOMIC = 0x00000002;
+	enum LIBSSH2_SFTP_RENAME_NATIVE = 0x00000004;
+
+	/* Flags for stat_ex() */
+	enum LIBSSH2_SFTP_STAT = 0;
+	enum LIBSSH2_SFTP_LSTAT = 1;
+	enum LIBSSH2_SFTP_SETSTAT = 2;
+
+	/* Flags for symlink_ex() */
+	enum LIBSSH2_SFTP_SYMLINK = 0;
+	enum LIBSSH2_SFTP_READLINK = 1;
+	enum LIBSSH2_SFTP_REALPATH = 2;
+
+	/* Flags for sftp_mkdir() */
+	enum LIBSSH2_SFTP_DEFAULT_MODE = -1;
+
+	/* SFTP attribute flag bits */
+	enum LIBSSH2_SFTP_ATTR_SIZE = 0x00000001;
+	enum LIBSSH2_SFTP_ATTR_UIDGID = 0x00000002;
+	enum LIBSSH2_SFTP_ATTR_PERMISSIONS = 0x00000004;
+	enum LIBSSH2_SFTP_ATTR_ACMODTIME = 0x00000008;
+	enum LIBSSH2_SFTP_ATTR_EXTENDED = 0x80000000;
+
+	/* SFTP statvfs flag bits */
+	enum LIBSSH2_SFTP_ST_RDONLY = 0x00000001;
+	enum LIBSSH2_SFTP_ST_NOSUID = 0x00000002;
+
+	enum LIBSSH2_SFTP_TYPE_REGULAR = 1;
+	enum LIBSSH2_SFTP_TYPE_DIRECTORY = 2;
+	enum LIBSSH2_SFTP_TYPE_SYMLINK = 3;
+	enum LIBSSH2_SFTP_TYPE_SPECIAL = 4;
+	enum LIBSSH2_SFTP_TYPE_UNKNOWN = 5;
+	enum LIBSSH2_SFTP_TYPE_SOCKET = 6;
+	enum LIBSSH2_SFTP_TYPE_CHAR_DEVICE = 7;
+	enum LIBSSH2_SFTP_TYPE_BLOCK_DEVICE = 8;
+	enum LIBSSH2_SFTP_TYPE_FIFO = 9;
+
+
+	/* File type */
+	enum LIBSSH2_SFTP_S_IFMT = 0xF000;     /* type of file mask */
+	enum LIBSSH2_SFTP_S_IFIFO = 0x1000;     /* named pipe (fifo) */
+	enum LIBSSH2_SFTP_S_IFCHR = 0x2000;     /* character special */
+	enum LIBSSH2_SFTP_S_IFDIR = 0x4000;     /* directory */
+	enum LIBSSH2_SFTP_S_IFBLK = 0x6000;     /* block special */
+	enum LIBSSH2_SFTP_S_IFREG = 0x8000;     /* regular */
+	enum LIBSSH2_SFTP_S_IFLNK = 0xA000;     /* symbolic link */
+	enum LIBSSH2_SFTP_S_IFSOCK = 0xC000;     /* socket */
+
+	enum LIBSSH2_FXF_READ = 0x00000001;
+	enum LIBSSH2_FXF_WRITE = 0x00000002;
+	enum LIBSSH2_FXF_APPEND = 0x00000004;
+	enum LIBSSH2_FXF_CREAT = 0x00000008;
+	enum LIBSSH2_FXF_TRUNC = 0x00000010;
+	enum LIBSSH2_FXF_EXCL = 0x00000020;
+
+	enum LIBSSH2_FX {
+		OK = 0,
+		EOF = 1,
+		NO_SUCH_FILE = 2,
+		PERMISSION_DENIED = 3,
+		FAILURE = 4,
+		BAD_MESSAGE = 5,
+		NO_CONNECTION = 6,
+		CONNECTION_LOST = 7,
+		OP_UNSUPPORTED = 8,
+		INVALID_HANDLE = 9,
+		NO_SUCH_PATH = 10,
+		FILE_ALREADY_EXISTS = 11,
+		WRITE_PROTECT = 12,
+		NO_MEDIA = 13,
+		NO_SPACE_ON_FILESYSTEM = 14,
+		QUOTA_EXCEEDED = 15,
+		UNKNOWN_PRINCIPAL = 16,
+		LOCK_CONFLICT = 17,
+		DIR_NOT_EMPTY = 18,
+		NOT_A_DIRECTORY = 19,
+		INVALID_FILENAME = 20,
+		LINK_LOOP = 21,
+	}
+
+	LIBSSH2_SFTP_HANDLE * libssh2_sftp_open_ex(LIBSSH2_SFTP *sftp, const char *filename, uint filename_len, c_ulong flags, c_long mode, int open_type);
+
+
+	ssize_t libssh2_sftp_read(LIBSSH2_SFTP_HANDLE *handle, char *buffer, size_t buffer_maxlen); 
+	ssize_t libssh2_sftp_write(LIBSSH2_SFTP_HANDLE *handle, const char *buffer, size_t count);
+	/* end sftp */
+
+	int libssh2_userauth_password(LIBSSH2_SESSION*, const char* username, const char* password);
 	int libssh2_userauth_publickey_fromfile_ex(
 		LIBSSH2_SESSION* session,
 		const char *username,
