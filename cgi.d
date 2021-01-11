@@ -2007,12 +2007,21 @@ class Cgi {
 		return scriptName;
 	}
 
-	/// Sets the HTTP status of the response. For example, "404 File Not Found" or "500 Internal Server Error".
-	/// It assumes "200 OK", and automatically changes to "302 Found" if you call setResponseLocation().
-	/// Note setResponseStatus() must be called *before* you write() any data to the output.
+	/++
+		Sets the HTTP status of the response. For example, "404 File Not Found" or "500 Internal Server Error".
+		It assumes "200 OK", and automatically changes to "302 Found" if you call setResponseLocation().
+		Note setResponseStatus() must be called *before* you write() any data to the output.
+
+		History:
+			The `int` overload was added on January 11, 2021.
+	+/
 	void setResponseStatus(string status) {
 		assert(!outputtedResponseData);
 		responseStatus = status;
+	}
+	/// ditto
+	void setResponseStatus(int statusCode) {
+		setResponseStatus(getHttpCodeText(statusCode));
 	}
 	private string responseStatus = null;
 
