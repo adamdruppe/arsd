@@ -357,6 +357,8 @@ version(Posix) {
 	} else {
 		version(GNU) {
 			// GDC doesn't support static foreach so I had to cheat on it :(
+		} else version(FreeBSD) {
+			// I never implemented the fancy stuff there either
 		} else {
 			version=with_breaking_cgi_features;
 			version=with_sendfd;
@@ -3375,6 +3377,8 @@ struct RequestServer {
 	void configureFromCommandLine(string[] args) {
 		bool foundPort = false;
 		bool foundHost = false;
+		bool foundUid = false;
+		bool foundGid = false;
 		foreach(arg; args) {
 			if(foundPort) {
 				listeningPort = to!ushort(arg);
@@ -3384,12 +3388,26 @@ struct RequestServer {
 				listeningHost = arg;
 				foundHost = false;
 			}
+			if(foundUid) {
+				privDropUserId = to!int(arg);
+				foundUid = false;
+			}
+			if(foundGid) {
+				privDropGroupId = to!int(arg);
+				foundGid = false;
+			}
 			if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
 				foundHost = true;
 			else if(arg == "--port" || arg == "-p" || arg == "/port" || arg == "--listening-port")
 				foundPort = true;
+			else if(arg == "--uid")
+				foundUid = true;
+			else if(arg == "--gid")
+				foundGid = true;
 		}
 	}
+
+	// FIXME: the privDropUserId/group id need to be set in here instead of global
 
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
@@ -3470,6 +3488,27 @@ struct RequestServer {
 	}
 }
 
+private int privDropUserId;
+private int privDropGroupId;
+
+private void dropPrivs() {
+	version(Posix) {
+		import core.sys.posix.unistd;
+
+		auto userId = privDropUserId;
+		auto groupId = privDropGroupId;
+
+		if((userId != 0 || groupId != 0) && getuid() == 0) {
+			if(groupId)
+				setgid(groupId);
+			if(userId)
+				setuid(userId);
+		}
+
+	}
+	// FIXME: Windows?
+}
+
 version(embedded_httpd_processes)
 void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer params) {
 	import core.sys.posix.unistd;
@@ -3513,6 +3552,7 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 			close(sock);
 			throw new Exception("listen");
 		}
+		dropPrivs();
 	}
 
 	version(embedded_httpd_processes_accept_after_fork) {} else {
@@ -4777,6 +4817,9 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 	}
 
 	listener.listen(backQueue);
+
+	dropPrivs();
+
 	return listener;
 }
 
@@ -9905,41 +9948,6 @@ auto serveStaticFileDirectory(string urlPrefix, string directory = null) {
 	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, false, DispatcherDetails(directory));
 }
 
-// duplicated in http2.d
-private static string getHttpCodeText(int code) pure nothrow @nogc {
-	switch(code) {
-		case 200: return "200 OK";
-		case 201: return "201 Created";
-		case 202: return "202 Accepted";
-		case 203: return "203 Non-Authoritative Information";
-		case 204: return "204 No Content";
-		case 205: return "205 Reset Content";
-		//
-		case 300: return "300 Multiple Choices";
-		case 301: return "301 Moved Permanently";
-		case 302: return "302 Found";
-		case 303: return "303 See Other";
-		case 307: return "307 Temporary Redirect";
-		case 308: return "308 Permanent Redirect";
-		//
-		// FIXME: add more common 400 ones cgi.d might return too
-		case 400: return "400 Bad Request";
-		case 403: return "403 Forbidden";
-		case 404: return "404 Not Found";
-		case 405: return "405 Method Not Allowed";
-		case 406: return "406 Not Acceptable";
-		case 409: return "409 Conflict";
-		case 410: return "410 Gone";
-		//
-		case 500: return "500 Internal Server Error";
-		case 501: return "501 Not Implemented";
-		case 502: return "502 Bad Gateway";
-		case 503: return "503 Service Unavailable";
-		//
-		default: assert(0, "Unsupported http code");
-	}
-}
-
 /++
 	Redirects one url to another
 
@@ -10134,6 +10142,42 @@ private struct StackBuffer {
 		return buffer[0 .. position];
 	}
 }
+
+// duplicated in http2.d
+private static string getHttpCodeText(int code) pure nothrow @nogc {
+	switch(code) {
+		case 200: return "200 OK";
+		case 201: return "201 Created";
+		case 202: return "202 Accepted";
+		case 203: return "203 Non-Authoritative Information";
+		case 204: return "204 No Content";
+		case 205: return "205 Reset Content";
+		//
+		case 300: return "300 Multiple Choices";
+		case 301: return "301 Moved Permanently";
+		case 302: return "302 Found";
+		case 303: return "303 See Other";
+		case 307: return "307 Temporary Redirect";
+		case 308: return "308 Permanent Redirect";
+		//
+		// FIXME: add more common 400 ones cgi.d might return too
+		case 400: return "400 Bad Request";
+		case 403: return "403 Forbidden";
+		case 404: return "404 Not Found";
+		case 405: return "405 Method Not Allowed";
+		case 406: return "406 Not Acceptable";
+		case 409: return "409 Conflict";
+		case 410: return "410 Gone";
+		//
+		case 500: return "500 Internal Server Error";
+		case 501: return "501 Not Implemented";
+		case 502: return "502 Bad Gateway";
+		case 503: return "503 Service Unavailable";
+		//
+		default: assert(0, "Unsupported http code");
+	}
+}
+
 
 /+
 /++
