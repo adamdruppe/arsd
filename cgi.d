@@ -2104,11 +2104,26 @@ class Cgi {
 	private bool publicCaching = false;
 	*/
 
-	/// Sets an HTTP cookie, automatically encoding the data to the correct string.
-	/// expiresIn is how many milliseconds in the future the cookie will expire.
-	/// TIP: to make a cookie accessible from subdomains, set the domain to .yourdomain.com.
-	/// Note setCookie() must be called *before* you write() any data to the output.
-	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false, bool secure = false) {
+	/++
+		History:
+			Added January 11, 2021
+	+/
+	enum SameSitePolicy {
+		Lax,
+		Strict,
+		None
+	}
+
+	/+
+		Sets an HTTP cookie, automatically encoding the data to the correct string.
+		expiresIn is how many milliseconds in the future the cookie will expire.
+		TIP: to make a cookie accessible from subdomains, set the domain to .yourdomain.com.
+		Note setCookie() must be called *before* you write() any data to the output.
+
+		History:
+			Parameter `sameSitePolicy` was added on January 11, 2021.
+	+/
+	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false, bool secure = false, SameSitePolicy sameSitePolicy = SameSitePolicy.Lax) {
 		assert(!outputtedResponseData);
 		string cookie = std.uri.encodeComponent(name) ~ "=";
 		cookie ~= std.uri.encodeComponent(data);
@@ -2123,6 +2138,18 @@ class Cgi {
 			cookie ~= "; Secure";
 		if(httpOnly == true )
 			cookie ~= "; HttpOnly";
+		final switch(sameSitePolicy) {
+			case SameSitePolicy.Lax:
+				cookie ~= "; SameSite=Lax";
+			break;
+			case SameSitePolicy.Strict:
+				cookie ~= "; SameSite=Strict";
+			break;
+			case SameSitePolicy.None:
+				cookie ~= "; SameSite=None";
+				assert(secure); // cookie spec requires this now, see: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie/SameSite
+			break;
+		}
 
 		if(auto idx = name in cookieIndexes) {
 			responseCookies[*idx] = cookie;
@@ -3491,6 +3518,7 @@ struct RequestServer {
 private int privDropUserId;
 private int privDropGroupId;
 
+// Added Jan 11, 2021
 private void dropPrivs() {
 	version(Posix) {
 		import core.sys.posix.unistd;
