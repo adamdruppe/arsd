@@ -2589,7 +2589,7 @@ struct RealTimeConsoleInput {
 		return true;
 	}
 
-	/// Check for input, waiting no longer than the number of milliseconds
+	/// Check for input, waiting no longer than the number of milliseconds. Note that this doesn't necessarily mean [getch] will not block, use this AND [kbhit] for that case.
 	bool timedCheckForInput(int milliseconds) {
 		if(inputQueue.length || timedCheckForInput_bypassingBuffer(milliseconds))
 			return true;
@@ -5015,10 +5015,11 @@ class LineGetter {
 			//deleteChar();
 	}
 
-	void wordForward() {
+	private int wordForwardIdx() {
+		int cursorPosition = this.cursorPosition;
 		import std.uni : isWhite;
 		if(cursorPosition == line.length)
-			return;
+			return cursorPosition;
 		while(cursorPosition + 1 < line.length && isWhite(line[cursorPosition]))
 			cursorPosition++;
 		while(cursorPosition + 1 < line.length && !isWhite(line[cursorPosition + 1]))
@@ -5026,7 +5027,19 @@ class LineGetter {
 		cursorPosition += 2;
 		if(cursorPosition > line.length)
 			cursorPosition = cast(int) line.length;
+
+		return cursorPosition;
+	}
+	void wordForward() {
+		cursorPosition = wordForwardIdx();
 		aligned(cursorPosition, 1);
+		maybePositionCursor();
+	}
+	void killWordForward() {
+		int to = wordForwardIdx(), from = cursorPosition;
+		killText(line[from .. to]);
+		line = line[0 .. from] ~ line[to .. $];
+		cursorPosition = cast(int)from;
 		maybePositionCursor();
 	}
 	private int wordBackIdx() {
@@ -5583,6 +5596,15 @@ class LineGetter {
 						redraw();
 					break;
 					case 'd', 4: // ctrl+d will also send a newline-equivalent 
+						if(ev.modifierState & ModifierState.alt) {
+							// gnu alias for kill word (also on ctrl+backspace)
+							justHitTab = false;
+							lineChanged = true;
+							killWordForward();
+							justKilled = true;
+							redraw();
+							break;
+						}
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
 						if(line.length == 0)
@@ -5647,7 +5669,8 @@ class LineGetter {
 					break;
 					case '\b':
 						justHitTab = false;
-						if(ev.modifierState & ModifierState.control) {
+						// i use control for delete word, but gnu uses alt. so this allows both
+						if(ev.modifierState & (ModifierState.control | ModifierState.alt)) {
 							lineChanged = true;
 							killWord();
 							justKilled = true;
