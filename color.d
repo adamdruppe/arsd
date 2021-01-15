@@ -935,8 +935,8 @@ class IndexedImage : MemoryImage {
 	override void clearInternal () nothrow @system {// @nogc {
 		import core.memory : GC;
 		// it is safe to call [GC.free] with `null` pointer.
-		GC.free(palette.ptr); palette = null;
-		GC.free(data.ptr); data = null;
+		GC.free(GC.addrOf(palette.ptr)); palette = null;
+		GC.free(GC.addrOf(data.ptr)); data = null;
 		_width = _height = 0;
 	}
 
@@ -1076,7 +1076,7 @@ class TrueColorImage : MemoryImage {
 	override void clearInternal () nothrow @system {// @nogc {
 		import core.memory : GC;
 		// it is safe to call [GC.free] with `null` pointer.
-		GC.free(imageData.bytes.ptr); imageData.bytes = null;
+		GC.free(GC.addrOf(imageData.bytes.ptr)); imageData.bytes = null;
 		_width = _height = 0;
 	}
 
