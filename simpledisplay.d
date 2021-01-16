@@ -7,6 +7,19 @@
 
 // on Mac with X11: -L-L/usr/X11/lib 
 
+/+
+	Progress bar in taskbar
+		- i can probably just set a property on the window...
+		  it sets that prop to an integer 0 .. 100. Taskbar
+		  deletes it or window deletes it when it is handled.
+		- prolly display it as a nice little line at the bottom.
+	My new notification system.
+		- use a unix socket? or a x property? or a udp port?
+		- could of course also get on the dbus train but ugh.
+		- it could also reply with the info as a string for easy remote examination.
+
++/
+
 /*
 	Event Loop would be nices:
 
@@ -593,7 +606,7 @@ void main() {
 	I live in the eastern United States, so I will most likely not be around at night in
 	that US east timezone.
 
-	License: Copyright Adam D. Ruppe, 2011-2020. Released under the Boost Software License.
+	License: Copyright Adam D. Ruppe, 2011-2021. Released under the Boost Software License.
 
 	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
 	building the documentation for simpledisplay yourself. It will give it a bit more style.
@@ -4539,7 +4552,8 @@ class WindowsHandleReader {
 
 	void dispose() {
 		disable();
-		mapping.remove(handle);
+		if(handle)
+			mapping.remove(handle);
 		handle = null;
 	}
 
@@ -4626,8 +4640,10 @@ class PosixFdReader {
 	version(with_eventloop) {} else
 	///
 	void dispose() {
-		disable();
-		mapping.remove(fd);
+		if(enabled)
+			disable();
+		if(fd != -1)
+			mapping.remove(fd);
 		fd = -1;
 	}
 
@@ -7205,8 +7221,14 @@ class OperatingSystemFont {
 				}
 			if(font is null)
 				return 0;
-			else
+			else if(fontset) {
+				XRectangle rect;
+				Xutf8TextExtents(fontset, "M", 1, null, &rect);
+
+				return rect.width;
+			} else {
 				return font.max_bounds.width;
+			}
 		} else version(Windows)
 			return width_;
 		else assert(0);
@@ -10315,6 +10337,15 @@ version(X11) {
 				return extents.width;
 			}
 
+			if(fontset) {
+				if(line.length == 0)
+					return 0;
+				XRectangle rect;
+				Xutf8TextExtents(fontset, line.ptr, cast(int) line.length, null, &rect);
+
+				return rect.width;
+			}
+
 			if(font)
 				// FIXME: unicode
 				return XTextWidth( font, line.ptr, cast(int) line.length);
@@ -10353,7 +10384,7 @@ version(X11) {
 					if(ch < 256)
 						text ~= cast(ubyte) ch;
 					else
-						text ~= 191; // FIXME: using a random character to fill the space
+						text ~= 191; // FIXME: using a random character (upside down question mark) to fill the space
 			}
 			loaded:
 			if(text.length == 0)
@@ -12992,6 +13023,8 @@ extern(C) nothrow @nogc {
 	void XFreeFontSet(Display*, XFontSet);
 	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
 	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
+
+	int Xutf8TextExtents(XFontSet font_set, const char *, int num_bytes, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
 
 	void XDrawText(Display*, Drawable, GC, int, int, XTextItem*, int);
 	int XSetFunction(Display*, GC, int);
