@@ -4439,7 +4439,10 @@ class LineGetter {
 						cur ~= cast(char[]) chunk[0 .. idx];
 						history ~= cur;
 						cur = null;
-						chunk = chunk[idx + 2 .. $]; // skipping \r\n
+						if(idx + 2 <= chunk.length)
+							chunk = chunk[idx + 2 .. $]; // skipping \r\n
+						else
+							chunk = chunk[$ .. $];
 						idx = (cast(char[]) chunk).indexOf(cast(char) '\r');
 					}
 					cur ~= cast(char[]) chunk;
@@ -7015,6 +7018,11 @@ version(TerminalDirectToEmulator) {
 	+/
 	enum IntegratedEmulator = true;
 
+	version(Windows)
+	private enum defaultFont = "Consolas";
+	else
+	private enum defaultFont = "monospace";
+
 	/++
 		Allows customization of the integrated emulator window.
 		You may change the default colors, font, and other aspects
@@ -7043,8 +7051,13 @@ version(TerminalDirectToEmulator) {
 
 			History:
 				Implemented March 26, 2020
+
+				On January 16, 2021, I changed the default to be a fancier
+				font than the underlying terminalemulator.d uses ("monospace"
+				on Linux and "Consolas" on Windows, though I will note
+				that I do *not* guarantee this won't change.)
 		+/
-		string fontName;
+		string fontName = defaultFont;
 		/// ditto
 		int fontSize = 14;
 
@@ -7158,10 +7171,13 @@ version(TerminalDirectToEmulator) {
 			this.parent = parent;
 			scope(success) if(parent) parent.registerChild(this);
 
-			super("Terminal Application", integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
+			super("Terminal Application");
+			//, integratedTerminalEmulatorConfiguration.initialWidth * integratedTerminalEmulatorConfiguration.fontSize / 2, integratedTerminalEmulatorConfiguration.initialHeight * integratedTerminalEmulatorConfiguration.fontSize);
 
 			smw = new ScrollMessageWidget(this);
 			tew = new TerminalEmulatorWidget(term, smw);
+
+			win.resize(integratedTerminalEmulatorConfiguration.initialWidth * tew.terminalEmulator.fontWidth, integratedTerminalEmulatorConfiguration.initialHeight * tew.terminalEmulator.fontHeight);
 
 			smw.addEventListener("scroll", () {
 				tew.terminalEmulator.scrollbackTo(smw.position.x, smw.position.y + tew.terminalEmulator.height);
@@ -7687,12 +7703,15 @@ version(TerminalDirectToEmulator) {
 
 			if(integratedTerminalEmulatorConfiguration.fontName.length) {
 				this.font = new OperatingSystemFont(integratedTerminalEmulatorConfiguration.fontName, integratedTerminalEmulatorConfiguration.fontSize, FontWeight.medium);
-				if(!this.font.isNull) {
+				if(this.font.isNull) {
+					// carry on, it will try a default later
+				} else if(this.font.isMonospace) {
 					this.fontWidth = font.averageWidth;
 					this.fontHeight = font.height;
+				} else {
+					this.font.unload(); // can't really use a non-monospace font, so just going to unload it so the default font loads again
 				}
 			}
-
 
 			if(this.font is null || this.font.isNull)
 				loadDefaultFont(integratedTerminalEmulatorConfiguration.fontSize);
