@@ -243,7 +243,7 @@ extern(C) {
 		at the end of the structure on 64-bit architectures.
 	*/
 	struct gpioline_info_changed {
-		struct gpioline_info info; /// updated line information
+		gpioline_info info; /// updated line information
 		ulong timestamp; /// estimate of time of status change occurrence, in nanoseconds and GPIOLINE_CHANGED_CONFIG
 		uint event_type; /// one of GPIOLINE_CHANGED_REQUESTED, GPIOLINE_CHANGED_RELEASED
 		uint[5] padding; /* for future use */
@@ -254,9 +254,9 @@ extern(C) {
 	enum GPIOHANDLE_REQUEST_ACTIVE_LOW = (1 << 2); /// ditto
 	enum GPIOHANDLE_REQUEST_OPEN_DRAIN = (1 << 3); /// ditto
 	enum GPIOHANDLE_REQUEST_OPEN_SOURCE = (1 << 4); /// ditto
-	enum GPIOHANDLE_REQUEST_BIAS_PULL_UP = (1 << 5) /// ditto
-	enum GPIOHANDLE_REQUEST_BIAS_PULL_DOWN = (1 << 6) /// ditto
-	enum GPIOHANDLE_REQUEST_BIAS_DISABLE = (1 << 7) /// ditto
+	enum GPIOHANDLE_REQUEST_BIAS_PULL_UP = (1 << 5); /// ditto
+	enum GPIOHANDLE_REQUEST_BIAS_PULL_DOWN = (1 << 6); /// ditto
+	enum GPIOHANDLE_REQUEST_BIAS_DISABLE = (1 << 7); /// ditto
 
 
 	/**
