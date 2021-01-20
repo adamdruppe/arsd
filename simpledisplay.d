@@ -11544,7 +11544,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 			// now remove all registered images to prevent shared memory leaks
 			freeImages();
 
-			XCloseDisplay(display);
+			// tbh I don't know why it is doing this but like if this happens to run
+			// from the other thread there's frequent hanging inside here.
+			if(thisIsGuiThread)
+				XCloseDisplay(display);
 			display = null;
 		}
 	}
