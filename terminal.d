@@ -1393,6 +1393,12 @@ struct Terminal {
 			if(hConsole !is stdo)
 				CloseHandle(hConsole);
 		}
+
+		version(TerminalDirectToEmulator)
+		if(usingDirectEmulator && guiThread !is null) {
+			guiThread.join();
+			guiThread = null;
+		}
 	}
 
 	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
@@ -7471,7 +7477,20 @@ version(TerminalDirectToEmulator) {
 						CloseHandle(wi.readPipe);
 					version(Posix) {
 						import unix = core.sys.posix.unistd;
+						import unix2 = core.sys.posix.fcntl;
 						unix.close(wi.readFd);
+
+						version(none)
+						if(term && term.pipeThroughStdOut) {
+							auto fd = unix2.open("/dev/null", unix2.O_RDWR);
+							unix.close(0);
+							unix.close(1);
+							unix.close(2);
+
+							dup2(fd, 0);
+							dup2(fd, 1);
+							dup2(fd, 2);
+						}
 					}
 				}
 
@@ -7804,6 +7823,11 @@ version(TerminalDirectToEmulator) {
 				if(c == 0x1c) /* ctrl+\, force quit */ {
 					version(Posix) {
 						import core.sys.posix.signal;
+						if(widget is null || widget.term is null) {
+							// the other thread must already be dead, so we can just close
+							widget.parentWindow.close(); // I'm gonna let it segfault if this is null cuz like that isn't supposed to happen
+							return;
+						}
 						pthread_kill(widget.term.threadId, SIGQUIT); // or SIGKILL even?
 
 						assert(0);
