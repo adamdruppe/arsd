@@ -4243,6 +4243,8 @@ mixin template SdpyDraw() {
 			}
 		} else version(Windows) {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
+			if(!this.font.isNull && !this.font.isMonospace) 
+				this.font.unload(); // non-monospace fonts are unusable here. This should never happen anyway though as Courier New comes with Windows
 		}
 
 		if(font.isNull) {

@@ -7,6 +7,7 @@ im tempted to add some css kind of thing to minigui. i've not done in the past c
 the virtual functions remain as the default calculated values. then the reads go through some proxy object that can override it...
 */
 
+// FIXME: opt-in file picker widget with image support
 
 // FIXME: slider widget.
 // FIXME: number widget

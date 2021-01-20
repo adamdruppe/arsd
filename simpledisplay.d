@@ -7039,6 +7039,9 @@ class OperatingSystemFont {
 
 		this.isXft = true;
 
+		if(xftFont !is null)
+			isMonospace_ = stringWidth("x") == stringWidth("M");
+
 		return !isNull();
 	}
 
@@ -7097,6 +7100,9 @@ class OperatingSystemFont {
 		char* lol3;
 		fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
+		if(font !is null)
+			isMonospace_ = stringWidth("l") == stringWidth("M");
+
 		return !isNull();
 	}
 
@@ -7121,6 +7127,8 @@ class OperatingSystemFont {
 
 		width_ = tm.tmAveCharWidth;
 		height_ = tm.tmHeight;
+		// If this bit is set the font is a variable pitch font. If this bit is clear the font is a fixed pitch font. Note very carefully that those meanings are the opposite of what the constant name implies.
+		isMonospace_ = (tm.tmPitchAndFamily & TMPF_FIXED_PITCH) == 0;
 
 		return !isNull();
 	}
@@ -7207,15 +7215,47 @@ class OperatingSystemFont {
 		} else static assert(0);
 	}
 
-	// Assuming monospace!!!!!
-	// added March 26, 2020
+	private bool isMonospace_;
+
+	/++
+		History:
+			Added January 16, 2021
+	+/
+	bool isMonospace() {
+		return isMonospace_;
+	}
+
+	/++
+		Returns the average width of the font, conventionally defined as the width of the lowercase 'x' character.
+
+		History:
+			Added March 26, 2020
+			Documented January 16, 2021
+	+/
 	int averageWidth() {
+		version(X11) {
+			return stringWidth("x");
+		} else version(Windows)
+			return width_;
+		else assert(0);
+	}
+
+	/++
+		Returns the width of the string as drawn on the specified window, or the default screen if the window is null.
+
+		History:
+			Added January 16, 2021
+	+/
+	int stringWidth(string s, SimpleWindow window = null) {
+		if(isNull)
+			return 0;
+
 		version(X11) {
 			version(with_xft)
 				if(isXft && xftFont !is null) {
 					//return xftFont.max_advance_width;
 					XGlyphInfo extents;
-					XftTextExtentsUtf8(XDisplayConnection.get, xftFont, "M", 1, &extents);
+					XftTextExtentsUtf8(XDisplayConnection.get, xftFont, s.ptr, cast(int) s.length, &extents);
 					//import std.stdio; writeln(extents);
 					return extents.xOff;
 				}
@@ -7223,19 +7263,35 @@ class OperatingSystemFont {
 				return 0;
 			else if(fontset) {
 				XRectangle rect;
-				Xutf8TextExtents(fontset, "M", 1, null, &rect);
+				Xutf8TextExtents(fontset, s.ptr, cast(int) s.length, null, &rect);
 
 				return rect.width;
 			} else {
-				return font.max_bounds.width;
+				return XTextWidth(font, s.ptr, cast(int) s.length);
 			}
-		} else version(Windows)
-			return width_;
+		} else version(Windows) {
+			WCharzBuffer buffer = WCharzBuffer(s);
+
+			SIZE size;
+
+			auto dc = GetDC(window is null ? null : window.impl.hwnd);
+			SelectObject(dc, font);
+			GetTextExtentPoint32W(dc, buffer.ptr, cast(int) buffer.length, &size);
+			ReleaseDC(null, dc);
+
+			return size.cx;
+		}
 		else assert(0);
+
 	}
 
-	// Assuming monospace!!!!!
-	// added March 26, 2020
+	/++
+		Returns the height of the font.
+
+		History:
+			Added March 26, 2020
+			Documented January 16, 2021
+	+/
 	int height() {
 		version(X11) {
 			version(with_xft)
@@ -13025,6 +13081,9 @@ extern(C) nothrow @nogc {
 	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
 
 	int Xutf8TextExtents(XFontSet font_set, const char *, int num_bytes, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
+	 	
+
+//Status Xutf8TextPerCharExtents(XFontSet font_set, char *string, int num_bytes, XRectangle *ink_array_return, XRectangle *logical_array_return, int array_size, int *num_chars_return, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
 
 	void XDrawText(Display*, Drawable, GC, int, int, XTextItem*, int);
 	int XSetFunction(Display*, GC, int);

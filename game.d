@@ -76,6 +76,15 @@ module arsd.game;
 
 +/
 
+/+
+	ADD ME:
+	Animation helper like audio style. Your game object
+	has a particular image attached as primary.
+
+	You can be like `animate once` or `animate indefinitely`
+	and it takes care of it, then set new things and it does that too.
++/
+
 public import arsd.gamehelpers;
 public import arsd.color;
 public import arsd.simpledisplay;

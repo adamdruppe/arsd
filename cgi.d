@@ -2352,6 +2352,18 @@ class Cgi {
 				// maybeAutoClose can be false though to avoid this (important if you call from inside close()!
 	}
 
+	/++
+		Convenience method to set content type to json and write the string as the complete response.
+
+		History:
+			Added January 16, 2020
+	+/
+	void writeJson(string json) {
+		this.setResponseContentType("application/json");
+		this.write(json, true);
+	}
+
+	/// Flushes the pending buffer, leaving the connection open so you can send more.
 	void flush() {
 		if(rawDataOutput is null)
 			stdout.flush();

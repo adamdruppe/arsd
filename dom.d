@@ -8919,11 +8919,11 @@ unittest {
 }
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2020
+Copyright: Adam D. Ruppe, 2010 - 2021
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 
-        Copyright Adam D. Ruppe 2010-2020.
+        Copyright Adam D. Ruppe 2010-2021.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
         http://www.boost.org/LICENSE_1_0.txt)

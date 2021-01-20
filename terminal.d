@@ -7018,10 +7018,13 @@ version(TerminalDirectToEmulator) {
 	+/
 	enum IntegratedEmulator = true;
 
-	version(Windows)
+	version(Windows) {
 	private enum defaultFont = "Consolas";
-	else
+	private enum defaultSize = 14;
+	} else {
 	private enum defaultFont = "monospace";
+	private enum defaultSize = 12; // it is measured differently with fontconfig than core x and windows...
+	}
 
 	/++
 		Allows customization of the integrated emulator window.
@@ -7055,18 +7058,22 @@ version(TerminalDirectToEmulator) {
 				On January 16, 2021, I changed the default to be a fancier
 				font than the underlying terminalemulator.d uses ("monospace"
 				on Linux and "Consolas" on Windows, though I will note
-				that I do *not* guarantee this won't change.)
+				that I do *not* guarantee this won't change.) On January 18,
+				I changed the default size.
+
+				If you want specific values for these things, you should set
+				them in your own application.
 		+/
 		string fontName = defaultFont;
 		/// ditto
-		int fontSize = 14;
+		int fontSize = defaultSize;
 
 		/++
 			Requested initial terminal size in character cells. You may not actually get exactly this.
 		+/
 		int initialWidth = 80;
 		/// ditto
-		int initialHeight = 40;
+		int initialHeight = 30;
 
 		/++
 			If `true`, the window will close automatically when the main thread exits.
@@ -7876,6 +7883,8 @@ private version(Windows) {
 	History:
 		Added December 29, 2020.
 +/
+static if(__traits(compiles, mixin(`{ static foreach(i; 0 .. 1) {} }`)))
+mixin(q{
 auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 	struct impl {
 		static import sdpy = arsd.simpledisplay;
@@ -7981,6 +7990,7 @@ auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 	}
 	return impl(window);
 }
+});
 
 
 /*

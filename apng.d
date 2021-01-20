@@ -266,6 +266,12 @@ enum APNG_BLEND_OP : byte {
 	OVER = 1
 }
 
+/++
+	Loads an apng file.
+
+	If it is a normal png file without animation it will
+	just load it as a single frame "animation" FIXME
++/
 ApngAnimation readApng(in ubyte[] data) {
 	auto png = readPng(data);
 	auto header = PngHeader.fromChunk(png.chunks[0]);

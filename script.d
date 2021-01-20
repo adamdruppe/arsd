@@ -240,6 +240,7 @@ make sure superclass ctors are called
 		varargs
 		lambdas - maybe without function keyword and the x => foo syntax from D.
 
+	Author: Adam D Ruppe
 
 	History:
 		September 1, 2020: added overloading for functions and type matching in `catch` blocks among other bug fixes

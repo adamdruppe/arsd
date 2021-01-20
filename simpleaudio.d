@@ -258,6 +258,8 @@ struct AudioOutputThread {
 
 	@disable new(size_t); // gdc9 requires the arg fyi
 
+	@disable void start() {} // you aren't supposed to control the thread yourself!
+
 	/++
 		Pass `true` to enable the audio thread. Otherwise, it will
 		just live as a dummy mock object that you should not actually
@@ -456,7 +458,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		}
 	}
 
-	///
+	/// Stops the output thread. Using the object after it is stopped is not recommended, except to `join` the thread. This is meant to be called when you are all done with it.
 	void stop() {
 		if(ao) {
 			ao.stop();
@@ -1326,8 +1328,12 @@ struct AudioInput {
 		snd_pcm_sframes_t read;
 
 		read = snd_pcm_readi(handle, buffer.ptr, buffer.length / channels /* div number of channels apparently */);
-		if(read < 0)
-			throw new AlsaException("pcm read", cast(int)read);
+		if(read < 0) {
+			read = snd_pcm_recover(handle, cast(int) read, 0);
+			if(read < 0)
+				throw new AlsaException("pcm read", cast(int)read);
+			return null;
+		}
 
 		return buffer[0 .. read * channels];
 	}

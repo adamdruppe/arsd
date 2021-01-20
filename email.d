@@ -932,6 +932,7 @@ class IncomingEmailMessage {
 	string gpgproto; ///
 	MimePart gpgmime; ///
 
+	///
 	string fromEmailAddress() {
 		auto i = from.indexOf("<");
 		if(i == -1)
@@ -940,6 +941,7 @@ class IncomingEmailMessage {
 		return from[i + 1 .. e];
 	}
 
+	///
 	string toEmailAddress() {
 		auto i = to.indexOf("<");
 		if(i == -1)
@@ -949,9 +951,11 @@ class IncomingEmailMessage {
 	}
 }
 
+///
 struct MboxMessages {
 	immutable(ubyte)[][] linesRemaining;
 
+	///
 	this(immutable(ubyte)[] data) {
 		linesRemaining = splitLinesWithoutDecoding(data);
 		popFront();
@@ -959,14 +963,17 @@ struct MboxMessages {
 
 	IncomingEmailMessage currentFront;
 
+	///
 	IncomingEmailMessage front() {
 		return currentFront;
 	}
 
+	///
 	bool empty() {
 		return currentFront is null;
 	}
 
+	///
 	void popFront() {
 		if(linesRemaining.length)
 			currentFront = new IncomingEmailMessage(linesRemaining);

@@ -75,6 +75,10 @@
 	Wrapping D native objects is coming later, the current ways suck. I really needed
 	properties to do them sanely at all, and now I have it. A native wrapped object will
 	also need to be set with _object prolly.
+
+	Author: Adam D Ruppe
+
+	History: Started in July 2013.
 +/
 module arsd.jsvar;
 
@@ -945,6 +949,19 @@ struct var {
 
 			I also wrote the first draft of this documentation at that time,
 			even though the function has been public since the beginning.
+
+			On January 1, 2021, I changed `get!some_struct` to call properties
+			on the var, if a member looks like a function or object, to try to
+			get plain-old-data out. Since the functions are only ever put there
+			by you or by you allowing script, I don't feel too bad about it, but
+			it still might not be ideal for all circumstances, so idk if I'll leave
+			it this way or not.
+
+			One thing it helps for though is taking scripted subclasses back into D
+			structs, since the parent class thing is likely to be virtual properties.
+			And having that just work in argument lists is really cool...
+
+			Search function for the comment "property getter support" to see the impl.
 	+/
 	public T get(T)() if(!is(T == void)) {
 		static if(is(T == var)) {
@@ -1024,7 +1041,14 @@ struct var {
 
 						if(initialized)
 						foreach(i, a; t.tupleof) {
-							cast(Unqual!(typeof((a)))) t.tupleof[i] = this[t.tupleof[i].stringof[2..$]].get!(typeof(a));
+							var possibility = this[t.tupleof[i].stringof[2..$]];
+							// FIXME: so there is the possibility of getting some data getting all caught
+							// up in a script function doing weird things. If I can prevent that, I'd like to...
+							// but it is also really useful for this to work for some scenarios...
+							static if(!is(typeof(a) == return)) // if it is callable, just assign the func ref
+							if(possibility.payloadType == Type.Function || possibility.payloadType == Type.Object)
+								possibility = possibility.apply(this, null); // crude approximation of property getter support
+							cast(Unqual!(typeof((a)))) t.tupleof[i] = possibility.get!(typeof(a));
 						}
 
 						return t;
@@ -2461,8 +2485,13 @@ int typeCompatibilityScore(var arg, var type) {
 	} else {
 		// exact type category match
 		if(type.payloadType == var.Type.Array) {
-			// arrays not supported here....
-			thisScore = 0;
+			// arrays not really supported here....
+			// so just like if both are arrays i'll take
+			// it as a bare minimum but i don't love it otherwise
+			if(arg.payloadType == var.Type.Array)
+				thisScore = 1;
+			else
+				thisScore = 0;
 			return thisScore;
 		} else if(type.payloadType == var.Type.Object) {
 			// objects are the interesting one...
@@ -2625,7 +2654,7 @@ class OverloadSet : PrototypeObject {
 		}
 
 		if(bestScore < 0)
-			throw new Exception("no matching overload found");// " ~ to!string(arguments) ~ " " ~ to!string(overloads));
+			throw new Exception("no matching overload found " ~ to!string(arguments) ~ " " ~ to!string(overloads));
 			
 
 		return bestMatch.func.apply(this_, arguments);
@@ -2746,8 +2775,8 @@ string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t.
 private
 auto ParamDefault(alias T, size_t idx)() {
 	static if(is(typeof(T) Params == __parameters)) {
-		auto fn(Params[idx .. idx + 1] args) {
-			return args[0];
+		auto fn(Params[idx .. idx + 1] _args__) { // if i used plain `args` and one of the args in the list was also called `args`, this fails to compile and that error will be dropped by opDispatch.  LOL.
+			return _args__[0];
 		}
 		static if(__traits(compiles, fn())) {
 			return fn();
