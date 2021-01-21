@@ -1913,7 +1913,7 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			foreach(i; 0 .. arr.length) {
 				auto prev = i < bpp ? 0 : arr[i - bpp];
 				arr[i] += cast(ubyte)
-					/*std.math.floor*/( cast(int) (prev + previousLine[i]) / 2);
+					/*std.math.floor*/( cast(int) (prev + (previousLine.length ? previousLine[i] : 0)) / 2);
 			}
 
 			return assumeUnique(arr);
