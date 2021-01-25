@@ -5059,6 +5059,51 @@ class LabeledLineEdit : Widget {
 	}
 }
 
+/++
+	A labeled password edit.
+
+	History:
+		Added January 25, 2021
+
+	Future_Directions:
+		This might be merged with [LabeledLineEdit] at some point. If I do that in code, I'll
+		alias the names or something.
++/
+class LabeledPasswordEdit : Widget {
+	///
+	this(string label = "Password: ", Widget parent = null) {
+		super(parent);
+		tabStop = false;
+		auto hl = new HorizontalLayout(this);
+		this.label = new TextLabel(label, hl);
+		this.lineEdit = new PasswordEdit(hl);
+	}
+	TextLabel label; ///
+	PasswordEdit lineEdit; ///
+
+	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return Window.lineHeight + 4; }
+
+	///
+	string content() {
+		return lineEdit.content;
+	}
+	///
+	void content(string c) {
+		return lineEdit.content(c);
+	}
+
+	///
+	void selectAll() {
+		lineEdit.selectAll();
+	}
+
+	override void focus() {
+		lineEdit.focus();
+	}
+}
+
+
 ///
 class MainWindow : Window {
 	///
@@ -7102,7 +7147,49 @@ class LineEdit : EditableTextWidget {
 	}
 	override int maxHeight() { return Window.lineHeight + 4; }
 	override int minHeight() { return Window.lineHeight + 4; }
+
+	/+
+	@property void passwordMode(bool p) {
+		SetWindowLongPtr(hwnd, GWL_STYLE, GetWindowLongPtr(hwnd, GWL_STYLE) | ES_PASSWORD);
+	}
+	+/
 }
+
+/++
+	A [LineEdit] that displays `*` in place of the actual characters.
+
+	Alas, Windows requires the window to be created differently to use this style,
+	so it had to be a new class instead of a toggle on and off on an existing object.
+
+	FIXME: this is not yet implemented on Linux, it will work the same as a TextEdit there for now.
+
+	History:
+		Added January 24, 2021
++/
+class PasswordEdit : EditableTextWidget {
+	version(custom_widgets) {
+	override bool showingVerticalScroll() { return false; }
+	override bool showingHorizontalScroll() { return false; }
+	}
+
+	///
+	this(Widget parent = null) {
+		super(parent);
+		version(win32_widgets) {
+			createWin32Window(this, "edit"w, "", 
+				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
+		} else version(custom_widgets) {
+			setupCustomTextEditing();
+			addEventListener("char", delegate(Widget _this, Event ev) {
+				if(ev.character == '\n')
+					ev.preventDefault();
+			});
+		} else static assert(false);
+	}
+	override int maxHeight() { return Window.lineHeight + 4; }
+	override int minHeight() { return Window.lineHeight + 4; }
+}
+
 
 ///
 class TextEdit : EditableTextWidget {
