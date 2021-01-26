@@ -174,6 +174,8 @@ struct DrawingTextContext {
 		Added April 24, 2020
 +/
 class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
+// FIXME: does this kern?
+// FIXME: it would be cool if it did per-letter transforms too like word art. make it tangent to some baseline
 
 	import arsd.simpledisplay;
 
