@@ -1,3 +1,6 @@
+// See:  https://github.com/torvalds/linux/commit/b53911aa872db462be2e5f1dd611b25c4c2e663b
+// and:  https://github.com/torvalds/linux/blob/a409ed156a90093a03fe6a93721ddf4c591eac87/include/uapi/linux/gpio.h
+// the kernel didn't keep the v1 abi for long, there's a v2 thing less than a year later. This v2 thing is new in kernel 5.10
 /++
 	PRERELEASE EXPERIMENTAL MODULE / SUBJECT TO CHANGE WITHOUT WARNING / LIKELY TO CONTAIN BUGS
 

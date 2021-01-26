@@ -216,7 +216,7 @@
 		},
 		{
 			"name": "jpeg",
-			"description": "Dependency-free partial JPEG file format read support",
+			"description": "Dependency-free partial JPEG file format read and write support",
 			"importPaths": ["."],
 			"targetType": "library",
 			"dflags": ["-mv=arsd.jpeg=jpeg.d"],
