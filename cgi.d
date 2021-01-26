@@ -4116,6 +4116,9 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 		try {
 			cgi = new CustomCgi(ir, &closeConnection);
 			cgi._outputFileHandle = connection.handle;
+		} catch(ConnectionClosedException ce) {
+			closeConnection = true;
+			break;
 		} catch(ConnectionException ce) {
 			// broken pipe or something, just abort the connection
 			closeConnection = true;
@@ -4145,6 +4148,9 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 		} catch(ConnectionException ce) {
 			// broken pipe or something, just abort the connection
 			closeConnection = true;
+		} catch(ConnectionClosedException ce) {
+			// broken pipe or something, just abort the connection
+			closeConnection = true;
 		} catch(Throwable t) {
 			// a processing error can be recovered from
 			version(CRuntime_Musl) {} else
@@ -4154,6 +4160,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 		}
 
 		if(closeConnection || alwaysCloseConnection) {
+			connection.shutdown(SocketShutdown.BOTH);
 			connection.close();
 			ir.dispose();
 			closeConnection = false; // don't reclose after loop
@@ -4162,6 +4169,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 			if(ir.front.length) {
 				ir.popFront(); // we can't just discard the buffer, so get the next bit and keep chugging along
 			} else if(ir.sourceClosed) {
+				ir.source.shutdown(SocketShutdown.BOTH);
 				ir.source.close();
 				ir.dispose();
 				closeConnection = false;
@@ -4173,6 +4181,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	}
 
 	if(closeConnection) {
+		connection.shutdown(SocketShutdown.BOTH);
 		connection.close();
 		ir.dispose();
 	}
@@ -4989,6 +4998,9 @@ class ConnectionThread : Thread {
 					}
 				}
 				+/
+			} catch(ConnectionClosedException e) {
+				// can just ignore this, it is fairly normal
+				socket.close();
 			} catch(Throwable e) {
 				import std.stdio; stderr.rawWrite(e.toString); stderr.rawWrite("\n");
 				socket.close();
