@@ -966,6 +966,8 @@ class HttpRequest {
 					socket.connect(new UnixAddress(unixSocketPath));
 				} else {
 					// FIXME: i should prolly do ipv6 if available too.
+					if(host.length == 0) // this could arguably also be an in contract since it is user error, but the exception is good enough
+						throw new Exception("No host given for request");
 					socket.connect(new InternetAddress(host, port));
 				}
 
