@@ -12165,6 +12165,74 @@ version(nanovg_bindbc_opengl_bindings) {
   import bindbc.opengl;
 } else version(nanovg_builtin_opengl_bindings) {
   import arsd.simpledisplay;
+
+	/++
+		A SimpleWindow subclass that encapsulates some nanovega defaults. You just set a `redrawNVGScene` delegate and, optionally, your nromal event handlers for simpledisplay, and the rest is set up for you.
+
+		History:
+			Added January 22, 2021 (version 9.2 release)
+	+/
+	public class NVGWindow : SimpleWindow {
+		NVGContext nvg;
+
+		/++
+
+		+/
+		this(int width, int height, string title) {
+			setOpenGLContextVersion(3, 0);
+			super(width, height, title, OpenGlOptions.yes, Resizability.allowResizing);
+
+			this.onClosing = delegate() {
+				nvg.kill();
+			};
+
+			this.visibleForTheFirstTime = delegate() {
+				nvg = nvgCreateContext();
+				if(nvg is null) throw new Exception("cannot initialize NanoVega");
+			};
+
+			this.redrawOpenGlScene = delegate() {
+				if(redrawNVGScene is null)
+					return;
+				glViewport(0, 0, this.width, this.height);
+				if(clearOnEachFrame) {
+					glClearColor(0, 0, 0, 0);
+					glClear(glNVGClearFlags);
+				}
+
+				nvg.beginFrame(this.width, this.height);
+				scope(exit) nvg.endFrame();
+
+				redrawNVGScene(nvg);
+			};
+
+			this.setEventHandlers(
+				&redrawOpenGlSceneNow,
+				(KeyEvent ke) {
+					if(ke.key == Key.Escape || ke.key == Key.Q)
+						this.close();
+				}
+			);
+		}
+
+		/++
+
+		+/
+		bool clearOnEachFrame = true;
+
+		/++
+
+		+/
+		void delegate(NVGContext nvg) redrawNVGScene;
+
+		/++
+
+		+/
+		void redrawNVGSceneNow() {
+			redrawOpenGlSceneNow();
+		}
+	}
+
 } else {
   import iv.glbinds;
 }
