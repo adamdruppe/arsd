@@ -2089,7 +2089,12 @@ version(use_openssl) {
 
 	shared static this() {
 		version(OSX) {
-			ossllib_handle = dlopen("libssl.dylib", RTLD_NOW);
+			// newest box
+			ossllib_handle = dlopen("libssl.1.1.dylib", RTLD_NOW);
+			// other boxes
+			if(ossllib_handle is null)
+				ossllib_handle = dlopen("libssl.dylib", RTLD_NOW);
+			// old ones like my laptop test
 			if(ossllib_handle is null)
 				ossllib_handle = dlopen("/usr/local/opt/openssl/lib/libssl.1.0.0.dylib", RTLD_NOW);
 
