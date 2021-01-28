@@ -2086,7 +2086,12 @@ version(use_openssl) {
 	import core.stdc.stdio;
 
 	shared static this() {
-		version(Posix) {
+		version(OSX) {
+			ossllib_handle = dlopen("/usr/local/opt/openssl/lib/libssl.1.1.0.dylib", RTLD_NOW);
+			if(ossllib_handle is null)
+				ossllib_handle = dlopen("/usr/local/opt/openssl/lib/libssl.1.0.0.dylib", RTLD_NOW);
+
+		} else version(Posix) {
 			ossllib_handle = dlopen("libssl.so.1.1", RTLD_NOW);
 			if(ossllib_handle is null)
 				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
