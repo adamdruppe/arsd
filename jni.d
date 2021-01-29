@@ -1619,15 +1619,37 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 	else static if(is(T == string[])) return null; // FIXME!!!
 
 	else static if(is(T == IJavaObject[])) return null; // FIXME!!!
-	else static if(is(T == bool[])) return null; // FIXME!!!
-	else static if(is(T == byte[])) return null; // FIXME!!!
-	else static if(is(T == wchar[])) return null; // FIXME!!!
-	else static if(is(T == short[])) return null; // FIXME!!!
-	else static if(is(T == int[])) return null; // FIXME!!!
-	else static if(is(T == long[])) return null; // FIXME!!!
-	else static if(is(T == float[])) return null; // FIXME!!!
-	else static if(is(T == double[])) return null; // FIXME!!!
-	else static if(is(T == E[], E)) return null; // FIXME!!!
+	else static if(is(T == bool[])) {
+		auto j = (*env).NewBooleanArray(env, cast(jsize) data.length);
+		(*env).SetBooleanArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == byte[])) {
+		auto j = (*env).NewByteArray(env, cast(jsize) data.length);
+		(*env).SetByteArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == wchar[])) {
+		return null; // FIXME!!!
+	} else static if(is(T == short[])) {
+		auto j = (*env).NewShortArray(env, cast(jsize) data.length);
+		(*env).SetShortArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == int[])) {
+		auto j = (*env).NewIntArray(env, cast(jsize) data.length);
+		(*env).SetIntArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == long[])) {
+		auto j = (*env).NewLongArray(env, cast(jsize) data.length);
+		(*env).SetLongArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == float[])) {
+		auto j = (*env).NewFloatArray(env, cast(jsize) data.length);
+		(*env).SetFloatArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == double[])) {
+		auto j = (*env).NewDoubleArray(env, cast(jsize) data.length);
+		(*env).SetDoubleArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
+		return j;
+	} else static if(is(T == E[], E)) return null; // FIXME!!!
 
 
 	else static assert(0, "Unsupported type " ~ T.stringof);
