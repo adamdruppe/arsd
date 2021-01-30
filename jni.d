@@ -1695,6 +1695,45 @@ private struct JavaParamsToD(Spec...) {
 					auto jarg = jargs[idx];
 					(*env).ReleaseStringChars(env, jarg, arg.ptr);
 				}
+			} else static if(is(T == IJavaObject[])) {
+				// FIXME
+			} else static if(is(T == bool[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseBooleanArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == byte[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseByteArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == wchar[])) {
+				// intentionally blank, wstring did it above
+			} else static if(is(T == short[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseShortArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == int[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseIntArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == long[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseLongArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == float[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseFloatArrayElements(env, jarg, arg.ptr, 0);
+				}
+			} else static if(is(T == double[])) {
+				if(arg.ptr !is null) {
+					auto jarg = jargs[idx];
+					(*env).ReleaseDoubleArrayElements(env, jarg, arg.ptr, 0);
+				}
 			}
 		}
 	}
@@ -1747,6 +1786,36 @@ private struct JavaParamsToD(Spec...) {
 			// FIXME other types of arrays
 			} else static if(is(T : IJavaObject)) {
 				arg = fromExistingJavaObject!T(jarg);
+			} else static if(is(T == bool[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetBooleanArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == byte[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetByteArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == wchar[])) {
+				// handled above
+			} else static if(is(T == short[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetShortArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == int[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetIntArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == long[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetLongArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == float[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetFloatArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
+			} else static if(is(T == double[])) {
+				auto len = (*env).GetArrayLength(env, jarg);
+				auto ptr = (*env).GetDoubleArrayElements(env, jarg, null);
+				arg = ptr is null ? null : ptr[0 .. len];
 			}
 			else static assert(0, "Unimplemented/unsupported type " ~ T.stringof);
 
