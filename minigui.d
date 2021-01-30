@@ -2246,11 +2246,15 @@ class OpenGlWidget : Widget {
 	//void delegate() drawFrame;
 }
 
+version(custom_widgets)
+	private alias ListWidgetBase = ScrollableWidget;
+else
+	private alias ListWidgetBase = Widget;
+
 /++
 
 +/
-version(custom_widgets)
-class ListWidget : ScrollableWidget {
+class ListWidget : ListWidgetBase {
 
 	static struct Option {
 		string label;
@@ -2271,6 +2275,7 @@ class ListWidget : ScrollableWidget {
 
 	}
 
+	version(custom_widgets)
 	override void defaultEventHandler_click(Event event) {
 		this.focus();
 		auto y = (event.clientY - 4) / Window.lineHeight;
@@ -2285,10 +2290,12 @@ class ListWidget : ScrollableWidget {
 		super(parent);
 	}
 
+	version(custom_widgets)
 	override void paintFrameAndBackground(WidgetPainter painter) {
 		draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
 	}
 
+	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto pos = Point(4, 4);
 		foreach(idx, option; options) {
@@ -3098,7 +3105,7 @@ class VerticalSlider : Slider {
 		super(min, max, step, parent);
 
 		version(win32_widgets)
-			win32Setup(TBS_VERT | TBS_REVERSED);
+			win32Setup(TBS_VERT | 0x0200 /* TBS_REVERSED */);
 	}
 
 	protected override int win32direction() {
@@ -4420,7 +4427,7 @@ class Window : Widget {
 
 	SimpleWindow win;
 
-	///
+	/// YOU ALMOST CERTAINLY SHOULD NOT USE THIS. This is really only for special purposes like pseudowindows or popup windows doing their own thing.
 	this(Widget p) {
 		tabStop = false;
 		super(p);
