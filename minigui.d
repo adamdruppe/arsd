@@ -1806,33 +1806,11 @@ class Widget {
 		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			switch(iMessage) {
 				case WM_COMMAND:
-					switch(HIWORD(wParam)) {
-						case 0:
-						// case BN_CLICKED: aka 0
-						case 1:
-							auto idm = LOWORD(wParam);
-							if(auto item = idm in Action.mapping) {
-								foreach(handler; (*item).triggered)
-									handler();
-							/*
-								auto event = new Event("triggered", *item);
-								event.button = idm;
-								event.dispatch();
-							*/
-							} else {
-								auto handle = cast(HWND) lParam;
-								if(auto widgetp = handle in Widget.nativeMapping) {
-									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
-								}
-							}
-						break;
-						default:
-							return 0;
-					}
-				break;
+					auto handle = cast(HWND) lParam;
+					auto cmd = HIWORD(wParam);
+					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
 				default:
 			}
-
 			return 0;
 		}
 	}
@@ -2271,8 +2249,8 @@ class ListWidget : ListWidgetBase {
 		auto evt = new Event(EventType.change, this);
 		evt.dispatch();
 
-		redraw();
-
+		version(custom_widgets)
+			redraw();
 	}
 
 	version(custom_widgets)
@@ -2288,7 +2266,22 @@ class ListWidget : ListWidgetBase {
 	this(Widget parent = null) {
 		tabStop = false;
 		super(parent);
+		version(win32_widgets)
+			createWin32Window(this, WC_LISTBOX, "", 
+				0|WS_CHILD|WS_VISIBLE|LBS_NOTIFY, 0);
 	}
+
+	version(win32_widgets)
+	override void handleWmCommand(ushort code, ushort id) {
+		switch(code) {
+			case LBN_SELCHANGE:
+				auto sel = SendMessageW(hwnd, LB_GETCURSEL, 0, 0);
+				setSelection(sel);
+			break;
+			default:
+		}
+	}
+
 
 	version(custom_widgets)
 	override void paintFrameAndBackground(WidgetPainter painter) {
@@ -2318,17 +2311,32 @@ class ListWidget : ListWidgetBase {
 
 	void addOption(string text) {
 		options ~= Option(text);
-		setContentSize(width, cast(int) (options.length * Window.lineHeight));
-		redraw();
+		version(win32_widgets) {
+			WCharzBuffer buffer = WCharzBuffer(text);
+			SendMessageW(hwnd, LB_ADDSTRING, 0, cast(LPARAM) buffer.ptr);
+		}
+		version(custom_widgets) {
+			setContentSize(width, cast(int) (options.length * Window.lineHeight));
+			redraw();
+		}
 	}
 
 	void clear() {
 		options = null;
-		redraw();
+		version(win32_widgets) {
+			while(SendMessageW(hwnd, LB_DELETESTRING, 0, 0) > 0)
+				{}
+
+		} else version(custom_widgets) {
+			redraw();
+		}
 	}
 
 	Option[] options;
-	bool multiSelect;
+	version(win32_widgets)
+		enum multiSelect = false; /// not implemented yet
+	else
+		bool multiSelect;
 
 	override int heightStretchiness() { return 6; }
 }
@@ -4389,6 +4397,29 @@ class FixedPosition : StaticPosition {
 	this(Widget parent) { super(parent); }
 }
 
+version(win32_widgets)
+int processWmCommand(HWND parentWindow, HWND handle, ushort cmd, ushort idm) {
+	if(true) {
+		// cmd == 0 = menu, cmd == 1 = accelerator
+		if(auto item = idm in Action.mapping) {
+			foreach(handler; (*item).triggered)
+				handler();
+		/*
+			auto event = new Event("triggered", *item);
+			event.button = idm;
+			event.dispatch();
+		*/
+			return 0;
+		}
+	}
+	if(handle)
+	if(auto widgetp = handle in Widget.nativeMapping) {
+		(*widgetp).handleWmCommand(cmd, idm);
+		return 0;
+	}
+	return 1;
+}
+
 
 ///
 class Window : Widget {
@@ -4604,30 +4635,10 @@ class Window : Widget {
 					}
 				break;
 				case WM_COMMAND:
-					switch(HIWORD(wParam)) {
-						case 0:
-						// case BN_CLICKED: aka 0
-						case 1:
-							auto idm = LOWORD(wParam);
-							if(auto item = idm in Action.mapping) {
-								foreach(handler; (*item).triggered)
-									handler();
-							/*
-								auto event = new Event("triggered", *item);
-								event.button = idm;
-								event.dispatch();
-							*/
-							} else {
-								auto handle = cast(HWND) lParam;
-								if(auto widgetp = handle in Widget.nativeMapping) {
-									(*widgetp).handleWmCommand(HIWORD(wParam), LOWORD(wParam));
-								}
-							}
-						break;
-						default:
-							return 1;
-					}
-				break;
+					auto handle = cast(HWND) lParam;
+					auto cmd = HIWORD(wParam);
+					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
+
 				default: return 1; // not handled, pass it on
 			}
 			return 0;
@@ -6244,8 +6255,10 @@ class MouseActivatedWidget : Widget {
 	}
 
 	override void handleWmCommand(ushort cmd, ushort id) {
-		auto event = new Event("triggered", this);
-		event.dispatch();
+		if(cmd == 0) {
+			auto event = new Event("triggered", this);
+			event.dispatch();
+		}
 	}
 
 	this(Widget parent = null) {
@@ -6516,12 +6529,6 @@ class Button : MouseActivatedWidget {
 
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
-
-	version(win32_widgets)
-	override void handleWmCommand(ushort cmd, ushort id) {
-		auto event = new Event("triggered", this);
-		event.dispatch();
-	}
 
 	version(win32_widgets) {}
 	else version(custom_widgets)
