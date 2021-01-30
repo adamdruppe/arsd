@@ -593,6 +593,10 @@ class MySql : Database {
 		bool[] columnIsNull; // FIXME: should be part of the row
 	}
 +/
+	MYSQL* getHandle() {
+		return mysql;
+	}
+
   private:
 	MYSQL* mysql;
 }
@@ -630,10 +634,193 @@ struct ResultByDataObject(ObjType) if (is(ObjType : DataObject)) {
 	MySql mysql;
 }
 
+
+// thanks to 0xEAB on discord for sending me initial prepared statement support
+
+struct Statement
+{
+    ~this()
+    {
+        if (this.statement !is null)
+        {
+            this.statement.mysql_stmt_close();
+            this.statement = null;
+        }
+    }
+
+private:
+    MYSQL_STMT* statement;
+    MYSQL_BIND[] params;
+}
+
+Statement* prepare(MySql m, string query) @trusted
+{
+    MYSQL_STMT* s = m.getHandle.mysql_stmt_init();
+    immutable x = s.mysql_stmt_prepare(query.toStringz, query.length);
+
+    if (x != 0)
+    {
+        throw new Exception(m.getHandle.mysql_error.fromCstring);
+    }
+
+    return new Statement(s);
+}
+
+import std.traits : isNumeric;
+
+void bindParameter(T)(Statement* s, ref T value) if (isNumeric!T)
+{
+    import std.traits : isUnsigned;
+
+    MYSQL_BIND p = MYSQL_BIND();
+
+    p.buffer = &value;
+    p.buffer_type = mySqlType!T;
+    p.is_unsigned = isUnsigned!T;
+
+    s.params ~= p;
+    immutable x = s.statement.mysql_stmt_bind_param(&(s.params[$ - 1]));
+
+    if (x != 0)
+    {
+        throw new Exception(s.statement.mysql_stmt_error.fromStringz.to!string);
+    }
+}
+
+void bindParameterNull(Statement* s)
+{
+    MYSQL_BIND p = MYSQL_BIND();
+
+    p.buffer_type = enum_field_types.MYSQL_TYPE_NULL;
+
+    s.params ~= p;
+    immutable x = s.statement.mysql_stmt_bind_param(null);
+
+    if (x != 0)
+    {
+        throw new Exception(s.statement.mysql_stmt_error.fromStringz.to!string);
+    }
+}
+
+void bindParameter(T)(Statement* s, T value) if (is(T == string))
+{
+    import std.traits : isUnsigned;
+
+    MYSQL_BIND p = MYSQL_BIND();
+
+    p.buffer = cast(void*) value.toCstring();
+    p.buffer_type = mySqlType!string;
+    p.buffer_length = value.length;
+
+    s.params ~= p;
+    immutable x = s.statement.mysql_stmt_bind_param(&s.params[$ - 1]);
+
+    if (x != 0)
+    {
+        throw new Exception(s.statement.mysql_stmt_error.fromStringz.to!string);
+    }
+}
+
+void execute(Statement* s) @trusted
+{
+    immutable x = s.statement.mysql_stmt_execute();
+
+    if (x != 0)
+    {
+        throw new Exception(s.statement.mysql_stmt_error.fromStringz.to!string);
+    }
+}
+
+
 extern(System) {
+	/*
+		from <my_alloc.h>
+		original header actually contains members,
+		but guess we don't need them here
+	*/
+	struct USED_MEM;
+
+	/*
+		from <my_alloc.h>
+	*/
+	struct MEM_ROOT
+	{
+		USED_MEM* free; /* blocks with free memory in it */
+		USED_MEM* used; /* blocks almost without free memory */
+		USED_MEM* pre_alloc; /* preallocated block */
+		/* if block have less memory it will be put in 'used' list */
+		size_t min_malloc;
+		size_t block_size; /* initial block size */
+		uint block_num; /* allocated blocks counter */
+		/*
+		first free block in queue test counter (if it exceed
+		MAX_BLOCK_USAGE_BEFORE_DROP block will be dropped in 'used' list)
+		*/
+		uint first_block_usage;
+
+		void function () error_handler;
+	}
+
+	/*
+		from <mysql_com.h>
+
+		original header actually contains members,
+		but guess we don't need them here
+	*/
+	struct NET;
+
+	/* from <mysql_com.h> */
+	enum MYSQL_ERRMSG_SIZE = 512;
+
+	/* from <mysql_com.h> */
+	enum enum_field_types {
+		MYSQL_TYPE_DECIMAL, MYSQL_TYPE_TINY,
+		MYSQL_TYPE_SHORT,  MYSQL_TYPE_LONG,
+		MYSQL_TYPE_FLOAT,  MYSQL_TYPE_DOUBLE,
+		MYSQL_TYPE_NULL,   MYSQL_TYPE_TIMESTAMP,
+		MYSQL_TYPE_LONGLONG,MYSQL_TYPE_INT24,
+		MYSQL_TYPE_DATE,   MYSQL_TYPE_TIME,
+		MYSQL_TYPE_DATETIME, MYSQL_TYPE_YEAR,
+		MYSQL_TYPE_NEWDATE, MYSQL_TYPE_VARCHAR,
+		MYSQL_TYPE_BIT,
+
+			/*
+				mysql-5.6 compatibility temporal types.
+				They're only used internally for reading RBR
+				mysql-5.6 binary log events and mysql-5.6 frm files.
+				They're never sent to the client.
+			*/
+			MYSQL_TYPE_TIMESTAMP2,
+			MYSQL_TYPE_DATETIME2,
+			MYSQL_TYPE_TIME2,
+
+			MYSQL_TYPE_NEWDECIMAL=246,
+
+		MYSQL_TYPE_ENUM=247,
+		MYSQL_TYPE_SET=248,
+		MYSQL_TYPE_TINY_BLOB=249,
+		MYSQL_TYPE_MEDIUM_BLOB=250,
+		MYSQL_TYPE_LONG_BLOB=251,
+		MYSQL_TYPE_BLOB=252,
+		MYSQL_TYPE_VAR_STRING=253,
+		MYSQL_TYPE_STRING=254,
+		MYSQL_TYPE_GEOMETRY=255
+	}
+
+	/* from <my_list.h>*/
+	struct LIST
+	{
+		LIST* prev;
+		LIST* next;
+		void* data;
+	}
+
 	struct MYSQL;
 	struct MYSQL_RES;
 	/* typedef */ alias const(ubyte)* cstring;
+
+	alias my_bool = char;
+	alias my_ulonglong = ulong;
 
 	struct MYSQL_FIELD {
 		  cstring name;                 /* Name of column */
@@ -661,6 +848,135 @@ extern(System) {
 		version(MySQL_51) {
 			void* extension;
 		}
+	}
+
+	struct MYSQL_ROWS
+	{
+		MYSQL_ROWS* next; /* list of rows */
+		MYSQL_ROW data;
+		c_ulong length;
+	}
+
+	alias MYSQL_ROW_OFFSET = MYSQL_ROWS*; /* offset to current row */
+
+	struct EMBEDDED_QUERY_RESULT;
+
+	struct MYSQL_DATA
+	{
+		MYSQL_ROWS* data;
+		EMBEDDED_QUERY_RESULT* embedded_info;
+		MEM_ROOT alloc;
+		my_ulonglong rows;
+		uint fields;
+
+		version(MySQL_51) {
+			/* extra info for embedded library */
+			void* extension;
+		}
+	}
+
+	/* statement state */
+	enum enum_mysql_stmt_state
+	{
+		MYSQL_STMT_INIT_DONE = 1,
+		MYSQL_STMT_PREPARE_DONE = 2,
+		MYSQL_STMT_EXECUTE_DONE = 3,
+		MYSQL_STMT_FETCH_DONE = 4
+	}
+
+	enum enum_stmt_attr_type
+	{
+		/**
+			When doing mysql_stmt_store_result calculate max_length attribute
+			of statement metadata. This is to be consistent with the old API,
+			where this was done automatically.
+			In the new API we do that only by request because it slows down
+			mysql_stmt_store_result sufficiently.
+		*/
+		STMT_ATTR_UPDATE_MAX_LENGTH = 0,
+		/**
+			unsigned long with combination of cursor flags (read only, for update, etc)
+		*/
+		STMT_ATTR_CURSOR_TYPE = 1,
+		/**
+			Amount of rows to retrieve from server per one fetch if using cursors.
+			Accepts unsigned long attribute in the range 1 - ulong_max
+		*/
+		STMT_ATTR_PREFETCH_ROWS = 2
+	}
+
+	struct MYSQL_BIND
+	{
+		c_ulong* length; /* output length pointer */
+		my_bool* is_null; /* Pointer to null indicator */
+		void* buffer; /* buffer to get/put data */
+		/* set this if you want to track data truncations happened during fetch */
+		my_bool* error;
+		ubyte* row_ptr; /* for the current data position */
+		void function (NET* net, MYSQL_BIND* param) store_param_func;
+		void function (MYSQL_BIND*, MYSQL_FIELD*, ubyte** row) fetch_result;
+		void function (MYSQL_BIND*, MYSQL_FIELD*, ubyte** row) skip_result;
+		/* output buffer length, must be set when fetching str/binary */
+		c_ulong buffer_length;
+		c_ulong offset; /* offset position for char/binary fetch */
+		c_ulong length_value; /* Used if length is 0 */
+		uint param_number; /* For null count and error messages */
+		uint pack_length; /* Internal length for packed data */
+		enum_field_types buffer_type; /* buffer type */
+		my_bool error_value; /* used if error is 0 */
+		my_bool is_unsigned; /* set if integer type is unsigned */
+		my_bool long_data_used; /* If used with mysql_send_long_data */
+		my_bool is_null_value; /* Used if is_null is 0 */
+		void* extension;
+	}
+
+	struct st_mysql_stmt_extension;
+
+	/* statement handler */
+	struct MYSQL_STMT
+	{
+		MEM_ROOT mem_root; /* root allocations */
+		LIST list; /* list to keep track of all stmts */
+		MYSQL* mysql; /* connection handle */
+		MYSQL_BIND* params; /* input parameters */
+		MYSQL_BIND* bind; /* output parameters */
+		MYSQL_FIELD* fields; /* result set metadata */
+		MYSQL_DATA result; /* cached result set */
+		MYSQL_ROWS* data_cursor; /* current row in cached result */
+		/*
+		mysql_stmt_fetch() calls this function to fetch one row (it's different
+		for buffered, unbuffered and cursor fetch).
+		*/
+		int function (MYSQL_STMT* stmt, ubyte** row) read_row_func;
+		/* copy of mysql->affected_rows after statement execution */
+		my_ulonglong affected_rows;
+		my_ulonglong insert_id; /* copy of mysql->insert_id */
+		c_ulong stmt_id; /* Id for prepared statement */
+		c_ulong flags; /* i.e. type of cursor to open */
+		c_ulong prefetch_rows; /* number of rows per one COM_FETCH */
+		/*
+		Copied from mysql->server_status after execute/fetch to know
+		server-side cursor status for this statement.
+		*/
+		uint server_status;
+		uint last_errno; /* error code */
+		uint param_count; /* input parameter count */
+		uint field_count; /* number of columns in result set */
+		enum_mysql_stmt_state state; /* statement state */
+		char[MYSQL_ERRMSG_SIZE] last_error; /* error message */
+		char[6] sqlstate;
+		/* Types of input parameters should be sent to server */
+		my_bool send_types_to_server;
+		my_bool bind_param_done; /* input buffers were supplied */
+		ubyte bind_result_done; /* output buffers were supplied */
+		/* mysql_stmt_close() had to cancel this result */
+		my_bool unbuffered_fetch_cancelled;
+		/*
+		Is set to true if we need to calculate field->max_length for
+		metadata fields when doing mysql_stmt_store_result.
+		*/
+		my_bool update_max_length;
+		st_mysql_stmt_extension* extension;
 	}
 
 	/* typedef */ alias cstring* MYSQL_ROW;
@@ -695,6 +1011,20 @@ extern(System) {
 
 	void mysql_free_result(MYSQL_RES*);
 
+	MYSQL_STMT* mysql_stmt_init (MYSQL* mysql);
+	int mysql_stmt_prepare (MYSQL_STMT* stmt, const(char)* query, c_ulong length);
+	int mysql_stmt_execute (MYSQL_STMT* stmt);
+	my_bool mysql_stmt_bind_param (MYSQL_STMT* stmt, MYSQL_BIND* bnd);
+	my_bool mysql_stmt_close (MYSQL_STMT* stmt);
+	my_bool mysql_stmt_free_result (MYSQL_STMT* stmt);
+	my_bool mysql_stmt_reset (MYSQL_STMT* stmt);
+	uint mysql_stmt_errno (MYSQL_STMT* stmt);
+	const(char)* mysql_stmt_error (MYSQL_STMT* stmt);
+	const(char)* mysql_stmt_sqlstate (MYSQL_STMT* stmt);
+	my_ulonglong mysql_stmt_num_rows (MYSQL_STMT* stmt);
+	my_ulonglong mysql_stmt_affected_rows (MYSQL_STMT* stmt);
+	my_ulonglong mysql_stmt_insert_id (MYSQL_STMT* stmt);
+
 }
 
 import std.string;
@@ -724,6 +1054,42 @@ string fromCstring(cstring c, size_t len = size_t.max) {
 	return ret;
 }
 
+enum_field_types getMySqlType(T)() {
+	static if (is(T == bool))
+		return enum_field_types.MYSQL_TYPE_TINY;
+
+	static if (is(T == char))
+		return enum_field_types.MYSQL_TYPE_TINY;
+
+		static if (is(T == byte) || is(T == ubyte))
+		return enum_field_types.MYSQL_TYPE_TINY;
+
+	else static if (is(T == short) || is(T == ushort))
+		return enum_field_types.MYSQL_TYPE_SHORT;
+
+	else static if (is(T == int) || is(T == uint))
+		return enum_field_types.MYSQL_TYPE_LONG;
+
+	else static if (is(T == long) || is(T == ulong))
+		return enum_field_types.MYSQL_TYPE_LONGLONG;
+
+	else static if (is(T == string))
+		return enum_field_types.MYSQL_TYPE_STRING;
+
+	else static if (is(T == float))
+		return enum_field_types.MYSQL_TYPE_FLOAT;
+
+	else static if (is(T == double))
+		return enum_field_types.MYSQL_TYPE_DOUBLE;
+
+	//else static if (is(T == byte[]))
+	//	return enum_field_types.MYSQL_TYPE_BLOB;
+
+	else
+		static assert("No MySQL equivalent known for " ~ T);
+}
+
+enum enum_field_types mySqlType(T) = getMySqlType!T;
 
 // FIXME: this should work generically with all database types and them moved to database.d
 ///
