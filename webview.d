@@ -3828,7 +3828,7 @@ void main() {
 	ICoreWebView2 webview_window;
 	ICoreWebView2Environment webview_env;
 
-	func(null, null, null,
+	auto result = func(null, null, null,
 		callback!(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler)(
 			delegate(error, env) {
 				if(error)
@@ -3892,6 +3892,11 @@ void main() {
 			}
 		)
 	);
+
+	if(result != S_OK) {
+		import std.stdio;
+		writeln("Failed: ", result);
+	}
 
 	window.eventLoop(0);
 }

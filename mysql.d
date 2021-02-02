@@ -648,6 +648,11 @@ struct Statement
         }
     }
 
+    void reset()
+    {
+	mysql_stmt_reset(statement);
+    }
+
 private:
     MYSQL_STMT* statement;
     MYSQL_BIND[] params;
@@ -656,7 +661,7 @@ private:
 Statement* prepare(MySql m, string query) @trusted
 {
     MYSQL_STMT* s = m.getHandle.mysql_stmt_init();
-    immutable x = s.mysql_stmt_prepare(query.toStringz, query.length);
+    immutable x = s.mysql_stmt_prepare(query.toStringz, cast(int) query.length);
 
     if (x != 0)
     {

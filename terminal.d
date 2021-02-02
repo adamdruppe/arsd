@@ -4335,7 +4335,7 @@ class LineGetter {
 	/// Call this before letting LineGetter die so it can do any necessary
 	/// cleanup and save the updated history to a file.
 	void dispose() {
-		if(historyFilename.length)
+		if(historyFilename.length && historyCommitMode == HistoryCommitMode.atTermination)
 			saveSettingsAndHistoryToFile();
 	}
 
@@ -4414,17 +4414,67 @@ class LineGetter {
 		return candidate;
 	}
 
-	/// You may override this to do nothing
+	/++
+		History is normally only committed to the file when the program is
+		terminating, but if you are losing data due to crashes, you might want
+		to change this to `historyCommitMode = HistoryCommitMode.afterEachLine;`.
+
+		History:
+			Added January 26, 2021 (version 9.2)
+	+/
+	public enum HistoryCommitMode {
+		/// The history file is written to disk only at disposal time by calling [saveSettingsAndHistoryToFile]
+		atTermination,
+		/// The history file is written to disk after each line of input by calling [appendHistoryToFile]
+		afterEachLine
+	}
+
+	/// ditto
+	public HistoryCommitMode historyCommitMode;
+
+	/++
+		You may override this to do nothing. If so, you should
+		also override [appendHistoryToFile] if you ever change
+		[historyCommitMode].
+
+		You should call [historyPath] to get the proper filename.
+	+/
 	/* virtual */ void saveSettingsAndHistoryToFile() {
 		import std.file;
 		if(!exists(historyFileDirectory))
-			mkdir(historyFileDirectory);
+			mkdirRecurse(historyFileDirectory);
+
 		auto fn = historyPath();
+
 		import std.stdio;
 		auto file = File(fn, "wb");
 		file.write("// getline history file\r\n");
 		foreach(item; history)
 			file.writeln(item, "\r");
+	}
+
+	/++
+		If [historyCommitMode] is [HistoryCommitMode.afterEachLine],
+		this line is called after each line to append to the file instead
+		of [saveSettingsAndHistoryToFile].
+
+		Use [historyPath] to get the proper full path.
+
+		History:
+			Added January 26, 2021 (version 9.2)
+	+/
+	/* virtual */ void appendHistoryToFile(string item) {
+		import std.file;
+
+		if(!exists(historyFileDirectory))
+			mkdirRecurse(historyFileDirectory);
+		// this isn't exactly atomic but meh tbh i don't care.
+		auto fn = historyPath();
+		if(exists(fn)) {
+			append(fn, item ~ "\r\n");
+		} else {
+			std.file.write(fn, "// getline history file\r\n" ~ item ~ "\r\n");
+		}
 	}
 
 	/// You may override this to do nothing
@@ -4669,7 +4719,7 @@ class LineGetter {
 			Introduced on January 30, 2020
 	+/
 	protected string helpMessage() {
-		return "Press F2 to edit current line in your editor. F3 searches. F9 runs current line while maintaining current edit state.";
+		return "Press F2 to edit current line in your external editor. F3 searches history. F9 runs current line while maintaining current edit state.";
 	}
 
 	/++
@@ -4818,6 +4868,77 @@ class LineGetter {
 			Added November 27, 2020.
 	+/
 	HistoryRecallFilterMethod historyRecallFilterMethod = HistoryRecallFilterMethod.chronological;
+
+	/++
+		Enables automatic closing of brackets like (, {, and [ when the user types.
+		Specifically, you subclass and return a string of the completions you want to
+		do, so for that set, return `"()[]{}"`
+
+
+		$(WARNING
+			If you subclass this and return anything other than `null`, your subclass must also
+			realize that the `line` member and everything that slices it ([tabComplete] and more)
+			need to mask away the extra bits to get the original content. See [PRIVATE_BITS_MASK].
+			`line[] &= cast(dchar) ~PRIVATE_BITS_MASK;`
+		)
+
+		Returns:
+			A string with pairs of characters. When the user types the character in an even-numbered
+			position, it automatically inserts the following character after the cursor (without moving
+			the cursor). The inserted character will be automatically overstriken if the user types it
+			again.
+
+			The default is `return null`, which disables the feature.
+
+		History:
+			Added January 25, 2021 (version 9.2)
+	+/
+	protected string enableAutoCloseBrackets() {
+		return null;
+	}
+
+	/++
+		If [enableAutoCloseBrackets] does not return null, you should ignore these bits in the line.
+	+/
+	protected enum PRIVATE_BITS_MASK = 0x80_00_00_00;
+	// note: several instances in the code of PRIVATE_BITS_MASK are kinda conservative; masking it away is destructive
+	// but less so than crashing cuz of invalid unicode character popping up later. Besides the main intention is when
+	// you are kinda immediately typing so it forgetting is probably fine.
+
+	/++
+		Subclasses that implement this function can enable syntax highlighting in the line as you edit it.
+
+
+		The library will call this when it prepares to draw the line, giving you the full line as well as the
+		current position in that array it is about to draw. You return a [SyntaxHighlightMatch]
+		object with its `charsMatched` member set to how many characters the given colors should apply to.
+		If it is set to zero, default behavior is retained for the next character, and [syntaxHighlightMatch]
+		will be called again immediately. If it is set to -1 syntax highlighting is disabled for the rest of
+		the line. If set to int.max, it will apply to the remainder of the line.
+
+		If it is set to another positive value, the given colors are applied for that number of characters and
+		[syntaxHighlightMatch] will NOT be called again until those characters are consumed.
+
+		Note that the first call may have `currentDrawPosition` be greater than zero due to horizontal scrolling.
+		After that though, it will be called based on your `charsMatched` in the return value.
+
+		`currentCursorPosition` is passed in case you want to do things like highlight a matching parenthesis over
+		the cursor or similar. You can also simply ignore it.
+
+		History:
+			Added January 25, 2021 (version 9.2)
+	+/
+	protected SyntaxHighlightMatch syntaxHighlightMatch(in dchar[] line, in size_t currentDrawPosition, in size_t currentCursorPosition) {
+		return SyntaxHighlightMatch(-1); // -1 just means syntax highlighting is disabled and it shouldn't try again
+	}
+
+	/// ditto
+	static struct SyntaxHighlightMatch {
+		int charsMatched = 0;
+		Color foreground = Color.DEFAULT;
+		Color background = Color.DEFAULT;
+	}
+
 
 	private int currentHistoryViewPosition = 0;
 	private dchar[] uncommittedHistoryCandidate;
@@ -5111,10 +5232,27 @@ class LineGetter {
 		int written;
 		int lineLength;
 
+
+		Color currentFg_ = Color.DEFAULT;
+		Color currentBg_ = Color.DEFAULT;
+		int colorChars = 0;
+
+		Color currentFg() {
+			if(colorChars <= 0 || currentFg_ == Color.DEFAULT)
+				return lg.regularForeground;
+			return currentFg_;
+		}
+
+		Color currentBg() {
+			if(colorChars <= 0 || currentBg_ == Color.DEFAULT)
+				return lg.background;
+			return currentBg_;
+		}
+
 		void specialChar(char c) {
 			lg.terminal.color(lg.regularForeground, lg.specialCharBackground);
 			lg.terminal.write(c);
-			lg.terminal.color(lg.regularForeground, lg.background);
+			lg.terminal.color(currentFg, currentBg);
 
 			written++;
 			lineLength--;
@@ -5131,19 +5269,32 @@ class LineGetter {
 			lineLength--;
 		}
 
-		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0, bool inverted = false) {
+		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0, bool inverted = false, int lineidx = -1) {
 			// FIXME: if there is a color at the end of the line it messes up as you scroll
 			// FIXME: need a way to go to multi-line editing
 
 			bool highlightOn = false;
 			void highlightOff() {
-				lg.terminal.color(lg.regularForeground, lg.background, ForceOption.automatic, inverted);
+				lg.terminal.color(currentFg, currentBg, ForceOption.automatic, inverted);
 				highlightOn = false;
 			}
 
 			foreach(idx, dchar ch; towrite) {
 				if(lineLength <= 0)
 					break;
+
+				static if(is(T == dchar[])) {
+					if(lineidx != -1 && colorChars == 0) {
+						auto shm = lg.syntaxHighlightMatch(lg.line, lineidx + idx, lg.cursorPosition);
+						if(shm.charsMatched > 0) {
+							colorChars = shm.charsMatched;
+							currentFg_ = shm.foreground;
+							currentBg_ = shm.background;
+							lg.terminal.color(currentFg, currentBg);
+						}
+					}
+				}
+
 				switch(ch) {
 					case '\n': specialChar('n'); break;
 					case '\r': specialChar('r'); break;
@@ -5162,7 +5313,13 @@ class LineGetter {
 							}
 						}
 
-						regularChar(ch);
+						regularChar(ch & ~PRIVATE_BITS_MASK);
+				}
+
+				if(colorChars > 0) {
+					colorChars--;
+					if(colorChars == 0)
+						lg.terminal.color(currentFg, currentBg);
 				}
 			}
 			if(highlightOn)
@@ -5191,6 +5348,7 @@ class LineGetter {
 		}
 
 		terminal.moveTo(startOfLineX + cdi.cursorPositionToDrawX + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
+		endRedraw(); // make sure the cursor is turned back on
 	}
 
 	static struct CoreRedrawInfo {
@@ -5200,23 +5358,29 @@ class LineGetter {
 		int cursorPositionToDrawY;
 	}
 
+	private void endRedraw() {
+		version(Win32Console) {
+			// on Windows, we want to make sure all
+			// is displayed before the cursor jumps around
+			terminal.flush();
+			terminal.showCursor();
+		} else {
+			// but elsewhere, the showCursor is itself buffered,
+			// so we can do it all at once for a slight speed boost
+			terminal.showCursor();
+			//import std.string; import std.stdio; writeln(terminal.writeBuffer.replace("\033", "\\e"));
+			terminal.flush();
+		}
+	}
+
 	final CoreRedrawInfo coreRedraw() {
 		if(supplementalGetter)
 			return CoreRedrawInfo.init; // the supplementalGetter will be drawing instead...
 		terminal.hideCursor();
-		scope(exit) {
-			version(Win32Console) {
-				// on Windows, we want to make sure all
-				// is displayed before the cursor jumps around
-				terminal.flush();
-				terminal.showCursor();
-			} else {
-				// but elsewhere, the showCursor is itself buffered,
-				// so we can do it all at once for a slight speed boost
-				terminal.showCursor();
-				//import std.string; import std.stdio; writeln(terminal.writeBuffer.replace("\033", "\\e"));
-				terminal.flush();
-			}
+		scope(failure) {
+			// don't want to leave the cursor hidden on the event of an exception
+			// can't just scope(success) it here since the cursor will be seen bouncing when finalizeRedraw is run
+			endRedraw();
 		}
 		terminal.moveTo(startOfLineX, startOfLineY);
 
@@ -5247,7 +5411,7 @@ class LineGetter {
 			terminal.color(regularForeground, background);
 			drawer.drawContent(afterSelection);
 		} else {
-			drawer.drawContent(towrite);
+			drawer.drawContent(towrite, 0, 0, false, horizontalScrollPosition);
 		}
 
 		string suggestion;
@@ -5546,6 +5710,7 @@ class LineGetter {
 			if(selectionStart == selectionEnd)
 				return null;
 			import std.conv;
+			line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 			return to!string(line[selectionStart .. selectionEnd]);
 		}
 	}
@@ -5596,14 +5761,15 @@ class LineGetter {
 				/* Insert the character (unless it is backspace, tab, or some other control char) */
 				auto ch = ev.which;
 				switch(ch) {
-					version(Windows) case 'z', 26: // and this is really for Windows
-						if(!(ev.modifierState & ModifierState.control))
-							goto default;
-						goto case;
 					case KeyboardEvent.ProprietaryPseudoKeys.SelectNone:
 						selectNone();
 						redraw();
 					break;
+					version(Windows) case 'z', 26: { // and this is really for Windows
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
+					}
 					case 'd', 4: // ctrl+d will also send a newline-equivalent 
 						if(ev.modifierState & ModifierState.alt) {
 							// gnu alias for kill word (also on ctrl+backspace)
@@ -5640,6 +5806,11 @@ class LineGetter {
 							redraw();
 							break;
 						}
+
+						// I want to hide the private bits from the other functions, but retain them across completions,
+						// which is why it does it on a copy here. Could probably be more efficient, but meh.
+						auto line = this.line.dup;
+						line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 
 						auto relevantLineSection = line[0 .. cursorPosition];
 						auto start = tabCompleteStartPoint(relevantLineSection, line[cursorPosition .. $]);
@@ -5717,6 +5888,7 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.F2:
 						justHitTab = justKilled = false;
+						line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 						auto got = editLineInEditor(line, cursorPosition);
 						if(got !is null) {
 							line = got;
@@ -5728,6 +5900,17 @@ class LineGetter {
 							redraw();
 						}
 					break;
+					case 'l', 12:
+						if(!(ev.modifierState & ModifierState.control))
+							goto default;
+						goto case;
+					case KeyboardEvent.Key.F5:
+						// FIXME: I might not want to do this on full screen programs,
+						// but arguably the application should just hook the event then.
+						terminal.clear();
+						updateCursorPosition();
+						redraw();
+					break;
 					case 'r', 18:
 						if(!(ev.modifierState & ModifierState.control))
 							goto default;
@@ -5736,6 +5919,7 @@ class LineGetter {
 						justHitTab = justKilled = false;
 						// search in history
 						// FIXME: what about search in completion too?
+						line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 						supplementalGetter = new HistorySearchLineGetter(this);
 						supplementalGetter.startGettingLine();
 						supplementalGetter.redraw();
@@ -5764,8 +5948,9 @@ class LineGetter {
 							goto default;
 						justHitTab = justKilled = false;
 						// FIXME: would be cool if this worked with quotes and such too
+						// FIXME: in insert mode prolly makes sense to look at the position before the cursor tbh
 						if(cursorPosition >= 0 && cursorPosition < line.length) {
-							dchar at = line[cursorPosition];
+							dchar at = line[cursorPosition] & ~PRIVATE_BITS_MASK;
 							int direction;
 							dchar lookFor;
 							switch(at) {
@@ -5781,9 +5966,10 @@ class LineGetter {
 								int pos = cursorPosition;
 								int count;
 								while(pos >= 0 && pos < line.length) {
-									if(line[pos] == at)
+									auto lp = line[pos] & ~PRIVATE_BITS_MASK;
+									if(lp == at)
 										count++;
-									if(line[pos] == lookFor)
+									if(lp == lookFor)
 										count--;
 									if(count == 0) {
 										cursorPosition = pos;
@@ -5881,8 +6067,7 @@ class LineGetter {
 						if(ev.modifierState & ModifierState.shift) {
 							// ctrl+shift+a will select all...
 							// for now I will have it just copy to clipboard but later once I get the time to implement full selection handling, I'll change it
-							import std.conv;
-							terminal.requestCopyToClipboard(to!string(line));
+							terminal.requestCopyToClipboard(lineAsString());
 							break;
 						}
 						goto case;
@@ -5970,8 +6155,38 @@ class LineGetter {
 					break;
 					default:
 						justHitTab = justKilled = false;
-						if(e.keyboardEvent.isCharacter)
+						if(e.keyboardEvent.isCharacter) {
+
+							// overstrike an auto-inserted thing if that's right there
+							if(cursorPosition < line.length)
+							if(line[cursorPosition] & PRIVATE_BITS_MASK) {
+								if((line[cursorPosition] & ~PRIVATE_BITS_MASK) == ch) {
+									line[cursorPosition] = ch;
+									cursorPosition++;
+									redraw();
+									break;
+								}
+							}
+
+
+
+							// the ordinary add, of course
 							addChar(ch);
+
+
+							// and auto-insert a closing pair if appropriate
+							auto autoChars = enableAutoCloseBrackets();
+							bool found = false;
+							foreach(idx, dchar ac; autoChars) {
+								if(found) {
+									addChar(ac | PRIVATE_BITS_MASK);
+									charBack();
+									break;
+								}
+								if((idx&1) == 0 && ac == ch)
+									found = true;
+							}
+						}
 						redraw();
 				}
 			break;
@@ -6062,15 +6277,40 @@ class LineGetter {
 		replaceLine(tmp[0 .. idx]);
 	}
 
+	/++
+		Gets the current line buffer as a duplicated string.
+
+		History:
+			Added January 25, 2021
+	+/
+	string lineAsString() {
+		import std.conv;
+
+		// FIXME: I should prolly not do this on the internal copy but it isn't a huge deal
+		line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
+
+		return to!string(line);
+	}
+
 	///
 	string finishGettingLine() {
 		import std.conv;
+
+		line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
+
 		auto f = to!string(line);
 		auto history = historyFilter(f);
-		if(history !is null)
+		if(history !is null) {
 			this.history ~= history;
+			if(this.historyCommitMode == HistoryCommitMode.afterEachLine)
+				appendHistoryToFile(history);
+		}
 
 		// FIXME: we should hide the cursor if it was hidden in the call to startGettingLine
+
+		// also need to reset the color going forward
+		terminal.color(Color.DEFAULT, Color.DEFAULT);
+
 		return eof ? null : f.length ? f : "";
 	}
 }

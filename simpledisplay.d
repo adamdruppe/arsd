@@ -6991,6 +6991,18 @@ class OperatingSystemFont {
 	}
 
 	/++
+		Constructs the object, but does nothing. Call one of [load] or [loadDefault] to populate the object.
+
+		You can also call the platform-specific [loadXft], [loadCoreX], or [loadWin32] functions if appropriate for you.
+
+		History:
+			Added January 24, 2021.
+	+/
+	this() {
+		// this space intentionally left blank
+	}
+
+	/++
 		Loads specifically with the Xft library - a freetype font from a fontconfig string.
 
 		History:
@@ -7039,11 +7051,16 @@ class OperatingSystemFont {
 
 		this.isXft = true;
 
-		if(xftFont !is null)
+		if(xftFont !is null) {
 			isMonospace_ = stringWidth("x") == stringWidth("M");
+			ascent_ = xftFont.ascent;
+			descent_ = xftFont.descent;
+		}
 
 		return !isNull();
 	}
+
+	// see also: XftLockFace(font) which gives a FT_Face. from /usr/include/X11/Xft/Xft.h line 352
 
 	private string weightToString(FontWeight weight) {
 		with(FontWeight)
@@ -7100,10 +7117,18 @@ class OperatingSystemFont {
 		char* lol3;
 		fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
-		if(font !is null)
-			isMonospace_ = stringWidth("l") == stringWidth("M");
+		prepareFontInfo();
 
 		return !isNull();
+	}
+
+	version(X11)
+	private void prepareFontInfo() {
+		if(font !is null) {
+			isMonospace_ = stringWidth("l") == stringWidth("M");
+			ascent_ = font.max_bounds.ascent;
+			descent_ = font.max_bounds.descent;
+		}
 	}
 
 	/++
@@ -7113,24 +7138,36 @@ class OperatingSystemFont {
 			Added November 13, 2020. Before then, this code was integrated in the [load] function.
 	+/
 	version(Windows)
-	bool loadWin32(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+	bool loadWin32(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false, HDC hdc = null) {
 		unload();
 
 		WCharzBuffer buffer = WCharzBuffer(name);
 		font = CreateFont(size, 0, 0, 0, cast(int) weight, italic, 0, 0, 0, 0, 0, 0, 0, buffer.ptr);
 
+		prepareFontInfo(hdc);
+
+		return !isNull();
+	}
+
+	version(Windows)
+	void prepareFontInfo(HDC hdc = null) {
+		if(font is null)
+			return;
+
 		TEXTMETRIC tm;
-		auto dc = GetDC(null);
-		SelectObject(dc, font);
+		auto dc = hdc ? hdc : GetDC(null);
+		auto orig = SelectObject(dc, font);
 		GetTextMetrics(dc, &tm);
-		ReleaseDC(null, dc);
+		SelectObject(dc, orig);
+		if(hdc is null)
+			ReleaseDC(null, dc);
 
 		width_ = tm.tmAveCharWidth;
 		height_ = tm.tmHeight;
+		ascent_ = tm.tmAscent;
+		descent_ = tm.tmDescent;
 		// If this bit is set the font is a variable pitch font. If this bit is clear the font is a fixed pitch font. Note very carefully that those meanings are the opposite of what the constant name implies.
 		isMonospace_ = (tm.tmPitchAndFamily & TMPF_FIXED_PITCH) == 0;
-
-		return !isNull();
 	}
 
 
@@ -7246,7 +7283,8 @@ class OperatingSystemFont {
 		History:
 			Added January 16, 2021
 	+/
-	int stringWidth(string s, SimpleWindow window = null) {
+	int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+	// FIXME: what about tab?
 		if(isNull)
 			return 0;
 
@@ -7272,18 +7310,76 @@ class OperatingSystemFont {
 		} else version(Windows) {
 			WCharzBuffer buffer = WCharzBuffer(s);
 
-			SIZE size;
-
-			auto dc = GetDC(window is null ? null : window.impl.hwnd);
-			SelectObject(dc, font);
-			GetTextExtentPoint32W(dc, buffer.ptr, cast(int) buffer.length, &size);
-			ReleaseDC(null, dc);
-
-			return size.cx;
+			return stringWidth(buffer.slice, window);
 		}
 		else assert(0);
-
 	}
+
+	version(Windows)
+	/// ditto
+	int stringWidth(scope const(wchar)[] s, SimpleWindow window = null) {
+		if(isNull)
+			return 0;
+		version(Windows) {
+			SIZE size;
+
+			prepareContext(window);
+			scope(exit) releaseContext();
+
+			GetTextExtentPoint32W(dc, s.ptr, cast(int) s.length, &size);
+
+			return size.cx;
+		} else {
+			// std.conv can do this easily but it is slow to import and i don't think it is worth it
+			static assert(0, "not implemented yet");
+			//return stringWidth(s, window);
+		}
+	}
+
+	private {
+		int prepRefcount;
+
+		version(Windows) {
+			HDC dc;
+			HANDLE orig;
+			HWND hwnd;
+		}
+	}
+	/++
+		[stringWidth] can be slow. This helps speed it up if you are doing a lot of calculations. Just prepareContext when you start this work and releaseContext when you are done. Important to release before too long though as it can be a scarce system resource.
+
+		History:
+			Added January 23, 2021
+	+/
+	void prepareContext(SimpleWindow window = null) {
+		prepRefcount++;
+		if(prepRefcount == 1) {
+			version(Windows) {
+				hwnd = window is null ? null : window.impl.hwnd;
+				dc = GetDC(hwnd);
+				orig = SelectObject(dc, font);
+			}
+		}
+	}
+	/// ditto
+	void releaseContext() {
+		prepRefcount--;
+		if(prepRefcount == 0) {
+			version(Windows) {
+				SelectObject(dc, orig);
+				ReleaseDC(hwnd, dc);
+				hwnd = null;
+				dc = null;
+				orig = null;
+			}
+		}
+	}
+
+	/+
+		FIXME: I think I need advance and kerning pair
+
+		int advance(dchar from, dchar to) { } // use dchar.init for first item in string
+	+/
 
 	/++
 		Returns the height of the font.
@@ -7305,9 +7401,63 @@ class OperatingSystemFont {
 		else assert(0);
 	}
 
-	/// FIXME not implemented
-	void loadDefault() {
+	private int ascent_;
+	private int descent_;
 
+	/++
+		Max ascent above the baseline.
+
+		History:
+			Added January 22, 2021
+	+/
+	int ascent() {
+		return ascent_;
+	}
+
+	/++
+		Max descent below the baseline.
+
+		History:
+			Added January 22, 2021
+	+/
+	int descent() {
+		return descent_;
+	}
+
+	/++
+		Loads the default font used by [ScreenPainter] if none others are loaded.
+
+		Returns:
+			This method mutates the `this` object, but then returns `this` for
+			easy chaining like:
+
+			---
+			auto font = foo.isNull ? foo : foo.loadDefault
+			---
+
+		History:
+			Added previously, but left unimplemented until January 24, 2021.
+	+/
+	OperatingSystemFont loadDefault() {
+		unload();
+
+		version(X11) {
+			// another option would be https://tronche.com/gui/x/xlib/graphics/font-metrics/XQueryFont.html
+			// but meh since sdpy does its own thing, this should be ok too
+
+			ScreenPainterImplementation.ensureDefaultFontLoaded();
+			this.font = ScreenPainterImplementation.defaultfont;
+			this.fontset = ScreenPainterImplementation.defaultfontset;
+
+			prepareFontInfo();
+		} else version(Windows) {
+			ScreenPainterImplementation.ensureDefaultFontLoaded();
+			this.font = ScreenPainterImplementation.defaultGuiFont;
+
+			prepareFontInfo();
+		} else throw new NotYetImplementedException();
+
+		return this;
 	}
 
 	///
@@ -7329,7 +7479,6 @@ class OperatingSystemFont {
 		what happens when I draw the full string with the OS functions.
 
 		subclasses might do the same thing while getting the glyphs on images
-	+/
 	struct GlyphInfo {
 		int glyph;
 
@@ -7343,6 +7492,7 @@ class OperatingSystemFont {
 		return null;
 
 	}
+	+/
 
 	~this() {
 		unload();
@@ -7625,6 +7775,18 @@ struct ScreenPainter {
 		if(isClipped(upperLeft, Point(int.max, int.max))) return;
 		transform(upperLeft);
 		font.drawString(this, upperLeft, text);
+	}
+
+	version(Windows)
+	void drawText(Point upperLeft, scope const(wchar)[] text) {
+		if(impl is null) return;
+		if(isClipped(upperLeft, Point(int.max, int.max))) return;
+		transform(upperLeft);
+
+		if(text.length && text[$-1] == '\n')
+			text = text[0 .. $-1]; // tailing newlines are weird on windows...
+
+		TextOutW(impl.hdc, upperLeft.x, upperLeft.y, text.ptr, cast(int) text.length);
 	}
 
 	static struct TextDrawingContext {
@@ -8972,7 +9134,16 @@ version(Windows) {
 			// X doesn't draw a text background, so neither should we
 			SetBkMode(hdc, TRANSPARENT);
 
+			ensureDefaultFontLoaded();
 
+			if(defaultGuiFont) {
+				SelectObject(hdc, defaultGuiFont);
+				// DeleteObject(defaultGuiFont);
+			}
+		}
+
+		static HFONT defaultGuiFont;
+		static void ensureDefaultFontLoaded() {
 			static bool triedDefaultGuiFont = false;
 			if(!triedDefaultGuiFont) {
 				NONCLIENTMETRICS params;
@@ -8982,14 +9153,7 @@ version(Windows) {
 				}
 				triedDefaultGuiFont = true;
 			}
-
-			if(defaultGuiFont) {
-				SelectObject(hdc, defaultGuiFont);
-				// DeleteObject(defaultGuiFont);
-			}
 		}
-
-		static HFONT defaultGuiFont;
 
 		void setFont(OperatingSystemFont font) {
 			if(font && font.font) {
@@ -10101,8 +10265,20 @@ version(X11) {
 
 			XCopyGC(display, dgc, 0xffffffff, this.gc);
 
+			ensureDefaultFontLoaded();
+
+			font = defaultfont;
+			fontset = defaultfontset;
+
+			if(font) {
+				XSetFont(display, gc, font.fid);
+			}
+		}
+
+		static void ensureDefaultFontLoaded() {
 			if(!fontAttempted) {
-				font = XLoadQueryFont(display, xfontstr.ptr);
+				auto display = XDisplayConnection.get;
+				auto font = XLoadQueryFont(display, xfontstr.ptr);
 				// if the user font choice fails, fixed is pretty reliable (required by X to start!) and not bad either
 				if(font is null)
 					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
@@ -10110,19 +10286,12 @@ version(X11) {
 				char** lol;
 				int lol2;
 				char* lol3;
-				fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
+				auto fontset = XCreateFontSet(display, xfontstr.ptr, &lol, &lol2, &lol3);
 
 				fontAttempted = true;
 
 				defaultfont = font;
 				defaultfontset = fontset;
-			}
-
-			font = defaultfont;
-			fontset = defaultfontset;
-
-			if(font) {
-				XSetFont(display, gc, font.fid);
 			}
 		}
 
@@ -15982,7 +16151,7 @@ version(X11) {
 	}
 }
 
-mixin template ExperimentalTextComponent2() {
+class ExperimentalTextComponent2 {
 	/+
 		Stage 1: get it working monospace
 		Stage 2: use proportional font
@@ -15994,6 +16163,321 @@ mixin template ExperimentalTextComponent2() {
 		Stage 8: justification
 		Stage 9: editing, selection, etc.
 	+/
+
+	/++
+		It asks for a window so it can translate abstract font sizes to actual on-screen values depending on the window's current dpi, scaling settings, etc.
+	+/
+	this(SimpleWindow window) {
+		this.window = window;
+	}
+
+	private SimpleWindow window;
+
+
+	/++
+		When you render a [ComponentInFlow], it returns an arbitrary number of these interfaces
+		representing the internal parts. The first pass is focused on the x parameter, then the
+		renderer is responsible for going back to the parts in the current line and calling
+		adjustDownForAscent to change the y params.
+	+/
+	static interface ComponentRenderHelper {
+		void adjustDownForAscent(int amount); // at the end of the line it needs to do these
+
+		int ascent() const;
+		int descent() const;
+
+		int advance() const;
+
+		bool endsWithExplititLineBreak() const;
+	}
+
+	static interface RenderResult {
+		/++
+			This is responsible for using what space is left (your object is responsible for keeping its own state after getting it updated from [repositionForNextLine]) and not going over if at all possible. If you can word wrap, you should when space is out. Otherwise, you can keep going if it means overflow hidden or scroll.
+		+/
+		void popFront();
+		@property bool empty() const;
+		@property ComponentRenderHelper front() const;
+
+		void repositionForNextLine(Point baseline, int availableWidth);
+	}
+
+	static interface ComponentInFlow {
+		void draw(ScreenPainter painter);
+		//RenderResult render(Point baseline, int availableWidth); // FIXME: it needs to be able to say "my cache is good, nothing different"
+
+		bool startsWithExplicitLineBreak() const;
+	}
+
+	static class TextFlowComponent : ComponentInFlow {
+		bool startsWithExplicitLineBreak() const { return false; } // FIXME: if it is block this can return true
+
+		Color foreground;
+		Color background;
+
+		OperatingSystemFont font; // should NEVER be null
+
+		ubyte attributes; // underline, strike through, display on new block
+
+		version(Windows)
+			const(wchar)[] content;
+		else
+			const(char)[] content; // this should NEVER have a newline, except at the end
+
+		RenderedComponent[] rendered; // entirely controlled by [rerender]
+
+		// could prolly put some spacing around it too like margin / padding
+
+		this(Color f, Color b, OperatingSystemFont font, ubyte attr, const(char)[] c)
+			in { assert(font !is null);
+			     assert(!font.isNull); }
+			body
+		{
+			this.foreground = f;
+			this.background = b;
+			this.font = font;
+
+			this.attributes = attr;
+			version(Windows) {
+				auto conversionFlags = 0;//WindowsStringConversionFlags.convertNewLines;
+				auto sz = sizeOfConvertedWstring(c, conversionFlags);
+				auto buffer = new wchar[](sz);
+				this.content = makeWindowsString(c, buffer, conversionFlags);
+			} else {
+				this.content = c.dup;
+			}
+		}
+
+		void draw(ScreenPainter painter) {
+			painter.setFont(this.font);
+			painter.outlineColor = this.foreground;
+			painter.fillColor = Color.transparent;
+			foreach(rendered; this.rendered) {
+				// the component works in term of baseline,
+				// but the painter works in term of upper left bounding box
+				// so need to translate that
+
+				if(this.background.a) {
+					painter.fillColor = this.background;
+					painter.outlineColor = this.background;
+
+					painter.drawRectangle(Point(rendered.startX, rendered.startY - this.font.ascent), Size(rendered.width, this.font.height));
+
+					painter.outlineColor = this.foreground;
+					painter.fillColor = Color.transparent;
+				}
+
+				painter.drawText(Point(rendered.startX, rendered.startY - this.font.ascent), rendered.slice);
+
+				// FIXME: strike through, underline, highlight selection, etc.
+			}
+		}
+	}
+
+	// I could split the parts into words on render
+	// for easier word-wrap, each one being an unbreakable "inline-block"
+	private TextFlowComponent[] parts;
+	private int needsRerenderFrom;
+
+	void addPart(Color f, Color b, OperatingSystemFont font, ubyte attr, const(char)[] c) {
+		// FIXME: needsRerenderFrom. Basically if the bounding box and baseline is the same as the previous thing, it can prolly just stop.
+		parts ~= new TextFlowComponent(f, b, font, attr, c);
+	}
+
+	static struct RenderedComponent {
+		int startX;
+		int startY;
+		short width;
+		// height is always from the containing part's font. This saves some space and means recalculations need not continue past the current line, unless a new part is added with a different font!
+		// for individual chars in here you've gotta process on demand
+		version(Windows)
+			const(wchar)[] slice;
+		else
+			const(char)[] slice;
+	}
+
+
+	void rerender(Rectangle boundingBox) {
+		Point baseline = boundingBox.upperLeft;
+
+		this.boundingBox.left = boundingBox.left;
+		this.boundingBox.top = boundingBox.top;
+
+		auto remainingParts = parts;
+
+		int largestX;
+
+
+		foreach(part; parts)
+			part.font.prepareContext(window);
+		scope(exit)
+		foreach(part; parts)
+			part.font.releaseContext();
+
+		calculateNextLine:
+
+		int nextLineHeight = 0;
+		int nextBiggestDescent = 0;
+
+		foreach(part; remainingParts) {
+			auto height = part.font.ascent;
+			if(height > nextLineHeight)
+				nextLineHeight = height;
+			if(part.font.descent > nextBiggestDescent)
+				nextBiggestDescent = part.font.descent;
+			if(part.content.length && part.content[$-1] == '\n')
+				break;
+		}
+
+		baseline.y += nextLineHeight;
+		auto lineStart = baseline;
+
+		while(remainingParts.length) {
+			remainingParts[0].rendered = null;
+
+			bool eol;
+			if(remainingParts[0].content.length && remainingParts[0].content[$-1] == '\n')
+				eol = true;
+
+			// FIXME: word wrap
+			auto font = remainingParts[0].font;
+			auto slice = remainingParts[0].content[0 .. $ - (eol ? 1 : 0)];
+			auto width = font.stringWidth(slice, window);
+			remainingParts[0].rendered ~= RenderedComponent(baseline.x, baseline.y, cast(short) width, slice);
+
+			remainingParts = remainingParts[1 .. $];
+			baseline.x += width;
+
+			if(eol) {
+				baseline.y += nextBiggestDescent;
+				if(baseline.x > largestX)
+					largestX = baseline.x;
+				baseline.x = lineStart.x;
+				goto calculateNextLine;
+			}
+		}
+
+		if(baseline.x > largestX)
+			largestX = baseline.x;
+
+		this.boundingBox.right = largestX;
+		this.boundingBox.bottom = baseline.y;
+	}
+
+	// you must call rerender first!
+	void draw(ScreenPainter painter) {
+		foreach(part; parts) {
+			part.draw(painter);
+		}
+	}
+
+	struct IdentifyResult {
+		TextFlowComponent part;
+		int charIndexInPart;
+		int totalCharIndex = -1; // if this is -1, it just means the end
+
+		Rectangle boundingBox;
+	}
+
+	IdentifyResult identify(Point pt, bool exact = false) {
+		if(parts.length == 0)
+			return IdentifyResult(null, 0);
+
+		if(pt.y < boundingBox.top) {
+			if(exact)
+				return IdentifyResult(null, 1);
+			return IdentifyResult(parts[0], 0);
+		}
+		if(pt.y > boundingBox.bottom) {
+			if(exact)
+				return IdentifyResult(null, 2);
+			return IdentifyResult(parts[$-1], cast(int) parts[$-1].content.length);
+		}
+
+		int tci = 0;
+
+		// I should probably like binary search this or something...
+		foreach(ref part; parts) {
+			foreach(rendered; part.rendered) {
+				auto rect = Rectangle(rendered.startX, rendered.startY - part.font.ascent, rendered.startX + rendered.width, rendered.startY + part.font.descent);
+				if(rect.contains(pt)) {
+					auto x = pt.x - rendered.startX;
+					auto estimatedIdx = x / part.font.averageWidth;
+
+					if(estimatedIdx < 0)
+						estimatedIdx = 0;
+
+					if(estimatedIdx > rendered.slice.length)
+						estimatedIdx = cast(int) rendered.slice.length;
+
+					int idx;
+					int x1, x2;
+					if(part.font.isMonospace) {
+						auto w = part.font.averageWidth;
+						if(!exact && x > (estimatedIdx + 1) * w)
+							return IdentifyResult(null, 4);
+						idx = estimatedIdx;
+						x1 = idx * w;
+						x2 = (idx + 1) * w;
+					} else {
+						idx = estimatedIdx;
+
+						part.font.prepareContext(window);
+						scope(exit) part.font.releaseContext();
+
+						// int iterations;
+
+						while(true) {
+							// iterations++;
+							x1 = idx ? part.font.stringWidth(rendered.slice[0 .. idx - 1]) : 0;
+							x2 = part.font.stringWidth(rendered.slice[0 .. idx]); // should be the maximum since `averageWidth` kinda lies.
+
+							x1 += rendered.startX;
+							x2 += rendered.startX;
+
+							if(pt.x < x1) {
+								if(idx == 0) {
+									if(exact)
+										return IdentifyResult(null, 6);
+									else
+										break;
+								}
+								idx--;
+							} else if(pt.x > x2) {
+								idx++;
+								if(idx > rendered.slice.length) {
+									if(exact)
+										return IdentifyResult(null, 5);
+									else
+										break;
+								}
+							} else if(pt.x >= x1 && pt.x <= x2) {
+								if(idx)
+									idx--; // point it at the original index
+								break; // we fit
+							}
+						}
+
+						// import std.stdio; writeln(iterations)
+					}
+
+
+					return IdentifyResult(part, idx, tci + idx, Rectangle(x1, rect.top, x2, rect.bottom)); // FIXME: utf-8?
+				}
+			}
+			tci += cast(int) part.content.length; // FIXME: utf-8?
+		}
+		return IdentifyResult(null, 3);
+	}
+
+	Rectangle boundingBox; // only set after [rerender]
+
+	// text will be positioned around the exclusion zone
+	static struct ExclusionZone {
+
+	}
+
+	ExclusionZone[] exclusionZones;
 }
 
 

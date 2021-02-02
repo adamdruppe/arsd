@@ -2513,7 +2513,7 @@ union jvalue
 }
 
 /*
-	Copyright 2019-2020, Adam D. Ruppe.
+	Copyright 2019-2021, Adam D. Ruppe.
 	Boost license. or whatever.
 	Most work done in December 2019.
 */

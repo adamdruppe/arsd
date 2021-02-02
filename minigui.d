@@ -2276,7 +2276,7 @@ class ListWidget : ListWidgetBase {
 		switch(code) {
 			case LBN_SELCHANGE:
 				auto sel = SendMessageW(hwnd, LB_GETCURSEL, 0, 0);
-				setSelection(sel);
+				setSelection(cast(int) sel);
 			break;
 			default:
 		}
