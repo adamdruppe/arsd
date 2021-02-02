@@ -681,7 +681,13 @@ final class AudioPcmOutThreadImplementation : Thread {
 						tmp[0] = buffersIn[0].ptr;
 						tmp[1] = buffersIn[1].ptr;
 
+						loop:
 						auto actuallyGot = v.getSamplesFloat(v.chans, tmp.ptr, cast(int) buffersIn[0].length);
+						if(actuallyGot == 0 && loop) {
+							v.seekStart();
+							scf.currentPosition = 0;
+							goto loop;
+						}
 
 						resamplerDataLeft.dataIn = buffersIn[0][0 .. actuallyGot];
 						if(v.chans > 1)
