@@ -3581,12 +3581,12 @@ public struct JpegParams {
 /// Writes JPEG image to file.
 /// num_channels must be 1 (Y), 3 (RGB), 4 (RGBA), image pitch must be width*num_channels.
 /// note that alpha will not be stored in jpeg file.
-bool compress_image_to_jpeg_stream() (scope jpeg_encoder.WriteFunc wfn, int width, int height, int num_channels, const(ubyte)[] pImage_data) { return compress_image_to_jpeg_stream(wfn, width, height, num_channels, pImage_data, JpegParams()); }
+bool compress_image_to_jpeg_stream (scope jpeg_encoder.WriteFunc wfn, int width, int height, int num_channels, const(ubyte)[] pImage_data) { return compress_image_to_jpeg_stream(wfn, width, height, num_channels, pImage_data, JpegParams()); }
 
 /// Writes JPEG image to file.
 /// num_channels must be 1 (Y), 3 (RGB), 4 (RGBA), image pitch must be width*num_channels.
 /// note that alpha will not be stored in jpeg file.
-bool compress_image_to_jpeg_stream() (scope jpeg_encoder.WriteFunc wfn, int width, int height, int num_channels, const(ubyte)[] pImage_data, in auto ref JpegParams comp_params) {
+bool compress_image_to_jpeg_stream (scope jpeg_encoder.WriteFunc wfn, int width, int height, int num_channels, const(ubyte)[] pImage_data, in JpegParams comp_params) {
   jpeg_encoder dst_image;
   if (!dst_image.setup(wfn, width, height, num_channels, comp_params)) return false;
   for (uint pass_index = 0; pass_index < dst_image.total_passes(); pass_index++) {
@@ -3617,7 +3617,7 @@ bool compress_image_to_jpeg_file() (const(char)[] fname, int width, int height, 
   if (fl is null) return false;
   scope(exit) if (fl !is null) fclose(fl);
   auto res = compress_image_to_jpeg_stream(
-    delegate bool (const(void)[] buf) {
+    delegate bool (scope const(ubyte)[] buf) {
       if (fwrite(buf.ptr, 1, buf.length, fl) != buf.length) return false;
       return true;
     }, width, height, num_channels, pImage_data, comp_params);
