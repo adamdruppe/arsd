@@ -5331,6 +5331,9 @@ version(cgi_with_websocket) {
 
 		private this(Cgi cgi) {
 			this.cgi = cgi;
+
+			Socket socket = cgi.idlol.source;
+			socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"minutes"(5));
 		}
 
 		// returns true if data available, false if it timed out
@@ -5531,7 +5534,8 @@ version(cgi_with_websocket) {
 					return m;
 			} while(lowLevelReceive());
 
-			return WebSocketFrame.init; // FIXME? maybe.
+			throw new ConnectionClosedException("Websocket receive timed out");
+			//return WebSocketFrame.init; // FIXME? maybe.
 		}
 
 		/++
