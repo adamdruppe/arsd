@@ -1495,6 +1495,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			beingOpenKeepsAppOpen = false;
 	}
 
+	/// ditto
+	this(int width, int height, string title, Resizability resizable, OpenGlOptions opengl = OpenGlOptions.no, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
+		this(width, height, title, opengl, resizable, windowType, customizationFlags, parent);
+	}
+
 	/// Same as above, except using the `Size` struct instead of separate width and height.
 	this(Size size, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible) {
 		this(size.width, size.height, title, opengl, resizable);
@@ -9337,8 +9342,10 @@ version(Windows) {
 		void drawText(int x, int y, int x2, int y2, scope const(char)[] text, uint alignment) {
 			if(text.length && text[$-1] == '\n')
 				text = text[0 .. $-1]; // tailing newlines are weird on windows...
+			if(text.length && text[$-1] == '\r')
+				text = text[0 .. $-1];
 
-			WCharzBuffer buffer = WCharzBuffer(text);
+			WCharzBuffer buffer = WCharzBuffer(text, WindowsStringConversionFlags.convertNewLines);
 			if(x2 == 0 && y2 == 0)
 				TextOutW(hdc, x, y, buffer.ptr, cast(int) buffer.length);
 			else {
