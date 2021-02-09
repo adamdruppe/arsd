@@ -1505,6 +1505,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		this(size.width, size.height, title, opengl, resizable);
 	}
 
+	/// ditto
+	this(Size size, string title, Resizability resizable, OpenGlOptions opengl = OpenGlOptions.no) {
+		this(size, title, opengl, resizable);
+	}
+
 
 	/++
 		Creates a window based on the given [Image]. It's client area
