@@ -352,6 +352,17 @@ class Document : FileResource {
 			return new Utf8Stream(data);
 	}
 
+	/++
+		List of elements that can be assumed to be self-closed
+		in this document. The default for a Document are a hard-coded
+		list of ones appropriate for HTML. For [XmlDocument], it defaults
+		to empty. You can modify this after construction but before parsing.
+
+		History:
+			Added February 8, 2021 (included in dub release 9.2)
+	+/
+	string[] selfClosedElements = htmlSelfClosedElements;
+
 	/**
 		Take XMLish data and try to make the DOM tree out of it.
 
@@ -1329,7 +1340,7 @@ class Document : FileResource {
 		if(loose)
 			name = name.toLower();
 
-		auto e = Element.make(name);
+		auto e = Element.make(name, null, null, selfClosedElements);
 		e.parentDocument = this;
 
 		return e;
@@ -1946,9 +1957,15 @@ class Element {
 
 	// and now methods
 
-	/// Convenience function to try to do the right thing for HTML. This is the main
-	/// way I create elements.
-	static Element make(string tagName, string childInfo = null, string childInfo2 = null) {
+	/++
+		Convenience function to try to do the right thing for HTML. This is the main way I create elements.
+
+		History:
+			On February 8, 2021, the `selfClosedElements` parameter was added. Previously, it used a private
+			immutable global list for HTML. It still defaults to the same list, but you can change it now via
+			the parameter.
+	+/
+	static Element make(string tagName, string childInfo = null, string childInfo2 = null, const string[] selfClosedElements = htmlSelfClosedElements) {
 		bool selfClosed = tagName.isInArray(selfClosedElements);
 
 		Element e;
@@ -2074,9 +2091,17 @@ class Element {
 		assert(_tagName.indexOf(" ") == -1);//, "<" ~ _tagName ~ "> is invalid");
 	}
 
-	/// Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
-	/// Note also that without a parent document, elements are always in strict, case-sensitive mode.
-	this(string _tagName, string[string] _attributes = null) {
+	/++
+		Convenience constructor when you don't care about the parentDocument. Note this might break things on the document.
+		Note also that without a parent document, elements are always in strict, case-sensitive mode.
+
+		History:
+			On February 8, 2021, the `selfClosedElements` parameter was added. It defaults to the same behavior as
+			before: using the hard-coded list of HTML elements, but it can now be overridden. If you use
+			[Document.createElement], it will use the list set for the current document. Otherwise, you can pass
+			something here if you like.
+	+/
+	this(string _tagName, string[string] _attributes = null, const string[] selfClosedElements = htmlSelfClosedElements) {
 		tagName = _tagName;
 		if(_attributes !is null)
 			attributes = _attributes;
@@ -3532,6 +3557,7 @@ class Element {
 /// Group: core_functionality
 class XmlDocument : Document {
 	this(string data) {
+		selfClosedElements = null;
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
@@ -6750,7 +6776,7 @@ struct DomMutationEvent {
 }
 
 
-private immutable static string[] selfClosedElements = [
+private immutable static string[] htmlSelfClosedElements = [
 	// html 4
 	"img", "hr", "input", "br", "col", "link", "meta",
 	// html 5
