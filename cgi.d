@@ -4814,7 +4814,16 @@ class ListeningConnectionManager {
 	bool tcp;
 	void delegate() cleanup;
 
+	private void function(Socket) fhandler;
+	private void dg_handler(Socket s) {
+		fhandler(s);
+	}
 	this(string host, ushort port, void function(Socket) handler) {
+		fhandler = handler;
+		this(host, port, &dg_handler);
+	}
+
+	this(string host, ushort port, void delegate(Socket) handler) {
 		this.handler = handler;
 
 		listener = startListening(host, port, tcp, cleanup, 128);
@@ -4827,7 +4836,7 @@ class ListeningConnectionManager {
 	}
 
 	Socket listener;
-	void function(Socket) handler;
+	void delegate(Socket) handler;
 
 	bool running;
 	void quit() {
@@ -4911,7 +4920,7 @@ class ConnectionException : Exception {
 	}
 }
 
-alias void function(Socket) CMT;
+alias void delegate(Socket) CMT;
 
 import core.thread;
 /+
