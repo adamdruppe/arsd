@@ -4036,13 +4036,17 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 version(cgi_use_fiber)
 class CgiFiber : Fiber {
 	this(void function(Socket) handler) {
+		this(delegate void(Socket s) { handler(s); });
+	}
+
+	this(void delegate(Socket) handler) {
 		this.handler = handler;
 		// FIXME: stack size
 		super(&run);
 	}
 
 	Socket connection;
-	void function(Socket) handler;
+	void delegate(Socket) handler;
 
 	void run() {
 		handler(connection);
