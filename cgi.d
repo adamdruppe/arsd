@@ -4035,8 +4035,13 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 
 version(cgi_use_fiber)
 class CgiFiber : Fiber {
+	private void function(Socket) f_handler;
+	private void f_handler_dg(Socket s) { // to avoid extra allocation w/ function
+		f_handler(s);
+	}
 	this(void function(Socket) handler) {
-		this(delegate void(Socket s) { handler(s); });
+		this.f_handler = handler;
+		this(&f_handler_dg);
 	}
 
 	this(void delegate(Socket) handler) {
