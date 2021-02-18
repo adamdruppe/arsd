@@ -181,6 +181,7 @@ version(Posix) {
 	__gshared bool windowSizeChanged = false;
 	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
 	__gshared bool hangedUp = false; /// similar to interrupted.
+	__gshared bool continuedFromSuspend = false; /// SIGCONT was just received, the terminal state may have changed. Added Feb 18, 2021.
 	version=WithSignals;
 
 	version(with_eventloop)
@@ -212,6 +213,16 @@ version(Posix) {
 	extern(C)
 	void hangupSignalHandler(int sigNumber) nothrow {
 		hangedUp = true;
+		version(with_eventloop) {
+			import arsd.eventloop;
+			try
+				send(SignalFired());
+			catch(Exception) {}
+		}
+	}
+	extern(C)
+	void continueSignalHandler(int sigNumber) nothrow {
+		continuedFromSuspend = true;
 		version(with_eventloop) {
 			import arsd.eventloop;
 			try
@@ -2298,6 +2309,7 @@ struct RealTimeConsoleInput {
 		private sigaction_t oldSigWinch;
 		private sigaction_t oldSigIntr;
 		private sigaction_t oldHupIntr;
+		private sigaction_t oldContIntr;
 		private termios old;
 		ubyte[128] hack;
 		// apparently termios isn't the size druntime thinks it is (at least on 32 bit, sometimes)....
@@ -2314,6 +2326,62 @@ struct RealTimeConsoleInput {
 	private ConsoleInputFlags flags;
 	private Terminal* terminal;
 	private void function(RealTimeConsoleInput*)[] destructor;
+
+	version(Posix)
+	private bool reinitializeAfterSuspend() {
+		version(TerminalDirectToEmulator) {
+			if(terminal.usingDirectEmulator)
+				return false;
+		}
+
+		// copy/paste from posixInit but with private old
+		if(fdIn != -1) {
+			termios old;
+			ubyte[128] hack;
+
+			tcgetattr(fdIn, &old);
+			auto n = old;
+
+			auto f = ICANON;
+			if(!(flags & ConsoleInputFlags.echo))
+				f |= ECHO;
+
+			n.c_lflag &= ~f;
+			tcsetattr(fdIn, TCSANOW, &n);
+		}
+
+		// copy paste from constructor, but not setting the destructor teardown since that's already done
+		if(flags & ConsoleInputFlags.selectiveMouse) {
+			terminal.writeStringRaw("\033[?1014h");
+		} else if(flags & ConsoleInputFlags.mouse) {
+			terminal.writeStringRaw("\033[?1000h");
+			import std.process : environment;
+
+			if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
+				terminal.writeStringRaw("\033[?1003h");
+			} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
+				terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
+			}
+		}
+		if(flags & ConsoleInputFlags.paste) {
+			if(terminal.terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
+				terminal.writeStringRaw("\033[?2004h"); // bracketed paste mode
+			}
+		}
+
+		if(terminal.tcaps & TerminalCapabilities.arsdHyperlinks) {
+			terminal.writeStringRaw("\033[?3004h"); // bracketed link mode
+		}
+
+		// try to ensure the terminal is in UTF-8 mode
+		if(terminal.terminalInFamily("xterm", "screen", "linux", "tmux") && !terminal.isMacTerminal()) {
+			terminal.writeStringRaw("\033%G");
+		}
+
+		terminal.flush();
+
+		return true;
+	}
 
 	/// To capture input, you need to provide a terminal and some flags.
 	public this(Terminal* terminal, ConsoleInputFlags flags) {
@@ -2416,21 +2484,24 @@ struct RealTimeConsoleInput {
 
 		version(with_eventloop) {
 			import arsd.eventloop;
-			version(Win32Console)
-				auto listenTo = inputHandle;
-			else version(Posix)
-				auto listenTo = this.fdIn;
-			else static assert(0, "idk about this OS");
+			version(Win32Console) {
+				static HANDLE listenTo;
+				listenTo = inputHandle;
+			} else version(Posix) {
+				// total hack but meh i only ever use this myself
+				static int listenTo;
+				listenTo = this.fdIn;
+			} else static assert(0, "idk about this OS");
 
 			version(Posix)
 			addListener(&signalFired);
 
 			if(listenTo != -1) {
 				addFileEventListeners(listenTo, &eventListener, null, null);
-				destructor ~= (this_) { this_.removeFileEventListeners(listenTo); };
+				destructor ~= (this_) { removeFileEventListeners(listenTo); };
 			}
 			addOnIdle(&terminal.flush);
-			destructor ~= (this_) { this_.removeOnIdle(&terminal.flush); };
+			destructor ~= (this_) { removeOnIdle(&this_.terminal.flush); };
 		}
 	}
 
@@ -2482,6 +2553,16 @@ struct RealTimeConsoleInput {
 			n.sa_flags = 0;
 			sigaction(SIGHUP, &n, &oldHupIntr);
 		}
+
+		{
+			import core.sys.posix.signal;
+			sigaction_t n;
+			n.sa_handler = &continueSignalHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			sigaction(SIGCONT, &n, &oldContIntr);
+		}
+
 	}
 
 	void fdReadyReader() {
@@ -2568,6 +2649,7 @@ struct RealTimeConsoleInput {
 			}
 			sigaction(SIGINT, &oldSigIntr, null);
 			sigaction(SIGHUP, &oldHupIntr, null);
+			sigaction(SIGCONT, &oldContIntr, null);
 		}
 
 		skip_extra:
@@ -2725,6 +2807,8 @@ struct RealTimeConsoleInput {
 			}
 		} else {
 			auto got = nextRaw_impl(interruptable);
+			if(got == int.min && !interruptable)
+				throw new Exception("eof found in non-interruptable context");
 			// import std.stdio; writeln(cast(int) got);
 			return got;
 		}
@@ -2738,7 +2822,7 @@ struct RealTimeConsoleInput {
 			try_again:
 			auto ret = read(fdIn, buf.ptr, buf.length);
 			if(ret == 0)
-				return 0; // input closed
+				return int.min; // input closed
 			if(ret == -1) {
 				import core.stdc.errno;
 				if(errno == EINTR)
@@ -2763,6 +2847,8 @@ struct RealTimeConsoleInput {
 			import std.conv;
 			if(!ReadFile(inputHandle, buf.ptr, cast(int) buf.length, &d, null))
 				throw new Exception("ReadFile " ~ to!string(GetLastError()));
+			if(d == 0)
+				return int.min;
 			return buf[0];
 		}
 	}
@@ -2836,6 +2922,14 @@ struct RealTimeConsoleInput {
 
 			if(windowSizeChanged) {
 				return checkWindowSizeChanged();
+			}
+
+			if(continuedFromSuspend) {
+				continuedFromSuspend = false;
+				if(reinitializeAfterSuspend())
+					return checkWindowSizeChanged(); // while it was suspended it is possible the window got resized, so we'll check that, and sending this event also triggers a redraw on most programs too which is also convenient for getting them caught back up to the screen
+				else
+					goto wait_for_more;
 			}
 		}
 
@@ -3071,7 +3165,7 @@ struct RealTimeConsoleInput {
 			auto ne = readNextEventsHelper();
 			initial ~= ne;
 			foreach(n; ne)
-				if(n.type == InputEvent.Type.EndOfFileEvent)
+				if(n.type == InputEvent.Type.EndOfFileEvent || n.type == InputEvent.Type.HangupEvent)
 					return initial; // hit end of file, get out of here lest we infinite loop
 					// (select still returns info available even after we read end of file)
 		}
@@ -3494,9 +3588,9 @@ struct RealTimeConsoleInput {
 		auto c = remainingFromLastTime == int.max ? nextRaw(true) : remainingFromLastTime;
 		if(c == -1)
 			return null; // interrupted; give back nothing so the other level can recheck signal flags
-		// this conflicted with ctrl+space idk why it was ever there tbh
-		//if(c == 0)
-			//return [InputEvent(EndOfFileEvent(), terminal)];
+		// 0 conflicted with ctrl+space, so I have to use int.min to indicate eof
+		if(c == int.min)
+			return [InputEvent(EndOfFileEvent(), terminal)];
 		if(c == '\033') {
 			if(!timedCheckForInput_bypassingBuffer(50)) {
 				// user hit escape (or super slow escape sequence, but meh)
