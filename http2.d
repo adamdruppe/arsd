@@ -2760,6 +2760,11 @@ class WebSocket {
 		if(config.origin.length)
 			append("Origin: ", origin, "\r\n");
 
+		foreach(h; config.additionalHeaders) {
+			append(h);
+			append("\r\n");
+		}
+
 		append("\r\n");
 
 		auto remaining = buffer[0 .. pos];
@@ -3002,6 +3007,19 @@ class WebSocket {
 		string[string] cookies; /// Cookies to send with the initial request. cookies[name] = value;
 		string origin; /// Origin URL to send with the handshake, if desired.
 		string protocol; /// the protocol header, if desired.
+
+		/++
+			Additional headers to put in the HTTP request. These should be formatted `Name: value`, like for example:
+
+			---
+			Config config;
+			config.additionalHeaders ~= "Authorization: Bearer your_auth_token_here";
+			---
+
+			History:
+				Added February 19, 2021 (included in dub version 9.2)
+		+/
+		string[] additionalHeaders;
 
 		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
 	}
