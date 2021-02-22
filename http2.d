@@ -954,9 +954,10 @@ class HttpRequest {
 			Socket openNewConnection() {
 				Socket socket;
 				if(ssl) {
-					version(with_openssl)
+					version(with_openssl) {
+						loadOpenSsl();
 						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host);
-					else
+					} else
 						throw new Exception("SSL not compiled in");
 				} else
 					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
@@ -2087,7 +2088,14 @@ version(use_openssl) {
 
 	import core.stdc.stdio;
 
-	shared static this() {
+	private __gshared Object loadSslMutex = new Object;
+	private __gshared bool sslLoaded = false;
+
+	void loadOpenSsl() {
+		if(sslLoaded)
+			return;
+	synchronized(loadSslMutex) {
+
 		version(OSX) {
 			// newest box
 			ossllib_handle = dlopen("libssl.1.1.dylib", RTLD_NOW);
@@ -2151,6 +2159,9 @@ version(use_openssl) {
 		else if(ossllib.OPENSSL_init_ssl)
 			ossllib.OPENSSL_init_ssl(0x00200000L, null);
 		else throw new Exception("couldn't load openssl errors");
+
+		sslLoaded = true;
+	}
 	}
 
 	/+
@@ -2707,9 +2718,10 @@ class WebSocket {
 		port = cast(ushort) (uri.port ? uri.port : ssl ? 443 : 80);
 
 		if(ssl) {
-			version(with_openssl)
+			version(with_openssl) {
+				loadOpenSsl();
 				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host);
-			else
+			} else
 				throw new Exception("SSL not compiled in");
 		} else
 			socket = new Socket(family(uri.unixSocketPath), SocketType.STREAM);
@@ -2735,11 +2747,15 @@ class WebSocket {
 
 		// the headers really shouldn't be bigger than this, at least
 		// the chunks i need to process
-		ubyte[4096] buffer;
+		ubyte[4096] bufferBacking = void;
+		ubyte[] buffer = bufferBacking[];
 		size_t pos;
 
 		void append(in char[][] items...) {
 			foreach(what; items) {
+				if((pos + what.length) > buffer.length) {
+					buffer.length += 4096;
+				}
 				buffer[pos .. pos + what.length] = cast(ubyte[]) what[];
 				pos += what.length;
 			}
@@ -3295,7 +3311,7 @@ class WebSocket {
 				auto selectGot = Socket.select(readSet, null, null, 10.seconds /* timeout */);
 				if(selectGot == 0) { /* timeout */
 					// timeout
-					goto tryAgain;
+					continue;
 				} else if(selectGot == -1) { /* interrupted */
 					goto tryAgain;
 				} else {
