@@ -6,6 +6,12 @@
 +/
 module arsd.webview;
 
+// Please note; the Microsoft terms and conditions say they may be able to collect
+// information about your users if you use this on Windows.
+// see: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+
+// https://go.microsoft.com/fwlink/p/?LinkId=2124703
+
 
 /* Original https://github.com/zserge/webview notice below:
  * MIT License

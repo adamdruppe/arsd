@@ -6,30 +6,6 @@
 	"description": "Subpackage collection for web, database, terminal ui, gui, scripting, and more with a commitment to long-term compatibility and stability. Use individual subpackages instead of the overall package to avoid bringing in things you don't need/want!",
 	"authors": ["Adam D. Ruppe"],
 	"license":"BSL-1.0",
-	"dependencies": {
-		":simpledisplay": "*",
-		":minigui": "*",
-		":nanovega": "*",
-		":email": "*",
-		":image_files": "*",
-		":png": "*",
-		":htmltotext": "*",
-		":dom": "*",
-		":characterencodings": "*",
-		":cgi": "*",
-		":mysql": "*",
-		":postgres": "*",
-		":sqlite": "*",
-		":mssql": "*",
-		":http": "*",
-		":jsvar": "*",
-		":script": "*",
-		":terminal": "*",
-		":ttf": "*",
-		":color_base": "*",
-		":svg":"*",
-		":database_base": "*"
-	},
 	"subPackages": [
 		{
 			"name": "simpledisplay",
@@ -42,17 +18,17 @@
 			"configurations": [
 				{
 					"name": "normal",
-					"libs-windows": ["gdi32"]
+					"libs-windows": ["gdi32", "ole32"]
 				},
 				{
 					"name": "without-opengl",
 					"versions": ["without_opengl"],
-					"libs-windows": ["gdi32"]
+					"libs-windows": ["gdi32", "ole32"]
 				},
 				{
 					"name": "cocoa",
 					"versions-osx": [ "OSXCocoa", "allow_unimplemented_features", "without_opengl" ],
-					"lflags-osx": ["-framework", "Cocoa"],
+					"lflags-osx": ["-framework", "Cocoa"]
 				}
 			],
 			"sourceFiles": ["simpledisplay.d"]
@@ -80,6 +56,18 @@
 			"importPaths": ["."],
 			"libs-posix": ["freetype", "fontconfig"],
 			"sourceFiles": ["nanovega.d", "blendish.d"]
+		},
+		{
+			"name": "minigui-nanovega",
+			"description": "Nanovega widget add-on for minigui. New in v9.2.",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.minigui_addons.nanovega=minigui_addons/nanovega.d"],
+			"dependencies": {
+				"arsd-official:minigui":"*",
+				"arsd-official:nanovega":"*"
+			},
+			"importPaths": ["."],
+			"sourceFiles": ["minigui_addons/nanovega.d"]
 		},
 		{
 			"name": "gamehelpers",

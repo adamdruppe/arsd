@@ -2154,6 +2154,10 @@ class OpenGlWidget : Widget {
 		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, pwin);
 		super(parent);
 
+		windowsetup(win);
+	}
+
+	protected void windowsetup(SimpleWindow w) {
 		/*
 		win.onFocusChange = (bool getting) {
 			if(getting)
@@ -2185,6 +2189,7 @@ class OpenGlWidget : Widget {
 				},
 			);
 		}
+
 	}
 
 	override void paint(WidgetPainter painter) {
