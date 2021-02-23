@@ -1436,6 +1436,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 			impl.createWindow(_width, _height, _title, openglMode, _parent);
 
+			if(auto dh = dropHandler) {
+				dropHandler = null;
+				enableDragAndDrop(this, dh);
+			}
+
 			if(recreateAdditionalConnectionState)
 				recreateAdditionalConnectionState();
 
@@ -1454,8 +1459,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		void delegate() discardAdditionalConnectionState;
 		void delegate() recreateAdditionalConnectionState;
+
 	}
 
+	private DropHandler dropHandler;
 
 	SimpleWindow _parent;
 	bool beingOpenKeepsAppOpen = true;
@@ -2762,6 +2769,25 @@ private:
 		return (res >= int.max ? 0 : res);
 	}
 }
+
+/* Drag and drop support { */
+version(X11) {
+
+} else version(Windows) {
+	import core.sys.windows.uuid;
+	import core.sys.windows.ole2;
+	import core.sys.windows.oleidl;
+	import core.sys.windows.objidl;
+	import core.sys.windows.wtypes;
+
+	pragma(lib, "ole32");
+	void initDnd() {
+		auto err = OleInitialize(null);
+		if(err != S_OK && err != S_FALSE)
+			throw new Exception("init");//err);
+	}
+}
+/* } End drag and drop support */
 
 
 /// Represents a mouse cursor (aka the mouse pointer, the image seen on screen that indicates where the mouse is pointing).
@@ -5116,8 +5142,10 @@ version(X11) {
 
 	private Atom*[] interredAtoms; // for discardAndRecreate
 
+	// FIXME: do a GetAtomUpfront too that just queues all at CT and combines it all.
 	/// Platform specific for X11
-	@property Atom GetAtom(string name, bool create = false)(Display* display) {
+	/// History: On February 21, 2021, I changed the default value of `create` to be true.
+	@property Atom GetAtom(string name, bool create = true)(Display* display) {
 		static Atom a;
 		if(!a) {
 			a = XInternAtom(display, name, !create);
@@ -5205,10 +5233,18 @@ version(X11) {
 			selectionEvent.time = event.time;
 			selectionEvent.target = event.target;
 
+			bool supportedType() {
+				foreach(t; this.availableFormats())
+					if(t == event.target)
+						return true;
+				return false;
+			}
+
 			if(event.property == None) {
 				selectionEvent.property = event.target;
 
 				XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+				XFlush(display);
 			} if(event.target == GetAtom!"TARGETS"(display)) {
 				/* respond with the supported types */
 				auto tlist = this.availableFormats();
@@ -5216,7 +5252,8 @@ version(X11) {
 				selectionEvent.property = event.property;
 
 				XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
-			} else {
+				XFlush(display);
+			} else if(supportedType()) {
 				auto buffer = new ubyte[](1024 * 64);
 				auto toSend = this.getData(event.target, buffer[]);
 
@@ -5231,6 +5268,7 @@ version(X11) {
 						toSend.ptr, cast(int) toSend.length);
 
 					XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+					XFlush(display);
 				} else {
 					// large, let's send incrementally
 					arch_ulong l = toSend.length;
@@ -5260,15 +5298,14 @@ version(X11) {
 				}
 				//if(after)
 					//after();
-			}
-
-			/+
-			// FIXME
-			if(unsupported) {
+			} else {
+				debug(sdpy_clip) {
+					import std.stdio; writeln("Unsupported data ", getAtomName(event.target, display));
+				}
 				selectionEvent.property = None; // I don't know how to handle this type...
-			XSendEvent(display, selectionEvent.requestor, false, 0, cast(XEvent*) &selectionEvent);
+				XSendEvent(display, selectionEvent.requestor, false, EventMask.NoEventMask, cast(XEvent*) &selectionEvent);
+				XFlush(display);
 			}
-			+/
 		}
 	}
 
@@ -5284,6 +5321,7 @@ version(X11) {
 			auto display = XDisplayConnection.get;
 			return [
 				GetAtom!"UTF8_STRING"(display),
+				GetAtom!"text/plain"(display),
 				XA_STRING,
 				GetAtom!"TARGETS"(display)
 			];
@@ -5365,7 +5403,7 @@ version(X11) {
 	}
 
 	///
-	void getX11Selection(string atomName)(SimpleWindow window, void delegate(in char[]) handler) {
+	void getX11Selection(string atomName)(SimpleWindow window, void delegate(in char[]) handler, Time timestamp = 0 /* CurrentTime */) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
@@ -5381,7 +5419,7 @@ version(X11) {
 			void delegate(in char[]) handler;
 
 			void handleData(Atom target, in ubyte[] data) {
-				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING)
+				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
 					handler(cast(const char[]) data);
 			}
 
@@ -5393,18 +5431,20 @@ version(X11) {
 						break;
 					} else if(option == XA_STRING) {
 						best = option;
+					} else if(option == GetAtom!"text/plain"(XDisplayConnection.get)) {
+						best = option;
 					}
 				}
 				return best;
 			}
 		}
 
-		window.impl.getSelectionHandler = new X11GetSelectionHandler_Text(handler);
+		window.impl.getSelectionHandlers[atom] = new X11GetSelectionHandler_Text(handler);
 
 		auto target = GetAtom!"TARGETS"(display);
 
 		// SDD_DATA is "simpledisplay.d data"
-		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, 0 /*CurrentTime*/);
+		XConvertSelection(display, atom, target, GetAtom!("SDD_DATA", true)(display), window.impl.window, timestamp);
 	}
 
 	/// Gets the image on the clipboard, if there is one. Added July 2020.
@@ -5443,7 +5483,7 @@ version(X11) {
 		}
 
 
-		window.impl.getSelectionHandler = new X11GetSelectionHandler_Image(handler);
+		window.impl.getSelectionHandlers[atom] = new X11GetSelectionHandler_Image(handler);
 
 		auto target = GetAtom!"TARGETS"(display);
 
@@ -6329,6 +6369,9 @@ struct MouseEvent {
 
 	MouseButton button; /// See [MouseButton]
 	int modifierState; /// See [ModifierState]
+
+	version(X11)
+		private Time timestamp;
 
 	/// Returns a linear representation of mouse button,
 	/// for use with static arrays. Guaranteed to be >= 0 && <= 15
@@ -11886,7 +11929,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		int warpEventCount = 0; // number of mouse movement events to eat
 
 		__gshared X11SetSelectionHandler[Atom] setSelectionHandlers;
-		X11GetSelectionHandler getSelectionHandler;
+		X11GetSelectionHandler[Atom] getSelectionHandlers;
 
 		version(without_opengl) {} else
 		GLXContext glc;
@@ -12615,8 +12658,8 @@ version(X11) {
 
 
 		  	if(auto win = e.xproperty.window in SimpleWindow.nativeMapping)
-		  	if(win.getSelectionHandler !is null) {
-				if(win.getSelectionHandler.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyNewValue) {
+		  	if(auto handler = e.xproperty.atom in win.getSelectionHandlers) {
+				if(handler.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyNewValue) {
 					Atom target;
 					int format;
 					arch_ulong bytesafter, length;
@@ -12640,7 +12683,7 @@ version(X11) {
 
 					auto id = (cast(ubyte*) value)[0 .. length];
 
-					win.getSelectionHandler.handleIncrData(targetToKeep, id);
+					handler.handleIncrData(targetToKeep, id);
 
 					XFree(value);
 				}
@@ -12648,12 +12691,11 @@ version(X11) {
 		  break;
 		  case EventType.SelectionNotify:
 		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
-		  	if(win.getSelectionHandler !is null) {
-				// FIXME: maybe we should call a different handler for PRIMARY vs CLIPBOARD
+		  	if(auto handler = e.xproperty.atom in win.getSelectionHandlers) {
 				if(e.xselection.property == None) { // || e.xselection.property == GetAtom!("NULL", true)(e.xselection.display)) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
-					win.getSelectionHandler.handleData(None, null);
+					handler.handleData(None, null);
 				} else {
 					Atom target;
 					int format;
@@ -12681,9 +12723,14 @@ version(X11) {
 							// we can handle, if available
 
 							Atom[] answer = (cast(Atom*) value)[0 .. length];
-							Atom best = win.getSelectionHandler.findBestFormat(answer);
+							Atom best = handler.findBestFormat(answer);
 
-							//writeln("got ", answer);
+							/+
+							writeln("got ", answer);
+							foreach(a; answer)
+								printf("%s\n", XGetAtomName(display, a));
+							writeln("best ", best);
+							+/
 
 							if(best != None) {
 								// actually request the best format
@@ -12692,7 +12739,7 @@ version(X11) {
 						} else if(target == GetAtom!"INCR"(display)) {
 							// incremental
 
-							win.getSelectionHandler.prepareIncremental(e.xselection.requestor, e.xselection.property);
+							handler.prepareIncremental(e.xselection.requestor, e.xselection.property);
 
 							// signal the sending program that we see
 							// the incr and are ready to receive more.
@@ -12702,7 +12749,7 @@ version(X11) {
 								e.xselection.property);
 						} else {
 							// unsupported type... maybe, forward
-							win.getSelectionHandler.handleData(target, cast(ubyte[]) value[0 .. length]);
+							handler.handleData(target, cast(ubyte[]) value[0 .. length]);
 						}
 					}
 					XFree(value);
@@ -12799,6 +12846,97 @@ version(X11) {
 				} else if(e.xclient.message_type == GetAtom!"MANAGER"(e.xany.display)) {
 					foreach(nai; NotificationAreaIcon.activeIcons)
 						nai.newManager();
+				} else if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+
+					bool xDragWindow = true;
+					if(xDragWindow && e.xclient.message_type == GetAtom!"XdndStatus"(e.xany.display)) {
+						//XDefineCursor(display, xDragWindow.impl.window,
+							//import std.stdio; writeln("XdndStatus ", e.xclient.data.l);
+					}
+					if(auto dh = win.dropHandler) {
+
+						static Atom[3] xFormatsBuffer;
+						static Atom[] xFormats;
+
+						void resetXFormats() {
+							xFormatsBuffer[] = 0;
+							xFormats = xFormatsBuffer[];
+						}
+
+						if(e.xclient.message_type == GetAtom!"XdndEnter"(e.xany.display)) {
+							// on Windows it is supposed to return the effect you actually do FIXME
+
+							auto sourceWindow =  e.xclient.data.l[0];
+
+							xFormatsBuffer[0] = e.xclient.data.l[2];
+							xFormatsBuffer[1] = e.xclient.data.l[3];
+							xFormatsBuffer[2] = e.xclient.data.l[4];
+
+							if(e.xclient.data.l[1] & 1) {
+								// can just grab it all but like we don't necessarily need them...
+								xFormats = cast(Atom[]) getX11PropertyData(sourceWindow, GetAtom!"XdndTypeList"(display), XA_ATOM);
+							} else {
+								int len;
+								foreach(fmt; xFormatsBuffer)
+									if(fmt) len++;
+								xFormats = xFormatsBuffer[0 .. len];
+							}
+
+							auto pkg = DropPackage(*win, e.xclient.data.l[0], 0, xFormats);
+
+							dh.dragEnter(&pkg);
+						} else if(e.xclient.message_type == GetAtom!"XdndPosition"(e.xany.display)) {
+
+							auto pack = e.xclient.data.l[2];
+
+							auto result = dh.dragOver(Point((pack & 0xffff0000) >> 16, pack & 0xffff)); // FIXME: translate screen coordinates back to window coords
+
+
+							XClientMessageEvent xclient;
+
+							xclient.type = EventType.ClientMessage;
+							xclient.window = e.xclient.data.l[0];
+							xclient.message_type = GetAtom!"XdndStatus"(display);
+							xclient.format = 32;
+							xclient.data.l[0] = win.impl.window;
+							xclient.data.l[1] = (result.action != DragAndDropAction.none) ? 1 : 0; // will accept
+							auto r = result.consistentWithin;
+							xclient.data.l[2] = ((cast(short) r.left) << 16) | (cast(short) r.top);
+							xclient.data.l[3] = ((cast(short) r.width) << 16) | (cast(short) r.height);
+							xclient.data.l[4] = dndActionAtom(e.xany.display, result.action);
+
+							XSendEvent(
+								display,
+								e.xclient.data.l[0],
+								false,
+								EventMask.NoEventMask,
+								cast(XEvent*) &xclient
+							);
+
+
+						} else if(e.xclient.message_type == GetAtom!"XdndLeave"(e.xany.display)) {
+							//import std.stdio; writeln("XdndLeave");
+							// drop cancelled.
+							// data.l[0] is the source window
+							dh.dragLeave();
+
+							resetXFormats();
+						} else if(e.xclient.message_type == GetAtom!"XdndDrop"(e.xany.display)) {
+							// drop happening, should fetch data, then send finished
+							//import std.stdio; writeln("XdndDrop");
+
+							auto pkg = DropPackage(*win, e.xclient.data.l[0], e.xclient.data.l[2], xFormats);
+
+							dh.drop(&pkg);
+
+							resetXFormats();
+						} else if(e.xclient.message_type == GetAtom!"XdndFinished"(e.xany.display)) {
+							// import std.stdio; writeln("XdndFinished");
+
+							dh.finish();
+						}
+
+					}
 				}
 		  break;
 		  case EventType.MapNotify:
@@ -12872,6 +13010,8 @@ version(X11) {
 			mouse.y = event.y;
 			mouse.modifierState = event.state;
 
+			mouse.timestamp = event.time;
+
 			if(auto win = e.xmotion.window in SimpleWindow.nativeMapping) {
 				mouse.window = *win;
 				if (win.warpEventCount > 0) {
@@ -12896,6 +13036,8 @@ version(X11) {
 		  case EventType.ButtonRelease:
 			MouseEvent mouse;
 			auto event = e.xbutton;
+
+			mouse.timestamp = event.time;
 
 			mouse.type = cast(MouseEventType) (e.type == EventType.ButtonPress ? 1 : 2);
 			mouse.x = event.x;
@@ -17437,6 +17579,966 @@ mixin template ExperimentalTextComponent() {
 
 }
 
+/++
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+interface DropHandler {
+	/++
+		Called when the drag enters the handler's area.
+	+/
+	DragAndDropAction dragEnter(DropPackage*);
+	/++
+		Called when the drag leaves the handler's area or is
+		cancelled. You should free your resources when this is called.
+	+/
+	void dragLeave();
+	/++
+		Called continually as the drag moves over the handler's area.
+
+		Returns: feedback to the dragger
+	+/
+	DropParameters dragOver(Point pt);
+	/++
+		The user dropped the data and you should process it now. You can
+		access the data through the given [DropPackage].
+	+/
+	void drop(scope DropPackage*);
+	/++
+		Called when the drop is complete. You should free whatever temporary
+		resources you were using. It is often reasonable to simply forward
+		this call to [dragLeave].
+	+/
+	void finish();
+
+	/++
+		Parameters returned by [DropHandler.drop].
+	+/
+	static struct DropParameters {
+		/++
+			Acceptable action over this area.
+		+/
+		DragAndDropAction action;
+		/++
+			Rectangle, in client coordinates, where the dragger can expect the same result during this drag session and thus need not ask again.
+
+			If you leave this as Rectangle.init, the dragger will continue to ask and this can waste resources.
+		+/
+		Rectangle consistentWithin;
+	}
+}
+
+/++
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+enum DragAndDropAction {
+	none = 0,
+	copy,
+	move,
+	link,
+	ask,
+	custom
+}
+
+/++
+	An opaque structure representing dropped data. It contains
+	private, platform-specific data that your `drop` function
+	should simply forward.
+
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+struct DropPackage {
+	/++
+		Lists the available formats as magic numbers. You should compare these
+		against looked-up formats (see [DraggableData.getFormatId]) you know you support and can
+		understand the passed data.
+	+/
+	DraggableData.FormatId[] availableFormats() {
+		version(X11) {
+			return xFormats;
+		} else version(Windows) {
+			if(pDataObj is null)
+				return null;
+
+			typeof(return) ret;
+
+			IEnumFORMATETC ef;
+			if(pDataObj.EnumFormatEtc(DATADIR.DATADIR_GET, &ef) == S_OK) {
+				FORMATETC fmt;
+				ULONG fetched;
+				while(ef.Next(1, &fmt, &fetched) == S_OK) {
+					if(fetched == 0)
+						break;
+
+					if(fmt.lindex != -1)
+						continue;
+					if(fmt.dwAspect != DVASPECT.DVASPECT_CONTENT)
+						continue;
+					if(!(fmt.tymed & TYMED.TYMED_HGLOBAL))
+						continue;
+
+					ret ~= fmt.cfFormat;
+				}
+			}
+
+			return ret;
+		}
+	}
+
+	/++
+		Gets data from the drop and optionally accepts it.
+
+		Returns:
+			void because the data is fed asynchronously through the `dg` parameter.
+
+		Params:
+			acceptedAction = the action to report back to the ender. If it is [DragAndDropAction.none], you are just inspecting the data, but not accepting the drop.
+
+			This is useful to tell the sender that you accepted a move, for example, so they can update their data source as well. For other cases, accepting a drop also indicates that any memory associated with the transfer can be freed.
+
+			Calling `getData` again after accepting a drop is not permitted.
+
+			format = the format you want, from [availableFormats]. Use [DraggableData.getFormatId] to convert from a MIME string or well-known standard format.
+
+			dg = delegate to receive the data asynchronously. Please note this delegate may be called immediately, never be called, or be called somewhere in between during event loop processing depending on the platform, requested format, and other conditions beyond your control.
+
+		Throws:
+			if `format` was not compatible with the [availableFormats] or if the drop has already been accepted.
+
+		History:
+			Included in first release of [DropPackage].
+	+/
+	void getData(DragAndDropAction acceptedAction, DraggableData.FormatId format, void delegate(scope ubyte[] data) dg) {
+		version(X11) {
+
+			auto display = XDisplayConnection.get();
+			auto selectionAtom = GetAtom!"XdndSelection"(display);
+			auto best = format;
+
+			class X11GetSelectionHandler_Drop : X11GetSelectionHandler {
+				mixin X11GetSelectionHandler_Basics;
+
+				void handleData(Atom target, in ubyte[] data) {
+					//if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
+
+					dg(cast(ubyte[]) data);
+
+					if(acceptedAction != DragAndDropAction.none) {
+						auto display = XDisplayConnection.get;
+
+						XClientMessageEvent xclient;
+
+						xclient.type = EventType.ClientMessage;
+						xclient.window = sourceWindow;
+						xclient.message_type = GetAtom!"XdndFinished"(display);
+						xclient.format = 32;
+						xclient.data.l[0] = win.impl.window;
+						xclient.data.l[1] = 1; // drop successful
+						xclient.data.l[2] = GetAtom!"XdndActionCopy"(display); // FIXME: actual accepted action
+
+						XSendEvent(
+							display,
+							sourceWindow,
+							false,
+							EventMask.NoEventMask,
+							cast(XEvent*) &xclient
+						);
+					}
+				}
+
+				Atom findBestFormat(Atom[] answer) {
+					Atom best = None;
+					foreach(option; answer) {
+						if(option == format) {
+							best = option;
+							break;
+						}
+						/*
+						if(option == GetAtom!"UTF8_STRING"(XDisplayConnection.get)) {
+							best = option;
+							break;
+						} else if(option == XA_STRING) {
+							best = option;
+						} else if(option == GetAtom!"text/plain"(XDisplayConnection.get)) {
+							best = option;
+						}
+						*/
+					}
+					return best;
+				}
+			}
+
+			win.impl.getSelectionHandlers[selectionAtom] = new X11GetSelectionHandler_Drop();
+
+			XConvertSelection(display, selectionAtom, best, GetAtom!("SDD_DATA", true)(display), win.impl.window, dataTimestamp);
+
+		} else version(Windows) {
+
+			// clean up like DragLeave
+			// pass effect back up
+
+			FORMATETC t;
+			assert(format >= 0 && format <= ushort.max);
+			t.cfFormat = cast(ushort) format;
+			t.lindex = -1;
+			t.dwAspect = DVASPECT.DVASPECT_CONTENT;
+			t.tymed = TYMED.TYMED_HGLOBAL;
+
+			STGMEDIUM m;
+
+			if(pDataObj.GetData(&t, &m) != S_OK) {
+				// fail
+			} else {
+				// succeed, take the data and clean up
+
+				// FIXME: ensure it is legit HGLOBAL
+				auto handle = m.hGlobal;
+
+				if(handle) {
+					auto sz = GlobalSize(handle);
+					if(auto ptr = cast(ubyte*) GlobalLock(handle)) {
+						scope(exit) GlobalUnlock(handle);
+						scope(exit) GlobalFree(handle);
+
+						auto data = ptr[0 .. sz];
+
+						dg(data);
+					}
+				}
+			}
+		}
+	}
+
+	private:
+
+	version(X11) {
+		SimpleWindow win;
+		Window sourceWindow;
+		Time dataTimestamp;
+
+		Atom[] xFormats;
+	}
+	version(Windows) {
+		IDataObject pDataObj;
+	}
+}
+
+/++
+	A generic helper base class for making a drop handler with a preference list of custom types.
+	This is the base for [TextDropHandler] and [FilesDropHandler] and you can use it for your own
+	droppers too.
+
+	It assumes the whole window it used, but you can subclass to change that.
+
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+class GenericDropHandlerBase : DropHandler {
+	// no fancy state here so no need to do anything here
+	void finish() { }
+	void dragLeave() { }
+
+	private DragAndDropAction acceptedAction;
+	private DraggableData.FormatId acceptedFormat;
+	private void delegate(scope ubyte[]) acceptedHandler;
+
+	struct FormatHandler {
+		DraggableData.FormatId format;
+		void delegate(scope ubyte[]) handler;
+	}
+
+	protected abstract FormatHandler[] formatHandlers();
+
+	DragAndDropAction dragEnter(DropPackage* pkg) {
+		debug(sdpy_dnd) { import std.stdio; foreach(fmt; pkg.availableFormats()) writeln(fmt, " ", DraggableData.getFormatName(fmt)); }
+		foreach(fmt; formatHandlers())
+		foreach(f; pkg.availableFormats())
+			if(f == fmt.format) {
+				acceptedFormat = f;
+				acceptedHandler = fmt.handler;
+				return acceptedAction = DragAndDropAction.copy;
+			}
+		return acceptedAction = DragAndDropAction.none;
+	}
+	DropParameters dragOver(Point pt) {
+		return DropParameters(acceptedAction);
+	}
+
+	void drop(scope DropPackage* dropPackage) {
+		if(!acceptedFormat || acceptedHandler is null)
+			return; // prolly shouldn't happen anyway...
+
+		dropPackage.getData(acceptedAction, acceptedFormat, acceptedHandler);
+	}
+}
+
+/++
+	A simple handler for making your window accept drops of plain text.
+
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 22, 2021
++/
+/// Group: drag_and_drop
+class TextDropHandler : GenericDropHandlerBase {
+	private void delegate(in char[] text) dg;
+
+	/++
+
+	+/
+	this(void delegate(in char[] text) dg) {
+		this.dg = dg;
+	}
+
+	protected override FormatHandler[] formatHandlers() {
+		version(X11)
+			return [
+				FormatHandler(GetAtom!"UTF8_STRING"(XDisplayConnection.get), &translator),
+				FormatHandler(GetAtom!"text/plain;charset=utf-8"(XDisplayConnection.get), &translator),
+			];
+		else version(Windows)
+			return [
+				FormatHandler(CF_UNICODETEXT, &translator),
+			];
+	}
+
+	private void translator(scope ubyte[] data) {
+		version(X11)
+			dg(cast(char[]) data);
+		else version(Windows)
+			dg(makeUtf8StringFromWindowsString(cast(wchar[]) data));
+	}
+}
+
+/++
+	A simple handler for making your window accept drops of files, issued to you as file names.
+
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 22, 2021
++/
+/// Group: drag_and_drop
+
+class FilesDropHandler : GenericDropHandlerBase {
+	private void delegate(in char[][]) dg;
+
+	/++
+
+	+/
+	this(void delegate(in char[][] fileNames) dg) {
+		this.dg = dg;
+	}
+
+	protected override FormatHandler[] formatHandlers() {
+		version(X11)
+			return [
+				FormatHandler(GetAtom!"text/uri-list"(XDisplayConnection.get), &translator),
+			];
+		else version(Windows)
+			return [
+				FormatHandler(CF_HDROP, &translator),
+			];
+	}
+
+	private void translator(scope ubyte[] data) {
+		version(X11) {
+			char[] listString = cast(char[]) data;
+			char[][16] buffer;
+			int count;
+			char[][] result = buffer[];
+
+			void commit(char[] s) {
+				if(count == result.length)
+					result.length += 16;
+				if(s.length > 7 && s[0 ..7] == "file://")
+					s = s[7 .. $]; // FIXME: also may need to trim out the host and do some entity decoding
+				result[count++] = s;
+			}
+
+			size_t last;
+			foreach(idx, char c; listString) {
+				if(c == '\n') {
+					commit(listString[last .. idx - 1]); // a \r
+					last = idx + 1; // a \n
+				}
+			}
+
+			if(last < listString.length) {
+				commit(listString[last .. $]);
+			}
+
+			// FIXME: they are uris now, should I translate it to local file names?
+			// of course the host name is supposed to be there cuz of X rokking...
+
+			dg(result[0 .. count]);
+		} else version(Windows) {
+
+			static struct DROPFILES {
+				DWORD pFiles;
+				POINT pt;
+				BOOL  fNC;
+				BOOL  fWide;
+			}
+
+
+			const(char)[][16] buffer;
+			int count;
+			const(char)[][] result = buffer[];
+			size_t last;
+
+			void commitA(in char[] stuff) {
+				if(count == result.length)
+					result.length += 16;
+				result[count++] = stuff;
+			}
+
+			void commitW(in wchar[] stuff) {
+				commitA(makeUtf8StringFromWindowsString(stuff));
+			}
+
+			void magic(T)(T chars) {
+				size_t idx;
+				while(chars[idx]) {
+					last = idx;
+					while(chars[idx]) {
+						idx++;
+					}
+					static if(is(T == char*))
+						commitA(chars[last .. idx]);
+					else
+						commitW(chars[last .. idx]);
+					idx++;
+				}
+			}
+
+			auto df = cast(DROPFILES*) data.ptr;
+			if(df.fWide) {
+				wchar* chars = cast(wchar*) (data.ptr + df.pFiles);
+				magic(chars);
+			} else {
+				char* chars = cast(char*) (data.ptr + df.pFiles);
+				magic(chars);
+			}
+			dg(result[0 .. count]);
+		}
+	}
+}
+
+/++
+	Interface to describe data being dragged. See also [draggable] helper function.
+
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+interface DraggableData {
+	version(X11)
+		alias FormatId = Atom;
+	else
+		alias FormatId = uint;
+	/++
+		Gets the platform-specific FormatId associated with the given named format.
+
+		This may be a MIME type, but may also be other various strings defined by the
+		programs you want to interoperate with.
+
+		FIXME: sdpy needs to offer data adapter things that look for compatible formats
+		and convert it to some particular type for you.
+	+/
+	static FormatId getFormatId(string name)() {
+		version(X11)
+			return GetAtom!name(XDisplayConnection.get);
+		else version(Windows) {
+			static UINT cache;
+			if(!cache)
+				cache = RegisterClipboardFormatA(name);
+			return cache;
+		} else
+			throw new NotYetImplementedException();
+	}
+
+	/++
+		Looks up a string to represent the name for the given format, if there is one.
+
+		You should avoid using this function because it is slow. It is provided more for
+		debugging than for primary use.
+	+/
+	static string getFormatName(FormatId format) {
+		version(X11) {
+			if(format == 0)
+				return "None";
+			else
+				return getAtomName(format, XDisplayConnection.get);
+		} else version(Windows) {
+			switch(format) {
+				case CF_UNICODETEXT: return "CF_UNICODETEXT";
+				case CF_DIBV5: return "CF_DIBV5";
+				case CF_RIFF: return "CF_RIFF";
+				case CF_WAVE: return "CF_WAVE";
+				case CF_HDROP: return "CF_HDROP";
+				default:
+					char[1024] name;
+					auto count = GetClipboardFormatNameA(format, name.ptr, name.length);
+					return name[0 .. count].idup;
+			}
+		}
+	}
+
+	FormatId[] availableFormats();
+	// Return the slice of data you filled, empty slice if done.
+	// this is to support the incremental thing
+	ubyte[] getData(FormatId format, return scope ubyte[] data);
+
+	size_t dataLength(FormatId format);
+}
+
+/++
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+DraggableData draggable(string s) {
+	version(X11)
+	return new class X11SetSelectionHandler_Text, DraggableData {
+		this() {
+			super(s);
+		}
+
+		override FormatId[] availableFormats() {
+			return X11SetSelectionHandler_Text.availableFormats();
+		}
+
+		override ubyte[] getData(FormatId format, return scope ubyte[] data) {
+			return X11SetSelectionHandler_Text.getData(format, data);
+		}
+
+		size_t dataLength(FormatId format) {
+			return s.length;
+		}
+	};
+	version(Windows)
+	return new class DraggableData {
+		FormatId[] availableFormats() {
+			return [CF_UNICODETEXT];
+		}
+
+		ubyte[] getData(FormatId format, return scope ubyte[] data) {
+			return cast(ubyte[]) makeWindowsString(s, cast(wchar[]) data, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
+		}
+
+		size_t dataLength(FormatId format) {
+			return sizeOfConvertedWstring(s, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate) * wchar.sizeof;
+		}
+	};
+}
+
+/++
+	$(PITFALL this is not yet stable and may break in future versions without notice.)
+
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+int doDragDrop(SimpleWindow window, DraggableData handler, DragAndDropAction action = DragAndDropAction.copy)
+in {
+	assert(window !is null);
+	assert(handler !is null);
+}
+do
+{
+	version(X11) {
+		auto sh = cast(X11SetSelectionHandler) handler;
+		if(sh is null) {
+			// gotta make my own adapter.
+			sh = new class X11SetSelectionHandler {
+				mixin X11SetSelectionHandler_Basics;
+
+				Atom[] availableFormats() { return handler.availableFormats(); }
+				ubyte[] getData(Atom format, return scope ubyte[] data) {
+					return handler.getData(format, data);
+				}
+
+				// since the drop selection is only ever used once it isn't important
+				// to reset it.
+				void done() {}
+			};
+		}
+		return doDragDropX11(window, sh, action);
+	} else version(Windows) {
+		return doDragDropWindows(window, handler, action);
+	} else throw new NotYetImplementedException();
+}
+
+version(Windows)
+private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAndDropAction action = DragAndDropAction.copy) {
+	IDataObject obj = new class IDataObject {
+		ULONG refCount;
+		ULONG AddRef() {
+			return ++refCount;
+		}
+		ULONG Release() {
+			return --refCount;
+		}
+		HRESULT QueryInterface(const (IID)*riid, LPVOID *ppv) {
+			if (IID_IUnknown == *riid) {
+				*ppv = cast(void*) cast(IUnknown) this;
+			}
+			else if (IID_IDataObject == *riid) {
+				*ppv = cast(void*) cast(IDataObject) this;
+			}
+			else {
+				*ppv = null;
+				return E_NOINTERFACE;
+			}
+
+			AddRef();
+			return NOERROR;
+		}
+
+		HRESULT DAdvise(FORMATETC* pformatetc, DWORD advf, IAdviseSink pAdvSink, DWORD* pdwConnection) {
+			// import std.stdio; writeln("Advise");
+			return E_NOTIMPL;
+		}
+		HRESULT DUnadvise(DWORD dwConnection) {
+			return E_NOTIMPL;
+		}
+		HRESULT EnumDAdvise(IEnumSTATDATA* ppenumAdvise) {
+			// import std.stdio; writeln("EnumDAdvise");
+			return OLE_E_ADVISENOTSUPPORTED;
+		}
+		// tell what formats it supports
+
+		FORMATETC[] types;
+		this() {
+			FORMATETC t;
+			foreach(ty; handler.availableFormats()) {
+				assert(ty <= ushort.max && ty >= 0);
+				t.cfFormat = cast(ushort) ty;
+				t.lindex = -1;
+				t.dwAspect = DVASPECT.DVASPECT_CONTENT;
+				t.tymed = TYMED.TYMED_HGLOBAL;
+			}
+			types ~= t;
+		}
+		HRESULT EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC* ppenumFormatEtc) {
+			if(dwDirection == DATADIR.DATADIR_GET) {
+				*ppenumFormatEtc = new class IEnumFORMATETC {
+					ULONG refCount;
+					ULONG AddRef() {
+						return ++refCount;
+					}
+					ULONG Release() {
+						return --refCount;
+					}
+					HRESULT QueryInterface(const (IID)*riid, LPVOID *ppv) {
+						if (IID_IUnknown == *riid) {
+							*ppv = cast(void*) cast(IUnknown) this;
+						}
+						else if (IID_IEnumFORMATETC == *riid) {
+							*ppv = cast(void*) cast(IEnumFORMATETC) this;
+						}
+						else {
+							*ppv = null;
+							return E_NOINTERFACE;
+						}
+
+						AddRef();
+						return NOERROR;
+					}
+
+
+					int pos;
+					this() {
+						pos = 0;
+					}
+
+					HRESULT Clone(IEnumFORMATETC* ppenum) {
+						// import std.stdio; writeln("clone");
+						return E_NOTIMPL; // FIXME
+					}
+
+					// Caller is responsible for freeing memory
+					HRESULT Next(ULONG celt, FORMATETC* rgelt, ULONG* pceltFetched) {
+						// fetched may be null if celt is one
+						if(celt != 1)
+							return E_NOTIMPL; // FIXME
+
+						if(celt + pos > types.length)
+							return S_FALSE;
+
+						*rgelt = types[pos++];
+
+						if(pceltFetched !is null)
+							*pceltFetched = 1;
+
+						// import std.stdio; writeln("ok celt ", celt);
+						return S_OK;
+					}
+
+					HRESULT Reset() {
+						pos = 0;
+						return S_OK;
+					}
+
+					HRESULT Skip(ULONG celt) {
+						if(celt + pos <= types.length) {
+							pos += celt;
+							return S_OK;
+						}
+						return S_FALSE;
+					}
+				};
+
+				return S_OK;
+			} else
+				return E_NOTIMPL;
+		}
+		// given a format, return the format you'd prefer to use cuz it is identical
+		HRESULT GetCanonicalFormatEtc(FORMATETC* pformatectIn, FORMATETC* pformatetcOut) {
+			// FIXME: prolly could be better but meh
+			// import std.stdio; writeln("gcf: ", *pformatectIn);
+			*pformatetcOut = *pformatectIn;
+			return S_OK;
+		}
+		HRESULT GetData(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) {
+			foreach(ty; types) {
+				if(ty == *pformatetcIn) {
+					auto format = ty.cfFormat;
+					// import std.stdio; writeln("A: ", *pformatetcIn, "\nB: ", ty);
+					STGMEDIUM medium;
+					medium.tymed = TYMED.TYMED_HGLOBAL;
+
+					auto sz = handler.dataLength(format);
+					auto handle = GlobalAlloc(GMEM_MOVEABLE, sz);
+					if(handle is null) throw new Exception("GlobalAlloc");
+					if(auto data = cast(wchar*) GlobalLock(handle)) {
+						auto slice = data[0 .. sz];
+						scope(exit)
+							GlobalUnlock(handle);
+
+						handler.getData(format, cast(ubyte[]) slice[]);
+					}
+
+
+					medium.hGlobal = handle; // FIXME
+					*pmedium = medium;
+					return S_OK;
+				}
+			}
+			return DV_E_FORMATETC;
+		}
+		HRESULT GetDataHere(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) {
+			// import std.stdio; writeln("GDH: ", *pformatetcIn);
+			return E_NOTIMPL; // FIXME
+		}
+		HRESULT QueryGetData(FORMATETC* pformatetc) {
+			auto search = *pformatetc;
+			search.tymed &= TYMED.TYMED_HGLOBAL;
+			foreach(ty; types)
+				if(ty == search) {
+					// import std.stdio; writeln("QueryGetData ", search, " ", types[0]);
+					return S_OK;
+				}
+			if(pformatetc.cfFormat==CF_UNICODETEXT) {
+				//import std.stdio; writeln("QueryGetData FALSE ", search, " ", types[0]);
+			}
+			return S_FALSE;
+		}
+		HRESULT SetData(FORMATETC* pformatetc, STGMEDIUM* pmedium, BOOL fRelease) {
+			// import std.stdio; writeln("SetData: ");
+			return E_NOTIMPL;
+		}
+	};
+
+
+	IDropSource src = new class IDropSource {
+		ULONG refCount;
+		ULONG AddRef() {
+			return ++refCount;
+		}
+		ULONG Release() {
+			return --refCount;
+		}
+		HRESULT QueryInterface(const (IID)*riid, LPVOID *ppv) {
+			if (IID_IUnknown == *riid) {
+				*ppv = cast(void*) cast(IUnknown) this;
+			}
+			else if (IID_IDropSource == *riid) {
+				*ppv = cast(void*) cast(IDropSource) this;
+			}
+			else {
+				*ppv = null;
+				return E_NOINTERFACE;
+			}
+
+			AddRef();
+			return NOERROR;
+		}
+
+		int QueryContinueDrag(int fEscapePressed, uint grfKeyState) {
+			if(fEscapePressed)
+				return DRAGDROP_S_CANCEL;
+			if(!(grfKeyState & MK_LBUTTON))
+				return DRAGDROP_S_DROP;
+			return S_OK;
+		}
+
+		int GiveFeedback(uint dwEffect) {
+			return DRAGDROP_S_USEDEFAULTCURSORS;
+		}
+	};
+
+	DWORD effect;
+
+	if(action == DragAndDropAction.none) assert(0, "Don't drag something with a none effect.");
+
+	DROPEFFECT de = win32DragAndDropAction(action);
+
+	auto ret = DoDragDrop(obj, src, de, &effect);
+	/+
+	import std.stdio;
+	if(ret == DRAGDROP_S_DROP)
+		writeln("drop ", effect);
+	else if(ret == DRAGDROP_S_CANCEL)
+		writeln("cancel");
+	else if(ret == S_OK)
+		writeln("ok");
+	else writeln(ret);
+	+/
+
+	return ret;
+}
+
+version(Windows)
+DROPEFFECT win32DragAndDropAction(DragAndDropAction action) {
+	DROPEFFECT de;
+
+	with(DragAndDropAction)
+	with(DROPEFFECT)
+	final switch(action) {
+		case none: de = DROPEFFECT_NONE; break;
+		case copy: de = DROPEFFECT_COPY; break;
+		case move: de = DROPEFFECT_MOVE; break;
+		case link: de = DROPEFFECT_LINK; break;
+		case ask: throw new Exception("ask not implemented yet");
+		case custom: throw new Exception("custom not implemented yet");
+	}
+
+	return de;
+}
+
+
+/++
+	History:
+		Added February 19, 2021
++/
+/// Group: drag_and_drop
+void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
+	version(X11) {
+		auto display = XDisplayConnection.get;
+
+		Atom atom = 5; // right???
+
+		XChangeProperty(
+			display,
+			window.impl.window,
+			GetAtom!"XdndAware"(display),
+			XA_ATOM,
+			32 /* bits */,
+			PropModeReplace,
+			&atom,
+			1);
+
+		window.dropHandler = handler;
+	} else version(Windows) {
+
+		initDnd();
+
+
+		auto dropTarget = new class IDropTarget {
+			ULONG refCount;
+			ULONG AddRef() {
+				return ++refCount;
+			}
+			ULONG Release() {
+				return --refCount;
+			}
+			HRESULT QueryInterface(const (IID)*riid, LPVOID *ppv) {
+				if (IID_IUnknown == *riid) {
+					*ppv = cast(void*) cast(IUnknown) this;
+				}
+				else if (IID_IDropTarget == *riid) {
+					*ppv = cast(void*) cast(IDropTarget) this;
+				}
+				else {
+					*ppv = null;
+					return E_NOINTERFACE;
+				}
+
+				AddRef();
+				return NOERROR;
+			}
+
+
+			// ///////////////////
+
+			HRESULT DragEnter(IDataObject pDataObj, DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
+				DropPackage dropPackage = DropPackage(pDataObj);
+				*pdwEffect = win32DragAndDropAction(handler.dragEnter(&dropPackage));
+				return S_OK; // https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
+			}
+
+			HRESULT DragLeave() {
+				handler.dragLeave();
+				// release the IDataObject if needed
+				return S_OK;
+			}
+
+			HRESULT DragOver(DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
+				auto res = handler.dragOver(Point(pt.x, pt.y)); // FIXME: translate screen coordinates back to window coordinates
+
+				*pdwEffect = win32DragAndDropAction(res.action);
+				// same as DragEnter basically
+				return S_OK;
+			}
+
+			HRESULT Drop(IDataObject pDataObj, DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
+				DropPackage pkg = DropPackage(pDataObj);
+				handler.drop(&pkg);
+
+				return S_OK;
+			}
+
+		};
+		//import core.memory;
+		//GC.addRoot(cast(void*) dropTarget);
+
+
+		if(RegisterDragDrop(window.impl.hwnd, dropTarget) != S_OK)
+			throw new Exception("register");
+
+		window.dropHandler = handler;
+	} else throw new NotYetImplementedException();
+}
+
+
+
 static if(UsingSimpledisplayX11) {
 
 enum _NET_WM_STATE_ADD = 1;
@@ -17487,6 +18589,235 @@ void demandAttention(Window window, bool needs = true) {
 		&atom,
 		1);
 	+/
+}
+
+private Atom dndActionAtom(Display* display, DragAndDropAction action) {
+	Atom actionAtom;
+	with(DragAndDropAction)
+	final switch(action) {
+		case none: actionAtom = None; break;
+		case copy: actionAtom = GetAtom!"XdndActionCopy"(display); break;
+		case move: actionAtom = GetAtom!"XdndActionMove"(display); break;
+		case link: actionAtom = GetAtom!"XdndActionLink"(display); break;
+		case ask: actionAtom = GetAtom!"XdndActionAsk"(display); break;
+		case custom: actionAtom = GetAtom!"XdndActionCustom"(display); break;
+	}
+
+	return actionAtom;
+}
+
+private int doDragDropX11(SimpleWindow window, X11SetSelectionHandler handler, DragAndDropAction action) {
+	// FIXME: I need to show user feedback somehow.
+	auto display = XDisplayConnection.get;
+
+	auto actionAtom = dndActionAtom(display, action);
+	assert(actionAtom, "Don't use action none to accept a drop");
+
+	setX11Selection!"XdndSelection"(window, handler, null);
+
+	auto oldKeyHandler = window.handleKeyEvent;
+	scope(exit) window.handleKeyEvent = oldKeyHandler;
+
+	auto oldCharHandler = window.handleCharEvent;
+	scope(exit) window.handleCharEvent = oldCharHandler;
+
+	auto oldMouseHandler = window.handleMouseEvent;
+	scope(exit) window.handleMouseEvent = oldMouseHandler;
+
+	Window[Window] eligibility; // 0 == not eligible, otherwise it is the window id of an eligible child
+
+	import core.sys.posix.sys.time;
+	timeval tv;
+	gettimeofday(&tv, null);
+
+	Time dataTimestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+
+	Time lastMouseTimestamp;
+
+	bool dnding = true;
+	Window lastIn = None;
+
+	void leave() {
+		if(lastIn == None)
+			return;
+
+		XEvent ev;
+		ev.xclient.type = EventType.ClientMessage;
+		ev.xclient.window = lastIn;
+		ev.xclient.message_type = GetAtom!("XdndLeave", true)(display);
+		ev.xclient.format = 32;
+		ev.xclient.data.l[0] = window.impl.window;
+
+		XSendEvent(XDisplayConnection.get, lastIn, false, EventMask.NoEventMask, &ev);
+		XFlush(display);
+
+		lastIn = None;
+	}
+
+	void enter(Window w) {
+		assert(lastIn == None);
+
+		lastIn = w;
+
+		XEvent ev;
+		ev.xclient.type = EventType.ClientMessage;
+		ev.xclient.window = lastIn;
+		ev.xclient.message_type = GetAtom!("XdndEnter", true)(display);
+		ev.xclient.format = 32;
+		ev.xclient.data.l[0] = window.impl.window;
+		ev.xclient.data.l[1] = (5 << 24) | 0; // version 5, no more sources. FIXME source types
+
+		auto types = handler.availableFormats();
+		assert(types.length > 0);
+
+		ev.xclient.data.l[2] = types[0];
+		if(types.length > 1)
+			ev.xclient.data.l[3] = types[1];
+		if(types.length > 2)
+			ev.xclient.data.l[4] = types[2];
+
+		// FIXME: other types?!?!? and make sure we skip TARGETS
+
+		XSendEvent(XDisplayConnection.get, lastIn, false, EventMask.NoEventMask, &ev);
+		XFlush(display);
+	}
+
+	void position(int rootX, int rootY) {
+		assert(lastIn != None);
+
+		XEvent ev;
+		ev.xclient.type = EventType.ClientMessage;
+		ev.xclient.window = lastIn;
+		ev.xclient.message_type = GetAtom!("XdndPosition", true)(display);
+		ev.xclient.format = 32;
+		ev.xclient.data.l[0] = window.impl.window;
+		ev.xclient.data.l[1] = 0; // reserved
+		ev.xclient.data.l[2] = (rootX << 16) | rootY;
+		ev.xclient.data.l[3] = dataTimestamp;
+		ev.xclient.data.l[4] = actionAtom;
+
+		XSendEvent(XDisplayConnection.get, lastIn, false, EventMask.NoEventMask, &ev);
+		XFlush(display);
+
+	}
+
+	void drop() {
+		XEvent ev;
+		ev.xclient.type = EventType.ClientMessage;
+		ev.xclient.window = lastIn;
+		ev.xclient.message_type = GetAtom!("XdndDrop", true)(display);
+		ev.xclient.format = 32;
+		ev.xclient.data.l[0] = window.impl.window;
+		ev.xclient.data.l[1] = 0; // reserved
+		ev.xclient.data.l[2] = dataTimestamp;
+
+		XSendEvent(XDisplayConnection.get, lastIn, false, EventMask.NoEventMask, &ev);
+		XFlush(display);
+
+		lastIn = None;
+		dnding = false;
+	}
+
+	// fyi nativeEventHandler can return 0 if it handles it, or otherwise it goes back to the normal handler
+	// but idk if i should...
+
+	window.setEventHandlers(
+		delegate(KeyEvent ev) {
+			if(ev.pressed == true && ev.key == Key.Escape) {
+				// cancel
+				dnding = false;
+			}
+		},
+		delegate(MouseEvent ev) {
+			if(ev.timestamp < lastMouseTimestamp)
+				return;
+
+			lastMouseTimestamp = ev.timestamp;
+
+			if(ev.type == MouseEventType.motion) {
+				auto display = XDisplayConnection.get;
+				auto root = RootWindow(display, DefaultScreen(display));
+
+				Window topWindow;
+				int rootX, rootY;
+
+				XTranslateCoordinates(display, window.impl.window, root, ev.x, ev.y, &rootX, &rootY, &topWindow);
+
+				if(topWindow == None)
+					return;
+
+				top:
+				if(auto result = topWindow in eligibility) {
+					auto dropWindow = *result;
+					if(dropWindow == None) {
+						leave();
+						return;
+					}
+
+					if(dropWindow != lastIn) {
+						leave();
+						enter(dropWindow);
+						position(rootX, rootY);
+					} else {
+						position(rootX, rootY);
+					}
+				} else {
+					// determine eligibility
+					auto data = cast(Atom[]) getX11PropertyData(topWindow, GetAtom!"XdndAware"(display), XA_ATOM);
+					if(data.length == 1) {
+						// in case there is no WM or it isn't reparenting
+						eligibility[topWindow] = (data[0] == 5) ? topWindow : None; // FIXME I'm supposed to handle older versions too but meh
+					} else {
+
+						Window tryScanChildren(Window search, int maxRecurse) {
+							// could be reparenting window manager, so gotta check the next few children too
+							Window child;
+							int x;
+							int y;
+							XTranslateCoordinates(display, window.impl.window, search, ev.x, ev.y, &x, &y, &child);
+
+							if(child == None)
+								return None;
+							auto data = cast(Atom[]) getX11PropertyData(child, GetAtom!"XdndAware"(display), XA_ATOM);
+							if(data.length == 1) {
+								return (data[0] == 5) ? child : None; // FIXME I'm supposed to handle older versions too but meh
+							} else {
+								if(maxRecurse)
+									return tryScanChildren(child, maxRecurse - 1);
+								else
+									return None;
+							}
+
+						}
+
+						// if a WM puts more than 3 layers on it, like wtf is it doing, screw that.
+						auto topResult = tryScanChildren(topWindow, 3);
+						// it is easy to have a false negative due to the mouse going over a WM
+						// child window like the close button if separate from the frame... so I
+						// can't really cache negatives, :(
+						if(topResult != None) {
+							eligibility[topWindow] = topResult;
+							goto top; // reload to do the positioning iff eligibility changed lest we endless loop
+						}
+					}
+
+				}
+
+			} else if(ev.type == MouseEventType.buttonReleased) {
+				drop();
+				dnding = false;
+			}
+		}
+	);
+
+	window.grabInput();
+	scope(exit)
+		window.releaseInputGrab();
+
+
+	EventLoop.get.run(() => dnding);
+
+	return 0;
 }
 
 /// X-specific
