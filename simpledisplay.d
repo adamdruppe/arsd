@@ -1745,6 +1745,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	void close() {
 		if (!_closed) {
 			runInGuiThread( {
+				if(_closed) return; // another thread got to it first. this is a big FIXME like this is all pretty wtf-y
 				if (onClosing !is null) onClosing();
 				impl.closeWindow();
 				_closed = true;
@@ -8371,13 +8372,11 @@ bool runInGuiThread(scope void delegate() dg) @trusted {
 	if(!SimpleWindow.eventWakeUp())
 		throw new Error("runInGuiThread impossible; eventWakeUp failed");
 
-	if(guiThreadTerminating)
-		return false;
-
 	rqm.signal.wait();
+	auto t = rqm.thrown;
 
-	if(rqm.thrown)
-		throw rqm.thrown;
+	if(t)
+		throw t;
 
 	return true;
 }
