@@ -1745,7 +1745,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	void close() {
 		if (!_closed) {
 			runInGuiThread( {
-				if(_closed) return; // another thread got to it first. this is a big FIXME like this is all pretty wtf-y
+				if(_closed) return; // another thread got to it first. this isn't a big deal, it just means our message was queued
 				if (onClosing !is null) onClosing();
 				impl.closeWindow();
 				_closed = true;
@@ -18488,6 +18488,9 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 
 	DROPEFFECT de = win32DragAndDropAction(action);
 
+	// I'm not as concerned about the GC here since DoDragDrop blocks so the stack frame still sane the whole time
+	// but still prolly a FIXME
+
 	auto ret = DoDragDrop(obj, src, de, &effect);
 	/+
 	import std.stdio;
@@ -18548,8 +18551,11 @@ void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
 
 		initDnd();
 
-
-		auto dropTarget = new class IDropTarget {
+		auto dropTarget = new class (handler) IDropTarget {
+			DropHandler handler;
+			this(DropHandler handler) {
+				this.handler = handler;
+			}
 			ULONG refCount;
 			ULONG AddRef() {
 				return ++refCount;
@@ -18602,11 +18608,14 @@ void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
 
 				return S_OK;
 			}
-
 		};
-		//import core.memory;
-		//GC.addRoot(cast(void*) dropTarget);
-
+		// Windows can hold on to the handler and try to call it
+		// during which time the GC can't see it. so important to
+		// manually manage this. At some point i'll FIXME and make
+		// all my com instances manually managed since they supposed
+		// to respect the refcount.
+		import core.memory;
+		GC.addRoot(cast(void*) dropTarget);
 
 		if(RegisterDragDrop(window.impl.hwnd, dropTarget) != S_OK)
 			throw new Exception("register");

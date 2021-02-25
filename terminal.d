@@ -7810,9 +7810,10 @@ version(TerminalDirectToEmulator) {
 
 					// if I don't close the redirected pipe, the other thread
 					// will get stuck indefinitely as it tries to flush its stderr
-					version(Windows)
+					version(Windows) {
 						CloseHandle(wi.readPipe);
-					version(Posix) {
+						wi.readPipe = null;
+					} version(Posix) {
 						import unix = core.sys.posix.unistd;
 						import unix2 = core.sys.posix.fcntl;
 						unix.close(wi.readFd);

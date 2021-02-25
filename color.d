@@ -209,7 +209,10 @@ struct Color {
 	static Color teal() { return Color(0, 255, 255); }
 	/// Ditto
 	nothrow pure @nogc
-	static Color purple() { return Color(255, 0, 255); }
+	static Color purple() { return Color(128, 0, 128); }
+	/// Ditto
+	nothrow pure @nogc
+	static Color magenta() { return Color(255, 0, 255); }
 	/// Ditto
 	nothrow pure @nogc
 	static Color brown() { return Color(128, 64, 0); }

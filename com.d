@@ -92,10 +92,10 @@ module arsd.com;
 	createRawComObject returns the IUnknown raw one
 +/
 
-import core.sys.windows.windows;
-import core.sys.windows.com;
-import core.sys.windows.wtypes;
-import core.sys.windows.oaidl;
+public import core.sys.windows.windows;
+public import core.sys.windows.com;
+public import core.sys.windows.wtypes;
+public import core.sys.windows.oaidl;
 
 import core.stdc.string;
 import core.atomic;
@@ -1131,7 +1131,7 @@ struct TmpStr {
 	char[256] buffer;
 	int length;
 	void clear() { length = 0; }
-	char* getPtr() {
+	char* getPtr() return {
 		buffer[length] = 0;
 		return buffer.ptr;
 	}
