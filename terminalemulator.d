@@ -2050,22 +2050,17 @@ class TerminalEmulator {
 					// one byte thing, do nothing more...
 				} else {
 					// the number of bytes in the sequence is the number of set bits in the first byte...
-					uint shifted = 0;
-					bool there = false;
 					ubyte checkingBit = 7;
-					while(checkingBit) {
-						if(!there && b & (1 << checkingBit))
-							utf8BytesRemaining++;
-						else
-							there = true;
-						if(there)
-							shifted |= b & (1 << checkingBit);
+					while(b & (1 << checkingBit)) {
+						utf8BytesRemaining++;
 						checkingBit--;
 					}
+					uint shifted = b & ((1 << checkingBit) - 1);
 					utf8BytesRemaining--; // since this current byte counts too
 					currentUtf8Shift = utf8BytesRemaining * 6;
 
-					shifted <<= (currentUtf8Shift + checkingBit);
+
+					shifted <<= currentUtf8Shift;
 					utf8Sequence = cast(dchar) shifted;
 
 					utf8SequenceBufferPosition = 0;
