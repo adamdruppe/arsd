@@ -218,6 +218,8 @@ class TerminalEmulator {
 		//if(pasteDataPending.length)
 			//throw new Exception("paste data being discarded, wtf, shouldnt happen");
 
+		// FIXME: i should put it all together so the brackets don't get separated by threads
+
 		if(bracketedPasteMode)
 			sendToApplication("\033[200~");
 
