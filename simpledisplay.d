@@ -1215,6 +1215,29 @@ enum WindowFlags : int {
 	cannotBeActivated = 8, ///
 	alwaysRequestMouseMotionEvents = 16, /// By default, simpledisplay will attempt to optimize mouse motion event reporting when it detects a remote connection, causing them to only be issued if input is grabbed (see: [SimpleWindow.grabInput]). This means doing hover effects and mouse game control on a remote X connection may not work right. Include this flag to override this optimization and always request the motion events. However btw, if you are doing mouse game control, you probably want to grab input anyway, and hover events are usually expendable! So think before you use this flag.
 	extraComposite = 32, /// On windows this will make this a layered windows (not supported for child windows before windows 8) to support transparency and improve animation performance.
+	/++
+		Sets the window as a short-lived child of its parent, but unlike an ordinary child,
+		it is still a top-level window. This should NOT be set separately for most window types.
+
+		A transient window will not keep the application open if its main window closes.
+
+		$(PITFALL This may not be correctly implemented and its behavior is subject to change.)
+
+
+		From the ICCM:
+
+		$(BLOCKQUOTE
+			It is important not to confuse WM_TRANSIENT_FOR with override-redirect. WM_TRANSIENT_FOR should be used in those cases where the pointer is not grabbed while the window is mapped (in other words, if other windows are allowed to be active while the transient is up). If other windows must be prevented from processing input (for example, when implementing pop-up menus), use override-redirect and grab the pointer while the window is mapped. 
+
+			$(CITE https://tronche.com/gui/x/icccm/sec-4.html)
+		)
+
+		So if you are using a window type that already describes this like [WindowTypes.dropdownMenu] etc., you should not use this flag.
+
+		History:
+			Added February 23, 2021 but not yet stabilized.
+	+/
+	transient = 64,
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
@@ -1483,7 +1506,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			$(P `automaticallyScaleIfPossible` will allow the user to resize, but will still present the original size to the API user. The contents you draw will be scaled to the size the user chose. If this scaling is not efficient, the window will be fixed size. The `windowResized` event handler will never be called. This is the default.)
 		windowType = The type of window you want to make.
 		customizationFlags = A way to make a window without a border, always on top, skip taskbar, and more. Do not use this if one of the pre-defined [WindowTypes], given in the `windowType` argument, is a good match for what you need.
-		parent = the parent window, if applicable
+		parent = the parent window, if applicable. This makes the child window nested inside the parent unless you set [WindowFlags.transient], which makes it a top-level window merely owned by the "parent".
 	+/
 	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
 		claimGuiThread();
@@ -1498,7 +1521,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		this._parent = parent;
 		impl.createWindow(width, height, this._title, opengl, parent);
 
-		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild)
+		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild || (customizationFlags & WindowFlags.transient))
 			beingOpenKeepsAppOpen = false;
 	}
 
@@ -2708,30 +2731,7 @@ private:
 			sw.processCustomEvents();
 		}
 
-		// run pending [runInGuiThread] delegates
-		more:
-		RunQueueMember* next;
-		synchronized(runInGuiThreadLock) {
-			if(runInGuiThreadQueue.length) {
-				next = runInGuiThreadQueue[0];
-				runInGuiThreadQueue = runInGuiThreadQueue[1 .. $];
-			} else {
-				next = null;
-			}
-		}
-
-		if(next) {
-			try {
-				next.dg();
-				next.thrown = null;
-			} catch(Throwable t) {
-				next.thrown = t;
-			}
-
-			next.signal.notify();
-
-			goto more;
-		}
+		runPendingRunInGuiThreadDelegates();
 	}
 
 	// 0: infinite (i.e. no scheduled events in queue)
@@ -2950,8 +2950,11 @@ struct EventLoop {
 		if(impl is null)
 			return;
 		impl.refcount--;
-		if(impl.refcount == 0)
+		if(impl.refcount == 0) {
 			impl.dispose();
+			if(thisIsGuiThread)
+				guiThreadFinalize();
+		}
 
 	}
 
@@ -8327,16 +8330,27 @@ void flushGui() {
 		}.runInGuiThread;
 	)
 
+	Returns:
+		`true` if the function was called, `false` if it was not.
+		The function may not be called because the gui thread had
+		already terminated by the time you called this.
+
 	History:
 		Added April 10, 2020 (v7.2.0)
+
+		Return value added and implementation tweaked to avoid locking
+		at program termination on February 24, 2021 (v9.2.1).
 +/
-void runInGuiThread(scope void delegate() dg) @trusted {
+bool runInGuiThread(scope void delegate() dg) @trusted {
 	claimGuiThread();
 
 	if(thisIsGuiThread) {
 		dg();
-		return;
+		return true;
 	}
+
+	if(guiThreadTerminating)
+		return false;
 
 	import core.sync.semaphore;
 	static Semaphore sc;
@@ -8357,10 +8371,41 @@ void runInGuiThread(scope void delegate() dg) @trusted {
 	if(!SimpleWindow.eventWakeUp())
 		throw new Error("runInGuiThread impossible; eventWakeUp failed");
 
+	if(guiThreadTerminating)
+		return false;
+
 	rqm.signal.wait();
 
 	if(rqm.thrown)
 		throw rqm.thrown;
+
+	return true;
+}
+
+private void runPendingRunInGuiThreadDelegates() {
+	more:
+	RunQueueMember* next;
+	synchronized(runInGuiThreadLock) {
+		if(runInGuiThreadQueue.length) {
+			next = runInGuiThreadQueue[0];
+			runInGuiThreadQueue = runInGuiThreadQueue[1 .. $];
+		} else {
+			next = null;
+		}
+	}
+
+	if(next) {
+		try {
+			next.dg();
+			next.thrown = null;
+		} catch(Throwable t) {
+			next.thrown = t;
+		}
+
+		next.signal.notify();
+
+		goto more;
+	}
 }
 
 private void claimGuiThread() {
@@ -8380,6 +8425,14 @@ private __gshared RunQueueMember*[] runInGuiThreadQueue;
 private __gshared Object runInGuiThreadLock = new Object; // intentional CTFE
 private bool thisIsGuiThread = false;
 private shared bool guiThreadExists = false;
+private shared bool guiThreadTerminating = false;
+
+private void guiThreadFinalize() {
+	assert(thisIsGuiThread);
+
+	guiThreadTerminating = true; // don't add any more from this point on
+	runPendingRunInGuiThreadDelegates();
+}
 
 /// Used internal to dispatch events to various classes.
 interface CapableOfHandlingNativeEvent {
@@ -12183,7 +12236,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 					auto root = RootWindow(display, screen);
 					swa.colormap = XCreateColormap(display, root, vi.visual, AllocNone);
 
-					window = XCreateWindow(display, parent is null ? root : parent.impl.window,
+					window = XCreateWindow(display, (windowType != WindowTypes.nestedChild || parent is null) ? root : parent.impl.window,
 						0, 0, width, height,
 						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap, &swa);
 
@@ -12232,7 +12285,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				auto root = RootWindow(display, screen);
 				swa.colormap = XCreateColormap(display, root, DefaultVisual(display, screen), AllocNone);
 
-				window = XCreateWindow(display, parent is null ? root : parent.impl.window,
+				window = XCreateWindow(display, (windowType != WindowTypes.nestedChild || parent is null) ? root : parent.impl.window,
 					0, 0, width, height,
 					0, CopyFromParent, 1 /* InputOutput */, cast(Visual*) CopyFromParent, CWColormap | CWBackPixel | CWBorderPixel | CWOverrideRedirect, &swa);
 
@@ -12294,8 +12347,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 
 			// This gives our window a close button
 			if (windowType != WindowTypes.eventOnly) {
-				Atom atom = XInternAtom(display, "WM_DELETE_WINDOW".ptr, true); // FIXME: does this need to be freed?
-				XSetWMProtocols(display, window, &atom, 1);
+				// FIXME: actually implement the WM_TAKE_FOCUS correctly
+				//Atom[2] atoms = [GetAtom!"WM_DELETE_WINDOW"(display), GetAtom!"WM_TAKE_FOCUS"(display)];
+				Atom[1] atoms = [GetAtom!"WM_DELETE_WINDOW"(display)];
+				XSetWMProtocols(display, window, atoms.ptr, cast(int) atoms.length);
 			}
 
 			// FIXME: windowType and customizationFlags
@@ -12317,7 +12372,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 					goto hiddenWindow;
 				//break;
 				case WindowTypes.nestedChild:
-
+					// handled in XCreateWindow calls
 				break;
 
 				case WindowTypes.dropdownMenu:
@@ -12412,6 +12467,19 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				&pid,
 				1);
 
+			if(customizationFlags & WindowFlags.transient) {
+				if(parent is null) assert(0);
+				XChangeProperty(
+					display,
+					impl.window,
+					GetAtom!("WM_TRANSIENT_FOR", true)(display),
+					XA_WINDOW,
+					32 /* bits */,
+					0 /*PropModeReplace*/,
+					&parent.impl.window,
+					1);
+
+			}
 
 			if(windowType != WindowTypes.eventOnly && (customizationFlags&WindowFlags.dontAutoShow) == 0) {
 				XMapWindow(display, window);
@@ -12842,6 +12910,17 @@ version(X11) {
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
 						if ((*win).closeQuery !is null) (*win).closeQuery(); else (*win).close();
+					}
+
+				} else if(e.xclient.data.l[0] == GetAtom!"WM_TAKE_FOCUS"(e.xany.display)) {
+					import std.stdio; writeln("HAPPENED");
+					// user clicked the close button on the window manager
+					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+
+						// FIXME: so this is actually supposed to focus to a relevant child window if appropriate
+						XSetInputFocus(display, e.xclient.window, RevertToParent, e.xclient.data.l[1]);
 					}
 				} else if(e.xclient.message_type == GetAtom!"MANAGER"(e.xany.display)) {
 					foreach(nai; NotificationAreaIcon.activeIcons)

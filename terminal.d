@@ -1365,12 +1365,15 @@ struct Terminal {
 			}
 			version(TerminalDirectToEmulator) {
 				if(usingDirectEmulator) {
-					writeln("\n\n<exited>");
-					setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
-					tew.term = null;
 
-					if(integratedTerminalEmulatorConfiguration.closeOnExit)
+					if(integratedTerminalEmulatorConfiguration.closeOnExit) {
 						tew.parentWindow.close();
+					} else {
+						writeln("\n\n<exited>");
+						setTitle(tew.terminalEmulator.currentTitle ~ " <exited>");
+					}
+
+					tew.term = null;
 				} else {
 					if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 						writeStringRaw("\033[23;0t"); // restore window title from the stack
