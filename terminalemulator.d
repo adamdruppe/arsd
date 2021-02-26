@@ -660,7 +660,7 @@ class TerminalEmulator {
 				}
 			break;
 			case Space:
-				if(shift || alt) {
+				if(alt) { // it used to be shift || alt here, but like shift+space is more trouble than it is worth in actual usage experience. too easily to accidentally type it in the middle of something else to be unambiguously useful. I wouldn't even set a hotkey on it so gonna just send it as plain space always.
 					// ctrl+space sends 0 per normal translation char rules
 					specialAscii(' ');
 					return true;
