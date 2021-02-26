@@ -724,13 +724,16 @@ class HttpRequest {
 		this.cache = cache;
 	}
 
+	private Uri where;
+
 	private ICache cache;
 
 	/// Final url after any redirections
 	string finalUrl;
 
 	void populateFromInfo(Uri where, HttpVerb method) {
-		auto parts = where;
+		auto parts = where.basedOn(this.where);
+		this.where = parts;
 		finalUrl = where.toString();
 		requestParameters.method = method;
 		requestParameters.unixSocketPath = where.unixSocketPath;
