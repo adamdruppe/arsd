@@ -734,9 +734,11 @@ class HttpRequest {
 		finalUrl = where.toString();
 		requestParameters.method = method;
 		requestParameters.unixSocketPath = where.unixSocketPath;
-		requestParameters.host = parts.host;
-		requestParameters.port = cast(ushort) parts.port;
-		requestParameters.ssl = parts.scheme == "https";
+		if(parts.host.length) {
+			requestParameters.host = parts.host;
+			requestParameters.port = cast(ushort) parts.port;
+			requestParameters.ssl = parts.scheme == "https";
+		}
 		if(parts.port == 0)
 			requestParameters.port = requestParameters.ssl ? 443 : 80;
 		requestParameters.uri = parts.path.length ? parts.path : "/";
