@@ -1,14 +1,55 @@
 /++
 	Support for [https://wiki.mozilla.org/APNG_Specification|animated png] files.
 
+	$(WARNING Please note this interface is not exactly stable and may break with minimum notice.)
+
 	History:
 		Originally written March 2019 with read support.
 
 		Render support added December 28, 2020.
+
+		Write support added February 27, 2021.
 +/
 module arsd.apng;
 
-///
+/// Demo creating one from scratch
+unittest {
+	import arsd.apng;
+
+	void main() {
+		auto apng = new ApngAnimation(50, 50);
+
+		auto frame = apng.addFrame(25, 25);
+		frame.data[] = 255;
+
+		frame = apng.addFrame(25, 25);
+		frame.data[] = 255;
+		frame.frameControlChunk.delay_num = 10;
+
+		frame = apng.addFrame(25, 25);
+		frame.data[] = 255;
+		frame.frameControlChunk.x_offset = 25;
+		frame.frameControlChunk.delay_num = 10;
+
+		frame = apng.addFrame(25, 25);
+		frame.data[] = 255;
+		frame.frameControlChunk.y_offset = 25;
+		frame.frameControlChunk.delay_num = 10;
+
+		frame = apng.addFrame(25, 25);
+		frame.data[] = 255;
+		frame.frameControlChunk.x_offset = 25;
+		frame.frameControlChunk.y_offset = 25;
+		frame.frameControlChunk.delay_num = 10;
+
+
+		writeApngToFile(apng, "/home/me/test.apng");
+	}
+
+	version(Demo) main(); // remove from docs
+}
+
+/// Demo reading and rendering
 unittest {
 	import arsd.simpledisplay;
 	import arsd.game;
@@ -58,21 +99,43 @@ unittest {
 		//(KeyEvent ev) {
 		//if(ev.pressed)
 		});
+
+		// writeApngToFile(a, "/home/me/test.apng");
 	}
 
-	version(Demo) main(["", "/home/me/test/apngexample.apng"]); // remove from docs
+	version(Demo) main(["", "/home/me/test.apng"]); // remove from docs
+	//version(Demo) main(["", "/home/me/small-clouds.png"]); // remove from docs
 }
 
 import arsd.png;
 
-// acTL
 // must be in the file before the IDAT
+/// acTL chunk direct representation
 struct AnimationControlChunk {
 	uint num_frames;
 	uint num_plays;
+
+	/// Adds it to a chunk payload buffer, returning the slice of `buffer` actually used
+	/// Used internally by the [writeApngToFile] family of functions.
+	ubyte[] toChunkPayload(ubyte[] buffer)
+		in { assert(buffer.length >= 8); }
+	do {
+		int offset = 0;
+		buffer[offset++] = (num_frames >> 24) & 0xff;
+		buffer[offset++] = (num_frames >> 16) & 0xff;
+		buffer[offset++] = (num_frames >>  8) & 0xff;
+		buffer[offset++] = (num_frames >>  0) & 0xff;
+
+		buffer[offset++] = (num_plays >> 24) & 0xff;
+		buffer[offset++] = (num_plays >> 16) & 0xff;
+		buffer[offset++] = (num_plays >>  8) & 0xff;
+		buffer[offset++] = (num_plays >>  0) & 0xff;
+
+		return buffer[0 .. offset];
+	}
 }
 
-// fcTL
+/// fcTL chunk direct representation
 struct FrameControlChunk {
 	align(1):
 	// this should go up each time, for frame control AND for frame data, each increases.
@@ -88,9 +151,55 @@ struct FrameControlChunk {
 
 	static assert(dispose_op.offsetof == 24);
 	static assert(blend_op.offsetof == 25);
+
+	ubyte[] toChunkPayload(int sequenceNumber, ubyte[] buffer)
+		in { assert(buffer.length >= typeof(this).sizeof); }
+	do {
+		int offset = 0;
+
+		sequence_number = sequenceNumber;
+
+		buffer[offset++] = (sequence_number >> 24) & 0xff;
+		buffer[offset++] = (sequence_number >> 16) & 0xff;
+		buffer[offset++] = (sequence_number >>  8) & 0xff;
+		buffer[offset++] = (sequence_number >>  0) & 0xff;
+
+		buffer[offset++] = (width >> 24) & 0xff;
+		buffer[offset++] = (width >> 16) & 0xff;
+		buffer[offset++] = (width >>  8) & 0xff;
+		buffer[offset++] = (width >>  0) & 0xff;
+
+		buffer[offset++] = (height >> 24) & 0xff;
+		buffer[offset++] = (height >> 16) & 0xff;
+		buffer[offset++] = (height >>  8) & 0xff;
+		buffer[offset++] = (height >>  0) & 0xff;
+
+		buffer[offset++] = (x_offset >> 24) & 0xff;
+		buffer[offset++] = (x_offset >> 16) & 0xff;
+		buffer[offset++] = (x_offset >>  8) & 0xff;
+		buffer[offset++] = (x_offset >>  0) & 0xff;
+
+		buffer[offset++] = (y_offset >> 24) & 0xff;
+		buffer[offset++] = (y_offset >> 16) & 0xff;
+		buffer[offset++] = (y_offset >>  8) & 0xff;
+		buffer[offset++] = (y_offset >>  0) & 0xff;
+
+		buffer[offset++] = (delay_num >>  8) & 0xff;
+		buffer[offset++] = (delay_num >>  0) & 0xff;
+
+		buffer[offset++] = (delay_den >>  8) & 0xff;
+		buffer[offset++] = (delay_den >>  0) & 0xff;
+
+		buffer[offset++] = cast(ubyte) dispose_op;
+		buffer[offset++] = cast(ubyte) blend_op;
+
+		return buffer[0 .. offset];
+	}
 }
 
-// fdAT
+/++
+	Represents a single frame from the file, directly corresponding to the fcTL and fdAT data from the file.
++/
 class ApngFrame {
 
 	ApngAnimation parent;
@@ -99,12 +208,68 @@ class ApngFrame {
 		this.parent = parent;
 	}
 
+	this(ApngAnimation parent, int width, int height) {
+		this.parent = parent;
+		frameControlChunk.width = width;
+		frameControlChunk.height = height;
+
+		if(parent.header.type == 3) { // FIXME: other types?!
+			auto ii = new IndexedImage(width, height);
+			ii.palette = parent.palette;
+			frameData = ii;
+			data = ii.data;
+		} else {
+			auto tci = new TrueColorImage(width, height);
+			frameData = tci;
+			data = tci.imageData.bytes;
+		}
+	}
+
+	void resyncData() {
+		if(frameData is null)
+			populateData();
+
+		assert(frameData !is null);
+		assert(frameData.width == frameControlChunk.width);
+		assert(frameData.height == frameControlChunk.height);
+
+		if(auto tci = cast(TrueColorImage) frameData) {
+			data = tci.imageData.bytes;
+			assert(parent.header.type == 6);
+		} else if(auto ii = cast(IndexedImage) frameData) {
+			data = ii.data;
+			assert(parent.header.type == 3);
+			assert(ii.palette == parent.palette);
+		}
+	}
+
+	/++
+		You're allowed to edit these values but remember it is your responsibility to keep
+		it consistent with the rest of the file (at least for now, I might change this in the future).
+	+/
 	FrameControlChunk frameControlChunk;
 
-	ubyte[] compressedDatastream;
+	private ubyte[] compressedDatastream; /// Raw datastream from the file.
 
+	/++
+		A reference to frameData's bytes. May be 8 bit if indexed or 32 bit rgba if not.
+
+		Do not replace this reference but you may edit the content.
+	+/
 	ubyte[] data;
+
+	/++
+		Processed frame data as an image. only set after you call populateData.
+
+		You are allowed to edit the bytes on this but don't change the width/height or palette. Also don't replace the object.
+
+		This also means `getAsTrueColorImage` is not that useful, instead cast to [IndexedImage] or [TrueColorImage] depending
+		on your type.
+	+/
 	MemoryImage frameData;
+	/++
+		Loads the raw [compressedDatastream] into raw uncompressed [data] and processed [frameData]
+	+/
 	void populateData() {
 		if(data !is null)
 			return;
@@ -129,7 +294,7 @@ class ApngFrame {
 			img = i;
 			i.palette = parent.palette;
 			idata = i.data;
-		} else {
+		} else { // FIXME: other types?!
 			auto i = new TrueColorImage(width, height);
 			img = i;
 			idata = i.imageData.bytes;
@@ -153,10 +318,16 @@ class ApngFrame {
 	}
 }
 
+/++
+
++/
 struct ApngRenderBuffer {
+	/// Load this yourself
 	ApngAnimation animation;
 
+	/// Then these are populated when you call [nextFrame]
 	public TrueColorImage buffer;
+	/// ditto
 	public int frameNumber;
 
 	private FrameControlChunk prevFcc;
@@ -164,7 +335,7 @@ struct ApngRenderBuffer {
 	private TrueColorImage previousFrame;
 
 	/++
-		Returns number of millisecond to wait until the next frame.
+		Returns number of millisecond to wait until the next frame and populates [buffer] and [frameNumber].
 	+/
 	int nextFrame() {
 		if(frameNumber == animation.frames.length) {
@@ -239,10 +410,16 @@ struct ApngRenderBuffer {
 
 		frameNumber++;
 
-		return fcc.delay_num * 1000 / fcc.delay_den;
+		if(fcc.delay_den == 0)
+			return fcc.delay_num * 1000 / 100;
+		else
+			return fcc.delay_num * 1000 / fcc.delay_den;
 	}
 }
 
+/+
+
++/
 class ApngAnimation {
 	PngHeader header;
 	AnimationControlChunk acc;
@@ -250,29 +427,78 @@ class ApngAnimation {
 	ApngFrame[] frames;
 	// default image? tho i can just load it as a png for that too.
 
+	/// This is an uninitialized thing, you're responsible for filling in all data yourself. You probably don't want this.
+	this() {
+
+	}
+
+	/++
+		If palette is null, it is a true color image. If it has data, it is indexed.
+	+/
+	this(int width, int height, Color[] palette = null) {
+		header.type = (palette !is null) ? 3 : 6;
+		header.width = width;
+		header.height = height;
+
+		this.palette = palette;
+	}
+
+	/++
+		Adds a frame with the given size and returns the object. You can change other values in the frameControlChunk on it
+		and get the data bytes out of there.
+	+/
+	ApngFrame addFrame(int width, int height) {
+		assert(width <= header.width);
+		assert(height <= header.height);
+		auto f = new ApngFrame(this, width, height);
+		frames ~= f;
+		acc.num_frames++;
+		return f;
+	}
+
+	// call before writing or trying to render again
+	void resyncData() {
+		acc.num_frames = cast(int) frames.length;
+		foreach(frame; frames)
+			frame.resyncData();
+	}
+
+	///
 	ApngRenderBuffer renderer() {
 		return ApngRenderBuffer(this, new TrueColorImage(header.width, header.height), 0);
 	}
 }
 
+///
 enum APNG_DISPOSE_OP : byte {
-	NONE = 0,
-	BACKGROUND = 1,
-	PREVIOUS = 2
+	NONE = 0, ///
+	BACKGROUND = 1, ///
+	PREVIOUS = 2 ///
 }
 
+///
 enum APNG_BLEND_OP : byte {
-	SOURCE = 0,
-	OVER = 1
+	SOURCE = 0, ///
+	OVER = 1 ///
 }
 
 /++
 	Loads an apng file.
 
-	If it is a normal png file without animation it will
-	just load it as a single frame "animation" FIXME
+	Params:
+		data = the raw data bytes of the file
+		strictApng = if true, it will strictly interpret
+		the file as apng and ignore the default image. If there
+		are no animation chunks, it will return an empty ApngAnimation
+		object.
+
+		If false, it will use the default image as the first
+		(and only) frame of animation if there are no apng chunks.
+
+	History:
+		Parameter `strictApng` added February 27, 2021
 +/
-ApngAnimation readApng(in ubyte[] data) {
+ApngAnimation readApng(in ubyte[] data, bool strictApng = false) {
 	auto png = readPng(data);
 	auto header = PngHeader.fromChunk(png.chunks[0]);
 
@@ -289,9 +515,54 @@ ApngAnimation readApng(in ubyte[] data) {
 	int frameNumber;
 	int expectedSequenceNumber = 0;
 
+	bool seenacTL = false;
+
 	foreach(chunk; png.chunks) {
 		switch(chunk.stype) {
 			case "IDAT":
+
+				if(!seenacTL && !strictApng) {
+					// acTL chunks must appear before IDAT per spec,
+					// so if there isn't one by now, it isn't an apng file.
+					// but unless we care about strictApng, we can salvage
+					// by making some dummy data.
+
+					{
+						AnimationControlChunk c;
+						c.num_frames = 1;
+						c.num_plays = 1;
+
+						obj.acc = c;
+						obj.frames = new ApngFrame[](c.num_frames);
+
+						seenacTL = true;
+					}
+
+					{
+						FrameControlChunk c;
+						c.sequence_number = 1;
+						c.width = header.width;
+						c.height = header.height;
+						c.x_offset = 0;
+						c.y_offset = 0;
+						c.delay_num = short.max;
+						c.delay_den = 1;
+						c.dispose_op = APNG_DISPOSE_OP.NONE;
+						c.blend_op = APNG_BLEND_OP.SOURCE;
+
+						seenFctl = true;
+
+						// not increasing expectedSequenceNumber since if something is present, this is malformed!
+
+						if(obj.frames[frameNumber] is null)
+							obj.frames[frameNumber] = new ApngFrame(obj);
+						obj.frames[frameNumber].frameControlChunk = c;
+
+						frameNumber++;
+					}
+				}
+
+
 				seenIdat = true;
 				// all I care about here are animation frames,
 				// so if this isn't after a control chunk, I'm
@@ -322,6 +593,8 @@ ApngAnimation readApng(in ubyte[] data) {
 
 				obj.acc = c;
 				obj.frames = new ApngFrame[](c.num_frames);
+
+				seenacTL = true;
 			break;
 			case "fcTL":
 				FrameControlChunk c;
@@ -365,8 +638,9 @@ ApngAnimation readApng(in ubyte[] data) {
 
 				assert(offset == chunk.payload.length);
 
+				import std.conv;
 				if(expectedSequenceNumber != c.sequence_number)
-					throw new Exception("malformed apng file");
+					throw new Exception("malformed apng file expected fcTL seq " ~ to!string(expectedSequenceNumber) ~ " got " ~ to!string(c.sequence_number));
 
 				expectedSequenceNumber++;
 
@@ -386,8 +660,9 @@ ApngAnimation readApng(in ubyte[] data) {
 				sequence_number |= chunk.payload[offset++] <<  8;
 				sequence_number |= chunk.payload[offset++] <<  0;
 
+				import std.conv;
 				if(expectedSequenceNumber != sequence_number)
-					throw new Exception("malformed apng file");
+					throw new Exception("malformed apng file expected fdAT seq " ~ to!string(expectedSequenceNumber) ~ " got " ~ to!string(sequence_number));
 
 				expectedSequenceNumber++;
 
@@ -401,4 +676,119 @@ ApngAnimation readApng(in ubyte[] data) {
 	}
 
 	return obj;
+}
+
+
+/++
+
++/
+void writeApngToData(ApngAnimation apng, scope void delegate(in ubyte[] data) sink) {
+
+	apng.resyncData();
+
+	PNG* p = blankPNG(apng.header);
+	if(apng.palette.length)
+		p.replacePalette(apng.palette);
+
+	// I want acTL first, then frames, then idat last.
+
+	ubyte[128] buffer;
+
+	p.chunks ~= *(Chunk.create("acTL", apng.acc.toChunkPayload(buffer[]).dup));
+
+	// then IDAT is required
+	// FIXME: it might be better to just legit use the first frame but meh gotta check size and stuff too
+	auto render = apng.renderer();
+	render.nextFrame();
+	auto data = render.buffer.imageData.bytes;
+	addImageDatastreamToPng(data, p, false);
+
+	// then the frames
+	int sequenceNumber = 0;
+	foreach(frame; apng.frames) {
+		p.chunks ~= *(Chunk.create("fcTL", frame.frameControlChunk.toChunkPayload(sequenceNumber++, buffer[]).dup));
+		// fdAT
+
+		import std.zlib;
+
+		size_t bytesPerLine;
+		switch(apng.header.type) {
+			case 0:
+				// FIXME: < 8 depth not supported here but should be
+				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 1 * apng.header.depth / 8;
+			break;
+			case 2:
+				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 3 * apng.header.depth / 8;
+			break;
+			case 3:
+				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 1 * apng.header.depth / 8;
+			break;
+			case 4:
+				// FIXME: < 8 depth not supported here but should be
+				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 2 * apng.header.depth / 8;
+			break;
+			case 6:
+				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 4 * apng.header.depth / 8;
+			break;
+			default: assert(0);
+		
+		}
+
+		Chunk dat;
+		dat.type = ['f', 'd', 'A', 'T'];
+		size_t pos = 0;
+
+		const(ubyte)[] output;
+
+		frame.populateData();
+
+		while(pos+bytesPerLine <= frame.data.length) {
+			output ~= 0;
+			output ~= frame.data[pos..pos+bytesPerLine];
+			pos += bytesPerLine;
+		}
+
+		auto com = cast(ubyte[]) compress(output);
+		dat.size = cast(int) com.length + 4;
+
+		buffer[0] = (sequenceNumber >> 24) & 0xff;
+		buffer[1] = (sequenceNumber >> 16) & 0xff;
+		buffer[2] = (sequenceNumber >>  8) & 0xff;
+		buffer[3] = (sequenceNumber >>  0) & 0xff;
+
+		sequenceNumber++;
+
+
+		dat.payload = buffer[0 .. 4] ~ com;
+		dat.checksum = crc("fdAT", dat.payload);
+
+		p.chunks ~= dat;
+	}
+
+	{
+		Chunk c;
+
+		c.size = 0;
+		c.type = ['I', 'E', 'N', 'D'];
+		c.checksum = crc("IEND", c.payload);
+		p.chunks ~= c;
+	}
+
+	sink(writePng(p));
+}
+
+/// ditto
+void writeApngToFile(ApngAnimation apng, string filename) {
+	import std.stdio;
+	auto file = File(filename, "wb");
+	writeApngToData(apng, delegate(in ubyte[] data) {
+		file.rawWrite(data);
+	});
+}
+
+/// ditto
+ubyte[] getApngBytes(ApngAnimation apng) {
+	ubyte[] ret;
+	writeApngToData(apng, (in ubyte[] data) { ret ~= data; });
+	return ret;
 }

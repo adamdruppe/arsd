@@ -681,7 +681,7 @@ PNG* blankPNG(PngHeader h) {
 
 // should NOT have any idata already.
 // FIXME: doesn't handle palettes
-void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
+void addImageDatastreamToPng(const(ubyte)[] data, PNG* png, bool addIend = true) {
 	// we need to go through the lines and add the filter byte
 	// then compress it into an IDAT chunk
 	// then add the IEND chunk
@@ -734,13 +734,15 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png) {
 
 	png.chunks ~= dat;
 
-	Chunk c;
+	if(addIend) {
+		Chunk c;
 
-	c.size = 0;
-	c.type = ['I', 'E', 'N', 'D'];
-	c.checksum = crc("IEND", c.payload);
+		c.size = 0;
+		c.type = ['I', 'E', 'N', 'D'];
+		c.checksum = crc("IEND", c.payload);
 
-	png.chunks ~= c;
+		png.chunks ~= c;
+	}
 
 }
 
