@@ -21,6 +21,11 @@
 				// and even forward exceptions (sort of, it puts it in a RuntimeException right now)
 				h.throwException();
 			}
+
+			public void printMember() {
+				System.out.println("Member: " + member);
+			}
+			public int member;
 		}
 	```
 
@@ -48,6 +53,13 @@
 				import std.stdio;
 				writefln("hello from D, %s", name);
 			}
+
+			// D can also access Java methods
+			@Import void printMember();
+
+			// and fields, as properties
+			@Import @property int member(); // getter for java's `int member`
+			@Import @property void member(int); // setter for java's `int member`
 		}
 	---
 
@@ -1227,6 +1239,57 @@ private void exceptionCheck(JNIEnv* env) {
 	}
 }
 
+E[] translateJavaArray(E)(JNIEnv* env, jarray jarr) {
+	auto len = (*env).GetArrayLength(env, jarr);
+	static if(is(E == int)) {
+		auto eles = (*env).GetIntArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup; // FIXME:  is this dup strictly necessary? I think it is
+		(*env).ReleaseIntArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == bool)) {
+		auto eles = (*env).GetBooleanArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseBooleanArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == long)) {
+		auto eles = (*env).GetLongArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseLongArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == short)) {
+		auto eles = (*env).GetShortArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseShortArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == wchar)) {
+		auto eles = (*env).GetCharArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseCharArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == float)) {
+		auto eles = (*env).GetFloatArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseFloatArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == double)) {
+		auto eles = (*env).GetDoubleArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseDoubleArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == byte)) {
+		auto eles = (*env).GetByteArrayElements(env, jarr, null);
+		auto res = eles[0 .. len].dup;
+		(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
+	} else static if(is(E == string)) {
+		/*
+		auto eles = (*env).GetByteArrayElements(env, jarr, null);
+		auto res = eles[0 .. len];
+		(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
+		*/
+		string[] res; // FIXME
+	} else static if(is(E : IJavaObject)) {
+		// FIXME: implement this
+		typeof(return) res = null;
+	} else static if(true) {
+		E[] res; // FIXME FIXME
+	} else static assert(0, E.stringof ~ " not supported array element type yet"); // FIXME handle object arrays too. which would also prolly include arrays of arrays.
+
+	return res;
+}
+
 private enum ImportImplementationString = q{
 		static if(is(typeof(return) == void)) {
 			(*env).CallSTATICVoidMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
@@ -1297,53 +1360,7 @@ private enum ImportImplementationString = q{
 			auto jarr = (*env).CallSTATICObjectMethod(env, jobj, _jmethodID, DDataToJni(env, args).args);
 			exceptionCheck(env);
 
-			auto len = (*env).GetArrayLength(env, jarr);
-			static if(is(E == int)) {
-				auto eles = (*env).GetIntArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseIntArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == bool)) {
-				auto eles = (*env).GetBooleanArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseBooleanArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == long)) {
-				auto eles = (*env).GetLongArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseLongArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == short)) {
-				auto eles = (*env).GetShortArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseShortArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == wchar)) {
-				auto eles = (*env).GetCharArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseCharArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == float)) {
-				auto eles = (*env).GetFloatArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseFloatArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == double)) {
-				auto eles = (*env).GetDoubleArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseDoubleArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == byte)) {
-				auto eles = (*env).GetByteArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
-			} else static if(is(E == string)) {
-				/*
-				auto eles = (*env).GetByteArrayElements(env, jarr, null);
-				auto res = eles[0 .. len];
-				(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
-				*/
-				string[] res; // FIXME
-			} else static if(is(E : IJavaObject)) {
-				// FIXME: implement this
-				typeof(return) res = null;
-			} else static if(true) {
-				E[] res; // FIXME FIXME
-			} else static assert(0, E.stringof ~ " not supported array element type yet"); // FIXME handle object arrays too. which would also prolly include arrays of arrays.
-
+			auto res = translateJavaArray!E(env, jarr);
 			return res;
 		} else {
 			static assert(0, "Unsupported return type for JNI: " ~ typeof(return).stringof);
@@ -1355,9 +1372,284 @@ import std.string;
 static immutable ImportImplementationString_static = ImportImplementationString.replace("STATIC", "Static");
 static immutable ImportImplementationString_not = ImportImplementationString.replace("STATIC", "");
 
+bool isProperty(string[] items...) {
+	foreach(item; items)
+		if(item == "@property")
+			return true;
+	return false;
+}
+
 private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 	import std.traits;
 
+	static if(isProperty(__traits(getFunctionAttributes, method))) {
+
+	private static jfieldID _jfieldID;
+
+	static if(__traits(isStaticFunction, method))
+	pragma(mangle, method.mangleof)
+	private static ReturnType!method implementation(Parameters!method args) {
+		auto env = activeEnv;
+		if(env is null)
+			throw new Exception("JNI not active in this thread");
+
+		static if(is(typeof(return) == void)) {
+			static assert(Parameters!method.length == 1, "Java Property setters must take exactly one argument and return void");
+			alias FieldType = Parameters!method[0];
+		} else {
+			static assert(Parameters!method.length == 0, "Java Property getters must take no arguments");
+			alias FieldType = typeof(return);
+		}
+
+		if(!_jfieldID) {
+			jclass jc;
+			if(!T.internalJavaClassHandle_) {
+				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
+				if(!jc)
+					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
+				T.internalJavaClassHandle_ = jc;
+			} else {
+				jc = T.internalJavaClassHandle_;
+			}
+			_jfieldID = (*env).GetStaticFieldID(env, jc,
+				getJavaName!method.ptr,
+				(DTypesToJniString!(FieldType) ~ "\0").ptr
+			);
+
+			if(!_jfieldID)
+				throw new Exception("Cannot find Java static field " ~ T.stringof ~ "." ~ __traits(identifier, method));
+		}
+
+		auto jobj = T.internalJavaClassHandle_; // for static
+
+		static if(is(typeof(return) == void)) {
+			// setter
+			static if(is(FieldType == string) || is(FieldType == wstring)) {
+				(*env).SetStaticObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == int)) {
+				(*env).SetStaticIntField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == short)) {
+				(*env).SetStaticShortField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType : IJavaObject)) {
+				(*env).SetStaticObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == long)) {
+				(*env).SetStaticLongField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == float)) {
+				(*env).SetStaticFloatField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == double)) {
+				(*env).SetStaticDoubleField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == bool)) {
+				(*env).SetStaticBooleanField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == byte)) {
+				(*env).SetStaticByteField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == wchar)) {
+				(*env).SetStaticCharField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == E[], E)) {
+				// Java arrays are represented as objects
+				(*env).SetStaticObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else {
+				static assert(0, "Unsupported return type for JNI: " ~ FieldType.stringof);
+					//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+			}
+		} else {
+			// getter
+			static if(is(FieldType == string) || is(FieldType == wstring)) {
+				// I can't just use JavaParamsToD here btw because of lifetime worries.
+				// maybe i should fix it down there though because there is a lot of duplication
+
+				auto jret = (*env).GetStaticObjectField(env, jobj, _jfieldID);
+
+				FieldType ret;
+
+				auto len = (*env).GetStringLength(env, jret);
+				auto ptr = (*env).GetStringChars(env, jret, null);
+				static if(is(FieldType == wstring)) {
+					if(ptr !is null) {
+						ret = ptr[0 .. len].idup;
+						(*env).ReleaseStringChars(env, jret, ptr);
+					}
+				} else {
+					import std.conv;
+					if(ptr !is null) {
+						ret = to!string(ptr[0 .. len]);
+						(*env).ReleaseStringChars(env, jret, ptr);
+					}
+				}
+
+				return ret;
+			} else static if(is(FieldType == int)) {
+				auto ret = (*env).GetStaticIntField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == short)) {
+				auto ret = (*env).GetStaticShortField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType : IJavaObject)) {
+				auto ret = (*env).GetStaticObjectField(env, jobj, _jfieldID);
+				return fromExistingJavaObject!(FieldType)(ret);
+			} else static if(is(FieldType == long)) {
+				auto ret = (*env).GetStaticLongField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == float)) {
+				auto ret = (*env).GetStaticFloatField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == double)) {
+				auto ret = (*env).GetStaticDoubleField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == bool)) {
+				auto ret = (*env).GetStaticBooleanField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == byte)) {
+				auto ret = (*env).GetStaticByteField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == wchar)) {
+				auto ret = (*env).GetStaticCharField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == E[], E)) {
+				// Java arrays are represented as objects
+				auto jarr = (*env).GetStaticObjectField(env, jobj, _jfieldID);
+
+				auto res = translateJavaArray!E(env, jarr);
+				return res;
+			} else {
+				static assert(0, "Unsupported return type for JNI: " ~ FieldType.stringof);
+					//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+			}
+		}
+	}
+
+	else
+	pragma(mangle, method.mangleof)
+	private static ReturnType!method implementation(Parameters!method args, T this_) {
+		auto env = activeEnv;
+		if(env is null)
+			throw new Exception("JNI not active in this thread");
+
+		static if(is(typeof(return) == void)) {
+			static assert(Parameters!method.length == 1, "Java Property setters must take exactly one argument and return void");
+			alias FieldType = Parameters!method[0];
+		} else {
+			static assert(Parameters!method.length == 0, "Java Property getters must take no arguments");
+			alias FieldType = typeof(return);
+		}
+
+		if(!_jfieldID) {
+			jclass jc;
+			if(!T.internalJavaClassHandle_) {
+				jc = (*env).FindClass(env, (T._javaParameterString[1 .. $-1] ~ "\0").ptr);
+				if(!jc)
+					throw new Exception("Cannot find Java class " ~ T._javaParameterString[1 .. $-1]);
+				T.internalJavaClassHandle_ = jc;
+			} else {
+				jc = T.internalJavaClassHandle_;
+			}
+			_jfieldID = (*env).GetFieldID(env, jc,
+				getJavaName!method.ptr,
+				(DTypesToJniString!(FieldType) ~ "\0").ptr
+			);
+
+			if(!_jfieldID)
+				throw new Exception("Cannot find Java field " ~ T.stringof ~ "." ~ __traits(identifier, method));
+		}
+
+		// auto jobj = T.internalJavaClassHandle_; // for static
+		auto jobj = this_.getJavaHandle();
+
+		static if(is(typeof(return) == void)) {
+			// setter
+			static if(is(FieldType == string) || is(FieldType == wstring)) {
+				(*env).SetObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == int)) {
+				(*env).SetIntField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == short)) {
+				(*env).SetShortField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType : IJavaObject)) {
+				(*env).SetObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == long)) {
+				(*env).SetLongField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == float)) {
+				(*env).SetFloatField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == double)) {
+				(*env).SetDoubleField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == bool)) {
+				(*env).SetBooleanField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == byte)) {
+				(*env).SetByteField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == wchar)) {
+				(*env).SetCharField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else static if(is(FieldType == E[], E)) {
+				// Java arrays are represented as objects
+				(*env).SetObjectField(env, jobj, _jfieldID, DDataToJni(env, args).args);
+			} else {
+				static assert(0, "Unsupported return type for JNI: " ~ FieldType.stringof);
+					//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+			}
+		} else {
+			// getter
+			static if(is(FieldType == string) || is(FieldType == wstring)) {
+				// I can't just use JavaParamsToD here btw because of lifetime worries.
+				// maybe i should fix it down there though because there is a lot of duplication
+
+				auto jret = (*env).GetObjectField(env, jobj, _jfieldID);
+
+				FieldType ret;
+
+				auto len = (*env).GetStringLength(env, jret);
+				auto ptr = (*env).GetStringChars(env, jret, null);
+				static if(is(FieldType == wstring)) {
+					if(ptr !is null) {
+						ret = ptr[0 .. len].idup;
+						(*env).ReleaseStringChars(env, jret, ptr);
+					}
+				} else {
+					import std.conv;
+					if(ptr !is null) {
+						ret = to!string(ptr[0 .. len]);
+						(*env).ReleaseStringChars(env, jret, ptr);
+					}
+				}
+
+				return ret;
+			} else static if(is(FieldType == int)) {
+				auto ret = (*env).GetIntField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == short)) {
+				auto ret = (*env).GetShortField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType : IJavaObject)) {
+				auto ret = (*env).GetObjectField(env, jobj, _jfieldID);
+				return fromExistingJavaObject!(FieldType)(ret);
+			} else static if(is(FieldType == long)) {
+				auto ret = (*env).GetLongField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == float)) {
+				auto ret = (*env).GetFloatField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == double)) {
+				auto ret = (*env).GetDoubleField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == bool)) {
+				auto ret = (*env).GetBooleanField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == byte)) {
+				auto ret = (*env).GetByteField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == wchar)) {
+				auto ret = (*env).GetCharField(env, jobj, _jfieldID);
+				return ret;
+			} else static if(is(FieldType == E[], E)) {
+				// Java arrays are represented as objects
+				auto jarr = (*env).GetObjectField(env, jobj, _jfieldID);
+
+				auto res = translateJavaArray!E(env, jarr);
+				return res;
+			} else {
+				static assert(0, "Unsupported return type for JNI: " ~ FieldType.stringof);
+					//return DDataToJni(env, __traits(getMember, dobj, __traits(identifier, method))(JavaParamsToD!(Parameters!method)(env, args).args));
+			}
+		}
+	}
+
+	} else {
 	private static jmethodID _jmethodID;
 
 	static if(__traits(identifier, method) == "__ctor")
@@ -1455,6 +1747,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 		}
 
 		mixin(ImportImplementationString_not);
+	}
 	}
 }
 
