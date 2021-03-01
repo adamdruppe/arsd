@@ -2758,6 +2758,19 @@ public int  stbtt_GetFontVMetricsOS2(stbtt_fontinfo* info, int *typoAscent, int 
    return 1;
 }
 
+public int  stbtt_GetFontXHeight(stbtt_fontinfo* info, int *xHeight)
+{
+   int tab = stbtt__find_table(info.data, info.fontstart, "OS/2");
+   if (!tab)
+      return 0;
+   if (xHeight) {
+      auto height = ttSHORT(info.data+tab + 86);
+      if (height == 0) height = ttSHORT(info.data+tab + 2);
+      *xHeight = height;
+   }
+   return 1;
+}
+
 public void stbtt_GetFontBoundingBox(const(stbtt_fontinfo)* info, int *x0, int *y0, int *x1, int *y1)
 {
    *x0 = ttSHORT(info.data + info.head + 36);
