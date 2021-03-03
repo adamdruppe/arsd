@@ -7542,7 +7542,7 @@ version(TerminalDirectToEmulator) {
 
 
 
-			if(term.pipeThroughStdOut) {
+			if(term.pipeThroughStdOut && parent is null) { // if we have a parent, it already did this and stealing it is going to b0rk the output entirely
 				version(Posix) {
 					import unix = core.sys.posix.unistd;
 					import core.stdc.stdio;
