@@ -6150,7 +6150,8 @@ class Menu : Window {
 		HMENU handle;
 		///
 		this(string label, Widget parent = null) {
-			super(parent);
+			// not actually passing the parent since it effs up the drawing
+			super(cast(Widget) null);// parent);
 			this.label = label;
 			handle = CreatePopupMenu();
 		}
