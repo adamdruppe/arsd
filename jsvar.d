@@ -734,7 +734,9 @@ struct var {
 		} else static if(isSomeString!T) {
 			this._type = Type.String;
 			this._payload._string = to!string(t);
-		} else static if(is(T == class)) {
+		} else static if(is(T == class) || is(T == interface)) {
+			if(t !is null && (cast(Object) t) is null)
+				throw new Exception("Unsupported class or interface");
 			this._type = Type.Object;
 			this._payload._object = t is null ? null : wrapNativeObject(t);
 		} else static if(.isScriptableOpaque!T) {
@@ -2263,6 +2265,42 @@ unittest {
 	assert(iamazing !is null);
 	assert(iamazing.method() == "Amazing");
 	assert(iamazing.method2() == 10);
+
+	// and here ensuring the interface we got out can go back in and back out too
+	var globals2 = var.emptyObject;
+	globals2.opDispatch!"iamazing2" = iamazing;
+	// though inside, it is treated as an opaque reference since nothing is @scriptable
+	// so nothing to test there...
+	// however getting it back out should work fine
+	IFoo gotten = globals2.iamazing2.get!IFoo;
+	assert(gotten !is null);
+	assert(gotten is iamazing);
+	//import std.stdio; writeln("wtf", iamazing.method());
+
+	// now this seems obvious, but adding the interface can actually overwrite the dynamic
+	// prototype.... i think
+	//assert(gotten.method() == "Amazing");
+
+	class CFoo : IFoo {
+		@scriptable string method() { return "CFoo"; }
+		int method2() { return 55; }
+		int args(int, int) { return 6 + 5; }
+	}
+
+	globals.opDispatch!"iamazing3" = new CFoo; // and also just testing a standard class assign
+	IFoo input = new CFoo();
+	globals.opDispatch!"iamazing4" = input; // and interface
+	interpret(q{
+		var a = iamazing3.method();
+		assert(a == "CFoo"); // works cuz the class is scriptable
+		// but the following line is NOT available because the interface itself is not marked scriptable
+		//assert(iamazing4.method() == "CFoo");
+	}, globals);
+
+	// but we can get it right back out
+	IFoo got2 = globals.iamazing4.get!IFoo;
+	assert(got2 is input);
+	assert(got2.method() == "CFoo");
 }
 
 // just a base class we can reference when looking for native objects
@@ -2283,11 +2321,11 @@ template helper(alias T) { alias helper = T; }
 	History:
 		This became the default after April 24, 2020. Previously, [var.opAssign] would [wrapOpaquely] instead.
 +/
-WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(is(Class == class)) {
+WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(is(Class == class) || is(Class == interface)) {
 	import std.meta;
 	static class WrappedNativeObjectImpl : WrappedNativeObject {
 		override Object getObject() {
-			return obj;
+			return cast(Object) obj;
 		}
 
 		override bool isSpecial() { return special; }
@@ -2301,7 +2339,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 		this(Class objIn) {
 			this.obj = objIn;
-			wrappedType = typeid(obj);
+			wrappedType = typeid(cast(Object) obj);
 			// wrap the other methods
 			// and wrap members as scriptable properties
 
@@ -2386,7 +2424,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 }
 
 import std.traits;
-class WrappedOpaque(T) : PrototypeObject if(isPointer!T || is(T == class)) {
+class WrappedOpaque(T) : PrototypeObject if(isPointer!T || is(T == class) || is(T == interface)) {
 	T wrapped;
 	this(T t) {
 		wrapped = t;
@@ -2395,7 +2433,7 @@ class WrappedOpaque(T) : PrototypeObject if(isPointer!T || is(T == class)) {
 		return wrapped;
 	}
 }
-class WrappedOpaque(T) : PrototypeObject if(!isPointer!T && !is(T == class)) {
+class WrappedOpaque(T) : PrototypeObject if(!isPointer!T && !is(T == class) && !is(T == interface)) {
 	T* wrapped;
 	this(T t) {
 		wrapped = new T;
