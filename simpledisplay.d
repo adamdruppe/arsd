@@ -8,11 +8,49 @@
 // on Mac with X11: -L-L/usr/X11/lib 
 
 /+
+
+* I might need to set modal hints too _NET_WM_STATE_MODAL and make sure that TRANSIENT_FOR legit works
+
 	Progress bar in taskbar
 		- i can probably just set a property on the window...
 		  it sets that prop to an integer 0 .. 100. Taskbar
 		  deletes it or window deletes it when it is handled.
 		- prolly display it as a nice little line at the bottom.
+
+
+from gtk:
+
+#define PROGRESS_HINT  "_NET_WM_XAPP_PROGRESS"
+#define PROGRESS_PULSE_HINT  "_NET_WM_XAPP_PROGRESS_PULSE"
+
+>+  if (cardinal > 0)
+>+  {
+>+    XChangeProperty (GDK_DISPLAY_XDISPLAY (display),
+>+                     xid,
+>+                     gdk_x11_get_xatom_by_name_for_display (display, atom_name),
+>+                     XA_CARDINAL, 32,
+>+                     PropModeReplace,
+>+                     (guchar *) &cardinal, 1);
+>+  }
+>+  else
+>+  {
+>+    XDeleteProperty (GDK_DISPLAY_XDISPLAY (display),
+>+                     xid,
+>+                     gdk_x11_get_xatom_by_name_for_display (display, atom_name));
+>+  }
+
+from Windows:
+
+see: https://docs.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-itaskbarlist3
+
+interface
+CoCreateInstance( CLSID_TaskbarList, nullptr, CLSCTX_ALL, __uuidof(ITaskbarList3), (LPVOID*)&m_pTL3 ); 
+auto msg = RegisterWindowMessage(TEXT(“TaskbarButtonCreated”)); 
+listen for msg, return TRUE
+interface->SetProgressState(hwnd, TBPF_NORMAL); 
+interface->SetProgressValue(hwnd, 40, 100); 
+
+
 	My new notification system.
 		- use a unix socket? or a x property? or a udp port?
 		- could of course also get on the dbus train but ugh.
@@ -1602,12 +1640,32 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			keyboard = do you want to grab keyboard input?
 			mouse = grab mouse input?
 			confine = confine the mouse cursor to inside this window?
+
+		History:
+			Prior to March 11, 2021, grabbing the keyboard would always also
+			set the X input focus. Now, it only focuses if it is a non-transient
+			window and otherwise manages the input direction internally.
+
+			This means spurious focus/blur events will no longer be sent and the
+			application will not steal focus from other applications (which the
+			window manager may have rejected anyway).
 	+/
 	void grabInput(bool keyboard = true, bool mouse = true, bool confine = false) {
 		static if(UsingSimpledisplayX11) {
 			XSync(XDisplayConnection.get, 0);
-			if(keyboard)
-				XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+			if(keyboard) {
+				if(isTransient && _parent) {
+					/*
+					FIXME:
+						setting the keyboard focus is not actually that helpful, what I more likely want
+						is the events from the parent window to be sent over here if we're transient.
+					*/
+
+					_parent.inputProxy = this;
+				} else {
+					XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+				}
+			}
 			if(mouse) {
 			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */, 
 				EventMask.PointerMotionMask // FIXME: not efficient
@@ -1640,12 +1698,27 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else static assert(0);
 	}
 
+	private bool isTransient() {
+		with(WindowTypes)
+		final switch(windowType) {
+			case normal, undecorated, eventOnly:
+			case nestedChild:
+				return (customizationFlags & WindowFlags.transient) ? true : false;
+			case dropdownMenu, popupMenu, notification:
+				return true;
+		}
+	}
+
+	private SimpleWindow inputProxy;
+
 	/++
 		Releases the grab acquired by [grabInput].
 	+/
 	void releaseInputGrab() {
 		static if(UsingSimpledisplayX11) {
 			XUngrabPointer(XDisplayConnection.get, CurrentTime);
+			if(_parent)
+				_parent.inputProxy = null;
 		} else version(Windows) {
 			ReleaseCapture();
 			ClipCursor(null); 
@@ -12592,7 +12665,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				&pid,
 				1);
 
-			if(customizationFlags & WindowFlags.transient) {
+			if(isTransient && parent) { // customizationFlags & WindowFlags.transient) {
 				if(parent is null) assert(0);
 				XChangeProperty(
 					display,
@@ -13330,6 +13403,11 @@ version(X11) {
 
 			if (auto win = e.xkey.window in SimpleWindow.nativeMapping) {
 				ke.window = *win;
+
+
+				if(win.inputProxy)
+					win = &win.inputProxy;
+
 				if (win.handleKeyEvent) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);

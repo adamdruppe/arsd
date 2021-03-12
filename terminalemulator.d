@@ -1573,10 +1573,21 @@ class TerminalEmulator {
 		recalculateScrollbackLength();
 	}
 
+	private bool scrollLockLockEnabled = false;
+	package void scrollLockLock() {
+		scrollLockLockEnabled = true;
+		if(!scrollLock)
+			toggleScrollLock();
+	}
+
 	private bool scrollLock = false;
 	public void toggleScrollLock() {
+		if(scrollLockLockEnabled && scrollLock)
+			goto nochange;
 		scrollLock = !scrollLock;
 		scrollbackReflow = !scrollLock;
+
+		nochange:
 		recalculateScrollbackLength();
 
 		if(scrollLock) {

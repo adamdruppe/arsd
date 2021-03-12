@@ -4641,6 +4641,9 @@ class LineGetter {
 
 		Default is to provide recent command history as autocomplete.
 
+		$(WARNING Both `candidate` and `afterCursor` may have private data packed into the dchar bits
+		if you enabled [enableAutoCloseBrackets]. Use `ch & ~PRIVATE_BITS_MASK` to get standard dchars.)
+
 		Returns:
 			This function should return the full string to replace
 			`candidate[tabCompleteStartPoint(args) .. $]`.
@@ -4681,6 +4684,9 @@ class LineGetter {
 		is `0`, always completing the complete line, but you may return the index of another
 		character of `candidate` to provide a new split.
 
+		$(WARNING Both `candidate` and `afterCursor` may have private data packed into the dchar bits
+		if you enabled [enableAutoCloseBrackets]. Use `ch & ~PRIVATE_BITS_MASK` to get standard dchars.)
+
 		Returns:
 			The index of `candidate` where we should start the slice to keep in [tabComplete].
 			It must be `>= 0 && <= candidate.length`.
@@ -4713,7 +4719,7 @@ class LineGetter {
 
 		foreach(item; list) {
 			import std.algorithm;
-			if(startsWith(item, line[start .. cursorPosition]))
+			if(startsWith(item, line[start .. cursorPosition].map!(x => x & ~PRIVATE_BITS_MASK)))
 				f ~= item;
 		}
 
@@ -4820,6 +4826,9 @@ class LineGetter {
 	}
 
 	/++
+		$(WARNING `line` may have private data packed into the dchar bits
+		if you enabled [enableAutoCloseBrackets]. Use `ch & ~PRIVATE_BITS_MASK` to get standard dchars.)
+
 		History:
 			Introduced on January 30, 2020
 	+/
@@ -5021,6 +5030,9 @@ class LineGetter {
 
 		`currentCursorPosition` is passed in case you want to do things like highlight a matching parenthesis over
 		the cursor or similar. You can also simply ignore it.
+
+		$(WARNING `line` may have private data packed into the dchar bits
+		if you enabled [enableAutoCloseBrackets]. Use `ch & ~PRIVATE_BITS_MASK` to get standard dchars.)
 
 		History:
 			Added January 25, 2021 (version 9.2)
@@ -7667,6 +7679,7 @@ version(TerminalDirectToEmulator) {
 				if(atBottom) {
 					tew.terminalEmulator.notifyScrollbarPosition(0, int.max);
 					tew.terminalEmulator.scrollbackTo(0, int.max);
+					tew.terminalEmulator.drawScrollback();
 					tew.redraw();
 				}
 			}
@@ -7714,6 +7727,8 @@ version(TerminalDirectToEmulator) {
 				dialog((FilterParams p) {
 					auto nw = new TerminalEmulatorWindow(null, this);
 
+					nw.parentWindow.win.handleCharEvent = null; // kinda a hack... i just don't want it ever turning off scroll lock...
+
 					nw.parentFilter = (TerminalEmulator.TerminalCell[] line) {
 						import std.algorithm;
 						import std.uni;
@@ -7728,10 +7743,11 @@ version(TerminalDirectToEmulator) {
 					};
 
 					foreach(line; tew.terminalEmulator.sbb[0 .. $]) {
-						if(auto l = nw.parentFilter(line))
+						if(auto l = nw.parentFilter(line)) {
 							nw.tew.terminalEmulator.addScrollbackLine(l);
+						}
 					}
-					nw.tew.terminalEmulator.toggleScrollLock();
+					nw.tew.terminalEmulator.scrollLockLock();
 					nw.tew.terminalEmulator.drawScrollback();
 					nw.title = "Filter Display";
 					nw.show();
@@ -7781,7 +7797,7 @@ version(TerminalDirectToEmulator) {
 
 		override Menu contextMenu(int x, int y) {
 			if(ctx is null) {
-				ctx = new Menu("");
+				ctx = new Menu("", this);
 				ctx.addItem(new MenuItem(new Action("Copy", 0, {
 					terminalEmulator.copyToClipboard(terminalEmulator.getSelectedText());
 				})));

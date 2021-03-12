@@ -46,7 +46,7 @@ unittest {
 		writeApngToFile(apng, "/home/me/test.apng");
 	}
 
-	version(Demo) main(); // remove from docs
+	version(Demo) main(); // exclude from docs
 }
 
 /// Demo reading and rendering
@@ -103,8 +103,8 @@ unittest {
 		// writeApngToFile(a, "/home/me/test.apng");
 	}
 
-	version(Demo) main(["", "/home/me/test.apng"]); // remove from docs
-	//version(Demo) main(["", "/home/me/small-clouds.png"]); // remove from docs
+	version(Demo) main(["", "/home/me/test.apng"]); // exclude from docs
+	//version(Demo) main(["", "/home/me/small-clouds.png"]); // exclude from docs
 }
 
 import arsd.png;

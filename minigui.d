@@ -331,7 +331,7 @@ abstract class ComboboxBase : Widget {
 			auto coord = this.globalCoordinates();
 			auto dropDown = new SimpleWindow(
 				w, h,
-				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow/*, window*/);
+				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow, parentWindow ? parentWindow.win : null);
 
 			dropDown.move(coord.x, coord.y + this.height);
 
@@ -5246,7 +5246,7 @@ class MainWindow : Window {
 						if(menu.name in mcs) {
 							mc = mcs[menu.name];
 						} else {
-							mc = new Menu(menu.name);
+							mc = new Menu(menu.name, this);
 							menuBar.addItem(mc);
 							mcs[menu.name] = mc;
 						}
@@ -6163,7 +6163,7 @@ class Menu : Window {
 			}
 			dropDown = new SimpleWindow(
 				150, 4,
-				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow/*, window*/);
+				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow, parent ? parent.parentWindow.win : null);
 
 			this.label = label;
 
