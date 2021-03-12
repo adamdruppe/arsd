@@ -1753,6 +1753,42 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		}
 	}
 
+	/++
+		`close` is one of the few methods that can be called from other threads. This `shared` overload reflects that.
+
+		History:
+			Overload added on March 7, 2021.
+	+/
+	void close() shared {
+		(cast() this).close();
+	}
+
+	/++
+
+	+/
+	void maximize() {
+		version(Windows)
+			ShowWindow(impl.hwnd, SW_MAXIMIZE);
+		else version(X11) {
+			// I actually could set both at once...
+			setNetWmStateAtom(this.impl.window, GetAtom!("_NET_WM_STATE_MAXIMIZED_VERT", false)(XDisplayConnection.get), true, GetAtom!("_NET_WM_STATE_MAXIMIZED_HORZ", false)(XDisplayConnection.get));
+
+			// also note _NET_WM_STATE_FULLSCREEN
+		}
+
+	}
+
+	/++
+		Note: only implemented on Windows. No-op on other platforms. You may want to use [hide] instead.
+
+	+/
+	void minimize() {
+		version(Windows)
+			ShowWindow(impl.hwnd, SW_MINIMIZE);
+		//else version(X11)
+			//setNetWmStateAtom(this, GetAtom!("_NET_WM_STATE_MINIMIZED", false)(XDisplayConnection.get), true);
+	}
+
 	/// Alias for `hidden = false`
 	void show() {
 		hidden = false;
@@ -7448,8 +7484,9 @@ class OperatingSystemFont {
 	int height() {
 		version(X11) {
 			version(with_xft)
-				if(isXft && xftFont !is null)
-					return xftFont.height;
+				if(isXft && xftFont !is null) {
+					return xftFont.ascent + xftFont.descent; // i don't use height here because it doesn't include the baseline pixel
+				}
 			if(font is null)
 				return 0;
 			return font.max_bounds.ascent + font.max_bounds.descent;
@@ -7766,13 +7803,22 @@ struct ScreenPainter {
 		drawRectangle(Point(0, 0), window.width, window.height);
 	}
 
-	///
+	/++
+		Draws a pixmap (represented by the [Sprite] class) on the drawable.
+
+		Params:
+			upperLeft = point on the window where the upper left corner of the image will be drawn
+			imageUpperLeft = point on the image to start the slice to draw
+			sliceSize = size of the slice of the image to draw on the window. If width or height is 0, it uses the entire width or height of the image.
+		History:
+			The `imageUpperLeft` and `sliceSize` parameters were added on March 11, 2021 (dub v9.3.0)
+	+/
 	version(OSXCocoa) {} else // NotYetImplementedException
-	void drawPixmap(Sprite s, Point upperLeft) {
+	void drawPixmap(Sprite s, Point upperLeft, Point imageUpperLeft = Point(0, 0), Size sliceSize = Size(0, 0)) {
 		if(impl is null) return;
 		if(isClipped(upperLeft, s.width, s.height)) return;
 		transform(upperLeft);
-		impl.drawPixmap(s, upperLeft.x, upperLeft.y);
+		impl.drawPixmap(s, upperLeft.x, upperLeft.y, imageUpperLeft.x, imageUpperLeft.y, sliceSize.width, sliceSize.height);
 	}
 
 	///
@@ -8122,9 +8168,16 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 	/++
 		Draws the image on the specified painter at the specified point. The point is the upper-left point where the image will be drawn.
+
+		Params:
+			where = point on the window where the upper left corner of the image will be drawn
+			imageUpperLeft = point on the image to start the slice to draw
+			sliceSize = size of the slice of the image to draw on the window. If width or height is 0, it uses the entire width or height of the image.
+		History:
+			The `imageUpperLeft` and `sliceSize` parameters were added on March 11, 2021 (dub v9.3.0)
 	+/
-	void drawAt(ScreenPainter painter, Point where) {
-		painter.drawPixmap(this, where);
+	void drawAt(ScreenPainter painter, Point where, Point imageUpperLeft = Point(0, 0), Size sliceSize = Size(0, 0)) {
+		painter.drawPixmap(this, where, imageUpperLeft, sliceSize);
 	}
 
 
@@ -8432,6 +8485,79 @@ private void guiThreadFinalize() {
 	guiThreadTerminating = true; // don't add any more from this point on
 	runPendingRunInGuiThreadDelegates();
 }
+
+/+
+interface IPromise {
+	void reportProgress(int current, int max, string message);
+
+	/+ // not formally in cuz of templates but still
+	IPromise Then();
+	IPromise Catch();
+	IPromise Finally();
+	+/
+}
+
+/+
+	auto promise = async({ ... });
+	promise.Then(whatever).
+		Then(whateverelse).
+		Catch((exception) { });
+
+
+	A promise is run inside a fiber and it looks something like:
+
+	try {
+		auto res = whatever();
+		auto res2 = whateverelse(res);
+	} catch(Exception e) {
+		{ }(e);
+	}
+
+	When a thing succeeds, it is passed as an arg to the next
++/
+class Promise(T) : IPromise {
+	auto Then() { return null; }
+	auto Catch() { return null; }
+	auto Finally() { return null; }
+
+	// wait for it to resolve and return the value, or rethrow the error if that occurred.
+	// cannot be called from the gui thread, but this is caught at runtime instead of compile time.
+	T await();
+}
+
+interface Task {
+}
+
+interface Resolvable(T) : Task {
+	void run();
+
+	void resolve(T);
+
+	Resolvable!T then(void delegate(T)); // returns a new promise
+	Resolvable!T error(Throwable); // js catch
+	Resolvable!T completed(); // js finally
+
+}
+
+/++
+	Runs `work` in a helper thread and sends its return value back to the main gui
+	thread as the argument to `uponCompletion`. If `work` throws, the exception is
+	sent to the `uponThrown` if given, or if null, rethrown from the event loop to
+	kill the program.
+
+	You can call reportProgress(position, max, message) to update your parent window
+	on your progress.
+
+	I should also use `shared` methods. FIXME
+
+	History:
+		Added March 6, 2021 (dub version 9.3).
++/
+void runInWorkerThread(T)(T delegate(Task) work, void delegate(T) uponCompletion) {
+	uponCompletion(work(null));
+}
+
++/
 
 /// Used internal to dispatch events to various classes.
 interface CapableOfHandlingNativeEvent {
@@ -9412,7 +9538,7 @@ version(Windows) {
 			DeleteDC(hdcMem);
 		}
 
-		void drawPixmap(Sprite s, int x, int y) {
+		void drawPixmap(Sprite s, int x, int y, int ix, int iy, int w, int h) {
 			BITMAP bm;
 
 			HDC hdcMem = CreateCompatibleDC(hdc);
@@ -9421,7 +9547,7 @@ version(Windows) {
 			GetObject(s.handle, bm.sizeof, &bm);
 
 			// or should I AlphaBlend!??!?! note it is supposed to be premultiplied  http://www.fengyuan.com/article/alphablend.html
-			BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+			BitBlt(hdc, x, y, w ? w : bm.bmWidth, h ? h : bm.bmHeight, hdcMem, ix, iy, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
@@ -10646,8 +10772,8 @@ version(X11) {
 				XPutImage(display, d, gc, i.handle, ix, iy, x, y, w, h);
 		}
 
-		void drawPixmap(Sprite s, int x, int y) {
-			XCopyArea(display, s.handle, d, gc, 0, 0, s.width, s.height, x, y);
+		void drawPixmap(Sprite s, int x, int y, int ix, int iy, int w, int h) {
+			XCopyArea(display, s.handle, d, gc, ix, iy, w ? w : s.width, h ? h : s.height, x, y);
 		}
 
 		int fontHeight() {
@@ -18639,8 +18765,11 @@ void demandAttention(SimpleWindow window, bool needs = true) {
 
 /// ditto
 void demandAttention(Window window, bool needs = true) {
+	setNetWmStateAtom(window, GetAtom!("_NET_WM_STATE_DEMANDS_ATTENTION", false)(XDisplayConnection.get), needs);
+}
+
+void setNetWmStateAtom(Window window, Atom atom, bool set = true, Atom atom2 = None) {
 	auto display = XDisplayConnection.get();
-	auto atom = XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", true);
 	if(atom == None)
 		return; // non-failure error
 	//auto atom2 = GetAtom!"_NET_WM_STATE_SHADED"(display);
@@ -18651,10 +18780,10 @@ void demandAttention(Window window, bool needs = true) {
 	xclient.window = window;
 	xclient.message_type = GetAtom!"_NET_WM_STATE"(display);
 	xclient.format = 32;
-	xclient.data.l[0] = needs ? _NET_WM_STATE_ADD : _NET_WM_STATE_REMOVE;
+	xclient.data.l[0] = set ? _NET_WM_STATE_ADD : _NET_WM_STATE_REMOVE;
 	xclient.data.l[1] = atom;
-	//xclient.data.l[2] = atom2;
-	// [2] == a second property
+	xclient.data.l[2] = atom2;
+	xclient.data.l[3] = 1;
 	// [3] == source. 0 == unknown, 1 == app, 2 == else
 
 	XSendEvent(
