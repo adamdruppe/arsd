@@ -7539,7 +7539,12 @@ version(TerminalDirectToEmulator) {
 			smw = new ScrollMessageWidget(this);
 			tew = new TerminalEmulatorWidget(term, smw);
 
-			win.resize(integratedTerminalEmulatorConfiguration.initialWidth * tew.terminalEmulator.fontWidth, integratedTerminalEmulatorConfiguration.initialHeight * tew.terminalEmulator.fontHeight);
+			if(integratedTerminalEmulatorConfiguration.initialWidth == 0 || integratedTerminalEmulatorConfiguration.initialHeight == 0) {
+				win.show(); // if must be mapped before maximized... it does cause a flash but meh.
+				win.maximize();
+			} else {
+				win.resize(integratedTerminalEmulatorConfiguration.initialWidth * tew.terminalEmulator.fontWidth, integratedTerminalEmulatorConfiguration.initialHeight * tew.terminalEmulator.fontHeight);
+			}
 
 			smw.addEventListener("scroll", () {
 				tew.terminalEmulator.scrollbackTo(smw.position.x, smw.position.y + tew.terminalEmulator.height);
@@ -8096,7 +8101,8 @@ version(TerminalDirectToEmulator) {
 			if(this.font is null || this.font.isNull)
 				loadDefaultFont(integratedTerminalEmulatorConfiguration.fontSize);
 
-			super(integratedTerminalEmulatorConfiguration.initialWidth, integratedTerminalEmulatorConfiguration.initialHeight);
+			super(integratedTerminalEmulatorConfiguration.initialWidth ? integratedTerminalEmulatorConfiguration.initialWidth : 80,
+				integratedTerminalEmulatorConfiguration.initialHeight ? integratedTerminalEmulatorConfiguration.initialHeight : 30);
 
 			defaultForeground = integratedTerminalEmulatorConfiguration.defaultForeground;
 			defaultBackground = integratedTerminalEmulatorConfiguration.defaultBackground;
