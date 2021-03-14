@@ -1432,24 +1432,33 @@ float[2] getDpi() {
 }
 
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
-	throw new Exception("not implemented");
-	version(none) {
+	TrueColorImage got;
 	version(X11) {
 		auto display = XDisplayConnection.get;
-		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ZPixmap);
+		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ImageFormat.ZPixmap);
 
 		// https://github.com/adamdruppe/arsd/issues/98
 
-		// FIXME: copy that shit
+		auto i = new Image(image);
+		got = i.toTrueColorImage();
 
 		XDestroyImage(image);
 	} else version(Windows) {
 		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
 
+		auto hdc = GetDC(handle);
+		scope(exit) ReleaseDC(handle, hdc);
+		auto i = new Image(width, height);
+		HDC hdcMem = CreateCompatibleDC(hdc);
+		HBITMAP hbmOld = SelectObject(hdcMem, i.handle);
+		BitBlt(hdcMem, 0, 0, width, height, hdc, 0, 0, SRCCOPY);
+		SelectObject(hdcMem, hbmOld);
+		DeleteDC(hdcMem);
+
+		got = i.toTrueColorImage();
 	} else featureNotImplemented();
 
-	return null;
-	}
+	return got;
 }
 
 /++
@@ -1473,8 +1482,14 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 +/
 class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
-	/// Be warned: this can be a very slow operation
-	/// FIXME NOT IMPLEMENTED
+	/++
+		Copies the window's current state into a [TrueColorImage].
+
+		Be warned: this can be a very slow operation
+
+		History:
+			Actually implemented on March 14, 2021
+	+/
 	TrueColorImage takeScreenshot() {
 		version(Windows)
 			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
@@ -2359,7 +2374,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
-			DeleteDC(hwnd);
+			ReleaseDC(hwnd, hdc);
 
 			/*
 			RECT r;
@@ -6867,7 +6882,19 @@ final class Image {
 		this(size.width, size.height, forcexshm);
 	}
 
+	private bool suppressDestruction;
+
+	version(X11)
+	this(XImage* handle) {
+		this.handle = handle;
+		this.rawData = cast(ubyte*) handle.data;
+		this.width = handle.width;
+		this.height = handle.height;
+		suppressDestruction = true;
+	}
+
 	~this() {
+		if(suppressDestruction) return;
 		impl.dispose();
 	}
 
@@ -8162,8 +8189,14 @@ class Sprite : CapableOfBeingDrawnUpon {
 		return ScreenPainter(this, handle);
 	}
 
-	/// Be warned: this can be a very slow operation
-	/// FIXME NOT IMPLEMENTED
+	/++
+		Copies the sprite's current state into a [TrueColorImage].
+
+		Be warned: this can be a very slow operation
+
+		History:
+			Actually implemented on March 14, 2021
+	+/
 	TrueColorImage takeScreenshot() {
 		return trueColorImageFromNativeHandle(handle, width, height);
 	}
@@ -8301,6 +8334,8 @@ class Sprite : CapableOfBeingDrawnUpon {
 }
 
 /++
+	NOT IMPLEMENTED
+
 	A display-stored image optimized for relatively quick drawing, like
 	[Sprite], but this one supports alpha channel blending and does NOT
 	support direct drawing upon it with a [ScreenPainter].
@@ -8312,7 +8347,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 	almost everywhere though.
 
 	History:
-		Added November 14, 2020.
+		Added November 14, 2020 but NOT ACTUALLY IMPLEMENTED
 +/
 version(none)
 class AlphaSprite {
@@ -9513,7 +9548,7 @@ version(Windows) {
 				DeleteDC(hdc);
 
 			if(window.paintingFinishedDg !is null)
-				window.paintingFinishedDg();
+				window.paintingFinishedDg()();
 		}
 
 		bool windowDc;
@@ -10698,7 +10733,7 @@ version(X11) {
 			XFlush(display);
 
 			if(window.paintingFinishedDg !is null)
-				window.paintingFinishedDg();
+				window.paintingFinishedDg()();
 		}
 
 		bool backgroundIsNotTransparent = true;
@@ -13615,6 +13650,9 @@ extern(C) nothrow @nogc {
 		uint		/* width */,
 		uint		/* height */
 	);
+
+	XImage *XGetImage(Display *display, Drawable d, int x, int y, uint width, uint height, c_ulong plane_mask, int format);
+
 
 	int XDestroyWindow(
 		Display*	/* display */,
