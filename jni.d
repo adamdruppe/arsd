@@ -1240,6 +1240,8 @@ private void exceptionCheck(JNIEnv* env) {
 }
 
 E[] translateJavaArray(E)(JNIEnv* env, jarray jarr) {
+	if(jarr is null)
+		return null;
 	auto len = (*env).GetArrayLength(env, jarr);
 	static if(is(E == int)) {
 		auto eles = (*env).GetIntArrayElements(env, jarr, null);
@@ -2080,35 +2082,49 @@ private struct JavaParamsToD(Spec...) {
 			} else static if(is(T : IJavaObject)) {
 				arg = fromExistingJavaObject!T(jarg);
 			} else static if(is(T == bool[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetBooleanArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetBooleanArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == byte[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetByteArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetByteArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == wchar[])) {
 				// handled above
 			} else static if(is(T == short[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetShortArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetShortArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == int[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetIntArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetIntArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == long[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetLongArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetLongArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == float[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetFloatArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetFloatArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			} else static if(is(T == double[])) {
-				auto len = (*env).GetArrayLength(env, jarg);
-				auto ptr = (*env).GetDoubleArrayElements(env, jarg, null);
-				arg = ptr is null ? null : ptr[0 .. len];
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					auto ptr = (*env).GetDoubleArrayElements(env, jarg, null);
+					arg = ptr is null ? null : ptr[0 .. len];
+				}
 			}
 			else static assert(0, "Unimplemented/unsupported type " ~ T.stringof);
 
@@ -2205,6 +2221,8 @@ T as(T, R)(R obj) {
 
 
 static T fromExistingJavaObject(T)(jobject o) if(is(T : IJavaObject) && !is(T == interface)) {
+	if(o is null)
+		return null;
 	import core.memory;
 	auto ptr = GC.malloc(__traits(classInstanceSize, T));
 	ptr[0 .. __traits(classInstanceSize, T)] = typeid(T).initializer[];
