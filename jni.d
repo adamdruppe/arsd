@@ -1276,15 +1276,26 @@ E[] translateJavaArray(E)(JNIEnv* env, jarray jarr) {
 		auto res = eles[0 .. len].dup;
 		(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
 	} else static if(is(E == string)) {
-		/*
-		auto eles = (*env).GetByteArrayElements(env, jarr, null);
-		auto res = eles[0 .. len];
-		(*env).ReleaseByteArrayElements(env, jarr, eles, 0);
-		*/
-		string[] res; // FIXME
+		string[] res;
+
+		if(jarr !is null) {
+			res.length = len;
+			foreach(idxarr, ref a; res) {
+				auto ja = (*env).GetObjectArrayElement(env, jarr, cast(int) idxarr);
+				a = JavaParamsToD!string(env, ja).args[0].idup;
+			}
+		}
 	} else static if(is(E : IJavaObject)) {
-		// FIXME: implement this
 		typeof(return) res = null;
+
+		if(jarr !is null) {
+			res.length = len;
+			foreach(idxarr, ref a; res) {
+				auto ja = (*env).GetObjectArrayElement(env, jarr, cast(int) idxarr);
+				a = fromExistingJavaObject!E(ja);
+			}
+		}
+
 	} else static if(true) {
 		E[] res; // FIXME FIXME
 	} else static assert(0, E.stringof ~ " not supported array element type yet"); // FIXME handle object arrays too. which would also prolly include arrays of arrays.
@@ -1911,10 +1922,12 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 	else static if(is(T : IJavaObject)) return data is null ? null : data.getJavaHandle();
 
 
-	else static if(is(T == string[])) return null; // FIXME!!!
-
-	else static if(is(T == IJavaObject[])) return null; // FIXME!!!
-	else static if(is(T == bool[])) {
+	else static if(is(T == string[])) {
+		auto j = (*env).NewObjectArray(env, cast(int) data.length, (*env).FindClass(env, "java/lang/String"), null);
+		foreach(idx, str; data)
+			(*env).SetObjectArrayElement(env, j, cast(int) idx, DDatumToJni(env, str));
+		return j;
+	} else static if(is(T == bool[])) {
 		auto j = (*env).NewBooleanArray(env, cast(jsize) data.length);
 		(*env).SetBooleanArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
 		return j;
@@ -1923,7 +1936,7 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 		(*env).SetByteArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
 		return j;
 	} else static if(is(T == wchar[])) {
-		return null; // FIXME!!!
+		return DDatumToJni(env, to!string(data)); // FIXME: could prolly be more efficient
 	} else static if(is(T == short[])) {
 		auto j = (*env).NewShortArray(env, cast(jsize) data.length);
 		(*env).SetShortArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
@@ -1944,9 +1957,21 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 		auto j = (*env).NewDoubleArray(env, cast(jsize) data.length);
 		(*env).SetDoubleArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
 		return j;
-	} else static if(is(T == E[], E)) return null; // FIXME!!!
+	} else static if(is(T == E[], E)) {
+		static if(is(E : IJavaObject)) {
+			static if(is(E == IJavaObject))
+				auto handle = (*env).FindClass(env, "java/lang/Object");
+			else
+				auto handle = E.internalJavaClassHandle_;
 
-
+			auto j = (*env).NewObjectArray(env, cast(int) data.length, handle, null);
+			foreach(idx, str; data)
+				(*env).SetObjectArrayElement(env, j, cast(int) idx, DDatumToJni(env, str));
+			return j;
+		} else {
+			static assert(0, "Unsupported array element type " ~ E.stringof);
+		}
+	}
 	else static assert(0, "Unsupported type " ~ T.stringof);
 	/* // FIXME: finish these.
 	else static if(is(T == IJavaObject[]))
@@ -2125,6 +2150,27 @@ private struct JavaParamsToD(Spec...) {
 					auto ptr = (*env).GetDoubleArrayElements(env, jarg, null);
 					arg = ptr is null ? null : ptr[0 .. len];
 				}
+			} else static if(is(T == string[])) {
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					arg.length = len;
+					foreach(idxarr, ref a; arg) {
+						auto ja = (*env).GetObjectArrayElement(env, jarg, cast(int) idxarr);
+						a = JavaParamsToD!string(env, ja).args[0].idup;
+					}
+				}
+			} else static if(is(T == E[], E)) {
+				static if(is(E : IJavaObject)) {
+				if(jarg !is null) {
+					auto len = (*env).GetArrayLength(env, jarg);
+					arg.length = len;
+					foreach(idxarr, ref a; arg) {
+						auto ja = (*env).GetObjectArrayElement(env, jarg, cast(int) idxarr);
+						a = fromExistingJavaObject!E(ja);
+					}
+				}
+				} else static assert(0, "Unsupported array element type " ~ E.stringof);
+				// FIXME: actually check the other types not just the generic array
 			}
 			else static assert(0, "Unimplemented/unsupported type " ~ T.stringof);
 
