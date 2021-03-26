@@ -1225,7 +1225,7 @@ alias extern(C) int function(scope const void*, scope const void*) @system Compa
 IndexedImage quantize(in TrueColorImage img, Color[] palette = null, in int maxColors = 256)
 	// this is just because IndexedImage assumes ubyte palette values
 	in { assert(maxColors <= 256); }
-body {
+do {
 	int[Color] uses;
 	foreach(pixel; img.imageData.colors) {
 		if(auto i = pixel in uses) {
