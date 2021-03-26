@@ -36,6 +36,24 @@ CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
 	typeof(return) delegate() bestMatch;
 	int bestScore;
 
+	string argsStr() {
+		string s;
+		foreach(arg; args) {
+			if(s.length)
+				s ~= ", ";
+			static if (is(typeof(arg) == class)) {
+				if (arg is null) {
+					s ~= "null " ~ typeof(arg).stringof;
+				} else {
+					s ~= typeid(arg).name;
+				}
+			} else {
+				s ~= typeof(arg).stringof;
+			}
+		}
+		return s;
+	}
+
 	ov: foreach(overload; __traits(getOverloads, __traits(parent, fn), __traits(identifier, fn))) {
 		Parameters!overload pargs;
 		int score = 0;
@@ -51,7 +69,7 @@ CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
 				pargs[idx] = args[idx];
 		}
 		if(score == bestScore)
-			throw new Exception("ambiguous overload selection with args"); // FIXME: show the things
+			throw new Exception("ambiguous overload selection with args (" ~ argsStr ~ ")");
 		if(score > bestScore) {
 			bestMatch = () {
 				static if(is(typeof(return) == void))
@@ -64,7 +82,7 @@ CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
 	}
 
 	if(bestMatch is null)
-		throw new Exception("no match existed");
+		throw new Exception("no match existed with args (" ~ argsStr ~ ")");
 
 	return bestMatch();
 }
@@ -81,6 +99,8 @@ unittest {
 		int foo(Object a, Object b) { return 1; }
 		int foo(MyClass a, Object b) { return 2; }
 		int foo(DerivedClass a, MyClass b) { return 3; }
+
+		int bar(MyClass a) { return 4; }
 	}
 
 	with(Wrapper) {
@@ -91,5 +111,7 @@ unittest {
 		assert(mvd!foo(new OtherClass, new MyClass) == 1);
 		assert(mvd!foo(new DerivedClass, new DerivedClass) == 3);
 		assert(mvd!foo(new OtherClass, new MyClass) == 1);
+
+		//mvd!bar(new OtherClass);
 	}
 }
