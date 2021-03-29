@@ -2029,7 +2029,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	void opacity(double opacity) @property
 	in {
 		assert(opacity >= 0 && opacity <= 1);
-	} body {
+	} do {
 		version (Windows) {
 			impl.setOpacity(cast(ubyte)(255 * opacity));
 		} else version (X11) {
@@ -16725,7 +16725,7 @@ class ExperimentalTextComponent2 {
 		this(Color f, Color b, OperatingSystemFont font, ubyte attr, const(char)[] c)
 			in { assert(font !is null);
 			     assert(!font.isNull); }
-			body
+			do
 		{
 			this.foreground = f;
 			this.background = b;
