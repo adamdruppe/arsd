@@ -3,6 +3,9 @@
 	See [imageResize] for the main function, all others are lower level if you need
 	more control.
 
+	Note that this focuses more on quality than speed. You can tweak the `filterScale`
+	argument to speed things up at the expense of quality though (lower number = faster).
+
 
 	Authors:
 		Originally written in C by Rich Geldreich, ported to D by ketmar.
@@ -78,6 +81,29 @@ public int imageResizeFindFilter (const(char)[] name, const(char)[] defaultFilte
   return res;
 }
 
+/++
+	Calculates a new size that fits inside the maximums while keeping the original aspect ratio.
+
+	History:
+		Added March 18, 2021 (dub v9.4)
++/
+public Size calculateSizeKeepingAspectRatio(int currentWidth, int currentHeight, int maxWidth, int maxHeight) {
+	if(currentWidth <= maxWidth && currentHeight <= maxHeight)
+		return Size(currentWidth, currentHeight);
+
+	float shrinkage = 1.0;
+
+	if(currentWidth > maxWidth) {
+		shrinkage = cast(float) maxWidth / currentWidth;
+	}
+	if(currentHeight > maxHeight) {
+		auto shrinkage2 = cast(float) maxHeight / currentHeight;
+		if(shrinkage2 < shrinkage)
+			shrinkage = shrinkage2;
+	}
+
+	return Size(cast(int) (currentWidth * shrinkage), cast(int) (currentHeight * shrinkage));
+}
 
 // ////////////////////////////////////////////////////////////////////////// //
 /// Resize image.

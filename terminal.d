@@ -174,6 +174,20 @@ import core.stdc.stdio;
 
 version(TerminalDirectToEmulator) {
 	version=WithEncapsulatedSignals;
+	private __gshared bool windowGone = false;
+	private bool forceTerminationTried = false;
+	private void forceTermination() {
+		if(forceTerminationTried) {
+			// why are we still here?! someone must be catching the exception and calling back.
+			// there's no recovery so time to kill this program.
+			import core.stdc.stdlib;
+			abort();
+		} else {
+			// give them a chance to cleanly exit...
+			forceTerminationTried = true;
+			throw new HangupException();
+		}
+	}
 }
 
 version(Posix) {
@@ -2705,6 +2719,7 @@ struct RealTimeConsoleInput {
 			import core.time;
 			if(terminal.tew.terminalEmulator.pendingForApplication.length)
 				return true;
+			if(windowGone) forceTermination();
 			if(terminal.tew.terminalEmulator.outgoingSignal.wait(milliseconds.msecs))
 				// it was notified, but it could be left over from stuff we
 				// already processed... so gonna check the blocking conditions here too
@@ -2795,8 +2810,10 @@ struct RealTimeConsoleInput {
 			moar:
 			//if(interruptable && inputQueue.length)
 				//return -1;
-			if(terminal.tew.terminalEmulator.pendingForApplication.length == 0)
+			if(terminal.tew.terminalEmulator.pendingForApplication.length == 0) {
+				if(windowGone) forceTermination();
 				terminal.tew.terminalEmulator.outgoingSignal.wait();
+			}
 			synchronized(terminal.tew.terminalEmulator) {
 				if(terminal.tew.terminalEmulator.pendingForApplication.length == 0) {
 					if(interruptable)
@@ -5626,6 +5643,7 @@ class LineGetter {
 				terminal.tew.terminalEmulator.waitingForInboundSync = true;
 				terminal.writeStringRaw("\xff");
 				terminal.flush();
+				if(windowGone) forceTermination();
 				terminal.tew.terminalEmulator.syncSignal.wait();
 			}
 
@@ -7822,8 +7840,10 @@ version(TerminalDirectToEmulator) {
 			terminalEmulator = new TerminalEmulatorInsideWidget(this);
 			super(parent);
 			this.parentWindow.win.onClosing = {
-				if(term)
+				if(term) {
 					term.hangedUp = true;
+					// should I just send an official SIGHUP?!
+				}
 
 				if(auto wi = cast(TerminalEmulatorWindow) this.parentWindow) {
 					if(wi.parent)
@@ -7860,6 +7880,8 @@ version(TerminalDirectToEmulator) {
 				terminalEmulator.outgoingSignal.notify();
 				terminalEmulator.incomingSignal.notify();
 				terminalEmulator.syncSignal.notify();
+
+				windowGone = true;
 			};
 
 			this.parentWindow.win.addEventListener((InputEventInternal ie) {
@@ -7875,6 +7897,7 @@ version(TerminalDirectToEmulator) {
 		void sendRawInput(const(ubyte)[] data) {
 			if(this.parentWindow) {
 				this.parentWindow.win.postEvent(new InputEventInternal(data));
+				if(windowGone) forceTermination();
 				terminalEmulator.incomingSignal.wait(); // blocking write basically, wait until the TE confirms the receipt of it
 			}
 		}

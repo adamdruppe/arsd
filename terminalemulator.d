@@ -1311,7 +1311,11 @@ class TerminalEmulator {
 					(esc[0] == '[' && (b >= 64 && b <= 126)) ||
 					(esc[0] == ']' && b == '\007')))
 				{
-					tryEsc(esc[]);
+					try {
+						tryEsc(esc[]);
+					} catch(Exception e) {
+						unknownEscapeSequence(e.msg ~ " :: " ~ cast(char[]) esc[]);
+					}
 					esc = null;
 					readingEsc = false;
 				} else if(esc.length == 3 && esc[0] == '%' && esc[1] == 'G') {
@@ -1625,13 +1629,41 @@ class TerminalEmulator {
 		notifyScrollbarPosition(currentScrollbackX, currentScrollback ? scrollbackLength - currentScrollback : int.max);
 	}
 
+	/++
+		Writes the text in the scrollback buffer to the given file.
+
+		Discards formatting information and embedded images.
+
+		See_Also:
+			[writeScrollbackToDelegate]
+	+/
 	public void writeScrollbackToFile(string filename) {
 		import std.stdio;
 		auto file = File(filename, "wt");
 		foreach(line; scrollbackBuffer[]) {
 			foreach(c; line)
-				file.write(c.ch); // I hope this is buffered
+				if(!c.hasNonCharacterData)
+					file.write(c.ch); // I hope this is buffered
 			file.writeln();
+		}
+	}
+
+	/++
+		Writes the text in the scrollback buffer to the given delegate, one character at a time.
+
+		Discards formatting information and embedded images.
+
+		See_Also:
+			[writeScrollbackToFile]
+		History:
+			Added March 14, 2021 (dub version 9.4)
+	+/
+	public void writeScrollbackToDelegate(scope void delegate(dchar c) dg) {
+		foreach(line; scrollbackBuffer[]) {
+			foreach(c; line)
+				if(!c.hasNonCharacterData)
+					dg(c.ch);
+			dg('\n');
 		}
 	}
 
@@ -1836,6 +1868,13 @@ class TerminalEmulator {
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
 		bool selectiveMouseTracking;
+		/+
+			When set, it causes xterm to send CSI I when the terminal gains focus, and CSI O  when it loses focus.
+			this is turned on by mode 1004 with mouse events.
+
+			FIXME: not implemented.
+		+/
+		bool sendFocusEvents;
 
 		bool mouseMotionTracking() {
 			return _mouseMotionTracking;
@@ -1851,6 +1890,7 @@ class TerminalEmulator {
 			mouseButtonTracking = false;
 			mouseButtonReleaseTracking = false;
 			mouseButtonMotionTracking = false;
+			sendFocusEvents = false;
 		}
 
 		bool wraparoundMode = true;
@@ -2337,7 +2377,13 @@ class TerminalEmulator {
 					return bfr[0 .. max(argsAtSidx[sidx - 1].length, defaults.length)];
 				}
 
-				auto argsSection = cast(char[]) esc[sidx .. $-1];
+				auto end = esc.length - 1;
+				foreach(iii, b; esc[sidx .. end]) {
+					if(b >= 0x20 && b < 0x30)
+						end = iii + sidx;
+				}
+
+				auto argsSection = cast(char[]) esc[sidx .. end];
 				int[] args = argsAtSidxBuffer[sidx - 1][];
 
 				import std.string : split;
@@ -2995,6 +3041,9 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									mouseButtonReleaseTracking = true;
 									mouseMotionTracking = true;
 								break;
+								case 1004:
+									sendFocusEvents = true;
+								break;
 								case 1005:
 									// enable utf-8 mouse mode
 									/*
@@ -3101,6 +3150,9 @@ URXVT (1015)
 							break;
 							case 34:
 								// no idea. vim inside screen sends it
+							break;
+							case 1004:
+								sendFocusEvents = false;
 							break;
 							case 1005:
 								// turn off utf-8 mouse

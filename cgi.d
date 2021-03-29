@@ -3354,10 +3354,15 @@ bool tryAddonServers(string[] args) {
 					printf("Add-on servers not compiled in.\n");
 				return true;
 			case "--timer-server":
+			try {
 				version(with_addon_servers)
 					runTimerServer();
 				else
 					printf("Add-on servers not compiled in.\n");
+			} catch(Throwable t) {
+				import std.file;
+				std.file.write("/tmp/timer-exception", t.toString);
+			}
 				return true;
 			case "--timed-jobs":
 				import core.demangle;
@@ -5985,7 +5990,7 @@ void startAddonServer()(string arg) {
 		import core.sys.posix.unistd;
 		pid_t pid;
 		const(char)*[16] args;
-		args[0] = "ARSD_CGI_WEBSOCKET_SERVER";
+		args[0] = "ARSD_CGI_ADDON_SERVER";
 		args[1] = arg.ptr;
 		posix_spawn(&pid, "/proc/self/exe",
 			null,
@@ -6459,6 +6464,13 @@ mixin template ImplementRpcClientInterface(T, string serverPath, string cmdArg) 
 
 			version(Posix) {{
 				auto ret = send(connectionHandle, sendable.ptr, sendable.length, 0);
+
+				if(ret == -1) {
+					throw new Exception("send returned -1, errno: " ~ to!string(errno));
+				} else if(ret == 0) {
+					throw new Exception("Connection to addon server lost");
+				} if(ret < sendable.length)
+					throw new Exception("Send failed to send all");
 				assert(ret == sendable.length);
 			}} // FIXME Windows impl
 
@@ -6514,6 +6526,7 @@ void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(i
 
 	int dataLocation;
 	ubyte[] grab(int sz) {
+		if(sz == 0) assert(0);
 		auto d = data[dataLocation .. dataLocation + sz];
 		dataLocation += sz;
 		return d;
@@ -6547,7 +6560,13 @@ void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(i
 
 					version(Posix) {
 						auto r = send(fd, sendable.ptr, sendable.length, 0);
-						assert(r == sendable.length);
+						if(r == -1) {
+							throw new Exception("send returned -1, errno: " ~ to!string(errno));
+						} else if(r == 0) {
+							throw new Exception("Connection to addon client lost");
+						} if(r < sendable.length)
+							throw new Exception("Send failed to send all");
+
 					} // FIXME Windows impl
 				}
 			break sw;
@@ -7016,7 +7035,9 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 			if(fd == -1)
 				throw new Exception("fd timer create failed");
 
-			auto job = Job(executable, func, args, fd, nj);
+			foreach(ref arg; args)
+				arg = arg.idup;
+			auto job = Job(executable.idup, func.idup, .dup(args), fd, nj);
 
 			itimerspec value;
 			value.it_value.tv_sec = when;
@@ -7030,8 +7051,11 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 
 			auto op = allocateIoOp(fd, IoOp.Read, 16, (IoOp* op, int fd) {
 				jobs.remove(nj);
+				epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, null);
+				close(fd);
 
-				spawnProcess([job.executable, "--timed-job", job.func] ~ args);
+
+				spawnProcess([job.executable, "--timed-job", job.func] ~ job.args);
 
 				return true;
 			});
@@ -7054,6 +7078,8 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 			auto job = jobId in jobs;
 			if(job is null)
 				return;
+
+			jobs.remove(jobId);
 
 			version(linux) {
 				import core.sys.linux.timerfd;
@@ -7452,6 +7478,13 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 
 		import core.sys.posix.signal;
 		signal(SIGPIPE, SIG_IGN);
+
+		static extern(C) void sigchldhandler(int) {
+			int status;
+			import w = core.sys.posix.sys.wait;
+			w.wait(&status);
+		}
+		signal(SIGCHLD, &sigchldhandler);
 
 		int sock = socket(AF_UNIX, SOCK_STREAM, 0);
 		if(sock == -1)

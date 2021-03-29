@@ -23,18 +23,70 @@ struct Feed {
 	static struct Item {
 		string title; ///
 		string link; ///
-		string description; ///
-		string author; ///
-		string publicationDate; ///
-		string lastUpdatedDate; ///
+		string description; /// could be html or text!
+		string author; /// Typical format: email (name)
+		string publicationDate; /// the format is 2005-07-31T12:29:29Z
+		string lastUpdatedDate; /// the format is 2005-07-31T12:29:29Z
 		string guid; ///
 
 		string enclosureUri; ///
-		string enclosureType; ///
+		string enclosureType; /// a mime type
 		string enclosureSize; ///
 	}
 
 	Item[] items; ///
+}
+
+/+
+import arsd.cgi;
+mixin GenericMain!handler;
+void handler(Cgi cgi) {
+	cgi.setResponseContentType("application/atom+xml");
+	cgi.write(feedToAtom(parseFeed(Document.fromUrl("http://dpldocs.info/this-week-in-d/twid.rss", true).root)).toString);
+}
++/
+
+/++
+	Turns a generic feed back into an Atom document.
+
+	History:
+		Added March 18, 2021
++/
+XmlDocument feedToAtom(Feed feed) {
+	auto document = new XmlDocument(`<feed xmlns="http://www.w3.org/2005/Atom"></feed>`);
+	document.root.addChild("title", feed.title);
+	document.root.addChild("subtitle", feed.description);
+	document.root.addChild("updated", feed.lastUpdated);
+
+	foreach(item; feed.items) {
+		auto entry = document.root.addChild("entry");
+		entry.addChild("title", item.title);
+		entry.addChild("link").setAttribute("href", item.link);
+		if(item.enclosureUri.length)
+			entry.addChild("link").
+				setAttribute("rel", "enclosure").
+				setAttribute("href", item.enclosureUri).
+				setAttribute("length", item.enclosureSize).
+				setAttribute("type", item.enclosureType);
+		entry.addChild("id", item.guid);
+		entry.addChild("published", item.publicationDate);
+		entry.addChild("updated", item.lastUpdatedDate);
+		entry.addChild("content", item.description).setAttribute("type", "html"); // or summary? idk
+		if(item.author.length) {
+			auto author = entry.addChild("author");
+			import std.string;
+			auto idx = item.author.indexOf("(");
+			if(idx == -1) {
+				author.addChild("email", item.author);
+			} else {
+				if(item.author.length > idx + 2)
+					author.addChild("name", item.author[idx + 1 .. $-1]);
+				author.addChild("email", item.author[0 .. idx -1]);
+			}
+		}
+	}
+
+	return document;
 }
 
 ///
@@ -100,7 +152,7 @@ struct RssChannel {
 		Feed f;
 		f.title = this.title;
 		f.description = this.description; // FIXME text vs html?
-		f.lastUpdated = this.lastBuildDate; // FIXME: normalize format rss uses "Mon, 18 Nov 2019 12:00:00 GMT"
+		f.lastUpdated = this.lastBuildDate.rssDateToAtom;
 
 		foreach(item; items) {
 			Feed.Item fi;
@@ -109,7 +161,7 @@ struct RssChannel {
 			fi.link = item.link;
 			fi.description = item.description; // FIXME: try to normalize text vs html
 			fi.author = item.author; // FIXME
-			fi.publicationDate = item.pubDate; // FIXME
+			fi.lastUpdatedDate = fi.publicationDate = item.pubDate.rssDateToAtom;
 			fi.guid = item.guid;
 			//fi.lastUpdatedDate; // not available i think
 
@@ -258,16 +310,21 @@ struct AtomFeed {
 
 		feed.title = this.title;
 		feed.description = this.subtitle;
-		feed.lastUpdated = this.updated; // FIXME: normalize the format is 2005-07-31T12:29:29Z
+		feed.lastUpdated = this.updated;
 
 		foreach(entry; this.entries) {
 			Feed.Item item;
 
 			item.title = entry.title;
 			item.link = entry.link;
-			item.description = entry.summary.html.length ? entry.summary.html : entry.summary.text; // FIXME
-			item.author = entry.author.email; // FIXME normalize; RSS does "email (name)"
-			item.publicationDate = entry.published; // FIXME the format is 2005-07-31T12:29:29Z
+			if(entry.content.html.length || entry.content.text.length)
+				item.description = entry.content.html.length ? entry.content.html : entry.content.text; // FIXME
+			else
+				item.description = entry.summary.html.length ? entry.summary.html : entry.summary.text; // FIXME
+			item.author = entry.author.email;
+			if(entry.author.name.length)
+				item.author ~= " (" ~ entry.author.name ~ ")";
+			item.publicationDate = entry.published;
 			item.lastUpdatedDate = entry.updated;
 			item.guid = entry.id;
 
@@ -382,6 +439,60 @@ AtomFeed parseAtom(Element ele) {
 AtomFeed parseAtom(string s) {
 	auto document = new Document(s, true, true);
 	return parseAtom(document.root);
+}
+
+string rssDateToAtom(string d) {
+	auto orig = d;
+	if(d.length < 22 || d[3] != ',')
+		return orig; // doesn't appear to be the right format
+	d = d[5 .. $];
+
+	import std.conv;
+	auto day = parse!int(d);
+	if(d.length == 0 || d[0] != ' ')
+		return orig;
+	d = d[1 .. $];
+
+	if(d.length < 4)
+		return orig;
+
+	int month;
+
+	string months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+	foreach(i; 0 .. 12) {
+		if(months[i * 3 .. i * 3 + 3] == d[0 .. 3]) {
+			month = i + 1;
+			break;
+		}
+	}
+
+	d = d[4 .. $];
+
+	auto year = parse!int(d);
+
+	if(d.length == 0 || d[0] != ' ')
+		return orig;
+	d = d[1 .. $];
+
+	auto hour = parse!int(d);
+
+	if(d.length == 0 || d[0] != ':')
+		return orig;
+	d = d[1 .. $];
+
+	auto minute = parse!int(d);
+
+	if(d.length == 0 || d[0] != ':')
+		return orig;
+	d = d[1 .. $];
+
+	auto second = parse!int(d);
+
+	import std.format;
+	return format("%04d-%02d-%02dT%02d:%02d:%02dZ", year, month, day, hour, minute, second);
+}
+unittest {
+	assert(rssDateToAtom("Mon, 18 Nov 2019 12:05:44 GMT") == "2019-11-18T12:05:44Z");
 }
 
 unittest {
@@ -647,6 +758,10 @@ auto testAtom1 = `<?xml version="1.0" encoding="utf-8"?>
 		assert(e.entries[0].summary.html.length == 0);
 		assert(e.entries[0].content.text.length == 0);
 		assert(e.entries[0].content.html.length > 10);
+
+		auto gf = e.toGenericFeed();
+
+		assert(gf.items[0].lastUpdatedDate == "2003-12-13T18:30:02Z");
 	}
 
 	{
@@ -702,6 +817,8 @@ auto testAtom1 = `<?xml version="1.0" encoding="utf-8"?>
 
 			auto gf = e.toGenericFeed();
 			assert(gf.items[0].link == "https://www.nytimes.com/2019/12/06/world/europe/france-pension-strike-macron.html?emc=rss&partner=rss", e.items[0].link);
+
+			assert(gf.items[0].publicationDate == "2019-12-06T18:02:13Z");
 	}
 
 }

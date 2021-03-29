@@ -477,7 +477,8 @@
 			"targetType": "library",
 			"sourceFiles": ["libssh2.d"],
 			"importPaths": ["."],
-			"libs": ["ssh2"],
+			"libs-posix": ["ssh2"],
+			"libs-windows": ["libssh2"],
 			"dflags": ["-mv=arsd.libssh2=libssh2.d"]
 		},
 		{

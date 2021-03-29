@@ -57,7 +57,7 @@ void main() {
 
 	char[1024] buffer;
 	again:
-	auto got = libssh2_sftp_read(handle, buffer.ptr, cast(int) buffer.length);
+	auto got = libssh2_sftp_read(handle, buffer.ptr, buffer.length);
 
 	import std.stdio;
 	writeln(buffer[0 .. got]);
@@ -266,9 +266,87 @@ extern(C) {
 
 	ssize_t libssh2_sftp_read(LIBSSH2_SFTP_HANDLE *handle, char *buffer, size_t buffer_maxlen); 
 	ssize_t libssh2_sftp_write(LIBSSH2_SFTP_HANDLE *handle, const char *buffer, size_t count);
+
+	enum LIBSSH2_SFTP_ATTR {
+		SIZE            = 0x00000001,
+		UIDGID          = 0x00000002,
+		PERMISSIONS     = 0x00000004,
+		ACMODTIME       = 0x00000008,
+		EXTENDED        = 0x80000000,
+	}
+
+	struct LIBSSH2_SFTP_ATTRIBUTES {
+		c_ulong flags; // see LIBSSH2_SFTP_ATTR
+
+		ulong filesize;
+		c_ulong uid, gid;
+		c_ulong permissions;
+		c_ulong atime, mtime;
+	}
+
+	int libssh2_sftp_readdir_ex(LIBSSH2_SFTP_HANDLE *handle,
+                        char *buffer, size_t buffer_maxlen,
+                        char *longentry, size_t longentry_maxlen, // longentry is just a user-friendly display
+                        LIBSSH2_SFTP_ATTRIBUTES *attrs);
+	int libssh2_sftp_stat_ex(LIBSSH2_SFTP *sftp,
+					     const char *path,
+					     uint,
+					     int stat_type,
+					     LIBSSH2_SFTP_ATTRIBUTES *attrs);
+	int libssh2_sftp_fstatvfs(LIBSSH2_SFTP_HANDLE *handle,
+					      LIBSSH2_SFTP_STATVFS *st);
+	int libssh2_sftp_statvfs(LIBSSH2_SFTP *sftp,
+					     const char *path,
+					     size_t path_len,
+					     LIBSSH2_SFTP_STATVFS *st);
+	int libssh2_sftp_rmdir_ex(LIBSSH2_SFTP *sftp,
+					      const char *path,
+					      uint);
+	int libssh2_sftp_mkdir_ex(LIBSSH2_SFTP *sftp,
+					      const char *path,
+					      uint, c_long mode);
+	int libssh2_sftp_unlink_ex(LIBSSH2_SFTP *sftp,
+					       const char *filename,
+					       uint);
+	int libssh2_sftp_symlink_ex(LIBSSH2_SFTP *sftp,
+						const char *path,
+						uint,
+						char *target,
+						uint,
+						int link_type);
+	int libssh2_sftp_rename_ex(LIBSSH2_SFTP *sftp,
+					       const char *source_filename,
+					       uint,
+					       const char *dest_filename,
+					       uint,
+					       c_long flags);
+
+	struct LIBSSH2_SFTP_STATVFS {
+		ulong  f_bsize;    /* file system block size */
+		ulong  f_frsize;   /* fragment size */
+		ulong  f_blocks;   /* size of fs in f_frsize units */
+		ulong  f_bfree;    /* # free blocks */
+		ulong  f_bavail;   /* # free blocks for non-root */
+		ulong  f_files;    /* # inodes */
+		ulong  f_ffree;    /* # free inodes */
+		ulong  f_favail;   /* # free inodes for non-root */
+		ulong  f_fsid;     /* file system ID */
+		ulong  f_flag;     /* mount flags */
+		ulong  f_namemax;  /* maximum filename length */
+	}
+
+
 	/* end sftp */
 
-	int libssh2_userauth_password(LIBSSH2_SESSION*, const char* username, const char* password);
+	int libssh2_userauth_password_ex(LIBSSH2_SESSION *session,
+                    const char *username,
+                    uint username_len,
+                    const char *password,
+                    uint password_len,
+		    void* passwd_change_cb);
+                    //LIBSSH2_PASSWD_CHANGEREQ_FUNC((*passwd_change_cb)));
+
+	//int libssh2_userauth_password(LIBSSH2_SESSION*, const char* username, const char* password);
 	int libssh2_userauth_publickey_fromfile_ex(
 		LIBSSH2_SESSION* session,
 		const char *username,
@@ -276,6 +354,15 @@ extern(C) {
 		const char *publickey,
 		const char *privatekey,
 		const char *passphrase);
+
+	struct LIBSSH2_LISTENER {}
+	LIBSSH2_LISTENER * libssh2_channel_forward_listen_ex(LIBSSH2_SESSION *session, const char *host,
+		  int port, int *bound_port,
+		  int queue_maxsize);
+	int libssh2_channel_forward_cancel(LIBSSH2_LISTENER *listener);
+	LIBSSH2_CHANNEL * libssh2_channel_forward_accept(LIBSSH2_LISTENER *listener);
+	LIBSSH2_CHANNEL * libssh2_channel_direct_tcpip_ex(LIBSSH2_SESSION *session, const char *host,
+                                int port, const char *shost, int sport);
 
 	struct LIBSSH2_CHANNEL {}
 	LIBSSH2_CHANNEL* libssh2_channel_open_ex(
@@ -351,5 +438,18 @@ extern(C) {
 	int libssh2_session_flag(LIBSSH2_SESSION*, int, int);
 	enum LIBSSH2_FLAG_SIGPIPE = 1;
 	enum LIBSSH2_FLAG_COMPRESS = 2;
+
+
+	int libssh2_channel_x11_req_ex(LIBSSH2_CHANNEL *channel,
+                                           int single_connection,
+                                           const char *auth_proto,
+                                           const char *auth_cookie,
+                                           int screen_number);
+
+
+int libssh2_channel_get_exit_status(LIBSSH2_CHANNEL* channel);
+int libssh2_channel_get_exit_signal(LIBSSH2_CHANNEL *channel, char **exitsignal, size_t *exitsignal_len, char **errmsg, size_t *errmsg_len, char **langtag, size_t *langtag_len); 
+
+int libssh2_channel_send_eof(LIBSSH2_CHANNEL *channel);
 
 }

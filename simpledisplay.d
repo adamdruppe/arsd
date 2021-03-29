@@ -198,6 +198,10 @@ interface->SetProgressValue(hwnd, 40, 100);
 	its specific implementation. If you disagree with how I did something, please contact me so we
 	can discuss it!
 
+	$(H2 Using with fibers)
+
+	simpledisplay can be used with [core.thread.Fiber], but be warned many of the functions can use a significant amount of stack space. I recommend at least 64 KB stack for each fiber (just set through the second argument to Fiber's constructor).
+
 	Examples:
 
 	$(H3 Event-example)
@@ -1858,12 +1862,26 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		version(Windows)
 			ShowWindow(impl.hwnd, SW_MAXIMIZE);
 		else version(X11) {
-			// I actually could set both at once...
 			setNetWmStateAtom(this.impl.window, GetAtom!("_NET_WM_STATE_MAXIMIZED_VERT", false)(XDisplayConnection.get), true, GetAtom!("_NET_WM_STATE_MAXIMIZED_HORZ", false)(XDisplayConnection.get));
 
 			// also note _NET_WM_STATE_FULLSCREEN
 		}
 
+	}
+
+	private bool _fullscreen;
+
+	/// not fully implemented but planned for a future release
+	void fullscreen(bool yes) {
+		version(X11)
+			setNetWmStateAtom(this.impl.window, GetAtom!("_NET_WM_STATE_FULLSCREEN", false)(XDisplayConnection.get), yes);
+
+		_fullscreen = yes;
+
+	}
+
+	bool fullscreen() {
+		return _fullscreen;
 	}
 
 	/++
@@ -1972,12 +1990,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		width and height are actually changed.
 	+/
 	void resize(int w, int h) {
+		if(!_closed && _fullscreen) fullscreen = false;
 		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.resize(w, h);
 	}
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
 	void moveResize (int x, int y, int w, int h) {
+		if(!_closed && _fullscreen) fullscreen = false;
 		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.moveResize(x, y, w, h);
 	}
@@ -18044,7 +18064,28 @@ struct DropPackage {
 			auto selectionAtom = GetAtom!"XdndSelection"(display);
 			auto best = format;
 
-			class X11GetSelectionHandler_Drop : X11GetSelectionHandler {
+			static class X11GetSelectionHandler_Drop : X11GetSelectionHandler {
+
+				XDisplay* display;
+				Atom selectionAtom;
+				DraggableData.FormatId best;
+				DraggableData.FormatId format;
+				void delegate(scope ubyte[] data) dg;
+				DragAndDropAction acceptedAction;
+				Window sourceWindow;
+				SimpleWindow win;
+				this(XDisplay* display, SimpleWindow win, Window sourceWindow, DraggableData.FormatId format, Atom selectionAtom, DraggableData.FormatId best, void delegate(scope ubyte[] data) dg, DragAndDropAction acceptedAction) {
+					this.display = display;
+					this.win = win;
+					this.sourceWindow = sourceWindow;
+					this.format = format;
+					this.selectionAtom = selectionAtom;
+					this.best = best;
+					this.dg = dg;
+					this.acceptedAction = acceptedAction;
+				}
+
+
 				mixin X11GetSelectionHandler_Basics;
 
 				void handleData(Atom target, in ubyte[] data) {
@@ -18063,7 +18104,7 @@ struct DropPackage {
 						xclient.format = 32;
 						xclient.data.l[0] = win.impl.window;
 						xclient.data.l[1] = 1; // drop successful
-						xclient.data.l[2] = GetAtom!"XdndActionCopy"(display); // FIXME: actual accepted action
+						xclient.data.l[2] = dndActionAtom(display, acceptedAction);
 
 						XSendEvent(
 							display,
@@ -18072,6 +18113,8 @@ struct DropPackage {
 							EventMask.NoEventMask,
 							cast(XEvent*) &xclient
 						);
+
+						XFlush(display);
 					}
 				}
 
@@ -18097,7 +18140,7 @@ struct DropPackage {
 				}
 			}
 
-			win.impl.getSelectionHandlers[selectionAtom] = new X11GetSelectionHandler_Drop();
+			win.impl.getSelectionHandlers[selectionAtom] = new X11GetSelectionHandler_Drop(display, win, sourceWindow, format, selectionAtom, best, dg, acceptedAction);
 
 			XConvertSelection(display, selectionAtom, best, GetAtom!("SDD_DATA", true)(display), win.impl.window, dataTimestamp);
 
@@ -18197,8 +18240,10 @@ class GenericDropHandlerBase : DropHandler {
 	}
 
 	void drop(scope DropPackage* dropPackage) {
-		if(!acceptedFormat || acceptedHandler is null)
+		if(!acceptedFormat || acceptedHandler is null) {
+			debug(sdpy_dnd) { import std.stdio; writeln("drop called w/ handler ", acceptedHandler, " and format ", acceptedFormat); }
 			return; // prolly shouldn't happen anyway...
+		}
 
 		dropPackage.getData(acceptedAction, acceptedFormat, acceptedHandler);
 	}
