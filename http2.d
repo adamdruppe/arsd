@@ -719,10 +719,13 @@ class HttpRequest {
 	}
 
 	///
-	this(Uri where, HttpVerb method, ICache cache = null) {
+	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds) {
 		populateFromInfo(where, method);
+        this.timeout = timeout;
 		this.cache = cache;
 	}
+
+    Duration timeout;
 
 	private Uri where;
 
@@ -880,7 +883,7 @@ class HttpRequest {
 		}
 
 		if(advance)
-			HttpRequest.advanceConnections();
+			HttpRequest.advanceConnections(this.timeout);
 	}
 
 
@@ -891,7 +894,7 @@ class HttpRequest {
 				send();
 				continue;
 			}
-			if(auto err = HttpRequest.advanceConnections()) {
+			if(auto err = HttpRequest.advanceConnections(this.timeout)) {
 				switch(err) {
 					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
 					case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
@@ -1034,7 +1037,7 @@ class HttpRequest {
 		SocketSet writeSet;
 
 
-		int advanceConnections() {
+		int advanceConnections(Duration timeout=10.seconds) {
 			if(readSet is null)
 				readSet = new SocketSet();
 			if(writeSet is null)
@@ -1123,7 +1126,7 @@ class HttpRequest {
 				}
 			}
 
-			auto selectGot = Socket.select(readSet, writeSet, null, 10.seconds /* timeout */); // FIXME: adjust timeout based on the individual requests
+			auto selectGot = Socket.select(readSet, writeSet, null, timeout /* timeout */); // FIXME: adjust timeout based on the individual requests
 			if(selectGot == 0) { /* timeout */
 				// FIXME: individual requests should have different time outs...
 				foreach(sock, request; activeRequestOnSocket) {
