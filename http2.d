@@ -721,11 +721,22 @@ class HttpRequest {
 	///
 	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds) {
 		populateFromInfo(where, method);
-        this.timeout = timeout;
+		setTimeout(timeout);
 		this.cache = cache;
 	}
 
-    Duration timeout;
+	/++
+		Sets the timeout from inactivity on the request. This is the amount of time that passes with no send or receive activity on the request before it fails with "request timed out" error.
+
+		History:
+			Added March 31, 2021
+	+/
+	void setTimeout(Duration timeout) {
+		this.requestParameters.timeoutFromInactivity = timeout;
+		this.timeoutFromInactivity = MonoTime.currTime + this.requestParameters.timeoutFromInactivity;
+	}
+
+	private MonoTime timeoutFromInactivity;
 
 	private Uri where;
 
@@ -883,7 +894,7 @@ class HttpRequest {
 		}
 
 		if(advance)
-			HttpRequest.advanceConnections(this.timeout);
+			HttpRequest.advanceConnections();
 	}
 
 
@@ -894,7 +905,7 @@ class HttpRequest {
 				send();
 				continue;
 			}
-			if(auto err = HttpRequest.advanceConnections(this.timeout)) {
+			if(auto err = HttpRequest.advanceConnections()) {
 				switch(err) {
 					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
 					case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
@@ -1037,7 +1048,7 @@ class HttpRequest {
 		SocketSet writeSet;
 
 
-		int advanceConnections(Duration timeout=10.seconds) {
+		int advanceConnections() {
 			if(readSet is null)
 				readSet = new SocketSet();
 			if(writeSet is null)
@@ -1048,7 +1059,7 @@ class HttpRequest {
 			HttpRequest[16] removeFromPending;
 			size_t removeFromPendingCount = 0;
 
-			bool hadAbortion;
+			bool hadAbortedRequest;
 
 			// are there pending requests? let's try to send them
 			foreach(idx, pc; pending) {
@@ -1057,7 +1068,7 @@ class HttpRequest {
 
 				if(pc.state == HttpRequest.State.aborted) {
 					removeFromPending[removeFromPendingCount++] = pc;
-					hadAbortion = true;
+					hadAbortedRequest = true;
 					continue;
 				}
 
@@ -1072,7 +1083,7 @@ class HttpRequest {
 					pc.responseData.code = 2;
 					pc.responseData.codeText = "connection failed";
 
-					hadAbortion = true;
+					hadAbortedRequest = true;
 
 					removeFromPending[removeFromPendingCount++] = pc;
 					continue;
@@ -1096,12 +1107,25 @@ class HttpRequest {
 
 			bool hadOne = false;
 
+			Duration minTimeout = 10.seconds;
+			auto now = MonoTime.currTime;
+
 			// active requests need to be read or written to
 			foreach(sock, request; activeRequestOnSocket) {
 				// check the other sockets just for EOF, if they close, take them out of our list,
 				// we'll reopen if needed upon request.
 				readSet.add(sock);
 				hadOne = true;
+
+				Duration timeo;
+				if(request.timeoutFromInactivity <= now)
+					timeo = 0.seconds;
+				else
+					timeo = request.timeoutFromInactivity - now;
+
+				if(timeo < minTimeout)
+					minTimeout = timeo;
+
 				if(request.state == State.sendingHeaders || request.state == State.sendingBody) {
 					writeSet.add(sock);
 					hadOne = true;
@@ -1109,7 +1133,7 @@ class HttpRequest {
 			}
 
 			if(!hadOne) {
-				if(hadAbortion)
+				if(hadAbortedRequest)
 					return 0; // something got aborted, that's progress
 				return 2; // automatic timeout, nothing to do
 			}
@@ -1126,17 +1150,20 @@ class HttpRequest {
 				}
 			}
 
-			auto selectGot = Socket.select(readSet, writeSet, null, timeout /* timeout */); // FIXME: adjust timeout based on the individual requests
+			auto selectGot = Socket.select(readSet, writeSet, null, minTimeout);
 			if(selectGot == 0) { /* timeout */
-				// FIXME: individual requests should have different time outs...
+				now = MonoTime.currTime;
 				foreach(sock, request; activeRequestOnSocket) {
-					request.state = HttpRequest.State.aborted;
-					request.responseData.code = 5;
-					request.responseData.codeText = "Request timed out";
 
-					inactive[inactiveCount++] = sock;
-					sock.close();
-					loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+					if(request.timeoutFromInactivity <= now) {
+						request.state = HttpRequest.State.aborted;
+						request.responseData.code = 5;
+						request.responseData.codeText = "Request timed out";
+
+						inactive[inactiveCount++] = sock;
+						sock.close();
+						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+					}
 				}
 				killInactives();
 				return 0;
@@ -1154,6 +1181,7 @@ class HttpRequest {
 				foreach(sock, request; activeRequestOnSocket) {
 					if(readSet.isSet(sock)) {
 						keep_going:
+						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
 						auto got = sock.receive(buffer);
 						debug(arsd_http2_verbose) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
 						if(got < 0) {
@@ -1210,6 +1238,7 @@ class HttpRequest {
 
 					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
 					if(writeSet.isSet(sock)) {
+						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
 						assert(request.sendBuffer.length);
 						auto sent = sock.send(request.sendBuffer);
 						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
@@ -1578,7 +1607,7 @@ class HttpRequest {
 struct HttpRequestParameters {
 	// FIXME: implement these
 	//Duration timeoutTotal; // the whole request must finish in this time or else it fails,even if data is still trickling in
-	//Duration timeoutFromInactivity; // if there's no activity in this time it dies. basically the socket receive timeout
+	Duration timeoutFromInactivity; // if there's no activity in this time it dies. basically the socket receive timeout
 
 	// debugging
 	bool useHttp11 = true; ///
@@ -1665,6 +1694,14 @@ class HttpClient {
 		return currentUrl;
 	}
 
+	/++
+		Default timeout for requests created on this client.
+
+		History:
+			Added March 31, 2021
+	+/
+	Duration defaultTimeout = 10.seconds;
+
 	/// High level function that works similarly to entering a url
 	/// into a browser.
 	///
@@ -1684,7 +1721,7 @@ class HttpClient {
 		(but will still save cookies btw... when that is implemented)
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
-		auto request = new HttpRequest(uri, method, cache);
+		auto request = new HttpRequest(uri, method, cache, defaultTimeout);
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
@@ -2706,6 +2743,9 @@ class WebSocket {
 	private ushort port;
 	private bool ssl;
 
+	private MonoTime timeoutFromInactivity;
+	private MonoTime nextPing;
+
 	/++
 		wss://echo.websocket.org
 	+/
@@ -2908,6 +2948,9 @@ class WebSocket {
 		if(onopen)
 			onopen();
 
+		nextPing = MonoTime.currTime + config.pingFrequency.msecs;
+		timeoutFromInactivity = MonoTime.currTime + config.timeoutFromInactivity;
+
 		registerActiveSocket(this);
 	}
 
@@ -3044,6 +3087,16 @@ class WebSocket {
 		string[] additionalHeaders;
 
 		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
+
+		/++
+			Amount of time to disconnect when there's no activity. Note that automatic pings will keep the connection alive; this timeout only occurs if there's absolutely nothing, including no responses to websocket ping frames. Since the default [pingFrequency] is only seconds, this one minute should never elapse unless the connection is actually dead.
+
+			The one thing to keep in mind is if your program is busy and doesn't check input, it might consider this a time out since there's no activity. The reason is that your program was busy rather than a connection failure, but it doesn't care. You should avoid long processing periods anyway though!
+
+			History:
+				Added March 31, 2021 (included in dub version 9.4)
+		+/
+		Duration timeoutFromInactivity = 1.minutes;
 	}
 
 	/++
@@ -3304,8 +3357,31 @@ class WebSocket {
 			outermost: while(!loopExited) {
 				readSet.reset();
 
+				Duration timeout = 10.seconds;
+
+				auto now = MonoTime.currTime;
 				bool hadAny;
 				foreach(sock; activeSockets) {
+					if(now >= sock.timeoutFromInactivity) {
+						// timeout
+						if(sock.onerror)
+							sock.onerror();
+
+						sock.socket.close();
+						sock.readyState_ = CLOSED;
+						unregisterActiveSocket(sock);
+						continue outermost;
+					}
+
+					if(now >= sock.nextPing) {
+						sock.ping();
+						sock.nextPing = now + sock.config.pingFrequency.msecs;
+					}
+
+					auto timeo = sock.timeoutFromInactivity - now;
+					if(timeo < timeout)
+						timeout = timeo;
+
 					readSet.add(sock.socket);
 					hadAny = true;
 				}
@@ -3314,15 +3390,16 @@ class WebSocket {
 					return;
 
 				tryAgain:
-				auto selectGot = Socket.select(readSet, null, null, 10.seconds /* timeout */);
+				auto selectGot = Socket.select(readSet, null, null, timeout);
 				if(selectGot == 0) { /* timeout */
 					// timeout
-					continue;
+					continue; // it will be handled at the top of the loop
 				} else if(selectGot == -1) { /* interrupted */
 					goto tryAgain;
 				} else {
 					foreach(sock; activeSockets) {
 						if(readSet.isSet(sock.socket)) {
+							sock.timeoutFromInactivity = MonoTime.currTime + sock.config.timeoutFromInactivity;
 							if(!sock.lowLevelReceive()) {
 								sock.readyState_ = CLOSED;
 								unregisterActiveSocket(sock);
