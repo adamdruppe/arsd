@@ -2217,6 +2217,21 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			if (useGLFinish) glFinish();
 		}
 
+		private bool redrawOpenGlSceneSoonSet = false;
+		private static class RedrawOpenGlSceneEvent {
+			SimpleWindow w;
+			this(SimpleWindow w) { this.w = w; }
+		}
+		private RedrawOpenGlSceneEvent redrawOpenGlSceneEvent;
+		void redrawOpenGlSceneSoon() {
+			if(!redrawOpenGlSceneSoonSet) {
+				redrawOpenGlSceneEvent = new RedrawOpenGlSceneEvent(this);
+				this.addEventListener((RedrawOpenGlSceneEvent e) { e.w.redrawOpenGlSceneNow(); });
+				redrawOpenGlSceneSoonSet = true;
+			}
+			this.postEvent(redrawOpenGlSceneEvent, true);
+		}
+
 
 		/// Makes all gl* functions target this window until changed. This is only valid if you passed `OpenGlOptions.yes` to the constructor.
 		void setAsCurrentOpenGlContext() {
@@ -12059,7 +12074,14 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		}
 
 		// close connection on program exit -- we need this to properly free all images
-		shared static ~this () { close(); }
+		static ~this () {
+			// the gui thread must clean up after itself or else Xlib might deadlock
+			// using this flag on any thread destruction is the easiest way i know of
+			// (shared static this is run by the LAST thread to exit, which may not be
+			// the gui thread, and normal static this run by ALL threads, so we gotta check.)
+			if(thisIsGuiThread)
+				close();
+		}
 
 		///
 		static void close() {
@@ -13099,15 +13121,17 @@ version(X11) {
 				// closed to handle that.
 				if((*win).closed) break;
 				if((*win).openglMode == OpenGlOptions.no) {
-					bool doCopy = true;
+					bool doCopy = true;// e.xexpose.count == 0; // the count is better if we copy all area but meh
 					if (win.handleExpose !is null) doCopy = !win.handleExpose(e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.count);
 					if (doCopy) XCopyArea(display, cast(Drawable) (*win).buffer, cast(Drawable) (*win).window, (*win).gc, e.xexpose.x, e.xexpose.y, e.xexpose.width, e.xexpose.height, e.xexpose.x, e.xexpose.y);
 				} else {
 					// need to redraw the scene somehow
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					version(without_opengl) {} else
-					win.redrawOpenGlSceneNow();
+					if(e.xexpose.count == 0) { // only do the last one since redrawOpenGlSceneNow always does it all
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						version(without_opengl) {} else
+						win.redrawOpenGlSceneSoon();
+					}
 				}
 			}
 		  break;
