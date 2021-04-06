@@ -137,7 +137,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 	`-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
 	subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`.
 
-	If using ldc instead of dmd, use `-L/entry:wmainCRTstartup` instead of `mainCRTStartup`;
+	If using ldc instead of dmd, use `-L/entry:wmainCRTStartup` instead of `mainCRTStartup`;
 	note the "w".
 
 	On Win32, you can pass `-L/subsystem:windows` if you don't want a
