@@ -1628,7 +1628,17 @@ struct Terminal {
 
 		Params:
 			text = text displayed in the terminal
-			identifier = an additional number attached to the text and returned to you in a [LinkEvent]
+
+			identifier = an additional number attached to the text and returned to you in a [LinkEvent].
+			Possible uses of this are to have a small number of "link classes" that are handled based on
+			the text. For example, maybe identifier == 0 means paste text into the line. identifier == 1
+			could mean open a browser. identifier == 2 might open details for it. Just be sure to encode
+			the bulk of the information into the text so the user can copy/paste it out too.
+
+			You may also create a mapping of (identifier,text) back to some other activity, but if you do
+			that, be sure to check [hyperlinkSupported] and fallback in your own code so it still makes
+			sense to users on other terminals.
+
 			autoStyle = set to `false` to suppress the automatic color and underlining of the text.
 
 		Bugs:
@@ -1659,6 +1669,21 @@ struct Terminal {
 			}
 		} else {
 			write(text); // graceful degrade  
+		}
+	}
+
+	/++
+		Returns true if the terminal advertised compatibility with the [hyperlink] function's
+		implementation.
+
+		History:
+			Added April 2, 2021
+	+/
+	bool hyperlinkSupported() {
+		if((tcaps & TerminalCapabilities.arsdHyperlinks)) {
+			return true;
+		} else {
+			return false;
 		}
 	}
 
@@ -3871,9 +3896,9 @@ struct PasteEvent {
 		Added March 18, 2020
 +/
 struct LinkEvent {
-	string text; ///
-	ushort identifier; ///
-	ushort command; /// set by the terminal to indicate how it was clicked. values tbd
+	string text; /// the text visible to the user that they clicked on
+	ushort identifier; /// the identifier set when you output the link. This is small because it is packed into extra bits on the text, one bit per character.
+	ushort command; /// set by the terminal to indicate how it was clicked. values tbd, currently always 0
 }
 
 /// .
@@ -6347,6 +6372,10 @@ class LineGetter {
 					}
 				}
 			break;
+			case InputEvent.Type.LinkEvent:
+				if(handleLinkEvent !is null)
+					handleLinkEvent(e.linkEvent, this);
+			break;
 			case InputEvent.Type.SizeChangedEvent:
 				/* We'll adjust the bounding box. If you don't like this, handle SizeChangedEvent
 				   yourself and then don't pass it to this function. */
@@ -6367,6 +6396,29 @@ class LineGetter {
 
 		return true;
 	}
+
+	/++
+		Gives a convenience hook for subclasses to handle my terminal's hyperlink extension.
+
+
+		You can also handle these by filtering events before you pass them to [workOnLine].
+		That's still how I recommend handling any overrides or custom events, but making this
+		a delegate is an easy way to inject handlers into an otherwise linear i/o application.
+
+		Does nothing if null.
+
+		It passes the event as well as the current line getter to the delegate. You may simply
+		`lg.addString(ev.text); lg.redraw();` in some cases.
+
+		History:
+			Added April 2, 2021.
+
+		See_Also:
+			[Terminal.hyperlink]
+
+			[TerminalCapabilities.arsdHyperlinks]
+	+/
+	void delegate(LinkEvent ev, LineGetter lg) handleLinkEvent;
 
 	/++
 		Replaces the line currently being edited with the given line and positions the cursor inside it.
@@ -7527,6 +7579,18 @@ version(TerminalDirectToEmulator) {
 		Represents the window that the library pops up for you.
 	+/
 	final class TerminalEmulatorWindow : MainWindow {
+		/++
+			Returns the size of an individual character cell, in pixels.
+
+			History:
+				Added April 2, 2021
+		+/
+		Size characterCellSize() {
+			if(tew && tew.terminalEmulator)
+				return Size(tew.terminalEmulator.fontWidth, tew.terminalEmulator.fontHeight);
+			else
+				return Size(1, 1);
+		}
 
 		/++
 			Gives access to the underlying terminal emulation object.
@@ -7943,6 +8007,7 @@ version(TerminalDirectToEmulator) {
 				widget.smw.setViewableArea(this.width, this.height);
 				widget.smw.setPageSize(this.width / 2, this.height / 2);
 			}
+			notifyScrollbarPosition(0, int.max);
 			clearScreenRequested = true;
 			if(widget && widget.term)
 				widget.term.windowSizeChanged = true;

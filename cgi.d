@@ -2114,7 +2114,7 @@ class Cgi {
 		None
 	}
 
-	/+
+	/++
 		Sets an HTTP cookie, automatically encoding the data to the correct string.
 		expiresIn is how many milliseconds in the future the cookie will expire.
 		TIP: to make a cookie accessible from subdomains, set the domain to .yourdomain.com.
@@ -3354,15 +3354,10 @@ bool tryAddonServers(string[] args) {
 					printf("Add-on servers not compiled in.\n");
 				return true;
 			case "--timer-server":
-			try {
 				version(with_addon_servers)
 					runTimerServer();
 				else
 					printf("Add-on servers not compiled in.\n");
-			} catch(Throwable t) {
-				import std.file;
-				std.file.write("/tmp/timer-exception", t.toString);
-			}
 				return true;
 			case "--timed-jobs":
 				import core.demangle;

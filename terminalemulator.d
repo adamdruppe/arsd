@@ -45,11 +45,14 @@ interface NonCharacterData {
 	//const(ubyte)[] serialize();
 }
 
-struct BrokenUpImage {
+struct BinaryDataTerminalRepresentation {
 	int width;
 	int height;
 	TerminalEmulator.TerminalCell[] representation;
 }
+
+// old name, don't use in new programs anymore.
+deprecated alias BrokenUpImage = BinaryDataTerminalRepresentation;
 
 struct CustomGlyph {
 	TrueColorImage image;
@@ -864,8 +867,8 @@ class TerminalEmulator {
 	}
 
 	/// if a binary extension is triggered, the implementing class is responsible for figuring out how it should be made to fit into the screen buffer
-	protected /*abstract*/ BrokenUpImage handleBinaryExtensionData(const(ubyte)[]) {
-		return BrokenUpImage();
+	protected /*abstract*/ BinaryDataTerminalRepresentation handleBinaryExtensionData(const(ubyte)[]) {
+		return BinaryDataTerminalRepresentation();
 	}
 
 	/// If you subclass this and return true, you can scroll on command without needing to redraw the entire screen;
@@ -1504,16 +1507,24 @@ class TerminalEmulator {
 
 		int max = cast(int) scrollbackBuffer.length - screenHeight;
 		if(scrollbackReflow && max < 0) {
-			foreach(line; scrollbackBuffer[])
-				max += cast(int) line.length / screenWidth;
+			foreach(line; scrollbackBuffer[]) {
+				if(line.length > 2 && (line[0].hasNonCharacterData || line[$-1].hasNonCharacterData))
+					max += 0;
+				else
+					max += cast(int) line.length / screenWidth;
+			}
 		}
 
 		if(max < 0)
 			max = 0;
 
 		if(scrollbackReflow && currentScrollback > max) {
-			foreach(line; scrollbackBuffer[])
-				max += cast(int) line.length / screenWidth;
+			foreach(line; scrollbackBuffer[]) {
+				if(line.length > 2 && (line[0].hasNonCharacterData || line[$-1].hasNonCharacterData))
+					max += 0;
+				else
+					max += cast(int) line.length / screenWidth;
+			}
 		}
 
 		if(currentScrollback > max)
@@ -1615,7 +1626,10 @@ class TerminalEmulator {
 		int max;
 		if(scrollbackReflow) {
 			foreach(line; scrollbackBuffer[]) {
-				count += cast(int) line.length / screenWidth;
+				if(line.length > 2 && (line[0].hasNonCharacterData || line[$-1].hasNonCharacterData))
+					{} // intentionally blank, the count is fine since this line isn't reflowed anyway
+				else
+					count += cast(int) line.length / screenWidth;
 			}
 		} else {
 			foreach(line; scrollbackBuffer[]) {
@@ -1684,6 +1698,11 @@ class TerminalEmulator {
 			int idx = cast(int) scrollbackBuffer.length - 1;
 			foreach_reverse(line; scrollbackBuffer[]) {
 				auto lineCount = 1 + line.length / screenWidth;
+
+				// if the line has an image in it, it cannot be reflowed. this hack to check just the first and last thing is the cheapest way rn
+				if(line.length > 2 && (line[0].hasNonCharacterData || line[$-1].hasNonCharacterData))
+					lineCount = 1;
+
 				numLines += lineCount;
 				if(numLines >= (screenHeight + howFar)) {
 					start = cast(int) idx;
@@ -1736,6 +1755,9 @@ class TerminalEmulator {
 
 				if(cursorX == screenWidth-1) {
 					if(scrollbackReflow) {
+						// don't attempt to reflow images
+						if(cell.hasNonCharacterData)
+							break;
 						cursorX = 0;
 						if(cursorY + 1 == screenHeight)
 							break outer;
@@ -1765,7 +1787,8 @@ class TerminalEmulator {
 		if(scrollLock)
 			toggleScrollLock();
 
-		endScrollback(); // FIXME: hack
+		// FIXME: hack
+		endScrollback();
 
 		screenWidth = w;
 		screenHeight = h;
@@ -2177,7 +2200,11 @@ class TerminalEmulator {
 			} else {
 				if(!scrollbackReflow && line.length > scrollbackWidth_)
 					scrollbackWidth_ = cast(int) line.length;
-				scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
+
+				if(line.length > 2 && (line[0].hasNonCharacterData || line[$-1].hasNonCharacterData))
+					scrollbackLength = scrollbackLength + 1;
+				else
+					scrollbackLength = cast(int) (scrollbackLength + 1 + (scrollbackBuffer[cast(int) scrollbackBuffer.length - 1].length) / screenWidth);
 				notifyScrollbackAdded();
 			}
 
@@ -4180,7 +4207,159 @@ mixin template SdpyImageSupport() {
 		}
 	}
 
-	protected override BrokenUpImage handleBinaryExtensionData(const(ubyte)[] binaryData) {
+	version(TerminalDirectToEmulator)
+	class NonCharacterData_Widget : NonCharacterData {
+		this(void* data, size_t idx, int width, int height) {
+			this.window = cast(SimpleWindow) data;
+			this.idx = idx;
+			this.width = width;
+			this.height = height;
+		}
+
+		void position(int posx, int posy, int width, int height) {
+			if(posx == this.posx && posy == this.posy && width == this.pixelWidth && height == this.pixelHeight)
+				return;
+			this.posx = posx;
+			this.posy = posy;
+			this.pixelWidth = width;
+			this.pixelHeight = height;
+
+			window.moveResize(posx, posy, width, height);
+			import std.stdio; writeln(posx, " ", posy, " ", width, " ", height);
+
+			auto painter = this.window.draw;
+			painter.outlineColor = Color.red;
+			painter.fillColor = Color.green;
+			painter.drawRectangle(Point(0, 0), width, height);
+
+
+		}
+
+		SimpleWindow window;
+		size_t idx;
+		int width;
+		int height;
+
+		int posx;
+		int posy;
+		int pixelWidth;
+		int pixelHeight;
+	}
+
+	private struct CachedImage {
+		ulong hash;
+		BinaryDataTerminalRepresentation bui;
+		int timesSeen;
+		import core.time;
+		MonoTime lastUsed;
+	}
+	private CachedImage[] imageCache;
+	private CachedImage* findInCache(ulong hash) {
+		if(hash == 0)
+			return null;
+
+		/*
+		import std.stdio;
+		writeln("***");
+		foreach(cache; imageCache) {
+			writeln(cache.hash, " ", cache.timesSeen, " ", cache.lastUsed);
+		}
+		*/
+
+		foreach(ref i; imageCache)
+			if(i.hash == hash) {
+				import core.time;
+				i.lastUsed = MonoTime.currTime;
+				i.timesSeen++;
+				return &i;
+			}
+		return null;
+	}
+	private BinaryDataTerminalRepresentation addImageCache(ulong hash, BinaryDataTerminalRepresentation bui) {
+		import core.time;
+		if(imageCache.length == 0)
+			imageCache.length = 8;
+
+		auto now = MonoTime.currTime;
+
+		size_t oldestIndex;
+		MonoTime oldestTime = now;
+
+		size_t leastUsedIndex;
+		int leastUsedCount = int.max;
+		foreach(idx, ref cached; imageCache) {
+			if(cached.hash == 0) {
+				cached.hash = hash;
+				cached.bui = bui;
+				cached.timesSeen = 1;
+				cached.lastUsed = now;
+
+				return bui;
+			} else {
+				if(cached.timesSeen < leastUsedCount) {
+					leastUsedCount = cached.timesSeen;
+					leastUsedIndex = idx;
+				}
+				if(cached.lastUsed < oldestTime) {
+					oldestTime = cached.lastUsed;
+					oldestIndex = idx;
+				}
+			}
+		}
+
+		// need to overwrite one of the cached items, I'll just use the oldest one here
+		// but maybe that could be smarter later
+
+		imageCache[oldestIndex].hash = hash;
+		imageCache[oldestIndex].bui = bui;
+		imageCache[oldestIndex].timesSeen = 1;
+		imageCache[oldestIndex].lastUsed = now;
+
+		return bui;
+	}
+
+	// It has a cache of the 8 most recently used items right now so if there's a loop of 9 you get pwned
+	// but still the cache does an ok job at helping things while balancing out the big memory consumption it
+	// could do if just left to grow and grow. i hope.
+	protected override BinaryDataTerminalRepresentation handleBinaryExtensionData(const(ubyte)[] binaryData) {
+
+		version(none) {
+		//version(TerminalDirectToEmulator)
+		//if(binaryData.length == size_t.sizeof + 10) {
+			//if((cast(uint[]) binaryData[0 .. 4])[0] == 0xdeadbeef && (cast(uint[]) binaryData[$-4 .. $])[0] == 0xabcdef32) {
+				//auto widthInCharacterCells = binaryData[4];
+				//auto heightInCharacterCells = binaryData[5];
+				//auto pointer = (cast(void*[]) binaryData[6 .. $-4])[0];
+
+				auto widthInCharacterCells = 30;
+				auto heightInCharacterCells = 20;
+				SimpleWindow pwin;
+				foreach(k, v; SimpleWindow.nativeMapping) {
+					if(v.type == WindowTypes.normal)
+					pwin = v;
+				}
+				auto pointer = cast(void*) (new SimpleWindow(640, 480, null, OpenGlOptions.no, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, pwin));
+
+				BinaryDataTerminalRepresentation bi;
+				bi.width = widthInCharacterCells;
+				bi.height = heightInCharacterCells;
+				bi.representation.length = bi.width * bi.height;
+
+				foreach(idx, ref cell; bi.representation) {
+					cell.nonCharacterData = new NonCharacterData_Widget(pointer, idx, widthInCharacterCells, heightInCharacterCells);
+				}
+
+				return bi;
+			//}
+		}
+
+		import std.digest.md;
+
+		ulong hash = * (cast(ulong*) md5Of(binaryData).ptr);
+
+		if(auto cached = findInCache(hash))
+			return cached.bui;
+
 		TrueColorImage mi;
 
 		if(binaryData.length > 8 && binaryData[1] == 'P' && binaryData[2] == 'N' && binaryData[3] == 'G') {
@@ -4196,7 +4375,7 @@ mixin template SdpyImageSupport() {
 			import arsd.svg;
 			NSVG* image = nsvgParse(cast(const(char)[]) binaryData);
 			if(image is null)
-				return BrokenUpImage();
+				return BinaryDataTerminalRepresentation();
 
 			int w = cast(int) image.width + 1;
 			int h = cast(int) image.height + 1;
@@ -4205,10 +4384,10 @@ mixin template SdpyImageSupport() {
 			rasterize(rast, image, 0, 0, 1, mi.imageData.bytes.ptr, w, h, w*4);
 			image.kill();
 		} else {
-			return BrokenUpImage();
+			return BinaryDataTerminalRepresentation();
 		}
 
-		BrokenUpImage bi;
+		BinaryDataTerminalRepresentation bi;
 		bi.width = mi.width / fontWidth + ((mi.width%fontWidth) ? 1 : 0);
 		bi.height = mi.height / fontHeight + ((mi.height%fontHeight) ? 1 : 0);
 
@@ -4239,10 +4418,10 @@ mixin template SdpyImageSupport() {
 				ix = 0;
 				iy += fontHeight;
 			}
-
 		}
 
-		return bi;
+		return addImageCache(hash, bi);
+		//return bi;
 	}
 
 }
@@ -4466,8 +4645,7 @@ mixin template SdpyDraw() {
 							}
 							hasBufferedInfo = true;
 						} catch(Exception e) {
-							import std.stdio;
-							writeln(cast(uint) cell.ch, " :: ", e.msg);
+							// import std.stdio; writeln(cast(uint) cell.ch, " :: ", e.msg);
 						}
 					//}
 				} else if(cell.nonCharacterData !is null) {
@@ -4478,6 +4656,19 @@ mixin template SdpyDraw() {
 						painter.fillColor = defaultBackground;
 						painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
 						painter.drawImage(Point(posx, posy), ncdi.data, Point(ncdi.imageOffsetX, ncdi.imageOffsetY), fontWidth, fontHeight);
+					}
+					version(TerminalDirectToEmulator)
+					if(auto wdi = cast(NonCharacterData_Widget) cell.nonCharacterData) {
+						flushBuffer();
+						if(wdi.idx == 0) {
+							wdi.position(posx, posy, fontWidth * wdi.width, fontHeight * wdi.height);
+							/*
+							painter.outlineColor = defaultBackground;
+							painter.fillColor = defaultBackground;
+							painter.drawRectangle(Point(posx, posy), fontWidth, fontHeight);
+							*/
+						}
+
 					}
 				}
 

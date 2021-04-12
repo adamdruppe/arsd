@@ -4,6 +4,9 @@
 
 // https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
 
+// https://www.x.org/releases/X11R7.7/doc/libXext/dbelib.html
+// https://www.x.org/releases/X11R7.6/doc/libXext/synclib.html
+
 
 // on Mac with X11: -L-L/usr/X11/lib 
 

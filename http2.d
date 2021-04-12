@@ -343,7 +343,8 @@ struct HttpResponse {
 				// ignore
 			}
 
-			header = header[1 .. $];
+			if(header.length)
+				header = header[1 .. $];
 		}
 
 		ret ~= current;
@@ -1529,8 +1530,11 @@ class HttpRequest {
 
 							bodyReadingState.chunkedState = 0;
 
-							while(data[a] != 10)
+							while(data[a] != 10) {
 								a++;
+								if(a == data.length)
+									return stillAlive; // in the footer state we're just discarding everything until we're done so this should be ok
+							}
 							data = data[a + 1 .. $];
 
 							if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
