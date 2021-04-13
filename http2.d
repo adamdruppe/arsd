@@ -680,6 +680,10 @@ struct BasicAuth {
 	string password; ///
 }
 
+class ProxyException : Exception {
+	this(string msg) {super(msg); }
+}
+
 /**
 	Represents a HTTP request. You usually create these through a [HttpClient].
 
@@ -720,10 +724,11 @@ class HttpRequest {
 	}
 
 	///
-	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds) {
+	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds, string proxy = null) {
 		populateFromInfo(where, method);
 		setTimeout(timeout);
 		this.cache = cache;
+		this.proxy = proxy;
 	}
 
 	/++
@@ -742,6 +747,16 @@ class HttpRequest {
 	private Uri where;
 
 	private ICache cache;
+
+	/++
+		Proxy to use for this request. It should be a URL or `null`.
+
+		This must be sent before you call `send`.
+
+		History:
+			Added April 12, 2021 (dub v9.5)
+	+/
+	string proxy;
 
 	/// Final url after any redirections
 	string finalUrl;
@@ -840,7 +855,21 @@ class HttpRequest {
 
 		string headers;
 
-		headers ~= to!string(requestParameters.method) ~ " "~requestParameters.uri;
+		headers ~= to!string(requestParameters.method);
+		headers ~= " ";
+		if(proxy.length && !requestParameters.ssl) {
+			// if we're doing a http proxy, we need to send a complete, absolute uri
+			// so reconstruct it
+			headers ~= "http://";
+			headers ~= requestParameters.host;
+			if(requestParameters.port != 80) {
+				headers ~= ":";
+				headers ~= to!string(requestParameters.port);
+			}
+		}
+
+		headers ~= requestParameters.uri;
+
 		if(requestParameters.useHttp11)
 			headers ~= " HTTP/1.1\r\n";
 		else
@@ -927,7 +956,7 @@ class HttpRequest {
 		this.state = State.aborted;
 		this.responseData.code = 1;
 		this.responseData.codeText = "request.abort called";
-		// FIXME actually cancel it?
+		// the actual cancellation happens in the event loop
 	}
 
 	HttpRequestParameters requestParameters; ///
@@ -967,8 +996,7 @@ class HttpRequest {
 			}
 		}
 
-		Socket getOpenSocketOnHost(string host, ushort port, bool ssl, string unixSocketPath) {
-
+		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath) {
 			Socket openNewConnection() {
 				Socket socket;
 				if(ssl) {
@@ -980,6 +1008,7 @@ class HttpRequest {
 				} else
 					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
 
+				// FIXME: connect timeout?
 				if(unixSocketPath) {
 					import std.stdio; writeln(cast(ubyte[]) unixSocketPath);
 					socket.connect(new UnixAddress(unixSocketPath));
@@ -987,7 +1016,51 @@ class HttpRequest {
 					// FIXME: i should prolly do ipv6 if available too.
 					if(host.length == 0) // this could arguably also be an in contract since it is user error, but the exception is good enough
 						throw new Exception("No host given for request");
-					socket.connect(new InternetAddress(host, port));
+					if(proxy.length) {
+						if(proxy.indexOf("//") == -1)
+							proxy = "http://" ~ proxy;
+						auto proxyurl = Uri(proxy);
+
+						// the precise types here are important to help with overload
+						// resolution of the devirtualized call!
+						Address pa = new InternetAddress(proxyurl.host, proxyurl.port ? cast(ushort) proxyurl.port : 80);
+
+						debug(arsd_http2) writeln("using proxy ", pa.toString());
+
+						// the proxy never actually starts TLS, but if the request is tls then we need to CONNECT then upgrade the connection
+						// using the parent class functions let us bypass the encryption
+						socket.Socket.connect(pa);
+
+						string message;
+						if(ssl) {
+							auto hostName =  host ~ ":" ~ to!string(port);
+							message = "CONNECT " ~ hostName ~ " HTTP/1.1\r\n";
+							message ~= "Host: " ~ hostName ~ "\r\n";
+							if(proxyurl.userinfo.length) {
+								import std.base64;
+								message ~= "Proxy-Authorization: Basic " ~ Base64.encode(cast(ubyte[]) proxyurl.userinfo) ~ "\r\n";
+							}
+							message ~= "\r\n";
+							// again gotta use plain
+							// FIXME: what if proxy times out? should be reasonably fast too.
+							socket.Socket.send(message, SocketFlags.NONE);
+
+							ubyte[1024] recvBuffer;
+							// and last time
+							auto rcvGot = socket.Socket.receive(recvBuffer[], SocketFlags.NONE);
+							if(rcvGot == -1)
+								throw new ProxyException("proxy receive error");
+							auto got = cast(string) recvBuffer[0 .. rcvGot];
+							auto expect = "HTTP/1.1 200";
+							if(got[0 .. expect.length] != expect)
+								throw new ProxyException("Proxy rejected request: " ~ got[0 .. expect.length]);
+
+							(cast(OpenSslSocket)socket).do_ssl_connect();
+						} else {
+						}
+					} else {
+						socket.connect(new InternetAddress(host, port));
+					}
 				}
 
 				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket);
@@ -1076,13 +1149,25 @@ class HttpRequest {
 				Socket socket;
 
 				try {
-					socket = getOpenSocketOnHost(pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
+					socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
+				} catch(ProxyException e) {
+					// connection refused or timed out (I should disambiguate somehow)...
+					pc.state = HttpRequest.State.aborted;
+
+					pc.responseData.code = 2;
+					pc.responseData.codeText = e.msg ~ " from " ~ pc.proxy;
+
+					hadAbortedRequest = true;
+
+					removeFromPending[removeFromPendingCount++] = pc;
+					continue;
+
 				} catch(SocketException e) {
 					// connection refused or timed out (I should disambiguate somehow)...
 					pc.state = HttpRequest.State.aborted;
 
 					pc.responseData.code = 2;
-					pc.responseData.codeText = "connection failed";
+					pc.responseData.codeText = pc.proxy.length ? ("connection failed to proxy " ~ pc.proxy) : "connection failed";
 
 					hadAbortedRequest = true;
 
@@ -1103,6 +1188,18 @@ class HttpRequest {
 			foreach(rp; removeFromPending[0 .. removeFromPendingCount])
 				pending = pending.remove!((a) => a is rp)();
 
+			tryAgain:
+
+			Socket[16] inactive;
+			int inactiveCount = 0;
+			void killInactives() {
+				foreach(s; inactive[0 .. inactiveCount]) {
+					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
+					activeRequestOnSocket.remove(s);
+				}
+			}
+
+
 			readSet.reset();
 			writeSet.reset();
 
@@ -1113,6 +1210,15 @@ class HttpRequest {
 
 			// active requests need to be read or written to
 			foreach(sock, request; activeRequestOnSocket) {
+
+				if(request.state == State.aborted) {
+					inactive[inactiveCount++] = sock;
+					sock.close();
+					loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+					hadAbortedRequest = true;
+					continue;
+				}
+
 				// check the other sockets just for EOF, if they close, take them out of our list,
 				// we'll reopen if needed upon request.
 				readSet.add(sock);
@@ -1134,21 +1240,11 @@ class HttpRequest {
 			}
 
 			if(!hadOne) {
-				if(hadAbortedRequest)
+				if(hadAbortedRequest) {
+					killInactives();
 					return 0; // something got aborted, that's progress
-				return 2; // automatic timeout, nothing to do
-			}
-
-			tryAgain:
-
-
-			Socket[16] inactive;
-			int inactiveCount = 0;
-			void killInactives() {
-				foreach(s; inactive[0 .. inactiveCount]) {
-					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
-					activeRequestOnSocket.remove(s);
 				}
+				return 2; // automatic timeout, nothing to do
 			}
 
 			auto selectGot = Socket.select(readSet, writeSet, null, minTimeout);
@@ -1725,7 +1821,19 @@ class HttpClient {
 		(but will still save cookies btw... when that is implemented)
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
-		auto request = new HttpRequest(uri, method, cache, defaultTimeout);
+		string proxyToUse;
+		switch(uri.scheme) {
+			case "http":
+				proxyToUse = httpProxy;
+			break;
+			case "https":
+				proxyToUse = httpsProxy;
+			break;
+			default:
+				proxyToUse = null;
+		}
+
+		auto request = new HttpRequest(uri, method, cache, defaultTimeout, proxyToUse);
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
@@ -1753,11 +1861,46 @@ class HttpClient {
 
 	this(ICache cache = null) {
 		this.cache = cache;
-
+		loadDefaultProxy();
 	}
 
-	// FIXME: add proxy
-	// FIXME: some kind of caching
+	/++
+		Loads the system-default proxy. Note that the constructor does this automatically
+		so you should rarely need to call this explicitly.
+
+		The environment variables are used, if present, on all operating systems.
+
+		History:
+			Added April 12, 2021 (included in dub v9.5)
+
+		Bugs:
+			On Windows, it does NOT currently check the IE settings, but I do intend to
+			implement that in the future. When I do, it will be classified as a bug fix,
+			NOT a breaking change.
+	+/
+	void loadDefaultProxy() {
+		import std.process;
+		httpProxy = environment.get("http_proxy", environment.get("HTTP_PROXY", null));
+		httpsProxy = environment.get("https_proxy", environment.get("HTTPS_PROXY", null));
+
+		// FIXME: on Windows, I should use the Internet Explorer proxy settings
+	}
+
+	/++
+		Proxies to use for requests. The [HttpClient] constructor will set these to the system values,
+		then you can reset it to `null` if you want to override and not use the proxy after all, or you
+		can set it after construction to whatever.
+
+		The proxy from the client will be automatically set to the requests performed through it. You can
+		also override on a per-request basis by creating the request and setting the `proxy` field there
+		before sending it.
+
+		History:
+			Added April 12, 2021 (included in dub v9.5)
+	+/
+	string httpProxy;
+	/// ditto
+	string httpsProxy;
 
 	///
 	void setCookie(string name, string value, string domain = null) {
@@ -2254,6 +2397,11 @@ version(use_openssl) {
 		@trusted
 		override void connect(Address to) {
 			super.connect(to);
+			do_ssl_connect();
+		}
+
+		@trusted
+		void do_ssl_connect() {
 			if(SSL_connect(ssl) == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
