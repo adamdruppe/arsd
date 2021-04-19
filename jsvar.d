@@ -1048,7 +1048,7 @@ struct var {
 							// up in a script function doing weird things. If I can prevent that, I'd like to...
 							// but it is also really useful for this to work for some scenarios...
 							static if(!is(typeof(a) == return)) // if it is callable, just assign the func ref
-							if(possibility.payloadType == Type.Function || possibility.payloadType == Type.Object)
+							if(isCallableJsvarObject(possibility))
 								possibility = possibility.apply(this, null); // crude approximation of property getter support
 							cast(Unqual!(typeof((a)))) t.tupleof[i] = possibility.get!(typeof(a));
 						}
@@ -2303,6 +2303,24 @@ unittest {
 	assert(got2.method() == "CFoo");
 }
 
+unittest {
+	static struct Foo {
+		struct Bar {
+			int[] x;
+		}
+
+		Bar bar;
+	}
+
+	assert(
+		var.fromJson(`{
+			"bar":{ "x": [1,2,3]}
+		}`).get!Foo
+		==
+		Foo(Foo.Bar([1,2,3]))
+	);
+}
+
 // just a base class we can reference when looking for native objects
 class WrappedNativeObject : PrototypeObject {
 	TypeInfo wrappedType;
@@ -2486,6 +2504,21 @@ WrappedNativeObject wrapUfcs(alias Module, Type)(Type obj) {
 		}
 	};
 }
+
+bool isCallableJsvarObject(var possibility) {
+	if(possibility.payloadType == var.Type.Function)
+		return true;
+	if(possibility.payloadType == var.Type.Object) {
+		if(possibility._payload._object is null)
+			return false;
+
+		if(possibility._payload._object._peekMember("opCall", true))
+			return true;
+
+	}
+	return false;
+}
+
 
 bool isScriptable(attributes...)() {
 	bool nonConstConditionForWorkingAroundASpuriousDmdWarning = true;
