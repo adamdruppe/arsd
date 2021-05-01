@@ -161,7 +161,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	Don't worry, you don't have to read this whole documentation file!
 
-	Check out the [#Event-example] and [#Pong-example] to get started quickly.
+	Check out the [#event-example] and [#Pong-example] to get started quickly.
 
 	The main classes you may want to create are [SimpleWindow], [Timer],
 	[Image], and [Sprite].
@@ -205,68 +205,6 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	simpledisplay can be used with [core.thread.Fiber], but be warned many of the functions can use a significant amount of stack space. I recommend at least 64 KB stack for each fiber (just set through the second argument to Fiber's constructor).
 
-	Examples:
-
-	$(H3 Event-example)
-	This program creates a window and draws events inside them as they
-	happen, scrolling the text in the window as needed. Run this program
-	and experiment to get a feel for where basic input events take place
-	in the library.
-
-	---
-	// dmd example.d simpledisplay.d color.d
-	import arsd.simpledisplay;
-	import std.conv;
-
-	void main() {
-		auto window = new SimpleWindow(Size(500, 500), "Event example - simpledisplay.d");
-
-		int y = 0;
-
-		void addLine(string text) {
-			auto painter = window.draw();
-
-			if(y + painter.fontHeight >= window.height) {
-				painter.scrollArea(Point(0, 0), window.width, window.height, 0, painter.fontHeight);
-				y -= painter.fontHeight;
-			}
-
-			painter.outlineColor = Color.red;
-			painter.fillColor = Color.black;
-			painter.drawRectangle(Point(0, y), window.width, painter.fontHeight);
-
-			painter.outlineColor = Color.white;
-
-			painter.drawText(Point(10, y), text);
-
-			y += painter.fontHeight;
-		}
-
-		window.eventLoop(1000,
-		  () {
-			addLine("Timer went off!");
-		  },
-		  (KeyEvent event) {
-			addLine(to!string(event));
-		  },
-		  (MouseEvent event) {
-			addLine(to!string(event));
-		  },
-		  (dchar ch) {
-			addLine(to!string(ch));
-		  }
-		);
-	}
-	---
-
-	If you are interested in more game writing with D, check out my gamehelpers.d which builds upon simpledisplay, and its other stand-alone support modules, simpleaudio.d and joystick.d, too.
-
-	This program displays a pie chart. Clicking on a color will increase its share of the pie.
-
-	---
-
-	---
-
 	$(H2 Topics)
 
 	$(H3 $(ID topic-windows) Windows)
@@ -304,15 +242,21 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		On Linux, the event loop is implemented with the `epoll` system call for efficiency an extensibility to other files. On Windows, it runs a traditional `GetMessage` + `DispatchMessage` loop, with a call to `SleepEx` in each iteration to allow the thread to enter an alertable wait state regularly, primarily so Overlapped I/O callbacks will get a chance to run.
 
-		On Linux, simpledisplay also supports my [arsd.eventloop] module. Compile your program, including the eventloop.d file, with the `-version=with_eventloop` switch.
+		On Linux, simpledisplay also supports my (deprecated) [arsd.eventloop] module. Compile your program, including the eventloop.d file, with the `-version=with_eventloop` switch.
 
 		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
+
+		You can also run the event loop independently of a window, with [EventLoop.run|EventLoop.get.run], though since it will automatic terminate when there's no open windows, you will want to have one anyway.
 
 	$(H3 $(ID topic-notification-areas) Notification area (aka systray) icons)
 		Notification area icons are currently implemented on X11 and Windows. On X11, it defaults to using `libnotify` to show bubbles, if available, and will do a custom bubble window if not. You can `version=without_libnotify` to avoid this run-time dependency, if you like.
 
+		See the [NotificationAreaIcon] class.
+
 	$(H3 $(ID topic-input-handling) Input handling)
 		There are event handlers for low-level keyboard and mouse events, and higher level handlers for character events.
+
+		See [SimpleWindow.handleCharEvent], [SimpleWindow.handleKeyEvent], [SimpleWindow.handleMouseEvent].
 
 	$(H3 $(ID topic-2d-drawing) 2d Drawing)
 		To draw on your window, use the [SimpleWindow.draw] method. It returns a [ScreenPainter] structure with drawing methods.
@@ -337,7 +281,8 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		Painting is done based on two color properties, a pen and a brush.
 
-		At this time, the 2d drawing does not support alpha blending. If you need that, use a 2d OpenGL context instead.
+		At this time, the 2d drawing does not support alpha blending, except for the [Sprite] class. If you need that, use a 2d OpenGL context instead.
+
 		FIXME add example of 2d opengl drawing here
 	$(H3 $(ID topic-3d-drawing) 3d Drawing (or 2d with OpenGL))
 		simpledisplay can create OpenGL contexts on your window. It works quite differently than 2d drawing.
@@ -348,126 +293,164 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		Next, you set [SimpleWindow.redrawOpenGlScene|window.redrawOpenGlScene] to a delegate which draws your frame.
 
-		To force a redraw of the scene, call [SimpleWindow.redrawOpenGlScene|window.redrawOpenGlSceneNow()].
+		To force a redraw of the scene, call [SimpleWindow.redrawOpenGlSceneNow|window.redrawOpenGlSceneNow()] or to queue a redraw after processing the next batch of pending events, use [SimpleWindow.redrawOpenGlSceneSoon|window.redrawOpenGlSceneSoon].
 
-		Please note that my experience with OpenGL is very out-of-date, and the bindings in simpledisplay reflect that. If you want to use more modern functions, you may have to define the bindings yourself, or import them from another module. However, the OpenGL context creation done in simpledisplay will work for any version.
+		simpledisplay supports both old-style `glBegin` and newer-style shader-based code all through its built-in bindings. See the next section of the docs to see a shader-based program.
 
-		This example program will draw a rectangle on your window:
+		This example program will draw a rectangle on your window using old-style OpenGL with a pulsating color:
 
 		---
-		// dmd example.d simpledisplay.d color.d
 		import arsd.simpledisplay;
 
 		void main() {
+			auto window = new SimpleWindow(800, 600, "opengl 1", OpenGlOptions.yes, Resizability.allowResizing);
 
+			float otherColor = 0.0;
+			float colorDelta = 0.05;
+
+			window.redrawOpenGlScene = delegate() {
+				glLoadIdentity();
+				glBegin(GL_QUADS);
+
+				glColor3f(1.0, otherColor, 0);
+				glVertex3f(-0.8, -0.8, 0);
+
+				glColor3f(1.0, otherColor, 1.0);
+				glVertex3f(0.8, -0.8, 0);
+
+				glColor3f(0, 1.0, otherColor);
+				glVertex3f(0.8, 0.8, 0);
+
+				glColor3f(otherColor, 0, 1.0);
+				glVertex3f(-0.8, 0.8, 0);
+
+				glEnd();
+			};
+
+			window.eventLoop(50, () {
+				otherColor += colorDelta;
+				if(otherColor > 1.0) {
+					otherColor = 1.0;
+					colorDelta = -0.05;
+				}
+				if(otherColor < 0) {
+					otherColor = 0;
+					colorDelta = 0.05;
+				}
+				// at the end of the timer, we have to request a redraw
+				// or we won't see the changes.
+				window.redrawOpenGlSceneSoon();
+			});
 		}
 		---
+
+		My [arsd.game] module has some helpers for using old-style opengl to make 2D windows too. See: [arsd.game.create2dWindow].
 	$(H3 $(ID topic-modern-opengl) Modern OpenGL)
 		simpledisplay's opengl support, by default, is for "legacy" opengl. To use "modern" functions, you must opt-into them with a little more setup. But the library providers helpers for this too.
 
 		This example program shows how you can set up a shader to draw a rectangle:
 
 		---
-module opengl3test;
-import arsd.simpledisplay;
+		module opengl3test;
+		import arsd.simpledisplay;
 
-// based on https://learnopengl.com/Getting-started/Hello-Triangle
+		// based on https://learnopengl.com/Getting-started/Hello-Triangle
 
-void main() {
-	// First thing we do, before creating the window, is declare what version we want.
-	setOpenGLContextVersion(3, 3);
-	// turning off legacy compat is required to use version 3.3 and newer
-	openGLContextCompatible = false;
+		void main() {
+			// First thing we do, before creating the window, is declare what version we want.
+			setOpenGLContextVersion(3, 3);
+			// turning off legacy compat is required to use version 3.3 and newer
+			openGLContextCompatible = false;
 
-	uint VAO;
-	OpenGlShader shader;
+			uint VAO;
+			OpenGlShader shader;
 
-	// then we can create the window.
-	auto window = new SimpleWindow(800, 600, "opengl 3", OpenGlOptions.yes, Resizability.allowResizing);
+			// then we can create the window.
+			auto window = new SimpleWindow(800, 600, "opengl 3", OpenGlOptions.yes, Resizability.allowResizing);
 
-	// additional setup needs to be done when it is visible, simpledisplay offers a property
-	// for exactly that:
-	window.visibleForTheFirstTime = delegate() {
-		// now with the window loaded, we can start loading the modern opengl functions.
+			// additional setup needs to be done when it is visible, simpledisplay offers a property
+			// for exactly that:
+			window.visibleForTheFirstTime = delegate() {
+				// now with the window loaded, we can start loading the modern opengl functions.
 
-		// you MUST set the context first.
-		window.setAsCurrentOpenGlContext;
-		// then load the remainder of the library
-  		gl3.loadDynamicLibrary();
+				// you MUST set the context first.
+				window.setAsCurrentOpenGlContext;
+				// then load the remainder of the library
+				gl3.loadDynamicLibrary();
 
-		// now you can create the shaders, etc.
-		shader = new OpenGlShader(
-			OpenGlShader.Source(GL_VERTEX_SHADER, `
-				#version 330 core
-				layout (location = 0) in vec3 aPos;
-				void main() {
-					gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
-				}
-			`),
-			OpenGlShader.Source(GL_FRAGMENT_SHADER, `
-				#version 330 core
-				out vec4 FragColor;
-				uniform vec4 mycolor;
-				void main() {
-					FragColor = mycolor;
-				}
-			`),
-		);
+				// now you can create the shaders, etc.
+				shader = new OpenGlShader(
+					OpenGlShader.Source(GL_VERTEX_SHADER, `
+						#version 330 core
+						layout (location = 0) in vec3 aPos;
+						void main() {
+							gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+						}
+					`),
+					OpenGlShader.Source(GL_FRAGMENT_SHADER, `
+						#version 330 core
+						out vec4 FragColor;
+						uniform vec4 mycolor;
+						void main() {
+							FragColor = mycolor;
+						}
+					`),
+				);
 
-		// and do whatever other setup you want.
+				// and do whatever other setup you want.
 
-		float[] vertices = [
-			0.5f,  0.5f, 0.0f,  // top right
-			0.5f, -0.5f, 0.0f,  // bottom right
-			-0.5f, -0.5f, 0.0f,  // bottom left
-			-0.5f,  0.5f, 0.0f   // top left 
-		];
-		uint[] indices = [  // note that we start from 0!
-			0, 1, 3,  // first Triangle
-			1, 2, 3   // second Triangle
-		];
-		uint VBO, EBO;
-		glGenVertexArrays(1, &VAO);
-		// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
-		glBindVertexArray(VAO);
+				float[] vertices = [
+					0.5f,  0.5f, 0.0f,  // top right
+					0.5f, -0.5f, 0.0f,  // bottom right
+					-0.5f, -0.5f, 0.0f,  // bottom left
+					-0.5f,  0.5f, 0.0f   // top left 
+				];
+				uint[] indices = [  // note that we start from 0!
+					0, 1, 3,  // first Triangle
+					1, 2, 3   // second Triangle
+				];
+				uint VBO, EBO;
+				glGenVertexArrays(1, &VAO);
+				// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
+				glBindVertexArray(VAO);
 
-		glGenBuffers(1, &VBO);
-		glGenBuffers(1, &EBO);
+				glGenBuffers(1, &VBO);
+				glGenBuffers(1, &EBO);
 
-		glBindBuffer(GL_ARRAY_BUFFER, VBO);
-		glBufferDataSlice(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW);
+				glBindBuffer(GL_ARRAY_BUFFER, VBO);
+				glBufferDataSlice(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW);
 
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-		glBufferDataSlice(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+				glBufferDataSlice(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, null);
-		glEnableVertexAttribArray(0);
+				glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, null);
+				glEnableVertexAttribArray(0);
 
-		// the library will set the initial viewport and trigger our first draw,
-		// so these next two lines are NOT needed. they are just here as comments
-		// to show what would happen next.
+				// the library will set the initial viewport and trigger our first draw,
+				// so these next two lines are NOT needed. they are just here as comments
+				// to show what would happen next.
 
-		// glViewport(0, 0, window.width, window.height);
-		// window.redrawOpenGlSceneNow();
-	};
+				// glViewport(0, 0, window.width, window.height);
+				// window.redrawOpenGlSceneNow();
+			};
 
-	// this delegate is called any time the window needs to be redrawn or if you call `window.redrawOpenGlSceneNow;`
-	// it is our render method.
-	window.redrawOpenGlScene = delegate() {
-		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
+			// this delegate is called any time the window needs to be redrawn or if you call `window.redrawOpenGlSceneNow;`
+			// it is our render method.
+			window.redrawOpenGlScene = delegate() {
+				glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+				glClear(GL_COLOR_BUFFER_BIT);
 
-		glUseProgram(shader.shaderProgram);
+				glUseProgram(shader.shaderProgram);
 
-		// the shader helper class has methods to set uniforms too
-		shader.uniforms.mycolor.opAssign(1.0, 1.0, 0, 1.0);
+				// the shader helper class has methods to set uniforms too
+				shader.uniforms.mycolor.opAssign(1.0, 1.0, 0, 1.0);
 
-		glBindVertexArray(VAO);
-		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, null);
-	};
+				glBindVertexArray(VAO);
+				glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, null);
+			};
 
-	window.eventLoop(0);
-}
+			window.eventLoop(0);
+		}
 		---
 
 	This program only draws the image once because that's all that is necessary, since it is static. If you want to do animation, you might set a pulse timer (which would be a fixed max fps, not necessarily consistent) or use a render loop in a separate thread.
@@ -494,10 +477,15 @@ void main() {
 	$(H3 $(ID topic-sprites) Sprites)
 		The [Sprite] class is used to make images on the display server for fast blitting to screen. This is especially important to use to support fast drawing of repeated images on a remote X11 link.
 
+		[Sprite] is also the only facility that currently supports alpha blending without using OpenGL .
+
 	$(H3 $(ID topic-clipboard) Clipboard)
 		The free functions [getClipboardText] and [setClipboardText] consist of simpledisplay's cross-platform clipboard support at this time.
 
 		It also has helpers for handling X-specific events.
+
+	$(H3 $(ID topic-dnd) Drag and Drop)
+		See [enableDragAndDrop] and [draggable].
 
 	$(H3 $(ID topic-timers) Timers)
 		There are two timers in simpledisplay: one is the pulse timeout you can set on the call to `window.eventLoop`, and the other is a customizable class, [Timer].
@@ -611,6 +599,21 @@ void main() {
 		</assembly>
 	```
 
+	$(H2 Tips)
+
+	$(H3 Name conflicts)
+
+	simpledisplay has a lot of symbols and more are liable to be added without notice, since it contains its own bindings as needed to accomplish its goals. Some of these may conflict with other bindings you use. If so, you can use a static import in D, possibly combined with a selective import:
+
+	---
+	static import sdpy = arsd.simpledisplay;
+	import arsd.simpledisplay : SimpleWindow;
+
+	void main() {
+		auto window = new SimpleWindow();
+		sdpy.EventLoop.get.run();
+	}
+	---
 
 	$(H2 $(ID developer-notes) Developer notes)
 
@@ -645,18 +648,82 @@ void main() {
 	function, then look at one piece at a time.
 
 	Authors: Adam D. Ruppe with the help of others. If you need help, please email me with
-	destructionator@gmail.com or find me on IRC. Our channel is #d on Freenode. I go by
-	Destructionator or adam_d_ruppe, depending on which computer I'm logged into.
+	destructionator@gmail.com or find me on IRC. Our channel is #d on Freenode and you can
+	ping me, adam_d_ruppe, and I'll usually see it if I'm around.
 
 	I live in the eastern United States, so I will most likely not be around at night in
 	that US east timezone.
 
 	License: Copyright Adam D. Ruppe, 2011-2021. Released under the Boost Software License.
 
-	Building documentation: You may wish to use the `arsd.ddoc` file from my github with
-	building the documentation for simpledisplay yourself. It will give it a bit more style.
-	Simply download the arsd.ddoc file and add it to your compile command when building docs.
-	`dmd -c simpledisplay.d color.d -D arsd.ddoc`
+	Building documentation: use my adrdox generator, `dub run adrdox`.
+
+	Examples:
+
+	$(DIV $(ID Event-example))
+	$(H3 $(ID event-example) Event example)
+	This program creates a window and draws events inside them as they
+	happen, scrolling the text in the window as needed. Run this program
+	and experiment to get a feel for where basic input events take place
+	in the library.
+
+	---
+	// dmd example.d simpledisplay.d color.d
+	import arsd.simpledisplay;
+	import std.conv;
+
+	void main() {
+		auto window = new SimpleWindow(Size(500, 500), "Event example - simpledisplay.d");
+
+		int y = 0;
+
+		void addLine(string text) {
+			auto painter = window.draw();
+
+			if(y + painter.fontHeight >= window.height) {
+				painter.scrollArea(Point(0, 0), window.width, window.height, 0, painter.fontHeight);
+				y -= painter.fontHeight;
+			}
+
+			painter.outlineColor = Color.red;
+			painter.fillColor = Color.black;
+			painter.drawRectangle(Point(0, y), window.width, painter.fontHeight);
+
+			painter.outlineColor = Color.white;
+
+			painter.drawText(Point(10, y), text);
+
+			y += painter.fontHeight;
+		}
+
+		window.eventLoop(1000,
+		  () {
+			addLine("Timer went off!");
+		  },
+		  (KeyEvent event) {
+			addLine(to!string(event));
+		  },
+		  (MouseEvent event) {
+			addLine(to!string(event));
+		  },
+		  (dchar ch) {
+			addLine(to!string(ch));
+		  }
+		);
+	}
+	---
+
+	If you are interested in more game writing with D, check out my gamehelpers.d which builds upon simpledisplay, and its other stand-alone support modules, simpleaudio.d and joystick.d, too.
+
+	$(COMMENT
+	This program displays a pie chart. Clicking on a color will increase its share of the pie.
+
+	---
+
+	---
+	)
+
+
 +/
 module arsd.simpledisplay;
 
@@ -787,7 +854,7 @@ unittest {
 	}
 }
 
-/++ $(ID example-minesweeper)
+/++ $(H3 $(ID example-minesweeper) Minesweeper)
 
 	This minesweeper demo shows how we can implement another classic
 	game with simpledisplay and shows some mouse input and basic output
@@ -1040,6 +1107,9 @@ version(Windows) {
 
 	pragma(lib, "gdi32");
 	pragma(lib, "user32");
+
+	// for AlphaBlend... a breaking change....
+	pragma(lib, "msimg32");
 } else version (linux) {
 	//k8: this is hack for rdmd. sorry.
 	static import core.sys.linux.epoll;
@@ -6284,6 +6354,23 @@ struct KeyEvent {
 
 	SimpleWindow window; /// associated Window
 
+	/++
+		A view into the upcoming buffer holding coming character events that are sent if and only if neither
+		the alt or super modifier keys are pressed (check this with `!(modifierState & (ModifierState.window | ModifierState.alt))`
+		to predict if char events are actually coming..
+
+		Only available on X systems since this information is not given ahead of time elsewhere.
+		(Well, you COULD probably dig it up, but as far as I know right now, it isn't terribly pretty.)
+
+		I'm adding this because it is useful to the terminal emulator, but given its platform specificness
+		and potential quirks I'd recommend avoiding it.
+
+		History:
+			Added April 26, 2021 (dub v9.5)
+	+/
+	version(X11)
+		dchar[] charsPossible;
+
 	// convert key event to simplified string representation a-la emacs
 	const(char)[] toStrBuf(bool growdest=false) (char[] dest) const nothrow @trusted {
 		uint dpos = 0;
@@ -6908,16 +6995,17 @@ struct Pen {
 +/
 final class Image {
 	///
-	this(int width, int height, bool forcexshm=false) {
+	this(int width, int height, bool forcexshm=false, bool enableAlpha = false) {
 		this.width = width;
 		this.height = height;
+		this.enableAlpha = enableAlpha;
 
-		impl.createImage(width, height, forcexshm);
+		impl.createImage(width, height, forcexshm, enableAlpha);
 	}
 
 	///
-	this(Size size, bool forcexshm=false) {
-		this(size.width, size.height, forcexshm);
+	this(Size size, bool forcexshm=false, bool enableAlpha = false) {
+		this(size.width, size.height, forcexshm, enableAlpha);
 	}
 
 	private bool suppressDestruction;
@@ -6928,6 +7016,7 @@ final class Image {
 		this.rawData = cast(ubyte*) handle.data;
 		this.width = handle.width;
 		this.height = handle.height;
+		this.enableAlpha = handle.depth == 32;
 		suppressDestruction = true;
 	}
 
@@ -6986,7 +7075,11 @@ final class Image {
 			version(X11) {
 				return 0;
 			} else version(Windows) {
-				return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+				if(enableAlpha) {
+					return (width * 4) * (height - 1);
+				} else {
+					return (((cast(int) width * 3 + 3) / 4) * 4) * (height - 1);
+				}
 			} else version(OSXCocoa) {
 				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
@@ -6998,10 +7091,17 @@ final class Image {
 				auto offset = (y * width + x) * 4;
 				return offset;
 			} else version(Windows) {
-				auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
-				// remember, bmps are upside down
-				auto offset = itemsPerLine * (height - y - 1) + x * 3;
-				return offset;
+				if(enableAlpha) {
+					auto itemsPerLine = width * 4;
+					// remember, bmps are upside down
+					auto offset = itemsPerLine * (height - y - 1) + x * 4;
+					return offset;
+				} else {
+					auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+					// remember, bmps are upside down
+					auto offset = itemsPerLine * (height - y - 1) + x * 3;
+					return offset;
+				}
 			} else version(OSXCocoa) {
 				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
@@ -7013,7 +7113,10 @@ final class Image {
 				return width * 4;
 			} else version(Windows) {
 				// windows bmps are upside down, so the adjustment is actually negative
-				return -((cast(int) width * 3 + 3) / 4) * 4;
+				if(enableAlpha)
+					return - (cast(int) width * 4);
+				else
+					return -((cast(int) width * 3 + 3) / 4) * 4;
 			} else version(OSXCocoa) {
 				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
@@ -7049,6 +7152,17 @@ final class Image {
 				return 0;
 			} else version(OSXCocoa) {
 				return 0 ; //throw new NotYetImplementedException();
+			} else static assert(0, "fill in this info for other OSes");
+		}
+
+		/// Only valid if [enableAlpha] is true
+		int alphaByteOffset() {
+			version(X11) {
+				return 3;
+			} else version(Windows) {
+				return 3;
+			} else version(OSXCocoa) {
+				return 3; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 	}
@@ -7087,9 +7201,9 @@ final class Image {
 	}
 
 	///
-	static Image fromMemoryImage(MemoryImage i) {
+	static Image fromMemoryImage(MemoryImage i, bool enableAlpha = false) {
 		auto tci = i.getAsTrueColorImage();
-		auto img = new Image(tci.width, tci.height);
+		auto img = new Image(tci.width, tci.height, false, enableAlpha);
 		img.setRgbaBytes(tci.imageData.bytes);
 		return img;
 	}
@@ -7120,7 +7234,7 @@ final class Image {
 	/// for use with getDataPointer
 	final int bytesPerLine() const pure @safe nothrow {
 		version(Windows)
-			return ((cast(int) width * 3 + 3) / 4) * 4;
+			return enableAlpha ? (width * 4) : (((cast(int) width * 3 + 3) / 4) * 4);
 		else version(X11)
 			return 4 * width;
 		else version(OSXCocoa)
@@ -7131,7 +7245,7 @@ final class Image {
 	/// for use with getDataPointer
 	final int bytesPerPixel() const pure @safe nothrow {
 		version(Windows)
-			return 3;
+			return enableAlpha ? 4 : 3;
 		else version(X11)
 			return 4;
 		else version(OSXCocoa)
@@ -7144,6 +7258,9 @@ final class Image {
 
 	///
 	immutable int height;
+
+	///
+	immutable bool enableAlpha;
     //private:
 	mixin NativeImageImplementation!() impl;
 }
@@ -7289,6 +7406,95 @@ class OperatingSystemFont {
 		}
 
 		return !isNull();
+	}
+
+	/++
+		Lists available fonts from the system that match the given pattern, finding names that are suitable for passing to [OperatingSystemFont]'s constructor.
+
+
+		Fonts will be fed to you (possibly! it is platform and implementation dependent on if it is called immediately or later) asynchronously through the given delegate. It should return `true` if you want more, `false` if you are done. The delegate will be called once after finishing with a `init` value to let you know it is done and you can do final processing.
+
+		If `pattern` is null, it returns all available font families.
+
+		Please note that you may also receive fonts that do not match your given pattern. You should still filter them in the handler; the pattern is really just an optimization hint rather than a formal guarantee.
+
+		The format of the pattern is platform-specific.
+
+		History:
+			Added May 1, 2021 (dub v9.5)
+	+/
+	static void listFonts(string pattern, bool delegate(in char[] name) handler) {
+		version(Windows) {
+			auto hdc = GetDC(null);
+			scope(exit) ReleaseDC(null, hdc);
+			LOGFONT logfont;
+			static extern(Windows) int proc(const LOGFONT* lf, const TEXTMETRIC* tm, DWORD type, LPARAM p) {
+				auto localHandler = *(cast(typeof(handler)*) p);
+				return localHandler(lf.lfFaceName[].sliceCString) ? 1 : 0;
+			}
+			EnumFontFamiliesEx(hdc, &logfont, &proc, cast(LPARAM) &handler, 0);
+		} else version(X11) {
+			//import core.stdc.stdio;
+			bool done = false;
+			version(with_xft) {
+				if(!XftLibrary.attempted) {
+					XftLibrary.loadDynamicLibrary();
+				}
+
+				if(!XftLibrary.loadSuccessful)
+					goto skipXft;
+
+				if(!FontConfigLibrary.attempted)
+					FontConfigLibrary.loadDynamicLibrary();
+				if(!FontConfigLibrary.loadSuccessful)
+					goto skipXft;
+
+				{
+					auto got = XftListFonts(XDisplayConnection.get, 0, null, "family".ptr, "style".ptr, null);
+					if(got is null)
+						goto skipXft;
+					scope(exit) FcFontSetDestroy(got);
+
+					auto fontPatterns = got.fonts[0 .. got.nfont];
+					foreach(candidate; fontPatterns) {
+						char* where, whereStyle;
+
+						char* pmg = FcNameUnparse(candidate);
+
+						//FcPatternGetString(candidate, "family", 0, &where);
+						//FcPatternGetString(candidate, "style", 0, &whereStyle);
+						//if(where && whereStyle) {
+						if(pmg) {
+							if(!handler(pmg.sliceCString))
+								return;
+							//printf("%s || %s %s\n", pmg, where, whereStyle);
+						}
+					}
+				}
+			}
+
+			skipXft:
+
+			if(pattern is null)
+				pattern = "*";
+
+			int count;
+			auto coreFontsRaw = XListFonts(XDisplayConnection.get, pattern.toStringz, 10000 /* max return */, &count);
+			scope(exit) XFreeFontNames(coreFontsRaw);
+
+			auto coreFonts = coreFontsRaw[0 .. count];
+
+			foreach(font; coreFonts) {
+				char[128] tmp;
+				tmp[0 ..5] = "core:";
+				auto cf = font.sliceCString;
+				if(5 + cf.length > tmp.length)
+					assert(0, "a font name was too long, sorry i didn't bother implementing a fallback");
+				tmp[5 .. 5 + cf.length] = cf;
+				if(!handler(tmp[0 .. 5 + cf.length]))
+					return;
+			}
+		}
 	}
 
 	// see also: XftLockFace(font) which gives a FT_Face. from /usr/include/X11/Xft/Xft.h line 352
@@ -7729,6 +7935,16 @@ class OperatingSystemFont {
 	~this() {
 		unload();
 	}
+}
+
+private string sliceCString(const(wchar)[] w) {
+	return makeUtf8StringFromWindowsString(cast(wchar*) w.ptr);
+}
+
+private inout(char)[] sliceCString(inout(char)* s) {
+	import core.stdc.string;
+	auto len = strlen(s);
+	return s[0 .. len];
 }
 
 /**
@@ -8215,9 +8431,8 @@ struct ScreenPainter {
 	future, but if you need alpha blending right now, use OpenGL instead. See
 	`gamehelpers.d` for a similar class to `Sprite` that uses OpenGL: `OpenGlTexture`.)
 
-	FIXME: you are supposed to be able to draw on these similarly to on windows.
-	ScreenPainter needs to be refactored to allow that though. So until that is
-	done, consider a `Sprite` to have const contents.
+	Update: on April 23, 2021, I finally added alpha blending support. You must opt
+	in by setting the enableAlpha = true in the constructor.
 */
 version(OSXCocoa) {} else // NotYetImplementedException
 class Sprite : CapableOfBeingDrawnUpon {
@@ -8248,21 +8463,50 @@ class Sprite : CapableOfBeingDrawnUpon {
 	version(Windows)
 		private ubyte* rawData;
 	// FIXME: sprites are lost when disconnecting from X! We need some way to invalidate them...
+	// ditto on the XPicture stuff
 
-	this(SimpleWindow win, int width, int height) {
+	version(X11) {
+		private static XRenderPictFormat* RGB24;
+		private static XRenderPictFormat* ARGB32;
+
+		private Picture xrenderPicture;
+	}
+
+	this(SimpleWindow win, int width, int height, bool enableAlpha = false) {
 		this._width = width;
 		this._height = height;
+		this.enableAlpha = enableAlpha;
 
 		version(X11) {
 			auto display = XDisplayConnection.get();
-			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, DefaultDepthOfDisplay(display));
+
+			if(enableAlpha) {
+				if(!XRenderLibrary.loadAttempted) {
+					XRenderLibrary.loadDynamicLibrary();
+				}
+
+				if(!XRenderLibrary.loadSuccessful)
+					throw new Exception("XRender library load failure");
+			}
+
+			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, enableAlpha ? 32 : DefaultDepthOfDisplay(display));
+
+			if(enableAlpha) {
+				if(RGB24 is null)
+					RGB24 = XRenderFindStandardFormat(display, PictStandardRGB24);
+				if(ARGB32 is null)
+					ARGB32 = XRenderFindStandardFormat(display, PictStandardARGB32);
+
+				XRenderPictureAttributes attrs;
+				xrenderPicture = XRenderCreatePicture(display, handle, ARGB32, 0, &attrs);
+			}
 		} else version(Windows) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
 			infoheader.bmiHeader.biWidth = width;
 			infoheader.bmiHeader.biHeight = height;
 			infoheader.bmiHeader.biPlanes = 1;
-			infoheader.bmiHeader.biBitCount = 24;
+			infoheader.bmiHeader.biBitCount = enableAlpha ? 32 : 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
 
 			// FIXME: this should prolly be a device dependent bitmap...
@@ -8281,16 +8525,18 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 	/// Makes a sprite based on the image with the initial contents from the Image
 	this(SimpleWindow win, Image i) {
-		this(win, i.width, i.height);
+		this(win, i.width, i.height, i.enableAlpha);
 
 		version(X11) {
 			auto display = XDisplayConnection.get();
+			auto gc = XCreateGC(display, this.handle, 0, null);
+			scope(exit) XFreeGC(display, gc);
 			if(i.usingXshm)
-				XShmPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height, false);
+				XShmPutImage(display, cast(Drawable) handle, gc, i.handle, 0, 0, 0, 0, i.width, i.height, false);
 			else
-				XPutImage(display, cast(Drawable) handle, DefaultGC(display, DefaultScreen(display)), i.handle, 0, 0, 0, 0, i.width, i.height);
+				XPutImage(display, cast(Drawable) handle, gc, i.handle, 0, 0, 0, 0, i.width, i.height);
 		} else version(Windows) {
-			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			auto itemsPerLine = enableAlpha ? (4 * width) : (((cast(int) width * 3 + 3) / 4) * 4);
 			auto arrLength = itemsPerLine * height;
 			rawData[0..arrLength] = i.rawData[0..arrLength];
 		} else version(OSXCocoa) {
@@ -8324,10 +8570,13 @@ class Sprite : CapableOfBeingDrawnUpon {
 		painter.drawPixmap(this, where, imageUpperLeft, sliceSize);
 	}
 
-
 	/// Call this when you're ready to get rid of it
 	void dispose() {
 		version(X11) {
+			if(xrenderPicture) {
+				XRenderFreePicture(XDisplayConnection.get, xrenderPicture);
+				xrenderPicture = None;
+			}
 			if(handle)
 				XFreePixmap(XDisplayConnection.get(), handle);
 			handle = None;
@@ -8354,14 +8603,15 @@ class Sprite : CapableOfBeingDrawnUpon {
 	final @property int height() { return _height; }
 
 	///
-	static Sprite fromMemoryImage(SimpleWindow win, MemoryImage img) {
-		return new Sprite(win, Image.fromMemoryImage(img));
+	static Sprite fromMemoryImage(SimpleWindow win, MemoryImage img, bool enableAlpha = false) {
+		return new Sprite(win, Image.fromMemoryImage(img, enableAlpha));
 	}
 
 	private:
 
 	int _width;
 	int _height;
+	bool enableAlpha;
 	version(X11)
 		Pixmap handle;
 	else version(Windows)
@@ -8474,7 +8724,7 @@ class AlphaSprite {
 	static void repopulateX() {
 		auto display = XDisplayConnection.get;
 		RGB  = XRenderFindStandardFormat(display, PictStandardRGB24);
-		RGBA = XRenderFindStandardFormat(display, PictStandardARGB24);
+		RGBA = XRenderFindStandardFormat(display, PictStandardARGB32);
 	}
 
 	XPixmap pixmap;
@@ -9693,7 +9943,16 @@ version(Windows) {
 			GetObject(s.handle, bm.sizeof, &bm);
 
 			// or should I AlphaBlend!??!?! note it is supposed to be premultiplied  http://www.fengyuan.com/article/alphablend.html
-			BitBlt(hdc, x, y, w ? w : bm.bmWidth, h ? h : bm.bmHeight, hdcMem, ix, iy, SRCCOPY);
+			if(s.enableAlpha) {
+				auto dw = w ? w : bm.bmWidth;
+				auto dh = h ? h : bm.bmHeight;
+				BLENDFUNCTION bf;
+				bf.BlendOp = AC_SRC_OVER;
+				bf.SourceConstantAlpha = 255;
+				bf.AlphaFormat = AC_SRC_ALPHA;
+				AlphaBlend(hdc, x, y, dw, dh, hdcMem, ix, iy, dw, dh, bf);
+			} else
+				BitBlt(hdc, x, y, w ? w : bm.bmWidth, h ? h : bm.bmHeight, hdcMem, ix, iy, SRCCOPY);
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
@@ -10504,10 +10763,14 @@ version(Windows) {
 			auto offset = itemsPerLine * (height - y - 1) + x * 3;
 
 			Color c;
-			c.a = 255;
+			if(enableAlpha)
+				c.a = rawData[offset + 3];
+			else
+				c.a = 255;
 			c.b = rawData[offset + 0];
 			c.g = rawData[offset + 1];
 			c.r = rawData[offset + 2];
+			c.unPremultiply();
 			return c;
 		}
 
@@ -10516,9 +10779,14 @@ version(Windows) {
 			// remember, bmps are upside down
 			auto offset = itemsPerLine * (height - y - 1) + x * 3;
 
+			if(enableAlpha)
+				c.premultiply();
+
 			rawData[offset + 0] = c.b;
 			rawData[offset + 1] = c.g;
 			rawData[offset + 2] = c.r;
+			if(enableAlpha)
+				rawData[offset + 3] = c.a;
 		}
 
 		void convertToRgbaBytes(ubyte[] where) {
@@ -10534,7 +10802,12 @@ version(Windows) {
 					where[idx + 0] = rawData[offset + 2]; // r
 					where[idx + 1] = rawData[offset + 1]; // g
 					where[idx + 2] = rawData[offset + 0]; // b
-					where[idx + 3] = 255; // a
+					if(enableAlpha) {
+						where[idx + 3] = rawData[offset + 3]; // a
+						unPremultiplyRgba(where[idx .. idx + 4]);
+						offset++;
+					} else
+						where[idx + 3] = 255; // a
 					idx += 4;
 					offset += 3;
 				}
@@ -10546,17 +10819,27 @@ version(Windows) {
 		void setFromRgbaBytes(in ubyte[] what) {
 			assert(what.length == this.width * this.height * 4);
 
-			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
+			auto itemsPerLine = enableAlpha ? (width * 4) : (((cast(int) width * 3 + 3) / 4) * 4);
 			int idx = 0;
 			int offset = itemsPerLine * (height - 1);
 			// remember, bmps are upside down
 			for(int y = height - 1; y >= 0; y--) {
 				auto offsetStart = offset;
 				for(int x = 0; x < width; x++) {
-					rawData[offset + 2] = what[idx + 0]; // r
-					rawData[offset + 1] = what[idx + 1]; // g
-					rawData[offset + 0] = what[idx + 2]; // b
-					//where[idx + 3] = 255; // a
+					if(enableAlpha) {
+						auto a = what[idx + 3];
+
+						rawData[offset + 2] = (a * what[idx + 0]) / 255; // r
+						rawData[offset + 1] = (a * what[idx + 1]) / 255; // g
+						rawData[offset + 0] = (a * what[idx + 2]) / 255; // b
+						rawData[offset + 3] = a; // a
+						premultiplyBgra(rawData[offset .. offset + 4]);
+						offset++;
+					} else {
+						rawData[offset + 2] = what[idx + 0]; // r
+						rawData[offset + 1] = what[idx + 1]; // g
+						rawData[offset + 0] = what[idx + 2]; // b
+					}
 					idx += 4;
 					offset += 3;
 				}
@@ -10566,13 +10849,13 @@ version(Windows) {
 		}
 
 
-		void createImage(int width, int height, bool forcexshm=false) {
+		void createImage(int width, int height, bool forcexshm=false, bool enableAlpha = false) {
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
 			infoheader.bmiHeader.biWidth = width;
 			infoheader.bmiHeader.biHeight = height;
 			infoheader.bmiHeader.biPlanes = 1;
-			infoheader.bmiHeader.biBitCount = 24;
+			infoheader.bmiHeader.biBitCount = enableAlpha ? 32: 24;
 			infoheader.bmiHeader.biCompression = BI_RGB;
 
 			handle = CreateDIBSection(
@@ -10743,8 +11026,15 @@ version(X11) {
 
 		}
 
+		private Picture xrenderPicturePainter;
+
 		void dispose() {
 			this.rasterOp = RasterOp.normal;
+
+			if(xrenderPicturePainter) {
+				XRenderFreePicture(display, xrenderPicturePainter);
+				xrenderPicturePainter = None;
+			}
 
 			// FIXME: this.window.width/height is probably wrong
 
@@ -10919,7 +11209,32 @@ version(X11) {
 		}
 
 		void drawPixmap(Sprite s, int x, int y, int ix, int iy, int w, int h) {
-			XCopyArea(display, s.handle, d, gc, ix, iy, w ? w : s.width, h ? h : s.height, x, y);
+			if(s.enableAlpha) {
+				// the Sprite must be created first, meaning if we're here, XRender is already loaded
+				if(this.xrenderPicturePainter == None) {
+					XRenderPictureAttributes attrs;
+					// FIXME: I can prolly reuse this as long as the pixmap itself is valid.
+					xrenderPicturePainter = XRenderCreatePicture(display, d, Sprite.RGB24, 0, &attrs);
+				}
+
+				XRenderComposite(
+					display,
+					3, // PicOpOver
+					s.xrenderPicture,
+					None,
+					this.xrenderPicturePainter,
+					ix,
+					iy,
+					0,
+					0,
+					x,
+					y,
+					w ? w : s.width,
+					h ? h : s.height
+				);
+			} else {
+				XCopyArea(display, s.handle, d, gc, ix, iy, w ? w : s.width, h ? h : s.height, x, y);
+			}
 		}
 
 		int fontHeight() {
@@ -11691,7 +12006,6 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 
 	int XftGetVersion ();
 
-
 	FcFontSet * XftListFonts (Display   *dpy,
 				int       screen,
 				...);
@@ -11858,7 +12172,15 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 
 	}
 
+	interface FontConfig {
+	extern(C) @nogc pure:
+		int FcPatternGetString(const FcPattern *p, const char *object, int n, char ** s);
+		void FcFontSetDestroy(FcFontSet*);
+		char* FcNameUnparse(const FcPattern *);
+	}
+
 	mixin DynamicLoad!(Xft, "Xft", 2) XftLibrary;
+	mixin DynamicLoad!(FontConfig, "fontconfig", 1) FontConfigLibrary;
 
 
 	/* Xft } */
@@ -12135,7 +12457,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		bool usingXshm;
 	final:
 
-		void createImage(int width, int height, bool forcexshm=false) {
+		void createImage(int width, int height, bool forcexshm=false, bool enableAlpha = false) {
 			auto display = XDisplayConnection.get();
 			assert(display !is null);
 			auto screen = DefaultScreen(display);
@@ -12147,7 +12469,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				handle = XShmCreateImage(
 					display,
 					DefaultVisual(display, screen),
-					24,
+					enableAlpha ? 32: 24,
 					ImageFormat.ZPixmap,
 					null,
 					&shminfo,
@@ -12176,12 +12498,12 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				handle = XCreateImage(
 					display,
 					DefaultVisual(display, screen),
-					24, // bpp
+					enableAlpha ? 32 : 24, // bpp
 					ImageFormat.ZPixmap,
 					0, // offset
 					rawData,
 					width, height,
-					8 /* FIXME */, 4 * width); // padding, bytes per line
+					enableAlpha ? 32 : 8 /* FIXME */, 4 * width); // padding, bytes per line
 			}
 		}
 
@@ -12204,18 +12526,24 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		Color getPixel(int x, int y) {
 			auto offset = (y * width + x) * 4;
 			Color c;
-			c.a = 255;
+			c.a = enableAlpha ? rawData[offset + 3] : 255;
 			c.b = rawData[offset + 0];
 			c.g = rawData[offset + 1];
 			c.r = rawData[offset + 2];
+			if(enableAlpha)
+				c.unPremultiply;
 			return c;
 		}
 
 		void setPixel(int x, int y, Color c) {
+			if(enableAlpha)
+				c.premultiply();
 			auto offset = (y * width + x) * 4;
 			rawData[offset + 0] = c.b;
 			rawData[offset + 1] = c.g;
 			rawData[offset + 2] = c.r;
+			if(enableAlpha)
+				rawData[offset + 3] = c.a;
 		}
 
 		void convertToRgbaBytes(ubyte[] where) {
@@ -12227,7 +12555,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				where[idx + 0] = rawData[idx + 2]; // r
 				where[idx + 1] = rawData[idx + 1]; // g
 				where[idx + 2] = rawData[idx + 0]; // b
-				where[idx + 3] = 255; // a
+				where[idx + 3] = enableAlpha ? rawData[idx + 3] : 255; // a
+
+				if(enableAlpha)
+					unPremultiplyRgba(where[idx .. idx + 4]);
 			}
 		}
 
@@ -12240,7 +12571,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				rawData[idx + 2] = where[idx + 0]; // r
 				rawData[idx + 1] = where[idx + 1]; // g
 				rawData[idx + 0] = where[idx + 2]; // b
-				//rawData[idx + 3] = 255; // a
+				if(enableAlpha) {
+					rawData[idx + 3] = where[idx + 3]; // a
+					premultiplyBgra(rawData[idx .. idx + 4]);
+				}
 			}
 		}
 
@@ -13490,12 +13824,6 @@ version(X11) {
 				if(win.inputProxy)
 					win = &win.inputProxy;
 
-				if (win.handleKeyEvent) {
-					XUnlockDisplay(display);
-					scope(exit) XLockDisplay(display);
-					win.handleKeyEvent(ke);
-				}
-
 				// char events are separate since they are on Windows too
 				// also, xcompose can generate long char sequences
 				// don't send char events if Meta and/or Hyper is pressed
@@ -13503,15 +13831,39 @@ version(X11) {
 				if ((e.xkey.state&ModifierState.ctrl) != 0) {
 					if (charbuflen > 1 || charbuf[0] >= ' ') charbuflen = 0;
 				}
-				if (ke.pressed && charbuflen > 0 && (e.xkey.state&(ModifierState.alt|ModifierState.windows)) == 0) {
+
+				dchar[32] charsComingBuffer;
+				int charsComingPosition;
+				dchar[] charsComing = charsComingBuffer[];
+
+				if (ke.pressed && charbuflen > 0) {
 					// FIXME: I think Windows sends these on releases... we should try to match that, but idk about repeats.
 					foreach (immutable dchar ch; charbuf[0..charbuflen]) {
-						if (win.handleCharEvent) {
-							XUnlockDisplay(display);
-							scope(exit) XLockDisplay(display);
-							win.handleCharEvent(ch);
-						}
+						if(charsComingPosition >= charsComing.length)
+							charsComing.length = charsComingPosition + 8;
+
+						charsComing[charsComingPosition++] = ch;
 					}
+
+					charsComing = charsComing[0 .. charsComingPosition];
+				} else {
+					charsComing = null;
+				}
+
+				ke.charsPossible = charsComing;
+
+				if (win.handleKeyEvent) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
+					win.handleKeyEvent(ke);
+				}
+
+				// Super and alt modifier keys never actually send the chars, they are assumed to be special.
+				if ((e.xkey.state&(ModifierState.alt|ModifierState.windows)) == 0 && win.handleCharEvent) {
+					XUnlockDisplay(display);
+					scope(exit) XLockDisplay(display);
+					foreach(ch; charsComing)
+						win.handleCharEvent(ch);
 				}
 			}
 
@@ -13597,6 +13949,9 @@ extern(C) nothrow @nogc {
 	Window XGetSelectionOwner(Display *display, Atom selection);
 
 	XVisualInfo* XGetVisualInfo(Display*, c_long, XVisualInfo*, int*);
+
+	char** XListFonts(Display*, const char*, int, int*);
+	void XFreeFontNames(char**);
 
 	Display* XOpenDisplay(const char*);
 	int XCloseDisplay(Display*);
@@ -13801,6 +14156,16 @@ extern(C) nothrow @nogc {
 	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
 	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
 	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
+
+	KeySym XStringToKeysym(const char *string);
+
+	Bool XCheckTypedEvent(Display *display, int event_type, XEvent *event_return);
+
+	Window XDefaultRootWindow(Display*);
+
+	int XGrabButton(Display *display, uint button, uint modifiers, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor);
+
+	int XUngrabButton(Display *display, uint button, uint modifiers, Window grab_window); 
 
 	int XDrawLines(Display*, Drawable, GC, XPoint*, int, CoordMode);
 	int XFillPolygon(Display*, Drawable, GC, XPoint*, int, PolygonShape, CoordMode);
