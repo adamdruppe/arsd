@@ -7937,6 +7937,7 @@ class OperatingSystemFont {
 	}
 }
 
+version(Windows)
 private string sliceCString(const(wchar)[] w) {
 	return makeUtf8StringFromWindowsString(cast(wchar*) w.ptr);
 }
