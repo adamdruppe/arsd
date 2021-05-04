@@ -106,7 +106,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 */
 
 /++
-	simpledisplay.d provides basic cross-platform GUI-related functionality,
+	simpledisplay.d (often abbreviated to "sdpy") provides basic cross-platform GUI-related functionality,
 	including creating windows, drawing on them, working with the clipboard,
 	timers, OpenGL, and more. However, it does NOT provide high level GUI
 	widgets. See my minigui.d, an extension to this module, for that
@@ -5799,7 +5799,7 @@ version(X11) {
 		import core.stdc.stdio;
 		char[265] buffer;
 		XGetErrorText(dpy, evt.error_code, buffer.ptr, cast(int) buffer.length);
-		printf("ERROR: %s\n", buffer.ptr);
+		debug printf("X Error %d: %s / Serial: %lld, Opcode: %d.%d, XID: 0x%llx\n", evt.error_code, buffer.ptr, evt.serial, evt.request_code, evt.minor_code, evt.resourceid);
 		return 0;
 	}
 
@@ -6348,7 +6348,7 @@ struct KeyEvent {
 	ubyte hardwareCode; /// A platform and hardware specific code for the key
 	bool pressed; /// true if the key was just pressed, false if it was just released. note: released events aren't always sent...
 
-	dchar character; ///
+	deprecated("This never actually worked anyway, you should do a character event handler instead.") dchar character;
 
 	uint modifierState; /// see enum [ModifierState]. They are bitwise combined together.
 
@@ -12368,6 +12368,8 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				if(!librariesSuccessfullyLoaded)
 					throw new Exception("Unable to load X11 client libraries");
 				display = XOpenDisplay(displayName);
+				//XSetErrorHandler(&adrlogger);
+				//XSynchronize(display, true);
 				connectionSequence_++;
 				if(display is null)
 					throw new Exception("Unable to open X display");
@@ -13956,6 +13958,8 @@ extern(C) nothrow @nogc {
 
 	Display* XOpenDisplay(const char*);
 	int XCloseDisplay(Display*);
+
+	int XSynchronize(Display*, bool);
 
 	Bool XQueryExtension(Display*, const char*, int*, int*, int*);
 
@@ -17049,6 +17053,13 @@ class ExperimentalTextComponent2 {
 		Stage 7: word wrap
 		Stage 8: justification
 		Stage 9: editing, selection, etc.
+
+			Operations:
+				insert text
+				overstrike text
+				select
+				cut
+				modify
 	+/
 
 	/++
@@ -17068,6 +17079,17 @@ class ExperimentalTextComponent2 {
 		adjustDownForAscent to change the y params.
 	+/
 	static interface ComponentRenderHelper {
+
+		/+
+			When you do an edit, possibly stuff on the same line previously need to move (to adjust
+			the baseline), stuff subsequent needs to move (adjust x) and possibly stuff below needs
+			to move (adjust y to make room for new line) until you get back to the same position,
+			then you can stop - if one thing is unchanged, nothing after it is changed too.
+
+			Word wrap might change this as if can rewrap tons of stuff, but the same idea applies,
+			once you reach something that is unchanged, you can stop.
+		+/
+
 		void adjustDownForAscent(int amount); // at the end of the line it needs to do these
 
 		int ascent() const;
@@ -17371,6 +17393,8 @@ class ExperimentalTextComponent2 {
 // Don't use this yet. When I'm happy with it, I will move it to the
 // regular module namespace.
 mixin template ExperimentalTextComponent() {
+
+static:
 
 	alias Rectangle = arsd.color.Rectangle;
 

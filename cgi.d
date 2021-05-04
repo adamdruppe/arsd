@@ -150,7 +150,7 @@ void main() {
 	
 	For CGI, `dmd yourfile.d cgi.d` then put the executable in your cgi-bin directory.
 
-	For FastCGI: `dmd yourfile.d cgi.d -version=fastcgi` and run it. spawn-fcgi helps on nginx. You can put the file in the directory for Apache. On IIS, run it with a port on the command line.
+	For FastCGI: `dmd yourfile.d cgi.d -version=fastcgi` and run it. spawn-fcgi helps on nginx. You can put the file in the directory for Apache. On IIS, run it with a port on the command line (this causes it to call FCGX_OpenSocket, which can work on nginx too).
 
 	For SCGI: `dmd yourfile.d cgi.d -version=scgi` and run the executable, providing a port number on the command line.
 
@@ -1751,6 +1751,7 @@ class Cgi {
 				parts.popFront();
 				requestUri = parts.front;
 
+				// FIXME:  the requestUri could be an absolute path!!! should I rename it or something?
 				scriptName = requestUri[0 .. pathInfoStarts];
 
 				auto question = requestUri.indexOf("?");
