@@ -217,6 +217,21 @@ struct Color {
 	nothrow pure @nogc
 	static Color brown() { return Color(128, 64, 0); }
 
+	nothrow pure @nogc
+	void premultiply() {
+		r = (r * a) / 255;
+		g = (g * a) / 255;
+		b = (b * a) / 255;
+	}
+
+	nothrow pure @nogc
+	void unPremultiply() {
+		r = cast(ubyte)(r * 255 / a);
+		g = cast(ubyte)(g * 255 / a);
+		b = cast(ubyte)(b * 255 / a);
+	}
+
+
 	/*
 	ubyte[4] toRgbaArray() {
 		return [r,g,b,a];
@@ -445,6 +460,22 @@ struct Color {
 			return foreground;
 		}
 	}
+}
+
+void premultiplyBgra(ubyte[] bgra) pure @nogc @safe nothrow in { assert(bgra.length == 4); } do {
+	auto a = bgra[3];
+
+	bgra[2] = (bgra[2] * a) / 255;
+	bgra[1] = (bgra[1] * a) / 255;
+	bgra[0] = (bgra[0] * a) / 255;
+}
+
+void unPremultiplyRgba(ubyte[] rgba) pure @nogc @safe nothrow in { assert(rgba.length == 4); } do {
+	auto a = rgba[3];
+
+	rgba[0] = cast(ubyte)(rgba[0] * 255 / a);
+	rgba[1] = cast(ubyte)(rgba[1] * 255 / a);
+	rgba[2] = cast(ubyte)(rgba[2] * 255 / a);
 }
 
 unittest {
