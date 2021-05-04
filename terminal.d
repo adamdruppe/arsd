@@ -5296,14 +5296,30 @@ class LineGetter {
 			//deleteChar();
 	}
 
+	/++
+		Used by the word movement keys (e.g. alt+backspace) to find a word break.
+
+		History:
+			Added April 21, 2021 (dub v9.5)
+
+			Prior to that, [LineGetter] only used [std.uni.isWhite]. Now it uses this which
+			uses if not alphanum and not underscore.
+
+			You can subclass this to customize its behavior.
+	+/
+	bool isWordSeparatorCharacter(dchar d) {
+		import std.uni : isAlphaNum;
+
+		return !(isAlphaNum(d) || d == '_');
+	}
+
 	private int wordForwardIdx() {
 		int cursorPosition = this.cursorPosition;
-		import std.uni : isWhite;
 		if(cursorPosition == line.length)
 			return cursorPosition;
-		while(cursorPosition + 1 < line.length && isWhite(line[cursorPosition]))
+		while(cursorPosition + 1 < line.length && isWordSeparatorCharacter(line[cursorPosition]))
 			cursorPosition++;
-		while(cursorPosition + 1 < line.length && !isWhite(line[cursorPosition + 1]))
+		while(cursorPosition + 1 < line.length && !isWordSeparatorCharacter(line[cursorPosition + 1]))
 			cursorPosition++;
 		cursorPosition += 2;
 		if(cursorPosition > line.length)
@@ -5324,13 +5340,12 @@ class LineGetter {
 		maybePositionCursor();
 	}
 	private int wordBackIdx() {
-		import std.uni : isWhite;
 		if(!line.length || !cursorPosition)
 			return cursorPosition;
 		int ret = cursorPosition - 1;
-		while(ret && isWhite(line[ret]))
+		while(ret && isWordSeparatorCharacter(line[ret]))
 			ret--;
-		while(ret && !isWhite(line[ret - 1]))
+		while(ret && !isWordSeparatorCharacter(line[ret - 1]))
 			ret--;
 		return ret;
 	}
@@ -6051,6 +6066,15 @@ class LineGetter {
 							positionCursor();
 							redraw();
 						}
+					break;
+					case '(':
+						if(!(ev.modifierState & ModifierState.alt))
+							goto default;
+						justHitTab = justKilled = false;
+						addChar('(');
+						addChar(cast(dchar) (')' | PRIVATE_BITS_MASK));
+						charBack();
+						redraw();
 					break;
 					case 'l', 12:
 						if(!(ev.modifierState & ModifierState.control))
