@@ -1,8 +1,10 @@
-// Copyright 2013-2020, Adam D. Ruppe.
+// Copyright 2013-2021, Adam D. Ruppe.
 
-// FIXME: eaders are supposed to be case insensitive. ugh.
+// FIXME: websocket proxy support
+// FIXME: ipv6 support
 
-// FIXME: need timeout controls
+// FIXME: headers are supposed to be case insensitive. ugh.
+
 // FIXME: 100 continue. tho we never Expect it so should never happen, never kno,
 
 /++
@@ -75,6 +77,8 @@ unittest {
 
 // FIXME: multipart encoded file uploads needs implementation
 // future: do web client api stuff
+
+__gshared bool defaultVerifyPeer = true; // public but intentionally undocumented
 
 debug import std.stdio;
 
@@ -939,6 +943,7 @@ class HttpRequest {
 				switch(err) {
 					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
 					case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
+					case 3: continue; // EINTR
 					default: throw new Exception("HttpRequest.advanceConnections got err " ~ to!string(err));
 				}
 			}
@@ -1002,7 +1007,7 @@ class HttpRequest {
 				if(ssl) {
 					version(with_openssl) {
 						loadOpenSsl();
-						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host);
+						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host, defaultVerifyPeer);
 					} else
 						throw new Exception("SSL not compiled in");
 				} else
@@ -1021,15 +1026,22 @@ class HttpRequest {
 							proxy = "http://" ~ proxy;
 						auto proxyurl = Uri(proxy);
 
+						//auto proxyhttps = proxyurl.scheme == "https";
+						enum proxyhttps = false; // this isn't properly implemented and might never be necessary anyway so meh
+
 						// the precise types here are important to help with overload
 						// resolution of the devirtualized call!
 						Address pa = new InternetAddress(proxyurl.host, proxyurl.port ? cast(ushort) proxyurl.port : 80);
 
 						debug(arsd_http2) writeln("using proxy ", pa.toString());
 
-						// the proxy never actually starts TLS, but if the request is tls then we need to CONNECT then upgrade the connection
-						// using the parent class functions let us bypass the encryption
-						socket.Socket.connect(pa);
+						if(proxyhttps) {
+							socket.connect(pa);
+						} else {
+							// the proxy never actually starts TLS, but if the request is tls then we need to CONNECT then upgrade the connection
+							// using the parent class functions let us bypass the encryption
+							socket.Socket.connect(pa);
+						}
 
 						string message;
 						if(ssl) {
@@ -1041,21 +1053,38 @@ class HttpRequest {
 								message ~= "Proxy-Authorization: Basic " ~ Base64.encode(cast(ubyte[]) proxyurl.userinfo) ~ "\r\n";
 							}
 							message ~= "\r\n";
-							// again gotta use plain
+
 							// FIXME: what if proxy times out? should be reasonably fast too.
-							socket.Socket.send(message, SocketFlags.NONE);
+							if(proxyhttps) {
+								socket.send(message, SocketFlags.NONE);
+							} else {
+								socket.Socket.send(message, SocketFlags.NONE);
+							}
 
 							ubyte[1024] recvBuffer;
 							// and last time
-							auto rcvGot = socket.Socket.receive(recvBuffer[], SocketFlags.NONE);
+							ptrdiff_t rcvGot;
+							if(proxyhttps) {
+								rcvGot = socket.receive(recvBuffer[], SocketFlags.NONE);
+								// bool verifyPeer = true;
+								//(cast(OpenSslSocket)socket).freeSsl();
+								//(cast(OpenSslSocket)socket).initSsl(verifyPeer, host);
+							} else {
+								rcvGot = socket.Socket.receive(recvBuffer[], SocketFlags.NONE);
+							}
+
 							if(rcvGot == -1)
 								throw new ProxyException("proxy receive error");
 							auto got = cast(string) recvBuffer[0 .. rcvGot];
 							auto expect = "HTTP/1.1 200";
-							if(got[0 .. expect.length] != expect)
-								throw new ProxyException("Proxy rejected request: " ~ got[0 .. expect.length]);
+							if(got.length < expect.length || (got[0 .. expect.length] != expect && got[0 .. expect.length] != "HTTP/1.0 200"))
+								throw new ProxyException("Proxy rejected request: " ~ got[0 .. expect.length <= got.length ? expect.length : got.length]);
 
-							(cast(OpenSslSocket)socket).do_ssl_connect();
+							if(proxyhttps) {
+								//(cast(OpenSslSocket)socket).do_ssl_connect();
+							} else {
+								(cast(OpenSslSocket)socket).do_ssl_connect();
+							}
 						} else {
 						}
 					} else {
@@ -1121,8 +1150,64 @@ class HttpRequest {
 		SocketSet readSet;
 		SocketSet writeSet;
 
+		/+
+			Generic event loop registration:
 
-		int advanceConnections() {
+				handle, operation (read/write), buffer (on posix it *might* be stack if a select loop), timeout (in real time), callback when op completed.
+
+				....basically Windows style. Then it translates internally.
+
+				It should tell the thing if the buffer is reused or not
+		+/
+
+
+		/++
+			This is made public for rudimentary event loop integration, but is still
+			basically an internal detail. Try not to use it if you have another way.
+
+			This does a single iteration of the internal select()-based processing loop.
+
+
+			Future directions:
+				I want to merge the internal use of [WebSocket.eventLoop] with this;
+				[advanceConnections] does just one run on the loop, whereas eventLoop
+				runs it until all connections are closed. But they'd both process both
+				pending http requests and active websockets.
+
+				After that, I want to be able to integrate in other event loops too.
+				One might be to simply to reactor callbacks, then perhaps Windows overlapped
+				i/o (that's just going to be tricky to retrofit into the existing select()-based
+				code). It could then go fiber just by calling the resume function too.
+
+				The hard part is ensuring I keep this file stand-alone while offering these
+				things.
+
+				This `advanceConnections` call will probably continue to work now that it is
+				public, but it may not be wholly compatible with all the future features; you'd
+				have to pick either the internal event loop or an external one you integrate, but not
+				mix them.
+
+			History:
+				This has been included in the library since almost day one, but
+				it was private until April 13, 2021 (dub v9.5).
+
+			Params:
+				maximumTimeout = the maximum time it will wait in select(). It may return much sooner than this if a connection timed out in the mean time.
+				automaticallyRetryOnInterruption = internally loop on EINTR.
+
+			Returns:
+
+				0 = no error, work may remain so you should call `advanceConnections` again when you can
+
+				1 = passed `maximumTimeout` reached with no work done, yet requests are still in the queue. You may call `advanceConnections` again.
+
+				2 = no work to do, no point calling it again unless you've added new requests. Your program may exit if you have nothing to add since it means everything requested is now done.
+
+				3 = EINTR occurred on select(), you should check your interrupt flags if you set a signal handler, then call `advanceConnections` again if you aren't exiting. Only occurs if `automaticallyRetryOnInterruption` is set to `false` (the default when it is called externally).
+
+				any other value should be considered a non-recoverable error if you want to be forward compatible as I reserve the right to add more values later.
+		+/
+		public int advanceConnections(Duration maximumTimeout = 10.seconds, bool automaticallyRetryOnInterruption = false) {
 			if(readSet is null)
 				readSet = new SocketSet();
 			if(writeSet is null)
@@ -1205,7 +1290,7 @@ class HttpRequest {
 
 			bool hadOne = false;
 
-			Duration minTimeout = 10.seconds;
+			auto minTimeout = maximumTimeout;
 			auto now = MonoTime.currTime;
 
 			// active requests need to be read or written to
@@ -1250,6 +1335,7 @@ class HttpRequest {
 			auto selectGot = Socket.select(readSet, writeSet, null, minTimeout);
 			if(selectGot == 0) { /* timeout */
 				now = MonoTime.currTime;
+				bool anyWorkDone = false;
 				foreach(sock, request; activeRequestOnSocket) {
 
 					if(request.timeoutFromInactivity <= now) {
@@ -1260,10 +1346,11 @@ class HttpRequest {
 						inactive[inactiveCount++] = sock;
 						sock.close();
 						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+						anyWorkDone = true;
 					}
 				}
 				killInactives();
-				return 0;
+				return anyWorkDone ? 0 : 1;
 				// return 1; was an error to time out but now im making it on the individual request
 			} else if(selectGot == -1) { /* interrupted */
 				/*
@@ -1273,7 +1360,10 @@ class HttpRequest {
 						throw new Exception("select error: " ~ to!string(errno));
 				}
 				*/
-				goto tryAgain;
+				if(automaticallyRetryOnInterruption)
+					goto tryAgain;
+				else
+					return 3;
 			} else { /* ready */
 				foreach(sock, request; activeRequestOnSocket) {
 					if(readSet.isSet(sock)) {
@@ -2454,15 +2544,21 @@ version(use_openssl) {
 			super.close();
 		}
 
-		this(socket_t sock, AddressFamily af, string hostname) {
+		this(socket_t sock, AddressFamily af, string hostname, bool verifyPeer = true) {
 			super(sock, af);
-			initSsl(true, hostname);
+			initSsl(verifyPeer, hostname);
 		}
 
-		~this() {
+		void freeSsl() {
+			if(ssl is null)
+				return;
 			SSL_free(ssl);
 			SSL_CTX_free(ctx);
 			ssl = null;
+		}
+
+		~this() {
+			freeSsl();
 		}
 	}
 }
@@ -2918,7 +3014,7 @@ class WebSocket {
 		if(ssl) {
 			version(with_openssl) {
 				loadOpenSsl();
-				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host);
+				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host, defaultVerifyPeer);
 			} else
 				throw new Exception("SSL not compiled in");
 		} else
