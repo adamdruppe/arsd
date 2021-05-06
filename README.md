@@ -14,6 +14,8 @@ I have [a patreon](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly
 
 This only lists changes that broke things and got a major version bump. I didn't start keeping track here until 9.0.
 
+Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
+
 ## 9.0
 
 simpledisplay's OperatingSystemFont, which is also used by terminalemulator.d (which is used by terminal.d's -version=TerminalDirectToEmulator function) would previously only load X Core Fonts. It now prefers TrueType fonts via Xft. This loads potentially different fonts and the sizes are interpreted differently, so you may need to adjust your preferences there. To restore previous behavior, prefix your font name strings with "core:".

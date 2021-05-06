@@ -116,12 +116,16 @@ the virtual functions remain as the default calculated values. then the reads go
 	console and other visual bugs.
 
 	HTML_To_Classes:
-		`<input type="text">` = [LineEdit]
-		`<textarea>` = [TextEdit]
-		`<select>` = [DropDownSelection]
-		`<input type="checkbox">` = [Checkbox]
-		`<input type="radio">` = [Radiobox]
-		`<button>` = [Button]
+	$(SMALL_TABLE
+		HTML Code | Minigui Class
+
+		`<input type="text">` | [LineEdit]
+		`<textarea>` | [TextEdit]
+		`<select>` | [DropDownSelection]
+		`<input type="checkbox">` | [Checkbox]
+		`<input type="radio">` | [Radiobox]
+		`<button>` | [Button]
+	)
 
 
 	Stretchiness:
@@ -130,7 +134,7 @@ the virtual functions remain as the default calculated values. then the reads go
 		smaller sizes.
 
 	Overlapped_input:
-		COMING SOON:
+		COMING EVENTUALLY:
 		minigui will include a little bit of I/O functionality that just works
 		with the event loop. If you want to get fancy, I suggest spinning up
 		another thread and posting events back and forth.
@@ -159,6 +163,9 @@ the virtual functions remain as the default calculated values. then the reads go
 		---
 
 		More to come.
+
+	History:
+		The event model changed slightly in May 2021 (dub v10.0). See [Event] for details.
 +/
 module arsd.minigui;
 
@@ -257,7 +264,7 @@ abstract class ComboboxBase : Widget {
 		this(Widget parent = null) {
 			super(parent);
 
-			addEventListener("keydown", (Event event) {
+			addEventListener((KeyDownEvent event) {
 				if(event.key == Key.Up) {
 					if(selection > -1) { // -1 means select blank
 						selection--;
@@ -292,10 +299,21 @@ abstract class ComboboxBase : Widget {
 		version(win32_widgets)
 		SendMessageW(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
-		auto t = new Event(EventType.change, this);
-		t.intValue = selection;
-		t.stringValue = selection == -1 ? null : options[selection];
+		auto t = new SelectionChangedEvent(this, selection, selection == -1 ? null : options[selection]);
 		t.dispatch();
+	}
+
+	static class SelectionChangedEvent : Event {
+		this(Widget target, int iv, string sv) {
+			super("change", target);
+			this.iv = iv;
+			this.sv = sv;
+		}
+		immutable int iv;
+		immutable string sv;
+
+		override @property string stringValue() { return sv; }
+		override @property int intValue() { return iv; }
 	}
 
 	version(win32_widgets)
@@ -307,10 +325,9 @@ abstract class ComboboxBase : Widget {
 	private void fireChangeEvent() {
 		if(selection >= options.length)
 			selection = -1;
-		auto event = new Event(EventType.change, this);
-		event.intValue = selection;
-		event.stringValue = selection == -1 ? null : options[selection];
-		event.dispatch();
+
+		auto t = new SelectionChangedEvent(this, selection, selection == -1 ? null : options[selection]);
+		t.dispatch();
 	}
 
 	version(win32_widgets) {
@@ -382,7 +399,7 @@ class DropDownSelection : ComboboxBase {
 			addEventListener("blur", () { this.redraw; });
 			addEventListener(EventType.change, () { this.redraw; });
 			addEventListener("mousedown", () { this.focus(); this.popup(); });
-			addEventListener("keydown", (Event event) {
+			addEventListener((KeyDownEvent event) {
 				if(event.key == Key.Space)
 					popup();
 			});
@@ -1517,7 +1534,8 @@ private class Style {
 
 
 	The goal is to look kinda like Windows 95, perhaps with customizability.
-	Nothing too fancy, just the basics that work.
+	Nothing too fancy, just the basics that work, but of course you can do whatever
+	you want in the draw handler.
 */
 class Widget {
 	mixin LayoutInfo!();
@@ -1624,17 +1642,17 @@ class Widget {
 
 	/// ditto
 	void setupDefaultEventHandlers() {
-		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(event); };
-		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(event); };
-		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(event); };
-		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(event); };
-		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(event); };
-		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(event); };
-		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(event); };
-		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(event); };
-		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(event); };
-		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(event); };
-		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(event); };
+		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(cast(ClickEvent) event); };
+		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(cast(KeyDownEvent) event); };
+		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(cast(KeyUpEvent) event); };
+		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(cast(MouseOverEvent) event); };
+		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(cast(MouseOutEvent) event); };
+		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(cast(MouseDownEvent) event); };
+		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(cast(MouseUpEvent) event); };
+		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(cast(MouseEnterEvent) event); };
+		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(cast(MouseLeaveEvent) event); };
+		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(cast(MouseMoveEvent) event); };
+		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(cast(CharEvent) event); };
 		defaultEventHandlers["triggered"] = (Widget t, Event event) { t.defaultEventHandler_triggered(event); };
 		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
 		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
@@ -1642,27 +1660,27 @@ class Widget {
 	}
 
 	/// ditto
-	void defaultEventHandler_click(Event event) {}
+	void defaultEventHandler_click(ClickEvent event) {}
 	/// ditto
-	void defaultEventHandler_keydown(Event event) {}
+	void defaultEventHandler_keydown(KeyDownEvent event) {}
 	/// ditto
-	void defaultEventHandler_keyup(Event event) {}
+	void defaultEventHandler_keyup(KeyUpEvent event) {}
 	/// ditto
-	void defaultEventHandler_mousedown(Event event) {}
+	void defaultEventHandler_mousedown(MouseDownEvent event) {}
 	/// ditto
-	void defaultEventHandler_mouseover(Event event) {}
+	void defaultEventHandler_mouseover(MouseOverEvent event) {}
 	/// ditto
-	void defaultEventHandler_mouseout(Event event) {}
+	void defaultEventHandler_mouseout(MouseOutEvent event) {}
 	/// ditto
-	void defaultEventHandler_mouseup(Event event) {}
+	void defaultEventHandler_mouseup(MouseUpEvent event) {}
 	/// ditto
-	void defaultEventHandler_mousemove(Event event) {}
+	void defaultEventHandler_mousemove(MouseMoveEvent event) {}
 	/// ditto
-	void defaultEventHandler_mouseenter(Event event) {}
+	void defaultEventHandler_mouseenter(MouseEnterEvent event) {}
 	/// ditto
-	void defaultEventHandler_mouseleave(Event event) {}
+	void defaultEventHandler_mouseleave(MouseLeaveEvent event) {}
 	/// ditto
-	void defaultEventHandler_char(Event event) {}
+	void defaultEventHandler_char(CharEvent event) {}
 	/// ditto
 	void defaultEventHandler_triggered(Event event) {}
 	/// ditto
@@ -1692,6 +1710,17 @@ class Widget {
 		}, useCapture);
 	}
 
+	EventListener addEventListener(Handler)(Handler handler, bool useCapture = false) {
+		static if(is(Handler Fn == delegate)) {
+		static if(is(Fn Params == __parameters)) {
+			return addEventListener(EventString!(Params[0]), (Widget, Event e) {
+				auto ty = cast(Params[0]) e;
+				if(ty !is null)
+					handler(ty);
+			}, useCapture);
+		} else static assert(0);
+		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate.");
+	}
 
 	///
 	@scriptable
@@ -2066,15 +2095,15 @@ class Widget {
 		}
 	}
 
-	bool useNativeDrawing() nothrow {
+	protected bool useNativeDrawing() nothrow {
 		version(win32_widgets)
 			return hwnd !is null;
 		else
 			return false;
 	}
 
-	static class RedrawEvent {}
-	__gshared re = new RedrawEvent();
+	private static class RedrawEvent {}
+	private __gshared re = new RedrawEvent();
 
 	private bool redrawRequested;
 	///
@@ -2091,7 +2120,7 @@ class Widget {
 		}
 	}
 
-	void actualRedraw() {
+	private void actualRedraw() {
 		if(!showing) return;
 
 		assert(parentWindow !is null);
@@ -2114,7 +2143,63 @@ class Widget {
 		privatePaint(WidgetPainter(painter), lox, loy);
 	}
 
-	SimpleWindow drawableWindow;
+	private SimpleWindow drawableWindow;
+
+	/++
+		Allows a class to easily dispatch its own statically-declared event (see [Emits]). The main benefit of using this over constructing an event yourself is simply that you ensure you haven't sent something you haven't documented you can send.
+
+		Returns:
+			`true` if you should do your default behavior.
+
+		History:
+			Added May 5, 2021
+	+/
+	final protected bool emit(EventType, this This, Args...)(Args args) {
+		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
+		auto e = new EventType(args, this);
+		e.dispatch();
+		return !e.defaultPrevented;
+	}
+	/// ditto
+	final protected bool emit(string eventString, this This)() {
+		auto e = new Event(eventString, this);
+		e.dispatch();
+		return !e.defaultPrevented;
+	}
+
+	/++
+		Does the same as [addEventListener]'s delegate overload, but adds an additional check to ensure the event you are subscribing to is actually emitted by the static type you are using. Since it works on static types, if you have a generic [Widget], this can only subscribe to events declared as [Emits] inside [Widget] itself, not any child classes nor any child elements. If this is too restrictive, simply use [addEventListener] instead.
+
+		History:
+			Added May 5, 2021
+	+/
+	final public EventListener subscribe(EventType, this This)(void delegate(EventType) handler) {
+		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
+		return addEventListener(handler);
+	}
+
+	mixin Emits!KeyDownEvent;
+}
+
+/*private*/ template EventString(E) {
+	static if(is(typeof(E.EventString)))
+		enum EventString = E.EventString;
+	else
+		enum EventString = E.mangleof; // FIXME fqn? or something more user friendly
+}
+
+template classStaticallyEmits(This, EventType) {
+	static if(is(This Base == super))
+		static if(is(Base : Widget))
+			enum baseEmits = classStaticallyEmits!(Base, EventType);
+		else
+			enum baseEmits = false;
+	else
+		enum baseEmits = false;
+
+	enum thisEmits = is(typeof(__traits(getMember, This, "emits_" ~ EventString!EventType)) == EventType[0]);
+
+	enum classStaticallyEmits = thisEmits || baseEmits;
 }
 
 /++
@@ -2259,7 +2344,7 @@ class ListWidget : ListWidgetBase {
 	}
 
 	version(custom_widgets)
-	override void defaultEventHandler_click(Event event) {
+	override void defaultEventHandler_click(ClickEvent event) {
 		this.focus();
 		auto y = (event.clientY - 4) / Window.lineHeight;
 		if(y >= 0 && y < options.length) {
@@ -2464,7 +2549,7 @@ class ScrollableWidget : Widget {
 	version(custom_widgets)
 		ScrollableContainerWidget outerContainer;
 
-	override void defaultEventHandler_click(Event event) {
+	override void defaultEventHandler_click(ClickEvent event) {
 		if(event.button == MouseButton.wheelUp)
 			verticalScroll(-16);
 		if(event.button == MouseButton.wheelDown)
@@ -2472,7 +2557,7 @@ class ScrollableWidget : Widget {
 		super.defaultEventHandler_click(event);
 	}
 
-	override void defaultEventHandler_keydown(Event event) {
+	override void defaultEventHandler_keydown(KeyDownEvent event) {
 		switch(event.key) {
 			case Key.Left:
 				horizontalScroll(-16);
@@ -3014,8 +3099,7 @@ abstract class Slider : Widget {
 	}
 
 	private void notify() {
-		auto event = new Event("change", this);
-		event.intValue = this.position;
+		auto event = new ChangeEvent!int(this, this.position);
 		event.dispatch();
 	}
 
@@ -3064,7 +3148,7 @@ abstract class Slider : Widget {
 
 		protected abstract void setPositionCustom(int a);
 
-		override void defaultEventHandler_keydown(Event event) {
+		override void defaultEventHandler_keydown(KeyDownEvent event) {
 			switch(event.key) {
 				case Key.Up:
 				case Key.Right:
@@ -3098,8 +3182,7 @@ abstract class Slider : Widget {
 		}
 
 		protected void changed() {
-			auto ev = new Event("change", this);
-			ev.intValue = position_;
+			auto ev = new ChangeEvent!int(this, position_);
 			ev.dispatch();
 		}
 
@@ -3288,12 +3371,14 @@ abstract class ScrollbarBase : Widget {
 	}
 
 	// FIXME: remove this.... maybe
+	/+
 	protected void informProgramThatUserChangedPosition(int n) {
 		position_ = n;
 		auto evt = new Event(EventType.change, this);
 		evt.intValue = n;
 		evt.dispatch();
 	}
+	+/
 
 	version(custom_widgets) {
 		abstract protected int getBarDim();
@@ -3378,7 +3463,7 @@ class MouseTrackingWidget : Widget {
 
 		//assert(parentWindow !is null);
 
-		addEventListener(EventType.mousedown, (Event event) {
+		addEventListener((MouseDownEvent event) {
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
 				dragging = true;
 				startMouseX = event.clientX - positionX;
@@ -3423,7 +3508,7 @@ class MouseTrackingWidget : Widget {
 
 		int lpx, lpy;
 
-		addEventListener(EventType.mousemove, (Event event) {
+		addEventListener((MouseMoveEvent event) {
 			auto oh = hovering;
 			if(event.clientX >= positionX && event.clientX < positionX + thumbWidth && event.clientY >= positionY && event.clientY < positionY + thumbHeight) {
 				hovering = true;
@@ -3571,8 +3656,7 @@ class HorizontalScrollbar : ScrollbarBase {
 				auto sx = thumb.positionX * max() / thumb.width;
 				//informProgramThatUserChangedPosition(sx);
 
-				auto ev = new Event("scrolltoposition", this);
-				ev.intValue = sx;
+				auto ev = new ScrollToPositionEvent(this, sx);
 				ev.dispatch();
 			});
 		}
@@ -3581,6 +3665,19 @@ class HorizontalScrollbar : ScrollbarBase {
 	override int minHeight() { return 16; }
 	override int maxHeight() { return 16; }
 	override int minWidth() { return 48; }
+}
+
+class ScrollToPositionEvent : Event {
+	this(Widget target, int value) {
+		this.value = value;
+		super("scrolltoposition", target);
+	}
+
+	immutable int value;
+
+	override @property int intValue() {
+		return value;
+	}
 }
 
 //version(custom_widgets)
@@ -3674,8 +3771,7 @@ class VerticalScrollbar : ScrollbarBase {
 			thumb.addEventListener(EventType.change, () {
 				auto sy = thumb.positionY * max() / thumb.height;
 
-				auto ev = new Event("scrolltoposition", this);
-				ev.intValue = sy;
+				auto ev = new ScrollToPositionEvent(this, sy);
 				ev.dispatch();
 
 				//informProgramThatUserChangedPosition(sy);
@@ -3812,7 +3908,8 @@ class TabWidget : Widget {
 		} else version(custom_widgets) {
 			tabBarHeight = Window.lineHeight;
 
-			addDirectEventListener(EventType.click, (Event event) {
+			addEventListener((ClickEvent event) {
+				if(event.target !is this) return;
 				if(event.clientY < tabBarHeight) {
 					auto t = (event.clientX / tabWidth);
 					if(t >= 0 && t < children.length)
@@ -4587,15 +4684,13 @@ class Window : Widget {
 								event.dispatch();
 							break;
 							case SB_THUMBPOSITION:
-								auto event = new Event("scrolltoposition", *widgetp);
-								event.intValue = pos;
-								event.dispatch();
+								auto ev = new ScrollToPositionEvent(*widgetp, pos);
+								ev.dispatch();
 							break;
 							case SB_THUMBTRACK:
 								// eh kinda lying but i like the real time update display
-								auto event = new Event("scrolltoposition", *widgetp);
-								event.intValue = pos;
-								event.dispatch();
+								auto ev = new ScrollToPositionEvent(*widgetp, pos);
+								ev.dispatch();
 								// the event loop doesn't seem to carry on with a requested redraw..
 								// so we request it to get our dirty bit set...
 								// then we need to immediately actually redraw it too for instant feedback to user
@@ -4681,7 +4776,7 @@ class Window : Widget {
 	}
 
 
-	override void defaultEventHandler_keydown(Event event) {
+	override void defaultEventHandler_keydown(KeyDownEvent event) {
 		Widget _this = event.target;
 
 		if(event.key == Key.Tab) {
@@ -4799,15 +4894,18 @@ class Window : Widget {
 	@scriptable
 	void close() {
 		win.close();
+		// I synchronize here upon window closing to ensure all child windows
+		// get updated too before the event loop. This avoids some random X errors.
+		static if(UsingSimpledisplayX11)
+			XSync(XDisplayConnection.get, false);
 	}
 
 	bool dispatchKeyEvent(KeyEvent ev) {
 		auto wid = focusedWidget;
 		if(wid is null)
 			wid = this;
-		auto event = new Event(ev.pressed ? "keydown" : "keyup", wid);
+		KeyEventBase event = ev.pressed ? new KeyDownEvent(wid) : new KeyUpEvent(wid);
 		event.originalKeyEvent = ev;
-		event.character = ev.character;
 		event.key = ev.key;
 		event.state = ev.modifierState;
 		event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
@@ -4820,8 +4918,7 @@ class Window : Widget {
 
 	bool dispatchCharEvent(dchar ch) {
 		if(focusedWidget) {
-			auto event = new Event("char", focusedWidget);
-			event.character = ch;
+			auto event = new CharEvent(focusedWidget, ch);
 			event.dispatch();
 		}
 		return true;
@@ -4850,7 +4947,7 @@ class Window : Widget {
 
 		if(ev.type == 1) {
 			mouseLastDownOn = ele;
-			auto event = new Event("mousedown", ele);
+			auto event = new MouseDownEvent(ele);
 			event.button = ev.button;
 			event.buttonLinear = ev.buttonLinear;
 			event.state = ev.modifierState;
@@ -4858,15 +4955,17 @@ class Window : Widget {
 			event.clientY = eleR.y;
 			event.dispatch();
 		} else if(ev.type == 2) {
-			auto event = new Event("mouseup", ele);
-			event.button = ev.button;
-			event.buttonLinear = ev.buttonLinear;
-			event.clientX = eleR.x;
-			event.clientY = eleR.y;
-			event.state = ev.modifierState;
-			event.dispatch();
+			{
+				auto event = new MouseUpEvent(ele);
+				event.button = ev.button;
+				event.buttonLinear = ev.buttonLinear;
+				event.clientX = eleR.x;
+				event.clientY = eleR.y;
+				event.state = ev.modifierState;
+				event.dispatch();
+			}
 			if(mouseLastDownOn is ele) {
-				event = new Event("click", ele);
+				auto event = new ClickEvent(ele);
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
 				event.state = ev.modifierState;
@@ -4876,16 +4975,18 @@ class Window : Widget {
 			}
 		} else if(ev.type == 0) {
 			// motion
-			Event event = new Event("mousemove", ele);
-			event.state = ev.modifierState;
-			event.clientX = eleR.x;
-			event.clientY = eleR.y;
-			event.dispatch();
+			{
+				auto event = new MouseMoveEvent(ele);
+				event.state = ev.modifierState;
+				event.clientX = eleR.x;
+				event.clientY = eleR.y;
+				event.dispatch();
+			}
 
 			if(mouseLastOver !is ele) {
 				if(ele !is null) {
 					if(!isAParentOf(ele, mouseLastOver)) {
-						event = new Event("mouseenter", ele);
+						auto event = new MouseEnterEvent(ele);
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
 
@@ -4895,20 +4996,20 @@ class Window : Widget {
 
 				if(mouseLastOver !is null) {
 					if(!isAParentOf(mouseLastOver, ele)) {
-						event = new Event("mouseleave", mouseLastOver);
+						auto event = new MouseLeaveEvent(mouseLastOver);
 						event.relatedTarget = ele;
 						event.sendDirectly();
 					}
 				}
 
 				if(ele !is null) {
-					event = new Event("mouseover", ele);
+					auto event = new MouseOverEvent(ele);
 					event.relatedTarget = mouseLastOver;
 					event.dispatch();
 				}
 
 				if(mouseLastOver !is null) {
-					event = new Event("mouseout", mouseLastOver);
+					auto event = new MouseOutEvent(mouseLastOver);
 					event.relatedTarget = ele;
 					event.dispatch();
 				}
@@ -4979,7 +5080,7 @@ debug private class DevToolWindow : Window {
 		clickX = new TextLabel("", hl);
 		clickY = new TextLabel("", hl);
 
-		parentListeners ~= p.addEventListener(EventType.click, (Event ev) {
+		parentListeners ~= p.addEventListener((ClickEvent ev) {
 			auto s = ev.srcElement;
 			string list = s.toString();
 			s = s.parent;
@@ -5007,7 +5108,7 @@ debug private class DevToolWindow : Window {
 		super.close();
 	}
 
-	override void defaultEventHandler_keydown(Event ev) {
+	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		if(ev.key == Key.F12) {
 			this.close();
 			p.devTools = null;
@@ -5129,6 +5230,7 @@ class LabeledPasswordEdit : Widget {
 
 ///
 class MainWindow : Window {
+	mixin Emits!KeyUpEvent;
 	///
 	this(string title = null, int initialWidth = 500, int initialHeight = 500) {
 		super(initialWidth, initialHeight, title);
@@ -5268,14 +5370,14 @@ class MainWindow : Window {
 
 	void delegate()[string] accelerators;
 
-	override void defaultEventHandler_keydown(Event event) {
+	override void defaultEventHandler_keydown(KeyDownEvent event) {
 		auto str = event.originalKeyEvent.toStr;
 		if(auto acl = str in accelerators)
 			(*acl)();
 		super.defaultEventHandler_keydown(event);
 	}
 
-	override void defaultEventHandler_mouseover(Event event) {
+	override void defaultEventHandler_mouseover(MouseOverEvent event) {
 		super.defaultEventHandler_mouseover(event);
 		if(this.statusBar !is null && event.target.statusTip.length)
 			this.statusBar.parts[0].content = event.target.statusTip;
@@ -5487,7 +5589,7 @@ class ToolButton : Button {
 	}
 
 	version(custom_widgets)
-	override void defaultEventHandler_click(Event event) {
+	override void defaultEventHandler_click(ClickEvent event) {
 		foreach(handler; action.triggered)
 			handler();
 	}
@@ -6318,14 +6420,14 @@ class MouseActivatedWidget : Widget {
 		isHovering = false;
 		this.redraw();
 	}
-	override void defaultEventHandler_keydown(Event ev) {
+	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		super.defaultEventHandler_keydown(ev);
 		if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
 			isDepressed = true;
 			this.redraw();
 		}
 	}
-	override void defaultEventHandler_keyup(Event ev) {
+	override void defaultEventHandler_keyup(KeyUpEvent ev) {
 		super.defaultEventHandler_keyup(ev);
 		if(!isDepressed)
 			return;
@@ -6335,7 +6437,7 @@ class MouseActivatedWidget : Widget {
 		auto event = new Event("triggered", this);
 		event.sendDirectly();
 	}
-	override void defaultEventHandler_click(Event ev) {
+	override void defaultEventHandler_click(ClickEvent ev) {
 		super.defaultEventHandler_click(ev);
 		if(this.tabStop)
 			this.focus();
@@ -6828,7 +6930,9 @@ class TextLabel : Widget {
 }
 
 version(custom_widgets)
-	private mixin ExperimentalTextComponent;
+	private struct etc {
+		mixin ExperimentalTextComponent;
+	}
 
 version(win32_widgets)
 	alias EditableTextWidgetParent = Widget; ///
@@ -6950,10 +7054,10 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 		static if(SimpledisplayTimerAvailable)
 			Timer caretTimer;
-		TextLayout textLayout;
+		etc.TextLayout textLayout;
 
 		void setupCustomTextEditing() {
-			textLayout = new TextLayout(Rectangle(4, 2, width - 8, height - 4));
+			textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
 		}
 
 		override void paint(WidgetPainter painter) {
@@ -6985,7 +7089,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 
 	version(custom_widgets)
-	override void defaultEventHandler_mousedown(Event ev) {
+	override void defaultEventHandler_mousedown(MouseDownEvent ev) {
 		super.defaultEventHandler_mousedown(ev);
 		if(parentWindow.win.closed) return;
 		if(ev.button == MouseButton.left) {
@@ -7008,13 +7112,13 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 
 	version(custom_widgets)
-	override void defaultEventHandler_mouseup(Event ev) {
+	override void defaultEventHandler_mouseup(MouseUpEvent ev) {
 		//this.parentWindow.win.releaseInputGrab();
 		super.defaultEventHandler_mouseup(ev);
 	}
 
 	version(custom_widgets)
-	override void defaultEventHandler_mousemove(Event ev) {
+	override void defaultEventHandler_mousemove(MouseMoveEvent ev) {
 		super.defaultEventHandler_mousemove(ev);
 		if(ev.state & ModifierState.leftButtonDown) {
 			textLayout.selectToPixelCoordinates(ev.clientX, ev.clientY);
@@ -7070,13 +7174,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			}
 		}
 
-		auto evt = new Event(EventType.change, this);
-		evt.stringValue = this.content;
+		auto evt = new ChangeEvent!string(this, this.content);
 		evt.dispatch();
 	}
 
 	version(custom_widgets)
-	override void defaultEventHandler_char(Event ev) {
+	override void defaultEventHandler_char(CharEvent ev) {
 		super.defaultEventHandler_char(ev);
 		textLayout.insert(ev.character);
 		redraw();
@@ -7086,7 +7189,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		setContentSize(cbb.width, cbb.height);
 	}
 	version(custom_widgets)
-	override void defaultEventHandler_keydown(Event ev) {
+	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		//super.defaultEventHandler_keydown(ev);
 		switch(ev.key) {
 			case Key.Delete:
@@ -7159,7 +7262,7 @@ class LineEdit : EditableTextWidget {
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
 			setupCustomTextEditing();
-			addEventListener("char", delegate(Widget _this, Event ev) {
+			addEventListener(delegate(CharEvent ev) {
 				if(ev.character == '\n')
 					ev.preventDefault();
 			});
@@ -7200,7 +7303,7 @@ class PasswordEdit : EditableTextWidget {
 				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
 			setupCustomTextEditing();
-			addEventListener("char", delegate(Widget _this, Event ev) {
+			addEventListener(delegate(CharEvent ev) {
 				if(ev.character == '\n')
 					ev.preventDefault();
 			});
@@ -7409,7 +7512,13 @@ struct EventListener {
 	}
 }
 
-///
+/++
+	The purpose of this enum was to give a compile-time checked version of various standard event strings.
+
+	Now, I recommend you use a statically typed event object instead.
+
+	See_Also: [TypedEvent]
++/
 enum EventType : string {
 	click = "click", ///
 
@@ -7433,13 +7542,150 @@ enum EventType : string {
 	change = "change", ///
 }
 
-///
+/++
+	Represents an event that is currently being processed.
+
+
+	Minigui's event model is based on the web browser. An event has a name, a target,
+	and an associated data object. It starts from the window and works its way down through
+	the target through all intermediate [Widget]s, triggering capture phase handlers as it goes,
+	then goes back up again all the way back to the window, triggering bubble phase handlers. At
+	the end, if [Event.preventDefault] has not been called, it calls the target widget's default
+	handlers for the event (please note that default handlers will be called even if [Event.stopPropagation]
+	was called; that just stops it from calling other handlers in the widget tree, but the default happens
+	whenever propagation is done, not only if it gets to the end of the chain).
+
+	This model has several nice points:
+
+	$(LIST
+		* It is easy to delegate dynamic handlers to a parent. You can have a parent container
+		  with event handlers set, then add/remove children as much as you want without needing
+		  to manage the event handlers on them - the parent alone can manage everything.
+
+		* It is easy to create new custom events in your application.
+
+		* It is familiar to many web developers.
+	)
+
+	There's a few downsides though:
+
+	$(LIST
+		* There's not a lot of type safety.
+
+		* You don't get a static list of what events a widget can emit.
+
+		* Tracing where an event got cancelled along the chain can get difficult; the downside of
+		  the central delegation benefit is it can be lead to debugging of action at a distance.
+	)
+
+	In May 2021, I started to adjust this model to minigui takes better advantage of D over Javascript
+	while keeping the benefits - and most compatibility with - the existing model. The main idea is
+	to simply use a D object type which provides a static interface as well as a built-in event name.
+	Then, a new static interface allows you to see what an event can emit and attach handlers to it
+	similarly to C#, which just forwards to the JS style api. They're fully compatible so you can still
+	delegate to a parent and use custom events as well as using the runtime dynamic access, in addition
+	to having a little more help from the D compiler and documentation generator.
+
+	Your code would change like this:
+
+	---
+	// old
+	widget.addEventListener("keydown", (Event ev) { ... }, /* optional arg */ useCapture );
+
+	// new
+	widget.addEventListener((KeyDownEvent ev) { ... }, /* optional arg */ useCapture );
+	---
+
+	The old-style code will still work, but using certain members of the [Event] class will generate deprecation warnings. Changing handlers to the new style will silence all those warnings at once without requiring any other changes to your code.
+
+	All you have to do is replace the string with a specific Event subclass. It will figure out the event string from the class.
+
+	Alternatively, you can cast the Event yourself to the appropriate subclass, but it is easier to let the library do it for you!
+
+	Thus the family of functions are:
+
+	[Widget.addEventListener] is the fully-flexible base method. It has two main overload families: one with the string and one without. The one with the string takes the Event object, the one without determines the string from the type you pass.
+
+	[Widget.addDirectEventListener] is addEventListener, but only calls the handler if target == this. Useful for something you can't afford to delegate.
+
+	[Widget.setDefaultEventHandler] is what is called if no preventDefault was called. This should be called in the widget's constructor to set default behaivor. Default event handlers are only called on the event target.
+
+	Let's implement a custom widget that can emit a ChangeEvent.
+
+	class MyCheckbox : Widget {
+		/// This gives a chance to document it and generates a convenience function to send it and attach handlers.
+		/// It is NOT actually required but should be used whenever possible.
+		mixin Emits!ChangeEvent;
+
+		this(Widget parent) {
+			super(parent);
+			setDefaultEventHandler((ClickEvent) { emit(ChangeEvent()); });
+		}
+	}
+
+	Events can be subclasses of other events. If this is true, they trigger all their parent class events as well.
+
+	class StringChangeEvent : ChangeEvent {}
+
+	Will count as BOTH "stringchange" and "change" (and "*", the base event type). You only need to emit the most derived type.
+
+	## General Conventions
+
+	Change events should NOT be emitted when a value is changed programmatically. Indeed, methods should usually not send events. The point of an event is to know something changed and when you call a method, you already know about it.
+
+	History:
+		Prior to May 2021, Event had a set of pre-made members with no extensibility (outside of diy casts) and no static checks on field presence.
+
+		After that, those old pre-made members are deprecated accessors and the fields are moved to child classes. To transition, change string events to typed events or do a dynamic cast (don't forget the null check!) in your handler.
++/
+/+
+	## Qt-style signals and slots
+
+	Some events make sense to use with just name and data type. These are one-way notifications with no propagation nor default behavior and thus separate from the other event system.
+
+	The intention is for events to be used when
+
+	---
+	class Demo : Widget {
+		this() {
+			myPropertyChanged = Signal!int(this);
+		}
+		@property myProperty(int v) {
+			myPropertyChanged.emit(v);
+		}
+
+		Signal!int myPropertyChanged; // i need to get `this` off it and inspect the name...
+		// but it can just genuinely not care about `this` since that's not really passed.
+	}
+
+	class Foo : Widget {
+		// the slot uda is not necessary, but it helps the script and ui builder find it.
+		@slot void setValue(int v) { ... }
+	}
+
+	demo.myPropertyChanged.connect(&foo.setValue);
+	---
+
+	The Signal type has a disabled default constructor, meaning your widget constructor must pass `this` to it in its constructor.
+
+	Some events may also wish to implement the Signal interface. These use particular arguments to call a method automatically.
+
+	class StringChangeEvent : ChangeEvent, Signal!string {
+		mixin SignalImpl
+	}
+
++/
 class Event {
 	/// Creates an event without populating any members and without sending it. See [dispatch]
 	this(string eventName, Widget target) {
 		this.eventName = eventName;
 		this.srcElement = target;
 	}
+
+	Widget srcElement; ///
+	alias srcElement target; ///
+
+	Widget relatedTarget; ///
 
 	/// Prevents the default event handler (if there is one) from being called
 	void preventDefault() {
@@ -7456,60 +7702,9 @@ class Event {
 	private bool propagationStopped;
 	private string eventName;
 
-	Widget srcElement; ///
-	alias srcElement target; ///
-
-	Widget relatedTarget; ///
-
-	// for mouse events
-	int clientX; /// The mouse event location relative to the target widget
-	int clientY; /// ditto
-
-	int viewportX; /// The mouse event location relative to the window origin
-	int viewportY; /// ditto
-
-	int button; /// [MouseEvent.button]
-	int buttonLinear; /// [MouseEvent.buttonLinear]
-
-	// for key events
-	Key key; ///
-
-	KeyEvent originalKeyEvent;
-
-	// char character events
-	dchar character; ///
-
-	// for several event types
-	int state; ///
-
-	// for change events
-	int intValue; ///
-	string stringValue; ///
-
-	bool shiftKey; ///
-	/++
-		NOTE: only set on key events right now
-
-		History:
-			Added April 15, 2020
-	+/
-	bool ctrlKey;
-
-	/// ditto
-	bool altKey;
-
 	private bool isBubbling;
 
-	private void adjustScrolling() {
-	version(custom_widgets) { // TEMP
-		viewportX = clientX;
-		viewportY = clientY;
-		if(auto se = cast(ScrollableWidget) srcElement) {
-			clientX += se.scrollOrigin.x;
-			clientY += se.scrollOrigin.y;
-		}
-	}
-	}
+	protected void adjustScrolling() { }
 
 	/// this sends it only to the target. If you want propagation, use dispatch() instead.
 	void sendDirectly() {
@@ -7586,6 +7781,328 @@ class Event {
 			if(eventName in e.defaultEventHandlers)
 				e.defaultEventHandlers[eventName](e, this);
 		}
+	}
+
+
+	/* old compatibility things */
+	deprecated("Use some subclass of KeyEventBase instead of plain Event in your handler going forward")
+	final @property {
+		Key key() { return (cast(KeyEventBase) this).key; }
+		KeyEvent originalKeyEvent() { return (cast(KeyEventBase) this).originalKeyEvent; }
+
+		bool ctrlKey() { return (cast(KeyEventBase) this).ctrlKey; }
+		bool altKey() { return (cast(KeyEventBase) this).altKey; }
+		bool shiftKey() { return (cast(KeyEventBase) this).shiftKey; }
+	}
+
+	deprecated("Use some subclass of MouseEventBase instead of Event in your handler going forward")
+	final @property {
+		int clientX() { return (cast(MouseEventBase) this).clientX; }
+		int clientY() { return (cast(MouseEventBase) this).clientY; }
+
+		int viewportX() { return (cast(MouseEventBase) this).viewportX; }
+		int viewportY() { return (cast(MouseEventBase) this).viewportY; }
+
+		int button() { return (cast(MouseEventBase) this).button; }
+		int buttonLinear() { return (cast(MouseEventBase) this).buttonLinear; }
+	}
+
+	deprecated("Use either a KeyEventBase or a MouseEventBase instead of Event in your handler going forward")
+	final @property {
+		int state() {
+			if(auto meb = cast(MouseEventBase) this)
+				return meb.state;
+			if(auto keb = cast(KeyEventBase) this)
+				return keb.state;
+			assert(0);
+		}
+	}
+
+	deprecated("Use a CharEvent instead of Event in your handler going forward")
+	final @property {
+		dchar character() {
+			if(auto ce = cast(CharEvent) this)
+				return ce.character;
+			return dchar.init;
+		}
+	}
+
+	// for change events
+	@property {
+		///
+		int intValue() { return 0; }
+		///
+		string stringValue() { return null; }
+	}
+}
+
+/++
+	This lets you statically verify you send the events you claim you send and gives you a hook to document them.
+
+	Please note that a widget may send events not listed as Emits. You can always construct and dispatch
+	dynamic and custom events, but the static list helps ensure you get them right.
+
+	If this is declared, you can use [Widget.emit] to send the event.
+
+	All events work the same way though, following the capture->widget->bubble model described under [Event].
+
+	History:
+		Added May 4, 2021
++/
+mixin template Emits(EventType) {
+	import arsd.minigui : EventString;
+	static if(is(EventType : Event) && !is(EventType == Event))
+		mixin("private EventType[0] emits_" ~ EventString!EventType ~";");
+	else
+		static assert(0, "You can only emit subclasses of Event");
+}
+
+/// ditto
+mixin template Emits(string eventString) {
+	mixin("private Event[0] emits_" ~ eventString ~";");
+}
+
+/*
+class SignalEvent(string name) : Event {
+
+}
+*/
+
+/++
+	Indicates that a character has been typed by the user. Normally dispatched to the currently focused widget.
+
+	History:
+		Added May 2, 2021. Previously, this was simply a "char" event and `character` as a member of the [Event] base class.
++/
+class CharEvent : Event {
+	enum EventString = "char";
+	this(Widget target, dchar ch) {
+		character = ch;
+		super("char", target);
+	}
+
+	immutable dchar character;
+}
+
+abstract class ChangeEventBase : Event {
+	this(string name, Widget target) {
+		super(name, target);
+	}
+}
+
+class ChangeEvent(T) : ChangeEventBase {
+	enum EventString = "change";
+	this(Widget target, T newValue) {
+		this.value = newValue;
+		super("change"/* ~ T.stringof*/, target);
+	}
+
+	T value;
+
+	static if(is(immutable T == immutable int))
+		override int intValue() { return value; }
+	static if(is(immutable T == immutable string))
+		override string stringValue() { return value; }
+}
+
+/++
+	Contains shared properties for [KeyDownEvent]s and [KeyUpEvent]s.
+
+
+	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	History:
+		Added May 2, 2021. Previously, its properties were members of the [Event] base class.
++/
+abstract class KeyEventBase : Event {
+	this(string name, Widget target) {
+		super(name, target);
+	}
+
+	// for key events
+	Key key; ///
+
+	KeyEvent originalKeyEvent;
+
+	/++
+		Indicates the current state of the given keyboard modifier keys.
+
+		History:
+			Added to events on April 15, 2020.
+	+/
+	bool ctrlKey;
+
+	/// ditto
+	bool altKey;
+
+	/// ditto
+	bool shiftKey;
+
+	/++
+		The raw bitflags that are parsed out into [ctrlKey], [altKey], and [shiftKey].
+
+		See [arsd.simpledisplay.ModifierState] for other possible flags.
+	+/
+	int state;
+}
+
+/++
+	Indicates that the user has pressed a key on the keyboard, or if they've been holding it long enough to repeat (key down events are sent both on the initial press then repeated by the OS on its own time.) For available properties, see [KeyEventBase].
+
+
+	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	Please note that a `KeyDownEvent` will also often send a [CharEvent], but there is not necessarily a one-to-one relationship between them. For example, a capital letter may send KeyDownEvent for Key.Shift, then KeyDownEvent for the letter's key (this key may not match the letter due to keyboard mappings), then CharEvent for the letter, then KeyUpEvent for the letter, and finally, KeyUpEvent for shift.
+
+	For some characters, there are other key down events as well. A compose key can be pressed and released, followed by several letters pressed and released to generate one character. This is why [CharEvent] is a separate entity.
+
+	See_Also: [KeyUpEvent], [CharEvent]
+
+	History:
+		Added May 2, 2021. Previously, it was only seen as the base [Event] class on "keydown" event listeners.
++/
+class KeyDownEvent : KeyEventBase {
+	enum EventString = "keydown";
+	this(Widget target) {
+		super("keydown", target);
+	}
+}
+
+/++
+	Indicates that the user has released a key on the keyboard. For available properties, see [KeyEventBase].
+
+
+	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	See_Also: [KeyDownEvent], [CharEvent]
+
+	History:
+		Added May 2, 2021. Previously, it was only seen as the base [Event] class on "keyup" event listeners.
++/
+class KeyUpEvent : KeyEventBase {
+	enum EventString = "keyup";
+	this(Widget target) {
+		super("keyup", target);
+	}
+}
+
+/++
+	Contains shared properties for various mouse events;
+
+
+	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	History:
+		Added May 2, 2021. Previously, its properties were members of the [Event] base class.
++/
+abstract class MouseEventBase : Event {
+	this(string name, Widget target) {
+		super(name, target);
+	}
+
+	// for mouse events
+	int clientX; /// The mouse event location relative to the target widget
+	int clientY; /// ditto
+
+	int viewportX; /// The mouse event location relative to the window origin
+	int viewportY; /// ditto
+
+	int button; /// [MouseEvent.button]
+	int buttonLinear; /// [MouseEvent.buttonLinear]
+
+	int state; ///
+
+	override void adjustScrolling() {
+	version(custom_widgets) { // TEMP
+		viewportX = clientX;
+		viewportY = clientY;
+		if(auto se = cast(ScrollableWidget) srcElement) {
+			clientX += se.scrollOrigin.x;
+			clientY += se.scrollOrigin.y;
+		}
+	}
+	}
+
+}
+
+/++
+	Indicates that the user has worked with the mouse over your widget. For available properties, see [MouseEventBase].
+
+
+	[MouseDownEvent] is sent when the user presses a mouse button. It is also sent on mouse wheel movement.
+
+	[MouseUpEvent] is sent when the user releases a mouse button.
+
+	[MouseMoveEvent] is sent when the mouse is moved. Please note you may not receive this in some cases unless a button is also pressed; the system is free to withhold them as an optimization. (In practice, [arsd.simpledisplay] does not request mouse motion event without a held button if it is on a remote X11 link, but does elsewhere at this time.)
+
+	[ClickEvent] is sent when the user clicks on the widget. It may also be sent with keyboard control, though minigui prefers to send a "triggered" event in addition to a mouse click and instead of a simulated mouse click in cases like keyboard activation of a button.
+
+	[MouseOverEvent] is sent then the mouse first goes over a widget. Please note that this participates in event propagation of children! Use [MouseEnterEvent] instead if you are only interested in a specific element's whole bounding box instead of the top-most element in any particular location.
+
+	[MouseOutEvent] is sent when the mouse exits a target. Please note that this participates in event propagation of children! Use [MouseLeaveEvent] instead if you are only interested in a specific element's whole bounding box instead of the top-most element in any particular location.
+
+	[MouseEnterEvent] is sent when the mouse enters the bounding box of a widget.
+
+	[MouseLeaveEvent] is sent when the mouse leaves the bounding box of a widget.
+
+	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	History:
+		Added May 2, 2021. Previously, it was only seen as the base [Event] class on event listeners. See the member [EventString] to see what the associated string is with these elements.
++/
+class MouseUpEvent : MouseEventBase {
+	enum EventString = "mouseup"; ///
+	this(Widget target) {
+		super("mouseup", target);
+	}
+}
+/// ditto
+class MouseDownEvent : MouseEventBase {
+	enum EventString = "mousedown"; ///
+	this(Widget target) {
+		super("mousedown", target);
+	}
+}
+/// ditto
+class MouseMoveEvent : MouseEventBase {
+	enum EventString = "mousemove"; ///
+	this(Widget target) {
+		super("mousemove", target);
+	}
+}
+/// ditto
+class ClickEvent : MouseEventBase {
+	enum EventString = "click"; ///
+	this(Widget target) {
+		super("click", target);
+	}
+}
+/// ditto
+class MouseOverEvent : Event {
+	enum EventString = "mouseover"; ///
+	this(Widget target) {
+		super("mouseover", target);
+	}
+}
+/// ditto
+class MouseOutEvent : Event {
+	enum EventString = "mouseout"; ///
+	this(Widget target) {
+		super("mouseout", target);
+	}
+}
+/// ditto
+class MouseEnterEvent : Event {
+	enum EventString = "mouseenter"; ///
+	this(Widget target) {
+		super("mouseenter", target);
+	}
+}
+/// ditto
+class MouseLeaveEvent : Event {
+	enum EventString = "mouseleave"; ///
+	this(Widget target) {
+		super("mouseleave", target);
 	}
 }
 
@@ -7961,7 +8478,7 @@ class FilePicker : Dialog {
 
 		lineEdit = new LineEdit(this);
 		lineEdit.focus();
-		lineEdit.addEventListener("char", (Event event) {
+		lineEdit.addEventListener(delegate(CharEvent event) {
 			if(event.character == '\t' || event.character == '\n')
 				event.preventDefault();
 		});
@@ -7973,7 +8490,7 @@ class FilePicker : Dialog {
 		});
 
 		//version(none)
-		lineEdit.addEventListener(EventType.keydown, (Event event) {
+		lineEdit.addEventListener((KeyDownEvent event) {
 			if(event.key == Key.Tab) {
 				listWidget.clear();
 
@@ -8074,7 +8591,7 @@ class FilePicker : Dialog {
 		cancelButton.addEventListener(EventType.triggered, &Cancel);
 		okButton.addEventListener(EventType.triggered, &OK);
 
-		this.addEventListener("keydown", (Event event) {
+		this.addEventListener((KeyDownEvent event) {
 			if(event.key == Key.Enter || event.key == Key.PadEnter) {
 				event.preventDefault();
 				OK();
@@ -8303,7 +8820,7 @@ class AutomaticDialog(T) : Dialog {
 		ok.addEventListener(EventType.triggered, &OK);
 		cancel.addEventListener(EventType.triggered, &Cancel);
 
-		this.addEventListener(EventType.keydown, (Event ev) {
+		this.addEventListener((KeyDownEvent ev) {
 			if(ev.key == Key.Enter || ev.key == Key.PadEnter) {
 				ok.focus();
 				OK();
@@ -8347,3 +8864,45 @@ private long stringToLong(string s) {
 		ret = -ret;
 	return ret;
 }
+
+
+/+
+	Both widgets and events should prolly have the get/set property thing for runtime info.
+
+
+It would use this for GUI designer access, XML construction, and scripting.
+
+interface Reflectable {
+
+	string[] getPropertyNames();
+	string getProperty(string name);
+	void setProperty(string name, string value);
+
+	mixin template Register() {
+
+	}
+}
++/
+
+
+/+
+	class Widget {
+		Widget[] children() { return null; }
+	}
+	interface WidgetContainer {
+		Widget asWidget();
+		void addChild(Widget w);
+
+		// alias asWidget this; // but meh
+	}
+
+	Widget can keep a (Widget parent) ctor, but it should prolly deprecate and tell people to instead change their ctors to take WidgetContainer instead.
+
+	class Layout : Widget, WidgetContainer {}
+
+	class Window : WidgetContainer {}
+
+
+	All constructors that previously took Widgets should now take WidgetContainers instead
+
++/

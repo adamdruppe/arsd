@@ -8221,7 +8221,7 @@ version(TerminalDirectToEmulator) {
 
 			bool skipNextChar = false;
 
-			widget.addEventListener("mousedown", (Event ev) {
+			widget.addEventListener((MouseDownEvent ev) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -8238,7 +8238,7 @@ version(TerminalDirectToEmulator) {
 						redraw();
 			});
 
-			widget.addEventListener("mouseup", (Event ev) {
+			widget.addEventListener((MouseUpEvent ev) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -8252,7 +8252,7 @@ version(TerminalDirectToEmulator) {
 					redraw();
 			});
 
-			widget.addEventListener("mousemove", (Event ev) {
+			widget.addEventListener((MouseMoveEvent ev) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -8266,7 +8266,7 @@ version(TerminalDirectToEmulator) {
 					redraw();
 			});
 
-			widget.addEventListener("keydown", (Event ev) {
+			widget.addEventListener((KeyDownEvent ev) {
 				if(ev.key == Key.C && (ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
 					// ctrl+c is cancel so ctrl+shift+c ends up doing copy.
 					copyToClipboard(getSelectedText());
@@ -8278,8 +8278,16 @@ version(TerminalDirectToEmulator) {
 					return;
 				}
 
+				auto keyToSend = ev.key;
+
+				static if(UsingSimpledisplayX11) {
+					if((ev.state & ModifierState.alt) && ev.originalKeyEvent.charsPossible.length) {
+						keyToSend = cast(Key) ev.originalKeyEvent.charsPossible[0];
+					} 
+				}
+
 				defaultKeyHandler!(typeof(ev.key))(
-					ev.key
+					keyToSend
 					, (ev.state & ModifierState.shift)?true:false
 					, (ev.state & ModifierState.alt)?true:false
 					, (ev.state & ModifierState.ctrl)?true:false
@@ -8289,7 +8297,11 @@ version(TerminalDirectToEmulator) {
 				return; // the character event handler will do others
 			});
 
-			widget.addEventListener("char", (Event ev) {
+			widget.addEventListener((CharEvent ev) {
+				if(skipNextChar) {
+					skipNextChar = false;
+					return;
+				}
 				dchar c = ev.character;
 
 				if(c == 0x1c) /* ctrl+\, force quit */ {
@@ -8312,7 +8324,7 @@ version(TerminalDirectToEmulator) {
 						TerminateProcess(hnd, -1);
 						assert(0);
 					}
-				} else if(c == 3) /* ctrl+c, interrupt */ {
+				} else if(c == 3) {// && !ev.shiftKey) /* ctrl+c, interrupt. But NOT ctrl+shift+c as that's a user-defined keystroke and/or "copy", but ctrl+shift+c never gets sent here.... thanks to the skipNextChar above */ {
 					if(sigIntExtension)
 						sigIntExtension();
 

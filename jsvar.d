@@ -2361,7 +2361,7 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 			// wrap the other methods
 			// and wrap members as scriptable properties
 
-			foreach(memberName; __traits(allMembers, Class)) static if(is(typeof(__traits(getMember, obj, memberName)) type)) {
+			foreach(memberName; __traits(allMembers, Class)) static if(!mixin(deprecationCheck()) && is(typeof(__traits(getMember, obj, memberName)) type)) {
 				static if(is(type == function)) {
 					auto os = new OverloadSet();
 					foreach(idx, overload; AliasSeq!(__traits(getOverloads, obj, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
@@ -2512,8 +2512,10 @@ bool isCallableJsvarObject(var possibility) {
 		if(possibility._payload._object is null)
 			return false;
 
-		if(possibility._payload._object._peekMember("opCall", true))
-			return true;
+		if(var* test = possibility._payload._object._peekMember("opCall", true)) {
+			if(isCallableJsvarObject(*test))
+				return true;
+		}
 
 	}
 	return false;
@@ -2840,6 +2842,13 @@ string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t.
 	}
 
 	return a;
+}
+
+private string deprecationCheck() {
+	static if(__VERSION__ >= 2077)
+		return "__traits(isDeprecated, __traits(getMember, obj, memberName))";
+	else
+		return "false";
 }
 
 // LOL this can't work because function pointers drop the default :(

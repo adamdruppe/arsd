@@ -184,7 +184,7 @@ class ColorPickerDialog : Dialog {
 			updateCurrent();
 		});
 
-		void helper(Event event) {
+		void helper(MouseEventBase event) {
 			auto h = cast(double) event.clientX / hslImage.width * 360.0;
 			auto s = 1.0 - (cast(double) event.clientY / hslImage.height * 1.0);
 			auto l = this.l.content.to!double;
@@ -199,14 +199,14 @@ class ColorPickerDialog : Dialog {
 		}
 
 		if(hslImage !is null)
-		wid.addEventListener("mousedown", &helper);
+		wid.addEventListener((MouseDownEvent ev) { helper(ev); });
 		if(hslImage !is null)
-		wid.addEventListener("mousemove", (Event event) {
+		wid.addEventListener((MouseMoveEvent event) {
 			if(event.state & ModifierState.leftButtonDown)
 				helper(event);
 		});
 
-		this.addEventListener("keydown", (Event event) {
+		this.addEventListener((KeyDownEvent event) {
 			if(event.key == Key.Enter || event.key == Key.PadEnter)
 				OK();
 			if(event.key == Key.Escape)
