@@ -1468,5 +1468,57 @@ struct varchar(size_t max) {
 	alias asString this;
 }
 
+version (unittest)
+{
+	/// Unittest utility that returns a predefined set of values
+	package (arsd) final class PredefinedResultSet : ResultSet
+	{
+		string[] fields;
+		Row[] rows;
+		size_t current;
 
+		this(string[] fields, Row[] rows)
+		{
+			this.fields = fields;
+			this.rows = rows;
+			foreach (ref row; rows)
+				row.resultSet = this;
+		}
 
+		int getFieldIndex(const string field) const
+		{
+			foreach (const idx, const val; fields)
+				if (val == field)
+					return cast(int) idx;
+
+			assert(false, "No field with name: " ~ field);
+		}
+
+		string[] fieldNames()
+		{
+			return fields;
+		}
+
+		@property bool empty() const
+		{
+			return current == rows.length;
+		}
+
+		Row front() @property
+		{
+			assert(!empty);
+			return rows[current];
+		}
+
+		void popFront()
+		{
+			assert(!empty);
+			current++;
+		}
+
+		size_t length() @property
+		{
+			return rows.length - current;
+		}
+	}
+}
