@@ -341,11 +341,28 @@ void insert(O)(ref O t, Database db) {
 		foreach(row; db.query("SELECT max(id) FROM " ~ toTableName(O.stringof)))
 			t.id.value = to!int(row[0]);
 	} else {
-		foreach(row; builder.execute(db, "RETURNING id")) // FIXME: postgres-ism
-			t.id.value = to!int(row[0]);
+		static if (__traits(hasMember, O, "id"))
+		{
+			foreach(row; builder.execute(db, "RETURNING id")) // FIXME: postgres-ism
+				t.id.value = to!int(row[0]);
+		}
+		else
+		{
+			builder.execute(db);
+		}
 	}
 }
 
+// Check that insert doesn't require an `id`
+unittest
+{
+	static struct NoPK
+	{
+		int a;
+	}
+
+	alias test = insert!NoPK;
+}
 ///
 class RecordNotFoundException : Exception {
 	this() { super("RecordNotFoundException"); }
