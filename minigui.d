@@ -8886,6 +8886,9 @@ interface Reflectable {
 
 
 /+
+
+	I could fix up the hierarchy kinda like this
+
 	class Widget {
 		Widget[] children() { return null; }
 	}
@@ -8905,4 +8908,34 @@ interface Reflectable {
 
 	All constructors that previously took Widgets should now take WidgetContainers instead
 
+
+
+	But I'm kinda meh toward it, im not sure this is a real problem even though there are some addChild things that throw "plz don't".
++/
+
+/+
+	LAYOUTS 2.0
+
+	can just be assigned as a function. assigning a new one will cause it to be immediately called.
+
+	they simply are responsible for the recomputeChildLayout. If this pointer is null, it uses the default virtual one.
+
+	recomputeChildLayout only really needs a property accessor proxy... just the layout info too.
+
+	and even Paint can just use computedStyle...
+
+		background color
+		font
+		border color and style
+
+	And actually the style proxy can offer some helper routines to draw these like the draw 3d box
+		please note that many widgets and in some modes will completely ignore properties as they will.
+		they are just hints you set, not promises.
+
+
+
+
+
+	So generally the existing virtual functions are just the default for the class. But individual objects
+	or stylesheets can override this. The virtual ones count as tag-level specificity in css.
 +/
