@@ -27,7 +27,7 @@ import std.exception;
 	---
 +/
 class PostgreSql : Database {
-	/// dbname = name  is probably the most common connection string
+	/// `dbname=your_database_name` is probably the most common connection string. See section "33.1.1.1. Keyword/Value Connection Strings" on https://www.postgresql.org/docs/10/libpq-connect.html
 	this(string connectionString) {
 		this.connectionString = connectionString;
 		conn = PQconnectdb(toStringz(connectionString));
