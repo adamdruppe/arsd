@@ -378,11 +378,9 @@ auto find(alias T)(Database db, int id) {
 private void populateFromDbRow(T)(ref T t, Row record) {
 	foreach(field, value; record) {
 		sw: switch(field) {
-			static foreach(memberName; __traits(allMembers, T)) {
-				case memberName:
-					static if(is(typeof(__traits(getMember, T, memberName)))) {
-						populateFromDbVal(__traits(getMember, t, memberName), value);
-					}
+			static foreach(const idx, alias mem; T.tupleof) {
+				case __traits(identifier, mem):
+					populateFromDbVal(t.tupleof[idx], value);
 				break sw;
 			}
 			default:
@@ -414,6 +412,26 @@ private void populateFromDbVal(V)(ref V val, string value) {
 	}
 }
 
+unittest
+{
+	static struct SomeStruct
+	{
+		int a;
+		void foo() {}
+		int b;
+	}
+
+	auto rs = new PredefinedResultSet(
+		[ "a", "b" ],
+		[ Row([ "1", "2" ]) ]
+	);
+
+	SomeStruct s;
+	populateFromDbRow(s, rs.front);
+
+	assert(s.a == 1);
+	assert(s.b == 2);
+}
 /++
 	Gets all the children of that type. Specifically, it looks in T for a ForeignKey referencing B and queries on that.
 
