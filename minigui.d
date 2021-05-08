@@ -1215,6 +1215,17 @@ struct WidgetPainter {
 	+/
 	Rectangle[] invalidatedRectangles;
 
+	private static IVisualTheme _visualTheme;
+
+	static @property IVisualTheme visualTheme() {
+		if(_visualTheme is null)
+			_visualTheme = new DefaultVisualTheme();
+		return _visualTheme;
+	}
+
+	static @property void visualTheme(IVisualTheme theme) {
+		_visualTheme = theme;
+	}
 
 	// all this stuff is a dangerous experiment....
 	static class ScriptableVersion {
@@ -2074,7 +2085,10 @@ class Widget {
 			painter.setClipRectangle(Point(0, 0), width, height);
 
 			erase(painter);
-			paint(painter);
+			if(painter.visualTheme)
+				painter.visualTheme.doPaint(this, painter);
+			else
+				paint(painter);
 
 			redrawRequested = false;
 			actuallyPainted = true;
@@ -2838,7 +2852,10 @@ class ScrollableWidget : Widget {
 			painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, width - 4, height - 4);
 
 			//erase(painter); // we paintFrameAndBackground above so no need
-			paint(painter);
+			if(painter.visualTheme)
+				painter.visualTheme.doPaint(this, painter);
+			else
+				paint(painter);
 
 			actuallyPainted = true;
 			redrawRequested = false;
@@ -8939,3 +8956,61 @@ interface Reflectable {
 	So generally the existing virtual functions are just the default for the class. But individual objects
 	or stylesheets can override this. The virtual ones count as tag-level specificity in css.
 +/
+
+interface IVisualTheme {
+	void doPaint(Widget widget, WidgetPainter painter);
+	string getProperty(Widget widget, string propertyName);
+
+	final T getProperty(T, string propertyName)(Widget widget) {
+		return T.init;
+	}
+}
+
+private int baseClassCount(Class)() {
+	int count = 0;
+	static if(is(Class bases == super)) {
+		foreach(base; bases)
+			static if(is(base == class))
+				count += 1 + baseClassCount!base;
+	}
+	return count;
+
+}
+
+class VisualTheme(CRTP) : IVisualTheme {
+	string getProperty(Widget widget, string propertyName) { return null; }
+
+	final void doPaint(Widget widget, WidgetPainter painter) {
+		auto derived = cast(CRTP) cast(void*) this;
+
+		scope void delegate(Widget, WidgetPainter) bestMatch;
+		int bestMatchScore;
+
+		static if(__traits(hasMember, CRTP, "paint"))
+		foreach(overload; __traits(getOverloads, CRTP, "paint")) {
+			static if(is(typeof(overload) Params == __parameters)) {
+				static assert(Params.length == 2);
+				static assert(is(Params[0] : Widget));
+				static assert(is(Params[1] == WidgetPainter));
+				static assert(is(typeof(&__traits(child, derived, overload)) == delegate));
+
+				alias type = Params[0];
+				if(cast(type) widget) {
+					auto score = baseClassCount!type;
+
+					if(score > bestMatchScore) {
+						bestMatch = cast(typeof(bestMatch)) &__traits(child, derived, overload);
+						bestMatchScore = score;
+					}
+				}
+			} else static assert(0, "paint should be a method.");
+		}
+
+		if(bestMatch)
+			bestMatch(widget, painter);
+		else
+			widget.paint(painter);
+	}
+}
+
+final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {}
