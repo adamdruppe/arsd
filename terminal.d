@@ -7225,9 +7225,15 @@ struct ScrollbackBuffer {
 }
 
 
+/++
+	Thrown by [LineGetter] if the user pressed ctrl+c while it is processing events.
++/
 class UserInterruptionException : Exception {
 	this() { super("Ctrl+C"); }
 }
+/++
+	Thrown by [LineGetter] if the terminal closes while it is processing input.
++/
 class HangupException : Exception {
 	this() { super("Terminal disconnected"); }
 }
