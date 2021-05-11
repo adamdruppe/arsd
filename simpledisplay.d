@@ -7674,9 +7674,9 @@ class OperatingSystemFont {
 				}
 			}
 
-			if(font)
+			if(font && font !is ScreenPainterImplementation.defaultfont)
 				XFreeFont(display, font);
-			if(fontset)
+			if(fontset && fontset !is ScreenPainterImplementation.defaultfontset)
 				XFreeFontSet(display, fontset);
 
 			font = null;
@@ -11053,12 +11053,14 @@ version(X11) {
 				xftDraw = null;
 			}
 
-			version(none) // we don't want to free it because we can use it later
-			if(font)
+			if(font && font !is defaultfont) {
 				XFreeFont(display, font);
-			version(none) // we don't want to free it because we can use it later
-			if(fontset)
+				font = null;
+			}
+			if(fontset && fontset !is defaultfontset) {
 				XFreeFontSet(display, fontset);
+				fontset = null;
+			}
 			XFlush(display);
 
 			if(window.paintingFinishedDg !is null)
