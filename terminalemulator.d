@@ -3198,7 +3198,7 @@ URXVT (1015)
 								/* Extensions */
 								if(arg < 65536 + 65535)
 									hyperlinkActive = false;
-							}
+							} else
 							switch(arg) {
 								case 1:
 									// normal cursor keys
