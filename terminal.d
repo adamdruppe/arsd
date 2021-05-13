@@ -8009,7 +8009,12 @@ version(TerminalDirectToEmulator) {
 			terminalEmulator.attentionReceived();
 		}
 
-		override MouseCursor cursor() { return GenericCursor.Text; }
+		static class Style : Widget.Style {
+			override MouseCursor cursor() {
+				return GenericCursor.Text;
+			}
+		}
+		mixin OverrideStyle!Style;
 
 		override void erase(WidgetPainter painter) { /* intentionally blank, paint does it better */ }
 
