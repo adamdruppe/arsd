@@ -96,7 +96,7 @@ void loadMiniguiPublicClasses() {
 	import std.traits;
 	import std.conv;
 
-	foreach(memberName; __traits(allMembers, mixin("arsd.minigui"))) static if(__traits(compiles, __traits(getMember, mixin("arsd.minigui"), memberName))) {
+	foreach(memberName; __traits(allMembers, mixin("arsd.minigui"))) static if(!__traits(isDeprecated, __traits(getMember, mixin("arsd.minigui"), memberName))) {
 		alias Member = ident!(__traits(getMember, mixin("arsd.minigui"), memberName));
 		static if(is(Member == class) && !isAbstractClass!Member && is(Member : Widget) && __traits(getProtection, Member) != "private") {
 			widgetFactoryFunctions[memberName] = (string[string] args, Widget parent) {

@@ -1137,6 +1137,15 @@ struct ActivateJniEnv {
 	"no jvm dll" in the message. That error can also be thrown if
 	you have a 32 bit program but try to load a 64 bit JVM, or vice
 	versa.
+
+	Returns:
+		an opaque object you should hold on to but not actually use.
+		Its destructor does necessary cleanup tasks to unload the jvm
+		but otherwise its effect is global.
+
+		As long as that object is in scope, you can work with java classes
+		globally and it will use that jvm's environment and load classes and jars
+		through the java classpath.
 +/
 auto createJvm()() {
 	version(Windows)

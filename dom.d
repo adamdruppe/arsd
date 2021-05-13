@@ -6828,7 +6828,7 @@ int intFromHex(string hex) {
 		///.
 		static immutable string[] selectorTokens = [
 			// It is important that the 2 character possibilities go first here for accurate lexing
-		    "~=", "*=", "|=", "^=", "$=", "!=", // "::" should be there too for full standard
+		    "~=", "*=", "|=", "^=", "$=", "!=",
 		    "::", ">>",
 		    "<<", // my any-parent extension (reciprocal of whitespace)
 		    // " - ", // previous-sibling extension (whitespace required to disambiguate tag-names)

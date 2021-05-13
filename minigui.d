@@ -249,7 +249,1078 @@ version(Windows) {
 		* rich text
 */
 
-alias HWND=void*;
+
+/+
+	enum LayoutMethods {
+		 verticalFlex,
+		 horizontalFlex,
+		 inlineBlock, // left to right, no stretch, goes to next line as needed
+		 static, // just set to x, y
+		 verticalNoStretch, // browser style default
+
+		 inlineBlockFlex, // goes left to right, flexing, but when it runs out of space, it spills into next line
+
+		 grid, // magic
+	}
++/
+
+/++
+	The way this module works is it builds on top of a SimpleWindow
+	from simpledisplay to provide simple controls and such.
+
+	Non-native controls suck, but nevertheless, I'm going to do it that
+	way to avoid dependencies on stuff like gtk on X... and since I'll
+	be writing the widgets there, I might as well just use them on Windows
+	too if you like, using `-version=custom_widgets`.
+
+	So, by extension, this sucks. But gtkd is just too big for me.
+
+
+	The goal is to look kinda like Windows 95, perhaps with customizability.
+	Nothing too fancy, just the basics that work, but of course you can do whatever
+	you want in the draw handler.
++/
+class Widget {
+
+	// Default layout properties {
+
+		int minWidth() { return 0; }
+		int minHeight() {
+			// default widgets have a vertical layout, therefore the minimum height is the sum of the contents
+			int sum = 0;
+			foreach(child; children) {
+				sum += child.minHeight();
+				sum += child.marginTop();
+				sum += child.marginBottom();
+			}
+
+			return sum;
+		}
+		int maxWidth() { return int.max; }
+		int maxHeight() { return int.max; }
+		int widthStretchiness() { return 4; }
+		int heightStretchiness() { return 4; }
+
+		int marginLeft() { return 0; }
+		int marginRight() { return 0; }
+		int marginTop() { return 0; }
+		int marginBottom() { return 0; }
+		int paddingLeft() { return 0; }
+		int paddingRight() { return 0; }
+		int paddingTop() { return 0; }
+		int paddingBottom() { return 0; }
+		//LinePreference linePreference() { return LinePreference.PreferOwnLine; }
+
+		void recomputeChildLayout() {
+			.recomputeChildLayout!"height"(this);
+		}
+
+	// }
+
+
+	/++
+		Returns the style's tag name string this object uses.
+
+		The default is to use the typeid() name trimmed down to whatever is after the last dot which is typically the identifier of the class.
+
+		This tag may never be used, it is just available for the [VisualTheme.getPropertyString] if it chooses to do something like CSS.
+
+		History:
+			Added May 10, 2021
+	+/
+	string styleTagName() const {
+		string n = typeid(this).name;
+		foreach_reverse(idx, ch; n)
+			if(ch == '.') {
+				n = n[idx + 1 .. $];
+				break;
+			}
+		return n;
+	}
+
+	/// API for the [styleClassList]
+	static struct ClassList {
+		private Widget widget;
+
+		///
+		void add(string s) {
+			widget.styleClassList_ ~= s;
+		}
+
+		///
+		void remove(string s) {
+			foreach(idx, s1; widget.styleClassList_)
+				if(s1 == s) {
+					widget.styleClassList_[idx] = widget.styleClassList_[$-1];
+					widget.styleClassList_ = widget.styleClassList_[0 .. $-1];
+					widget.styleClassList_.assumeSafeAppend();
+					return;
+				}
+		}
+
+		/// Returns true if it was added, false if it was removed.
+		bool toggle(string s) {
+			if(contains(s)) {
+				remove(s);
+				return false;
+			} else {
+				add(s);
+				return true;
+			}
+		}
+
+		///
+		bool contains(string s) const {
+			foreach(s1; widget.styleClassList_)
+				if(s1 == s)
+					return true;
+			return false;
+
+		}
+	}
+
+	private string[] styleClassList_;
+
+	/++
+		Returns a "class list" that can be used by the visual theme's style engine via [VisualTheme.getPropertyString] if it chooses to do something like CSS.
+
+		It has no inherent meaning, it is really just a place to put some metadata tags on individual objects.
+
+		History:
+			Added May 10, 2021
+	+/
+	inout(ClassList) styleClassList() inout {
+		return cast(inout(ClassList)) ClassList(cast() this);
+	}
+
+	/++
+		List of dynamic states made available to the style engine, for cases like CSS pseudo-classes and also used by default paint methods. It is stored in a 64 bit variable attached to the widget that you can update. The style cache is aware of the fact that these can frequently change.
+
+		The lower 32 bits are defined here or reserved for future use by the library. You should keep these updated if you reasonably can on custom widgets if they apply to you, but don't use them for a purpose they aren't defined for.
+
+		The upper 32 bits are available for your own extensions.
+
+		History:
+			Added May 10, 2021
+	+/
+	enum DynamicState : ulong {
+		focus = (1 << 0), /// the widget currently has the keyboard focus
+		hover = (1 << 1), /// the mouse is currently hovering over the widget (may not always be updated)
+		valid = (1 << 2), /// the widget's content has been validated and it passed (do not set if not validation has been performed!)
+		invalid = (1 << 3), /// the widget's content has been validated and it failed (do not set if not validation has been performed!)
+		checked = (1 << 4), /// the widget is toggleable and currently toggled on
+		selected = (1 << 5), /// the widget represents one option of many and is currently selected, but is not necessarily focused nor checked.
+		disabled = (1 << 6), /// the widget is currently unable to perform its designated task
+		indeterminate = (1 << 7), /// the widget has tri-state and is between checked and not checked
+
+		USER_BEGIN = (1UL << 32),
+	}
+	/// ditto
+	@property ulong dynamicState() { return dynamicState_; }
+	/// ditto
+	@property ulong dynamicState(ulong newValue) {
+		if(dynamicState != newValue) {
+			auto old = dynamicState_;
+			dynamicState_ = newValue;
+
+			useStyleProperties((s) {
+				if(s.variesWithState(old ^ newValue))
+					redraw();
+			});
+		}
+		return dynamicState_;
+	}
+
+	/// ditto
+	void setDynamicState(ulong flags, bool state) {
+		auto ds = dynamicState_;
+		if(state)
+			ds |= flags;
+		else
+			ds &= ~flags;
+
+		dynamicState = ds;
+	}
+
+	private ulong dynamicState_;
+
+	deprecated("Use dynamic styles instead now") {
+		Color backgroundColor() { return backgroundColor_; }
+		void backgroundColor(Color c){ this.backgroundColor_ = c; }
+
+		MouseCursor cursor() { return GenericCursor.Default; }
+	} private Color backgroundColor_ = Color.transparent;
+
+
+	/++
+		Style properties are defined as an accessory class so they can be referenced and overridden independently.
+
+		It is here so there can be a specificity switch.
+
+		History:
+			Added May 11, 2021
+	+/
+	static class Style/* : StyleProperties*/ {
+		public Widget widget; // public because the mixin template needs access to it
+
+		/// This assumes any change to the dynamic state (focus, hover, etc) triggers a redraw, but you can filter a bit to optimize some draws.
+		bool variesWithState(ulong dynamicStateFlags) {
+			return true;
+		}
+
+		///
+		Color foregroundColor() {
+			return WidgetPainter.visualTheme.foregroundColor;
+		}
+
+		///
+		Color backgroundColor() {
+			// the default is a "transparent" background, which means
+			// it goes as far up as it can to get the color
+			if (widget.backgroundColor_ != Color.transparent)
+				return widget.backgroundColor_;
+			if (widget.parent)
+				return StyleInformation.extractStyleProperty!"backgroundColor"(widget.parent);
+			return widget.backgroundColor_;
+		}
+
+		private OperatingSystemFont fontCached_;
+		private OperatingSystemFont fontCached() {
+			if(fontCached_ is null)
+				fontCached_ = font();
+			return fontCached_;
+		}
+
+		/++
+			Returns the default font to be used with this widget. The return value will be cached by the library, so you can not expect live updates.
+		+/
+		OperatingSystemFont font() {
+			return null;
+		}
+
+		/++
+			Returns the cursor that should be used over this widget. You may change this and updates will be reflected next time the mouse enters the widget.
+
+			You can return a member of [GenericCursor] or your own [MouseCursor] instance.
+
+			History:
+				Was previously a method directly on [Widget], moved to [Widget.Style] on May 12, 2021
+		+/
+		MouseCursor cursor() {
+			return GenericCursor.Default;
+		}
+
+		FrameStyle borderStyle() {
+			return FrameStyle.none;
+		}
+
+		/++
+		+/
+		Color borderColor() {
+			return Color.transparent;
+		}
+
+		FrameStyle outlineStyle() {
+			if(widget.dynamicState & DynamicState.focus)
+				return FrameStyle.dotted;
+			else
+				return FrameStyle.none;
+		}
+
+		Color outlineColor() {
+			return foregroundColor;
+		}
+	}
+
+	/++
+		This goes in order like this:
+
+		mixin OverrideStyle!(
+			DynamicState.focus, YourFocusedStyle,
+			DynamicState.hover, YourHoverStyle,
+			YourDefaultStyle
+		)
+
+		It checks if `dynamicState` matches the state and if so, returns the object given.
+
+		If there is no state mask given, the next one matches everything. The first match
+		given is used.
+	+/
+	static protected mixin template OverrideStyle(S...) {
+		override void useStyleProperties(scope void delegate(scope Widget.Style props) dg) {
+			ulong mask = 0;
+			foreach(idx, thing; S) {
+				static if(is(typeof(thing) : ulong)) {
+					mask = thing;
+				} else {
+					if(!(idx & 1) || (this.dynamicState & mask) == mask) {
+						scope Widget.Style s = new thing();
+						s.widget = this;
+						dg(s);
+						return;
+					}
+				}
+			}
+		}
+	}
+	/++
+		You can override this by hand, or use the [OverrideStyle] helper which is a bit less verbose.
+	+/
+	void useStyleProperties(scope void delegate(scope Style props) dg) {
+		scope Style s = new Style();
+		s.widget = this;
+		dg(s);
+	}
+
+
+	protected void sendResizeEvent() {
+		auto event = new Event("resize", this);
+		event.sendDirectly();
+	}
+
+	Menu contextMenu(int x, int y) { return null; }
+
+	final bool showContextMenu(int x, int y, int screenX = -2, int screenY = -2) {
+		if(parentWindow is null || parentWindow.win is null) return false;
+
+		auto menu = this.contextMenu(x, y);
+		if(menu is null)
+			return false;
+
+		version(win32_widgets) {
+			// FIXME: if it is -1, -1, do it at the current selection location instead
+			// tho the corner of the window, whcih it does now, isn't the literal worst.
+
+			if(screenX < 0 && screenY < 0) {
+				auto p = this.globalCoordinates();
+				if(screenX == -2)
+					p.x += x;
+				if(screenY == -2)
+					p.y += y;
+
+				screenX = p.x;
+				screenY = p.y;
+			}
+
+			if(!TrackPopupMenuEx(menu.handle, 0, screenX, screenY, parentWindow.win.impl.hwnd, null))
+				throw new Exception("TrackContextMenuEx");
+		} else version(custom_widgets) {
+			menu.popup(this, x, y);
+		}
+
+		return true;
+	}
+
+	/++
+		Removes this widget from its parent.
+
+		History:
+			`removeWidget` was made `final` on May 11, 2021.
+	+/
+	@scriptable
+	final void removeWidget() {
+		auto p = this.parent;
+		if(p) {
+			int item;
+			for(item = 0; item < p._children.length; item++)
+				if(p._children[item] is this)
+					break;
+			for(; item < p._children.length - 1; item++)
+				p._children[item] = p._children[item + 1];
+			p._children = p._children[0 .. $-1];
+		}
+	}
+
+	/++
+		Calls [getByName] with the generic type of Widget. Meant for script interop where instantiating a template is impossible.
+	+/
+	@scriptable
+	Widget getChildByName(string name) {
+		return getByName(name);
+	}
+	/++
+		Finds the nearest descendant with the requested type and [name]. May return `this`.
+	+/
+	final WidgetClass getByName(WidgetClass = Widget)(string name) {
+		if(this.name == name)
+			if(auto c = cast(WidgetClass) this)
+				return c;
+		foreach(child; children) {
+			auto w = child.getByName(name);
+			if(auto c = cast(WidgetClass) w)
+				return c;
+		}
+		return null;
+	}
+
+	/++
+		The name is a string tag that is used to reference the widget from scripts, gui loaders, declarative ui templates, etc. Similar to a HTML id attribute.
+		Names should be unique in a window.
+
+		See_Also: [getByName], [getChildByName]
+	+/
+	@scriptable string name;
+
+	private EventHandler[][string] bubblingEventHandlers;
+	private EventHandler[][string] capturingEventHandlers;
+
+	/++
+		Default event handlers. These are called on the appropriate
+		event unless [Event.preventDefault] is called on the event at
+		some point through the bubbling process.
+
+
+		If you are implementing your own widget and want to add custom
+		events, you should follow the same pattern here: create a virtual
+		function named `defaultEventHandler_eventname` with the implementation,
+		then, override [setupDefaultEventHandlers] and add a wrapped caller to
+		`defaultEventHandlers["eventname"]`. It should be wrapped like so:
+		`defaultEventHandlers["eventname"] = (Widget t, Event event) { t.defaultEventHandler_name(event); };`.
+		This ensures virtual dispatch based on the correct subclass.
+
+		Also, don't forget to call `super.setupDefaultEventHandlers();` too in your
+		overridden version.
+
+		You only need to do that on parent classes adding NEW event types. If you
+		just want to change the default behavior of an existing event type in a subclass,
+		you override the function (and optionally call `super.method_name`) like normal.
+
+	+/
+	protected EventHandler[string] defaultEventHandlers;
+
+	/// ditto
+	void setupDefaultEventHandlers() {
+		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(cast(ClickEvent) event); };
+		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(cast(KeyDownEvent) event); };
+		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(cast(KeyUpEvent) event); };
+		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(cast(MouseOverEvent) event); };
+		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(cast(MouseOutEvent) event); };
+		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(cast(MouseDownEvent) event); };
+		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(cast(MouseUpEvent) event); };
+		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(cast(MouseEnterEvent) event); };
+		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(cast(MouseLeaveEvent) event); };
+		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(cast(MouseMoveEvent) event); };
+		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(cast(CharEvent) event); };
+		defaultEventHandlers["triggered"] = (Widget t, Event event) { t.defaultEventHandler_triggered(event); };
+		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
+		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
+		defaultEventHandlers["blur"] = (Widget t, Event event) { t.defaultEventHandler_blur(event); };
+	}
+
+	/// ditto
+	void defaultEventHandler_click(ClickEvent event) {}
+	/// ditto
+	void defaultEventHandler_keydown(KeyDownEvent event) {}
+	/// ditto
+	void defaultEventHandler_keyup(KeyUpEvent event) {}
+	/// ditto
+	void defaultEventHandler_mousedown(MouseDownEvent event) {}
+	/// ditto
+	void defaultEventHandler_mouseover(MouseOverEvent event) {}
+	/// ditto
+	void defaultEventHandler_mouseout(MouseOutEvent event) {}
+	/// ditto
+	void defaultEventHandler_mouseup(MouseUpEvent event) {}
+	/// ditto
+	void defaultEventHandler_mousemove(MouseMoveEvent event) {}
+	/// ditto
+	void defaultEventHandler_mouseenter(MouseEnterEvent event) {}
+	/// ditto
+	void defaultEventHandler_mouseleave(MouseLeaveEvent event) {}
+	/// ditto
+	void defaultEventHandler_char(CharEvent event) {}
+	/// ditto
+	void defaultEventHandler_triggered(Event event) {}
+	/// ditto
+	void defaultEventHandler_change(Event event) {}
+	/// ditto
+	void defaultEventHandler_focus(Event event) {}
+	/// ditto
+	void defaultEventHandler_blur(Event event) {}
+
+	/++
+		[Event]s use a Javascript-esque model. See more details on the [Event] page.
+
+		[addEventListener] returns an opaque handle that you can later pass to [removeEventListener].
+
+		addDirectEventListener just inserts a check `if(e.target !is this) return;` meaning it opts out
+		of participating in handler delegation.
+	+/
+	EventListener addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) {
+			if(e.srcElement is this)
+				handler();
+		}, useCapture);
+	}
+
+	/// ditto
+	EventListener addDirectEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) {
+			if(e.srcElement is this)
+				handler(e);
+		}, useCapture);
+	}
+
+	/// ditto
+	@scriptable
+	EventListener addEventListener(string event, void delegate() handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event) { handler(); }, useCapture);
+	}
+
+	/// ditto
+	EventListener addEventListener(Handler)(Handler handler, bool useCapture = false) {
+		static if(is(Handler Fn == delegate)) {
+		static if(is(Fn Params == __parameters)) {
+			return addEventListener(EventString!(Params[0]), (Widget, Event e) {
+				auto ty = cast(Params[0]) e;
+				if(ty !is null)
+					handler(ty);
+			}, useCapture);
+		} else static assert(0);
+		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate.");
+	}
+
+	/// ditto
+	EventListener addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
+		return addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
+	}
+
+	/// ditto
+	EventListener addEventListener(string event, EventHandler handler, bool useCapture = false) {
+		if(event.length > 2 && event[0..2] == "on")
+			event = event[2 .. $];
+
+		if(useCapture)
+			capturingEventHandlers[event] ~= handler;
+		else
+			bubblingEventHandlers[event] ~= handler;
+
+		return EventListener(this, event, handler, useCapture);
+	}
+
+	/// ditto
+	void removeEventListener(string event, EventHandler handler, bool useCapture = false) {
+		if(event.length > 2 && event[0..2] == "on")
+			event = event[2 .. $];
+
+		if(useCapture) {
+			if(event in capturingEventHandlers)
+			foreach(ref evt; capturingEventHandlers[event])
+				if(evt is handler) evt = null;
+		} else {
+			if(event in bubblingEventHandlers)
+			foreach(ref evt; bubblingEventHandlers[event])
+				if(evt is handler) evt = null;
+		}
+	}
+
+	/// ditto
+	void removeEventListener(EventListener listener) {
+		removeEventListener(listener.event, listener.handler, listener.useCapture);
+	}
+
+	static if(UsingSimpledisplayX11) {
+		void discardXConnectionState() {
+			foreach(child; children)
+				child.discardXConnectionState();
+		}
+
+		void recreateXConnectionState() {
+			foreach(child; children)
+				child.recreateXConnectionState();
+			redraw();
+		}
+	}
+
+	/++
+		Returns the coordinates of this widget on the screen, relative to the upper left corner of the whole screen.
+
+		History:
+			`globalCoordinates` was made `final` on May 11, 2021.
+	+/
+	Point globalCoordinates() {
+		int x = this.x;
+		int y = this.y;
+		auto p = this.parent;
+		while(p) {
+			x += p.x;
+			y += p.y;
+			p = p.parent;
+		}
+
+		static if(UsingSimpledisplayX11) {
+			auto dpy = XDisplayConnection.get;
+			arsd.simpledisplay.Window dummyw;
+			XTranslateCoordinates(dpy, this.parentWindow.win.impl.window, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
+		} else {
+			POINT pt;
+			pt.x = x;
+			pt.y = y;
+			MapWindowPoints(this.parentWindow.win.impl.hwnd, null, &pt, 1);
+			x = pt.x;
+			y = pt.y;
+		}
+
+		return Point(x, y);
+	}
+
+	version(win32_widgets)
+	void handleWmCommand(ushort cmd, ushort id) {}
+
+	version(win32_widgets)
+	int handleWmNotify(NMHDR* hdr, int code) { return 0; }
+
+	/++
+		This tip is displayed in the status bar (if there is one in the containing window) when the mouse moves over this widget.
+
+		Updates to this variable will only be made visible on the next mouse enter event.
+	+/
+	@scriptable string statusTip;
+	// string toolTip;
+	// string helpText;
+
+	/++
+		If true, this widget can be focused via keyboard control with the tab key.
+
+		If false, it is assumed the widget itself does not contain the keyboard focus (though its childen are free to).
+	+/
+	bool tabStop = true;
+	/++
+		The tab key cycles through widgets by the order of a.tabOrder < b.tabOrder. If they are equal, it does them in child order (which is typically the order they were added to the widget.)
+	+/
+	int tabOrder;
+
+	version(win32_widgets) {
+		static Widget[HWND] nativeMapping;
+		HWND hwnd;
+		WNDPROC originalWindowProcedure;
+
+		SimpleWindow simpleWindowWrappingHwnd;
+
+		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
+			switch(iMessage) {
+				case WM_COMMAND:
+					auto handle = cast(HWND) lParam;
+					auto cmd = HIWORD(wParam);
+					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
+				default:
+			}
+			return 0;
+		}
+	}
+	private bool implicitlyCreated;
+
+	/// Child's position relative to the parent's origin. only the layout manager should be modifying this and even reading it is of limited utility. It may be made `private` at some point in the future without advance notice. Do NOT depend on it being available unless you are writing a layout manager.
+	int x;
+	/// ditto
+	int y;
+	private int _width;
+	private int _height;
+	private Widget[] _children;
+	private Widget _parent;
+	private Window _parentWindow;
+
+	/++
+		Returns the window to which this widget is attached.
+
+		History:
+			Prior to May 11, 2021, the `Window parentWindow` variable was directly available. Now, only this property getter is available and the actual store is private.
+	+/
+	final @property inout(Window) parentWindow() inout @nogc nothrow pure { return _parentWindow; }
+	private @property void parentWindow(Window parent) {
+		_parentWindow = parent;
+		foreach(child; children)
+			child.parentWindow = parent; // please note that this is recursive
+	}
+
+	/++
+		Returns the list of the widget's children.
+
+		History:
+			Prior to May 11, 2021, the `Widget[] children` was directly available. Now, only this property getter is available and the actual store is private.
+
+			Children should be added by the constructor most the time, but if that's impossible, use [addChild] and [removeWidget] to manage the list.
+	+/
+	final @property inout(Widget)[] children() inout @nogc nothrow pure { return _children; }
+
+	/++
+		Returns the widget's parent.
+
+		History:
+			Prior to May 11, 2021, the `Widget parent` variable was directly available. Now, only this property getter is permitted.
+
+			The parent should only be managed by the [addChild] and [removeWidget] method.
+	+/
+	final @property inout(Widget) parent() inout nothrow @nogc pure @safe return { return _parent; }
+
+	/// The widget's current size.
+	final @scriptable public @property int width() const nothrow @nogc pure @safe { return _width; }
+	/// ditto
+	final @scriptable public @property int height() const nothrow @nogc pure @safe { return _height; }
+
+	/// Only the layout manager should be calling these.
+	final protected @property int width(int a) @safe { return _width = a; }
+	/// ditto
+	final protected @property int height(int a) @safe { return _height = a; }
+
+	/++
+		This function is called by the layout engine after it has updated the position (in variables `x` and `y`) and the size (in properties `width` and `height`) to give you a chance to update the actual position of the native child window (if there is one) or whatever.
+
+		It is also responsible for calling [sendResizeEvent] to notify other listeners that the widget has changed size.
+	+/
+	protected void registerMovement() {
+		version(win32_widgets) {
+			if(hwnd) {
+				auto pos = getChildPositionRelativeToParentHwnd(this);
+				MoveWindow(hwnd, pos[0], pos[1], width, height, true);
+			}
+		}
+		sendResizeEvent();
+	}
+
+	/// Creates the widget and adds it to the parent.
+	this(Widget parent = null) {
+		if(parent !is null)
+			parent.addChild(this);
+		setupDefaultEventHandlers();
+	}
+
+	/// Returns true if this is the current focused widget inside the parent window. Please note it may return `true` when the window itself is unfocused. In that case, it indicates this widget will receive focuse again when the window does.
+	@scriptable
+	bool isFocused() {
+		return parentWindow && parentWindow.focusedWidget is this;
+	}
+
+	private bool showing_ = true;
+	///
+	bool showing() { return showing_; }
+	///
+	bool hidden() { return !showing_; }
+	/++
+		Shows or hides the window. Meant to be assigned as a property. If `recalculate` is true (the default), it recalculates the layout of the parent widget to use the space this widget being hidden frees up or make space for this widget to appear again.
+	+/
+	void showing(bool s, bool recalculate = true) {
+		auto so = showing_;
+		showing_ = s;
+		if(s != so) {
+
+			version(win32_widgets)
+			if(hwnd)
+				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
+
+			if(parent && recalculate) {
+				parent.recomputeChildLayout();
+				parent.redraw();
+			}
+
+			foreach(child; children)
+				child.showing(s, false);
+		}
+	}
+	/// Convenience method for `showing = true`
+	@scriptable
+	void show() {
+		showing = true;
+	}
+	/// Convenience method for `showing = false`
+	@scriptable
+	void hide() {
+		showing = false;
+	}
+
+	///
+	@scriptable
+	void focus() {
+		assert(parentWindow !is null);
+		if(isFocused())
+			return;
+
+		if(parentWindow.focusedWidget) {
+			// FIXME: more details here? like from and to
+			auto evt = new Event("blur", parentWindow.focusedWidget);
+			parentWindow.focusedWidget.setDynamicState(DynamicState.focus, false);
+			parentWindow.focusedWidget = null;
+			evt.sendDirectly();
+		}
+
+
+		version(win32_widgets) {
+			if(this.hwnd !is null)
+				SetFocus(this.hwnd);
+		}
+
+		parentWindow.focusedWidget = this;
+		parentWindow.focusedWidget.setDynamicState(DynamicState.focus, true);
+		auto evt = new Event("focus", this);
+		evt.dispatch();
+	}
+
+
+	/++
+		This is called when the widget is added to a window. It gives you a chance to set up event hooks.
+
+		Update on May 11, 2021: I'm considering removing this method. You can usually achieve these things through looser-coupled methods.
+	+/
+	void attachedToWindow(Window w) {}
+	/++
+		Callback when the widget is added to another widget.
+
+		Update on May 11, 2021: I'm considering removing this method since I've never actually found it useful.
+	+/
+	void addedTo(Widget w) {}
+
+	/++
+		Adds a child to the given position. This is `protected` because you generally shouldn't be calling this directly. Instead, construct widgets with the parent directly.
+
+		This is available primarily to be overridden. For example, [MainWindow] overrides it to redirect its children into a central widget.
+	+/
+	protected void addChild(Widget w, int position = int.max) {
+		w._parent = this;
+		if(position == int.max || position == children.length) {
+			_children ~= w;
+		} else {
+			assert(position < _children.length);
+			_children.length = _children.length + 1;
+			for(int i = cast(int) _children.length - 1; i > position; i--)
+				_children[i] = _children[i - 1];
+			_children[position] = w;
+		}
+
+		this.parentWindow = this._parentWindow;
+
+		w.addedTo(this);
+
+		if(this.hidden)
+			w.showing = false;
+
+		if(parentWindow !is null) {
+			w.attachedToWindow(parentWindow);
+			parentWindow.recomputeChildLayout();
+			parentWindow.redraw();
+		}
+	}
+
+	/++
+		Finds the child at the top of the z-order at the given coordinates (relative to the `this` widget's origin), or null if none are found.
+	+/
+	Widget getChildAtPosition(int x, int y) {
+		// it goes backward so the last one to show gets picked first
+		// might use z-index later
+		foreach_reverse(child; children) {
+			if(child.hidden)
+				continue;
+			if(child.x <= x && child.y <= y
+				&& ((x - child.x) < child.width)
+				&& ((y - child.y) < child.height))
+			{
+				return child;
+			}
+		}
+
+		return null;
+	}
+
+	/++
+		Responsible for actually painting the widget to the screen. The clip rectangle and coordinate translation in the [WidgetPainter] are pre-configured so you can draw independently.
+
+		You should also look at [WidgetPainter.visualTheme] to be theme aware.
+	+/
+	void paint(WidgetPainter painter) {}
+
+	deprecated("Change ScreenPainter to WidgetPainter")
+	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
+
+	/// I don't actually like the name of this
+	/// this draws a background on it
+	void erase(WidgetPainter painter) {
+		version(win32_widgets)
+			if(hwnd) return; // Windows will do it. I think.
+
+		auto c = getComputedStyle().backgroundColor;
+		painter.fillColor = c;
+		painter.outlineColor = c;
+
+		version(win32_widgets) {
+			HANDLE b, p;
+			if(c.a == 0) {
+				b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
+				p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
+			}
+		}
+		painter.drawRectangle(Point(0, 0), width, height);
+		version(win32_widgets) {
+			if(c.a == 0) {
+				SelectObject(painter.impl.hdc, p);
+				SelectObject(painter.impl.hdc, b);
+			}
+		}
+	}
+
+	///
+	WidgetPainter draw() {
+		int x = this.x, y = this.y;
+		auto parent = this.parent;
+		while(parent) {
+			x += parent.x;
+			y += parent.y;
+			parent = parent.parent;
+		}
+
+		auto painter = parentWindow.win.draw();
+		painter.originX = x;
+		painter.originY = y;
+		painter.setClipRectangle(Point(0, 0), width, height);
+		return WidgetPainter(painter, this);
+	}
+
+	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code.
+	protected void privatePaint(WidgetPainter painter, int lox, int loy, bool force = false) {
+		if(hidden)
+			return;
+
+		painter.originX = lox + x;
+		painter.originY = loy + y;
+
+		bool actuallyPainted = false;
+
+		if(redrawRequested || force) {
+			painter.setClipRectangle(Point(0, 0), width, height);
+
+			painter.drawingUpon = this;
+
+			erase(painter);
+			if(painter.visualTheme)
+				painter.visualTheme.doPaint(this, painter);
+			else
+				paint(painter);
+
+			redrawRequested = false;
+			actuallyPainted = true;
+		}
+
+		foreach(child; children) {
+			version(win32_widgets)
+				if(child.useNativeDrawing()) continue;
+			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+		}
+
+		version(win32_widgets)
+		foreach(child; children) {
+			if(child.useNativeDrawing) {
+				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw, child);
+				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+			}
+		}
+	}
+
+	protected bool useNativeDrawing() nothrow {
+		version(win32_widgets)
+			return hwnd !is null;
+		else
+			return false;
+	}
+
+	private static class RedrawEvent {}
+	private __gshared re = new RedrawEvent();
+
+	private bool redrawRequested;
+	///
+	final void redraw(string file = __FILE__, size_t line = __LINE__) {
+		redrawRequested = true;
+
+		if(this.parentWindow) {
+			auto sw = this.parentWindow.win;
+			assert(sw !is null);
+			if(!sw.eventQueued!RedrawEvent) {
+				sw.postEvent(re);
+				//import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+			}
+		}
+	}
+
+	private void actualRedraw() {
+		if(!showing) return;
+
+		assert(parentWindow !is null);
+
+		auto w = drawableWindow;
+		if(w is null)
+			w = parentWindow.win;
+
+		if(w.closed())
+			return;
+
+		auto ugh = this.parent;
+		int lox, loy;
+		while(ugh) {
+			lox += ugh.x;
+			loy += ugh.y;
+			ugh = ugh.parent;
+		}
+		auto painter = w.draw();
+		privatePaint(WidgetPainter(painter, this), lox, loy);
+	}
+
+	private SimpleWindow drawableWindow;
+
+	/++
+		Allows a class to easily dispatch its own statically-declared event (see [Emits]). The main benefit of using this over constructing an event yourself is simply that you ensure you haven't sent something you haven't documented you can send.
+
+		Returns:
+			`true` if you should do your default behavior.
+
+		History:
+			Added May 5, 2021
+	+/
+	final protected bool emit(EventType, this This, Args...)(Args args) {
+		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
+		auto e = new EventType(args, this);
+		e.dispatch();
+		return !e.defaultPrevented;
+	}
+	/// ditto
+	final protected bool emit(string eventString, this This)() {
+		auto e = new Event(eventString, this);
+		e.dispatch();
+		return !e.defaultPrevented;
+	}
+
+	/++
+		Does the same as [addEventListener]'s delegate overload, but adds an additional check to ensure the event you are subscribing to is actually emitted by the static type you are using. Since it works on static types, if you have a generic [Widget], this can only subscribe to events declared as [Emits] inside [Widget] itself, not any child classes nor any child elements. If this is too restrictive, simply use [addEventListener] instead.
+
+		History:
+			Added May 5, 2021
+	+/
+	final public EventListener subscribe(EventType, this This)(void delegate(EventType) handler) {
+		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
+		return addEventListener(handler);
+	}
+
+	/++
+		Gets the computed style properties from the visual theme.
+
+		You should use this in your paint and layout functions instead of the direct properties on the widget if you want to be style aware. (But when setting defaults in your classes, overriding is the right thing to do. Override to set defaults, but then read out of [getComputedStyle].)
+
+		History:
+			Added May 8, 2021
+	+/
+	final StyleInformation getComputedStyle() {
+		return StyleInformation(this);
+	}
+
+	mixin Emits!KeyDownEvent; ///
+	mixin Emits!KeyUpEvent; ///
+	mixin Emits!CharEvent; ///
+
+	mixin Emits!MouseDownEvent; ///
+	mixin Emits!MouseUpEvent; ///
+	mixin Emits!ClickEvent; ///
+	mixin Emits!MouseMoveEvent; ///
+	mixin Emits!MouseOverEvent; ///
+	mixin Emits!MouseOutEvent; ///
+	mixin Emits!MouseEnterEvent; ///
+	mixin Emits!MouseLeaveEvent; ///
+}
 
 ///
 abstract class ComboboxBase : Widget {
@@ -353,10 +1424,11 @@ abstract class ComboboxBase : Widget {
 			dropDown.move(coord.x, coord.y + this.height);
 
 			{
+				auto cs = getComputedStyle();
 				auto painter = dropDown.draw();
-				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen);
+				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen, getComputedStyle().backgroundColor);
 				auto p = Point(4, 4);
-				painter.outlineColor = Color.black;
+				painter.outlineColor = cs.foregroundColor;
 				foreach(option; options) {
 					painter.drawText(p, option);
 					p.y += Window.lineHeight;
@@ -408,12 +1480,13 @@ class DropDownSelection : ComboboxBase {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		draw3dFrame(this, painter, FrameStyle.risen);
-		painter.outlineColor = Color.black;
+		auto cs = getComputedStyle();
+		draw3dFrame(this, painter, FrameStyle.risen, getComputedStyle.backgroundColor);
+		painter.outlineColor = cs.foregroundColor;
 		painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
 
-		painter.outlineColor = Color.black;
-		painter.fillColor = Color.black;
+		painter.outlineColor = cs.foregroundColor;
+		painter.fillColor = cs.foregroundColor;
 		Point[4] triangle;
 		enum padding = 6;
 		enum paddingV = 7;
@@ -426,9 +1499,9 @@ class DropDownSelection : ComboboxBase {
 
 		if(isFocused()) {
 			painter.fillColor = Color.transparent;
-			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+			painter.pen = Pen(cs.foregroundColor, 1, Pen.Style.Dotted);
 			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
+			painter.pen = Pen(cs.foregroundColor, 1, Pen.Style.Solid);
 
 		}
 	}
@@ -627,6 +1700,9 @@ class DataView : Widget {
 //static if(UsingSimpledisplayX11)
 version(win32_widgets) {}
 else version(custom_widgets) {
+	enum scrollClickRepeatInterval = 50;
+
+deprecated("Get these properties off `Widget.getComputedStyle` instead. The defaults are now set in the `WidgetPainter.visualTheme`.") {
 	enum windowBackgroundColor = Color(212, 212, 212); // used to be 192
 	enum activeTabColor = lightAccentColor;
 	enum hoveringColor = Color(228, 228, 228);
@@ -636,12 +1712,13 @@ else version(custom_widgets) {
 	enum progressBarColor = Color(0, 0, 128);
 	enum activeMenuItemColor = Color(0, 0, 128);
 
-	enum scrollClickRepeatInterval = 50;
-}
+}}
 else static assert(false);
+deprecated("Get these properties off the `visualTheme` instead.") {
 	// these are used by horizontal rule so not just custom_widgets. for now at least.
 	enum darkAccentColor = Color(172, 172, 172);
 	enum lightAccentColor = Color(223, 223, 223); // used to be 223
+}
 
 private const(wchar)* toWstringzInternal(in char[] s) {
 	wchar[] str;
@@ -702,35 +1779,76 @@ else
 void setClickRepeat(Widget w, int interval, int delay = 250) {}
 
 enum FrameStyle {
+	none,
 	risen,
-	sunk
+	sunk,
+	solid,
+	dotted
 }
 
 version(custom_widgets)
-void draw3dFrame(Widget widget, ScreenPainter painter, FrameStyle style, Color background = windowBackgroundColor) {
+deprecated
+void draw3dFrame(Widget widget, ScreenPainter painter, FrameStyle style) {
+	draw3dFrame(0, 0, widget.width, widget.height, painter, style, WidgetPainter.visualTheme.windowBackgroundColor);
+}
+
+version(custom_widgets)
+void draw3dFrame(Widget widget, ScreenPainter painter, FrameStyle style, Color background) {
 	draw3dFrame(0, 0, widget.width, widget.height, painter, style, background);
 }
 
 version(custom_widgets)
-void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, FrameStyle style, Color background = windowBackgroundColor) {
-	// outer layer
-	painter.outlineColor = style == FrameStyle.sunk ? Color.white : Color.black;
+deprecated
+void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, FrameStyle style) {
+	draw3dFrame(x, y, width, height, painter, style, WidgetPainter.visualTheme.windowBackgroundColor);
+}
+
+int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, FrameStyle style, Color background, Color border = Color.transparent) {
+	int borderWidth;
+	final switch(style) {
+		case FrameStyle.sunk, FrameStyle.risen:
+			// outer layer
+			painter.outlineColor = style == FrameStyle.sunk ? Color.white : Color.black;
+			borderWidth = 2;
+		break;
+		case FrameStyle.none:
+			painter.outlineColor = background;
+			borderWidth = 0;
+		break;
+		case FrameStyle.solid:
+			painter.pen = Pen(border, 1);
+			borderWidth = 1;
+		break;
+		case FrameStyle.dotted:
+			painter.pen = Pen(border, 1, Pen.Style.Dotted);
+			borderWidth = 1;
+		break;
+	}
+
 	painter.fillColor = background;
 	painter.drawRectangle(Point(x + 0, y + 0), width, height);
 
-	painter.outlineColor = (style == FrameStyle.sunk) ? darkAccentColor : lightAccentColor;
-	painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
-	painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
 
-	// inner layer
-	//right, bottom
-	painter.outlineColor = (style == FrameStyle.sunk) ? lightAccentColor : darkAccentColor;
-	painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
-	painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
-	// left, top
-	painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
-	painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
-	painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
+	if(style == FrameStyle.sunk || style == FrameStyle.risen) {
+		// 3d effect
+		auto vt = WidgetPainter.visualTheme;
+
+		painter.outlineColor = (style == FrameStyle.sunk) ? vt.darkAccentColor : vt.lightAccentColor;
+		painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
+		painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
+
+		// inner layer
+		//right, bottom
+		painter.outlineColor = (style == FrameStyle.sunk) ? vt.lightAccentColor : vt.darkAccentColor;
+		painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
+		painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
+		// left, top
+		painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
+		painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
+		painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
+	}
+
+	return borderWidth;
 }
 
 ///
@@ -848,40 +1966,6 @@ mixin template Margin(string code) {
 	override int marginBottom() { return mixin(code);}
 }
 
-
-mixin template LayoutInfo() {
-	int minWidth() { return 0; }
-	int minHeight() {
-		// default widgets have a vertical layout, therefore the minimum height is the sum of the contents
-		int sum = 0;
-		foreach(child; children) {
-			sum += child.minHeight();
-			sum += child.marginTop();
-			sum += child.marginBottom();
-		}
-
-		return sum;
-	}
-	int maxWidth() { return int.max; }
-	int maxHeight() { return int.max; }
-	int widthStretchiness() { return 4; }
-	int heightStretchiness() { return 4; }
-
-	int marginLeft() { return 0; }
-	int marginRight() { return 0; }
-	int marginTop() { return 0; }
-	int marginBottom() { return 0; }
-	int paddingLeft() { return 0; }
-	int paddingRight() { return 0; }
-	int paddingTop() { return 0; }
-	int paddingBottom() { return 0; }
-	//LinePreference linePreference() { return LinePreference.PreferOwnLine; }
-
-	void recomputeChildLayout() {
-		.recomputeChildLayout!"height"(this);
-	}
-}
-
 private
 void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	enum calcingV = relevantMeasure == "height";
@@ -891,6 +1975,8 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	if(parent.children.length == 0)
 		return;
 
+	auto parentStyle = parent.getComputedStyle();
+
 	enum firstThingy = relevantMeasure == "height" ? "Top" : "Left";
 	enum secondThingy = relevantMeasure == "height" ? "Bottom" : "Right";
 
@@ -899,8 +1985,8 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 	// my own width and height should already be set by the caller of this function...
 	int spaceRemaining = mixin("parent." ~ relevantMeasure) -
-		mixin("parent.padding"~firstThingy~"()") -
-		mixin("parent.padding"~secondThingy~"()");
+		mixin("parentStyle.padding"~firstThingy~"()") -
+		mixin("parentStyle.padding"~secondThingy~"()");
 
 	int stretchinessSum;
 	int stretchyChildSum;
@@ -908,6 +1994,9 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 	// set initial size
 	foreach(child; parent.children) {
+
+		auto childStyle = child.getComputedStyle();
+
 		if(cast(StaticPosition) child)
 			continue;
 		if(child.hidden)
@@ -915,33 +2004,33 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 		static if(calcingV) {
 			child.width = parent.width -
-				mixin("child.margin"~otherFirstThingy~"()") -
-				mixin("child.margin"~otherSecondThingy~"()") -
-				mixin("parent.padding"~otherFirstThingy~"()") -
-				mixin("parent.padding"~otherSecondThingy~"()");
+				mixin("childStyle.margin"~otherFirstThingy~"()") -
+				mixin("childStyle.margin"~otherSecondThingy~"()") -
+				mixin("parentStyle.padding"~otherFirstThingy~"()") -
+				mixin("parentStyle.padding"~otherSecondThingy~"()");
 
 			if(child.width < 0)
 				child.width = 0;
-			if(child.width > child.maxWidth())
-				child.width = child.maxWidth();
-			child.height = child.minHeight();
+			if(child.width > childStyle.maxWidth())
+				child.width = childStyle.maxWidth();
+			child.height = childStyle.minHeight();
 		} else {
 			child.height = parent.height -
-				mixin("child.margin"~firstThingy~"()") -
-				mixin("child.margin"~secondThingy~"()") -
-				mixin("parent.padding"~firstThingy~"()") -
-				mixin("parent.padding"~secondThingy~"()");
+				mixin("childStyle.margin"~firstThingy~"()") -
+				mixin("childStyle.margin"~secondThingy~"()") -
+				mixin("parentStyle.padding"~firstThingy~"()") -
+				mixin("parentStyle.padding"~secondThingy~"()");
 			if(child.height < 0)
 				child.height = 0;
-			if(child.height > child.maxHeight())
-				child.height = child.maxHeight();
-			child.width = child.minWidth();
+			if(child.height > childStyle.maxHeight())
+				child.height = childStyle.maxHeight();
+			child.width = childStyle.minWidth();
 		}
 
 		spaceRemaining -= mixin("child." ~ relevantMeasure);
 
-		int thisMargin = mymax(lastMargin, mixin("child.margin"~firstThingy~"()"));
-		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
+		int thisMargin = mymax(lastMargin, mixin("childStyle.margin"~firstThingy~"()"));
+		auto margin = mixin("childStyle.margin" ~ secondThingy ~ "()");
 		lastMargin = margin;
 		spaceRemaining -= thisMargin + margin;
 		auto s = mixin("child." ~ relevantMeasure ~ "Stretchiness()");
@@ -968,14 +2057,15 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		Widget mostStretchy;
 		int mostStretchyS;
 		foreach(child; parent.children) {
+			auto childStyle = child.getComputedStyle();
 			if(cast(StaticPosition) child)
 				continue;
 			if(child.hidden)
 				continue;
 			static if(calcingV)
-				auto maximum = child.maxHeight();
+				auto maximum = childStyle.maxHeight();
 			else
-				auto maximum = child.maxWidth();
+				auto maximum = childStyle.maxWidth();
 
 			if(mixin("child." ~ relevantMeasure) >= maximum) {
 				auto adj = mixin("child." ~ relevantMeasure) - maximum;
@@ -1004,12 +2094,13 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 		if(giveToBiggest && mostStretchy !is null) {
 			auto child = mostStretchy;
+			auto childStyle = child.getComputedStyle();
 			int spaceAdjustment = spaceRemaining;
 
 			static if(calcingV)
-				auto maximum = child.maxHeight();
+				auto maximum = childStyle.maxHeight();
 			else
-				auto maximum = child.maxWidth();
+				auto maximum = childStyle.maxWidth();
 
 			mixin("child._" ~ relevantMeasure) += spaceAdjustment;
 			spaceRemaining -= spaceAdjustment;
@@ -1028,21 +2119,22 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	lastMargin = 0;
 	int currentPos = mixin("parent.padding"~firstThingy~"()");
 	foreach(child; parent.children) {
+		auto childStyle = child.getComputedStyle();
 		if(cast(StaticPosition) child) {
 			child.recomputeChildLayout();
 			continue;
 		}
 		if(child.hidden)
 			continue;
-		auto margin = mixin("child.margin" ~ secondThingy ~ "()");
-		int thisMargin = mymax(lastMargin, mixin("child.margin"~firstThingy~"()"));
+		auto margin = mixin("childStyle.margin" ~ secondThingy ~ "()");
+		int thisMargin = mymax(lastMargin, mixin("childStyle.margin"~firstThingy~"()"));
 		currentPos += thisMargin;
 		static if(calcingV) {
-			child.x = parent.paddingLeft() + child.marginLeft();
+			child.x = parentStyle.paddingLeft() + childStyle.marginLeft();
 			child.y = currentPos;
 		} else {
 			child.x = currentPos;
-			child.y = parent.paddingTop() + child.marginTop();
+			child.y = parentStyle.paddingTop() + childStyle.marginTop();
 
 		}
 		currentPos += mixin("child." ~ relevantMeasure);
@@ -1190,7 +2282,7 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 		return true;
 	auto parent = cast(Widget) cast(void*) lparam;
 	Widget p = new Widget();
-	p.parent = parent;
+	p._parent = parent;
 	p.parentWindow = parent.parentWindow;
 	p.hwnd = hwnd;
 	p.implicitlyCreated = true;
@@ -1200,13 +2292,22 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 }
 
 /++
-
+	Encapsulates the simpledisplay [ScreenPainter] for use on a [Widget], with [VisualTheme] and invalidated area awareness.
 +/
 struct WidgetPainter {
+	this(ScreenPainter screenPainter, Widget drawingUpon) {
+		this.drawingUpon = drawingUpon;
+		this.screenPainter = screenPainter;
+		if(auto font = visualTheme.defaultFontCached)
+			this.screenPainter.setFont(font);
+	}
+
 	///
 	ScreenPainter screenPainter;
 	/// Forward to the screen painter for other methods
 	alias screenPainter this;
+
+	private Widget drawingUpon;
 
 	/++
 		This is the list of rectangles that actually need to be redrawn.
@@ -1215,16 +2316,119 @@ struct WidgetPainter {
 	+/
 	Rectangle[] invalidatedRectangles;
 
-	private static IVisualTheme _visualTheme;
+	private static BaseVisualTheme _visualTheme;
 
-	static @property IVisualTheme visualTheme() {
+	/++
+		Functions to access the visual theme and helpers to easily use it.
+
+		These are aware of the current widget's computed style out of the theme.
+	+/
+	static @property BaseVisualTheme visualTheme() {
 		if(_visualTheme is null)
 			_visualTheme = new DefaultVisualTheme();
 		return _visualTheme;
 	}
 
-	static @property void visualTheme(IVisualTheme theme) {
+	/// ditto
+	static @property void visualTheme(BaseVisualTheme theme) {
 		_visualTheme = theme;
+	}
+
+	/// ditto
+	Color themeForeground() {
+		return drawingUpon.getComputedStyle().foregroundColor();
+	}
+
+	/// ditto
+	Color themeBackground() {
+		return drawingUpon.getComputedStyle().backgroundColor();
+	}
+
+	int isDarkTheme() {
+		return 0; // unspecified, yes, no as enum. FIXME
+	}
+
+	/++
+		Draws the general pattern of a widget if you don't need anything particularly special and/or control the other details through your widget's style theme hints.
+
+		It gives your draw delegate a [Rectangle] representing the coordinates inside your border and padding.
+
+		If you change teh clip rectangle, you should change it back before you return.
+
+
+		The sequence it uses is:
+			background
+			content (delegated to you)
+			border
+			focused outline
+			selected overlay
+
+		Example code:
+
+		---
+		void paint(WidgetPainter painter) {
+			painter.drawThemed((bounds) {
+				return bounds; // if the selection overlay should be contained, you can return it here.
+			});
+		}
+		---
+	+/
+	void drawThemed(scope Rectangle delegate(const Rectangle bounds) drawBody) {
+		drawThemed((WidgetPainter painter, const Rectangle bounds) {
+			return drawBody(bounds);
+		});
+	}
+	// this overload is actually mroe for setting the delegate to a virtual function
+	void drawThemed(scope Rectangle delegate(WidgetPainter painter, const Rectangle bounds) drawBody) {
+		Rectangle rect = Rectangle(0, 0, drawingUpon.width, drawingUpon.height);
+
+		auto cs = drawingUpon.getComputedStyle();
+
+		auto bg = cs.backgroundColor;
+
+		auto borderWidth = draw3dFrame(0, 0, drawingUpon.width, drawingUpon.height, this, cs.borderStyle, bg, cs.borderColor);
+
+		rect.left += borderWidth;
+		rect.right -= borderWidth;
+		rect.top += borderWidth;
+		rect.bottom -= borderWidth;
+
+		auto insideBorderRect = rect;
+
+		rect.left += cs.paddingLeft;
+		rect.right -= cs.paddingRight;
+		rect.top += cs.paddingTop;
+		rect.bottom += cs.paddingBottom;
+
+		this.outlineColor = this.themeForeground;
+		this.fillColor = bg;
+
+		rect = drawBody(this, rect);
+
+		if(auto os = cs.outlineStyle()) {
+			this.pen = Pen(cs.outlineColor(), 1, os == FrameStyle.dotted ? Pen.Style.Dotted : Pen.Style.Solid);
+			this.fillColor = Color.transparent;
+			this.drawRectangle(insideBorderRect);
+		}
+	}
+
+	/++
+		First, draw the background.
+		Then draw your content.
+		Next, draw the border.
+		And the focused indicator.
+		And the is-selected box.
+
+		If it is focused i can draw the outline too...
+
+		If selected i can even do the xor action but that's at the end.
+	+/
+	void drawThemeBackground() {
+
+	}
+
+	void drawThemeBorder() {
+
 	}
 
 	// all this stuff is a dangerous experiment....
@@ -1336,21 +2540,6 @@ template Container(CArgs...) {
 		static ContainerMeta opCall(ContainerMeta[] children...) {
 			return opCall(null, children);
 		}
-	}
-}
-
-struct Style {
-	static struct helper(string m, T) {
-		enum method = m;
-		T v;
-
-		mixin template MethodOverride(typeof(this) v) {
-			mixin("override typeof(v.v) "~v.method~"() { return v.v; }");
-		}
-	}
-
-	static auto opDispatch(string method, T)(T value) {
-		return helper!(method, T)(value);
 	}
 }
 
@@ -1503,697 +2692,108 @@ DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T* t) if(is(T =
 
 	widget.computedStyle
 +/
-version(none)
-private class Style {
-	this(Widget w) {
+struct StyleInformation {
+	private Widget w;
+	private BaseVisualTheme visualTheme;
 
+	private this(Widget w) {
+		this.w = w;
+		this.visualTheme = WidgetPainter.visualTheme;
 	}
 
-	T getProperty(T)(string name, T default_) {
-		return default_;
+	// FIXME: clear this upon a X server disconnect
+	private static OperatingSystemFont[string] fontCache;
+
+	T getProperty(T)(string name, lazy T default_) {
+		if(visualTheme !is null) {
+			auto str = visualTheme.getPropertyString(w, name);
+			if(str is null)
+				return default_;
+			static if(is(T == Color))
+				return Color.fromString(str);
+			else static if(is(T == Measurement))
+				return Measurement(cast(int) toInternal!int(str));
+			else static if(is(T == OperatingSystemFont)) {
+				if(auto f = str in fontCache)
+					return *f;
+				else
+					return fontCache[str] = new OperatingSystemFont(str);
+			} else static if(is(T == FrameStyle)) {
+				switch(str) {
+					default:
+						return FrameStyle.none;
+					foreach(style; __traits(allMembers, FrameStyle))
+					case style:
+						return __traits(getMember, FrameStyle, style);
+				}
+			} else static assert(0);
+		} else
+			return default_;
 	}
 
-	int paddingLeft() { return getProperty("padding-left", w.paddingLeft()); }
-	int paddingRight() { return getProperty("padding-right", w.paddingRight()); }
-	int paddingTop() { return getProperty("padding-top", w.paddingTop()); }
-	int paddingBottom() { return getProperty("padding-bottom", w.paddingBottom()); }
+	static struct Measurement {
+		int value;
+		alias value this;
+	}
 
-	int marginLeft() { return getProperty("margin-left", w.marginLeft()); }
-	int marginRight() { return getProperty("margin-right", w.marginRight()); }
-	int marginTop() { return getProperty("margin-top", w.marginTop()); }
-	int marginBottom() { return getProperty("margin-bottom", w.marginBottom()); }
+	private static auto extractStyleProperty(string name)(Widget w) {
+		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
+		w.useStyleProperties((props) {
+			prop = __traits(getMember, props, name);
+		});
+		return prop;
+	}
 
-	int maxHeight() { return getProperty("max-height", w.maxHeight()); }
-	int minHeight() { return getProperty("min-height", w.minHeight()); }
+	@property:
 
-	int maxWidth() { return getProperty("max-width", w.maxWidth()); }
-	int minWidth() { return getProperty("min-width", w.minWidth()); }
+	int paddingLeft() { return getProperty("padding-left", Measurement(w.paddingLeft())); }
+	int paddingRight() { return getProperty("padding-right", Measurement(w.paddingRight())); }
+	int paddingTop() { return getProperty("padding-top", Measurement(w.paddingTop())); }
+	int paddingBottom() { return getProperty("padding-bottom", Measurement(w.paddingBottom())); }
 
-	Color backgroundColor() { return getProperty("background-color", getProperty("--bg", windowBackgroundColor)); }
+	int marginLeft() { return getProperty("margin-left", Measurement(w.marginLeft())); }
+	int marginRight() { return getProperty("margin-right", Measurement(w.marginRight())); }
+	int marginTop() { return getProperty("margin-top", Measurement(w.marginTop())); }
+	int marginBottom() { return getProperty("margin-bottom", Measurement(w.marginBottom())); }
+
+	int maxHeight() { return getProperty("max-height", Measurement(w.maxHeight())); }
+	int minHeight() { return getProperty("min-height", Measurement(w.minHeight())); }
+
+	int maxWidth() { return getProperty("max-width", Measurement(w.maxWidth())); }
+	int minWidth() { return getProperty("min-width", Measurement(w.minWidth())); }
+
+
+	Color backgroundColor() { return getProperty("background-color", extractStyleProperty!"backgroundColor"(w)); }
+	Color foregroundColor() { return getProperty("foreground-color", extractStyleProperty!"foregroundColor"(w)); }
+
+	OperatingSystemFont font() { return getProperty("font", extractStyleProperty!"fontCached"(w)); }
+
+	FrameStyle borderStyle() { return getProperty("border-style", extractStyleProperty!"borderStyle"(w)); }
+	Color borderColor() { return getProperty("border-color", extractStyleProperty!"borderColor"(w)); }
+
+	FrameStyle outlineStyle() { return getProperty("outline-style", extractStyleProperty!"outlineStyle"(w)); }
+	Color outlineColor() { return getProperty("outline-color", extractStyleProperty!"outlineColor"(w)); }
+
+
+	Color windowBackgroundColor() { return WidgetPainter.visualTheme.windowBackgroundColor(); }
+	Color lightAccentColor() { return WidgetPainter.visualTheme.lightAccentColor(); }
+	Color darkAccentColor() { return WidgetPainter.visualTheme.darkAccentColor(); }
+
+	Color activeTabColor() { return lightAccentColor; }
+	Color buttonColor() { return windowBackgroundColor; }
+	Color depressedButtonColor() { return darkAccentColor; }
+	Color hoveringColor() { return Color(228, 228, 228); }
+	Color activeListXorColor() {
+		auto c = WidgetPainter.visualTheme.selectionColor();
+		return Color(c.r ^ 255, c.g ^ 255, c.b ^ 255, c.a);
+	}
+	Color progressBarColor() { return WidgetPainter.visualTheme.selectionColor(); }
+	Color activeMenuItemColor() { return WidgetPainter.visualTheme.selectionColor(); }
 }
 
-/**
-	The way this module works is it builds on top of a SimpleWindow
-	from simpledisplay to provide simple controls and such.
 
-	Non-native controls suck, but nevertheless, I'm going to do it that
-	way to avoid dependencies on stuff like gtk on X... and since I'll
-	be writing the widgets there, I might as well just use them on Windows
-	too if you like, using `-version=custom_widgets`.
 
-	So, by extension, this sucks. But gtkd is just too big for me.
-
-
-	The goal is to look kinda like Windows 95, perhaps with customizability.
-	Nothing too fancy, just the basics that work, but of course you can do whatever
-	you want in the draw handler.
-*/
-class Widget {
-	mixin LayoutInfo!();
-
-	protected void sendResizeEvent() {
-		auto event = new Event("resize", this);
-		event.sendDirectly();
-	}
-
-	Menu contextMenu(int x, int y) { return null; }
-
-	final bool showContextMenu(int x, int y, int screenX = -2, int screenY = -2) {
-		if(parentWindow is null || parentWindow.win is null) return false;
-
-		auto menu = this.contextMenu(x, y);
-		if(menu is null)
-			return false;
-
-		version(win32_widgets) {
-			// FIXME: if it is -1, -1, do it at the current selection location instead
-			// tho the corner of the window, whcih it does now, isn't the literal worst.
-
-			if(screenX < 0 && screenY < 0) {
-				auto p = this.globalCoordinates();
-				if(screenX == -2)
-					p.x += x;
-				if(screenY == -2)
-					p.y += y;
-
-				screenX = p.x;
-				screenY = p.y;
-			}
-
-			if(!TrackPopupMenuEx(menu.handle, 0, screenX, screenY, parentWindow.win.impl.hwnd, null))
-				throw new Exception("TrackContextMenuEx");
-		} else version(custom_widgets) {
-			menu.popup(this, x, y);
-		}
-
-		return true;
-	}
-
-	///
-	@scriptable
-	void removeWidget() {
-		auto p = this.parent;
-		if(p) {
-			int item;
-			for(item = 0; item < p.children.length; item++)
-				if(p.children[item] is this)
-					break;
-			for(; item < p.children.length - 1; item++)
-				p.children[item] = p.children[item + 1];
-			p.children = p.children[0 .. $-1];
-		}
-	}
-
-	@scriptable
-	Widget getChildByName(string name) {
-		return getByName(name);
-	}
-	///
-	final WidgetClass getByName(WidgetClass = Widget)(string name) {
-		if(this.name == name)
-			if(auto c = cast(WidgetClass) this)
-				return c;
-		foreach(child; children) {
-			auto w = child.getByName(name);
-			if(auto c = cast(WidgetClass) w)
-				return c;
-		}
-		return null;
-	}
-
-	@scriptable
-	string name; ///
-
-	private EventHandler[][string] bubblingEventHandlers;
-	private EventHandler[][string] capturingEventHandlers;
-
-	/++
-		Default event handlers. These are called on the appropriate
-		event unless [Event.preventDefault] is called on the event at
-		some point through the bubbling process.
-
-
-		If you are implementing your own widget and want to add custom
-		events, you should follow the same pattern here: create a virtual
-		function named `defaultEventHandler_eventname` with the implementation,
-		then, override [setupDefaultEventHandlers] and add a wrapped caller to
-		`defaultEventHandlers["eventname"]`. It should be wrapped like so:
-		`defaultEventHandlers["eventname"] = (Widget t, Event event) { t.defaultEventHandler_name(event); };`.
-		This ensures virtual dispatch based on the correct subclass.
-
-		Also, don't forget to call `super.setupDefaultEventHandlers();` too in your
-		overridden version.
-
-		You only need to do that on parent classes adding NEW event types. If you
-		just want to change the default behavior of an existing event type in a subclass,
-		you override the function (and optionally call `super.method_name`) like normal.
-
-	+/
-	protected EventHandler[string] defaultEventHandlers;
-
-	/// ditto
-	void setupDefaultEventHandlers() {
-		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(cast(ClickEvent) event); };
-		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(cast(KeyDownEvent) event); };
-		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(cast(KeyUpEvent) event); };
-		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(cast(MouseOverEvent) event); };
-		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(cast(MouseOutEvent) event); };
-		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(cast(MouseDownEvent) event); };
-		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(cast(MouseUpEvent) event); };
-		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(cast(MouseEnterEvent) event); };
-		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(cast(MouseLeaveEvent) event); };
-		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(cast(MouseMoveEvent) event); };
-		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(cast(CharEvent) event); };
-		defaultEventHandlers["triggered"] = (Widget t, Event event) { t.defaultEventHandler_triggered(event); };
-		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
-		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
-		defaultEventHandlers["blur"] = (Widget t, Event event) { t.defaultEventHandler_blur(event); };
-	}
-
-	/// ditto
-	void defaultEventHandler_click(ClickEvent event) {}
-	/// ditto
-	void defaultEventHandler_keydown(KeyDownEvent event) {}
-	/// ditto
-	void defaultEventHandler_keyup(KeyUpEvent event) {}
-	/// ditto
-	void defaultEventHandler_mousedown(MouseDownEvent event) {}
-	/// ditto
-	void defaultEventHandler_mouseover(MouseOverEvent event) {}
-	/// ditto
-	void defaultEventHandler_mouseout(MouseOutEvent event) {}
-	/// ditto
-	void defaultEventHandler_mouseup(MouseUpEvent event) {}
-	/// ditto
-	void defaultEventHandler_mousemove(MouseMoveEvent event) {}
-	/// ditto
-	void defaultEventHandler_mouseenter(MouseEnterEvent event) {}
-	/// ditto
-	void defaultEventHandler_mouseleave(MouseLeaveEvent event) {}
-	/// ditto
-	void defaultEventHandler_char(CharEvent event) {}
-	/// ditto
-	void defaultEventHandler_triggered(Event event) {}
-	/// ditto
-	void defaultEventHandler_change(Event event) {}
-	/// ditto
-	void defaultEventHandler_focus(Event event) {}
-	/// ditto
-	void defaultEventHandler_blur(Event event) {}
-
-	/++
-		Events use a Javascript-esque scheme.
-
-		[addEventListener] returns an opaque handle that you can later pass to [removeEventListener].
-	+/
-	EventListener addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event e) {
-			if(e.srcElement is this)
-				handler();
-		}, useCapture);
-	}
-
-	///
-	EventListener addDirectEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event e) {
-			if(e.srcElement is this)
-				handler(e);
-		}, useCapture);
-	}
-
-	EventListener addEventListener(Handler)(Handler handler, bool useCapture = false) {
-		static if(is(Handler Fn == delegate)) {
-		static if(is(Fn Params == __parameters)) {
-			return addEventListener(EventString!(Params[0]), (Widget, Event e) {
-				auto ty = cast(Params[0]) e;
-				if(ty !is null)
-					handler(ty);
-			}, useCapture);
-		} else static assert(0);
-		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate.");
-	}
-
-	///
-	@scriptable
-	EventListener addEventListener(string event, void delegate() handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event) { handler(); }, useCapture);
-	}
-
-	///
-	EventListener addEventListener(string event, void delegate(Event) handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event e) { handler(e); }, useCapture);
-	}
-
-	///
-	EventListener addEventListener(string event, EventHandler handler, bool useCapture = false) {
-		if(event.length > 2 && event[0..2] == "on")
-			event = event[2 .. $];
-
-		if(useCapture)
-			capturingEventHandlers[event] ~= handler;
-		else
-			bubblingEventHandlers[event] ~= handler;
-
-		return EventListener(this, event, handler, useCapture);
-	}
-
-	///
-	void removeEventListener(string event, EventHandler handler, bool useCapture = false) {
-		if(event.length > 2 && event[0..2] == "on")
-			event = event[2 .. $];
-
-		if(useCapture) {
-			if(event in capturingEventHandlers)
-			foreach(ref evt; capturingEventHandlers[event])
-				if(evt is handler) evt = null;
-		} else {
-			if(event in bubblingEventHandlers)
-			foreach(ref evt; bubblingEventHandlers[event])
-				if(evt is handler) evt = null;
-		}
-	}
-
-	///
-	void removeEventListener(EventListener listener) {
-		removeEventListener(listener.event, listener.handler, listener.useCapture);
-	}
-
-	MouseCursor cursor() {
-		return GenericCursor.Default;
-	}
-
-	static if(UsingSimpledisplayX11) {
-		void discardXConnectionState() {
-			foreach(child; children)
-				child.discardXConnectionState();
-		}
-
-		void recreateXConnectionState() {
-			foreach(child; children)
-				child.recreateXConnectionState();
-			redraw();
-		}
-	}
-
-	///
-	Point globalCoordinates() {
-		int x = this.x;
-		int y = this.y;
-		auto p = this.parent;
-		while(p) {
-			x += p.x;
-			y += p.y;
-			p = p.parent;
-		}
-
-		static if(UsingSimpledisplayX11) {
-			auto dpy = XDisplayConnection.get;
-			arsd.simpledisplay.Window dummyw;
-			XTranslateCoordinates(dpy, this.parentWindow.win.impl.window, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
-		} else {
-			POINT pt;
-			pt.x = x;
-			pt.y = y;
-			MapWindowPoints(this.parentWindow.win.impl.hwnd, null, &pt, 1);
-			x = pt.x;
-			y = pt.y;
-		}
-
-		return Point(x, y);
-	}
-
-	version(win32_widgets)
-	void handleWmCommand(ushort cmd, ushort id) {}
-
-	version(win32_widgets)
-	int handleWmNotify(NMHDR* hdr, int code) { return 0; }
-
-	@scriptable
-	string statusTip;
-	// string toolTip;
-	// string helpText;
-
-	bool tabStop = true;
-	int tabOrder;
-
-	version(win32_widgets) {
-		static Widget[HWND] nativeMapping;
-		HWND hwnd;
-		WNDPROC originalWindowProcedure;
-
-		SimpleWindow simpleWindowWrappingHwnd;
-
-		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
-			switch(iMessage) {
-				case WM_COMMAND:
-					auto handle = cast(HWND) lParam;
-					auto cmd = HIWORD(wParam);
-					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
-				default:
-			}
-			return 0;
-		}
-	}
-	bool implicitlyCreated;
-
-	int x; // relative to the parent's origin
-	int y; // relative to the parent's origin
-	int _width;
-	int _height;
-	Widget[] children;
-	Widget parent;
-
-	public @property int width() { return _width; }
-	public @property int height() { return _height; }
-
-	protected @property int width(int a) { return _width = a; }
-	protected @property int height(int a) { return _height = a; }
-
-	protected
-	void registerMovement() {
-		version(win32_widgets) {
-			if(hwnd) {
-				auto pos = getChildPositionRelativeToParentHwnd(this);
-				MoveWindow(hwnd, pos[0], pos[1], width, height, true);
-			}
-		}
-		sendResizeEvent();
-	}
-
-	Window parentWindow;
-
-	///
-	this(Widget parent = null) {
-		if(parent !is null)
-			parent.addChild(this);
-		setupDefaultEventHandlers();
-	}
-
-	///
-	@scriptable
-	bool isFocused() {
-		return parentWindow && parentWindow.focusedWidget is this;
-	}
-
-	private bool showing_ = true;
-	bool showing() { return showing_; }
-	bool hidden() { return !showing_; }
-	void showing(bool s, bool recalculate = true) {
-		auto so = showing_;
-		showing_ = s;
-		if(s != so) {
-
-			version(win32_widgets)
-			if(hwnd)
-				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
-
-			if(parent && recalculate) {
-				parent.recomputeChildLayout();
-				parent.redraw();
-			}
-
-			foreach(child; children)
-				child.showing(s, false);
-		}
-	}
-	///
-	@scriptable
-	void show() {
-		showing = true;
-	}
-	///
-	@scriptable
-	void hide() {
-		showing = false;
-	}
-
-	///
-	@scriptable
-	void focus() {
-		assert(parentWindow !is null);
-		if(isFocused())
-			return;
-
-		if(parentWindow.focusedWidget) {
-			// FIXME: more details here? like from and to
-			auto evt = new Event("blur", parentWindow.focusedWidget);
-			parentWindow.focusedWidget = null;
-			evt.sendDirectly();
-		}
-
-
-		version(win32_widgets) {
-			if(this.hwnd !is null)
-				SetFocus(this.hwnd);
-		}
-
-		parentWindow.focusedWidget = this;
-		auto evt = new Event("focus", this);
-		evt.dispatch();
-	}
-
-
-	void attachedToWindow(Window w) {}
-	void addedTo(Widget w) {}
-
-	private void newWindow(Window parent) {
-		parentWindow = parent;
-		foreach(child; children)
-			child.newWindow(parent);
-	}
-
-	protected void addChild(Widget w, int position = int.max) {
-		w.parent = this;
-		if(position == int.max || position == children.length)
-			children ~= w;
-		else {
-			assert(position < children.length);
-			children.length = children.length + 1;
-			for(int i = cast(int) children.length - 1; i > position; i--)
-				children[i] = children[i - 1];
-			children[position] = w;
-		}
-
-		w.newWindow(this.parentWindow);
-
-		w.addedTo(this);
-
-		if(this.hidden)
-			w.showing = false;
-
-		if(parentWindow !is null) {
-			w.attachedToWindow(parentWindow);
-			parentWindow.recomputeChildLayout();
-			parentWindow.redraw();
-		}
-	}
-
-	Widget getChildAtPosition(int x, int y) {
-		// it goes backward so the last one to show gets picked first
-		// might use z-index later
-		foreach_reverse(child; children) {
-			if(child.hidden)
-				continue;
-			if(child.x <= x && child.y <= y
-				&& ((x - child.x) < child.width)
-				&& ((y - child.y) < child.height))
-			{
-				return child;
-			}
-		}
-
-		return null;
-	}
-
-	///
-	void paint(WidgetPainter painter) {}
-
-	deprecated("Change ScreenPainter to WidgetPainter")
-	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
-
-	/// I don't actually like the name of this
-	/// this draws a background on it
-	void erase(WidgetPainter painter) {
-		version(win32_widgets)
-			if(hwnd) return; // Windows will do it. I think.
-
-		auto c = backgroundColor;
-		painter.fillColor = c;
-		painter.outlineColor = c;
-
-		version(win32_widgets) {
-			HANDLE b, p;
-			if(c.a == 0) {
-				b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
-				p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
-			}
-		}
-		painter.drawRectangle(Point(0, 0), width, height);
-		version(win32_widgets) {
-			if(c.a == 0) {
-				SelectObject(painter.impl.hdc, p);
-				SelectObject(painter.impl.hdc, b);
-			}
-		}
-	}
-
-	///
-	Color backgroundColor() {
-		// the default is a "transparent" background, which means
-		// it goes as far up as it can to get the color
-		if (backgroundColor_ != Color.transparent)
-			return backgroundColor_;
-		if (parent)
-			return parent.backgroundColor();
-		return backgroundColor_;
-	}
-
-	private Color backgroundColor_ = Color.transparent;
-	
-	///
-	void backgroundColor(Color c){
-		this.backgroundColor_ = c;
-	}
-
-	///
-	WidgetPainter draw() {
-		int x = this.x, y = this.y;
-		auto parent = this.parent;
-		while(parent) {
-			x += parent.x;
-			y += parent.y;
-			parent = parent.parent;
-		}
-
-		auto painter = parentWindow.win.draw();
-		painter.originX = x;
-		painter.originY = y;
-		painter.setClipRectangle(Point(0, 0), width, height);
-		return WidgetPainter(painter);
-	}
-
-	protected void privatePaint(WidgetPainter painter, int lox, int loy, bool force = false) {
-		if(hidden)
-			return;
-
-		painter.originX = lox + x;
-		painter.originY = loy + y;
-
-		bool actuallyPainted = false;
-
-		if(redrawRequested || force) {
-			painter.setClipRectangle(Point(0, 0), width, height);
-
-			erase(painter);
-			if(painter.visualTheme)
-				painter.visualTheme.doPaint(this, painter);
-			else
-				paint(painter);
-
-			redrawRequested = false;
-			actuallyPainted = true;
-		}
-
-		foreach(child; children) {
-			version(win32_widgets)
-				if(child.useNativeDrawing()) continue;
-			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
-		}
-
-		version(win32_widgets)
-		foreach(child; children) {
-			if(child.useNativeDrawing) {
-				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw);
-				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
-			}
-		}
-	}
-
-	protected bool useNativeDrawing() nothrow {
-		version(win32_widgets)
-			return hwnd !is null;
-		else
-			return false;
-	}
-
-	private static class RedrawEvent {}
-	private __gshared re = new RedrawEvent();
-
-	private bool redrawRequested;
-	///
-	final void redraw(string file = __FILE__, size_t line = __LINE__) {
-		redrawRequested = true;
-
-		if(this.parentWindow) {
-			auto sw = this.parentWindow.win;
-			assert(sw !is null);
-			if(!sw.eventQueued!RedrawEvent) {
-				sw.postEvent(re);
-				//import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
-			}
-		}
-	}
-
-	private void actualRedraw() {
-		if(!showing) return;
-
-		assert(parentWindow !is null);
-
-		auto w = drawableWindow;
-		if(w is null)
-			w = parentWindow.win;
-
-		if(w.closed())
-			return;
-
-		auto ugh = this.parent;
-		int lox, loy;
-		while(ugh) {
-			lox += ugh.x;
-			loy += ugh.y;
-			ugh = ugh.parent;
-		}
-		auto painter = w.draw();
-		privatePaint(WidgetPainter(painter), lox, loy);
-	}
-
-	private SimpleWindow drawableWindow;
-
-	/++
-		Allows a class to easily dispatch its own statically-declared event (see [Emits]). The main benefit of using this over constructing an event yourself is simply that you ensure you haven't sent something you haven't documented you can send.
-
-		Returns:
-			`true` if you should do your default behavior.
-
-		History:
-			Added May 5, 2021
-	+/
-	final protected bool emit(EventType, this This, Args...)(Args args) {
-		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
-		auto e = new EventType(args, this);
-		e.dispatch();
-		return !e.defaultPrevented;
-	}
-	/// ditto
-	final protected bool emit(string eventString, this This)() {
-		auto e = new Event(eventString, this);
-		e.dispatch();
-		return !e.defaultPrevented;
-	}
-
-	/++
-		Does the same as [addEventListener]'s delegate overload, but adds an additional check to ensure the event you are subscribing to is actually emitted by the static type you are using. Since it works on static types, if you have a generic [Widget], this can only subscribe to events declared as [Emits] inside [Widget] itself, not any child classes nor any child elements. If this is too restrictive, simply use [addEventListener] instead.
-
-		History:
-			Added May 5, 2021
-	+/
-	final public EventListener subscribe(EventType, this This)(void delegate(EventType) handler) {
-		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
-		return addEventListener(handler);
-	}
-
-	mixin Emits!KeyDownEvent;
-}
+// pragma(msg, __traits(classInstanceSize, Widget));
 
 /*private*/ template EventString(E) {
 	static if(is(typeof(E.EventString)))
@@ -2394,17 +2994,18 @@ class ListWidget : ListWidgetBase {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
 		auto pos = Point(4, 4);
 		foreach(idx, option; options) {
 			painter.fillColor = Color.white;
 			painter.outlineColor = Color.white;
 			painter.drawRectangle(pos, width - 8, Window.lineHeight);
-			painter.outlineColor = Color.black;
+			painter.outlineColor = cs.foregroundColor;
 			painter.drawText(pos, option.label);
 			if(option.selected) {
 				painter.rasterOp = RasterOp.xor;
 				painter.outlineColor = Color.white;
-				painter.fillColor = activeListXorColor;
+				painter.fillColor = cs.activeListXorColor;
 				painter.drawRectangle(pos, width - 8, Window.lineHeight);
 				painter.rasterOp = RasterOp.normal;
 			}
@@ -2826,7 +3427,7 @@ class ScrollableWidget : Widget {
 		painter.originY = painter.originY - scrollOrigin.y;
 		painter.setClipRectangle(scrollOrigin, viewportWidth(), viewportHeight());
 
-		return WidgetPainter(painter);
+		return WidgetPainter(painter, this);
 	}
 
 	override protected void privatePaint(WidgetPainter painter, int lox, int loy, bool force = false) {
@@ -3567,12 +4168,13 @@ class MouseTrackingWidget : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		auto c = darken(windowBackgroundColor, 0.2);
+		auto cs = getComputedStyle();
+		auto c = darken(cs.windowBackgroundColor, 0.2);
 		painter.outlineColor = c;
 		painter.fillColor = c;
 		painter.drawRectangle(Point(0, 0), this.width, this.height);
 
-		auto color = hovering ? hoveringColor : windowBackgroundColor;
+		auto color = hovering ? cs.hoveringColor : cs.windowBackgroundColor;
 		draw3dFrame(positionX, positionY, thumbWidth, thumbHeight, painter, FrameStyle.risen, color);
 	}
 }
@@ -3923,8 +4525,6 @@ class TabWidget : Widget {
 		version(win32_widgets) {
 			createWin32Window(this, WC_TABCONTROL, "", 0);
 		} else version(custom_widgets) {
-			tabBarHeight = Window.lineHeight;
-
 			addEventListener((ClickEvent event) {
 				if(event.target !is this) return;
 				if(event.clientY < tabBarHeight) {
@@ -4027,25 +4627,29 @@ class TabWidget : Widget {
 
 	version(custom_widgets) {
 		private int currentTab_;
-		int tabBarHeight;
+		private int tabBarHeight() { return Window.lineHeight; }
 		int tabWidth = 80;
 	}
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
 
-		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen);
+		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.backgroundColor);
 
 		int posX = 0;
 		foreach(idx, child; children) {
 			if(auto twp = cast(TabWidgetPage) child) {
 				auto isCurrent = idx == getCurrentTab();
-				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? windowBackgroundColor : darken(windowBackgroundColor, 0.1));
-				painter.outlineColor = Color.black;
+
+				painter.setClipRectangle(Point(posX, 0), tabWidth, tabBarHeight);
+
+				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
+				painter.outlineColor = cs.foregroundColor;
 				painter.drawText(Point(posX + 4, 2), twp.title);
 
 				if(isCurrent) {
-					painter.outlineColor = windowBackgroundColor;
+					painter.outlineColor = cs.windowBackgroundColor;
 					painter.fillColor = Color.transparent;
 					painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
 					painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
@@ -4053,7 +4657,7 @@ class TabWidget : Widget {
 					painter.outlineColor = Color.white;
 					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
 					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
-					painter.outlineColor = activeTabColor;
+					painter.outlineColor = cs.activeTabColor;
 					painter.drawPixel(Point(posX, tabBarHeight - 1));
 				}
 
@@ -4095,8 +4699,8 @@ class TabWidget : Widget {
 		}
 
 		for(int a = item; a < children.length - 1; a++)
-			this.children[a] = this.children[a + 1];
-		this.children = this.children[0 .. $-1];
+			this._children[a] = this._children[a + 1];
+		this._children = this._children[0 .. $-1];
 	}
 
 	///
@@ -4190,8 +4794,8 @@ class PageWidget : Widget {
 			setCurrentTab(item - 1);
 
 		for(int a = item; a < children.length - 1; a++)
-			this.children[a] = this.children[a + 1];
-		this.children = this.children[0 .. $-1];
+			this._children[a] = this._children[a + 1];
+		this._children = this._children[0 .. $-1];
 	}
 
 	///
@@ -4562,16 +5166,38 @@ class Window : Widget {
 		return win.focused;
 	}
 
-	override Color backgroundColor() {
-		version(custom_widgets)
-			return windowBackgroundColor;
-		else version(win32_widgets)
-			return Color.transparent;
-		else static assert(0);
+	static class Style : Widget.Style {
+		override Color backgroundColor() {
+			version(custom_widgets)
+				return WidgetPainter.visualTheme.windowBackgroundColor;
+			else version(win32_widgets)
+				return Color.transparent;
+			else static assert(0);
+		}
 	}
+	mixin OverrideStyle!Style;
 
-	///
-	static int lineHeight;
+	/++
+		Gives the height of a line according to the default font. You should try to use your computed font instead of this, but until May 8, 2021, this was the only real option.
+	+/
+	static int lineHeight() {
+		OperatingSystemFont font;
+		if(auto vt = WidgetPainter.visualTheme) {
+			font = vt.defaultFontCached();
+		}
+
+		if(font is null) {
+			static int defaultHeightCache;
+			if(defaultHeightCache == 0) {
+				font = new OperatingSystemFont;
+				font.loadDefault;
+				defaultHeightCache = font.height() * 5 / 4;
+			}
+			return defaultHeightCache;
+		}
+
+		return font.height() * 5 / 4;
+	}
 
 	Widget focusedWidget;
 
@@ -4760,13 +5386,6 @@ class Window : Widget {
 			}
 			return 0;
 		};
-
-
-
-		if(lineHeight == 0) {
-			auto painter = win.draw();
-			lineHeight = painter.fontHeight() * 5 / 4;
-		}
 	}
 
 	version(win32_widgets)
@@ -4787,8 +5406,9 @@ class Window : Widget {
 	}
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		painter.fillColor = windowBackgroundColor;
-		painter.outlineColor = windowBackgroundColor;
+		auto cs = getComputedStyle();
+		painter.fillColor = cs.windowBackgroundColor;
+		painter.outlineColor = cs.windowBackgroundColor;
 		painter.drawRectangle(Point(0, 0), this.width, this.height);
 	}
 
@@ -4869,14 +5489,6 @@ class Window : Widget {
 			if(recipient !is null) {
 				// import std.stdio; writeln(typeid(recipient));
 				recipient.focus();
-				/*
-				version(win32_widgets) {
-					if(recipient.hwnd !is null)
-						SetFocus(recipient.hwnd);
-				} else version(custom_widgets) {
-					focusedWidget = recipient;
-				} else static assert(false);
-				*/
 
 				skipNextChar = true;
 			}
@@ -4896,8 +5508,16 @@ class Window : Widget {
 	debug DevToolWindow devTools;
 
 
-	///
+	/++
+		History:
+			Prior to May 12, 2021, the default title was "D Application" (simpledisplay.d's default). After that, the default is Runtime.args[0] instead.
+	+/
 	this(int width = 500, int height = 500, string title = null) {
+		if(title is null) {
+			import core.runtime;
+			if(Runtime.args.length)
+				title = Runtime.args[0];
+		}
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
 		this(win);
 	}
@@ -5003,16 +5623,20 @@ class Window : Widget {
 			if(mouseLastOver !is ele) {
 				if(ele !is null) {
 					if(!isAParentOf(ele, mouseLastOver)) {
+						ele.setDynamicState(DynamicState.hover, true);
 						auto event = new MouseEnterEvent(ele);
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
 
-						ele.parentWindow.win.cursor = ele.cursor;
+						ele.useStyleProperties((s) {
+							ele.parentWindow.win.cursor = s.cursor;
+						});
 					}
 				}
 
 				if(mouseLastOver !is null) {
 					if(!isAParentOf(mouseLastOver, ele)) {
+						mouseLastOver.setDynamicState(DynamicState.hover, false);
 						auto event = new MouseLeaveEvent(mouseLastOver);
 						event.relatedTarget = ele;
 						event.sendDirectly();
@@ -5053,7 +5677,9 @@ class Window : Widget {
 		if(firstShow) {
 			firstShow = false;
 			recomputeChildLayout();
-			focusedWidget = getFirstFocusable(this); // FIXME: autofocus?
+			auto f = getFirstFocusable(this); // FIXME: autofocus?
+			if(f)
+				f.focus();
 			redraw();
 		}
 		win.show();
@@ -5247,7 +5873,6 @@ class LabeledPasswordEdit : Widget {
 
 ///
 class MainWindow : Window {
-	mixin Emits!KeyUpEvent;
 	///
 	this(string title = null, int initialWidth = 500, int initialHeight = 500) {
 		super(initialWidth, initialHeight, title);
@@ -5673,6 +6298,7 @@ class ToolButton : Button {
 			break;
 			case GenericIcons.Cut:
 				painter.fillColor = Color.transparent;
+				painter.outlineColor = getComputedStyle.foregroundColor();
 				painter.drawLine(Point(3, 2) * multiplier / divisor, Point(10, 9) * multiplier / divisor);
 				painter.drawLine(Point(4, 9) * multiplier / divisor, Point(11, 2) * multiplier / divisor);
 				painter.drawRectangle(Point(3, 9) * multiplier / divisor, Point(5, 13) * multiplier / divisor);
@@ -5688,6 +6314,7 @@ class ToolButton : Button {
 				painter.drawRectangle(Point(4, 5) * multiplier / divisor, Point(9, 6) * multiplier / divisor);
 			break;
 			case GenericIcons.Help:
+				painter.outlineColor = getComputedStyle.foregroundColor();
 				painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 			break;
 			case GenericIcons.Undo:
@@ -5748,7 +6375,7 @@ class MenuBar : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		draw3dFrame(this, painter, FrameStyle.risen);
+		draw3dFrame(this, painter, FrameStyle.risen, getComputedStyle().backgroundColor);
 	}
 
 	///
@@ -5906,14 +6533,19 @@ class StatusBar : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.sunk);
+		auto cs = getComputedStyle();
+		this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
 		int cpos = 0;
 		int remainingLength = this.width;
 		foreach(idx, part; this.partsArray) {
 			auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
 			painter.setClipRectangle(Point(cpos, 0), partWidth, height);
-			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk);
+			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk, cs.backgroundColor);
 			painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
+
+			painter.outlineColor = cs.foregroundColor();
+			painter.fillColor = cs.foregroundColor();
+
 			painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
 			cpos += partWidth;
 			remainingLength -= partWidth;
@@ -5960,8 +6592,9 @@ class ProgressBar : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.sunk);
-		painter.fillColor = progressBarColor;
+		auto cs = getComputedStyle();
+		this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
+		painter.fillColor = cs.progressBarColor;
 		painter.drawRectangle(Point(0, 0), width * current / max, height);
 	}
 
@@ -6062,21 +6695,22 @@ class Fieldset : Widget {
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		painter.fillColor = Color.transparent;
-		painter.pen = Pen(Color.black, 1);
+		auto cs = getComputedStyle();
+		painter.pen = Pen(cs.foregroundColor, 1);
 		painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
 
 		auto tx = painter.textSize(legend);
 		painter.outlineColor = Color.transparent;
 
 		static if(UsingSimpledisplayX11) {
-			painter.fillColor = windowBackgroundColor;
+			painter.fillColor = getComputedStyle().windowBackgroundColor;
 			painter.drawRectangle(Point(8, 0), tx.width, tx.height);
 		} else version(Windows) {
 			auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
 			painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
 			SelectObject(painter.impl.hdc, b);
 		} else static assert(0);
-		painter.outlineColor = Color.black;
+		painter.outlineColor = cs.foregroundColor;
 		painter.drawText(Point(8, 0), legend);
 	}
 
@@ -6120,9 +6754,10 @@ class HorizontalRule : Widget {
 	}
 
 	override void paint(WidgetPainter painter) {
-		painter.outlineColor = darkAccentColor;
+		auto cs = getComputedStyle();
+		painter.outlineColor = cs.darkAccentColor;
 		painter.drawLine(Point(0, 0), Point(width, 0));
-		painter.outlineColor = lightAccentColor;
+		painter.outlineColor = cs.lightAccentColor;
 		painter.drawLine(Point(0, 1), Point(width, 1));
 	}
 }
@@ -6139,9 +6774,10 @@ class VerticalRule : Widget {
 	}
 
 	override void paint(WidgetPainter painter) {
-		painter.outlineColor = darkAccentColor;
+		auto cs = getComputedStyle();
+		painter.outlineColor = cs.darkAccentColor;
 		painter.drawLine(Point(0, 0), Point(0, height));
-		painter.outlineColor = lightAccentColor;
+		painter.outlineColor = cs.lightAccentColor;
 		painter.drawLine(Point(1, 0), Point(1, height));
 	}
 }
@@ -6152,7 +6788,7 @@ class Menu : Window {
 	void remove() {
 		foreach(i, child; parentWindow.children)
 			if(child is this) {
-				parentWindow.children = parentWindow.children[0 .. i] ~ parentWindow.children[i + 1 .. $];
+				parentWindow._children = parentWindow._children[0 .. i] ~ parentWindow._children[i + 1 .. $];
 				break;
 			}
 		parentWindow.redraw();
@@ -6296,7 +6932,7 @@ class Menu : Window {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.risen);
+		this.draw3dFrame(painter, FrameStyle.risen, getComputedStyle.backgroundColor);
 	}
 }
 
@@ -6330,12 +6966,13 @@ class MenuItem : MouseActivatedWidget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
 		if(isDepressed)
-			this.draw3dFrame(painter, FrameStyle.sunk);
+			this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
 		if(isHovering)
-			painter.outlineColor = activeMenuItemColor;
+			painter.outlineColor = cs.activeMenuItemColor;
 		else
-			painter.outlineColor = Color.black;
+			painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = Color.transparent;
 		painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
 		if(action && action.accelerator !is KeyEvent.init) {
@@ -6504,14 +7141,15 @@ class Checkbox : MouseActivatedWidget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
 		if(isFocused()) {
 			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
-			painter.fillColor = windowBackgroundColor;
+			painter.fillColor = cs.windowBackgroundColor;
 			painter.drawRectangle(Point(0, 0), width, height);
 			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
 		} else {
-			painter.pen = Pen(windowBackgroundColor, 1, Pen.Style.Solid);
-			painter.fillColor = windowBackgroundColor;
+			painter.pen = Pen(cs.windowBackgroundColor, 1, Pen.Style.Solid);
+			painter.fillColor = cs.windowBackgroundColor;
 			painter.drawRectangle(Point(0, 0), width, height);
 		}
 
@@ -6531,6 +7169,9 @@ class Checkbox : MouseActivatedWidget {
 
 			painter.pen = Pen(Color.black, 1);
 		}
+
+		painter.outlineColor = cs.foregroundColor();
+		painter.fillColor = cs.foregroundColor();
 
 		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 	}
@@ -6595,12 +7236,13 @@ class Radiobox : MouseActivatedWidget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
 		if(isFocused) {
-			painter.fillColor = windowBackgroundColor;
+			painter.fillColor = cs.windowBackgroundColor;
 			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
 		} else {
-			painter.fillColor = windowBackgroundColor;
-			painter.outlineColor = windowBackgroundColor;
+			painter.fillColor = cs.windowBackgroundColor;
+			painter.outlineColor = cs.windowBackgroundColor;
 		}
 		painter.drawRectangle(Point(0, 0), width, height);
 
@@ -6617,6 +7259,9 @@ class Radiobox : MouseActivatedWidget {
 			// I'm using height so the checkbox is square
 			painter.drawEllipse(Point(5, 5), Point(buttonSize - 5, buttonSize - 5));
 		}
+
+		painter.outlineColor = cs.foregroundColor();
+		painter.fillColor = cs.foregroundColor();
 
 		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 	}
@@ -6648,21 +7293,18 @@ class Radiobox : MouseActivatedWidget {
 
 ///
 class Button : MouseActivatedWidget {
-	Color normalBgColor;
-	Color hoverBgColor;
-	Color depressedBgColor;
-
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
 
 	version(win32_widgets) {}
 	else version(custom_widgets)
 	Color currentButtonColor() {
-		if(isHovering) {
-			return isDepressed ? depressedBgColor : hoverBgColor;
-		}
-
-		return normalBgColor;
+		auto cs = getComputedStyle();
+		if(isDepressed)
+			return cs.depressedButtonColor();
+		if(isHovering)
+			return cs.hoveringColor();
+		return cs.buttonColor();
 	}
 	else static assert(false);
 
@@ -6696,9 +7338,6 @@ class Button : MouseActivatedWidget {
 		width = 50;
 		height = 30;
 		super(parent);
-		normalBgColor = buttonColor;
-		hoverBgColor = hoveringColor;
-		depressedBgColor = depressedButtonColor;
 
 		this.label = label;
 	}
@@ -6710,16 +7349,17 @@ class Button : MouseActivatedWidget {
 	override void paint(WidgetPainter painter) {
 		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
 
+		auto cs = getComputedStyle();
 
-		painter.outlineColor = Color.black;
+		painter.outlineColor = cs.foregroundColor();
+		painter.fillColor = cs.foregroundColor();
 		painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 
 		if(isFocused()) {
 			painter.fillColor = Color.transparent;
-			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
+			painter.pen = Pen(cs.foregroundColor(), 1, Pen.Style.Dotted);
 			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-			painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-
+			painter.pen = Pen(cs.foregroundColor(), 1, Pen.Style.Solid);
 		}
 	}
 
@@ -6774,8 +7414,10 @@ class ArrowButton : Button {
 	override void paint(WidgetPainter painter) {
 		super.paint(painter);
 
-		painter.outlineColor = Color.black;
-		painter.fillColor = Color.black;
+		auto cs = getComputedStyle();
+
+		painter.outlineColor = cs.foregroundColor;
+		painter.fillColor = cs.foregroundColor;
 
 		auto offset = Point((this.width - 16) / 2, (this.height - 16) / 2);
 
@@ -6940,7 +7582,7 @@ class TextLabel : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		painter.outlineColor = Color.black;
+		painter.outlineColor = getComputedStyle().foregroundColor;
 		painter.drawText(Point(0, 0), this.label, Point(width, height), alignment);
 	}
 
@@ -7075,6 +7717,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 		void setupCustomTextEditing() {
 			textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
+			textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
 		}
 
 		override void paint(WidgetPainter painter) {
@@ -7097,9 +7740,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		}
 
 
-		override MouseCursor cursor() {
-			return GenericCursor.Text;
+		static class Style : Widget.Style {
+			override MouseCursor cursor() {
+				return GenericCursor.Text;
+			}
 		}
+		mixin OverrideStyle!Style;
 	}
 	else static assert(false);
 
@@ -7396,7 +8042,12 @@ class MessageBox : Window {
 
 	override void paint(WidgetPainter painter) {
 		super.paint(painter);
-		painter.outlineColor = Color.black;
+
+		auto cs = getComputedStyle();
+
+		painter.outlineColor = cs.foregroundColor();
+		painter.fillColor = cs.foregroundColor();
+
 		painter.drawText(Point(0, 0), message, Point(width, height / 2), TextAlignment.Center | TextAlignment.VerticalCenter);
 	}
 
@@ -7699,6 +8350,11 @@ class Event {
 		this.srcElement = target;
 	}
 
+	// Added May 12, 2021
+	bool propagates() const pure nothrow @nogc @safe {
+		return true;
+	}
+
 	Widget srcElement; ///
 	alias srcElement target; ///
 
@@ -7748,6 +8404,11 @@ class Event {
 	void dispatch() {
 		if(srcElement is null)
 			return;
+
+		if(!propagates) {
+			sendDirectly;
+			return;
+		}
 
 		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
 			//target.parentWindow.devTools.log("Event ", eventName, " dispatched to ", srcElement);
@@ -7895,7 +8556,7 @@ class CharEvent : Event {
 	enum EventString = "char";
 	this(Widget target, dchar ch) {
 		character = ch;
-		super("char", target);
+		super(EventString, target);
 	}
 
 	immutable dchar character;
@@ -7980,9 +8641,7 @@ abstract class KeyEventBase : Event {
 +/
 class KeyDownEvent : KeyEventBase {
 	enum EventString = "keydown";
-	this(Widget target) {
-		super("keydown", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 
 /++
@@ -7998,9 +8657,7 @@ class KeyDownEvent : KeyEventBase {
 +/
 class KeyUpEvent : KeyEventBase {
 	enum EventString = "keyup";
-	this(Widget target) {
-		super("keyup", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 
 /++
@@ -8069,58 +8726,46 @@ abstract class MouseEventBase : Event {
 +/
 class MouseUpEvent : MouseEventBase {
 	enum EventString = "mouseup"; ///
-	this(Widget target) {
-		super("mouseup", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class MouseDownEvent : MouseEventBase {
 	enum EventString = "mousedown"; ///
-	this(Widget target) {
-		super("mousedown", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class MouseMoveEvent : MouseEventBase {
 	enum EventString = "mousemove"; ///
-	this(Widget target) {
-		super("mousemove", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class ClickEvent : MouseEventBase {
 	enum EventString = "click"; ///
-	this(Widget target) {
-		super("click", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class MouseOverEvent : Event {
 	enum EventString = "mouseover"; ///
-	this(Widget target) {
-		super("mouseover", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class MouseOutEvent : Event {
 	enum EventString = "mouseout"; ///
-	this(Widget target) {
-		super("mouseout", target);
-	}
+	this(Widget target) { super(EventString, target); }
 }
 /// ditto
 class MouseEnterEvent : Event {
 	enum EventString = "mouseenter"; ///
-	this(Widget target) {
-		super("mouseenter", target);
-	}
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
 }
 /// ditto
 class MouseLeaveEvent : Event {
 	enum EventString = "mouseleave"; ///
-	this(Widget target) {
-		super("mouseleave", target);
-	}
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
 }
 
 private bool isAParentOf(Widget a, Widget b) {
@@ -8864,6 +9509,20 @@ class AutomaticDialog(T) : Dialog {
 	}
 }
 
+private template baseClassCount(Class) {
+	private int helper() {
+		int count = 0;
+		static if(is(Class bases == super)) {
+			foreach(base; bases)
+				static if(is(base == class))
+					count += 1 + baseClassCount!base;
+		}
+		return count;
+	}
+
+	enum int baseClassCount = helper();
+}
+
 private long stringToLong(string s) {
 	long ret;
 	if(s.length == 0)
@@ -8957,30 +9616,73 @@ interface Reflectable {
 	or stylesheets can override this. The virtual ones count as tag-level specificity in css.
 +/
 
-interface IVisualTheme {
+/++
+	Interface to a custom visual theme which is able to access and use style hint properties, draw stylistic elements, and even completely override existing class' paint methods (though I'd note that can be a lot harder than it may seem due to the various little details of state you need to reflect visually, so that should be your last result!)
+
+	Please note that this is only guaranteed to be used by custom widgets, and custom widgets are generally inferior to system widgets. Layout properties may be used by sytstem widgets though.
+
+	You should not inherit from this directly, but instead use [VisualTheme].
+
+	History:
+		Added May 8, 2021
++/
+abstract class BaseVisualTheme {
+	/// Don't implement this, instead use [VisualTheme] and implement `paint` methods on specific subclasses you want to override.
 	void doPaint(Widget widget, WidgetPainter painter);
-	string getProperty(Widget widget, string propertyName);
+	/++
+		Returns the property as a string, or null if it was not overridden in the style definition. The idea here is something like css,
+		where the interpretation of the string varies for each property and may include things like measurement units.
+	+/
+	abstract string getPropertyString(Widget widget, string propertyName);
 
-	final T getProperty(T, string propertyName)(Widget widget) {
-		return T.init;
+	/++
+		Default background color of the window. Widgets also use this to simulate transparency.
+
+		Probably some shade of grey.
+	+/
+	abstract Color windowBackgroundColor();
+	abstract Color foregroundColor();
+	abstract Color lightAccentColor();
+	abstract Color darkAccentColor();
+
+	/++
+		Color used to indicate active selections in lists and text boxes, etc.
+	+/
+	abstract Color selectionColor();
+
+	abstract OperatingSystemFont defaultFont();
+
+	private OperatingSystemFont defaultFontCache_;
+	private bool defaultFontCachePopulated;
+	private OperatingSystemFont defaultFontCached() {
+		if(!defaultFontCachePopulated) {
+			// FIXME: set this to false if X disconnect or if visual theme changes
+			defaultFontCache_ = defaultFont();
+			defaultFontCachePopulated = true;
+		}
+		return defaultFontCache_;
 	}
 }
 
-private int baseClassCount(Class)() {
-	int count = 0;
-	static if(is(Class bases == super)) {
-		foreach(base; bases)
-			static if(is(base == class))
-				count += 1 + baseClassCount!base;
+/+
+	A widget should have:
+		classList
+		dataset
+		attributes
+		computedStyles
+		state (persistent)
+		dynamic state (focused, hover, etc)
++/
+
+// visualTheme.computedStyle(this).paddingLeft
+
+
+abstract class VisualTheme(CRTP) : BaseVisualTheme {
+	override string getPropertyString(Widget widget, string propertyName) {
+		return null;
 	}
-	return count;
 
-}
-
-class VisualTheme(CRTP) : IVisualTheme {
-	string getProperty(Widget widget, string propertyName) { return null; }
-
-	final void doPaint(Widget widget, WidgetPainter painter) {
+	final override void doPaint(Widget widget, WidgetPainter painter) {
 		auto derived = cast(CRTP) cast(void*) this;
 
 		scope void delegate(Widget, WidgetPainter) bestMatch;
@@ -8992,7 +9694,7 @@ class VisualTheme(CRTP) : IVisualTheme {
 				static assert(Params.length == 2);
 				static assert(is(Params[0] : Widget));
 				static assert(is(Params[1] == WidgetPainter));
-				static assert(is(typeof(&__traits(child, derived, overload)) == delegate));
+				static assert(is(typeof(&__traits(child, derived, overload)) == delegate), "Found a paint method that doesn't appear to be a delegate. One cause of this can be your dmd being too old, make sure it is version 2.094 or newer to use this feature."); // , __traits(getLocation, overload).stringof ~ " is not a delegate " ~ typeof(&__traits(child, derived, overload)).stringof);
 
 				alias type = Params[0];
 				if(cast(type) widget) {
@@ -9011,6 +9713,28 @@ class VisualTheme(CRTP) : IVisualTheme {
 		else
 			widget.paint(painter);
 	}
+
+	// I have to put these here even though I kinda don't want to since dmd regressed on detecting unimplemented interface functions through abstract classes
+	override Color windowBackgroundColor() { return Color(212, 212, 212); }
+	override Color foregroundColor() { return Color.black; }
+	override Color darkAccentColor() { return Color(172, 172, 172); }
+	override Color lightAccentColor() { return Color(223, 223, 223); }
+	override Color selectionColor() { return Color(0, 0, 128); }
+	override OperatingSystemFont defaultFont() { return null; } // will just use the default out of simpledisplay's xfontstr
+
+	private static struct Cached {
+		// i prolly want to do this
+	}
 }
 
-final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {}
+final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
+	/+
+	OperatingSystemFont defaultFont() { return new OperatingSystemFont("Times New Roman", 8, FontWeight.medium); }
+	Color windowBackgroundColor() { return Color(242, 242, 242); }
+	Color darkAccentColor() { return windowBackgroundColor; }
+	Color lightAccentColor() { return windowBackgroundColor; }
+	+/
+}
+
+// still do layout delegation
+// and... split off Window from Widget.

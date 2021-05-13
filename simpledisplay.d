@@ -2665,6 +2665,14 @@ public:
 		return false;
 	}
 
+	/++
+		Event listeners added with [addEventListener] have their exceptions swallowed by the event loop. This delegate can handle them again before it proceeds.
+
+		History:
+			Added May 12, 2021
+	+/
+	void delegate(Exception e) nothrow eventUncaughtException;
+
 	/** Add listener for custom event. Can be used like this:
 	 *
 	 * ---------------------
@@ -2691,8 +2699,10 @@ public:
 				if (auto co = cast(ET)o) {
 					try {
 						dg(co);
-					} catch (Exception) {
+					} catch (Exception e) {
 						// sorry!
+						if(eventUncaughtException)
+							eventUncaughtException(e);
 					}
 					return true;
 				}
@@ -7298,6 +7308,8 @@ enum FontWeight : int {
 	heavy = 900
 }
 
+// FIXME: i need a font cache and it needs to handle disconnects.
+
 /++
 	Represents a font loaded off the operating system or the X server.
 
@@ -7980,7 +7992,7 @@ struct ScreenPainter {
 			impl.create(handle);
 			impl.referenceCount = 1;
 			window.activeScreenPainter = impl;
-		//	writeln("constructed");
+			//import std.stdio; writeln("constructed");
 		}
 
 		copyActiveOriginals();
@@ -8001,7 +8013,7 @@ struct ScreenPainter {
 		impl.referenceCount--;
 		//writeln("refcount -- ", impl.referenceCount);
 		if(impl.referenceCount == 0) {
-			//writeln("destructed");
+			//import std.stdio; writeln("destructed");
 			impl.dispose();
 			*window.activeScreenPainter = ScreenPainterImplementation.init;
 			//import std.stdio; writeln("paint finished");
@@ -8062,21 +8074,33 @@ struct ScreenPainter {
 	}
 
 
-	/// Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
-	void setClipRectangle(Point pt, int width, int height) {
-		if(impl is null) return;
+	/++
+		Sets the clipping region for drawing. If width == 0 && height == 0, disabled clipping.
+
+		Returns:
+			The old clip rectangle.
+
+		History:
+			Return value was `void` prior to May 10, 2021.
+
+	+/
+	arsd.color.Rectangle setClipRectangle(Point pt, int width, int height) {
+		if(impl is null) return currentClipRectangle;
 		if(pt == currentClipRectangle.upperLeft && width == currentClipRectangle.width && height == currentClipRectangle.height)
-			return; // no need to do anything
+			return currentClipRectangle; // no need to do anything
+		auto old = currentClipRectangle;
 		currentClipRectangle = arsd.color.Rectangle(pt, Size(width, height));
 		transform(pt);
 
 		impl.setClipRectangle(pt.x, pt.y, width, height);
+
+		return old;
 	}
 
 	/// ditto
-	void setClipRectangle(arsd.color.Rectangle rect) {
-		if(impl is null) return;
-		setClipRectangle(rect.upperLeft, rect.width, rect.height);
+	arsd.color.Rectangle setClipRectangle(arsd.color.Rectangle rect) {
+		if(impl is null) return currentClipRectangle;
+		return setClipRectangle(rect.upperLeft, rect.width, rect.height);
 	}
 
 	///
@@ -8329,6 +8353,12 @@ struct ScreenPainter {
 		transform(lowerRightInclusive);
 		impl.drawRectangle(upperLeft.x, upperLeft.y,
 			lowerRightInclusive.x - upperLeft.x + 1, lowerRightInclusive.y - upperLeft.y + 1);
+	}
+
+	// overload added on May 12, 2021
+	/// ditto
+	void drawRectangle(Rectangle rect) {
+		drawRectangle(rect.upperLeft, rect.size);
 	}
 
 	/// Arguments are the points of the bounding rectangle
@@ -10961,12 +10991,24 @@ version(X11) {
 		arsd.color.Rectangle _clipRectangle;
 		void setClipRectangle(int x, int y, int width, int height) {
 			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
-			if(width == 0 || height == 0)
+			if(width == 0 || height == 0) {
 				XSetClipMask(display, gc, None);
-			else {
+
+				version(with_xft) {
+					if(xftFont is null || xftDraw is null)
+						return;
+					XftDrawSetClip(xftDraw, null);
+				}
+			} else {
 				XRectangle[1] rects;
 				rects[0] = XRectangle(cast(short)(x), cast(short)(y), cast(short) width, cast(short) height);
 				XSetClipRectangles(XDisplayConnection.get, gc, 0, 0, rects.ptr, 1, 0);
+
+				version(with_xft) {
+					if(xftFont is null || xftDraw is null)
+						return;
+					XftDrawSetClipRectangles(xftDraw, 0, 0, rects.ptr, 1);
+				}
 			}
 		}
 
@@ -11711,12 +11753,14 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 	struct BOX {
 		short x1, x2, y1, y2;
 	}
-	struct Region {
+	struct _XRegion {
 		c_long size;
 		c_long numRects;
 		BOX* rects;
 		BOX extents;
 	}
+
+	alias Region = _XRegion*;
 
 	// ok actually Xft
 
@@ -17858,6 +17902,8 @@ static:
 			}
 		}
 
+		Color selectionXorColor = Color(255, 255, 127);
+
 		void highlightSelection(ScreenPainter painter) {
 			if(selectionStart is selectionEnd)
 				return; // no selection
@@ -17870,7 +17916,7 @@ static:
 
 			painter.rasterOp = RasterOp.xor;
 			painter.outlineColor = Color.transparent;
-			painter.fillColor = Color(255, 255, 127);
+			painter.fillColor = selectionXorColor;
 
 			auto at = selectionStart.inlineElement;
 			auto atOffset = selectionStart.offset;
