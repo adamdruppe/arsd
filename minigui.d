@@ -4807,7 +4807,7 @@ class Window : Widget {
 			wid = this;
 		auto event = new Event(ev.pressed ? "keydown" : "keyup", wid);
 		event.originalKeyEvent = ev;
-		event.character = ev.character;
+		//event.character = ev.character;
 		event.key = ev.key;
 		event.state = ev.modifierState;
 		event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;

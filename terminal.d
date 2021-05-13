@@ -8279,8 +8279,18 @@ version(TerminalDirectToEmulator) {
 					return;
 				}
 
+				auto keyToSend = ev.key;
+
+				static if(UsingSimpledisplayX11) {
+					if((ev.state & ModifierState.alt) && ev.originalKeyEvent.charsPossible.length) {
+						keyToSend = cast(Key) ev.originalKeyEvent.charsPossible[0];
+					} 
+				}
+
+
+
 				defaultKeyHandler!(typeof(ev.key))(
-					ev.key
+					keyToSend
 					, (ev.state & ModifierState.shift)?true:false
 					, (ev.state & ModifierState.alt)?true:false
 					, (ev.state & ModifierState.ctrl)?true:false
@@ -8291,6 +8301,10 @@ version(TerminalDirectToEmulator) {
 			});
 
 			widget.addEventListener("char", (Event ev) {
+				if(skipNextChar) {
+					skipNextChar = false;
+					return;
+				}
 				dchar c = ev.character;
 
 				if(c == 0x1c) /* ctrl+\, force quit */ {
