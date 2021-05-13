@@ -5951,7 +5951,8 @@ class LineGetter {
 							goto default;
 						if(line.length == 0)
 							eof = true;
-						goto case;
+						justHitTab = justKilled = false;
+						return false; // indicate end of line so it doesn't maintain the buffer thinking it was ctrl+enter
 					case '\r':
 					case '\n':
 						justHitTab = justKilled = false;
