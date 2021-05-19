@@ -16,12 +16,41 @@ This only lists changes that broke things and got a major version bump. I didn't
 
 Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
 
+## 10.0
+
+Released: May 2020
+
+minigui 2.0 came out with deprecations on some event properties, moved style properties, and various other changes. See http://arsd-official.dpldocs.info/arsd.minigui.html#history for details.
+
 ## 9.0
+
+Released: December 2020
 
 simpledisplay's OperatingSystemFont, which is also used by terminalemulator.d (which is used by terminal.d's -version=TerminalDirectToEmulator function) would previously only load X Core Fonts. It now prefers TrueType fonts via Xft. This loads potentially different fonts and the sizes are interpreted differently, so you may need to adjust your preferences there. To restore previous behavior, prefix your font name strings with "core:".
 
 http2.d's "connection refused" handler used to throw an exception for any pending connection. Now it instead just sets that connection to `aborted` and carries on with other ones. When you are doing a request, be sure to check `response.code`. It may be < 100 if connection refused and other errors. You should already have been checking the http response code, but now some things that were exceptions are now codes, so it is even more important to check this properly.
 
+## Prehistory:
+
+8.0 Released: June 2020
+
+7.0 and 6.0 Released: March 2020 (these were changes to the terminal.d virtual methods, tag 6.0 was a mistake, i pressed it too early)
+
+5.0 Released: January 2019
+
+4.0 and 3.0 Released: July 2019 and June 2019, respectively. These had to do with dub subpackage configuration changes IIRC.
+
+2.0 Released (first use of semver tagging, before this I would only push to master): March 2018
+
+April 2016: simpledisplay and terminal renamed to arsd.simpledisplay and arsd.terminal
+
+September 2015: simpledisplay started to depend on color.d instead of being standalone
+
+Joined dub (tagged 1.0): June 2015
+
+Joined github: July 2011
+
+Started project on my website: 2008
 
 ## Credits
 

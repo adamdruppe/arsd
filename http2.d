@@ -12,15 +12,36 @@
 	
 	
 	It has no dependencies for basic operation, but does require OpenSSL
-	libraries (or compatible) to be support HTTPS. Compile with
-	`-version=with_openssl` to enable such support.
+	libraries (or compatible) to be support HTTPS. This dynamically loaded
+	on-demand (meaning it won't be loaded if you don't use it, but if you do
+	use it, the openssl dynamic libraries must be found in the system search path).
+
+	You can compile with `-version=without_openssl` to entirely disable ssl support.
 	
 	http2.d, despite its name, does NOT implement HTTP/2.0, but this
 	shouldn't matter for 99.9% of usage, since all servers will continue
 	to support HTTP/1.1 for a very long time.
-
 +/
 module arsd.http2;
+
+///
+unittest {
+	import arsd.http2;
+
+	void main() {
+		auto client = new HttpClient();
+
+		auto request = client.request(Uri("http://dlang.org/"));
+		auto response = request.waitForCompletion();
+
+		import std.stdio;
+		writeln(response.contentText);
+		writeln(response.code, " ", response.codeText);
+		writeln(response.contentType);
+	}
+
+	version(arsd_http2_integration_test) main(); // exclude from docs
+}
 
 // FIXME: I think I want to disable sigpipe here too.
 
@@ -660,16 +681,24 @@ struct Uri {
 			if(part == ".") {
 				continue;
 			} else if(part == "..") {
-				toKeep = toKeep[0 .. $-1];
+				//if(toKeep.length > 1)
+					toKeep = toKeep[0 .. $-1];
+				//else
+					//toKeep = [""];
 				continue;
 			} else {
+				//if(toKeep.length && toKeep[$-1].length == 0 && part.length == 0)
+					//continue; // skip a `//` situation
 				toKeep ~= part;
 			}
 		}
 
-		this.path = toKeep.join("/");
-	}
+		auto path = toKeep.join("/");
+		if(path.length && path[0] != '/')
+			path = "/" ~ path;
 
+		this.path = path;
+	}
 }
 
 /*
@@ -1853,26 +1882,12 @@ enum HttpVerb {
 	MERGE
 }
 
-/**
-	Usage:
+/++
+	HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.
+	You can use it as your entry point to make http requests.
 
-	---
-	auto client = new HttpClient("localhost", 80);
-	// relative links work based on the current url
-	HttpRequest request = client.get("foo/bar");
-	request = client.get("baz"); // gets foo/baz
-
-	// requests are not sent until you tell them to;
-	// they are just objects representing potential.
-	// to realize it and fetch the response, use waitForCompletion:
-
-	HttpResponse response = request.waitForCompletion();
-
-	// now you can use response.headers, response.contentText, etc
-	---
-*/
-
-/// HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.
+	See the example on [arsd.http2#examples].
++/
 class HttpClient {
 	/* Protocol restrictions, useful to disable when debugging servers */
 	bool useHttp11 = true; ///

@@ -9,8 +9,10 @@ the virtual functions remain as the default calculated values. then the reads go
 
 // FIXME: opt-in file picker widget with image support
 
-// FIXME: slider widget.
 // FIXME: number widget
+
+// https://www.codeguru.com/cpp/controls/buttonctrl/advancedbuttons/article.php/c5161/Native-Win32-ThemeAware-OwnerDraw-Controls-No-MFC.htm
+// https://docs.microsoft.com/en-us/windows/win32/controls/using-visual-styles
 
 // osx style menu search.
 
@@ -95,21 +97,21 @@ the virtual functions remain as the default calculated values. then the reads go
 	may be later, and should use native controls) to keep size down. The Linux
 	appearance is similar to Windows 95 and avoids using images to maintain network
 	efficiency on remote X connections, though you can customize that.
-	
-	minigui's only required dependencies are [arsd.simpledisplay] and [arsd.color].
+
+
+	minigui's only required dependencies are [arsd.simpledisplay] and [arsd.color],
+	on which it is built. simpledisplay provides the low-level interfaces and minigui
+	builds the concept of widgets inside the windows on top of it.
 
 	Its #1 goal is to be useful without being large and complicated like GTK and Qt.
 	It isn't hugely concerned with appearance - on Windows, it just uses the native
 	controls and native theme, and on Linux, it keeps it simple and I may change that
-	at any time.
-
-	I love Qt, if you want something full featured, use it! But if you want something
-	you can just drop into a small project and expect the basics to work without outside
-	dependencies, hopefully minigui will work for you.
+	at any time, though after May 2021, you can customize some things with css-inspired
+	[Widget.Style] classes. (On Windows, if you compile with `-version=custom_widgets`,
+	you can use the custom implementation there too, but... you shouldn't.)
 
 	The event model is similar to what you use in the browser with Javascript and the
 	layout engine tries to automatically fit things in, similar to a css flexbox.
-
 
 	FOR BEST RESULTS: be sure to link with the appropriate subsystem command
 	`-L/SUBSYSTEM:WINDOWS:5.0`, for example, because otherwise you'll get a
@@ -140,8 +142,10 @@ the virtual functions remain as the default calculated values. then the reads go
 		another thread and posting events back and forth.
 
 	$(H2 Add ons)
+		See the `minigui_addons` directory in the arsd repo for some add on widgets
+		you can import separately too.
 
-	$(H2 XML definitions)
+	$(H3 XML definitions)
 		If you use [arsd.minigui_xml], you can create widget trees from XML at runtime.
 
 	$(H3 Scriptability)
@@ -165,12 +169,68 @@ the virtual functions remain as the default calculated values. then the reads go
 		More to come.
 
 	History:
-		The event model changed slightly in May 2021 (dub v10.0). See [Event] for details.
+		Minigui had mostly additive changes or bug fixes since its inception until May 2021.
+
+		In May 2021 (dub v10.0), minigui got an overhaul. If it was versioned independently, I'd
+		tag this as version 2.0.
+
+		Among the changes:
+		$(LIST
+			* The event model changed to prefer strongly-typed events, though the Javascript string style ones still work, using properties off them is deprecated. It will still compile and function, but you should change the handler to use the classes in its argument list. I adapted my code to use the new model in just a few minutes, so it shouldn't too hard.
+
+			See [Event] for details.
+
+			* A [DoubleClickEvent] was added. Previously, you'd get two rapidly repeated click events. Now, you get one click event followed by a double click event. If you must recreate the old way exactly, you can listen for a DoubleClickEvent, set a flag upon receiving one, then send yourself a synthetic ClickEvent on the next MouseUpEvent, but your program might be better served just working with [MouseDownEvent]s instead.
+
+			See [DoubleClickEvent] for details.
+
+			* Styling hints were added, and the few that existed before have been moved to a new helper class. Deprecated forwarders exist for the (few) old properties to help you transition. Note that most of these only affect a `custom_events` build, which is the default on Linux, but opt in only on Windows.
+
+			See [Widget.Style] for details.
+
+			* A widget must now opt in to receiving keyboard focus, rather than opting out.
+
+			* Most Widget constructors no longer have a default `parent` argument. You must pass the parent to almost all widgets, or in rare cases, an explict `null`, but more often than not, you need the parent so the default argument was not very useful at best and misleading to a crash at worst.
+
+			* [LabeledLineEdit] changed its default layout to vertical instead of horizontal. You can restore the old behavior by passing a `TextAlignment` argument to the constructor.
+
+			* Several conversions of public fields to properties, deprecated, or made private. It is unlikely this will affect you, but the compiler will tell you if it does.
+
+			* Various non-breaking additions.
+		)
 +/
 module arsd.minigui;
 
+/++
+	This hello world sample will have an oversized button, but that's ok, you see your first window!
++/
+version(Demo)
+unittest {
+	import arsd.minigui;
+
+	void main() {
+		auto window = new MainWindow();
+
+		auto hello = new TextLabel("Hello, world!", TextAlignment.Center, window);
+		auto button = new Button("Close", window);
+		button.addEventListener((scope ClickEvent ev) {
+			window.close();
+		});
+
+		window.loop();
+	}
+
+	main(); // exclude from docs
+}
+
 public import arsd.simpledisplay;
-private alias Rectangle = arsd.color.Rectangle; // I specifically want this in here, not the win32 GDI Rectangle()
+/++
+	Convenience import to override the Windows GDI Rectangle function (you can still use it through fully-qualified imports)
+
+	History:
+		Was private until May 15, 2021.
++/
+public alias Rectangle = arsd.color.Rectangle; // I specifically want this in here, not the win32 GDI Rectangle()
 
 version(Windows) {
 	import core.sys.windows.winnls;
@@ -265,20 +325,50 @@ version(Windows) {
 +/
 
 /++
-	The way this module works is it builds on top of a SimpleWindow
-	from simpledisplay to provide simple controls and such.
-
-	Non-native controls suck, but nevertheless, I'm going to do it that
-	way to avoid dependencies on stuff like gtk on X... and since I'll
-	be writing the widgets there, I might as well just use them on Windows
-	too if you like, using `-version=custom_widgets`.
-
-	So, by extension, this sucks. But gtkd is just too big for me.
+	The `Widget` is the base class for minigui's functionality, ranging from UI components like checkboxes or text displays to abstract groupings of other widgets like a layout container or a html `<div>`. You will likely want to use pre-made widgets as well as creating your own.
 
 
-	The goal is to look kinda like Windows 95, perhaps with customizability.
-	Nothing too fancy, just the basics that work, but of course you can do whatever
-	you want in the draw handler.
+	To create your own widget, you must inherit from it and create a constructor that passes a parent to `super`. Everything else after that is optional.
+
+	---
+	class MinimalWidget : Widget {
+		this(Widget parent) {
+			super(parent);
+		}
+	}
+	---
+
+	$(SIDEBAR
+		I'm not entirely happy with leaf, container, and windows all coming from the same base Widget class, but I so far haven't thought of a better solution that's good enough to justify the breakage of a transition. It hasn't been a major problem in practice anyway.
+	)
+
+	Broadly, there's two kinds of widgets: leaf widgets, which are intended to be the direct user-interactive components, and container widgets, which organize, lay out, and aggregate other widgets in the object tree. A special case of a container widget is [Window], which represents a separate top-level window on the screen. Both leaf and container widgets inherit from `Widget`, so this distinction is more conventional than formal.
+
+	Among the things you'll most likely want to change in your custom widget:
+
+	$(LIST
+		* In your constructor, set `tabStop = false;` if the widget is not supposed to receive keyboard focus. (Please note its childen still can, so `tabStop = false;` is appropriate on most container widgets.)
+
+		You may explicitly set `tabStop = true;` to ensure you get it, even against future changes to the library, though that's the default right now.
+
+		Do this $(I after) calling the `super` constructor.
+
+		* Override [paint] if you want full control of the widget's drawing area (except the area obscured by children!), or [paintContent] if you want to participate in the styling engine's system. You'll also possibly want to make a subclass of [Style] and use [OverrideStyle] to change the default hints given to the styling engine for widget.
+
+		Generally, painting is a job for leaf widgets, since child widgets would obscure your drawing area anyway. However, it is your decision.
+
+		* Override default event handlers with your behavior. For example [defaultEventHandler_click] may be overridden to make clicks do something. Again, this is generally a job for leaf widgets rather than containers; most events are dispatched to the lowest leaf on the widget tree, but they also pass through all their parents. See [Event] for more details about the event model.
+
+		* You may also want to override the various layout hints like [minWidth], [maxHeight], etc. In particular [Padding] and [Margin] are often relevant for both container and leaf widgets and the default values of 0 are often not what you want.
+	)
+
+	On Microsoft Windows, many widgets are also based on native controls. You can also do this if `static if(UsingWin32Widgets)` passes. You should use the helper function [createWin32Window] to create the window and let minigui do what it needs to do to create its bridge structures. This will populate [Widget.hwnd] which you can access later for communcating with the native window. You may also consider overriding [Widget.handleWmCommand] and [Widget.handleWmNotify] for the widget to translate those messages into appropriate minigui [Event]s.
+
+	It is also possible to embed a [SimpleWindow]-based native window inside a widget. See [OpenGlWidget]'s source code as an example.
+
+	Your own custom-drawn and native system controls can exist side-by-side.
+
+	Later I'll add more complete examples, but for now [TextLabel] and [LabeledPasswordEdit] are both simple widgets you can view implementation to get some ideas.
 +/
 class Widget {
 
@@ -412,9 +502,13 @@ class Widget {
 		selected = (1 << 5), /// the widget represents one option of many and is currently selected, but is not necessarily focused nor checked.
 		disabled = (1 << 6), /// the widget is currently unable to perform its designated task
 		indeterminate = (1 << 7), /// the widget has tri-state and is between checked and not checked
+		depressed = (1 << 8), /// the widget is being actively pressed or clicked (compare to css `:active`). Can be combined with hover to visually indicate if a mouse up would result in a click event.
 
 		USER_BEGIN = (1UL << 32),
 	}
+
+	// I want to add the primary and cancel styles to buttons at least at some point somehow.
+
 	/// ditto
 	@property ulong dynamicState() { return dynamicState_; }
 	/// ditto
@@ -456,6 +550,8 @@ class Widget {
 		Style properties are defined as an accessory class so they can be referenced and overridden independently.
 
 		It is here so there can be a specificity switch.
+
+		See [OverrideStyle] for a helper function to use your own.
 
 		History:
 			Added May 11, 2021
@@ -533,18 +629,46 @@ class Widget {
 	}
 
 	/++
-		This goes in order like this:
+		This mixin overrides the [useStyleProperties] method to direct it toward your own style class.
+		The basic usage is simple:
 
+		---
+		static class Style : YourParentClass.Style { /* YourParentClass is frequently Widget, of course, but not always */
+			// override style hints as-needed here
+		}
+		OverrideStyle!Style; // add the method
+		---
+
+		$(TIP
+			While the class is not forced to be `static`, for best results, it should be. A non-static class
+			can not be inherited by other objects whereas the static one can. A property on the base class,
+			called [Widget.Style.widget|widget], is available for you to access its properties.
+		)
+
+		This exists just because [useStyleProperties] has a somewhat convoluted signature and its overrides must
+		repeat them. Moreover, its implementation uses a stack class to optimize GC pressure from small fetches
+		and that's a little tedious to repeat in your child classes too when you only care about changing the type.
+
+
+		It also has a further facility to pick a wholly differnet class based on the [DynamicState] of the Widget.
+
+		---
 		mixin OverrideStyle!(
 			DynamicState.focus, YourFocusedStyle,
 			DynamicState.hover, YourHoverStyle,
 			YourDefaultStyle
 		)
+		---
 
 		It checks if `dynamicState` matches the state and if so, returns the object given.
 
-		If there is no state mask given, the next one matches everything. The first match
-		given is used.
+		If there is no state mask given, the next one matches everything. The first match given is used.
+
+		However, since in most cases you'll want check state inside your individual methods, you probably won't
+		find much use for this whole-class swap out.
+
+		History:
+			Added May 16, 2021
 	+/
 	static protected mixin template OverrideStyle(S...) {
 		override void useStyleProperties(scope void delegate(scope Widget.Style props) dg) {
@@ -554,6 +678,7 @@ class Widget {
 					mask = thing;
 				} else {
 					if(!(idx & 1) || (this.dynamicState & mask) == mask) {
+						//static assert(!__traits(isNested, thing), thing.stringof ~ " is a nested class. For best results, mark it `static`. You can still access the widget through a `widget` variable inside the Style class.");
 						scope Widget.Style s = new thing();
 						s.widget = this;
 						dg(s);
@@ -574,8 +699,7 @@ class Widget {
 
 
 	protected void sendResizeEvent() {
-		auto event = new Event("resize", this);
-		event.sendDirectly();
+		this.emit!ResizeEvent();
 	}
 
 	Menu contextMenu(int x, int y) { return null; }
@@ -745,9 +869,13 @@ class Widget {
 
 		addDirectEventListener just inserts a check `if(e.target !is this) return;` meaning it opts out
 		of participating in handler delegation.
+
+		$(TIP
+			Use `scope` on your handlers when you can. While it currently does nothing, this will future-proof your code against future optimizations I want to do. Instead of copying whole event objects out if you do need to store them, just copy the properties you need.
+		)
 	+/
 	EventListener addDirectEventListener(string event, void delegate() handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event e) {
+		return addEventListener(event, (Widget, scope Event e) {
 			if(e.srcElement is this)
 				handler();
 		}, useCapture);
@@ -764,7 +892,7 @@ class Widget {
 	/// ditto
 	@scriptable
 	EventListener addEventListener(string event, void delegate() handler, bool useCapture = false) {
-		return addEventListener(event, (Widget, Event) { handler(); }, useCapture);
+		return addEventListener(event, (Widget, scope Event) { handler(); }, useCapture);
 	}
 
 	/// ditto
@@ -865,9 +993,11 @@ class Widget {
 	}
 
 	version(win32_widgets)
+	/// Called when a WM_COMMAND is sent to the associated hwnd.
 	void handleWmCommand(ushort cmd, ushort id) {}
 
 	version(win32_widgets)
+	/// Called when a WM_NOTIFY is sent to the associated hwnd.
 	int handleWmNotify(NMHDR* hdr, int code) { return 0; }
 
 	/++
@@ -882,7 +1012,7 @@ class Widget {
 	/++
 		If true, this widget can be focused via keyboard control with the tab key.
 
-		If false, it is assumed the widget itself does not contain the keyboard focus (though its childen are free to).
+		If false, it is assumed the widget itself does will never receive the keyboard focus (though its childen are free to).
 	+/
 	bool tabStop = true;
 	/++
@@ -892,6 +1022,7 @@ class Widget {
 
 	version(win32_widgets) {
 		static Widget[HWND] nativeMapping;
+		/// The native handle, if there is one.
 		HWND hwnd;
 		WNDPROC originalWindowProcedure;
 
@@ -979,7 +1110,7 @@ class Widget {
 	}
 
 	/// Creates the widget and adds it to the parent.
-	this(Widget parent = null) {
+	this(Widget parent) {
 		if(parent !is null)
 			parent.addChild(this);
 		setupDefaultEventHandlers();
@@ -1037,10 +1168,10 @@ class Widget {
 
 		if(parentWindow.focusedWidget) {
 			// FIXME: more details here? like from and to
-			auto evt = new Event("blur", parentWindow.focusedWidget);
+			auto from = parentWindow.focusedWidget;
 			parentWindow.focusedWidget.setDynamicState(DynamicState.focus, false);
 			parentWindow.focusedWidget = null;
-			evt.sendDirectly();
+			from.emit!BlurEvent();
 		}
 
 
@@ -1051,8 +1182,7 @@ class Widget {
 
 		parentWindow.focusedWidget = this;
 		parentWindow.focusedWidget.setDynamicState(DynamicState.focus, true);
-		auto evt = new Event("focus", this);
-		evt.dispatch();
+		this.emit!FocusEvent();
 	}
 
 
@@ -1123,9 +1253,43 @@ class Widget {
 	/++
 		Responsible for actually painting the widget to the screen. The clip rectangle and coordinate translation in the [WidgetPainter] are pre-configured so you can draw independently.
 
+		This function paints the entire widget, including styled borders, backgrounds, etc. You are also responsible for displaying any important active state to the user, including if you hold the active keyboard focus. If you only want to be responsible for the content while letting the style engine draw the rest, override [paintContent] instead.
+
+		[paint] is not called for system widgets as the OS library draws them instead.
+
+
+		The default implementation forwards to [WidgetPainter.drawThemed], passing [paintContent] as the delegate. If you override this, you might use those same functions or you can do your own thing.
+
 		You should also look at [WidgetPainter.visualTheme] to be theme aware.
+
+		History:
+			Prior to May 15, 2021, the default implementation was empty. Now, it is `painter.drawThemed(&paintContent);`. You may wish to override [paintContent] instead of [paint] to take advantage of the new styling engine.
 	+/
-	void paint(WidgetPainter painter) {}
+	void paint(WidgetPainter painter) {
+		painter.drawThemed(&paintContent); // note this refers to the following overload
+	}
+
+	/++
+		Responsible for drawing the content as the theme engine is responsible for other elements.
+
+		$(WARNING If you override [paint], this method may never be used as it is only called from inside the default implementation of `paint`.)
+
+		Params:
+			painter = your painter (forwarded from [paint]) for drawing on the widget. The clip rectangle and coordinate translation are prepared for you ahead of time so you can use widget coordinates. It also has the theme foreground preloaded into the painter outline color, the theme font preloaded as the painter's active font, and the theme background preloaded as the painter's fill color.
+
+			bounds = the bounds, inside the widget, where your content should be drawn. This is the rectangle inside the border and padding (if any). The stuff outside is not clipped - it is still part of your widget - but you should respect these bounds for visual consistency and respecting the theme's area.
+
+			If you do want to clip it, you can of course call `auto oldClip = painter.setClipRectangle(bounds); scope(exit) painter.setClipRectangle(oldClip);` to modify it and return to the previous setting when you return.
+
+		Returns:
+			The rectangle representing your actual content. Typically, this is simply `return bounds;`. The theme engine uses this return value to determine where the outline and overlay should be.
+
+		History:
+			Added May 15, 2021
+	+/
+	Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+		return bounds;
+	}
 
 	deprecated("Change ScreenPainter to WidgetPainter")
 	final void paint(ScreenPainter) { assert(0, "Change ScreenPainter to WidgetPainter and recompile your code"); }
@@ -1274,7 +1438,7 @@ class Widget {
 	+/
 	final protected bool emit(EventType, this This, Args...)(Args args) {
 		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
-		auto e = new EventType(args, this);
+		auto e = new EventType(this, args);
 		e.dispatch();
 		return !e.defaultPrevented;
 	}
@@ -1308,6 +1472,10 @@ class Widget {
 		return StyleInformation(this);
 	}
 
+	// FIXME: I kinda want to hide events from implementation widgets
+	// so it just catches them all and stops propagation...
+	// i guess i can do it with a event listener on star.
+
 	mixin Emits!KeyDownEvent; ///
 	mixin Emits!KeyUpEvent; ///
 	mixin Emits!CharEvent; ///
@@ -1315,11 +1483,17 @@ class Widget {
 	mixin Emits!MouseDownEvent; ///
 	mixin Emits!MouseUpEvent; ///
 	mixin Emits!ClickEvent; ///
+	mixin Emits!DoubleClickEvent; ///
 	mixin Emits!MouseMoveEvent; ///
 	mixin Emits!MouseOverEvent; ///
 	mixin Emits!MouseOutEvent; ///
 	mixin Emits!MouseEnterEvent; ///
 	mixin Emits!MouseLeaveEvent; ///
+
+	mixin Emits!ResizeEvent; ///
+
+	mixin Emits!BlurEvent; ///
+	mixin Emits!FocusEvent; ///
 }
 
 ///
@@ -1327,12 +1501,12 @@ abstract class ComboboxBase : Widget {
 	// if the user can enter arbitrary data, we want to use  2 == CBS_DROPDOWN
 	// or to always show the list, we want CBS_SIMPLE == 1
 	version(win32_widgets)
-		this(uint style, Widget parent = null) {
+		this(uint style, Widget parent) {
 			super(parent);
 			createWin32Window(this, "ComboBox"w, null, style);
 		}
 	else version(custom_widgets)
-		this(Widget parent = null) {
+		this(Widget parent) {
 			super(parent);
 
 			addEventListener((KeyDownEvent event) {
@@ -1461,7 +1635,7 @@ abstract class ComboboxBase : Widget {
 	given options. Like `<select>` in HTML.
 +/
 class DropDownSelection : ComboboxBase {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		version(win32_widgets)
 			super(3 /* CBS_DROPDOWNLIST */ | WS_VSCROLL, parent);
 		else version(custom_widgets) {
@@ -1478,12 +1652,17 @@ class DropDownSelection : ComboboxBase {
 		} else static assert(false);
 	}
 
+	mixin Padding!q{2};
+	static class Style : Widget.Style {
+		override FrameStyle borderStyle() { return FrameStyle.risen; }
+	}
+	mixin OverrideStyle!Style;
+
 	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
 		auto cs = getComputedStyle();
-		draw3dFrame(this, painter, FrameStyle.risen, getComputedStyle.backgroundColor);
-		painter.outlineColor = cs.foregroundColor;
-		painter.drawText(Point(4, 4), selection == -1 ? "" : options[selection]);
+
+		painter.drawText(bounds.upperLeft, selection == -1 ? "" : options[selection]);
 
 		painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = cs.foregroundColor;
@@ -1497,13 +1676,7 @@ class DropDownSelection : ComboboxBase {
 		triangle[3] = triangle[0];
 		painter.drawPolygon(triangle[]);
 
-		if(isFocused()) {
-			painter.fillColor = Color.transparent;
-			painter.pen = Pen(cs.foregroundColor, 1, Pen.Style.Dotted);
-			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-			painter.pen = Pen(cs.foregroundColor, 1, Pen.Style.Solid);
-
-		}
+		return bounds;
 	}
 
 	version(win32_widgets)
@@ -1527,7 +1700,7 @@ class DropDownSelection : ComboboxBase {
 	The user can choose from the list, or type their own.
 +/
 class FreeEntrySelection : ComboboxBase {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		version(win32_widgets)
 			super(2 /* CBS_DROPDOWN */, parent);
 		else version(custom_widgets) {
@@ -1567,7 +1740,7 @@ class FreeEntrySelection : ComboboxBase {
 	A combination of free entry with a list below it.
 +/
 class ComboBox : ComboboxBase {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		version(win32_widgets)
 			super(1 /* CBS_SIMPLE */ | CBS_NOINTEGRALHEIGHT, parent);
 		else version(custom_widgets) {
@@ -1631,7 +1804,7 @@ class ComboBox : ComboboxBase {
 /+
 class Spinner : Widget {
 	version(win32_widgets)
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		auto hlayout = new HorizontalLayout(this);
@@ -1645,7 +1818,7 @@ class Spinner : Widget {
 
 class UpDownControl : Widget {
 	version(win32_widgets)
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		parentWindow = parent.parentWindow;
 		createWin32Window(this, "msctls_updown32"w, null, 4/*UDS_ALIGNRIGHT*/| 2 /* UDS_SETBUDDYINT */ | 16 /* UDS_AUTOBUDDY */ | 32 /* UDS_ARROWKEYS */);
@@ -1750,7 +1923,7 @@ void setClickRepeat(Widget w, int interval, int delay = 250) {
 			if(delayRemaining > 0)
 				delayRemaining--;
 			else {
-				auto ev = new Event("click", w);
+				auto ev = new ClickEvent(w);
 				ev.sendDirectly();
 			}
 		});
@@ -1779,11 +1952,12 @@ else
 void setClickRepeat(Widget w, int interval, int delay = 250) {}
 
 enum FrameStyle {
-	none,
-	risen,
-	sunk,
-	solid,
-	dotted
+	none, ///
+	risen, /// a 3d pop-out effect (think Windows 95 button)
+	sunk, /// a 3d sunken effect (think Windows 95 button as you click on it)
+	solid, ///
+	dotted, ///
+	fantasy, /// a style based on a popular fantasy video game
 }
 
 version(custom_widgets)
@@ -1823,6 +1997,10 @@ int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fram
 			painter.pen = Pen(border, 1, Pen.Style.Dotted);
 			borderWidth = 1;
 		break;
+		case FrameStyle.fantasy:
+			painter.pen = Pen(border, 3);
+			borderWidth = 3;
+		break;
 	}
 
 	painter.fillColor = background;
@@ -1846,6 +2024,10 @@ int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fram
 		painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
 		painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
 		painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
+	} else if(style == FrameStyle.fantasy) {
+		painter.pen = Pen(Color.white, 1, Pen.Style.Solid);
+		painter.fillColor = Color.transparent;
+		painter.drawRectangle(Point(x + 1, y + 1), Point(x + width - 1, y + height - 1));
 	}
 
 	return borderWidth;
@@ -1952,6 +2134,34 @@ enum LinePreference {
 }
 */
 
+/++
+	Convenience mixin for overriding all four sides of margin or padding in a [Widget] with the same code. It mixes in the given string as the return value of the four overridden methods.
+
+	---
+	class MyWidget : Widget {
+		this(Widget parent) { super(parent); }
+
+		// set paddingLeft, paddingRight, paddingTop, and paddingBottom all to `return 4;` in one go:
+		mixin Padding!q{4};
+
+		// set marginLeft, marginRight, marginTop, and marginBottom all to `return 8;` in one go:
+		mixin Margin!q{8};
+
+		// but if I specify one outside, it overrides the override, so now marginLeft is 2,
+		// while Top/Bottom/Right remain 8 from the mixin above.
+		override int marginLeft() { return 2; }
+	}
+	---
+
+
+	The minigui layout model is based on the web's CSS box model. The layout engine* arranges widgets based on their margin for separation and assigns them a size based on thier preferences (e.g. [Widget.minHeight]) and the available space. Widgets are assigned a size by the layout engine. Inside this size, they have a border (see [Widget.Style.borderWidth]), then padding space, and then their content. Their content box may also have an outline drawn on top of it (see [Widget.Style.outlineStyle]).
+
+	Padding is the area inside a widget where its background is drawn, but the content avoids.
+
+	Margin is the area between widgets. The algorithm is the spacing between any two widgets is the max of their adjacent margins (not the sum!).
+
+	* Some widgets do not participate in placement, e.g. [StaticPosition], and some layout systems do their own separate thing too; ultimately, these properties are just hints to the layout function and you can always implement your own to do whatever you want. But this statement is still mostly true.
++/
 mixin template Padding(string code) {
 	override int paddingLeft() { return mixin(code);}
 	override int paddingRight() { return mixin(code);}
@@ -1959,6 +2169,7 @@ mixin template Padding(string code) {
 	override int paddingBottom() { return mixin(code);}
 }
 
+/// ditto
 mixin template Margin(string code) {
 	override int marginLeft() { return mixin(code);}
 	override int marginRight() { return mixin(code);}
@@ -2213,7 +2424,18 @@ version(win32_widgets) {
 		return HookedWndProc(hWnd, iMessage, wParam, lParam);
 	}
 
-	// className MUST be a string literal
+	/++
+		Calls MS Windows' CreateWindowExW function to create a native backing for the given widget. It will create
+		needed mappings, window procedure hooks, and other private member variables needed to tie it into the rest
+		of minigui's expectations.
+
+		This should be called in your widget's constructor AFTER you call `super(parent);`. The parent window
+		member MUST already be initialized for this function to succeed, which is done by [Widget]'s base constructor.
+
+		It assumes `className` is zero-terminated. It should come from a `"wide string literal"w`.
+
+		To check if you can use this, use `static if(UsingWin32Widgets)`.
+	+/
 	void createWin32Window(Widget p, const(wchar)[] className, string windowText, DWORD style, DWORD extStyle = 0) {
 		assert(p.parentWindow !is null);
 		assert(p.parentWindow.win.impl.hwnd !is null);
@@ -2281,7 +2503,7 @@ extern(Windows) BOOL childHandler(HWND hwnd, LPARAM lparam) {
 	if(hwnd is null || hwnd in Widget.nativeMapping)
 		return true;
 	auto parent = cast(Widget) cast(void*) lparam;
-	Widget p = new Widget();
+	Widget p = new Widget(null);
 	p._parent = parent;
 	p.parentWindow = parent.parentWindow;
 	p.hwnd = hwnd;
@@ -2776,6 +2998,7 @@ struct StyleInformation {
 
 
 	Color windowBackgroundColor() { return WidgetPainter.visualTheme.windowBackgroundColor(); }
+	Color widgetBackgroundColor() { return WidgetPainter.visualTheme.widgetBackgroundColor(); }
 	Color lightAccentColor() { return WidgetPainter.visualTheme.lightAccentColor(); }
 	Color darkAccentColor() { return WidgetPainter.visualTheme.darkAccentColor(); }
 
@@ -2802,6 +3025,22 @@ struct StyleInformation {
 		enum EventString = E.mangleof; // FIXME fqn? or something more user friendly
 }
 
+/*private*/ template EventStringIdentifier(E) {
+	string helper() {
+		auto es = EventString!E;
+		char[] id = new char[](es.length * 2);
+		size_t idx;
+		foreach(char ch; es) {
+			id[idx++] = cast(char)('a' + (ch >> 4));
+			id[idx++] = cast(char)('a' + (ch & 0x0f));
+		}
+		return cast(string) id;
+	}
+
+	enum EventStringIdentifier = helper();
+}
+
+
 template classStaticallyEmits(This, EventType) {
 	static if(is(This Base == super))
 		static if(is(Base : Widget))
@@ -2811,7 +3050,7 @@ template classStaticallyEmits(This, EventType) {
 	else
 		enum baseEmits = false;
 
-	enum thisEmits = is(typeof(__traits(getMember, This, "emits_" ~ EventString!EventType)) == EventType[0]);
+	enum thisEmits = is(typeof(__traits(getMember, This, "emits_" ~ EventStringIdentifier!EventType)) == EventType[0]);
 
 	enum classStaticallyEmits = thisEmits || baseEmits;
 }
@@ -2934,15 +3173,23 @@ else
 	private alias ListWidgetBase = Widget;
 
 /++
+	A list widget contains a list of strings that the user can examine and select.
 
+
+	In the future, items in the list may be possible to be more than just strings.
 +/
 class ListWidget : ListWidgetBase {
+	/// Sends a change event when the selection changes, but the data is not attached to the event. You must instead loop the options to see if they are selected.
+	mixin Emits!(ChangeEvent!void);
 
 	static struct Option {
 		string label;
 		bool selected;
 	}
 
+	/++
+		Sets the current selection to the `y`th item in the list. Will emit [ChangeEvent] when complete.
+	+/
 	void setSelection(int y) {
 		if(!multiSelect)
 			foreach(ref opt; options)
@@ -2950,8 +3197,7 @@ class ListWidget : ListWidgetBase {
 		if(y >= 0 && y < options.length)
 			options[y].selected = !options[y].selected;
 
-		auto evt = new Event(EventType.change, this);
-		evt.dispatch();
+		this.emit!(ChangeEvent!void)(delegate {});
 
 		version(custom_widgets)
 			redraw();
@@ -2967,7 +3213,7 @@ class ListWidget : ListWidgetBase {
 		super.defaultEventHandler_click(event);
 	}
 
-	this(Widget parent = null) {
+	this(Widget parent) {
 		tabStop = false;
 		super(parent);
 		version(win32_widgets)
@@ -3013,6 +3259,13 @@ class ListWidget : ListWidgetBase {
 		}
 	}
 
+	static class Style : Widget.Style {
+		override Color backgroundColor() {
+			return WidgetPainter.visualTheme.widgetBackgroundColor;
+		}
+	}
+	mixin OverrideStyle!Style;
+	//mixin Padding!q{2};
 
 	void addOption(string text) {
 		options ~= Option(text);
@@ -3056,9 +3309,13 @@ enum ScrollBarShowPolicy {
 }
 
 /++
-FIXME ScrollBarShowPolicy
-FIXME: use the ScrollMessageWidget in here now that it exists
+	A widget that tries (with, at best, limited success) to offer scrolling that is transparent to the inner.
+
+	It isn't very good and may be removed. Try [ScrollMessageWidget] instead for new code.
+
 +/
+// FIXME ScrollBarShowPolicy
+// FIXME: use the ScrollMessageWidget in here now that it exists
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
 	// FIXME: add keyboard controls
@@ -3717,7 +3974,7 @@ abstract class Slider : Widget {
 	}
 
 	private void notify() {
-		auto event = new ChangeEvent!int(this, this.position);
+		auto event = new ChangeEvent!int(this, &this.position);
 		event.dispatch();
 	}
 
@@ -3800,11 +4057,9 @@ abstract class Slider : Widget {
 		}
 
 		protected void changed() {
-			auto ev = new ChangeEvent!int(this, position_);
+			auto ev = new ChangeEvent!int(this, &position);
 			ev.dispatch();
 		}
-
-
 	}
 }
 
@@ -4076,7 +4331,7 @@ class MouseTrackingWidget : Widget {
 	private int startMouseX, startMouseY;
 
 	///
-	this(Orientation orientation, Widget parent = null) {
+	this(Orientation orientation, Widget parent) {
 		super(parent);
 
 		//assert(parentWindow !is null);
@@ -4104,6 +4359,7 @@ class MouseTrackingWidget : Widget {
 					positionY = 0;
 
 
+				// this.emit!(ChangeEvent!void)();
 				auto evt = new Event(EventType.change, this);
 				evt.sendDirectly();
 
@@ -4258,13 +4514,11 @@ class HorizontalScrollbar : ScrollbarBase {
 			thumb.tabStop = false;
 
 			leftButton.addEventListener(EventType.triggered, () {
-				auto ev = new Event("scrolltopreviousline", this);
-				ev.dispatch();
+				this.emitCommand!"scrolltopreviousline"();
 				//informProgramThatUserChangedPosition(position - step());
 			});
 			rightButton.addEventListener(EventType.triggered, () {
-				auto ev = new Event("scrolltonextline", this);
-				ev.dispatch();
+				this.emitCommand!"scrolltonextline"();
 				//informProgramThatUserChangedPosition(position + step());
 			});
 
@@ -4374,13 +4628,11 @@ class VerticalScrollbar : ScrollbarBase {
 			downButton.setClickRepeat(scrollClickRepeatInterval);
 
 			upButton.addEventListener(EventType.triggered, () {
-				auto ev = new Event("scrolltopreviousline", this);
-				ev.dispatch();
+				this.emitCommand!"scrolltopreviousline"();
 				//informProgramThatUserChangedPosition(position - step());
 			});
 			downButton.addEventListener(EventType.triggered, () {
-				auto ev = new Event("scrolltonextline", this);
-				ev.dispatch();
+				this.emitCommand!"scrolltonextline"();
 				//informProgramThatUserChangedPosition(position + step());
 			});
 
@@ -4411,7 +4663,7 @@ class VerticalScrollbar : ScrollbarBase {
 
 ///
 abstract class Layout : Widget {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		tabStop = false;
 		super(parent);
 	}
@@ -4426,7 +4678,7 @@ abstract class Layout : Widget {
 +/
 class InlineBlockLayout : Layout {
 	///
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 
 	override void recomputeChildLayout() {
 		registerMovement();
@@ -4870,7 +5122,7 @@ class VerticalLayout : Layout {
 /// Stacks the widgets horizontally, taking all the available height for each child.
 class HorizontalLayout : Layout {
 	///
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
@@ -4922,9 +5174,30 @@ class HorizontalLayout : Layout {
 	messages to it when the user scrolls. Unlike [ScrollableWidget], it makes
 	no effort to automatically scroll or clip its child widgets - it just sends
 	the messages.
+
+
+	A ScrollMessageWidget notifies you with a [ScrollEvent] that it has changed.
+	The scroll coordinates are all given in a unit you interpret as you wish. One
+	of these units is moved on each press of the arrow buttons and represents the
+	smallest amount the user can scroll. The intention is for this to be one line,
+	one item in a list, one row in a table, etc. Whatever makes sense for your widget
+	in each direction that the user might be interested in.
+
+	You can set a "page size" with the [step] property. (Yes, I regret the name...)
+	This is the amount it jumps when the user pressed page up and page down, or clicks
+	in the exposed part of the scroll bar.
+
+	You should add child content to the ScrollMessageWidget. However, it is important to
+	note that the coordinates are always independent of the scroll position! It is YOUR
+	responsibility to do any necessary transforms, clipping, etc., while drawing the
+	content and interpreting mouse events if they are supposed to change with the scroll.
+	This is in contrast to the (likely to be deprecated) [ScrollableWidget], which tries
+	to maintain the illusion that there's an infinite space. The [ScrollMessageWidget] gives
+	you more control (which can be considerably more efficient and adapted to your actual data)
+	at the expense of you also needing to be aware of its reality.
 +/
 class ScrollMessageWidget : Widget {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 
 		container = new Widget(this);
@@ -4995,9 +5268,10 @@ class ScrollMessageWidget : Widget {
 	HorizontalScrollbar horizontalScrollBar() { return hsb; }
 
 	void notify() {
-		auto event = new Event("scroll", this);
-		event.dispatch();
+		this.emit!ScrollEvent();
 	}
+
+	mixin Emits!ScrollEvent;
 
 	///
 	Point position() {
@@ -5074,7 +5348,7 @@ class ScrollMessageWidget : Widget {
 +/
 class StaticLayout : Layout {
 	///
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 	override void recomputeChildLayout() {
 		registerMovement();
 		foreach(child; children)
@@ -5092,7 +5366,7 @@ class StaticLayout : Layout {
 +/
 class StaticPosition : Layout {
 	///
-	this(Widget parent = null) { super(parent); }
+	this(Widget parent) { super(parent); }
 
 	override void recomputeChildLayout() {
 		registerMovement();
@@ -5243,11 +5517,16 @@ class Window : Widget {
 
 		win.onFocusChange = (bool getting) {
 			if(this.focusedWidget) {
-				auto evt = new Event(getting ? "focus" : "blur", this.focusedWidget);
-				evt.dispatch();
+				if(getting)
+					this.focusedWidget.emit!FocusEvent();
+				else
+					this.focusedWidget.emit!BlurEvent();
 			}
-			auto evt = new Event(getting ? "focus" : "blur", this);
-			evt.dispatch();
+
+			if(getting)
+				this.emit!FocusEvent();
+			else
+				this.emit!BlurEvent();
 		};
 
 		win.setEventHandlers(
@@ -5311,20 +5590,16 @@ class Window : Widget {
 							break;
 							+/
 							case SB_LINEDOWN:
-								auto event = new Event("scrolltonextline", *widgetp);
-								event.dispatch();
+								this.emitCommand!"scrolltonextline"();
 							break;
 							case SB_LINEUP:
-								auto event = new Event("scrolltopreviousline", *widgetp);
-								event.dispatch();
+								this.emitCommand!"scrolltopreviousline"();
 							break;
 							case SB_PAGEDOWN:
-								auto event = new Event("scrolltonextpage", *widgetp);
-								event.dispatch();
+								this.emitCommand!"scrolltonextpage"();
 							break;
 							case SB_PAGEUP:
-								auto event = new Event("scrolltopreviouspage", *widgetp);
-								event.dispatch();
+								this.emitCommand!"scrolltopreviouspage"();
 							break;
 							case SB_THUMBPOSITION:
 								auto ev = new ScrollToPositionEvent(*widgetp, pos);
@@ -5563,6 +5838,7 @@ class Window : Widget {
 
 	Widget mouseLastOver;
 	Widget mouseLastDownOn;
+	bool lastWasDoubleClick;
 	bool dispatchMouseEvent(MouseEvent ev) {
 		auto eleR = widgetAtPoint(this, ev.x, ev.y);
 		auto ele = eleR.widget;
@@ -5582,16 +5858,30 @@ class Window : Widget {
 			pain = pain.parent;
 		}
 
-		if(ev.type == 1) {
-			mouseLastDownOn = ele;
-			auto event = new MouseDownEvent(ele);
+		if(ev.type == MouseEventType.buttonPressed) {
+			MouseEventBase event = new MouseDownEvent(ele);
 			event.button = ev.button;
 			event.buttonLinear = ev.buttonLinear;
 			event.state = ev.modifierState;
 			event.clientX = eleR.x;
 			event.clientY = eleR.y;
 			event.dispatch();
-		} else if(ev.type == 2) {
+
+			if(ev.button != MouseButton.wheelDown && ev.button != MouseButton.wheelUp && mouseLastDownOn is ele && ev.doubleClick) {
+				event = new DoubleClickEvent(ele);
+				event.button = ev.button;
+				event.buttonLinear = ev.buttonLinear;
+				event.state = ev.modifierState;
+				event.clientX = eleR.x;
+				event.clientY = eleR.y;
+				event.dispatch();
+				lastWasDoubleClick = ev.doubleClick;
+			} else {
+				lastWasDoubleClick = false;
+			}
+
+			mouseLastDownOn = ele;
+		} else if(ev.type == MouseEventType.buttonReleased) {
 			{
 				auto event = new MouseUpEvent(ele);
 				event.button = ev.button;
@@ -5601,8 +5891,8 @@ class Window : Widget {
 				event.state = ev.modifierState;
 				event.dispatch();
 			}
-			if(mouseLastDownOn is ele) {
-				auto event = new ClickEvent(ele);
+			if(!lastWasDoubleClick && mouseLastDownOn is ele) {
+				MouseEventBase event = new ClickEvent(ele);
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
 				event.state = ev.modifierState;
@@ -5610,7 +5900,7 @@ class Window : Widget {
 				event.buttonLinear = ev.buttonLinear;
 				event.dispatch();
 			}
-		} else if(ev.type == 0) {
+		} else if(ev.type == MouseEventType.motion) {
 			// motion
 			{
 				auto event = new MouseMoveEvent(ele);
@@ -5723,6 +6013,10 @@ debug private class DevToolWindow : Window {
 		clickX = new TextLabel("", hl);
 		clickY = new TextLabel("", hl);
 
+		parentListeners ~= p.addEventListener("*", (Event ev) {
+			log(typeid(ev.source).name, " emitted ", typeid(ev).name);
+		});
+
 		parentListeners ~= p.addEventListener((ClickEvent ev) {
 			auto s = ev.srcElement;
 			string list = s.toString();
@@ -5754,7 +6048,8 @@ debug private class DevToolWindow : Window {
 	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		if(ev.key == Key.F12) {
 			this.close();
-			p.devTools = null;
+			if(p)
+				p.devTools = null;
 		} else {
 			super.defaultEventHandler_keydown(ev);
 		}
@@ -5768,6 +6063,7 @@ debug private class DevToolWindow : Window {
 		str ~= "\n";
 		logWindow.addText(str);
 
+		version(custom_widgets)
 		logWindow.ensureVisibleInScroll(logWindow.textLayout.caretBoundingBox());
 	}
 }
@@ -5791,21 +6087,60 @@ abstract class Dialog : Window {
 	}
 }
 
-///
-class LabeledLineEdit : Widget {
-	///
-	this(string label, Widget parent = null) {
-		super(parent);
-		tabStop = false;
-		auto hl = new HorizontalLayout(this);
-		this.label = new TextLabel(label, hl);
-		this.lineEdit = new LineEdit(hl);
-	}
-	TextLabel label; ///
-	LineEdit lineEdit; ///
+/++
+	A line edit box with an associated label.
 
-	override int minHeight() { return Window.lineHeight + 4; }
-	override int maxHeight() { return Window.lineHeight + 4; }
+	History:
+		On May 17, the default internal layout was changed from horizontal to vertical.
+
+		```
+		Old: ________
+
+		New:
+		____________
+		```
+
+		To restore the old behavior, use `new LabeledLineEdit("label", TextAlignment.Right, parent);`
++/
+alias LabeledLineEdit = Labeled!LineEdit;
+
+/++
+	History:
+		Added May 19, 2020
++/
+class Labeled(T) : Widget {
+	///
+	this(string label, Widget parent) {
+		super(parent);
+		initialize!VerticalLayout(label, TextAlignment.Left, parent);
+	}
+
+	/++
+		History:
+			The alignment parameter was added May 17, 2021
+	+/
+	this(string label, TextAlignment alignment, Widget parent) {
+		super(parent);
+		initialize!HorizontalLayout(label, alignment, parent);
+	}
+
+	private void initialize(L)(string label, TextAlignment alignment, Widget parent) {
+		tabStop = false;
+		horizontal = is(L == HorizontalLayout);
+		auto hl = new L(this);
+		this.label = new TextLabel(label, alignment, hl);
+		this.lineEdit = new T(hl);
+	}
+
+	private bool horizontal;
+
+	TextLabel label; ///
+	T lineEdit; ///
+
+	override int minHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
+	override int maxHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
+	override int marginTop() { return 4; }
+	override int marginBottom() { return 4; }
 
 	///
 	string content() {
@@ -5830,45 +6165,11 @@ class LabeledLineEdit : Widget {
 	A labeled password edit.
 
 	History:
-		Added January 25, 2021
+		Added as a class on January 25, 2021, changed into an alias of the new [Labeled] template on May 19, 2021
 
-	Future_Directions:
-		This might be merged with [LabeledLineEdit] at some point. If I do that in code, I'll
-		alias the names or something.
+		The default parameters for the constructors were also removed on May 19, 2021
 +/
-class LabeledPasswordEdit : Widget {
-	///
-	this(string label = "Password: ", Widget parent = null) {
-		super(parent);
-		tabStop = false;
-		auto hl = new HorizontalLayout(this);
-		this.label = new TextLabel(label, hl);
-		this.lineEdit = new PasswordEdit(hl);
-	}
-	TextLabel label; ///
-	PasswordEdit lineEdit; ///
-
-	override int minHeight() { return Window.lineHeight + 4; }
-	override int maxHeight() { return Window.lineHeight + 4; }
-
-	///
-	string content() {
-		return lineEdit.content;
-	}
-	///
-	void content(string c) {
-		return lineEdit.content(c);
-	}
-
-	///
-	void selectAll() {
-		lineEdit.selectAll();
-	}
-
-	override void focus() {
-		lineEdit.focus();
-	}
-}
+alias LabeledPasswordEdit = Labeled!PasswordEdit;
 
 
 ///
@@ -6108,9 +6409,12 @@ class MainWindow : Window {
 	@property void title(string title) { parentWindow.win.title = title; }
 }
 
+/+
+	This is really an implementation detail of [MainWindow]
++/
 class ClientAreaWidget : Widget {
-	this(Widget parent = null) {
-		super(parent);
+	this() {
+		super(null);
 		//sa = new ScrollableWidget(this);
 	}
 	/*
@@ -6150,7 +6454,7 @@ class ToolBar : Widget {
 	}
 
 	///
-	this(Action[] actions, Widget parent = null) {
+	this(Action[] actions, Widget parent) {
 		super(parent);
 
 		tabStop = false;
@@ -6205,7 +6509,7 @@ class ToolBar : Widget {
 			assert(idealHeight);
 		} else version(custom_widgets) {
 			foreach(action; actions)
-				addChild(new ToolButton(action));
+				new ToolButton(action, this);
 		} else static assert(false);
 	}
 
@@ -6219,12 +6523,12 @@ enum toolbarIconSize = 24;
 ///
 class ToolButton : Button {
 	///
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		super(label, parent);
 		tabStop = false;
 	}
 	///
-	this(Action action, Widget parent = null) {
+	this(Action action, Widget parent) {
 		super(action.label, parent);
 		tabStop = false;
 		this.action = action;
@@ -6245,8 +6549,7 @@ class ToolButton : Button {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
-
+	painter.drawThemed(delegate Rectangle (const Rectangle bounds) {
 		painter.outlineColor = Color.black;
 
 		// I want to get from 16 to 24. that's * 3 / 2
@@ -6344,6 +6647,8 @@ class ToolButton : Button {
 			default:
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 		}
+		return bounds;
+		});
 	}
 
 }
@@ -6515,7 +6820,7 @@ class StatusBar : Widget {
 
 
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(null); // FIXME
 		_parts = Parts(this);
 		tabStop = false;
@@ -6567,7 +6872,7 @@ class StatusBar : Widget {
 version(none)
 class IndefiniteProgressBar : Widget {
 	version(win32_widgets)
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		createWin32Window(this, "msctls_progress32"w, "", 8 /* PBS_MARQUEE */);
 		tabStop = false;
@@ -6577,7 +6882,7 @@ class IndefiniteProgressBar : Widget {
 
 /// A progress bar with a known endpoint and completion amount
 class ProgressBar : Widget {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		version(win32_widgets) {
 			super(parent);
 			createWin32Window(this, "msctls_progress32"w, "", 0);
@@ -6749,7 +7054,7 @@ class HorizontalRule : Widget {
 	override int maxHeight() { return 2; }
 
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 	}
 
@@ -6769,7 +7074,7 @@ class VerticalRule : Widget {
 	override int maxWidth() { return 2; }
 
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 	}
 
@@ -6878,8 +7183,7 @@ class Menu : Window {
 		dropDown.hide();
 		if(!menuParent.parentWindow.win.closed) {
 			if(auto maw = cast(MouseActivatedWidget) menuParent) {
-				maw.isDepressed = false;
-				maw.isHovering = false;
+				maw.setDynamicState(DynamicState.depressed, false);
 				maw.redraw();
 			}
 			menuParent.parentWindow.win.focus();
@@ -6904,7 +7208,7 @@ class Menu : Window {
 	version(win32_widgets) {
 		HMENU handle;
 		///
-		this(string label, Widget parent = null) {
+		this(string label, Widget parent) {
 			// not actually passing the parent since it effs up the drawing
 			super(cast(Widget) null);// parent);
 			this.label = label;
@@ -6912,7 +7216,7 @@ class Menu : Window {
 		}
 	} else version(custom_widgets) {
 		///
-		this(string label, Widget parent = null) {
+		this(string label, Widget parent) {
 
 			if(dropDown) {
 				dropDown.close();
@@ -6936,7 +7240,9 @@ class Menu : Window {
 	}
 }
 
-///
+/++
+	A MenuItem belongs to a [Menu] - use [Menu.addItem] to add one - and calls an [Action] when it is clicked.
++/
 class MenuItem : MouseActivatedWidget {
 	Menu submenu;
 
@@ -6954,7 +7260,7 @@ class MenuItem : MouseActivatedWidget {
 		}
 		return int.max;
 	}
-	///
+	/// This should ONLY be used if there is no associated action, for example, if the menu item is just a submenu.
 	this(string lbl, Widget parent = null) {
 		super(parent);
 		//label = lbl; // FIXME
@@ -6964,12 +7270,20 @@ class MenuItem : MouseActivatedWidget {
 		tabStop = false; // these are selected some other way
 	}
 
+	///
+	this(Action action, Widget parent = null) {
+		assert(action !is null);
+		this(action.label, parent);
+		this.action = action;
+		tabStop = false; // these are selected some other way
+	}
+
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
-		if(isDepressed)
+		if(dynamicState & DynamicState.depressed)
 			this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
-		if(isHovering)
+		if(dynamicState & DynamicState.hover)
 			painter.outlineColor = cs.activeMenuItemColor;
 		else
 			painter.outlineColor = cs.foregroundColor;
@@ -6979,15 +7293,6 @@ class MenuItem : MouseActivatedWidget {
 			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), action.accelerator.toStr(), Point(width - 4, height), TextAlignment.Right);
 
 		}
-	}
-
-
-	///
-	this(Action action, Widget parent = null) {
-		assert(action !is null);
-		this(action.label);
-		this.action = action;
-		tabStop = false; // these are selected some other way
 	}
 
 	override void defaultEventHandler_triggered(Event event) {
@@ -7018,48 +7323,39 @@ class MouseActivatedWidget : Widget {
 
 	override void handleWmCommand(ushort cmd, ushort id) {
 		if(cmd == 0) {
-			auto event = new Event("triggered", this);
+			auto event = new Event(EventType.triggered, this);
 			event.dispatch();
 		}
 	}
 
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 	}
 }
 else version(custom_widgets)
 ///
 class MouseActivatedWidget : Widget {
-	bool isDepressed = false;
-	bool isHovering = false;
-	bool isChecked = false;
+	@property bool isChecked() { return isChecked_; }
+	@property bool isChecked(bool b) { return isChecked_ = b; }
+
+	private bool isChecked_;
 
 	override void attachedToWindow(Window w) {
 		w.addEventListener("mouseup", delegate (Widget _this, Event ev) {
-			isDepressed = false;
+			setDynamicState(DynamicState.depressed, false);
 		});
 	}
 
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
-		addEventListener("mouseenter", delegate (Widget _this, Event ev) {
-			isHovering = true;
-			redraw();
-		});
-
-		addEventListener("mouseleave", delegate (Widget _this, Event ev) {
-			isHovering = false;
-			isDepressed = false;
-			redraw();
-		});
 
 		addEventListener("mousedown", delegate (Widget _this, Event ev) {
-			isDepressed = true;
+			setDynamicState(DynamicState.depressed, true);
 			redraw();
 		});
 
 		addEventListener("mouseup", delegate (Widget _this, Event ev) {
-			isDepressed = false;
+			setDynamicState(DynamicState.depressed, false);
 			redraw();
 		});
 	}
@@ -7070,32 +7366,31 @@ class MouseActivatedWidget : Widget {
 	}
 	override void defaultEventHandler_blur(Event ev) {
 		super.defaultEventHandler_blur(ev);
-		isDepressed = false;
-		isHovering = false;
+		setDynamicState(DynamicState.depressed, false);
 		this.redraw();
 	}
 	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		super.defaultEventHandler_keydown(ev);
 		if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
-			isDepressed = true;
+			setDynamicState(DynamicState.depressed, true);
 			this.redraw();
 		}
 	}
 	override void defaultEventHandler_keyup(KeyUpEvent ev) {
 		super.defaultEventHandler_keyup(ev);
-		if(!isDepressed)
+		if(!(dynamicState & DynamicState.depressed))
 			return;
-		isDepressed = false;
+		setDynamicState(DynamicState.depressed, false);
 		this.redraw();
 
-		auto event = new Event("triggered", this);
+		auto event = new Event(EventType.triggered, this);
 		event.sendDirectly();
 	}
 	override void defaultEventHandler_click(ClickEvent ev) {
 		super.defaultEventHandler_click(ev);
 		if(this.tabStop)
 			this.focus();
-		auto event = new Event("triggered", this);
+		auto event = new Event(EventType.triggered, this);
 		event.sendDirectly();
 	}
 
@@ -7129,7 +7424,7 @@ class Checkbox : MouseActivatedWidget {
 	private string label;
 
 	///
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		super(parent);
 		this.label = label;
 		version(win32_widgets) {
@@ -7179,17 +7474,19 @@ class Checkbox : MouseActivatedWidget {
 	override void defaultEventHandler_triggered(Event ev) {
 		isChecked = !isChecked;
 
-		auto event = new Event(EventType.change, this);
-		event.dispatch();
+		this.emit!(ChangeEvent!bool)(&isChecked);
 
 		redraw();
 	}
+
+	/// Emits a change event with the checked state
+	mixin Emits!(ChangeEvent!bool);
 }
 
 /// Adds empty space to a layout.
 class VerticalSpacer : Widget {
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 	}
 }
@@ -7197,7 +7494,7 @@ class VerticalSpacer : Widget {
 /// ditto
 class HorizontalSpacer : Widget {
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		this.tabStop = false;
 	}
@@ -7220,13 +7517,13 @@ class Radiobox : MouseActivatedWidget {
 	private string label;
 
 	version(win32_widgets)
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		super(parent);
 		this.label = label;
 		createWin32Window(this, "button"w, label, BS_AUTORADIOBUTTON);
 	}
 	else version(custom_widgets)
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		super(parent);
 		this.label = label;
 		height = 16;
@@ -7275,19 +7572,19 @@ class Radiobox : MouseActivatedWidget {
 				if(child is this) continue;
 				if(auto rb = cast(Radiobox) child) {
 					rb.isChecked = false;
-					auto event = new Event(EventType.change, rb);
-					event.dispatch();
+					rb.emit!(ChangeEvent!bool)(&rb.isChecked);
 					rb.redraw();
 				}
 			}
 		}
 
-		auto event = new Event(EventType.change, this);
-		event.dispatch();
+		this.emit!(ChangeEvent!bool)(&this.isChecked);
 
 		redraw();
 	}
 
+	/// Emits a change event with if it is checked. Note that when you select one in a group, that one will emit changed with value == true, and the previous one will emit changed with value == false right before. A button group may catch this and change the event.
+	mixin Emits!(ChangeEvent!bool);
 }
 
 
@@ -7295,18 +7592,6 @@ class Radiobox : MouseActivatedWidget {
 class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
-
-	version(win32_widgets) {}
-	else version(custom_widgets)
-	Color currentButtonColor() {
-		auto cs = getComputedStyle();
-		if(isDepressed)
-			return cs.depressedButtonColor();
-		if(isHovering)
-			return cs.hoveringColor();
-		return cs.buttonColor();
-	}
-	else static assert(false);
 
 	private string label_;
 
@@ -7324,7 +7609,7 @@ class Button : MouseActivatedWidget {
 	}
 
 	version(win32_widgets)
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		// FIXME: use ideal button size instead
 		width = 50;
 		height = 30;
@@ -7334,7 +7619,7 @@ class Button : MouseActivatedWidget {
 		this.label = label;
 	}
 	else version(custom_widgets)
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		width = 50;
 		height = 30;
 		super(parent);
@@ -7345,22 +7630,38 @@ class Button : MouseActivatedWidget {
 
 	override int minHeight() { return Window.lineHeight + 4; }
 
+	static class Style : Widget.Style {
+		override Color backgroundColor() {
+			auto cs = widget.getComputedStyle(); // FIXME: this is potentially recursive
+
+			auto pressed = DynamicState.depressed | DynamicState.hover;
+			if((widget.dynamicState & pressed) == pressed) {
+				return cs.depressedButtonColor();
+			} else if(widget.dynamicState & DynamicState.hover) {
+				return cs.hoveringColor();
+			} else {
+				return cs.buttonColor();
+			}
+		}
+
+		override FrameStyle borderStyle() {
+			auto pressed = DynamicState.depressed | DynamicState.hover;
+			if((widget.dynamicState & pressed) == pressed) {
+				return FrameStyle.sunk;
+			} else {
+				return FrameStyle.risen;
+			}
+
+		}
+	}
+	mixin OverrideStyle!Style;
+
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, isDepressed ? FrameStyle.sunk : FrameStyle.risen, currentButtonColor);
-
-		auto cs = getComputedStyle();
-
-		painter.outlineColor = cs.foregroundColor();
-		painter.fillColor = cs.foregroundColor();
-		painter.drawText(Point(0, 0), label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
-
-		if(isFocused()) {
-			painter.fillColor = Color.transparent;
-			painter.pen = Pen(cs.foregroundColor(), 1, Pen.Style.Dotted);
-			painter.drawRectangle(Point(2, 2), width - 4, height - 4);
-			painter.pen = Pen(cs.foregroundColor(), 1, Pen.Style.Solid);
-		}
+		painter.drawThemed(delegate Rectangle(const Rectangle bounds) {
+			painter.drawText(bounds.upperLeft, label, bounds.lowerRight, TextAlignment.Center | TextAlignment.VerticalCenter);
+			return bounds;
+		});
 	}
 
 }
@@ -7369,7 +7670,7 @@ class Button : MouseActivatedWidget {
 	A button with a consistent size, suitable for user commands like OK and Cancel.
 +/
 class CommandButton : Button {
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		super(label, parent);
 	}
 
@@ -7399,7 +7700,7 @@ enum ArrowDirection {
 version(custom_widgets)
 class ArrowButton : Button {
 	///
-	this(ArrowDirection direction, Widget parent = null) {
+	this(ArrowDirection direction, Widget parent) {
 		super("", parent);
 		this.direction = direction;
 	}
@@ -7510,13 +7811,18 @@ class ImageBox : Widget {
 	private Color backgroundColor_;
 
 	///
-	this(MemoryImage image, HowToFit howToFit, Color backgroundColor = Color.transparent, Widget parent = null) {
+	this(MemoryImage image, HowToFit howToFit, Color backgroundColor, Widget parent) {
 		this.image_ = image;
 		this.tabStop = false;
 		this.howToFit_ = howToFit;
 		this.backgroundColor_ = backgroundColor;
 		super(parent);
 		updateSprite();
+	}
+
+	/// ditto
+	this(MemoryImage image, HowToFit howToFit, Widget parent) {
+		this(image, howToFit, Color.transparent, parent);
 	}
 
 	private void updateSprite() {
@@ -7563,12 +7869,12 @@ class TextLabel : Widget {
 	}
 
 	///
-	this(string label, Widget parent = null) {
+	this(string label, Widget parent) {
 		this(label, TextAlignment.Right, parent);
 	}
 
 	///
-	this(string label, TextAlignment alignment, Widget parent = null) {
+	this(string label, TextAlignment alignment, Widget parent) {
 		this.label_ = label;
 		this.alignment = alignment;
 		this.tabStop = false;
@@ -7601,7 +7907,7 @@ else static assert(0);
 
 /// Contains the implementation of text editing
 abstract class EditableTextWidget : EditableTextWidgetParent {
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 	}
 
@@ -7739,7 +8045,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
 		}
 
-
 		static class Style : Widget.Style {
 			override MouseCursor cursor() {
 				return GenericCursor.Text;
@@ -7837,7 +8142,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			}
 		}
 
-		auto evt = new ChangeEvent!string(this, this.content);
+		auto evt = new ChangeEvent!string(this, &this.content);
 		evt.dispatch();
 	}
 
@@ -7918,7 +8223,7 @@ class LineEdit : EditableTextWidget {
 	}
 
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
 			createWin32Window(this, "edit"w, "", 
@@ -7959,7 +8264,7 @@ class PasswordEdit : EditableTextWidget {
 	}
 
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
 			createWin32Window(this, "edit"w, "", 
@@ -7980,7 +8285,7 @@ class PasswordEdit : EditableTextWidget {
 ///
 class TextEdit : EditableTextWidget {
 	///
-	this(Widget parent = null) {
+	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
 			createWin32Window(this, "edit"w, "", 
@@ -8167,12 +8472,17 @@ int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, Messa
 ///
 alias void delegate(Widget handlerAttachedTo, Event event) EventHandler;
 
-///
+/++
+	This is an opaque type you can use to disconnect an event handler when you're no longer interested.
+
+	History:
+		The data members were `public` (albiet undocumented and not intended for use) prior to May 13, 2021. They are now `private`, reflecting the single intended use of this object.
++/
 struct EventListener {
-	Widget widget;
-	string event;
-	EventHandler handler;
-	bool useCapture;
+	private Widget widget;
+	private string event;
+	private EventHandler handler;
+	private bool useCapture;
 
 	///
 	void disconnect() {
@@ -8185,7 +8495,7 @@ struct EventListener {
 
 	Now, I recommend you use a statically typed event object instead.
 
-	See_Also: [TypedEvent]
+	See_Also: [Event]
 +/
 enum EventType : string {
 	click = "click", ///
@@ -8272,7 +8582,7 @@ enum EventType : string {
 
 	Thus the family of functions are:
 
-	[Widget.addEventListener] is the fully-flexible base method. It has two main overload families: one with the string and one without. The one with the string takes the Event object, the one without determines the string from the type you pass.
+	[Widget.addEventListener] is the fully-flexible base method. It has two main overload families: one with the string and one without. The one with the string takes the Event object, the one without determines the string from the type you pass. The string "*" matches ALL events that pass through.
 
 	[Widget.addDirectEventListener] is addEventListener, but only calls the handler if target == this. Useful for something you can't afford to delegate.
 
@@ -8280,6 +8590,7 @@ enum EventType : string {
 
 	Let's implement a custom widget that can emit a ChangeEvent.
 
+	---
 	class MyCheckbox : Widget {
 		/// This gives a chance to document it and generates a convenience function to send it and attach handlers.
 		/// It is NOT actually required but should be used whenever possible.
@@ -8290,12 +8601,17 @@ enum EventType : string {
 			setDefaultEventHandler((ClickEvent) { emit(ChangeEvent()); });
 		}
 	}
+	---
 
-	Events can be subclasses of other events. If this is true, they trigger all their parent class events as well.
+	## Creating Your Own Events
 
-	class StringChangeEvent : ChangeEvent {}
+	To avoid clashing in the string namespace, your events should use your module and class name as the event string. The simple code `mixin Register;` in your Event subclass will do this for you.
 
-	Will count as BOTH "stringchange" and "change" (and "*", the base event type). You only need to emit the most derived type.
+	---
+	class MyEvent : Event {
+		mixin Register; // adds EventString and other reflection information
+	}
+	---
 
 	## General Conventions
 
@@ -8345,20 +8661,76 @@ enum EventType : string {
 +/
 class Event {
 	/// Creates an event without populating any members and without sending it. See [dispatch]
-	this(string eventName, Widget target) {
+	this(string eventName, Widget emittedBy) {
 		this.eventName = eventName;
-		this.srcElement = target;
+		this.srcElement = emittedBy;
 	}
 
-	// Added May 12, 2021
+	/++
+		Events should generally follow the propagation model, but there's some exceptions
+		to that rule. If so, they should override this to return false. In that case, only
+		bubbling event handlers on the target itself and capturing event handlers on the containing
+		window will be called. (That is, [dispatch] will call [sendDirectly] instead of doing the normal
+		capture -> target -> bubble process.)
+
+		History:
+			Added May 12, 2021
+	+/
 	bool propagates() const pure nothrow @nogc @safe {
 		return true;
 	}
 
-	Widget srcElement; ///
-	alias srcElement target; ///
+	/++
+		hints as to whether preventDefault will actually do anything. not entirely reliable
+		History:
+			Added May 14, 2021
+	+/
+	bool cancelable() const pure nothrow @nogc @safe {
+		return true;
+	}
 
-	Widget relatedTarget; ///
+	/++
+		You can mix this into child class to register some boilerplate. It includes the `EventString`
+		member, a constructor, and implementations of the dynamic get data interfaces.
+
+		If you fail to do this, your event will probably not have full compatibility but it might still work for you.
+
+
+		You can override the default EventString by simply providing your own in the form of
+		`enum string EventString = "some.name";` The default is the name of your class and its parent entity
+		which provides some namespace protection against conflicts in other libraries while still being fairly
+		easy to use.
+
+		If you provide your own constructor, it will override the default constructor provided here. A constructor
+		must call `super(EventString, passed_widget_target)` at some point. The `passed_widget_target` must be the
+		first argument to your constructor.
+
+		History:
+			Added May 13, 2021.
+	+/
+	protected static mixin template Register() {
+		public enum string EventString = __traits(identifier, __traits(parent, typeof(this))) ~ "." ~  __traits(identifier, typeof(this));
+		this(Widget target) { super(EventString, target); }
+	}
+
+	/++
+		This is the widget that emitted the event.
+
+
+		The aliased names come from Javascript for ease of web developers to transition in, but they're all synonyms.
+
+		History:
+			The `source` name was added on May 14, 2021. It is a little weird that `source` and `target` are synonyms,
+			but that's a side effect of it doing both capture and bubble handlers and people are used to it from the web
+			so I don't intend to remove these aliases.
+	+/
+	Widget source;
+	/// ditto
+	alias source target;
+	/// ditto
+	alias source srcElement;
+
+	Widget relatedTarget; /// Note: likely to be deprecated at some point.
 
 	/// Prevents the default event handler (if there is one) from being called
 	void preventDefault() {
@@ -8379,22 +8751,43 @@ class Event {
 
 	protected void adjustScrolling() { }
 
-	/// this sends it only to the target. If you want propagation, use dispatch() instead.
+	/++
+		this sends it only to the target. If you want propagation, use dispatch() instead.
+
+		This should be made private!!!
+
+	+/
 	void sendDirectly() {
 		if(srcElement is null)
 			return;
+
+		// i capturing on the parent too. The main reason for this is that gives a central place to log all events for the debug window.
 
 		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
 			//target.parentWindow.devTools.log("Event ", eventName, " dispatched directly to ", srcElement);
 
 		adjustScrolling();
 
+		if(auto e = target.parentWindow) {
+			if(auto handlers = "*" in e.capturingEventHandlers)
+			foreach(handler; *handlers)
+				if(handler) handler(e, this);
+			if(auto handlers = eventName in e.capturingEventHandlers)
+			foreach(handler; *handlers)
+				if(handler) handler(e, this);
+		}
+
 		auto e = srcElement;
 
-		if(eventName in e.bubblingEventHandlers)
-		foreach(handler; e.bubblingEventHandlers[eventName])
-			handler(e, this);
+		if(auto handlers = eventName in e.bubblingEventHandlers)
+		foreach(handler; *handlers)
+			if(handler) handler(e, this);
 
+		if(auto handlers = "*" in e.bubblingEventHandlers)
+		foreach(handler; *handlers)
+			if(handler) handler(e, this);
+
+		// there's never a default for a catch-all event
 		if(!defaultPrevented)
 			if(eventName in e.defaultEventHandlers)
 				e.defaultEventHandlers[eventName](e, this);
@@ -8427,10 +8820,14 @@ class Event {
 		isBubbling = false;
 
 		foreach_reverse(e; chain) {
-			if(eventName in e.capturingEventHandlers)
-			foreach(handler; e.capturingEventHandlers[eventName])
-				if(handler !is null)
-					handler(e, this);
+			if(auto handlers = "*" in e.capturingEventHandlers)
+				foreach(handler; *handlers) if(handler !is null) handler(e, this);
+
+			if(propagationStopped)
+				break;
+
+			if(auto handlers = eventName in e.capturingEventHandlers)
+				foreach(handler; *handlers) if(handler !is null) handler(e, this);
 
 			// the default on capture should really be to always do nothing
 
@@ -8445,10 +8842,14 @@ class Event {
 		isBubbling = true;
 		if(!propagationStopped)
 		foreach(e; chain) {
-			if(eventName in e.bubblingEventHandlers)
-			foreach(handler; e.bubblingEventHandlers[eventName])
-				if(handler !is null)
-					handler(e, this);
+			if(auto handlers = eventName in e.bubblingEventHandlers)
+				foreach(handler; *handlers) if(handler !is null) handler(e, this);
+
+			if(propagationStopped)
+				break;
+
+			if(auto handlers = "*" in e.bubblingEventHandlers)
+				foreach(handler; *handlers) if(handler !is null) handler(e, this);
 
 			if(propagationStopped)
 				break;
@@ -8530,7 +8931,7 @@ class Event {
 mixin template Emits(EventType) {
 	import arsd.minigui : EventString;
 	static if(is(EventType : Event) && !is(EventType == Event))
-		mixin("private EventType[0] emits_" ~ EventString!EventType ~";");
+		mixin("private EventType[0] emits_" ~ EventStringIdentifier!EventType ~";");
 	else
 		static assert(0, "You can only emit subclasses of Event");
 }
@@ -8545,6 +8946,88 @@ class SignalEvent(string name) : Event {
 
 }
 */
+
+/++
+	Command Events are used with a widget wants to issue a higher-level, yet loosely coupled command do its parents and other interested listeners, for example, "scroll up".
+
+
+	Command Events are a bit special in the way they're used. You don't typically refer to them by object, but instead by a name string and a set of arguments. The expectation is that they will be delegated to a parent, which "consumes" the command - it handles it and stops its propagation upward. The [consumesCommand] method will call your handler with the arguments, then stop the command event's propagation for you, meaning you don't have to call [Event.stopPropagation]. A command event should have no default behavior, so calling [Event.preventDefault] is not necessary either.
+
+	History:
+		Added on May 13, 2021. Prior to that, you'd most likely `addEventListener(EventType.triggered, ...)` to handle similar things.
++/
+class CommandEvent : Event {
+	enum EventString = "command";
+	this(Widget source, string CommandString = EventString) {
+		super(CommandString, source);
+	}
+}
+
+/++
+	A [CommandEvent] is typically actually an instance of these to hold the strongly-typed arguments.
++/
+class CommandEventWithArgs(Args...) : CommandEvent {
+	this(Widget source, string CommandString, Args args) { super(source, CommandString); this.args = args; }
+	Args args;
+}
+
+/++
+	Declares that the given widget consumes a command identified by the `CommandString` AND containing `Args`. Your `handler` is called with the arguments, then the event's propagation is stopped, so it will not be seen by the consumer's parents.
+
+	See [CommandEvent] for more information.
+
+	Returns:
+		The [EventListener] you can use to remove the handler.
++/
+EventListener consumesCommand(string CommandString, WidgetType, Args...)(WidgetType w, void delegate(Args) handler) {
+	return w.addEventListener(CommandString, (Event ev) {
+		if(ev.target is w)
+			return; // it does not consume its own commands!
+		if(auto cev = cast(CommandEventWithArgs!Args) ev) {
+			handler(cev.args);
+			ev.stopPropagation();
+		}
+	});
+}
+
+/++
+	Emits a command to the sender widget's parents with the given `CommandString` and `args`. You have no way of knowing if it was ever actually consumed due to the loose coupling. Instead, the consumer may broadcast a state update back toward you.
++/
+void emitCommand(string CommandString, WidgetType, Args...)(WidgetType w, Args args) {
+	auto event = new CommandEventWithArgs!Args(w, CommandString, args);
+	event.dispatch();
+}
+
+class ResizeEvent : Event {
+	enum EventString = "resize";
+
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
+}
+
+class BlurEvent : Event {
+	enum EventString = "blur";
+
+	// FIXME: related target?
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
+}
+
+class FocusEvent : Event {
+	enum EventString = "focus";
+
+	// FIXME: related target?
+	this(Widget target) { super(EventString, target); }
+}
+
+class ScrollEvent : Event {
+	enum EventString = "scroll";
+	this(Widget target) { super(EventString, target); }
+
+	override bool cancelable() const { return false; }
+}
 
 /++
 	Indicates that a character has been typed by the user. Normally dispatched to the currently focused widget.
@@ -8562,23 +9045,65 @@ class CharEvent : Event {
 	immutable dchar character;
 }
 
+/++
+	You should generally use a `ChangeEvent!Type` instead of this directly. See [ChangeEvent] for more information.
++/
 abstract class ChangeEventBase : Event {
-	this(string name, Widget target) {
-		super(name, target);
+	enum EventString = "change";
+	this(Widget target) {
+		super(EventString, target);
 	}
+
+	/+
+		// idk where or how exactly i want to do this.
+		// i might come back to it later.
+
+	// If a widget itself broadcasts one of theses itself, it stops propagation going down
+	// this way the source doesn't get too confused (think of a nested scroll widget)
+	//
+	// the idea is like the scroll bar emits a command event saying like "scroll left one line"
+	// then you consume that command and change you scroll x position to whatever. then you do
+	// some kind of change event that is broadcast back to the children and any horizontal scroll
+	// listeners are now able to update, without having an explicit connection between them.
+	void broadcastToChildren(string fieldName) {
+
+	}
+	+/
 }
 
+/++
+	Single-value widgets (that is, ones with a programming interface that just expose a value that the user has control over) should emit this after their value changes.
+
+
+	Generally speaking, if your widget can reasonably have a `@property T value();` or `@property bool checked();` method, it should probably emit this event when that value changes to inform its parents that they can now read a new value. Whether you emit it on each keystroke or other intermediate values or only when a value is committed (e.g. when the user leaves the field) is up to the widget. You might even make that a togglable property depending on your needs (emitting events can get expensive).
+
+	The delegate you pass to the constructor ought to be a handle to your getter property. If your widget has `@property string value()` for example, you emit `ChangeEvent!string(&value);`
+
+	Since it is emitted after the value has already changed, [preventDefault] is unlikely to do anything.
+
+	History:
+		Added May 11, 2021. Prior to that, widgets would more likely just send `new Event("change")`. These typed ChangeEvents are still compatible with listeners subscribed to generic change events.
++/
 class ChangeEvent(T) : ChangeEventBase {
-	enum EventString = "change";
-	this(Widget target, T newValue) {
-		this.value = newValue;
-		super("change"/* ~ T.stringof*/, target);
+	this(Widget target, T delegate() getNewValue) {
+		assert(getNewValue !is null);
+		this.getNewValue = getNewValue;
+		super(target);
 	}
 
-	T value;
+	private T delegate() getNewValue;
 
+	/++
+		Gets the new value that just changed.
+	+/
+	@property T value() {
+		return getNewValue();
+	}
+
+	/// compatibility method for old generic Events
 	static if(is(immutable T == immutable int))
 		override int intValue() { return value; }
+	/// ditto
 	static if(is(immutable T == immutable string))
 		override string stringValue() { return value; }
 }
@@ -8686,6 +9211,16 @@ abstract class MouseEventBase : Event {
 
 	int state; ///
 
+	/++
+		Mouse wheel movement sends down/up/click events just like other buttons clicking. This method is to help you filter that out.
+
+		History:
+			Added May 15, 2021
+	+/
+	bool isMouseWheel() {
+		return button == MouseButton.wheelUp || button == MouseButton.wheelDown;
+	}
+
 	override void adjustScrolling() {
 	version(custom_widgets) { // TEMP
 		viewportX = clientX;
@@ -8711,6 +9246,8 @@ abstract class MouseEventBase : Event {
 
 	[ClickEvent] is sent when the user clicks on the widget. It may also be sent with keyboard control, though minigui prefers to send a "triggered" event in addition to a mouse click and instead of a simulated mouse click in cases like keyboard activation of a button.
 
+	[DoubleClickEvent] is sent when the user clicks twice on a thing quickly, immediately after the second MouseDownEvent. The sequence is: MouseDownEvent, MouseUpEvent, ClickEvent, MouseDownEvent, DoubleClickEvent, MouseUpEvent. The second ClickEvent is NOT sent. Note that this is differnet than Javascript! They would send down,up,click,down,up,click,dblclick. Minigui does it differently because this is the way the Windows OS reports it.
+
 	[MouseOverEvent] is sent then the mouse first goes over a widget. Please note that this participates in event propagation of children! Use [MouseEnterEvent] instead if you are only interested in a specific element's whole bounding box instead of the top-most element in any particular location.
 
 	[MouseOutEvent] is sent when the mouse exits a target. Please note that this participates in event propagation of children! Use [MouseLeaveEvent] instead if you are only interested in a specific element's whole bounding box instead of the top-most element in any particular location.
@@ -8720,6 +9257,14 @@ abstract class MouseEventBase : Event {
 	[MouseLeaveEvent] is sent when the mouse leaves the bounding box of a widget.
 
 	You can construct these yourself, but generally the system will send them to you and there's little need to emit your own.
+
+	Rationale:
+
+		If you only want to do drag, mousedown/up works just fine being consistently sent.
+
+		If you want click, that event does what you expect (if the user mouse downs then moves the mouse off the widget before going up, no click event happens - a click is only down and back up on the same thing).
+
+		If you want double click and listen to that specifically, it also just works, and if you only cared about clicks, odds are the double click should do the same thing as a single click anyway - the double was prolly accidental - so only sending the event once is prolly what user intended.
 
 	History:
 		Added May 2, 2021. Previously, it was only seen as the base [Event] class on event listeners. See the member [EventString] to see what the associated string is with these elements.
@@ -8741,6 +9286,11 @@ class MouseMoveEvent : MouseEventBase {
 /// ditto
 class ClickEvent : MouseEventBase {
 	enum EventString = "click"; ///
+	this(Widget target) { super(EventString, target); }
+}
+/// ditto
+class DoubleClickEvent : MouseEventBase {
+	enum EventString = "dblclick"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
@@ -9446,7 +9996,7 @@ class AutomaticDialog(T) : Dialog {
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, cast(int)(__traits(allMembers, T).length + 5) * Window.lineHeight, T.stringof);
+		super(400, cast(int)(__traits(allMembers, T).length * 2) * (Window.lineHeight + 4 + 2) + Window.lineHeight + 56, T.stringof);
 
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
@@ -9641,6 +10191,7 @@ abstract class BaseVisualTheme {
 		Probably some shade of grey.
 	+/
 	abstract Color windowBackgroundColor();
+	abstract Color widgetBackgroundColor();
 	abstract Color foregroundColor();
 	abstract Color lightAccentColor();
 	abstract Color darkAccentColor();
@@ -9716,6 +10267,7 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 
 	// I have to put these here even though I kinda don't want to since dmd regressed on detecting unimplemented interface functions through abstract classes
 	override Color windowBackgroundColor() { return Color(212, 212, 212); }
+	override Color widgetBackgroundColor() { return Color.white; }
 	override Color foregroundColor() { return Color.black; }
 	override Color darkAccentColor() { return Color(172, 172, 172); }
 	override Color lightAccentColor() { return Color(223, 223, 223); }

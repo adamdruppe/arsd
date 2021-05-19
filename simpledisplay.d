@@ -6918,7 +6918,7 @@ version(arsd_mevent_strcmp_test) unittest {
 /// This gives a few more options to drawing lines and such
 struct Pen {
 	Color color; /// the foreground color
-	int width = 1; /// width of the line
+	int width = 1; /// width of the line. please note that on X, wide lines are drawn centered on the coordinates, so you may have to offset things.
 	Style style; /// See [Style]
 /+
 // From X.h
@@ -10061,6 +10061,7 @@ version(Windows) {
 		}
 
 		void drawRectangle(int x, int y, int width, int height) {
+			// FIXME: with a wider pen this might not draw quite right. im not sure.
 			gdi.Rectangle(hdc, x, y, x + width, y + height);
 		}
 
@@ -11431,8 +11432,9 @@ version(X11) {
 				XFillRectangle(display, d, gc, x+1, y+1, width-2, height-2); // Need to ensure pixels are only drawn once...
 				swapColors();
 			}
+			// since X centers the line on the coordinates, we try to undo that with the width/2 thing here so it is aligned in the rectangle's bounds
 			if(foregroundIsNotTransparent)
-				XDrawRectangle(display, d, gc, x, y, width - 1, height - 1);
+				XDrawRectangle(display, d, gc, x + _activePen.width / 2, y + _activePen.width / 2, width - 1 - _activePen.width / 2, height - 1 - _activePen.width / 2);
 		}
 
 		/// Arguments are the points of the bounding rectangle

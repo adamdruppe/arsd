@@ -2991,14 +2991,23 @@ struct Uri {
 			if(part == ".") {
 				continue;
 			} else if(part == "..") {
-				toKeep = toKeep[0 .. $-1];
+				//if(toKeep.length > 1)
+					toKeep = toKeep[0 .. $-1];
+				//else
+					//toKeep = [""];
 				continue;
 			} else {
+				//if(toKeep.length && toKeep[$-1].length == 0 && part.length == 0)
+					//continue; // skip a `//` situation
 				toKeep ~= part;
 			}
 		}
 
-		this.path = toKeep.join("/");
+		auto path = toKeep.join("/");
+		if(path.length && path[0] != '/')
+			path = "/" ~ path;
+
+		this.path = path;
 	}
 
 	unittest {
@@ -3080,6 +3089,9 @@ struct Uri {
 		url = Uri("/test/bar");
 		assert(Uri("./").basedOn(url) == "/test/", Uri("./").basedOn(url));
 		assert(Uri("../").basedOn(url) == "/");
+
+		url = Uri("http://example.com/");
+		assert(Uri("../foo").basedOn(url) == "http://example.com/foo");
 
 		//auto uriBefore = url;
 		url = Uri("#anchor"); // everything should remain the same except the anchor
