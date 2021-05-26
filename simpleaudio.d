@@ -213,6 +213,11 @@ interface SampleController {
 		If the sample has finished playing. Happens when it runs out or if it is stopped.
 	+/
 	bool finished();
+
+	/++
+		If the sample has beend paused.
+	+/
+	bool paused();
 }
 
 private class DummySample : SampleController {
@@ -221,19 +226,21 @@ private class DummySample : SampleController {
 	void stop() {}
 	float position() { return float.init; }
 	bool finished() { return true; }
+	bool paused() { return true; }
 }
 
 private class SampleControlFlags : SampleController {
-	void pause() { paused = true; }
-	void resume() { paused = false; }
-	void stop() { paused = false; stopped = true; }
+	void pause() { paused_ = true; }
+	void resume() { paused_ = false; }
+	void stop() { paused_ = false; stopped = true; }
 
-	bool paused;
+	bool paused_;
 	bool stopped;
 	bool finished_;
 
 	float position() { return currentPosition; }
 	bool finished() { return finished_; }
+	bool paused() { return paused_; }
 
 	float currentPosition = 0.0;
 }
