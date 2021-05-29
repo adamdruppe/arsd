@@ -1109,7 +1109,8 @@ version(Windows) {
 	pragma(lib, "user32");
 
 	// for AlphaBlend... a breaking change....
-	pragma(lib, "msimg32");
+	version(CRuntime_DigitalMars) { } else
+		pragma(lib, "msimg32");
 } else version (linux) {
 	//k8: this is hack for rdmd. sorry.
 	static import core.sys.linux.epoll;
@@ -5051,8 +5052,8 @@ void getClipboardImage()(SimpleWindow clipboardOwner, void delegate(MemoryImage)
 
 version(Windows)
 struct WCharzBuffer {
-	wchar[256] staticBuffer;
 	wchar[] buffer;
+	wchar[256] staticBuffer = void;
 
 	size_t length() {
 		return buffer.length;
@@ -6126,7 +6127,11 @@ version (X11) {
 			}
 		}
 
-		///
+		/++
+			Sends a fake press key event.
+
+			Please note you need to call [flushGui] or return to the event loop for this to actually be sent.
+		+/
 		void pressKey(Key key, bool pressed, int delay = 0) {
 			XTestFakeKeyEvent(XDisplayConnection.get, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
 		}
@@ -8532,6 +8537,11 @@ class Sprite : CapableOfBeingDrawnUpon {
 				xrenderPicture = XRenderCreatePicture(display, handle, ARGB32, 0, &attrs);
 			}
 		} else version(Windows) {
+			version(CRuntime_DigitalMars) {
+				//if(enableAlpha)
+					//throw new Exception("Alpha support not available, try recompiling with -m32mscoff");
+			}
+
 			BITMAPINFO infoheader;
 			infoheader.bmiHeader.biSize = infoheader.bmiHeader.sizeof;
 			infoheader.bmiHeader.biWidth = width;
@@ -9973,6 +9983,8 @@ version(Windows) {
 
 			GetObject(s.handle, bm.sizeof, &bm);
 
+			version(CRuntime_DigitalMars) goto noalpha;
+
 			// or should I AlphaBlend!??!?! note it is supposed to be premultiplied  http://www.fengyuan.com/article/alphablend.html
 			if(s.enableAlpha) {
 				auto dw = w ? w : bm.bmWidth;
@@ -9982,8 +9994,10 @@ version(Windows) {
 				bf.SourceConstantAlpha = 255;
 				bf.AlphaFormat = AC_SRC_ALPHA;
 				AlphaBlend(hdc, x, y, dw, dh, hdcMem, ix, iy, dw, dh, bf);
-			} else
+			} else {
+				noalpha:
 				BitBlt(hdc, x, y, w ? w : bm.bmWidth, h ? h : bm.bmHeight, hdcMem, ix, iy, SRCCOPY);
+			}
 
 			SelectObject(hdcMem, hbmOld);
 			DeleteDC(hdcMem);
@@ -10974,8 +10988,9 @@ version(X11) {
 				auto display = XDisplayConnection.get;
 				auto font = XLoadQueryFont(display, xfontstr.ptr);
 				// if the user font choice fails, fixed is pretty reliable (required by X to start!) and not bad either
+				xfontstr = "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*";
 				if(font is null)
-					font = XLoadQueryFont(display, "-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*".ptr);
+					font = XLoadQueryFont(display, xfontstr.ptr);
 
 				char** lol;
 				int lol2;
@@ -11096,6 +11111,8 @@ version(X11) {
 				xftDraw = null;
 			}
 
+			/+
+			// this should prolly legit never be used since if it destroys the font handle from a OperatingSystemFont, it also ruins a reusable resource.
 			if(font && font !is defaultfont) {
 				XFreeFont(display, font);
 				font = null;
@@ -11104,6 +11121,7 @@ version(X11) {
 				XFreeFontSet(display, fontset);
 				fontset = null;
 			}
+			+/
 			XFlush(display);
 
 			if(window.paintingFinishedDg !is null)

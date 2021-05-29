@@ -188,7 +188,9 @@ the virtual functions remain as the default calculated values. then the reads go
 
 			See [Widget.Style] for details.
 
-			* A widget must now opt in to receiving keyboard focus, rather than opting out.
+			// * A widget must now opt in to receiving keyboard focus, rather than opting out.
+
+			* Widgets now draw their keyboard focus by default instead of opt in. You may wish to set `tabStop = false;` if it wasn't supposed to receive it.
 
 			* Most Widget constructors no longer have a default `parent` argument. You must pass the parent to almost all widgets, or in rare cases, an explict `null`, but more often than not, you need the parent so the default argument was not very useful at best and misleading to a crash at worst.
 
@@ -371,6 +373,36 @@ version(Windows) {
 	Later I'll add more complete examples, but for now [TextLabel] and [LabeledPasswordEdit] are both simple widgets you can view implementation to get some ideas.
 +/
 class Widget {
+
+	/++
+		Sets some internal param, `name`, to the string `value`. It is meant to be used from things like XML loaders.
+
+		If you subclass this, you should add your derived members, then `return super.addParameter(name, value);` in the default case.
+
+		Returns:
+			`true` if you handled it, `false` if you did not. This can be used to give user feedback.
+
+		History:
+			Added May 22, 2021
+	+/
+	bool addParameter(string name, string value) {
+		switch(name) {
+			case "name": this.name = value; return true;
+			default: return false;
+		}
+	}
+
+	/++
+		If `encapsulatedChildren` returns true, it changes the event handling mechanism to act as if events from the child widgets are actually targeted on this widget.
+
+		The idea is then you can use child widgets as part of your implementation, but not expose those details through the event system; if someone checks the mouse coordinates and target of the event once it bubbles past you, it will show as it it came from you.
+
+		History:
+			Added May 22, 2021
+	+/
+	protected bool encapsulatedChildren() {
+		return false;
+	}
 
 	// Default layout properties {
 
@@ -570,14 +602,14 @@ class Widget {
 		}
 
 		///
-		Color backgroundColor() {
+		WidgetBackground background() {
 			// the default is a "transparent" background, which means
 			// it goes as far up as it can to get the color
 			if (widget.backgroundColor_ != Color.transparent)
-				return widget.backgroundColor_;
+				return WidgetBackground(widget.backgroundColor_);
 			if (widget.parent)
-				return StyleInformation.extractStyleProperty!"backgroundColor"(widget.parent);
-			return widget.backgroundColor_;
+				return WidgetBackground(StyleInformation.extractStyleProperty!"background"(widget.parent));
+			return WidgetBackground(widget.backgroundColor_);
 		}
 
 		private OperatingSystemFont fontCached_;
@@ -1300,7 +1332,7 @@ class Widget {
 		version(win32_widgets)
 			if(hwnd) return; // Windows will do it. I think.
 
-		auto c = getComputedStyle().backgroundColor;
+		auto c = getComputedStyle().background.color;
 		painter.fillColor = c;
 		painter.outlineColor = c;
 
@@ -1600,7 +1632,7 @@ abstract class ComboboxBase : Widget {
 			{
 				auto cs = getComputedStyle();
 				auto painter = dropDown.draw();
-				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen, getComputedStyle().backgroundColor);
+				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen, getComputedStyle().background.color);
 				auto p = Point(4, 4);
 				painter.outlineColor = cs.foregroundColor;
 				foreach(option; options) {
@@ -1612,13 +1644,13 @@ abstract class ComboboxBase : Widget {
 			dropDown.setEventHandlers(
 				(MouseEvent event) {
 					if(event.type == MouseEventType.buttonReleased) {
+						dropDown.close();
 						auto element = (event.y - 4) / Window.lineHeight;
 						if(element >= 0 && element <= options.length) {
 							selection = element;
 
 							fireChangeEvent();
 						}
-						dropDown.close();
 					}
 				}
 			);
@@ -2033,7 +2065,14 @@ int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fram
 	return borderWidth;
 }
 
-///
+/++
+	An `Action` represents some kind of user action they can trigger through menu options, toolbars, hotkeys, and similar mechanisms. The text label, icon, and handlers are centrally held here instead of repeated in each UI element.
+
+	See_Also:
+		[MenuItem]
+		[ToolButton]
+		[Menu.addItem]
++/
 class Action {
 	version(win32_widgets) {
 		private int id;
@@ -2043,7 +2082,16 @@ class Action {
 
 	KeyEvent accelerator;
 
-	///
+	// FIXME: disable message
+	// and toggle thing?
+	// ??? and trigger arguments too ???
+
+	/++
+		Params:
+			label = the textual label
+			icon = icon ID. See [GenericIcons]. There is currently no way to do custom icons.
+			triggered = initial handler, more can be added via the [triggered] member.
+	+/
 	this(string label, ushort icon = 0, void delegate() triggered = null) {
 		this.label = label;
 		this.iconId = icon;
@@ -2060,6 +2108,7 @@ class Action {
 	// icon
 
 	// when it is triggered, the triggered event is fired on the window
+	/// The list of handlers when it is triggered.
 	void delegate()[] triggered;
 }
 
@@ -2563,7 +2612,7 @@ struct WidgetPainter {
 
 	/// ditto
 	Color themeBackground() {
-		return drawingUpon.getComputedStyle().backgroundColor();
+		return drawingUpon.getComputedStyle().background.color;
 	}
 
 	int isDarkTheme() {
@@ -2606,7 +2655,7 @@ struct WidgetPainter {
 
 		auto cs = drawingUpon.getComputedStyle();
 
-		auto bg = cs.backgroundColor;
+		auto bg = cs.background.color;
 
 		auto borderWidth = draw3dFrame(0, 0, drawingUpon.width, drawingUpon.height, this, cs.borderStyle, bg, cs.borderColor);
 
@@ -2690,6 +2739,22 @@ struct WidgetPainter {
 	// done..........
 }
 
+
+struct Style {
+	static struct helper(string m, T) {
+		enum method = m;
+		T v;
+
+		mixin template MethodOverride(typeof(this) v) {
+			mixin("override typeof(v.v) "~v.method~"() { return v.v; }");
+		}
+	}
+
+	static auto opDispatch(string method, T)(T value) {
+		return helper!(method, T)(value);
+	}
+}
+
 /++
 	History:
 		Added Oct 28, 2020
@@ -2727,6 +2792,15 @@ struct ContainerMeta {
 	}
 }
 
+/++
+	This is a helper for [addDataControllerWidget]. You can use it as a UDA on the type. See
+	http://dpldocs.info/this-week-in-d/Blog.Posted_2020_11_02.html for more information.
+
+	Please note that as of May 28, 2021, a dmd bug prevents this from compiling on module-level
+	structures. It works fine on structs declared inside functions though.
+
+	See: https://issues.dlang.org/show_bug.cgi?id=21984
++/
 template Container(CArgs...) {
 	static if(CArgs.length && is(CArgs[0] : Widget)) {
 		private alias Super = CArgs[0];
@@ -2835,17 +2909,57 @@ class DataControllerWidget(T) : Widget {
 		foreach(member; __traits(allMembers, T))
 		static if(member != "this") // wtf
 		static if(__traits(getProtection, __traits(getMember, this.datum, member)) == "public") {
-			auto w = widgetFor!(__traits(getMember, T, member))(&__traits(getMember, this.datum, member), helper(member));
+			void delegate() update;
+
+			auto w = widgetFor!(__traits(getMember, T, member))(&__traits(getMember, this.datum, member), helper(member), update);
+
+			if(update)
+				updaters ~= update;
+
 			static if(is(typeof(__traits(getMember, this.datum, member)) == function))
-				w.addEventListener("triggered", &__traits(getMember, this.datum, member));
-			else static if(is(w : DropDownSelection))
+				w.addEventListener("triggered", delegate() {
+					__traits(getMember, this.datum, member)();
+					notifyDataUpdated();
+				});
+			else static if(is(typeof(w.value) == string) || is(typeof(w.content) == string))
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.stringValue); } );
 			else
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 		}
 	}
 
-	Widget[string] memberWidgets;
+	/++
+		If you modify the data in the structure directly, you need to call this to update the UI and propagate any change messages.
+
+		History:
+			Added May 28, 2021
+	+/
+	void notifyDataUpdated() {
+		foreach(updater; updaters)
+			updater();
+
+		this.emit!(ChangeEvent!void)(delegate{});
+	}
+
+	private Widget[string] memberWidgets;
+	private void delegate()[] updaters;
+
+	override int maxHeight() {
+		if(this.children.length == 1)
+			return this.children[0].maxHeight;
+		else
+			return int.max;
+	}
+
+	override int maxWidth() {
+		if(this.children.length == 1)
+			return this.children[0].maxWidth;
+		else
+			return int.max;
+	}
+
+
+	mixin Emits!(ChangeEvent!void);
 }
 
 void genericSetValue(T, W)(T* where, W what) {
@@ -2855,20 +2969,24 @@ void genericSetValue(T, W)(T* where, W what) {
 }
 
 // FIXME: integrate with AutomaticDialog
-static auto widgetFor(alias tt, P)(P valptr, Widget parent) {
+static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void delegate() update) {
 	static if(controlledByCount!tt == 1) {
 		foreach(i, attr; __traits(getAttributes, tt)) {
 			static if(is(typeof(attr) == ControlledBy_!(T, Args), T, Args...)) {
 				auto w = attr.construct(parent);
 				static if(__traits(compiles, w.setPosition(*valptr)))
-					w.setPosition(*valptr);
+					update = () { w.setPosition(*valptr); };
 				else static if(__traits(compiles, w.setValue(*valptr)))
-					w.setValue(*valptr);
+					update = () { w.setValue(*valptr); };
+
+				if(update)
+					update();
 				return w;
 			}
 		}
 	} else static if(controlledByCount!tt == 0) {
 		static if(is(typeof(tt) == enum)) {
+			// FIXME: update
 			auto dds = new DropDownSelection(parent);
 			foreach(idx, option; __traits(allMembers, typeof(tt))) {
 				dds.addOption(option);
@@ -2879,7 +2997,13 @@ static auto widgetFor(alias tt, P)(P valptr, Widget parent) {
 		} else static if(is(typeof(tt) : const long)) {
 			static assert(0);
 		} else static if(is(typeof(tt) : const string)) {
-			static assert(0);
+			auto le = new LabeledLineEdit(__traits(identifier, tt), parent);
+			update = () { le.content = *valptr; };
+			update();
+			return le;
+		} else static if(is(typeof(tt) == function)) {
+			auto w = new Button(__traits(identifier, tt), parent);
+			return w;
 		}
 	} else static assert(0, "multiple controllers not yet supported");
 }
@@ -2899,14 +3023,27 @@ private template controlledByCount(alias tt) {
 /++
 	Intended for UFCS action like `window.addDataControllerWidget(new MyObject());`
 
+	If you provide a `redrawOnChange` widget, it will automatically register a change event handler that calls that widget's redraw method.
+
+	History:
+		The `redrawOnChange` parameter was added on May 28, 2021.
 +/
-DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t) if(is(T == class)) {
-	return new DataControllerWidget!T(t, parent);
+DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t, Widget redrawOnChange = null) if(is(T == class)) {
+	auto dcw = new DataControllerWidget!T(t, parent);
+	initializeDataControllerWidget(dcw, redrawOnChange);
+	return dcw;
 }
 
 /// ditto
-DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T* t) if(is(T == struct)) {
-	return new DataControllerWidget!T(t, parent);
+DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T* t, Widget redrawOnChange = null) if(is(T == struct)) {
+	auto dcw = new DataControllerWidget!T(t, parent);
+	initializeDataControllerWidget(dcw, redrawOnChange);
+	return dcw;
+}
+
+private void initializeDataControllerWidget(Widget w, Widget redrawOnChange) {
+	if(redrawOnChange !is null)
+		w.addEventListener("change", delegate() { redrawOnChange.redraw(); });
 }
 
 /+
@@ -2935,6 +3072,8 @@ struct StyleInformation {
 				return Color.fromString(str);
 			else static if(is(T == Measurement))
 				return Measurement(cast(int) toInternal!int(str));
+			else static if(is(T == WidgetBackground))
+				return WidgetBackground.fromString(str);
 			else static if(is(T == OperatingSystemFont)) {
 				if(auto f = str in fontCache)
 					return *f;
@@ -2985,7 +3124,7 @@ struct StyleInformation {
 	int minWidth() { return getProperty("min-width", Measurement(w.minWidth())); }
 
 
-	Color backgroundColor() { return getProperty("background-color", extractStyleProperty!"backgroundColor"(w)); }
+	WidgetBackground background() { return getProperty("background", extractStyleProperty!"background"(w)); }
 	Color foregroundColor() { return getProperty("foreground-color", extractStyleProperty!"foregroundColor"(w)); }
 
 	OperatingSystemFont font() { return getProperty("font", extractStyleProperty!"fontCached"(w)); }
@@ -3260,8 +3399,8 @@ class ListWidget : ListWidgetBase {
 	}
 
 	static class Style : Widget.Style {
-		override Color backgroundColor() {
-			return WidgetPainter.visualTheme.widgetBackgroundColor;
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
 		}
 	}
 	mixin OverrideStyle!Style;
@@ -4175,6 +4314,7 @@ class HorizontalSlider : Slider {
 	protected override void setPositionCustom(int a) {
 		if(max())
 			thumb.positionX = a * (thumb.width - 16) / max();
+		redraw();
 	}
 }
 
@@ -4774,6 +4914,8 @@ class TabWidget : Widget {
 	this(Widget parent) {
 		super(parent);
 
+		tabStop = false;
+
 		version(win32_widgets) {
 			createWin32Window(this, WC_TABCONTROL, "", 0);
 		} else version(custom_widgets) {
@@ -4883,11 +5025,14 @@ class TabWidget : Widget {
 		int tabWidth = 80;
 	}
 
+	version(win32_widgets)
+	override void paint(WidgetPainter painter) {}
+
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
 
-		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.backgroundColor);
+		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.background.color);
 
 		int posX = 0;
 		foreach(idx, child; children) {
@@ -5075,6 +5220,7 @@ class TabWidgetPage : Widget {
 	string title;
 	this(string title, Widget parent) {
 		this.title = title;
+		this.tabStop = false;
 		super(parent);
 
 		///*
@@ -5441,11 +5587,11 @@ class Window : Widget {
 	}
 
 	static class Style : Widget.Style {
-		override Color backgroundColor() {
+		override WidgetBackground background() {
 			version(custom_widgets)
-				return WidgetPainter.visualTheme.windowBackgroundColor;
+				return WidgetBackground(WidgetPainter.visualTheme.windowBackgroundColor);
 			else version(win32_widgets)
-				return Color.transparent;
+				return WidgetBackground(Color.transparent);
 			else static assert(0);
 		}
 	}
@@ -5843,15 +5989,17 @@ class Window : Widget {
 		auto eleR = widgetAtPoint(this, ev.x, ev.y);
 		auto ele = eleR.widget;
 
+		auto captureEle = ele;
+
 		if(mouseCapturedBy !is null) {
 			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
-				ele = mouseCapturedBy;
+				captureEle = mouseCapturedBy;
 		}
 
 		// a hack to get it relative to the widget.
 		eleR.x = ev.x;
 		eleR.y = ev.y;
-		auto pain = ele;
+		auto pain = captureEle;
 		while(pain) {
 			eleR.x -= pain.x;
 			eleR.y -= pain.y;
@@ -5859,7 +6007,7 @@ class Window : Widget {
 		}
 
 		if(ev.type == MouseEventType.buttonPressed) {
-			MouseEventBase event = new MouseDownEvent(ele);
+			MouseEventBase event = new MouseDownEvent(captureEle);
 			event.button = ev.button;
 			event.buttonLinear = ev.buttonLinear;
 			event.state = ev.modifierState;
@@ -5868,7 +6016,7 @@ class Window : Widget {
 			event.dispatch();
 
 			if(ev.button != MouseButton.wheelDown && ev.button != MouseButton.wheelUp && mouseLastDownOn is ele && ev.doubleClick) {
-				event = new DoubleClickEvent(ele);
+				event = new DoubleClickEvent(captureEle);
 				event.button = ev.button;
 				event.buttonLinear = ev.buttonLinear;
 				event.state = ev.modifierState;
@@ -5883,7 +6031,7 @@ class Window : Widget {
 			mouseLastDownOn = ele;
 		} else if(ev.type == MouseEventType.buttonReleased) {
 			{
-				auto event = new MouseUpEvent(ele);
+				auto event = new MouseUpEvent(captureEle);
 				event.button = ev.button;
 				event.buttonLinear = ev.buttonLinear;
 				event.clientX = eleR.x;
@@ -5892,7 +6040,7 @@ class Window : Widget {
 				event.dispatch();
 			}
 			if(!lastWasDoubleClick && mouseLastDownOn is ele) {
-				MouseEventBase event = new ClickEvent(ele);
+				MouseEventBase event = new ClickEvent(captureEle);
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
 				event.state = ev.modifierState;
@@ -5903,7 +6051,7 @@ class Window : Widget {
 		} else if(ev.type == MouseEventType.motion) {
 			// motion
 			{
-				auto event = new MouseMoveEvent(ele);
+				auto event = new MouseMoveEvent(captureEle);
 				event.state = ev.modifierState;
 				event.clientX = eleR.x;
 				event.clientY = eleR.y;
@@ -6143,11 +6291,11 @@ class Labeled(T) : Widget {
 	override int marginBottom() { return 4; }
 
 	///
-	string content() {
+	@property string content() {
 		return lineEdit.content;
 	}
 	///
-	void content(string c) {
+	@property void content(string c) {
 		return lineEdit.content(c);
 	}
 
@@ -6171,8 +6319,65 @@ class Labeled(T) : Widget {
 +/
 alias LabeledPasswordEdit = Labeled!PasswordEdit;
 
+private string toMenuLabel(string s) {
+	string n;
+	n.reserve(s.length);
+	foreach(c; s)
+		if(c == '_')
+			n ~= ' ';
+		else
+			n ~= c;
+	return n;
+}
 
-///
+private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
+	static if(is(T : void delegate())) {
+		return t;
+	} else {
+		static if(is(typeof(fn) Params == __parameters))
+		struct S {
+			static foreach(idx, ignore; Params) {
+				mixin("Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
+			}
+		}
+		return () {
+			dialog((S s) {
+				t(s.tupleof);
+			}, null, __traits(identifier, fn));
+		};
+	}
+}
+
+private template hasAnyRelevantAnnotations(a...) {
+	bool helper() {
+		bool any;
+		foreach(attr; a) {
+			static if(is(typeof(attr) == .menu))
+				any = true;
+			else static if(is(typeof(attr) == .toolbar))
+				any = true;
+			else static if(is(attr == .separator))
+				any = true;
+			else static if(is(typeof(attr) == .accelerator))
+				any = true;
+			else static if(is(typeof(attr) == .hotkey))
+				any = true;
+			else static if(is(typeof(attr) == .icon))
+				any = true;
+			else static if(is(typeof(attr) == .label))
+				any = true;
+			else static if(is(typeof(attr) == .tip))
+				any = true;
+		}
+		return any;
+	}
+
+	enum bool hasAnyRelevantAnnotations = helper();
+}
+
+/++
+	A `MainWindow` is a window that includes turnkey support for a menu bar, tool bar, and status bar automatically positioned around a client area where you put your widgets.
++/
 class MainWindow : Window {
 	///
 	this(string title = null, int initialWidth = 500, int initialHeight = 500) {
@@ -6200,7 +6405,7 @@ class MainWindow : Window {
                         void Open() {}
                         void Save() {}
                         @separator
-                        void Exit() @accelerator("Alt+F4") {
+                        void Exit() @accelerator("Alt+F4") @hotkey('x') {
                                 window.close();
                         }
                 }
@@ -6225,6 +6430,8 @@ class MainWindow : Window {
         window.setMenuAndToolbarFromAnnotatedCode(commands);
 	---
 
+	Note that you can call this function multiple times and it will add the items in order to the given items.
+
 	+/
 	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) if(!is(T == class) && !is(T == interface)) {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
@@ -6241,10 +6448,9 @@ class MainWindow : Window {
 			mcs[menu.label] = menu;
 		}
 
-		void delegate() triggering;
-
 		foreach(memberName; __traits(derivedMembers, T)) {
-			static if(__traits(compiles, triggering = &__traits(getMember, t, memberName))) {
+			static if(memberName != "this")
+			static if(hasAnyRelevantAnnotations!(__traits(getAttributes, __traits(getMember, T, memberName)))) {
 				.menu menu;
 				.toolbar toolbar;
 				bool separator;
@@ -6275,13 +6481,16 @@ class MainWindow : Window {
 				if(menu !is .menu.init || toolbar !is .toolbar.init) {
 					ushort correctIcon = icon.id; // FIXME
 					if(label.length == 0)
-						label = memberName;
-					auto action = new Action(label, correctIcon, &__traits(getMember, t, memberName));
+						label = memberName.toMenuLabel;
+
+					auto handler = makeAutomaticHandler!(__traits(getMember, T, memberName))(&__traits(getMember, t, memberName));
+
+					auto action = new Action(label, correctIcon, handler);
 
 					if(accelerator.keyString.length) {
 						auto ke = KeyEvent.parse(accelerator.keyString);
 						action.accelerator = ke;
-						accelerators[ke.toStr] = &__traits(getMember, t, memberName);
+						accelerators[ke.toStr] = handler;
 					}
 
 					if(toolbar !is .toolbar.init)
@@ -6412,8 +6621,9 @@ class MainWindow : Window {
 /+
 	This is really an implementation detail of [MainWindow]
 +/
-class ClientAreaWidget : Widget {
+private class ClientAreaWidget : Widget {
 	this() {
+		this.tabStop = false;
 		super(null);
 		//sa = new ScrollableWidget(this);
 	}
@@ -6433,7 +6643,7 @@ class ClientAreaWidget : Widget {
 
 /**
 	Toolbars are lists of buttons (typically icons) that appear under the menu.
-	Each button ought to correspond to a menu item.
+	Each button ought to correspond to a menu item, represented by [Action] objects.
 */
 class ToolBar : Widget {
 	version(win32_widgets) {
@@ -6520,7 +6730,7 @@ class ToolBar : Widget {
 
 enum toolbarIconSize = 24;
 
-///
+/// An implementation helper for [ToolBar]. Generally, you shouldn't create these yourself and instead just pass [Action]s to [ToolBar]'s constructor and let it create the buttons for you.
 class ToolButton : Button {
 	///
 	this(string label, Widget parent) {
@@ -6680,7 +6890,7 @@ class MenuBar : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		draw3dFrame(this, painter, FrameStyle.risen, getComputedStyle().backgroundColor);
+		draw3dFrame(this, painter, FrameStyle.risen, getComputedStyle().background.color);
 	}
 
 	///
@@ -6839,13 +7049,13 @@ class StatusBar : Widget {
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
-		this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
+		this.draw3dFrame(painter, FrameStyle.sunk, cs.background.color);
 		int cpos = 0;
 		int remainingLength = this.width;
 		foreach(idx, part; this.partsArray) {
 			auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
 			painter.setClipRectangle(Point(cpos, 0), partWidth, height);
-			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk, cs.backgroundColor);
+			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk, cs.background.color);
 			painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
 
 			painter.outlineColor = cs.foregroundColor();
@@ -6898,7 +7108,7 @@ class ProgressBar : Widget {
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
-		this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
+		this.draw3dFrame(painter, FrameStyle.sunk, cs.background.color);
 		painter.fillColor = cs.progressBarColor;
 		painter.drawRectangle(Point(0, 0), width * current / max, height);
 	}
@@ -7236,7 +7446,7 @@ class Menu : Window {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.risen, getComputedStyle.backgroundColor);
+		this.draw3dFrame(painter, FrameStyle.risen, getComputedStyle.background.color);
 	}
 }
 
@@ -7282,7 +7492,7 @@ class MenuItem : MouseActivatedWidget {
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
 		if(dynamicState & DynamicState.depressed)
-			this.draw3dFrame(painter, FrameStyle.sunk, cs.backgroundColor);
+			this.draw3dFrame(painter, FrameStyle.sunk, cs.background.color);
 		if(dynamicState & DynamicState.hover)
 			painter.outlineColor = cs.activeMenuItemColor;
 		else
@@ -7340,23 +7550,28 @@ class MouseActivatedWidget : Widget {
 
 	private bool isChecked_;
 
-	override void attachedToWindow(Window w) {
-		w.addEventListener("mouseup", delegate (Widget _this, Event ev) {
-			setDynamicState(DynamicState.depressed, false);
-		});
-	}
-
 	this(Widget parent) {
 		super(parent);
 
-		addEventListener("mousedown", delegate (Widget _this, Event ev) {
-			setDynamicState(DynamicState.depressed, true);
-			redraw();
+		addEventListener((MouseDownEvent ev) {
+			if(ev.button == MouseButton.left) {
+				setDynamicState(DynamicState.depressed, true);
+				redraw();
+			}
 		});
 
-		addEventListener("mouseup", delegate (Widget _this, Event ev) {
-			setDynamicState(DynamicState.depressed, false);
-			redraw();
+		addEventListener((MouseUpEvent ev) {
+			if(ev.button == MouseButton.left) {
+				setDynamicState(DynamicState.depressed, false);
+				redraw();
+			}
+		});
+
+		addEventListener((MouseMoveEvent mme) {
+			if(!(mme.state & ModifierState.leftButtonDown)) {
+				setDynamicState(DynamicState.depressed, false);
+				redraw();
+			}
 		});
 	}
 
@@ -7390,8 +7605,10 @@ class MouseActivatedWidget : Widget {
 		super.defaultEventHandler_click(ev);
 		if(this.tabStop)
 			this.focus();
-		auto event = new Event(EventType.triggered, this);
-		event.sendDirectly();
+		if(ev.button == MouseButton.left) {
+			auto event = new Event(EventType.triggered, this);
+			event.sendDirectly();
+		}
 	}
 
 }
@@ -7631,16 +7848,16 @@ class Button : MouseActivatedWidget {
 	override int minHeight() { return Window.lineHeight + 4; }
 
 	static class Style : Widget.Style {
-		override Color backgroundColor() {
+		override WidgetBackground background() {
 			auto cs = widget.getComputedStyle(); // FIXME: this is potentially recursive
 
 			auto pressed = DynamicState.depressed | DynamicState.hover;
 			if((widget.dynamicState & pressed) == pressed) {
-				return cs.depressedButtonColor();
+				return WidgetBackground(cs.depressedButtonColor());
 			} else if(widget.dynamicState & DynamicState.hover) {
-				return cs.hoveringColor();
+				return WidgetBackground(cs.hoveringColor());
 			} else {
-				return cs.buttonColor();
+				return WidgetBackground(cs.buttonColor());
 			}
 		}
 
@@ -8609,13 +8826,12 @@ enum EventType : string {
 
 	---
 	class MyEvent : Event {
+		this(Widget w) { super(w); }
 		mixin Register; // adds EventString and other reflection information
 	}
 	---
 
-	## General Conventions
-
-	Change events should NOT be emitted when a value is changed programmatically. Indeed, methods should usually not send events. The point of an event is to know something changed and when you call a method, you already know about it.
+	Then declare that it is sent with the [Emits] mixin, so you can use [Widget.emit] to dispatch it.
 
 	History:
 		Prior to May 2021, Event had a set of pre-made members with no extensibility (outside of diy casts) and no static checks on field presence.
@@ -8623,6 +8839,12 @@ enum EventType : string {
 		After that, those old pre-made members are deprecated accessors and the fields are moved to child classes. To transition, change string events to typed events or do a dynamic cast (don't forget the null check!) in your handler.
 +/
 /+
+
+	## General Conventions
+
+	Change events should NOT be emitted when a value is changed programmatically. Indeed, methods should usually not send events. The point of an event is to know something changed and when you call a method, you already know about it.
+
+
 	## Qt-style signals and slots
 
 	Some events make sense to use with just name and data type. These are one-way notifications with no propagation nor default behavior and thus separate from the other event system.
@@ -8749,7 +8971,10 @@ class Event {
 
 	private bool isBubbling;
 
+	/// This is an internal implementation detail you should not use. It would be private if the language allowed it and it may be removed without notice.
 	protected void adjustScrolling() { }
+	/// ditto
+	protected void adjustClientCoordinates(int deltaX, int deltaY) { }
 
 	/++
 		this sends it only to the target. If you want propagation, use dispatch() instead.
@@ -8839,6 +9064,9 @@ class Event {
 				break;
 		}
 
+		int adjustX;
+		int adjustY;
+
 		isBubbling = true;
 		if(!propagationStopped)
 		foreach(e; chain) {
@@ -8853,6 +9081,14 @@ class Event {
 
 			if(propagationStopped)
 				break;
+
+			if(e.encapsulatedChildren()) {
+				adjustClientCoordinates(adjustX, adjustY);
+				target = e;
+			} else {
+				adjustX += e.x;
+				adjustY += e.y;
+			}
 		}
 
 		if(!defaultPrevented)
@@ -9206,8 +9442,8 @@ abstract class MouseEventBase : Event {
 	int viewportX; /// The mouse event location relative to the window origin
 	int viewportY; /// ditto
 
-	int button; /// [MouseEvent.button]
-	int buttonLinear; /// [MouseEvent.buttonLinear]
+	int button; /// See: [MouseEvent.button]
+	int buttonLinear; /// See: [MouseEvent.buttonLinear]
 
 	int state; ///
 
@@ -9219,6 +9455,12 @@ abstract class MouseEventBase : Event {
 	+/
 	bool isMouseWheel() {
 		return button == MouseButton.wheelUp || button == MouseButton.wheelDown;
+	}
+
+	// private
+	override void adjustClientCoordinates(int deltaX, int deltaY) {
+		clientX += deltaX;
+		clientY += deltaY;
 	}
 
 	override void adjustScrolling() {
@@ -9237,6 +9479,12 @@ abstract class MouseEventBase : Event {
 /++
 	Indicates that the user has worked with the mouse over your widget. For available properties, see [MouseEventBase].
 
+
+	$(WARNING
+		Important: MouseDownEvent, MouseUpEvent, ClickEvent, and DoubleClickEvent are all sent for all mouse buttons and
+		for wheel movement! You should check the [MouseEventBase.button|button] property in most your handlers to get correct
+		behavior.
+	)
 
 	[MouseDownEvent] is sent when the user presses a mouse button. It is also sent on mouse wheel movement.
 
@@ -9355,6 +9603,7 @@ private WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 }
 
 version(win32_widgets) {
+private:
 	import core.sys.windows.commctrl;
 
 	pragma(lib, "comctl32");
@@ -9927,8 +10176,8 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 	---
 +/
 /// Group: generating_from_code
-void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null) {
-	auto dg = new AutomaticDialog!T(onOK, onCancel);
+void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
+	auto dg = new AutomaticDialog!T(onOK, onCancel, title);
 	dg.show();
 }
 
@@ -9991,12 +10240,12 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingLeft() { return Window.lineHeight; }
 
 
-	this(void delegate(T) onOK, void delegate() onCancel) {
+	this(void delegate(T) onOK, void delegate() onCancel, string title) {
 		static if(is(T == class))
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, cast(int)(__traits(allMembers, T).length * 2) * (Window.lineHeight + 4 + 2) + Window.lineHeight + 56, T.stringof);
+		super(400, cast(int)(__traits(allMembers, T).length * 2) * (Window.lineHeight + 4 + 2) + Window.lineHeight + 56, title);
 
 		foreach(memberName; __traits(allMembers, T)) {
 			alias member = I!(__traits(getMember, t, memberName))[0];
@@ -10165,6 +10414,31 @@ interface Reflectable {
 	So generally the existing virtual functions are just the default for the class. But individual objects
 	or stylesheets can override this. The virtual ones count as tag-level specificity in css.
 +/
+
+/++
+	Structure to represent a collection of background hints. New features can be added here, so make sure you use the provided constructors and factories for maximum compatibility.
+
+	History:
+		Added May 24, 2021.
++/
+struct WidgetBackground {
+	/++
+		A background with the given solid color.
+	+/
+	this(Color color) {
+		this.color = color;
+	}
+
+	this(WidgetBackground bg) {
+		this = bg;
+	}
+
+	static WidgetBackground fromString(string s) {
+		return WidgetBackground(Color.fromString(s));
+	}
+
+	private Color color;
+}
 
 /++
 	Interface to a custom visual theme which is able to access and use style hint properties, draw stylistic elements, and even completely override existing class' paint methods (though I'd note that can be a lot harder than it may seem due to the various little details of state you need to reflect visually, so that should be your last result!)

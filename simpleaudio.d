@@ -215,7 +215,10 @@ interface SampleController {
 	bool finished();
 
 	/++
-		If the sample has beend paused.
+		If the sample has been paused.
+
+		History:
+			Added May 26, 2021 (dub v10.0)
 	+/
 	bool paused();
 }

@@ -28,77 +28,38 @@ If you know canvas, you're up to speed with NanoVega in no time.
 $(SIDE_BY_SIDE
 
 	$(COLUMN
-
 		D code with nanovega:
 
 		---
+		import arsd.nanovega;
 		import arsd.simpledisplay;
 
-		import arsd.nanovega;
-
 		void main () {
-		  NVGContext nvg; // our NanoVega context
+			// The NVGWindow class creates a window and sets up the nvg context for you
+			// you can also do these steps yourself, see the other examples in these docs
+			auto window = new NVGWindow(800, 600, "NanoVega Simple Sample");
 
-		  // we need at least OpenGL3 with GLSL to use NanoVega,
-		  // so let's tell simpledisplay about that
-		  setOpenGLContextVersion(3, 0);
+			window.redrawNVGScene = delegate (nvg) {
+				nvg.beginPath(); // start new path
+				nvg.roundedRect(20.5, 30.5, window.width-40, window.height-60, 8); // .5 to draw at pixel center (see NanoVega documentation)
+				// now set filling mode for our rectangle
+				// you can create colors using HTML syntax, or with convenient constants
+				nvg.fillPaint = nvg.linearGradient(20.5, 30.5, window.width-40, window.height-60,
+				NVGColor("#f70"), NVGColor.green);
+				// now fill our rect
+				nvg.fill();
+				// and draw a nice outline
+				nvg.strokeColor = NVGColor.white;
+				nvg.strokeWidth = 2;
+				nvg.stroke();
+				// that's all, folks!
+			};
 
-		  // now create OpenGL window
-		  auto sdmain = new SimpleWindow(800, 600, "NanoVega Simple Sample", OpenGlOptions.yes, Resizability.allowResizing);
-
-		  // we need to destroy NanoVega context on window close
-		  // stricly speaking, it is not necessary, as nothing fatal
-		  // will happen if you'll forget it, but let's be polite.
-		  // note that we cannot do that *after* our window was closed,
-		  // as we need alive OpenGL context to do proper cleanup.
-		  sdmain.onClosing = delegate () {
-		    nvg.kill();
-		  };
-
-		  // this is called just before our window will be shown for the first time.
-		  // we must create NanoVega context here, as it needs to initialize
-		  // internal OpenGL subsystem with valid OpenGL context.
-		  sdmain.visibleForTheFirstTime = delegate () {
-		    // yes, that's all
-		    nvg = nvgCreateContext();
-		    if (nvg is null) assert(0, "cannot initialize NanoVega");
-		  };
-
-		  // this callback will be called when we will need to repaint our window
-		  sdmain.redrawOpenGlScene = delegate () {
-		    // fix viewport (we can do this in resize event, or here, it doesn't matter)
-		    glViewport(0, 0, sdmain.width, sdmain.height);
-
-		    // clear window
-		    glClearColor(0, 0, 0, 0);
-		    glClear(glNVGClearFlags); // use NanoVega API to get flags for OpenGL call
-
-		    {
-		      nvg.beginFrame(sdmain.width, sdmain.height); // begin rendering
-		      scope(exit) nvg.endFrame(); // and flush render queue on exit
-
-		      nvg.beginPath(); // start new path
-		      nvg.roundedRect(20.5, 30.5, sdmain.width-40, sdmain.height-60, 8); // .5 to draw at pixel center (see NanoVega documentation)
-		      // now set filling mode for our rectangle
-		      // you can create colors using HTML syntax, or with convenient constants
-		      nvg.fillPaint = nvg.linearGradient(20.5, 30.5, sdmain.width-40, sdmain.height-60, NVGColor("#f70"), NVGColor.green);
-		      // now fill our rect
-		      nvg.fill();
-		      // and draw a nice outline
-		      nvg.strokeColor = NVGColor.white;
-		      nvg.strokeWidth = 2;
-		      nvg.stroke();
-		      // that's all, folks!
-		    }
-		  };
-
-		  sdmain.eventLoop(0, // no pulse timer required
-		    delegate (KeyEvent event) {
-		      if (event == "*-Q" || event == "Escape") { sdmain.close(); return; } // quit on Q, Ctrl+Q, and so on
-		    },
-		  );
-
-		  flushGui(); // let OS do it's cleanup
+			window.eventLoop(0,
+				delegate (KeyEvent event) {
+					if (event == "*-Q" || event == "Escape") { window.close(); return; } // quit on Q, Ctrl+Q, and so on
+				},
+			);
 		}
 		---
 	)
@@ -470,6 +431,79 @@ The following code illustrates the OpenGL state touched by the rendering code:
     TODO for Ketmar: write some nice example code here, and finish documenting FontStash API.
  */
 module arsd.nanovega;
+
+/// This example shows how to do the NanoVega sample without the [NVGWindow] helper class.
+unittest {
+	import arsd.simpledisplay;
+
+	import arsd.nanovega;
+
+	void main () {
+	  NVGContext nvg; // our NanoVega context
+
+	  // we need at least OpenGL3 with GLSL to use NanoVega,
+	  // so let's tell simpledisplay about that
+	  setOpenGLContextVersion(3, 0);
+
+	  // now create OpenGL window
+	  auto sdmain = new SimpleWindow(800, 600, "NanoVega Simple Sample", OpenGlOptions.yes, Resizability.allowResizing);
+
+	  // we need to destroy NanoVega context on window close
+	  // stricly speaking, it is not necessary, as nothing fatal
+	  // will happen if you'll forget it, but let's be polite.
+	  // note that we cannot do that *after* our window was closed,
+	  // as we need alive OpenGL context to do proper cleanup.
+	  sdmain.onClosing = delegate () {
+	    nvg.kill();
+	  };
+
+	  // this is called just before our window will be shown for the first time.
+	  // we must create NanoVega context here, as it needs to initialize
+	  // internal OpenGL subsystem with valid OpenGL context.
+	  sdmain.visibleForTheFirstTime = delegate () {
+	    // yes, that's all
+	    nvg = nvgCreateContext();
+	    if (nvg is null) assert(0, "cannot initialize NanoVega");
+	  };
+
+	  // this callback will be called when we will need to repaint our window
+	  sdmain.redrawOpenGlScene = delegate () {
+	    // fix viewport (we can do this in resize event, or here, it doesn't matter)
+	    glViewport(0, 0, sdmain.width, sdmain.height);
+
+	    // clear window
+	    glClearColor(0, 0, 0, 0);
+	    glClear(glNVGClearFlags); // use NanoVega API to get flags for OpenGL call
+
+	    {
+	      nvg.beginFrame(sdmain.width, sdmain.height); // begin rendering
+	      scope(exit) nvg.endFrame(); // and flush render queue on exit
+
+	      nvg.beginPath(); // start new path
+	      nvg.roundedRect(20.5, 30.5, sdmain.width-40, sdmain.height-60, 8); // .5 to draw at pixel center (see NanoVega documentation)
+	      // now set filling mode for our rectangle
+	      // you can create colors using HTML syntax, or with convenient constants
+	      nvg.fillPaint = nvg.linearGradient(20.5, 30.5, sdmain.width-40, sdmain.height-60, NVGColor("#f70"), NVGColor.green);
+	      // now fill our rect
+	      nvg.fill();
+	      // and draw a nice outline
+	      nvg.strokeColor = NVGColor.white;
+	      nvg.strokeWidth = 2;
+	      nvg.stroke();
+	      // that's all, folks!
+	    }
+	  };
+
+	  sdmain.eventLoop(0, // no pulse timer required
+	    delegate (KeyEvent event) {
+	      if (event == "*-Q" || event == "Escape") { sdmain.close(); return; } // quit on Q, Ctrl+Q, and so on
+	    },
+	  );
+
+	  flushGui(); // let OS do it's cleanup
+	}
+}
+
 private:
 
 version(aliced) {

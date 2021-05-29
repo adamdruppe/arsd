@@ -123,16 +123,16 @@ class ColorPickerDialog : Dialog {
 			override int maxWidth() { return 150; };
 		};
 
-		h = new LabeledLineEdit("Hue:", vlHsl);
-		s = new LabeledLineEdit("Saturation:", vlHsl);
-		l = new LabeledLineEdit("Lightness:", vlHsl);
+		h = new LabeledLineEdit("Hue:", TextAlignment.Right, vlHsl);
+		s = new LabeledLineEdit("Saturation:", TextAlignment.Right, vlHsl);
+		l = new LabeledLineEdit("Lightness:", TextAlignment.Right, vlHsl);
 
-		css = new LabeledLineEdit("CSS:", vlHsl);
+		css = new LabeledLineEdit("CSS:", TextAlignment.Right, vlHsl);
 
-		r = new LabeledLineEdit("Red:", vlRgb);
-		g = new LabeledLineEdit("Green:", vlRgb);
-		b = new LabeledLineEdit("Blue:", vlRgb);
-		a = new LabeledLineEdit("Alpha:", vlRgb);
+		r = new LabeledLineEdit("Red:", TextAlignment.Right, vlRgb);
+		g = new LabeledLineEdit("Green:", TextAlignment.Right, vlRgb);
+		b = new LabeledLineEdit("Blue:", TextAlignment.Right, vlRgb);
+		a = new LabeledLineEdit("Alpha:", TextAlignment.Right, vlRgb);
 
 		import std.conv;
 		import std.format;
