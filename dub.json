@@ -316,6 +316,10 @@
 				{
 					"name": "scgi",
 					"versions": ["scgi"]
+				},
+				{
+					"name": "stdio_http",
+					"versions": ["stdio_http"]
 				}
 			]
 		},

@@ -1,6 +1,9 @@
 // for optional dependency
 // for VT on Windows P s = 1 8 → Report the size of the text area in characters as CSI 8 ; height ; width t
 // could be used to have the TE volunteer the size
+
+// FIXME: the resume signal needs to be handled to set the terminal back in proper mode.
+
 /++
 	Module for interacting with the user's terminal, including color output, cursor manipulation, and full-featured real-time mouse and keyboard input. Also includes high-level convenience methods, like [Terminal.getline], which gives the user a line editor with history, completion, etc. See the [#examples].
 

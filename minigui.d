@@ -372,23 +372,40 @@ version(Windows) {
 
 	Later I'll add more complete examples, but for now [TextLabel] and [LabeledPasswordEdit] are both simple widgets you can view implementation to get some ideas.
 +/
-class Widget {
+class Widget : ReflectableProperties {
 
-	/++
-		Sets some internal param, `name`, to the string `value`. It is meant to be used from things like XML loaders.
 
-		If you subclass this, you should add your derived members, then `return super.addParameter(name, value);` in the default case.
-
-		Returns:
-			`true` if you handled it, `false` if you did not. This can be used to give user feedback.
-
-		History:
-			Added May 22, 2021
-	+/
-	bool addParameter(string name, string value) {
+	/// Implementations of [ReflectableProperties] interface. See the interface for details.
+	SetPropertyResult setPropertyFromString(string name, scope const(char)[] value, bool valueIsJson) {
+		if(valueIsJson)
+			return SetPropertyResult.wrongFormat;
 		switch(name) {
-			case "name": this.name = value; return true;
-			default: return false;
+			case "name":
+				this.name = value.idup;
+				return SetPropertyResult.success;
+			case "statusTip":
+				this.statusTip = value.idup;
+				return SetPropertyResult.success;
+			default:
+				return SetPropertyResult.noSuchProperty;
+		}
+	}
+	/// ditto
+	void getPropertiesList(scope void delegate(string name) sink) const {
+		sink("name");
+		sink("statusTip");
+	}
+	/// ditto
+	void getPropertyAsString(string name, scope void delegate(string name, scope const(char)[] value, bool valueIsJson) sink) {
+		switch(name) {
+			case "name":
+				sink(name, this.name, false);
+				return;
+			case "statusTip":
+				sink(name, this.statusTip, false);
+				return;
+			default:
+				sink(name, null, true);
 		}
 	}
 
@@ -608,7 +625,7 @@ class Widget {
 			if (widget.backgroundColor_ != Color.transparent)
 				return WidgetBackground(widget.backgroundColor_);
 			if (widget.parent)
-				return WidgetBackground(StyleInformation.extractStyleProperty!"background"(widget.parent));
+				return widget.parent.getComputedStyle.background;
 			return WidgetBackground(widget.backgroundColor_);
 		}
 
@@ -870,7 +887,10 @@ class Widget {
 	/// ditto
 	void defaultEventHandler_keyup(KeyUpEvent event) {}
 	/// ditto
-	void defaultEventHandler_mousedown(MouseDownEvent event) {}
+	void defaultEventHandler_mousedown(MouseDownEvent event) {
+		if(this.tabStop)
+			this.focus();
+	}
 	/// ditto
 	void defaultEventHandler_mouseover(MouseOverEvent event) {}
 	/// ditto
@@ -2756,11 +2776,15 @@ struct Style {
 }
 
 /++
+	Implementation detail of the [ControlledBy] UDA.
+
 	History:
 		Added Oct 28, 2020
 +/
 struct ControlledBy_(T, Args...) {
 	Args args;
+
+	static if(Args.length)
 	this(Args args) {
 		this.args = args;
 	}
@@ -2771,6 +2795,8 @@ struct ControlledBy_(T, Args...) {
 }
 
 /++
+	User-defined attribute you can add to struct members contrlled by [addDataControllerWidget] or [dialog] to tell which widget you want created for them.
+
 	History:
 		Added Oct 28, 2020
 +/
@@ -2871,7 +2897,7 @@ template Container(CArgs...) {
 		Added Oct 28, 2020
 +/
 /// Group: generating_from_code
-class DataControllerWidget(T) : Widget {
+class DataControllerWidget(T) : WidgetContainer {
 	static if(is(T == class) || is(T : const E[], E))
 		private alias Tref = T;
 	else
@@ -2916,15 +2942,22 @@ class DataControllerWidget(T) : Widget {
 			if(update)
 				updaters ~= update;
 
-			static if(is(typeof(__traits(getMember, this.datum, member)) == function))
+			static if(is(typeof(__traits(getMember, this.datum, member)) == function)) {
 				w.addEventListener("triggered", delegate() {
-					__traits(getMember, this.datum, member)();
+					makeAutomaticHandler!(__traits(getMember, this.datum, member))(&__traits(getMember, this.datum, member))();
 					notifyDataUpdated();
 				});
-			else static if(is(typeof(w.value) == string) || is(typeof(w.content) == string))
+			} else static if(is(typeof(w.isChecked) == bool)) {
+				w.addEventListener(EventType.change, (Event ev) {
+					__traits(getMember, this.datum, member) = w.isChecked;
+				});
+			} else static if(is(typeof(w.value) == string) || is(typeof(w.content) == string)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.stringValue); } );
-			else
+			} else static if(is(typeof(w.value) == int)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
+			} else {
+				static assert(0, "unsupported type");
+			}
 		}
 	}
 
@@ -2944,22 +2977,17 @@ class DataControllerWidget(T) : Widget {
 	private Widget[string] memberWidgets;
 	private void delegate()[] updaters;
 
-	override int maxHeight() {
-		if(this.children.length == 1)
-			return this.children[0].maxHeight;
-		else
-			return int.max;
-	}
-
-	override int maxWidth() {
-		if(this.children.length == 1)
-			return this.children[0].maxWidth;
-		else
-			return int.max;
-	}
-
-
 	mixin Emits!(ChangeEvent!void);
+}
+
+private int saturatedSum(int[] values...) {
+	int sum;
+	foreach(value; values) {
+		if(value == int.max)
+			return int.max;
+		sum += value;
+	}
+	return sum;
 }
 
 void genericSetValue(T, W)(T* where, W what) {
@@ -2968,8 +2996,17 @@ void genericSetValue(T, W)(T* where, W what) {
 	//*where = cast(T) stringToLong(what);
 }
 
-// FIXME: integrate with AutomaticDialog
-static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void delegate() update) {
+/++
+	Creates a widget for the value `tt`, which is pointed to at runtime by `valptr`, with the given parent.
+
+	The `update` delegate can be called if you change `*valptr` to reflect those changes in the widget.
+
+	Note that this creates the widget but does not attach any event handlers to it.
++/
+private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void delegate() update) {
+
+	string displayName = __traits(identifier, tt).beautify;
+
 	static if(controlledByCount!tt == 1) {
 		foreach(i, attr; __traits(getAttributes, tt)) {
 			static if(is(typeof(attr) == ControlledBy_!(T, Args), T, Args...)) {
@@ -2994,15 +3031,23 @@ static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void delegate() 
 					dds.setSelection(cast(int) idx);
 			}
 			return dds;
+		} else static if(is(typeof(tt) == bool)) {
+			auto box = new Checkbox(displayName, parent);
+			update = () { box.isChecked = *valptr; };
+			update();
+			return box;
 		} else static if(is(typeof(tt) : const long)) {
-			static assert(0);
+			auto le = new LabeledLineEdit(displayName, parent);
+			update = () { le.content = toInternal!string(*valptr); };
+			update();
+			return le;
 		} else static if(is(typeof(tt) : const string)) {
-			auto le = new LabeledLineEdit(__traits(identifier, tt), parent);
+			auto le = new LabeledLineEdit(displayName, parent);
 			update = () { le.content = *valptr; };
 			update();
 			return le;
 		} else static if(is(typeof(tt) == function)) {
-			auto w = new Button(__traits(identifier, tt), parent);
+			auto w = new Button(displayName, parent);
 			return w;
 		}
 	} else static assert(0, "multiple controllers not yet supported");
@@ -3046,10 +3091,11 @@ private void initializeDataControllerWidget(Widget w, Widget redrawOnChange) {
 		w.addEventListener("change", delegate() { redrawOnChange.redraw(); });
 }
 
-/+
-	styleClass = "";
+/++
+	Get this through [Widget.getComputedStyle]. It provides access to the [Widget.Style] style hints and [Widget] layout hints, possibly modified through the [VisualTheme], through a unifed interface.
 
-	widget.computedStyle
+	History:
+		Finalized on June 3, 2021 for the dub v10.0 release
 +/
 struct StyleInformation {
 	private Widget w;
@@ -3058,6 +3104,66 @@ struct StyleInformation {
 	private this(Widget w) {
 		this.w = w;
 		this.visualTheme = WidgetPainter.visualTheme;
+	}
+
+	/// Forwards to [Widget.Style]
+	// through the [VisualTheme]
+	public @property opDispatch(string name)() {
+		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
+		w.useStyleProperties((props) {
+		//visualTheme.useStyleProperties(w, (props) {
+			prop = __traits(getMember, props, name);
+		});
+		return prop;
+	}
+
+	@property {
+		// Layout helpers. Currently just forwarding since I haven't made up my mind on a better way.
+		/** */ int paddingLeft() { return w.paddingLeft(); }
+		/** */ int paddingRight() { return w.paddingRight(); }
+		/** */ int paddingTop() { return w.paddingTop(); }
+		/** */ int paddingBottom() { return w.paddingBottom(); }
+
+		/** */ int marginLeft() { return w.marginLeft(); }
+		/** */ int marginRight() { return w.marginRight(); }
+		/** */ int marginTop() { return w.marginTop(); }
+		/** */ int marginBottom() { return w.marginBottom(); }
+
+		/** */ int maxHeight() { return w.maxHeight(); }
+		/** */ int minHeight() { return w.minHeight(); }
+
+		/** */ int maxWidth() { return w.maxWidth(); }
+		/** */ int minWidth() { return w.minWidth(); }
+
+		// Global helpers some of these are unstable.
+		static:
+		/** */ Color windowBackgroundColor() { return WidgetPainter.visualTheme.windowBackgroundColor(); }
+		/** */ Color widgetBackgroundColor() { return WidgetPainter.visualTheme.widgetBackgroundColor(); }
+		/** */ Color lightAccentColor() { return WidgetPainter.visualTheme.lightAccentColor(); }
+		/** */ Color darkAccentColor() { return WidgetPainter.visualTheme.darkAccentColor(); }
+
+		/** */ Color activeTabColor() { return lightAccentColor; }
+		/** */ Color buttonColor() { return windowBackgroundColor; }
+		/** */ Color depressedButtonColor() { return darkAccentColor; }
+		/** */ Color hoveringColor() { return Color(228, 228, 228); }
+		/** */ Color activeListXorColor() {
+			auto c = WidgetPainter.visualTheme.selectionColor();
+			return Color(c.r ^ 255, c.g ^ 255, c.b ^ 255, c.a);
+		}
+		/** */ Color progressBarColor() { return WidgetPainter.visualTheme.selectionColor(); }
+		/** */ Color activeMenuItemColor() { return WidgetPainter.visualTheme.selectionColor(); }
+	}
+
+
+
+	/+
+
+	private static auto extractStyleProperty(string name)(Widget w) {
+		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
+		w.useStyleProperties((props) {
+			prop = __traits(getMember, props, name);
+		});
+		return prop;
 	}
 
 	// FIXME: clear this upon a X server disconnect
@@ -3095,14 +3201,6 @@ struct StyleInformation {
 	static struct Measurement {
 		int value;
 		alias value this;
-	}
-
-	private static auto extractStyleProperty(string name)(Widget w) {
-		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
-		w.useStyleProperties((props) {
-			prop = __traits(getMember, props, name);
-		});
-		return prop;
 	}
 
 	@property:
@@ -3151,6 +3249,7 @@ struct StyleInformation {
 	}
 	Color progressBarColor() { return WidgetPainter.visualTheme.selectionColor(); }
 	Color activeMenuItemColor() { return WidgetPainter.visualTheme.selectionColor(); }
+	+/
 }
 
 
@@ -4800,6 +4899,121 @@ class VerticalScrollbar : ScrollbarBase {
 }
 
 
+/++
+	EXPERIMENTAL
+
+	A widget specialized for being a container for other widgets.
+
+	History:
+		Added May 29, 2021. Not stabilized at this time.
++/
+class WidgetContainer : Widget {
+	this(Widget parent) {
+		tabStop = false;
+		super(parent);
+	}
+
+	override int maxHeight() {
+		if(this.children.length == 1) {
+			return saturatedSum(this.children[0].maxHeight, this.children[0].marginTop, this.children[0].marginBottom);
+		} else {
+			return int.max;
+		}
+	}
+
+	override int maxWidth() {
+		if(this.children.length == 1) {
+			return saturatedSum(this.children[0].maxWidth, this.children[0].marginLeft, this.children[0].marginRight);
+		} else {
+			return int.max;
+		}
+	}
+
+	/+
+
+	override int minHeight() {
+		int largest = 0;
+		int margins = 0;
+		int lastMargin = 0;
+		foreach(child; children) {
+			auto mh = child.minHeight();
+			if(mh > largest)
+				largest = mh;
+			margins += mymax(lastMargin, child.marginTop());
+			lastMargin = child.marginBottom();
+		}
+		return largest + margins;
+	}
+
+	override int maxHeight() {
+		int largest = 0;
+		int margins = 0;
+		int lastMargin = 0;
+		foreach(child; children) {
+			auto mh = child.maxHeight();
+			if(mh == int.max)
+				return int.max;
+			if(mh > largest)
+				largest = mh;
+			margins += mymax(lastMargin, child.marginTop());
+			lastMargin = child.marginBottom();
+		}
+		return largest + margins;
+	}
+
+	override int minWidth() {
+		int min;
+		foreach(child; children) {
+			auto cm = child.minWidth;
+			if(cm > min)
+				min = cm;
+		}
+		return min + paddingLeft + paddingRight;
+	}
+
+	override int minHeight() {
+		int min;
+		foreach(child; children) {
+			auto cm = child.minHeight;
+			if(cm > min)
+				min = cm;
+		}
+		return min + paddingTop + paddingBottom;
+	}
+
+	override int maxHeight() {
+		int largest = 0;
+		int margins = 0;
+		int lastMargin = 0;
+		foreach(child; children) {
+			auto mh = child.maxHeight();
+			if(mh == int.max)
+				return int.max;
+			if(mh > largest)
+				largest = mh;
+			margins += mymax(lastMargin, child.marginTop());
+			lastMargin = child.marginBottom();
+		}
+		return largest + margins;
+	}
+
+	override int heightStretchiness() {
+		int max;
+		foreach(child; children) {
+			auto c = child.heightStretchiness;
+			if(c > max)
+				max = c;
+		}
+		return max;
+	}
+
+	override int marginTop() {
+		if(this.children.length)
+			return this.children[0].marginTop;
+		return 0;
+	}
+	+/
+}
 
 ///
 abstract class Layout : Widget {
@@ -7518,7 +7732,7 @@ class MenuItem : MouseActivatedWidget {
 }
 
 version(win32_widgets)
-///
+/// A "mouse activiated widget" is really just an abstract variant of button.
 class MouseActivatedWidget : Widget {
 	bool isChecked() {
 		assert(hwnd);
@@ -7543,7 +7757,7 @@ class MouseActivatedWidget : Widget {
 	}
 }
 else version(custom_widgets)
-///
+/// ditto
 class MouseActivatedWidget : Widget {
 	@property bool isChecked() { return isChecked_; }
 	@property bool isChecked(bool b) { return isChecked_ = b; }
@@ -7556,6 +7770,7 @@ class MouseActivatedWidget : Widget {
 		addEventListener((MouseDownEvent ev) {
 			if(ev.button == MouseButton.left) {
 				setDynamicState(DynamicState.depressed, true);
+				setDynamicState(DynamicState.hover, true);
 				redraw();
 			}
 		});
@@ -7563,6 +7778,7 @@ class MouseActivatedWidget : Widget {
 		addEventListener((MouseUpEvent ev) {
 			if(ev.button == MouseButton.left) {
 				setDynamicState(DynamicState.depressed, false);
+				setDynamicState(DynamicState.hover, false);
 				redraw();
 			}
 		});
@@ -7588,6 +7804,7 @@ class MouseActivatedWidget : Widget {
 		super.defaultEventHandler_keydown(ev);
 		if(ev.key == Key.Space || ev.key == Key.Enter || ev.key == Key.PadEnter) {
 			setDynamicState(DynamicState.depressed, true);
+			setDynamicState(DynamicState.hover, true);
 			this.redraw();
 		}
 	}
@@ -7596,6 +7813,7 @@ class MouseActivatedWidget : Widget {
 		if(!(dynamicState & DynamicState.depressed))
 			return;
 		setDynamicState(DynamicState.depressed, false);
+		setDynamicState(DynamicState.hover, false);
 		this.redraw();
 
 		auto event = new Event(EventType.triggered, this);
@@ -7603,8 +7821,6 @@ class MouseActivatedWidget : Widget {
 	}
 	override void defaultEventHandler_click(ClickEvent ev) {
 		super.defaultEventHandler_click(ev);
-		if(this.tabStop)
-			this.focus();
 		if(ev.button == MouseButton.left) {
 			auto event = new Event(EventType.triggered, this);
 			event.sendDirectly();
@@ -7625,9 +7841,10 @@ class OnOffSwitch : MouseActivatedWidget {
 }
 */
 
-///
+/++
+	A basic checked or not checked box with an attached label.
++/
 class Checkbox : MouseActivatedWidget {
-
 	version(win32_widgets) {
 		override int maxHeight() { return 16; }
 		override int minHeight() { return 16; }
@@ -7637,6 +7854,14 @@ class Checkbox : MouseActivatedWidget {
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
+
+	/++
+		Just an alias because I keep typing checked out of web habit.
+
+		History:
+			Added May 31, 2021
+	+/
+	alias checked = isChecked;
 
 	private string label;
 
@@ -7682,10 +7907,13 @@ class Checkbox : MouseActivatedWidget {
 			painter.pen = Pen(Color.black, 1);
 		}
 
-		painter.outlineColor = cs.foregroundColor();
-		painter.fillColor = cs.foregroundColor();
+		if(label !is null) {
+			painter.outlineColor = cs.foregroundColor();
+			painter.fillColor = cs.foregroundColor();
 
-		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			// FIXME: should prolly just align the baseline or something
+			painter.drawText(Point(buttonSize + 4, 2), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+		}
 	}
 
 	override void defaultEventHandler_triggered(Event ev) {
@@ -8098,7 +8326,7 @@ class TextLabel : Widget {
 		super(parent);
 
 		version(win32_widgets)
-		createWin32Window(this, "static"w, label, 0, alignment == TextAlignment.Right ? WS_EX_RIGHT : WS_EX_LEFT);
+		createWin32Window(this, "static"w, label, alignment == TextAlignment.Center ? SS_CENTER : 0, alignment == TextAlignment.Right ? WS_EX_RIGHT : WS_EX_LEFT);
 	}
 
 	TextAlignment alignment;
@@ -8805,17 +9033,24 @@ enum EventType : string {
 
 	[Widget.setDefaultEventHandler] is what is called if no preventDefault was called. This should be called in the widget's constructor to set default behaivor. Default event handlers are only called on the event target.
 
-	Let's implement a custom widget that can emit a ChangeEvent.
+	Let's implement a custom widget that can emit a ChangeEvent describing its `checked` property:
 
 	---
 	class MyCheckbox : Widget {
 		/// This gives a chance to document it and generates a convenience function to send it and attach handlers.
 		/// It is NOT actually required but should be used whenever possible.
-		mixin Emits!ChangeEvent;
+		mixin Emits!(ChangeEvent!bool);
 
 		this(Widget parent) {
 			super(parent);
-			setDefaultEventHandler((ClickEvent) { emit(ChangeEvent()); });
+			setDefaultEventHandler((ClickEvent) { checked = !checked; });
+		}
+
+		private bool _checked;
+		@property bool checked() { return _checked; }
+		@property void checked(bool set) {
+			_checked = set;
+			emit!(ChangeEvent!bool)(&checked);
 		}
 	}
 	---
@@ -8826,7 +9061,7 @@ enum EventType : string {
 
 	---
 	class MyEvent : Event {
-		this(Widget w) { super(w); }
+		this(Widget target) { super(EventString, target); }
 		mixin Register; // adds EventString and other reflection information
 	}
 	---
@@ -8881,12 +9116,85 @@ enum EventType : string {
 	}
 
 +/
-class Event {
+class Event : ReflectableProperties {
 	/// Creates an event without populating any members and without sending it. See [dispatch]
 	this(string eventName, Widget emittedBy) {
 		this.eventName = eventName;
 		this.srcElement = emittedBy;
 	}
+
+
+	/// Implementations for the [ReflectableProperties] interface/
+	void getPropertiesList(scope void delegate(string name) sink) const {}
+	/// ditto
+	void getPropertyAsString(string name, scope void delegate(string name, scope const(char)[] value, bool valueIsJson) sink) { }
+	/// ditto
+	SetPropertyResult setPropertyFromString(string name, scope const(char)[] str, bool strIsJson) {
+		return SetPropertyResult.notPermitted;
+	}
+
+
+	/+
+	/++
+		This is an internal implementation detail of [Register] and is subject to be changed or removed at any time without notice.
+
+		It is just protected so the mixin template can see it from user modules. If I made it private, even my own mixin template couldn't see it due to mixin scoping rules.
+	+/
+	protected final void sinkJsonString(string memberName, scope const(char)[] value, scope void delegate(string name, scope const(char)[] value) finalSink) {
+		if(value.length == 0) {
+			finalSink(memberName, `""`);
+			return;
+		}
+
+		char[1024] bufferBacking;
+		char[] buffer = bufferBacking;
+		int bufferPosition;
+
+		void sink(char ch) {
+			if(bufferPosition >= buffer.length)
+				buffer.length = buffer.length + 1024;
+			buffer[bufferPosition++] = ch;
+		}
+
+		sink('"');
+
+		foreach(ch; value) {
+			switch(ch) {
+				case '\\':
+					sink('\\'); sink('\\');
+				break;
+				case '"':
+					sink('\\'); sink('"');
+				break;
+				case '\n':
+					sink('\\'); sink('n');
+				break;
+				case '\r':
+					sink('\\'); sink('r');
+				break;
+				case '\t':
+					sink('\\'); sink('t');
+				break;
+				default:
+					sink(ch);
+			}
+		}
+
+		sink('"');
+
+		finalSink(memberName, buffer[0 .. bufferPosition]);
+	}
+	+/
+
+	/+
+	enum EventInitiator {
+		system,
+		minigui,
+		user
+	}
+
+	immutable EventInitiator; initiatedBy;
+	+/
 
 	/++
 		Events should generally follow the propagation model, but there's some exceptions
@@ -8903,7 +9211,8 @@ class Event {
 	}
 
 	/++
-		hints as to whether preventDefault will actually do anything. not entirely reliable
+		hints as to whether preventDefault will actually do anything. not entirely reliable.
+
 		History:
 			Added May 14, 2021
 	+/
@@ -8933,6 +9242,8 @@ class Event {
 	protected static mixin template Register() {
 		public enum string EventString = __traits(identifier, __traits(parent, typeof(this))) ~ "." ~  __traits(identifier, typeof(this));
 		this(Widget target) { super(EventString, target); }
+
+		mixin ReflectableProperties.RegisterGetters;
 	}
 
 	/++
@@ -9383,6 +9694,8 @@ abstract class KeyEventBase : Event {
 		See [arsd.simpledisplay.ModifierState] for other possible flags.
 	+/
 	int state;
+
+	mixin Register;
 }
 
 /++
@@ -9474,6 +9787,7 @@ abstract class MouseEventBase : Event {
 	}
 	}
 
+	mixin Register;
 }
 
 /++
@@ -10226,8 +10540,9 @@ private string beautify(string name, char space = ' ', bool allLowerCase = false
 	return buffer[0 .. bufferIndex].idup;
 }
 
-
-
+/++
+	This is the implementation for [dialog]. None of its details are guaranteed stable and may change at any time; the stable interface is just the [dialog] function at this time.
++/
 class AutomaticDialog(T) : Dialog {
 	T t;
 
@@ -10239,40 +10554,18 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingRight() { return Window.lineHeight; }
 	override int paddingLeft() { return Window.lineHeight; }
 
-
 	this(void delegate(T) onOK, void delegate() onCancel, string title) {
+		assert(onOK !is null);
 		static if(is(T == class))
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
 		super(400, cast(int)(__traits(allMembers, T).length * 2) * (Window.lineHeight + 4 + 2) + Window.lineHeight + 56, title);
 
-		foreach(memberName; __traits(allMembers, T)) {
-			alias member = I!(__traits(getMember, t, memberName))[0];
-			alias type = typeof(member);
-			static if(is(type == bool)) {
-				auto box = new Checkbox(memberName.beautify, this);
-				box.addEventListener(EventType.change, (Event ev) {
-					__traits(getMember, t, memberName) = box.isChecked;
-				});
-			} else static if(is(type == string)) {
-				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
-				le.addEventListener(EventType.change, (Event ev) {
-					__traits(getMember, t, memberName) = ev.stringValue;
-				});
-			} else static if(is(type : long)) {
-				auto le = new LabeledLineEdit(memberName.beautify ~ ": ", this);
-				/+
-				le.addEventListener("char", (Event ev) {
-					if((ev.character < '0' || ev.character > '9') && ev.character != '-')
-						ev.preventDefault();
-				});
-				+/
-				le.addEventListener(EventType.change, (Event ev) {
-					__traits(getMember, t, memberName) = cast(type) stringToLong(ev.stringValue);
-				});
-			}
-		}
+		static if(is(T == class))
+			this.addDataControllerWidget(t);
+		else
+			this.addDataControllerWidget(&t);
 
 		auto hl = new HorizontalLayout(this);
 		auto stretch = new HorizontalSpacer(hl); // to right align
@@ -10293,7 +10586,7 @@ class AutomaticDialog(T) : Dialog {
 			}
 		});
 
-		this.children[0].focus();
+		//this.children[0].focus();
 	}
 
 	override void OK() {
@@ -10341,23 +10634,149 @@ private long stringToLong(string s) {
 }
 
 
-/+
-	Both widgets and events should prolly have the get/set property thing for runtime info.
+interface ReflectableProperties {
+	/++
+		Iterates the event's properties as strings. Note that keys may be repeated and a get property request may
+		call your sink with `null`. It it does, it means the key either doesn't request or cannot be represented by
+		json in the current implementation.
 
+		This is auto-implemented for you if you mixin [RegisterGetters] in your child classes and only have
+		properties of type `bool`, `int`, `double`, or `string`. For other ones, you will need to do it yourself
+		as of the June 2, 2021 release.
 
-It would use this for GUI designer access, XML construction, and scripting.
+		History:
+			Added June 2, 2021.
 
-interface Reflectable {
+		See_Also: [getPropertyAsString], [setPropertyFromString]
+	+/
+	void getPropertiesList(scope void delegate(string name) sink) const;// @nogc pure nothrow;
+	/++
+		Requests a property to be delivered to you as a string, through your `sink` delegate.
 
-	string[] getPropertyNames();
-	string getProperty(string name);
-	void setProperty(string name, string value);
+		If the `value` is null, it means the property could not be retreived. If `valueIsJson`, it should
+		be interpreted as json, otherwise, it is just a plain string.
 
-	mixin template Register() {
+		The sink should always be called exactly once for each call (it is basically a return value, but it might
+		use a local buffer it maintains instead of allocating a return value).
 
+		History:
+			Added June 2, 2021.
+
+		See_Also: [getPropertiesList], [setPropertyFromString]
+	+/
+	void getPropertyAsString(string name, scope void delegate(string name, scope const(char)[] value, bool valueIsJson) sink);
+	/++
+		Sets the given property, if it exists, to the given value, if possible. If `strIsJson` is true, it will json decode (if the implementation wants to) then apply the value, otherwise it will treat it as a plain string.
+
+		History:
+			Added June 2, 2021.
+
+		See_Also: [getPropertiesList], [getPropertyAsString], [SetPropertyResult]
+	+/
+	SetPropertyResult setPropertyFromString(string name, scope const(char)[] str, bool strIsJson);
+
+	/// [setPropertyFromString] possible return values
+	enum SetPropertyResult {
+		success = 0, /// the property has been successfully set to the request value
+		notPermitted = -1, /// the property exists but it cannot be changed at this time
+		notImplemented = -2, /// the set function is not implemented for the given property (which may or may not exist)
+		noSuchProperty = -3, /// there is no property by that name
+		wrongFormat = -4, /// the string was given in the wrong format, e.g. passing "two" for an int value
+		invalidValue = -5, /// the string is in the correct format, but the specific given value could not be used (for example, because it was out of bounds)
+	}
+
+	/++
+		You can mix this in to get an implementation in child classes. This does [setPropertyFromString].
+
+		Your original base class, however, must implement its own methods. I recommend doing the initial ones by hand.
+
+		For [Widget] and [Event], the library provides [Widget.Register] and [Event.Register] that call these for you, so you should
+		rarely need to use these building blocks directly.
+	+/
+	mixin template RegisterSetters() {
+		override SetPropertyResult setPropertyFromString(string name, scope const(char)[] value, bool valueIsJson) {
+			switch(name) {
+				foreach(memberName; __traits(derivedMembers, typeof(this))) {
+					case memberName:
+						static if(is(typeof(__traits(getMember, this, memberName)) : const bool)) {
+							if(value != "true" && value != "false")
+								return SetPropertyResult.wrongFormat;
+							__traits(getMember, this, memberName) = value == "true" ? true : false;
+							return SetPropertyResult.success;
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const long)) {
+							import core.stdc.stdlib;
+							char[128] zero = 0;
+							if(buffer.length + 1 >= zero.length)
+								return SetPropertyResult.wrongFormat;
+							zero[0 .. buffer.length] = buffer[];
+							__traits(getMember, this, memberName) = strtol(buffer.ptr, null, 10);
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const double)) {
+							import core.stdc.stdlib;
+							char[128] zero = 0;
+							if(buffer.length + 1 >= zero.length)
+								return SetPropertyResult.wrongFormat;
+							zero[0 .. buffer.length] = buffer[];
+							__traits(getMember, this, memberName) = strtod(buffer.ptr, null, 10);
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const string)) {
+							__traits(getMember, this, memberName) = value.idup;
+						} else {
+							return SetPropertyResult.notImplemented;
+						}
+
+				}
+				default:
+					return super.setPropertyFromString(name, value, valueIsJson);
+			}
+		}
+	}
+
+	/++
+		You can mix this in to get an implementation in child classes. This does [getPropertyAsString] and [getPropertiesList].
+
+		Your original base class, however, must implement its own methods. I recommend doing the initial ones by hand.
+
+		For [Widget] and [Event], the library provides [Widget.Register] and [Event.Register] that call these for you, so you should
+		rarely need to use these building blocks directly.
+	+/
+	mixin template RegisterGetters() {
+		override void getPropertiesList(scope void delegate(string name) sink) const {
+			super.getPropertiesList(sink);
+
+			foreach(memberName; __traits(derivedMembers, typeof(this))) {
+				sink(memberName);
+			}
+		}
+		override void getPropertyAsString(string name, scope void delegate(string name, scope const(char)[] value, bool valueIsJson) sink) {
+			switch(name) {
+				foreach(memberName; __traits(derivedMembers, typeof(this))) {
+					case memberName:
+						static if(is(typeof(__traits(getMember, this, memberName)) : const bool)) {
+							sink(name, __traits(getMember, this, memberName) ? "true" : "false", true);
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const long)) {
+							import core.stdc.stdio;
+							char[32] buffer;
+							auto len = snprintf(buffer.ptr, buffer.length, "%lld", cast(long) __traits(getMember, this, memberName));
+							sink(name, buffer[0 .. len], true);
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const double)) {
+							import core.stdc.stdio;
+							char[32] buffer;
+							auto len = snprintf(buffer.ptr, buffer.length, "%f", cast(double) __traits(getMember, this, memberName));
+							sink(name, buffer[0 .. len], true);
+						} else static if(is(typeof(__traits(getMember, this, memberName)) : const string)) {
+							sink(name, __traits(getMember, this, memberName), false);
+							//sinkJsonString(memberName, __traits(getMember, this, memberName), sink);
+						} else {
+							sink(name, null, true);
+						}
+
+					return;
+				}
+				default:
+					return super.getPropertyAsString(name, sink);
+			}
+		}
 	}
 }
-+/
 
 
 /+
@@ -10433,6 +10852,11 @@ struct WidgetBackground {
 		this = bg;
 	}
 
+	/++
+		Creates a widget from the string.
+
+		Currently, it only supports solid colors via [Color.fromString], but it will likely be expanded in the future to something more like css.
+	+/
 	static WidgetBackground fromString(string s) {
 		return WidgetBackground(Color.fromString(s));
 	}
@@ -10452,7 +10876,13 @@ struct WidgetBackground {
 +/
 abstract class BaseVisualTheme {
 	/// Don't implement this, instead use [VisualTheme] and implement `paint` methods on specific subclasses you want to override.
-	void doPaint(Widget widget, WidgetPainter painter);
+	abstract void doPaint(Widget widget, WidgetPainter painter);
+
+	/+
+	/// Don't implement this, instead use [VisualTheme] and implement `StyleOverride` aliases on specific subclasses you want to override.
+	abstract void useStyleProperties(Widget w, scope void delegate(scope Widget.Style props) dg);
+	+/
+
 	/++
 		Returns the property as a string, or null if it was not overridden in the style definition. The idea here is something like css,
 		where the interpretation of the string varies for each property and may include things like measurement units.
@@ -10502,10 +10932,20 @@ abstract class BaseVisualTheme {
 // visualTheme.computedStyle(this).paddingLeft
 
 
+/++
+	This is your entry point to create your own visual theme for custom widgets.
++/
 abstract class VisualTheme(CRTP) : BaseVisualTheme {
 	override string getPropertyString(Widget widget, string propertyName) {
 		return null;
 	}
+
+	/+
+		mixin StyleOverride!Widget
+	final override void useStyleProperties(Widget w, scope void delegate(scope Widget.Style props) dg) {
+		w.useStyleProperties(dg);
+	}
+	+/
 
 	final override void doPaint(Widget widget, WidgetPainter painter) {
 		auto derived = cast(CRTP) cast(void*) this;

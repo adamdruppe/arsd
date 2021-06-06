@@ -107,6 +107,7 @@ void main() {
 		* `cgi` for traditional cgi binaries.
 		* `fastcgi` for FastCGI builds.
 		* `scgi` for SCGI builds.
+		* `stdio_http` for speaking raw http over stdin and stdout. See [RequestServer.serveSingleHttpConnectionOnStdio] for more information.
 	)
 
 	With dmd, use:
@@ -131,6 +132,8 @@ void main() {
 			- The embedded HTTP server will use a prefork style process pool. (use instead of plain `embedded_httpd` if you want this specific implementation)
 		* - `-version=embedded_httpd_processes_accept_after_fork`
 			- It will call accept() in each child process, after forking. This is currently the only option, though I am experimenting with other ideas. You probably should NOT specify this right now.
+		* - `-version=stdio_http`
+			- The embedded HTTP server will be spoken over stdin and stdout.
 
 		* + Tweaks
 		  + (can be used together with others)
@@ -3521,7 +3524,7 @@ struct RequestServer {
 		version(fastcgi) {
 			serveFastCgi!(fun, CustomCgi, maxContentLength)(this);
 		} else
-		version(stdiocgi) {
+		version(stdio_http) {
 			serveSingleHttpConnectionOnStdio!(fun, CustomCgi, maxContentLength)();
 		} else {
 			//version=plain_cgi;

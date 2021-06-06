@@ -12452,6 +12452,11 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 					throw new Exception("Unable to load X11 client libraries");
 				display = XOpenDisplay(displayName);
 
+				isLocal_ = false;
+
+				connectionSequence_++;
+				if(display is null)
+					throw new Exception("Unable to open X display");
 
 				auto str = display.display_name;
 				// this is a bit of a hack but like if it looks like a unix socket we assume it is local
@@ -12461,12 +12466,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 				else
 					isLocal_ = true;
 
-
 				//XSetErrorHandler(&adrlogger);
 				//XSynchronize(display, true);
-				connectionSequence_++;
-				if(display is null)
-					throw new Exception("Unable to open X display");
+
+
 				XSetIOErrorHandler(&x11ioerrCB);
 				Bool sup;
 				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released

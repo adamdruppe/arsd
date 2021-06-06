@@ -1072,8 +1072,9 @@ class Document : FileResource {
 										pos++;
 
 										ateAny = eatWhitespace();
-										if(strict && ateAny)
-											throw new MarkupException("inappropriate whitespace after attribute equals");
+										// the spec actually allows this!
+										//if(strict && ateAny)
+											//throw new MarkupException("inappropriate whitespace after attribute equals");
 
 										attrValue = readAttributeValue();
 
