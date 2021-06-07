@@ -2350,6 +2350,7 @@ struct RealTimeConsoleInput {
 		}
 	}
 
+	private bool utf8MouseMode;
 
 	version(Posix) {
 		private int fdOut;
@@ -2406,7 +2407,8 @@ struct RealTimeConsoleInput {
 			import std.process : environment;
 
 			if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
-				terminal.writeStringRaw("\033[?1003h");
+				terminal.writeStringRaw("\033[?1003h\033[?1005h"); // full mouse tracking (1003) with utf-8 mode (1005) for exceedingly large terminals
+				utf8MouseMode = true;
 			} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 				terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 			}
@@ -2502,8 +2504,9 @@ struct RealTimeConsoleInput {
 
 				if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
 					// this is vt200 mouse with full motion tracking, supported by xterm
-					terminal.writeStringRaw("\033[?1003h");
-					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1003l"); };
+					terminal.writeStringRaw("\033[?1003h\033[?1005h");
+					utf8MouseMode = true;
+					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1005l\033[?1003l"); };
 				} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1002l"); };
@@ -3462,8 +3465,16 @@ struct RealTimeConsoleInput {
 					auto buttonCode = nextRaw() - 32;
 						// nextChar is commented because i'm not using UTF-8 mouse mode
 						// cuz i don't think it is as widely supported
-					auto x = cast(int) (/*nextChar*/(nextRaw())) - 33; /* they encode value + 32, but make upper left 1,1. I want it to be 0,0 */
-					auto y = cast(int) (/*nextChar*/(nextRaw())) - 33; /* ditto */
+					int x;
+					int y;
+
+					if(utf8MouseMode) {
+						x = cast(int) nextChar(nextRaw()) - 33; /* they encode value + 32, but make upper left 1,1. I want it to be 0,0 */
+						y = cast(int) nextChar(nextRaw()) - 33; /* ditto */
+					} else {
+						x = cast(int) (/*nextChar*/(nextRaw())) - 33; /* they encode value + 32, but make upper left 1,1. I want it to be 0,0 */
+						y = cast(int) (/*nextChar*/(nextRaw())) - 33; /* ditto */
+					}
 
 
 					bool isRelease = (buttonCode & 0b11) == 3;
@@ -4227,7 +4238,7 @@ void main() {
 				terminal.writef("\t%s\n", event.get!(InputEvent.Type.PasteEvent));
 			break;
 			case InputEvent.Type.MouseEvent:
-				//terminal.writef("\t%s\n", event.get!(InputEvent.Type.MouseEvent));
+				terminal.writef("\t%s\n", event.get!(InputEvent.Type.MouseEvent));
 			break;
 			case InputEvent.Type.CustomEvent:
 			break;
@@ -8453,7 +8464,10 @@ version(TerminalDirectToEmulator) {
 
 				if(sendMouseInputToApplication(termX, termY,
 					arsd.terminalemulator.MouseEventType.motion,
-					cast(arsd.terminalemulator.MouseButton) ev.button,
+					(ev.state & ModifierState.leftButtonDown) ? arsd.terminalemulator.MouseButton.left
+					: (ev.state & ModifierState.rightButtonDown) ? arsd.terminalemulator.MouseButton.right
+					: (ev.state & ModifierState.middleButtonDown) ? arsd.terminalemulator.MouseButton.middle
+					: cast(arsd.terminalemulator.MouseButton) 0,
 					(ev.state & ModifierState.shift) ? true : false,
 					(ev.state & ModifierState.ctrl) ? true : false,
 					(ev.state & ModifierState.alt) ? true : false
