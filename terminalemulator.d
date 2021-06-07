@@ -363,8 +363,9 @@ class TerminalEmulator {
 				ScopeBuffer!(char, 16) buffer;
 				buffer ~= "\033[M";
 				buffer ~= cast(char) (b | 32);
-				buffer ~= cast(char) (termX+1 + 32);
-				buffer ~= cast(char) (termY+1 + 32);
+				addMouseCoordinates(buffer, termX, termY);
+				//buffer ~= cast(char) (termX+1 + 32);
+				//buffer ~= cast(char) (termY+1 + 32);
 				sendToApplication(buffer[]);
 			}
 		}
@@ -378,8 +379,9 @@ class TerminalEmulator {
 					ScopeBuffer!(char, 16) buffer;
 					buffer ~= "\033[M";
 					buffer ~= cast(char) ((b | 32) + 32);
-					buffer ~= cast(char) (termX+1 + 32);
-					buffer ~= cast(char) (termY+1 + 32);
+					addMouseCoordinates(buffer, termX, termY);
+					//buffer ~= cast(char) (termX+1 + 32);
+					//buffer ~= cast(char) (termY+1 + 32);
 					sendToApplication(buffer[]);
 				}
 
@@ -460,8 +462,9 @@ class TerminalEmulator {
 				ScopeBuffer!(char, 16) buffer;
 				buffer ~= "\033[M";
 				buffer ~= cast(char) (b | 32);
-				buffer ~= cast(char) (x + 32);
-				buffer ~= cast(char) (y + 32);
+				addMouseCoordinates(buffer, termX, termY); 
+				//buffer ~= cast(char) (x + 32);
+				//buffer ~= cast(char) (y + 32);
 
 				sendToApplication(buffer[]);
 			} else {
@@ -557,6 +560,26 @@ class TerminalEmulator {
 		}
 
 		return false;
+	}
+
+	private void addMouseCoordinates(ref ScopeBuffer!(char, 16) buffer, int x, int y) {
+		// 1-based stuff and 32 is the base value
+		x += 1 + 32;
+		y += 1 + 32;
+
+		if(utf8MouseMode) {
+			import std.utf;
+			char[4] str;
+
+			foreach(char ch; str[0 .. encode(str, x)])
+				buffer ~= ch;
+
+			foreach(char ch; str[0 .. encode(str, y)])
+				buffer ~= ch;
+		} else {
+			buffer ~= cast(char) x;
+			buffer ~= cast(char) y;
+		}
 	}
 
 	protected void returnToNormalScreen() {
@@ -1888,6 +1911,7 @@ class TerminalEmulator {
 		bool bracketedHyperlinkMode;
 		bool mouseButtonTracking;
 		private bool _mouseMotionTracking;
+		bool utf8MouseMode;
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
 		bool selectiveMouseTracking;
@@ -3072,6 +3096,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									sendFocusEvents = true;
 								break;
 								case 1005:
+									utf8MouseMode = true;
 									// enable utf-8 mouse mode
 									/*
 UTF-8 (1005)
@@ -3183,6 +3208,7 @@ URXVT (1015)
 							break;
 							case 1005:
 								// turn off utf-8 mouse
+								utf8MouseMode = false;
 							break;
 							case 1006:
 								// turn off sgr mouse
