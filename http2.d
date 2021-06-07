@@ -1655,7 +1655,8 @@ class HttpRequest {
 				responseData.headers[$-1] ~= data[position];
 			}
 
-			parseLastHeader();
+			if(responseData.headers.length)
+				parseLastHeader();
 			data = data[position .. $];
 		}
 
