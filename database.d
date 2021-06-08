@@ -384,6 +384,12 @@ string toSql(Database db, Variant a) {
 	} else if(auto t = a.peek!(DateTime)) {
 		// FIXME: this might be broken cuz of timezones!
 		return db.sysTimeToValue(cast(SysTime) *t);
+	} else if(auto t = a.peek!string) {
+		auto str = *t;
+		if(str is null)
+			return "NULL";
+		else
+			return '\'' ~ db.escape(str) ~ '\'';
 	} else {
 		string str = to!string(a);
 		return '\'' ~ db.escape(str) ~ '\'';

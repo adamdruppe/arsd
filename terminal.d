@@ -8448,6 +8448,8 @@ version(TerminalDirectToEmulator) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
 
+				import std.stdio; writeln(ev.button);
+
 				if(sendMouseInputToApplication(termX, termY,
 					arsd.terminalemulator.MouseEventType.buttonReleased,
 					cast(arsd.terminalemulator.MouseButton) ev.button,

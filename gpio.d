@@ -143,6 +143,7 @@ struct GpioChip {
 	}
 }
 
+version(gpio_demo)
 void main() {
 	import std.stdio;
 	GpioChip g = GpioChip("/dev/gpiochip0");
