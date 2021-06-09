@@ -566,7 +566,7 @@ class Widget : ReflectableProperties {
 			auto old = dynamicState_;
 			dynamicState_ = newValue;
 
-			useStyleProperties((s) {
+			useStyleProperties((scope Widget.Style s) {
 				if(s.variesWithState(old ^ newValue))
 					redraw();
 			});
@@ -1487,8 +1487,12 @@ class Widget : ReflectableProperties {
 
 		History:
 			Added May 5, 2021
+
+		Bugs:
+			It does not do the static checks on gdc right now.
 	+/
 	final protected bool emit(EventType, this This, Args...)(Args args) {
+		version(GNU) {} else
 		static assert(classStaticallyEmits!(This, EventType), "The " ~ This.stringof ~ " class is not declared to emit " ~ EventType.stringof);
 		auto e = new EventType(this, args);
 		e.dispatch();
@@ -3110,7 +3114,7 @@ struct StyleInformation {
 	// through the [VisualTheme]
 	public @property opDispatch(string name)() {
 		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
-		w.useStyleProperties((props) {
+		w.useStyleProperties((scope Widget.Style props) {
 		//visualTheme.useStyleProperties(w, (props) {
 			prop = __traits(getMember, props, name);
 		});
@@ -6280,7 +6284,7 @@ class Window : Widget {
 						event.relatedTarget = mouseLastOver;
 						event.sendDirectly();
 
-						ele.useStyleProperties((s) {
+						ele.useStyleProperties((scope Widget.Style s) {
 							ele.parentWindow.win.cursor = s.cursor;
 						});
 					}
@@ -6550,9 +6554,13 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 	} else {
 		static if(is(typeof(fn) Params == __parameters))
 		struct S {
+			static if(!__(traits(compiles, mixin(`{ static foreach(i; 1..4) {} }`)))) {
+				pragma(msg, "warning: automatic handler of params not yet implemented on your compiler");
+			} else mixin(q{
 			static foreach(idx, ignore; Params) {
 				mixin("Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
 			}
+			});
 		}
 		return () {
 			dialog((S s) {

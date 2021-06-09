@@ -595,6 +595,10 @@ static:
 	}
 
 	auto byChunk(size_t sz) { return ByChunk(sz); }
+
+	void close() {
+		std.stdio.stdin.close;
+	}
 }
 }
 

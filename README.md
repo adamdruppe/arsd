@@ -22,6 +22,8 @@ Released: May 2020
 
 minigui 2.0 came out with deprecations on some event properties, moved style properties, and various other changes. See http://arsd-official.dpldocs.info/arsd.minigui.html#history for details.
 
+database.d now considers null strings as NULL when inserting/updating. before it would consider it '' to the database. Empty strings are still ''.
+
 ## 9.0
 
 Released: December 2020
