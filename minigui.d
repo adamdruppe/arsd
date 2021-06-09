@@ -2960,7 +2960,7 @@ class DataControllerWidget(T) : WidgetContainer {
 			} else static if(is(typeof(w.value) == int)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 			} else {
-				static assert(0, "unsupported type");
+				static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
 			}
 		}
 	}
@@ -7745,12 +7745,12 @@ class MenuItem : MouseActivatedWidget {
 version(win32_widgets)
 /// A "mouse activiated widget" is really just an abstract variant of button.
 class MouseActivatedWidget : Widget {
-	bool isChecked() {
+	@property bool isChecked() {
 		assert(hwnd);
 		return SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
 	}
-	void isChecked(bool state) {
+	@property void isChecked(bool state) {
 		assert(hwnd);
 		SendMessageW(hwnd, BM_SETCHECK, state ? BST_CHECKED : BST_UNCHECKED, 0);
 
