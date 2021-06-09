@@ -6172,8 +6172,11 @@ class Window : Widget {
 		win.close();
 		// I synchronize here upon window closing to ensure all child windows
 		// get updated too before the event loop. This avoids some random X errors.
-		static if(UsingSimpledisplayX11)
-			XSync(XDisplayConnection.get, false);
+		static if(UsingSimpledisplayX11) {
+			runInGuiThread( {
+				XSync(XDisplayConnection.get, false);
+			});
+		}
 	}
 
 	bool dispatchKeyEvent(KeyEvent ev) {
