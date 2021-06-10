@@ -2937,7 +2937,7 @@ class DataControllerWidget(T) : WidgetContainer {
 		}
 
 		foreach(member; __traits(allMembers, T))
-		static if(member != "this") // wtf
+		static if(member != "this") // wtf https://issues.dlang.org/show_bug.cgi?id=22011
 		static if(__traits(getProtection, __traits(getMember, this.datum, member)) == "public") {
 			void delegate() update;
 

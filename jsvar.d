@@ -2281,7 +2281,8 @@ unittest {
 	// prototype.... i think
 	//assert(gotten.method() == "Amazing");
 
-	class CFoo : IFoo {
+	//https://issues.dlang.org/show_bug.cgi?id=22011 necessitated the static!
+	static class CFoo : IFoo {
 		@scriptable string method() { return "CFoo"; }
 		int method2() { return 55; }
 		int args(int, int) { return 6 + 5; }
@@ -2845,8 +2846,9 @@ string static_foreach(size_t length, int t_start_idx, int t_end_idx, string[] t.
 }
 
 private string deprecationCheck() {
+	//https://issues.dlang.org/show_bug.cgi?id=22011 this hack sucks
 	static if(__VERSION__ >= 2077)
-		return "__traits(isDeprecated, __traits(getMember, obj, memberName))";
+		return "__traits(isDeprecated, __traits(getMember, obj, memberName == `this` ? `__ctor` : memberName))";
 	else
 		return "false";
 }
