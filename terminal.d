@@ -2879,14 +2879,15 @@ struct RealTimeConsoleInput {
 				return int.min; // input closed
 			if(ret == -1) {
 				import core.stdc.errno;
-				if(errno == EINTR)
+				if(errno == EINTR) {
 					// interrupted by signal call, quite possibly resize or ctrl+c which we want to check for in the event loop
 					if(interruptable)
 						return -1;
 					else
 						goto try_again;
-				else
+				} else {
 					throw new Exception("read failed");
+				}
 			}
 
 			//terminal.writef("RAW READ: %d\n", buf[0]);
@@ -8447,8 +8448,6 @@ version(TerminalDirectToEmulator) {
 			widget.addEventListener((MouseUpEvent ev) {
 				int termX = (ev.clientX - paddingLeft) / fontWidth;
 				int termY = (ev.clientY - paddingTop) / fontHeight;
-
-				import std.stdio; writeln(ev.button);
 
 				if(sendMouseInputToApplication(termX, termY,
 					arsd.terminalemulator.MouseEventType.buttonReleased,
