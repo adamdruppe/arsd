@@ -7596,16 +7596,12 @@ class Menu : Window {
 
 			dropDown.show();
 
-			bool firstClick = true;
-
-			clickListener = this.addEventListener(EventType.click, (Event ev) {
-				if(firstClick) {
-					firstClick = false;
-					//return;
-				}
-				//if(ev.clientX < 0 || ev.clientY < 0 || ev.clientX > width || ev.clientY > height)
-					unpopup();
-			});
+			clickListener = this.addEventListener((scope ClickEvent ev) {
+				unpopup();
+				// need to unlock asap just in case other user handlers block...
+				static if(UsingSimpledisplayX11)
+					flushGui();
+			}, true /* again for asap action */);
 		}
 
 		EventListener clickListener;
