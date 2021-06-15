@@ -673,7 +673,7 @@ class ApiProvider : WebDotDBaseType {
 	out(ret) {
 		assert(ret !is null);
 	}
-	body {
+	do {
 		auto document = new TemplatedDocument(
 "<!DOCTYPE html>
 <html>

@@ -546,7 +546,7 @@ private struct stdin {
 		in {
 			assert(size, "size must be larger than 0");
 		}
-		body {
+		do {
 			chunk_ = new ubyte[](size);
 			popFront();
 		}

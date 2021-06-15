@@ -39,7 +39,7 @@ struct CssSize {
 
 	int getPixels(int oneEm, int oneHundredPercent)
 //		out (ret) { assert(ret >= 0, to!string(ret) ~ " " ~ definition); }
-	body {
+	do {
 		if(definition.length == 0 || definition == "none")
 			return 0;
 

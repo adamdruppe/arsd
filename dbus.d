@@ -300,7 +300,7 @@ struct ObjectPath {
     assert(ObjectPath.isValid(_value) && ObjectPath.isValid(rhs._value));
   } out (v) {
     assert(ObjectPath.isValid(v._value));
-  } body {
+  } do {
     ObjectPath ret;
 
     if (_value == "/")

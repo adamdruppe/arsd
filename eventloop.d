@@ -277,7 +277,7 @@ public struct FileEventDispatcher {
 
 	private WrappedListener getHandler(OsFileHandle fd, int idx)
 		in { assert(idx >= 0 && idx < 3); }
-	body {
+	do {
 		auto handlersPtr = fd in listeners;
 		if(handlersPtr is null)
 			return null; // we don't handle this function

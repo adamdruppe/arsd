@@ -1879,8 +1879,16 @@ struct Terminal {
 
 				while(writeBuffer.length) {
 					written = unix.write(this.fdOut, writeBuffer.ptr, writeBuffer.length);
-					if(written < 0)
+					if(written < 0) {
+						import core.stdc.errno;
+						auto err = errno();
+						if(err == EAGAIN || err == EWOULDBLOCK) {
+							import core.thread;
+							Thread.sleep(1.msecs);
+							continue;
+						}
 						throw new Exception("write failed for some reason");
+					}
 					writeBuffer = writeBuffer[written .. $];
 				}
 			}
@@ -2397,6 +2405,19 @@ struct RealTimeConsoleInput {
 
 			n.c_lflag &= ~f;
 			tcsetattr(fdIn, TCSANOW, &n);
+
+			// ensure these are still blocking after the resumption
+			import core.sys.posix.fcntl;
+			if(fdIn != -1) {
+				auto ctl = fcntl(fdIn, F_GETFL);
+				ctl &= ~O_NONBLOCK;
+				fcntl(fdIn, F_SETFL, ctl);
+			}
+			if(fdOut != -1) {
+				auto ctl = fcntl(fdOut, F_GETFL);
+				ctl &= ~O_NONBLOCK;
+				fcntl(fdOut, F_SETFL, ctl);
+			}
 		}
 
 		// copy paste from constructor, but not setting the destructor teardown since that's already done
@@ -2430,6 +2451,7 @@ struct RealTimeConsoleInput {
 
 		terminal.flush();
 
+		// returning true will send a resize event as well, which does the rest of the catch up and redraw as necessary
 		return true;
 	}
 
@@ -2560,6 +2582,22 @@ struct RealTimeConsoleInput {
 	private void posixInit() {
 		this.fdIn = terminal.fdIn;
 		this.fdOut = terminal.fdOut;
+
+		// if a naughty program changes the mode on these to nonblocking
+		// and doesn't change them back, it can cause trouble to us here.
+		// so i explicitly set the blocking flag since EAGAIN is not as nice
+		// for my purposes (it isn't consistently handled well in here)
+		import core.sys.posix.fcntl;
+		{
+			auto ctl = fcntl(fdIn, F_GETFL);
+			ctl &= ~O_NONBLOCK;
+			fcntl(fdIn, F_SETFL, ctl);
+		}
+		{
+			auto ctl = fcntl(fdOut, F_GETFL);
+			ctl &= ~O_NONBLOCK;
+			fcntl(fdOut, F_SETFL, ctl);
+		}
 
 		if(fdIn != -1) {
 			tcgetattr(fdIn, &old);
@@ -2885,8 +2923,15 @@ struct RealTimeConsoleInput {
 						return -1;
 					else
 						goto try_again;
+				} else if(errno == EAGAIN || errno == EWOULDBLOCK) {
+					// I turn off O_NONBLOCK explicitly in setup, but
+					// still just in case, let's keep this working too
+					import core.thread;
+					Thread.sleep(1.msecs);
+					goto try_again;
 				} else {
-					throw new Exception("read failed");
+					import std.conv;
+					throw new Exception("read failed " ~ to!string(errno));
 				}
 			}
 

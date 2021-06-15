@@ -1678,7 +1678,7 @@ struct Chunk {
 		in {
 			assert(type.length == 4);
 		}
-	body {
+	do {
 		Chunk* c = new Chunk;
 		c.size = cast(int) payload.length;
 		c.type[] = (cast(ubyte[]) type)[];

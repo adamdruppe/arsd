@@ -185,7 +185,7 @@ string decodeImpl(in ubyte[] data, in dchar[] chars160to255, in dchar[] chars128
 		import std.utf;
 		validate(ret);
 	}
-body {
+do {
 	string utf8;
 
 	/// I'm sure this could be a lot more efficient, but whatever, it

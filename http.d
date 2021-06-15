@@ -190,7 +190,7 @@ HttpResponse doHttpRequestOnHelpers(void delegate(string) write, char[] delegate
 	in {
 		assert(method == "POST" || method == "GET");
 	}
-body {
+do {
 	auto u = UriParts(uri);
 
 
