@@ -440,6 +440,28 @@ class Widget : ReflectableProperties {
 		int widthStretchiness() { return 4; }
 		int heightStretchiness() { return 4; }
 
+		/++
+			Where stretchiness will grow from the flex basis, this shrinkiness will let it get smaller if needed to make room for other items.
+
+			History:
+				Added June 15, 2021 (dub v10.1)
+		+/
+		int widthShrinkiness() { return 0; }
+		/// ditto
+		int heightShrinkiness() { return 0; }
+
+		/++
+			The initial size of the widget for layout calculations. Default is 0.
+
+			See_Also: [https://developer.mozilla.org/en-US/docs/Web/CSS/flex-basis|CSS flex-basis]
+
+			History:
+				Added June 15, 2021 (dub v10.1)
+		+/
+		int flexBasisWidth() { return 0; }
+		/// ditto
+		int flexBasisHeight() { return 0; }
+
 		int marginLeft() { return 0; }
 		int marginRight() { return 0; }
 		int marginTop() { return 0; }
@@ -610,6 +632,10 @@ class Widget : ReflectableProperties {
 
 		/// This assumes any change to the dynamic state (focus, hover, etc) triggers a redraw, but you can filter a bit to optimize some draws.
 		bool variesWithState(ulong dynamicStateFlags) {
+			version(win32_widgets) {
+				if(widget.hwnd)
+					return false;
+			}
 			return true;
 		}
 
@@ -1318,6 +1344,9 @@ class Widget : ReflectableProperties {
 			Prior to May 15, 2021, the default implementation was empty. Now, it is `painter.drawThemed(&paintContent);`. You may wish to override [paintContent] instead of [paint] to take advantage of the new styling engine.
 	+/
 	void paint(WidgetPainter painter) {
+		version(win32_widgets)
+			if(hwnd)
+				return;
 		painter.drawThemed(&paintContent); // note this refers to the following overload
 	}
 
@@ -2276,6 +2305,9 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	int stretchyChildSum;
 	int lastMargin = 0;
 
+	int shrinkinessSum;
+	int shrinkyChildSum;
+
 	// set initial size
 	foreach(child; parent.children) {
 
@@ -2285,6 +2317,9 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			continue;
 		if(child.hidden)
 			continue;
+
+		const iw = child.flexBasisWidth();
+		const ih = child.flexBasisHeight();
 
 		static if(calcingV) {
 			child.width = parent.width -
@@ -2297,18 +2332,37 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				child.width = 0;
 			if(child.width > childStyle.maxWidth())
 				child.width = childStyle.maxWidth();
-			child.height = childStyle.minHeight();
+
+			if(iw > 0) {
+				auto totalPossible = child.width;
+				if(child.width > iw)
+					child.width = iw;
+			}
+
+			child.height = mymax(childStyle.minHeight(), ih);
 		} else {
+			// set to take all the space
 			child.height = parent.height -
 				mixin("childStyle.margin"~firstThingy~"()") -
 				mixin("childStyle.margin"~secondThingy~"()") -
 				mixin("parentStyle.padding"~firstThingy~"()") -
 				mixin("parentStyle.padding"~secondThingy~"()");
+
+			// then clamp it
 			if(child.height < 0)
 				child.height = 0;
 			if(child.height > childStyle.maxHeight())
 				child.height = childStyle.maxHeight();
-			child.width = childStyle.minWidth();
+
+			// and if possible, respect the ideal target
+			if(ih > 0) {
+				auto totalPossible = child.height;
+				if(child.height > ih)
+					child.height = ih;
+			}
+
+			// if we have an ideal, try to respect it, otehrwise, just use the minimum
+			child.width = mymax(childStyle.minWidth(), iw);
 		}
 
 		spaceRemaining -= mixin("child." ~ relevantMeasure);
@@ -2317,10 +2371,41 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		auto margin = mixin("childStyle.margin" ~ secondThingy ~ "()");
 		lastMargin = margin;
 		spaceRemaining -= thisMargin + margin;
+
 		auto s = mixin("child." ~ relevantMeasure ~ "Stretchiness()");
 		stretchinessSum += s;
 		if(s > 0)
 			stretchyChildSum++;
+
+		auto s2 = mixin("child." ~ relevantMeasure ~ "Shrinkiness()");
+		shrinkinessSum += s2;
+		if(s2 > 0)
+			shrinkyChildSum++;
+	}
+
+	if(spaceRemaining < 0 && shrinkyChildSum) {
+		// shrink to get into the space if it is possible
+		auto toRemove = -spaceRemaining;
+		auto removalPerItem  = toRemove * shrinkinessSum / shrinkyChildSum;
+		auto remainder = toRemove * shrinkinessSum % shrinkyChildSum;
+
+		foreach(child; parent.children) {
+			auto childStyle = child.getComputedStyle();
+			if(cast(StaticPosition) child)
+				continue;
+			if(child.hidden)
+				continue;
+			static if(calcingV) {
+				auto maximum = childStyle.maxHeight();
+			} else {
+				auto maximum = childStyle.maxWidth();
+			}
+
+			mixin("child._" ~ relevantMeasure) -= removalPerItem + remainder; // this is removing more than needed to trigger the next thing. ugh.
+
+			spaceRemaining += removalPerItem + remainder;
+		}
+
 	}
 
 	// stretch to fill space
@@ -2346,10 +2431,11 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				continue;
 			if(child.hidden)
 				continue;
-			static if(calcingV)
+			static if(calcingV) {
 				auto maximum = childStyle.maxHeight();
-			else
+			} else {
 				auto maximum = childStyle.maxWidth();
+			}
 
 			if(mixin("child." ~ relevantMeasure) >= maximum) {
 				auto adj = mixin("child." ~ relevantMeasure) - maximum;
@@ -3138,6 +3224,15 @@ struct StyleInformation {
 
 		/** */ int maxWidth() { return w.maxWidth(); }
 		/** */ int minWidth() { return w.minWidth(); }
+
+		/** */ int flexBasisWidth() { return w.flexBasisWidth(); }
+		/** */ int flexBasisHeight() { return w.flexBasisHeight(); }
+
+		/** */ int heightStretchiness() { return w.heightStretchiness(); }
+		/** */ int widthStretchiness() { return w.widthStretchiness(); }
+
+		/** */ int heightShrinkiness() { return w.heightShrinkiness(); }
+		/** */ int widthShrinkiness() { return w.widthShrinkiness(); }
 
 		// Global helpers some of these are unstable.
 		static:
@@ -7418,7 +7513,16 @@ class Fieldset : Widget {
 
 	string legend;
 
-	///
+	version(custom_widgets) private char accelerator;
+
+	/++
+		Creates the fieldset (also known as a group box) with the given layer. Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
+
+		Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
+
+		History:
+			The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
+	+/
 	this(string legend, Widget parent) {
 		version(win32_widgets) {
 			super(parent);
@@ -7428,7 +7532,24 @@ class Fieldset : Widget {
 		} else version(custom_widgets) {
 			super(parent);
 			tabStop = false;
-			this.legend = legend;
+			this.legend.reserve(legend.length);
+			bool justSawAmpersand;
+			foreach(ch; legend) {
+				if(justSawAmpersand) {
+					justSawAmpersand = false;
+					if(ch == '&') {
+						goto plain;
+					}
+					accelerator = ch;
+				} else {
+					if(ch == '&') {
+						justSawAmpersand = true;
+						continue;
+					}
+					plain:
+					this.legend ~= ch;
+				}
+			}
 		} else static assert(0);
 	}
 
@@ -8241,6 +8362,19 @@ int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
 ///
 class ImageBox : Widget {
 	private MemoryImage image_;
+
+	override int widthStretchiness() { return 1; }
+	override int heightStretchiness() { return 1; }
+	override int widthShrinkiness() { return 1; }
+	override int heightShrinkiness() { return 1; }
+
+	override int flexBasisHeight() {
+		return image_.height;
+	}
+
+	override int flexBasisWidth() {
+		return image_.width;
+	}
 
 	///
 	public void setImage(MemoryImage image){
