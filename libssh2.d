@@ -142,7 +142,7 @@ void main() {
 
 
 
-alias socket_t = int;
+import std.socket : socket_t;
 
 version(Windows) {
 	pragma(lib, "libssh2");
