@@ -363,6 +363,17 @@ class Document : FileResource {
 	+/
 	string[] selfClosedElements = htmlSelfClosedElements;
 
+	/++
+		List of elements that are considered inline for pretty printing.
+		The default for a Document are hard-coded to something appropriate
+		for HTML. For [XmlDocument], it defaults to empty. You can modify
+		this after construction but before parsing.
+
+		History:
+			Added June 21, 2021 (included in dub release 10.1)
+	+/
+	string[] inlineElements = htmlInlineElements;
+
 	/**
 		Take XMLish data and try to make the DOM tree out of it.
 
@@ -3353,6 +3364,8 @@ class Element {
 		}
 		+/
 
+		auto inlineElements = (parentDocument is null ? null : parentDocument.inlineElements);
+
 		const(Element)[] children;
 
 		TextNode lastTextChild = null;
@@ -3400,7 +3413,7 @@ class Element {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(tagName.isInArray(inlineElements) || allAreInlineHtml(children)) {
+		if(tagName.isInArray(inlineElements) || allAreInlineHtml(children, inlineElements)) {
 			foreach(child; children) {
 				s ~= child.toString();//toPrettyString(false, 0, null);
 			}
@@ -3559,6 +3572,7 @@ class Element {
 class XmlDocument : Document {
 	this(string data) {
 		selfClosedElements = null;
+		inlineElements = null;
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
@@ -6783,7 +6797,7 @@ private immutable static string[] htmlSelfClosedElements = [
 	// html 5
 	"source" ];
 
-private immutable static string[] inlineElements = [
+private immutable static string[] htmlInlineElements = [
 	"span", "strong", "em", "b", "i", "a"
 ];
 
@@ -8781,11 +8795,11 @@ unittest {
 }
 +/
 
-bool allAreInlineHtml(const(Element)[] children) {
+bool allAreInlineHtml(const(Element)[] children, const string[] inlineElements) {
 	foreach(child; children) {
 		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {
 			// cool
-		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children)) {
+		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children, inlineElements)) {
 			// cool
 		} else {
 			// prolly block
