@@ -8653,6 +8653,10 @@ class Sprite : CapableOfBeingDrawnUpon {
 		return new Sprite(win, Image.fromMemoryImage(img, enableAlpha));
 	}
 
+	auto nativeHandle() {
+		return handle;
+	}
+
 	private:
 
 	int _width;
@@ -10016,7 +10020,7 @@ version(Windows) {
 			}
 			RECT rect;
 			WCharzBuffer buffer = WCharzBuffer(text);
-			DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, DT_CALCRECT);
+			DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, DT_CALCRECT | DT_NOPREFIX);
 			return Size(dummyX ? 0 : rect.right, rect.bottom);
 		}
 
@@ -10027,9 +10031,9 @@ version(Windows) {
 				text = text[0 .. $-1];
 
 			WCharzBuffer buffer = WCharzBuffer(text, WindowsStringConversionFlags.convertNewLines);
-			if(x2 == 0 && y2 == 0)
+			if(x2 == 0 && y2 == 0) {
 				TextOutW(hdc, x, y, buffer.ptr, cast(int) buffer.length);
-			else {
+			} else {
 				RECT rect;
 				rect.left = x;
 				rect.top = y;
@@ -10046,7 +10050,7 @@ version(Windows) {
 				if(alignment & TextAlignment.VerticalCenter)
 					mode |= DT_VCENTER | DT_SINGLELINE;
 
-				DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, mode);
+				DrawTextW(hdc, buffer.ptr, cast(int) buffer.length, &rect, mode | DT_NOPREFIX);
 			}
 
 			/*

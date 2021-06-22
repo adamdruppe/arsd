@@ -655,7 +655,7 @@ class Widget : ReflectableProperties {
 			return WidgetBackground(widget.backgroundColor_);
 		}
 
-		private OperatingSystemFont fontCached_;
+		private static OperatingSystemFont fontCached_;
 		private OperatingSystemFont fontCached() {
 			if(fontCached_ is null)
 				fontCached_ = font();
@@ -983,7 +983,7 @@ class Widget : ReflectableProperties {
 					handler(ty);
 			}, useCapture);
 		} else static assert(0);
-		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate.");
+		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate. Use the delegate keyword at the call site.");
 	}
 
 	/// ditto
@@ -2784,7 +2784,18 @@ struct WidgetPainter {
 		this.outlineColor = this.themeForeground;
 		this.fillColor = bg;
 
+		auto widgetFont = cs.fontCached;
+		if(widgetFont !is null)
+			this.setFont(widgetFont);
+
 		rect = drawBody(this, rect);
+
+		if(widgetFont !is null) {
+			if(auto vtFont = visualTheme.defaultFontCached)
+				this.setFont(vtFont);
+			else
+				this.setFont(null);
+		}
 
 		if(auto os = cs.outlineStyle()) {
 			this.pen = Pen(cs.outlineColor(), 1, os == FrameStyle.dotted ? Pen.Style.Dotted : Pen.Style.Solid);
@@ -5934,7 +5945,23 @@ class Window : Widget {
 
 	Widget focusedWidget;
 
-	SimpleWindow win;
+	private SimpleWindow win_;
+
+	@property {
+		/++
+			Provides access to the underlying [SimpleWindow]. Note that changing properties on this window may disconnect minigui's event dispatchers.
+
+			History:
+				Prior to June 21, 2021, it was a public (but undocumented) member. Now it a semi-protected property.
+		+/
+		public SimpleWindow win() {
+			return win_;
+		}
+		///
+		protected void win(SimpleWindow w) {
+			win_ = w;
+		}
+	}
 
 	/// YOU ALMOST CERTAINLY SHOULD NOT USE THIS. This is really only for special purposes like pseudowindows or popup windows doing their own thing.
 	this(Widget p) {
@@ -5944,7 +5971,11 @@ class Window : Widget {
 
 	private bool skipNextChar = false;
 
-	///
+	/++
+		Creates a window from an existing [SimpleWindow]. This constructor attaches various event handlers to the SimpleWindow object which may overwrite your existing handlers.
+
+		This constructor is intended primarily for internal use and may be changed to `protected` later.
+	+/
 	this(SimpleWindow win) {
 
 		static if(UsingSimpledisplayX11) {
@@ -5964,6 +5995,14 @@ class Window : Widget {
 		this.width = win.width;
 		this.height = win.height;
 		this.parentWindow = this;
+
+		win.closeQuery = () {
+			if(this.emit!ClosingEvent())
+				win.close();
+		};
+		win.onClosing = () {
+			this.emit!ClosedEvent();
+		};
 
 		win.windowResized = (int w, int h) {
 			this.width = w;
@@ -6243,8 +6282,12 @@ class Window : Widget {
 
 
 	/++
+		Creates a window. Please note windows are created in a hidden state, so you must call [show] or [loop] to get it to display.
+
 		History:
-			Prior to May 12, 2021, the default title was "D Application" (simpledisplay.d's default). After that, the default is Runtime.args[0] instead.
+			Prior to May 12, 2021, the default title was "D Application" (simpledisplay.d's default). After that, the default is `Runtime.args[0]` instead.
+
+			The width and height arguments were added to the overload that takes `string` first on June 21, 2021.
 	+/
 	this(int width = 500, int height = 500, string title = null) {
 		if(title is null) {
@@ -6253,12 +6296,13 @@ class Window : Widget {
 				title = Runtime.args[0];
 		}
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
+
 		this(win);
 	}
 
-	///
-	this(string title) {
-		this(500, 500, title);
+	/// ditto
+	this(string title, int width = 500, int height = 500) {
+		this(width, height, title);
 	}
 
 	///
@@ -6457,6 +6501,9 @@ class Window : Widget {
 		}
 		return null;
 	}
+
+	mixin Emits!ClosingEvent;
+	mixin Emits!ClosedEvent;
 }
 
 debug private class DevToolWindow : Window {
@@ -7493,7 +7540,39 @@ class ProgressBar : Widget {
 	override int minHeight() { return 10; }
 }
 
-///
+version(custom_widgets)
+private void extractWindowsStyleLabel(scope const char[] label, out string thisLabel, out dchar thisAccelerator) {
+	thisLabel.reserve(label.length);
+	bool justSawAmpersand;
+	foreach(ch; label) {
+		if(justSawAmpersand) {
+			justSawAmpersand = false;
+			if(ch == '&') {
+				goto plain;
+			}
+			thisAccelerator = ch;
+		} else {
+			if(ch == '&') {
+				justSawAmpersand = true;
+				continue;
+			}
+			plain:
+			thisLabel ~= ch;
+		}
+	}
+}
+
+/++
+	Creates the fieldset (also known as a group box) with the given label. A fieldset is generally used a container for mutually exclusive [Radiobox]s.
+
+
+	Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
+
+	Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
+
+	History:
+		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
++/
 class Fieldset : Widget {
 	// FIXME: on Windows,it doesn't draw the background on the label
 	// on X, it doesn't fix the clipping rectangle for it
@@ -7513,16 +7592,8 @@ class Fieldset : Widget {
 
 	string legend;
 
-	version(custom_widgets) private char accelerator;
+	version(custom_widgets) private dchar accelerator;
 
-	/++
-		Creates the fieldset (also known as a group box) with the given layer. Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
-
-		Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
-
-		History:
-			The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
-	+/
 	this(string legend, Widget parent) {
 		version(win32_widgets) {
 			super(parent);
@@ -7532,24 +7603,8 @@ class Fieldset : Widget {
 		} else version(custom_widgets) {
 			super(parent);
 			tabStop = false;
-			this.legend.reserve(legend.length);
-			bool justSawAmpersand;
-			foreach(ch; legend) {
-				if(justSawAmpersand) {
-					justSawAmpersand = false;
-					if(ch == '&') {
-						goto plain;
-					}
-					accelerator = ch;
-				} else {
-					if(ch == '&') {
-						justSawAmpersand = true;
-						continue;
-					}
-					plain:
-					this.legend ~= ch;
-				}
-			}
+
+			legend.extractWindowsStyleLabel(this.legend, this.accelerator);
 		} else static assert(0);
 	}
 
@@ -7970,7 +8025,53 @@ class OnOffSwitch : MouseActivatedWidget {
 */
 
 /++
+	History:
+		Added June 15, 2021 (dub v10.1)
++/
+struct ImageLabel {
+	this(string label) {
+		this.label = label;
+		this.displayFlags = DisplayFlags.displayText;
+	}
+
+	this(string label, MemoryImage image) {
+		this.label = label;
+		this.image = image;
+		this.displayFlags = DisplayFlags.displayText | DisplayFlags.displayImage;
+	}
+
+	this(MemoryImage image) {
+		this.image = image;
+		this.displayFlags = DisplayFlags.displayImage;
+	}
+
+	this(string label, MemoryImage image, int displayFlags) {
+		this.label = label;
+		this.image = image;
+		this.displayFlags = displayFlags;
+	}
+
+	string label;
+	MemoryImage image;
+
+	enum DisplayFlags {
+		displayText = 1 << 0,
+		displayImage = 1 << 1,
+	}
+
+	int displayFlags = DisplayFlags.displayText | DisplayFlags.displayImage;
+}
+
+/++
 	A basic checked or not checked box with an attached label.
+
+
+	Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
+
+	Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
+
+	History:
+		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
 +/
 class Checkbox : MouseActivatedWidget {
 	version(win32_widgets) {
@@ -7992,15 +8093,21 @@ class Checkbox : MouseActivatedWidget {
 	alias checked = isChecked;
 
 	private string label;
+	private dchar accelerator;
 
 	///
 	this(string label, Widget parent) {
-		super(parent);
-		this.label = label;
-		version(win32_widgets) {
-			createWin32Window(this, "button"w, label, BS_CHECKBOX);
-		} else version(custom_widgets) {
+		this(ImageLabel(label), parent);
+	}
 
+	/// ditto
+	private this(ImageLabel label, Widget parent) {
+		super(parent);
+		version(win32_widgets) {
+			this.label = label.label;
+			createWin32Window(this, "button"w, label.label, BS_CHECKBOX);
+		} else version(custom_widgets) {
+			label.label.extractWindowsStyleLabel(this.label, this.accelerator);
 		} else static assert(0);
 	}
 
@@ -8074,7 +8181,17 @@ class HorizontalSpacer : Widget {
 }
 
 
-///
+/++
+	Creates a radio button with an associated label. These are usually put inside a [Fieldset].
+
+
+	Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
+
+	Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
+
+	History:
+		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
++/
 class Radiobox : MouseActivatedWidget {
 
 	version(win32_widgets) {
@@ -8088,6 +8205,7 @@ class Radiobox : MouseActivatedWidget {
 	override int marginLeft() { return 4; }
 
 	private string label;
+	private dchar accelerator;
 
 	version(win32_widgets)
 	this(string label, Widget parent) {
@@ -8098,7 +8216,7 @@ class Radiobox : MouseActivatedWidget {
 	else version(custom_widgets)
 	this(string label, Widget parent) {
 		super(parent);
-		this.label = label;
+		label.extractWindowsStyleLabel(this.label, this.accelerator);
 		height = 16;
 		width = height + 4 + cast(int) label.length * 16;
 	}
@@ -8161,12 +8279,23 @@ class Radiobox : MouseActivatedWidget {
 }
 
 
-///
+/++
+	Creates a push button with unbounded size. When it is clicked, it emits a `triggered` event.
+
+
+	Please note that the ampersand (&) character gets special treatment as described on this page https://docs.microsoft.com/en-us/windows/win32/menurc/common-control-parameters?redirectedfrom=MSDN
+
+	Use double-ampersand, "First && Second", to be displayed as a single one, "First & Second".
+
+	History:
+		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
++/
 class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
 
 	private string label_;
+	private dchar accelerator;
 
 	///
 	string label() { return label_; }
@@ -8181,25 +8310,56 @@ class Button : MouseActivatedWidget {
 		}
 	}
 
-	version(win32_widgets)
-	this(string label, Widget parent) {
-		// FIXME: use ideal button size instead
-		width = 50;
-		height = 30;
-		super(parent);
-		createWin32Window(this, "button"w, label, BS_PUSHBUTTON);
+	private Sprite sprite;
+	private int displayFlags;
 
-		this.label = label;
-	}
-	else version(custom_widgets)
-	this(string label, Widget parent) {
-		width = 50;
-		height = 30;
-		super(parent);
+	/++
+		Creates a push button with the given label, which may be an image or some text.
 
-		this.label = label;
+		Bugs:
+			If the image is bigger than the button, it may not be displayed in the right position on Linux.
+
+		History:
+			The [ImageLabel] overload was added on June 21, 2021 (dub v10.1).
+	+/
+	this(ImageLabel label, Widget parent) {
+		version(win32_widgets) {
+			// FIXME: use ideal button size instead
+			width = 50;
+			height = 30;
+			super(parent);
+
+			// BS_BITMAP is set when we want image only, so checking for exactly that combination
+			enum imgFlags = ImageLabel.DisplayFlags.displayImage;
+			auto extraStyle = ((label.displayFlags & imgFlags) == imgFlags) ? BS_BITMAP : 0;
+
+			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle);
+
+			if(label.image) {
+				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
+
+				SendMessageW(hwnd, BM_SETIMAGE, IMAGE_BITMAP, cast(LPARAM) sprite.nativeHandle);
+			}
+
+			this.label = label.label;
+		} else version(custom_widgets) {
+			width = 50;
+			height = 30;
+			super(parent);
+
+			label.label.extractWindowsStyleLabel(this.label_, this.accelerator);
+
+			if(label.image) {
+				this.sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
+				this.displayFlags = label.displayFlags;
+			}
+		}
 	}
-	else static assert(false);
+
+	///
+	this(string label, Widget parent) {
+		this(ImageLabel(label), parent);
+	}
 
 	override int minHeight() { return Window.lineHeight + 4; }
 
@@ -8232,7 +8392,16 @@ class Button : MouseActivatedWidget {
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		painter.drawThemed(delegate Rectangle(const Rectangle bounds) {
-			painter.drawText(bounds.upperLeft, label, bounds.lowerRight, TextAlignment.Center | TextAlignment.VerticalCenter);
+			if(sprite) {
+				sprite.drawAt(
+					painter,
+					bounds.upperLeft + Point((bounds.width - sprite.width) / 2, (bounds.height - sprite.height) / 2),
+					Point(0, 0),
+					bounds.size
+				);
+			} else {
+				painter.drawText(bounds.upperLeft, label, bounds.lowerRight, TextAlignment.Center | TextAlignment.VerticalCenter);
+			}
 			return bounds;
 		});
 	}
@@ -9694,6 +9863,34 @@ class ResizeEvent : Event {
 	override bool propagates() const { return false; }
 }
 
+/++
+	ClosingEvent is fired when a user is attempting to close a window. You can `preventDefault` to cancel the close.
+
+	ClosedEvent happens when the window has been closed. It is already gone by the time this event fires, meaning you cannot prevent the close. Use [ClosingEvent] if you want to cancel, use [ClosedEvent] if you simply want to be notified.
+
+	History:
+		Added June 21, 2021 (dub v10.1)
++/
+class ClosingEvent : Event {
+	enum EventString = "closing";
+
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
+	override bool cancelable() const { return true; }
+}
+
+/// ditto
+class ClosedEvent : Event {
+	enum EventString = "closed";
+
+	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
+	override bool cancelable() const { return false; }
+}
+
+///
 class BlurEvent : Event {
 	enum EventString = "blur";
 
@@ -9703,6 +9900,7 @@ class BlurEvent : Event {
 	override bool propagates() const { return false; }
 }
 
+///
 class FocusEvent : Event {
 	enum EventString = "focus";
 

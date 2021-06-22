@@ -7830,6 +7830,15 @@ version(TerminalDirectToEmulator) {
 
 		+/
 		bool fallbackToDegradedTerminal = true;
+
+		/++
+			The default key control is ctrl+c sends an interrupt character and ctrl+shift+c
+			does copy to clipboard. If you set this to `true`, it swaps those two bindings.
+
+			History:
+				Added June 15, 2021. Included in release v10.1.0.
+		+/
+		bool ctrlCCopies = false; // FIXME: i could make this context-sensitive too, so if text selected, copy, otherwise, cancel. prolly show in statu s bar
 	}
 
 	/+
@@ -8174,7 +8183,7 @@ version(TerminalDirectToEmulator) {
 			this.term = term;
 			terminalEmulator = new TerminalEmulatorInsideWidget(this);
 			super(parent);
-			this.parentWindow.win.onClosing = {
+			this.parentWindow.addEventListener("closed", {
 				if(term) {
 					term.hangedUp = true;
 					// should I just send an official SIGHUP?!
@@ -8217,7 +8226,7 @@ version(TerminalDirectToEmulator) {
 				terminalEmulator.syncSignal.notify();
 
 				windowGone = true;
-			};
+			});
 
 			this.parentWindow.win.addEventListener((InputEventInternal ie) {
 				terminalEmulator.sendRawInput(ie.data);
@@ -8522,8 +8531,19 @@ version(TerminalDirectToEmulator) {
 			});
 
 			widget.addEventListener((KeyDownEvent ev) {
+				if(ev.key == Key.C && !(ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
+					if(integratedTerminalEmulatorConfiguration.ctrlCCopies) {
+						goto copy;
+					}
+				}
 				if(ev.key == Key.C && (ev.state & ModifierState.shift) && (ev.state & ModifierState.ctrl)) {
+					if(integratedTerminalEmulatorConfiguration.ctrlCCopies) {
+						sendSigInt();
+						skipNextChar = true;
+						return;
+					}
 					// ctrl+c is cancel so ctrl+shift+c ends up doing copy.
+					copy:
 					copyToClipboard(getSelectedText());
 					skipNextChar = true;
 					return;
@@ -8580,17 +8600,21 @@ version(TerminalDirectToEmulator) {
 						assert(0);
 					}
 				} else if(c == 3) {// && !ev.shiftKey) /* ctrl+c, interrupt. But NOT ctrl+shift+c as that's a user-defined keystroke and/or "copy", but ctrl+shift+c never gets sent here.... thanks to the skipNextChar above */ {
-					if(sigIntExtension)
-						sigIntExtension();
-
-					if(widget && widget.term) {
-						widget.term.interrupted = true;
-						outgoingSignal.notify();
-					}
+					sendSigInt();
 				} else {
 					defaultCharHandler(c);
 				}
 			});
+		}
+
+		void sendSigInt() {
+			if(sigIntExtension)
+				sigIntExtension();
+
+			if(widget && widget.term) {
+				widget.term.interrupted = true;
+				outgoingSignal.notify();
+			}
 		}
 
 		bool clearScreenRequested = true;
