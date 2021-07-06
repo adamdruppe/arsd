@@ -242,7 +242,108 @@ struct HttpResponse {
 		return null;
 	}
 
-	string[string] cookies; /// Names and values of cookies set in the response.
+	/++
+		Names and values of cookies set in the response.
+
+		History:
+			Prior to July 5, 2021 (dub v10.2), this was a public field instead of a property. I did
+			not consider this a breaking change since the intended use is completely compatible with the
+			property, and it was not actually implemented properly before anyway.
+	+/
+	@property string[string] cookies() const {
+		string[string] ret;
+		foreach(cookie; cookiesDetails)
+			ret[cookie.name] = cookie.value;
+		return ret;
+	}
+	/++
+		The full parsed-out information of cookies set in the response.
+
+		History:
+			Added July 5, 2021 (dub v10.2).
+	+/
+	@property CookieHeader[] cookiesDetails() inout {
+		CookieHeader[] ret;
+		foreach(header; headers) {
+			if(auto content = header.isHttpHeader("set-cookie")) {
+				// format: name=value, value might be double quoted. it MIGHT be url encoded, but im not going to attempt that since the RFC is silent.
+				// then there's optionally ; attr=value after that. attributes need not have a value
+
+				CookieHeader cookie;
+
+				auto remaining = content;
+
+				cookie_name:
+				foreach(idx, ch; remaining) {
+					if(ch == '=') {
+						cookie.name = remaining[0 .. idx].idup_if_needed;
+						remaining = remaining[idx + 1 .. $];
+						break;
+					}
+				}
+
+				cookie_value:
+
+				{
+					auto idx = remaining.indexOf(";");
+					if(idx == -1) {
+						cookie.value = remaining;
+						remaining = remaining[$..$];
+					} else {
+						cookie.value = remaining[0 .. idx];
+						remaining = remaining[idx + 1 .. $].stripLeft;
+					}
+
+					if(cookie.value.length > 2 && cookie.value[0] == '"' && cookie.value[$-1] == '"')
+						cookie.value = cookie.value[1 .. $ - 1];
+				}
+
+				cookie_attributes:
+
+				while(remaining.length) {
+					string name;
+					foreach(idx, ch; remaining) {
+						if(ch == '=') {
+							name = remaining[0 .. idx].idup_if_needed;
+							remaining = remaining[idx + 1 .. $];
+
+							string value;
+
+							foreach(idx2, ch2; remaining) {
+								if(ch2 == ';') {
+									value = remaining[0 .. idx2].idup_if_needed;
+									remaining = remaining[idx2 + 1 .. $].stripLeft;
+									break;
+								}
+							}
+
+							if(value is null) {
+								value = remaining.idup_if_needed;
+								remaining = remaining[$ .. $];
+							}
+
+							cookie.attributes[name] = value;
+							continue cookie_attributes;
+						} else if(ch == ';') {
+							name = remaining[0 .. idx].idup_if_needed;
+							remaining = remaining[idx + 1 .. $].stripLeft;
+							cookie.attributes[name] = "";
+							continue cookie_attributes;
+						}
+					}
+
+					if(remaining.length) {
+						cookie.attributes[remaining.idup_if_needed] = "";
+						remaining = remaining[$..$];
+
+					} 
+				}
+
+				ret ~= cookie;
+			}
+		}
+		return ret;
+	}
 
 	string[] headers; /// Array of all headers returned.
 	string[string] headersHash; ///
@@ -277,7 +378,6 @@ struct HttpResponse {
 
 	HttpResponse deepCopy() const {
 		HttpResponse h = cast(HttpResponse) this;
-		h.cookies = h.cookies.dup;
 		h.headers = h.headers.dup;
 		h.headersHash = h.headersHash.dup;
 		h.content = h.content.dup;
@@ -380,11 +480,54 @@ struct HttpResponse {
 	}
 }
 
+/+
+	headerName MUST be all lower case and NOT have the colon on it
+
+	returns slice of the input thing after the header name
++/
+private inout(char)[] isHttpHeader(inout(char)[] thing, const(char)[] headerName) {
+	foreach(idx, ch; thing) {
+		if(idx < headerName.length) {
+			if(headerName[idx] == '-' && ch != '-')
+				return null;
+			if((ch | ' ') != headerName[idx])
+				return null;
+		} else if(idx == headerName.length) {
+			if(ch != ':')
+				return null;
+		} else {
+			return thing[idx .. $].strip;
+		}
+	}
+	return null;
+}
+
+private string idup_if_needed(string s) { return s; }
+private string idup_if_needed(const(char)[] s) { return s.idup; }
+
+unittest {
+	assert("Cookie: foo=bar".isHttpHeader("cookie") == "foo=bar");
+	assert("cookie: foo=bar".isHttpHeader("cookie") == "foo=bar");
+	assert("cOOkie: foo=bar".isHttpHeader("cookie") == "foo=bar");
+	assert("Set-Cookie: foo=bar".isHttpHeader("set-cookie") == "foo=bar");
+	assert(!"".isHttpHeader("cookie"));
+}
+
 ///
 struct LinkHeader {
 	string url; ///
 	string rel; ///
 	string[string] attributes; /// like title, rev, media, whatever attributes
+}
+
+/++
+	History:
+		Added July 5, 2021
++/
+struct CookieHeader {
+	string name;
+	string value;
+	string[string] attributes;
 }
 
 import std.string;
@@ -722,7 +865,8 @@ class ProxyException : Exception {
 
 
 	---
-	auto request = new HttpRequest();
+	auto request = new HttpRequest(); // note that when there's no associated client, some features may not work
+	// normally you'd instead do `new HttpClient(); client.request(...)`
 	// set any properties here
 
 	// synchronous usage
@@ -753,15 +897,37 @@ class HttpRequest {
 	/// Automatically follow a redirection?
 	bool followLocation = false;
 
+	/++
+		Set to `true` to automatically retain cookies in the associated [HttpClient] from this request.
+		Note that you must have constructed the request from a `HttpClient` or at least passed one into the
+		constructor for this to have any effect.
+
+		Bugs:
+			See [HttpClient.retainCookies] for important caveats.
+
+		History:
+			Added July 5, 2021 (dub v10.2)
+	+/
+	bool retainCookies = false;
+
+	private HttpClient client;
+
 	this() {
 	}
 
 	///
-	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds, string proxy = null) {
+	this(HttpClient client, Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds, string proxy = null) {
+		this.client = client;
 		populateFromInfo(where, method);
 		setTimeout(timeout);
 		this.cache = cache;
 		this.proxy = proxy;
+	}
+
+	
+	/// ditto
+	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds, string proxy = null) {
+		this(null, where, method, cache, timeout, proxy);
 	}
 
 	/++
@@ -930,6 +1096,22 @@ class HttpRequest {
 			headers ~= "Accept-Encoding: gzip\r\n";
 		if(requestParameters.keepAlive)
 			headers ~= "Connection: keep-alive\r\n";
+
+		string cookieHeader;
+		foreach(name, value; requestParameters.cookies) {
+			if(cookieHeader is null)
+				cookieHeader = "Cookie: ";
+			else
+				cookieHeader ~= "; ";
+			cookieHeader ~= name;
+			cookieHeader ~= "=";
+			cookieHeader ~= value;
+		}
+
+		if(cookieHeader !is null) {
+			cookieHeader ~= "\r\n";
+			headers ~= cookieHeader;
+		}
 
 		foreach(header; requestParameters.headers)
 			headers ~= header ~ "\r\n";
@@ -1742,7 +1924,6 @@ class HttpRequest {
 							goto start_over;
 						case 5: // reading footers
 							//goto done; // FIXME
-							state = State.complete;
 
 							bodyReadingState.chunkedState = 0;
 
@@ -1760,35 +1941,40 @@ class HttpRequest {
 							}
 
 							//	responseData.content ~= cast(ubyte[]) uncompress.flush();
-
 							responseData.contentText = cast(string) responseData.content;
 
 							goto done;
 					}
 				}
 
-				done:
-				// FIXME
-				//if(closeSocketWhenComplete)
-					//socket.close();
 			} else {
 				//if(bodyReadingState.isGzipped || bodyReadingState.isDeflated)
 				//	responseData.content ~= cast(ubyte[]) uncompress.uncompress(data);
 				//else
 					responseData.content ~= data;
 				//assert(data.length <= bodyReadingState.contentLengthRemaining, format("%d <= %d\n%s", data.length, bodyReadingState.contentLengthRemaining, cast(string)data));
-				int use = cast(int) data.length;
-				if(use > bodyReadingState.contentLengthRemaining)
-					use = bodyReadingState.contentLengthRemaining;
-				bodyReadingState.contentLengthRemaining -= use;
-				data = data[use .. $];
+				{
+					int use = cast(int) data.length;
+					if(use > bodyReadingState.contentLengthRemaining)
+						use = bodyReadingState.contentLengthRemaining;
+					bodyReadingState.contentLengthRemaining -= use;
+					data = data[use .. $];
+				}
 				if(bodyReadingState.contentLengthRemaining == 0) {
 					if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
 						auto n = uncompress.uncompress(responseData.content);
 						n ~= uncompress.flush();
 						responseData.content = cast(ubyte[]) n;
+						responseData.contentText = cast(string) responseData.content;
 						//responseData.content ~= cast(ubyte[]) uncompress.flush();
 					}
+
+					done:
+
+					if(retainCookies && client !is null) {
+						client.retainCookies(responseData);
+					}
+
 					if(followLocation && responseData.location.length) {
 						static bool first = true;
 						//version(DigitalMars) if(!first) asm { int 3; }
@@ -1803,7 +1989,6 @@ class HttpRequest {
 						sendPrivate(false);
 					} else {
 						state = State.complete;
-						responseData.contentText = cast(string) responseData.content;
 						// FIXME
 						//if(closeSocketWhenComplete)
 							//socket.close();
@@ -1908,23 +2093,26 @@ class HttpClient {
 	+/
 	Duration defaultTimeout = 10.seconds;
 
-	/// High level function that works similarly to entering a url
-	/// into a browser.
-	///
-	/// Follows locations, updates the current url.
+	/++
+		High level function that works similarly to entering a url
+		into a browser.
+
+		Follows locations, retain cookies, updates the current url, etc.
+	+/
 	HttpRequest navigateTo(Uri where, HttpVerb method = HttpVerb.GET) {
 		currentUrl = where.basedOn(currentUrl);
 		currentDomain = where.host;
 
 		auto request = this.request(currentUrl, method);
 		request.followLocation = true;
+		request.retainCookies = true;
 
 		return request;
 	}
 
 	/++
-		Creates a request without updating the current url state
-		(but will still save cookies btw... when that is implemented)
+		Creates a request without updating the current url state. If you want to save cookies, either call [retainCookies] with the response yourself
+		or set [HttpRequest.retainCookies|request.retainCookies] to `true` on the returned object. But see important implementation shortcomings on [retainCookies].
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
 		string proxyToUse;
@@ -1939,7 +2127,7 @@ class HttpClient {
 				proxyToUse = null;
 		}
 
-		auto request = new HttpRequest(uri, method, cache, defaultTimeout, proxyToUse);
+		auto request = new HttpRequest(this, uri, method, cache, defaultTimeout, proxyToUse);
 
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
@@ -1950,6 +2138,13 @@ class HttpClient {
 
 		request.requestParameters.bodyData = bodyData;
 		request.requestParameters.contentType = contentType;
+
+		// FIXME: what about expiration and the like? or domain/path checks? or Secure checks?
+		// FIXME: is uri.host correct? i think it should include port number too. what fun.
+		if(auto cookies = ""/*uri.host*/ in this.cookies) {
+			foreach(cookie; *cookies)
+				request.requestParameters.cookies[cookie.name] = cookie.value;
+		}
 
 		return request;
 
@@ -2008,12 +2203,63 @@ class HttpClient {
 	/// ditto
 	string httpsProxy;
 
-	///
+	/// See [retainCookies] for important caveats.
 	void setCookie(string name, string value, string domain = null) {
-		if(domain == null)
+		CookieHeader ch;
+
+		ch.name = name;
+		ch.value = value;
+
+		setCookie(ch, domain);
+	}
+
+	/// ditto
+	void setCookie(CookieHeader ch, string domain = null) {
+		if(domain is null)
 			domain = currentDomain;
 
-		cookies[domain][name] = value;
+		cookies[""/*domain*/] ~= ch;
+	}
+
+	/++
+		[HttpClient] does NOT automatically store cookies. You must explicitly retain them from a response by calling this method.
+
+		Examples:
+			---
+			import arsd.http2;
+			void main() {
+				auto client = new HttpClient();
+				auto setRequest = client.request(Uri("http://arsdnet.net/cgi-bin/cookies/set"));
+				auto setResponse = setRequest.waitForCompletion();
+
+				auto request = client.request(Uri("http://arsdnet.net/cgi-bin/cookies/get"));
+				auto response = request.waitForCompletion();
+
+				// the cookie wasn't explicitly retained, so the server echos back nothing
+				assert(response.responseText.length == 0);
+
+				// now keep the cookies from our original set
+				client.retainCookies(setResponse);
+
+				request = client.request(Uri("http://arsdnet.net/cgi-bin/cookies/get"));
+				response = request.waitForCompletion();
+
+				// now it matches
+				assert(response.responseText.length && response.responseText == setResponse.cookies["example-cookie"]);
+			}
+			---
+
+		Bugs:
+			It does NOT currently implement domain / path / secure separation nor cookie expiration. It assumes that if you call this function, you're ok with it.
+
+			You may want to use separate HttpClient instances if any sharing is unacceptable at this time.
+
+		History:
+			Added July 5, 2021 (dub v10.2)
+	+/
+	void retainCookies(HttpResponse fromResponse) {
+		foreach(name, value; fromResponse.cookies)
+			setCookie(name, value);
 	}
 
 	///
@@ -2029,7 +2275,7 @@ class HttpClient {
 	string authorization; ///
 
 	/* inter-request state */
-	string[string][string] cookies;
+	private CookieHeader[][string] cookies;
 }
 
 interface ICache {

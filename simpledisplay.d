@@ -11435,7 +11435,6 @@ version(X11) {
 
 				if(fontset)
 					Xutf8DrawString(display, d, fontset, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
-
 				else
 					XDrawString(display, d, gc, px, py + (font ? font.max_bounds.ascent : lineHeight), line.ptr, cast(int) line.length);
 				carry_on:

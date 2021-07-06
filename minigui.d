@@ -630,13 +630,18 @@ class Widget : ReflectableProperties {
 	static class Style/* : StyleProperties*/ {
 		public Widget widget; // public because the mixin template needs access to it
 
-		/// This assumes any change to the dynamic state (focus, hover, etc) triggers a redraw, but you can filter a bit to optimize some draws.
+		/++
+			You must override this to trigger automatic redraws if you ever uses the `dynamicState` flag in your style.
+
+			History:
+				Added May 11, 2021, but changed on July 2, 2021 to return false by default. You MUST override this if you want declarative hover effects etc to take effect.
+		+/
 		bool variesWithState(ulong dynamicStateFlags) {
 			version(win32_widgets) {
 				if(widget.hwnd)
 					return false;
 			}
-			return true;
+			return widget.tabStop && ((dynamicStateFlags & DynamicState.focus) ? true : false);
 		}
 
 		///
@@ -726,6 +731,7 @@ class Widget : ReflectableProperties {
 
 
 		It also has a further facility to pick a wholly differnet class based on the [DynamicState] of the Widget.
+		You may also just override `variesWithState` when you use this flag.
 
 		---
 		mixin OverrideStyle!(
@@ -828,6 +834,33 @@ class Widget : ReflectableProperties {
 				p._children[item] = p._children[item + 1];
 			p._children = p._children[0 .. $-1];
 		}
+		version(win32_widgets) {
+			removeAllChildren();
+			if(hwnd) {
+				DestroyWindow(hwnd);
+				hwnd = null;
+			}
+		}
+	}
+
+	/++
+		Removes all child widgets from `this`. You should not use the removed widgets again.
+
+		Note that on Windows, it also destroys the native handles for the removed children recursively.
+
+		History:
+			Added July 1, 2021 (dub v10.2)
+	+/
+	void removeAllChildren() {
+		version(win32_widgets)
+		foreach(child; _children) {
+			child.removeAllChildren();
+			if(child.hwnd) {
+				DestroyWindow(child.hwnd);
+				child.hwnd = null;
+			}
+		}
+		this._children = null;
 	}
 
 	/++
@@ -890,6 +923,7 @@ class Widget : ReflectableProperties {
 	/// ditto
 	void setupDefaultEventHandlers() {
 		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(cast(ClickEvent) event); };
+		defaultEventHandlers["dblclick"] = (Widget t, Event event) { t.defaultEventHandler_dblclick(cast(DoubleClickEvent) event); };
 		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(cast(KeyDownEvent) event); };
 		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(cast(KeyUpEvent) event); };
 		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(cast(MouseOverEvent) event); };
@@ -904,18 +938,24 @@ class Widget : ReflectableProperties {
 		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
 		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
 		defaultEventHandlers["blur"] = (Widget t, Event event) { t.defaultEventHandler_blur(event); };
+		defaultEventHandlers["focusin"] = (Widget t, Event event) { t.defaultEventHandler_focusin(event); };
+		defaultEventHandlers["focusout"] = (Widget t, Event event) { t.defaultEventHandler_focusout(event); };
 	}
 
 	/// ditto
 	void defaultEventHandler_click(ClickEvent event) {}
+	/// ditto
+	void defaultEventHandler_dblclick(DoubleClickEvent event) {}
 	/// ditto
 	void defaultEventHandler_keydown(KeyDownEvent event) {}
 	/// ditto
 	void defaultEventHandler_keyup(KeyUpEvent event) {}
 	/// ditto
 	void defaultEventHandler_mousedown(MouseDownEvent event) {
-		if(this.tabStop)
-			this.focus();
+		if(event.button == MouseButton.left) {
+			if(this.tabStop)
+				this.focus();
+		}
 	}
 	/// ditto
 	void defaultEventHandler_mouseover(MouseOverEvent event) {}
@@ -939,6 +979,10 @@ class Widget : ReflectableProperties {
 	void defaultEventHandler_focus(Event event) {}
 	/// ditto
 	void defaultEventHandler_blur(Event event) {}
+	/// ditto
+	void defaultEventHandler_focusin(Event event) {}
+	/// ditto
+	void defaultEventHandler_focusout(Event event) {}
 
 	/++
 		[Event]s use a Javascript-esque model. See more details on the [Event] page.
@@ -1250,6 +1294,7 @@ class Widget : ReflectableProperties {
 			parentWindow.focusedWidget.setDynamicState(DynamicState.focus, false);
 			parentWindow.focusedWidget = null;
 			from.emit!BlurEvent();
+			this.emit!FocusOutEvent();
 		}
 
 
@@ -1261,6 +1306,7 @@ class Widget : ReflectableProperties {
 		parentWindow.focusedWidget = this;
 		parentWindow.focusedWidget.setDynamicState(DynamicState.focus, true);
 		this.emit!FocusEvent();
+		this.emit!FocusInEvent();
 	}
 
 
@@ -1303,7 +1349,7 @@ class Widget : ReflectableProperties {
 
 		if(parentWindow !is null) {
 			w.attachedToWindow(parentWindow);
-			parentWindow.recomputeChildLayout();
+			parentWindow.needsChildLayoutRecomputed = true;
 			parentWindow.redraw();
 		}
 	}
@@ -1327,6 +1373,14 @@ class Widget : ReflectableProperties {
 
 		return null;
 	}
+
+	/++
+		If the widget is a scrollable container, this should add the current scroll position to the given coordinates so the mouse events can be dispatched correctly.
+
+		History:
+			Added July 2, 2021 (v10.2)
+	+/
+	protected void addScrollPosition(ref int x, ref int y) {};
 
 	/++
 		Responsible for actually painting the widget to the screen. The clip rectangle and coordinate translation in the [WidgetPainter] are pre-configured so you can draw independently.
@@ -1419,7 +1473,7 @@ class Widget : ReflectableProperties {
 	}
 
 	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code.
-	protected void privatePaint(WidgetPainter painter, int lox, int loy, bool force = false) {
+	protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
 		if(hidden)
 			return;
 
@@ -1428,8 +1482,14 @@ class Widget : ReflectableProperties {
 
 		bool actuallyPainted = false;
 
+		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width, height)));
+		if(clip == Rectangle.init) {
+			//import std.stdio; writeln(this, " clipped out");
+			return;
+		}
+
 		if(redrawRequested || force) {
-			painter.setClipRectangle(Point(0, 0), width, height);
+			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 
 			painter.drawingUpon = this;
 
@@ -1446,14 +1506,14 @@ class Widget : ReflectableProperties {
 		foreach(child; children) {
 			version(win32_widgets)
 				if(child.useNativeDrawing()) continue;
-			child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+			child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
 		}
 
 		version(win32_widgets)
 		foreach(child; children) {
 			if(child.useNativeDrawing) {
 				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw, child);
-				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
 			}
 		}
 	}
@@ -1478,32 +1538,9 @@ class Widget : ReflectableProperties {
 			assert(sw !is null);
 			if(!sw.eventQueued!RedrawEvent) {
 				sw.postEvent(re);
-				//import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+				// import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
 			}
 		}
-	}
-
-	private void actualRedraw() {
-		if(!showing) return;
-
-		assert(parentWindow !is null);
-
-		auto w = drawableWindow;
-		if(w is null)
-			w = parentWindow.win;
-
-		if(w.closed())
-			return;
-
-		auto ugh = this.parent;
-		int lox, loy;
-		while(ugh) {
-			lox += ugh.x;
-			loy += ugh.y;
-			ugh = ugh.parent;
-		}
-		auto painter = w.draw();
-		privatePaint(WidgetPainter(painter, this), lox, loy);
 	}
 
 	private SimpleWindow drawableWindow;
@@ -1579,6 +1616,9 @@ class Widget : ReflectableProperties {
 
 	mixin Emits!BlurEvent; ///
 	mixin Emits!FocusEvent; ///
+
+	mixin Emits!FocusInEvent; ///
+	mixin Emits!FocusOutEvent; ///
 }
 
 ///
@@ -1648,8 +1688,10 @@ abstract class ComboboxBase : Widget {
 
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
-		selection = cast(int) SendMessageW(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
-		fireChangeEvent();
+		if(cmd == CBN_SELCHANGE) {
+			selection = cast(int) SendMessageW(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+			fireChangeEvent();
+		}
 	}
 
 	private void fireChangeEvent() {
@@ -2516,6 +2558,10 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 }
 
 int mymax(int a, int b) { return a > b ? a : b; }
+int mymax(int a, int b, int c) {
+	auto d = mymax(a, b);
+	return c > d ? c : d;
+}
 
 // OK so we need to make getting at the native window stuff possible in simpledisplay.d
 // and here, it must be integrable with the layout, the event system, and not be painted over.
@@ -3659,8 +3705,7 @@ enum ScrollBarShowPolicy {
 /++
 	A widget that tries (with, at best, limited success) to offer scrolling that is transparent to the inner.
 
-	It isn't very good and may be removed. Try [ScrollMessageWidget] instead for new code.
-
+	It isn't very good and will very likely be removed. Try [ScrollMessageWidget] or [ScrollableContainerWidget] instead for new code.
 +/
 // FIXME ScrollBarShowPolicy
 // FIXME: use the ScrollMessageWidget in here now that it exists
@@ -3730,13 +3775,13 @@ class ScrollableWidget : Widget {
 							// so we request it to get our dirty bit set...
 							redraw();
 							// then we need to immediately actually redraw it too for instant feedback to user
-							actualRedraw();
+							//actualRedraw();
 						}
 					break;
 					default:
 				}
 			}
-			return 0;
+			return super.hookedWndProc(msg, wParam, lParam);
 		}
 	}
 	///
@@ -3744,30 +3789,17 @@ class ScrollableWidget : Widget {
 		this.parentWindow = parent.parentWindow;
 
 		version(win32_widgets) {
-			static bool classRegistered = false;
-			if(!classRegistered) {
-				HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
-				WNDCLASSEX wc;
-				wc.cbSize = wc.sizeof;
-				wc.hInstance = hInstance;
-				wc.lpfnWndProc = &DefWindowProc;
-				wc.lpszClassName = "arsd_minigui_ScrollableWidget"w.ptr;
-				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
-				classRegistered = true;
-			}
-
-			createWin32Window(this, "arsd_minigui_ScrollableWidget"w, "", 
+			createWin32Window(this, Win32Class!"arsd_minigui_ScrollableWidget"w, "", 
 				0|WS_CHILD|WS_VISIBLE|WS_HSCROLL|WS_VSCROLL, 0);
 			super(parent);
 		} else version(custom_widgets) {
-			outerContainer = new ScrollableContainerWidget(this, parent);
+			outerContainer = new InternalScrollableContainerWidget(this, parent);
 			super(outerContainer);
 		} else static assert(0);
 	}
 
 	version(custom_widgets)
-		ScrollableContainerWidget outerContainer;
+		InternalScrollableContainerWidget outerContainer;
 
 	override void defaultEventHandler_click(ClickEvent event) {
 		if(event.button == MouseButton.wheelUp)
@@ -4035,7 +4067,7 @@ class ScrollableWidget : Widget {
 		return WidgetPainter(painter, this);
 	}
 
-	override protected void privatePaint(WidgetPainter painter, int lox, int loy, bool force = false) {
+	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
 		if(hidden)
 			return;
 
@@ -4047,15 +4079,21 @@ class ScrollableWidget : Widget {
 
 		bool actuallyPainted = false;
 
+		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width, height)));
+		if(clip == Rectangle.init)
+			return;
+
 		if(force || redrawRequested) {
-			painter.setClipRectangle(Point(0, 0), width, height);
+			//painter.setClipRectangle(scrollOrigin, width, height);
+			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 			paintFrameAndBackground(painter);
 		}
 
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
 		if(force || redrawRequested) {
-			painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, width - 4, height - 4);
+			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY) + Point(2, 2) /* border */, clip.width - 4, clip.height - 4);
+			//painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, width - 4, height - 4);
 
 			//erase(painter); // we paintFrameAndBackground above so no need
 			if(painter.visualTheme)
@@ -4068,15 +4106,292 @@ class ScrollableWidget : Widget {
 		}
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
-				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, actuallyPainted);
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted);
 			else
-				child.privatePaint(painter, painter.originX, painter.originY, actuallyPainted);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
 		}
 	}
 }
 
+private class InternalScrollableContainerInsideWidget : ContainerWidget {
+	ScrollableContainerWidget scw;
+
+	this(ScrollableContainerWidget parent) {
+		scw = parent;
+		super(parent);
+	}
+
+	version(custom_widgets)
+	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
+		if(hidden)
+			return;
+
+		bool actuallyPainted = false;
+
+		auto scrollOrigin = Point(scw.scrollX_, scw.scrollY_);
+
+		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width, height)));
+		if(clip == Rectangle.init)
+			return;
+
+		painter.originX = lox + x - scrollOrigin.x;
+		painter.originY = loy + y - scrollOrigin.y;
+		if(force || redrawRequested) {
+			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
+
+			erase(painter);
+			if(painter.visualTheme)
+				painter.visualTheme.doPaint(this, painter);
+			else
+				paint(painter);
+
+			actuallyPainted = true;
+			redrawRequested = false;
+		}
+		foreach(child; children) {
+			if(cast(FixedPosition) child)
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted);
+			else
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
+		}
+	}
+
+	version(custom_widgets)
+	override protected void addScrollPosition(ref int x, ref int y) {
+		x += scw.scrollX_;
+		y += scw.scrollY_;
+	}
+}
+
+/++
+	A widget meant to contain other widgets that may need to scroll.
+
+	History:
+		Added July 1, 2021 (dub v10.2)
++/
+class ScrollableContainerWidget : ContainerWidget {
+	///
+	this(Widget parent) {
+		super(parent);
+
+		container = new InternalScrollableContainerInsideWidget(this);
+		hsb = new HorizontalScrollbar(this);
+		vsb = new VerticalScrollbar(this);
+
+		tabStop = false;
+		container.tabStop = false;
+		magic = true;
+
+
+		vsb.addEventListener("scrolltonextline", () {
+			scrollBy(0, 16);
+		});
+		vsb.addEventListener("scrolltopreviousline", () {
+			scrollBy(0, -16);
+		});
+		vsb.addEventListener("scrolltonextpage", () {
+			scrollBy(0, container.height);
+		});
+		vsb.addEventListener("scrolltopreviouspage", () {
+			scrollBy(0, -container.height);
+		});
+		vsb.addEventListener((scope ScrollToPositionEvent spe) {
+			scrollTo(scrollX_, spe.value);
+		});
+	}
+
+	override void defaultEventHandler_click(ClickEvent e) {
+		if(e.button == MouseButton.wheelUp) {
+			scrollBy(0, -16);
+		} else if(e.button == MouseButton.wheelDown) {
+			scrollBy(0, 16);
+		}
+	}
+
+	override void removeAllChildren() {
+		container.removeAllChildren();
+	}
+
+	void scrollTo(int x, int y) {
+		scrollBy(x - scrollX_, y - scrollY_);
+	}
+
+	void scrollBy(int x, int y) {
+		auto ox = scrollX_;
+		auto oy = scrollY_;
+
+		auto nx = ox + x;
+		auto ny = oy + y;
+
+		if(nx < 0)
+			nx = 0;
+		if(ny < 0)
+			ny = 0;
+
+		auto maxX = hsb.max - container.width;
+		if(maxX < 0) maxX = 0;
+		auto maxY = vsb.max - container.height;
+		if(maxY < 0) maxY = 0;
+
+		if(nx > maxX)
+			nx = maxX;
+		if(ny > maxY)
+			ny = maxY;
+
+		auto dx = nx - ox;
+		auto dy = ny - oy;
+
+		if(dx || dy) {
+			version(win32_widgets)
+				ScrollWindowEx(container.hwnd, -dx, -dy, null, null, null, null, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+			else
+				redraw();
+
+			hsb.setPosition = nx;
+			vsb.setPosition = ny;
+
+			scrollX_ = nx;
+			scrollY_ = ny;
+		}
+	}
+
+	private int scrollX_;
+	private int scrollY_;
+
+	void setTotalArea(int width, int height) {
+		hsb.setMax(width);
+		vsb.setMax(height);
+	}
+
+	///
+	void setViewableArea(int width, int height) {
+		hsb.setViewableArea(width);
+		vsb.setViewableArea(height);
+	}
+
+	private bool magic;
+	override void addChild(Widget w, int position = int.max) {
+		if(magic)
+			container.addChild(w, position);
+		else
+			super.addChild(w, position);
+	}
+
+	override void recomputeChildLayout() {
+		if(hsb is null || vsb is null || container is null) return;
+
+		/+
+		import std.stdio; writeln(x, " ", y , " ", width, " ", height);
+		writeln(this.ContainerWidget.minWidth(), "x", this.ContainerWidget.minHeight());
+		+/
+
+		registerMovement();
+
+		hsb.height = 16; // FIXME? are tese 16s sane?
+		hsb.x = 0;
+		hsb.y = this.height - hsb.height;
+		hsb.width = this.width - 16;
+		hsb.recomputeChildLayout();
+
+		vsb.width = 16; // FIXME?
+		vsb.x = this.width - vsb.width;
+		vsb.y = 0;
+		vsb.height = this.height - 16;
+		vsb.recomputeChildLayout();
+
+		container.x = 0;
+		container.y = 0;
+		container.width = this.width - vsb.width;
+		container.height = this.height - hsb.height;
+		container.recomputeChildLayout();
+
+		scrollX_ = 0;
+		scrollY_ = 0;
+
+		hsb.setPosition(0);
+		vsb.setPosition(0);
+
+		setViewableArea(width, height);
+		setTotalArea(this.ContainerWidget.minWidth(), this.ContainerWidget.minHeight());
+	}
+
+	override int minHeight() { return 64; }
+
+	version(win32_widgets)
+	override int hookedWndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+		switch(msg) {
+			case WM_VSCROLL, WM_HSCROLL:
+				auto pos = HIWORD(wParam);
+				auto m = LOWORD(wParam);
+
+				auto scrollbarHwnd = cast(HWND) lParam;
+
+
+				if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
+
+					//auto smw = cast(ScrollMessageWidget) widgetp.parent;
+
+					switch(m) {
+						/+
+						// I don't think those messages are ever actually sent normally by the widget itself,
+						// they are more used for the keyboard interface. methinks.
+						case SB_BOTTOM:
+							//import std.stdio; writeln("end");
+							auto event = new Event("scrolltoend", *widgetp);
+							event.dispatch();
+							//if(!event.defaultPrevented)
+						break;
+						case SB_TOP:
+							//import std.stdio; writeln("top");
+							auto event = new Event("scrolltobeginning", *widgetp);
+							event.dispatch();
+						break;
+						case SB_ENDSCROLL:
+							// idk
+						break;
+						+/
+						case SB_LINEDOWN:
+							(*widgetp).emitCommand!"scrolltonextline"();
+						break;
+						case SB_LINEUP:
+							(*widgetp).emitCommand!"scrolltopreviousline"();
+						break;
+						case SB_PAGEDOWN:
+							(*widgetp).emitCommand!"scrolltonextpage"();
+						break;
+						case SB_PAGEUP:
+							(*widgetp).emitCommand!"scrolltopreviouspage"();
+						break;
+						case SB_THUMBPOSITION:
+							auto ev = new ScrollToPositionEvent(*widgetp, pos);
+							ev.dispatch();
+						break;
+						case SB_THUMBTRACK:
+							// eh kinda lying but i like the real time update display
+							auto ev = new ScrollToPositionEvent(*widgetp, pos);
+							ev.dispatch();
+							// the event loop doesn't seem to carry on with a requested redraw..
+							// so we request it to get our dirty bit set...
+							// then we need to immediately actually redraw it too for instant feedback to user
+							//if(redrawRequested)
+								//actualRedraw();
+						break;
+						default:
+					}
+				}
+			default:
+		}
+		return 0;
+	}
+
+	HorizontalScrollbar hsb;
+	VerticalScrollbar vsb;
+	ContainerWidget container;
+}
+
+
 version(custom_widgets)
-private class ScrollableContainerWidget : Widget {
+private class InternalScrollableContainerWidget : Widget {
 
 	ScrollableWidget sw;
 
@@ -4890,9 +5205,11 @@ class HorizontalScrollbar : ScrollbarBase {
 }
 
 class ScrollToPositionEvent : Event {
+	enum EventString = "scrolltoposition";
+
 	this(Widget target, int value) {
 		this.value = value;
-		super("scrolltoposition", target);
+		super(EventString, target);
 	}
 
 	immutable int value;
@@ -5549,22 +5866,7 @@ class TabWidgetPage : Widget {
 
 		///*
 		version(win32_widgets) {
-			static bool classRegistered = false;
-			if(!classRegistered) {
-				HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
-				WNDCLASSEX wc;
-				wc.cbSize = wc.sizeof;
-				wc.hInstance = hInstance;
-				wc.hbrBackground = cast(HBRUSH) (COLOR_3DFACE+1); // GetStockObject(WHITE_BRUSH);
-				wc.lpfnWndProc = &DefWindowProc;
-				wc.lpszClassName = "arsd_minigui_TabWidgetPage"w.ptr;
-				if(!RegisterClassExW(&wc))
-					throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
-				classRegistered = true;
-			}
-
-
-			createWin32Window(this, "arsd_minigui_TabWidgetPage"w, "", 0);
+			createWin32Window(this, Win32Class!"arsd_minigui_TabWidgetPage"w, "", 0);
 		}
 		//*/
 	}
@@ -5637,6 +5939,41 @@ class HorizontalLayout : Layout {
 		return max;
 	}
 
+}
+
+private wstring Win32Class(wstring name)() {
+	static bool classRegistered;
+	if(!classRegistered) {
+		HINSTANCE hInstance = cast(HINSTANCE) GetModuleHandle(null);
+		WNDCLASSEX wc;
+		wc.cbSize = wc.sizeof;
+		wc.hInstance = hInstance;
+		wc.hbrBackground = cast(HBRUSH) (COLOR_3DFACE+1); // GetStockObject(WHITE_BRUSH);
+		wc.lpfnWndProc = &DefWindowProc;
+		wc.lpszClassName = name.ptr;
+		if(!RegisterClassExW(&wc))
+			throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
+		classRegistered = true;
+	}
+
+		return name;
+}
+
+/++
+	A widget specifically designed to hold other widgets.
+
+	History:
+		Added July 1, 2021
++/
+class ContainerWidget : Widget {
+	this(Widget parent) {
+		super(parent);
+		this.tabStop = false;
+
+		version(win32_widgets) {
+			createWin32Window(this, Win32Class!"arsd_minigui_ContainerWidget"w, "", 0);
+		}
+	}
 }
 
 /++
@@ -5852,6 +6189,17 @@ class StaticPosition : Layout {
 			child.recomputeChildLayout();
 	}
 
+	alias width = typeof(super).width;
+	alias height = typeof(super).height;
+
+	@property int width(int w) @nogc pure @safe nothrow {
+		return this._width = w;
+	}
+
+	@property int height(int w) @nogc pure @safe nothrow {
+		return this._height = w;
+	}
+
 }
 
 /++
@@ -5969,6 +6317,37 @@ class Window : Widget {
 		super(p);
 	}
 
+
+
+	private bool needsChildLayoutRecomputed;
+	private void actualRedraw() {
+		if(needsChildLayoutRecomputed) {
+			recomputeChildLayout();
+			needsChildLayoutRecomputed = false;
+		}
+		if(!showing) return;
+
+		assert(parentWindow !is null);
+
+		auto w = drawableWindow;
+		if(w is null)
+			w = parentWindow.win;
+
+		if(w.closed())
+			return;
+
+		auto ugh = this.parent;
+		int lox, loy;
+		while(ugh) {
+			lox += ugh.x;
+			loy += ugh.y;
+			ugh = ugh.parent;
+		}
+		auto painter = w.draw();
+		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max));
+	}
+
+
 	private bool skipNextChar = false;
 
 	/++
@@ -6015,16 +6394,22 @@ class Window : Widget {
 
 		win.onFocusChange = (bool getting) {
 			if(this.focusedWidget) {
-				if(getting)
+				if(getting) {
 					this.focusedWidget.emit!FocusEvent();
-				else
+					this.focusedWidget.emit!FocusInEvent();
+				} else {
 					this.focusedWidget.emit!BlurEvent();
+					this.focusedWidget.emit!FocusOutEvent();
+				}
 			}
 
-			if(getting)
+			if(getting) {
 				this.emit!FocusEvent();
-			else
+				this.emit!FocusInEvent();
+			} else {
 				this.emit!BlurEvent();
+				this.emit!FocusOutEvent();
+			}
 		};
 
 		win.setEventHandlers(
@@ -6073,13 +6458,13 @@ class Window : Widget {
 							// I don't think those messages are ever actually sent normally by the widget itself,
 							// they are more used for the keyboard interface. methinks.
 							case SB_BOTTOM:
-								import std.stdio; writeln("end");
+								//import std.stdio; writeln("end");
 								auto event = new Event("scrolltoend", *widgetp);
 								event.dispatch();
 								//if(!event.defaultPrevented)
 							break;
 							case SB_TOP:
-								import std.stdio; writeln("top");
+								//import std.stdio; writeln("top");
 								auto event = new Event("scrolltobeginning", *widgetp);
 								event.dispatch();
 							break;
@@ -6088,16 +6473,16 @@ class Window : Widget {
 							break;
 							+/
 							case SB_LINEDOWN:
-								this.emitCommand!"scrolltonextline"();
+								(*widgetp).emitCommand!"scrolltonextline"();
 							break;
 							case SB_LINEUP:
-								this.emitCommand!"scrolltopreviousline"();
+								(*widgetp).emitCommand!"scrolltopreviousline"();
 							break;
 							case SB_PAGEDOWN:
-								this.emitCommand!"scrolltonextpage"();
+								(*widgetp).emitCommand!"scrolltonextpage"();
 							break;
 							case SB_PAGEUP:
-								this.emitCommand!"scrolltopreviouspage"();
+								(*widgetp).emitCommand!"scrolltopreviouspage"();
 							break;
 							case SB_THUMBPOSITION:
 								auto ev = new ScrollToPositionEvent(*widgetp, pos);
@@ -6110,8 +6495,8 @@ class Window : Widget {
 								// the event loop doesn't seem to carry on with a requested redraw..
 								// so we request it to get our dirty bit set...
 								// then we need to immediately actually redraw it too for instant feedback to user
-								if(redrawRequested)
-									actualRedraw();
+								//if(redrawRequested)
+									//actualRedraw();
 							break;
 							default:
 						}
@@ -6363,6 +6748,7 @@ class Window : Widget {
 		while(pain) {
 			eleR.x -= pain.x;
 			eleR.y -= pain.y;
+			pain.addScrollPosition(eleR.x, eleR.y);
 			pain = pain.parent;
 		}
 
@@ -7902,6 +8288,13 @@ class MenuItem : MouseActivatedWidget {
 		}
 	}
 
+	static class Style : Widget.Style {
+		override bool variesWithState(ulong dynamicStateFlags) {
+			return super.variesWithState(dynamicStateFlags) || (dynamicStateFlags & (DynamicState.depressed | DynamicState.hover));
+		}
+	}
+	mixin OverrideStyle!Style;
+
 	override void defaultEventHandler_triggered(Event event) {
 		if(action)
 		foreach(handler; action.triggered)
@@ -7968,8 +8361,10 @@ class MouseActivatedWidget : Widget {
 
 		addEventListener((MouseMoveEvent mme) {
 			if(!(mme.state & ModifierState.leftButtonDown)) {
-				setDynamicState(DynamicState.depressed, false);
-				redraw();
+				if(dynamicState_ & DynamicState.depressed) {
+					setDynamicState(DynamicState.depressed, false);
+					redraw();
+				}
 			}
 		});
 	}
@@ -8095,17 +8490,46 @@ class Checkbox : MouseActivatedWidget {
 	private string label;
 	private dchar accelerator;
 
-	///
+	/++
+	+/
 	this(string label, Widget parent) {
-		this(ImageLabel(label), parent);
+		this(ImageLabel(label), Appearance.checkbox, parent);
 	}
 
 	/// ditto
-	private this(ImageLabel label, Widget parent) {
+	this(string label, Appearance appearance, Widget parent) {
+		this(ImageLabel(label), appearance, parent);
+	}
+
+	/++
+		Changes the look and may change the ideal size of the widget without changing its behavior. The precise look is platform-specific.
+
+		History:
+			Added June 29, 2021 (dub v10.2)
+	+/
+	enum Appearance {
+		checkbox, /// a normal checkbox
+		pushbutton, /// a button that is showed as pushed when checked and up when unchecked. Similar to the bold button in a toolbar in Wordpad.
+		//sliderswitch,
+	}
+	private Appearance appearance;
+
+	/// ditto
+	private this(ImageLabel label, Appearance appearance, Widget parent) {
 		super(parent);
 		version(win32_widgets) {
 			this.label = label.label;
-			createWin32Window(this, "button"w, label.label, BS_CHECKBOX);
+
+			uint extraStyle;
+			final switch(appearance) {
+				case Appearance.checkbox:
+				break;
+				case Appearance.pushbutton:
+					extraStyle |= BS_PUSHLIKE;
+				break;
+			}
+
+			createWin32Window(this, "button"w, label.label, BS_CHECKBOX | extraStyle);
 		} else version(custom_widgets) {
 			label.label.extractWindowsStyleLabel(this.label, this.accelerator);
 		} else static assert(0);
@@ -8294,6 +8718,14 @@ class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
 
+	/++
+		If true, this button will emit trigger events on double (and other quick events, if added) click events as well as on normal single click events.
+
+		History:
+			Added July 2, 2021
+	+/
+	public bool triggersOnMultiClick;
+
 	private string label_;
 	private dchar accelerator;
 
@@ -8307,6 +8739,16 @@ class Button : MouseActivatedWidget {
 			SetWindowTextW(hwnd, bfr.ptr);
 		} else version(custom_widgets) {
 			redraw();
+		}
+	}
+
+	override void defaultEventHandler_dblclick(DoubleClickEvent ev) {
+		super.defaultEventHandler_dblclick(ev);
+		if(triggersOnMultiClick) {
+			if(ev.button == MouseButton.left) {
+				auto event = new Event(EventType.triggered, this);
+				event.sendDirectly();
+			}
 		}
 	}
 
@@ -8386,6 +8828,10 @@ class Button : MouseActivatedWidget {
 			}
 
 		}
+
+		override bool variesWithState(ulong dynamicStateFlags) {
+			return super.variesWithState(dynamicStateFlags) || (dynamicStateFlags & (DynamicState.depressed | DynamicState.hover));
+		}
 	}
 	mixin OverrideStyle!Style;
 
@@ -8445,6 +8891,7 @@ class ArrowButton : Button {
 	this(ArrowDirection direction, Widget parent) {
 		super("", parent);
 		this.direction = direction;
+		triggersOnMultiClick = true;
 	}
 
 	private ArrowDirection direction;
@@ -9906,8 +10353,36 @@ class FocusEvent : Event {
 
 	// FIXME: related target?
 	this(Widget target) { super(EventString, target); }
+
+	override bool propagates() const { return false; }
 }
 
+/++
+	FocusInEvent is a FocusEvent that propagates, while FocusOutEvent is a BlurEvent that propagates.
+
+	History:
+		Added July 3, 2021
++/
+class FocusInEvent : Event {
+	enum EventString = "focusin";
+
+	// FIXME: related target?
+	this(Widget target) { super(EventString, target); }
+
+	override bool cancelable() const { return false; }
+}
+
+/// ditto
+class FocusOutEvent : Event {
+	enum EventString = "focusout";
+
+	// FIXME: related target?
+	this(Widget target) { super(EventString, target); }
+
+	override bool cancelable() const { return false; }
+}
+
+///
 class ScrollEvent : Event {
 	enum EventString = "scroll";
 	this(Widget target) { super(EventString, target); }
@@ -10122,6 +10597,9 @@ abstract class MouseEventBase : Event {
 		if(auto se = cast(ScrollableWidget) srcElement) {
 			clientX += se.scrollOrigin.x;
 			clientY += se.scrollOrigin.y;
+		} else if(auto se = cast(ScrollableContainerWidget) srcElement) {
+			//clientX += se.scrollX_;
+			//clientY += se.scrollY_;
 		}
 	}
 	}
@@ -10234,12 +10712,17 @@ private bool isAParentOf(Widget a, Widget b) {
 
 private struct WidgetAtPointResponse {
 	Widget widget;
+
+	// x, y relative to the widget in the response.
 	int x;
 	int y;
 }
 
 private WidgetAtPointResponse widgetAtPoint(Widget starting, int x, int y) {
 	assert(starting !is null);
+
+	starting.addScrollPosition(x, y);
+
 	auto child = starting.getChildAtPosition(x, y);
 	while(child) {
 		if(child.hidden)
@@ -11343,3 +11826,13 @@ final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 
 // still do layout delegation
 // and... split off Window from Widget.
+
+
+
+// FIXME: i called hotkey accelerator in some places. hotkey = key when menu is active like E&xit. accelerator = global shortcut.
+// FIXME: make multiple accelerators disambiguate based ona rgs
+// FIXME: MainWindow ctor should have same arg order as Window
+// FIXME: mainwindow ctor w/ client area size instead of total size.
+// Push on/off button (basically an alternate display of a checkbox) -- BS_PUSHLIKE and maybe BS_TEXT (BS_TOP moves it). see also BS_FLAT.
+// FIXME: tri-state checkbox
+// FIXME: subordinate controls grouping...

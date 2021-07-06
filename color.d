@@ -1614,6 +1614,27 @@ struct Rectangle {
 		// the -1 in here are because right and top are exclusive
 		return !((right-1) < r.left || (r.right-1) < left || (bottom-1) < r.top || (r.bottom-1) < top);
 	}
+
+	/++
+		Returns a Rectangle representing the intersection of this and the other given one.
+
+		History:
+			Added July 1, 2021
+	+/
+	Rectangle intersectionOf(in Rectangle r) {
+		auto tmp = Rectangle(max(left, r.left), max(top, r.top), min(right, r.right), min(bottom, r.bottom));
+		if(tmp.left >= tmp.right || tmp.top >= tmp.bottom)
+			tmp = Rectangle.init;
+
+		return tmp;
+	}
+}
+
+private int max(int a, int b) @nogc nothrow pure @safe {
+	return a >= b ? a : b;
+}
+private int min(int a, int b) @nogc nothrow pure @safe {
+	return a <= b ? a : b;
 }
 
 /++
