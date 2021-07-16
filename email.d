@@ -351,7 +351,7 @@ class MimePart {
 	string gpgproto;
 
 	MimeAttachment toMimeAttachment() {
-        if(type == "multipart/mixed" && stuff.length == 1)
+		if(type == "multipart/mixed" && stuff.length == 1)
 			return stuff[0].toMimeAttachment;
 
 		MimeAttachment att;
