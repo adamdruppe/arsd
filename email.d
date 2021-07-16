@@ -351,6 +351,9 @@ class MimePart {
 	string gpgproto;
 
 	MimeAttachment toMimeAttachment() {
+        if(type == "multipart/mixed" && stuff.length == 1)
+			return stuff[0].toMimeAttachment;
+
 		MimeAttachment att;
 		att.type = type;
 		att.filename = filename;
@@ -407,6 +410,8 @@ class MimePart {
 					auto name = h[0 .. idx].strip.toLower;
 					auto content = h[idx + 1 .. $].strip;
 
+					string[4] filenames_found;
+
 					switch(name) {
 						case "content-type":
 							parseContentType(content);
@@ -423,6 +428,19 @@ class MimePart {
 									case "filename":
 										filename = v;
 									break;
+									// FIXME: https://datatracker.ietf.org/doc/html/rfc2184#section-3 is what it is SUPPOSED to do
+									case "filename*0":
+										filenames_found[0] = v;
+									break;
+									case "filename*1":
+										filenames_found[1] = v;
+									break;
+									case "filename*2":
+										filenames_found[2] = v;
+									break;
+									case "filename*3":
+										filenames_found[3] = v;
+									break;
 									default:
 								}
 							}
@@ -431,6 +449,12 @@ class MimePart {
 							id = content;
 						break;
 						default:
+					}
+
+					if (filenames_found[0] != "") {
+						foreach (string v; filenames_found) {
+							this.filename ~= v;
+						}
 					}
 				}
 			}
