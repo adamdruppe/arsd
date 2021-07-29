@@ -4198,15 +4198,24 @@ class ScrollableContainerWidget : ContainerWidget {
 		vsb.addEventListener((scope ScrollToPositionEvent spe) {
 			scrollTo(scrollX_, spe.value);
 		});
+
+		this.addEventListener(delegate (scope ClickEvent e) {
+			if(e.button == MouseButton.wheelUp) {
+				if(!e.defaultPrevented)
+					scrollBy(0, -16);
+				e.stopPropagation();
+			} else if(e.button == MouseButton.wheelDown) {
+				if(!e.defaultPrevented)
+					scrollBy(0, 16);
+				e.stopPropagation();
+			}
+		});
 	}
 
+	/+
 	override void defaultEventHandler_click(ClickEvent e) {
-		if(e.button == MouseButton.wheelUp) {
-			scrollBy(0, -16);
-		} else if(e.button == MouseButton.wheelDown) {
-			scrollBy(0, 16);
-		}
 	}
+	+/
 
 	override void removeAllChildren() {
 		container.removeAllChildren();
