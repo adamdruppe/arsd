@@ -5322,7 +5322,9 @@ class LineGetter {
 	void addString(string s) {
 		// FIXME: this could be more efficient
 		// but does it matter? these lines aren't super long anyway. But then again a paste could be excessively long (prolly accidental, but still)
-		foreach(dchar ch; s)
+
+		import std.utf;
+		foreach(dchar ch; s.byDchar) // using this for the replacement dchar, normal foreach would throw on invalid utf 8
 			addChar(ch);
 	}
 
@@ -5531,6 +5533,7 @@ class LineGetter {
 					case '\t': specialChar('t'); break;
 					case '\b': specialChar('b'); break;
 					case '\033': specialChar('e'); break;
+					case '\&nbsp;': specialChar(' '); break;
 					default:
 						if(highlightEnd) {
 							if(idx == highlightBegin) {
