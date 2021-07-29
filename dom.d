@@ -94,7 +94,10 @@ bool isConvenientAttribute(string name) {
 
 /// The main document interface, including a html parser.
 /// Group: core_functionality
-class Document : FileResource {
+class Document : FileResource, DomParent {
+	inout(Document) asDocument() inout { return this; }
+	inout(Element) asElement() inout { return null; }
+
 	/// Convenience method for web scraping. Requires [arsd.http2] to be
 	/// included in the build as well as [arsd.characterencodings].
 	static Document fromUrl()(string url, bool strictMode = false) {
@@ -1130,6 +1133,7 @@ class Document : FileResource {
 		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype; root only begins on a regular node
 
 		root = r.element;
+		root.parent_ = this;
 
 		if(!strict) // in strict mode, we'll just ignore stuff after the xml
 		while(r.type != 4) {
@@ -1353,7 +1357,6 @@ class Document : FileResource {
 			name = name.toLower();
 
 		auto e = Element.make(name, null, null, selfClosedElements);
-		e.parentDocument = this;
 
 		return e;
 
@@ -1475,9 +1478,17 @@ class Document : FileResource {
 	}
 }
 
+interface DomParent {
+	inout(Document) asDocument() inout;
+	inout(Element) asElement() inout;
+}
+
 /// This represents almost everything in the DOM.
 /// Group: core_functionality
-class Element {
+class Element : DomParent {
+	inout(Document) asDocument() inout { return null; }
+	inout(Element) asElement() inout { return this; }
+
 	/// Returns a collection of elements by selector.
 	/// See: [Document.opIndex]
 	ElementCollection opIndex(string selector) {
@@ -1926,44 +1937,64 @@ class Element {
 	/// Instead, this flag tells if it should be. It is based on the source document's notation and a html element list.
 	private bool selfClosed;
 
+	private DomParent parent_;
+
 	/// Get the parent Document object that contains this element.
 	/// It may be null, so remember to check for that.
-	Document parentDocument;
+	@property inout(Document) parentDocument() inout {
+		if(this.parent_ is null)
+			return null;
+		auto p = cast() this.parent_.asElement;
+		auto prev = cast() this;
+		while(p) {
+			prev = p;
+			if(p.parent_ is null)
+				return null;
+			p = cast() p.parent_.asElement;
+		}
+		return cast(inout) prev.parent_.asDocument;
+	}
+
+	deprecated @property void parentDocument(Document doc) {
+		parent_ = doc;
+	}
 
 	///.
 	inout(Element) parentNode() inout {
-		auto p = _parentNode;
+		if(parent_ is null)
+			return null;
+
+		auto p = parent_.asElement;
 
 		if(cast(DocumentFragment) p)
-			return p._parentNode;
+			return p.parent_.asElement;
 
 		return p;
 	}
 
 	//protected
 	Element parentNode(Element e) {
-		return _parentNode = e;
+		parent_ = e;
+		return e;
 	}
-
-	private Element _parentNode;
-
-	// the next few methods are for implementing interactive kind of things
-	private CssStyle _computedStyle;
 
 	// these are here for event handlers. Don't forget that this library never fires events.
 	// (I'm thinking about putting this in a version statement so you don't have the baggage. The instance size of this class is 56 bytes right now.)
-	EventHandler[][string] bubblingEventHandlers;
-	EventHandler[][string] capturingEventHandlers;
-	EventHandler[string] defaultEventHandlers;
 
-	void addEventListener(string event, EventHandler handler, bool useCapture = false) {
-		if(event.length > 2 && event[0..2] == "on")
-			event = event[2 .. $];
+	version(dom_with_events) {
+		EventHandler[][string] bubblingEventHandlers;
+		EventHandler[][string] capturingEventHandlers;
+		EventHandler[string] defaultEventHandlers;
 
-		if(useCapture)
-			capturingEventHandlers[event] ~= handler;
-		else
-			bubblingEventHandlers[event] ~= handler;
+		void addEventListener(string event, EventHandler handler, bool useCapture = false) {
+			if(event.length > 2 && event[0..2] == "on")
+				event = event[2 .. $];
+
+			if(useCapture)
+				capturingEventHandlers[event] ~= handler;
+			else
+				bubblingEventHandlers[event] ~= handler;
+		}
 	}
 
 
@@ -2091,7 +2122,6 @@ class Element {
 
 	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
-		parentDocument = _parentDocument;
 		tagName = _tagName;
 		if(_attributes !is null)
 			attributes = _attributes;
@@ -2128,8 +2158,6 @@ class Element {
 	}
 
 	private this(Document _parentDocument) {
-		parentDocument = _parentDocument;
-
 		version(dom_node_indexes)
 			this.dataset.nodeIndex = to!string(&(this.attributes));
 	}
@@ -2600,6 +2628,10 @@ class Element {
 
 
 	// if you change something here, it won't apply... FIXME const? but changing it would be nice if it applies to the style attribute too though you should use style there.
+
+	// the next few methods are for implementing interactive kind of things
+	private CssStyle _computedStyle;
+
 	/// Don't use this.
 	@property CssStyle computedStyle() {
 		if(_computedStyle is null) {
@@ -2713,11 +2745,15 @@ class Element {
 
 		selfClosed = false;
 		e.parentNode = this;
-		e.parentDocument = this.parentDocument;
 		if(auto frag = cast(DocumentFragment) e)
 			children ~= frag.children;
 		else
 			children ~= e;
+
+		/+
+		foreach(item; e.tree)
+			item.parentDocument = this.parentDocument;
+		+/
 
 		sendObserverEvent(DomMutationOperations.appendChild, null, null, e);
 
@@ -2746,7 +2782,6 @@ class Element {
 					children = children[0..i] ~ frag.children ~ children[i..$];
 				else
 					children = children[0..i] ~ what ~ children[i..$];
-				what.parentDocument = this.parentDocument;
 				what.parentNode = this;
 				return what;
 			}
@@ -2781,7 +2816,6 @@ class Element {
 				else
 					children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
 				what.parentNode = this;
-				what.parentDocument = this.parentDocument;
 				return what;
 			}
 		}
@@ -2810,7 +2844,6 @@ class Element {
 				c.parentNode = null;
 				c = replacement;
 				c.parentNode = this;
-				c.parentDocument = this.parentDocument;
 				return child;
 			}
 		assert(0);
@@ -2888,7 +2921,6 @@ class Element {
 				else
 					children = children[0..i] ~ child ~ children[i..$];
 				child.parentNode = this;
-				child.parentDocument = this.parentDocument;
 				break;
 			}
 		}
@@ -2920,7 +2952,6 @@ class Element {
 	do {
 		foreach(c; e.children) {
 			c.parentNode = this;
-			c.parentDocument = this.parentDocument;
 		}
 		if(position is null)
 			children ~= e.children;
@@ -2954,7 +2985,6 @@ class Element {
 		}
 	do {
 		e.parentNode = this;
-		e.parentDocument = this.parentDocument;
 		if(auto frag = cast(DocumentFragment) e)
 			children = e.children ~ children;
 		else
@@ -3000,12 +3030,9 @@ class Element {
 		doc.parseUtf8("<innerhtml>" ~ html ~ "</innerhtml>", strict, strict); // FIXME: this should preserve the strictness of the parent document
 
 		children = doc.root.children;
-		foreach(c; children) {
+		foreach(c; doc.root.tree) {
 			c.parentNode = this;
-			c.parentDocument = this.parentDocument;
 		}
-
-		reparentTreeDocuments();
 
 		doc.root.children = null;
 
@@ -3015,11 +3042,6 @@ class Element {
 	/// ditto
 	@property Element innerHTML(Html html) {
 		return this.innerHTML = html.source;
-	}
-
-	private void reparentTreeDocuments() {
-		foreach(c; this.tree)
-			c.parentDocument = this.parentDocument;
 	}
 
 	/**
@@ -3037,12 +3059,7 @@ class Element {
 		children = doc.root.children;
 		foreach(c; children) {
 			c.parentNode = this;
-			c.parentDocument = this.parentDocument;
 		}
-
-
-		reparentTreeDocuments();
-
 
 		stripOut();
 
@@ -3093,7 +3110,6 @@ class Element {
 				replace.parentNode = this;
 				children[i].parentNode = null;
 				children[i] = replace;
-				replace.parentDocument = this.parentDocument;
 				return replace;
 			}
 		}
@@ -3132,7 +3148,6 @@ class Element {
 				children[i] = replace[0];
 				foreach(e; replace) {
 					e.parentNode = this;
-					e.parentDocument = this.parentDocument;
 				}
 
 				children = .insertAfter(children, i, replace[1..$]);
@@ -3263,7 +3278,6 @@ class Element {
 	/// Clones the node. If deepClone is true, clone all inner tags too. If false, only do this tag (and its attributes), but it will have no contents.
 	Element cloneNode(bool deepClone) {
 		auto e = Element.make(this.tagName);
-		e.parentDocument = this.parentDocument;
 		e.attributes = this.attributes.aadup;
 		e.selfClosed = this.selfClosed;
 
@@ -3565,6 +3579,9 @@ class Element {
 	}
 
 }
+// computedStyle could argubaly be removed to bring size down
+//pragma(msg, __traits(classInstanceSize, Element));
+//pragma(msg, Element.tupleof);
 
 // FIXME: since Document loosens the input requirements, it should probably be the sub class...
 /// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
@@ -4053,7 +4070,7 @@ class DocumentFragment : Element {
 	}
 	*/
 	override Element parentNode(Element p) {
-		this._parentNode = p;
+		this.parent_ = p;
 		foreach(child; children)
 			child.parentNode = p;
 		return p;
@@ -8499,9 +8516,11 @@ private string[string] aadup(in string[string] arr) {
 // dom event support, if you want to use it
 
 /// used for DOM events
+version(dom_with_events)
 alias EventHandler = void delegate(Element handlerAttachedTo, Event event);
 
 /// This is a DOM event, like in javascript. Note that this library never fires events - it is only here for you to use if you want it.
+version(dom_with_events)
 class Event {
 	this(string eventName, Element target) {
 		this.eventName = eventName;

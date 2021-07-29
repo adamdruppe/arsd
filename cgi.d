@@ -3277,6 +3277,37 @@ mixin template GenericMain(alias fun, long maxContentLength = defaultMaxContentL
 	mixin CustomCgiMain!(Cgi, fun, maxContentLength);
 }
 
+/++
+	Boilerplate mixin for a main function that uses the [dispatcher] function.
+
+	You can send `typeof(null)` as the `Presenter` argument to use a generic one.
+
+	History:
+		Added July 9, 2021
++/
+mixin template DispatcherMain(Presenter, DispatcherArgs...) {
+	/++
+		Handler to the generated presenter you can use from your objects, etc.
+	+/
+	Presenter activePresenter;
+
+	/++
+		Request handler that creates the presenter then forwards to the [dispatcher] function.
+		Renders 404 if the dispatcher did not handle the request.
+	+/
+	void handler(Cgi cgi) {
+		auto presenter = new Presenter;
+		activePresenter = presenter;
+		scope(exit) activePresenter = null;
+
+		if(cgi.dispatcher!DispatcherArgs(presenter))
+			return;
+
+		presenter.renderBasicError(cgi, 404);
+	}
+	mixin GenericMain!handler;
+}
+
 private string simpleHtmlEncode(string s) {
 	return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />\n");
 }
@@ -4068,6 +4099,17 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 
 +/
 
+/++
+	The stack size when a fiber is created. You can set this from your main or from a shared static constructor
+	to optimize your memory use if you know you don't need this much space. Be careful though, some functions use
+	more stack space than you realize and a recursive function (including ones like in dom.d) can easily grow fast!
+
+	History:
+		Added July 10, 2021. Previously, it used the druntime default of 16 KB.
++/
+version(cgi_use_fiber)
+__gshared size_t fiberStackSize = 4096 * 100;
+
 version(cgi_use_fiber)
 class CgiFiber : Fiber {
 	private void function(Socket) f_handler;
@@ -4081,8 +4123,7 @@ class CgiFiber : Fiber {
 
 	this(void delegate(Socket) handler) {
 		this.handler = handler;
-		// FIXME: stack size
-		super(&run);
+		super(&run, fiberStackSize);
 	}
 
 	Socket connection;
@@ -8106,8 +8147,34 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 				*what = T.init;
 				return true;
 			} else {
-				// could be a child
-				if(name[paramName.length] == '.') {
+				// could be a child. gonna allow either obj.field OR obj[field]
+
+				string afterName;
+
+				if(name[paramName.length] == '[') {
+					int count = 1;
+					auto idx = paramName.length + 1;
+					while(idx < name.length && count > 0) {
+						if(name[idx] == '[')
+							count++;
+						else if(name[idx] == ']') {
+							count--;
+							if(count == 0) break;
+						}
+						idx++;
+					}
+
+					if(idx == name.length)
+						return false; // malformed
+
+					auto insideBrackets = name[paramName.length + 1 .. idx];
+					afterName = name[idx + 1 .. $];
+
+					name = name[0 .. paramName.length];
+
+					paramName = insideBrackets;
+
+				} else if(name[paramName.length] == '.') {
 					paramName = name[paramName.length + 1 .. $];
 					name = paramName;
 					int p = 0;
@@ -8117,17 +8184,23 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 						p++;
 					}
 
-					// set the child member
-					switch(paramName) {
-						foreach(idx, memberName; __traits(allMembers, T))
-						static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-							// data member!
-							case memberName:
-								return setVariable(name, paramName, &(__traits(getMember, *what, memberName)), value);
-						}
-						default:
-							// ok, not a member
+					afterName = paramName[p .. $];
+					paramName = paramName[0 .. p];
+				} else {
+					return false;
+				}
+
+				if(paramName.length)
+				// set the child member
+				switch(paramName) {
+					foreach(idx, memberName; __traits(allMembers, T))
+					static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+						// data member!
+						case memberName:
+							return setVariable(name ~ afterName, paramName, &(__traits(getMember, *what, memberName)), value);
 					}
+					default:
+						// ok, not a member
 				}
 			}
 
@@ -8539,13 +8612,13 @@ html", true, true);
 	}
 
 	/// Multiple responses deconstruct the algebraic type and forward to the appropriate handler at runtime
-	void presentSuccessfulReturn(T : MultipleResponses!Types, Types...)(Cgi cgi, T ret, typeof(null) meta, string format) {
+	void presentSuccessfulReturn(T : MultipleResponses!Types, Meta, Types...)(Cgi cgi, T ret, Meta meta, string format) {
 		bool outputted = false;
 		foreach(index, type; Types) {
 			if(ret.contains == index) {
 				assert(!outputted);
 				outputted = true;
-				(cast(CRTP) this).presentSuccessfulReturnAsHtml(cgi, ret.payload[index], meta);
+				(cast(CRTP) this).presentSuccessfulReturn(cgi, ret.payload[index], meta, format);
 			}
 		}
 		if(!outputted)
@@ -8655,7 +8728,19 @@ html", true, true);
 		auto div = Element.make("div");
 		div.addClass("form-field");
 
-		static if(is(T == struct)) {
+		static if(is(T == Cgi.UploadedFile)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			i.attrs.type = "file";
+		} else static if(is(T == struct)) {
 			if(displayName !is null)
 				div.addChild("span", displayName, "label-text");
 			auto fieldset = div.addChild("fieldset");

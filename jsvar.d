@@ -693,6 +693,9 @@ struct var {
 			// so prewrapped stuff can be easily passed.
 			this._type = Type.Object;
 			this._payload._object = t;
+		} else static if(is(T == enum)) {
+			this._type = Type.String;
+			this._payload._string = to!string(t);
 		} else static if(isFloatingPoint!T) {
 			this._type = Type.Floating;
 			this._payload._floating = t;
