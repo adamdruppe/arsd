@@ -1469,6 +1469,18 @@ class HttpRequest {
 
 					removeFromPending[removeFromPendingCount++] = pc;
 					continue;
+				} catch(Exception e) {
+					// connection failed due to other user error
+					pc.state = HttpRequest.State.aborted;
+
+					pc.responseData.code = 2;
+					pc.responseData.codeText = e.msg;
+
+					hadAbortedRequest = true;
+
+					removeFromPending[removeFromPendingCount++] = pc;
+					continue;
+
 				}
 
 				if(socket !is null) {
