@@ -1750,8 +1750,16 @@ abstract class ComboboxBase : Widget {
 				}
 			);
 
+			dropDown.visibilityChanged = (bool visible) {
+				if(visible) {
+					this.redraw();
+					dropDown.grabInput();
+				} else {
+					dropDown.releaseInputGrab();
+				}
+			};
+
 			dropDown.show();
-			dropDown.grabInput();
 		}
 
 	}
