@@ -351,14 +351,12 @@ class MimePart {
 	string gpgproto;
 
 	MimeAttachment toMimeAttachment() {
-		import std.array: empty;
-
-        if(type == "multipart/mixed" && stuff.length == 1)
+		if(type == "multipart/mixed" && stuff.length == 1)
 			return stuff[0].toMimeAttachment;
 
 		MimeAttachment att;
 		att.type = type;
-		if ( att.type == "application/octet-stream" && filename.empty && !name.empty ) {
+		if(att.type == "application/octet-stream" && filename.length == 0 && name.length > 0 ) {
 			att.filename = name;
 		} else {
 			att.filename = filename;
