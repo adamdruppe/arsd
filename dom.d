@@ -2706,6 +2706,8 @@ class Element : DomParent {
 			assert(this.children.length == 0);
 		}
 	do {
+		foreach(child; children)
+			child.parentNode = null;
 		children = null;
 	}
 
@@ -2744,11 +2746,12 @@ class Element : DomParent {
 			e.parentNode.removeChild(e);
 
 		selfClosed = false;
-		e.parentNode = this;
 		if(auto frag = cast(DocumentFragment) e)
 			children ~= frag.children;
 		else
 			children ~= e;
+
+		e.parentNode = this;
 
 		/+
 		foreach(item; e.tree)
@@ -2778,10 +2781,13 @@ class Element : DomParent {
 	do {
 		foreach(i, e; children) {
 			if(e is where) {
-				if(auto frag = cast(DocumentFragment) what)
+				if(auto frag = cast(DocumentFragment) what) {
 					children = children[0..i] ~ frag.children ~ children[i..$];
-				else
+					foreach(child; frag.children)
+						child.parentNode = this;
+				} else {
 					children = children[0..i] ~ what ~ children[i..$];
+				}
 				what.parentNode = this;
 				return what;
 			}
@@ -2811,9 +2817,11 @@ class Element : DomParent {
 	do {
 		foreach(i, e; children) {
 			if(e is where) {
-				if(auto frag = cast(DocumentFragment) what)
+				if(auto frag = cast(DocumentFragment) what) {
 					children = children[0 .. i + 1] ~ what.children ~ children[i + 1 .. $];
-				else
+					foreach(child; frag.children)
+						child.parentNode = this;
+				} else
 					children = children[0 .. i + 1] ~ what ~ children[i + 1 .. $];
 				what.parentNode = this;
 				return what;
@@ -2916,9 +2924,11 @@ class Element : DomParent {
 		foreach(ref i, c; children) {
 			if(c is where) {
 				i++;
-				if(auto frag = cast(DocumentFragment) child)
+				if(auto frag = cast(DocumentFragment) child) {
 					children = children[0..i] ~ child.children ~ children[i..$];
-				else
+					//foreach(child; frag.children)
+						//child.parentNode = this;
+				} else
 					children = children[0..i] ~ child ~ children[i..$];
 				child.parentNode = this;
 				break;
@@ -2984,11 +2994,13 @@ class Element : DomParent {
 			assert(children[0] is e);
 		}
 	do {
-		e.parentNode = this;
-		if(auto frag = cast(DocumentFragment) e)
+		if(auto frag = cast(DocumentFragment) e) {
 			children = e.children ~ children;
-		else
+			foreach(child; frag.children)
+				child.parentNode = this;
+		} else
 			children = e ~ children;
+		e.parentNode = this;
 		return e;
 	}
 
@@ -3030,7 +3042,7 @@ class Element : DomParent {
 		doc.parseUtf8("<innerhtml>" ~ html ~ "</innerhtml>", strict, strict); // FIXME: this should preserve the strictness of the parent document
 
 		children = doc.root.children;
-		foreach(c; doc.root.tree) {
+		foreach(c; children) {
 			c.parentNode = this;
 		}
 
@@ -3083,15 +3095,15 @@ class Element : DomParent {
 	@property void innerRawSource(string rawSource) {
 		children.length = 0;
 		auto rs = new RawSource(parentDocument, rawSource);
-		rs.parentNode = this;
-
 		children ~= rs;
+		rs.parentNode = this;
 	}
 
 	///.
 	Element replaceChild(Element find, Element replace)
 		in {
 			assert(find !is null);
+			assert(find.parentNode is this);
 			assert(replace !is null);
 			assert(replace.parentNode is null);
 		}
@@ -3114,7 +3126,7 @@ class Element : DomParent {
 			}
 		}
 
-		throw new Exception("no such child");
+		throw new Exception("no such child ");// ~  find.toString ~ " among " ~ typeid(this).toString);//.toString ~ " magic \n\n\n" ~ find.parentNode.toString);
 	}
 
 	/**
@@ -3238,8 +3250,8 @@ class Element : DomParent {
 	@property void innerText(string text) {
 		selfClosed = false;
 		Element e = new TextNode(parentDocument, text);
-		e.parentNode = this;
 		children = [e];
+		e.parentNode = this;
 	}
 
 	/**
@@ -3304,16 +3316,30 @@ class Element : DomParent {
 
 
 	invariant () {
-		assert(tagName.indexOf(" ") == -1);
+		debug assert(tagName.indexOf(" ") == -1);
 
+		// commented cuz it gets into recursive pain and eff dat.
+		/+
 		if(children !is null)
-		debug foreach(child; children) {
+		foreach(child; children) {
 		//	assert(parentNode !is null);
 			assert(child !is null);
-	//		assert(child.parentNode is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parentNode is null ? "null" : child.parentNode.tagName));
+			assert(child.parent_.asElement is this, format("%s is not a parent of %s (it thought it was %s)", tagName, child.tagName, child.parent_.asElement is null ? "null" : child.parent_.asElement.tagName));
 			assert(child !is this);
 			//assert(child !is parentNode);
 		}
+		+/
+
+		/+
+		// this isn't helping
+		if(parent_ && parent_.asElement) {
+			bool found = false;
+			foreach(child; parent_.asElement.children)
+				if(child is this)
+					found = true;
+			assert(found, format("%s lists %s as parent, but it is not in children", typeid(this), typeid(this.parent_.asElement)));
+		}
+		+/
 
 		/+ // only depend on parentNode's accuracy if you shuffle things around and use the top elements - where the contracts guarantee it on out
 		if(parentNode !is null) {
@@ -4069,12 +4095,14 @@ class DocumentFragment : Element {
 		return children.length ? children[0].parentNode : null;
 	}
 	*/
+	/+
 	override Element parentNode(Element p) {
-		this.parent_ = p;
+		this.parentNode = p;
 		foreach(child; children)
 			child.parentNode = p;
 		return p;
 	}
+	+/
 }
 
 /// Given text, encode all html entities on it - &, <, >, and ". This function also
