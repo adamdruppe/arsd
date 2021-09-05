@@ -217,11 +217,6 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		A single running event loop will handle as many windows as needed.
 
-		setEventHandlers function
-		eventLoop function
-		draw function
-		title property
-
 	$(H3 $(ID topic-event-loops) Event loops)
 		The simpledisplay event loop is designed to handle common cases easily while being extensible for more advanced cases, or replaceable by other libraries.
 
@@ -246,7 +241,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		It should be possible to integrate simpledisplay with vibe.d as well, though I haven't tried.
 
-		You can also run the event loop independently of a window, with [EventLoop.run|EventLoop.get.run], though since it will automatic terminate when there's no open windows, you will want to have one anyway.
+		You can also run the event loop independently of a window, with [EventLoop.run|EventLoop.get.run], though since it will automatically terminate when there are no open windows, you will want to have one anyway.
 
 	$(H3 $(ID topic-notification-areas) Notification area (aka systray) icons)
 		Notification area icons are currently implemented on X11 and Windows. On X11, it defaults to using `libnotify` to show bubbles, if available, and will do a custom bubble window if not. You can `version=without_libnotify` to avoid this run-time dependency, if you like.
@@ -283,7 +278,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		At this time, the 2d drawing does not support alpha blending, except for the [Sprite] class. If you need that, use a 2d OpenGL context instead.
 
-		FIXME add example of 2d opengl drawing here
+		FIXME Add example of 2d opengl drawing here.
 	$(H3 $(ID topic-3d-drawing) 3d Drawing (or 2d with OpenGL))
 		simpledisplay can create OpenGL contexts on your window. It works quite differently than 2d drawing.
 
@@ -346,7 +341,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 		My [arsd.game] module has some helpers for using old-style opengl to make 2D windows too. See: [arsd.game.create2dWindow].
 	$(H3 $(ID topic-modern-opengl) Modern OpenGL)
-		simpledisplay's opengl support, by default, is for "legacy" opengl. To use "modern" functions, you must opt-into them with a little more setup. But the library providers helpers for this too.
+		simpledisplay's opengl support, by default, is for "legacy" opengl. To use "modern" functions, you must opt-into them with a little more setup. But the library provides helpers for this too.
 
 		This example program shows how you can set up a shader to draw a rectangle:
 
@@ -3035,7 +3030,7 @@ version(X11) {
 
 
 /// Represents a mouse cursor (aka the mouse pointer, the image seen on screen that indicates where the mouse is pointing).
-/// See [GenericCursor]
+/// See [GenericCursor].
 class MouseCursor {
 	int osId;
 	bool isStockCursor;
@@ -3076,7 +3071,7 @@ class MouseCursor {
 // https://developer.mozilla.org/en-US/docs/Web/CSS/cursor
 // https://tronche.com/gui/x/xlib/appendix/b/
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms648391(v=vs.85).aspx
-/// Note that there is no exact appearance guaranteed for any of these items; it may change appearance on different operating systems or future simpledisplay versions
+/// Note that there is no exact appearance guaranteed for any of these items; it may change appearance on different operating systems or future simpledisplay versions.
 enum GenericCursorType {
 	Default, /// The default arrow pointer.
 	Wait, /// A cursor indicating something is loading and the user must wait.
@@ -3084,14 +3079,14 @@ enum GenericCursorType {
 	Help, /// A cursor indicating the user can get help about the pointer location.
 	Cross, /// A crosshair.
 	Text, /// An i-beam shape, typically used to indicate text selection is possible.
-	Move, /// Pointer indicating movement is possible. May also be used as SizeAll
+	Move, /// Pointer indicating movement is possible. May also be used as SizeAll.
 	UpArrow, /// An arrow pointing straight up.
 	Progress, /// The hourglass and arrow, indicating the computer is working but the user can still work. Not great results on X11.
 	NotAllowed, /// Indicates the current operation is not allowed. Not great results on X11.
-	SizeNesw, /// Arrow pointing northeast and southwest (lower-left corner resize indicator)
-	SizeNs, /// Arrow pointing north and south (upper/lower edge resize indicator)
-	SizeNwse, /// Arrow pointing northwest and southeast (upper-left corner resize indicator)
-	SizeWe, /// Arrow pointing west and east (left/right edge resize indicator)
+	SizeNesw, /// Arrow pointing northeast and southwest (lower-left corner resize indicator).
+	SizeNs, /// Arrow pointing north and south (upper/lower edge resize indicator).
+	SizeNwse, /// Arrow pointing northwest and southeast (upper-left corner resize indicator).
+	SizeWe, /// Arrow pointing west and east (left/right edge resize indicator).
 
 }
 
@@ -4592,7 +4587,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 }
 
 version(X11)
-/// call XFreePixmap on the return value
+/// Call `XFreePixmap()` on the return value.
 Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 	char[] data = new char[](i.width * i.height / 8 + 2);
 	data[] = 0;
@@ -4803,7 +4798,7 @@ version(Windows)
 private int eventLoopRound;
 
 version(Windows)
-/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.) Only works on certain types of handles! see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex
+/// Lets you add HANDLEs to the event loop. Not meant to be used for async I/O per se, but for other handles (it can only handle a few handles at a time.) Only works on certain types of handles! See: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex
 class WindowsHandleReader {
 	///
 	this(void delegate() onReady, HANDLE handle) {
@@ -4976,7 +4971,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 /++
 	this does a delegate because it is actually an async call on X...
 	the receiver may never be called if the clipboard is empty or unavailable
-	gets plain text from the clipboard
+	gets plain text from the clipboard.
 +/
 void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
 	version(Windows) {
@@ -5020,7 +5015,7 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 /++
 	this does a delegate because it is actually an async call on X...
 	the receiver may never be called if the clipboard is empty or unavailable
-	gets image from the clipboard
+	gets image from the clipboard.
 
 	templated because it introduces an optional dependency on arsd.bmp
 +/
@@ -5275,7 +5270,7 @@ int findIndexOfZero(in char[] str) {
 	return cast(int) str.length;
 }
 
-/// copies some text to the clipboard
+/// Copies some text to the clipboard.
 void setClipboardText(SimpleWindow clipboardOwner, string text) {
 	assert(clipboardOwner !is null);
 	version(Windows) {
@@ -5390,7 +5385,7 @@ version(X11) {
 	private Atom*[] interredAtoms; // for discardAndRecreate
 
 	// FIXME: do a GetAtomUpfront too that just queues all at CT and combines it all.
-	/// Platform specific for X11
+	/// Platform-specific for X11.
 	/// History: On February 21, 2021, I changed the default value of `create` to be true.
 	@property Atom GetAtom(string name, bool create = true)(Display* display) {
 		static Atom a;
@@ -5403,7 +5398,7 @@ version(X11) {
 		return a;
 	}
 
-	/// Platform specific for X11 - gets atom names as a string
+	/// Platform-specific for X11 - gets atom names as a string.
 	string getAtomName(Atom atom, Display* display) {
 		auto got = XGetAtomName(display, atom);
 		scope(exit) XFree(got);
@@ -5412,12 +5407,12 @@ version(X11) {
 		return s;
 	}
 
-	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later
+	/// Asserts ownership of PRIMARY and copies the text into a buffer that clients can request later.
 	void setPrimarySelection(SimpleWindow window, string text) {
 		setX11Selection!"PRIMARY"(window, text);
 	}
 
-	/// Asserts ownership of SECONDARY and copies the text into a buffer that clients can request later
+	/// Asserts ownership of SECONDARY and copies the text into a buffer that clients can request later.
 	void setSecondarySelection(SimpleWindow window, string text) {
 		setX11Selection!"SECONDARY"(window, text);
 	}
@@ -5987,7 +5982,7 @@ version(X11) {
 }
 
 version(Windows) {
-	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application)
+	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application).
 	void sendSyntheticInput(wstring s) {
 		INPUT[] inputs;
 		inputs.reserve(s.length * 2);
@@ -6050,7 +6045,7 @@ version(Windows) {
 		return id;
 	}
 
-	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by registerHotKey.
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by `registerHotKey()`.
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
@@ -6360,7 +6355,7 @@ alias Rectangle = arsd.color.Rectangle;
 
 
 /++
-	Keyboard press and release events
+	Keyboard press and release events.
 +/
 struct KeyEvent {
 	/// see table below. Always use the symbolic names, even for ASCII characters, since the actual numbers vary across platforms. See [Key]
@@ -6579,7 +6574,7 @@ struct KeyEvent {
 	}
 }
 
-/// sets the application name.
+/// Sets the application name.
 @property string ApplicationName(string name) {
 	return _applicationName = name;
 }
@@ -6596,7 +6591,7 @@ string _applicationName;
 }
 
 
-/// Type of a [MouseEvent]
+/// Type of a [MouseEvent].
 enum MouseEventType : int {
 	motion = 0, /// The mouse moved inside the window
 	buttonPressed = 1, /// A mouse button was pressed or the wheel was spun
@@ -8799,7 +8794,7 @@ interface CapableOfBeingDrawnUpon {
 	TrueColorImage takeScreenshot();
 }
 
-/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call loop()
+/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call `loop()`.
 void flushGui() {
 	version(X11) {
 		auto dpy = XDisplayConnection.get();
@@ -9076,7 +9071,7 @@ enum ModifierState : uint {
 	rightButtonDown = 1024, /// ditto
 }
 
-/// The names assume a right-handed mouse. These are bitwise combined on the events that use them
+/// The names assume a right-handed mouse. These are bitwise combined on the events that use them.
 enum MouseButton : int {
 	none = 0,
 	left = 1, ///
@@ -12269,7 +12264,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		}
 	}
 
-	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a Display*
+	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a `Display*`.
 	class XDisplayConnection {
 		private __gshared Display* display;
 		private __gshared XIM xim;
@@ -13356,7 +13351,7 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 
 version(X11) {
 
-	int mouseDoubleClickTimeout = 350; /// double click timeout. X only, you probably shouldn't change this.
+	int mouseDoubleClickTimeout = 350; /// Double click timeout. X only, you probably shouldn't change this.
 
 	void recordX11Resize(Display* display, SimpleWindow win, int width, int height) {
 		if(width != win.width || height != win.height) {
@@ -13423,7 +13418,7 @@ version(X11) {
 	}
 
 
-	/// Platform-specific, you might use it when doing a custom event loop
+	/// Platform-specific, you might use it when doing a custom event loop.
 	bool doXNextEvent(Display* display) {
 		bool done;
 		XEvent e;
@@ -18497,7 +18492,7 @@ static:
 }
 
 /++
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -18567,7 +18562,7 @@ enum DragAndDropAction {
 	private, platform-specific data that your `drop` function
 	should simply forward.
 
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -18779,7 +18774,7 @@ struct DropPackage {
 
 	It assumes the whole window it used, but you can subclass to change that.
 
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -18829,7 +18824,7 @@ class GenericDropHandlerBase : DropHandler {
 /++
 	A simple handler for making your window accept drops of plain text.
 
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 22, 2021
@@ -18868,7 +18863,7 @@ class TextDropHandler : GenericDropHandlerBase {
 /++
 	A simple handler for making your window accept drops of files, issued to you as file names.
 
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 22, 2021
@@ -18983,7 +18978,7 @@ class FilesDropHandler : GenericDropHandlerBase {
 /++
 	Interface to describe data being dragged. See also [draggable] helper function.
 
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -19050,7 +19045,7 @@ interface DraggableData {
 }
 
 /++
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -19091,7 +19086,7 @@ DraggableData draggable(string s) {
 }
 
 /++
-	$(PITFALL this is not yet stable and may break in future versions without notice.)
+	$(PITFALL This is not yet stable and may break in future versions without notice.)
 
 	History:
 		Added February 19, 2021
@@ -19496,7 +19491,7 @@ enum _NET_WM_STATE_ADD = 1;
 enum _NET_WM_STATE_REMOVE = 0;
 enum _NET_WM_STATE_TOGGLE = 2;
 
-/// X-specific. Use [SimpleWindow.requestAttention] instead for most casesl
+/// X-specific. Use [SimpleWindow.requestAttention] instead for most cases.
 void demandAttention(SimpleWindow window, bool needs = true) {
 	demandAttention(window.impl.window, needs);
 }
