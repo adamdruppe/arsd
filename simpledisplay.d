@@ -4587,7 +4587,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 }
 
 version(X11)
-/// Call `XFreePixmap()` on the return value.
+/// Call `XFreePixmap` on the return value.
 Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 	char[] data = new char[](i.width * i.height / 8 + 2);
 	data[] = 0;
@@ -6045,7 +6045,7 @@ version(Windows) {
 		return id;
 	}
 
-	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by `registerHotKey()`.
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by `registerHotKey`.
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
