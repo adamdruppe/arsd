@@ -6045,7 +6045,7 @@ version(Windows) {
 		return id;
 	}
 
-	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by `registerHotKey`.
+	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by [registerHotKey].
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
 			throw new Exception("UnregisterHotKey");
@@ -8794,7 +8794,7 @@ interface CapableOfBeingDrawnUpon {
 	TrueColorImage takeScreenshot();
 }
 
-/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call `loop()`.
+/// Flushes any pending gui buffers. Necessary if you are using with_eventloop with X - flush after you create your windows but before you call [arsd.eventloop.loop].
 void flushGui() {
 	version(X11) {
 		auto dpy = XDisplayConnection.get();
