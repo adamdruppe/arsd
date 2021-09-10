@@ -150,7 +150,7 @@ void main() {
 	)
 
 	Compile_and_run:
-	
+
 	For CGI, `dmd yourfile.d cgi.d` then put the executable in your cgi-bin directory.
 
 	For FastCGI: `dmd yourfile.d cgi.d -version=fastcgi` and run it. spawn-fcgi helps on nginx. You can put the file in the directory for Apache. On IIS, run it with a port on the command line (this causes it to call FCGX_OpenSocket, which can work on nginx too).
@@ -328,7 +328,7 @@ void main() {
 	web applications.
 
 	For working with json, try [arsd.jsvar].
-	
+
 	[arsd.database], [arsd.mysql], [arsd.postgres], [arsd.mssql], and [arsd.sqlite] can help in
 	accessing databases.
 
@@ -532,7 +532,7 @@ class ConnectionClosedException : Exception {
 	}
 }
 
- 
+
 version(Windows) {
 // FIXME: ugly hack to solve stdin exception problems on Windows:
 // reading stdin results in StdioException (Bad file descriptor)
@@ -1345,7 +1345,7 @@ class Cgi {
 				}
 
 				/*
-				stderr.writeln("RECEIVED: ", pps.piece.name, "=", 
+				stderr.writeln("RECEIVED: ", pps.piece.name, "=",
 					pps.piece.content.length < 1000
 					?
 					to!string(pps.piece.content)
@@ -1612,7 +1612,7 @@ class Cgi {
 	/// My idea here was so you can output a progress bar or
 	/// something to a cooperative client (see arsd.rtud for a potential helper)
 	///
-	/// The default is to do nothing. Subclass cgi and use the 
+	/// The default is to do nothing. Subclass cgi and use the
 	/// CustomCgiMain mixin to do something here.
 	void onRequestBodyDataReceived(size_t receivedSoFar, size_t totalExpected) const {
 		// This space intentionally left blank.
@@ -1964,8 +1964,8 @@ class Cgi {
 	/// application. Either use Apache's built in methods for basic authentication, or add
 	/// something along these lines to your server configuration:
 	///
-	///      RewriteEngine On 
-	///      RewriteCond %{HTTP:Authorization} ^(.*) 
+	///      RewriteEngine On
+	///      RewriteCond %{HTTP:Authorization} ^(.*)
 	///      RewriteRule ^(.*) - [E=HTTP_AUTHORIZATION:%1]
 	///
 	/// To ensure the necessary data is available to cgi.d.
@@ -2420,7 +2420,7 @@ class Cgi {
 	/++
 		Gets a request variable as a specific type, or the default value of it isn't there
 		or isn't convertible to the request type.
-		
+
 		Checks both GET and POST variables, preferring the POST variable, if available.
 
 		A nice trick is using the default value to choose the type:
@@ -2555,7 +2555,7 @@ class Cgi {
 	immutable(char[]) referrer;
 	immutable(char[]) requestUri; 	/// The full url if the current request, excluding the protocol and host. requestUri == scriptName ~ pathInfo ~ (queryString.length ? "?" ~ queryString : "");
 
-	immutable(char[]) remoteAddress; /// The IP address of the user, as we see it. (Might not match the IP of the user's computer due to things like proxies and NAT.) 
+	immutable(char[]) remoteAddress; /// The IP address of the user, as we see it. (Might not match the IP of the user's computer due to things like proxies and NAT.)
 
 	immutable bool https; 	/// Was the request encrypted via https?
 	immutable int port; 	/// On what TCP port number did the server receive the request?
@@ -2568,7 +2568,7 @@ class Cgi {
 
 	/**
 		Represents user uploaded files.
-		
+
 		When making a file upload form, be sure to follow the standard: set method="POST" and enctype="multipart/form-data" in your html <form> tag attributes. The key into this array is the name attribute on your input tag, just like with other post variables. See the comments on the UploadedFile struct for more information about the data inside, including important notes on max size and content location.
 	*/
 	immutable(UploadedFile[][string]) filesArray;
@@ -2893,7 +2893,7 @@ struct Uri {
 
 		path_loop:
 		auto path_start = idx;
-		
+
 		foreach(char c; uri[idx .. $]) {
 			if(c == '?' || c == '#')
 				break;
@@ -4080,7 +4080,7 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 		specify if you yield all bets are off.
 
 		when the request is finished, if there's more data buffered, it just
-		keeps going. if there is no more data buffered, it epoll ctls to 
+		keeps going. if there is no more data buffered, it epoll ctls to
 		get triggered when more data comes in. all one shot.
 
 		when a connection is closed, the fiber returns and is then reset
@@ -4651,7 +4651,7 @@ class BufferedInputRange {
 						// gonna treat a timeout here as a close
 						sourceClosed = true;
 						return;
-					} 
+					}
 				}
 				version(Posix) {
 					import core.stdc.errno;
@@ -6404,7 +6404,7 @@ https://docs.microsoft.com/en-us/windows/desktop/api/winsock2/nf-winsock2-wsaget
 	You can customize your server by subclassing the appropriate server. Then, register your
 	subclass at compile time with the [registerEventIoServer] template, or implement your own
 	main function and call it yourself.
-	
+
 	$(TIP If you make your subclass a `final class`, there is a slight performance improvement.)
 +/
 version(with_addon_servers_connections)
@@ -6813,7 +6813,7 @@ interface Session(Data) : SessionObject {
 /++
 	An implementation of [Session] that works on real cgi connections utilizing the
 	[BasicDataServer].
-	
+
 	As opposed to a [MockSession] which is made for testing purposes.
 
 	You will not construct one of these directly. See [Cgi.getSessionObject] instead.
@@ -9333,7 +9333,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 						} else static if(__traits(isSame, AutomaticForm, attr)) {
 							automaticForm = true;
 						}
-				
+
 				/+
 				int zeroArgOverload = -1;
 				int overloadCount = cast(int) __traits(getOverloads, T, methodName).length;
@@ -9470,7 +9470,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			default:
 				return false;
 		}
-	
+
 		assert(0);
 	}
 	return DispatcherDefinition!internalHandler(urlPrefix, false);
@@ -10114,7 +10114,7 @@ struct DUMMY {}
 struct SetOfFields(T) {
 	private void[0][string] storage;
 	void set(string what) {
-		//storage[what] = 
+		//storage[what] =
 	}
 	void unset(string what) {}
 	void setAll() {}
@@ -10421,27 +10421,59 @@ private static string getHttpCodeText(int code) pure nothrow @nogc {
 		case 203: return "203 Non-Authoritative Information";
 		case 204: return "204 No Content";
 		case 205: return "205 Reset Content";
+      case 206 : return "206 Partial Content";
 		//
 		case 300: return "300 Multiple Choices";
 		case 301: return "301 Moved Permanently";
 		case 302: return "302 Found";
 		case 303: return "303 See Other";
+      case 304: return "304 Not Modified";
+      case 305 : return "305 Use Proxy";
 		case 307: return "307 Temporary Redirect";
 		case 308: return "308 Permanent Redirect";
+
 		//
 		// FIXME: add more common 400 ones cgi.d might return too
 		case 400: return "400 Bad Request";
+      case 401: return "401 Unauthorized";
+      case 402: return "402 Payment Required";
 		case 403: return "403 Forbidden";
 		case 404: return "404 Not Found";
 		case 405: return "405 Method Not Allowed";
 		case 406: return "406 Not Acceptable";
+      case 407: return "407 Proxy Authentication Required";
+      case 408: return "408 Request Timeout";
 		case 409: return "409 Conflict";
 		case 410: return "410 Gone";
-		//
+      case 411: return "411 Length Required";
+      case 412: return "412 Precondition Failed";
+      case 413: return "413 Payload Too Large";
+      case 414: return "414 URI Too Long";
+      case 415: return "415 Unsupported Media Type";
+      case 416: return "416 Range Not Satisfiable";
+      case 417: return "417 Expectation Failed";
+      case 418: return "418 I'm a teapot";
+      case 421: return "421 Misdirected Request";
+      case 422: return "422 Unprocessable Entity (WebDAV)";
+      case 423: return "423 Locked (WebDAV)";
+      case 424: return "424 Failed Dependency (WebDAV)";
+      case 425: return "425 Too Early";
+      case 426: return "426 Upgrade Required";
+      case 428: return "428 Precondition Required";
+      case 431: return "431 Request Header Fields Too Large";
+      case 451: return "451 Unavailable For Legal Reasons";
+
 		case 500: return "500 Internal Server Error";
 		case 501: return "501 Not Implemented";
 		case 502: return "502 Bad Gateway";
 		case 503: return "503 Service Unavailable";
+      case 504: return "504 Gateway Timeout";
+      case 505: return "505 HTTP Version Not Supported";
+      case 506: return "506 Variant Also Negotiates";
+      case 507: return "507 Insufficient Storage (WebDAV)";
+      case 508: return "508 Loop Detected (WebDAV)";
+      case 510: return "510 Not Extended";
+      case 511: return "511 Network Authentication Required";
 		//
 		default: assert(0, "Unsupported http code");
 	}
