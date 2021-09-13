@@ -2292,6 +2292,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			this(SimpleWindow w) { this.w = w; }
 		}
 		private RedrawOpenGlSceneEvent redrawOpenGlSceneEvent;
+		/++
+			Queues an opengl redraw as soon as the other pending events are cleared.
+		+/
 		void redrawOpenGlSceneSoon() {
 			if(!redrawOpenGlSceneSoonSet) {
 				redrawOpenGlSceneEvent = new RedrawOpenGlSceneEvent(this);
@@ -6309,9 +6312,9 @@ version(without_opengl) {
 			}
 
 			version(OSX)
-			mixin DynamicLoad!(GLX, "GL", 0, true) glx;
+			mixin DynamicLoad!(GLX, "GL", 0, openGlLibrariesSuccessfullyLoaded) glx;
 			else
-			mixin DynamicLoad!(GLX, "GLX", 0, true) glx;
+			mixin DynamicLoad!(GLX, "GLX", 0, openGlLibrariesSuccessfullyLoaded) glx;
 			shared static this() {
 				glx.loadDynamicLibrary();
 			}
@@ -7511,6 +7514,71 @@ class OperatingSystemFont {
 				if(!handler(tmp[0 .. 5 + cf.length]))
 					return;
 			}
+		}
+	}
+
+	/++
+		Returns the raw content of the ttf file, if possible. This allows you to use OperatingSystemFont
+		to look up fonts that you then pass to things like [arsd.game.OpenGlLimitedFont] or [arsd.nanovega].
+
+		Returns null if impossible. It is impossible if the loaded font is not a local TTF file or if the
+		underlying system doesn't support returning the raw bytes.
+
+		History:
+			Added September 10, 2021 (dub v10.3)
+	+/
+	ubyte[] getTtfBytes() {
+		if(isNull)
+			return null;
+
+		version(Windows) {
+			auto dc = GetDC(null);
+			auto orig = SelectObject(dc, font);
+
+			scope(exit) {
+				SelectObject(dc, orig);
+				ReleaseDC(null, dc);
+			}
+
+			auto res = GetFontData(dc, 0 /* whole file */, 0 /* offset */, null, 0);
+			if(res == GDI_ERROR)
+				return null;
+
+			ubyte[] buffer = new ubyte[](res);
+			res = GetFontData(dc, 0 /* whole file */, 0 /* offset */, buffer.ptr, cast(DWORD) buffer.length);
+			if(res == GDI_ERROR)
+				return null; // wtf really tbh
+
+			return buffer;
+		} else version(with_xft) {
+			if(isXft && xftFont) {
+				if(!FontConfigLibrary.attempted)
+					FontConfigLibrary.loadDynamicLibrary();
+				if(!FontConfigLibrary.loadSuccessful)
+					return null;
+
+				char* file;
+				if (FcPatternGetString(xftFont.pattern, "file", 0, &file) == 0 /*FcResultMatch*/) {
+					if (file !is null && file[0]) {
+						import core.stdc.stdio;
+						auto fp = fopen(file, "rb");
+						if(fp is null)
+							return null;
+						scope(exit)
+							fclose(fp);
+						fseek(fp, 0, SEEK_END);
+						ubyte[] buffer = new ubyte[](ftell(fp));
+						fseek(fp, 0, SEEK_SET);
+
+						auto got = fread(buffer.ptr, 1, buffer.length, fp);
+						if(got != buffer.length)
+							return null;
+
+						return buffer;
+					}
+				}
+			}
+			return null;
 		}
 	}
 
@@ -11750,7 +11818,8 @@ extern(C) @nogc:
 				XAnimCursor	*cursors);
 }
 
-mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
+__gshared bool XRenderLibrarySuccessfullyLoaded = true;
+mixin DynamicLoad!(XRender, "Xrender", 1, XRenderLibrarySuccessfullyLoaded) XRenderLibrary;
 
 
 
@@ -12250,8 +12319,8 @@ mixin DynamicLoad!(XRender, "Xrender", 1, false, true) XRenderLibrary;
 		char* FcNameUnparse(const FcPattern *);
 	}
 
-	mixin DynamicLoad!(Xft, "Xft", 2) XftLibrary;
-	mixin DynamicLoad!(FontConfig, "fontconfig", 1) FontConfigLibrary;
+	mixin DynamicLoad!(Xft, "Xft", 2, librariesSuccessfullyLoaded) XftLibrary;
+	mixin DynamicLoad!(FontConfig, "fontconfig", 1, librariesSuccessfullyLoaded) FontConfigLibrary;
 
 
 	/* Xft } */
@@ -14417,8 +14486,8 @@ extern(C) nothrow @nogc {
 	//int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
 
 
-mixin DynamicLoad!(XLib, "X11", 6) xlib;
-mixin DynamicLoad!(Xext, "Xext", 6) xext;
+mixin DynamicLoad!(XLib, "X11", 6, librariesSuccessfullyLoaded) xlib;
+mixin DynamicLoad!(Xext, "Xext", 6, librariesSuccessfullyLoaded) xext;
 shared static this() {
 	xlib.loadDynamicLibrary();
 	xext.loadDynamicLibrary();
@@ -16905,20 +16974,30 @@ extern(System) nothrow @nogc {
 	}
 }
 
+/++
+	History:
+		Added September 10, 2021. Previously it would have listed openGlLibrariesSuccessfullyLoaded as false if it couldn't find GLU but really opengl3 works fine without it so I didn't want to keep it required anymore.
++/
+__gshared bool gluSuccessfullyLoaded = true;
+
 version(without_opengl) {} else {
 static if(!SdpyIsUsingIVGLBinds) {
 	version(Windows) {
-		mixin DynamicLoad!(GL, "opengl32", 1, true) gl;
-		mixin DynamicLoad!(GLU, "glu32", 1, true) glu;
+		mixin DynamicLoad!(GL, "opengl32", 1, openGlLibrariesSuccessfullyLoaded) gl;
+		mixin DynamicLoad!(GLU, "glu32", 1, gluSuccessfullyLoaded) glu;
 	} else {
-		mixin DynamicLoad!(GL, "GL", 1, true) gl;
-		mixin DynamicLoad!(GLU, "GLU", 3, true) glu;
+		mixin DynamicLoad!(GL, "GL", 1, openGlLibrariesSuccessfullyLoaded) gl;
+		mixin DynamicLoad!(GLU, "GLU", 3, gluSuccessfullyLoaded) glu;
 	}
 	mixin DynamicLoadSupplementalOpenGL!(GL3) gl3;
 
 
 	shared static this() {
 		gl.loadDynamicLibrary();
+
+		// FIXME: this is NOT actually required and should NOT fail if it is not loaded
+		// unless those functions are actually used
+		// go to mark b openGlLibrariesSuccessfullyLoaded = false;
 		glu.loadDynamicLibrary();
 	}
 }
@@ -19966,7 +20045,7 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 	return code[0 .. pos];
 }
 
-private mixin template DynamicLoad(Iface, string library, int majorVersion, bool openGLRelated = false, bool optional = false) {
+private mixin template DynamicLoad(Iface, string library, int majorVersion, alias success) {
 	mixin(staticForeachReplacement!Iface);
 
         private void* libHandle;
@@ -20014,11 +20093,8 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, bool
 				return GetProcAddress(l, name);
 			}
                 }
-                if(libHandle is null && !optional) {
-			if(openGLRelated)
-				openGlLibrariesSuccessfullyLoaded = false;
-			else
-				librariesSuccessfullyLoaded = false;
+                if(libHandle is null) {
+			success = false;
                         //throw new Exception("load failure of library " ~ library);
 		}
                 foreach(name; __traits(derivedMembers, Iface)) {
