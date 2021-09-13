@@ -108,6 +108,7 @@ $(TIP
     Former are used by default, latter can be activated by passing the `bindbc` version specifier to the compiler.
 )
 
+
 Creating drawing context
 ========================
 
