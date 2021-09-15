@@ -8050,7 +8050,8 @@ struct ScreenPainter {
 		this.window = window;
 		if(window.closed)
 			return; // null painter is now allowed so no need to throw anymore, this likely happens at the end of a program anyway
-		currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
+		//currentClipRectangle = arsd.color.Rectangle(0, 0, window.width, window.height);
+		currentClipRectangle = arsd.color.Rectangle(short.min, short.min, short.max, short.max);
 		if(window.activeScreenPainter !is null) {
 			impl = window.activeScreenPainter;
 			if(impl.referenceCount == 0) {
@@ -8113,14 +8114,10 @@ struct ScreenPainter {
 	@property int originX() { return _originX; }
 	@property int originY() { return _originY; }
 	@property int originX(int a) {
-		//currentClipRectangle.left += a - _originX;
-		//currentClipRectangle.right += a - _originX;
 		_originX = a;
 		return _originX;
 	}
 	@property int originY(int a) {
-		//currentClipRectangle.top += a - _originY;
-		//currentClipRectangle.bottom += a - _originY;
 		_originY = a;
 		return _originY;
 	}
