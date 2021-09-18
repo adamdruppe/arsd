@@ -3293,6 +3293,9 @@ class WebSocket {
 	private ushort port;
 	private bool ssl;
 
+	// used to decide if we mask outgoing msgs
+	private bool isClient;
+
 	private MonoTime timeoutFromInactivity;
 	private MonoTime nextPing;
 
@@ -3329,6 +3332,7 @@ class WebSocket {
 	+/
 	/// Group: foundational
 	void connect() {
+		this.isClient = true;
 		if(uri.unixSocketPath)
 			socket.connect(new UnixAddress(uri.unixSocketPath));
 		else
@@ -3712,6 +3716,7 @@ class WebSocket {
 	void send(in char[] textData) {
 		WebSocketFrame wss;
 		wss.fin = true;
+		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.text;
 		wss.data = cast(ubyte[]) textData;
 		wss.send(&llsend);
@@ -3723,6 +3728,7 @@ class WebSocket {
 	/// Group: foundational
 	void send(in ubyte[] binaryData) {
 		WebSocketFrame wss;
+		wss.masked = this.isClient;
 		wss.fin = true;
 		wss.opcode = WebSocketOpcode.binary;
 		wss.data = cast(ubyte[]) binaryData;
