@@ -2532,6 +2532,7 @@ version(use_openssl) {
 			SSL_METHOD* function() SSLv3_client_method;
 			SSL_METHOD* function() TLS_client_method;
 
+			void function(SSL_CTX*, void function(SSL*, char* line)) SSL_CTX_set_keylog_callback;
 		}
 	}
 
@@ -2627,6 +2628,14 @@ version(use_openssl) {
 		if(eallib.ERR_print_errors_fp)
 			return eallib.ERR_print_errors_fp(a);
 		else throw new Exception("ERR_print_errors_fp not loaded");
+	}
+
+	extern(C)
+	void SSL_CTX_keylog_cb_func(SSL_CTX* ctx, void function(SSL*, char*) func)
+	{
+		if(ossllib.SSL_CTX_set_keylog_callback)
+			ossllib.SSL_CTX_set_keylog_callback(ctx, func);
+		else throw new Exception("SSL_CTX_keylog_cb_func not loaded");
 	}
 
 
@@ -2741,6 +2750,20 @@ version(use_openssl) {
 
 	//pragma(lib, "crypto");
 	//pragma(lib, "ssl");
+	extern(C)
+	void write_to_file(SSL* ssl, char* line)
+	{
+		import std.stdio;
+		import std.string;
+		import std.process : environment;
+		string logfile = environment.get("SSLKEYLOGFILE");
+		if (logfile !is null)
+		{
+			auto f = std.stdio.File("/tmp/keyfile", "a+");
+			f.writeln(fromStringz(line));
+			f.close();
+		}
+	}
 
 	class OpenSslSocket : Socket {
 		private SSL* ssl;
@@ -2748,7 +2771,7 @@ version(use_openssl) {
 		private void initSsl(bool verifyPeer, string hostname) {
 			ctx = SSL_CTX_new(SSLv23_client_method());
 			assert(ctx !is null);
-
+			debug SSL_CTX_keylog_cb_func(ctx, &write_to_file);
 			ssl = SSL_new(ctx);
 
 			if(hostname.length)
