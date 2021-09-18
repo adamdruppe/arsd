@@ -3540,6 +3540,15 @@ class WebSocket {
 	public bool lowLevelReceive() {
 		if(readyState == CONNECTING)
 			throw new Exception("WebSocket not connected when trying to receive. Did you forget to call connect(); ?");
+		if (receiveBufferUsedLength == receiveBuffer.length)
+		{
+			if (receiveBuffer.length == config.maximumReceiveBufferSize)
+				throw new Exception("Maximum receive buffer size exhausted");
+
+			import std.algorithm : min;
+			receiveBuffer.length = min(receiveBuffer.length + config.initialReceiveBufferSize,
+				config.maximumReceiveBufferSize);
+		}
 		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
 		if(r == 0)
 			return false;
