@@ -2667,6 +2667,11 @@ version(use_openssl) {
 		} else version(Windows) {
 			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
 			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+
+			if(ossllib_handle is null) {
+				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
+				oeaylib_handle = ossllib_handle;
+			}
 		}
 
 		if(ossllib_handle is null)
