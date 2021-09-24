@@ -1504,11 +1504,42 @@ float[2] getDpi() {
 	return dpi;
 }
 
-TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width, int height) {
+/++
+	Implementation used by [SimpleWindow.takeScreenshot].
+
+	Params:
+		handle = the native window handle. If `NativeWindowHandle.init`, it will attempt to get the whole screen.
+		width = the width of the image you wish to capture. If 0, it will attempt to capture the full width of the target.
+		height = the height of the image you wish to capture. If 0, it will attempt to capture the full height of the target.
+		x = the x-offset of the image to capture, from the left.
+		y = the y-offset of the image to capture, from the top.
+
+	History:
+		Added on March 14, 2021
+
+		Documented public on September 23, 2021 with full support for null params (dub 10.3)
+		
++/
+TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width = 0, int height = 0, int x = 0, int y = 0) {
 	TrueColorImage got;
 	version(X11) {
 		auto display = XDisplayConnection.get;
-		auto image = XGetImage(display, handle, 0, 0, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ImageFormat.ZPixmap);
+		if(handle == 0)
+			handle = RootWindow(display, DefaultScreen(display));
+
+		if(width == 0 || height == 0) {
+			Window root;
+			int xpos, ypos;
+			uint widthret, heightret, borderret, depthret;
+			XGetGeometry(display, handle, &root, &xpos, &ypos, &widthret, &heightret, &borderret, &depthret);
+
+			if(width == 0)
+				width = widthret;
+			if(height == 0)
+				height = heightret;
+		}
+
+		auto image = XGetImage(display, handle, x, y, width, height, (cast(c_ulong) ~0) /*AllPlanes*/, ImageFormat.ZPixmap);
 
 		// https://github.com/adamdruppe/arsd/issues/98
 
@@ -1517,14 +1548,23 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 
 		XDestroyImage(image);
 	} else version(Windows) {
-		// I just need to BitBlt that shit... BUT WAIT IT IS ALREADY IN A DIB!!!!!!!
-
 		auto hdc = GetDC(handle);
 		scope(exit) ReleaseDC(handle, hdc);
+
+		if(width == 0 || height == 0) {
+			BITMAP bmHeader;
+			auto bm  = GetCurrentObject(hdc, OBJ_BITMAP);
+			GetObject(bm, BITMAP.sizeof, &bmHeader);
+			if(width == 0)
+				width = bmHeader.bmWidth;
+			if(height == 0)
+				height = bmHeader.bmHeight;
+		}
+
 		auto i = new Image(width, height);
 		HDC hdcMem = CreateCompatibleDC(hdc);
 		HBITMAP hbmOld = SelectObject(hdcMem, i.handle);
-		BitBlt(hdcMem, 0, 0, width, height, hdc, 0, 0, SRCCOPY);
+		BitBlt(hdcMem, x, y, width, height, hdc, 0, 0, SRCCOPY);
 		SelectObject(hdcMem, hbmOld);
 		DeleteDC(hdcMem);
 
@@ -2469,6 +2509,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// Draws an image on the window. This is meant to provide quick look
 	/// of a static image generated elsewhere.
 	@property void image(Image i) {
+	/+
 		version(Windows) {
 			BITMAP bm;
 			HDC hdc = GetDC(hwnd);
@@ -2502,6 +2543,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			draw().drawImage(Point(0, 0), i);
 			setNeedsDisplay(view, true);
 		} else static assert(0);
+	+/
+		auto painter = this.draw;
+		painter.drawImage(Point(0, 0), i);
 	}
 
 	/++
@@ -10158,14 +10202,20 @@ version(Windows) {
 				drawEllipse(x1, y1, x1 + width, y1 + height);
 			else {
 				import core.stdc.math;
-				float startAngle = start * 64 * 180 / 3.14159265;
-				float endAngle = finish * 64 * 180 / 3.14159265;
-				Arc(hdc, x1, y1, x1 + width, y1 + height,
-					cast(int)(cos(startAngle) * width / 2 + x1),
-					cast(int)(sin(startAngle) * height / 2 + y1),
-					cast(int)(cos(endAngle) * width / 2 + x1),
-					cast(int)(sin(endAngle) * height / 2 + y1),
-				);
+				float startAngle = cast(float) start / 64.0 / 180.0 * 3.14159265358979323;
+				float endAngle = cast(float) finish / 64.0 / 180.0 * 3.14159265358979323;
+
+				auto c1 = cast(int)(cos(startAngle) * width / 2 + x1 + width / 2);
+				auto c2 = cast(int)(-sin(startAngle) * height / 2 + y1 + height / 2);
+				auto c3 = cast(int)(cos(endAngle) * width / 2 + x1 + width / 2);
+				auto c4 = cast(int)(-sin(endAngle) * height / 2 + y1 + height / 2);
+				import std.stdio; writeln(c1, " ", c2, " ", c3, " ", c4);
+
+
+				if(_activePen.color.a)
+					Arc(hdc, x1, y1, x1 + width + 1, y1 + height + 1, c1, c2, c3, c4);
+				if(_fillColor.a)
+					Pie(hdc, x1, y1, x1 + width + 1, y1 + height + 1, c1, c2, c3, c4);
 			}
 		}
 
@@ -11536,8 +11586,10 @@ version(X11) {
 				XFillArc(display, d, gc, x1, y1, width, height, start, finish);
 				swapColors();
 			}
-			if(foregroundIsNotTransparent)
+			if(foregroundIsNotTransparent) {
 				XDrawArc(display, d, gc, x1, y1, width, height, start, finish);
+				// Windows draws the straight lines on the edges too so FIXME sort of
+			}
 		}
 
 		void drawPolygon(Point[] vertexes) {
