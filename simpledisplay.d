@@ -10209,8 +10209,6 @@ version(Windows) {
 				auto c2 = cast(int)(-sin(startAngle) * height / 2 + y1 + height / 2);
 				auto c3 = cast(int)(cos(endAngle) * width / 2 + x1 + width / 2);
 				auto c4 = cast(int)(-sin(endAngle) * height / 2 + y1 + height / 2);
-				import std.stdio; writeln(c1, " ", c2, " ", c3, " ", c4);
-
 
 				if(_activePen.color.a)
 					Arc(hdc, x1, y1, x1 + width + 1, y1 + height + 1, c1, c2, c3, c4);
