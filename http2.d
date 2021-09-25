@@ -4188,7 +4188,7 @@ public {
 				if(d.length < 8) return needsMoreData();
 
 				foreach(i; 0 .. 8) {
-					msg.realLength |= d[0] << ((7-i) * 8);
+					msg.realLength |= ulong(d[0]) << ((7-i) * 8);
 					d = d[1 .. $];
 				}
 			} else {
