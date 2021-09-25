@@ -4118,7 +4118,9 @@ public {
 
 			//assert(!masked, "masking key not properly implemented");
 			if(masked) {
-				// FIXME: randomize this
+				import std.random;
+				foreach(ref item; maskingKey)
+					item = uniform(ubyte.min, ubyte.max);
 				headerScratch[headerScratchPos .. headerScratchPos + 4] = maskingKey[];
 				headerScratchPos += 4;
 
