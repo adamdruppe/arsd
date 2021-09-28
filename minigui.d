@@ -4000,8 +4000,10 @@ class ScrollableWidget : Widget {
 							// the event loop doesn't seem to carry on with a requested redraw..
 							// so we request it to get our dirty bit set...
 							redraw();
+
 							// then we need to immediately actually redraw it too for instant feedback to user
-							//actualRedraw();
+							if(parentWindow)
+								parentWindow.actualRedraw();
 						}
 					break;
 					default:
@@ -4614,8 +4616,8 @@ class ScrollableContainerWidget : ContainerWidget {
 							// the event loop doesn't seem to carry on with a requested redraw..
 							// so we request it to get our dirty bit set...
 							// then we need to immediately actually redraw it too for instant feedback to user
-							//if(redrawRequested)
-								//actualRedraw();
+							if(parentWindow)
+								parentWindow.actualRedraw();
 						break;
 						default:
 					}
@@ -6929,8 +6931,8 @@ class Window : Widget {
 								// the event loop doesn't seem to carry on with a requested redraw..
 								// so we request it to get our dirty bit set...
 								// then we need to immediately actually redraw it too for instant feedback to user
-								//if(redrawRequested)
-									//actualRedraw();
+								if(parentWindow)
+									parentWindow.actualRedraw();
 							break;
 							default:
 						}
