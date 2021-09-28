@@ -1,11 +1,17 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// for responsive design, a collapsible widget that if it doesn't have enough room, it just automatically becomes a "more" button or whatever.
+
+// responsive minigui, menu search, and file open with a preview hook on the side.
+
 /*
 
 im tempted to add some css kind of thing to minigui. i've not done in the past cuz i have a lot of virtual functins i use but i think i have an evil plan
 
 the virtual functions remain as the default calculated values. then the reads go through some proxy object that can override it...
 */
+
+// FIXME: text label must be copyable to the clipboard, at least as a full chunk.
 
 // FIXME: opt-in file picker widget with image support
 
@@ -374,6 +380,18 @@ version(Windows) {
 +/
 class Widget : ReflectableProperties {
 
+	/+
+	/++
+		Calling this directly after constructor can give you a reflectable object as-needed so you don't pay for what you don't need.
+
+		History:
+			Added September 15, 2021
+			implemented.... ???
+	+/
+	void prepareReflection(this This)() {
+
+	}
+	+/
 
 	/// Implementations of [ReflectableProperties] interface. See the interface for details.
 	SetPropertyResult setPropertyFromString(string name, scope const(char)[] value, bool valueIsJson) {
@@ -830,9 +848,13 @@ class Widget : ReflectableProperties {
 			for(item = 0; item < p._children.length; item++)
 				if(p._children[item] is this)
 					break;
+			auto idx = item;
 			for(; item < p._children.length - 1; item++)
 				p._children[item] = p._children[item + 1];
 			p._children = p._children[0 .. $-1];
+
+			this.parent.widgetRemoved(idx, this);
+			//this.parent = null;
 		}
 		version(win32_widgets) {
 			removeAllChildren();
@@ -842,6 +864,14 @@ class Widget : ReflectableProperties {
 			}
 		}
 	}
+
+	/++
+		Notifies the subclass that a widget was removed. If you keep auxillary data about your children, you can override this to help keep that data in sync.
+
+		History:
+			Added September 19, 2021
+	+/
+	protected void widgetRemoved(size_t oldIndex, Widget oldReference) { }
 
 	/++
 		Removes all child widgets from `this`. You should not use the removed widgets again.
@@ -860,7 +890,10 @@ class Widget : ReflectableProperties {
 				child.hwnd = null;
 			}
 		}
+		auto orig = this._children;
 		this._children = null;
+		foreach(idx, w; orig)
+			this.widgetRemoved(idx, w);
 	}
 
 	/++
@@ -1619,6 +1652,188 @@ class Widget : ReflectableProperties {
 
 	mixin Emits!FocusInEvent; ///
 	mixin Emits!FocusOutEvent; ///
+}
+
+/+
+/++
+	Interface to indicate that the widget has a simple value property.
+
+	History:
+		Added August 26, 2021
++/
+interface HasValue!T {
+	/// Getter
+	@property T value();
+	/// Setter
+	@property void value(T);
+}
+
+/++
+	Interface to indicate that the widget has a range of possible values for its simple value property.
+	This would be present on something like a slider or possibly a number picker.
+
+	History:
+		Added September 11, 2021
++/
+interface HasRangeOfValues!T : HasValue!T {
+	/// The minimum and maximum values in the range, inclusive.
+	@property T minValue();
+	@property void minValue(T); /// ditto
+	@property T maxValue(); /// ditto
+	@property void maxValue(T); /// ditto
+
+	/// The smallest step the user interface allows. User may still type in values without this limitation.
+	@property void step(T);
+	@property T step(); /// ditto
+}
+
+/++
+	Interface to indicate that the widget has a list of possible values the user can choose from.
+	This would be present on something like a drop-down selector.
+
+	The value is NOT necessarily one of the items on the list. Consider the case of a free-entry
+	combobox.
+
+	History:
+		Added September 11, 2021
++/
+interface HasListOfValues!T : HasValue!T {
+	@property T[] values;
+	@property void values(T[]);
+
+	@property int selectedIndex(); // note it may return -1!
+	@property void selectedIndex(int);
+}
++/
+
+class GridLayout : Layout {
+
+	// FIXME: grid padding around edges and also cell spacing between units. even though you could do that by just specifying some gutter yourself in the layout.
+
+	/++
+		If a widget is too small to fill a grid cell, the graviy tells where it "sticks" to.
+	+/
+	enum Gravity {
+		Center    = 0,
+		NorthWest = North | West,
+		North     = 0b10_00,
+		NorthEast = North | East,
+		West      = 0b00_10,
+		East      = 0b00_01,
+		SouthWest = South | West,
+		South     = 0b01_00,
+		SouthEast = South | East,
+	}
+
+	/++
+		The width and height are in some proportional units and can often just be 12.
+	+/
+	this(int width, int height, Widget parent) {
+		this.gridWidth = width;
+		this.gridHeight = height;
+		super(parent);
+	}
+
+	/++
+		Sets the position of the given child.
+
+		The units of these arguments are in the proportional grid units you set in the constructor.
+	+/
+	Widget setChildPosition(Widget child, int x, int y, int width, int height, Gravity gravity = Gravity.Center) {
+		// ensure it is in bounds
+		// then ensure no overlaps
+
+		ChildPosition p = ChildPosition(child, x, y, width, height, gravity);
+
+		foreach(ref position; positions) {
+			if(position.widget is child) {
+				position = p;
+				goto set;
+			}
+		}
+
+		positions ~= p;
+
+		set:
+
+		// FIXME: should this batch?
+		recomputeChildLayout();
+
+		return child;
+	}
+
+	override void addChild(Widget w, int position = int.max) {
+		super.addChild(w, position);
+		//positions ~= ChildPosition(w);
+		if(position != int.max) {
+			// FIXME: align it so they actually match.
+		}
+	}
+
+	override void widgetRemoved(size_t idx, Widget w) {
+		// FIXME: keep the positions array aligned
+		// positions[idx].widget = null;
+	}
+
+	override void recomputeChildLayout() {
+		registerMovement();
+		c: foreach(child; children) {
+			// just snap it to the grid
+			foreach(position; positions)
+				if(position.widget is child) {
+					child.x = this.width * position.x / this.gridWidth;
+					child.y = this.height * position.y / this.gridHeight;
+					child.width = this.width * position.width / this.gridWidth;
+					child.height = this.height * position.height / this.gridHeight;
+
+					auto diff = child.width - child.maxWidth();
+					// FIXME: gravity?
+					if(diff > 0) {
+						child.width = child.width - diff;
+
+						if(position.gravity & Gravity.West) {
+							// nothing needed, already aligned
+						} else if(position.gravity & Gravity.East) {
+							child.x += diff;
+						} else {
+							child.x += diff / 2;
+						}
+					}
+
+					diff = child.height - child.maxHeight();
+					// FIXME: gravity?
+					if(diff > 0) {
+						child.height = child.height - diff;
+
+						if(position.gravity & Gravity.North) {
+							// nothing needed, already aligned
+						} else if(position.gravity & Gravity.South) {
+							child.y += diff;
+						} else {
+							child.y += diff / 2;
+						}
+					}
+
+
+					child.recomputeChildLayout();
+					continue c;
+				}
+			//assert(0);
+		}
+	}
+
+	private struct ChildPosition {
+		Widget widget;
+		int x;
+		int y;
+		int width;
+		int height;
+		Gravity gravity;
+	}
+	private ChildPosition[] positions;
+
+	int gridWidth = 12;
+	int gridHeight = 12;
 }
 
 ///
@@ -3579,6 +3794,9 @@ else
 
 
 	In the future, items in the list may be possible to be more than just strings.
+
+	See_Also:
+		[TableView]
 +/
 class ListWidget : ListWidgetBase {
 	/// Sends a change event when the selection changes, but the data is not attached to the event. You must instead loop the options to see if they are selected.
@@ -4075,6 +4293,12 @@ class ScrollableWidget : Widget {
 		return WidgetPainter(painter, this);
 	}
 
+	mixin ScrollableChildren;
+}
+
+// you need to have a Point scrollOrigin in the class somewhere
+// and a paintFrameAndBackground
+private mixin template ScrollableChildren() {
 	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
 		if(hidden)
 			return;
@@ -4531,14 +4755,13 @@ private class InternalScrollableContainerWidget : Widget {
 			sw.scrollOrigin_.y = 0;
 
 		if(sw.showingHorizontalScroll())
-			horizontalScrollBar.showing = true;
+			horizontalScrollBar.showing(true, false);
 		else
-			horizontalScrollBar.showing = false;
+			horizontalScrollBar.showing(false, false);
 		if(sw.showingVerticalScroll())
-			verticalScrollBar.showing = true;
+			verticalScrollBar.showing(true, false);
 		else
-			verticalScrollBar.showing = false;
-
+			verticalScrollBar.showing(false, false);
 
 		verticalScrollBar.setViewableArea(sw.viewportHeight());
 		verticalScrollBar.setMax(sw.contentHeight);
@@ -5494,10 +5717,15 @@ class InlineBlockLayout : Layout {
 				child.recomputeChildLayout();
 				continue;
 			}
-			child.width = child.minWidth();
+			child.width = child.flexBasisWidth();
+			if(child.width == 0)
+				child.width = child.minWidth();
 			if(child.width == 0)
 				child.width = 32;
-			child.height = child.minHeight();
+
+			child.height = child.flexBasisHeight();
+			if(child.height == 0)
+				child.height = child.minHeight();
 			if(child.height == 0)
 				child.height = 32;
 
@@ -5897,6 +6125,11 @@ class TabWidgetPage : Widget {
 }
 
 version(none)
+/++
+	A collapsable sidebar is a container that shows if its assigned width is greater than its minimum and otherwise shows as a button.
+
+	I think I need to modify the layout algorithms to support this.
++/
 class CollapsableSidebar : Widget {
 
 }
@@ -6019,6 +6252,9 @@ class ContainerWidget : Widget {
 	to maintain the illusion that there's an infinite space. The [ScrollMessageWidget] gives
 	you more control (which can be considerably more efficient and adapted to your actual data)
 	at the expense of you also needing to be aware of its reality.
+
+	Please note that it does NOT react to mouse wheel events or various keyboard events as of
+	version 10.3. Maybe this will change in the future....
 +/
 class ScrollMessageWidget : Widget {
 	this(Widget parent) {
@@ -6075,14 +6311,142 @@ class ScrollMessageWidget : Widget {
 		magic = true;
 	}
 
-	///
-	void scrollUp() {
-		vsb.setPosition(vsb.position - 1);
+	/++
+		Add default event listeners for keyboard and mouse wheel scrolling shortcuts.
+
+
+		The defaults for [addDefaultWheelListeners] are:
+
+			$(LIST
+				* Mouse wheel scrolls vertically
+				* Alt key + mouse wheel scrolls horiontally
+				* Shift + mouse wheel scrolls faster.
+				* Any mouse click or wheel event will focus the inner widget if it has `tabStop = true`
+			)
+
+		The defaults for [addDefaultKeyboardListeners] are:
+
+			$(LIST
+				* Arrow keys scroll by the given amounts
+				* Shift+arrow keys scroll by the given amounts times the given shiftMultiplier
+				* Page up and down scroll by the vertical viewable area
+				* Home and end scroll to the start and end of the verticle viewable area.
+				* Alt + page up / page down / home / end will horizonally scroll instead of vertical.
+			)
+
+		My recommendation is to change the scroll amounts if you are scrolling by pixels, but otherwise keep them at one line.
+
+		Params:
+			horizontalArrowScrollAmount =
+			verticalArrowScrollAmount =
+			verticalWheelScrollAmount = how much should be scrolled vertically on each tick of the mouse wheel
+			horizontalWheelScrollAmount = how much should be scrolled horizontally when alt is held on each tick of the mouse wheel
+			shiftMultiplier = multiplies the scroll amount by this when shift is held
+	+/
+	void addDefaultKeyboardListeners(int verticalArrowScrollAmount = 1, int horizontalArrowScrollAmount = 1, int shiftMultiplier = 3) {
+		auto _this = this;
+
+		container.addEventListener((scope KeyDownEvent ke) {
+			switch(ke.key) {
+				case Key.Left:
+					_this.scrollLeft(horizontalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.Right:
+					_this.scrollRight(horizontalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.Up:
+					_this.scrollUp(verticalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.Down:
+					_this.scrollDown(verticalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.PageUp:
+					if(ke.altKey)
+						_this.scrollLeft(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
+					else
+						_this.scrollUp(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.PageDown:
+					if(ke.altKey)
+						_this.scrollRight(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
+					else
+						_this.scrollDown(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
+				break;
+				case Key.Home:
+					if(ke.altKey)
+						_this.scrollLeft(short.max * 16);
+					else
+						_this.scrollUp(short.max * 16);
+				break;
+				case Key.End:
+					if(ke.altKey)
+						_this.scrollRight(short.max * 16);
+					else
+						_this.scrollDown(short.max * 16);
+				break;
+
+				default:
+					// ignore, not for us.
+			}
+
+		});
+	}
+
+	/// ditto
+	void addDefaultWheelListeners(int verticalWheelScrollAmount = 1, int horizontalWheelScrollAmount = 1, int shiftMultiplier = 3) {
+		auto _this = this;
+		container.addEventListener((scope ClickEvent ce) {
+
+			if(ce.target && ce.target.tabStop)
+				ce.target.focus();
+
+			// ctrl is reserved for the application
+			if(ce.ctrlKey)
+				return;
+
+			if(horizontalWheelScrollAmount == 0 && ce.altKey)
+				return;
+
+			if(shiftMultiplier == 0 && ce.shiftKey)
+				return;
+
+			if(ce.button == MouseButton.wheelDown) {
+				if(ce.altKey)
+					_this.scrollRight(horizontalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+				else
+					_this.scrollDown(verticalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+			} else if(ce.button == MouseButton.wheelUp) {
+				if(ce.altKey)
+					_this.scrollLeft(horizontalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+				else
+					_this.scrollUp(verticalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+			}
+		});
+	}
+
+	/++
+		Scrolls the given amount.
+
+		History:
+			The scroll up and down functions was here in the initial release of the class, but the `amount` parameter and left/right functions were added on September 28, 2021.
+	+/
+	void scrollUp(int amount = 1) {
+		vsb.setPosition(vsb.position - amount);
 		notify();
 	}
-	/// Ditto
-	void scrollDown() {
-		vsb.setPosition(vsb.position + 1);
+	/// ditto
+	void scrollDown(int amount = 1) {
+		vsb.setPosition(vsb.position + amount);
+		notify();
+	}
+	/// ditto
+	void scrollLeft(int amount = 1) {
+		hsb.setPosition(hsb.position - amount);
+		notify();
+	}
+	/// ditto
+	void scrollRight(int amount = 1) {
+		hsb.setPosition(hsb.position + amount);
 		notify();
 	}
 
@@ -6124,6 +6488,28 @@ class ScrollMessageWidget : Widget {
 	void setViewableArea(int width, int height) {
 		hsb.setViewableArea(width);
 		vsb.setViewableArea(height);
+
+		bool needsNotify = false;
+
+		// FIXME: if at any point the rhs is outside the scrollbar, we need
+		// to reset to 0. but it should remember the old position in case the
+		// window resizes again, so it can kinda return ot where it was.
+		//
+		// so there's an inner position and a exposed position. the exposed one is always in bounds and thus may be (0,0)
+		if(width > hsb.max) {
+			// there's plenty of room to display it all so we need to reset to zero
+			// FIXME: adjust so it matches the note above
+			hsb.setPosition(0);
+			needsNotify = true;
+		}
+		if(height > vsb.max) {
+			// there's plenty of room to display it all so we need to reset to zero
+			// FIXME: adjust so it matches the note above
+			vsb.setPosition(0);
+			needsNotify = true;
+		}
+		if(needsNotify)
+			notify();
 	}
 
 	private bool magic;
@@ -6151,16 +6537,47 @@ class ScrollMessageWidget : Widget {
 		vsb.height = this.height - 16;
 		vsb.recomputeChildLayout();
 
-		container.x = 0;
-		container.y = 0;
-		container.width = this.width - vsb.width;
-		container.height = this.height - hsb.height;
-		container.recomputeChildLayout();
+		if(this.header is null) {
+			container.x = 0;
+			container.y = 0;
+			container.width = this.width - vsb.width;
+			container.height = this.height - hsb.height;
+			container.recomputeChildLayout();
+		} else {
+			header.x = 0;
+			header.y = 0;
+			header.width = this.width - vsb.width;
+			header.height = 16; // size of the button
+			header.recomputeChildLayout();
+
+			container.x = 0;
+			container.y = 16;
+			container.width = this.width - vsb.width;
+			container.height = this.height - hsb.height - 16;
+			container.recomputeChildLayout();
+		}
 	}
 
 	HorizontalScrollbar hsb;
 	VerticalScrollbar vsb;
 	Widget container;
+	private Widget header;
+
+	/++
+		Adds a fixed-size "header" widget. This will be positioned to align with the scroll up button.
+
+		History:
+			Added September 27, 2021 (dub v10.3)
+	+/
+	Widget getHeader() {
+		if(this.header is null) {
+			magic = false;
+			scope(exit) magic = true;
+			this.header = new Widget(this);
+			recomputeChildLayout();
+		}
+		return this.header;
+	}
 }
 
 /++
@@ -6769,22 +7186,28 @@ class Window : Widget {
 			pain = pain.parent;
 		}
 
-		if(ev.type == MouseEventType.buttonPressed) {
-			MouseEventBase event = new MouseDownEvent(captureEle);
+		void populateMouseEventBase(MouseEventBase event) {
 			event.button = ev.button;
 			event.buttonLinear = ev.buttonLinear;
 			event.state = ev.modifierState;
 			event.clientX = eleR.x;
 			event.clientY = eleR.y;
-			event.dispatch();
+
+			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
+			event.altKey = (ev.modifierState & ModifierState.alt) ? true : false;
+			event.ctrlKey = (ev.modifierState & ModifierState.ctrl) ? true : false;
+		}
+
+		if(ev.type == MouseEventType.buttonPressed) {
+			{
+				auto event = new MouseDownEvent(captureEle);
+				populateMouseEventBase(event);
+				event.dispatch();
+			}
 
 			if(ev.button != MouseButton.wheelDown && ev.button != MouseButton.wheelUp && mouseLastDownOn is ele && ev.doubleClick) {
-				event = new DoubleClickEvent(captureEle);
-				event.button = ev.button;
-				event.buttonLinear = ev.buttonLinear;
-				event.state = ev.modifierState;
-				event.clientX = eleR.x;
-				event.clientY = eleR.y;
+				auto event = new DoubleClickEvent(captureEle);
+				populateMouseEventBase(event);
 				event.dispatch();
 				lastWasDoubleClick = ev.doubleClick;
 			} else {
@@ -6795,29 +7218,19 @@ class Window : Widget {
 		} else if(ev.type == MouseEventType.buttonReleased) {
 			{
 				auto event = new MouseUpEvent(captureEle);
-				event.button = ev.button;
-				event.buttonLinear = ev.buttonLinear;
-				event.clientX = eleR.x;
-				event.clientY = eleR.y;
-				event.state = ev.modifierState;
+				populateMouseEventBase(event);
 				event.dispatch();
 			}
 			if(!lastWasDoubleClick && mouseLastDownOn is ele) {
-				MouseEventBase event = new ClickEvent(captureEle);
-				event.clientX = eleR.x;
-				event.clientY = eleR.y;
-				event.state = ev.modifierState;
-				event.button = ev.button;
-				event.buttonLinear = ev.buttonLinear;
+				auto event = new ClickEvent(captureEle);
+				populateMouseEventBase(event);
 				event.dispatch();
 			}
 		} else if(ev.type == MouseEventType.motion) {
 			// motion
 			{
 				auto event = new MouseMoveEvent(captureEle);
-				event.state = ev.modifierState;
-				event.clientX = eleR.x;
-				event.clientY = eleR.y;
+				populateMouseEventBase(event); // fills in button which is meaningless but meh
 				event.dispatch();
 			}
 
@@ -6924,8 +7337,8 @@ debug private class DevToolWindow : Window {
 		parentList = new TextEdit(this);
 
 		auto hl = new HorizontalLayout(this);
-		clickX = new TextLabel("", hl);
-		clickY = new TextLabel("", hl);
+		clickX = new TextLabel("", TextAlignment.Right, hl);
+		clickY = new TextLabel("", TextAlignment.Right, hl);
 
 		parentListeners ~= p.addEventListener("*", (Event ev) {
 			log(typeid(ev.source).name, " emitted ", typeid(ev).name);
@@ -7002,6 +7415,286 @@ abstract class Dialog : Window {
 }
 
 /++
+	A custom widget similar to the HTML5 <details> tag.
++/
+version(none)
+class DetailsView : Widget {
+
+}
+
+// FIXME: maybe i should expose the other list views Windows offers too
+
+/++
+	A TableView is a widget made to display a table of data strings.
+
+	Each item can have an id, a string, an icon, and a map of details (which win32 calls subitems). Items may be grouped in win32 but prolly not here cuz i wanna do the owner data thing.
+
+	History:
+		Added September 24, 2021
+	See_Also:
+		[ListWidget] which displays a list of strings without additional columns.
++/
+class TableView : Widget {
+	this(Widget parent) {
+		super(parent);
+
+		version(win32_widgets) {
+			createWin32Window(this, WC_LISTVIEW, "", LVS_REPORT | LVS_OWNERDATA);
+		} else version(custom_widgets) {
+			auto smw = new ScrollMessageWidget(this);
+			smw.addDefaultKeyboardListeners();
+			smw.addDefaultWheelListeners(1, 16);
+			tvwi = new TableViewWidgetInner(this, smw);
+		}
+	}
+
+	version(custom_widgets) private {
+		ColumnInfo[] columns;
+		int itemCount;
+
+		TableViewWidgetInner tvwi;
+	}
+
+	static struct ColumnInfo {
+		const(char)[] name;
+		int width;
+		TextAlignment alignment;
+	}
+	void setColumnInfo(ColumnInfo[] columns...) {
+		version(custom_widgets) {
+			this.columns = columns.dup;
+			foreach(ref c; this.columns)
+				c.name = c.name.idup;
+
+			tvwi.header.updateHeaders();
+			tvwi.updateScrolls();
+		} else version(win32_widgets)
+		foreach(i, column; columns) {
+			LVCOLUMN lvColumn;
+			lvColumn.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM;
+			lvColumn.cx = column.width;
+
+			auto bfr = WCharzBuffer(column.name);
+			lvColumn.pszText = bfr.ptr;
+
+			if(column.alignment & TextAlignment.Center)
+				lvColumn.fmt = LVCFMT_CENTER;
+			else if(column.alignment & TextAlignment.Right)
+				lvColumn.fmt = LVCFMT_RIGHT;
+			else
+				lvColumn.fmt = LVCFMT_LEFT;
+
+			SendMessage(hwnd, LVM_INSERTCOLUMN, cast(WPARAM) i, cast(LPARAM) &lvColumn);
+		}
+	}
+
+	void setItemCount(int count) {
+		version(custom_widgets) {
+			this.itemCount = count;
+			tvwi.updateScrolls();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, LVM_SETITEMCOUNT, count, 0);
+		}
+	}
+
+	void clear() {
+		version(custom_widgets) {
+			this.itemCount = 0;
+			this.columns = null;
+			tvwi.header.updateHeaders();
+			tvwi.updateScrolls();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0);
+		}
+	}
+
+	version(win32_widgets)
+	override int handleWmNotify(NMHDR* hdr, int code) {
+		switch(code) {
+			case LVN_GETDISPINFO:
+				LV_DISPINFO* info = cast(LV_DISPINFO*) hdr;
+
+				if(info.item.mask & LVIF_TEXT) {
+					if(getData) {
+						getData(info.item.iItem, info.item.iSubItem, (in char[] dataReceived) {
+							auto bfr = WCharzBuffer(dataReceived);
+							auto len = info.item.cchTextMax;
+							if(bfr.length < len)
+								len = cast(typeof(len)) bfr.length;
+							info.item.pszText[0 .. len] = bfr.ptr[0 .. len];
+							info.item.pszText[len] = 0;
+						});
+					} else {
+						info.item.pszText[0] = 0;
+					}
+					//info.item.iItem
+					//if(info.item.iSubItem)
+				}
+			break;
+			default:
+		}
+		return 0;
+	}
+
+	override bool encapsulatedChildren() {
+		return true;
+	}
+
+	// fill up as much of the buffer as you can
+	void delegate(int row, int column, scope void delegate(in char[]) sink) getData;
+}
+
+version(custom_widgets)
+class TableViewWidgetInner : Widget {
+
+// wrap this thing in a ScrollMessageWidget
+
+	TableView tvw;
+	ScrollMessageWidget smw;
+	HeaderWidget header;
+
+	this(TableView tvw, ScrollMessageWidget smw) {
+		this.tvw = tvw;
+		this.smw = smw;
+		super(smw);
+
+		this.tabStop = true;
+
+		header = new HeaderWidget(this, smw.getHeader());
+
+		smw.addEventListener("scroll", () {
+			this.redraw();
+			header.redraw();
+		});
+
+
+		// I need headers outside the scroll area but rendered on the same line as the up arrow
+		// FIXME: add a fixed header to the SMW
+	}
+
+	void updateScrolls() {
+		int w;
+		foreach(column; tvw.columns)
+			w += column.width;
+		smw.setTotalArea(w, tvw.itemCount);
+		columnsWidth = w;
+	}
+
+	private int columnsWidth;
+
+		int lh = 16; // FIXME lineHeight
+
+	override void registerMovement() {
+		super.registerMovement();
+		// FIXME: actual column width. it might need to be done per-pixel instead of per-colum
+		smw.setViewableArea(this.width, this.height / lh);
+	}
+
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+		int x;
+		int y;
+
+		int row = smw.position.y;
+
+		foreach(lol; 0 .. this.height / lh) {
+			x = 2;
+			foreach(columnNumber, column; tvw.columns) {
+				auto x2 = x + column.width;
+				auto smwx = smw.position.x;
+
+				if(x2 > smwx /* if right side of it is visible at all */ || (x >= smwx && x < smwx + this.width) /* left side is visible at all*/)
+				tvw.getData(row, cast(int) columnNumber, (info) {
+					painter.drawText(Point(x - smw.position.x, y), info, Point(x + column.width - 2 - smw.position.x, y + lh), column.alignment);
+				});
+
+				x += column.width;
+			}
+			row++;
+			y += lh;
+		}
+		return bounds;
+	}
+
+	static class Style : Widget.Style {
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+		}
+	}
+	mixin OverrideStyle!Style;
+
+	private static class HeaderWidget : Widget {
+		this(TableViewWidgetInner tvw, Widget parent) {
+			super(parent);
+			this.tvw = tvw;
+
+			this.remainder = new Button("", this);
+		}
+
+		void updateHeaders() {
+			foreach(child; children[1 .. $])
+				child.removeWidget();
+
+			foreach(column; tvw.tvw.columns) {
+				// the cast is ok because I dup it above, just the type is never changed.
+				// all this is private so it should never get messed up.
+				new Button(ImageLabel(cast(string) column.name, column.alignment), this);
+			}
+		}
+
+		Button remainder;
+		TableViewWidgetInner tvw;
+
+		override void recomputeChildLayout() {
+			registerMovement();
+			int pos;
+			foreach(child; children[1 .. $]) {
+				child.x = pos;
+				child.y = 0;
+				child.width = 100;
+				child.height = 16;// this.height;
+				pos += 100;
+
+				child.recomputeChildLayout();
+			}
+
+			if(remainder is null)
+				return;
+
+			remainder.x = pos;
+			remainder.y = 0;
+			if(pos < this.width)
+				remainder.width = this.width - pos;// + 4;
+			else
+				remainder.width = 0;
+			remainder.height = 16;
+
+			remainder.recomputeChildLayout();
+		}
+
+		// for the scrollable children mixin
+		Point scrollOrigin() {
+			return Point(tvw.smw.position.x, 0);
+		}
+		void paintFrameAndBackground(WidgetPainter painter) { }
+
+		mixin ScrollableChildren;
+	}
+}
+
+/+
+
+// given struct / array / number / string / etc, make it viewable and editable
+class DataViewerWidget : Widget {
+
+}
+
+// this is just the tab list with no associated page
+class TabMessageWidget : Widget {
+
+}
++/
+
+/++
 	A line edit box with an associated label.
 
 	History:
@@ -7050,6 +7743,8 @@ class Labeled(T) : Widget {
 
 	TextLabel label; ///
 	T lineEdit; ///
+
+	override int flexBasisWidth() { return 250; }
 
 	override int minHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
 	override int maxHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
@@ -7102,7 +7797,7 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 	} else {
 		static if(is(typeof(fn) Params == __parameters))
 		struct S {
-			static if(!__(traits(compiles, mixin(`{ static foreach(i; 1..4) {} }`)))) {
+			static if(!__traits(compiles, mixin(`{ static foreach(i; 1..4) {} }`))) {
 				pragma(msg, "warning: automatic handler of params not yet implemented on your compiler");
 			} else mixin(q{
 			static foreach(idx, ignore; Params) {
@@ -7112,7 +7807,7 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 		}
 		return () {
 			dialog((S s) {
-				t(s.tupleof);
+				cast(void) t(s.tupleof);
 			}, null, __traits(identifier, fn));
 		};
 	}
@@ -8441,25 +9136,33 @@ class OnOffSwitch : MouseActivatedWidget {
 		Added June 15, 2021 (dub v10.1)
 +/
 struct ImageLabel {
-	this(string label) {
+	/++
+		History:
+			The `alignment` parameter was added on September 27, 2021
+	+/
+	this(string label, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.displayFlags = DisplayFlags.displayText;
+		this.alignment = alignment;
 	}
 
-	this(string label, MemoryImage image) {
+	this(string label, MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
 		this.displayFlags = DisplayFlags.displayText | DisplayFlags.displayImage;
+		this.alignment = alignment;
 	}
 
-	this(MemoryImage image) {
+	this(MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.image = image;
 		this.displayFlags = DisplayFlags.displayImage;
+		this.alignment = alignment;
 	}
 
-	this(string label, MemoryImage image, int displayFlags) {
+	this(string label, MemoryImage image, int displayFlags, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
+		this.alignment = alignment;
 		this.displayFlags = displayFlags;
 	}
 
@@ -8472,6 +9175,8 @@ struct ImageLabel {
 	}
 
 	int displayFlags = DisplayFlags.displayText | DisplayFlags.displayImage;
+
+	TextAlignment alignment;
 }
 
 /++
@@ -8495,6 +9200,8 @@ class Checkbox : MouseActivatedWidget {
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
+
+	override int flexBasisWidth() { return 24 + cast(int) label.length * 7; }
 
 	/++
 		Just an alias because I keep typing checked out of web habit.
@@ -8744,6 +9451,7 @@ class Button : MouseActivatedWidget {
 	public bool triggersOnMultiClick;
 
 	private string label_;
+	private TextAlignment alignment;
 	private dchar accelerator;
 
 	///
@@ -8812,6 +9520,8 @@ class Button : MouseActivatedWidget {
 				this.sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
 				this.displayFlags = label.displayFlags;
 			}
+
+			this.alignment = label.alignment;
 		}
 	}
 
@@ -8863,7 +9573,7 @@ class Button : MouseActivatedWidget {
 					bounds.size
 				);
 			} else {
-				painter.drawText(bounds.upperLeft, label, bounds.lowerRight, TextAlignment.Center | TextAlignment.VerticalCenter);
+				painter.drawText(bounds.upperLeft, label, bounds.lowerRight, alignment | TextAlignment.VerticalCenter);
 			}
 			return bounds;
 		});
@@ -9070,6 +9780,9 @@ class TextLabel : Widget {
 	override int minHeight() { return Window.lineHeight; }
 	override int minWidth() { return 32; }
 
+	override int flexBasisHeight() { return minHeight(); }
+	override int flexBasisWidth() { return cast(int) label_.length * 7; }
+
 	string label_;
 
 	///
@@ -9088,11 +9801,6 @@ class TextLabel : Widget {
 	}
 
 	///
-	this(string label, Widget parent) {
-		this(label, TextAlignment.Right, parent);
-	}
-
-	///
 	this(string label, TextAlignment alignment, Widget parent) {
 		this.label_ = label;
 		this.alignment = alignment;
@@ -9100,8 +9808,17 @@ class TextLabel : Widget {
 		super(parent);
 
 		version(win32_widgets)
-		createWin32Window(this, "static"w, label, alignment == TextAlignment.Center ? SS_CENTER : 0, alignment == TextAlignment.Right ? WS_EX_RIGHT : WS_EX_LEFT);
+		createWin32Window(this, "static"w, label, (alignment & TextAlignment.Center) ? SS_CENTER : 0, (alignment & TextAlignment.Right) ? WS_EX_RIGHT : WS_EX_LEFT);
 	}
+
+	/++
+		WARNING: this currently sets TextAlignment.Right as the default. That will change in a future version.
+		For future-proofing of your code, if you rely on TextAlignment.Right, you MUST specify that explicitly.
+	+/
+	this(string label, Widget parent) {
+		this(label, TextAlignment.Right, parent);
+	}
+
 
 	TextAlignment alignment;
 
@@ -9441,6 +10158,8 @@ class LineEdit : EditableTextWidget {
 	override bool showingHorizontalScroll() { return false; }
 	}
 
+	override int flexBasisWidth() { return 250; }
+
 	///
 	this(Widget parent) {
 		super(parent);
@@ -9515,6 +10234,9 @@ class TextEdit : EditableTextWidget {
 	}
 	override int maxHeight() { return int.max; }
 	override int heightStretchiness() { return 7; }
+
+	override int flexBasisWidth() { return 250; }
+	override int flexBasisHeight() { return 250; }
 }
 
 
@@ -10185,7 +10907,7 @@ class Event : ReflectableProperties {
 
 
 	/* old compatibility things */
-	deprecated("Use some subclass of KeyEventBase instead of plain Event in your handler going forward")
+	deprecated("Use some subclass of KeyEventBase instead of plain Event in your handler going forward. WARNING these may crash on non-key events!")
 	final @property {
 		Key key() { return (cast(KeyEventBase) this).key; }
 		KeyEvent originalKeyEvent() { return (cast(KeyEventBase) this).originalKeyEvent; }
@@ -10195,7 +10917,7 @@ class Event : ReflectableProperties {
 		bool shiftKey() { return (cast(KeyEventBase) this).shiftKey; }
 	}
 
-	deprecated("Use some subclass of MouseEventBase instead of Event in your handler going forward")
+	deprecated("Use some subclass of MouseEventBase instead of Event in your handler going forward. WARNING these may crash on non-mouse events!")
 	final @property {
 		int clientX() { return (cast(MouseEventBase) this).clientX; }
 		int clientY() { return (cast(MouseEventBase) this).clientY; }
@@ -10589,7 +11311,31 @@ abstract class MouseEventBase : Event {
 	int button; /// See: [MouseEvent.button]
 	int buttonLinear; /// See: [MouseEvent.buttonLinear]
 
+	/++
+		Indicates the current state of the given keyboard modifier keys.
+
+		History:
+			Added to mouse events on September 28, 2010.
+	+/
+	bool ctrlKey;
+
+	/// ditto
+	bool altKey;
+
+	/// ditto
+	bool shiftKey;
+
+
+
 	int state; ///
+
+	/++
+		for consistent names with key event. 
+
+		History:
+			Added September 28, 2021 (dub v10.3)
+	+/
+	alias modifierState = state;
 
 	/++
 		Mouse wheel movement sends down/up/click events just like other buttons clicking. This method is to help you filter that out.
