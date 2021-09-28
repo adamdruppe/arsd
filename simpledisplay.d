@@ -10656,12 +10656,12 @@ version(Windows) {
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					// send click
 					mouse.type = cast(MouseEventType) 1;
-					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
+					mouse.button = ((GET_WHEEL_DELTA_WPARAM(wParam) > 0) ? MouseButton.wheelUp : MouseButton.wheelDown);
 					mouseEvent(true, LOWORD(wParam));
 
 					// also send release
 					mouse.type = cast(MouseEventType) 2;
-					mouse.button = ((HIWORD(wParam) > 120) ? MouseButton.wheelDown : MouseButton.wheelUp);
+					mouse.button = ((GET_WHEEL_DELTA_WPARAM(wParam) > 0) ? MouseButton.wheelUp : MouseButton.wheelDown);
 					mouseEvent(true, LOWORD(wParam));
 				break;
 				case WM_MOUSEMOVE:
