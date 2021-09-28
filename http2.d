@@ -2646,9 +2646,10 @@ version(use_openssl) {
 	extern(C)
 	void SSL_CTX_keylog_cb_func(SSL_CTX* ctx, void function(SSL*, char*) func)
 	{
+		// this isn't in openssl 1.0 and is non-essential, so it is allowed to fail.
 		if(ossllib.SSL_CTX_set_keylog_callback)
 			ossllib.SSL_CTX_set_keylog_callback(ctx, func);
-		else throw new Exception("SSL_CTX_keylog_cb_func not loaded");
+		//else throw new Exception("SSL_CTX_keylog_cb_func not loaded");
 	}
 
 
