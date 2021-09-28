@@ -1239,6 +1239,7 @@ class Document : FileResource, DomParent {
 		return e;
 	}
 
+	/// ditto
 	final MaybeNullElement!SomeElementType optionSelector(SomeElementType = Element)(string selector, string file = __FILE__, size_t line = __LINE__)
 		if(is(SomeElementType : Element))
 	{
@@ -2306,6 +2307,12 @@ class Element : DomParent {
 
 		Note: you can give multiple selectors, separated by commas.
 	 	It will return the first match it finds.
+
+		Tip: to use namespaces, escape the colon in the name:
+
+		---
+			element.querySelector(`ns\:tag`); // the backticks are raw strings then the backslash is interpreted by querySelector
+		---
 	+/
 	@scriptable
 	Element querySelector(string selector) {

@@ -4,7 +4,9 @@
 
 	Pass `-version=ps1_style` or `-version=xbox_style` to pick your API style - the constants will use the names of the buttons on those controllers and attempt to emulate the other. ps1_style is compatible with more hardware and thus the default. XBox controllers work with either, though.
 
-	The docs for this file are quite weak, I suggest you view source of [arsd.gamehelers] for an example of how it might be used.
+	The docs for this file are quite weak, I suggest you view source of [arsd.game] for an example of how it might be used.
+
+	FIXME: on Linux, certain controller brands will not be recognized and you need to set the mappings yourself, e.g., `version(linux) joystickMapping[0] = &xbox360Mapping;`. I will formalize this into a proper api later.
 +/
 
 /*

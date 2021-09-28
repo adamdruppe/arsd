@@ -1,3 +1,4 @@
+// i could add a "time" uniform for the shaders automatically. unity does a float4 i think with ticks in it
 // register cheat code? or even a fighting game combo..
 /++
 	An add-on for simpledisplay.d, joystick.d, and simpleaudio.d

@@ -27,6 +27,13 @@
 */
 module arsd.terminalemulator;
 
+/+
+	FIXME
+	terminal optimization:
+        first invalidated + last invalidated to slice the array
+        when looking for things that need redrawing.
++/
+
 import arsd.color;
 import std.algorithm : max;
 
