@@ -5,8 +5,6 @@
 
 // FIXME: headers are supposed to be case insensitive. ugh.
 
-// FIXME: 100 continue. tho we never Expect it so should never happen, never kno,
-
 /++
 	This is version 2 of my http/1.1 client implementation.
 	
@@ -21,6 +19,11 @@
 	http2.d, despite its name, does NOT implement HTTP/2.0, but this
 	shouldn't matter for 99.9% of usage, since all servers will continue
 	to support HTTP/1.1 for a very long time.
+
+	History:
+		Automatic `100 Continue` handling was added on September 28, 2021. It doesn't
+		set the Expect header, so it isn't supposed to happen, but plenty of web servers
+		don't follow the standard anyway.
 +/
 module arsd.http2;
 
@@ -1791,7 +1794,7 @@ class HttpRequest {
 						break;
 						case "Set-Cookie":
 						case "set-cookie":
-							// FIXME handle
+							// handled elsewhere fyi
 						break;
 						default:
 							// ignore
@@ -1815,10 +1818,19 @@ class HttpRequest {
 						// done with headers
 						if(data[position] == '\r' && (position + 1) < data.length && data[position + 1] == '\n')
 							position++;
-						if(this.requestParameters.method == HttpVerb.HEAD)
-							state = State.complete;
-						else
-							state = State.readingBody;
+						if(responseData.headers.length && responseData.headers[0].indexOf(" 100 ") != -1) {
+							// HTTP/1.1 100 Continue
+							// here we just discard the continue message and carry on; it is just informational anyway
+							// it arguably should be smarter though
+							responseData.headers[0] = null;
+							position++;
+							continue;
+						} else {
+							if(this.requestParameters.method == HttpVerb.HEAD)
+								state = State.complete;
+							else
+								state = State.readingBody;
+						}
 						position++; // skip the newline
 						break;
 					} else if(data[position] == ' ' || data[position] == '\t') {
