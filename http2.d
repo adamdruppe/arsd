@@ -1805,7 +1805,7 @@ class HttpRequest {
 			}
 
 			size_t position = 0;
-			for(position = 0; position < dataIn.length; position++) {
+			for(position = 0; position < data.length; position++) {
 				if(headerReadingState.readingLineContinuation) {
 					if(data[position] == ' ' || data[position] == '\t')
 						continue;
@@ -1822,8 +1822,9 @@ class HttpRequest {
 							// HTTP/1.1 100 Continue
 							// here we just discard the continue message and carry on; it is just informational anyway
 							// it arguably should be smarter though
-							responseData.headers[0] = null;
-							position++;
+							responseData.headers = null;
+							headerReadingState.atStartOfLine = true;
+
 							continue;
 						} else {
 							if(this.requestParameters.method == HttpVerb.HEAD)
