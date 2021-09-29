@@ -3696,7 +3696,7 @@ class WebSocket {
 		WebSocketFrame wss;
 		wss.fin = true;
 		wss.opcode = WebSocketOpcode.close;
-		wss.data = cast(ubyte[]) reason;
+		wss.data = cast(ubyte[]) reason.dup;
 		wss.send(&llsend);
 
 		readyState_ = CLOSING;
@@ -3732,7 +3732,7 @@ class WebSocket {
 		wss.fin = true;
 		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.text;
-		wss.data = cast(ubyte[]) textData;
+		wss.data = cast(ubyte[]) textData.dup;
 		wss.send(&llsend);
 	}
 
@@ -3745,7 +3745,7 @@ class WebSocket {
 		wss.masked = this.isClient;
 		wss.fin = true;
 		wss.opcode = WebSocketOpcode.binary;
-		wss.data = cast(ubyte[]) binaryData;
+		wss.data = cast(ubyte[]) binaryData.dup;
 		wss.send(&llsend);
 	}
 
@@ -4065,11 +4065,11 @@ public {
 		ubyte[4] maskingKey; // don't set this when sending
 		ubyte[] data;
 
-		static WebSocketFrame simpleMessage(WebSocketOpcode opcode, void[] data) {
+		static WebSocketFrame simpleMessage(WebSocketOpcode opcode, in void[] data) {
 			WebSocketFrame msg;
 			msg.fin = true;
 			msg.opcode = opcode;
-			msg.data = cast(ubyte[]) data;
+			msg.data = cast(ubyte[]) data.dup; // it is mutated below when masked, so need to be cautious and copy it, sigh
 
 			return msg;
 		}

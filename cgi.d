@@ -5610,7 +5610,7 @@ version(cgi_with_websocket) {
 			WebSocketFrame wss;
 			wss.fin = true;
 			wss.opcode = WebSocketOpcode.close;
-			wss.data = cast(ubyte[]) reason;
+			wss.data = cast(ubyte[]) reason.dup;
 			wss.send(&llsend);
 
 			readyState_ = CLOSING;
@@ -5645,7 +5645,7 @@ version(cgi_with_websocket) {
 			WebSocketFrame wss;
 			wss.fin = true;
 			wss.opcode = WebSocketOpcode.text;
-			wss.data = cast(ubyte[]) textData;
+			wss.data = cast(ubyte[]) textData.dup;
 			wss.send(&llsend);
 		}
 
@@ -5657,7 +5657,7 @@ version(cgi_with_websocket) {
 			WebSocketFrame wss;
 			wss.fin = true;
 			wss.opcode = WebSocketOpcode.binary;
-			wss.data = cast(ubyte[]) binaryData;
+			wss.data = cast(ubyte[]) binaryData.dup;
 			wss.send(&llsend);
 		}
 
@@ -5895,7 +5895,7 @@ version(cgi_with_websocket) {
 			WebSocketFrame msg;
 			msg.fin = true;
 			msg.opcode = opcode;
-			msg.data = cast(ubyte[]) data;
+			msg.data = cast(ubyte[]) data.dup;
 
 			return msg;
 		}
