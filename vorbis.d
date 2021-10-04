@@ -2067,45 +2067,47 @@ enum iter_54(string z) = q{{
   ${__temp_prefix__}z[-7] = ${__temp_prefix__}k11+${__temp_prefix__}k22; // z1-z5-z2+z6
 }}.cmacroFixVars!"z"(z);
 
-private void imdct_step3_inner_s_loop_ld654 (int n, float* e, int i_off, float* A, int base_n) {
-  int a_off = base_n>>3;
-  float A2 = A[0+a_off];
-  float* z = e+i_off;
-  float* base = z-16*n;
-  float k00, k11;
-  while (z > base) {
-    k00   = z[-0]-z[-8];
-    k11   = z[-1]-z[-9];
-    z[-0] = z[-0]+z[-8];
-    z[-1] = z[-1]+z[-9];
-    z[-8] =  k00;
-    z[-9] =  k11;
+static void imdct_step3_inner_s_loop_ld654(int n, float *e, int i_off, float *A, int base_n)
+{
+    int a_off = base_n >> 3;
+    float A2 = A[0+a_off];
+    float *z = e + i_off;
+    float *base = z - 16 * n;
 
-    k00    = z[ -2]-z[-10];
-    k11    = z[ -3]-z[-11];
-    z[ -2] = z[ -2]+z[-10];
-    z[ -3] = z[ -3]+z[-11];
-    z[-10] = (k00+k11)*A2;
-    z[-11] = (k11-k00)*A2;
+    while (z > base) {
+        float k00,k11;
+        float l00,l11;
 
-    k00    = z[-12]-z[ -4];  // reverse to avoid a unary negation
-    k11    = z[ -5]-z[-13];
-    z[ -4] = z[ -4]+z[-12];
-    z[ -5] = z[ -5]+z[-13];
-    z[-12] = k11;
-    z[-13] = k00;
+        k00    = z[-0] - z[ -8];
+        k11    = z[-1] - z[ -9];
+        l00    = z[-2] - z[-10];
+        l11    = z[-3] - z[-11];
+        z[ -0] = z[-0] + z[ -8];
+        z[ -1] = z[-1] + z[ -9];
+        z[ -2] = z[-2] + z[-10];
+        z[ -3] = z[-3] + z[-11];
+        z[ -8] = k00;
+        z[ -9] = k11;
+        z[-10] = (l00+l11) * A2;
+        z[-11] = (l11-l00) * A2;
 
-    k00    = z[-14]-z[ -6];  // reverse to avoid a unary negation
-    k11    = z[ -7]-z[-15];
-    z[ -6] = z[ -6]+z[-14];
-    z[ -7] = z[ -7]+z[-15];
-    z[-14] = (k00+k11)*A2;
-    z[-15] = (k00-k11)*A2;
+        k00    = z[ -4] - z[-12];
+        k11    = z[ -5] - z[-13];
+        l00    = z[ -6] - z[-14];
+        l11    = z[ -7] - z[-15];
+        z[ -4] = z[ -4] + z[-12];
+        z[ -5] = z[ -5] + z[-13];
+        z[ -6] = z[ -6] + z[-14];
+        z[ -7] = z[ -7] + z[-15];
+        z[-12] = k11;
+        z[-13] = -k00;
+        z[-14] = (l11-l00) * A2;
+        z[-15] = (l00+l11) * -A2;
 
-    mixin(iter_54!"z");
-    mixin(iter_54!"z-8");
-    z -= 16;
-  }
+        mixin(iter_54!"z");
+        mixin(iter_54!"z-8");
+        z -= 16;
+    }
 }
 
 private void inverse_mdct (float* buffer, int n, VorbisDecoder f, int blocktype) {
