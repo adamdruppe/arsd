@@ -3236,15 +3236,19 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 	WebSocket client, based on the browser api, though also with other api options.
 
 	---
-		auto ws = new WebSocket(URI("ws://...."));
+		import arsd.http2;
 
-		ws.onmessage = (in char[] msg) {
-			ws.send("a reply");
-		};
+		void main() {
+			auto ws = new WebSocket(Uri("ws://...."));
 
-		ws.connect();
+			ws.onmessage = (in char[] msg) {
+				ws.send("a reply");
+			};
 
-		WebSocket.eventLoop();
+			ws.connect();
+
+			WebSocket.eventLoop();
+		}
 	---
 
 	Symbol_groups:

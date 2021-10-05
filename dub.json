@@ -150,6 +150,8 @@
 			"importPaths": ["."],
 			"targetType": "library",
 			"dflags": ["-mv=arsd.simpleaudio=simpleaudio.d"],
+			"libs-windows": ["winmm"],
+			"libs-linux": ["asound"],
 			"sourceFiles": ["simpleaudio.d"]
 		},
 		{

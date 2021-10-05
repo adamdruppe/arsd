@@ -1926,6 +1926,9 @@ abstract class ComboboxBase : Widget {
 	}
 
 	version(custom_widgets) {
+
+		// FIXME: this should scroll if there's too many elements to reasonably fit on screen
+
 		SimpleWindow dropDown;
 		void popup() {
 			auto w = width;
@@ -3324,6 +3327,9 @@ class DataControllerWidget(T) : WidgetContainer {
 			} else static if(is(typeof(w.value) == string) || is(typeof(w.content) == string)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.stringValue); } );
 			} else static if(is(typeof(w.value) == int)) {
+				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
+			} else static if(is(typeof(w) == DropDownSelection)) {
+				// special case for this to kinda support enums and such. coudl be better though
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 			} else {
 				static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
@@ -4852,6 +4858,16 @@ abstract class Slider : Widget {
 	}
 
 	protected abstract int win32direction();
+
+	/++
+		Alias for [position] for better compatibility with generic code.
+
+		History:
+			Added October 5, 2021
+	+/
+	@property int value() {
+		return position;
+	}
 
 	///
 	int position() {
@@ -7547,7 +7563,7 @@ class TableView : Widget {
 }
 
 version(custom_widgets)
-class TableViewWidgetInner : Widget {
+private class TableViewWidgetInner : Widget {
 
 // wrap this thing in a ScrollMessageWidget
 
@@ -7700,7 +7716,7 @@ class TabMessageWidget : Widget {
 	A line edit box with an associated label.
 
 	History:
-		On May 17, the default internal layout was changed from horizontal to vertical.
+		On May 17, 2021, the default internal layout was changed from horizontal to vertical.
 
 		```
 		Old: ________
@@ -7710,12 +7726,15 @@ class TabMessageWidget : Widget {
 		```
 
 		To restore the old behavior, use `new LabeledLineEdit("label", TextAlignment.Right, parent);`
+
+		You can also use `new LabeledLineEdit("label", TextAlignment.Left, parent);` if you want a
+		horizontal label but left aligned. You may also consider a [GridLayout].
 +/
 alias LabeledLineEdit = Labeled!LineEdit;
 
 /++
 	History:
-		Added May 19, 2020
+		Added May 19, 2021
 +/
 class Labeled(T) : Widget {
 	///
@@ -7739,6 +7758,8 @@ class Labeled(T) : Widget {
 		auto hl = new L(this);
 		this.label = new TextLabel(label, alignment, hl);
 		this.lineEdit = new T(hl);
+
+		this.label.labelFor = this.lineEdit;
 	}
 
 	private bool horizontal;
@@ -9787,6 +9808,17 @@ class TextLabel : Widget {
 
 	string label_;
 
+	/++
+		Indicates which other control this label is here for. Similar to HTML `for` attribute.
+
+		In practice this means a click on the label will focus the `labelFor`. In future versions
+		it will also set screen reader hints but that is not yet implemented.
+
+		History:
+			Added October 3, 2021 (dub v10.4)
+	+/
+	Widget labelFor;
+
 	///
 	@scriptable
 	string label() { return label_; }
@@ -9811,6 +9843,11 @@ class TextLabel : Widget {
 
 		version(win32_widgets)
 		createWin32Window(this, "static"w, label, (alignment & TextAlignment.Center) ? SS_CENTER : 0, (alignment & TextAlignment.Right) ? WS_EX_RIGHT : WS_EX_LEFT);
+	}
+
+	override void defaultEventHandler_click(scope ClickEvent ce) {
+		if(this.labelFor !is null)
+			this.labelFor.focus();
 	}
 
 	/++
