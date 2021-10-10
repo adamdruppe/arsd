@@ -20100,8 +20100,8 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 private mixin template DynamicLoad(Iface, string library, int majorVersion, alias success) {
 	mixin(staticForeachReplacement!Iface);
 
-        private void* libHandle;
-	private bool attempted;
+	private __gshared void* libHandle;
+	private __gshared bool attempted;
 
         void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
