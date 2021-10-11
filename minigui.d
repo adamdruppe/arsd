@@ -7445,14 +7445,19 @@ class DetailsView : Widget {
 /++
 	A TableView is a widget made to display a table of data strings.
 
-	Each item can have an id, a string, an icon, and a map of details (which win32 calls subitems). Items may be grouped in win32 but prolly not here cuz i wanna do the owner data thing.
+	Warning: this is not fully stable and the api may still change.
 
+	Future_Directions:
+		Each item should be able to take an icon too and maybe I'll allow more of the view modes Windows offers.
 	History:
-		Added September 24, 2021
+		Added September 24, 2021. Not yet stablized at this time.
 	See_Also:
 		[ListWidget] which displays a list of strings without additional columns.
 +/
 class TableView : Widget {
+	/++
+
+	+/
 	this(Widget parent) {
 		super(parent);
 
@@ -7466,6 +7471,9 @@ class TableView : Widget {
 		}
 	}
 
+	// FIXME: auto-size columns on double click of header thing like in Windows
+	// it need only make the currently displayed things fit well.
+
 	version(custom_widgets) private {
 		ColumnInfo[] columns;
 		int itemCount;
@@ -7473,11 +7481,15 @@ class TableView : Widget {
 		TableViewWidgetInner tvwi;
 	}
 
+	/// Passed to [setColumnInfo]
 	static struct ColumnInfo {
-		const(char)[] name;
-		int width;
-		TextAlignment alignment;
+		const(char)[] name; /// the name displayed in the header
+		int width; /// the default width, in pixels
+		TextAlignment alignment; /// alignment of the text in the cell
 	}
+	/++
+		Sets the number of columns along with information about the headers.
+	+/
 	void setColumnInfo(ColumnInfo[] columns...) {
 		version(custom_widgets) {
 			this.columns = columns.dup;
@@ -7506,21 +7518,29 @@ class TableView : Widget {
 		}
 	}
 
+	/++
+		Tells the view how many items are in it. It uses this to set the scroll bar, but the items are not added per se; it calls [getData] as-needed.
+	+/
 	void setItemCount(int count) {
 		version(custom_widgets) {
 			this.itemCount = count;
 			tvwi.updateScrolls();
+			redraw();
 		} else version(win32_widgets) {
 			SendMessage(hwnd, LVM_SETITEMCOUNT, count, 0);
 		}
 	}
 
+	/++
+		Clears all items;
+	+/
 	void clear() {
 		version(custom_widgets) {
 			this.itemCount = 0;
 			this.columns = null;
 			tvwi.header.updateHeaders();
 			tvwi.updateScrolls();
+			redraw();
 		} else version(win32_widgets) {
 			SendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0);
 		}
@@ -7558,7 +7578,9 @@ class TableView : Widget {
 		return true;
 	}
 
-	// fill up as much of the buffer as you can
+	/++
+
+	+/
 	void delegate(int row, int column, scope void delegate(in char[]) sink) getData;
 }
 
@@ -7614,16 +7636,28 @@ private class TableViewWidgetInner : Widget {
 
 		int row = smw.position.y;
 
+		enum padding = 3;
+
 		foreach(lol; 0 .. this.height / lh) {
-			x = 2;
+			x = 0;
 			foreach(columnNumber, column; tvw.columns) {
 				auto x2 = x + column.width;
 				auto smwx = smw.position.x;
 
-				if(x2 > smwx /* if right side of it is visible at all */ || (x >= smwx && x < smwx + this.width) /* left side is visible at all*/)
-				tvw.getData(row, cast(int) columnNumber, (info) {
-					painter.drawText(Point(x - smw.position.x, y), info, Point(x + column.width - 2 - smw.position.x, y + lh), column.alignment);
-				});
+				if(x2 > smwx /* if right side of it is visible at all */ || (x >= smwx && x < smwx + this.width) /* left side is visible at all*/) {
+					auto startX = x;
+					auto endX = x + column.width;
+					switch (column.alignment & (TextAlignment.Left | TextAlignment.Center | TextAlignment.Right)) {
+						case TextAlignment.Left: startX += padding; break;
+						case TextAlignment.Center: startX += padding; endX -= padding; break;
+						case TextAlignment.Right: endX -= padding; break;
+						default: /* broken */ break;
+					}
+					tvw.getData(row, cast(int) columnNumber, (info) {
+						// auto clip = painter.setClipRectangle(
+						painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x, y + lh), column.alignment);
+					});
+				}
 
 				x += column.width;
 			}
@@ -7665,12 +7699,14 @@ private class TableViewWidgetInner : Widget {
 		override void recomputeChildLayout() {
 			registerMovement();
 			int pos;
-			foreach(child; children[1 .. $]) {
+			foreach(idx, child; children[1 .. $]) {
+				if(idx >= tvw.tvw.columns.length)
+					continue;
 				child.x = pos;
 				child.y = 0;
-				child.width = 100;
+				child.width = tvw.tvw.columns[idx].width;
 				child.height = 16;// this.height;
-				pos += 100;
+				pos += child.width;
 
 				child.recomputeChildLayout();
 			}
