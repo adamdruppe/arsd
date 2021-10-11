@@ -89,6 +89,12 @@ unittest {
 		auto terminal = Terminal(ConsoleOutputType.linear);
 		string line = terminal.getline();
 		terminal.writeln("You wrote: ", line);
+
+		// new on October 11, 2021: you can change the echo char
+		// for password masking now. Also pass `0` there to get unix-style
+		// total silence.
+		string pwd = terminal.getline("Password: ", '*')
+		terminal.writeln("Your password is: ", pwd);
 	}
 
 	version(demos) main; // exclude from docs
@@ -2202,13 +2208,25 @@ struct Terminal {
 			---
 		)
 		You really shouldn't call this if stdin isn't actually a user-interactive terminal! So if you expect people to pipe data to your app, check for that or use something else. See [stdinIsTerminal].
+
+		Params:
+			prompt = the prompt to give the user. For example, `"Your name: "`.
+			echoChar = the character to show back to the user as they type. The default value of `dchar.init` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
+
+		History:
+			The `echoChar` parameter was added on October 11, 2021 (dub v10.4).
 	+/
-	string getline(string prompt = null) {
+	string getline(string prompt = null, dchar echoChar = dchar.init) {
 		if(lineGetter is null)
 			lineGetter = new LineGetter(&this);
 		// since the struct might move (it shouldn't, this should be unmovable!) but since
 		// it technically might, I'm updating the pointer before using it just in case.
 		lineGetter.terminal = &this;
+
+		auto ec = lineGetter.echoChar;
+		scope(exit)
+			lineGetter.echoChar = ec;
+		lineGetter.echoChar = echoChar;
 
 		if(prompt !is null)
 			lineGetter.prompt = prompt;
@@ -5452,6 +5470,21 @@ class LineGetter {
 		return maximumDrawWidth - promptLength - 1;
 	}
 
+	/++
+		Controls the input echo setting.
+
+		Possible values are:
+
+			`dchar.init` = normal; user can see their input.
+
+			`'\0'` = nothing; the cursor does not visually move as they edit. Similar to Unix style password prompts.
+
+			`'*'` (or anything else really) = will replace all input characters with stars when displaying, obscure the specific characters, but still showing the number of characters and position of the cursor to the user.
+
+		History:
+			Added October 11, 2021 (dub v10.4)
+	+/
+	dchar echoChar = dchar.init;
 
 	protected static struct Drawer {
 		LineGetter lg;
@@ -5481,6 +5514,8 @@ class LineGetter {
 		}
 
 		void specialChar(char c) {
+			// maybe i should check echoChar here too but meh
+
 			lg.terminal.color(lg.regularForeground, lg.specialCharBackground);
 			lg.terminal.write(c);
 			lg.terminal.color(currentFg, currentBg);
@@ -5492,6 +5527,12 @@ class LineGetter {
 		void regularChar(dchar ch) {
 			import std.utf;
 			char[4] buffer;
+
+			if(lg.echoChar == '\0')
+				return;
+			else if(lg.echoChar !is dchar.init)
+				ch = lg.echoChar;
+
 			auto l = encode(buffer, ch);
 			// note the Terminal buffers it so meh
 			lg.terminal.write(buffer[0 .. l]);
@@ -5616,7 +5657,8 @@ class LineGetter {
 			lastDrawLength = cdi.written;
 		}
 
-		terminal.moveTo(startOfLineX + cdi.cursorPositionToDrawX + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
+		// if echoChar is null then we don't want to reflect the position at all
+		terminal.moveTo(startOfLineX + ((echoChar == 0) ? 0 : cdi.cursorPositionToDrawX) + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
 		endRedraw(); // make sure the cursor is turned back on
 	}
 
