@@ -1992,6 +1992,8 @@ class HttpRequest {
 						responseData.content = cast(ubyte[]) n;
 						responseData.contentText = cast(string) responseData.content;
 						//responseData.content ~= cast(ubyte[]) uncompress.flush();
+					} else {
+						responseData.contentText = cast(string) responseData.content;
 					}
 
 					done:
