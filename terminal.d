@@ -93,7 +93,7 @@ unittest {
 		// new on October 11, 2021: you can change the echo char
 		// for password masking now. Also pass `0` there to get unix-style
 		// total silence.
-		string pwd = terminal.getline("Password: ", '*')
+		string pwd = terminal.getline("Password: ", '*');
 		terminal.writeln("Your password is: ", pwd);
 	}
 
@@ -4628,9 +4628,21 @@ class LineGetter {
 		return line.length > 0;
 	}
 
-	/// Override this if you don't want all lines added to the history.
-	/// You can return null to not add it at all, or you can transform it.
+	/++
+		Override this if you don't want all lines added to the history.
+		You can return null to not add it at all, or you can transform it.
+
+		History:
+			Prior to October 12, 2021, it always committed all candidates.
+			After that, it no longer commits in F9/ctrl+enter "run and maintain buffer"
+			operations. This is tested with the [lastLineWasRetained] method.
+
+			The idea is those are temporary experiments and need not clog history until
+			it is complete.
+	+/
 	/* virtual */ string historyFilter(string candidate) {
+		if(lastLineWasRetained())
+			return null;
 		return candidate;
 	}
 
@@ -5980,6 +5992,20 @@ class LineGetter {
 
 	private bool maintainBuffer;
 
+	/++
+		Returns true if the last line was retained by the user via the F9 or ctrl+enter key
+		which runs it but keeps it in the edit buffer.
+
+		This is only valid inside [finishGettingLine] or immediately after [finishGettingLine]
+		returns, but before [startGettingLine] is called again.
+
+		History:
+			Added October 12, 2021
+	+/
+	final public bool lastLineWasRetained() const {
+		return maintainBuffer;
+	}
+
 	private LineGetter supplementalGetter;
 
 	/* selection helpers */
@@ -6263,6 +6289,7 @@ class LineGetter {
 						justHitTab = justKilled = false;
 						// compile and run analog; return the current string
 						// but keep the buffer the same
+
 						maintainBuffer = true;
 						return false;
 					case '5', 0x1d: // ctrl+5, because of vim % shortcut
