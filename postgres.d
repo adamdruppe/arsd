@@ -1,4 +1,27 @@
-/// Uses libpq implement the [arsd.database.Database] interface.
+/++
+	Uses libpq implement the [arsd.database.Database] interface.
+
+	Requires the official pq library from Postgres to be installed to build
+	and to use. Note that on Windows, it is often distributed as `libpq.lib`.
+	You will have to copy or rename that to `pq.lib` for dub or dmd to automatically
+	find it. You will also likely need to add the lib search path yourself on
+	both Windows and Linux systems (on my Linux box, it is `-L-L/usr/local/pgsql/lib`
+	to dmd. You can also list things your app's dub.json's lflags too. Note on the
+	Microsoft linker, the flag is called `/LIBPATH`.)
+
+	For example, for the default Postgres install on Windows, try:
+
+	```
+		"lflags-windows": [ "/LIBPATH:C:/Program Files/PostgreSQL/<VERSION>/lib" ],
+	```
+
+	In your dub.json.
+
+	When you distribute your application, the user will want to install libpq client on
+	Linux, and on Windows, you may want to include the libpq.dll in your distribution.
+	Note it may also depend on OpenSSL ssl and crypto dlls and libintl.dll as well. These
+	should be found in the PostgreSQL lib and/or bin folders (check them both!).
++/
 module arsd.postgres;
 pragma(lib, "pq");
 
