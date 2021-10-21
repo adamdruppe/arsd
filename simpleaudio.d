@@ -266,7 +266,10 @@ private class SampleControlFlags : SampleController {
 struct AudioOutputThread {
 	@disable this();
 
-	@disable new(size_t); // gdc9 requires the arg fyi
+	static if(__VERSION__ < 2098)
+		mixin(q{ @disable new(size_t); }); // gdc9 requires the arg fyi, but i mix it in because dmd deprecates before semantic so it can't be versioned out ugh
+	else
+		@disable new(); // but new dmd is strict about not allowing it
 
 	@disable void start() {} // you aren't supposed to control the thread yourself!
 
