@@ -719,6 +719,8 @@ public:
       import core.stdc.stdlib : malloc, free;
       auto tfn = (cast(char*)malloc(filename.length+1))[0..filename.length+1];
       if (tfn !is null) {
+      	tfn[0 .. filename.length] = filename[];
+	tfn[filename.length] = 0;
         scope(exit) free(tfn.ptr);
         fl = fopen(tfn.ptr, "rb");
       }
