@@ -5031,6 +5031,7 @@ void sendAll(Socket s, const(void)[] data, string file = __FILE__, size_t line =
 			throw new ConnectionException(s, lastSocketError, file, line);
 		}
 		assert(amount > 0);
+
 		data = data[amount .. $];
 	} while(data.length);
 }
@@ -7403,9 +7404,9 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		foreach(url, connections; eventConnectionsByUrl)
 		foreach(connection; connections)
 			if(connection.needsChunking)
-				nonBlockingWrite(this, connection.fd, "2\r\n:\n");
+				nonBlockingWrite(this, connection.fd, "2\r\n:\n\r\n");
 			else
-				nonBlockingWrite(this, connection.fd, ":\n");
+				nonBlockingWrite(this, connection.fd, ":\n\r\n");
 	}
 
 	void fileClosed(int fd) {
@@ -7571,18 +7572,21 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		auto len = toHex(formattedMessage.length);
 		buffer[4 .. 6] = "\r\n"[];
 		buffer[4 - len.length .. 4] = len[];
+		buffer[6 + formattedMessage.length] = '\r';
+		buffer[6 + formattedMessage.length + 1] = '\n';
 
-		auto chunkedMessage = buffer[4 - len.length .. 6 + formattedMessage.length];
+		auto chunkedMessage = buffer[4 - len.length .. 6 + formattedMessage.length +2];
 		// done
 
 		// FIXME: send back requests when needed
 		// FIXME: send a single ":\n" every 15 seconds to keep alive
 
 		foreach(connection; connections) {
-			if(connection.needsChunking)
+			if(connection.needsChunking) {
 				nonBlockingWrite(this, connection.fd, chunkedMessage);
-			else
+			} else {
 				nonBlockingWrite(this, connection.fd, formattedMessage);
+			}
 		}
 	}
 }
