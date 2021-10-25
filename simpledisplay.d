@@ -15655,12 +15655,12 @@ struct Visual
 
 	alias Display* _XPrivDisplay;
 
-	Screen* ScreenOfDisplay(Display* dpy, int scr) {
+	extern(D) Screen* ScreenOfDisplay(Display* dpy, int scr) {
 		assert(dpy !is null);
 		return &dpy.screens[scr];
 	}
 
-	Window	RootWindow(Display *dpy,int scr) {
+	extern(D) Window RootWindow(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).root;
 	}
 
@@ -15680,18 +15680,18 @@ struct Visual
 		char* res_class;
 	}
 
-	int DefaultScreen(Display *dpy) {
+	extern(D) int DefaultScreen(Display *dpy) {
 		return dpy.default_screen;
 	}
 
-	int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
-	int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
-	int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
-	int DisplayWidthMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mwidth; }
-	int DisplayHeightMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mheight; }
-	auto DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
+	extern(D) int DefaultDepth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).root_depth; }
+	extern(D) int DisplayWidth(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).width; }
+	extern(D) int DisplayHeight(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).height; }
+	extern(D) int DisplayWidthMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mwidth; }
+	extern(D) int DisplayHeightMM(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).mheight; }
+	extern(D) auto DefaultColormap(Display* dpy, int scr) { return ScreenOfDisplay(dpy, scr).cmap; }
 
-	int ConnectionNumber(Display* dpy) { return dpy.fd; }
+	extern(D) int ConnectionNumber(Display* dpy) { return dpy.fd; }
 
 	enum int AnyPropertyType = 0;
 	enum int Success = 0;
@@ -15702,23 +15702,23 @@ struct Visual
 	enum int RevertToPointerRoot = PointerRoot;
 	enum int RevertToParent = 2;
 
-	int DefaultDepthOfDisplay(Display* dpy) {
+	extern(D) int DefaultDepthOfDisplay(Display* dpy) {
 		return ScreenOfDisplay(dpy, DefaultScreen(dpy)).root_depth;
 	}
 
-	Visual* DefaultVisual(Display *dpy,int scr) {
+	extern(D) Visual* DefaultVisual(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).root_visual;
 	}
 
-	GC DefaultGC(Display *dpy,int scr) {
+	extern(D) GC DefaultGC(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).default_gc;
 	}
 
-	uint BlackPixel(Display *dpy,int scr) {
+	extern(D) uint BlackPixel(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).black_pixel;
 	}
 
-	uint WhitePixel(Display *dpy,int scr) {
+	extern(D) uint WhitePixel(Display *dpy,int scr) {
 		return ScreenOfDisplay(dpy,scr).white_pixel;
 	}
 
