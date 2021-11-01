@@ -856,27 +856,27 @@ class Engine{
 
 	bool wantToQuit;
 
-	bool[NUM_BUTTONS][16] buttonsDown;
-	bool[NUM_BUTTONS][16] buttonsChecked;
+	bool[16][NUM_BUTTONS] buttonsDown;
+	bool[16][NUM_BUTTONS] buttonsChecked;
 
 	const int LAG_QUEUE_SIZE = 10;
 	// This lag is used for network games. It sends you old data until the lag time is up,
 	// to try and keep all the players synchronized.
-	int[NUM_BUTTONS][16][LAG_QUEUE_SIZE] buttonLagRemaining;
+	int[LAG_QUEUE_SIZE][16][NUM_BUTTONS] buttonLagRemaining;
 
 	// This way we can queue up activities happening while the lag is waiting
-	int[NUM_BUTTONS][16] buttonLagQueueStart;
-	int[NUM_BUTTONS][16] buttonLagQueueEnd;
-	int[NUM_BUTTONS][16] buttonLagQueueLength;
+	int[16][NUM_BUTTONS] buttonLagQueueStart;
+	int[16][NUM_BUTTONS] buttonLagQueueEnd;
+	int[16][NUM_BUTTONS] buttonLagQueueLength;
 
 	// These store what the state was before the lag began; it is what is returned while
 	// waiting on the lag to complete
-	bool[NUM_BUTTONS][16][LAG_QUEUE_SIZE] lagbuttonsDown;
+	bool[LAG_QUEUE_SIZE][16][NUM_BUTTONS] lagbuttonsDown;
 
 
 
-	int[3][16] stickX;
-	int[3][16] stickY;
+	int[16][3] stickX;
+	int[16][3] stickY;
 
 	bool[8] mouseButtonsDown;
 	bool[8] mouseButtonsChecked;
