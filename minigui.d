@@ -1706,6 +1706,10 @@ interface HasListOfValues!T : HasValue!T {
 }
 +/
 
+/++
+	History:
+		Added September 2021 (dub v10.4)
++/
 class GridLayout : Layout {
 
 	// FIXME: grid padding around edges and also cell spacing between units. even though you could do that by just specifying some gutter yourself in the layout.
@@ -1739,7 +1743,7 @@ class GridLayout : Layout {
 
 		The units of these arguments are in the proportional grid units you set in the constructor.
 	+/
-	Widget setChildPosition(Widget child, int x, int y, int width, int height, Gravity gravity = Gravity.Center) {
+	Widget setChildPosition(return Widget child, int x, int y, int width, int height, Gravity gravity = Gravity.Center) {
 		// ensure it is in bounds
 		// then ensure no overlaps
 
@@ -1777,8 +1781,10 @@ class GridLayout : Layout {
 
 	override void recomputeChildLayout() {
 		registerMovement();
+		int onGrid = cast(int) positions.length;
 		c: foreach(child; children) {
 			// just snap it to the grid
+			if(onGrid)
 			foreach(position; positions)
 				if(position.widget is child) {
 					child.x = this.width * position.x / this.gridWidth;
@@ -1816,9 +1822,10 @@ class GridLayout : Layout {
 
 
 					child.recomputeChildLayout();
+					onGrid--;
 					continue c;
 				}
-			//assert(0);
+			// the position isn't given on the grid array, we'll just fill in from where the explicit ones left off.
 		}
 	}
 
@@ -1851,15 +1858,15 @@ abstract class ComboboxBase : Widget {
 
 			addEventListener((KeyDownEvent event) {
 				if(event.key == Key.Up) {
-					if(selection > -1) { // -1 means select blank
-						selection--;
+					if(selection_ > -1) { // -1 means select blank
+						selection_--;
 						fireChangeEvent();
 					}
 					event.preventDefault();
 				}
 				if(event.key == Key.Down) {
-					if(selection + 1 < options.length) {
-						selection++;
+					if(selection_ + 1 < options.length) {
+						selection_++;
 						fireChangeEvent();
 					}
 					event.preventDefault();
@@ -1871,7 +1878,7 @@ abstract class ComboboxBase : Widget {
 	else static assert(false);
 
 	private string[] options;
-	private int selection = -1;
+	private int selection_ = -1;
 
 	void addOption(string s) {
 		options ~= s;
@@ -1879,12 +1886,16 @@ abstract class ComboboxBase : Widget {
 		SendMessageW(hwnd, 323 /*CB_ADDSTRING*/, 0, cast(LPARAM) toWstringzInternal(s));
 	}
 
+	int getSelection() {
+		return selection_;
+	}
+
 	void setSelection(int idx) {
-		selection = idx;
+		selection_ = idx;
 		version(win32_widgets)
 		SendMessageW(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
-		auto t = new SelectionChangedEvent(this, selection, selection == -1 ? null : options[selection]);
+		auto t = new SelectionChangedEvent(this, selection_, selection_ == -1 ? null : options[selection_]);
 		t.dispatch();
 	}
 
@@ -1904,16 +1915,16 @@ abstract class ComboboxBase : Widget {
 	version(win32_widgets)
 	override void handleWmCommand(ushort cmd, ushort id) {
 		if(cmd == CBN_SELCHANGE) {
-			selection = cast(int) SendMessageW(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
+			selection_ = cast(int) SendMessageW(hwnd, 327 /* CB_GETCURSEL */, 0, 0);
 			fireChangeEvent();
 		}
 	}
 
 	private void fireChangeEvent() {
-		if(selection >= options.length)
-			selection = -1;
+		if(selection_ >= options.length)
+			selection_ = -1;
 
-		auto t = new SelectionChangedEvent(this, selection, selection == -1 ? null : options[selection]);
+		auto t = new SelectionChangedEvent(this, selection_, selection_ == -1 ? null : options[selection_]);
 		t.dispatch();
 	}
 
@@ -1960,7 +1971,7 @@ abstract class ComboboxBase : Widget {
 						dropDown.close();
 						auto element = (event.y - 4) / Window.lineHeight;
 						if(element >= 0 && element <= options.length) {
-							selection = element;
+							selection_ = element;
 
 							fireChangeEvent();
 						}
@@ -2015,7 +2026,7 @@ class DropDownSelection : ComboboxBase {
 	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
 		auto cs = getComputedStyle();
 
-		painter.drawText(bounds.upperLeft, selection == -1 ? "" : options[selection]);
+		painter.drawText(bounds.upperLeft, selection_ == -1 ? "" : options[selection_]);
 
 		painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = cs.foregroundColor;
@@ -2117,9 +2128,9 @@ class ComboBox : ComboboxBase {
 			this.addEventListener("focus", &lineEdit.focus);
 
 			addDirectEventListener(EventType.change, {
-				listWidget.setSelection(selection);
-				if(selection != -1)
-					lineEdit.content = options[selection];
+				listWidget.setSelection(selection_);
+				if(selection_ != -1)
+					lineEdit.content = options[selection_];
 				lineEdit.focus();
 				redraw();
 			});
@@ -2133,7 +2144,7 @@ class ComboBox : ComboboxBase {
 						set = cast(int) idx;
 						break;
 					}
-				if(set != selection)
+				if(set != selection_)
 					this.setSelection(set);
 			});
 		} else static assert(false);
@@ -2603,7 +2614,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 			if(iw > 0) {
 				auto totalPossible = child.width;
-				if(child.width > iw)
+				if(child.width > iw && child.widthStretchiness() == 0)
 					child.width = iw;
 			}
 
@@ -2625,7 +2636,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			// and if possible, respect the ideal target
 			if(ih > 0) {
 				auto totalPossible = child.height;
-				if(child.height > ih)
+				if(child.height > ih && child.heightStretchiness() == 0)
 					child.height = ih;
 			}
 
@@ -2657,6 +2668,8 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 		auto removalPerItem  = toRemove * shrinkinessSum / shrinkyChildSum;
 		auto remainder = toRemove * shrinkinessSum % shrinkyChildSum;
 
+		// FIXME: wtf why am i shrinking things with no shrinkiness?
+
 		foreach(child; parent.children) {
 			auto childStyle = child.getComputedStyle();
 			if(cast(StaticPosition) child)
@@ -2673,12 +2686,10 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 			spaceRemaining += removalPerItem + remainder;
 		}
-
 	}
 
 	// stretch to fill space
 	while(spaceRemaining > 0 && stretchinessSum && stretchyChildSum) {
-		//import std.stdio; writeln("str ", stretchinessSum);
 		auto spacePerChild = spaceRemaining / stretchinessSum;
 		bool spreadEvenly;
 		bool giveToBiggest;
@@ -2751,6 +2762,7 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 
 		if(spaceRemaining == previousSpaceRemaining)
 			break; // apparently nothing more we can do
+
 	}
 
 	// position
@@ -6154,7 +6166,7 @@ class CollapsableSidebar : Widget {
 
 /// Stacks the widgets vertically, taking all the available width for each child.
 class VerticalLayout : Layout {
-	// intentionally blank - widget's default is vertical layout right now
+	// most of this is intentionally blank - widget's default is vertical layout right now
 	///
 	this(Widget parent) { super(parent); }
 }
