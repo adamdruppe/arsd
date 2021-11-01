@@ -13417,9 +13417,10 @@ mixin DynamicLoad!(XRender, "Xrender", 1, XRenderLibrarySuccessfullyLoaded) XRen
 				cast(int) atoms.length);
 		}
 
-		void motifHideDecorations() {
+		void motifHideDecorations(bool hide = true) {
 			MwmHints hints;
 			hints.flags = MWM_HINTS_DECORATIONS;
+			hints.decorations = hide ? 0 : 1;
 
 			XChangeProperty(
 				display,
@@ -15050,11 +15051,11 @@ enum EventMask:int
 }
 
 struct MwmHints {
-	int flags;
-	int functions;
-	int decorations;
-	int input_mode;
-	int status;
+	c_ulong flags;
+	c_ulong functions;
+	c_ulong decorations;
+	c_long input_mode;
+	c_ulong status;
 }
 
 enum {
