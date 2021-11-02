@@ -1967,8 +1967,12 @@ class Element : DomParent {
 
 		auto p = parent_.asElement;
 
-		if(cast(DocumentFragment) p)
-			return p.parent_.asElement;
+		if(cast(DocumentFragment) p) {
+			if(p.parent_ is null)
+				return null;
+			else
+				return p.parent_.asElement;
+		}
 
 		return p;
 	}
@@ -4179,6 +4183,30 @@ string xmlEntitiesEncode(string data) {
 /// This helper function is used for decoding html entities. It has a hard-coded list of entities and characters.
 /// Group: core_functionality
 dchar parseEntity(in dchar[] entity) {
+
+	char[128] buffer;
+	int bpos;
+	foreach(char c; entity[1 .. $-1])
+		buffer[bpos++] = c;
+	char[] entityAsString = buffer[0 .. bpos];
+
+	int min = 0;
+	int max = cast(int) availableEntities.length;
+
+	keep_looking:
+	if(min + 1 < max) {
+		int spot = (max - min) / 2 + min;
+		if(availableEntities[spot] == entityAsString) {
+			return availableEntitiesValues[spot];
+		} else if(entityAsString < availableEntities[spot]) {
+			max = spot;
+			goto keep_looking;
+		} else {
+			min = spot;
+			goto keep_looking;
+		}
+	}
+
 	switch(entity[1..$-1]) {
 		case "quot":
 			return '"';
@@ -4191,1454 +4219,6 @@ dchar parseEntity(in dchar[] entity) {
 		case "amp":
 			return '&';
 		// the next are html rather than xml
-
-		// Retrieved from https://en.wikipedia.org/wiki/List_of_XML_and_HTML_character_entity_references
-		// Only entities that resolve to U+0009 ~ U+1D56B are stated.
-		case "Tab": return '\u0009';
-		case "NewLine": return '\u000A';
-		case "excl": return '\u0021';
-		case "QUOT": return '\u0022';
-		case "num": return '\u0023';
-		case "dollar": return '\u0024';
-		case "percnt": return '\u0025';
-		case "AMP": return '\u0026';
-		case "lpar": return '\u0028';
-		case "rpar": return '\u0029';
-		case "ast": case "midast": return '\u002A';
-		case "plus": return '\u002B';
-		case "comma": return '\u002C';
-		case "period": return '\u002E';
-		case "sol": return '\u002F';
-		case "colon": return '\u003A';
-		case "semi": return '\u003B';
-		case "LT": return '\u003C';
-		case "equals": return '\u003D';
-		case "GT": return '\u003E';
-		case "quest": return '\u003F';
-		case "commat": return '\u0040';
-		case "lsqb": case "lbrack": return '\u005B';
-		case "bsol": return '\u005C';
-		case "rsqb": case "rbrack": return '\u005D';
-		case "Hat": return '\u005E';
-		case "lowbar": case "UnderBar": return '\u005F';
-		case "grave": case "DiacriticalGrave": return '\u0060';
-		case "lcub": case "lbrace": return '\u007B';
-		case "verbar": case "vert": case "VerticalLine": return '\u007C';
-		case "rcub": case "rbrace": return '\u007D';
-		case "nbsp": case "NonBreakingSpace": return '\u00A0';
-		case "iexcl": return '\u00A1';
-		case "cent": return '\u00A2';
-		case "pound": return '\u00A3';
-		case "curren": return '\u00A4';
-		case "yen": return '\u00A5';
-		case "brvbar": return '\u00A6';
-		case "sect": return '\u00A7';
-		case "Dot": case "die": case "DoubleDot": case "uml": return '\u00A8';
-		case "copy": case "COPY": return '\u00A9';
-		case "ordf": return '\u00AA';
-		case "laquo": return '\u00AB';
-		case "not": return '\u00AC';
-		case "shy": return '\u00AD';
-		case "reg": case "circledR": case "REG": return '\u00AE';
-		case "macr": case "strns": return '\u00AF';
-		case "deg": return '\u00B0';
-		case "plusmn": case "pm": case "PlusMinus": return '\u00B1';
-		case "sup2": return '\u00B2';
-		case "sup3": return '\u00B3';
-		case "acute": case "DiacriticalAcute": return '\u00B4';
-		case "micro": return '\u00B5';
-		case "para": return '\u00B6';
-		case "middot": case "centerdot": case "CenterDot": return '\u00B7';
-		case "cedil": case "Cedilla": return '\u00B8';
-		case "sup1": return '\u00B9';
-		case "ordm": return '\u00BA';
-		case "raquo": return '\u00BB';
-		case "frac14": return '\u00BC';
-		case "frac12": case "half": return '\u00BD';
-		case "frac34": return '\u00BE';
-		case "iquest": return '\u00BF';
-		case "Agrave": return '\u00C0';
-		case "Aacute": return '\u00C1';
-		case "Acirc": return '\u00C2';
-		case "Atilde": return '\u00C3';
-		case "Auml": return '\u00C4';
-		case "Aring": case "angst": return '\u00C5';
-		case "AElig": return '\u00C6';
-		case "Ccedil": return '\u00C7';
-		case "Egrave": return '\u00C8';
-		case "Eacute": return '\u00C9';
-		case "Ecirc": return '\u00CA';
-		case "Euml": return '\u00CB';
-		case "Igrave": return '\u00CC';
-		case "Iacute": return '\u00CD';
-		case "Icirc": return '\u00CE';
-		case "Iuml": return '\u00CF';
-		case "ETH": return '\u00D0';
-		case "Ntilde": return '\u00D1';
-		case "Ograve": return '\u00D2';
-		case "Oacute": return '\u00D3';
-		case "Ocirc": return '\u00D4';
-		case "Otilde": return '\u00D5';
-		case "Ouml": return '\u00D6';
-		case "times": return '\u00D7';
-		case "Oslash": return '\u00D8';
-		case "Ugrave": return '\u00D9';
-		case "Uacute": return '\u00DA';
-		case "Ucirc": return '\u00DB';
-		case "Uuml": return '\u00DC';
-		case "Yacute": return '\u00DD';
-		case "THORN": return '\u00DE';
-		case "szlig": return '\u00DF';
-		case "agrave": return '\u00E0';
-		case "aacute": return '\u00E1';
-		case "acirc": return '\u00E2';
-		case "atilde": return '\u00E3';
-		case "auml": return '\u00E4';
-		case "aring": return '\u00E5';
-		case "aelig": return '\u00E6';
-		case "ccedil": return '\u00E7';
-		case "egrave": return '\u00E8';
-		case "eacute": return '\u00E9';
-		case "ecirc": return '\u00EA';
-		case "euml": return '\u00EB';
-		case "igrave": return '\u00EC';
-		case "iacute": return '\u00ED';
-		case "icirc": return '\u00EE';
-		case "iuml": return '\u00EF';
-		case "eth": return '\u00F0';
-		case "ntilde": return '\u00F1';
-		case "ograve": return '\u00F2';
-		case "oacute": return '\u00F3';
-		case "ocirc": return '\u00F4';
-		case "otilde": return '\u00F5';
-		case "ouml": return '\u00F6';
-		case "divide": case "div": return '\u00F7';
-		case "oslash": return '\u00F8';
-		case "ugrave": return '\u00F9';
-		case "uacute": return '\u00FA';
-		case "ucirc": return '\u00FB';
-		case "uuml": return '\u00FC';
-		case "yacute": return '\u00FD';
-		case "thorn": return '\u00FE';
-		case "yuml": return '\u00FF';
-		case "Amacr": return '\u0100';
-		case "amacr": return '\u0101';
-		case "Abreve": return '\u0102';
-		case "abreve": return '\u0103';
-		case "Aogon": return '\u0104';
-		case "aogon": return '\u0105';
-		case "Cacute": return '\u0106';
-		case "cacute": return '\u0107';
-		case "Ccirc": return '\u0108';
-		case "ccirc": return '\u0109';
-		case "Cdot": return '\u010A';
-		case "cdot": return '\u010B';
-		case "Ccaron": return '\u010C';
-		case "ccaron": return '\u010D';
-		case "Dcaron": return '\u010E';
-		case "dcaron": return '\u010F';
-		case "Dstrok": return '\u0110';
-		case "dstrok": return '\u0111';
-		case "Emacr": return '\u0112';
-		case "emacr": return '\u0113';
-		case "Edot": return '\u0116';
-		case "edot": return '\u0117';
-		case "Eogon": return '\u0118';
-		case "eogon": return '\u0119';
-		case "Ecaron": return '\u011A';
-		case "ecaron": return '\u011B';
-		case "Gcirc": return '\u011C';
-		case "gcirc": return '\u011D';
-		case "Gbreve": return '\u011E';
-		case "gbreve": return '\u011F';
-		case "Gdot": return '\u0120';
-		case "gdot": return '\u0121';
-		case "Gcedil": return '\u0122';
-		case "Hcirc": return '\u0124';
-		case "hcirc": return '\u0125';
-		case "Hstrok": return '\u0126';
-		case "hstrok": return '\u0127';
-		case "Itilde": return '\u0128';
-		case "itilde": return '\u0129';
-		case "Imacr": return '\u012A';
-		case "imacr": return '\u012B';
-		case "Iogon": return '\u012E';
-		case "iogon": return '\u012F';
-		case "Idot": return '\u0130';
-		case "imath": case "inodot": return '\u0131';
-		case "IJlig": return '\u0132';
-		case "ijlig": return '\u0133';
-		case "Jcirc": return '\u0134';
-		case "jcirc": return '\u0135';
-		case "Kcedil": return '\u0136';
-		case "kcedil": return '\u0137';
-		case "kgreen": return '\u0138';
-		case "Lacute": return '\u0139';
-		case "lacute": return '\u013A';
-		case "Lcedil": return '\u013B';
-		case "lcedil": return '\u013C';
-		case "Lcaron": return '\u013D';
-		case "lcaron": return '\u013E';
-		case "Lmidot": return '\u013F';
-		case "lmidot": return '\u0140';
-		case "Lstrok": return '\u0141';
-		case "lstrok": return '\u0142';
-		case "Nacute": return '\u0143';
-		case "nacute": return '\u0144';
-		case "Ncedil": return '\u0145';
-		case "ncedil": return '\u0146';
-		case "Ncaron": return '\u0147';
-		case "ncaron": return '\u0148';
-		case "napos": return '\u0149';
-		case "ENG": return '\u014A';
-		case "eng": return '\u014B';
-		case "Omacr": return '\u014C';
-		case "omacr": return '\u014D';
-		case "Odblac": return '\u0150';
-		case "odblac": return '\u0151';
-		case "OElig": return '\u0152';
-		case "oelig": return '\u0153';
-		case "Racute": return '\u0154';
-		case "racute": return '\u0155';
-		case "Rcedil": return '\u0156';
-		case "rcedil": return '\u0157';
-		case "Rcaron": return '\u0158';
-		case "rcaron": return '\u0159';
-		case "Sacute": return '\u015A';
-		case "sacute": return '\u015B';
-		case "Scirc": return '\u015C';
-		case "scirc": return '\u015D';
-		case "Scedil": return '\u015E';
-		case "scedil": return '\u015F';
-		case "Scaron": return '\u0160';
-		case "scaron": return '\u0161';
-		case "Tcedil": return '\u0162';
-		case "tcedil": return '\u0163';
-		case "Tcaron": return '\u0164';
-		case "tcaron": return '\u0165';
-		case "Tstrok": return '\u0166';
-		case "tstrok": return '\u0167';
-		case "Utilde": return '\u0168';
-		case "utilde": return '\u0169';
-		case "Umacr": return '\u016A';
-		case "umacr": return '\u016B';
-		case "Ubreve": return '\u016C';
-		case "ubreve": return '\u016D';
-		case "Uring": return '\u016E';
-		case "uring": return '\u016F';
-		case "Udblac": return '\u0170';
-		case "udblac": return '\u0171';
-		case "Uogon": return '\u0172';
-		case "uogon": return '\u0173';
-		case "Wcirc": return '\u0174';
-		case "wcirc": return '\u0175';
-		case "Ycirc": return '\u0176';
-		case "ycirc": return '\u0177';
-		case "Yuml": return '\u0178';
-		case "Zacute": return '\u0179';
-		case "zacute": return '\u017A';
-		case "Zdot": return '\u017B';
-		case "zdot": return '\u017C';
-		case "Zcaron": return '\u017D';
-		case "zcaron": return '\u017E';
-		case "fnof": return '\u0192';
-		case "imped": return '\u01B5';
-		case "gacute": return '\u01F5';
-		case "jmath": return '\u0237';
-		case "circ": return '\u02C6';
-		case "caron": case "Hacek": return '\u02C7';
-		case "breve": case "Breve": return '\u02D8';
-		case "dot": case "DiacriticalDot": return '\u02D9';
-		case "ring": return '\u02DA';
-		case "ogon": return '\u02DB';
-		case "tilde": case "DiacriticalTilde": return '\u02DC';
-		case "dblac": case "DiacriticalDoubleAcute": return '\u02DD';
-		case "DownBreve": return '\u0311';
-		case "Alpha": return '\u0391';
-		case "Beta": return '\u0392';
-		case "Gamma": return '\u0393';
-		case "Delta": return '\u0394';
-		case "Epsilon": return '\u0395';
-		case "Zeta": return '\u0396';
-		case "Eta": return '\u0397';
-		case "Theta": return '\u0398';
-		case "Iota": return '\u0399';
-		case "Kappa": return '\u039A';
-		case "Lambda": return '\u039B';
-		case "Mu": return '\u039C';
-		case "Nu": return '\u039D';
-		case "Xi": return '\u039E';
-		case "Omicron": return '\u039F';
-		case "Pi": return '\u03A0';
-		case "Rho": return '\u03A1';
-		case "Sigma": return '\u03A3';
-		case "Tau": return '\u03A4';
-		case "Upsilon": return '\u03A5';
-		case "Phi": return '\u03A6';
-		case "Chi": return '\u03A7';
-		case "Psi": return '\u03A8';
-		case "Omega": case "ohm": return '\u03A9';
-		case "alpha": return '\u03B1';
-		case "beta": return '\u03B2';
-		case "gamma": return '\u03B3';
-		case "delta": return '\u03B4';
-		case "epsi": case "epsilon": return '\u03B5';
-		case "zeta": return '\u03B6';
-		case "eta": return '\u03B7';
-		case "theta": return '\u03B8';
-		case "iota": return '\u03B9';
-		case "kappa": return '\u03BA';
-		case "lambda": return '\u03BB';
-		case "mu": return '\u03BC';
-		case "nu": return '\u03BD';
-		case "xi": return '\u03BE';
-		case "omicron": return '\u03BF';
-		case "pi": return '\u03C0';
-		case "rho": return '\u03C1';
-		case "sigmav": case "varsigma": case "sigmaf": return '\u03C2';
-		case "sigma": return '\u03C3';
-		case "tau": return '\u03C4';
-		case "upsi": case "upsilon": return '\u03C5';
-		case "phi": return '\u03C6';
-		case "chi": return '\u03C7';
-		case "psi": return '\u03C8';
-		case "omega": return '\u03C9';
-		case "thetav": case "vartheta": case "thetasym": return '\u03D1';
-		case "Upsi": case "upsih": return '\u03D2';
-		case "straightphi": case "phiv": case "varphi": return '\u03D5';
-		case "piv": case "varpi": return '\u03D6';
-		case "Gammad": return '\u03DC';
-		case "gammad": case "digamma": return '\u03DD';
-		case "kappav": case "varkappa": return '\u03F0';
-		case "rhov": case "varrho": return '\u03F1';
-		case "epsiv": case "varepsilon": case "straightepsilon": return '\u03F5';
-		case "bepsi": case "backepsilon": return '\u03F6';
-		case "IOcy": return '\u0401';
-		case "DJcy": return '\u0402';
-		case "GJcy": return '\u0403';
-		case "Jukcy": return '\u0404';
-		case "DScy": return '\u0405';
-		case "Iukcy": return '\u0406';
-		case "YIcy": return '\u0407';
-		case "Jsercy": return '\u0408';
-		case "LJcy": return '\u0409';
-		case "NJcy": return '\u040A';
-		case "TSHcy": return '\u040B';
-		case "KJcy": return '\u040C';
-		case "Ubrcy": return '\u040E';
-		case "DZcy": return '\u040F';
-		case "Acy": return '\u0410';
-		case "Bcy": return '\u0411';
-		case "Vcy": return '\u0412';
-		case "Gcy": return '\u0413';
-		case "Dcy": return '\u0414';
-		case "IEcy": return '\u0415';
-		case "ZHcy": return '\u0416';
-		case "Zcy": return '\u0417';
-		case "Icy": return '\u0418';
-		case "Jcy": return '\u0419';
-		case "Kcy": return '\u041A';
-		case "Lcy": return '\u041B';
-		case "Mcy": return '\u041C';
-		case "Ncy": return '\u041D';
-		case "Ocy": return '\u041E';
-		case "Pcy": return '\u041F';
-		case "Rcy": return '\u0420';
-		case "Scy": return '\u0421';
-		case "Tcy": return '\u0422';
-		case "Ucy": return '\u0423';
-		case "Fcy": return '\u0424';
-		case "KHcy": return '\u0425';
-		case "TScy": return '\u0426';
-		case "CHcy": return '\u0427';
-		case "SHcy": return '\u0428';
-		case "SHCHcy": return '\u0429';
-		case "HARDcy": return '\u042A';
-		case "Ycy": return '\u042B';
-		case "SOFTcy": return '\u042C';
-		case "Ecy": return '\u042D';
-		case "YUcy": return '\u042E';
-		case "YAcy": return '\u042F';
-		case "acy": return '\u0430';
-		case "bcy": return '\u0431';
-		case "vcy": return '\u0432';
-		case "gcy": return '\u0433';
-		case "dcy": return '\u0434';
-		case "iecy": return '\u0435';
-		case "zhcy": return '\u0436';
-		case "zcy": return '\u0437';
-		case "icy": return '\u0438';
-		case "jcy": return '\u0439';
-		case "kcy": return '\u043A';
-		case "lcy": return '\u043B';
-		case "mcy": return '\u043C';
-		case "ncy": return '\u043D';
-		case "ocy": return '\u043E';
-		case "pcy": return '\u043F';
-		case "rcy": return '\u0440';
-		case "scy": return '\u0441';
-		case "tcy": return '\u0442';
-		case "ucy": return '\u0443';
-		case "fcy": return '\u0444';
-		case "khcy": return '\u0445';
-		case "tscy": return '\u0446';
-		case "chcy": return '\u0447';
-		case "shcy": return '\u0448';
-		case "shchcy": return '\u0449';
-		case "hardcy": return '\u044A';
-		case "ycy": return '\u044B';
-		case "softcy": return '\u044C';
-		case "ecy": return '\u044D';
-		case "yucy": return '\u044E';
-		case "yacy": return '\u044F';
-		case "iocy": return '\u0451';
-		case "djcy": return '\u0452';
-		case "gjcy": return '\u0453';
-		case "jukcy": return '\u0454';
-		case "dscy": return '\u0455';
-		case "iukcy": return '\u0456';
-		case "yicy": return '\u0457';
-		case "jsercy": return '\u0458';
-		case "ljcy": return '\u0459';
-		case "njcy": return '\u045A';
-		case "tshcy": return '\u045B';
-		case "kjcy": return '\u045C';
-		case "ubrcy": return '\u045E';
-		case "dzcy": return '\u045F';
-		case "ensp": return '\u2002';
-		case "emsp": return '\u2003';
-		case "emsp13": return '\u2004';
-		case "emsp14": return '\u2005';
-		case "numsp": return '\u2007';
-		case "puncsp": return '\u2008';
-		case "thinsp": case "ThinSpace": return '\u2009';
-		case "hairsp": case "VeryThinSpace": return '\u200A';
-		case "ZeroWidthSpace": case "NegativeVeryThinSpace": case "NegativeThinSpace": case "NegativeMediumSpace": case "NegativeThickSpace": return '\u200B';
-		case "zwnj": return '\u200C';
-		case "zwj": return '\u200D';
-		case "lrm": return '\u200E';
-		case "rlm": return '\u200F';
-		case "hyphen": case "dash": return '\u2010';
-		case "ndash": return '\u2013';
-		case "mdash": return '\u2014';
-		case "horbar": return '\u2015';
-		case "Verbar": case "Vert": return '\u2016';
-		case "lsquo": case "OpenCurlyQuote": return '\u2018';
-		case "rsquo": case "rsquor": case "CloseCurlyQuote": return '\u2019';
-		case "lsquor": case "sbquo": return '\u201A';
-		case "ldquo": case "OpenCurlyDoubleQuote": return '\u201C';
-		case "rdquo": case "rdquor": case "CloseCurlyDoubleQuote": return '\u201D';
-		case "ldquor": case "bdquo": return '\u201E';
-		case "dagger": return '\u2020';
-		case "Dagger": case "ddagger": return '\u2021';
-		case "bull": case "bullet": return '\u2022';
-		case "nldr": return '\u2025';
-		case "hellip": case "mldr": return '\u2026';
-		case "permil": return '\u2030';
-		case "pertenk": return '\u2031';
-		case "prime": return '\u2032';
-		case "Prime": return '\u2033';
-		case "tprime": return '\u2034';
-		case "bprime": case "backprime": return '\u2035';
-		case "lsaquo": return '\u2039';
-		case "rsaquo": return '\u203A';
-		case "oline": case "OverBar": return '\u203E';
-		case "caret": return '\u2041';
-		case "hybull": return '\u2043';
-		case "frasl": return '\u2044';
-		case "bsemi": return '\u204F';
-		case "qprime": return '\u2057';
-		case "MediumSpace": return '\u205F';
-		case "NoBreak": return '\u2060';
-		case "ApplyFunction": case "af": return '\u2061';
-		case "InvisibleTimes": case "it": return '\u2062';
-		case "InvisibleComma": case "ic": return '\u2063';
-		case "euro": return '\u20AC';
-		case "tdot": case "TripleDot": return '\u20DB';
-		case "DotDot": return '\u20DC';
-		case "Copf": case "complexes": return '\u2102';
-		case "incare": return '\u2105';
-		case "gscr": return '\u210A';
-		case "hamilt": case "HilbertSpace": case "Hscr": return '\u210B';
-		case "Hfr": case "Poincareplane": return '\u210C';
-		case "quaternions": case "Hopf": return '\u210D';
-		case "planckh": return '\u210E';
-		case "planck": case "hbar": case "plankv": case "hslash": return '\u210F';
-		case "Iscr": case "imagline": return '\u2110';
-		case "image": case "Im": case "imagpart": case "Ifr": return '\u2111';
-		case "Lscr": case "lagran": case "Laplacetrf": return '\u2112';
-		case "ell": return '\u2113';
-		case "Nopf": case "naturals": return '\u2115';
-		case "numero": return '\u2116';
-		case "copysr": return '\u2117';
-		case "weierp": case "wp": return '\u2118';
-		case "Popf": case "primes": return '\u2119';
-		case "rationals": case "Qopf": return '\u211A';
-		case "Rscr": case "realine": return '\u211B';
-		case "real": case "Re": case "realpart": case "Rfr": return '\u211C';
-		case "reals": case "Ropf": return '\u211D';
-		case "rx": return '\u211E';
-		case "trade": case "TRADE": return '\u2122';
-		case "integers": case "Zopf": return '\u2124';
-		case "mho": return '\u2127';
-		case "Zfr": case "zeetrf": return '\u2128';
-		case "iiota": return '\u2129';
-		case "bernou": case "Bernoullis": case "Bscr": return '\u212C';
-		case "Cfr": case "Cayleys": return '\u212D';
-		case "escr": return '\u212F';
-		case "Escr": case "expectation": return '\u2130';
-		case "Fscr": case "Fouriertrf": return '\u2131';
-		case "phmmat": case "Mellintrf": case "Mscr": return '\u2133';
-		case "order": case "orderof": case "oscr": return '\u2134';
-		case "alefsym": case "aleph": return '\u2135';
-		case "beth": return '\u2136';
-		case "gimel": return '\u2137';
-		case "daleth": return '\u2138';
-		case "CapitalDifferentialD": case "DD": return '\u2145';
-		case "DifferentialD": case "dd": return '\u2146';
-		case "ExponentialE": case "exponentiale": case "ee": return '\u2147';
-		case "ImaginaryI": case "ii": return '\u2148';
-		case "frac13": return '\u2153';
-		case "frac23": return '\u2154';
-		case "frac15": return '\u2155';
-		case "frac25": return '\u2156';
-		case "frac35": return '\u2157';
-		case "frac45": return '\u2158';
-		case "frac16": return '\u2159';
-		case "frac56": return '\u215A';
-		case "frac18": return '\u215B';
-		case "frac38": return '\u215C';
-		case "frac58": return '\u215D';
-		case "frac78": return '\u215E';
-		case "larr": case "leftarrow": case "LeftArrow": case "slarr": case "ShortLeftArrow": return '\u2190';
-		case "uarr": case "uparrow": case "UpArrow": case "ShortUpArrow": return '\u2191';
-		case "rarr": case "rightarrow": case "RightArrow": case "srarr": case "ShortRightArrow": return '\u2192';
-		case "darr": case "downarrow": case "DownArrow": case "ShortDownArrow": return '\u2193';
-		case "harr": case "leftrightarrow": case "LeftRightArrow": return '\u2194';
-		case "varr": case "updownarrow": case "UpDownArrow": return '\u2195';
-		case "nwarr": case "UpperLeftArrow": case "nwarrow": return '\u2196';
-		case "nearr": case "UpperRightArrow": case "nearrow": return '\u2197';
-		case "searr": case "searrow": case "LowerRightArrow": return '\u2198';
-		case "swarr": case "swarrow": case "LowerLeftArrow": return '\u2199';
-		case "nlarr": case "nleftarrow": return '\u219A';
-		case "nrarr": case "nrightarrow": return '\u219B';
-		case "rarrw": case "rightsquigarrow": return '\u219D';
-		case "Larr": case "twoheadleftarrow": return '\u219E';
-		case "Uarr": return '\u219F';
-		case "Rarr": case "twoheadrightarrow": return '\u21A0';
-		case "Darr": return '\u21A1';
-		case "larrtl": case "leftarrowtail": return '\u21A2';
-		case "rarrtl": case "rightarrowtail": return '\u21A3';
-		case "LeftTeeArrow": case "mapstoleft": return '\u21A4';
-		case "UpTeeArrow": case "mapstoup": return '\u21A5';
-		case "map": case "RightTeeArrow": case "mapsto": return '\u21A6';
-		case "DownTeeArrow": case "mapstodown": return '\u21A7';
-		case "larrhk": case "hookleftarrow": return '\u21A9';
-		case "rarrhk": case "hookrightarrow": return '\u21AA';
-		case "larrlp": case "looparrowleft": return '\u21AB';
-		case "rarrlp": case "looparrowright": return '\u21AC';
-		case "harrw": case "leftrightsquigarrow": return '\u21AD';
-		case "nharr": case "nleftrightarrow": return '\u21AE';
-		case "lsh": case "Lsh": return '\u21B0';
-		case "rsh": case "Rsh": return '\u21B1';
-		case "ldsh": return '\u21B2';
-		case "rdsh": return '\u21B3';
-		case "crarr": return '\u21B5';
-		case "cularr": case "curvearrowleft": return '\u21B6';
-		case "curarr": case "curvearrowright": return '\u21B7';
-		case "olarr": case "circlearrowleft": return '\u21BA';
-		case "orarr": case "circlearrowright": return '\u21BB';
-		case "lharu": case "LeftVector": case "leftharpoonup": return '\u21BC';
-		case "lhard": case "leftharpoondown": case "DownLeftVector": return '\u21BD';
-		case "uharr": case "upharpoonright": case "RightUpVector": return '\u21BE';
-		case "uharl": case "upharpoonleft": case "LeftUpVector": return '\u21BF';
-		case "rharu": case "RightVector": case "rightharpoonup": return '\u21C0';
-		case "rhard": case "rightharpoondown": case "DownRightVector": return '\u21C1';
-		case "dharr": case "RightDownVector": case "downharpoonright": return '\u21C2';
-		case "dharl": case "LeftDownVector": case "downharpoonleft": return '\u21C3';
-		case "rlarr": case "rightleftarrows": case "RightArrowLeftArrow": return '\u21C4';
-		case "udarr": case "UpArrowDownArrow": return '\u21C5';
-		case "lrarr": case "leftrightarrows": case "LeftArrowRightArrow": return '\u21C6';
-		case "llarr": case "leftleftarrows": return '\u21C7';
-		case "uuarr": case "upuparrows": return '\u21C8';
-		case "rrarr": case "rightrightarrows": return '\u21C9';
-		case "ddarr": case "downdownarrows": return '\u21CA';
-		case "lrhar": case "ReverseEquilibrium": case "leftrightharpoons": return '\u21CB';
-		case "rlhar": case "rightleftharpoons": case "Equilibrium": return '\u21CC';
-		case "nlArr": case "nLeftarrow": return '\u21CD';
-		case "nhArr": case "nLeftrightarrow": return '\u21CE';
-		case "nrArr": case "nRightarrow": return '\u21CF';
-		case "lArr": case "Leftarrow": case "DoubleLeftArrow": return '\u21D0';
-		case "uArr": case "Uparrow": case "DoubleUpArrow": return '\u21D1';
-		case "rArr": case "Rightarrow": case "Implies": case "DoubleRightArrow": return '\u21D2';
-		case "dArr": case "Downarrow": case "DoubleDownArrow": return '\u21D3';
-		case "hArr": case "Leftrightarrow": case "DoubleLeftRightArrow": case "iff": return '\u21D4';
-		case "vArr": case "Updownarrow": case "DoubleUpDownArrow": return '\u21D5';
-		case "nwArr": return '\u21D6';
-		case "neArr": return '\u21D7';
-		case "seArr": return '\u21D8';
-		case "swArr": return '\u21D9';
-		case "lAarr": case "Lleftarrow": return '\u21DA';
-		case "rAarr": case "Rrightarrow": return '\u21DB';
-		case "zigrarr": return '\u21DD';
-		case "larrb": case "LeftArrowBar": return '\u21E4';
-		case "rarrb": case "RightArrowBar": return '\u21E5';
-		case "duarr": case "DownArrowUpArrow": return '\u21F5';
-		case "loarr": return '\u21FD';
-		case "roarr": return '\u21FE';
-		case "hoarr": return '\u21FF';
-		case "forall": case "ForAll": return '\u2200';
-		case "comp": case "complement": return '\u2201';
-		case "part": case "PartialD": return '\u2202';
-		case "exist": case "Exists": return '\u2203';
-		case "nexist": case "NotExists": case "nexists": return '\u2204';
-		case "empty": case "emptyset": case "emptyv": case "varnothing": return '\u2205';
-		case "nabla": case "Del": return '\u2207';
-		case "isin": case "isinv": case "Element": case "in": return '\u2208';
-		case "notin": case "NotElement": case "notinva": return '\u2209';
-		case "niv": case "ReverseElement": case "ni": case "SuchThat": return '\u220B';
-		case "notni": case "notniva": case "NotReverseElement": return '\u220C';
-		case "prod": case "Product": return '\u220F';
-		case "coprod": case "Coproduct": return '\u2210';
-		case "sum": case "Sum": return '\u2211';
-		case "minus": return '\u2212';
-		case "mnplus": case "mp": case "MinusPlus": return '\u2213';
-		case "plusdo": case "dotplus": return '\u2214';
-		case "setmn": case "setminus": case "Backslash": case "ssetmn": case "smallsetminus": return '\u2216';
-		case "lowast": return '\u2217';
-		case "compfn": case "SmallCircle": return '\u2218';
-		case "radic": case "Sqrt": return '\u221A';
-		case "prop": case "propto": case "Proportional": case "vprop": case "varpropto": return '\u221D';
-		case "infin": return '\u221E';
-		case "angrt": return '\u221F';
-		case "ang": case "angle": return '\u2220';
-		case "angmsd": case "measuredangle": return '\u2221';
-		case "angsph": return '\u2222';
-		case "mid": case "VerticalBar": case "smid": case "shortmid": return '\u2223';
-		case "nmid": case "NotVerticalBar": case "nsmid": case "nshortmid": return '\u2224';
-		case "par": case "parallel": case "DoubleVerticalBar": case "spar": case "shortparallel": return '\u2225';
-		case "npar": case "nparallel": case "NotDoubleVerticalBar": case "nspar": case "nshortparallel": return '\u2226';
-		case "and": case "wedge": return '\u2227';
-		case "or": case "vee": return '\u2228';
-		case "cap": return '\u2229';
-		case "cup": return '\u222A';
-		case "int": case "Integral": return '\u222B';
-		case "Int": return '\u222C';
-		case "tint": case "iiint": return '\u222D';
-		case "conint": case "oint": case "ContourIntegral": return '\u222E';
-		case "Conint": case "DoubleContourIntegral": return '\u222F';
-		case "Cconint": return '\u2230';
-		case "cwint": return '\u2231';
-		case "cwconint": case "ClockwiseContourIntegral": return '\u2232';
-		case "awconint": case "CounterClockwiseContourIntegral": return '\u2233';
-		case "there4": case "therefore": case "Therefore": return '\u2234';
-		case "becaus": case "because": case "Because": return '\u2235';
-		case "ratio": return '\u2236';
-		case "Colon": case "Proportion": return '\u2237';
-		case "minusd": case "dotminus": return '\u2238';
-		case "mDDot": return '\u223A';
-		case "homtht": return '\u223B';
-		case "sim": case "Tilde": case "thksim": case "thicksim": return '\u223C';
-		case "bsim": case "backsim": return '\u223D';
-		case "ac": case "mstpos": return '\u223E';
-		case "acd": return '\u223F';
-		case "wreath": case "VerticalTilde": case "wr": return '\u2240';
-		case "nsim": case "NotTilde": return '\u2241';
-		case "esim": case "EqualTilde": case "eqsim": return '\u2242';
-		case "sime": case "TildeEqual": case "simeq": return '\u2243';
-		case "nsime": case "nsimeq": case "NotTildeEqual": return '\u2244';
-		case "cong": case "TildeFullEqual": return '\u2245';
-		case "simne": return '\u2246';
-		case "ncong": case "NotTildeFullEqual": return '\u2247';
-		case "asymp": case "ap": case "TildeTilde": case "approx": case "thkap": case "thickapprox": return '\u2248';
-		case "nap": case "NotTildeTilde": case "napprox": return '\u2249';
-		case "ape": case "approxeq": return '\u224A';
-		case "apid": return '\u224B';
-		case "bcong": case "backcong": return '\u224C';
-		case "asympeq": case "CupCap": return '\u224D';
-		case "bump": case "HumpDownHump": case "Bumpeq": return '\u224E';
-		case "bumpe": case "HumpEqual": case "bumpeq": return '\u224F';
-		case "esdot": case "DotEqual": case "doteq": return '\u2250';
-		case "eDot": case "doteqdot": return '\u2251';
-		case "efDot": case "fallingdotseq": return '\u2252';
-		case "erDot": case "risingdotseq": return '\u2253';
-		case "colone": case "coloneq": case "Assign": return '\u2254';
-		case "ecolon": case "eqcolon": return '\u2255';
-		case "ecir": case "eqcirc": return '\u2256';
-		case "cire": case "circeq": return '\u2257';
-		case "wedgeq": return '\u2259';
-		case "veeeq": return '\u225A';
-		case "trie": case "triangleq": return '\u225C';
-		case "equest": case "questeq": return '\u225F';
-		case "ne": case "NotEqual": return '\u2260';
-		case "equiv": case "Congruent": return '\u2261';
-		case "nequiv": case "NotCongruent": return '\u2262';
-		case "le": case "leq": return '\u2264';
-		case "ge": case "GreaterEqual": case "geq": return '\u2265';
-		case "lE": case "LessFullEqual": case "leqq": return '\u2266';
-		case "gE": case "GreaterFullEqual": case "geqq": return '\u2267';
-		case "lnE": case "lneqq": return '\u2268';
-		case "gnE": case "gneqq": return '\u2269';
-		case "Lt": case "NestedLessLess": case "ll": return '\u226A';
-		case "Gt": case "NestedGreaterGreater": case "gg": return '\u226B';
-		case "twixt": case "between": return '\u226C';
-		case "NotCupCap": return '\u226D';
-		case "nlt": case "NotLess": case "nless": return '\u226E';
-		case "ngt": case "NotGreater": case "ngtr": return '\u226F';
-		case "nle": case "NotLessEqual": case "nleq": return '\u2270';
-		case "nge": case "NotGreaterEqual": case "ngeq": return '\u2271';
-		case "lsim": case "LessTilde": case "lesssim": return '\u2272';
-		case "gsim": case "gtrsim": case "GreaterTilde": return '\u2273';
-		case "nlsim": case "NotLessTilde": return '\u2274';
-		case "ngsim": case "NotGreaterTilde": return '\u2275';
-		case "lg": case "lessgtr": case "LessGreater": return '\u2276';
-		case "gl": case "gtrless": case "GreaterLess": return '\u2277';
-		case "ntlg": case "NotLessGreater": return '\u2278';
-		case "ntgl": case "NotGreaterLess": return '\u2279';
-		case "pr": case "Precedes": case "prec": return '\u227A';
-		case "sc": case "Succeeds": case "succ": return '\u227B';
-		case "prcue": case "PrecedesSlantEqual": case "preccurlyeq": return '\u227C';
-		case "sccue": case "SucceedsSlantEqual": case "succcurlyeq": return '\u227D';
-		case "prsim": case "precsim": case "PrecedesTilde": return '\u227E';
-		case "scsim": case "succsim": case "SucceedsTilde": return '\u227F';
-		case "npr": case "nprec": case "NotPrecedes": return '\u2280';
-		case "nsc": case "nsucc": case "NotSucceeds": return '\u2281';
-		case "sub": case "subset": return '\u2282';
-		case "sup": case "supset": case "Superset": return '\u2283';
-		case "nsub": return '\u2284';
-		case "nsup": return '\u2285';
-		case "sube": case "SubsetEqual": case "subseteq": return '\u2286';
-		case "supe": case "supseteq": case "SupersetEqual": return '\u2287';
-		case "nsube": case "nsubseteq": case "NotSubsetEqual": return '\u2288';
-		case "nsupe": case "nsupseteq": case "NotSupersetEqual": return '\u2289';
-		case "subne": case "subsetneq": return '\u228A';
-		case "supne": case "supsetneq": return '\u228B';
-		case "cupdot": return '\u228D';
-		case "uplus": case "UnionPlus": return '\u228E';
-		case "sqsub": case "SquareSubset": case "sqsubset": return '\u228F';
-		case "sqsup": case "SquareSuperset": case "sqsupset": return '\u2290';
-		case "sqsube": case "SquareSubsetEqual": case "sqsubseteq": return '\u2291';
-		case "sqsupe": case "SquareSupersetEqual": case "sqsupseteq": return '\u2292';
-		case "sqcap": case "SquareIntersection": return '\u2293';
-		case "sqcup": case "SquareUnion": return '\u2294';
-		case "oplus": case "CirclePlus": return '\u2295';
-		case "ominus": case "CircleMinus": return '\u2296';
-		case "otimes": case "CircleTimes": return '\u2297';
-		case "osol": return '\u2298';
-		case "odot": case "CircleDot": return '\u2299';
-		case "ocir": case "circledcirc": return '\u229A';
-		case "oast": case "circledast": return '\u229B';
-		case "odash": case "circleddash": return '\u229D';
-		case "plusb": case "boxplus": return '\u229E';
-		case "minusb": case "boxminus": return '\u229F';
-		case "timesb": case "boxtimes": return '\u22A0';
-		case "sdotb": case "dotsquare": return '\u22A1';
-		case "vdash": case "RightTee": return '\u22A2';
-		case "dashv": case "LeftTee": return '\u22A3';
-		case "top": case "DownTee": return '\u22A4';
-		case "bottom": case "bot": case "perp": case "UpTee": return '\u22A5';
-		case "models": return '\u22A7';
-		case "vDash": case "DoubleRightTee": return '\u22A8';
-		case "Vdash": return '\u22A9';
-		case "Vvdash": return '\u22AA';
-		case "VDash": return '\u22AB';
-		case "nvdash": return '\u22AC';
-		case "nvDash": return '\u22AD';
-		case "nVdash": return '\u22AE';
-		case "nVDash": return '\u22AF';
-		case "prurel": return '\u22B0';
-		case "vltri": case "vartriangleleft": case "LeftTriangle": return '\u22B2';
-		case "vrtri": case "vartriangleright": case "RightTriangle": return '\u22B3';
-		case "ltrie": case "trianglelefteq": case "LeftTriangleEqual": return '\u22B4';
-		case "rtrie": case "trianglerighteq": case "RightTriangleEqual": return '\u22B5';
-		case "origof": return '\u22B6';
-		case "imof": return '\u22B7';
-		case "mumap": case "multimap": return '\u22B8';
-		case "hercon": return '\u22B9';
-		case "intcal": case "intercal": return '\u22BA';
-		case "veebar": return '\u22BB';
-		case "barvee": return '\u22BD';
-		case "angrtvb": return '\u22BE';
-		case "lrtri": return '\u22BF';
-		case "xwedge": case "Wedge": case "bigwedge": return '\u22C0';
-		case "xvee": case "Vee": case "bigvee": return '\u22C1';
-		case "xcap": case "Intersection": case "bigcap": return '\u22C2';
-		case "xcup": case "Union": case "bigcup": return '\u22C3';
-		case "diam": case "diamond": case "Diamond": return '\u22C4';
-		case "sdot": return '\u22C5';
-		case "sstarf": case "Star": return '\u22C6';
-		case "divonx": case "divideontimes": return '\u22C7';
-		case "bowtie": return '\u22C8';
-		case "ltimes": return '\u22C9';
-		case "rtimes": return '\u22CA';
-		case "lthree": case "leftthreetimes": return '\u22CB';
-		case "rthree": case "rightthreetimes": return '\u22CC';
-		case "bsime": case "backsimeq": return '\u22CD';
-		case "cuvee": case "curlyvee": return '\u22CE';
-		case "cuwed": case "curlywedge": return '\u22CF';
-		case "Sub": case "Subset": return '\u22D0';
-		case "Sup": case "Supset": return '\u22D1';
-		case "Cap": return '\u22D2';
-		case "Cup": return '\u22D3';
-		case "fork": case "pitchfork": return '\u22D4';
-		case "epar": return '\u22D5';
-		case "ltdot": case "lessdot": return '\u22D6';
-		case "gtdot": case "gtrdot": return '\u22D7';
-		case "Ll": return '\u22D8';
-		case "Gg": case "ggg": return '\u22D9';
-		case "leg": case "LessEqualGreater": case "lesseqgtr": return '\u22DA';
-		case "gel": case "gtreqless": case "GreaterEqualLess": return '\u22DB';
-		case "cuepr": case "curlyeqprec": return '\u22DE';
-		case "cuesc": case "curlyeqsucc": return '\u22DF';
-		case "nprcue": case "NotPrecedesSlantEqual": return '\u22E0';
-		case "nsccue": case "NotSucceedsSlantEqual": return '\u22E1';
-		case "nsqsube": case "NotSquareSubsetEqual": return '\u22E2';
-		case "nsqsupe": case "NotSquareSupersetEqual": return '\u22E3';
-		case "lnsim": return '\u22E6';
-		case "gnsim": return '\u22E7';
-		case "prnsim": case "precnsim": return '\u22E8';
-		case "scnsim": case "succnsim": return '\u22E9';
-		case "nltri": case "ntriangleleft": case "NotLeftTriangle": return '\u22EA';
-		case "nrtri": case "ntriangleright": case "NotRightTriangle": return '\u22EB';
-		case "nltrie": case "ntrianglelefteq": case "NotLeftTriangleEqual": return '\u22EC';
-		case "nrtrie": case "ntrianglerighteq": case "NotRightTriangleEqual": return '\u22ED';
-		case "vellip": return '\u22EE';
-		case "ctdot": return '\u22EF';
-		case "utdot": return '\u22F0';
-		case "dtdot": return '\u22F1';
-		case "disin": return '\u22F2';
-		case "isinsv": return '\u22F3';
-		case "isins": return '\u22F4';
-		case "isindot": return '\u22F5';
-		case "notinvc": return '\u22F6';
-		case "notinvb": return '\u22F7';
-		case "isinE": return '\u22F9';
-		case "nisd": return '\u22FA';
-		case "xnis": return '\u22FB';
-		case "nis": return '\u22FC';
-		case "notnivc": return '\u22FD';
-		case "notnivb": return '\u22FE';
-		case "barwed": case "barwedge": return '\u2305';
-		case "Barwed": case "doublebarwedge": return '\u2306';
-		case "lceil": case "LeftCeiling": return '\u2308';
-		case "rceil": case "RightCeiling": return '\u2309';
-		case "lfloor": case "LeftFloor": return '\u230A';
-		case "rfloor": case "RightFloor": return '\u230B';
-		case "drcrop": return '\u230C';
-		case "dlcrop": return '\u230D';
-		case "urcrop": return '\u230E';
-		case "ulcrop": return '\u230F';
-		case "bnot": return '\u2310';
-		case "profline": return '\u2312';
-		case "profsurf": return '\u2313';
-		case "telrec": return '\u2315';
-		case "target": return '\u2316';
-		case "ulcorn": case "ulcorner": return '\u231C';
-		case "urcorn": case "urcorner": return '\u231D';
-		case "dlcorn": case "llcorner": return '\u231E';
-		case "drcorn": case "lrcorner": return '\u231F';
-		case "frown": case "sfrown": return '\u2322';
-		case "smile": case "ssmile": return '\u2323';
-		case "cylcty": return '\u232D';
-		case "profalar": return '\u232E';
-		case "topbot": return '\u2336';
-		case "ovbar": return '\u233D';
-		case "solbar": return '\u233F';
-		case "angzarr": return '\u237C';
-		case "lmoust": case "lmoustache": return '\u23B0';
-		case "rmoust": case "rmoustache": return '\u23B1';
-		case "tbrk": case "OverBracket": return '\u23B4';
-		case "bbrk": case "UnderBracket": return '\u23B5';
-		case "bbrktbrk": return '\u23B6';
-		case "OverParenthesis": return '\u23DC';
-		case "UnderParenthesis": return '\u23DD';
-		case "OverBrace": return '\u23DE';
-		case "UnderBrace": return '\u23DF';
-		case "trpezium": return '\u23E2';
-		case "elinters": return '\u23E7';
-		case "blank": return '\u2423';
-		case "oS": case "circledS": return '\u24C8';
-		case "boxh": case "HorizontalLine": return '\u2500';
-		case "boxv": return '\u2502';
-		case "boxdr": return '\u250C';
-		case "boxdl": return '\u2510';
-		case "boxur": return '\u2514';
-		case "boxul": return '\u2518';
-		case "boxvr": return '\u251C';
-		case "boxvl": return '\u2524';
-		case "boxhd": return '\u252C';
-		case "boxhu": return '\u2534';
-		case "boxvh": return '\u253C';
-		case "boxH": return '\u2550';
-		case "boxV": return '\u2551';
-		case "boxdR": return '\u2552';
-		case "boxDr": return '\u2553';
-		case "boxDR": return '\u2554';
-		case "boxdL": return '\u2555';
-		case "boxDl": return '\u2556';
-		case "boxDL": return '\u2557';
-		case "boxuR": return '\u2558';
-		case "boxUr": return '\u2559';
-		case "boxUR": return '\u255A';
-		case "boxuL": return '\u255B';
-		case "boxUl": return '\u255C';
-		case "boxUL": return '\u255D';
-		case "boxvR": return '\u255E';
-		case "boxVr": return '\u255F';
-		case "boxVR": return '\u2560';
-		case "boxvL": return '\u2561';
-		case "boxVl": return '\u2562';
-		case "boxVL": return '\u2563';
-		case "boxHd": return '\u2564';
-		case "boxhD": return '\u2565';
-		case "boxHD": return '\u2566';
-		case "boxHu": return '\u2567';
-		case "boxhU": return '\u2568';
-		case "boxHU": return '\u2569';
-		case "boxvH": return '\u256A';
-		case "boxVh": return '\u256B';
-		case "boxVH": return '\u256C';
-		case "uhblk": return '\u2580';
-		case "lhblk": return '\u2584';
-		case "block": return '\u2588';
-		case "blk14": return '\u2591';
-		case "blk12": return '\u2592';
-		case "blk34": return '\u2593';
-		case "squ": case "square": case "Square": return '\u25A1';
-		case "squf": case "squarf": case "blacksquare": case "FilledVerySmallSquare": return '\u25AA';
-		case "EmptyVerySmallSquare": return '\u25AB';
-		case "rect": return '\u25AD';
-		case "marker": return '\u25AE';
-		case "fltns": return '\u25B1';
-		case "xutri": case "bigtriangleup": return '\u25B3';
-		case "utrif": case "blacktriangle": return '\u25B4';
-		case "utri": case "triangle": return '\u25B5';
-		case "rtrif": case "blacktriangleright": return '\u25B8';
-		case "rtri": case "triangleright": return '\u25B9';
-		case "xdtri": case "bigtriangledown": return '\u25BD';
-		case "dtrif": case "blacktriangledown": return '\u25BE';
-		case "dtri": case "triangledown": return '\u25BF';
-		case "ltrif": case "blacktriangleleft": return '\u25C2';
-		case "ltri": case "triangleleft": return '\u25C3';
-		case "loz": case "lozenge": return '\u25CA';
-		case "cir": return '\u25CB';
-		case "tridot": return '\u25EC';
-		case "xcirc": case "bigcirc": return '\u25EF';
-		case "ultri": return '\u25F8';
-		case "urtri": return '\u25F9';
-		case "lltri": return '\u25FA';
-		case "EmptySmallSquare": return '\u25FB';
-		case "FilledSmallSquare": return '\u25FC';
-		case "starf": case "bigstar": return '\u2605';
-		case "star": return '\u2606';
-		case "phone": return '\u260E';
-		case "female": return '\u2640';
-		case "male": return '\u2642';
-		case "spades": case "spadesuit": return '\u2660';
-		case "clubs": case "clubsuit": return '\u2663';
-		case "hearts": case "heartsuit": return '\u2665';
-		case "diams": case "diamondsuit": return '\u2666';
-		case "sung": return '\u266A';
-		case "flat": return '\u266D';
-		case "natur": case "natural": return '\u266E';
-		case "sharp": return '\u266F';
-		case "check": case "checkmark": return '\u2713';
-		case "cross": return '\u2717';
-		case "malt": case "maltese": return '\u2720';
-		case "sext": return '\u2736';
-		case "VerticalSeparator": return '\u2758';
-		case "lbbrk": return '\u2772';
-		case "rbbrk": return '\u2773';
-		case "bsolhsub": return '\u27C8';
-		case "suphsol": return '\u27C9';
-		case "lobrk": case "LeftDoubleBracket": return '\u27E6';
-		case "robrk": case "RightDoubleBracket": return '\u27E7';
-		case "lang": case "LeftAngleBracket": case "langle": return '\u27E8';
-		case "rang": case "RightAngleBracket": case "rangle": return '\u27E9';
-		case "Lang": return '\u27EA';
-		case "Rang": return '\u27EB';
-		case "loang": return '\u27EC';
-		case "roang": return '\u27ED';
-		case "xlarr": case "longleftarrow": case "LongLeftArrow": return '\u27F5';
-		case "xrarr": case "longrightarrow": case "LongRightArrow": return '\u27F6';
-		case "xharr": case "longleftrightarrow": case "LongLeftRightArrow": return '\u27F7';
-		case "xlArr": case "Longleftarrow": case "DoubleLongLeftArrow": return '\u27F8';
-		case "xrArr": case "Longrightarrow": case "DoubleLongRightArrow": return '\u27F9';
-		case "xhArr": case "Longleftrightarrow": case "DoubleLongLeftRightArrow": return '\u27FA';
-		case "xmap": case "longmapsto": return '\u27FC';
-		case "dzigrarr": return '\u27FF';
-		case "nvlArr": return '\u2902';
-		case "nvrArr": return '\u2903';
-		case "nvHarr": return '\u2904';
-		case "Map": return '\u2905';
-		case "lbarr": return '\u290C';
-		case "rbarr": case "bkarow": return '\u290D';
-		case "lBarr": return '\u290E';
-		case "rBarr": case "dbkarow": return '\u290F';
-		case "RBarr": case "drbkarow": return '\u2910';
-		case "DDotrahd": return '\u2911';
-		case "UpArrowBar": return '\u2912';
-		case "DownArrowBar": return '\u2913';
-		case "Rarrtl": return '\u2916';
-		case "latail": return '\u2919';
-		case "ratail": return '\u291A';
-		case "lAtail": return '\u291B';
-		case "rAtail": return '\u291C';
-		case "larrfs": return '\u291D';
-		case "rarrfs": return '\u291E';
-		case "larrbfs": return '\u291F';
-		case "rarrbfs": return '\u2920';
-		case "nwarhk": return '\u2923';
-		case "nearhk": return '\u2924';
-		case "searhk": case "hksearow": return '\u2925';
-		case "swarhk": case "hkswarow": return '\u2926';
-		case "nwnear": return '\u2927';
-		case "nesear": case "toea": return '\u2928';
-		case "seswar": case "tosa": return '\u2929';
-		case "swnwar": return '\u292A';
-		case "rarrc": return '\u2933';
-		case "cudarrr": return '\u2935';
-		case "ldca": return '\u2936';
-		case "rdca": return '\u2937';
-		case "cudarrl": return '\u2938';
-		case "larrpl": return '\u2939';
-		case "curarrm": return '\u293C';
-		case "cularrp": return '\u293D';
-		case "rarrpl": return '\u2945';
-		case "harrcir": return '\u2948';
-		case "Uarrocir": return '\u2949';
-		case "lurdshar": return '\u294A';
-		case "ldrushar": return '\u294B';
-		case "LeftRightVector": return '\u294E';
-		case "RightUpDownVector": return '\u294F';
-		case "DownLeftRightVector": return '\u2950';
-		case "LeftUpDownVector": return '\u2951';
-		case "LeftVectorBar": return '\u2952';
-		case "RightVectorBar": return '\u2953';
-		case "RightUpVectorBar": return '\u2954';
-		case "RightDownVectorBar": return '\u2955';
-		case "DownLeftVectorBar": return '\u2956';
-		case "DownRightVectorBar": return '\u2957';
-		case "LeftUpVectorBar": return '\u2958';
-		case "LeftDownVectorBar": return '\u2959';
-		case "LeftTeeVector": return '\u295A';
-		case "RightTeeVector": return '\u295B';
-		case "RightUpTeeVector": return '\u295C';
-		case "RightDownTeeVector": return '\u295D';
-		case "DownLeftTeeVector": return '\u295E';
-		case "DownRightTeeVector": return '\u295F';
-		case "LeftUpTeeVector": return '\u2960';
-		case "LeftDownTeeVector": return '\u2961';
-		case "lHar": return '\u2962';
-		case "uHar": return '\u2963';
-		case "rHar": return '\u2964';
-		case "dHar": return '\u2965';
-		case "luruhar": return '\u2966';
-		case "ldrdhar": return '\u2967';
-		case "ruluhar": return '\u2968';
-		case "rdldhar": return '\u2969';
-		case "lharul": return '\u296A';
-		case "llhard": return '\u296B';
-		case "rharul": return '\u296C';
-		case "lrhard": return '\u296D';
-		case "udhar": case "UpEquilibrium": return '\u296E';
-		case "duhar": case "ReverseUpEquilibrium": return '\u296F';
-		case "RoundImplies": return '\u2970';
-		case "erarr": return '\u2971';
-		case "simrarr": return '\u2972';
-		case "larrsim": return '\u2973';
-		case "rarrsim": return '\u2974';
-		case "rarrap": return '\u2975';
-		case "ltlarr": return '\u2976';
-		case "gtrarr": return '\u2978';
-		case "subrarr": return '\u2979';
-		case "suplarr": return '\u297B';
-		case "lfisht": return '\u297C';
-		case "rfisht": return '\u297D';
-		case "ufisht": return '\u297E';
-		case "dfisht": return '\u297F';
-		case "lopar": return '\u2985';
-		case "ropar": return '\u2986';
-		case "lbrke": return '\u298B';
-		case "rbrke": return '\u298C';
-		case "lbrkslu": return '\u298D';
-		case "rbrksld": return '\u298E';
-		case "lbrksld": return '\u298F';
-		case "rbrkslu": return '\u2990';
-		case "langd": return '\u2991';
-		case "rangd": return '\u2992';
-		case "lparlt": return '\u2993';
-		case "rpargt": return '\u2994';
-		case "gtlPar": return '\u2995';
-		case "ltrPar": return '\u2996';
-		case "vzigzag": return '\u299A';
-		case "vangrt": return '\u299C';
-		case "angrtvbd": return '\u299D';
-		case "ange": return '\u29A4';
-		case "range": return '\u29A5';
-		case "dwangle": return '\u29A6';
-		case "uwangle": return '\u29A7';
-		case "angmsdaa": return '\u29A8';
-		case "angmsdab": return '\u29A9';
-		case "angmsdac": return '\u29AA';
-		case "angmsdad": return '\u29AB';
-		case "angmsdae": return '\u29AC';
-		case "angmsdaf": return '\u29AD';
-		case "angmsdag": return '\u29AE';
-		case "angmsdah": return '\u29AF';
-		case "bemptyv": return '\u29B0';
-		case "demptyv": return '\u29B1';
-		case "cemptyv": return '\u29B2';
-		case "raemptyv": return '\u29B3';
-		case "laemptyv": return '\u29B4';
-		case "ohbar": return '\u29B5';
-		case "omid": return '\u29B6';
-		case "opar": return '\u29B7';
-		case "operp": return '\u29B9';
-		case "olcross": return '\u29BB';
-		case "odsold": return '\u29BC';
-		case "olcir": return '\u29BE';
-		case "ofcir": return '\u29BF';
-		case "olt": return '\u29C0';
-		case "ogt": return '\u29C1';
-		case "cirscir": return '\u29C2';
-		case "cirE": return '\u29C3';
-		case "solb": return '\u29C4';
-		case "bsolb": return '\u29C5';
-		case "boxbox": return '\u29C9';
-		case "trisb": return '\u29CD';
-		case "rtriltri": return '\u29CE';
-		case "LeftTriangleBar": return '\u29CF';
-		case "RightTriangleBar": return '\u29D0';
-		case "iinfin": return '\u29DC';
-		case "infintie": return '\u29DD';
-		case "nvinfin": return '\u29DE';
-		case "eparsl": return '\u29E3';
-		case "smeparsl": return '\u29E4';
-		case "eqvparsl": return '\u29E5';
-		case "lozf": case "blacklozenge": return '\u29EB';
-		case "RuleDelayed": return '\u29F4';
-		case "dsol": return '\u29F6';
-		case "xodot": case "bigodot": return '\u2A00';
-		case "xoplus": case "bigoplus": return '\u2A01';
-		case "xotime": case "bigotimes": return '\u2A02';
-		case "xuplus": case "biguplus": return '\u2A04';
-		case "xsqcup": case "bigsqcup": return '\u2A06';
-		case "qint": case "iiiint": return '\u2A0C';
-		case "fpartint": return '\u2A0D';
-		case "cirfnint": return '\u2A10';
-		case "awint": return '\u2A11';
-		case "rppolint": return '\u2A12';
-		case "scpolint": return '\u2A13';
-		case "npolint": return '\u2A14';
-		case "pointint": return '\u2A15';
-		case "quatint": return '\u2A16';
-		case "intlarhk": return '\u2A17';
-		case "pluscir": return '\u2A22';
-		case "plusacir": return '\u2A23';
-		case "simplus": return '\u2A24';
-		case "plusdu": return '\u2A25';
-		case "plussim": return '\u2A26';
-		case "plustwo": return '\u2A27';
-		case "mcomma": return '\u2A29';
-		case "minusdu": return '\u2A2A';
-		case "loplus": return '\u2A2D';
-		case "roplus": return '\u2A2E';
-		case "Cross": return '\u2A2F';
-		case "timesd": return '\u2A30';
-		case "timesbar": return '\u2A31';
-		case "smashp": return '\u2A33';
-		case "lotimes": return '\u2A34';
-		case "rotimes": return '\u2A35';
-		case "otimesas": return '\u2A36';
-		case "Otimes": return '\u2A37';
-		case "odiv": return '\u2A38';
-		case "triplus": return '\u2A39';
-		case "triminus": return '\u2A3A';
-		case "tritime": return '\u2A3B';
-		case "iprod": case "intprod": return '\u2A3C';
-		case "amalg": return '\u2A3F';
-		case "capdot": return '\u2A40';
-		case "ncup": return '\u2A42';
-		case "ncap": return '\u2A43';
-		case "capand": return '\u2A44';
-		case "cupor": return '\u2A45';
-		case "cupcap": return '\u2A46';
-		case "capcup": return '\u2A47';
-		case "cupbrcap": return '\u2A48';
-		case "capbrcup": return '\u2A49';
-		case "cupcup": return '\u2A4A';
-		case "capcap": return '\u2A4B';
-		case "ccups": return '\u2A4C';
-		case "ccaps": return '\u2A4D';
-		case "ccupssm": return '\u2A50';
-		case "And": return '\u2A53';
-		case "Or": return '\u2A54';
-		case "andand": return '\u2A55';
-		case "oror": return '\u2A56';
-		case "orslope": return '\u2A57';
-		case "andslope": return '\u2A58';
-		case "andv": return '\u2A5A';
-		case "orv": return '\u2A5B';
-		case "andd": return '\u2A5C';
-		case "ord": return '\u2A5D';
-		case "wedbar": return '\u2A5F';
-		case "sdote": return '\u2A66';
-		case "simdot": return '\u2A6A';
-		case "congdot": return '\u2A6D';
-		case "easter": return '\u2A6E';
-		case "apacir": return '\u2A6F';
-		case "apE": return '\u2A70';
-		case "eplus": return '\u2A71';
-		case "pluse": return '\u2A72';
-		case "Esim": return '\u2A73';
-		case "Colone": return '\u2A74';
-		case "Equal": return '\u2A75';
-		case "eDDot": case "ddotseq": return '\u2A77';
-		case "equivDD": return '\u2A78';
-		case "ltcir": return '\u2A79';
-		case "gtcir": return '\u2A7A';
-		case "ltquest": return '\u2A7B';
-		case "gtquest": return '\u2A7C';
-		case "les": case "LessSlantEqual": case "leqslant": return '\u2A7D';
-		case "ges": case "GreaterSlantEqual": case "geqslant": return '\u2A7E';
-		case "lesdot": return '\u2A7F';
-		case "gesdot": return '\u2A80';
-		case "lesdoto": return '\u2A81';
-		case "gesdoto": return '\u2A82';
-		case "lesdotor": return '\u2A83';
-		case "gesdotol": return '\u2A84';
-		case "lap": case "lessapprox": return '\u2A85';
-		case "gap": case "gtrapprox": return '\u2A86';
-		case "lne": case "lneq": return '\u2A87';
-		case "gne": case "gneq": return '\u2A88';
-		case "lnap": case "lnapprox": return '\u2A89';
-		case "gnap": case "gnapprox": return '\u2A8A';
-		case "lEg": case "lesseqqgtr": return '\u2A8B';
-		case "gEl": case "gtreqqless": return '\u2A8C';
-		case "lsime": return '\u2A8D';
-		case "gsime": return '\u2A8E';
-		case "lsimg": return '\u2A8F';
-		case "gsiml": return '\u2A90';
-		case "lgE": return '\u2A91';
-		case "glE": return '\u2A92';
-		case "lesges": return '\u2A93';
-		case "gesles": return '\u2A94';
-		case "els": case "eqslantless": return '\u2A95';
-		case "egs": case "eqslantgtr": return '\u2A96';
-		case "elsdot": return '\u2A97';
-		case "egsdot": return '\u2A98';
-		case "el": return '\u2A99';
-		case "eg": return '\u2A9A';
-		case "siml": return '\u2A9D';
-		case "simg": return '\u2A9E';
-		case "simlE": return '\u2A9F';
-		case "simgE": return '\u2AA0';
-		case "LessLess": return '\u2AA1';
-		case "GreaterGreater": return '\u2AA2';
-		case "glj": return '\u2AA4';
-		case "gla": return '\u2AA5';
-		case "ltcc": return '\u2AA6';
-		case "gtcc": return '\u2AA7';
-		case "lescc": return '\u2AA8';
-		case "gescc": return '\u2AA9';
-		case "smt": return '\u2AAA';
-		case "lat": return '\u2AAB';
-		case "smte": return '\u2AAC';
-		case "late": return '\u2AAD';
-		case "bumpE": return '\u2AAE';
-		case "pre": case "preceq": case "PrecedesEqual": return '\u2AAF';
-		case "sce": case "succeq": case "SucceedsEqual": return '\u2AB0';
-		case "prE": return '\u2AB3';
-		case "scE": return '\u2AB4';
-		case "prnE": case "precneqq": return '\u2AB5';
-		case "scnE": case "succneqq": return '\u2AB6';
-		case "prap": case "precapprox": return '\u2AB7';
-		case "scap": case "succapprox": return '\u2AB8';
-		case "prnap": case "precnapprox": return '\u2AB9';
-		case "scnap": case "succnapprox": return '\u2ABA';
-		case "Pr": return '\u2ABB';
-		case "Sc": return '\u2ABC';
-		case "subdot": return '\u2ABD';
-		case "supdot": return '\u2ABE';
-		case "subplus": return '\u2ABF';
-		case "supplus": return '\u2AC0';
-		case "submult": return '\u2AC1';
-		case "supmult": return '\u2AC2';
-		case "subedot": return '\u2AC3';
-		case "supedot": return '\u2AC4';
-		case "subE": case "subseteqq": return '\u2AC5';
-		case "supE": case "supseteqq": return '\u2AC6';
-		case "subsim": return '\u2AC7';
-		case "supsim": return '\u2AC8';
-		case "subnE": case "subsetneqq": return '\u2ACB';
-		case "supnE": case "supsetneqq": return '\u2ACC';
-		case "csub": return '\u2ACF';
-		case "csup": return '\u2AD0';
-		case "csube": return '\u2AD1';
-		case "csupe": return '\u2AD2';
-		case "subsup": return '\u2AD3';
-		case "supsub": return '\u2AD4';
-		case "subsub": return '\u2AD5';
-		case "supsup": return '\u2AD6';
-		case "suphsub": return '\u2AD7';
-		case "supdsub": return '\u2AD8';
-		case "forkv": return '\u2AD9';
-		case "topfork": return '\u2ADA';
-		case "mlcp": return '\u2ADB';
-		case "Dashv": case "DoubleLeftTee": return '\u2AE4';
-		case "Vdashl": return '\u2AE6';
-		case "Barv": return '\u2AE7';
-		case "vBar": return '\u2AE8';
-		case "vBarv": return '\u2AE9';
-		case "Vbar": return '\u2AEB';
-		case "Not": return '\u2AEC';
-		case "bNot": return '\u2AED';
-		case "rnmid": return '\u2AEE';
-		case "cirmid": return '\u2AEF';
-		case "midcir": return '\u2AF0';
-		case "topcir": return '\u2AF1';
-		case "nhpar": return '\u2AF2';
-		case "parsim": return '\u2AF3';
-		case "parsl": return '\u2AFD';
-		case "fflig": return '\uFB00';
-		case "filig": return '\uFB01';
-		case "fllig": return '\uFB02';
-		case "ffilig": return '\uFB03';
-		case "ffllig": return '\uFB04';
-		case "Ascr": return '\U0001D49C';
-		case "Cscr": return '\U0001D49E';
-		case "Dscr": return '\U0001D49F';
-		case "Gscr": return '\U0001D4A2';
-		case "Jscr": return '\U0001D4A5';
-		case "Kscr": return '\U0001D4A6';
-		case "Nscr": return '\U0001D4A9';
-		case "Oscr": return '\U0001D4AA';
-		case "Pscr": return '\U0001D4AB';
-		case "Qscr": return '\U0001D4AC';
-		case "Sscr": return '\U0001D4AE';
-		case "Tscr": return '\U0001D4AF';
-		case "Uscr": return '\U0001D4B0';
-		case "Vscr": return '\U0001D4B1';
-		case "Wscr": return '\U0001D4B2';
-		case "Xscr": return '\U0001D4B3';
-		case "Yscr": return '\U0001D4B4';
-		case "Zscr": return '\U0001D4B5';
-		case "ascr": return '\U0001D4B6';
-		case "bscr": return '\U0001D4B7';
-		case "cscr": return '\U0001D4B8';
-		case "dscr": return '\U0001D4B9';
-		case "fscr": return '\U0001D4BB';
-		case "hscr": return '\U0001D4BD';
-		case "iscr": return '\U0001D4BE';
-		case "jscr": return '\U0001D4BF';
-		case "kscr": return '\U0001D4C0';
-		case "lscr": return '\U0001D4C1';
-		case "mscr": return '\U0001D4C2';
-		case "nscr": return '\U0001D4C3';
-		case "pscr": return '\U0001D4C5';
-		case "qscr": return '\U0001D4C6';
-		case "rscr": return '\U0001D4C7';
-		case "sscr": return '\U0001D4C8';
-		case "tscr": return '\U0001D4C9';
-		case "uscr": return '\U0001D4CA';
-		case "vscr": return '\U0001D4CB';
-		case "wscr": return '\U0001D4CC';
-		case "xscr": return '\U0001D4CD';
-		case "yscr": return '\U0001D4CE';
-		case "zscr": return '\U0001D4CF';
-		case "Afr": return '\U0001D504';
-		case "Bfr": return '\U0001D505';
-		case "Dfr": return '\U0001D507';
-		case "Efr": return '\U0001D508';
-		case "Ffr": return '\U0001D509';
-		case "Gfr": return '\U0001D50A';
-		case "Jfr": return '\U0001D50D';
-		case "Kfr": return '\U0001D50E';
-		case "Lfr": return '\U0001D50F';
-		case "Mfr": return '\U0001D510';
-		case "Nfr": return '\U0001D511';
-		case "Ofr": return '\U0001D512';
-		case "Pfr": return '\U0001D513';
-		case "Qfr": return '\U0001D514';
-		case "Sfr": return '\U0001D516';
-		case "Tfr": return '\U0001D517';
-		case "Ufr": return '\U0001D518';
-		case "Vfr": return '\U0001D519';
-		case "Wfr": return '\U0001D51A';
-		case "Xfr": return '\U0001D51B';
-		case "Yfr": return '\U0001D51C';
-		case "afr": return '\U0001D51E';
-		case "bfr": return '\U0001D51F';
-		case "cfr": return '\U0001D520';
-		case "dfr": return '\U0001D521';
-		case "efr": return '\U0001D522';
-		case "ffr": return '\U0001D523';
-		case "gfr": return '\U0001D524';
-		case "hfr": return '\U0001D525';
-		case "ifr": return '\U0001D526';
-		case "jfr": return '\U0001D527';
-		case "kfr": return '\U0001D528';
-		case "lfr": return '\U0001D529';
-		case "mfr": return '\U0001D52A';
-		case "nfr": return '\U0001D52B';
-		case "ofr": return '\U0001D52C';
-		case "pfr": return '\U0001D52D';
-		case "qfr": return '\U0001D52E';
-		case "rfr": return '\U0001D52F';
-		case "sfr": return '\U0001D530';
-		case "tfr": return '\U0001D531';
-		case "ufr": return '\U0001D532';
-		case "vfr": return '\U0001D533';
-		case "wfr": return '\U0001D534';
-		case "xfr": return '\U0001D535';
-		case "yfr": return '\U0001D536';
-		case "zfr": return '\U0001D537';
-		case "Aopf": return '\U0001D538';
-		case "Bopf": return '\U0001D539';
-		case "Dopf": return '\U0001D53B';
-		case "Eopf": return '\U0001D53C';
-		case "Fopf": return '\U0001D53D';
-		case "Gopf": return '\U0001D53E';
-		case "Iopf": return '\U0001D540';
-		case "Jopf": return '\U0001D541';
-		case "Kopf": return '\U0001D542';
-		case "Lopf": return '\U0001D543';
-		case "Mopf": return '\U0001D544';
-		case "Oopf": return '\U0001D546';
-		case "Sopf": return '\U0001D54A';
-		case "Topf": return '\U0001D54B';
-		case "Uopf": return '\U0001D54C';
-		case "Vopf": return '\U0001D54D';
-		case "Wopf": return '\U0001D54E';
-		case "Xopf": return '\U0001D54F';
-		case "Yopf": return '\U0001D550';
-		case "aopf": return '\U0001D552';
-		case "bopf": return '\U0001D553';
-		case "copf": return '\U0001D554';
-		case "dopf": return '\U0001D555';
-		case "eopf": return '\U0001D556';
-		case "fopf": return '\U0001D557';
-		case "gopf": return '\U0001D558';
-		case "hopf": return '\U0001D559';
-		case "iopf": return '\U0001D55A';
-		case "jopf": return '\U0001D55B';
-		case "kopf": return '\U0001D55C';
-		case "lopf": return '\U0001D55D';
-		case "mopf": return '\U0001D55E';
-		case "nopf": return '\U0001D55F';
-		case "oopf": return '\U0001D560';
-		case "popf": return '\U0001D561';
-		case "qopf": return '\U0001D562';
-		case "ropf": return '\U0001D563';
-		case "sopf": return '\U0001D564';
-		case "topf": return '\U0001D565';
-		case "uopf": return '\U0001D566';
-		case "vopf": return '\U0001D567';
-		case "wopf": return '\U0001D568';
-		case "xopf": return '\U0001D569';
-		case "yopf": return '\U0001D56A';
-		case "zopf": return '\U0001D56B';
 
 		// and handling numeric entities
 		default:
@@ -5667,6 +4247,27 @@ dchar parseEntity(in dchar[] entity) {
 	}
 
 	assert(0);
+}
+
+unittest {
+	// not in the binary search
+	assert(parseEntity("&quot;"d) == '"');
+
+	// numeric value
+	assert(parseEntity("&#x0534;") == '\u0534');
+
+	// not found at all
+	assert(parseEntity("&asdasdasd;"d) == '\ufffd');
+
+	// random values in the bin search
+	assert(parseEntity("&Tab;"d) == '\t');
+	assert(parseEntity("&raquo;"d) == '\&raquo;');
+
+	// near the middle and edges of the bin search
+	assert(parseEntity("&ascr;"d) == '\U0001d4b6');
+	assert(parseEntity("&ast;"d) == '\u002a');
+	assert(parseEntity("&AElig;"d) == '\u00c6');
+	assert(parseEntity("&zwnj;"d) == '\u200c');
 }
 
 import std.utf;
@@ -8547,6 +7148,312 @@ private string[string] aadup(in string[string] arr) {
 		ret[k] = v;
 	return ret;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// These MUST be sorted. See generatedomcases.d for a program to generate it if you need to add more than a few (otherwise maybe you can work it in yourself but yikes)
+
+immutable string[] availableEntities =
+["AElig", "AElig", "AMP", "AMP", "Aacute", "Aacute", "Abreve", "Abreve", "Acirc", "Acirc", "Acy", "Acy", "Afr", "Afr", "Agrave", "Agrave", "Alpha", "Alpha", "Amacr", "Amacr", "And", "And", "Aogon", "Aogon", "Aopf", "Aopf", "ApplyFunction", "ApplyFunction", "Aring", "Aring", "Ascr", "Ascr", "Assign", "Assign", "Atilde", 
+"Atilde", "Auml", "Auml", "Backslash", "Backslash", "Barv", "Barv", "Barwed", "Barwed", "Bcy", "Bcy", "Because", "Because", "Bernoullis", "Bernoullis", "Beta", "Beta", "Bfr", "Bfr", "Bopf", "Bopf", "Breve", "Breve", "Bscr", "Bscr", "Bumpeq", "Bumpeq", "CHcy", "CHcy", "COPY", "COPY", "Cacute", "Cacute", "Cap", "Cap", "CapitalDifferentialD", 
+"CapitalDifferentialD", "Cayleys", "Cayleys", "Ccaron", "Ccaron", "Ccedil", "Ccedil", "Ccirc", "Ccirc", "Cconint", "Cconint", "Cdot", "Cdot", "Cedilla", "Cedilla", "CenterDot", "CenterDot", "Cfr", "Cfr", "Chi", "Chi", "CircleDot", "CircleDot", "CircleMinus", "CircleMinus", "CirclePlus", "CirclePlus", "CircleTimes", "CircleTimes", 
+"ClockwiseContourIntegral", "ClockwiseContourIntegral", "CloseCurlyDoubleQuote", "CloseCurlyDoubleQuote", "CloseCurlyQuote", "CloseCurlyQuote", "Colon", "Colon", "Colone", "Colone", "Congruent", "Congruent", "Conint", "Conint", "ContourIntegral", "ContourIntegral", "Copf", "Copf", "Coproduct", "Coproduct", "CounterClockwiseContourIntegral", 
+"CounterClockwiseContourIntegral", "Cross", "Cross", "Cscr", "Cscr", "Cup", "Cup", "CupCap", "CupCap", "DD", "DD", "DDotrahd", "DDotrahd", "DJcy", "DJcy", "DScy", "DScy", "DZcy", "DZcy", "Dagger", "Dagger", "Darr", "Darr", "Dashv", "Dashv", "Dcaron", "Dcaron", "Dcy", "Dcy", "Del", "Del", "Delta", "Delta", "Dfr", "Dfr", 
+"DiacriticalAcute", "DiacriticalAcute", "DiacriticalDot", "DiacriticalDot", "DiacriticalDoubleAcute", "DiacriticalDoubleAcute", "DiacriticalGrave", "DiacriticalGrave", "DiacriticalTilde", "DiacriticalTilde", "Diamond", "Diamond", "DifferentialD", "DifferentialD", "Dopf", "Dopf", "Dot", "Dot", "DotDot", "DotDot", "DotEqual", 
+"DotEqual", "DoubleContourIntegral", "DoubleContourIntegral", "DoubleDot", "DoubleDot", "DoubleDownArrow", "DoubleDownArrow", "DoubleLeftArrow", "DoubleLeftArrow", "DoubleLeftRightArrow", "DoubleLeftRightArrow", "DoubleLeftTee", "DoubleLeftTee", "DoubleLongLeftArrow", "DoubleLongLeftArrow", "DoubleLongLeftRightArrow", 
+"DoubleLongLeftRightArrow", "DoubleLongRightArrow", "DoubleLongRightArrow", "DoubleRightArrow", "DoubleRightArrow", "DoubleRightTee", "DoubleRightTee", "DoubleUpArrow", "DoubleUpArrow", "DoubleUpDownArrow", "DoubleUpDownArrow", "DoubleVerticalBar", "DoubleVerticalBar", "DownArrow", "DownArrow", "DownArrowBar", "DownArrowBar", 
+"DownArrowUpArrow", "DownArrowUpArrow", "DownBreve", "DownBreve", "DownLeftRightVector", "DownLeftRightVector", "DownLeftTeeVector", "DownLeftTeeVector", "DownLeftVector", "DownLeftVector", "DownLeftVectorBar", "DownLeftVectorBar", "DownRightTeeVector", "DownRightTeeVector", "DownRightVector", "DownRightVector", "DownRightVectorBar", 
+"DownRightVectorBar", "DownTee", "DownTee", "DownTeeArrow", "DownTeeArrow", "Downarrow", "Downarrow", "Dscr", "Dscr", "Dstrok", "Dstrok", "ENG", "ENG", "ETH", "ETH", "Eacute", "Eacute", "Ecaron", "Ecaron", "Ecirc", "Ecirc", "Ecy", "Ecy", "Edot", "Edot", "Efr", "Efr", "Egrave", "Egrave", "Element", "Element", "Emacr", "Emacr", 
+"EmptySmallSquare", "EmptySmallSquare", "EmptyVerySmallSquare", "EmptyVerySmallSquare", "Eogon", "Eogon", "Eopf", "Eopf", "Epsilon", "Epsilon", "Equal", "Equal", "EqualTilde", "EqualTilde", "Equilibrium", "Equilibrium", "Escr", "Escr", "Esim", "Esim", "Eta", "Eta", "Euml", "Euml", "Exists", "Exists", "ExponentialE", "ExponentialE", 
+"Fcy", "Fcy", "Ffr", "Ffr", "FilledSmallSquare", "FilledSmallSquare", "FilledVerySmallSquare", "FilledVerySmallSquare", "Fopf", "Fopf", "ForAll", "ForAll", "Fouriertrf", "Fouriertrf", "Fscr", "Fscr", "GJcy", "GJcy", "GT", "GT", "Gamma", "Gamma", "Gammad", "Gammad", "Gbreve", "Gbreve", "Gcedil", "Gcedil", "Gcirc", "Gcirc", 
+"Gcy", "Gcy", "Gdot", "Gdot", "Gfr", "Gfr", "Gg", "Gg", "Gopf", "Gopf", "GreaterEqual", "GreaterEqual", "GreaterEqualLess", "GreaterEqualLess", "GreaterFullEqual", "GreaterFullEqual", "GreaterGreater", "GreaterGreater", "GreaterLess", "GreaterLess", "GreaterSlantEqual", "GreaterSlantEqual", "GreaterTilde", "GreaterTilde", 
+"Gscr", "Gscr", "Gt", "Gt", "HARDcy", "HARDcy", "Hacek", "Hacek", "Hat", "Hat", "Hcirc", "Hcirc", "Hfr", "Hfr", "HilbertSpace", "HilbertSpace", "Hopf", "Hopf", "HorizontalLine", "HorizontalLine", "Hscr", "Hscr", "Hstrok", "Hstrok", "HumpDownHump", "HumpDownHump", "HumpEqual", "HumpEqual", "IEcy", "IEcy", "IJlig", "IJlig", 
+"IOcy", "IOcy", "Iacute", "Iacute", "Icirc", "Icirc", "Icy", "Icy", "Idot", "Idot", "Ifr", "Ifr", "Igrave", "Igrave", "Im", "Im", "Imacr", "Imacr", "ImaginaryI", "ImaginaryI", "Implies", "Implies", "Int", "Int", "Integral", "Integral", "Intersection", "Intersection", "InvisibleComma", "InvisibleComma", "InvisibleTimes", 
+"InvisibleTimes", "Iogon", "Iogon", "Iopf", "Iopf", "Iota", "Iota", "Iscr", "Iscr", "Itilde", "Itilde", "Iukcy", "Iukcy", "Iuml", "Iuml", "Jcirc", "Jcirc", "Jcy", "Jcy", "Jfr", "Jfr", "Jopf", "Jopf", "Jscr", "Jscr", "Jsercy", "Jsercy", "Jukcy", "Jukcy", "KHcy", "KHcy", "KJcy", "KJcy", "Kappa", "Kappa", "Kcedil", "Kcedil", 
+"Kcy", "Kcy", "Kfr", "Kfr", "Kopf", "Kopf", "Kscr", "Kscr", "LJcy", "LJcy", "LT", "LT", "Lacute", "Lacute", "Lambda", "Lambda", "Lang", "Lang", "Laplacetrf", "Laplacetrf", "Larr", "Larr", "Lcaron", "Lcaron", "Lcedil", "Lcedil", "Lcy", "Lcy", "LeftAngleBracket", "LeftAngleBracket", "LeftArrow", "LeftArrow", "LeftArrowBar", 
+"LeftArrowBar", "LeftArrowRightArrow", "LeftArrowRightArrow", "LeftCeiling", "LeftCeiling", "LeftDoubleBracket", "LeftDoubleBracket", "LeftDownTeeVector", "LeftDownTeeVector", "LeftDownVector", "LeftDownVector", "LeftDownVectorBar", "LeftDownVectorBar", "LeftFloor", "LeftFloor", "LeftRightArrow", "LeftRightArrow", "LeftRightVector", 
+"LeftRightVector", "LeftTee", "LeftTee", "LeftTeeArrow", "LeftTeeArrow", "LeftTeeVector", "LeftTeeVector", "LeftTriangle", "LeftTriangle", "LeftTriangleBar", "LeftTriangleBar", "LeftTriangleEqual", "LeftTriangleEqual", "LeftUpDownVector", "LeftUpDownVector", "LeftUpTeeVector", "LeftUpTeeVector", "LeftUpVector", "LeftUpVector", 
+"LeftUpVectorBar", "LeftUpVectorBar", "LeftVector", "LeftVector", "LeftVectorBar", "LeftVectorBar", "Leftarrow", "Leftarrow", "Leftrightarrow", "Leftrightarrow", "LessEqualGreater", "LessEqualGreater", "LessFullEqual", "LessFullEqual", "LessGreater", "LessGreater", "LessLess", "LessLess", "LessSlantEqual", "LessSlantEqual", 
+"LessTilde", "LessTilde", "Lfr", "Lfr", "Ll", "Ll", "Lleftarrow", "Lleftarrow", "Lmidot", "Lmidot", "LongLeftArrow", "LongLeftArrow", "LongLeftRightArrow", "LongLeftRightArrow", "LongRightArrow", "LongRightArrow", "Longleftarrow", "Longleftarrow", "Longleftrightarrow", "Longleftrightarrow", "Longrightarrow", "Longrightarrow", 
+"Lopf", "Lopf", "LowerLeftArrow", "LowerLeftArrow", "LowerRightArrow", "LowerRightArrow", "Lscr", "Lscr", "Lsh", "Lsh", "Lstrok", "Lstrok", "Lt", "Lt", "Map", "Map", "Mcy", "Mcy", "MediumSpace", "MediumSpace", "Mellintrf", "Mellintrf", "Mfr", "Mfr", "MinusPlus", "MinusPlus", "Mopf", "Mopf", "Mscr", "Mscr", "Mu", "Mu", 
+"NJcy", "NJcy", "Nacute", "Nacute", "Ncaron", "Ncaron", "Ncedil", "Ncedil", "Ncy", "Ncy", "NegativeMediumSpace", "NegativeMediumSpace", "NegativeThickSpace", "NegativeThickSpace", "NegativeThinSpace", "NegativeThinSpace", "NegativeVeryThinSpace", "NegativeVeryThinSpace", "NestedGreaterGreater", "NestedGreaterGreater", 
+"NestedLessLess", "NestedLessLess", "NewLine", "NewLine", "Nfr", "Nfr", "NoBreak", "NoBreak", "NonBreakingSpace", "NonBreakingSpace", "Nopf", "Nopf", "Not", "Not", "NotCongruent", "NotCongruent", "NotCupCap", "NotCupCap", "NotDoubleVerticalBar", "NotDoubleVerticalBar", "NotElement", "NotElement", "NotEqual", "NotEqual", 
+"NotExists", "NotExists", "NotGreater", "NotGreater", "NotGreaterEqual", "NotGreaterEqual", "NotGreaterLess", "NotGreaterLess", "NotGreaterTilde", "NotGreaterTilde", "NotLeftTriangle", "NotLeftTriangle", "NotLeftTriangleEqual", "NotLeftTriangleEqual", "NotLess", "NotLess", "NotLessEqual", "NotLessEqual", "NotLessGreater", 
+"NotLessGreater", "NotLessTilde", "NotLessTilde", "NotPrecedes", "NotPrecedes", "NotPrecedesSlantEqual", "NotPrecedesSlantEqual", "NotReverseElement", "NotReverseElement", "NotRightTriangle", "NotRightTriangle", "NotRightTriangleEqual", "NotRightTriangleEqual", "NotSquareSubsetEqual", "NotSquareSubsetEqual", "NotSquareSupersetEqual", 
+"NotSquareSupersetEqual", "NotSubsetEqual", "NotSubsetEqual", "NotSucceeds", "NotSucceeds", "NotSucceedsSlantEqual", "NotSucceedsSlantEqual", "NotSupersetEqual", "NotSupersetEqual", "NotTilde", "NotTilde", "NotTildeEqual", "NotTildeEqual", "NotTildeFullEqual", "NotTildeFullEqual", "NotTildeTilde", "NotTildeTilde", "NotVerticalBar", 
+"NotVerticalBar", "Nscr", "Nscr", "Ntilde", "Ntilde", "Nu", "Nu", "OElig", "OElig", "Oacute", "Oacute", "Ocirc", "Ocirc", "Ocy", "Ocy", "Odblac", "Odblac", "Ofr", "Ofr", "Ograve", "Ograve", "Omacr", "Omacr", "Omega", "Omega", "Omicron", "Omicron", "Oopf", "Oopf", "OpenCurlyDoubleQuote", "OpenCurlyDoubleQuote", "OpenCurlyQuote", 
+"OpenCurlyQuote", "Or", "Or", "Oscr", "Oscr", "Oslash", "Oslash", "Otilde", "Otilde", "Otimes", "Otimes", "Ouml", "Ouml", "OverBar", "OverBar", "OverBrace", "OverBrace", "OverBracket", "OverBracket", "OverParenthesis", "OverParenthesis", "PartialD", "PartialD", "Pcy", "Pcy", "Pfr", "Pfr", "Phi", "Phi", "Pi", "Pi", "PlusMinus", 
+"PlusMinus", "Poincareplane", "Poincareplane", "Popf", "Popf", "Pr", "Pr", "Precedes", "Precedes", "PrecedesEqual", "PrecedesEqual", "PrecedesSlantEqual", "PrecedesSlantEqual", "PrecedesTilde", "PrecedesTilde", "Prime", "Prime", "Product", "Product", "Proportion", "Proportion", "Proportional", "Proportional", "Pscr", "Pscr", 
+"Psi", "Psi", "QUOT", "QUOT", "Qfr", "Qfr", "Qopf", "Qopf", "Qscr", "Qscr", "RBarr", "RBarr", "REG", "REG", "Racute", "Racute", "Rang", "Rang", "Rarr", "Rarr", "Rarrtl", "Rarrtl", "Rcaron", "Rcaron", "Rcedil", "Rcedil", "Rcy", "Rcy", "Re", "Re", "ReverseElement", "ReverseElement", "ReverseEquilibrium", "ReverseEquilibrium", 
+"ReverseUpEquilibrium", "ReverseUpEquilibrium", "Rfr", "Rfr", "Rho", "Rho", "RightAngleBracket", "RightAngleBracket", "RightArrow", "RightArrow", "RightArrowBar", "RightArrowBar", "RightArrowLeftArrow", "RightArrowLeftArrow", "RightCeiling", "RightCeiling", "RightDoubleBracket", "RightDoubleBracket", "RightDownTeeVector", 
+"RightDownTeeVector", "RightDownVector", "RightDownVector", "RightDownVectorBar", "RightDownVectorBar", "RightFloor", "RightFloor", "RightTee", "RightTee", "RightTeeArrow", "RightTeeArrow", "RightTeeVector", "RightTeeVector", "RightTriangle", "RightTriangle", "RightTriangleBar", "RightTriangleBar", "RightTriangleEqual", 
+"RightTriangleEqual", "RightUpDownVector", "RightUpDownVector", "RightUpTeeVector", "RightUpTeeVector", "RightUpVector", "RightUpVector", "RightUpVectorBar", "RightUpVectorBar", "RightVector", "RightVector", "RightVectorBar", "RightVectorBar", "Rightarrow", "Rightarrow", "Ropf", "Ropf", "RoundImplies", "RoundImplies", 
+"Rrightarrow", "Rrightarrow", "Rscr", "Rscr", "Rsh", "Rsh", "RuleDelayed", "RuleDelayed", "SHCHcy", "SHCHcy", "SHcy", "SHcy", "SOFTcy", "SOFTcy", "Sacute", "Sacute", "Sc", "Sc", "Scaron", "Scaron", "Scedil", "Scedil", "Scirc", "Scirc", "Scy", "Scy", "Sfr", "Sfr", "ShortDownArrow", "ShortDownArrow", "ShortLeftArrow", "ShortLeftArrow", 
+"ShortRightArrow", "ShortRightArrow", "ShortUpArrow", "ShortUpArrow", "Sigma", "Sigma", "SmallCircle", "SmallCircle", "Sopf", "Sopf", "Sqrt", "Sqrt", "Square", "Square", "SquareIntersection", "SquareIntersection", "SquareSubset", "SquareSubset", "SquareSubsetEqual", "SquareSubsetEqual", "SquareSuperset", "SquareSuperset", 
+"SquareSupersetEqual", "SquareSupersetEqual", "SquareUnion", "SquareUnion", "Sscr", "Sscr", "Star", "Star", "Sub", "Sub", "Subset", "Subset", "SubsetEqual", "SubsetEqual", "Succeeds", "Succeeds", "SucceedsEqual", "SucceedsEqual", "SucceedsSlantEqual", "SucceedsSlantEqual", "SucceedsTilde", "SucceedsTilde", "SuchThat", 
+"SuchThat", "Sum", "Sum", "Sup", "Sup", "Superset", "Superset", "SupersetEqual", "SupersetEqual", "Supset", "Supset", "THORN", "THORN", "TRADE", "TRADE", "TSHcy", "TSHcy", "TScy", "TScy", "Tab", "Tab", "Tau", "Tau", "Tcaron", "Tcaron", "Tcedil", "Tcedil", "Tcy", "Tcy", "Tfr", "Tfr", "Therefore", "Therefore", "Theta", "Theta", 
+"ThinSpace", "ThinSpace", "Tilde", "Tilde", "TildeEqual", "TildeEqual", "TildeFullEqual", "TildeFullEqual", "TildeTilde", "TildeTilde", "Topf", "Topf", "TripleDot", "TripleDot", "Tscr", "Tscr", "Tstrok", "Tstrok", "Uacute", "Uacute", "Uarr", "Uarr", "Uarrocir", "Uarrocir", "Ubrcy", "Ubrcy", "Ubreve", "Ubreve", "Ucirc", 
+"Ucirc", "Ucy", "Ucy", "Udblac", "Udblac", "Ufr", "Ufr", "Ugrave", "Ugrave", "Umacr", "Umacr", "UnderBar", "UnderBar", "UnderBrace", "UnderBrace", "UnderBracket", "UnderBracket", "UnderParenthesis", "UnderParenthesis", "Union", "Union", "UnionPlus", "UnionPlus", "Uogon", "Uogon", "Uopf", "Uopf", "UpArrow", "UpArrow", "UpArrowBar", 
+"UpArrowBar", "UpArrowDownArrow", "UpArrowDownArrow", "UpDownArrow", "UpDownArrow", "UpEquilibrium", "UpEquilibrium", "UpTee", "UpTee", "UpTeeArrow", "UpTeeArrow", "Uparrow", "Uparrow", "Updownarrow", "Updownarrow", "UpperLeftArrow", "UpperLeftArrow", "UpperRightArrow", "UpperRightArrow", "Upsi", "Upsi", "Upsilon", "Upsilon", 
+"Uring", "Uring", "Uscr", "Uscr", "Utilde", "Utilde", "Uuml", "Uuml", "VDash", "VDash", "Vbar", "Vbar", "Vcy", "Vcy", "Vdash", "Vdash", "Vdashl", "Vdashl", "Vee", "Vee", "Verbar", "Verbar", "Vert", "Vert", "VerticalBar", "VerticalBar", "VerticalLine", "VerticalLine", "VerticalSeparator", "VerticalSeparator", "VerticalTilde", 
+"VerticalTilde", "VeryThinSpace", "VeryThinSpace", "Vfr", "Vfr", "Vopf", "Vopf", "Vscr", "Vscr", "Vvdash", "Vvdash", "Wcirc", "Wcirc", "Wedge", "Wedge", "Wfr", "Wfr", "Wopf", "Wopf", "Wscr", "Wscr", "Xfr", "Xfr", "Xi", "Xi", "Xopf", "Xopf", "Xscr", "Xscr", "YAcy", "YAcy", "YIcy", "YIcy", "YUcy", "YUcy", "Yacute", "Yacute", 
+"Ycirc", "Ycirc", "Ycy", "Ycy", "Yfr", "Yfr", "Yopf", "Yopf", "Yscr", "Yscr", "Yuml", "Yuml", "ZHcy", "ZHcy", "Zacute", "Zacute", "Zcaron", "Zcaron", "Zcy", "Zcy", "Zdot", "Zdot", "ZeroWidthSpace", "ZeroWidthSpace", "Zeta", "Zeta", "Zfr", "Zfr", "Zopf", "Zopf", "Zscr", "Zscr", "aacute", "aacute", "abreve", "abreve", "ac", 
+"ac", "acd", "acd", "acirc", "acirc", "acute", "acute", "acy", "acy", "aelig", "aelig", "af", "af", "afr", "afr", "agrave", "agrave", "alefsym", "alefsym", "aleph", "aleph", "alpha", "alpha", "amacr", "amacr", "amalg", "amalg", "and", "and", "andand", "andand", "andd", "andd", "andslope", "andslope", "andv", "andv", "ang", 
+"ang", "ange", "ange", "angle", "angle", "angmsd", "angmsd", "angmsdaa", "angmsdaa", "angmsdab", "angmsdab", "angmsdac", "angmsdac", "angmsdad", "angmsdad", "angmsdae", "angmsdae", "angmsdaf", "angmsdaf", "angmsdag", "angmsdag", "angmsdah", "angmsdah", "angrt", "angrt", "angrtvb", "angrtvb", "angrtvbd", "angrtvbd", "angsph", 
+"angsph", "angst", "angst", "angzarr", "angzarr", "aogon", "aogon", "aopf", "aopf", "ap", "ap", "apE", "apE", "apacir", "apacir", "ape", "ape", "apid", "apid", "approx", "approx", "approxeq", "approxeq", "aring", "aring", "ascr", "ascr", "ast", "ast", "asymp", "asymp", "asympeq", "asympeq", "atilde", "atilde", "auml", 
+"auml", "awconint", "awconint", "awint", "awint", "bNot", "bNot", "backcong", "backcong", "backepsilon", "backepsilon", "backprime", "backprime", "backsim", "backsim", "backsimeq", "backsimeq", "barvee", "barvee", "barwed", "barwed", "barwedge", "barwedge", "bbrk", "bbrk", "bbrktbrk", "bbrktbrk", "bcong", "bcong", "bcy", 
+"bcy", "bdquo", "bdquo", "becaus", "becaus", "because", "because", "bemptyv", "bemptyv", "bepsi", "bepsi", "bernou", "bernou", "beta", "beta", "beth", "beth", "between", "between", "bfr", "bfr", "bigcap", "bigcap", "bigcirc", "bigcirc", "bigcup", "bigcup", "bigodot", "bigodot", "bigoplus", "bigoplus", "bigotimes", "bigotimes", 
+"bigsqcup", "bigsqcup", "bigstar", "bigstar", "bigtriangledown", "bigtriangledown", "bigtriangleup", "bigtriangleup", "biguplus", "biguplus", "bigvee", "bigvee", "bigwedge", "bigwedge", "bkarow", "bkarow", "blacklozenge", "blacklozenge", "blacksquare", "blacksquare", "blacktriangle", "blacktriangle", "blacktriangledown", 
+"blacktriangledown", "blacktriangleleft", "blacktriangleleft", "blacktriangleright", "blacktriangleright", "blank", "blank", "blk12", "blk12", "blk14", "blk14", "blk34", "blk34", "block", "block", "bnot", "bnot", "bopf", "bopf", "bot", "bot", "bottom", "bottom", "bowtie", "bowtie", "boxDL", "boxDL", "boxDR", "boxDR", "boxDl", 
+"boxDl", "boxDr", "boxDr", "boxH", "boxH", "boxHD", "boxHD", "boxHU", "boxHU", "boxHd", "boxHd", "boxHu", "boxHu", "boxUL", "boxUL", "boxUR", "boxUR", "boxUl", "boxUl", "boxUr", "boxUr", "boxV", "boxV", "boxVH", "boxVH", "boxVL", "boxVL", "boxVR", "boxVR", "boxVh", "boxVh", "boxVl", "boxVl", "boxVr", "boxVr", "boxbox", 
+"boxbox", "boxdL", "boxdL", "boxdR", "boxdR", "boxdl", "boxdl", "boxdr", "boxdr", "boxh", "boxh", "boxhD", "boxhD", "boxhU", "boxhU", "boxhd", "boxhd", "boxhu", "boxhu", "boxminus", "boxminus", "boxplus", "boxplus", "boxtimes", "boxtimes", "boxuL", "boxuL", "boxuR", "boxuR", "boxul", "boxul", "boxur", "boxur", "boxv", 
+"boxv", "boxvH", "boxvH", "boxvL", "boxvL", "boxvR", "boxvR", "boxvh", "boxvh", "boxvl", "boxvl", "boxvr", "boxvr", "bprime", "bprime", "breve", "breve", "brvbar", "brvbar", "bscr", "bscr", "bsemi", "bsemi", "bsim", "bsim", "bsime", "bsime", "bsol", "bsol", "bsolb", "bsolb", "bsolhsub", "bsolhsub", "bull", "bull", "bullet", 
+"bullet", "bump", "bump", "bumpE", "bumpE", "bumpe", "bumpe", "bumpeq", "bumpeq", "cacute", "cacute", "cap", "cap", "capand", "capand", "capbrcup", "capbrcup", "capcap", "capcap", "capcup", "capcup", "capdot", "capdot", "caret", "caret", "caron", "caron", "ccaps", "ccaps", "ccaron", "ccaron", "ccedil", "ccedil", "ccirc", 
+"ccirc", "ccups", "ccups", "ccupssm", "ccupssm", "cdot", "cdot", "cedil", "cedil", "cemptyv", "cemptyv", "cent", "cent", "centerdot", "centerdot", "cfr", "cfr", "chcy", "chcy", "check", "check", "checkmark", "checkmark", "chi", "chi", "cir", "cir", "cirE", "cirE", "circ", "circ", "circeq", "circeq", "circlearrowleft", 
+"circlearrowleft", "circlearrowright", "circlearrowright", "circledR", "circledR", "circledS", "circledS", "circledast", "circledast", "circledcirc", "circledcirc", "circleddash", "circleddash", "cire", "cire", "cirfnint", "cirfnint", "cirmid", "cirmid", "cirscir", "cirscir", "clubs", "clubs", "clubsuit", "clubsuit", "colon", 
+"colon", "colone", "colone", "coloneq", "coloneq", "comma", "comma", "commat", "commat", "comp", "comp", "compfn", "compfn", "complement", "complement", "complexes", "complexes", "cong", "cong", "congdot", "congdot", "conint", "conint", "copf", "copf", "coprod", "coprod", "copy", "copy", "copysr", "copysr", "crarr", "crarr", 
+"cross", "cross", "cscr", "cscr", "csub", "csub", "csube", "csube", "csup", "csup", "csupe", "csupe", "ctdot", "ctdot", "cudarrl", "cudarrl", "cudarrr", "cudarrr", "cuepr", "cuepr", "cuesc", "cuesc", "cularr", "cularr", "cularrp", "cularrp", "cup", "cup", "cupbrcap", "cupbrcap", "cupcap", "cupcap", "cupcup", "cupcup", 
+"cupdot", "cupdot", "cupor", "cupor", "curarr", "curarr", "curarrm", "curarrm", "curlyeqprec", "curlyeqprec", "curlyeqsucc", "curlyeqsucc", "curlyvee", "curlyvee", "curlywedge", "curlywedge", "curren", "curren", "curvearrowleft", "curvearrowleft", "curvearrowright", "curvearrowright", "cuvee", "cuvee", "cuwed", "cuwed", 
+"cwconint", "cwconint", "cwint", "cwint", "cylcty", "cylcty", "dArr", "dArr", "dHar", "dHar", "dagger", "dagger", "daleth", "daleth", "darr", "darr", "dash", "dash", "dashv", "dashv", "dbkarow", "dbkarow", "dblac", "dblac", "dcaron", "dcaron", "dcy", "dcy", "dd", "dd", "ddagger", "ddagger", "ddarr", "ddarr", "ddotseq", 
+"ddotseq", "deg", "deg", "delta", "delta", "demptyv", "demptyv", "dfisht", "dfisht", "dfr", "dfr", "dharl", "dharl", "dharr", "dharr", "diam", "diam", "diamond", "diamond", "diamondsuit", "diamondsuit", "diams", "diams", "die", "die", "digamma", "digamma", "disin", "disin", "div", "div", "divide", "divide", "divideontimes", 
+"divideontimes", "divonx", "divonx", "djcy", "djcy", "dlcorn", "dlcorn", "dlcrop", "dlcrop", "dollar", "dollar", "dopf", "dopf", "dot", "dot", "doteq", "doteq", "doteqdot", "doteqdot", "dotminus", "dotminus", "dotplus", "dotplus", "dotsquare", "dotsquare", "doublebarwedge", "doublebarwedge", "downarrow", "downarrow", "downdownarrows", 
+"downdownarrows", "downharpoonleft", "downharpoonleft", "downharpoonright", "downharpoonright", "drbkarow", "drbkarow", "drcorn", "drcorn", "drcrop", "drcrop", "dscr", "dscr", "dscy", "dscy", "dsol", "dsol", "dstrok", "dstrok", "dtdot", "dtdot", "dtri", "dtri", "dtrif", "dtrif", "duarr", "duarr", "duhar", "duhar", "dwangle", 
+"dwangle", "dzcy", "dzcy", "dzigrarr", "dzigrarr", "eDDot", "eDDot", "eDot", "eDot", "eacute", "eacute", "easter", "easter", "ecaron", "ecaron", "ecir", "ecir", "ecirc", "ecirc", "ecolon", "ecolon", "ecy", "ecy", "edot", "edot", "ee", "ee", "efDot", "efDot", "efr", "efr", "eg", "eg", "egrave", "egrave", "egs", "egs", "egsdot", 
+"egsdot", "el", "el", "elinters", "elinters", "ell", "ell", "els", "els", "elsdot", "elsdot", "emacr", "emacr", "empty", "empty", "emptyset", "emptyset", "emptyv", "emptyv", "emsp", "emsp", "emsp13", "emsp13", "emsp14", "emsp14", "eng", "eng", "ensp", "ensp", "eogon", "eogon", "eopf", "eopf", "epar", "epar", "eparsl", 
+"eparsl", "eplus", "eplus", "epsi", "epsi", "epsilon", "epsilon", "epsiv", "epsiv", "eqcirc", "eqcirc", "eqcolon", "eqcolon", "eqsim", "eqsim", "eqslantgtr", "eqslantgtr", "eqslantless", "eqslantless", "equals", "equals", "equest", "equest", "equiv", "equiv", "equivDD", "equivDD", "eqvparsl", "eqvparsl", "erDot", "erDot", 
+"erarr", "erarr", "escr", "escr", "esdot", "esdot", "esim", "esim", "eta", "eta", "eth", "eth", "euml", "euml", "euro", "euro", "excl", "excl", "exist", "exist", "expectation", "expectation", "exponentiale", "exponentiale", "fallingdotseq", "fallingdotseq", "fcy", "fcy", "female", "female", "ffilig", "ffilig", "fflig", 
+"fflig", "ffllig", "ffllig", "ffr", "ffr", "filig", "filig", "flat", "flat", "fllig", "fllig", "fltns", "fltns", "fnof", "fnof", "fopf", "fopf", "forall", "forall", "fork", "fork", "forkv", "forkv", "fpartint", "fpartint", "frac12", "frac12", "frac13", "frac13", "frac14", "frac14", "frac15", "frac15", "frac16", "frac16", 
+"frac18", "frac18", "frac23", "frac23", "frac25", "frac25", "frac34", "frac34", "frac35", "frac35", "frac38", "frac38", "frac45", "frac45", "frac56", "frac56", "frac58", "frac58", "frac78", "frac78", "frasl", "frasl", "frown", "frown", "fscr", "fscr", "gE", "gE", "gEl", "gEl", "gacute", "gacute", "gamma", "gamma", "gammad", 
+"gammad", "gap", "gap", "gbreve", "gbreve", "gcirc", "gcirc", "gcy", "gcy", "gdot", "gdot", "ge", "ge", "gel", "gel", "geq", "geq", "geqq", "geqq", "geqslant", "geqslant", "ges", "ges", "gescc", "gescc", "gesdot", "gesdot", "gesdoto", "gesdoto", "gesdotol", "gesdotol", "gesles", "gesles", "gfr", "gfr", "gg", "gg", "ggg", 
+"ggg", "gimel", "gimel", "gjcy", "gjcy", "gl", "gl", "glE", "glE", "gla", "gla", "glj", "glj", "gnE", "gnE", "gnap", "gnap", "gnapprox", "gnapprox", "gne", "gne", "gneq", "gneq", "gneqq", "gneqq", "gnsim", "gnsim", "gopf", "gopf", "grave", "grave", "gscr", "gscr", "gsim", "gsim", "gsime", "gsime", "gsiml", "gsiml", "gtcc", 
+"gtcc", "gtcir", "gtcir", "gtdot", "gtdot", "gtlPar", "gtlPar", "gtquest", "gtquest", "gtrapprox", "gtrapprox", "gtrarr", "gtrarr", "gtrdot", "gtrdot", "gtreqless", "gtreqless", "gtreqqless", "gtreqqless", "gtrless", "gtrless", "gtrsim", "gtrsim", "hArr", "hArr", "hairsp", "hairsp", "half", "half", "hamilt", "hamilt", 
+"hardcy", "hardcy", "harr", "harr", "harrcir", "harrcir", "harrw", "harrw", "hbar", "hbar", "hcirc", "hcirc", "hearts", "hearts", "heartsuit", "heartsuit", "hellip", "hellip", "hercon", "hercon", "hfr", "hfr", "hksearow", "hksearow", "hkswarow", "hkswarow", "hoarr", "hoarr", "homtht", "homtht", "hookleftarrow", "hookleftarrow", 
+"hookrightarrow", "hookrightarrow", "hopf", "hopf", "horbar", "horbar", "hscr", "hscr", "hslash", "hslash", "hstrok", "hstrok", "hybull", "hybull", "hyphen", "hyphen", "iacute", "iacute", "ic", "ic", "icirc", "icirc", "icy", "icy", "iecy", "iecy", "iexcl", "iexcl", "iff", "iff", "ifr", "ifr", "igrave", "igrave", "ii", 
+"ii", "iiiint", "iiiint", "iiint", "iiint", "iinfin", "iinfin", "iiota", "iiota", "ijlig", "ijlig", "imacr", "imacr", "image", "image", "imagline", "imagline", "imagpart", "imagpart", "imath", "imath", "imof", "imof", "imped", "imped", "in", "in", "incare", "incare", "infin", "infin", "infintie", "infintie", "inodot", 
+"inodot", "int", "int", "intcal", "intcal", "integers", "integers", "intercal", "intercal", "intlarhk", "intlarhk", "intprod", "intprod", "iocy", "iocy", "iogon", "iogon", "iopf", "iopf", "iota", "iota", "iprod", "iprod", "iquest", "iquest", "iscr", "iscr", "isin", "isin", "isinE", "isinE", "isindot", "isindot", "isins", 
+"isins", "isinsv", "isinsv", "isinv", "isinv", "it", "it", "itilde", "itilde", "iukcy", "iukcy", "iuml", "iuml", "jcirc", "jcirc", "jcy", "jcy", "jfr", "jfr", "jmath", "jmath", "jopf", "jopf", "jscr", "jscr", "jsercy", "jsercy", "jukcy", "jukcy", "kappa", "kappa", "kappav", "kappav", "kcedil", "kcedil", "kcy", "kcy", "kfr", 
+"kfr", "kgreen", "kgreen", "khcy", "khcy", "kjcy", "kjcy", "kopf", "kopf", "kscr", "kscr", "lAarr", "lAarr", "lArr", "lArr", "lAtail", "lAtail", "lBarr", "lBarr", "lE", "lE", "lEg", "lEg", "lHar", "lHar", "lacute", "lacute", "laemptyv", "laemptyv", "lagran", "lagran", "lambda", "lambda", "lang", "lang", "langd", "langd", 
+"langle", "langle", "lap", "lap", "laquo", "laquo", "larr", "larr", "larrb", "larrb", "larrbfs", "larrbfs", "larrfs", "larrfs", "larrhk", "larrhk", "larrlp", "larrlp", "larrpl", "larrpl", "larrsim", "larrsim", "larrtl", "larrtl", "lat", "lat", "latail", "latail", "late", "late", "lbarr", "lbarr", "lbbrk", "lbbrk", "lbrace", 
+"lbrace", "lbrack", "lbrack", "lbrke", "lbrke", "lbrksld", "lbrksld", "lbrkslu", "lbrkslu", "lcaron", "lcaron", "lcedil", "lcedil", "lceil", "lceil", "lcub", "lcub", "lcy", "lcy", "ldca", "ldca", "ldquo", "ldquo", "ldquor", "ldquor", "ldrdhar", "ldrdhar", "ldrushar", "ldrushar", "ldsh", "ldsh", "le", "le", "leftarrow", 
+"leftarrow", "leftarrowtail", "leftarrowtail", "leftharpoondown", "leftharpoondown", "leftharpoonup", "leftharpoonup", "leftleftarrows", "leftleftarrows", "leftrightarrow", "leftrightarrow", "leftrightarrows", "leftrightarrows", "leftrightharpoons", "leftrightharpoons", "leftrightsquigarrow", "leftrightsquigarrow", "leftthreetimes", 
+"leftthreetimes", "leg", "leg", "leq", "leq", "leqq", "leqq", "leqslant", "leqslant", "les", "les", "lescc", "lescc", "lesdot", "lesdot", "lesdoto", "lesdoto", "lesdotor", "lesdotor", "lesges", "lesges", "lessapprox", "lessapprox", "lessdot", "lessdot", "lesseqgtr", "lesseqgtr", "lesseqqgtr", "lesseqqgtr", "lessgtr", "lessgtr", 
+"lesssim", "lesssim", "lfisht", "lfisht", "lfloor", "lfloor", "lfr", "lfr", "lg", "lg", "lgE", "lgE", "lhard", "lhard", "lharu", "lharu", "lharul", "lharul", "lhblk", "lhblk", "ljcy", "ljcy", "ll", "ll", "llarr", "llarr", "llcorner", "llcorner", "llhard", "llhard", "lltri", "lltri", "lmidot", "lmidot", "lmoust", "lmoust", 
+"lmoustache", "lmoustache", "lnE", "lnE", "lnap", "lnap", "lnapprox", "lnapprox", "lne", "lne", "lneq", "lneq", "lneqq", "lneqq", "lnsim", "lnsim", "loang", "loang", "loarr", "loarr", "lobrk", "lobrk", "longleftarrow", "longleftarrow", "longleftrightarrow", "longleftrightarrow", "longmapsto", "longmapsto", "longrightarrow", 
+"longrightarrow", "looparrowleft", "looparrowleft", "looparrowright", "looparrowright", "lopar", "lopar", "lopf", "lopf", "loplus", "loplus", "lotimes", "lotimes", "lowast", "lowast", "lowbar", "lowbar", "loz", "loz", "lozenge", "lozenge", "lozf", "lozf", "lpar", "lpar", "lparlt", "lparlt", "lrarr", "lrarr", "lrcorner", 
+"lrcorner", "lrhar", "lrhar", "lrhard", "lrhard", "lrm", "lrm", "lrtri", "lrtri", "lsaquo", "lsaquo", "lscr", "lscr", "lsh", "lsh", "lsim", "lsim", "lsime", "lsime", "lsimg", "lsimg", "lsqb", "lsqb", "lsquo", "lsquo", "lsquor", "lsquor", "lstrok", "lstrok", "ltcc", "ltcc", "ltcir", "ltcir", "ltdot", "ltdot", "lthree", 
+"lthree", "ltimes", "ltimes", "ltlarr", "ltlarr", "ltquest", "ltquest", "ltrPar", "ltrPar", "ltri", "ltri", "ltrie", "ltrie", "ltrif", "ltrif", "lurdshar", "lurdshar", "luruhar", "luruhar", "mDDot", "mDDot", "macr", "macr", "male", "male", "malt", "malt", "maltese", "maltese", "map", "map", "mapsto", "mapsto", "mapstodown", 
+"mapstodown", "mapstoleft", "mapstoleft", "mapstoup", "mapstoup", "marker", "marker", "mcomma", "mcomma", "mcy", "mcy", "mdash", "mdash", "measuredangle", "measuredangle", "mfr", "mfr", "mho", "mho", "micro", "micro", "mid", "mid", "midast", "midast", "midcir", "midcir", "middot", "middot", "minus", "minus", "minusb", 
+"minusb", "minusd", "minusd", "minusdu", "minusdu", "mlcp", "mlcp", "mldr", "mldr", "mnplus", "mnplus", "models", "models", "mopf", "mopf", "mp", "mp", "mscr", "mscr", "mstpos", "mstpos", "mu", "mu", "multimap", "multimap", "mumap", "mumap", "nLeftarrow", "nLeftarrow", "nLeftrightarrow", "nLeftrightarrow", "nRightarrow", 
+"nRightarrow", "nVDash", "nVDash", "nVdash", "nVdash", "nabla", "nabla", "nacute", "nacute", "nap", "nap", "napos", "napos", "napprox", "napprox", "natur", "natur", "natural", "natural", "naturals", "naturals", "nbsp", "nbsp", "ncap", "ncap", "ncaron", "ncaron", "ncedil", "ncedil", "ncong", "ncong", "ncup", "ncup", "ncy", 
+"ncy", "ndash", "ndash", "ne", "ne", "neArr", "neArr", "nearhk", "nearhk", "nearr", "nearr", "nearrow", "nearrow", "nequiv", "nequiv", "nesear", "nesear", "nexist", "nexist", "nexists", "nexists", "nfr", "nfr", "nge", "nge", "ngeq", "ngeq", "ngsim", "ngsim", "ngt", "ngt", "ngtr", "ngtr", "nhArr", "nhArr", "nharr", "nharr", 
+"nhpar", "nhpar", "ni", "ni", "nis", "nis", "nisd", "nisd", "niv", "niv", "njcy", "njcy", "nlArr", "nlArr", "nlarr", "nlarr", "nldr", "nldr", "nle", "nle", "nleftarrow", "nleftarrow", "nleftrightarrow", "nleftrightarrow", "nleq", "nleq", "nless", "nless", "nlsim", "nlsim", "nlt", "nlt", "nltri", "nltri", "nltrie", "nltrie", 
+"nmid", "nmid", "nopf", "nopf", "not", "not", "notin", "notin", "notinva", "notinva", "notinvb", "notinvb", "notinvc", "notinvc", "notni", "notni", "notniva", "notniva", "notnivb", "notnivb", "notnivc", "notnivc", "npar", "npar", "nparallel", "nparallel", "npolint", "npolint", "npr", "npr", "nprcue", "nprcue", "nprec", 
+"nprec", "nrArr", "nrArr", "nrarr", "nrarr", "nrightarrow", "nrightarrow", "nrtri", "nrtri", "nrtrie", "nrtrie", "nsc", "nsc", "nsccue", "nsccue", "nscr", "nscr", "nshortmid", "nshortmid", "nshortparallel", "nshortparallel", "nsim", "nsim", "nsime", "nsime", "nsimeq", "nsimeq", "nsmid", "nsmid", "nspar", "nspar", "nsqsube", 
+"nsqsube", "nsqsupe", "nsqsupe", "nsub", "nsub", "nsube", "nsube", "nsubseteq", "nsubseteq", "nsucc", "nsucc", "nsup", "nsup", "nsupe", "nsupe", "nsupseteq", "nsupseteq", "ntgl", "ntgl", "ntilde", "ntilde", "ntlg", "ntlg", "ntriangleleft", "ntriangleleft", "ntrianglelefteq", "ntrianglelefteq", "ntriangleright", "ntriangleright", 
+"ntrianglerighteq", "ntrianglerighteq", "nu", "nu", "num", "num", "numero", "numero", "numsp", "numsp", "nvDash", "nvDash", "nvHarr", "nvHarr", "nvdash", "nvdash", "nvinfin", "nvinfin", "nvlArr", "nvlArr", "nvrArr", "nvrArr", "nwArr", "nwArr", "nwarhk", "nwarhk", "nwarr", "nwarr", "nwarrow", "nwarrow", "nwnear", "nwnear", 
+"oS", "oS", "oacute", "oacute", "oast", "oast", "ocir", "ocir", "ocirc", "ocirc", "ocy", "ocy", "odash", "odash", "odblac", "odblac", "odiv", "odiv", "odot", "odot", "odsold", "odsold", "oelig", "oelig", "ofcir", "ofcir", "ofr", "ofr", "ogon", "ogon", "ograve", "ograve", "ogt", "ogt", "ohbar", "ohbar", "ohm", "ohm", "oint", 
+"oint", "olarr", "olarr", "olcir", "olcir", "olcross", "olcross", "oline", "oline", "olt", "olt", "omacr", "omacr", "omega", "omega", "omicron", "omicron", "omid", "omid", "ominus", "ominus", "oopf", "oopf", "opar", "opar", "operp", "operp", "oplus", "oplus", "or", "or", "orarr", "orarr", "ord", "ord", "order", "order", 
+"orderof", "orderof", "ordf", "ordf", "ordm", "ordm", "origof", "origof", "oror", "oror", "orslope", "orslope", "orv", "orv", "oscr", "oscr", "oslash", "oslash", "osol", "osol", "otilde", "otilde", "otimes", "otimes", "otimesas", "otimesas", "ouml", "ouml", "ovbar", "ovbar", "par", "par", "para", "para", "parallel", "parallel", 
+"parsim", "parsim", "parsl", "parsl", "part", "part", "pcy", "pcy", "percnt", "percnt", "period", "period", "permil", "permil", "perp", "perp", "pertenk", "pertenk", "pfr", "pfr", "phi", "phi", "phiv", "phiv", "phmmat", "phmmat", "phone", "phone", "pi", "pi", "pitchfork", "pitchfork", "piv", "piv", "planck", "planck", 
+"planckh", "planckh", "plankv", "plankv", "plus", "plus", "plusacir", "plusacir", "plusb", "plusb", "pluscir", "pluscir", "plusdo", "plusdo", "plusdu", "plusdu", "pluse", "pluse", "plusmn", "plusmn", "plussim", "plussim", "plustwo", "plustwo", "pm", "pm", "pointint", "pointint", "popf", "popf", "pound", "pound", "pr", 
+"pr", "prE", "prE", "prap", "prap", "prcue", "prcue", "pre", "pre", "prec", "prec", "precapprox", "precapprox", "preccurlyeq", "preccurlyeq", "preceq", "preceq", "precnapprox", "precnapprox", "precneqq", "precneqq", "precnsim", "precnsim", "precsim", "precsim", "prime", "prime", "primes", "primes", "prnE", "prnE", "prnap", 
+"prnap", "prnsim", "prnsim", "prod", "prod", "profalar", "profalar", "profline", "profline", "profsurf", "profsurf", "prop", "prop", "propto", "propto", "prsim", "prsim", "prurel", "prurel", "pscr", "pscr", "psi", "psi", "puncsp", "puncsp", "qfr", "qfr", "qint", "qint", "qopf", "qopf", "qprime", "qprime", "qscr", "qscr", 
+"quaternions", "quaternions", "quatint", "quatint", "quest", "quest", "questeq", "questeq", "rAarr", "rAarr", "rArr", "rArr", "rAtail", "rAtail", "rBarr", "rBarr", "rHar", "rHar", "racute", "racute", "radic", "radic", "raemptyv", "raemptyv", "rang", "rang", "rangd", "rangd", "range", "range", "rangle", "rangle", "raquo", 
+"raquo", "rarr", "rarr", "rarrap", "rarrap", "rarrb", "rarrb", "rarrbfs", "rarrbfs", "rarrc", "rarrc", "rarrfs", "rarrfs", "rarrhk", "rarrhk", "rarrlp", "rarrlp", "rarrpl", "rarrpl", "rarrsim", "rarrsim", "rarrtl", "rarrtl", "rarrw", "rarrw", "ratail", "ratail", "ratio", "ratio", "rationals", "rationals", "rbarr", "rbarr", 
+"rbbrk", "rbbrk", "rbrace", "rbrace", "rbrack", "rbrack", "rbrke", "rbrke", "rbrksld", "rbrksld", "rbrkslu", "rbrkslu", "rcaron", "rcaron", "rcedil", "rcedil", "rceil", "rceil", "rcub", "rcub", "rcy", "rcy", "rdca", "rdca", "rdldhar", "rdldhar", "rdquo", "rdquo", "rdquor", "rdquor", "rdsh", "rdsh", "real", "real", "realine", 
+"realine", "realpart", "realpart", "reals", "reals", "rect", "rect", "reg", "reg", "rfisht", "rfisht", "rfloor", "rfloor", "rfr", "rfr", "rhard", "rhard", "rharu", "rharu", "rharul", "rharul", "rho", "rho", "rhov", "rhov", "rightarrow", "rightarrow", "rightarrowtail", "rightarrowtail", "rightharpoondown", "rightharpoondown", 
+"rightharpoonup", "rightharpoonup", "rightleftarrows", "rightleftarrows", "rightleftharpoons", "rightleftharpoons", "rightrightarrows", "rightrightarrows", "rightsquigarrow", "rightsquigarrow", "rightthreetimes", "rightthreetimes", "ring", "ring", "risingdotseq", "risingdotseq", "rlarr", "rlarr", "rlhar", "rlhar", "rlm", 
+"rlm", "rmoust", "rmoust", "rmoustache", "rmoustache", "rnmid", "rnmid", "roang", "roang", "roarr", "roarr", "robrk", "robrk", "ropar", "ropar", "ropf", "ropf", "roplus", "roplus", "rotimes", "rotimes", "rpar", "rpar", "rpargt", "rpargt", "rppolint", "rppolint", "rrarr", "rrarr", "rsaquo", "rsaquo", "rscr", "rscr", "rsh", 
+"rsh", "rsqb", "rsqb", "rsquo", "rsquo", "rsquor", "rsquor", "rthree", "rthree", "rtimes", "rtimes", "rtri", "rtri", "rtrie", "rtrie", "rtrif", "rtrif", "rtriltri", "rtriltri", "ruluhar", "ruluhar", "rx", "rx", "sacute", "sacute", "sbquo", "sbquo", "sc", "sc", "scE", "scE", "scap", "scap", "scaron", "scaron", "sccue", 
+"sccue", "sce", "sce", "scedil", "scedil", "scirc", "scirc", "scnE", "scnE", "scnap", "scnap", "scnsim", "scnsim", "scpolint", "scpolint", "scsim", "scsim", "scy", "scy", "sdot", "sdot", "sdotb", "sdotb", "sdote", "sdote", "seArr", "seArr", "searhk", "searhk", "searr", "searr", "searrow", "searrow", "sect", "sect", "semi", 
+"semi", "seswar", "seswar", "setminus", "setminus", "setmn", "setmn", "sext", "sext", "sfr", "sfr", "sfrown", "sfrown", "sharp", "sharp", "shchcy", "shchcy", "shcy", "shcy", "shortmid", "shortmid", "shortparallel", "shortparallel", "shy", "shy", "sigma", "sigma", "sigmaf", "sigmaf", "sigmav", "sigmav", "sim", "sim", "simdot", 
+"simdot", "sime", "sime", "simeq", "simeq", "simg", "simg", "simgE", "simgE", "siml", "siml", "simlE", "simlE", "simne", "simne", "simplus", "simplus", "simrarr", "simrarr", "slarr", "slarr", "smallsetminus", "smallsetminus", "smashp", "smashp", "smeparsl", "smeparsl", "smid", "smid", "smile", "smile", "smt", "smt", "smte", 
+"smte", "softcy", "softcy", "sol", "sol", "solb", "solb", "solbar", "solbar", "sopf", "sopf", "spades", "spades", "spadesuit", "spadesuit", "spar", "spar", "sqcap", "sqcap", "sqcup", "sqcup", "sqsub", "sqsub", "sqsube", "sqsube", "sqsubset", "sqsubset", "sqsubseteq", "sqsubseteq", "sqsup", "sqsup", "sqsupe", "sqsupe", 
+"sqsupset", "sqsupset", "sqsupseteq", "sqsupseteq", "squ", "squ", "square", "square", "squarf", "squarf", "squf", "squf", "srarr", "srarr", "sscr", "sscr", "ssetmn", "ssetmn", "ssmile", "ssmile", "sstarf", "sstarf", "star", "star", "starf", "starf", "straightepsilon", "straightepsilon", "straightphi", "straightphi", "strns", 
+"strns", "sub", "sub", "subE", "subE", "subdot", "subdot", "sube", "sube", "subedot", "subedot", "submult", "submult", "subnE", "subnE", "subne", "subne", "subplus", "subplus", "subrarr", "subrarr", "subset", "subset", "subseteq", "subseteq", "subseteqq", "subseteqq", "subsetneq", "subsetneq", "subsetneqq", "subsetneqq", 
+"subsim", "subsim", "subsub", "subsub", "subsup", "subsup", "succ", "succ", "succapprox", "succapprox", "succcurlyeq", "succcurlyeq", "succeq", "succeq", "succnapprox", "succnapprox", "succneqq", "succneqq", "succnsim", "succnsim", "succsim", "succsim", "sum", "sum", "sung", "sung", "sup", "sup", "sup1", "sup1", "sup2", 
+"sup2", "sup3", "sup3", "supE", "supE", "supdot", "supdot", "supdsub", "supdsub", "supe", "supe", "supedot", "supedot", "suphsol", "suphsol", "suphsub", "suphsub", "suplarr", "suplarr", "supmult", "supmult", "supnE", "supnE", "supne", "supne", "supplus", "supplus", "supset", "supset", "supseteq", "supseteq", "supseteqq", 
+"supseteqq", "supsetneq", "supsetneq", "supsetneqq", "supsetneqq", "supsim", "supsim", "supsub", "supsub", "supsup", "supsup", "swArr", "swArr", "swarhk", "swarhk", "swarr", "swarr", "swarrow", "swarrow", "swnwar", "swnwar", "szlig", "szlig", "target", "target", "tau", "tau", "tbrk", "tbrk", "tcaron", "tcaron", "tcedil", 
+"tcedil", "tcy", "tcy", "tdot", "tdot", "telrec", "telrec", "tfr", "tfr", "there4", "there4", "therefore", "therefore", "theta", "theta", "thetasym", "thetasym", "thetav", "thetav", "thickapprox", "thickapprox", "thicksim", "thicksim", "thinsp", "thinsp", "thkap", "thkap", "thksim", "thksim", "thorn", "thorn", "tilde", 
+"tilde", "times", "times", "timesb", "timesb", "timesbar", "timesbar", "timesd", "timesd", "tint", "tint", "toea", "toea", "top", "top", "topbot", "topbot", "topcir", "topcir", "topf", "topf", "topfork", "topfork", "tosa", "tosa", "tprime", "tprime", "trade", "trade", "triangle", "triangle", "triangledown", "triangledown", 
+"triangleleft", "triangleleft", "trianglelefteq", "trianglelefteq", "triangleq", "triangleq", "triangleright", "triangleright", "trianglerighteq", "trianglerighteq", "tridot", "tridot", "trie", "trie", "triminus", "triminus", "triplus", "triplus", "trisb", "trisb", "tritime", "tritime", "trpezium", "trpezium", "tscr", 
+"tscr", "tscy", "tscy", "tshcy", "tshcy", "tstrok", "tstrok", "twixt", "twixt", "twoheadleftarrow", "twoheadleftarrow", "twoheadrightarrow", "twoheadrightarrow", "uArr", "uArr", "uHar", "uHar", "uacute", "uacute", "uarr", "uarr", "ubrcy", "ubrcy", "ubreve", "ubreve", "ucirc", "ucirc", "ucy", "ucy", "udarr", "udarr", "udblac", 
+"udblac", "udhar", "udhar", "ufisht", "ufisht", "ufr", "ufr", "ugrave", "ugrave", "uharl", "uharl", "uharr", "uharr", "uhblk", "uhblk", "ulcorn", "ulcorn", "ulcorner", "ulcorner", "ulcrop", "ulcrop", "ultri", "ultri", "umacr", "umacr", "uml", "uml", "uogon", "uogon", "uopf", "uopf", "uparrow", "uparrow", "updownarrow", 
+"updownarrow", "upharpoonleft", "upharpoonleft", "upharpoonright", "upharpoonright", "uplus", "uplus", "upsi", "upsi", "upsih", "upsih", "upsilon", "upsilon", "upuparrows", "upuparrows", "urcorn", "urcorn", "urcorner", "urcorner", "urcrop", "urcrop", "uring", "uring", "urtri", "urtri", "uscr", "uscr", "utdot", "utdot", 
+"utilde", "utilde", "utri", "utri", "utrif", "utrif", "uuarr", "uuarr", "uuml", "uuml", "uwangle", "uwangle", "vArr", "vArr", "vBar", "vBar", "vBarv", "vBarv", "vDash", "vDash", "vangrt", "vangrt", "varepsilon", "varepsilon", "varkappa", "varkappa", "varnothing", "varnothing", "varphi", "varphi", "varpi", "varpi", "varpropto", 
+"varpropto", "varr", "varr", "varrho", "varrho", "varsigma", "varsigma", "vartheta", "vartheta", "vartriangleleft", "vartriangleleft", "vartriangleright", "vartriangleright", "vcy", "vcy", "vdash", "vdash", "vee", "vee", "veebar", "veebar", "veeeq", "veeeq", "vellip", "vellip", "verbar", "verbar", "vert", "vert", "vfr", 
+"vfr", "vltri", "vltri", "vopf", "vopf", "vprop", "vprop", "vrtri", "vrtri", "vscr", "vscr", "vzigzag", "vzigzag", "wcirc", "wcirc", "wedbar", "wedbar", "wedge", "wedge", "wedgeq", "wedgeq", "weierp", "weierp", "wfr", "wfr", "wopf", "wopf", "wp", "wp", "wr", "wr", "wreath", "wreath", "wscr", "wscr", "xcap", "xcap", "xcirc", 
+"xcirc", "xcup", "xcup", "xdtri", "xdtri", "xfr", "xfr", "xhArr", "xhArr", "xharr", "xharr", "xi", "xi", "xlArr", "xlArr", "xlarr", "xlarr", "xmap", "xmap", "xnis", "xnis", "xodot", "xodot", "xopf", "xopf", "xoplus", "xoplus", "xotime", "xotime", "xrArr", "xrArr", "xrarr", "xrarr", "xscr", "xscr", "xsqcup", "xsqcup", "xuplus", 
+"xuplus", "xutri", "xutri", "xvee", "xvee", "xwedge", "xwedge", "yacute", "yacute", "yacy", "yacy", "ycirc", "ycirc", "ycy", "ycy", "yen", "yen", "yfr", "yfr", "yicy", "yicy", "yopf", "yopf", "yscr", "yscr", "yucy", "yucy", "yuml", "yuml", "zacute", "zacute", "zcaron", "zcaron", "zcy", "zcy", "zdot", "zdot", "zeetrf", 
+"zeetrf", "zeta", "zeta", "zfr", "zfr", "zhcy", "zhcy", "zigrarr", "zigrarr", "zopf", "zopf", "zscr", "zscr", "zwj", "zwj", "zwnj", "zwnj", ];
+
+immutable dchar[] availableEntitiesValues =
+['\u00c6', '\u00c6', '\u0026', '\u0026', '\u00c1', '\u00c1', '\u0102', '\u0102', '\u00c2', '\u00c2', '\u0410', '\u0410', '\U0001d504', '\U0001d504', '\u00c0', '\u00c0', '\u0391', '\u0391', '\u0100', '\u0100', '\u2a53', '\u2a53', '\u0104', '\u0104', '\U0001d538', '\U0001d538', '\u2061', '\u2061', '\u00c5', '\u00c5', '\U0001d49c', '\U0001d49c', '\u2254', '\u2254', '\u00c3', 
+'\u00c3', '\u00c4', '\u00c4', '\u2216', '\u2216', '\u2ae7', '\u2ae7', '\u2306', '\u2306', '\u0411', '\u0411', '\u2235', '\u2235', '\u212c', '\u212c', '\u0392', '\u0392', '\U0001d505', '\U0001d505', '\U0001d539', '\U0001d539', '\u02d8', '\u02d8', '\u212c', '\u212c', '\u224e', '\u224e', '\u0427', '\u0427', '\u00a9', '\u00a9', '\u0106', '\u0106', '\u22d2', '\u22d2', '\u2145', 
+'\u2145', '\u212d', '\u212d', '\u010c', '\u010c', '\u00c7', '\u00c7', '\u0108', '\u0108', '\u2230', '\u2230', '\u010a', '\u010a', '\u00b8', '\u00b8', '\u00b7', '\u00b7', '\u212d', '\u212d', '\u03a7', '\u03a7', '\u2299', '\u2299', '\u2296', '\u2296', '\u2295', '\u2295', '\u2297', '\u2297', 
+'\u2232', '\u2232', '\u201d', '\u201d', '\u2019', '\u2019', '\u2237', '\u2237', '\u2a74', '\u2a74', '\u2261', '\u2261', '\u222f', '\u222f', '\u222e', '\u222e', '\u2102', '\u2102', '\u2210', '\u2210', '\u2233', 
+'\u2233', '\u2a2f', '\u2a2f', '\U0001d49e', '\U0001d49e', '\u22d3', '\u22d3', '\u224d', '\u224d', '\u2145', '\u2145', '\u2911', '\u2911', '\u0402', '\u0402', '\u0405', '\u0405', '\u040f', '\u040f', '\u2021', '\u2021', '\u21a1', '\u21a1', '\u2ae4', '\u2ae4', '\u010e', '\u010e', '\u0414', '\u0414', '\u2207', '\u2207', '\u0394', '\u0394', '\U0001d507', '\U0001d507', 
+'\u00b4', '\u00b4', '\u02d9', '\u02d9', '\u02dd', '\u02dd', '\u0060', '\u0060', '\u02dc', '\u02dc', '\u22c4', '\u22c4', '\u2146', '\u2146', '\U0001d53b', '\U0001d53b', '\u00a8', '\u00a8', '\u20dc', '\u20dc', '\u2250', 
+'\u2250', '\u222f', '\u222f', '\u00a8', '\u00a8', '\u21d3', '\u21d3', '\u21d0', '\u21d0', '\u21d4', '\u21d4', '\u2ae4', '\u2ae4', '\u27f8', '\u27f8', '\u27fa', 
+'\u27fa', '\u27f9', '\u27f9', '\u21d2', '\u21d2', '\u22a8', '\u22a8', '\u21d1', '\u21d1', '\u21d5', '\u21d5', '\u2225', '\u2225', '\u2193', '\u2193', '\u2913', '\u2913', 
+'\u21f5', '\u21f5', '\u0311', '\u0311', '\u2950', '\u2950', '\u295e', '\u295e', '\u21bd', '\u21bd', '\u2956', '\u2956', '\u295f', '\u295f', '\u21c1', '\u21c1', '\u2957', 
+'\u2957', '\u22a4', '\u22a4', '\u21a7', '\u21a7', '\u21d3', '\u21d3', '\U0001d49f', '\U0001d49f', '\u0110', '\u0110', '\u014a', '\u014a', '\u00d0', '\u00d0', '\u00c9', '\u00c9', '\u011a', '\u011a', '\u00ca', '\u00ca', '\u042d', '\u042d', '\u0116', '\u0116', '\U0001d508', '\U0001d508', '\u00c8', '\u00c8', '\u2208', '\u2208', '\u0112', '\u0112', 
+'\u25fb', '\u25fb', '\u25ab', '\u25ab', '\u0118', '\u0118', '\U0001d53c', '\U0001d53c', '\u0395', '\u0395', '\u2a75', '\u2a75', '\u2242', '\u2242', '\u21cc', '\u21cc', '\u2130', '\u2130', '\u2a73', '\u2a73', '\u0397', '\u0397', '\u00cb', '\u00cb', '\u2203', '\u2203', '\u2147', '\u2147', 
+'\u0424', '\u0424', '\U0001d509', '\U0001d509', '\u25fc', '\u25fc', '\u25aa', '\u25aa', '\U0001d53d', '\U0001d53d', '\u2200', '\u2200', '\u2131', '\u2131', '\u2131', '\u2131', '\u0403', '\u0403', '\u003e', '\u003e', '\u0393', '\u0393', '\u03dc', '\u03dc', '\u011e', '\u011e', '\u0122', '\u0122', '\u011c', '\u011c', 
+'\u0413', '\u0413', '\u0120', '\u0120', '\U0001d50a', '\U0001d50a', '\u22d9', '\u22d9', '\U0001d53e', '\U0001d53e', '\u2265', '\u2265', '\u22db', '\u22db', '\u2267', '\u2267', '\u2aa2', '\u2aa2', '\u2277', '\u2277', '\u2a7e', '\u2a7e', '\u2273', '\u2273', 
+'\U0001d4a2', '\U0001d4a2', '\u226b', '\u226b', '\u042a', '\u042a', '\u02c7', '\u02c7', '\u005e', '\u005e', '\u0124', '\u0124', '\u210c', '\u210c', '\u210b', '\u210b', '\u210d', '\u210d', '\u2500', '\u2500', '\u210b', '\u210b', '\u0126', '\u0126', '\u224e', '\u224e', '\u224f', '\u224f', '\u0415', '\u0415', '\u0132', '\u0132', 
+'\u0401', '\u0401', '\u00cd', '\u00cd', '\u00ce', '\u00ce', '\u0418', '\u0418', '\u0130', '\u0130', '\u2111', '\u2111', '\u00cc', '\u00cc', '\u2111', '\u2111', '\u012a', '\u012a', '\u2148', '\u2148', '\u21d2', '\u21d2', '\u222c', '\u222c', '\u222b', '\u222b', '\u22c2', '\u22c2', '\u2063', '\u2063', '\u2062', 
+'\u2062', '\u012e', '\u012e', '\U0001d540', '\U0001d540', '\u0399', '\u0399', '\u2110', '\u2110', '\u0128', '\u0128', '\u0406', '\u0406', '\u00cf', '\u00cf', '\u0134', '\u0134', '\u0419', '\u0419', '\U0001d50d', '\U0001d50d', '\U0001d541', '\U0001d541', '\U0001d4a5', '\U0001d4a5', '\u0408', '\u0408', '\u0404', '\u0404', '\u0425', '\u0425', '\u040c', '\u040c', '\u039a', '\u039a', '\u0136', '\u0136', 
+'\u041a', '\u041a', '\U0001d50e', '\U0001d50e', '\U0001d542', '\U0001d542', '\U0001d4a6', '\U0001d4a6', '\u0409', '\u0409', '\u003c', '\u003c', '\u0139', '\u0139', '\u039b', '\u039b', '\u27ea', '\u27ea', '\u2112', '\u2112', '\u219e', '\u219e', '\u013d', '\u013d', '\u013b', '\u013b', '\u041b', '\u041b', '\u27e8', '\u27e8', '\u2190', '\u2190', '\u21e4', 
+'\u21e4', '\u21c6', '\u21c6', '\u2308', '\u2308', '\u27e6', '\u27e6', '\u2961', '\u2961', '\u21c3', '\u21c3', '\u2959', '\u2959', '\u230a', '\u230a', '\u2194', '\u2194', '\u294e', 
+'\u294e', '\u22a3', '\u22a3', '\u21a4', '\u21a4', '\u295a', '\u295a', '\u22b2', '\u22b2', '\u29cf', '\u29cf', '\u22b4', '\u22b4', '\u2951', '\u2951', '\u2960', '\u2960', '\u21bf', '\u21bf', 
+'\u2958', '\u2958', '\u21bc', '\u21bc', '\u2952', '\u2952', '\u21d0', '\u21d0', '\u21d4', '\u21d4', '\u22da', '\u22da', '\u2266', '\u2266', '\u2276', '\u2276', '\u2aa1', '\u2aa1', '\u2a7d', '\u2a7d', 
+'\u2272', '\u2272', '\U0001d50f', '\U0001d50f', '\u22d8', '\u22d8', '\u21da', '\u21da', '\u013f', '\u013f', '\u27f5', '\u27f5', '\u27f7', '\u27f7', '\u27f6', '\u27f6', '\u27f8', '\u27f8', '\u27fa', '\u27fa', '\u27f9', '\u27f9', 
+'\U0001d543', '\U0001d543', '\u2199', '\u2199', '\u2198', '\u2198', '\u2112', '\u2112', '\u21b0', '\u21b0', '\u0141', '\u0141', '\u226a', '\u226a', '\u2905', '\u2905', '\u041c', '\u041c', '\u205f', '\u205f', '\u2133', '\u2133', '\U0001d510', '\U0001d510', '\u2213', '\u2213', '\U0001d544', '\U0001d544', '\u2133', '\u2133', '\u039c', '\u039c', 
+'\u040a', '\u040a', '\u0143', '\u0143', '\u0147', '\u0147', '\u0145', '\u0145', '\u041d', '\u041d', '\u200b', '\u200b', '\u200b', '\u200b', '\u200b', '\u200b', '\u200b', '\u200b', '\u226b', '\u226b', 
+'\u226a', '\u226a', '\u000a', '\u000a', '\U0001d511', '\U0001d511', '\u2060', '\u2060', '\u00a0', '\u00a0', '\u2115', '\u2115', '\u2aec', '\u2aec', '\u2262', '\u2262', '\u226d', '\u226d', '\u2226', '\u2226', '\u2209', '\u2209', '\u2260', '\u2260', 
+'\u2204', '\u2204', '\u226f', '\u226f', '\u2271', '\u2271', '\u2279', '\u2279', '\u2275', '\u2275', '\u22ea', '\u22ea', '\u22ec', '\u22ec', '\u226e', '\u226e', '\u2270', '\u2270', '\u2278', 
+'\u2278', '\u2274', '\u2274', '\u2280', '\u2280', '\u22e0', '\u22e0', '\u220c', '\u220c', '\u22eb', '\u22eb', '\u22ed', '\u22ed', '\u22e2', '\u22e2', '\u22e3', 
+'\u22e3', '\u2288', '\u2288', '\u2281', '\u2281', '\u22e1', '\u22e1', '\u2289', '\u2289', '\u2241', '\u2241', '\u2244', '\u2244', '\u2247', '\u2247', '\u2249', '\u2249', '\u2224', 
+'\u2224', '\U0001d4a9', '\U0001d4a9', '\u00d1', '\u00d1', '\u039d', '\u039d', '\u0152', '\u0152', '\u00d3', '\u00d3', '\u00d4', '\u00d4', '\u041e', '\u041e', '\u0150', '\u0150', '\U0001d512', '\U0001d512', '\u00d2', '\u00d2', '\u014c', '\u014c', '\u03a9', '\u03a9', '\u039f', '\u039f', '\U0001d546', '\U0001d546', '\u201c', '\u201c', '\u2018', 
+'\u2018', '\u2a54', '\u2a54', '\U0001d4aa', '\U0001d4aa', '\u00d8', '\u00d8', '\u00d5', '\u00d5', '\u2a37', '\u2a37', '\u00d6', '\u00d6', '\u203e', '\u203e', '\u23de', '\u23de', '\u23b4', '\u23b4', '\u23dc', '\u23dc', '\u2202', '\u2202', '\u041f', '\u041f', '\U0001d513', '\U0001d513', '\u03a6', '\u03a6', '\u03a0', '\u03a0', '\u00b1', 
+'\u00b1', '\u210c', '\u210c', '\u2119', '\u2119', '\u2abb', '\u2abb', '\u227a', '\u227a', '\u2aaf', '\u2aaf', '\u227c', '\u227c', '\u227e', '\u227e', '\u2033', '\u2033', '\u220f', '\u220f', '\u2237', '\u2237', '\u221d', '\u221d', '\U0001d4ab', '\U0001d4ab', 
+'\u03a8', '\u03a8', '\u0022', '\u0022', '\U0001d514', '\U0001d514', '\u211a', '\u211a', '\U0001d4ac', '\U0001d4ac', '\u2910', '\u2910', '\u00ae', '\u00ae', '\u0154', '\u0154', '\u27eb', '\u27eb', '\u21a0', '\u21a0', '\u2916', '\u2916', '\u0158', '\u0158', '\u0156', '\u0156', '\u0420', '\u0420', '\u211c', '\u211c', '\u220b', '\u220b', '\u21cb', '\u21cb', 
+'\u296f', '\u296f', '\u211c', '\u211c', '\u03a1', '\u03a1', '\u27e9', '\u27e9', '\u2192', '\u2192', '\u21e5', '\u21e5', '\u21c4', '\u21c4', '\u2309', '\u2309', '\u27e7', '\u27e7', '\u295d', 
+'\u295d', '\u21c2', '\u21c2', '\u2955', '\u2955', '\u230b', '\u230b', '\u22a2', '\u22a2', '\u21a6', '\u21a6', '\u295b', '\u295b', '\u22b3', '\u22b3', '\u29d0', '\u29d0', '\u22b5', 
+'\u22b5', '\u294f', '\u294f', '\u295c', '\u295c', '\u21be', '\u21be', '\u2954', '\u2954', '\u21c0', '\u21c0', '\u2953', '\u2953', '\u21d2', '\u21d2', '\u211d', '\u211d', '\u2970', '\u2970', 
+'\u21db', '\u21db', '\u211b', '\u211b', '\u21b1', '\u21b1', '\u29f4', '\u29f4', '\u0429', '\u0429', '\u0428', '\u0428', '\u042c', '\u042c', '\u015a', '\u015a', '\u2abc', '\u2abc', '\u0160', '\u0160', '\u015e', '\u015e', '\u015c', '\u015c', '\u0421', '\u0421', '\U0001d516', '\U0001d516', '\u2193', '\u2193', '\u2190', '\u2190', 
+'\u2192', '\u2192', '\u2191', '\u2191', '\u03a3', '\u03a3', '\u2218', '\u2218', '\U0001d54a', '\U0001d54a', '\u221a', '\u221a', '\u25a1', '\u25a1', '\u2293', '\u2293', '\u228f', '\u228f', '\u2291', '\u2291', '\u2290', '\u2290', 
+'\u2292', '\u2292', '\u2294', '\u2294', '\U0001d4ae', '\U0001d4ae', '\u22c6', '\u22c6', '\u22d0', '\u22d0', '\u22d0', '\u22d0', '\u2286', '\u2286', '\u227b', '\u227b', '\u2ab0', '\u2ab0', '\u227d', '\u227d', '\u227f', '\u227f', '\u220b', 
+'\u220b', '\u2211', '\u2211', '\u22d1', '\u22d1', '\u2283', '\u2283', '\u2287', '\u2287', '\u22d1', '\u22d1', '\u00de', '\u00de', '\u2122', '\u2122', '\u040b', '\u040b', '\u0426', '\u0426', '\u0009', '\u0009', '\u03a4', '\u03a4', '\u0164', '\u0164', '\u0162', '\u0162', '\u0422', '\u0422', '\U0001d517', '\U0001d517', '\u2234', '\u2234', '\u0398', '\u0398', 
+'\u2009', '\u2009', '\u223c', '\u223c', '\u2243', '\u2243', '\u2245', '\u2245', '\u2248', '\u2248', '\U0001d54b', '\U0001d54b', '\u20db', '\u20db', '\U0001d4af', '\U0001d4af', '\u0166', '\u0166', '\u00da', '\u00da', '\u219f', '\u219f', '\u2949', '\u2949', '\u040e', '\u040e', '\u016c', '\u016c', '\u00db', 
+'\u00db', '\u0423', '\u0423', '\u0170', '\u0170', '\U0001d518', '\U0001d518', '\u00d9', '\u00d9', '\u016a', '\u016a', '\u005f', '\u005f', '\u23df', '\u23df', '\u23b5', '\u23b5', '\u23dd', '\u23dd', '\u22c3', '\u22c3', '\u228e', '\u228e', '\u0172', '\u0172', '\U0001d54c', '\U0001d54c', '\u2191', '\u2191', '\u2912', 
+'\u2912', '\u21c5', '\u21c5', '\u2195', '\u2195', '\u296e', '\u296e', '\u22a5', '\u22a5', '\u21a5', '\u21a5', '\u21d1', '\u21d1', '\u21d5', '\u21d5', '\u2196', '\u2196', '\u2197', '\u2197', '\u03d2', '\u03d2', '\u03a5', '\u03a5', 
+'\u016e', '\u016e', '\U0001d4b0', '\U0001d4b0', '\u0168', '\u0168', '\u00dc', '\u00dc', '\u22ab', '\u22ab', '\u2aeb', '\u2aeb', '\u0412', '\u0412', '\u22a9', '\u22a9', '\u2ae6', '\u2ae6', '\u22c1', '\u22c1', '\u2016', '\u2016', '\u2016', '\u2016', '\u2223', '\u2223', '\u007c', '\u007c', '\u2758', '\u2758', '\u2240', 
+'\u2240', '\u200a', '\u200a', '\U0001d519', '\U0001d519', '\U0001d54d', '\U0001d54d', '\U0001d4b1', '\U0001d4b1', '\u22aa', '\u22aa', '\u0174', '\u0174', '\u22c0', '\u22c0', '\U0001d51a', '\U0001d51a', '\U0001d54e', '\U0001d54e', '\U0001d4b2', '\U0001d4b2', '\U0001d51b', '\U0001d51b', '\u039e', '\u039e', '\U0001d54f', '\U0001d54f', '\U0001d4b3', '\U0001d4b3', '\u042f', '\u042f', '\u0407', '\u0407', '\u042e', '\u042e', '\u00dd', '\u00dd', 
+'\u0176', '\u0176', '\u042b', '\u042b', '\U0001d51c', '\U0001d51c', '\U0001d550', '\U0001d550', '\U0001d4b4', '\U0001d4b4', '\u0178', '\u0178', '\u0416', '\u0416', '\u0179', '\u0179', '\u017d', '\u017d', '\u0417', '\u0417', '\u017b', '\u017b', '\u200b', '\u200b', '\u0396', '\u0396', '\u2128', '\u2128', '\u2124', '\u2124', '\U0001d4b5', '\U0001d4b5', '\u00e1', '\u00e1', '\u0103', '\u0103', '\u223e', 
+'\u223e', '\u223f', '\u223f', '\u00e2', '\u00e2', '\u00b4', '\u00b4', '\u0430', '\u0430', '\u00e6', '\u00e6', '\u2061', '\u2061', '\U0001d51e', '\U0001d51e', '\u00e0', '\u00e0', '\u2135', '\u2135', '\u2135', '\u2135', '\u03b1', '\u03b1', '\u0101', '\u0101', '\u2a3f', '\u2a3f', '\u2227', '\u2227', '\u2a55', '\u2a55', '\u2a5c', '\u2a5c', '\u2a58', '\u2a58', '\u2a5a', '\u2a5a', '\u2220', 
+'\u2220', '\u29a4', '\u29a4', '\u2220', '\u2220', '\u2221', '\u2221', '\u29a8', '\u29a8', '\u29a9', '\u29a9', '\u29aa', '\u29aa', '\u29ab', '\u29ab', '\u29ac', '\u29ac', '\u29ad', '\u29ad', '\u29ae', '\u29ae', '\u29af', '\u29af', '\u221f', '\u221f', '\u22be', '\u22be', '\u299d', '\u299d', '\u2222', 
+'\u2222', '\u00c5', '\u00c5', '\u237c', '\u237c', '\u0105', '\u0105', '\U0001d552', '\U0001d552', '\u2248', '\u2248', '\u2a70', '\u2a70', '\u2a6f', '\u2a6f', '\u224a', '\u224a', '\u224b', '\u224b', '\u2248', '\u2248', '\u224a', '\u224a', '\u00e5', '\u00e5', '\U0001d4b6', '\U0001d4b6', '\u002a', '\u002a', '\u2248', '\u2248', '\u224d', '\u224d', '\u00e3', '\u00e3', '\u00e4', 
+'\u00e4', '\u2233', '\u2233', '\u2a11', '\u2a11', '\u2aed', '\u2aed', '\u224c', '\u224c', '\u03f6', '\u03f6', '\u2035', '\u2035', '\u223d', '\u223d', '\u22cd', '\u22cd', '\u22bd', '\u22bd', '\u2305', '\u2305', '\u2305', '\u2305', '\u23b5', '\u23b5', '\u23b6', '\u23b6', '\u224c', '\u224c', '\u0431', 
+'\u0431', '\u201e', '\u201e', '\u2235', '\u2235', '\u2235', '\u2235', '\u29b0', '\u29b0', '\u03f6', '\u03f6', '\u212c', '\u212c', '\u03b2', '\u03b2', '\u2136', '\u2136', '\u226c', '\u226c', '\U0001d51f', '\U0001d51f', '\u22c2', '\u22c2', '\u25ef', '\u25ef', '\u22c3', '\u22c3', '\u2a00', '\u2a00', '\u2a01', '\u2a01', '\u2a02', '\u2a02', 
+'\u2a06', '\u2a06', '\u2605', '\u2605', '\u25bd', '\u25bd', '\u25b3', '\u25b3', '\u2a04', '\u2a04', '\u22c1', '\u22c1', '\u22c0', '\u22c0', '\u290d', '\u290d', '\u29eb', '\u29eb', '\u25aa', '\u25aa', '\u25b4', '\u25b4', '\u25be', 
+'\u25be', '\u25c2', '\u25c2', '\u25b8', '\u25b8', '\u2423', '\u2423', '\u2592', '\u2592', '\u2591', '\u2591', '\u2593', '\u2593', '\u2588', '\u2588', '\u2310', '\u2310', '\U0001d553', '\U0001d553', '\u22a5', '\u22a5', '\u22a5', '\u22a5', '\u22c8', '\u22c8', '\u2557', '\u2557', '\u2554', '\u2554', '\u2556', 
+'\u2556', '\u2553', '\u2553', '\u2550', '\u2550', '\u2566', '\u2566', '\u2569', '\u2569', '\u2564', '\u2564', '\u2567', '\u2567', '\u255d', '\u255d', '\u255a', '\u255a', '\u255c', '\u255c', '\u2559', '\u2559', '\u2551', '\u2551', '\u256c', '\u256c', '\u2563', '\u2563', '\u2560', '\u2560', '\u256b', '\u256b', '\u2562', '\u2562', '\u255f', '\u255f', '\u29c9', 
+'\u29c9', '\u2555', '\u2555', '\u2552', '\u2552', '\u2510', '\u2510', '\u250c', '\u250c', '\u2500', '\u2500', '\u2565', '\u2565', '\u2568', '\u2568', '\u252c', '\u252c', '\u2534', '\u2534', '\u229f', '\u229f', '\u229e', '\u229e', '\u22a0', '\u22a0', '\u255b', '\u255b', '\u2558', '\u2558', '\u2518', '\u2518', '\u2514', '\u2514', '\u2502', 
+'\u2502', '\u256a', '\u256a', '\u2561', '\u2561', '\u255e', '\u255e', '\u253c', '\u253c', '\u2524', '\u2524', '\u251c', '\u251c', '\u2035', '\u2035', '\u02d8', '\u02d8', '\u00a6', '\u00a6', '\U0001d4b7', '\U0001d4b7', '\u204f', '\u204f', '\u223d', '\u223d', '\u22cd', '\u22cd', '\u005c', '\u005c', '\u29c5', '\u29c5', '\u27c8', '\u27c8', '\u2022', '\u2022', '\u2022', 
+'\u2022', '\u224e', '\u224e', '\u2aae', '\u2aae', '\u224f', '\u224f', '\u224f', '\u224f', '\u0107', '\u0107', '\u2229', '\u2229', '\u2a44', '\u2a44', '\u2a49', '\u2a49', '\u2a4b', '\u2a4b', '\u2a47', '\u2a47', '\u2a40', '\u2a40', '\u2041', '\u2041', '\u02c7', '\u02c7', '\u2a4d', '\u2a4d', '\u010d', '\u010d', '\u00e7', '\u00e7', '\u0109', 
+'\u0109', '\u2a4c', '\u2a4c', '\u2a50', '\u2a50', '\u010b', '\u010b', '\u00b8', '\u00b8', '\u29b2', '\u29b2', '\u00a2', '\u00a2', '\u00b7', '\u00b7', '\U0001d520', '\U0001d520', '\u0447', '\u0447', '\u2713', '\u2713', '\u2713', '\u2713', '\u03c7', '\u03c7', '\u25cb', '\u25cb', '\u29c3', '\u29c3', '\u02c6', '\u02c6', '\u2257', '\u2257', '\u21ba', 
+'\u21ba', '\u21bb', '\u21bb', '\u00ae', '\u00ae', '\u24c8', '\u24c8', '\u229b', '\u229b', '\u229a', '\u229a', '\u229d', '\u229d', '\u2257', '\u2257', '\u2a10', '\u2a10', '\u2aef', '\u2aef', '\u29c2', '\u29c2', '\u2663', '\u2663', '\u2663', '\u2663', '\u003a', 
+'\u003a', '\u2254', '\u2254', '\u2254', '\u2254', '\u002c', '\u002c', '\u0040', '\u0040', '\u2201', '\u2201', '\u2218', '\u2218', '\u2201', '\u2201', '\u2102', '\u2102', '\u2245', '\u2245', '\u2a6d', '\u2a6d', '\u222e', '\u222e', '\U0001d554', '\U0001d554', '\u2210', '\u2210', '\u00a9', '\u00a9', '\u2117', '\u2117', '\u21b5', '\u21b5', 
+'\u2717', '\u2717', '\U0001d4b8', '\U0001d4b8', '\u2acf', '\u2acf', '\u2ad1', '\u2ad1', '\u2ad0', '\u2ad0', '\u2ad2', '\u2ad2', '\u22ef', '\u22ef', '\u2938', '\u2938', '\u2935', '\u2935', '\u22de', '\u22de', '\u22df', '\u22df', '\u21b6', '\u21b6', '\u293d', '\u293d', '\u222a', '\u222a', '\u2a48', '\u2a48', '\u2a46', '\u2a46', '\u2a4a', '\u2a4a', 
+'\u228d', '\u228d', '\u2a45', '\u2a45', '\u21b7', '\u21b7', '\u293c', '\u293c', '\u22de', '\u22de', '\u22df', '\u22df', '\u22ce', '\u22ce', '\u22cf', '\u22cf', '\u00a4', '\u00a4', '\u21b6', '\u21b6', '\u21b7', '\u21b7', '\u22ce', '\u22ce', '\u22cf', '\u22cf', 
+'\u2232', '\u2232', '\u2231', '\u2231', '\u232d', '\u232d', '\u21d3', '\u21d3', '\u2965', '\u2965', '\u2020', '\u2020', '\u2138', '\u2138', '\u2193', '\u2193', '\u2010', '\u2010', '\u22a3', '\u22a3', '\u290f', '\u290f', '\u02dd', '\u02dd', '\u010f', '\u010f', '\u0434', '\u0434', '\u2146', '\u2146', '\u2021', '\u2021', '\u21ca', '\u21ca', '\u2a77', 
+'\u2a77', '\u00b0', '\u00b0', '\u03b4', '\u03b4', '\u29b1', '\u29b1', '\u297f', '\u297f', '\U0001d521', '\U0001d521', '\u21c3', '\u21c3', '\u21c2', '\u21c2', '\u22c4', '\u22c4', '\u22c4', '\u22c4', '\u2666', '\u2666', '\u2666', '\u2666', '\u00a8', '\u00a8', '\u03dd', '\u03dd', '\u22f2', '\u22f2', '\u00f7', '\u00f7', '\u00f7', '\u00f7', '\u22c7', 
+'\u22c7', '\u22c7', '\u22c7', '\u0452', '\u0452', '\u231e', '\u231e', '\u230d', '\u230d', '\u0024', '\u0024', '\U0001d555', '\U0001d555', '\u02d9', '\u02d9', '\u2250', '\u2250', '\u2251', '\u2251', '\u2238', '\u2238', '\u2214', '\u2214', '\u22a1', '\u22a1', '\u2306', '\u2306', '\u2193', '\u2193', '\u21ca', 
+'\u21ca', '\u21c3', '\u21c3', '\u21c2', '\u21c2', '\u2910', '\u2910', '\u231f', '\u231f', '\u230c', '\u230c', '\U0001d4b9', '\U0001d4b9', '\u0455', '\u0455', '\u29f6', '\u29f6', '\u0111', '\u0111', '\u22f1', '\u22f1', '\u25bf', '\u25bf', '\u25be', '\u25be', '\u21f5', '\u21f5', '\u296f', '\u296f', '\u29a6', 
+'\u29a6', '\u045f', '\u045f', '\u27ff', '\u27ff', '\u2a77', '\u2a77', '\u2251', '\u2251', '\u00e9', '\u00e9', '\u2a6e', '\u2a6e', '\u011b', '\u011b', '\u2256', '\u2256', '\u00ea', '\u00ea', '\u2255', '\u2255', '\u044d', '\u044d', '\u0117', '\u0117', '\u2147', '\u2147', '\u2252', '\u2252', '\U0001d522', '\U0001d522', '\u2a9a', '\u2a9a', '\u00e8', '\u00e8', '\u2a96', '\u2a96', '\u2a98', 
+'\u2a98', '\u2a99', '\u2a99', '\u23e7', '\u23e7', '\u2113', '\u2113', '\u2a95', '\u2a95', '\u2a97', '\u2a97', '\u0113', '\u0113', '\u2205', '\u2205', '\u2205', '\u2205', '\u2205', '\u2205', '\u2003', '\u2003', '\u2004', '\u2004', '\u2005', '\u2005', '\u014b', '\u014b', '\u2002', '\u2002', '\u0119', '\u0119', '\U0001d556', '\U0001d556', '\u22d5', '\u22d5', '\u29e3', 
+'\u29e3', '\u2a71', '\u2a71', '\u03b5', '\u03b5', '\u03b5', '\u03b5', '\u03f5', '\u03f5', '\u2256', '\u2256', '\u2255', '\u2255', '\u2242', '\u2242', '\u2a96', '\u2a96', '\u2a95', '\u2a95', '\u003d', '\u003d', '\u225f', '\u225f', '\u2261', '\u2261', '\u2a78', '\u2a78', '\u29e5', '\u29e5', '\u2253', '\u2253', 
+'\u2971', '\u2971', '\u212f', '\u212f', '\u2250', '\u2250', '\u2242', '\u2242', '\u03b7', '\u03b7', '\u00f0', '\u00f0', '\u00eb', '\u00eb', '\u20ac', '\u20ac', '\u0021', '\u0021', '\u2203', '\u2203', '\u2130', '\u2130', '\u2147', '\u2147', '\u2252', '\u2252', '\u0444', '\u0444', '\u2640', '\u2640', '\ufb03', '\ufb03', '\ufb00', 
+'\ufb00', '\ufb04', '\ufb04', '\U0001d523', '\U0001d523', '\ufb01', '\ufb01', '\u266d', '\u266d', '\ufb02', '\ufb02', '\u25b1', '\u25b1', '\u0192', '\u0192', '\U0001d557', '\U0001d557', '\u2200', '\u2200', '\u22d4', '\u22d4', '\u2ad9', '\u2ad9', '\u2a0d', '\u2a0d', '\u00bd', '\u00bd', '\u2153', '\u2153', '\u00bc', '\u00bc', '\u2155', '\u2155', '\u2159', '\u2159', 
+'\u215b', '\u215b', '\u2154', '\u2154', '\u2156', '\u2156', '\u00be', '\u00be', '\u2157', '\u2157', '\u215c', '\u215c', '\u2158', '\u2158', '\u215a', '\u215a', '\u215d', '\u215d', '\u215e', '\u215e', '\u2044', '\u2044', '\u2322', '\u2322', '\U0001d4bb', '\U0001d4bb', '\u2267', '\u2267', '\u2a8c', '\u2a8c', '\u01f5', '\u01f5', '\u03b3', '\u03b3', '\u03dd', 
+'\u03dd', '\u2a86', '\u2a86', '\u011f', '\u011f', '\u011d', '\u011d', '\u0433', '\u0433', '\u0121', '\u0121', '\u2265', '\u2265', '\u22db', '\u22db', '\u2265', '\u2265', '\u2267', '\u2267', '\u2a7e', '\u2a7e', '\u2a7e', '\u2a7e', '\u2aa9', '\u2aa9', '\u2a80', '\u2a80', '\u2a82', '\u2a82', '\u2a84', '\u2a84', '\u2a94', '\u2a94', '\U0001d524', '\U0001d524', '\u226b', '\u226b', '\u22d9', 
+'\u22d9', '\u2137', '\u2137', '\u0453', '\u0453', '\u2277', '\u2277', '\u2a92', '\u2a92', '\u2aa5', '\u2aa5', '\u2aa4', '\u2aa4', '\u2269', '\u2269', '\u2a8a', '\u2a8a', '\u2a8a', '\u2a8a', '\u2a88', '\u2a88', '\u2a88', '\u2a88', '\u2269', '\u2269', '\u22e7', '\u22e7', '\U0001d558', '\U0001d558', '\u0060', '\u0060', '\u210a', '\u210a', '\u2273', '\u2273', '\u2a8e', '\u2a8e', '\u2a90', '\u2a90', '\u2aa7', 
+'\u2aa7', '\u2a7a', '\u2a7a', '\u22d7', '\u22d7', '\u2995', '\u2995', '\u2a7c', '\u2a7c', '\u2a86', '\u2a86', '\u2978', '\u2978', '\u22d7', '\u22d7', '\u22db', '\u22db', '\u2a8c', '\u2a8c', '\u2277', '\u2277', '\u2273', '\u2273', '\u21d4', '\u21d4', '\u200a', '\u200a', '\u00bd', '\u00bd', '\u210b', '\u210b', 
+'\u044a', '\u044a', '\u2194', '\u2194', '\u2948', '\u2948', '\u21ad', '\u21ad', '\u210f', '\u210f', '\u0125', '\u0125', '\u2665', '\u2665', '\u2665', '\u2665', '\u2026', '\u2026', '\u22b9', '\u22b9', '\U0001d525', '\U0001d525', '\u2925', '\u2925', '\u2926', '\u2926', '\u21ff', '\u21ff', '\u223b', '\u223b', '\u21a9', '\u21a9', 
+'\u21aa', '\u21aa', '\U0001d559', '\U0001d559', '\u2015', '\u2015', '\U0001d4bd', '\U0001d4bd', '\u210f', '\u210f', '\u0127', '\u0127', '\u2043', '\u2043', '\u2010', '\u2010', '\u00ed', '\u00ed', '\u2063', '\u2063', '\u00ee', '\u00ee', '\u0438', '\u0438', '\u0435', '\u0435', '\u00a1', '\u00a1', '\u21d4', '\u21d4', '\U0001d526', '\U0001d526', '\u00ec', '\u00ec', '\u2148', 
+'\u2148', '\u2a0c', '\u2a0c', '\u222d', '\u222d', '\u29dc', '\u29dc', '\u2129', '\u2129', '\u0133', '\u0133', '\u012b', '\u012b', '\u2111', '\u2111', '\u2110', '\u2110', '\u2111', '\u2111', '\u0131', '\u0131', '\u22b7', '\u22b7', '\u01b5', '\u01b5', '\u2208', '\u2208', '\u2105', '\u2105', '\u221e', '\u221e', '\u29dd', '\u29dd', '\u0131', 
+'\u0131', '\u222b', '\u222b', '\u22ba', '\u22ba', '\u2124', '\u2124', '\u22ba', '\u22ba', '\u2a17', '\u2a17', '\u2a3c', '\u2a3c', '\u0451', '\u0451', '\u012f', '\u012f', '\U0001d55a', '\U0001d55a', '\u03b9', '\u03b9', '\u2a3c', '\u2a3c', '\u00bf', '\u00bf', '\U0001d4be', '\U0001d4be', '\u2208', '\u2208', '\u22f9', '\u22f9', '\u22f5', '\u22f5', '\u22f4', 
+'\u22f4', '\u22f3', '\u22f3', '\u2208', '\u2208', '\u2062', '\u2062', '\u0129', '\u0129', '\u0456', '\u0456', '\u00ef', '\u00ef', '\u0135', '\u0135', '\u0439', '\u0439', '\U0001d527', '\U0001d527', '\u0237', '\u0237', '\U0001d55b', '\U0001d55b', '\U0001d4bf', '\U0001d4bf', '\u0458', '\u0458', '\u0454', '\u0454', '\u03ba', '\u03ba', '\u03f0', '\u03f0', '\u0137', '\u0137', '\u043a', '\u043a', '\U0001d528', 
+'\U0001d528', '\u0138', '\u0138', '\u0445', '\u0445', '\u045c', '\u045c', '\U0001d55c', '\U0001d55c', '\U0001d4c0', '\U0001d4c0', '\u21da', '\u21da', '\u21d0', '\u21d0', '\u291b', '\u291b', '\u290e', '\u290e', '\u2266', '\u2266', '\u2a8b', '\u2a8b', '\u2962', '\u2962', '\u013a', '\u013a', '\u29b4', '\u29b4', '\u2112', '\u2112', '\u03bb', '\u03bb', '\u27e8', '\u27e8', '\u2991', '\u2991', 
+'\u27e8', '\u27e8', '\u2a85', '\u2a85', '\u00ab', '\u00ab', '\u2190', '\u2190', '\u21e4', '\u21e4', '\u291f', '\u291f', '\u291d', '\u291d', '\u21a9', '\u21a9', '\u21ab', '\u21ab', '\u2939', '\u2939', '\u2973', '\u2973', '\u21a2', '\u21a2', '\u2aab', '\u2aab', '\u2919', '\u2919', '\u2aad', '\u2aad', '\u290c', '\u290c', '\u2772', '\u2772', '\u007b', 
+'\u007b', '\u005b', '\u005b', '\u298b', '\u298b', '\u298f', '\u298f', '\u298d', '\u298d', '\u013e', '\u013e', '\u013c', '\u013c', '\u2308', '\u2308', '\u007b', '\u007b', '\u043b', '\u043b', '\u2936', '\u2936', '\u201c', '\u201c', '\u201e', '\u201e', '\u2967', '\u2967', '\u294b', '\u294b', '\u21b2', '\u21b2', '\u2264', '\u2264', '\u2190', 
+'\u2190', '\u21a2', '\u21a2', '\u21bd', '\u21bd', '\u21bc', '\u21bc', '\u21c7', '\u21c7', '\u2194', '\u2194', '\u21c6', '\u21c6', '\u21cb', '\u21cb', '\u21ad', '\u21ad', '\u22cb', 
+'\u22cb', '\u22da', '\u22da', '\u2264', '\u2264', '\u2266', '\u2266', '\u2a7d', '\u2a7d', '\u2a7d', '\u2a7d', '\u2aa8', '\u2aa8', '\u2a7f', '\u2a7f', '\u2a81', '\u2a81', '\u2a83', '\u2a83', '\u2a93', '\u2a93', '\u2a85', '\u2a85', '\u22d6', '\u22d6', '\u22da', '\u22da', '\u2a8b', '\u2a8b', '\u2276', '\u2276', 
+'\u2272', '\u2272', '\u297c', '\u297c', '\u230a', '\u230a', '\U0001d529', '\U0001d529', '\u2276', '\u2276', '\u2a91', '\u2a91', '\u21bd', '\u21bd', '\u21bc', '\u21bc', '\u296a', '\u296a', '\u2584', '\u2584', '\u0459', '\u0459', '\u226a', '\u226a', '\u21c7', '\u21c7', '\u231e', '\u231e', '\u296b', '\u296b', '\u25fa', '\u25fa', '\u0140', '\u0140', '\u23b0', '\u23b0', 
+'\u23b0', '\u23b0', '\u2268', '\u2268', '\u2a89', '\u2a89', '\u2a89', '\u2a89', '\u2a87', '\u2a87', '\u2a87', '\u2a87', '\u2268', '\u2268', '\u22e6', '\u22e6', '\u27ec', '\u27ec', '\u21fd', '\u21fd', '\u27e6', '\u27e6', '\u27f5', '\u27f5', '\u27f7', '\u27f7', '\u27fc', '\u27fc', '\u27f6', 
+'\u27f6', '\u21ab', '\u21ab', '\u21ac', '\u21ac', '\u2985', '\u2985', '\U0001d55d', '\U0001d55d', '\u2a2d', '\u2a2d', '\u2a34', '\u2a34', '\u2217', '\u2217', '\u005f', '\u005f', '\u25ca', '\u25ca', '\u25ca', '\u25ca', '\u29eb', '\u29eb', '\u0028', '\u0028', '\u2993', '\u2993', '\u21c6', '\u21c6', '\u231f', 
+'\u231f', '\u21cb', '\u21cb', '\u296d', '\u296d', '\u200e', '\u200e', '\u22bf', '\u22bf', '\u2039', '\u2039', '\U0001d4c1', '\U0001d4c1', '\u21b0', '\u21b0', '\u2272', '\u2272', '\u2a8d', '\u2a8d', '\u2a8f', '\u2a8f', '\u005b', '\u005b', '\u2018', '\u2018', '\u201a', '\u201a', '\u0142', '\u0142', '\u2aa6', '\u2aa6', '\u2a79', '\u2a79', '\u22d6', '\u22d6', '\u22cb', 
+'\u22cb', '\u22c9', '\u22c9', '\u2976', '\u2976', '\u2a7b', '\u2a7b', '\u2996', '\u2996', '\u25c3', '\u25c3', '\u22b4', '\u22b4', '\u25c2', '\u25c2', '\u294a', '\u294a', '\u2966', '\u2966', '\u223a', '\u223a', '\u00af', '\u00af', '\u2642', '\u2642', '\u2720', '\u2720', '\u2720', '\u2720', '\u21a6', '\u21a6', '\u21a6', '\u21a6', '\u21a7', 
+'\u21a7', '\u21a4', '\u21a4', '\u21a5', '\u21a5', '\u25ae', '\u25ae', '\u2a29', '\u2a29', '\u043c', '\u043c', '\u2014', '\u2014', '\u2221', '\u2221', '\U0001d52a', '\U0001d52a', '\u2127', '\u2127', '\u00b5', '\u00b5', '\u2223', '\u2223', '\u002a', '\u002a', '\u2af0', '\u2af0', '\u00b7', '\u00b7', '\u2212', '\u2212', '\u229f', 
+'\u229f', '\u2238', '\u2238', '\u2a2a', '\u2a2a', '\u2adb', '\u2adb', '\u2026', '\u2026', '\u2213', '\u2213', '\u22a7', '\u22a7', '\U0001d55e', '\U0001d55e', '\u2213', '\u2213', '\U0001d4c2', '\U0001d4c2', '\u223e', '\u223e', '\u03bc', '\u03bc', '\u22b8', '\u22b8', '\u22b8', '\u22b8', '\u21cd', '\u21cd', '\u21ce', '\u21ce', '\u21cf', 
+'\u21cf', '\u22af', '\u22af', '\u22ae', '\u22ae', '\u2207', '\u2207', '\u0144', '\u0144', '\u2249', '\u2249', '\u0149', '\u0149', '\u2249', '\u2249', '\u266e', '\u266e', '\u266e', '\u266e', '\u2115', '\u2115', '\u00a0', '\u00a0', '\u2a43', '\u2a43', '\u0148', '\u0148', '\u0146', '\u0146', '\u2247', '\u2247', '\u2a42', '\u2a42', '\u043d', 
+'\u043d', '\u2013', '\u2013', '\u2260', '\u2260', '\u21d7', '\u21d7', '\u2924', '\u2924', '\u2197', '\u2197', '\u2197', '\u2197', '\u2262', '\u2262', '\u2928', '\u2928', '\u2204', '\u2204', '\u2204', '\u2204', '\U0001d52b', '\U0001d52b', '\u2271', '\u2271', '\u2271', '\u2271', '\u2275', '\u2275', '\u226f', '\u226f', '\u226f', '\u226f', '\u21ce', '\u21ce', '\u21ae', '\u21ae', 
+'\u2af2', '\u2af2', '\u220b', '\u220b', '\u22fc', '\u22fc', '\u22fa', '\u22fa', '\u220b', '\u220b', '\u045a', '\u045a', '\u21cd', '\u21cd', '\u219a', '\u219a', '\u2025', '\u2025', '\u2270', '\u2270', '\u219a', '\u219a', '\u21ae', '\u21ae', '\u2270', '\u2270', '\u226e', '\u226e', '\u2274', '\u2274', '\u226e', '\u226e', '\u22ea', '\u22ea', '\u22ec', '\u22ec', 
+'\u2224', '\u2224', '\U0001d55f', '\U0001d55f', '\u00ac', '\u00ac', '\u2209', '\u2209', '\u2209', '\u2209', '\u22f7', '\u22f7', '\u22f6', '\u22f6', '\u220c', '\u220c', '\u220c', '\u220c', '\u22fe', '\u22fe', '\u22fd', '\u22fd', '\u2226', '\u2226', '\u2226', '\u2226', '\u2a14', '\u2a14', '\u2280', '\u2280', '\u22e0', '\u22e0', '\u2280', 
+'\u2280', '\u21cf', '\u21cf', '\u219b', '\u219b', '\u219b', '\u219b', '\u22eb', '\u22eb', '\u22ed', '\u22ed', '\u2281', '\u2281', '\u22e1', '\u22e1', '\U0001d4c3', '\U0001d4c3', '\u2224', '\u2224', '\u2226', '\u2226', '\u2241', '\u2241', '\u2244', '\u2244', '\u2244', '\u2244', '\u2224', '\u2224', '\u2226', '\u2226', '\u22e2', 
+'\u22e2', '\u22e3', '\u22e3', '\u2284', '\u2284', '\u2288', '\u2288', '\u2288', '\u2288', '\u2281', '\u2281', '\u2285', '\u2285', '\u2289', '\u2289', '\u2289', '\u2289', '\u2279', '\u2279', '\u00f1', '\u00f1', '\u2278', '\u2278', '\u22ea', '\u22ea', '\u22ec', '\u22ec', '\u22eb', '\u22eb', 
+'\u22ed', '\u22ed', '\u03bd', '\u03bd', '\u0023', '\u0023', '\u2116', '\u2116', '\u2007', '\u2007', '\u22ad', '\u22ad', '\u2904', '\u2904', '\u22ac', '\u22ac', '\u29de', '\u29de', '\u2902', '\u2902', '\u2903', '\u2903', '\u21d6', '\u21d6', '\u2923', '\u2923', '\u2196', '\u2196', '\u2196', '\u2196', '\u2927', '\u2927', 
+'\u24c8', '\u24c8', '\u00f3', '\u00f3', '\u229b', '\u229b', '\u229a', '\u229a', '\u00f4', '\u00f4', '\u043e', '\u043e', '\u229d', '\u229d', '\u0151', '\u0151', '\u2a38', '\u2a38', '\u2299', '\u2299', '\u29bc', '\u29bc', '\u0153', '\u0153', '\u29bf', '\u29bf', '\U0001d52c', '\U0001d52c', '\u02db', '\u02db', '\u00f2', '\u00f2', '\u29c1', '\u29c1', '\u29b5', '\u29b5', '\u03a9', '\u03a9', '\u222e', 
+'\u222e', '\u21ba', '\u21ba', '\u29be', '\u29be', '\u29bb', '\u29bb', '\u203e', '\u203e', '\u29c0', '\u29c0', '\u014d', '\u014d', '\u03c9', '\u03c9', '\u03bf', '\u03bf', '\u29b6', '\u29b6', '\u2296', '\u2296', '\U0001d560', '\U0001d560', '\u29b7', '\u29b7', '\u29b9', '\u29b9', '\u2295', '\u2295', '\u2228', '\u2228', '\u21bb', '\u21bb', '\u2a5d', '\u2a5d', '\u2134', '\u2134', 
+'\u2134', '\u2134', '\u00aa', '\u00aa', '\u00ba', '\u00ba', '\u22b6', '\u22b6', '\u2a56', '\u2a56', '\u2a57', '\u2a57', '\u2a5b', '\u2a5b', '\u2134', '\u2134', '\u00f8', '\u00f8', '\u2298', '\u2298', '\u00f5', '\u00f5', '\u2297', '\u2297', '\u2a36', '\u2a36', '\u00f6', '\u00f6', '\u233d', '\u233d', '\u2225', '\u2225', '\u00b6', '\u00b6', '\u2225', '\u2225', 
+'\u2af3', '\u2af3', '\u2afd', '\u2afd', '\u2202', '\u2202', '\u043f', '\u043f', '\u0025', '\u0025', '\u002e', '\u002e', '\u2030', '\u2030', '\u22a5', '\u22a5', '\u2031', '\u2031', '\U0001d52d', '\U0001d52d', '\u03c6', '\u03c6', '\u03d5', '\u03d5', '\u2133', '\u2133', '\u260e', '\u260e', '\u03c0', '\u03c0', '\u22d4', '\u22d4', '\u03d6', '\u03d6', '\u210f', '\u210f', 
+'\u210e', '\u210e', '\u210f', '\u210f', '\u002b', '\u002b', '\u2a23', '\u2a23', '\u229e', '\u229e', '\u2a22', '\u2a22', '\u2214', '\u2214', '\u2a25', '\u2a25', '\u2a72', '\u2a72', '\u00b1', '\u00b1', '\u2a26', '\u2a26', '\u2a27', '\u2a27', '\u00b1', '\u00b1', '\u2a15', '\u2a15', '\U0001d561', '\U0001d561', '\u00a3', '\u00a3', '\u227a', 
+'\u227a', '\u2ab3', '\u2ab3', '\u2ab7', '\u2ab7', '\u227c', '\u227c', '\u2aaf', '\u2aaf', '\u227a', '\u227a', '\u2ab7', '\u2ab7', '\u227c', '\u227c', '\u2aaf', '\u2aaf', '\u2ab9', '\u2ab9', '\u2ab5', '\u2ab5', '\u22e8', '\u22e8', '\u227e', '\u227e', '\u2032', '\u2032', '\u2119', '\u2119', '\u2ab5', '\u2ab5', '\u2ab9', 
+'\u2ab9', '\u22e8', '\u22e8', '\u220f', '\u220f', '\u232e', '\u232e', '\u2312', '\u2312', '\u2313', '\u2313', '\u221d', '\u221d', '\u221d', '\u221d', '\u227e', '\u227e', '\u22b0', '\u22b0', '\U0001d4c5', '\U0001d4c5', '\u03c8', '\u03c8', '\u2008', '\u2008', '\U0001d52e', '\U0001d52e', '\u2a0c', '\u2a0c', '\U0001d562', '\U0001d562', '\u2057', '\u2057', '\U0001d4c6', '\U0001d4c6', 
+'\u210d', '\u210d', '\u2a16', '\u2a16', '\u003f', '\u003f', '\u225f', '\u225f', '\u21db', '\u21db', '\u21d2', '\u21d2', '\u291c', '\u291c', '\u290f', '\u290f', '\u2964', '\u2964', '\u0155', '\u0155', '\u221a', '\u221a', '\u29b3', '\u29b3', '\u27e9', '\u27e9', '\u2992', '\u2992', '\u29a5', '\u29a5', '\u27e9', '\u27e9', '\u00bb', 
+'\u00bb', '\u2192', '\u2192', '\u2975', '\u2975', '\u21e5', '\u21e5', '\u2920', '\u2920', '\u2933', '\u2933', '\u291e', '\u291e', '\u21aa', '\u21aa', '\u21ac', '\u21ac', '\u2945', '\u2945', '\u2974', '\u2974', '\u21a3', '\u21a3', '\u219d', '\u219d', '\u291a', '\u291a', '\u2236', '\u2236', '\u211a', '\u211a', '\u290d', '\u290d', 
+'\u2773', '\u2773', '\u007d', '\u007d', '\u005d', '\u005d', '\u298c', '\u298c', '\u298e', '\u298e', '\u2990', '\u2990', '\u0159', '\u0159', '\u0157', '\u0157', '\u2309', '\u2309', '\u007d', '\u007d', '\u0440', '\u0440', '\u2937', '\u2937', '\u2969', '\u2969', '\u201d', '\u201d', '\u201d', '\u201d', '\u21b3', '\u21b3', '\u211c', '\u211c', '\u211b', 
+'\u211b', '\u211c', '\u211c', '\u211d', '\u211d', '\u25ad', '\u25ad', '\u00ae', '\u00ae', '\u297d', '\u297d', '\u230b', '\u230b', '\U0001d52f', '\U0001d52f', '\u21c1', '\u21c1', '\u21c0', '\u21c0', '\u296c', '\u296c', '\u03c1', '\u03c1', '\u03f1', '\u03f1', '\u2192', '\u2192', '\u21a3', '\u21a3', '\u21c1', '\u21c1', 
+'\u21c0', '\u21c0', '\u21c4', '\u21c4', '\u21cc', '\u21cc', '\u21c9', '\u21c9', '\u219d', '\u219d', '\u22cc', '\u22cc', '\u02da', '\u02da', '\u2253', '\u2253', '\u21c4', '\u21c4', '\u21cc', '\u21cc', '\u200f', 
+'\u200f', '\u23b1', '\u23b1', '\u23b1', '\u23b1', '\u2aee', '\u2aee', '\u27ed', '\u27ed', '\u21fe', '\u21fe', '\u27e7', '\u27e7', '\u2986', '\u2986', '\U0001d563', '\U0001d563', '\u2a2e', '\u2a2e', '\u2a35', '\u2a35', '\u0029', '\u0029', '\u2994', '\u2994', '\u2a12', '\u2a12', '\u21c9', '\u21c9', '\u203a', '\u203a', '\U0001d4c7', '\U0001d4c7', '\u21b1', 
+'\u21b1', '\u005d', '\u005d', '\u2019', '\u2019', '\u2019', '\u2019', '\u22cc', '\u22cc', '\u22ca', '\u22ca', '\u25b9', '\u25b9', '\u22b5', '\u22b5', '\u25b8', '\u25b8', '\u29ce', '\u29ce', '\u2968', '\u2968', '\u211e', '\u211e', '\u015b', '\u015b', '\u201a', '\u201a', '\u227b', '\u227b', '\u2ab4', '\u2ab4', '\u2ab8', '\u2ab8', '\u0161', '\u0161', '\u227d', 
+'\u227d', '\u2ab0', '\u2ab0', '\u015f', '\u015f', '\u015d', '\u015d', '\u2ab6', '\u2ab6', '\u2aba', '\u2aba', '\u22e9', '\u22e9', '\u2a13', '\u2a13', '\u227f', '\u227f', '\u0441', '\u0441', '\u22c5', '\u22c5', '\u22a1', '\u22a1', '\u2a66', '\u2a66', '\u21d8', '\u21d8', '\u2925', '\u2925', '\u2198', '\u2198', '\u2198', '\u2198', '\u00a7', '\u00a7', '\u003b', 
+'\u003b', '\u2929', '\u2929', '\u2216', '\u2216', '\u2216', '\u2216', '\u2736', '\u2736', '\U0001d530', '\U0001d530', '\u2322', '\u2322', '\u266f', '\u266f', '\u0449', '\u0449', '\u0448', '\u0448', '\u2223', '\u2223', '\u2225', '\u2225', '\u00ad', '\u00ad', '\u03c3', '\u03c3', '\u03c2', '\u03c2', '\u03c2', '\u03c2', '\u223c', '\u223c', '\u2a6a', 
+'\u2a6a', '\u2243', '\u2243', '\u2243', '\u2243', '\u2a9e', '\u2a9e', '\u2aa0', '\u2aa0', '\u2a9d', '\u2a9d', '\u2a9f', '\u2a9f', '\u2246', '\u2246', '\u2a24', '\u2a24', '\u2972', '\u2972', '\u2190', '\u2190', '\u2216', '\u2216', '\u2a33', '\u2a33', '\u29e4', '\u29e4', '\u2223', '\u2223', '\u2323', '\u2323', '\u2aaa', '\u2aaa', '\u2aac', 
+'\u2aac', '\u044c', '\u044c', '\u002f', '\u002f', '\u29c4', '\u29c4', '\u233f', '\u233f', '\U0001d564', '\U0001d564', '\u2660', '\u2660', '\u2660', '\u2660', '\u2225', '\u2225', '\u2293', '\u2293', '\u2294', '\u2294', '\u228f', '\u228f', '\u2291', '\u2291', '\u228f', '\u228f', '\u2291', '\u2291', '\u2290', '\u2290', '\u2292', '\u2292', 
+'\u2290', '\u2290', '\u2292', '\u2292', '\u25a1', '\u25a1', '\u25a1', '\u25a1', '\u25aa', '\u25aa', '\u25aa', '\u25aa', '\u2192', '\u2192', '\U0001d4c8', '\U0001d4c8', '\u2216', '\u2216', '\u2323', '\u2323', '\u22c6', '\u22c6', '\u2606', '\u2606', '\u2605', '\u2605', '\u03f5', '\u03f5', '\u03d5', '\u03d5', '\u00af', 
+'\u00af', '\u2282', '\u2282', '\u2ac5', '\u2ac5', '\u2abd', '\u2abd', '\u2286', '\u2286', '\u2ac3', '\u2ac3', '\u2ac1', '\u2ac1', '\u2acb', '\u2acb', '\u228a', '\u228a', '\u2abf', '\u2abf', '\u2979', '\u2979', '\u2282', '\u2282', '\u2286', '\u2286', '\u2ac5', '\u2ac5', '\u228a', '\u228a', '\u2acb', '\u2acb', 
+'\u2ac7', '\u2ac7', '\u2ad5', '\u2ad5', '\u2ad3', '\u2ad3', '\u227b', '\u227b', '\u2ab8', '\u2ab8', '\u227d', '\u227d', '\u2ab0', '\u2ab0', '\u2aba', '\u2aba', '\u2ab6', '\u2ab6', '\u22e9', '\u22e9', '\u227f', '\u227f', '\u2211', '\u2211', '\u266a', '\u266a', '\u2283', '\u2283', '\u00b9', '\u00b9', '\u00b2', 
+'\u00b2', '\u00b3', '\u00b3', '\u2ac6', '\u2ac6', '\u2abe', '\u2abe', '\u2ad8', '\u2ad8', '\u2287', '\u2287', '\u2ac4', '\u2ac4', '\u27c9', '\u27c9', '\u2ad7', '\u2ad7', '\u297b', '\u297b', '\u2ac2', '\u2ac2', '\u2acc', '\u2acc', '\u228b', '\u228b', '\u2ac0', '\u2ac0', '\u2283', '\u2283', '\u2287', '\u2287', '\u2ac6', 
+'\u2ac6', '\u228b', '\u228b', '\u2acc', '\u2acc', '\u2ac8', '\u2ac8', '\u2ad4', '\u2ad4', '\u2ad6', '\u2ad6', '\u21d9', '\u21d9', '\u2926', '\u2926', '\u2199', '\u2199', '\u2199', '\u2199', '\u292a', '\u292a', '\u00df', '\u00df', '\u2316', '\u2316', '\u03c4', '\u03c4', '\u23b4', '\u23b4', '\u0165', '\u0165', '\u0163', 
+'\u0163', '\u0442', '\u0442', '\u20db', '\u20db', '\u2315', '\u2315', '\U0001d531', '\U0001d531', '\u2234', '\u2234', '\u2234', '\u2234', '\u03b8', '\u03b8', '\u03d1', '\u03d1', '\u03d1', '\u03d1', '\u2248', '\u2248', '\u223c', '\u223c', '\u2009', '\u2009', '\u2248', '\u2248', '\u223c', '\u223c', '\u00fe', '\u00fe', '\u02dc', 
+'\u02dc', '\u00d7', '\u00d7', '\u22a0', '\u22a0', '\u2a31', '\u2a31', '\u2a30', '\u2a30', '\u222d', '\u222d', '\u2928', '\u2928', '\u22a4', '\u22a4', '\u2336', '\u2336', '\u2af1', '\u2af1', '\U0001d565', '\U0001d565', '\u2ada', '\u2ada', '\u2929', '\u2929', '\u2034', '\u2034', '\u2122', '\u2122', '\u25b5', '\u25b5', '\u25bf', '\u25bf', 
+'\u25c3', '\u25c3', '\u22b4', '\u22b4', '\u225c', '\u225c', '\u25b9', '\u25b9', '\u22b5', '\u22b5', '\u25ec', '\u25ec', '\u225c', '\u225c', '\u2a3a', '\u2a3a', '\u2a39', '\u2a39', '\u29cd', '\u29cd', '\u2a3b', '\u2a3b', '\u23e2', '\u23e2', '\U0001d4c9', 
+'\U0001d4c9', '\u0446', '\u0446', '\u045b', '\u045b', '\u0167', '\u0167', '\u226c', '\u226c', '\u219e', '\u219e', '\u21a0', '\u21a0', '\u21d1', '\u21d1', '\u2963', '\u2963', '\u00fa', '\u00fa', '\u2191', '\u2191', '\u045e', '\u045e', '\u016d', '\u016d', '\u00fb', '\u00fb', '\u0443', '\u0443', '\u21c5', '\u21c5', '\u0171', 
+'\u0171', '\u296e', '\u296e', '\u297e', '\u297e', '\U0001d532', '\U0001d532', '\u00f9', '\u00f9', '\u21bf', '\u21bf', '\u21be', '\u21be', '\u2580', '\u2580', '\u231c', '\u231c', '\u231c', '\u231c', '\u230f', '\u230f', '\u25f8', '\u25f8', '\u016b', '\u016b', '\u00a8', '\u00a8', '\u0173', '\u0173', '\U0001d566', '\U0001d566', '\u2191', '\u2191', '\u2195', 
+'\u2195', '\u21bf', '\u21bf', '\u21be', '\u21be', '\u228e', '\u228e', '\u03c5', '\u03c5', '\u03d2', '\u03d2', '\u03c5', '\u03c5', '\u21c8', '\u21c8', '\u231d', '\u231d', '\u231d', '\u231d', '\u230e', '\u230e', '\u016f', '\u016f', '\u25f9', '\u25f9', '\U0001d4ca', '\U0001d4ca', '\u22f0', '\u22f0', 
+'\u0169', '\u0169', '\u25b5', '\u25b5', '\u25b4', '\u25b4', '\u21c8', '\u21c8', '\u00fc', '\u00fc', '\u29a7', '\u29a7', '\u21d5', '\u21d5', '\u2ae8', '\u2ae8', '\u2ae9', '\u2ae9', '\u22a8', '\u22a8', '\u299c', '\u299c', '\u03f5', '\u03f5', '\u03f0', '\u03f0', '\u2205', '\u2205', '\u03d5', '\u03d5', '\u03d6', '\u03d6', '\u221d', 
+'\u221d', '\u2195', '\u2195', '\u03f1', '\u03f1', '\u03c2', '\u03c2', '\u03d1', '\u03d1', '\u22b2', '\u22b2', '\u22b3', '\u22b3', '\u0432', '\u0432', '\u22a2', '\u22a2', '\u2228', '\u2228', '\u22bb', '\u22bb', '\u225a', '\u225a', '\u22ee', '\u22ee', '\u007c', '\u007c', '\u007c', '\u007c', '\U0001d533', 
+'\U0001d533', '\u22b2', '\u22b2', '\U0001d567', '\U0001d567', '\u221d', '\u221d', '\u22b3', '\u22b3', '\U0001d4cb', '\U0001d4cb', '\u299a', '\u299a', '\u0175', '\u0175', '\u2a5f', '\u2a5f', '\u2227', '\u2227', '\u2259', '\u2259', '\u2118', '\u2118', '\U0001d534', '\U0001d534', '\U0001d568', '\U0001d568', '\u2118', '\u2118', '\u2240', '\u2240', '\u2240', '\u2240', '\U0001d4cc', '\U0001d4cc', '\u22c2', '\u22c2', '\u25ef', 
+'\u25ef', '\u22c3', '\u22c3', '\u25bd', '\u25bd', '\U0001d535', '\U0001d535', '\u27fa', '\u27fa', '\u27f7', '\u27f7', '\u03be', '\u03be', '\u27f8', '\u27f8', '\u27f5', '\u27f5', '\u27fc', '\u27fc', '\u22fb', '\u22fb', '\u2a00', '\u2a00', '\U0001d569', '\U0001d569', '\u2a01', '\u2a01', '\u2a02', '\u2a02', '\u27f9', '\u27f9', '\u27f6', '\u27f6', '\U0001d4cd', '\U0001d4cd', '\u2a06', '\u2a06', '\u2a04', 
+'\u2a04', '\u25b3', '\u25b3', '\u22c1', '\u22c1', '\u22c0', '\u22c0', '\u00fd', '\u00fd', '\u044f', '\u044f', '\u0177', '\u0177', '\u044b', '\u044b', '\u00a5', '\u00a5', '\U0001d536', '\U0001d536', '\u0457', '\u0457', '\U0001d56a', '\U0001d56a', '\U0001d4ce', '\U0001d4ce', '\u044e', '\u044e', '\u00ff', '\u00ff', '\u017a', '\u017a', '\u017e', '\u017e', '\u0437', '\u0437', '\u017c', '\u017c', '\u2128', 
+'\u2128', '\u03b6', '\u03b6', '\U0001d537', '\U0001d537', '\u0436', '\u0436', '\u21dd', '\u21dd', '\U0001d56b', '\U0001d56b', '\U0001d4cf', '\U0001d4cf', '\u200d', '\u200d', '\u200c', '\u200c', ];
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // dom event support, if you want to use it
 
