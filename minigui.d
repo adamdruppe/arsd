@@ -7521,10 +7521,11 @@ class TableView : Widget {
 	// FIXME: auto-size columns on double click of header thing like in Windows
 	// it need only make the currently displayed things fit well.
 
-	version(custom_widgets) private {
-		ColumnInfo[] columns;
-		int itemCount;
 
+	private ColumnInfo[] columns;
+	private int itemCount;
+
+	version(custom_widgets) private {
 		TableViewWidgetInner tvwi;
 	}
 
@@ -7533,6 +7534,32 @@ class TableView : Widget {
 		const(char)[] name; /// the name displayed in the header
 		int width; /// the default width, in pixels
 		TextAlignment alignment; /// alignment of the text in the cell
+
+		/++
+			After all the pixel widths have been assigned, any left over
+			space is divided up among all columns and distributed to according
+			to the widthPercent field.
+
+			For example, if you have two fields, both with width 50 and one with
+			widthPercent of 25 and the other with widthPercent of 75, and the
+			container is 200 pixels wide, first both get their width of 50.
+			then the 100 remaining pixels are split up, so the one gets a total
+			of 75 pixels and the other gets a total of 125.
+
+			This is automatically applied as the window is resized.
+
+			If there is not enough space - that is, when a horizontal scrollbar
+			needs to appear - there are 0 pixels divided up, and thus everyone
+			gets 0. This can cause a column to shrink out of proportion when
+			passing the scroll threshold.
+
+			History:
+				Added November 10, 2021 (dub v10.4)
+		+/
+		int widthPercent;
+
+
+		private int calculatedWidth;
 	}
 	/++
 		Sets the number of columns along with information about the headers.
@@ -7541,18 +7568,21 @@ class TableView : Widget {
 		and is always left aligned.
 	+/
 	void setColumnInfo(ColumnInfo[] columns...) {
-		version(custom_widgets) {
-			this.columns = columns.dup;
-			foreach(ref c; this.columns)
-				c.name = c.name.idup;
 
+		foreach(ref c; this.columns)
+			c.name = c.name.idup;
+		this.columns = columns.dup;
+
+		updateCalculatedWidth(false);
+
+		version(custom_widgets) {
 			tvwi.header.updateHeaders();
 			tvwi.updateScrolls();
 		} else version(win32_widgets)
-		foreach(i, column; columns) {
+		foreach(i, ref column; columns) {
 			LVCOLUMN lvColumn;
 			lvColumn.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM;
-			lvColumn.cx = column.width;
+			lvColumn.cx = column.calculatedWidth;
 
 			auto bfr = WCharzBuffer(column.name);
 			lvColumn.pszText = bfr.ptr;
@@ -7569,12 +7599,36 @@ class TableView : Widget {
 		}
 	}
 
+	private void updateCalculatedWidth(bool informWindows) {
+
+		int remaining = this.width;
+		foreach(column; columns)
+			remaining -= column.width;
+		if(remaining < 0)
+			remaining = 0;
+
+		foreach(i, ref column; columns) {
+			auto c = column.width + (remaining * column.widthPercent) / 100;
+			column.calculatedWidth = c;
+			version(win32_widgets)
+			if(informWindows)
+				SendMessage(hwnd, LVM_SETCOLUMNWIDTH, i, c); // LVSCW_AUTOSIZE or LVSCW_AUTOSIZE_USEHEADER are amazing omg
+		}
+
+	}
+
+	override void registerMovement() {
+		super.registerMovement();
+
+		updateCalculatedWidth(true);
+	}
+
 	/++
 		Tells the view how many items are in it. It uses this to set the scroll bar, but the items are not added per se; it calls [getData] as-needed.
 	+/
 	void setItemCount(int count) {
+		this.itemCount = count;
 		version(custom_widgets) {
-			this.itemCount = count;
 			tvwi.updateScrolls();
 			redraw();
 		} else version(win32_widgets) {
@@ -7586,9 +7640,9 @@ class TableView : Widget {
 		Clears all items;
 	+/
 	void clear() {
+		this.itemCount = 0;
+		this.columns = null;
 		version(custom_widgets) {
-			this.itemCount = 0;
-			this.columns = null;
 			tvwi.header.updateHeaders();
 			tvwi.updateScrolls();
 			redraw();
@@ -7711,12 +7765,12 @@ private class TableViewWidgetInner : Widget {
 				break;
 			x = 0;
 			foreach(columnNumber, column; tvw.columns) {
-				auto x2 = x + column.width;
+				auto x2 = x + column.calculatedWidth;
 				auto smwx = smw.position.x;
 
 				if(x2 > smwx /* if right side of it is visible at all */ || (x >= smwx && x < smwx + this.width) /* left side is visible at all*/) {
 					auto startX = x;
-					auto endX = x + column.width;
+					auto endX = x + column.calculatedWidth;
 					switch (column.alignment & (TextAlignment.Left | TextAlignment.Center | TextAlignment.Right)) {
 						case TextAlignment.Left: startX += padding; break;
 						case TextAlignment.Center: startX += padding; endX -= padding; break;
@@ -7729,7 +7783,7 @@ private class TableViewWidgetInner : Widget {
 					});
 				}
 
-				x += column.width;
+				x += column.calculatedWidth;
 			}
 			row++;
 			y += lh;
@@ -7774,7 +7828,7 @@ private class TableViewWidgetInner : Widget {
 					continue;
 				child.x = pos;
 				child.y = 0;
-				child.width = tvw.tvw.columns[idx].width;
+				child.width = tvw.tvw.columns[idx].calculatedWidth;
 				child.height = 16;// this.height;
 				pos += child.width;
 
