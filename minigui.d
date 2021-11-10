@@ -7607,13 +7607,19 @@ class TableView : Widget {
 		if(remaining < 0)
 			remaining = 0;
 
+		int percentTotal;
 		foreach(i, ref column; columns) {
+			percentTotal += column.widthPercent;
 			auto c = column.width + (remaining * column.widthPercent) / 100;
 			column.calculatedWidth = c;
 			version(win32_widgets)
 			if(informWindows)
 				SendMessage(hwnd, LVM_SETCOLUMNWIDTH, i, c); // LVSCW_AUTOSIZE or LVSCW_AUTOSIZE_USEHEADER are amazing omg
 		}
+
+		assert(percentTotal >= 0, "The total percents in your column definitions were negative. They must add up to something between 0 and 100.");
+		assert(percentTotal <= 100, "The total percents in your column definitions exceeded 100. They must add up to no more than 100 (can be less though).");
+			
 
 	}
 
