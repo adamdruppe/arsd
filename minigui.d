@@ -1185,6 +1185,16 @@ class Widget : ReflectableProperties {
 
 		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
 			switch(iMessage) {
+
+				case WM_NOTIFY:
+					auto hdr = cast(NMHDR*) lParam;
+					auto hwndFrom = hdr.hwndFrom;
+					auto code = hdr.code;
+
+					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+						return (*widgetp).handleWmNotify(hdr, code);
+					}
+				break;
 				case WM_COMMAND:
 					auto handle = cast(HWND) lParam;
 					auto cmd = HIWORD(wParam);
@@ -1335,6 +1345,8 @@ class Widget : ReflectableProperties {
 			if(this.hwnd !is null)
 				SetFocus(this.hwnd);
 		}
+		//else static if(UsingSimpledisplayX11)
+			//this.parentWindow.win.focus();
 
 		parentWindow.focusedWidget = this;
 		parentWindow.focusedWidget.setDynamicState(DynamicState.focus, true);
@@ -3691,23 +3703,27 @@ template classStaticallyEmits(This, EventType) {
 }
 
 /++
-	Nests an opengl capable window inside this window as a widget.
+	A helper to make widgets out of other native windows.
 
-	You may also just want to create an additional [SimpleWindow] with
-	[OpenGlOptions.yes] yourself.
-
-	An OpenGL widget cannot have child widgets. It will throw if you try.
+	History:
+		Factored out of OpenGlWidget on November 5, 2021
 +/
-static if(OpenGlEnabled)
-class OpenGlWidget : Widget {
+class NestedChildWindowWidget : Widget {
 	SimpleWindow win;
 
 	///
-	this(Widget parent) {
+	// win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, getParentWindow(parent));
+	this(SimpleWindow win, Widget parent) {
 		this.parentWindow = parent.parentWindow;
+		this.win = win;
 
-		SimpleWindow pwin = this.parentWindow.win;
+		super(parent);
+		windowsetup(win);
+	}
 
+	static protected SimpleWindow getParentWindow(Widget parent) {
+		assert(parent !is null);
+		SimpleWindow pwin = parent.parentWindow.win;
 
 		version(win32_widgets) {
 			HWND phwnd;
@@ -3724,10 +3740,7 @@ class OpenGlWidget : Widget {
 				pwin = new SimpleWindow(phwnd);
 		}
 
-		win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, pwin);
-		super(parent);
-
-		windowsetup(win);
+		return pwin;
 	}
 
 	protected void windowsetup(SimpleWindow w) {
@@ -3765,14 +3778,6 @@ class OpenGlWidget : Widget {
 
 	}
 
-	override void paint(WidgetPainter painter) {
-		win.redrawOpenGlSceneNow();
-	}
-
-	void redrawOpenGlScene(void delegate() dg) {
-		win.redrawOpenGlScene = dg;
-	}
-
 	override void showing(bool s, bool recalc) {
 		auto cur = hidden;
 		win.hidden = !s;
@@ -3795,11 +3800,41 @@ class OpenGlWidget : Widget {
 			auto pos = getChildPositionRelativeToParentOrigin(this);
 		win.moveResize(pos[0], pos[1], width, height);
 
-		win.setAsCurrentOpenGlContext();
+		registerMovementAdditionalWork();
 		sendResizeEvent();
 	}
 
-	//void delegate() drawFrame;
+	abstract void registerMovementAdditionalWork();
+}
+
+/++
+	Nests an opengl capable window inside this window as a widget.
+
+	You may also just want to create an additional [SimpleWindow] with
+	[OpenGlOptions.yes] yourself.
+
+	An OpenGL widget cannot have child widgets. It will throw if you try.
++/
+static if(OpenGlEnabled)
+class OpenGlWidget : NestedChildWindowWidget {
+
+	override void registerMovementAdditionalWork() {
+		win.setAsCurrentOpenGlContext();
+	}
+
+	///
+	this(Widget parent) {
+		auto win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, getParentWindow(parent));
+		super(win, parent);
+	}
+
+	override void paint(WidgetPainter painter) {
+		win.redrawOpenGlSceneNow();
+	}
+
+	void redrawOpenGlScene(void delegate() dg) {
+		win.redrawOpenGlScene = dg;
+	}
 }
 
 version(custom_widgets)
@@ -7501,6 +7536,9 @@ class TableView : Widget {
 	}
 	/++
 		Sets the number of columns along with information about the headers.
+
+		Please note: on Windows, the first column ignores your alignment preference
+		and is always left aligned.
 	+/
 	void setColumnInfo(ColumnInfo[] columns...) {
 		version(custom_widgets) {
@@ -7526,7 +7564,8 @@ class TableView : Widget {
 			else
 				lvColumn.fmt = LVCFMT_LEFT;
 
-			SendMessage(hwnd, LVM_INSERTCOLUMN, cast(WPARAM) i, cast(LPARAM) &lvColumn);
+			if(SendMessage(hwnd, LVM_INSERTCOLUMN, cast(WPARAM) i, cast(LPARAM) &lvColumn) == -1)
+				throw new WindowsApiException("Insert Column Fail");
 		}
 	}
 
@@ -7591,6 +7630,23 @@ class TableView : Widget {
 	}
 
 	/++
+		Informs the control that content has changed.
+
+		History:
+			Added November 10, 2021 (dub v10.4)
+	+/
+	void update() {
+		version(custom_widgets)
+			redraw();
+		else {
+			SendMessage(hwnd, LVM_REDRAWITEMS, 0, SendMessage(hwnd, LVM_GETITEMCOUNT, 0, 0));
+			UpdateWindow(hwnd);
+		}
+			
+
+	}
+
+	/++
 
 	+/
 	void delegate(int row, int column, scope void delegate(in char[]) sink) getData;
@@ -7651,6 +7707,8 @@ private class TableViewWidgetInner : Widget {
 		enum padding = 3;
 
 		foreach(lol; 0 .. this.height / lh) {
+			if(row >= tvw.itemCount)
+				break;
 			x = 0;
 			foreach(columnNumber, column; tvw.columns) {
 				auto x2 = x + column.width;
@@ -9653,7 +9711,7 @@ class Button : MouseActivatedWidget {
 }
 
 /++
-	A button with a consistent size, suitable for user commands like OK and Cancel.
+	A button with a consistent size, suitable for user commands like OK and cANCEL.
 +/
 class CommandButton : Button {
 	this(string label, Widget parent) {
@@ -11857,20 +11915,25 @@ enum GenericIcons : ushort {
 void getOpenFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
-	string[] filters = null
+	string[] filters = null,
+	void delegate() onCancel = null,
 )
 {
-	return getFileName(true, onOK, prefilledName, filters);
+	return getFileName(true, onOK, prefilledName, filters, onCancel);
 }
 
-///
+/++
+	History:
+		onCancel was added November 6, 2021.
++/
 void getSaveFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
-	string[] filters = null
+	string[] filters = null,
+	void delegate() onCancel = null,
 )
 {
-	return getFileName(false, onOK, prefilledName, filters);
+	return getFileName(false, onOK, prefilledName, filters, onCancel);
 }
 
 void getFileName(
@@ -11878,6 +11941,7 @@ void getFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
 	string[] filters = null,
+	void delegate() onCancel = null,
 )
 {
 
@@ -11905,10 +11969,14 @@ void getFileName(
 		ofn.nMaxFile = file.length;
 		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) {
 			onOK(makeUtf8StringFromWindowsString(ofn.lpstrFile));
+		} else {
+			if(onCancel)
+				onCancel();
 		}
 	} else version(custom_widgets) {
 		auto picker = new FilePicker(prefilledName);
 		picker.onOK = onOK;
+		picker.onCancel = onCancel;
 		picker.show();
 	}
 }
@@ -11917,6 +11985,7 @@ version(custom_widgets)
 private
 class FilePicker : Dialog {
 	void delegate(string) onOK;
+	void delegate() onCancel;
 	LineEdit lineEdit;
 	this(string prefilledName, Window owner = null) {
 		super(300, 200, "Choose File..."); // owner);
@@ -12052,6 +12121,12 @@ class FilePicker : Dialog {
 	override void OK() {
 		if(onOK)
 			onOK(lineEdit.content);
+		close();
+	}
+
+	override void Cancel() {
+		if(onCancel)
+			onCancel();
 		close();
 	}
 }
