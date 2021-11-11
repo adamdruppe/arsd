@@ -14822,6 +14822,10 @@ enum ColorMapNotification:int
 		alias ulong XID;
 		alias ulong arch_ulong;
 		alias long arch_long;
+	} else version (AArch64) {
+		alias ulong XID;
+		alias ulong arch_ulong;
+		alias long arch_long;
 	} else {
 		alias uint XID;
 		alias uint arch_ulong;
@@ -15623,6 +15627,8 @@ union XEvent{
 		static assert(XAnyEvent.sizeof == 40);
 		static assert(XMappingEvent.sizeof == 56);
 		static assert(XEvent.sizeof == 192);
+    	} else version (AArch64) {
+        	// omit check for aarch64
 	} else {
 		static assert(Display.sizeof == 176);
 		static assert(XPointer.sizeof == 4);
