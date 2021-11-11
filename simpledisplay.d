@@ -1738,18 +1738,21 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			impl.hwnd = nativeWindow;
 		else version(X11) {
 			impl.window = nativeWindow;
-			display = XDisplayConnection.get(); // get initial display to not segfault
+			if(nativeWindow)
+				display = XDisplayConnection.get(); // get initial display to not segfault
 		} else version(OSXCocoa)
 			throw new NotYetImplementedException();
 		else featureNotImplemented();
 		// FIXME: set the size correctly
 		_width = 1;
 		_height = 1;
-		nativeMapping[nativeWindow] = this;
+		if(nativeWindow)
+			nativeMapping[nativeWindow] = this;
 
 		beingOpenKeepsAppOpen = false;
 
-		CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+		if(nativeWindow)
+			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 		_suppressDestruction = true; // so it doesn't try to close
 	}
 
@@ -1824,6 +1827,26 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
+	}
+
+	/++
+		Returns the native window.
+
+		History:
+			Added November 5, 2021 (dub v10.4). Prior to that, you'd have
+			to access it through the `impl` member (which is semi-supported
+			but platform specific and here it is simple enough to offer an accessor).
+
+		Bugs:
+			Not implemented outside Windows or X11.
+	+/
+	NativeWindowHandle nativeWindowHandle() {
+		version(X11)
+			return impl.window;
+		else version(Windows)
+			return impl.hwnd;
+		else
+			throw new NotYetImplementedException();
 	}
 
 	private bool isTransient() {
@@ -3012,6 +3035,9 @@ private:
 
 	// for all windows in nativeMapping
 	static void processAllCustomEvents () {
+
+		justCommunication.processCustomEvents();
+
 		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
 			if (sw is null || sw.closed) continue;
 			sw.processCustomEvents();
@@ -3055,6 +3081,15 @@ private:
 		return (res >= int.max ? 0 : res);
 	}
 }
+
+/++
+	Magic pseudo-window for just posting events to a global queue.
+
+	Not entirely supported, I might delete it at any time.
+
+	Added Nov 5, 2021.
++/
+__gshared SimpleWindow justCommunication = new SimpleWindow(NativeWindowHandle.init);
 
 /* Drag and drop support { */
 version(X11) {
@@ -8989,6 +9024,36 @@ bool runInGuiThread(scope void delegate() dg) @trusted {
 	return true;
 }
 
+void runInGuiThreadAsync(void delegate() dg, void delegate(Exception) nothrow handleError = null) nothrow {
+	claimGuiThread();
+
+	try {
+
+		if(thisIsGuiThread) {
+			dg();
+			return;
+		}
+
+		if(guiThreadTerminating)
+			return;
+
+		RunQueueMember* rqm = new RunQueueMember;
+		rqm.dg = cast(typeof(rqm.dg)) dg;
+		rqm.signal = null;
+		rqm.thrown = null;
+
+		synchronized(runInGuiThreadLock) {
+			runInGuiThreadQueue ~= rqm;
+		}
+
+		if(!SimpleWindow.eventWakeUp())
+			throw new Error("runInGuiThread impossible; eventWakeUp failed");
+	} catch(Exception e) {
+		if(handleError)
+			handleError(e);
+	}
+}
+
 private void runPendingRunInGuiThreadDelegates() {
 	more:
 	RunQueueMember* next;
@@ -9009,13 +9074,14 @@ private void runPendingRunInGuiThreadDelegates() {
 			next.thrown = t;
 		}
 
-		next.signal.notify();
+		if(next.signal)
+			next.signal.notify();
 
 		goto more;
 	}
 }
 
-private void claimGuiThread() {
+private void claimGuiThread() nothrow {
 	import core.atomic;
 	if(cas(&guiThreadExists, false, true))
 		thisIsGuiThread = true;
@@ -15067,7 +15133,15 @@ enum {
 	MWM_FUNC_MOVE = (1L << 2),
 	MWM_FUNC_MINIMIZE = (1L << 3),
 	MWM_FUNC_MAXIMIZE = (1L << 4),
-	MWM_FUNC_CLOSE = (1L << 5)
+	MWM_FUNC_CLOSE = (1L << 5),
+
+	MWM_DECOR_ALL = (1L << 0),
+	MWM_DECOR_BORDER = (1L << 1),
+	MWM_DECOR_RESIZEH = (1L << 2),
+	MWM_DECOR_TITLE = (1L << 3),
+	MWM_DECOR_MENU = (1L << 4),
+	MWM_DECOR_MINIMIZE = (1L << 5),
+	MWM_DECOR_MAXIMIZE = (1L << 6),
 }
 
 import core.stdc.config : c_long, c_ulong;
