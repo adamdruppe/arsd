@@ -7553,6 +7553,13 @@ class TableView : Widget {
 			gets 0. This can cause a column to shrink out of proportion when
 			passing the scroll threshold.
 
+			It is important to still set a fixed width (that is, to populate the
+			`width` field) even if you use the percents because that will be the
+			default minimum in the event of a scroll bar appearing.
+
+			The percents total in the column can never exceed 100 or be less than 0.
+			Doing this will trigger an assert error.
+
 			History:
 				Added November 10, 2021 (dub v10.4)
 		+/
@@ -7710,6 +7717,12 @@ class TableView : Widget {
 
 	+/
 	void delegate(int row, int column, scope void delegate(in char[]) sink) getData;
+
+
+
+	// i want to be able to do things like draw little colored things to show red for negative numbers
+	// or background color indicators or even in-cell charts
+	// void delegate(int row, int column, WidgetPainter painter, int width, int height, in char[] text) drawCell;
 }
 
 version(custom_widgets)
@@ -8649,7 +8662,7 @@ class StatusBar : Widget {
 
 	private Parts _parts;
 	///
-	@property Parts parts() {
+	final @property Parts parts() {
 		return _parts;
 	}
 
@@ -10405,6 +10418,8 @@ class PasswordEdit : EditableTextWidget {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
 	}
+
+	override int flexBasisWidth() { return 250; }
 
 	///
 	this(Widget parent) {
