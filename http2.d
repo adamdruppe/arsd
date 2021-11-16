@@ -1142,7 +1142,7 @@ class HttpRequest {
 		}
 
 		if(advance)
-			HttpRequest.advanceConnections();
+			HttpRequest.advanceConnections(requestParameters.timeoutFromInactivity);
 	}
 
 
@@ -1153,7 +1153,7 @@ class HttpRequest {
 				send();
 				continue;
 			}
-			if(auto err = HttpRequest.advanceConnections()) {
+			if(auto err = HttpRequest.advanceConnections(requestParameters.timeoutFromInactivity)) {
 				switch(err) {
 					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
 					case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
