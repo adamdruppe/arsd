@@ -769,7 +769,8 @@ struct var {
 							};
 						}
 					} else static if(is(typeof(__traits(getMember, t, member)))) {
-						this[member] = __traits(getMember, t, member);
+						static if(!is(typeof(__traits(getMember, t, member)) == void))
+							this[member] = __traits(getMember, t, member);
 					}
 				}
 			} else {
@@ -860,6 +861,8 @@ struct var {
 	// foo in this
 	public var* opBinaryRight(string op : "in", T)(T s) {
 		// this needs to be an object
+		if(this._object is null)
+			return null;
 		return var(s).get!string in this._object._properties;
 	}
 
@@ -985,7 +988,7 @@ struct var {
 				else static if(isFloatingPoint!T || isIntegral!T)
 					return cast(T) (this._payload._boolean ? 1 : 0); // the cast is for enums, I don't like this so FIXME
 				else static if(isSomeString!T)
-					return this._payload._boolean ? "true" : "false";
+					return to!T(this._payload._boolean ? "true" : "false");
 				else
 				return T.init;
 			case Type.Object:
@@ -1012,15 +1015,17 @@ struct var {
 					// first, we'll try to give them back the native object we have, if we have one
 					static if(is(T : Object) || is(T == interface)) {
 						auto t = this;
-						// need to walk up the prototype chain to 
+						// need to walk up the prototype chain too
 						while(t != null) {
+							assert(t.payloadType == Type.Object);
 							if(auto wno = cast(WrappedNativeObject) t._payload._object) {
 								auto no = cast(T) wno.getObject();
 
 								if(no !is null) {
 									auto sc = cast(ScriptableSubclass) no;
-									if(sc !is null)
+									if(sc !is null) {
 										sc.setScriptVar(this);
+									}
 
 									return no;
 								}
@@ -1060,7 +1065,7 @@ struct var {
 					}
 				} else static if(isSomeString!T) {
 					if(this._object !is null)
-						return this._object.toString();
+						return to!T(this._object.toString());
 					return null;// "null";
 				} else
 					return T.init;
@@ -1068,14 +1073,14 @@ struct var {
 				static if(isFloatingPoint!T || isIntegral!T)
 					return to!T(this._payload._integral);
 				else static if(isSomeString!T)
-					return to!string(this._payload._integral);
+					return to!T(this._payload._integral);
 				else
 					return T.init;
 			case Type.Floating:
 				static if(isFloatingPoint!T || isIntegral!T)
 					return to!T(this._payload._floating);
 				else static if(isSomeString!T)
-					return to!string(this._payload._floating);
+					return to!T(this._payload._floating);
 				else
 					return T.init;
 			case Type.String:
@@ -1089,7 +1094,7 @@ struct var {
 				import std.range;
 				auto pl = this._payload._array;
 				static if(isSomeString!T) {
-					return to!string(pl);
+					return to!T(pl);
 				} else static if(is(T == E[N], E, size_t N)) {
 					T ret;
 					foreach(i; 0 .. N) {
@@ -1113,7 +1118,7 @@ struct var {
 				// is it sane to translate anything else?
 			case Type.Function:
 				static if(isSomeString!T) {
-					return "<function>";
+					return to!T("<function>");
 				} else static if(isDelegate!T) {
 					// making a local copy because otherwise the delegate might refer to a struct on the stack and get corrupted later or something
 					auto func = this._payload._function;
@@ -2087,8 +2092,13 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 		static if(memberName != "toHash")
 		static foreach(overload; __traits(getOverloads, T, memberName))
 		static if(__traits(isVirtualMethod, overload))
+		static if(!__traits(isFinalFunction, overload))
+		static if(!__traits(isDeprecated, overload))
 		// note: overload behavior undefined
-		static if(!(functionAttributes!(overload) & (FunctionAttribute.pure_ | FunctionAttribute.safe | FunctionAttribute.trusted | FunctionAttribute.nothrow_)))
+		static if(!(functionAttributes!(overload) & (FunctionAttribute.pure_ | FunctionAttribute.safe | FunctionAttribute.trusted | FunctionAttribute.nothrow_ | FunctionAttribute.const_ | FunctionAttribute.inout_)))
+		static if(!hasRefParam!overload)
+		static if(__traits(getFunctionVariadicStyle, overload) == "none")
+		static if(__traits(identifier, overload) == memberName) // to filter out aliases
 		mixin(q{
 			@scriptable
 			override ReturnType!(overload)
@@ -2096,8 +2106,10 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 			(Parameters!(overload) p)
 			{
 			//import std.stdio; writeln("calling ", T.stringof, ".", memberName, " - ", methodOverriddenByScript(memberName), "/", _next_devirtualized, " on ", cast(size_t) cast(void*) this);
-				if(_next_devirtualized || !methodOverriddenByScript(memberName))
+				if(_next_devirtualized || !methodOverriddenByScript(memberName)) {
+					_next_devirtualized = false;
 					return __traits(getMember, super, memberName)(p);
+				}
 				return _this[memberName].call(_this, p).get!(typeof(return));
 			}
 		});
@@ -2124,6 +2136,20 @@ var subclassable(T)() if(is(T == class) || is(T == interface)) {
 
 	return f;
 }
+
+template hasRefParam(alias overload) {
+	bool helper() {
+		static if(is(typeof(overload) P == __parameters))
+		foreach(idx, p; P)
+		foreach(thing; __traits(getParameterStorageClasses, overload, idx))
+			if(thing == "ref")
+				return true;
+		return false;
+	}
+
+	enum hasRefParam = helper();
+}
+
 });
 
 /// Demonstrates tested capabilities of [subclassable]
@@ -2153,6 +2179,12 @@ unittest {
 	}
 	static class Bar : Foo {
 		override string method() { return "Bar"; }
+		string test1() { return test2(); }
+		string test2() { return "test2"; }
+
+		int acceptFoo(Foo f) {
+			return f.method2();
+		}
 	}
 	static class Baz : Bar {
 		override int method2() { return 20; }
@@ -2194,8 +2226,14 @@ unittest {
 		assert(bar.method() == "Bar");
 		assert(bar.method2() == 10);
 
+		assert(bar.acceptFoo(new Foo()) == 10);
+		assert(bar.acceptFoo(new Baz()) == 20);
+
 		// this final member is accessible because it was marked @scriptable
 		assert(bar.fm() == 56);
+
+		assert(bar.test1() == "test2");
+		assert(bar.test2() == "test2");
 
 		// the script can even subclass D classes!
 		class Amazing : Bar {
@@ -2217,12 +2255,18 @@ unittest {
 				// calling parent class method still possible
 				return super.args(a*2, b*2);
 			}
+
+			function test2() {
+				return "script test";
+			}
 		}
 
 		var amazing = new Amazing();
 		assert(amazing.method() == "Amazing");
 		assert(amazing.method2() == 10); // calls back to the parent class
 		amazing.member(5);
+
+		assert(amazing.test1() == "script test"); // even the virtual method call from D goes into the script override
 
 		// this line I can paste down to interactively debug the test btw.
 		//}, globals); repl!true(globals); interpret(q{

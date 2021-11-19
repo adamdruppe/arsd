@@ -2215,6 +2215,10 @@ struct Terminal {
 
 		History:
 			The `echoChar` parameter was added on October 11, 2021 (dub v10.4).
+
+			The `prompt` would not take effect if it was `null` prior to November 12, 2021. Before then, a `null` prompt would just leave the previous prompt string in place on the object. After that, the prompt is always set to the argument, including turning it off if you pass `null` (which is the default).
+
+			Always pass a string if you want it to display a string.
 	+/
 	string getline(string prompt = null, dchar echoChar = dchar.init) {
 		if(lineGetter is null)
@@ -2224,12 +2228,15 @@ struct Terminal {
 		lineGetter.terminal = &this;
 
 		auto ec = lineGetter.echoChar;
-		scope(exit)
+		auto p = lineGetter.prompt;
+		scope(exit) {
 			lineGetter.echoChar = ec;
+			lineGetter.prompt = p;
+		}
 		lineGetter.echoChar = echoChar;
 
-		if(prompt !is null)
-			lineGetter.prompt = prompt;
+
+		lineGetter.prompt = prompt;
 
 		auto input = RealTimeConsoleInput(&this, ConsoleInputFlags.raw | ConsoleInputFlags.selectiveMouse | ConsoleInputFlags.paste | ConsoleInputFlags.size | ConsoleInputFlags.noEolWrap);
 		auto line = lineGetter.getline(&input);
@@ -6870,6 +6877,13 @@ class FileLineGetter : LineGetter {
 		return list;
 	}
 }
+
+/+
+class FullscreenEditor {
+
+}
++/
+
 
 version(Windows) {
 	// to get the directory for saving history in the line things

@@ -78,11 +78,17 @@ interface Database {
 }
 import std.stdio;
 
-Ret queryOneColumn(Ret, string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
+// Added Oct 26, 2021
+Row queryOneRow(string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
 	auto res = db.query(sql, t);
 	if(res.empty)
 		throw new Exception("no row in result", file, line);
 	auto row = res.front;
+	return row;
+}
+
+Ret queryOneColumn(Ret, string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
+	auto row = queryOneRow(db, sql, t);
 	return to!Ret(row[0]);
 }
 
@@ -727,19 +733,19 @@ mixin template DataObjectConstructors() {
 	}
 }
 
-string yield(string what) { return `if(auto result = dg(`~what~`)) return result;`; }
+private string yield(string what) { return `if(auto result = dg(`~what~`)) return result;`; }
 
 import std.typecons;
 import std.json; // for json value making
 class DataObject {
 	// lets you just free-form set fields, assuming they all come from the given table
 	// note it doesn't try to handle joins for new rows. you've gotta do that yourself
-	this(Database db, string table) {
+	this(Database db, string table, UpdateOrInsertMode mode = UpdateOrInsertMode.CheckForMe) {
 		assert(db !is null);
 		this.db = db;
 		this.table = table;
 
-		mode = UpdateOrInsertMode.CheckForMe;
+		this.mode = mode;
 	}
 
 	JSONValue makeJsonValue() {
@@ -1103,19 +1109,24 @@ class SimpleDataObject(string tableToUse, fieldsToUse) : DataObject {
 	break on complex tables.
 
 	Data types handled:
+
+	```
 		INTEGER, SMALLINT, MEDIUMINT -> D's int
 		TINYINT -> D's bool
 		BIGINT -> D's long
 		TEXT, VARCHAR -> D's string
 		FLOAT, DOUBLE -> D's double
+	```
 
 	It also reads DEFAULT values to pass to D, except for NULL.
 	It ignores any length restrictions.
 
 	Bugs:
-		Skips all constraints
-		Doesn't handle nullable fields, except with strings
-		It only handles SQL keywords if they are all caps
+	$(LIST
+		* Skips all constraints
+		* Doesn't handle nullable fields, except with strings
+		* It only handles SQL keywords if they are all caps
+	)
 
 	This, when combined with SimpleDataObject!(),
 	can automatically create usable D classes from
@@ -1206,6 +1217,7 @@ string getCreateTable(string sql, string tableName) {
 			case "INTEGER":
 			case "SMALLINT":
 			case "MEDIUMINT":
+			case "SERIAL": // added Oct 23, 2021
 				structCode ~= "int";
 			break;
 			case "BOOLEAN":
@@ -1221,6 +1233,7 @@ string getCreateTable(string sql, string tableName) {
 			case "varchar":
 			case "TEXT":
 			case "text":
+			case "TIMESTAMPTZ": // added Oct 23, 2021
 				structCode ~= "string";
 			break;
 			case "FLOAT":
@@ -1352,15 +1365,70 @@ mixin template DatabaseOperations(string table) {
 
 }
 
+string toDbName(string s) {
+	import std.string;
+	return s.toLower ~ "s";
+}
+
+/++
+	Easy interop with [arsd.cgi] serveRestObject classes.
+
+	History:
+		Added October 31, 2021.
+
+	Warning: not stable/supported at this time.
++/
+mixin template DatabaseRestObject(alias getDb) {
+	override void save() {
+		this.id = this.saveToDatabase(getDb());
+	}
+
+	override void load(string urlId) {
+		import std.conv;
+		this.id = to!int(urlId);
+		this.loadFromDatabase(getDb());
+	}
+}
+
+void loadFromDatabase(T)(T t, Database database, string tableName = toDbName(__traits(identifier, T))) {
+	static assert(is(T == class), "structs wont work for this function, try rowToObject instead for now and complain to me adding struct support is easy enough");
+	auto query = new SelectBuilder(database);
+	query.table = tableName;
+	query.fields ~= "*";
+	query.wheres ~= "id = ?0";
+	auto res = database.query(query.toString(), t.id);
+	if(res.empty)
+		throw new Exception("no such row");
+
+	rowToObject(res.front, t);
+}
+
+auto saveToDatabase(T)(T t, Database database, string tableName = toDbName(__traits(identifier, T))) {
+	DataObject obj = objectToDataObject(t, database, tableName, t.id ? UpdateOrInsertMode.AlwaysUpdate : UpdateOrInsertMode.AlwaysInsert);
+	if(!t.id) {
+		import std.random; // omg i hate htis
+		obj.id = uniform(2, int.max);
+	}
+	obj.commitChanges;
+	return t.id;
+}
+
 import std.traits, std.datetime;
 enum DbSave;
 enum DbNullable;
 alias AliasHelper(alias T) = T;
 
 T rowToObject(T)(Row row) {
+	T t;
+	static if(is(T == class))
+		t = new T();
+	rowToObject(row, t);
+	return t;
+}
+
+void rowToObject(T)(Row row, ref T t) {
 	import arsd.dom, arsd.cgi;
 
-	T t;
 	foreach(memberName; __traits(allMembers, T)) {
 		alias member = AliasHelper!(__traits(getMember, t, memberName));
 		foreach(attr; __traits(getAttributes, member)) {
@@ -1381,14 +1449,12 @@ T rowToObject(T)(Row row) {
 			}
 		}
 	}
-	return t;
-
 }
 
-DataObject objectToDataObject(T)(T t, Database db, string table) {
+DataObject objectToDataObject(T)(T t, Database db, string table, UpdateOrInsertMode mode = UpdateOrInsertMode.CheckForMe) {
 	import arsd.dom, arsd.cgi;
 
-	DataObject obj = new DataObject(db, table);
+	DataObject obj = new DataObject(db, table, mode);
 	foreach(memberName; __traits(allMembers, T)) {
 		alias member = AliasHelper!(__traits(getMember, t, memberName));
 		foreach(attr; __traits(getAttributes, member)) {
@@ -1408,8 +1474,18 @@ DataObject objectToDataObject(T)(T t, Database db, string table) {
 						}
 					}
 
-					if(!done)
-						obj.opDispatch!memberName(__traits(getMember, t, memberName));
+					if(!done) {
+						static if(memberName == "id") {
+							if(__traits(getMember, t, memberName)) {
+								// maybe i shouldn't actually set the id but idk
+								obj.opDispatch!memberName(__traits(getMember, t, memberName));
+							} else {
+								// it is null, let the system do something about it like auto increment
+
+							}
+						} else
+							obj.opDispatch!memberName(__traits(getMember, t, memberName));
+					}
 				}
 			}
 		}

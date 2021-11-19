@@ -3294,6 +3294,8 @@ mixin template DispatcherMain(Presenter, DispatcherArgs...) {
 	/++
 		Request handler that creates the presenter then forwards to the [dispatcher] function.
 		Renders 404 if the dispatcher did not handle the request.
+
+		Will automatically serve the presenter.style and presenter.script as "style.css" and "script.js"
 	+/
 	void handler(Cgi cgi) {
 		auto presenter = new Presenter;
@@ -3303,9 +3305,27 @@ mixin template DispatcherMain(Presenter, DispatcherArgs...) {
 		if(cgi.dispatcher!DispatcherArgs(presenter))
 			return;
 
-		presenter.renderBasicError(cgi, 404);
+		switch(cgi.pathInfo) {
+			case "/style.css":
+				cgi.setCache(true);
+				cgi.setResponseContentType("text/css");
+				cgi.write(presenter.style(), true);
+			break;
+			case "/script.js":
+				cgi.setCache(true);
+				cgi.setResponseContentType("application/javascript");
+				cgi.write(presenter.script(), true);
+			break;
+			default:
+				presenter.renderBasicError(cgi, 404);
+		}
 	}
 	mixin GenericMain!handler;
+}
+
+mixin template DispatcherMain(DispatcherArgs...) if(!is(DispatcherArgs[0] : WebPresenter!T, T)) {
+	class GenericPresenter : WebPresenter!GenericPresenter {}
+	mixin DispatcherMain!(GenericPresenter, DispatcherArgs);
 }
 
 private string simpleHtmlEncode(string s) {
@@ -4140,12 +4160,20 @@ class CgiFiber : Fiber {
 	}
 
 	void proceed() {
-		call();
-		auto py = postYield;
-		postYield = null;
-		if(py !is null)
-			py();
+		try {
+			call();
+			auto py = postYield;
+			postYield = null;
+			if(py !is null)
+				py();
+		} catch(Exception e) {
+			if(connection)
+				connection.close();
+			goto terminate;
+		}
+
 		if(state == State.TERM) {
+			terminate:
 			import core.memory;
 			GC.removeRoot(cast(void*) this);
 		}
@@ -4168,8 +4196,10 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection) {
 	scope(failure) {
 		// catch all for other errors
-		sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
-		connection.close();
+		try {
+			sendAll(connection, plainHttpError(false, "500 Internal Server Error", null));
+			connection.close();
+		} catch(Exception e) {} // swallow it, we're aborting anyway.
 	}
 
 	bool closeConnection = alwaysCloseConnection;
@@ -8466,8 +8496,8 @@ class WebPresenter(CRTP) {
 			:root {
 				--mild-border: #ccc;
 				--middle-border: #999;
-				--accent-color: #e8e8e8;
-				--sidebar-color: #f2f2f2;
+				--accent-color: #f2f2f2;
+				--sidebar-color: #fefefe;
 			}
 		` ~ genericFormStyling() ~ genericSiteStyling();
 	}
@@ -8988,6 +9018,11 @@ html", true, true);
 					ol.addChild("li", formatReturnValueAsHtml(e));
 				return ol;
 			}
+		} else static if(is(T : Object)) {
+			static if(is(typeof(t.toHtml()))) // FIXME: maybe i will make this an interface
+				return Element.make("div", t.toHtml());
+			else
+				return Element.make("div", t.toString());
 		} else static assert(0, "bad return value for cgi call " ~ T.stringof);
 
 		assert(0);
@@ -9580,6 +9615,8 @@ template urlNamesForMethod(alias method, string default_) {
 
 /++
 	The base of all REST objects, to be used with [serveRestObject] and [serveRestCollectionOf].
+
+	WARNING: this is not stable.
 +/
 class RestObject(CRTP) : WebObject {
 
@@ -9594,19 +9631,22 @@ class RestObject(CRTP) : WebObject {
 		show();
 	}
 
-	ValidationResult delegate(typeof(this)) validateFromReflection;
-	Element delegate(typeof(this)) toHtmlFromReflection;
-	var delegate(typeof(this)) toJsonFromReflection;
-
 	/// Override this to provide access control to this object.
 	AccessCheck accessCheck(string urlId, Operation operation) {
 		return AccessCheck.allowed;
 	}
 
 	ValidationResult validate() {
-		if(validateFromReflection !is null)
-			return validateFromReflection(this);
+		// FIXME
 		return ValidationResult.valid;
+	}
+
+	string getUrlSlug() {
+		import std.conv;
+		static if(is(typeof(CRTP.id)))
+			return to!string((cast(CRTP) this).id);
+		else
+			return null;
 	}
 
 	// The functions with more arguments are the low-level ones,
@@ -9618,7 +9658,9 @@ class RestObject(CRTP) : WebObject {
 		of the new object.
 	+/
 	string create(scope void delegate() applyChanges) {
-		return null;
+		applyChanges();
+		save();
+		return getUrlSlug();
 	}
 
 	void replace() {
@@ -9649,18 +9691,31 @@ class RestObject(CRTP) : WebObject {
 	abstract void load(string urlId);
 	abstract void save();
 
-	Element toHtml() {
-		if(toHtmlFromReflection)
-			return toHtmlFromReflection(this);
-		else
-			assert(0);
+	Element toHtml(Presenter)(Presenter presenter) {
+		import arsd.dom;
+		import std.conv;
+		auto obj = cast(CRTP) this;
+		auto div = Element.make("div");
+		div.addClass("Dclass_" ~ CRTP.stringof);
+		div.dataset.url = getUrlSlug();
+		bool first = true;
+		foreach(idx, memberName; __traits(derivedMembers, CRTP))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			if(!first) div.addChild("br"); else first = false;
+			div.appendChild(presenter.formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
+		}
+		return div;
 	}
 
 	var toJson() {
-		if(toJsonFromReflection)
-			return toJsonFromReflection(this);
-		else
-			assert(0);
+		import arsd.jsvar;
+		var v = var.emptyObject();
+		auto obj = cast(CRTP) this;
+		foreach(idx, memberName; __traits(derivedMembers, CRTP))
+		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
+			v[memberName] = __traits(getMember, obj, memberName);
+		}
+		return v;
 	}
 
 	/+
@@ -9889,32 +9944,6 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 	// FIXME: support precondition failed, if-modified-since, expectation failed, etc.
 
 	auto obj = new T();
-	obj.toHtmlFromReflection = delegate(t) {
-		import arsd.dom;
-		auto div = Element.make("div");
-		div.addClass("Dclass_" ~ T.stringof);
-		div.dataset.url = urlId;
-		bool first = true;
-		foreach(idx, memberName; __traits(derivedMembers, T))
-		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
-			if(!first) div.addChild("br"); else first = false;
-			div.appendChild(presenter.formatReturnValueAsHtml(__traits(getMember, obj, memberName)));
-		}
-		return div;
-	};
-	obj.toJsonFromReflection = delegate(t) {
-		import arsd.jsvar;
-		var v = var.emptyObject();
-		foreach(idx, memberName; __traits(derivedMembers, T))
-		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
-			v[memberName] = __traits(getMember, obj, memberName);
-		}
-		return v;
-	};
-	obj.validateFromReflection = delegate(t) {
-		// FIXME
-		return ValidationResult.valid;
-	};
 	obj.initialize(cgi);
 	// FIXME: populate reflection info delegates
 
@@ -9965,13 +9994,14 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 				`);
 				else
 				container.appendHtml(`
+					<a href="..">Back</a>
 					<form>
 						<button type="submit" name="_method" value="PATCH">Edit</button>
 						<button type="submit" name="_method" value="DELETE">Delete</button>
 					</form>
 				`);
 			}
-			container.appendChild(obj.toHtml());
+			container.appendChild(obj.toHtml(presenter));
 			cgi.write(container.parentDocument.toString, true);
 		}
 	}
@@ -10160,6 +10190,32 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 		return true;
 	}
 	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(filename, contentType));
+}
+
+/++
+	Serves static data. To be used with [dispatcher].
+
+	History:
+		Added October 31, 2021
++/
+auto serveStaticData(string urlPrefix, immutable(void)[] data, string contentType = null) {
+	assert(urlPrefix[0] == '/');
+	if(contentType is null) {
+		contentType = contentTypeFromFileExtension(urlPrefix);
+	}
+
+	static struct DispatcherDetails {
+		immutable(void)[] data;
+		string contentType;
+	}
+
+	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
+		cgi.setCache(true);
+		cgi.setResponseContentType(details.contentType);
+		cgi.write(details.data, true);
+		return true;
+	}
+	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(data, contentType));
 }
 
 string contentTypeFromFileExtension(string filename) {

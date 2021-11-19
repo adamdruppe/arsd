@@ -102,21 +102,20 @@ private {
 	bool startsWithInternal(in char[] a, in char[] b) {
 		return (a.length >= b.length && a[0 .. b.length] == b);
 	}
-	inout(char)[][] splitInternal(inout(char)[] a, char c) {
-		inout(char)[][] ret;
+	void splitInternal(scope inout(char)[] a, char c, scope void delegate(int, scope inout(char)[]) @safe dg) {
+		int count;
 		size_t previous = 0;
 		foreach(i, char ch; a) {
 			if(ch == c) {
-				ret ~= a[previous .. i];
+				dg(count++, a[previous .. i]);
 				previous = i + 1;
 			}
 		}
 		if(previous != a.length)
-			ret ~= a[previous .. $];
-		return ret;
+			dg(count++, a[previous .. $]);
 	}
 	nothrow @safe @nogc pure
-	inout(char)[] stripInternal(inout(char)[] s) {
+	inout(char)[] stripInternal(return inout(char)[] s) {
 		foreach(i, char c; s)
 			if(c != ' ' && c != '\t' && c != '\n') {
 				s = s[i .. $];
@@ -309,13 +308,12 @@ struct Color {
 			double[3] hsl;
 			ubyte a = 255;
 
-			auto parts = s.splitInternal(',');
-			foreach(i, part; parts) {
+			s.splitInternal(',', (int i, scope const(char)[] part) {
 				if(i < 3)
 					hsl[i] = toInternal!double(part.stripInternal);
 				else
 					a = clampToByte(cast(int) (toInternal!double(part.stripInternal) * 255));
-			}
+			});
 
 			c = .fromHsl(hsl);
 			c.a = a;
@@ -328,8 +326,7 @@ struct Color {
 			assert(s[$-1] == ')');
 			s = s[s.startsWithInternal("rgb(") ? 4 : 5  .. $ - 1]; // the closing paren
 
-			auto parts = s.splitInternal(',');
-			foreach(i, part; parts) {
+			s.splitInternal(',', (int i, scope const(char)[] part) {
 				// lol the loop-switch pattern
 				auto v = toInternal!double(part.stripInternal);
 				switch(i) {
@@ -347,7 +344,7 @@ struct Color {
 					break;
 					default: // ignore
 				}
-			}
+			});
 
 			return c;
 		}

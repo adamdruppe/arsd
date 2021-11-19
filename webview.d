@@ -32,6 +32,15 @@
 +/
 module arsd.webview;
 
+enum WebviewEngine {
+	none,
+	cef,
+	wv2,
+	webkit_gtk
+}
+// see activeEngine which is an enum you can static if on
+
+
 // I might recover this gtk thing but i don't like gtk
 // dmdi webview -version=linux_gtk -version=Demo
 
@@ -82,6 +91,8 @@ T callback(T)(typeof(&T.init.Invoke) dg) {
 	};
 }
 
+enum activeEngine = WebviewEngine.wv2;
+
 struct RC(T) {
 	private T object;
 	this(T t) {
@@ -105,6 +116,8 @@ struct RC(T) {
 		this.object = obj;
 	}
 
+	T raw() { return object; }
+
 	T returnable() {
 		if(object is null) return null;
 		return object;
@@ -119,6 +132,32 @@ struct RC(T) {
 	static foreach(memberName; __traits(derivedMembers, T)) {
 		mixin ForwardMethod!(memberName);
 	}
+}
+
+extern(Windows)
+alias StringMethod = int delegate(wchar**);
+
+string toGC(scope StringMethod dg) {
+	wchar* t;
+	auto res = dg(&t);
+	if(res != S_OK)
+		throw new ComException(res);
+
+	auto ot = t;
+
+	string s;
+
+	// FIXME: encode properly in UTF-8
+	while(*t) {
+		s ~= *t;
+		t++;
+	}
+
+	auto ret = s;
+
+	CoTaskMemFree(ot);
+
+	return ret;
 }
 
 class ComException : Exception {
@@ -523,6 +562,8 @@ void main() {
 }
 
 version(linux_gtk)
+
+enum activeEngine = WebviewEngine.webkit_gtk;
 
 /++
 
@@ -1175,6 +1216,8 @@ private template CefToD(T...) {
 
 	}
 }
+
+enum activeEngine = WebviewEngine.cef;
 
 struct RC(Base) {
 	private Base* inner;

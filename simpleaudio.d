@@ -1230,7 +1230,14 @@ final class AudioPcmOutThreadImplementation : Thread {
 				buffer[] = 0;
 			}
 		};
+		//try
 		ao.play();
+		/+
+		catch(Throwable t) {
+			import std.stdio;
+			writeln(t);
+		}
+		+/
 	}
 }
 
@@ -1548,12 +1555,22 @@ struct AudioOutput {
 					//throw new AlsaException("uh oh", err);
 					continue;
 				}
+				if(err == 0)
+					continue;
 				// err == 0 means timeout
 				// err == 1 means ready
 
 				auto ready = snd_pcm_avail_update(handle);
-				if(ready < 0)
-					throw new AlsaException("avail", cast(int)ready);
+				if(ready < 0) {
+					//import std.stdio; writeln("recover");
+
+					// actually it seems ok to just try again..
+
+					// err = snd_pcm_recover(handle, err, 0);
+					//if(err)
+						//throw new AlsaException("avail", cast(int)ready);
+					continue;
+				}
 				if(ready > BUFFER_SIZE_FRAMES)
 					ready = BUFFER_SIZE_FRAMES;
 				//import std.stdio; writeln("filling ", ready);
@@ -1565,7 +1582,9 @@ struct AudioOutput {
 					while(data.length) {
 						written = snd_pcm_writei(handle, data.ptr, data.length / channels);
 						if(written < 0) {
+						//import std.stdio; writeln(written);
 							written = snd_pcm_recover(handle, cast(int)written, 0);
+						//import std.stdio; writeln("recover ", written);
 							if (written < 0) throw new AlsaException("pcm write", cast(int)written);
 						}
 						data = data[written * channels .. $];
@@ -2321,12 +2340,13 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels,
 	if (auto err = snd_pcm_hw_params_set_channels(handle, hwParams, channels))
 		throw new AlsaException("params channels", err);
 
-	uint periods = 2;
+	uint periods = 4;
 	{
 	auto err = snd_pcm_hw_params_set_periods_near(handle, hwParams, &periods, 0);
 	if(err < 0)
 		throw new AlsaException("periods", err);
 
+	// import std.stdio; writeln(periods);
 	snd_pcm_uframes_t sz = (BUFFER_SIZE_FRAMES * periods);
 	err = snd_pcm_hw_params_set_buffer_size_near(handle, hwParams, &sz);
 	if(err < 0)

@@ -1902,6 +1902,14 @@ abstract class ComboboxBase : Widget {
 		return selection_;
 	}
 
+	/++
+		History:
+			Added November 17, 2021
+	+/
+	string getSelectionString() {
+		return selection_ == -1 ? null : options[selection_];
+	}
+
 	void setSelection(int idx) {
 		selection_ = idx;
 		version(win32_widgets)

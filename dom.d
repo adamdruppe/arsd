@@ -6228,6 +6228,17 @@ int intFromHex(string hex) {
 				// a "*" matcher to act as a root. for cases like document.querySelector("> body")
 				// which implies html
 
+				// however, if it is a child-matching selector and there are no children,
+				// bail out early as it obviously cannot match.
+				bool hasNonTextChildren = false;
+				foreach(c; e.children)
+					if(c.nodeType != 3) {
+						hasNonTextChildren = true;
+						break;
+					}
+				if(!hasNonTextChildren)
+					return false;
+
 				// there is probably a MUCH better way to do this.
 				auto dummy = SelectorPart.init;
 				dummy.tagNameFilter = "*";
@@ -7804,10 +7815,21 @@ unittest {
                         <div>Foo</div>
                         <div>Bar</div>
                 </div>
+		<div id=\"empty\"></div>
+		<div id=\"empty-but-text\">test</div>
         </body>
 </html>");
 
 	auto doc = document;
+
+	{
+	auto empty = doc.requireElementById("empty");
+	assert(empty.querySelector(" > *") is null, empty.querySelector(" > *").toString);
+	}
+	{
+	auto empty = doc.requireElementById("empty-but-text");
+	assert(empty.querySelector(" > *") is null, empty.querySelector(" > *").toString);
+	}
 
 	assert(doc.querySelectorAll("div div").length == 2);
 	assert(doc.querySelector("div").querySelectorAll("div").length == 2);

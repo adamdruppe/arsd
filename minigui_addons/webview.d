@@ -89,16 +89,31 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 
 	abstract void navigate(string url);
 
-	// the url and line are for error reporting purposes
+	// the url and line are for error reporting purposes. They might be ignored.
 	abstract void executeJavascript(string code, string url = null, int line = 0);
+	// for injecting stuff into the context
+	// abstract void executeJavascriptBeforeEachLoad(string code);
 
 	abstract void showDevTools();
+
+	/++
+		Your communication consists of running Javascript and sending string messages back and forth,
+		kinda similar to your communication with a web server.
+	+/
+	// these form your communcation channel between the web view and the native world
+	// abstract void sendMessageToHost(string json);
+	// void delegate(string json) receiveMessageFromHost;
+
+	/+
+		I also need a url filter
+	+/
 
 	// this is implemented as a do-nothing in the NestedChildWindowWidget base
 	// but you will almost certainly need to override it in implementations.
 	// abstract void registerMovementAdditionalWork();
 }
 
+// AddScriptToExecuteOnDocumentCreated
 
 version(wv2)
 class WebViewWidget_WV2 : WebViewWidgetBase {
@@ -123,6 +138,11 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 					webview_window = controller.CoreWebView2;
 
+					webview_window.add_DocumentTitleChanged((sender, args) {
+						this.title = toGC(&sender.get_DocumentTitle);
+						return S_OK;
+					});
+
 					RC!ICoreWebView2Settings Settings = webview_window.Settings;
 					Settings.IsScriptEnabled = TRUE;
 					Settings.AreDefaultScriptDialogsEnabled = TRUE;
@@ -131,21 +151,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 					auto ert = webview_window.add_NavigationStarting(
 						delegate (sender, args) {
-							wchar* t;
-							args.get_Uri(&t);
-							auto ot = t;
-
-							string s;
-
-							while(*t) {
-								s ~= *t;
-								t++;
-							}
-
-							this.url = s;
-
-							CoTaskMemFree(ot);
-
+							this.url = toGC(&args.get_Uri);
 							return S_OK;
 						});
 

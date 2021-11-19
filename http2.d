@@ -3574,7 +3574,16 @@ class WebSocket {
 			//connect();
 		while(d.length) {
 			auto r = socket.send(d);
-			if(r <= 0) throw new Exception("Socket send failed");
+			if(r < 0 && wouldHaveBlocked()) {
+				import core.thread;
+				Thread.sleep(1.msecs);
+				continue;
+			}
+			//import core.stdc.errno; import std.stdio; writeln(errno);
+			if(r <= 0) {
+				// import std.stdio; writeln(GetLastError());
+				throw new Exception("Socket send failed");
+			}
 			d = d[r .. $];
 		}
 	}
@@ -3604,8 +3613,12 @@ class WebSocket {
 		auto r = socket.receive(receiveBuffer[receiveBufferUsedLength .. $]);
 		if(r == 0)
 			return false;
-		if(r <= 0)
+		if(r < 0 && wouldHaveBlocked())
+			return true;
+		if(r <= 0) {
+			//import std.stdio; writeln(WSAGetLastError());
 			throw new Exception("Socket receive failed");
+		}
 		receiveBufferUsedLength += r;
 		return true;
 	}
@@ -4023,6 +4036,9 @@ class WebSocket {
 	}
 }
 
+/++
+	Warning: you should call this AFTER websocket.connect or else it might throw on connect because the function sets nonblocking mode and the connect function doesn't handle that well (it throws on the "would block" condition in that function. easier to just do that first)
++/
 template addToSimpledisplayEventLoop() {
 	import arsd.simpledisplay;
 	void addToSimpledisplayEventLoop(WebSocket ws, SimpleWindow window) {
@@ -4038,12 +4054,91 @@ template addToSimpledisplayEventLoop() {
 
 		version(linux) {
 			auto reader = new PosixFdReader(&midprocess, ws.socket.handle);
+		} else version(none) {
+			if(WSAAsyncSelect(ws.socket.handle, window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))
+				throw new Exception("WSAAsyncSelect");
+
+                        window.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+                                if(hwnd !is window.impl.hwnd)
+                                        return 1; // we don't care...
+                                switch(msg) {
+                                        case WM_USER + 150: // socket activity
+                                                switch(LOWORD(lParam)) {
+                                                        case FD_READ:
+                                                        case FD_CLOSE:
+								midprocess();
+                                                        break;
+                                                        default:
+                                                                // nothing
+                                                }
+                                        break;
+                                        default: return 1; // not handled, pass it on
+                                }
+                                return 0;
+                        };
+
 		} else version(Windows) {
-			auto reader = new WindowsHandleReader(&midprocess, ws.socket.handle);
+			ws.socket.blocking = false; // the WSAEventSelect does this anyway and doing it here lets phobos know about it.
+			//CreateEvent(null, 0, 0, null);
+			auto event = WSACreateEvent();
+			if(!event) {
+				throw new Exception("WSACreateEvent");
+			}
+			if(WSAEventSelect(ws.socket.handle, event, 1/*FD_READ*/ | (1<<5)/*FD_CLOSE*/)) {
+				//import std.stdio; writeln(WSAGetLastError());
+				throw new Exception("WSAEventSelect");
+			}
+
+			auto handle = new WindowsHandleReader(&midprocess, event);
+
+			/+
+			static class Ready {}
+
+			Ready thisr = new Ready;
+
+			justCommunication.addEventListener((Ready r) {
+				if(r is thisr)
+					midprocess();
+			});
+
+			import core.thread;
+			auto thread = new Thread({
+				while(true) {
+					WSAWaitForMultipleEvents(1, &event, true, -1/*WSA_INFINITE*/, false);
+					justCommunication.postEvent(thisr);
+				}
+			});
+			thread.isDaemon = true;
+			thread.start;
+			+/
+
 		} else static assert(0, "unsupported OS");
 	}
 }
 
+version(Windows) {
+        import core.sys.windows.windows;
+        import core.sys.windows.winsock2;
+}
+
+version(none) {
+        extern(Windows) int WSAAsyncSelect(SOCKET, HWND, uint, int);
+        enum int FD_CLOSE = 1 << 5;
+        enum int FD_READ = 1 << 0;
+        enum int WM_USER = 1024;
+}
+
+version(Windows) {
+	import core.stdc.config;
+	extern(Windows)
+	int WSAEventSelect(SOCKET, HANDLE /* to an Event */, c_long);
+
+	extern(Windows)
+	HANDLE WSACreateEvent();
+
+	extern(Windows)
+	DWORD WSAWaitForMultipleEvents(DWORD, HANDLE*, BOOL, DWORD, BOOL);
+}
 
 /* copy/paste from cgi.d */
 public {
