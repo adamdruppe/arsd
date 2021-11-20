@@ -1299,7 +1299,6 @@ class Widget : ReflectableProperties {
 		auto so = showing_;
 		showing_ = s;
 		if(s != so) {
-
 			version(win32_widgets)
 			if(hwnd)
 				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
@@ -1311,6 +1310,8 @@ class Widget : ReflectableProperties {
 
 			foreach(child; children)
 				child.showing(s, false);
+
+			redraw();
 		}
 	}
 	/// Convenience method for `showing = true`
@@ -1353,6 +1354,16 @@ class Widget : ReflectableProperties {
 		this.emit!FocusEvent();
 		this.emit!FocusInEvent();
 	}
+
+	/+
+	/++
+		Unfocuses the widget. This may reset
+	+/
+	@scriptable
+	void blur() {
+
+	}
+	+/
 
 
 	/++
@@ -1522,12 +1533,22 @@ class Widget : ReflectableProperties {
 		if(hidden)
 			return;
 
-		painter.originX = lox + x;
-		painter.originY = loy + y;
+		int paintX = x;
+		int paintY = y;
+		if(this.useNativeDrawing()) {
+			paintX = 0;
+			paintY = 0;
+			lox = 0;
+			loy = 0;
+			containment = Rectangle(0, 0, int.max, int.max);
+		}
+
+		painter.originX = lox + paintX;
+		painter.originY = loy + paintY;
 
 		bool actuallyPainted = false;
 
-		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width, height)));
+		const clip = containment.intersectionOf(Rectangle(Point(lox + paintX, loy + paintY), Size(width, height)));
 		if(clip == Rectangle.init) {
 			//import std.stdio; writeln(this, " clipped out");
 			return;
@@ -3837,6 +3858,7 @@ class OpenGlWidget : NestedChildWindowWidget {
 	}
 
 	override void paint(WidgetPainter painter) {
+		glViewport(0, 0, this.width, this.height);
 		win.redrawOpenGlSceneNow();
 	}
 
@@ -4148,8 +4170,6 @@ class ScrollableWidget : Widget {
 		info.nMax = contentWidth_;
 		SetScrollInfo(hwnd, SB_HORZ, &info, true);
 	}
-
-
 
 	/*
 		Scrolling
@@ -4783,6 +4803,15 @@ private class InternalScrollableContainerWidget : Widget {
 
 
 	override void recomputeChildLayout() {
+		// The stupid thing needs to calculate if a scroll bar is needed...
+		recomputeChildLayoutHelper();
+		// then running it again will position things correctly if the bar is NOT needed
+		recomputeChildLayoutHelper();
+
+		// this sucks but meh it barely works
+	}
+
+	private void recomputeChildLayoutHelper() {
 		if(sw is null) return;
 
 		bool both = sw.showingVerticalScroll && sw.showingHorizontalScroll;
@@ -5960,6 +5989,7 @@ class TabWidget : Widget {
 
 			TabCtrl_AdjustRect(hwnd, false, &rect);
 			foreach(child; children) {
+				if(!child.showing) continue;
 				child.x = rect.left - left;
 				child.y = rect.top - top;
 				child.width = rect.right - rect.left;
@@ -5969,6 +5999,7 @@ class TabWidget : Widget {
 		} else version(custom_widgets) {
 			this.registerMovement();
 			foreach(child; children) {
+				if(!child.showing) continue;
 				child.x = 2;
 				child.y = tabBarHeight + 2; // for the border
 				child.width = width - 4; // for the border
@@ -6067,18 +6098,25 @@ class TabWidget : Widget {
 
 	private void showOnly(int item) {
 		foreach(idx, child; children) {
-			child.hide();
+			child.showing(false, false); // batch the recalculates for the end
 		}
 
 		foreach(idx, child; children) {
 			if(idx == item) {
-				child.show();
+				child.showing(true, false);
+				if(parentWindow) {
+					auto f = parentWindow.getFirstFocusable(child);
+					if(f)
+						f.focus();
+				}
 				recomputeChildLayout();
 			}
 		}
 
 		version(win32_widgets) {
-			InvalidateRect(parentWindow.hwnd, null, true);
+			InvalidateRect(hwnd, null, true);
+		} else version(custom_widgets) {
+			this.redraw();
 		}
 	}
 }
@@ -6281,6 +6319,27 @@ private wstring Win32Class(wstring name)() {
 
 		return name;
 }
+
+/+
+version(win32_widgets)
+extern(Windows)
+private
+LRESULT CustomDrawWindowProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
+	switch(iMessage) {
+		case WM_PAINT:
+			if(auto te = hWnd in Widget.nativeMapping) {
+				try {
+					//te.redraw();
+					import std.stdio; writeln(te, " drawing");
+				} catch(Exception) {}
+			}
+			return DefWindowProc(hWnd, iMessage, wParam, lParam);
+		default:
+			return DefWindowProc(hWnd, iMessage, wParam, lParam);
+	}
+}
++/
+
 
 /++
 	A widget specifically designed to hold other widgets.
