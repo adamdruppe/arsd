@@ -4635,8 +4635,8 @@ class ScrollableContainerWidget : ContainerWidget {
 		hsb.setPosition(0);
 		vsb.setPosition(0);
 
-		setViewableArea(width, height);
 		setTotalArea(this.ContainerWidget.minWidth(), this.ContainerWidget.minHeight());
+		setViewableArea(width, height);
 	}
 
 	override int minHeight() { return 64; }
