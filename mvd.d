@@ -33,6 +33,10 @@ alias CommonReturnOfOverloads(alias fn) = CommonType!(staticMap!(ReturnType, __t
 
 /// See details on the [arsd.mvd] page.
 CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
+	return mvdObj!fn(null, args);
+}
+
+CommonReturnOfOverloads!fn mvdObj(alias fn, This, T...)(This this_, T args) {
 	typeof(return) delegate() bestMatch;
 	int bestScore;
 
@@ -73,9 +77,9 @@ CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
 		if(score > bestScore) {
 			bestMatch = () {
 				static if(is(typeof(return) == void))
-					overload(pargs);
+					__traits(child, this_, overload)(pargs);
 				else
-					return overload(pargs);
+					return __traits(child, this_, overload)(pargs);
 			};
 			bestScore = score;
 		}
@@ -114,4 +118,34 @@ unittest {
 
 		//mvd!bar(new OtherClass);
 	}
+}
+
+///
+unittest {
+
+	class MyClass {}
+	class DerivedClass : MyClass {}
+	class OtherClass {}
+
+	class Wrapper {
+		int x;
+
+		int foo(Object a, Object b) { return x + 1; }
+		int foo(MyClass a, Object b) { return x + 2; }
+		int foo(DerivedClass a, MyClass b) { return x + 3; }
+
+		int bar(MyClass a) { return x + 4; }
+	}
+
+	Wrapper wrapper = new Wrapper;
+	wrapper.x = 20;
+	assert(wrapper.mvdObj!(wrapper.foo)(new Object, new Object) == 21);
+	assert(wrapper.mvdObj!(wrapper.foo)(new MyClass, new DerivedClass) == 22);
+	assert(wrapper.mvdObj!(wrapper.foo)(new DerivedClass, new DerivedClass) == 23);
+	assert(wrapper.mvdObj!(wrapper.foo)(new OtherClass, new OtherClass) == 21);
+	assert(wrapper.mvdObj!(wrapper.foo)(new OtherClass, new MyClass) == 21);
+	assert(wrapper.mvdObj!(wrapper.foo)(new DerivedClass, new DerivedClass) == 23);
+	assert(wrapper.mvdObj!(wrapper.foo)(new OtherClass, new MyClass) == 21);
+
+	//mvd!bar(new OtherClass);
 }
