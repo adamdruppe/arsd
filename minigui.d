@@ -490,6 +490,37 @@ class Widget : ReflectableProperties {
 		int paddingBottom() { return 0; }
 		//LinePreference linePreference() { return LinePreference.PreferOwnLine; }
 
+		private bool recomputeChildLayoutRequired = true;
+		private static class RecomputeEvent {}
+		private __gshared rce = new RecomputeEvent();
+		protected final void queueRecomputeChildLayout() {
+			recomputeChildLayoutRequired = true;
+
+			if(this.parentWindow) {
+				auto sw = this.parentWindow.win;
+				assert(sw !is null);
+				if(!sw.eventQueued!RecomputeEvent) {
+					sw.postEvent(rce);
+					// import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+				}
+			}
+
+		}
+
+		protected final void recomputeChildLayoutEntry() {
+			if(recomputeChildLayoutRequired) {
+				recomputeChildLayout();
+				recomputeChildLayoutRequired = false;
+				redraw();
+			} else {
+				// I still need to check the tree just in case one of them was queued up
+				// and the event came up here instead of there.
+				foreach(child; children)
+					child.recomputeChildLayoutEntry();
+			}
+		}
+
+		// this function should (almost) never be called directly anymore... call recomputeChildLayoutEntry when executing it and queueRecomputeChildLayout if you just want it done soon
 		void recomputeChildLayout() {
 			.recomputeChildLayout!"height"(this);
 		}
@@ -1304,15 +1335,16 @@ class Widget : ReflectableProperties {
 				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
 
 			if(parent && recalculate) {
-				parent.recomputeChildLayout();
+				parent.queueRecomputeChildLayout();
 				parent.redraw();
 			}
 
 			foreach(child; children)
 				child.showing(s, false);
 
-			redraw();
 		}
+		queueRecomputeChildLayout();
+		redraw();
 	}
 	/// Convenience method for `showing = true`
 	@scriptable
@@ -1405,7 +1437,7 @@ class Widget : ReflectableProperties {
 
 		if(parentWindow !is null) {
 			w.attachedToWindow(parentWindow);
-			parentWindow.needsChildLayoutRecomputed = true;
+			parentWindow.queueRecomputeChildLayout();
 			parentWindow.redraw();
 		}
 	}
@@ -1794,7 +1826,7 @@ class GridLayout : Layout {
 		set:
 
 		// FIXME: should this batch?
-		recomputeChildLayout();
+		queueRecomputeChildLayout();
 
 		return child;
 	}
@@ -6885,12 +6917,9 @@ class Window : Widget {
 
 
 
-	private bool needsChildLayoutRecomputed;
 	private void actualRedraw() {
-		if(needsChildLayoutRecomputed) {
-			recomputeChildLayout();
-			needsChildLayoutRecomputed = false;
-		}
+		if(recomputeChildLayoutRequired)
+			recomputeChildLayoutEntry();
 		if(!showing) return;
 
 		assert(parentWindow !is null);
@@ -6933,8 +6962,21 @@ class Window : Widget {
 		this.win = win;
 
 		win.addEventListener((Widget.RedrawEvent) {
-			//import std.stdio; writeln("redrawing");
+			if(win.eventQueued!RecomputeEvent) {
+				// import std.stdio; writeln("skipping");
+				return; // let the recompute event do the actual redraw
+			}
 			this.actualRedraw();
+		});
+
+		win.addEventListener((Widget.RecomputeEvent) {
+			recomputeChildLayoutEntry();
+			if(win.eventQueued!RedrawEvent)
+				return; // let the queued one do it
+			else {
+				// import std.stdio; writeln("drawing");
+				this.actualRedraw(); // if not queued, it needs to be done now anyway
+			}
 		});
 
 		this.width = win.width;
@@ -12894,6 +12936,48 @@ final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 // still do layout delegation
 // and... split off Window from Widget.
 
+version(minigui_demos)
+// https://github.com/adamdruppe/arsd/issues/310
+unittest {
+	import arsd.minigui;
+
+	class ColorWidget : Widget {
+		this(Color color, Widget parent) {
+			this.color = color;
+			super(parent);
+		}
+		Color color;
+		class Style : Widget.Style {
+			override WidgetBackground background() { return WidgetBackground(color); }
+		}
+		mixin OverrideStyle!Style;
+	}
+
+	void main() {
+		auto window = new Window;
+
+		auto header = new class HorizontalLayout {
+			this() { super(window); }
+			override int maxHeight() { return 50; }
+		};
+
+		auto bar = new HorizontalLayout(window);
+
+		auto left = new class VerticalLayout {
+			this() { super(bar); }
+			override int maxWidth() { return 100; }
+		};
+
+		auto container = new Widget(bar);
+
+
+		auto headerColorBox = new ColorWidget(Color(0, 255, 255), header);
+		auto leftColorBox = new ColorWidget(Color.green, left);
+		auto rightColorBox = new ColorWidget(Color.purple, container);
+
+		window.loop();
+	}
+}
 
 
 // FIXME: i called hotkey accelerator in some places. hotkey = key when menu is active like E&xit. accelerator = global shortcut.
