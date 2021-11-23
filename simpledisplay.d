@@ -3786,12 +3786,17 @@ struct EventLoopImpl {
 					}
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
+					int count;
 					while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) { // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
 						ret = GetMessage(&message, null, 0, 0);
 						if(ret == -1)
 							throw new Exception("GetMessage failed");
 						TranslateMessage(&message);
 						DispatchMessage(&message);
+
+						count++;
+						if(count > 10)
+							break; // take the opportunity to catch up on other events
 
 						if(ret == 0) // WM_QUIT
 							break;
@@ -8535,7 +8540,7 @@ struct ScreenPainter {
 		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
 	}
 
-	//this function draws a circle with the drawEllipse() function above, it requires the upper left point and the radius
+	/// this function draws a circle with the drawEllipse() function above, it requires the upper left point and the radius
 	void drawCircle(Point upperLeft, int diameter) {
 		drawEllipse(upperLeft, Point(upperLeft.x + diameter, upperLeft.y + diameter));
 	}
@@ -8657,6 +8662,26 @@ class Sprite : CapableOfBeingDrawnUpon {
 		private Picture xrenderPicture;
 	}
 
+	version(X11)
+	private static void requireXRender() {
+		if(!XRenderLibrary.loadAttempted) {
+			XRenderLibrary.loadDynamicLibrary();
+		}
+
+		if(!XRenderLibrary.loadSuccessful)
+			throw new Exception("XRender library load failure");
+
+		auto display = XDisplayConnection.get;
+
+		// FIXME: if we migrate X displays, these need to be changed
+		if(RGB24 is null)
+			RGB24 = XRenderFindStandardFormat(display, PictStandardRGB24);
+		if(ARGB32 is null)
+			ARGB32 = XRenderFindStandardFormat(display, PictStandardARGB32);
+	}
+
+	protected this() {}
+
 	this(SimpleWindow win, int width, int height, bool enableAlpha = false) {
 		this._width = width;
 		this._height = height;
@@ -8666,22 +8691,12 @@ class Sprite : CapableOfBeingDrawnUpon {
 			auto display = XDisplayConnection.get();
 
 			if(enableAlpha) {
-				if(!XRenderLibrary.loadAttempted) {
-					XRenderLibrary.loadDynamicLibrary();
-				}
-
-				if(!XRenderLibrary.loadSuccessful)
-					throw new Exception("XRender library load failure");
+				requireXRender();
 			}
 
 			handle = XCreatePixmap(display, cast(Drawable) win.window, width, height, enableAlpha ? 32 : DefaultDepthOfDisplay(display));
 
 			if(enableAlpha) {
-				if(RGB24 is null)
-					RGB24 = XRenderFindStandardFormat(display, PictStandardRGB24);
-				if(ARGB32 is null)
-					ARGB32 = XRenderFindStandardFormat(display, PictStandardARGB32);
-
 				XRenderPictureAttributes attrs;
 				xrenderPicture = XRenderCreatePicture(display, handle, ARGB32, 0, &attrs);
 			}
@@ -8816,6 +8831,213 @@ class Sprite : CapableOfBeingDrawnUpon {
 }
 
 /++
+	Represents a display-side gradient pseudo-image. Actually construct it with [LinearGradient], [RadialGradient], or [ConicalGradient].
+
+	History:
+		Added November 20, 2021 (dub v10.4)
++/
+abstract class Gradient : Sprite {
+	protected this(int w, int h) {
+		version(X11) {
+			Sprite.requireXRender();
+
+			super();
+			enableAlpha = true;
+			_width = w;
+			_height = h;
+		} else version(Windows) {
+			super(null, w, h, true); // on Windows i'm just making a bitmap myself
+		}
+	}
+
+	version(Windows)
+	final void forEachPixel(scope Color delegate(int x, int y) dg) {
+		auto ptr = rawData;
+		foreach(j; 0 .. _height)
+		foreach(i; 0 .. _width) {
+			auto color = dg(i, _height - j - 1); // cuz of upside down bitmap
+			*rawData = (color.a * color.b) / 255; rawData++;
+			*rawData = (color.a * color.g) / 255; rawData++;
+			*rawData = (color.a * color.r) / 255; rawData++;
+			*rawData = color.a; rawData++;
+		}
+	}
+
+	version(X11)
+	protected void helper(scope Stop[] stops, scope Picture delegate(scope XFixed[] stopsPositions, scope XRenderColor[] colors) dg) {
+		assert(stops.length > 0);
+		assert(stops.length <= 16, "I got lazy with buffers");
+
+		XFixed[16] stopsPositions = void;
+		XRenderColor[16] colors = void;
+
+		foreach(idx, stop; stops) {
+			stopsPositions[idx] = cast(int)(stop.percentage * ushort.max);
+			auto c = stop.c;
+			colors[idx] = XRenderColor(
+				cast(ushort)(c.r * ushort.max / 255),
+				cast(ushort)(c.g * ushort.max / 255),
+				cast(ushort)(c.b * ushort.max / 255),
+				cast(ushort)(c.a * ubyte.max) // max value here is fractional
+			);
+		}
+
+		xrenderPicture = dg(stopsPositions, colors);
+	}
+
+	///
+	static struct Stop {
+		float percentage; /// between 0 and 1.0
+		Color c;
+	}
+}
+
+/++
+	Creates a linear gradient between p1 and p2.
+
+	X ONLY RIGHT NOW
+
+	History:
+		Added November 20, 2021 (dub v10.4)
+
+	Bugs:
+		Not yet implemented on Windows.
++/
+class LinearGradient : Gradient {
+	/++
+
+	+/
+	this(Point p1, Point p2, Stop[] stops...) {
+		super(p2.x, p2.y);
+
+		version(X11) {
+			XLinearGradient gradient;
+			gradient.p1 = XPointFixed(p1.x * ushort.max, p1.y * ushort.max);
+			gradient.p2 = XPointFixed(p2.x * ushort.max, p2.y * ushort.max);
+
+			helper(stops, (stopsPositions, colors) {
+				return XRenderCreateLinearGradient(
+					XDisplayConnection.get,
+					&gradient,
+					stopsPositions.ptr,
+					colors.ptr,
+					cast(int) stops.length);
+			});
+		} else version(Windows) {
+			// FIXME
+			forEachPixel((int x, int y) {
+				import core.stdc.math;
+
+				//sqrtf(
+
+				return Color.transparent;
+				// return Color(x * 2, y * 2, 0, 128); // this result is so beautiful
+			});
+		}
+	}
+}
+
+/++
+	A conical gradient goes from color to color around a circumference from a center point.
+
+	X ONLY RIGHT NOW
+
+	History:
+		Added November 20, 2021 (dub v10.4)
+
+	Bugs:
+		Not yet implemented on Windows.
++/
+class ConicalGradient : Gradient {
+	/++
+
+	+/
+	this(Point center, float angleInDegrees, Stop[] stops...) {
+		super(center.x * 2, center.y * 2);
+
+		version(X11) {
+			XConicalGradient gradient;
+			gradient.center = XPointFixed(center.x * ushort.max, center.y * ushort.max);
+			gradient.angle = cast(int)(angleInDegrees * ushort.max);
+
+			helper(stops, (stopsPositions, colors) {
+				return XRenderCreateConicalGradient(
+					XDisplayConnection.get,
+					&gradient,
+					stopsPositions.ptr,
+					colors.ptr,
+					cast(int) stops.length);
+			});
+		} else version(Windows) {
+			// FIXME
+			forEachPixel((int x, int y) {
+				import core.stdc.math;
+
+				//sqrtf(
+
+				return Color.transparent;
+				// return Color(x * 2, y * 2, 0, 128); // this result is so beautiful
+			});
+
+		}
+	}
+}
+
+/++
+	A radial gradient goes from color to color based on distance from the center.
+	It is like rings of color.
+
+	X ONLY RIGHT NOW
+
+
+	More specifically, you create two circles: an inner circle and an outer circle.
+	The gradient is only drawn in the area outside the inner circle but inside the outer
+	circle. The closest line between those two circles forms the line for the gradient
+	and the stops are calculated the same as the [LinearGradient]. Then it just sweeps around.
+
+	History:
+		Added November 20, 2021 (dub v10.4)
+
+	Bugs:
+		Not yet implemented on Windows.
++/
+class RadialGradient : Gradient {
+	/++
+
+	+/
+	this(Point innerCenter, float innerRadius, Point outerCenter, float outerRadius, Stop[] stops...) {
+		super(cast(int)(outerCenter.x + outerRadius + 0.5), cast(int)(outerCenter.y + outerRadius + 0.5));
+
+		version(X11) {
+			XRadialGradient gradient;
+			gradient.inner = XCircle(innerCenter.x * ushort.max, innerCenter.y * ushort.max, cast(int) (innerRadius * ushort.max));
+			gradient.outer = XCircle(outerCenter.x * ushort.max, outerCenter.y * ushort.max, cast(int) (outerRadius * ushort.max));
+
+			helper(stops, (stopsPositions, colors) {
+				return XRenderCreateRadialGradient(
+					XDisplayConnection.get,
+					&gradient,
+					stopsPositions.ptr,
+					colors.ptr,
+					cast(int) stops.length);
+			});
+		} else version(Windows) {
+			// FIXME
+			forEachPixel((int x, int y) {
+				import core.stdc.math;
+
+				//sqrtf(
+
+				return Color.transparent;
+				// return Color(x * 2, y * 2, 0, 128); // this result is so beautiful
+			});
+		}
+	}
+}
+
+
+
+/+
 	NOT IMPLEMENTED
 
 	A display-stored image optimized for relatively quick drawing, like
@@ -10564,6 +10786,9 @@ version(Windows) {
 				SelectObject(hdcBmp, oldPen);
 				DeleteDC(hdcBmp);
 
+				bmpWidth = width;
+				bmpHeight = height;
+
 				ReleaseDC(hwnd, hdc); // we keep this in opengl mode since it is a class member now
 			}
 
@@ -10793,6 +11018,9 @@ version(Windows) {
 		int oldHeight;
 		bool inSizeMove;
 
+		int bmpWidth;
+		int bmpHeight;
+
 		// the extern(Windows) wndproc should just forward to this
 		LRESULT windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
 			assert(hwnd is this.hwnd);
@@ -10841,6 +11069,11 @@ version(Windows) {
 					if(!inSizeMove)
 						goto size_changed;
 				break;
+				/+
+				case WM_SIZING:
+					import std.stdio; writeln("size");
+				break;
+				+/
 				// I don't like the tearing I get when redrawing on WM_SIZE
 				// (I know there's other ways to fix that but I don't like that behavior anyway)
 				// so instead it is going to redraw only at the end of a size.
@@ -10851,39 +11084,44 @@ version(Windows) {
 				break;
 				case 0x0232: /* WM_EXITSIZEMOVE */
 					inSizeMove = false;
+
+					size_changed:
+
 					// nothing relevant changed, don't bother redrawing
 					if(oldWidth == width && oldHeight == height)
 						break;
-
-					size_changed:
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
 					if(openglMode == OpenGlOptions.no) { // && resizability == Resizability.allowResizing) {
 						// gotta get the double buffer bmp to match the window
-					// FIXME: could this be more efficient? It isn't really necessary to make
-					// a new buffer if we're sizing down at least.
-						auto hdc = GetDC(hwnd);
-						auto oldBuffer = buffer;
-						buffer = CreateCompatibleBitmap(hdc, width, height);
+						// FIXME: could this be more efficient? it never relinquishes a large bitmap
+						if(width > bmpWidth || height > bmpHeight) {
+							auto hdc = GetDC(hwnd);
+							auto oldBuffer = buffer;
+							buffer = CreateCompatibleBitmap(hdc, width, height);
 
-						auto hdcBmp = CreateCompatibleDC(hdc);
-						auto oldBmp = SelectObject(hdcBmp, buffer);
+							auto hdcBmp = CreateCompatibleDC(hdc);
+							auto oldBmp = SelectObject(hdcBmp, buffer);
 
-						auto hdcOldBmp = CreateCompatibleDC(hdc);
-						auto oldOldBmp = SelectObject(hdcOldBmp, oldBmp);
+							auto hdcOldBmp = CreateCompatibleDC(hdc);
+							auto oldOldBmp = SelectObject(hdcOldBmp, oldBmp);
 
-						BitBlt(hdcBmp, 0, 0, width, height, hdcOldBmp, oldWidth, oldHeight, SRCCOPY);
+							BitBlt(hdcBmp, 0, 0, width, height, hdcOldBmp, oldWidth, oldHeight, SRCCOPY);
 
-						SelectObject(hdcOldBmp, oldOldBmp);
-						DeleteDC(hdcOldBmp);
+							bmpWidth = width;
+							bmpHeight = height;
 
-						SelectObject(hdcBmp, oldBmp);
-						DeleteDC(hdcBmp);
+							SelectObject(hdcOldBmp, oldOldBmp);
+							DeleteDC(hdcOldBmp);
 
-						ReleaseDC(hwnd, hdc);
+							SelectObject(hdcBmp, oldBmp);
+							DeleteDC(hdcBmp);
 
-						DeleteObject(oldBuffer);
+							ReleaseDC(hwnd, hdc);
+
+							DeleteObject(oldBuffer);
+						}
 					}
 
 					version(without_opengl) {} else
@@ -11067,7 +11305,7 @@ version(Windows) {
 						rawData[offset + 1] = (a * what[idx + 1]) / 255; // g
 						rawData[offset + 0] = (a * what[idx + 2]) / 255; // b
 						rawData[offset + 3] = a; // a
-						premultiplyBgra(rawData[offset .. offset + 4]);
+						//premultiplyBgra(rawData[offset .. offset + 4]);
 						offset++;
 					} else {
 						rawData[offset + 2] = what[idx + 0]; // r
@@ -16897,6 +17135,8 @@ extern(System) nothrow @nogc {
 		GLint glGetUniformLocation(GLuint, const(GLchar)*);
 		void glGenBuffers(GLsizei, GLuint*);
 		void glUniform4fv(GLint, GLsizei, const(GLfloat)*);
+		void glUniform1f(GLint, float);
+		void glUniform2f(GLint, float, float);
 		void glUniform4f(GLint, float, float, float, float);
 		void glColorMask(GLboolean, GLboolean, GLboolean, GLboolean);
 		void glStencilOpSeparate(GLenum, GLenum, GLenum, GLenum);
@@ -17323,7 +17563,18 @@ final class OpenGlShader {
 
 		/// Assigns the 4 floats. You will probably have to call this via the .opAssign name
 		void opAssign(float x, float y, float z, float w) {
+			if(id != -1)
 			glUniform4f(id, x, y, z, w);
+		}
+
+		void opAssign(float x) {
+			if(id != -1)
+			glUniform1f(id, x);
+		}
+
+		void opAssign(float x, float y) {
+			if(id != -1)
+			glUniform2f(id, x, y);
 		}
 	}
 
@@ -17332,8 +17583,9 @@ final class OpenGlShader {
 
 		@property Uniform opDispatch(string name)() {
 			auto i = glGetUniformLocation(_shader.shaderProgram, name.ptr);
-			if(i == -1)
-				throw new Exception("Could not find uniform " ~ name);
+			// FIXME: decide what to do here; the exception is liable to be swallowed by the event syste
+			//if(i == -1)
+				//throw new Exception("Could not find uniform " ~ name);
 			return Uniform(i);
 		}
 	}
