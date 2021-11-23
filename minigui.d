@@ -393,6 +393,52 @@ class Widget : ReflectableProperties {
 	}
 	+/
 
+	private bool _enabled = true;
+
+	/++
+		Determines whether the control is enabled. Disabled controls are generally displayed as greyed out and clicking on them does nothing.
+
+		I also recommend you set a [disabledReason] if you chose to set `enabled = false` to tell the user why the control does not work and what they can do to enable it.
+
+		History:
+			Added November 23, 2021 (dub v10.4)
+		Bugs:
+			Currently only implemented for widgets backed by native Windows controls.
+
+		See_Also: [disabledReason]
+	+/
+	@property bool enabled() {
+		return _enabled;
+	}
+
+	/// ditto
+	@property void enabled(bool yes) {
+		_enabled = yes;
+		version(win32_widgets) {
+			if(hwnd)
+				EnableWindow(hwnd, yes);
+		}
+		setDynamicState(DynamicState.disabled, yes);
+	}
+
+	private string disabledReason_;
+
+	/++
+		If the widget is not [enabled] this string may be presented to the user when they try to use it. The exact manner and time it gets displayed is up to the implementation of the control.
+
+		History:
+			Added November 23, 2021 (dub v10.4)
+		See_Also: [enabled]
+	+/
+	@property string disabledReason() {
+		return enabled() ? null : disabledReason_;
+	}
+
+	/// ditto
+	@property void disabledReason(string reason) {
+		disabledReason_ = reason;
+	}
+
 	/// Implementations of [ReflectableProperties] interface. See the interface for details.
 	SetPropertyResult setPropertyFromString(string name, scope const(char)[] value, bool valueIsJson) {
 		if(valueIsJson)
