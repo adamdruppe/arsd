@@ -1272,9 +1272,7 @@ struct Terminal {
 		readTermcap();
 
 		if(type == ConsoleOutputType.cellular) {
-			doTermcap("ti");
-			clear();
-			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
+			goCellular();
 		}
 
 		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
@@ -1283,12 +1281,80 @@ struct Terminal {
 
 	}
 
-	// EXPERIMENTAL do not use yet
-	Terminal alternateScreen() {
-		assert(this.type != ConsoleOutputType.cellular);
+	private void goCellular() {
+		version(Win32Console) {
+			hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
+			if(hConsole == INVALID_HANDLE_VALUE) {
+				import std.conv;
+				throw new Exception(to!string(GetLastError()));
+			}
 
-		this.flush();
-		return Terminal(ConsoleOutputType.cellular);
+			SetConsoleActiveScreenBuffer(hConsole);
+			/*
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
+			*/
+			COORD size;
+			/*
+			CONSOLE_SCREEN_BUFFER_INFO sbi;
+			GetConsoleScreenBufferInfo(hConsole, &sbi);
+			size.X = cast(short) GetSystemMetrics(SM_CXMIN);
+			size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
+			*/
+
+			// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
+			//size.X = 80;
+			//size.Y = 24;
+			//SetConsoleScreenBufferSize(hConsole, size);
+
+			GetConsoleCursorInfo(hConsole, &originalCursorInfo);
+
+			clear();
+		} else {
+			doTermcap("ti");
+			clear();
+			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
+		}
+	}
+
+	private void goLinear() {
+		version(Win32Console) {
+			auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
+			SetConsoleActiveScreenBuffer(stdo);
+			if(hConsole !is stdo)
+				CloseHandle(hConsole);
+
+			hConsole = stdo;
+		} else {
+			doTermcap("te");
+		}
+	}
+
+	private ConsoleOutputType originalType;
+	private bool typeChanged;
+
+	// EXPERIMENTAL do not use yet
+	/++
+		It is not valid to call this if you constructed with minimalProcessing.
+	+/
+	void enableAlternateScreen(bool active) {
+		assert(type != ConsoleOutputType.minimalProcessing);
+
+		if(active) {
+			if(type == ConsoleOutputType.cellular)
+				return; // already set
+
+			flush();
+			goCellular();
+			type = ConsoleOutputType.cellular;
+		} else {
+			if(type == ConsoleOutputType.linear)
+				return; // already set
+
+			flush();
+			goLinear();
+			type = ConsoleOutputType.linear;
+		}
 	}
 
 	version(Windows) {
@@ -1306,33 +1372,7 @@ struct Terminal {
 			initializeVt();
 		} else {
 			if(type == ConsoleOutputType.cellular) {
-				hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
-				if(hConsole == INVALID_HANDLE_VALUE) {
-					import std.conv;
-					throw new Exception(to!string(GetLastError()));
-				}
-
-				SetConsoleActiveScreenBuffer(hConsole);
-				/*
-	http://msdn.microsoft.com/en-us/library/windows/desktop/ms686125%28v=vs.85%29.aspx
-	http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.aspx
-				*/
-				COORD size;
-				/*
-				CONSOLE_SCREEN_BUFFER_INFO sbi;
-				GetConsoleScreenBufferInfo(hConsole, &sbi);
-				size.X = cast(short) GetSystemMetrics(SM_CXMIN);
-				size.Y = cast(short) GetSystemMetrics(SM_CYMIN);
-				*/
-
-				// FIXME: this sucks, maybe i should just revert it. but there shouldn't be scrollbars in cellular mode
-				//size.X = 80;
-				//size.Y = 24;
-				//SetConsoleScreenBufferSize(hConsole, size);
-
-				GetConsoleCursorInfo(hConsole, &originalCursorInfo);
-
-				clear();
+				goCellular();
 			} else {
 				hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 			}
@@ -1384,7 +1424,7 @@ struct Terminal {
 
 		if(UseVtSequences) {
 			if(type == ConsoleOutputType.cellular) {
-				doTermcap("te");
+				goLinear();
 			}
 			version(TerminalDirectToEmulator) {
 				if(usingDirectEmulator) {
@@ -1425,10 +1465,7 @@ struct Terminal {
 			SetConsoleOutputCP(oldCp);
 			SetConsoleCP(oldCpIn);
 
-			auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
-			SetConsoleActiveScreenBuffer(stdo);
-			if(hConsole !is stdo)
-				CloseHandle(hConsole);
+			goLinear();
 		}
 
 		version(TerminalDirectToEmulator)
@@ -5285,7 +5322,40 @@ class LineGetter {
 	}
 
 	bool insertMode = true;
-	bool multiLineMode = false;
+
+	private ConsoleOutputType original = cast(ConsoleOutputType) -1;
+	private bool multiLineModeOn = false;
+	private int startOfLineXOriginal;
+	private int startOfLineYOriginal;
+	void multiLineMode(bool on) {
+		if(original == -1) {
+			original = terminal.type;
+			startOfLineXOriginal = startOfLineX;
+			startOfLineYOriginal = startOfLineY;
+		}
+
+		if(on) {
+			terminal.enableAlternateScreen = true;
+			startOfLineX = 0;
+			startOfLineY = 0;
+		}
+		else if(original == ConsoleOutputType.linear) {
+			terminal.enableAlternateScreen = false;
+		}
+
+		if(!on) {
+			startOfLineX = startOfLineXOriginal;
+			startOfLineY = startOfLineYOriginal;
+		}
+
+		multiLineModeOn = on;
+	}
+	bool multiLineMode() { return multiLineModeOn; }
+
+	void toggleMultiLineMode() {
+		multiLineMode = !multiLineModeOn;
+		redraw();
+	}
 
 	private dchar[] line;
 	private int cursorPosition = 0;
@@ -5558,6 +5628,12 @@ class LineGetter {
 
 			written++;
 			lineLength--;
+
+			if(lg.multiLineMode) {
+				if(ch == '\n') {
+					lineLength = lg.terminal.width;
+				}
+			}
 		}
 
 		void drawContent(T)(T towrite, int highlightBegin = 0, int highlightEnd = 0, bool inverted = false, int lineidx = -1) {
@@ -5571,8 +5647,14 @@ class LineGetter {
 			}
 
 			foreach(idx, dchar ch; towrite) {
-				if(lineLength <= 0)
-					break;
+				if(lineLength <= 0) {
+					if(lg.multiLineMode) {
+						if(ch == '\n')
+							lineLength = lg.terminal.width;
+						continue;
+					} else
+						break;
+				}
 
 				static if(is(T == dchar[])) {
 					if(lineidx != -1 && colorChars == 0) {
@@ -5587,7 +5669,7 @@ class LineGetter {
 				}
 
 				switch(ch) {
-					case '\n': specialChar('n'); break;
+					case '\n': lg.multiLineMode ? regularChar('\n') : specialChar('n'); break;
 					case '\r': specialChar('r'); break;
 					case '\a': specialChar('a'); break;
 					case '\t': specialChar('t'); break;
@@ -5666,18 +5748,22 @@ class LineGetter {
 		if(!cdi.populated)
 			return;
 
-		if(UseVtSequences && !_drawWidthMax) {
-			terminal.writeStringRaw("\033[K");
+		if(!multiLineMode) {
+			if(UseVtSequences && !_drawWidthMax) {
+				terminal.writeStringRaw("\033[K");
+			} else {
+				// FIXME: graphemes
+				if(cdi.written + promptLength < lastDrawLength)
+				foreach(i; cdi.written + promptLength .. lastDrawLength)
+					terminal.write(" ");
+				lastDrawLength = cdi.written;
+			}
+			// if echoChar is null then we don't want to reflect the position at all
+			terminal.moveTo(startOfLineX + ((echoChar == 0) ? 0 : cdi.cursorPositionToDrawX) + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
 		} else {
-			// FIXME: graphemes
-			if(cdi.written + promptLength < lastDrawLength)
-			foreach(i; cdi.written + promptLength .. lastDrawLength)
-				terminal.write(" ");
-			lastDrawLength = cdi.written;
+			if(echoChar != 0)
+				terminal.moveTo(cdi.cursorPositionToDrawX, cdi.cursorPositionToDrawY);
 		}
-
-		// if echoChar is null then we don't want to reflect the position at all
-		terminal.moveTo(startOfLineX + ((echoChar == 0) ? 0 : cdi.cursorPositionToDrawX) + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
 		endRedraw(); // make sure the cursor is turned back on
 	}
 
@@ -5714,17 +5800,26 @@ class LineGetter {
 		}
 		terminal.moveTo(startOfLineX, startOfLineY);
 
+		if(multiLineMode)
+			terminal.clear();
+
 		Drawer drawer = Drawer(this);
 
 		drawer.lineLength = availableLineLength();
 		if(drawer.lineLength < 0)
 			throw new Exception("too narrow terminal to draw");
 
-		terminal.color(promptColor, background);
-		terminal.write(prompt);
-		terminal.color(regularForeground, background);
+		if(!multiLineMode) {
+			terminal.color(promptColor, background);
+			terminal.write(prompt);
+			terminal.color(regularForeground, background);
+		}
 
 		auto towrite = line[horizontalScrollPosition .. $];
+		if(multiLineMode) {
+			towrite = line[];
+			horizontalScrollPosition = 0; // FIXME
+		}
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
 
@@ -5762,8 +5857,27 @@ class LineGetter {
 		CoreRedrawInfo cri;
 		cri.populated = true;
 		cri.written = drawer.written;
-		cri.cursorPositionToDrawX = cursorPositionToDrawX;
-		cri.cursorPositionToDrawY = cursorPositionToDrawY;
+		if(multiLineMode) {
+			cursorPositionToDrawX = 0;
+			cursorPositionToDrawY = 0;
+			// would be better if it did this in the same drawing pass...
+			foreach(idx, dchar ch; line) {
+				if(idx == cursorPosition)
+					break;
+				if(ch == '\n') {
+					cursorPositionToDrawX = 0;
+					cursorPositionToDrawY++;
+				} else {
+					cursorPositionToDrawX++;
+				}
+			}
+
+			cri.cursorPositionToDrawX = cursorPositionToDrawX;
+			cri.cursorPositionToDrawY = cursorPositionToDrawY;
+		} else {
+			cri.cursorPositionToDrawX = cursorPositionToDrawX;
+			cri.cursorPositionToDrawY = cursorPositionToDrawY;
+		}
 
 		return cri;
 	}
@@ -6064,6 +6178,88 @@ class LineGetter {
 		int selectionEnd = -1;
 	}
 
+	void backwardToNewline() {
+		while(cursorPosition && line[cursorPosition - 1] != '\n')
+			cursorPosition--;
+		phantomCursorX = 0;
+	}
+
+	void forwardToNewLine() {
+		while(cursorPosition < line.length && line[cursorPosition] != '\n')
+			cursorPosition++;
+	}
+
+	private int phantomCursorX;
+
+	void lineBackward() {
+		int count;
+		while(cursorPosition && line[cursorPosition - 1] != '\n') {
+			cursorPosition--;
+			count++;
+		}
+		if(count > phantomCursorX)
+			phantomCursorX = count;
+
+		if(cursorPosition == 0)
+			return;
+		cursorPosition--;
+
+		while(cursorPosition && line[cursorPosition - 1] != '\n') {
+			cursorPosition--;
+		}
+
+		count = phantomCursorX;
+		while(count) {
+			if(cursorPosition == line.length)
+				break;
+			if(line[cursorPosition] == '\n')
+				break;
+			cursorPosition++;
+			count--;
+		}
+	}
+
+	void lineForward() {
+		int count;
+
+		// see where we are in the current line
+		auto beginPos = cursorPosition;
+		while(beginPos && line[beginPos - 1] != '\n') {
+			beginPos--;
+			count++;
+		}
+
+		if(count > phantomCursorX)
+			phantomCursorX = count;
+
+		// get to the next line
+		while(cursorPosition < line.length && line[cursorPosition] != '\n') {
+			cursorPosition++;
+		}
+		if(cursorPosition == line.length)
+			return;
+		cursorPosition++;
+
+		// get to the same spot in this same line
+		count = phantomCursorX;
+		while(count) {
+			if(cursorPosition == line.length)
+				break;
+			if(line[cursorPosition] == '\n')
+				break;
+			cursorPosition++;
+			count--;
+		}
+	}
+
+	void pageBackward() {
+
+	}
+
+	void pageForward() {
+
+	}
+
 	/++
 		for integrating into another event loop
 		you can pass individual events to this and
@@ -6219,13 +6415,18 @@ class LineGetter {
 
 							redraw();
 						}
+						phantomCursorX = 0;
 					break;
 					case KeyboardEvent.Key.escape:
 						justHitTab = justKilled = false;
-						cursorPosition = 0;
-						horizontalScrollPosition = 0;
-						line = line[0 .. 0];
-						line.assumeSafeAppend();
+						if(multiLineMode)
+							multiLineMode = false;
+						else {
+							cursorPosition = 0;
+							horizontalScrollPosition = 0;
+							line = line[0 .. 0];
+							line.assumeSafeAppend();
+						}
 						redraw();
 					break;
 					case KeyboardEvent.Key.F1:
@@ -6234,6 +6435,12 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.F2:
 						justHitTab = justKilled = false;
+
+						if(ev.modifierState & ModifierState.control) {
+							toggleMultiLineMode();
+							break;
+						}
+
 						line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 						auto got = editLineInEditor(line, cursorPosition);
 						if(got !is null) {
@@ -6363,6 +6570,7 @@ class LineGetter {
 					break;
 					case KeyboardEvent.Key.LeftArrow:
 						justHitTab = justKilled = false;
+						phantomCursorX = 0;
 
 						/*
 						if(ev.modifierState & ModifierState.shift)
@@ -6395,7 +6603,10 @@ class LineGetter {
 						goto default;
 					case KeyboardEvent.Key.UpArrow:
 						justHitTab = justKilled = false;
-						loadFromHistory(currentHistoryViewPosition + 1);
+						if(multiLineMode)
+							lineBackward();
+						else
+							loadFromHistory(currentHistoryViewPosition + 1);
 						redraw();
 					break;
 					case 'n', 14:
@@ -6404,17 +6615,26 @@ class LineGetter {
 						goto default;
 					case KeyboardEvent.Key.DownArrow:
 						justHitTab = justKilled = false;
-						loadFromHistory(currentHistoryViewPosition - 1);
+						if(multiLineMode)
+							lineForward();
+						else
+							loadFromHistory(currentHistoryViewPosition - 1);
 						redraw();
 					break;
 					case KeyboardEvent.Key.PageUp:
 						justHitTab = justKilled = false;
-						loadFromHistory(cast(int) history.length);
+						if(multiLineMode)
+							pageBackward();
+						else
+							loadFromHistory(cast(int) history.length);
 						redraw();
 					break;
 					case KeyboardEvent.Key.PageDown:
 						justHitTab = justKilled = false;
-						loadFromHistory(0);
+						if(multiLineMode)
+							pageForward();
+						else
+							loadFromHistory(0);
 						redraw();
 					break;
 					case 'a', 1: // this one conflicts with Windows-style select all...
@@ -6429,7 +6649,11 @@ class LineGetter {
 						goto case;
 					case KeyboardEvent.Key.Home:
 						justHitTab = justKilled = false;
-						cursorPosition = 0;
+						if(multiLineMode) {
+							backwardToNewline();
+						} else {
+							cursorPosition = 0;
+						}
 						horizontalScrollPosition = 0;
 						redraw();
 					break;
@@ -6439,8 +6663,12 @@ class LineGetter {
 						goto case;
 					case KeyboardEvent.Key.End:
 						justHitTab = justKilled = false;
-						cursorPosition = cast(int) line.length;
-						scrollToEnd();
+						if(multiLineMode) {
+							forwardToNewLine();
+						} else {
+							cursorPosition = cast(int) line.length;
+							scrollToEnd();
+						}
 						redraw();
 					break;
 					case 'v', 22:
@@ -6678,6 +6906,10 @@ class LineGetter {
 	///
 	string finishGettingLine() {
 		import std.conv;
+
+
+		if(multiLineMode)
+			multiLineMode = false;
 
 		line[] &= cast(dchar) ~PRIVATE_BITS_MASK;
 
