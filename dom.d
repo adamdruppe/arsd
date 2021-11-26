@@ -1133,7 +1133,8 @@ class Document : FileResource, DomParent {
 		} while (r.type != 0 || r.element.nodeType != 1); // we look past the xml prologue and doctype; root only begins on a regular node
 
 		root = r.element;
-		root.parent_ = this;
+		if(root !is null)
+			root.parent_ = this;
 
 		if(!strict) // in strict mode, we'll just ignore stuff after the xml
 		while(r.type != 4) {
@@ -8010,6 +8011,10 @@ unittest {
 	auto document = new XmlDocument("<a att=\"http://ele\"><b><ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
 	assert(document.root.toPrettyString(false, 0, " ") == "<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
 
+}
+
+unittest {
+	auto document = new Document("broken"); // just ensuring it doesn't crash
 }
 
 /*
