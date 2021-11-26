@@ -136,6 +136,9 @@ interface->SetProgressValue(hwnd, 40, 100);
 	operating system and `color.d`, so it should just work most the
 	time, but there are a few caveats on some systems:
 
+	On Win32, you can pass `-L/subsystem:windows` if you don't want a
+	console to be automatically allocated.
+
 	Please note when compiling on Win64, you need to explicitly list
 	`-Lgdi32.lib -Luser32.lib` on the build command. If you want the Windows
 	subsystem too, use `-L/subsystem:windows -L/entry:mainCRTStartup`.
@@ -143,8 +146,9 @@ interface->SetProgressValue(hwnd, 40, 100);
 	If using ldc instead of dmd, use `-L/entry:wmainCRTStartup` instead of `mainCRTStartup`;
 	note the "w".
 
-	On Win32, you can pass `-L/subsystem:windows` if you don't want a
-	console to be automatically allocated.
+	I provided a `mixin EnableWindowsSubsystem;` helper to do those linker flags for you,
+	but you still need to use dmd -m32mscoff or -m64 (which dub does by default too fyi).
+	See [EnableWindowsSubsystem] for more information.
 
 	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd. For OpenGL, add `-L-framework -LOpenGL` to the build command.
 
@@ -591,8 +595,23 @@ interface->SetProgressValue(hwnd, 40, 100);
 			/>
 		    </dependentAssembly>
 		</dependency>
+		<application xmlns="urn:schemas-microsoft-com:asm.v3">
+			<windowsSettings>
+				<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware> <!-- old style -->
+				<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness> <!-- new style -->
+				<!-- Un-comment the line below to enable GDI-scaling in this project. This will enable text -->
+				<!-- to render crisply in DPI-unaware contexts --> 
+				<!--<gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>-->
+			</windowsSettings>
+		</application>
 		</assembly>
 	```
+
+	You can also just distribute yourapp.exe.manifest as a separate file alongside yourapp.exe, or link it in to the exe with linker command lines `/manifest:embed` and `/manifestinput:yourfile.exe.manifest`.
+
+	Doing this lets you opt into various new things since Windows XP.
+
+	See: https://docs.microsoft.com/en-us/windows/win32/SbsCs/application-manifests
 
 	$(H2 Tips)
 
@@ -1304,6 +1323,32 @@ version(without_opengl)
 else
 	enum bool OpenGlEnabled = true;
 
+/++
+	Adds the necessary pragmas to your application to use the Windows gui subsystem.
+	If you mix this in above your `main` function, you no longer need to use the linker
+	flags explicitly. It does the necessary version blocks for various compilers and runtimes.
+
+	It does nothing if not compiling for Windows, so you need not version it out yourself.
+
+	Please note that Windows gui subsystem applications must NOT use std.stdio's stdout and
+	stderr writeln. It will fail and throw an exception.
+
+	This will NOT work with plain `dmd` on Windows; you must use `dmd -m32mscoff` or `dmd -m64`.
+
+	History:
+		Added November 24, 2021 (dub v10.4)
++/
+mixin template EnableWindowsSubsystem() {
+	version(Windows)
+	version(CRuntime_Microsoft) {
+		pragma(linkerDirective, "/subsystem:windows");
+		version(LDC)
+			pragma(linkerDirective, "/entry:wmainCRTStartup");
+		else
+			pragma(linkerDirective, "/entry:mainCRTStartup");
+	}
+}
+
 
 /++
 	After selecting a type from [WindowTypes], you may further customize
@@ -1460,6 +1505,8 @@ string sdpyWindowClass () {
 
 /++
 	Returns the DPI of the default monitor. [0] is width, [1] is height (they are usually the same though). You may wish to round the numbers off.
+
+	If you want per-monitor dpi values, check [SimpleWindow.actualDpi], but you can fall back to this if it returns 0.
 +/
 float[2] getDpi() {
 	float[2] dpi;
@@ -1574,6 +1621,32 @@ TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int wid
 	return got;
 }
 
+version(Windows) extern(Windows) private alias SetProcessDpiAwarenessContext_t = BOOL function(HANDLE);
+version(Windows) extern(Windows) private __gshared UINT function(HWND) GetDpiForWindow;
+version(Windows) extern(Windows) private __gshared BOOL function(UINT, UINT, PVOID, UINT, UINT) SystemParametersInfoForDpi;
+
+version(Windows)
+shared static this() {
+	auto lib = LoadLibrary("User32.dll");
+	if(lib is null)
+		return;
+	scope(exit)
+		FreeLibrary(lib);
+
+	SetProcessDpiAwarenessContext_t SetProcessDpiAwarenessContext = cast(SetProcessDpiAwarenessContext_t) GetProcAddress(lib, "SetProcessDpiAwarenessContext");
+
+	if(SetProcessDpiAwarenessContext is null)
+		return;
+
+	enum DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = cast(HANDLE) -4;
+	if(!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+		//writeln(GetLastError());
+	}
+
+	GetDpiForWindow = cast(typeof(GetDpiForWindow)) GetProcAddress(lib, "GetDpiForWindow");
+	SystemParametersInfoForDpi = cast(typeof(SystemParametersInfoForDpi)) GetProcAddress(lib, "SystemParametersInfoForDpi");
+}
+
 /++
 	The flagship window class.
 
@@ -1612,6 +1685,154 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			return trueColorImageFromNativeHandle(impl.window, width, height);
 	}
 
+	/++
+		Returns the actual physical DPI for the window on its current display monitor. If the window
+		straddles monitors, it will return the value of one or the other in a platform-defined manner.
+
+		Please note this function may return zero if it doesn't know the answer!
+
+
+		On Windows, it returns the dpi per monitor if the operating system supports it (Windows 10),
+		or a system dpi value if not, which will live-update if the OS supports it (Windows 8 and up).
+
+		On X, it reads the xrandr extension to determine monitor positions and sizes. On some systems,
+		this is not provided, meaning it will return 0. Otherwise, it will determine which monitor the
+		window primarily resides on by checking the center point of the window against the monitor map.
+
+		Returns:
+			0 if unknown. Otherwise, a rounded value of dots per inch reported by the monitor. It
+			assumes the X and Y dpi are the same.
+
+		History:
+			Added November 26, 2021 (dub v10.4)
+
+		Bugs:
+			Probably plenty. I haven't done a lot of tests on this. I know it doesn't
+
+		See_Also:
+			[getDpi] gives the value provided for the default monitor. Not necessarily the same
+			as this since the window many be on a different monitor, but it is a reasonable fallback
+			to use if `actualDpi` returns 0.
+
+			[onDpiChanged] is changed when `actualDpi` has changed.
+	+/
+	int actualDpi() {
+		if(!actualDpiLoadAttempted) {
+			// FIXME: do the actual monitor we are on
+			// and on X this is a good chance to load the monitor map.
+			version(Windows) {
+				if(GetDpiForWindow)
+					actualDpi_ = GetDpiForWindow(impl.hwnd);
+			} else version(X11) {
+				if(!xRandrInfoLoadAttemped) {
+					xRandrInfoLoadAttemped = true;
+					if(!XRandrLibrary.attempted) {
+						XRandrLibrary.loadDynamicLibrary();
+					}
+
+					if(XRandrLibrary.loadSuccessful) {
+						auto display = XDisplayConnection.get;
+						int scratch;
+						int major, minor;
+						if(!XRRQueryExtension(display, &xrrEventBase, &scratch))
+							goto fallback;
+
+						XRRQueryVersion(display, &major, &minor);
+						if(major <= 1 && minor < 5)
+							goto fallback;
+
+						int count;
+						XRRMonitorInfo *monitors = XRRGetMonitors(display, RootWindow(display, DefaultScreen(display)), true, &count);
+						if(monitors is null)
+							goto fallback;
+						scope(exit) XRRFreeMonitors(monitors);
+
+						MonitorInfo.info = MonitorInfo.info[0 .. 0];
+						MonitorInfo.info.assumeSafeAppend();
+						foreach(monitor; monitors[0 .. count]) {
+							MonitorInfo.info ~= MonitorInfo(
+								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
+								Size(monitor.mwidth, monitor.mheight),
+								minInternal(
+									// millimeter to int then rounding up.
+									cast(int)(monitor.width * 25.4 / monitor.mwidth + 0.5),
+									cast(int)(monitor.height * 25.4 / monitor.mheight + 0.5)
+								)
+							);
+						}
+						//import std.stdio; writeln("Here", MonitorInfo.info);
+					}
+				}
+
+				if(XRandrLibrary.loadSuccessful) {
+					updateActualDpi(true);
+					//import std.stdio; writeln("updated");
+
+					if(!requestedInput) {
+						// this is what requests live updates should the configuration change
+						// each time you select input, it sends an initial event, so very important
+						// to not get into a loop of selecting input, getting event, updating data,
+						// and reselecting input...
+						requestedInput = true;
+						XRRSelectInput(display, impl.window, RRScreenChangeNotifyMask);
+						//import std.stdio; writeln("requested input");
+					}
+				} else {
+					fallback:
+					// make sure we disable events that aren't coming
+					xrrEventBase = -1;
+					// best guess...
+					actualDpi_ = cast(int) getDpi()[0];
+				}
+			}
+			actualDpiLoadAttempted = true;
+		}
+		return actualDpi_;
+	}
+
+	private int actualDpi_;
+	private bool actualDpiLoadAttempted;
+
+	version(X11) private {
+		bool requestedInput;
+		static bool xRandrInfoLoadAttemped;
+		struct MonitorInfo {
+			Rectangle position;
+			Size size;
+			int dpi;
+
+			static MonitorInfo[] info;
+		}
+		int screenPositionX;
+		int screenPositionY;
+		void updateActualDpi(bool loadingNow = false) {
+			if(!loadingNow && !actualDpiLoadAttempted)
+				actualDpi(); // just to make it do the load 
+			foreach(idx, m; MonitorInfo.info) {
+				if(m.position.contains(Point(screenPositionX + this.width / 2, screenPositionY + this.height / 2))) {
+					bool changed = actualDpi_ && actualDpi_ != m.dpi;
+					actualDpi_ = m.dpi;
+					//import std.stdio; writeln("monitor ", idx);
+					if(changed && onDpiChanged)
+						onDpiChanged();
+					break;
+				}
+			}
+		}
+	}
+
+	/++
+		Sent when the window is moved to a new DPI context, for example, when it is dragged between monitors
+		or if the window is moved to a new remote connection or a monitor is hot-swapped.
+
+		History:
+			Added November 26, 2021 (dub v10.4)
+
+		See_Also:
+			[actualDpi]
+	+/
+	void delegate() onDpiChanged;
+
 	version(X11) {
 		void recreateAfterDisconnect() {
 			if(!stateDiscarded) return;
@@ -1622,6 +1843,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			bool wasHidden = hidden;
 
 			activeScreenPainter = null; // should already be done but just to confirm
+
+			actualDpi_ = 0;
+			actualDpiLoadAttempted = false;
+			xRandrInfoLoadAttemped = false;
 
 			impl.createWindow(_width, _height, _title, openglMode, _parent);
 
@@ -11014,12 +11239,22 @@ version(Windows) {
 		}
 
 		HWND hwnd;
-		int oldWidth;
-		int oldHeight;
-		bool inSizeMove;
+		private int oldWidth;
+		private int oldHeight;
+		private bool inSizeMove;
 
-		int bmpWidth;
-		int bmpHeight;
+		/++
+			If this is true, the live resize events will trigger all the size things as they drag. If false, those events only come when the size is complete; when the user lets go of the mouse button.
+
+			History:
+				Added November 23, 2021
+
+				Not fully stable, may be moved out of the impl struct.
+		+/
+		bool doLiveResizing;
+
+		private int bmpWidth;
+		private int bmpHeight;
 
 		// the extern(Windows) wndproc should just forward to this
 		LRESULT windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
@@ -11057,6 +11292,40 @@ version(Windows) {
 						PostQuitMessage(0);
 					}
 				break;
+				case 0x02E0 /*WM_DPICHANGED*/:
+					this.actualDpi_ = LOWORD(wParam); // hiword is the y param but it is the same per docs
+
+					RECT* prcNewWindow = cast(RECT*)lParam;
+					// docs say this is the recommended position and we should honor it
+					SetWindowPos(hwnd,
+							null,
+							prcNewWindow.left,
+							prcNewWindow.top,
+							prcNewWindow.right - prcNewWindow.left,
+							prcNewWindow.bottom - prcNewWindow.top,
+							SWP_NOZORDER | SWP_NOACTIVATE);
+
+					// doing this because of https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/DPIAwarenessPerWindow/client/DpiAwarenessContext.cpp
+					// im not sure it is completely correct
+					// but without it the tabs and such do look weird as things change.
+					{
+						LOGFONT lfText;
+						SystemParametersInfoForDpi(SPI_GETICONTITLELOGFONT, lfText.sizeof, &lfText, FALSE, this.actualDpi_);
+						HFONT hFontNew = CreateFontIndirect(&lfText);
+						if (hFontNew)
+						{
+							//DeleteObject(hFontOld);
+							static extern(Windows) BOOL helper(HWND hWnd, LPARAM lParam) {
+								SendMessage(hWnd, WM_SETFONT, cast(WPARAM)lParam, MAKELPARAM(TRUE, 0));
+								return TRUE;
+							}
+							EnumChildWindows(hwnd, &helper, cast(LPARAM) hFontNew);
+						}
+					}
+
+					if(this.onDpiChanged)
+						this.onDpiChanged();
+				break;
 				case WM_SIZE:
 					if(wParam == 1 /* SIZE_MINIMIZED */)
 						break;
@@ -11066,7 +11335,7 @@ version(Windows) {
 					// I want to avoid tearing in the windows (my code is inefficient
 					// so this is a hack around that) so while sizing, we don't trigger,
 					// but we do want to trigger on events like mazimize.
-					if(!inSizeMove)
+					if(!inSizeMove || doLiveResizing)
 						goto size_changed;
 				break;
 				/+
@@ -12177,9 +12446,63 @@ extern(C) @nogc:
 __gshared bool XRenderLibrarySuccessfullyLoaded = true;
 mixin DynamicLoad!(XRender, "Xrender", 1, XRenderLibrarySuccessfullyLoaded) XRenderLibrary;
 
-
-
 	/* XRender } */
+
+	/* Xrandr { */
+
+struct XRRMonitorInfo {
+    Atom name;
+    Bool primary;
+    Bool automatic;
+    int noutput;
+    int x;
+    int y;
+    int width;
+    int height;
+    int mwidth;
+    int mheight;
+    /*RROutput*/ void *outputs;
+}
+
+struct XRRScreenChangeNotifyEvent {
+    int type;                   /* event base */
+    c_ulong serial;       /* # of last request processed by server */
+    Bool send_event;            /* true if this came from a SendEvent request */
+    Display *display;           /* Display the event was read from */
+    Window window;              /* window which selected for this event */
+    Window root;                /* Root window for changed screen */
+    Time timestamp;             /* when the screen change occurred */
+    Time config_timestamp;      /* when the last configuration change */
+    ushort/*SizeID*/ size_index;
+    ushort/*SubpixelOrder*/ subpixel_order;
+    ushort/*Rotation*/ rotation;
+    int width;
+    int height;
+    int mwidth;
+    int mheight;
+}
+
+enum RRScreenChangeNotify = 0;
+
+enum RRScreenChangeNotifyMask = 1;
+
+__gshared int xrrEventBase = -1;
+
+
+interface XRandr {
+extern(C) @nogc:
+	Bool XRRQueryExtension (Display *dpy, int *event_base_return, int *error_base_return);
+	Status XRRQueryVersion (Display *dpy, int     *major_version_return, int     *minor_version_return);
+
+	XRRMonitorInfo * XRRGetMonitors(Display *dpy, Window window, Bool get_active, int *nmonitors);
+	void XRRFreeMonitors(XRRMonitorInfo *monitors);
+
+	void XRRSelectInput(Display *dpy, Window window, int mask);
+}
+
+__gshared bool XRandrLibrarySuccessfullyLoaded = true;
+mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrLibrary;
+	/* Xrandr } */
 
 	/* Xft { */
 
@@ -13893,6 +14216,18 @@ version(X11) {
 			}
 		}
 
+		if(xrrEventBase != -1 && e.type == xrrEventBase + RRScreenChangeNotify) {
+		  	if(auto win = e.xany.window in SimpleWindow.nativeMapping) {
+				// we get this because of the RRScreenChangeNotifyMask
+
+				// this isn't actually an ideal way to do it since it wastes time
+				// but meh it is simple and it works.
+				win.actualDpiLoadAttempted = false;
+				SimpleWindow.xRandrInfoLoadAttemped = false;
+				win.updateActualDpi(); // trigger a reload
+			}
+		}
+
 		switch(e.type) {
 		  case EventType.SelectionClear:
 		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping) {
@@ -14028,6 +14363,10 @@ version(X11) {
 			auto event = e.xconfigure;
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
+
+				win.screenPositionX = event.x;
+				win.screenPositionY = event.y;
+				win.updateActualDpi();
 
 				recordX11Resize(display, *win, event.width, event.height);
 			}
@@ -20514,6 +20853,10 @@ void guiAbortProcess(string msg) {
 	}
 
 	abort();
+}
+
+private int minInternal(int a, int b) {
+	return (a < b) ? a : b;
 }
 
 private alias scriptable = arsd_jsvar_compatible;
