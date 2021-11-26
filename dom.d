@@ -1450,9 +1450,9 @@ class Document : FileResource, DomParent {
 		if(insertComments) s ~= "-->";
 		*/
 
-		s ~= root.toPrettyString(insertComments, indentationLevel, indentWith);
+		s ~= root.toPrettyStringImpl(insertComments, indentationLevel, indentWith);
 		foreach(a; piecesAfterRoot)
-			s ~= a.toPrettyString(insertComments, indentationLevel, indentWith);
+			s ~= a.toPrettyStringImpl(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -3372,7 +3372,7 @@ class Element : DomParent {
 	}
 
 	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
-		if(indentWith is null)
+		if(indentWith is null || this.children.length == 0)
 			return null;
 		string s;
 
@@ -3388,8 +3388,40 @@ class Element : DomParent {
 	/++
 		Writes out with formatting. Be warned: formatting changes the contents. Use ONLY
 		for eyeball debugging.
+
+		$(PITFALL
+			This function is not stable. Its interface and output may change without
+			notice. The only promise I make is that it will continue to make a best-
+			effort attempt at being useful for debugging by human eyes.
+
+			I have used it in the past for diffing html documents, but even then, it
+			might change between versions. If it is useful, great, but beware; this
+			use is at your own risk.
+		)
+
+		History:
+			On November 19, 2021, I changed this to `final`. If you were overriding it,
+			change our override to `toPrettyStringImpl` instead. It now just calls
+			`toPrettyStringImpl.strip` to be an entry point for a stand-alone call.
+
+			If you are calling it as part of another implementation, you might want to
+			change that call to `toPrettyStringImpl` as well.
+
+			I am NOT considering this a breaking change since this function is documented
+			to only be used for eyeball debugging anyway, which means the exact format is
+			not specified and the override behavior can generally not be relied upon.
+
+			(And I find it extremely unlikely anyone was subclassing anyway, but if you were,
+			email me, and we'll see what we can do. I'd like to know at least.)
+
+			I reserve the right to make future changes in the future without considering
+			them breaking as well.
 	+/
-	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
+	final string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
+		return toPrettyStringImpl(insertComments, indentationLevel, indentWith).strip;
+	}
+
+	string toPrettyStringImpl(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 
 		// first step is to concatenate any consecutive text nodes to simplify
 		// the white space analysis. this changes the tree! but i'm allowed since
@@ -3472,7 +3504,7 @@ class Element : DomParent {
 			foreach(child; children) {
 				assert(child !is null);
 
-				s ~= child.toPrettyString(insertComments, indentationLevel + 1, indentWith);
+				s ~= child.toPrettyStringImpl(insertComments, indentationLevel + 1, indentWith);
 			}
 
 			s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
@@ -4093,10 +4125,10 @@ class DocumentFragment : Element {
 		return this.innerHTML(where);
 	}
 
-	override string toPrettyString(bool insertComments, int indentationLevel, string indentWith) const {
+	override string toPrettyStringImpl(bool insertComments, int indentationLevel, string indentWith) const {
 		string s;
 		foreach(child; children)
-			s ~= child.toPrettyString(insertComments, indentationLevel, indentWith);
+			s ~= child.toPrettyStringImpl(insertComments, indentationLevel, indentWith);
 		return s;
 	}
 
@@ -4395,7 +4427,7 @@ class RawSource : SpecialElement {
 		return source;
 	}
 
-	override string toPrettyString(bool, int, string) const {
+	override string toPrettyStringImpl(bool, int, string) const {
 		return source;
 	}
 
@@ -4429,7 +4461,7 @@ abstract class ServerSideCode : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int, string) const {
+	override string toPrettyStringImpl(bool, int, string) const {
 		return "<" ~ source ~ ">";
 	}
 
@@ -4493,7 +4525,7 @@ class BangInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int, string) const {
+	override string toPrettyStringImpl(bool, int, string) const {
 		string s;
 		s ~= "<!";
 		s ~= source;
@@ -4533,7 +4565,7 @@ class QuestionInstruction : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int, string) const {
+	override string toPrettyStringImpl(bool, int, string) const {
 		string s;
 		s ~= "<";
 		s ~= source;
@@ -4574,7 +4606,7 @@ class HtmlComment : SpecialElement {
 		return where.data[start .. $];
 	}
 
-	override string toPrettyString(bool, int, string) const {
+	override string toPrettyStringImpl(bool, int, string) const {
 		string s;
 		s ~= "<!--";
 		s ~= source;
@@ -4643,7 +4675,7 @@ class TextNode : Element {
 		return s;
 	}
 
-	override string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
+	override string toPrettyStringImpl(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
 		string s;
 
 		string contents = this.contents;
@@ -7940,6 +7972,44 @@ unittest {
 	} catch(Exception e) {
 		// good; it should throw an exception, not an error.
 	}
+}
+
+unittest {
+	// toPrettyString is not stable, but these are some best-effort attempts
+	// despite these being in a test, I might change these anyway!
+	assert(Element.make("a").toPrettyString == "<a></a>");
+	assert(Element.make("a", "b").toPrettyString == "<a>b</a>");
+	assert(Element.make("a", "b").toPrettyString(false, 0, "") == "<a>b</a>");
+
+	{
+	auto document = new Document("<html><body><p>hello <a href=\"world\">world</a></p></body></html>");
+	auto pretty = document.toPrettyString(false, 0, "  ");
+	assert(pretty ==
+`<!DOCTYPE html>
+<html>
+  <body>
+    <p>hello <a href="world">world</a></p>
+  </body>
+</html>`, pretty);
+	}
+
+	{
+	auto document = new XmlDocument("<html><body><p>hello <a href=\"world\">world</a></p></body></html>");
+	auto pretty = document.toPrettyString(false, 0, "  ");
+	assert(pretty ==
+`<?xml version="1.0" encoding="UTF-8"?>
+<html>
+  <body>
+    <p>hello
+      <a href="world">world</a>
+    </p>
+  </body>
+</html>`, pretty);
+	}
+
+	auto document = new XmlDocument("<a att=\"http://ele\"><b><ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+	assert(document.root.toPrettyString(false, 0, " ") == "<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+
 }
 
 /*
