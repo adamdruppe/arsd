@@ -163,6 +163,38 @@ struct Color {
 	}
 
 	/++
+		Returns a value compatible with [https://docs.microsoft.com/en-us/windows/win32/gdi/colorref|a Win32 COLORREF].
+
+		Please note that the alpha value is lost in translation.
+
+		History:
+			Added November 27, 2021 (dub v10.4)
+		See_Also:
+			[fromWindowsColorRef]
+	+/
+	nothrow pure @nogc
+	uint asWindowsColorRef() {
+		uint cr;
+		cr |= b << 16;
+		cr |= g << 8;
+		cr |= r;
+		return cr;
+	}
+
+	/++
+		Constructs a Color from [https://docs.microsoft.com/en-us/windows/win32/gdi/colorref|a Win32 COLORREF].
+
+		History:
+			Added November 27, 2021 (dub v10.4)
+		See_Also:
+			[asWindowsColorRef]
+	+/
+	nothrow pure @nogc
+	static Color fromWindowsColorRef(uint cr) {
+		return Color(cr & 0xff, (cr >> 8) & 0xff, (cr >> 16) & 0xff);
+	}
+
+	/++
 		Like the constructor, but this makes sure they are in range before casting. If they are out of range, it saturates: anything less than zero becomes zero and anything greater than 255 becomes 255.
 	+/
 	nothrow pure @nogc
