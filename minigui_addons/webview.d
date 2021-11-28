@@ -14,45 +14,6 @@ version(Windows)
 	version=wv2;
 
 
-class StateChanged(alias field) : Event {
-	enum EventString = __traits(identifier, __traits(parent, field)) ~ "." ~ __traits(identifier, field) ~ ":change";
-	override bool cancelable() const { return false; }
-	this(Widget target, typeof(field) newValue) {
-		this.newValue = newValue;
-		super(EventString, target);
-	}
-
-	typeof(field) newValue;
-}
-
-void addWhenTriggered(Widget w, void delegate() dg) {
-	w.addEventListener("triggered", dg);
-}
-
-mixin template Observable(T, string name) {
-	private T backing;
-
-	mixin(q{
-		void } ~ name ~ q{_changed (void delegate(T) dg) {
-			this.addEventListener((StateChanged!this_thing ev) {
-				dg(ev.newValue);
-			});
-		}
-
-		@property T } ~ name ~ q{ () {
-			return backing;
-		}
-
-		@property void } ~ name ~ q{ (T t) {
-			backing = t;
-			auto event = new StateChanged!this_thing(this, t);
-			event.dispatch();
-		}
-	});
-
-	mixin("private alias this_thing = " ~ name ~ ";");
-}
-
 /+
 	SPA mode: put favicon on top level window, no other user controls at top level, links to different domains always open in new window.
 +/
@@ -142,6 +103,9 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 						this.title = toGC(&sender.get_DocumentTitle);
 						return S_OK;
 					});
+
+					// add_HistoryChanged
+					// that's where CanGoBack and CanGoForward can be rechecked.
 
 					RC!ICoreWebView2Settings Settings = webview_window.Settings;
 					Settings.IsScriptEnabled = TRUE;
