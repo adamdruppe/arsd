@@ -808,7 +808,7 @@ class Cgi {
 				}
 			} else {
 				// it is an argument of some sort
-				if(requestMethod == Cgi.RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
+				if(requestMethod == Cgi.RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT || requestMethod == Cgi.RequestMethod.CommandLine) {
 					auto parts = breakUp(arg);
 					_post[parts[0]] ~= parts[1];
 					allPostNamesInOrder ~= parts[0];
@@ -1017,7 +1017,7 @@ class Cgi {
 		// FIXME: DOCUMENT_ROOT?
 
 		// FIXME: what about PUT?
-		if(requestMethod == RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT) {
+		if(requestMethod == RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT || requestMethod == Cgi.RequestMethod.CommandLine) {
 			version(preserveData) // a hack to make forwarding simpler
 				immutable(ubyte)[] data;
 			size_t amountReceived = 0;
