@@ -1,8 +1,7 @@
 /++
 	Creates a UNIX terminal emulator, nested in a minigui widget.
 
-	Depends on my terminalemulator.d core. Get it here:
-	https://github.com/adamdruppe/terminal-emulator/blob/master/terminalemulator.d
+	Depends on my terminalemulator.d core in the arsd repo.
 +/
 module arsd.minigui_addons.terminal_emulator_widget;
 ///

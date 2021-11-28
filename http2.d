@@ -4052,7 +4052,7 @@ template addToSimpledisplayEventLoop() {
 			while(ws.processOnce().populated) {}
 		}
 
-		version(linux) {
+		version(Posix) {
 			auto reader = new PosixFdReader(&midprocess, ws.socket.handle);
 		} else version(none) {
 			if(WSAAsyncSelect(ws.socket.handle, window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))

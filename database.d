@@ -1413,6 +1413,20 @@ auto saveToDatabase(T)(T t, Database database, string tableName = toDbName(__tra
 	return t.id;
 }
 
+/+ +
+	auto builder = UpdateBuilder("rooms");
+	builder.player_one_selection = challenge;
+	builder.execute(db, id);
++/
+private struct UpdateBuilder {
+	this(T)(string table, T id) {
+		this.table = table;
+		import std.conv;
+		this.id = to!string(id);
+	}
+
+}
+
 import std.traits, std.datetime;
 enum DbSave;
 enum DbNullable;

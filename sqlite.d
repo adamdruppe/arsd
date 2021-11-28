@@ -46,7 +46,7 @@ import std.conv;
 	scope(exit))
 */
 
-Sqlite openDBAndCreateIfNotPresent(string filename, string sql, void delegate(Sqlite db) initialize = null){
+Sqlite openDBAndCreateIfNotPresent(string filename, string sql, scope void delegate(Sqlite db) initialize = null){
 	if(exists(filename))
 		return new Sqlite(filename);
 	else {
