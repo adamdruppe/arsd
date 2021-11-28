@@ -10167,6 +10167,29 @@ class Button : MouseActivatedWidget {
 		});
 	}
 
+	override int flexBasisWidth() {
+		version(win32_widgets) {
+			SIZE size;
+			SendMessage(hwnd, BCM_GETIDEALSIZE, 0, cast(LPARAM) &size);
+			if(size.cx == 0)
+				goto fallback;
+			return size.cx + scaleWithDpi(16);
+		}
+		fallback:
+			return scaleWithDpi(cast(int) label.length * 8 + 16);
+	}
+
+	override int flexBasisHeight() {
+		version(win32_widgets) {
+			SIZE size;
+			SendMessage(hwnd, BCM_GETIDEALSIZE, 0, cast(LPARAM) &size);
+			if(size.cy == 0)
+				goto fallback;
+			return size.cy + scaleWithDpi(6);
+		}
+		fallback:
+			return defaultLineHeight + 4;
+	}
 }
 
 /++
