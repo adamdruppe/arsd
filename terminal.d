@@ -1148,7 +1148,6 @@ struct Terminal {
 	+/
 	this(ConsoleOutputType type) {
 		_initialized = true;
-		createLock();
 		this.type = type;
 
 		if(type == ConsoleOutputType.minimalProcessing) {
@@ -1245,7 +1244,6 @@ struct Terminal {
 	 */
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
 		_initialized = true;
-		createLock();
 		posixInitialize(type, fdIn, fdOut, getSizeOverride);
 	}
 
@@ -1366,7 +1364,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	/// ditto
 	this(ConsoleOutputType type) {
 		_initialized = true;
-		createLock();
 		if(UseVtSequences) {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 			initializeVt();
@@ -1835,7 +1832,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				hideCursor();
 			else if(UseVtSequences) {
 				// prepend the hide cursor command so it is the first thing flushed
-				lock(); scope(exit) unlock();
 				writeBuffer = "\033[?25l" ~ writeBuffer;
 			}
 
@@ -1899,7 +1895,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		if(writeBuffer.length == 0)
 			return;
-		lock(); scope(exit) unlock();
 
 		version(TerminalDirectToEmulator) {
 			if(usingDirectEmulator) {
@@ -2062,7 +2057,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	+/
 
 	void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
-		lock(); scope(exit) unlock();
 		// an escape character is going to mess things up. Actually any non-printable character could, but meh
 		// assert(s.indexOf("\033") == -1);
 
@@ -2178,33 +2172,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			fwrite(s.ptr, 1, s.length, stdout);
 			return;
 		}
-		lock(); scope(exit) unlock();
 
 		writeBuffer ~= s; // buffer it to do everything at once in flush() calls
 		if(writeBuffer.length >  1024 * 32)
 			flush();
 	}
 
-	import core.sync.mutex;
-	version(none)
-	private shared(Mutex) mutex;
-
-	private void createLock() {
-		version(none)
-		if(mutex is null)
-			mutex = new shared Mutex;
-	}
-
-	void lock() {
-		version(none)
-		if(mutex)
-			mutex.lock();
-	}
-	void unlock() {
-		version(none)
-		if(mutex)
-			mutex.unlock();
-	}
 
 	/// Clears the screen.
 	void clear() {
@@ -2519,6 +2492,7 @@ struct RealTimeConsoleInput {
 
 	/// To capture input, you need to provide a terminal and some flags.
 	public this(Terminal* terminal, ConsoleInputFlags flags) {
+		createLock();
 		_initialized = true;
 		this.flags = flags;
 		this.terminal = terminal;
@@ -3111,11 +3085,14 @@ struct RealTimeConsoleInput {
 			}
 		}
 
+		mutex.lock();
 		if(inputQueue.length) {
 			auto e = inputQueue[0];
 			inputQueue = inputQueue[1 .. $];
+			mutex.unlock();
 			return e;
 		}
+		mutex.unlock();
 
 		auto more = readNextEvents();
 		if(!more.length)
@@ -3124,18 +3101,54 @@ struct RealTimeConsoleInput {
 		assert(more.length);
 
 		auto e = more[0];
+		mutex.lock(); scope(exit) mutex.unlock();
 		inputQueue = more[1 .. $];
 		return e;
 	}
 
 	InputEvent* peekNextEvent() {
+		mutex.lock(); scope(exit) mutex.unlock();
 		if(inputQueue.length)
 			return &(inputQueue[0]);
 		return null;
 	}
 
+
+	import core.sync.mutex;
+	private shared(Mutex) mutex;
+
+	private void createLock() {
+		if(mutex is null)
+			mutex = new shared Mutex;
+	}
 	enum InjectionPosition { head, tail }
+
+	/++
+		Injects a custom event into the terminal input queue.
+
+		History:
+			`shared` overload added November 24, 2021 (dub v10.4)
+		Bugs:
+			Unless using `TerminalDirectToEmulator`, this will not wake up the
+			event loop if it is already blocking until normal terminal input
+			arrives anyway, then the event will be processed before the new event.
+
+			I might change this later.
+	+/
+	void injectEvent(CustomEvent ce) shared {
+		(cast() this).injectEvent(InputEvent(ce, cast(Terminal*) terminal), InjectionPosition.tail);
+
+		version(TerminalDirectToEmulator) {
+			if(terminal.usingDirectEmulator) {
+				(cast(Terminal*) terminal).tew.terminalEmulator.outgoingSignal.notify();
+				return;
+			}
+		}
+		// FIXME: for the others, i might need to wake up the WaitForSingleObject or select calls.
+	}
+
 	void injectEvent(InputEvent ev, InjectionPosition where) {
+		mutex.lock(); scope(exit) mutex.unlock();
 		final switch(where) {
 			case InjectionPosition.head:
 				inputQueue = ev ~ inputQueue;
@@ -4075,6 +4088,19 @@ struct HangupEvent {}
 struct EndOfFileEvent {}
 
 interface CustomEvent {}
+
+class RunnableCustomEvent : CustomEvent {
+	this(void delegate() dg) {
+		this.dg = dg;
+	}
+
+	void run() {
+		if(dg)
+			dg();
+	}
+
+	private void delegate() dg;
+}
 
 version(Win32Console)
 enum ModifierState : uint {
@@ -6813,6 +6839,10 @@ class LineGetter {
 				   yourself and then don't pass it to this function. */
 				// FIXME
 				initializeWithSize();
+			break;
+			case InputEvent.Type.CustomEvent:
+				if(auto rce = cast(RunnableCustomEvent) e.customEvent)
+					rce.run();
 			break;
 			case InputEvent.Type.UserInterruptionEvent:
 				/* I'll take this as canceling the line. */
