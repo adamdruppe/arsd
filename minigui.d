@@ -396,19 +396,21 @@ class Widget : ReflectableProperties {
 	private bool _enabled = true;
 
 	/++
-		Determines whether the control is enabled. Disabled controls are generally displayed as greyed out and clicking on them does nothing.
+		Determines whether the control is marked enabled. Disabled controls are generally displayed as greyed out and clicking on them does nothing. It is also possible for a control to be disabled because its parent is disabled, in which case this will still return `true`, but setting `enabled = true` may have no effect. Check [disabledBy] to see which parent caused it to be disabled.
 
 		I also recommend you set a [disabledReason] if you chose to set `enabled = false` to tell the user why the control does not work and what they can do to enable it.
 
 		History:
 			Added November 23, 2021 (dub v10.4)
+
+			Warning: the specific behavior of disabling with parents may change in the future.
 		Bugs:
 			Currently only implemented for widgets backed by native Windows controls.
 
-		See_Also: [disabledReason]
+		See_Also: [disabledReason], [disabledBy]
 	+/
 	@property bool enabled() {
-		return _enabled;
+		return disabledBy() is null;
 	}
 
 	/// ditto
@@ -426,17 +428,37 @@ class Widget : ReflectableProperties {
 	/++
 		If the widget is not [enabled] this string may be presented to the user when they try to use it. The exact manner and time it gets displayed is up to the implementation of the control.
 
+		Setting this does NOT disable the widget. You need to call `enabled = false;` separately. It does set the data though.
+
 		History:
 			Added November 23, 2021 (dub v10.4)
-		See_Also: [enabled]
+		See_Also: [enabled], [disabledBy]
 	+/
 	@property string disabledReason() {
-		return enabled() ? null : disabledReason_;
+		auto w = disabledBy();
+		return (w is null) ? null : w.disabledReason_;
 	}
 
 	/// ditto
 	@property void disabledReason(string reason) {
 		disabledReason_ = reason;
+	}
+
+	/++
+		Returns the widget that disabled this. It might be this or one of its parents all the way up the chain, or `null` if the widget is not disabled by anything. You can check [disabledReason] on the return value (after the null check!) to get a hint to display to the user.
+
+		History:
+			Added November 25, 2021 (dub v10.4)
+		See_Also: [enabled], [disabledReason]
+	+/
+	Widget disabledBy() {
+		Widget p = this;
+		while(p) {
+			if(!p._enabled) 
+				return p;
+			p = p.parent;
+		}
+		return null;
 	}
 
 	/// Implementations of [ReflectableProperties] interface. See the interface for details.
@@ -471,6 +493,27 @@ class Widget : ReflectableProperties {
 			default:
 				sink(name, null, true);
 		}
+	}
+
+	/++
+		Scales the given value to the system-reported DPI for the monitor on which the widget resides.
+
+		History:
+			Added November 25, 2021
+	+/
+	int scaleWithDpi(int value, int assumedDpi = 96) {
+		auto divide = (parentWindow && parentWindow.win) ? parentWindow.win.actualDpi : assumedDpi;
+		// for lower values it is something i don't really want changed anyway since it is an old monitor and you don't want to scale down.
+		// this also covers the case when actualDpi returns 0.
+		if(divide < 96)
+			divide = 96;
+		return value * divide / assumedDpi;
+	}
+
+	// avoid this it just forwards to a soon-to-be-deprecated function and is not remotely stable
+	// I'll think up something better eventually
+	protected final int defaultLineHeight() {
+		return scaleWithDpi(Window.lineHeight);
 	}
 
 	/++
@@ -1225,12 +1268,22 @@ class Widget : ReflectableProperties {
 	}
 
 	version(win32_widgets)
+	int handleWmDrawItem(DRAWITEMSTRUCT* dis) { return 0; }
+
+	version(win32_widgets)
 	/// Called when a WM_COMMAND is sent to the associated hwnd.
 	void handleWmCommand(ushort cmd, ushort id) {}
 
 	version(win32_widgets)
-	/// Called when a WM_NOTIFY is sent to the associated hwnd.
-	int handleWmNotify(NMHDR* hdr, int code) { return 0; }
+	/++
+		Called when a WM_NOTIFY is sent to the associated hwnd.
+
+		History:
+	+/
+	int handleWmNotify(NMHDR* hdr, int code, out int mustReturn) { return 0; }
+
+	version(win32_widgets)
+	deprecated("This overload is problematic since it is liable to discard return values. Add the `out int mustReturn` to your override as the last parameter and set it to 1 when you must forward the return value to Windows. Otherwise, you can just add the parameter then ignore it and use the default value of 0 to maintain the status quo.") int handleWmNotify(NMHDR* hdr, int code) { int ignored; return handleWmNotify(hdr, code, ignored); }
 
 	/++
 		This tip is displayed in the status bar (if there is one in the containing window) when the mouse moves over this widget.
@@ -1260,24 +1313,8 @@ class Widget : ReflectableProperties {
 
 		SimpleWindow simpleWindowWrappingHwnd;
 
+		// please note it IGNORES your return value and does NOT forward it to Windows!
 		int hookedWndProc(UINT iMessage, WPARAM wParam, LPARAM lParam) {
-			switch(iMessage) {
-
-				case WM_NOTIFY:
-					auto hdr = cast(NMHDR*) lParam;
-					auto hwndFrom = hdr.hwndFrom;
-					auto code = hdr.code;
-
-					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
-						return (*widgetp).handleWmNotify(hdr, code);
-					}
-				break;
-				case WM_COMMAND:
-					auto handle = cast(HWND) lParam;
-					auto cmd = HIWORD(wParam);
-					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
-				default:
-			}
 			return 0;
 		}
 	}
@@ -2048,11 +2085,11 @@ abstract class ComboboxBase : Widget {
 	}
 
 	version(win32_widgets) {
-		override int minHeight() { return Window.lineHeight + 6; }
-		override int maxHeight() { return Window.lineHeight + 6; }
+		override int minHeight() { return defaultLineHeight + 6; }
+		override int maxHeight() { return defaultLineHeight + 6; }
 	} else {
-		override int minHeight() { return Window.lineHeight + 4; }
-		override int maxHeight() { return Window.lineHeight + 4; }
+		override int minHeight() { return defaultLineHeight + 4; }
+		override int maxHeight() { return defaultLineHeight + 4; }
 	}
 
 	version(custom_widgets) {
@@ -2063,7 +2100,7 @@ abstract class ComboboxBase : Widget {
 		void popup() {
 			auto w = width;
 			// FIXME: suggestedDropdownHeight see below
-			auto h = cast(int) this.options.length * Window.lineHeight + 8;
+			auto h = cast(int) this.options.length * defaultLineHeight + 8;
 
 			auto coord = this.globalCoordinates();
 			auto dropDown = new SimpleWindow(
@@ -2080,7 +2117,7 @@ abstract class ComboboxBase : Widget {
 				painter.outlineColor = cs.foregroundColor;
 				foreach(option; options) {
 					painter.drawText(p, option);
-					p.y += Window.lineHeight;
+					p.y += defaultLineHeight;
 				}
 			}
 
@@ -2088,7 +2125,7 @@ abstract class ComboboxBase : Widget {
 				(MouseEvent event) {
 					if(event.type == MouseEventType.buttonReleased) {
 						dropDown.close();
-						auto element = (event.y - 4) / Window.lineHeight;
+						auto element = (event.y - 4) / defaultLineHeight;
 						if(element >= 0 && element <= options.length) {
 							selection_ = element;
 
@@ -2269,7 +2306,7 @@ class ComboBox : ComboboxBase {
 		} else static assert(false);
 	}
 
-	override int minHeight() { return Window.lineHeight * 3; }
+	override int minHeight() { return defaultLineHeight * 3; }
 	override int maxHeight() { return int.max; }
 	override int heightStretchiness() { return 5; }
 
@@ -2307,11 +2344,11 @@ class UpDownControl : Widget {
 		createWin32Window(this, "msctls_updown32"w, null, 4/*UDS_ALIGNRIGHT*/| 2 /* UDS_SETBUDDYINT */ | 16 /* UDS_AUTOBUDDY */ | 32 /* UDS_ARROWKEYS */);
 	}
 
-	override int minHeight() { return Window.lineHeight; }
-	override int maxHeight() { return Window.lineHeight * 3/2; }
+	override int minHeight() { return defaultLineHeight; }
+	override int maxHeight() { return defaultLineHeight * 3/2; }
 
-	override int minWidth() { return Window.lineHeight * 3/2; }
-	override int maxWidth() { return Window.lineHeight * 3/2; }
+	override int minWidth() { return defaultLineHeight * 3/2; }
+	override int maxWidth() { return defaultLineHeight * 3/2; }
 }
 +/
 
@@ -2923,14 +2960,140 @@ int mymax(int a, int b, int c) {
 // OK so we need to make getting at the native window stuff possible in simpledisplay.d
 // and here, it must be integrable with the layout, the event system, and not be painted over.
 version(win32_widgets) {
+
+	// this function just does stuff that a parent window needs for redirection
+	int WindowProcedureHelper(Widget this_, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, out int mustReturn) {
+		this_.hookedWndProc(msg, wParam, lParam);
+
+		switch(msg) {
+
+			case WM_VSCROLL, WM_HSCROLL:
+				auto pos = HIWORD(wParam);
+				auto m = LOWORD(wParam);
+
+				auto scrollbarHwnd = cast(HWND) lParam;
+
+				if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
+
+					//auto smw = cast(ScrollMessageWidget) widgetp.parent;
+
+					switch(m) {
+						/+
+						// I don't think those messages are ever actually sent normally by the widget itself,
+						// they are more used for the keyboard interface. methinks.
+						case SB_BOTTOM:
+							//import std.stdio; writeln("end");
+							auto event = new Event("scrolltoend", *widgetp);
+							event.dispatch();
+							//if(!event.defaultPrevented)
+						break;
+						case SB_TOP:
+							//import std.stdio; writeln("top");
+							auto event = new Event("scrolltobeginning", *widgetp);
+							event.dispatch();
+						break;
+						case SB_ENDSCROLL:
+							// idk
+						break;
+						+/
+						case SB_LINEDOWN:
+							(*widgetp).emitCommand!"scrolltonextline"();
+						return 0;
+						case SB_LINEUP:
+							(*widgetp).emitCommand!"scrolltopreviousline"();
+						return 0;
+						case SB_PAGEDOWN:
+							(*widgetp).emitCommand!"scrolltonextpage"();
+						return 0;
+						case SB_PAGEUP:
+							(*widgetp).emitCommand!"scrolltopreviouspage"();
+						return 0;
+						case SB_THUMBPOSITION:
+							auto ev = new ScrollToPositionEvent(*widgetp, pos);
+							ev.dispatch();
+						return 0;
+						case SB_THUMBTRACK:
+							// eh kinda lying but i like the real time update display
+							auto ev = new ScrollToPositionEvent(*widgetp, pos);
+							ev.dispatch();
+							// the event loop doesn't seem to carry on with a requested redraw..
+							// so we request it to get our dirty bit set...
+							// then we need to immediately actually redraw it too for instant feedback to user
+							if(this_.parentWindow)
+								this_.parentWindow.actualRedraw();
+						return 0;
+						default:
+					}
+				}
+			break;
+
+			case WM_CONTEXTMENU:
+				auto hwndFrom = cast(HWND) wParam;
+
+				auto xPos = cast(short) LOWORD(lParam); 
+				auto yPos = cast(short) HIWORD(lParam); 
+
+				if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+					POINT p;
+					p.x = xPos;
+					p.y = yPos;
+					ScreenToClient(hwnd, &p);
+					auto clientX = cast(ushort) p.x;
+					auto clientY = cast(ushort) p.y;
+
+					auto wap = widgetAtPoint(*widgetp, clientX, clientY);
+
+					if(wap.widget.showContextMenu(wap.x, wap.y, xPos, yPos)) {
+						return 0;
+					}
+				}
+			break;
+
+			case WM_DRAWITEM:
+				auto dis = cast(DRAWITEMSTRUCT*) lParam;
+				if(auto widgetp = dis.hwndItem in Widget.nativeMapping) {
+					return (*widgetp).handleWmDrawItem(dis);
+				}
+			break;
+
+			case WM_NOTIFY:
+				auto hdr = cast(NMHDR*) lParam;
+				auto hwndFrom = hdr.hwndFrom;
+				auto code = hdr.code;
+
+				if(auto widgetp = hwndFrom in Widget.nativeMapping) {
+					return (*widgetp).handleWmNotify(hdr, code, mustReturn);
+				}
+			break;
+			case WM_COMMAND:
+				auto handle = cast(HWND) lParam;
+				auto cmd = HIWORD(wParam);
+				return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
+
+			default:
+				// pass it on
+		}
+		return 0;
+	}
+
+
+
 	extern(Windows)
 	private
+	// this is called by native child windows, whereas the other hook is done by simpledisplay windows
+	// but can i merge them?!
 	LRESULT HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
+
 		if(auto te = hWnd in Widget.nativeMapping) {
 			try {
 
 				te.hookedWndProc(iMessage, wParam, lParam);
+
+				int mustReturn;
+				auto ret = WindowProcedureHelper(*te, hWnd, iMessage, wParam, lParam, mustReturn);
+				if(mustReturn)
+					return ret;
 
 				if(iMessage == WM_SETFOCUS) {
 					auto lol = *te;
@@ -2941,13 +3104,11 @@ version(win32_widgets) {
 				}
 
 
-
 				if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
 					SetBkMode(cast(HDC) wParam, TRANSPARENT);
 					return cast(typeof(return)) GetSysColorBrush(COLOR_3DFACE); // this is the window background color...
 						//GetStockObject(NULL_BRUSH);
 				}
-
 
 				auto pos = getChildPositionRelativeToParentOrigin(*te);
 				lastDefaultPrevented = false;
@@ -3987,7 +4148,7 @@ class ListWidget : ListWidgetBase {
 	version(custom_widgets)
 	override void defaultEventHandler_click(ClickEvent event) {
 		this.focus();
-		auto y = (event.clientY - 4) / Window.lineHeight;
+		auto y = (event.clientY - 4) / defaultLineHeight;
 		if(y >= 0 && y < options.length) {
 			setSelection(y);
 		}
@@ -4026,17 +4187,17 @@ class ListWidget : ListWidgetBase {
 		foreach(idx, option; options) {
 			painter.fillColor = Color.white;
 			painter.outlineColor = Color.white;
-			painter.drawRectangle(pos, width - 8, Window.lineHeight);
+			painter.drawRectangle(pos, width - 8, defaultLineHeight);
 			painter.outlineColor = cs.foregroundColor;
 			painter.drawText(pos, option.label);
 			if(option.selected) {
 				painter.rasterOp = RasterOp.xor;
 				painter.outlineColor = Color.white;
 				painter.fillColor = cs.activeListXorColor;
-				painter.drawRectangle(pos, width - 8, Window.lineHeight);
+				painter.drawRectangle(pos, width - 8, defaultLineHeight);
 				painter.rasterOp = RasterOp.normal;
 			}
-			pos.y += Window.lineHeight;
+			pos.y += defaultLineHeight;
 		}
 	}
 
@@ -4055,7 +4216,7 @@ class ListWidget : ListWidgetBase {
 			SendMessageW(hwnd, LB_ADDSTRING, 0, cast(LPARAM) buffer.ptr);
 		}
 		version(custom_widgets) {
-			setContentSize(width, cast(int) (options.length * Window.lineHeight));
+			setContentSize(width, cast(int) (options.length * defaultLineHeight));
 			redraw();
 		}
 	}
@@ -4718,73 +4879,6 @@ class ScrollableContainerWidget : ContainerWidget {
 	}
 
 	override int minHeight() { return 64; }
-
-	version(win32_widgets)
-	override int hookedWndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
-		switch(msg) {
-			case WM_VSCROLL, WM_HSCROLL:
-				auto pos = HIWORD(wParam);
-				auto m = LOWORD(wParam);
-
-				auto scrollbarHwnd = cast(HWND) lParam;
-
-
-				if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
-
-					//auto smw = cast(ScrollMessageWidget) widgetp.parent;
-
-					switch(m) {
-						/+
-						// I don't think those messages are ever actually sent normally by the widget itself,
-						// they are more used for the keyboard interface. methinks.
-						case SB_BOTTOM:
-							//import std.stdio; writeln("end");
-							auto event = new Event("scrolltoend", *widgetp);
-							event.dispatch();
-							//if(!event.defaultPrevented)
-						break;
-						case SB_TOP:
-							//import std.stdio; writeln("top");
-							auto event = new Event("scrolltobeginning", *widgetp);
-							event.dispatch();
-						break;
-						case SB_ENDSCROLL:
-							// idk
-						break;
-						+/
-						case SB_LINEDOWN:
-							(*widgetp).emitCommand!"scrolltonextline"();
-						break;
-						case SB_LINEUP:
-							(*widgetp).emitCommand!"scrolltopreviousline"();
-						break;
-						case SB_PAGEDOWN:
-							(*widgetp).emitCommand!"scrolltonextpage"();
-						break;
-						case SB_PAGEUP:
-							(*widgetp).emitCommand!"scrolltopreviouspage"();
-						break;
-						case SB_THUMBPOSITION:
-							auto ev = new ScrollToPositionEvent(*widgetp, pos);
-							ev.dispatch();
-						break;
-						case SB_THUMBTRACK:
-							// eh kinda lying but i like the real time update display
-							auto ev = new ScrollToPositionEvent(*widgetp, pos);
-							ev.dispatch();
-							// the event loop doesn't seem to carry on with a requested redraw..
-							// so we request it to get our dirty bit set...
-							// then we need to immediately actually redraw it too for instant feedback to user
-							if(parentWindow)
-								parentWindow.actualRedraw();
-						break;
-						default:
-					}
-				}
-			default:
-		}
-		return 0;
-	}
 
 	HorizontalScrollbar hsb;
 	VerticalScrollbar vsb;
@@ -6013,7 +6107,7 @@ class TabWidget : Widget {
 
 			max = rect.bottom;
 		} else {
-			max += Window.lineHeight + 4;
+			max += defaultLineHeight + 4;
 		}
 
 
@@ -6021,7 +6115,7 @@ class TabWidget : Widget {
 	}
 
 	version(win32_widgets)
-	override int handleWmNotify(NMHDR* hdr, int code) {
+	override int handleWmNotify(NMHDR* hdr, int code, out int mustReturn) {
 		switch(code) {
 			case TCN_SELCHANGE:
 				auto sel = TabCtrl_GetCurSel(hwnd);
@@ -6089,7 +6183,7 @@ class TabWidget : Widget {
 
 	version(custom_widgets) {
 		private int currentTab_;
-		private int tabBarHeight() { return Window.lineHeight; }
+		private int tabBarHeight() { return defaultLineHeight; }
 		int tabWidth = 80;
 	}
 
@@ -7066,6 +7160,10 @@ class Window : Widget {
 			}
 		};
 
+		win.onDpiChanged = {
+			this.queueRecomputeChildLayout();
+		};
+
 		win.setEventHandlers(
 			(MouseEvent e) {
 				dispatchMouseEvent(e);
@@ -7090,113 +7188,13 @@ class Window : Widget {
 		});
 
 		version(win32_widgets)
-		win.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-
+		win.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, out int mustReturn) {
 			if(hwnd !is this.win.impl.hwnd)
-				return 1; // we don't care...
-			switch(msg) {
-
-				case WM_VSCROLL, WM_HSCROLL:
-					auto pos = HIWORD(wParam);
-					auto m = LOWORD(wParam);
-
-					auto scrollbarHwnd = cast(HWND) lParam;
-
-
-					if(auto widgetp = scrollbarHwnd in Widget.nativeMapping) {
-
-						//auto smw = cast(ScrollMessageWidget) widgetp.parent;
-
-						switch(m) {
-							/+
-							// I don't think those messages are ever actually sent normally by the widget itself,
-							// they are more used for the keyboard interface. methinks.
-							case SB_BOTTOM:
-								//import std.stdio; writeln("end");
-								auto event = new Event("scrolltoend", *widgetp);
-								event.dispatch();
-								//if(!event.defaultPrevented)
-							break;
-							case SB_TOP:
-								//import std.stdio; writeln("top");
-								auto event = new Event("scrolltobeginning", *widgetp);
-								event.dispatch();
-							break;
-							case SB_ENDSCROLL:
-								// idk
-							break;
-							+/
-							case SB_LINEDOWN:
-								(*widgetp).emitCommand!"scrolltonextline"();
-							break;
-							case SB_LINEUP:
-								(*widgetp).emitCommand!"scrolltopreviousline"();
-							break;
-							case SB_PAGEDOWN:
-								(*widgetp).emitCommand!"scrolltonextpage"();
-							break;
-							case SB_PAGEUP:
-								(*widgetp).emitCommand!"scrolltopreviouspage"();
-							break;
-							case SB_THUMBPOSITION:
-								auto ev = new ScrollToPositionEvent(*widgetp, pos);
-								ev.dispatch();
-							break;
-							case SB_THUMBTRACK:
-								// eh kinda lying but i like the real time update display
-								auto ev = new ScrollToPositionEvent(*widgetp, pos);
-								ev.dispatch();
-								// the event loop doesn't seem to carry on with a requested redraw..
-								// so we request it to get our dirty bit set...
-								// then we need to immediately actually redraw it too for instant feedback to user
-								if(parentWindow)
-									parentWindow.actualRedraw();
-							break;
-							default:
-						}
-					} else {
-						return 1;
-					}
-				break;
-
-				case WM_CONTEXTMENU:
-					auto hwndFrom = cast(HWND) wParam;
-
-					auto xPos = cast(short) LOWORD(lParam); 
-					auto yPos = cast(short) HIWORD(lParam); 
-
-					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
-						POINT p;
-						p.x = xPos;
-						p.y = yPos;
-						ScreenToClient(hwnd, &p);
-						auto clientX = cast(ushort) p.x;
-						auto clientY = cast(ushort) p.y;
-
-						auto wap = widgetAtPoint(*widgetp, clientX, clientY);
-
-						if(!wap.widget.showContextMenu(wap.x, wap.y, xPos, yPos))
-							return 1; // it didn't show above, pass message on
-					}
-				break;
-
-				case WM_NOTIFY:
-					auto hdr = cast(NMHDR*) lParam;
-					auto hwndFrom = hdr.hwndFrom;
-					auto code = hdr.code;
-
-					if(auto widgetp = hwndFrom in Widget.nativeMapping) {
-						return (*widgetp).handleWmNotify(hdr, code);
-					}
-				break;
-				case WM_COMMAND:
-					auto handle = cast(HWND) lParam;
-					auto cmd = HIWORD(wParam);
-					return processWmCommand(hwnd, handle, cmd, LOWORD(wParam));
-
-				default: return 1; // not handled, pass it on
-			}
-			return 0;
+				return 1; // we don't care... pass it on
+			auto ret = WindowProcedureHelper(this, hwnd, msg, wParam, lParam, mustReturn);
+			if(mustReturn)
+				return ret;
+			return 1; // pass it on
 		};
 	}
 
@@ -7647,12 +7645,13 @@ class DetailsView : Widget {
 /++
 	A TableView is a widget made to display a table of data strings.
 
-	Warning: this is not fully stable and the api may still change.
 
 	Future_Directions:
 		Each item should be able to take an icon too and maybe I'll allow more of the view modes Windows offers.
+
+		I will add a selection changed event at some point, as well as item clicked events.
 	History:
-		Added September 24, 2021. Not yet stablized at this time.
+		Added September 24, 2021. Initial api stabilized in dub v10.4, but it isn't completely feature complete yet.
 	See_Also:
 		[ListWidget] which displays a list of strings without additional columns.
 +/
@@ -7664,7 +7663,7 @@ class TableView : Widget {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, WC_LISTVIEW, "", LVS_REPORT | LVS_OWNERDATA);
+			createWin32Window(this, WC_LISTVIEW, "", LVS_REPORT | LVS_OWNERDATA);//| LVS_OWNERDRAWFIXED);
 		} else version(custom_widgets) {
 			auto smw = new ScrollMessageWidget(this);
 			smw.addDefaultKeyboardListeners();
@@ -7819,12 +7818,105 @@ class TableView : Widget {
 		}
 	}
 
+	/+
 	version(win32_widgets)
-	override int handleWmNotify(NMHDR* hdr, int code) {
+	override int handleWmDrawItem(DRAWITEMSTRUCT* dis) 
+		auto itemId = dis.itemID;
+		auto hdc = dis.hDC;
+		auto rect = dis.rcItem;
+		switch(dis.itemAction) {
+			case ODA_DRAWENTIRE:
+
+				// FIXME: do other items
+				// FIXME: do the focus rectangle i guess
+				// FIXME: alignment
+				// FIXME: column width
+				// FIXME: padding left
+				// FIXME: check dpi scaling
+				// FIXME: don't owner draw unless it is necessary.
+
+				auto padding = GetSystemMetrics(SM_CXEDGE); // FIXME: for dpi
+				RECT itemRect;
+				itemRect.top = 1; // subitem idx, 1-based
+				itemRect.left = LVIR_BOUNDS;
+
+				SendMessage(hwnd, LVM_GETSUBITEMRECT, itemId, cast(LPARAM) &itemRect);
+				itemRect.left += padding;
+
+				getData(itemId, 0, (in char[] data) {
+					auto wdata = WCharzBuffer(data);
+					DrawTextW(hdc, wdata.ptr, wdata.length, &itemRect, DT_RIGHT| DT_END_ELLIPSIS);
+
+				});
+			goto case;
+			case ODA_FOCUS:
+				if(dis.itemState & ODS_FOCUS)
+					DrawFocusRect(hdc, &rect);
+			break;
+			case ODA_SELECT:
+				// itemState & ODS_SELECTED
+			break;
+			default:
+		}
+		return 1;
+	}
+	+/
+
+
+	version(win32_widgets)
+	override int handleWmNotify(NMHDR* hdr, int code, out int mustReturn) {
 		switch(code) {
+			case NM_CUSTOMDRAW:
+				auto s = cast(NMLVCUSTOMDRAW*) hdr;
+				switch(s.nmcd.dwDrawStage) {
+					case CDDS_PREPAINT:
+						if(getCellStyle is null)
+							return 0;
+
+						mustReturn = true;
+						return CDRF_NOTIFYITEMDRAW;
+					case CDDS_ITEMPREPAINT:
+						mustReturn = true;
+						return CDRF_NOTIFYSUBITEMDRAW;
+					case CDDS_ITEMPREPAINT | CDDS_SUBITEM:
+						mustReturn = true;
+
+						if(getCellStyle is null) // this SHOULD never happen...
+							return 0;
+
+						auto style = getCellStyle(s.nmcd.dwItemSpec, s.iSubItem);
+						if(style == CellStyle.init)
+							return 0; // allow default processing to continue
+
+						if(style.flags & CellStyle.Flags.textColorSet)
+							s.clrText = style.textColor.asWindowsColorRef;
+						else
+							s.clrText = 0; // reset in case it was set from last iteration not a fan
+						if(style.flags & CellStyle.Flags.backgroundColorSet)
+							s.clrTextBk = style.backgroundColor.asWindowsColorRef;
+						else
+							s.clrTextBk = Color.white.asWindowsColorRef; // need to reset it... not a fan of this
+
+						return CDRF_NEWFONT;
+					default:
+						return 0;
+
+				}
+			case NM_RETURN: // no need since i subclass keydown
+			break;
+			case LVN_COLUMNCLICK:
+				auto info = cast(LPNMLISTVIEW) hdr;
+				this.emit!HeaderClickedEvent(info.iSubItem);
+			break;
+			case NM_CLICK:
+			case NM_DBLCLK:
+			case NM_RCLICK:
+			case NM_RDBLCLK:
+				// the item/subitem is set here and that can be a useful notification
+				// even beyond the normal click notification
+			break;
 			case LVN_GETDISPINFO:
 				LV_DISPINFO* info = cast(LV_DISPINFO*) hdr;
-
 				if(info.item.mask & LVIF_TEXT) {
 					if(getData) {
 						getData(info.item.iItem, info.item.iSubItem, (in char[] dataReceived) {
@@ -7869,15 +7961,115 @@ class TableView : Widget {
 	}
 
 	/++
-
+		Called by the system to request the text content of an individual cell. You
+		should pass the text into the provided `sink` delegate. This function will be
+		called for each visible cell as-needed when drawing.
 	+/
 	void delegate(int row, int column, scope void delegate(in char[]) sink) getData;
+
+	/++
+		Available per-cell style customization options. Use one of the constructors
+		provided to set the values conveniently, or default construct it and set individual
+		values yourself. Just remember to set the `flags` so your values are actually used.
+		If the flag isn't set, the field is ignored and the system default is used instead.
+
+		This is returned by the [getCellStyle] delegate.
+
+		Examples:
+			---
+			// assumes you have a variables called `my_data` which is an array of arrays of numbers
+			auto table = new TableView(window);
+			// snip: you would set up columns here
+
+			// this is how you provide data to the table view class
+			table.getData = delegate(int row, int column, scope void delegate(in char[]) sink) {
+				import std.conv;
+				sink(to!string(my_data[row][column]));
+			};
+
+			// and this is how you customize the colors
+			table.getCellStyle = delegate(int row, int column) {
+				return (my_data[row][column] < 0) ?
+					TableView.CellStyle(Color.red); // make negative numbers red
+					: TableView.CellStyle.init; // leave the rest alone
+			};
+			// snip: you would call table.setItemCount here then continue with the rest of your window setup work
+			---
+
+		History:
+			Added November 27, 2021 (dub v10.4)
+	+/
+	struct CellStyle {
+		/// Sets just a custom text color, leaving the background as the default. Use caution with certain colors as it may have illeglible contrast on the (unknown to you) background color.
+		this(Color textColor) {
+			this.textColor = textColor;
+			this.flags |= Flags.textColorSet;
+		}
+		/// Sets a custom text and background color.
+		this(Color textColor, Color backgroundColor) {
+			this.textColor = textColor;
+			this.backgroundColor = backgroundColor;
+			this.flags |= Flags.textColorSet | Flags.backgroundColorSet;
+		}
+
+		Color textColor;
+		Color backgroundColor;
+		int flags; /// bitmask of [Flags]
+		/// available options to combine into [flags]
+		enum Flags {
+			textColorSet = 1 << 0,
+			backgroundColorSet = 1 << 1,
+		}
+	}
+	/++
+		Companion delegate to [getData] that allows you to custom style each
+		cell of the table.
+
+		Returns:
+			A [CellStyle] structure that describes the desired style for the
+			given cell. `return CellStyle.init` if you want the default style.
+
+		History:
+			Added November 27, 2021 (dub v10.4)
+	+/
+	CellStyle delegate(int row, int column) getCellStyle;
 
 
 
 	// i want to be able to do things like draw little colored things to show red for negative numbers
 	// or background color indicators or even in-cell charts
 	// void delegate(int row, int column, WidgetPainter painter, int width, int height, in char[] text) drawCell;
+
+	/++
+		When the user clicks on a header, this event is emitted. It has a meber to identify which header (by index) was clicked.
+	+/
+	mixin Emits!HeaderClickedEvent;
+}
+
+/++
+	This is emitted by the [TableView] when a user clicks on a column header.
+
+	Its member `columnIndex` has the zero-based index of the column that was clicked.
+
+	The default behavior of this event is to do nothing, so `preventDefault` has no effect.
+
+	History:
+		Added November 27, 2021 (dub v10.4)
++/
+class HeaderClickedEvent : Event {
+	enum EventString = "HeaderClicked";
+	this(Widget target, int columnIndex) {
+		this.columnIndex = columnIndex;
+		super(EventString, target);
+	}
+
+	/// The index of the column
+	int columnIndex;
+
+	///
+	override @property int intValue() {
+		return columnIndex;
+	}
 }
 
 version(custom_widgets)
@@ -7953,7 +8145,30 @@ private class TableViewWidgetInner : Widget {
 					}
 					tvw.getData(row, cast(int) columnNumber, (info) {
 						// auto clip = painter.setClipRectangle(
-						painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x, y + lh), column.alignment);
+
+						void dotext(WidgetPainter painter) {
+							painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x, y + lh), column.alignment);
+						}
+
+						if(tvw.getCellStyle !is null) {
+							auto style = tvw.getCellStyle(row, cast(int) columnNumber);
+
+							if(style.flags & TableView.CellStyle.Flags.backgroundColorSet) {
+								auto tempPainter = painter;
+								tempPainter.fillColor = style.backgroundColor;
+								tempPainter.outlineColor = style.backgroundColor;
+
+								tempPainter.drawRectangle(Point(startX - smw.position.x, y), 
+									Point(endX - smw.position.x, y + lh));
+							}
+							auto tempPainter = painter;
+							if(style.flags & TableView.CellStyle.Flags.textColorSet)
+								tempPainter.outlineColor = style.textColor;
+
+							dotext(tempPainter);
+						} else {
+							dotext(painter);
+						}
 					});
 				}
 
@@ -7978,6 +8193,22 @@ private class TableViewWidgetInner : Widget {
 			this.tvw = tvw;
 
 			this.remainder = new Button("", this);
+
+			this.addEventListener((scope ClickEvent ev) {
+				int header = -1;
+				foreach(idx, child; this.children[1 .. $]) {
+					if(child is ev.target) {
+						header = cast(int) idx;
+						break;
+					}
+				}
+
+				if(header != -1) {
+					auto hce = new HeaderClickedEvent(tvw.tvw, header);
+					hce.dispatch();
+				}
+
+			});
 		}
 
 		void updateHeaders() {
@@ -8103,8 +8334,8 @@ class Labeled(T) : Widget {
 
 	override int flexBasisWidth() { return 250; }
 
-	override int minHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
-	override int maxHeight() { return (horizontal ? 1 : 2) * Window.lineHeight + 4; }
+	override int minHeight() { return (horizontal ? 1 : 2) * defaultLineHeight + 4; }
+	override int maxHeight() { return (horizontal ? 1 : 2) * defaultLineHeight + 4; }
 	override int marginTop() { return 4; }
 	override int marginBottom() { return 4; }
 
@@ -8473,8 +8704,8 @@ class ToolBar : Widget {
 		override int minHeight() { return idealHeight; }
 		override int maxHeight() { return idealHeight; }
 	} else version(custom_widgets) {
-		override int minHeight() { return toolbarIconSize; }// Window.lineHeight * 3/2; }
-		override int maxHeight() { return toolbarIconSize; } //Window.lineHeight * 3/2; }
+		override int minHeight() { return toolbarIconSize; }// defaultLineHeight * 3/2; }
+		override int maxHeight() { return toolbarIconSize; } //defaultLineHeight * 3/2; }
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
@@ -8751,8 +8982,8 @@ class MenuBar : Widget {
 		.recomputeChildLayout!"width"(this);
 	}
 
-	override int maxHeight() { return Window.lineHeight + 4; }
-	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return defaultLineHeight + 4; }
+	override int minHeight() { return defaultLineHeight + 4; }
 }
 
 
@@ -8895,8 +9126,8 @@ class StatusBar : Widget {
 		override int maxHeight() { return idealHeight; }
 		override int minHeight() { return idealHeight; }
 	} else version(custom_widgets) {
-		override int maxHeight() { return Window.lineHeight + 4; }
-		override int minHeight() { return Window.lineHeight + 4; }
+		override int maxHeight() { return defaultLineHeight + 4; }
+		override int minHeight() { return defaultLineHeight + 4; }
 	} else static assert(false);
 }
 
@@ -9032,9 +9263,9 @@ class Fieldset : Widget {
 	// FIXME: on Windows,it doesn't draw the background on the label
 	// on X, it doesn't fix the clipping rectangle for it
 	version(win32_widgets)
-		override int paddingTop() { return Window.lineHeight; }
+		override int paddingTop() { return defaultLineHeight; }
 	else version(custom_widgets)
-		override int paddingTop() { return Window.lineHeight + 2; }
+		override int paddingTop() { return defaultLineHeight + 2; }
 	else static assert(false);
 	override int paddingBottom() { return 6; }
 	override int paddingLeft() { return 6; }
@@ -9068,7 +9299,7 @@ class Fieldset : Widget {
 		painter.fillColor = Color.transparent;
 		auto cs = getComputedStyle();
 		painter.pen = Pen(cs.foregroundColor, 1);
-		painter.drawRectangle(Point(0, Window.lineHeight / 2), width, height - Window.lineHeight / 2);
+		painter.drawRectangle(Point(0, defaultLineHeight / 2), width, height - Window.lineHeight / 2);
 
 		auto tx = painter.textSize(legend);
 		painter.outlineColor = Color.transparent;
@@ -9202,7 +9433,7 @@ class Menu : Window {
 			}
 
 			if(offsetY == int.min)
-				offsetY = parent.parentWindow.lineHeight;
+				offsetY = parent.defaultLineHeight;
 
 			auto coord = parent.globalCoordinates();
 			dropDown.moveResize(coord.x + offsetX, coord.y + offsetY, w, h);
@@ -9293,8 +9524,8 @@ class Menu : Window {
 		}
 	} else static assert(false);
 
-	override int maxHeight() { return Window.lineHeight; }
-	override int minHeight() { return Window.lineHeight; }
+	override int maxHeight() { return defaultLineHeight; }
+	override int minHeight() { return defaultLineHeight; }
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
@@ -9313,12 +9544,12 @@ class MenuItem : MouseActivatedWidget {
 
 	override int paddingLeft() { return 4; }
 
-	override int maxHeight() { return Window.lineHeight + 4; }
-	override int minHeight() { return Window.lineHeight + 4; }
-	override int minWidth() { return Window.lineHeight * cast(int) label.length + 8; }
+	override int maxHeight() { return defaultLineHeight + 4; }
+	override int minHeight() { return defaultLineHeight + 4; }
+	override int minWidth() { return defaultLineHeight * cast(int) label.length + 8; }
 	override int maxWidth() {
 		if(cast(MenuBar) parent) {
-			return Window.lineHeight / 2 * cast(int) label.length + 8;
+			return defaultLineHeight / 2 * cast(int) label.length + 8;
 		}
 		return int.max;
 	}
@@ -9549,11 +9780,11 @@ struct ImageLabel {
 +/
 class Checkbox : MouseActivatedWidget {
 	version(win32_widgets) {
-		override int maxHeight() { return 16; }
-		override int minHeight() { return 16; }
+		override int maxHeight() { return scaleWithDpi(16); }
+		override int minHeight() { return scaleWithDpi(16); }
 	} else version(custom_widgets) {
-		override int maxHeight() { return Window.lineHeight; }
-		override int minHeight() { return Window.lineHeight; }
+		override int maxHeight() { return defaultLineHeight; }
+		override int minHeight() { return defaultLineHeight; }
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
@@ -9700,11 +9931,11 @@ class HorizontalSpacer : Widget {
 class Radiobox : MouseActivatedWidget {
 
 	version(win32_widgets) {
-		override int maxHeight() { return 16; }
-		override int minHeight() { return 16; }
+		override int maxHeight() { return scaleWithDpi(16); }
+		override int minHeight() { return scaleWithDpi(16); }
 	} else version(custom_widgets) {
-		override int maxHeight() { return Window.lineHeight; }
-		override int minHeight() { return Window.lineHeight; }
+		override int maxHeight() { return defaultLineHeight; }
+		override int minHeight() { return defaultLineHeight; }
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
@@ -9887,7 +10118,7 @@ class Button : MouseActivatedWidget {
 		this(ImageLabel(label), parent);
 	}
 
-	override int minHeight() { return Window.lineHeight + 4; }
+	override int minHeight() { return defaultLineHeight + 4; }
 
 	static class Style : Widget.Style {
 		override WidgetBackground background() {
@@ -9947,11 +10178,11 @@ class CommandButton : Button {
 	}
 
 	override int maxHeight() {
-		return Window.lineHeight + 4;
+		return defaultLineHeight + 4;
 	}
 
 	override int maxWidth() {
-		return Window.lineHeight * 4;
+		return defaultLineHeight * 4;
 	}
 
 	override int marginLeft() { return 12; }
@@ -10047,6 +10278,7 @@ int[2] getChildPositionRelativeToParentOrigin(Widget c) nothrow {
 version(win32_widgets)
 private
 int[2] getChildPositionRelativeToParentHwnd(Widget c) nothrow {
+// MapWindowPoints?
 	int x, y;
 	Widget par = c;
 	while(par) {
@@ -10133,8 +10365,8 @@ class ImageBox : Widget {
 
 ///
 class TextLabel : Widget {
-	override int maxHeight() { return Window.lineHeight; }
-	override int minHeight() { return Window.lineHeight; }
+	override int maxHeight() { return defaultLineHeight; }
+	override int minHeight() { return defaultLineHeight; }
 	override int minWidth() { return 32; }
 
 	override int flexBasisHeight() { return minHeight(); }
@@ -10230,7 +10462,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 
 	override int minWidth() { return 16; }
-	override int minHeight() { return Window.lineHeight + 0; } // the +0 is to leave room for the padding
+	override int minHeight() { return defaultLineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 7; }
 
 	void selectAll() {
@@ -10547,8 +10779,8 @@ class LineEdit : EditableTextWidget {
 			});
 		} else static assert(false);
 	}
-	override int maxHeight() { return Window.lineHeight + 4; }
-	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return defaultLineHeight + 4; }
+	override int minHeight() { return defaultLineHeight + 4; }
 
 	/+
 	@property void passwordMode(bool p) {
@@ -10590,8 +10822,8 @@ class PasswordEdit : EditableTextWidget {
 			});
 		} else static assert(false);
 	}
-	override int maxHeight() { return Window.lineHeight + 4; }
-	override int minHeight() { return Window.lineHeight + 4; }
+	override int maxHeight() { return defaultLineHeight + 4; }
+	override int minHeight() { return defaultLineHeight + 4; }
 }
 
 
@@ -12170,7 +12402,7 @@ void getFileName(
 	bool openOrSave,
 	void delegate(string) onOK,
 	string prefilledName = null,
-	string[] filters = null,
+	string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
 	void delegate() onCancel = null,
 )
 {
@@ -12192,9 +12424,19 @@ void getFileName(
 
 
 		wchar[1024] file = 0;
+		wchar[1024] filterBuffer = 0;
 		makeWindowsString(prefilledName, file[]);
 		OPENFILENAME ofn;
 		ofn.lStructSize = ofn.sizeof;
+		if(filters.length) {
+			string filter;
+			foreach(i, f; filters) {
+				filter ~= f;
+				filter ~= "\0";
+			}
+			filter ~= "\0";
+			ofn.lpstrFilter = makeWindowsString(filter, filterBuffer[], 0 /* already terminated */).ptr;
+		}
 		ofn.lpstrFile = file.ptr;
 		ofn.nMaxFile = file.length;
 		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) {
@@ -12526,10 +12768,10 @@ class AutomaticDialog(T) : Dialog {
 	void delegate(T) onOK;
 	void delegate() onCancel;
 
-	override int paddingTop() { return Window.lineHeight; }
-	override int paddingBottom() { return Window.lineHeight; }
-	override int paddingRight() { return Window.lineHeight; }
-	override int paddingLeft() { return Window.lineHeight; }
+	override int paddingTop() { return defaultLineHeight; }
+	override int paddingBottom() { return defaultLineHeight; }
+	override int paddingRight() { return defaultLineHeight; }
+	override int paddingLeft() { return defaultLineHeight; }
 
 	this(void delegate(T) onOK, void delegate() onCancel, string title) {
 		assert(onOK !is null);
@@ -12537,7 +12779,7 @@ class AutomaticDialog(T) : Dialog {
 			t = new T();
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, cast(int)(__traits(allMembers, T).length * 2) * (Window.lineHeight + 4 + 2) + Window.lineHeight + 56, title);
+		super(400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + 4 + 2) + Window.lineHeight + 56, title);
 
 		static if(is(T == class))
 			this.addDataControllerWidget(t);
@@ -12978,6 +13220,73 @@ final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 	Color lightAccentColor() { return windowBackgroundColor; }
 	+/
 }
+
+/++
+	Event fired when an [Observeable] variable changes. You will want to add an event listener referencing
+	the field like `widget.addEventListener((scope StateChanged!(Whatever.field) ev) { });`
+
+	History:
+		Moved from minigui_addons.webview to main minigui on November 27, 2021 (dub v10.4)
++/
+class StateChanged(alias field) : Event {
+	enum EventString = __traits(identifier, __traits(parent, field)) ~ "." ~ __traits(identifier, field) ~ ":change";
+	override bool cancelable() const { return false; }
+	this(Widget target, typeof(field) newValue) {
+		this.newValue = newValue;
+		super(EventString, target);
+	}
+
+	typeof(field) newValue;
+}
+
+/++
+	Convenience function to add a `triggered` event listener.
+
+	Its implementation is simply `w.addEventListener("triggered", dg);`
+
+	History:
+		Added November 27, 2021 (dub v10.4)
++/
+void addWhenTriggered(Widget w, void delegate() dg) {
+	w.addEventListener("triggered", dg);
+}
+
+/++
+	Observable varables can be added to widgets and when they are changed, it fires
+	off a [StateChanged] event so you can react to it.
+
+	It is implemented as a getter and setter property, along with another helper you
+	can use to subscribe whith is `name_changed`. You can also subscribe to the [StateChanged]
+	event through the usual means. Just give the name of the variable. See [StateChanged] for an
+	example.
+
+	History:
+		Moved from minigui_addons.webview to main minigui on November 27, 2021 (dub v10.4)
++/
+mixin template Observable(T, string name) {
+	private T backing;
+
+	mixin(q{
+		void } ~ name ~ q{_changed (void delegate(T) dg) {
+			this.addEventListener((StateChanged!this_thing ev) {
+				dg(ev.newValue);
+			});
+		}
+
+		@property T } ~ name ~ q{ () {
+			return backing;
+		}
+
+		@property void } ~ name ~ q{ (T t) {
+			backing = t;
+			auto event = new StateChanged!this_thing(this, t);
+			event.dispatch();
+		}
+	});
+
+	mixin("private alias this_thing = " ~ name ~ ";");
+}
+
 
 // still do layout delegation
 // and... split off Window from Widget.
