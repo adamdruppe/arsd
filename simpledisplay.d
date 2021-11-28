@@ -1750,6 +1750,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 						MonitorInfo.info = MonitorInfo.info[0 .. 0];
 						MonitorInfo.info.assumeSafeAppend();
 						foreach(monitor; monitors[0 .. count]) {
+							if(monitor.mwidth == 0 || monitor.mheight == 0)
+							// unknown physical size, just guess 96 to avoid divide by zero
+							MonitorInfo.info ~= MonitorInfo(
+								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
+								Size(monitor.mwidth, monitor.mheight),
+								96
+							);
+							else
+							// and actual thing
 							MonitorInfo.info ~= MonitorInfo(
 								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
 								Size(monitor.mwidth, monitor.mheight),
@@ -2889,18 +2898,44 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// for this to ever happen.
 	void delegate(int width, int height) windowResized;
 
-	/** Platform specific - handle any native messages this window gets.
-	  *
-	  * Note: this is called *in addition to* other event handlers, unless you return zero indicating that you handled it.
+	/++
+		Platform specific - handle any native message this window gets.
 
-	  * On Windows, it takes the form of int delegate(HWND,UINT, WPARAM, LPARAM).
+		Note: this is called *in addition to* other event handlers, unless you either:
 
-	  * On X11, it takes the form of int delegate(XEvent).
+		1) On X11, return 0 indicating that you handled it. Any other return value is simply discarded.
 
-	  * IMPORTANT: it used to be static in old versions of simpledisplay.d, but I always used
-	  * it as if it wasn't static... so now I just fixed it so it isn't anymore.
-	**/
-	NativeEventHandler handleNativeEvent;
+		2) On Windows, set the `mustReturn` parameter to 1 indicating you've done it and your return value should be forwarded to the operating system. If you do not set `mustReturn`, your return value will be discarded.
+
+		On Windows, your delegate takes the form of `int delegate(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, out int mustReturn)`.
+
+		On X, it takes the form of `int delegate(XEvent)`.
+
+		History:
+			In ancient versions, this was `static`. If you want a global hook, use [handleNativeGlobalEvent] instead.
+
+			Prior to November 27, 2021, the `mustReturn` parameter was not present, and the Windows implementation would discard return values. There's still a deprecated shim with that signature, but since the return value is often important, you shouldn't use it.
+	+/
+	NativeEventHandler handleNativeEvent_;
+
+	@property NativeEventHandler handleNativeEvent() nothrow pure @nogc const @safe {
+		return handleNativeEvent_;
+	}
+	@property void handleNativeEvent(NativeEventHandler neh) nothrow pure @nogc @safe {
+		handleNativeEvent_ = neh;
+	}
+
+	version(Windows)
+	// compatibility shim with the old deprecated way
+	// in this one, if you return 0, it means you must return. otherwise the ret value is ignored.
+	deprecated("This old api ignored your non-zero return values and that hurt it a lot. Add an `out int pleaseReturn` param to your delegate and set it to one if you must return the result to Windows. Otherwise, leave it zero and processing will continue through to the default window message processor.") @property void handleNativeEvent(int delegate(HWND, UINT, WPARAM, LPARAM) dg) {
+		handleNativeEvent_ = delegate int(HWND h, UINT m, WPARAM w, LPARAM l, out int r) {
+			auto ret = dg(h, m, w, l);
+			if(ret == 0)
+				r = 1;
+			return ret;
+		};
+	}
 
 	/// This is the same as handleNativeEvent, but static so it can hook ALL events in the loop.
 	/// If you used to use handleNativeEvent depending on it being static, just change it to use
@@ -4453,7 +4488,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		NOTIFYICONDATAW data;
 
 		NativeEventHandler getNativeEventHandler() {
-			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+			return delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, out int mustReturn) {
 				if(msg == WM_USER) {
 					auto event = LOWORD(lParam);
 					auto iconId = HIWORD(lParam);
@@ -6329,9 +6364,9 @@ version(Windows) {
 
 		handlers[window.impl.hwnd][id] = handler;
 
-		int delegate(HWND, UINT, WPARAM, LPARAM) oldHandler;
+		int delegate(HWND, UINT, WPARAM, LPARAM, out int) oldHandler;
 
-		auto nativeEventHandler = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+		auto nativeEventHandler = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, out int mustReturn) {
 			switch(msg) {
 				// http://msdn.microsoft.com/en-us/library/windows/desktop/ms646279%28v=vs.85%29.aspx
 				case WM_HOTKEY:
@@ -6345,7 +6380,7 @@ version(Windows) {
 				default:
 			}
 			if(oldHandler)
-				return oldHandler(hwnd, msg, wParam, lParam);
+				return oldHandler(hwnd, msg, wParam, lParam, mustReturn);
 			return 1; // pass it on
 		};
 
@@ -9140,7 +9175,7 @@ class LinearGradient : Gradient {
 			gradient.p1 = XPointFixed(p1.x * ushort.max, p1.y * ushort.max);
 			gradient.p2 = XPointFixed(p2.x * ushort.max, p2.y * ushort.max);
 
-			helper(stops, (stopsPositions, colors) {
+			helper(stops, (scope XFixed[] stopsPositions, scope XRenderColor[] colors) {
 				return XRenderCreateLinearGradient(
 					XDisplayConnection.get,
 					&gradient,
@@ -9185,7 +9220,7 @@ class ConicalGradient : Gradient {
 			gradient.center = XPointFixed(center.x * ushort.max, center.y * ushort.max);
 			gradient.angle = cast(int)(angleInDegrees * ushort.max);
 
-			helper(stops, (stopsPositions, colors) {
+			helper(stops, (scope XFixed[] stopsPositions, scope XRenderColor[] colors) {
 				return XRenderCreateConicalGradient(
 					XDisplayConnection.get,
 					&gradient,
@@ -9238,7 +9273,7 @@ class RadialGradient : Gradient {
 			gradient.inner = XCircle(innerCenter.x * ushort.max, innerCenter.y * ushort.max, cast(int) (innerRadius * ushort.max));
 			gradient.outer = XCircle(outerCenter.x * ushort.max, outerCenter.y * ushort.max, cast(int) (outerRadius * ushort.max));
 
-			helper(stops, (stopsPositions, colors) {
+			helper(stops, (scope XFixed[] stopsPositions, scope XRenderColor[] colors) {
 				return XRenderCreateRadialGradient(
 					XDisplayConnection.get,
 					&gradient,
@@ -10356,7 +10391,7 @@ version(Windows) {
 
 
 
-	alias int delegate(HWND, UINT, WPARAM, LPARAM) NativeEventHandler;
+	alias int delegate(HWND, UINT, WPARAM, LPARAM, out int) NativeEventHandler;
 	alias HWND NativeWindowHandle;
 
 	extern(Windows)
@@ -10365,15 +10400,17 @@ version(Windows) {
 			if(SimpleWindow.handleNativeGlobalEvent !is null) {
 				// it returns zero if the message is handled, so we won't do anything more there
 				// do I like that though?
-				auto ret = SimpleWindow.handleNativeGlobalEvent(hWnd, iMessage, wParam, lParam);
-				if(ret == 0)
+				int mustReturn;
+				auto ret = SimpleWindow.handleNativeGlobalEvent(hWnd, iMessage, wParam, lParam, mustReturn);
+				if(mustReturn)
 					return ret;
 			}
 
 			if(auto window = hWnd in CapableOfHandlingNativeEvent.nativeHandleMapping) {
 				if(window.getNativeEventHandler !is null) {
-					auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam);
-					if(ret == 0)
+					int mustReturn;
+					auto ret = window.getNativeEventHandler()(hWnd, iMessage, wParam, lParam, mustReturn);
+					if(mustReturn)
 						return ret;
 				}
 				if(auto w = cast(SimpleWindow) (*window))
