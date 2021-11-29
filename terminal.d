@@ -5386,12 +5386,17 @@ class LineGetter {
 	private dchar[] line;
 	private int cursorPosition = 0;
 	private int horizontalScrollPosition = 0;
+	private int verticalScrollPosition = 0;
 
 	private void scrollToEnd() {
-		horizontalScrollPosition = (cast(int) line.length);
-		horizontalScrollPosition -= availableLineLength();
-		if(horizontalScrollPosition < 0)
-			horizontalScrollPosition = 0;
+		if(multiLineMode) {
+			// FIXME
+		} else {
+			horizontalScrollPosition = (cast(int) line.length);
+			horizontalScrollPosition -= availableLineLength();
+			if(horizontalScrollPosition < 0)
+				horizontalScrollPosition = 0;
+		}
 	}
 
 	// used for redrawing the line in the right place
@@ -5445,8 +5450,12 @@ class LineGetter {
 		}
 		cursorPosition++;
 
-		if(cursorPosition > horizontalScrollPosition + availableLineLength())
-			horizontalScrollPosition++;
+		if(multiLineMode) {
+			// FIXME
+		} else {
+			if(cursorPosition > horizontalScrollPosition + availableLineLength())
+				horizontalScrollPosition++;
+		}
 
 		lineChanged = true;
 	}
@@ -5561,8 +5570,43 @@ class LineGetter {
 	}
 
 	private void maybePositionCursor() {
-		if(cursorPosition < horizontalScrollPosition || cursorPosition > horizontalScrollPosition + availableLineLength()) {
-			positionCursor();
+		if(multiLineMode) {
+			// omg this is so bad
+			// and it more accurately sets scroll position
+			int x, y;
+			foreach(idx, ch; line) {
+				if(idx == cursorPosition)
+					break;
+				if(ch == '\n') {
+					x = 0;
+					y++;
+				} else {
+					x++;
+				}
+			}
+
+			while(x - horizontalScrollPosition < 0) {
+				horizontalScrollPosition -= terminal.width / 2;
+				if(horizontalScrollPosition < 0)
+					horizontalScrollPosition = 0;
+			}
+			while(y - verticalScrollPosition < 0) {
+				verticalScrollPosition --;
+				if(verticalScrollPosition < 0)
+					verticalScrollPosition = 0;
+			}
+
+			while((x - horizontalScrollPosition) >= terminal.width) {
+				horizontalScrollPosition += terminal.width / 2;
+			}
+			while((y - verticalScrollPosition) + 2 >= terminal.height) {
+				verticalScrollPosition ++;
+			}
+
+		} else {
+			if(cursorPosition < horizontalScrollPosition || cursorPosition > horizontalScrollPosition + availableLineLength()) {
+				positionCursor();
+			}
 		}
 	}
 
@@ -5606,10 +5650,13 @@ class LineGetter {
 
 		this(LineGetter lg) {
 			this.lg = lg;
+			linesRemaining = lg.terminal.height - 1;
 		}
 
 		int written;
 		int lineLength;
+
+		int linesRemaining;
 
 
 		Color currentFg_ = Color.DEFAULT;
@@ -5658,6 +5705,7 @@ class LineGetter {
 			if(lg.multiLineMode) {
 				if(ch == '\n') {
 					lineLength = lg.terminal.width;
+					linesRemaining--;
 				}
 			}
 		}
@@ -5673,10 +5721,13 @@ class LineGetter {
 			}
 
 			foreach(idx, dchar ch; towrite) {
+				if(linesRemaining <= 0)
+					break;
 				if(lineLength <= 0) {
 					if(lg.multiLineMode) {
-						if(ch == '\n')
+						if(ch == '\n') {
 							lineLength = lg.terminal.width;
+						}
 						continue;
 					} else
 						break;
@@ -5841,10 +5892,26 @@ class LineGetter {
 			terminal.color(regularForeground, background);
 		}
 
-		auto towrite = line[horizontalScrollPosition .. $];
+		dchar[] towrite;
+
 		if(multiLineMode) {
 			towrite = line[];
+			if(verticalScrollPosition) {
+				int remaining = verticalScrollPosition;
+				while(towrite.length) {
+					if(towrite[0] == '\n') {
+						towrite = towrite[1 .. $];
+						remaining--;
+						if(remaining == 0)
+							break;
+						continue;
+					}
+					towrite = towrite[1 .. $];
+				}
+			}
 			horizontalScrollPosition = 0; // FIXME
+		} else {
+			towrite = line[horizontalScrollPosition .. $];
 		}
 		auto cursorPositionToDrawX = cursorPosition - horizontalScrollPosition;
 		auto cursorPositionToDrawY = 0;
@@ -5898,8 +5965,8 @@ class LineGetter {
 				}
 			}
 
-			cri.cursorPositionToDrawX = cursorPositionToDrawX;
-			cri.cursorPositionToDrawY = cursorPositionToDrawY;
+			cri.cursorPositionToDrawX = cursorPositionToDrawX - horizontalScrollPosition;
+			cri.cursorPositionToDrawY = cursorPositionToDrawY - verticalScrollPosition;
 		} else {
 			cri.cursorPositionToDrawX = cursorPositionToDrawX;
 			cri.cursorPositionToDrawY = cursorPositionToDrawY;
@@ -5917,6 +5984,7 @@ class LineGetter {
 		if(!maintainBuffer) {
 			cursorPosition = 0;
 			horizontalScrollPosition = 0;
+			verticalScrollPosition = 0;
 			justHitTab = false;
 			currentHistoryViewPosition = 0;
 			if(line.length) {
@@ -5934,18 +6002,24 @@ class LineGetter {
 	}
 
 	private void positionCursor() {
-		if(cursorPosition == 0)
+		if(cursorPosition == 0) {
 			horizontalScrollPosition = 0;
-		else if(cursorPosition == line.length)
+			verticalScrollPosition = 0;
+		} else if(cursorPosition == line.length) {
 			scrollToEnd();
-		else {
-			// otherwise just try to center it in the screen
-			horizontalScrollPosition = cursorPosition;
-			horizontalScrollPosition -= maximumDrawWidth / 2;
-			// align on a code point boundary
-			aligned(horizontalScrollPosition, -1);
-			if(horizontalScrollPosition < 0)
-				horizontalScrollPosition = 0;
+		} else {
+			if(multiLineMode) {
+				// FIXME
+				maybePositionCursor();
+			} else {
+				// otherwise just try to center it in the screen
+				horizontalScrollPosition = cursorPosition;
+				horizontalScrollPosition -= maximumDrawWidth / 2;
+				// align on a code point boundary
+				aligned(horizontalScrollPosition, -1);
+				if(horizontalScrollPosition < 0)
+					horizontalScrollPosition = 0;
+			}
 		}
 	}
 
@@ -6279,11 +6353,15 @@ class LineGetter {
 	}
 
 	void pageBackward() {
-
+		foreach(count; 0 .. terminal.height)
+			lineBackward();
+		maybePositionCursor();
 	}
 
 	void pageForward() {
-
+		foreach(count; 0 .. terminal.height)
+			lineForward();
+		maybePositionCursor();
 	}
 
 	/++
@@ -6432,7 +6510,9 @@ class LineGetter {
 							line = line[0 .. $ - 1];
 							line.assumeSafeAppend();
 
-							if(!multiLineMode) {
+							if(multiLineMode) {
+								// FIXME
+							} else {
 								if(horizontalScrollPosition > cursorPosition - 1)
 									horizontalScrollPosition = cursorPosition - 1 - availableLineLength();
 								if(horizontalScrollPosition < 0)
@@ -6629,9 +6709,10 @@ class LineGetter {
 						goto default;
 					case KeyboardEvent.Key.UpArrow:
 						justHitTab = justKilled = false;
-						if(multiLineMode)
+						if(multiLineMode) {
 							lineBackward();
-						else
+							maybePositionCursor();
+						} else
 							loadFromHistory(currentHistoryViewPosition + 1);
 						redraw();
 					break;
@@ -6641,9 +6722,10 @@ class LineGetter {
 						goto default;
 					case KeyboardEvent.Key.DownArrow:
 						justHitTab = justKilled = false;
-						if(multiLineMode)
+						if(multiLineMode) {
 							lineForward();
-						else
+							maybePositionCursor();
+						} else
 							loadFromHistory(currentHistoryViewPosition - 1);
 						redraw();
 					break;
@@ -6815,7 +6897,9 @@ class LineGetter {
 				auto me = e.mouseEvent;
 				if(me.eventType == MouseEvent.Type.Pressed) {
 					if(me.buttons & MouseEvent.Button.Left) {
-						if(me.y == startOfLineY) {
+						if(multiLineMode) {
+							// FIXME
+						} else if(me.y == startOfLineY) { // single line only processes on itself
 							int p = me.x - startOfLineX - promptLength + horizontalScrollPosition;
 							if(p >= 0 && p < line.length) {
 								justHitTab = false;
@@ -6897,8 +6981,14 @@ class LineGetter {
 		this.line[] = line[];
 		if(cursorPosition > line.length)
 			cursorPosition = cast(int) line.length;
-		if(horizontalScrollPosition > line.length)
-			horizontalScrollPosition = cast(int) line.length;
+		if(multiLineMode) {
+			// FIXME?
+			horizontalScrollPosition = 0;
+			verticalScrollPosition = 0;
+		} else {
+			if(horizontalScrollPosition > line.length)
+				horizontalScrollPosition = cast(int) line.length;
+		}
 		positionCursor();
 	}
 
