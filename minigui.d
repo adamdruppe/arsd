@@ -7884,7 +7884,7 @@ class TableView : Widget {
 						if(getCellStyle is null) // this SHOULD never happen...
 							return 0;
 
-						auto style = getCellStyle(s.nmcd.dwItemSpec, s.iSubItem);
+						auto style = getCellStyle(cast(int) s.nmcd.dwItemSpec, cast(int) s.iSubItem);
 						if(style == CellStyle.init)
 							return 0; // allow default processing to continue
 
@@ -10199,6 +10199,8 @@ class CommandButton : Button {
 	this(string label, Widget parent) {
 		super(label, parent);
 	}
+
+	// FIXME: I think I can simply make this 0 stretchiness instead of max now that the flex basis is there
 
 	override int maxHeight() {
 		return defaultLineHeight + 4;
