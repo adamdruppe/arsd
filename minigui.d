@@ -502,6 +502,14 @@ class Widget : ReflectableProperties {
 			Added November 25, 2021
 	+/
 	int scaleWithDpi(int value, int assumedDpi = 96) {
+		// avoid potential overflow with common special values
+		if(value == int.max)
+			return int.max;
+		if(value == int.min)
+			return int.min;
+		if(value == 0)
+			return 0;
+
 		auto divide = (parentWindow && parentWindow.win) ? parentWindow.win.actualDpi : assumedDpi;
 		// for lower values it is something i don't really want changed anyway since it is an old monitor and you don't want to scale down.
 		// this also covers the case when actualDpi returns 0.
@@ -4148,9 +4156,11 @@ class ListWidget : ListWidgetBase {
 	version(custom_widgets)
 	override void defaultEventHandler_click(ClickEvent event) {
 		this.focus();
-		auto y = (event.clientY - 4) / defaultLineHeight;
-		if(y >= 0 && y < options.length) {
-			setSelection(y);
+		if(event.button == MouseButton.left) {
+			auto y = (event.clientY - 4) / defaultLineHeight;
+			if(y >= 0 && y < options.length) {
+				setSelection(y);
+			}
 		}
 		super.defaultEventHandler_click(event);
 	}
@@ -4228,6 +4238,7 @@ class ListWidget : ListWidgetBase {
 				{}
 
 		} else version(custom_widgets) {
+			scrollTo(Point(0, 0));
 			redraw();
 		}
 	}
@@ -6422,12 +6433,45 @@ class VerticalLayout : Layout {
 	// most of this is intentionally blank - widget's default is vertical layout right now
 	///
 	this(Widget parent) { super(parent); }
+
+	/++
+		Sets a max width for the layout so you don't have to subclass. The max width
+		is in device-independent pixels, meaning pixels at 96 dpi that are auto-scaled.
+
+		History:
+			Added November 29, 2021 (dub v10.5)
+	+/
+	this(int maxWidth, Widget parent) {
+		this.mw = maxWidth;
+		super(parent);
+	}
+
+	private int mw = int.max;
+
+	override int maxWidth() { return scaleWithDpi(mw); }
 }
 
 /// Stacks the widgets horizontally, taking all the available height for each child.
 class HorizontalLayout : Layout {
 	///
 	this(Widget parent) { super(parent); }
+
+	/++
+		Sets a max height for the layout so you don't have to subclass. The max height
+		is in device-independent pixels, meaning pixels at 96 dpi that are auto-scaled.
+
+		History:
+			Added November 29, 2021 (dub v10.5)
+	+/
+	this(int maxHeight, Widget parent) {
+		this.mh = maxHeight;
+		super(parent);
+	}
+
+	private int mh = 0;
+
+
+
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
 	}
@@ -6447,6 +6491,9 @@ class HorizontalLayout : Layout {
 	}
 
 	override int maxHeight() {
+		if(mh != 0)
+			return mymax(minHeight, scaleWithDpi(mh));
+
 		int largest = 0;
 		int margins = 0;
 		int lastMargin = 0;
@@ -7862,6 +7909,11 @@ class TableView : Widget {
 	}
 	+/
 
+	version(win32_widgets) {
+		CellStyle last;
+		COLORREF defaultColor;
+		COLORREF defaultBackground;
+	}
 
 	version(win32_widgets)
 	override int handleWmNotify(NMHDR* hdr, int code, out int mustReturn) {
@@ -7884,18 +7936,30 @@ class TableView : Widget {
 						if(getCellStyle is null) // this SHOULD never happen...
 							return 0;
 
+						if(s.iSubItem == 0) {
+							// Windows resets it per row so we'll use item 0 as a chance
+							// to capture these for later
+							defaultColor = s.clrText;
+							defaultBackground = s.clrTextBk;
+						}
+
 						auto style = getCellStyle(cast(int) s.nmcd.dwItemSpec, cast(int) s.iSubItem);
-						if(style == CellStyle.init)
+						// if no special style and no reset needed...
+						if(style == CellStyle.init && (s.iSubItem == 0 || last == CellStyle.init))
 							return 0; // allow default processing to continue
+
+						last = style;
+
+						// might still need to reset or use the preference.
 
 						if(style.flags & CellStyle.Flags.textColorSet)
 							s.clrText = style.textColor.asWindowsColorRef;
 						else
-							s.clrText = 0; // reset in case it was set from last iteration not a fan
+							s.clrText = defaultColor; // reset in case it was set from last iteration not a fan
 						if(style.flags & CellStyle.Flags.backgroundColorSet)
 							s.clrTextBk = style.backgroundColor.asWindowsColorRef;
 						else
-							s.clrTextBk = Color.white.asWindowsColorRef; // need to reset it... not a fan of this
+							s.clrTextBk = defaultBackground; // need to reset it... not a fan of this
 
 						return CDRF_NEWFONT;
 					default:
@@ -12471,7 +12535,7 @@ void getFileName(
 				onCancel();
 		}
 	} else version(custom_widgets) {
-		auto picker = new FilePicker(prefilledName);
+		auto picker = new FilePicker(prefilledName, filters);
 		picker.onOK = onOK;
 		picker.onCancel = onCancel;
 		picker.show();
@@ -12484,10 +12548,194 @@ class FilePicker : Dialog {
 	void delegate(string) onOK;
 	void delegate() onCancel;
 	LineEdit lineEdit;
-	this(string prefilledName, Window owner = null) {
+
+	enum GetFilesResult {
+		success,
+		fileNotFound
+	}
+	static GetFilesResult getFiles(string cwd, scope void delegate(string name, bool isDirectory) dg) {
+		version(Windows) {
+			WIN32_FIND_DATA data;
+			WCharzBuffer search = WCharzBuffer(cwd ~ "/*");
+			auto handle = FindFirstFileW(search.ptr, &data);
+			scope(exit) if(handle !is INVALID_HANDLE_VALUE) FindClose(handle);
+			if(handle is INVALID_HANDLE_VALUE) {
+				if(GetLastError() == ERROR_FILE_NOT_FOUND)
+					return GetFilesResult.fileNotFound;
+				throw new WindowsApiException("FindFirstFileW");
+			}
+
+			try_more:
+
+			string name = makeUtf8StringFromWindowsString(data.cFileName[0 .. findIndexOfZero(data.cFileName[])]);
+
+			dg(name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? true : false);
+
+			auto ret = FindNextFileW(handle, &data);
+			if(ret == 0) {
+				if(GetLastError() == ERROR_NO_MORE_FILES)
+					return GetFilesResult.success;
+				throw new WindowsApiException("FindNextFileW");
+			}
+
+			goto try_more;
+
+		} else version(Posix) {
+			import core.sys.posix.dirent;
+			auto dir = opendir((cwd ~ "\0").ptr);
+			scope(exit)
+				if(dir) closedir(dir);
+			if(dir is null)
+				throw new ErrnoApiException("opendir [" ~ cwd ~ "]");
+
+			auto dirent = readdir(dir);
+			if(dirent is null)
+				return GetFilesResult.fileNotFound;
+
+			try_more:
+
+			string name = dirent.d_name[0 .. findIndexOfZero(dirent.d_name[])].idup;
+
+			dg(name, dirent.d_type == DT_DIR);
+
+			dirent = readdir(dir);
+			if(dirent is null)
+				return GetFilesResult.success;
+
+			goto try_more;
+		} else static assert(0);
+	}
+
+	// returns common prefix
+	string loadFiles(string cwd, string[] filters...) {
+		string[] files;
+		string[] dirs;
+
+		string commonPrefix;
+
+		getFiles(cwd, (string name, bool isDirectory) {
+			if(name == ".")
+				return; // skip this as unnecessary
+			if(isDirectory)
+				dirs ~= name;
+			else {
+				foreach(filter; filters)
+				if(
+					filter.length <= 1 ||
+					(filter[0] == '*' && name.endsWith(filter[1 .. $])) ||
+					(filter[$-1] == '*' && name.startsWith(filter[0 .. $ - 1]))
+				)
+				{
+					files ~= name;
+
+					if(filter.length > 0 && filter[$-1] == '*') {
+						if(commonPrefix is null) {
+							commonPrefix = name;
+						} else {
+							foreach(idx, char i; name) {
+								if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
+									commonPrefix = commonPrefix[0 .. idx];
+									break;
+								}
+							}
+						}
+					}
+
+					break;
+				}
+			}
+		});
+
+		extern(C) static int comparator(scope const void* a, scope const void* b) {
+			auto sa = *cast(string*) a;
+			auto sb = *cast(string*) b;
+
+			for(int i = 0; i < sa.length; i++) {
+				if(i == sb.length)
+					return 1;
+				return sa[i] - sb[i];
+			}
+
+			return 0;
+		}
+
+		nonPhobosSort(files, &comparator);
+		nonPhobosSort(dirs, &comparator);
+
+		listWidget.clear();
+		dirWidget.clear();
+		foreach(name; dirs)
+			dirWidget.addOption(name);
+		foreach(name; files)
+			listWidget.addOption(name);
+
+		return commonPrefix;
+	}
+
+	ListWidget listWidget;
+	ListWidget dirWidget;
+
+	string currentDirectory;
+	string[] processedFilters;
+
+	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
+	this(string prefilledName, string[] filters, Window owner = null) {
 		super(300, 200, "Choose File..."); // owner);
 
-		auto listWidget = new ListWidget(this);
+		foreach(filter; filters) {
+			while(filter.length && filter[0] != 0) {
+				filter = filter[1 .. $];
+			}
+			if(filter.length)
+				filter = filter[1 .. $]; // trim off the 0
+
+			while(filter.length) {
+				int idx = 0;
+				while(idx < filter.length && filter[idx] != ';') {
+					idx++;
+				}
+
+				processedFilters ~= filter[0 .. idx];
+				if(idx < filter.length)
+					idx++; // skip the ;
+				filter = filter[idx .. $];
+			}
+		}
+
+		currentDirectory = ".";
+
+		{
+			auto hl = new HorizontalLayout(this);
+			dirWidget = new ListWidget(hl);
+			listWidget = new ListWidget(hl);
+
+			// double click events normally trigger something else but
+			// here user might be clicking kinda fast and we'd rather just
+			// keep it
+			dirWidget.addEventListener((scope DoubleClickEvent dev) {
+				auto ce = new ChangeEvent!void(dirWidget, () {});
+				ce.dispatch();
+			});
+
+			dirWidget.addEventListener((scope ChangeEvent!void sce) {
+				string v;
+				foreach(o; dirWidget.options)
+					if(o.selected) {
+						v = o.label;
+						break;
+					}
+				if(v.length) {
+					currentDirectory ~= "/" ~ v;
+					loadFiles(currentDirectory, processedFilters);
+				}
+			});
+
+			// double click here, on the other hand, selects the file
+			// and moves on
+			listWidget.addEventListener((scope DoubleClickEvent dev) {
+				OK();
+			});
+		}
 
 		lineEdit = new LineEdit(this);
 		lineEdit.focus();
@@ -12502,104 +12750,31 @@ class FilePicker : Dialog {
 					lineEdit.content = o.label;
 		});
 
-		//version(none)
+		loadFiles(currentDirectory, processedFilters);
+
 		lineEdit.addEventListener((KeyDownEvent event) {
 			if(event.key == Key.Tab) {
-				listWidget.clear();
 
-				string commonPrefix;
-				auto cnt = lineEdit.content;
-				if(cnt.length >= 2 && cnt[0 ..2] == "./")
-					cnt = cnt[2 .. $];
+				auto current = lineEdit.content;
+				if(current.length >= 2 && current[0 ..2] == "./")
+					current = current[2 .. $];
 
-				version(Windows) {
-					WIN32_FIND_DATA data;
-					WCharzBuffer search = WCharzBuffer("./" ~ cnt ~ "*");
-					auto handle = FindFirstFileW(search.ptr, &data);
-					scope(exit) if(handle !is INVALID_HANDLE_VALUE) FindClose(handle);
-					if(handle is INVALID_HANDLE_VALUE) {
-						if(GetLastError() == ERROR_FILE_NOT_FOUND)
-							goto file_not_found;
-						throw new WindowsApiException("FindFirstFileW");
-					}
-				} else version(Posix) {
-					import core.sys.posix.dirent;
-					auto dir = opendir(".");
-					scope(exit)
-						if(dir) closedir(dir);
-					if(dir is null)
-						throw new ErrnoApiException("opendir");
+				auto commonPrefix = loadFiles(".", current ~ "*");
 
-					auto dirent = readdir(dir);
-					if(dirent is null)
-						goto file_not_found;
-					// filter those that don't start with it, since posix doesn't
-					// do the * thing itself
-					while(dirent.d_name[0 .. cnt.length] != cnt[]) {
-						dirent = readdir(dir);
-						if(dirent is null)
-							goto file_not_found;
-					}
-				} else static assert(0);
-
-				while(true) {
-				//foreach(string name; dirEntries(".", cnt ~ "*", SpanMode.shallow)) {
-					version(Windows) {
-						string name = makeUtf8StringFromWindowsString(data.cFileName[0 .. findIndexOfZero(data.cFileName[])]);
-					} else version(Posix) {
-						string name = dirent.d_name[0 .. findIndexOfZero(dirent.d_name[])].idup;
-					} else static assert(0);
-
-
-					listWidget.addOption(name);
-					if(commonPrefix is null)
-						commonPrefix = name;
-					else {
-						foreach(idx, char i; name) {
-							if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
-								commonPrefix = commonPrefix[0 .. idx];
-								break;
-							}
-						}
-					}
-
-					version(Windows) {
-						auto ret = FindNextFileW(handle, &data);
-						if(ret == 0) {
-							if(GetLastError() == ERROR_NO_MORE_FILES)
-								break;
-							throw new WindowsApiException("FindNextFileW");
-						}
-					} else version(Posix) {
-						dirent = readdir(dir);
-						if(dirent is null)
-							break;
-
-						while(dirent.d_name[0 .. cnt.length] != cnt[]) {
-							dirent = readdir(dir);
-							if(dirent is null)
-								break;
-						}
-
-						if(dirent is null)
-							break;
-					} else static assert(0);
-				}
 				if(commonPrefix.length)
 					lineEdit.content = commonPrefix;
 
-				file_not_found:
+				// FIXME: if that is a directory, add the slash? or even go inside?
+
 				event.preventDefault();
 			}
 		});
 
 		lineEdit.content = prefilledName;
 
-		auto hl = new HorizontalLayout(this);
+		auto hl = new HorizontalLayout(60, this);
 		auto cancelButton = new Button("Cancel", hl);
 		auto okButton = new Button("OK", hl);
-
-		recomputeChildLayout(); // FIXME hack
 
 		cancelButton.addEventListener(EventType.triggered, &Cancel);
 		okButton.addEventListener(EventType.triggered, &OK);
@@ -12616,8 +12791,26 @@ class FilePicker : Dialog {
 	}
 
 	override void OK() {
-		if(onOK)
-			onOK(lineEdit.content);
+		if(lineEdit.content.length) {
+			string accepted;
+			auto c = lineEdit.content;
+			if(c.length && c[0] == '/')
+				accepted = c;
+			else
+				accepted = currentDirectory ~ "/" ~ lineEdit.content;
+
+			if(isDir(accepted)) {
+				// FIXME: would be kinda nice to support ~ and collapse these paths too
+				// FIXME: would also be nice to actually show the "Looking in..." directory and maybe the filters but later.
+				currentDirectory = accepted;
+				loadFiles(currentDirectory, processedFilters);
+				lineEdit.content = "";
+				return;
+			}
+
+			if(onOK)
+				onOK(accepted);
+		}
 		close();
 	}
 
@@ -12626,6 +12819,23 @@ class FilePicker : Dialog {
 			onCancel();
 		close();
 	}
+}
+
+private bool isDir(string name) {
+	version(Windows) {
+		auto ws = WCharzBuffer(name);
+		auto ret = GetFileAttributesW(ws.ptr);
+		if(ret == INVALID_FILE_ATTRIBUTES)
+			return false;
+		return (ret & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	} else version(Posix) {
+		import core.sys.posix.sys.stat;
+		stat_t buf;
+		auto ret = stat((name ~ '\0').ptr, &buf);
+		if(ret == -1)
+			return false; // I could probably check more specific errors tbh
+		return (buf.st_mode & S_IFMT) == S_IFDIR;
+	} else return false;
 }
 
 /*
@@ -13312,6 +13522,18 @@ mixin template Observable(T, string name) {
 	mixin("private alias this_thing = " ~ name ~ ";");
 }
 
+
+private bool startsWith(string test, string thing) {
+	if(test.length < thing.length)
+		return false;
+	return test[0 .. thing.length] == thing;
+}
+
+private bool endsWith(string test, string thing) {
+	if(test.length < thing.length)
+		return false;
+	return test[$ - thing.length .. $] == thing;
+}
 
 // still do layout delegation
 // and... split off Window from Widget.
