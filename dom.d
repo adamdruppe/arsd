@@ -3372,8 +3372,31 @@ class Element : DomParent {
 		return writeToAppender();
 	}
 
+	/++
+		Returns if the node would be printed to string as `<tag />` or `<tag></tag>`. In other words, if it has no non-empty text nodes and no element nodes. Please note that whitespace text nodes are NOT considered empty; `Html("<tag> </tag>").isEmpty == false`.
+
+
+		The value is undefined if there are comment or processing instruction nodes. The current implementation returns false if it sees those, assuming the nodes haven't been stripped out during parsing. But I'm not married to the current implementation and reserve the right to change it without notice.
+
+		History:
+			Added December 3, 2021 (dub v10.5)
+
+	+/
+	public bool isEmpty() const {
+		foreach(child; this.children) {
+			// any non-text node is of course not empty since that's a tag
+			if(child.nodeType != NodeType.Text)
+				return false;
+			// or a text node is empty if it is is a null or empty string, so this length check fixes that
+			if(child.nodeValue.length)
+				return false;
+		}
+
+		return true;
+	}
+
 	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
-		if(indentWith is null || this.children.length == 0)
+		if(indentWith is null || this.isEmpty())
 			return null;
 		string s;
 
@@ -5840,7 +5863,7 @@ int intFromHex(string hex) {
 			}
 			+/
 			if(emptyElement) {
-				if(e.children.length)
+				if(e.isEmpty())
 					return false;
 			}
 			if(whitespaceOnly) {
@@ -7979,6 +8002,7 @@ unittest {
 	// toPrettyString is not stable, but these are some best-effort attempts
 	// despite these being in a test, I might change these anyway!
 	assert(Element.make("a").toPrettyString == "<a></a>");
+	assert(Element.make("a", "").toPrettyString(false, 0, " ") == "<a></a>");
 	assert(Element.make("a", "b").toPrettyString == "<a>b</a>");
 	assert(Element.make("a", "b").toPrettyString(false, 0, "") == "<a>b</a>");
 
