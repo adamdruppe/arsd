@@ -3520,7 +3520,7 @@ class Element : DomParent {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(tagName.isInArray(inlineElements) || allAreInlineHtml(children, inlineElements)) {
+		if(isEmpty || tagName.isInArray(inlineElements) || allAreInlineHtml(children, inlineElements)) {
 			foreach(child; children) {
 				s ~= child.toString();//toPrettyString(false, 0, null);
 			}
@@ -7827,7 +7827,7 @@ bool allAreInlineHtml(const(Element)[] children, const string[] inlineElements) 
 	foreach(child; children) {
 		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {
 			// cool
-		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children, inlineElements)) {
+		} else if(child.isEmpty || child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children, inlineElements)) {
 			// cool
 		} else {
 			// prolly block
@@ -8003,6 +8003,7 @@ unittest {
 	// despite these being in a test, I might change these anyway!
 	assert(Element.make("a").toPrettyString == "<a></a>");
 	assert(Element.make("a", "").toPrettyString(false, 0, " ") == "<a></a>");
+	assert(Element.make("a", " ").toPrettyString(false, 0, " ") == "<a> </a>");//, Element.make("a", " ").toPrettyString(false, 0, " "));
 	assert(Element.make("a", "b").toPrettyString == "<a>b</a>");
 	assert(Element.make("a", "b").toPrettyString(false, 0, "") == "<a>b</a>");
 
