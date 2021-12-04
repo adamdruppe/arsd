@@ -1630,8 +1630,8 @@ shared static this() {
 	auto lib = LoadLibrary("User32.dll");
 	if(lib is null)
 		return;
-	scope(exit)
-		FreeLibrary(lib);
+	//scope(exit)
+		//FreeLibrary(lib);
 
 	SetProcessDpiAwarenessContext_t SetProcessDpiAwarenessContext = cast(SetProcessDpiAwarenessContext_t) GetProcAddress(lib, "SetProcessDpiAwarenessContext");
 
@@ -9565,7 +9565,7 @@ private void runPendingRunInGuiThreadDelegates() {
 
 private void claimGuiThread() nothrow {
 	import core.atomic;
-	if(cas(&guiThreadExists, false, true))
+	if(cas(&guiThreadExists_, false, true))
 		thisIsGuiThread = true;
 }
 
@@ -9579,8 +9579,107 @@ private struct RunQueueMember {
 private __gshared RunQueueMember*[] runInGuiThreadQueue;
 private __gshared Object runInGuiThreadLock = new Object; // intentional CTFE
 private bool thisIsGuiThread = false;
-private shared bool guiThreadExists = false;
+private shared bool guiThreadExists_ = false;
 private shared bool guiThreadTerminating = false;
+
+/++
+	Returns `true` if a gui thread exists, that is, a thread running the simpledisplay.d
+	event loop. All windows must be exclusively created and managed by a single thread.
+
+	If no gui thread exists, simpledisplay.d will automatically adopt the current thread
+	when you call one of its constructors.
+
+	If a gui thread exists, you should check [thisThreadRunningGui] to see if it is this
+	one. If so, you can run gui functions on it. If not, don't. The helper functions
+	[runInGuiThread] and [runInGuiThreadAsync] can be used to help you with this automatically.
+
+	The reason this function is available is in case you want to message pass between a gui
+	thread and your current thread. If no gui thread exists or if this is the gui thread,
+	you're liable to deadlock when trying to communicate since you'd end up talking to yourself.
+
+	History:
+		Added December 3, 2021 (dub v10.5)
++/
+public bool guiThreadExists() {
+	return guiThreadExists_;
+}
+
+/++
+	Returns `true` if this thread is either running or set to be running the
+	simpledisplay.d gui core event loop because it owns windows.
+
+	It is important to keep gui-related functionality in the right thread, so you will
+	want to `runInGuiThread` when you call them (with some specific exceptions called
+	out in those specific functions' documentation). Notably, all windows must be
+	created and managed only from the gui thread.
+
+	Will return false if simpledisplay's other functions haven't been called
+	yet; check [guiThreadExists] in addition to this.
+
+	History:
+		Added December 3, 2021 (dub v10.5)
++/
+public bool thisThreadRunningGui() {
+	return thisIsGuiThread;
+}
+
+/++
+	Function to help temporarily print debugging info. It will bypass any stdout/err redirection
+	and go to the controlling tty or console (attaching to the parent and/or allocating one as
+	needed on Windows. Please note it may overwrite output from other programs in the parent and the
+	allocated one will not survive if your program crashes. Use the `fileOverride` to print to a log
+	file instead if you are in one of those situations).
+
+	It does not support outputting very many types; just strings and ints are likely to actually work.
+
+	It will perform very slowly and swallows any errors that may occur. Moreover, the specific output
+	is unspecified meaning I can change it at any time. The only point of this function is to help
+	in temporary use for printf-style debugging. It is NOT nogc, but you can use the `debug` keyword
+	and the compiler will cheat for you. It is, however, formally nothrow and trusted to ease its use
+	in those contexts.
+
+	$(WARNING
+		I reserve the right to change this function at any time. You can use it if it helps you
+		but do not rely on it for anything permanent.
+	)
+
+	History:
+		Added December 3, 2021. Not formally supported under any stable tag.
++/
+void sdpyPrintDebugString(string fileOverride = null, T...)(T t) nothrow @trusted {
+	try {
+		version(Windows) {
+			import core.sys.windows.windows;
+			if(AttachConsole(ATTACH_PARENT_PROCESS))
+				AllocConsole();
+			const(char)* fn = "CONOUT$";
+		} else version(Posix) {
+			const(char)* fn = "/dev/tty";
+		} else static assert(0, "Function not implemented for your system");
+
+		if(fileOverride.length)
+			fn = fileOverride.ptr;
+
+		import core.stdc.stdio;
+		auto fp = fopen(fn, "wt");
+		if(fp is null) return;
+		scope(exit) fclose(fp);
+
+		string str;
+		foreach(item; t) {
+			static if(is(typeof(item) : const(char)[]))
+				str ~= item;
+			else
+				str ~= toInternal!string(item);
+			str ~= " ";
+		}
+		str ~= "\n";
+
+		fwrite(str.ptr, 1, str.length, fp);
+	} catch(Exception e) {
+		// sorry no hope
+	}
+}
 
 private void guiThreadFinalize() {
 	assert(thisIsGuiThread);
@@ -11345,7 +11444,7 @@ version(Windows) {
 					// doing this because of https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/DPIAwarenessPerWindow/client/DpiAwarenessContext.cpp
 					// im not sure it is completely correct
 					// but without it the tabs and such do look weird as things change.
-					{
+					if(SystemParametersInfoForDpi) {
 						LOGFONT lfText;
 						SystemParametersInfoForDpi(SPI_GETICONTITLELOGFONT, lfText.sizeof, &lfText, FALSE, this.actualDpi_);
 						HFONT hFontNew = CreateFontIndirect(&lfText);

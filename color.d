@@ -46,7 +46,7 @@ private {
 	}
 
 	package(arsd) @trusted
-	string toInternal(T)(int a) {
+	string toInternal(T)(long a) {
 		if(a == 0)
 			return "0";
 		char[] ret;

@@ -7733,13 +7733,44 @@ class TableView : Widget {
 	/// Passed to [setColumnInfo]
 	static struct ColumnInfo {
 		const(char)[] name; /// the name displayed in the header
-		int width; /// the default width, in pixels
-		TextAlignment alignment; /// alignment of the text in the cell
+		/++
+			The default width, in pixels. As a special case, you can set this to -1
+			if you want the system to try to automatically size the width to fit visible
+			content. If it can't, it will try to pick a sensible default size.
+
+			Any other negative value is not allowed and may lead to unpredictable results.
+
+			History:
+				The -1 behavior was specified on December 3, 2021. It actually worked before
+				anyway on Win32 but now it is a formal feature with partial Linux support.
+
+			Bugs:
+				It doesn't actually attempt to calculate a best-fit width on Linux as of
+				December 3, 2021. I do plan to fix this in the future, but Windows is the
+				priority right now. At least it doesn't break things when you use it now.
+		+/
+		int width;
+
+		/++
+			Alignment of the text in the cell. Applies to the header as well as all data in this
+			column.
+
+			Bugs:
+				On Windows, the first column ignores this member and is always left aligned.
+				You can work around this by inserting a dummy first column with width = 0
+				then putting your actual data in the second column, which does respect the
+				alignment.
+
+				This is a quirk of the operating system's implementation going back a very
+				long time and is unlikely to ever be fixed.
+		+/
+		TextAlignment alignment;
 
 		/++
 			After all the pixel widths have been assigned, any left over
 			space is divided up among all columns and distributed to according
 			to the widthPercent field.
+
 
 			For example, if you have two fields, both with width 50 and one with
 			widthPercent of 25 and the other with widthPercent of 75, and the
@@ -7761,6 +7792,17 @@ class TableView : Widget {
 			The percents total in the column can never exceed 100 or be less than 0.
 			Doing this will trigger an assert error.
 
+			Implementation note:
+
+			Please note that percentages are only recalculated 1) upon original
+			construction and 2) upon resizing the control. If the user adjusts the
+			width of a column, the percentage items will not be updated.
+
+			On the other hand, if the user adjusts the width of a percentage column
+			then resizes the window, it is recalculated, meaning their hand adjustment
+			is discarded. This specific behavior may change in the future as it is
+			arguably a bug, but I'm not certain yet.
+
 			History:
 				Added November 10, 2021 (dub v10.4)
 		+/
@@ -7777,8 +7819,9 @@ class TableView : Widget {
 	+/
 	void setColumnInfo(ColumnInfo[] columns...) {
 
-		foreach(ref c; this.columns)
+		foreach(ref c; columns) {
 			c.name = c.name.idup;
+		}
 		this.columns = columns.dup;
 
 		updateCalculatedWidth(false);
@@ -7787,10 +7830,10 @@ class TableView : Widget {
 			tvwi.header.updateHeaders();
 			tvwi.updateScrolls();
 		} else version(win32_widgets)
-		foreach(i, ref column; columns) {
+		foreach(i, column; this.columns) {
 			LVCOLUMN lvColumn;
 			lvColumn.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM;
-			lvColumn.cx = column.calculatedWidth;
+			lvColumn.cx = column.width == -1 ? -1 : column.calculatedWidth;
 
 			auto bfr = WCharzBuffer(column.name);
 			lvColumn.pszText = bfr.ptr;
@@ -7807,19 +7850,35 @@ class TableView : Widget {
 		}
 	}
 
-	private void updateCalculatedWidth(bool informWindows) {
+	private int getActualSetSize(size_t i, bool askWindows) {
+		version(win32_widgets)
+			if(askWindows)
+				return SendMessage(hwnd, LVM_GETCOLUMNWIDTH, cast(WPARAM) i, 0);
+		auto w = columns[i].width;
+		if(w == -1)
+			return 50; // idk, just give it some space so the percents aren't COMPLETELY off
+		return w;
+	}
 
+	private void updateCalculatedWidth(bool informWindows) {
+		int padding;
+		version(win32_widgets)
+			padding = 4;
 		int remaining = this.width;
-		foreach(column; columns)
-			remaining -= column.width;
+		foreach(i, column; columns)
+			remaining -= this.getActualSetSize(i, informWindows && column.widthPercent == 0) + padding;
+		remaining -= padding;
 		if(remaining < 0)
 			remaining = 0;
 
 		int percentTotal;
 		foreach(i, ref column; columns) {
 			percentTotal += column.widthPercent;
-			auto c = column.width + (remaining * column.widthPercent) / 100;
+
+			auto c = this.getActualSetSize(i, informWindows && column.widthPercent == 0) + (remaining * column.widthPercent) / 100;
+
 			column.calculatedWidth = c;
+
 			version(win32_widgets)
 			if(informWindows)
 				SendMessage(hwnd, LVM_SETCOLUMNWIDTH, i, c); // LVSCW_AUTOSIZE or LVSCW_AUTOSIZE_USEHEADER are amazing omg
@@ -8098,8 +8157,6 @@ class TableView : Widget {
 	+/
 	CellStyle delegate(int row, int column) getCellStyle;
 
-
-
 	// i want to be able to do things like draw little colored things to show red for negative numbers
 	// or background color indicators or even in-cell charts
 	// void delegate(int row, int column, WidgetPainter painter, int width, int height, in char[] text) drawCell;
@@ -8195,6 +8252,10 @@ private class TableViewWidgetInner : Widget {
 				break;
 			x = 0;
 			foreach(columnNumber, column; tvw.columns) {
+
+				if(column.width == 0)
+					continue;
+
 				auto x2 = x + column.calculatedWidth;
 				auto smwx = smw.position.x;
 
@@ -8280,6 +8341,8 @@ private class TableViewWidgetInner : Widget {
 				child.removeWidget();
 
 			foreach(column; tvw.tvw.columns) {
+				if(column.width == 0)
+					continue;
 				// the cast is ok because I dup it above, just the type is never changed.
 				// all this is private so it should never get messed up.
 				new Button(ImageLabel(cast(string) column.name, column.alignment), this);
@@ -12462,7 +12525,14 @@ enum GenericIcons : ushort {
 	Print, ///
 }
 
-///
+/++
+	History:
+		The dialog itself on Linux was modified on December 2, 2021 to include
+		a directory picker in addition to the command line completion view.
+	Future_directions:
+		I want to add some kind of custom preview and maybe thumbnail thing in the future,
+		at least on Linux, maybe on Windows too.
++/
 void getOpenFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
