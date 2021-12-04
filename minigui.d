@@ -7856,7 +7856,7 @@ class TableView : Widget {
 				return SendMessage(hwnd, LVM_GETCOLUMNWIDTH, cast(WPARAM) i, 0);
 		auto w = columns[i].width;
 		if(w == -1)
-			return 50; // idk, just give it some space so the percents aren't COMPLETELY off
+			return 50; // idk, just give it some space so the percents aren't COMPLETELY off FIXME
 		return w;
 	}
 
@@ -8221,10 +8221,14 @@ private class TableViewWidgetInner : Widget {
 		// FIXME: add a fixed header to the SMW
 	}
 
+	enum padding = 3;
+
 	void updateScrolls() {
 		int w;
-		foreach(column; tvw.columns)
-			w += column.width;
+		foreach(idx, column; tvw.columns) {
+			if(column.width == 0) continue;
+			w += tvw.getActualSetSize(idx, false);// + padding;
+		}
 		smw.setTotalArea(w, tvw.itemCount);
 		columnsWidth = w;
 	}
@@ -8245,17 +8249,11 @@ private class TableViewWidgetInner : Widget {
 
 		int row = smw.position.y;
 
-		enum padding = 3;
-
 		foreach(lol; 0 .. this.height / lh) {
 			if(row >= tvw.itemCount)
 				break;
 			x = 0;
 			foreach(columnNumber, column; tvw.columns) {
-
-				if(column.width == 0)
-					continue;
-
 				auto x2 = x + column.calculatedWidth;
 				auto smwx = smw.position.x;
 
@@ -8268,6 +8266,7 @@ private class TableViewWidgetInner : Widget {
 						case TextAlignment.Right: endX -= padding; break;
 						default: /* broken */ break;
 					}
+					if(column.width != 0) // no point drawing an invisible column
 					tvw.getData(row, cast(int) columnNumber, (info) {
 						// auto clip = painter.setClipRectangle(
 
