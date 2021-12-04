@@ -8341,8 +8341,6 @@ private class TableViewWidgetInner : Widget {
 				child.removeWidget();
 
 			foreach(column; tvw.tvw.columns) {
-				if(column.width == 0)
-					continue;
 				// the cast is ok because I dup it above, just the type is never changed.
 				// all this is private so it should never get messed up.
 				new Button(ImageLabel(cast(string) column.name, column.alignment), this);
