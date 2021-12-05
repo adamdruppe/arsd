@@ -7853,7 +7853,7 @@ class TableView : Widget {
 	private int getActualSetSize(size_t i, bool askWindows) {
 		version(win32_widgets)
 			if(askWindows)
-				return SendMessage(hwnd, LVM_GETCOLUMNWIDTH, cast(WPARAM) i, 0);
+				return cast(int) SendMessage(hwnd, LVM_GETCOLUMNWIDTH, cast(WPARAM) i, 0);
 		auto w = columns[i].width;
 		if(w == -1)
 			return 50; // idk, just give it some space so the percents aren't COMPLETELY off FIXME
