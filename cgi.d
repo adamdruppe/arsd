@@ -564,7 +564,7 @@ private struct stdin {
 	import core.sys.windows.windows;
 static:
 
-	static this() {
+	shared static this() {
 		// Set stdin to binary mode
 		version(Win64)
 		_setmode(std.stdio.stdin.fileno(), 0x8000);
