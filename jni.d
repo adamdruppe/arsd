@@ -61,6 +61,11 @@
 			@Import @property int member(); // getter for java's `int member`
 			@Import @property void member(int); // setter for java's `int member`
 		}
+
+		version(Windows) {
+			import core.sys.windows.dll;
+			mixin SimpleDllMain;
+		}
 	---
 
 	We can:
