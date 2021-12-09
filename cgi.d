@@ -370,6 +370,15 @@ version(Posix) {
 	}
 }
 
+version(Windows) {
+	version(minimal) {
+
+	} else {
+		// not too concerned about gdc here since the mingw version is fairly new as well
+		version=with_breaking_cgi_features;
+	}
+}
+
 void cloexec(int fd) {
 	version(Posix) {
 		import core.sys.posix.fcntl;
