@@ -1648,6 +1648,60 @@ shared static this() {
 }
 
 /++
+	Blocking mode for event loop calls associated with a window instance.
+
+	History:
+		Added December 8, 2021 (dub v10.5). Prior to that, all calls to
+		`window.eventLoop` were the same as calls to `EventLoop.get.run`; that
+		is, all would block until the application quit.
+
+		That behavior can still be achieved here with `untilApplicationQuits`,
+		or explicitly calling the top-level `EventLoop.get.run` function.
++/
+enum BlockingMode {
+	/++
+		The event loop call will block until the whole application is ready
+		to quit if it is the only one running, but if it is nested inside
+		another one, it will only block until the window you're calling it on
+		closes.
+	+/
+	automatic             = 0x00,
+	/++
+		The event loop call will only return when the whole application
+		is ready to quit. This usually means all windows have been closed.
+
+		This is appropriate for your main application event loop.
+	+/
+	untilApplicationQuits = 0x01,
+	/++
+		The event loop will return when the window you're calling it on
+		closes. If there are other windows still open, they may be destroyed
+		unless you have another event loop running later.
+
+		This might be appropriate for a modal dialog box loop. Remember that
+		other windows are still processing input though, so you can end up
+		with a lengthy call stack if this happens in a loop, similar to a
+		recursive function (well, it literally is a recursive function, just
+		not an obvious looking one).
+	+/
+	untilWindowCloses     = 0x02,
+	/++
+		If an event loop is already running, this call will immediately
+		return, allowing the existing loop to handle it. If not, this call
+		will block until the condition you bitwise-or into the flag.
+
+		The default is to block until the application quits, same as with
+		the `automatic` setting (since if it were nested, which triggers until
+		window closes in automatic, this flag would instead not block at all),
+		but if you used `BlockingMode.onlyIfNotNested | BlockingMode.untilWindowCloses`,
+		it will only nest until the window closes. You might want that if you are
+		going to open two windows simultaneously and want closing just one of them
+		to trigger the event loop return.
+	+/
+	onlyIfNotNested       = 0x10,
+}
+
+/++
 	The flagship window class.
 
 
@@ -2192,6 +2246,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// Returns true if the window has been closed.
 	final @property bool closed() { return _closed; }
 
+	private final @property bool notClosed() { return !_closed; }
+
 	/// Returns true if the window is focused.
 	final @property bool focused() { return _focused; }
 
@@ -2405,7 +2461,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	/++
 		Sets your event handlers, without entering the event loop. Useful if you
-		have multiple windows - set the handlers on each window, then only do eventLoop on your main window.
+		have multiple windows - set the handlers on each window, then only do
+		[eventLoop] on your main window or call `EventLoop.get.run();`.
+
+		This assigns the given handlers to [handleKeyEvent], [handleCharEvent],
+		[handlePulse], and [handleMouseEvent] automatically based on the provide
+		delegate signatures.
 	+/
 	void setEventHandlers(T...)(T eventHandlers) {
 		// FIXME: add more events
@@ -2422,11 +2483,65 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		}
 	}
 
-	/// The event loop automatically returns when the window is closed
-	/// pulseTimeout is given in milliseconds. If pulseTimeout == 0, no
-	/// pulse timer is created. The event loop will block until an event
-	/// arrives or the pulse timer goes off.
+	/++
+		The event loop automatically returns when the window is closed
+		pulseTimeout is given in milliseconds. If pulseTimeout == 0, no
+		pulse timer is created. The event loop will block until an event
+		arrives or the pulse timer goes off.
+
+		The given `eventHandlers` are passed to [setEventHandlers], which in turn
+		assigns them to [handleKeyEvent], [handleCharEvent], [handlePulse], and
+		[handleMouseEvent], based on the signature of delegates you provide.
+
+		Give one with no parameters to set a timer pulse handler. Give one that
+		takes [KeyEvent] for a key handler, [MouseEvent], for a mouse handler,
+		and one that takes `dchar` for a char event handler. You can use as many
+		or as few handlers as you need for your application.
+
+		History:
+			The overload without `pulseTimeout` was added on December 8, 2021.
+
+			On December 9, 2021, the default blocking mode (which is now configurable
+			because [eventLoopWithBlockingMode] was added) switched from
+			[BlockingMode.untilApplicationQuits] over to [BlockingMode.automatic]. This
+			should almost never be noticeable to you since the typical simpledisplay
+			paradigm has been (and I still recommend) to have one `eventLoop` call.
+
+		See_Also:
+			[eventLoopWithBlockingMode]
+	+/
 	final int eventLoop(T...)(
+		long pulseTimeout,    /// set to zero if you don't want a pulse.
+		T eventHandlers) /// delegate list like std.concurrency.receive
+	{
+		return eventLoopWithBlockingMode(BlockingMode.automatic, pulseTimeout, eventHandlers);
+	}
+
+	/// ditto
+	final int eventLoop(T...)(T eventHandlers) if(T.length == 0 || is(T[0] == delegate))
+	{
+		return eventLoopWithBlockingMode(BlockingMode.automatic, 0, eventHandlers);
+	}
+
+	/++
+		This is the function [eventLoop] forwards to. It, in turn, forwards to `EventLoop.get.run`.
+
+		History:
+			Added December 8, 2021 (dub v10.5)
+
+			Previously, this implementation was right inside [eventLoop], but when I wanted
+			to add the new [BlockingMode] parameter, the compiler got in a trouble loop so I
+			just renamed it instead of adding as an overload. Besides, the new name makes it
+			easier to remember the order and avoids ambiguity between two int-like params anyway.
+
+		See_Also:
+			[SimpleWindow.eventLoop], [EventLoop]
+
+		Bugs:
+			The blocking mode is not implemented on OSX Cocoa nor on the (deprecated) arsd.eventloop.
+	+/
+	final int eventLoopWithBlockingMode(T...)(
+		BlockingMode blockingMode, /// when you want this function to block until
 		long pulseTimeout,    /// set to zero if you don't want a pulse.
 		T eventHandlers) /// delegate list like std.concurrency.receive
 	{
@@ -2456,7 +2571,15 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
             		return 0;
         	} else {
 			EventLoop el = EventLoop(pulseTimeout, handlePulse);
-			return el.run();
+
+			if((blockingMode & BlockingMode.onlyIfNotNested) && el.impl.refcount > 1)
+				return 0;
+
+			return el.run(
+				((blockingMode & 0x0f) == BlockingMode.untilApplicationQuits) ?
+					null :
+					&this.notClosed
+			);
 		}
 	}
 
@@ -3507,6 +3630,10 @@ struct EventLoop {
 		return EventLoop(0, null);
 	}
 
+	static void quitApplication() {
+		EventLoop.get().exit();
+	}
+
 	__gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
 
 	/// Construct an application-global event loop for yourself
@@ -4058,8 +4185,10 @@ struct EventLoopImpl {
 						if(count > 10)
 							break; // take the opportunity to catch up on other events
 
-						if(ret == 0) // WM_QUIT
+						if(ret == 0) { // WM_QUIT
+							EventLoop.quitApplication();
 							break;
+						}
 					}
 				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
 					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
@@ -7627,18 +7756,28 @@ final class Image {
 	mixin NativeImageImplementation!() impl;
 }
 
-/// A convenience function to pop up a window displaying the image.
-/// If you pass a win, it will draw the image in it. Otherwise, it will
-/// create a window with the size of the image and run its event loop, closing
-/// when a key is pressed.
-void displayImage(Image image, SimpleWindow win = null) {
+/++
+	A convenience function to pop up a window displaying the image.
+	If you pass a win, it will draw the image in it. Otherwise, it will
+	create a window with the size of the image and run its event loop, closing
+	when a key is pressed.
+
+	History:
+		`BlockingMode` parameter added on December 8, 2021. Previously, it would
+		always block until the application quit which could cause bizarre behavior
+		inside a more complex application. Now, the default is to block until
+		this window closes if it is the only event loop running, and otherwise,
+		not to block at all and just pop up the display window asynchronously.
++/
+void displayImage(Image image, SimpleWindow win = null, BlockingMode bm = BlockingMode.untilWindowCloses | BlockingMode.onlyIfNotNested) {
 	if(win is null) {
 		win = new SimpleWindow(image);
 		{
 			auto p = win.draw;
 			p.drawImage(Point(0, 0), image);
 		}
-		win.eventLoop(0,
+		win.eventLoopWithBlockingMode(
+			bm, 0,
 			(KeyEvent ev) {
 				if (ev.pressed && (ev.key == Key.Escape || ev.key == Key.Space)) win.close();
 			} );
@@ -14739,8 +14878,10 @@ version(X11) {
 						anyImportant = true;
 						break;
 					}
-				if(!anyImportant)
+				if(!anyImportant) {
+					EventLoop.quitApplication();
 					done = true;
+				}
 			}
 			auto window = e.xdestroywindow.window;
 			if(window in CapableOfHandlingNativeEvent.nativeHandleMapping)
@@ -17609,10 +17750,41 @@ extern(System) nothrow @nogc {
 		void glDeleteShader(GLuint);
 		GLint glGetUniformLocation(GLuint, const(GLchar)*);
 		void glGenBuffers(GLsizei, GLuint*);
-		void glUniform4fv(GLint, GLsizei, const(GLfloat)*);
-		void glUniform1f(GLint, float);
-		void glUniform2f(GLint, float, float);
-		void glUniform4f(GLint, float, float, float, float);
+
+		void glUniform1f(GLint location, GLfloat v0); 
+		void glUniform2f(GLint location, GLfloat v0, GLfloat v1); 
+		void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2); 
+		void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3); 
+		void glUniform1i(GLint location, GLint v0); 
+		void glUniform2i(GLint location, GLint v0, GLint v1); 
+		void glUniform3i(GLint location, GLint v0, GLint v1, GLint v2); 
+		void glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3); 
+		void glUniform1ui(GLint location, GLuint v0); 
+		void glUniform2ui(GLint location, GLuint v0, GLuint v1); 
+		void glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2); 
+		void glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3); 
+		void glUniform1fv(GLint location, GLsizei count, const GLfloat *value); 
+		void glUniform2fv(GLint location, GLsizei count, const GLfloat *value); 
+		void glUniform3fv(GLint location, GLsizei count, const GLfloat *value); 
+		void glUniform4fv(GLint location, GLsizei count, const GLfloat *value); 
+		void glUniform1iv(GLint location, GLsizei count, const GLint *value); 
+		void glUniform2iv(GLint location, GLsizei count, const GLint *value); 
+		void glUniform3iv(GLint location, GLsizei count, const GLint *value); 
+		void glUniform4iv(GLint location, GLsizei count, const GLint *value); 
+		void glUniform1uiv(GLint location, GLsizei count, const GLuint *value); 
+		void glUniform2uiv(GLint location, GLsizei count, const GLuint *value); 
+		void glUniform3uiv(GLint location, GLsizei count, const GLuint *value); 
+		void glUniform4uiv(GLint location, GLsizei count, const GLuint *value);
+		void glUniformMatrix2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix2x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix3x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix2x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix4x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix3x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+		void glUniformMatrix4x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+
 		void glColorMask(GLboolean, GLboolean, GLboolean, GLboolean);
 		void glStencilOpSeparate(GLenum, GLenum, GLenum, GLenum);
 		void glDrawArrays(GLenum, GLint, GLsizei);
@@ -18051,6 +18223,10 @@ final class OpenGlShader {
 			if(id != -1)
 			glUniform2f(id, x, y);
 		}
+
+		void opAssign(T)(T t) {
+			t.glUniform(id);
+		}
 	}
 
 	static struct UniformsHelper {
@@ -18063,6 +18239,11 @@ final class OpenGlShader {
 				//throw new Exception("Could not find uniform " ~ name);
 			return Uniform(i);
 		}
+
+		@property void opDispatch(string name, T)(T t) {
+			Uniform f = this.opDispatch!name;
+			t.glUniform(f);
+		}
 	}
 
 	/++
@@ -18070,6 +18251,97 @@ final class OpenGlShader {
 		`OpenGlShader.Uniform = shader.uniforms.foo; // calls glGetUniformLocation(this, "foo");
 	+/
 	@property UniformsHelper uniforms() { return UniformsHelper(this); }
+}
+
+version(without_opengl) {} else {
+/++
+	A static container of types and value constructors for opengl 3+ shaders.
+
+
+	You can declare variables like:
+
+	```
+	OGL.vec3f something;
+	```
+
+	But generally it would be used with [OpenGlShader]'s uniform helpers like
+
+	```
+	shader.uniforms.mouse = OGL.vec(mouseX, mouseY); // or OGL.vec2f if you want to be more specific
+	```
++/
+final class OGL {
+	static:
+
+	private template typeFromSpecifier(string specifier) {
+		static if(specifier == "f")
+			alias typeFromSpecifier = GLfloat;
+		else static if(specifier == "i")
+			alias typeFromSpecifier = GLint;
+		else static if(specifier == "ui")
+			alias typeFromSpecifier = GLuint;
+		else static assert(0, "I don't know this ogl type suffix " ~ specifier);
+	}
+
+	private template CommonType(T...) {
+		static if(T.length == 1)
+			alias CommonType = T[0];
+		else static if(is(typeof(true ? T[0].init : T[1].init) C))
+			alias CommonType = CommonType!(C, T[2 .. $]);
+	}
+
+	private template typesToSpecifier(T...) {
+		static if(is(CommonType!T == float))
+			enum typesToSpecifier = "f";
+		else static if(is(CommonType!T == int))
+			enum typesToSpecifier = "i";
+		else static if(is(CommonType!T == uint))
+			enum typesToSpecifier = "ui";
+		else static assert(0, "I can't find a gl type suffix for common type " ~ CommonType!T.stringof);
+	}
+
+	private template genNames(size_t dim) {
+		string helper() {
+			string s;
+			if(dim > 0) s ~= "type x = 0;";
+			if(dim > 1) s ~= "type y = 0;";
+			if(dim > 2) s ~= "type z = 0;";
+			if(dim > 3) s ~= "type w = 0;";
+			return s;
+		}
+
+		enum genNames = helper();
+	}
+
+	// there's vec, arrays of vec, mat, and arrays of mat
+	template opDispatch(string name)
+		if(name.length > 4 && (name[0 .. 3] == "vec" || name[0 .. 3] == "mat"))
+	{
+		// FIXME: matrix can be this or nx4 etc
+		enum dim = cast(int) (name[3] - '0');
+		static assert(dim > 0 && dim <= 4, "Bad dimension for OGL type " ~ name[3]);
+		enum isArray = name[$ - 1] == 'v';
+		enum typeSpecifier = isArray ? name[4 .. $ - 1] : name[4 .. $];
+		alias type = typeFromSpecifier!typeSpecifier;
+
+		align(1)
+		struct opDispatch {
+			align(1):
+			mixin(genNames!dim);
+
+			private void glUniform(OpenGlShader.Uniform assignTo) {
+				glUniform(assignTo.id);
+			}
+			private void glUniform(int assignTo) {
+				mixin("glUniform" ~ name[3 .. $])(assignTo, this.tupleof);
+			}
+		}
+	}
+
+	auto vec(T...)(T members) {
+		return typeof(this).opDispatch!("vec" ~ toInternal!string(cast(int) T.length)~ typesToSpecifier!T)(members);
+	}
+}
 }
 
 version(linux) {

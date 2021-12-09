@@ -7541,11 +7541,24 @@ class Window : Widget {
 		return true;
 	}
 
-	/// Shows the window and runs the application event loop.
+	/++
+		Shows the window and runs the application event loop.
+
+		Blocks until this window is closed.
+
+		History:
+			The [BlockingMode] parameter was added on December 8, 2021.
+			The default behavior is to block until the application quits
+			(so all windows have been closed), unless another minigui or
+			simpledisplay event loop is already running, in which case it
+			will block until this window closes specifically.
+	+/
 	@scriptable
-	void loop() {
+	void loop(BlockingMode bm = BlockingMode.automatic) {
+		if(win.closed)
+			return; // otherwise show will throw
 		show();
-		win.eventLoop(0);
+		win.eventLoopWithBlockingMode(bm, 0);
 	}
 
 	private bool firstShow = true;
@@ -12558,7 +12571,7 @@ void getFileName(
 	bool openOrSave,
 	void delegate(string) onOK,
 	string prefilledName = null,
-	string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
+	string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\0*.png;*.jpg"]
 	void delegate() onCancel = null,
 )
 {
