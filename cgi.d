@@ -3755,7 +3755,7 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 						Cgi cgi;
 						try {
 							cgi = new CustomCgi(ir, &closeConnection);
-							cgi._outputFileHandle = s;
+							cgi._outputFileHandle = cast(CgiConnectionHandle) s;
 							// if we have a single process and the browser tries to leave the connection open while concurrently requesting another, it will block everything an deadlock since there's no other server to accept it. By closing after each request in this situation, it tells the browser to serialize for us.
 							if(processPoolSize <= 1)
 								closeConnection = true;
@@ -4048,9 +4048,9 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 	try {
 		cgi = new CustomCgi(maxContentLength);
 		version(Posix)
-			cgi._outputFileHandle = 1; // stdout
+			cgi._outputFileHandle = cast(CgiConnectionHandle) 1; // stdout
 		else version(Windows)
-			cgi._outputFileHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+			cgi._outputFileHandle = cast(CgiConnectionHandle) GetStdHandle(STD_OUTPUT_HANDLE);
 		else static assert(0);
 	} catch(Throwable t) {
 		version(CRuntime_Musl) {
@@ -4239,7 +4239,11 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(ir, &closeConnection);
-			cgi._outputFileHandle = connection.handle;
+			// There's a bunch of these casts around because the type matches up with
+			// the -version=.... specifiers, just you can also create a RequestServer
+			// and instantiate the things where the types don't match up. It isn't exactly
+			// correct but I also don't care rn. Might FIXME and either remove it later or something.
+			cgi._outputFileHandle = cast(CgiConnectionHandle) connection.handle;
 		} catch(ConnectionClosedException ce) {
 			closeConnection = true;
 			break;
@@ -4390,7 +4394,7 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 	Cgi cgi;
 	try {
 		cgi = new CustomCgi(maxContentLength, headers, &getScgiChunk, &writeScgi, &flushScgi);
-		cgi._outputFileHandle = connection.handle;
+		cgi._outputFileHandle = cast(CgiConnectionHandle) connection.handle;
 	} catch(Throwable t) {
 		sendAll(connection, plainHttpError(true, "400 Bad Request", t));
 		connection.close();
