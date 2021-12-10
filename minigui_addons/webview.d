@@ -1,10 +1,30 @@
 /++
 	A webview (based on [arsd.webview]) for minigui.
 
-	For now at least, to use this, you MUST have a CefApp in scope in main for the duration of your gui application.
+	For now at least, to use this, you MUST have a [WebViewApp] in scope in main for the duration of your gui application.
+
+	Warning: CEF spams the current directory with a bunch of files and directories. You might want to run your program in a dedicated location.
 
 	History:
 		Added November 5, 2021. NOT YET STABLE.
+
+	Examples:
+	---
+	/+ dub.sdl:
+		name "web"
+		dependency "arsd-official:minigui-webview" version="*"
+	+/
+
+	import arsd.minigui;
+	import arsd.minigui_addons.webview;
+
+	void main() {
+		auto app = WebViewApp(null);
+		auto window = new Window;
+		auto webview = new WebViewWidget("http://dlang.org/", window);
+		window.loop;
+	}
+	---
 +/
 module minigui_addons.webview;
 
@@ -23,11 +43,13 @@ version(Windows)
 import arsd.minigui;
 import arsd.webview;
 
-version(wv2)
+version(wv2) {
 	alias WebViewWidget = WebViewWidget_WV2;
-else version(cef)
+	alias WebViewApp = Wv2App;
+} else version(cef) {
 	alias WebViewWidget = WebViewWidget_CEF;
-else static assert(0, "no webview available");
+	alias WebViewApp = CefApp;
+} else static assert(0, "no webview available");
 
 class WebViewWidgetBase : NestedChildWindowWidget {
 	protected SimpleWindow containerWindow;
@@ -84,7 +106,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 	private bool initialized;
 
-	this(Widget parent) {
+	this(string url, Widget parent) {
 		super(parent);
 		// that ctor sets containerWindow
 
@@ -122,9 +144,12 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 					RECT bounds;
 					GetClientRect(containerWindow.impl.hwnd, &bounds);
 					controller.Bounds = bounds;
-					error = webview_window.Navigate("http://arsdnet.net/test.html"w.ptr);
+					//error = webview_window.Navigate("http://arsdnet.net/test.html"w.ptr);
 					//error = webview_window.NavigateToString("<html><body>Hello</body></html>"w.ptr);
 					//error = webview_window.Navigate("http://192.168.1.10/"w.ptr);
+
+					WCharzBuffer bfr = WCharzBuffer(url);
+					webview_window.Navigate(bfr.ptr);
 
 					controller.IsVisible = true;
 
@@ -183,7 +208,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 version(cef)
 class WebViewWidget_CEF : WebViewWidgetBase {
-	this(Widget parent) {
+	this(string url, Widget parent) {
 		//semaphore = new Semaphore;
 		assert(CefApp.active);
 
@@ -196,7 +221,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		cef_window_info_t window_info;
 		window_info.parent_window = containerWindow.nativeWindowHandle;
 
-		cef_string_t cef_url = cef_string_t("http://arsdnet.net/test.html");
+		cef_string_t cef_url = cef_string_t(url);//"http://arsdnet.net/test.html");
 
 		cef_browser_settings_t browser_settings;
 		browser_settings.size = cef_browser_settings_t.sizeof;

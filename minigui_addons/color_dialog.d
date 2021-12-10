@@ -1,5 +1,10 @@
 /++
-	Displays a color-picker dialog box.
+	Displays a color-picker dialog box. On Windows, uses the standard system dialog you know from Paint. On X, uses a custom one with hsla and rgba support.
+
+	History:
+		Written April 2017.
+		
+		Added to dub on December 9, 2021.
 +/
 module arsd.minigui_addons.color_dialog;
 

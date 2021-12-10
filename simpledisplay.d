@@ -3620,7 +3620,8 @@ static struct GenericCursor {
 /++
 	If you want to get more control over the event loop, you can use this.
 
-	Typically though, you can just call [SimpleWindow.eventLoop].
+	Typically though, you can just call [SimpleWindow.eventLoop] which forwards
+	to `EventLoop.get.run`.
 +/
 struct EventLoop {
 	@disable this();

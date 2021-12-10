@@ -562,12 +562,12 @@ void main() {
 }
 
 version(linux_gtk)
-
 enum activeEngine = WebviewEngine.webkit_gtk;
 
 /++
 
 +/
+version(linux_gtk)
 class WebView : browser_engine {
 
 	/++

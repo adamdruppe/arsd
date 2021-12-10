@@ -70,6 +70,40 @@
 			"sourceFiles": ["minigui_addons/nanovega.d"]
 		},
 		{
+			"name": "minigui-terminal_emulator_widget",
+			"description": "Terminal emulator widget add-on for minigui. New to dub in v10.5.",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.minigui_addons.terminal_emulator_widget=minigui_addons/terminal_emulator_widget.d"],
+			"dependencies": {
+				"arsd-official:minigui":"*",
+				"arsd-official:terminalemulator":"*"
+			},
+			"importPaths": ["."],
+			"sourceFiles": ["minigui_addons/terminal_emulator_widget.d"]
+		},
+		{
+			"name": "minigui-color_dialog",
+			"description": "Color picker dialog add-on for minigui. New to dub in v10.5.",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.minigui_addons.color_dialog=minigui_addons/color_dialog.d"],
+			"dependencies": {
+				"arsd-official:minigui":"*"
+			},
+			"importPaths": ["."],
+			"sourceFiles": ["minigui_addons/color_dialog.d"]
+		},
+		{
+			"name": "minigui-webview",
+			"description": "Webview widget add-on for minigui. New to dub in v10.5 but NOT STABLE in that release and it will break at random without notice until I say it is stable.",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.minigui_addons.webview=minigui_addons/webview.d", "-mv=arsd.webview=webview.d"],
+			"dependencies": {
+				"arsd-official:minigui":"*"
+			},
+			"importPaths": ["."],
+			"sourceFiles": ["minigui_addons/webview.d", "webview.d"]
+		},
+		{
 			"name": "gamehelpers",
 			"description": "Assorted game-related structs and algorithms",
 			"targetType": "library",
