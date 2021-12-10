@@ -3396,8 +3396,16 @@ class Element : DomParent {
 	}
 
 	protected string toPrettyStringIndent(bool insertComments, int indentationLevel, string indentWith) const {
-		if(indentWith is null || this.isEmpty())
+		if(indentWith is null)
 			return null;
+
+		// at the top we don't have anything to really do
+		if(parent_ is null)
+			return null;
+
+			// I've used isEmpty before but this other check seems better....
+			//|| this.isEmpty())
+
 		string s;
 
 		if(insertComments) s ~= "<!--";
@@ -3520,7 +3528,13 @@ class Element : DomParent {
 
 		// for simple `<collection><item>text</item><item>text</item></collection>`, let's
 		// just keep them on the same line
-		if(isEmpty || tagName.isInArray(inlineElements) || allAreInlineHtml(children, inlineElements)) {
+
+		if(isEmpty) {
+			// no work needed, this is empty so don't indent just for a blank line
+		} else if(children.length == 1 && children[0].isEmpty) {
+			// just one empty one, can put it inline too
+			s ~= children[0].toString();
+		} else if(tagName.isInArray(inlineElements) || allAreInlineHtml(children, inlineElements)) {
 			foreach(child; children) {
 				s ~= child.toString();//toPrettyString(false, 0, null);
 			}
@@ -7827,8 +7841,8 @@ bool allAreInlineHtml(const(Element)[] children, const string[] inlineElements) 
 	foreach(child; children) {
 		if(child.nodeType == NodeType.Text && child.nodeValue.strip.length) {
 			// cool
-		} else if(child.isEmpty || child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children, inlineElements)) {
-			// cool
+		} else if(child.tagName.isInArray(inlineElements) && allAreInlineHtml(child.children, inlineElements)) {
+			// cool, this is an inline element and none of its children contradict that
 		} else {
 			// prolly block
 			return false;
@@ -8021,20 +8035,51 @@ unittest {
 
 	{
 	auto document = new XmlDocument("<html><body><p>hello <a href=\"world\">world</a></p></body></html>");
-	auto pretty = document.toPrettyString(false, 0, "  ");
-	assert(pretty ==
+	assert(document.toPrettyString(false, 0, "  ") ==
 `<?xml version="1.0" encoding="UTF-8"?>
 <html>
   <body>
-    <p>hello
+    <p>
+      hello
       <a href="world">world</a>
     </p>
   </body>
-</html>`, pretty);
+</html>`);
 	}
 
+	{
 	auto document = new XmlDocument("<a att=\"http://ele\"><b><ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
 	assert(document.root.toPrettyString(false, 0, " ") == "<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+	}
+
+	{
+	auto document = new XmlDocument(`<a><b>toto</b><c></c></a>`);
+	assert(document.root.toPrettyString(false, 0, null) == `<a><b>toto</b><c></c></a>`);
+	assert(document.root.toPrettyString(false, 0, " ") == `<a>
+ <b>toto</b>
+ <c></c>
+</a>`);
+	}
+
+	{
+auto str = `<!DOCTYPE html>
+<html>
+	<head>
+		<title>Test</title>
+	</head>
+	<body>
+		<p>Hello there</p>
+		<p>I like <a href="">Links</a></p>
+		<div>
+			this is indented since there's a block inside
+			<p>this is the block</p>
+			and this gets its own line
+		</div>
+	</body>
+</html>`;
+		auto doc = new Document(str, true, true);
+		assert(doc.toPrettyString == str);
+	}
 
 }
 
