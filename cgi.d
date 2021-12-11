@@ -573,14 +573,6 @@ private struct stdin {
 	import core.sys.windows.windows;
 static:
 
-	shared static this() {
-		// Set stdin to binary mode
-		version(Win64)
-		_setmode(std.stdio.stdin.fileno(), 0x8000);
-		else
-		setmode(std.stdio.stdin.fileno(), 0x8000);
-	}
-
 	T[] rawRead(T)(T[] buf) {
 		uint bytesRead;
 		auto result = ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf.ptr, cast(int) (buf.length * T.sizeof), &bytesRead, null);
@@ -4044,6 +4036,16 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 //version(plain_cgi)
 void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
 	// standard CGI is the default version
+
+
+	// Set stdin to binary mode if necessary to avoid mangled newlines
+	version(Windows) {
+		version(Win64)
+		_setmode(std.stdio.stdin.fileno(), 0x8000);
+		else
+		setmode(std.stdio.stdin.fileno(), 0x8000);
+	}
+
 	Cgi cgi;
 	try {
 		cgi = new CustomCgi(maxContentLength);
