@@ -3635,7 +3635,7 @@ struct EventLoop {
 		EventLoop.get().exit();
 	}
 
-	__gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
+	private __gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
 
 	/// Construct an application-global event loop for yourself
 	/// See_Also: [SimpleWindow.setEventHandlers]
@@ -18256,7 +18256,7 @@ final class OpenGlShader {
 
 version(without_opengl) {} else {
 /++
-	A static container of types and value constructors for opengl 3+ shaders.
+	A static container of experimental types and value constructors for opengl 3+ shaders.
 
 
 	You can declare variables like:
@@ -18270,6 +18270,12 @@ version(without_opengl) {} else {
 	```
 	shader.uniforms.mouse = OGL.vec(mouseX, mouseY); // or OGL.vec2f if you want to be more specific
 	```
+
+	This is still extremely experimental, not very useful at this point, and thus subject to change at random.
+
+
+	History:
+		Added December 7, 2021. Not yet stable.
 +/
 final class OGL {
 	static:
@@ -18301,13 +18307,17 @@ final class OGL {
 		else static assert(0, "I can't find a gl type suffix for common type " ~ CommonType!T.stringof);
 	}
 
-	private template genNames(size_t dim) {
+	private template genNames(size_t dim, size_t dim2 = 0) {
 		string helper() {
 			string s;
-			if(dim > 0) s ~= "type x = 0;";
-			if(dim > 1) s ~= "type y = 0;";
-			if(dim > 2) s ~= "type z = 0;";
-			if(dim > 3) s ~= "type w = 0;";
+			if(dim2) {
+				s ~= "type["~(dim + '0')~"]["~(dim2 + '0')~"] matrix;";
+			} else {
+				if(dim > 0) s ~= "type x = 0;";
+				if(dim > 1) s ~= "type y = 0;";
+				if(dim > 2) s ~= "type z = 0;";
+				if(dim > 3) s ~= "type w = 0;";
+			}
 			return s;
 		}
 
@@ -18318,23 +18328,42 @@ final class OGL {
 	template opDispatch(string name)
 		if(name.length > 4 && (name[0 .. 3] == "vec" || name[0 .. 3] == "mat"))
 	{
-		// FIXME: matrix can be this or nx4 etc
-		enum dim = cast(int) (name[3] - '0');
-		static assert(dim > 0 && dim <= 4, "Bad dimension for OGL type " ~ name[3]);
-		enum isArray = name[$ - 1] == 'v';
-		enum typeSpecifier = isArray ? name[4 .. $ - 1] : name[4 .. $];
-		alias type = typeFromSpecifier!typeSpecifier;
+		static if(name[4] == 'x') {
+			enum dimX = cast(int) (name[3] - '0');
+			static assert(dimX > 0 && dimX <= 4, "Bad dimension for OGL X type " ~ name[3]);
+
+			enum dimY = cast(int) (name[5] - '0');
+			static assert(dimY > 0 && dimY <= 4, "Bad dimension for OGL Y type " ~ name[5]);
+
+			enum isArray = name[$ - 1] == 'v';
+			enum typeSpecifier = isArray ? name[6 .. $ - 1] : name[6 .. $];
+			alias type = typeFromSpecifier!typeSpecifier;
+		} else {
+			enum dim = cast(int) (name[3] - '0');
+			static assert(dim > 0 && dim <= 4, "Bad dimension for OGL type " ~ name[3]);
+			enum isArray = name[$ - 1] == 'v';
+			enum typeSpecifier = isArray ? name[4 .. $ - 1] : name[4 .. $];
+			alias type = typeFromSpecifier!typeSpecifier;
+		}
 
 		align(1)
 		struct opDispatch {
 			align(1):
-			mixin(genNames!dim);
+			static if(name[4] == 'x')
+				mixin(genNames!(dimX, dimY));
+			else
+				mixin(genNames!dim);
 
 			private void glUniform(OpenGlShader.Uniform assignTo) {
 				glUniform(assignTo.id);
 			}
 			private void glUniform(int assignTo) {
-				mixin("glUniform" ~ name[3 .. $])(assignTo, this.tupleof);
+				static if(name[4] == 'x') {
+					// FIXME
+					pragma(msg, "This matrix uniform helper has never been tested!!!!");
+					mixin("glUniformMatrix" ~ name[3 .. $] ~ "v")(assignTo, dimX * dimY, false, this.matrix.ptr);
+				} else
+					mixin("glUniform" ~ name[3 .. $])(assignTo, this.tupleof);
 			}
 		}
 	}
