@@ -4039,6 +4039,8 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 
 
 	// Set stdin to binary mode if necessary to avoid mangled newlines
+	// the fact that stdin is global means this could be trouble but standard cgi request
+	// handling is one per process anyway so it shouldn't actually be threaded here or anything.
 	version(Windows) {
 		version(Win64)
 		_setmode(std.stdio.stdin.fileno(), 0x8000);

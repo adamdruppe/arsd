@@ -2627,6 +2627,15 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							attentionDemanded = true;
 							demandAttention();
 						break;
+						/+
+						// this might reduce flickering but would it really? idk.
+						case "5002":
+							// disable redraw
+						break;
+						case "5003":
+							// re-enable redraw, force it now.
+						break;
+						+/
 						default:
 							unknownEscapeSequence("" ~ cast(char) esc[1]);
 					}
