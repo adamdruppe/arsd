@@ -1422,6 +1422,7 @@ class HttpRequest {
 				any other value should be considered a non-recoverable error if you want to be forward compatible as I reserve the right to add more values later.
 		+/
 		public int advanceConnections(Duration maximumTimeout = 10.seconds, bool automaticallyRetryOnInterruption = false) {
+			debug(arsd_http2_verbose) writeln("advancing");
 			if(readSet is null)
 				readSet = new SocketSet();
 			if(writeSet is null)
@@ -1592,6 +1593,24 @@ class HttpRequest {
 					return 3;
 			} else { /* ready */
 				foreach(sock, request; activeRequestOnSocket) {
+					// always need to try to send first in part because http works that way but
+					// also because openssl will sometimes leave something ready to read even if we haven't
+					// sent yet (probably leftover data from the crypto negotiation) and if that happens ssl
+					// is liable to block forever hogging the connection and not letting it send...
+					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
+					if(writeSet.isSet(sock)) {
+						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
+						assert(request.sendBuffer.length);
+						auto sent = sock.send(request.sendBuffer);
+						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
+						if(sent <= 0)
+							throw new Exception("send error " ~ lastSocketError);
+						request.sendBuffer = request.sendBuffer[sent .. $];
+						if(request.sendBuffer.length == 0) {
+							request.state = State.waitingForResponse;
+						}
+					}
+
 					if(readSet.isSet(sock)) {
 						keep_going:
 						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
@@ -1646,20 +1665,6 @@ class HttpRequest {
 							if(s.dataPending()) {
 								goto keep_going;
 							}
-						}
-					}
-
-					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
-					if(writeSet.isSet(sock)) {
-						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
-						assert(request.sendBuffer.length);
-						auto sent = sock.send(request.sendBuffer);
-						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
-						if(sent <= 0)
-							throw new Exception("send error " ~ lastSocketError);
-						request.sendBuffer = request.sendBuffer[sent .. $];
-						if(request.sendBuffer.length == 0) {
-							request.state = State.waitingForResponse;
 						}
 					}
 				}
@@ -2822,6 +2827,7 @@ version(use_openssl) {
 		@trusted
 		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 		//import std.stdio;writeln(cast(string) buf);
+			debug(arsd_http2_verbose) writeln("ssl writing ", buf.length);
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
@@ -2838,13 +2844,16 @@ version(use_openssl) {
 		}
 		@trusted
 		override ptrdiff_t receive(scope void[] buf, SocketFlags flags) {
+
+			debug(arsd_http2_verbose) writeln("ssl_read before");
 			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
+			debug(arsd_http2_verbose) writeln("ssl_read after");
 			if(retval == -1) {
 				ERR_print_errors_fp(core.stdc.stdio.stderr);
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl send");
+				throw new Exception("ssl receive");
 			}
 			return retval;
 		}
