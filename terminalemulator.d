@@ -192,6 +192,45 @@ class TerminalEmulator {
 		attentionDemanded = false;
 	}
 
+	protected final {
+		version(invalidator_2) {
+		int invalidatedMin;
+		int invalidatedMax;
+		}
+
+		void clearInvalidatedRange() {
+		version(invalidator_2) {
+			invalidatedMin = int.max;
+			invalidatedMax = 0;
+		}
+		}
+
+		void extendInvalidatedRange() {
+		version(invalidator_2) {
+			invalidatedMin = 0;
+			invalidatedMax = int.max;
+		}
+		}
+
+		void extendInvalidatedRange(int x, int y, int x2, int y2) {
+		version(invalidator_2) {
+			extendInvalidatedRange(y * screenWidth + x, y2 * screenWidth + x2);
+		}
+		}
+
+		void extendInvalidatedRange(int o1, int o2) {
+		version(invalidator_2) {
+			if(o1 < invalidatedMin)
+				invalidatedMin = o1;
+			if(o2 > invalidatedMax)
+				invalidatedMax = o2;
+
+			if(invalidatedMax < invalidatedMin)
+				invalidatedMin = invalidatedMax;
+		}
+		}
+	}
+
 	// I believe \033[50buffer[] and up are available for extensions everywhere.
 	// when keys are shifted, xterm sends them as \033[1;2F for example with end. but is this even sane? how would we do it with say, F5?
 	// apparently shifted F5 is ^[[15;2~
@@ -234,7 +273,7 @@ class TerminalEmulator {
 			sendToApplication("\033[200~");
 
 		version(use_libssh2)
-			enum MAX_PASTE_CHUNK = 4000;
+			enum MAX_PASTE_CHUNK = 1024 * 40;
 		else
 			enum MAX_PASTE_CHUNK = 1024 * 1024 * 10;
 
@@ -412,6 +451,8 @@ class TerminalEmulator {
 						cell.selected = false;
 					}
 
+					extendInvalidatedRange(start, end);
+
 					cancelOverriddenSelection();
 					selectionEnd = idx;
 
@@ -427,6 +468,8 @@ class TerminalEmulator {
 						cell.invalidated = true;
 						cell.selected = true;
 					}
+
+					extendInvalidatedRange(start, end);
 
 					return true;
 				}
@@ -501,6 +544,8 @@ class TerminalEmulator {
 						cell.selected = false;
 					}
 
+					extendInvalidatedRange(selectionStart, selectionEnd);
+
 					if(consecutiveClicks == 1) {
 						selectionStart = termY * screenWidth + termX;
 						selectionEnd = selectionStart;
@@ -528,6 +573,7 @@ class TerminalEmulator {
 						cell.invalidated = true;
 						cell.selected = true;
 					}
+					extendInvalidatedRange(selectionStart, selectionEnd);
 
 					return true;
 				}
@@ -556,6 +602,8 @@ class TerminalEmulator {
 						cell.invalidated = true;
 						cell.selected = true;
 					}
+
+					extendInvalidatedRange(changed1, changed2);
 
 					auto text = getPlainText(selectionStart, selectionEnd);
 					if(text.length) {
@@ -599,6 +647,7 @@ class TerminalEmulator {
 		}
 
 		notifyScrollbarRelevant(true, true);
+		extendInvalidatedRange();
 	}
 
 	protected void outputOccurred() { }
@@ -1112,6 +1161,7 @@ class TerminalEmulator {
 		foreach(i, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
 			cell = plain;
 		}
+		extendInvalidatedRange(0, 0, screenWidth, screenHeight);
 	}
 
 	void makeSelectionOffsetsSane(ref int offsetStart, ref int offsetEnd) {
@@ -1199,6 +1249,7 @@ class TerminalEmulator {
 				foreach(x; 0 .. screenWidth)
 					ASS[cursorY][x] = plain;
 			}
+			extendInvalidatedRange(0, cursorY, screenWidth, scrollZoneBottom);
 		}
 	}
 
@@ -1219,6 +1270,8 @@ class TerminalEmulator {
 				foreach(x; 0 .. screenWidth)
 					ASS[cursorY][x] = plain;
 			}
+
+			extendInvalidatedRange(0, scrollZoneTop, screenWidth, cursorY);
 		}
 	}
 
@@ -1399,6 +1452,7 @@ class TerminalEmulator {
 
 			if(b == 8) {
 				cursorX = cursorX - 1;
+				extendInvalidatedRange(cursorX, cursorY, cursorX + 1, cursorY);
 				setTentativeScrollback(cursorX);
 				continue;
 			}
@@ -1804,6 +1858,8 @@ class TerminalEmulator {
 			cursorX = 0;
 		}
 
+		extendInvalidatedRange();
+
 		cursorX = 0;
 	}
 
@@ -1836,6 +1892,8 @@ class TerminalEmulator {
 		plain.invalidated = true;
 		normalScreen[] = plain;
 		alternateScreen[] = plain;
+
+		extendInvalidatedRange();
 
 		// then, in normal mode, we'll redraw using the scrollback buffer
 		//
@@ -2249,6 +2307,7 @@ class TerminalEmulator {
 
 		bool insertMode = false;
 		void newLine(bool commitScrollback) {
+			extendInvalidatedRange(); // FIXME
 			if(!alternateScreenActive && commitScrollback) {
 				// I am limiting this because obscenely long lines are kinda useless anyway and
 				// i don't want it to eat excessive memory when i spam some thing accidentally
@@ -2345,6 +2404,8 @@ class TerminalEmulator {
 				}
 			selectionStart = 0;
 			selectionEnd = 0;
+
+			extendInvalidatedRange();
 		}
 
 		private int tentativeScrollback = int.max;
@@ -2398,6 +2459,8 @@ class TerminalEmulator {
 
 				addScrollbackOutput(tc);
 			}
+
+			extendInvalidatedRange(cursorX, cursorY, cursorX + 1, cursorY);
 			// FIXME: the wraparoundMode seems to help gnu screen but then it doesn't go away properly and that messes up bash...
 			//if(wraparoundMode && cursorX == screenWidth - 1) {
 			if(cursorX == screenWidth - 1) {
@@ -2698,6 +2761,8 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									ASS[scrollZoneBottom][x] = plain;
 								}
 							}
+
+							extendInvalidatedRange();
 						}
 					break;
 					case 'K':
@@ -3345,6 +3410,8 @@ URXVT (1015)
 							ASS[cursorY][this.screenWidth-1].ch = ' ';
 							ASS[cursorY][this.screenWidth-1].invalidated = true;
 						}
+
+						extendInvalidatedRange(cursorX, cursorY, this.screenWidth, cursorY);
 					break;
 					case '@':
 						// insert blank characters
@@ -3357,6 +3424,8 @@ URXVT (1015)
 							ASS[cursorY][cursorX].ch = ' ';
 							ASS[cursorY][cursorX].invalidated = true;
 						}
+
+						extendInvalidatedRange(cursorX, cursorY, this.screenWidth, cursorY);
 					break;
 					case 'c':
 						// send device attributes
@@ -3951,6 +4020,7 @@ mixin template PtySupport(alias resizeHelper) {
 
 	final void redraw_() {
 		if(invalidateAll) {
+			extendInvalidatedRange(0, 0, this.screenWidth, this.screenHeight);
 			if(alternateScreenActive)
 				foreach(ref t; alternateScreen)
 					t.invalidated = true;
@@ -4605,6 +4675,8 @@ mixin template SdpyDraw() {
 			// FIXME: make sure this clips correctly
 			painter.drawText(Point(bufferX, bufferY), cast(immutable) bufferText[0 .. bufferTextLength]);
 
+			// import std.stdio; writeln(bufferX, " ", bufferY);
+
 			hasBufferedInfo = false;
 
 			bufferReverse = false;
@@ -4616,7 +4688,29 @@ mixin template SdpyDraw() {
 
 
 		int x;
-		foreach(idx, ref cell; alternateScreenActive ? alternateScreen : normalScreen) {
+		auto bfr = alternateScreenActive ? alternateScreen : normalScreen;
+
+		version(invalidator_2) {
+		if(invalidatedMax > bfr.length)
+			invalidatedMax = cast(int) bfr.length;
+		if(invalidatedMin > invalidatedMax)
+			invalidatedMin = invalidatedMax;
+		if(invalidatedMin >= 0)
+			bfr = bfr[invalidatedMin .. invalidatedMax];
+
+		posx += (invalidatedMin % screenWidth) * fontWidth;
+		posy += (invalidatedMin / screenWidth) * fontHeight;
+
+		//import std.stdio; writeln(invalidatedMin, " to ", invalidatedMax, " ", posx, "x", posy);
+		invalidated.left = posx;
+		invalidated.top = posy;
+		invalidated.right = posx;
+		invalidated.top = posy;
+
+		clearInvalidatedRange();
+		}
+
+		foreach(idx, ref cell; bfr) {
 			if(!forceRedraw && !cell.invalidated && lastDrawAlternativeScreen == alternateScreenActive) {
 				flushBuffer();
 				goto skipDrawing;
@@ -4736,6 +4830,8 @@ mixin template SdpyDraw() {
 			}
 		}
 
+		flushBuffer();
+
 		if(cursorShowing) {
 			painter.fillColor = cursorColor;
 			painter.outlineColor = cursorColor;
@@ -4765,6 +4861,8 @@ mixin template SdpyDraw() {
 			if(cursorX >= 0 && cursorY >= 0 && cursorY < screenHeight && cursorX < screenWidth) {
 				(*buffer)[cursorY * screenWidth + cursorX].invalidated = true;
 			}
+
+			extendInvalidatedRange(cursorX, cursorY, cursorX + 1, cursorY);
 
 			invalidated.left = posx < invalidated.left ? posx : invalidated.left;
 			invalidated.top = posy < invalidated.top ? posy : invalidated.top;
