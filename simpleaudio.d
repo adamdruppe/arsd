@@ -41,6 +41,8 @@
 */
 module arsd.simpleaudio;
 
+// http://webcache.googleusercontent.com/search?q=cache:NqveBqL0AOUJ:https://www.alsa-project.org/alsa-doc/alsa-lib/group___p_c_m.html&hl=en&gl=us&strip=1&vwsrc=0
+
 version(without_resampler) {
 
 } else {
@@ -478,35 +480,52 @@ final class AudioPcmOutThreadImplementation : Thread {
 		}
 	}
 
-	/// Args in hertz and milliseconds
+	/++
+		Makes some old-school style sound effects. Play with them to see what they actually sound like.
+
+		Params:
+			freq = frequency of the wave in hertz
+			dur = duration in milliseconds
+			volume = amplitude of the wave, between 0 and 100
+			balance = stereo balance. 50 = both speakers equally, 0 = all to the left, none to the right, 100 = all to the right, none to the left.
+			attack = a parameter to the change of frequency
+			freqBase = the base frequency in the sound effect algorithm
+
+		History:
+			The `balance` argument was added on December 13, 2021 (dub v10.5)
+
+	+/
 	@scriptable
-	void beep(int freq = 900, int dur = 150, int volume = DEFAULT_VOLUME) {
+	void beep(int freq = 900, int dur = 150, int volume = DEFAULT_VOLUME, int balance = 50) {
 		Sample s;
 		s.operation = 0; // square wave
 		s.frequency = SampleRate / freq;
 		s.duration = dur * SampleRate / 1000;
 		s.volume = volume;
+		s.balance = balance;
 		addSample(s);
 	}
 
-	///
+	/// ditto
 	@scriptable
-	void noise(int dur = 150, int volume = DEFAULT_VOLUME) {
+	void noise(int dur = 150, int volume = DEFAULT_VOLUME, int balance = 50) {
 		Sample s;
 		s.operation = 1; // noise
 		s.frequency = 0;
 		s.volume = volume;
 		s.duration = dur * SampleRate / 1000;
+		s.balance = balance;
 		addSample(s);
 	}
 
-	///
+	/// ditto
 	@scriptable
-	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = DEFAULT_VOLUME) {
+	void boop(float attack = 8, int freqBase = 500, int dur = 150, int volume = DEFAULT_VOLUME, int balance = 50) {
 		Sample s;
 		s.operation = 5; // custom
 		s.volume = volume;
 		s.duration = dur * SampleRate / 1000;
+		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase / (1 + cast(float) x / (cast(float) SampleRate / attack));
 			import std.math;
@@ -516,13 +535,14 @@ final class AudioPcmOutThreadImplementation : Thread {
 		addSample(s);
 	}
 
-	///
+	/// ditto
 	@scriptable
-	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = DEFAULT_VOLUME) {
+	void blip(float attack = 6, int freqBase = 800, int dur = 150, int volume = DEFAULT_VOLUME, int balance = 50) {
 		Sample s;
 		s.operation = 5; // custom
 		s.volume = volume;
 		s.duration = dur * SampleRate / 1000;
+		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase * (1 + cast(float) x / (cast(float) SampleRate / attack));
 			import std.math;
@@ -993,6 +1013,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		int duration; /* in samples */
 		int volume; /* between 1 and 100. You should generally shoot for something lowish, like 20. */
 		int delay; /* in samples */
+		int balance = 50; /* between 0 and 100 */
 
 		int x;
 		short delegate(int x) f;
@@ -1001,6 +1022,12 @@ final class AudioPcmOutThreadImplementation : Thread {
 	final void addSample(Sample currentSample) {
 		int frequencyCounter;
 		short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
+
+		enum divisor = 50;
+		int leftMultiplier  = 50 + (50 - currentSample.balance);
+		int rightMultiplier = 50 + (currentSample.balance - 50);
+		bool left = true;
+
 		addChannel(
 			delegate bool (short[] buffer) {
 				if(currentSample.duration) {
@@ -1031,7 +1058,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 					switch(currentSample.operation) {
 						case 0: // square wave
 							for(; i < sampleFinish; i++) {
-								buffer[i] = val;
+								buffer[i] = cast(short)((val * (left ? leftMultiplier : rightMultiplier)) / divisor);
+								left = !left;
 								// left and right do the same thing so we only count
 								// every other sample
 								if(i & 1) {
@@ -1048,7 +1076,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 						case 1: // noise
 							for(; i < sampleFinish; i++) {
 								import std.random;
-								buffer[i] = uniform(cast(short) -cast(int)val, val);
+								buffer[i] = cast(short)((left ? leftMultiplier : rightMultiplier) * uniform(cast(short) -cast(int)val, val) / divisor);
+								left = !left;
 							}
 						break;
 						/+
@@ -1130,7 +1159,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 						case 5: // custom function
 							val = currentSample.f(currentSample.x);
 							for(; i < sampleFinish; i++) {
-								buffer[i] = val;
+								buffer[i] = cast(short)(val * (left ? leftMultiplier : rightMultiplier) / divisor);
+								left = !left;
 								if(i & 1) {
 									currentSample.x++;
 									val = currentSample.f(currentSample.x);
