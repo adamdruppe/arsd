@@ -3486,7 +3486,11 @@ struct RequestServer {
 		listeningPort = defaultPort;
 	}
 
-	/// Reads the args into the other values.
+	/++
+		Reads the command line arguments into the values here.
+
+		Possible arguments are `--listening-host`, `--listening-port` (or `--port`), `--uid`, and `--gid`.
+	+/
 	void configureFromCommandLine(string[] args) {
 		bool foundPort = false;
 		bool foundHost = false;
