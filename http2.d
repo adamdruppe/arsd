@@ -2010,6 +2010,7 @@ class HttpRequest {
 					if(followLocation && responseData.location.length) {
 						static bool first = true;
 						//version(DigitalMars) if(!first) asm { int 3; }
+						debug(arsd_http2) writeln("redirecting to ", responseData.location);
 						populateFromInfo(Uri(responseData.location), HttpVerb.GET);
 						//import std.stdio; writeln("redirected to ", responseData.location);
 						first = false;
