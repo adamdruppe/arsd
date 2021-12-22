@@ -8519,6 +8519,25 @@ class MissingArgumentException : Exception {
 }
 
 /++
+	You can throw this from an api handler to indicate a 404 response. This is done by the presentExceptionAsHtml function in the presenter.
+
+	History:
+		Added December 15, 2021 (dub v10.5)
++/
+class ResourceNotFoundException : Exception {
+	string resourceType;
+	string resourceId;
+
+	this(string resourceType, string resourceId, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.resourceType = resourceType;
+		this.resourceId = resourceId;
+
+		super("Resource not found: " ~ resourceType ~ " " ~ resourceId, file, line, next);
+	}
+
+}
+
+/++
 	This can be attached to any constructor or function called from the cgi system.
 
 	If it is present, the function argument can NOT be set from web params, but instead
@@ -8831,6 +8850,74 @@ private bool hasIfCalledFromWeb(attrs...)() {
 +/
 template AutomaticForm(alias customizer) { }
 
+/++
+	This is meant to be returned by a function that takes a form POST submission. You
+	want to set the url of the new resource it created, which is set as the http
+	Location header for a "201 Created" result, and you can also set a separate
+	destination for browser users, which it sets via a "Refresh" header.
+
+	The `resourceRepresentation` should generally be the thing you just created, and
+	it will be the body of the http response when formatted through the presenter.
+	The exact thing is up to you - it could just return an id, or the whole object, or
+	perhaps a partial object.
+
+	Examples:
+	---
+	class Test : WebObject {
+		@(Cgi.RequestMethod.POST)
+		CreatedResource!int makeThing(string value) {
+			return CreatedResource!int(value.to!int, "/resources/id");
+		}
+	}
+	---
+
+	History:
+		Added December 18, 2021
++/
+struct CreatedResource(T) {
+	static if(!is(T == void))
+		T resourceRepresentation;
+	string resourceUrl;
+	string refreshUrl;
+}
+
+/+
+/++
+	This can be attached as a UDA to a handler to add a http Refresh header on a
+	successful run. (It will not be attached if the function throws an exception.)
+	This will refresh the browser the given number of seconds after the page loads,
+	to the url returned by `urlFunc`, which can be either a static function or a
+	member method of the current handler object.
+
+	You might use this for a POST handler that is normally used from ajax, but you
+	want it to degrade gracefully to a temporarily flashed message before reloading
+	the main page.
+
+	History:
+		Added December 18, 2021
++/
+struct Refresh(alias urlFunc) {
+	int waitInSeconds;
+
+	string url() {
+		static if(__traits(isStaticFunction, urlFunc))
+			return urlFunc();
+		else static if(is(urlFunc : string))
+			return urlFunc;
+	}
+}
++/
+
+/+
+/++
+	Sets a filter to be run before
+
+	A before function can do validations of params and log and stop the function from running.
++/
+template Before(alias b) {}
+template After(alias b) {}
++/
+
 /+
 	Argument conversions: for the most part, it is to!Thing(string).
 
@@ -9081,6 +9168,17 @@ html", true, true);
 		cgi.setResponseLocation(ret.to, true, getHttpCodeText(ret.code));
 	}
 
+	/// [CreatedResource]s send code 201 and will set the given urls, then present the given representation.
+	void presentSuccessfulReturn(T : CreatedResource!R, Meta, R)(Cgi cgi, T ret, Meta meta, string format) {
+		cgi.setResponseStatus(getHttpCodeText(201));
+		if(ret.resourceUrl.length)
+			cgi.header("Location: " ~ ret.resourceUrl);
+		if(ret.refreshUrl.length)
+			cgi.header("Refresh: 0;" ~ ret.refreshUrl);
+		static if(!is(R == void))
+			presentSuccessfulReturn(cgi, ret.resourceRepresentation, meta, format);
+	}
+
 	/// Multiple responses deconstruct the algebraic type and forward to the appropriate handler at runtime
 	void presentSuccessfulReturn(T : MultipleResponses!Types, Meta, Types...)(Cgi cgi, T ret, Meta meta, string format) {
 		bool outputted = false;
@@ -9119,11 +9217,27 @@ html", true, true);
 		useful forms or richer error messages for the user.
 	+/
 	void presentExceptionAsHtml(alias func, T)(Cgi cgi, Throwable t, T dg) {
-		presentExceptionAsHtmlImpl(cgi, t, createAutomaticFormForFunction!(func)(dg));
+		Form af;
+		foreach(attr; __traits(getAttributes, func)) {
+			static if(__traits(isSame, attr, AutomaticForm)) {
+				af = createAutomaticFormForFunction!(func)(dg);
+			}
+		}
+		presentExceptionAsHtmlImpl(cgi, t, af);
 	}
 
 	void presentExceptionAsHtmlImpl(Cgi cgi, Throwable t, Form automaticForm) {
-		if(auto mae = cast(MissingArgumentException) t) {
+		if(auto e = cast(ResourceNotFoundException) t) {
+			auto container = this.htmlContainer();
+
+			container.addChild("p", e.msg);
+
+			if(!cgi.outputtedResponseData)
+				cgi.setResponseStatus("404 Not Found");
+			cgi.write(container.parentDocument.toString(), true);
+		} else if(auto mae = cast(MissingArgumentException) t) {
+			if(automaticForm is null)
+				goto generic;
 			auto container = this.htmlContainer();
 			if(cgi.requestMethod == Cgi.RequestMethod.POST)
 				container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
@@ -9131,6 +9245,7 @@ html", true, true);
 
 			cgi.write(container.parentDocument.toString(), true);
 		} else {
+			generic:
 			auto container = this.htmlContainer();
 
 			// import std.stdio; writeln(t.toString());
@@ -9192,7 +9307,7 @@ html", true, true);
 	/++
 		Returns an element for a particular type
 	+/
-	Element elementFor(T)(string displayName, string name) {
+	Element elementFor(T)(string displayName, string name, Element function() udaSuggestion) {
 		import std.traits;
 
 		auto div = Element.make("div");
@@ -9218,7 +9333,7 @@ html", true, true);
 			fieldset.addChild("input", name);
 			foreach(idx, memberName; __traits(allMembers, T))
 			static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName));
+				fieldset.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(beautify(memberName), name ~ "." ~ memberName, null /* FIXME: pull off the UDA */));
 			}
 		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
 			Element lbl;
@@ -9229,13 +9344,22 @@ html", true, true);
 			} else {
 				lbl = div;
 			}
-			auto i = lbl.addChild("input", name);
+			Element i;
+			if(udaSuggestion) {
+				i = udaSuggestion();
+				lbl.appendChild(i);
+			} else {
+				i = lbl.addChild("input", name);
+			}
 			i.attrs.name = name;
 			static if(isSomeString!T)
 				i.attrs.type = "text";
 			else
 				i.attrs.type = "number";
-			i.attrs.value = to!string(T.init);
+			if(i.tagName == "textarea")
+				i.textContent = to!string(T.init);
+			else
+				i.attrs.value = to!string(T.init);
 		} else static if(is(T == bool)) {
 			Element lbl;
 			if(displayName !is null) {
@@ -9263,7 +9387,7 @@ html", true, true);
 			i.attrs.type = "file";
 		} else static if(is(T == K[], K)) {
 			auto templ = div.addChild("template");
-			templ.appendChild(elementFor!(K)(null, name));
+			templ.appendChild(elementFor!(K)(null, name, null /* uda??*/));
 			if(displayName !is null)
 				div.addChild("span", displayName, "label-text");
 			auto btn = div.addChild("button");
@@ -9312,10 +9436,15 @@ html", true, true);
 
 			static if(!mustNotBeSetFromWebParams!(param[0], __traits(getAttributes, param))) {
 				string displayName = beautify(__traits(identifier, param));
-				foreach(attr; __traits(getAttributes, param))
+				Element function() element;
+				foreach(attr; __traits(getAttributes, param)) {
 					static if(is(typeof(attr) == DisplayName))
 						displayName = attr.name;
-				auto i = form.appendChild(elementFor!(param)(displayName, __traits(identifier, param)));
+					else static if(is(typeof(attr) : typeof(element))) {
+						element = attr;
+					}
+				}
+				auto i = form.appendChild(elementFor!(param)(displayName, __traits(identifier, param), element));
 				if(i.querySelector("input[type=file]") !is null)
 					form.setAttribute("enctype", "multipart/form-data");
 			}
@@ -9343,10 +9472,13 @@ html", true, true);
 		foreach(idx, memberName; __traits(derivedMembers, T)) {{
 		static if(__traits(compiles, __traits(getMember, obj, memberName).offsetof)) {
 			string displayName = beautify(memberName);
+			Element function() element;
 			foreach(attr; __traits(getAttributes,  __traits(getMember, T, memberName)))
 				static if(is(typeof(attr) == DisplayName))
 					displayName = attr.name;
-			form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName));
+				else static if(is(typeof(attr) : typeof(element)))
+					element = attr;
+			form.appendChild(elementFor!(typeof(__traits(getMember, T, memberName)))(displayName, memberName, element));
 
 			form.setValue(memberName, to!string(__traits(getMember, obj, memberName)));
 		}}}
@@ -9552,6 +9684,7 @@ struct MultipleResponses(T...) {
 	+/
 }
 
+// FIXME: implement this somewhere maybe
 struct RawResponse {
 	int code;
 	string[] headers;
@@ -9567,7 +9700,7 @@ struct RawResponse {
 +/
 struct Redirection {
 	string to; /// The URL to redirect to.
-	int code = 303; /// The HTTP code to retrn.
+	int code = 303; /// The HTTP code to return.
 }
 
 /++
