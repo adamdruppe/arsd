@@ -85,6 +85,8 @@ void main() {
 		# now you can go to http://localhost:8080/?name=whatever
 	)
 
+	Please note: the default port for http is 8085 and for cgi is 4000. I recommend you set your own by the command line argument in a startup script instead of relying on any hard coded defaults. It is possible though to hard code your own with [RequestServer].
+
 
 	Compile_versions:
 
