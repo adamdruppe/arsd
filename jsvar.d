@@ -1542,13 +1542,13 @@ struct var {
 	}
 
 	///
-	static var fromJson(string json) {
+	static var fromJson(const(char)[] json) {
 		auto decoded = parseJSON(json);
 		return var.fromJsonValue(decoded);
 	}
 
 	///
-	static var fromJsonFile(string filename) {
+	static var fromJsonFile(const(char)[] filename) {
 		import std.file;
 		return var.fromJson(readText(filename));
 	}
