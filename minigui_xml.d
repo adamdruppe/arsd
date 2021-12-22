@@ -73,7 +73,7 @@
 		});
 	---
 +/
-module minigui_xml;
+module arsd.minigui_xml;
 
 public import arsd.minigui;
 public import arsd.minigui : Event;

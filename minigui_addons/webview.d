@@ -27,6 +27,7 @@
 	---
 +/
 module minigui_addons.webview;
+// FIXME: i think i can download the cef automatically if needed.
 
 version(linux)
 	version=cef;

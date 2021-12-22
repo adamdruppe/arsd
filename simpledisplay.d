@@ -5170,6 +5170,9 @@ class Timer {
 
 	private int intervalInMilliseconds;
 
+	// just cuz I sometimes call it this.
+	alias dispose = destroy;
+
 	/// Stop and destroy the timer object.
 	void destroy() {
 		version(Windows) {
