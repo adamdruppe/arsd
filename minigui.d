@@ -231,6 +231,80 @@ unittest {
 	main(); // exclude from docs
 }
 
+/++
+	This example shows one way you can partition your window into a header
+	and sidebar. Here, the header and sidebar have a fixed width, while the
+	rest of the content sizes with the window.
+
+	It might be a new way of thinking about window layout to do things this
+	way - perhaps [GridLayout] more matches your style of thought - but the
+	concept here is to partition the window into sub-boxes with a particular
+	size, then partition those boxes into further boxes.
+
+	$(IMG //arsdnet.net/minigui-screenshots/windows/layout.png, The example window has a header across the top, then below it a sidebar to the left and a content area to the right.)
+
+	So to make the header, start with a child layout that has a max height.
+	It will use that space from the top, then the remaining children will
+	split the remaining area, meaning you can think of is as just being another
+	box you can split again. Keep splitting until you have the look you desire.
++/
+// https://github.com/adamdruppe/arsd/issues/310
+version(minigui_screenshots)
+@Screenshot("layout")
+unittest {
+	import arsd.minigui;
+
+	// This helper class is just to help make the layout boxes visible.
+	// think of it like a <div style="background-color: whatever;"></div> in HTML.
+	class ColorWidget : Widget {
+		this(Color color, Widget parent) {
+			this.color = color;
+			super(parent);
+		}
+		Color color;
+		class Style : Widget.Style {
+			override WidgetBackground background() { return WidgetBackground(color); }
+		}
+		mixin OverrideStyle!Style;
+	}
+
+	void main() {
+		auto window = new Window;
+
+		// the key is to give it a max height. This is one way to do it:
+		auto header = new class HorizontalLayout {
+			this() { super(window); }
+			override int maxHeight() { return 50; }
+		};
+		// this next line is a shortcut way of doing it too, but it only works
+		// for HorizontalLayout and VerticalLayout, and is less explicit, so it
+		// is good to know how to make a new class like above anyway.
+		// auto header = new HorizontalLayout(50, window);
+
+		auto bar = new HorizontalLayout(window);
+
+		// or since this is so common, VerticalLayout and HorizontalLayout both
+		// can just take an argument in their constructor for max width/height respectively
+
+		// (could have tone this above too, but I wanted to demo both techniques)
+		auto left = new VerticalLayout(100, bar);
+
+		// and this is the main section's container. A plain Widget instance is good enough here.
+		auto container = new Widget(bar);
+
+		// and these just add color to the containers we made above for the screenshot.
+		// in a real application, you can just add your actual controls instead of these.
+		auto headerColorBox = new ColorWidget(Color.teal, header);
+		auto leftColorBox = new ColorWidget(Color.green, left);
+		auto rightColorBox = new ColorWidget(Color.purple, container);
+
+		window.loop();
+	}
+
+	main(); // exclude from docs
+}
+
+
 public import arsd.simpledisplay;
 /++
 	Convenience import to override the Windows GDI Rectangle function (you can still use it through fully-qualified imports)
@@ -7243,7 +7317,12 @@ class Window : Widget {
 				return ret;
 			return 1; // pass it on
 		};
+
+		if(Window.newWindowCreated)
+			Window.newWindowCreated(this);
 	}
+
+	private static void delegate(Window) newWindowCreated;
 
 	version(win32_widgets)
 	override void paint(WidgetPainter painter) {
@@ -9481,6 +9560,21 @@ class Fieldset : Widget {
 	}
 }
 
+/++
+	$(IMG //arsdnet.net/minigui-screenshots/windows/Fieldset.png, A box saying "baby will" with three round buttons inside it for the options of "eat", "cry", and "sleep")
+	$(IMG //arsdnet.net/minigui-screenshots/linux/Fieldset.png, Same thing, but in the default Linux theme.)
++/
+version(minigui_screenshots)
+@Screenshot("Fieldset")
+unittest {
+	auto window = new Window(200, 100);
+	auto set = new Fieldset("Baby will", window);
+	auto option1 = new Radiobox("Eat", set);
+	auto option2 = new Radiobox("Cry", set);
+	auto option3 = new Radiobox("Sleep", set);
+	window.loop();
+}
+
 /// Draws a line
 class HorizontalRule : Widget {
 	mixin Margin!q{ 2 };
@@ -9499,6 +9593,20 @@ class HorizontalRule : Widget {
 		painter.outlineColor = cs.lightAccentColor;
 		painter.drawLine(Point(0, 1), Point(width, 1));
 	}
+}
+
+version(minigui_screenshots)
+@Screenshot("HorizontalRule")
+/++
+	$(IMG //arsdnet.net/minigui-screenshots/linux/HorizontalRule.png, Same thing, but in the default Linux theme.)
+
++/
+unittest {
+	auto window = new Window(200, 100);
+	auto above = new TextLabel("Above the line", TextAlignment.Left, window);
+	new HorizontalRule(window);
+	auto below = new TextLabel("Below the line", TextAlignment.Left, window);
+	window.loop();
 }
 
 /// ditto
@@ -13618,49 +13726,69 @@ private bool endsWith(string test, string thing) {
 // still do layout delegation
 // and... split off Window from Widget.
 
-version(minigui_demos)
-// https://github.com/adamdruppe/arsd/issues/310
-unittest {
-	import arsd.minigui;
-
-	class ColorWidget : Widget {
-		this(Color color, Widget parent) {
-			this.color = color;
-			super(parent);
-		}
-		Color color;
-		class Style : Widget.Style {
-			override WidgetBackground background() { return WidgetBackground(color); }
-		}
-		mixin OverrideStyle!Style;
-	}
-
-	void main() {
-		auto window = new Window;
-
-		auto header = new class HorizontalLayout {
-			this() { super(window); }
-			override int maxHeight() { return 50; }
-		};
-
-		auto bar = new HorizontalLayout(window);
-
-		auto left = new class VerticalLayout {
-			this() { super(bar); }
-			override int maxWidth() { return 100; }
-		};
-
-		auto container = new Widget(bar);
-
-
-		auto headerColorBox = new ColorWidget(Color(0, 255, 255), header);
-		auto leftColorBox = new ColorWidget(Color.green, left);
-		auto rightColorBox = new ColorWidget(Color.purple, container);
-
-		window.loop();
-	}
+version(minigui_screenshots)
+struct Screenshot {
+	string name;
 }
 
+version(minigui_screenshots)
+static if(__VERSION__ > 2092)
+mixin(q{
+shared static this() {
+	import core.runtime;
+
+	static UnitTestResult screenshotMagic() {
+		string name;
+
+		import arsd.png;
+
+		auto results = new Window();
+		auto button = new Button("do it", results);
+
+		Window.newWindowCreated = delegate(Window w) {
+			Timer timer;
+			timer = new Timer(250, {
+				auto img = w.win.takeScreenshot();
+				timer.destroy();
+
+				version(Windows)
+					writePng("/var/www/htdocs/minigui-screenshots/windows/" ~ name ~ ".png", img);
+				else
+					writePng("/var/www/htdocs/minigui-screenshots/linux/" ~ name ~ ".png", img);
+
+				w.close();
+			});
+		};
+
+		button.addWhenTriggered( {
+
+		foreach(test; __traits(getUnitTests, mixin(__MODULE__))) {
+			name = null;
+			static foreach(attr; __traits(getAttributes, test)) {
+				static if(is(typeof(attr) == Screenshot))
+					name = attr.name;
+			}
+			if(name.length) {
+				test();
+			}
+		}
+
+		});
+
+		results.loop();
+
+		return UnitTestResult(0, 0, false, false);
+	}
+
+
+	Runtime.extendedModuleUnitTester = &screenshotMagic;
+}
+});
+version(minigui_screenshots) {
+	version(unittest)
+		void main() {}
+	else static assert(0, "dont forget the -unittest flag to dmd");
+}
 
 // FIXME: i called hotkey accelerator in some places. hotkey = key when menu is active like E&xit. accelerator = global shortcut.
 // FIXME: make multiple accelerators disambiguate based ona rgs
