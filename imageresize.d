@@ -3,8 +3,22 @@
 	See [imageResize] for the main function, all others are lower level if you need
 	more control.
 
+
 	Note that this focuses more on quality than speed. You can tweak the `filterScale`
 	argument to speed things up at the expense of quality though (lower number = faster).
+
+	I've found:
+
+	---
+	auto size = calculateSizeKeepingAspectRatio(i.width, i.height, maxWidth, maxHeight);
+	if(size.width != i.width || size.height != i.height) {
+		i = imageResize(i, size.width, size.height, null, 1.0, 0.6);
+	}
+	---
+
+	Gives decent results balancing quality and speed. Compiling with ldc or gdc can also
+	speed up your program.
+
 
 
 	Authors:
