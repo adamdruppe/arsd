@@ -1,3 +1,4 @@
+// FIXME: add a query devices thing
 /**
 	The purpose of this module is to provide audio functions for
 	things like playback, capture, and volume on both Windows

@@ -4858,10 +4858,12 @@ version(cgi_use_fiber) {
 
 		int epfd = -1; // thread local because EPOLLEXCLUSIVE works much better this way... weirdly.
 	} else version(Windows) {
-		__gshared HANDLE iocp;
+		// declaring the iocp thing below...
 	} else static assert(0, "The hybrid fiber server is not implemented on your OS.");
 }
 
+version(Windows)
+	__gshared HANDLE iocp;
 
 version(cgi_use_fiber) {
 	version(linux)

@@ -9,6 +9,16 @@ MemoryImage readPng(string filename) {
 	return imageFromPng(readPng(cast(ubyte[]) read(filename)));
 }
 
+/++
+	Easily reads a png from a data array into a MemoryImage.
+
+	History:
+		Added December 29, 2021 (dub v10.5)
++/
+MemoryImage readPngFromBytes(const(ubyte)[] bytes) {
+	return imageFromPng(readPng(bytes));
+}
+
 /// Saves a MemoryImage to a png. See also: writeImageToPngFile which uses memory a little more efficiently
 void writePng(string filename, MemoryImage mi) {
 	// FIXME: it would be nice to write the file lazily so we don't have so many intermediate buffers here

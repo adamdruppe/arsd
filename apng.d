@@ -417,8 +417,8 @@ struct ApngRenderBuffer {
 	}
 }
 
-/+
-
+/++
+	Class that represents an apng file.
 +/
 class ApngAnimation {
 	PngHeader header;
@@ -427,7 +427,10 @@ class ApngAnimation {
 	ApngFrame[] frames;
 	// default image? tho i can just load it as a png for that too.
 
-	/// This is an uninitialized thing, you're responsible for filling in all data yourself. You probably don't want this.
+	/++
+		This is an uninitialized thing, you're responsible for filling in all data yourself. You probably don't want to
+		use this except for use in the `factory` function you pass to [readApng].
+	+/
 	this() {
 
 	}
@@ -467,6 +470,50 @@ class ApngAnimation {
 	ApngRenderBuffer renderer() {
 		return ApngRenderBuffer(this, new TrueColorImage(header.width, header.height), 0);
 	}
+
+	/++
+		Hook for subclasses to handle custom chunks in the png file as it is loaded by [readApng].
+
+		Examples:
+			---
+			override void handleOtherChunkWhenLoading(Chunk chunk) {
+				if(chunk.stype == "mine") {
+					ubyte[] data = chunk.payload;
+					// process it
+				}
+			}
+			---
+
+		History:
+			Added December 26, 2021 (dub v10.5)
+	+/
+	protected void handleOtherChunkWhenLoading(Chunk chunk) {
+		// intentionally blank to ignore it since the main function does the whole base functionality
+	}
+
+	/++
+		Hook for subclasses to add custom chunks to the png file as it is written by [writeApngToData] and [writeApngToFile].
+
+		Standards:
+			See the png spec for guidelines on how to create non-essential, private chunks in a file:
+
+			http://www.libpng.org/pub/png/spec/1.2/PNG-Encoders.html#E.Use-of-private-chunks
+
+		Examples:
+			---
+			override createOtherChunksWhenSaving(scope void delegate(Chunk c) sink) {
+				sink(*Chunk.create("mine", [payload, bytes, here]));
+			}
+			---
+
+		History:
+			Added December 26, 2021 (dub v10.5)
+	+/
+	protected void createOtherChunksWhenSaving(scope void delegate(Chunk c) sink) {
+		// no other chunks by default
+
+		// I can now do the repeat frame thing for start / cycle / end bits of the animation in the game!
+	}
 }
 
 ///
@@ -495,14 +542,25 @@ enum APNG_BLEND_OP : byte {
 		If false, it will use the default image as the first
 		(and only) frame of animation if there are no apng chunks.
 
+		factory = factory function for constructing the [ApngAnimation]
+		object the function returns. You can use this to override the
+		allocation pattern or to return a subclass instead, which can handle
+		custom chunks and other things.
+
 	History:
 		Parameter `strictApng` added February 27, 2021
+		Parameter `factory` added December 26, 2021
 +/
-ApngAnimation readApng(in ubyte[] data, bool strictApng = false) {
+ApngAnimation readApng(in ubyte[] data, bool strictApng = false, scope ApngAnimation delegate() factory = null) {
 	auto png = readPng(data);
 	auto header = PngHeader.fromChunk(png.chunks[0]);
 
-	auto obj = new ApngAnimation();
+	ApngAnimation obj;
+	if(factory)
+		obj = factory();
+	else
+		obj = new ApngAnimation();
+
 	obj.header = header;
 
 	if(header.type == 3) {
@@ -670,7 +728,7 @@ ApngAnimation readApng(in ubyte[] data, bool strictApng = false) {
 				obj.frames[frameNumber - 1].compressedDatastream ~= chunk.payload[offset .. $];
 			break;
 			default:
-				// ignore
+				obj.handleOtherChunk(chunk);
 		}
 
 	}
@@ -680,7 +738,8 @@ ApngAnimation readApng(in ubyte[] data, bool strictApng = false) {
 
 
 /++
-
+	It takes the apng file and feeds the file data to your `sink` delegate, the given file,
+	or simply returns it as an in-memory array.
 +/
 void writeApngToData(ApngAnimation apng, scope void delegate(in ubyte[] data) sink) {
 

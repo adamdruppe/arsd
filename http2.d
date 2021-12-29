@@ -2041,6 +2041,188 @@ class HttpRequest {
 	}
 }
 
+/++
+	Waits for the first of the given requests to be either aborted or completed.
+	Returns the first one in that state, or `null` if the operation was interrupted
+	or reached the given timeout before any completed. (If it returns null even before
+	the timeout, it might be because the user pressed ctrl+c, so you should consider
+	checking if you should cancel the operation. If not, you can simply call it again
+	with the same arguments to start waiting again.)
+
+	You MUST check for null, even if you don't specify a timeout!
+
+	Note that if an individual request times out before any others request, it will
+	return that timed out request, since that counts as completion.
+
+	If the return is not null, you should call `waitForCompletion` on the given request
+	to get the response out. It will not have to wait since it is guaranteed to be
+	finished when returned by this function; that will just give you the cached response.
+
+	(I thought about just having it return the response, but tying a response back to
+	a request is harder than just getting the original request object back and taking
+	the response out of it.)
+
+	Please note: if a request in the set has already completed or been aborted, it will
+	always return the first one it sees upon calling the function. You may wish to remove
+	them from the list before calling the function.
+
+	History:
+		Added December 24, 2021 (dub v10.5)
++/
+HttpRequest waitForFirstToComplete(Duration timeout, HttpRequest[] requests...) {
+
+	foreach(request; requests) {
+		if(request.state == HttpRequest.State.unsent)
+			request.send();
+		else if(request.state == HttpRequest.State.complete)
+			return request;
+		else if(request.state == HttpRequest.State.aborted)
+			return request;
+	}
+
+	while(true) {
+		if(auto err = HttpRequest.advanceConnections(timeout)) {
+			switch(err) {
+				case 1: return null;
+				case 2: throw new Exception("HttpRequest.advanceConnections returned 2: nothing to do");
+				case 3: return null;
+				default: throw new Exception("HttpRequest.advanceConnections got err " ~ to!string(err));
+			}
+		}
+
+		foreach(request; requests) {
+			if(request.state == HttpRequest.State.aborted || request.state == HttpRequest.State.complete) {
+				request.waitForCompletion();
+				return request;
+			}
+		}
+
+	}
+}
+
+/// ditto
+HttpRequest waitForFirstToComplete(HttpRequest[] requests...) {
+	return waitForFirstToComplete(1.weeks, requests);
+}
+
+/++
+	An input range that runs [waitForFirstToComplete] but only returning each request once.
+	Before you loop over it, you can set some properties to customize behavior.
+
+	If it times out or is interrupted, it will prematurely run empty. You can set the delegate
+	to process this.
+
+	Implementation note: each iteration through the loop does a O(n) check over each item remaining.
+	This shouldn't matter, but if it does become an issue for you, let me know.
+
+	History:
+		Added December 24, 2021 (dub v10.5)
++/
+struct HttpRequestsAsTheyComplete {
+	/++
+		Seeds it with an overall timeout and the initial requests.
+		It will send all the requests before returning, then will process
+		the responses as they come.
+
+		Please note that it modifies the array of requests you pass in! It
+		will keep a reference to it and reorder items on each call of popFront.
+		You might want to pass a duplicate if you have another purpose for your
+		array and don't want to see it shuffled.
+	+/
+	this(Duration timeout, HttpRequest[] requests) {
+		remainingRequests = requests;
+		this.timeout = timeout;
+		popFront();
+	}
+
+	/++
+		You can set this delegate to decide how to handle an interruption. Returning true
+		from this will keep working. Returning false will terminate the loop.
+
+		If this is null, an interruption will always terminate the loop.
+
+		Note that interruptions can be caused by the garbage collector being triggered by
+		another thread as well as by user action. If you don't set a SIGINT handler, it
+		might be reasonable to always return true here.
+	+/
+	bool delegate() onInterruption;
+
+	private HttpRequest[] remainingRequests;
+
+	/// The timeout you set in the constructor. You can change it if you want.
+	Duration timeout;
+
+	/++
+		Adds another request to the work queue. It is safe to call this from inside the loop
+		as you process other requests.
+	+/
+	void appendRequest(HttpRequest request) {
+		remainingRequests ~= request;
+	}
+
+	/++
+		If the loop exited, it might be due to an interruption or a time out. If you like, you
+		can call this to pick up the work again,
+
+		If it returns `false`, the work is indeed all finished and you should not re-enter the loop.
+
+		---
+		auto range = HttpRequestsAsTheyComplete(10.seconds, your_requests);
+		process_loop: foreach(req; range) {
+			// process req
+		}
+		// make sure we weren't interrupted because the user requested we cancel!
+		// but then try to re-enter the range if possible
+		if(!user_quit && range.reenter()) {
+			// there's still something unprocessed in there
+			// range.reenter returning true means it is no longer
+			// empty, so we should try to loop over it again
+			goto process_loop; // re-enter the loop
+		}
+		---
+	+/
+	bool reenter() {
+		if(remainingRequests.length == 0)
+			return false;
+		empty = false;
+		popFront();
+		return true;
+	}
+
+	/// Standard range primitives. I reserve the right to change the variables to read-only properties in the future without notice.
+	HttpRequest front;
+
+	/// ditto
+	bool empty;
+
+	/// ditto
+	void popFront() {
+		resume:
+		if(remainingRequests.length == 0) {
+			empty = true;
+			return;
+		}
+
+		front = waitForFirstToComplete(timeout, remainingRequests);
+
+		if(front is null) {
+			if(onInterruption) {
+				if(onInterruption())
+					goto resume;
+			}
+			empty = true;
+			return;
+		}
+		foreach(idx, req; remainingRequests) {
+			if(req is front) {
+				remainingRequests[idx] = remainingRequests[$ - 1];
+				remainingRequests = remainingRequests[0 .. $ - 1];
+				return;
+			}
+		}
+	}
+}
+
 ///
 struct HttpRequestParameters {
 	// FIXME: implement these

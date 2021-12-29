@@ -2138,6 +2138,7 @@ abstract class ComboboxBase : Widget {
 	}
 
 	static class SelectionChangedEvent : Event {
+		enum EventString = "change";
 		this(Widget target, int iv, string sv) {
 			super("change", target);
 			this.iv = iv;
@@ -6148,14 +6149,48 @@ class InlineBlockLayout : Layout {
 }
 
 /++
-	A tab widget is a set of clickable tab buttons followed by a content area.
+	A TabMessageWidget is a clickable row of tabs followed by a content area, very similar
+	to the [TabWidget]. The difference is the TabMessageWidget only sends messages, whereas
+	the [TabWidget] will automatically change pages of child widgets.
 
+	This allows you to react to it however you see fit rather than having to
+	be tied to just the new sets of child widgets.
 
-	Tabs can change existing content or can be new pages.
+	It sends the message in the form of `this.emitCommand!"changetab"();`.
 
-	When the user picks a different tab, a `change` message is generated.
+	History:
+		Added December 24, 2021 (dub v10.5)
 +/
-class TabWidget : Widget {
+class TabMessageWidget : Widget {
+
+	protected void tabIndexClicked(int item) {
+		this.emitCommand!"changetab"();
+	}
+
+	/++
+		Adds the a new tab to the control with the given title.
+
+		Returns:
+			The index of the newly added tab. You will need to know
+			this index to refer to it later and to know which tab to
+			change to when you get a changetab message.
+	+/
+	int addTab(string title, int pos = int.max) {
+		version(win32_widgets) {
+			TCITEM item;
+			item.mask = TCIF_TEXT;
+			WCharzBuffer buf = WCharzBuffer(title);
+			item.pszText = buf.ptr;
+			return cast(int) SendMessage(hwnd, TCM_INSERTITEM, pos, cast(LPARAM) &item);
+		} else version(custom_widgets) {
+			tabs ~= title;
+			return cast(int) tabs.length - 1;
+		}
+	}
+
+	version(custom_widgets)
+		string[] tabs;
+
 	this(Widget parent) {
 		super(parent);
 
@@ -6204,11 +6239,109 @@ class TabWidget : Widget {
 		switch(code) {
 			case TCN_SELCHANGE:
 				auto sel = TabCtrl_GetCurSel(hwnd);
-				showOnly(sel);
+				tabIndexClicked(sel);
 			break;
 			default:
 		}
 		return 0;
+	}
+
+	version(custom_widgets) {
+		private int currentTab_;
+		private int tabBarHeight() { return defaultLineHeight; }
+		int tabWidth = 80;
+	}
+
+	version(win32_widgets)
+	override void paint(WidgetPainter painter) {}
+
+	version(custom_widgets)
+	override void paint(WidgetPainter painter) {
+		auto cs = getComputedStyle();
+
+		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.background.color);
+
+		int posX = 0;
+		// FIXME: addTab broken here
+		foreach(idx, child; children) {
+			if(auto twp = cast(TabWidgetPage) child) {
+				auto isCurrent = idx == getCurrentTab();
+
+				painter.setClipRectangle(Point(posX, 0), tabWidth, tabBarHeight);
+
+				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
+				painter.outlineColor = cs.foregroundColor;
+				painter.drawText(Point(posX + 4, 2), twp.title);
+
+				if(isCurrent) {
+					painter.outlineColor = cs.windowBackgroundColor;
+					painter.fillColor = Color.transparent;
+					painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
+					painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
+
+					painter.outlineColor = Color.white;
+					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
+					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
+					painter.outlineColor = cs.activeTabColor;
+					painter.drawPixel(Point(posX, tabBarHeight - 1));
+				}
+
+				posX += tabWidth - 2;
+			}
+		}
+	}
+
+	///
+	@scriptable
+	void setCurrentTab(int item) {
+		version(win32_widgets)
+			TabCtrl_SetCurSel(hwnd, item);
+		else version(custom_widgets)
+			currentTab_ = item;
+		else static assert(0);
+
+		tabIndexClicked(item);
+	}
+
+	///
+	@scriptable
+	int getCurrentTab() {
+		version(win32_widgets)
+			return TabCtrl_GetCurSel(hwnd);
+		else version(custom_widgets)
+			return currentTab_; // FIXME
+		else static assert(0);
+	}
+
+	///
+	@scriptable
+	void removeTab(int item) {
+		if(item && item == getCurrentTab())
+			setCurrentTab(item - 1);
+
+		version(win32_widgets) {
+			TabCtrl_DeleteItem(hwnd, item);
+		}
+
+		for(int a = item; a < children.length - 1; a++)
+			this._children[a] = this._children[a + 1];
+		this._children = this._children[0 .. $-1];
+	}
+
+}
+
+
+/++
+	A tab widget is a set of clickable tab buttons followed by a content area.
+
+
+	Tabs can change existing content or can be new pages.
+
+	When the user picks a different tab, a `change` message is generated.
++/
+class TabWidget : TabMessageWidget {
+	this(Widget parent) {
+		super(parent);
 	}
 
 	override void addChild(Widget child, int pos = int.max) {
@@ -6217,14 +6350,7 @@ class TabWidget : Widget {
 			if(pos == int.max)
 				pos = cast(int) this.children.length - 1;
 
-			version(win32_widgets) {
-				TCITEM item;
-				item.mask = TCIF_TEXT;
-				WCharzBuffer buf = WCharzBuffer(twp.title);
-				item.pszText = buf.ptr;
-				SendMessage(hwnd, TCM_INSERTITEM, pos, cast(LPARAM) &item);
-			} else version(custom_widgets) {
-			}
+			super.addTab(twp.title, pos); // need to bypass the override here which would get into a loop...
 
 			if(pos != getCurrentTab) {
 				child.showing = false;
@@ -6266,94 +6392,50 @@ class TabWidget : Widget {
 		} else static assert(0);
 	}
 
-	version(custom_widgets) {
-		private int currentTab_;
-		private int tabBarHeight() { return defaultLineHeight; }
-		int tabWidth = 80;
-	}
+	// FIXME: add tab icons at some point, Windows supports them
+	/++
+		Adds a page and its associated tab with the given label to the widget.
 
-	version(win32_widgets)
-	override void paint(WidgetPainter painter) {}
-
-	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
-		auto cs = getComputedStyle();
-
-		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.background.color);
-
-		int posX = 0;
-		foreach(idx, child; children) {
-			if(auto twp = cast(TabWidgetPage) child) {
-				auto isCurrent = idx == getCurrentTab();
-
-				painter.setClipRectangle(Point(posX, 0), tabWidth, tabBarHeight);
-
-				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
-				painter.outlineColor = cs.foregroundColor;
-				painter.drawText(Point(posX + 4, 2), twp.title);
-
-				if(isCurrent) {
-					painter.outlineColor = cs.windowBackgroundColor;
-					painter.fillColor = Color.transparent;
-					painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
-					painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
-
-					painter.outlineColor = Color.white;
-					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
-					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
-					painter.outlineColor = cs.activeTabColor;
-					painter.drawPixel(Point(posX, tabBarHeight - 1));
-				}
-
-				posX += tabWidth - 2;
-			}
-		}
-	}
-
-	///
-	@scriptable
-	void setCurrentTab(int item) {
-		version(win32_widgets)
-			TabCtrl_SetCurSel(hwnd, item);
-		else version(custom_widgets)
-			currentTab_ = item;
-		else static assert(0);
-
-		showOnly(item);
-	}
-
-	///
-	@scriptable
-	int getCurrentTab() {
-		version(win32_widgets)
-			return TabCtrl_GetCurSel(hwnd);
-		else version(custom_widgets)
-			return currentTab_; // FIXME
-		else static assert(0);
-	}
-
-	///
-	@scriptable
-	void removeTab(int item) {
-		if(item && item == getCurrentTab())
-			setCurrentTab(item - 1);
-
-		version(win32_widgets) {
-			TabCtrl_DeleteItem(hwnd, item);
-		}
-
-		for(int a = item; a < children.length - 1; a++)
-			this._children[a] = this._children[a + 1];
-		this._children = this._children[0 .. $-1];
-	}
-
-	///
+		Returns:
+			The added page object, to which you can add other widgets.
+	+/
 	@scriptable
 	TabWidgetPage addPage(string title) {
 		return new TabWidgetPage(title, this);
 	}
 
-	private void showOnly(int item) {
+	/++
+		Gets the page at the given tab index, or `null` if the index is bad.
+
+		History:
+			Added December 24, 2021.
+	+/
+	TabWidgetPage getPage(int index) {
+		if(index < this.children.length)
+			return null;
+		return cast(TabWidgetPage) this.children[index];
+	}
+
+	/++
+		While you can still use the addTab from the parent class,
+		*strongly* recommend you use [addPage] insteaad.
+
+		History:
+			Added December 24, 2021 to fulful the interface
+			requirement that came from adding [TabMessageWidget].
+
+			You should not use it though since the [addPage] function
+			is much easier to use here.
+	+/
+	override int addTab(string title, int pos = int.max) {
+		auto p = addPage(title);
+		foreach(idx, child; this.children)
+			if(child is p)
+				return cast(int) idx;
+		return -1;
+	}
+
+	protected override void tabIndexClicked(int item) {
 		foreach(idx, child; children) {
 			child.showing(false, false); // batch the recalculates for the end
 		}
@@ -6376,6 +6458,7 @@ class TabWidget : Widget {
 			this.redraw();
 		}
 	}
+
 }
 
 /++
@@ -6911,6 +6994,10 @@ class ScrollMessageWidget : Widget {
 
 	///
 	void setViewableArea(int width, int height) {
+
+		if(width == hsb.viewableArea_ && height == vsb.viewableArea_)
+			return; // no need to do what is already done
+
 		hsb.setViewableArea(width);
 		vsb.setViewableArea(height);
 
@@ -8484,11 +8571,6 @@ private class TableViewWidgetInner : Widget {
 
 // given struct / array / number / string / etc, make it viewable and editable
 class DataViewerWidget : Widget {
-
-}
-
-// this is just the tab list with no associated page
-class TabMessageWidget : Widget {
 
 }
 +/

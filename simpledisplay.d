@@ -1527,9 +1527,8 @@ float[2] getDpi() {
 		char* resourceString = XResourceManagerString(display);
 		XrmInitialize();
 
-		auto db = XrmGetStringDatabase(resourceString);
-
 		if (resourceString) {
+			auto db = XrmGetStringDatabase(resourceString);
 			XrmValue value;
 			char* type;
 			if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
@@ -9792,7 +9791,7 @@ public bool thisThreadRunningGui() {
 void sdpyPrintDebugString(string fileOverride = null, T...)(T t) nothrow @trusted {
 	try {
 		version(Windows) {
-			import core.sys.windows.windows;
+			import core.sys.windows.wincon;
 			if(AttachConsole(ATTACH_PARENT_PROCESS))
 				AllocConsole();
 			const(char)* fn = "CONOUT$";
@@ -21249,7 +21248,7 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
 				return dlsym(l, name);
 			}
                 } else version(Windows) {
-                        import core.sys.windows.windows;
+                        import core.sys.windows.winbase;
                         libHandle = LoadLibrary(library ~ ".dll");
 			static void* loadsym(void* l, const char* name) {
 				import core.stdc.stdlib;
@@ -21274,7 +21273,7 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
                         import core.sys.posix.dlfcn;
                         dlclose(libHandle);
                 } else version(Windows) {
-                        import core.sys.windows.windows;
+                        import core.sys.windows.winbase;
                         FreeLibrary(libHandle);
                 }
                 foreach(name; __traits(derivedMembers, Iface))
