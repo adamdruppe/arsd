@@ -4,6 +4,8 @@
 
 // responsive minigui, menu search, and file open with a preview hook on the side.
 
+// FIXME: add menu checkbox and menu icon eventually
+
 /*
 
 im tempted to add some css kind of thing to minigui. i've not done in the past cuz i have a lot of virtual functins i use but i think i have an evil plan
@@ -3682,6 +3684,7 @@ class DataControllerWidget(T) : WidgetContainer {
 
 		foreach(member; __traits(allMembers, T))
 		static if(member != "this") // wtf https://issues.dlang.org/show_bug.cgi?id=22011
+		static if(is(typeof(__traits(getMember, this.datum, member))))
 		static if(__traits(getProtection, __traits(getMember, this.datum, member)) == "public") {
 			void delegate() update;
 
@@ -4180,6 +4183,7 @@ class OpenGlWidget : NestedChildWindowWidget {
 	}
 
 	override void paint(WidgetPainter painter) {
+		win.setAsCurrentOpenGlContext();
 		glViewport(0, 0, this.width, this.height);
 		win.redrawOpenGlSceneNow();
 	}
@@ -6183,8 +6187,16 @@ class TabMessageWidget : Widget {
 			item.pszText = buf.ptr;
 			return cast(int) SendMessage(hwnd, TCM_INSERTITEM, pos, cast(LPARAM) &item);
 		} else version(custom_widgets) {
-			tabs ~= title;
-			return cast(int) tabs.length - 1;
+			if(pos >= tabs.length) {
+				tabs ~= title;
+				return cast(int) tabs.length - 1;
+			} else if(pos <= 0) {
+				tabs = title ~ tabs;
+				return 0;
+			} else {
+				tabs = tabs[0 .. pos] ~ title ~ title[pos .. $];
+				return pos;
+			}
 		}
 	}
 
@@ -6262,32 +6274,29 @@ class TabMessageWidget : Widget {
 		draw3dFrame(0, tabBarHeight - 2, width, height - tabBarHeight + 2, painter, FrameStyle.risen, cs.background.color);
 
 		int posX = 0;
-		// FIXME: addTab broken here
-		foreach(idx, child; children) {
-			if(auto twp = cast(TabWidgetPage) child) {
-				auto isCurrent = idx == getCurrentTab();
+		foreach(idx, title; tabs) {
+			auto isCurrent = idx == getCurrentTab();
 
-				painter.setClipRectangle(Point(posX, 0), tabWidth, tabBarHeight);
+			painter.setClipRectangle(Point(posX, 0), tabWidth, tabBarHeight);
 
-				draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
-				painter.outlineColor = cs.foregroundColor;
-				painter.drawText(Point(posX + 4, 2), twp.title);
+			draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
+			painter.outlineColor = cs.foregroundColor;
+			painter.drawText(Point(posX + 4, 2), title);
 
-				if(isCurrent) {
-					painter.outlineColor = cs.windowBackgroundColor;
-					painter.fillColor = Color.transparent;
-					painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
-					painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
+			if(isCurrent) {
+				painter.outlineColor = cs.windowBackgroundColor;
+				painter.fillColor = Color.transparent;
+				painter.drawLine(Point(posX + 2, tabBarHeight - 1), Point(posX + tabWidth, tabBarHeight - 1));
+				painter.drawLine(Point(posX + 2, tabBarHeight - 2), Point(posX + tabWidth, tabBarHeight - 2));
 
-					painter.outlineColor = Color.white;
-					painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
-					painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
-					painter.outlineColor = cs.activeTabColor;
-					painter.drawPixel(Point(posX, tabBarHeight - 1));
-				}
-
-				posX += tabWidth - 2;
+				painter.outlineColor = Color.white;
+				painter.drawPixel(Point(posX + 1, tabBarHeight - 1));
+				painter.drawPixel(Point(posX + 1, tabBarHeight - 2));
+				painter.outlineColor = cs.activeTabColor;
+				painter.drawPixel(Point(posX, tabBarHeight - 1));
 			}
+
+			posX += tabWidth - 2;
 		}
 	}
 
@@ -6992,7 +7001,7 @@ class ScrollMessageWidget : Widget {
 		vsb.setMax(height);
 	}
 
-	///
+	/// Always set the viewable area AFTER setitng the total area if you are going to change both.
 	void setViewableArea(int width, int height) {
 
 		if(width == hsb.viewableArea_ && height == vsb.viewableArea_)
@@ -7008,13 +7017,13 @@ class ScrollMessageWidget : Widget {
 		// window resizes again, so it can kinda return ot where it was.
 		//
 		// so there's an inner position and a exposed position. the exposed one is always in bounds and thus may be (0,0)
-		if(width > hsb.max) {
+		if(width >= hsb.max) {
 			// there's plenty of room to display it all so we need to reset to zero
 			// FIXME: adjust so it matches the note above
 			hsb.setPosition(0);
 			needsNotify = true;
 		}
-		if(height > vsb.max) {
+		if(height >= vsb.max) {
 			// there's plenty of room to display it all so we need to reset to zero
 			// FIXME: adjust so it matches the note above
 			vsb.setPosition(0);
@@ -7090,6 +7099,20 @@ class ScrollMessageWidget : Widget {
 		}
 		return this.header;
 	}
+}
+
+/++
+	$(IMG //arsdnet.net/minigui-screenshots/windows/ScrollMessageWidget.png, A box saying "baby will" with three round buttons inside it for the options of "eat", "cry", and "sleep")
+	$(IMG //arsdnet.net/minigui-screenshots/linux/ScrollMessageWidget.png, Same thing, but in the default Linux theme.)
++/
+version(minigui_screenshots)
+@Screenshot("ScrollMessageWidget")
+unittest {
+	auto window = new Window("ScrollMessageWidget");
+
+	auto smw = new ScrollMessageWidget(window);
+
+	window.loop();
 }
 
 /++
