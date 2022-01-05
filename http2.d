@@ -1615,7 +1615,7 @@ class HttpRequest {
 						keep_going:
 						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
 						auto got = sock.receive(buffer);
-						debug(arsd_http2_verbose) writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET===");
+						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
 						if(got < 0) {
 							throw new Exception("receive error");
 						} else if(got == 0) {
@@ -1838,6 +1838,9 @@ class HttpRequest {
 								state = State.readingBody;
 						}
 						position++; // skip the newline
+
+						if(responseData.headers.length)
+							parseLastHeader();
 						break;
 					} else if(data[position] == ' ' || data[position] == '\t') {
 						// line continuation, ignore all whitespace and collapse it into a space
@@ -1867,8 +1870,6 @@ class HttpRequest {
 				responseData.headers[$-1] ~= data[position];
 			}
 
-			if(responseData.headers.length)
-				parseLastHeader();
 			data = data[position .. $];
 		}
 
@@ -1889,6 +1890,8 @@ class HttpRequest {
 							} else {
 								int power = 1;
 								bodyReadingState.contentLengthRemaining = 0;
+								if(a == 0)
+									break; // just wait for more data
 								assert(a != 0, cast(string) data);
 								for(int b = a-1; b >= 0; b--) {
 									char cc = data[b];
@@ -4540,6 +4543,56 @@ public {
 			return cast(char[]) data;
 		}
 	}
+}
+
+version(arsd_http2_unittests)
+unittest {
+	import core.thread;
+
+	static void server() {
+		import std.socket;
+		auto socket = new TcpSocket();
+		socket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+		socket.bind(new InternetAddress(12346));
+		socket.listen(1);
+		auto s = socket.accept();
+		socket.close();
+
+		ubyte[1024] thing;
+		auto g = s.receive(thing[]);
+
+		/+
+		string response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 9\r\n\r\nHello!!??";
+		auto packetSize = 2;
+		+/
+
+		auto packetSize = 1;
+		string response = "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nHello!\r\n0\r\n\r\n";
+
+		while(response.length) {
+			s.send(response[0 .. packetSize]);
+			response = response[packetSize .. $];
+			//import std.stdio; writeln(response);
+		}
+
+		s.close();
+	}
+
+	auto thread = new Thread(&server);
+	thread.start;
+
+	Thread.sleep(200.msecs);
+
+	auto response = get("http://localhost:12346/").waitForCompletion;
+	assert(response.code == 200);
+	//import std.stdio; writeln(response);
+
+	foreach(site; ["https://dlang.org/", "http://arsdnet.net", "https://phobos.dpldocs.info"]) {
+		response = get(site).waitForCompletion;
+		assert(response.code == 200);
+	}
+
+	thread.join;
 }
 
 /+
