@@ -197,6 +197,18 @@
 			"sourceFiles": ["midi.d"]
 		},
 		{
+			"name": "midiplayer",
+			"description": "turn-key midi player library",
+			"importPaths": ["."],
+			"targetType": "library",
+			"dflags": ["-mv=arsd.midiplayer=midiplayer.d"],
+			"sourceFiles": ["midiplayer.d"],
+			"dependencies": {
+				"arsd-official:simpleaudio":"*",
+				"arsd-official:midi":"*"
+			}
+		},
+		{
 			"name": "nukedopl3",
 			"description": "nukedopl3 emulator port, required by simpleaudio's playEmulatedOpl3Midi functio",
 			"license": "GPL",

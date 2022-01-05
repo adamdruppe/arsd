@@ -1584,6 +1584,8 @@ class Widget : ReflectableProperties {
 		This is available primarily to be overridden. For example, [MainWindow] overrides it to redirect its children into a central widget.
 	+/
 	protected void addChild(Widget w, int position = int.max) {
+		assert(w._parent !is this, "Child cannot be added twice to the same parent");
+		assert(w !is this, "Child cannot be its own parent!");
 		w._parent = this;
 		if(position == int.max || position == children.length) {
 			_children ~= w;
@@ -1696,14 +1698,15 @@ class Widget : ReflectableProperties {
 
 		version(win32_widgets) {
 			HANDLE b, p;
-			if(c.a == 0) {
+			if(c.a == 0 && parent is parentWindow) {
+				// I don't remember why I had this really...
 				b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
 				p = SelectObject(painter.impl.hdc, GetStockObject(NULL_PEN));
 			}
 		}
 		painter.drawRectangle(Point(0, 0), width, height);
 		version(win32_widgets) {
-			if(c.a == 0) {
+			if(c.a == 0 && parent is parentWindow) {
 				SelectObject(painter.impl.hdc, p);
 				SelectObject(painter.impl.hdc, b);
 			}
@@ -1720,15 +1723,15 @@ class Widget : ReflectableProperties {
 			parent = parent.parent;
 		}
 
-		auto painter = parentWindow.win.draw();
+		auto painter = parentWindow.win.draw(true);
 		painter.originX = x;
 		painter.originY = y;
 		painter.setClipRectangle(Point(0, 0), width, height);
 		return WidgetPainter(painter, this);
 	}
 
-	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code.
-	protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
+	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code. There are no stability guarantees if you do override this; it can (and likely will) break without notice.
+	protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
 			return;
 
@@ -1764,6 +1767,12 @@ class Widget : ReflectableProperties {
 			else
 				paint(painter);
 
+			if(invalidate) {
+				painter.invalidateRect(Rectangle(Point(clip.upperLeft.x - painter.originX, clip.upperRight.y - painter.originY), Size(clip.width, clip.height)));
+				// children are contained inside this, so no need to do extra work
+				invalidate = false;
+			}
+
 			redrawRequested = false;
 			actuallyPainted = true;
 		}
@@ -1771,14 +1780,14 @@ class Widget : ReflectableProperties {
 		foreach(child; children) {
 			version(win32_widgets)
 				if(child.useNativeDrawing()) continue;
-			child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
+			child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
 		}
 
 		version(win32_widgets)
 		foreach(child; children) {
 			if(child.useNativeDrawing) {
-				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw, child);
-				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
+				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw(true), child);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
 			}
 		}
 	}
@@ -3104,8 +3113,10 @@ version(win32_widgets) {
 							// the event loop doesn't seem to carry on with a requested redraw..
 							// so we request it to get our dirty bit set...
 							// then we need to immediately actually redraw it too for instant feedback to user
-							if(this_.parentWindow)
-								this_.parentWindow.actualRedraw();
+							SimpleWindow.processAllCustomEvents();
+							SimpleWindow.processAllCustomEvents();
+							//if(this_.parentWindow)
+								//this_.parentWindow.actualRedraw();
 						return 0;
 						default:
 					}
@@ -4414,8 +4425,10 @@ class ScrollableWidget : Widget {
 							redraw();
 
 							// then we need to immediately actually redraw it too for instant feedback to user
-							if(parentWindow)
-								parentWindow.actualRedraw();
+
+							SimpleWindow.processAllCustomEvents();
+							//if(parentWindow)
+								//parentWindow.actualRedraw();
 						}
 					break;
 					default:
@@ -4691,9 +4704,9 @@ class ScrollableWidget : Widget {
 		}
 
 		//version(win32_widgets) {
-			//auto painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw() : parentWindow.win.draw();
+			//auto painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw(true) : parentWindow.win.draw(true);
 		//} else {
-			auto painter = parentWindow.win.draw();
+			auto painter = parentWindow.win.draw(true);
 		//}
 		painter.originX = x;
 		painter.originY = y;
@@ -4711,12 +4724,12 @@ class ScrollableWidget : Widget {
 // you need to have a Point scrollOrigin in the class somewhere
 // and a paintFrameAndBackground
 private mixin template ScrollableChildren() {
-	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
+	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
 			return;
 
 		//version(win32_widgets)
-			//painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw() : parentWindow.win.draw();
+			//painter = simpleWindowWrappingHwnd ? simpleWindowWrappingHwnd.draw(true) : parentWindow.win.draw(true);
 
 		painter.originX = lox + x;
 		painter.originY = loy + y;
@@ -4745,14 +4758,21 @@ private mixin template ScrollableChildren() {
 			else
 				paint(painter);
 
+			if(invalidate) {
+				painter.invalidateRect(Rectangle(Point(clip.upperLeft.x - painter.originX, clip.upperRight.y - painter.originY), Size(clip.width, clip.height)));
+				// children are contained inside this, so no need to do extra work
+				invalidate = false;
+			}
+
+
 			actuallyPainted = true;
 			redrawRequested = false;
 		}
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
-				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted);
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted, invalidate);
 			else
-				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
 		}
 	}
 }
@@ -4766,7 +4786,7 @@ private class InternalScrollableContainerInsideWidget : ContainerWidget {
 	}
 
 	version(custom_widgets)
-	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force = false) {
+	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
 			return;
 
@@ -4774,7 +4794,7 @@ private class InternalScrollableContainerInsideWidget : ContainerWidget {
 
 		auto scrollOrigin = Point(scw.scrollX_, scw.scrollY_);
 
-		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width, height)));
+		const clip = containment.intersectionOf(Rectangle(Point(lox + x, loy + y), Size(width + scw.scrollX_, height + scw.scrollY_)));
 		if(clip == Rectangle.init)
 			return;
 
@@ -4789,14 +4809,20 @@ private class InternalScrollableContainerInsideWidget : ContainerWidget {
 			else
 				paint(painter);
 
+			if(invalidate) {
+				painter.invalidateRect(Rectangle(Point(clip.upperLeft.x - painter.originX, clip.upperRight.y - painter.originY), Size(clip.width, clip.height)));
+				// children are contained inside this, so no need to do extra work
+				invalidate = false;
+			}
+
 			actuallyPainted = true;
 			redrawRequested = false;
 		}
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
-				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted);
+				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted, invalidate);
 			else
-				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
 		}
 	}
 
@@ -4810,8 +4836,14 @@ private class InternalScrollableContainerInsideWidget : ContainerWidget {
 /++
 	A widget meant to contain other widgets that may need to scroll.
 
+	Currently buggy.
+
 	History:
 		Added July 1, 2021 (dub v10.2)
+
+		On January 3, 2022, I tried to use it in a few other cases
+		and found it only worked well in the original test case. Since
+		it still sucks, I think I'm going to rewrite it again.
 +/
 class ScrollableContainerWidget : ContainerWidget {
 	///
@@ -4897,8 +4929,9 @@ class ScrollableContainerWidget : ContainerWidget {
 		if(dx || dy) {
 			version(win32_widgets)
 				ScrollWindowEx(container.hwnd, -dx, -dy, null, null, null, null, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
-			else
+			else {
 				redraw();
+			}
 
 			hsb.setPosition = nx;
 			vsb.setPosition = ny;
@@ -4964,7 +4997,20 @@ class ScrollableContainerWidget : ContainerWidget {
 		hsb.setPosition(0);
 		vsb.setPosition(0);
 
-		setTotalArea(this.ContainerWidget.minWidth(), this.ContainerWidget.minHeight());
+		int mw, mh;
+		Widget c = container;
+		// FIXME: hack here to handle a layout inside...
+		if(c.children.length == 1 && cast(Layout) c.children[0])
+			c = c.children[0];
+		foreach(child; c.children) {
+			auto w = child.x + child.width;
+			auto h = child.y + child.height;
+
+			if(w > mw) mw = w;
+			if(h > mh) mh = h;
+		}
+
+		setTotalArea(mw, mh);
 		setViewableArea(width, height);
 	}
 
@@ -6189,15 +6235,63 @@ class TabMessageWidget : Widget {
 		} else version(custom_widgets) {
 			if(pos >= tabs.length) {
 				tabs ~= title;
+				redraw();
 				return cast(int) tabs.length - 1;
 			} else if(pos <= 0) {
 				tabs = title ~ tabs;
+				redraw();
 				return 0;
 			} else {
 				tabs = tabs[0 .. pos] ~ title ~ title[pos .. $];
+				redraw();
 				return pos;
 			}
 		}
+	}
+
+	override void addChild(Widget child, int pos = int.max) {
+		if(container)
+			container.addChild(child, pos);
+		else
+			super.addChild(child, pos);
+	}
+
+	protected Widget makeContainer() {
+		return new Widget(this);
+	}
+
+	private Widget container;
+
+	override void recomputeChildLayout() {
+		version(win32_widgets) {
+			this.registerMovement();
+
+			RECT rect;
+			GetWindowRect(hwnd, &rect);
+
+			auto left = rect.left;
+			auto top = rect.top;
+
+			TabCtrl_AdjustRect(hwnd, false, &rect);
+			foreach(child; children) {
+				if(!child.showing) continue;
+				child.x = rect.left - left;
+				child.y = rect.top - top;
+				child.width = rect.right - rect.left;
+				child.height = rect.bottom - rect.top;
+				child.recomputeChildLayout();
+			}
+		} else version(custom_widgets) {
+			this.registerMovement();
+			foreach(child; children) {
+				if(!child.showing) continue;
+				child.x = 2;
+				child.y = tabBarHeight + 2; // for the border
+				child.width = width - 4; // for the border
+				child.height = height - tabBarHeight - 2 - 2; // for the border
+				child.recomputeChildLayout();
+			}
+		} else static assert(0);
 	}
 
 	version(custom_widgets)
@@ -6212,14 +6306,19 @@ class TabMessageWidget : Widget {
 			createWin32Window(this, WC_TABCONTROL, "", 0);
 		} else version(custom_widgets) {
 			addEventListener((ClickEvent event) {
-				if(event.target !is this) return;
+				if(event.target !is this && this.container !is null && event.target !is this.container) return;
 				if(event.clientY < tabBarHeight) {
 					auto t = (event.clientX / tabWidth);
-					if(t >= 0 && t < children.length)
-						setCurrentTab(t);
+					if(t >= 0 && t < tabs.length) {
+						currentTab_ = t;
+						tabIndexClicked(t);
+						redraw();
+					}
 				}
 			});
 		} else static assert(0);
+
+		this.container = makeContainer();
 	}
 
 	override int marginTop() { return 4; }
@@ -6353,9 +6452,13 @@ class TabWidget : TabMessageWidget {
 		super(parent);
 	}
 
+	override protected Widget makeContainer() {
+		return null;
+	}
+
 	override void addChild(Widget child, int pos = int.max) {
 		if(auto twp = cast(TabWidgetPage) child) {
-			super.addChild(child, pos);
+			Widget.addChild(child, pos);
 			if(pos == int.max)
 				pos = cast(int) this.children.length - 1;
 
@@ -6367,38 +6470,6 @@ class TabWidget : TabMessageWidget {
 		} else {
 			assert(0, "Don't add children directly to a tab widget, instead add them to a page (see addPage)");
 		}
-	}
-
-	override void recomputeChildLayout() {
-		version(win32_widgets) {
-			this.registerMovement();
-
-			RECT rect;
-			GetWindowRect(hwnd, &rect);
-
-			auto left = rect.left;
-			auto top = rect.top;
-
-			TabCtrl_AdjustRect(hwnd, false, &rect);
-			foreach(child; children) {
-				if(!child.showing) continue;
-				child.x = rect.left - left;
-				child.y = rect.top - top;
-				child.width = rect.right - rect.left;
-				child.height = rect.bottom - rect.top;
-				child.recomputeChildLayout();
-			}
-		} else version(custom_widgets) {
-			this.registerMovement();
-			foreach(child; children) {
-				if(!child.showing) continue;
-				child.x = 2;
-				child.y = tabBarHeight + 2; // for the border
-				child.width = width - 4; // for the border
-				child.height = height - tabBarHeight - 2 - 2; // for the border
-				child.recomputeChildLayout();
-			}
-		} else static assert(0);
 	}
 
 	// FIXME: add tab icons at some point, Windows supports them
@@ -6973,6 +7044,14 @@ class ScrollMessageWidget : Widget {
 	HorizontalScrollbar horizontalScrollBar() { return hsb; }
 
 	void notify() {
+		static bool insideNotify;
+
+		if(insideNotify)
+			return; // avoid the recursive call, even if it isn't strictly correct
+
+		insideNotify = true;
+		scope(exit) insideNotify = false;
+
 		this.emit!ScrollEvent();
 	}
 
@@ -7002,11 +7081,13 @@ class ScrollMessageWidget : Widget {
 	}
 
 	/// Always set the viewable area AFTER setitng the total area if you are going to change both.
+	/// NEVER call this from inside a scroll event. This includes through recomputeChildLayout.
+	/// If you need to do that, use [queueRecomputeChildLayout].
 	void setViewableArea(int width, int height) {
 
-		if(width == hsb.viewableArea_ && height == vsb.viewableArea_)
-			return; // no need to do what is already done
-
+		// actually there IS A need to dothis cuz the max might have changed since then
+		//if(width == hsb.viewableArea_ && height == vsb.viewableArea_)
+			//return; // no need to do what is already done
 		hsb.setViewableArea(width);
 		vsb.setViewableArea(height);
 
@@ -7111,6 +7192,8 @@ unittest {
 	auto window = new Window("ScrollMessageWidget");
 
 	auto smw = new ScrollMessageWidget(window);
+	smw.addDefaultKeyboardListeners();
+	smw.addDefaultWheelListeners();
 
 	window.loop();
 }
@@ -7309,8 +7392,8 @@ class Window : Widget {
 			loy += ugh.y;
 			ugh = ugh.parent;
 		}
-		auto painter = w.draw();
-		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max));
+		auto painter = w.draw(true);
+		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, true);
 	}
 
 
@@ -8700,25 +8783,56 @@ private string toMenuLabel(string s) {
 	return n;
 }
 
+private void autoExceptionHandler(Exception e) {
+	messageBox(e.msg);
+}
+
 private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 	static if(is(T : void delegate())) {
-		return t;
-	} else {
-		static if(is(typeof(fn) Params == __parameters))
-		struct S {
-			static if(!__traits(compiles, mixin(`{ static foreach(i; 1..4) {} }`))) {
-				pragma(msg, "warning: automatic handler of params not yet implemented on your compiler");
-			} else mixin(q{
-			static foreach(idx, ignore; Params) {
-				mixin("Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
-			}
-			});
-		}
 		return () {
-			dialog((S s) {
-				cast(void) t(s.tupleof);
-			}, null, __traits(identifier, fn));
+			try
+				t();
+			catch(Exception e)
+				autoExceptionHandler(e);
 		};
+	} else static if(is(typeof(fn) Params == __parameters)) {
+		static if(Params.length == 1 && is(Params[0] == FileName!(member, filters, type), alias member, string[] filters, FileDialogType type)) {
+			return () {
+				void onOK(string s) {
+					member = s;
+					try
+						t(Params[0](s));
+					catch(Exception e)
+						autoExceptionHandler(e);
+				}
+
+				if(
+					(type == FileDialogType.Automatic && (__traits(identifier, fn).startsWith("Save") || __traits(identifier, fn).startsWith("Export")))
+					|| type == FileDialogType.Save)
+				{
+					getSaveFileName(&onOK, member, filters, null);
+				} else
+					getOpenFileName(&onOK, member, filters, null);
+			};
+		} else {
+			struct S {
+				static if(!__traits(compiles, mixin(`{ static foreach(i; 1..4) {} }`))) {
+					pragma(msg, "warning: automatic handler of params not yet implemented on your compiler");
+				} else mixin(q{
+				static foreach(idx, ignore; Params) {
+					mixin("Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
+				}
+				});
+			}
+			return () {
+				dialog((S s) {
+					try
+						cast(void) t(s.tupleof);
+					catch(Exception e)
+						autoExceptionHandler(e);
+				}, null, __traits(identifier, fn));
+			};
+		}
 	}
 }
 
@@ -12748,6 +12862,33 @@ enum GenericIcons : ushort {
 	Print, ///
 }
 
+enum FileDialogType {
+	Automatic,
+	Open,
+	Save
+}
+string previousFileReferenced;
+
+/++
+	Used in automatic menu functions to indicate that the user should be able to browse for a file.
+
+	Params:
+		storage = an alias to a `static string` variable that stores the last file referenced. It will
+		use this to pre-fill the dialog with a suggestion.
+
+		Please note that it MUST be `static` or you will get compile errors.
+
+		filters = the filters param to [getFileName]
+
+		type = the type if dialog to show. If `FileDialogType.Automatic`, it the driver code will
+		guess based on the function name. If it has the word "Save" or "Export" in it, it will show
+		a save dialog box. Otherwise, it will show an open dialog box.
++/
+struct FileName(alias storage = previousFileReferenced, string[] filters = null, FileDialogType type = FileDialogType.Automatic) {
+	string name;
+	alias name this;
+}
+
 /++
 	History:
 		The dialog itself on Linux was modified on December 2, 2021 to include
@@ -12828,6 +12969,8 @@ void getFileName(
 				onCancel();
 		}
 	} else version(custom_widgets) {
+		if(filters.length == 0)
+			filters = ["All Files\0*.*"];
 		auto picker = new FilePicker(prefilledName, filters);
 		picker.onOK = onOK;
 		picker.onCancel = onCancel;
@@ -12915,6 +13058,7 @@ class FilePicker : Dialog {
 				foreach(filter; filters)
 				if(
 					filter.length <= 1 ||
+					filter == "*.*" ||
 					(filter[0] == '*' && name.endsWith(filter[1 .. $])) ||
 					(filter[$-1] == '*' && name.startsWith(filter[0 .. $ - 1]))
 				)
@@ -13235,10 +13379,21 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 		// you can check the members now
 	});
 	---
+
+	Params:
+		initialData = the initial value to show in the dialog. It will not modify this unless
+		it is a class then it might, no promises.
+
+	History:
+		The overload that lets you specify `initialData` was added on December 30, 2021 (dub v10.5)
 +/
 /// Group: generating_from_code
 void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
-	auto dg = new AutomaticDialog!T(onOK, onCancel, title);
+	dialog(T.init, onOK, onCancel, title);
+}
+/// ditto
+void dialog(T)(T initialData, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
+	auto dg = new AutomaticDialog!T(initialData, onOK, onCancel, title);
 	dg.show();
 }
 
@@ -13301,10 +13456,15 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingRight() { return defaultLineHeight; }
 	override int paddingLeft() { return defaultLineHeight; }
 
-	this(void delegate(T) onOK, void delegate() onCancel, string title) {
+	this(T initialData, void delegate(T) onOK, void delegate() onCancel, string title) {
 		assert(onOK !is null);
-		static if(is(T == class))
-			t = new T();
+
+		t = initialData;
+
+		static if(is(T == class)) {
+			if(t is null)
+				t = new T();
+		}
 		this.onOK = onOK;
 		this.onCancel = onCancel;
 		super(400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + 4 + 2) + Window.lineHeight + 56, title);

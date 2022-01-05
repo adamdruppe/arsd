@@ -2591,9 +2591,26 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		Returns: an instance of [ScreenPainter], which has the drawing methods
 		on it to draw on this window.
+
+		Params:
+			manualInvalidations = if you set this to true, you will need to
+			set the invalid rectangle on the painter yourself. If false, it
+			assumes the whole window has been redrawn each time you draw.
+
+			Only invalidated rectangles are blitted back to the window when
+			the destructor runs. Doing this yourself can reduce flickering
+			of child windows.
+
+		History:
+			The `manualInvalidations` parameter overload was added on
+			December 30, 2021 (dub v10.5)
 	+/
 	ScreenPainter draw() {
-		return impl.getPainter();
+		return draw(false);
+	}
+	/// ditto
+	ScreenPainter draw(bool manualInvalidations) {
+		return impl.getPainter(manualInvalidations);
 	}
 
 	// This is here to implement the interface we use for various native handlers.
@@ -3416,7 +3433,7 @@ private:
 	}
 
 	// for all windows in nativeMapping
-	static void processAllCustomEvents () {
+	package static void processAllCustomEvents () {
 
 		justCommunication.processCustomEvents();
 
@@ -8532,7 +8549,7 @@ private inout(char)[] sliceCString(inout(char)* s) {
 */
 struct ScreenPainter {
 	CapableOfBeingDrawnUpon window;
-	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle) {
+	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle, bool manualInvalidations) {
 		this.window = window;
 		if(window.closed)
 			return; // null painter is now allowed so no need to throw anymore, this likely happens at the end of a program anyway
@@ -8544,6 +8561,7 @@ struct ScreenPainter {
 				impl.window = window;
 				impl.create(handle);
 			}
+			impl.manualInvalidations = manualInvalidations;
 			impl.referenceCount++;
 		//	writeln("refcount ++ ", impl.referenceCount);
 		} else {
@@ -8551,11 +8569,34 @@ struct ScreenPainter {
 			impl.window = window;
 			impl.create(handle);
 			impl.referenceCount = 1;
+			impl.manualInvalidations = manualInvalidations;
 			window.activeScreenPainter = impl;
 			//import std.stdio; writeln("constructed");
 		}
 
 		copyActiveOriginals();
+	}
+
+	/++
+		If you are using manual invalidations, this informs the
+		window system that a section needs to be redrawn.
+
+		If you didn't opt into manual invalidation, you don't
+		have to call this.
+
+		History:
+			Added December 30, 2021 (dub v10.5)
+	+/
+	void invalidateRect(Rectangle rect) {
+		if(impl is null) return;
+
+		// transform(rect)
+		rect.left += _originX;
+		rect.right += _originX;
+		rect.top += _originY;
+		rect.bottom += _originY;
+
+		impl.invalidateRect(rect);
 	}
 
 	private Pen originalPen;
@@ -9031,7 +9072,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 
 	///
 	ScreenPainter draw() {
-		return ScreenPainter(this, handle);
+		return ScreenPainter(this, handle, false);
 	}
 
 	/++
@@ -10760,14 +10801,26 @@ version(Windows) {
 		// just because we can on Windows...
 		//void create(Image image);
 
+		void invalidateRect(Rectangle invalidRect) {
+			RECT rect;
+			rect.left = invalidRect.left;
+			rect.right = invalidRect.right;
+			rect.top = invalidRect.top;
+			rect.bottom = invalidRect.bottom;
+			InvalidateRect(hwnd, &rect, false);
+		}
+		bool manualInvalidations;
+
 		void dispose() {
 			// FIXME: this.window.width/height is probably wrong
 			// BitBlt(windowHdc, 0, 0, this.window.width, this.window.height, hdc, 0, 0, SRCCOPY);
 			// ReleaseDC(hwnd, windowHdc);
 
 			// FIXME: it shouldn't invalidate the whole thing in all cases... it would be ideal to do this right
-			if(cast(SimpleWindow) this.window)
-			InvalidateRect(hwnd, cast(RECT*)null, false); // no need to erase bg as the whole thing gets bitblt'd ove
+			if(cast(SimpleWindow) this.window) {
+				if(!manualInvalidations)
+					InvalidateRect(hwnd, cast(RECT*)null, false); // no need to erase bg as the whole thing gets bitblt'd ove
+			}
 
 			if(originalPen !is null)
 				SelectObject(hdc, originalPen);
@@ -11064,8 +11117,8 @@ version(Windows) {
 		// though it is nonessential anyway.
 		void setResizeGranularity (int granx, int grany) {}
 
-		ScreenPainter getPainter() {
-			return ScreenPainter(this, hwnd);
+		ScreenPainter getPainter(bool manualInvalidations) {
+			return ScreenPainter(this, hwnd, manualInvalidations);
 		}
 
 		HBITMAP buffer;
@@ -11604,6 +11657,14 @@ version(Windows) {
 					if(this.onDpiChanged)
 						this.onDpiChanged();
 				break;
+				case WM_ENTERIDLE:
+					// when a menu is up, it stops normal event processing (modal message loop)
+					// but this at least gives us a chance to SOMETIMES catch up
+					// FIXME: I can use SetTimer while idle to keep working i think... but idk when i'd destroy it.
+					SimpleWindow.processAllCustomEvents;
+					SimpleWindow.processAllCustomEvents;
+					SleepEx(0, true);
+					break;
 				case WM_SIZE:
 					if(wParam == 1 /* SIZE_MINIMIZED */)
 						break;
@@ -11678,6 +11739,9 @@ version(Windows) {
 
 					if(windowResized !is null)
 						windowResized(width, height);
+
+					if(inSizeMove)
+						SimpleWindow.processAllCustomEvents();
 				break;
 				case WM_ERASEBKGND:
 					// call `visibleForTheFirstTime` here, so we can do initialization as early as possible
@@ -12061,6 +12125,11 @@ version(X11) {
 
 		private Picture xrenderPicturePainter;
 
+		bool manualInvalidations;
+		void invalidateRect(Rectangle invalidRect) {
+			// FIXME if manualInvalidations
+		}
+
 		void dispose() {
 			this.rasterOp = RasterOp.normal;
 
@@ -12073,6 +12142,8 @@ version(X11) {
 
 			// src x,y     then dest x, y
 			if(destiny != None) {
+				// FIXME: if manual invalidations we can actually only copy some of the area.
+				// if(manualInvalidations)
 				XSetClipMask(display, gc, None);
 				XCopyArea(display, d, destiny, gc, 0, 0, this.window.width, this.window.height, 0, 0);
 			}
@@ -12358,14 +12429,16 @@ version(X11) {
 			int cy = y;
 
 			if(alignment & TextAlignment.VerticalBottom) {
-				assert(y2);
+				if(y2 <= 0)
+					return;
 				auto h = y2 - y;
 				if(h > textHeight) {
 					cy += h - textHeight;
 					cy -= lineHeight / 2;
 				}
 			} else if(alignment & TextAlignment.VerticalCenter) {
-				assert(y2);
+				if(y2 <= 0)
+					return;
 				auto h = y2 - y;
 				if(textHeight < h) {
 					cy += (h - textHeight) / 2;
@@ -12379,12 +12452,14 @@ version(X11) {
 				int px = x, py = cy;
 
 				if(alignment & TextAlignment.Center) {
-					assert(x2);
+					if(x2 <= 0)
+						return;
 					auto w = x2 - x;
 					if(w > textWidth)
 						px += (w - textWidth) / 2;
 				} else if(alignment & TextAlignment.Right) {
-					assert(x2);
+					if(x2 <= 0)
+						return;
 					auto pos = x2 - textWidth;
 					if(pos > x)
 						px = pos;
@@ -13801,8 +13876,8 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 		}
 
-		ScreenPainter getPainter() {
-			return ScreenPainter(this, window);
+		ScreenPainter getPainter(bool manualInvalidations) {
+			return ScreenPainter(this, window, manualInvalidations);
 		}
 
 		void move(int x, int y) {
@@ -17178,6 +17253,9 @@ version(OSXCocoa) {
             	setNeedsDisplay(view, true);
         }
 
+	bool manualInvalidations;
+	void invalidateRect(Rectangle invalidRect) { }
+
 	// NotYetImplementedException
 	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
 	void rasterOp(RasterOp op) {}
@@ -17353,8 +17431,8 @@ version(OSXCocoa) {
             .close(window);
         }
 
-        ScreenPainter getPainter() {
-		return ScreenPainter(this, this);
+        ScreenPainter getPainter(bool manualInvalidations) {
+		return ScreenPainter(this, this, manualInvalidations);
 	}
 
         id window;

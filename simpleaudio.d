@@ -1,4 +1,5 @@
 // FIXME: add a query devices thing
+// FIXME: add the alsa sequencer interface cuz then i don't need the virtual raw midi sigh. or at elast load "virtual" and auto connect it somehow
 /**
 	The purpose of this module is to provide audio functions for
 	things like playback, capture, and volume on both Windows
@@ -275,6 +276,26 @@ struct AudioOutputThread {
 		@disable new(); // but new dmd is strict about not allowing it
 
 	@disable void start() {} // you aren't supposed to control the thread yourself!
+	/++
+		You should call `exit` instead of join. It will signal the thread to exit and then call join for you.
+
+		If you absolutely must call join, use [rawJoin] instead.
+
+		History:
+			Disabled on December 30, 2021
+	+/
+	@disable void join(bool a = false) {} // you aren't supposed to control the thread yourself!
+
+	/++
+		Don't call this unless you're sure you know what you're doing.
+
+		You should use `audioOutputThread.exit();` instead.
+	+/
+	Throwable rawJoin(bool rethrow = true) {
+		if(impl is null)
+			return null;
+		return impl.join(rethrow);
+	}
 
 	/++
 		Pass `true` to enable the audio thread. Otherwise, it will
@@ -292,6 +313,7 @@ struct AudioOutputThread {
 			impl.refcount++;
 			impl.start();
 			impl.waitForInitialization();
+			impl.priority = Thread.PRIORITY_MAX;
 		}
 	}
 
@@ -311,10 +333,21 @@ struct AudioOutputThread {
 		if(impl) {
 			impl.refcount--;
 			if(impl.refcount == 0) {
-				impl.stop();
-				impl.join();
+				impl.exit(true);
 			}
 		}
+	}
+
+	/++
+		Returns true if the output is suspended. Use `suspend` and `unsuspend` to change this.
+
+		History:
+			Added December 21, 2021 (dub v10.5)
+	+/
+	bool suspended() {
+		if(impl)
+			return impl.suspended();
+		return true;
 	}
 
 	/++
@@ -414,6 +447,146 @@ struct AudioOutputThread {
 +/
 deprecated("Use AudioOutputThread instead.") class AudioPcmOutThread {}
 
+/+
+/++
+
++/
+void mmsleep(Duration time) {
+	version(Windows) {
+		static HANDLE timerQueue;
+
+		static HANDLE event;
+		if(event is null)
+			event = CreateEvent(null, false, false, null);
+
+		extern(Windows)
+		static void cb(PVOID ev, BOOLEAN) {
+			HANDLE e = cast(HANDLE) ev;
+			SetEvent(e);
+		}
+
+		//if(timerQueue is null)
+			//timerQueue = CreateTimerQueue();
+
+		// DeleteTimerQueueEx(timerQueue, null);
+
+		HANDLE nt;
+		auto ret = CreateTimerQueueTimer(&nt, timerQueue, &cb, event /+ param +/, cast(DWORD) time.total!"msecs", 0 /* period */, WT_EXECUTEDEFAULT);
+		if(!ret)
+			throw new Exception("fail");
+		//DeleteTimerQueueTimer(timerQueue, nt, INVALID_HANDLE_VALUE);
+
+		WaitForSingleObject(event, 1000);
+	}
+}
++/
+
+/++
+	A clock you can use for multimedia applications. It compares time elapsed against
+	a position variable you pass in to figure out how long to wait to get to that point.
+	Very similar to Phobos' [std.datetime.stopwatch.StopWatch|StopWatch] but with built-in
+	wait capabilities.
+
+
+	For example, suppose you want something to happen 60 frames per second:
+
+	---
+	MMClock clock;
+	Duration frame;
+	clock.restart();
+	while(running) {
+		frame += 1.seconds / 60;
+		bool onSchedule = clock.waitUntil(frame);
+
+		do_essential_frame_work();
+
+		if(onSchedule) {
+			// if we're on time, do other work too.
+			// but if we weren't on time, skipping this
+			// might help catch back up to where we're
+			// supposed to be.
+
+			do_would_be_nice_frame_work();
+		}
+	}
+	---
++/
+struct MMClock {
+	import core.time;
+
+	private Duration position;
+	private MonoTime lastPositionUpdate;
+	private bool paused;
+	int speed = 1000; /// 1000 = 1.0, 2000 = 2.0, 500 = 0.5, etc.
+
+	private void updatePosition() {
+		auto now = MonoTime.currTime;
+		position += (now - lastPositionUpdate) * speed / 1000;
+		lastPositionUpdate = now;
+	}
+
+	/++
+		Restarts the clock from position zero.
+	+/
+	void restart() {
+		position = Duration.init;
+		lastPositionUpdate = MonoTime.currTime;
+	}
+
+	/++
+		Pauses the clock.
+	+/
+	void pause() {
+		if(paused) return;
+		updatePosition();
+		paused = true;
+	}
+	void unpause() {
+		if(!paused) return;
+		lastPositionUpdate = MonoTime.currTime;
+		paused = false;
+	}
+	/++
+		Goes to sleep until the real clock catches up to the given
+		`position`.
+
+		Returns: `true` if you're on schedule, returns false if the
+		given `position` is already in the past. In that case,
+		you might want to consider skipping some work to get back
+		on time.
+	+/
+	bool waitUntil(Duration position) {
+		auto diff = timeUntil(position);
+		if(diff < 0.msecs)
+			return false;
+
+		if(diff == 0.msecs)
+			return true;
+
+		import core.thread;
+		Thread.sleep(diff);
+		return true;
+	}
+
+	/++
+
+	+/
+	Duration timeUntil(Duration position) {
+		updatePosition();
+		return (position - this.position) * 1000 / speed;
+	}
+
+	/++
+		Returns the current time on the clock since the
+		last call to [restart], excluding times when the
+		clock was paused.
+	+/
+	Duration currentPosition() {
+		updatePosition();
+		return position;
+	}
+}
+
 import core.thread;
 /++
 	Makes an audio thread for you that you can make
@@ -450,15 +623,23 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 	private void waitForInitialization() {
 		shared(AudioOutput*)* ao = cast(shared(AudioOutput*)*) &this.ao;
+		//int wait = 0;
 		while(isRunning && *ao is null) {
 			Thread.sleep(5.msecs);
+			//wait += 5;
 		}
 
-		if(*ao is null)
-			join(); // it couldn't initialize, just rethrow the exception
+		//import std.stdio; writeln(wait);
+
+		if(*ao is null) {
+			exit(true);
+		}
 	}
 
-	///
+	/++
+		Asks the device to pause/unpause. This may not actually do anything on some systems.
+		You should probably use [suspend] and [unsuspend] instead.
+	+/
 	@scriptable
 	void pause() {
 		if(ao) {
@@ -466,7 +647,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		}
 	}
 
-	///
+	/// ditto
 	@scriptable
 	void unpause() {
 		if(ao) {
@@ -474,11 +655,34 @@ final class AudioPcmOutThreadImplementation : Thread {
 		}
 	}
 
-	/// Stops the output thread. Using the object after it is stopped is not recommended, except to `join` the thread. This is meant to be called when you are all done with it.
+	/++
+		Stops the output thread. Using the object after it is stopped is not recommended which is why
+		this is now deprecated.
+
+		You probably want [suspend] or [exit] instead. Use [suspend] if you want to stop playing, and
+		close the output device, but keep the thread alive so you can [unsuspend] later. After calling
+		[suspend], you can call [unsuspend] and then continue using the other method normally again.
+
+		Use [exit] if you want to stop playing, close the output device, and terminate the worker thread.
+		After calling [exit], you may not call any methods on the thread again.
+
+		The one exception is if you are inside an audio callback and want to stop the thread and prepare
+		it to be [AudioOutputThread.rawJoin]ed. Preferably, you'd avoid doing this - the channels can
+		simply return false to indicate that they are done. But if you must do that, call [rawStop] instead.
+
+		History:
+			`stop` was deprecated and `rawStop` added on December 30, 2021 (dub v10.5)
+	+/
+	deprecated("You want to use either suspend or exit instead, or rawStop if you must but see the docs.")
 	void stop() {
 		if(ao) {
 			ao.stop();
 		}
+	}
+
+	/// ditto
+	void rawStop() {
+		if(ao) { ao.stop(); }
 	}
 
 	/++
@@ -1204,6 +1408,64 @@ final class AudioPcmOutThreadImplementation : Thread {
 		int fillDatasLength = 0;
 	}
 
+
+	private bool suspendWanted;
+	private bool exiting;
+
+	private bool suspended_;
+
+	/++
+		Stops playing and closes the audio device, but keeps the worker thread
+		alive and waiting for a call to [unsuspend], which will re-open everything
+		and pick up (close to; a couple buffers may be discarded) where it left off.
+
+		This is more reliable than [pause] and [unpause] since it doesn't require
+		the system/hardware to cooperate.
+
+		History:
+			Added December 30, 2021 (dub v10.5)
+	+/
+	public void suspend() {
+		suspended_ = true;
+		suspendWanted = true;
+		if(ao)
+			ao.stop();
+	}
+
+	/// ditto
+	public void unsuspend() {
+		suspended_ = false;
+		suspendWanted = false;
+		event.set();
+	}
+
+	/// ditto
+	public bool suspended() {
+		return suspended_;
+	}
+
+	/++
+		Stops playback and unsupends if necessary and exits.
+
+		Call this instead of join.
+
+		Please note: you should never call this from inside an audio
+		callback, as it will crash or deadlock. Instead, just return false
+		from your buffer fill function to indicate that you are done.
+
+		History:
+			Added December 30, 2021 (dub v10.5)
+	+/
+	public Throwable exit(bool rethrow = false) {
+		exiting = true;
+		unsuspend();
+		if(ao)
+			ao.stop();
+
+		return join(rethrow);
+	}
+
+
 	private void run() {
 		version(linux) {
 			// this thread has no business intercepting signals from the main thread,
@@ -1221,6 +1483,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		}
 
 		AudioOutput ao = AudioOutput(device, SampleRate, channels);
+
 		this.ao = &ao;
 		scope(exit) this.ao = null;
 		auto omg = this;
@@ -1262,6 +1525,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 			}
 		};
 		//try
+		resume_from_suspend:
 		ao.play();
 		/+
 		catch(Throwable t) {
@@ -1269,7 +1533,46 @@ final class AudioPcmOutThreadImplementation : Thread {
 			writeln(t);
 		}
 		+/
+
+		if(suspendWanted) {
+			ao.close();
+
+			event.initialize(true, false);
+			if(event.wait() && !exiting) {
+				event.reset();
+
+				ao.open();
+				goto resume_from_suspend;
+			}
+		}
+
+		event.terminate();
 	}
+
+	static if(__VERSION__ > 2080) {
+		import core.sync.event;
+	} else {
+		// bad emulation of the Event but meh
+		static struct Event {
+			void terminate() {}
+			void initialize(bool, bool) {}
+
+			bool isSet;
+
+			void set() { isSet = true; }
+			void reset() { isSet = false; }
+			bool wait() {
+				while(!isSet) {
+					Thread.sleep(500.msecs);
+				}
+				isSet = false;
+				return true;
+			}
+
+		}
+	}
+
+	Event event;
 }
 
 
@@ -1522,6 +1825,7 @@ struct AudioOutput {
 
 	private int SampleRate;
 	private int channels;
+	private string device;
 
 	/++
 		`device` is a device name. On Linux, it is the ALSA string.
@@ -1536,21 +1840,9 @@ struct AudioOutput {
 
 		this.SampleRate = SampleRate;
 		this.channels = channels;
+		this.device = device;
 
-		version(ALSA) {
-			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK, SampleRate, channels, device);
-		} else version(WinMM) {
-			WAVEFORMATEX format;
-			format.wFormatTag = WAVE_FORMAT_PCM;
-			format.nChannels = cast(ushort) channels;
-			format.nSamplesPerSec = SampleRate;
-			format.nAvgBytesPerSec = SampleRate * channels * 2; // two channels, two bytes per sample
-			format.nBlockAlign = 4;
-			format.wBitsPerSample = 16;
-			format.cbSize = 0;
-			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
-				throw new WinMMException("wave out open", err);
-		} else static assert(0);
+		open();
 	}
 
 	/// Always pass card == 0.
@@ -1571,6 +1863,9 @@ struct AudioOutput {
 
 	/// Starts playing, loops until stop is called
 	void play() {
+		if(handle is null)
+			open();
+
 		assert(fillData !is null);
 		playing = true;
 
@@ -1680,6 +1975,8 @@ struct AudioOutput {
 				if(auto err = waveOutUnprepareHeader(handle, &header, header.sizeof))
 					throw new WinMMException("unprepare", err);
 		} else static assert(0);
+
+		close();
 	}
 
 	/// Breaks the play loop
@@ -1719,14 +2016,55 @@ struct AudioOutput {
 		}
 	}
 
+
+	/++
+		Re-opens the audio device that you have previously [close]d.
+
+		History:
+			Added December 30, 2021
+	+/
+	void open() {
+		assert(handle is null);
+		assert(!playing);
+		version(ALSA) {
+			handle = openAlsaPcm(snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK, SampleRate, channels, device);
+		} else version(WinMM) {
+			WAVEFORMATEX format;
+			format.wFormatTag = WAVE_FORMAT_PCM;
+			format.nChannels = cast(ushort) channels;
+			format.nSamplesPerSec = SampleRate;
+			format.nAvgBytesPerSec = SampleRate * channels * 2; // two channels, two bytes per sample
+			format.nBlockAlign = 4;
+			format.wBitsPerSample = 16;
+			format.cbSize = 0;
+			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
+				throw new WinMMException("wave out open", err);
+		} else static assert(0);
+	}
+
+	/++
+		Closes the audio device. You MUST call [stop] before calling this.
+
+		History:
+			Added December 30, 2021
+	+/
+	void close() {
+		if(!handle)
+			return;
+		assert(!playing);
+		version(ALSA) {
+			snd_pcm_close(handle);
+			handle = null;
+		} else version(WinMM) {
+			waveOutClose(handle);
+			handle = null;
+		} else static assert(0);
+	}
+
 	// FIXME: add async function hooks
 
 	~this() {
-		version(ALSA) {
-			snd_pcm_close(handle);
-		} else version(WinMM) {
-			waveOutClose(handle);
-		} else static assert(0);
+		close();
 	}
 }
 
@@ -1853,23 +2191,6 @@ B0 40 00 # sustain pedal off
 	}
 }
 
-// plays a midi file in the background with methods to tweak song as it plays
-struct MidiOutputThread {
-	void injectCommand() {}
-	void pause() {}
-	void unpause() {}
-
-	void trackEnabled(bool on) {}
-	void channelEnabled(bool on) {}
-
-	void loopEnabled(bool on) {}
-
-	// stops the current song, pushing its position to the stack for later
-	void pushSong() {}
-	// restores a popped song from where it was.
-	void popSong() {}
-}
-
 version(Posix) {
 	import core.sys.posix.signal;
 	private sigaction_t oldSigIntr;
@@ -1916,10 +2237,18 @@ struct MidiOutput {
 		On Windows, it is currently ignored, so you should pass "default"
 		or null so when it does get implemented your code won't break.
 
+		If you pass the string "DUMMY", it will not actually open a device
+		and simply be a do-nothing mock object;
+
 		History:
 			Added Nov 8, 2020.
+
+			Support for the "DUMMY" device was added on January 2, 2022.
 	+/
 	this(string device) {
+		if(device == "DUMMY")
+			return;
+
 		version(ALSA) {
 			if(auto err = snd_rawmidi_open(null, &handle, device.toStringz, 0))
 				throw new AlsaException("rawmidi open", err);
@@ -1936,10 +2265,10 @@ struct MidiOutput {
 
 	/// Send a reset message, silencing all notes
 	void reset() {
+		if(!handle) return;
+
 		version(ALSA) {
-			static immutable ubyte[3] resetSequence = [0x0b << 4, 123, 0];
-			// send a controller event to reset it
-			writeRawMessageData(resetSequence[]);
+			silenceAllNotes();
 			static immutable ubyte[1] resetCmd = [0xff];
 			writeRawMessageData(resetCmd[]);
 			// and flush it immediately
@@ -1953,6 +2282,7 @@ struct MidiOutput {
 	/// Writes a single low-level midi message
 	/// Timing and sending sane data is your responsibility!
 	void writeMidiMessage(int status, int param1, int param2) {
+		if(!handle) return;
 		version(ALSA) {
 			ubyte[3] dataBuffer;
 
@@ -1980,6 +2310,7 @@ struct MidiOutput {
 	/// Timing and sending sane data is your responsibility!
 	/// The data should NOT include any timestamp bytes - each midi message should be 2 or 3 bytes.
 	void writeRawMessageData(scope const(ubyte)[] data) {
+		if(!handle) return;
 		if(data.length == 0)
 			return;
 		version(ALSA) {
@@ -2006,6 +2337,7 @@ struct MidiOutput {
 	}
 
 	~this() {
+		if(!handle) return;
 		version(ALSA) {
 			snd_rawmidi_close(handle);
 		} else version(WinMM) {

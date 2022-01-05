@@ -12,6 +12,14 @@
 */
 module arsd.midi;
 
+
+/+
+	So the midi ticks are defined in terms of per quarter note so that's good stuff.
+
+	If you're reading live though you have milliseconds, and probably want to round them
+	off a little to fit the beat.
++/
+
 import core.time;
 
 version(NewMidiDemo)
@@ -138,31 +146,175 @@ class MidiFile {
 		Note that you do not need to handle any meta events, it keeps the
 		tempo internally, but you can look at it if you like.
 	+/
-	PlayStream playbackStream() {
-		return PlayStream(this);
+	const(PlayStreamEvent)[] playbackStream() {
+		PlayStreamEvent[] stream;
+		size_t size;
+		foreach(track; tracks)
+			size += track.events.length;
+		stream.reserve(size);
+
+		Duration position;
+
+		static struct NoteOnInfo {
+			PlayStreamEvent* event;
+			int turnedOnTicks;
+			Duration turnedOnPosition;
+		}
+		NoteOnInfo[] noteOnInfo = new NoteOnInfo[](128 * 16);
+		scope(exit) noteOnInfo = null;
+
+		static struct LastNoteInfo {
+			PlayStreamEvent*[6] event; // in case there's a chord
+			int eventCount;
+			int turnedOnTicks;
+		}
+		LastNoteInfo[/*16*/] lastNoteInfo = new LastNoteInfo[](16); // it doesn't allow the static array cuz of @safe and i don't wanna deal with that so just doing this, nbd alloc anyway
+
+		void recordOff(scope NoteOnInfo* noi, int midiClockPosition) {
+			noi.event.noteOnDuration = position - noi.turnedOnPosition;
+
+			noi.event = null;
+		}
+
+		// FIXME: what about rests?
+		foreach(item; flattenedTrackStream) {
+			position += item.wait;
+
+			stream ~= item;
+
+			if(item.event.event == MIDI_EVENT_NOTE_ON) {
+				if(item.event.data2 == 0)
+					goto off;
+
+				auto ptr = &stream[$-1];
+
+				auto noi = &noteOnInfo[(item.event.channel & 0x0f) * 128 + (item.event.data1 & 0x7f)];
+
+				if(noi.event) {
+					recordOff(noi, item.midiClockPosition);
+				}
+
+				noi.event = ptr;
+				noi.turnedOnTicks = item.midiClockPosition;
+				noi.turnedOnPosition = position;
+
+				auto lni = &lastNoteInfo[(item.event.channel & 0x0f)];
+				if(lni.eventCount) {
+					if(item.midiClockPosition == lni.turnedOnTicks) {
+						if(lni.eventCount == lni.event.length)
+							goto maxedOut;
+						lni.event[lni.eventCount++] = ptr;
+					} else {
+						maxedOut:
+						foreach(ref e; lni.event[0 .. lni.eventCount])
+							e.midiTicksToNextNoteOnChannel = item.midiClockPosition - lni.turnedOnTicks;
+
+						goto frist;
+					}
+				} else {
+					frist:
+					lni.event[0] = ptr;
+					lni.eventCount = 1;
+					lni.turnedOnTicks = item.midiClockPosition;
+				}
+
+			} else if(item.event.event == MIDI_EVENT_NOTE_OFF) {
+				off:
+				auto noi = &noteOnInfo[(item.event.channel & 0x0f) * 128 + (item.event.data1 & 0x7f)];
+
+				if(noi.event) {
+					recordOff(noi, item.midiClockPosition);
+				}
+			}
+		}
+
+		return stream;
+	}
+
+	/++
+		Returns a forward range for playback or analysis that flattens the midi
+		tracks into a single stream. Each item is a command, which
+		is like the midi event but with some more annotations and control methods.
+
+		Modifying this MidiFile object or any of its children during iteration
+		may cause trouble.
+
+		Note that you do not need to handle any meta events, it keeps the
+		tempo internally, but you can look at it if you like.
+	+/
+	FlattenedTrackStream flattenedTrackStream() {
+		return FlattenedTrackStream(this);
 	}
 }
 
-struct PlayStream {
-	static struct Event {
-		/// This is how long you wait until triggering this event.
-		/// Note it may be zero.
-		Duration wait;
+static struct PlayStreamEvent {
+	/// This is how long you wait until triggering this event.
+	/// Note it may be zero.
+	Duration wait;
 
-		/// And this is the event.
-		MidiEvent event;
+	/// And this is the midi event message.
+	MidiEvent event;
 
-		string toString() {
-			return event.toString();
-		}
-
-		/// informational
-		MidiFile file;
-		/// ditto
-		MidiTrack track;
+	string toString() const {
+		return event.toString();
 	}
 
-	PlayStream save() {
+	/// informational. May be null if the stream didn't come from a file or tracks.
+	MidiFile file;
+	/// ditto
+	MidiTrack track;
+
+	/++
+		Gives the position ot the global midi clock for this event. The `event.deltaTime`
+		is in units of the midi clock, but the actual event has the clock per-track whereas
+		this value is global, meaning it might not be the sum of event.deltaTime to this point.
+		(It should add up if you only sum ones with the same [track] though.
+
+		The midi clock is used in conjunction with the [MidiFile.timing] and current tempo
+		state to determine a real time wait value, which you can find in the [wait] member.
+
+		This position is probably less useful than the running sum of [wait]s, but is provided
+		just in case it is useful to you.
+	+/
+	int midiClockPosition;
+
+	/++
+		The duration between this non-zero velocity note on and its associated note off.
+
+		Will be zero if this isn't actually a note on, the input stream was not seekable (e.g.
+		a real time recording), or if a note off was not found ahead in the stream.
+
+		It is basically how long the pianist held down the key.
+
+		Be aware that that the note on to note off is not necessarily associated with the
+		note you'd see on sheet music. It is more about the time the sound actually rings,
+		but it may not exactly be that either due to the time it takes for the note to
+		fade out.
+	+/
+	Duration noteOnDuration;
+	/++
+		This is the count of midi clock ticks after this non-zero velocity note on event (if
+		it is not one of those, this value will be zero) and the next note that will be sounded
+		on its same channel.
+
+		While rests may throw this off, this number is the most help in this struct for determining
+		the note length you'd put on sheet music. Divide it by [MidiFile.timing] to get the number
+		of midi quarter notes, which is directly correlated to the musical beat.
+
+		Will be zero if this isn't actually a note on, the input stream was not seekable (e.g.
+		a real time recording where the next note hasn't been struck yet), or if a note off was
+		not found ahead in the stream.
+	+/
+	int midiTicksToNextNoteOnChannel;
+
+	// when recording and working in milliseconds we prolly want to round off to the nearest 64th note, or even less fine grained at user command todeal with bad musicians (i.e. me) being off beat
+}
+
+static immutable(PlayStreamEvent)[] longWait = [{wait: 1.weeks, event: {status: 0xff, data1: 0x01, meta: null}}];
+
+struct FlattenedTrackStream {
+
+	FlattenedTrackStream save() {
 		auto copy = this;
 		copy.trackPositions = this.trackPositions.dup;
 		return copy;
@@ -178,11 +330,13 @@ struct PlayStream {
 		}
 
 		this.currentTrack = -1;
-		this.tempo = 500000;
+		this.tempo = 500000; // microseconds per quarter note
 		popFront();
 	}
 
 	//@nogc:
+
+	int midiClock;
 
 	void popFront() {
 		done = true;
@@ -197,7 +351,7 @@ struct PlayStream {
 					currentTrack += 1;
 				}
 
-				pending = Event(0.seconds, f, file, tp.track);
+				pending = PlayStreamEvent(0.seconds, f, file, tp.track, midiClock);
 				processPending();
 				done = false;
 				return;
@@ -232,9 +386,11 @@ struct PlayStream {
 		// if high bit set... idk it is different.
 		//
 		// then the temp is microseconds per quarter note.
-		auto time = (minWait * tempo / file.timing).usecs;
 
-		pending = Event(time, trackPositions[minWaitTrack].remaining[0], file, trackPositions[minWaitTrack].track);
+		auto time = (cast(long) minWait * tempo / file.timing).usecs;
+		midiClock += minWait;
+
+		pending = PlayStreamEvent(time, trackPositions[minWaitTrack].remaining[0], file, trackPositions[minWaitTrack].track, midiClock);
 		processPending();
 		trackPositions[minWaitTrack].remaining = trackPositions[minWaitTrack].remaining[1 .. $];
 		trackPositions[minWaitTrack].clock = 0;
@@ -262,18 +418,19 @@ struct PlayStream {
 	}
 
 	@property
-	Event front() {
+	PlayStreamEvent front() {
 		return pending;
 	}
 
 	private uint tempo;
-	private Event pending;
+	private PlayStreamEvent pending;
 	private bool done;
 
 	@property
 	bool empty() {
 		return done;
 	}
+
 }
 
 class MidiTrack {
@@ -303,6 +460,10 @@ class MidiTrack {
 
 		while(buf.bytes.length) {
 			MidiEvent newEvent = MidiEvent.fromBuffer(buf, runningStatus);
+
+			if(newEvent.isMeta && newEvent.data1 == MetaEvent.Name)
+				name_ = cast(string) newEvent.meta.idup;
+
 			if(newEvent.status == 0xff && newEvent.data1 == MetaEvent.EndOfTrack) {
 				break;
 			}
@@ -311,7 +472,28 @@ class MidiTrack {
 		//assert(begin - trackLength == buf.bytes.length);
 	}
 
+	/++
+		All the midi events found in the track.
+	+/
 	MidiEvent[] events;
+	/++
+		The name of the track, as found from metadata at load time.
+
+		This may change to scan events to see updates without the cache in the future.
+	+/
+	@property string name() {
+		return name_;
+	}
+
+	private string name_;
+
+	/++
+		This field is not used or stored in a midi file; it is just
+		a place to store some state in your player.
+
+		I use it to keep flags like if the track is currently enabled.
+	+/
+	int customPlayerInfo;
 
 	override string toString() const {
 		string s;
@@ -383,6 +565,39 @@ struct MidiEvent {
 	/// ditto
 	static MidiEvent CuePoint(string t) { return MidiEvent(0, 0xff, MetaEvent.CuePoint, 0, cast(const(ubyte)[]) t); }
 
+	/++
+		Conveneince factories for normal events. These just put your given values into the event as raw data so you're responsible to know what they do.
+
+		History:
+			Added January 2, 2022 (dub v10.5)
+	+/
+	static MidiEvent NoteOn(int channel, int note, int velocity) { return MidiEvent(0, (MIDI_EVENT_NOTE_ON << 4) | (channel & 0x0f), note & 0x7f, velocity & 0x7f); }
+	/// ditto
+	static MidiEvent NoteOff(int channel, int note, int velocity) { return MidiEvent(0, (MIDI_EVENT_NOTE_OFF << 4) | (channel & 0x0f), note & 0x7f, velocity & 0x7f); }
+
+	/+
+	// FIXME: this is actually a relatively complicated one i should fix, it combines bits... 8192 == 0.
+	// This is a bit of a magical function, it takes a signed bend between 0 and 81
+	static MidiEvent PitchBend(int channel, int bend) {
+		return MidiEvent(0, (MIDI_EVENT_PITCH_BEND << 4) | (channel & 0x0f), bend & 0x7f, bend & 0x7f);
+	}
+	+/
+	// this overload ok, it is what the thing actually tells. coarse == 64 means we're at neutral.
+	/// ditto
+	static MidiEvent PitchBend(int channel, int fine, int coarse) { return MidiEvent(0, (MIDI_EVENT_PITCH_BEND << 4) | (channel & 0x0f), fine & 0x7f, coarse & 0x7f); }
+
+	/// ditto
+	static MidiEvent NoteAftertouch(int channel, int note, int velocity) { return MidiEvent(0, (MIDI_EVENT_NOTE_AFTERTOUCH << 4) | (channel & 0x0f), note & 0x7f, velocity & 0x7f); }
+	// FIXME the different controllers do have standard IDs we could look up in an enum... and many of them have coarse/fine things you can send as two messages.
+	/// ditto
+	static MidiEvent Controller(int channel, int controller, int value) { return MidiEvent(0, (MIDI_EVENT_CONTROLLER << 4) | (channel & 0x0f), controller & 0x7f, value & 0x7f); }
+
+	// the two byte ones
+	/// ditto
+	static MidiEvent ProgramChange(int channel, int program) { return MidiEvent(0, (MIDI_EVENT_PROGRAM_CHANGE << 4) | (channel & 0x0f), program & 0x7f); }
+	/// ditto
+	static MidiEvent ChannelAftertouch(int channel, int param) { return MidiEvent(0, (MIDI_EVENT_CHANNEL_AFTERTOUCH << 4) | (channel & 0x0f), param & 0x7f); }
+
 	///
 	bool isMeta() const {
 		return status == 0xff;
@@ -435,6 +650,7 @@ struct MidiEvent {
 		s ~= " ";
 		s ~= toh(data1);
 		s ~= " ";
+
 		if(isMeta) {
 			switch(data1) {
 				case MetaEvent.Text:
@@ -488,6 +704,20 @@ struct MidiEvent {
 			}
 		} else {
 			s ~= toh(data2);
+
+			s ~= " ";
+			s ~= tos(channel);
+			s ~= " ";
+			switch(event) {
+				case MIDI_EVENT_NOTE_OFF: s ~= "NOTE_OFF"; break;
+				case MIDI_EVENT_NOTE_ON: s ~=  data2 ? "NOTE_ON" : "NOTE_ON_ZERO"; break;
+				case MIDI_EVENT_NOTE_AFTERTOUCH: s ~= "NOTE_AFTERTOUCH"; break;
+				case MIDI_EVENT_CONTROLLER: s ~= "CONTROLLER"; break;
+				case MIDI_EVENT_PROGRAM_CHANGE: s ~= "PROGRAM_CHANGE"; break;
+				case MIDI_EVENT_CHANNEL_AFTERTOUCH: s ~= "CHANNEL_AFTERTOUCH"; break;
+				case MIDI_EVENT_PITCH_BEND: s ~= "PITCH_BEND"; break;
+				default:
+			}
 		}
 
 		return s;
