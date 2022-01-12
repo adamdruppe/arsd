@@ -4010,16 +4010,16 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 	}
 
 	auto lp = params.listeningPort;
+	auto host = params.listeningHost;
 
 	FCGX_Request request;
-	if(lp) {
+	if(lp || !host.empty) {
 		// if a listening port was specified on the command line, we want to spawn ourself
 		// (needed for nginx without spawn-fcgi, e.g. on Windows)
 		FCGX_Init();
 
 		int sock;
 
-		auto host = params.listeningHost;
 		if(host.startsWith("unix:")) {
 			sock = FCGX_OpenSocket(toStringz(params.listeningHost["unix:".length .. $]), 12);
 		} else if(host.startsWith("abstract:")) {
