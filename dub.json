@@ -148,7 +148,7 @@
 		},
 		{
 			"name": "image_files",
-			"description": "Various image file format support - PNG read/write, JPEG, TGA, BMP, PCX, TGA, DDS read.",
+			"description": "Various image file format support - PNG read/write, JPEG, TGA, BMP, PCX, TGA, DDS read and SVG rasterization.",
 			"importPaths": ["."],
 			"targetType": "library",
 			"dependencies": {

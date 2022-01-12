@@ -8197,10 +8197,16 @@ version(TerminalDirectToEmulator) {
 
 				If you want specific values for these things, you should set
 				them in your own application.
+
+				On January 12, 2022, I changed the font size to be auto-scaled
+				with detected dpi by default. You can undo this by setting
+				`scaleFontSizeWithDpi` to false.
 		+/
 		string fontName = defaultFont;
 		/// ditto
 		int fontSize = defaultSize;
+		/// ditto
+		bool scaleFontSizeWithDpi = true;
 
 		/++
 			Requested initial terminal size in character cells. You may not actually get exactly this.
@@ -8619,8 +8625,8 @@ version(TerminalDirectToEmulator) {
 		this(Terminal* term, ScrollMessageWidget parent) {
 			this.smw = parent;
 			this.term = term;
-			terminalEmulator = new TerminalEmulatorInsideWidget(this);
 			super(parent);
+			terminalEmulator = new TerminalEmulatorInsideWidget(this);
 			this.parentWindow.addEventListener("closed", {
 				if(term) {
 					term.hangedUp = true;
@@ -8681,6 +8687,13 @@ version(TerminalDirectToEmulator) {
 				this.parentWindow.win.postEvent(new InputEventInternal(data));
 				if(windowGone) forceTermination();
 				terminalEmulator.incomingSignal.wait(); // blocking write basically, wait until the TE confirms the receipt of it
+			}
+		}
+
+		override void dpiChanged() {
+			if(terminalEmulator) {
+				terminalEmulator.loadFont();
+				terminalEmulator.resized(width, height);
 			}
 		}
 
@@ -8889,16 +8902,18 @@ version(TerminalDirectToEmulator) {
 
 		@property bool invalidateAll() { return super.invalidateAll; }
 
-		private this(TerminalEmulatorWidget widget) {
-
-			this.syncSignal = new Semaphore();
-			this.outgoingSignal = new Semaphore();
-			this.incomingSignal = new Semaphore();
-
-			this.widget = widget;
+		void loadFont() {
+			if(this.font) {
+				this.font.unload();
+				this.font = null;
+			}
+			auto fontSize = integratedTerminalEmulatorConfiguration.fontSize;
+			if(integratedTerminalEmulatorConfiguration.scaleFontSizeWithDpi) {
+				fontSize = widget.scaleWithDpi(fontSize);
+			}
 
 			if(integratedTerminalEmulatorConfiguration.fontName.length) {
-				this.font = new OperatingSystemFont(integratedTerminalEmulatorConfiguration.fontName, integratedTerminalEmulatorConfiguration.fontSize, FontWeight.medium);
+				this.font = new OperatingSystemFont(integratedTerminalEmulatorConfiguration.fontName, fontSize, FontWeight.medium);
 				if(this.font.isNull) {
 					// carry on, it will try a default later
 				} else if(this.font.isMonospace) {
@@ -8910,7 +8925,18 @@ version(TerminalDirectToEmulator) {
 			}
 
 			if(this.font is null || this.font.isNull)
-				loadDefaultFont(integratedTerminalEmulatorConfiguration.fontSize);
+				loadDefaultFont(fontSize);
+		}
+
+		private this(TerminalEmulatorWidget widget) {
+
+			this.syncSignal = new Semaphore();
+			this.outgoingSignal = new Semaphore();
+			this.incomingSignal = new Semaphore();
+
+			this.widget = widget;
+
+			loadFont();
 
 			super(integratedTerminalEmulatorConfiguration.initialWidth ? integratedTerminalEmulatorConfiguration.initialWidth : 80,
 				integratedTerminalEmulatorConfiguration.initialHeight ? integratedTerminalEmulatorConfiguration.initialHeight : 30);

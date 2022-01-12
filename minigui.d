@@ -575,7 +575,8 @@ class Widget : ReflectableProperties {
 		Scales the given value to the system-reported DPI for the monitor on which the widget resides.
 
 		History:
-			Added November 25, 2021
+			Added November 25, 2021 (dub v10.5)
+			`Point` overload added January 12, 2022 (dub v10.6)
 	+/
 	int scaleWithDpi(int value, int assumedDpi = 96) {
 		// avoid potential overflow with common special values
@@ -587,11 +588,17 @@ class Widget : ReflectableProperties {
 			return 0;
 
 		auto divide = (parentWindow && parentWindow.win) ? parentWindow.win.actualDpi : assumedDpi;
+		//divide = 138;
 		// for lower values it is something i don't really want changed anyway since it is an old monitor and you don't want to scale down.
 		// this also covers the case when actualDpi returns 0.
 		if(divide < 96)
 			divide = 96;
 		return value * divide / assumedDpi;
+	}
+
+	/// ditto
+	Point scaleWithDpi(Point value, int assumedDpi = 96) {
+		return Point(scaleWithDpi(value.x, assumedDpi), scaleWithDpi(value.y, assumedDpi));
 	}
 
 	// avoid this it just forwards to a soon-to-be-deprecated function and is not remotely stable
@@ -610,6 +617,22 @@ class Widget : ReflectableProperties {
 	+/
 	protected bool encapsulatedChildren() {
 		return false;
+	}
+
+	private void privateDpiChanged() {
+		dpiChanged();
+		foreach(child; children)
+			child.privateDpiChanged();
+	}
+
+	/++
+		Virtual hook to update any caches or fonts you need on the event of a dpi scaling change.
+
+		History:
+			Added January 12, 2022 (dub v10.6)
+	+/
+	protected void dpiChanged() {
+
 	}
 
 	// Default layout properties {
@@ -4390,27 +4413,27 @@ class ScrollableWidget : Widget {
 					break;
 					case SB_LINEDOWN:
 						if(msg == WM_HSCROLL)
-							horizontalScroll(16);
+							horizontalScroll(scaleWithDpi(16));
 						else
-							verticalScroll(16);
+							verticalScroll(scaleWithDpi(16));
 					break;
 					case SB_LINEUP:
 						if(msg == WM_HSCROLL)
-							horizontalScroll(-16);
+							horizontalScroll(scaleWithDpi(-16));
 						else
-							verticalScroll(-16);
+							verticalScroll(scaleWithDpi(-16));
 					break;
 					case SB_PAGEDOWN:
 						if(msg == WM_HSCROLL)
-							horizontalScroll(100);
+							horizontalScroll(scaleWithDpi(100));
 						else
-							verticalScroll(100);
+							verticalScroll(scaleWithDpi(100));
 					break;
 					case SB_PAGEUP:
 						if(msg == WM_HSCROLL)
-							horizontalScroll(-100);
+							horizontalScroll(scaleWithDpi(-100));
 						else
-							verticalScroll(-100);
+							verticalScroll(scaleWithDpi(-100));
 					break;
 					case SB_THUMBPOSITION:
 					case SB_THUMBTRACK:
@@ -4456,25 +4479,25 @@ class ScrollableWidget : Widget {
 
 	override void defaultEventHandler_click(ClickEvent event) {
 		if(event.button == MouseButton.wheelUp)
-			verticalScroll(-16);
+			verticalScroll(scaleWithDpi(-16));
 		if(event.button == MouseButton.wheelDown)
-			verticalScroll(16);
+			verticalScroll(scaleWithDpi(16));
 		super.defaultEventHandler_click(event);
 	}
 
 	override void defaultEventHandler_keydown(KeyDownEvent event) {
 		switch(event.key) {
 			case Key.Left:
-				horizontalScroll(-16);
+				horizontalScroll(scaleWithDpi(-16));
 			break;
 			case Key.Right:
-				horizontalScroll(16);
+				horizontalScroll(scaleWithDpi(16));
 			break;
 			case Key.Up:
-				verticalScroll(-16);
+				verticalScroll(scaleWithDpi(-16));
 			break;
 			case Key.Down:
-				verticalScroll(16);
+				verticalScroll(scaleWithDpi(16));
 			break;
 			case Key.Home:
 				verticalScrollTo(0);
@@ -4483,10 +4506,10 @@ class ScrollableWidget : Widget {
 				verticalScrollTo(contentHeight);
 			break;
 			case Key.PageUp:
-				verticalScroll(-160);
+				verticalScroll(scaleWithDpi(-160));
 			break;
 			case Key.PageDown:
-				verticalScroll(160);
+				verticalScroll(scaleWithDpi(160));
 			break;
 			default:
 		}
@@ -4535,11 +4558,11 @@ class ScrollableWidget : Widget {
 
 	///
 	final @property int viewportWidth() {
-		return width - (showingVerticalScroll ? 16 : 0);
+		return width - (showingVerticalScroll ? scaleWithDpi(16) : 0);
 	}
 	///
 	final @property int viewportHeight() {
-		return height - (showingHorizontalScroll ? 16 : 0);
+		return height - (showingHorizontalScroll ? scaleWithDpi(16) : 0);
 	}
 
 	// FIXME property
@@ -4687,8 +4710,8 @@ class ScrollableWidget : Widget {
 	}
 
 	// make space for the scroll bar, and that's it.
-	final override int paddingRight() { return 16; }
-	final override int paddingBottom() { return 16; }
+	final override int paddingRight() { return scaleWithDpi(16); }
+	final override int paddingBottom() { return scaleWithDpi(16); }
 
 	/*
 		END SCROLLING
@@ -4860,10 +4883,10 @@ class ScrollableContainerWidget : ContainerWidget {
 
 
 		vsb.addEventListener("scrolltonextline", () {
-			scrollBy(0, 16);
+			scrollBy(0, scaleWithDpi(16));
 		});
 		vsb.addEventListener("scrolltopreviousline", () {
-			scrollBy(0, -16);
+			scrollBy(0,scaleWithDpi( -16));
 		});
 		vsb.addEventListener("scrolltonextpage", () {
 			scrollBy(0, container.height);
@@ -4878,11 +4901,11 @@ class ScrollableContainerWidget : ContainerWidget {
 		this.addEventListener(delegate (scope ClickEvent e) {
 			if(e.button == MouseButton.wheelUp) {
 				if(!e.defaultPrevented)
-					scrollBy(0, -16);
+					scrollBy(0, scaleWithDpi(-16));
 				e.stopPropagation();
 			} else if(e.button == MouseButton.wheelDown) {
 				if(!e.defaultPrevented)
-					scrollBy(0, 16);
+					scrollBy(0, scaleWithDpi(16));
 				e.stopPropagation();
 			}
 		});
@@ -4973,16 +4996,16 @@ class ScrollableContainerWidget : ContainerWidget {
 
 		registerMovement();
 
-		hsb.height = 16; // FIXME? are tese 16s sane?
+		hsb.height = scaleWithDpi(16); // FIXME? are tese 16s sane?
 		hsb.x = 0;
 		hsb.y = this.height - hsb.height;
-		hsb.width = this.width - 16;
+		hsb.width = this.width - scaleWithDpi(16);
 		hsb.recomputeChildLayout();
 
-		vsb.width = 16; // FIXME?
+		vsb.width = scaleWithDpi(16); // FIXME?
 		vsb.x = this.width - vsb.width;
 		vsb.y = 0;
-		vsb.height = this.height - 16;
+		vsb.height = this.height - scaleWithDpi(16);
 		vsb.recomputeChildLayout();
 
 		container.x = 0;
@@ -5014,7 +5037,7 @@ class ScrollableContainerWidget : ContainerWidget {
 		setViewableArea(width, height);
 	}
 
-	override int minHeight() { return 64; }
+	override int minHeight() { return scaleWithDpi(64); }
 
 	HorizontalScrollbar hsb;
 	VerticalScrollbar vsb;
@@ -5407,10 +5430,10 @@ class VerticalSlider : Slider {
 		thumb.tabStop = false;
 
 		thumb.thumbWidth = width;
-		thumb.thumbHeight = 16;
+		thumb.thumbHeight = scaleWithDpi(16);
 
 		thumb.addEventListener(EventType.change, () {
-			auto sx = thumb.positionY * max() / (thumb.height - 16);
+			auto sx = thumb.positionY * max() / (thumb.height - scaleWithDpi(16));
 			sx = max - sx;
 			//informProgramThatUserChangedPosition(sx);
 
@@ -5430,7 +5453,7 @@ class VerticalSlider : Slider {
 	version(custom_widgets)
 	protected override void setPositionCustom(int a) {
 		if(max())
-			thumb.positionY = (max - a) * (thumb.height - 16) / max();
+			thumb.positionY = (max - a) * (thumb.height - scaleWithDpi(16)) / max();
 		redraw();
 	}
 }
@@ -5464,11 +5487,11 @@ class HorizontalSlider : Slider {
 
 		thumb.tabStop = false;
 
-		thumb.thumbWidth = 16;
+		thumb.thumbWidth = scaleWithDpi(16);
 		thumb.thumbHeight = height;
 
 		thumb.addEventListener(EventType.change, () {
-			auto sx = thumb.positionX * max() / (thumb.width - 16);
+			auto sx = thumb.positionX * max() / (thumb.width - scaleWithDpi(16));
 			//informProgramThatUserChangedPosition(sx);
 
 			position_ = sx;
@@ -5487,7 +5510,7 @@ class HorizontalSlider : Slider {
 	version(custom_widgets)
 	protected override void setPositionCustom(int a) {
 		if(max())
-			thumb.positionX = a * (thumb.width - 16) / max();
+			thumb.positionX = a * (thumb.width - scaleWithDpi(16)) / max();
 		redraw();
 	}
 }
@@ -5499,11 +5522,12 @@ abstract class ScrollbarBase : Widget {
 	this(Widget parent) {
 		super(parent);
 		tabStop = false;
+		step_ = scaleWithDpi(16);
 	}
 
 	private int viewableArea_;
 	private int max_;
-	private int step_ = 16;
+	private int step_;// = 16;
 	private int position_;
 
 	///
@@ -5837,7 +5861,7 @@ class HorizontalScrollbar : ScrollbarBase {
 			});
 
 			thumb.thumbWidth = this.minWidth;
-			thumb.thumbHeight = 16;
+			thumb.thumbHeight = scaleWithDpi(16);
 
 			thumb.addEventListener(EventType.change, () {
 				auto sx = thumb.positionX * max() / thumb.width;
@@ -5849,9 +5873,9 @@ class HorizontalScrollbar : ScrollbarBase {
 		}
 	}
 
-	override int minHeight() { return 16; }
-	override int maxHeight() { return 16; }
-	override int minWidth() { return 48; }
+	override int minHeight() { return scaleWithDpi(16); }
+	override int maxHeight() { return scaleWithDpi(16); }
+	override int minWidth() { return scaleWithDpi(48); }
 }
 
 class ScrollToPositionEvent : Event {
@@ -5953,7 +5977,7 @@ class VerticalScrollbar : ScrollbarBase {
 			});
 
 			thumb.thumbWidth = this.minWidth;
-			thumb.thumbHeight = 16;
+			thumb.thumbHeight = scaleWithDpi(16);
 
 			thumb.addEventListener(EventType.change, () {
 				auto sy = thumb.positionY * max() / thumb.height;
@@ -5970,9 +5994,9 @@ class VerticalScrollbar : ScrollbarBase {
 		}
 	}
 
-	override int minWidth() { return 16; }
-	override int maxWidth() { return 16; }
-	override int minHeight() { return 48; }
+	override int minWidth() { return scaleWithDpi(16); }
+	override int maxWidth() { return scaleWithDpi(16); }
+	override int minHeight() { return scaleWithDpi(48); }
 }
 
 
@@ -6380,7 +6404,7 @@ class TabMessageWidget : Widget {
 
 			draw3dFrame(posX, 0, tabWidth, tabBarHeight, painter, isCurrent ? FrameStyle.risen : FrameStyle.sunk, isCurrent ? cs.windowBackgroundColor : darken(cs.windowBackgroundColor, 0.1));
 			painter.outlineColor = cs.foregroundColor;
-			painter.drawText(Point(posX + 4, 2), title);
+			painter.drawText(Point(posX + 4, 2), title, Point(posX + tabWidth, tabBarHeight - 2), TextAlignment.VerticalCenter);
 
 			if(isCurrent) {
 				painter.outlineColor = cs.windowBackgroundColor;
@@ -7127,16 +7151,16 @@ class ScrollMessageWidget : Widget {
 
 		registerMovement();
 
-		hsb.height = 16; // FIXME? are tese 16s sane?
+		hsb.height = scaleWithDpi(16); // FIXME? are tese 16s sane?
 		hsb.x = 0;
 		hsb.y = this.height - hsb.height;
-		hsb.width = this.width - 16;
+		hsb.width = this.width - scaleWithDpi(16);
 		hsb.recomputeChildLayout();
 
-		vsb.width = 16; // FIXME?
+		vsb.width = scaleWithDpi(16); // FIXME?
 		vsb.x = this.width - vsb.width;
 		vsb.y = 0;
-		vsb.height = this.height - 16;
+		vsb.height = this.height - scaleWithDpi(16);
 		vsb.recomputeChildLayout();
 
 		if(this.header is null) {
@@ -7149,13 +7173,13 @@ class ScrollMessageWidget : Widget {
 			header.x = 0;
 			header.y = 0;
 			header.width = this.width - vsb.width;
-			header.height = 16; // size of the button
+			header.height = scaleWithDpi(16); // size of the button
 			header.recomputeChildLayout();
 
 			container.x = 0;
-			container.y = 16;
+			container.y = scaleWithDpi(16);
 			container.width = this.width - vsb.width;
-			container.height = this.height - hsb.height - 16;
+			container.height = this.height - hsb.height - scaleWithDpi(16);
 			container.recomputeChildLayout();
 		}
 	}
@@ -7476,6 +7500,10 @@ class Window : Widget {
 
 		win.onDpiChanged = {
 			this.queueRecomputeChildLayout();
+			auto event = new DpiChangedEvent(this);
+			event.sendDirectly();
+
+			privateDpiChanged();
 		};
 
 		win.setEventHandlers(
@@ -7872,6 +7900,18 @@ class Window : Widget {
 	mixin Emits!ClosedEvent;
 }
 
+/++
+	History:
+		Added January 12, 2022
++/
+class DpiChangedEvent : Event {
+	enum EventString = "dpichanged";
+
+	this(Widget target) {
+		super(EventString, target);
+	}
+}
+
 debug private class DevToolWindow : Window {
 	Window p;
 
@@ -7999,7 +8039,7 @@ class TableView : Widget {
 		} else version(custom_widgets) {
 			auto smw = new ScrollMessageWidget(this);
 			smw.addDefaultKeyboardListeners();
-			smw.addDefaultWheelListeners(1, 16);
+			smw.addDefaultWheelListeners(1, scaleWithDpi(16));
 			tvwi = new TableViewWidgetInner(this, smw);
 		}
 	}
@@ -8520,7 +8560,7 @@ private class TableViewWidgetInner : Widget {
 
 	private int columnsWidth;
 
-		int lh = 16; // FIXME lineHeight
+	private int lh() { return scaleWithDpi(16); } // FIXME lineHeight
 
 	override void registerMovement() {
 		super.registerMovement();
@@ -8643,7 +8683,7 @@ private class TableViewWidgetInner : Widget {
 				child.x = pos;
 				child.y = 0;
 				child.width = tvw.tvw.columns[idx].calculatedWidth;
-				child.height = 16;// this.height;
+				child.height = scaleWithDpi(16);// this.height;
 				pos += child.width;
 
 				child.recomputeChildLayout();
@@ -8658,7 +8698,7 @@ private class TableViewWidgetInner : Widget {
 				remainder.width = this.width - pos;// + 4;
 			else
 				remainder.width = 0;
-			remainder.height = 16;
+			remainder.height = scaleWithDpi(16);
 
 			remainder.recomputeChildLayout();
 		}
@@ -9534,6 +9574,14 @@ class StatusBar : Widget {
 		} else static assert(false);
 	}
 
+	version(win32_widgets)
+	override protected void dpiChanged() {
+		RECT rect;
+		GetWindowRect(hwnd, &rect);
+		idealHeight = rect.bottom - rect.top;
+		assert(idealHeight);
+	}
+
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
@@ -9557,7 +9605,7 @@ class StatusBar : Widget {
 
 
 	version(win32_widgets) {
-		private const int idealHeight;
+		private int idealHeight;
 		override int maxHeight() { return idealHeight; }
 		override int minHeight() { return idealHeight; }
 	} else version(custom_widgets) {
@@ -10045,9 +10093,9 @@ class MenuItem : MouseActivatedWidget {
 		else
 			painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = Color.transparent;
-		painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), label, Point(width, height), TextAlignment.Left);
+		painter.drawText(scaleWithDpi(Point(cast(MenuBar) this.parent ? 4 : 20, 0)), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		if(action && action.accelerator !is KeyEvent.init) {
-			painter.drawText(Point(cast(MenuBar) this.parent ? 4 : 20, 2), action.accelerator.toStr(), Point(width - 4, height), TextAlignment.Right);
+			painter.drawText(scaleWithDpi(Point(cast(MenuBar) this.parent ? 4 : 20, 0)), action.accelerator.toStr(), Point(width - 4, height), TextAlignment.Right | TextAlignment.VerticalCenter);
 
 		}
 	}
@@ -10330,14 +10378,14 @@ class Checkbox : MouseActivatedWidget {
 
 		painter.outlineColor = Color.black;
 		painter.fillColor = Color.white;
-		painter.drawRectangle(Point(2, 2), buttonSize - 2, buttonSize - 2);
+		painter.drawRectangle(scaleWithDpi(Point(2, 2)), scaleWithDpi(buttonSize - 2), scaleWithDpi(buttonSize - 2));
 
 		if(isChecked) {
 			painter.pen = Pen(Color.black, 2);
 			// I'm using height so the checkbox is square
 			enum padding = 5;
-			painter.drawLine(Point(padding, padding), Point(buttonSize - (padding-2), buttonSize - (padding-2)));
-			painter.drawLine(Point(buttonSize-(padding-2), padding), Point(padding, buttonSize - (padding-2)));
+			painter.drawLine(scaleWithDpi(Point(padding, padding)), scaleWithDpi(Point(buttonSize - (padding-2), buttonSize - (padding-2))));
+			painter.drawLine(scaleWithDpi(Point(buttonSize-(padding-2), padding)), scaleWithDpi(Point(padding, buttonSize - (padding-2))));
 
 			painter.pen = Pen(Color.black, 1);
 		}
@@ -10347,7 +10395,7 @@ class Checkbox : MouseActivatedWidget {
 			painter.fillColor = cs.foregroundColor();
 
 			// FIXME: should prolly just align the baseline or something
-			painter.drawText(Point(buttonSize + 4, 2), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			painter.drawText(scaleWithDpi(Point(buttonSize + 4, 2)), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 		}
 	}
 
@@ -10440,18 +10488,18 @@ class Radiobox : MouseActivatedWidget {
 
 		painter.outlineColor = Color.black;
 		painter.fillColor = Color.white;
-		painter.drawEllipse(Point(2, 2), Point(buttonSize - 2, buttonSize - 2));
+		painter.drawEllipse(scaleWithDpi(Point(2, 2)), scaleWithDpi(Point(buttonSize - 2, buttonSize - 2)));
 		if(isChecked) {
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.black;
 			// I'm using height so the checkbox is square
-			painter.drawEllipse(Point(5, 5), Point(buttonSize - 5, buttonSize - 5));
+			painter.drawEllipse(scaleWithDpi(Point(5, 5)), scaleWithDpi(Point(buttonSize - 5, buttonSize - 5)));
 		}
 
 		painter.outlineColor = cs.foregroundColor();
 		painter.fillColor = cs.foregroundColor();
 
-		painter.drawText(Point(buttonSize + 4, 0), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+		painter.drawText(scaleWithDpi(Point(buttonSize + 4, 0)), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
 	}
 
 
@@ -10700,10 +10748,10 @@ class ArrowButton : Button {
 
 	private ArrowDirection direction;
 
-	override int minHeight() { return 16; }
-	override int maxHeight() { return 16; }
-	override int minWidth() { return 16; }
-	override int maxWidth() { return 16; }
+	override int minHeight() { return scaleWithDpi(16); }
+	override int maxHeight() { return scaleWithDpi(16); }
+	override int minWidth() { return scaleWithDpi(16); }
+	override int maxWidth() { return scaleWithDpi(16); }
 
 	override void paint(WidgetPainter painter) {
 		super.paint(painter);
@@ -10713,39 +10761,39 @@ class ArrowButton : Button {
 		painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = cs.foregroundColor;
 
-		auto offset = Point((this.width - 16) / 2, (this.height - 16) / 2);
+		auto offset = Point((this.width - scaleWithDpi(16)) / 2, (this.height - scaleWithDpi(16)) / 2);
 
 		final switch(direction) {
 			case ArrowDirection.up:
 				painter.drawPolygon(
-					Point(2, 10) + offset,
-					Point(7, 5) + offset,
-					Point(12, 10) + offset,
-					Point(2, 10) + offset
+					scaleWithDpi(Point(2, 10) + offset),
+					scaleWithDpi(Point(7, 5) + offset),
+					scaleWithDpi(Point(12, 10) + offset),
+					scaleWithDpi(Point(2, 10) + offset)
 				);
 			break;
 			case ArrowDirection.down:
 				painter.drawPolygon(
-					Point(2, 6) + offset,
-					Point(7, 11) + offset,
-					Point(12, 6) + offset,
-					Point(2, 6) + offset
+					scaleWithDpi(Point(2, 6) + offset),
+					scaleWithDpi(Point(7, 11) + offset),
+					scaleWithDpi(Point(12, 6) + offset),
+					scaleWithDpi(Point(2, 6) + offset)
 				);
 			break;
 			case ArrowDirection.left:
 				painter.drawPolygon(
-					Point(10, 2) + offset,
-					Point(5, 7) + offset,
-					Point(10, 12) + offset,
-					Point(10, 2) + offset
+					scaleWithDpi(Point(10, 2) + offset),
+					scaleWithDpi(Point(5, 7) + offset),
+					scaleWithDpi(Point(10, 12) + offset),
+					scaleWithDpi(Point(10, 2) + offset)
 				);
 			break;
 			case ArrowDirection.right:
 				painter.drawPolygon(
-					Point(6, 2) + offset,
-					Point(11, 7) + offset,
-					Point(6, 12) + offset,
-					Point(6, 2) + offset
+					scaleWithDpi(Point(6, 2) + offset),
+					scaleWithDpi(Point(11, 7) + offset),
+					scaleWithDpi(Point(6, 12) + offset),
+					scaleWithDpi(Point(6, 2) + offset)
 				);
 			break;
 		}
@@ -10950,7 +10998,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		} else static assert(false);
 	}
 
-	override int minWidth() { return 16; }
+	override int minWidth() { return scaleWithDpi(16); }
 	override int minHeight() { return defaultLineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 7; }
 
@@ -11359,6 +11407,7 @@ class MessageBox : Window {
 		this.message = message;
 
 		int buttonsWidth = cast(int) buttons.length * 50 + (cast(int) buttons.length - 1) * 16;
+		buttonsWidth = scaleWithDpi(buttonsWidth);
 
 		int x = this.width / 2 - buttonsWidth / 2;
 
@@ -11373,7 +11422,7 @@ class MessageBox : Window {
 
 			button.registerMovement();
 			x += button.width;
-			x += 16;
+			x += scaleWithDpi(16);
 			if(idx == 0)
 				button.focus();
 		}
