@@ -26,11 +26,18 @@
 			</form>
 
 			<render-template file="partial.html" />
+
+			<script>
+				var a = <%= some_var %>; // it will be json encoded in a script tag, so it can be safely used from Javascript
+			</script>
 		</main>
 	```
 
 	Functions available:
 		`encodeURIComponent`, `formatDate`, `dayOfWeek`, `formatTime`
+
+	History:
+		Things inside script tag were added on January 7, 2022.
 +/
 module arsd.webtemplate;
 
@@ -261,6 +268,32 @@ void expandTemplate(Element root, var context) {
 				}
 			}
 			asp.replaceWith(fragment);
+		} else if(ele.tagName == "script") {
+			auto source = ele.innerHTML;
+			string newCode;
+			check_more:
+			auto idx = source.indexOf("<%=");
+			if(idx != -1) {
+				newCode = source[0 .. idx];
+				auto remaining = source[idx + 3 .. $];
+				idx = remaining.indexOf("%>");
+				if(idx == -1)
+					throw new Exception("unclosed asp code in script");
+				auto code = remaining[0 .. idx];
+
+				auto data = interpret(code, context);
+				newCode ~= data.toJson();
+
+				source = remaining[idx + 2 .. $];
+				goto check_more;
+			}
+
+			if(newCode is null)
+				{} // nothing needed
+			else {
+				newCode ~= source;
+				ele.innerRawSource = newCode;
+			}
 		} else {
 			expandTemplate(ele, context);
 		}
