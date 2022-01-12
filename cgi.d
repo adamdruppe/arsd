@@ -4021,9 +4021,9 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 
 		auto host = params.listeningHost;
 		if(host.startsWith("unix:")) {
-			sock = FCGX_OpenSocket(toStringz(params.listeningHosa["unix:".length .. $]), 12);
+			sock = FCGX_OpenSocket(toStringz(params.listeningHost["unix:".length .. $]), 12);
 		} else if(host.startsWith("abstract:")) {
-			sock = FCGX_OpenSocket(toStringz("\0" ~ params.listeningHosa["abstract:".length .. $]), 12);
+			sock = FCGX_OpenSocket(toStringz("\0" ~ params.listeningHost["abstract:".length .. $]), 12);
 		} else {
 			sock = FCGX_OpenSocket(toStringz(params.listeningHost ~ ":" ~ to!string(lp)), 12);
 		}
