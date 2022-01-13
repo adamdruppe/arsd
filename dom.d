@@ -4305,6 +4305,9 @@ dchar parseEntity(in dchar[] entity) {
 					while(decimal.length && (decimal[0] < '0' || decimal[0] >   '9'))
 						decimal = decimal[1 .. $];
 
+					while(decimal.length && (decimal[$-1] < '0' || decimal[$-1] >   '9'))
+						decimal = decimal[0 .. $ - 1];
+
 					if(decimal.length == 0)
 						return ' '; // this is really broken html
 					// done with dealing with broken stuff
@@ -4357,6 +4360,8 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	char[4] buffer;
 
 	bool tryingEntity = false;
+	bool tryingNumericEntity = false;
+	bool tryingHexEntity = false;
 	dchar[16] entityBeingTried;
 	int entityBeingTriedLength = 0;
 	int entityAttemptIndex = 0;
@@ -4366,6 +4371,14 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 			entityAttemptIndex++;
 			entityBeingTried[entityBeingTriedLength++] = ch;
 
+			if(entityBeingTriedLength == 2 && ch == '#') {
+				tryingNumericEntity = true;
+				continue;
+			} else if(tryingNumericEntity && entityBeingTriedLength == 3 && ch == 'x') {
+				tryingHexEntity = true;
+				continue;
+			}
+
 			// I saw some crappy html in the wild that looked like &0&#1111; this tries to handle that.
 			if(ch == '&') {
 				if(strict)
@@ -4373,14 +4386,21 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 
 				// if not strict, let's try to parse both.
 
-				if(entityBeingTried[0 .. entityBeingTriedLength] == "&&")
+				if(entityBeingTried[0 .. entityBeingTriedLength] == "&&") {
 					a ~= "&"; // double amp means keep the first one, still try to parse the next one
-				else
-					a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
+				} else {
+					auto ch2 = parseEntity(entityBeingTried[0 .. entityBeingTriedLength]);
+					if(ch2 == '\ufffd') { // either someone put this in intentionally (lol) or we failed to get it
+						// but either way, just abort and keep the plain text
+						foreach(char c; entityBeingTried[0 .. entityBeingTriedLength - 1]) // cut off the & we're on now
+							a ~= c;
+					} else {
+						a ~= buffer[0.. std.utf.encode(buffer, ch2)];
+					}
+				}
 
 				// tryingEntity is still true
-				entityBeingTriedLength = 1;
-				entityAttemptIndex = 0; // restarting o this
+				goto new_entity;
 			} else
 			if(ch == ';') {
 				tryingEntity = false;
@@ -4391,10 +4411,34 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 					throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 				else {
 					tryingEntity = false;
-					a ~= to!(char[])(entityBeingTried[0 .. entityBeingTriedLength]);
+					a ~= to!(char[])(entityBeingTried[0 .. entityBeingTriedLength - 1]);
+					a ~= buffer[0 .. std.utf.encode(buffer, ch)];
 				}
 			} else {
+				if(tryingNumericEntity) {
+					if(ch < '0' || ch > '9') {
+						if(tryingHexEntity) {
+							if(ch < 'A')
+								goto trouble;
+							if(ch > 'Z' && ch < 'a')
+								goto trouble;
+							if(ch > 'z')
+								goto trouble;
+						} else {
+							trouble:
+							if(strict)
+								throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
+							tryingEntity = false;
+							a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
+							a ~= ch;
+							continue;
+						}
+					}
+				}
+
+
 				if(entityAttemptIndex >= 9) {
+					done:
 					if(strict)
 						throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 					else {
@@ -4405,7 +4449,10 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 			}
 		} else {
 			if(ch == '&') {
+				new_entity:
 				tryingEntity = true;
+				tryingNumericEntity = false;
+				tryingHexEntity = false;
 				entityBeingTriedLength = 0;
 				entityBeingTried[entityBeingTriedLength++] = ch;
 				entityAttemptIndex = 0;
@@ -4425,6 +4472,25 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	}
 
 	return cast(string) a; // assumeUnique is actually kinda slow, lol
+}
+
+unittest {
+	// error recovery
+	assert(htmlEntitiesDecode("&lt;&foo") == "<&foo"); // unterminated turned back to thing
+	assert(htmlEntitiesDecode("&lt&foo") == "<&foo"); // semi-terminated... parse and carry on (is this really sane?)
+	assert(htmlEntitiesDecode("loc&#61en_us&tracknum&#61;111") == "loc=en_us&tracknum=111"); // a bit of both, seen in a real life email
+	assert(htmlEntitiesDecode("&amp test") == "&amp test"); // unterminated, just abort
+
+	// in strict mode all of these should fail
+	try { assert(htmlEntitiesDecode("&lt;&foo", true) == "<&foo"); assert(0); } catch(Exception e) { }
+	try { assert(htmlEntitiesDecode("&lt&foo", true) == "<&foo"); assert(0); } catch(Exception e) { }
+	try { assert(htmlEntitiesDecode("loc&#61en_us&tracknum&#61;111", true) == "<&foo"); assert(0); } catch(Exception e) { }
+	try { assert(htmlEntitiesDecode("&amp test", true) == "& test"); assert(0); } catch(Exception e) { }
+
+	// correct cases that should pass the same in strict or loose mode
+	foreach(strict; [false, true]) {
+		assert(htmlEntitiesDecode("&amp;hello&raquo; win", strict) == "&hello\&raquo; win");
+	}
 }
 
 /// Group: implementations
@@ -5538,6 +5604,8 @@ int intFromHex(string hex) {
 			v = q - '0';
 		else if (q >= 'a' && q <= 'f')
 			v = q - 'a' + 10;
+		else if (q >= 'A' && q <= 'F')
+			v = q - 'A' + 10;
 		else throw new Exception("Illegal hex character: " ~ q);
 
 		value += v * place;
