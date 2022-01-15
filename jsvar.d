@@ -808,7 +808,14 @@ struct var {
 
 	public var opOpAssign(string op, T)(T t) {
 		if(payloadType() == Type.Object) {
-			if(this._payload._object !is null) {
+			if(auto pt = cast(PropertyPrototype) this._payload._object) {
+				auto propValue = pt.get;
+				auto result = propValue.opOpAssign!(op)(t);
+
+				pt.set(result);
+
+				return result;
+			} else if(this._payload._object !is null) {
 				var* operator = this._payload._object._peekMember("opOpAssign", true);
 				if(operator !is null && operator._type == Type.Function)
 					return operator.call(this, op, t);
@@ -1375,7 +1382,7 @@ struct var {
 			else
 				return *(new var);
 		}
-		return from._getMember(name, true, false, file, line);
+		return from._getMember(name, true, false, false, file, line);
 	}
 
 	public ref var opIndexAssign(T)(T t, string name, string file = __FILE__, size_t line = __LINE__) {
@@ -1823,12 +1830,14 @@ class PrototypeObject {
 	}
 
 	// FIXME: maybe throw something else
-	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, string file = __FILE__, size_t line = __LINE__) {
+	/*package*/ ref var _getMember(string name, bool recurse, bool throwOnFailure, bool returnRawProperty = false, string file = __FILE__, size_t line = __LINE__) {
 		var* mem = _peekMember(name, recurse);
 
 		if(mem !is null) {
 			// If it is a property, we need to call the getter on it
 			if((*mem).payloadType == var.Type.Object && cast(PropertyPrototype) (*mem)._payload._object) {
+				if(returnRawProperty)
+					return *mem;
 				auto prop = cast(PropertyPrototype) (*mem)._payload._object;
 				return prop.get;
 			}
@@ -1854,14 +1863,25 @@ class PrototypeObject {
 	/*package*/ ref var _setMember(string name, var t, bool recurse, bool throwOnFailure, bool suppressOverloading, string file = __FILE__, size_t line = __LINE__) {
 		var* mem = _peekMember(name, recurse);
 
+		bool onParent = false;
+
+		if(mem is null && !recurse) {
+			mem = _peekMember(name, true); // properties need the check anyway as a setter might be on a prototype
+			onParent = true;
+		}
+
 		if(mem !is null) {
 			// Property check - the setter should be proxied over to it
 			if((*mem).payloadType == var.Type.Object && cast(PropertyPrototype) (*mem)._payload._object) {
 				auto prop = cast(PropertyPrototype) (*mem)._payload._object;
 				return prop.set(t);
 			}
-			*mem = t;
-			return *mem;
+			if(!onParent) {
+				*mem = t;
+				return *mem;
+			} else {
+				mem = null;
+			}
 		}
 
 		if(!suppressOverloading) {
@@ -2367,6 +2387,36 @@ unittest {
 		==
 		Foo(Foo.Bar([1,2,3]))
 	);
+}
+
+version(with_arsd_script)
+unittest {
+	import arsd.script;
+	static class Test {
+		@scriptable int a;
+	}
+
+	Test test = new Test;
+
+	test.a = 15;
+
+	var globals = var.emptyObject;
+	globals.test = test;
+	globals.Test = subclassable!Test;
+
+	interpret(q{
+		  test.a = 4;
+		  var wtf = test.a += 5;
+		  assert(wtf == 9);
+		  assert(test.a == 9);
+		  var test2 = new Test;
+		  test2.a = 2;
+		  test2.a += 5;
+		  assert(test2.a == 7);
+	}, globals);
+
+	assert(test.a == 9);
+	assert(globals.test2.get!Test.a == 7);
 }
 
 // just a base class we can reference when looking for native objects

@@ -1503,7 +1503,7 @@ class OpAssignExpression : Expression {
 		var n;
 		foreach(ctOp; CtList!("+=", "-=", "*=", "/=", "~=", "&=", "|=", "^=", "%="))
 			if(ctOp[0..1] == op)
-				n = mixin("v.getVar(sc) "~ctOp~" right");
+				n = mixin("v.getVar(sc, true, true) "~ctOp~" right");
 
 		// FIXME: ensure the variable is updated in scope too
 
@@ -1579,9 +1579,9 @@ class VariableExpression : Expression {
 		return getVar(sc).get!string;
 	}
 
-	ref var getVar(PrototypeObject sc, bool recurse = true) {
+	ref var getVar(PrototypeObject sc, bool recurse = true, bool returnRawProperty = false) {
 		try {
-			return sc._getMember(identifier, true /* FIXME: recurse?? */, true);
+			return sc._getMember(identifier, true /* FIXME: recurse?? */, true, returnRawProperty);
 		} catch(DynamicTypeException dte) {
 			dte.callStack ~= loc;
 			throw dte;
@@ -1592,7 +1592,12 @@ class VariableExpression : Expression {
 		return sc._setMember(identifier, t, true /* FIXME: recurse?? */, true, suppressOverloading);
 	}
 
-	ref var getVarFrom(PrototypeObject sc, ref var v) {
+	ref var getVarFrom(PrototypeObject sc, ref var v, bool returnRawProperty) {
+		if(returnRawProperty) {
+			if(v.payloadType == var.Type.Object)
+				return v._payload._object._getMember(identifier, true, false, returnRawProperty);
+		}
+
 		return v[identifier];
 	}
 
@@ -1658,7 +1663,7 @@ class DotVarExpression : VariableExpression {
 		return e1.toString() ~ "." ~ e2.toString();
 	}
 
-	override ref var getVar(PrototypeObject sc, bool recurse = true) {
+	override ref var getVar(PrototypeObject sc, bool recurse = true, bool returnRawProperty = false) {
 		if(!this.recurse) {
 			// this is a special hack...
 			if(auto ve = cast(VariableExpression) e1) {
@@ -1676,7 +1681,7 @@ class DotVarExpression : VariableExpression {
 		}
 
 		if(auto ve = cast(VariableExpression) e1) {
-			return this.getVarFrom(sc, ve.getVar(sc, recurse));
+			return this.getVarFrom(sc, ve.getVar(sc, recurse), returnRawProperty);
 		} else if(cast(StringLiteralExpression) e1 && e2.identifier == "interpolate") {
 			auto se = cast(StringLiteralExpression) e1;
 			var* functor = new var;
@@ -1690,7 +1695,7 @@ class DotVarExpression : VariableExpression {
 			// make a temporary for the lhs
 			auto v = new var();
 			*v = e1.interpret(sc).value;
-			return this.getVarFrom(sc, *v);
+			return this.getVarFrom(sc, *v, returnRawProperty);
 		}
 	}
 
@@ -1702,8 +1707,8 @@ class DotVarExpression : VariableExpression {
 	}
 
 
-	override ref var getVarFrom(PrototypeObject sc, ref var v) {
-		return e2.getVarFrom(sc, v);
+	override ref var getVarFrom(PrototypeObject sc, ref var v, bool returnRawProperty) {
+		return e2.getVarFrom(sc, v, returnRawProperty);
 	}
 
 	override string toInterpretedString(PrototypeObject sc) {
@@ -1725,13 +1730,13 @@ class IndexExpression : VariableExpression {
 		return e1.toString() ~ "[" ~ e2.toString() ~ "]";
 	}
 
-	override ref var getVar(PrototypeObject sc, bool recurse = true) {
+	override ref var getVar(PrototypeObject sc, bool recurse = true, bool returnRawProperty = false) {
 		if(auto ve = cast(VariableExpression) e1)
-			return ve.getVar(sc, recurse)[e2.interpret(sc).value];
+			return ve.getVar(sc, recurse, returnRawProperty)[e2.interpret(sc).value];
 		else {
 			auto v = new var();
 			*v = e1.interpret(sc).value;
-			return this.getVarFrom(sc, *v);
+			return this.getVarFrom(sc, *v, returnRawProperty);
 		}
 	}
 
