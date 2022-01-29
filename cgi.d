@@ -6845,11 +6845,14 @@ void freeIoOp(ref IoOp* ptr) {
 version(Posix)
 version(with_addon_servers_connections)
 void nonBlockingWrite(EventIoServer eis, int connection, const void[] data) {
+
+	//import std.stdio : writeln; writeln(cast(string) data);
+
 	import core.sys.posix.unistd;
 
 	auto ret = write(connection, data.ptr, data.length);
 	if(ret != data.length) {
-		if(ret == 0 || errno == EPIPE) {
+		if(ret == 0 || (ret == -1 && (errno == EPIPE || errno == ETIMEDOUT))) {
 			// the file is closed, remove it
 			eis.fileClosed(connection);
 		} else
@@ -7875,7 +7878,9 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		}
 		return false;
 	}
-	void handleLocalConnectionClose(IoOp* op) {}
+	void handleLocalConnectionClose(IoOp* op) {
+		fileClosed(op.fd);
+	}
 	void handleLocalConnectionComplete(IoOp* op) {}
 
 	void wait_timeout() {
@@ -7883,9 +7888,9 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		foreach(url, connections; eventConnectionsByUrl)
 		foreach(connection; connections)
 			if(connection.needsChunking)
-				nonBlockingWrite(this, connection.fd, "2\r\n:\n\r\n");
+				nonBlockingWrite(this, connection.fd, "1b\r\nevent: keepalive\ndata: ok\n\n\r\n");
 			else
-				nonBlockingWrite(this, connection.fd, ":\n\r\n");
+				nonBlockingWrite(this, connection.fd, "event: keepalive\ndata: ok\n\n\r\n");
 	}
 
 	void fileClosed(int fd) {
@@ -8151,11 +8156,20 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 			ioops[sock] = acceptOp;
 		}
 
+		import core.time : MonoTime, seconds;
+
+		MonoTime timeout = MonoTime.currTime + 15.seconds;
+
 		while(true) {
 
 			// FIXME: it should actually do a timerfd that runs on any thing that hasn't been run recently
 
-			int timeout_milliseconds = 15000; //  -1; // infinite
+			int timeout_milliseconds = 0; //  -1; // infinite
+
+			timeout_milliseconds = cast(int) (timeout - MonoTime.currTime).total!"msecs";
+			if(timeout_milliseconds < 0)
+				timeout_milliseconds = 0;
+
 			//writeln("waiting for ", name);
 
 			version(linux) {
@@ -8172,6 +8186,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 
 			if(nfds == 0) {
 				eis.wait_timeout();
+				timeout += 15.seconds;
 			}
 
 			foreach(idx; 0 .. nfds) {

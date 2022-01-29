@@ -372,7 +372,8 @@ struct Statement {
 
 					break;
 					case SQLITE_NULL:
-						v = null;
+						string n = null;
+						v = n;
 					break;
 				}
 

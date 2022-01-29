@@ -3400,8 +3400,8 @@ class Element : DomParent {
 			return null;
 
 		// at the top we don't have anything to really do
-		if(parent_ is null)
-			return null;
+		//if(parent_ is null)
+			//return null;
 
 			// I've used isEmpty before but this other check seems better....
 			//|| this.isEmpty())
@@ -8115,9 +8115,17 @@ unittest {
 </html>`);
 	}
 
+	foreach(test; [
+		"<a att=\"http://ele\"><b><ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>",
+		"<a att=\"http://ele\"><b><ele1>Hello</ele1><c><d><ele2>How are you?</ele2></d><e><ele3>Good &amp; you?</ele3></e></c></b></a>",
+	] )
 	{
-	auto document = new XmlDocument("<a att=\"http://ele\"><b><ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+	auto document = new XmlDocument(test);
 	assert(document.root.toPrettyString(false, 0, " ") == "<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+	assert(document.toPrettyString(false, 0, " ") == "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
+	auto omg = document.root;
+	omg.parent_ = null;
+	assert(omg.toPrettyString(false, 0, " ") == "<a att=\"http://ele\">\n <b>\n  <ele1>Hello</ele1>\n  <c>\n   <d>\n    <ele2>How are you?</ele2>\n   </d>\n   <e>\n    <ele3>Good &amp; you?</ele3>\n   </e>\n  </c>\n </b>\n</a>");
 	}
 
 	{

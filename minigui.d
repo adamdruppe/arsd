@@ -4227,6 +4227,148 @@ class OpenGlWidget : NestedChildWindowWidget {
 	}
 }
 
+/++
+	This demo shows how to draw text in an opengl scene.
++/
+unittest {
+	import arsd.minigui;
+	import arsd.ttf;
+
+	void main() {
+		auto window = new Window();
+
+		auto widget = new OpenGlWidget(window);
+
+		// old means non-shader code so compatible with glBegin etc.
+		// tbh I haven't implemented new one in font yet...
+		// anyway, declaring here, will construct soon.
+		OpenGlLimitedFont!(OpenGlFontGLVersion.old) glfont;
+
+		// this is a little bit awkward, calling some methods through
+		// the underlying SimpleWindow `win` method, and you can't do this
+		// on a nanovega widget due to conflicts so I should probably fix
+		// the api to be a bit easier. But here it will work.
+		//
+		// Alternatively, you could load the font on the first draw, inside
+		// the redrawOpenGlScene, and keep a flag so you don't do it every
+		// time. That'd be a bit easier since the lib sets up the context
+		// by then guaranteed.
+		//
+		// But still, I wanna show this.
+		widget.win.visibleForTheFirstTime = delegate {
+			// must set the opengl context
+			widget.win.setAsCurrentOpenGlContext();
+
+			// if you were doing a OpenGL 3+ shader, this
+			// gets especially important to do in order. With
+			// old-style opengl, I think you can even do it
+			// in main(), but meh, let's show it more correctly.
+
+			// Anyway, now it is time to load the font from the
+			// OS (you can alternatively load one from a .ttf file
+			// you bundle with the application), then load the
+			// font into texture for drawing.
+
+			auto osfont = new OperatingSystemFont("DejaVu Sans", 18);
+
+			assert(!osfont.isNull()); // make sure it actually loaded
+
+			// using typeof to avoid repeating the long name lol
+			glfont = new typeof(glfont)(
+				// get the raw data from the font for loading in here
+				// since it doesn't use the OS function to draw the
+				// text, we gotta treat it more as a file than as
+				// a drawing api.
+				osfont.getTtfBytes(),
+				18, // need to respecify size since opengl world is different coordinate system
+
+				// these last two numbers are why it is called
+				// "Limited" font. It only loads the characters
+				// in the given range, since the texture atlas
+				// it references is all a big image generated ahead
+				// of time. You could maybe do the whole thing but
+				// idk how much memory that is.
+				//
+				// But here, 0-128 represents the ASCII range, so
+				// good enough for most English things, numeric labels,
+				// etc.
+				0,
+				128
+			);
+		};
+
+		widget.redrawOpenGlScene = () {
+			// now we can use the glfont's drawString function
+
+			// first some opengl setup. You can do this in one place
+			// on window first visible too in many cases, just showing
+			// here cuz it is easier for me.
+
+			// gonna need some alpha blending or it just looks awful
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glClearColor(0,0,0,0);
+			glDepthFunc(GL_LEQUAL);
+
+			// Also need to enable 2d textures, since it draws the
+			// font characters as images baked in
+			glMatrixMode(GL_MODELVIEW);
+			glLoadIdentity();
+			glDisable(GL_DEPTH_TEST);
+			glEnable(GL_TEXTURE_2D);
+
+			// the orthographic matrix is best for 2d things like text
+			// so let's set that up. This matrix makes the coordinates
+			// in the opengl scene be one-to-one with the actual pixels
+			// on screen. (Not necessarily best, you may wish to scale
+			// things, but it does help keep fonts looking normal.)
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(0, widget.width, widget.height, 0, 0, 1);
+
+			// you can do other glScale, glRotate, glTranslate, etc
+			// to the matrix here of course if you want.
+
+			// note the x,y coordinates here are for the text baseline
+			// NOT the upper-left corner. The baseline is like the line
+			// in the notebook you write on. Most the letters are actually
+			// above it, but some, like p and q, dip a bit below it.
+			//
+			// So if you're used to the upper left coordinate like the
+			// rest of simpledisplay/minigui usually do, do the
+			// y + glfont.ascent to bring it down a little. So this
+			// example puts the string in the upper left of the window.
+			glfont.drawString(0, 0 + glfont.ascent, "Hello!!", Color.green);
+
+			// re color btw: the function sets a solid color internally,
+			// but you actually COULD do your own thing for rainbow effects
+			// and the sort if you wanted too, by pulling its guts out.
+			// Just view its source for an idea of how it actually draws:
+			// http://arsd-official.dpldocs.info/source/arsd.ttf.d.html#L332
+
+			// it gets a bit complicated with the character positioning,
+			// but the opengl parts are fairly simple: bind a texture,
+			// set the color, draw a quad for each letter.
+
+
+			// the last optional argument there btw is a bounding box
+			// it will/ use to word wrap and return an object you can
+			// use to implement scrolling or pagination; it tells how
+			// much of the string didn't fit in the box. But for simple
+			// labels we can just ignore that.
+
+
+			// I'd suggest drawing text as the last step, after you
+			// do your other drawing. You might use the push/pop matrix
+			// stuff to keep your place. You, in theory, should be able
+			// to do text in a 3d space but I've never actually tried
+			// that....
+		};
+
+		window.loop();
+	}
+}
+
 version(custom_widgets)
 	private alias ListWidgetBase = ScrollableWidget;
 else

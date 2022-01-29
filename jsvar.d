@@ -444,7 +444,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 				_this._payload._integral = l;
 				return _this;
 			} else static if(isFloatingPoint!T) {
-				static if(op == "&" || op == "|" || op == "^") {
+				static if(op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
 					this2._type = var.Type.Integral;
 					long f = l;
 					mixin("f "~op~"= cast(long) t;");
@@ -465,7 +465,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 					_this._type = var.Type.Integral;
 					_this._payload._integral = l;
 				} else{
-					static if(op == "&" || op == "|" || op == "^") {
+					static if(op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
 						long f = l;
 						mixin("f "~op~"= cast(long) rhs;");
 						_this._type = var.Type.Integral;
@@ -484,7 +484,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 			auto f = this._payload._floating;
 
 			static if(isIntegral!T || isFloatingPoint!T) {
-				static if(op == "&" || op == "|" || op == "^") {
+				static if(op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
 					long argh = cast(long) f;
 					mixin("argh "~op~"= cast(long) t;");
 					_this._type = var.Type.Integral;
@@ -498,7 +498,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 			} else static if(isSomeString!T) {
 				auto rhs = stringToNumber(t);
 
-				static if(op == "&" || op == "|" || op == "^") {
+				static if(op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
 					long pain = cast(long) f;
 					mixin("pain "~op~"= cast(long) rhs;");
 					_this._type = var.Type.Integral;
@@ -511,7 +511,7 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 				return _this;
 			} else static assert(0);
 		} else if(this2.payloadType() == var.Type.String) {
-			static if(op == "&" || op == "|" || op == "^") {
+			static if(op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
 				long r = cast(long) stringToNumber(this2._payload._string);
 				long rhs;
 			} else {

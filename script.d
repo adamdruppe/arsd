@@ -1462,7 +1462,7 @@ class BinaryExpression : Expression {
 		sw: switch(op) {
 			// I would actually kinda prefer this to be static foreach, but normal
 			// tuple foreach here has broaded compiler compatibility.
-			foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%")) //, ">>", "<<", ">>>")) // FIXME
+			foreach(ctOp; CtList!("+", "-", "*", "/", "==", "!=", "<=", ">=", ">", "<", "~", "&&", "||", "&", "|", "^", "%", ">>", "<<", ">>>")) // FIXME
 			case ctOp: {
 				n = mixin("left "~ctOp~" right");
 				break sw;
@@ -2824,6 +2824,9 @@ Expression parseFactor(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 
 		if(peek.type == ScriptToken.Type.symbol) {
 			switch(peek.str) {
+				case "<<":
+				case ">>":
+				case ">>>":
 				case "*":
 				case "/":
 				case "%":
@@ -3510,7 +3513,6 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 				case "continue":
 				case "break":
 				case "return":
-
 					return parseExpression(tokens);
 				// unary prefix operators
 				case "!":
@@ -3535,6 +3537,26 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 
 	assert(0);
 }
+
+// FIXME someday this should work, my parser is so bad
+// until then put parens around your == stuff.
+version(none)
+unittest {
+	interpret(q{
+		var a = 5;
+		var b = false;
+		assert(a == 5 || b);
+	});
+}
+version(none)
+unittest {
+	interpret(q{
+		var a = 5;
+		var b = false;
+		assert(((a == 5) || b));
+	});
+}
+
 
 struct CompoundStatementRange(MyTokenStreamHere) {
 	// FIXME: if MyTokenStreamHere is not a class, this fails!

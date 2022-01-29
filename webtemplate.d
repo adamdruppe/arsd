@@ -13,7 +13,7 @@
 				whatever == false
 			</or-else>
 
-			<for-each over="some_array" as="item">
+			<for-each over="some_array" as="item" index="idx">
 				<%= item %>
 			</for-each>
 			<or-else>
@@ -34,7 +34,7 @@
 	```
 
 	Functions available:
-		`encodeURIComponent`, `formatDate`, `dayOfWeek`, `formatTime`
+		`encodeURIComponent`, `formatDate`, `dayOfWeek`, `formatTime`, `filterKeys`
 
 	History:
 		Things inside script tag were added on January 7, 2022.
@@ -64,6 +64,39 @@ class TemplateException : Exception {
 void addDefaultFunctions(var context) {
 	import std.conv;
 	// FIXME: I prolly want it to just set the prototype or something
+
+	/+
+		foo |> filterKeys(["foo", "bar"]);
+
+		It needs to match the filter, then if it is -pattern, it is removed and if it is +pattern, it is retained.
+
+		First one that matches applies to the key, so the last one in the list is your default.
+
+		Default is to reject. Putting a "*" at the end will keep everything not removed though.
+
+		["-foo", "*"] // keep everything except foo
+	+/
+	context.filterKeys = function var(var f, string[] filters) {
+		import std.path;
+		var o = var.emptyObject;
+		foreach(k, v; f) {
+			bool keep = false;
+			foreach(filter; filters) {
+				if(filter.length == 0)
+					throw new Exception("invalid filter");
+				bool filterOff = filter[0] == '-';
+				if(filterOff)
+					filter = filter[1 .. $];
+				if(globMatch(k.get!string, filter)) {
+					keep = !filterOff;
+					break;
+				}
+			}
+			if(keep)
+				o[k] = v;
+		}
+		return o;
+	};
 
 	context.encodeURIComponent = function string(var f) {
 		import std.uri;
@@ -213,9 +246,11 @@ void expandTemplate(Element root, var context) {
 			var nc = var.emptyObject(context);
 			lastBoolResult = false;
 			auto got = interpret(ele.attrs.over, context);
-			foreach(item; got) {
+			foreach(k, item; got) {
 				lastBoolResult = true;
 				nc[ele.attrs.as] = item;
+				if(ele.attrs.index.length)
+					nc[ele.attrs.index] = k;
 				auto clone = ele.cloneNode(true);
 				clone.tagName = "root"; // it certainly isn't a for-each anymore!
 				expandTemplate(clone, nc);
@@ -274,7 +309,7 @@ void expandTemplate(Element root, var context) {
 			check_more:
 			auto idx = source.indexOf("<%=");
 			if(idx != -1) {
-				newCode = source[0 .. idx];
+				newCode ~= source[0 .. idx];
 				auto remaining = source[idx + 3 .. $];
 				idx = remaining.indexOf("%>");
 				if(idx == -1)
