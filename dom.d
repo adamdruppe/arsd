@@ -5582,9 +5582,9 @@ struct DomMutationEvent {
 
 private immutable static string[] htmlSelfClosedElements = [
 	// html 4
-	"img", "hr", "input", "br", "col", "link", "meta",
+	"area","base","br","col","hr","img","input","link","meta","param",
 	// html 5
-	"source" ];
+	"embed","source","track","wbr" ];
 
 private immutable static string[] htmlInlineElements = [
 	"span", "strong", "em", "b", "i", "a"
