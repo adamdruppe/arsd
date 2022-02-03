@@ -2327,7 +2327,7 @@ class HttpClient {
 		History:
 			Added February 2, 2022 (dub v10.6)
 	+/
-	void setClientCert(string certFilename, string keyFilename, CertificateFileFormat certFormat = CertificateFileFormat.guess) {
+	void setClientCertificate(string certFilename, string keyFilename, CertificateFileFormat certFormat = CertificateFileFormat.guess) {
 		this.certFilename = certFilename;
 		this.keyFilename = keyFilename;
 		this.certFormat = certFormat;
