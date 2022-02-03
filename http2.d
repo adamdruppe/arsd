@@ -2287,6 +2287,19 @@ enum HttpVerb {
 }
 
 /++
+	Supported file formats for [HttpClient.setClientCert]. These are loaded by OpenSSL
+	in the current implementation.
+
+	History:
+		Added February 3, 2022 (dub v10.6)
++/
+enum CertificateFileFormat {
+	guess, /// try to guess the format from the file name and/or contents
+	pem, /// the files are specifically in PEM format
+	der /// the files are specifically in DER format
+}
+
+/++
 	HttpClient keeps cookies, location, and some other state to reuse connections, when possible, like a web browser.
 	You can use it as your entry point to make http requests.
 
@@ -2297,6 +2310,33 @@ class HttpClient {
 	bool useHttp11 = true; ///
 	bool acceptGzip = true; ///
 	bool keepAlive = true; ///
+
+	/++
+		Sets the client certificate used as a log in identifier on https connections.
+		The certificate and key must be unencrypted at this time and both must be in
+		the same file format.
+
+		Bugs:
+			The current implementation sets the filenames into a static variable,
+			meaning it is shared across all clients and connections.
+
+			Errors in the cert or key are only reported if the server reports an
+			authentication failure. Make sure you are passing correct filenames
+			and formats of you do see a failure.
+
+		History:
+			Added February 2, 2022 (dub v10.6)
+	+/
+	void setClientCert(string certFilename, string keyFilename, CertificateFileFormat certFormat = CertificateFileFormat.guess) {
+		this.certFilename = certFilename;
+		this.keyFilename = keyFilename;
+		this.certFormat = certFormat;
+	}
+
+	// FIXME: try to not make these static
+	private static string certFilename;
+	private static string keyFilename;
+	private static CertificateFileFormat certFormat;
 
 	///
 	@property Uri location() {
@@ -2739,8 +2779,25 @@ version(use_openssl) {
 			SSL_METHOD* function() TLS_client_method;
 
 			void function(SSL_CTX*, void function(SSL*, char* line)) SSL_CTX_set_keylog_callback;
+
+
+			// client cert things
+			void function (SSL_CTX *ctx, int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey)) SSL_CTX_set_client_cert_cb;
+
+			X509* function(FILE *fp, X509 **x, pem_password_cb *cb, void *u) PEM_read_X509;
+			EVP_PKEY* function(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void* userPointer) PEM_read_PrivateKey;
+
+			EVP_PKEY* function(FILE *fp, EVP_PKEY **a) d2i_PrivateKey_fp;
+			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 		}
 	}
+	// copy it into the buf[0 .. size] and return actual length you read.
+	// rwflag == 0 when reading, 1 when writing.
+	extern(C)
+	alias pem_password_cb = int function(char* buffer, int bufferSize, int rwflag, void* userPointer);
+
+	struct X509;
+	struct EVP_PKEY;
 
 	import core.stdc.config;
 
@@ -2773,6 +2830,38 @@ version(use_openssl) {
 			return ossllib.SSL_set_fd(a, b);
 		else throw new Exception("SSL_set_fd not loaded");
 	}
+
+	extern(C)
+	alias client_cert_cb = int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey);
+
+	void SSL_CTX_set_client_cert_cb(SSL_CTX *ctx, client_cert_cb cb) {
+		if(ossllib.SSL_CTX_set_client_cert_cb)
+			return ossllib.SSL_CTX_set_client_cert_cb(ctx, cb);
+		else throw new Exception("SSL_CTX_set_client_cert_cb not loaded");
+	}
+
+	X509* PEM_read_X509(FILE *fp, X509 **x, pem_password_cb *cb, void *u) {
+		if(ossllib.PEM_read_X509)
+			return ossllib.PEM_read_X509(fp, x, cb, u);
+		else throw new Exception("PEM_read_X509 not loaded");
+	}
+	EVP_PKEY* PEM_read_PrivateKey(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void *u) {
+		if(ossllib.PEM_read_PrivateKey)
+			return ossllib.PEM_read_PrivateKey(fp, x, cb, u);
+		else throw new Exception("PEM_read_PrivateKey not loaded");
+	}
+
+	EVP_PKEY* d2i_PrivateKey_fp(FILE *fp, EVP_PKEY **a) {
+		if(ossllib.d2i_PrivateKey_fp)
+			return ossllib.d2i_PrivateKey_fp(fp, a);
+		else throw new Exception("d2i_PrivateKey_fp not loaded");
+	}
+	X509* d2i_X509_fp(FILE *fp, X509 **x) {
+		if(ossllib.d2i_X509_fp)
+			return ossllib.d2i_X509_fp(fp, x);
+		else throw new Exception("d2i_X509_fp not loaded");
+	}
+
 	int SSL_connect(SSL* a) {
 		if(ossllib.SSL_connect)
 			return ossllib.SSL_connect(a);
@@ -2987,6 +3076,46 @@ version(use_openssl) {
 			if(!verifyPeer)
 				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
 			SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
+
+
+			SSL_CTX_set_client_cert_cb(ctx, &cb);
+		}
+
+		extern(C)
+		static int cb(SSL* ssl, X509** x509, EVP_PKEY** pkey) {
+			if(HttpClient.certFilename.length && HttpClient.keyFilename.length) {
+				FILE* fpCert = fopen((HttpClient.certFilename ~ "\0").ptr, "rb");
+				if(fpCert is null)
+					return 0;
+				scope(exit)
+					fclose(fpCert);
+				FILE* fpKey = fopen((HttpClient.keyFilename ~ "\0").ptr, "rb");
+				if(fpKey is null)
+					return 0;
+				scope(exit)
+					fclose(fpKey);
+
+				with(CertificateFileFormat)
+				final switch(HttpClient.certFormat) {
+					case guess:
+						if(HttpClient.certFilename.endsWith(".pem") || HttpClient.keyFilename.endsWith(".pem"))
+							goto case pem;
+						else
+							goto case der;
+					case pem:
+						*x509 = PEM_read_X509(fpCert, null, null, null);
+						*pkey = PEM_read_PrivateKey(fpKey, null, null, null);
+					break;
+					case der:
+						*x509 = d2i_X509_fp(fpCert, null);
+						*pkey = d2i_PrivateKey_fp(fpKey, null);
+					break;
+				}
+
+				return 1;
+			}
+
+			return 0;
 		}
 
 		bool dataPending() {
