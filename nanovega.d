@@ -12461,7 +12461,11 @@ enum GLMaskState {
   JustCleared = 2,
 }
 
-final class GLNVGTextureLocker {}
+import core.sync.mutex;
+__gshared Mutex GLNVGTextureLocker;
+shared static this() {
+	GLNVGTextureLocker = new Mutex();
+}
 
 struct GLNVGcontext {
   private import core.thread : ThreadID;
@@ -12630,16 +12634,16 @@ bool glnvg__deleteTexture (GLNVGcontext* gl, ref int id) nothrow @trusted @nogc 
       // alas, we aren't doing frame business, so we should postpone deletion
       version(nanovega_debug_textures) {{ import core.stdc.stdio; printf("*** POSTPONED texture deletion with id %d (%d); glid=%u\n", tx.id, id, tx.tex); }}
       version(aliced) {
-        synchronized(GLNVGTextureLocker.classinfo) {
+	{
+        GLNVGTextureLocker.lock_nothrow; scope(exit) GLNVGTextureLocker.unlock_nothrow;
           tx.id = 0; // mark it as dead
           gl.mustCleanTextures = true; // set "need cleanup" flag
-        }
+	}
       } else {
         try {
-          synchronized(GLNVGTextureLocker.classinfo) {
+            GLNVGTextureLocker.lock_nothrow; scope(exit) GLNVGTextureLocker.unlock_nothrow;
             tx.id = 0; // mark it as dead
             gl.mustCleanTextures = true; // set "need cleanup" flag
-          }
         } catch (Exception e) {}
       }
     }
@@ -13615,7 +13619,8 @@ void glnvg__renderViewport (void* uptr, int width, int height) nothrow @trusted 
       } else {
         if (gl.mainTID != Thread.getThis.id) assert(0, "NanoVega: cannot use context in alien thread");
       }
-      synchronized(GLNVGTextureLocker.classinfo) {
+      {
+        GLNVGTextureLocker.lock_nothrow; scope(exit) GLNVGTextureLocker.unlock_nothrow;
         gl.mustCleanTextures = false;
         foreach (immutable tidx, ref GLNVGtexture tex; gl.textures[0..gl.ntextures]) {
           // no need to use atomic ops here, as we're locked

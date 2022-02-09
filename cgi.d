@@ -2007,6 +2007,7 @@ class Cgi {
 			uri ~= "s";
 		uri ~= "://";
 		uri ~= host;
+		version(none)
 		if(!(!port || port == defaultPort)) {
 			uri ~= ":";
 			uri ~= to!string(port);

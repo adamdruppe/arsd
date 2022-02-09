@@ -2075,8 +2075,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					_cursorX = 0;
 				break;
 				case '\t':
-					_cursorX ++;
-					_cursorX += _cursorX % 8; // FIXME: get the actual tabstop, if possible
+					// FIXME: get the actual tabstop, if possible
+					int diff = 8 - (_cursorX % 8);
+					if(diff == 0)
+						diff = 8;
+					_cursorX += diff;
 				break;
 				default:
 					_cursorX++;
@@ -4995,8 +4998,34 @@ class LineGetter {
 						if(terminal.cursorX + 2 < terminal.width) {
 							remaining = terminal.width - terminal.cursorX - 2;
 						}
-						if(remaining > 8)
-							terminal.write(remaining < help.length ? help[0 .. remaining] : help);
+						if(remaining > 8) {
+							string msg = help;
+							foreach(idxh, dchar c; msg) {
+								remaining--;
+								if(remaining <= 0) {
+									msg = msg[0 .. idxh];
+									break;
+								}
+							}
+
+							/+
+							size_t use = help.length < remaining ? help.length : remaining;
+
+							if(use < help.length) {
+								if((help[use] & 0xc0) != 0x80) {
+									import std.utf;
+									use += stride(help[use .. $]);
+								} else {
+									// just get to the end of this code point
+									while(use < help.length && (help[use] & 0xc0) == 0x80)
+										use++;
+								}
+							}
+							auto msg = help[0 .. use];
+							+/
+							if(msg.length)
+								terminal.write(msg);
+						}
 					}
 					terminal.writeln();
 
