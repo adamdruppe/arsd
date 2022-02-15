@@ -14161,7 +14161,8 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 				window = XCreateWindow(display, (windowType != WindowTypes.nestedChild || parent is null) ? root : parent.impl.window,
 					0, 0, width, height,
-					0, CopyFromParent, 1 /* InputOutput */, cast(Visual*) CopyFromParent, CWColormap | CWBackPixel | CWBorderPixel | CWOverrideRedirect, &swa);
+						// I'm commenting that CWBackPixel thing just because it actually causes flicker for no apparent benefit.
+					0, CopyFromParent, 1 /* InputOutput */, cast(Visual*) CopyFromParent, CWColormap /*| CWBackPixel*/ | CWBorderPixel | CWOverrideRedirect, &swa);
 
 
 
