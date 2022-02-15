@@ -3479,6 +3479,10 @@ private:
 		}
 		return (res >= int.max ? 0 : res);
 	}
+
+	version(X11) {
+		ResizeEvent pendingResizeEvent;
+	}
 }
 
 /++
@@ -11816,6 +11820,7 @@ version(Windows) {
 						StretchBlt(hdc, 0, 0, this.width, this.height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
 						else
 						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+						//BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left, ps.rcPaint.top - ps.rcPaint.bottom, hdcMem, 0, 0, SRCCOPY);
 
 						SelectObject(hdcMem, hbmOld);
 						DeleteDC(hdcMem);
@@ -14455,6 +14460,24 @@ version(X11) {
 
 	int mouseDoubleClickTimeout = 350; /// Double click timeout. X only, you probably shouldn't change this.
 
+	private class ResizeEvent {
+		int width, height;
+	}
+
+	void recordX11ResizeAsync(Display* display, SimpleWindow win, int width, int height) {
+		if(win.pendingResizeEvent is null) {
+			win.pendingResizeEvent = new ResizeEvent();
+			win.addEventListener((ResizeEvent re) {
+				recordX11Resize(XDisplayConnection.get, win, re.width, re.height);
+			});
+		}
+		win.pendingResizeEvent.width = width;
+		win.pendingResizeEvent.height = height;
+		if(!win.eventQueued!ResizeEvent) {
+			win.postEvent(win.pendingResizeEvent);
+		}
+	}
+
 	void recordX11Resize(Display* display, SimpleWindow win, int width, int height) {
 		if(width != win.width || height != win.height) {
 			win._width = width;
@@ -14721,7 +14744,7 @@ version(X11) {
 				win.screenPositionY = event.y;
 				win.updateActualDpi();
 
-				recordX11Resize(display, *win, event.width, event.height);
+				recordX11ResizeAsync(display, *win, event.width, event.height);
 			}
 		  break;
 		  case EventType.Expose:
@@ -18208,7 +18231,7 @@ final class OpenGlShader {
 		buffer[0] = code.code.ptr;
 		lengthBuffer[0] = cast(int) code.code.length;
 
-		glShaderSource(sid, 1, buffer.ptr, lengthBuffer.ptr);
+		glShaderSource(sid, cast(int) buffer.length, buffer.ptr, lengthBuffer.ptr);
 		glCompileShader(sid);
 
 		int success;
