@@ -2783,12 +2783,6 @@ version(use_openssl) {
 
 			// client cert things
 			void function (SSL_CTX *ctx, int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey)) SSL_CTX_set_client_cert_cb;
-
-			X509* function(FILE *fp, X509 **x, pem_password_cb *cb, void *u) PEM_read_X509;
-			EVP_PKEY* function(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void* userPointer) PEM_read_PrivateKey;
-
-			EVP_PKEY* function(FILE *fp, EVP_PKEY **a) d2i_PrivateKey_fp;
-			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 		}
 	}
 	// copy it into the buf[0 .. size] and return actual length you read.
@@ -2811,6 +2805,13 @@ version(use_openssl) {
 			void function(ulong, void*) OPENSSL_init_crypto;
 
 			void function(FILE*) ERR_print_errors_fp;
+
+
+			X509* function(FILE *fp, X509 **x, pem_password_cb *cb, void *u) PEM_read_X509;
+			EVP_PKEY* function(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void* userPointer) PEM_read_PrivateKey;
+
+			EVP_PKEY* function(FILE *fp, EVP_PKEY **a) d2i_PrivateKey_fp;
+			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 		}
 	}
 
@@ -2841,24 +2842,24 @@ version(use_openssl) {
 	}
 
 	X509* PEM_read_X509(FILE *fp, X509 **x, pem_password_cb *cb, void *u) {
-		if(ossllib.PEM_read_X509)
-			return ossllib.PEM_read_X509(fp, x, cb, u);
+		if(eallib.PEM_read_X509)
+			return eallib.PEM_read_X509(fp, x, cb, u);
 		else throw new Exception("PEM_read_X509 not loaded");
 	}
 	EVP_PKEY* PEM_read_PrivateKey(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void *u) {
-		if(ossllib.PEM_read_PrivateKey)
-			return ossllib.PEM_read_PrivateKey(fp, x, cb, u);
+		if(eallib.PEM_read_PrivateKey)
+			return eallib.PEM_read_PrivateKey(fp, x, cb, u);
 		else throw new Exception("PEM_read_PrivateKey not loaded");
 	}
 
 	EVP_PKEY* d2i_PrivateKey_fp(FILE *fp, EVP_PKEY **a) {
-		if(ossllib.d2i_PrivateKey_fp)
-			return ossllib.d2i_PrivateKey_fp(fp, a);
+		if(eallib.d2i_PrivateKey_fp)
+			return eallib.d2i_PrivateKey_fp(fp, a);
 		else throw new Exception("d2i_PrivateKey_fp not loaded");
 	}
 	X509* d2i_X509_fp(FILE *fp, X509 **x) {
-		if(ossllib.d2i_X509_fp)
-			return ossllib.d2i_X509_fp(fp, x);
+		if(eallib.d2i_X509_fp)
+			return eallib.d2i_X509_fp(fp, x);
 		else throw new Exception("d2i_X509_fp not loaded");
 	}
 
