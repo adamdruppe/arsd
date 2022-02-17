@@ -369,6 +369,51 @@ void populateForm(Form form, var obj, string name) {
 
 }
 
+/++
+	Replaces `things[0]` with `things[1]` in `what` all at once.
+	Returns the new string.
+
+	History:
+		Added February 12, 2022. I might move it later.
++/
+string multiReplace(string what, string[] things...) {
+	import std.string; // FIXME: indexOf not actually ideal but meh
+	if(things.length == 0)
+		return what;
+
+	assert(things.length % 2 == 0);
+
+	string n;
+
+	while(what.length) {
+		int nextIndex = cast(int) what.length;
+		int nextThing = -1;
+
+		foreach(i, thing; things) {
+			if(i & 1)
+				continue;
+
+			auto idx = what.indexOf(thing);
+			if(idx != -1 && idx < nextIndex) {
+				nextIndex = cast(int) idx;
+				nextThing = cast(int) i;
+			}
+		}
+
+		if(nextThing == -1) {
+			n ~= what;
+			what = null;
+		} else {
+			n ~= what[0 .. nextIndex];
+			what = what[nextIndex + things[nextThing].length .. $];
+			n ~= things[nextThing + 1];
+			continue;
+		}
+	}
+
+	return n;
+}
+
 immutable daysOfWeekFullNames = [
 	"Sunday",
 	"Monday",
