@@ -1,5 +1,7 @@
 // https://dpaste.dzfl.pl/7a77355acaec
 
+// Search for: FIXME: leaks if multithreaded gc
+
 // https://freedesktop.org/wiki/Specifications/XDND/
 
 // https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
@@ -2888,6 +2890,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	bool _suppressDestruction;
 
 	~this() {
+		if(!thisIsGuiThread) return; // FIXME: leaks if multithreaded gc
 		if(_suppressDestruction)
 			return;
 		impl.dispose();
@@ -3434,6 +3437,8 @@ private:
 
 	// for all windows in nativeMapping
 	package static void processAllCustomEvents () {
+
+		cleanupQueue.process();
 
 		justCommunication.processCustomEvents();
 
@@ -5076,6 +5081,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	}
 
 	~this() {
+		if(!thisIsGuiThread) return; // FIXME: leaks if multithreaded gc
 		version(X11)
 			if(clippixmap != None)
 				XFreePixmap(XDisplayConnection.get, clippixmap);
@@ -5196,37 +5202,50 @@ class Timer {
 	/// Stop and destroy the timer object.
 	void destroy() {
 		version(Windows) {
-			if(handle) {
-				// KillTimer(null, handle);
-				CancelWaitableTimer(cast(void*)handle);
-				mapping.remove(handle);
-				CloseHandle(handle);
-				handle = null;
-			}
+			staticDestroy(handle);
+			handle = null;
 		} else version(linux) {
-			if(fd != -1) {
-				import unix = core.sys.posix.unistd;
-				static import ep = core.sys.linux.epoll;
-
-				version(with_eventloop) {
-					import arsd.eventloop;
-					removeFileEventListeners(fd);
-				} else {
-					ep.epoll_event ev = void;
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = fd;
-
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
-				}
-				unix.close(fd);
-				mapping.remove(fd);
-				fd = -1;
-			}
+			staticDestroy(fd);
+			fd = -1;
 		} else featureNotImplemented();
 	}
 
+	version(Windows)
+	static void staticDestroy(HANDLE handle) {
+		if(handle) {
+			// KillTimer(null, handle);
+			CancelWaitableTimer(cast(void*)handle);
+			mapping.remove(handle);
+			CloseHandle(handle);
+		}
+	}
+	else version(linux)
+	static void staticDestroy(int fd) {
+		if(fd != -1) {
+			import unix = core.sys.posix.unistd;
+			static import ep = core.sys.linux.epoll;
+
+			version(with_eventloop) {
+				import arsd.eventloop;
+				removeFileEventListeners(fd);
+			} else {
+				ep.epoll_event ev = void;
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = fd;
+
+				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
+			}
+			unix.close(fd);
+			mapping.remove(fd);
+		}
+	}
+
 	~this() {
-		destroy();
+		version(Windows) { if(handle)
+			cleanupQueue.queue!staticDestroy(handle);
+		} else version(linux) { if(fd != -1)
+			cleanupQueue.queue!staticDestroy(fd);
+		}
 	}
 
 
@@ -8525,6 +8544,7 @@ class OperatingSystemFont {
 	+/
 
 	~this() {
+		if(!thisIsGuiThread) return; // FIXME: leaks if multithreaded gc
 		unload();
 	}
 }
@@ -9225,27 +9245,45 @@ class Sprite : CapableOfBeingDrawnUpon {
 	/// Call this when you're ready to get rid of it
 	void dispose() {
 		version(X11) {
-			if(xrenderPicture) {
-				XRenderFreePicture(XDisplayConnection.get, xrenderPicture);
-				xrenderPicture = None;
-			}
-			if(handle)
-				XFreePixmap(XDisplayConnection.get(), handle);
+			staticDispose(xrenderPicture, handle);
+			xrenderPicture = None;
 			handle = None;
 		} else version(Windows) {
-			if(handle)
-				DeleteObject(handle);
+			staticDispose(handle);
 			handle = null;
 		} else version(OSXCocoa) {
-			if(context)
-				CGContextRelease(context);
+			staticDispose(context);
 			context = null;
 		} else static assert(0);
 
 	}
 
+	version(X11)
+	static void staticDispose(Picture xrenderPicture, Pixmap handle) {
+		if(xrenderPicture)
+			XRenderFreePicture(XDisplayConnection.get, xrenderPicture);
+		if(handle)
+			XFreePixmap(XDisplayConnection.get(), handle);
+	}
+	else version(Windows)
+	static void staticDispose(HBITMAP handle) {
+		if(handle)
+			DeleteObject(handle);
+	}
+	else version(OSXCocoa)
+	static void staticDispose(CGContextRef context) {
+		if(context)
+			CGContextRelease(context);
+	}
+
 	~this() {
-		dispose();
+		version(X11) { if(xrenderPicture || handle)
+			cleanupQueue.queue!staticDispose(xrenderPicture, handle);
+		} else version(Windows) { if(handle)
+			cleanupQueue.queue!staticDispose(handle);
+		} else version(OSXCocoa) { if(context)
+			cleanupQueue.queue!staticDispose(context);
+		} else static assert(0);
 	}
 
 	///
@@ -10666,6 +10704,7 @@ version(Windows) {
 		}
 
 		~this() {
+			if(!thisIsGuiThread) return; // FIXME: leaks if multithreaded gc
 			DestroyIcon(hIcon);
 		}
 
@@ -11585,8 +11624,10 @@ version(Windows) {
 				Added November 23, 2021
 
 				Not fully stable, may be moved out of the impl struct.
+
+				Default value changed to `true` on February 15, 2021
 		+/
-		bool doLiveResizing;
+		bool doLiveResizing = true;
 
 		private int bmpWidth;
 		private int bmpHeight;
@@ -21382,6 +21423,72 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
                         mixin(name ~ " = null;");
         }
 }
+
+/+
+	The GC can be called from any thread, and a lot of cleanup must be done
+	on the gui thread. Since the GC can interrupt any locks - including being
+	triggered inside a critical section - it is vital to avoid deadlocks to get
+	these functions called from the right place.
+
+	If the buffer overflows, things are going to get leaked. I'm kinda ok with that
+	right now.
+
+	The cleanup function is run when the event loop gets around to it, which is just
+	whenever there's something there after it has been woken up for other work. It does
+	NOT wake up the loop itself - can't risk doing that from inside the GC in another thread.
+	(Well actually it might be ok but i don't wanna mess with it right now.)
++/
+private struct CleanupQueue {
+	import core.stdc.stdlib;
+
+	void queue(alias func, T...)(T args) {
+		static struct Args {
+			T args;
+		}
+		static struct RealJob {
+			Job j;
+			Args a;
+		}
+		static void call(Job* data) {
+			auto rj = cast(RealJob*) data;
+			func(rj.a.args);
+		}
+
+		RealJob* thing = cast(RealJob*) malloc(RealJob.sizeof);
+		thing.j.call = &call;
+		thing.a.args = args;
+
+		buffer[tail++] = cast(Job*) thing;
+
+		// FIXME: set overflowed
+	}
+
+	void process() {
+		const tail = this.tail;
+
+		while(tail != head) {
+			Job* job = cast(Job*) buffer[head++];
+			job.call(job);
+			free(job);
+		}
+
+		if(overflowed)
+			throw new Exception("cleanup overflowed");
+	}
+
+	private:
+
+	ubyte tail; // must ONLY be written by queue
+	ubyte head; // must ONLY be written by process
+	bool overflowed;
+
+	static struct Job {
+		void function(Job*) call;
+	}
+
+	void*[256] buffer;
+}
+private __gshared CleanupQueue cleanupQueue;
 
 void guiAbortProcess(string msg) {
 	import core.stdc.stdlib;
