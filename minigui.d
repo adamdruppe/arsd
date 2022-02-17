@@ -3133,6 +3133,7 @@ version(win32_widgets) {
 							// eh kinda lying but i like the real time update display
 							auto ev = new ScrollToPositionEvent(*widgetp, pos);
 							ev.dispatch();
+
 							// the event loop doesn't seem to carry on with a requested redraw..
 							// so we request it to get our dirty bit set...
 							// then we need to immediately actually redraw it too for instant feedback to user
@@ -3140,6 +3141,15 @@ version(win32_widgets) {
 							SimpleWindow.processAllCustomEvents();
 							//if(this_.parentWindow)
 								//this_.parentWindow.actualRedraw();
+
+							// and this ensures the WM_PAINT message is sent fairly quickly
+							// still seems to lag a little in large windows but meh it basically works.
+							if(this_.parentWindow) {
+								// FIXME: if painting is slow, this does still lag
+								// we probably will want to expose some user hook to ScrollWindowEx
+								// or something.
+								UpdateWindow(this_.parentWindow.hwnd);
+							}
 						return 0;
 						default:
 					}
@@ -10990,8 +11000,11 @@ class ImageBox : Widget {
 	///
 	public void setImage(MemoryImage image){
 		this.image_ = image;
-		if(this.parentWindow && this.parentWindow.win)
+		if(this.parentWindow && this.parentWindow.win) {
+			if(sprite)
+				sprite.dispose();
 			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+		}
 		redraw();
 	}
 
