@@ -4675,6 +4675,74 @@ public {
 	}
 }
 
+version(Windows) {
+	// because i use the FILE* in PEM_read_X509 and friends
+	// gotta use this to bridge the MS C runtime functions
+	// might be able to just change those to only use the BIO versions
+	// instead
+
+	// only on MS C runtime
+	version(CRuntime_Microsoft) {} else version=no_openssl_applink;
+
+	version(no_openssl_applink) {} else {
+		private extern(C) {
+			void _open();
+			void _read();
+			void _write();
+			void _lseek();
+			void _close();
+			int _fileno(FILE*);
+			int _setmode(int, int);
+		}
+	export extern(C) void** OPENSSL_Applink() {
+		import core.stdc.stdio;
+
+		static extern(C) void* app_stdin() { return cast(void*) stdin; }
+		static extern(C) void* app_stdout() { return cast(void*) stdout; }
+		static extern(C) void* app_stderr() { return cast(void*) stderr; }
+		static extern(C) int app_feof(FILE* fp) { return feof(fp); }
+		static extern(C) int app_ferror(FILE* fp) { return ferror(fp); }
+		static extern(C) void app_clearerr(FILE* fp) { return clearerr(fp); }
+		static extern(C) int app_fileno(FILE* fp) { return _fileno(fp); }
+		static extern(C) int app_fsetmod(FILE* fp, char mod) {
+			return _setmode(_fileno(fp), mod == 'b' ? _O_BINARY : _O_TEXT);
+		}
+
+		static immutable void*[] table = [
+			cast(void*) 22, // applink max
+
+			&app_stdin,
+			&app_stdout,
+			&app_stderr,
+			&fprintf,
+			&fgets,
+			&fread,
+			&fwrite,
+			&app_fsetmod,
+			&app_feof,
+			&fclose,
+
+			&fopen,
+			&fseek,
+			&ftell,
+			&fflush,
+			&app_ferror,
+			&app_clearerr,
+			&app_fileno,
+
+			&_open,
+			&_read,
+			&_write,
+			&_lseek,
+			&_close,
+		];
+		static assert(table.length == 23);
+
+		return cast(void**) table.ptr;
+	}
+	}
+}
+
 version(arsd_http2_unittests)
 unittest {
 	import core.thread;
