@@ -1031,7 +1031,8 @@ class Cgi {
 			// to be slow if they did that. The spec says it is always there though.
 			// And it has worked reliably for me all year in the live environment,
 			// but some servers might be different.
-			auto contentLength = to!size_t(getenv("CONTENT_LENGTH"));
+			auto cls = getenv("CONTENT_LENGTH");
+			auto contentLength = to!size_t(cls.length ? cls : "0");
 
 			immutable originalContentLength = contentLength;
 			if(contentLength) {
@@ -9795,7 +9796,12 @@ private string nextPieceFromSlash(ref string remainingUrl) {
 	return ident;
 }
 
+/++
+	UDA used to indicate to the [dispatcher] that a trailing slash should always be added to or removed from the url. It will do it as a redirect header as-needed.
++/
 enum AddTrailingSlash;
+/// ditto
+enum RemoveTrailingSlash;
 
 private auto serveApiInternal(T)(string urlPrefix) {
 
@@ -9976,6 +9982,12 @@ private auto serveApiInternal(T)(string urlPrefix) {
 								cgi.setResponseLocation(cgi.pathInfo ~ "/");
 								return true;
 							}
+						} else static if(is(attr == RemoveTrailingSlash)) {
+							if(remainingUrl !is null) {
+								cgi.setResponseLocation(cgi.pathInfo[0 .. lastIndexOf(cgi.pathInfo, "/")]);
+								return true;
+							}
+
 						} else static if(__traits(isSame, AutomaticForm, attr)) {
 							automaticForm = true;
 						}
