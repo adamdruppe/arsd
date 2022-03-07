@@ -9731,6 +9731,7 @@ bool runInGuiThread(scope void delegate() dg) @trusted {
 	return true;
 }
 
+// note it runs sync if this is the gui thread....
 void runInGuiThreadAsync(void delegate() dg, void delegate(Exception) nothrow handleError = null) nothrow {
 	claimGuiThread();
 

@@ -139,7 +139,7 @@ void addDefaultFunctions(var context) {
 		context.data = var.emptyObject;
 }
 
-Document renderTemplate(string templateName, var context = var.emptyObject, var skeletonContext = var.emptyObject) {
+Document renderTemplate(string templateName, var context = var.emptyObject, var skeletonContext = var.emptyObject, string skeletonName = null) {
 	import std.file;
 	import arsd.cgi;
 
@@ -147,7 +147,10 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 		addDefaultFunctions(context);
 		addDefaultFunctions(skeletonContext);
 
-		auto skeleton = new Document(readText("templates/skeleton.html"), true, true);
+		if(skeletonName.length == 0)
+			skeletonName = "skeleton.html";
+
+		auto skeleton = new Document(readText("templates/" ~ skeletonName), true, true);
 		auto document = new Document();
 		document.parseSawAspCode = (string) => true; // enable adding <% %> to the dom
 		document.parse("<root>" ~ readText("templates/" ~ templateName) ~ "</root>", true, true);
@@ -265,7 +268,15 @@ void expandTemplate(Element root, var context) {
 			document.parseSawAspCode = (string) => true; // enable adding <% %> to the dom
 			document.parse("<root>" ~ readText("templates/" ~ templateName) ~ "</root>", true, true);
 
-			expandTemplate(document.root, context);
+			var obj = var.emptyObject;
+			obj.prototype = context;
+
+			// FIXME: there might be other data you pass from the parent...
+			if(auto data = ele.getAttribute("data")) {
+				obj["data"] = var.fromJson(data);
+			}
+
+			expandTemplate(document.root, obj);
 
 			auto fragment = new DocumentFragment(null);
 
@@ -457,6 +468,7 @@ struct RenderTemplate {
 	string name;
 	var context = var.emptyObject;
 	var skeletonContext = var.emptyObject;
+	string skeletonName;
 }
 
 
@@ -510,7 +522,7 @@ template WebPresenterWithTemplateSupport(CTRP) {
 
 		void presentSuccessfulReturnAsHtml(T : RenderTemplate)(Cgi cgi, T ret, Meta meta) {
 			addContext(cgi, ret.context);
-			auto skeleton = renderTemplate(ret.name, ret.context, ret.skeletonContext);
+			auto skeleton = renderTemplate(ret.name, ret.context, ret.skeletonContext, ret.skeletonName);
 			cgi.setResponseContentType("text/html; charset=utf8");
 			cgi.gzipResponse = true;
 			cgi.write(skeleton.toString(), true);
@@ -537,7 +549,7 @@ template WebPresenterWithTemplateSupport(CTRP) {
 				obj.meta.currentPath = cgi.pathInfo;
 				obj.meta.automaticForm = { return meta.automaticForm(this).toString; };
 
-				presentSuccessfulReturnAsHtml(cgi, RenderTemplate(meta.templateName, obj, sobj), meta);
+				presentSuccessfulReturnAsHtml(cgi, RenderTemplate(meta.templateName, obj, sobj, meta.skeletonName), meta);
 			} else
 				super.presentSuccessfulReturnAsHtml(cgi, ret, meta);
 		}
