@@ -432,6 +432,10 @@
 				{
 					"name": "without_openssl",
 					"versions": ["without_openssl"]
+				},
+				{
+					"name": "no_openssl_applink",
+					"versions": ["no_openssl_applink"]
 				}
 			]
 		},
