@@ -2141,20 +2141,38 @@ abstract class ComboboxBase : Widget {
 		}
 	else static assert(false);
 
-	private string[] options;
+	/++
+		Returns the current list of options in the selection.
+
+		History:
+			Property accessor added March 1, 2022 (dub v10.7). Prior to that, it was private.
+	+/
+	final @property string[] options() const {
+		return options_;
+	}
+
+	private string[] options_;
 	private int selection_ = -1;
 
+	/++
+		Adds an option to the end of options array.
+	+/
 	void addOption(string s) {
-		options ~= s;
+		options_ ~= s;
 		version(win32_widgets)
 		SendMessageW(hwnd, 323 /*CB_ADDSTRING*/, 0, cast(LPARAM) toWstringzInternal(s));
 	}
 
+	/++
+		Gets the current selection as an index into the [options] array. Returns -1 if nothing is selected.
+	+/
 	int getSelection() {
 		return selection_;
 	}
 
 	/++
+		Returns the current selection as a string.
+
 		History:
 			Added November 17, 2021
 	+/
@@ -2162,19 +2180,47 @@ abstract class ComboboxBase : Widget {
 		return selection_ == -1 ? null : options[selection_];
 	}
 
-	void setSelection(int idx) {
+	/++
+		Sets the current selection to an index in the options array, or to the given option if present.
+		Please note that the string version may do a linear lookup.
+
+		Returns:
+			the index you passed in
+
+		History:
+			The `string` based overload was added on March 1, 2022 (dub v10.7).
+
+			The return value was `void` prior to March 1, 2022.
+	+/
+	int setSelection(int idx) {
 		selection_ = idx;
 		version(win32_widgets)
 		SendMessageW(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
 		auto t = new SelectionChangedEvent(this, selection_, selection_ == -1 ? null : options[selection_]);
 		t.dispatch();
+
+		return idx;
 	}
 
-	static class SelectionChangedEvent : Event {
-		enum EventString = "change";
+	/// ditto
+	void setSelection(string s) {
+		if(s !is null)
+		foreach(idx, item; options)
+			if(item == s) {
+				return setSelection(cast(int) idx);
+			}
+		return setSelection(-1);
+	}
+
+	/++
+		This event is fired when the selection changes. Note it inherits
+		from ChangeEvent!string, meaning you can use that as well, and it also
+		fills in [Event.intValue].
+	+/
+	static class SelectionChangedEvent : ChangeEvent!string {
 		this(Widget target, int iv, string sv) {
-			super("change", target);
+			super(target, &stringValue);
 			this.iv = iv;
 			this.sv = sv;
 		}
