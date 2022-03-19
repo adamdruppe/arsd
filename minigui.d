@@ -997,7 +997,8 @@ class Widget : ReflectableProperties {
 			Added May 16, 2021
 	+/
 	static protected mixin template OverrideStyle(S...) {
-		override void useStyleProperties(scope void delegate(scope Widget.Style props) dg) {
+		static import amg = arsd.minigui;
+		override void useStyleProperties(scope void delegate(scope amg.Widget.Style props) dg) {
 			ulong mask = 0;
 			foreach(idx, thing; S) {
 				static if(is(typeof(thing) : ulong)) {
@@ -1005,7 +1006,7 @@ class Widget : ReflectableProperties {
 				} else {
 					if(!(idx & 1) || (this.dynamicState & mask) == mask) {
 						//static assert(!__traits(isNested, thing), thing.stringof ~ " is a nested class. For best results, mark it `static`. You can still access the widget through a `widget` variable inside the Style class.");
-						scope Widget.Style s = new thing();
+						scope amg.Widget.Style s = new thing();
 						s.widget = this;
 						dg(s);
 						return;
@@ -2148,7 +2149,7 @@ abstract class ComboboxBase : Widget {
 			Property accessor added March 1, 2022 (dub v10.7). Prior to that, it was private.
 	+/
 	final @property string[] options() const {
-		return options_;
+		return cast(string[]) options_;
 	}
 
 	private string[] options_;
@@ -2204,7 +2205,7 @@ abstract class ComboboxBase : Widget {
 	}
 
 	/// ditto
-	void setSelection(string s) {
+	int setSelection(string s) {
 		if(s !is null)
 		foreach(idx, item; options)
 			if(item == s) {
@@ -6764,7 +6765,7 @@ class TabWidget : TabMessageWidget {
 }
 
 /++
-	A page widget is basically a tab widget with hidden tabs.
+	A page widget is basically a tab widget with hidden tabs. It is also sometimes called a "StackWidget".
 
 	You add [TabWidgetPage]s to it.
 +/
@@ -9826,6 +9827,14 @@ class IndefiniteProgressBar : Widget {
 
 /// A progress bar with a known endpoint and completion amount
 class ProgressBar : Widget {
+	/++
+		History:
+			Added March 16, 2022 (dub v10.7)
+	+/
+	this(int min, int max, Widget parent) {
+		this(parent);
+		setRange(cast(ushort) min, cast(ushort) max); // FIXME
+	}
 	this(Widget parent) {
 		version(win32_widgets) {
 			super(parent);
