@@ -13,7 +13,23 @@
 	RealTimeConsoleInput, which gives real time input.
 	
 	Creating an instance of these structs will perform console initialization. When the struct
-	goes out of scope, any changes in console settings will be automatically reverted.
+	goes out of scope, any changes in console settings will be automatically reverted and pending
+	output is flushed. Do not create a global Terminal, as this will skip the destructor. You should
+	create the object as a local, then pass borrowed pointers to it if needed somewhere else. This
+	ensures the construction and destruction is run in a timely manner.
+
+	$(PITFALL
+		Output is NOT flushed on \n! Output is buffered until:
+
+		$(LIST
+			* Terminal's destructor is run
+			* You request input from the terminal object
+			* You call `terminal.flush()`
+		)
+
+		If you want to see output immediately, always call `terminal.flush()`
+		after writing.
+	)
 
 	Note: on Posix, it traps SIGINT and translates it into an input event. You should
 	keep your event loop moving and keep an eye open for this to exit cleanly; simply break
@@ -22,8 +38,8 @@
 
 	As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
 
-	On old Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work. Most functions basically
-	work now with newer Mac OS versions though.
+	On old Mac Terminal btw, a lot of hacks are needed and mouse support doesn't work on older versions.
+	Most functions work now with newer Mac OS versions though.
 
 	Future_Roadmap:
 	$(LIST
