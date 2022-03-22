@@ -8245,7 +8245,9 @@ version(TerminalDirectToEmulator) {
 
 				On January 12, 2022, I changed the font size to be auto-scaled
 				with detected dpi by default. You can undo this by setting
-				`scaleFontSizeWithDpi` to false.
+				`scaleFontSizeWithDpi` to false. On March 22, 2022, I tweaked
+				this slightly to only scale if the font point size is not already
+				scaled (e.g. by Xft.dpi settings) to avoid double scaling.
 		+/
 		string fontName = defaultFont;
 		/// ditto
@@ -8954,7 +8956,22 @@ version(TerminalDirectToEmulator) {
 			}
 			auto fontSize = integratedTerminalEmulatorConfiguration.fontSize;
 			if(integratedTerminalEmulatorConfiguration.scaleFontSizeWithDpi) {
-				fontSize = widget.scaleWithDpi(fontSize);
+				static if(UsingSimpledisplayX11) {
+					// if it is an xft font and xft is already scaled, we should NOT double scale.
+					import std.algorithm;
+					if(integratedTerminalEmulatorConfiguration.fontName.startsWith("core:")) {
+						// core font doesn't use xft anyway
+						fontSize = widget.scaleWithDpi(fontSize);
+					} else {
+						auto xft = getXftDpi();
+						if(xft is float.init)
+							xft = 96;
+						fontSize = widget.scaleWithDpi(fontSize, cast(int) xft);
+
+					}
+				} else {
+					fontSize = widget.scaleWithDpi(fontSize);
+				}
 			}
 
 			if(integratedTerminalEmulatorConfiguration.fontName.length) {

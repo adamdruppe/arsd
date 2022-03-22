@@ -604,7 +604,19 @@ class Widget : ReflectableProperties {
 	// avoid this it just forwards to a soon-to-be-deprecated function and is not remotely stable
 	// I'll think up something better eventually
 	protected final int defaultLineHeight() {
-		return scaleWithDpi(Window.lineHeight);
+		auto cs = getComputedStyle();
+		if(cs.font && !cs.font.isNull)
+			return cs.font.height() * 5 / 4;
+		else
+			return scaleWithDpi(Window.lineHeight);
+	}
+
+	protected final int defaultTextWidth(const(char)[] text) {
+		auto cs = getComputedStyle();
+		if(cs.font && !cs.font.isNull)
+			return cs.font.stringWidth(text);
+		else
+			return scaleWithDpi(Window.lineHeight * cast(int) text.length / 2);
 	}
 
 	/++
@@ -3951,14 +3963,41 @@ struct StyleInformation {
 		this.visualTheme = WidgetPainter.visualTheme;
 	}
 
-	/// Forwards to [Widget.Style]
-	// through the [VisualTheme]
+	/++
+		Forwards to [Widget.Style]
+
+		Bugs:
+			It is supposed to fall back to the [VisualTheme] if
+			the style doesn't override the default, but that is
+			not generally implemented. Many of them may end up
+			being explicit overloads instead of the generic
+			opDispatch fallback, like [font] is now.
+	+/
 	public @property opDispatch(string name)() {
 		typeof(__traits(getMember, Widget.Style.init, name)()) prop;
 		w.useStyleProperties((scope Widget.Style props) {
 		//visualTheme.useStyleProperties(w, (props) {
 			prop = __traits(getMember, props, name);
 		});
+		return prop;
+	}
+
+	/++
+		Returns the cached font object associated with the widget,
+		if overridden by the [Widget.Style|Style], or the [VisualTheme] if not.
+
+		History:
+			Prior to March 21, 2022 (dub v10.7), `font` went through
+			[opDispatch], which did not use the cache. You can now call it
+			repeatedly without guilt.
+	+/
+	public @property OperatingSystemFont font() {
+		OperatingSystemFont prop;
+		w.useStyleProperties((scope Widget.Style props) {
+			prop = props.fontCached;
+		});
+		if(prop is null)
+			prop = visualTheme.defaultFontCached;
 		return prop;
 	}
 
@@ -8982,6 +9021,8 @@ class Labeled(T) : Widget {
 	override int marginTop() { return 4; }
 	override int marginBottom() { return 4; }
 
+	// FIXME: i should prolly call it value as well as content tbh
+
 	///
 	@property string content() {
 		return lineEdit.content;
@@ -10265,10 +10306,10 @@ class MenuItem : MouseActivatedWidget {
 
 	override int maxHeight() { return defaultLineHeight + 4; }
 	override int minHeight() { return defaultLineHeight + 4; }
-	override int minWidth() { return defaultLineHeight * cast(int) label.length + 8; }
+	override int minWidth() { return defaultTextWidth(label) + 8 + scaleWithDpi(12); }
 	override int maxWidth() {
 		if(cast(MenuBar) parent) {
-			return defaultLineHeight / 2 * cast(int) label.length + 8;
+			return minWidth();
 		}
 		return int.max;
 	}
@@ -11417,6 +11458,8 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		});
 	}
 
+	private string lastContentBlur;
+
 	override void defaultEventHandler_blur(Event ev) {
 		super.defaultEventHandler_blur(ev);
 		if(parentWindow.win.closed) return;
@@ -11430,8 +11473,11 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			}
 		}
 
-		auto evt = new ChangeEvent!string(this, &this.content);
-		evt.dispatch();
+		if(this.content != lastContentBlur) {
+			auto evt = new ChangeEvent!string(this, &this.content);
+			evt.dispatch();
+			lastContentBlur = this.content;
+		}
 	}
 
 	version(custom_widgets)

@@ -559,6 +559,10 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	$(H2 Platform-specific tips and tricks)
 
+	X_tips:
+
+	On X11, if you set an environment variable, `ARSD_SCALING_FACTOR`, you can control the per-monitor DPI scaling returned to the application. The format is `ARSD_SCALING_FACTOR=2;1`, for example, to set 2x scaling on your first monitor and 1x scaling on your second monitor. Support for this was added on March 22, 2022, the dub 10.7 release.
+
 	Windows_tips:
 
 	You can add icons or manifest files to your exe using a resource file.
@@ -1506,7 +1510,7 @@ string sdpyWindowClass () {
 }
 
 /++
-	Returns the DPI of the default monitor. [0] is width, [1] is height (they are usually the same though). You may wish to round the numbers off.
+	Returns the logical DPI of the default monitor. [0] is width, [1] is height (they are usually the same though). You may wish to round the numbers off. This isn't necessarily related to the physical side of the screen; it is associated with a user-defined scaling factor.
 
 	If you want per-monitor dpi values, check [SimpleWindow.actualDpi], but you can fall back to this if it returns 0.
 +/
@@ -1521,35 +1525,50 @@ float[2] getDpi() {
 		auto screen = DefaultScreen(display);
 
 		void fallback() {
+			/+
 			// 25.4 millimeters in an inch...
 			dpi[0] = cast(float) DisplayWidth(display, screen) / DisplayWidthMM(display, screen) * 25.4;
 			dpi[1] = cast(float) DisplayHeight(display, screen) / DisplayHeightMM(display, screen) * 25.4;
+			+/
+
+			// the physical size isn't actually as important as the logical size since this is
+			// all about scaling really
+			dpi[0] = 96;
+			dpi[1] = 96;
 		}
 
-		char* resourceString = XResourceManagerString(display);
-		XrmInitialize();
-
-		if (resourceString) {
-			auto db = XrmGetStringDatabase(resourceString);
-			XrmValue value;
-			char* type;
-			if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
-				if (value.addr) {
-					import core.stdc.stdlib;
-					dpi[0] = atof(cast(char*) value.addr);
-					dpi[1] = dpi[0];
-				} else {
-					fallback();
-				}
-			} else {
-				fallback();
-			}
-		} else {
+		auto xft = getXftDpi();
+		if(xft is float.init)
 			fallback();
+		else {
+			dpi[0] = xft;
+			dpi[1] = xft;
 		}
 	}
 
 	return dpi;
+}
+
+version(X11)
+float getXftDpi() {
+	auto display = XDisplayConnection.get;
+
+	char* resourceString = XResourceManagerString(display);
+	XrmInitialize();
+
+	if (resourceString) {
+		auto db = XrmGetStringDatabase(resourceString);
+		XrmValue value;
+		char* type;
+		if (XrmGetResource(db, "Xft.dpi", "String", &type, &value) == true) {
+			if (value.addr) {
+				import core.stdc.stdlib;
+				return atof(cast(char*) value.addr);
+			}
+		}
+	}
+
+	return float.init;
 }
 
 /++
@@ -1804,7 +1823,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 						MonitorInfo.info = MonitorInfo.info[0 .. 0];
 						MonitorInfo.info.assumeSafeAppend();
-						foreach(monitor; monitors[0 .. count]) {
+						foreach(idx, monitor; monitors[0 .. count]) {
+							MonitorInfo.info ~= MonitorInfo(
+								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
+								Size(monitor.mwidth, monitor.mheight),
+								cast(int) (customScalingFactorForMonitor(cast(int) idx) * 96)
+							);
+
+							/+
 							if(monitor.mwidth == 0 || monitor.mheight == 0)
 							// unknown physical size, just guess 96 to avoid divide by zero
 							MonitorInfo.info ~= MonitorInfo(
@@ -1823,8 +1849,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 									cast(int)(monitor.height * 25.4 / monitor.mheight + 0.5)
 								)
 							);
+							+/
 						}
-						//import std.stdio; writeln("Here", MonitorInfo.info);
+						// import std.stdio; writeln("Here", MonitorInfo.info);
 					}
 				}
 
@@ -1845,8 +1872,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 					fallback:
 					// make sure we disable events that aren't coming
 					xrrEventBase = -1;
-					// best guess...
-					actualDpi_ = cast(int) getDpi()[0];
+					// best guess... respect the custom scaling user command to some extent at least though
+					actualDpi_ = cast(int) (getDpi()[0] * customScalingFactorForMonitor(0));
 				}
 			}
 			actualDpiLoadAttempted = true;
@@ -9902,6 +9929,7 @@ void sdpyPrintDebugString(string fileOverride = null, T...)(T t) nothrow @truste
 		str ~= "\n";
 
 		fwrite(str.ptr, 1, str.length, fp);
+		fflush(fp);
 	} catch(Exception e) {
 		// sorry no hope
 	}
@@ -21490,6 +21518,50 @@ private struct CleanupQueue {
 	void*[256] buffer;
 }
 private __gshared CleanupQueue cleanupQueue;
+
+version(X11)
+/++
+	Returns the custom scaling factor read out of environment["ARSD_SCALING_FACTOR"].
+
+	$(WARNING
+		This function is exempted from stability guarantees.
+	)
++/
+float customScalingFactorForMonitor(int monitorNumber) {
+	import core.stdc.stdlib;
+	auto val = getenv("ARSD_SCALING_FACTOR");
+
+	if(val is null)
+		return 1.0;
+
+	char[16] buffer = 0;
+	int pos;
+
+	const(char)* at = val;
+
+	foreach(item; 0 .. monitorNumber + 1) {
+		if(*at == 0)
+			break; // reuse the last number when we at the end of the string
+		pos = 0;
+		while(pos + 1 < buffer.length && *at && *at != ';') {
+			buffer[pos++] = *at;
+			at++;
+		}
+		if(*at)
+			at++; // skip the semicolon
+		buffer[pos] = 0;
+	}
+
+	//sdpyPrintDebugString(buffer[0 .. pos]);
+
+	import core.stdc.math;
+	auto f = atof(buffer.ptr);
+
+	if(f <= 0.0 || isnan(f) || isinf(f))
+		return 1.0;
+
+	return f;
+}
 
 void guiAbortProcess(string msg) {
 	import core.stdc.stdlib;
