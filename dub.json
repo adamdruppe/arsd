@@ -93,6 +93,17 @@
 			"sourceFiles": ["minigui_addons/color_dialog.d"]
 		},
 		{
+			"name": "minigui-datetime_picker",
+			"description": "Date and time picker widget add-on for minigui. New in v10.7.",
+			"targetType": "library",
+			"dflags": ["-mv=arsd.minigui_addons.datetime_picker=minigui_addons/datetime_picker.d"],
+			"dependencies": {
+				"arsd-official:minigui":"*"
+			},
+			"importPaths": ["."],
+			"sourceFiles": ["minigui_addons/datetime_picker.d"]
+		},
+		{
 			"name": "minigui-webview",
 			"description": "Webview widget add-on for minigui. New to dub in v10.5 but NOT STABLE in that release and it will break at random without notice until I say it is stable.",
 			"targetType": "library",
