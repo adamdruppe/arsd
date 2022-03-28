@@ -327,12 +327,12 @@ version(Windows) {
 }
 
 version(Windows) {
+	static if(__VERSION__ >= 2_083)
 	version(CRuntime_Microsoft) { // FIXME: mingw?
 		// assume we want commctrl6 whenever possible since there's really no reason not to
 		// and this avoids some of the manifest hassle
 		pragma(linkerDirective, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"");
 	}
-
 }
 
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
