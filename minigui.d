@@ -10845,13 +10845,13 @@ class Button : MouseActivatedWidget {
 			super(parent);
 
 			// BS_BITMAP is set when we want image only, so checking for exactly that combination
-			enum imgFlags = ImageLabel.DisplayFlags.displayImage;
-			auto extraStyle = ((label.displayFlags & imgFlags) == imgFlags) ? BS_BITMAP : 0;
+			enum imgFlags = ImageLabel.DisplayFlags.displayImage | ImageLabel.DisplayFlags.displayText;
+			auto extraStyle = ((label.displayFlags & imgFlags) == ImageLabel.DisplayFlags.displayImage) ? BS_BITMAP : 0;
 
-			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle);
+			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle, WS_EX_TRANSPARENT );
 
 			if(label.image) {
-				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
+				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image, true);
 
 				SendMessageW(hwnd, BM_SETIMAGE, IMAGE_BITMAP, cast(LPARAM) sprite.nativeHandle);
 			}
