@@ -326,6 +326,15 @@ version(Windows) {
 	static import gdi = core.sys.windows.wingdi;
 }
 
+version(Windows) {
+	static if(__VERSION__ >= 2_083)
+	version(CRuntime_Microsoft) { // FIXME: mingw?
+		// assume we want commctrl6 whenever possible since there's really no reason not to
+		// and this avoids some of the manifest hassle
+		pragma(linkerDirective, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"");
+	}
+}
+
 // this is a hack to call the original window procedure on native win32 widgets if our event listener thing prevents default.
 private bool lastDefaultPrevented;
 
@@ -10485,6 +10494,13 @@ class OnOffSwitch : MouseActivatedWidget {
 +/
 struct ImageLabel {
 	/++
+		Defines a label+image combo used by some widgets.
+		
+		If you provide just a text label, that is all the widget will try to
+		display. Or just an image will display just that. If you provide both,
+		it may display both text and image side by side or display the image
+		and offer text on an input event depending on the widget.
+
 		History:
 			The `alignment` parameter was added on September 27, 2021
 	+/
@@ -10494,6 +10510,7 @@ struct ImageLabel {
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(string label, MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
@@ -10501,12 +10518,14 @@ struct ImageLabel {
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.image = image;
 		this.displayFlags = DisplayFlags.displayImage;
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(string label, MemoryImage image, int displayFlags, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
@@ -10836,6 +10855,9 @@ class Button : MouseActivatedWidget {
 
 		History:
 			The [ImageLabel] overload was added on June 21, 2021 (dub v10.1).
+
+			The button with label and image will respect requests to show both on Windows as
+			of March 28, 2022 iff you provide a manifest file to opt into common controls v6.
 	+/
 	this(ImageLabel label, Widget parent) {
 		version(win32_widgets) {
@@ -10845,13 +10867,13 @@ class Button : MouseActivatedWidget {
 			super(parent);
 
 			// BS_BITMAP is set when we want image only, so checking for exactly that combination
-			enum imgFlags = ImageLabel.DisplayFlags.displayImage;
-			auto extraStyle = ((label.displayFlags & imgFlags) == imgFlags) ? BS_BITMAP : 0;
+			enum imgFlags = ImageLabel.DisplayFlags.displayImage | ImageLabel.DisplayFlags.displayText;
+			auto extraStyle = ((label.displayFlags & imgFlags) == ImageLabel.DisplayFlags.displayImage) ? BS_BITMAP : 0;
 
-			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle);
+			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle, WS_EX_TRANSPARENT );
 
 			if(label.image) {
-				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
+				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image, true);
 
 				SendMessageW(hwnd, BM_SETIMAGE, IMAGE_BITMAP, cast(LPARAM) sprite.nativeHandle);
 			}
