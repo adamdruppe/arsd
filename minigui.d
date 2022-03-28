@@ -10485,6 +10485,13 @@ class OnOffSwitch : MouseActivatedWidget {
 +/
 struct ImageLabel {
 	/++
+		Defines a label+image combo used by some widgets.
+		
+		If you provide just a text label, that is all the widget will try to
+		display. Or just an image will display just that. If you provide both,
+		it may display both text and image side by side or display the image
+		and offer text on an input event depending on the widget.
+
 		History:
 			The `alignment` parameter was added on September 27, 2021
 	+/
@@ -10494,6 +10501,7 @@ struct ImageLabel {
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(string label, MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
@@ -10501,12 +10509,14 @@ struct ImageLabel {
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(MemoryImage image, TextAlignment alignment = TextAlignment.Center) {
 		this.image = image;
 		this.displayFlags = DisplayFlags.displayImage;
 		this.alignment = alignment;
 	}
 
+	/// ditto
 	this(string label, MemoryImage image, int displayFlags, TextAlignment alignment = TextAlignment.Center) {
 		this.label = label;
 		this.image = image;
@@ -10836,6 +10846,9 @@ class Button : MouseActivatedWidget {
 
 		History:
 			The [ImageLabel] overload was added on June 21, 2021 (dub v10.1).
+
+			The button with label and image will respect requests to show both on Windows as
+			of March 28, 2022 iff you provide a manifest file to opt into common controls v6.
 	+/
 	this(ImageLabel label, Widget parent) {
 		version(win32_widgets) {
