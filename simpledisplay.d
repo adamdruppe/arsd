@@ -9904,7 +9904,7 @@ void sdpyPrintDebugString(string fileOverride = null, T...)(T t) nothrow @truste
 	try {
 		version(Windows) {
 			import core.sys.windows.wincon;
-			if(AttachConsole(ATTACH_PARENT_PROCESS))
+			if(!AttachConsole(ATTACH_PARENT_PROCESS))
 				AllocConsole();
 			const(char)* fn = "CONOUT$";
 		} else version(Posix) {
