@@ -1851,7 +1851,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 							);
 							+/
 						}
-						// import std.stdio; writeln("Here", MonitorInfo.info);
+					// import std.stdio; writeln("Here", MonitorInfo.info);
 					}
 				}
 
@@ -1894,6 +1894,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 			static MonitorInfo[] info;
 		}
+		bool screenPositionKnown;
 		int screenPositionX;
 		int screenPositionY;
 		void updateActualDpi(bool loadingNow = false) {
@@ -14811,9 +14812,28 @@ version(X11) {
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
 
-				win.screenPositionX = event.x;
-				win.screenPositionY = event.y;
-				win.updateActualDpi();
+				/+
+					The ICCCM says window managers must send a synthetic event when the window
+					is moved but NOT when it is resized. In the resize case, an event is sent
+					with position (0, 0) which can be wrong and break the dpi calculations.
+
+					So we only consider the synthetic events from the WM and otherwise
+					need to wait for some other event to get the position which... sucks.
+
+					I'd rather not have windows changing their layout on mouse motion after
+					switching monitors... might be forced to but for now just ignoring it.
+
+					Easiest way to switch monitors without sending a size position is by
+					maximize or fullscreen in a setup like mine, but on most setups those
+					work on the monitor it is already living on, so it should be ok most the
+					time.
+				+/
+				if(event.send_event) {
+					win.screenPositionKnown = true;
+					win.screenPositionX = event.x;
+					win.screenPositionY = event.y;
+					win.updateActualDpi();
+				}
 
 				recordX11ResizeAsync(display, *win, event.width, event.height);
 			}

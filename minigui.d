@@ -11158,7 +11158,7 @@ class TextLabel : Widget {
 	override int minWidth() { return 32; }
 
 	override int flexBasisHeight() { return minHeight(); }
-	override int flexBasisWidth() { return cast(int) label_.length * 7; }
+	override int flexBasisWidth() { return defaultTextWidth(label); }
 
 	string label_;
 
@@ -11216,9 +11216,10 @@ class TextLabel : Widget {
 	TextAlignment alignment;
 
 	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
 		painter.outlineColor = getComputedStyle().foregroundColor;
 		painter.drawText(Point(0, 0), this.label, Point(width, height), alignment);
+		return bounds;
 	}
 
 }
