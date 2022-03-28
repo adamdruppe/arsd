@@ -3237,7 +3237,11 @@ class Element : DomParent {
 		This does not match what real innerText does!
 		http://perfectionkills.com/the-poor-misunderstood-innerText/
 
-		It is more like textContent.
+		It is more like [textContent].
+
+		See_Also:
+			[visibleText], which is closer to what the real `innerText`
+			does.
 	*/
 	@scriptable
 	@property string innerText() const {
@@ -3251,8 +3255,38 @@ class Element : DomParent {
 		return s;
 	}
 
-	///
+	/// ditto
 	alias textContent = innerText;
+
+	/++
+		Gets the element's visible text, similar to how it would look assuming
+		the document was HTML being displayed by a browser. This means it will
+		attempt whitespace normalization (unless it is a `<pre>` tag), add `\n`
+		characters for `<br>` tags, and I reserve the right to make it process
+		additional css and tags in the future.
+
+		If you need specific output, use the more stable [textContent] property
+		or iterate yourself with [tree] or a recursive function with [children].
+
+		History:
+			Added March 25, 2022 (dub v10.8)
+	+/
+	string visibleText() const {
+		return this.visibleTextHelper(this.tagName == "pre");
+	}
+
+	private string visibleTextHelper(bool pre) const {
+		string result;
+		foreach(thing; this.children) {
+			if(thing.nodeType == NodeType.Text)
+				result ~= pre ? thing.nodeValue : normalizeWhitespace(thing.nodeValue);
+			else if(thing.tagName == "br")
+				result ~= "\n";
+			else
+				result ~= thing.visibleTextHelper(pre || thing.tagName == "pre");
+		}
+		return result;
+	}
 
 	/**
 		Sets the inside text, replacing all children. You don't
@@ -5583,8 +5617,10 @@ struct DomMutationEvent {
 private immutable static string[] htmlSelfClosedElements = [
 	// html 4
 	"area","base","br","col","hr","img","input","link","meta","param",
+
 	// html 5
-	"embed","source","track","wbr" ];
+	"embed","source","track","wbr"
+];
 
 private immutable static string[] htmlInlineElements = [
 	"span", "strong", "em", "b", "i", "a"
@@ -7867,6 +7903,49 @@ void fillForm(T)(Form form, T obj, string name) {
 	fillData((k, v) => form.setValue(k, v), obj, name); 
 } 
 
+/++
+	Normalizes the whitespace in the given text according to HTML rules.
+
+	History:
+		Added March 25, 2022 (dub v10.8)
++/
+string normalizeWhitespace(string text) {
+	string ret;
+	ret.reserve(text.length);
+	bool lastWasWhite = true;
+	foreach(char ch; text) {
+		if(ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+			if(lastWasWhite)
+				continue;
+			lastWasWhite = true;
+			ch = ' ';
+		} else {
+			lastWasWhite = false;
+		}
+
+		ret ~= ch;
+	}
+
+	return ret.stripRight;
+}
+
+unittest {
+	assert(normalizeWhitespace("    foo   ") == "foo");
+	assert(normalizeWhitespace("    f\n \t oo   ") == "f oo");
+}
+
+unittest {
+	Document document;
+
+	document = new Document("<test> foo \r </test>");
+	assert(document.root.visibleText == "foo");
+
+	document = new Document("<test> foo \r <br>hi</test>");
+	assert(document.root.visibleText == "foo\nhi");
+
+	document = new Document("<test> foo \r <br>hi<pre>hi\nthere\n    indent<br />line</pre></test>");
+	assert(document.root.visibleText == "foo\nhihi\nthere\n    indent\nline", document.root.visibleText);
+}
 
 /+
 /+
