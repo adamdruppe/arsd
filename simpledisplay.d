@@ -6550,31 +6550,36 @@ version(X11) {
 }
 
 version(Windows) {
-	/// Platform-specific for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application).
+	/++
+		See [SyntheticInput.sendSyntheticInput] instead for cross-platform applications.
+
+		This is platform-specific UTF-16 function for Windows. Sends a string as key press and release events to the actively focused window (not necessarily your application).
+	+/
 	void sendSyntheticInput(wstring s) {
-		INPUT[] inputs;
-		inputs.reserve(s.length * 2);
+			INPUT[] inputs;
+			inputs.reserve(s.length * 2);
 
-		foreach(wchar c; s) {
-			INPUT input;
-			input.type = INPUT_KEYBOARD;
-			input.ki.wScan = c;
-			input.ki.dwFlags = KEYEVENTF_UNICODE;
-			inputs ~= input;
+			foreach(wchar c; s) {
+				INPUT input;
+				input.type = INPUT_KEYBOARD;
+				input.ki.wScan = c;
+				input.ki.dwFlags = KEYEVENTF_UNICODE;
+				inputs ~= input;
 
-			input.ki.dwFlags |= KEYEVENTF_KEYUP;
-			inputs ~= input;
-		}
+				input.ki.dwFlags |= KEYEVENTF_KEYUP;
+				inputs ~= input;
+			}
 
-		if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
-			throw new Exception("SendInput failed");
-		}
+			if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
+				throw new Exception("SendInput failed");
+			}
+
 	}
 
 
 	// global hotkey helper function
 
-	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID.
+	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID. See [GlobalHotkeyManager] for Linux. Maybe some day I will merge these.
 	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
 		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
@@ -6623,33 +6628,39 @@ version(Windows) {
 version (X11) {
 	pragma(lib, "dl");
 	import core.sys.posix.dlfcn;
+}
 
-	/++
-		Allows for sending synthetic input to the X server via the Xtst
-		extension.
+/++
+	Allows for sending synthetic input to the X server via the Xtst
+	extension or on Windows using SendInput.
 
-		Please remember user input is meant to be user - don't use this
-		if you have some other alternative!
+	Please remember user input is meant to be user - don't use this
+	if you have some other alternative!
 
-		If you need this on Windows btw, the top-level [sendSyntheticInput] shows
-		the Win32 api to start it, but I only did basics there, PR welcome if you like,
-		it is an easy enough function to use.
+	History:
+		Added May 17, 2020 with the X implementation.
 
-		History: Added May 17, 2020.
-	+/
-	struct SyntheticInput {
-		@disable this();
+		Added unified implementation for Windows on April 3, 2022. (Prior to that, you had to use the top-level [sendSyntheticInput] or the Windows SendInput call directly.)
+	Bugs:
+		All methods on OSX Cocoa will throw not yet implemented exceptions.
++/
+struct SyntheticInput {
+	@disable this();
 
+	private int* refcount;
+
+	version(X11) {
 		private void* lib;
-		private int* refcount;
 
 		private extern(C) {
 			void function(Display*, uint keycode, bool press, arch_ulong delay) XTestFakeKeyEvent;
 			void function(Display*, uint button, bool press, arch_ulong delay) XTestFakeButtonEvent;
 		}
+	}
 
-		/// The dummy param must be 0.
-		this(int dummy) {
+	/// The dummy param must be 0.
+	this(int dummy) {
+		version(X11) {
 			lib = dlopen("libXtst.so", RTLD_NOW);
 			if(lib is null)
 				throw new Exception("cannot load xtest lib extension");
@@ -6663,49 +6674,136 @@ version (X11) {
 				throw new Exception("No XTestFakeKeyEvent");
 			if(XTestFakeButtonEvent is null)
 				throw new Exception("No XTestFakeButtonEvent");
-
-			refcount = new int;
-			*refcount = 1;
 		}
 
-		this(this) {
-			if(refcount)
-				*refcount += 1;
-		}
+		refcount = new int;
+		*refcount = 1;
+	}
 
-		~this() {
-			if(refcount) {
-				*refcount -= 1;
-				if(*refcount == 0)
-					// I commented this because if I close the lib before
-					// XCloseDisplay, it is liable to segfault... so just
-					// gonna keep it loaded if it is loaded, no big deal
-					// anyway.
-					{} // dlclose(lib);
+	this(this) {
+		if(refcount)
+			*refcount += 1;
+	}
+
+	~this() {
+		if(refcount) {
+			*refcount -= 1;
+			if(*refcount == 0)
+				// I commented this because if I close the lib before
+				// XCloseDisplay, it is liable to segfault... so just
+				// gonna keep it loaded if it is loaded, no big deal
+				// anyway.
+				{} // dlclose(lib);
+		}
+	}
+
+	/++
+		Simulates typing a string into the keyboard.
+
+		Bugs:
+			On X11, this ONLY works with basic ascii! On Windows, it can handle more.
+
+			Not implemented except on Windows and X11.
+	+/
+	void sendSyntheticInput(string s) {
+		version(Windows) {
+			INPUT[] inputs;
+			inputs.reserve(s.length * 2);
+
+			auto ei = GetMessageExtraInfo();
+
+			foreach(wchar c; s) {
+				INPUT input;
+				input.type = INPUT_KEYBOARD;
+				input.ki.wScan = c;
+				input.ki.dwFlags = KEYEVENTF_UNICODE;
+				input.ki.dwExtraInfo = ei;
+				inputs ~= input;
+
+				input.ki.dwFlags |= KEYEVENTF_KEYUP;
+				inputs ~= input;
 			}
-		}
 
-		/// This ONLY works with basic ascii!
-		void sendSyntheticInput(string s) {
+			if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
+				throw new Exception("SendInput failed");
+			}
+		} else version(X11) {
 			int delay = 0;
 			foreach(ch; s) {
 				pressKey(cast(Key) ch, true, delay);
 				pressKey(cast(Key) ch, false, delay);
 				delay += 5;
 			}
-		}
+		} else throw new NotYetImplementedException();
+	}
 
-		/++
-			Sends a fake press key event.
+	/++
+		Sends a fake press or release key event.
 
-			Please note you need to call [flushGui] or return to the event loop for this to actually be sent.
-		+/
-		void pressKey(Key key, bool pressed, int delay = 0) {
+		Please note you need to call [flushGui] or return to the event loop for this to actually be sent on X11.
+
+		Bugs:
+			The `delay` parameter is not implemented yet on Windows.
+
+			Not implemented except on Windows and X11.
+	+/
+	void pressKey(Key key, bool pressed, int delay = 0) {
+		version(Windows) {
+			INPUT input;
+			input.type = INPUT_KEYBOARD;
+			input.ki.wVk = cast(ushort) key;
+
+			input.ki.dwFlags = pressed ? 0 : KEYEVENTF_KEYUP;
+			input.ki.dwExtraInfo = GetMessageExtraInfo();
+
+			if(SendInput(1, &input, INPUT.sizeof) != 1) {
+				throw new Exception("SendInput failed");
+			}
+		} else version(X11) {
 			XTestFakeKeyEvent(XDisplayConnection.get, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
-		}
+		} else throw new NotYetImplementedException();
+	}
 
-		///
-		void pressMouseButton(MouseButton button, bool pressed, int delay = 0) {
+	/++
+		Sends a fake mouse button press or release event.
+
+		Please note you need to call [flushGui] or return to the event loop for this to actually be sent on X11.
+
+		`pressed` param must be `true` if button is `wheelUp` or `wheelDown`.
+
+		Bugs:
+			The `delay` parameter is not implemented yet on Windows.
+
+			The backButton and forwardButton will throw NotYetImplementedException on Windows.
+
+			All arguments will throw NotYetImplementedException on OSX Cocoa.
+	+/
+	void pressMouseButton(MouseButton button, bool pressed, int delay = 0) {
+		version(Windows) {
+			INPUT input;
+			input.type = INPUT_MOUSE;
+			input.mi.dwExtraInfo = GetMessageExtraInfo();
+
+			// input.mi.mouseData for a wheel event
+
+			switch(button) {
+				case MouseButton.left: input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; break;
+				case MouseButton.middle: input.mi.dwFlags = pressed ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
+				case MouseButton.right: input.mi.dwFlags = pressed ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; break;
+				case MouseButton.wheelUp:
+				case MouseButton.wheelDown:
+					input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+					input.mi.mouseData = button == MouseButton.wheelUp ? 120 : -120;
+				break;
+				case MouseButton.backButton: throw new NotYetImplementedException(); break;
+				case MouseButton.forwardButton: throw new NotYetImplementedException(); break;
+				default:
+			}
+
+			if(SendInput(1, &input, INPUT.sizeof) != 1) {
+				throw new Exception("SendInput failed");
+			}
+		} else version(X11) {
 			int btn;
 
 			switch(button) {
@@ -6722,22 +6820,48 @@ version (X11) {
 			assert(btn);
 
 			XTestFakeButtonEvent(XDisplayConnection.get, btn, pressed, delay);
-		}
+		} else throw new NotYetImplementedException();
+	}
 
-		///
-		static void moveMouseArrowBy(int dx, int dy) {
+	///
+	static void moveMouseArrowBy(int dx, int dy) {
+		version(Windows) {
+			INPUT input;
+			input.type = INPUT_MOUSE;
+			input.mi.dwExtraInfo = GetMessageExtraInfo();
+			input.mi.dx = dx;
+			input.mi.dy = dy;
+			input.mi.dwFlags = MOUSEEVENTF_MOVE;
+
+			if(SendInput(1, &input, INPUT.sizeof) != 1) {
+				throw new Exception("SendInput failed");
+			}
+		} else version(X11) {
 			auto disp = XDisplayConnection.get();
 			XWarpPointer(disp, None, None, 0, 0, 0, 0, dx, dy);
 			XFlush(disp);
-		}
+		} else throw new NotYetImplementedException();
+	}
 
-		///
-		static void moveMouseArrowTo(int x, int y) {
+	///
+	static void moveMouseArrowTo(int x, int y) {
+		version(Windows) {
+			INPUT input;
+			input.type = INPUT_MOUSE;
+			input.mi.dwExtraInfo = GetMessageExtraInfo();
+			input.mi.dx = x;
+			input.mi.dy = y;
+			input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+
+			if(SendInput(1, &input, INPUT.sizeof) != 1) {
+				throw new Exception("SendInput failed");
+			}
+		} else version(X11) {
 			auto disp = XDisplayConnection.get();
 			auto root = RootWindow(disp, DefaultScreen(disp));
 			XWarpPointer(disp, None, root, 0, 0, 0, 0, x, y);
 			XFlush(disp);
-		}
+		} else throw new NotYetImplementedException();
 	}
 }
 
