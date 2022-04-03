@@ -1400,6 +1400,16 @@ enum WindowFlags : int {
 			Added February 23, 2021 but not yet stabilized.
 	+/
 	transient = 64,
+	/++
+		This indicates that the window manages its own platform-specific child window input focus. You must use a delegate, [SimpleWindow.setRequestedInputFocus], to set the input when requested. This delegate returns the handle to the window that should receive the focus.
+
+		This is currently only used for the WM_TAKE_FOCUS protocol on X11 at this time.
+
+		History:
+			Added April 1, 2022
+	+/
+	managesChildWindowFocus = 128,
+
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
@@ -2072,6 +2082,17 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 		_suppressDestruction = true; // so it doesn't try to close
 	}
+
+	/++
+		Used iff [WindowFlags.managesChildWindowFocus] is set when the window is created.
+		The delegate will be called when the window manager asks you to take focus.
+
+		This is currently only used for the WM_TAKE_FOCUS protocol on X11 at this time.
+
+		History:
+			Added April 1, 2022 (dub v10.8)
+	+/
+	SimpleWindow delegate() setRequestedInputFocus;
 
 	/// Experimental, do not use yet
 	/++
@@ -14128,6 +14149,10 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
 
+			bool overrideRedirect = false;
+			if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.notification)// || windowType == WindowTypes.nestedChild)
+				overrideRedirect = true;
+
 			version(without_opengl) {}
 			else {
 				if(opengl == OpenGlOptions.yes) {
@@ -14181,9 +14206,11 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 					auto root = RootWindow(display, screen);
 					swa.colormap = XCreateColormap(display, root, vi.visual, AllocNone);
 
+					swa.override_redirect = overrideRedirect;
+
 					window = XCreateWindow(display, (windowType != WindowTypes.nestedChild || parent is null) ? root : parent.impl.window,
 						0, 0, width, height,
-						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap, &swa);
+						0, vi.depth, 1 /* InputOutput */, vi.visual, CWColormap | CWOverrideRedirect, &swa);
 
 					// now try to use `glXCreateContextAttribsARB()` if it's here
 					if (!useLegacy) {
@@ -14218,10 +14245,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 
 			if(opengl == OpenGlOptions.no) {
-
-				bool overrideRedirect = false;
-				if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.notification)
-					overrideRedirect = true;
 
 				XSetWindowAttributes swa;
 				swa.background_pixel = WhitePixel(display, screen);
@@ -14281,6 +14304,10 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				//{ import core.stdc.stdio; printf("winclass: [%s]\n", sdpyWindowClassStr); }
 				XClassHint klass;
 				XWMHints wh;
+				if(this.customizationFlags & WindowFlags.managesChildWindowFocus) {
+					wh.input = true;
+					wh.flags |= InputHint;
+				}
 				XSizeHints size;
 				klass.res_name = sdpyWindowClassStr;
 				klass.res_class = sdpyWindowClassStr;
@@ -14293,10 +14320,15 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 			// This gives our window a close button
 			if (windowType != WindowTypes.eventOnly) {
-				// FIXME: actually implement the WM_TAKE_FOCUS correctly
-				//Atom[2] atoms = [GetAtom!"WM_DELETE_WINDOW"(display), GetAtom!"WM_TAKE_FOCUS"(display)];
-				Atom[1] atoms = [GetAtom!"WM_DELETE_WINDOW"(display)];
-				XSetWMProtocols(display, window, atoms.ptr, cast(int) atoms.length);
+				Atom[2] atoms = [GetAtom!"WM_DELETE_WINDOW"(display), GetAtom!"WM_TAKE_FOCUS"(display)];
+				int useAtoms;
+				if(this.customizationFlags & WindowFlags.managesChildWindowFocus) {
+					useAtoms = 2;
+				} else {
+					useAtoms = 1;
+				}
+				assert(useAtoms <= atoms.length);
+				XSetWMProtocols(display, window, atoms.ptr, useAtoms);
 			}
 
 			// FIXME: windowType and customizationFlags
@@ -14862,21 +14894,64 @@ version(X11) {
 		  break;
 		  case EventType.FocusIn:
 		  case EventType.FocusOut:
+
 		  	if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
+				/+
+
+				void info(string detail) {
+					string s;
+					import std.conv;
+					import std.datetime;
+					s ~= to!string(Clock.currTime);
+					s ~= " ";
+					s ~= e.type == EventType.FocusIn ? "in " : "out";
+					s ~= " ";
+					s ~= win.windowType == WindowTypes.nestedChild ? "child " : "main  ";
+					s ~= e.xfocus.mode == NotifyModes.NotifyNormal ? " normal ": " grabbed ";
+					s ~= detail;
+					s ~= " ";
+
+					sdpyPrintDebugString(s);
+
+				}
+
+				switch(e.xfocus.detail) {
+					case NotifyDetail.NotifyAncestor: info("Ancestor"); break;
+					case NotifyDetail.NotifyVirtual: info("Virtual"); break;
+					case NotifyDetail.NotifyInferior: info("Inferior"); break;
+					case NotifyDetail.NotifyNonlinear: info("Nonlinear"); break;
+					case NotifyDetail.NotifyNonlinearVirtual: info("nlinearvirtual"); break;
+					case NotifyDetail.NotifyPointer: info("pointer"); break;
+					case NotifyDetail.NotifyPointerRoot: info("pointerroot"); break;
+					case NotifyDetail.NotifyDetailNone: info("none"); break;
+					default:
+
+				}
+				+/
+
+
 				if (win.xic !is null) {
 					//{ import core.stdc.stdio : printf; printf("XIC focus change!\n"); }
 					if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
 				}
 
+				if(e.xfocus.detail == NotifyDetail.NotifyPointer)
+					break; // just ignore these they seem irrelevant
+
+				auto old = win._focused;
 				win._focused = e.type == EventType.FocusIn;
+
+				// yes, we are losing the focus, but to our own child. that's actually kinda keeping it.
+				if(e.type == EventType.FocusOut && e.xfocus.detail == NotifyDetail.NotifyInferior)
+					win._focused = true;
 
 				if(win.demandingAttention)
 					demandAttention(*win, false);
 
-				if(win.onFocusChange) {
+				if(old != win._focused && win.onFocusChange) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
-					win.onFocusChange(e.type == EventType.FocusIn);
+					win.onFocusChange(win._focused);
 				}
 			}
 		  break;
@@ -14915,14 +14990,25 @@ version(X11) {
 					}
 
 				} else if(e.xclient.data.l[0] == GetAtom!"WM_TAKE_FOCUS"(e.xany.display)) {
-					import std.stdio; writeln("HAPPENED");
+					//import std.stdio; writeln("HAPPENED");
 					// user clicked the close button on the window manager
 					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
 						XUnlockDisplay(display);
 						scope(exit) XLockDisplay(display);
 
+						auto setTo = *win;
+
+						if(win.setRequestedInputFocus !is null) {
+							auto s = win.setRequestedInputFocus();
+							if(s !is null)
+								setTo = s;
+						}
+
+						assert(setTo !is null);
+
 						// FIXME: so this is actually supposed to focus to a relevant child window if appropriate
-						XSetInputFocus(display, e.xclient.window, RevertToParent, e.xclient.data.l[1]);
+
+						XSetInputFocus(display, setTo.impl.window, RevertToParent, e.xclient.data.l[1]);
 					}
 				} else if(e.xclient.message_type == GetAtom!"MANAGER"(e.xany.display)) {
 					foreach(nai; NotificationAreaIcon.activeIcons)
@@ -21589,9 +21675,11 @@ void guiAbortProcess(string msg) {
 		WCharzBuffer t = WCharzBuffer(msg);
 		MessageBoxW(null, t.ptr, "Program Termination"w.ptr, 0);
 	} else {
-		import std.stdio;
-		stderr.writeln(msg);
-		stderr.flush();
+		import core.stdc.stdio;
+		fwrite(msg.ptr, 1, msg.length, stderr);
+		msg = "\n";
+		fwrite(msg.ptr, 1, msg.length, stderr);
+		fflush(stderr);
 	}
 
 	abort();
