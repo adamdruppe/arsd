@@ -6797,8 +6797,8 @@ struct SyntheticInput {
 					input.mi.dwFlags = MOUSEEVENTF_WHEEL;
 					input.mi.mouseData = button == MouseButton.wheelUp ? 120 : -120;
 				break;
-				case MouseButton.backButton: throw new NotYetImplementedException(); break;
-				case MouseButton.forwardButton: throw new NotYetImplementedException(); break;
+				case MouseButton.backButton: throw new NotYetImplementedException();
+				case MouseButton.forwardButton: throw new NotYetImplementedException();
 				default:
 			}
 
