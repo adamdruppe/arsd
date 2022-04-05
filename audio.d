@@ -4,8 +4,6 @@ module arsd.audio;
 import sdl.SDL;
 import sdl.SDL_mixer;
 
-import std.string;
-
 import arsd.engine;
 
 bool audioIsLoaded; // potential hack material
@@ -15,7 +13,7 @@ class Sound {
 	this(char[] filename){
 		if(!audioIsLoaded)
 			return;
-		sfx = Mix_LoadWAV(std.string.toStringz(filename));
+		sfx = Mix_LoadWAV((filename ~ "\0").ptr);
 		if(sfx is null)
 			throw new Exception(immutableString("Sound load " ~ filename));
 	}
@@ -45,7 +43,7 @@ class Music {
 	this(char[] filename){
 		if(!audioIsLoaded)
 			return;
-		mus = Mix_LoadMUS(std.string.toStringz(filename));
+		mus = Mix_LoadMUS((filename~"\0").ptr);
 		if(mus is null)
 			throw new Exception(immutableString("Music load " ~ filename));
 	}
