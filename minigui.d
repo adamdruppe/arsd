@@ -7619,6 +7619,17 @@ class Window : Widget {
 		win.releaseInputGrab();
 	}
 
+	/++
+		Sets the window icon which is often seen in title bars and taskbars.
+
+		History:
+			Added April 5, 2022 (dub v10.8)
+	+/
+	@property void icon(MemoryImage icon) {
+		if(win && icon)
+			win.icon = icon;
+	}
+
 	///
 	@scriptable
 	@property bool focused() {
