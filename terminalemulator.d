@@ -3628,6 +3628,12 @@ version(Posix) {
 
 			argv[args.length] = null;
 
+			termios info;
+			ubyte[128] hack; // jic that druntime definition is still wrong
+			tcgetattr(master, &info);
+			info.c_cc[VERASE] = '\b';
+			tcsetattr(master, TCSANOW, &info);
+
 			core.sys.posix.unistd.execv(argv[0], argv);
 		} else {
 			childrenAlive = 1;
