@@ -3069,12 +3069,14 @@ version(use_openssl) {
 			if(ossllib_handle is null)
 				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
 		} else version(Windows) {
-			//ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
-			//if(ossllib_handle is null)
-			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
-			//oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
-			//if(oeaylib_handle)
-			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+			version(X86_64)
+				ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
+			if(ossllib_handle is null)
+				ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
+			version(X86_64)
+				oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
+			if(oeaylib_handle is null)
+				oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
 
 			if(ossllib_handle is null) {
 				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
