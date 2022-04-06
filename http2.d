@@ -3069,7 +3069,11 @@ version(use_openssl) {
 			if(ossllib_handle is null)
 				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
 		} else version(Windows) {
+			//ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
+			//if(ossllib_handle is null)
 			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
+			//oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
+			//if(oeaylib_handle)
 			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
 
 			if(ossllib_handle is null) {
@@ -4804,16 +4808,34 @@ version(Windows) {
 		PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
 
 	void loadCertificatesFromRegistry(SSL_CTX* ctx) {
-
 		auto store = CertOpenSystemStore(0, "ROOT");
-		if(store is null)
+		if(store is null) {
+			// import std.stdio; writeln("failed");
 			return;
+		}
 		scope(exit)
 			CertCloseStore(store, 0);
 
 		X509_STORE* ssl_store = SSL_CTX_get_cert_store(ctx);
 		PCCERT_CONTEXT c;
 		while((c = CertEnumCertificatesInStore(store, c)) !is null) {
+			FILETIME na = c.pCertInfo.NotAfter;
+			SYSTEMTIME st;
+			FileTimeToSystemTime(&na, &st);
+
+			/+
+			_CRYPTOAPI_BLOB i = cast() c.pCertInfo.Issuer;
+
+			char[256] buffer;
+			auto p = CertNameToStrA(X509_ASN_ENCODING, &i, CERT_SIMPLE_NAME_STR, buffer.ptr, cast(int) buffer.length);
+			import std.stdio; writeln(buffer[0 .. p]);
+			+/
+
+			if(st.wYear <= 2021) {
+				// see: https://www.openssl.org/blog/blog/2021/09/13/LetsEncryptRootCertExpire/
+				continue; // no point keeping an expired root cert and it can break Let's Encrypt anyway
+			}
+
 			const(ubyte)* thing = c.pbCertEncoded;
 			auto x509 = d2i_X509(null, &thing, c.cbCertEncoded);
 			if (x509) {
