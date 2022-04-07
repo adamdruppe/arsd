@@ -2504,7 +2504,7 @@ class ComboBox : ComboboxBase {
 	}
 
 	override int minHeight() { return defaultLineHeight * 3; }
-	override int maxHeight() { return options.length * defaultLineHeight + defaultLineHeight; }
+	override int maxHeight() { return cast(int) options.length * defaultLineHeight + defaultLineHeight; }
 	override int heightStretchiness() { return 5; }
 
 	version(custom_widgets) {
@@ -7084,9 +7084,10 @@ class HorizontalLayout : Layout {
 
 }
 
+version(Windows)
 private
 extern(Windows)
-int DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) nothrow {
+LRESULT DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) nothrow {
 	Widget* pwin = hwnd in Widget.nativeMapping;
 	if(pwin is null)
 		return DefWindowProc(hwnd, message, wparam, lparam);

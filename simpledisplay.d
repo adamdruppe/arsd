@@ -11026,7 +11026,7 @@ version(Windows) {
 			rect.right = invalidRect.right;
 			rect.top = invalidRect.top;
 			rect.bottom = invalidRect.bottom;
-			InvalidateRect(hwnd, &rect, true);
+			InvalidateRect(hwnd, &rect, false);
 		}
 		bool manualInvalidations;
 

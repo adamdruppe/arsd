@@ -116,7 +116,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 	private bool initialized;
 
-	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, Widget parent) {
+	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, BrowserSettings settings, Widget parent) {
 		// FIXME: openNewWindow
 		super(parent);
 		// that ctor sets containerWindow
@@ -246,19 +246,117 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 +/
 struct OpenNewWindowParams {
 	string url;
-	WebViewWidget delegate(Widget parent, bool enableJavascript = true) accept;
+	WebViewWidget delegate(Widget parent, BrowserSettings settings = BrowserSettings.init) accept;
+}
+
+/++
+	Represents a browser setting that can be left default or specifically turned on or off.
++/
+struct SettingValue {
+	private byte value = -1;
+
+	/++
+		Set it with `= true` or `= false`.
+	+/
+	void opAssign(bool enable) {
+		value = enable ? 1 : 0;
+	}
+
+	/++
+		And this resets it to the default value.
+	+/
+	void setDefault() {
+		value = -1;
+	}
+
+	/// If isDefault, it will use the default setting from the browser. Else, the getValue return value will be used. getValue is invalid if !isDefault.
+	bool isDefault() {
+		return value == -1;
+	}
+
+	/// ditto
+	bool getValue() {
+		return value == 1;
+	}
+}
+
+/++
+	Defines settings for a browser widget. Not all backends will respect all settings.
+
+	The order of members of this struct may change at any time. Refer to its members by
+	name.
++/
+struct BrowserSettings {
+	/// This is just disabling the automatic positional constructor, since that is not stable here.
+	this(typeof(null)) {}
+
+	string standardFontFamily;
+	string fixedFontFamily;
+	string serifFontFamily;
+	string sansSerifFontFamily;
+	string cursiveFontFamily;
+	string fantasyFontFamily;
+
+	int defaultFontSize;
+	int defaultFixedFontSize;
+	int minimumFontSize;
+	//int minimumLogicalFontSize;
+
+	SettingValue remoteFontsEnabled;
+	SettingValue javascriptEnabled;
+	SettingValue imagesEnabled;
+	SettingValue clipboardAccessEnabled;
+	SettingValue localStorageEnabled;
+
+	version(cef)
+	private void set(cef_browser_settings_t* browser_settings) {
+		alias settings = this;
+		if(settings.standardFontFamily)
+			browser_settings.standard_font_family = cef_string_t(settings.standardFontFamily);
+		if(settings.fixedFontFamily)
+			browser_settings.fixed_font_family = cef_string_t(settings.fixedFontFamily);
+		if(settings.serifFontFamily)
+			browser_settings.serif_font_family = cef_string_t(settings.serifFontFamily);
+		if(settings.sansSerifFontFamily)
+			browser_settings.sans_serif_font_family = cef_string_t(settings.sansSerifFontFamily);
+		if(settings.cursiveFontFamily)
+			browser_settings.cursive_font_family = cef_string_t(settings.cursiveFontFamily);
+		if(settings.fantasyFontFamily)
+			browser_settings.fantasy_font_family = cef_string_t(settings.fantasyFontFamily);
+		if(settings.defaultFontSize)
+			browser_settings.default_font_size = settings.defaultFontSize;
+		if(settings.defaultFixedFontSize)
+			browser_settings.default_fixed_font_size = settings.defaultFixedFontSize;
+		if(settings.minimumFontSize)
+			browser_settings.minimum_font_size = settings.minimumFontSize;
+
+		if(!settings.remoteFontsEnabled.isDefault())
+			browser_settings.remote_fonts = settings.remoteFontsEnabled.getValue() ? cef_state_t.STATE_ENABLED : cef_state_t.STATE_DISABLED;
+		if(!settings.javascriptEnabled.isDefault())
+			browser_settings.javascript = settings.javascriptEnabled.getValue() ? cef_state_t.STATE_ENABLED : cef_state_t.STATE_DISABLED;
+		if(!settings.imagesEnabled.isDefault())
+			browser_settings.image_loading = settings.imagesEnabled.getValue() ? cef_state_t.STATE_ENABLED : cef_state_t.STATE_DISABLED;
+		if(!settings.clipboardAccessEnabled.isDefault())
+			browser_settings.javascript_access_clipboard = settings.clipboardAccessEnabled.getValue() ? cef_state_t.STATE_ENABLED : cef_state_t.STATE_DISABLED;
+		if(!settings.localStorageEnabled.isDefault())
+			browser_settings.local_storage = settings.localStorageEnabled.getValue() ? cef_state_t.STATE_ENABLED : cef_state_t.STATE_DISABLED;
+
+	}
 }
 
 version(cef)
 class WebViewWidget_CEF : WebViewWidgetBase {
 	/++
-		Create a webview that does not support opening links in new windows.
+		Create a webview that does not support opening links in new windows and uses default settings to load the given url.
 	+/
 	this(string url, Widget parent) {
-		this(url, null, parent);
+		this(url, null, BrowserSettings.init, parent);
 	}
 
-	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, Widget parent) {
+	/++
+		Full-featured constructor.
+	+/
+	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, BrowserSettings settings, Widget parent) {
 		//semaphore = new Semaphore;
 		assert(CefApp.active);
 
@@ -272,14 +370,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		cef_browser_settings_t browser_settings;
 		browser_settings.size = cef_browser_settings_t.sizeof;
 
-		browser_settings.standard_font_family = cef_string_t("DejaVu Sans");
-		browser_settings.fixed_font_family = cef_string_t("DejaVu Sans Mono");
-		browser_settings.serif_font_family = cef_string_t("DejaVu Sans");
-		browser_settings.sans_serif_font_family = cef_string_t("DejaVu Sans");
-		browser_settings.cursive_font_family = cef_string_t("DejaVu Sans");
-		browser_settings.fantasy_font_family = cef_string_t("DejaVu Sans");
-
-		browser_settings.remote_fonts = cef_state_t.STATE_DISABLED;
+		settings.set(&browser_settings);
 
 		auto got = libcef.browser_host_create_browser(&window_info, client.passable, &cef_url, &browser_settings, null, null);
 	}
@@ -439,7 +530,7 @@ version(cef) {
 			const(cef_popup_features_t)* popupFeatures,
 			cef_window_info_t* windowInfo,
 			cef_client_t** client,
-			cef_browser_settings_t* settings,
+			cef_browser_settings_t* browser_settings,
 			cef_dictionary_value_t** extra_info,
 			int* no_javascript_access
 		) {
@@ -453,21 +544,24 @@ version(cef) {
 				import core.thread;
 				try { thread_attachThis(); } catch(Exception e) {}
 
+				// FIXME: change settings here
+
 				runInGuiThread({
 					ret = 1;
-					scope WebViewWidget delegate(Widget, bool) o = (parent, enableJavascript) {
+					scope WebViewWidget delegate(Widget, BrowserSettings) o = (parent, passed_settings) {
 						ret = 0;
 						if(parent !is null) {
 							auto widget = new WebViewWidget_CEF(this.client, parent);
 							(*windowInfo).parent_window = widget.containerWindow.nativeWindowHandle;
 
-							this.client.listOfWidgets ~= widget;
+							passed_settings.set(browser_settings);
+
 							return widget;
 						}
 						return null;
 					};
-					this.client.openNewWindow(OpenNewWindowParams("", o));
-						return;
+					this.client.openNewWindow(OpenNewWindowParams(target_url.toGC, o));
+					return;
 				});
 
 				return ret;
@@ -759,8 +853,6 @@ version(cef) {
 	}
 
 	class MiniguiCefClient : CEF!cef_client_t {
-
-		WebViewWidget_CEF[] listOfWidgets;
 
 		void delegate(scope OpenNewWindowParams) openNewWindow;
 
