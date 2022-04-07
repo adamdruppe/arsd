@@ -11976,6 +11976,10 @@ version(Windows) {
 					if(inSizeMove) {
 						SimpleWindow.processAllCustomEvents();
 						SimpleWindow.processAllCustomEvents();
+					} else {
+						// when it is all done, make sure everything is freshly drawn or there might be
+						// weird bugs left.
+						RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
 					}
 
 					oldWidth = this.width;

@@ -11033,7 +11033,8 @@ class Button : MouseActivatedWidget {
 			enum imgFlags = ImageLabel.DisplayFlags.displayImage | ImageLabel.DisplayFlags.displayText;
 			auto extraStyle = ((label.displayFlags & imgFlags) == ImageLabel.DisplayFlags.displayImage) ? BS_BITMAP : 0;
 
-			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle, WS_EX_TRANSPARENT );
+			// the transparent thing can mess up borders in other cases, so only going to keep it for bitmap things where it might matter
+			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle, extraStyle == BS_BITMAP ? WS_EX_TRANSPARENT : 0 );
 
 			if(label.image) {
 				sprite = Sprite.fromMemoryImage(parentWindow.win, label.image, true);
