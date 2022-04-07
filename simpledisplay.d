@@ -2897,8 +2897,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	private Image secret_icon_inner;
 
 
-	/// Set the icon that is seen in the title bar or taskbar, etc., for the user.
+	/// Set the icon that is seen in the title bar or taskbar, etc., for the user. If passed `null`, does nothing.
 	@property void icon(MemoryImage icon) {
+		if(icon is null)
+			return;
 		auto tci = icon.getAsTrueColorImage();
 		version(Windows) {
 			winIcon = new WindowsIcon(icon);
@@ -6795,8 +6797,8 @@ struct SyntheticInput {
 					input.mi.dwFlags = MOUSEEVENTF_WHEEL;
 					input.mi.mouseData = button == MouseButton.wheelUp ? 120 : -120;
 				break;
-				case MouseButton.backButton: throw new NotYetImplementedException(); break;
-				case MouseButton.forwardButton: throw new NotYetImplementedException(); break;
+				case MouseButton.backButton: throw new NotYetImplementedException();
+				case MouseButton.forwardButton: throw new NotYetImplementedException();
 				default:
 			}
 

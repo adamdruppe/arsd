@@ -34,7 +34,6 @@ version(linux)
 version(Windows)
 	version=wv2;
 
-
 /+
 	SPA mode: put favicon on top level window, no other user controls at top level, links to different domains always open in new window.
 +/
@@ -64,7 +63,13 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 	mixin Observable!(string, "title");
 	mixin Observable!(string, "url");
 	mixin Observable!(string, "status");
+
+	// not implemented on WV2
 	mixin Observable!(int, "loadingProgress");
+
+	// not implemented on WV2
+	mixin Observable!(string, "favicon_url");
+	mixin Observable!(MemoryImage, "favicon"); // please note it can be changed to null!
 
 	abstract void refresh();
 	abstract void back();
@@ -74,6 +79,8 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 	abstract void navigate(string url);
 
 	// the url and line are for error reporting purposes. They might be ignored.
+	// FIXME: add a callback with the reply. this can send a message from the js thread in cef and just ExecuteScript inWV2
+	// FIXME: add AddScriptToExecuteOnDocumentCreated for cef....
 	abstract void executeJavascript(string code, string url = null, int line = 0);
 	// for injecting stuff into the context
 	// abstract void executeJavascriptBeforeEachLoad(string code);
@@ -99,6 +106,8 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 
 // AddScriptToExecuteOnDocumentCreated
 
+
+
 version(wv2)
 class WebViewWidget_WV2 : WebViewWidgetBase {
 	private RC!ICoreWebView2 webview_window;
@@ -107,7 +116,8 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 	private bool initialized;
 
-	this(string url, Widget parent) {
+	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, Widget parent) {
+		// FIXME: openNewWindow
 		super(parent);
 		// that ctor sets containerWindow
 
@@ -207,17 +217,52 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 	}
 }
 
+/++
+	The openInNewWindow delegate is given these params.
+
+	To accept the new window, call
+
+	params.accept(parent_widget);
+
+	Please note, you can force it to replace the current tab
+	by just navigating your current thing to the given url instead
+	of accepting it.
+
+	If you accept with a null widget, it will create a new window
+	but then return null, since the new window is managed by the
+	underlying webview instead of by minigui.
+
+	If you do not call accept, the pop up will be blocked.
+
+	accept returns an instance to the newly created widget, which will
+	be a parent to the widget you passed.
+
+	accept will be called from the gui thread and it MUST not call into
+	any other webview methods. It should only create windows/widgets
+	and set event handlers etc.
+
+	You MUST not escape references to anything in this structure. It
+	is entirely strictly temporary!
++/
+struct OpenNewWindowParams {
+	string url;
+	WebViewWidget delegate(Widget parent, bool enableJavascript = true) accept;
+}
+
 version(cef)
 class WebViewWidget_CEF : WebViewWidgetBase {
+	/++
+		Create a webview that does not support opening links in new windows.
+	+/
 	this(string url, Widget parent) {
+		this(url, null, parent);
+	}
+
+	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, Widget parent) {
 		//semaphore = new Semaphore;
 		assert(CefApp.active);
 
-		super(parent);
-
-		flushGui();
-
-		mapping[containerWindow.nativeWindowHandle()] = this;
+		this(new MiniguiCefClient(openNewWindow), parent);
 
 		cef_window_info_t window_info;
 		window_info.parent_window = containerWindow.nativeWindowHandle;
@@ -227,28 +272,76 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		cef_browser_settings_t browser_settings;
 		browser_settings.size = cef_browser_settings_t.sizeof;
 
-		client = new MiniguiCefClient();
+		browser_settings.standard_font_family = cef_string_t("DejaVu Sans");
+		browser_settings.fixed_font_family = cef_string_t("DejaVu Sans Mono");
+		browser_settings.serif_font_family = cef_string_t("DejaVu Sans");
+		browser_settings.sans_serif_font_family = cef_string_t("DejaVu Sans");
+		browser_settings.cursive_font_family = cef_string_t("DejaVu Sans");
+		browser_settings.fantasy_font_family = cef_string_t("DejaVu Sans");
+
+		browser_settings.remote_fonts = cef_state_t.STATE_DISABLED;
 
 		auto got = libcef.browser_host_create_browser(&window_info, client.passable, &cef_url, &browser_settings, null, null);
+	}
 
-		/+
-		containerWindow.closeQuery = delegate() {
-			browserHandle.get_host.close_browser(true);
-			//containerWindow.close();
-		};
-		+/
+	/+
+	~this() {
+		import core.stdc.stdio;
+		import core.memory;
+		printf("CLEANUP %s\n", GC.inFinalizer ? "GC".ptr : "destroy".ptr);
+	}
+	+/
 
+	override void dispose() {
+		// sdpyPrintDebugString("closed");
+		// the window is already gone so too late to do this really....
+		// if(browserHandle) browserHandle.get_host.close_browser(true);
+
+		// sdpyPrintDebugString("DISPOSE");
+
+		if(win && win.nativeWindowHandle())
+			mapping.remove(win.nativeWindowHandle());
+		if(browserWindow)
+			browserMapping.remove(browserWindow);
+
+		.destroy(this); // but this is ok to do some memory management cleanup
+	}
+
+	private this(MiniguiCefClient client, Widget parent) {
+		super(parent);
+
+		this.client = client;
+
+		flushGui();
+
+		mapping[containerWindow.nativeWindowHandle()] = this;
+
+
+		this.parentWindow.addEventListener((FocusEvent fe) {
+			if(!browserHandle) return;
+			//browserHandle.get_host.set_focus(true);
+
+			executeJavascript("if(window.__arsdPreviouslyFocusedNode) window.__arsdPreviouslyFocusedNode.focus(); window.dispatchEvent(new FocusEvent(\"focus\"));");
+		});
+		this.parentWindow.addEventListener((BlurEvent be) {
+			if(!browserHandle) return;
+
+			executeJavascript("if(document.activeElement) { window.__arsdPreviouslyFocusedNode = document.activeElement; document.activeElement.blur(); } window.dispatchEvent(new FocusEvent(\"blur\"));");
+		});
+
+		bool closeAttempted = false;
+
+		this.parentWindow.addEventListener((scope ClosingEvent ce) {
+			if(!closeAttempted && browserHandle) {
+				browserHandle.get_host.close_browser(true);
+				ce.preventDefault();
+				// sdpyPrintDebugString("closing");
+			}
+			closeAttempted = true;
+		});
 	}
 
 	private MiniguiCefClient client;
-
-	/+
-	override void close() {
-		// FIXME: this should prolly be on the onclose event instead
-		mapping.remove[win.nativeWindowHandle()];
-		super.close();
-	}
-	+/
 
 	override void registerMovementAdditionalWork() {
 		if(browserWindow) {
@@ -258,6 +351,12 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		}
 	}
 
+	SimpleWindow browserWindowWrapped;
+	override SimpleWindow focusableWindow() {
+		if(browserWindowWrapped is null && browserWindow)
+			browserWindowWrapped = new SimpleWindow(browserWindow);
+		return browserWindowWrapped;
+	}
 
 	private NativeWindowHandle browserWindow;
 	private RC!cef_browser_t browserHandle;
@@ -311,6 +410,10 @@ version(cef) {
 	+/
 	void runOnWebView(RC!cef_browser_t browser, void delegate(WebViewWidget) dg) nothrow {
 		auto wh = cast(NativeWindowHandle) browser.get_host.get_window_handle;
+
+		import core.thread;
+		try { thread_attachThis(); } catch(Exception e) {}
+
 		runInGuiThreadAsync({
 			if(auto wvp = wh in WebViewWidget.browserMapping) {
 				dg(*wvp);
@@ -321,12 +424,67 @@ version(cef) {
 	}
 
 	class MiniguiCefLifeSpanHandler : CEF!cef_life_span_handler_t {
-		override int on_before_popup(RC!cef_browser_t, RC!cef_frame_t, const(cef_string_utf16_t)*, const(cef_string_utf16_t)*, cef_window_open_disposition_t, int, const(cef_popup_features_t)*, cef_window_info_t*, cef_client_t**, cef_browser_settings_t*, cef_dictionary_value_t**, int*) {
-			return 0;
+		private MiniguiCefClient client;
+		this(MiniguiCefClient client) {
+			this.client = client;
+		}
+
+		override int on_before_popup(
+			RC!cef_browser_t browser,
+			RC!cef_frame_t frame,
+			const(cef_string_t)* target_url,
+			const(cef_string_t)* target_frame_name,
+			cef_window_open_disposition_t target_disposition,
+			int user_gesture,
+			const(cef_popup_features_t)* popupFeatures,
+			cef_window_info_t* windowInfo,
+			cef_client_t** client,
+			cef_browser_settings_t* settings,
+			cef_dictionary_value_t** extra_info,
+			int* no_javascript_access
+		) {
+
+			if(this.client.openNewWindow is null)
+				return 1; // new windows disabled
+
+			try {
+				int ret;
+
+				import core.thread;
+				try { thread_attachThis(); } catch(Exception e) {}
+
+				runInGuiThread({
+					ret = 1;
+					scope WebViewWidget delegate(Widget, bool) o = (parent, enableJavascript) {
+						ret = 0;
+						if(parent !is null) {
+							auto widget = new WebViewWidget_CEF(this.client, parent);
+							(*windowInfo).parent_window = widget.containerWindow.nativeWindowHandle;
+
+							this.client.listOfWidgets ~= widget;
+							return widget;
+						}
+						return null;
+					};
+					this.client.openNewWindow(OpenNewWindowParams("", o));
+						return;
+				});
+
+				return ret;
+			} catch(Exception e) {
+				return 1;
+			}
+			/+
+			if(!user_gesture)
+				return 1; // if not created by the user, cancel it; basic popup blocking
+			+/
 		}
 		override void on_after_created(RC!cef_browser_t browser) {
 			auto handle = cast(NativeWindowHandle) browser.get_host().get_window_handle();
 			auto ptr = browser.passable; // this adds to the refcount until it gets inside
+
+			import core.thread;
+			try { thread_attachThis(); } catch(Exception e) {}
 
 			// the only reliable key (at least as far as i can tell) is the window handle
 			// so gonna look that up and do the sync mapping that way.
@@ -349,6 +507,16 @@ version(cef) {
 					wv.browserWindow = handle;
 					wv.browserHandle = RC!cef_browser_t(ptr);
 
+					wv.browserWindowWrapped = new SimpleWindow(wv.browserWindow);
+					/+
+					XSelectInput(XDisplayConnection.get, handle, EventMask.FocusChangeMask);
+					
+					wv.browserWindowWrapped.onFocusChange = (bool got) {
+						import std.format;
+						sdpyPrintDebugString(format("focus change %s %x", got, wv.browserWindowWrapped.impl.window));
+					};
+					+/
+
 					wv.registerMovementAdditionalWork();
 
 					WebViewWidget.browserMapping[handle] = wv;
@@ -356,7 +524,11 @@ version(cef) {
 			});
 		}
 		override int do_close(RC!cef_browser_t browser) {
-			return 0;
+			browser.runOnWebView((wv) {
+				auto bce = new BrowserClosedEvent(wv);
+				bce.dispatch();
+			});
+			return 1;
 		}
 		override void on_before_close(RC!cef_browser_t browser) {
 			/+
@@ -389,7 +561,7 @@ version(cef) {
 		override int on_file_dialog(RC!(cef_browser_t) browser, cef_file_dialog_mode_t mode, const(cef_string_utf16_t)* title, const(cef_string_utf16_t)* default_file_path, cef_string_list_t accept_filters, int selected_accept_filter, RC!(cef_file_dialog_callback_t) callback) {
 			try {
 				auto ptr = callback.passable();
-				runInGuiThreadAsync({
+				browser.runOnWebView((wv) {
 					getOpenFileName((string name) {
 						auto callback = RC!cef_file_dialog_callback_t(ptr);
 						auto list = libcef.string_list_alloc();
@@ -407,6 +579,64 @@ version(cef) {
 		}
 	}
 
+	class MiniguiDownloadHandler : CEF!cef_download_handler_t {
+		override void on_before_download(
+			RC!cef_browser_t browser,
+			RC!cef_download_item_t download_item,
+			const(cef_string_t)* suggested_name,
+			RC!cef_before_download_callback_t callback
+		) nothrow
+		{
+			// FIXME: different filename and check if exists for overwrite etc
+			auto fn = cef_string_t(cast(wstring)("/home/me/Downloads/"w ~ suggested_name.str[0..suggested_name.length]));
+			sdpyPrintDebugString(fn.toGC);
+			callback.cont(&fn, false);
+		}
+
+		override void on_download_updated(
+			RC!cef_browser_t browser,
+			RC!cef_download_item_t download_item,
+			RC!cef_download_item_callback_t cancel
+		) nothrow
+		{
+			sdpyPrintDebugString(download_item.get_percent_complete());
+			// FIXME
+		}
+	}
+
+	class MiniguiKeyboardHandler : CEF!cef_keyboard_handler_t {
+		override int on_pre_key_event(
+			RC!(cef_browser_t) browser,
+			const(cef_key_event_t)* event,
+			XEvent* osEvent,
+			int* isShortcut
+		) nothrow {
+		/+
+			sdpyPrintDebugString("---pre---");
+			sdpyPrintDebugString(event.focus_on_editable_field);
+			sdpyPrintDebugString(event.windows_key_code);
+			sdpyPrintDebugString(event.modifiers);
+			sdpyPrintDebugString(event.unmodified_character);
+		+/
+			//*isShortcut = 1;
+			return 0; // 1 if handled, which cancels sending it to browser
+		}
+
+		override int on_key_event(
+			RC!(cef_browser_t) browser,
+			const(cef_key_event_t)* event,
+			XEvent* osEvent
+		) nothrow {
+		/+
+			sdpyPrintDebugString("---key---");
+			sdpyPrintDebugString(event.focus_on_editable_field);
+			sdpyPrintDebugString(event.windows_key_code);
+			sdpyPrintDebugString(event.modifiers);
+		+/
+			return 0; // 1 if handled
+		}
+	}
+
 	class MiniguiDisplayHandler : CEF!cef_display_handler_t {
 		override void on_address_change(RC!(cef_browser_t) browser, RC!(cef_frame_t), const(cef_string_utf16_t)* address) {
 			auto url = address.toGC;
@@ -420,7 +650,64 @@ version(cef) {
 				wv.title = t;
 			});
 		}
-		override void on_favicon_urlchange(RC!(cef_browser_t) browser, cef_string_list_t) {
+		override void on_favicon_urlchange(RC!(cef_browser_t) browser, cef_string_list_t urls) {
+			string url;
+			auto size = libcef.string_list_size(urls);
+			if(size > 0) {
+				cef_string_t str;
+				libcef.string_list_value(urls, 0, &str);
+				url = str.toGC;
+
+				static class Thing : CEF!cef_download_image_callback_t {
+					RC!cef_browser_t browserHandle;
+					this(RC!cef_browser_t browser) nothrow {
+						this.browserHandle = browser;
+					}
+					override void on_download_image_finished(const(cef_string_t)* image_url, int http_status_code, RC!cef_image_t image) nothrow {
+						int width;
+						int height;
+						if(image.getRawPointer is null) {
+							browserHandle.runOnWebView((wv) {
+								wv.favicon = null;
+							});
+							return;
+						}
+
+						auto data = image.get_as_bitmap(1.0, cef_color_type_t.CEF_COLOR_TYPE_RGBA_8888, cef_alpha_type_t.CEF_ALPHA_TYPE_POSTMULTIPLIED, &width, &height);
+
+						if(data.getRawPointer is null || width == 0 || height == 0) {
+							browserHandle.runOnWebView((wv) {
+								wv.favicon = null;
+							});
+						} else {
+							auto s = data.get_size();
+							auto buffer = new ubyte[](s);
+							auto got = data.get_data(buffer.ptr, buffer.length, 0);
+							auto slice = buffer[0 .. got];
+
+							auto img = new TrueColorImage (width, height, slice);
+
+							browserHandle.runOnWebView((wv) {
+								wv.favicon = img;
+							});
+						}
+					}
+				}
+
+				if(url.length) {
+					auto callback = new Thing(browser);
+
+					browser.get_host().download_image(&str, true, 16, 0, callback.passable);
+				} else {
+					browser.runOnWebView((wv) {
+						wv.favicon = null;
+					});
+				}
+			}
+
+			browser.runOnWebView((wv) {
+				wv.favicon_url = url;
+			});
 		}
 		override void on_fullscreen_mode_change(RC!(cef_browser_t) browser, int) {
 		}
@@ -450,16 +737,49 @@ version(cef) {
 		}
 	}
 
+	class MiniguiFocusHandler : CEF!cef_focus_handler_t {
+		override void on_take_focus(RC!(cef_browser_t) browser, int next) nothrow {
+			// sdpyPrintDebugString("take");
+		}
+		override int on_set_focus(RC!(cef_browser_t) browser, cef_focus_source_t source) nothrow {
+			//browser.runOnWebView((ev) {
+			//sdpyPrintDebugString("setting");
+				//ev.parentWindow.focusedWidget = ev;
+			//});
+
+			return 1; // otherwise, cancel because this bullshit tends to steal focus from other applications and i never, ever, ever want that to happen.
+			// seems to happen because of race condition in it getting a focus event and then stealing the focus from the parent
+			// even though things work fine if i always cancel except
+			// it still keeps the decoration assuming focus though even though it doesn't have it which is kinda fucked up but meh
+			// it also breaks its own pop up menus and drop down boxes to allow this! wtf
+		}
+		override void on_got_focus(RC!(cef_browser_t) browser) nothrow {
+			// sdpyPrintDebugString("got");
+		}
+	}
+
 	class MiniguiCefClient : CEF!cef_client_t {
+
+		WebViewWidget_CEF[] listOfWidgets;
+
+		void delegate(scope OpenNewWindowParams) openNewWindow;
+
 		MiniguiCefLifeSpanHandler lsh;
 		MiniguiLoadHandler loadHandler;
 		MiniguiDialogHandler dialogHandler;
 		MiniguiDisplayHandler displayHandler;
-		this() {
-			lsh = new MiniguiCefLifeSpanHandler();
+		MiniguiDownloadHandler downloadHandler;
+		MiniguiKeyboardHandler keyboardHandler;
+		MiniguiFocusHandler focusHandler;
+		this(void delegate(scope OpenNewWindowParams) openNewWindow) {
+			this.openNewWindow = openNewWindow;
+			lsh = new MiniguiCefLifeSpanHandler(this);
 			loadHandler = new MiniguiLoadHandler();
 			dialogHandler = new MiniguiDialogHandler();
 			displayHandler = new MiniguiDisplayHandler();
+			downloadHandler = new MiniguiDownloadHandler();
+			keyboardHandler = new MiniguiKeyboardHandler();
+			focusHandler = new MiniguiFocusHandler();
 		}
 
 		override cef_audio_handler_t* get_audio_handler() {
@@ -475,7 +795,7 @@ version(cef) {
 			return displayHandler.returnable;
 		}
 		override cef_download_handler_t* get_download_handler() {
-			return null;
+			return downloadHandler.returnable;
 		}
 		override cef_drag_handler_t* get_drag_handler() {
 			return null;
@@ -484,7 +804,7 @@ version(cef) {
 			return null;
 		}
 		override cef_focus_handler_t* get_focus_handler() {
-			return null;
+			return focusHandler.returnable;
 		}
 		override cef_jsdialog_handler_t* get_jsdialog_handler() {
 			// needed for alert etc.
@@ -492,7 +812,7 @@ version(cef) {
 		}
 		override cef_keyboard_handler_t* get_keyboard_handler() {
 			// this can handle keyboard shortcuts etc
-			return null;
+			return keyboardHandler.returnable;
 		}
 		override cef_life_span_handler_t* get_life_span_handler() {
 			return lsh.returnable;
@@ -520,3 +840,19 @@ version(cef) {
 
 	}
 }
+
+class BrowserClosedEvent : Event {
+	enum EventString = "browserclosed";
+
+	this(Widget target) { super(EventString, target); }
+	override bool cancelable() const { return false; }
+}
+
+/+
+pragma(mangle, "_ZN12CefWindowX115FocusEv")
+//pragma(mangle, "_ZN3x116XProto13SetInputFocusERKNS_20SetInputFocusRequestE")
+extern(C++)
+export void _ZN12CefWindowX115FocusEv() {
+	sdpyPrintDebugString("OVERRIDDEN");
+}
++/

@@ -102,7 +102,11 @@ unittest {
 // FIXME: multipart encoded file uploads needs implementation
 // future: do web client api stuff
 
-__gshared bool defaultVerifyPeer = true; // public but intentionally undocumented
+private __gshared bool defaultVerifyPeer_ = true;
+
+void defaultVerifyPeer(bool v) {
+	defaultVerifyPeer_ = v;
+}
 
 debug import std.stdio;
 
@@ -953,12 +957,29 @@ class HttpRequest {
 	/++
 		Proxy to use for this request. It should be a URL or `null`.
 
-		This must be sent before you call `send`.
+		This must be sent before you call [send].
 
 		History:
 			Added April 12, 2021 (dub v9.5)
 	+/
 	string proxy;
+
+	/++
+		For https connections, if this is `true`, it will fail to connect if the TLS certificate can not be
+		verified. Setting this to `false` will skip this check and allow the connection to continue anyway.
+
+		When the [HttpRequest] is constructed from a [HttpClient], it will inherit the value from the client
+		instead of using the `= true` here. You can change this value any time before you call [send] (which
+		is done implicitly if you call [waitForCompletion]).
+
+		History:
+			Added April 5, 2022 (dub v10.8)
+
+			Prior to this, it always used the global (but undocumented) `defaultVerifyPeer` setting, and sometimes
+			even if it was true, it would skip the verification. Now, it always respects this local setting.
+	+/
+	bool verifyPeer = true;
+
 
 	/// Final url after any redirections
 	string finalUrl;
@@ -1215,13 +1236,13 @@ class HttpRequest {
 			}
 		}
 
-		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath) {
+		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
 			Socket openNewConnection() {
 				Socket socket;
 				if(ssl) {
 					version(with_openssl) {
 						loadOpenSsl();
-						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host, defaultVerifyPeer);
+						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host, verifyPeer);
 					} else
 						throw new Exception("SSL not compiled in");
 				} else
@@ -1449,7 +1470,7 @@ class HttpRequest {
 				Socket socket;
 
 				try {
-					socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath);
+					socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath, pc.verifyPeer);
 				} catch(ProxyException e) {
 					// connection refused or timed out (I should disambiguate somehow)...
 					pc.state = HttpRequest.State.aborted;
@@ -1474,7 +1495,7 @@ class HttpRequest {
 					removeFromPending[removeFromPendingCount++] = pc;
 					continue;
 				} catch(Exception e) {
-					// connection failed due to other user error
+					// connection failed due to other user error or SSL (i should disambiguate somehow)...
 					pc.state = HttpRequest.State.aborted;
 
 					pc.responseData.code = 2;
@@ -2226,7 +2247,7 @@ struct HttpRequestsAsTheyComplete {
 	}
 }
 
-///
+//
 struct HttpRequestParameters {
 	// FIXME: implement these
 	//Duration timeoutTotal; // the whole request must finish in this time or else it fails,even if data is still trickling in
@@ -2255,7 +2276,7 @@ struct HttpRequestParameters {
 	string contentType; ///
 	ubyte[] bodyData; ///
 
-	string unixSocketPath;
+	string unixSocketPath; ///
 }
 
 interface IHttpClient {
@@ -2333,6 +2354,15 @@ class HttpClient {
 		this.certFormat = certFormat;
 	}
 
+	/++
+		Sets whether [HttpRequest]s created through this object (with [navigateTo], [request], etc.), will have the
+		value of [HttpRequest.verifyPeer] of true or false upon construction.
+
+		History:
+			Added April 5, 2022 (dub v10.8). Previously, there was an undocumented global value used.
+	+/
+	bool defaultVerifyPeer = true;
+
 	// FIXME: try to not make these static
 	private static string certFilename;
 	private static string keyFilename;
@@ -2387,6 +2417,8 @@ class HttpClient {
 
 		auto request = new HttpRequest(this, uri, method, cache, defaultTimeout, proxyToUse);
 
+		request.verifyPeer = this.defaultVerifyPeer;
+
 		request.requestParameters.userAgent = userAgent;
 		request.requestParameters.authorization = authorization;
 
@@ -2418,7 +2450,11 @@ class HttpClient {
 	private string currentDomain;
 	private ICache cache;
 
+	/++
+
+	+/
 	this(ICache cache = null) {
+		this.defaultVerifyPeer = .defaultVerifyPeer_;
 		this.cache = cache;
 		loadDefaultProxy();
 	}
@@ -2748,6 +2784,7 @@ version(use_openssl) {
 	struct SSL_CTX {}
 	struct SSL_METHOD {}
 	enum SSL_VERIFY_NONE = 0;
+	enum SSL_VERIFY_PEER = 1;
 
 	struct ossllib {
 		__gshared static extern(C) {
@@ -2780,6 +2817,16 @@ version(use_openssl) {
 
 			void function(SSL_CTX*, void function(SSL*, char* line)) SSL_CTX_set_keylog_callback;
 
+			int function(SSL_CTX*) SSL_CTX_set_default_verify_paths;
+
+			X509_STORE* function(SSL_CTX*) SSL_CTX_get_cert_store;
+			c_long function(const SSL* ssl) SSL_get_verify_result;
+
+			/+
+			SSL_CTX_load_verify_locations
+			SSL_CTX_set_client_CA_list
+			+/
+
 
 			// client cert things
 			void function (SSL_CTX *ctx, int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey)) SSL_CTX_set_client_cert_cb;
@@ -2791,6 +2838,7 @@ version(use_openssl) {
 	alias pem_password_cb = int function(char* buffer, int bufferSize, int rwflag, void* userPointer);
 
 	struct X509;
+	struct X509_STORE;
 	struct EVP_PKEY;
 
 	import core.stdc.config;
@@ -2804,7 +2852,10 @@ version(use_openssl) {
 
 			void function(ulong, void*) OPENSSL_init_crypto;
 
-			void function(FILE*) ERR_print_errors_fp;
+			void function(print_errors_cb, void*) ERR_print_errors_cb;
+
+			void function(X509*) X509_free;
+			int function(X509_STORE*, X509*) X509_STORE_add_cert;
 
 
 			X509* function(FILE *fp, X509 **x, pem_password_cb *cb, void *u) PEM_read_X509;
@@ -2812,9 +2863,31 @@ version(use_openssl) {
 
 			EVP_PKEY* function(FILE *fp, EVP_PKEY **a) d2i_PrivateKey_fp;
 			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
+
+			X509* function(X509** a, const(ubyte*)* pp, c_long length) d2i_X509;
 		}
 	}
 
+	extern(C)
+	alias print_errors_cb = int function(const char*, size_t, void*);
+
+	int SSL_CTX_set_default_verify_paths(SSL_CTX* a) {
+		if(ossllib.SSL_CTX_set_default_verify_paths)
+			return ossllib.SSL_CTX_set_default_verify_paths(a);
+		else throw new Exception("SSL_CTX_set_default_verify_paths not loaded");
+	}
+
+	c_long SSL_get_verify_result(const SSL* ssl) {
+		if(ossllib.SSL_get_verify_result)
+			return ossllib.SSL_get_verify_result(ssl);
+		else throw new Exception("SSL_get_verify_result not loaded");
+	}
+
+	X509_STORE* SSL_CTX_get_cert_store(SSL_CTX* a) {
+		if(ossllib.SSL_CTX_get_cert_store)
+			return ossllib.SSL_CTX_get_cert_store(a);
+		else throw new Exception("SSL_CTX_get_cert_store not loaded");
+	}
 
 	SSL_CTX* SSL_CTX_new(const SSL_METHOD* a) {
 		if(ossllib.SSL_CTX_new)
@@ -2839,6 +2912,12 @@ version(use_openssl) {
 		if(ossllib.SSL_CTX_set_client_cert_cb)
 			return ossllib.SSL_CTX_set_client_cert_cb(ctx, cb);
 		else throw new Exception("SSL_CTX_set_client_cert_cb not loaded");
+	}
+
+	X509* d2i_X509(X509** a, const(ubyte*)* pp, c_long length) {
+		if(eallib.d2i_X509)
+			return eallib.d2i_X509(a, pp, length);
+		else throw new Exception("d2i_X509 not loaded");
 	}
 
 	X509* PEM_read_X509(FILE *fp, X509 **x, pem_password_cb *cb, void *u) {
@@ -2920,10 +2999,29 @@ version(use_openssl) {
 			return ossllib.TLS_client_method();
 		else throw new Exception("TLS_client_method not loaded");
 	}
-	void ERR_print_errors_fp(FILE* a) {
-		if(eallib.ERR_print_errors_fp)
-			return eallib.ERR_print_errors_fp(a);
-		else throw new Exception("ERR_print_errors_fp not loaded");
+	void ERR_print_errors_cb(print_errors_cb cb, void* u) {
+		if(eallib.ERR_print_errors_cb)
+			return eallib.ERR_print_errors_cb(cb, u);
+		else throw new Exception("ERR_print_errors_cb not loaded");
+	}
+	void X509_free(X509* x) {
+		if(eallib.X509_free)
+			return eallib.X509_free(x);
+		else throw new Exception("X509_free not loaded");
+	}
+	int X509_STORE_add_cert(X509_STORE* s, X509* x) {
+		if(eallib.X509_STORE_add_cert)
+			return eallib.X509_STORE_add_cert(s, x);
+		else throw new Exception("X509_STORE_add_cert not loaded");
+	}
+
+	extern(C)
+	int collectSslErrors(const char* ptr, size_t len, void* user) @trusted {
+		string* s = cast(string*) user;
+
+		(*s) ~= ptr[0 .. len];
+
+		return 0;
 	}
 
 	extern(C)
@@ -2971,8 +3069,14 @@ version(use_openssl) {
 			if(ossllib_handle is null)
 				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
 		} else version(Windows) {
-			ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
-			oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+			version(X86_64)
+				ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
+			if(ossllib_handle is null)
+				ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
+			version(X86_64)
+				oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
+			if(oeaylib_handle is null)
+				oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
 
 			if(ossllib_handle is null) {
 				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
@@ -3068,14 +3172,22 @@ version(use_openssl) {
 		private void initSsl(bool verifyPeer, string hostname) {
 			ctx = SSL_CTX_new(SSLv23_client_method());
 			assert(ctx !is null);
+
+			SSL_CTX_set_default_verify_paths(ctx);
+			version(Windows)
+				loadCertificatesFromRegistry(ctx);
+
 			debug SSL_CTX_keylog_cb_func(ctx, &write_to_file);
 			ssl = SSL_new(ctx);
 
 			if(hostname.length)
-			SSL_set_tlsext_host_name(ssl, toStringz(hostname));
+				SSL_set_tlsext_host_name(ssl, toStringz(hostname));
 
-			if(!verifyPeer)
+			if(verifyPeer)
+				SSL_set_verify(ssl, SSL_VERIFY_PEER, null);
+			else
 				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
+
 			SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
 
 
@@ -3132,11 +3244,13 @@ version(use_openssl) {
 		@trusted
 		void do_ssl_connect() {
 			if(SSL_connect(ssl) == -1) {
-				ERR_print_errors_fp(core.stdc.stdio.stderr);
+				string str;
+				ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
+				auto err = SSL_get_verify_result(ssl);
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl connect");
+				throw new Exception("ssl connect failed " ~ str ~ " // " ~ to!string(err));
 			}
 		}
 		
@@ -3146,11 +3260,12 @@ version(use_openssl) {
 			debug(arsd_http2_verbose) writeln("ssl writing ", buf.length);
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
-				ERR_print_errors_fp(core.stdc.stdio.stderr);
+				string str;
+				ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl send");
+				throw new Exception("ssl send failed " ~ str);
 			}
 			return retval;
 
@@ -3165,11 +3280,12 @@ version(use_openssl) {
 			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			debug(arsd_http2_verbose) writeln("ssl_read after");
 			if(retval == -1) {
-				ERR_print_errors_fp(core.stdc.stdio.stderr);
+				string str;
+				ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl receive");
+				throw new Exception("ssl receive failed " ~ str);
 			}
 			return retval;
 		}
@@ -3664,7 +3780,7 @@ class WebSocket {
 		if(ssl) {
 			version(with_openssl) {
 				loadOpenSsl();
-				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host, defaultVerifyPeer);
+				socket = new SslClientSocket(family(uri.unixSocketPath), SocketType.STREAM, host, config.verifyPeer);
 			} else
 				throw new Exception("SSL not compiled in");
 		} else
@@ -4018,6 +4134,18 @@ class WebSocket {
 				Added March 31, 2021 (included in dub version 9.4)
 		+/
 		Duration timeoutFromInactivity = 1.minutes;
+
+		/++
+			For https connections, if this is `true`, it will fail to connect if the TLS certificate can not be
+			verified. Setting this to `false` will skip this check and allow the connection to continue anyway.
+
+			History:
+				Added April 5, 2022 (dub v10.8)
+
+				Prior to this, it always used the global (but undocumented) `defaultVerifyPeer` setting, and sometimes
+				even if it was true, it would skip the verification. Now, it always respects this local setting.
+		+/
+		bool verifyPeer = true;
 	}
 
 	/++
@@ -4676,6 +4804,52 @@ public {
 }
 
 version(Windows) {
+	pragma(lib, "crypt32");
+	import core.sys.windows.wincrypt;
+	extern(Windows)
+		PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
+
+	void loadCertificatesFromRegistry(SSL_CTX* ctx) {
+		auto store = CertOpenSystemStore(0, "ROOT");
+		if(store is null) {
+			// import std.stdio; writeln("failed");
+			return;
+		}
+		scope(exit)
+			CertCloseStore(store, 0);
+
+		X509_STORE* ssl_store = SSL_CTX_get_cert_store(ctx);
+		PCCERT_CONTEXT c;
+		while((c = CertEnumCertificatesInStore(store, c)) !is null) {
+			FILETIME na = c.pCertInfo.NotAfter;
+			SYSTEMTIME st;
+			FileTimeToSystemTime(&na, &st);
+
+			/+
+			_CRYPTOAPI_BLOB i = cast() c.pCertInfo.Issuer;
+
+			char[256] buffer;
+			auto p = CertNameToStrA(X509_ASN_ENCODING, &i, CERT_SIMPLE_NAME_STR, buffer.ptr, cast(int) buffer.length);
+			import std.stdio; writeln(buffer[0 .. p]);
+			+/
+
+			if(st.wYear <= 2021) {
+				// see: https://www.openssl.org/blog/blog/2021/09/13/LetsEncryptRootCertExpire/
+				continue; // no point keeping an expired root cert and it can break Let's Encrypt anyway
+			}
+
+			const(ubyte)* thing = c.pbCertEncoded;
+			auto x509 = d2i_X509(null, &thing, c.cbCertEncoded);
+			if (x509) {
+				auto success = X509_STORE_add_cert(ssl_store, x509);
+				X509_free(x509);
+			}
+		}
+
+		CertFreeCertificateContext(c);
+	}
+
+
 	// because i use the FILE* in PEM_read_X509 and friends
 	// gotta use this to bridge the MS C runtime functions
 	// might be able to just change those to only use the BIO versions

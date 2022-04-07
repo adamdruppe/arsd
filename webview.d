@@ -1061,12 +1061,12 @@ abstract class CEF(Base) {
 	}
 	private Inner inner;
 
-	this() {
+	this() nothrow {
 		if(!__ctfe) construct();
 	}
 
 	// ONLY call this if you did a ctfe construction
-	void construct() {
+	void construct() nothrow {
 		assert(inner.c.base.size == 0);
 
 		import core.memory;
@@ -1234,6 +1234,7 @@ struct RC(Base) {
 		if(inner is null) return;
 		inner.base.release(&inner.base);
 		inner = null;
+		//sdpyPrintDebugString("omg release");
 	}
 	bool opCast(T:bool)() nothrow {
 		return inner !is null;

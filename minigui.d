@@ -327,6 +327,9 @@ version(Windows) {
 }
 
 version(Windows) {
+	version(minigui_manifest) {} else version=minigui_no_manifest;
+
+	version(minigui_no_manifest) {} else
 	static if(__VERSION__ >= 2_083)
 	version(CRuntime_Microsoft) { // FIXME: mingw?
 		// assume we want commctrl6 whenever possible since there's really no reason not to
@@ -464,6 +467,15 @@ version(Windows) {
 	Later I'll add more complete examples, but for now [TextLabel] and [LabeledPasswordEdit] are both simple widgets you can view implementation to get some ideas.
 +/
 class Widget : ReflectableProperties {
+
+	private bool willDraw() {
+		return true;
+	}
+
+	private bool skipPaintCycle() {
+		return false;
+	}
+
 
 	/+
 	/++
@@ -1778,6 +1790,9 @@ class Widget : ReflectableProperties {
 	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code. There are no stability guarantees if you do override this; it can (and likely will) break without notice.
 	protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
+			return;
+
+		if(skipPaintCycle())
 			return;
 
 		int paintX = x;
@@ -4204,6 +4219,19 @@ template classStaticallyEmits(This, EventType) {
 class NestedChildWindowWidget : Widget {
 	SimpleWindow win;
 
+	/++
+		Used on X to send focus to the appropriate child window when requested by the window manager.
+
+		Normally returns its own nested window. Can also return another child or null to revert to the parent
+		if you override it in a child class.
+
+		History:
+			Added April 2, 2022 (dub v10.8)
+	+/
+	SimpleWindow focusableWindow() {
+		return win;
+	}
+
 	///
 	// win = new SimpleWindow(640, 480, null, OpenGlOptions.yes, Resizability.automaticallyScaleIfPossible, WindowTypes.nestedChild, WindowFlags.normal, getParentWindow(parent));
 	this(SimpleWindow win, Widget parent) {
@@ -4236,6 +4264,18 @@ class NestedChildWindowWidget : Widget {
 		return pwin;
 	}
 
+	/++
+		Called upon the nested window being destroyed.
+		Remember the window has already been destroyed at
+		this point, so don't use the native handle for anything.
+
+		History:
+			Added April 3, 2022 (dub v10.8)
+	+/
+	protected void dispose() {
+
+	}
+
 	protected void windowsetup(SimpleWindow w) {
 		/*
 		win.onFocusChange = (bool getting) {
@@ -4243,6 +4283,23 @@ class NestedChildWindowWidget : Widget {
 				this.focus();
 		};
 		*/
+
+		/+
+		win.onFocusChange = (bool getting) {
+			if(getting) {
+				this.parentWindow.focusedWidget = this;
+				this.emit!FocusEvent();
+				this.emit!FocusInEvent();
+			} else {
+				this.emit!BlurEvent();
+				this.emit!FocusOutEvent();
+			}
+		};
+		+/
+
+		win.onDestroyed = () {
+			this.dispose();
+		};
 
 		version(win32_widgets) {
 			Widget.nativeMapping[win.hwnd] = this;
@@ -4259,8 +4316,7 @@ class NestedChildWindowWidget : Widget {
 					parentWindow.dispatchMouseEvent(e);
 				},
 				(KeyEvent e) {
-					//import std.stdio;
-					//writefln("%x   %s", cast(uint) e.key, e.key);
+					//import std.stdio; writefln("%s %x   %s", cast(void*) win, cast(uint) e.key, e.key);
 					parentWindow.dispatchKeyEvent(e);
 				},
 				(dchar e) {
@@ -6369,6 +6425,11 @@ abstract class Layout : Widget {
 		tabStop = false;
 		super(parent);
 	}
+
+	version(none)
+	override bool willDraw() {
+		return false;
+	}
 }
 
 /++
@@ -7575,6 +7636,17 @@ class Window : Widget {
 		win.releaseInputGrab();
 	}
 
+	/++
+		Sets the window icon which is often seen in title bars and taskbars.
+
+		History:
+			Added April 5, 2022 (dub v10.8)
+	+/
+	@property void icon(MemoryImage icon) {
+		if(win && icon)
+			win.icon = icon;
+	}
+
 	///
 	@scriptable
 	@property bool focused() {
@@ -7640,8 +7712,6 @@ class Window : Widget {
 		super(p);
 	}
 
-
-
 	private void actualRedraw() {
 		if(recomputeChildLayoutRequired)
 			recomputeChildLayoutEntry();
@@ -7664,7 +7734,7 @@ class Window : Widget {
 			ugh = ugh.parent;
 		}
 		auto painter = w.draw(true);
-		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, true);
+		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, willDraw());
 	}
 
 
@@ -7926,9 +7996,19 @@ class Window : Widget {
 			if(Runtime.args.length)
 				title = Runtime.args[0];
 		}
-		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow);
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus);
+
+		win.setRequestedInputFocus = &this.setRequestedInputFocus;
 
 		this(win);
+	}
+
+	private SimpleWindow setRequestedInputFocus() {
+		if(auto fw = cast(NestedChildWindowWidget) focusedWidget) {
+			// sdpyPrintDebugString("heaven");
+			return fw.focusableWindow;
+		}
+		return win;
 	}
 
 	/// ditto
@@ -9715,7 +9795,7 @@ class MenuBar : Widget {
 	Status bars appear at the bottom of a MainWindow.
 	They are made out of Parts, with a width and content.
 
-	They can have multiple parts or be in simple mode. FIXME: implement
+	They can have multiple parts or be in simple mode. FIXME: implement simple mode.
 
 
 	sb.parts[0].content = "Status bar text!";
@@ -10808,6 +10888,9 @@ class Radiobox : MouseActivatedWidget {
 class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
+
+	version(none)
+	override bool skipPaintCycle() { return true; }
 
 	/++
 		If true, this button will emit trigger events on double (and other quick events, if added) click events as well as on normal single click events.

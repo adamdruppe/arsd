@@ -21,13 +21,13 @@ pragma(lib, "GL");
 import sdl.SDL;
 import sdl.SDL_net;
 
-import std.string;
 version(D_Version2) {
 	import random = core.stdc.stdlib;
 	alias random.srand srand;
 
-	import std.conv;
-	char[] convToString(T)(T t) { return to!(char[])(t); }
+	char[] convToString(int a) {
+		return null;
+	}
 	string immutableString(in char[] a) { return a.idup; }
 } else {
 	import random = std.random;
@@ -49,7 +49,12 @@ version(D_Version2)
 else
 	import std.stdarg;
 
-import std.stdio;
+version(D_Version2) {
+	import core.stdc.stdio;
+	void writefln(string s) { printf("%*s", s.length, s.ptr); }
+	void writefln(string s, int i) { printf(s.ptr, i); }
+} else
+	import std.stdio;
 //version(linux) pragma(lib, "kbhit.o");
 
 int randomNumber(int min, int max){
@@ -317,7 +322,7 @@ class Engine{
 
 		IPaddress ip;
 
-		if(SDLNet_ResolveHost(&ip, std.string.toStringz(whom), NET_PORT) == -1)
+		if(SDLNet_ResolveHost(&ip, (whom~"\0").ptr, NET_PORT) == -1)
 			throw new Exception("Resolve host");
 
 		clientsock = SDLNet_TCP_Open(&ip);
@@ -661,7 +666,7 @@ class Engine{
 	}
 
 	void setTitle(in char[] title){
-		SDL_WM_SetCaption(std.string.toStringz(title), null);
+		SDL_WM_SetCaption((title~"\0").ptr, null);
 	}
 
 	bool buttonWasPressed(Buttons button, int which = 0){
@@ -979,7 +984,7 @@ class Engine{
 				buttonLagQueueEnd[button][which] = 0;
 		} else {
 			if(when < globalTimer)
-				throw new Exception(immutableString("Impossible control timing " ~ convToString(when) ~ " @ " ~ convToString(globalTimer)));
+				throw new Exception(immutableString("Impossible control timing"));//  " ~ convToString(when) ~ " @ " ~ convToString(globalTimer)));
 			buttonsDown[button][which] = type;
 			buttonsChecked[button][which] = false;
 		}
