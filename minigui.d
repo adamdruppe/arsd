@@ -468,6 +468,15 @@ version(Windows) {
 +/
 class Widget : ReflectableProperties {
 
+	private bool willDraw() {
+		return true;
+	}
+
+	private bool skipPaintCycle() {
+		return false;
+	}
+
+
 	/+
 	/++
 		Calling this directly after constructor can give you a reflectable object as-needed so you don't pay for what you don't need.
@@ -1781,6 +1790,9 @@ class Widget : ReflectableProperties {
 	/// This can be overridden by scroll things. It is responsible for actually calling [paint]. Do not override unless you've studied minigui.d's source code. There are no stability guarantees if you do override this; it can (and likely will) break without notice.
 	protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
+			return;
+
+		if(skipPaintCycle())
 			return;
 
 		int paintX = x;
@@ -6413,6 +6425,11 @@ abstract class Layout : Widget {
 		tabStop = false;
 		super(parent);
 	}
+
+	version(none)
+	override bool willDraw() {
+		return false;
+	}
 }
 
 /++
@@ -7695,8 +7712,6 @@ class Window : Widget {
 		super(p);
 	}
 
-
-
 	private void actualRedraw() {
 		if(recomputeChildLayoutRequired)
 			recomputeChildLayoutEntry();
@@ -7719,7 +7734,7 @@ class Window : Widget {
 			ugh = ugh.parent;
 		}
 		auto painter = w.draw(true);
-		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, true);
+		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, willDraw());
 	}
 
 
@@ -10873,6 +10888,9 @@ class Radiobox : MouseActivatedWidget {
 class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
+
+	version(none)
+	override bool skipPaintCycle() { return true; }
 
 	/++
 		If true, this button will emit trigger events on double (and other quick events, if added) click events as well as on normal single click events.
