@@ -10966,7 +10966,6 @@ version(Windows) {
 				// drawing on something else, draw directly
 				hdc = CreateCompatibleDC(null);
 				SelectObject(hdc, window);
-
 			}
 
 			// X doesn't draw a text background, so neither should we
@@ -11027,7 +11026,7 @@ version(Windows) {
 			rect.right = invalidRect.right;
 			rect.top = invalidRect.top;
 			rect.bottom = invalidRect.bottom;
-			InvalidateRect(hwnd, &rect, false);
+			InvalidateRect(hwnd, &rect, true);
 		}
 		bool manualInvalidations;
 
@@ -11806,11 +11805,12 @@ version(Windows) {
 		+/
 		bool doLiveResizing = true;
 
-		private int bmpWidth;
-		private int bmpHeight;
+		package int bmpWidth;
+		package int bmpHeight;
 
 		// the extern(Windows) wndproc should just forward to this
 		LRESULT windowProcedure(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam) {
+		try {
 			assert(hwnd is this.hwnd);
 
 			if(triggerEvents(hwnd, msg, wParam, lParam, 0, 0, this))
@@ -11908,8 +11908,6 @@ version(Windows) {
 				// (I know there's other ways to fix that but I don't like that behavior anyway)
 				// so instead it is going to redraw only at the end of a size.
 				case 0x0231: /* WM_ENTERSIZEMOVE */
-					oldWidth = this.width;
-					oldHeight = this.height;
 					inSizeMove = true;
 				break;
 				case 0x0232: /* WM_EXITSIZEMOVE */
@@ -11918,8 +11916,9 @@ version(Windows) {
 					size_changed:
 
 					// nothing relevant changed, don't bother redrawing
-					if(oldWidth == width && oldHeight == height)
+					if(oldWidth == width && oldHeight == height) {
 						break;
+					}
 
 					// note: OpenGL windows don't use a backing bmp, so no need to change them
 					// if resizability is anything other than allowResizing, it is meant to either stretch the one image or just do nothing
@@ -11935,9 +11934,21 @@ version(Windows) {
 							auto oldBmp = SelectObject(hdcBmp, buffer);
 
 							auto hdcOldBmp = CreateCompatibleDC(hdc);
-							auto oldOldBmp = SelectObject(hdcOldBmp, oldBmp);
+							auto oldOldBmp = SelectObject(hdcOldBmp, oldBuffer);
 
-							BitBlt(hdcBmp, 0, 0, width, height, hdcOldBmp, oldWidth, oldHeight, SRCCOPY);
+							/+
+							RECT r;
+							r.left = 0;
+							r.top = 0;
+							r.right = width;
+							r.bottom = height;
+							auto c = Color.green;
+							auto brush = CreateSolidBrush(RGB(c.r, c.g, c.b));
+							FillRect(hdcBmp, &r, brush);
+							DeleteObject(brush);
+							+/
+
+							BitBlt(hdcBmp, 0, 0, bmpWidth, bmpHeight, hdcOldBmp, 0, 0, SRCCOPY);
 
 							bmpWidth = width;
 							bmpHeight = height;
@@ -11962,8 +11973,13 @@ version(Windows) {
 					if(windowResized !is null)
 						windowResized(width, height);
 
-					if(inSizeMove)
+					if(inSizeMove) {
 						SimpleWindow.processAllCustomEvents();
+						SimpleWindow.processAllCustomEvents();
+					}
+
+					oldWidth = this.width;
+					oldHeight = this.height;
 				break;
 				case WM_ERASEBKGND:
 					// call `visibleForTheFirstTime` here, so we can do initialization as early as possible
@@ -12054,6 +12070,11 @@ version(Windows) {
 			}
 			 return 0;
 
+		}
+		catch(Throwable t) {
+			sdpyPrintDebugString(t.toString);
+			return 0;
+		}
 		}
 	}
 

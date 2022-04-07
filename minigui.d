@@ -472,11 +472,6 @@ class Widget : ReflectableProperties {
 		return true;
 	}
 
-	private bool skipPaintCycle() {
-		return false;
-	}
-
-
 	/+
 	/++
 		Calling this directly after constructor can give you a reflectable object as-needed so you don't pay for what you don't need.
@@ -1523,7 +1518,7 @@ class Widget : ReflectableProperties {
 		version(win32_widgets) {
 			if(hwnd) {
 				auto pos = getChildPositionRelativeToParentHwnd(this);
-				MoveWindow(hwnd, pos[0], pos[1], width, height, true);
+				MoveWindow(hwnd, pos[0], pos[1], width, height, false); // setting this to false can sometimes speed things up but only if it is actually drawn later and that's kinda iffy to do right here so being slower but safer rn
 			}
 		}
 		sendResizeEvent();
@@ -1713,8 +1708,9 @@ class Widget : ReflectableProperties {
 	+/
 	void paint(WidgetPainter painter) {
 		version(win32_widgets)
-			if(hwnd)
+			if(hwnd) {
 				return;
+			}
 		painter.drawThemed(&paintContent); // note this refers to the following overload
 	}
 
@@ -1792,9 +1788,6 @@ class Widget : ReflectableProperties {
 		if(hidden)
 			return;
 
-		if(skipPaintCycle())
-			return;
-
 		int paintX = x;
 		int paintY = y;
 		if(this.useNativeDrawing()) {
@@ -1816,6 +1809,8 @@ class Widget : ReflectableProperties {
 			return;
 		}
 
+		bool invalidateChildren = invalidate;
+
 		if(redrawRequested || force) {
 			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 
@@ -1828,9 +1823,11 @@ class Widget : ReflectableProperties {
 				paint(painter);
 
 			if(invalidate) {
-				painter.invalidateRect(Rectangle(Point(clip.upperLeft.x - painter.originX, clip.upperRight.y - painter.originY), Size(clip.width, clip.height)));
+				// sdpyPrintDebugString("invalidate " ~ typeid(this).name);
+				auto region = Rectangle(Point(clip.upperLeft.x - painter.originX, clip.upperRight.y - painter.originY), Size(clip.width, clip.height));
+				painter.invalidateRect(region);
 				// children are contained inside this, so no need to do extra work
-				invalidate = false;
+				invalidateChildren = false;
 			}
 
 			redrawRequested = false;
@@ -1840,14 +1837,14 @@ class Widget : ReflectableProperties {
 		foreach(child; children) {
 			version(win32_widgets)
 				if(child.useNativeDrawing()) continue;
-			child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
+			child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidateChildren);
 		}
 
 		version(win32_widgets)
 		foreach(child; children) {
 			if(child.useNativeDrawing) {
 				painter = WidgetPainter(child.simpleWindowWrappingHwnd.draw(true), child);
-				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, invalidate);
+				child.privatePaint(painter, painter.originX, painter.originY, clip, actuallyPainted, true); // have to reset the invalidate flag since these are not necessarily affected the same way, being native children with a clip
 			}
 		}
 	}
@@ -2507,7 +2504,7 @@ class ComboBox : ComboboxBase {
 	}
 
 	override int minHeight() { return defaultLineHeight * 3; }
-	override int maxHeight() { return int.max; }
+	override int maxHeight() { return options.length * defaultLineHeight + defaultLineHeight; }
 	override int heightStretchiness() { return 5; }
 
 	version(custom_widgets) {
@@ -3342,6 +3339,7 @@ version(win32_widgets) {
 
 	extern(Windows)
 	private
+	// see for info https://jeffpar.github.io/kbarchive/kb/079/Q79982/
 	LRESULT HookedWndProcBSGROUPBOX_HACK(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
 		if(iMessage == WM_ERASEBKGND) {
 			auto dc = GetDC(hWnd);
@@ -3354,6 +3352,7 @@ version(win32_widgets) {
 			SelectObject(dc, p);
 			SelectObject(dc, b);
 			ReleaseDC(hWnd, dc);
+			InvalidateRect(hWnd, null, false); // redraw the border
 			return 1;
 		}
 		return HookedWndProc(hWnd, iMessage, wParam, lParam);
@@ -3399,7 +3398,7 @@ version(win32_widgets) {
 		//if(className != WC_TABCONTROL)
 			style |= WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 		p.hwnd = CreateWindowExW(extStyle, className.ptr, wt.ptr, style,
-				CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
+				CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
 				phwnd, null, cast(HINSTANCE) GetModuleHandle(null), null);
 
 		assert(p.hwnd !is null);
@@ -6425,11 +6424,6 @@ abstract class Layout : Widget {
 		tabStop = false;
 		super(parent);
 	}
-
-	version(none)
-	override bool willDraw() {
-		return false;
-	}
 }
 
 /++
@@ -7090,6 +7084,93 @@ class HorizontalLayout : Layout {
 
 }
 
+private
+extern(Windows)
+int DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) nothrow {
+	Widget* pwin = hwnd in Widget.nativeMapping;
+	if(pwin is null)
+		return DefWindowProc(hwnd, message, wparam, lparam);
+	SimpleWindow win = pwin.simpleWindowWrappingHwnd;
+	if(win is null)
+		return DefWindowProc(hwnd, message, wparam, lparam);
+
+	switch(message) {
+		case WM_SIZE:
+			auto width = LOWORD(lparam);
+			auto height = HIWORD(lparam);
+
+			// FIXME: could this be more efficient? it never relinquishes a large bitmap
+			if(width > win.bmpWidth || height > win.bmpHeight) {
+				auto hdc = GetDC(hwnd);
+				auto oldBuffer = win.buffer;
+				win.buffer = CreateCompatibleBitmap(hdc, width, height);
+
+				auto hdcBmp = CreateCompatibleDC(hdc);
+
+				auto oldBmp = SelectObject(hdcBmp, win.buffer);
+
+				if(oldBuffer) {
+					auto hdcOldBmp = CreateCompatibleDC(hdc);
+					auto oldOldBmp = SelectObject(hdcOldBmp, oldBuffer);
+
+					BitBlt(hdcBmp, 0, 0, win.bmpWidth, win.bmpHeight, hdcOldBmp, 0, 0, SRCCOPY);
+
+					SelectObject(hdcOldBmp, oldOldBmp);
+					DeleteDC(hdcOldBmp);
+				}
+
+				auto brush = GetSysColorBrush(COLOR_3DFACE);
+				RECT r;
+				r.left = win.bmpWidth;
+				r.top = 0;
+				r.right = width;
+				r.bottom = height;
+				FillRect(hdcBmp, &r, brush);
+
+				r.left = 0;
+				r.top = win.bmpHeight;
+				r.right = width;
+				r.bottom = height;
+				FillRect(hdcBmp, &r, brush);
+
+				SelectObject(hdcBmp, oldBmp);
+				DeleteDC(hdcBmp);
+				ReleaseDC(hwnd, hdc);
+
+				if(oldBuffer)
+					DeleteObject(oldBuffer);
+
+				win.bmpWidth = width;
+				win.bmpHeight = height;
+			}
+		break;
+		case WM_PAINT:
+			if(win.buffer is null)
+				goto default;
+
+			BITMAP bm;
+			PAINTSTRUCT ps;
+
+			HDC hdc = BeginPaint(hwnd, &ps);
+
+			HDC hdcMem = CreateCompatibleDC(hdc);
+			HBITMAP hbmOld = SelectObject(hdcMem, win.buffer);
+
+			GetObject(win.buffer, bm.sizeof, &bm);
+
+			BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+
+			SelectObject(hdcMem, hbmOld);
+			DeleteDC(hdcMem);
+			EndPaint(hwnd, &ps);
+		break;
+		default:
+			return DefWindowProc(hwnd, message, wparam, lparam);
+	}
+
+	return 0;
+}
+
 private wstring Win32Class(wstring name)() {
 	static bool classRegistered;
 	if(!classRegistered) {
@@ -7098,7 +7179,7 @@ private wstring Win32Class(wstring name)() {
 		wc.cbSize = wc.sizeof;
 		wc.hInstance = hInstance;
 		wc.hbrBackground = cast(HBRUSH) (COLOR_3DFACE+1); // GetStockObject(WHITE_BRUSH);
-		wc.lpfnWndProc = &DefWindowProc;
+		wc.lpfnWndProc = &DoubleBufferWndProc;
 		wc.lpszClassName = name.ptr;
 		if(!RegisterClassExW(&wc))
 			throw new Exception("RegisterClass ");// ~ to!string(GetLastError()));
@@ -7735,6 +7816,7 @@ class Window : Widget {
 		}
 		auto painter = w.draw(true);
 		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, willDraw());
+		// RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
 	}
 
 
@@ -7790,6 +7872,7 @@ class Window : Widget {
 			this.width = w;
 			this.height = h;
 			recomputeChildLayout();
+			// this causes a HUGE performance problem for no apparent benefit, hence the commenting
 			//version(win32_widgets)
 				//InvalidateRect(hwnd, null, true);
 			redraw();
@@ -10136,7 +10219,6 @@ class Fieldset : Widget {
 		painter.drawText(Point(8, 0), legend);
 	}
 
-
 	override int maxHeight() {
 		auto m = paddingTop() + paddingBottom();
 		foreach(child; children) {
@@ -10888,9 +10970,6 @@ class Radiobox : MouseActivatedWidget {
 class Button : MouseActivatedWidget {
 	override int heightStretchiness() { return 3; }
 	override int widthStretchiness() { return 3; }
-
-	version(none)
-	override bool skipPaintCycle() { return true; }
 
 	/++
 		If true, this button will emit trigger events on double (and other quick events, if added) click events as well as on normal single click events.
