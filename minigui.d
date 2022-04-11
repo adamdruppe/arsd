@@ -11333,7 +11333,7 @@ class ImageBox : Widget {
 		if(this.parentWindow && this.parentWindow.win) {
 			if(sprite)
 				sprite.dispose();
-			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_, true));
 		}
 		redraw();
 	}
@@ -11367,7 +11367,7 @@ class ImageBox : Widget {
 
 	private void updateSprite() {
 		if(sprite is null && this.parentWindow && this.parentWindow.win) {
-			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_));
+			sprite = new Sprite(this.parentWindow.win, Image.fromMemoryImage(image_, true));
 		}
 	}
 
