@@ -8082,12 +8082,59 @@ class Window : Widget {
 		}
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus);
 
+		/+
+		// for input proxy
+		auto display = XDisplayConnection.get;
+		auto inputProxy = XCreateSimpleWindow(display, win.window, -1, -1, 1, 1, 0, 0, 0);
+		XSelectInput(display, inputProxy, EventMask.KeyPressMask | EventMask.KeyReleaseMask);
+		XMapWindow(display, inputProxy);
+		import std.stdio; writefln("input proxy: 0x%0x", inputProxy);
+		this.inputProxy = new SimpleWindow(inputProxy);
+
+		XEvent lastEvent;
+		this.inputProxy.handleNativeEvent = (XEvent ev) {
+			lastEvent = ev;
+			return 1;
+		};
+		this.inputProxy.setEventHandlers(
+			(MouseEvent e) {
+				dispatchMouseEvent(e);
+			},
+			(KeyEvent e) {
+				//import std.stdio;
+				//writefln("%x   %s", cast(uint) e.key, e.key);
+				if(dispatchKeyEvent(e)) {
+					// FIXME: i should trap error
+					if(auto nw = cast(NestedChildWindowWidget) focusedWidget) {
+						auto thing = nw.focusableWindow();
+						if(thing && thing.window) {
+							import std.stdio; writeln("sending event ", lastEvent.xkey);
+							XSendEvent(XDisplayConnection.get, thing.window, false, 0, &lastEvent);
+						}
+					}
+				}
+			},
+			(dchar e) {
+				if(e == 13) e = 10; // hack?
+				if(e == 127) return; // linux sends this, windows doesn't. we don't want it.
+				dispatchCharEvent(e);
+			},
+		);
+		// done
+		+/
+
+
+
 		win.setRequestedInputFocus = &this.setRequestedInputFocus;
 
 		this(win);
 	}
 
+	SimpleWindow inputProxy;
+
 	private SimpleWindow setRequestedInputFocus() {
+		// return inputProxy;
+
 		if(auto fw = cast(NestedChildWindowWidget) focusedWidget) {
 			// sdpyPrintDebugString("heaven");
 			return fw.focusableWindow;
@@ -8126,13 +8173,14 @@ class Window : Widget {
 		event.ctrlKey = (ev.modifierState & ModifierState.ctrl) ? true : false;
 		event.dispatch();
 
-		return true;
+		return !event.defaultPrevented;
 	}
 
 	bool dispatchCharEvent(dchar ch) {
 		if(focusedWidget) {
 			auto event = new CharEvent(focusedWidget, ch);
 			event.dispatch();
+			return !event.defaultPrevented;
 		}
 		return true;
 	}
@@ -8249,7 +8297,7 @@ class Window : Widget {
 			}
 		}
 
-		return true;
+		return true; // FIXME: the event default prevented?
 	}
 
 	/++

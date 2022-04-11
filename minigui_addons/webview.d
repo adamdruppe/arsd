@@ -548,7 +548,7 @@ version(cef) {
 
 				runInGuiThread({
 					ret = 1;
-					scope WebViewWidget delegate(Widget, BrowserSettings) o = (parent, passed_settings) {
+					scope WebViewWidget delegate(Widget, BrowserSettings) accept = (parent, passed_settings) {
 						ret = 0;
 						if(parent !is null) {
 							auto widget = new WebViewWidget_CEF(this.client, parent);
@@ -560,7 +560,7 @@ version(cef) {
 						}
 						return null;
 					};
-					this.client.openNewWindow(OpenNewWindowParams(target_url.toGC, o));
+					this.client.openNewWindow(OpenNewWindowParams(target_url.toGC, accept));
 					return;
 				});
 
@@ -836,10 +836,12 @@ version(cef) {
 			// sdpyPrintDebugString("take");
 		}
 		override int on_set_focus(RC!(cef_browser_t) browser, cef_focus_source_t source) nothrow {
-			//browser.runOnWebView((ev) {
-			//sdpyPrintDebugString("setting");
-				//ev.parentWindow.focusedWidget = ev;
-			//});
+			/+
+			browser.runOnWebView((ev) {
+			sdpyPrintDebugString("setting");
+				ev.parentWindow.focusedWidget = ev;
+			});
+			+/
 
 			return 1; // otherwise, cancel because this bullshit tends to steal focus from other applications and i never, ever, ever want that to happen.
 			// seems to happen because of race condition in it getting a focus event and then stealing the focus from the parent
