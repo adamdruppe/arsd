@@ -3039,6 +3039,47 @@ version(use_openssl) {
 			return ossllib.TLS_client_method();
 	}
 
+	static immutable string[] sslErrorCodes = [
+		"OK (code 0)",
+		"Unspecified SSL/TLS error (code 1)",
+		"Unable to get TLS issuer certificate (code 2)",
+		"Unable to get TLS CRL (code 3)",
+		"Unable to decrypt TLS certificate signature (code 4)",
+		"Unable to decrypt TLS CRL signature (code 5)",
+		"Unable to decode TLS issuer public key (code 6)",
+		"TLS certificate signature failure (code 7)",
+		"TLS CRL signature failure (code 8)",
+		"TLS certificate not yet valid (code 9)",
+		"TLS certificate expired (code 10)",
+		"TLS CRL not yet valid (code 11)",
+		"TLS CRL expired (code 12)",
+		"TLS error in certificate not before field (code 13)",
+		"TLS error in certificate not after field (code 14)",
+		"TLS error in CRL last update field (code 15)",
+		"TLS error in CRL next update field (code 16)",
+		"TLS system out of memory (code 17)",
+		"TLS certificate is self-signed (code 18)",
+		"Self-signed certificate in TLS chain (code 19)",
+		"Unable to get TLS issuer certificate locally (code 20)",
+		"Unable to verify TLS leaf signature (code 21)",
+		"TLS certificate chain too long (code 22)",
+		"TLS certificate was revoked (code 23)",
+		"TLS CA is invalid (code 24)",
+		"TLS error: path length exceeded (code 25)",
+		"TLS error: invalid purpose (code 26)",
+		"TLS error: certificate untrusted (code 27)",
+		"TLS error: certificate rejected (code 28)",
+	];
+
+	string getOpenSslErrorCode(int error) {
+		if(error == 62)
+			return "TLS certificate hostname mismatch";
+
+		if(error < 0 || error >= sslErrorCodes.length)
+			return "SSL/TLS error code " ~ to!string(error);
+		return sslErrorCodes[error];
+	}
+
 	struct SSL {}
 	struct SSL_CTX {}
 	struct SSL_METHOD {}
@@ -3509,7 +3550,7 @@ version(use_openssl) {
 				auto err = SSL_get_verify_result(ssl);
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl connect failed " ~ str ~ " // " ~ to!string(err));
+				throw new Exception("Secure connect failed " ~ getOpenSslErrorCode(err));
 			}
 		}
 		
