@@ -566,7 +566,7 @@ private class UnixAddress : Address {
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
 
-	// scheme//userinfo@host:port/path?query#fragment
+	// scheme://userinfo@host:port/path?query#fragment
 
 	string scheme; /// e.g. "http" in "http://example.com/"
 	string userinfo; /// the username (and possibly a password) in the uri
@@ -579,6 +579,12 @@ struct Uri {
 	/// Breaks down a uri string to its components
 	this(string uri) {
 		reparse(uri);
+	}
+
+	/// Returns `port` if set, otherwise if scheme is https 443, otherwise always 80
+	int effectivePort() const @property nothrow pure @safe @nogc {
+		return port != 0 ? port
+			: scheme == "https" ? 443 : 80;
 	}
 
 	private string unixSocketPath = null;
@@ -991,10 +997,8 @@ class HttpRequest {
 		requestParameters.method = method;
 		requestParameters.unixSocketPath = where.unixSocketPath;
 		requestParameters.host = parts.host;
-		requestParameters.port = cast(ushort) parts.port;
+		requestParameters.port = cast(ushort) parts.effectivePort;
 		requestParameters.ssl = parts.scheme == "https";
-		if(parts.port == 0)
-			requestParameters.port = requestParameters.ssl ? 443 : 80;
 		requestParameters.uri = parts.path.length ? parts.path : "/";
 		if(parts.query.length) {
 			requestParameters.uri ~= "?";
@@ -2403,17 +2407,7 @@ class HttpClient {
 		or set [HttpRequest.retainCookies|request.retainCookies] to `true` on the returned object. But see important implementation shortcomings on [retainCookies].
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
-		string proxyToUse;
-		switch(uri.scheme) {
-			case "http":
-				proxyToUse = httpProxy;
-			break;
-			case "https":
-				proxyToUse = httpsProxy;
-			break;
-			default:
-				proxyToUse = null;
-		}
+		string proxyToUse = getProxyFor(uri);
 
 		auto request = new HttpRequest(this, uri, method, cache, defaultTimeout, proxyToUse);
 
@@ -2466,6 +2460,8 @@ class HttpClient {
 		The environment variables are used, if present, on all operating systems.
 
 		History:
+			no_proxy support added April 13, 2022
+
 			Added April 12, 2021 (included in dub v9.5)
 
 		Bugs:
@@ -2477,8 +2473,238 @@ class HttpClient {
 		import std.process;
 		httpProxy = environment.get("http_proxy", environment.get("HTTP_PROXY", null));
 		httpsProxy = environment.get("https_proxy", environment.get("HTTPS_PROXY", null));
+		auto noProxy = environment.get("no_proxy", environment.get("NO_PROXY", null));
+		if (noProxy.length) {
+			proxyIgnore = noProxy.split(",");
+			foreach (ref rule; proxyIgnore)
+				rule = rule.strip;
+		}
 
 		// FIXME: on Windows, I should use the Internet Explorer proxy settings
+	}
+
+	/++
+		Checks if the given uri should be proxied according to the httpProxy, httpsProxy, proxyIgnore
+		variables and returns either httpProxy, httpsProxy or null.
+
+		If neither `httpProxy` or `httpsProxy` are set this always returns `null`. Same if `proxyIgnore`
+		contains `*`.
+
+		DNS is not resolved for proxyIgnore IPs, only IPs match IPs and hosts match hosts.
+	+/
+	string getProxyFor(Uri uri) {
+		string proxyToUse;
+		switch(uri.scheme) {
+			case "http":
+				proxyToUse = httpProxy;
+			break;
+			case "https":
+				proxyToUse = httpsProxy;
+			break;
+			default:
+				proxyToUse = null;
+		}
+
+		if (proxyToUse.length) {
+			foreach (ignore; proxyIgnore) {
+				if (matchProxyIgnore(ignore, uri)) {
+					return null;
+				}
+			}
+		}
+
+		return proxyToUse;
+	}
+
+	/// Returns -1 on error, otherwise the IP as uint. Parsing is very strict.
+	private static long tryParseIPv4(scope const(char)[] s) nothrow {
+		import std.algorithm : findSplit, all;
+		import std.ascii : isDigit;
+
+		static int parseNum(scope const(char)[] num) nothrow {
+			if (num.length < 1 || num.length > 3 || !num.representation.all!isDigit)
+				return -1;
+			try {
+				auto ret = num.to!int;
+				return ret > 255 ? -1 : ret;
+			} catch (Exception) {
+				assert(false);
+			}
+		}
+
+		if (s.length < "0.0.0.0".length || s.length > "255.255.255.255".length)
+			return -1;
+		auto firstPair = s.findSplit(".");
+		auto secondPair = firstPair[2].findSplit(".");
+		auto thirdPair = secondPair[2].findSplit(".");
+		auto a = parseNum(firstPair[0]);
+		auto b = parseNum(secondPair[0]);
+		auto c = parseNum(thirdPair[0]);
+		auto d = parseNum(thirdPair[2]);
+		if (a < 0 || b < 0 || c < 0 || d < 0)
+			return -1;
+		return (cast(uint)a << 24) | (b << 16) | (c << 8) | (d);
+	}
+
+	unittest {
+		assert(tryParseIPv4("0.0.0.0") == 0);
+		assert(tryParseIPv4("127.0.0.1") == 0x7f000001);
+		assert(tryParseIPv4("162.217.114.56") == 0xa2d97238);
+		assert(tryParseIPv4("256.0.0.1") == -1);
+		assert(tryParseIPv4("0.0.0.-2") == -1);
+		assert(tryParseIPv4("0.0.0.a") == -1);
+		assert(tryParseIPv4("0.0.0") == -1);
+		assert(tryParseIPv4("0.0.0.0.0") == -1);
+	}
+
+	/++
+		Returns true if the given no_proxy rule matches the uri.
+
+		Invalid IP ranges are silently ignored and return false.
+	
+		See $(LREF proxyIgnore).
+	+/
+	static bool matchProxyIgnore(scope const(char)[] rule, scope const Uri uri) nothrow {
+		import std.algorithm;
+		import std.ascii : isDigit;
+		import std.uni : sicmp;
+
+		string uriHost = uri.host;
+		if (uriHost.length && uriHost[$ - 1] == '.')
+			uriHost = uriHost[0 .. $ - 1];
+
+		if (rule == "*")
+			return true;
+		while (rule.length && rule[0] == '.') rule = rule[1 .. $];
+
+		static int parsePort(scope const(char)[] portStr) nothrow {
+			if (portStr.length < 1 || portStr.length > 5 || !portStr.representation.all!isDigit)
+				return -1;
+			try {
+				return portStr.to!int;
+			} catch (Exception) {
+				assert(false, "to!int should succeed");
+			}
+		}
+
+		if (sicmp(rule, uriHost) == 0
+			|| (uriHost.length > rule.length
+				&& sicmp(rule, uriHost[$ - rule.length .. $]) == 0
+				&& uriHost[$ - rule.length - 1] == '.'))
+			return true;
+
+		if (rule.startsWith("[")) { // IPv6
+			// below code is basically nothrow lastIndexOfAny("]:")
+			ptrdiff_t lastColon = cast(ptrdiff_t) rule.length - 1;
+			while (lastColon >= 0) {
+				if (rule[lastColon] == ']' || rule[lastColon] == ':')
+					break;
+				lastColon--;
+			}
+			if (lastColon == -1)
+				return false; // malformed
+
+			if (rule[lastColon] == ':') { // match with port
+				auto port = parsePort(rule[lastColon + 1 .. $]);
+				if (port != -1) {
+					if (uri.effectivePort != port.to!int)
+						return false;
+					return uriHost == rule[0 .. lastColon];
+				}
+			}
+			// exact match of host already done above
+		} else {
+			auto slash = rule.lastIndexOfNothrow('/');
+			if (slash == -1) { // no IP range
+				auto colon = rule.lastIndexOfNothrow(':');
+				auto host = colon == -1 ? rule : rule[0 .. colon];
+				auto port = colon != -1 ? parsePort(rule[colon + 1 .. $]) : -1;
+				auto ip = tryParseIPv4(host);
+				if (ip == -1) { // not an IPv4, test for host with port
+					return port != -1
+						&& uri.effectivePort == port
+						&& uriHost == host;
+				} else {
+					// perform IPv4 equals
+					auto other = tryParseIPv4(uriHost);
+					if (other == -1)
+						return false; // rule == IPv4, uri != IPv4
+					if (port != -1)
+						return uri.effectivePort == port
+							&& uriHost == host;
+					else
+						return uriHost == host;
+				}
+			} else {
+				auto maskStr = rule[slash + 1 .. $];
+				auto ip = tryParseIPv4(rule[0 .. slash]);
+				if (ip == -1)
+					return false;
+				if (maskStr.length && maskStr.length < 3 && maskStr.representation.all!isDigit) {
+					// IPv4 range match
+					int mask;
+					try {
+						mask = maskStr.to!int;
+					} catch (Exception) {
+						assert(false);
+					}
+
+					auto other = tryParseIPv4(uriHost);
+					if (other == -1)
+						return false; // rule == IPv4, uri != IPv4
+
+					if (mask == 0) // matches all
+						return true;
+					if (mask > 32) // matches none
+						return false;
+
+					auto shift = 32 - mask;
+					return cast(uint)other >> shift
+						== cast(uint)ip >> shift;
+				}
+			}
+		}
+		return false;
+	}
+
+	unittest {
+		assert(matchProxyIgnore("0.0.0.0/0", Uri("http://127.0.0.1:80/a")));
+		assert(matchProxyIgnore("0.0.0.0/0", Uri("http://127.0.0.1/a")));
+		assert(!matchProxyIgnore("0.0.0.0/0", Uri("https://dlang.org/a")));
+		assert(matchProxyIgnore("*", Uri("https://dlang.org/a")));
+		assert(matchProxyIgnore("127.0.0.0/8", Uri("http://127.0.0.1:80/a")));
+		assert(matchProxyIgnore("127.0.0.0/8", Uri("http://127.0.0.1/a")));
+		assert(matchProxyIgnore("127.0.0.1", Uri("http://127.0.0.1:1234/a")));
+		assert(!matchProxyIgnore("127.0.0.1:80", Uri("http://127.0.0.1:1234/a")));
+		assert(!matchProxyIgnore("127.0.0.1/8", Uri("http://localhost/a"))); // no DNS resolution / guessing
+		assert(!matchProxyIgnore("0.0.0.0/1", Uri("http://localhost/a"))
+			&& !matchProxyIgnore("128.0.0.0/1", Uri("http://localhost/a"))); // no DNS resolution / guessing 2
+		foreach (m; 1 .. 32) {
+			assert(matchProxyIgnore(text("127.0.0.1/", m), Uri("http://127.0.0.1/a")));
+			assert(!matchProxyIgnore(text("127.0.0.1/", m), Uri("http://128.0.0.1/a")));
+			bool expectedMatch = m <= 24;
+			assert(expectedMatch == matchProxyIgnore(text("127.0.1.0/", m), Uri("http://127.0.1.128/a")), m.to!string);
+		}
+		assert(matchProxyIgnore("localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore("localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore("localhost", Uri("http://foo.localhost./a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("foo.localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore("foo.localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore("foo.localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://localhost/a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://foo.localhost/a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://bbar.localhost./a")));
+		assert(matchProxyIgnore("[::1]", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]", Uri("http://[::2]/a")));
+		assert(matchProxyIgnore("[::1]:80", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]:443", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]:80", Uri("https://[::1]/a")));
+		assert(matchProxyIgnore("[::1]:443", Uri("https://[::1]/a")));
+		assert(matchProxyIgnore("google.com", Uri("https://GOOGLE.COM/a")));
 	}
 
 	/++
@@ -2496,6 +2722,28 @@ class HttpClient {
 	string httpProxy;
 	/// ditto
 	string httpsProxy;
+	/++
+		List of hosts or ips, optionally including a port, where not to proxy.
+
+		Each entry may be one of the following formats:
+		- `127.0.0.1` (IPv4, any port)
+		- `127.0.0.1:1234` (IPv4, specific port)
+		- `127.0.0.1/8` (IPv4 range / CIDR block, any port)
+		- `[::1]` (IPv6, any port)
+		- `[::1]:1234` (IPv6, specific port)
+		- `*` (all hosts and ports, basically don't proxy at all anymore)
+		- `.domain.name`, `domain.name` (don't proxy the specified domain,
+			leading dots are stripped and subdomains are also not proxied)
+		- `.domain.name:1234`, `domain.name:1234` (same as above, with specific port)
+
+		No DNS resolution or regex is done in this list.
+
+		See https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
+
+		History:
+			Added April 13, 2022
+	+/
+	string[] proxyIgnore;
 
 	/// See [retainCookies] for important caveats.
 	void setCookie(string name, string value, string domain = null) {
@@ -2570,6 +2818,17 @@ class HttpClient {
 
 	/* inter-request state */
 	private CookieHeader[][string] cookies;
+}
+
+private ptrdiff_t lastIndexOfNothrow(T)(scope T[] arr, T value) nothrow
+{
+	ptrdiff_t ret = cast(ptrdiff_t)arr.length - 1;
+	while (ret >= 0) {
+		if (arr[ret] == value)
+			return ret;
+		ret--;
+	}
+	return ret;
 }
 
 interface ICache {
