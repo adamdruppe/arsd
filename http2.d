@@ -3071,9 +3071,9 @@ version(use_openssl) {
 		"TLS error: certificate rejected (code 28)",
 	];
 
-	string getOpenSslErrorCode(int error) {
+	string getOpenSslErrorCode(long error) {
 		if(error == 62)
-			return "TLS certificate hostname mismatch";
+			return "TLS certificate host name mismatch";
 
 		if(error < 0 || error >= sslErrorCodes.length)
 			return "SSL/TLS error code " ~ to!string(error);
@@ -3122,6 +3122,8 @@ version(use_openssl) {
 			X509_STORE* function(SSL_CTX*) SSL_CTX_get_cert_store;
 			c_long function(const SSL* ssl) SSL_get_verify_result;
 
+			X509_VERIFY_PARAM* function(const SSL*) SSL_get0_param;
+
 			/+
 			SSL_CTX_load_verify_locations
 			SSL_CTX_set_client_CA_list
@@ -3140,6 +3142,7 @@ version(use_openssl) {
 	struct X509;
 	struct X509_STORE;
 	struct EVP_PKEY;
+	struct X509_VERIFY_PARAM;
 
 	import core.stdc.config;
 
@@ -3165,6 +3168,8 @@ version(use_openssl) {
 			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 
 			X509* function(X509** a, const(ubyte*)* pp, c_long length) d2i_X509;
+
+			int function(X509_VERIFY_PARAM* a, const char* b, size_t l) X509_VERIFY_PARAM_set1_host;
 		}
 	}
 
@@ -3181,6 +3186,12 @@ version(use_openssl) {
 		if(ossllib.SSL_get_verify_result)
 			return ossllib.SSL_get_verify_result(ssl);
 		else throw new Exception("SSL_get_verify_result not loaded");
+	}
+
+	X509_VERIFY_PARAM* SSL_get0_param(const SSL* ssl) {
+		if(ossllib.SSL_get0_param)
+			return ossllib.SSL_get0_param(ssl);
+		else throw new Exception("SSL_get0_param not loaded");
 	}
 
 	X509_STORE* SSL_CTX_get_cert_store(SSL_CTX* a) {
@@ -3288,7 +3299,11 @@ version(use_openssl) {
 			return ossllib.SSL_ctrl(a, 55 /*SSL_CTRL_SET_TLSEXT_HOSTNAME*/, 0 /*TLSEXT_NAMETYPE_host_name*/, cast(void*) b);
 		else throw new Exception("SSL_set_tlsext_host_name not loaded");
 	}
-
+	int X509_VERIFY_PARAM_set1_host(X509_VERIFY_PARAM* a, const char* b, size_t l) {
+		if(eallib.X509_VERIFY_PARAM_set1_host)
+			return eallib.X509_VERIFY_PARAM_set1_host(a, b, l);
+		else throw new Exception("X509_VERIFY_PARAM_set1_host not loaded");
+	}
 	SSL_METHOD* SSLv3_client_method() {
 		if(ossllib.SSLv3_client_method)
 			return ossllib.SSLv3_client_method();
@@ -3480,8 +3495,11 @@ version(use_openssl) {
 			debug SSL_CTX_keylog_cb_func(ctx, &write_to_file);
 			ssl = SSL_new(ctx);
 
-			if(hostname.length)
+			if(hostname.length) {
 				SSL_set_tlsext_host_name(ssl, toStringz(hostname));
+				if(verifyPeer)
+					X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), hostname.ptr, hostname.length);
+			}
 
 			if(verifyPeer)
 				SSL_set_verify(ssl, SSL_VERIFY_PEER, null);
@@ -3550,7 +3568,7 @@ version(use_openssl) {
 				auto err = SSL_get_verify_result(ssl);
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("Secure connect failed " ~ getOpenSslErrorCode(err));
+				throw new Exception("Secure connect failed: " ~ getOpenSslErrorCode(err));
 			}
 		}
 		
