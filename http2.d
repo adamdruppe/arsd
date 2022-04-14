@@ -3073,9 +3073,10 @@ version(use_openssl) {
 		return sslErrorCodes[error];
 	}
 
-	struct SSL {}
-	struct SSL_CTX {}
-	struct SSL_METHOD {}
+	struct SSL;
+	struct SSL_CTX;
+	struct SSL_METHOD;
+	struct X509_STORE_CTX;
 	enum SSL_VERIFY_NONE = 0;
 	enum SSL_VERIFY_PEER = 1;
 
@@ -3148,6 +3149,8 @@ version(use_openssl) {
 				void function() OpenSSL_add_all_digests;
 			/* } */
 
+			const(char)* function(int) OpenSSL_version;
+
 			void function(ulong, void*) OPENSSL_init_crypto;
 
 			void function(print_errors_cb, void*) ERR_print_errors_cb;
@@ -3163,8 +3166,12 @@ version(use_openssl) {
 			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 
 			X509* function(X509** a, const(ubyte*)* pp, c_long length) d2i_X509;
+			int function(X509* a, ubyte** o) i2d_X509;
 
 			int function(X509_VERIFY_PARAM* a, const char* b, size_t l) X509_VERIFY_PARAM_set1_host;
+
+			X509* function(X509_STORE_CTX *ctx) X509_STORE_CTX_get_current_cert;
+			int function(X509_STORE_CTX *ctx) X509_STORE_CTX_get_error;
 		}
 	}
 
@@ -3364,10 +3371,6 @@ version(use_openssl) {
 			ctx = OpenSSL.SSL_CTX_new(OpenSSL.SSLv23_client_method());
 			assert(ctx !is null);
 
-			OpenSSL.SSL_CTX_set_default_verify_paths(ctx);
-			version(Windows)
-				loadCertificatesFromRegistry(ctx);
-
 			debug OpenSSL.SSL_CTX_keylog_cb_func(ctx, &write_to_file);
 			ssl = OpenSSL.SSL_new(ctx);
 
@@ -3377,9 +3380,15 @@ version(use_openssl) {
 					OpenSSL.X509_VERIFY_PARAM_set1_host(OpenSSL.SSL_get0_param(ssl), hostname.ptr, hostname.length);
 			}
 
-			if(verifyPeer)
-				OpenSSL.SSL_set_verify(ssl, SSL_VERIFY_PEER, null);
-			else
+			if(verifyPeer) {
+				OpenSSL.SSL_CTX_set_default_verify_paths(ctx);
+
+				version(Windows) {
+					loadCertificatesFromRegistry(ctx);
+				}
+
+				OpenSSL.SSL_set_verify(ssl, SSL_VERIFY_PEER, &verifyCertificateFromRegistryArsdHttp);
+			} else
 				OpenSSL.SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
 
 			OpenSSL.SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
@@ -4997,11 +5006,62 @@ public {
 	}
 }
 
+private extern(C)
+int verifyCertificateFromRegistryArsdHttp(int preverify_ok, X509_STORE_CTX* ctx) {
+	version(Windows) {
+		if(preverify_ok)
+			return 1;
+
+		auto err_cert = OpenSSL.X509_STORE_CTX_get_current_cert(ctx);
+		auto err = OpenSSL.X509_STORE_CTX_get_error(ctx);
+
+		if(err == 62)
+			return 0; // hostname mismatch is an error we can trust; that means OpenSSL already found the certificate and rejected it
+
+		auto len = OpenSSL.i2d_X509(err_cert, null);
+		if(len == -1)
+			return 0;
+		ubyte[] buffer = new ubyte[](len);
+		auto ptr = buffer.ptr;
+		len = OpenSSL.i2d_X509(err_cert, &ptr);
+		if(len != buffer.length)
+			return 0;
+
+
+		CERT_CHAIN_PARA thing;
+		thing.cbSize = thing.sizeof;
+		auto context = CertCreateCertificateContext(X509_ASN_ENCODING, buffer.ptr, cast(int) buffer.length);
+		if(context is null)
+			return 0;
+		scope(exit) CertFreeCertificateContext(context);
+
+		PCCERT_CHAIN_CONTEXT chain;
+		if(CertGetCertificateChain(null, context, null, null, &thing, 0, null, &chain)) {
+			scope(exit)
+				CertFreeCertificateChain(chain);
+
+			DWORD errorStatus = chain.TrustStatus.dwErrorStatus;
+
+			if(errorStatus == 0)
+				return 1; // Windows approved it, OK carry on
+			// otherwise, sustain OpenSSL's original ruling
+		}
+
+		return 0;
+	} else {
+		return preverify_ok;
+	}
+}
+
+
 version(Windows) {
 	pragma(lib, "crypt32");
 	import core.sys.windows.wincrypt;
-	extern(Windows)
+	extern(Windows) {
 		PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
+		// BOOL CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEXT pCertContext, LPFILETIME pTime, HCERTSTORE hAdditionalStore, PCERT_CHAIN_PARA pChainPara, DWORD dwFlags, LPVOID pvReserved, PCCERT_CHAIN_CONTEXT *ppChainContext);
+		PCCERT_CONTEXT CertCreateCertificateContext(DWORD dwCertEncodingType, const BYTE *pbCertEncoded, DWORD cbCertEncoded);
+	}
 
 	void loadCertificatesFromRegistry(SSL_CTX* ctx) {
 		auto store = CertOpenSystemStore(0, "ROOT");
@@ -5045,6 +5105,8 @@ version(Windows) {
 		}
 
 		CertFreeCertificateContext(c);
+
+		// import core.stdc.stdio; printf("%s\n", OpenSSL.OpenSSL_version(0));
 	}
 
 
