@@ -12296,6 +12296,13 @@ version(X11) {
 			if(width == 0 || height == 0) {
 				XSetClipMask(display, gc, None);
 
+				if(xrenderPicturePainter) {
+
+					XRectangle[1] rects;
+					rects[0] = XRectangle(short.min, short.min, short.max, short.max);
+					XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
+				}
+
 				version(with_xft) {
 					if(xftFont is null || xftDraw is null)
 						return;
@@ -12305,6 +12312,9 @@ version(X11) {
 				XRectangle[1] rects;
 				rects[0] = XRectangle(cast(short)(x), cast(short)(y), cast(short) width, cast(short) height);
 				XSetClipRectangles(XDisplayConnection.get, gc, 0, 0, rects.ptr, 1, 0);
+
+				if(xrenderPicturePainter)
+					XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
 
 				version(with_xft) {
 					if(xftFont is null || xftDraw is null)
@@ -12572,6 +12582,12 @@ version(X11) {
 					XRenderPictureAttributes attrs;
 					// FIXME: I can prolly reuse this as long as the pixmap itself is valid.
 					xrenderPicturePainter = XRenderCreatePicture(display, d, Sprite.RGB24, 0, &attrs);
+
+					// need to initialize the clip
+					XRectangle[1] rects;
+					rects[0] = XRectangle(cast(short)(_clipRectangle.left), cast(short)(_clipRectangle.top), cast(short) _clipRectangle.width, cast(short) _clipRectangle.height);
+
+					XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
 				}
 
 				XRenderComposite(
@@ -13611,6 +13627,35 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			this.userRequested = userRequested;
 			super("X disconnected");
 		}
+	}
+
+	/++
+		Platform-specific for X11. Traps errors for the duration of `dg`. Avoid calling this from inside a call to this.
+
+		Please note that it returns
+	+/
+	XErrorEvent[] trapXErrors(scope void delegate() dg) {
+
+		static XErrorEvent[] errorBuffer;
+		
+		static extern(C) int handler (Display* dpy, XErrorEvent* evt) nothrow {
+			errorBuffer ~= *evt;
+			return 0;
+		}
+
+		auto savedErrorHandler = XSetErrorHandler(&handler);
+
+		try {
+			dg();
+		} finally {
+			XSync(XDisplayConnection.get, 0/*False*/);
+			XSetErrorHandler(savedErrorHandler);
+		}
+
+		auto bfr = errorBuffer;
+		errorBuffer = null;
+
+		return bfr;
 	}
 
 	/// Platform-specific for X11. A singleton class (well, all its methods are actually static... so more like a namespace) wrapping a `Display*`.
@@ -16986,6 +17031,9 @@ extern(C) {
 	extern(C) alias XIOErrorHandler = int function (Display* display);
 }
 
+extern(C) nothrow
+alias XErrorHandler = int function(Display*, XErrorEvent*);
+
 extern(C) nothrow @nogc {
 struct Screen{
 	XExtData *ext_data;		/* hook for extension to hang data */
@@ -17189,8 +17237,6 @@ struct Visual
 		byte flags;
 		byte pad;
 	}
-
-	alias XErrorHandler = int function(Display*, XErrorEvent*);
 
 	struct XRectangle {
 		short x;

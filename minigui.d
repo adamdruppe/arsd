@@ -1925,6 +1925,18 @@ class Widget : ReflectableProperties {
 		return StyleInformation(this);
 	}
 
+	int focusableWidgets(scope int delegate(Widget) dg) {
+		foreach(widget; WidgetStream(this)) {
+			if(widget.tabStop && !widget.hidden) {
+				int result = dg(widget);
+				if (result)
+					return result;
+			}
+		}
+		return 0;
+	}
+
+
 	// FIXME: I kinda want to hide events from implementation widgets
 	// so it just catches them all and stops propagation...
 	// i guess i can do it with a event listener on star.
@@ -7084,7 +7096,7 @@ class HorizontalLayout : Layout {
 
 }
 
-version(Windows)
+version(win32_widgets)
 private
 extern(Windows)
 LRESULT DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) nothrow {
@@ -7944,6 +7956,12 @@ class Window : Widget {
 			Window.newWindowCreated(this);
 	}
 
+	version(custom_widgets)
+	override void defaultEventHandler_click(ClickEvent event) {
+		if(event.target && event.target.tabStop)
+			event.target.focus();
+	}
+
 	private static void delegate(Window) newWindowCreated;
 
 	version(win32_widgets)
@@ -8082,13 +8100,13 @@ class Window : Widget {
 		}
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus);
 
-		/+
+		///+
 		// for input proxy
 		auto display = XDisplayConnection.get;
 		auto inputProxy = XCreateSimpleWindow(display, win.window, -1, -1, 1, 1, 0, 0, 0);
 		XSelectInput(display, inputProxy, EventMask.KeyPressMask | EventMask.KeyReleaseMask);
 		XMapWindow(display, inputProxy);
-		import std.stdio; writefln("input proxy: 0x%0x", inputProxy);
+		//import std.stdio; writefln("input proxy: 0x%0x", inputProxy);
 		this.inputProxy = new SimpleWindow(inputProxy);
 
 		XEvent lastEvent;
@@ -8108,8 +8126,11 @@ class Window : Widget {
 					if(auto nw = cast(NestedChildWindowWidget) focusedWidget) {
 						auto thing = nw.focusableWindow();
 						if(thing && thing.window) {
-							import std.stdio; writeln("sending event ", lastEvent.xkey);
-							XSendEvent(XDisplayConnection.get, thing.window, false, 0, &lastEvent);
+							lastEvent.xkey.window = thing.window;
+							// import std.stdio; writeln("sending event ", lastEvent.xkey);
+							trapXErrors( {
+								XSendEvent(XDisplayConnection.get, thing.window, false, 0, &lastEvent);
+							});
 						}
 					}
 				}
@@ -8121,7 +8142,7 @@ class Window : Widget {
 			},
 		);
 		// done
-		+/
+		//+/
 
 
 
@@ -8133,13 +8154,7 @@ class Window : Widget {
 	SimpleWindow inputProxy;
 
 	private SimpleWindow setRequestedInputFocus() {
-		// return inputProxy;
-
-		if(auto fw = cast(NestedChildWindowWidget) focusedWidget) {
-			// sdpyPrintDebugString("heaven");
-			return fw.focusableWindow;
-		}
-		return win;
+		return inputProxy;
 	}
 
 	/// ditto
@@ -8173,14 +8188,15 @@ class Window : Widget {
 		event.ctrlKey = (ev.modifierState & ModifierState.ctrl) ? true : false;
 		event.dispatch();
 
-		return !event.defaultPrevented;
+		return !event.propagationStopped;
 	}
 
+	// returns true if propagation should continue into nested things.... prolly not a great thing to do.
 	bool dispatchCharEvent(dchar ch) {
 		if(focusedWidget) {
 			auto event = new CharEvent(focusedWidget, ch);
 			event.dispatch();
-			return !event.defaultPrevented;
+			return !event.propagationStopped;
 		}
 		return true;
 	}
@@ -8343,17 +8359,28 @@ class Window : Widget {
 	}
 
 	static Widget getFirstFocusable(Widget start) {
-		if(start.tabStop && !start.hidden)
-			return start;
+		if(start is null)
+			return null;
 
-		if(!start.hidden)
-		foreach(child; start.children) {
-			auto f = getFirstFocusable(child);
-			if(f !is null)
-				return f;
+		foreach(widget; &start.focusableWidgets) {
+			return widget;
 		}
+
 		return null;
 	}
+
+	static Widget getLastFocusable(Widget start) {
+		if(start is null)
+			return null;
+
+		Widget last;
+		foreach(widget; &start.focusableWidgets) {
+			last = widget;
+		}
+
+		return last;
+	}
+
 
 	mixin Emits!ClosingEvent;
 	mixin Emits!ClosedEvent;
@@ -10457,9 +10484,10 @@ class Menu : Window {
 		if(!menuParent.parentWindow.win.closed) {
 			if(auto maw = cast(MouseActivatedWidget) menuParent) {
 				maw.setDynamicState(DynamicState.depressed, false);
+				maw.setDynamicState(DynamicState.hover, false);
 				maw.redraw();
 			}
-			menuParent.parentWindow.win.focus();
+			// menuParent.parentWindow.win.focus();
 		}
 		clickListener.disconnect();
 	}
@@ -14223,6 +14251,117 @@ interface ReflectableProperties {
 			}
 		}
 	}
+}
+
+private struct Stack(T) {
+	this(int maxSize) {
+		internalLength = 0;
+		arr = initialBuffer[];
+	}
+
+	///.
+	void push(T t) {
+		if(internalLength >= arr.length) {
+			auto oldarr = arr;
+			if(arr.length < 4096)
+				arr = new T[arr.length * 2];
+			else
+				arr = new T[arr.length + 4096];
+			arr[0 .. oldarr.length] = oldarr[];
+		}
+
+		arr[internalLength] = t;
+		internalLength++;
+	}
+
+	///.
+	T pop() {
+		assert(internalLength);
+		internalLength--;
+		return arr[internalLength];
+	}
+
+	///.
+	T peek() {
+		assert(internalLength);
+		return arr[internalLength - 1];
+	}
+
+	///.
+	@property bool empty() {
+		return internalLength ? false : true;
+	}
+
+	///.
+	private T[] arr;
+	private size_t internalLength;
+	private T[64] initialBuffer;
+	// the static array is allocated with this object, so if we have a small stack (which we prolly do; dom trees usually aren't insanely deep),
+	// using this saves us a bunch of trips to the GC. In my last profiling, I got about a 50x improvement in the push()
+	// function thanks to this, and push() was actually one of the slowest individual functions in the code!
+}
+
+/// This is the lazy range that walks the tree for you. It tries to go in the lexical order of the source: node, then children from first to last, each recursively.
+private struct WidgetStream {
+
+	///.
+	@property Widget front() {
+		return current.widget;
+	}
+
+	/// Use Widget.tree instead.
+	this(Widget start) {
+		current.widget = start;
+		current.childPosition = -1;
+		isEmpty = false;
+		stack = typeof(stack)(0);
+	}
+
+	/*
+		Handle it
+		handle its children
+
+	*/
+
+	///.
+	void popFront() {
+	    more:
+	    	if(isEmpty) return;
+
+		// FIXME: the profiler says this function is somewhat slow (noticeable because it can be called a lot of times)
+
+		current.childPosition++;
+		if(current.childPosition >= current.widget.children.length) {
+			if(stack.empty())
+				isEmpty = true;
+			else {
+				current = stack.pop();
+				goto more;
+			}
+		} else {
+			stack.push(current);
+			current.widget = current.widget.children[current.childPosition];
+			current.childPosition = -1;
+		}
+	}
+
+	///.
+	@property bool empty() {
+		return isEmpty;
+	}
+
+	private:
+
+	struct Current {
+		Widget widget;
+		int childPosition;
+	}
+
+	Current current;
+
+	Stack!(Current) stack;
+
+	bool isEmpty;
 }
 
 
