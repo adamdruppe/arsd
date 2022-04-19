@@ -3070,7 +3070,7 @@ version(use_openssl) {
 
 		if(error < 0 || error >= sslErrorCodes.length)
 			return "SSL/TLS error code " ~ to!string(error);
-		return sslErrorCodes[error];
+		return sslErrorCodes[cast(size_t) error];
 	}
 
 	struct SSL;

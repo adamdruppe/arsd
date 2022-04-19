@@ -8100,6 +8100,7 @@ class Window : Widget {
 		}
 		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus);
 
+		static if(UsingSimpledisplayX11) {
 		///+
 		// for input proxy
 		auto display = XDisplayConnection.get;
@@ -8143,6 +8144,7 @@ class Window : Widget {
 		);
 		// done
 		//+/
+		}
 
 
 
