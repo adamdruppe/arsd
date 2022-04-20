@@ -3260,8 +3260,8 @@ version(use_openssl) {
 					"libssl.43.dylib",
 					"libssl.35.dylib",
 					"libssl.1.1.dylib",
-					"/usr/local/opt/openssl/lib/libssl.1.0.0.dylib",
 					"libssl.dylib",
+					"/usr/local/opt/openssl/lib/libssl.1.0.0.dylib",
 				];
 			} else {
 				static immutable string[] ossllibs = [
@@ -3281,31 +3281,33 @@ version(use_openssl) {
 			version(X86_64) {
 				ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
 				oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
-			} else {
-				static immutable wstring[] ossllibs = [
-					"libssl-1_1.dll"w,
-					"libssl32.dll"w,
-				];
+			}
 
-				foreach(lib; ossllibs) {
-					ossllib_handle = LoadLibraryW(lib.ptr);
-					if(ossllib_handle !is null) break;
-				}
+			static immutable wstring[] ossllibs = [
+				"libssl-1_1.dll"w,
+				"libssl32.dll"w,
+			];
 
-				static immutable wstring[] eaylibs = [
-					"libcrypto-1_1.dll"w,
-					"libeay32.dll",
-				];
+			if(ossllib_handle is null)
+			foreach(lib; ossllibs) {
+				ossllib_handle = LoadLibraryW(lib.ptr);
+				if(ossllib_handle !is null) break;
+			}
 
-				foreach(lib; eaylibs) {
-					oeaylib_handle = LoadLibraryW(lib.ptr);
-					if (oeaylib_handle !is null) break;
-				}
+			static immutable wstring[] eaylibs = [
+				"libcrypto-1_1.dll"w,
+				"libeay32.dll",
+			];
 
-				if(ossllib_handle is null) {
-					ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
-					oeaylib_handle = ossllib_handle;
-				}
+			if(oeaylib_handle is null)
+			foreach(lib; eaylibs) {
+				oeaylib_handle = LoadLibraryW(lib.ptr);
+				if (oeaylib_handle !is null) break;
+			}
+
+			if(ossllib_handle is null) {
+				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
+				oeaylib_handle = ossllib_handle;
 			}
 		}
 
