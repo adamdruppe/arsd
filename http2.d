@@ -3252,33 +3252,60 @@ version(use_openssl) {
 			return;
 	synchronized(loadSslMutex) {
 
-		version(OSX) {
-			// newest box
-			ossllib_handle = dlopen("libssl.1.1.dylib", RTLD_NOW);
-			// other boxes
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("libssl.dylib", RTLD_NOW);
-			// old ones like my laptop test
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("/usr/local/opt/openssl/lib/libssl.1.0.0.dylib", RTLD_NOW);
+		version(Posix) {
+			version(OSX) {
+				static immutable string[] ossllibs = [
+					"libssl.46.dylib",
+					"libssl.44.dylib",
+					"libssl.43.dylib",
+					"libssl.35.dylib",
+					"libssl.1.1.dylib",
+					"/usr/local/opt/openssl/lib/libssl.1.0.0.dylib",
+					"libssl.dylib",
+				];
+			} else {
+				static immutable string[] ossllibs = [
+					"libssl.so.1.1",
+					"libssl.so.1.0.2",
+					"libssl.so.1.0.1",
+					"libssl.so.1.0.0",
+					"libssl.so",
+				];
+			}
 
-		} else version(Posix) {
-			ossllib_handle = dlopen("libssl.so.1.1", RTLD_NOW);
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
+			foreach(lib; ossllibs) {
+				ossllib_handle = dlopen(lib.ptr, RTLD_NOW);
+				if(ossllib_handle !is null) break;
+			}
 		} else version(Windows) {
-			version(X86_64)
+			version(X86_64) {
 				ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
-			if(ossllib_handle is null)
-				ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
-			version(X86_64)
 				oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
-			if(oeaylib_handle is null)
-				oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+			} else {
+				static immutable wstring[] ossllibs = [
+					"libssl-1_1.dll"w,
+					"libssl32.dll"w,
+				];
 
-			if(ossllib_handle is null) {
-				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
-				oeaylib_handle = ossllib_handle;
+				foreach(lib; ossllibs) {
+					ossllib_handle = LoadLibraryW(lib.ptr);
+					if(ossllib_handle !is null) break;
+				}
+
+				static immutable wstring[] eaylibs = [
+					"libcrypto-1_1.dll"w,
+					"libeay32.dll",
+				];
+
+				foreach(lib; eaylibs) {
+					oeaylib_handle = LoadLibraryW(lib.ptr);
+					if (oeaylib_handle !is null) break;
+				}
+
+				if(ossllib_handle is null) {
+					ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
+					oeaylib_handle = ossllib_handle;
+				}
 			}
 		}
 
