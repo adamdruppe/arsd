@@ -4698,9 +4698,9 @@ class WebSocket {
 			}
 		}
 
-		private bool loopExited;
+		private __gshared bool loopExited;
 		/++
-
+			Exits the running [WebSocket.eventLoop].  You can call this from a signal handler or another thread.
 		+/
 		void exitEventLoop() {
 			loopExited = true;
