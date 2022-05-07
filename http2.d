@@ -578,7 +578,36 @@ struct Uri {
 
 	/// Breaks down a uri string to its components
 	this(string uri) {
-		reparse(uri);
+		size_t lastGoodIndex;
+		foreach(char ch; uri) {
+			if(ch > 127) {
+				break;
+			}
+			lastGoodIndex++;
+		}
+
+		string replacement = uri[0 .. lastGoodIndex];
+		foreach(char ch; uri[lastGoodIndex .. $]) {
+			if(ch > 127) {
+				// need to percent-encode any non-ascii in it
+				char[3] buffer;
+				buffer[0] = '%';
+
+				auto first = ch / 16;
+				auto second = ch % 16;
+				first += (first >= 10) ? ('A'-10) : '0';
+				second += (second >= 10) ? ('A'-10) : '0';
+
+				buffer[1] = cast(char) first;
+				buffer[2] = cast(char) second;
+
+				replacement ~= buffer[];
+			} else {
+				replacement ~= ch;
+			}
+		}
+
+		reparse(replacement);
 	}
 
 	/// Returns `port` if set, otherwise if scheme is https 443, otherwise always 80
