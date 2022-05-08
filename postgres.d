@@ -184,6 +184,19 @@ class PostgresResult : ResultSet {
 		return row;
 	}
 
+	int affectedRows() {
+		auto g = PQcmdTuples(res);
+		if(g is null)
+			return 0;
+		int num;
+		while(*g) {
+			num *= 10;
+			num += *g - '0';
+			g++;
+		}
+		return num;
+	}
+
 	void popFront() {
 		position++;
 		if(position < numRows)
@@ -308,6 +321,7 @@ extern(C) {
 			int row_number,
 			int column_number);
 
+	char* PQcmdTuples(PGresult *res);
 
 }
 
