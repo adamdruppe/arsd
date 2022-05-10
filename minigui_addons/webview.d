@@ -490,6 +490,61 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 	private static WebViewWidget[NativeWindowHandle] mapping;
 	private static WebViewWidget[NativeWindowHandle] browserMapping;
 
+	private {
+		int findingIdent;
+		string findingText;
+		bool findingCase;
+	}
+
+	// might not be stable, webview does this fully integrated
+	void findText(string text, bool forward = true, bool matchCase = false, bool findNext = false) {
+		if(browserHandle) {
+			auto host = browserHandle.get_host();
+
+			static ident = 0;
+			auto txt = cef_string_t(text);
+			host.find(++ident, &txt, forward, matchCase, findNext);
+
+			findingIdent = ident;
+			findingText = text;
+			findingCase = matchCase;
+		}
+	}
+
+	// ditto
+	void findPrevious() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		auto txt = cef_string_t(findingText);
+		host.find(findingIdent, &txt, 0, findingCase, 1);
+	}
+
+	// ditto
+	void findNext() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		auto txt = cef_string_t(findingText);
+		host.find(findingIdent, &txt, 1, findingCase, 1);
+	}
+
+	// ditto
+	void stopFind() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		host.stop_finding(1);
+
+		findingIdent = 0;
+	}
+
 	override void refresh() { if(browserHandle) browserHandle.reload(); }
 	override void back() { if(browserHandle) browserHandle.go_back(); }
 	override void forward() { if(browserHandle) browserHandle.go_forward(); }
