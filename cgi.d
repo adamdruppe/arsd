@@ -3510,11 +3510,11 @@ struct RequestServer {
 				foundHost = false;
 			}
 			if(foundUid) {
-				privilegesDropToUid = to!int(arg);
+				privilegesDropToUid = to!uid_t(arg);
 				foundUid = false;
 			}
 			if(foundGid) {
-				privilegesDropToGid = to!int(arg);
+				privilegesDropToGid = to!gid_t(arg);
 				foundGid = false;
 			}
 			if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
