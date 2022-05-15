@@ -476,7 +476,6 @@ import std.base64;
 static import std.algorithm;
 import std.datetime;
 import std.range;
-import std.typecons : Nullable;
 
 import std.process;
 
@@ -3529,19 +3528,21 @@ struct RequestServer {
 		}
 	}
 
-	///
-	Nullable!uid_t privilegesDropToUid;
-	///
-	Nullable!gid_t privilegesDropToGid;
+	/// user (uid) to drop privileges to
+	/// 0 … do nothing
+	uid_t privilegesDropToUid = 0;
+	/// group (gid) to drop privileges to
+	/// 0 … do nothing
+	gid_t privilegesDropToGid = 0;
 
 	private void dropPrivileges() {
 		version(Posix) {
 			import core.sys.posix.unistd;
 
-			if (!privilegesDropToGid.isNull && setgid(privilegesDropToGid.get) != 0)
+			if (privilegesDropToGid != 0 && setgid(privilegesDropToGid) != 0)
 				throw new Exception("Dropping privileges via setgid() failed.");
 
-			if (!privilegesDropToUid.isNull && setuid(privilegesDropToUid.get) != 0)
+			if (privilegesDropToUid != 0 && setuid(privilegesDropToUid) != 0)
 				throw new Exception("Dropping privileges via setuid() failed.");
 		}
 		else {
@@ -3549,9 +3550,9 @@ struct RequestServer {
 			//pragma(msg, "Dropping privileges is not implemented for this platform");
 		}
 
-		// done, set null
-		privilegesDropToGid.nullify();
-		privilegesDropToUid.nullify();
+		// done, set zero
+		privilegesDropToGid = 0;
+		privilegesDropToUid = 0;
 	}
 
 	/++
