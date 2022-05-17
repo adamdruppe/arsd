@@ -7469,6 +7469,16 @@ struct ScrollbackBuffer {
 	}
 
 	/++
+		Adds a line by components without affecting scrollback.
+
+		History:
+			Added May 17, 2022
+	+/
+	void addLine(LineComponent[] components...) {
+		lines ~= Line(components.dup);
+	}
+
+	/++
 		Scrolling controls.
 
 		Notice that `scrollToTop`  needs width and height to know how to word wrap it to determine the number of lines present to scroll back.
