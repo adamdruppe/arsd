@@ -3510,11 +3510,11 @@ struct RequestServer {
 				foundHost = false;
 			}
 			if(foundUid) {
-				privDropUserId = to!int(arg);
+				privilegesDropToUid = to!uid_t(arg);
 				foundUid = false;
 			}
 			if(foundGid) {
-				privDropGroupId = to!int(arg);
+				privilegesDropToGid = to!gid_t(arg);
 				foundGid = false;
 			}
 			if(arg == "--listening-host" || arg == "-h" || arg == "/listening-host")
@@ -3528,7 +3528,32 @@ struct RequestServer {
 		}
 	}
 
-	// FIXME: the privDropUserId/group id need to be set in here instead of global
+	/// user (uid) to drop privileges to
+	/// 0 … do nothing
+	uid_t privilegesDropToUid = 0;
+	/// group (gid) to drop privileges to
+	/// 0 … do nothing
+	gid_t privilegesDropToGid = 0;
+
+	private void dropPrivileges() {
+		version(Posix) {
+			import core.sys.posix.unistd;
+
+			if (privilegesDropToGid != 0 && setgid(privilegesDropToGid) != 0)
+				throw new Exception("Dropping privileges via setgid() failed.");
+
+			if (privilegesDropToUid != 0 && setuid(privilegesDropToUid) != 0)
+				throw new Exception("Dropping privileges via setuid() failed.");
+		}
+		else {
+			// FIXME: Windows?
+			//pragma(msg, "Dropping privileges is not implemented for this platform");
+		}
+
+		// done, set zero
+		privilegesDropToGid = 0;
+		privilegesDropToUid = 0;
+	}
 
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
@@ -3557,7 +3582,7 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1);
+		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
 		auto connection = socket.accept();
 		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection);
 
@@ -3680,28 +3705,6 @@ else
 
 private __gshared bool globalStopFlag = false;
 
-private int privDropUserId;
-private int privDropGroupId;
-
-// Added Jan 11, 2021
-private void dropPrivs() {
-	version(Posix) {
-		import core.sys.posix.unistd;
-
-		auto userId = privDropUserId;
-		auto groupId = privDropGroupId;
-
-		if((userId != 0 || groupId != 0) && getuid() == 0) {
-			if(groupId)
-				setgid(groupId);
-			if(userId)
-				setuid(userId);
-		}
-
-	}
-	// FIXME: Windows?
-}
-
 version(embedded_httpd_processes)
 void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer params) {
 	import core.sys.posix.unistd;
@@ -3745,7 +3748,7 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 			close(sock);
 			throw new Exception("listen");
 		}
-		dropPrivs();
+		params.dropPrivileges();
 	}
 
 	version(embedded_httpd_processes_accept_after_fork) {} else {
@@ -5153,9 +5156,13 @@ import core.atomic;
 /**
 	To use this thing:
 
+	---
 	void handler(Socket s) { do something... }
-	auto manager = new ListeningConnectionManager("127.0.0.1", 80, &handler);
+	auto manager = new ListeningConnectionManager("127.0.0.1", 80, &handler, &delegateThatDropsPrivileges);
 	manager.listen();
+	---
+
+	The 4th parameter is optional.
 
 	I suggest you use BufferedInputRange(connection) to handle the input. As a packet
 	comes in, you will get control. You can just continue; though to fetch more.
@@ -5355,15 +5362,15 @@ class ListeningConnectionManager {
 	private void dg_handler(Socket s) {
 		fhandler(s);
 	}
-	this(string host, ushort port, void function(Socket) handler) {
+	this(string host, ushort port, void function(Socket) handler, void delegate() dropPrivs = null) {
 		fhandler = handler;
-		this(host, port, &dg_handler);
+		this(host, port, &dg_handler, dropPrivs);
 	}
 
-	this(string host, ushort port, void delegate(Socket) handler) {
+	this(string host, ushort port, void delegate(Socket) handler, void delegate() dropPrivs = null) {
 		this.handler = handler;
 
-		listener = startListening(host, port, tcp, cleanup, 128);
+		listener = startListening(host, port, tcp, cleanup, 128, dropPrivs);
 
 		version(cgi_use_fiber) version(cgi_use_fork)
 			listener.blocking = false;
@@ -5376,7 +5383,7 @@ class ListeningConnectionManager {
 	void delegate(Socket) handler;
 }
 
-Socket startListening(string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue) {
+Socket startListening(string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
 	Socket listener;
 	if(host.startsWith("unix:")) {
 		version(Posix) {
@@ -5424,7 +5431,8 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 
 	listener.listen(backQueue);
 
-	dropPrivs();
+	if (dropPrivs !is null) // can be null, backwards compatibility
+		dropPrivs();
 
 	return listener;
 }
