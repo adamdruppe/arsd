@@ -1141,13 +1141,18 @@ class HttpRequest {
 		}
 		headers ~= "\r\n";
 
+		bool specSaysRequestAlwaysHasBody =
+			requestParameters.method == HttpVerb.POST ||
+			requestParameters.method == HttpVerb.PUT ||
+			requestParameters.method == HttpVerb.PATCH;
+
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
 		if(requestParameters.contentType.length)
 			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
 		if(requestParameters.authorization.length)
 			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
-		if(requestParameters.bodyData.length)
+		if(requestParameters.bodyData.length || specSaysRequestAlwaysHasBody)
 			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
 		if(requestParameters.acceptGzip)
 			headers ~= "Accept-Encoding: gzip\r\n";
