@@ -4562,6 +4562,7 @@ class ListWidget : ListWidgetBase {
 	static struct Option {
 		string label;
 		bool selected;
+		ptrdiff_t tag;
 	}
 
 	/++
@@ -4578,6 +4579,19 @@ class ListWidget : ListWidgetBase {
 
 		version(custom_widgets)
 			redraw();
+	}
+
+	/++
+		Gets the index of the selected item. In case of multi select, the index of the first selected item is returned.
+		Returns -1 if nothing is selected.
+	+/
+	int getSelection()
+	{
+		foreach(i, opt; options) {
+			if (opt.selected)
+				return cast(int) i;
+		}
+		return -1;
 	}
 
 	version(custom_widgets)
@@ -4646,8 +4660,8 @@ class ListWidget : ListWidgetBase {
 	mixin OverrideStyle!Style;
 	//mixin Padding!q{2};
 
-	void addOption(string text) {
-		options ~= Option(text);
+	void addOption(string text, ptrdiff_t tag = 0) {
+		options ~= Option(text, false, tag);
 		version(win32_widgets) {
 			WCharzBuffer buffer = WCharzBuffer(text);
 			SendMessageW(hwnd, LB_ADDSTRING, 0, cast(LPARAM) buffer.ptr);
