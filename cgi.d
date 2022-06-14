@@ -3528,6 +3528,11 @@ struct RequestServer {
 		}
 	}
 
+	version(Windows) {
+		private alias uid_t = int;
+		private alias gid_t = int;
+	}
+
 	/// user (uid) to drop privileges to
 	/// 0 … do nothing
 	uid_t privilegesDropToUid = 0;
