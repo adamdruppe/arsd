@@ -109,6 +109,10 @@ struct RC(T) {
 		object = null;
 	}
 
+	bool opCast(T:bool)() nothrow {
+		return inner !is null;
+	}
+
 	void opAssign(T obj) {
 		obj.AddRef();
 		if(object)

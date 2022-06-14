@@ -10799,7 +10799,7 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 // man 2 sendfile
 	assert(urlPrefix[0] == '/');
 	if(filename is null)
-		filename = urlPrefix[1 .. $];
+		filename = decodeComponent(urlPrefix[1 .. $]); // FIXME is this actually correct?
 	if(contentType is null) {
 		contentType = contentTypeFromFileExtension(filename);
 	}
@@ -10881,7 +10881,7 @@ auto serveStaticFileDirectory(string urlPrefix, string directory = null) {
 	assert(directory[$-1] == '/');
 
 	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
-		auto file = cgi.pathInfo[urlPrefix.length .. $];
+		auto file = decodeComponent(cgi.pathInfo[urlPrefix.length .. $]); // FIXME: is this actually correct
 		if(file.indexOf("/") != -1 || file.indexOf("\\") != -1)
 			return false;
 
