@@ -4875,7 +4875,7 @@ class LineGetter {
 			it to `write` or `writeln`, you should return `["write", "writeln"]`.
 
 			If you offer different tab complete in different places, you still
-			need to return the whole string. For example, a file competition of
+			need to return the whole string. For example, a file completion of
 			a second argument, when the user writes `terminal.d term<tab>` and you
 			want it to complete to an additional `terminal.d`, you should return
 			`["terminal.d terminal.d"]`; in other words, `candidate ~ completion`
@@ -6407,6 +6407,25 @@ class LineGetter {
 		foreach(count; 0 .. terminal.height)
 			lineForward();
 		maybePositionCursor();
+	}
+
+	bool isSearchingHistory() {
+		return supplementalGetter !is null;
+	}
+
+	/++
+		Cancels an in-progress history search immediately, discarding the result, returning
+		to the normal prompt.
+
+		If the user is not currently searching history (see [isSearchingHistory]), this
+		function does nothing.
+	+/
+	void cancelHistorySearch() {
+		if(isSearchingHistory()) {
+			lastDrawLength = maximumDrawWidth - 1;
+			supplementalGetter = null;
+			redraw();
+		}
 	}
 
 	/++
