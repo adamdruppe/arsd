@@ -1329,7 +1329,7 @@ private:
 
   // Process markers. Returns when an SOFx, SOI, EOI, or SOS marker is
   // encountered.
-  int process_markers () {
+  int process_markers (bool allow_restarts = false) {
     int c;
 
     for ( ; ; ) {
@@ -1370,7 +1370,6 @@ private:
           break;
         //case M_APP0:  /* no need to read the JFIF marker */
 
-        case M_JPG:
         case M_RST0:    /* no parameters */
         case M_RST1:
         case M_RST2:
@@ -1379,6 +1378,11 @@ private:
         case M_RST5:
         case M_RST6:
         case M_RST7:
+		if(allow_restarts)
+			continue;
+		else
+			goto case;
+        case M_JPG:
         case M_TEM:
           stop_decoding(JPGD_UNEXPECTED_MARKER);
           break;
@@ -1387,6 +1391,8 @@ private:
           break;
       }
     }
+
+    assert(0);
   }
 
   // Finds the start of image (SOI) marker.
@@ -2222,7 +2228,7 @@ private:
       get_bits(16);
 
       // The next marker _should_ be EOI
-      process_markers();
+      process_markers(true); // but restarts are allowed as we can harmlessly skip them at the end of the stream
     }
 
     m_total_bytes_read -= m_in_buf_left;
