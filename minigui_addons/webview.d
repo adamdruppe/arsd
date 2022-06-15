@@ -360,7 +360,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		//semaphore = new Semaphore;
 		assert(CefApp.active);
 
-		this(new MiniguiCefClient(openNewWindow), parent);
+		this(new MiniguiCefClient(openNewWindow), parent, false);
 
 		cef_window_info_t window_info;
 		window_info.parent_window = containerWindow.nativeWindowHandle;
@@ -398,7 +398,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		.destroy(this); // but this is ok to do some memory management cleanup
 	}
 
-	private this(MiniguiCefClient client, Widget parent) {
+	private this(MiniguiCefClient client, Widget parent, bool isDevTools) {
 		super(parent);
 
 		this.client = client;
@@ -407,22 +407,56 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 
 		mapping[containerWindow.nativeWindowHandle()] = this;
 
-
-		this.parentWindow.addEventListener((FocusEvent fe) {
-			if(!browserHandle) return;
-			//browserHandle.get_host.set_focus(true);
-
-			executeJavascript("if(window.__arsdPreviouslyFocusedNode) window.__arsdPreviouslyFocusedNode.focus(); window.dispatchEvent(new FocusEvent(\"focus\"));");
+		this.addEventListener(delegate(KeyDownEvent ke) {
+			if(ke.key == Key.Tab)
+				ke.preventDefault();
 		});
-		this.parentWindow.addEventListener((BlurEvent be) {
+
+		this.addEventListener((FocusEvent fe) {
 			if(!browserHandle) return;
 
-			executeJavascript("if(document.activeElement) { window.__arsdPreviouslyFocusedNode = document.activeElement; document.activeElement.blur(); } window.dispatchEvent(new FocusEvent(\"blur\"));");
+			XFocusChangeEvent ev;
+			ev.type = arsd.simpledisplay.EventType.FocusIn;
+			ev.display = XDisplayConnection.get;
+			ev.window = ozone;
+			ev.mode = NotifyModes.NotifyNormal;
+			ev.detail = NotifyDetail.NotifyVirtual;
+
+			trapXErrors( {
+				XSendEvent(XDisplayConnection.get, ozone, false, 0, cast(XEvent*) &ev);
+			});
+
+			// this also works if the message is buggy and it avoids weirdness from raising window etc
+			//executeJavascript("if(window.__arsdPreviouslyFocusedNode) window.__arsdPreviouslyFocusedNode.focus(); window.dispatchEvent(new FocusEvent(\"focus\"));");
+		});
+		this.addEventListener((BlurEvent be) {
+			if(!browserHandle) return;
+
+			XFocusChangeEvent ev;
+			ev.type = arsd.simpledisplay.EventType.FocusOut;
+			ev.display = XDisplayConnection.get;
+			ev.window = ozone;
+			ev.mode = NotifyModes.NotifyNormal;
+			ev.detail = NotifyDetail.NotifyNonlinearVirtual;
+
+			trapXErrors( {
+				XSendEvent(XDisplayConnection.get, ozone, false, 0, cast(XEvent*) &ev);
+			});
+
+			//executeJavascript("if(document.activeElement) { window.__arsdPreviouslyFocusedNode = document.activeElement; document.activeElement.blur(); } window.dispatchEvent(new FocusEvent(\"blur\"));");
 		});
 
 		bool closeAttempted = false;
 
+		if(isDevTools)
 		this.parentWindow.addEventListener((scope ClosingEvent ce) {
+			this.parentWindow.hide();
+			ce.preventDefault();
+		});
+		else
+		this.parentWindow.addEventListener((scope ClosingEvent ce) {
+			if(devTools)
+				devTools.close();
 			if(!closeAttempted && browserHandle) {
 				browserHandle.get_host.close_browser(true);
 				ce.preventDefault();
@@ -450,10 +484,66 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 	}
 
 	private NativeWindowHandle browserWindow;
+	private NativeWindowHandle ozone;
 	private RC!cef_browser_t browserHandle;
 
 	private static WebViewWidget[NativeWindowHandle] mapping;
 	private static WebViewWidget[NativeWindowHandle] browserMapping;
+
+	private {
+		int findingIdent;
+		string findingText;
+		bool findingCase;
+	}
+
+	// might not be stable, webview does this fully integrated
+	void findText(string text, bool forward = true, bool matchCase = false, bool findNext = false) {
+		if(browserHandle) {
+			auto host = browserHandle.get_host();
+
+			static ident = 0;
+			auto txt = cef_string_t(text);
+			host.find(++ident, &txt, forward, matchCase, findNext);
+
+			findingIdent = ident;
+			findingText = text;
+			findingCase = matchCase;
+		}
+	}
+
+	// ditto
+	void findPrevious() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		auto txt = cef_string_t(findingText);
+		host.find(findingIdent, &txt, 0, findingCase, 1);
+	}
+
+	// ditto
+	void findNext() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		auto txt = cef_string_t(findingText);
+		host.find(findingIdent, &txt, 1, findingCase, 1);
+	}
+
+	// ditto
+	void stopFind() {
+		if(findingIdent == 0)
+			return;
+		if(!browserHandle)
+			return;
+		auto host = browserHandle.get_host();
+		host.stop_finding(1);
+
+		findingIdent = 0;
+	}
 
 	override void refresh() { if(browserHandle) browserHandle.reload(); }
 	override void back() { if(browserHandle) browserHandle.go_back(); }
@@ -475,9 +565,37 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		browserHandle.get_main_frame.execute_java_script(&c, &u, line);
 	}
 
+	private Window devTools;
 	override void showDevTools() {
 		if(!browserHandle) return;
-		browserHandle.get_host.show_dev_tools(null /* window info */, client.passable, null /* settings */, null /* inspect element at coordinates */);
+
+		if(devTools is null) {
+			auto host = browserHandle.get_host;
+
+			if(host.has_dev_tools()) {
+				host.close_dev_tools();
+				return;
+			}
+
+			cef_window_info_t windowinfo;
+			version(linux) {
+				auto sw = new Window("DevTools");
+				//sw.win.beingOpenKeepsAppOpen = false;
+				devTools = sw;
+
+				auto wv = new WebViewWidget_CEF(client, sw, true);
+
+				sw.show();
+
+				windowinfo.parent_window = wv.containerWindow.nativeWindowHandle;
+			}
+			host.show_dev_tools(&windowinfo, client.passable, null /* settings */, null /* inspect element at coordinates */);
+		} else {
+			if(devTools.hidden)
+				devTools.show();
+			else
+				devTools.hide();
+		}
 	}
 
 	// FYI the cef browser host also allows things like custom spelling dictionaries and getting navigation entries.
@@ -534,7 +652,7 @@ version(cef) {
 			cef_dictionary_value_t** extra_info,
 			int* no_javascript_access
 		) {
-
+		sdpyPrintDebugString("on_before_popup");
 			if(this.client.openNewWindow is null)
 				return 1; // new windows disabled
 
@@ -548,10 +666,10 @@ version(cef) {
 
 				runInGuiThread({
 					ret = 1;
-					scope WebViewWidget delegate(Widget, BrowserSettings) o = (parent, passed_settings) {
+					scope WebViewWidget delegate(Widget, BrowserSettings) accept = (parent, passed_settings) {
 						ret = 0;
 						if(parent !is null) {
-							auto widget = new WebViewWidget_CEF(this.client, parent);
+							auto widget = new WebViewWidget_CEF(this.client, parent, false);
 							(*windowInfo).parent_window = widget.containerWindow.nativeWindowHandle;
 
 							passed_settings.set(browser_settings);
@@ -560,7 +678,7 @@ version(cef) {
 						}
 						return null;
 					};
-					this.client.openNewWindow(OpenNewWindowParams(target_url.toGC, o));
+					this.client.openNewWindow(OpenNewWindowParams(target_url.toGC, accept));
 					return;
 				});
 
@@ -589,10 +707,13 @@ version(cef) {
 					import arsd.simpledisplay : Window;
 					Window root;
 					Window parent;
+					Window ozone;
 					uint c = 0;
 					auto display = XDisplayConnection.get;
 					Window* children;
 					XQueryTree(display, handle, &root, &parent, &children, &c);
+					if(c == 1)
+						ozone = children[0];
 					XFree(children);
 				} else static assert(0);
 
@@ -600,8 +721,9 @@ version(cef) {
 					auto wv = *wvp;
 					wv.browserWindow = handle;
 					wv.browserHandle = RC!cef_browser_t(ptr);
+					wv.ozone = ozone ? ozone : handle;
 
-					wv.browserWindowWrapped = new SimpleWindow(wv.browserWindow);
+					wv.browserWindowWrapped = new SimpleWindow(wv.ozone);
 					/+
 					XSelectInput(XDisplayConnection.get, handle, EventMask.FocusChangeMask);
 					
@@ -831,15 +953,70 @@ version(cef) {
 		}
 	}
 
+	class MiniguiRequestHandler : CEF!cef_request_handler_t {
+		override int on_before_browse(RC!(cef_browser_t), RC!(cef_frame_t), RC!(cef_request_t), int, int) nothrow {
+			return 0;
+		}
+		override int on_open_urlfrom_tab(RC!(cef_browser_t), RC!(cef_frame_t), const(cef_string_utf16_t)*, cef_window_open_disposition_t, int) nothrow {
+			return 0;
+		}
+		override cef_resource_request_handler_t* get_resource_request_handler(RC!(cef_browser_t), RC!(cef_frame_t), RC!(cef_request_t), int, int, const(cef_string_utf16_t)*, int*) nothrow {
+			return null;
+		}
+		override int get_auth_credentials(RC!(cef_browser_t), const(cef_string_utf16_t)*, int, const(cef_string_utf16_t)*, int, const(cef_string_utf16_t)*, const(cef_string_utf16_t)*, RC!(cef_auth_callback_t)) nothrow {
+			// this is for http basic auth popup.....
+			return 0;
+		}
+		override int on_quota_request(RC!(cef_browser_t), const(cef_string_utf16_t)*, long, RC!(cef_callback_t)) nothrow {
+			return 0;
+		}
+		override int on_certificate_error(RC!(cef_browser_t), cef_errorcode_t, const(cef_string_utf16_t)*, RC!(cef_sslinfo_t), RC!(cef_callback_t)) nothrow {
+			return 0;
+		}
+		override int on_select_client_certificate(RC!(cef_browser_t), int, const(cef_string_utf16_t)*, int, ulong, cef_x509certificate_t**, RC!(cef_select_client_certificate_callback_t)) nothrow {
+			return 0;
+		}
+		override void on_plugin_crashed(RC!(cef_browser_t), const(cef_string_utf16_t)*) nothrow {
+
+		}
+		override void on_render_view_ready(RC!(cef_browser_t) p) nothrow {
+
+		}
+		override void on_render_process_terminated(RC!(cef_browser_t), cef_termination_status_t) nothrow {
+
+		}
+		override void on_document_available_in_main_frame(RC!(cef_browser_t) browser) nothrow {
+			browser.runOnWebView(delegate(wv) {
+				wv.executeJavascript("console.log('here');");
+			});
+
+		}
+	}
+
 	class MiniguiFocusHandler : CEF!cef_focus_handler_t {
 		override void on_take_focus(RC!(cef_browser_t) browser, int next) nothrow {
-			// sdpyPrintDebugString("take");
+			browser.runOnWebView(delegate(wv) {
+				Widget f;
+				if(next) {
+					f = Window.getFirstFocusable(wv.parentWindow);
+				} else {
+					foreach(w; &wv.parentWindow.focusableWidgets) {
+						if(w is wv)
+							break;
+						f = w;
+					}
+				}
+				if(f)
+					f.focus();
+			});
 		}
 		override int on_set_focus(RC!(cef_browser_t) browser, cef_focus_source_t source) nothrow {
-			//browser.runOnWebView((ev) {
+			/+
+			browser.runOnWebView((ev) {
+				ev.focus(); // even this can steal focus from other parts of my application!
+			});
+			+/
 			//sdpyPrintDebugString("setting");
-				//ev.parentWindow.focusedWidget = ev;
-			//});
 
 			return 1; // otherwise, cancel because this bullshit tends to steal focus from other applications and i never, ever, ever want that to happen.
 			// seems to happen because of race condition in it getting a focus event and then stealing the focus from the parent
@@ -848,7 +1025,12 @@ version(cef) {
 			// it also breaks its own pop up menus and drop down boxes to allow this! wtf
 		}
 		override void on_got_focus(RC!(cef_browser_t) browser) nothrow {
-			// sdpyPrintDebugString("got");
+			browser.runOnWebView((ev) {
+				// this sometimes steals from the app too but it is relatively acceptable
+				// steals when i mouse in from the side of the window quickly, but still
+				// i want the minigui state to match so i'll allow it
+				ev.focus();
+			});
 		}
 	}
 
@@ -863,6 +1045,7 @@ version(cef) {
 		MiniguiDownloadHandler downloadHandler;
 		MiniguiKeyboardHandler keyboardHandler;
 		MiniguiFocusHandler focusHandler;
+		MiniguiRequestHandler requestHandler;
 		this(void delegate(scope OpenNewWindowParams) openNewWindow) {
 			this.openNewWindow = openNewWindow;
 			lsh = new MiniguiCefLifeSpanHandler(this);
@@ -872,6 +1055,7 @@ version(cef) {
 			downloadHandler = new MiniguiDownloadHandler();
 			keyboardHandler = new MiniguiKeyboardHandler();
 			focusHandler = new MiniguiFocusHandler();
+			requestHandler = new MiniguiRequestHandler();
 		}
 
 		override cef_audio_handler_t* get_audio_handler() {
@@ -915,10 +1099,12 @@ version(cef) {
 		override cef_render_handler_t* get_render_handler() {
 			// this thing might work for an off-screen thing
 			// like to an image or to a video stream maybe
+			//
+			// might be useful to have it render here then send it over too for remote X sharing a process
 			return null;
 		}
 		override cef_request_handler_t* get_request_handler() {
-			return null;
+			return requestHandler.returnable;
 		}
 		override int on_process_message_received(RC!cef_browser_t, RC!cef_frame_t, cef_process_id_t, RC!cef_process_message_t) {
 			return 0; // return 1 if you can actually handle the message

@@ -566,7 +566,7 @@ private class UnixAddress : Address {
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
 
-	// scheme//userinfo@host:port/path?query#fragment
+	// scheme://userinfo@host:port/path?query#fragment
 
 	string scheme; /// e.g. "http" in "http://example.com/"
 	string userinfo; /// the username (and possibly a password) in the uri
@@ -578,7 +578,42 @@ struct Uri {
 
 	/// Breaks down a uri string to its components
 	this(string uri) {
-		reparse(uri);
+		size_t lastGoodIndex;
+		foreach(char ch; uri) {
+			if(ch > 127) {
+				break;
+			}
+			lastGoodIndex++;
+		}
+
+		string replacement = uri[0 .. lastGoodIndex];
+		foreach(char ch; uri[lastGoodIndex .. $]) {
+			if(ch > 127) {
+				// need to percent-encode any non-ascii in it
+				char[3] buffer;
+				buffer[0] = '%';
+
+				auto first = ch / 16;
+				auto second = ch % 16;
+				first += (first >= 10) ? ('A'-10) : '0';
+				second += (second >= 10) ? ('A'-10) : '0';
+
+				buffer[1] = cast(char) first;
+				buffer[2] = cast(char) second;
+
+				replacement ~= buffer[];
+			} else {
+				replacement ~= ch;
+			}
+		}
+
+		reparse(replacement);
+	}
+
+	/// Returns `port` if set, otherwise if scheme is https 443, otherwise always 80
+	int effectivePort() const @property nothrow pure @safe @nogc {
+		return port != 0 ? port
+			: scheme == "https" ? 443 : 80;
 	}
 
 	private string unixSocketPath = null;
@@ -991,10 +1026,8 @@ class HttpRequest {
 		requestParameters.method = method;
 		requestParameters.unixSocketPath = where.unixSocketPath;
 		requestParameters.host = parts.host;
-		requestParameters.port = cast(ushort) parts.port;
+		requestParameters.port = cast(ushort) parts.effectivePort;
 		requestParameters.ssl = parts.scheme == "https";
-		if(parts.port == 0)
-			requestParameters.port = requestParameters.ssl ? 443 : 80;
 		requestParameters.uri = parts.path.length ? parts.path : "/";
 		if(parts.query.length) {
 			requestParameters.uri ~= "?";
@@ -1108,13 +1141,18 @@ class HttpRequest {
 		}
 		headers ~= "\r\n";
 
+		bool specSaysRequestAlwaysHasBody =
+			requestParameters.method == HttpVerb.POST ||
+			requestParameters.method == HttpVerb.PUT ||
+			requestParameters.method == HttpVerb.PATCH;
+
 		if(requestParameters.userAgent.length)
 			headers ~= "User-Agent: "~requestParameters.userAgent~"\r\n";
 		if(requestParameters.contentType.length)
 			headers ~= "Content-Type: "~requestParameters.contentType~"\r\n";
 		if(requestParameters.authorization.length)
 			headers ~= "Authorization: "~requestParameters.authorization~"\r\n";
-		if(requestParameters.bodyData.length)
+		if(requestParameters.bodyData.length || specSaysRequestAlwaysHasBody)
 			headers ~= "Content-Length: "~to!string(requestParameters.bodyData.length)~"\r\n";
 		if(requestParameters.acceptGzip)
 			headers ~= "Accept-Encoding: gzip\r\n";
@@ -2403,17 +2441,7 @@ class HttpClient {
 		or set [HttpRequest.retainCookies|request.retainCookies] to `true` on the returned object. But see important implementation shortcomings on [retainCookies].
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
-		string proxyToUse;
-		switch(uri.scheme) {
-			case "http":
-				proxyToUse = httpProxy;
-			break;
-			case "https":
-				proxyToUse = httpsProxy;
-			break;
-			default:
-				proxyToUse = null;
-		}
+		string proxyToUse = getProxyFor(uri);
 
 		auto request = new HttpRequest(this, uri, method, cache, defaultTimeout, proxyToUse);
 
@@ -2466,6 +2494,8 @@ class HttpClient {
 		The environment variables are used, if present, on all operating systems.
 
 		History:
+			no_proxy support added April 13, 2022
+
 			Added April 12, 2021 (included in dub v9.5)
 
 		Bugs:
@@ -2477,8 +2507,238 @@ class HttpClient {
 		import std.process;
 		httpProxy = environment.get("http_proxy", environment.get("HTTP_PROXY", null));
 		httpsProxy = environment.get("https_proxy", environment.get("HTTPS_PROXY", null));
+		auto noProxy = environment.get("no_proxy", environment.get("NO_PROXY", null));
+		if (noProxy.length) {
+			proxyIgnore = noProxy.split(",");
+			foreach (ref rule; proxyIgnore)
+				rule = rule.strip;
+		}
 
 		// FIXME: on Windows, I should use the Internet Explorer proxy settings
+	}
+
+	/++
+		Checks if the given uri should be proxied according to the httpProxy, httpsProxy, proxyIgnore
+		variables and returns either httpProxy, httpsProxy or null.
+
+		If neither `httpProxy` or `httpsProxy` are set this always returns `null`. Same if `proxyIgnore`
+		contains `*`.
+
+		DNS is not resolved for proxyIgnore IPs, only IPs match IPs and hosts match hosts.
+	+/
+	string getProxyFor(Uri uri) {
+		string proxyToUse;
+		switch(uri.scheme) {
+			case "http":
+				proxyToUse = httpProxy;
+			break;
+			case "https":
+				proxyToUse = httpsProxy;
+			break;
+			default:
+				proxyToUse = null;
+		}
+
+		if (proxyToUse.length) {
+			foreach (ignore; proxyIgnore) {
+				if (matchProxyIgnore(ignore, uri)) {
+					return null;
+				}
+			}
+		}
+
+		return proxyToUse;
+	}
+
+	/// Returns -1 on error, otherwise the IP as uint. Parsing is very strict.
+	private static long tryParseIPv4(scope const(char)[] s) nothrow {
+		import std.algorithm : findSplit, all;
+		import std.ascii : isDigit;
+
+		static int parseNum(scope const(char)[] num) nothrow {
+			if (num.length < 1 || num.length > 3 || !num.representation.all!isDigit)
+				return -1;
+			try {
+				auto ret = num.to!int;
+				return ret > 255 ? -1 : ret;
+			} catch (Exception) {
+				assert(false);
+			}
+		}
+
+		if (s.length < "0.0.0.0".length || s.length > "255.255.255.255".length)
+			return -1;
+		auto firstPair = s.findSplit(".");
+		auto secondPair = firstPair[2].findSplit(".");
+		auto thirdPair = secondPair[2].findSplit(".");
+		auto a = parseNum(firstPair[0]);
+		auto b = parseNum(secondPair[0]);
+		auto c = parseNum(thirdPair[0]);
+		auto d = parseNum(thirdPair[2]);
+		if (a < 0 || b < 0 || c < 0 || d < 0)
+			return -1;
+		return (cast(uint)a << 24) | (b << 16) | (c << 8) | (d);
+	}
+
+	unittest {
+		assert(tryParseIPv4("0.0.0.0") == 0);
+		assert(tryParseIPv4("127.0.0.1") == 0x7f000001);
+		assert(tryParseIPv4("162.217.114.56") == 0xa2d97238);
+		assert(tryParseIPv4("256.0.0.1") == -1);
+		assert(tryParseIPv4("0.0.0.-2") == -1);
+		assert(tryParseIPv4("0.0.0.a") == -1);
+		assert(tryParseIPv4("0.0.0") == -1);
+		assert(tryParseIPv4("0.0.0.0.0") == -1);
+	}
+
+	/++
+		Returns true if the given no_proxy rule matches the uri.
+
+		Invalid IP ranges are silently ignored and return false.
+	
+		See $(LREF proxyIgnore).
+	+/
+	static bool matchProxyIgnore(scope const(char)[] rule, scope const Uri uri) nothrow {
+		import std.algorithm;
+		import std.ascii : isDigit;
+		import std.uni : sicmp;
+
+		string uriHost = uri.host;
+		if (uriHost.length && uriHost[$ - 1] == '.')
+			uriHost = uriHost[0 .. $ - 1];
+
+		if (rule == "*")
+			return true;
+		while (rule.length && rule[0] == '.') rule = rule[1 .. $];
+
+		static int parsePort(scope const(char)[] portStr) nothrow {
+			if (portStr.length < 1 || portStr.length > 5 || !portStr.representation.all!isDigit)
+				return -1;
+			try {
+				return portStr.to!int;
+			} catch (Exception) {
+				assert(false, "to!int should succeed");
+			}
+		}
+
+		if (sicmp(rule, uriHost) == 0
+			|| (uriHost.length > rule.length
+				&& sicmp(rule, uriHost[$ - rule.length .. $]) == 0
+				&& uriHost[$ - rule.length - 1] == '.'))
+			return true;
+
+		if (rule.startsWith("[")) { // IPv6
+			// below code is basically nothrow lastIndexOfAny("]:")
+			ptrdiff_t lastColon = cast(ptrdiff_t) rule.length - 1;
+			while (lastColon >= 0) {
+				if (rule[lastColon] == ']' || rule[lastColon] == ':')
+					break;
+				lastColon--;
+			}
+			if (lastColon == -1)
+				return false; // malformed
+
+			if (rule[lastColon] == ':') { // match with port
+				auto port = parsePort(rule[lastColon + 1 .. $]);
+				if (port != -1) {
+					if (uri.effectivePort != port.to!int)
+						return false;
+					return uriHost == rule[0 .. lastColon];
+				}
+			}
+			// exact match of host already done above
+		} else {
+			auto slash = rule.lastIndexOfNothrow('/');
+			if (slash == -1) { // no IP range
+				auto colon = rule.lastIndexOfNothrow(':');
+				auto host = colon == -1 ? rule : rule[0 .. colon];
+				auto port = colon != -1 ? parsePort(rule[colon + 1 .. $]) : -1;
+				auto ip = tryParseIPv4(host);
+				if (ip == -1) { // not an IPv4, test for host with port
+					return port != -1
+						&& uri.effectivePort == port
+						&& uriHost == host;
+				} else {
+					// perform IPv4 equals
+					auto other = tryParseIPv4(uriHost);
+					if (other == -1)
+						return false; // rule == IPv4, uri != IPv4
+					if (port != -1)
+						return uri.effectivePort == port
+							&& uriHost == host;
+					else
+						return uriHost == host;
+				}
+			} else {
+				auto maskStr = rule[slash + 1 .. $];
+				auto ip = tryParseIPv4(rule[0 .. slash]);
+				if (ip == -1)
+					return false;
+				if (maskStr.length && maskStr.length < 3 && maskStr.representation.all!isDigit) {
+					// IPv4 range match
+					int mask;
+					try {
+						mask = maskStr.to!int;
+					} catch (Exception) {
+						assert(false);
+					}
+
+					auto other = tryParseIPv4(uriHost);
+					if (other == -1)
+						return false; // rule == IPv4, uri != IPv4
+
+					if (mask == 0) // matches all
+						return true;
+					if (mask > 32) // matches none
+						return false;
+
+					auto shift = 32 - mask;
+					return cast(uint)other >> shift
+						== cast(uint)ip >> shift;
+				}
+			}
+		}
+		return false;
+	}
+
+	unittest {
+		assert(matchProxyIgnore("0.0.0.0/0", Uri("http://127.0.0.1:80/a")));
+		assert(matchProxyIgnore("0.0.0.0/0", Uri("http://127.0.0.1/a")));
+		assert(!matchProxyIgnore("0.0.0.0/0", Uri("https://dlang.org/a")));
+		assert(matchProxyIgnore("*", Uri("https://dlang.org/a")));
+		assert(matchProxyIgnore("127.0.0.0/8", Uri("http://127.0.0.1:80/a")));
+		assert(matchProxyIgnore("127.0.0.0/8", Uri("http://127.0.0.1/a")));
+		assert(matchProxyIgnore("127.0.0.1", Uri("http://127.0.0.1:1234/a")));
+		assert(!matchProxyIgnore("127.0.0.1:80", Uri("http://127.0.0.1:1234/a")));
+		assert(!matchProxyIgnore("127.0.0.1/8", Uri("http://localhost/a"))); // no DNS resolution / guessing
+		assert(!matchProxyIgnore("0.0.0.0/1", Uri("http://localhost/a"))
+			&& !matchProxyIgnore("128.0.0.0/1", Uri("http://localhost/a"))); // no DNS resolution / guessing 2
+		foreach (m; 1 .. 32) {
+			assert(matchProxyIgnore(text("127.0.0.1/", m), Uri("http://127.0.0.1/a")));
+			assert(!matchProxyIgnore(text("127.0.0.1/", m), Uri("http://128.0.0.1/a")));
+			bool expectedMatch = m <= 24;
+			assert(expectedMatch == matchProxyIgnore(text("127.0.1.0/", m), Uri("http://127.0.1.128/a")), m.to!string);
+		}
+		assert(matchProxyIgnore("localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore("localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore("localhost", Uri("http://foo.localhost./a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore(".localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("foo.localhost", Uri("http://localhost/a")));
+		assert(matchProxyIgnore("foo.localhost", Uri("http://foo.localhost/a")));
+		assert(matchProxyIgnore("foo.localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://localhost/a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://foo.localhost/a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://foo.localhost./a")));
+		assert(!matchProxyIgnore("bar.localhost", Uri("http://bbar.localhost./a")));
+		assert(matchProxyIgnore("[::1]", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]", Uri("http://[::2]/a")));
+		assert(matchProxyIgnore("[::1]:80", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]:443", Uri("http://[::1]/a")));
+		assert(!matchProxyIgnore("[::1]:80", Uri("https://[::1]/a")));
+		assert(matchProxyIgnore("[::1]:443", Uri("https://[::1]/a")));
+		assert(matchProxyIgnore("google.com", Uri("https://GOOGLE.COM/a")));
 	}
 
 	/++
@@ -2496,6 +2756,28 @@ class HttpClient {
 	string httpProxy;
 	/// ditto
 	string httpsProxy;
+	/++
+		List of hosts or ips, optionally including a port, where not to proxy.
+
+		Each entry may be one of the following formats:
+		- `127.0.0.1` (IPv4, any port)
+		- `127.0.0.1:1234` (IPv4, specific port)
+		- `127.0.0.1/8` (IPv4 range / CIDR block, any port)
+		- `[::1]` (IPv6, any port)
+		- `[::1]:1234` (IPv6, specific port)
+		- `*` (all hosts and ports, basically don't proxy at all anymore)
+		- `.domain.name`, `domain.name` (don't proxy the specified domain,
+			leading dots are stripped and subdomains are also not proxied)
+		- `.domain.name:1234`, `domain.name:1234` (same as above, with specific port)
+
+		No DNS resolution or regex is done in this list.
+
+		See https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
+
+		History:
+			Added April 13, 2022
+	+/
+	string[] proxyIgnore;
 
 	/// See [retainCookies] for important caveats.
 	void setCookie(string name, string value, string domain = null) {
@@ -2570,6 +2852,17 @@ class HttpClient {
 
 	/* inter-request state */
 	private CookieHeader[][string] cookies;
+}
+
+private ptrdiff_t lastIndexOfNothrow(T)(scope T[] arr, T value) nothrow
+{
+	ptrdiff_t ret = cast(ptrdiff_t)arr.length - 1;
+	while (ret >= 0) {
+		if (arr[ret] == value)
+			return ret;
+		ret--;
+	}
+	return ret;
 }
 
 interface ICache {
@@ -2772,19 +3065,68 @@ void main() {
 version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
 
-	// macros in the original C
-	SSL_METHOD* SSLv23_client_method() {
-		if(ossllib.SSLv23_client_method)
-			return ossllib.SSLv23_client_method();
-		else
-			return ossllib.TLS_client_method();
+	// CRL = Certificate Revocation List
+	static immutable string[] sslErrorCodes = [
+		"OK (code 0)",
+		"Unspecified SSL/TLS error (code 1)",
+		"Unable to get TLS issuer certificate (code 2)",
+		"Unable to get TLS CRL (code 3)",
+		"Unable to decrypt TLS certificate signature (code 4)",
+		"Unable to decrypt TLS CRL signature (code 5)",
+		"Unable to decode TLS issuer public key (code 6)",
+		"TLS certificate signature failure (code 7)",
+		"TLS CRL signature failure (code 8)",
+		"TLS certificate not yet valid (code 9)",
+		"TLS certificate expired (code 10)",
+		"TLS CRL not yet valid (code 11)",
+		"TLS CRL expired (code 12)",
+		"TLS error in certificate not before field (code 13)",
+		"TLS error in certificate not after field (code 14)",
+		"TLS error in CRL last update field (code 15)",
+		"TLS error in CRL next update field (code 16)",
+		"TLS system out of memory (code 17)",
+		"TLS certificate is self-signed (code 18)",
+		"Self-signed certificate in TLS chain (code 19)",
+		"Unable to get TLS issuer certificate locally (code 20)",
+		"Unable to verify TLS leaf signature (code 21)",
+		"TLS certificate chain too long (code 22)",
+		"TLS certificate was revoked (code 23)",
+		"TLS CA is invalid (code 24)",
+		"TLS error: path length exceeded (code 25)",
+		"TLS error: invalid purpose (code 26)",
+		"TLS error: certificate untrusted (code 27)",
+		"TLS error: certificate rejected (code 28)",
+	];
+
+	string getOpenSslErrorCode(long error) {
+		if(error == 62)
+			return "TLS certificate host name mismatch";
+
+		if(error < 0 || error >= sslErrorCodes.length)
+			return "SSL/TLS error code " ~ to!string(error);
+		return sslErrorCodes[cast(size_t) error];
 	}
 
-	struct SSL {}
-	struct SSL_CTX {}
-	struct SSL_METHOD {}
+	struct SSL;
+	struct SSL_CTX;
+	struct SSL_METHOD;
+	struct X509_STORE_CTX;
 	enum SSL_VERIFY_NONE = 0;
 	enum SSL_VERIFY_PEER = 1;
+
+	// copy it into the buf[0 .. size] and return actual length you read.
+	// rwflag == 0 when reading, 1 when writing.
+	extern(C) alias pem_password_cb = int function(char* buffer, int bufferSize, int rwflag, void* userPointer);
+	extern(C) alias print_errors_cb = int function(const char*, size_t, void*);
+	extern(C) alias client_cert_cb = int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey);
+	extern(C) alias keylog_cb = void function(SSL*, char*);
+
+	struct X509;
+	struct X509_STORE;
+	struct EVP_PKEY;
+	struct X509_VERIFY_PARAM;
+
+	import core.stdc.config;
 
 	struct ossllib {
 		__gshared static extern(C) {
@@ -2822,26 +3164,17 @@ version(use_openssl) {
 			X509_STORE* function(SSL_CTX*) SSL_CTX_get_cert_store;
 			c_long function(const SSL* ssl) SSL_get_verify_result;
 
+			X509_VERIFY_PARAM* function(const SSL*) SSL_get0_param;
+
 			/+
 			SSL_CTX_load_verify_locations
 			SSL_CTX_set_client_CA_list
 			+/
 
-
 			// client cert things
 			void function (SSL_CTX *ctx, int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey)) SSL_CTX_set_client_cert_cb;
 		}
 	}
-	// copy it into the buf[0 .. size] and return actual length you read.
-	// rwflag == 0 when reading, 1 when writing.
-	extern(C)
-	alias pem_password_cb = int function(char* buffer, int bufferSize, int rwflag, void* userPointer);
-
-	struct X509;
-	struct X509_STORE;
-	struct EVP_PKEY;
-
-	import core.stdc.config;
 
 	struct eallib {
 		__gshared static extern(C) {
@@ -2849,6 +3182,8 @@ version(use_openssl) {
 				void function() OpenSSL_add_all_ciphers;
 				void function() OpenSSL_add_all_digests;
 			/* } */
+
+			const(char)* function(int) OpenSSL_version;
 
 			void function(ulong, void*) OPENSSL_init_crypto;
 
@@ -2865,154 +3200,60 @@ version(use_openssl) {
 			X509* function(FILE *fp, X509 **x) d2i_X509_fp;
 
 			X509* function(X509** a, const(ubyte*)* pp, c_long length) d2i_X509;
+			int function(X509* a, ubyte** o) i2d_X509;
+
+			int function(X509_VERIFY_PARAM* a, const char* b, size_t l) X509_VERIFY_PARAM_set1_host;
+
+			X509* function(X509_STORE_CTX *ctx) X509_STORE_CTX_get_current_cert;
+			int function(X509_STORE_CTX *ctx) X509_STORE_CTX_get_error;
 		}
 	}
 
-	extern(C)
-	alias print_errors_cb = int function(const char*, size_t, void*);
+	struct OpenSSL {
+		static:
 
-	int SSL_CTX_set_default_verify_paths(SSL_CTX* a) {
-		if(ossllib.SSL_CTX_set_default_verify_paths)
-			return ossllib.SSL_CTX_set_default_verify_paths(a);
-		else throw new Exception("SSL_CTX_set_default_verify_paths not loaded");
-	}
+		template opDispatch(string name) {
+			auto opDispatch(T...)(T t) {
+				static if(__traits(hasMember, ossllib, name)) {
+					auto ptr = __traits(getMember, ossllib, name);
+				} else static if(__traits(hasMember, eallib, name)) {
+					auto ptr = __traits(getMember, eallib, name);
+				} else static assert(0);
 
-	c_long SSL_get_verify_result(const SSL* ssl) {
-		if(ossllib.SSL_get_verify_result)
-			return ossllib.SSL_get_verify_result(ssl);
-		else throw new Exception("SSL_get_verify_result not loaded");
-	}
+				if(ptr is null)
+					throw new Exception(name ~ " not loaded");
+				return ptr(t);
+			}
+		}
 
-	X509_STORE* SSL_CTX_get_cert_store(SSL_CTX* a) {
-		if(ossllib.SSL_CTX_get_cert_store)
-			return ossllib.SSL_CTX_get_cert_store(a);
-		else throw new Exception("SSL_CTX_get_cert_store not loaded");
-	}
+		// macros in the original C
+		SSL_METHOD* SSLv23_client_method() {
+			if(ossllib.SSLv23_client_method)
+				return ossllib.SSLv23_client_method();
+			else
+				return ossllib.TLS_client_method();
+		}
 
-	SSL_CTX* SSL_CTX_new(const SSL_METHOD* a) {
-		if(ossllib.SSL_CTX_new)
-			return ossllib.SSL_CTX_new(a);
-		else throw new Exception("SSL_CTX_new not loaded");
-	}
-	SSL* SSL_new(SSL_CTX* a) {
-		if(ossllib.SSL_new)
-			return ossllib.SSL_new(a);
-		else throw new Exception("SSL_new not loaded");
-	}
-	int SSL_set_fd(SSL* a, int b) {
-		if(ossllib.SSL_set_fd)
-			return ossllib.SSL_set_fd(a, b);
-		else throw new Exception("SSL_set_fd not loaded");
-	}
+		void SSL_set_tlsext_host_name(SSL* a, const char* b) {
+			if(ossllib.SSL_ctrl)
+				return ossllib.SSL_ctrl(a, 55 /*SSL_CTRL_SET_TLSEXT_HOSTNAME*/, 0 /*TLSEXT_NAMETYPE_host_name*/, cast(void*) b);
+			else throw new Exception("SSL_set_tlsext_host_name not loaded");
+		}
 
-	extern(C)
-	alias client_cert_cb = int function(SSL *ssl, X509 **x509, EVP_PKEY **pkey);
+		// special case
+		@trusted nothrow @nogc int SSL_shutdown(SSL* a) {
+			if(ossllib.SSL_shutdown)
+				return ossllib.SSL_shutdown(a);
+			assert(0);
+		}
 
-	void SSL_CTX_set_client_cert_cb(SSL_CTX *ctx, client_cert_cb cb) {
-		if(ossllib.SSL_CTX_set_client_cert_cb)
-			return ossllib.SSL_CTX_set_client_cert_cb(ctx, cb);
-		else throw new Exception("SSL_CTX_set_client_cert_cb not loaded");
-	}
+		void SSL_CTX_keylog_cb_func(SSL_CTX* ctx, keylog_cb func) {
+			// this isn't in openssl 1.0 and is non-essential, so it is allowed to fail.
+			if(ossllib.SSL_CTX_set_keylog_callback)
+				ossllib.SSL_CTX_set_keylog_callback(ctx, func);
+			//else throw new Exception("SSL_CTX_keylog_cb_func not loaded");
+		}
 
-	X509* d2i_X509(X509** a, const(ubyte*)* pp, c_long length) {
-		if(eallib.d2i_X509)
-			return eallib.d2i_X509(a, pp, length);
-		else throw new Exception("d2i_X509 not loaded");
-	}
-
-	X509* PEM_read_X509(FILE *fp, X509 **x, pem_password_cb *cb, void *u) {
-		if(eallib.PEM_read_X509)
-			return eallib.PEM_read_X509(fp, x, cb, u);
-		else throw new Exception("PEM_read_X509 not loaded");
-	}
-	EVP_PKEY* PEM_read_PrivateKey(FILE *fp, EVP_PKEY **x, pem_password_cb *cb, void *u) {
-		if(eallib.PEM_read_PrivateKey)
-			return eallib.PEM_read_PrivateKey(fp, x, cb, u);
-		else throw new Exception("PEM_read_PrivateKey not loaded");
-	}
-
-	EVP_PKEY* d2i_PrivateKey_fp(FILE *fp, EVP_PKEY **a) {
-		if(eallib.d2i_PrivateKey_fp)
-			return eallib.d2i_PrivateKey_fp(fp, a);
-		else throw new Exception("d2i_PrivateKey_fp not loaded");
-	}
-	X509* d2i_X509_fp(FILE *fp, X509 **x) {
-		if(eallib.d2i_X509_fp)
-			return eallib.d2i_X509_fp(fp, x);
-		else throw new Exception("d2i_X509_fp not loaded");
-	}
-
-	int SSL_connect(SSL* a) {
-		if(ossllib.SSL_connect)
-			return ossllib.SSL_connect(a);
-		else throw new Exception("SSL_connect not loaded");
-	}
-	int SSL_write(SSL* a, const void* b, int c) {
-		if(ossllib.SSL_write)
-			return ossllib.SSL_write(a, b, c);
-		else throw new Exception("SSL_write not loaded");
-	}
-	int SSL_read(SSL* a, void* b, int c) {
-		if(ossllib.SSL_read)
-			return ossllib.SSL_read(a, b, c);
-		else throw new Exception("SSL_read not loaded");
-	}
-	@trusted nothrow @nogc int SSL_shutdown(SSL* a) {
-		if(ossllib.SSL_shutdown)
-			return ossllib.SSL_shutdown(a);
-		assert(0);
-	}
-	void SSL_free(SSL* a) {
-		if(ossllib.SSL_free)
-			return ossllib.SSL_free(a);
-		else throw new Exception("SSL_free not loaded");
-	}
-	void SSL_CTX_free(SSL_CTX* a) {
-		if(ossllib.SSL_CTX_free)
-			return ossllib.SSL_CTX_free(a);
-		else throw new Exception("SSL_CTX_free not loaded");
-	}
-
-	int SSL_pending(const SSL* a) {
-		if(ossllib.SSL_pending)
-			return ossllib.SSL_pending(a);
-		else throw new Exception("SSL_pending not loaded");
-	}
-	void SSL_set_verify(SSL* a, int b, void* c) {
-		if(ossllib.SSL_set_verify)
-			return ossllib.SSL_set_verify(a, b, c);
-		else throw new Exception("SSL_set_verify not loaded");
-	}
-	void SSL_set_tlsext_host_name(SSL* a, const char* b) {
-		if(ossllib.SSL_ctrl)
-			return ossllib.SSL_ctrl(a, 55 /*SSL_CTRL_SET_TLSEXT_HOSTNAME*/, 0 /*TLSEXT_NAMETYPE_host_name*/, cast(void*) b);
-		else throw new Exception("SSL_set_tlsext_host_name not loaded");
-	}
-
-	SSL_METHOD* SSLv3_client_method() {
-		if(ossllib.SSLv3_client_method)
-			return ossllib.SSLv3_client_method();
-		else throw new Exception("SSLv3_client_method not loaded");
-	}
-	SSL_METHOD* TLS_client_method() {
-		if(ossllib.TLS_client_method)
-			return ossllib.TLS_client_method();
-		else throw new Exception("TLS_client_method not loaded");
-	}
-	void ERR_print_errors_cb(print_errors_cb cb, void* u) {
-		if(eallib.ERR_print_errors_cb)
-			return eallib.ERR_print_errors_cb(cb, u);
-		else throw new Exception("ERR_print_errors_cb not loaded");
-	}
-	void X509_free(X509* x) {
-		if(eallib.X509_free)
-			return eallib.X509_free(x);
-		else throw new Exception("X509_free not loaded");
-	}
-	int X509_STORE_add_cert(X509_STORE* s, X509* x) {
-		if(eallib.X509_STORE_add_cert)
-			return eallib.X509_STORE_add_cert(s, x);
-		else throw new Exception("X509_STORE_add_cert not loaded");
 	}
 
 	extern(C)
@@ -3022,15 +3263,6 @@ version(use_openssl) {
 		(*s) ~= ptr[0 .. len];
 
 		return 0;
-	}
-
-	extern(C)
-	void SSL_CTX_keylog_cb_func(SSL_CTX* ctx, void function(SSL*, char*) func)
-	{
-		// this isn't in openssl 1.0 and is non-essential, so it is allowed to fail.
-		if(ossllib.SSL_CTX_set_keylog_callback)
-			ossllib.SSL_CTX_set_keylog_callback(ctx, func);
-		//else throw new Exception("SSL_CTX_keylog_cb_func not loaded");
 	}
 
 
@@ -3054,29 +3286,58 @@ version(use_openssl) {
 			return;
 	synchronized(loadSslMutex) {
 
-		version(OSX) {
-			// newest box
-			ossllib_handle = dlopen("libssl.1.1.dylib", RTLD_NOW);
-			// other boxes
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("libssl.dylib", RTLD_NOW);
-			// old ones like my laptop test
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("/usr/local/opt/openssl/lib/libssl.1.0.0.dylib", RTLD_NOW);
+		version(Posix) {
+			version(OSX) {
+				static immutable string[] ossllibs = [
+					"libssl.46.dylib",
+					"libssl.44.dylib",
+					"libssl.43.dylib",
+					"libssl.35.dylib",
+					"libssl.1.1.dylib",
+					"libssl.dylib",
+					"/usr/local/opt/openssl/lib/libssl.1.0.0.dylib",
+				];
+			} else {
+				static immutable string[] ossllibs = [
+					"libssl.so.1.1",
+					"libssl.so.1.0.2",
+					"libssl.so.1.0.1",
+					"libssl.so.1.0.0",
+					"libssl.so",
+				];
+			}
 
-		} else version(Posix) {
-			ossllib_handle = dlopen("libssl.so.1.1", RTLD_NOW);
-			if(ossllib_handle is null)
-				ossllib_handle = dlopen("libssl.so", RTLD_NOW);
+			foreach(lib; ossllibs) {
+				ossllib_handle = dlopen(lib.ptr, RTLD_NOW);
+				if(ossllib_handle !is null) break;
+			}
 		} else version(Windows) {
-			version(X86_64)
+			version(X86_64) {
 				ossllib_handle = LoadLibraryW("libssl-1_1-x64.dll"w.ptr);
-			if(ossllib_handle is null)
-				ossllib_handle = LoadLibraryW("libssl32.dll"w.ptr);
-			version(X86_64)
 				oeaylib_handle = LoadLibraryW("libcrypto-1_1-x64.dll"w.ptr);
+			}
+
+			static immutable wstring[] ossllibs = [
+				"libssl-1_1.dll"w,
+				"libssl32.dll"w,
+			];
+
+			if(ossllib_handle is null)
+			foreach(lib; ossllibs) {
+				ossllib_handle = LoadLibraryW(lib.ptr);
+				if(ossllib_handle !is null) break;
+			}
+
+			static immutable wstring[] eaylibs = [
+				"libcrypto-1_1.dll"w,
+				"libeay32.dll",
+			];
+
 			if(oeaylib_handle is null)
-				oeaylib_handle = LoadLibraryW("libeay32.dll"w.ptr);
+			foreach(lib; eaylibs) {
+				oeaylib_handle = LoadLibraryW(lib.ptr);
+				if (oeaylib_handle !is null) break;
+			}
 
 			if(ossllib_handle is null) {
 				ossllib_handle = LoadLibraryW("ssleay32.dll"w.ptr);
@@ -3160,7 +3421,7 @@ version(use_openssl) {
 		string logfile = environment.get("SSLKEYLOGFILE");
 		if (logfile !is null)
 		{
-			auto f = std.stdio.File("/tmp/keyfile", "a+");
+			auto f = std.stdio.File(logfile, "a+");
 			f.writeln(fromStringz(line));
 			f.close();
 		}
@@ -3170,28 +3431,33 @@ version(use_openssl) {
 		private SSL* ssl;
 		private SSL_CTX* ctx;
 		private void initSsl(bool verifyPeer, string hostname) {
-			ctx = SSL_CTX_new(SSLv23_client_method());
+			ctx = OpenSSL.SSL_CTX_new(OpenSSL.SSLv23_client_method());
 			assert(ctx !is null);
 
-			SSL_CTX_set_default_verify_paths(ctx);
-			version(Windows)
-				loadCertificatesFromRegistry(ctx);
+			debug OpenSSL.SSL_CTX_keylog_cb_func(ctx, &write_to_file);
+			ssl = OpenSSL.SSL_new(ctx);
 
-			debug SSL_CTX_keylog_cb_func(ctx, &write_to_file);
-			ssl = SSL_new(ctx);
+			if(hostname.length) {
+				OpenSSL.SSL_set_tlsext_host_name(ssl, toStringz(hostname));
+				if(verifyPeer)
+					OpenSSL.X509_VERIFY_PARAM_set1_host(OpenSSL.SSL_get0_param(ssl), hostname.ptr, hostname.length);
+			}
 
-			if(hostname.length)
-				SSL_set_tlsext_host_name(ssl, toStringz(hostname));
+			if(verifyPeer) {
+				OpenSSL.SSL_CTX_set_default_verify_paths(ctx);
 
-			if(verifyPeer)
-				SSL_set_verify(ssl, SSL_VERIFY_PEER, null);
-			else
-				SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
+				version(Windows) {
+					loadCertificatesFromRegistry(ctx);
+				}
 
-			SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
+				OpenSSL.SSL_set_verify(ssl, SSL_VERIFY_PEER, &verifyCertificateFromRegistryArsdHttp);
+			} else
+				OpenSSL.SSL_set_verify(ssl, SSL_VERIFY_NONE, null);
+
+			OpenSSL.SSL_set_fd(ssl, cast(int) this.handle); // on win64 it is necessary to truncate, but the value is never large anyway see http://openssl.6102.n7.nabble.com/Sockets-windows-64-bit-td36169.html
 
 
-			SSL_CTX_set_client_cert_cb(ctx, &cb);
+			OpenSSL.SSL_CTX_set_client_cert_cb(ctx, &cb);
 		}
 
 		extern(C)
@@ -3216,12 +3482,12 @@ version(use_openssl) {
 						else
 							goto case der;
 					case pem:
-						*x509 = PEM_read_X509(fpCert, null, null, null);
-						*pkey = PEM_read_PrivateKey(fpKey, null, null, null);
+						*x509 = OpenSSL.PEM_read_X509(fpCert, null, null, null);
+						*pkey = OpenSSL.PEM_read_PrivateKey(fpKey, null, null, null);
 					break;
 					case der:
-						*x509 = d2i_X509_fp(fpCert, null);
-						*pkey = d2i_PrivateKey_fp(fpKey, null);
+						*x509 = OpenSSL.d2i_X509_fp(fpCert, null);
+						*pkey = OpenSSL.d2i_PrivateKey_fp(fpKey, null);
 					break;
 				}
 
@@ -3232,7 +3498,7 @@ version(use_openssl) {
 		}
 
 		bool dataPending() {
-			return SSL_pending(ssl) > 0;
+			return OpenSSL.SSL_pending(ssl) > 0;
 		}
 
 		@trusted
@@ -3243,14 +3509,14 @@ version(use_openssl) {
 
 		@trusted
 		void do_ssl_connect() {
-			if(SSL_connect(ssl) == -1) {
+			if(OpenSSL.SSL_connect(ssl) == -1) {
 				string str;
-				ERR_print_errors_cb(&collectSslErrors, &str);
+				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
-				auto err = SSL_get_verify_result(ssl);
+				auto err = OpenSSL.SSL_get_verify_result(ssl);
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl connect failed " ~ str ~ " // " ~ to!string(err));
+				throw new Exception("Secure connect failed: " ~ getOpenSslErrorCode(err));
 			}
 		}
 		
@@ -3258,10 +3524,10 @@ version(use_openssl) {
 		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 		//import std.stdio;writeln(cast(string) buf);
 			debug(arsd_http2_verbose) writeln("ssl writing ", buf.length);
-			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
+			auto retval = OpenSSL.SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
 				string str;
-				ERR_print_errors_cb(&collectSslErrors, &str);
+				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
@@ -3277,11 +3543,11 @@ version(use_openssl) {
 		override ptrdiff_t receive(scope void[] buf, SocketFlags flags) {
 
 			debug(arsd_http2_verbose) writeln("ssl_read before");
-			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
+			auto retval = OpenSSL.SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			debug(arsd_http2_verbose) writeln("ssl_read after");
 			if(retval == -1) {
 				string str;
-				ERR_print_errors_cb(&collectSslErrors, &str);
+				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
@@ -3299,7 +3565,7 @@ version(use_openssl) {
 		}
 
 		override void close() {
-			if(ssl) SSL_shutdown(ssl);
+			if(ssl) OpenSSL.SSL_shutdown(ssl);
 			super.close();
 		}
 
@@ -3311,8 +3577,8 @@ version(use_openssl) {
 		void freeSsl() {
 			if(ssl is null)
 				return;
-			SSL_free(ssl);
-			SSL_CTX_free(ctx);
+			OpenSSL.SSL_free(ssl);
+			OpenSSL.SSL_CTX_free(ctx);
 			ssl = null;
 		}
 
@@ -4466,9 +4732,9 @@ class WebSocket {
 			}
 		}
 
-		private bool loopExited;
+		private __gshared bool loopExited;
 		/++
-
+			Exits the running [WebSocket.eventLoop].  You can call this from a signal handler or another thread.
 		+/
 		void exitEventLoop() {
 			loopExited = true;
@@ -4803,11 +5069,62 @@ public {
 	}
 }
 
+private extern(C)
+int verifyCertificateFromRegistryArsdHttp(int preverify_ok, X509_STORE_CTX* ctx) {
+	version(Windows) {
+		if(preverify_ok)
+			return 1;
+
+		auto err_cert = OpenSSL.X509_STORE_CTX_get_current_cert(ctx);
+		auto err = OpenSSL.X509_STORE_CTX_get_error(ctx);
+
+		if(err == 62)
+			return 0; // hostname mismatch is an error we can trust; that means OpenSSL already found the certificate and rejected it
+
+		auto len = OpenSSL.i2d_X509(err_cert, null);
+		if(len == -1)
+			return 0;
+		ubyte[] buffer = new ubyte[](len);
+		auto ptr = buffer.ptr;
+		len = OpenSSL.i2d_X509(err_cert, &ptr);
+		if(len != buffer.length)
+			return 0;
+
+
+		CERT_CHAIN_PARA thing;
+		thing.cbSize = thing.sizeof;
+		auto context = CertCreateCertificateContext(X509_ASN_ENCODING, buffer.ptr, cast(int) buffer.length);
+		if(context is null)
+			return 0;
+		scope(exit) CertFreeCertificateContext(context);
+
+		PCCERT_CHAIN_CONTEXT chain;
+		if(CertGetCertificateChain(null, context, null, null, &thing, 0, null, &chain)) {
+			scope(exit)
+				CertFreeCertificateChain(chain);
+
+			DWORD errorStatus = chain.TrustStatus.dwErrorStatus;
+
+			if(errorStatus == 0)
+				return 1; // Windows approved it, OK carry on
+			// otherwise, sustain OpenSSL's original ruling
+		}
+
+		return 0;
+	} else {
+		return preverify_ok;
+	}
+}
+
+
 version(Windows) {
 	pragma(lib, "crypt32");
 	import core.sys.windows.wincrypt;
-	extern(Windows)
+	extern(Windows) {
 		PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
+		// BOOL CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEXT pCertContext, LPFILETIME pTime, HCERTSTORE hAdditionalStore, PCERT_CHAIN_PARA pChainPara, DWORD dwFlags, LPVOID pvReserved, PCCERT_CHAIN_CONTEXT *ppChainContext);
+		PCCERT_CONTEXT CertCreateCertificateContext(DWORD dwCertEncodingType, const BYTE *pbCertEncoded, DWORD cbCertEncoded);
+	}
 
 	void loadCertificatesFromRegistry(SSL_CTX* ctx) {
 		auto store = CertOpenSystemStore(0, "ROOT");
@@ -4818,7 +5135,7 @@ version(Windows) {
 		scope(exit)
 			CertCloseStore(store, 0);
 
-		X509_STORE* ssl_store = SSL_CTX_get_cert_store(ctx);
+		X509_STORE* ssl_store = OpenSSL.SSL_CTX_get_cert_store(ctx);
 		PCCERT_CONTEXT c;
 		while((c = CertEnumCertificatesInStore(store, c)) !is null) {
 			FILETIME na = c.pCertInfo.NotAfter;
@@ -4839,14 +5156,20 @@ version(Windows) {
 			}
 
 			const(ubyte)* thing = c.pbCertEncoded;
-			auto x509 = d2i_X509(null, &thing, c.cbCertEncoded);
+			auto x509 = OpenSSL.d2i_X509(null, &thing, c.cbCertEncoded);
 			if (x509) {
-				auto success = X509_STORE_add_cert(ssl_store, x509);
-				X509_free(x509);
+				auto success = OpenSSL.X509_STORE_add_cert(ssl_store, x509);
+				//if(!success)
+					//writeln("FAILED HERE");
+				OpenSSL.X509_free(x509);
+			} else {
+				//writeln("FAILED");
 			}
 		}
 
 		CertFreeCertificateContext(c);
+
+		// import core.stdc.stdio; printf("%s\n", OpenSSL.OpenSSL_version(0));
 	}
 
 

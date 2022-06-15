@@ -728,7 +728,7 @@ ApngAnimation readApng(in ubyte[] data, bool strictApng = false, scope ApngAnima
 				obj.frames[frameNumber - 1].compressedDatastream ~= chunk.payload[offset .. $];
 			break;
 			default:
-				obj.handleOtherChunk(chunk);
+				obj.handleOtherChunkWhenLoading(chunk);
 		}
 
 	}

@@ -199,7 +199,9 @@ version(linux) {
 					break;
 				else assert(0); // , to!string(fd) ~ " " ~ to!string(errno));
 			}
-			assert(r == event.sizeof);
+			if(r != event.sizeof)
+				throw new Exception("Read something weird off the joystick event fd");
+				//import std.stdio; writeln(event);
 
 			ptrdiff_t player = -1;
 			foreach(i, f; joystickFds)
@@ -230,6 +232,7 @@ version(linux) {
 			}
 			if(event.type & JS_EVENT_BUTTON) {
 				joystickState[player].buttons[event.number] = event.value ? 255 : 0;
+				//writeln(player, " ", event.number, " ", event.value, " ", joystickState[player].buttons[event.number]);//, " != ", event.value ? 255 : 0);
 			}
 		}
 	}
