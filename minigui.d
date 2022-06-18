@@ -4562,7 +4562,7 @@ class ListWidget : ListWidgetBase {
 	static struct Option {
 		string label;
 		bool selected;
-		ptrdiff_t tag;
+		void* tag;
 	}
 
 	/++
@@ -4660,7 +4660,7 @@ class ListWidget : ListWidgetBase {
 	mixin OverrideStyle!Style;
 	//mixin Padding!q{2};
 
-	void addOption(string text, ptrdiff_t tag = 0) {
+	void addOption(string text, void* tag = null) {
 		options ~= Option(text, false, tag);
 		version(win32_widgets) {
 			WCharzBuffer buffer = WCharzBuffer(text);
