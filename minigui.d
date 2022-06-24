@@ -13546,8 +13546,12 @@ void getFileName(
 		}
 		ofn.lpstrFile = file.ptr;
 		ofn.nMaxFile = file.length;
-		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) {
-			onOK(makeUtf8StringFromWindowsString(ofn.lpstrFile));
+		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) 
+		{
+			string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
+			if(okString[$-1] == '\0')
+				okString = okString[0..$-1];
+			onOK(okString);
 		} else {
 			if(onCancel)
 				onCancel();
