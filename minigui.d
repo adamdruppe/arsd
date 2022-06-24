@@ -13549,7 +13549,7 @@ void getFileName(
 		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) 
 		{
 			string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
-			if(okString[$-1] == '\0')
+			if(okString.length && okString[$-1] == '\0')
 				okString = okString[0..$-1];
 			onOK(okString);
 		} else {
