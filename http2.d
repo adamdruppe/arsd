@@ -4014,7 +4014,6 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 class WebSocket {
 	private Uri uri;
 	private string[string] cookies;
-	private string origin;
 
 	private string host;
 	private ushort port;
@@ -4101,7 +4100,7 @@ class WebSocket {
 		if(config.protocol.length)
 			append("Sec-WebSocket-Protocol: ", config.protocol, "\r\n");
 		if(config.origin.length)
-			append("Origin: ", origin, "\r\n");
+			append("Origin: ", config.origin, "\r\n");
 
 		foreach(h; config.additionalHeaders) {
 			append(h);
