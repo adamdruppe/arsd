@@ -338,7 +338,7 @@ void main() {
 
 	Copyright:
 
-	cgi.d copyright 2008-2021, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2022, Adam D. Ruppe. Provided under the Boost Software License.
 
 	Yes, this file is old, and yes, it is still actively maintained and used.
 +/
@@ -2196,6 +2196,17 @@ class Cgi {
 	void header(string h) {
 		customHeaders ~= h;
 	}
+
+	/++
+		I named the original function `header` after PHP, but this pattern more fits
+		the rest of the Cgi object.
+
+		Either name are allowed.
+
+		History:
+			Alias added June 17, 2022.
+	+/
+	alias setResponseHeader = header;
 
 	private string[] customHeaders;
 	private bool websocketMode;
@@ -7969,7 +7980,7 @@ final class EventSourceServerImplementation : EventSourceServer, EventIoServer {
 		int typeLength;
 		char[32] typeBuffer = 0;
 		int messageLength;
-		char[2048] messageBuffer = 0;
+		char[2048 * 4] messageBuffer = 0; // this is an arbitrary limit, it needs to fit comfortably in stack (including in a fiber) and be a single send on the kernel side cuz of the impl... i think this is ok for a unix socket.
 		int _lifetime;
 
 		char[] message() return {
@@ -8242,7 +8253,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 						cloexec(ns);
 
 						makeNonBlocking(ns);
-						auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096, &eis.handleLocalConnectionData);
+						auto niop = allocateIoOp(ns, IoOp.ReadSocketHandle, 4096 * 4, &eis.handleLocalConnectionData);
 						niop.closeHandler = &eis.handleLocalConnectionClose;
 						niop.completeHandler = &eis.handleLocalConnectionComplete;
 						scope(failure) freeIoOp(niop);
@@ -9700,30 +9711,34 @@ struct MultipleResponses(T...) {
 		---
 			auto valueToTest = your_test_function();
 
-			valueToTest.visit!(
-				(Redirection) { assert(0); }, // got a redirection instead of a string, fail the test
+			valueToTest.visit(
+				(Redirection r) { assert(0); }, // got a redirection instead of a string, fail the test
 				(string s) { assert(s == "test"); } // right value, go ahead and test it.
 			);
 		---
+
+		History:
+			Was horribly broken until June 16, 2022. Ironically, I wrote it for tests but never actually tested it.
+			It tried to use alias lambdas before, but runtime delegates work much better so I changed it.
 	+/
-	void visit(Handlers...)() {
-		template findHandler(type, HandlersToCheck...) {
+	void visit(Handlers...)(Handlers handlers) {
+		template findHandler(type, int count, HandlersToCheck...) {
 			static if(HandlersToCheck.length == 0)
-				alias findHandler = void;
+				enum findHandler = -1;
 			else {
-				static if(is(typeof(HandlersToCheck[0](type.init))))
-					alias findHandler = handler;
+				static if(is(typeof(HandlersToCheck[0].init(type.init))))
+					enum findHandler = count;
 				else
-					alias findHandler = findHandler!(type, HandlersToCheck[1 .. $]);
+					enum findHandler = findHandler!(type, count + 1, HandlersToCheck[1 .. $]);
 			}
 		}
 		foreach(index, type; T) {
-			alias handler = findHandler!(type, Handlers);
-			static if(is(handler == void))
+			enum handlerIndex = findHandler!(type, 0, Handlers);
+			static if(handlerIndex == -1)
 				static assert(0, "Type " ~ type.stringof ~ " was not handled by visitor");
 			else {
-				if(index == contains)
-					handler(payload[index]);
+				if(index == this.contains)
+					handlers[handlerIndex](this.payload[index]);
 			}
 		}
 	}
@@ -11195,11 +11210,11 @@ bool apiDispatcher()(Cgi cgi) {
 version(linux)
 private extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
 /*
-Copyright: Adam D. Ruppe, 2008 - 2021
+Copyright: Adam D. Ruppe, 2008 - 2022
 License:   [http://www.boost.org/LICENSE_1_0.txt|Boost License 1.0].
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2021.
+	Copyright Adam D. Ruppe 2008 - 2022.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
