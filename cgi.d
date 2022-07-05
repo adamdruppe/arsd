@@ -4314,7 +4314,7 @@ extern(Windows) private {
 	alias LPWSAOVERLAPPED = LPOVERLAPPED;
 	/+
 
-	alias LPFN_ACCEPTEX = 
+	alias LPFN_ACCEPTEX =
 		BOOL
 		function(
 				SOCKET sListenSocket,
@@ -4457,7 +4457,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 
 	WSABUF[1] buffer;
 	OVERLAPPED overlapped;
-	override ptrdiff_t send(const(void)[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) @trusted {
 		overlapped = overlapped.init;
 		buffer[0].len = cast(DWORD) buf.length;
 		buffer[0].buf = cast(CHAR*) buf.ptr;
@@ -4472,7 +4472,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 		Fiber.yield();
 		return lastAnswer;
 	}
-	override ptrdiff_t receive(void[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t receive(scope void[] buf, SocketFlags flags) @trusted {
 		overlapped = overlapped.init;
 		buffer[0].len = cast(DWORD) buf.length;
 		buffer[0].buf = cast(CHAR*) buf.ptr;
@@ -4493,16 +4493,16 @@ private class PseudoblockingOverlappedSocket : Socket {
 	}
 
 	// I might go back and implement these for udp things.
-	override ptrdiff_t receiveFrom(void[] buf, SocketFlags flags, ref Address from) @trusted {
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags, ref Address from) @trusted {
 		assert(0);
 	}
-	override ptrdiff_t receiveFrom(void[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags) @trusted {
 		assert(0);
 	}
-	override ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags, Address to) @trusted {
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags, Address to) @trusted {
 		assert(0);
 	}
-	override ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags) @trusted {
 		assert(0);
 	}
 
@@ -5128,13 +5128,13 @@ private class FakeSocketForStdin : Socket {
 
 	private bool closed;
 
-	override ptrdiff_t receive(void[] buffer, std.socket.SocketFlags) @trusted {
+	override ptrdiff_t receive(scope void[] buffer, std.socket.SocketFlags) @trusted {
 		if(closed)
 			throw new Exception("Closed");
 		return stdin.rawRead(buffer).length;
 	}
 
-	override ptrdiff_t send(const void[] buffer, std.socket.SocketFlags) @trusted {
+	override ptrdiff_t send(const scope void[] buffer, std.socket.SocketFlags) @trusted {
 		if(closed)
 			throw new Exception("Closed");
 		stdout.rawWrite(buffer);
@@ -5149,7 +5149,7 @@ private class FakeSocketForStdin : Socket {
 		// FIXME
 	}
 
-	override void setOption(SocketOptionLevel, SocketOption, void[]) {}
+	override void setOption(SocketOptionLevel, SocketOption, scope void[]) {}
 	override void setOption(SocketOptionLevel, SocketOption, Duration) {}
 
 	override @property @trusted Address remoteAddress() { return null; }
