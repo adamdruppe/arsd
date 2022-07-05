@@ -185,30 +185,30 @@ class FiberSocket : Socket {
 		}
 		return r;
 	}
-	
+
 	/// Yielding override of the Phobos interface
-	override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+	override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 		return magic( () { return super.send(buf, flags); }, PendingOperation.write);
 	}
 	/// ditto
-	override ptrdiff_t receive(void[] buf, SocketFlags flags) {
+	override ptrdiff_t receive(scope void[] buf, SocketFlags flags) {
 		return magic( () { return super.receive(buf, flags); }, PendingOperation.read);
 	}
 
 	/// ditto
-	override ptrdiff_t receiveFrom(void[] buf, SocketFlags flags, ref Address from) @trusted {
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags, ref Address from) @trusted {
 		return magic( () { return super.receiveFrom(buf, flags, from); }, PendingOperation.read);
 	}
 	/// ditto
-	override ptrdiff_t receiveFrom(void[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags) @trusted {
 		return magic( () { return super.receiveFrom(buf, flags); }, PendingOperation.read);
 	}
 	/// ditto
-	override ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags, Address to) @trusted {
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags, Address to) @trusted {
 		return magic( () { return super.sendTo(buf, flags, to); }, PendingOperation.write);
 	}
 	/// ditto
-	override ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags) @trusted {
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags) @trusted {
 		return magic( () { return super.sendTo(buf, flags); }, PendingOperation.write);
 	}
 
