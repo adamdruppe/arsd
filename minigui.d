@@ -223,7 +223,7 @@ unittest {
 
 		auto hello = new TextLabel("Hello, world!", TextAlignment.Center, window);
 		auto button = new Button("Close", window);
-		button.addEventListener((scope ClickEvent ev) {
+		button.addWhenTriggered({
 			window.close();
 		});
 
@@ -1298,6 +1298,21 @@ class Widget : ReflectableProperties {
 			if(e.srcElement is this)
 				handler(e);
 		}, useCapture);
+	}
+
+	/// ditto
+	EventListener addDirectEventListener(Handler)(Handler handler, bool useCapture = false) {
+		static if(is(Handler Fn == delegate)) {
+		static if(is(Fn Params == __parameters)) {
+			return addEventListener(EventString!(Params[0]), (Widget, Event e) {
+				if(e.srcElement !is this)
+					return;
+				auto ty = cast(Params[0]) e;
+				if(ty !is null)
+					handler(ty);
+			}, useCapture);
+		} else static assert(0);
+		} else static assert(0, "Your handler wasn't usable because it wasn't passed a delegate. Use the delegate keyword at the call site.");
 	}
 
 	/// ditto
@@ -2640,7 +2655,7 @@ void setClickRepeat(Widget w, int interval, int delay = 250) {
 
 	immutable originalDelayRemaining = delayRemaining;
 
-	w.addDirectEventListener("mousedown", (Event ev) {
+	w.addDirectEventListener((scope MouseDownEvent ev) {
 		if(ev.srcElement !is w)
 			return;
 		if(timer !is null) {
@@ -2652,13 +2667,13 @@ void setClickRepeat(Widget w, int interval, int delay = 250) {
 			if(delayRemaining > 0)
 				delayRemaining--;
 			else {
-				auto ev = new ClickEvent(w);
+				auto ev = new Event("triggered", w);
 				ev.sendDirectly();
 			}
 		});
 	});
 
-	w.addDirectEventListener("mouseup", (Event ev) {
+	w.addDirectEventListener((scope MouseUpEvent ev) {
 		if(ev.srcElement !is w)
 			return;
 		if(timer !is null) {
@@ -2667,7 +2682,7 @@ void setClickRepeat(Widget w, int interval, int delay = 250) {
 		}
 	});
 
-	w.addDirectEventListener("mouseleave", (Event ev) {
+	w.addDirectEventListener((scope MouseLeaveEvent ev) {
 		if(ev.srcElement !is w)
 			return;
 		if(timer !is null) {
@@ -8179,6 +8194,11 @@ class Window : Widget {
 	}
 
 	///
+	@property string title() { return parentWindow.win.title; }
+	///
+	@property void title(string title) { parentWindow.win.title = title; }
+
+	///
 	@scriptable
 	void close() {
 		win.close();
@@ -9636,18 +9656,18 @@ class MainWindow : Window {
 	}
 
 	private StatusBar _statusBar;
-	///
+	/++
+		Returns the window's [StatusBar]. Be warned it may be `null`.
+	+/
 	@property StatusBar statusBar() { return _statusBar; }
-	///
+	/// ditto
 	@property void statusBar(StatusBar bar) {
+		if(_statusBar !is null)
+			_statusBar.removeWidget();
 		_statusBar = bar;
-		super.addChild(_statusBar);
+		if(bar !is null)
+			super.addChild(_statusBar);
 	}
-
-	///
-	@property string title() { return parentWindow.win.title; }
-	///
-	@property void title(string title) { parentWindow.win.title = title; }
 }
 
 /+
