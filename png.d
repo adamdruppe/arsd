@@ -334,7 +334,14 @@ PNG* pngFromImage(IndexedImage i) {
 		addImageDatastreamToPng(i.data, png);
 	} else {
 		// gotta convert it
-		ubyte[] datastream = new ubyte[cast(size_t)i.width * i.height * h.depth / 8]; // FIXME?
+
+		auto bitsPerLine = i.width * h.depth;
+		if(bitsPerLine % 8 != 0)
+			bitsPerLine = bitsPerLine / 8 + 1;
+		else
+			bitsPerLine = bitsPerLine / 8;
+
+		ubyte[] datastream = new ubyte[bitsPerLine * i.height];
 		int shift = 0;
 
 		switch(h.depth) {
@@ -704,28 +711,32 @@ void addImageDatastreamToPng(const(ubyte)[] data, PNG* png, bool addIend = true)
 	if(h.width == 0)
 		throw new Exception("width zero?!!?!?!");
 
+	int multiplier;
 	size_t bytesPerLine;
 	switch(h.type) {
 		case 0:
-			// FIXME: < 8 depth not supported here but should be
-			bytesPerLine = cast(size_t)h.width * 1 * h.depth / 8;
+			multiplier = 1;
 		break;
 		case 2:
-			bytesPerLine = cast(size_t)h.width * 3 * h.depth / 8;
+			multiplier = 3;
 		break;
 		case 3:
-			bytesPerLine = cast(size_t)h.width * 1 * h.depth / 8;
+			multiplier = 1;
 		break;
 		case 4:
-			// FIXME: < 8 depth not supported here but should be
-			bytesPerLine = cast(size_t)h.width * 2 * h.depth / 8;
+			multiplier = 2;
 		break;
 		case 6:
-			bytesPerLine = cast(size_t)h.width * 4 * h.depth / 8;
+			multiplier = 4;
 		break;
 		default: assert(0);
-	
 	}
+
+	bytesPerLine = h.width * multiplier * h.depth / 8;
+	if((h.width * multiplier * h.depth) % 8 != 0)
+		bytesPerLine += 1;
+
+	assert(bytesPerLine >= 1);
 	Chunk dat;
 	dat.type = ['I', 'D', 'A', 'T'];
 	size_t pos = 0;
