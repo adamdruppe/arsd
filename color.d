@@ -211,6 +211,17 @@ struct Color {
 		this.a = cast(ubyte) alpha;
 	}
 
+	/++
+		Construct a color from components[0 .. 4]. It must have length of at least 4 and be in r, g, b, a order.
+
+		History:
+			Added July 18, 2022 (dub v10.9)
+	+/
+	nothrow pure @nogc
+	this(ubyte[] components) {
+		this.components[] = components[0 .. 4];
+	}
+
 	/// Static convenience functions for common color names
 	nothrow pure @nogc
 	static Color transparent() { return Color(0, 0, 0, 0); }
