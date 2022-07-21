@@ -35,7 +35,7 @@ MemoryImage readBmp(string filename) {
 	are a little-endian uint giving the file size. You might slice only to that, or you could slice right to `int.max`
 	and trust the library to bounds check for you based on data integrity checks.
 +/
-MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAround64BitLongs = false) {
+MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAround64BitLongs = false, bool hasAndMask = false) {
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
 		while(size) {
@@ -47,7 +47,7 @@ MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAro
 		}
 	}
 
-	return readBmpIndirect(&specialFread, lookForFileHeader, hackAround64BitLongs);
+	return readBmpIndirect(&specialFread, lookForFileHeader, hackAround64BitLongs, hasAndMask);
 }
 
 /++
@@ -57,8 +57,10 @@ MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAro
 		The `lookForFileHeader` param was added in July 2020.
 
 		The `hackAround64BitLongs` param was added December 21, 2020. You should probably never use this unless you know for sure you have a file corrupted in this specific way. View the source to see a comment inside the file to describe it a bit more.
+
+		The `hasAndMask` param was added July 21, 2022. This is set to true if it is a bitmap from a .ico file or similar, where the top half of the file (by height) is the xor mask, then the bottom half is the and mask.
 +/
-MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true, bool hackAround64BitLongs = false) {
+MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookForFileHeader = true, bool hackAround64BitLongs = false, bool hasAndMask = false) {
 	uint read4()  { uint what; fread(&what, 4); return what; }
 	uint readLONG()  {
 		auto le = read4();
@@ -137,6 +139,12 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 	}
 
 	height = (rdheight < 0 ? -rdheight : rdheight);
+
+	if(hasAndMask) {
+		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("has and mask so height slashed %d\n", height / 2); }
+		height = height / 2;
+	}
+
 	rdheight = (rdheight < 0 ? 1 : -1); // so we can use it as delta (note the inverted sign)
 
 	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("size: %dx%d\n", cast(int)width, cast(int) height); }
@@ -336,6 +344,7 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		int offsetStart = width * height * 4;
 		int bytesPerPixel = 4;
 		for(int y = height; y > 0; y--) {
+			//version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  true color image: %d\n", y); }
 			offsetStart -= width * bytesPerPixel;
 			int offset = offsetStart;
 			int b = 0;
@@ -408,6 +417,39 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 			if(w)
 			for(int a = 0; a < 4-w; a++)
 				read1(); // pad until divisible by four
+		}
+
+		if(hasAndMask) {
+			// the and mask is always 1bpp and i want to translate it into transparent pixels
+
+			int offset = 0;
+			for(int y = height; y > 0; y--) {
+				int read;
+				for(int x = 0; x < width; x++) {
+					auto b = read1();
+					read++;
+					foreach(lol; 0 .. 8) {
+						bool transparent = cast(bool) ((b & (1 << lol)) >> (7 - lol));
+						// FIXME: im just keeping the alpha channel from the bmp here but this is arguably wrong
+						//img.imageData.bytes[offset + 3] = transparent ? 0 : 255;
+						//import std.stdio; write(transparent ? "o":"x");
+						offset += 4;
+						x++;
+					}
+					x--; // we do this once too many times in the loop
+				}
+				while(read % 4) {
+					read1();
+					read++;
+				}
+				//import std.stdio; writeln("");
+			}
+
+			/+
+			this the algorithm btw
+			keep.imageData.bytes[] &= tci.imageData.bytes[andOffset .. $];
+			keep.imageData.bytes[] ^= tci.imageData.bytes[0 .. andOffset];
+			+/
 		}
 
 
