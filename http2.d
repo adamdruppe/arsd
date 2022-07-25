@@ -226,7 +226,7 @@ struct HttpResponse {
 
 	string statusLine; ///
 
-	string contentType; /// The content type header
+	string contentType; /// The *full* content type header. See also [contentTypeMimeType] and [contentTypeCharset].
 	string location; /// The location header
 
 	/++
@@ -236,6 +236,20 @@ struct HttpResponse {
 	+/
 	bool wasSuccessful() {
 		return code >= 200 && code < 400;
+	}
+
+	/++
+		Returns the mime type part of the [contentType] header.
+
+		History:
+			Added July 25, 2022 (version 10.9)
+	+/
+	string contentTypeMimeType() {
+		auto idx = contentType.indexOf(";");
+		if(idx == -1)
+			return contentType;
+
+		return contentType[0 .. idx].strip;
 	}
 
 	/// the charset out of content type, if present. `null` if not.
@@ -1365,7 +1379,7 @@ class HttpRequest {
 					}
 				}
 
-				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket);
+				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket, " ssl=", ssl);
 				assert(socket.handle() !is socket_t.init);
 				return socket;
 			}
@@ -1667,8 +1681,11 @@ class HttpRequest {
 						request.sendBuffer = request.sendBuffer[sent .. $];
 						if(request.sendBuffer.length == 0) {
 							request.state = State.waitingForResponse;
+
+							debug(arsd_http2_verbose) writeln("all sent");
 						}
 					}
+
 
 					if(readSet.isSet(sock)) {
 						keep_going:
@@ -1695,6 +1712,14 @@ class HttpRequest {
 
 							try {
 								stillAlive = request.handleIncomingData(buffer[0 .. got]);
+								/+
+									state needs to be set and public
+									requestData.content/contentText needs to be around
+									you need to be able to clear the content and keep processing for things like event sources.
+									also need to be able to abort it.
+
+									and btw it should prolly just have evnet source as a pre-packaged thing.
+								+/
 							} catch (Exception e) {
 								request.state = HttpRequest.State.aborted;
 								request.responseData.code = 4;
