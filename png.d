@@ -476,8 +476,10 @@ struct PNG {
 	bool replaceChunk (Chunk* chk) { return insertChunk(chk, true); }
 }
 
-// this is just like writePng(filename, pngFromImage(image)), but it manages
-// is own memory and writes straight to the file instead of using intermediate buffers that might not get gc'd right
+/++
+	this is just like writePng(filename, pngFromImage(image)), but it manages
+	its own memory and writes straight to the file instead of using intermediate buffers that might not get gc'd right
++/
 void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	PNG* png;
 	ubyte[] com;
