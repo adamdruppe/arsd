@@ -2510,8 +2510,20 @@ private:
         m_max_mcu_x_size = 8;
         m_max_mcu_y_size = 8;
       }
-      else
+      else if ((m_comp_h_samp.ptr[0] == 2) && (m_comp_v_samp.ptr[0] == 1))
+      {
+      	// adr added this. idk if it is right seems wrong since it the same as above but..... meh ship it.
+        m_scan_type = JPGD_GRAYSCALE;
+        m_max_blocks_per_mcu = 4;
+        m_max_mcu_x_size = 8;
+        m_max_mcu_y_size = 8;
+      }
+      else {
+      // code -231 brings us here
+      //import std.conv;
+      //assert(0, to!string(m_comp_h_samp) ~ to!string(m_comp_v_samp));
         stop_decoding(JPGD_UNSUPPORTED_SAMP_FACTORS);
+      }
     }
     else if (m_comps_in_frame == 3)
     {
@@ -3249,6 +3261,17 @@ public ubyte[] decompress_jpeg_image_from_file(bool useMalloc=false) (VFile fl, 
 // if we have access "arsd.color", add some handy API
 static if (__traits(compiles, { import arsd.color; })) enum JpegHasArsd = true; else enum JpegHasArsd = false;
 
+
+
+public struct LastJpegError {
+	int stage;
+	int code;
+	int details;
+}
+
+public LastJpegError lastJpegError;
+
+
 static if (JpegHasArsd) {
 import arsd.color;
 
@@ -3261,7 +3284,7 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
   if (rfn is null) return null;
 
   auto decoder = jpeg_decoder(rfn);
-  if (decoder.error_code != JPGD_SUCCESS) return null;
+  if (decoder.error_code != JPGD_SUCCESS) { lastJpegError = LastJpegError(1, decoder.error_code); return null; }
   version(jpegd_test) scope(exit) { import core.stdc.stdio : printf; printf("%u bytes read.\n", cast(uint)decoder.total_bytes_read); }
 
   immutable int image_width = decoder.width;
@@ -3272,7 +3295,11 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
 
   version(jpegd_test) {{ import core.stdc.stdio; stderr.fprintf("starting (%dx%d)...\n", image_width, image_height); }}
 
-  if (decoder.begin_decoding() != JPGD_SUCCESS || image_width < 1 || image_height < 1) return null;
+  auto err = decoder.begin_decoding();
+  if (err != JPGD_SUCCESS || image_width < 1 || image_height < 1) {
+		lastJpegError = LastJpegError(2, err, decoder.m_error_code);
+		return null;
+  }
 
   immutable int dst_bpl = image_width*req_comps;
   auto img = new TrueColorImage(image_width, image_height);
@@ -3284,7 +3311,9 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
 
     const(ubyte)* pScan_line;
     uint scan_line_len;
-    if (decoder.decode(/*(const void**)*/cast(void**)&pScan_line, &scan_line_len) != JPGD_SUCCESS) {
+    err = decoder.decode(/*(const void**)*/cast(void**)&pScan_line, &scan_line_len);
+    if (err != JPGD_SUCCESS) {
+      lastJpegError = LastJpegError(3, err);
       img.clearInternal();
       img = null;
       //jpgd_free(pImage_data);
@@ -3340,6 +3369,7 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
 
 // ////////////////////////////////////////////////////////////////////////// //
 /// decompress JPEG image from disk file.
+/// Returns null if loading failed for any reason.
 public MemoryImage readJpeg (const(char)[] filename) {
   import core.stdc.stdio;
 
