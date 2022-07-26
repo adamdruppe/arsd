@@ -36,12 +36,15 @@ MemoryImage readBmp(string filename) {
 	and trust the library to bounds check for you based on data integrity checks.
 +/
 MemoryImage readBmp(in ubyte[] data, bool lookForFileHeader = true, bool hackAround64BitLongs = false, bool hasAndMask = false) {
+	int position;
 	const(ubyte)[] current = data;
 	void specialFread(void* tgt, size_t size) {
 		while(size) {
 			if (current.length == 0) throw new Exception("out of bmp data"); // it's not *that* fatal, so don't throw RangeError
+			//import std.stdio; writefln("%04x", position);
 			*cast(ubyte*)(tgt) = current[0];
 			current = current[1 .. $];
+			position++;
 			tgt++;
 			size--;
 		}
@@ -209,6 +212,53 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 
 	headerRead = true;
 
+
+
+	// the dg returns the change in offset
+	void processAndMask(scope int delegate(int x, int y, bool transparent) apply) {
+		try {
+			// the and mask is always 1bpp and i want to translate it into transparent pixels
+
+			for(int y = (height - 1); y >= 0; y--) {
+				//version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf(" reading and mask %d\n", y); }
+				int read;
+				for(int x = 0; x < width; x++) {
+					const b = read1();
+					//import std.stdio; writefln("%02x", b);
+					read++;
+					foreach_reverse(lol; 0 .. 8) {
+						bool transparent = !!((b & (1 << lol)));
+						version(arsd_debug_bitmap_loader) { import std.stdio; write(transparent ? "o":"x"); }
+						apply(x, y, transparent);
+
+						x++;
+						if(x >= width)
+							break;
+					}
+					x--; // we do this once too many times in the loop
+				}
+				while(read % 4) {
+					read1();
+					read++;
+				}
+				version(arsd_debug_bitmap_loader) {import std.stdio; writeln(""); }
+			}
+
+			/+
+			this the algorithm btw
+			keep.imageData.bytes[] &= tci.imageData.bytes[andOffset .. $];
+			keep.imageData.bytes[] ^= tci.imageData.bytes[0 .. andOffset];
+			+/
+		} catch(Exception e) {
+			// discard; the and mask is optional in practice since using all 0's
+			// gives a result and some files in the wild deliberately truncate the
+			// file (though they aren't supposed to....) expecting readers to do this.
+			version(arsd_debug_bitmap_loader) { import std.stdio; writeln(e); }
+		}
+	}
+
+
+
 	if(bitsPerPixel <= 8) {
 		// indexed image
 		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("colorsUsed=%u; colorsImportant=%u\n", colorsUsed, colorsImportant); }
@@ -320,8 +370,9 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 							break;
 						img.data[offset++] = (b & 0b00000011) >> 0;
 					} else if(bitsPerPixel == 1) {
-						foreach(lol; 0 .. 8) {
-							img.data[offset++] = (b & (1 << lol)) >> (7 - lol);
+						foreach_reverse(lol; 0 .. 8) {
+							bool value = !!((b & (1 << lol)));
+							img.data[offset++] = value ? 1 : 0;
 							x++;
 							if(offset == img.data.length)
 								break;
@@ -331,6 +382,40 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 					// I don't think these happen in the wild but I could be wrong, my bmp knowledge is somewhat outdated
 				}
 				if (rdheight > 0) offsetStart += width * bytesPerPixel;
+			}
+		}
+
+		if(hasAndMask) {
+			auto tp = img.palette.length;
+			if(tp < 256) {
+				// easy, there's room, just add an entry.
+				img.palette ~= Color.transparent;
+				img.hasAlpha = true;
+			} else {
+				// not enough room, gotta try to find something unused to overwrite...
+				// FIXME: could prolly use more caution here
+				auto selection = 39;
+
+				img.palette[selection] = Color.transparent;
+				img.hasAlpha = true;
+				tp = selection;
+			}
+
+			if(tp < 256) {
+				processAndMask(delegate int(int x, int y, bool transparent) {
+					auto existing = img.data[y * img.width + x];
+
+					if(img.palette[existing] == Color.black && transparent) {
+						// import std.stdio; write("O");
+						img.data[y * img.width + x] = cast(ubyte) tp;
+					} else {
+						// import std.stdio; write("X");
+					}
+
+					return 1;
+				});
+			} else {
+				//import std.stdio; writeln("no room in palette for transparency alas");
 			}
 		}
 
@@ -344,7 +429,7 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		int offsetStart = width * height * 4;
 		int bytesPerPixel = 4;
 		for(int y = height; y > 0; y--) {
-			//version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  true color image: %d\n", y); }
+			version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("  true color image: %d\n", y); }
 			offsetStart -= width * bytesPerPixel;
 			int offset = offsetStart;
 			int b = 0;
@@ -420,36 +505,16 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		}
 
 		if(hasAndMask) {
-			// the and mask is always 1bpp and i want to translate it into transparent pixels
+			processAndMask(delegate int(int x, int y, bool transparent) {
+				int offset = (y * img.width + x) * 4;
+				auto existing = img.imageData.bytes[offset + 3];
+				// only use the and mask if the alpha channel appears unused
+				if(transparent && existing == 255)
+					img.imageData.bytes[offset + 3] = 0;
+				//import std.stdio; write(transparent ? "o":"x");
 
-			int offset = 0;
-			for(int y = height; y > 0; y--) {
-				int read;
-				for(int x = 0; x < width; x++) {
-					auto b = read1();
-					read++;
-					foreach(lol; 0 .. 8) {
-						bool transparent = cast(bool) ((b & (1 << lol)) >> (7 - lol));
-						// FIXME: im just keeping the alpha channel from the bmp here but this is arguably wrong
-						//img.imageData.bytes[offset + 3] = transparent ? 0 : 255;
-						//import std.stdio; write(transparent ? "o":"x");
-						offset += 4;
-						x++;
-					}
-					x--; // we do this once too many times in the loop
-				}
-				while(read % 4) {
-					read1();
-					read++;
-				}
-				//import std.stdio; writeln("");
-			}
-
-			/+
-			this the algorithm btw
-			keep.imageData.bytes[] &= tci.imageData.bytes[andOffset .. $];
-			keep.imageData.bytes[] ^= tci.imageData.bytes[0 .. andOffset];
-			+/
+				return 4;
+			});
 		}
 
 
