@@ -2046,7 +2046,7 @@ class HttpRequest {
 							int footerSize;
 
 							while(footerReadingState != 2 && a < data.length) {
-							import std.stdio; writeln(footerReadingState, " ", footerSize, " ", data);
+								// import std.stdio; writeln(footerReadingState, " ", footerSize, " ", data);
 								switch(footerReadingState) {
 									case 0:
 										if(data[a] == 13)
