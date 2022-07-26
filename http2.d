@@ -2135,6 +2135,10 @@ class HttpRequest {
 						responseData = HttpResponse.init;
 						headerReadingState = HeaderReadingState.init;
 						bodyReadingState = BodyReadingState.init;
+						if(client !is null) {
+							// FIXME: this won't clear cookies that were cleared in another request
+							client.populateCookies(this); // they might have changed in the previous redirection cycle!
+						}
 						state = State.unsent;
 						stillAlive = false;
 						sendPrivate(false);
@@ -2513,16 +2517,21 @@ class HttpClient {
 		request.requestParameters.bodyData = bodyData;
 		request.requestParameters.contentType = contentType;
 
+		populateCookies(request);
+
+		return request;
+
+	}
+
+	private void populateCookies(HttpRequest request) {
 		// FIXME: what about expiration and the like? or domain/path checks? or Secure checks?
 		// FIXME: is uri.host correct? i think it should include port number too. what fun.
 		if(auto cookies = ""/*uri.host*/ in this.cookies) {
 			foreach(cookie; *cookies)
 				request.requestParameters.cookies[cookie.name] = cookie.value;
 		}
-
-		return request;
-
 	}
+
 
 	/// ditto
 	HttpRequest request(Uri uri, FormData fd, HttpVerb method = HttpVerb.POST) {
