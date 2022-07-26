@@ -2042,14 +2042,45 @@ class HttpRequest {
 						case 5: // reading footers
 							//goto done; // FIXME
 
-							while(data[a] != 10) {
+							int footerReadingState = 0;
+							int footerSize;
+
+							while(footerReadingState != 2 && a < data.length) {
+							import std.stdio; writeln(footerReadingState, " ", footerSize, " ", data);
+								switch(footerReadingState) {
+									case 0:
+										if(data[a] == 13)
+											footerReadingState++;
+										else
+											footerSize++;
+									break;
+									case 1:
+										if(data[a] == 10) {
+											if(footerSize == 0) {
+												// all done, time to break
+												footerReadingState++;
+
+											} else {
+												// actually had a footer, try to read another
+												footerReadingState = 0;
+												footerSize = 0;
+											}
+										} else {
+											throw new Exception("bad footer thing");
+										}
+									break;
+									default:
+										assert(0);
+								}
+
 								a++;
-								if(a == data.length)
-									return stillAlive; // in the footer state we're just discarding everything until we're done so this should be ok
 							}
 
+							if(footerReadingState != 2)
+								break start_over; // haven't hit the end of the thing yet
+
 							bodyReadingState.chunkedState = 0;
-							data = data[a + 1 .. $];
+							data = data[a .. $];
 
 							if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
 								auto n = uncompress.uncompress(responseData.content);
