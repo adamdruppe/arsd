@@ -1721,6 +1721,7 @@ class HttpRequest {
 									and btw it should prolly just have evnet source as a pre-packaged thing.
 								+/
 							} catch (Exception e) {
+								debug(arsd_http2_verbose) { import std.stdio; writeln(e); }
 								request.state = HttpRequest.State.aborted;
 								request.responseData.code = 4;
 								request.responseData.codeText = e.msg;
@@ -1861,7 +1862,7 @@ class HttpRequest {
 						break;
 						case "Content-Length":
 						case "content-length":
-							bodyReadingState.contentLengthRemaining = to!int(value);
+							bodyReadingState.contentLengthRemaining = to!int(value.strip);
 						break;
 						case "Transfer-Encoding":
 						case "transfer-encoding":
