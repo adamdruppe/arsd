@@ -956,7 +956,7 @@ class HttpRequest {
 	/++
 		Maximum number of redirections to follow (used only if [followLocation] is set to true). Will resolve with an error if a single request has more than this number of redirections. The default value is currently 10, but may change without notice. If you need a specific value, be sure to call this function.
 
-		If you want unlimited redirects, call it with `int.max`.
+		If you want unlimited redirects, call it with `int.max`. If you set it to 0 but set [followLocation] to `true`, any attempt at redirection will abort the request. To disable automatically following redirection, set [followLocation] to `false` so you can process the 30x code yourself as a completed request.
 
 		History:
 			Added July 27, 2022 (dub v10.9)
@@ -1692,8 +1692,17 @@ class HttpRequest {
 						assert(request.sendBuffer.length);
 						auto sent = sock.send(request.sendBuffer);
 						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
-						if(sent <= 0)
-							throw new Exception("send error " ~ lastSocketError);
+						if(sent <= 0) {
+							request.state = State.aborted;
+
+							request.responseData.code = 3;
+							request.responseData.codeText = "send failed to server";
+							inactive[inactiveCount++] = sock;
+							sock.close();
+							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+							continue;
+
+						}
 						request.sendBuffer = request.sendBuffer[sent .. $];
 						if(request.sendBuffer.length == 0) {
 							request.state = State.waitingForResponse;
@@ -1709,7 +1718,16 @@ class HttpRequest {
 						auto got = sock.receive(buffer);
 						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
 						if(got < 0) {
-							throw new Exception("receive error");
+							debug(arsd_http2) writeln("receive error");
+							if(request.state != State.complete) {
+								request.state = State.aborted;
+
+								request.responseData.code = 3;
+								request.responseData.codeText = "receive error from server";
+							}
+							inactive[inactiveCount++] = sock;
+							sock.close();
+							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						} else if(got == 0) {
 							// remote side disconnected
 							debug(arsd_http2) writeln("remote disconnect");
@@ -3640,7 +3658,8 @@ version(use_openssl) {
 				int i;
 				//printf("wtf\n");
 				//scanf("%d\n", i);
-				throw new Exception("ssl receive failed " ~ str);
+
+				//throw new Exception("ssl receive failed " ~ str);
 			}
 			return retval;
 		}
