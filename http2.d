@@ -308,10 +308,10 @@ struct HttpResponse {
 				{
 					auto idx = remaining.indexOf(";");
 					if(idx == -1) {
-						cookie.value = remaining;
+						cookie.value = remaining.idup_if_needed;
 						remaining = remaining[$..$];
 					} else {
-						cookie.value = remaining[0 .. idx];
+						cookie.value = remaining[0 .. idx].idup_if_needed;
 						remaining = remaining[idx + 1 .. $].stripLeft;
 					}
 
@@ -954,6 +954,20 @@ class HttpRequest {
 	bool followLocation = false;
 
 	/++
+		Maximum number of redirections to follow (used only if [followLocation] is set to true). Will resolve with an error if a single request has more than this number of redirections. The default value is currently 10, but may change without notice. If you need a specific value, be sure to call this function.
+
+		If you want unlimited redirects, call it with `int.max`.
+
+		History:
+			Added July 27, 2022 (dub v10.9)
+	+/
+	void setMaximumNumberOfRedirects(int max = 10) {
+		maximumNumberOfRedirectsRemaining = max;
+	}
+
+	private int maximumNumberOfRedirectsRemaining;
+
+	/++
 		Set to `true` to automatically retain cookies in the associated [HttpClient] from this request.
 		Note that you must have constructed the request from a `HttpClient` or at least passed one into the
 		constructor for this to have any effect.
@@ -978,6 +992,8 @@ class HttpRequest {
 		setTimeout(timeout);
 		this.cache = cache;
 		this.proxy = proxy;
+
+		setMaximumNumberOfRedirects();
 	}
 
 	
@@ -2127,6 +2143,12 @@ class HttpRequest {
 					}
 
 					if(followLocation && responseData.location.length) {
+						if(maximumNumberOfRedirectsRemaining <= 0) {
+							throw new Exception("Maximum number of redirects exceeded");
+						} else {
+							maximumNumberOfRedirectsRemaining--;
+						}
+
 						static bool first = true;
 						//version(DigitalMars) if(!first) asm { int 3; }
 						debug(arsd_http2) writeln("redirecting to ", responseData.location);
@@ -2860,6 +2882,7 @@ class HttpClient {
 		if(domain is null)
 			domain = currentDomain;
 
+		// FIXME: figure all this out or else cookies liable to get too long, in addition to the overwriting and oversharing issues in long scraping sessions
 		cookies[""/*domain*/] ~= ch;
 	}
 
