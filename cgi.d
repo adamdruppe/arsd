@@ -3645,6 +3645,7 @@ struct RequestServer {
 		If you want the forking worker process server, you do need to compile with the embedded_httpd_processes config though.
 	+/
 	void serveEmbeddedHttp(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)(ThisFor!fun _this) {
+		globalStopFlag = false;
 		static if(__traits(isStaticFunction, fun))
 			alias funToUse = fun;
 		else
@@ -3661,6 +3662,7 @@ struct RequestServer {
 		Runs the embedded SCGI server specifically, regardless of which build configuration you have.
 	+/
 	void serveScgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		globalStopFlag = false;
 		auto manager = new ListeningConnectionManager(listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
 		manager.listen();
 	}
@@ -3677,6 +3679,7 @@ struct RequestServer {
 		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(new FakeSocketForStdin());
 	}
 
+	version(embedded_httpd_processes) {} else
 	/++
 		Stops serving after the current requests.
 
@@ -3687,7 +3690,6 @@ struct RequestServer {
 			A Windows implementation is planned but not sure about the others. Maybe a posix pipe can be used on other OSes. I do not intend
 			to implement this for the processes config.
 	+/
-	version(embedded_httpd_processes) {} else
 	static void stop() {
 		globalStopFlag = true;
 
@@ -8757,6 +8759,9 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 			}
 
 			return false;
+		} else static if(is(T == enum)) {
+			*what = to!T(value);
+			return true;
 		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
 			*what = to!T(value);
 			return true;
@@ -9388,6 +9393,21 @@ html", true, true);
 			auto i = lbl.addChild("input", name);
 			i.attrs.name = name;
 			i.attrs.type = "file";
+		} else static if(is(T == enum)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("select", name);
+			i.attrs.name = name;
+
+			foreach(memberName; __traits(allMembers, T))
+				i.addChild("option", memberName);
+
 		} else static if(is(T == struct)) {
 			if(displayName !is null)
 				div.addChild("span", displayName, "label-text");
@@ -9436,18 +9456,6 @@ html", true, true);
 			i.attrs.type = "checkbox";
 			i.attrs.value = "true";
 			i.attrs.name = name;
-		} else static if(is(T == Cgi.UploadedFile)) {
-			Element lbl;
-			if(displayName !is null) {
-				lbl = div.addChild("label");
-				lbl.addChild("span", displayName, "label-text");
-				lbl.appendText(" ");
-			} else {
-				lbl = div;
-			}
-			auto i = lbl.addChild("input", name);
-			i.attrs.name = name;
-			i.attrs.type = "file";
 		} else static if(is(T == K[], K)) {
 			auto templ = div.addChild("template");
 			templ.appendChild(elementFor!(K)(null, name, null /* uda??*/));
@@ -10868,6 +10876,8 @@ auto serveStaticData(string urlPrefix, immutable(void)[] data, string contentTyp
 string contentTypeFromFileExtension(string filename) {
 		if(filename.endsWith(".png"))
 			return "image/png";
+		if(filename.endsWith(".apng"))
+			return "image/apng";
 		if(filename.endsWith(".svg"))
 			return "image/svg+xml";
 		if(filename.endsWith(".jpg"))
