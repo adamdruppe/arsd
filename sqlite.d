@@ -76,18 +76,21 @@ void main() {
 ///
 class Sqlite : Database {
   public:
-	///
-	this(string filename, int flags = SQLITE_OPEN_READWRITE) {
-	/+
-		int error = sqlite3_open_v2(toStringz(filename), &db, flags, null);
-		if(error == SQLITE_CANTOPEN)
-			throw new DatabaseException("omg cant open");
-		if(error != SQLITE_OK)
-			throw new DatabaseException("db open " ~ error());
+	/++
+		Opens and creates the database, if desired.
+
+		History:
+			The `flags` argument was ignored until July 29, 2022. (This function was originally written over 11 years ago, when sqlite3_open_v2 was not commonly supported on some distributions yet, and I didn't notice to revisit it for ages!)
 	+/
+	this(string filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) {
+		int error = sqlite3_open_v2(toStringz(filename), &db, flags, null);
+		if(error != SQLITE_OK)
+			throw new DatabaseException(this.error());
+	/+
 		int error = sqlite3_open(toStringz(filename), &db);
 		if(error != SQLITE_OK)
 			throw new DatabaseException(this.error());
+	+/
 	}
 
 	~this(){
@@ -681,14 +684,13 @@ extern(C){
 			sqlite3 **ppDb          /* OUT: SQLite db handle */
 			);
 			
-/+
 int sqlite3_open_v2(
-  char *filename,   /* Database filename (UTF-8) */
+  const char *filename,   /* Database filename (UTF-8) */
   sqlite3 **ppDb,         /* OUT: SQLite db handle */
   int flags,              /* Flags */
-  char *zVfs        /* Name of VFS module to use */
+  const char *zVfs        /* Name of VFS module to use */
 );
-+/
+
 	int sqlite3_prepare_v2(
   sqlite3 *db,            /* Database handle */
   const(char) *zSql,       /* SQL statement, UTF-8 encoded */
