@@ -146,6 +146,24 @@ class PostgreSql : Database {
 		return ret;
 	}
 
+	string escapeBinaryString(const(ubyte)[] data) {
+		// must include '\x ... ' here
+		size_t len;
+		char* buf = PQescapeByteaConn(conn, data.ptr, data.length, &len);
+		if(buf is null)
+			throw new Exception("pgsql out of memory escaping binary string");
+
+		string res;
+		if(len == 0)
+			res = "''";
+		else
+			res = cast(string) ("'" ~ buf[0 .. len - 1] ~ "'"); // gotta cut the zero terminator off
+
+		PQfreemem(buf);
+
+		return res;
+	}
+
 
 	///
 	string error() {
@@ -243,7 +261,26 @@ class PostgresResult : ResultSet {
 				if(PQgetisnull(res, position, i))
 					a = null;
 				else {
-					a = copyCString(PQgetvalue(res, position, i), PQgetlength(res, position, i));
+					switch(PQfformat(res, i)) {
+						case 0: // text representation
+							switch(PQftype(res, i)) {
+								case BYTEAOID:
+									size_t len;
+									char* c = PQunescapeBytea(PQgetvalue(res, position, i), &len);
+
+									a = cast(string) c[0 .. len].idup;
+
+									PQfreemem(c);
+								break;
+								default:
+									a = copyCString(PQgetvalue(res, position, i), PQgetlength(res, position, i));
+							}
+						break;
+						case 1: // binary representation
+							throw new Exception("unexpected format returned by pq");
+						default:
+							throw new Exception("unknown pq format");
+					}
 
 				}
 				row ~= a;
@@ -320,6 +357,19 @@ extern(C) {
 	int PQgetisnull(const PGresult *res,
 			int row_number,
 			int column_number);
+
+	int PQfformat(const PGresult *res, int column_number);
+
+	alias Oid = int;
+	enum BYTEAOID = 17;
+	Oid PQftype(const PGresult* res, int column_number);
+
+	char *PQescapeByteaConn(PGconn *conn,
+                                 const ubyte *from,
+                                 size_t from_length,
+                                 size_t *to_length);
+	char *PQunescapeBytea(const char *from, size_t *to_length);
+	void PQfreemem(void *ptr);
 
 	char* PQcmdTuples(PGresult *res);
 

@@ -79,6 +79,10 @@ class MsSql : Database {
 		//return ret.replace("'", "''");
 	}
 
+	string escapeBinaryString(const(ubyte)[] data) { // FIXME
+		return "'" ~ escape(cast(string) data) ~ "'";
+	}
+
 
 	string error() {
 		return null; // FIXME

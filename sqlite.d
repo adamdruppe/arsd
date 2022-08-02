@@ -148,6 +148,10 @@ class Sqlite : Database {
 		return esc;
 	}
 
+	string escapeBinaryString(const(ubyte)[] b) {
+		return tohexsql(b);
+	}
+
 	string error(){
 		import core.stdc.string : strlen;
 		char* mesg = sqlite3_errmsg(db);
@@ -231,7 +235,10 @@ class SqliteResult :  ResultSet {
 		if(rows.length <= position)
 			throw new Exception("Result is empty");
 		foreach(c; rows[position]) {
-			r.row ~= c.coerce!(string);
+			if(auto t = c.peek!(immutable(byte)[]))
+				r.row ~= cast(string) *t;
+			else
+				r.row ~= c.coerce!(string);
 		}
 
 		return r;
@@ -502,6 +509,7 @@ template extract(A, T, R...){
 		void bind (const char[] name, int value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, float value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, const byte[] value){ bind(bindNameLookUp(name), value); }
+		void bind (const char[] name, const ubyte[] value){ bind(bindNameLookUp(name), value); }
 
 	void bind(int col, typeof(null) value){
 		if(sqlite3_bind_null(s, col) != SQLITE_OK)
@@ -526,7 +534,17 @@ template extract(A, T, R...){
 		if(sqlite3_bind_int64(s, col, value) != SQLITE_OK)
 			throw new DatabaseException("bind " ~ db.error());
 	}
-	
+
+	void bind(int col, const ubyte[] value){
+		if(value is null) {
+			if(sqlite3_bind_null(s, col) != SQLITE_OK)
+				throw new DatabaseException("bind " ~ db.error());
+		} else {
+			if(sqlite3_bind_blob(s, col, cast(void*)value.ptr, cast(int) value.length, cast(void*)-1) != SQLITE_OK)
+				throw new DatabaseException("bind " ~ db.error());
+		}
+	}
+
 	void bind(int col, const byte[] value){
 		if(value is null) {
 			if(sqlite3_bind_null(s, col) != SQLITE_OK)
@@ -556,6 +574,10 @@ template extract(A, T, R...){
 			bind(col, v.get!float);
 		else if(v.peek!(byte[]))
 			bind(col, v.get!(byte[]));
+		else if(v.peek!(ubyte[]))
+			bind(col, v.get!(ubyte[]));
+		else if(v.peek!(immutable(ubyte)[]))
+			bind(col, v.get!(immutable(ubyte)[]));
 		else if(v.peek!(void*) && v.get!(void*) is null)
 			bind(col, null);
 		else

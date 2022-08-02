@@ -13,7 +13,24 @@
 	db.query("INSERT INTO people (id, name) VALUES (?, ?)", 5, "Adam");
 	---
 
-	To convert to other types, just use [std.conv.to] since everything comes out of this as simple strings.
+	To convert to other types, just use [std.conv.to] since everything comes out of this as simple strings with the exception of binary data,
+	which you'll want to cast to const(ubyte)[].
+
+	History:
+		Originally written prior to 2011.
+
+		On August 2, 2022, the behavior of BLOB (or BYTEA in postgres) changed significantly.
+		Before, it would convert to strings with `to!string(bytes)` on insert and platform specific
+		on query. It didn't really work at all.
+
+		It now actually stores ubyte[] as a blob and retrieves it without modification. Note you need to
+		cast it.
+
+		This is potentially breaking, but since it didn't work much before I doubt anyone was using it successfully
+		but this might be a problem. I advise you to retest.
+
+		Be aware I don't like this string interface much anymore and want to change it significantly but idk
+		how to work it in without breaking a decade of code.
 +/
 module arsd.database;
 
@@ -49,6 +66,8 @@ interface Database {
 
 	/// Escapes data for inclusion into an sql string literal
 	string escape(string sqlData);
+	/// Escapes binary data for inclusion into a sql string. Note that unlike `escape`, the returned string here SHOULD include the quotes.
+	string escapeBinaryString(const(ubyte)[] sqlData);
 
 	/// query to start a transaction, only here because sqlite is apparently different in syntax...
 	void startTransaction();
@@ -380,8 +399,40 @@ class SelectBuilder : SqlBuilder {
 
 // /////////////////////sql//////////////////////////////////
 
+package string tohexsql(const(ubyte)[] b) {
+	char[] x;
+	x.length = b.length * 2 + 3;
+	int pos = 0;
+	x[pos++] = 'x';
+	x[pos++] = '\'';
+
+	char tohex(ubyte a) {
+		if(a < 10)
+			return cast(char)(a + '0');
+		else
+			return cast(char)(a - 10 + 'A');
+	}
+
+	foreach(item; b) {
+		x[pos++] = tohex(item >> 4);
+		x[pos++] = tohex(item & 0x0f);
+	}
+
+	x[pos++] = '\'';
+
+	return cast(string) x;
+}
+
 // used in the internal placeholder thing
 string toSql(Database db, Variant a) {
+
+	string binary(const(ubyte)[] b) {
+		if(b is null)
+			return "NULL";
+		else
+			return db.escapeBinaryString(b);
+	}
+
 	auto v = a.peek!(void*);
 	if(v && (*v is null)) {
 		return "NULL";
@@ -390,6 +441,10 @@ string toSql(Database db, Variant a) {
 	} else if(auto t = a.peek!(DateTime)) {
 		// FIXME: this might be broken cuz of timezones!
 		return db.sysTimeToValue(cast(SysTime) *t);
+	} else if(auto t = a.peek!(ubyte[])) {
+		return binary(*t);
+	} else if(auto t = a.peek!(immutable(ubyte)[])) {
+		return binary(*t);
 	} else if(auto t = a.peek!string) {
 		auto str = *t;
 		if(str is null)

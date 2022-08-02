@@ -307,6 +307,10 @@ class MySql : Database {
 		return cast(string) buffer;
 	}
 
+	string escapeBinaryString(const(ubyte)[] data) {
+		return tohexsql(b);
+	}
+
 	string escaped(T...)(string sql, T t) {
 		static if(t.length > 0) {
 			string fixedup;
