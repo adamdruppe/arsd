@@ -1377,8 +1377,8 @@ struct LazyPngFile(LazyPngChunksProvider)
 						auto err = inflate(zs, Z_SYNC_FLUSH);
 						if (err != Z_STREAM_END && err != Z_OK) throw new Exception("PNG unpack error");
 						if (err == Z_STREAM_END) {
-							// this thing is malformed
 							if(zs.avail_in != 0) {
+								// this thing is malformed..
 								// libpng would warn here "libpng warning: IDAT: Extra compressed data"
 								// i used to just throw with the assertion on the next line
 								// but now just gonna discard the extra data to be a bit more permissive
