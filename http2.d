@@ -1,4 +1,4 @@
-// Copyright 2013-2021, Adam D. Ruppe.
+// Copyright 2013-2022, Adam D. Ruppe.
 
 // FIXME: websocket proxy support
 // FIXME: ipv6 support
