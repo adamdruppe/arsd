@@ -1770,7 +1770,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	}
 
 	/++
-		Returns the actual physical DPI for the window on its current display monitor. If the window
+		Returns the actual logical DPI for the window on its current display monitor. If the window
 		straddles monitors, it will return the value of one or the other in a platform-defined manner.
 
 		Please note this function may return zero if it doesn't know the answer!
@@ -1790,8 +1790,20 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		History:
 			Added November 26, 2021 (dub v10.4)
 
+			It said "physical dpi" in the description prior to July 29, 2022, but the behavior was
+			always a logical value on Windows and usually one on Linux too, so now the docs reflect
+			that.
+
 		Bugs:
-			Probably plenty. I haven't done a lot of tests on this. I know it doesn't
+			Probably plenty. I haven't done a lot of tests on this. I know it doesn't automatically
+			just work on linux; you need to set ARSD_SCALING_FACTOR as an environment variable to
+			set it. Set ARSD_SCALING_FACTOR=1;1.5 for example to set it to 1x on the primary monitor
+			and 1.5 on the secondary monitor.
+
+			The local dpi is not necessarily related to the physical dpi of the monitor. The name
+			is a historical misnomer - the real thing of interest is the scale factor and due to
+			compatibility concerns the scale would modify dpi values to trick applications. But since
+			that's the terminology common out there, I used it too.
 
 		See_Also:
 			[getDpi] gives the value provided for the default monitor. Not necessarily the same
