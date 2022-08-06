@@ -397,7 +397,8 @@ class TerminalEmulator {
 							}
 						}
 
-						sendHyperlinkData(buffer[0 .. end - start], number);
+						if((cast(size_t) (end - start)) <= buffer.length)
+							sendHyperlinkData(buffer[0 .. end - start], number);
 					}
 				}
 			}
