@@ -1918,41 +1918,32 @@ class HttpRequest {
 					auto header = responseData.headers[$-1];
 
 					auto colon = header.indexOf(":");
-					if(colon == -1)
+					if(colon < 0 || colon >= header.length)
 						return;
-					auto name = header[0 .. colon];
-					if(colon + 1 == header.length || colon + 2 == header.length) // assuming a space there
-						return; // empty header, idk
-					assert(colon + 2 < header.length, header);
-					auto value = header[colon + 2 .. $]; // skipping the colon itself and the following space
+					auto name = toLower(header[0 .. colon]);
+					auto value = header[colon + 1 .. $].strip; // skip colon and strip whitespace
 
 					switch(name) {
-						case "Connection":
 						case "connection":
 							if(value == "close")
 								closeSocketWhenComplete = true;
 						break;
-						case "Content-Type":
 						case "content-type":
 							responseData.contentType = value;
 						break;
-						case "Location":
 						case "location":
 							responseData.location = value;
 						break;
-						case "Content-Length":
 						case "content-length":
-							bodyReadingState.contentLengthRemaining = to!int(value.strip);
+							bodyReadingState.contentLengthRemaining = to!int(value);
 						break;
-						case "Transfer-Encoding":
 						case "transfer-encoding":
 							// note that if it is gzipped, it zips first, then chunks the compressed stream.
 							// so we should always dechunk first, then feed into the decompressor
-							if(value.strip == "chunked")
+							if(value == "chunked")
 								bodyReadingState.isChunked = true;
 							else throw new Exception("Unknown Transfer-Encoding: " ~ value);
 						break;
-						case "Content-Encoding":
 						case "content-encoding":
 							if(value == "gzip") {
 								bodyReadingState.isGzipped = true;
@@ -1962,7 +1953,6 @@ class HttpRequest {
 								uncompress = new UnCompress();
 							} else throw new Exception("Unknown Content-Encoding: " ~ value);
 						break;
-						case "Set-Cookie":
 						case "set-cookie":
 							// handled elsewhere fyi
 						break;
