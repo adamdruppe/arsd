@@ -2981,6 +2981,8 @@ struct Uri {
 	/// Browsers use a function like this to figure out links in html.
 	Uri basedOn(in Uri baseUrl) const {
 		Uri n = this; // copies
+		if(n.scheme == "data")
+			return n;
 		// n.uriInvalidated = true; // make sure we regenerate...
 
 		// userinfo is not inherited... is this wrong?
