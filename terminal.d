@@ -1009,6 +1009,46 @@ struct Terminal {
 		else return (tcaps & TerminalCapabilities.arsdClipboard) ? true : false;
 	}
 
+	version (Win32Console)
+		// Mimic sc & rc termcaps on Windows
+		COORD[] cursorPositionStack;
+
+	bool saveCursorPosition()
+	{
+		version (Win32Console)
+		{
+			CONSOLE_SCREEN_BUFFER_INFO info;
+			if (GetConsoleScreenBufferInfo(hConsole, &info))
+			{
+				cursorPositionStack ~= info.dwCursorPosition; // push
+				return true;
+			}
+			else
+				return false;
+		}
+		else
+			return doTermcap("sc");
+	}
+
+	bool restoreCursorPosition()
+	{
+		version (Win32Console)
+		{
+			if (cursorPositionStack.length > 0)
+			{
+				if (SetConsoleCursorPosition(hConsole, cursorPositionStack[$ - 1]))
+				{
+					cursorPositionStack = cursorPositionStack[0 .. $ - 1]; // pop
+					return true;
+				}
+				else
+					return false;
+			}
+		}
+		else
+			return doTermcap("rc");
+	}
+
 	// only supported on my custom terminal emulator. guarded behind if(inlineImagesSupported)
 	// though that isn't even 100% accurate but meh
 	void changeWindowIcon()(string filename) {
