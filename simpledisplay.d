@@ -11680,6 +11680,7 @@ version(Windows) {
 					if(wind.onFocusChange)
 						wind.onFocusChange(msg == WM_SETFOCUS);
 				  break;
+
 				case WM_SYSKEYDOWN:
 					goto case;
 				case WM_SYSKEYUP:
@@ -11703,7 +11704,18 @@ version(Windows) {
 					//k8: this doesn't work; thanks for nothing, windows
 					/*if(GetKeyState(Key.Alt)&0x8000 || GetKeyState(Key.Alt_r)&0x8000)
 						ev.modifierState |= ModifierState.alt;*/
-					if (wParam == 0x12) altPressed = (msg == WM_SYSKEYDOWN);
+					// this never seems to actually be set
+					// if (lParam & 0x2000 /* KF_ALTDOWN */) ev.modifierState |= ModifierState.alt; else ev.modifierState &= ~ModifierState.alt;
+
+					if (wParam == 0x12) {
+						altPressed = (msg == WM_SYSKEYDOWN);
+					}
+
+					if(msg == WM_KEYDOWN || msg == WM_KEYUP) {
+						altPressed = false;
+					}
+					// sdpyPrintDebugString(altPressed ? "alt down" : " up ");
+
 					if (altPressed) ev.modifierState |= ModifierState.alt; else ev.modifierState &= ~ModifierState.alt;
 					if(GetKeyState(Key.Ctrl)&0x8000 || GetKeyState(Key.Ctrl_r)&0x8000)
 						ev.modifierState |= ModifierState.ctrl;
@@ -11827,6 +11839,18 @@ version(Windows) {
 
 			if(triggerEvents(hwnd, msg, wParam, lParam, 0, 0, this))
 			switch(msg) {
+				case WM_MENUCHAR: // menu active but key not associated with a thing.
+					// you would ideally use this for like a search function but sdpy not that ideally designed. alas.
+					// The main things we can do are select, execute, close, or ignore
+					// the default is ignore, but it doesn't *just* ignore it - it also dings an audio alert to
+					// the user. This can be a bit annoying for sdpy things so instead im overriding and setting it
+					// to close, which can be really annoying when you hit the wrong button. but meh i think for sdpy
+					// that's the lesser bad choice rn. Can always override by returning true in triggerEvents....
+
+					// returns the value in the *high order word* of the return value
+					// hence the << 16
+					return 1 << 16; // MNC_CLOSE, close the menu without dinging at the user
+				break;
 				case WM_SETCURSOR:
 					if(cast(HWND) wParam !is hwnd)
 						return 0; // further processing elsewhere
