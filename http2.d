@@ -1095,6 +1095,9 @@ class HttpRequest {
 		/// sent on the socket yet because the connection is busy.
 		pendingAvailableConnection,
 
+		/// connect has been called, but we're waiting on word of success
+		connecting,
+
 		/// The headers are being sent now
 		sendingHeaders,
 
@@ -1359,8 +1362,10 @@ class HttpRequest {
 						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host, verifyPeer);
 					} else
 						throw new Exception("SSL not compiled in");
-				} else
+				} else {
 					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
+					socket.blocking = false;
+				}
 
 				// FIXME: connect timeout?
 				if(unixSocketPath) {
@@ -1625,7 +1630,7 @@ class HttpRequest {
 				if(socket !is null) {
 					activeRequestOnSocket[socket] = pc;
 					assert(pc.sendBuffer.length);
-					pc.state = State.sendingHeaders;
+					pc.state = State.connecting;
 
 					removeFromPending[removeFromPendingCount++] = pc;
 				}
@@ -1680,7 +1685,7 @@ class HttpRequest {
 				if(timeo < minTimeout)
 					minTimeout = timeo;
 
-				if(request.state == State.sendingHeaders || request.state == State.sendingBody) {
+				if(request.state == State.connecting || request.state == State.sendingHeaders || request.state == State.sendingBody) {
 					writeSet.add(sock);
 					hadOne = true;
 				}
@@ -1703,7 +1708,10 @@ class HttpRequest {
 					if(request.timeoutFromInactivity <= now) {
 						request.state = HttpRequest.State.aborted;
 						request.responseData.code = 5;
-						request.responseData.codeText = "Request timed out";
+						if(request.state == State.connecting)
+							request.responseData.codeText = "Connect timed out";
+						else
+							request.responseData.codeText = "Request timed out";
 
 						inactive[inactiveCount++] = sock;
 						sock.close();
@@ -1732,6 +1740,44 @@ class HttpRequest {
 					// also because openssl will sometimes leave something ready to read even if we haven't
 					// sent yet (probably leftover data from the crypto negotiation) and if that happens ssl
 					// is liable to block forever hogging the connection and not letting it send...
+					if(request.state == State.connecting)
+					if(writeSet.isSet(sock) || readSet.isSet(sock)) {
+						int error;
+						int retopt = sock.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
+						if(retopt < 0 || error != 0) {
+							request.state = State.aborted;
+
+							request.responseData.code = 2;
+							try {
+								request.responseData.codeText = "connection failed - " ~ formatSocketError(error);
+							} catch(Exception e) {
+								request.responseData.codeText = "connection failed";
+							}
+							inactive[inactiveCount++] = sock;
+							sock.close();
+							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+							continue;
+
+						} else {
+							request.state = State.sendingHeaders;
+
+							if(auto s = cast(SslClientSocket) sock) {
+								try {
+									s.do_ssl_connect();
+								} catch(Exception e) {
+									request.state = State.aborted;
+
+									request.responseData.code = 2;
+									request.responseData.codeText = e.msg;
+									inactive[inactiveCount++] = sock;
+									sock.close();
+									loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+								}
+								continue;
+							}
+						}
+					}
+
 					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
 					if(writeSet.isSet(sock)) {
 						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
@@ -3647,7 +3693,8 @@ version(use_openssl) {
 		@trusted
 		override void connect(Address to) {
 			super.connect(to);
-			do_ssl_connect();
+			if(!blocking)
+				do_ssl_connect();
 		}
 
 		@trusted
