@@ -1098,6 +1098,11 @@ class HttpRequest {
 		/// connect has been called, but we're waiting on word of success
 		connecting,
 
+		/// connecting a ssl, needing this
+		sslConnectPendingRead,
+		/// ditto
+		sslConnectPendingWrite,
+
 		/// The headers are being sent now
 		sendingHeaders,
 
@@ -1690,7 +1695,7 @@ class HttpRequest {
 				if(timeo < minTimeout)
 					minTimeout = timeo;
 
-				if(request.state == State.connecting || request.state == State.sendingHeaders || request.state == State.sendingBody) {
+				if(request.state == State.connecting || request.state == State.sslConnectPendingWrite || request.state == State.sendingHeaders || request.state == State.sendingBody) {
 					writeSet.add(sock);
 					hadOne = true;
 				}
@@ -1740,6 +1745,35 @@ class HttpRequest {
 				else
 					return 3;
 			} else { /* ready */
+
+				void sslProceed(HttpRequest request, SslClientSocket s) {
+					try {
+						auto code = s.do_ssl_connect();
+						switch(code) {
+							case 0:
+								request.state = State.sendingHeaders;
+							break;
+							case SSL_ERROR_WANT_READ:
+								request.state = State.sslConnectPendingRead;
+							break;
+							case SSL_ERROR_WANT_WRITE:
+								request.state = State.sslConnectPendingWrite;
+							break;
+							default:
+								assert(0);
+						}
+					} catch(Exception e) {
+						request.state = State.aborted;
+
+						request.responseData.code = 2;
+						request.responseData.codeText = e.msg;
+						inactive[inactiveCount++] = s;
+						s.close();
+						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, s);
+					}
+				}
+
+
 				foreach(sock, request; activeRequestOnSocket) {
 					// always need to try to send first in part because http works that way but
 					// also because openssl will sometimes leave something ready to read even if we haven't
@@ -1762,28 +1796,25 @@ class HttpRequest {
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 							continue;
-
 						} else {
-							request.state = State.sendingHeaders;
-
 							if(auto s = cast(SslClientSocket) sock) {
-								try {
-									// maybe not ideal to set the blocking but meh it simplifies the code
-									s.blocking = true;
-									s.do_ssl_connect();
-									s.blocking = false;
-								} catch(Exception e) {
-									request.state = State.aborted;
-
-									request.responseData.code = 2;
-									request.responseData.codeText = e.msg;
-									inactive[inactiveCount++] = sock;
-									sock.close();
-									loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-								}
+								sslProceed(request, s);
 								continue;
+							} else {
+								request.state = State.sendingHeaders;
 							}
 						}
+					}
+
+					if(request.state == State.sslConnectPendingRead)
+					if(readSet.isSet(sock)) {
+						sslProceed(request, cast(SslClientSocket) sock);
+						continue;
+					}
+					if(request.state == State.sslConnectPendingWrite)
+					if(writeSet.isSet(sock)) {
+						sslProceed(request, cast(SslClientSocket) sock);
+						continue;
 					}
 
 					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
@@ -3330,6 +3361,9 @@ version(use_openssl) {
 
 	import core.stdc.config;
 
+	enum SSL_ERROR_WANT_READ = 2;
+	enum SSL_ERROR_WANT_WRITE = 3;
+
 	struct ossllib {
 		__gshared static extern(C) {
 			/* these are only on older openssl versions { */
@@ -3351,6 +3385,7 @@ version(use_openssl) {
 			void function(SSL_CTX*) SSL_CTX_free;
 
 			int function(const SSL*) SSL_pending;
+			int function (const SSL *ssl, int ret) SSL_get_error;
 
 			void function(SSL*, int, void*) SSL_set_verify;
 
@@ -3712,8 +3747,15 @@ version(use_openssl) {
 		}
 
 		@trusted
-		void do_ssl_connect() {
+		// returns true if it is finished, false if it would have blocked, throws if there's an error
+		int do_ssl_connect() {
 			if(OpenSSL.SSL_connect(ssl) == -1) {
+
+				auto errCode = OpenSSL.SSL_get_error(ssl, -1);
+				if(errCode == SSL_ERROR_WANT_READ || errCode == SSL_ERROR_WANT_WRITE) {
+					return errCode;
+				}
+
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
@@ -3722,6 +3764,8 @@ version(use_openssl) {
 				//scanf("%d\n", i);
 				throw new Exception("Secure connect failed: " ~ getOpenSslErrorCode(err));
 			}
+
+			return 0;
 		}
 		
 		@trusted
