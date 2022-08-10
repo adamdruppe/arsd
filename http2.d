@@ -1360,6 +1360,7 @@ class HttpRequest {
 					version(with_openssl) {
 						loadOpenSsl();
 						socket = new SslClientSocket(family(unixSocketPath), SocketType.STREAM, host, verifyPeer);
+						socket.blocking = false;
 					} else
 						throw new Exception("SSL not compiled in");
 				} else {
@@ -1763,7 +1764,10 @@ class HttpRequest {
 
 							if(auto s = cast(SslClientSocket) sock) {
 								try {
+									// maybe not ideal to set the blocking but meh it simplifies the code
+									s.blocking = true;
 									s.do_ssl_connect();
+									s.blocking = false;
 								} catch(Exception e) {
 									request.state = State.aborted;
 
@@ -3693,8 +3697,9 @@ version(use_openssl) {
 		@trusted
 		override void connect(Address to) {
 			super.connect(to);
-			if(!blocking)
+			if(blocking) {
 				do_ssl_connect();
+			}
 		}
 
 		@trusted
