@@ -1336,10 +1336,7 @@ class HttpRequest {
 		// The key is the *domain name* and the port. Multiple domains on the same address will have separate connections.
 		Socket[][string] socketsPerHost;
 
-		void loseSocket(string host, ushort port, bool ssl, Socket s) {
-			import std.string;
-			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
-
+		void loseSocketByKey(string key, Socket s) {
 			if(auto list = key in socketsPerHost) {
 				for(int a = 0; a < (*list).length; a++) {
 					if((*list)[a] is s) {
@@ -1351,6 +1348,13 @@ class HttpRequest {
 					}
 				}
 			}
+		}
+
+		void loseSocket(string host, ushort port, bool ssl, Socket s) {
+			import std.string;
+			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
+
+			loseSocketByKey(key, s);
 		}
 
 		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
@@ -1789,6 +1793,9 @@ class HttpRequest {
 						auto sent = sock.send(request.sendBuffer);
 						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
 						if(sent <= 0) {
+							if(wouldHaveBlocked())
+								continue;
+
 							request.state = State.aborted;
 
 							request.responseData.code = 3;
@@ -1814,6 +1821,8 @@ class HttpRequest {
 						auto got = sock.receive(buffer);
 						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
 						if(got < 0) {
+							if(wouldHaveBlocked())
+								continue;
 							debug(arsd_http2) writeln("receive error");
 							if(request.state != State.complete) {
 								request.state = State.aborted;
