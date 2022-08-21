@@ -2182,6 +2182,10 @@ class HttpRequest {
 						// done with headers
 						if(data[position] == '\r' && (position + 1) < data.length && data[position + 1] == '\n')
 							position++;
+						// 101 Switching Protocols
+						// 102 Processing
+						// FIXME: skip 103 Early Hints too
+						// i should just skip all the 100 things unrecognized.
 						if(responseData.headers.length && responseData.headers[0].indexOf(" 100 ") != -1) {
 							// HTTP/1.1 100 Continue
 							// here we just discard the continue message and carry on; it is just informational anyway
@@ -4641,6 +4645,7 @@ class WebSocket {
 		if(readyState == CONNECTING)
 			throw new Exception("WebSocket not connected when trying to send. Did you forget to call connect(); ?");
 			//connect();
+			//import std.stdio; writeln("LLSEND: ", d);
 		while(d.length) {
 			auto r = socket.send(d);
 			if(r < 0 && wouldHaveBlocked()) {
@@ -4658,6 +4663,7 @@ class WebSocket {
 	}
 
 	private void llclose() {
+		// import std.stdio; writeln("LLCLOSE");
 		socket.shutdown(SocketShutdown.SEND);
 	}
 
@@ -4795,6 +4801,7 @@ class WebSocket {
 			return; // it cool, we done
 		WebSocketFrame wss;
 		wss.fin = true;
+		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.close;
 		wss.data = cast(ubyte[]) reason.dup;
 		wss.send(&llsend);
@@ -4808,19 +4815,26 @@ class WebSocket {
 		Sends a ping message to the server. This is done automatically by the library if you set a non-zero [Config.pingFrequency], but you can also send extra pings explicitly as well with this function.
 	+/
 	/// Group: foundational
-	void ping() {
+	void ping(in ubyte[] data = null) {
 		WebSocketFrame wss;
 		wss.fin = true;
+		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.ping;
+		if(data !is null) wss.data = data.dup;
 		wss.send(&llsend);
 	}
 
-	// automatically handled....
-	void pong() {
+	/++
+		Sends a pong message to the server. This is normally done automatically in response to pings.
+	+/
+	/// Group: foundational
+	void pong(in ubyte[] data = null) {
 		WebSocketFrame wss;
 		wss.fin = true;
+		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.pong;
 		wss.send(&llsend);
+		if(data !is null) wss.data = data.dup;
 	}
 
 	/++
@@ -4907,7 +4921,6 @@ class WebSocket {
 
 	private WebSocketFrame processOnce() {
 		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
-		//import std.stdio; writeln(d);
 		auto s = d;
 		// FIXME: handle continuation frames more efficiently. it should really just reuse the receive buffer.
 		WebSocketFrame m;
@@ -4956,6 +4969,8 @@ class WebSocket {
 					}
 				break;
 				case WebSocketOpcode.close:
+
+					//import std.stdio; writeln("closed ", cast(string) m.data);
 					readyState_ = CLOSED;
 					if(onclose)
 						onclose();
@@ -4963,9 +4978,11 @@ class WebSocket {
 					unregisterActiveSocket(this);
 				break;
 				case WebSocketOpcode.ping:
-					pong();
+					// import std.stdio; writeln("ping received ", m.data);
+					pong(m.data);
 				break;
 				case WebSocketOpcode.pong:
+					// import std.stdio; writeln("pong received ", m.data);
 					// just really references it is still alive, nbd.
 				break;
 				default: // ignore though i could and perhaps should throw too
@@ -5041,7 +5058,8 @@ class WebSocket {
 				auto now = MonoTime.currTime;
 				bool hadAny;
 				foreach(sock; activeSockets) {
-					if(now >= sock.timeoutFromInactivity) {
+					auto diff = sock.timeoutFromInactivity - now;
+					if(diff <= 0.msecs) {
 						// timeout
 						if(sock.onerror)
 							sock.onerror();
@@ -5052,23 +5070,31 @@ class WebSocket {
 						continue outermost;
 					}
 
-					if(now >= sock.nextPing) {
+					if(diff < timeout)
+						timeout = diff;
+
+					diff = sock.nextPing - now;
+
+					if(diff <= 0.msecs) {
+						//sock.send(`{"action": "ping"}`);
 						sock.ping();
 						sock.nextPing = now + sock.config.pingFrequency.msecs;
+					} else {
+						if(diff < timeout)
+							timeout = diff;
 					}
-
-					auto timeo = sock.timeoutFromInactivity - now;
-					if(timeo < timeout)
-						timeout = timeo;
 
 					readSet.add(sock.socket);
 					hadAny = true;
 				}
 
-				if(!hadAny)
+				if(!hadAny) {
+					// import std.stdio; writeln("had none");
 					return;
+				}
 
 				tryAgain:
+					// import std.stdio; writeln(timeout);
 				auto selectGot = Socket.select(readSet, null, null, timeout);
 				if(selectGot == 0) { /* timeout */
 					// timeout
@@ -5337,7 +5363,8 @@ public {
 
 			//writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
 			llsend(headerScratch[0 .. headerScratchPos]);
-			llsend(data);
+			if(data.length)
+				llsend(data);
 		}
 
 		static WebSocketFrame read(ref ubyte[] d) {
