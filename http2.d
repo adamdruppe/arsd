@@ -1106,6 +1106,8 @@ class HttpRequest {
 		/// The headers are being sent now
 		sendingHeaders,
 
+		// FIXME: allow Expect: 100-continue and separate the body send
+
 		/// The body is being sent now
 		sendingBody,
 
@@ -1264,9 +1266,10 @@ class HttpRequest {
 
 		headers ~= "\r\n";
 
+		// FIXME: separate this for 100 continue
 		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
 
-		// import std.stdio; writeln("******* ", sendBuffer);
+		// import std.stdio; writeln("******* ", cast(string) sendBuffer);
 
 		responseData = HttpResponse.init;
 		responseData.requestParameters = requestParameters;
@@ -2180,30 +2183,34 @@ class HttpRequest {
 					headerReadingState.atStartOfLine = false;
 					if(data[position] == '\r' || data[position] == '\n') {
 						// done with headers
-						if(data[position] == '\r' && (position + 1) < data.length && data[position + 1] == '\n')
-							position++;
-						// 101 Switching Protocols
-						// 102 Processing
-						// FIXME: skip 103 Early Hints too
-						// i should just skip all the 100 things unrecognized.
-						if(responseData.headers.length && responseData.headers[0].indexOf(" 100 ") != -1) {
-							// HTTP/1.1 100 Continue
-							// here we just discard the continue message and carry on; it is just informational anyway
-							// it arguably should be smarter though
-							responseData.headers = null;
-							headerReadingState.atStartOfLine = true;
 
-							continue;
-						} else {
-							if(this.requestParameters.method == HttpVerb.HEAD)
-								state = State.complete;
-							else
-								state = State.readingBody;
-						}
 						position++; // skip the newline
 
 						if(responseData.headers.length)
 							parseLastHeader();
+
+						if(responseData.code >= 100 && responseData.code < 200) {
+							// "100 Continue" - we should continue uploading request data at this point
+							// "101 Switching Protocols" - websocket, not expected here...
+							// "102 Processing" - server still working, keep the connection alive
+							// "103 Early Hints" - can have useful Link headers etc
+							//
+							// and other unrecognized ones can just safely be skipped
+
+							// FIXME: the headers shouldn't actually be reset; 103 Early Hints
+							// can give useful headers we want to keep
+
+							responseData.headers = null;
+							headerReadingState.atStartOfLine = true;
+
+							continue;
+						}
+
+						if(this.requestParameters.method == HttpVerb.HEAD)
+							state = State.complete;
+						else
+							state = State.readingBody;
+
 						break;
 					} else if(data[position] == ' ' || data[position] == '\t') {
 						// line continuation, ignore all whitespace and collapse it into a space
