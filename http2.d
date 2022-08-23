@@ -5046,9 +5046,24 @@ class WebSocket {
 
 	static {
 		/++
+			Runs an event loop with all known websockets on this thread until all websockets
+			are closed or unregistered, or until you call [exitEventLoop], or set `*localLoopExited`
+			to false (please note it may take a few seconds until it checks that flag again; it may
+			not exit immediately).
 
+			History:
+				The `localLoopExited` parameter was added August 22, 2022 (dub v10.9)
+
+			See_Also:
+				[addToSimpledisplayEventLoop]
 		+/
-		void eventLoop() {
+		void eventLoop(shared(bool)* localLoopExited = null) {
+			import core.atomic;
+			atomicOp!"+="(numberOfEventLoops, 1);
+			scope(exit) {
+				if(atomicOp!"-="(numberOfEventLoops, 1) <= 0)
+					loopExited = false; // reset it so we can reenter
+			}
 
 			static SocketSet readSet;
 
@@ -5057,10 +5072,10 @@ class WebSocket {
 
 			loopExited = false;
 
-			outermost: while(!loopExited) {
+			outermost: while(!loopExited && (localLoopExited is null || (*localLoopExited == false))) {
 				readSet.reset();
 
-				Duration timeout = 10.seconds;
+				Duration timeout = 3.seconds;
 
 				auto now = MonoTime.currTime;
 				bool hadAny;
@@ -5127,16 +5142,29 @@ class WebSocket {
 			}
 		}
 
+		private static shared(int) numberOfEventLoops;
+
 		private __gshared bool loopExited;
 		/++
-			Exits the running [WebSocket.eventLoop].  You can call this from a signal handler or another thread.
+			Exits all running [WebSocket.eventLoop]s next time they loop around. You can call this from a signal handler or another thread.
+
+			Please note they may not loop around to check the flag for several seconds. Any new event loops will exit immediately until
+			all current ones are closed. Once all event loops are exited, the flag is cleared and you can start the loop again.
+
+			This function is likely to be deprecated in the future due to its quirks and imprecise name.
 		+/
 		void exitEventLoop() {
 			loopExited = true;
 		}
 
 		WebSocket[] activeSockets;
+
 		void registerActiveSocket(WebSocket s) {
+			// ensure it isn't already there...
+			assert(s !is null);
+			foreach(i, a; activeSockets)
+				if(a is s)
+					return;
 			activeSockets ~= s;
 		}
 		void unregisterActiveSocket(WebSocket s) {
