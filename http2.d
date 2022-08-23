@@ -2181,10 +2181,11 @@ class HttpRequest {
 
 				if(headerReadingState.atStartOfLine) {
 					headerReadingState.atStartOfLine = false;
+					// FIXME it being \r should never happen... and i don't think it does
 					if(data[position] == '\r' || data[position] == '\n') {
 						// done with headers
 
-						position++; // skip the newline
+						position++; // skip the \r
 
 						if(responseData.headers.length)
 							parseLastHeader();
@@ -2203,13 +2204,16 @@ class HttpRequest {
 							responseData.headers = null;
 							headerReadingState.atStartOfLine = true;
 
-							continue;
+							continue; // the \n will be skipped by the for loop advance
 						}
 
 						if(this.requestParameters.method == HttpVerb.HEAD)
 							state = State.complete;
 						else
 							state = State.readingBody;
+
+						// skip the \n before we break
+						position++;
 
 						break;
 					} else if(data[position] == ' ' || data[position] == '\t') {
@@ -2396,6 +2400,7 @@ class HttpRequest {
 				}
 				if(bodyReadingState.contentLengthRemaining == 0) {
 					if(bodyReadingState.isGzipped || bodyReadingState.isDeflated) {
+						// import std.stdio; writeln(responseData.content.length, " ", responseData.content[0 .. 2], " .. ", responseData.content[$-2 .. $]);
 						auto n = uncompress.uncompress(responseData.content);
 						n ~= uncompress.flush();
 						responseData.content = cast(ubyte[]) n;
@@ -3661,6 +3666,7 @@ version(use_openssl) {
 				];
 			} else {
 				static immutable string[] ossllibs = [
+					"libssl.so.3",
 					"libssl.so.1.1",
 					"libssl.so.1.0.2",
 					"libssl.so.1.0.1",
@@ -3680,6 +3686,8 @@ version(use_openssl) {
 			}
 
 			static immutable wstring[] ossllibs = [
+				"libssl-3-x64.dll"w,
+				"libssl-3.dll"w,
 				"libssl-1_1.dll"w,
 				"libssl32.dll"w,
 			];
@@ -3691,6 +3699,8 @@ version(use_openssl) {
 			}
 
 			static immutable wstring[] eaylibs = [
+				"libcrypto-3-x64.dll"w,
+				"libcrypto-3.dll"w,
 				"libcrypto-1_1.dll"w,
 				"libeay32.dll",
 			];
