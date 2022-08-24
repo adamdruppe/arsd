@@ -10671,7 +10671,7 @@ private:
     return true;
   }
 
-  inout(FONSstate)* getState () inout pure nothrow @trusted @nogc {
+  inout(FONSstate)* getState () inout pure nothrow @trusted @nogc return {
     pragma(inline, true);
     return cast(inout)(&states[(nstates > 0 ? nstates-1 : 0)]);
   }

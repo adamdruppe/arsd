@@ -308,7 +308,7 @@ class MySql : Database {
 	}
 
 	string escapeBinaryString(const(ubyte)[] data) {
-		return tohexsql(b);
+		return tohexsql(data);
 	}
 
 	string escaped(T...)(string sql, T t) {

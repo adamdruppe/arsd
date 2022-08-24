@@ -11850,7 +11850,6 @@ version(Windows) {
 					// returns the value in the *high order word* of the return value
 					// hence the << 16
 					return 1 << 16; // MNC_CLOSE, close the menu without dinging at the user
-				break;
 				case WM_SETCURSOR:
 					if(cast(HWND) wParam !is hwnd)
 						return 0; // further processing elsewhere
