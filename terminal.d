@@ -9047,6 +9047,8 @@ version(TerminalDirectToEmulator) {
 						auto xft = getXftDpi();
 						if(xft is float.init)
 							xft = 96;
+						// the xft passed as assumed means it will figure that's what the size
+						// is based on (which it is, inside xft) preventing the double scale problem
 						fontSize = widget.scaleWithDpi(fontSize, cast(int) xft);
 
 					}

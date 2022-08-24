@@ -1849,7 +1849,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 							MonitorInfo.info ~= MonitorInfo(
 								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
 								Size(monitor.mwidth, monitor.mheight),
-								cast(int) (customScalingFactorForMonitor(cast(int) idx) * 96)
+								cast(int) (customScalingFactorForMonitor(cast(int) idx) * getDpi()[0])
 							);
 
 							/+
