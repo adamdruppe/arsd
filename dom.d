@@ -1,4 +1,3 @@
-// FIXME: add classList. it is a live list and removes whitespace and duplicates when you use it.
 // FIXME: xml namespace support???
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: parentElement is parentNode that skips DocumentFragment etc but will be hard to work in with my compatibility...
@@ -1556,9 +1555,71 @@ class Element : DomParent {
 
 
 	/// get all the classes on this element
-	@property string[] classes() {
-		return split(className, " ");
+	@property string[] classes() const {
+		// FIXME: remove blank names
+		auto cs = split(className, " ");
+		foreach(ref c; cs)
+			c = c.strip();
+		return cs;
 	}
+
+	/++
+		The object [classList] returns.
+	+/
+	static struct ClassListHelper {
+		Element this_;
+		this(inout(Element) this_) inout {
+			this.this_ = this_;
+		}
+
+		///
+		bool contains(string cn) const {
+			return this_.hasClass(cn);
+		}
+
+		///
+		void add(string cn) {
+			this_.addClass(cn);
+		}
+
+		///
+		void remove(string cn) {
+			this_.removeClass(cn);
+		}
+
+		///
+		void toggle(string cn) {
+			if(contains(cn))
+				remove(cn);
+			else
+				add(cn);
+		}
+	}
+
+	/++
+		Returns a helper object to work with classes, just like javascript.
+
+		History:
+			Added August 25, 2022
+	+/
+	@property inout(ClassListHelper) classList() inout {
+		return inout(ClassListHelper)(this);
+	}
+	// FIXME: classList is supposed to whitespace and duplicates when you use it. need to test.
+
+	unittest {
+		Element element = Element.make("div");
+		element.classList.add("foo");
+		assert(element.classList.contains("foo"));
+		element.classList.remove("foo");
+		assert(!element.classList.contains("foo"));
+		element.classList.toggle("bar");
+		assert(element.classList.contains("bar"));
+	}
+
+	/// ditto
+	alias classNames = classes;
+
 
 	/// Adds a string to the class attribute. The class attribute is used a lot in CSS.
 	@scriptable
@@ -1597,7 +1658,7 @@ class Element : DomParent {
 	}
 
 	/// Returns whether the given class appears in this element.
-	bool hasClass(string c) {
+	bool hasClass(string c) const {
 		string cn = className;
 
 		auto idx = cn.indexOf(c);
@@ -1605,7 +1666,7 @@ class Element : DomParent {
 			return false;
 
 		foreach(cla; cn.split(" "))
-			if(cla == c)
+			if(cla.strip == c)
 				return true;
 		return false;
 
@@ -1834,13 +1895,6 @@ class Element : DomParent {
 		e.removeFromTree();
 		this.parentNode.replaceChild(this, e);
 		return e;
-	}
-
-	/**
-		Splits the className into an array of each class given
-	*/
-	string[] classNames() const {
-		return className().split(" ");
 	}
 
 	/**
