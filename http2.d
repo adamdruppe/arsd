@@ -3908,12 +3908,19 @@ version(use_openssl) {
 		//import std.stdio;writeln(cast(string) buf);
 			debug(arsd_http2_verbose) writeln("ssl writing ", buf.length);
 			auto retval = OpenSSL.SSL_write(ssl, buf.ptr, cast(uint) buf.length);
+
+			// don't need to throw anymore since it is checked elsewhere
+			// code useful sometimes for debugging hence commenting instead of deleting
+			version(none)
 			if(retval == -1) {
+
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
+
 				//printf("wtf\n");
 				//scanf("%d\n", i);
+
 				throw new Exception("ssl send failed " ~ str);
 			}
 			return retval;
@@ -3928,14 +3935,20 @@ version(use_openssl) {
 			debug(arsd_http2_verbose) writeln("ssl_read before");
 			auto retval = OpenSSL.SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			debug(arsd_http2_verbose) writeln("ssl_read after");
+
+			// don't need to throw anymore since it is checked elsewhere
+			// code useful sometimes for debugging hence commenting instead of deleting
+			version(none)
 			if(retval == -1) {
+
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
 				int i;
+
 				//printf("wtf\n");
 				//scanf("%d\n", i);
 
-				//throw new Exception("ssl receive failed " ~ str);
+				throw new Exception("ssl receive failed " ~ str);
 			}
 			return retval;
 		}
