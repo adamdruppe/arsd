@@ -423,7 +423,7 @@ struct HttpResponse {
 		linksLazilyParsed = true;
 		LinkHeader[] ret;
 
-		auto hdrPtr = "Link" in headersHash;
+		auto hdrPtr = "link" in headersHash;
 		if(hdrPtr is null)
 			return ret;
 
