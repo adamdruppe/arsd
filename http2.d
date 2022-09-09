@@ -452,7 +452,10 @@ struct HttpResponse {
 					idx++;
 
 				string name = header[0 .. idx];
-				header = header[idx + 1 .. $];
+				if(idx + 1 < header.length)
+					header = header[idx + 1 .. $];
+				else
+					header = header[$ .. $];
 
 				string value;
 
@@ -764,7 +767,10 @@ struct Uri {
 				host = authority;
 			} else {
 				host = authority[0 .. idx2];
-				port = to!int(authority[idx2 + 1 .. $]);
+				if(idx2 + 1 < authority.length)
+					port = to!int(authority[idx2 + 1 .. $]);
+				else
+					port = 0;
 			}
 		}
 

@@ -2912,7 +2912,10 @@ struct Uri {
 				host = authority;
 			} else {
 				host = authority[0 .. idx2];
-				port = to!int(authority[idx2 + 1 .. $]);
+				if(idx2 + 1 < authority.length)
+					port = to!int(authority[idx2 + 1 .. $]);
+				else
+					port = 0;
 			}
 		}
 
