@@ -6405,6 +6405,7 @@ version(X11) {
 		} catch (Exception e) {
 			conwriteln("ERROR registering hotkey!");
 		}
+		EventLoop.get.run();
 		---
 
 		The key strings are based on Emacs. In practical terms,
@@ -15864,6 +15865,10 @@ extern(C) nothrow @nogc {
 
 	int XGrabKey (Display* display, int keycode, uint modifiers, Window grab_window, Bool owner_events, int pointer_mode, int keyboard_mode);
 	int XUngrabKey (Display* display, int keycode, uint modifiers, Window grab_window);
+
+	int XGrabKeyboard(Display*, Window, Bool, int, int, Time);
+	int XUngrabKeyboard(Display*, Time);
+
 	KeyCode XKeysymToKeycode (Display* display, KeySym keysym);
 
 	KeySym XStringToKeysym(const char *string);
@@ -16009,6 +16014,8 @@ enum VisualColormapSizeMask=0x80;
 enum VisualBitsPerRGBMask=0x100;
 enum VisualAllMask=	0x1FF;
 
+enum AnyKey = 0;
+enum AnyModifier = 1 << 15;
 
 // XIM and other crap
 struct _XOM {}
