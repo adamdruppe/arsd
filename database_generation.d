@@ -91,7 +91,7 @@ struct Serial {
 
 
 string generateCreateTableFor(alias O)() {
-	enum tableName = tableNameFor!O(toTableName(O.stringof));
+	enum tableName = tableNameFor!O();
 	string sql = "CREATE TABLE " ~ tableName ~ " (";
 	string postSql;
 	bool outputtedPostSql = false;
@@ -198,7 +198,7 @@ string generateCreateTableFor(alias O)() {
 					} else
 						addPostSql("PRIMARY KEY(" ~ memberName ~ ")");
 				} else static if(is(attr == ForeignKey!(to, sqlPolicy), alias to, string sqlPolicy)) {
-					string refTable = tableNameFor!(__traits(parent, to))(toTableName(__traits(parent, to).stringof));
+					string refTable = tableNameFor!(__traits(parent, to))();
 					string refField = to.stringof;
 					addPostSql("FOREIGN KEY(" ~ memberName ~ ") REFERENCES "~refTable~"("~refField~(sqlPolicy.length ? ") " : ")") ~ sqlPolicy);
 				}
@@ -218,7 +218,7 @@ string generateCreateTableFor(alias O)() {
 	return sql;
 }
 
-string tableNameFor(T)(string def) {
+string tableNameFor(T)(string def = toTableName(T.stringof)) {
 	foreach(attr; __traits(getAttributes, T))
 		static if(is(typeof(attr) == DBName))
 			def = attr.name;
@@ -306,7 +306,7 @@ void save(O)(ref O t, Database db) {
 +/
 void insert(O)(ref O t, Database db) {
 	auto builder = new InsertBuilder;
-	builder.setTable(tableNameFor!O(toTableName(O.stringof)));
+	builder.setTable(tableNameFor!O());
 
 	static foreach(memberName; __traits(allMembers, O)) {{
 		alias member = __traits(getMember, O, memberName);
@@ -345,7 +345,7 @@ void insert(O)(ref O t, Database db) {
 	import std.conv;
 	version(dbgenerate_sqlite) {
 		builder.execute(db);
-		foreach(row; db.query("SELECT max(id) FROM " ~ tableNameFor!O(toTableName(O.stringof))))
+		foreach(row; db.query("SELECT max(id) FROM " ~ tableNameFor!O()))
 			t.id.value = to!int(row[0]);
 	} else {
 		static if (__traits(hasMember, O, "id"))
@@ -389,7 +389,7 @@ auto find(alias T)(Database db, int id) {
 	// if it is unique, return an individual item.
 	// if not, return the array
 
-	foreach(record; db.query("SELECT * FROM " ~ tableNameFor!T(toTableName(T.stringof)) ~ " WHERE id = ?", id)) {
+	foreach(record; db.query("SELECT * FROM " ~ tableNameFor!T() ~ " WHERE id = ?", id)) {
 		T t;
 		populateFromDbRow(t, record);
 
@@ -616,7 +616,7 @@ struct QueryBuilderHelper(T) {
 }
 
 QueryBuilderHelper!(T[]) from(T)() {
-	return QueryBuilderHelper!(T[])(tableNameFor!T(toTableName(T.stringof)));
+	return QueryBuilderHelper!(T[])(tableNameFor!T());
 }
 
 /// ditto
