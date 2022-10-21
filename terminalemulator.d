@@ -4668,15 +4668,46 @@ mixin template SdpyDraw() {
 			} else if(bufferForeground == bufferBackground) {
 				// color on itself, I want it visible too
 				auto hsl = toHsl(bufferForeground, true);
-				if(hsl[2] < 0.5)
-					hsl[2] += 0.5;
-				else
-					hsl[2] -= 0.5;
+				if(hsl[0] == 240) {
+					// blue is a bit special, it generally looks darker
+					// so we want to get very bright or very dark
+					if(hsl[2] < 0.7)
+						hsl[2] = 0.9;
+					else
+						hsl[2] = 0.1;
+				} else {
+					if(hsl[2] < 0.5)
+						hsl[2] += 0.5;
+					else
+						hsl[2] -= 0.5;
+				}
 				painter.outlineColor = fromHsl(hsl[0], hsl[1], hsl[2]);
-
 			} else {
+				auto drawColor = bufferReverse ? bufferBackground : bufferForeground;
+				///+
+					// try to ensure legible contrast with any arbitrary combination
+				auto bgColor = bufferReverse ? bufferForeground : bufferBackground;
+				auto fghsl = toHsl(drawColor, true);
+				auto bghsl = toHsl(bgColor, true);
+
+				if(fghsl[2] > 0.5 && bghsl[2] > 0.5) {
+					// bright color on bright background
+					painter.outlineColor = fromHsl(fghsl[0], fghsl[1], 0.2);
+				} else if(fghsl[2] < 0.5 && bghsl[2] < 0.5) {
+					// dark color on dark background
+					if(fghsl[0] == 240 && bghsl[0] >= 60 && bghsl[0] <= 180)
+						// blue on green looks dark to the algorithm but isn't really
+						painter.outlineColor = fromHsl(fghsl[0], fghsl[1], 0.2);
+					else
+						painter.outlineColor = fromHsl(fghsl[0], fghsl[1], 0.8);
+				} else {
+					// normal
+					painter.outlineColor = drawColor;
+				}
+				//+/
+
 				// normal
-				painter.outlineColor = bufferReverse ? bufferBackground : bufferForeground;
+				//painter.outlineColor = drawColor;
 			}
 
 			// FIXME: make sure this clips correctly
