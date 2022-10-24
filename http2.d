@@ -579,7 +579,9 @@ private class UnixAddress : Address {
 
 
 // Copy pasta from cgi.d, then stripped down. unix path thing added tho
-///
+/++
+	Represents a URI. It offers named access to the components and relative uri resolution, though as a user of the library, you'd mostly just construct it like `Uri("http://example.com/index.html")`.
++/
 struct Uri {
 	alias toString this; // blargh idk a url really is a string, but should it be implicit?
 
@@ -881,6 +883,9 @@ struct Uri {
 		return n;
 	}
 
+	/++
+		Resolves ../ and ./ parts of the path. Used in the implementation of [basedOn] and you could also use it to normalize things.
+	+/
 	void removeDots() {
 		auto parts = this.path.split("/");
 		string[] toKeep;
