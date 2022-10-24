@@ -7,13 +7,22 @@
 	an event-driven framework, arsd.game always uses a consistent
 	timer for updates.
 
+	$(PITFALL
+		I AM NO LONGER HAPPY WITH THIS INTERFACE AND IT WILL CHANGE.
+
+		At least, I am going to change the delta time over to drawFrame
+		for fractional interpolation while keeping the time step fixed.
+
+		If you depend on it the way it is, you'll want to fork.
+	)
+
 	Usage example:
 
 	---
 	final class MyGame : GameHelperBase {
 		/// Called when it is time to redraw the frame
 		/// it will try for a particular FPS
-		override void drawFrame() {
+		override void drawFrame(float interpolate) {
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_ACCUM_BUFFER_BIT);
 
 			glLoadIdentity();
@@ -31,7 +40,7 @@
 		}
 
 		int x, y;
-		override bool update(Duration deltaTime) {
+		override bool update() {
 			x += 1;
 			y += 1;
 			return true;
@@ -51,7 +60,7 @@
 	void main() {
 		auto game = new MyGame();
 
-		runGame(game, maxRedrawRate, maxUpdateRate);
+		runGame(game, maxRedrawRate, targetUpdateRate);
 	}
 	---
 
@@ -155,24 +164,44 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 	---
 +/
 abstract class GameHelperBase {
-	/// Implement this to draw.
-	abstract void drawFrame();
+	/++
+		Implement this to draw.
+
+		The `interpolateToNextFrame` argument tells you how close you are to the next frame. You should
+		take your current state and add the estimated next frame things multiplied by this to get smoother
+		animation. interpolateToNextFrame will always be >= 0 and < 1.0.
+
+		History:
+			Previous to August 27, 2022, this took no arguments. It could thus not interpolate frames!
+	+/
+	abstract void drawFrame(float interpolateToNextFrame);
 
 	ushort snesRepeatRate() { return ushort.max; }
 	ushort snesRepeatDelay() { return snesRepeatRate(); }
 
-	/// Implement this to update. The deltaTime tells how much real time has passed since the last update.
-	/// Returns true if anything changed, which will queue up a redraw
-	abstract bool update(Duration deltaTime);
+	/++
+		Implement this to update your game state by a single fixed timestep. You should
+		check for user input state here.
+
+		Return true if something visibly changed to queue a frame redraw asap.
+
+		History:
+			Previous to August 27, 2022, this took an argument. This was a design flaw.
+	+/
+	abstract bool update();
 	//abstract void fillAudioBuffer(short[] buffer);
 
-	/// Returns the main game window. This function will only be
-	/// called once if you use runGame. You should return a window
-	/// here like one created with `create2dWindow`.
+	/++
+		Returns the main game window. This function will only be
+		called once if you use runGame. You should return a window
+		here like one created with `create2dWindow`.
+	+/
 	abstract SimpleWindow getWindow();
 
-	/// Override this and return true to initialize the audio system.
-	/// Note that trying to use the [audio] member without this will segfault!
+	/++
+		Override this and return true to initialize the audio system. If you return `true`
+		here, the [audio] member can be used.
+	+/
 	bool wantAudio() { return false; }
 
 	/// You must override [wantAudio] and return true for this to be valid;
@@ -293,12 +322,12 @@ struct VirtualController {
 		instead.
 +/
 deprecated("Use runGame!YourGameType(updateRate, redrawRate); instead now.")
-void runGame()(GameHelperBase game, int maxUpdateRate = 20, int maxRedrawRate = 0) { assert(0, "this overload is deprecated, use runGame!YourClass instead"); }
+void runGame()(GameHelperBase game, int targetUpdateRate = 20, int maxRedrawRate = 0) { assert(0, "this overload is deprecated, use runGame!YourClass instead"); }
 
 /++
 	Runs your game. It will construct the given class and destroy it at end of scope.
 	Your class must have a default constructor and must implement [GameHelperBase].
-	Your class should also probably be `final` for performance reasons.
+	Your class should also probably be `final` for a small, but easy performance boost.
 
 	$(TIP
 		If you need to pass parameters to your game class, you can define
@@ -308,11 +337,10 @@ void runGame()(GameHelperBase game, int maxUpdateRate = 20, int maxRedrawRate = 
 	)
 
 	Params:
-	maxUpdateRate = The max rates are given in executions per second
-	maxRedrawRate = Redraw will never be called unless there has been at least one update
+	targetUpdateRate = The number of game state updates you get per second. You want this to be quick enough that players don't feel input lag, but conservative enough that any supported computer can keep up with it easily.
+	maxRedrawRate = The maximum draw frame rate. 0 means it will only redraw after a state update changes things. It will be automatically capped at the user's monitor refresh rate. Frames in between updates can be interpolated or skipped.
 +/
-void runGame(T : GameHelperBase)(int maxUpdateRate = 20, int maxRedrawRate = 0) {
-
+void runGame(T : GameHelperBase)(int targetUpdateRate = 20, int maxRedrawRate = 0) {
 
 	auto game = new T();
 	scope(exit) .destroy(game);
@@ -325,11 +353,23 @@ void runGame(T : GameHelperBase)(int maxUpdateRate = 20, int maxRedrawRate = 0) 
 
 	auto window = game.getWindow();
 
-	window.redrawOpenGlScene = &game.drawFrame;
-
 	auto lastUpdate = MonoTime.currTime;
+	bool isImmediateUpdate;
 
-	window.eventLoop(1000 / maxUpdateRate,
+	window.redrawOpenGlScene = delegate() {
+		if(isImmediateUpdate) {
+			game.drawFrame(0.0);
+			isImmediateUpdate = false;
+		} else {
+			auto now = MonoTime.currTime - lastUpdate;
+			Duration nextFrame = msecs(1000 / targetUpdateRate);
+			auto delta = cast(float) ((nextFrame - now).total!"usecs") / cast(float) nextFrame.total!"usecs";
+
+			game.drawFrame(delta);
+		}
+	};
+
+	window.eventLoop(1000 / targetUpdateRate,
 		delegate() {
 			foreach(p; 0 .. joystickPlayers) {
 				version(linux)
@@ -395,7 +435,7 @@ void runGame(T : GameHelperBase)(int maxUpdateRate = 20, int maxRedrawRate = 0) 
 			}
 
 			auto now = MonoTime.currTime;
-			bool changed = game.update(now - lastUpdate);
+			bool changed = game.update();
 			auto stateChange = game.snes.truePreviousState ^ game.snes.state;
 			game.snes.previousState = game.snes.state;
 			game.snes.truePreviousState = game.snes.state;
@@ -421,8 +461,10 @@ void runGame(T : GameHelperBase)(int maxUpdateRate = 20, int maxRedrawRate = 0) 
 			}
 
 			// FIXME: rate limiting
-			if(changed)
+			if(changed) {
+				isImmediateUpdate = true;
 				window.redrawOpenGlSceneNow();
+			}
 		},
 
 		delegate (KeyEvent ke) {
