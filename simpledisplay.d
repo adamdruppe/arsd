@@ -8030,6 +8030,58 @@ enum FontWeight : int {
 	heavy = 900
 }
 
+/++
+	Interface with the common functionality for font measurements between [OperatingSystemFont] and [DrawableFont].
+
+	History:
+		Added October 24, 2022. The methods were already on [OperatingSystemFont] before that.
++/
+interface MeasurableFont {
+	/++
+		Returns true if it is a monospace font, meaning each of the
+		glyphs (at least the ascii characters) have matching width
+		and no kerning, so you can determine the display width of some
+		strings by simply multiplying the string width by [averageWidth].
+
+		(Please note that multiply doesn't $(I actually) work in general,
+		consider characters like tab and newline, but it does sometimes.)
+	+/
+	bool isMonospace();
+
+	/++
+		The average width of glyphs in the font, traditionally equal to the
+		width of the lowercase x. Can be used to estimate bounding boxes,
+		especially if the font [isMonospace].
+
+		Given in pixels.
+	+/
+	int averageWidth();
+	/++
+		The height of the bounding box of a line.
+	+/
+	int height();
+	/++
+		The maximum ascent of a glyph above the baseline.
+
+		Given in pixels.
+	+/
+	int ascent();
+	/++
+		The maximum descent of a glyph below the baseline. For example, how low the g might go.
+
+		Given in pixels.
+	+/
+	int descent();
+	/++
+		The display width of the given string, and if you provide a window, it will use it to
+		make the pixel count on screen more accurate too, but this shouldn't generally be necessary.
+
+		Given in pixels.
+	+/
+	int stringWidth(scope const(char)[] s, SimpleWindow window = null);
+
+}
+
 // FIXME: i need a font cache and it needs to handle disconnects.
 
 /++
@@ -8045,7 +8097,7 @@ enum FontWeight : int {
 	Worst case, a null font will automatically fall back to the default font loaded
 	for your system.
 +/
-class OperatingSystemFont {
+class OperatingSystemFont : MeasurableFont {
 	// FIXME: when the X Connection is lost, these need to be invalidated!
 	// that means I need to store the original stuff again to reconstruct it too.
 
@@ -8233,7 +8285,7 @@ class OperatingSystemFont {
 
 	/++
 		Returns the raw content of the ttf file, if possible. This allows you to use OperatingSystemFont
-		to look up fonts that you then pass to things like [arsd.game.OpenGlLimitedFont] or [arsd.nanovega].
+		to look up fonts that you then pass to things like [arsd.ttf.OpenGlLimitedFont] or [arsd.nanovega].
 
 		Returns null if impossible. It is impossible if the loaded font is not a local TTF file or if the
 		underlying system doesn't support returning the raw bytes.
@@ -21605,22 +21657,48 @@ void loadBinNameToWindowClassName () {
 }
 
 /++
-	An interface representing a font.
+	An interface representing a font that is drawn with custom facilities.
 
-	This is still MAJOR work in progress.
+	You might want [OperatingSystemFont] instead, which represents
+	a font loaded and drawn by functions native to the operating system.
+
+	WARNING: I might still change this.
 +/
-interface DrawableFont {
+interface DrawableFont : MeasurableFont {
+	/++
+		Please note the point is upperLeft, NOT baseline! This is the point of a bounding box of the string.
+
+		Implementations must use the painter's fillColor to draw a rectangle behind the string,
+		then use the outlineColor to draw the string. It might alpha composite if there's a transparent
+		fill color, but that's up to the implementation.
+	+/
 	void drawString(ScreenPainter painter, Point upperLeft, in char[] text);
+
+	/++
+		Requests that the given string is added to the image cache. You should only do this rarely, but
+		if you have a string that you know will be used over and over again, adding it to a cache can
+		improve things (assuming the implementation actually has a cache; it is also valid for an implementation
+		to implement this as a do-nothing method).
+	+/
+	void cacheString(SimpleWindow window, Color foreground, Color background, string text);
 }
 
 /++
-	Loads a true type font using [arsd.ttf]. That module must be compiled
-	in if you choose to use this function.
+	Loads a true type font using [arsd.ttf] that can be drawn as images on windows
+	through a [ScreenPainter]. That module must be compiled in if you choose to use this function.
 
-	Be warned: this can be slow and memory hungry, especially on remote connections
-	to the X server.
+	You should also consider [OperatingSystemFont], which loads and draws a font with
+	facilities native to the user's operating system. You might also consider
+	[arsd.ttf.OpenGlLimitedFont] or using [arsd.nanovega] if you are making some kind
+	of game, as they have their own ways to draw text too.
 
-	This is still MAJOR work in progress.
+	Be warned: this can be slow, especially on remote connections to the X server, since
+	it needs to create and transfer bitmaps instead of just text. The [DrawableFont] interface
+	offers [DrawableFont.cacheString] which can help with this, sometimes. You might want to
+	experiment in your specific case.
+
+	Please note that the return type of [DrawableFont] also includes an implementation of
+	[MeasurableFont].
 +/
 DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
 	import arsd.ttf;
@@ -21630,9 +21708,75 @@ DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
 		this(in ubyte[] data, int size) {
 			font = TtfFont(data);
 			this.size = size;
+
+
+			auto scale = stbtt_ScaleForPixelHeight(&font.font, size);
+			int ascent_, descent_, line_gap;
+			stbtt_GetFontVMetrics(&font.font, &ascent_, &descent_, &line_gap);
+
+			int advance, lsb;
+			stbtt_GetCodepointHMetrics(&font.font, 'x', &advance, &lsb);
+			xWidth = cast(int) (advance * scale);
+			stbtt_GetCodepointHMetrics(&font.font, 'M', &advance, &lsb);
+			MWidth = cast(int) (advance * scale);
 		}
 
+		private int ascent_;
+		private int descent_;
+		private int xWidth;
+		private int MWidth;
+
+		bool isMonospace() {
+			return xWidth == MWidth;
+		}
+		int averageWidth() {
+			return xWidth;
+		}
+		int height() {
+			return size;
+		}
+		int ascent() {
+			return ascent_;
+		}
+		int descent() {
+			return descent_;
+		}
+
+		int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+			int width, height;
+			font.getStringSize(s, size, width, height);
+			return width;
+		}
+
+
+
 		Sprite[string] cache;
+
+		void cacheString(SimpleWindow window, Color foreground, Color background, string text) {
+			auto sprite = new Sprite(window, stringToImage(foreground, background, text));
+			cache[text] = sprite;
+		}
+
+		Image stringToImage(Color fg, Color bg, in char[] text) {
+			int width, height;
+			auto data = font.renderString(text, size, width, height);
+			auto image = new TrueColorImage(width, height);
+			int pos = 0;
+			foreach(y; 0 .. height)
+			foreach(x; 0 .. width) {
+				fg.a = data[0];
+				bg.a = 255;
+				auto color = alphaBlend(fg, bg);
+				image.imageData.bytes[pos++] = color.r;
+				image.imageData.bytes[pos++] = color.g;
+				image.imageData.bytes[pos++] = color.b;
+				image.imageData.bytes[pos++] = data[0];
+				data = data[1 .. $];
+			}
+			assert(data.length == 0);
+
+			return Image.fromMemoryImage(image);
+		}
 
 		void drawString(ScreenPainter painter, Point upperLeft, in char[] text) {
 			Sprite sprite = (text in cache) ? *(text in cache) : null;
@@ -21640,29 +21784,14 @@ DrawableFont arsdTtfFont()(in ubyte[] data, int size) {
 			auto fg = painter.impl._outlineColor;
 			auto bg = painter.impl._fillColor;
 
-			if(sprite is null) {
-				int width, height;
-				auto data = font.renderString(text, size, width, height);
-				auto image = new TrueColorImage(width, height);
-				int pos = 0;
-				foreach(y; 0 .. height)
-				foreach(x; 0 .. width) {
-					fg.a = data[0];
-					bg.a = 255;
-					auto color = alphaBlend(fg, bg);
-					image.imageData.bytes[pos++] = color.r;
-					image.imageData.bytes[pos++] = color.g;
-					image.imageData.bytes[pos++] = color.b;
-					image.imageData.bytes[pos++] = data[0];
-					data = data[1 .. $];
-				}
-				assert(data.length == 0);
+			if(sprite !is null) {
+				auto w = cast(SimpleWindow) painter.window;
+				assert(w !is null);
 
-				sprite = new Sprite(painter.window, Image.fromMemoryImage(image));
-				cache[text.idup] = sprite;
+				sprite.drawAt(painter, upperLeft);
+			} else {
+				painter.drawImage(upperLeft, stringToImage(fg, bg, text));
 			}
-
-			sprite.drawAt(painter, upperLeft);
 		}
 	}
 
