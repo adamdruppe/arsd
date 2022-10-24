@@ -1226,6 +1226,7 @@ struct Terminal {
 
 		import arsd.simpledisplay;
 		static if(UsingSimpledisplayX11) {
+			if(!integratedTerminalEmulatorConfiguration.preferDegradedTerminal)
 			try {
 				if(arsd.simpledisplay.librariesSuccessfullyLoaded) {
 					XDisplayConnection.get();
@@ -8411,6 +8412,19 @@ version(TerminalDirectToEmulator) {
 				Added June 15, 2021. Included in release v10.1.0.
 		+/
 		bool ctrlCCopies = false; // FIXME: i could make this context-sensitive too, so if text selected, copy, otherwise, cancel. prolly show in statu s bar
+
+		/++
+			When using the integrated terminal emulator, the default is to assume you want it.
+			But some users may wish to force the in-terminal fallback anyway at start up time.
+
+			Seeing this to `true` will skip attempting to create the gui window where a fallback
+			is available. It is ignored on systems where there is no fallback. Make sure that
+			[fallbackToDegradedTerminal] is set to `true` if you use this.
+
+			History:
+				Added October 4, 2022 (dub v10.10)
+		+/
+		bool preferDegradedTerminal = false;
 	}
 
 	/+
