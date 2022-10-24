@@ -1,9 +1,33 @@
-/// PNG file read and write. Leverages color.d's Image interfaces for interop.
+/++
+	PNG file read and write. Leverages [arsd.color|color.d]'s [MemoryImage] interfaces for interop.
+
+	The main high-level functions you want are [readPng], [readPngFromBytes], [writePng], and maybe [writeImageToPngFile] or [writePngLazy] for some circumstances.
+
+	The other functions are low-level implementations and helpers for dissecting the png file format.
+
+	History:
+		Originally written in 2009. This is why some of it is still written in a C-like style!
+
+	See_Also:
+	$(LIST
+		* [arsd.image] has generic load interfaces that can handle multiple file formats, including png.
+		* [arsd.apng] handles the animated png extensions.
+	)
++/
 module arsd.png;
 
 import core.memory;
 
-/// Easily reads a png file into a MemoryImage
+/++
+	Easily reads a png file into a [MemoryImage]
+
+	Returns:
+		Please note this function doesn't return null right now, but you should still check for null anyway as that might change.
+
+		The returned [MemoryImage] is either a [IndexedImage] or a [TrueColorImage], depending on the file's color mode. You can cast it to one or the other, or just call [MemoryImage.getAsTrueColorImage] which will cast and return or convert as needed automatically.
+
+		Greyscale pngs and bit depths other than 8 are converted for the ease of the MemoryImage interface. If you need more detail, try [PNG] and [getDatastream] etc.
++/
 MemoryImage readPng(string filename) {
 	import std.file;
 	return imageFromPng(readPng(cast(ubyte[]) read(filename)));
@@ -19,7 +43,9 @@ MemoryImage readPngFromBytes(const(ubyte)[] bytes) {
 	return imageFromPng(readPng(bytes));
 }
 
-/// Saves a MemoryImage to a png. See also: writeImageToPngFile which uses memory a little more efficiently
+/++
+	Saves a MemoryImage to a png file. See also: [writeImageToPngFile] which uses memory a little more efficiently
++/
 void writePng(string filename, MemoryImage mi) {
 	// FIXME: it would be nice to write the file lazily so we don't have so many intermediate buffers here
 	PNG* png;
@@ -32,7 +58,9 @@ void writePng(string filename, MemoryImage mi) {
 	std.file.write(filename, writePng(png));
 }
 
-///
+/++
+	Represents the different types of png files, with numbers matching what the spec gives for filevalues.
++/
 enum PngType {
 	greyscale = 0, /// The data must be `depth` bits per pixel
 	truecolor = 2, /// The data will be RGB triples, so `depth * 3` bits per pixel. Depth must be 8 or 16.
@@ -41,7 +69,9 @@ enum PngType {
 	truecolor_with_alpha = 6 /// The data must be RGBA quads for each pixel. Thus, `depth * 4` bits per pixel. Depth must be 8 or 16.
 }
 
-/// Saves an image from an existing array. Note that depth other than 8 may not be implemented yet. Also note depth of 16 must be stored big endian
+/++
+	Saves an image from an existing array of pixel data. Note that depth other than 8 may not be implemented yet. Also note depth of 16 must be stored big endian
++/
 void writePng(string filename, const ubyte[] data, int width, int height, PngType type, ubyte depth = 8) {
 	PngHeader h;
 	h.width = width;
@@ -159,7 +189,11 @@ MemoryImage imageFromPng(PNG* png) {
 	return i;
 }
 
-// idata needs to be already sized for the image! width * height if indexed, width*height*4 if not.
+/+
+	This is used by the load MemoryImage functions to convert the png'd datastream into the format MemoryImage's implementations expect.
+
+	idata needs to be already sized for the image! width * height if indexed, width*height*4 if not.
++/
 void convertPngData(ubyte type, ubyte depth, const(ubyte)[] data, int width, ubyte[] idata, ref size_t idataIdx) {
 	ubyte consumeOne() {
 		ubyte ret = data[0];
@@ -281,6 +315,12 @@ struct PngHeader {
 */
 
 
+/++
+	Creates the [PNG] data structure out of an [IndexedImage]. This structure will have the minimum number of colors
+	needed to represent the image faithfully in the file and will be ready for writing to a file.
+
+	This is called by [writePng].
++/
 PNG* pngFromImage(IndexedImage i) {
 	PngHeader h;
 	h.width = i.width;
@@ -396,6 +436,13 @@ PNG* pngFromImage(IndexedImage i) {
 	return png;
 }
 
+/++
+	Creates the [PNG] data structure out of a [TrueColorImage]. This implementation currently always make
+	the file a true color with alpha png type.
+
+	This is called by [writePng].
++/
+
 PNG* pngFromImage(TrueColorImage i) {
 	PngHeader h;
 	h.width = i.width;
@@ -421,11 +468,39 @@ void main(string[] args) {
 }
 */
 
+/++
+	Represents the PNG file's data. This struct is intended to be passed around by pointer.
++/
 struct PNG {
+	/++
+		The length of the file.
+	+/
 	uint length;
-	ubyte[8] header;
+	/++
+		The PNG file magic number header. Please note the image data header is a IHDR chunk, not this (see [getHeader] for that). This just a static identifier
+
+		History:
+			Prior to October 10, 2022, this was called `header`.
+	+/
+	ubyte[8] magic;// = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]; // this is the only valid value but idk if it is worth changing here since the ctor sets it regardless.
+	/// ditto
+	deprecated("use `magic` instead") alias header = magic;
+
+	/++
+		The array of chunks that make up the file contents. See [getChunkNullable], [getChunk], [insertChunk], and [replaceChunk] for functions to access and manipulate this array.
+	+/
 	Chunk[] chunks;
 
+	/++
+		Gets the chunk with the given name, or throws if it cannot be found.
+
+		Returns:
+			A non-null pointer to the chunk in the [chunks] array.
+		Throws:
+			an exception if the chunk can not be found. The type of this exception is subject to change at this time.
+		See_Also:
+			[getChunkNullable], which returns a null pointer instead of throwing.
+	+/
 	pure @trusted /* see note on getChunkNullable */
 	Chunk* getChunk(string what) {
 		foreach(ref c; chunks) {
@@ -435,6 +510,12 @@ struct PNG {
 		throw new Exception("no such chunk " ~ what);
 	}
 
+	/++
+		Gets the chunk with the given name, return `null` if it is not found.
+
+		See_Also:
+			[getChunk], which throws if the chunk cannot be found.
+	+/
 	nothrow @nogc pure @trusted /* trusted because &c i know is referring to the dynamic array, not actually a local. That has lifetime at least as much of the parent PNG object. */
 	Chunk* getChunkNullable(string what) {
 		foreach(ref c; chunks) {
@@ -444,10 +525,12 @@ struct PNG {
 		return null;
 	}
 
-	// Insert chunk before IDAT. PNG specs allows to drop all chunks after IDAT,
-	// so we have to insert our custom chunks right before it.
-	// Use `Chunk.create()` to create new chunk, and then `insertChunk()` to add it.
-	// Return `true` if we did replacement.
+	/++
+		Insert chunk before IDAT. PNG specs allows to drop all chunks after IDAT,
+		so we have to insert our custom chunks right before it.
+		Use `Chunk.create()` to create new chunk, and then `insertChunk()` to add it.
+		Return `true` if we did replacement.
+	+/
 	nothrow pure @trusted /* the chunks.ptr here fails safe, but it does that for performance and again I control that data so can be reasonably assured */
 	bool insertChunk (Chunk* chk, bool replaceExisting=false) {
 		if (chk is null) return false; // just in case
@@ -471,7 +554,9 @@ struct PNG {
 		return false;
 	}
 
-	// Convenient wrapper for `insertChunk()`.
+	/++
+		Convenient wrapper for `insertChunk()`.
+	+/
 	nothrow pure @safe
 	bool replaceChunk (Chunk* chk) { return insertChunk(chk, true); }
 }
@@ -536,7 +621,7 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 		throw new Exception("Couldn't open png file for writing.");
 	scope(exit) fclose(fp);
 
-	fwrite(png.header.ptr, 1, 8, fp);
+	fwrite(png.magic.ptr, 1, 8, fp);
 	foreach(c; png.chunks) {
 		fputc((c.size & 0xff000000) >> 24, fp);
 		fputc((c.size & 0x00ff0000) >> 16, fp);
@@ -556,6 +641,9 @@ void writeImageToPngFile(in char[] filename, TrueColorImage image) {
 	// just wanna make sure this crap doesn't stick around
 }
 
+/++
+	Turns a [PNG] structure into an array of bytes, ready to be written to a file.
++/
 ubyte[] writePng(PNG* p) {
 	ubyte[] a;
 	if(p.length)
@@ -567,7 +655,7 @@ ubyte[] writePng(PNG* p) {
 	}
 	size_t pos;
 
-	a[0..8] = p.header[0..8];
+	a[0..8] = p.magic[0..8];
 	pos = 8;
 	foreach(c; p.chunks) {
 		a[pos++] = (c.size & 0xff000000) >> 24;
@@ -589,6 +677,12 @@ ubyte[] writePng(PNG* p) {
 	return a;
 }
 
+/++
+	Opens a file and pulls the [PngHeader] out, leaving the rest of the data alone.
+
+	This might be useful when you're only interested in getting a file's image size or
+	other basic metainfo without loading the whole thing.
++/
 PngHeader getHeaderFromFile(string filename) {
 	import std.stdio;
 	auto file = File(filename, "rb");
@@ -624,13 +718,18 @@ PngHeader getHeaderFromFile(string filename) {
 	return getHeader(png);
 }
 
+/++
+	Given an in-memory array of bytes from a PNG file, returns the parsed out [PNG] object.
+
+	You might want the other [readPng] overload instead, which returns an even more processed [MemoryImage] object.
++/
 PNG* readPng(in ubyte[] data) {
 	auto p = new PNG;
 
 	p.length = cast(int) data.length;
-	p.header[0..8] = data[0..8];
+	p.magic[0..8] = data[0..8];
 
-	if(p.header != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+	if(p.magic != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 		throw new Exception("not a png, header wrong");
 
 	size_t pos = 8;
@@ -662,9 +761,12 @@ PNG* readPng(in ubyte[] data) {
 	return p;
 }
 
+/++
+	Creates a new [PNG] object from the given header parameters, ready to receive data.
++/
 PNG* blankPNG(PngHeader h) {
 	auto p = new PNG;
-	p.header = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	p.magic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 	Chunk c;
 
@@ -698,6 +800,11 @@ PNG* blankPNG(PngHeader h) {
 	return p;
 }
 
+/+
+	Implementation helper for creating png files.
+
+	Its API is subject to change; it would be private except it might be useful to you.
++/
 // should NOT have any idata already.
 // FIXME: doesn't handle palettes
 void addImageDatastreamToPng(const(ubyte)[] data, PNG* png, bool addIend = true) {
@@ -773,6 +880,9 @@ deprecated alias PngHeader PNGHeader;
 
 // bKGD - palette entry for background or the RGB (16 bits each) for that. or 16 bits of grey
 
+/+
+	Uncompresses the raw datastream out of the file chunks, but does not continue processing it, so the scanlines are still filtered, etc.
++/
 ubyte[] getDatastream(PNG* p) {
 	import std.zlib;
 	ubyte[] compressed;
@@ -786,6 +896,9 @@ ubyte[] getDatastream(PNG* p) {
 	return cast(ubyte[]) uncompress(compressed);
 }
 
+/+
+	Gets a raw datastream out of a 8 bpp png. See also [getANDMask]
++/
 // FIXME: Assuming 8 bits per pixel
 ubyte[] getUnfilteredDatastream(PNG* p) {
 	PngHeader h = getHeader(p);
@@ -810,6 +923,9 @@ ubyte[] getUnfilteredDatastream(PNG* p) {
 	return ufdata;
 }
 
+/+
+	Gets the unfiltered raw datastream for conversion to Windows ico files. See also [getANDMask] and [fetchPaletteWin32].
++/
 ubyte[] getFlippedUnfilteredDatastream(PNG* p) {
 	PngHeader h = getHeader(p);
 	assert(h.filterMethod == 0);
@@ -842,7 +958,9 @@ ubyte getLowNybble(ubyte a) {
 	return a & 0x0f;
 }
 
-// Takes the transparency info and returns
+/++
+	Takes the transparency info and returns an AND mask suitable for use in a Windows ico
++/
 ubyte[] getANDMask(PNG* p) {
 	PngHeader h = getHeader(p);
 	assert(h.filterMethod == 0);
@@ -892,6 +1010,9 @@ ubyte[] getANDMask(PNG* p) {
 
 // Done with assumption
 
+/++
+	Gets the parsed [PngHeader] data out of the [PNG] object.
++/
 @nogc @safe pure
 PngHeader getHeader(PNG* p) {
 	PngHeader h;
@@ -954,6 +1075,11 @@ PNG* toPNG(Image i) {
 			ubyte rgbReserved;
 		}
 
+/+
+	Gets the palette out of the format Windows expects for bmp and ico files.
+
+	See also getANDMask
++/
 RGBQUAD[] fetchPaletteWin32(PNG* p) {
 	RGBQUAD[] colors;
 
@@ -972,6 +1098,12 @@ RGBQUAD[] fetchPaletteWin32(PNG* p) {
 
 }
 
+/++
+	Extracts the palette chunk from a PNG object as an array of RGBA quads.
+
+	See_Also:
+		[replacePalette]
++/
 Color[] fetchPalette(PNG* p) {
 	Color[] colors;
 
@@ -1007,6 +1139,12 @@ Color[] fetchPalette(PNG* p) {
 	return colors;
 }
 
+/++
+	Replaces the palette data in a [PNG] object.
+
+	See_Also:
+		[fetchPalette]
++/
 void replacePalette(PNG* p, Color[] colors) {
 	auto palette = p.getChunk("PLTE");
 	auto alpha = p.getChunkNullable("tRNS");
@@ -1045,7 +1183,11 @@ uint update_crc(in uint crc, in ubyte[] buf){
 	return c;
 }
 
-// lol is just the chunk name
+/+
+	Figures out the crc for a chunk. Used internally.
+
+	lol is just the chunk name
++/
 uint crc(in string lol, in ubyte[] buf){
 	uint c = update_crc(0xffffffffL, cast(ubyte[]) lol);
 	return update_crc(c, buf) ^ 0xffffffffL;
@@ -1091,6 +1233,7 @@ struct RgbaScanline {
 }
 
 
+// lazy range to convert some png scanlines into greyscale. part of an experiment i didn't do much with but still use sometimes.
 auto convertToGreyscale(ImageLines)(ImageLines lines)
 	if(isInputRange!ImageLines && is(ElementType!ImageLines == RgbaScanline))
 {
@@ -1182,6 +1325,7 @@ auto pngFromBytes(Range)(Range r)
 	return file;
 }
 
+/// See: [readPngChunks]
 struct LazyPngChunks(T)
 	if(isBufferedInputRange!(T) && is(ElementType!T == ubyte[]))
 {
@@ -1575,6 +1719,8 @@ int bytesPerLineOfPng(ubyte depth, ubyte type, uint width) {
 
 /// Is the given range a buffered input range? That is, an input range
 /// that also provides consumeFromFront(int) and appendToFront()
+///
+/// THIS IS BAD CODE. I wrote it before understanding how ranges are supposed to work.
 template isBufferedInputRange(R) {
 	enum bool isBufferedInputRange =
 		isInputRange!(R) && is(typeof(
@@ -1849,6 +1995,7 @@ struct PngHeader {
 	}
 }
 
+/// turns a range of png scanlines into a png file in the output range. really weird
 void writePngLazy(OutputRange, InputRange)(ref OutputRange where, InputRange image)
 	if(
 		isOutputRange!(OutputRange, ubyte[]) &&
@@ -1918,6 +2065,9 @@ uint crcPng(in char[] chunkName, in ubyte[] buf){
 	return update_crc(c, buf) ^ 0xffffffffL;
 }
 
+/++
+	Png files apply a filter to each line in the datastream, hoping to aid in compression. This undoes that as you load.
++/
 immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previousLine, int bpp) {
 	// Note: the overflow arithmetic on the ubytes in here is intentional
 	switch(filterType) {
@@ -1977,6 +2127,7 @@ ubyte PaethPredictor(ubyte a, ubyte b, ubyte c) {
 	return c;
 }
 
+///
 int bytesPerPixel(PngHeader header) {
 	immutable bitsPerChannel = header.depth;
 

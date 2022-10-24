@@ -555,6 +555,11 @@ void main() {
 }
 +/
 
+/++
+	Writes a bitmap file to a delegate, byte by byte, with data from the given image.
+
+	If `prependFileHeader` is `true`, it will add the bitmap file header too.
++/
 void writeBmpIndirect(MemoryImage img, scope void delegate(ubyte) fwrite, bool prependFileHeader) {
 
 	void write4(uint what){

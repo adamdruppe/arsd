@@ -91,14 +91,58 @@ bool isConvenientAttribute(string name) {
 */
 
 
-/// The main document interface, including a html parser.
+/++
+	The main document interface, including a html or xml parser.
+
+	There's three main ways to create a Document:
+
+	If you want to parse something and inspect the tags, you can use the [this|constructor]:
+	---
+		// create and parse some HTML in one call
+		auto document = new Document("<html></html>");
+
+		// or some XML
+		auto document = new Document("<xml></xml>", true, true); // strict mode enabled
+
+		// or better yet:
+		auto document = new XmlDocument("<xml></xml>"); // specialized subclass
+	---
+
+	If you want to download something and parse it in one call, the [fromUrl] static function can help:
+	---
+		auto document = Document.fromUrl("http://dlang.org/");
+	---
+	(note that this requires my [arsd.characterencodings] and [arsd.http2] libraries)
+
+	And, if you need to inspect things like `<%= foo %>` tags and comments, you can add them to the dom like this, with the [enableAddingSpecialTagsToDom]
+	and [parseUtf8] or [parseGarbage] functions:
+	---
+		auto document = new Document();
+		document.enableAddingSpecialTagsToDom();
+		document.parseUtf8("<example></example>", true, true); // changes the trues to false to switch from xml to html mode
+	---
+
+	However you parse it, it will put a few things into special variables.
+
+	[root] contains the root document.
+	[prolog] contains the instructions before the root (like `<!DOCTYPE html>`). To keep the original things, you will need to [enableAddingSpecialTagsToDom] first, otherwise the library will return generic strings in there. [piecesBeforeRoot] will have other parsed instructions, if [enableAddingSpecialTagsToDom] is called.
+	[piecesAfterRoot] will contain any xml-looking data after the root tag is closed.
+
+	Most often though, you will not need to look at any of that data, since `Document` itself has methods like [querySelector], [appendChild], and more which will forward to the root [Element] for you.
++/
 /// Group: core_functionality
 class Document : FileResource, DomParent {
 	inout(Document) asDocument() inout { return this; }
 	inout(Element) asElement() inout { return null; }
 
-	/// Convenience method for web scraping. Requires [arsd.http2] to be
-	/// included in the build as well as [arsd.characterencodings].
+	/++
+		Convenience method for web scraping. Requires [arsd.http2] to be
+		included in the build as well as [arsd.characterencodings].
+
+		This will download the file from the given url and create a document
+		off it, using a strict constructor or a [parseGarbage], depending on
+		the value of `strictMode`.
+	+/
 	static Document fromUrl()(string url, bool strictMode = false) {
 		import arsd.http2;
 		auto client = new HttpClient();
@@ -116,30 +160,41 @@ class Document : FileResource, DomParent {
 		return document;
 	}
 
-	///.
+	/++
+		Creates a document with the given source data. If you want HTML behavior, use `caseSensitive` and `struct` set to `false`. For XML mode, set them to `true`.
+
+		Please note that anything after the root element will be found in [piecesAfterRoot]. Comments, processing instructions, and other special tags will be stripped out b default. You can customize this by using the zero-argument constructor and setting callbacks on the [parseSawComment], [parseSawBangInstruction], [parseSawAspCode], [parseSawPhpCode], and [parseSawQuestionInstruction] members, then calling one of the [parseUtf8], [parseGarbage], or [parse] functions. Calling the convenience method, [enableAddingSpecialTagsToDom], will enable all those things at once.
+
+		See_Also:
+			[parseGarbage]
+			[parseUtf8]
+			[parseUrl]
+	+/
 	this(string data, bool caseSensitive = false, bool strict = false) {
 		parseUtf8(data, caseSensitive, strict);
 	}
 
 	/**
-		Creates an empty document. It has *nothing* in it at all.
+		Creates an empty document. It has *nothing* in it at all, ready.
 	*/
 	this() {
 
 	}
 
-	/// This is just something I'm toying with. Right now, you use opIndex to put in css selectors.
-	/// It returns a struct that forwards calls to all elements it holds, and returns itself so you
-	/// can chain it.
-	///
-	/// Example: document["p"].innerText("hello").addClass("modified");
-	///
-	/// Equivalent to: foreach(e; document.getElementsBySelector("p")) { e.innerText("hello"); e.addClas("modified"); }
-	///
-	/// Note: always use function calls (not property syntax) and don't use toString in there for best results.
-	///
-	/// You can also do things like: document["p"]["b"] though tbh I'm not sure why since the selector string can do all that anyway. Maybe
-	/// you could put in some kind of custom filter function tho.
+	/++
+		This is just something I'm toying with. Right now, you use opIndex to put in css selectors.
+		It returns a struct that forwards calls to all elements it holds, and returns itself so you
+		can chain it.
+		
+		Example: document["p"].innerText("hello").addClass("modified");
+
+		Equivalent to: foreach(e; document.getElementsBySelector("p")) { e.innerText("hello"); e.addClas("modified"); }
+
+		Note: always use function calls (not property syntax) and don't use toString in there for best results.
+
+		You can also do things like: document["p"]["b"] though tbh I'm not sure why since the selector string can do all that anyway. Maybe
+		you could put in some kind of custom filter function tho.
+	+/
 	ElementCollection opIndex(string selector) {
 		auto e = ElementCollection(this.root);
 		return e[selector];
@@ -176,8 +231,8 @@ class Document : FileResource, DomParent {
 	}
 
 
-	/// Concatenates any consecutive text nodes
 	/*
+	/// Concatenates any consecutive text nodes
 	void normalize() {
 
 	}
@@ -186,7 +241,18 @@ class Document : FileResource, DomParent {
 	/// This will set delegates for parseSaw* (note: this overwrites anything else you set, and you setting subsequently will overwrite this) that add those things to the dom tree when it sees them.
 	/// Call this before calling parse().
 
-	/// Note this will also preserve the prolog and doctype from the original file, if there was one.
+	/++
+		Adds objects to the dom representing things normally stripped out during the default parse, like comments, `<!instructions>`, `<% code%>`, and `<? code?>` all at once.
+
+		Note this will also preserve the prolog and doctype from the original file, if there was one.
+
+		See_Also:
+			[parseSawComment]
+			[parseSawAspCode]
+			[parseSawPhpCode]
+			[parseSawQuestionInstruction]
+			[parseSawBangInstruction]
+	+/
 	void enableAddingSpecialTagsToDom() {
 		parseSawComment = (string) => true;
 		parseSawAspCode = (string) => true;
@@ -197,38 +263,38 @@ class Document : FileResource, DomParent {
 
 	/// If the parser sees a html comment, it will call this callback
 	/// <!-- comment --> will call parseSawComment(" comment ")
-	/// Return true if you want the node appended to the document.
+	/// Return true if you want the node appended to the document. It will be in a [HtmlComment] object.
 	bool delegate(string) parseSawComment;
 
 	/// If the parser sees <% asp code... %>, it will call this callback.
 	/// It will be passed "% asp code... %" or "%= asp code .. %"
-	/// Return true if you want the node appended to the document.
+	/// Return true if you want the node appended to the document. It will be in an [AspCode] object.
 	bool delegate(string) parseSawAspCode;
 
 	/// If the parser sees <?php php code... ?>, it will call this callback.
 	/// It will be passed "?php php code... ?" or "?= asp code .. ?"
 	/// Note: dom.d cannot identify  the other php <? code ?> short format.
-	/// Return true if you want the node appended to the document.
+	/// Return true if you want the node appended to the document. It will be in a [PhpCode] object.
 	bool delegate(string) parseSawPhpCode;
 
 	/// if it sees a <?xxx> that is not php or asp
 	/// it calls this function with the contents.
 	/// <?SOMETHING foo> calls parseSawQuestionInstruction("?SOMETHING foo")
 	/// Unlike the php/asp ones, this ends on the first > it sees, without requiring ?>.
-	/// Return true if you want the node appended to the document.
+	/// Return true if you want the node appended to the document. It will be in a [QuestionInstruction] object.
 	bool delegate(string) parseSawQuestionInstruction;
 
 	/// if it sees a <! that is not CDATA or comment (CDATA is handled automatically and comments call parseSawComment),
 	/// it calls this function with the contents.
 	/// <!SOMETHING foo> calls parseSawBangInstruction("SOMETHING foo")
-	/// Return true if you want the node appended to the document.
+	/// Return true if you want the node appended to the document. It will be in a [BangInstruction] object.
 	bool delegate(string) parseSawBangInstruction;
 
 	/// Given the kind of garbage you find on the Internet, try to make sense of it.
 	/// Equivalent to document.parse(data, false, false, null);
 	/// (Case-insensitive, non-strict, determine character encoding from the data.)
 
-	/// NOTE: this makes no attempt at added security.
+	/// NOTE: this makes no attempt at added security, but it will try to recover from anything instead of throwing.
 	///
 	/// It is a template so it lazily imports characterencodings.
 	void parseGarbage()(string data) {
@@ -1408,16 +1474,13 @@ class Document : FileResource, DomParent {
 		loose = false;
 	}
 
-	///.
-	void setProlog(string d) {
-		_prolog = d;
-		prologWasSet = true;
-	}
-
-	///.
 	private string _prolog = "<!DOCTYPE html>\n";
 	private bool prologWasSet = false; // set to true if the user changed it
 
+	/++
+		Returns or sets the string before the root element. This is, for example,
+		`<!DOCTYPE html>\n` or similar.
+	+/
 	@property string prolog() const {
 		// if the user explicitly changed it, do what they want
 		// or if we didn't keep/find stuff from the document itself,
@@ -1431,7 +1494,17 @@ class Document : FileResource, DomParent {
 		return p;
 	}
 
-	///.
+	/// ditto
+	void setProlog(string d) {
+		_prolog = d;
+		prologWasSet = true;
+	}
+
+	/++
+		Returns the document as string form. Please note that if there is anything in [piecesAfterRoot],
+		they are discarded. If you want to add them to the file, loop over that and append it yourself
+		(but remember xml isn't supposed to have anything after the root element).
+	+/
 	override string toString() const {
 		return prolog ~ root.toString();
 	}
@@ -1458,7 +1531,7 @@ class Document : FileResource, DomParent {
 		return s;
 	}
 
-	///.
+	/// The root element, like `<html>`. Most the methods on Document forward to this object.
 	Element root;
 
 	/// if these were kept, this is stuff that appeared before the root element, such as <?xml version ?> decls and <!DOCTYPE>s
@@ -1486,7 +1559,9 @@ interface DomParent {
 	inout(Element) asElement() inout;
 }
 
-/// This represents almost everything in the DOM.
+/++
+	This represents almost everything in the DOM and offers a lot of inspection and manipulation functions. Element, or its subclasses, are what makes the dom tree.
++/
 /// Group: core_functionality
 class Element : DomParent {
 	inout(Document) asDocument() inout { return null; }
@@ -1594,6 +1669,13 @@ class Element : DomParent {
 			else
 				add(cn);
 		}
+
+		// this thing supposed to be iterable in javascript but idk how i want to do it in D. meh
+		/+
+		string[] opIndex() const {
+			return this_.classes;
+		}
+		+/
 	}
 
 	/++
@@ -1697,9 +1779,16 @@ class Element : DomParent {
 	/* *******************************
 		  DOM Mutation
 	*********************************/
-	/// convenience function to quickly add a tag with some text or
-	/// other relevant info (for example, it's a src for an <img> element
-	/// instead of inner text)
+	/++
+		Family of convenience functions to quickly add a tag with some text or
+		other relevant info (for example, it's a src for an <img> element
+		instead of inner text). They forward to [Element.make] then calls [appendChild].
+
+		---
+		div.addChild("span", "hello there");
+		div.addChild("div", Html("<p>children of the div</p>"));
+		---
+	+/
 	Element addChild(string tagName, string childInfo = null, string childInfo2 = null)
 		in {
 			assert(tagName !is null);
@@ -1715,50 +1804,12 @@ class Element : DomParent {
 		return appendChild(e);
 	}
 
-	/// Another convenience function. Adds a child directly after the current one, returning
-	/// the new child.
-	///
-	/// Between this, addChild, and parentNode, you can build a tree as a single expression.
-	Element addSibling(string tagName, string childInfo = null, string childInfo2 = null)
-		in {
-			assert(tagName !is null);
-			assert(parentNode !is null);
-		}
-		out(e) {
-			assert(e.parentNode is this.parentNode);
-			assert(e.parentDocument is this.parentDocument);
-		}
-	do {
-		auto e = Element.make(tagName, childInfo, childInfo2);
-		return parentNode.insertAfter(this, e);
-	}
-
-	///
-	Element addSibling(Element e) {
-		return parentNode.insertAfter(this, e);
-	}
-
-	///
+	/// ditto
 	Element addChild(Element e) {
 		return this.appendChild(e);
 	}
 
-	/// Convenience function to append text intermixed with other children.
-	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
-	/// or div.addChildren("Hello, ", user.name, "!");
-
-	/// See also: appendHtml. This might be a bit simpler though because you don't have to think about escaping.
-	void addChildren(T...)(T t) {
-		foreach(item; t) {
-			static if(is(item : Element))
-				appendChild(item);
-			else static if (is(isSomeString!(item)))
-				appendText(to!string(item));
-			else static assert(0, "Cannot pass " ~ typeof(item).stringof ~ " to addChildren");
-		}
-	}
-
-	///.
+	/// ditto
 	Element addChild(string tagName, Element firstChild, string info2 = null)
 	in {
 		assert(firstChild !is null);
@@ -1778,7 +1829,7 @@ class Element : DomParent {
 		return e;
 	}
 
-	///
+	/// ditto
 	Element addChild(string tagName, in Html innerHtml, string info2 = null)
 	in {
 	}
@@ -1795,13 +1846,51 @@ class Element : DomParent {
 	}
 
 
-	/// .
+	/// Another convenience function. Adds a child directly after the current one, returning
+	/// the new child.
+	///
+	/// Between this, addChild, and parentNode, you can build a tree as a single expression.
+	/// See_Also: [addChild]
+	Element addSibling(string tagName, string childInfo = null, string childInfo2 = null)
+		in {
+			assert(tagName !is null);
+			assert(parentNode !is null);
+		}
+		out(e) {
+			assert(e.parentNode is this.parentNode);
+			assert(e.parentDocument is this.parentDocument);
+		}
+	do {
+		auto e = Element.make(tagName, childInfo, childInfo2);
+		return parentNode.insertAfter(this, e);
+	}
+
+	/// ditto
+	Element addSibling(Element e) {
+		return parentNode.insertAfter(this, e);
+	}
+
+	/// Convenience function to append text intermixed with other children.
+	/// For example: div.addChildren("You can visit my website by ", new Link("mysite.com", "clicking here"), ".");
+	/// or div.addChildren("Hello, ", user.name, "!");
+	/// See also: appendHtml. This might be a bit simpler though because you don't have to think about escaping.
+	void addChildren(T...)(T t) {
+		foreach(item; t) {
+			static if(is(item : Element))
+				appendChild(item);
+			else static if (is(isSomeString!(item)))
+				appendText(to!string(item));
+			else static assert(0, "Cannot pass " ~ typeof(item).stringof ~ " to addChildren");
+		}
+	}
+
+	/// Appends the list of children to this element.
 	void appendChildren(Element[] children) {
 		foreach(ele; children)
 			appendChild(ele);
 	}
 
-	///.
+	/// Removes this element form its current parent and appends it to the given `newParent`.
 	void reparent(Element newParent)
 		in {
 			assert(newParent !is null);
@@ -2017,7 +2106,7 @@ class Element : DomParent {
 		parent_ = doc;
 	}
 
-	///.
+	/// Returns the parent node in the tree this element is attached to.
 	inout(Element) parentNode() inout {
 		if(parent_ is null)
 			return null;
@@ -2069,6 +2158,8 @@ class Element : DomParent {
 			On February 8, 2021, the `selfClosedElements` parameter was added. Previously, it used a private
 			immutable global list for HTML. It still defaults to the same list, but you can change it now via
 			the parameter.
+		See_Also:
+			[addChild], [addSibling]
 	+/
 	static Element make(string tagName, string childInfo = null, string childInfo2 = null, const string[] selfClosedElements = htmlSelfClosedElements) {
 		bool selfClosed = tagName.isInArray(selfClosedElements);
@@ -2168,6 +2259,7 @@ class Element : DomParent {
 		return e;
 	}
 
+	/// ditto
 	static Element make(string tagName, in Html innerHtml, string childInfo2 = null) {
 		// FIXME: childInfo2 is ignored when info1 is null
 		auto m = Element.make(tagName, "not null"[0..0], childInfo2);
@@ -2175,6 +2267,7 @@ class Element : DomParent {
 		return m;
 	}
 
+	/// ditto
 	static Element make(string tagName, Element child, string childInfo2 = null) {
 		auto m = Element.make(tagName, cast(string) null, childInfo2);
 		m.appendChild(child);
@@ -2235,13 +2328,13 @@ class Element : DomParent {
 		return children.length ? children[0] : null;
 	}
 
-	///
+	/// Returns the last child of the element, or null if it has no children. Remember, text nodes are children too.
 	@property Element lastChild() {
 		return children.length ? children[$ - 1] : null;
 	}
 	
-	/// UNTESTED
-	/// the next element you would encounter if you were reading it in the source
+	// FIXME UNTESTED
+	/// the next or previous element you would encounter if you were reading it in the source. May be a text node or other special non-tag object if you enabled them.
 	Element nextInSource() {
 		auto n = firstChild;
 		if(n is null)
@@ -2256,7 +2349,6 @@ class Element : DomParent {
 		return n;
 	}
 
-	/// UNTESTED
 	/// ditto
 	Element previousInSource() {
 		auto p = previousSibling;
@@ -2270,12 +2362,25 @@ class Element : DomParent {
 		return p;
 	}
 
-	///.
+	/++
+		Returns the next or previous sibling that is not a text node. Please note: the behavior with comments is subject to change. Currently, it will return a comment or other nodes if it is in the tree (if you enabled it with [Document.enableAddingSpecialTagsToDom] or [Document.parseSawComment]) and not if you didn't, but the implementation will probably change at some point to skip them regardless.
+
+		Equivalent to [previousSibling]/[nextSibling]("*").
+
+		Please note it may return `null`.
+	+/
 	@property Element previousElementSibling() {
 		return previousSibling("*");
 	}
 
-	///.
+	/// ditto
+	@property Element nextElementSibling() {
+		return nextSibling("*");
+	}
+
+	/++
+		Returns the next or previous sibling matching the `tagName` filter. The default filter of `null` will return the first sibling it sees, even if it is a comment or text node, or anything else. A filter of `"*"` will match any tag with a name. Otherwise, the string must match the [tagName] of the sibling you want to find.
+	+/
 	@property Element previousSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -2292,12 +2397,7 @@ class Element : DomParent {
 		return ps;
 	}
 
-	///.
-	@property Element nextElementSibling() {
-		return nextSibling("*");
-	}
-
-	///.
+	/// ditto
 	@property Element nextSibling(string tagName = null) {
 		if(this.parentNode is null)
 			return null;
@@ -2324,8 +2424,11 @@ class Element : DomParent {
 	}
 
 
-	/// Gets the nearest node, going up the chain, with the given tagName
-	/// May return null or throw.
+	/++
+		Gets the nearest node, going up the chain, with the given tagName
+		May return null or throw. The type `T` will specify a subclass like
+		[Form], [Table], or [Link], which it will cast for you when found.
+	+/
 	T getParent(T = Element)(string tagName = null) if(is(T : Element)) {
 		if(tagName is null) {
 			static if(is(T == Form))
@@ -2353,7 +2456,9 @@ class Element : DomParent {
 		return t;
 	}
 
-	///.
+	/++
+		Searches this element and the tree of elements under it for one matching the given `id` attribute.
+	+/
 	Element getElementById(string id) {
 		// FIXME: I use this function a lot, and it's kinda slow
 		// not terribly slow, but not great.
@@ -2382,12 +2487,6 @@ class Element : DomParent {
 			if(s.matchesElement(ele))
 				return ele;
 		return null;
-	}
-
-	/// a more standards-compliant alias for getElementsBySelector
-	@scriptable
-	Element[] querySelectorAll(string selector) {
-		return getElementsBySelector(selector);
 	}
 
 	/// If the element matches the given selector. Previously known as `matchesSelector`.
@@ -2455,8 +2554,11 @@ class Element : DomParent {
 
 
 		There should be two functions: given element, does it match the selector? and given a selector, give me all the elements
+
+		The name `getElementsBySelector` was the original name, written back before the name `querySelector` was standardized (this library is older than you might think!), but they do the same thing..
 	*/
-	Element[] getElementsBySelector(string selector) {
+	@scriptable
+	Element[] querySelectorAll(string selector) {
 		// FIXME: this function could probably use some performance attention
 		// ... but only mildly so according to the profiler in the big scheme of things; probably negligible in a big app.
 
@@ -2471,13 +2573,22 @@ class Element : DomParent {
 		return ret;
 	}
 
-	/// .
+	/// ditto
+	alias getElementsBySelector = querySelectorAll;
+
+	/++
+		Returns child elements that have the given class name or tag name.
+
+		Please note the standard specifies this should return a live node list. This means, in Javascript for example, if you loop over the value returned by getElementsByTagName and getElementsByClassName and remove the elements, the length of the list will decrease. When I implemented this, I figured that was more trouble than it was worth and returned a plain array instead. By the time I had the infrastructure to make it simple, I didn't want to do the breaking change.
+
+		So these is incompatible with Javascript in the face of live dom mutation and will likely remain so.
+	+/
 	Element[] getElementsByClassName(string cn) {
 		// is this correct?
 		return getElementsBySelector("." ~ cn);
 	}
 
-	///.
+	/// ditto
 	Element[] getElementsByTagName(string tag) {
 		if(parentDocument && parentDocument.loose)
 			tag = tag.toLower();
@@ -2568,7 +2679,7 @@ class Element : DomParent {
 	}
 
 	/**
-		Gets the class attribute's contents. Returns
+		Gets or sets the class attribute's contents. Returns
 		an empty string if it has no class.
 	*/
 	@property string className() const {
@@ -2578,7 +2689,7 @@ class Element : DomParent {
 		return c;
 	}
 
-	///.
+	/// ditto
 	@property Element className(string c) {
 		setAttribute("class", c);
 		return this;
@@ -2626,12 +2737,7 @@ class Element : DomParent {
 	/**
 		Returns the element's children.
 	*/
-	@property const(Element[]) childNodes() const {
-		return children;
-	}
-
-	/// Mutable version of the same
-	@property Element[] childNodes() { // FIXME: the above should be inout
+	@property inout(Element[]) childNodes() inout {
 		return children;
 	}
 
@@ -2700,7 +2806,7 @@ class Element : DomParent {
 	// the next few methods are for implementing interactive kind of things
 	private CssStyle _computedStyle;
 
-	/// Don't use this.
+	/// Don't use this. It can try to parse out the style element but it isn't complete and if I get back to it, it won't be for a while.
 	@property CssStyle computedStyle() {
 		if(_computedStyle is null) {
 			auto style = this.getAttribute("style");
@@ -2779,13 +2885,17 @@ class Element : DomParent {
 		children = null;
 	}
 
-	/// History: added June 13, 2020
+	/++
+		Adds a sibling element before or after this one in the dom.
+
+		History: added June 13, 2020
+	+/
 	Element appendSibling(Element e) {
 		parentNode.insertAfter(this, e);
 		return e;
 	}
 
-	/// History: added June 13, 2020
+	/// ditto
 	Element prependSibling(Element e) {
 		parentNode.insertBefore(this, e);
 		return e;
@@ -2803,6 +2913,7 @@ class Element : DomParent {
 	Element appendChild(Element e)
 		in {
 			assert(e !is null);
+			assert(e !is this);
 		}
 		out (ret) {
 			assert((cast(DocumentFragment) this !is null) || (e.parentNode is this), e.toString);// e.parentNode ? e.parentNode.toString : "null");
@@ -2973,7 +3084,9 @@ class Element : DomParent {
 	}
 
 
-	///.
+	/++
+		Inserts a child under this element after the element `where`.
+	+/
 	void insertChildAfter(Element child, Element where)
 		in {
 			assert(child !is null);
@@ -3167,7 +3280,9 @@ class Element : DomParent {
 		rs.parentNode = this;
 	}
 
-	///.
+	/++
+		Replaces the element `find`, which must be a child of `this`, with the element `replace`, which must have no parent.
+	+/
 	Element replaceChild(Element find, Element replace)
 		in {
 			assert(find !is null);
@@ -3700,8 +3815,13 @@ class Element : DomParent {
 
 	// I moved these from Form because they are generally useful.
 	// Ideally, I'd put them in arsd.html and use UFCS, but that doesn't work with the opDispatch here.
-	/// Tags: HTML, HTML5
 	// FIXME: add overloads for other label types...
+	/++
+		Adds a form field to this element, normally a `<input>` but `type` can also be `"textarea"`.
+
+		This is fairly html specific and the label uses my style. I recommend you view the source before you use it to better understand what it does.
+	+/
+	/// Tags: HTML, HTML5
 	Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto fs = this;
 		auto i = fs.addChild("label");
@@ -3727,6 +3847,7 @@ class Element : DomParent {
 		return i;
 	}
 
+	/// ditto
 	Element addField(Element label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto fs = this;
 		auto i = fs.addChild("label");
@@ -3746,10 +3867,12 @@ class Element : DomParent {
 		return i;
 	}
 
+	/// ditto
 	Element addField(string label, string name, FormFieldOptions fieldOptions) {
 		return addField(label, name, "text", fieldOptions);
 	}
 
+	/// ditto
 	Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto fs = this;
 		auto i = fs.addChild("label");
@@ -3764,6 +3887,7 @@ class Element : DomParent {
 		return i;
 	}
 
+	/// ditto
 	Element addSubmitButton(string label = null) {
 		auto t = this;
 		auto holder = t.addChild("div");
@@ -4932,23 +5056,29 @@ class TextNode : Element {
 	functions for the element in HTML.
 */
 
-///.
+/++
+	Represents a HTML link. This provides some convenience methods for manipulating query strings, but otherwise is sthe same Element interface.
+
+	Please note this object may not be used for all `<a>` tags.
++/
 /// Group: implementations
 class Link : Element {
 
-	///.
-	this(Document _parentDocument) {
-		super(_parentDocument);
-		this.tagName = "a";
-	}
-
-
-	///.
+	/++
+		Constructs `<a href="that href">that text</a>`.
+	+/
 	this(string href, string text) {
 		super("a");
 		setAttribute("href", href);
 		innerText = text;
 	}
+
+	/// ditto
+	this(Document _parentDocument) {
+		super(_parentDocument);
+		this.tagName = "a";
+	}
+
 /+
 	/// Returns everything in the href EXCEPT the query string
 	@property string targetSansQuery() {
@@ -5002,7 +5132,7 @@ class Link : Element {
 		return hash;
 	}
 
-	///.
+	/// Replaces all the stuff after a ? in the link at once with the given assoc array values.
 	/*private*/ void updateQueryString(string[string] vars) {
 		string href = getAttribute("href");
 
@@ -5071,7 +5201,11 @@ class Link : Element {
 	*/
 }
 
-///.
+/++
+	Represents a HTML form. This slightly specializes Element to add a few more convenience methods for adding and extracting form data.
+
+	Please note this object may not be used for all `<form>` tags.
++/
 /// Group: implementations
 class Form : Element {
 
@@ -5081,6 +5215,7 @@ class Form : Element {
 		tagName = "form";
 	}
 
+	/// Overrides of the base class implementations that more confirm to *my* conventions when writing form html.
 	override Element addField(string label, string name, string type = "text", FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto t = this.querySelector("fieldset div");
 		if(t is null)
@@ -5089,6 +5224,7 @@ class Form : Element {
 			return t.addField(label, name, type, fieldOptions);
 	}
 
+	/// ditto
 	override Element addField(string label, string name, FormFieldOptions fieldOptions) {
 		auto type = "text";
 		auto t = this.querySelector("fieldset div");
@@ -5098,6 +5234,7 @@ class Form : Element {
 			return t.addField(label, name, type, fieldOptions);
 	}
 
+	/// ditto
 	override Element addField(string label, string name, string[string] options, FormFieldOptions fieldOptions = FormFieldOptions.none) {
 		auto t = this.querySelector("fieldset div");
 		if(t is null)
@@ -5106,6 +5243,7 @@ class Form : Element {
 			return t.addField(label, name, options, fieldOptions);
 	}
 
+	/// ditto
 	override void setValue(string field, string value) {
 		setValue(field, value, true);
 	}
@@ -5238,7 +5376,12 @@ class Form : Element {
 	}
 
 	// FIXME: doesn't handle multiple elements with the same name (except radio buttons)
-	///.
+	/++
+		Returns the form's contents in application/x-www-form-urlencoded format.
+
+		Bugs:
+			Doesn't handle repeated elements of the same name nor files.
+	+/
 	string getPostableData() {
 		bool[string] namesDone;
 
@@ -5322,17 +5465,23 @@ class Form : Element {
 
 import std.conv;
 
-///.
+/++
+	Represents a HTML table. Has some convenience methods for working with tabular data.
++/
 /// Group: implementations
 class Table : Element {
 
-	///.
+	/// You can make this yourself but you'd generally get one of these object out of a html parse or [Element.make] call.
 	this(Document _parentDocument) {
 		super(_parentDocument);
 		tagName = "table";
 	}
 
-	/// Creates an element with the given type and content.
+	/++
+		Creates an element with the given type and content. The argument can be an Element, Html, or other data which is converted to text with `to!string`
+
+		The element is $(I not) appended to the table.
+	+/
 	Element th(T)(T t) {
 		Element e;
 		if(parentDocument !is null)
@@ -5341,6 +5490,8 @@ class Table : Element {
 			e = Element.make("th");
 		static if(is(T == Html))
 			e.innerHTML = t;
+		else static if(is(T : Element))
+			e.appendChild(t);
 		else
 			e.innerText = to!string(t);
 		return e;
@@ -5355,26 +5506,35 @@ class Table : Element {
 			e = Element.make("td");
 		static if(is(T == Html))
 			e.innerHTML = t;
+		else static if(is(T : Element))
+			e.appendChild(t);
 		else
 			e.innerText = to!string(t);
 		return e;
 	}
 
-	/// .
+	/++
+		Passes each argument to the [th] method for `appendHeaderRow` or [td] method for the others, appends them all to the `<tbody>` element for `appendRow`, `<thead>` element for `appendHeaderRow`, or a `<tfoot>` element for `appendFooterRow`, and ensures it is appended it to the table.
+	+/
 	Element appendHeaderRow(T...)(T t) {
 		return appendRowInternal("th", "thead", t);
 	}
 
-	/// .
+	/// ditto
 	Element appendFooterRow(T...)(T t) {
 		return appendRowInternal("td", "tfoot", t);
 	}
 
-	/// .
+	/// ditto
 	Element appendRow(T...)(T t) {
 		return appendRowInternal("td", "tbody", t);
 	}
 
+	/++
+		Takes each argument as a class name and calls [Element.addClass] for each element in the column associated with that index.
+
+		Please note this does not use the html `<col>` element.
+	+/
 	void addColumnClasses(string[] classes...) {
 		auto grid = getGrid();
 		foreach(row; grid)
@@ -5435,7 +5595,7 @@ class Table : Element {
 		return row;
 	}
 
-	///.
+	/// Returns the `<caption>` element of the table, creating one if it isn't there.
 	Element captionElement() {
 		Element cap;
 		foreach(c; children) {
@@ -5453,12 +5613,12 @@ class Table : Element {
 		return cap;
 	}
 
-	///.
+	/// Returns or sets the text inside the `<caption>` element, creating that element if it isnt' there.
 	@property string caption() {
 		return captionElement().innerText;
 	}
 
-	///.
+	/// ditto
 	@property void caption(string text) {
 		captionElement().innerText = text;
 	}
@@ -5583,6 +5743,7 @@ class TableCell : Element {
 		super(_parentDocument, _tagName);
 	}
 
+	/// Gets and sets the row/colspan attributes as integers
 	@property int rowspan() const {
 		int ret = 1;
 		auto it = getAttribute("rowspan");
@@ -5591,6 +5752,7 @@ class TableCell : Element {
 		return ret;
 	}
 
+	/// ditto
 	@property int colspan() const {
 		int ret = 1;
 		auto it = getAttribute("colspan");
@@ -5599,11 +5761,13 @@ class TableCell : Element {
 		return ret;
 	}
 
+	/// ditto
 	@property int rowspan(int i) {
 		setAttribute("rowspan", to!string(i));
 		return i;
 	}
 
+	/// ditto
 	@property int colspan(int i) {
 		setAttribute("colspan", to!string(i));
 		return i;
@@ -5612,7 +5776,7 @@ class TableCell : Element {
 }
 
 
-///.
+/// This is thrown on parse errors.
 /// Group: implementations
 class MarkupException : Exception {
 
@@ -5685,7 +5849,7 @@ private immutable static string[] htmlInlineElements = [
 
 static import std.conv;
 
-///.
+/// helper function for decoding html entities
 int intFromHex(string hex) {
 	int place = 1;
 	int value = 0;
@@ -5750,7 +5914,7 @@ int intFromHex(string hex) {
 			return tid;
 		}
 
-	///.
+	/// Parts of the CSS selector implementation
 	// look, ma, no phobos!
 	// new lexer by ketmar
 	string[] lexSelector (string selstr) {
@@ -5887,7 +6051,7 @@ int intFromHex(string hex) {
 		assert(lexSelector(r"alice,is#best") == ["alice", ",", "is", "#", "best"]);
 	}
 
-	///.
+	/// ditto
 	struct SelectorPart {
 		string tagNameFilter; ///.
 		string[] attributesPresent; /// [attr]
@@ -5981,7 +6145,7 @@ int intFromHex(string hex) {
 		}
 
 		// USEFUL
-		///.
+		/// Returns true if the given element matches this part
 		bool matchElement(Element e) {
 			// FIXME: this can be called a lot of times, and really add up in times according to the profiler.
 			// Each individual call is reasonably fast already, but it adds up.
@@ -6259,7 +6423,7 @@ int intFromHex(string hex) {
 	}
 
 	// USEFUL
-	///.
+	/// ditto
 	Element[] getElementsBySelectorParts(Element start, SelectorPart[] parts) {
 		Element[] ret;
 		if(!parts.length) {
