@@ -50,6 +50,17 @@ struct Nullable(T) {
 	}
 
 	T toArsdJsvar() { return value; }
+
+	string toString() {
+		import std.conv;
+
+		if (isNull) {
+			return "Nullable.null";
+		}
+		else {
+			return to!string(this.value);
+		}
+	}
 }
 
 struct Timestamp {
