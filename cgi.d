@@ -7013,7 +7013,7 @@ interface EventIoServer {
 }
 
 // the sink should buffer it
-private void serialize(T)(scope void delegate(ubyte[]) sink, T t) {
+private void serialize(T)(scope void delegate(scope ubyte[]) sink, T t) {
 	static if(is(T == struct)) {
 		foreach(member; __traits(allMembers, T))
 			serialize(sink, __traits(getMember, t, member));
@@ -7195,9 +7195,9 @@ mixin template ImplementRpcClientInterface(T, string serverPath, string cmdArg) 
 
 					int dataLocation;
 					ubyte[] grab(int sz) {
-						auto d = got[dataLocation .. dataLocation + sz];
+						auto dataLocation1 = dataLocation;
 						dataLocation += sz;
-						return d;
+						return got[dataLocation1 .. dataLocation];
 					}
 
 					typeof(return) retu;
