@@ -2354,11 +2354,39 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	}
 
 	private bool _fullscreen;
+	private WINDOWPLACEMENT g_wpPrev;
 
 	/// not fully implemented but planned for a future release
 	void fullscreen(bool yes) {
-		version(X11)
+		version(Windows) {
+			g_wpPrev.length = WINDOWPLACEMENT.sizeof;
+			DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+			if (dwStyle & WS_OVERLAPPEDWINDOW) {
+				MONITORINFO mi;
+				mi.cbSize = MONITORINFO.sizeof;
+				if (GetWindowPlacement(hwnd, &g_wpPrev) &&
+				    GetMonitorInfo(MonitorFromWindow(hwnd,
+								     MONITOR_DEFAULTTOPRIMARY), &mi)) {
+					SetWindowLong(hwnd, GWL_STYLE,
+						      dwStyle & ~WS_OVERLAPPEDWINDOW);
+					SetWindowPos(hwnd, HWND_TOP,
+						     mi.rcMonitor.left, mi.rcMonitor.top,
+						     mi.rcMonitor.right - mi.rcMonitor.left,
+						     mi.rcMonitor.bottom - mi.rcMonitor.top,
+						     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+				}
+			} else {
+				SetWindowLong(hwnd, GWL_STYLE,
+					      dwStyle | WS_OVERLAPPEDWINDOW);
+				SetWindowPlacement(hwnd, &g_wpPrev);
+				SetWindowPos(hwnd, null, 0, 0, 0, 0,
+					     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+					     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+			}
+
+		} else version(X11) {
 			setNetWmStateAtom(this.impl.window, GetAtom!("_NET_WM_STATE_FULLSCREEN", false)(XDisplayConnection.get), yes);
+		}
 
 		_fullscreen = yes;
 
