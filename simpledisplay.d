@@ -11132,8 +11132,11 @@ version(Windows) {
 
 		Pen _activePen;
 
+		Color _outlineColor;
+
 		@property void pen(Pen p) {
 			_activePen = p;
+			_outlineColor = p.color;
 
 			HPEN pen;
 			if(p.color.a == 0) {
