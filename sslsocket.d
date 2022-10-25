@@ -106,7 +106,7 @@ version(use_openssl) {
 		}
 		
 		@trusted
-		override ptrdiff_t send(const(void)[] buf, SocketFlags flags) {
+		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(stderr);
@@ -118,11 +118,11 @@ version(use_openssl) {
 			return retval;
 
 		}
-		override ptrdiff_t send(const(void)[] buf) {
+		override ptrdiff_t send(scope const(void)[] buf) {
 			return send(buf, SocketFlags.NONE);
 		}
 		@trusted
-		override ptrdiff_t receive(void[] buf, SocketFlags flags) {
+		override ptrdiff_t receive(scope void[] buf, SocketFlags flags) {
 			auto retval = SSL_read(ssl, buf.ptr, cast(int)buf.length);
 			if(retval == -1) {
 				ERR_print_errors_fp(stderr);
@@ -133,7 +133,7 @@ version(use_openssl) {
 			}
 			return retval;
 		}
-		override ptrdiff_t receive(void[] buf) {
+		override ptrdiff_t receive(scope void[] buf) {
 			return receive(buf, SocketFlags.NONE);
 		}
 
