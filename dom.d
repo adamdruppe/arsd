@@ -1348,7 +1348,7 @@ class Document : FileResource, DomParent {
 		foreach(ref comp; s.components)
 			if(comp.parts.length && comp.parts[0].separation == 0)
 				comp.parts[0].separation = -1;
-		return s.getMatchingElements(this.root);
+		return s.getMatchingElements(this.root, null);
 	}
 
 	/// ditto
@@ -2483,8 +2483,20 @@ class Element : DomParent {
 	@scriptable
 	Element querySelector(string selector) {
 		Selector s = Selector(selector);
+
+		foreach(ref comp; s.components)
+			if(comp.parts.length && comp.parts[0].separation > 0) {
+				// this is illegal in standard dom, but i use it a lot
+				// gonna insert a :scope thing
+
+				SelectorPart part;
+				part.separation = -1;
+				part.scopeElement = true;
+				comp.parts = part ~ comp.parts;
+			}
+
 		foreach(ele; tree)
-			if(s.matchesElement(ele))
+			if(s.matchesElement(ele, this))
 				return ele;
 		return null;
 	}
@@ -2569,7 +2581,7 @@ class Element : DomParent {
 
 		Element[] ret;
 		foreach(sel; parseSelectorString(selector, caseSensitiveTags))
-			ret ~= sel.getElements(this);
+			ret ~= sel.getElements(this, null);
 		return ret;
 	}
 
@@ -6146,7 +6158,7 @@ int intFromHex(string hex) {
 
 		// USEFUL
 		/// Returns true if the given element matches this part
-		bool matchElement(Element e) {
+		bool matchElement(Element e, Element scopeElementNow = null) {
 			// FIXME: this can be called a lot of times, and really add up in times according to the profiler.
 			// Each individual call is reasonably fast already, but it adds up.
 			if(e is null) return false;
@@ -6194,12 +6206,10 @@ int intFromHex(string hex) {
 					}
 				}
 			}
-			/+
 			if(scopeElement) {
-				if(e !is this_)
+				if(e !is scopeElementNow)
 					return false;
 			}
-			+/
 			if(emptyElement) {
 				if(e.isEmpty())
 					return false;
@@ -6424,7 +6434,7 @@ int intFromHex(string hex) {
 
 	// USEFUL
 	/// ditto
-	Element[] getElementsBySelectorParts(Element start, SelectorPart[] parts) {
+	Element[] getElementsBySelectorParts(Element start, SelectorPart[] parts, Element scopeElementNow = null) {
 		Element[] ret;
 		if(!parts.length) {
 			return [start]; // the null selector only matches the start point; it
@@ -6440,22 +6450,22 @@ int intFromHex(string hex) {
 				foreach(e; start.tree) {
 					if(part.separation == 0 && start is e)
 						continue; // space doesn't match itself!
-					if(part.matchElement(e)) {
-						ret ~= getElementsBySelectorParts(e, parts[1..$]);
+					if(part.matchElement(e, scopeElementNow)) {
+						ret ~= getElementsBySelectorParts(e, parts[1..$], scopeElementNow);
 					}
 				}
 			break;
 			case 1: // children
 				foreach(e; start.childNodes) {
-					if(part.matchElement(e)) {
-						ret ~= getElementsBySelectorParts(e, parts[1..$]);
+					if(part.matchElement(e, scopeElementNow)) {
+						ret ~= getElementsBySelectorParts(e, parts[1..$], scopeElementNow);
 					}
 				}
 			break;
 			case 2: // next-sibling
 				auto e = start.nextSibling("*");
-				if(part.matchElement(e))
-					ret ~= getElementsBySelectorParts(e, parts[1..$]);
+				if(part.matchElement(e, scopeElementNow))
+					ret ~= getElementsBySelectorParts(e, parts[1..$], scopeElementNow);
 			break;
 			case 3: // younger sibling
 				auto tmp = start.parentNode;
@@ -6470,15 +6480,15 @@ int intFromHex(string hex) {
 					}
 					assert(pos != -1);
 					foreach(e; children[pos+1..$]) {
-						if(part.matchElement(e))
-							ret ~= getElementsBySelectorParts(e, parts[1..$]);
+						if(part.matchElement(e, scopeElementNow))
+							ret ~= getElementsBySelectorParts(e, parts[1..$], scopeElementNow);
 					}
 				}
 			break;
 			case 4: // immediate parent node, an extension of mine to walk back up the tree
 				auto e = start.parentNode;
-				if(part.matchElement(e)) {
-					ret ~= getElementsBySelectorParts(e, parts[1..$]);
+				if(part.matchElement(e, scopeElementNow)) {
+					ret ~= getElementsBySelectorParts(e, parts[1..$], scopeElementNow);
 				}
 				/*
 					Example of usefulness:
@@ -6549,10 +6559,10 @@ int intFromHex(string hex) {
 		/++
 			Reciprocal of [Element.querySelectorAll]
 		+/
-		Element[] getMatchingElements(Element start) {
+		Element[] getMatchingElements(Element start, Element relativeTo = null) {
 			Element[] ret;
 			foreach(component; components)
-				ret ~= getElementsBySelectorParts(start, component.parts);
+				ret ~= getElementsBySelectorParts(start, component.parts, relativeTo);
 			return removeDuplicates(ret);
 		}
 
@@ -6604,8 +6614,8 @@ int intFromHex(string hex) {
 
 		// USEFUL
 		///.
-		Element[] getElements(Element start) {
-			return removeDuplicates(getElementsBySelectorParts(start, parts));
+		Element[] getElements(Element start, Element relativeTo = null) {
+			return removeDuplicates(getElementsBySelectorParts(start, parts, relativeTo));
 		}
 
 		// USEFUL (but not implemented)
@@ -6618,6 +6628,8 @@ int intFromHex(string hex) {
 			auto lparts = parts;
 
 			if(parts.length && parts[0].separation > 0) {
+				throw new Exception("invalid selector");
+			/+
 				// if it starts with a non-trivial separator, inject
 				// a "*" matcher to act as a root. for cases like document.querySelector("> body")
 				// which implies html
@@ -6638,6 +6650,7 @@ int intFromHex(string hex) {
 				dummy.tagNameFilter = "*";
 				dummy.separation = 0;
 				lparts = dummy ~ lparts;
+			+/
 			}
 
 			foreach(part; retro(lparts)) {
@@ -6646,14 +6659,14 @@ int intFromHex(string hex) {
 				 // writeln(parts);
 
 				if(lastSeparation == -1) {
-					if(!part.matchElement(where))
+					if(!part.matchElement(where, relativeTo))
 						return false;
 				} else if(lastSeparation == 0) { // generic parent
 					// need to go up the whole chain
 					where = where.parentNode;
 
 					while(where !is null) {
-						if(part.matchElement(where))
+						if(part.matchElement(where, relativeTo))
 							break;
 
 						if(where is relativeTo)
@@ -6667,18 +6680,18 @@ int intFromHex(string hex) {
 				} else if(lastSeparation == 1) { // the > operator
 					where = where.parentNode;
 
-					if(!part.matchElement(where))
+					if(!part.matchElement(where, relativeTo))
 						return false;
 				} else if(lastSeparation == 2) { // the + operator
 				//writeln("WHERE", where, " ", part);
 					where = where.previousSibling("*");
 
-					if(!part.matchElement(where))
+					if(!part.matchElement(where, relativeTo))
 						return false;
 				} else if(lastSeparation == 3) { // the ~ operator
 					where = where.previousSibling("*");
 					while(where !is null) {
-						if(part.matchElement(where))
+						if(part.matchElement(where, relativeTo))
 							break;
 
 						if(where is relativeTo)
@@ -6695,8 +6708,18 @@ int intFromHex(string hex) {
 
 				lastSeparation = part.separation;
 
+				/*
+					/+
+					I commented this to magically make unittest pass and I think the reason it works
+					when commented is that I inject a :scope iff there's a selector at top level now
+					and if not, it follows the (frankly stupid) w3c standard behavior at arbitrary id
+					asduiwh . but me injecting the :scope also acts as a terminating condition.
+
+					tbh this prolly needs like a trillion more tests.
+					+/
 				if(where is relativeTo)
 					return false; // at end of line, if we aren't done by now, the match fails
+				*/
 			}
 			return true; // if we got here, it is a success
 		}
@@ -8455,7 +8478,23 @@ auto str = `<!DOCTYPE html>
 		auto doc = new Document(str, true, true);
 		assert(doc.toPrettyString == str);
 	}
+}
 
+unittest {
+	auto document = new Document("<foo><items><item><title>test</title><desc>desc</desc></item></items></foo>");
+	auto items = document.root.requireSelector("> items");
+	auto item = items.requireSelector("> item");
+	auto title = item.requireSelector("> title");
+
+	// this not actually implemented at this point but i might want to later. it prolly should work as an extension of the standard behavior
+	// assert(title.requireSelector("~ desc").innerText == "desc");
+
+	assert(item.requireSelector("title ~ desc").innerText == "desc");
+
+	assert(items.querySelector("item:has(title)") !is null);
+	assert(items.querySelector("item:has(nothing)") is null);
+
+	assert(title.innerText == "test");
 }
 
 unittest {
