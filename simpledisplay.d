@@ -2354,6 +2354,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	}
 
 	private bool _fullscreen;
+	version(Windows)
 	private WINDOWPLACEMENT g_wpPrev;
 
 	/// not fully implemented but planned for a future release
