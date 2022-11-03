@@ -3972,7 +3972,7 @@ version(use_openssl) {
 			initSsl(verifyPeer, hostname);
 		}
 
-		override void close() {
+		override void close() scope {
 			if(ssl) OpenSSL.SSL_shutdown(ssl);
 			super.close();
 		}

@@ -5207,7 +5207,7 @@ private class FakeSocketForStdin : Socket {
 		return buffer.length;
 	}
 
-	override void close() @trusted {
+	override void close() @trusted scope {
 		(cast(void delegate() @nogc nothrow) &realClose)();
 	}
 
