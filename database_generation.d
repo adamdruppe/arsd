@@ -731,3 +731,169 @@ template where(conditions...) {
 		return this_;
 	}
 }
+
+// Basically a wrapper for a ResultSet
+struct TabResultSet(T)
+{
+	this(ResultSet result)
+	{
+		this.result = result;
+	}
+
+	bool empty() @property
+	{
+		return this.result.empty;
+	}
+
+	T front() @property
+	{
+		T row;
+		row.populateFromDbRow(this.result.front);
+		return row;
+	}
+
+	void popFront()
+	{
+		this.result.popFront();
+	}
+
+	size_t length() @property
+	{
+		return this.result.length;
+	}
+
+	private ResultSet result;
+}
+
+// ditto
+TabResultSet!T to_table_rows(T)(ResultSet res)
+{
+	return TabResultSet!T(res);
+}
+
+private template FieldReference(alias field_)
+{
+	alias Table = __traits(parent, field_);
+	alias field = field_;
+}
+
+private template isFieldRefInAttributes(Attributes...)
+{
+	static if (Attributes.length == 0) {
+		static immutable bool isFieldRefInAttributes = false;
+	}
+	else {
+		alias attr = Attributes[0];
+		static if (is(attr == ForeignKey!(field, s), alias field, string s)) {
+			static immutable bool isFieldRefInAttributes = true;
+		}
+		else {
+			static immutable bool fieldRefInAttributes =
+				isFieldRefInAttributes!(Attributes[1..$]);
+		}
+	}
+}
+
+private template getFieldRefInAttributes(Attributes...)
+{
+	alias attr = Attributes[0];
+	static if (is(attr == ForeignKey!(field, s), alias field, string s)) {
+		alias getFieldRefInAttributes = FieldReference!(field);
+	}
+	else {
+		alias fieldRefInAttributes =
+			getFieldRefInAttributes!(RT, Attributes[1..$]);
+	}
+}
+
+private alias getRefToField(alias fk_field) =
+	getFieldRefInAttributes!(__traits(getAttributes, fk_field));
+
+unittest
+{
+	struct Role { int id; }
+
+	struct User
+	{
+		int id;
+		@ForeignKey!(Role.id, "") int role_id;
+	}
+
+	alias FieldRef = getRefToField!(User.role_id);
+	assert(is(FieldRef.Table == Role));
+	assert(__traits(isSame, FieldRef.field, Role.id));
+}
+
+string toFieldName(T)(string s, bool isPlural = false)
+{
+	int cnt = isPlural ? 2 : 1;
+	if (s is null)
+		return plural(cnt, beautify(tableNameFor!T(), '_', true));
+	return s;
+}
+
+/++
+	generates get functions for a one-to-many relationship
+	```d
+	Struct Role { int id; }
+	struct User {
+		@ForeignKey!(Role.id, "") int role_id;
+	}
+
+	mixin(one_to_many!(User.role_id), "role", "users");
+	/*
+	   this will generate the following functions
+		Role get_role(User role, Database db) {...}
+		TabResultSet!User get_users(Role row, Database db) {...}
+	*/
+	```
+	if t2 or t1 are set as null they will be infered from either
+	the `DBName` attribute or from the name of the the Table
++/
+template one_to_many(alias fk_field, string t2 = null, string t1 = null)
+{
+	private {
+		alias T1 = __traits(parent, fk_field);
+
+		static assert(
+			isFieldRefInAttributes!(__traits(getAttributes, fk_field)),
+			T1.stringof ~ "." ~ fk_field.stringof ~ " does't have a ForeignKey");
+
+		alias FieldRef = getRefToField!(fk_field);
+		alias T2 = FieldRef.Table;
+		alias ref_field = FieldRef.field;
+
+		immutable string t2_name = toFieldName!T2(t2);
+		immutable string t1_name = toFieldName!T1(t1, true);
+	}
+
+	static immutable string one_to_many =
+		T2.stringof~` get_`~t2_name~`(`~T1.stringof~` row, Database db)
+		{
+			import std.exception;
+
+			enforce(db !is null, "Database must not be null");
+			auto fk_id = row.`~fk_field.stringof~`;
+
+			auto res = db.query(
+				"select * from `~tableNameFor!T2()~`" ~
+				" where `~ref_field.stringof~` = ?", fk_id
+			).to_table_rows!`~T2.stringof~`;
+
+			return res.front();
+		}
+		TabResultSet!`~T1.stringof~` get_`~t1_name~`(`~T2.stringof~` row, Database db)
+		{
+			import std.exception;
+
+			enforce(db !is null, "Database must not be null");
+			auto id = row.`~ref_field.stringof~`;
+
+			auto res = db.query(
+				"select * from `~tableNameFor!T1()~`"~
+				" where `~fk_field.stringof~` = ?", id
+			).to_table_rows!`~T1.stringof~`;
+
+			return res;
+		}`;
+}
