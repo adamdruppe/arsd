@@ -833,19 +833,24 @@ string toFieldName(T)(string s, bool isPlural = false)
 }
 
 /++
-	generates get functions for a one-to-many relationship
+	generates get functions for a one-to-many relationship with the form
+	`T2 get_<t2>(T1 row, Database db)` and
+	`TabResultSet!T1 get_<t1>(T2 row, Database db)`
+	Example: 
 	```d
 	Struct Role { int id; }
 	struct User {
 		@ForeignKey!(Role.id, "") int role_id;
 	}
 
-	mixin(one_to_many!(User.role_id), "role", "users");
-	/*
-	   this will generate the following functions
-		Role get_role(User role, Database db) {...}
-		TabResultSet!User get_users(Role row, Database db) {...}
-	*/
+	mixin(one_to_many!(User.role_id, "role", "users"));
+	void main()
+	{
+		Database db = ...
+		User user = db.find!User(1);
+		Role role = user.get_role(db);
+		auto users = role.get_users(db);
+	}
 	```
 	if t2 or t1 are set as null they will be infered from either
 	the `DBName` attribute or from the name of the the Table
