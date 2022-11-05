@@ -836,8 +836,75 @@ string toFieldName(T)(string s, bool isPlural = false)
 	generates get functions for a one-to-many relationship with the form
 	`T2 get_<t2>(T1 row, Database db)` and
 	`TabResultSet!T1 get_<t1>(T2 row, Database db)`
-	Example: 
-	```d
+
+
+	[children] also works with a one-to-many relationship, but they are different in that [children] only gives you the many in the one-to-many relationship and only works with a single foreign key at a time.
+
+	Say you have a User and Role tables where each User has a role and a Role can be used by multiple users, with:
+
+	---
+	/*
+	This would give you all of the users with the Role `role`.
+	*/
+	auto res = role.children!(User, Role).execute(db);
+	---
+
+	However if you wanted to get the Role of a user there would be no way of doing so with children. It doesn't work the other way around.
+
+	Also the big thing that one_to_many can do and children can not do is handle multiple relationships(Multiple foreign keys pointing to the same Table for example:
+
+	---
+	import std.stdio;
+	import arsd.sqlite;
+	import arsd.database_generation;
+
+	alias FK(alias toWhat) = ForeignKey!(toWhat, null);
+
+	@DBName("Professor") struct Professor
+	{
+	    int id;
+	    string name;
+	}
+
+	@DBName("Course") struct Course
+	{
+	    int id;
+	    @FK!(Professor.id) int professor_id;
+	    @FK!(Professor.id) int assistant_id;
+	}
+
+	mixin(one_to_many!(Course.professor_id, "prof", "courses_taught"));
+	mixin(one_to_many!(Course.assistant_id, "assistant", "courses_assisted"));
+
+	void main()
+	{
+	    Database db = new Sqlite("test2.db");
+
+	    Course course = db.find!Course(1);
+	    Professor prof = course.get_prof(db);
+
+	    writeln(prof.get_courses_taught(db));
+	    writeln(prof.get_courses_assisted(db));
+	}
+	---
+
+	Here there are 2 relationships from Course to Professor here. One of them you can get from get_courses_taught and the other one with get_courses_assisted.
+	If you attempt to use children like so
+
+	---
+	writeln(prof.children!(Course, Professor).execute(db));
+	---
+
+	You would get:
+	$(CONSOLE
+		source/arsd/database_generation.d(489,2): Error: static assert: "Course does not have exactly one foreign key of type Professor"
+	)
+
+	In conclusion, children is nice in that its simple, doesn't require mixins to create extra symbols(functions). However it doesn't handle the one in one-to-many relationships at all, and it also doesn't work in tables with more than one relationship to a table. And finally, you might prefer the syntax of `prof.get_courses(db)` over `prof.children!(Course, Professor).execute(db)`.
+
+	Examples: 
+
+	---
 	Struct Role { int id; }
 	struct User {
 		@ForeignKey!(Role.id, "") int role_id;
@@ -851,7 +918,8 @@ string toFieldName(T)(string s, bool isPlural = false)
 		Role role = user.get_role(db);
 		auto users = role.get_users(db);
 	}
-	```
+	---
+
 	if t2 or t1 are set as null they will be inferred from either
 	the `DBName` attribute or from the name of the Table
 
