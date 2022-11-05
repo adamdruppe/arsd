@@ -852,8 +852,11 @@ string toFieldName(T)(string s, bool isPlural = false)
 		auto users = role.get_users(db);
 	}
 	```
-	if t2 or t1 are set as null they will be infered from either
-	the `DBName` attribute or from the name of the the Table
+	if t2 or t1 are set as null they will be inferred from either
+	the `DBName` attribute or from the name of the Table
+
+	History:
+		Added November 5, 2022 (dub v10.10)
 +/
 template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 {
