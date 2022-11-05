@@ -957,7 +957,7 @@ class Cgi {
 		{
 			import core.runtime;
 			auto sfn = getenv("SCRIPT_FILENAME");
-			scriptFileName = sfn.length ? sfn : Runtime.args[0];
+			scriptFileName = sfn.length ? sfn : (Runtime.args.length ? Runtime.args[0] : null);
 		}
 
 		bool iis = false;
@@ -1751,7 +1751,7 @@ class Cgi {
 
 		{
 			import core.runtime;
-			scriptFileName = Runtime.args[0];
+			scriptFileName = Runtime.args.length ? Runtime.args[0] : null;
 		}
 
 
