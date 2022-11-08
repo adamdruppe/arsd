@@ -941,7 +941,7 @@ template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 	immutable string t2_name = toFieldName!T2(t2);
 	immutable string t1_name = toFieldName!T1(t1, true);
 
-	static immutable string one_to_many =
+	static immutable string one = (t2 is "") ? "" :
 		T2.stringof~` get_`~t2_name~`(`~T1.stringof~` row, Database db)
 		{
 			import std.exception;
@@ -955,7 +955,8 @@ template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 			).to_table_rows!`~T2.stringof~`;
 
 			return res.front();
-		}
+		}`;
+	static immutable string many = (t1 is "") ? "" : `
 		TabResultSet!`~T1.stringof~` get_`~t1_name~`(`~T2.stringof~` row, Database db)
 		{
 			import std.exception;
@@ -970,4 +971,5 @@ template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 
 			return res;
 		}`;
+	static immutable string one_to_many = one ~ many;
 }
