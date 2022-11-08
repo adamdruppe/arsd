@@ -920,8 +920,9 @@ string toFieldName(T)(string s, bool isPlural = false)
 	}
 	---
 
-	if t2 or t1 are set as null they will be inferred from either
-	the `DBName` attribute or from the name of the Table
+	if t2 or t1 are set as "" the get function will not be generated
+	(the name will not be inferred), if set as null they will be inferred from
+	either the `DBName` attribute or from the name of the Table.
 
 	History:
 		Added November 5, 2022 (dub v10.10)
