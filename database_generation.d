@@ -920,30 +920,29 @@ string toFieldName(T)(string s, bool isPlural = false)
 	}
 	---
 
-	if t2 or t1 are set as null they will be inferred from either
-	the `DBName` attribute or from the name of the Table
+	if t2 or t1 are set as "" the get function will not be generated
+	(the name will not be inferred), if set as null they will be inferred from
+	either the `DBName` attribute or from the name of the Table.
 
 	History:
 		Added November 5, 2022 (dub v10.10)
 +/
 template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 {
-	private {
-		alias T1 = __traits(parent, fk_field);
+	alias T1 = __traits(parent, fk_field);
 
-		static assert(
-			isFieldRefInAttributes!(__traits(getAttributes, fk_field)),
-			T1.stringof ~ "." ~ fk_field.stringof ~ " does't have a ForeignKey");
+	static assert(
+		isFieldRefInAttributes!(__traits(getAttributes, fk_field)),
+		T1.stringof ~ "." ~ fk_field.stringof ~ " does't have a ForeignKey");
 
-		alias FieldRef = getRefToField!(fk_field);
-		alias T2 = FieldRef.Table;
-		alias ref_field = FieldRef.field;
+	alias FieldRef = getRefToField!(fk_field);
+	alias T2 = FieldRef.Table;
+	alias ref_field = FieldRef.field;
 
-		immutable string t2_name = toFieldName!T2(t2);
-		immutable string t1_name = toFieldName!T1(t1, true);
-	}
+	immutable string t2_name = toFieldName!T2(t2);
+	immutable string t1_name = toFieldName!T1(t1, true);
 
-	static immutable string one_to_many =
+	static immutable string one = (t2 is "") ? "" :
 		T2.stringof~` get_`~t2_name~`(`~T1.stringof~` row, Database db)
 		{
 			import std.exception;
@@ -957,7 +956,8 @@ template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 			).to_table_rows!`~T2.stringof~`;
 
 			return res.front();
-		}
+		}`;
+	static immutable string many = (t1 is "") ? "" : `
 		TabResultSet!`~T1.stringof~` get_`~t1_name~`(`~T2.stringof~` row, Database db)
 		{
 			import std.exception;
@@ -972,4 +972,5 @@ template one_to_many(alias fk_field, string t2 = null, string t1 = null)
 
 			return res;
 		}`;
+	static immutable string one_to_many = one ~ many;
 }
