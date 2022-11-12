@@ -409,6 +409,9 @@ static auto find(alias T)(Database db, int id) {
 		alias TType = T;
 	}
 
+	static assert(is(FType : int),
+			TType.stringof ~ "." ~ fieldName ~ " should be an Integral field");
+
 	string q = "SELECT * FROM " ~ tableNameFor!TType() ~ " WHERE " ~ fieldName ~ " = ?";
 	foreach(record; db.query(q, id)) {
 		TType t;
