@@ -394,14 +394,24 @@ class RecordNotFoundException : Exception {
 	If you just give a type, it assumes the relevant index is "id".
 
 +/
-auto find(alias T)(Database db, int id) {
-
-	// FIXME: if T is an index, search by it.
+static auto find(alias T)(Database db, int id) {
+	// FIXME:
 	// if it is unique, return an individual item.
 	// if not, return the array
+	static if (!is(T)) {
+		static const string fieldName = T.stringof;
+		alias FType = typeof(T); // field type
+		alias TType = __traits(parent, T); // Table type
+	}
+	else {
+		static const string fieldName = "id";
+		alias FType = int;
+		alias TType = T;
+	}
 
-	foreach(record; db.query("SELECT * FROM " ~ tableNameFor!T() ~ " WHERE id = ?", id)) {
-		T t;
+	string q = "SELECT * FROM " ~ tableNameFor!TType() ~ " WHERE " ~ fieldName ~ " = ?";
+	foreach(record; db.query(q, id)) {
+		TType t;
 		populateFromDbRow(t, record);
 
 		return t;
