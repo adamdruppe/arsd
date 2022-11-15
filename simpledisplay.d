@@ -1768,11 +1768,11 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	TrueColorImage takeScreenshot() {
 		version(Windows)
-			return trueColorImageFromNativeHandle(impl.hwnd, width, height);
+			return trueColorImageFromNativeHandle(impl.hwnd, _width, _height);
 		else version(OSXCocoa)
 			throw new NotYetImplementedException();
 		else
-			return trueColorImageFromNativeHandle(impl.window, width, height);
+			return trueColorImageFromNativeHandle(impl.window, _width, _height);
 	}
 
 	/++
@@ -2022,9 +2022,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	this(int width = 640, int height = 480, string title = null, OpenGlOptions opengl = OpenGlOptions.no, Resizability resizable = Resizability.automaticallyScaleIfPossible, WindowTypes windowType = WindowTypes.normal, int customizationFlags = WindowFlags.normal, SimpleWindow parent = null) {
 		claimGuiThread();
 		version(sdpy_thread_checks) assert(thisIsGuiThread);
-		this._width = width;
-		this._height = height;
+		this._width = this._virtualWidth = width;
+		this._height = this._virtualHeight = height;
 		this.openglMode = opengl;
+		version(X11) {
+			// auto scale not implemented except with opengl and even there it is kinda weird
+			if(resizable == Resizability.automaticallyScaleIfPossible && opengl == OpenGlOptions.no)
+				resizable = Resizability.fixedSize;
+		}
 		this.resizability = resizable;
 		this.windowType = windowType;
 		this.customizationFlags = customizationFlags;
@@ -2719,13 +2724,39 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
 	public __gshared SimpleWindow[NativeWindowHandle] nativeMapping;
 
+	// the size the user requested in the constructor, in automatic scale modes it always pretends to be this size
+	private int _virtualWidth;
+	private int _virtualHeight;
+
 	/// Width of the window's drawable client area, in pixels.
 	@scriptable
-	final @property int width() const pure nothrow @safe @nogc { return _width; }
+	final @property int width() const pure nothrow @safe @nogc {
+		if(resizability == Resizability.automaticallyScaleIfPossible)
+			return _virtualWidth;
+		else
+			return _width;
+	}
 
 	/// Height of the window's drawable client area, in pixels.
 	@scriptable
-	final @property int height() const pure nothrow @safe @nogc { return _height; }
+	final @property int height() const pure nothrow @safe @nogc {
+		if(resizability == Resizability.automaticallyScaleIfPossible)
+			return _virtualHeight;
+		else
+			return _height;
+	}
+
+	/++
+		Returns the actual size of the window, bypassing the logical
+		illusions of [Resizability.automaticallyScaleIfPossible].
+
+		History:
+			Added November 11, 2022 (dub v10.10)
+	+/
+	final @property Size actualWindowSize() const pure nothrow @safe @nogc {
+		return Size(_width, _height);
+	}
+
 
 	private int _width;
 	private int _height;
@@ -7092,11 +7123,28 @@ alias Resizablity = Resizability;
 
 /// When you create a SimpleWindow, you can see its resizability to be one of these via the constructor...
 enum Resizability {
-	fixedSize, /// the window cannot be resized
-	allowResizing, /// the window can be resized. The buffer (if there is one) will automatically adjust size, but not stretch the contents. the windowResized delegate will be called so you can respond to the new size yourself.
-	automaticallyScaleIfPossible, /// if possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size. If this is impossible, it will not allow the user to resize the window at all. Note: window.width and window.height WILL be adjusted, which might throw you off if you draw based on them, so keep track of your expected width and height separately. That way, when it is scaled, things won't be thrown off.
+	fixedSize, /// the window cannot be resized. If it is resized anyway, simpledisplay will position and truncate your drawn content without necessarily informing your program, maintaining the API illusion of a non-resizable window.
+	allowResizing, /// the window can be resized. The buffer (if there is one) will automatically adjust size, but not stretch the contents. the windowResized delegate will be called so you can respond to the new size yourself. This allows most control for both user and you as the library consumer, but you also have to do the most work to handle it well.
+	/++
+		$(PITFALL
+			Planned for the future but not implemented.
+		)
 
-	// FIXME: automaticallyScaleIfPossible should adjust the OpenGL viewport on resize events
+		Allow the user to resize the window, but try to maintain the original aspect ratio of the client area. The simpledisplay library may letterbox your content if necessary but will not stretch it. The windowResized delegate and width and height members will be updated with the size.
+
+		History:
+			Added November 11, 2022, but not yet implemented and may not be for some time.
+	+/
+	@future allowResizingMaintainingAspectRatio,
+	/++
+		If possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size, letterboxing if needed to keep the aspect ratio. If this is impossible, it will fallback to [fixedSize]. The simpledisplay library will always provide the illusion that your window is the same size you requested, even if it scales things for you, meaning [width] and [height] will never change.
+
+		History:
+			Prior to November 11, 2022, width and height would change, which made this mode harder to use than intended. While I had documented this as a possiblity, I still considered it a bug, a leaky abstraction, and changed the code to tighten it up. After that date, the width and height members, as well as mouse coordinates, are always scaled to maintain the illusion of a fixed canvas size.
+
+			Your programs should not be affected, as they will continue to function as if the user simply never resized the window at all.
+	+/
+	automaticallyScaleIfPossible,
 }
 
 
@@ -11566,7 +11614,11 @@ version(Windows) {
 			// FIXME: windowType and customizationFlags
 			final switch(windowType) {
 				case WindowTypes.normal:
-					style = WS_OVERLAPPEDWINDOW;
+					if(resizability == Resizability.fixedSize) {
+						style = WS_SYSMENU | WS_OVERLAPPED | WS_CAPTION;
+					} else {
+						style = WS_OVERLAPPEDWINDOW;
+					}
 				break;
 				case WindowTypes.undecorated:
 					style = WS_POPUP | WS_SYSMENU;
@@ -11739,6 +11791,12 @@ version(Windows) {
 					x = cast(ushort) p.x;
 					y = cast(ushort) p.y;
 				}
+
+				if(wind.resizability == Resizability.automaticallyScaleIfPossible) {
+					x = cast(ushort)( x * wind._virtualWidth / wind._width );
+					y = cast(ushort)( y * wind._virtualHeight / wind._height );
+				}
+
 				mouse.x = x + offsetX;
 				mouse.y = y + offsetY;
 
@@ -12063,7 +12121,7 @@ version(Windows) {
 					size_changed:
 
 					// nothing relevant changed, don't bother redrawing
-					if(oldWidth == width && oldHeight == height) {
+					if(oldWidth == _width && oldHeight == _height) {
 						break;
 					}
 
@@ -12072,10 +12130,13 @@ version(Windows) {
 					if(openglMode == OpenGlOptions.no) { // && resizability == Resizability.allowResizing) {
 						// gotta get the double buffer bmp to match the window
 						// FIXME: could this be more efficient? it never relinquishes a large bitmap
-						if(width > bmpWidth || height > bmpHeight) {
+
+						// if it is auto-scaled, we keep the backing bitmap the same size all the time
+						if(resizability != Resizability.automaticallyScaleIfPossible)
+						if(_width > bmpWidth || _height > bmpHeight) {
 							auto hdc = GetDC(hwnd);
 							auto oldBuffer = buffer;
-							buffer = CreateCompatibleBitmap(hdc, width, height);
+							buffer = CreateCompatibleBitmap(hdc, _width, _height);
 
 							auto hdcBmp = CreateCompatibleDC(hdc);
 							auto oldBmp = SelectObject(hdcBmp, buffer);
@@ -12097,8 +12158,8 @@ version(Windows) {
 
 							BitBlt(hdcBmp, 0, 0, bmpWidth, bmpHeight, hdcOldBmp, 0, 0, SRCCOPY);
 
-							bmpWidth = width;
-							bmpHeight = height;
+							bmpWidth = _width;
+							bmpHeight = _height;
 
 							SelectObject(hdcOldBmp, oldOldBmp);
 							DeleteDC(hdcOldBmp);
@@ -12114,8 +12175,9 @@ version(Windows) {
 
 					updateOpenglViewportIfNeeded(width, height);
 
+					if(resizability != Resizability.automaticallyScaleIfPossible)
 					if(windowResized !is null)
-						windowResized(width, height);
+						windowResized(_width, _height);
 
 					if(inSizeMove) {
 						SimpleWindow.processAllCustomEvents();
@@ -12126,8 +12188,8 @@ version(Windows) {
 						RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
 					}
 
-					oldWidth = this.width;
-					oldHeight = this.height;
+					oldWidth = this._width;
+					oldHeight = this._height;
 				break;
 				case WM_ERASEBKGND:
 					// call `visibleForTheFirstTime` here, so we can do initialization as early as possible
@@ -12181,7 +12243,7 @@ version(Windows) {
 
 						// FIXME: only BitBlt the invalidated rectangle, not the whole thing
 						if(resizability == Resizability.automaticallyScaleIfPossible)
-						StretchBlt(hdc, 0, 0, this.width, this.height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+						StretchBlt(hdc, 0, 0, this._width, this._height, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
 						else
 						BitBlt(hdc, 0, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
 						//BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left, ps.rcPaint.top - ps.rcPaint.bottom, hdcMem, 0, 0, SRCCOPY);
@@ -14956,6 +15018,7 @@ version(X11) {
 
 			win.fixFixedSize(width, height); //k8: this does nothing on my FluxBox; wtf?!
 
+			if(resizability != Resizability.automaticallyScaleIfPossible)
 			if(win.windowResized !is null) {
 				XUnlockDisplay(display);
 				scope(exit) XLockDisplay(display);
