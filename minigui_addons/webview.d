@@ -457,12 +457,16 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		this.parentWindow.addEventListener((scope ClosingEvent ce) {
 			if(devTools)
 				devTools.close();
-			if(!closeAttempted && browserHandle) {
-				browserHandle.get_host.close_browser(true);
-				ce.preventDefault();
-				// sdpyPrintDebugString("closing");
+			if(browserHandle) {
+				if(!closeAttempted) {
+					closeAttempted = true;
+					browserHandle.get_host.close_browser(false);
+					ce.preventDefault();
+				} else {
+					browserHandle.get_host.close_browser(true);
+				}
+				 sdpyPrintDebugString("closing");
 			}
-			closeAttempted = true;
 		});
 	}
 
@@ -491,7 +495,6 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 	private static WebViewWidget[NativeWindowHandle] browserMapping;
 
 	private {
-		int findingIdent;
 		string findingText;
 		bool findingCase;
 	}
@@ -501,11 +504,9 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		if(browserHandle) {
 			auto host = browserHandle.get_host();
 
-			static ident = 0;
 			auto txt = cef_string_t(text);
-			host.find(++ident, &txt, forward, matchCase, findNext);
+			host.find(&txt, forward, matchCase, findNext);
 
-			findingIdent = ident;
 			findingText = text;
 			findingCase = matchCase;
 		}
@@ -513,36 +514,28 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 
 	// ditto
 	void findPrevious() {
-		if(findingIdent == 0)
-			return;
 		if(!browserHandle)
 			return;
 		auto host = browserHandle.get_host();
 		auto txt = cef_string_t(findingText);
-		host.find(findingIdent, &txt, 0, findingCase, 1);
+		host.find(&txt, 0, findingCase, 1);
 	}
 
 	// ditto
 	void findNext() {
-		if(findingIdent == 0)
-			return;
 		if(!browserHandle)
 			return;
 		auto host = browserHandle.get_host();
 		auto txt = cef_string_t(findingText);
-		host.find(findingIdent, &txt, 1, findingCase, 1);
+		host.find(&txt, 1, findingCase, 1);
 	}
 
 	// ditto
 	void stopFind() {
-		if(findingIdent == 0)
-			return;
 		if(!browserHandle)
 			return;
 		auto host = browserHandle.get_host();
 		host.stop_finding(1);
-
-		findingIdent = 0;
 	}
 
 	override void refresh() { if(browserHandle) browserHandle.reload(); }
@@ -773,8 +766,7 @@ version(cef) {
 	}
 
 	class MiniguiDialogHandler : CEF!cef_dialog_handler_t {
-
-		override int on_file_dialog(RC!(cef_browser_t) browser, cef_file_dialog_mode_t mode, const(cef_string_utf16_t)* title, const(cef_string_utf16_t)* default_file_path, cef_string_list_t accept_filters, int selected_accept_filter, RC!(cef_file_dialog_callback_t) callback) {
+		override int on_file_dialog(RC!(cef_browser_t) browser, cef_file_dialog_mode_t mode, const(cef_string_utf16_t)* title, const(cef_string_utf16_t)* default_file_path, cef_string_list_t accept_filters, RC!(cef_file_dialog_callback_t) callback) {
 			try {
 				auto ptr = callback.passable();
 				browser.runOnWebView((wv) {
@@ -783,11 +775,11 @@ version(cef) {
 						auto list = libcef.string_list_alloc();
 						auto item = cef_string_t(name);
 						libcef.string_list_append(list, &item);
-						callback.cont(selected_accept_filter, list);
+						callback.cont(list);
 					}, null, null, () {
 						auto callback = RC!cef_file_dialog_callback_t(ptr);
 						callback.cancel();
-					});
+					}, "/home/me/");
 				});
 			} catch(Exception e) {}
 
@@ -817,6 +809,10 @@ version(cef) {
 		{
 			sdpyPrintDebugString(download_item.get_percent_complete());
 			// FIXME
+		}
+
+		override int can_download(RC!(cef_browser_t), const(cef_string_utf16_t)*, const(cef_string_utf16_t)*) {
+			return 1;
 		}
 	}
 
@@ -951,6 +947,9 @@ version(cef) {
 		override int on_cursor_change(RC!(cef_browser_t), cef_cursor_handle_t, cef_cursor_type_t, const(cef_cursor_info_t)*) {
 			return 0;
 		}
+		override void on_media_access_change(RC!(cef_browser_t), int, int) {
+
+		}
 	}
 
 	class MiniguiRequestHandler : CEF!cef_request_handler_t {
@@ -975,9 +974,6 @@ version(cef) {
 		}
 		override int on_select_client_certificate(RC!(cef_browser_t), int, const(cef_string_utf16_t)*, int, ulong, cef_x509certificate_t**, RC!(cef_select_client_certificate_callback_t)) nothrow {
 			return 0;
-		}
-		override void on_plugin_crashed(RC!(cef_browser_t), const(cef_string_utf16_t)*) nothrow {
-
 		}
 		override void on_render_view_ready(RC!(cef_browser_t) p) nothrow {
 
@@ -1113,6 +1109,14 @@ version(cef) {
 			return null;
 		}
 		override cef_print_handler_t* get_print_handler() nothrow {
+			return null;
+		}
+
+		override cef_command_handler_t* get_command_handler() {
+			return null;
+		}
+
+		override cef_permission_handler_t* get_permission_handler() {
 			return null;
 		}
 
