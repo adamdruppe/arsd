@@ -152,6 +152,12 @@ interface->SetProgressValue(hwnd, 40, 100);
 	but you still need to use dmd -m32mscoff or -m64 (which dub does by default too fyi).
 	See [EnableWindowsSubsystem] for more information.
 
+	$(PITFALL
+		With the Windows subsystem, there is no console, so standard writeln will throw!
+		You can use [sdpyPrintDebugString] instead of stdio writeln instead which will
+		create a console as needed.
+	)
+
 	On Mac, when compiling with X11, you need XQuartz and -L-L/usr/X11R6/lib passed to dmd. If using the Cocoa implementation on Mac, you need to pass `-L-framework -LCocoa` to dmd. For OpenGL, add `-L-framework -LOpenGL` to the build command.
 
 	On Ubuntu, you might need to install X11 development libraries to
@@ -2302,6 +2308,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	/// You can do OpenGL initialization here. Note that in X11 you can't call
 	/// [setAsCurrentOpenGlContext] right after window creation, or X11 may
 	/// fail to send reparent and map events (hit that with proprietary NVidia drivers).
+	/// So you need to wait until this is called and call setAsCurrentOpenGlContext in there, then do the OpenGL initialization.
 	private bool _visibleForTheFirstTimeCalled;
 	void delegate () visibleForTheFirstTime;
 
@@ -2791,7 +2798,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
 		/// Note that at least NVidia proprietary driver may segfault if you will modify texture fast
-		/// enough without waiting 'em to finish their frame bussiness.
+		/// enough without waiting 'em to finish their frame business.
 		bool useGLFinish = true;
 
 		// FIXME: it should schedule it for the end of the current iteration of the event loop...
@@ -2842,7 +2849,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			} else version(Windows) {
 				static if (SdpyIsUsingIVGLBinds) import iv.glbinds; // override druntime windows imports
 				if (!wglMakeCurrent(ghDC, ghRC))
-					throw new Exception("wglMakeCurrent"); // let windows users suffer too
+					throw new Exception("wglMakeCurrent " ~ toInternal!int(GetLastError())); // let windows users suffer too
 			}
 		}
 
@@ -3579,6 +3586,26 @@ private:
 
 	version(X11) {
 		ResizeEvent pendingResizeEvent;
+	}
+
+	/++
+		When in opengl mode and automatically resizing, it will set the opengl viewport to stretch.
+
+		If you work with multiple opengl contexts and/or threads, this might be more trouble than it is
+		worth so you can disable it by setting this to `true`.
+
+		History:
+			Added November 13, 2022.
+	+/
+	public bool suppressAutoOpenglViewport = false;
+	private void updateOpenglViewportIfNeeded(int width, int height) {
+		if(suppressAutoOpenglViewport) return;
+
+		version(without_opengl) {} else
+		if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
+			setAsCurrentOpenGlContextNT();
+			glViewport(0, 0, width, height);
+		}
 	}
 }
 
@@ -11475,7 +11502,7 @@ version(Windows) {
 			// same position, new size for the client rectangle
 			MoveWindow(hwnd, rect.left, rect.top, rect.right, rect.bottom, true);
 
-			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+			updateOpenglViewportIfNeeded(w, h);
 		}
 
 		void moveResize (int x, int y, int w, int h) {
@@ -11490,7 +11517,7 @@ version(Windows) {
 				throw new Exception("AdjustWindowRect");
 
 			MoveWindow(hwnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, true);
-			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+			updateOpenglViewportIfNeeded(w, h);
 			if (windowResized !is null) windowResized(w, h);
 		}
 
@@ -12085,10 +12112,7 @@ version(Windows) {
 						}
 					}
 
-					version(without_opengl) {} else
-					if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
-						glViewport(0, 0, width, height);
-					}
+					updateOpenglViewportIfNeeded(width, height);
 
 					if(windowResized !is null)
 						windowResized(width, height);
@@ -12110,12 +12134,6 @@ version(Windows) {
 					if (!this._visibleForTheFirstTimeCalled) {
 						this._visibleForTheFirstTimeCalled = true;
 						if (this.visibleForTheFirstTime !is null) {
-							version(without_opengl) {} else {
-								if(openglMode == OpenGlOptions.yes) {
-									this.setAsCurrentOpenGlContextNT();
-									glViewport(0, 0, width, height);
-								}
-							}
 							this.visibleForTheFirstTime();
 						}
 					}
@@ -12136,12 +12154,6 @@ version(Windows) {
 					if (!this._visibleForTheFirstTimeCalled && this._visible) {
 						this._visibleForTheFirstTimeCalled = true;
 						if (this.visibleForTheFirstTime !is null) {
-							version(without_opengl) {} else {
-								if(openglMode == OpenGlOptions.yes) {
-									this.setAsCurrentOpenGlContextNT();
-									glViewport(0, 0, width, height);
-								}
-							}
 							this.visibleForTheFirstTime();
 						}
 					}
@@ -12151,12 +12163,6 @@ version(Windows) {
 					if (!this._visibleForTheFirstTimeCalled) {
 						this._visibleForTheFirstTimeCalled = true;
 						if (this.visibleForTheFirstTime !is null) {
-							version(without_opengl) {} else {
-								if(openglMode == OpenGlOptions.yes) {
-									this.setAsCurrentOpenGlContextNT();
-									glViewport(0, 0, width, height);
-								}
-							}
 							this.visibleForTheFirstTime();
 						}
 					}
@@ -12186,7 +12192,7 @@ version(Windows) {
 					} else {
 						EndPaint(hwnd, &ps);
 						version(without_opengl) {} else
-							redrawOpenGlSceneNow();
+							redrawOpenGlSceneSoon();
 					}
 				} break;
 				  default:
@@ -14308,15 +14314,14 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			// btw might overrule this and resize it again
 			recordX11Resize(display, this, w, h);
 
-			// FIXME: do we need to set this as the opengl context to do the glViewport change?
-			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+			updateOpenglViewportIfNeeded(w, h);
 		}
 
 		void moveResize (int x, int y, int w, int h) {
 			if (w < 1) w = 1;
 			if (h < 1) h = 1;
 			XMoveResizeWindow(display, window, x, y, w, h);
-			version(without_opengl) {} else if (openglMode == OpenGlOptions.yes) glViewport(0, 0, w, h);
+			updateOpenglViewportIfNeeded(w, h);
 		}
 
 		void hideCursor () {
@@ -14947,10 +14952,7 @@ version(X11) {
 
 			}
 
-			version(without_opengl) {} else
-			if(win.openglMode == OpenGlOptions.yes && win.resizability == Resizability.automaticallyScaleIfPossible) {
-				glViewport(0, 0, width, height);
-			}
+			win.updateOpenglViewportIfNeeded(width, height);
 
 			win.fixFixedSize(width, height); //k8: this does nothing on my FluxBox; wtf?!
 
@@ -15430,12 +15432,6 @@ version(X11) {
 						if ((*win).visibleForTheFirstTime !is null) {
 							XUnlockDisplay(display);
 							scope(exit) XLockDisplay(display);
-							version(without_opengl) {} else {
-								if((*win).openglMode == OpenGlOptions.yes) {
-									(*win).setAsCurrentOpenGlContextNT();
-									glViewport(0, 0, (*win).width, (*win).height);
-								}
-							}
 							(*win).visibleForTheFirstTime();
 						}
 					}
