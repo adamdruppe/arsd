@@ -225,6 +225,18 @@ interface SampleController {
 			Added May 26, 2021 (dub v10.0)
 	+/
 	bool paused();
+
+	/++
+		Sets a delegate that will be called on the audio thread when the sample is finished
+		playing; immediately after [finished] becomes `true`.
+
+		$(PITFALL
+			Very important: your callback is called on the audio thread. The safest thing
+			to do in it is to simply send a message back to your main thread where it deals
+			with whatever you want to do.
+		)
+	+/
+	//void onfinished(void delegate() shared callback);
 }
 
 private class DummySample : SampleController {
@@ -377,8 +389,16 @@ struct AudioOutputThread {
 		else static assert(0);
 	}
 
+	// manual forward of thse since the opDispatch doesn't do the variadic
+	alias Sample = AudioPcmOutThreadImplementation.Sample;
+	void addSample(Sample[] samples...) {
+		if(impl !is null)
+			impl.addSample(samples);
+	}
+
 	// since these are templates, the opDispatch won't trigger them, so I have to do it differently.
 	// the dummysample is good anyway.
+
 	SampleController playEmulatedOpl3Midi()(string filename) {
 		if(impl)
 			return impl.playEmulatedOpl3Midi(filename);
@@ -1210,21 +1230,77 @@ final class AudioPcmOutThreadImplementation : Thread {
 		return scf;
 	}
 
+	/++
+		A helper object.
 
+		Construct it with the [synth] function.
+	+/
+	static struct SynthBuilder {
+		private this(AudioPcmOutThreadImplementation ao) {
+			this.ao = ao;
+		}
+		private AudioPcmOutThreadImplementation ao;
+	}
 
-	struct Sample {
+	/// ditto
+	SynthBuilder synth() {
+		return SynthBuilder(this);
+	}
+
+	static struct Sample {
+		enum Operation {
+			squareWave = 0,
+			noise = 1,
+			triangleWave = 2,
+			sawtoothWave = 3,
+			sineWave = 4,
+			customFunction = 5
+		}
+
+		/+
+		static Sample opDispatch(string operation)(int frequency) if(__traits(hasMember, Operation, operation)) {
+			Sample s;
+			s.operation = cast(int) __traits(getMember, Operation, operation);
+			s.frequency = frequency;
+			return s;
+		}
+		+/
+
 		int operation;
 		int frequency; /* in samples */
 		int duration; /* in samples */
-		int volume; /* between 1 and 100. You should generally shoot for something lowish, like 20. */
+		int volume = DEFAULT_VOLUME; /* between 1 and 100. You should generally shoot for something lowish, like 20. */
 		int delay; /* in samples */
 		int balance = 50; /* between 0 and 100 */
+
+		/+
+		// volume envelope
+		int attack;
+		int decay;
+		int sustainLevel;
+		int release;
+
+		// change in frequency
+		int frequencyAttack;
+
+		int vibratoRange; // change of frequency as it sustains
+		int vibratoSpeed; // how fast it cycles through the vibratoRange
+		+/
 
 		int x;
 		short delegate(int x) f;
 	}
 
-	final void addSample(Sample currentSample) {
+	// FIXME: go ahead and make this return a SampleController too
+	final void addSample(Sample[] samples...) {
+		if(samples.length == 0)
+			return;
+
+		Sample currentSample = samples[0];
+		samples = samples[1 .. $];
+		if(samples.length)
+			samples = samples.dup; // ensure it isn't in stack memory that might get smashed when the delegate is passed to the other thread
+
 		int frequencyCounter;
 		short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
 
@@ -1235,6 +1311,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 		addChannel(
 			delegate bool (short[] buffer) {
+				newsample:
 				if(currentSample.duration) {
 					size_t i = 0;
 					if(currentSample.delay) {
@@ -1379,7 +1456,19 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(i < buffer.length)
 						buffer[i .. $] = 0;
 
-					return currentSample.duration > 0;
+					return currentSample.duration > 0 || samples.length;
+				} else if(samples.length) {
+					currentSample = samples[0];
+					samples = samples[1 .. $];
+
+					frequencyCounter = 0;
+					val = cast(short) (cast(int) short.max * currentSample.volume / 100);
+
+					leftMultiplier  = 50 + (50 - currentSample.balance);
+					rightMultiplier = 50 + (currentSample.balance - 50);
+					left = true;
+
+					goto newsample;
 				} else {
 					return false;
 				}

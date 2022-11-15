@@ -13495,8 +13495,12 @@ struct FileName(alias storage = previousFileReferenced, string[] filters = null,
 
 /++
 	History:
+		onCancel was added November 6, 2021.
+
 		The dialog itself on Linux was modified on December 2, 2021 to include
 		a directory picker in addition to the command line completion view.
+
+		The `initialDirectory` argument was added November 9, 2022 (dub v10.10)
 	Future_directions:
 		I want to add some kind of custom preview and maybe thumbnail thing in the future,
 		at least on Linux, maybe on Windows too.
@@ -13506,23 +13510,22 @@ void getOpenFileName(
 	string prefilledName = null,
 	string[] filters = null,
 	void delegate() onCancel = null,
+	string initialDirectory = null,
 )
 {
-	return getFileName(true, onOK, prefilledName, filters, onCancel);
+	return getFileName(true, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
-/++
-	History:
-		onCancel was added November 6, 2021.
-+/
+/// ditto
 void getSaveFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
 	string[] filters = null,
 	void delegate() onCancel = null,
+	string initialDirectory = null, 
 )
 {
-	return getFileName(false, onOK, prefilledName, filters, onCancel);
+	return getFileName(false, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
 void getFileName(
@@ -13531,6 +13534,7 @@ void getFileName(
 	string prefilledName = null,
 	string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\0*.png;*.jpg"]
 	void delegate() onCancel = null,
+	string initialDirectory = null,
 )
 {
 
@@ -13566,6 +13570,13 @@ void getFileName(
 		}
 		ofn.lpstrFile = file.ptr;
 		ofn.nMaxFile = file.length;
+
+		wchar[1024] initialDir = 0;
+		if(initialDirectory !is null) {
+			makeWindowsString(initialDirectory, initialDir[]);
+			ofn.lpstrInitialDir = file.ptr;
+		}
+
 		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) 
 		{
 			string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
@@ -13579,7 +13590,7 @@ void getFileName(
 	} else version(custom_widgets) {
 		if(filters.length == 0)
 			filters = ["All Files\0*.*"];
-		auto picker = new FilePicker(prefilledName, filters);
+		auto picker = new FilePicker(prefilledName, filters, initialDirectory);
 		picker.onOK = onOK;
 		picker.onCancel = onCancel;
 		picker.show();
@@ -13724,7 +13735,7 @@ class FilePicker : Dialog {
 	string[] processedFilters;
 
 	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
-	this(string prefilledName, string[] filters, Window owner = null) {
+	this(string prefilledName, string[] filters, string initialDirectory, Window owner = null) {
 		super(300, 200, "Choose File..."); // owner);
 
 		foreach(filter; filters) {
@@ -13747,7 +13758,7 @@ class FilePicker : Dialog {
 			}
 		}
 
-		currentDirectory = ".";
+		currentDirectory = initialDirectory is null ? "." : initialDirectory;
 
 		{
 			auto hl = new HorizontalLayout(this);
