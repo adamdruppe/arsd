@@ -1710,6 +1710,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	private bool _underlined = false;
+	private bool _bolded = false;
+	private bool _italics = false;
 
 	/++
 		Outputs a hyperlink to my custom terminal (v0.0.7 or later) or to version
@@ -1799,7 +1801,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		}
 	}
 
-	/// Note: the Windows console does not support underlining
+	/++
+		Sets or resets the terminal's text rendering options.
+
+		Note: the Windows console does not support these and many Unix terminals don't either.
+		Many will treat italic as blink and bold as brighter color. There is no way to know
+		what will happen. So I don't recommend you use these in general. They don't even work
+		with `-version=TerminalDirectToEmulator`.
+
+		History:
+			underline was added in March 2020. italic and bold were added November 1, 2022
+
+			since they are unreliable, i didnt want to add these but did for some special requests.
+	+/
 	void underline(bool set, ForceOption force = ForceOption.automatic) {
 		if(set == _underlined && force != ForceOption.alwaysSend)
 			return;
@@ -1811,7 +1825,42 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		}
 		_underlined = set;
 	}
-	// FIXME: do I want to do bold and italic?
+	/// ditto
+	void italic(bool set, ForceOption force = ForceOption.automatic) {
+		if(set == _italics && force != ForceOption.alwaysSend)
+			return;
+		if(UseVtSequences) {
+			if(set)
+				writeStringRaw("\033[3m");
+			else
+				writeStringRaw("\033[23m");
+		}
+		_italics = set;
+	}
+	/// ditto
+	void bold(bool set, ForceOption force = ForceOption.automatic) {
+		if(set == _bolded && force != ForceOption.alwaysSend)
+			return;
+		if(UseVtSequences) {
+			if(set)
+				writeStringRaw("\033[1m");
+			else
+				writeStringRaw("\033[22m");
+		}
+		_bolded = set;
+	}
+
+	// FIXME: implement this in arsd terminalemulator too
+	// and make my vim use it. these are extensions in the iterm, etc
+	/+
+	void setUnderlineColor(Color colorIndex) {} // 58;5;n
+	void setUnderlineColor(int r, int g, int b) {} // 58;2;r;g;b
+	void setDefaultUnderlineColor() {} // 59
+	+/
+
+
+
+
 
 	/// Returns the terminal to normal output colors
 	void reset() {
@@ -1823,6 +1872,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			writeStringRaw("\033[0m");
 
 		_underlined = false;
+		_italics = false;
+		_bolded = false;
 		_currentForeground = Color.DEFAULT;
 		_currentBackground = Color.DEFAULT;
 		reverseVideo = false;
