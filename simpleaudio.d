@@ -1,5 +1,6 @@
 // FIXME: add a query devices thing
 // FIXME: add the alsa sequencer interface cuz then i don't need the virtual raw midi sigh. or at elast load "virtual" and auto connect it somehow
+// FIXME: 3d sound samples - basically you can assign a position to a thing you are playing in terms of a angle and distance from teh observe and do a bit of lag and left/right balance adjustments, then tell it its own speed for doppler shifts
 /**
 	The purpose of this module is to provide audio functions for
 	things like playback, capture, and volume on both Windows
