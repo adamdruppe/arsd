@@ -228,6 +228,17 @@ interface SampleController {
 	bool paused();
 
 	/++
+		Seeks to a point in the sample, if possible. If impossible, this function does nothing.
+
+		Params:
+			where = point to seek to, in seconds
+
+		History:
+			Added November 20, 2022 (dub v10.10)
+	+/
+	void seek(float where);
+
+	/++
 		Sets a delegate that will be called on the audio thread when the sample is finished
 		playing; immediately after [finished] becomes `true`.
 
@@ -247,6 +258,8 @@ private class DummySample : SampleController {
 	float position() { return float.init; }
 	bool finished() { return true; }
 	bool paused() { return true; }
+
+	void seek(float where) {}
 }
 
 private class SampleControlFlags : SampleController {
@@ -262,7 +275,10 @@ private class SampleControlFlags : SampleController {
 	bool finished() { return finished_; }
 	bool paused() { return paused_; }
 
+	void seek(float where) { synchronized(this) {requestedSeek = where;} }
+
 	float currentPosition = 0.0;
+	float requestedSeek = float.init;
 }
 
 /++
@@ -909,6 +925,15 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
+					synchronized(scf)
+					if(scf.requestedSeek !is float.init) {
+						if(v.seek(cast(uint) (scf.requestedSeek * v.sampleRate))) {
+							scf.currentPosition = scf.requestedSeek;
+						}
+
+						scf.requestedSeek = float.init;
+					}
+
 					plain:
 					auto got = v.getSamplesShortInterleaved(2, buffer.ptr, cast(int) buffer.length);
 					if(got == 0) {
@@ -940,6 +965,15 @@ final class AudioPcmOutThreadImplementation : Thread {
 						tmp[0] = buffersIn[0].ptr;
 						tmp[1] = buffersIn[1].ptr;
 
+						synchronized(scf)
+						if(scf.requestedSeek !is float.init) {
+							if(v.seekFrame(cast(uint) (scf.requestedSeek * v.sampleRate))) {
+								scf.currentPosition = scf.requestedSeek;
+							}
+
+							scf.requestedSeek = float.init;
+						}
+
 						loop:
 						auto actuallyGot = v.getSamplesFloat(v.chans, tmp.ptr, cast(int) buffersIn[0].length);
 						if(actuallyGot == 0 && loop) {
@@ -969,6 +1003,9 @@ final class AudioPcmOutThreadImplementation : Thread {
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
 			Please note that the static type may change in the future. It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playOgg] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+
+		Bugs:
+			Mp3s cannot be seeked or looped in the current implementation.
 
 		History:
 			Automatic resampling support added Nov 7, 2020.
@@ -1030,6 +1067,15 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
+					synchronized(scf)
+					if(scf.requestedSeek !is float.init) {
+						if(mp3.seek(cast(uint) (scf.requestedSeek * v.sampleRate))) {
+							scf.currentPosition = scf.requestedSeek;
+						}
+
+						scf.requestedSeek = float.init;
+					}
+
 					more:
 					if(next.length >= buffer.length) {
 						buffer[] = next[0 .. buffer.length];
@@ -1057,8 +1103,9 @@ final class AudioPcmOutThreadImplementation : Thread {
 						}
 					}
 
-					if(scf.stopped)
+					if(scf.stopped) {
 						scf.finished_ = true;
+					}
 					return !scf.stopped;
 				}
 			);

@@ -588,6 +588,7 @@ struct ProbedPage {
 private int error (VorbisDecoder f, STBVorbisError e) {
   f.error = e;
   if (!f.eof && e != STBVorbisError.need_more_data) {
+    // import std.stdio; debug writeln(e);
     f.error = e; // breakpoint for debugging
   }
   return 0;
@@ -1030,7 +1031,7 @@ private bool getn (VorbisDecoder f, void* data, int n) {
 }
 
 private void skip (VorbisDecoder f, int n) {
-  if (f.eof || n <= 0) return;
+  if (f.eof || n == 0) return;
   f.rawSkip(n);
 }
 
@@ -1125,6 +1126,7 @@ private int maybe_start_packet (VorbisDecoder f) {
   if (f.next_seg == -1) {
     auto x = get8(f);
     if (f.eof) return false; // EOF at page boundary is not an error!
+    // import std.stdio; debug writefln("CAPTURE %x %x", x, f.stpos);
     if (0x4f != x      ) return error(f, STBVorbisError.missing_capture_pattern);
     if (0x67 != get8(f)) return error(f, STBVorbisError.missing_capture_pattern);
     if (0x67 != get8(f)) return error(f, STBVorbisError.missing_capture_pattern);
@@ -4097,7 +4099,15 @@ private:
     }
     return 0;
   }
-  void rawSkip (int n) { static if (__VERSION__ > 2067) pragma(inline, true); if (isOpened && n > 0) { if ((stpos += n) > stend) stpos = stend; } }
+  void rawSkip (int n) { static if (__VERSION__ > 2067) pragma(inline, true);
+  	if (isOpened) {
+		stpos += n;
+		if(stpos < stst)
+			stpos = stst;
+		else if(stpos > stend)
+			stpos = stend;
+	}
+  }
   void rawSeek (int n) { static if (__VERSION__ > 2067) pragma(inline, true); if (isOpened) { stpos = stst+(n < 0 ? 0 : n); if (stpos > stend) stpos = stend; } }
   void rawClose () { static if (__VERSION__ > 2067) pragma(inline, true); if (isOpened) { isOpened = false; stmread(null, 0, this); } }
 
@@ -4121,14 +4131,17 @@ private:
 
   static int stflRead (void[] buf, uint ofs, VorbisDecoder vb) {
     if (buf !is null) {
-      //{ import core.stdc.stdio; printf("stflRead: ofs=%u; len=%u\n", ofs, cast(uint)buf.length); }
       if (vb.stlastofs != ofs) {
+      	// { import core.stdc.stdio; printf("stflRead: ofs=%u; len=%u\n", ofs, cast(uint)buf.length); }
         import core.stdc.stdio : fseek, SEEK_SET;
         vb.stlastofs = ofs;
         fseek(vb.stfl, ofs, SEEK_SET);
       }
       import core.stdc.stdio : fread;
-      return cast(int)fread(buf.ptr, 1, buf.length, vb.stfl);
+      auto rd = cast(int)fread(buf.ptr, 1, buf.length, vb.stfl);
+      if(rd > 0)
+      	vb.stlastofs += rd;
+      return rd;
     } else {
       if (vb.stclose) {
         import core.stdc.stdio : fclose;
@@ -4492,6 +4505,8 @@ public:
     assert(this.current_loc_valid);
     assert(this.current_loc <= sample_number);
 
+    import std.stdio;
+
     // linear search for the relevant packet
     max_frame_samples = (this.blocksize_1*3-this.blocksize_0)>>2;
     while (this.current_loc < sample_number) {
@@ -4514,6 +4529,7 @@ public:
     }
     // the next frame will start with the sample
     assert(this.current_loc == sample_number);
+
     return 1;
   }
 
