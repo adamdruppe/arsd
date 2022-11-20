@@ -1909,7 +1909,8 @@ class HttpRequest {
 					// is liable to block forever hogging the connection and not letting it send...
 					if(request.state == State.connecting)
 					if(writeSet.isSet(sock) || readSet.isSet(sock)) {
-						int error;
+						import core.stdc.stdint;
+						int32_t error;
 						int retopt = sock.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
 						if(retopt < 0 || error != 0) {
 							request.state = State.aborted;
