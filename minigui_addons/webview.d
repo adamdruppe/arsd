@@ -56,6 +56,7 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 
 	protected this(Widget parent) {
 		containerWindow = new SimpleWindow(640, 480, null, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.nestedChild, WindowFlags.normal, getParentWindow(parent));
+						import std.stdio; writefln("container window %d created", containerWindow.window);
 
 		super(containerWindow, parent);
 	}
@@ -462,10 +463,11 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 					closeAttempted = true;
 					browserHandle.get_host.close_browser(false);
 					ce.preventDefault();
+				 	sdpyPrintDebugString("closing 1");
 				} else {
 					browserHandle.get_host.close_browser(true);
+				 	sdpyPrintDebugString("closing 2");
 				}
-				 sdpyPrintDebugString("closing");
 			}
 		});
 	}
@@ -474,16 +476,22 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 
 	override void registerMovementAdditionalWork() {
 		if(browserWindow) {
-			static if(UsingSimpledisplayX11)
+			// import std.stdio; writeln("new size ", width, "x", height);
+			static if(UsingSimpledisplayX11) {
 				XResizeWindow(XDisplayConnection.get, browserWindow, width, height);
+				if(ozone) XResizeWindow(XDisplayConnection.get, ozone, width, height);
+			}
 			// FIXME: do for Windows too
 		}
 	}
 
+	SimpleWindow browserHostWrapped;
 	SimpleWindow browserWindowWrapped;
 	override SimpleWindow focusableWindow() {
-		if(browserWindowWrapped is null && browserWindow)
+		if(browserWindowWrapped is null && browserWindow) {
 			browserWindowWrapped = new SimpleWindow(browserWindow);
+			// FIXME: this should never actually happen should it
+		}
 		return browserWindowWrapped;
 	}
 
@@ -716,10 +724,31 @@ version(cef) {
 					wv.browserHandle = RC!cef_browser_t(ptr);
 					wv.ozone = ozone ? ozone : handle;
 
+					wv.browserHostWrapped = new SimpleWindow(handle);
+					// XSelectInput(XDisplayConnection.get, handle, EventMask.StructureNotifyMask);
+
+					wv.browserHostWrapped.onDestroyed = delegate{
+						import std.stdio; writefln("browser host %d destroyed (handle %d)", wv.browserWindowWrapped.window, wv.browserWindow);
+
+						auto bce = new BrowserClosedEvent(wv);
+						bce.dispatch();
+					};
+
+					// need this to forward key events to
 					wv.browserWindowWrapped = new SimpleWindow(wv.ozone);
+
 					/+
-					XSelectInput(XDisplayConnection.get, handle, EventMask.FocusChangeMask);
-					
+					XSelectInput(XDisplayConnection.get, wv.ozone, EventMask.StructureNotifyMask);
+					wv.browserWindowWrapped.onDestroyed = delegate{
+						import std.stdio; writefln("browser core %d destroyed (handle %d)", wv.browserWindowWrapped.window, wv.browserWindow);
+
+						//auto bce = new BrowserClosedEvent(wv);
+						//bce.dispatch();
+					};
+					+/
+
+					/+
+					XSelectInput(XDisplayConnection.get, ozone, EventMask.FocusChangeMask);
 					wv.browserWindowWrapped.onFocusChange = (bool got) {
 						import std.format;
 						sdpyPrintDebugString(format("focus change %s %x", got, wv.browserWindowWrapped.impl.window));
@@ -733,15 +762,25 @@ version(cef) {
 			});
 		}
 		override int do_close(RC!cef_browser_t browser) {
+						import std.stdio;
+						debug writeln("do_close");
+			/+
 			browser.runOnWebView((wv) {
-				auto bce = new BrowserClosedEvent(wv);
-				bce.dispatch();
+				wv.browserWindowWrapped.close();
+				.destroy(wv.browserHandle);
 			});
+
 			return 1;
+			+/
+
+			return 0;
 		}
 		override void on_before_close(RC!cef_browser_t browser) {
-			/+
 			import std.stdio; debug writeln("notify");
+			browser.runOnWebView((wv) {
+				.destroy(wv.browserHandle);
+			});
+			/+
 			try
 			semaphore.notify;
 			catch(Exception e) { assert(0); }
@@ -939,7 +978,7 @@ version(cef) {
 			});
 		}
 		override int on_console_message(RC!(cef_browser_t), cef_log_severity_t, const(cef_string_utf16_t)*, const(cef_string_utf16_t)*, int) {
-			return 0; // 1 means to suppress it being automatically output
+			return 1; // 1 means to suppress it being automatically output
 		}
 		override int on_auto_resize(RC!(cef_browser_t), const(cef_size_t)*) {
 			return 0;
