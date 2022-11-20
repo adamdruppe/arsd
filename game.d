@@ -249,7 +249,7 @@
 
 	You can also implement a `chatHistoryLength` which tells how many messages to keep in memory.
 
-	Finally, you can send custom network messages with `sendNetworkUpdate` and `getNetworkUpdate`, which work with your own arbitrary structs that represent data packets. Each one can be sent to recipients like chat messages but this is strictly for the program to read
+	Finally, you can send custom network messages with `sendNetworkUpdate` and `getNetworkUpdate`, which work with your own arbitrary structs that represent data packets. Each one can be sent to recipients like chat messages but this is strictly for the program to read  These take an argument to decide if it should be the tcp or udp connections.
 
 	$(H2 Split screen)
 
