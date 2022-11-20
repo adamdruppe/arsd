@@ -1454,6 +1454,18 @@ enum WindowTypes : int {
 	*/
 	/// a child nested inside the parent. You must pass a parent window to the ctor
 	nestedChild,
+
+	/++
+		The type you get when you pass in an existing browser handle, which means most
+		of simpledisplay's fancy things will not be done since they were never set up.
+
+		Using this to the main SimpleWindow constructor explicitly will trigger an assertion
+		failure; you should use the existing handle constructor.
+
+		History:
+			Added November 17, 2022 (previously it would have type `normal`)
+	+/
+	minimallyWrapped
 }
 
 
@@ -2084,6 +2096,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		other details SimpleWindow does not expose) available to the event loop wrappers.
 	+/
 	this(NativeWindowHandle nativeWindow) {
+		windowType = WindowTypes.minimallyWrapped;
 		version(Windows)
 			impl.hwnd = nativeWindow;
 		else version(X11) {
@@ -2214,7 +2227,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		with(WindowTypes)
 		final switch(windowType) {
 			case normal, undecorated, eventOnly:
-			case nestedChild:
+			case nestedChild, minimallyWrapped:
 				return (customizationFlags & WindowFlags.transient) ? true : false;
 			case dropdownMenu, popupMenu, notification:
 				return true;
@@ -6475,11 +6488,13 @@ version(X11) {
 		return 0;
 	}
 
+	private __gshared int errorHappened;
 	private extern(C) int adrlogger (Display* dpy, XErrorEvent* evt) nothrow @nogc {
 		import core.stdc.stdio;
 		char[265] buffer;
 		XGetErrorText(dpy, evt.error_code, buffer.ptr, cast(int) buffer.length);
 		debug printf("X Error %d: %s / Serial: %lld, Opcode: %d.%d, XID: 0x%llx\n", evt.error_code, buffer.ptr, evt.serial, evt.request_code, evt.minor_code, evt.resourceid);
+		errorHappened = true;
 		return 0;
 	}
 
@@ -11635,6 +11650,8 @@ version(Windows) {
 				case WindowTypes.nestedChild:
 					style = WS_CHILD;
 				break;
+				case WindowTypes.minimallyWrapped:
+					assert(0, "construct minimally wrapped through the other ctor overlad");
 			}
 
 			if ((customizationFlags & WindowFlags.extraComposite) != 0)
@@ -14046,8 +14063,19 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				else
 					isLocal_ = true;
 
-				//XSetErrorHandler(&adrlogger);
-				//XSynchronize(display, true);
+				debug(sdpy_x_errors) {
+					XSetErrorHandler(&adrlogger);
+					XSynchronize(display, true);
+
+					extern(C) int wtf() {
+						if(errorHappened) {
+							asm { int 3; }
+							errorHappened = false;
+						}
+						return 0;
+					}
+					XSetAfterFunction(display, &wtf);
+				}
 
 
 				XSetIOErrorHandler(&x11ioerrCB);
@@ -14751,6 +14779,8 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_NOTIFICATION"(display));
 					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
 				break;
+				case WindowTypes.minimallyWrapped:
+					assert(0, "don't create a minimallyWrapped thing explicitly!");
 				/+
 				case WindowTypes.menu:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
@@ -14856,6 +14886,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				EventMask.PropertyChangeMask |
 				EventMask.FocusChangeMask |
 				EventMask.StructureNotifyMask |
+				EventMask.SubstructureNotifyMask |
 				EventMask.VisibilityChangeMask
 				| EventMask.ButtonPressMask
 				| EventMask.ButtonReleaseMask
@@ -14952,6 +14983,9 @@ version(X11) {
 	}
 
 	void recordX11ResizeAsync(Display* display, SimpleWindow win, int width, int height) {
+		if(win.windowType == WindowTypes.minimallyWrapped)
+			return;
+
 		if(win.pendingResizeEvent is null) {
 			win.pendingResizeEvent = new ResizeEvent();
 			win.addEventListener((ResizeEvent re) {
@@ -14966,7 +15000,14 @@ version(X11) {
 	}
 
 	void recordX11Resize(Display* display, SimpleWindow win, int width, int height) {
+		if(win.windowType == WindowTypes.minimallyWrapped)
+			return;
+		if(win.closed)
+			return;
+
 		if(width != win.width || height != win.height) {
+
+		// import std.stdio; writeln("RESIZE: ", width, "x", height, " was ", win._width, "x", win._height, " window: ", win.windowType, "-", win.title, " ", win.window);
 			win._width = width;
 			win._height = height;
 
@@ -15018,7 +15059,7 @@ version(X11) {
 
 			win.fixFixedSize(width, height); //k8: this does nothing on my FluxBox; wtf?!
 
-			if(resizability != Resizability.automaticallyScaleIfPossible)
+			if(win.resizability != Resizability.automaticallyScaleIfPossible)
 			if(win.windowResized !is null) {
 				XUnlockDisplay(display);
 				scope(exit) XLockDisplay(display);
@@ -15223,6 +15264,8 @@ version(X11) {
 		  case EventType.ConfigureNotify:
 			auto event = e.xconfigure;
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
+				if(win.windowType == WindowTypes.minimallyWrapped)
+					break;
 					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
 
 				/+
@@ -15253,6 +15296,8 @@ version(X11) {
 		  break;
 		  case EventType.Expose:
 		 	if(auto win = e.xexpose.window in SimpleWindow.nativeMapping) {
+				if(win.windowType == WindowTypes.minimallyWrapped)
+					break;
 				// if it is closing from a popup menu, it can get
 				// an Expose event right by the end and trigger a
 				// BadDrawable error ... we'll just check
@@ -15517,6 +15562,8 @@ version(X11) {
 		  break;
 		  case EventType.DestroyNotify:
 			if(auto win = e.xdestroywindow.window in SimpleWindow.nativeMapping) {
+				if(win.destroyed)
+					break; // might get a notification both for itself and from its parent
 				if (win.onDestroyed !is null) try { win.onDestroyed(); } catch (Exception e) {} // sorry
 				win._closed = true; // just in case
 				win.destroyed = true;
@@ -15807,7 +15854,8 @@ extern(C) nothrow @nogc {
 	Display* XOpenDisplay(const char*);
 	int XCloseDisplay(Display*);
 
-	int XSynchronize(Display*, bool);
+	int function() XSynchronize(Display*, bool);
+	int function() XSetAfterFunction(Display*, int function() proc);
 
 	Bool XQueryExtension(Display*, const char*, int*, int*, int*);
 
