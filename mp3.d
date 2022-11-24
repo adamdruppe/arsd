@@ -1,3078 +1,2838 @@
-/*
- * MPEG Audio Layer III decoder
- * Copyright (c) 2001, 2002 Fabrice Bellard,
- *           (c) 2007 Martin J. Fiedler
- *
- * D conversion by Ketmar // Invisible Vector
- *
- * This file is a stripped-down version of the MPEG Audio decoder from
- * the FFmpeg libavcodec library.
- *
- * FFmpeg and minimp3 are free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * FFmpeg and minimp3 are distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with FFmpeg; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
 /++
-	Port of ffmpeg's minimp3 lib to D.
+	Port of the C library [https://github.com/lieff/minimp3|minimp3] to D, with an added high-level API
+	in the form of [MP3Decoder].
+
+	You can use it through [arsd.simpleaudio]'s playMp3 function for a very easy high-level api to just play
+	the sound. If all you want is the mp3 sound to come out your computer's speakers, use that api. If you want
+	to inspect a mp3 file's innards, play it through a different api, convert it to different formats, etc., this
+	module may help you.
 
 	Authors:
-		Code originally by Fabrice Bellard and Martin J. Fiedler.
+		Original C source: https://github.com/lieff/minimp3
 
-		Ported to D by ketmar.
+		To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide.  This software is distributed without any warranty.  See <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-		Hacked up by Adam.
-	License:
-		LGPL 2.1.
+		Translated to D by Guillaume Piolat. He stripped it down a bit for the needs of audio-formats.
+
+		Lightly modified by Adam for arsd inclusion and maintaining compatibility with the published interface of the old implementation.
+		I added the [MP3Decoder] back from the old implementation and removed `@nogc nothrow` for being annoying. Of course, most things
+		here don't do GC or throws at runtime anyway, with the exception of first call setups.
+	History:
+		This module used to be based on a different minimp3, written in 2008 and based on ffmpeg code. On November 20, 2020, I replaced it with the newer implementation (which is the designated successor of the original minimp3). Since the implementation was all private previously, this meant little outside breakage, but some attribute qualifiers changed.
+
+		The new minimp3 implementation is public, but not part of the official `arsd.mp3` API, so I reserve the right to change it again without notice. Only the [MP3Decoder] has stability guarantees. (Though I am unlikely to change what works.)
 +/
 module arsd.mp3;
 
-/* code sample:
-  auto fi = File(args[1]);
-
-  auto reader = delegate (void[] buf) {
-    auto rd = fi.rawRead(buf[]);
-    return cast(int)rd.length;
-  };
-
-  auto mp3 = new MP3Decoder(reader);
-
-  if (!mp3.valid) {
-    writeln("invalid MP3 file!");
-    return;
-  }
-
-  writeln("sample rate: ", mp3.sampleRate);
-  writeln("channels   : ", mp3.channels);
-
-  auto fo = File("z00.raw", "w");
-  while (mp3.valid) {
-    fo.rawWrite(mp3.frameSamples);
-    mp3.decodeNextFrame(reader);
-  }
-  fo.close();
-*/
-
-/* determining mp3 duration with scanning:
-  auto fi = File(args.length > 1 ? args[1] : FileName);
-
-  auto info = mp3Scan((void[] buf) {
-    auto rd = fi.rawRead(buf[]);
-    return cast(uint)rd.length;
-  });
-
-  if (!info.valid) {
-    writeln("invalid MP3 file!");
-  } else {
-    writeln("sample rate: ", info.sampleRate);
-    writeln("channels   : ", info.channels);
-    writeln("samples    : ", info.samples);
-    auto seconds = info.samples/info.sampleRate;
-    writefln("time: %2s:%02s", seconds/60, seconds%60);
-  }
-*/
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-alias MP3Decoder = MP3DecoderImpl!true;
-alias MP3DecoderNoGC = MP3DecoderImpl!false;
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-// see iv.mp3scan
-/+
-struct MP3Info {
-  uint sampleRate;
-  ubyte channels;
-  ulong samples;
-
-  @property bool valid () const pure nothrow @safe @nogc { return (sampleRate != 0); }
-}
-
-
-MP3Info mp3Scan(RDG) (scope RDG rdg) if (is(typeof({
-  ubyte[2] buf;
-  int rd = rdg(buf[]);
-}))) {
-  MP3Info info;
-  bool eofhit;
-  ubyte[4096] inbuf;
-  enum inbufsize = cast(uint)inbuf.length;
-  uint inbufpos, inbufused;
-  mp3_context_t* s = cast(mp3_context_t*)libc_calloc(mp3_context_t.sizeof, 1);
-  if (s is null) return info;
-  scope(exit) libc_free(s);
-  bool skipTagCheck;
-  int headersCount;
-
-  void readMoreData () {
-    if (inbufused-inbufpos < 1441) {
-      import core.stdc.string : memmove;
-      auto left = inbufused-inbufpos;
-      if (inbufpos > 0) memmove(inbuf.ptr, inbuf.ptr+inbufpos, left);
-      inbufpos = 0;
-      inbufused = left;
-      // read more bytes
-      left = inbufsize-inbufused;
-      int rd = rdg(inbuf[inbufused..inbufused+left]);
-      if (rd <= 0) {
-        eofhit = true;
-      } else {
-        inbufused += rd;
-      }
-    }
-  }
-
-  // now skip frames
-  while (!eofhit) {
-    readMoreData();
-    if (eofhit && inbufused-inbufpos < 1024) break;
-    auto left = inbufused-inbufpos;
-    // check for tags
-    if (!skipTagCheck) {
-      skipTagCheck = true;
-      if (left >= 10) {
-        // check for ID3v2
-        if (inbuf.ptr[0] == 'I' && inbuf.ptr[1] == 'D' && inbuf.ptr[2] == '3' && inbuf.ptr[3] != 0xff && inbuf.ptr[4] != 0xff &&
-            ((inbuf.ptr[6]|inbuf.ptr[7]|inbuf.ptr[8]|inbuf.ptr[9])&0x80) == 0) { // see ID3v2 specs
-          // get tag size
-          uint sz = (inbuf.ptr[9]|(inbuf.ptr[8]<<7)|(inbuf.ptr[7]<<14)|(inbuf.ptr[6]<<21))+10;
-          // skip `sz` bytes, it's a tag
-          while (sz > 0 && !eofhit) {
-            readMoreData();
-            left = inbufused-inbufpos;
-            if (left > sz) left = sz;
-            inbufpos += left;
-            sz -= left;
-          }
-          if (eofhit) break;
-          continue;
-        }
-      }
-    } else {
-      if (inbuf.ptr[0] == 'T' && inbuf.ptr[1] == 'A' && inbuf.ptr[2] == 'G') {
-        // this may be ID3v1, just skip 128 bytes
-        uint sz = 128;
-        while (sz > 0 && !eofhit) {
-          readMoreData();
-          left = inbufused-inbufpos;
-          if (left > sz) left = sz;
-          inbufpos += left;
-          sz -= left;
-        }
-        if (eofhit) break;
-        continue;
-      }
-    }
-    int res = mp3_skip_frame(s, inbuf.ptr+inbufpos, left);
-    if (res < 0) {
-      // can't decode frame
-      if (inbufused-inbufpos < 1024) inbufpos = inbufused; else inbufpos += 1024;
-    } else {
-      if (headersCount < 6) ++headersCount;
-      if (!info.valid) {
-        if (s.sample_rate < 1024 || s.sample_rate > 96000) break;
-        if (s.nb_channels < 1 || s.nb_channels > 2) break;
-        info.sampleRate = s.sample_rate;
-        info.channels = cast(ubyte)s.nb_channels;
-      }
-      info.samples += s.sample_count;
-      inbufpos += res;
-    }
-  }
-  //{ import core.stdc.stdio : printf; printf("%d\n", headersCount); }
-  if (headersCount < 6) info = info.init;
-  return info;
-}
+/++
+	The high-level D api for mp3 decoding. You construct it with a read and seek function,
+	then inspect the members for info about the mp3, then call [decodeNextFrame] and
+	[frameSamplesFloat] in a loop to get the data until frameSamplesFloat returns an empty
+	array, indicating you've hit the end of file.
 +/
+class MP3Decoder {
 
+	// https://github.com/lieff/minimp3#high-level-api
 
-// ////////////////////////////////////////////////////////////////////////// //
-final class MP3DecoderImpl(bool allowGC) {
-public:
-  enum MaxSamplesPerFrame = 1152*2;
+	private mp3dec_ex_t dec;
+	private bool isOpen;
 
-  // read bytes into the buffer, return number of bytes read or 0 for EOF, -1 on error
-  // will never be called with empty buffer, or buffer more than 128KB
-  static if (allowGC) {
-    alias ReadBufFn = int delegate (void[] buf);
-  } else {
-    alias ReadBufFn = int delegate (void[] buf) nothrow @nogc;
-  }
+	private static size_t read_cb_static(void* buf, size_t size, void* user_data) {
+		//import std.stdio; writeln("request ", size);
+		auto d = cast(MP3Decoder) user_data;
+		return d.reader(cast(ubyte[]) buf[0 .. size]);
+	}
 
-public:
-  static struct mp3_info_t {
-    int sample_rate;
-    int channels;
-    int audio_bytes; // generated amount of audio per frame
-  }
+	private static int seek_cb_static(uint64_t position, void* user_data) {
+		auto d = cast(MP3Decoder) user_data;
+		return d.seeker(position);
+	}
 
-private:
-  void* dec;
-  //ReadBufFn readBuf;
-  ubyte* inbuf;
-  uint inbufsize; // will allocate enough bytes for one frame
-  uint inbufpos, inbufused;
-  bool eofhit;
-  short[MaxSamplesPerFrame] samples;
-  uint scanLeft = 256*1024+16; // how much bytes we should scan (max ID3 size is 256KB)
+	// read bytes into the buffer, return number of bytes read or 0 for EOF, -1 on error
+	// will never be called with empty buffer, or buffer more than 128KB
+	alias ReadBufFn = int delegate (void[] buf);
 
-  static if (allowGC) mixin(ObjectCodeMixin); else mixin("nothrow @nogc: "~ObjectCodeMixin);
+	private int delegate (ubyte[] buf) reader;
+	private int delegate(size_t where) seeker;
+
+	private mp3dec_io_t io;
+
+	/++
+		Creates a mp3 decoder out of two functions: a reader and a seeker. Both must work together
+		for things to work.
+
+		A reader works like `fread` - it gives you a buffer and you fill it as much as you can,
+		and return the number of bytes filled. A seeker works like `fseek`, it tells you a position
+		in the file to go to and you do it, then return 0. If you return non-zero, the library will
+		treat that as an I/O error. You can forward directly to those C functions if you like. Or, you
+		can refer to a memory buffer, or even a network stream. It is all up to you.
+
+		Please note that you are responsible for closing the file when you are done with it. This means
+		*after* the mp3 decoder is no longer used. The api will not help you determine this.
+
+		Also note that the delegates are NOT scope - they are held on to by this class. It is your
+		responsibility to get lifetimes right; the delegates need to remain valid throughout the use
+		of the decoder object. As a particular warning, a [std.stdio.File] has a RAII destructor that
+		will trigger when it goes out of scope - $(I not) at the end of its referenced lifetime. Meaning
+		the object will be copied for your delegates, but the file will be closed when the function
+		returns, making it useless! I recommend you encapsulate all this in an additional object.
+
+		[arsd.simpleaudio]'s playMp3 function does this encapsulation for you.
+
+		History:
+			It used to take the `reader` as scope, but that changed on November 20, 2022. It also
+			used to not take the `seeker` argument, but this is now required.
+
+			The `reader` used to take `void[] buf`, but now takes `ubyte[] buf`. This is a simple
+			change in your signature, otherwise they work the same. ubyte is more appropriate since
+			it is looking for file bytes, not random untyped data.
+
+			I realize these are all breaking changes, but the fix is easy and the new functionality,
+			the [seek] function among others, is worth it. To me anyway, and I hope for you too.
+	+/
+	this (int delegate (ubyte[] buf) reader, int delegate(size_t where) seeker) {
+		if (reader is null)
+			throw new Exception("reader is null");
+		if (seeker is null)
+			throw new Exception("seeker is null");
+
+		this.reader = reader;
+		this.seeker = seeker;
+
+		io.read = &read_cb_static;
+		io.read_data = cast(void*) this;
+		io.seek = &seek_cb_static;
+		io.seek_data = cast(void*) this;
+
+		auto ret = mp3dec_ex_open_cb(&dec, &io, MP3D_SEEK_TO_SAMPLE);
+		if(ret != 0) {
+			// import std.stdio; writeln(ret);
+			throw new Exception("open");
+		}
+		isOpen = true;
+	}
+
+	~this () { close(); }
+
+	/++
+		Seeks the decoder to the given sample number, so the next call to [decodeNextFrame] will move to that part of the file.
+
+		To go from a time in seconds to a sampleNumber, multiply by [sampleRate] and by [channels]: `mp3.seek(timeInSeconds * mp3.sampleRate * mp3.channels)`.
+
+		Returns: `true` if the seek was successful. Among the reasons it can be false is giving an invalid sample number, an i/o error, or the decoder already being closed.
+
+		History:
+			Added November 20, 2022
+	+/
+	bool seek(uint sampleNumber) {
+		if(!isOpen)
+			return false;
+
+		auto ret = mp3dec_ex_seek(&dec, sampleNumber);
+		// import std.stdio; writeln("seek ", ret);
+
+		return true;
+	}
+
+	/++
+		Closes the decoder, freeing memory associated with it. Remember, this does NOT close any file you referred to in your reader and seeker delegates, it just frees internal memory.
+	+/
+	void close () {
+		if(isOpen) {
+			mp3dec_ex_close(&dec);
+			isOpen = false;
+		}
+	}
+
+	private float[] decodedFramesFloat;
+	private short[] decodedFramesShort;
+	private size_t decodedFramesUsed;
+	private bool shortDecoded;
+
+	// Deprecated - it ignores the reader and calls the other overload.
+	// Only provided for API compatibility with old versions.
+
+	// FIXME: when it reaches eof, what do we want to do?
+	/++
+		Decodes the next frame of data and stores it in [frameSamplesFloat] (also accessible
+		through [frameSamples] as `short[]`).
+
+		Returns:
+			`true` if a new frame was decoded, `false` if it wasn't. Possible reasons for failure are trying to decode an invalid mp3 (see [valid]) and reaching end-of-file.
+
+		Params:
+			reader = ignored. Overload only provided for API compatibility with older versions of `arsd.mp3`.
+
+		See_Also:
+			[channels], [sampleRate]
+	+/
+	bool decodeNextFrame () {
+		if(!isOpen)
+			return false;
+
+		if(decodedFramesFloat is null)
+			decodedFramesFloat = new float[](MINIMP3_MAX_SAMPLES_PER_FRAME);
+
+		auto ret = mp3dec_ex_read(&dec, decodedFramesFloat.ptr, decodedFramesFloat.length);
+		// import std.stdio; writeln("ret ", ret);
+		decodedFramesUsed = ret;
+		shortDecoded = false;
+
+		if(ret <= 0) {
+			close();
+		}
+
+		return ret > 0;
+	}
+
+	/// ditto
+	deprecated bool decodeNextFrame (scope ReadBufFn reader) {
+		return decodeNextFrame();
+	}
+
+	/++
+		Returns `true` if the object is in a valid state. May be
+		false if the stream was corrupted or reached end-of-file.
+	+/
+	@property bool valid () const pure nothrow @safe @nogc {
+		return isOpen;
+	}
+	/++
+		Returns the sample rate, in hz, of the audio stream. Note that
+		this is per channel, so if this returns 44,100 hz and [channels]
+		returns 2, you'd have a total of 88,200 samples per second between
+		the two channels.
+
+		See_Also:
+			[channels]
+	+/
+	@property uint sampleRate () const pure nothrow @safe @nogc {
+		return valid ? dec.info.hz : 0;
+	}
+	/++
+		Returns the number of channels in the file. Note the channel
+		data is interlaced, meaning the first sample is left channel,
+		second sample right channel, then back and forth (assuming two
+		channels, of course).
+
+		See_Also:
+			[sampleRate]
+	+/
+	@property ubyte channels () const pure nothrow @safe @nogc {
+		return (valid ? cast(ubyte) dec.info.channels : 0);
+	}
+	/++
+		Returns the bitrate of the first frame, in kbps.
+
+		Note that different frames of the file may vary bitrate, so this
+		is only an approximation of the whole file.
+
+		History:
+			Added November 21, 2022 (dub v10.10)
+	+/
+	@property int bitrate() const pure nothrow @safe @nogc {
+		return (valid ? dec.info.bitrate_kbps : 0);
+	}
+
+	/++
+		Returns the number of samples in the current frame, as prepared by [decodeNextFrame].
+
+		You probably never need to actually call this, as it is just `frameSamplesFloat.length / channels`.
+
+		See_Also:
+			[frameSamplesFloat], [frameSamples], [decodeNextFrame], [channels]
+	+/
+	@property int samplesInFrame () const pure nothrow @safe @nogc {
+		if(valid)
+			return cast(int) (decodedFramesUsed / channels);
+		else
+			return 0;
+	}
+	/++
+		Returns the current frame, as prepared by [decodeNextFrame], in signed 16 bit (`short[]`) format.
+
+		This will allocate the buffer on first use, then continue reusing it for the duration of the `MP3Decoder`
+		instance's lifetime, meaning it will not allocate again in the loop, but you should not keep a reference
+		to the array because its contents will be overwritten as you continue calling `decodeNextFrame`.
+
+		Is you want something that never allocates, see [frameSamplesFloat].
+
+		See_Also:
+			[frameSamplesFloat], [decodeNextFrame]
+
+		History:
+			This was `@nogc` until November 20, 2022. It now lazily allocates the buffer
+			if needed. If you want something nogc, use [frameSamplesFloat] and convert it yourself.
+	+/
+	@property short[] frameSamples () nothrow {
+		if(decodedFramesShort is null)
+			decodedFramesShort = new short[](MINIMP3_MAX_SAMPLES_PER_FRAME);
+		if(!shortDecoded) {
+			foreach(i, frame; frameSamplesFloat)
+				decodedFramesShort[i] = cast(short)(frame * short.max);
+			shortDecoded = true;
+		}
+		return decodedFramesShort[0 .. decodedFramesUsed];
+	}
+	/++
+		Returns the current frame, as prepared by [decodeNextFrame], in floating point (`float[]`) format.
+
+		You should not keep a reference to the array because its contents will be overwritten as you continue
+		calling `decodeNextFrame`.
+
+		See_Also:
+			[frameSamples], [decodeNextFrame]
+
+		History:
+			Added November 20, 2022 (dub v10.10)
+
+	+/
+	@property float[] frameSamplesFloat () nothrow @nogc {
+		return decodedFramesFloat[0 .. decodedFramesUsed];
+	}
+
+	/++
+		Calls `seek(0)`. This function is provided for compatibility with older versions of the MP3Decoder api and has no other use.
+
+		Params:
+			reader = ignored, provided just for legacy compatibility
+	+/
+	deprecated void restart (scope ReadBufFn reader) { seek(0); }
+
+	/++
+		Does nothing. Only provided for compatibility with older versions of the MP3Decoder api.
+
+		Previously would resync to a frame after a file seek, but this is no longer necessary. Call [seek] instead.
+	+/
+	deprecated void sync (scope ReadBufFn reader) { }
 }
 
-private enum ObjectCodeMixin = q{
-private:
-  uint ensureBytes (scope ReadBufFn readBuf, uint size) {
-    import core.stdc.string : memmove;
-    for (;;) {
-      assert(inbufused >= inbufpos);
-      uint left = inbufused-inbufpos;
-      if (left >= size) return size;
-      if (eofhit) return left;
-      if (left > 0) {
-        if (inbufpos > 0) memmove(inbuf, inbuf+inbufpos, left);
-        inbufused = left;
-      } else {
-        inbufused = 0;
-      }
-      inbufpos = 0;
-      //{ import std.conv : to; assert(size > inbufused, "size="~to!string(size)~"; inbufpos="~to!string(inbufpos)~"; inbufused="~to!string(inbufused)~"; inbufsize="~to!string(inbufsize)); }
-      assert(size > inbufused);
-      left = size-inbufused;
-      assert(left > 0);
-      if (inbufsize < inbufused+left) {
-        auto np = libc_realloc(inbuf, inbufused+left);
-        if (np is null) assert(0, "out of memory"); //FIXME
-        inbufsize = inbufused+left;
-        inbuf = cast(ubyte*)np;
-      }
-      auto rd = readBuf(inbuf[inbufused..inbufused+left]);
-      if (rd > left) assert(0, "mp3 reader returned too many bytes");
-      if (rd <= 0) eofhit = true; else inbufused += rd;
-    }
-  }
-
-  void removeBytes (uint size) {
-    if (size == 0) return;
-    if (size > inbufused-inbufpos) {
-      //assert(0, "the thing that should not be");
-      // we will come here when we are scanning for MP3 frame and no more bytes left
-      eofhit = true;
-      inbufpos = inbufused;
-    } else {
-      inbufpos += size;
-    }
-  }
-
-private:
-  mp3_info_t info;
-  bool curFrameIsOk;
-  bool skipTagCheck;
-
-private:
-  bool decodeOneFrame (scope ReadBufFn readBuf, bool first=false) {
-    for (;;) {
-      if (!eofhit && inbufused-inbufpos < 1441) ensureBytes(readBuf, 64*1024);
-      int res, size = -1;
-
-      // check for tags
-      if (!skipTagCheck) {
-        skipTagCheck = false;
-        if (inbufused-inbufpos >= 10) {
-          // check for ID3v2
-          if (inbuf[inbufpos+0] == 'I' && inbuf[inbufpos+1] == 'D' && inbuf[inbufpos+2] == '3' && inbuf[inbufpos+3] != 0xff && inbuf[inbufpos+4] != 0xff &&
-              ((inbuf[inbufpos+6]|inbuf[inbufpos+7]|inbuf[inbufpos+8]|inbuf[inbufpos+9])&0x80) == 0) { // see ID3v2 specs
-            // get tag size
-            uint sz = (inbuf[inbufpos+9]|(inbuf[inbufpos+8]<<7)|(inbuf[inbufpos+7]<<14)|(inbuf[inbufpos+6]<<21))+10;
-            // skip `sz` bytes, it's a tag
-            while (sz > 0 && !eofhit) {
-              ensureBytes(readBuf, 64*1024);
-              auto left = inbufused-inbufpos;
-              if (left > sz) left = sz;
-              removeBytes(left);
-              sz -= left;
-            }
-            if (!eofhit)
-              continue;
-          }
-        }
-      } else {
-        if (inbuf[inbufpos+0] == 'T' && inbuf[inbufpos+1] == 'A' && inbuf[inbufpos+2] == 'G') {
-          // this may be ID3v1, just skip 128 bytes
-          uint sz = 128;
-          while (sz > 0 && !eofhit) {
-            ensureBytes(readBuf, 64*1024);
-            auto left = inbufused-inbufpos;
-            if (left > sz) left = sz;
-            removeBytes(left);
-            sz -= left;
-          }
-          if (!eofhit)
-            continue;
-        }
-      }
-
-      mp3_context_t* s = cast(mp3_context_t*)dec;
-      res = mp3_decode_frame(s, /*cast(int16_t*)out_*/samples.ptr, &size, inbuf+inbufpos, /*bytes*/inbufused-inbufpos);
-      if (res < 0) {
-        // can't decode frame
-        if (scanLeft >= 1024) {
-          scanLeft -= 1024;
-          removeBytes(1024);
-          continue;
-        }
-        curFrameIsOk = false;
-        return false;
-      }
-      info.audio_bytes = size;
-      if (first) {
-        info.sample_rate = s.sample_rate;
-        info.channels = s.nb_channels;
-        if ((info.sample_rate < 1024 || info.sample_rate > 96000) ||
-            (info.channels < 1 || info.channels > 2) ||
-            (info.audio_bytes < 2 || info.audio_bytes > MaxSamplesPerFrame*2 || info.audio_bytes%2 != 0))
-        {
-          curFrameIsOk = false;
-          return false;
-        }
-        curFrameIsOk = true;
-      } else {
-        if ((s.sample_rate < 1024 || s.sample_rate > 96000) ||
-            (s.nb_channels < 1 || s.nb_channels > 2) ||
-            (size < 2 || size > MaxSamplesPerFrame*2 || size%2 != 0))
-        {
-          curFrameIsOk = false;
-        } else {
-          curFrameIsOk = true;
-        }
-      }
-      if (curFrameIsOk) {
-        scanLeft = 256*1024+16;
-        removeBytes(s.frame_size);
-        return /*s.frame_size*/true;
-      }
-      if (scanLeft >= 1024) {
-        scanLeft -= 1024;
-        removeBytes(1024);
-        continue;
-      }
-      return false;
-    }
-  }
-
-public:
-  this (scope ReadBufFn reader) {
-    static if (allowGC) {
-      if (reader is null) throw new Exception("reader is null");
-    } else {
-      if (reader is null) assert(0, "reader is null");
-    }
-    //readBuf = reader;
-    dec = libc_calloc(mp3_context_t.sizeof, 1);
-    if (dec is null) assert(0, "out of memory"); // no, really! ;-)
-    //mp3_decode_init(cast(mp3_context_t*)dec);
-    if (!decodeOneFrame(reader, true)) close();
-  }
-
-  ~this () { close(); }
-
-  void close () {
-    if (dec !is null) { libc_free(dec); dec = null; }
-    if (inbuf !is null) { libc_free(inbuf); inbuf = null; }
-    info.audio_bytes = 0;
-  }
-
-  // restart decoding
-  void restart (scope ReadBufFn reader) {
-    inbufpos = inbufused = 0;
-    eofhit = false;
-    info.audio_bytes = 0;
-    scanLeft = 256*1024+16;
-    skipTagCheck = false;
-    if (!decodeOneFrame(reader, true)) close();
-  }
-
-  // empty read buffers and decode next frame; should be used to sync after seeking in input stream
-  void sync (scope ReadBufFn reader) {
-    inbufpos = inbufused = 0;
-    eofhit = false;
-    info.audio_bytes = 0;
-    scanLeft = 256*1024+16;
-    skipTagCheck = false;
-    if (!decodeOneFrame(reader)) close();
-  }
-
-  bool decodeNextFrame (scope ReadBufFn reader) {
-    if (!valid) return false;
-    static if (allowGC) scope(failure) close();
-    if (reader is null) return false;
-    if (!decodeOneFrame(reader)) {
-      close();
-      return false;
-    }
-    return true;
-  }
-
-  @property bool valid () const pure nothrow @safe @nogc { return (dec !is null && curFrameIsOk); }
-  @property uint sampleRate () const pure nothrow @safe @nogc { return (valid ? info.sample_rate : 0); }
-  @property ubyte channels () const pure nothrow @safe @nogc { return (valid ? cast(ubyte)info.channels : 0); }
-  @property int samplesInFrame () const pure nothrow @safe @nogc { return (valid ? cast(ubyte)info.audio_bytes : 0); }
-
-  @property short[] frameSamples () nothrow @nogc {
-    if (!valid) return null;
-    return samples[0..info.audio_bytes/2];
-  }
-};
 
 
-// ////////////////////////////////////////////////////////////////////////// //
-private:
-nothrow @nogc:
-import core.stdc.stdlib : libc_calloc = calloc, libc_malloc = malloc, libc_realloc = realloc, libc_free = free;
-import core.stdc.string : libc_memcpy = memcpy, libc_memset = memset, libc_memmove = memmove;
-
-import std.math : libc_pow = pow, libc_frexp = frexp, tan, M_PI = PI, sqrt, cos, sin;
-
-/*
-void* libc_calloc (usize nmemb, usize count) {
-  import core.stdc.stdlib : calloc;
-  import core.stdc.stdio : printf;
-  printf("calloc(%zu, %zu)\n", nmemb, count);
-  return calloc(nmemb, count);
-}
-
-void* libc_malloc (usize count) {
-  import core.stdc.stdlib : malloc;
-  import core.stdc.stdio : printf;
-  printf("malloc(%zu)\n", count+1024*1024);
-  return malloc(count);
-}
-
-void* libc_realloc (void* ptr, usize count) {
-  import core.stdc.stdlib : realloc;
-  import core.stdc.stdio : printf;
-  printf("realloc(%p, %zu)\n", ptr, count);
-  return realloc(ptr, count+1024*1024);
-}
-
-void libc_free (void* ptr) {
-  import core.stdc.stdlib : free;
-  import core.stdc.stdio : printf;
-  printf("free(%p)\n", ptr);
-  return free(ptr);
-}
-*/
-
-enum MP3_FRAME_SIZE = 1152;
-enum MP3_MAX_CODED_FRAME_SIZE = 1792;
-enum MP3_MAX_CHANNELS = 2;
-enum SBLIMIT = 32;
-
-enum MP3_STEREO = 0;
-enum MP3_JSTEREO = 1;
-enum MP3_DUAL = 2;
-enum MP3_MONO = 3;
-
-enum SAME_HEADER_MASK = (0xffe00000 | (3 << 17) | (0xf << 12) | (3 << 10) | (3 << 19));
-
-enum FRAC_BITS = 15;
-enum WFRAC_BITS = 14;
-
-enum OUT_MAX = (32767);
-enum OUT_MIN = (-32768);
-enum OUT_SHIFT = (WFRAC_BITS + FRAC_BITS - 15);
-
-enum MODE_EXT_MS_STEREO = 2;
-enum MODE_EXT_I_STEREO = 1;
-
-enum FRAC_ONE = (1 << FRAC_BITS);
-//enum FIX(a)   ((int)((a) * FRAC_ONE))
-enum FIXR(double a) = (cast(int)((a) * FRAC_ONE + 0.5));
-int FIXRx(double a) { static if (__VERSION__ > 2067) pragma(inline, true); return (cast(int)((a) * FRAC_ONE + 0.5)); }
-//enum FRAC_RND(a) (((a) + (FRAC_ONE/2)) >> FRAC_BITS)
-enum FIXHR(double a) = (cast(int)((a) * (1L<<32) + 0.5));
-int FIXHRx() (double a) { static if (__VERSION__ > 2067) pragma(inline, true); return (cast(int)((a) * (1L<<32) + 0.5)); }
-
-long MULL() (int a, int b) { static if (__VERSION__ > 2067) pragma(inline, true); return ((cast(long)(a) * cast(long)(b)) >> FRAC_BITS); }
-long MULH() (int a, int b) { static if (__VERSION__ > 2067) pragma(inline, true); return ((cast(long)(a) * cast(long)(b)) >> 32); }
-auto MULS(T) (T ra, T rb) { static if (__VERSION__ > 2067) pragma(inline, true); return ((ra) * (rb)); }
-
-enum ISQRT2 = FIXR!(0.70710678118654752440);
-
-enum HEADER_SIZE = 4;
-enum BACKSTEP_SIZE = 512;
-enum EXTRABYTES = 24;
 
 
-// ////////////////////////////////////////////////////////////////////////// //
-alias VLC_TYPE = short;
-alias VT2 = VLC_TYPE[2];
 
-alias int8_t = byte;
-alias int16_t = short;
-alias int32_t = int;
-alias int64_t = long;
+import core.stdc.stdlib;
+import core.stdc.string;
+
+// nothrow:
+// @nogc:
 
 alias uint8_t = ubyte;
 alias uint16_t = ushort;
 alias uint32_t = uint;
 alias uint64_t = ulong;
+alias int16_t = short;
+alias int32_t = int;
 
-struct bitstream_t {
-  const(ubyte)* buffer, buffer_end;
-  int index;
-  int size_in_bits;
+enum MINIMP3_MAX_SAMPLES_PER_FRAME = (1152*2);
+
+struct mp3dec_frame_info_t
+{
+    int frame_bytes;
+    int frame_offset;
+    int channels;
+    int hz;
+    int layer;
+    int bitrate_kbps;
 }
 
-struct vlc_t {
-  int bits;
-  //VLC_TYPE (*table)[2]; ///< code, bits
-  VT2* table;
-  int table_size, table_allocated;
+struct mp3dec_t
+{
+    float[9*32][2] mdct_overlap;
+    float[15*2*32] qmf_state;
+    int reserv;
+    int free_format_bytes;
+    ubyte[4] header;
+    ubyte[511] reserv_buf;
 }
 
-struct mp3_context_t {
-  uint8_t[2*BACKSTEP_SIZE+EXTRABYTES] last_buf;
-  int last_buf_size;
-  int frame_size;
-  uint32_t free_format_next_header;
-  int error_protection;
-  int sample_rate;
-  int sample_rate_index;
-  int bit_rate;
-  bitstream_t gb;
-  bitstream_t in_gb;
-  int nb_channels;
-  int sample_count;
-  int mode;
-  int mode_ext;
-  int lsf;
-  int16_t[512*2][MP3_MAX_CHANNELS] synth_buf;
-  int[MP3_MAX_CHANNELS] synth_buf_offset;
-  int32_t[SBLIMIT][36][MP3_MAX_CHANNELS] sb_samples;
-  int32_t[SBLIMIT*18][MP3_MAX_CHANNELS] mdct_buf;
-  int dither_state;
-  uint last_header; //&0xffff0c00u;
+version = MINIMP3_FLOAT_OUTPUT;
+
+
+alias mp3d_sample_t = float;
+
+enum MAX_FREE_FORMAT_FRAME_SIZE = 2304;    /* more than ISO spec's */
+enum MAX_FRAME_SYNC_MATCHES = 10;
+
+enum MAX_L3_FRAME_PAYLOAD_BYTES = MAX_FREE_FORMAT_FRAME_SIZE; /* MUST be >= 320000/8/32000*1152 = 1440 */
+
+enum MAX_BITRESERVOIR_BYTES      = 511;
+enum SHORT_BLOCK_TYPE            = 2;
+enum STOP_BLOCK_TYPE             = 3;
+enum MODE_MONO                   = 3;
+enum MODE_JOINT_STEREO           = 1;
+enum HDR_SIZE                    = 4;
+
+bool HDR_IS_MONO(const(ubyte)* h)
+{
+    return (((h[3]) & 0xC0) == 0xC0);
 }
 
-struct granule_t {
-  uint8_t scfsi;
-  int part2_3_length;
-  int big_values;
-  int global_gain;
-  int scalefac_compress;
-  uint8_t block_type;
-  uint8_t switch_point;
-  int[3] table_select;
-  int[3] subblock_gain;
-  uint8_t scalefac_scale;
-  uint8_t count1table_select;
-  int[3] region_size;
-  int preflag;
-  int short_start, long_end;
-  uint8_t[40] scale_factors;
-  int32_t[SBLIMIT * 18] sb_hybrid;
+bool HDR_IS_MS_STEREO(const(ubyte)* h)
+{
+    return  (((h[3]) & 0xE0) == 0x60);
 }
 
-struct huff_table_t {
-  int xsize;
-  immutable(uint8_t)* bits;
-  immutable(uint16_t)* codes;
+bool HDR_IS_FREE_FORMAT(const(ubyte)* h)
+{
+    return (((h[2]) & 0xF0) == 0);
+} 
+
+bool HDR_IS_CRC(const(ubyte)* h)
+{
+    return (!((h[1]) & 1));
+} 
+
+int HDR_TEST_PADDING(const(ubyte)* h)
+{
+    return ((h[2]) & 0x2);
 }
 
-__gshared vlc_t[16] huff_vlc;
-__gshared vlc_t[2] huff_quad_vlc;
-__gshared uint16_t[23][9] band_index_long;
-enum TABLE_4_3_SIZE = (8191 + 16)*4;
-__gshared int8_t* table_4_3_exp;
-__gshared uint32_t* table_4_3_value;
-__gshared uint32_t[512] exp_table;
-__gshared uint32_t[16][512] expval_table;
-__gshared int32_t[16][2] is_table;
-__gshared int32_t[16][2][2] is_table_lsf;
-__gshared int32_t[4][8] csa_table;
-__gshared float[4][8] csa_table_float;
-__gshared int32_t[36][8] mdct_win;
-__gshared int16_t[512] window;
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-static immutable uint16_t[15][2] mp3_bitrate_tab = [
-  [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320 ],
-  [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]
-];
-
-static immutable uint16_t[3] mp3_freq_tab = [ 44100, 48000, 32000 ];
-
-static immutable int32_t[257] mp3_enwindow = [
-     0,    -1,    -1,    -1,    -1,    -1,    -1,    -2,
-    -2,    -2,    -2,    -3,    -3,    -4,    -4,    -5,
-    -5,    -6,    -7,    -7,    -8,    -9,   -10,   -11,
-   -13,   -14,   -16,   -17,   -19,   -21,   -24,   -26,
-   -29,   -31,   -35,   -38,   -41,   -45,   -49,   -53,
-   -58,   -63,   -68,   -73,   -79,   -85,   -91,   -97,
-  -104,  -111,  -117,  -125,  -132,  -139,  -147,  -154,
-  -161,  -169,  -176,  -183,  -190,  -196,  -202,  -208,
-   213,   218,   222,   225,   227,   228,   228,   227,
-   224,   221,   215,   208,   200,   189,   177,   163,
-   146,   127,   106,    83,    57,    29,    -2,   -36,
-   -72,  -111,  -153,  -197,  -244,  -294,  -347,  -401,
-  -459,  -519,  -581,  -645,  -711,  -779,  -848,  -919,
-  -991, -1064, -1137, -1210, -1283, -1356, -1428, -1498,
- -1567, -1634, -1698, -1759, -1817, -1870, -1919, -1962,
- -2001, -2032, -2057, -2075, -2085, -2087, -2080, -2063,
-  2037,  2000,  1952,  1893,  1822,  1739,  1644,  1535,
-  1414,  1280,  1131,   970,   794,   605,   402,   185,
-   -45,  -288,  -545,  -814, -1095, -1388, -1692, -2006,
- -2330, -2663, -3004, -3351, -3705, -4063, -4425, -4788,
- -5153, -5517, -5879, -6237, -6589, -6935, -7271, -7597,
- -7910, -8209, -8491, -8755, -8998, -9219, -9416, -9585,
- -9727, -9838, -9916, -9959, -9966, -9935, -9863, -9750,
- -9592, -9389, -9139, -8840, -8492, -8092, -7640, -7134,
-  6574,  5959,  5288,  4561,  3776,  2935,  2037,  1082,
-    70,  -998, -2122, -3300, -4533, -5818, -7154, -8540,
- -9975,-11455,-12980,-14548,-16155,-17799,-19478,-21189,
--22929,-24694,-26482,-28289,-30112,-31947,-33791,-35640,
--37489,-39336,-41176,-43006,-44821,-46617,-48390,-50137,
--51853,-53534,-55178,-56778,-58333,-59838,-61289,-62684,
--64019,-65290,-66494,-67629,-68692,-69679,-70590,-71420,
--72169,-72835,-73415,-73908,-74313,-74630,-74856,-74992,
- 75038,
-];
-
-static immutable uint8_t[16][2] slen_table = [
-  [ 0, 0, 0, 0, 3, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4 ],
-  [ 0, 1, 2, 3, 0, 1, 2, 3, 1, 2, 3, 1, 2, 3, 2, 3 ],
-];
-
-static immutable uint8_t[4][3][6] lsf_nsf_table = [
-  [ [  6,  5,  5, 5 ], [  9,  9,  9, 9 ], [  6,  9,  9, 9 ] ],
-  [ [  6,  5,  7, 3 ], [  9,  9, 12, 6 ], [  6,  9, 12, 6 ] ],
-  [ [ 11, 10,  0, 0 ], [ 18, 18,  0, 0 ], [ 15, 18,  0, 0 ] ],
-  [ [  7,  7,  7, 0 ], [ 12, 12, 12, 0 ], [  6, 15, 12, 0 ] ],
-  [ [  6,  6,  6, 3 ], [ 12,  9,  9, 6 ], [  6, 12,  9, 6 ] ],
-  [ [  8,  8,  5, 0 ], [ 15, 12,  9, 0 ], [  6, 18,  9, 0 ] ],
-];
-
-static immutable uint16_t[4] mp3_huffcodes_1 = [ 0x0001, 0x0001, 0x0001, 0x0000, ];
-
-static immutable uint8_t[4] mp3_huffbits_1 = [ 1,  3,  2,  3, ];
-
-static immutable uint16_t[9] mp3_huffcodes_2 = [ 0x0001, 0x0002, 0x0001, 0x0003, 0x0001, 0x0001, 0x0003, 0x0002, 0x0000, ];
-
-static immutable uint8_t[9] mp3_huffbits_2 = [ 1,  3,  6,  3,  3,  5,  5,  5,  6, ];
-
-static immutable uint16_t[9] mp3_huffcodes_3 = [ 0x0003, 0x0002, 0x0001, 0x0001, 0x0001, 0x0001, 0x0003, 0x0002, 0x0000, ];
-
-static immutable uint8_t[9] mp3_huffbits_3 = [ 2,  2,  6,  3,  2,  5,  5,  5,  6, ];
-
-static immutable uint16_t[16] mp3_huffcodes_5 = [
- 0x0001, 0x0002, 0x0006, 0x0005, 0x0003, 0x0001, 0x0004, 0x0004,
- 0x0007, 0x0005, 0x0007, 0x0001, 0x0006, 0x0001, 0x0001, 0x0000,
-];
-
-static immutable uint8_t[16] mp3_huffbits_5 = [
-  1,  3,  6,  7,  3,  3,  6,  7,
-  6,  6,  7,  8,  7,  6,  7,  8,
-];
-
-static immutable uint16_t[16] mp3_huffcodes_6 = [
- 0x0007, 0x0003, 0x0005, 0x0001, 0x0006, 0x0002, 0x0003, 0x0002,
- 0x0005, 0x0004, 0x0004, 0x0001, 0x0003, 0x0003, 0x0002, 0x0000,
-];
-
-static immutable uint8_t[16] mp3_huffbits_6 = [
-  3,  3,  5,  7,  3,  2,  4,  5,
-  4,  4,  5,  6,  6,  5,  6,  7,
-];
-
-static immutable uint16_t[36] mp3_huffcodes_7 = [
- 0x0001, 0x0002, 0x000a, 0x0013, 0x0010, 0x000a, 0x0003, 0x0003,
- 0x0007, 0x000a, 0x0005, 0x0003, 0x000b, 0x0004, 0x000d, 0x0011,
- 0x0008, 0x0004, 0x000c, 0x000b, 0x0012, 0x000f, 0x000b, 0x0002,
- 0x0007, 0x0006, 0x0009, 0x000e, 0x0003, 0x0001, 0x0006, 0x0004,
- 0x0005, 0x0003, 0x0002, 0x0000,
-];
-
-static immutable uint8_t[36] mp3_huffbits_7 = [
-  1,  3,  6,  8,  8,  9,  3,  4,
-  6,  7,  7,  8,  6,  5,  7,  8,
-  8,  9,  7,  7,  8,  9,  9,  9,
-  7,  7,  8,  9,  9, 10,  8,  8,
-  9, 10, 10, 10,
-];
-
-static immutable uint16_t[36] mp3_huffcodes_8 = [
- 0x0003, 0x0004, 0x0006, 0x0012, 0x000c, 0x0005, 0x0005, 0x0001,
- 0x0002, 0x0010, 0x0009, 0x0003, 0x0007, 0x0003, 0x0005, 0x000e,
- 0x0007, 0x0003, 0x0013, 0x0011, 0x000f, 0x000d, 0x000a, 0x0004,
- 0x000d, 0x0005, 0x0008, 0x000b, 0x0005, 0x0001, 0x000c, 0x0004,
- 0x0004, 0x0001, 0x0001, 0x0000,
-];
-
-static immutable uint8_t[36] mp3_huffbits_8 = [
-  2,  3,  6,  8,  8,  9,  3,  2,
-  4,  8,  8,  8,  6,  4,  6,  8,
-  8,  9,  8,  8,  8,  9,  9, 10,
-  8,  7,  8,  9, 10, 10,  9,  8,
-  9,  9, 11, 11,
-];
-
-static immutable uint16_t[36] mp3_huffcodes_9 = [
- 0x0007, 0x0005, 0x0009, 0x000e, 0x000f, 0x0007, 0x0006, 0x0004,
- 0x0005, 0x0005, 0x0006, 0x0007, 0x0007, 0x0006, 0x0008, 0x0008,
- 0x0008, 0x0005, 0x000f, 0x0006, 0x0009, 0x000a, 0x0005, 0x0001,
- 0x000b, 0x0007, 0x0009, 0x0006, 0x0004, 0x0001, 0x000e, 0x0004,
- 0x0006, 0x0002, 0x0006, 0x0000,
-];
-
-static immutable uint8_t[36] mp3_huffbits_9 = [
-  3,  3,  5,  6,  8,  9,  3,  3,
-  4,  5,  6,  8,  4,  4,  5,  6,
-  7,  8,  6,  5,  6,  7,  7,  8,
-  7,  6,  7,  7,  8,  9,  8,  7,
-  8,  8,  9,  9,
-];
-
-static immutable uint16_t[64] mp3_huffcodes_10 = [
- 0x0001, 0x0002, 0x000a, 0x0017, 0x0023, 0x001e, 0x000c, 0x0011,
- 0x0003, 0x0003, 0x0008, 0x000c, 0x0012, 0x0015, 0x000c, 0x0007,
- 0x000b, 0x0009, 0x000f, 0x0015, 0x0020, 0x0028, 0x0013, 0x0006,
- 0x000e, 0x000d, 0x0016, 0x0022, 0x002e, 0x0017, 0x0012, 0x0007,
- 0x0014, 0x0013, 0x0021, 0x002f, 0x001b, 0x0016, 0x0009, 0x0003,
- 0x001f, 0x0016, 0x0029, 0x001a, 0x0015, 0x0014, 0x0005, 0x0003,
- 0x000e, 0x000d, 0x000a, 0x000b, 0x0010, 0x0006, 0x0005, 0x0001,
- 0x0009, 0x0008, 0x0007, 0x0008, 0x0004, 0x0004, 0x0002, 0x0000,
-];
-
-static immutable uint8_t[64] mp3_huffbits_10 = [
-  1,  3,  6,  8,  9,  9,  9, 10,
-  3,  4,  6,  7,  8,  9,  8,  8,
-  6,  6,  7,  8,  9, 10,  9,  9,
-  7,  7,  8,  9, 10, 10,  9, 10,
-  8,  8,  9, 10, 10, 10, 10, 10,
-  9,  9, 10, 10, 11, 11, 10, 11,
-  8,  8,  9, 10, 10, 10, 11, 11,
-  9,  8,  9, 10, 10, 11, 11, 11,
-];
-
-static immutable uint16_t[64] mp3_huffcodes_11 = [
- 0x0003, 0x0004, 0x000a, 0x0018, 0x0022, 0x0021, 0x0015, 0x000f,
- 0x0005, 0x0003, 0x0004, 0x000a, 0x0020, 0x0011, 0x000b, 0x000a,
- 0x000b, 0x0007, 0x000d, 0x0012, 0x001e, 0x001f, 0x0014, 0x0005,
- 0x0019, 0x000b, 0x0013, 0x003b, 0x001b, 0x0012, 0x000c, 0x0005,
- 0x0023, 0x0021, 0x001f, 0x003a, 0x001e, 0x0010, 0x0007, 0x0005,
- 0x001c, 0x001a, 0x0020, 0x0013, 0x0011, 0x000f, 0x0008, 0x000e,
- 0x000e, 0x000c, 0x0009, 0x000d, 0x000e, 0x0009, 0x0004, 0x0001,
- 0x000b, 0x0004, 0x0006, 0x0006, 0x0006, 0x0003, 0x0002, 0x0000,
-];
-
-static immutable uint8_t[64] mp3_huffbits_11 = [
-  2,  3,  5,  7,  8,  9,  8,  9,
-  3,  3,  4,  6,  8,  8,  7,  8,
-  5,  5,  6,  7,  8,  9,  8,  8,
-  7,  6,  7,  9,  8, 10,  8,  9,
-  8,  8,  8,  9,  9, 10,  9, 10,
-  8,  8,  9, 10, 10, 11, 10, 11,
-  8,  7,  7,  8,  9, 10, 10, 10,
-  8,  7,  8,  9, 10, 10, 10, 10,
-];
-
-static immutable uint16_t[64] mp3_huffcodes_12 = [
- 0x0009, 0x0006, 0x0010, 0x0021, 0x0029, 0x0027, 0x0026, 0x001a,
- 0x0007, 0x0005, 0x0006, 0x0009, 0x0017, 0x0010, 0x001a, 0x000b,
- 0x0011, 0x0007, 0x000b, 0x000e, 0x0015, 0x001e, 0x000a, 0x0007,
- 0x0011, 0x000a, 0x000f, 0x000c, 0x0012, 0x001c, 0x000e, 0x0005,
- 0x0020, 0x000d, 0x0016, 0x0013, 0x0012, 0x0010, 0x0009, 0x0005,
- 0x0028, 0x0011, 0x001f, 0x001d, 0x0011, 0x000d, 0x0004, 0x0002,
- 0x001b, 0x000c, 0x000b, 0x000f, 0x000a, 0x0007, 0x0004, 0x0001,
- 0x001b, 0x000c, 0x0008, 0x000c, 0x0006, 0x0003, 0x0001, 0x0000,
-];
-
-static immutable uint8_t[64] mp3_huffbits_12 = [
-  4,  3,  5,  7,  8,  9,  9,  9,
-  3,  3,  4,  5,  7,  7,  8,  8,
-  5,  4,  5,  6,  7,  8,  7,  8,
-  6,  5,  6,  6,  7,  8,  8,  8,
-  7,  6,  7,  7,  8,  8,  8,  9,
-  8,  7,  8,  8,  8,  9,  8,  9,
-  8,  7,  7,  8,  8,  9,  9, 10,
-  9,  8,  8,  9,  9,  9,  9, 10,
-];
-
-static immutable uint16_t[256] mp3_huffcodes_13 = [
- 0x0001, 0x0005, 0x000e, 0x0015, 0x0022, 0x0033, 0x002e, 0x0047,
- 0x002a, 0x0034, 0x0044, 0x0034, 0x0043, 0x002c, 0x002b, 0x0013,
- 0x0003, 0x0004, 0x000c, 0x0013, 0x001f, 0x001a, 0x002c, 0x0021,
- 0x001f, 0x0018, 0x0020, 0x0018, 0x001f, 0x0023, 0x0016, 0x000e,
- 0x000f, 0x000d, 0x0017, 0x0024, 0x003b, 0x0031, 0x004d, 0x0041,
- 0x001d, 0x0028, 0x001e, 0x0028, 0x001b, 0x0021, 0x002a, 0x0010,
- 0x0016, 0x0014, 0x0025, 0x003d, 0x0038, 0x004f, 0x0049, 0x0040,
- 0x002b, 0x004c, 0x0038, 0x0025, 0x001a, 0x001f, 0x0019, 0x000e,
- 0x0023, 0x0010, 0x003c, 0x0039, 0x0061, 0x004b, 0x0072, 0x005b,
- 0x0036, 0x0049, 0x0037, 0x0029, 0x0030, 0x0035, 0x0017, 0x0018,
- 0x003a, 0x001b, 0x0032, 0x0060, 0x004c, 0x0046, 0x005d, 0x0054,
- 0x004d, 0x003a, 0x004f, 0x001d, 0x004a, 0x0031, 0x0029, 0x0011,
- 0x002f, 0x002d, 0x004e, 0x004a, 0x0073, 0x005e, 0x005a, 0x004f,
- 0x0045, 0x0053, 0x0047, 0x0032, 0x003b, 0x0026, 0x0024, 0x000f,
- 0x0048, 0x0022, 0x0038, 0x005f, 0x005c, 0x0055, 0x005b, 0x005a,
- 0x0056, 0x0049, 0x004d, 0x0041, 0x0033, 0x002c, 0x002b, 0x002a,
- 0x002b, 0x0014, 0x001e, 0x002c, 0x0037, 0x004e, 0x0048, 0x0057,
- 0x004e, 0x003d, 0x002e, 0x0036, 0x0025, 0x001e, 0x0014, 0x0010,
- 0x0035, 0x0019, 0x0029, 0x0025, 0x002c, 0x003b, 0x0036, 0x0051,
- 0x0042, 0x004c, 0x0039, 0x0036, 0x0025, 0x0012, 0x0027, 0x000b,
- 0x0023, 0x0021, 0x001f, 0x0039, 0x002a, 0x0052, 0x0048, 0x0050,
- 0x002f, 0x003a, 0x0037, 0x0015, 0x0016, 0x001a, 0x0026, 0x0016,
- 0x0035, 0x0019, 0x0017, 0x0026, 0x0046, 0x003c, 0x0033, 0x0024,
- 0x0037, 0x001a, 0x0022, 0x0017, 0x001b, 0x000e, 0x0009, 0x0007,
- 0x0022, 0x0020, 0x001c, 0x0027, 0x0031, 0x004b, 0x001e, 0x0034,
- 0x0030, 0x0028, 0x0034, 0x001c, 0x0012, 0x0011, 0x0009, 0x0005,
- 0x002d, 0x0015, 0x0022, 0x0040, 0x0038, 0x0032, 0x0031, 0x002d,
- 0x001f, 0x0013, 0x000c, 0x000f, 0x000a, 0x0007, 0x0006, 0x0003,
- 0x0030, 0x0017, 0x0014, 0x0027, 0x0024, 0x0023, 0x0035, 0x0015,
- 0x0010, 0x0017, 0x000d, 0x000a, 0x0006, 0x0001, 0x0004, 0x0002,
- 0x0010, 0x000f, 0x0011, 0x001b, 0x0019, 0x0014, 0x001d, 0x000b,
- 0x0011, 0x000c, 0x0010, 0x0008, 0x0001, 0x0001, 0x0000, 0x0001,
-];
-
-static immutable uint8_t[256] mp3_huffbits_13 = [
-  1,  4,  6,  7,  8,  9,  9, 10,
-  9, 10, 11, 11, 12, 12, 13, 13,
-  3,  4,  6,  7,  8,  8,  9,  9,
-  9,  9, 10, 10, 11, 12, 12, 12,
-  6,  6,  7,  8,  9,  9, 10, 10,
-  9, 10, 10, 11, 11, 12, 13, 13,
-  7,  7,  8,  9,  9, 10, 10, 10,
- 10, 11, 11, 11, 11, 12, 13, 13,
-  8,  7,  9,  9, 10, 10, 11, 11,
- 10, 11, 11, 12, 12, 13, 13, 14,
-  9,  8,  9, 10, 10, 10, 11, 11,
- 11, 11, 12, 11, 13, 13, 14, 14,
-  9,  9, 10, 10, 11, 11, 11, 11,
- 11, 12, 12, 12, 13, 13, 14, 14,
- 10,  9, 10, 11, 11, 11, 12, 12,
- 12, 12, 13, 13, 13, 14, 16, 16,
-  9,  8,  9, 10, 10, 11, 11, 12,
- 12, 12, 12, 13, 13, 14, 15, 15,
- 10,  9, 10, 10, 11, 11, 11, 13,
- 12, 13, 13, 14, 14, 14, 16, 15,
- 10, 10, 10, 11, 11, 12, 12, 13,
- 12, 13, 14, 13, 14, 15, 16, 17,
- 11, 10, 10, 11, 12, 12, 12, 12,
- 13, 13, 13, 14, 15, 15, 15, 16,
- 11, 11, 11, 12, 12, 13, 12, 13,
- 14, 14, 15, 15, 15, 16, 16, 16,
- 12, 11, 12, 13, 13, 13, 14, 14,
- 14, 14, 14, 15, 16, 15, 16, 16,
- 13, 12, 12, 13, 13, 13, 15, 14,
- 14, 17, 15, 15, 15, 17, 16, 16,
- 12, 12, 13, 14, 14, 14, 15, 14,
- 15, 15, 16, 16, 19, 18, 19, 16,
-];
-
-static immutable uint16_t[256] mp3_huffcodes_15 = [
- 0x0007, 0x000c, 0x0012, 0x0035, 0x002f, 0x004c, 0x007c, 0x006c,
- 0x0059, 0x007b, 0x006c, 0x0077, 0x006b, 0x0051, 0x007a, 0x003f,
- 0x000d, 0x0005, 0x0010, 0x001b, 0x002e, 0x0024, 0x003d, 0x0033,
- 0x002a, 0x0046, 0x0034, 0x0053, 0x0041, 0x0029, 0x003b, 0x0024,
- 0x0013, 0x0011, 0x000f, 0x0018, 0x0029, 0x0022, 0x003b, 0x0030,
- 0x0028, 0x0040, 0x0032, 0x004e, 0x003e, 0x0050, 0x0038, 0x0021,
- 0x001d, 0x001c, 0x0019, 0x002b, 0x0027, 0x003f, 0x0037, 0x005d,
- 0x004c, 0x003b, 0x005d, 0x0048, 0x0036, 0x004b, 0x0032, 0x001d,
- 0x0034, 0x0016, 0x002a, 0x0028, 0x0043, 0x0039, 0x005f, 0x004f,
- 0x0048, 0x0039, 0x0059, 0x0045, 0x0031, 0x0042, 0x002e, 0x001b,
- 0x004d, 0x0025, 0x0023, 0x0042, 0x003a, 0x0034, 0x005b, 0x004a,
- 0x003e, 0x0030, 0x004f, 0x003f, 0x005a, 0x003e, 0x0028, 0x0026,
- 0x007d, 0x0020, 0x003c, 0x0038, 0x0032, 0x005c, 0x004e, 0x0041,
- 0x0037, 0x0057, 0x0047, 0x0033, 0x0049, 0x0033, 0x0046, 0x001e,
- 0x006d, 0x0035, 0x0031, 0x005e, 0x0058, 0x004b, 0x0042, 0x007a,
- 0x005b, 0x0049, 0x0038, 0x002a, 0x0040, 0x002c, 0x0015, 0x0019,
- 0x005a, 0x002b, 0x0029, 0x004d, 0x0049, 0x003f, 0x0038, 0x005c,
- 0x004d, 0x0042, 0x002f, 0x0043, 0x0030, 0x0035, 0x0024, 0x0014,
- 0x0047, 0x0022, 0x0043, 0x003c, 0x003a, 0x0031, 0x0058, 0x004c,
- 0x0043, 0x006a, 0x0047, 0x0036, 0x0026, 0x0027, 0x0017, 0x000f,
- 0x006d, 0x0035, 0x0033, 0x002f, 0x005a, 0x0052, 0x003a, 0x0039,
- 0x0030, 0x0048, 0x0039, 0x0029, 0x0017, 0x001b, 0x003e, 0x0009,
- 0x0056, 0x002a, 0x0028, 0x0025, 0x0046, 0x0040, 0x0034, 0x002b,
- 0x0046, 0x0037, 0x002a, 0x0019, 0x001d, 0x0012, 0x000b, 0x000b,
- 0x0076, 0x0044, 0x001e, 0x0037, 0x0032, 0x002e, 0x004a, 0x0041,
- 0x0031, 0x0027, 0x0018, 0x0010, 0x0016, 0x000d, 0x000e, 0x0007,
- 0x005b, 0x002c, 0x0027, 0x0026, 0x0022, 0x003f, 0x0034, 0x002d,
- 0x001f, 0x0034, 0x001c, 0x0013, 0x000e, 0x0008, 0x0009, 0x0003,
- 0x007b, 0x003c, 0x003a, 0x0035, 0x002f, 0x002b, 0x0020, 0x0016,
- 0x0025, 0x0018, 0x0011, 0x000c, 0x000f, 0x000a, 0x0002, 0x0001,
- 0x0047, 0x0025, 0x0022, 0x001e, 0x001c, 0x0014, 0x0011, 0x001a,
- 0x0015, 0x0010, 0x000a, 0x0006, 0x0008, 0x0006, 0x0002, 0x0000,
-];
-
-static immutable uint8_t[256] mp3_huffbits_15 = [
-  3,  4,  5,  7,  7,  8,  9,  9,
-  9, 10, 10, 11, 11, 11, 12, 13,
-  4,  3,  5,  6,  7,  7,  8,  8,
-  8,  9,  9, 10, 10, 10, 11, 11,
-  5,  5,  5,  6,  7,  7,  8,  8,
-  8,  9,  9, 10, 10, 11, 11, 11,
-  6,  6,  6,  7,  7,  8,  8,  9,
-  9,  9, 10, 10, 10, 11, 11, 11,
-  7,  6,  7,  7,  8,  8,  9,  9,
-  9,  9, 10, 10, 10, 11, 11, 11,
-  8,  7,  7,  8,  8,  8,  9,  9,
-  9,  9, 10, 10, 11, 11, 11, 12,
-  9,  7,  8,  8,  8,  9,  9,  9,
-  9, 10, 10, 10, 11, 11, 12, 12,
-  9,  8,  8,  9,  9,  9,  9, 10,
- 10, 10, 10, 10, 11, 11, 11, 12,
-  9,  8,  8,  9,  9,  9,  9, 10,
- 10, 10, 10, 11, 11, 12, 12, 12,
-  9,  8,  9,  9,  9,  9, 10, 10,
- 10, 11, 11, 11, 11, 12, 12, 12,
- 10,  9,  9,  9, 10, 10, 10, 10,
- 10, 11, 11, 11, 11, 12, 13, 12,
- 10,  9,  9,  9, 10, 10, 10, 10,
- 11, 11, 11, 11, 12, 12, 12, 13,
- 11, 10,  9, 10, 10, 10, 11, 11,
- 11, 11, 11, 11, 12, 12, 13, 13,
- 11, 10, 10, 10, 10, 11, 11, 11,
- 11, 12, 12, 12, 12, 12, 13, 13,
- 12, 11, 11, 11, 11, 11, 11, 11,
- 12, 12, 12, 12, 13, 13, 12, 13,
- 12, 11, 11, 11, 11, 11, 11, 12,
- 12, 12, 12, 12, 13, 13, 13, 13,
-];
-
-static immutable uint16_t[256] mp3_huffcodes_16 = [
- 0x0001, 0x0005, 0x000e, 0x002c, 0x004a, 0x003f, 0x006e, 0x005d,
- 0x00ac, 0x0095, 0x008a, 0x00f2, 0x00e1, 0x00c3, 0x0178, 0x0011,
- 0x0003, 0x0004, 0x000c, 0x0014, 0x0023, 0x003e, 0x0035, 0x002f,
- 0x0053, 0x004b, 0x0044, 0x0077, 0x00c9, 0x006b, 0x00cf, 0x0009,
- 0x000f, 0x000d, 0x0017, 0x0026, 0x0043, 0x003a, 0x0067, 0x005a,
- 0x00a1, 0x0048, 0x007f, 0x0075, 0x006e, 0x00d1, 0x00ce, 0x0010,
- 0x002d, 0x0015, 0x0027, 0x0045, 0x0040, 0x0072, 0x0063, 0x0057,
- 0x009e, 0x008c, 0x00fc, 0x00d4, 0x00c7, 0x0183, 0x016d, 0x001a,
- 0x004b, 0x0024, 0x0044, 0x0041, 0x0073, 0x0065, 0x00b3, 0x00a4,
- 0x009b, 0x0108, 0x00f6, 0x00e2, 0x018b, 0x017e, 0x016a, 0x0009,
- 0x0042, 0x001e, 0x003b, 0x0038, 0x0066, 0x00b9, 0x00ad, 0x0109,
- 0x008e, 0x00fd, 0x00e8, 0x0190, 0x0184, 0x017a, 0x01bd, 0x0010,
- 0x006f, 0x0036, 0x0034, 0x0064, 0x00b8, 0x00b2, 0x00a0, 0x0085,
- 0x0101, 0x00f4, 0x00e4, 0x00d9, 0x0181, 0x016e, 0x02cb, 0x000a,
- 0x0062, 0x0030, 0x005b, 0x0058, 0x00a5, 0x009d, 0x0094, 0x0105,
- 0x00f8, 0x0197, 0x018d, 0x0174, 0x017c, 0x0379, 0x0374, 0x0008,
- 0x0055, 0x0054, 0x0051, 0x009f, 0x009c, 0x008f, 0x0104, 0x00f9,
- 0x01ab, 0x0191, 0x0188, 0x017f, 0x02d7, 0x02c9, 0x02c4, 0x0007,
- 0x009a, 0x004c, 0x0049, 0x008d, 0x0083, 0x0100, 0x00f5, 0x01aa,
- 0x0196, 0x018a, 0x0180, 0x02df, 0x0167, 0x02c6, 0x0160, 0x000b,
- 0x008b, 0x0081, 0x0043, 0x007d, 0x00f7, 0x00e9, 0x00e5, 0x00db,
- 0x0189, 0x02e7, 0x02e1, 0x02d0, 0x0375, 0x0372, 0x01b7, 0x0004,
- 0x00f3, 0x0078, 0x0076, 0x0073, 0x00e3, 0x00df, 0x018c, 0x02ea,
- 0x02e6, 0x02e0, 0x02d1, 0x02c8, 0x02c2, 0x00df, 0x01b4, 0x0006,
- 0x00ca, 0x00e0, 0x00de, 0x00da, 0x00d8, 0x0185, 0x0182, 0x017d,
- 0x016c, 0x0378, 0x01bb, 0x02c3, 0x01b8, 0x01b5, 0x06c0, 0x0004,
- 0x02eb, 0x00d3, 0x00d2, 0x00d0, 0x0172, 0x017b, 0x02de, 0x02d3,
- 0x02ca, 0x06c7, 0x0373, 0x036d, 0x036c, 0x0d83, 0x0361, 0x0002,
- 0x0179, 0x0171, 0x0066, 0x00bb, 0x02d6, 0x02d2, 0x0166, 0x02c7,
- 0x02c5, 0x0362, 0x06c6, 0x0367, 0x0d82, 0x0366, 0x01b2, 0x0000,
- 0x000c, 0x000a, 0x0007, 0x000b, 0x000a, 0x0011, 0x000b, 0x0009,
- 0x000d, 0x000c, 0x000a, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
-];
-
-static immutable uint8_t[256] mp3_huffbits_16 = [
-  1,  4,  6,  8,  9,  9, 10, 10,
- 11, 11, 11, 12, 12, 12, 13,  9,
-  3,  4,  6,  7,  8,  9,  9,  9,
- 10, 10, 10, 11, 12, 11, 12,  8,
-  6,  6,  7,  8,  9,  9, 10, 10,
- 11, 10, 11, 11, 11, 12, 12,  9,
-  8,  7,  8,  9,  9, 10, 10, 10,
- 11, 11, 12, 12, 12, 13, 13, 10,
-  9,  8,  9,  9, 10, 10, 11, 11,
- 11, 12, 12, 12, 13, 13, 13,  9,
-  9,  8,  9,  9, 10, 11, 11, 12,
- 11, 12, 12, 13, 13, 13, 14, 10,
- 10,  9,  9, 10, 11, 11, 11, 11,
- 12, 12, 12, 12, 13, 13, 14, 10,
- 10,  9, 10, 10, 11, 11, 11, 12,
- 12, 13, 13, 13, 13, 15, 15, 10,
- 10, 10, 10, 11, 11, 11, 12, 12,
- 13, 13, 13, 13, 14, 14, 14, 10,
- 11, 10, 10, 11, 11, 12, 12, 13,
- 13, 13, 13, 14, 13, 14, 13, 11,
- 11, 11, 10, 11, 12, 12, 12, 12,
- 13, 14, 14, 14, 15, 15, 14, 10,
- 12, 11, 11, 11, 12, 12, 13, 14,
- 14, 14, 14, 14, 14, 13, 14, 11,
- 12, 12, 12, 12, 12, 13, 13, 13,
- 13, 15, 14, 14, 14, 14, 16, 11,
- 14, 12, 12, 12, 13, 13, 14, 14,
- 14, 16, 15, 15, 15, 17, 15, 11,
- 13, 13, 11, 12, 14, 14, 13, 14,
- 14, 15, 16, 15, 17, 15, 14, 11,
-  9,  8,  8,  9,  9, 10, 10, 10,
- 11, 11, 11, 11, 11, 11, 11,  8,
-];
-
-static immutable uint16_t[256] mp3_huffcodes_24 = [
- 0x000f, 0x000d, 0x002e, 0x0050, 0x0092, 0x0106, 0x00f8, 0x01b2,
- 0x01aa, 0x029d, 0x028d, 0x0289, 0x026d, 0x0205, 0x0408, 0x0058,
- 0x000e, 0x000c, 0x0015, 0x0026, 0x0047, 0x0082, 0x007a, 0x00d8,
- 0x00d1, 0x00c6, 0x0147, 0x0159, 0x013f, 0x0129, 0x0117, 0x002a,
- 0x002f, 0x0016, 0x0029, 0x004a, 0x0044, 0x0080, 0x0078, 0x00dd,
- 0x00cf, 0x00c2, 0x00b6, 0x0154, 0x013b, 0x0127, 0x021d, 0x0012,
- 0x0051, 0x0027, 0x004b, 0x0046, 0x0086, 0x007d, 0x0074, 0x00dc,
- 0x00cc, 0x00be, 0x00b2, 0x0145, 0x0137, 0x0125, 0x010f, 0x0010,
- 0x0093, 0x0048, 0x0045, 0x0087, 0x007f, 0x0076, 0x0070, 0x00d2,
- 0x00c8, 0x00bc, 0x0160, 0x0143, 0x0132, 0x011d, 0x021c, 0x000e,
- 0x0107, 0x0042, 0x0081, 0x007e, 0x0077, 0x0072, 0x00d6, 0x00ca,
- 0x00c0, 0x00b4, 0x0155, 0x013d, 0x012d, 0x0119, 0x0106, 0x000c,
- 0x00f9, 0x007b, 0x0079, 0x0075, 0x0071, 0x00d7, 0x00ce, 0x00c3,
- 0x00b9, 0x015b, 0x014a, 0x0134, 0x0123, 0x0110, 0x0208, 0x000a,
- 0x01b3, 0x0073, 0x006f, 0x006d, 0x00d3, 0x00cb, 0x00c4, 0x00bb,
- 0x0161, 0x014c, 0x0139, 0x012a, 0x011b, 0x0213, 0x017d, 0x0011,
- 0x01ab, 0x00d4, 0x00d0, 0x00cd, 0x00c9, 0x00c1, 0x00ba, 0x00b1,
- 0x00a9, 0x0140, 0x012f, 0x011e, 0x010c, 0x0202, 0x0179, 0x0010,
- 0x014f, 0x00c7, 0x00c5, 0x00bf, 0x00bd, 0x00b5, 0x00ae, 0x014d,
- 0x0141, 0x0131, 0x0121, 0x0113, 0x0209, 0x017b, 0x0173, 0x000b,
- 0x029c, 0x00b8, 0x00b7, 0x00b3, 0x00af, 0x0158, 0x014b, 0x013a,
- 0x0130, 0x0122, 0x0115, 0x0212, 0x017f, 0x0175, 0x016e, 0x000a,
- 0x028c, 0x015a, 0x00ab, 0x00a8, 0x00a4, 0x013e, 0x0135, 0x012b,
- 0x011f, 0x0114, 0x0107, 0x0201, 0x0177, 0x0170, 0x016a, 0x0006,
- 0x0288, 0x0142, 0x013c, 0x0138, 0x0133, 0x012e, 0x0124, 0x011c,
- 0x010d, 0x0105, 0x0200, 0x0178, 0x0172, 0x016c, 0x0167, 0x0004,
- 0x026c, 0x012c, 0x0128, 0x0126, 0x0120, 0x011a, 0x0111, 0x010a,
- 0x0203, 0x017c, 0x0176, 0x0171, 0x016d, 0x0169, 0x0165, 0x0002,
- 0x0409, 0x0118, 0x0116, 0x0112, 0x010b, 0x0108, 0x0103, 0x017e,
- 0x017a, 0x0174, 0x016f, 0x016b, 0x0168, 0x0166, 0x0164, 0x0000,
- 0x002b, 0x0014, 0x0013, 0x0011, 0x000f, 0x000d, 0x000b, 0x0009,
- 0x0007, 0x0006, 0x0004, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
-];
-
-static immutable uint8_t[256] mp3_huffbits_24 = [
-  4,  4,  6,  7,  8,  9,  9, 10,
- 10, 11, 11, 11, 11, 11, 12,  9,
-  4,  4,  5,  6,  7,  8,  8,  9,
-  9,  9, 10, 10, 10, 10, 10,  8,
-  6,  5,  6,  7,  7,  8,  8,  9,
-  9,  9,  9, 10, 10, 10, 11,  7,
-  7,  6,  7,  7,  8,  8,  8,  9,
-  9,  9,  9, 10, 10, 10, 10,  7,
-  8,  7,  7,  8,  8,  8,  8,  9,
-  9,  9, 10, 10, 10, 10, 11,  7,
-  9,  7,  8,  8,  8,  8,  9,  9,
-  9,  9, 10, 10, 10, 10, 10,  7,
-  9,  8,  8,  8,  8,  9,  9,  9,
-  9, 10, 10, 10, 10, 10, 11,  7,
- 10,  8,  8,  8,  9,  9,  9,  9,
- 10, 10, 10, 10, 10, 11, 11,  8,
- 10,  9,  9,  9,  9,  9,  9,  9,
-  9, 10, 10, 10, 10, 11, 11,  8,
- 10,  9,  9,  9,  9,  9,  9, 10,
- 10, 10, 10, 10, 11, 11, 11,  8,
- 11,  9,  9,  9,  9, 10, 10, 10,
- 10, 10, 10, 11, 11, 11, 11,  8,
- 11, 10,  9,  9,  9, 10, 10, 10,
- 10, 10, 10, 11, 11, 11, 11,  8,
- 11, 10, 10, 10, 10, 10, 10, 10,
- 10, 10, 11, 11, 11, 11, 11,  8,
- 11, 10, 10, 10, 10, 10, 10, 10,
- 11, 11, 11, 11, 11, 11, 11,  8,
- 12, 10, 10, 10, 10, 10, 10, 11,
- 11, 11, 11, 11, 11, 11, 11,  8,
-  8,  7,  7,  7,  7,  7,  7,  7,
-  7,  7,  7,  8,  8,  8,  8,  4,
-];
-
-static immutable huff_table_t[16] mp3_huff_tables = [
-huff_table_t( 1, null, null ),
-huff_table_t( 2, mp3_huffbits_1.ptr, mp3_huffcodes_1.ptr ),
-huff_table_t( 3, mp3_huffbits_2.ptr, mp3_huffcodes_2.ptr ),
-huff_table_t( 3, mp3_huffbits_3.ptr, mp3_huffcodes_3.ptr ),
-huff_table_t( 4, mp3_huffbits_5.ptr, mp3_huffcodes_5.ptr ),
-huff_table_t( 4, mp3_huffbits_6.ptr, mp3_huffcodes_6.ptr ),
-huff_table_t( 6, mp3_huffbits_7.ptr, mp3_huffcodes_7.ptr ),
-huff_table_t( 6, mp3_huffbits_8.ptr, mp3_huffcodes_8.ptr ),
-huff_table_t( 6, mp3_huffbits_9.ptr, mp3_huffcodes_9.ptr ),
-huff_table_t( 8, mp3_huffbits_10.ptr, mp3_huffcodes_10.ptr ),
-huff_table_t( 8, mp3_huffbits_11.ptr, mp3_huffcodes_11.ptr ),
-huff_table_t( 8, mp3_huffbits_12.ptr, mp3_huffcodes_12.ptr ),
-huff_table_t( 16, mp3_huffbits_13.ptr, mp3_huffcodes_13.ptr ),
-huff_table_t( 16, mp3_huffbits_15.ptr, mp3_huffcodes_15.ptr ),
-huff_table_t( 16, mp3_huffbits_16.ptr, mp3_huffcodes_16.ptr ),
-huff_table_t( 16, mp3_huffbits_24.ptr, mp3_huffcodes_24.ptr ),
-];
-
-static immutable uint8_t[2][32] mp3_huff_data = [
-[ 0, 0 ],
-[ 1, 0 ],
-[ 2, 0 ],
-[ 3, 0 ],
-[ 0, 0 ],
-[ 4, 0 ],
-[ 5, 0 ],
-[ 6, 0 ],
-[ 7, 0 ],
-[ 8, 0 ],
-[ 9, 0 ],
-[ 10, 0 ],
-[ 11, 0 ],
-[ 12, 0 ],
-[ 0, 0 ],
-[ 13, 0 ],
-[ 14, 1 ],
-[ 14, 2 ],
-[ 14, 3 ],
-[ 14, 4 ],
-[ 14, 6 ],
-[ 14, 8 ],
-[ 14, 10 ],
-[ 14, 13 ],
-[ 15, 4 ],
-[ 15, 5 ],
-[ 15, 6 ],
-[ 15, 7 ],
-[ 15, 8 ],
-[ 15, 9 ],
-[ 15, 11 ],
-[ 15, 13 ],
-];
-
-static immutable uint8_t[16][2] mp3_quad_codes = [
-    [  1,  5,  4,  5,  6,  5,  4,  4, 7,  3,  6,  0,  7,  2,  3,  1, ],
-    [ 15, 14, 13, 12, 11, 10,  9,  8, 7,  6,  5,  4,  3,  2,  1,  0, ],
-];
-
-static immutable uint8_t[16][2] mp3_quad_bits = [
-    [ 1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6, ],
-    [ 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ],
-];
-
-static immutable uint8_t[22][9] band_size_long = [
-[ 4, 4, 4, 4, 4, 4, 6, 6, 8, 8, 10,
-  12, 16, 20, 24, 28, 34, 42, 50, 54, 76, 158, ], /* 44100 */
-[ 4, 4, 4, 4, 4, 4, 6, 6, 6, 8, 10,
-  12, 16, 18, 22, 28, 34, 40, 46, 54, 54, 192, ], /* 48000 */
-[ 4, 4, 4, 4, 4, 4, 6, 6, 8, 10, 12,
-  16, 20, 24, 30, 38, 46, 56, 68, 84, 102, 26, ], /* 32000 */
-[ 6, 6, 6, 6, 6, 6, 8, 10, 12, 14, 16,
-  20, 24, 28, 32, 38, 46, 52, 60, 68, 58, 54, ], /* 22050 */
-[ 6, 6, 6, 6, 6, 6, 8, 10, 12, 14, 16,
-  18, 22, 26, 32, 38, 46, 52, 64, 70, 76, 36, ], /* 24000 */
-[ 6, 6, 6, 6, 6, 6, 8, 10, 12, 14, 16,
-  20, 24, 28, 32, 38, 46, 52, 60, 68, 58, 54, ], /* 16000 */
-[ 6, 6, 6, 6, 6, 6, 8, 10, 12, 14, 16,
-  20, 24, 28, 32, 38, 46, 52, 60, 68, 58, 54, ], /* 11025 */
-[ 6, 6, 6, 6, 6, 6, 8, 10, 12, 14, 16,
-  20, 24, 28, 32, 38, 46, 52, 60, 68, 58, 54, ], /* 12000 */
-[ 12, 12, 12, 12, 12, 12, 16, 20, 24, 28, 32,
-  40, 48, 56, 64, 76, 90, 2, 2, 2, 2, 2, ], /* 8000 */
-];
-
-static immutable uint8_t[13][9] band_size_short = [
-[ 4, 4, 4, 4, 6, 8, 10, 12, 14, 18, 22, 30, 56, ], /* 44100 */
-[ 4, 4, 4, 4, 6, 6, 10, 12, 14, 16, 20, 26, 66, ], /* 48000 */
-[ 4, 4, 4, 4, 6, 8, 12, 16, 20, 26, 34, 42, 12, ], /* 32000 */
-[ 4, 4, 4, 6, 6, 8, 10, 14, 18, 26, 32, 42, 18, ], /* 22050 */
-[ 4, 4, 4, 6, 8, 10, 12, 14, 18, 24, 32, 44, 12, ], /* 24000 */
-[ 4, 4, 4, 6, 8, 10, 12, 14, 18, 24, 30, 40, 18, ], /* 16000 */
-[ 4, 4, 4, 6, 8, 10, 12, 14, 18, 24, 30, 40, 18, ], /* 11025 */
-[ 4, 4, 4, 6, 8, 10, 12, 14, 18, 24, 30, 40, 18, ], /* 12000 */
-[ 8, 8, 8, 12, 16, 20, 24, 28, 36, 2, 2, 2, 26, ], /* 8000 */
-];
-
-static immutable uint8_t[22][2] mp3_pretab = [
-    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ],
-    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0 ],
-];
-
-static immutable float[8] ci_table = [
-    -0.6f, -0.535f, -0.33f, -0.185f, -0.095f, -0.041f, -0.0142f, -0.0037f,
-];
-
-enum C1 = FIXHR!(0.98480775301220805936/2);
-enum C2 = FIXHR!(0.93969262078590838405/2);
-enum C3 = FIXHR!(0.86602540378443864676/2);
-enum C4 = FIXHR!(0.76604444311897803520/2);
-enum C5 = FIXHR!(0.64278760968653932632/2);
-enum C6 = FIXHR!(0.5/2);
-enum C7 = FIXHR!(0.34202014332566873304/2);
-enum C8 = FIXHR!(0.17364817766693034885/2);
-
-static immutable int[9] icos36 = [
-    FIXR!(0.50190991877167369479),
-    FIXR!(0.51763809020504152469), //0
-    FIXR!(0.55168895948124587824),
-    FIXR!(0.61038729438072803416),
-    FIXR!(0.70710678118654752439), //1
-    FIXR!(0.87172339781054900991),
-    FIXR!(1.18310079157624925896),
-    FIXR!(1.93185165257813657349), //2
-    FIXR!(5.73685662283492756461),
-];
-
-static immutable int[9] icos36h = [
-    FIXHR!(0.50190991877167369479/2),
-    FIXHR!(0.51763809020504152469/2), //0
-    FIXHR!(0.55168895948124587824/2),
-    FIXHR!(0.61038729438072803416/2),
-    FIXHR!(0.70710678118654752439/2), //1
-    FIXHR!(0.87172339781054900991/2),
-    FIXHR!(1.18310079157624925896/4),
-    FIXHR!(1.93185165257813657349/4), //2
-    //FIXHR!(5.73685662283492756461),
-];
-
-////////////////////////////////////////////////////////////////////////////////
-
-int unaligned32_be (const(uint8_t)* p) {
-  static if (__VERSION__ > 2067) pragma(inline, true);
-  return (((p[0]<<8) | p[1])<<16) | (p[2]<<8) | (p[3]);
+int HDR_TEST_MPEG1(const(ubyte)* h)
+{
+    return ((h[1]) & 0x8);
 }
 
-enum MIN_CACHE_BITS = 25;
-
-enum NEG_SSR32(string a, string s) = "((cast( int32_t)("~a~"))>>(32-("~s~")))";
-enum NEG_USR32(string a, string s) = "((cast(uint32_t)("~a~"))>>(32-("~s~")))";
-
-enum OPEN_READER(string name, string gb) =
-  "int "~name~"_index = ("~gb~").index;\n"~
-  "int "~name~"_cache = 0;\n";
-
-enum CLOSE_READER(string name, string gb) = "("~gb~").index = "~name~"_index;";
-
-enum UPDATE_CACHE(string name, string gb) = name~"_cache = unaligned32_be(&(("~gb~").buffer["~name~"_index>>3])) << ("~name~"_index&0x07);";
-
-enum SKIP_CACHE(string name, string gb, string num) = name~"_cache <<= ("~num~");";
-
-enum SKIP_COUNTER(string name, string gb, string num) = name~"_index += ("~num~");";
-
-enum SKIP_BITS(string name, string gb, string num) = "{"~SKIP_CACHE!(name, gb, num)~SKIP_COUNTER!(name, gb, num)~"}";
-
-enum LAST_SKIP_BITS(string name, string gb, string num) = SKIP_COUNTER!(name, gb, num);
-enum LAST_SKIP_CACHE(string name, string gb, string num) = "{}";
-
-enum SHOW_UBITS(string name, string gb, string num) = NEG_USR32!(name~"_cache", num);
-
-enum SHOW_SBITS(string name, string gb, string num) = NEG_SSR32(name~"_cache", num);
-
-enum GET_CACHE(string name, string gb) = "(cast(uint32_t)"~name~"_cache)";
-
-int get_bits_count() (const(bitstream_t)* s) { static if (__VERSION__ > 2067) pragma(inline, true); return s.index; }
-
-void skip_bits_long (bitstream_t* s, int n) { static if (__VERSION__ > 2067) pragma(inline, true); s.index += n; }
-//#define skip_bits skip_bits_long
-alias skip_bits = skip_bits_long;
-
-void init_get_bits (bitstream_t* s, const(uint8_t)* buffer, int bit_size) {
-  int buffer_size = (bit_size+7)>>3;
-  if (buffer_size < 0 || bit_size < 0) {
-    buffer_size = bit_size = 0;
-    buffer = null;
-  }
-  s.buffer = buffer;
-  s.size_in_bits = bit_size;
-  s.buffer_end = buffer + buffer_size;
-  s.index = 0;
+int HDR_TEST_NOT_MPEG25(const(ubyte)* h)
+{
+    return ((h[1]) & 0x10);
 }
 
-uint get_bits (bitstream_t* s, int n){
-  int tmp;
-  mixin(OPEN_READER!("re", "s"));
-  mixin(UPDATE_CACHE!("re", "s"));
-  tmp = mixin(SHOW_UBITS!("re", "s", "n"));
-  mixin(LAST_SKIP_BITS!("re", "s", "n"));
-  mixin(CLOSE_READER!("re", "s"));
-  return tmp;
+int HDR_TEST_I_STEREO(const(ubyte)* h)
+{
+    return ((h[3]) & 0x10);
 }
 
-int get_bitsz (bitstream_t* s, int n) {
-  static if (__VERSION__ > 2067) pragma(inline, true);
-  return (n == 0 ? 0 : get_bits(s, n));
+int HDR_TEST_MS_STEREO(const(ubyte)* h)
+{
+    return ((h[3]) & 0x20);
 }
 
-uint get_bits1 (bitstream_t* s) {
-  int index = s.index;
-  uint8_t result = s.buffer[index>>3];
-  result <<= (index&0x07);
-  result >>= 8 - 1;
-  ++index;
-  s.index = index;
-  return result;
+int HDR_GET_STEREO_MODE(const(ubyte)* h)
+{
+    return (((h[3]) >> 6) & 3);
 }
 
-void align_get_bits (bitstream_t* s) {
-  int n = (-get_bits_count(s)) & 7;
-  if (n) skip_bits(s, n);
+int HDR_GET_STEREO_MODE_EXT(const(ubyte)* h)
+{
+    return (((h[3]) >> 4) & 3);
 }
 
-enum GET_DATA(string v, string table, string i, string wrap, string size) =
-"{\n"~
-"  const(uint8_t)* ptr = cast(const(uint8_t)*)"~table~"+"~i~"*"~wrap~";\n"~
-"  switch ("~size~") {\n"~
-"    case 1: "~v~" = *cast(const(uint8_t)*)ptr; break;\n"~
-"    case 2: "~v~" = *cast(const(uint16_t)*)ptr; break;\n"~
-"    default: "~v~" = *cast(const(uint32_t)*)ptr; break;\n"~
-"  }\n"~
-"}\n"~
-"";
-
-int alloc_table (vlc_t* vlc, int size) {
-  int index;
-  index = vlc.table_size;
-  vlc.table_size += size;
-  if (vlc.table_size > vlc.table_allocated) {
-    vlc.table_allocated += (1 << vlc.bits);
-    vlc.table = cast(VT2*)libc_realloc(vlc.table, VT2.sizeof * vlc.table_allocated);
-    if (!vlc.table) return -1;
-  }
-  return index;
+int HDR_GET_LAYER(const(ubyte)* h)
+{
+    return (((h[1]) >> 1) & 3);
 }
 
+int HDR_GET_BITRATE(const(ubyte)* h)
+{
+    return ((h[2]) >> 4);
+}
 
-int build_table (
-  vlc_t* vlc, int table_nb_bits,
-  int nb_codes,
-  const(void)* bits, int bits_wrap, int bits_size,
-  const(void)* codes, int codes_wrap, int codes_size,
-  uint32_t code_prefix, int n_prefix
-) {
-  int i, j, k, n, table_size, table_index, nb, n1, index, code_prefix2;
-  uint32_t code;
-  //VLC_TYPE (*table)[2];
-  VT2* table;
+int HDR_GET_SAMPLE_RATE(const(ubyte)* h)
+{
+    return (((h[2]) >> 2) & 3);
+}
 
-  table_size = 1 << table_nb_bits;
-  table_index = alloc_table(vlc, table_size);
-  if (table_index < 0) return -1;
-  table = &vlc.table[table_index];
+int HDR_GET_MY_SAMPLE_RATE(const(ubyte)* h)
+{
+    return (HDR_GET_SAMPLE_RATE(h) + (((h[1] >> 3) & 1) + ((h[1] >> 4) & 1))*3);
+}
 
-  for (i = 0; i < table_size; i++) {
-    table[i][1] = 0; //bits
-    table[i][0] = -1; //codes
-  }
+bool HDR_IS_FRAME_576(const(ubyte)* h)
+{
+    return ((h[1] & 14) == 2);
+}
 
-  for (i = 0; i < nb_codes; i++) {
-    mixin(GET_DATA!("n", "bits", "i", "bits_wrap", "bits_size"));
-    mixin(GET_DATA!("code", "codes", "i", "codes_wrap", "codes_size"));
-    if (n <= 0) continue;
-    n -= n_prefix;
-    code_prefix2 = code >> n;
-    if (n > 0 && code_prefix2 == code_prefix) {
-      if (n <= table_nb_bits) {
-        j = (code << (table_nb_bits - n)) & (table_size - 1);
-        nb = 1 << (table_nb_bits - n);
-        for(k=0;k<nb;k++) {
-          if (table[j][1] /*bits*/ != 0) {
-              return -1;
-          }
-          table[j][1] = cast(short)n; //bits
-          table[j][0] = cast(short)i; //code
-          j++;
-        }
-      } else {
-        n -= table_nb_bits;
-        j = (code >> n) & ((1 << table_nb_bits) - 1);
-        n1 = -cast(int)table[j][1]; //bits
-        if (n > n1)
-            n1 = n;
-        table[j][1] = cast(short)(-n1); //bits
-      }
+bool HDR_IS_LAYER_1(const(ubyte)* h)
+{
+    return ((h[1] & 6) == 6);
+}
+
+enum BITS_DEQUANTIZER_OUT        = -1;
+enum MAX_SCF                     = 255 + BITS_DEQUANTIZER_OUT*4 - 210;
+enum MAX_SCFI                    = (MAX_SCF + 3) & ~3;
+
+int MINIMP3_MIN(int a, int b)
+{
+    return (a > b) ? b : a;
+}
+
+ulong MINIMP3_MIN(ulong a, ulong b)
+{
+    return (a > b) ? b : a;
+}
+
+int MINIMP3_MAX(int a, int b)
+{
+    return (a < b) ? b : a;
+}
+      
+struct bs_t
+{
+    const(uint8_t)* buf;
+    int pos, limit;
+}
+
+struct L12_scale_info
+{
+    float[3*64] scf;
+    uint8_t total_bands;
+    uint8_t stereo_bands;
+    ubyte[64] bitalloc;
+    ubyte[64] scfcod;
+}
+
+struct L12_subband_alloc_t
+{
+    uint8_t tab_offset, code_tab_width, band_count;
+}
+
+struct L3_gr_info_t
+{
+    const(uint8_t)* sfbtab;
+    uint16_t part_23_length, big_values, scalefac_compress;
+    uint8_t global_gain, block_type, mixed_block_flag, n_long_sfb, n_short_sfb;
+    uint8_t[3] table_select, region_count, subblock_gain;
+    uint8_t preflag, scalefac_scale, count1_table, scfsi;
+}
+
+struct mp3dec_scratch_t
+{
+    bs_t bs;
+    uint8_t[MAX_BITRESERVOIR_BYTES + MAX_L3_FRAME_PAYLOAD_BYTES] maindata;
+    L3_gr_info_t[4] gr_info;
+    float[576][2] grbuf;
+    float[40] scf;
+    float[2*32][18 + 15] syn;    
+    uint8_t[39][2] ist_pos;
+}
+
+void bs_init(bs_t *bs, const(uint8_t)*data, int bytes)
+{
+    bs.buf   = data;
+    bs.pos   = 0;
+    bs.limit = bytes*8;
+}
+
+uint32_t get_bits(bs_t *bs, int n)
+{
+    uint32_t next, cache = 0, s = bs.pos & 7;
+    int shl = n + s;
+    const(uint8_t)*p = bs.buf + (bs.pos >> 3);
+    if ((bs.pos += n) > bs.limit)
+        return 0;
+    next = *p++ & (255 >> s);
+    while ((shl -= 8) > 0)
+    {
+        cache |= next << shl;
+        next = *p++;
     }
-  }
-  for(i=0;i<table_size;i++) {
-      n = table[i][1]; //bits
-      if (n < 0) {
-          n = -n;
-          if (n > table_nb_bits) {
-              n = table_nb_bits;
-              table[i][1] = cast(short)(-n); //bits
-          }
-          index = build_table(vlc, n, nb_codes,
-                              bits, bits_wrap, bits_size,
-                              codes, codes_wrap, codes_size,
-                              (code_prefix << table_nb_bits) | i,
-                              n_prefix + table_nb_bits);
-          if (index < 0)
-              return -1;
-          table = &vlc.table[table_index];
-          table[i][0] = cast(short)index; //code
-      }
-  }
-  return table_index;
+    return cache | (next >> -shl);
 }
 
-int init_vlc(
-    vlc_t *vlc, int nb_bits, int nb_codes,
-    const void *bits, int bits_wrap, int bits_size,
-    const void *codes, int codes_wrap, int codes_size
-) {
-    vlc.bits = nb_bits;
-    if (build_table(vlc, nb_bits, nb_codes,
-                    bits, bits_wrap, bits_size,
-                    codes, codes_wrap, codes_size,
-                    0, 0) < 0) {
-        libc_free(vlc.table);
+int hdr_valid(const uint8_t *h)
+{
+    return h[0] == 0xff &&
+        ((h[1] & 0xF0) == 0xf0 || (h[1] & 0xFE) == 0xe2) &&
+        (HDR_GET_LAYER(h) != 0) &&
+        (HDR_GET_BITRATE(h) != 15) &&
+        (HDR_GET_SAMPLE_RATE(h) != 3);
+}
+
+int hdr_compare(const uint8_t *h1, const uint8_t *h2)
+{
+    return hdr_valid(h2) &&
+        ((h1[1] ^ h2[1]) & 0xFE) == 0 &&
+        ((h1[2] ^ h2[2]) & 0x0C) == 0 &&
+        !(HDR_IS_FREE_FORMAT(h1) ^ HDR_IS_FREE_FORMAT(h2));
+}
+
+uint hdr_bitrate_kbps(const uint8_t *h)
+{
+    static immutable uint8_t[15][3][2] halfrate =
+    [
+        [ [ 0,4,8,12,16,20,24,28,32,40,48,56,64,72,80 ], [ 0,4,8,12,16,20,24,28,32,40,48,56,64,72,80 ], [ 0,16,24,28,32,40,48,56,64,72,80,88,96,112,128 ] ],
+        [ [ 0,16,20,24,28,32,40,48,56,64,80,96,112,128,160 ], [ 0,16,24,28,32,40,48,56,64,80,96,112,128,160,192 ], [ 0,16,32,48,64,80,96,112,128,144,160,176,192,208,224 ] ],
+    ];
+    return 2*halfrate[!!HDR_TEST_MPEG1(h)][HDR_GET_LAYER(h) - 1][HDR_GET_BITRATE(h)];
+}
+
+uint hdr_sample_rate_hz(const uint8_t *h)
+{
+    static immutable uint[3] g_hz = [ 44100, 48000, 32000 ];
+    return g_hz[HDR_GET_SAMPLE_RATE(h)] >> cast(int)!HDR_TEST_MPEG1(h) >> cast(int)!HDR_TEST_NOT_MPEG25(h);
+}
+
+uint hdr_frame_samples(const uint8_t *h)
+{
+    return HDR_IS_LAYER_1(h) ? 384 : (1152 >> cast(int)HDR_IS_FRAME_576(h));
+}
+
+int hdr_frame_bytes(const uint8_t *h, int free_format_size)
+{
+    int frame_bytes = hdr_frame_samples(h)*hdr_bitrate_kbps(h)*125/hdr_sample_rate_hz(h);
+    if (HDR_IS_LAYER_1(h))
+    {
+        frame_bytes &= ~3; /* slot align */
+    }
+    return frame_bytes ? frame_bytes : free_format_size;
+}
+
+static int hdr_padding(const uint8_t *h)
+{
+    return HDR_TEST_PADDING(h) ? (HDR_IS_LAYER_1(h) ? 4 : 1) : 0;
+}
+
+
+const(L12_subband_alloc_t)* L12_subband_alloc_table(const uint8_t *hdr, L12_scale_info *sci)
+{
+    const(L12_subband_alloc_t) *alloc;
+    int mode = HDR_GET_STEREO_MODE(hdr);
+    int nbands, stereo_bands = (mode == MODE_MONO) ? 0 : (mode == MODE_JOINT_STEREO) ? (HDR_GET_STEREO_MODE_EXT(hdr) << 2) + 4 : 32;
+
+    if (HDR_IS_LAYER_1(hdr))
+    {
+        static immutable L12_subband_alloc_t[] g_alloc_L1 = 
+        [ 
+            L12_subband_alloc_t(76, 4, 32) 
+        ];
+        alloc = g_alloc_L1.ptr;
+        nbands = 32;
+    } 
+    else if (!HDR_TEST_MPEG1(hdr))
+    {
+        static immutable L12_subband_alloc_t[] g_alloc_L2M2 = 
+        [ 
+            L12_subband_alloc_t(60, 4, 4),
+            L12_subband_alloc_t(44, 3, 7 ),
+            L12_subband_alloc_t(44, 2, 19),
+        ];
+        alloc = g_alloc_L2M2.ptr;
+        nbands = 30;
+    } 
+    else
+    {
+        static immutable L12_subband_alloc_t[] g_alloc_L2M1 = 
+        [
+            L12_subband_alloc_t(0, 4, 3),
+            L12_subband_alloc_t(16, 4, 8),
+            L12_subband_alloc_t(32, 3, 12),
+            L12_subband_alloc_t(40, 2, 7)
+        ];
+        
+        int sample_rate_idx = HDR_GET_SAMPLE_RATE(hdr);
+        uint kbps = hdr_bitrate_kbps(hdr) >> cast(int)(mode != MODE_MONO);
+        if (!kbps) /* free-format */
+        {
+            kbps = 192;
+        }
+
+        alloc = g_alloc_L2M1.ptr;
+        nbands = 27;
+        if (kbps < 56)
+        {
+            static immutable L12_subband_alloc_t[] g_alloc_L2M1_lowrate = 
+            [
+        
+               L12_subband_alloc_t(44, 4, 2), 
+               L12_subband_alloc_t(44, 3, 10)
+            ];            
+            alloc = g_alloc_L2M1_lowrate.ptr;
+            nbands = sample_rate_idx == 2 ? 12 : 8;
+        } 
+        else if (kbps >= 96 && sample_rate_idx != 1)
+        {
+            nbands = 30;
+        }
+    }
+
+    sci.total_bands = cast(uint8_t)nbands;
+    sci.stereo_bands = cast(uint8_t)MINIMP3_MIN(stereo_bands, nbands);
+
+    return alloc;
+}
+
+void L12_read_scalefactors(bs_t *bs, uint8_t *pba, uint8_t *scfcod, int bands, float *scf)
+{
+    static immutable float[18*3] g_deq_L12 =
+    [
+        3.17891e-07, 2.52311e-07, 2.00259e-07, 1.36239e-07, 1.08133e-07, 8.58253e-08, 
+        6.35783e-08, 5.04621e-08, 4.00518e-08, 3.07637e-08, 2.44172e-08, 1.93799e-08, 
+        1.51377e-08, 1.20148e-08, 9.53615e-09, 7.50925e-09, 5.96009e-09, 4.73053e-09, 
+        3.7399e-09, 2.96836e-09, 2.35599e-09, 1.86629e-09, 1.48128e-09, 1.17569e-09, 
+        9.32233e-10, 7.39914e-10, 5.8727e-10, 4.65889e-10, 3.69776e-10, 2.93492e-10, 
+        2.32888e-10, 1.84843e-10, 1.4671e-10, 1.1643e-10, 9.24102e-11, 7.3346e-11, 
+        5.82112e-11, 4.62023e-11, 3.66708e-11, 2.91047e-11, 2.31004e-11, 1.83348e-11, 
+        1.45521e-11, 1.155e-11, 9.16727e-12, 3.17891e-07, 2.52311e-07, 2.00259e-07, 
+        1.90735e-07, 1.51386e-07, 1.20155e-07, 1.05964e-07, 8.41035e-08, 6.6753e-08
+    ];
+
+    int i, m;
+    for (i = 0; i < bands; i++)
+    {
+        float s = 0;
+        int ba = *pba++;
+        int mask = ba ? 4 + ((19 >> scfcod[i]) & 3) : 0;
+        for (m = 4; m; m >>= 1)
+        {
+            if (mask & m)
+            {
+                int b = get_bits(bs, 6);
+                s = g_deq_L12[ba*3 - 6 + b % 3]*(1 << 21 >> b/3);
+            }
+            *scf++ = s;
+        }
+    }
+}
+
+void L12_read_scale_info(const uint8_t *hdr, bs_t *bs, L12_scale_info *sci)
+{
+    static immutable uint8_t[] g_bitalloc_code_tab = 
+    [
+        0,17, 3, 4, 5,6,7, 8,9,10,11,12,13,14,15,16,
+        0,17,18, 3,19,4,5, 6,7, 8, 9,10,11,12,13,16,
+        0,17,18, 3,19,4,5,16,
+        0,17,18,16,
+        0,17,18,19, 4,5,6, 7,8, 9,10,11,12,13,14,15,
+        0,17,18, 3,19,4,5, 6,7, 8, 9,10,11,12,13,14,
+        0, 2, 3, 4, 5,6,7, 8,9,10,11,12,13,14,15,16
+    ];
+    const(L12_subband_alloc_t)* subband_alloc = L12_subband_alloc_table(hdr, sci);
+
+    int i, k = 0, ba_bits = 0;
+    const(uint8_t)*ba_code_tab = g_bitalloc_code_tab.ptr;
+
+    for (i = 0; i < sci.total_bands; i++)
+    {
+        uint8_t ba;
+        if (i == k)
+        {
+            k += subband_alloc.band_count;
+            ba_bits = subband_alloc.code_tab_width;
+            ba_code_tab = g_bitalloc_code_tab.ptr + subband_alloc.tab_offset;
+            subband_alloc++;
+        }
+        ba = ba_code_tab[get_bits(bs, ba_bits)];
+        sci.bitalloc[2*i] = ba;
+        if (i < sci.stereo_bands)
+        {
+            ba = ba_code_tab[get_bits(bs, ba_bits)];
+        }
+        sci.bitalloc[2*i + 1] = sci.stereo_bands ? ba : 0;
+    }
+
+    for (i = 0; i < 2*sci.total_bands; i++)
+    {
+        ubyte temp = ( HDR_IS_LAYER_1(hdr) ? 2 : cast(ubyte) get_bits(bs, 2) );
+        sci.scfcod[i] = sci.bitalloc[i] ? temp : 6;
+    }
+
+    L12_read_scalefactors(bs, sci.bitalloc.ptr, sci.scfcod.ptr, sci.total_bands*2, sci.scf.ptr);
+
+    for (i = sci.stereo_bands; i < sci.total_bands; i++)
+    {
+        sci.bitalloc[2*i + 1] = 0;
+    }
+}
+
+int L12_dequantize_granule(float *grbuf, bs_t *bs, L12_scale_info *sci, int group_size)
+{
+    int i, j, k, choff = 576;
+    for (j = 0; j < 4; j++)
+    {
+        float *dst = grbuf + group_size*j;
+        for (i = 0; i < 2*sci.total_bands; i++)
+        {
+            int ba = sci.bitalloc[i];
+            if (ba != 0)
+            {
+                if (ba < 17)
+                {
+                    int half = (1 << (ba - 1)) - 1;
+                    for (k = 0; k < group_size; k++)
+                    {
+                        dst[k] = cast(float)(cast(int)get_bits(bs, ba) - half);
+                    }
+                } else
+                {
+                    uint mod = (2 << (ba - 17)) + 1;    /* 3, 5, 9 */
+                    uint code = get_bits(bs, mod + 2 - (mod >> 3));  /* 5, 7, 10 */
+                    for (k = 0; k < group_size; k++, code /= mod)
+                    {
+                        dst[k] = cast(float)(cast(int)(code % mod - mod/2));
+                    }
+                }
+            }
+            dst += choff;
+            choff = 18 - choff;
+        }
+    }
+    return group_size*4;
+}
+
+void L12_apply_scf_384(L12_scale_info *sci, const(float)*scf, float *dst)
+{
+    int i, k;
+    memcpy(dst + 576 + sci.stereo_bands*18, dst + sci.stereo_bands*18, (sci.total_bands - sci.stereo_bands)*18*float.sizeof);
+    for (i = 0; i < sci.total_bands; i++, dst += 18, scf += 6)
+    {
+        for (k = 0; k < 12; k++)
+        {
+            dst[k + 0]   *= scf[0];
+            dst[k + 576] *= scf[3];
+        }
+    }
+}
+
+
+int L3_read_side_info(bs_t *bs, L3_gr_info_t *gr, const uint8_t *hdr)
+{
+    static immutable uint8_t[23][8] g_scf_long = 
+    [
+        [ 6,6,6,6,6,6,8,10,12,14,16,20,24,28,32,38,46,52,60,68,58,54,0 ],
+        [ 12,12,12,12,12,12,16,20,24,28,32,40,48,56,64,76,90,2,2,2,2,2,0 ],
+        [ 6,6,6,6,6,6,8,10,12,14,16,20,24,28,32,38,46,52,60,68,58,54,0 ],
+        [ 6,6,6,6,6,6,8,10,12,14,16,18,22,26,32,38,46,54,62,70,76,36,0 ],
+        [ 6,6,6,6,6,6,8,10,12,14,16,20,24,28,32,38,46,52,60,68,58,54,0 ],
+        [ 4,4,4,4,4,4,6,6,8,8,10,12,16,20,24,28,34,42,50,54,76,158,0 ],
+        [ 4,4,4,4,4,4,6,6,6,8,10,12,16,18,22,28,34,40,46,54,54,192,0 ],
+        [ 4,4,4,4,4,4,6,6,8,10,12,16,20,24,30,38,46,56,68,84,102,26,0 ]
+    ];
+    static immutable uint8_t[40][8] g_scf_short = [
+        [ 4,4,4,4,4,4,4,4,4,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,30,30,30,40,40,40,18,18,18,0 ],
+        [ 8,8,8,8,8,8,8,8,8,12,12,12,16,16,16,20,20,20,24,24,24,28,28,28,36,36,36,2,2,2,2,2,2,2,2,2,26,26,26,0 ],
+        [ 4,4,4,4,4,4,4,4,4,6,6,6,6,6,6,8,8,8,10,10,10,14,14,14,18,18,18,26,26,26,32,32,32,42,42,42,18,18,18,0 ],
+        [ 4,4,4,4,4,4,4,4,4,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,32,32,32,44,44,44,12,12,12,0 ],
+        [ 4,4,4,4,4,4,4,4,4,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,30,30,30,40,40,40,18,18,18,0 ],
+        [ 4,4,4,4,4,4,4,4,4,4,4,4,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,22,22,22,30,30,30,56,56,56,0 ],
+        [ 4,4,4,4,4,4,4,4,4,4,4,4,6,6,6,6,6,6,10,10,10,12,12,12,14,14,14,16,16,16,20,20,20,26,26,26,66,66,66,0 ],
+        [ 4,4,4,4,4,4,4,4,4,4,4,4,6,6,6,8,8,8,12,12,12,16,16,16,20,20,20,26,26,26,34,34,34,42,42,42,12,12,12,0 ]
+    ];
+    static immutable uint8_t[40][8] g_scf_mixed = [
+        [ 6,6,6,6,6,6,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,30,30,30,40,40,40,18,18,18,0 ],
+        [ 12,12,12,4,4,4,8,8,8,12,12,12,16,16,16,20,20,20,24,24,24,28,28,28,36,36,36,2,2,2,2,2,2,2,2,2,26,26,26,0 ],
+        [ 6,6,6,6,6,6,6,6,6,6,6,6,8,8,8,10,10,10,14,14,14,18,18,18,26,26,26,32,32,32,42,42,42,18,18,18,0 ],
+        [ 6,6,6,6,6,6,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,32,32,32,44,44,44,12,12,12,0 ],
+        [ 6,6,6,6,6,6,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,24,24,24,30,30,30,40,40,40,18,18,18,0 ],
+        [ 4,4,4,4,4,4,6,6,4,4,4,6,6,6,8,8,8,10,10,10,12,12,12,14,14,14,18,18,18,22,22,22,30,30,30,56,56,56,0 ],
+        [ 4,4,4,4,4,4,6,6,4,4,4,6,6,6,6,6,6,10,10,10,12,12,12,14,14,14,16,16,16,20,20,20,26,26,26,66,66,66,0 ],
+        [ 4,4,4,4,4,4,6,6,4,4,4,6,6,6,8,8,8,12,12,12,16,16,16,20,20,20,26,26,26,34,34,34,42,42,42,12,12,12,0 ]
+    ];
+
+    uint tables, scfsi = 0;
+    int main_data_begin, part_23_sum = 0;
+    int sr_idx = HDR_GET_MY_SAMPLE_RATE(hdr); sr_idx -= (sr_idx != 0);
+    int gr_count = HDR_IS_MONO(hdr) ? 1 : 2;
+
+    if (HDR_TEST_MPEG1(hdr))
+    {
+        gr_count *= 2;
+        main_data_begin = get_bits(bs, 9);
+        scfsi = get_bits(bs, 7 + gr_count);
+    } else
+    {
+        main_data_begin = get_bits(bs, 8 + gr_count) >> gr_count;
+    }
+
+    do
+    {
+        if (HDR_IS_MONO(hdr))
+        {
+            scfsi <<= 4;
+        }
+        gr.part_23_length = cast(uint16_t)get_bits(bs, 12);
+        part_23_sum += gr.part_23_length;
+        gr.big_values = cast(uint16_t)get_bits(bs,  9);
+        if (gr.big_values > 288)
+        {
+            return -1;
+        }
+        gr.global_gain = cast(uint8_t)get_bits(bs, 8);
+        gr.scalefac_compress = cast(uint16_t)get_bits(bs, HDR_TEST_MPEG1(hdr) ? 4 : 9);
+        gr.sfbtab = g_scf_long[sr_idx].ptr;
+        gr.n_long_sfb  = 22;
+        gr.n_short_sfb = 0;
+        if (get_bits(bs, 1))
+        {
+            gr.block_type = cast(uint8_t)get_bits(bs, 2);
+            if (!gr.block_type)
+            {
+                return -1;
+            }
+            gr.mixed_block_flag = cast(uint8_t)get_bits(bs, 1);
+            gr.region_count[0] = 7;
+            gr.region_count[1] = 255;
+            if (gr.block_type == SHORT_BLOCK_TYPE)
+            {
+                scfsi &= 0x0F0F;
+                if (!gr.mixed_block_flag)
+                {
+                    gr.region_count[0] = 8;
+                    gr.sfbtab = g_scf_short[sr_idx].ptr;
+                    gr.n_long_sfb = 0;
+                    gr.n_short_sfb = 39;
+                } else
+                {
+                    gr.sfbtab = g_scf_mixed[sr_idx].ptr;
+                    gr.n_long_sfb = HDR_TEST_MPEG1(hdr) ? 8 : 6;
+                    gr.n_short_sfb = 30;
+                }
+            }
+            tables = get_bits(bs, 10);
+            tables <<= 5;
+            gr.subblock_gain[0] = cast(uint8_t)get_bits(bs, 3);
+            gr.subblock_gain[1] = cast(uint8_t)get_bits(bs, 3);
+            gr.subblock_gain[2] = cast(uint8_t)get_bits(bs, 3);
+        } else
+        {
+            gr.block_type = 0;
+            gr.mixed_block_flag = 0;
+            tables = get_bits(bs, 15);
+            gr.region_count[0] = cast(uint8_t)get_bits(bs, 4);
+            gr.region_count[1] = cast(uint8_t)get_bits(bs, 3);
+            gr.region_count[2] = 255;
+        }
+        gr.table_select[0] = cast(uint8_t)(tables >> 10);
+        gr.table_select[1] = cast(uint8_t)((tables >> 5) & 31);
+        gr.table_select[2] = cast(uint8_t)((tables) & 31);
+        gr.preflag = HDR_TEST_MPEG1(hdr) ? (cast(ubyte) get_bits(bs, 1)) : (gr.scalefac_compress >= 500);
+        gr.scalefac_scale = cast(uint8_t)get_bits(bs, 1);
+        gr.count1_table = cast(uint8_t)get_bits(bs, 1);
+        gr.scfsi = cast(uint8_t)((scfsi >> 12) & 15);
+        scfsi <<= 4;
+        gr++;
+    } while(--gr_count);
+
+    if (part_23_sum + bs.pos > bs.limit + main_data_begin*8)
+    {
         return -1;
     }
+
+    return main_data_begin;
+}
+
+void L3_read_scalefactors(uint8_t *scf, uint8_t *ist_pos, const uint8_t *scf_size, const uint8_t *scf_count, bs_t *bitbuf, int scfsi)
+{
+    int i, k;
+    for (i = 0; i < 4 && scf_count[i]; i++, scfsi *= 2)
+    {
+        int cnt = scf_count[i];
+        if (scfsi & 8)
+        {
+            memcpy(scf, ist_pos, cnt);
+        } else
+        {
+            int bits = scf_size[i];
+            if (!bits)
+            {
+                memset(scf, 0, cnt);
+                memset(ist_pos, 0, cnt);
+            } else
+            {
+                int max_scf = (scfsi < 0) ? (1 << bits) - 1 : -1;
+                for (k = 0; k < cnt; k++)
+                {
+                    int s = get_bits(bitbuf, bits);
+                    ist_pos[k] = cast(ubyte)(s == max_scf ? -1 : s);
+                    scf[k] = cast(ubyte)s;
+                }
+            }
+        }
+        ist_pos += cnt;
+        scf += cnt;
+    }
+    scf[0] = scf[1] = scf[2] = 0;
+}
+
+float L3_ldexp_q2(float y, int exp_q2)
+{
+    static immutable float[4] g_expfrac = 
+    [ 9.31322575e-10f,7.83145814e-10f,6.58544508e-10f,5.53767716e-10f ];
+    int e;
+    do
+    {
+        e = MINIMP3_MIN(30*4, exp_q2);
+        y *= g_expfrac[e & 3]*(1 << 30 >> (e >> 2));
+    } while ((exp_q2 -= e) > 0);
+    return y;
+}
+
+void L3_decode_scalefactors(const uint8_t *hdr, uint8_t *ist_pos, bs_t *bs, const L3_gr_info_t *gr, float *scf, int ch)
+{
+    static immutable uint8_t[28][3] g_scf_partitions = [
+        [ 6,5,5, 5,6,5,5,5,6,5, 7,3,11,10,0,0, 7, 7, 7,0, 6, 6,6,3, 8, 8,5,0 ],
+        [ 8,9,6,12,6,9,9,9,6,9,12,6,15,18,0,0, 6,15,12,0, 6,12,9,6, 6,18,9,0 ],
+        [ 9,9,6,12,9,9,9,9,9,9,12,6,18,18,0,0,12,12,12,0,12, 9,9,6,15,12,9,0 ]
+    ];
+    const(uint8_t)* scf_partition = g_scf_partitions[!!gr.n_short_sfb + !gr.n_long_sfb].ptr;
+    uint8_t[4] scf_size; 
+    uint8_t[40] iscf;
+    int i, scf_shift = gr.scalefac_scale + 1, gain_exp, scfsi = gr.scfsi;
+    float gain;
+
+    if (HDR_TEST_MPEG1(hdr))
+    {
+        static immutable uint8_t[16] g_scfc_decode = [ 0,1,2,3, 12,5,6,7, 9,10,11,13, 14,15,18,19 ];
+        int part = g_scfc_decode[gr.scalefac_compress];
+        scf_size[1] = scf_size[0] = cast(uint8_t)(part >> 2);
+        scf_size[3] = scf_size[2] = cast(uint8_t)(part & 3);
+    } else
+    {
+        static immutable uint8_t[6*4] g_mod = [ 5,5,4,4,5,5,4,1,4,3,1,1,5,6,6,1,4,4,4,1,4,3,1,1 ];
+        int k, modprod, sfc, ist = HDR_TEST_I_STEREO(hdr) && ch;
+        sfc = gr.scalefac_compress >> ist;
+        for (k = ist*3*4; sfc >= 0; sfc -= modprod, k += 4)
+        {
+            for (modprod = 1, i = 3; i >= 0; i--)
+            {
+                scf_size[i] = cast(uint8_t)(sfc / modprod % g_mod[k + i]);
+                modprod *= g_mod[k + i];
+            }
+        }
+        scf_partition += k;
+        scfsi = -16;
+    }
+    L3_read_scalefactors(iscf.ptr, ist_pos, scf_size.ptr, scf_partition, bs, scfsi);
+
+    if (gr.n_short_sfb)
+    {
+        int sh = 3 - scf_shift;
+        for (i = 0; i < gr.n_short_sfb; i += 3)
+        {
+            iscf[gr.n_long_sfb + i + 0] += gr.subblock_gain[0] << sh;
+            iscf[gr.n_long_sfb + i + 1] += gr.subblock_gain[1] << sh;
+            iscf[gr.n_long_sfb + i + 2] += gr.subblock_gain[2] << sh;
+        }
+    } else if (gr.preflag)
+    {
+        static immutable uint8_t[10] g_preamp = [ 1,1,1,1,2,2,3,3,3,2 ];
+        for (i = 0; i < 10; i++)
+        {
+            iscf[11 + i] += g_preamp[i];
+        }
+    }
+
+    gain_exp = gr.global_gain + BITS_DEQUANTIZER_OUT*4 - 210 - (HDR_IS_MS_STEREO(hdr) ? 2 : 0);
+    gain = L3_ldexp_q2(1 << (MAX_SCFI/4),  MAX_SCFI - gain_exp);
+    for (i = 0; i < cast(int)(gr.n_long_sfb + gr.n_short_sfb); i++)
+    {
+        scf[i] = L3_ldexp_q2(gain, iscf[i] << scf_shift);
+    }
+}
+
+static immutable float[129 + 16] g_pow43 = [
+    0,-1,-2.519842f,-4.326749f,-6.349604f,-8.549880f,-10.902724f,-13.390518f,-16.000000f,-18.720754f,-21.544347f,-24.463781f,-27.473142f,-30.567351f,-33.741992f,-36.993181f,
+    0,1,2.519842f,4.326749f,6.349604f,8.549880f,10.902724f,13.390518f,16.000000f,18.720754f,21.544347f,24.463781f,27.473142f,30.567351f,33.741992f,36.993181f,40.317474f,43.711787f,47.173345f,50.699631f,54.288352f,57.937408f,61.644865f,65.408941f,69.227979f,73.100443f,77.024898f,81.000000f,85.024491f,89.097188f,93.216975f,97.382800f,101.593667f,105.848633f,110.146801f,114.487321f,118.869381f,123.292209f,127.755065f,132.257246f,136.798076f,141.376907f,145.993119f,150.646117f,155.335327f,160.060199f,164.820202f,169.614826f,174.443577f,179.305980f,184.201575f,189.129918f,194.090580f,199.083145f,204.107210f,209.162385f,214.248292f,219.364564f,224.510845f,229.686789f,234.892058f,240.126328f,245.389280f,250.680604f,256.000000f,261.347174f,266.721841f,272.123723f,277.552547f,283.008049f,288.489971f,293.998060f,299.532071f,305.091761f,310.676898f,316.287249f,321.922592f,327.582707f,333.267377f,338.976394f,344.709550f,350.466646f,356.247482f,362.051866f,367.879608f,373.730522f,379.604427f,385.501143f,391.420496f,397.362314f,403.326427f,409.312672f,415.320884f,421.350905f,427.402579f,433.475750f,439.570269f,445.685987f,451.822757f,457.980436f,464.158883f,470.357960f,476.577530f,482.817459f,489.077615f,495.357868f,501.658090f,507.978156f,514.317941f,520.677324f,527.056184f,533.454404f,539.871867f,546.308458f,552.764065f,559.238575f,565.731879f,572.243870f,578.774440f,585.323483f,591.890898f,598.476581f,605.080431f,611.702349f,618.342238f,625.000000f,631.675540f,638.368763f,645.079578f
+];
+
+float L3_pow_43(int x)
+{
+    float frac;
+    int sign, mult = 256;
+
+    if (x < 129)
+    {
+        return g_pow43[16 + x];
+    }
+
+    if (x < 1024)
+    {
+        mult = 16;
+        x <<= 3;
+    }
+
+    sign = 2*x & 64;
+    frac = cast(float)((x & 63) - sign) / ((x & ~63) + sign);
+    return g_pow43[16 + ((x + sign) >> 6)]*(1.0f + frac*((4.0f/3) + frac*(2.0f/9)))*mult;
+}
+
+void L3_huffman(float *dst, bs_t *bs, const L3_gr_info_t *gr_info, const(float)*scf, int layer3gr_limit)
+{
+    static immutable int16_t[] tabs = [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        785,785,785,785,784,784,784,784,513,513,513,513,513,513,513,513,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,
+        -255,1313,1298,1282,785,785,785,785,784,784,784,784,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,290,288,
+        -255,1313,1298,1282,769,769,769,769,529,529,529,529,529,529,529,529,528,528,528,528,528,528,528,528,512,512,512,512,512,512,512,512,290,288,
+        -253,-318,-351,-367,785,785,785,785,784,784,784,784,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,819,818,547,547,275,275,275,275,561,560,515,546,289,274,288,258,
+        -254,-287,1329,1299,1314,1312,1057,1057,1042,1042,1026,1026,784,784,784,784,529,529,529,529,529,529,529,529,769,769,769,769,768,768,768,768,563,560,306,306,291,259,
+        -252,-413,-477,-542,1298,-575,1041,1041,784,784,784,784,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,-383,-399,1107,1092,1106,1061,849,849,789,789,1104,1091,773,773,1076,1075,341,340,325,309,834,804,577,577,532,532,516,516,832,818,803,816,561,561,531,531,515,546,289,289,288,258,
+        -252,-429,-493,-559,1057,1057,1042,1042,529,529,529,529,529,529,529,529,784,784,784,784,769,769,769,769,512,512,512,512,512,512,512,512,-382,1077,-415,1106,1061,1104,849,849,789,789,1091,1076,1029,1075,834,834,597,581,340,340,339,324,804,833,532,532,832,772,818,803,817,787,816,771,290,290,290,290,288,258,
+        -253,-349,-414,-447,-463,1329,1299,-479,1314,1312,1057,1057,1042,1042,1026,1026,785,785,785,785,784,784,784,784,769,769,769,769,768,768,768,768,-319,851,821,-335,836,850,805,849,341,340,325,336,533,533,579,579,564,564,773,832,578,548,563,516,321,276,306,291,304,259,
+        -251,-572,-733,-830,-863,-879,1041,1041,784,784,784,784,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,-511,-527,-543,1396,1351,1381,1366,1395,1335,1380,-559,1334,1138,1138,1063,1063,1350,1392,1031,1031,1062,1062,1364,1363,1120,1120,1333,1348,881,881,881,881,375,374,359,373,343,358,341,325,791,791,1123,1122,-703,1105,1045,-719,865,865,790,790,774,774,1104,1029,338,293,323,308,-799,-815,833,788,772,818,803,816,322,292,307,320,561,531,515,546,289,274,288,258,
+        -251,-525,-605,-685,-765,-831,-846,1298,1057,1057,1312,1282,785,785,785,785,784,784,784,784,769,769,769,769,512,512,512,512,512,512,512,512,1399,1398,1383,1367,1382,1396,1351,-511,1381,1366,1139,1139,1079,1079,1124,1124,1364,1349,1363,1333,882,882,882,882,807,807,807,807,1094,1094,1136,1136,373,341,535,535,881,775,867,822,774,-591,324,338,-671,849,550,550,866,864,609,609,293,336,534,534,789,835,773,-751,834,804,308,307,833,788,832,772,562,562,547,547,305,275,560,515,290,290,
+        -252,-397,-477,-557,-622,-653,-719,-735,-750,1329,1299,1314,1057,1057,1042,1042,1312,1282,1024,1024,785,785,785,785,784,784,784,784,769,769,769,769,-383,1127,1141,1111,1126,1140,1095,1110,869,869,883,883,1079,1109,882,882,375,374,807,868,838,881,791,-463,867,822,368,263,852,837,836,-543,610,610,550,550,352,336,534,534,865,774,851,821,850,805,593,533,579,564,773,832,578,578,548,548,577,577,307,276,306,291,516,560,259,259,
+        -250,-2107,-2507,-2764,-2909,-2974,-3007,-3023,1041,1041,1040,1040,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,-767,-1052,-1213,-1277,-1358,-1405,-1469,-1535,-1550,-1582,-1614,-1647,-1662,-1694,-1726,-1759,-1774,-1807,-1822,-1854,-1886,1565,-1919,-1935,-1951,-1967,1731,1730,1580,1717,-1983,1729,1564,-1999,1548,-2015,-2031,1715,1595,-2047,1714,-2063,1610,-2079,1609,-2095,1323,1323,1457,1457,1307,1307,1712,1547,1641,1700,1699,1594,1685,1625,1442,1442,1322,1322,-780,-973,-910,1279,1278,1277,1262,1276,1261,1275,1215,1260,1229,-959,974,974,989,989,-943,735,478,478,495,463,506,414,-1039,1003,958,1017,927,942,987,957,431,476,1272,1167,1228,-1183,1256,-1199,895,895,941,941,1242,1227,1212,1135,1014,1014,490,489,503,487,910,1013,985,925,863,894,970,955,1012,847,-1343,831,755,755,984,909,428,366,754,559,-1391,752,486,457,924,997,698,698,983,893,740,740,908,877,739,739,667,667,953,938,497,287,271,271,683,606,590,712,726,574,302,302,738,736,481,286,526,725,605,711,636,724,696,651,589,681,666,710,364,467,573,695,466,466,301,465,379,379,709,604,665,679,316,316,634,633,436,436,464,269,424,394,452,332,438,363,347,408,393,448,331,422,362,407,392,421,346,406,391,376,375,359,1441,1306,-2367,1290,-2383,1337,-2399,-2415,1426,1321,-2431,1411,1336,-2447,-2463,-2479,1169,1169,1049,1049,1424,1289,1412,1352,1319,-2495,1154,1154,1064,1064,1153,1153,416,390,360,404,403,389,344,374,373,343,358,372,327,357,342,311,356,326,1395,1394,1137,1137,1047,1047,1365,1392,1287,1379,1334,1364,1349,1378,1318,1363,792,792,792,792,1152,1152,1032,1032,1121,1121,1046,1046,1120,1120,1030,1030,-2895,1106,1061,1104,849,849,789,789,1091,1076,1029,1090,1060,1075,833,833,309,324,532,532,832,772,818,803,561,561,531,560,515,546,289,274,288,258,
+        -250,-1179,-1579,-1836,-1996,-2124,-2253,-2333,-2413,-2477,-2542,-2574,-2607,-2622,-2655,1314,1313,1298,1312,1282,785,785,785,785,1040,1040,1025,1025,768,768,768,768,-766,-798,-830,-862,-895,-911,-927,-943,-959,-975,-991,-1007,-1023,-1039,-1055,-1070,1724,1647,-1103,-1119,1631,1767,1662,1738,1708,1723,-1135,1780,1615,1779,1599,1677,1646,1778,1583,-1151,1777,1567,1737,1692,1765,1722,1707,1630,1751,1661,1764,1614,1736,1676,1763,1750,1645,1598,1721,1691,1762,1706,1582,1761,1566,-1167,1749,1629,767,766,751,765,494,494,735,764,719,749,734,763,447,447,748,718,477,506,431,491,446,476,461,505,415,430,475,445,504,399,460,489,414,503,383,474,429,459,502,502,746,752,488,398,501,473,413,472,486,271,480,270,-1439,-1455,1357,-1471,-1487,-1503,1341,1325,-1519,1489,1463,1403,1309,-1535,1372,1448,1418,1476,1356,1462,1387,-1551,1475,1340,1447,1402,1386,-1567,1068,1068,1474,1461,455,380,468,440,395,425,410,454,364,467,466,464,453,269,409,448,268,432,1371,1473,1432,1417,1308,1460,1355,1446,1459,1431,1083,1083,1401,1416,1458,1445,1067,1067,1370,1457,1051,1051,1291,1430,1385,1444,1354,1415,1400,1443,1082,1082,1173,1113,1186,1066,1185,1050,-1967,1158,1128,1172,1097,1171,1081,-1983,1157,1112,416,266,375,400,1170,1142,1127,1065,793,793,1169,1033,1156,1096,1141,1111,1155,1080,1126,1140,898,898,808,808,897,897,792,792,1095,1152,1032,1125,1110,1139,1079,1124,882,807,838,881,853,791,-2319,867,368,263,822,852,837,866,806,865,-2399,851,352,262,534,534,821,836,594,594,549,549,593,593,533,533,848,773,579,579,564,578,548,563,276,276,577,576,306,291,516,560,305,305,275,259,
+        -251,-892,-2058,-2620,-2828,-2957,-3023,-3039,1041,1041,1040,1040,769,769,769,769,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,256,-511,-527,-543,-559,1530,-575,-591,1528,1527,1407,1526,1391,1023,1023,1023,1023,1525,1375,1268,1268,1103,1103,1087,1087,1039,1039,1523,-604,815,815,815,815,510,495,509,479,508,463,507,447,431,505,415,399,-734,-782,1262,-815,1259,1244,-831,1258,1228,-847,-863,1196,-879,1253,987,987,748,-767,493,493,462,477,414,414,686,669,478,446,461,445,474,429,487,458,412,471,1266,1264,1009,1009,799,799,-1019,-1276,-1452,-1581,-1677,-1757,-1821,-1886,-1933,-1997,1257,1257,1483,1468,1512,1422,1497,1406,1467,1496,1421,1510,1134,1134,1225,1225,1466,1451,1374,1405,1252,1252,1358,1480,1164,1164,1251,1251,1238,1238,1389,1465,-1407,1054,1101,-1423,1207,-1439,830,830,1248,1038,1237,1117,1223,1148,1236,1208,411,426,395,410,379,269,1193,1222,1132,1235,1221,1116,976,976,1192,1162,1177,1220,1131,1191,963,963,-1647,961,780,-1663,558,558,994,993,437,408,393,407,829,978,813,797,947,-1743,721,721,377,392,844,950,828,890,706,706,812,859,796,960,948,843,934,874,571,571,-1919,690,555,689,421,346,539,539,944,779,918,873,932,842,903,888,570,570,931,917,674,674,-2575,1562,-2591,1609,-2607,1654,1322,1322,1441,1441,1696,1546,1683,1593,1669,1624,1426,1426,1321,1321,1639,1680,1425,1425,1305,1305,1545,1668,1608,1623,1667,1592,1638,1666,1320,1320,1652,1607,1409,1409,1304,1304,1288,1288,1664,1637,1395,1395,1335,1335,1622,1636,1394,1394,1319,1319,1606,1621,1392,1392,1137,1137,1137,1137,345,390,360,375,404,373,1047,-2751,-2767,-2783,1062,1121,1046,-2799,1077,-2815,1106,1061,789,789,1105,1104,263,355,310,340,325,354,352,262,339,324,1091,1076,1029,1090,1060,1075,833,833,788,788,1088,1028,818,818,803,803,561,561,531,531,816,771,546,546,289,274,288,258,
+        -253,-317,-381,-446,-478,-509,1279,1279,-811,-1179,-1451,-1756,-1900,-2028,-2189,-2253,-2333,-2414,-2445,-2511,-2526,1313,1298,-2559,1041,1041,1040,1040,1025,1025,1024,1024,1022,1007,1021,991,1020,975,1019,959,687,687,1018,1017,671,671,655,655,1016,1015,639,639,758,758,623,623,757,607,756,591,755,575,754,559,543,543,1009,783,-575,-621,-685,-749,496,-590,750,749,734,748,974,989,1003,958,988,973,1002,942,987,957,972,1001,926,986,941,971,956,1000,910,985,925,999,894,970,-1071,-1087,-1102,1390,-1135,1436,1509,1451,1374,-1151,1405,1358,1480,1420,-1167,1507,1494,1389,1342,1465,1435,1450,1326,1505,1310,1493,1373,1479,1404,1492,1464,1419,428,443,472,397,736,526,464,464,486,457,442,471,484,482,1357,1449,1434,1478,1388,1491,1341,1490,1325,1489,1463,1403,1309,1477,1372,1448,1418,1433,1476,1356,1462,1387,-1439,1475,1340,1447,1402,1474,1324,1461,1371,1473,269,448,1432,1417,1308,1460,-1711,1459,-1727,1441,1099,1099,1446,1386,1431,1401,-1743,1289,1083,1083,1160,1160,1458,1445,1067,1067,1370,1457,1307,1430,1129,1129,1098,1098,268,432,267,416,266,400,-1887,1144,1187,1082,1173,1113,1186,1066,1050,1158,1128,1143,1172,1097,1171,1081,420,391,1157,1112,1170,1142,1127,1065,1169,1049,1156,1096,1141,1111,1155,1080,1126,1154,1064,1153,1140,1095,1048,-2159,1125,1110,1137,-2175,823,823,1139,1138,807,807,384,264,368,263,868,838,853,791,867,822,852,837,866,806,865,790,-2319,851,821,836,352,262,850,805,849,-2399,533,533,835,820,336,261,578,548,563,577,532,532,832,772,562,562,547,547,305,275,560,515,290,290,288,258 ];
+    static immutable uint8_t[] tab32 = [ 130,162,193,209,44,28,76,140,9,9,9,9,9,9,9,9,190,254,222,238,126,94,157,157,109,61,173,205 ];
+    static immutable uint8_t[] tab33 = [ 252,236,220,204,188,172,156,140,124,108,92,76,60,44,28,12 ];
+    static immutable int16_t[2*16] tabindex = [ 0,32,64,98,0,132,180,218,292,364,426,538,648,746,0,1126,1460,1460,1460,1460,1460,1460,1460,1460,1842,1842,1842,1842,1842,1842,1842,1842 ];
+    static immutable uint8_t[] g_linbits =  [ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,4,6,8,10,13,4,5,6,7,8,9,11,13 ];
+
+
+    float one = 0.0f;
+    int ireg = 0, big_val_cnt = gr_info.big_values;
+    const(uint8_t)* sfb = gr_info.sfbtab;
+    const(uint8_t)* bs_next_ptr = bs.buf + bs.pos/8;
+    uint32_t bs_cache = (((bs_next_ptr[0]*256u + bs_next_ptr[1])*256u + bs_next_ptr[2])*256u + bs_next_ptr[3]) << (bs.pos & 7);
+    int pairs_to_decode, np, bs_sh = (bs.pos & 7) - 8;
+    bs_next_ptr += 4;
+
+    while (big_val_cnt > 0)
+    {
+        int tab_num = gr_info.table_select[ireg];
+        int sfb_cnt = gr_info.region_count[ireg++];
+        const int16_t *codebook = tabs.ptr + tabindex[tab_num];
+        int linbits = g_linbits[tab_num];
+        if (linbits)
+        {
+            do
+            {
+                np = *sfb++ / 2;
+                pairs_to_decode = MINIMP3_MIN(big_val_cnt, np);
+                one = *scf++;
+                do
+                {
+                    int j, w = 5;
+                    int leaf = codebook[(bs_cache >> (32 - w))];
+                    while (leaf < 0)
+                    {
+                        { bs_cache <<= (w); bs_sh += (w); }
+                        w = leaf & 7;
+                        leaf = codebook[(bs_cache >> (32 - w)) - (leaf >> 3)];
+                    }
+                    { bs_cache <<= (leaf >> 8); bs_sh += (leaf >> 8); }
+
+                    for (j = 0; j < 2; j++, dst++, leaf >>= 4)
+                    {
+                        int lsb = leaf & 0x0F;
+                        if (lsb == 15)
+                        {
+                            lsb += (bs_cache >> (32 - linbits));
+                            { bs_cache <<= (linbits); bs_sh += (linbits); }
+                            while (bs_sh >= 0) { bs_cache |= cast(uint32_t)*bs_next_ptr++ << bs_sh; bs_sh -= 8; }
+                            *dst = one*L3_pow_43(lsb)*(cast(int32_t)bs_cache < 0 ? -1: 1);
+                        } else
+                        {
+                            *dst = g_pow43[16 + lsb - 16*(bs_cache >> 31)]*one;
+                        }
+
+                        { bs_cache <<= (lsb ? 1 : 0); bs_sh += (lsb ? 1 : 0); }
+                    }
+                    while (bs_sh >= 0) { bs_cache |= cast(uint32_t)*bs_next_ptr++ << bs_sh; bs_sh -= 8; }
+                } while (--pairs_to_decode);
+            } while ((big_val_cnt -= np) > 0 && --sfb_cnt >= 0);
+        } else
+        {
+            do
+            {
+                np = *sfb++ / 2;
+                pairs_to_decode = MINIMP3_MIN(big_val_cnt, np);
+                one = *scf++;
+                do
+                {
+                    int j, w = 5;
+                    int leaf = codebook[(bs_cache >> (32 - w))];
+                    while (leaf < 0)
+                    {
+                        { bs_cache <<= (w); bs_sh += (w); }
+                        w = leaf & 7;
+                        leaf = codebook[(bs_cache >> (32 - w)) - (leaf >> 3)];
+                    }
+                    { bs_cache <<= (leaf >> 8); bs_sh += (leaf >> 8); }
+
+                    for (j = 0; j < 2; j++, dst++, leaf >>= 4)
+                    {
+                        int lsb = leaf & 0x0F;
+                        *dst = g_pow43[16 + lsb - 16*(bs_cache >> 31)]*one;
+                        { bs_cache <<= (lsb ? 1 : 0); bs_sh += (lsb ? 1 : 0); }
+                    }
+                    while (bs_sh >= 0) { bs_cache |= cast(uint32_t)*bs_next_ptr++ << bs_sh; bs_sh -= 8; }
+                } while (--pairs_to_decode);
+            } while ((big_val_cnt -= np) > 0 && --sfb_cnt >= 0);
+        }
+    }
+
+    for (np = 1 - big_val_cnt;; dst += 4)
+    {
+        const uint8_t *codebook_count1 = (gr_info.count1_table) ? tab33.ptr : tab32.ptr;
+        int leaf = codebook_count1[(bs_cache >> (32 - 4))];
+        if (!(leaf & 8))
+        {
+            leaf = codebook_count1[(leaf >> 3) + (bs_cache << 4 >> (32 - (leaf & 3)))];
+        }
+
+        { bs_cache <<= (leaf & 7); bs_sh += (leaf & 7); }
+
+        if (((bs_next_ptr - bs.buf)*8 - 24 + bs_sh) > layer3gr_limit)
+        {
+            break;
+        }
+//#define RELOAD_SCALEFACTOR  if (!--np) { np = *sfb++/2; if (!np) break; one = *scf++; }
+//#define DEQ_COUNT1(s) if (leaf & (128 >> s)) { dst[s] = ((int32_t)bs_cache < 0) ? -one : one; FLUSH_BITS(1) }
+
+        if (!--np) { np = *sfb++/2; if (!np) break; one = *scf++; }
+        /*DEQ_COUNT1(0);*/ if (leaf & (128 >> 0)) { dst[0] = (cast(int32_t)bs_cache < 0) ? -one : one; { bs_cache <<= (1); bs_sh += (1); } }
+        /*DEQ_COUNT1(1);*/ if (leaf & (128 >> 1)) { dst[1] = (cast(int32_t)bs_cache < 0) ? -one : one; { bs_cache <<= (1); bs_sh += (1); } }
+        if (!--np) { np = *sfb++/2; if (!np) break; one = *scf++; }
+        /* DEQ_COUNT1(2); */ if (leaf & (128 >> 2)) { dst[2] = (cast(int32_t)bs_cache < 0) ? -one : one; { bs_cache <<= (1); bs_sh += (1); } }
+        /* DEQ_COUNT1(3); */ if (leaf & (128 >> 3)) { dst[3] = (cast(int32_t)bs_cache < 0) ? -one : one; { bs_cache <<= (1); bs_sh += (1); } }
+        while (bs_sh >= 0) { bs_cache |= cast(uint32_t)*bs_next_ptr++ << bs_sh; bs_sh -= 8; }
+    }
+
+    bs.pos = layer3gr_limit;
+}
+
+void L3_midside_stereo(float *left, int n)
+{
+    int i = 0;
+    float *right = left + 576;
+    for (; i < n; i++)
+    {
+        float a = left[i];
+        float b = right[i];
+        left[i] = a + b;
+        right[i] = a - b;
+    }
+}
+
+void L3_intensity_stereo_band(float *left, int n, float kl, float kr)
+{
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        left[i + 576] = left[i]*kr;
+        left[i] = left[i]*kl;
+    }
+}
+
+void L3_stereo_top_band(const(float)*right, const uint8_t *sfb, int nbands, int* max_band)
+{
+    int i, k;
+
+    max_band[0] = max_band[1] = max_band[2] = -1;
+
+    for (i = 0; i < nbands; i++)
+    {
+        for (k = 0; k < sfb[i]; k += 2)
+        {
+            if (right[k] != 0 || right[k + 1] != 0)
+            {
+                max_band[i % 3] = i;
+                break;
+            }
+        }
+        right += sfb[i];
+    }
+}
+
+void L3_stereo_process(float *left, const uint8_t *ist_pos, const uint8_t *sfb, const uint8_t *hdr, int* max_band, int mpeg2_sh)
+{
+    static immutable float[7*2] g_pan = [ 0,1,0.21132487f,0.78867513f,0.36602540f,0.63397460f,0.5f,0.5f,0.63397460f,0.36602540f,0.78867513f,0.21132487f,1,0 ];
+    uint i;
+    uint max_pos = HDR_TEST_MPEG1(hdr) ? 7 : 64;
+
+    for (i = 0; sfb[i]; i++)
+    {
+        uint ipos = ist_pos[i];
+        if (cast(int)i > max_band[i % 3] && ipos < max_pos)
+        {
+            float kl, kr, s = HDR_TEST_MS_STEREO(hdr) ? 1.41421356f : 1;
+            if (HDR_TEST_MPEG1(hdr))
+            {
+                kl = g_pan[2*ipos];
+                kr = g_pan[2*ipos + 1];
+            } else
+            {
+                kl = 1;
+                kr = L3_ldexp_q2(1, (ipos + 1) >> 1 << mpeg2_sh);
+                if (ipos & 1)
+                {
+                    kl = kr;
+                    kr = 1;
+                }
+            }
+            L3_intensity_stereo_band(left, sfb[i], kl*s, kr*s);
+        } else if (HDR_TEST_MS_STEREO(hdr))
+        {
+            L3_midside_stereo(left, sfb[i]);
+        }
+        left += sfb[i];
+    }
+}
+
+void L3_intensity_stereo(float *left, uint8_t *ist_pos, const L3_gr_info_t *gr, const uint8_t *hdr)
+{
+    int[3] max_band;
+    int n_sfb = gr.n_long_sfb + gr.n_short_sfb;
+    int i, max_blocks = gr.n_short_sfb ? 3 : 1;
+
+    L3_stereo_top_band(left + 576, gr.sfbtab, n_sfb, max_band.ptr);
+    if (gr.n_long_sfb)
+    {
+        max_band[0] = max_band[1] = max_band[2] = MINIMP3_MAX(MINIMP3_MAX(max_band[0], max_band[1]), max_band[2]);
+    }
+    for (i = 0; i < max_blocks; i++)
+    {
+        int default_pos = HDR_TEST_MPEG1(hdr) ? 3 : 0;
+        int itop = n_sfb - max_blocks + i;
+        int prev = itop - max_blocks;
+        ist_pos[itop] = cast(ubyte)( max_band[i] >= prev ? default_pos : ist_pos[prev] );
+    }
+    L3_stereo_process(left, ist_pos, gr.sfbtab, hdr, max_band.ptr, gr[1].scalefac_compress & 1);
+}
+
+void L3_reorder(float *grbuf, float *scratch, const(uint8_t) *sfb)
+{
+    int i, len;
+    float *src = grbuf;
+    float *dst = scratch;
+
+    for (;0 != (len = *sfb); sfb += 3, src += 2*len)
+    {
+        for (i = 0; i < len; i++, src++)
+        {
+            *dst++ = src[0*len];
+            *dst++ = src[1*len];
+            *dst++ = src[2*len];
+        }
+    }
+    memcpy(grbuf, scratch, (dst - scratch)*float.sizeof);
+}
+
+void L3_antialias(float *grbuf, int nbands)
+{
+    static immutable float[8][2] g_aa = [
+        [0.85749293f,0.88174200f,0.94962865f,0.98331459f,0.99551782f,0.99916056f,0.99989920f,0.99999316f],
+        [0.51449576f,0.47173197f,0.31337745f,0.18191320f,0.09457419f,0.04096558f,0.01419856f,0.00369997f]
+    ];
+
+    for (; nbands > 0; nbands--, grbuf += 18)
+    {
+        int i = 0;
+        for(; i < 8; i++)
+        {
+            float u = grbuf[18 + i];
+            float d = grbuf[17 - i];
+            grbuf[18 + i] = u*g_aa[0][i] - d*g_aa[1][i];
+            grbuf[17 - i] = u*g_aa[1][i] + d*g_aa[0][i];
+        }
+    }
+}
+
+void L3_dct3_9(float *y)
+{
+    float s0, s1, s2, s3, s4, s5, s6, s7, s8, t0, t2, t4;
+
+    s0 = y[0]; s2 = y[2]; s4 = y[4]; s6 = y[6]; s8 = y[8];
+    t0 = s0 + s6*0.5f;
+    s0 -= s6;
+    t4 = (s4 + s2)*0.93969262f;
+    t2 = (s8 + s2)*0.76604444f;
+    s6 = (s4 - s8)*0.17364818f;
+    s4 += s8 - s2;
+
+    s2 = s0 - s4*0.5f;
+    y[4] = s4 + s0;
+    s8 = t0 - t2 + s6;
+    s0 = t0 - t4 + t2;
+    s4 = t0 + t4 - s6;
+
+    s1 = y[1]; s3 = y[3]; s5 = y[5]; s7 = y[7];
+
+    s3 *= 0.86602540f;
+    t0 = (s5 + s1)*0.98480775f;
+    t4 = (s5 - s7)*0.34202014f;
+    t2 = (s1 + s7)*0.64278761f;
+    s1 = (s1 - s5 - s7)*0.86602540f;
+
+    s5 = t0 - s3 - t2;
+    s7 = t4 - s3 - t0;
+    s3 = t4 + s3 - t2;
+
+    y[0] = s4 - s7;
+    y[1] = s2 + s1;
+    y[2] = s0 - s3;
+    y[3] = s8 + s5;
+    y[5] = s8 - s5;
+    y[6] = s0 + s3;
+    y[7] = s2 - s1;
+    y[8] = s4 + s7;
+}
+
+void L3_imdct36(float *grbuf, float *overlap, const float *window, int nbands)
+{
+    int i, j;
+    static immutable float[18] g_twid9 = [
+        0.73727734f,0.79335334f,0.84339145f,0.88701083f,0.92387953f,0.95371695f,0.97629601f,0.99144486f,0.99904822f,0.67559021f,0.60876143f,0.53729961f,0.46174861f,0.38268343f,0.30070580f,0.21643961f,0.13052619f,0.04361938f
+    ];
+
+    for (j = 0; j < nbands; j++, grbuf += 18, overlap += 9)
+    {
+        float[9] co, si;
+        co[0] = -grbuf[0];
+        si[0] = grbuf[17];
+        for (i = 0; i < 4; i++)
+        {
+            si[8 - 2*i] =   grbuf[4*i + 1] - grbuf[4*i + 2];
+            co[1 + 2*i] =   grbuf[4*i + 1] + grbuf[4*i + 2];
+            si[7 - 2*i] =   grbuf[4*i + 4] - grbuf[4*i + 3];
+            co[2 + 2*i] = -(grbuf[4*i + 3] + grbuf[4*i + 4]);
+        }
+        L3_dct3_9(co.ptr);
+        L3_dct3_9(si.ptr);
+
+        si[1] = -si[1];
+        si[3] = -si[3];
+        si[5] = -si[5];
+        si[7] = -si[7];
+
+        i = 0;
+
+        for (; i < 9; i++)
+        {
+            float ovl  = overlap[i];
+            float sum  = co[i]*g_twid9[9 + i] + si[i]*g_twid9[0 + i];
+            overlap[i] = co[i]*g_twid9[0 + i] - si[i]*g_twid9[9 + i];
+            grbuf[i]      = ovl*window[0 + i] - sum*window[9 + i];
+            grbuf[17 - i] = ovl*window[9 + i] + sum*window[0 + i];
+        }
+    }
+}
+
+void L3_idct3(float x0, float x1, float x2, float *dst)
+{
+    float m1 = x1*0.86602540f;
+    float a1 = x0 - x2*0.5f;
+    dst[1] = x0 + x2;
+    dst[0] = a1 + m1;
+    dst[2] = a1 - m1;
+}
+
+void L3_imdct12(float *x, float *dst, float *overlap)
+{
+    static immutable float[6] g_twid3 = [ 0.79335334f,0.92387953f,0.99144486f, 0.60876143f,0.38268343f,0.13052619f ];
+    float[3] co, si;
+    int i;
+
+    L3_idct3(-x[0], x[6] + x[3], x[12] + x[9], co.ptr);
+    L3_idct3(x[15], x[12] - x[9], x[6] - x[3], si.ptr);
+    si[1] = -si[1];
+
+    for (i = 0; i < 3; i++)
+    {
+        float ovl  = overlap[i];
+        float sum  = co[i]*g_twid3[3 + i] + si[i]*g_twid3[0 + i];
+        overlap[i] = co[i]*g_twid3[0 + i] - si[i]*g_twid3[3 + i];
+        dst[i]     = ovl*g_twid3[2 - i] - sum*g_twid3[5 - i];
+        dst[5 - i] = ovl*g_twid3[5 - i] + sum*g_twid3[2 - i];
+    }
+}
+
+void L3_imdct_short(float *grbuf, float *overlap, int nbands)
+{
+    for (;nbands > 0; nbands--, overlap += 9, grbuf += 18)
+    {
+        float[18] tmp;
+        memcpy(tmp.ptr, grbuf, tmp.sizeof);
+        memcpy(grbuf, overlap, 6*float.sizeof);
+        L3_imdct12(tmp.ptr, grbuf + 6, overlap + 6);
+        L3_imdct12(tmp.ptr + 1, grbuf + 12, overlap + 6);
+        L3_imdct12(tmp.ptr + 2, overlap, overlap + 6);
+    }
+}
+
+void L3_change_sign(float *grbuf)
+{
+    int b, i;
+    for (b = 0, grbuf += 18; b < 32; b += 2, grbuf += 36)
+        for (i = 1; i < 18; i += 2)
+            grbuf[i] = -grbuf[i];
+}
+
+void L3_imdct_gr(float *grbuf, float *overlap, uint block_type, uint n_long_bands)
+{
+    static immutable float[18][2] g_mdct_window = [
+        [ 0.99904822f,0.99144486f,0.97629601f,0.95371695f,0.92387953f,0.88701083f,0.84339145f,0.79335334f,0.73727734f,0.04361938f,0.13052619f,0.21643961f,0.30070580f,0.38268343f,0.46174861f,0.53729961f,0.60876143f,0.67559021f ],
+        [ 1,1,1,1,1,1,0.99144486f,0.92387953f,0.79335334f,0,0,0,0,0,0,0.13052619f,0.38268343f,0.60876143f ]
+    ];
+    if (n_long_bands)
+    {
+        L3_imdct36(grbuf, overlap, g_mdct_window[0].ptr, n_long_bands);
+        grbuf += 18*n_long_bands;
+        overlap += 9*n_long_bands;
+    }
+    if (block_type == SHORT_BLOCK_TYPE)
+        L3_imdct_short(grbuf, overlap, 32 - n_long_bands);
+    else
+        L3_imdct36(grbuf, overlap, g_mdct_window[block_type == STOP_BLOCK_TYPE].ptr, 32 - n_long_bands);
+}
+
+void L3_save_reservoir(mp3dec_t *h, mp3dec_scratch_t *s)
+{
+    int pos = (s.bs.pos + 7)/8u;
+    int remains = s.bs.limit/8u - pos;
+    if (remains > MAX_BITRESERVOIR_BYTES)
+    {
+        pos += remains - MAX_BITRESERVOIR_BYTES;
+        remains = MAX_BITRESERVOIR_BYTES;
+    }
+    if (remains > 0)
+    {
+        memmove(h.reserv_buf.ptr, s.maindata.ptr + pos, remains);
+    }
+    h.reserv = remains;
+}
+
+static int L3_restore_reservoir(mp3dec_t *h, bs_t *bs, mp3dec_scratch_t *s, int main_data_begin)
+{
+    int frame_bytes = (bs.limit - bs.pos)/8;
+    int bytes_have = MINIMP3_MIN(h.reserv, main_data_begin);
+    memcpy(s.maindata.ptr, h.reserv_buf.ptr + MINIMP3_MAX(0, h.reserv - main_data_begin), MINIMP3_MIN(h.reserv, main_data_begin));
+    memcpy(s.maindata.ptr + bytes_have, bs.buf + bs.pos/8, frame_bytes);
+    bs_init(&s.bs, s.maindata.ptr, bytes_have + frame_bytes);
+    return h.reserv >= main_data_begin;
+}
+
+void L3_decode(mp3dec_t *h, mp3dec_scratch_t *s, L3_gr_info_t *gr_info, int nch)
+{
+    int ch;
+
+    for (ch = 0; ch < nch; ch++)
+    {
+        int layer3gr_limit = s.bs.pos + gr_info[ch].part_23_length;
+        L3_decode_scalefactors(h.header.ptr, s.ist_pos[ch].ptr, &s.bs, gr_info + ch, s.scf.ptr, ch);
+        L3_huffman(s.grbuf[ch].ptr, &s.bs, gr_info + ch, s.scf.ptr, layer3gr_limit);
+    }
+
+    if (HDR_TEST_I_STEREO(h.header.ptr))
+    {
+        L3_intensity_stereo(s.grbuf[0].ptr, s.ist_pos[1].ptr, gr_info, h.header.ptr);
+    } else if (HDR_IS_MS_STEREO(h.header.ptr))
+    {
+        L3_midside_stereo(s.grbuf[0].ptr, 576);
+    }
+
+    for (ch = 0; ch < nch; ch++, gr_info++)
+    {
+        int aa_bands = 31;
+        int n_long_bands = (gr_info.mixed_block_flag ? 2 : 0) << cast(int)(HDR_GET_MY_SAMPLE_RATE(h.header.ptr) == 2);
+
+        if (gr_info.n_short_sfb)
+        {
+            aa_bands = n_long_bands - 1;
+            L3_reorder(s.grbuf[ch].ptr + n_long_bands*18, s.syn[0].ptr, gr_info.sfbtab + gr_info.n_long_sfb);
+        }
+
+        L3_antialias(s.grbuf[ch].ptr, aa_bands);
+        L3_imdct_gr(s.grbuf[ch].ptr, h.mdct_overlap[ch].ptr, gr_info.block_type, n_long_bands);
+        L3_change_sign(s.grbuf[ch].ptr);
+    }
+}
+
+void mp3d_DCT_II(float *grbuf, int n)
+{
+    static immutable float[24] g_sec = [
+        10.19000816f,0.50060302f,0.50241929f,3.40760851f,0.50547093f,0.52249861f,2.05778098f,0.51544732f,0.56694406f,1.48416460f,0.53104258f,0.64682180f,1.16943991f,0.55310392f,0.78815460f,0.97256821f,0.58293498f,1.06067765f,0.83934963f,0.62250412f,1.72244716f,0.74453628f,0.67480832f,5.10114861f
+    ];
+    int i, k = 0;
+
+    for (; k < n; k++)
+    {
+        float[8][4] t;
+        float* x, y = grbuf + k;
+
+        for (x = t[0].ptr, i = 0; i < 8; i++, x++)
+        {
+            float x0 = y[i*18];
+            float x1 = y[(15 - i)*18];
+            float x2 = y[(16 + i)*18];
+            float x3 = y[(31 - i)*18];
+            float t0 = x0 + x3;
+            float t1 = x1 + x2;
+            float t2 = (x1 - x2)*g_sec[3*i + 0];
+            float t3 = (x0 - x3)*g_sec[3*i + 1];
+            x[0] = t0 + t1;
+            x[8] = (t0 - t1)*g_sec[3*i + 2];
+            x[16] = t3 + t2;
+            x[24] = (t3 - t2)*g_sec[3*i + 2];
+        }
+        for (x = t[0].ptr, i = 0; i < 4; i++, x += 8)
+        {
+            float x0 = x[0], x1 = x[1], x2 = x[2], x3 = x[3], x4 = x[4], x5 = x[5], x6 = x[6], x7 = x[7], xt;
+            xt = x0 - x7; x0 += x7;
+            x7 = x1 - x6; x1 += x6;
+            x6 = x2 - x5; x2 += x5;
+            x5 = x3 - x4; x3 += x4;
+            x4 = x0 - x3; x0 += x3;
+            x3 = x1 - x2; x1 += x2;
+            x[0] = x0 + x1;
+            x[4] = (x0 - x1)*0.70710677f;
+            x5 =  x5 + x6;
+            x6 = (x6 + x7)*0.70710677f;
+            x7 =  x7 + xt;
+            x3 = (x3 + x4)*0.70710677f;
+            x5 -= x7*0.198912367f;  /* rotate by PI/8 */
+            x7 += x5*0.382683432f;
+            x5 -= x7*0.198912367f;
+            x0 = xt - x6; xt += x6;
+            x[1] = (xt + x7)*0.50979561f;
+            x[2] = (x4 + x3)*0.54119611f;
+            x[3] = (x0 - x5)*0.60134488f;
+            x[5] = (x0 + x5)*0.89997619f;
+            x[6] = (x4 - x3)*1.30656302f;
+            x[7] = (xt - x7)*2.56291556f;
+
+        }
+        for (i = 0; i < 7; i++, y += 4*18)
+        {
+            y[0*18] = t[0][i];
+            y[1*18] = t[2][i] + t[3][i] + t[3][i + 1];
+            y[2*18] = t[1][i] + t[1][i + 1];
+            y[3*18] = t[2][i + 1] + t[3][i] + t[3][i + 1];
+        }
+        y[0*18] = t[0][7];
+        y[1*18] = t[2][7] + t[3][7];
+        y[2*18] = t[1][7];
+        y[3*18] = t[3][7];
+    }
+}
+
+float mp3d_scale_pcm(float sample)
+{
+    return sample*(1.0f/32768.0f);
+}
+
+void mp3d_synth_pair(mp3d_sample_t *pcm, int nch, const(float)*z)
+{
+    float a;
+    a  = (z[14*64] - z[    0]) * 29;
+    a += (z[ 1*64] + z[13*64]) * 213;
+    a += (z[12*64] - z[ 2*64]) * 459;
+    a += (z[ 3*64] + z[11*64]) * 2037;
+    a += (z[10*64] - z[ 4*64]) * 5153;
+    a += (z[ 5*64] + z[ 9*64]) * 6574;
+    a += (z[ 8*64] - z[ 6*64]) * 37489;
+    a +=  z[ 7*64]             * 75038;
+    pcm[0] = mp3d_scale_pcm(a);
+
+    z += 2;
+    a  = z[14*64] * 104;
+    a += z[12*64] * 1567;
+    a += z[10*64] * 9727;
+    a += z[ 8*64] * 64019;
+    a += z[ 6*64] * -9975;
+    a += z[ 4*64] * -45;
+    a += z[ 2*64] * 146;
+    a += z[ 0*64] * -5;
+    pcm[16*nch] = mp3d_scale_pcm(a);
+}
+
+void mp3d_synth(float *xl, mp3d_sample_t *dstl, int nch, float *lins)
+{
+    int i;
+    float *xr = xl + 576*(nch - 1);
+    mp3d_sample_t *dstr = dstl + (nch - 1);
+
+    static immutable float[] g_win = [
+        -1,26,-31,208,218,401,-519,2063,2000,4788,-5517,7134,5959,35640,-39336,74992,
+        -1,24,-35,202,222,347,-581,2080,1952,4425,-5879,7640,5288,33791,-41176,74856,
+        -1,21,-38,196,225,294,-645,2087,1893,4063,-6237,8092,4561,31947,-43006,74630,
+        -1,19,-41,190,227,244,-711,2085,1822,3705,-6589,8492,3776,30112,-44821,74313,
+        -1,17,-45,183,228,197,-779,2075,1739,3351,-6935,8840,2935,28289,-46617,73908,
+        -1,16,-49,176,228,153,-848,2057,1644,3004,-7271,9139,2037,26482,-48390,73415,
+        -2,14,-53,169,227,111,-919,2032,1535,2663,-7597,9389,1082,24694,-50137,72835,
+        -2,13,-58,161,224,72,-991,2001,1414,2330,-7910,9592,70,22929,-51853,72169,
+        -2,11,-63,154,221,36,-1064,1962,1280,2006,-8209,9750,-998,21189,-53534,71420,
+        -2,10,-68,147,215,2,-1137,1919,1131,1692,-8491,9863,-2122,19478,-55178,70590,
+        -3,9,-73,139,208,-29,-1210,1870,970,1388,-8755,9935,-3300,17799,-56778,69679,
+        -3,8,-79,132,200,-57,-1283,1817,794,1095,-8998,9966,-4533,16155,-58333,68692,
+        -4,7,-85,125,189,-83,-1356,1759,605,814,-9219,9959,-5818,14548,-59838,67629,
+        -4,7,-91,117,177,-106,-1428,1698,402,545,-9416,9916,-7154,12980,-61289,66494,
+        -5,6,-97,111,163,-127,-1498,1634,185,288,-9585,9838,-8540,11455,-62684,65290
+    ];
+    float *zlin = lins + 15*64;
+    const(float) *w = g_win.ptr;
+
+    zlin[4*15]     = xl[18*16];
+    zlin[4*15 + 1] = xr[18*16];
+    zlin[4*15 + 2] = xl[0];
+    zlin[4*15 + 3] = xr[0];
+
+    zlin[4*31]     = xl[1 + 18*16];
+    zlin[4*31 + 1] = xr[1 + 18*16];
+    zlin[4*31 + 2] = xl[1];
+    zlin[4*31 + 3] = xr[1];
+
+    mp3d_synth_pair(dstr, nch, lins + 4*15 + 1);
+    mp3d_synth_pair(dstr + 32*nch, nch, lins + 4*15 + 64 + 1);
+    mp3d_synth_pair(dstl, nch, lins + 4*15);
+    mp3d_synth_pair(dstl + 32*nch, nch, lins + 4*15 + 64);
+
+    for (i = 14; i >= 0; i--)
+    {
+//#define LOAD(k) float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - k*64]; float *vy = &zlin[4*i - (15 - k)*64];
+//#define S0(k) { int j; LOAD(k); for (j = 0; j < 4; j++) b[j]  = vz[j]*w1 + vy[j]*w0, a[j]  = vz[j]*w0 - vy[j]*w1; }
+//#define S1(k) { int j; LOAD(k); for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
+//#define S2(k) { int j; LOAD(k); for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; }
+        float[4] a, b;
+
+        zlin[4*i]     = xl[18*(31 - i)];
+        zlin[4*i + 1] = xr[18*(31 - i)];
+        zlin[4*i + 2] = xl[1 + 18*(31 - i)];
+        zlin[4*i + 3] = xr[1 + 18*(31 - i)];
+        zlin[4*(i + 16)]   = xl[1 + 18*(1 + i)];
+        zlin[4*(i + 16) + 1] = xr[1 + 18*(1 + i)];
+        zlin[4*(i - 16) + 2] = xl[18*(1 + i)];
+        zlin[4*(i - 16) + 3] = xr[18*(1 + i)];
+
+        /* S0(0) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 0*64]; float *vy = &zlin[4*i - (15 - 0)*64]; /* LOAD(0); */ for (j = 0; j < 4; j++) b[j]  = vz[j]*w1 + vy[j]*w0, a[j]  = vz[j]*w0 - vy[j]*w1; }
+        /* S2(1) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 1*64]; float *vy = &zlin[4*i - (15 - 1)*64]; /* LOAD(1); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S1(2) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 2*64]; float *vy = &zlin[4*i - (15 - 2)*64]; /* LOAD(2); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
+        /* S2(3) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 3*64]; float *vy = &zlin[4*i - (15 - 3)*64]; /* LOAD(3); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S1(4) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 4*64]; float *vy = &zlin[4*i - (15 - 4)*64]; /* LOAD(4); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
+        /* S2(5) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 5*64]; float *vy = &zlin[4*i - (15 - 5)*64]; /* LOAD(5); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S1(6) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 6*64]; float *vy = &zlin[4*i - (15 - 6)*64]; /* LOAD(6); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
+        /* S2(7) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 7*64]; float *vy = &zlin[4*i - (15 - 7)*64]; /* LOAD(7); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+
+        dstr[(15 - i)*nch] = mp3d_scale_pcm(a[1]);
+        dstr[(17 + i)*nch] = mp3d_scale_pcm(b[1]);
+        dstl[(15 - i)*nch] = mp3d_scale_pcm(a[0]);
+        dstl[(17 + i)*nch] = mp3d_scale_pcm(b[0]);
+        dstr[(47 - i)*nch] = mp3d_scale_pcm(a[3]);
+        dstr[(49 + i)*nch] = mp3d_scale_pcm(b[3]);
+        dstl[(47 - i)*nch] = mp3d_scale_pcm(a[2]);
+        dstl[(49 + i)*nch] = mp3d_scale_pcm(b[2]);
+    }
+}
+
+void mp3d_synth_granule(float *qmf_state, float *grbuf, int nbands, int nch, mp3d_sample_t *pcm, float *lins)
+{
+    int i;
+    for (i = 0; i < nch; i++)
+    {
+        mp3d_DCT_II(grbuf + 576*i, nbands);
+    }
+
+    memcpy(lins, qmf_state, float.sizeof*15*64);
+
+    for (i = 0; i < nbands; i += 2)
+    {
+        mp3d_synth(grbuf + i, pcm + 32*nch*i, nch, lins + i*64);
+    }
+
+    if (nch == 1)
+    {
+        for (i = 0; i < 15*64; i += 2)
+        {
+            qmf_state[i] = lins[nbands*64 + i];
+        }
+    } else
+
+    {
+        memcpy(qmf_state, lins + nbands*64, float.sizeof*15*64);
+    }
+}
+
+static int mp3d_match_frame(const uint8_t *hdr, int mp3_bytes, int frame_bytes)
+{
+    int i, nmatch;
+    for (i = 0, nmatch = 0; nmatch < MAX_FRAME_SYNC_MATCHES; nmatch++)
+    {
+        i += hdr_frame_bytes(hdr + i, frame_bytes) + hdr_padding(hdr + i);
+        if (i + HDR_SIZE > mp3_bytes)
+            return nmatch > 0;
+        if (!hdr_compare(hdr, hdr + i))
+            return 0;
+    }
+    return 1;
+}
+
+static int mp3d_find_frame(const(uint8_t) *mp3, int mp3_bytes, int *free_format_bytes, int *ptr_frame_bytes)
+{
+    int i, k;
+    for (i = 0; i < mp3_bytes - HDR_SIZE; i++, mp3++)
+    {
+        if (hdr_valid(mp3))
+        {
+            int frame_bytes = hdr_frame_bytes(mp3, *free_format_bytes);
+            int frame_and_padding = frame_bytes + hdr_padding(mp3);
+
+            for (k = HDR_SIZE; !frame_bytes && k < MAX_FREE_FORMAT_FRAME_SIZE && i + 2*k < mp3_bytes - HDR_SIZE; k++)
+            {
+                if (hdr_compare(mp3, mp3 + k))
+                {
+                    int fb = k - hdr_padding(mp3);
+                    int nextfb = fb + hdr_padding(mp3 + k);
+                    if (i + k + nextfb + HDR_SIZE > mp3_bytes || !hdr_compare(mp3, mp3 + k + nextfb))
+                        continue;
+                    frame_and_padding = k;
+                    frame_bytes = fb;
+                    *free_format_bytes = fb;
+                }
+            }
+            if ((frame_bytes && i + frame_and_padding <= mp3_bytes &&
+                mp3d_match_frame(mp3, mp3_bytes - i, frame_bytes)) ||
+                (!i && frame_and_padding == mp3_bytes))
+            {
+                *ptr_frame_bytes = frame_and_padding;
+                return i;
+            }
+            *free_format_bytes = 0;
+        }
+    }
+    *ptr_frame_bytes = 0;
+    return mp3_bytes;
+}
+
+void mp3dec_init(mp3dec_t *dec)
+{
+    dec.header[0] = 0;
+}
+
+int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_sample_t *pcm, mp3dec_frame_info_t *info)
+{
+    int i = 0, igr, frame_size = 0, success = 1;
+    const(uint8_t) *hdr;
+    bs_t[1] bs_frame;
+    mp3dec_scratch_t scratch;
+
+    if (mp3_bytes > 4 && dec.header[0] == 0xff && hdr_compare(dec.header.ptr, mp3))
+    {
+        frame_size = hdr_frame_bytes(mp3, dec.free_format_bytes) + hdr_padding(mp3);
+        if (frame_size != mp3_bytes && (frame_size + HDR_SIZE > mp3_bytes || !hdr_compare(mp3, mp3 + frame_size)))
+        {
+            frame_size = 0;
+        }
+    }
+    if (!frame_size)
+    {
+        memset(dec, 0, mp3dec_t.sizeof);
+        i = mp3d_find_frame(mp3, mp3_bytes, &dec.free_format_bytes, &frame_size);
+        if (!frame_size || i + frame_size > mp3_bytes)
+        {
+            info.frame_bytes = i;
+            return 0;
+        }
+    }
+
+    hdr = mp3 + i;
+    memcpy(dec.header.ptr, hdr, HDR_SIZE);
+    info.frame_bytes = i + frame_size;
+    info.frame_offset = i;
+    info.channels = HDR_IS_MONO(hdr) ? 1 : 2;
+    info.hz = hdr_sample_rate_hz(hdr);
+    info.layer = 4 - HDR_GET_LAYER(hdr);
+    info.bitrate_kbps = hdr_bitrate_kbps(hdr);
+
+    if (!pcm)
+    {
+        return hdr_frame_samples(hdr);
+    }
+
+    bs_init(bs_frame.ptr, hdr + HDR_SIZE, frame_size - HDR_SIZE);
+    if (HDR_IS_CRC(hdr))
+    {
+        get_bits(bs_frame.ptr, 16);
+    }
+
+    if (info.layer == 3)
+    {
+        int main_data_begin = L3_read_side_info(bs_frame.ptr, scratch.gr_info.ptr, hdr);
+        if (main_data_begin < 0 || bs_frame[0].pos > bs_frame[0].limit)
+        {
+            mp3dec_init(dec);
+            return 0;
+        }
+        success = L3_restore_reservoir(dec, bs_frame.ptr, &scratch, main_data_begin);
+        if (success)
+        {
+            for (igr = 0; igr < (HDR_TEST_MPEG1(hdr) ? 2 : 1); igr++, pcm += 576*info.channels)
+            {
+                memset(scratch.grbuf[0].ptr, 0, 576*2*float.sizeof);
+                L3_decode(dec, &scratch, scratch.gr_info.ptr + igr*info.channels, info.channels);
+                mp3d_synth_granule(dec.qmf_state.ptr, scratch.grbuf[0].ptr, 18, info.channels, pcm, scratch.syn[0].ptr);
+            }
+        }
+        L3_save_reservoir(dec, &scratch);
+    } else
+    {
+        L12_scale_info[1] sci;
+        L12_read_scale_info(hdr, bs_frame.ptr, sci.ptr);
+
+        memset(scratch.grbuf[0].ptr, 0, 576*2*float.sizeof);
+        for (i = 0, igr = 0; igr < 3; igr++)
+        {
+            if (12 == (i += L12_dequantize_granule(scratch.grbuf[0].ptr + i, bs_frame.ptr, sci.ptr, info.layer | 1)))
+            {
+                i = 0;
+                L12_apply_scf_384(sci.ptr, sci[0].scf.ptr + igr, scratch.grbuf[0].ptr);
+                mp3d_synth_granule(dec.qmf_state.ptr, scratch.grbuf[0].ptr, 12, info.channels, pcm, scratch.syn[0].ptr);
+                memset(scratch.grbuf[0].ptr, 0, 576*2*float.sizeof);
+                pcm += 384*info.channels;
+            }
+            if (bs_frame[0].pos > bs_frame[0].limit)
+            {
+                mp3dec_init(dec);
+                return 0;
+            }
+        }
+    }
+    return success*hdr_frame_samples(dec.header.ptr);
+}
+
+/*
+    https://github.com/lieff/minimp3
+    To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide.
+    This software is distributed without any warranty.
+    See <http://creativecommons.org/publicdomain/zero/1.0/>.
+*/
+/*
+  Translated to D by Guillaume Piolat.
+  Stripped down a bit for the needs of audio-formats.
+*/
+
+import core.stdc.stdlib;
+import core.stdc.string;
+
+enum MP3D_SEEK_TO_BYTE =   0;
+enum MP3D_SEEK_TO_SAMPLE = 1;
+
+enum MINIMP3_PREDECODE_FRAMES = 2; /* frames to pre-decode and skip after seek (to fill internal structures) */
+/*#define MINIMP3_SEEK_IDX_LINEAR_SEARCH*/ /* define to use linear index search instead of binary search on seek */
+enum MINIMP3_IO_SIZE = (128*1024); /* io buffer size for streaming functions, must be greater than MINIMP3_BUF_SIZE */
+enum MINIMP3_BUF_SIZE = (16*1024); /* buffer which can hold minimum 10 consecutive mp3 frames (~16KB) worst case */
+enum MINIMP3_ENABLE_RING = 0;      /* enable hardware magic ring buffer if available, to make less input buffer memmove(s) in callback IO mode */
+
+enum MP3D_E_PARAM     =  -1;
+enum MP3D_E_MEMORY    =  -2;
+enum MP3D_E_IOERROR   =  -3;
+enum MP3D_E_USER      =  -4;  /* can be used to stop processing from callbacks without indicating specific error */
+enum MP3D_E_DECODE    =  -5;  /* decode error which can't be safely skipped, such as sample rate, layer and channels change */
+
+struct mp3dec_file_info_t
+{
+    mp3d_sample_t *buffer;
+    size_t samples; /* channels included, byte size = samples*sizeof(mp3d_sample_t) */
+    int channels, hz, layer, avg_bitrate_kbps;
+}
+
+struct mp3dec_map_info_t
+{
+    const(uint8_t) *buffer;
+    size_t size;
+}
+
+struct mp3dec_frame_t
+{
+    uint64_t sample;
+    uint64_t offset;
+}
+
+struct mp3dec_index_t
+{
+    mp3dec_frame_t *frames;
+    size_t num_frames, capacity;
+}
+
+alias MP3D_READ_CB = size_t function(void *buf, size_t size, void *user_data);
+alias MP3D_SEEK_CB = int function(uint64_t position, void *user_data);
+
+
+struct mp3dec_io_t
+{
+    MP3D_READ_CB read;
+    void *read_data;
+    MP3D_SEEK_CB seek;
+    void *seek_data;
+}
+
+struct mp3dec_ex_t
+{
+    mp3dec_t mp3d;
+    mp3dec_map_info_t file;
+    mp3dec_io_t *io;
+    mp3dec_index_t index;
+    uint64_t offset, samples, detected_samples, cur_sample, start_offset, end_offset;
+    mp3dec_frame_info_t info;
+    mp3d_sample_t[MINIMP3_MAX_SAMPLES_PER_FRAME] buffer;
+    size_t input_consumed, input_filled;
+    int is_file, seek_method, vbr_tag_found;
+    int free_format_bytes;
+    int buffer_samples, buffer_consumed, to_skip, start_delay;
+    int last_error;
+}
+
+alias MP3D_ITERATE_CB = int function(void *user_data, const uint8_t *frame, int frame_size, int free_format_bytes, size_t buf_size, uint64_t offset, mp3dec_frame_info_t *info);
+alias MP3D_PROGRESS_CB = int function(void *user_data, size_t file_size, uint64_t offset, mp3dec_frame_info_t *info);
+
+
+void mp3dec_skip_id3v1(const uint8_t *buf, size_t *pbuf_size)
+{
+    size_t buf_size = *pbuf_size;
+    if (buf_size >= 128 && !memcmp(buf + buf_size - 128, "TAG".ptr, 3))
+    {
+        buf_size -= 128;
+        if (buf_size >= 227 && !memcmp(buf + buf_size - 227, "TAG+".ptr, 4))
+            buf_size -= 227;
+    }
+    if (buf_size > 32 && !memcmp(buf + buf_size - 32, "APETAGEX".ptr, 8))
+    {
+        buf_size -= 32;
+        const uint8_t *tag = buf + buf_size + 8 + 4;
+        uint32_t tag_size = cast(uint32_t)(tag[3] << 24) | (tag[2] << 16) | (tag[1] << 8) | tag[0];
+        if (buf_size >= tag_size)
+            buf_size -= tag_size;
+    }
+    *pbuf_size = buf_size;
+}
+
+enum MINIMP3_ID3_DETECT_SIZE = 10;
+
+size_t mp3dec_skip_id3v2(const uint8_t *buf, size_t buf_size)
+{    
+    if (buf_size >= MINIMP3_ID3_DETECT_SIZE && !memcmp(buf, "ID3".ptr, 3) && !((buf[5] & 15) || (buf[6] & 0x80) || (buf[7] & 0x80) || (buf[8] & 0x80) || (buf[9] & 0x80)))
+    {
+        size_t id3v2size = (((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f)) + 10;
+        if ((buf[5] & 16))
+            id3v2size += 10; /* footer */
+        return id3v2size;
+    }enum MINIMP3_ID3_DETECT_SIZE = 10;
     return 0;
 }
 
-enum GET_VLC(string code, string name, string gb, string table, string bits, string max_depth) =
-"{\n"~
-"    int n, index, nb_bits;\n"~
-"\n"~
-"    index= "~SHOW_UBITS!(name, gb, bits)~";\n"~
-"    "~code~" = "~table~"[index][0];\n"~
-"    n    = "~table~"[index][1];\n"~
-"\n"~
-"    if ("~max_depth~" > 1 && n < 0){\n"~
-"        "~LAST_SKIP_BITS!(name, gb, bits)~"\n"~
-"        "~UPDATE_CACHE!(name, gb)~"\n"~
-"\n"~
-"        nb_bits = -n;\n"~
-"\n"~
-"        index= "~SHOW_UBITS!(name, gb, "nb_bits")~" + "~code~";\n"~
-"        "~code~" = "~table~"[index][0];\n"~
-"        n    = "~table~"[index][1];\n"~
-"        if ("~max_depth~" > 2 && n < 0){\n"~
-"            "~LAST_SKIP_BITS!(name, gb, "nb_bits")~"\n"~
-"            "~UPDATE_CACHE!(name, gb)~"\n"~
-"\n"~
-"            nb_bits = -n;\n"~
-"\n"~
-"            index= "~SHOW_UBITS!(name, gb, "nb_bits")~" + "~code~";\n"~
-"            "~code~" = "~table~"[index][0];\n"~
-"            n    = "~table~"[index][1];\n"~
-"        }\n"~
-"    }\n"~
-"    "~SKIP_BITS!(name, gb, "n")~"\n"~
-"}\n"~
-"";
-
-int get_vlc2(bitstream_t *s, VT2* table, int bits, int max_depth) {
-  int code;
-
-  mixin(OPEN_READER!("re", "s"));
-  mixin(UPDATE_CACHE!("re", "s"));
-
-  mixin(GET_VLC!("code", "re", "s", "table", "bits", "max_depth"));
-
-  mixin(CLOSE_READER!("re", "s"));
-  return code;
-}
-
-void switch_buffer (mp3_context_t *s, int *pos, int *end_pos, int *end_pos2) {
-    if(s.in_gb.buffer && *pos >= s.gb.size_in_bits){
-        s.gb= s.in_gb;
-        s.in_gb.buffer=null;
-        skip_bits_long(&s.gb, *pos - *end_pos);
-        *end_pos2=
-        *end_pos= *end_pos2 + get_bits_count(&s.gb) - *pos;
-        *pos= get_bits_count(&s.gb);
-    }
-}
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-int mp3_check_header(uint32_t header){
-  //pragma(inline, true);
-  /* header */
-  if ((header & 0xffe00000) != 0xffe00000) return -1;
-  /* layer check */
-  if ((header & (3<<17)) != (1 << 17)) return -1;
-  /* bit rate */
-  if ((header & (0xf<<12)) == 0xf<<12) return -1;
-  /* frequency */
-  if ((header & (3<<10)) == 3<<10) return -1;
-  return 0;
-}
-
-
-void lsf_sf_expand (int *slen, int sf, int n1, int n2, int n3) {
-    if (n3) {
-        slen[3] = sf % n3;
-        sf /= n3;
-    } else {
-        slen[3] = 0;
-    }
-    if (n2) {
-        slen[2] = sf % n2;
-        sf /= n2;
-    } else {
-        slen[2] = 0;
-    }
-    slen[1] = sf % n1;
-    sf /= n1;
-    slen[0] = sf;
-}
-
-int l3_unscale(int value, int exponent)
+void mp3dec_skip_id3(const(uint8_t)**pbuf, size_t *pbuf_size)
 {
-    uint m;
-    int e;
+    uint8_t *buf = cast(uint8_t *)(*pbuf);
+    size_t buf_size = *pbuf_size;
+    size_t id3v2size = mp3dec_skip_id3v2(buf, buf_size);
+    if (id3v2size)
+    {
+        if (id3v2size >= buf_size)
+            id3v2size = buf_size;
+        buf      += id3v2size;
+        buf_size -= id3v2size;
+    }
+    mp3dec_skip_id3v1(buf, &buf_size);
+    *pbuf = cast(const uint8_t *)buf;
+    *pbuf_size = buf_size;
+}
 
-    e = table_4_3_exp  [4*value + (exponent&3)];
-    m = table_4_3_value[4*value + (exponent&3)];
-    e -= (exponent >> 2);
-    if (e > 31)
+static int mp3dec_check_vbrtag(const uint8_t *frame, int frame_size, uint32_t *frames, int *delay, int *padding)
+{
+    static immutable char[4] g_xing_tag = "Xing";
+    static immutable char[4] g_info_tag = "Info";
+
+enum FRAMES_FLAG =    1;
+enum BYTES_FLAG     = 2;
+enum TOC_FLAG       = 4;
+enum VBR_SCALE_FLAG = 8;
+    /* Side info offsets after header:
+    /                Mono  Stereo
+    /  MPEG1          17     32
+    /  MPEG2 & 2.5     9     17*/
+    bs_t[1] bs;
+    L3_gr_info_t[4] gr_info;
+    bs_init(bs.ptr, frame + HDR_SIZE, frame_size - HDR_SIZE);
+    if (HDR_IS_CRC(frame))
+        get_bits(bs.ptr, 16);
+    if (L3_read_side_info(bs.ptr, gr_info.ptr, frame) < 0)
+        return 0; /* side info corrupted */
+
+    const(uint8_t)*tag = frame + HDR_SIZE + bs[0].pos/8;
+    if (memcmp(g_xing_tag.ptr, tag, 4) && memcmp(g_info_tag.ptr, tag, 4))
         return 0;
-    m = (m + (1 << (e-1))) >> e;
-
-    return m;
-}
-
-int round_sample(int *sum) {
-    int sum1;
-    sum1 = (*sum) >> OUT_SHIFT;
-    *sum &= (1<<OUT_SHIFT)-1;
-    if (sum1 < OUT_MIN)
-        sum1 = OUT_MIN;
-    else if (sum1 > OUT_MAX)
-        sum1 = OUT_MAX;
-    return sum1;
-}
-
-void exponents_from_scale_factors (mp3_context_t *s, granule_t *g, int16_t *exponents) {
-    const(uint8_t)* bstab, pretab;
-    int len, i, j, k, l, v0, shift, gain;
-    int[3] gains;
-    int16_t *exp_ptr;
-
-    exp_ptr = exponents;
-    gain = g.global_gain - 210;
-    shift = g.scalefac_scale + 1;
-
-    bstab = band_size_long[s.sample_rate_index].ptr;
-    pretab = mp3_pretab[g.preflag].ptr;
-    for(i=0;i<g.long_end;i++) {
-        v0 = gain - ((g.scale_factors[i] + pretab[i]) << shift) + 400;
-        len = bstab[i];
-        for(j=len;j>0;j--)
-            *exp_ptr++ = cast(short)v0;
+    int flags = tag[7];
+    if (!((flags & FRAMES_FLAG)))
+        return -1;
+    tag += 8;
+    *frames = cast(uint32_t)(tag[0] << 24) | (tag[1] << 16) | (tag[2] << 8) | tag[3];
+    tag += 4;
+    if (flags & BYTES_FLAG)
+        tag += 4;
+    if (flags & TOC_FLAG)
+        tag += 100;
+    if (flags & VBR_SCALE_FLAG)
+        tag += 4;
+    *delay = *padding = 0;
+    if (*tag)
+    {   /* extension, LAME, Lavc, etc. Should be the same structure. */
+        tag += 21;
+        if (tag - frame + 14 >= frame_size)
+            return 0;
+        *delay   = ((tag[0] << 4) | (tag[1] >> 4)) + (528 + 1);
+        *padding = (((tag[1] & 0xF) << 8) | tag[2]) - (528 + 1);
     }
-
-    if (g.short_start < 13) {
-        bstab = band_size_short[s.sample_rate_index].ptr;
-        gains[0] = gain - (g.subblock_gain[0] << 3);
-        gains[1] = gain - (g.subblock_gain[1] << 3);
-        gains[2] = gain - (g.subblock_gain[2] << 3);
-        k = g.long_end;
-        for(i=g.short_start;i<13;i++) {
-            len = bstab[i];
-            for(l=0;l<3;l++) {
-                v0 = gains[l] - (g.scale_factors[k++] << shift) + 400;
-                for(j=len;j>0;j--)
-                *exp_ptr++ = cast(short)v0;
-            }
-        }
-    }
+    return 1;
 }
 
-void reorder_block(mp3_context_t *s, granule_t *g)
+int mp3dec_detect_buf(const uint8_t *buf, size_t buf_size)
 {
-    int i, j, len;
-    int32_t* ptr, dst, ptr1;
-    int32_t[576] tmp;
-
-    if (g.block_type != 2)
-        return;
-
-    if (g.switch_point) {
-        if (s.sample_rate_index != 8) {
-            ptr = g.sb_hybrid.ptr + 36;
-        } else {
-            ptr = g.sb_hybrid.ptr + 48;
-        }
-    } else {
-        ptr = g.sb_hybrid.ptr;
-    }
-
-    for(i=g.short_start;i<13;i++) {
-        len = band_size_short[s.sample_rate_index][i];
-        ptr1 = ptr;
-        dst = tmp.ptr;
-        for(j=len;j>0;j--) {
-            *dst++ = ptr[0*len];
-            *dst++ = ptr[1*len];
-            *dst++ = ptr[2*len];
-            ptr++;
-        }
-        ptr+=2*len;
-        libc_memcpy(ptr1, tmp.ptr, len * 3 * (*ptr1).sizeof);
-    }
+    return mp3dec_detect_cb(null, cast(uint8_t *)buf, buf_size);
 }
 
-void compute_antialias(mp3_context_t *s, granule_t *g) {
-  enum INT_AA(string j) =
-    "tmp0 = ptr[-1-"~j~"];\n"~
-    "tmp1 = ptr[   "~j~"];\n"~
-    "tmp2= cast(int)MULH(tmp0 + tmp1, csa[0+4*"~j~"]);\n"~
-    "ptr[-1-"~j~"] = cast(int)(4*(tmp2 - MULH(tmp1, csa[2+4*"~j~"])));\n"~
-    "ptr[   "~j~"] = cast(int)(4*(tmp2 + MULH(tmp0, csa[3+4*"~j~"])));\n";
-
-    int32_t* ptr, csa;
-    int n, i;
-
-    /* we antialias only "long" bands */
-    if (g.block_type == 2) {
-        if (!g.switch_point)
-            return;
-        /* XXX: check this for 8000Hz case */
-        n = 1;
-    } else {
-        n = SBLIMIT - 1;
+int mp3dec_detect_cb(mp3dec_io_t *io, uint8_t *buf, size_t buf_size)
+{
+    if (!buf || cast(size_t)-1 == buf_size || (io && buf_size < MINIMP3_BUF_SIZE))
+        return MP3D_E_PARAM;
+    size_t filled = buf_size;
+    if (io)
+    {
+        if (io.seek(0, io.seek_data))
+            return MP3D_E_IOERROR;
+        filled = io.read(buf, MINIMP3_ID3_DETECT_SIZE, io.read_data);
+        if (filled > MINIMP3_ID3_DETECT_SIZE)
+            return MP3D_E_IOERROR;
     }
-
-    ptr = g.sb_hybrid.ptr + 18;
-    for(i = n;i > 0;i--) {
-        int tmp0, tmp1, tmp2;
-        csa = &csa_table[0][0];
-
-        mixin(INT_AA!("0"));
-        mixin(INT_AA!("1"));
-        mixin(INT_AA!("2"));
-        mixin(INT_AA!("3"));
-        mixin(INT_AA!("4"));
-        mixin(INT_AA!("5"));
-        mixin(INT_AA!("6"));
-        mixin(INT_AA!("7"));
-
-        ptr += 18;
+    if (filled < MINIMP3_ID3_DETECT_SIZE)
+        return MP3D_E_USER; /* too small, can't be mp3/mpa */
+    if (mp3dec_skip_id3v2(buf, filled))
+        return 0; /* id3v2 tag is enough evidence */
+    if (io)
+    {
+        size_t readed = io.read(buf + MINIMP3_ID3_DETECT_SIZE, buf_size - MINIMP3_ID3_DETECT_SIZE, io.read_data);
+        if (readed > (buf_size - MINIMP3_ID3_DETECT_SIZE))
+            return MP3D_E_IOERROR;
+        filled += readed;
+        if (filled < MINIMP3_BUF_SIZE)
+            mp3dec_skip_id3v1(buf, &filled);
+    } else
+    {
+        mp3dec_skip_id3v1(buf, &filled);
+        if (filled > MINIMP3_BUF_SIZE)
+            filled = MINIMP3_BUF_SIZE;
     }
+    int free_format_bytes, frame_size;
+    mp3d_find_frame(buf, cast(int)filled, &free_format_bytes, &frame_size);
+    if (frame_size)
+        return 0; /* MAX_FRAME_SYNC_MATCHES consecutive frames found */
+    return MP3D_E_USER;
 }
 
-void compute_stereo (mp3_context_t *s, granule_t *g0, granule_t *g1) {
-    int i, j, k, l;
-    int32_t v1, v2;
-    int sf_max, tmp0, tmp1, sf, len, non_zero_found;
-    int32_t[16]* is_tab;
-    int32_t* tab0, tab1;
-    int[3] non_zero_found_short;
+int mp3dec_load_buf(mp3dec_t *dec, const uint8_t *buf, size_t buf_size, mp3dec_file_info_t *info, MP3D_PROGRESS_CB progress_cb, void *user_data)
+{
+    return mp3dec_load_cb(dec, null, cast(uint8_t *)buf, buf_size, info, progress_cb, user_data);
+}
 
-    if (s.mode_ext & MODE_EXT_I_STEREO) {
-        if (!s.lsf) {
-            is_tab = is_table.ptr;
-            sf_max = 7;
-        } else {
-            is_tab = is_table_lsf[g1.scalefac_compress & 1].ptr;
-            sf_max = 16;
+int mp3dec_load_cb(mp3dec_t *dec, mp3dec_io_t *io, uint8_t *buf, size_t buf_size, mp3dec_file_info_t *info, MP3D_PROGRESS_CB progress_cb, void *user_data)
+{
+    if (!dec || !buf || !info || cast(size_t)-1 == buf_size || (io && buf_size < MINIMP3_BUF_SIZE))
+        return MP3D_E_PARAM;
+    uint64_t detected_samples = 0;
+    size_t orig_buf_size = buf_size;
+    int to_skip = 0;
+    mp3dec_frame_info_t frame_info;
+    memset(info, 0, (*info).sizeof);
+    memset(&frame_info, 0, (frame_info).sizeof);
+
+    /* skip id3 */
+    size_t filled = 0, consumed = 0;
+    int eof = 0, ret2 = 0;
+    if (io)
+    {
+        if (io.seek(0, io.seek_data))
+            return MP3D_E_IOERROR;
+        filled = io.read(buf, MINIMP3_ID3_DETECT_SIZE, io.read_data);
+        if (filled > MINIMP3_ID3_DETECT_SIZE)
+            return MP3D_E_IOERROR;
+        if (MINIMP3_ID3_DETECT_SIZE != filled)
+            return 0;
+        size_t id3v2size = mp3dec_skip_id3v2(buf, filled);
+        if (id3v2size)
+        {
+            if (io.seek(id3v2size, io.seek_data))
+                return MP3D_E_IOERROR;
+            filled = io.read(buf, buf_size, io.read_data);
+            if (filled > buf_size)
+                return MP3D_E_IOERROR;
+        } else
+        {
+            size_t readed = io.read(buf + MINIMP3_ID3_DETECT_SIZE, buf_size - MINIMP3_ID3_DETECT_SIZE, io.read_data);
+            if (readed > (buf_size - MINIMP3_ID3_DETECT_SIZE))
+                return MP3D_E_IOERROR;
+            filled += readed;
         }
-
-        tab0 = g0.sb_hybrid.ptr + 576;
-        tab1 = g1.sb_hybrid.ptr + 576;
-
-        non_zero_found_short[0] = 0;
-        non_zero_found_short[1] = 0;
-        non_zero_found_short[2] = 0;
-        k = (13 - g1.short_start) * 3 + g1.long_end - 3;
-        for(i = 12;i >= g1.short_start;i--) {
-            /* for last band, use previous scale factor */
-            if (i != 11)
-                k -= 3;
-            len = band_size_short[s.sample_rate_index][i];
-            for(l=2;l>=0;l--) {
-                tab0 -= len;
-                tab1 -= len;
-                if (!non_zero_found_short[l]) {
-                    /* test if non zero band. if so, stop doing i-stereo */
-                    for(j=0;j<len;j++) {
-                        if (tab1[j] != 0) {
-                            non_zero_found_short[l] = 1;
-                            goto found1;
-                        }
-                    }
-                    sf = g1.scale_factors[k + l];
-                    if (sf >= sf_max)
-                        goto found1;
-
-                    v1 = is_tab[0][sf];
-                    v2 = is_tab[1][sf];
-                    for(j=0;j<len;j++) {
-                        tmp0 = tab0[j];
-                        tab0[j] = cast(int)MULL(tmp0, v1);
-                        tab1[j] = cast(int)MULL(tmp0, v2);
-                    }
-                } else {
-                found1:
-                    if (s.mode_ext & MODE_EXT_MS_STEREO) {
-                        /* lower part of the spectrum : do ms stereo
-                           if enabled */
-                        for(j=0;j<len;j++) {
-                            tmp0 = tab0[j];
-                            tmp1 = tab1[j];
-                            tab0[j] = cast(int)MULL(tmp0 + tmp1, ISQRT2);
-                            tab1[j] = cast(int)MULL(tmp0 - tmp1, ISQRT2);
-                        }
-                    }
-                }
+        if (filled < MINIMP3_BUF_SIZE)
+            mp3dec_skip_id3v1(buf, &filled);
+    } else
+    {
+        mp3dec_skip_id3(cast(const(uint8_t)**)&buf, &buf_size);
+        if (!buf_size)
+            return 0;
+    }
+    /* try to make allocation size assumption by first frame or vbr tag */
+    mp3dec_init(dec);
+    int samples;
+    do
+    {
+        uint32_t frames;
+        int i, delay, padding, free_format_bytes = 0, frame_size = 0;
+        const(uint8_t) *hdr;
+        if (io)
+        {
+            if (!eof && filled - consumed < MINIMP3_BUF_SIZE)
+            {   /* keep minimum 10 consecutive mp3 frames (~16KB) worst case */
+                memmove(buf, buf + consumed, filled - consumed);
+                filled -= consumed;
+                consumed = 0;
+                size_t readed = io.read(buf + filled, buf_size - filled, io.read_data);
+                if (readed > (buf_size - filled))
+                    return MP3D_E_IOERROR;
+                if (readed != (buf_size - filled))
+                    eof = 1;
+                filled += readed;
+                if (eof)
+                    mp3dec_skip_id3v1(buf, &filled);
+            }
+            i = mp3d_find_frame(buf + consumed, cast(int)(filled - consumed), &free_format_bytes, &frame_size);
+            consumed += i;
+            hdr = buf + consumed;
+        } else
+        {
+            i = mp3d_find_frame(buf, cast(int)buf_size, &free_format_bytes, &frame_size);
+            buf      += i;
+            buf_size -= i;
+            hdr = buf;
+        }
+        if (i && !frame_size)
+            continue;
+        if (!frame_size)
+            return 0;
+        frame_info.channels = HDR_IS_MONO(hdr) ? 1 : 2;
+        frame_info.hz = hdr_sample_rate_hz(hdr);
+        frame_info.layer = 4 - HDR_GET_LAYER(hdr);
+        frame_info.bitrate_kbps = hdr_bitrate_kbps(hdr);
+        frame_info.frame_bytes = frame_size;
+        samples = hdr_frame_samples(hdr)*frame_info.channels;
+        if (3 != frame_info.layer)
+            break;
+        int ret = mp3dec_check_vbrtag(hdr, frame_size, &frames, &delay, &padding);
+        if (ret > 0)
+        {
+            padding *= frame_info.channels;
+            to_skip = delay*frame_info.channels;
+            detected_samples = samples*cast(uint64_t)frames;
+            if (detected_samples >= cast(uint64_t)to_skip)
+                detected_samples -= to_skip;
+            if (padding > 0 && detected_samples >= cast(uint64_t)padding)
+                detected_samples -= padding;
+            if (!detected_samples)
+                return 0;
+        }
+        if (ret)
+        {
+            if (io)
+            {
+                consumed += frame_size;
+            } else
+            {
+                buf      += frame_size;
+                buf_size -= frame_size;
             }
         }
-
-        non_zero_found = non_zero_found_short[0] |
-            non_zero_found_short[1] |
-            non_zero_found_short[2];
-
-        for(i = g1.long_end - 1;i >= 0;i--) {
-            len = band_size_long[s.sample_rate_index][i];
-            tab0 -= len;
-            tab1 -= len;
-            /* test if non zero band. if so, stop doing i-stereo */
-            if (!non_zero_found) {
-                for(j=0;j<len;j++) {
-                    if (tab1[j] != 0) {
-                        non_zero_found = 1;
-                        goto found2;
-                    }
-                }
-                /* for last band, use previous scale factor */
-                k = (i == 21) ? 20 : i;
-                sf = g1.scale_factors[k];
-                if (sf >= sf_max)
-                    goto found2;
-                v1 = is_tab[0][sf];
-                v2 = is_tab[1][sf];
-                for(j=0;j<len;j++) {
-                    tmp0 = tab0[j];
-                    tab0[j] = cast(int)MULL(tmp0, v1);
-                    tab1[j] = cast(int)MULL(tmp0, v2);
-                }
-            } else {
-            found2:
-                if (s.mode_ext & MODE_EXT_MS_STEREO) {
-                    /* lower part of the spectrum : do ms stereo
-                       if enabled */
-                    for(j=0;j<len;j++) {
-                        tmp0 = tab0[j];
-                        tmp1 = tab1[j];
-                        tab0[j] = cast(int)MULL(tmp0 + tmp1, ISQRT2);
-                        tab1[j] = cast(int)MULL(tmp0 - tmp1, ISQRT2);
-                    }
-                }
+        break;
+    } while(1);
+    size_t allocated = MINIMP3_MAX_SAMPLES_PER_FRAME*(mp3d_sample_t.sizeof);
+    if (detected_samples)
+        allocated += detected_samples*(mp3d_sample_t.sizeof);
+    else
+        allocated += (buf_size/frame_info.frame_bytes)*samples*(mp3d_sample_t.sizeof);
+    info.buffer = cast(mp3d_sample_t*) malloc(allocated);
+    if (!info.buffer)
+        return MP3D_E_MEMORY;
+    /* save info */
+    info.channels = frame_info.channels;
+    info.hz       = frame_info.hz;
+    info.layer    = frame_info.layer;
+    /* decode all frames */
+    size_t avg_bitrate_kbps = 0, frames = 0;
+    do
+    {
+        if ((allocated - info.samples*(mp3d_sample_t.sizeof)) < MINIMP3_MAX_SAMPLES_PER_FRAME*(mp3d_sample_t.sizeof))
+        {
+            allocated *= 2;
+            mp3d_sample_t *alloc_buf = cast(mp3d_sample_t*)realloc(info.buffer, allocated);
+            if (!alloc_buf)
+                return MP3D_E_MEMORY;
+            info.buffer = alloc_buf;
+        }
+        if (io)
+        {
+            if (!eof && filled - consumed < MINIMP3_BUF_SIZE)
+            {   /* keep minimum 10 consecutive mp3 frames (~16KB) worst case */
+                memmove(buf, buf + consumed, filled - consumed);
+                filled -= consumed;
+                consumed = 0;
+                size_t readed = io.read(buf + filled, buf_size - filled, io.read_data);
+                if (readed != (buf_size - filled))
+                    eof = 1;
+                filled += readed;
+                if (eof)
+                    mp3dec_skip_id3v1(buf, &filled);
             }
+            samples = mp3dec_decode_frame(dec, buf + consumed, cast(int)(filled - consumed), info.buffer + info.samples, &frame_info);
+            consumed += frame_info.frame_bytes;
+        } else
+        {
+            samples = mp3dec_decode_frame(dec, buf, cast(int)MINIMP3_MIN(buf_size, cast(size_t)int.max), info.buffer + info.samples, &frame_info);
+            buf      += frame_info.frame_bytes;
+            buf_size -= frame_info.frame_bytes;
         }
-    } else if (s.mode_ext & MODE_EXT_MS_STEREO) {
-        /* ms stereo ONLY */
-        /* NOTE: the 1/sqrt(2) normalization factor is included in the
-           global gain */
-        tab0 = g0.sb_hybrid.ptr;
-        tab1 = g1.sb_hybrid.ptr;
-        for(i=0;i<576;i++) {
-            tmp0 = tab0[i];
-            tmp1 = tab1[i];
-            tab0[i] = tmp0 + tmp1;
-            tab1[i] = tmp0 - tmp1;
-        }
-    }
-}
-
-int huffman_decode (mp3_context_t *s, granule_t *g, int16_t *exponents, int end_pos2) {
-    int s_index;
-    int i;
-    int last_pos, bits_left;
-    vlc_t* vlc;
-    int end_pos = s.gb.size_in_bits;
-    if (end_pos2 < end_pos) end_pos = end_pos2;
-
-    /* low frequencies (called big values) */
-    s_index = 0;
-    for(i=0;i<3;i++) {
-        int j, k, l, linbits;
-        j = g.region_size[i];
-        if (j == 0)
-            continue;
-        /* select vlc table */
-        k = g.table_select[i];
-        l = mp3_huff_data[k][0];
-        linbits = mp3_huff_data[k][1];
-        vlc = &huff_vlc[l];
-
-        if(!l){
-            libc_memset(&g.sb_hybrid[s_index], 0, (g.sb_hybrid[0]).sizeof*2*j);
-            s_index += 2*j;
-            continue;
-        }
-
-        /* read huffcode and compute each couple */
-        for(;j>0;j--) {
-            int exponent, x, y, v;
-            int pos= get_bits_count(&s.gb);
-
-            if (pos >= end_pos){
-                switch_buffer(s, &pos, &end_pos, &end_pos2);
-                if(pos >= end_pos)
+        if (samples)
+        {
+            if (info.hz != frame_info.hz || info.layer != frame_info.layer)
+            {
+                ret2 = MP3D_E_DECODE;
+                break;
+            }
+            if (info.channels && info.channels != frame_info.channels)
+            {
+                ret2 = MP3D_E_DECODE;
+                break;
+            }
+            samples *= frame_info.channels;
+            if (to_skip)
+            {
+                size_t skip = MINIMP3_MIN(samples, to_skip);
+                to_skip -= skip;
+                samples -= skip;
+                memmove(info.buffer, info.buffer + skip, samples);
+            }
+            info.samples += samples;
+            avg_bitrate_kbps += frame_info.bitrate_kbps;
+            frames++;
+            if (progress_cb)
+            {
+                ret2 = progress_cb(user_data, orig_buf_size, (orig_buf_size - buf_size), &frame_info);
+                if (ret2)
                     break;
             }
-            y = get_vlc2(&s.gb, vlc.table, 7, 3);
-
-            if(!y){
-                g.sb_hybrid[s_index  ] =
-                g.sb_hybrid[s_index+1] = 0;
-                s_index += 2;
-                continue;
-            }
-
-            exponent= exponents[s_index];
-
-            if(y&16){
-                x = y >> 5;
-                y = y & 0x0f;
-                if (x < 15){
-                    v = expval_table[ exponent ][ x ];
-                }else{
-                    x += get_bitsz(&s.gb, linbits);
-                    v = l3_unscale(x, exponent);
-                }
-                if (get_bits1(&s.gb))
-                    v = -v;
-                g.sb_hybrid[s_index] = v;
-                if (y < 15){
-                    v = expval_table[ exponent ][ y ];
-                }else{
-                    y += get_bitsz(&s.gb, linbits);
-                    v = l3_unscale(y, exponent);
-                }
-                if (get_bits1(&s.gb))
-                    v = -v;
-                g.sb_hybrid[s_index+1] = v;
-            }else{
-                x = y >> 5;
-                y = y & 0x0f;
-                x += y;
-                if (x < 15){
-                    v = expval_table[ exponent ][ x ];
-                }else{
-                    x += get_bitsz(&s.gb, linbits);
-                    v = l3_unscale(x, exponent);
-                }
-                if (get_bits1(&s.gb))
-                    v = -v;
-                g.sb_hybrid[s_index+!!y] = v;
-                g.sb_hybrid[s_index+ !y] = 0;
-            }
-            s_index+=2;
         }
+    } while (frame_info.frame_bytes);
+    if (detected_samples && info.samples > detected_samples)
+        info.samples = cast(size_t) detected_samples; /* cut padding */
+    /* reallocate to normal buffer size */
+    if (allocated != info.samples*(mp3d_sample_t.sizeof))
+    {
+        mp3d_sample_t *alloc_buf = cast(mp3d_sample_t*)realloc(info.buffer, info.samples*(mp3d_sample_t.sizeof));
+        if (!alloc_buf && info.samples)
+            return MP3D_E_MEMORY;
+        info.buffer = alloc_buf;
     }
-
-    /* high frequencies */
-    vlc = &huff_quad_vlc[g.count1table_select];
-    last_pos=0;
-    while (s_index <= 572) {
-        int pos, code;
-        pos = get_bits_count(&s.gb);
-        if (pos >= end_pos) {
-            if (pos > end_pos2 && last_pos){
-                /* some encoders generate an incorrect size for this
-                   part. We must go back into the data */
-                s_index -= 4;
-                skip_bits_long(&s.gb, last_pos - pos);
-                break;
-            }
-            switch_buffer(s, &pos, &end_pos, &end_pos2);
-            if(pos >= end_pos)
-                break;
-        }
-        last_pos= pos;
-
-        code = get_vlc2(&s.gb, vlc.table, vlc.bits, 1);
-        g.sb_hybrid[s_index+0]=
-        g.sb_hybrid[s_index+1]=
-        g.sb_hybrid[s_index+2]=
-        g.sb_hybrid[s_index+3]= 0;
-        while(code){
-            static immutable int[16] idxtab = [3,3,2,2,1,1,1,1,0,0,0,0,0,0,0,0];
-            int v;
-            int pos_= s_index+idxtab[code];
-            code ^= 8>>idxtab[code];
-            v = exp_table[ exponents[pos_] ];
-            if(get_bits1(&s.gb))
-                v = -v;
-            g.sb_hybrid[pos_] = v;
-        }
-        s_index+=4;
-    }
-    /*
-    if (s_index >= g.sb_hybrid.length) {
-      import core.stdc.stdio : printf;
-      printf("s_index=%u; len=%u; len=%u\n", cast(uint)s_index, cast(uint)g.sb_hybrid.length, cast(uint)((g.sb_hybrid[0]).sizeof*(576 - s_index)));
-      assert(0);
-    }
-    */
-    if ((g.sb_hybrid[0]).sizeof*(576 - s_index) > 0) {
-      libc_memset(&g.sb_hybrid[s_index], 0, (g.sb_hybrid[0]).sizeof*(576 - s_index));
-    }
-
-    /* skip extension bits */
-    bits_left = end_pos2 - get_bits_count(&s.gb);
-    if (bits_left < 0) {
-        return -1;
-    }
-    skip_bits_long(&s.gb, bits_left);
-
-    i= get_bits_count(&s.gb);
-    switch_buffer(s, &i, &end_pos, &end_pos2);
-
-    return 0;
+    if (frames)
+        info.avg_bitrate_kbps = cast(int)(avg_bitrate_kbps/frames);
+    return ret2;
 }
 
-
-// ////////////////////////////////////////////////////////////////////////// //
-void imdct12(int *out_, int *in_)
+int mp3dec_iterate_buf(const(uint8_t)*buf, size_t buf_size, MP3D_ITERATE_CB callback, void *user_data)
 {
-    int in0, in1, in2, in3, in4, in5, t1, t2;
-
-    in0= in_[0*3];
-    in1= in_[1*3] + in_[0*3];
-    in2= in_[2*3] + in_[1*3];
-    in3= in_[3*3] + in_[2*3];
-    in4= in_[4*3] + in_[3*3];
-    in5= in_[5*3] + in_[4*3];
-    in5 += in3;
-    in3 += in1;
-
-    in2= cast(int)MULH(2*in2, C3);
-    in3= cast(int)MULH(4*in3, C3);
-
-    t1 = in0 - in4;
-    t2 = cast(int)MULH(2*(in1 - in5), icos36h[4]);
-
-    out_[ 7]=
-    out_[10]= t1 + t2;
-    out_[ 1]=
-    out_[ 4]= t1 - t2;
-
-    in0 += in4>>1;
-    in4 = in0 + in2;
-    in5 += 2*in1;
-    in1 = cast(int)MULH(in5 + in3, icos36h[1]);
-    out_[ 8]=
-    out_[ 9]= in4 + in1;
-    out_[ 2]=
-    out_[ 3]= in4 - in1;
-
-    in0 -= in2;
-    in5 = cast(int)MULH(2*(in5 - in3), icos36h[7]);
-    out_[ 0]=
-    out_[ 5]= in0 - in5;
-    out_[ 6]=
-    out_[11]= in0 + in5;
-}
-
-void imdct36(int *out_, int *buf, int *in_, int *win)
-{
-    int i, j, t0, t1, t2, t3, s0, s1, s2, s3;
-    int[18] tmp;
-    int* tmp1, in1;
-
-    for(i=17;i>=1;i--)
-        in_[i] += in_[i-1];
-    for(i=17;i>=3;i-=2)
-        in_[i] += in_[i-2];
-
-    for(j=0;j<2;j++) {
-        tmp1 = tmp.ptr + j;
-        in1 = in_ + j;
-        t2 = in1[2*4] + in1[2*8] - in1[2*2];
-
-        t3 = in1[2*0] + (in1[2*6]>>1);
-        t1 = in1[2*0] - in1[2*6];
-        tmp1[ 6] = t1 - (t2>>1);
-        tmp1[16] = t1 + t2;
-
-        t0 = cast(int)MULH(2*(in1[2*2] + in1[2*4]),    C2);
-        t1 = cast(int)MULH(   in1[2*4] - in1[2*8] , -2*C8);
-        t2 = cast(int)MULH(2*(in1[2*2] + in1[2*8]),   -C4);
-
-        tmp1[10] = t3 - t0 - t2;
-        tmp1[ 2] = t3 + t0 + t1;
-        tmp1[14] = t3 + t2 - t1;
-
-        tmp1[ 4] = cast(int)MULH(2*(in1[2*5] + in1[2*7] - in1[2*1]), -C3);
-        t2 = cast(int)MULH(2*(in1[2*1] + in1[2*5]),    C1);
-        t3 = cast(int)MULH(   in1[2*5] - in1[2*7] , -2*C7);
-        t0 = cast(int)MULH(2*in1[2*3], C3);
-
-        t1 = cast(int)MULH(2*(in1[2*1] + in1[2*7]),   -C5);
-
-        tmp1[ 0] = t2 + t3 + t0;
-        tmp1[12] = t2 + t1 - t0;
-        tmp1[ 8] = t3 - t1 - t0;
-    }
-
-    i = 0;
-    for(j=0;j<4;j++) {
-        t0 = tmp[i];
-        t1 = tmp[i + 2];
-        s0 = t1 + t0;
-        s2 = t1 - t0;
-
-        t2 = tmp[i + 1];
-        t3 = tmp[i + 3];
-        s1 = cast(int)MULH(2*(t3 + t2), icos36h[j]);
-        s3 = cast(int)MULL(t3 - t2, icos36[8 - j]);
-
-        t0 = s0 + s1;
-        t1 = s0 - s1;
-        out_[(9 + j)*SBLIMIT] =  cast(int)MULH(t1, win[9 + j]) + buf[9 + j];
-        out_[(8 - j)*SBLIMIT] =  cast(int)MULH(t1, win[8 - j]) + buf[8 - j];
-        buf[9 + j] = cast(int)MULH(t0, win[18 + 9 + j]);
-        buf[8 - j] = cast(int)MULH(t0, win[18 + 8 - j]);
-
-        t0 = s2 + s3;
-        t1 = s2 - s3;
-        out_[(9 + 8 - j)*SBLIMIT] =  cast(int)MULH(t1, win[9 + 8 - j]) + buf[9 + 8 - j];
-        out_[(        j)*SBLIMIT] =  cast(int)MULH(t1, win[        j]) + buf[        j];
-        buf[9 + 8 - j] = cast(int)MULH(t0, win[18 + 9 + 8 - j]);
-        buf[      + j] = cast(int)MULH(t0, win[18         + j]);
-        i += 4;
-    }
-
-    s0 = tmp[16];
-    s1 = cast(int)MULH(2*tmp[17], icos36h[4]);
-    t0 = s0 + s1;
-    t1 = s0 - s1;
-    out_[(9 + 4)*SBLIMIT] =  cast(int)MULH(t1, win[9 + 4]) + buf[9 + 4];
-    out_[(8 - 4)*SBLIMIT] =  cast(int)MULH(t1, win[8 - 4]) + buf[8 - 4];
-    buf[9 + 4] = cast(int)MULH(t0, win[18 + 9 + 4]);
-    buf[8 - 4] = cast(int)MULH(t0, win[18 + 8 - 4]);
-}
-
-void compute_imdct (mp3_context_t *s, granule_t *g, int32_t *sb_samples, int32_t *mdct_buf) {
-    int32_t* ptr, win, win1, buf, out_ptr, ptr1;
-    int32_t[12] out2;
-    int i, j, mdct_long_end, v, sblimit;
-
-    /* find last non zero block */
-    ptr = g.sb_hybrid.ptr + 576;
-    ptr1 = g.sb_hybrid.ptr + 2 * 18;
-    while (ptr >= ptr1) {
-        ptr -= 6;
-        v = ptr[0] | ptr[1] | ptr[2] | ptr[3] | ptr[4] | ptr[5];
-        if (v != 0)
+    const uint8_t *orig_buf = buf;
+    if (!buf || cast(size_t)-1 == buf_size || !callback)
+        return MP3D_E_PARAM;
+    /* skip id3 */
+    mp3dec_skip_id3(&buf, &buf_size);
+    if (!buf_size)
+        return 0;
+    mp3dec_frame_info_t frame_info;
+    memset(&frame_info, 0, (frame_info.sizeof));
+    do
+    {
+        int free_format_bytes = 0, frame_size = 0, ret;
+        int i = mp3d_find_frame(buf, cast(int)buf_size, &free_format_bytes, &frame_size);
+        buf      += i;
+        buf_size -= i;
+        if (i && !frame_size)
+            continue;
+        if (!frame_size)
             break;
-    }
-    sblimit = cast(int)((ptr - g.sb_hybrid.ptr) / 18) + 1;
+        const uint8_t *hdr = buf;
+        frame_info.channels = HDR_IS_MONO(hdr) ? 1 : 2;
+        frame_info.hz = hdr_sample_rate_hz(hdr);
+        frame_info.layer = 4 - HDR_GET_LAYER(hdr);
+        frame_info.bitrate_kbps = hdr_bitrate_kbps(hdr);
+        frame_info.frame_bytes = frame_size;
 
-    if (g.block_type == 2) {
-        /* XXX: check for 8000 Hz */
-        if (g.switch_point)
-            mdct_long_end = 2;
-        else
-            mdct_long_end = 0;
-    } else {
-        mdct_long_end = sblimit;
-    }
-
-    buf = mdct_buf;
-    ptr = g.sb_hybrid.ptr;
-    for(j=0;j<mdct_long_end;j++) {
-        /* apply window & overlap with previous buffer */
-        out_ptr = sb_samples + j;
-        /* select window */
-        if (g.switch_point && j < 2)
-            win1 = mdct_win[0].ptr;
-        else
-            win1 = mdct_win[g.block_type].ptr;
-        /* select frequency inversion */
-        win = win1 + ((4 * 36) & -(j & 1));
-        imdct36(out_ptr, buf, ptr, win);
-        out_ptr += 18*SBLIMIT;
-        ptr += 18;
-        buf += 18;
-    }
-    for(j=mdct_long_end;j<sblimit;j++) {
-        /* select frequency inversion */
-        win = mdct_win[2].ptr + ((4 * 36) & -(j & 1));
-        out_ptr = sb_samples + j;
-
-        for(i=0; i<6; i++){
-            *out_ptr = buf[i];
-            out_ptr += SBLIMIT;
+        if (callback)
+        {
+            ret = callback(user_data, hdr, frame_size, free_format_bytes, buf_size, (hdr - orig_buf), &frame_info);
+            if (ret)
+                return ret;
         }
-        imdct12(out2.ptr, ptr + 0);
-        for(i=0;i<6;i++) {
-            *out_ptr = cast(int)MULH(out2[i], win[i]) + buf[i + 6*1];
-            buf[i + 6*2] = cast(int)MULH(out2[i + 6], win[i + 6]);
-            out_ptr += SBLIMIT;
-        }
-        imdct12(out2.ptr, ptr + 1);
-        for(i=0;i<6;i++) {
-            *out_ptr = cast(int)MULH(out2[i], win[i]) + buf[i + 6*2];
-            buf[i + 6*0] = cast(int)MULH(out2[i + 6], win[i + 6]);
-            out_ptr += SBLIMIT;
-        }
-        imdct12(out2.ptr, ptr + 2);
-        for(i=0;i<6;i++) {
-            buf[i + 6*0] = cast(int)MULH(out2[i], win[i]) + buf[i + 6*0];
-            buf[i + 6*1] = cast(int)MULH(out2[i + 6], win[i + 6]);
-            buf[i + 6*2] = 0;
-        }
-        ptr += 18;
-        buf += 18;
-    }
-    /* zero bands */
-    for(j=sblimit;j<SBLIMIT;j++) {
-        /* overlap */
-        out_ptr = sb_samples + j;
-        for(i=0;i<18;i++) {
-            *out_ptr = buf[i];
-            buf[i] = 0;
-            out_ptr += SBLIMIT;
-        }
-        buf += 18;
-    }
-}
-
-enum SUM8(string sum, string op, string w, string p) =
-"{\n"~
-"  "~sum~" "~op~" MULS(("~w~")[0 * 64], "~p~"[0 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[1 * 64], "~p~"[1 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[2 * 64], "~p~"[2 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[3 * 64], "~p~"[3 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[4 * 64], "~p~"[4 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[5 * 64], "~p~"[5 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[6 * 64], "~p~"[6 * 64]);\n"~
-"  "~sum~" "~op~" MULS(("~w~")[7 * 64], "~p~"[7 * 64]);\n"~
-"}\n";
-
-enum SUM8P2(string sum1, string op1, string sum2, string op2, string w1, string w2, string p) =
-"{\n"~
-"  int tmp_;\n"~
-"  tmp_ = "~p~"[0 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[0 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[0 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[1 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[1 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[1 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[2 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[2 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[2 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[3 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[3 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[3 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[4 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[4 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[4 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[5 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[5 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[5 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[6 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[6 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[6 * 64], tmp_);\n"~
-"  tmp_ = "~p~"[7 * 64];\n"~
-"  "~sum1~" "~op1~" MULS(("~w1~")[7 * 64], tmp_);\n"~
-"  "~sum2~" "~op2~" MULS(("~w2~")[7 * 64], tmp_);\n"~
-"}\n";
-
-enum COS0_0 = FIXHR!(0.50060299823519630134/2);
-enum COS0_1 = FIXHR!(0.50547095989754365998/2);
-enum COS0_2 = FIXHR!(0.51544730992262454697/2);
-enum COS0_3 = FIXHR!(0.53104259108978417447/2);
-enum COS0_4 = FIXHR!(0.55310389603444452782/2);
-enum COS0_5 = FIXHR!(0.58293496820613387367/2);
-enum COS0_6 = FIXHR!(0.62250412303566481615/2);
-enum COS0_7 = FIXHR!(0.67480834145500574602/2);
-enum COS0_8 = FIXHR!(0.74453627100229844977/2);
-enum COS0_9 = FIXHR!(0.83934964541552703873/2);
-enum COS0_10 = FIXHR!(0.97256823786196069369/2);
-enum COS0_11 = FIXHR!(1.16943993343288495515/4);
-enum COS0_12 = FIXHR!(1.48416461631416627724/4);
-enum COS0_13 = FIXHR!(2.05778100995341155085/8);
-enum COS0_14 = FIXHR!(3.40760841846871878570/8);
-enum COS0_15 = FIXHR!(10.19000812354805681150/32);
-
-enum COS1_0 = FIXHR!(0.50241928618815570551/2);
-enum COS1_1 = FIXHR!(0.52249861493968888062/2);
-enum COS1_2 = FIXHR!(0.56694403481635770368/2);
-enum COS1_3 = FIXHR!(0.64682178335999012954/2);
-enum COS1_4 = FIXHR!(0.78815462345125022473/2);
-enum COS1_5 = FIXHR!(1.06067768599034747134/4);
-enum COS1_6 = FIXHR!(1.72244709823833392782/4);
-enum COS1_7 = FIXHR!(5.10114861868916385802/16);
-
-enum COS2_0 = FIXHR!(0.50979557910415916894/2);
-enum COS2_1 = FIXHR!(0.60134488693504528054/2);
-enum COS2_2 = FIXHR!(0.89997622313641570463/2);
-enum COS2_3 = FIXHR!(2.56291544774150617881/8);
-
-enum COS3_0 = FIXHR!(0.54119610014619698439/2);
-enum COS3_1 = FIXHR!(1.30656296487637652785/4);
-
-enum COS4_0 = FIXHR!(0.70710678118654752439/2);
-
-enum BF(string a, string b, string c, string s) =
-"{\n"~
-"  tmp0 = tab["~a~"] + tab["~b~"];\n"~
-"  tmp1 = tab["~a~"] - tab["~b~"];\n"~
-"  tab["~a~"] = tmp0;\n"~
-"  tab["~b~"] = cast(int)MULH(tmp1<<("~s~"), "~c~");\n"~
-"}\n";
-
-enum BF1(string a, string b, string c, string d) =
-"{\n"~
-"  "~BF!(a, b, "COS4_0", "1")~"\n"~
-"  "~BF!(c, d,"-COS4_0", "1")~"\n"~
-"  tab["~c~"] += tab["~d~"];\n"~
-"}\n";
-
-enum BF2(string a, string b, string c, string d) =
-"{\n"~
-"  "~BF!(a, b, "COS4_0", "1")~"\n"~
-"  "~BF!(c, d,"-COS4_0", "1")~"\n"~
-"  tab["~c~"] += tab["~d~"];\n"~
-"  tab["~a~"] += tab["~c~"];\n"~
-"  tab["~c~"] += tab["~b~"];\n"~
-"  tab["~b~"] += tab["~d~"];\n"~
-"}\n";
-
-void dct32(int32_t *out_, int32_t *tab) {
-    int tmp0, tmp1;
-
-    /* pass 1 */
-    mixin(BF!("0", "31", "COS0_0", "1"));
-    mixin(BF!("15", "16", "COS0_15", "5"));
-    /* pass 2 */
-    mixin(BF!("0", "15", "COS1_0", "1"));
-    mixin(BF!("16", "31", "-COS1_0", "1"));
-    /* pass 1 */
-    mixin(BF!("7", "24", "COS0_7", "1"));
-    mixin(BF!("8", "23", "COS0_8", "1"));
-    /* pass 2 */
-    mixin(BF!("7", "8", "COS1_7", "4"));
-    mixin(BF!("23", "24", "-COS1_7", "4"));
-    /* pass 3 */
-    mixin(BF!("0", "7", "COS2_0", "1"));
-    mixin(BF!("8", "15", "-COS2_0", "1"));
-    mixin(BF!("16", "23", "COS2_0", "1"));
-    mixin(BF!("24", "31", "-COS2_0", "1"));
-    /* pass 1 */
-    mixin(BF!("3", "28", "COS0_3", "1"));
-    mixin(BF!("12", "19", "COS0_12", "2"));
-    /* pass 2 */
-    mixin(BF!("3", "12", "COS1_3", "1"));
-    mixin(BF!("19", "28", "-COS1_3", "1"));
-    /* pass 1 */
-    mixin(BF!("4", "27", "COS0_4", "1"));
-    mixin(BF!("11", "20", "COS0_11", "2"));
-    /* pass 2 */
-    mixin(BF!("4", "11", "COS1_4", "1"));
-    mixin(BF!("20", "27", "-COS1_4", "1"));
-    /* pass 3 */
-    mixin(BF!("3", "4", "COS2_3", "3"));
-    mixin(BF!("11", "12", "-COS2_3", "3"));
-    mixin(BF!("19", "20", "COS2_3", "3"));
-    mixin(BF!("27", "28", "-COS2_3", "3"));
-    /* pass 4 */
-    mixin(BF!("0", "3", "COS3_0", "1"));
-    mixin(BF!("4", "7", "-COS3_0", "1"));
-    mixin(BF!("8", "11", "COS3_0", "1"));
-    mixin(BF!("12", "15", "-COS3_0", "1"));
-    mixin(BF!("16", "19", "COS3_0", "1"));
-    mixin(BF!("20", "23", "-COS3_0", "1"));
-    mixin(BF!("24", "27", "COS3_0", "1"));
-    mixin(BF!("28", "31", "-COS3_0", "1"));
-
-
-
-    /* pass 1 */
-    mixin(BF!("1", "30", "COS0_1", "1"));
-    mixin(BF!("14", "17", "COS0_14", "3"));
-    /* pass 2 */
-    mixin(BF!("1", "14", "COS1_1", "1"));
-    mixin(BF!("17", "30", "-COS1_1", "1"));
-    /* pass 1 */
-    mixin(BF!("6", "25", "COS0_6", "1"));
-    mixin(BF!("9", "22", "COS0_9", "1"));
-    /* pass 2 */
-    mixin(BF!("6", "9", "COS1_6", "2"));
-    mixin(BF!("22", "25", "-COS1_6", "2"));
-    /* pass 3 */
-    mixin(BF!("1", "6", "COS2_1", "1"));
-    mixin(BF!("9", "14", "-COS2_1", "1"));
-    mixin(BF!("17", "22", "COS2_1", "1"));
-    mixin(BF!("25", "30", "-COS2_1", "1"));
-
-    /* pass 1 */
-    mixin(BF!("2", "29", "COS0_2", "1"));
-    mixin(BF!("13", "18", "COS0_13", "3"));
-    /* pass 2 */
-    mixin(BF!("2", "13", "COS1_2", "1"));
-    mixin(BF!("18", "29", "-COS1_2", "1"));
-    /* pass 1 */
-    mixin(BF!("5", "26", "COS0_5", "1"));
-    mixin(BF!("10", "21", "COS0_10", "1"));
-    /* pass 2 */
-    mixin(BF!("5", "10", "COS1_5", "2"));
-    mixin(BF!("21", "26", "-COS1_5", "2"));
-    /* pass 3 */
-    mixin(BF!("2", "5", "COS2_2", "1"));
-    mixin(BF!("10", "13", "-COS2_2", "1"));
-    mixin(BF!("18", "21", "COS2_2", "1"));
-    mixin(BF!("26", "29", "-COS2_2", "1"));
-    /* pass 4 */
-    mixin(BF!("1", "2", "COS3_1", "2"));
-    mixin(BF!("5", "6", "-COS3_1", "2"));
-    mixin(BF!("9", "10", "COS3_1", "2"));
-    mixin(BF!("13", "14", "-COS3_1", "2"));
-    mixin(BF!("17", "18", "COS3_1", "2"));
-    mixin(BF!("21", "22", "-COS3_1", "2"));
-    mixin(BF!("25", "26", "COS3_1", "2"));
-    mixin(BF!("29", "30", "-COS3_1", "2"));
-
-    /* pass 5 */
-    mixin(BF1!("0", "1", "2", "3"));
-    mixin(BF2!("4", "5", "6", "7"));
-    mixin(BF1!("8", "9", "10", "11"));
-    mixin(BF2!("12", "13", "14", "15"));
-    mixin(BF1!("16", "17", "18", "19"));
-    mixin(BF2!("20", "21", "22", "23"));
-    mixin(BF1!("24", "25", "26", "27"));
-    mixin(BF2!("28", "29", "30", "31"));
-
-    /* pass 6 */
-
-    tab[8] += tab[12];
-    tab[12] += tab[10];
-    tab[10] += tab[14];
-    tab[14] += tab[9];
-    tab[9] += tab[13];
-    tab[13] += tab[11];
-    tab[11] += tab[15];
-
-    out_[ 0] = tab[0];
-    out_[16] = tab[1];
-    out_[ 8] = tab[2];
-    out_[24] = tab[3];
-    out_[ 4] = tab[4];
-    out_[20] = tab[5];
-    out_[12] = tab[6];
-    out_[28] = tab[7];
-    out_[ 2] = tab[8];
-    out_[18] = tab[9];
-    out_[10] = tab[10];
-    out_[26] = tab[11];
-    out_[ 6] = tab[12];
-    out_[22] = tab[13];
-    out_[14] = tab[14];
-    out_[30] = tab[15];
-
-    tab[24] += tab[28];
-    tab[28] += tab[26];
-    tab[26] += tab[30];
-    tab[30] += tab[25];
-    tab[25] += tab[29];
-    tab[29] += tab[27];
-    tab[27] += tab[31];
-
-    out_[ 1] = tab[16] + tab[24];
-    out_[17] = tab[17] + tab[25];
-    out_[ 9] = tab[18] + tab[26];
-    out_[25] = tab[19] + tab[27];
-    out_[ 5] = tab[20] + tab[28];
-    out_[21] = tab[21] + tab[29];
-    out_[13] = tab[22] + tab[30];
-    out_[29] = tab[23] + tab[31];
-    out_[ 3] = tab[24] + tab[20];
-    out_[19] = tab[25] + tab[21];
-    out_[11] = tab[26] + tab[22];
-    out_[27] = tab[27] + tab[23];
-    out_[ 7] = tab[28] + tab[18];
-    out_[23] = tab[29] + tab[19];
-    out_[15] = tab[30] + tab[17];
-    out_[31] = tab[31];
-}
-
-void mp3_synth_filter(
-    int16_t *synth_buf_ptr, int *synth_buf_offset,
-    int16_t *window, int *dither_state,
-    int16_t *samples, int incr,
-    int32_t* sb_samples/*[SBLIMIT]*/
-) {
-    int32_t[32] tmp;
-    int16_t *synth_buf;
-    const(int16_t)* w, w2, p;
-    int j, offset, v;
-    int16_t *samples2;
-    int sum, sum2;
-
-    dct32(tmp.ptr, sb_samples);
-
-    offset = *synth_buf_offset;
-    synth_buf = synth_buf_ptr + offset;
-
-    for(j=0;j<32;j++) {
-        v = tmp[j];
-        /* NOTE: can cause a loss in precision if very high amplitude
-           sound */
-        if (v > 32767)
-            v = 32767;
-        else if (v < -32768)
-            v = -32768;
-        synth_buf[j] = cast(short)v;
-    }
-    /* copy to avoid wrap */
-    libc_memcpy(synth_buf + 512, synth_buf, 32 * int16_t.sizeof);
-
-    samples2 = samples + 31 * incr;
-    w = window;
-    w2 = window + 31;
-
-    sum = *dither_state;
-    p = synth_buf + 16;
-    mixin(SUM8!("sum", "+=", "w", "p"));
-    p = synth_buf + 48;
-    mixin(SUM8!("sum", "-=", "w + 32", "p"));
-    *samples = cast(short)round_sample(&sum);
-    samples += incr;
-    w++;
-
-    /* we calculate two samples at the same time to avoid one memory
-       access per two sample */
-    for(j=1;j<16;j++) {
-        sum2 = 0;
-        p = synth_buf + 16 + j;
-        mixin(SUM8P2!("sum", "+=", "sum2", "-=", "w", "w2", "p"));
-        p = synth_buf + 48 - j;
-        mixin(SUM8P2!("sum", "-=", "sum2", "-=", "w + 32", "w2 + 32", "p"));
-
-        *samples = cast(short)round_sample(&sum);
-        samples += incr;
-        sum += sum2;
-        *samples2 = cast(short)round_sample(&sum);
-        samples2 -= incr;
-        w++;
-        w2--;
-    }
-
-    p = synth_buf + 32;
-    mixin(SUM8!("sum", "-=", "w + 32", "p"));
-    *samples = cast(short)round_sample(&sum);
-    *dither_state= sum;
-
-    offset = (offset - 32) & 511;
-    *synth_buf_offset = offset;
-}
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-int decode_header(mp3_context_t *s, uint32_t header) {
-    static immutable short[4][4] sampleCount = [
-      [0, 576, 1152, 384], // v2.5
-      [0, 0, 0, 0], // reserved
-      [0, 576, 1152, 384], // v2
-      [0, 1152, 1152, 384], // v1
-    ];
-    ubyte mpid = (header>>19)&0x03;
-    ubyte layer = (header>>17)&0x03;
-
-    s.sample_count = sampleCount.ptr[mpid].ptr[layer];
-
-    int sample_rate, frame_size, mpeg25, padding;
-    int sample_rate_index, bitrate_index;
-    if (header & (1<<20)) {
-        s.lsf = (header & (1<<19)) ? 0 : 1;
-        mpeg25 = 0;
-    } else {
-        s.lsf = 1;
-        mpeg25 = 1;
-    }
-
-    sample_rate_index = (header >> 10) & 3;
-    sample_rate = mp3_freq_tab[sample_rate_index] >> (s.lsf + mpeg25);
-    sample_rate_index += 3 * (s.lsf + mpeg25);
-    s.sample_rate_index = sample_rate_index;
-    s.error_protection = ((header >> 16) & 1) ^ 1;
-    s.sample_rate = sample_rate;
-
-    bitrate_index = (header >> 12) & 0xf;
-    padding = (header >> 9) & 1;
-    s.mode = (header >> 6) & 3;
-    s.mode_ext = (header >> 4) & 3;
-    s.nb_channels = (s.mode == MP3_MONO) ? 1 : 2;
-
-    if (bitrate_index != 0) {
-        frame_size = mp3_bitrate_tab[s.lsf][bitrate_index];
-        s.bit_rate = frame_size * 1000;
-        s.frame_size = (frame_size * 144000) / (sample_rate << s.lsf) + padding;
-    } else {
-        /* if no frame size computed, signal it */
-        return 1;
-    }
+        buf      += frame_size;
+        buf_size -= frame_size;
+    } while (1);
     return 0;
 }
 
-int mp_decode_layer3(mp3_context_t *s) {
-    int nb_granules, main_data_begin, private_bits;
-    int gr, ch, blocksplit_flag, i, j, k, n, bits_pos;
-    granule_t *g;
-    static granule_t[2][2] granules;
-    static int16_t[576] exponents;
-    const(uint8_t)* ptr;
-
-    if (s.lsf) {
-        main_data_begin = get_bits(&s.gb, 8);
-        private_bits = get_bits(&s.gb, s.nb_channels);
-        nb_granules = 1;
-    } else {
-        main_data_begin = get_bits(&s.gb, 9);
-        if (s.nb_channels == 2)
-            private_bits = get_bits(&s.gb, 3);
-        else
-            private_bits = get_bits(&s.gb, 5);
-        nb_granules = 2;
-        for(ch=0;ch<s.nb_channels;ch++) {
-            granules[ch][0].scfsi = 0; /* all scale factors are transmitted */
-            granules[ch][1].scfsi = cast(ubyte)get_bits(&s.gb, 4);
-        }
+int mp3dec_iterate_cb(mp3dec_io_t *io, uint8_t *buf, size_t buf_size, MP3D_ITERATE_CB callback, void *user_data)
+{
+    if (!io || !buf || cast(size_t)-1 == buf_size || buf_size < MINIMP3_BUF_SIZE || !callback)
+        return MP3D_E_PARAM;
+    size_t filled = io.read(buf, MINIMP3_ID3_DETECT_SIZE, io.read_data), consumed = 0;
+    uint64_t readed2 = 0;
+    mp3dec_frame_info_t frame_info;
+    int eof = 0;
+    memset(&frame_info, 0, (frame_info.sizeof));
+    if (filled > MINIMP3_ID3_DETECT_SIZE)
+        return MP3D_E_IOERROR;
+    if (MINIMP3_ID3_DETECT_SIZE != filled)
+        return 0;
+    size_t id3v2size = mp3dec_skip_id3v2(buf, filled);
+    if (id3v2size)
+    {
+        if (io.seek(id3v2size, io.seek_data))
+            return MP3D_E_IOERROR;
+        filled = io.read(buf, buf_size, io.read_data);
+        if (filled > buf_size)
+            return MP3D_E_IOERROR;
+        readed2 += id3v2size;
+    } else
+    {
+        size_t readed = io.read(buf + MINIMP3_ID3_DETECT_SIZE, buf_size - MINIMP3_ID3_DETECT_SIZE, io.read_data);
+        if (readed > (buf_size - MINIMP3_ID3_DETECT_SIZE))
+            return MP3D_E_IOERROR;
+        filled += readed;
     }
-
-    for(gr=0;gr<nb_granules;gr++) {
-        for(ch=0;ch<s.nb_channels;ch++) {
-            g = &granules[ch][gr];
-            g.part2_3_length = get_bits(&s.gb, 12);
-            g.big_values = get_bits(&s.gb, 9);
-            g.global_gain = get_bits(&s.gb, 8);
-            /* if MS stereo only is selected, we precompute the
-               1/sqrt(2) renormalization factor */
-            if ((s.mode_ext & (MODE_EXT_MS_STEREO | MODE_EXT_I_STEREO)) ==
-                MODE_EXT_MS_STEREO)
-                g.global_gain -= 2;
-            if (s.lsf)
-                g.scalefac_compress = get_bits(&s.gb, 9);
-            else
-                g.scalefac_compress = get_bits(&s.gb, 4);
-            blocksplit_flag = get_bits(&s.gb, 1);
-            if (blocksplit_flag) {
-                g.block_type = cast(ubyte)get_bits(&s.gb, 2);
-                if (g.block_type == 0)
-                    return -1;
-                g.switch_point = cast(ubyte)get_bits(&s.gb, 1);
-                for(i=0;i<2;i++)
-                    g.table_select[i] = get_bits(&s.gb, 5);
-                for(i=0;i<3;i++)
-                    g.subblock_gain[i] = get_bits(&s.gb, 3);
-                /* compute huffman coded region sizes */
-                if (g.block_type == 2)
-                    g.region_size[0] = (36 / 2);
-                else {
-                    if (s.sample_rate_index <= 2)
-                        g.region_size[0] = (36 / 2);
-                    else if (s.sample_rate_index != 8)
-                        g.region_size[0] = (54 / 2);
-                    else
-                        g.region_size[0] = (108 / 2);
-                }
-                g.region_size[1] = (576 / 2);
-            } else {
-                int region_address1, region_address2, l;
-                g.block_type = 0;
-                g.switch_point = 0;
-                for(i=0;i<3;i++)
-                    g.table_select[i] = get_bits(&s.gb, 5);
-                /* compute huffman coded region sizes */
-                region_address1 = get_bits(&s.gb, 4);
-                region_address2 = get_bits(&s.gb, 3);
-                g.region_size[0] =
-                    band_index_long[s.sample_rate_index][region_address1 + 1] >> 1;
-                l = region_address1 + region_address2 + 2;
-                /* should not overflow */
-                if (l > 22)
-                    l = 22;
-                g.region_size[1] =
-                    band_index_long[s.sample_rate_index][l] >> 1;
-            }
-            /* convert region offsets to region sizes and truncate
-               size to big_values */
-            g.region_size[2] = (576 / 2);
-            j = 0;
-            for(i=0;i<3;i++) {
-                k = g.region_size[i];
-                if (g.big_values < k) k = g.big_values;
-                g.region_size[i] = k - j;
-                j = k;
-            }
-
-            /* compute band indexes */
-            if (g.block_type == 2) {
-                if (g.switch_point) {
-                    /* if switched mode, we handle the 36 first samples as
-                       long blocks.  For 8000Hz, we handle the 48 first
-                       exponents as long blocks (XXX: check this!) */
-                    if (s.sample_rate_index <= 2)
-                        g.long_end = 8;
-                    else if (s.sample_rate_index != 8)
-                        g.long_end = 6;
-                    else
-                        g.long_end = 4; /* 8000 Hz */
-
-                    g.short_start = 2 + (s.sample_rate_index != 8);
-                } else {
-                    g.long_end = 0;
-                    g.short_start = 0;
-                }
-            } else {
-                g.short_start = 13;
-                g.long_end = 22;
-            }
-
-            g.preflag = 0;
-            if (!s.lsf)
-                g.preflag = get_bits(&s.gb, 1);
-            g.scalefac_scale = cast(ubyte)get_bits(&s.gb, 1);
-            g.count1table_select = cast(ubyte)get_bits(&s.gb, 1);
+    if (filled < MINIMP3_BUF_SIZE)
+        mp3dec_skip_id3v1(buf, &filled);
+    do
+    {
+        int free_format_bytes = 0, frame_size = 0, ret;
+        int i = mp3d_find_frame(buf + consumed, cast(int)(filled - consumed), &free_format_bytes, &frame_size);
+        if (i && !frame_size)
+        {
+            consumed += i;
+            continue;
         }
-    }
+        if (!frame_size)
+            break;
+        const uint8_t *hdr = buf + consumed + i;
+        frame_info.channels = HDR_IS_MONO(hdr) ? 1 : 2;
+        frame_info.hz = hdr_sample_rate_hz(hdr);
+        frame_info.layer = 4 - HDR_GET_LAYER(hdr);
+        frame_info.bitrate_kbps = hdr_bitrate_kbps(hdr);
+        frame_info.frame_bytes = frame_size;
 
-    ptr = s.gb.buffer + (get_bits_count(&s.gb)>>3);
-    /* now we get bits from the main_data_begin offset */
-    if(main_data_begin > s.last_buf_size){
-        s.last_buf_size= main_data_begin;
-      }
-
-    libc_memcpy(s.last_buf.ptr + s.last_buf_size, ptr, EXTRABYTES);
-    s.in_gb= s.gb;
-    init_get_bits(&s.gb, s.last_buf.ptr + s.last_buf_size - main_data_begin, main_data_begin*8);
-
-    for(gr=0;gr<nb_granules;gr++) {
-        for(ch=0;ch<s.nb_channels;ch++) {
-            g = &granules[ch][gr];
-
-            bits_pos = get_bits_count(&s.gb);
-
-            if (!s.lsf) {
-                uint8_t *sc;
-                int slen, slen1, slen2;
-
-                /* MPEG1 scale factors */
-                slen1 = slen_table[0][g.scalefac_compress];
-                slen2 = slen_table[1][g.scalefac_compress];
-                if (g.block_type == 2) {
-                    n = g.switch_point ? 17 : 18;
-                    j = 0;
-                    if(slen1){
-                        for(i=0;i<n;i++)
-                            g.scale_factors[j++] = cast(ubyte)get_bits(&s.gb, slen1);
-                    }else{
-                        libc_memset(cast(void*) &g.scale_factors[j], 0, n);
-                        j += n;
-//                        for(i=0;i<n;i++)
-//                            g.scale_factors[j++] = 0;
-                    }
-                    if(slen2){
-                        for(i=0;i<18;i++)
-                            g.scale_factors[j++] = cast(ubyte)get_bits(&s.gb, slen2);
-                        for(i=0;i<3;i++)
-                            g.scale_factors[j++] = 0;
-                    }else{
-                        for(i=0;i<21;i++)
-                            g.scale_factors[j++] = 0;
-                    }
-                } else {
-                    sc = granules[ch][0].scale_factors.ptr;
-                    j = 0;
-                    for(k=0;k<4;k++) {
-                        n = (k == 0 ? 6 : 5);
-                        if ((g.scfsi & (0x8 >> k)) == 0) {
-                            slen = (k < 2) ? slen1 : slen2;
-                            if(slen){
-                                for(i=0;i<n;i++)
-                                    g.scale_factors[j++] = cast(ubyte)get_bits(&s.gb, slen);
-                            }else{
-                                libc_memset(cast(void*) &g.scale_factors[j], 0, n);
-                                j += n;
-//                                for(i=0;i<n;i++)
-//                                    g.scale_factors[j++] = 0;
-                            }
-                        } else {
-                            /* simply copy from last granule */
-                            for(i=0;i<n;i++) {
-                                g.scale_factors[j] = sc[j];
-                                j++;
-                            }
-                        }
-                    }
-                    g.scale_factors[j++] = 0;
-                }
-            } else {
-                int tindex, tindex2, sl, sf;
-                int[4] slen;
-
-                /* LSF scale factors */
-                if (g.block_type == 2) {
-                    tindex = g.switch_point ? 2 : 1;
-                } else {
-                    tindex = 0;
-                }
-                sf = g.scalefac_compress;
-                if ((s.mode_ext & MODE_EXT_I_STEREO) && ch == 1) {
-                    /* intensity stereo case */
-                    sf >>= 1;
-                    if (sf < 180) {
-                        lsf_sf_expand(slen.ptr, sf, 6, 6, 0);
-                        tindex2 = 3;
-                    } else if (sf < 244) {
-                        lsf_sf_expand(slen.ptr, sf - 180, 4, 4, 0);
-                        tindex2 = 4;
-                    } else {
-                        lsf_sf_expand(slen.ptr, sf - 244, 3, 0, 0);
-                        tindex2 = 5;
-                    }
-                } else {
-                    /* normal case */
-                    if (sf < 400) {
-                        lsf_sf_expand(slen.ptr, sf, 5, 4, 4);
-                        tindex2 = 0;
-                    } else if (sf < 500) {
-                        lsf_sf_expand(slen.ptr, sf - 400, 5, 4, 0);
-                        tindex2 = 1;
-                    } else {
-                        lsf_sf_expand(slen.ptr, sf - 500, 3, 0, 0);
-                        tindex2 = 2;
-                        g.preflag = 1;
-                    }
-                }
-
-                j = 0;
-                for(k=0;k<4;k++) {
-                    n = lsf_nsf_table[tindex2][tindex][k];
-                    sl = slen[k];
-                    if(sl){
-                        for(i=0;i<n;i++)
-                            g.scale_factors[j++] = cast(ubyte)get_bits(&s.gb, sl);
-                    }else{
-                        libc_memset(cast(void*) &g.scale_factors[j], 0, n);
-                        j += n;
-//                        for(i=0;i<n;i++)
-//                            g.scale_factors[j++] = 0;
-                    }
-                }
-                /* XXX: should compute exact size */
-                libc_memset(cast(void*) &g.scale_factors[j], 0, 40 - j);
-//                for(;j<40;j++)
-//                    g.scale_factors[j] = 0;
-            }
-
-            exponents_from_scale_factors(s, g, exponents.ptr);
-
-            /* read Huffman coded residue */
-            if (huffman_decode(s, g, exponents.ptr,
-                               bits_pos + g.part2_3_length) < 0)
-                return -1;
-        } /* ch */
-
-        if (s.nb_channels == 2)
-            compute_stereo(s, &granules[0][gr], &granules[1][gr]);
-
-        for(ch=0;ch<s.nb_channels;ch++) {
-            g = &granules[ch][gr];
-            reorder_block(s, g);
-            compute_antialias(s, g);
-            compute_imdct(s, g, &s.sb_samples[ch][18 * gr][0], s.mdct_buf[ch].ptr);
+        readed2 += i;
+        if (callback)
+        {
+            ret = callback(user_data, hdr, frame_size, free_format_bytes, filled - consumed, readed2, &frame_info);
+            if (ret)
+                return ret;
         }
-    } /* gr */
-    return nb_granules * 18;
-}
-
-int mp3_decode_main(
-    mp3_context_t *s,
-    int16_t *samples, const uint8_t *buf, int buf_size
-) {
-    int i, nb_frames, ch;
-    int16_t *samples_ptr;
-
-    init_get_bits(&s.gb, buf + HEADER_SIZE, (buf_size - HEADER_SIZE)*8);
-
-    if (s.error_protection)
-        get_bits(&s.gb, 16);
-
-        nb_frames = mp_decode_layer3(s);
-
-        s.last_buf_size=0;
-        if(s.in_gb.buffer){
-            align_get_bits(&s.gb);
-            i= (s.gb.size_in_bits - get_bits_count(&s.gb))>>3;
-            if(i >= 0 && i <= BACKSTEP_SIZE){
-                libc_memmove(s.last_buf.ptr, s.gb.buffer + (get_bits_count(&s.gb)>>3), i);
-                s.last_buf_size=i;
-            }
-            s.gb= s.in_gb;
+        readed2 += frame_size;
+        consumed += i + frame_size;
+        if (!eof && filled - consumed < MINIMP3_BUF_SIZE)
+        {   /* keep minimum 10 consecutive mp3 frames (~16KB) worst case */
+            memmove(buf, buf + consumed, filled - consumed);
+            filled -= consumed;
+            consumed = 0;
+            size_t readed = io.read(buf + filled, buf_size - filled, io.read_data);
+            if (readed > (buf_size - filled))
+                return MP3D_E_IOERROR;
+            if (readed != (buf_size - filled))
+                eof = 1;
+            filled += readed;
+            if (eof)
+                mp3dec_skip_id3v1(buf, &filled);
         }
-
-        align_get_bits(&s.gb);
-        i= (s.gb.size_in_bits - get_bits_count(&s.gb))>>3;
-
-        if(i<0 || i > BACKSTEP_SIZE || nb_frames<0){
-            i = buf_size - HEADER_SIZE;
-            if (BACKSTEP_SIZE < i) i = BACKSTEP_SIZE;
-        }
-        libc_memcpy(s.last_buf.ptr + s.last_buf_size, s.gb.buffer + buf_size - HEADER_SIZE - i, i);
-        s.last_buf_size += i;
-
-    /* apply the synthesis filter */
-    for(ch=0;ch<s.nb_channels;ch++) {
-        samples_ptr = samples + ch;
-        for(i=0;i<nb_frames;i++) {
-            mp3_synth_filter(
-                s.synth_buf[ch].ptr, &(s.synth_buf_offset[ch]),
-                window.ptr, &s.dither_state,
-                samples_ptr, s.nb_channels,
-                s.sb_samples[ch][i].ptr
-            );
-            samples_ptr += 32 * s.nb_channels;
-        }
-    }
-    return nb_frames * 32 * cast(int)uint16_t.sizeof * s.nb_channels;
-}
-
-
-// ////////////////////////////////////////////////////////////////////////// //
-shared static this () {
-  auto res = mp3_decode_init();
-  if (res < 0) assert(0, "mp3 initialization failed");
-}
-
-int mp3_decode_init () {
-    int i, j, k;
-
-    if (true) {
-        /* synth init */
-        for(i=0;i<257;i++) {
-            int v;
-            v = mp3_enwindow[i];
-            static if (WFRAC_BITS < 16) {
-              v = (v + (1 << (16 - WFRAC_BITS - 1))) >> (16 - WFRAC_BITS);
-            }
-            window[i] = cast(short)v;
-            if ((i & 63) != 0)
-                v = -v;
-            if (i != 0)
-                window[512 - i] = cast(short)v;
-        }
-
-        /* huffman decode tables */
-        for(i=1;i<16;i++) {
-            const huff_table_t *h = &mp3_huff_tables[i];
-            int xsize, x, y;
-            uint n;
-            uint8_t[512] tmp_bits;
-            uint16_t[512] tmp_codes;
-
-            libc_memset(tmp_bits.ptr, 0, tmp_bits.sizeof);
-            libc_memset(tmp_codes.ptr, 0, tmp_codes.sizeof);
-
-            xsize = h.xsize;
-            n = xsize * xsize;
-
-            j = 0;
-            for(x=0;x<xsize;x++) {
-                for(y=0;y<xsize;y++){
-                    tmp_bits [(x << 5) | y | ((x&&y)<<4)]= h.bits [j  ];
-                    tmp_codes[(x << 5) | y | ((x&&y)<<4)]= h.codes[j++];
-                }
-            }
-
-            init_vlc(&huff_vlc[i], 7, 512,
-                     tmp_bits.ptr, 1, 1, tmp_codes.ptr, 2, 2);
-        }
-        for(i=0;i<2;i++) {
-            init_vlc(&huff_quad_vlc[i], (i == 0 ? 7 : 4), 16,
-                     mp3_quad_bits[i].ptr, 1, 1, mp3_quad_codes[i].ptr, 1, 1);
-        }
-
-        for(i=0;i<9;i++) {
-            k = 0;
-            for(j=0;j<22;j++) {
-                band_index_long[i][j] = cast(ushort)k;
-                k += band_size_long[i][j];
-            }
-            band_index_long[i][22] = cast(ushort)k;
-        }
-
-        /* compute n ^ (4/3) and store it in mantissa/exp format */
-        table_4_3_exp= cast(byte*)libc_malloc(TABLE_4_3_SIZE * (table_4_3_exp[0]).sizeof);
-        if(!table_4_3_exp)
-            return -1;
-        table_4_3_value= cast(uint*)libc_malloc(TABLE_4_3_SIZE * (table_4_3_value[0]).sizeof);
-        if(!table_4_3_value)
-            return -1;
-
-        for(i=1;i<TABLE_4_3_SIZE;i++) {
-            double f, fm;
-            int e, m;
-            f = libc_pow(cast(double)(i/4), 4.0 / 3.0) * libc_pow(2, (i&3)*0.25);
-            fm = libc_frexp(f, e);
-            m = cast(uint32_t)(fm*(1L<<31) + 0.5);
-            e+= FRAC_BITS - 31 + 5 - 100;
-            table_4_3_value[i] = m;
-            table_4_3_exp[i] = cast(byte)(-e);
-        }
-        for(i=0; i<512*16; i++){
-            int exponent= (i>>4);
-            double f= libc_pow(i&15, 4.0 / 3.0) * libc_pow(2, (exponent-400)*0.25 + FRAC_BITS + 5);
-            expval_table[exponent][i&15]= cast(uint)f;
-            if((i&15)==1)
-                exp_table[exponent]= cast(uint)f;
-        }
-
-        for(i=0;i<7;i++) {
-            float f;
-            int v;
-            if (i != 6) {
-                f = tan(cast(double)i * M_PI / 12.0);
-                v = FIXRx(f / (1.0 + f));
-            } else {
-                v = FIXR!(1.0);
-            }
-            is_table[0][i] = v;
-            is_table[1][6 - i] = v;
-        }
-        for(i=7;i<16;i++)
-            is_table[0][i] = is_table[1][i] = cast(int)0.0;
-
-        for(i=0;i<16;i++) {
-            double f;
-            int e, k_;
-
-            for(j=0;j<2;j++) {
-                e = -(j + 1) * ((i + 1) >> 1);
-                f = libc_pow(2.0, e / 4.0);
-                k_ = i & 1;
-                is_table_lsf[j][k_ ^ 1][i] = FIXRx(f);
-                is_table_lsf[j][k_][i] = FIXR!(1.0);
-            }
-        }
-
-        for(i=0;i<8;i++) {
-            float ci, cs, ca;
-            ci = ci_table[i];
-            cs = 1.0 / sqrt(1.0 + ci * ci);
-            ca = cs * ci;
-            csa_table[i][0] = FIXHRx(cs/4);
-            csa_table[i][1] = FIXHRx(ca/4);
-            csa_table[i][2] = FIXHRx(ca/4) + FIXHRx(cs/4);
-            csa_table[i][3] = FIXHRx(ca/4) - FIXHRx(cs/4);
-            csa_table_float[i][0] = cs;
-            csa_table_float[i][1] = ca;
-            csa_table_float[i][2] = ca + cs;
-            csa_table_float[i][3] = ca - cs;
-        }
-
-        /* compute mdct windows */
-        for(i=0;i<36;i++) {
-            for(j=0; j<4; j++){
-                double d;
-
-                if(j==2 && i%3 != 1)
-                    continue;
-
-                d= sin(M_PI * (i + 0.5) / 36.0);
-                if(j==1){
-                    if     (i>=30) d= 0;
-                    else if(i>=24) d= sin(M_PI * (i - 18 + 0.5) / 12.0);
-                    else if(i>=18) d= 1;
-                }else if(j==3){
-                    if     (i<  6) d= 0;
-                    else if(i< 12) d= sin(M_PI * (i -  6 + 0.5) / 12.0);
-                    else if(i< 18) d= 1;
-                }
-                d*= 0.5 / cos(M_PI*(2*i + 19)/72);
-                if(j==2)
-                    mdct_win[j][i/3] = FIXHRx((d / (1<<5)));
-                else
-                    mdct_win[j][i  ] = FIXHRx((d / (1<<5)));
-            }
-        }
-        for(j=0;j<4;j++) {
-            for(i=0;i<36;i+=2) {
-                mdct_win[j + 4][i] = mdct_win[j][i];
-                mdct_win[j + 4][i + 1] = -mdct_win[j][i + 1];
-            }
-        }
-        //init = 1;
-    }
+    } while (1);
     return 0;
 }
 
-int mp3_decode_frame (mp3_context_t *s, int16_t *out_samples, int *data_size, uint8_t *buf, int buf_size) {
-  uint32_t header;
-  int out_size;
-  int extra_bytes = 0;
+static int mp3dec_load_index(void *user_data, const uint8_t *frame, int frame_size, int free_format_bytes, size_t buf_size, uint64_t offset, mp3dec_frame_info_t *info)
+{
+    mp3dec_frame_t *idx_frame;
+    mp3dec_ex_t *dec = cast(mp3dec_ex_t *)user_data;
+    if (!dec.index.frames && !dec.start_offset)
+    {   /* detect VBR tag and try to avoid full scan */
+        uint32_t frames;
+        int delay, padding;
+        dec.info = *info;
+        dec.start_offset = dec.offset = offset;
+        dec.end_offset   = (offset + buf_size);
+        dec.free_format_bytes = free_format_bytes; /* should not change */
+        if (3 == dec.info.layer)
+        {
+            int ret = mp3dec_check_vbrtag(frame, frame_size, &frames, &delay, &padding);
+            if (ret)
+                dec.start_offset = dec.offset = offset + frame_size;
+            if (ret > 0)
+            {
+                padding *= info.channels;
+                dec.start_delay = dec.to_skip = delay*info.channels;
+                dec.samples = hdr_frame_samples(frame)*info.channels*cast(uint64_t)frames;
+                if (dec.samples >= cast(uint64_t)dec.start_delay)
+                    dec.samples -= dec.start_delay;
+                if (padding > 0 && dec.samples >= cast(uint64_t)padding)
+                    dec.samples -= padding;
+                dec.detected_samples = dec.samples;
+                dec.vbr_tag_found = 1;
+                return MP3D_E_USER;
+            } else if (ret < 0)
+                return 0;
+        }
+    }
+    if (dec.index.num_frames + 1 > dec.index.capacity)
+    {
+        if (!dec.index.capacity)
+            dec.index.capacity = 4096;
+        else
+            dec.index.capacity *= 2;
+        mp3dec_frame_t *alloc_buf = cast(mp3dec_frame_t *)realloc(cast(void*)dec.index.frames, (mp3dec_frame_t.sizeof)*dec.index.capacity);
+        if (!alloc_buf)
+            return MP3D_E_MEMORY;
+        dec.index.frames = alloc_buf;
+    }
+    idx_frame = &dec.index.frames[dec.index.num_frames++];
+    idx_frame.offset = offset;
+    idx_frame.sample = dec.samples;
+    if (!dec.buffer_samples && dec.index.num_frames < 256)
+    {   /* for some cutted mp3 frames, bit-reservoir not filled and decoding can't be started from first frames */
+        /* try to decode up to 255 first frames till samples starts to decode */
+        dec.buffer_samples = mp3dec_decode_frame(&dec.mp3d, frame, cast(int)MINIMP3_MIN(buf_size, cast(size_t)int.max), dec.buffer.ptr, info);
+        dec.samples += dec.buffer_samples*info.channels;
+    } else
+        dec.samples += hdr_frame_samples(frame)*info.channels;
+    return 0;
+}
 
-retry:
-  if (buf_size < HEADER_SIZE) { return -1; }
+int mp3dec_ex_open_buf(mp3dec_ex_t *dec, const uint8_t *buf, size_t buf_size, int seek_method)
+{
+    if (!dec || !buf || cast(size_t)-1 == buf_size || !(MP3D_SEEK_TO_BYTE == seek_method || MP3D_SEEK_TO_SAMPLE == seek_method))
+        return MP3D_E_PARAM;
+    memset(dec, 0, (*dec).sizeof);
+    dec.file.buffer = buf;
+    dec.file.size   = buf_size;
+    dec.seek_method = seek_method;
+    mp3dec_init(&dec.mp3d);
+    int ret = mp3dec_iterate_buf(dec.file.buffer, dec.file.size, &mp3dec_load_index, dec);
+    if (ret && MP3D_E_USER != ret)
+        return ret;
+    mp3dec_init(&dec.mp3d);
+    dec.buffer_samples = 0;
+    return 0;
+}
 
-  header = (buf[0]<<24)|(buf[1]<<16)|(buf[2]<<8)|buf[3];
-  if (mp3_check_header(header) < 0){
-    ++buf;
-    --buf_size;
-    ++extra_bytes;
-    goto retry;
-  }
+size_t mp3dec_idx_binary_search(mp3dec_index_t *idx, uint64_t position)
+{
+    size_t end = idx.num_frames, start = 0, index = 0;
+    while (start <= end)
+    {
+        size_t mid = (start + end) / 2;
+        if (idx.frames[mid].sample >= position)
+        {   /* move left side. */
+            if (idx.frames[mid].sample == position)
+                return mid;
+            end = mid - 1;
+        }  else
+        {   /* move to right side */
+            index = mid;
+            start = mid + 1;
+            if (start == idx.num_frames)
+                break;
+        }
+    }
+    return index;
+}
 
-  if (s.last_header && (header&0xffff0c00u) != s.last_header) {
-    ++buf;
-    --buf_size;
-    ++extra_bytes;
-    goto retry;
-  }
+int mp3dec_ex_seek(mp3dec_ex_t *dec, uint64_t position)
+{
+    size_t i;
+    if (!dec)
+        return MP3D_E_PARAM;
+    if (MP3D_SEEK_TO_BYTE == dec.seek_method)
+    {
+        if (dec.io)
+        {
+            dec.offset = position;
+        } else
+        {
+            dec.offset = MINIMP3_MIN(position, dec.file.size);
+        }
+        dec.cur_sample = 0;
+        goto do_exit;
+    }
+    dec.cur_sample = position;
+    position += dec.start_delay;
+    if (0 == position)
+    {   /* optimize seek to zero, no index needed */
+seek_zero:
+        dec.offset  = dec.start_offset;
+        dec.to_skip = 0;
+        goto do_exit;
+    }
+    if (!dec.index.frames && dec.vbr_tag_found)
+    {   /* no index created yet (vbr tag used to calculate track length) */
+        dec.samples = 0;
+        dec.buffer_samples = 0;
+        if (dec.io)
+        {
+            if (dec.io.seek(dec.start_offset, dec.io.seek_data))
+                return MP3D_E_IOERROR;
+            int ret = mp3dec_iterate_cb(dec.io, cast(uint8_t *)dec.file.buffer, dec.file.size, &mp3dec_load_index, dec);
+            if (ret && MP3D_E_USER != ret)
+                return ret;
+        } else
+        {
+            int ret = mp3dec_iterate_buf(dec.file.buffer + dec.start_offset, cast(size_t)(dec.file.size - dec.start_offset), &mp3dec_load_index, dec);
+            if (ret && MP3D_E_USER != ret)
+                return ret;
+        }
+        for (i = 0; i < dec.index.num_frames; i++)
+            dec.index.frames[i].offset += dec.start_offset;
+        dec.samples = dec.detected_samples;
+    }
+    if (!dec.index.frames)
+        goto seek_zero; /* no frames in file - seek to zero */
+    i = mp3dec_idx_binary_search(&dec.index, position);
+    if (i)
+    {
+        int to_fill_bytes = 511;
+        int skip_frames = MINIMP3_PREDECODE_FRAMES;
+        i -= MINIMP3_MIN(i, cast(size_t)skip_frames);
+        if (3 == dec.info.layer)
+        {
+            while (i && to_fill_bytes)
+            {   /* make sure bit-reservoir is filled when we start decoding */
+                bs_t[1] bs;
+                L3_gr_info_t[4] gr_info;
+                int frame_bytes, frame_size;
+                const(uint8_t) *hdr;
+                if (dec.io)
+                {
+                    hdr = dec.file.buffer;
+                    if (dec.io.seek(dec.index.frames[i - 1].offset, dec.io.seek_data))
+                        return MP3D_E_IOERROR;
+                    size_t readed = dec.io.read(cast(uint8_t *)hdr, HDR_SIZE, dec.io.read_data);
+                    if (readed != HDR_SIZE)
+                        return MP3D_E_IOERROR;
+                    frame_size = hdr_frame_bytes(hdr, dec.free_format_bytes) + hdr_padding(hdr);
+                    readed = dec.io.read(cast(uint8_t *)hdr + HDR_SIZE, frame_size - HDR_SIZE, dec.io.read_data);
+                    if (readed != cast(size_t)(frame_size - HDR_SIZE))
+                        return MP3D_E_IOERROR;
+                    bs_init(bs.ptr, hdr + HDR_SIZE, frame_size - HDR_SIZE);
+                } else
+                {
+                    hdr = dec.file.buffer + dec.index.frames[i - 1].offset;
+                    frame_size = hdr_frame_bytes(hdr, dec.free_format_bytes) + hdr_padding(hdr);
+                    bs_init(bs.ptr, hdr + HDR_SIZE, frame_size - HDR_SIZE);
+                }
+                if (HDR_IS_CRC(hdr))
+                    get_bits(bs.ptr, 16);
+                i--;
+                if (L3_read_side_info(bs.ptr, gr_info.ptr, hdr) < 0)
+                    break; /* frame not decodable, we can start from here */
+                frame_bytes = (bs[0].limit - bs[0].pos)/8;
+                to_fill_bytes -= MINIMP3_MIN(to_fill_bytes, frame_bytes);
+            }
+        }
+    }
+    dec.offset = dec.index.frames[i].offset;
+    dec.to_skip = cast(int)(position - dec.index.frames[i].sample);
+    while ((i + 1) < dec.index.num_frames && !dec.index.frames[i].sample && !dec.index.frames[i + 1].sample)
+    {   /* skip not decodable first frames */
+        const(uint8_t) *hdr;
+        if (dec.io)
+        {
+            hdr = dec.file.buffer;
+            if (dec.io.seek(dec.index.frames[i].offset, dec.io.seek_data))
+                return MP3D_E_IOERROR;
+            size_t readed = dec.io.read(cast(uint8_t *)hdr, HDR_SIZE, dec.io.read_data);
+            if (readed != HDR_SIZE)
+                return MP3D_E_IOERROR;
+        } else
+            hdr = dec.file.buffer + dec.index.frames[i].offset;
+        dec.to_skip += hdr_frame_samples(hdr)*dec.info.channels;
+        i++;
+    }
+do_exit:
+    if (dec.io)
+    {
+        if (dec.io.seek(dec.offset, dec.io.seek_data))
+            return MP3D_E_IOERROR;
+    }
+    dec.buffer_samples  = 0;
+    dec.buffer_consumed = 0;
+    dec.input_consumed  = 0;
+    dec.input_filled    = 0;
+    dec.last_error      = 0;
+    mp3dec_init(&dec.mp3d);
+    return 0;
+}
 
-  if (decode_header(s, header) == 1) {
-    s.frame_size = -1;
-    return -1;
-  }
-
-  if (s.frame_size<=0 || s.frame_size > buf_size) return -1; // incomplete frame
-  if (s.frame_size < buf_size) buf_size = s.frame_size;
-
-  out_size = mp3_decode_main(s, out_samples, buf, buf_size);
-  if (out_size >= 0) {
-    *data_size = out_size;
-    s.last_header = header&0xffff0c00u;
-  }
-  // else: Error while decoding MPEG audio frame.
-  s.frame_size += extra_bytes;
-  return buf_size;
+size_t mp3dec_ex_read(mp3dec_ex_t *dec, mp3d_sample_t *buf, size_t samples)
+{
+    if (!dec || !buf)
+        return MP3D_E_PARAM;
+    uint64_t end_offset = dec.end_offset ? dec.end_offset : dec.file.size;
+    size_t samples_requested = samples;
+    int eof = 0;
+    mp3dec_frame_info_t frame_info;
+    memset(&frame_info, 0, (frame_info.sizeof));
+    if (dec.detected_samples && dec.cur_sample >= dec.detected_samples)
+        return 0; /* at end of stream */
+    if (dec.last_error)
+        return 0; /* error eof state, seek can reset it */
+    if (dec.buffer_consumed < dec.buffer_samples)
+    {
+        size_t to_copy = MINIMP3_MIN(cast(size_t)(dec.buffer_samples - dec.buffer_consumed), samples);
+        if (dec.detected_samples)
+        {   /* count decoded samples to properly cut padding */
+            if (dec.cur_sample + to_copy >= dec.detected_samples)
+                to_copy = cast(size_t)(dec.detected_samples - dec.cur_sample);
+        }
+        dec.cur_sample += to_copy;
+        memcpy(buf, dec.buffer.ptr + dec.buffer_consumed, to_copy*(mp3d_sample_t.sizeof));
+        buf += to_copy;
+        dec.buffer_consumed += to_copy;
+        samples -= to_copy;
+    }
+    while (samples)
+    {
+        if (dec.detected_samples && dec.cur_sample >= dec.detected_samples)
+            break;
+        const(uint8_t) *dec_buf;
+        if (dec.io)
+        {
+            if (!eof && (dec.input_filled - dec.input_consumed) < MINIMP3_BUF_SIZE)
+            {   /* keep minimum 10 consecutive mp3 frames (~16KB) worst case */
+                memmove(cast(uint8_t*)dec.file.buffer, cast(uint8_t*)dec.file.buffer + dec.input_consumed, dec.input_filled - dec.input_consumed);
+                dec.input_filled -= dec.input_consumed;
+                dec.input_consumed = 0;
+                size_t readed = dec.io.read(cast(uint8_t*)dec.file.buffer + dec.input_filled, dec.file.size - dec.input_filled, dec.io.read_data);
+                if (readed > (dec.file.size - dec.input_filled))
+                {
+                    dec.last_error = MP3D_E_IOERROR;
+                    readed = 0;
+                }
+                if (readed != (dec.file.size - dec.input_filled))
+                    eof = 1;
+                dec.input_filled += readed;
+                if (eof)
+                    mp3dec_skip_id3v1(cast(uint8_t*)dec.file.buffer, &dec.input_filled);
+            }
+            dec_buf = dec.file.buffer + dec.input_consumed;
+            if (!(dec.input_filled - dec.input_consumed))
+                break;
+            dec.buffer_samples = mp3dec_decode_frame(&dec.mp3d, dec_buf, cast(int)(dec.input_filled - dec.input_consumed), dec.buffer.ptr, &frame_info);
+            dec.input_consumed += frame_info.frame_bytes;
+        } else
+        {
+            dec_buf = dec.file.buffer + dec.offset;
+            uint64_t buf_size = end_offset - dec.offset;
+            if (!buf_size)
+                break;
+            dec.buffer_samples = mp3dec_decode_frame(&dec.mp3d, dec_buf, cast(int) MINIMP3_MIN(buf_size, cast(uint64_t)int.max), dec.buffer.ptr, &frame_info);
+        }
+        dec.buffer_consumed = 0;
+        if (dec.info.hz != frame_info.hz || dec.info.layer != frame_info.layer
+            || dec.info.channels != frame_info.channels
+            )
+        {
+            dec.last_error = MP3D_E_DECODE;
+            break;
+        }
+        if (dec.buffer_samples)
+        {
+            dec.buffer_samples *= frame_info.channels;
+            if (dec.to_skip)
+            {
+                size_t skip = MINIMP3_MIN(dec.buffer_samples, dec.to_skip);
+                dec.buffer_consumed += skip;
+                dec.to_skip -= skip;
+            }
+            size_t to_copy = MINIMP3_MIN(cast(size_t)(dec.buffer_samples - dec.buffer_consumed), samples);
+            if (dec.detected_samples)
+            {   /* ^ handle padding */
+                if (dec.cur_sample + to_copy >= dec.detected_samples)
+                    to_copy = cast(size_t)(dec.detected_samples - dec.cur_sample);
+            }
+            dec.cur_sample += to_copy;
+            memcpy(buf, dec.buffer.ptr + dec.buffer_consumed, to_copy*(mp3d_sample_t.sizeof));
+            buf += to_copy;
+            dec.buffer_consumed += to_copy;
+            samples -= to_copy;
+        } else if (dec.to_skip)
+        {   /* In mp3 decoding not always can start decode from any frame because of bit reservoir,
+               count skip samples for such frames */
+            int frame_samples = hdr_frame_samples(dec_buf)*frame_info.channels;
+            dec.to_skip -= MINIMP3_MIN(frame_samples, dec.to_skip);
+        }
+        dec.offset += frame_info.frame_bytes;
+    }
+    return samples_requested - samples;
 }
 
 
-/+
-int mp3_skip_frame (mp3_context_t *s, uint8_t *buf, int buf_size) {
-  uint32_t header;
-  int out_size;
-  int extra_bytes = 0;
-
-retry:
-  if (buf_size < HEADER_SIZE) return -1;
-
-  header = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
-  if (mp3_check_header(header) < 0) {
-    ++buf;
-    --buf_size;
-    ++extra_bytes;
-    goto retry;
-  }
-
-  if (s.last_header && (header&0xffff0c00u) != s.last_header) {
-    ++buf;
-    --buf_size;
-    ++extra_bytes;
-    goto retry;
-  }
-
-  if (decode_header(s, header) == 1) {
-    s.frame_size = -1;
-    return -1;
-  }
-
-  if (s.frame_size <= 0 || s.frame_size > buf_size) return -1;  // incomplete frame
-  if (s.frame_size < buf_size) buf_size = s.frame_size;
-  s.last_header = header&0xffff0c00u;
-  s.frame_size += extra_bytes;
-  return buf_size;
+void mp3dec_close_file(mp3dec_map_info_t *map_info)
+{
+    if (map_info.buffer)
+        free(cast(void *)map_info.buffer);
+    map_info.buffer = null;
+    map_info.size = 0;
 }
-+/
+
+int mp3dec_detect_mapinfo(mp3dec_map_info_t *map_info)
+{
+    int ret = mp3dec_detect_buf(map_info.buffer, map_info.size);
+    mp3dec_close_file(map_info);
+    return ret;
+}
+
+int mp3dec_load_mapinfo(mp3dec_t *dec, mp3dec_map_info_t *map_info, mp3dec_file_info_t *info, MP3D_PROGRESS_CB progress_cb, void *user_data)
+{
+    int ret = mp3dec_load_buf(dec, map_info.buffer, map_info.size, info, progress_cb, user_data);
+    mp3dec_close_file(map_info);
+    return ret;
+}
+
+int mp3dec_iterate_mapinfo(mp3dec_map_info_t *map_info, MP3D_ITERATE_CB callback, void *user_data)
+{
+    int ret = mp3dec_iterate_buf(map_info.buffer, map_info.size, callback, user_data);
+    mp3dec_close_file(map_info);
+    return ret;
+}
+
+static int mp3dec_ex_open_mapinfo(mp3dec_ex_t *dec, int seek_method)
+{
+    int ret = mp3dec_ex_open_buf(dec, dec.file.buffer, dec.file.size, seek_method);
+    dec.is_file = 1;
+    if (ret)
+        mp3dec_ex_close(dec);
+    return ret;
+}
+
+int mp3dec_ex_open_cb(mp3dec_ex_t *dec, mp3dec_io_t *io, int seek_method)
+{
+    if (!dec || !io || !(MP3D_SEEK_TO_BYTE == seek_method || MP3D_SEEK_TO_SAMPLE == seek_method))
+        return MP3D_E_PARAM;
+    memset(dec, 0, (*dec).sizeof);
+    dec.file.size = MINIMP3_IO_SIZE;
+    dec.file.buffer = cast(const uint8_t*)malloc(dec.file.size);
+    if (!dec.file.buffer)
+        return MP3D_E_MEMORY;
+    dec.seek_method = seek_method;
+    dec.io = io;
+    mp3dec_init(&dec.mp3d);
+    if (io.seek(0, io.seek_data))
+        return MP3D_E_IOERROR;
+    int ret = mp3dec_iterate_cb(io, cast(uint8_t *)dec.file.buffer, dec.file.size, &mp3dec_load_index, dec);
+    if (ret && MP3D_E_USER != ret)
+        return ret;
+    if (dec.io.seek(dec.start_offset, dec.io.seek_data))
+        return MP3D_E_IOERROR;
+    mp3dec_init(&dec.mp3d);
+    dec.buffer_samples = 0;
+    return 0;
+}
+
+void mp3dec_ex_close(mp3dec_ex_t *dec)
+{
+    if (dec.index.frames)
+        free(dec.index.frames);
+    memset(dec, 0, (*dec).sizeof);
+}
+
+

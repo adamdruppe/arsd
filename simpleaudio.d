@@ -236,7 +236,19 @@ interface SampleController {
 		History:
 			Added November 20, 2022 (dub v10.10)
 	+/
+	// FIXME: this is clearly wrong on mp3s in some way.
 	void seek(float where);
+
+	// FIXME: would be cool to add volume and playback speed control methods too.
+
+	/++
+		Duration of the sample, in seconds. Please note it may be nan if unknown or inf if infinite looping.
+		You should check for both conditions.
+
+		History:
+			Added November 20, 2022 (dub v10.10)
+	+/
+	// float duration();
 
 	/++
 		Sets a delegate that will be called on the audio thread when the sample is finished
@@ -275,7 +287,7 @@ private class SampleControlFlags : SampleController {
 	bool finished() { return finished_; }
 	bool paused() { return paused_; }
 
-	void seek(float where) { synchronized(this) {requestedSeek = where;} }
+	void seek(float where) { synchronized(this) {if(where < 0) where = 0; requestedSeek = where;} }
 
 	float currentPosition = 0.0;
 	float requestedSeek = float.init;
@@ -820,6 +832,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			If you use this function, you are opting into the GPL version 2 or later.
 		Authors:
 			Based on ketmar's code.
+		Bugs:
+			The seek method is not yet implemented.
 	+/
 	SampleController playEmulatedOpl3Midi()(string filename, bool loop = false) {
 		import std.file;
@@ -996,16 +1010,12 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	/++
-		Requires mp3.d to be compiled in (module [arsd.mp3]) which is LGPL licensed.
-		That LGPL license will extend to your code.
+		Requires mp3.d to be compiled in (module [arsd.mp3]).
 
 		Returns:
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
 			Please note that the static type may change in the future. It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playOgg] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
-
-		Bugs:
-			Mp3s cannot be seeked or looped in the current implementation.
 
 		History:
 			Automatic resampling support added Nov 7, 2020.
@@ -1013,20 +1023,26 @@ final class AudioPcmOutThreadImplementation : Thread {
 			Return value changed from `void` to a sample control object on December 23, 2020.
 
 			The `immutable(ubyte)[]` overload was added December 30, 2020.
+
+			The implementation of arsd.mp3 was completely changed on November 20, 2022, adding loop and seek support.
 	+/
 	SampleController playMp3()(string filename) {
 		import std.stdio;
 		auto fi = new File(filename); // just let the GC close it... otherwise random segfaults happen... blargh
-		auto reader = delegate(void[] buf) {
+		auto reader = delegate(ubyte[] buf) {
 			return cast(int) fi.rawRead(buf[]).length;
 		};
 
-		return playMp3(reader);
+		return playMp3(reader, (ulong pos) {
+			fi.seek(pos);
+			return 0;
+		});
 	}
 
 	/// ditto
 	SampleController playMp3()(immutable(ubyte)[] data) {
-		return playMp3( (void[] buffer) {
+		auto originalData = data;
+		return playMp3( (ubyte[] buffer) {
 			ubyte[] buf = cast(ubyte[]) buffer;
 			if(data.length >= buf.length) {
 				buf[] = data[0 .. buf.length];
@@ -1039,14 +1055,17 @@ final class AudioPcmOutThreadImplementation : Thread {
 				data = data[$ .. $];
 				return cast(int) it;
 			}
+		}, (ulong pos) {
+			data = originalData[pos .. $];
+			return 0;
 		});
 	}
 
 	// no compatibility guarantees, I can change this overload at any time!
-	/* private */ SampleController playMp3()(int delegate(void[]) reader) {
+	/* private */ SampleController playMp3()(int delegate(ubyte[]) reader, int delegate(size_t) seeker) {
 		import arsd.mp3;
 
-		auto mp3 = new MP3Decoder(reader);
+		auto mp3 = new MP3Decoder(reader, seeker);
 		if(!mp3.valid)
 			throw new Exception("file not valid");
 
@@ -1069,7 +1088,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 					synchronized(scf)
 					if(scf.requestedSeek !is float.init) {
-						if(mp3.seek(cast(uint) (scf.requestedSeek * v.sampleRate))) {
+						if(mp3.seek(cast(uint) (scf.requestedSeek * mp3.sampleRate * mp3.channels))) {
 							scf.currentPosition = scf.requestedSeek;
 						}
 
@@ -1092,7 +1111,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 						if(buffer.length) {
 							if(mp3.valid) {
-								mp3.decodeNextFrame(reader);
+								mp3.decodeNextFrame();
 								next = mp3.frameSamples;
 								goto more;
 							} else {
@@ -1119,6 +1138,18 @@ final class AudioPcmOutThreadImplementation : Thread {
 					}
 
 					override void loadMoreSamples() {
+
+
+						synchronized(scf)
+						if(scf.requestedSeek !is float.init) {
+							if(mp3.seek(cast(uint) (scf.requestedSeek * mp3.sampleRate * mp3.channels))) {
+								scf.currentPosition = scf.requestedSeek;
+							}
+
+							scf.requestedSeek = float.init;
+						}
+
+
 						if(mp3.channels == 1) {
 							int actuallyGot;
 
@@ -1127,7 +1158,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 								b = cast(float) next[0] / short.max;
 								next = next[1 .. $];
 								if(next.length == 0) {
-									mp3.decodeNextFrame(reader);
+									mp3.decodeNextFrame();
 									next = mp3.frameSamples;
 								}
 								actuallyGot++;
@@ -1141,13 +1172,13 @@ final class AudioPcmOutThreadImplementation : Thread {
 								b = cast(float) next[0] / short.max;
 								next = next[1 .. $];
 								if(next.length == 0) {
-									mp3.decodeNextFrame(reader);
+									mp3.decodeNextFrame();
 									next = mp3.frameSamples;
 								}
 								buffersIn[1][idx] = cast(float) next[0] / short.max;
 								next = next[1 .. $];
 								if(next.length == 0) {
-									mp3.decodeNextFrame(reader);
+									mp3.decodeNextFrame();
 									next = mp3.frameSamples;
 								}
 								actuallyGot++;
@@ -1175,6 +1206,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
 			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playOgg], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+		Bugs:
+			The seek method is not yet implemented.
 		History:
 			Added Nov 8, 2020.
 
