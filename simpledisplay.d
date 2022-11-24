@@ -6557,7 +6557,7 @@ version(X11) {
 			return modmask;
 		}
 
-		private static uint keyEvent2KeyCode() (in auto ref KeyEvent ke) {
+		private static uint keyEvent2KeyCode() (scope auto ref const KeyEvent ke) {
 			uint keycode = cast(uint)ke.key;
 			auto dpy = XDisplayConnection.get;
 			return XKeysymToKeycode(dpy, keycode);
@@ -7525,7 +7525,7 @@ struct MouseEvent {
 		motion (no prefix allowed)
 	'X' is either "up" or "down" (or "-up"/"-down"); if omited, means "down"
 	*/
-	static bool equStr() (in auto ref MouseEvent event, const(char)[] str) pure nothrow @trusted @nogc {
+	static bool equStr() (scope auto ref const MouseEvent event, const(char)[] str) pure nothrow @trusted @nogc {
 		if (str.length == 0) return false; // just in case
 		debug(arsd_mevent_strcmp) { import iv.cmdcon; conwriteln("str=<", str, ">"); }
 		enum Flag : uint { Up = 0x8000_0000U, Down = 0x4000_0000U, Any = 0x1000_0000U }
