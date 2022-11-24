@@ -10,7 +10,7 @@
 // https://www.x.org/releases/X11R7.6/doc/libXext/synclib.html
 
 
-// on Mac with X11: -L-L/usr/X11/lib 
+// on Mac with X11: -L-L/usr/X11/lib
 
 /+
 
@@ -49,11 +49,11 @@ from Windows:
 see: https://docs.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-itaskbarlist3
 
 interface
-CoCreateInstance( CLSID_TaskbarList, nullptr, CLSCTX_ALL, __uuidof(ITaskbarList3), (LPVOID*)&m_pTL3 ); 
-auto msg = RegisterWindowMessage(TEXT(“TaskbarButtonCreated”)); 
+CoCreateInstance( CLSID_TaskbarList, nullptr, CLSCTX_ALL, __uuidof(ITaskbarList3), (LPVOID*)&m_pTL3 );
+auto msg = RegisterWindowMessage(TEXT(“TaskbarButtonCreated”));
 listen for msg, return TRUE
-interface->SetProgressState(hwnd, TBPF_NORMAL); 
-interface->SetProgressValue(hwnd, 40, 100); 
+interface->SetProgressState(hwnd, TBPF_NORMAL);
+interface->SetProgressValue(hwnd, 40, 100);
 
 
 	My new notification system.
@@ -410,7 +410,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 					0.5f,  0.5f, 0.0f,  // top right
 					0.5f, -0.5f, 0.0f,  // bottom right
 					-0.5f, -0.5f, 0.0f,  // bottom left
-					-0.5f,  0.5f, 0.0f   // top left 
+					-0.5f,  0.5f, 0.0f   // top left
 				];
 				uint[] indices = [  // note that we start from 0!
 					0, 1, 3,  // first Triangle
@@ -612,7 +612,7 @@ interface->SetProgressValue(hwnd, 40, 100);
 				<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware> <!-- old style -->
 				<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness> <!-- new style -->
 				<!-- Un-comment the line below to enable GDI-scaling in this project. This will enable text -->
-				<!-- to render crisply in DPI-unaware contexts --> 
+				<!-- to render crisply in DPI-unaware contexts -->
 				<!--<gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>-->
 			</windowsSettings>
 		</application>
@@ -954,7 +954,7 @@ unittest {
 		board.length = width * height;
 
 		userState.length = width * height;
-		userState[] = UserSquare.unknown; 
+		userState[] = UserSquare.unknown;
 
 		import std.algorithm, std.random, std.range;
 
@@ -1255,7 +1255,7 @@ version(libnotify) {
 			// close
 		}
 
-		// FIXME: this looks up by name every time.... 
+		// FIXME: this looks up by name every time....
 		template call(string func, Ret, Args...) {
 			extern(C) Ret function(Args) fptr;
 			typeof(fptr) call() {
@@ -1395,7 +1395,7 @@ enum WindowFlags : int {
 		From the ICCM:
 
 		$(BLOCKQUOTE
-			It is important not to confuse WM_TRANSIENT_FOR with override-redirect. WM_TRANSIENT_FOR should be used in those cases where the pointer is not grabbed while the window is mapped (in other words, if other windows are allowed to be active while the transient is up). If other windows must be prevented from processing input (for example, when implementing pop-up menus), use override-redirect and grab the pointer while the window is mapped. 
+			It is important not to confuse WM_TRANSIENT_FOR with override-redirect. WM_TRANSIENT_FOR should be used in those cases where the pointer is not grabbed while the window is mapped (in other words, if other windows are allowed to be active while the transient is up). If other windows must be prevented from processing input (for example, when implementing pop-up menus), use override-redirect and grab the pointer while the window is mapped.
 
 			$(CITE https://tronche.com/gui/x/icccm/sec-4.html)
 		)
@@ -1613,7 +1613,7 @@ float getXftDpi() {
 		Added on March 14, 2021
 
 		Documented public on September 23, 2021 with full support for null params (dub 10.3)
-		
+
 +/
 TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width = 0, int height = 0, int x = 0, int y = 0) {
 	TrueColorImage got;
@@ -1939,7 +1939,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		int screenPositionY;
 		void updateActualDpi(bool loadingNow = false) {
 			if(!loadingNow && !actualDpiLoadAttempted)
-				actualDpi(); // just to make it do the load 
+				actualDpi(); // just to make it do the load
 			foreach(idx, m; MonitorInfo.info) {
 				if(m.position.contains(Point(screenPositionX + this.width / 2, screenPositionY + this.height / 2))) {
 					bool changed = actualDpi_ && actualDpi_ != m.dpi;
@@ -2172,7 +2172,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				}
 			}
 			if(mouse) {
-			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */, 
+			if(auto res = XGrabPointer(XDisplayConnection.get, this.impl.window, false /* owner_events */,
 				EventMask.PointerMotionMask // FIXME: not efficient
 				| EventMask.ButtonPressMask
 				| EventMask.ButtonReleaseMask
@@ -2194,9 +2194,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			if(confine) {
 				RECT rcClip;
 				//RECT rcOldClip;
-				//GetClipCursor(&rcOldClip); 
-				GetWindowRect(hwnd, &rcClip); 
-				ClipCursor(&rcClip); 
+				//GetClipCursor(&rcOldClip);
+				GetWindowRect(hwnd, &rcClip);
+				ClipCursor(&rcClip);
 			}
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
@@ -2246,7 +2246,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				_parent.inputProxy = null;
 		} else version(Windows) {
 			ReleaseCapture();
-			ClipCursor(null); 
+			ClipCursor(null);
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
@@ -4340,7 +4340,7 @@ struct EventLoopImpl {
 				}
 			}
 		}
-		
+
 		version(Windows) {
 			int ret = -1;
 			MSG message;
@@ -5029,8 +5029,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 	/++
 		Shows a balloon notification. You can only show one balloon at a time, if you call
 		it twice while one is already up, the first balloon will be replaced.
-		
-		
+
+
 		The user is free to block notifications and they will automatically disappear after
 		a timeout period.
 
@@ -5076,7 +5076,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 			}
 		}
-		
+
 		version(X11) {
 		if(useCustom) {
 			if(!active) return;
@@ -13842,7 +13842,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 	XErrorEvent[] trapXErrors(scope void delegate() dg) {
 
 		static XErrorEvent[] errorBuffer;
-		
+
 		static extern(C) int handler (Display* dpy, XErrorEvent* evt) nothrow {
 			errorBuffer ~= *evt;
 			return 0;
@@ -13916,7 +13916,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		/++
 			Requests the specified input from the root window on the connection, in addition to any other request.
 
-			
+
 			Since plain XSelectInput will replace the existing mask, adding input from multiple locations is tricky. This central function will combine all the masks for you.
 
 			$(WARNING it calls XSelectInput itself, which will override any other root window input you have!)
@@ -16030,7 +16030,7 @@ extern(C) nothrow @nogc {
 	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
 
 	int Xutf8TextExtents(XFontSet font_set, const char *, int num_bytes, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
-	 	
+
 
 //Status Xutf8TextPerCharExtents(XFontSet font_set, char *string, int num_bytes, XRectangle *ink_array_return, XRectangle *logical_array_return, int array_size, int *num_chars_return, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
 
@@ -16070,7 +16070,7 @@ extern(C) nothrow @nogc {
 
 	int XGrabButton(Display *display, uint button, uint modifiers, Window grab_window, Bool owner_events, uint event_mask, int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor);
 
-	int XUngrabButton(Display *display, uint button, uint modifiers, Window grab_window); 
+	int XUngrabButton(Display *display, uint button, uint modifiers, Window grab_window);
 
 	int XDrawLines(Display*, Drawable, GC, XPoint*, int, CoordMode);
 	int XFillPolygon(Display*, Drawable, GC, XPoint*, int, PolygonShape, CoordMode);
@@ -18294,7 +18294,7 @@ extern(System) nothrow @nogc {
 	}
 	}
 
- 
+
  	private __gshared extern(System) BOOL function(int) wglSwapIntervalEXT;
         void wglSetVSync(bool wait) {
 		if(wglSwapIntervalEXT is null) {
@@ -18462,29 +18462,29 @@ extern(System) nothrow @nogc {
 		GLint glGetUniformLocation(GLuint, const(GLchar)*);
 		void glGenBuffers(GLsizei, GLuint*);
 
-		void glUniform1f(GLint location, GLfloat v0); 
-		void glUniform2f(GLint location, GLfloat v0, GLfloat v1); 
-		void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2); 
-		void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3); 
-		void glUniform1i(GLint location, GLint v0); 
-		void glUniform2i(GLint location, GLint v0, GLint v1); 
-		void glUniform3i(GLint location, GLint v0, GLint v1, GLint v2); 
-		void glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3); 
-		void glUniform1ui(GLint location, GLuint v0); 
-		void glUniform2ui(GLint location, GLuint v0, GLuint v1); 
-		void glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2); 
-		void glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3); 
-		void glUniform1fv(GLint location, GLsizei count, const GLfloat *value); 
-		void glUniform2fv(GLint location, GLsizei count, const GLfloat *value); 
-		void glUniform3fv(GLint location, GLsizei count, const GLfloat *value); 
-		void glUniform4fv(GLint location, GLsizei count, const GLfloat *value); 
-		void glUniform1iv(GLint location, GLsizei count, const GLint *value); 
-		void glUniform2iv(GLint location, GLsizei count, const GLint *value); 
-		void glUniform3iv(GLint location, GLsizei count, const GLint *value); 
-		void glUniform4iv(GLint location, GLsizei count, const GLint *value); 
-		void glUniform1uiv(GLint location, GLsizei count, const GLuint *value); 
-		void glUniform2uiv(GLint location, GLsizei count, const GLuint *value); 
-		void glUniform3uiv(GLint location, GLsizei count, const GLuint *value); 
+		void glUniform1f(GLint location, GLfloat v0);
+		void glUniform2f(GLint location, GLfloat v0, GLfloat v1);
+		void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
+		void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+		void glUniform1i(GLint location, GLint v0);
+		void glUniform2i(GLint location, GLint v0, GLint v1);
+		void glUniform3i(GLint location, GLint v0, GLint v1, GLint v2);
+		void glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
+		void glUniform1ui(GLint location, GLuint v0);
+		void glUniform2ui(GLint location, GLuint v0, GLuint v1);
+		void glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2);
+		void glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3);
+		void glUniform1fv(GLint location, GLsizei count, const GLfloat *value);
+		void glUniform2fv(GLint location, GLsizei count, const GLfloat *value);
+		void glUniform3fv(GLint location, GLsizei count, const GLfloat *value);
+		void glUniform4fv(GLint location, GLsizei count, const GLfloat *value);
+		void glUniform1iv(GLint location, GLsizei count, const GLint *value);
+		void glUniform2iv(GLint location, GLsizei count, const GLint *value);
+		void glUniform3iv(GLint location, GLsizei count, const GLint *value);
+		void glUniform4iv(GLint location, GLsizei count, const GLint *value);
+		void glUniform1uiv(GLint location, GLsizei count, const GLuint *value);
+		void glUniform2uiv(GLint location, GLsizei count, const GLuint *value);
+		void glUniform3uiv(GLint location, GLsizei count, const GLuint *value);
 		void glUniform4uiv(GLint location, GLsizei count, const GLuint *value);
 		void glUniformMatrix2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 		void glUniformMatrix3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
@@ -18881,7 +18881,7 @@ final class OpenGlShader {
 
 		int[16] shadersBufferStack;
 
-		int[] shadersBuffer = codes.length <= shadersBufferStack.length ? 
+		int[] shadersBuffer = codes.length <= shadersBufferStack.length ?
 			shadersBufferStack[0 .. codes.length] :
 			new int[](codes.length);
 
