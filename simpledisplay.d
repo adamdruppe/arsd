@@ -2203,6 +2203,74 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else static assert(0);
 	}
 
+	private Point imePopupLocation = Point(0, 0);
+
+	/++
+		Sets the location for the IME (input method editor) to pop up when the user activates it.
+
+		Bugs:
+			Not implemented outside X11.
+	+/
+	void setIMEPopupLocation(Point location) {
+		static if(UsingSimpledisplayX11) {
+			imePopupLocation = location;
+			updateIMEPopupLocation();
+		} else {
+			throw new NotYetImplementedException();
+		}
+	}
+
+	/// ditto
+	void setIMEPopupLocation(int x, int y) {
+		return setIMEPopupLocation(Point(x, y));
+	}
+
+	// we need to remind XIM of where we wanted to place the IME whenever the window moves
+	// so this function gets called in setIMEPopupLocation as well as whenever the window
+	// receives a ConfigureNotify event
+	private void updateIMEPopupLocation() {
+		static if(UsingSimpledisplayX11) {
+			if (xic is null) {
+				return;
+			}
+
+			XPoint nspot;
+			nspot.x = cast(short) imePopupLocation.x;
+			nspot.y = cast(short) imePopupLocation.y;
+			XVaNestedList preeditAttr = XVaCreateNestedList(0, /*XNSpotLocation*/"spotLocation".ptr, &nspot, null);
+			XSetICValues(xic, /*XNPreeditAttributes*/"preeditAttributes".ptr, preeditAttr, null);
+			XFree(preeditAttr);
+		}
+	}
+
+	private bool imeFocused = true;
+
+	/++
+		Tells the IME whether or not an input field is currently focused in the window.
+
+		Bugs:
+			Not implemented outside X11.
+	+/
+	void setIMEFocused(bool value) {
+		imeFocused = value;
+		updateIMEFocused();
+	}
+
+	// used to focus/unfocus the IC if necessary when the window gains/loses focus
+	private void updateIMEFocused() {
+		static if(UsingSimpledisplayX11) {
+			if (xic is null) {
+				return;
+			}
+
+			if (focused && imeFocused) {
+				XSetICFocus(xic);
+			} else {
+				XUnsetICFocus(xic);
+			}
+		}
+	}
+
 	/++
 		Returns the native window.
 
@@ -13959,7 +14027,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			import core.stdc.stdlib : free;
 			import core.stdc.string : strdup;
 
-			static immutable string[3] mtry = [ null, "@im=local", "@im=" ];
+			static immutable string[3] mtry = [ "", "@im=local", "@im=" ];
 
 			auto olocale = strdup(setlocale(LC_ALL, null));
 			setlocale(LC_ALL, (sdx_isUTF8Locale ? "" : "en_US.UTF-8"));
@@ -13967,7 +14035,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 			//fprintf(stderr, "opening IM...\n");
 			foreach (string s; mtry) {
-				if (s.length) XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
+				XSetLocaleModifiers(s.ptr); // it's safe, as `s` is string literal
 				if ((xim = XOpenIM(display, null, null, null)) !is null) return;
 			}
 			fprintf(stderr, "createXIM: XOpenIM failed!\n");
@@ -15291,6 +15359,7 @@ version(X11) {
 					win.updateActualDpi();
 				}
 
+				win.updateIMEPopupLocation();
 				recordX11ResizeAsync(display, *win, event.width, event.height);
 			}
 		  break;
@@ -15356,11 +15425,6 @@ version(X11) {
 				+/
 
 
-				if (win.xic !is null) {
-					//{ import core.stdc.stdio : printf; printf("XIC focus change!\n"); }
-					if (e.type == EventType.FocusIn) XSetICFocus(win.xic); else XUnsetICFocus(win.xic);
-				}
-
 				if(e.xfocus.detail == NotifyDetail.NotifyPointer)
 					break; // just ignore these they seem irrelevant
 
@@ -15373,6 +15437,8 @@ version(X11) {
 
 				if(win.demandingAttention)
 					demandAttention(*win, false);
+
+				win.updateIMEFocused();
 
 				if(old != win._focused && win.onFocusChange) {
 					XUnlockDisplay(display);
@@ -15569,7 +15635,7 @@ version(X11) {
 				win.destroyed = true;
 				if (win.xic !is null) {
 					XDestroyIC(win.xic);
-					win.xic = null; // just in calse
+					win.xic = null; // just in case
 				}
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
 				bool anyImportant = false;
@@ -15819,6 +15885,8 @@ extern(C) nothrow @nogc {
 	int XLookupString(XKeyEvent *event_struct, char *buffer_return, int bytes_buffer, KeySym *keysym_return, void *status_in_out);
 
 	int XwcLookupString(XIC ic, XKeyPressedEvent* event, wchar_t* buffer_return, int wchars_buffer, KeySym* keysym_return, Status* status_return);
+
+	XVaNestedList XVaCreateNestedList(int unused, ...);
 
 	char *XKeysymToString(KeySym keysym);
 	KeySym XKeycodeToKeysym(
@@ -16215,6 +16283,8 @@ struct _XIC {}
 alias XOM = _XOM*;
 alias XIM = _XIM*;
 alias XIC = _XIC*;
+
+alias XVaNestedList = void*;
 
 alias XIMStyle = arch_ulong;
 enum : arch_ulong {
