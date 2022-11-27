@@ -14764,17 +14764,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 			// input context
 			//TODO: create this only for top-level windows, and reuse that?
-			if (XDisplayConnection.xim !is null) {
-				xic = XCreateIC(XDisplayConnection.xim,
-						/*XNInputStyle*/"inputStyle".ptr, XIMPreeditNothing|XIMStatusNothing,
-						/*XNClientWindow*/"clientWindow".ptr, window,
-						/*XNFocusWindow*/"focusWindow".ptr, window,
-						null);
-				if (xic is null) {
-					import core.stdc.stdio : stderr, fprintf;
-					fprintf(stderr, "XCreateIC failed for window %u\n", cast(uint)window);
-				}
-			}
+			populateXic();
 
 			if (sdpyWindowClassStr is null) loadBinNameToWindowClassName();
 			if (sdpyWindowClassStr is null) sdpyWindowClass = "DSimpleWindow";
@@ -14944,6 +14934,20 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				XMapWindow(display, window);
 			} else {
 				_hidden = true;
+			}
+		}
+
+		void populateXic() {
+			if (XDisplayConnection.xim !is null) {
+				xic = XCreateIC(XDisplayConnection.xim,
+						/*XNInputStyle*/"inputStyle".ptr, XIMPreeditNothing|XIMStatusNothing,
+						/*XNClientWindow*/"clientWindow".ptr, window,
+						/*XNFocusWindow*/"focusWindow".ptr, window,
+						null);
+				if (xic is null) {
+					import core.stdc.stdio : stderr, fprintf;
+					fprintf(stderr, "XCreateIC failed for window %u\n", cast(uint)window);
+				}
 			}
 		}
 

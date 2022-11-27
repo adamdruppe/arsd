@@ -8171,6 +8171,8 @@ class Window : Widget {
 				dispatchCharEvent(e);
 			},
 		);
+
+		this.inputProxy.populateXic();
 		// done
 		//+/
 		}
