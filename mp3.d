@@ -53,7 +53,7 @@ class MP3Decoder {
 	alias ReadBufFn = int delegate (void[] buf);
 
 	private int delegate (ubyte[] buf) reader;
-	private int delegate(size_t where) seeker;
+	private int delegate(ulong where) seeker;
 
 	private mp3dec_io_t io;
 
@@ -90,7 +90,7 @@ class MP3Decoder {
 			I realize these are all breaking changes, but the fix is easy and the new functionality,
 			the [seek] function among others, is worth it. To me anyway, and I hope for you too.
 	+/
-	this (int delegate (ubyte[] buf) reader, int delegate(size_t where) seeker) {
+	this (int delegate (ubyte[] buf) reader, int delegate(ulong where) seeker) {
 		if (reader is null)
 			throw new Exception("reader is null");
 		if (seeker is null)
@@ -235,6 +235,17 @@ class MP3Decoder {
 	}
 
 	/++
+		Returns the duration of the mp3, in seconds, if available, or `float.nan` if it is unknown
+		(unknown may happen because it is an unseekable stream without metadata).
+
+		History:
+			Added November 26, 2022 (dub v10.10)
+	+/
+	@property float duration() const pure nothrow @safe @nogc {
+		return (valid ? (cast(float) dec.samples / sampleRate / channels) : float.nan);
+	}
+
+	/++
 		Returns the number of samples in the current frame, as prepared by [decodeNextFrame].
 
 		You probably never need to actually call this, as it is just `frameSamplesFloat.length / channels`.
@@ -256,6 +267,8 @@ class MP3Decoder {
 		to the array because its contents will be overwritten as you continue calling `decodeNextFrame`.
 
 		Is you want something that never allocates, see [frameSamplesFloat].
+
+		Please note that you MUST call [decodeNextFrame] first.
 
 		See_Also:
 			[frameSamplesFloat], [decodeNextFrame]
