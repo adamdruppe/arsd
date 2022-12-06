@@ -3969,6 +3969,7 @@ version(use_openssl) {
 		}
 
 		this(AddressFamily af, SocketType type = SocketType.STREAM, string hostname = null, bool verifyPeer = true) {
+			version(Windows) __traits(getMember, this, "_blocking") = true; // lol longstanding phobos bug setting this to false on init
 			super(af, type);
 			initSsl(verifyPeer, hostname);
 		}
