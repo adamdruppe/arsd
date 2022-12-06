@@ -219,6 +219,8 @@ struct WavReader(Range) {
 	const ushort bitsPerSample;
 	int dataLength; // don't modify plz
 
+	float duration; // in seconds, added nov 26 2022
+
 	private uint remainingDataLength;
 
 	private Range underlying;
@@ -318,6 +320,8 @@ struct WavReader(Range) {
 		}
 
 		this.dataLength = this.remainingDataLength;
+
+		this.duration = cast(float) this.dataLength / header.bytesPerSeconds;
 	}
 
 	@property const(ubyte)[] front() {
