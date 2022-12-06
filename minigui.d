@@ -3485,6 +3485,20 @@ struct WidgetPainter {
 			this.screenPainter.setFont(font);
 	}
 
+	/++
+		EXPERIMENTAL. subject to change.
+
+		When you draw a cursor, you can draw this to notify your window of where it is,
+		for IME systems to use.
+	+/
+	void notifyCursorPosition(int x, int y, int width, int height) {
+		if(auto a = drawingUpon.parentWindow)
+		if(auto w = a.inputProxy) {
+			w.setIMEPopupLocation(x + screenPainter.originX + width, y + screenPainter.originY + height);
+		}
+	}
+
+
 	///
 	ScreenPainter screenPainter;
 	/// Forward to the screen painter for other methods
@@ -8134,7 +8148,7 @@ class Window : Widget {
 		// for input proxy
 		auto display = XDisplayConnection.get;
 		auto inputProxy = XCreateSimpleWindow(display, win.window, -1, -1, 1, 1, 0, 0, 0);
-		XSelectInput(display, inputProxy, EventMask.KeyPressMask | EventMask.KeyReleaseMask);
+		XSelectInput(display, inputProxy, EventMask.KeyPressMask | EventMask.KeyReleaseMask | EventMask.FocusChangeMask);
 		XMapWindow(display, inputProxy);
 		//import std.stdio; writefln("input proxy: 0x%0x", inputProxy);
 		this.inputProxy = new SimpleWindow(inputProxy);
@@ -11534,6 +11548,10 @@ version(win32_widgets)
 else version(custom_widgets)
 	alias EditableTextWidgetParent = ScrollableWidget; ///
 else static assert(0);
+
+/+
+	This awful thing has to be rewritten. And it needs to takecare of parentWindow.inputProxy.setIMEPopupLocation too
++/
 
 /// Contains the implementation of text editing
 abstract class EditableTextWidget : EditableTextWidgetParent {

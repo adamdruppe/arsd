@@ -2216,7 +2216,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			imePopupLocation = location;
 			updateIMEPopupLocation();
 		} else {
-			throw new NotYetImplementedException();
+			// this is non-fatal at this point... but still wanna find it when i search for NotYetImplementedException at least
+			// throw new NotYetImplementedException();
 		}
 	}
 
@@ -4550,8 +4551,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 								case 3: mb = MouseButton.right; break; // right
 								case 4: mb = MouseButton.wheelUp; break; // scroll up
 								case 5: mb = MouseButton.wheelDown; break; // scroll down
-								case 6: break; // idk
-								case 7: break; // idk
+								case 6: break; // scroll left...
+								case 7: break; // scroll right...
 								case 8: mb = MouseButton.backButton; break;
 								case 9: mb = MouseButton.forwardButton; break;
 								default:
@@ -9026,6 +9027,18 @@ struct ScreenPainter {
 		}
 
 		copyActiveOriginals();
+	}
+
+	/++
+		EXPERIMENTAL. subject to change.
+
+		When you draw a cursor, you can draw this to notify your window of where it is,
+		for IME systems to use.
+	+/
+	void notifyCursorPosition(int x, int y, int width, int height) {
+		if(auto w = cast(SimpleWindow) window) {
+			w.setIMEPopupLocation(x + _originX + width, y + _originY + height);
+		}
 	}
 
 	/++
@@ -15496,8 +15509,9 @@ version(X11) {
 
 						if(win.setRequestedInputFocus !is null) {
 							auto s = win.setRequestedInputFocus();
-							if(s !is null)
+							if(s !is null) {
 								setTo = s;
+							}
 						}
 
 						assert(setTo !is null);

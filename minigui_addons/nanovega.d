@@ -28,6 +28,7 @@ class NanoVegaWidget : OpenGlWidget {
 		};
 
 		win.visibleForTheFirstTime = delegate() {
+			win.setAsCurrentOpenGlContext();
 			nvg = nvgCreateContext();
 			if(nvg is null) throw new Exception("cannot initialize NanoVega");
 		};

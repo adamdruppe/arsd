@@ -4894,6 +4894,8 @@ mixin template SdpyDraw() {
 			}
 			painter.rasterOp = RasterOp.normal;
 
+			painter.notifyCursorPosition(posx, posy, cursorWidth, cursorHeight);
+
 			// since the cursor draws over the cell, we need to make sure it is redrawn each time too
 			auto buffer = alternateScreenActive ? (&alternateScreen) : (&normalScreen);
 			if(cursorX >= 0 && cursorY >= 0 && cursorY < screenHeight && cursorX < screenWidth) {
