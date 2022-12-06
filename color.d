@@ -218,8 +218,34 @@ struct Color {
 			Added July 18, 2022 (dub v10.9)
 	+/
 	nothrow pure @nogc
-	this(ubyte[] components) {
+	this(scope ubyte[] components) {
 		this.components[] = components[0 .. 4];
+	}
+
+	/++
+		Constructs a color from floating-point rgba components, each between 0 and 1.0.
+
+		History:
+			Added December 1, 2022 (dub v10.10)
+	+/
+	this(float r, float g, float b, float a = 1.0) {
+		if(r < 0) r = 0;
+		if(g < 0) g = 0;
+		if(b < 0) b = 0;
+		if(r > 1) r = 1;
+		if(g > 1) g = 1;
+		if(b > 1) b = 1;
+		/*
+		import std.conv;
+		assert(r >= 0.0 && r <= 1.0, to!string(r));
+		assert(g >= 0.0 && g <= 1.0, to!string(g));
+		assert(b >= 0.0 && b <= 1.0, to!string(b));
+		assert(a >= 0.0 && a <= 1.0, to!string(a));
+		*/
+		this.r = cast(ubyte) (r * 255);
+		this.g = cast(ubyte) (g * 255);
+		this.b = cast(ubyte) (b * 255);
+		this.a = cast(ubyte) (a * 255);
 	}
 
 	/// Static convenience functions for common color names
@@ -501,6 +527,204 @@ struct Color {
 		}
 	}
 }
+
+/++
+	OKLab colorspace conversions to/from [Color]. See: [https://bottosson.github.io/posts/oklab/]
+
+	L = perceived lightness. From 0 to 1.0.
+
+	a = how green/red the color is. Apparently supposed to be from -.233 to .276
+
+	b = how blue/yellow the color is. Apparently supposed to be from -.311 to 0.198.
+
+	History:
+		Added December 1, 2022 (dub v10.10)
+
+	Bugs:
+		Seems to be some but i might just not understand what the result is supposed to be.
++/
+struct Lab {
+	float L = 0.0;
+	float a = 0.0;
+	float b = 0.0;
+	float alpha = 1.0;
+
+	float C() const {
+		import core.stdc.math;
+		return sqrtf(a * a + b * b);
+	}
+
+	float h() const {
+		import core.stdc.math;
+		return atan2f(b, a);
+	}
+
+	/++
+		L's useful range is between 0 and 1.0
+
+		C's useful range is between 0 and 0.4
+
+		H can be 0 to 360 for degrees, or 0 to 2pi for radians.
+	+/
+	static Lab fromLChDegrees(float L, float C, float h, float alpha = 1.0)  {
+		return fromLChRadians(L, C, h * 3.14159265358979323f / 180.0f, alpha);
+	}
+
+	/// ditto
+	static Lab fromLChRadians(float L, float C, float h, float alpha = 1.0)  {
+		import core.stdc.math;
+		// if(C > 0.4) C = 0.4;
+		return Lab(L, C * cosf(h), C * sinf(h), alpha);
+	}
+}
+
+/// ditto
+Lab toOklab(Color c) {
+	import core.stdc.math;
+
+	// this algorithm requires linear sRGB
+
+	float f(float w) {
+		w = srbgToLinear(w);
+		if(w < 0)
+			w = 0;
+		if(w > 1)
+			w = 1;
+		return w;
+	}
+
+	float r = f(cast(float) c.r / 255);
+	float g = f(cast(float) c.g / 255);
+	float b = f(cast(float) c.b / 255);
+
+	float l = 0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b;
+	float m = 0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b;
+	float s = 0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b;
+
+	float l_ = cbrtf(l);
+	float m_ = cbrtf(m);
+	float s_ = cbrtf(s);
+
+	return Lab(
+		0.2104542553f*l_ + 0.7936177850f*m_ - 0.0040720468f*s_,
+		1.9779984951f*l_ - 2.4285922050f*m_ + 0.4505937099f*s_,
+		0.0259040371f*l_ + 0.7827717662f*m_ - 0.8086757660f*s_,
+		cast(float) c.a / 255
+	);
+}
+
+/// ditto
+Color fromOklab(Lab c) {
+	float l_ = c.L + 0.3963377774f * c.a + 0.2158037573f * c.b;
+	float m_ = c.L - 0.1055613458f * c.a - 0.0638541728f * c.b;
+	float s_ = c.L - 0.0894841775f * c.a - 1.2914855480f * c.b;
+
+	float l = l_*l_*l_;
+	float m = m_*m_*m_;
+	float s = s_*s_*s_;
+
+	float f(float w) {
+		w = linearToSrbg(w);
+		if(w < 0)
+			w = 0;
+		if(w > 1)
+			w = 1;
+		return w;
+	}
+
+	return Color(
+		f(+4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s),
+		f(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
+		f(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s),
+		c.alpha
+	);
+}
+
+// from https://bottosson.github.io/posts/colorwrong/#what-can-we-do%3F
+float linearToSrbg(float x) { // aka f
+	import core.stdc.math;
+	if (x >= 0.0031308)
+		return (1.055) * powf(x, (1.0/2.4)) - 0.055;
+	else
+		return 12.92 * x;
+}
+
+float srbgToLinear(float x) { // aka f_inv
+	import core.stdc.math;
+	if (x >= 0.04045)
+		return powf((x + 0.055)/(1 + 0.055), 2.4);
+	else 
+		return x / 12.92;
+}
+
+/+
+float[3] colorToYCbCr(Color c) {
+	return matrixMultiply(
+		[
+			+0.2126, +0.7152, +0.0722,
+			-0.1146, -0.3854, +0.5000,
+			+0.5000, -0.4542, -0.0458
+		],
+		[float(c.r) / 255, float(c.g) / 255, float(c.b) / 255]
+	);
+}
+
+Color YCbCrToColor(float Y, float Cb, float Cr) {
+
+/*
+Y = Y * 255;
+Cb = Cb * 255;
+Cr = Cr * 255;
+
+int r = cast(int) (Y + 1.40200 * (Cr - 0x80));
+ int g = cast(int) (Y - 0.34414 * (Cb - 0x80) - 0.71414 * (Cr - 0x80));
+ int b = cast(int) (Y + 1.77200 * (Cb - 0x80));
+
+	void clamp(ref int item, int min, int max) {
+		if(item < min) item = min;
+		if(item > max) item = max;
+	}
+
+ clamp(r, 0, 255);
+ clamp(g, 0, 255);
+ clamp(b, 0, 255);
+ return Color(r, g, b);
+*/
+
+	float f(float w) {
+		if(w < 0 || w > 1)
+			return 0;
+		assert(w >= 0.0);
+		assert(w <= 1.0);
+		//w = linearToSrbg(w);
+		if(w < 0)
+			w = 0;
+		if(w > 1)
+			w = 1;
+		return w;
+	}
+
+	auto rgb = matrixMultiply(
+		[
+			1, +0.0000, +1.5748,
+			1, -0.1873, -0.4681,
+			1, +1.8556, +0.0000
+		],
+		[Y, Cb, Cr]
+	);
+
+	return Color(f(rgb[0]), f(rgb[1]), f(rgb[2]));
+}
+
+private float[3] matrixMultiply(float[9] matrix, float[3] vector) {
+	return [
+		matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2],
+		matrix[3] * vector[0] + matrix[4] * vector[1] + matrix[5] * vector[2],
+		matrix[6] * vector[0] + matrix[7] * vector[1] + matrix[8] * vector[2],
+	];
+}
+
++/
 
 void premultiplyBgra(ubyte[] bgra) pure @nogc @safe nothrow in { assert(bgra.length == 4); } do {
 	auto a = bgra[3];
