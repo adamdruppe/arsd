@@ -257,7 +257,7 @@ interface CharSequence : JavaInterface!("java.lang", CharSequence) {
 		string whatever();
 	}
 
-	final class Foo : IFoo, JavaClass!("com.example", Foo) {
+	final class Foo : JavaClass!("com.example", Foo), IFoo {
 		// need to tell D that the implementation exists, just in Java.
 		// (This actually generates the D implementation that just forwards to the existing java method)
 		@Import string whatever();
