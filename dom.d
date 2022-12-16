@@ -303,8 +303,8 @@ class Document : FileResource, DomParent {
 
 	/// Parses well-formed UTF-8, case-sensitive, XML or XHTML
 	/// Will throw exceptions on things like unclosed tags.
-	void parseStrict(string data) {
-		parseStream(toUtf8Stream(data), true, true);
+	void parseStrict(string data, bool pureXmlMode = false) {
+		parseStream(toUtf8Stream(data), true, true, pureXmlMode);
 	}
 
 	/// Parses well-formed UTF-8 in loose mode (by default). Tries to correct
@@ -489,7 +489,7 @@ class Document : FileResource, DomParent {
 	}
 
 	// note: this work best in strict mode, unless data is just a simple string wrapper
-	void parseStream(Utf8Stream data, bool caseSensitive = false, bool strict = false) {
+	void parseStream(Utf8Stream data, bool caseSensitive = false, bool strict = false, bool pureXmlMode = false) {
 		// FIXME: this parser could be faster; it's in the top ten biggest tree times according to the profiler
 		// of my big app.
 
@@ -974,7 +974,7 @@ class Document : FileResource, DomParent {
 
 
 						// HACK to handle script and style as a raw data section as it is in HTML browsers
-						if(tagName == "script" || tagName == "style") {
+						if(!pureXmlMode && (tagName == "script" || tagName == "style")) {
 							if(!selfClosed) {
 								string closer = "</" ~ tagName ~ ">";
 								ptrdiff_t ending;
@@ -3918,19 +3918,40 @@ class Element : DomParent {
 //pragma(msg, Element.tupleof);
 
 // FIXME: since Document loosens the input requirements, it should probably be the sub class...
-/// Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+/++
+	Specializes Document for handling generic XML. (always uses strict mode, uses xml mime type and file header)
+
+	History:
+		On December 16, 2022, it disabled the special case treatment of `<script>` and `<style>` that [Document]
+		does for HTML. To get the old behavior back, add `, true` to your constructor call.
++/
 /// Group: core_functionality
 class XmlDocument : Document {
-	this(string data) {
+	this(string data, bool enableHtmlHacks = false) {
 		selfClosedElements = null;
 		inlineElements = null;
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
-		parseStrict(data);
+		parseStrict(data, !enableHtmlHacks);
 	}
 }
 
+unittest {
+	// FIXME: i should also make XmlDocument do different entities than just html too.
+	auto str = "<html><style>foo {}</style><script>void function() { a < b; }</script></html>";
+	auto document = new Document(str, true, true);
+	assert(document.requireSelector("style").children[0].tagName == "#raw");
+	assert(document.requireSelector("script").children[0].tagName == "#raw");
+	try {
+		auto xml = new XmlDocument(str);
+		assert(0);
+	} catch(MarkupException e) {
+		// failure expected, script special case is not valid XML without a dtd (which isn't here)
+	}
+	//assert(xml.requireSelector("style").children[0].tagName == "#raw");
+	//assert(xml.requireSelector("script").children[0].tagName == "#raw");
+}
 
 
 
