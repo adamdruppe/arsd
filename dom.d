@@ -4167,19 +4167,26 @@ struct DataSet {
 /// Proxy object for attributes which will replace the main opDispatch eventually
 /// Group: implementations
 struct AttributeSet {
-	///
+	/// Generally, you shouldn't create this yourself, since you can use [Element.attrs] instead.
 	this(Element e) {
 		this._element = e;
 	}
 
 	private Element _element;
-	/// Sets a `value` for `attribute`. If doens't exists, creates it
+	/++
+		Sets a `value` for attribute with `name`. If the attribute doesn't exist, this will create it, even if `value` is `null`.
+	+/
 	string set(string name, string value) {
 		_element.setAttribute(name, value);
 		return value;
 	}
 
-	/// Provides support for testing with `in`
+	/++
+		Provides support for testing presence of an attribute with the `in` operator.
+
+		History:
+			Added December 16, 2020 (dub v10.10)
+	+/
 	auto opBinaryRight(string op : "in")(string name) const
 	{
 		return name in _element.attributes;
@@ -4192,7 +4199,9 @@ struct AttributeSet {
 		assert("test" !in doc.root.attrs);
 	}
 
-	/// Returns attribute `name`, or `null` if doesn't exist
+	/++
+		Returns the value of attribute `name`, or `null` if doesn't exist
+	+/
 	string get(string name) const {
 		return _element.getAttribute(name);
 	}
