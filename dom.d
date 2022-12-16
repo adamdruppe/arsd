@@ -1138,8 +1138,9 @@ class Document : FileResource, DomParent {
 									string attrValue = attrName;
 
 									bool ateAny = eatWhitespace();
-									if(strict && ateAny)
-										throw new MarkupException("inappropriate whitespace after attribute name");
+									// the spec allows this too, sigh https://www.w3.org/TR/REC-xml/#NT-Eq
+									//if(strict && ateAny)
+										//throw new MarkupException("inappropriate whitespace after attribute name");
 
 									if(pos >= data.length) {
 										if(strict)
