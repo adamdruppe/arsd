@@ -12,7 +12,9 @@
 			"description": "Window creation and basic drawing",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.simpledisplay=simpledisplay.d"],
+			"dflags-dmd": ["-mv=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
+			"dflags-ldc": ["--mv=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
 			"lflags-osx": ["-L/usr/X11/lib"],
 			"dependencies": {"arsd-official:color_base":"*"},
 			"configurations": [
@@ -38,7 +40,9 @@
 			"description": "Small GUI widget library for Windows and Linux",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.minigui=minigui.d"],
+			"dflags-dmd": ["-mv=arsd.minigui=$PACKAGE_DIR/minigui.d"],
+			"dflags-ldc": ["--mv=arsd.minigui=$PACKAGE_DIR/minigui.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui=$PACKAGE_DIR/minigui.d"],
 			"dependencies": {"arsd-official:simpledisplay":"*"},
 			"sourceFiles": ["minigui.d"]
 		},
@@ -46,7 +50,8 @@
 			"name": "nanovega",
 			"description": "Vector graphics library",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.nanovega=nanovega.d"],
+			"dflags-dmd": ["-mv=arsd.nanovega=$PACKAGE_DIR/nanovega.d"],
+			"dflags-ldc": ["--mv=arsd.nanovega=$PACKAGE_DIR/nanovega.d"],
 			"dependencies": {
 				"arsd-official:simpledisplay":"*",
 				"arsd-official:image_files":"*",
@@ -61,7 +66,9 @@
 			"name": "minigui-nanovega",
 			"description": "Nanovega widget add-on for minigui. New in v9.2.",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.minigui_addons.nanovega=minigui_addons/nanovega.d"],
+			"dflags-dmd": ["-mv=arsd.minigui_addons.nanovega=$PACKAGE_DIR/minigui_addons/nanovega.d"],
+			"dflags-ldc": ["--mv=arsd.minigui_addons.nanovega=$PACKAGE_DIR/minigui_addons/nanovega.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui_addons.nanovega=$PACKAGE_DIR/minigui_addons/nanovega.d"],
 			"dependencies": {
 				"arsd-official:minigui":"*",
 				"arsd-official:nanovega":"*"
@@ -73,7 +80,9 @@
 			"name": "minigui-terminal_emulator_widget",
 			"description": "Terminal emulator widget add-on for minigui. New to dub in v10.5.",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.minigui_addons.terminal_emulator_widget=minigui_addons/terminal_emulator_widget.d"],
+			"dflags-dmd": ["-mv=arsd.minigui_addons.terminal_emulator_widget=$PACKAGE_DIR/minigui_addons/terminal_emulator_widget.d"],
+			"dflags-ldc": ["--mv=arsd.minigui_addons.terminal_emulator_widget=$PACKAGE_DIR/minigui_addons/terminal_emulator_widget.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui_addons.terminal_emulator_widget=$PACKAGE_DIR/minigui_addons/terminal_emulator_widget.d"],
 			"dependencies": {
 				"arsd-official:minigui":"*",
 				"arsd-official:terminalemulator":"*"
@@ -85,7 +94,9 @@
 			"name": "minigui-color_dialog",
 			"description": "Color picker dialog add-on for minigui. New to dub in v10.5.",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.minigui_addons.color_dialog=minigui_addons/color_dialog.d"],
+			"dflags-dmd": ["-mv=arsd.minigui_addons.color_dialog=$PACKAGE_DIR/minigui_addons/color_dialog.d"],
+			"dflags-ldc": ["--mv=arsd.minigui_addons.color_dialog=$PACKAGE_DIR/minigui_addons/color_dialog.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui_addons.color_dialog=$PACKAGE_DIR/minigui_addons/color_dialog.d"],
 			"dependencies": {
 				"arsd-official:minigui":"*"
 			},
@@ -96,7 +107,9 @@
 			"name": "minigui-datetime_picker",
 			"description": "Date and time picker widget add-on for minigui. New in v10.7.",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.minigui_addons.datetime_picker=minigui_addons/datetime_picker.d"],
+			"dflags-dmd": ["-mv=arsd.minigui_addons.datetime_picker=$PACKAGE_DIR/minigui_addons/datetime_picker.d"],
+			"dflags-ldc": ["--mv=arsd.minigui_addons.datetime_picker=$PACKAGE_DIR/minigui_addons/datetime_picker.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui_addons.datetime_picker=$PACKAGE_DIR/minigui_addons/datetime_picker.d"],
 			"dependencies": {
 				"arsd-official:minigui":"*"
 			},
@@ -107,7 +120,9 @@
 			"name": "minigui-webview",
 			"description": "Webview widget add-on for minigui. New to dub in v10.5 but NOT STABLE in that release and it will break at random without notice until I say it is stable.",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.minigui_addons.webview=minigui_addons/webview.d", "-mv=arsd.webview=webview.d"],
+			"dflags-dmd": ["-mv=arsd.minigui_addons.webview=$PACKAGE_DIR/minigui_addons/webview.d", "-mv=arsd.webview=$PACKAGE_DIR/webview.d"],
+			"dflags-ldc": ["--mv=arsd.minigui_addons.webview=$PACKAGE_DIR/minigui_addons/webview.d", "--mv=arsd.webview=$PACKAGE_DIR/webview.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.minigui_addons.webview=$PACKAGE_DIR/minigui_addons/webview.d", "-fmodule-file=arsd.webview=$PACKAGE_DIR/webview.d"],
 			"dependencies": {
 				"arsd-official:minigui":"*"
 			},
@@ -118,7 +133,9 @@
 			"name": "gamehelpers",
 			"description": "Assorted game-related structs and algorithms",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.gamehelpers=gamehelpers.d"],
+			"dflags-dmd": ["-mv=arsd.gamehelpers=$PACKAGE_DIR/gamehelpers.d"],
+			"dflags-ldc": ["--mv=arsd.gamehelpers=$PACKAGE_DIR/gamehelpers.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.gamehelpers=$PACKAGE_DIR/gamehelpers.d"],
 			"importPaths": ["."],
 			"sourceFiles": ["gamehelpers.d"]
 		},
@@ -126,7 +143,9 @@
 			"name": "joystick",
 			"description": "joystick reading for Windows XInput and Linux",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.joystick=joystick.d"],
+			"dflags-dmd": ["-mv=arsd.joystick=$PACKAGE_DIR/joystick.d"],
+			"dflags-ldc": ["--mv=arsd.joystick=$PACKAGE_DIR/joystick.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.joystick=$PACKAGE_DIR/joystick.d"],
 			"importPaths": ["."],
 			"sourceFiles": ["joystick.d"]
 		},
@@ -134,7 +153,9 @@
 			"name": "fibersocket",
 			"description": "Phobos-based fiber socket async i/o subclass",
 			"targetType": "library",
-			"dflags": ["-mv=arsd.fibersocket=fibersocket.d"],
+			"dflags-dmd": ["-mv=arsd.fibersocket=$PACKAGE_DIR/fibersocket.d"],
+			"dflags-ldc": ["--mv=arsd.fibersocket=$PACKAGE_DIR/fibersocket.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.fibersocket=$PACKAGE_DIR/fibersocket.d"],
 			"importPaths": ["."],
 			"sourceFiles": ["fibersocket.d"]
 		},
@@ -145,7 +166,9 @@
 			"targetType": "library",
 			"importPaths": ["."],
 			"dependencies": {"arsd-official:htmltotext":"*"},
-			"dflags": ["-mv=arsd.email=email.d"],
+			"dflags-dmd": ["-mv=arsd.email=$PACKAGE_DIR/email.d"],
+			"dflags-ldc": ["--mv=arsd.email=$PACKAGE_DIR/email.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.email=$PACKAGE_DIR/email.d"],
 			"sourceFiles": ["email.d"]
 		},
 		{
@@ -154,7 +177,9 @@
 			"targetType": "library",
 			"importPaths": ["."],
 			"dependencies": {"arsd-official:email":"*"},
-			"dflags": ["-mv=arsd.mailserver=mailserver.d"],
+			"dflags-dmd": ["-mv=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
+			"dflags-ldc": ["--mv=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
 			"sourceFiles": ["mailserver.d"]
 		},
 		{
@@ -170,11 +195,23 @@
 				"arsd-official:jpeg":"*",
 				"arsd-official:imageresize":"*"
 			},
-			"dflags": [
-				"-mv=arsd.image=image.d",
-				"-mv=arsd.targa=targa.d",
-				"-mv=arsd.pcx=pcx.d",
-				"-mv=arsd.dds=dds.d"
+			"dflags-dmd": [
+				"-mv=arsd.image=$PACKAGE_DIR/image.d",
+				"-mv=arsd.targa=$PACKAGE_DIR/targa.d",
+				"-mv=arsd.pcx=$PACKAGE_DIR/pcx.d",
+				"-mv=arsd.dds=$PACKAGE_DIR/dds.d"
+			],
+			"dflags-ldc": [
+				"--mv=arsd.image=$PACKAGE_DIR/image.d",
+				"--mv=arsd.targa=$PACKAGE_DIR/targa.d",
+				"--mv=arsd.pcx=$PACKAGE_DIR/pcx.d",
+				"--mv=arsd.dds=$PACKAGE_DIR/dds.d"
+			],
+			"dflags-gdc": [
+				"--fmodule-file=arsd.image=$PACKAGE_DIR/image.d",
+				"--fmodule-file=arsd.targa=$PACKAGE_DIR/targa.d",
+				"--fmodule-file=arsd.pcx=$PACKAGE_DIR/pcx.d",
+				"--fmodule-file=arsd.dds=$PACKAGE_DIR/dds.d"
 			],
 			"sourceFiles": ["image.d", "targa.d", "pcx.d", "dds.d"]
 		},
@@ -186,7 +223,9 @@
 				"arsd-official:color_base":"*"
 			},
 			"targetType": "library",
-			"dflags": ["-mv=arsd.imageresize=imageresize.d"],
+			"dflags-dmd": ["-mv=arsd.imageresize=$PACKAGE_DIR/imageresize.d"],
+			"dflags-ldc": ["--mv=arsd.imageresize=$PACKAGE_DIR/imageresize.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.imageresize=$PACKAGE_DIR/imageresize.d"],
 			"sourceFiles": ["imageresize.d"]
 		},
 		{
@@ -194,7 +233,9 @@
 			"description": "Simple audio+midi playback and capture for Windows and Linux",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.simpleaudio=simpleaudio.d"],
+			"dflags-dmd": ["-mv=arsd.simpleaudio=$PACKAGE_DIR/simpleaudio.d"],
+			"dflags-ldc": ["--mv=arsd.simpleaudio=$PACKAGE_DIR/simpleaudio.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.simpleaudio=$PACKAGE_DIR/simpleaudio.d"],
 			"libs-windows": ["winmm"],
 			"libs-linux": ["asound"],
 			"sourceFiles": ["simpleaudio.d"]
@@ -204,7 +245,9 @@
 			"description": "midi file format classes",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.midi=midi.d"],
+			"dflags-dmd": ["-mv=arsd.midi=$PACKAGE_DIR/midi.d"],
+			"dflags-ldc": ["--mv=arsd.midi=$PACKAGE_DIR/midi.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.midi=$PACKAGE_DIR/midi.d"],
 			"sourceFiles": ["midi.d"]
 		},
 		{
@@ -212,7 +255,9 @@
 			"description": "turn-key midi player library",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.midiplayer=midiplayer.d"],
+			"dflags-dmd": ["-mv=arsd.midiplayer=$PACKAGE_DIR/midiplayer.d"],
+			"dflags-ldc": ["--mv=arsd.midiplayer=$PACKAGE_DIR/midiplayer.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.midiplayer=$PACKAGE_DIR/midiplayer.d"],
 			"sourceFiles": ["midiplayer.d"],
 			"dependencies": {
 				"arsd-official:simpleaudio":"*",
@@ -225,7 +270,9 @@
 			"license": "GPL",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.nukedopl3=nukedopl3.d"],
+			"dflags-dmd": ["-mv=arsd.nukedopl3=$PACKAGE_DIR/nukedopl3.d"],
+			"dflags-ldc": ["--mv=arsd.nukedopl3=$PACKAGE_DIR/nukedopl3.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.nukedopl3=$PACKAGE_DIR/nukedopl3.d"],
 			"sourceFiles": ["nukedopl3.d"]
 		},
 		{
@@ -234,7 +281,9 @@
 			"description": "MP3 decoder. Required if you use simpleaudio's playMp3 function",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.mp3=mp3.d"],
+			"dflags-dmd": ["-mv=arsd.mp3=$PACKAGE_DIR/mp3.d"],
+			"dflags-ldc": ["--mv=arsd.mp3=$PACKAGE_DIR/mp3.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.mp3=$PACKAGE_DIR/mp3.d"],
 			"sourceFiles": ["mp3.d"]
 		},
 		{
@@ -242,7 +291,9 @@
 			"description": "Ogg vorbis decoder. Required if you use simpleaudio's playOgg function",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.vorbis=vorbis.d"],
+			"dflags-dmd": ["-mv=arsd.vorbis=$PACKAGE_DIR/vorbis.d"],
+			"dflags-ldc": ["--mv=arsd.vorbis=$PACKAGE_DIR/vorbis.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.vorbis=$PACKAGE_DIR/vorbis.d"],
 			"sourceFiles": ["vorbis.d"]
 		},
 		{
@@ -250,7 +301,9 @@
 			"description": "wav file format read and write",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.wav=wav.d"],
+			"dflags-dmd": ["-mv=arsd.wav=$PACKAGE_DIR/wav.d"],
+			"dflags-ldc": ["--mv=arsd.wav=$PACKAGE_DIR/wav.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.wav=$PACKAGE_DIR/wav.d"],
 			"sourceFiles": ["wav.d"]
 		},
 		{
@@ -258,7 +311,9 @@
 			"description": "Dependency-free partial SVG file format read support",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.svg=svg.d"],
+			"dflags-dmd": ["-mv=arsd.svg=$PACKAGE_DIR/svg.d"],
+			"dflags-ldc": ["--mv=arsd.svg=$PACKAGE_DIR/svg.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.svg=$PACKAGE_DIR/svg.d"],
 			"sourceFiles": ["svg.d"]
 		},
 		{
@@ -266,7 +321,9 @@
 			"description": "Dependency-free partial JPEG file format read and write support",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.jpeg=jpeg.d"],
+			"dflags-dmd": ["-mv=arsd.jpeg=$PACKAGE_DIR/jpeg.d"],
+			"dflags-ldc": ["--mv=arsd.jpeg=$PACKAGE_DIR/jpeg.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.jpeg=$PACKAGE_DIR/jpeg.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*"
 			},
@@ -277,7 +334,9 @@
 			"description": "PNG file format support",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.png=png.d"],
+			"dflags-dmd": ["-mv=arsd.png=$PACKAGE_DIR/png.d"],
+			"dflags-ldc": ["--mv=arsd.png=$PACKAGE_DIR/png.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.png=$PACKAGE_DIR/png.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*"
 			},
@@ -288,7 +347,9 @@
 			"description": "BMP file format support",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.bmp=bmp.d"],
+			"dflags-dmd": ["-mv=arsd.bmp=$PACKAGE_DIR/bmp.d"],
+			"dflags-ldc": ["--mv=arsd.bmp=$PACKAGE_DIR/bmp.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.bmp=$PACKAGE_DIR/bmp.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*"
 			},
@@ -300,7 +361,9 @@
 			"importPaths": ["."],
 			"targetType": "library",
 			"dependencies": {"arsd-official:dom":"*", "arsd-official:color_base":"*"},
-			"dflags": ["-mv=arsd.htmltotext=htmltotext.d"],
+			"dflags-dmd": ["-mv=arsd.htmltotext=$PACKAGE_DIR/htmltotext.d"],
+			"dflags-ldc": ["--mv=arsd.htmltotext=$PACKAGE_DIR/htmltotext.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.htmltotext=$PACKAGE_DIR/htmltotext.d"],
 			"sourceFiles": ["htmltotext.d"]
 
 		},
@@ -310,7 +373,9 @@
 			"targetType": "library",
 			"dependencies": {"arsd-official:characterencodings":"*"},
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.dom=dom.d"],
+			"dflags-dmd": ["-mv=arsd.dom=$PACKAGE_DIR/dom.d"],
+			"dflags-ldc": ["--mv=arsd.dom=$PACKAGE_DIR/dom.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.dom=$PACKAGE_DIR/dom.d"],
 			"sourceFiles": ["dom.d"]
 		},
 		{
@@ -319,7 +384,9 @@
 			"targetType": "library",
 			"dependencies": {"arsd-official:dom":"*"},
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.rss=rss.d"],
+			"dflags-dmd": ["-mv=arsd.rss=$PACKAGE_DIR/rss.d"],
+			"dflags-ldc": ["--mv=arsd.rss=$PACKAGE_DIR/rss.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.rss=$PACKAGE_DIR/rss.d"],
 			"sourceFiles": ["rss.d"]
 		},
 		{
@@ -327,7 +394,9 @@
 			"description": "Character encodings to UTF-8",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.characterencodings=characterencodings.d"],
+			"dflags-dmd": ["-mv=arsd.characterencodings=$PACKAGE_DIR/characterencodings.d"],
+			"dflags-ldc": ["--mv=arsd.characterencodings=$PACKAGE_DIR/characterencodings.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.characterencodings=$PACKAGE_DIR/characterencodings.d"],
 			"sourceFiles": ["characterencodings.d"]
 		},
 		{
@@ -336,7 +405,9 @@
 			"targetType": "library",
 			"importPaths": ["."],
 			"libs": ["argon2"],
-			"dflags": ["-mv=arsd.argon2=argon2.d"],
+			"dflags-dmd": ["-mv=arsd.argon2=$PACKAGE_DIR/argon2.d"],
+			"dflags-ldc": ["--mv=arsd.argon2=$PACKAGE_DIR/argon2.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.argon2=$PACKAGE_DIR/argon2.d"],
 			"sourceFiles": ["argon2.d"]
 		},
 		{
@@ -345,7 +416,9 @@
 			"targetType": "library",
 			"sourceFiles": ["cgi.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.cgi=cgi.d"],
+			"dflags-dmd": ["-mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
+			"dflags-ldc": ["--mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.cgi=$PACKAGE_DIR/cgi.d"],
 			"configurations": [
 				{
 					"name": "embedded_httpd",
@@ -392,7 +465,9 @@
 			"libs-windows": ["libmysql"],
 			"sourceFiles": ["mysql.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.mysql=mysql.d"]
+			"dflags-dmd": ["-mv=arsd.mysql=$PACKAGE_DIR/mysql.d"],
+			"dflags-ldc": ["--mv=arsd.mysql=$PACKAGE_DIR/mysql.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.mysql=$PACKAGE_DIR/mysql.d"]
 		},
 		{
 			"name": "postgres",
@@ -402,7 +477,9 @@
 			"libs": ["pq"],
 			"sourceFiles": ["postgres.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.postgres=postgres.d"]
+			"dflags-dmd": ["-mv=arsd.postgres=$PACKAGE_DIR/postgres.d"],
+			"dflags-ldc": ["--mv=arsd.postgres=$PACKAGE_DIR/postgres.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.postgres=$PACKAGE_DIR/postgres.d"]
 		},
 
 		{
@@ -414,7 +491,9 @@
 			"libs-posix": ["dl"],
 			"sourceFiles": ["sqlite.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.sqlite=sqlite.d"]
+			"dflags-dmd": ["-mv=arsd.sqlite=$PACKAGE_DIR/sqlite.d"],
+			"dflags-ldc": ["--mv=arsd.sqlite=$PACKAGE_DIR/sqlite.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.sqlite=$PACKAGE_DIR/sqlite.d"]
 		},
 
 		{
@@ -425,7 +504,9 @@
 			"libs-windows": ["odbc32"],
 			"sourceFiles": ["mssql.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.mssql=mssql.d"]
+			"dflags-dmd": ["-mv=arsd.mssql=$PACKAGE_DIR/mssql.d"],
+			"dflags-ldc": ["--mv=arsd.mssql=$PACKAGE_DIR/mssql.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.mssql=$PACKAGE_DIR/mssql.d"]
 		},
 
 		{
@@ -434,7 +515,9 @@
 			"targetType": "library",
 			"sourceFiles": ["http2.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.http2=http2.d"],
+			"dflags-dmd": ["-mv=arsd.http2=$PACKAGE_DIR/http2.d"],
+			"dflags-ldc": ["--mv=arsd.http2=$PACKAGE_DIR/http2.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.http2=$PACKAGE_DIR/http2.d"],
 			"configurations": [
 				{
 					"name": "with_openssl",
@@ -455,7 +538,9 @@
 			"description": "Javascript-like object in D, capable of json read/write/manipulation.",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.jsvar=jsvar.d"],
+			"dflags-dmd": ["-mv=arsd.jsvar=$PACKAGE_DIR/jsvar.d"],
+			"dflags-ldc": ["--mv=arsd.jsvar=$PACKAGE_DIR/jsvar.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.jsvar=$PACKAGE_DIR/jsvar.d"],
 			"sourceFiles": ["jsvar.d"]
 		},
 		{
@@ -463,7 +548,9 @@
 			"description": "Provides easy interop with Java via JNI.",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.jni=jni.d"],
+			"dflags-dmd": ["-mv=arsd.jni=$PACKAGE_DIR/jni.d"],
+			"dflags-ldc": ["--mv=arsd.jni=$PACKAGE_DIR/jni.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.jni=$PACKAGE_DIR/jni.d"],
 			"sourceFiles": ["jni.d"]
 		},
 		{
@@ -472,7 +559,9 @@
 			"targetType": "library",
 			"dependencies": {"arsd-official:jsvar":"*"},
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.script=script.d"],
+			"dflags-dmd": ["-mv=arsd.script=$PACKAGE_DIR/script.d"],
+			"dflags-ldc": ["--mv=arsd.script=$PACKAGE_DIR/script.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.script=$PACKAGE_DIR/script.d"],
 			"sourceFiles": ["script.d"]
 		},
 		{
@@ -482,7 +571,9 @@
 			"libs-windows": ["user32"],
 			"sourceFiles": ["terminal.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.terminal=terminal.d"],
+			"dflags-dmd": ["-mv=arsd.terminal=$PACKAGE_DIR/terminal.d"],
+			"dflags-ldc": ["--mv=arsd.terminal=$PACKAGE_DIR/terminal.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.terminal=$PACKAGE_DIR/terminal.d"],
 			"configurations": [
 				{
 					"name": "normal"
@@ -509,7 +600,9 @@
 			"importPaths": ["."],
 			"libs-posix": ["util"],
 			"sourceFiles": ["terminalemulator.d"],
-			"dflags": ["-mv=arsd.terminalemulator=terminalemulator.d"],
+			"dflags-dmd": ["-mv=arsd.terminalemulator=$PACKAGE_DIR/terminalemulator.d"],
+			"dflags-ldc": ["--mv=arsd.terminalemulator=$PACKAGE_DIR/terminalemulator.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.terminalemulator=$PACKAGE_DIR/terminalemulator.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*"
 			}
@@ -519,7 +612,9 @@
 			"description": "port of stb_ttf to D",
 			"importPaths": ["."],
 			"targetType": "library",
-			"dflags": ["-mv=arsd.ttf=ttf.d"],
+			"dflags-dmd": ["-mv=arsd.ttf=$PACKAGE_DIR/ttf.d"],
+			"dflags-ldc": ["--mv=arsd.ttf=$PACKAGE_DIR/ttf.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.ttf=$PACKAGE_DIR/ttf.d"],
 			"sourceFiles": ["ttf.d"]
 		},
 		{
@@ -527,7 +622,9 @@
 			"description": "Base color, point, image interface definitions",
 			"targetType": "library",
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.color=color.d"],
+			"dflags-dmd": ["-mv=arsd.color=$PACKAGE_DIR/color.d"],
+			"dflags-ldc": ["--mv=arsd.color=$PACKAGE_DIR/color.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.color=$PACKAGE_DIR/color.d"],
 			"sourceFiles": ["color.d"]
 		},
 		{
@@ -536,7 +633,9 @@
 			"targetType": "library",
 			"sourceFiles": ["database.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.database=database.d"]
+			"dflags-dmd": ["-mv=arsd.database=$PACKAGE_DIR/database.d"],
+			"dflags-ldc": ["--mv=arsd.database=$PACKAGE_DIR/database.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.database=$PACKAGE_DIR/database.d"]
 		},
 		{
 			"name": "libssh2_bindings",
@@ -546,7 +645,9 @@
 			"importPaths": ["."],
 			"libs-posix": ["ssh2"],
 			"libs-windows": ["libssh2"],
-			"dflags": ["-mv=arsd.libssh2=libssh2.d"]
+			"dflags-dmd": ["-mv=arsd.libssh2=$PACKAGE_DIR/libssh2.d"],
+			"dflags-ldc": ["--mv=arsd.libssh2=$PACKAGE_DIR/libssh2.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.libssh2=$PACKAGE_DIR/libssh2.d"]
 		},
 		{
 			"name": "eventloop",
@@ -555,7 +656,9 @@
 			"versions": ["with_eventloop"],
 			"sourceFiles": ["eventloop.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.eventloop=eventloop.d"]
+			"dflags-dmd": ["-mv=arsd.eventloop=$PACKAGE_DIR/eventloop.d"],
+			"dflags-ldc": ["--mv=arsd.eventloop=$PACKAGE_DIR/eventloop.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.eventloop=$PACKAGE_DIR/eventloop.d"]
 		},
 		{
 			"name": "archive",
@@ -563,7 +666,9 @@
 			"targetType": "library",
 			"sourceFiles": ["archive.d"],
 			"importPaths": ["."],
-			"dflags": ["-mv=arsd.archive=archive.d"]
+			"dflags-dmd": ["-mv=arsd.archive=$PACKAGE_DIR/archive.d"],
+			"dflags-ldc": ["--mv=arsd.archive=$PACKAGE_DIR/archive.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.archive=$PACKAGE_DIR/archive.d"]
 		}
 
 	]
