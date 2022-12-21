@@ -9130,7 +9130,7 @@ private class TableViewWidgetInner : Widget {
 						default: /* broken */ break;
 					}
 					if(column.width != 0) // no point drawing an invisible column
-					tvw.getData(row, cast(int) columnNumber, (info) {
+					tvw.getData(row, cast(int) columnNumber, (in char[] info) {
 						// auto clip = painter.setClipRectangle(
 
 						void dotext(WidgetPainter painter) {
@@ -11716,7 +11716,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			//this.parentWindow.win.grabInput();
 		} else if(ev.button == MouseButton.middle) {
 			static if(UsingSimpledisplayX11) {
-				getPrimarySelection(parentWindow.win, (txt) {
+				getPrimarySelection(parentWindow.win, (in char[] txt) {
 					textLayout.insert(txt);
 					redraw();
 
