@@ -2345,6 +2345,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		Params:
 			prompt = the prompt to give the user. For example, `"Your name: "`.
 			echoChar = the character to show back to the user as they type. The default value of `dchar.init` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
+			prefilledData = the initial data to populate the edit buffer
 
 		History:
 			The `echoChar` parameter was added on October 11, 2021 (dub v10.4).
@@ -2352,8 +2353,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			The `prompt` would not take effect if it was `null` prior to November 12, 2021. Before then, a `null` prompt would just leave the previous prompt string in place on the object. After that, the prompt is always set to the argument, including turning it off if you pass `null` (which is the default).
 
 			Always pass a string if you want it to display a string.
+
+			The `prefilledData` (and overload with it as second param) was added on January 1, 2023 (dub v10.10 / v11.0).
 	+/
-	string getline(string prompt = null, dchar echoChar = dchar.init) {
+	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
 		if(lineGetter is null)
 			lineGetter = new LineGetter(&this);
 		// since the struct might move (it shouldn't, this should be unmovable!) but since
@@ -2370,6 +2373,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 
 		lineGetter.prompt = prompt;
+		if(prefilledData) {
+			lineGetter.addString(prefilledData);
+			lineGetter.maintainBuffer = true;
+		}
 
 		auto input = RealTimeConsoleInput(&this, ConsoleInputFlags.raw | ConsoleInputFlags.selectiveMouse | ConsoleInputFlags.paste | ConsoleInputFlags.size | ConsoleInputFlags.noEolWrap);
 		auto line = lineGetter.getline(&input);
@@ -2382,6 +2389,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		writePrintableString("\n");
 
 		return line;
+	}
+
+	/// ditto
+	string getline(string prompt = null, string prefilledData = null, dchar echoChar = dchar.init) {
+		return getline(prompt, echoChar, prefilledData);
 	}
 
 }
