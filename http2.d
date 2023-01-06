@@ -4666,6 +4666,8 @@ class WebSocket {
 			}
 		}
 
+		readSet.reset();
+
 		readSet.add(socket);
 
 		//tryAgain:
