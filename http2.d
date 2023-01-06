@@ -4469,11 +4469,52 @@ class WebSocket {
 	/// Group: foundational
 	void connect() {
 		this.isClient = true;
+
+		socket.blocking = false;
+
 		if(uri.unixSocketPath)
 			socket.connect(new UnixAddress(uri.unixSocketPath));
 		else
 			socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
-		// FIXME: websocket handshake could and really should be async too.
+
+
+		auto readSet = new SocketSet();
+		auto writeSet = new SocketSet();
+
+		readSet.reset();
+		writeSet.reset();
+
+		readSet.add(socket);
+		writeSet.add(socket);
+
+		auto selectGot = Socket.select(readSet, writeSet, null, config.timeoutFromInactivity);
+		if(selectGot == -1) {
+			// interrupted
+
+			throw new Exception("Websocket connection interrupted - retry might succeed");
+		} else if(selectGot == 0) {
+			// time out
+			socket.close();
+			throw new Exception("Websocket connection timed out");
+		} else {
+			if(writeSet.isSet(socket) || readSet.isSet(socket)) {
+				import core.stdc.stdint;
+				int32_t error;
+				int retopt = socket.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
+				if(retopt < 0 || error != 0) {
+					socket.close();
+					throw new Exception("Websocket connection failed - " ~ formatSocketError(error));
+				} else {
+					// FIXME: websocket handshake could and really should be async too.
+					socket.blocking = true; // just convenience
+					if(auto s = cast(SslClientSocket) socket) {
+						s.do_ssl_connect();
+					} else {
+						// we're ready
+					}
+				}
+			}
+		}
 
 		auto uri = this.uri.path.length ? this.uri.path : "/";
 		if(this.uri.query.length) {
