@@ -4889,7 +4889,7 @@ class WebSocket {
 		wss.fin = true;
 		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.close;
-		wss.data = cast(ubyte[]) reason.dup;
+		wss.data = [ubyte((code >> 8) & 0xff), ubyte(code & 0xff)] ~ cast(ubyte[]) reason.dup;
 		wss.send(&llsend);
 
 		readyState_ = CLOSING;
