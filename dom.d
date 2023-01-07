@@ -135,6 +135,10 @@ class Document : FileResource, DomParent {
 	inout(Document) asDocument() inout { return this; }
 	inout(Element) asElement() inout { return null; }
 
+	void processNodeWhileParsing(Element parent, Element child) {
+		parent.appendChild(child);
+	}
+
 	/++
 		Convenience method for web scraping. Requires [arsd.http2] to be
 		included in the build as well as [arsd.characterencodings].
@@ -1031,13 +1035,13 @@ class Document : FileResource, DomParent {
 							if(n.type == 3 && n.element !is null) {
 								// special node, append if possible
 								if(e !is null)
-									e.appendChild(n.element);
+									processNodeWhileParsing(e, n.element);
 								else
 									piecesBeforeRoot ~= n.element;
 							} else if(n.type == 0) {
 								if(!strict)
 									considerHtmlParagraphHack(n.element);
-								e.appendChild(n.element);
+								processNodeWhileParsing(e, n.element);
 							} else if(n.type == 1) {
 								bool found = false;
 								if(n.payload != tagName) {
@@ -1049,7 +1053,7 @@ class Document : FileResource, DomParent {
 										if(n.element) {
 											if(!strict)
 												considerHtmlParagraphHack(n.element);
-											e.appendChild(n.element);
+											processNodeWhileParsing(e, n.element);
 											n.element = null;
 										}
 
@@ -1084,13 +1088,13 @@ class Document : FileResource, DomParent {
 										}
 
 										if(!found) // if not found in the tree though, it's probably just text
-										e.appendChild(TextNode.fromUndecodedString(this, "</"~n.payload~">"));
+										processNodeWhileParsing(e, TextNode.fromUndecodedString(this, "</"~n.payload~">"));
 									}
 								} else {
 									if(n.element) {
 										if(!strict)
 											considerHtmlParagraphHack(n.element);
-										e.appendChild(n.element);
+										processNodeWhileParsing(e, n.element);
 									}
 								}
 
@@ -8543,6 +8547,21 @@ unittest {
 
 unittest {
 	auto document = new Document("broken"); // just ensuring it doesn't crash
+}
+
+unittest {
+	static class StreamDocument : Document {
+		override void processNodeWhileParsing(Element parent, Element child) {
+			import std.stdio;
+			writeln("Processing: ", child);
+		}
+
+		this() {
+			super("<foo><bar></bar></foo>");
+		}
+	}
+
+	auto test = new StreamDocument();
 }
 
 /*
