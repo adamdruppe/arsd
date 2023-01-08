@@ -1881,12 +1881,17 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	// FIXME: add moveRelative
 
-	/// The current x position of the output cursor. 0 == leftmost column
+	/++
+		The current cached x and y positions of the output cursor. 0 == leftmost column for x and topmost row for y.
+
+		Please note that the cached position is not necessarily accurate. You may consider calling [updateCursorPosition]
+		first to ask the terminal for its authoritative answer.
+	+/
 	@property int cursorX() {
 		return _cursorX;
 	}
 
-	/// The current y position of the output cursor. 0 == topmost row
+	/// ditto
 	@property int cursorY() {
 		return _cursorY;
 	}
@@ -2396,6 +2401,149 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		return getline(prompt, echoChar, prefilledData);
 	}
 
+
+	/++
+		Forces [cursorX] and [cursorY] to resync from the terminal.
+
+		History:
+			Added January 8, 2023
+	+/
+	void updateCursorPosition() {
+		auto terminal = &this;
+
+		terminal.flush();
+
+		// then get the current cursor position to start fresh
+		version(TerminalDirectToEmulator) {
+			if(!terminal.usingDirectEmulator)
+				return updateCursorPosition_impl();
+
+			if(terminal.pipeThroughStdOut) {
+				terminal.tew.terminalEmulator.waitingForInboundSync = true;
+				terminal.writeStringRaw("\xff");
+				terminal.flush();
+				if(windowGone) forceTermination();
+				terminal.tew.terminalEmulator.syncSignal.wait();
+			}
+
+			terminal._cursorX = terminal.tew.terminalEmulator.cursorX;
+			terminal._cursorY = terminal.tew.terminalEmulator.cursorY;
+		} else
+			updateCursorPosition_impl();
+	}
+	private void updateCursorPosition_impl() {
+		auto terminal = &this;
+		version(Win32Console) {
+			CONSOLE_SCREEN_BUFFER_INFO info;
+			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
+			_cursorX = info.dwCursorPosition.X;
+			_cursorY = info.dwCursorPosition.Y;
+		} else version(Posix) {
+			// request current cursor position
+
+			// we have to turn off cooked mode to get this answer, otherwise it will all
+			// be messed up. (I hate unix terminals, the Windows way is so much easer.)
+
+			// We also can't use RealTimeConsoleInput here because it also does event loop stuff
+			// which would be broken by the child destructor :( (maybe that should be a FIXME)
+
+			/+
+			if(rtci !is null) {
+				while(rtci.timedCheckForInput_bypassingBuffer(1000))
+					rtci.inputQueue ~= rtci.readNextEvents();
+			}
+			+/
+
+			ubyte[128] hack2;
+			termios old;
+			ubyte[128] hack;
+			tcgetattr(terminal.fdIn, &old);
+			auto n = old;
+			n.c_lflag &= ~(ICANON | ECHO);
+			tcsetattr(terminal.fdIn, TCSANOW, &n);
+			scope(exit)
+				tcsetattr(terminal.fdIn, TCSANOW, &old);
+
+
+			terminal.writeStringRaw("\033[6n");
+			terminal.flush();
+
+			import std.conv;
+			import core.stdc.errno;
+
+			import core.sys.posix.unistd;
+
+			ubyte readOne() {
+				ubyte[1] buffer;
+				int tries = 0;
+				try_again:
+				if(tries > 30)
+					throw new Exception("terminal reply timed out");
+				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
+				if(len == -1) {
+					if(errno == EINTR)
+						goto try_again;
+					if(errno == EAGAIN || errno == EWOULDBLOCK) {
+						import core.thread;
+						Thread.sleep(10.msecs);
+						tries++;
+						goto try_again;
+					}
+				} else if(len == 0) {
+					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
+				}
+
+				return buffer[0];
+			}
+
+			nextEscape:
+			while(readOne() != '\033') {}
+			if(readOne() != '[')
+				goto nextEscape;
+
+			int x, y;
+
+			// now we should have some numbers being like yyy;xxxR
+			// but there may be a ? in there too; DEC private mode format
+			// of the very same data.
+
+			x = 0;
+			y = 0;
+
+			auto b = readOne();
+
+			if(b == '?')
+				b = readOne(); // no big deal, just ignore and continue
+
+			nextNumberY:
+			if(b >= '0' && b <= '9') {
+				y *= 10;
+				y += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			if(b != ';')
+				goto nextNumberY;
+
+			b = readOne();
+			nextNumberX:
+			if(b >= '0' && b <= '9') {
+				x *= 10;
+				x += b - '0';
+			} else goto nextEscape;
+
+			b = readOne();
+			// another digit
+			if(b >= '0' && b <= '9')
+				goto nextNumberX;
+
+			if(b != 'R')
+				goto nextEscape; // it wasn't the right thing it after all
+
+			_cursorX = x - 1;
+			_cursorY = y - 1;
+		}
+	}
 }
 
 /++
@@ -6211,141 +6359,10 @@ class LineGetter {
 	}
 
 	protected void updateCursorPosition() {
-		terminal.flush();
+		terminal.updateCursorPosition();
 
-		// then get the current cursor position to start fresh
-		version(TerminalDirectToEmulator) {
-			if(!terminal.usingDirectEmulator)
-				return updateCursorPosition_impl();
-
-			if(terminal.pipeThroughStdOut) {
-				terminal.tew.terminalEmulator.waitingForInboundSync = true;
-				terminal.writeStringRaw("\xff");
-				terminal.flush();
-				if(windowGone) forceTermination();
-				terminal.tew.terminalEmulator.syncSignal.wait();
-			}
-
-			startOfLineX = terminal.tew.terminalEmulator.cursorX;
-			startOfLineY = terminal.tew.terminalEmulator.cursorY;
-		} else
-			updateCursorPosition_impl();
-	}
-	private void updateCursorPosition_impl() {
-		version(Win32Console) {
-			CONSOLE_SCREEN_BUFFER_INFO info;
-			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
-			startOfLineX = info.dwCursorPosition.X;
-			startOfLineY = info.dwCursorPosition.Y;
-		} else version(Posix) {
-			// request current cursor position
-
-			// we have to turn off cooked mode to get this answer, otherwise it will all
-			// be messed up. (I hate unix terminals, the Windows way is so much easer.)
-
-			// We also can't use RealTimeConsoleInput here because it also does event loop stuff
-			// which would be broken by the child destructor :( (maybe that should be a FIXME)
-
-			/+
-			if(rtci !is null) {
-				while(rtci.timedCheckForInput_bypassingBuffer(1000))
-					rtci.inputQueue ~= rtci.readNextEvents();
-			}
-			+/
-
-			ubyte[128] hack2;
-			termios old;
-			ubyte[128] hack;
-			tcgetattr(terminal.fdIn, &old);
-			auto n = old;
-			n.c_lflag &= ~(ICANON | ECHO);
-			tcsetattr(terminal.fdIn, TCSANOW, &n);
-			scope(exit)
-				tcsetattr(terminal.fdIn, TCSANOW, &old);
-
-
-			terminal.writeStringRaw("\033[6n");
-			terminal.flush();
-
-			import std.conv;
-			import core.stdc.errno;
-
-			import core.sys.posix.unistd;
-
-			ubyte readOne() {
-				ubyte[1] buffer;
-				int tries = 0;
-				try_again:
-				if(tries > 30)
-					throw new Exception("terminal reply timed out");
-				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
-				if(len == -1) {
-					if(errno == EINTR)
-						goto try_again;
-					if(errno == EAGAIN || errno == EWOULDBLOCK) {
-						import core.thread;
-						Thread.sleep(10.msecs);
-						tries++;
-						goto try_again;
-					}
-				} else if(len == 0) {
-					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
-				}
-
-				return buffer[0];
-			}
-
-			nextEscape:
-			while(readOne() != '\033') {}
-			if(readOne() != '[')
-				goto nextEscape;
-
-			int x, y;
-
-			// now we should have some numbers being like yyy;xxxR
-			// but there may be a ? in there too; DEC private mode format
-			// of the very same data.
-
-			x = 0;
-			y = 0;
-
-			auto b = readOne();
-
-			if(b == '?')
-				b = readOne(); // no big deal, just ignore and continue
-
-			nextNumberY:
-			if(b >= '0' && b <= '9') {
-				y *= 10;
-				y += b - '0';
-			} else goto nextEscape;
-
-			b = readOne();
-			if(b != ';')
-				goto nextNumberY;
-
-			b = readOne();
-			nextNumberX:
-			if(b >= '0' && b <= '9') {
-				x *= 10;
-				x += b - '0';
-			} else goto nextEscape;
-
-			b = readOne();
-			// another digit
-			if(b >= '0' && b <= '9')
-				goto nextNumberX;
-
-			if(b != 'R')
-				goto nextEscape; // it wasn't the right thing it after all
-
-			startOfLineX = x - 1;
-			startOfLineY = y - 1;
-		}
-
-		// updating these too because I can with the more accurate info from above
-		terminal._cursorX = startOfLineX;
-		terminal._cursorY = startOfLineY;
+		startOfLineX = terminal.cursorX;
+		startOfLineY = terminal.cursorY;
 	}
 
 	// Text killed with C-w/C-u/C-k/C-backspace, to be restored by C-y
