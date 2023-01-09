@@ -4877,9 +4877,15 @@ class WebSocket {
 
 	/++
 		Closes the connection, sending a graceful teardown message to the other side.
+
+		Code 1000 is the normal closure code.
+
+		History:
+			The default `code` was changed to 1000 on January 9, 2023. Previously it was 0,
+			but also ignored anyway.
 	+/
 	/// Group: foundational
-	void close(int code = 0, string reason = null)
+	void close(int code = 1000, string reason = null)
 		//in (reason.length < 123)
 		in { assert(reason.length < 123); } do
 	{
