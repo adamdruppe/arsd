@@ -12222,6 +12222,7 @@ version(nanovg_bindbc_opengl_bindings) {
 			};
 
 			this.visibleForTheFirstTime = delegate() {
+				this.setAsCurrentOpenGlContext();
 				nvg = nvgCreateContext();
 				if(nvg is null) throw new Exception("cannot initialize NanoVega");
 			};
