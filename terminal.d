@@ -2330,6 +2330,25 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_cursorY = 0;
 	}
 
+        ///Clears the current line from the cursor onwards
+        void clearLine() {
+                if(UseVtSequences) {
+                        writeStringRaw("\033[0K");
+                }
+                else version(Windows) {
+                        updateCursorPosition();
+                        auto x = _cursorX;
+                        auto y = _cursorY;
+                        DWORD c;
+                        CONSOLE_SCREEN_BUFFER_INFO csbi;
+                        DWORD conSize = width-x;
+                        GetConsoleScreenBufferInfo(hConsole, &csbi);
+                        auto coordScreen = COORD(x,y);
+                        FillConsoleOutputCharacterA(hConsole, ' ', conSize, coordScreen, &c);
+                        FillConsoleOutputAttribute(hConsole, csbi.wAttributes, conSize, coordScreen, &c);
+                        moveTo(x, y, ForceOption.alwaysSend);
+                }
+        }
 	/++
 		Gets a line, including user editing. Convenience method around the [LineGetter] class and [RealTimeConsoleInput] facilities - use them if you need more control.
 
