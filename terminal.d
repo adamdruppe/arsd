@@ -2330,8 +2330,13 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_cursorY = 0;
 	}
 
-        ///Clears the current line from the cursor onwards
-        void clearLine() {
+        /++
+		Clears the current line from the cursor onwards.
+
+		History:
+			Added January 25, 2023 (dub v11.0)
+	+/
+        void clearToEndOfLine() {
                 if(UseVtSequences) {
                         writeStringRaw("\033[0K");
                 }
@@ -2343,7 +2348,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                         CONSOLE_SCREEN_BUFFER_INFO csbi;
                         DWORD conSize = width-x;
                         GetConsoleScreenBufferInfo(hConsole, &csbi);
-                        auto coordScreen = COORD(x,y);
+                        auto coordScreen = COORD(cast(short) x, cast(short) y);
                         FillConsoleOutputCharacterA(hConsole, ' ', conSize, coordScreen, &c);
                         FillConsoleOutputAttribute(hConsole, csbi.wAttributes, conSize, coordScreen, &c);
                         moveTo(x, y, ForceOption.alwaysSend);
@@ -2416,7 +2421,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	/// ditto
-	string getline(string prompt = null, string prefilledData = null, dchar echoChar = dchar.init) {
+	string getline(string prompt, string prefilledData, dchar echoChar = dchar.init) {
 		return getline(prompt, echoChar, prefilledData);
 	}
 
@@ -6154,6 +6159,8 @@ class LineGetter {
 			return;
 
 		if(!multiLineMode) {
+			terminal.clearToEndOfLine();
+			/*
 			if(UseVtSequences && !_drawWidthMax) {
 				terminal.writeStringRaw("\033[K");
 			} else {
@@ -6163,6 +6170,7 @@ class LineGetter {
 					terminal.write(" ");
 				lastDrawLength = cdi.written;
 			}
+			*/
 			// if echoChar is null then we don't want to reflect the position at all
 			terminal.moveTo(startOfLineX + ((echoChar == 0) ? 0 : cdi.cursorPositionToDrawX) + promptLength, startOfLineY + cdi.cursorPositionToDrawY);
 		} else {
