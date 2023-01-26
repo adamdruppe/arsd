@@ -2168,7 +2168,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 					_parent.inputProxy = this;
 				} else {
-					XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+
+					SimpleWindow setTo;
+					if(setRequestedInputFocus !is null)
+						setTo = setRequestedInputFocus();
+					if(setTo is null)
+						setTo = this;
+					XSetInputFocus(XDisplayConnection.get, setTo.impl.window, RevertToParent, CurrentTime);
 				}
 			}
 			if(mouse) {
@@ -2328,7 +2334,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	void focus() {
 		static if(UsingSimpledisplayX11) {
-			XSetInputFocus(XDisplayConnection.get, this.impl.window, RevertToParent, CurrentTime);
+			SimpleWindow setTo;
+			if(setRequestedInputFocus !is null)
+				setTo = setRequestedInputFocus();
+			if(setTo is null)
+				setTo = this;
+			XSetInputFocus(XDisplayConnection.get, setTo.impl.window, RevertToParent, CurrentTime);
 		} else version(Windows) {
 			SetFocus(this.impl.hwnd);
 		} else version(OSXCocoa) {
@@ -7219,7 +7230,7 @@ enum Resizability {
 		History:
 			Added November 11, 2022, but not yet implemented and may not be for some time.
 	+/
-	@future allowResizingMaintainingAspectRatio,
+	/*@future*/ allowResizingMaintainingAspectRatio, // gdc 9 doesn't allow the @future thing here but that's still the intention
 	/++
 		If possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size, letterboxing if needed to keep the aspect ratio. If this is impossible, it will fallback to [fixedSize]. The simpledisplay library will always provide the illusion that your window is the same size you requested, even if it scales things for you, meaning [width] and [height] will never change.
 
@@ -8325,6 +8336,19 @@ class OperatingSystemFont : MeasurableFont {
 	}
 
 	/++
+		Constructs a copy of the given font object.
+
+		History:
+			Added January 7, 2023.
+	+/
+	this(OperatingSystemFont font) {
+		if(font is null || font.loadedInfo is LoadedInfo.init)
+			loadDefault();
+		else
+			load(font.loadedInfo.tupleof);
+	}
+
+	/++
 		Loads specifically with the Xft library - a freetype font from a fontconfig string.
 
 		History:
@@ -8665,6 +8689,7 @@ class OperatingSystemFont : MeasurableFont {
 			Xft support was added on November 13, 2020. It would only load core fonts. Xft inclusion changed font lookup and interpretation of the `size` parameter, requiring a major version bump. This caused release v9.0.
 	+/
 	bool load(string name, int size = 0, FontWeight weight = FontWeight.dontcare, bool italic = false) {
+		this.loadedInfo = LoadedInfo(name, size, weight, italic);
 		version(X11) {
 			version(with_xft) {
 				if(name.length > 5 && name[0 .. 5] == "core:") {
@@ -8691,6 +8716,14 @@ class OperatingSystemFont : MeasurableFont {
 			return false;
 		} else static assert(0);
 	}
+
+	private struct LoadedInfo {
+		string name;
+		int size;
+		FontWeight weight;
+		bool italic;
+	}
+	private LoadedInfo loadedInfo;
 
 	///
 	void unload() {
@@ -8918,6 +8951,8 @@ class OperatingSystemFont : MeasurableFont {
 	OperatingSystemFont loadDefault() {
 		unload();
 
+		loadedInfo = LoadedInfo.init;
+
 		version(X11) {
 			// another option would be https://tronche.com/gui/x/xlib/graphics/font-metrics/XQueryFont.html
 			// but meh since sdpy does its own thing, this should be ok too
@@ -9066,11 +9101,13 @@ struct ScreenPainter {
 	private Pen originalPen;
 	private Color originalFillColor;
 	private arsd.color.Rectangle originalClipRectangle;
+	private OperatingSystemFont originalFont;
 	void copyActiveOriginals() {
 		if(impl is null) return;
 		originalPen = impl._activePen;
 		originalFillColor = impl._fillColor;
 		originalClipRectangle = impl._clipRectangle;
+		originalFont = impl._activeFont;
 	}
 
 	~this() {
@@ -9088,6 +9125,8 @@ struct ScreenPainter {
 			this.rasterOp = RasterOp.normal;
 			pen = originalPen;
 			fillColor = originalFillColor;
+			if(originalFont)
+				setFont(originalFont);
 			impl.setClipRectangle(originalClipRectangle.left, originalClipRectangle.top, originalClipRectangle.width, originalClipRectangle.height);
 		}
 	}
@@ -11257,10 +11296,15 @@ version(Windows) {
 			}
 		}
 
+		private OperatingSystemFont _activeFont;
+
 		void setFont(OperatingSystemFont font) {
+			_activeFont = font;
 			if(font && font.font) {
 				if(SelectObject(hdc, font.font) == HGDI_ERROR) {
 					// error... how to handle tho?
+				} else {
+
 				}
 			}
 			else if(defaultGuiFont)
@@ -11270,7 +11314,10 @@ version(Windows) {
 		arsd.color.Rectangle _clipRectangle;
 
 		void setClipRectangle(int x, int y, int width, int height) {
+			auto old = _clipRectangle;
 			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+			if(old == _clipRectangle)
+				return;
 
 			if(width == 0 || height == 0) {
 				SelectClipRgn(hdc, null);
@@ -12578,7 +12625,11 @@ version(X11) {
 
 		arsd.color.Rectangle _clipRectangle;
 		void setClipRectangle(int x, int y, int width, int height) {
+			auto old = _clipRectangle;
 			_clipRectangle = arsd.color.Rectangle(Point(x, y), Size(width, height));
+			if(old == _clipRectangle)
+				return;
+
 			if(width == 0 || height == 0) {
 				XSetClipMask(display, gc, None);
 
@@ -12633,7 +12684,9 @@ version(X11) {
 			}
 		}
 
+		private OperatingSystemFont _activeFont;
 		void setFont(OperatingSystemFont font) {
+			_activeFont = font;
 			version(with_xft) {
 				if(font && font.isXft && font.xftFont)
 					this.xftFont = font.xftFont;
@@ -12873,7 +12926,8 @@ version(X11) {
 					XRectangle[1] rects;
 					rects[0] = XRectangle(cast(short)(_clipRectangle.left), cast(short)(_clipRectangle.top), cast(short) _clipRectangle.width, cast(short) _clipRectangle.height);
 
-					XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
+					if(_clipRectangle != Rectangle.init)
+						XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
 				}
 
 				XRenderComposite(
@@ -15719,9 +15773,13 @@ version(X11) {
 			mouse.y = event.y;
 
 			static Time lastMouseDownTime = 0;
+			static int lastMouseDownButton = -1;
 
-			mouse.doubleClick = e.type == EventType.ButtonPress && (event.time - lastMouseDownTime) < mouseDoubleClickTimeout;
-			if(e.type == EventType.ButtonPress) lastMouseDownTime = event.time;
+			mouse.doubleClick = e.type == EventType.ButtonPress && event.button == lastMouseDownButton && (event.time - lastMouseDownTime) < mouseDoubleClickTimeout;
+			if(e.type == EventType.ButtonPress) {
+				lastMouseDownTime = event.time;
+				lastMouseDownButton = event.button;
+			}
 
 			switch(event.button) {
 				case 1: mouse.button = MouseButton.left; break; // left
