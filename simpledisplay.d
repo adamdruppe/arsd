@@ -3727,6 +3727,7 @@ private:
 
 		version(without_opengl) {} else
 		if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
+		import std.stdio; writeln(width, " ", height);
 			setAsCurrentOpenGlContextNT();
 			glViewport(0, 0, width, height);
 		}
@@ -12318,7 +12319,7 @@ version(Windows) {
 						}
 					}
 
-					updateOpenglViewportIfNeeded(width, height);
+					updateOpenglViewportIfNeeded(_width, _height);
 
 					if(resizability != Resizability.automaticallyScaleIfPossible)
 					if(windowResized !is null)
