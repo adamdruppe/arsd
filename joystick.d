@@ -152,7 +152,7 @@ version(linux) {
 	version(xbox_style) // xbox style maps directly to an xbox controller (of course)
 	static immutable xbox360Mapping = JoystickMapping(
 		[0,1,2,3,4,5,6,7],
-		[0,1,2,3,4,5,6,7,8,9,10]
+		[0,1,2,3,4,5,6,7,8,9,10, 11,12,13,14]
 	);
 	else version(ps1_style)
 	static immutable xbox360Mapping = JoystickMapping(
@@ -410,6 +410,9 @@ struct JoystickUpdate {
 				auto it = axisPositionHelperRaw(PS1AnalogAxes.horizontalDpad, what, digitalFallbackValue);
 				if(!it)
 					it = axisPositionHelperRaw(PS1AnalogAxes.horizontalLeftStick, what, digitalFallbackValue);
+				version(linux)
+				if(!it)
+					it = current.buttons[XBox360Buttons.dpadLeft] ? cast(short)-cast(int)digitalFallbackValue : current.buttons[XBox360Buttons.dpadRight] ? digitalFallbackValue : 0;
 				return it;
 			}
 
@@ -417,6 +420,9 @@ struct JoystickUpdate {
 				auto it = axisPositionHelperRaw(PS1AnalogAxes.verticalDpad, what, digitalFallbackValue);
 				if(!it)
 					it = axisPositionHelperRaw(PS1AnalogAxes.verticalLeftStick, what, digitalFallbackValue);
+				version(linux)
+				if(!it)
+					it = current.buttons[XBox360Buttons.dpadUp] ? cast(short)-cast(int)digitalFallbackValue : current.buttons[XBox360Buttons.dpadDown] ? digitalFallbackValue : 0;
 				return it;
 			}
 		}
@@ -467,6 +473,11 @@ struct JoystickUpdate {
 				case XBox360Buttons.leftStick: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) ? true : false;
 				case XBox360Buttons.rightStick: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) ? true : false;
 
+				case XBox360Buttons.dpadLeft: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? true : false;
+				case XBox360Buttons.dpadRight: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? true : false;
+				case XBox360Buttons.dpadUp: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? true : false;
+				case XBox360Buttons.dpadDown: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? true : false;
+
 				case XBox360Buttons.xboxLogo: return false;
 			}
 			else version(ps1_style)
@@ -512,12 +523,12 @@ struct JoystickUpdate {
 				case XBox360Axes.verticalRightStick:
 					return normalizeAxis(what.Gamepad.sThumbRY);
 				case XBox360Axes.verticalDpad:
-					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? -digitalFallbackValue :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? digitalFallbackValue :
+					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) ? cast(short) -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) ? cast(short) digitalFallbackValue :
 					       0;
 				case XBox360Axes.horizontalDpad:
-					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? -digitalFallbackValue :
-					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? digitalFallbackValue :
+					return (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) ? cast(short) -digitalFallbackValue :
+					       (what.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) ? cast(short) digitalFallbackValue :
 					       0;
 				case XBox360Axes.lt:
 					return normalizeTrigger(what.Gamepad.bLeftTrigger);
@@ -865,7 +876,12 @@ version(linux) {
 		start,
 		xboxLogo,
 		leftStick,
-		rightStick
+		rightStick,
+
+		dpadLeft,
+		dpadRight,
+		dpadUp,
+		dpadDown,
 	}
 
 	enum XBox360Axes {
