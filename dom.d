@@ -8550,10 +8550,12 @@ unittest {
 }
 
 unittest {
-	static class StreamDocument : Document {
+	bool encountered;
+	class StreamDocument : Document {
 		override void processNodeWhileParsing(Element parent, Element child) {
-			import std.stdio;
-			writeln("Processing: ", child);
+			// import std.stdio; writeln("Processing: ", child);
+			if(child.tagName == "bar")
+				encountered = true;
 		}
 
 		this() {
@@ -8562,17 +8564,12 @@ unittest {
 	}
 
 	auto test = new StreamDocument();
+	assert(encountered); // it should have been seen
+	assert(test.querySelector("bar") is null); // but not appended to the dom node
 }
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2022
+Copyright: Adam D. Ruppe, 2010 - 2023
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
-
-        Copyright Adam D. Ruppe 2010-2022.
-Distributed under the Boost Software License, Version 1.0.
-   (See accompanying file LICENSE_1_0.txt or copy at
-        http://www.boost.org/LICENSE_1_0.txt)
 */
-
-
