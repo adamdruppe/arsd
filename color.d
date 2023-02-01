@@ -533,9 +533,9 @@ struct Color {
 
 	L = perceived lightness. From 0 to 1.0.
 
-	a = how green/red the color is. Apparently supposed to be from -.233 to .276
+	a = how green/red the color is. Apparently supposed to be from -.233887 to .276216
 
-	b = how blue/yellow the color is. Apparently supposed to be from -.311 to 0.198.
+	b = how blue/yellow the color is. Apparently supposed to be from -.311528 to 0.198570.
 
 	History:
 		Added December 1, 2022 (dub v10.10)
