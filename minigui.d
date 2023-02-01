@@ -1,5 +1,9 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// me@arsd:~/.kde/share/config$ vim kdeglobals
+
+// FIXME: i kinda like how you can show find locations in scrollbars in the chrome browisers i wanna support that here too.
+
 // for responsive design, a collapsible widget that if it doesn't have enough room, it just automatically becomes a "more" button or whatever.
 
 // responsive minigui, menu search, and file open with a preview hook on the side.
@@ -12,6 +16,8 @@ im tempted to add some css kind of thing to minigui. i've not done in the past c
 
 the virtual functions remain as the default calculated values. then the reads go through some proxy object that can override it...
 */
+
+// FIXME: a popup with slightly shaped window pointing at the mouse might eb useful in places
 
 // FIXME: text label must be copyable to the clipboard, at least as a full chunk.
 
@@ -624,7 +630,7 @@ class Widget : ReflectableProperties {
 		if(cs.font && !cs.font.isNull)
 			return cs.font.height() * 5 / 4;
 		else
-			return scaleWithDpi(Window.lineHeight);
+			return scaleWithDpi(Window.lineHeight * 5/4);
 	}
 
 	protected final int defaultTextWidth(const(char)[] text) {
@@ -668,8 +674,10 @@ class Widget : ReflectableProperties {
 		int minWidth() { return 0; }
 		int minHeight() {
 			// default widgets have a vertical layout, therefore the minimum height is the sum of the contents
-			int sum = 0;
+			int sum = this.paddingTop + this.paddingBottom;
 			foreach(child; children) {
+				if(child.hidden)
+					continue;
 				sum += child.minHeight();
 				sum += child.marginTop();
 				sum += child.marginBottom();
@@ -704,14 +712,28 @@ class Widget : ReflectableProperties {
 		/// ditto
 		int flexBasisHeight() { return 0; }
 
-		int marginLeft() { return 0; }
-		int marginRight() { return 0; }
-		int marginTop() { return 0; }
-		int marginBottom() { return 0; }
-		int paddingLeft() { return 0; }
-		int paddingRight() { return 0; }
-		int paddingTop() { return 0; }
-		int paddingBottom() { return 0; }
+		/++
+			Not stable.
+
+			Values are scaled with dpi after assignment. If you override the virtual functions, this may be ignored.
+
+			So if you set defaultPadding to 4 and the user is on 150% zoom, it will multiply to return 6.
+
+			History:
+				Added January 5, 2023
+		+/
+		Rectangle defaultMargin;
+		/// ditto
+		Rectangle defaultPadding;
+
+		int marginLeft() { return scaleWithDpi(defaultMargin.left); }
+		int marginRight() { return scaleWithDpi(defaultMargin.right); }
+		int marginTop() { return scaleWithDpi(defaultMargin.top); }
+		int marginBottom() { return scaleWithDpi(defaultMargin.bottom); }
+		int paddingLeft() { return scaleWithDpi(defaultPadding.left); }
+		int paddingRight() { return scaleWithDpi(defaultPadding.right); }
+		int paddingTop() { return scaleWithDpi(defaultPadding.top); }
+		int paddingBottom() { return scaleWithDpi(defaultPadding.bottom); }
 		//LinePreference linePreference() { return LinePreference.PreferOwnLine; }
 
 		private bool recomputeChildLayoutRequired = true;
@@ -891,7 +913,7 @@ class Widget : ReflectableProperties {
 
 
 	/++
-		Style properties are defined as an accessory class so they can be referenced and overridden independently.
+		Style properties are defined as an accessory class so they can be referenced and overridden independently, but they are nested so you can refer to them easily by name (e.g. generic `Widget.Style` vs `Button.Style` and such).
 
 		It is here so there can be a specificity switch.
 
@@ -1951,6 +1973,35 @@ class Widget : ReflectableProperties {
 		return 0;
 	}
 
+	/++
+		Calculates the border box (that is, the full width/height of the widget, from border edge to border edge)
+		for the given content box (the area between the padding)
+
+		History:
+			Added January 4, 2023 (dub v11.0)
+	+/
+	Rectangle borderBoxForContentBox(Rectangle contentBox) {
+		auto cs = getComputedStyle();
+
+		auto borderWidth = getBorderWidth(cs.borderStyle);
+
+		auto rect = contentBox;
+
+		rect.left -= borderWidth;
+		rect.right += borderWidth;
+		rect.top -= borderWidth;
+		rect.bottom += borderWidth;
+
+		auto insideBorderRect = rect;
+
+		rect.left -= cs.paddingLeft;
+		rect.right += cs.paddingRight;
+		rect.top -= cs.paddingTop;
+		rect.bottom += cs.paddingBottom;
+
+		return rect;
+	}
+
 
 	// FIXME: I kinda want to hide events from implementation widgets
 	// so it just catches them all and stops propagation...
@@ -2721,29 +2772,39 @@ void draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fra
 	draw3dFrame(x, y, width, height, painter, style, WidgetPainter.visualTheme.windowBackgroundColor);
 }
 
+int getBorderWidth(FrameStyle style) {
+	final switch(style) {
+		case FrameStyle.sunk, FrameStyle.risen:
+			return 2;
+		case FrameStyle.none:
+			return 0;
+		case FrameStyle.solid:
+			return 1;
+		case FrameStyle.dotted:
+			return 1;
+		case FrameStyle.fantasy:
+			return 3;
+	}
+}
+
 int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, FrameStyle style, Color background, Color border = Color.transparent) {
-	int borderWidth;
+	int borderWidth = getBorderWidth(style);
 	final switch(style) {
 		case FrameStyle.sunk, FrameStyle.risen:
 			// outer layer
 			painter.outlineColor = style == FrameStyle.sunk ? Color.white : Color.black;
-			borderWidth = 2;
 		break;
 		case FrameStyle.none:
 			painter.outlineColor = background;
-			borderWidth = 0;
 		break;
 		case FrameStyle.solid:
 			painter.pen = Pen(border, 1);
-			borderWidth = 1;
 		break;
 		case FrameStyle.dotted:
 			painter.pen = Pen(border, 1, Pen.Style.Dotted);
-			borderWidth = 1;
 		break;
 		case FrameStyle.fantasy:
 			painter.pen = Pen(border, 3);
-			borderWidth = 3;
 		break;
 	}
 
@@ -3140,8 +3201,19 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			}
 		}
 
-		if(spaceRemaining == previousSpaceRemaining)
+		if(spaceRemaining == previousSpaceRemaining) {
+			if(mostStretchy !is null) {
+				static if(calcingV)
+					auto maximum = mostStretchy.maxHeight();
+				else
+					auto maximum = mostStretchy.maxWidth();
+
+				mixin("mostStretchy._" ~ relevantMeasure) += spaceRemaining;
+				if(mixin("mostStretchy._" ~ relevantMeasure) > maximum)
+					mixin("mostStretchy._" ~ relevantMeasure) = maximum;
+			}
 			break; // apparently nothing more we can do
+		}
 
 	}
 
@@ -3529,6 +3601,8 @@ struct WidgetPainter {
 	/// ditto
 	static @property void visualTheme(BaseVisualTheme theme) {
 		_visualTheme = theme;
+
+		// FIXME: notify all windows about the new theme
 	}
 
 	/// ditto
@@ -3595,7 +3669,7 @@ struct WidgetPainter {
 		rect.left += cs.paddingLeft;
 		rect.right -= cs.paddingRight;
 		rect.top += cs.paddingTop;
-		rect.bottom += cs.paddingBottom;
+		rect.bottom -= cs.paddingBottom;
 
 		this.outlineColor = this.themeForeground;
 		this.fillColor = bg;
@@ -3815,7 +3889,7 @@ template Container(CArgs...) {
 +/
 /// Group: generating_from_code
 class DataControllerWidget(T) : WidgetContainer {
-	static if(is(T == class) || is(T : const E[], E))
+	static if(is(T == class) || is(T == interface) || is(T : const E[], E))
 		private alias Tref = T;
 	else
 		private alias Tref = T*;
@@ -3877,7 +3951,7 @@ class DataControllerWidget(T) : WidgetContainer {
 				// special case for this to kinda support enums and such. coudl be better though
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 			} else {
-				static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
+				//static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
 			}
 		}
 	}
@@ -3962,6 +4036,12 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 			update = () { le.content = toInternal!string(*valptr); };
 			update();
 			return le;
+		} else static if(is(typeof(tt) : const double)) {
+			auto le = new LabeledLineEdit(displayName, parent);
+			import std.conv;
+			update = () { le.content = to!string(*valptr); };
+			update();
+			return le;
 		} else static if(is(typeof(tt) : const string)) {
 			auto le = new LabeledLineEdit(displayName, parent);
 			update = () { le.content = *valptr; };
@@ -3970,7 +4050,9 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 		} else static if(is(typeof(tt) == function)) {
 			auto w = new Button(displayName, parent);
 			return w;
-		}
+		} else static if(is(typeof(tt) == class) || is(typeof(tt) == interface)) {
+			return parent.addDataControllerWidget(tt);
+		} else static assert(0, typeof(tt).stringof);
 	} else static assert(0, "multiple controllers not yet supported");
 }
 
@@ -3994,7 +4076,7 @@ private template controlledByCount(alias tt) {
 	History:
 		The `redrawOnChange` parameter was added on May 28, 2021.
 +/
-DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t, Widget redrawOnChange = null) if(is(T == class)) {
+DataControllerWidget!T addDataControllerWidget(T)(Widget parent, T t, Widget redrawOnChange = null) if(is(T == class) || is(T == interface)) {
 	auto dcw = new DataControllerWidget!T(t, parent);
 	initializeDataControllerWidget(dcw, redrawOnChange);
 	return dcw;
@@ -4098,17 +4180,19 @@ struct StyleInformation {
 		/** */ Color widgetBackgroundColor() { return WidgetPainter.visualTheme.widgetBackgroundColor(); }
 		/** */ Color lightAccentColor() { return WidgetPainter.visualTheme.lightAccentColor(); }
 		/** */ Color darkAccentColor() { return WidgetPainter.visualTheme.darkAccentColor(); }
+		/** */ Color selectionForegroundColor() { return WidgetPainter.visualTheme.selectionForegroundColor(); }
+		/** */ Color selectionBackgroundColor() { return WidgetPainter.visualTheme.selectionBackgroundColor(); }
 
 		/** */ Color activeTabColor() { return lightAccentColor; }
 		/** */ Color buttonColor() { return windowBackgroundColor; }
 		/** */ Color depressedButtonColor() { return darkAccentColor; }
-		/** */ Color hoveringColor() { return Color(228, 228, 228); }
-		/** */ Color activeListXorColor() {
+		/** */ Color hoveringColor() { return lightAccentColor; }
+		deprecated("Use selectionForegroundColor and selectionBackgroundColor instead") Color activeListXorColor() {
 			auto c = WidgetPainter.visualTheme.selectionColor();
 			return Color(c.r ^ 255, c.g ^ 255, c.b ^ 255, c.a);
 		}
-		/** */ Color progressBarColor() { return WidgetPainter.visualTheme.selectionColor(); }
-		/** */ Color activeMenuItemColor() { return WidgetPainter.visualTheme.selectionColor(); }
+		/** */ Color progressBarColor() { return WidgetPainter.visualTheme.selectionBackgroundColor(); }
+		/** */ Color activeMenuItemColor() { return WidgetPainter.visualTheme.selectionBackgroundColor(); }
 	}
 
 
@@ -4657,7 +4741,7 @@ class ListWidget : ListWidgetBase {
 
 	version(custom_widgets)
 	override void paintFrameAndBackground(WidgetPainter painter) {
-		draw3dFrame(this, painter, FrameStyle.sunk, Color.white);
+		draw3dFrame(this, painter, FrameStyle.sunk, painter.visualTheme.widgetBackgroundColor);
 	}
 
 	version(custom_widgets)
@@ -4665,18 +4749,18 @@ class ListWidget : ListWidgetBase {
 		auto cs = getComputedStyle();
 		auto pos = Point(4, 4);
 		foreach(idx, option; options) {
-			painter.fillColor = Color.white;
-			painter.outlineColor = Color.white;
+			painter.fillColor = painter.visualTheme.widgetBackgroundColor;
+			painter.outlineColor = painter.visualTheme.widgetBackgroundColor;
 			painter.drawRectangle(pos, width - 8, defaultLineHeight);
-			painter.outlineColor = cs.foregroundColor;
-			painter.drawText(pos, option.label);
 			if(option.selected) {
-				painter.rasterOp = RasterOp.xor;
-				painter.outlineColor = Color.white;
-				painter.fillColor = cs.activeListXorColor;
+				//painter.rasterOp = RasterOp.xor;
+				painter.outlineColor = cs.selectionForegroundColor;
+				painter.fillColor = cs.selectionBackgroundColor;
 				painter.drawRectangle(pos, width - 8, defaultLineHeight);
-				painter.rasterOp = RasterOp.normal;
+				//painter.rasterOp = RasterOp.normal;
 			}
+			painter.outlineColor = option.selected ? cs.selectionForegroundColor : cs.foregroundColor;
+			painter.drawText(pos, option.label);
 			pos.y += defaultLineHeight;
 		}
 	}
@@ -5915,13 +5999,17 @@ abstract class ScrollbarBase : Widget {
 	}
 	///
 	void setPosition(int a) {
+		auto logicalMax = max_ - viewableArea_;
 		if(a == int.max)
-			a = max;
-		position_ = max ? a : 0;
-		if(position_ + viewableArea_ > max)
-			position_ = max - viewableArea_;
-		if(position_ < 0)
-			position_ = 0;
+			a = logicalMax;
+
+		if(a > logicalMax)
+			a = logicalMax;
+		if(a < 0)
+			a = 0;
+
+		position_ = a;
+
 		version(custom_widgets)
 			redraw();
 	}
@@ -5949,17 +6037,17 @@ abstract class ScrollbarBase : Widget {
 	+/
 
 	version(custom_widgets) {
+		enum MIN_THUMB_SIZE = 8;
+
 		abstract protected int getBarDim();
 		int thumbSize() {
-			if(viewableArea_ >= max_)
+			if(viewableArea_ >= max_ || max_ == 0)
 				return getBarDim();
 
-			int res;
-			if(max_) {
-				res = getBarDim() * viewableArea_ / max_;
-			}
-			if(res < 6)
-				res = 6;
+			int res = viewableArea_ * getBarDim() / max_;
+
+			if(res < scaleWithDpi(MIN_THUMB_SIZE))
+				res = scaleWithDpi(MIN_THUMB_SIZE);
 
 			return res;
 		}
@@ -5969,12 +6057,15 @@ abstract class ScrollbarBase : Widget {
 				viewableArea_ is the viewport height/width
 				position_ is where we are
 			*/
-			if(max_) {
-				if(position_ + viewableArea_ >= max_)
-					return getBarDim - thumbSize;
-				return getBarDim * position_ / max_;
-			}
-			return 0;
+			//if(position_ + viewableArea_ >= max_)
+				//return getBarDim - thumbSize;
+
+			auto maximumPossibleValue = getBarDim() - thumbSize;
+			auto maximiumLogicalValue = max_ - viewableArea_;
+
+			auto p = (maximiumLogicalValue > 0) ? cast(int) (cast(long) position_ * maximumPossibleValue / maximiumLogicalValue) : 0;
+
+			return p;
 		}
 	}
 }
@@ -6106,11 +6197,11 @@ class MouseTrackingWidget : Widget {
 				positionY = 0;
 
 			if(positionX != lpx || positionY != lpy) {
-				auto evt = new Event(EventType.change, this);
-				evt.sendDirectly();
-
 				lpx = positionX;
 				lpy = positionY;
+
+				auto evt = new Event(EventType.change, this);
+				evt.sendDirectly();
 			}
 
 			redraw();
@@ -6221,7 +6312,9 @@ class HorizontalScrollbar : ScrollbarBase {
 			thumb.thumbHeight = scaleWithDpi(16);
 
 			thumb.addEventListener(EventType.change, () {
-				auto sx = thumb.positionX * max() / thumb.width;
+				auto maximumPossibleValue = thumb.width - thumb.thumbWidth;
+				auto sx = maximumPossibleValue ? cast(int)(cast(long) thumb.positionX * (max()-viewableArea_) / maximumPossibleValue) : 0;
+
 				//informProgramThatUserChangedPosition(sx);
 
 				auto ev = new ScrollToPositionEvent(this, sx);
@@ -6337,7 +6430,8 @@ class VerticalScrollbar : ScrollbarBase {
 			thumb.thumbHeight = scaleWithDpi(16);
 
 			thumb.addEventListener(EventType.change, () {
-				auto sy = thumb.positionY * max() / thumb.height;
+				auto maximumPossibleValue = thumb.height - thumb.thumbHeight;
+				auto sy = maximumPossibleValue ? cast(int) (cast(long) thumb.positionY * (max()-viewableArea_) / maximumPossibleValue) : 0;
 
 				auto ev = new ScrollToPositionEvent(this, sy);
 				ev.dispatch();
@@ -7311,7 +7405,8 @@ class ContainerWidget : Widget {
 	at the expense of you also needing to be aware of its reality.
 
 	Please note that it does NOT react to mouse wheel events or various keyboard events as of
-	version 10.3. Maybe this will change in the future....
+	version 10.3. Maybe this will change in the future.... but for now you must call
+	[addDefaultKeyboardListeners] and/or [addDefaultWheelListeners] or set something up yourself.
 +/
 class ScrollMessageWidget : Widget {
 	this(Widget parent) {
@@ -7322,19 +7417,19 @@ class ScrollMessageWidget : Widget {
 		vsb = new VerticalScrollbar(this);
 
 		hsb.addEventListener("scrolltonextline", {
-			hsb.setPosition(hsb.position + 1);
+			hsb.setPosition(hsb.position + movementPerButtonClickH_);
 			notify();
 		});
 		hsb.addEventListener("scrolltopreviousline", {
-			hsb.setPosition(hsb.position - 1);
+			hsb.setPosition(hsb.position - movementPerButtonClickH_);
 			notify();
 		});
 		vsb.addEventListener("scrolltonextline", {
-			vsb.setPosition(vsb.position + 1);
+			vsb.setPosition(vsb.position + movementPerButtonClickV_);
 			notify();
 		});
 		vsb.addEventListener("scrolltopreviousline", {
-			vsb.setPosition(vsb.position - 1);
+			vsb.setPosition(vsb.position - movementPerButtonClickV_);
 			notify();
 		});
 		hsb.addEventListener("scrolltonextpage", {
@@ -7366,6 +7461,13 @@ class ScrollMessageWidget : Widget {
 		tabStop = false;
 		container.tabStop = false;
 		magic = true;
+	}
+
+	private int movementPerButtonClickH_ = 1;
+	private int movementPerButtonClickV_ = 1;
+	public void movementPerButtonClick(int h, int v) {
+		movementPerButtonClickH_ = h;
+		movementPerButtonClickV_ = v;
 	}
 
 	/++
@@ -7543,15 +7645,17 @@ class ScrollMessageWidget : Widget {
 		vsb.setStep(unitsY);
 	}
 
-	///
+	/// Always call this BEFORE setViewableArea
 	void setTotalArea(int width, int height) {
 		hsb.setMax(width);
 		vsb.setMax(height);
 	}
 
-	/// Always set the viewable area AFTER setitng the total area if you are going to change both.
-	/// NEVER call this from inside a scroll event. This includes through recomputeChildLayout.
-	/// If you need to do that, use [queueRecomputeChildLayout].
+	/++
+		Always set the viewable area AFTER setitng the total area if you are going to change both.
+		NEVER call this from inside a scroll event. This includes through recomputeChildLayout.
+		If you need to do that, use [queueRecomputeChildLayout].
+	+/
 	void setViewableArea(int width, int height) {
 
 		// actually there IS A need to dothis cuz the max might have changed since then
@@ -7596,41 +7700,48 @@ class ScrollMessageWidget : Widget {
 
 		registerMovement();
 
-		hsb.height = scaleWithDpi(16); // FIXME? are tese 16s sane?
+		enum BUTTON_SIZE = 16;
+
+		hsb.height = scaleWithDpi(BUTTON_SIZE); // FIXME? are tese 16s sane?
 		hsb.x = 0;
 		hsb.y = this.height - hsb.height;
-		hsb.width = this.width - scaleWithDpi(16);
-		hsb.recomputeChildLayout();
 
-		vsb.width = scaleWithDpi(16); // FIXME?
+		vsb.width = scaleWithDpi(BUTTON_SIZE); // FIXME?
 		vsb.x = this.width - vsb.width;
 		vsb.y = 0;
-		vsb.height = this.height - scaleWithDpi(16);
+
+		auto vsb_width = vsb.showing ? vsb.width : 0;
+		auto hsb_height = hsb.showing ? hsb.height : 0;
+
+		hsb.width = this.width - vsb_width;
+		vsb.height = this.height - hsb_height;
+
+		hsb.recomputeChildLayout();
 		vsb.recomputeChildLayout();
 
 		if(this.header is null) {
 			container.x = 0;
 			container.y = 0;
-			container.width = this.width - vsb.width;
-			container.height = this.height - hsb.height;
+			container.width = this.width - vsb_width;
+			container.height = this.height - hsb_height;
 			container.recomputeChildLayout();
 		} else {
 			header.x = 0;
 			header.y = 0;
-			header.width = this.width - vsb.width;
-			header.height = scaleWithDpi(16); // size of the button
+			header.width = this.width - vsb_width;
+			header.height = scaleWithDpi(BUTTON_SIZE); // size of the button
 			header.recomputeChildLayout();
 
 			container.x = 0;
-			container.y = scaleWithDpi(16);
-			container.width = this.width - vsb.width;
-			container.height = this.height - hsb.height - scaleWithDpi(16);
+			container.y = scaleWithDpi(BUTTON_SIZE);
+			container.width = this.width - vsb_width;
+			container.height = this.height - hsb_height - scaleWithDpi(BUTTON_SIZE);
 			container.recomputeChildLayout();
 		}
 	}
 
-	HorizontalScrollbar hsb;
-	VerticalScrollbar vsb;
+	private HorizontalScrollbar hsb;
+	private VerticalScrollbar vsb;
 	Widget container;
 	private Widget header;
 
@@ -7648,6 +7759,40 @@ class ScrollMessageWidget : Widget {
 			recomputeChildLayout();
 		}
 		return this.header;
+	}
+
+	/++
+		Makes an effort to ensure as much of `rect` is visible as possible, scrolling if necessary.
+
+		History:
+			Added January 3, 2023 (dub v11.0)
+	+/
+	void scrollIntoView(Rectangle rect) {
+		Rectangle viewRectangle = Rectangle(position, Size(hsb.viewableArea_, vsb.viewableArea_));
+
+		// import std.stdio; writeln(viewRectangle, " ", rect, " ", viewRectangle.contains(rect.lowerRight));
+
+		if(!viewRectangle.contains(rect.lowerRight))
+			setPosition(rect.upperLeft.tupleof);
+
+	}
+
+	override int minHeight() {
+		int min = container ? container.minHeight : 0;
+		if(header !is null)
+			min += header.minHeight;
+		if(horizontalScrollBar.showing)
+			min += horizontalScrollBar.minHeight;
+		return min;
+	}
+
+	override int maxHeight() {
+		int max = container ? container.maxHeight : int.max;
+		if(max == int.max)
+			return max;
+		if(horizontalScrollBar.showing)
+			max += horizontalScrollBar.minHeight;
+		return max;
 	}
 }
 
@@ -7815,12 +7960,12 @@ class Window : Widget {
 			if(defaultHeightCache == 0) {
 				font = new OperatingSystemFont;
 				font.loadDefault;
-				defaultHeightCache = font.height() * 5 / 4;
+				defaultHeightCache = font.height();// * 5 / 4;
 			}
 			return defaultHeightCache;
 		}
 
-		return font.height() * 5 / 4;
+		return font.height();// * 5 / 4;
 	}
 
 	Widget focusedWidget;
@@ -8474,11 +8619,25 @@ debug private class DevToolWindow : Window {
 
 		parentListeners ~= p.addEventListener((ClickEvent ev) {
 			auto s = ev.srcElement;
-			string list = s.toString();
+
+			string list;
+
+			void addInfo(Widget s) {
+				list ~= s.toString();
+				list ~= "\n\tminHeight: " ~ toInternal!string(s.minHeight);
+				list ~= "\n\tmaxHeight: " ~ toInternal!string(s.maxHeight);
+				list ~= "\n\theightStretchiness: " ~ toInternal!string(s.heightStretchiness);
+				list ~= "\n\theight: " ~ toInternal!string(s.height);
+				list ~= "\n\tmarginTop: " ~ toInternal!string(s.marginTop);
+				list ~= "\n\tmarginBottom: " ~ toInternal!string(s.marginBottom);
+			}
+
+			addInfo(s);
+
 			s = s.parent;
 			while(s) {
 				list ~= "\n";
-				list ~= s.toString();
+				addInfo(s);
 				s = s.parent;
 			}
 			parentList.content = list;
@@ -8518,8 +8677,8 @@ debug private class DevToolWindow : Window {
 		str ~= "\n";
 		logWindow.addText(str);
 
-		version(custom_widgets)
-		logWindow.ensureVisibleInScroll(logWindow.textLayout.caretBoundingBox());
+		//version(custom_widgets)
+		//logWindow.ensureVisibleInScroll(logWindow.textLayout.caretBoundingBox());
 	}
 }
 
@@ -9316,8 +9475,10 @@ class Labeled(T) : Widget {
 
 	override int flexBasisWidth() { return 250; }
 
-	override int minHeight() { return (horizontal ? 1 : 2) * defaultLineHeight + 4; }
-	override int maxHeight() { return (horizontal ? 1 : 2) * defaultLineHeight + 4; }
+	override int minHeight() {
+		return this.children[0].minHeight;
+	}
+	override int maxHeight() { return minHeight(); }
 	override int marginTop() { return 4; }
 	override int marginBottom() { return 4; }
 
@@ -9406,9 +9567,17 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 			}
 			return () {
 				dialog((S s) {
-					try
-						cast(void) t(s.tupleof);
-					catch(Exception e)
+					try {
+						static if(is(typeof(t) Ret == return)) {
+							static if(is(Ret == void)) {
+								t(s.tupleof);
+							} else {
+								auto ret = t(s.tupleof);
+								import std.conv;
+								messageBox(to!string(ret), "Returned Value");
+							}
+						}
+					} catch(Exception e)
 						autoExceptionHandler(e);
 				}, null, __traits(identifier, fn));
 			};
@@ -10330,7 +10499,7 @@ class Fieldset : Widget {
 		painter.fillColor = Color.transparent;
 		auto cs = getComputedStyle();
 		painter.pen = Pen(cs.foregroundColor, 1);
-		painter.drawRectangle(Point(0, defaultLineHeight / 2), width, height - Window.lineHeight / 2);
+		painter.drawRectangle(Point(0, defaultLineHeight / 2), width, height - defaultLineHeight / 2);
 
 		auto tx = painter.textSize(legend);
 		painter.outlineColor = Color.transparent;
@@ -11010,6 +11179,7 @@ class Radiobox : MouseActivatedWidget {
 
 	override int marginLeft() { return 4; }
 
+	// FIXME: make a label getter
 	private string label;
 	private dchar accelerator;
 
@@ -11231,8 +11401,7 @@ class Button : MouseActivatedWidget {
 				sprite.drawAt(
 					painter,
 					bounds.upperLeft + Point((bounds.width - sprite.width) / 2, (bounds.height - sprite.height) / 2),
-					Point(0, 0),
-					bounds.size
+					Point(0, 0)
 				);
 			} else {
 				painter.drawText(bounds.upperLeft, label, bounds.lowerRight, alignment | TextAlignment.VerticalCenter);
@@ -11545,9 +11714,577 @@ version(custom_widgets)
 
 version(win32_widgets)
 	alias EditableTextWidgetParent = Widget; ///
-else version(custom_widgets)
-	alias EditableTextWidgetParent = ScrollableWidget; ///
-else static assert(0);
+else version(custom_widgets) {
+	version(trash_text) {
+		alias EditableTextWidgetParent = ScrollableWidget; ///
+	} else {
+		alias EditableTextWidgetParent = Widget;
+		version=use_new_text_system;
+		import arsd.textlayouter;
+	}
+} else static assert(0);
+
+version(use_new_text_system)
+class TextDisplayHelper : Widget {
+	protected TextLayouter l;
+	protected ScrollMessageWidget smw;
+
+	private const(TextLayouter.State)*[] undoStack;
+	private const(TextLayouter.State)*[] redoStack;
+
+	bool readonly;
+	bool caretNavigation; // scroll lock can flip this
+	bool singleLine;
+	bool acceptsTabInput;
+
+	private Menu ctx;
+	override Menu contextMenu(int x, int y) {
+		if(ctx is null) {
+			ctx = new Menu("Actions", this);
+			ctx.addItem(new MenuItem(new Action("&Undo", GenericIcons.Undo, &undo)));
+			ctx.addItem(new MenuItem(new Action("&Redo", GenericIcons.Redo, &redo)));
+			ctx.addSeparator();
+			ctx.addItem(new MenuItem(new Action("Cu&t", GenericIcons.Cut, &cut)));
+			ctx.addItem(new MenuItem(new Action("&Copy", GenericIcons.Copy, &copy)));
+			ctx.addItem(new MenuItem(new Action("&Paste", GenericIcons.Paste, &paste)));
+			ctx.addItem(new MenuItem(new Action("&Delete", 0, &deleteContentOfSelection)));
+			ctx.addSeparator();
+			ctx.addItem(new MenuItem(new Action("Select &All", 0, &selectAll)));
+		}
+		return ctx;
+	}
+
+	void undo() {
+		if(undoStack.length) {
+			auto state = undoStack[$-1];
+			undoStack = undoStack[0 .. $-1];
+			undoStack.assumeSafeAppend();
+			redoStack ~= l.saveState();
+			l.restoreState(state);
+			adjustScrollbarSizes();
+			scrollForCaret();
+			redraw();
+			stateCheckpoint = true;
+		}
+	}
+
+	void redo() {
+		if(redoStack.length) {
+			doStateCheckpoint();
+			auto state = redoStack[$-1];
+			redoStack = redoStack[0 .. $-1];
+			redoStack.assumeSafeAppend();
+			l.restoreState(state);
+			adjustScrollbarSizes();
+			scrollForCaret();
+			redraw();
+			stateCheckpoint = true;
+		}
+	}
+
+	void cut() {
+		with(l.selection()) {
+			if(!isEmpty()) {
+				setClipboardText(parentWindow.win, getContentString());
+				doStateCheckpoint();
+				replaceContent("");
+				adjustScrollbarSizes();
+				scrollForCaret();
+				this.redraw();
+			}
+		}
+
+	}
+
+	void copy() {
+		with(l.selection()) {
+			if(!isEmpty()) {
+				setClipboardText(parentWindow.win, getContentString());
+				this.redraw();
+			}
+		}
+	}
+
+	void paste() {
+		getClipboardText(parentWindow.win, (txt) {
+			doStateCheckpoint();
+			l.selection.replaceContent(txt);
+			adjustScrollbarSizes();
+			scrollForCaret();
+			this.redraw();
+		});
+	}
+
+	void deleteContentOfSelection() {
+		doStateCheckpoint();
+		l.selection.replaceContent("");
+		l.selection.setUserXCoordinate();
+		adjustScrollbarSizes();
+		scrollForCaret();
+		redraw();
+	}
+
+	void selectAll() {
+		with(l.selection) {
+			moveToStartOfDocument();
+			setAnchor();
+			moveToEndOfDocument();
+			setFocus();
+		}
+		redraw();
+	}
+
+	protected bool stateCheckpoint = true;
+
+	protected void doStateCheckpoint() {
+		if(stateCheckpoint) {
+			undoStack ~= l.saveState();
+			stateCheckpoint = false;
+		}
+	}
+
+	protected void adjustScrollbarSizes() {
+		// FIXME: will want a content area helper function instead of doing all these subtractions myself
+		auto borderWidth = 2;
+		this.smw.setTotalArea(l.width, l.height);
+		this.smw.setViewableArea(
+			this.width - this.paddingLeft - this.paddingRight - borderWidth * 2,
+			this.height - this.paddingTop - this.paddingBottom - borderWidth * 2);
+	}
+
+	protected void scrollForCaret() {
+		// import std.stdio; writeln(l.width, "x", l.height); writeln(this.width - this.paddingLeft - this.paddingRight, " ", this.height - this.paddingTop - this.paddingBottom);
+		smw.scrollIntoView(l.selection.focusBoundingBox());
+	}
+
+	// FIXME: this should be a theme changed event listener instead
+	private BaseVisualTheme currentTheme;
+	override void recomputeChildLayout() {
+		if(currentTheme is null)
+			currentTheme = WidgetPainter.visualTheme;
+		if(WidgetPainter.visualTheme !is currentTheme) {
+			currentTheme = WidgetPainter.visualTheme;
+			auto ds = this.l.defaultStyle;
+			if(auto ms = cast(MyTextStyle) ds) {
+				auto cs = getComputedStyle();
+				auto font = cs.font();
+				if(font !is null)
+					ms.font_ = font;
+				else {
+					auto osc = new OperatingSystemFont();
+					osc.loadDefault;
+					ms.font_ = osc;
+				}
+			}
+		}
+		super.recomputeChildLayout();
+	}
+
+	private Point adjustForSingleLine(Point p) {
+		if(singleLine)
+			return Point(p.x, this.height / 2);
+		else
+			return p;
+	}
+
+	private bool wordWrapEnabled_;
+
+	this(TextLayouter l, ScrollMessageWidget parent) {
+		this.smw = parent;
+
+		smw.addDefaultWheelListeners(16, 16, 8);
+		smw.movementPerButtonClick(16, 16);
+
+		this.defaultPadding = Rectangle(2, 2, 2, 2);
+
+		this.l = l;
+		super(parent);
+
+		smw.addEventListener((scope ScrollEvent se) {
+			this.redraw();
+		});
+
+		bool mouseDown;
+
+		this.addEventListener((scope ResizeEvent re) {
+			// FIXME: I should add a method to give this client area width thing
+			if(wordWrapEnabled_)
+				this.l.wordWrapWidth = this.width - this.paddingLeft - this.paddingRight;
+
+			adjustScrollbarSizes();
+			scrollForCaret();
+
+			this.redraw();
+		});
+
+		this.addEventListener((scope KeyDownEvent kde) {
+			switch(kde.key) {
+				case Key.Up, Key.Down, Key.Left, Key.Right:
+				case Key.Home, Key.End:
+					stateCheckpoint = true;
+					bool setPosition = false;
+					switch(kde.key) {
+						case Key.Up: l.selection.moveUp(); break;
+						case Key.Down: l.selection.moveDown(); break;
+						case Key.Left: l.selection.moveLeft(); setPosition = true; break;
+						case Key.Right: l.selection.moveRight(); setPosition = true; break;
+						case Key.Home: l.selection.moveToStartOfLine(); setPosition = true; break;
+						case Key.End: l.selection.moveToEndOfLine(); setPosition = true; break;
+						default: assert(0);
+					}
+
+					if(kde.shiftKey)
+						l.selection.setFocus();
+					else
+						l.selection.setAnchor();
+					if(setPosition)
+						l.selection.setUserXCoordinate();
+					scrollForCaret();
+					redraw();
+				break;
+				case Key.PageUp, Key.PageDown:
+					// FIXME
+					scrollForCaret();
+				break;
+				case Key.Delete:
+					if(l.selection.isEmpty()) {
+						l.selection.setAnchor();
+						l.selection.moveRight();
+						l.selection.setFocus();
+					}
+					deleteContentOfSelection();
+					adjustScrollbarSizes();
+					scrollForCaret();
+				break;
+				case Key.Insert:
+				break;
+				case Key.A:
+					if(kde.ctrlKey)
+						selectAll();
+				break;
+				case Key.F:
+					// find
+				break;
+				case Key.Z:
+					if(kde.ctrlKey)
+						undo();
+				break;
+				case Key.R:
+					if(kde.ctrlKey)
+						redo();
+				break;
+				case Key.X:
+					if(kde.ctrlKey)
+						cut();
+				break;
+				case Key.C:
+					if(kde.ctrlKey)
+						copy();
+				break;
+				case Key.V:
+					if(kde.ctrlKey)
+						paste();
+				break;
+				case Key.F1:
+					with(l.selection()) {
+						moveToStartOfLine();
+						setAnchor();
+						moveToEndOfLine();
+						moveToIncludeAdjacentEndOfLineMarker();
+						setFocus();
+						replaceContent("");
+					}
+
+					redraw();
+				break;
+				/*
+				case Key.F2:
+					l.selection().changeStyle((old) => l.registerStyle(new MyTextStyle(
+						//(cast(MyTextStyle) old).font,
+						font2,
+						Color.red)));
+					redraw();
+				break;
+				*/
+				case Key.Tab:
+					// we process the char event, so don't want to change focus on it
+					if(acceptsTabInput)
+						kde.preventDefault();
+				break;
+				default:
+			}
+		});
+
+		Point downAt;
+
+		static if(UsingSimpledisplayX11)
+		this.addEventListener((scope ClickEvent ce) {
+			if(ce.button == MouseButton.middle) {
+				parentWindow.win.getPrimarySelection((txt) {
+					l.selection.replaceContent(txt);
+					redraw();
+				});
+			}
+		});
+
+		this.addEventListener((scope MouseDownEvent ce) {
+			if(ce.button == MouseButton.left) {
+				downAt = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
+				l.selection.moveTo(adjustForSingleLine(smw.position + downAt));
+				l.selection.setAnchor();
+				mouseDown = true;
+				parentWindow.captureMouse(this);
+				this.redraw();
+			} else if(ce.button == MouseButton.right) {
+				this.showContextMenu(ce.clientX, ce.clientY);
+			}
+			//import std.stdio;
+			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
+		});
+
+		Timer autoscrollTimer;
+		int autoscrollDirection;
+		int autoscrollAmount;
+
+		void autoscroll() {
+			switch(autoscrollDirection) {
+				case 0: smw.scrollUp(autoscrollAmount); break;
+				case 1: smw.scrollDown(autoscrollAmount); break;
+				case 2: smw.scrollLeft(autoscrollAmount); break;
+				case 3: smw.scrollRight(autoscrollAmount); break;
+				default: assert(0);
+			}
+
+			this.redraw();
+		}
+
+		void setAutoscrollTimer(int direction, int amount) {
+			if(autoscrollTimer is null) {
+				autoscrollTimer = new Timer(1000 / 60, &autoscroll);
+			}
+
+			autoscrollDirection = direction;
+			autoscrollAmount = amount;
+		}
+
+		void stopAutoscrollTimer() {
+			if(autoscrollTimer !is null) {
+				autoscrollTimer.dispose();
+				autoscrollTimer = null;
+			}
+			autoscrollAmount = 0;
+			autoscrollDirection = 0;
+		}
+
+		this.addEventListener((scope MouseMoveEvent ce) {
+			if(mouseDown) {
+				auto movedTo = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
+
+				// FIXME: when scrolling i actually do want a timer.
+				// i also want a zone near the sides of the window where i can auto scroll
+
+				auto scrollMultiplier = scaleWithDpi(16);
+				auto scrollDivisor = scaleWithDpi(16); // if you go more than 64px up it will scroll faster
+
+				if(!singleLine && movedTo.y < 4) {
+					setAutoscrollTimer(0, scrollMultiplier * -(movedTo.y-4) / scrollDivisor);
+				} else
+				if(!singleLine && (movedTo.y + 6) > this.height) {
+					setAutoscrollTimer(1, scrollMultiplier * (movedTo.y + 6 - this.height) / scrollDivisor);
+				} else
+				if(movedTo.x < 4) {
+					setAutoscrollTimer(2, scrollMultiplier * -(movedTo.x-4) / scrollDivisor);
+				} else
+				if((movedTo.x + 6) > this.width) {
+					setAutoscrollTimer(3, scrollMultiplier * (movedTo.x + 6 - this.width) / scrollDivisor);
+				} else
+					stopAutoscrollTimer();
+
+				l.selection.moveTo(adjustForSingleLine(smw.position + movedTo));
+				l.selection.setFocus();
+				this.redraw();
+			}
+		});
+
+		this.addEventListener((scope MouseUpEvent ce) {
+			// FIXME: assert primary selection
+			if(mouseDown && ce.button == MouseButton.left) {
+				stateCheckpoint = true;
+				//l.selection.moveTo(adjustForSingleLine(smw.position + Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop)));
+				//l.selection.setFocus();
+				mouseDown = false;
+				parentWindow.releaseMouseCapture();
+				stopAutoscrollTimer();
+				this.redraw();
+			}
+			//import std.stdio;
+			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
+		});
+
+		this.addEventListener((scope CharEvent ce) {
+			if(ce.character < 32 && ce.character != '\t' && ce.character != '\n' && ce.character != '\b')
+				return; // skip the ctrl+x characters we don't care about as plain text
+
+			if(singleLine && ce.character == '\n')
+				return;
+			if(!acceptsTabInput && ce.character == '\t')
+				return;
+
+			doStateCheckpoint();
+
+			char[4] buffer;
+			import std.utf;
+			auto stride = encode(buffer, ce.character);
+			l.selection.replaceContent(buffer[0 .. stride]);
+			l.selection.setUserXCoordinate();
+			adjustScrollbarSizes();
+			scrollForCaret();
+			redraw();
+		});
+	}
+
+	static class Style : Widget.Style {
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+		}
+
+		override Color foregroundColor() {
+			return WidgetPainter.visualTheme.foregroundColor;
+		}
+
+		override FrameStyle borderStyle() {
+			return FrameStyle.sunk;
+		}
+
+		override MouseCursor cursor() {
+			return GenericCursor.Text;
+		}
+	}
+	mixin OverrideStyle!Style;
+
+	override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, Window.lineHeight))).height; }
+	override int maxHeight() {
+		if(singleLine)
+			return minHeight;
+		else
+			return super.maxHeight();
+	}
+
+	void drawTextSegment(WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+		painter.drawText(upperLeft, text);
+	}
+
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+		//painter.setFont(font);
+
+		auto cs = getComputedStyle();
+		auto defaultColor = cs.foregroundColor;
+
+		auto old = painter.setClipRectangle(bounds);
+		scope(exit) painter.setClipRectangle(old);
+
+		l.getDrawableText(delegate bool(txt, style, info, carets...) {
+			//import std.stdio; writeln("Segment: ", txt);
+			assert(style !is null);
+
+			auto myStyle = cast(MyTextStyle) style;
+			assert(myStyle !is null);
+
+			painter.setFont(myStyle.font);
+			// defaultColor = myStyle.color; // FIXME: so wrong
+
+			if(info.selections && info.boundingBox.width > 0) {
+				auto color = this.isFocused ? cs.selectionBackgroundColor : Color(128, 128, 128); // FIXME don't hardcode
+				painter.fillColor = color;
+				painter.outlineColor = color;
+				painter.drawRectangle(Rectangle(info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, info.boundingBox.size));
+				painter.outlineColor = cs.selectionForegroundColor;
+				//painter.fillColor = Color.white;
+			} else {
+				painter.outlineColor = defaultColor;
+			}
+
+			if(this.isFocused)
+			foreach(idx, caret; carets) {
+				if(idx == 0)
+					painter.notifyCursorPosition(caret.boundingBox.left - smw.position.x + bounds.left, caret.boundingBox.top - smw.position.y + bounds.top, caret.boundingBox.width, caret.boundingBox.height);
+				painter.drawLine(
+					caret.boundingBox.upperLeft + bounds.upperLeft - smw.position(),
+					bounds.upperLeft + Point(caret.boundingBox.left, caret.boundingBox.bottom) - smw.position()
+				);
+			}
+
+			import std.string;
+			if(txt.strip.length)
+				drawTextSegment(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRight);
+
+			if(info.boundingBox.upperLeft.y - smw.position().y > this.height)
+				return false;
+			else {
+				return true;
+			}
+		}, Rectangle(smw.position(), bounds.size));
+
+		/+
+		int place = 0;
+		int y = 75;
+		foreach(width; widths) {
+			painter.fillColor = Color.red;
+			painter.drawRectangle(Point(place, y), Size(width, 75));
+			//y += 15;
+			place += width;
+		}
+		+/
+
+		return bounds;
+	}
+
+	static class MyTextStyle : TextStyle {
+		OperatingSystemFont font_;
+		this(OperatingSystemFont font, bool passwordMode = false) {
+			this.font_ = font;
+		}
+
+		override OperatingSystemFont font() {
+			return font_;
+		}
+	}
+}
+
+/+
+version(use_new_text_system)
+class TextWidget : Widget {
+	TextLayouter l;
+	ScrollMessageWidget smw;
+	TextDisplayHelper helper;
+	this(TextLayouter l, Widget parent) {
+		this.l = l;
+		super(parent);
+
+		smw = new ScrollMessageWidget(this);
+		//smw.horizontalScrollBar.hide;
+		//smw.verticalScrollBar.hide;
+		smw.addDefaultWheelListeners(16, 16, 8);
+		smw.movementPerButtonClick(16, 16);
+		helper = new TextDisplayHelper(l, smw);
+
+		// no need to do this here since there's gonna be a resize
+		// event immediately before any drawing
+		// smw.setTotalArea(l.width, l.height);
+		smw.setViewableArea(
+			this.width - this.paddingLeft - this.paddingRight,
+			this.height - this.paddingTop - this.paddingBottom);
+
+		/+
+		import std.stdio;
+		writeln(l.width, "x", l.height);
+		+/
+	}
+}
++/
+
+
+
 
 /+
 	This awful thing has to be rewritten. And it needs to takecare of parentWindow.inputProxy.setIMEPopupLocation too
@@ -11557,29 +12294,42 @@ else static assert(0);
 abstract class EditableTextWidget : EditableTextWidgetParent {
 	this(Widget parent) {
 		super(parent);
+
+		version(custom_widgets)
+			setupCustomTextEditing();
 	}
 
-	bool wordWrapEnabled_ = false;
+	private bool wordWrapEnabled_;
 	void wordWrapEnabled(bool enabled) {
 		version(win32_widgets) {
 			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
 		} else version(custom_widgets) {
-			wordWrapEnabled_ = enabled; // FIXME
+			wordWrapEnabled_ = enabled;
+			version(use_new_text_system)
+			textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
 		} else static assert(false);
 	}
 
 	override int minWidth() { return scaleWithDpi(16); }
-	override int minHeight() { return defaultLineHeight + 0; } // the +0 is to leave room for the padding
 	override int widthStretchiness() { return 7; }
+
+	version(use_new_text_system)
+	override int maxHeight() { return tdh.maxHeight; }
 
 	void selectAll() {
 		version(win32_widgets)
 			SendMessage(hwnd, EM_SETSEL, 0, -1);
 		else version(custom_widgets) {
-			textLayout.selectAll();
+			version(use_new_text_system)
+				tdh.selectAll();
+			else
+				textLayout.selectAll();
 			redraw();
 		}
 	}
+
+	version(use_new_text_system)
+		TextDisplayHelper tdh;
 
 	@property string content() {
 		version(win32_widgets) {
@@ -11597,7 +12347,10 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			else
 				return null;
 		} else version(custom_widgets) {
-			return textLayout.getPlainText();
+			version(use_new_text_system)
+				return textLayout.getTextString();
+			else
+				return textLayout.getPlainText();
 		} else static assert(false);
 	}
 	@property void content(string s) {
@@ -11605,39 +12358,52 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
 			SetWindowTextW(hwnd, bfr.ptr);
 		} else version(custom_widgets) {
-			textLayout.clear();
-			textLayout.addText(s);
+			version(use_new_text_system) {
+				selectAll();
+				textLayout.selection.replaceContent(s);
 
-			{
-			// FIXME: it should be able to get this info easier
-			auto painter = draw();
-			textLayout.redoLayout(painter);
+				tdh.adjustScrollbarSizes();
+				//scrollForCaret();
+
+				redraw();
+			} else {
+				textLayout.clear();
+				textLayout.addText(s);
+
+				{
+				// FIXME: it should be able to get this info easier
+				auto painter = draw();
+				textLayout.redoLayout(painter);
+				}
+				auto cbb = textLayout.contentBoundingBox();
+				setContentSize(cbb.width, cbb.height);
+				/*
+				textLayout.addText(ForegroundColor.red, s);
+				textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
+				textLayout.addText(" is the best!");
+				*/
+				redraw();
 			}
-			auto cbb = textLayout.contentBoundingBox();
-			setContentSize(cbb.width, cbb.height);
-			/*
-			textLayout.addText(ForegroundColor.red, s);
-			textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
-			textLayout.addText(" is the best!");
-			*/
-			redraw();
 		}
 		else static assert(false);
 	}
 
 	void addText(string txt) {
 		version(custom_widgets) {
+			version(use_new_text_system) {
+				textLayout.appendText(txt);
+				redraw();
+			} else {
+				textLayout.addText(txt);
 
-			textLayout.addText(txt);
-
-			{
-			// FIXME: it should be able to get this info easier
-			auto painter = draw();
-			textLayout.redoLayout(painter);
+				{
+				// FIXME: it should be able to get this info easier
+				auto painter = draw();
+				textLayout.redoLayout(painter);
+				}
+				auto cbb = textLayout.contentBoundingBox();
+				setContentSize(cbb.width, cbb.height);
 			}
-			auto cbb = textLayout.contentBoundingBox();
-			setContentSize(cbb.width, cbb.height);
-
 		} else version(win32_widgets) {
 			// get the current selection
 			DWORD StartPos, EndPos;
@@ -11657,43 +12423,80 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 
 	version(custom_widgets)
+	version(trash_text)
 	override void paintFrameAndBackground(WidgetPainter painter) {
 		this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
+	}
+
+	version(use_new_text_system)
+	TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
+		return new TextDisplayHelper(textLayout, smw);
+	}
+
+	version(use_new_text_system)
+	TextStyle defaultTextStyle() {
+		auto cs = getComputedStyle();
+		auto font = cs.font;
+		if(font is null) {
+			font = new OperatingSystemFont;
+			font.loadDefault();
+		}
+		return new TextDisplayHelper.MyTextStyle(font);
 	}
 
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
 	else version(custom_widgets) {
 		// FIXME
+		version(use_new_text_system) {
+			TextLayouter textLayout;
 
-		static if(SimpledisplayTimerAvailable)
-			Timer caretTimer;
-		etc.TextLayout textLayout;
+			void setupCustomTextEditing() {
+				textLayout = new TextLayouter(defaultTextStyle());
+				auto smw = new ScrollMessageWidget(this);
+				if(!showingHorizontalScroll)
+					smw.horizontalScrollBar.hide();
+				if(!showingVerticalScroll)
+					smw.verticalScrollBar.hide();
+				this.tabStop = false;
+				smw.tabStop = false;
+				tdh = textDisplayHelperFactory(textLayout, smw);
+			}
 
-		void setupCustomTextEditing() {
-			textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
-			textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
-		}
+		} else {
 
-		override void paint(WidgetPainter painter) {
-			if(parentWindow.win.closed) return;
+			static if(SimpledisplayTimerAvailable)
+				Timer caretTimer;
+			etc.TextLayout textLayout;
 
-			textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
+			void setupCustomTextEditing() {
+				textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
+				textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
+			}
 
-			/*
-			painter.outlineColor = Color.white;
-			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
-			*/
+			override void paint(WidgetPainter painter) {
+				if(parentWindow.win.closed) return;
 
-			painter.outlineColor = Color.black;
-			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+				textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
 
-			textLayout.caretShowingOnScreen = false;
+				/*
+				painter.outlineColor = Color.white;
+				painter.fillColor = Color.white;
+				painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
+				*/
 
-			textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
+				painter.outlineColor = Color.black;
+				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+
+				textLayout.caretShowingOnScreen = false;
+
+				textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
+			}
 		}
 
 		static class Style : Widget.Style {
+			override FrameStyle borderStyle() {
+				return FrameStyle.sunk;
+			}
 			override MouseCursor cursor() {
 				return GenericCursor.Text;
 			}
@@ -11702,6 +12505,8 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	else static assert(false);
 
+
+	version(trash_text) {
 
 
 	version(custom_widgets)
@@ -11864,7 +12669,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		ensureVisibleInScroll(textLayout.caretBoundingBox());
 	}
 
+	}
 
+	version(use_new_text_system) {
+		bool showingVerticalScroll() { return true; }
+		bool showingHorizontalScroll() { return true; }
+	}
 }
 
 ///
@@ -11884,15 +12694,28 @@ class LineEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "", 
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
-			setupCustomTextEditing();
-			addEventListener(delegate(CharEvent ev) {
-				if(ev.character == '\n')
-					ev.preventDefault();
-			});
+			version(trash_text) {
+				setupCustomTextEditing();
+				addEventListener(delegate(CharEvent ev) {
+					if(ev.character == '\n')
+						ev.preventDefault();
+				});
+			}
 		} else static assert(false);
 	}
-	override int maxHeight() { return defaultLineHeight + 4; }
-	override int minHeight() { return defaultLineHeight + 4; }
+
+	version(use_new_text_system)
+	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
+		auto tdh = new TextDisplayHelper(textLayout, smw);
+		tdh.singleLine = true;
+		return tdh;
+	}
+
+	version(win32_widgets) {
+		mixin Padding!q{2};
+		override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultLineHeight))).height; }
+		override int maxHeight() { return minHeight; }
+	}
 
 	/+
 	@property void passwordMode(bool p) {
@@ -11920,6 +12743,45 @@ class PasswordEdit : EditableTextWidget {
 
 	override int flexBasisWidth() { return 250; }
 
+	version(use_new_text_system)
+	override TextStyle defaultTextStyle() {
+		auto cs = getComputedStyle();
+
+		auto osf = new class OperatingSystemFont {
+			this() {
+				super(cs.font);
+			}
+			override int stringWidth(scope const(char)[] text, SimpleWindow window = null) {
+				int count = 0;
+				foreach(dchar ch; text)
+					count++;
+				return count * super.stringWidth("*", window);
+			}
+		};
+
+		return new TextDisplayHelper.MyTextStyle(osf);
+	}
+
+	version(use_new_text_system)
+	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
+		static class TDH : TextDisplayHelper {
+			this(TextLayouter textLayout, ScrollMessageWidget smw) {
+				singleLine = true;
+				super(textLayout, smw);
+			}
+
+			override void drawTextSegment(WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+				char[256] buffer = void;
+				int bufferLength = 0;
+				foreach(dchar ch; text)
+					buffer[bufferLength++] = '*';
+				painter.drawText(upperLeft, buffer[0..bufferLength]);
+			}
+		}
+
+		return new TDH(textLayout, smw);
+	}
+
 	///
 	this(Widget parent) {
 		super(parent);
@@ -11927,6 +12789,7 @@ class PasswordEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "", 
 				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
+			version(trash_text)
 			setupCustomTextEditing();
 			addEventListener(delegate(CharEvent ev) {
 				if(ev.character == '\n')
@@ -11934,8 +12797,11 @@ class PasswordEdit : EditableTextWidget {
 			});
 		} else static assert(false);
 	}
-	override int maxHeight() { return defaultLineHeight + 4; }
-	override int minHeight() { return defaultLineHeight + 4; }
+	version(win32_widgets) {
+		mixin Padding!q{2};
+		override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultLineHeight))).height; }
+		override int maxHeight() { return minHeight; }
+	}
 }
 
 
@@ -11948,6 +12814,7 @@ class TextEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "", 
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 		} else version(custom_widgets) {
+			version(trash_text)
 			setupCustomTextEditing();
 		} else static assert(false);
 	}
@@ -11955,7 +12822,7 @@ class TextEdit : EditableTextWidget {
 	override int heightStretchiness() { return 7; }
 
 	override int flexBasisWidth() { return 250; }
-	override int flexBasisHeight() { return 250; }
+	override int flexBasisHeight() { return 25; }
 }
 
 
@@ -14518,7 +15385,13 @@ struct WidgetBackground {
 		return WidgetBackground(Color.fromString(s));
 	}
 
-	private Color color;
+	/++
+		The background is not necessarily a solid color, but you can always specify a color as a fallback.
+
+		History:
+			Made `public` on December 18, 2022 (dub v10.10).
+	+/
+	Color color;
 }
 
 /++
@@ -14558,9 +15431,13 @@ abstract class BaseVisualTheme {
 	abstract Color darkAccentColor();
 
 	/++
-		Color used to indicate active selections in lists and text boxes, etc.
+		Colors used to indicate active selections in lists and text boxes, etc.
 	+/
-	abstract Color selectionColor();
+	abstract Color selectionForegroundColor();
+	/// ditto
+	abstract Color selectionBackgroundColor();
+
+	deprecated("Use selectionForegroundColor and selectionBackgroundColor instead") Color selectionColor() { return selectionBackgroundColor(); }
 
 	abstract OperatingSystemFont defaultFont();
 
@@ -14642,7 +15519,8 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 	override Color foregroundColor() { return Color.black; }
 	override Color darkAccentColor() { return Color(172, 172, 172); }
 	override Color lightAccentColor() { return Color(223, 223, 223); }
-	override Color selectionColor() { return Color(0, 0, 128); }
+	override Color selectionForegroundColor() { return Color.white; }
+	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
 	override OperatingSystemFont defaultFont() { return null; } // will just use the default out of simpledisplay's xfontstr
 
 	private static struct Cached {
