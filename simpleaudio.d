@@ -197,6 +197,8 @@ void main() {
 /++
 	Provides an interface to control a sound.
 
+	All methods on this interface execute asynchronously
+
 	History:
 		Added December 23, 2020
 +/
@@ -241,11 +243,10 @@ interface SampleController {
 
 		History:
 			Added November 20, 2022 (dub v10.10)
+		Bugs:
+			Only implemented for mp3 and ogg at this time.
 	+/
-	// FIXME: this is clearly wrong on mp3s in some way.
 	void seek(float where);
-
-	// FIXME: would be cool to add volume and playback speed control methods too.
 
 	/++
 		Duration of the sample, in seconds. Please note it may be nan if unknown or inf if infinite looping.
@@ -254,7 +255,48 @@ interface SampleController {
 		History:
 			Added November 20, 2022 (dub v10.10)
 	+/
-	// float duration();
+	float duration();
+
+	/++
+		Controls the volume of this particular sample, as a multiplier of its
+		original perceptual volume.
+
+		If unimplemented, the setter will return `float.nan` and the getter will
+		always return 1.0.
+
+		History:
+			Added November 26, 2020 (dub v10.10)
+
+		Bugs:
+			Not implemented for any type in simpleaudio at this time.
+	+/
+	float volume();
+	/// ditto
+	float volume(float multiplierOfOriginal);
+
+	/++
+		Controls the playback speed of this particular sample, as a multiplier
+		of its original speed. Setting it to 0.0 is liable to crash.
+
+		If unimplemented, the getter will always return 1.0. This is nearly always the
+		case if you compile with `-version=without_resampler`.
+
+		Please note that all members, [position], [duration], and any
+		others that relate to time will always return original times;
+		that is, as if `playbackSpeed == 1.0`.
+
+		Note that this is going to change the pitch of the sample; it
+		isn't a tempo change.
+
+		History:
+			Added November 26, 2020 (dub v10.10)
+	+/
+
+	float playbackSpeed();
+	/// ditto
+	void playbackSpeed(float multiplierOfOriginal);
+
+	/+
 
 	/++
 		Sets a delegate that will be called on the audio thread when the sample is finished
@@ -265,11 +307,62 @@ interface SampleController {
 			to do in it is to simply send a message back to your main thread where it deals
 			with whatever you want to do.
 		)
+
+		History:
+			Added November 26, 2020 (dub v10.10)
 	+/
-	//void onfinished(void delegate() shared callback);
+	void onfinished(void delegate() shared callback);
+
+	/++
+		Sets a delegate that will pre-process any buffer before it is passed to the audio device
+		when playing, or your waveform delegate when using [getWaveform]. You can modify data
+		in the buffer if you want, or copy it out somewhere else, but remember this may be called
+		on the audio thread.
+
+		I didn't mark the delegate param `scope` but I might. Copying the actual pointer is super
+		iffy because the buffer can be reused by the audio thread as soon as this function returns.
+
+		History:
+			Added November 27, 2020 (dub v10.10)
+	+/
+	void setBufferDelegate(void delegate(short[] buffer, int sampleRate, int numberOfChannels) shared callback);
+
+	/++
+		Plays the sample on the given audio device. You can only ever play it on one device at a time.
+
+		Returns:
+			`true` if it was able to play on the given device, `false` if not.
+
+			Among the reasons it may be unable to play is if it is already playing
+			elsewhere or if it is already used up.
+
+		History:
+			Added November 27, 2020 (dub v10.10)
+	+/
+	bool playOn(AudioOutputThread where);
+
+	/++
+		Plays it to your delegate which emulates an audio device with the given sample rate and number of channels. It will call your delegate with interleaved signed 16 bit samples.
+
+		Returns:
+			`true` if it called your delegate at least once.
+
+			Among the reasons it might be `false`:
+			$(LIST
+				* The sample is already playing on another device.
+				* You compiled with `-version=without_resampler` and the sample rate didn't match the sample's capabilities.
+				* The number of channels requested is incompatible with the implementation.
+			)
+
+		History:
+			Added November 27, 2020 (dub v10.10)
+	+/
+	bool getWaveform(int sampleRate, int numberOfChannels, scope void delegate(scope short[] buffer) dg);
+
+	+/
 }
 
-private class DummySample : SampleController {
+class DummySample : SampleController {
 	void pause() {}
 	void resume() {}
 	void stop() {}
@@ -277,10 +370,17 @@ private class DummySample : SampleController {
 	bool finished() { return true; }
 	bool paused() { return true; }
 
+	float duration() { return float.init; }
+	float volume() { return 1.0; }
+	float volume(float v) { return float.init; }
+
+	float playbackSpeed() { return 1.0; }
+	void playbackSpeed(float v) { }
+
 	void seek(float where) {}
 }
 
-private class SampleControlFlags : SampleController {
+private final class SampleControlFlags : SampleController {
 	void pause() { paused_ = true; }
 	void resume() { paused_ = false; }
 	void stop() { paused_ = false; stopped = true; }
@@ -297,6 +397,44 @@ private class SampleControlFlags : SampleController {
 
 	float currentPosition = 0.0;
 	float requestedSeek = float.init;
+
+	float detectedDuration;
+	float duration() { return detectedDuration; }
+
+	// FIXME: these aren't implemented
+	float volume() { return 1.0; }
+	float volume(float v) { return float.init; }
+
+	float playbackSpeed_ = 1.0;
+
+	float requestedPlaybackSpeed;
+
+	float playbackSpeed() { return playbackSpeed_; }
+	void playbackSpeed(float v) { requestedPlaybackSpeed = v; }
+
+
+	void pollUserChanges(
+		scope bool delegate(float) executeSeek,
+		scope bool delegate(float) executePlaybackSpeed,
+	) {
+		// should I synchronize it after all?
+		synchronized(this) {
+			if(this.requestedSeek !is float.init) {
+				if(executeSeek !is null && executeSeek(this.requestedSeek)) {
+					this.currentPosition = this.requestedSeek;
+				}
+
+				this.requestedSeek = float.init;
+			}
+			if(this.requestedPlaybackSpeed !is float.init) {
+				if(executePlaybackSpeed !is null && executePlaybackSpeed(this.playbackSpeed_)) {
+					this.playbackSpeed_ = this.requestedPlaybackSpeed;
+				}
+				this.requestedPlaybackSpeed = float.init;
+			}
+		}
+
+	}
 }
 
 /++
@@ -854,6 +992,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		auto scf = new SampleControlFlags;
 
 		auto player = new OPLPlayer(this.SampleRate, true, channels == 2);
+		// FIXME: populate the duration, support seek etc.
 		player.looped = loop;
 		player.load(data);
 		player.play();
@@ -924,6 +1063,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	/* private */ SampleController playOgg(VorbisDecoder)(VorbisDecoder v, bool loop = false) {
 
 		auto scf = new SampleControlFlags;
+		scf.detectedDuration = v.streamLengthInSeconds;
 
 		/+
 			If you want 2 channels:
@@ -934,8 +1074,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 				if the file has 2, average them.
 		+/
 
-		if(v.sampleRate == SampleRate && v.chans == channels) {
-			plain_fallback:
+		void plainFallback() {
+			//if(false && v.sampleRate == SampleRate && v.chans == channels) {
 			addChannel(
 				delegate bool(short[] buffer) {
 					if(scf.paused) {
@@ -945,14 +1085,12 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
-					synchronized(scf)
-					if(scf.requestedSeek !is float.init) {
-						if(v.seek(cast(uint) (scf.requestedSeek * v.sampleRate))) {
-							scf.currentPosition = scf.requestedSeek;
-						}
-
-						scf.requestedSeek = float.init;
-					}
+					scf.pollUserChanges(
+						delegate bool(float requestedSeek) {
+							return !!v.seek(cast(uint) (scf.requestedSeek * v.sampleRate));
+						},
+						null, // can't change speed without the resampler
+					);
 
 					plain:
 					auto got = v.getSamplesShortInterleaved(2, buffer.ptr, cast(int) buffer.length);
@@ -973,7 +1111,9 @@ final class AudioPcmOutThreadImplementation : Thread {
 					return !scf.stopped;
 				}
 			);
-		} else {
+		}
+
+		void withResampler() {
 			version(with_resampler) {
 				auto resampleContext = new class ResamplingContext {
 					this() {
@@ -985,14 +1125,16 @@ final class AudioPcmOutThreadImplementation : Thread {
 						tmp[0] = buffersIn[0].ptr;
 						tmp[1] = buffersIn[1].ptr;
 
-						synchronized(scf)
-						if(scf.requestedSeek !is float.init) {
-							if(v.seekFrame(cast(uint) (scf.requestedSeek * v.sampleRate))) {
-								scf.currentPosition = scf.requestedSeek;
-							}
 
-							scf.requestedSeek = float.init;
-						}
+						scf.pollUserChanges(
+							delegate bool(float requestedSeek) {
+								return !!v.seekFrame(cast(uint) (scf.requestedSeek * v.sampleRate));
+							},
+							delegate bool(float requestedPlaybackSpeed) {
+								this.changePlaybackSpeed(requestedPlaybackSpeed);
+								return true;
+							},
+						);
 
 						loop:
 						auto actuallyGot = v.getSamplesFloat(v.chans, tmp.ptr, cast(int) buffersIn[0].length);
@@ -1009,8 +1151,10 @@ final class AudioPcmOutThreadImplementation : Thread {
 				};
 
 				addChannel(&resampleContext.fillBuffer);
-			} else goto plain_fallback;
+			} else plainFallback();
 		}
+
+		withResampler();
 
 		return scf;
 	}
@@ -1068,7 +1212,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	}
 
 	// no compatibility guarantees, I can change this overload at any time!
-	/* private */ SampleController playMp3()(int delegate(ubyte[]) reader, int delegate(size_t) seeker) {
+	/* private */ SampleController playMp3()(int delegate(ubyte[]) reader, int delegate(ulong) seeker) {
 		import arsd.mp3;
 
 		auto mp3 = new MP3Decoder(reader, seeker);
@@ -1076,9 +1220,11 @@ final class AudioPcmOutThreadImplementation : Thread {
 			throw new Exception("file not valid");
 
 		auto scf = new SampleControlFlags;
+		scf.detectedDuration = mp3.duration;
 
-		if(mp3.sampleRate == SampleRate && mp3.channels == channels) {
-			plain_fallback:
+		void plainFallback() {
+			// if these aren't true this will not work right but im not gonna require it per se
+			// if(mp3.sampleRate == SampleRate && mp3.channels == channels) { ... }
 
 			auto next = mp3.frameSamples;
 
@@ -1092,26 +1238,24 @@ final class AudioPcmOutThreadImplementation : Thread {
 					if(cast(int) buffer.length != buffer.length)
 						throw new Exception("eeeek");
 
-					synchronized(scf)
-					if(scf.requestedSeek !is float.init) {
-						if(mp3.seek(cast(uint) (scf.requestedSeek * mp3.sampleRate * mp3.channels))) {
-							scf.currentPosition = scf.requestedSeek;
-						}
-
-						scf.requestedSeek = float.init;
-					}
+					scf.pollUserChanges(
+						delegate bool(float requestedSeek) {
+							return mp3.seek(cast(uint) (requestedSeek * mp3.sampleRate * mp3.channels));
+						},
+						null, // can't change speed without the resampler
+					);
 
 					more:
 					if(next.length >= buffer.length) {
 						buffer[] = next[0 .. buffer.length];
 						next = next[buffer.length .. $];
 
-						scf.currentPosition += cast(float) buffer.length / mp3.sampleRate / mp3.channels;
+						scf.currentPosition += cast(float) buffer.length / mp3.sampleRate / mp3.channels * scf.playbackSpeed;
 					} else {
 						buffer[0 .. next.length] = next[];
 						buffer = buffer[next.length .. $];
 
-						scf.currentPosition += cast(float) next.length / mp3.sampleRate / mp3.channels;
+						scf.currentPosition += cast(float) next.length / mp3.sampleRate / mp3.channels * scf.playbackSpeed;
 
 						next = next[$..$];
 
@@ -1134,8 +1278,11 @@ final class AudioPcmOutThreadImplementation : Thread {
 					return !scf.stopped;
 				}
 			);
-		} else {
+		}
+
+		void resamplingVersion() {
 			version(with_resampler) {
+				mp3.decodeNextFrame();
 				auto next = mp3.frameSamples;
 
 				auto resampleContext = new class ResamplingContext {
@@ -1145,16 +1292,15 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 					override void loadMoreSamples() {
 
-
-						synchronized(scf)
-						if(scf.requestedSeek !is float.init) {
-							if(mp3.seek(cast(uint) (scf.requestedSeek * mp3.sampleRate * mp3.channels))) {
-								scf.currentPosition = scf.requestedSeek;
-							}
-
-							scf.requestedSeek = float.init;
-						}
-
+						scf.pollUserChanges(
+							delegate bool(float requestedSeek) {
+								return mp3.seek(cast(uint) (requestedSeek * mp3.sampleRate * mp3.channels));
+							},
+							delegate bool(float requestedPlaybackSpeed) {
+								this.changePlaybackSpeed(requestedPlaybackSpeed);
+								return true;
+							},
+						);
 
 						if(mp3.channels == 1) {
 							int actuallyGot;
@@ -1197,8 +1343,10 @@ final class AudioPcmOutThreadImplementation : Thread {
 
 				addChannel(&resampleContext.fillBuffer);
 
-			} else goto plain_fallback;
+			} else plainFallback();
 		}
+
+		resamplingVersion();
 
 		return scf;
 	}
@@ -1221,6 +1369,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 	+/
 	SampleController playWav(R)(R filename_or_data) if(is(R == string) /* filename */ || is(R == immutable(ubyte)[]) /* data */ ) {
 		auto scf = new SampleControlFlags;
+		// FIXME: support seeking
 		version(with_resampler) {
 			auto resampleContext = new class ResamplingContext {
 				import arsd.wav;
@@ -1229,6 +1378,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 					reader = wavReader(filename_or_data);
 					next = reader.front;
 
+					scf.detectedDuration = reader.duration;
+
 					super(scf, reader.sampleRate, SampleRate, reader.numberOfChannels, channels);
 				}
 
@@ -1236,6 +1387,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 				const(ubyte)[] next;
 
 				override void loadMoreSamples() {
+
+					// FIXME: pollUserChanges once seek is implemented
 
 					bool moar() {
 						if(next.length == 0) {
@@ -1336,6 +1489,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			this.ao = ao;
 		}
 		private AudioPcmOutThreadImplementation ao;
+
+		// prolly want a tree of things that can be simultaneous sounds or sequential sounds
 	}
 
 	/// ditto
@@ -4434,6 +4589,17 @@ abstract class ResamplingContext {
 			throw new Exception("ugh");
 		resamplerRight.setup(1, inputSampleRate, outputSampleRate, 5);
 
+		processNewRate();
+	}
+
+	void changePlaybackSpeed(float newMultiplier) {
+		resamplerLeft.setRate(cast(uint) (inputSampleRate * newMultiplier), outputSampleRate);
+		resamplerRight.setRate(cast(uint) (inputSampleRate * newMultiplier), outputSampleRate);
+
+		processNewRate();
+	}
+
+	void processNewRate() {
 		resamplerLeft.getRatio(rateNum, rateDem);
 
 		int add = (rateNum % rateDem) ? 1 : 0;
@@ -4444,6 +4610,7 @@ abstract class ResamplingContext {
 			buffersIn[1] = new float[](BUFFER_SIZE_FRAMES * rateNum / rateDem + add);
 			buffersOut[1] = new float[](BUFFER_SIZE_FRAMES);
 		}
+
 	}
 
 	/+
@@ -4514,7 +4681,7 @@ abstract class ResamplingContext {
 				}
 			}
 
-			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels;
+			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels * scflags.playbackSpeed;
 		} else if(outputChannels == 2) {
 			foreach(idx, ref s; buffer) {
 				if(resamplerDataLeft.dataOut.length == 0) {
@@ -4539,7 +4706,7 @@ abstract class ResamplingContext {
 				}
 			}
 
-			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels;
+			scflags.currentPosition += cast(float) buffer.length / outputSampleRate / outputChannels * scflags.playbackSpeed;
 		} else assert(0);
 
 		if(scflags.stopped)
