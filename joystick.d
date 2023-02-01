@@ -9,6 +9,21 @@
 	FIXME: on Linux, certain controller brands will not be recognized and you need to set the mappings yourself, e.g., `version(linux) joystickMapping[0] = &xbox360Mapping;`. I will formalize this into a proper api later.
 +/
 
+/+
+	XBox360 DDR pad layout:
+
+	Back         Start
+	 B      Up      A
+	Left         Right
+	 Y     Down     X
+
+	 XBox360 Butons:
+
+	  Y
+	 X B
+	  A
++/
+
 /*
 	FIXME: a simple function to integrate with sdpy event loop. templated function
 
