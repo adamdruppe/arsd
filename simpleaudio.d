@@ -39,10 +39,16 @@
 	Ditto for Macintosh, as I don't have one and don't really care about them.
 
 	License:
-		GPL3 unless you compile with `-version=without_resampler` and do *not* use
-		the mp3 functions, in which case it is BSL-1.0.
+		GPL3 unless you compile with `-version=without_resampler` and don't use the `playEmulatedOpl3Midi`,
+		in which case it is BSL-1.0.
 */
 module arsd.simpleaudio;
+
+// hacking around https://issues.dlang.org/show_bug.cgi?id=23595
+import core.stdc.config;
+version(Posix)
+	import core.sys.posix.sys.types;
+// done with hack around compiler bug
 
 // http://webcache.googleusercontent.com/search?q=cache:NqveBqL0AOUJ:https://www.alsa-project.org/alsa-doc/alsa-lib/group___p_c_m.html&hl=en&gl=us&strip=1&vwsrc=0
 
