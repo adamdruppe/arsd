@@ -138,6 +138,30 @@ struct Query {
 	}
 }
 
+/+
+struct DatabaseDatum {
+	int tag;
+	union {
+		string text;
+		immutable(ubyte)[] blob;
+		int number;
+		double floating;
+	}
+
+	bool isNull() {
+		return true;
+	}
+
+	string toString() {
+		return null;
+	}
+	/++
+		For compatibility with earlier versions of the api, all data can easily convert to string implicitly.
+	+/
+	alias toString this;
+}
++/
+
 struct Row {
 	package string[] row;
 	package ResultSet resultSet;
