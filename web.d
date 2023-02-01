@@ -1,5 +1,13 @@
 /++
-	Old magic web wrapper - one of my first applications of CT reflection. Given a class of fairly ordinary C code, it automatically creates HTML pages and forms, a Javascript file to access the functions from the client, and JSON based api responses. I do $(I not) recommend it for new projects though, as a replacement is now built into [arsd.cgi].
+	Old magic web wrapper - one of my first applications of CT reflection. Given a class of fairly ordinary D code, it automatically creates HTML pages and forms, a Javascript file to access the functions from the client, and JSON based api responses. I do $(I not) recommend it for new projects though, as a replacement is now built into [arsd.cgi].
+
+	History:
+		Written some time prior to July 2011.
+
+		Retired in June 2019. I will still maintain it until
+		that becomes a hassle. But since I don't actively use
+		any of my projects using it anymore, it is possible it
+		will break without me noticing.
 +/
 module arsd.web;
 
