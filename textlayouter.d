@@ -474,6 +474,7 @@ public struct Selection {
 		FIXME: what if i want to replace it with some multiply styled text? Could probably call it in sequence actually.
 	+/
 	Selection replaceContent(scope const(char)[] newText, TextLayouter.StyleHandle style = TextLayouter.StyleHandle.init) {
+		layouter.wasMutated_ = true;
 
 		if(style == TextLayouter.StyleHandle.init)
 			style = layouter.getInsertionStyleAt(impl.focus);
@@ -1068,6 +1069,19 @@ class TextLayouter {
 		WrappedAround = 2
 	}
 
+	private bool wasMutated_ = false;
+	/++
+		The layouter maintains a flag to tell if the content has been changed.
+	+/
+	public bool wasMutated() {
+		return wasMutated_;
+	}
+
+	/// ditto
+	public void clearWasMutatedFlag() {
+		wasMutated_ = false;
+	}
+
 	/++
 		Represents a possible registered style for a segment of text.
 	+/
@@ -1090,6 +1104,7 @@ class TextLayouter {
 		Appends text at the end, without disturbing user selection.
 	+/
 	public void appendText(scope const(char)[] text, StyleHandle style = StyleHandle.init) {
+		wasMutated_ = true;
 		auto before = this.text;
 		this.text.length += text.length;
 		this.text[before.length-1 .. before.length-1 + text.length] = text[];
@@ -1117,7 +1132,7 @@ class TextLayouter {
 		FIXME: have some kind of index stuff so you can select some text found in here (think regex search)
 	+/
 	void getText(scope void delegate(scope const(char)[] segment, TextStyle style) handler) {
-		handler(text, null);
+		handler(text[0 .. $-1], null); // cut off the null terminator
 	}
 
 	/++

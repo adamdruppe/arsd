@@ -11754,6 +11754,19 @@ class TextDisplayHelper : Widget {
 		return ctx;
 	}
 
+	override void defaultEventHandler_blur(Event ev) {
+		super.defaultEventHandler_blur(ev);
+		if(l.wasMutated()) {
+			auto evt = new ChangeEvent!string(this, &this.content);
+			evt.dispatch();
+			l.clearWasMutatedFlag();
+		}
+	}
+
+	private string content() {
+		return l.getTextString();
+	}
+
 	void undo() {
 		if(undoStack.length) {
 			auto state = undoStack[$-1];
@@ -12347,9 +12360,9 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			else
 				return null;
 		} else version(custom_widgets) {
-			version(use_new_text_system)
+			version(use_new_text_system) {
 				return textLayout.getTextString();
-			else
+			} else
 				return textLayout.getPlainText();
 		} else static assert(false);
 	}
@@ -12505,9 +12518,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	else static assert(false);
 
-
 	version(trash_text) {
-
 
 	version(custom_widgets)
 	override void defaultEventHandler_mousedown(MouseDownEvent ev) {
