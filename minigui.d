@@ -14999,6 +14999,11 @@ class AutomaticDialog(T) : Dialog {
 			}
 		});
 
+		this.addEventListener((scope ClosedEvent ce) {
+			if(onCancel)
+				onCancel();
+		});
+
 		//this.children[0].focus();
 	}
 
