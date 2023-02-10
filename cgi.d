@@ -3513,7 +3513,11 @@ string toHexUpper(long num) {
 
 // the generic mixins
 
-/// Use this instead of writing your own main
+/++
+	Use this instead of writing your own main
+
+	It ultimately calls [cgiMainImpl] which creates a [RequestServer] for you.
++/
 mixin template GenericMain(alias fun, long maxContentLength = defaultMaxContentLength) {
 	mixin CustomCgiMain!(Cgi, fun, maxContentLength);
 }
@@ -5478,7 +5482,8 @@ class ListeningConnectionManager {
 			fd_set read_fds;
 			FD_ZERO(&read_fds);
 			FD_SET(listener.handle, &read_fds);
-			FD_SET(cancelfd, &read_fds);
+			if(cancelfd != -1)
+				FD_SET(cancelfd, &read_fds);
 			auto max = listener.handle > cancelfd ? listener.handle : cancelfd;
 			auto ret = select(max + 1, &read_fds, null, null, null);
 			if(ret == -1) {
@@ -5489,7 +5494,7 @@ class ListeningConnectionManager {
 					throw new Exception("wtf select");
 			}
 
-			if(FD_ISSET(cancelfd, &read_fds)) {
+			if(cancelfd != -1 && FD_ISSET(cancelfd, &read_fds)) {
 				return null;
 			}
 
@@ -9480,8 +9485,10 @@ css";
 	Element htmlContainer() {
 		auto document = new Document(q"html
 <!DOCTYPE html>
-<html>
+<html class="no-script">
 <head>
+	<script>document.documentElement.classList.remove("no-script");</script>
+	<style>.no-script requires-script { display: none; }</style>
 	<title>D Application</title>
 	<link rel="stylesheet" href="style.css" />
 </head>
