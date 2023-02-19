@@ -23,7 +23,11 @@
 	should be found in the PostgreSQL lib and/or bin folders (check them both!).
 +/
 module arsd.postgres;
-pragma(lib, "pq");
+
+version(Windows)
+	pragma(lib, "libpq");
+else
+	pragma(lib, "pq");
 
 public import arsd.database;
 

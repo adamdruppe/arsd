@@ -11754,6 +11754,19 @@ class TextDisplayHelper : Widget {
 		return ctx;
 	}
 
+	override void defaultEventHandler_blur(Event ev) {
+		super.defaultEventHandler_blur(ev);
+		if(l.wasMutated()) {
+			auto evt = new ChangeEvent!string(this, &this.content);
+			evt.dispatch();
+			l.clearWasMutatedFlag();
+		}
+	}
+
+	private string content() {
+		return l.getTextString();
+	}
+
 	void undo() {
 		if(undoStack.length) {
 			auto state = undoStack[$-1];
@@ -12347,9 +12360,9 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			else
 				return null;
 		} else version(custom_widgets) {
-			version(use_new_text_system)
+			version(use_new_text_system) {
 				return textLayout.getTextString();
-			else
+			} else
 				return textLayout.getPlainText();
 		} else static assert(false);
 	}
@@ -12505,10 +12518,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	else static assert(false);
 
-
-	version(trash_text) {
-
-
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_mousedown(MouseDownEvent ev) {
 		super.defaultEventHandler_mousedown(ev);
@@ -12532,12 +12542,14 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		}
 	}
 
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_mouseup(MouseUpEvent ev) {
 		//this.parentWindow.win.releaseInputGrab();
 		super.defaultEventHandler_mouseup(ev);
 	}
 
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_mousemove(MouseMoveEvent ev) {
 		super.defaultEventHandler_mousemove(ev);
@@ -12547,6 +12559,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		}
 	}
 
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_focus(Event ev) {
 		super.defaultEventHandler_focus(ev);
@@ -12582,28 +12595,46 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		});
 	}
 
-	private string lastContentBlur;
+	version(trash_text) {
+		private string lastContentBlur;
 
-	override void defaultEventHandler_blur(Event ev) {
-		super.defaultEventHandler_blur(ev);
-		if(parentWindow.win.closed) return;
-		version(custom_widgets) {
-			auto painter = this.draw();
-			textLayout.eraseCaret(painter);
-			static if(SimpledisplayTimerAvailable)
-			if(caretTimer) {
-				caretTimer.destroy();
-				caretTimer = null;
+		override void defaultEventHandler_blur(Event ev) {
+			super.defaultEventHandler_blur(ev);
+			if(parentWindow.win.closed) return;
+			version(custom_widgets) {
+				auto painter = this.draw();
+				textLayout.eraseCaret(painter);
+				static if(SimpledisplayTimerAvailable)
+				if(caretTimer) {
+					caretTimer.destroy();
+					caretTimer = null;
+				}
 			}
-		}
 
-		if(this.content != lastContentBlur) {
-			auto evt = new ChangeEvent!string(this, &this.content);
-			evt.dispatch();
-			lastContentBlur = this.content;
+			if(this.content != lastContentBlur) {
+				auto evt = new ChangeEvent!string(this, &this.content);
+				evt.dispatch();
+				lastContentBlur = this.content;
+			}
 		}
 	}
 
+	version(win32_widgets) {
+		private string lastContentBlur;
+
+		override void defaultEventHandler_blur(Event ev) {
+			super.defaultEventHandler_blur(ev);
+
+			if(this.content != lastContentBlur) {
+				auto evt = new ChangeEvent!string(this, &this.content);
+				evt.dispatch();
+				lastContentBlur = this.content;
+			}
+		}
+	}
+
+
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_char(CharEvent ev) {
 		super.defaultEventHandler_char(ev);
@@ -12614,6 +12645,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		auto cbb = textLayout.contentBoundingBox();
 		setContentSize(cbb.width, cbb.height);
 	}
+	version(trash_text)
 	version(custom_widgets)
 	override void defaultEventHandler_keydown(KeyDownEvent ev) {
 		//super.defaultEventHandler_keydown(ev);
@@ -12667,8 +12699,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		}
 		*/
 		ensureVisibleInScroll(textLayout.caretBoundingBox());
-	}
-
 	}
 
 	version(use_new_text_system) {
@@ -14997,6 +15027,11 @@ class AutomaticDialog(T) : Dialog {
 				Cancel();
 				ev.preventDefault();
 			}
+		});
+
+		this.addEventListener((scope ClosedEvent ce) {
+			if(onCancel)
+				onCancel();
 		});
 
 		//this.children[0].focus();
