@@ -1501,6 +1501,8 @@ class HttpRequest {
 					socket.blocking = false;
 				}
 
+				socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+
 				// FIXME: connect timeout?
 				if(unixSocketPath) {
 					import std.stdio; writeln(cast(ubyte[]) unixSocketPath);
@@ -4461,6 +4463,7 @@ class WebSocket {
 		} else
 			socket = new Socket(family(uri.unixSocketPath), SocketType.STREAM);
 
+		socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
 	}
 
 	/++
@@ -4843,7 +4846,13 @@ class WebSocket {
 		+/
 		string[] additionalHeaders;
 
-		int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
+		/++
+			Amount of time (in msecs) of idleness after which to send an automatic ping
+
+			Please note how this interacts with [timeoutFromInactivity] - a ping counts as activity that
+			keeps the socket alive.
+		+/
+		int pingFrequency = 5000;
 
 		/++
 			Amount of time to disconnect when there's no activity. Note that automatic pings will keep the connection alive; this timeout only occurs if there's absolutely nothing, including no responses to websocket ping frames. Since the default [pingFrequency] is only seconds, this one minute should never elapse unless the connection is actually dead.
@@ -4925,8 +4934,8 @@ class WebSocket {
 		wss.fin = true;
 		wss.masked = this.isClient;
 		wss.opcode = WebSocketOpcode.pong;
-		wss.send(&llsend);
 		if(data !is null) wss.data = data.dup;
+		wss.send(&llsend);
 	}
 
 	/++
