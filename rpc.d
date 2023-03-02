@@ -20,7 +20,7 @@ interface ExampleNetworkFunctions {
 	S2 structTest(S1);
 	void die();
 }
- 
+
 // the server must implement the interface
 class ExampleServer : ExampleNetworkFunctions {
 	override string sayHello(string name) {

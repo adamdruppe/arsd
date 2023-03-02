@@ -3009,16 +3009,16 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
       else
         p.unpackSize = cast(UInt32)(p.control & 0x1F) << 16;
       return ELzma2State.LZMA2_STATE_UNPACK0;
-    
+
     case ELzma2State.LZMA2_STATE_UNPACK0:
       p.unpackSize |= cast(UInt32)b << 8;
       return ELzma2State.LZMA2_STATE_UNPACK1;
-    
+
     case ELzma2State.LZMA2_STATE_UNPACK1:
       p.unpackSize |= cast(UInt32)b;
       p.unpackSize++;
       return (LZMA2_IS_UNCOMPRESSED_STATE(p)) ? ELzma2State.LZMA2_STATE_DATA : ELzma2State.LZMA2_STATE_PACK0;
-    
+
     case ELzma2State.LZMA2_STATE_PACK0:
       p.packSize = cast(UInt32)b << 8;
       return ELzma2State.LZMA2_STATE_PACK1;
@@ -3090,7 +3090,7 @@ SRes Lzma2Dec_DecodeToDic(CLzma2Dec *p, SizeT dicLimit,
       SizeT destSizeCur = dicLimit - dicPos;
       SizeT srcSizeCur = inSize - *srcLen;
       ELzmaFinishMode curFinishMode = LZMA_FINISH_ANY;
-      
+
       if (p.unpackSize <= destSizeCur)
       {
         destSizeCur = cast(SizeT)p.unpackSize;
@@ -3141,7 +3141,7 @@ SRes Lzma2Dec_DecodeToDic(CLzma2Dec *p, SizeT dicLimit,
           bool initState = (mode > 0);
           if ((!initDic && p.needInitDic) || (!initState && p.needInitState))
             return SRes.ERROR_DATA;
-          
+
           LzmaDec_InitDicAndState(&p.decoder, initDic, initState);
           p.needInitDic = false;
           p.needInitState = false;
@@ -3149,9 +3149,9 @@ SRes Lzma2Dec_DecodeToDic(CLzma2Dec *p, SizeT dicLimit,
         }
         if (srcSizeCur > p.packSize)
           srcSizeCur = cast(SizeT)p.packSize;
-          
+
         res = LzmaDec_DecodeToDic(&p.decoder, dicPos + destSizeCur, src, &srcSizeCur, curFinishMode, status);
-        
+
         src += srcSizeCur;
         *srcLen += srcSizeCur;
         p.packSize -= cast(UInt32)srcSizeCur;
@@ -3238,7 +3238,7 @@ SRes Lzma2Decode(Byte *dest, SizeT *destLen, Byte *src, SizeT *srcLen,
   if(wtf != 0) return wtf;
   wtf = LzmaDec_AllocateProbs(&decoder.decoder, props.ptr, LZMA_PROPS_SIZE);
   if(wtf != 0) return wtf;
-  
+
   *srcLen = inSize;
   res = Lzma2Dec_DecodeToDic(&decoder, outSize, src, srcLen, finishMode, status);
   *destLen = decoder.decoder.dicPos;

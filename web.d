@@ -167,7 +167,7 @@ struct IfInputContentType {
 	Running from the command line:
 
 	./myapp function positional args....
-	./myapp --format=json function 
+	./myapp --format=json function
 
 	./myapp --make-nested-call
 
@@ -448,7 +448,7 @@ class ApiProvider : WebDotDBaseType {
 		return false;
 	}
 
-	/// Shorthand for ensurePost and checkCsrfToken. You should use this on non-indempotent 
+	/// Shorthand for ensurePost and checkCsrfToken. You should use this on non-indempotent
 	/// functions. Override it if doing some custom checking.
 	void ensureGoodPost() {
 		if(_noCsrfChecks) return;
@@ -989,7 +989,7 @@ immutable(ReflectionInfo*) prepareReflectionImpl(alias PM, alias Parent)(Parent 
 	foreach(member; __traits(derivedMembers, Class)) { // we do derived on a base class loop because we don't want interfaces (OR DO WE? seriously idk) and we definitely don't want stuff from Object, ApiProvider itself is out too but that might change.
 	static if(member[0] != '_') {
 		// FIXME: the filthiest of all hacks...
-		static if(!__traits(compiles, 
+		static if(!__traits(compiles,
 			!is(typeof(__traits(getMember, Class, member)) == function) &&
 			isEnum!(__traits(getMember, Class, member))))
 		continue; // must be a data member or something...
@@ -1920,7 +1920,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		} else {
 			auto th = Element.make("th");
 			auto label = Element.make("label");
-			label.setAttribute("for", n); 
+			label.setAttribute("for", n);
 			label.innerText = beautify(param.name) ~ ": ";
 			th.appendChild(label);
 
@@ -1957,11 +1957,11 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 
 /* *
  * Returns the parameter names of the given function
- * 
+ *
  * Params:
  *     func = the function alias to get the parameter names of
- *     
- * Returns: an array of strings containing the parameter names 
+ *
+ * Returns: an array of strings containing the parameter names
  */
 /+
 string parameterNamesOf( alias fn )( ) {
@@ -1983,7 +1983,7 @@ string parameterNamesOf( alias fn )( ) {
 }
 +/
 
- 
+
 template parameterNamesOf (alias func) {
         const parameterNamesOf = parameterInfoImpl!(func)[0];
 }
@@ -2019,7 +2019,7 @@ sizediff_t lastIndexOfNew(string s, char a) {
 			return i - 1;
 	return -1;
 }
- 
+
 
 // FIXME: a problem here is the compiler only keeps one stringof
 // for a particular type
@@ -2027,7 +2027,7 @@ sizediff_t lastIndexOfNew(string s, char a) {
 // so if you have void a(string a, string b); and void b(string b, string c),
 // both a() and b() will show up as params == ["a", "b"]!
 //
-// 
+//
 private string[][2] parameterInfoImpl (alias func) ()
 {
         string funcStr = typeof(func).stringof; // this might fix the fixme above...
@@ -2038,37 +2038,37 @@ private string[][2] parameterInfoImpl (alias func) ()
 
 	assert(start != -1);
 	assert(end != -1);
-        
+
         const firstPattern = ' ';
         const secondPattern = ',';
-        
+
         funcStr = funcStr[start + 1 .. end];
-        
+
         if (funcStr == "") // no parameters
                 return [null, null];
-                
+
         funcStr ~= secondPattern;
-        
+
         string token;
         string[] arr;
-        
+
         foreach (c ; funcStr)
-        {               
+        {
                 if (c != firstPattern && c != secondPattern)
                         token ~= c;
-                
+
                 else
-                {                       
+                {
                         if (token)
                                 arr ~= token;
-                        
+
                         token = null;
-                }                       
+                }
         }
-        
+
         if (arr.length == 1)
                 return [arr, [""]];
-        
+
         string[] result;
 	string[] defaults;
         bool skip = false;
@@ -2077,7 +2077,7 @@ private string[][2] parameterInfoImpl (alias func) ()
 
 	string currentName = "";
 	string currentDefault = "";
-        
+
         foreach (str ; arr)
         {
 		if(str == "=") {
@@ -2093,7 +2093,7 @@ private string[][2] parameterInfoImpl (alias func) ()
 		}
 
                 skip = !skip;
-                
+
                 if (skip) {
 			if(currentName.length) {
 				result ~= currentName;
@@ -2112,7 +2112,7 @@ private string[][2] parameterInfoImpl (alias func) ()
 	}
 
 	assert(result.length == defaults.length);
-        
+
         return [result, defaults];
 }
 /////////////////////////////////
@@ -2829,7 +2829,7 @@ string formatAs(T, R)(T ret, string format, R api = null, JSONValue* returnValue
 				return customFormatted;
 			}
 		}
-	} 
+	}
 	switch(format) {
 		case "html":
 			retstr = toHtml(ret);
@@ -4462,9 +4462,9 @@ else string javascriptBase = `
 enum string javascriptBaseImpl = q{
 	"_doRequest": function(url, args, callback, method, async) {
 		var xmlHttp;
-		try {   
+		try {
 			xmlHttp=new XMLHttpRequest();
-		}     
+		}
 		catch (e) {
 			try {
 				xmlHttp=new ActiveXObject("Msxml2.XMLHTTP");

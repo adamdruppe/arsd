@@ -667,7 +667,7 @@ class TokenStream(TextStream) {
 			} else if((text[0] >= 'a' && text[0] <= 'z') || (text[0] == '_') || (text[0] >= 'A' && text[0] <= 'Z') || text[0] == '$') {
 				bool found = false;
 				foreach(keyword; keywords)
-					if(text.length >= keyword.length && text[0 .. keyword.length] == keyword && 
+					if(text.length >= keyword.length && text[0 .. keyword.length] == keyword &&
 						// making sure this isn't an identifier that starts with a keyword
 						(text.length == keyword.length || !(
 							(
@@ -721,7 +721,7 @@ class TokenStream(TextStream) {
 				}
 			} else if(text[0] == '"' || text[0] == '\'' || text[0] == '`' ||
 				// Also supporting double curly quoted strings: “foo” which nest. This is the utf 8 coding:
-				(text.length >= 3 && text[0] == 0xe2 && text[1] == 0x80 && text[2] == 0x9c)) 
+				(text.length >= 3 && text[0] == 0xe2 && text[1] == 0x80 && text[2] == 0x9c))
 			{
 				char end = text[0]; // support single quote and double quote strings the same
 				int openCurlyQuoteCount = (end == 0xe2) ? 1 : 0;

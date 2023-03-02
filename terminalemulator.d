@@ -142,7 +142,7 @@ struct ScopeBuffer(T, size_t maxSize, bool allowGrowth = false) {
 	}
 	void clear() {
 		isNull = true;
-		length = 0; 
+		length = 0;
 	}
 }
 
@@ -513,7 +513,7 @@ class TerminalEmulator {
 				ScopeBuffer!(char, 16) buffer;
 				buffer ~= "\033[M";
 				buffer ~= cast(char) (b | 32);
-				addMouseCoordinates(buffer, termX, termY); 
+				addMouseCoordinates(buffer, termX, termY);
 				//buffer ~= cast(char) (x + 32);
 				//buffer ~= cast(char) (y + 32);
 
@@ -1100,7 +1100,7 @@ class TerminalEmulator {
 			assert(!hasNonCharacterData);
 			return chStore;
 		}
-		void ch(dchar c) { 
+		void ch(dchar c) {
 			hasNonCharacterData = false;
 			chStore = c;
 		}
@@ -2600,7 +2600,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 							// echo -e "\033]52;p;?\007"
 							// the p == primary
 							// c == clipboard
-							// q == secondary 
+							// q == secondary
 							// s == selection
 							// 0-7, cut buffers
 							// the data after it is either base64 stuff to copy or ? to request a paste
@@ -3473,7 +3473,7 @@ enum TerminalKey : int {
 	End = 0x23 + 0xF0000, /// .
 	PageUp = 0x21 + 0xF0000, /// .
 	PageDown = 0x22 + 0xF0000, /// .
-	ScrollLock = 0x91 + 0xF0000, 
+	ScrollLock = 0x91 + 0xF0000,
 }
 
 /* These match simpledisplay.d which match terminal.d, so you can just cast them */
@@ -4286,7 +4286,7 @@ mixin template PtySupport(alias resizeHelper) {
 				auto data = buffer[0 .. len];
 
 				if(debugMode) {
-					import std.array; import std.stdio; writeln("GOT ", data, "\nOR ", 
+					import std.array; import std.stdio; writeln("GOT ", data, "\nOR ",
 						replace(cast(string) data, "\033", "\\")
 						.replace("\010", "^H")
 						.replace("\r", "^M")
@@ -4601,7 +4601,7 @@ mixin template SdpyDraw() {
 			}
 		} else version(Windows) {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
-			if(!this.font.isNull && !this.font.isMonospace) 
+			if(!this.font.isNull && !this.font.isMonospace)
 				this.font.unload(); // non-monospace fonts are unusable here. This should never happen anyway though as Courier New comes with Windows
 		}
 

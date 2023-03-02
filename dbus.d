@@ -99,7 +99,7 @@ template VariantType(T) {
 
 template allCanDBus(TS...) {
   static if (TS.length == 0) {
-    enum allCanDBus = true; 
+    enum allCanDBus = true;
   } else static if(!canDBus!(TS[0])) {
     enum allCanDBus = false;
   } else {
@@ -199,7 +199,7 @@ string typeSig(T)() if(canDBus!T) {
     string sig = "(";
     foreach(i, S; T.Types) {
       sig ~= typeSig!S();
-    } 
+    }
     sig ~= ")";
     return sig;
   } else static if(isInputRange!T) {

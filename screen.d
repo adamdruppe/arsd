@@ -789,42 +789,42 @@ scope class Painter{
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_LINES); 
+			glBegin(GL_LINES);
 	}
 	void beginDrawingConnectedLines(){
 		if(glbegin)
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_LINE_STRIP); 
+			glBegin(GL_LINE_STRIP);
 	}
 	void beginDrawingPolygon(){
 		if(glbegin)
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_POLYGON); 
+			glBegin(GL_POLYGON);
 	}
 	void beginDrawingTriangles(){
 		if(glbegin)
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_TRIANGLES); 
+			glBegin(GL_TRIANGLES);
 	}
 	void beginDrawingBoxes(){
 		if(glbegin)
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_QUADS); 
+			glBegin(GL_QUADS);
 	}
 	void beginDrawingPoints(){
 		if(glbegin)
 			throw new Exception("Can only draw one kind at a time");
 		glbegin = true;
 		if(useGL && s.bpp == 124)
-			glBegin(GL_POINTS); 
+			glBegin(GL_POINTS);
 	}
 
 	void endDrawingShapes(){
@@ -874,11 +874,11 @@ scope class Painter{
 //			glColor4f(.5,.5,.5,1);
 			setGLColor(c);
 			glBindTexture(GL_TEXTURE_2D, i.toGL);
-			glBegin(GL_QUADS); 
+			glBegin(GL_QUADS);
 				glTexCoord2f(0, 0); 			glVertex2i(x, y);
-				glTexCoord2f(i.texWidth, 0); 		glVertex2i(x+w, y); 
-				glTexCoord2f(i.texWidth, i.texHeight); 	glVertex2i(x+w, y+h); 
-				glTexCoord2f(0, i.texHeight); 		glVertex2i(x, y+h); 
+				glTexCoord2f(i.texWidth, 0); 		glVertex2i(x+w, y);
+				glTexCoord2f(i.texWidth, i.texHeight); 	glVertex2i(x+w, y+h);
+				glTexCoord2f(0, i.texHeight); 		glVertex2i(x, y+h);
 			glEnd();
 
 			glBindTexture(GL_TEXTURE_2D, 0); // unbind the texture... I guess

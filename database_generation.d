@@ -915,7 +915,7 @@ string toFieldName(T)(string s, bool isPlural = false)
 
 	In conclusion, children is nice in that its simple, doesn't require mixins to create extra symbols(functions). However it doesn't handle the one in one-to-many relationships at all, and it also doesn't work in tables with more than one relationship to a table. And finally, you might prefer the syntax of `prof.get_courses(db)` over `prof.children!(Course, Professor).execute(db)`.
 
-	Examples: 
+	Examples:
 
 	---
 	Struct Role { int id; }

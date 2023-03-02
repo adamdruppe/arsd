@@ -527,7 +527,7 @@ struct Channel {
 	string id;
 	Message*[] messages;
 
-	// a poor man's set... 
+	// a poor man's set...
 	NotificationConnection[NotificationConnection] listeningConnections;
 
 

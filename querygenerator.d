@@ -25,7 +25,7 @@ import std.typetuple;
 
 /**
   * The generated query + args.
-  * 
+  *
   * It offers support for concatenation, so you can create your query in parts and concatenate them afterwards.
   * Ths string prepend will be inserted inbetween two CreatedQuery.query strings at concatation if and only if both query strings are non empty.
   * The resulting CreatedQuery has a prepend string equal to the one of the left side of the '~' operation.
@@ -62,7 +62,7 @@ struct CreatedQuery {
         return res;
     }
 
-    
+
     ref CreatedQuery opOpAssign(string op)(string right) if(op=="~") {
         query~=right;
         return this;
@@ -118,7 +118,7 @@ string createQueryGenerator(string preSql) {
   * Uses createQueryGenerator for actually doing the job.
   * data_ will be made available with D's 'with' statement to the embedded code in queryString. So you can access the elements just as regular variables.
   *
-  * Params: 
+  * Params:
   *     queryString = An SQL template. An SQL template consists of nested blocks. The
   *                   uppermost block is the queryString itself, you create subblocks by
   *                   enclosing it in braces '{}'.
@@ -153,7 +153,7 @@ string createQueryGenerator(string preSql) {
 
                       Multiple declarations of the form '${}' might be present
                       within the declaration part, they may be separated by
-                      white space. 
+                      white space.
 
                       __Body part__
 
@@ -202,7 +202,7 @@ string createQueryGenerator(string preSql) {
                       data_.foo will just be 'foo'.
 
                       __Blocks__
-                        
+
                       Blocks are the building blocks of the resulting
                       expression. If a block contains a D expression or a
                       subblock which contains D expressions, then its contents
@@ -254,7 +254,7 @@ string createQueryGenerator(string preSql) {
                     string.
 
                     The outputs of each loop iteration will be separated with " or " by default,
-                    you can change this, by setting queryGenSep in the declaration part. 
+                    you can change this, by setting queryGenSep in the declaration part.
 
         data_   = The contents of data_ will be made available to the D expressions and declarations in the queryString. (The code gets embedded withing a with(data_) { ... })
 
@@ -283,8 +283,8 @@ unittest {
     }
     Test t1;
     CreatedQuery myQuery(Test t1) {
-        return createQuery!`select * from testtable where 
-        {({${queryGenSep=" or "} ${f in foo} : ({col1=#{f.a}} and {col2=#{f.b}})})} or 
+        return createQuery!`select * from testtable where
+        {({${queryGenSep=" or "} ${f in foo} : ({col1=#{f.a}} and {col2=#{f.b}})})} or
         {col3>#{k}}`(t1);
     }
     auto res=myQuery(t1);
@@ -325,8 +325,8 @@ size_t indexOf(string heap, char needle) {
 //pragma(msg, createQueryGenerator( " (${item in datespan} : ( { date>=#{item.from} and} {date<=#{item.to} and} {comment like #{\"%:Autorun:\"~item.autorun~\":Autorun:%\"}})"));
 //pragma(msg, createQueryGenerator( " Hello this is a test!"));
 //pragma(msg, createQueryGenerator( `  ${item in datespan} : ( { date>=#{item.from} } and {date<=#{item.to} } and {comment like #{"%:Autorun:"~item.autorun~":Autorun:%"}})`));
-//pragma(msg, createQueryGenerator(`select * from testtable where 
-        //{({${queryGenSep=" or "} ${f in foo} : ({col1=#{f.a}} and {col2=#{f.b}})})} or 
+//pragma(msg, createQueryGenerator(`select * from testtable where
+        //{({${queryGenSep=" or "} ${f in foo} : ({col1=#{f.a}} and {col2=#{f.b}})})} or
         //{col3>k}`));
 
 //Syntax:
@@ -495,19 +495,19 @@ string preSqlParser(ref string data, int level=0) {
             }
         }
         out_cmd~=text~"=`"~data[0..end]~"`;\n";
-        out_cmd~=buf~"~=`"~data[0..end]~"`;\n"; 
+        out_cmd~=buf~"~=`"~data[0..end]~"`;\n";
         data=data[end..$];
-        if(data.length==0) 
+        if(data.length==0)
             break;
         debug(querygenerator) writefln("Remaining (level: %s) data: %s", level, data);
         switch(data[0]) {
-            case '{' : 
+            case '{' :
                 assert(data.length>2, "Expected some data after '{' at: "~data);
                 data=data[1..$];
                 out_cmd~="if("~validCount~"==0) {\n";
                 out_cmd~=buf~"="~buf~"[0..$-"~text~".length];\n}\n";
                 out_cmd~=wasValid~"=0;\n"; // Reset, because inner level will just add to it.
-                out_cmd~=preSqlParser(data, level+1); 
+                out_cmd~=preSqlParser(data, level+1);
 
                 assert(data[0]=='}', "Expected closing '}', got: "~data);
                 data=data[1..$];
@@ -518,7 +518,7 @@ string preSqlParser(ref string data, int level=0) {
                 out_cmd~=validCount~"="~validCount~"==-1 ? "~wasValid~" : "~validCount~"+"~wasValid~";\n";
                 out_cmd~=`debug(queryGenerator) writefln("Updated valid count is now: %s", `~validCount~`);`~"\n";
                 break;
-            case '}' : 
+            case '}' :
                 goto finish;
             case '#' :
                 out_cmd~="if("~validCount~"==-1) {\n\t";
@@ -547,6 +547,6 @@ finish:
     // End of loop:
     out_cmd~="}\n";
     // End of block:
-    out_cmd~="}\n"; 
+    out_cmd~="}\n";
     return out_cmd;
 }
