@@ -4881,7 +4881,10 @@ private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn
 
 	auto got = buffer[0 .. len];
 	if(!hasAnswer(got)) {
-		goto try_again;
+		if(retries > 0)
+			goto try_again;
+		else
+			return TerminalCapabilities.minimal;
 	}
 	auto gots = cast(char[]) answer[3 .. $-1];
 
