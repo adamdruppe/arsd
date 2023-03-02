@@ -359,6 +359,7 @@ private inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
 	s ~= "."; // lol i suck
 	s = s.replace(".function.", ".function_.");
 	s = s.replace(".ref.", ".ref_.");
+	s = s.replace(".module.", ".module_.");
 	return s[0 .. $-1]; // god i am such a bad programmer
 }
 
