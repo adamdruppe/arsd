@@ -16,9 +16,37 @@ This only lists changes that broke things and got a major version bump. I didn't
 
 Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
 
+## 12.0
+
+Future release, 2024 or later.
+
+I will probably drop the existing support for gdc 6.
+
+## 11.0
+
+Released: Planned for 2023
+
+arsd.core was added, causing a general build system break for users who download individual files:
+
+simpledisplay.d used to depend only on color.d. It now also depends on core.d.
+
+terminal.d and http2.d used to be stand-along. They now depend on core.d.
+
+minigui.d now also depends on a new textlayouter.d, bringing its total dependencies from minigui.d, simpledisplay.d, color.d up to minigui.d, simpledisplay.d, color.d, core.d, and textlayouter.d
+
+Generally speaking, I am relaxing my dependency policy somewhat to permit a little more code sharing and interoperability throughout the modules. While I will make efforts to maintain some degree of stand-alone functionality, many new features and even some old features may be changed to use the new module. As such, I reserve to right to use core.d from any module from this point forward. You should be prepared to add it to your builds using any arsd component.
+
+I recommend you clone the repo and use `dmd -i` to let the compiler automatically included imported modules. It really is quite nice to use! But, of course, I don't require it and will call out other required cross-module dependencies in the future too.
+
+Also:
+
+	* dom.d's XmlDocument no longer treats `<script>` and `<style>` tags as CDATA; that was meant to be a html-specific behavior, not applicable to generic xml.
+	* game.d had significant changes, making the Game object be a manager of GameScreen objects, which use delta time interpolated renders and fixed time updates (before it was vice versa).
+	* database.d got its first overhaul in a decade.
+
 ## 10.0
 
-Released: May 2020
+Released: May 2021
 
 minigui 2.0 came out with deprecations on some event properties, moved style properties, and various other changes. See http://arsd-official.dpldocs.info/arsd.minigui.html#history for details.
 

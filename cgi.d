@@ -2753,6 +2753,23 @@ class Cgi {
 	version(preserveData) // note: this can eat lots of memory; don't use unless you're sure you need it.
 	immutable(ubyte)[] originalPostData;
 
+	/++
+		This holds the posted body data if it has not been parsed into [post] and [postArray].
+
+		It is intended to be used for JSON and XML request content types, but also may be used
+		for other content types your application can handle. But it will NOT be populated
+		for content types application/x-www-form-urlencoded or multipart/form-data, since those are
+		parsed into the post and postArray members.
+
+		Remember that anything beyond your `maxContentLength` param when setting up [GenericMain], etc.,
+		will be discarded to the client with an error. This helps keep this array from being exploded in size
+		and consuming all your server's memory (though it may still be possible to eat excess ram from a concurrent
+		client in certain build modes.)
+
+		History:
+			Added January 5, 2021
+			Documented February 21, 2023 (dub v11.0)
+	+/
 	public immutable string postBody;
 	alias postJson = postBody; // old name
 
@@ -4385,6 +4402,8 @@ string defaultListeningHost() {
 /++
 	This is the function [GenericMain] calls. View its source for some simple boilerplate you can copy/paste and modify, or you can call it yourself from your `main`.
 
+	Please note that this may spawn other helper processes that will call `main` again. It does this currently for the timer server and event source server (and the quasi-deprecated web socket server).
+
 	Params:
 		fun = Your request handler
 		CustomCgi = a subclass of Cgi, if you wise to customize it further
@@ -4392,7 +4411,7 @@ string defaultListeningHost() {
 		args = command-line arguments
 
 	History:
-	Documented Sept 26, 2020.
+		Documented Sept 26, 2020.
 +/
 void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)(string[] args) if(is(CustomCgi : Cgi)) {
 	if(tryAddonServers(args))
