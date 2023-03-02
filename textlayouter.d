@@ -1196,7 +1196,7 @@ class TextLayouter {
 	/++
 		Gets the text that you need to draw, guaranteeing each call to your delegate will:
 
-		* Have a contiguous slice into text 
+		* Have a contiguous slice into text
 		* Have exactly one style (which may be null, meaning use all your default values. Be sure you draw with the same font you passed as the default font to TextLayouter.)
 		* Be a linear block of text that fits in a single rectangular segment
 		* A segment will be as large a block of text as the implementation can do, but it may be as short as a single char.

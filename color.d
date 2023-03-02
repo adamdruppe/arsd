@@ -653,7 +653,7 @@ float srbgToLinear(float x) { // aka f_inv
 	import core.stdc.math;
 	if (x >= 0.04045)
 		return powf((x + 0.055)/(1 + 0.055), 2.4);
-	else 
+	else
 		return x / 12.92;
 }
 
@@ -904,7 +904,7 @@ double[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @truste
 		H += 360;
 	}
 
-	return [H, S, L]; 
+	return [H, S, L];
 }
 
 /// .

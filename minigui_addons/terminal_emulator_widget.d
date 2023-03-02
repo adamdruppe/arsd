@@ -295,7 +295,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 
 		version(Posix) {
 			auto cls = new PosixFdReader(&readyToRead, master);
-		} else 
+		} else
 		version(Windows) {
 			overlapped = new OVERLAPPED();
 			overlapped.hEvent = cast(void*) this;

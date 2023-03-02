@@ -283,7 +283,7 @@ class MySql : Database {
 				if(cnames[i] in columnsToModify)
 					v = columnsToModify[cnames[i]];
 
-				vals ~= "'" ~ escape(v) ~ "'"; 
+				vals ~= "'" ~ escape(v) ~ "'";
 
 			}
 		}
@@ -833,7 +833,7 @@ extern(System) {
 
 	struct MYSQL_FIELD {
 		  cstring name;                 /* Name of column */
-		  cstring org_name;             /* Original column name, if an alias */ 
+		  cstring org_name;             /* Original column name, if an alias */
 		  cstring table;                /* Table of column if column was a field */
 		  cstring org_table;            /* Org table name, if table was an alias */
 		  cstring db;                   /* Database for table */
@@ -853,7 +853,7 @@ extern(System) {
 		  uint charsetnr;     /* Character set */
 		  uint type; /* Type of field. See mysql_com.h for types */
 		  // type is actually an enum btw
-		  
+		
 		version(MySQL_51) {
 			void* extension;
 		}

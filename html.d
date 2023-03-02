@@ -315,14 +315,14 @@ Element checkbox(string name, string value, string label, bool checked = false) 
 
 /++ Convenience function to create a small <form> to POST, but the creation function is more like a link
     than a DOM form.
-   
+
     The idea is if you have a link to a page which needs to be changed since it is now taking an action,
     this should provide an easy way to do it.
 
     You might want to style these with css. The form these functions create has no class - use regular
     dom functions to add one. When styling, hit the form itself and form > [type=submit]. (That will
     cover both input[type=submit] and button[type=submit] - the two possibilities the functions may create.)
-   
+
     Param:
     	href: the link. Query params (if present) are converted into hidden form inputs and the rest is used as the form action
 	innerText: the text to show on the submit button

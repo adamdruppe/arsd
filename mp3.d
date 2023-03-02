@@ -390,12 +390,12 @@ bool HDR_IS_MS_STEREO(const(ubyte)* h)
 bool HDR_IS_FREE_FORMAT(const(ubyte)* h)
 {
     return (((h[2]) & 0xF0) == 0);
-} 
+}
 
 bool HDR_IS_CRC(const(ubyte)* h)
 {
     return (!((h[1]) & 1));
-} 
+}
 
 int HDR_TEST_PADDING(const(ubyte)* h)
 {
@@ -480,7 +480,7 @@ int MINIMP3_MAX(int a, int b)
 {
     return (a < b) ? b : a;
 }
-      
+
 struct bs_t
 {
     const(uint8_t)* buf;
@@ -517,7 +517,7 @@ struct mp3dec_scratch_t
     L3_gr_info_t[4] gr_info;
     float[576][2] grbuf;
     float[40] scf;
-    float[2*32][18 + 15] syn;    
+    float[2*32][18 + 15] syn;
     uint8_t[39][2] ist_pos;
 }
 
@@ -606,34 +606,34 @@ const(L12_subband_alloc_t)* L12_subband_alloc_table(const uint8_t *hdr, L12_scal
 
     if (HDR_IS_LAYER_1(hdr))
     {
-        static immutable L12_subband_alloc_t[] g_alloc_L1 = 
-        [ 
-            L12_subband_alloc_t(76, 4, 32) 
+        static immutable L12_subband_alloc_t[] g_alloc_L1 =
+        [
+            L12_subband_alloc_t(76, 4, 32)
         ];
         alloc = g_alloc_L1.ptr;
         nbands = 32;
-    } 
+    }
     else if (!HDR_TEST_MPEG1(hdr))
     {
-        static immutable L12_subband_alloc_t[] g_alloc_L2M2 = 
-        [ 
+        static immutable L12_subband_alloc_t[] g_alloc_L2M2 =
+        [
             L12_subband_alloc_t(60, 4, 4),
             L12_subband_alloc_t(44, 3, 7 ),
             L12_subband_alloc_t(44, 2, 19),
         ];
         alloc = g_alloc_L2M2.ptr;
         nbands = 30;
-    } 
+    }
     else
     {
-        static immutable L12_subband_alloc_t[] g_alloc_L2M1 = 
+        static immutable L12_subband_alloc_t[] g_alloc_L2M1 =
         [
             L12_subband_alloc_t(0, 4, 3),
             L12_subband_alloc_t(16, 4, 8),
             L12_subband_alloc_t(32, 3, 12),
             L12_subband_alloc_t(40, 2, 7)
         ];
-        
+
         int sample_rate_idx = HDR_GET_SAMPLE_RATE(hdr);
         uint kbps = hdr_bitrate_kbps(hdr) >> cast(int)(mode != MODE_MONO);
         if (!kbps) /* free-format */
@@ -645,15 +645,15 @@ const(L12_subband_alloc_t)* L12_subband_alloc_table(const uint8_t *hdr, L12_scal
         nbands = 27;
         if (kbps < 56)
         {
-            static immutable L12_subband_alloc_t[] g_alloc_L2M1_lowrate = 
+            static immutable L12_subband_alloc_t[] g_alloc_L2M1_lowrate =
             [
-        
-               L12_subband_alloc_t(44, 4, 2), 
+
+               L12_subband_alloc_t(44, 4, 2),
                L12_subband_alloc_t(44, 3, 10)
-            ];            
+            ];
             alloc = g_alloc_L2M1_lowrate.ptr;
             nbands = sample_rate_idx == 2 ? 12 : 8;
-        } 
+        }
         else if (kbps >= 96 && sample_rate_idx != 1)
         {
             nbands = 30;
@@ -670,14 +670,14 @@ void L12_read_scalefactors(bs_t *bs, uint8_t *pba, uint8_t *scfcod, int bands, f
 {
     static immutable float[18*3] g_deq_L12 =
     [
-        3.17891e-07, 2.52311e-07, 2.00259e-07, 1.36239e-07, 1.08133e-07, 8.58253e-08, 
-        6.35783e-08, 5.04621e-08, 4.00518e-08, 3.07637e-08, 2.44172e-08, 1.93799e-08, 
-        1.51377e-08, 1.20148e-08, 9.53615e-09, 7.50925e-09, 5.96009e-09, 4.73053e-09, 
-        3.7399e-09, 2.96836e-09, 2.35599e-09, 1.86629e-09, 1.48128e-09, 1.17569e-09, 
-        9.32233e-10, 7.39914e-10, 5.8727e-10, 4.65889e-10, 3.69776e-10, 2.93492e-10, 
-        2.32888e-10, 1.84843e-10, 1.4671e-10, 1.1643e-10, 9.24102e-11, 7.3346e-11, 
-        5.82112e-11, 4.62023e-11, 3.66708e-11, 2.91047e-11, 2.31004e-11, 1.83348e-11, 
-        1.45521e-11, 1.155e-11, 9.16727e-12, 3.17891e-07, 2.52311e-07, 2.00259e-07, 
+        3.17891e-07, 2.52311e-07, 2.00259e-07, 1.36239e-07, 1.08133e-07, 8.58253e-08,
+        6.35783e-08, 5.04621e-08, 4.00518e-08, 3.07637e-08, 2.44172e-08, 1.93799e-08,
+        1.51377e-08, 1.20148e-08, 9.53615e-09, 7.50925e-09, 5.96009e-09, 4.73053e-09,
+        3.7399e-09, 2.96836e-09, 2.35599e-09, 1.86629e-09, 1.48128e-09, 1.17569e-09,
+        9.32233e-10, 7.39914e-10, 5.8727e-10, 4.65889e-10, 3.69776e-10, 2.93492e-10,
+        2.32888e-10, 1.84843e-10, 1.4671e-10, 1.1643e-10, 9.24102e-11, 7.3346e-11,
+        5.82112e-11, 4.62023e-11, 3.66708e-11, 2.91047e-11, 2.31004e-11, 1.83348e-11,
+        1.45521e-11, 1.155e-11, 9.16727e-12, 3.17891e-07, 2.52311e-07, 2.00259e-07,
         1.90735e-07, 1.51386e-07, 1.20155e-07, 1.05964e-07, 8.41035e-08, 6.6753e-08
     ];
 
@@ -701,7 +701,7 @@ void L12_read_scalefactors(bs_t *bs, uint8_t *pba, uint8_t *scfcod, int bands, f
 
 void L12_read_scale_info(const uint8_t *hdr, bs_t *bs, L12_scale_info *sci)
 {
-    static immutable uint8_t[] g_bitalloc_code_tab = 
+    static immutable uint8_t[] g_bitalloc_code_tab =
     [
         0,17, 3, 4, 5,6,7, 8,9,10,11,12,13,14,15,16,
         0,17,18, 3,19,4,5, 6,7, 8, 9,10,11,12,13,16,
@@ -801,7 +801,7 @@ void L12_apply_scf_384(L12_scale_info *sci, const(float)*scf, float *dst)
 
 int L3_read_side_info(bs_t *bs, L3_gr_info_t *gr, const uint8_t *hdr)
 {
-    static immutable uint8_t[23][8] g_scf_long = 
+    static immutable uint8_t[23][8] g_scf_long =
     [
         [ 6,6,6,6,6,6,8,10,12,14,16,20,24,28,32,38,46,52,60,68,58,54,0 ],
         [ 12,12,12,12,12,12,16,20,24,28,32,40,48,56,64,76,90,2,2,2,2,2,0 ],
@@ -960,7 +960,7 @@ void L3_read_scalefactors(uint8_t *scf, uint8_t *ist_pos, const uint8_t *scf_siz
 
 float L3_ldexp_q2(float y, int exp_q2)
 {
-    static immutable float[4] g_expfrac = 
+    static immutable float[4] g_expfrac =
     [ 9.31322575e-10f,7.83145814e-10f,6.58544508e-10f,5.53767716e-10f ];
     int e;
     do
@@ -979,7 +979,7 @@ void L3_decode_scalefactors(const uint8_t *hdr, uint8_t *ist_pos, bs_t *bs, cons
         [ 9,9,6,12,9,9,9,9,9,9,12,6,18,18,0,0,12,12,12,0,12, 9,9,6,15,12,9,0 ]
     ];
     const(uint8_t)* scf_partition = g_scf_partitions[!!gr.n_short_sfb + !gr.n_long_sfb].ptr;
-    uint8_t[4] scf_size; 
+    uint8_t[4] scf_size;
     uint8_t[40] iscf;
     int i, scf_shift = gr.scalefac_scale + 1, gain_exp, scfsi = gr.scfsi;
     float gain;
@@ -1701,13 +1701,13 @@ void mp3d_synth(float *xl, mp3d_sample_t *dstl, int nch, float *lins)
         zlin[4*(i - 16) + 3] = xr[18*(1 + i)];
 
         /* S0(0) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 0*64]; float *vy = &zlin[4*i - (15 - 0)*64]; /* LOAD(0); */ for (j = 0; j < 4; j++) b[j]  = vz[j]*w1 + vy[j]*w0, a[j]  = vz[j]*w0 - vy[j]*w1; }
-        /* S2(1) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 1*64]; float *vy = &zlin[4*i - (15 - 1)*64]; /* LOAD(1); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S2(1) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 1*64]; float *vy = &zlin[4*i - (15 - 1)*64]; /* LOAD(1); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; }
         /* S1(2) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 2*64]; float *vy = &zlin[4*i - (15 - 2)*64]; /* LOAD(2); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
-        /* S2(3) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 3*64]; float *vy = &zlin[4*i - (15 - 3)*64]; /* LOAD(3); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S2(3) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 3*64]; float *vy = &zlin[4*i - (15 - 3)*64]; /* LOAD(3); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; }
         /* S1(4) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 4*64]; float *vy = &zlin[4*i - (15 - 4)*64]; /* LOAD(4); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
-        /* S2(5) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 5*64]; float *vy = &zlin[4*i - (15 - 5)*64]; /* LOAD(5); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S2(5) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 5*64]; float *vy = &zlin[4*i - (15 - 5)*64]; /* LOAD(5); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; }
         /* S1(6) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 6*64]; float *vy = &zlin[4*i - (15 - 6)*64]; /* LOAD(6); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vz[j]*w0 - vy[j]*w1; }
-        /* S2(7) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 7*64]; float *vy = &zlin[4*i - (15 - 7)*64]; /* LOAD(7); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; } 
+        /* S2(7) */ { int j; float w0 = *w++; float w1 = *w++; float *vz = &zlin[4*i - 7*64]; float *vy = &zlin[4*i - (15 - 7)*64]; /* LOAD(7); */ for (j = 0; j < 4; j++) b[j] += vz[j]*w1 + vy[j]*w0, a[j] += vy[j]*w1 - vz[j]*w0; }
 
         dstr[(15 - i)*nch] = mp3d_scale_pcm(a[1]);
         dstr[(17 + i)*nch] = mp3d_scale_pcm(b[1]);
@@ -2004,7 +2004,7 @@ void mp3dec_skip_id3v1(const uint8_t *buf, size_t *pbuf_size)
 enum MINIMP3_ID3_DETECT_SIZE = 10;
 
 size_t mp3dec_skip_id3v2(const uint8_t *buf, size_t buf_size)
-{    
+{
     if (buf_size >= MINIMP3_ID3_DETECT_SIZE && !memcmp(buf, "ID3".ptr, 3) && !((buf[5] & 15) || (buf[6] & 0x80) || (buf[7] & 0x80) || (buf[8] & 0x80) || (buf[9] & 0x80)))
     {
         size_t id3v2size = (((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f)) + 10;

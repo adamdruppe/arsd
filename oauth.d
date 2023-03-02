@@ -736,14 +736,14 @@ bool hasPermission(DataObject person, FacebookPermissions permission) {
 
 	if(person.facebook_access_token.length == 0)
 		return false;
-	try {   
+	try {
 		auto perms = getBasicDataFromVariant(fbGraphPermissions(person.                       facebook_access_token))[0];
 		return (to!string(permission) in perms) ? true : false;
 	} catch(FacebookApiException e) {
 		return false; // the token doesn't work
 	}
 
-	return false;                                                               
+	return false;
 }
 
 +/

@@ -166,7 +166,7 @@ version(with_libjpeg) {
 		 * output image dimensions available, as well as the output colormap
 		 * if we asked for color quantization.
 		 * In this example, we need to make an output work buffer of the right size.
-		 */ 
+		 */
 		/* JSAMPLEs per row in output buffer */
 		row_stride = cinfo.output_width * cinfo.output_components;
 		/* Make a one-row-high sample array that will go away when done with image */

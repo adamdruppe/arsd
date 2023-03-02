@@ -357,7 +357,7 @@ struct HttpResponse {
 						cookie.attributes[remaining.idup_if_needed] = "";
 						remaining = remaining[$..$];
 
-					} 
+					}
 				}
 
 				ret ~= cookie;
@@ -2252,7 +2252,7 @@ class HttpRequest {
 					headerReadingState.justSawLf = true;
 					headerReadingState.atStartOfLine = true;
 					continue;
-				} else 
+				} else
 					headerReadingState.justSawLf = false;
 
 				responseData.headers[$-1] ~= data[position];
@@ -3265,7 +3265,7 @@ class HttpCache : ICache {
 		return null;
 	}
 }
- 
+
 // / Gives simple maximum age caching, ignoring the actual http headers
 class SimpleCache : ICache {
 	const(HttpResponse)* getCachedResponse(HttpRequestParameters request) {

@@ -20171,7 +20171,7 @@ notice, this list of conditions and the following disclaimer.
 copyright notice, this list of conditions and the following disclaimer
 in the documentation and/or other materials provided with the
 distribution.
-   * The name of Microsoft Corporation, or the names of its contributors 
+   * The name of Microsoft Corporation, or the names of its contributors
 may not be used to endorse or promote products derived from this
 software without specific prior written permission.
 
@@ -21934,7 +21934,7 @@ interface ICoreWebView2HttpHeadersCollectionIterator : IUnknown
     extern(Windows):
   /// Get the name and value of the current HTTP header of the iterator. This
   /// method will fail if the last call to MoveNext set hasNext to FALSE.
-  HRESULT GetCurrentHeader(/+[out]+/ LPWSTR* name, 
+  HRESULT GetCurrentHeader(/+[out]+/ LPWSTR* name,
 		/+[out]+/ LPWSTR* value);
 
   /// True when the iterator hasn't run out of headers. If the collection over
@@ -21960,13 +21960,13 @@ interface ICoreWebView2HttpRequestHeaders : IUnknown
     static const GUID iid = { 0xe86cac0e,0x5523,0x465c,[ 0xb5,0x36,0x8f,0xb9,0xfc,0x8c,0x8c,0x60 ] };
     extern(Windows):
   /// Gets the header value matching the name.
-  HRESULT GetHeader(in LPCWSTR name, 
+  HRESULT GetHeader(in LPCWSTR name,
 		/+[out, retval]+/ LPWSTR* value);
   /// Gets the header value matching the name via an iterator.
-  HRESULT GetHeaders(in LPCWSTR name, 
+  HRESULT GetHeaders(in LPCWSTR name,
 		/+[out, retval]+/ ICoreWebView2HttpHeadersCollectionIterator * iterator);
   /// Checks whether the headers contain an entry matching the header name.
-  HRESULT Contains(in LPCWSTR name, 
+  HRESULT Contains(in LPCWSTR name,
 		/+[out, retval]+/ BOOL* contains);
   /// Adds or updates header that matches the name.
   HRESULT SetHeader(in LPCWSTR name, in LPCWSTR value);
@@ -21988,13 +21988,13 @@ interface ICoreWebView2HttpResponseHeaders : IUnknown
   /// Appends header line with name and value.
   HRESULT AppendHeader(in LPCWSTR name, in LPCWSTR value);
   /// Checks whether the headers contain entries matching the header name.
-  HRESULT Contains(in LPCWSTR name, 
+  HRESULT Contains(in LPCWSTR name,
 		/+[out, retval]+/ BOOL* contains);
   /// Gets the first header value in the collection matching the name.
-  HRESULT GetHeader(in LPCWSTR name, 
+  HRESULT GetHeader(in LPCWSTR name,
 		/+[out, retval]+/ LPWSTR* value);
   /// Gets the header values matching the name.
-  HRESULT GetHeaders(in LPCWSTR name, 
+  HRESULT GetHeaders(in LPCWSTR name,
 		/+[out, retval]+/ ICoreWebView2HttpHeadersCollectionIterator * iterator);
   /// Gets an iterator over the collection of entire response headers.
   HRESULT GetIterator(

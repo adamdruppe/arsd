@@ -1308,11 +1308,11 @@ final class OpenGlTexture {
 
 		glColor4f(cast(float)bg.r/255.0, cast(float)bg.g/255.0, cast(float)bg.b/255.0, cast(float)bg.a / 255.0);
 		glBindTexture(GL_TEXTURE_2D, _tex);
-		glBegin(GL_QUADS); 
+		glBegin(GL_QUADS);
 			glTexCoord2f(0, 0); 				glVertex2i(0, 0);
-			glTexCoord2f(texCoordWidth, 0); 		glVertex2i(width, 0); 
-			glTexCoord2f(texCoordWidth, texCoordHeight); 	glVertex2i(width, height); 
-			glTexCoord2f(0, texCoordHeight); 		glVertex2i(0, height); 
+			glTexCoord2f(texCoordWidth, 0); 		glVertex2i(width, 0);
+			glTexCoord2f(texCoordWidth, texCoordHeight); 	glVertex2i(width, height);
+			glTexCoord2f(0, texCoordHeight); 		glVertex2i(0, height);
 		glEnd();
 
 		glBindTexture(GL_TEXTURE_2D, 0); // unbind the texture

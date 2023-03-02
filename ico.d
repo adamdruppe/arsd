@@ -57,7 +57,7 @@ struct ICONDIRENTRY {
 /*
 Recall that if an image is stored in BMP format, it must exclude the opening BITMAPFILEHEADER structure, whereas if it is stored in PNG format, it must be stored in its entirety.
 
-Note that the height of the BMP image must be twice the height declared in the image directory. The second half of the bitmap should be an AND mask for the existing screen pixels, with the output pixels given by the formula Output = (Existing AND Mask) XOR Image. Set the mask to be zero everywhere for a clean overwrite. 
+Note that the height of the BMP image must be twice the height declared in the image directory. The second half of the bitmap should be an AND mask for the existing screen pixels, with the output pixels given by the formula Output = (Existing AND Mask) XOR Image. Set the mask to be zero everywhere for a clean overwrite.
 
 from wikipedia
 */

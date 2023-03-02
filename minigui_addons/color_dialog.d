@@ -62,7 +62,7 @@ class ColorPickerDialog : Dialog {
 		super(360, 460, "Color picker");
 
 		this.onOK = onOK;
- 
+
 
 	/*
 	statusBar.parts ~= new StatusBar.Part(140);

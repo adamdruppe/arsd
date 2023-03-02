@@ -44,24 +44,24 @@ mixin template ThrowableBaseImplementation() {
 	}
 
 	override void toString(scope void delegate(in char[]) sink) const {
-		char[32] tmpBuff = void; 
+		char[32] tmpBuff = void;
 		printName(sink);
-		sink("@"); sink(file); 
-		sink("("); sink(line.sizeToTempString(tmpBuff[])); sink(")"); 
+		sink("@"); sink(file);
+		sink("("); sink(line.sizeToTempString(tmpBuff[])); sink(")");
 		sink(": "); getHumanReadableMessage(sink);
 		sink("\n");
 		printMembers(sink);
-		if (info) { 
-			try { 
-				sink("----------------"); 
-				foreach (t; info) { 
-					sink("\n"); sink(t); 
-				} 
-			} 
-			catch (Throwable) { 
-				// ignore more errors 
-			} 
-		}  
+		if (info) {
+			try {
+				sink("----------------");
+				foreach (t; info) {
+					sink("\n"); sink(t);
+				}
+			}
+			catch (Throwable) {
+				// ignore more errors
+			}
+		}
 	}
 
 }
@@ -91,7 +91,7 @@ mixin template PrintMembers() {
 				static if(is(typeof(__traits(getMember, this, memberName)) : const(char)[]))
 					sink(__traits(getMember, this, memberName));
 				else static if(is(typeof(__traits(getMember, this, memberName)) : long)) {
-					char[32] tmpBuff = void; 
+					char[32] tmpBuff = void;
 					sink(sizeToTempString(__traits(getMember, this, memberName), tmpBuff));
 				} // else pragma(msg, typeof(__traits(getMember, this, memberName)));
 				sink("\n");

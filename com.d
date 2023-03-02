@@ -424,7 +424,7 @@ T getFromVariant(T)(VARIANT arg) {
 			if(SUCCEEDED(hr)) {
 				scope(exit) SafeArrayUnlock(a);
 
-				// BTW this is where things get interesting with the 
+				// BTW this is where things get interesting with the
 				// mid-level wrapper. it can avoid these copies
 
 				// maybe i should check bounds.lLbound too.....

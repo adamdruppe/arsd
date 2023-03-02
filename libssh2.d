@@ -171,8 +171,8 @@ extern(C) {
 	struct LIBSSH2_SFTP {}
 	struct LIBSSH2_SFTP_HANDLE {}
 	LIBSSH2_SFTP* libssh2_sftp_init(LIBSSH2_SESSION *session);
-	int libssh2_sftp_shutdown(LIBSSH2_SFTP *sftp); 
-	c_ulong libssh2_sftp_last_error(LIBSSH2_SFTP *sftp); 
+	int libssh2_sftp_shutdown(LIBSSH2_SFTP *sftp);
+	c_ulong libssh2_sftp_last_error(LIBSSH2_SFTP *sftp);
 	int libssh2_sftp_close_handle(LIBSSH2_SFTP_HANDLE *handle);
 	int libssh2_sftp_shutdown(LIBSSH2_SFTP *sftp);
 
@@ -264,7 +264,7 @@ extern(C) {
 	LIBSSH2_SFTP_HANDLE * libssh2_sftp_open_ex(LIBSSH2_SFTP *sftp, const char *filename, uint filename_len, c_ulong flags, c_long mode, int open_type);
 
 
-	ssize_t libssh2_sftp_read(LIBSSH2_SFTP_HANDLE *handle, char *buffer, size_t buffer_maxlen); 
+	ssize_t libssh2_sftp_read(LIBSSH2_SFTP_HANDLE *handle, char *buffer, size_t buffer_maxlen);
 	ssize_t libssh2_sftp_write(LIBSSH2_SFTP_HANDLE *handle, const char *buffer, size_t count);
 
 	enum LIBSSH2_SFTP_ATTR {
@@ -372,7 +372,7 @@ extern(C) {
 		uint window_size,
 		uint packet_size,
 		const char *message,
-		uint message_len); 
+		uint message_len);
 	// channel_open_session calls the above
 
 	int libssh2_channel_setenv_ex(
@@ -385,7 +385,7 @@ extern(C) {
 	enum LIBSSH2_CHANNEL_WINDOW_DEFAULT = (256*1024);
 	enum LIBSSH2_CHANNEL_PACKET_DEFAULT = 32768;
 
-	int libssh2_channel_request_pty_ex(LIBSSH2_CHANNEL *channel, const char *term, uint term_len, const char *modes, uint modes_len, int width, int height, int width_px, int height_px); 
+	int libssh2_channel_request_pty_ex(LIBSSH2_CHANNEL *channel, const char *term, uint term_len, const char *modes, uint modes_len, int width, int height, int width_px, int height_px);
 
 	int libssh2_channel_process_startup(
 		LIBSSH2_CHANNEL* channel,
@@ -393,11 +393,11 @@ extern(C) {
 		uint request_len,
 		const char *message,
 		uint message_len);
- 
 
-	int libssh2_channel_free(LIBSSH2_CHANNEL *channel); 
-	int libssh2_session_disconnect_ex(LIBSSH2_SESSION *session, int reason, const char *description, const char *lang); 
-	int libssh2_session_free(LIBSSH2_SESSION *session); 
+
+	int libssh2_channel_free(LIBSSH2_CHANNEL *channel);
+	int libssh2_session_disconnect_ex(LIBSSH2_SESSION *session, int reason, const char *description, const char *lang);
+	int libssh2_session_free(LIBSSH2_SESSION *session);
 
 	int libssh2_init(int flags);
 	void libssh2_exit();
@@ -418,7 +418,7 @@ extern(C) {
 	int libssh2_keepalive_send(LIBSSH2_SESSION *session,
 		int *seconds_to_next);
 
-	LIBSSH2_CHANNEL * libssh2_channel_direct_tcpip_ex(LIBSSH2_SESSION *session, const char *host, int port, const char *shost, int sport); 
+	LIBSSH2_CHANNEL * libssh2_channel_direct_tcpip_ex(LIBSSH2_SESSION *session, const char *host, int port, const char *shost, int sport);
 
 	int libssh2_channel_request_pty_size_ex(LIBSSH2_CHANNEL *channel,
 		int width, int height,
@@ -448,7 +448,7 @@ extern(C) {
 
 
 int libssh2_channel_get_exit_status(LIBSSH2_CHANNEL* channel);
-int libssh2_channel_get_exit_signal(LIBSSH2_CHANNEL *channel, char **exitsignal, size_t *exitsignal_len, char **errmsg, size_t *errmsg_len, char **langtag, size_t *langtag_len); 
+int libssh2_channel_get_exit_signal(LIBSSH2_CHANNEL *channel, char **exitsignal, size_t *exitsignal_len, char **errmsg, size_t *errmsg_len, char **langtag, size_t *langtag_len);
 
 int libssh2_channel_send_eof(LIBSSH2_CHANNEL *channel);
 

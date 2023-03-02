@@ -552,7 +552,7 @@ class Widget : ReflectableProperties {
 	Widget disabledBy() {
 		Widget p = this;
 		while(p) {
-			if(!p._enabled) 
+			if(!p._enabled)
 				return p;
 			p = p.parent;
 		}
@@ -3338,8 +3338,8 @@ version(win32_widgets) {
 			case WM_CONTEXTMENU:
 				auto hwndFrom = cast(HWND) wParam;
 
-				auto xPos = cast(short) LOWORD(lParam); 
-				auto yPos = cast(short) HIWORD(lParam); 
+				auto xPos = cast(short) LOWORD(lParam);
+				auto yPos = cast(short) HIWORD(lParam);
 
 				if(auto widgetp = hwndFrom in Widget.nativeMapping) {
 					POINT p;
@@ -4723,7 +4723,7 @@ class ListWidget : ListWidgetBase {
 		tabStop = false;
 		super(parent);
 		version(win32_widgets)
-			createWin32Window(this, WC_LISTBOX, "", 
+			createWin32Window(this, WC_LISTBOX, "",
 				0|WS_CHILD|WS_VISIBLE|LBS_NOTIFY, 0);
 	}
 
@@ -4906,7 +4906,7 @@ class ScrollableWidget : Widget {
 		this.parentWindow = parent.parentWindow;
 
 		version(win32_widgets) {
-			createWin32Window(this, Win32Class!"arsd_minigui_ScrollableWidget"w, "", 
+			createWin32Window(this, Win32Class!"arsd_minigui_ScrollableWidget"w, "",
 				0|WS_CHILD|WS_VISIBLE|WS_HSCROLL|WS_VSCROLL, 0);
 			super(parent);
 		} else version(custom_widgets) {
@@ -5757,7 +5757,7 @@ abstract class Slider : Widget {
 
 	version(win32_widgets)
 	void win32Setup(int style) {
-		createWin32Window(this, TRACKBAR_CLASS, "", 
+		createWin32Window(this, TRACKBAR_CLASS, "",
 			0|WS_CHILD|WS_VISIBLE|style|TBS_TOOLTIPS, 0);
 
 		// the trackbar sends the same messages as scroll, which
@@ -6285,7 +6285,7 @@ class HorizontalScrollbar : ScrollbarBase {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, "Scrollbar"w, "", 
+			createWin32Window(this, "Scrollbar"w, "",
 				0|WS_CHILD|WS_VISIBLE|SBS_HORZ|SBS_BOTTOMALIGN, 0);
 		} else version(custom_widgets) {
 			auto vl = new HorizontalLayout(this);
@@ -6407,7 +6407,7 @@ class VerticalScrollbar : ScrollbarBase {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, "Scrollbar"w, "", 
+			createWin32Window(this, "Scrollbar"w, "",
 				0|WS_CHILD|WS_VISIBLE|SBS_VERT|SBS_RIGHTALIGN, 0);
 		} else version(custom_widgets) {
 			auto vl = new VerticalLayout(this);
@@ -8948,7 +8948,7 @@ class TableView : Widget {
 
 	/+
 	version(win32_widgets)
-	override int handleWmDrawItem(DRAWITEMSTRUCT* dis) 
+	override int handleWmDrawItem(DRAWITEMSTRUCT* dis)
 		auto itemId = dis.itemID;
 		auto hdc = dis.hDC;
 		auto rect = dis.rcItem;
@@ -9304,7 +9304,7 @@ private class TableViewWidgetInner : Widget {
 								tempPainter.fillColor = style.backgroundColor;
 								tempPainter.outlineColor = style.backgroundColor;
 
-								tempPainter.drawRectangle(Point(startX - smw.position.x, y), 
+								tempPainter.drawRectangle(Point(startX - smw.position.x, y),
 									Point(endX - smw.position.x, y + lh));
 							}
 							auto tempPainter = painter;
@@ -9893,7 +9893,7 @@ class ToolBar : Widget {
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
-	version(win32_widgets) 
+	version(win32_widgets)
 		HIMAGELIST imageList;
 
 	this(Widget parent) {
@@ -12721,7 +12721,7 @@ class LineEdit : EditableTextWidget {
 	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
-			createWin32Window(this, "edit"w, "", 
+			createWin32Window(this, "edit"w, "",
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
 			version(trash_text) {
@@ -12816,7 +12816,7 @@ class PasswordEdit : EditableTextWidget {
 	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
-			createWin32Window(this, "edit"w, "", 
+			createWin32Window(this, "edit"w, "",
 				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
 			version(trash_text)
@@ -12841,7 +12841,7 @@ class TextEdit : EditableTextWidget {
 	this(Widget parent) {
 		super(parent);
 		version(win32_widgets) {
-			createWin32Window(this, "edit"w, "", 
+			createWin32Window(this, "edit"w, "",
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 		} else version(custom_widgets) {
 			version(trash_text)
@@ -13947,7 +13947,7 @@ abstract class MouseEventBase : Event {
 	int state; ///
 
 	/++
-		for consistent names with key event. 
+		for consistent names with key event.
 
 		History:
 			Added September 28, 2021 (dub v10.3)
@@ -14439,7 +14439,7 @@ void getSaveFileName(
 	string prefilledName = null,
 	string[] filters = null,
 	void delegate() onCancel = null,
-	string initialDirectory = null, 
+	string initialDirectory = null,
 )
 {
 	return getFileName(false, onOK, prefilledName, filters, onCancel, initialDirectory);
@@ -14458,16 +14458,16 @@ void getFileName(
 	version(win32_widgets) {
 		import core.sys.windows.commdlg;
 	/*
-	Ofn.lStructSize = sizeof(OPENFILENAME); 
-	Ofn.hwndOwner = hWnd; 
-	Ofn.lpstrFilter = szFilter; 
-	Ofn.lpstrFile= szFile; 
-	Ofn.nMaxFile = sizeof(szFile)/ sizeof(*szFile); 
-	Ofn.lpstrFileTitle = szFileTitle; 
-	Ofn.nMaxFileTitle = sizeof(szFileTitle); 
-	Ofn.lpstrInitialDir = (LPSTR)NULL; 
-	Ofn.Flags = OFN_SHOWHELP | OFN_OVERWRITEPROMPT; 
-	Ofn.lpstrTitle = szTitle; 
+	Ofn.lStructSize = sizeof(OPENFILENAME);
+	Ofn.hwndOwner = hWnd;
+	Ofn.lpstrFilter = szFilter;
+	Ofn.lpstrFile= szFile;
+	Ofn.nMaxFile = sizeof(szFile)/ sizeof(*szFile);
+	Ofn.lpstrFileTitle = szFileTitle;
+	Ofn.nMaxFileTitle = sizeof(szFileTitle);
+	Ofn.lpstrInitialDir = (LPSTR)NULL;
+	Ofn.Flags = OFN_SHOWHELP | OFN_OVERWRITEPROMPT;
+	Ofn.lpstrTitle = szTitle;
 	 */
 
 
@@ -14494,7 +14494,7 @@ void getFileName(
 			ofn.lpstrInitialDir = file.ptr;
 		}
 
-		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn)) 
+		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn))
 		{
 			string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
 			if(okString.length && okString[$-1] == '\0')

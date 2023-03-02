@@ -405,7 +405,7 @@ class Engine{
 			if(SDLNet_TCP_Recv(clientsock, data.ptr, 16) <= 0)
 				throw new Exception("Server closed the connection");
 
-			int lagAmount   = SDLNet_Read32(data.ptr); 
+			int lagAmount   = SDLNet_Read32(data.ptr);
 			int delayAmount = SDLNet_Read32(data.ptr + 4);
 			numberOfPlayers = SDLNet_Read32(data.ptr+8);
 
@@ -1196,7 +1196,7 @@ extern(C){
 
 int SDLNet_SocketReady(void* sock) {
         SDLNet_GenericSocket s = cast(SDLNet_GenericSocket)sock;
-        return sock != cast(TCPsocket)0 && s.ready;             
+        return sock != cast(TCPsocket)0 && s.ready;
 }
 
 

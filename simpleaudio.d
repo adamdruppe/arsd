@@ -1028,7 +1028,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		Returns:
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
-			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.
 		History:
 			Automatic resampling support added Nov 7, 2020.
 
@@ -1165,7 +1165,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		Returns:
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
-			Please note that the static type may change in the future. It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playOgg] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+			Please note that the static type may change in the future. It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playOgg] and [playWav], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.
 
 		History:
 			Automatic resampling support added Nov 7, 2020.
@@ -1359,7 +1359,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		Returns:
 			An implementation of [SampleController] which lets you pause, etc., the file.
 
-			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playOgg], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.  
+			Please note that the static type may change in the future.  It will always be a subtype of [SampleController], but it may be more specialized as I add more features and this will not necessarily match its sister functions, [playMp3] and [playOgg], though all three will share an ancestor in [SampleController].  Therefore, if you use `auto`, there's no guarantee the static type won't change in future versions and I will NOT consider that a breaking change since the base interface will remain compatible.
 		Bugs:
 			The seek method is not yet implemented.
 		History:
@@ -2311,7 +2311,7 @@ struct AudioOutput {
 					Sleep(1);
 			}
 
-			foreach(ref header; headers) 
+			foreach(ref header; headers)
 				if(auto err = waveOutUnprepareHeader(handle, &header, header.sizeof))
 					throw new WinMMException("unprepare", err);
 		} else static assert(0);
@@ -3022,7 +3022,7 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels,
 		throw new AlsaException("params malloc", err);
 	scope(exit)
 		snd_pcm_hw_params_free(hwParams);
-			 
+			
 	if (auto err = snd_pcm_hw_params_any(handle, hwParams))
 		// can actually survive a failure here, we will just move forward
 		{} // throw new AlsaException("params init", err);
@@ -3121,16 +3121,16 @@ extern(C):
 	}
 
 	enum snd_pcm_access_t {
-		/** mmap access with simple interleaved channels */ 
-		SND_PCM_ACCESS_MMAP_INTERLEAVED = 0, 
-		/** mmap access with simple non interleaved channels */ 
-		SND_PCM_ACCESS_MMAP_NONINTERLEAVED, 
-		/** mmap access with complex placement */ 
-		SND_PCM_ACCESS_MMAP_COMPLEX, 
-		/** snd_pcm_readi/snd_pcm_writei access */ 
-		SND_PCM_ACCESS_RW_INTERLEAVED, 
-		/** snd_pcm_readn/snd_pcm_writen access */ 
-		SND_PCM_ACCESS_RW_NONINTERLEAVED, 
+		/** mmap access with simple interleaved channels */
+		SND_PCM_ACCESS_MMAP_INTERLEAVED = 0,
+		/** mmap access with simple non interleaved channels */
+		SND_PCM_ACCESS_MMAP_NONINTERLEAVED,
+		/** mmap access with complex placement */
+		SND_PCM_ACCESS_MMAP_COMPLEX,
+		/** snd_pcm_readi/snd_pcm_writei access */
+		SND_PCM_ACCESS_RW_INTERLEAVED,
+		/** snd_pcm_readn/snd_pcm_writen access */
+		SND_PCM_ACCESS_RW_NONINTERLEAVED,
 		SND_PCM_ACCESS_LAST = SND_PCM_ACCESS_RW_NONINTERLEAVED
 	}
 

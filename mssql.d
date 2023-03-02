@@ -216,14 +216,14 @@ class MsSqlResult : ResultSet {
 private string getSQLError(short handletype, SQLHANDLE handle)
 {
 	char[32] sqlstate;
-	char[256] message; 
+	char[256] message;
 	SQLINTEGER nativeerror=0;
 	SQLSMALLINT textlen=0;			
-	auto ret = SQLGetDiagRec(handletype, handle, 1, 
-			cast(ubyte*)sqlstate.ptr, 
-			cast(int*)&nativeerror, 
-			cast(ubyte*)message.ptr, 
-			256, 
+	auto ret = SQLGetDiagRec(handletype, handle, 1,
+			cast(ubyte*)sqlstate.ptr,
+			cast(int*)&nativeerror,
+			cast(ubyte*)message.ptr,
+			256,
 			&textlen);
 
 	return message.idup;

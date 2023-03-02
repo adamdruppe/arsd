@@ -93,7 +93,7 @@ immutable(ubyte)[/*20*/] SHA1(T)(T data) if(isInputRange!(T)) /*const(ubyte)[] d
 				} else assert(0);
 
 				uint temp;
-				asm { 
+				asm {
 					mov EAX, a;
 					rol EAX, 5;
 					add EAX, f;

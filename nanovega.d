@@ -13288,7 +13288,7 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
     flag = GL_REPEAT;
   else if (imageFlags&NVGImageFlag.ClampToBorderX)
     flag = GL_CLAMP_TO_BORDER;
-  else 
+  else
     flag = GL_CLAMP_TO_EDGE;
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, flag);
 
@@ -13297,7 +13297,7 @@ int glnvg__renderCreateTexture (void* uptr, NVGtexture type, int w, int h, int i
     flag = GL_REPEAT;
   else if (imageFlags&NVGImageFlag.ClampToBorderY)
     flag = GL_CLAMP_TO_BORDER;
-  else 
+  else
     flag = GL_CLAMP_TO_EDGE;
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, flag);
 
