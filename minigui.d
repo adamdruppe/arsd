@@ -12329,6 +12329,9 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	version(use_new_text_system)
 	override int maxHeight() { return tdh.maxHeight; }
 
+	version(use_new_text_system)
+	override void focus() { if(tdh) tdh.focus(); }
+
 	void selectAll() {
 		version(win32_widgets)
 			SendMessage(hwnd, EM_SETSEL, 0, -1);
