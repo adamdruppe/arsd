@@ -8518,6 +8518,49 @@ class Window : Widget {
 
 		Blocks until this window is closed.
 
+		Bugs:
+
+		$(PITFALL
+			You should always have one event loop live for your application.
+			If you make two windows in sequence, the second call to loop (or
+			simpledisplay's [SimpleWindow.eventLoop], upon which this is built)
+			might fail:
+
+			---
+			// don't do this!
+			auto window = new Window();
+			window.loop();
+
+			// or new Window or new MainWindow, all the same
+			auto window2 = new SimpleWindow();
+			window2.eventLoop(0); // problematic! might crash
+			---
+
+			simpledisplay's current implementation assumes that final cleanup is
+			done when the event loop refcount reaches zero. So after the first
+			eventLoop returns, when there isn't already another one active, it assumes
+			the program will exit soon and cleans up.
+
+			This is arguably a bug that it doesn't reinitialize, and I'll probably change
+			it eventually, but in the mean time, there's an easy solution:
+
+			---
+			// do this
+			EventLoop mainEventLoop = EventLoop.get; // just add this line
+
+			auto window = new Window();
+			window.loop();
+
+			// or any other type of Window etc.
+			auto window2 = new Window();
+			window2.loop(); // perfectly fine since mainEventLoop still alive
+			---
+
+			By adding a top-level reference to the event loop, it ensures the final cleanup
+			is not performed until it goes out of scope too, letting the individual window loops
+			work without trouble despite the bug.
+		)
+
 		History:
 			The [BlockingMode] parameter was added on December 8, 2021.
 			The default behavior is to block until the application quits
