@@ -11,7 +11,7 @@
 	The main interface for this module is the Terminal struct, which
 	encapsulates the output functions and line-buffered input of the terminal, and
 	RealTimeConsoleInput, which gives real time input.
-	
+
 	Creating an instance of these structs will perform console initialization. When the struct
 	goes out of scope, any changes in console settings will be automatically reverted and pending
 	output is flushed. Do not create a global Terminal, as this will skip the destructor. You should
@@ -8012,7 +8012,7 @@ struct ScrollbackBuffer {
 				linePos++;
 				continue;
 			}
-		
+
 			terminal.moveTo(x, y + ((linePos >= 0) ? linePos : 0));
 
 			auto todo = line.components;

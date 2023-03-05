@@ -790,7 +790,7 @@ void writeApngToData(ApngAnimation apng, scope void delegate(in ubyte[] data) si
 				bytesPerLine = cast(size_t) frame.frameControlChunk.width * 4 * apng.header.depth / 8;
 			break;
 			default: assert(0);
-		
+
 		}
 
 		Chunk dat;

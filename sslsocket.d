@@ -104,7 +104,7 @@ version(use_openssl) {
 				throw new Exception("ssl connect");
 			}
 		}
-		
+
 		@trusted
 		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 			auto retval = SSL_write(ssl, buf.ptr, cast(uint) buf.length);

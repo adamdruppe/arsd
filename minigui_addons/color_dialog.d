@@ -3,7 +3,7 @@
 
 	History:
 		Written April 2017.
-		
+
 		Added to dub on December 9, 2021.
 +/
 module arsd.minigui_addons.color_dialog;

@@ -80,7 +80,7 @@ struct WindowChildrenIterator {
 			return result;
 		} else
 			static assert(0);
-		
+
 	}
 }
 

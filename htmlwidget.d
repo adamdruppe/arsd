@@ -492,7 +492,7 @@ bool layout(Element element, int containerWidth, int containerHeight, int cx, in
 
 	if(l.doNotRender)
 		return false;
-	
+
 	if(element.nodeType == 3 && element.nodeValue.strip.length == 0) {
 		l.doNotRender = true;
 		return false;
@@ -559,7 +559,7 @@ bool layout(Element element, int containerWidth, int containerHeight, int cx, in
 		}
 
 		auto childLayout = LayoutData.get(child);
-	
+
 		if(!childLayout.outsideNormalFlow && !childLayout.renderInline && hasContentLeft) {
 			cx = initialX;
 			cy += biggestHeight;

@@ -723,8 +723,8 @@ auto testAtom1 = `<?xml version="1.0" encoding="utf-8"?>
 	<link href="http://example.org/" />
 	<id>urn:uuid:60a76c80-d399-11d9-b91C-0003939e0af6</id>
 	<updated>2003-12-13T18:30:02Z</updated>
-	
-	
+
+
 	<entry>
 		<title>Atom-Powered Robots Run Amok</title>
 		<link href="http://example.org/2003/12/13/atom03" />

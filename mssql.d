@@ -128,7 +128,7 @@ class MsSqlResult : ResultSet {
 	{
 		return 1; //FIX ME
 	}
-	
+
 	this(SQLHSTMT statement) {
 		this.statement = statement;
 
@@ -203,7 +203,7 @@ class MsSqlResult : ResultSet {
 					null, null, null, null);
 				if (ret != SQL_SUCCESS)
 					throw new DatabaseException("Field mapping error: " ~ getSQLError(SQL_HANDLE_STMT, statement));
-				
+
 				string a = cast(string) buf[0 .. len].idup;
 
 				columnNames ~= a;
@@ -218,7 +218,7 @@ private string getSQLError(short handletype, SQLHANDLE handle)
 	char[32] sqlstate;
 	char[256] message;
 	SQLINTEGER nativeerror=0;
-	SQLSMALLINT textlen=0;			
+	SQLSMALLINT textlen=0;
 	auto ret = SQLGetDiagRec(handletype, handle, 1,
 			cast(ubyte*)sqlstate.ptr,
 			cast(int*)&nativeerror,

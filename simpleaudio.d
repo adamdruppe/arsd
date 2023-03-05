@@ -3022,7 +3022,7 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels,
 		throw new AlsaException("params malloc", err);
 	scope(exit)
 		snd_pcm_hw_params_free(hwParams);
-			
+
 	if (auto err = snd_pcm_hw_params_any(handle, hwParams))
 		// can actually survive a failure here, we will just move forward
 		{} // throw new AlsaException("params init", err);

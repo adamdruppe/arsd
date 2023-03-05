@@ -590,7 +590,7 @@ class MySql : Database {
 
 		ulong itemsTotal;
 		ulong itemsUsed;
-		
+
 		alias string[] Row;
 
 		Row row;
@@ -853,7 +853,7 @@ extern(System) {
 		  uint charsetnr;     /* Character set */
 		  uint type; /* Type of field. See mysql_com.h for types */
 		  // type is actually an enum btw
-		
+
 		version(MySQL_51) {
 			void* extension;
 		}

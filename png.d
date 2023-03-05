@@ -405,7 +405,7 @@ PNG* pngFromImage(IndexedImage i) {
 				case 4: shift-= 4; break;
 				case 8: shift-= 8; break;
 			}
-			
+
 			justAdvanced = shift < 0;
 			if(shift < 0) {
 				dsp++;

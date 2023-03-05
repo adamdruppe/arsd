@@ -393,7 +393,7 @@ class SelectBuilder : SqlBuilder {
 				sql ~= o;
 			}
 		}
-		
+
 		if(orderBys.length) {
 			bool outputted = false;
 			sql ~= " ORDER BY ";

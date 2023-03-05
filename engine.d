@@ -682,7 +682,7 @@ class Engine{
 			return buttonsDown[button][which];
 		return false;
 	}
-	
+
 	bool keyWasPressed(int button){
 		if(button < 400 && button >= 0)
 		if(!keysChecked[button] && keysDown[button]){
@@ -1152,7 +1152,7 @@ class Engine{
 			mouseY = event.motion.y;
 			mousedx += event.motion.xrel;
 			mousedy += event.motion.yrel;
-		
+
 			mouseEvent(
 				MOTION,
 				event.motion.x,
@@ -1246,7 +1246,7 @@ version(linux) {
 			return 0;
 		}
 	}
-	
+
 	// else, use kbhit.o from the C file
 }
 

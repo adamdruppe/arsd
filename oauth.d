@@ -179,7 +179,7 @@ string fbGraphImpl(string info, string id, bool useCache = false, long maxCacheH
 
 	if(id[0] != '/')
 		id = "/" ~ id;
-	
+
 	if(info !is null)
 		url = "https://graph.facebook.com" ~ id
 			~ c ~ "access_token=" ~ info ~ "&format=json";
@@ -202,7 +202,7 @@ string fbGraphImpl(string info, string id, bool useCache = false, long maxCacheH
 			}
 		}
 	}
-	
+
 	try {
 		response = curl(url);
 	} catch(CurlException e) {
@@ -848,7 +848,7 @@ ubyte[] mhashSign(string data, string signWith, hashid algorithm) {
                 ret ~= std.string.format("%.2x", mac[j]);
         }
 */
-	
+
 	return ret;
 }
 

@@ -135,7 +135,7 @@
 
 	Constructing Java objects works and it will pin it. Just remember
 	that `this` inside a method is still subject to escaping restrictions!
-	
+
 +/
 module arsd.jni;
 
