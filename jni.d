@@ -135,7 +135,7 @@
 
 	Constructing Java objects works and it will pin it. Just remember
 	that `this` inside a method is still subject to escaping restrictions!
-	
+
 +/
 module arsd.jni;
 
@@ -1131,6 +1131,14 @@ struct ActivateJniEnv {
 	If `main` is in Java, this is not necessary and should not be
 	used.
 
+	You can optionally pass a `JavaVMOption[]` to provide options
+	to the JVM when it starts, e.g.
+	`JavaVMOption("-Djava.compiler=NONE")` to disable JIT,
+	`JavaVMOption("-verbose:jni")` to print JNI-related messages,
+`	``JavaVMOption(`-Djava.class.path=c:\Users\me\program\jni\`)``
+	to specify the path to user classes or
+	``JavaVMOption(`-Djava.library.path=c:\Users\me\program\jdk-13.0.1\lib\`);``
+	to set native library path
 
 	This function will try to load the jvm with dynamic runtime
 	linking. For this to succeed:
@@ -1165,7 +1173,7 @@ struct ActivateJniEnv {
 		globally and it will use that jvm's environment and load classes and jars
 		through the java classpath.
 +/
-auto createJvm()() {
+auto createJvm()(JavaVMOption[] options = []) {
 	version(Windows)
 		import core.sys.windows.windows;
 	else
@@ -1195,12 +1203,6 @@ auto createJvm()() {
 	JNIEnv* env;
 
 	JavaVMInitArgs vm_args;
-	JavaVMOption[0] options;
-
-	//options[0].optionString = "-Djava.compiler=NONE";           /* disable JIT */
-	//options[1].optionString = "-verbose:jni";                   /* print JNI-related messages */
-	//options[1].optionString = `-Djava.class.path=c:\Users\me\program\jni\`; /* user classes */
-	//options[2].optionString = `-Djava.library.path=c:\Users\me\program\jdk-13.0.1\lib\`;  /* set native library path */
 
 	vm_args.version_ = JNI_VERSION_DESIRED;
 	vm_args.options = options.ptr;
