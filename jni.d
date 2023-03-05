@@ -360,11 +360,18 @@ private inout(char)[] fixupKeywordsInJavaPackageName(inout(char)[] s) {
 	s = s.replace(".function.", ".function_.");
 	s = s.replace(".ref.", ".ref_.");
 	s = s.replace(".module.", ".module_.");
+	s = s.replace(".package.", ".package_.");
+	s = s.replace(".debug.", ".debug_.");
+	s = s.replace(".version.", ".version_.");
+	s = s.replace(".asm.", ".asm_.");
+	s = s.replace(".shared.", ".shared_.");
+	s = s.replace(".scope.", ".scope_.");
 	return s[0 .. $-1]; // god i am such a bad programmer
 }
 
 private inout(char)[] fixupJavaClassName(inout(char)[] s) {
-	if(s == "Throwable" || s == "Object" || s == "Exception" || s == "Error" || s == "TypeInfo")
+	import std.algorithm : among;
+	if(s.among("Throwable", "Object", "Exception", "Error", "TypeInfo", "ClassInfo", "version"))
 		s = cast(typeof(s)) "Java" ~ s;
 	return s;
 }
@@ -552,7 +559,12 @@ void rawClassStructToD()(ref ClassFile cf, string dPackagePrefix, string outputD
 			auto name = method.name;
 
 			// FIXME: maybe check name for other D keywords but since so many overlap with java I think we will be ok most the time for now
-			if(name == "debug" || name == "delete" || name == "with" || name == "version" || name == "cast" || name == "union" || name == "align" || name == "alias" ||  name == "in" || name == "out" || name == "toString" || name == "init" || name == "lazy" || name == "immutable" || name == "is" || name == "function" || name == "delegate" || name == "template") {
+			import std.algorithm : among;
+			if(name.among("package", "export", "bool", "module", "debug",
+					"delete", "with", "version", "cast", "union", "align",
+					"alias", "in", "out", "toString", "init", "lazy",
+					"immutable", "is", "function", "delegate", "template",
+					"scope")) {
 				// toString is special btw in order to avoid a dmd bug
 				port ~= " @JavaName(\""~name~"\")";
 				name ~= "_";
