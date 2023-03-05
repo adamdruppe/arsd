@@ -1811,7 +1811,7 @@ mixin template CustomCgiFancyMain(CustomCgi, T, Args...) if(is(CustomCgi : Cgi))
 			//writefln("%s", reflection.functions[args[1]].dispatcher(null, namedArgs, "string"));
 		} else {
 +/
-//		}		
+//		}
 	}
 
 	mixin CustomCgiMain!(CustomCgi, fancyMainFunction, Args);
@@ -1858,7 +1858,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		type = param.type;
 		if(param.name in fieldTypes)
 			type = fieldTypes[param.name];
-		
+
 		if(type == "select") {
 			input = Element.make("select");
 
@@ -3298,7 +3298,7 @@ class Session {
 
 		if(hasData)
 			changed = true;
-			
+
 	}
 
 	/// Clears the session data from both memory and disk.
@@ -3635,7 +3635,7 @@ struct TemplateFilters {
 		} else {
 			date = cast(SysTime) DateTime.fromISOExtString(replacement);
 		}
-		
+
 		auto day = date.day;
 		auto year = date.year;
 		assert(date.month < monthNames.length, to!string(date.month));
@@ -4238,7 +4238,7 @@ string makeJavascriptApi(const ReflectionInfo* mod, string base, bool isNested =
 
 			script ~= n.name;
 
-		}		
+		}
 		script ~= ") { return {\n";
 
 		outp2 = false;

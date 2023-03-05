@@ -3,7 +3,7 @@
 		overloads can be done as an object representing the overload set
 		tat opCall does the dispatch. Then other overloads can actually
 		be added more sanely.
-	
+
 	FIXME:
 		instantiate template members when reflection with certain
 		arguments if marked right...
@@ -2826,7 +2826,7 @@ class OverloadSet : PrototypeObject {
 
 		if(bestScore < 0)
 			throw new Exception("no matching overload found " ~ to!string(arguments) ~ " " ~ to!string(overloads));
-			
+
 
 		return bestMatch.func.apply(this_, arguments);
 	}

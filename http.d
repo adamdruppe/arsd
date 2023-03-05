@@ -149,7 +149,7 @@ HttpResponse httpRequest(string method, string uri, const(ubyte)[] content = nul
 			SSL_library_init();
 			OpenSSL_add_all_algorithms();
 			SSL_load_error_strings();
-			
+
 			ctx = SSL_CTX_new(SSLv3_client_method());
 			sslAssert(!(ctx is null));
 

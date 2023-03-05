@@ -298,7 +298,7 @@ unittest {
 			return str ~ " concatenation";
 		}
 	};
-	
+
 	// once you have the globals set up, you call the interpreter
 	// with one simple function.
 	interpret(scriptSource, globals);
@@ -3745,7 +3745,7 @@ void repl(bool enhanced = false)(var globals) {
 			Range r;
 			r.popFront();
 			return r;
-			
+
 		}
 
 		void writeln(T...)(T t) {

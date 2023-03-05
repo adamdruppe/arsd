@@ -159,7 +159,7 @@ template enforceBase(ExceptionBaseClass, string failureCondition = "ret is null"
 					sink(" call failed");
 				}
 			}
-			
+
 			auto exception = new C(args);
 			exception.file = file;
 			exception.line = line;
@@ -188,7 +188,7 @@ void raise(ExceptionBaseClass, T...)(string file = __FILE__, size_t line = __LIN
 			sink(__traits(identifier, ExceptionBaseClass));
 		}
 	}
-	
+
 	auto exception = new C();
 	exception.file = file;
 	exception.line = line;

@@ -8908,7 +8908,7 @@ class TableView : Widget {
 
 		assert(percentTotal >= 0, "The total percents in your column definitions were negative. They must add up to something between 0 and 100.");
 		assert(percentTotal <= 100, "The total percents in your column definitions exceeded 100. They must add up to no more than 100 (can be less though).");
-			
+
 
 	}
 
@@ -9101,7 +9101,7 @@ class TableView : Widget {
 			SendMessage(hwnd, LVM_REDRAWITEMS, 0, SendMessage(hwnd, LVM_GETITEMCOUNT, 0, 0));
 			UpdateWindow(hwnd);
 		}
-			
+
 
 	}
 
@@ -9911,7 +9911,7 @@ class ToolBar : Widget {
 			// and eh, with windows visual styles enabled it looks cool anyway soooo gonna
 			// leave it commented
 			createWin32Window(this, "ToolbarWindow32"w, "", TBSTYLE_LIST|/*TBSTYLE_FLAT|*/TBSTYLE_TOOLTIPS);
-			
+
 			SendMessageW(hwnd, TB_SETEXTENDEDSTYLE, 0, 8/*TBSTYLE_EX_MIXEDBUTTONS*/);
 
 			imageList = ImageList_Create(
@@ -10955,7 +10955,7 @@ class OnOffSwitch : MouseActivatedWidget {
 struct ImageLabel {
 	/++
 		Defines a label+image combo used by some widgets.
-		
+
 		If you provide just a text label, that is all the widget will try to
 		display. Or just an image will display just that. If you provide both,
 		it may display both text and image side by side or display the image

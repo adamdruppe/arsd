@@ -358,7 +358,7 @@ class Image : Drawable{
 		for(int b = 0; b < hei; b++)
 			p.putpixel(XY(a, b), i.getPixel(XY(a + x, b + y)));
 	*/
-	
+
 		SDL_Surface* s1;
 
 		s1 = IMG_Load(std.string.toStringz(filename));
@@ -467,7 +467,7 @@ class Image : Drawable{
 		       	a.g = bufp[1];
 	        	a.b = bufp[0];
 		}
-	
+
 		return a;
 	}
 
@@ -1055,7 +1055,7 @@ int wordLength(in char[] w){
 			glEnd();
 		}
 	}
-	
+
 	void hline(Point start, int width, Color color){
 	if(useGL && s.bpp == 124){
 		line(start, XY(start.x + width, start.y), color);
@@ -1080,7 +1080,7 @@ int wordLength(in char[] w){
 			point.y++;
 		}
 	}
-	
+
 
 	void circle(Point center, int radius, Color color){
 		if(special) center += translate;
@@ -1222,7 +1222,7 @@ int wordLength(in char[] w){
 		bufp = cast(ubyte*)s.surface.pixels;
 		for(int y = 0; y < s.height; y++)
 			for(int x = 0; x < s.width; x++){
-			
+
 				bufp[2] = cast(ubyte)((bufp[2] * (255-color.a) + color.r * color.a) / 255);
 			        bufp[1] = cast(ubyte)((bufp[1] * (255-color.a) + color.g * color.a) / 255);
 		        	bufp[0] = cast(ubyte)((bufp[0] * (255-color.a) + color.b * color.a) / 255);
@@ -1396,7 +1396,7 @@ Point drawShadedRect(Painter p, Point where, int width, int height){
 	Color gray = RGB(128,128,128);
 
 	Point w;
-	
+
 	// top section
 	w = where + XY( BORDER_WIDTH, 0);
 		p.box( 	w + XY(0, 				0 * BORDER_WIDTH / 4),
@@ -1419,7 +1419,7 @@ Point drawShadedRect(Painter p, Point where, int width, int height){
 		p.box( 	w + XY(-1 *BORDER_WIDTH / 4,		3 * BORDER_WIDTH / 4),
 			w + XY( 1 *BORDER_WIDTH / 4 + width, 	4 * BORDER_WIDTH / 4),
 			gray);
-			
+
 	// left section
 	w = where + XY( 0, BORDER_WIDTH);
 		p.box( 	w + XY(0 * BORDER_WIDTH / 4, -1),

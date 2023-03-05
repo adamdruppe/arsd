@@ -7,15 +7,15 @@
 
 /++
 	This is version 2 of my http/1.1 client implementation.
-	
-	
+
+
 	It has no dependencies for basic operation, but does require OpenSSL
 	libraries (or compatible) to be support HTTPS. This dynamically loaded
 	on-demand (meaning it won't be loaded if you don't use it, but if you do
 	use it, the openssl dynamic libraries must be found in the system search path).
 
 	You can compile with `-version=without_openssl` to entirely disable ssl support.
-	
+
 	http2.d, despite its name, does NOT implement HTTP/2.0, but this
 	shouldn't matter for 99.9% of usage, since all servers will continue
 	to support HTTP/1.1 for a very long time.
@@ -778,7 +778,7 @@ struct Uri {
 
 		path_loop:
 		auto path_start = idx;
-		
+
 		foreach(char c; uri[idx .. $]) {
 			if(c == '?' || c == '#')
 				break;
@@ -1009,7 +1009,7 @@ class HttpRequest {
 		setMaximumNumberOfRedirects();
 	}
 
-	
+
 	/// ditto
 	this(Uri where, HttpVerb method, ICache cache = null, Duration timeout = 10.seconds, string proxy = null) {
 		this(null, where, method, cache, timeout, proxy);
@@ -2971,7 +2971,7 @@ class HttpClient {
 		Returns true if the given no_proxy rule matches the uri.
 
 		Invalid IP ranges are silently ignored and return false.
-	
+
 		See $(LREF proxyIgnore).
 	+/
 	static bool matchProxyIgnore(scope const(char)[] rule, scope const Uri uri) nothrow {
@@ -3916,7 +3916,7 @@ version(use_openssl) {
 
 			return 0;
 		}
-		
+
 		@trusted
 		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) {
 		//import std.stdio;writeln(cast(string) buf);
@@ -4421,7 +4421,7 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 				}
 			}
 			---
-			
+
 +/
 class WebSocket {
 	private Uri uri;

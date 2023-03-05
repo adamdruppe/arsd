@@ -524,12 +524,12 @@ template extract(A, T, R...){
 		if(sqlite3_bind_double(s, col, value) != SQLITE_OK)
 			throw new DatabaseException("bind " ~ db.error());
 	}
-	
+
 	void bind(int col, int value){
 		if(sqlite3_bind_int(s, col, value) != SQLITE_OK)
 			throw new DatabaseException("bind " ~ db.error());
 	}
-	
+
 	void bind(int col, long value){
 		if(sqlite3_bind_int64(s, col, value) != SQLITE_OK)
 			throw new DatabaseException("bind " ~ db.error());
@@ -700,12 +700,12 @@ extern(C){
 			void *,                                    /* 1st argument to callback */
 			char **errmsg                              /* Error msg written here */
 			);
-			
+
 	int sqlite3_open(
 			const(char) *filename,   /* Database filename (UTF-8) */
 			sqlite3 **ppDb          /* OUT: SQLite db handle */
 			);
-			
+
 int sqlite3_open_v2(
   const char *filename,   /* Database filename (UTF-8) */
   sqlite3 **ppDb,         /* OUT: SQLite db handle */

@@ -2667,7 +2667,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 									'0'-'9' == 0-9
 									'a'-'z' == 10 - 36
 									anything else is invalid
-								
+
 								then a palette in hex rgba format (8 chars each), up to 26 entries
 
 								then a capital Z

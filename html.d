@@ -827,7 +827,7 @@ mixin template opDispatches(R) {
 	Translates into javascript:
 		alert("hello");
 		alert("asds", somevar);
-		
+
 
 	The passed code is evaluated lazily.
 */
@@ -2228,7 +2228,7 @@ Color readCssColor(string cssColor) {
 					~ cssColor[1] ~ cssColor[1]
 					~ cssColor[2] ~ cssColor[2];
 		}
-		
+
 		if(cssColor.length == 6)
 			cssColor ~= "ff";
 

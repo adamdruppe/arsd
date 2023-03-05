@@ -227,7 +227,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 				import std.conv;
 				wchar*[1] names = [(to!wstring(memberName) ~ "\0"w).dup.ptr];
 				ComCheck(innerComObject_.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name");
-				
+
 				DISPPARAMS disp_params;
 
 				static if(args.length) {
