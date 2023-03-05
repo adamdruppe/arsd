@@ -1951,6 +1951,7 @@ auto DDatumToJni(T)(JNIEnv* env, T data) {
 		(*env).SetByteArrayRegion(env, j, 0, cast(jsize) data.length, data.ptr);
 		return j;
 	} else static if(is(T == wchar[])) {
+		import std.conv : to;
 		return DDatumToJni(env, to!string(data)); // FIXME: could prolly be more efficient
 	} else static if(is(T == short[])) {
 		auto j = (*env).NewShortArray(env, cast(jsize) data.length);
