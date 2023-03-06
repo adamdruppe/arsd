@@ -2417,7 +2417,7 @@ class Cgi {
 			return; // don't double close
 
 		if(!outputtedResponseData)
-			write("", false, false);
+			write("", true, false);
 
 		// writing auto buffered data
 		if(requestMethod != RequestMethod.HEAD && autoBuffer) {
