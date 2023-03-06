@@ -217,6 +217,8 @@ the virtual functions remain as the default calculated values. then the reads go
 +/
 module arsd.minigui;
 
+import arsd.core;
+
 /++
 	This hello world sample will have an oversized button, but that's ok, you see your first window!
 +/
@@ -7249,43 +7251,13 @@ LRESULT DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
 			auto width = LOWORD(lparam);
 			auto height = HIWORD(lparam);
 
+			auto hdc = GetDC(hwnd);
+			auto hdcBmp = CreateCompatibleDC(hdc);
+
 			// FIXME: could this be more efficient? it never relinquishes a large bitmap
 			if(width > win.bmpWidth || height > win.bmpHeight) {
-				auto hdc = GetDC(hwnd);
 				auto oldBuffer = win.buffer;
 				win.buffer = CreateCompatibleBitmap(hdc, width, height);
-
-				auto hdcBmp = CreateCompatibleDC(hdc);
-
-				auto oldBmp = SelectObject(hdcBmp, win.buffer);
-
-				if(oldBuffer) {
-					auto hdcOldBmp = CreateCompatibleDC(hdc);
-					auto oldOldBmp = SelectObject(hdcOldBmp, oldBuffer);
-
-					BitBlt(hdcBmp, 0, 0, win.bmpWidth, win.bmpHeight, hdcOldBmp, 0, 0, SRCCOPY);
-
-					SelectObject(hdcOldBmp, oldOldBmp);
-					DeleteDC(hdcOldBmp);
-				}
-
-				auto brush = GetSysColorBrush(COLOR_3DFACE);
-				RECT r;
-				r.left = win.bmpWidth;
-				r.top = 0;
-				r.right = width;
-				r.bottom = height;
-				FillRect(hdcBmp, &r, brush);
-
-				r.left = 0;
-				r.top = win.bmpHeight;
-				r.right = width;
-				r.bottom = height;
-				FillRect(hdcBmp, &r, brush);
-
-				SelectObject(hdcBmp, oldBmp);
-				DeleteDC(hdcBmp);
-				ReleaseDC(hwnd, hdc);
 
 				if(oldBuffer)
 					DeleteObject(oldBuffer);
@@ -7293,6 +7265,21 @@ LRESULT DoubleBufferWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
 				win.bmpWidth = width;
 				win.bmpHeight = height;
 			}
+
+			// just always erase it upon resizing so minigui can draw over with a clean slate
+			auto oldBmp = SelectObject(hdcBmp, win.buffer);
+
+			auto brush = GetSysColorBrush(COLOR_3DFACE);
+			RECT r;
+			r.left = 0;
+			r.top = 0;
+			r.right = width;
+			r.bottom = height;
+			FillRect(hdcBmp, &r, brush);
+
+			SelectObject(hdcBmp, oldBmp);
+			DeleteDC(hdcBmp);
+			ReleaseDC(hwnd, hdc);
 		break;
 		case WM_PAINT:
 			if(win.buffer is null)

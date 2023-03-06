@@ -749,9 +749,14 @@ interface->SetProgressValue(hwnd, 40, 100);
 	---
 	)
 
+	History:
+		simpledisplay was stand alone until about 2015. It then added a dependency on [arsd.color] and changed its name to `arsd.simpledisplay`.
 
+		On March 4, 2023 (dub v11.0), it started importing [arsd.core] as well, making that a build-time requirement.
 +/
 module arsd.simpledisplay;
+
+import arsd.core;
 
 // FIXME: tetris demo
 // FIXME: space invaders demo
@@ -2693,6 +2698,46 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		takes [KeyEvent] for a key handler, [MouseEvent], for a mouse handler,
 		and one that takes `dchar` for a char event handler. You can use as many
 		or as few handlers as you need for your application.
+
+		Bugs:
+
+		$(PITFALL
+			You should always have one event loop live for your application.
+			If you make two windows in sequence, the second call to eventLoop
+			might fail:
+
+			---
+			// don't do this!
+			auto window = new SimpleWindow();
+			window.eventLoop(0);
+
+			auto window2 = new SimpleWindow();
+			window2.eventLoop(0); // problematic! might crash
+			---
+
+			simpledisplay's current implementation assumes that final cleanup is
+			done when the event loop refcount reaches zero. So after the first
+			eventLoop returns, when there isn't already another one active, it assumes
+			the program will exit soon and cleans up.
+
+			This is arguably a bug that it doesn't reinitialize, and I'll probably change
+			it eventually, but in the mean time, there's an easy solution:
+
+			---
+			// do this
+			EventLoop mainEventLoop = EventLoop.get; // just add this line
+
+			auto window = new SimpleWindow();
+			window.eventLoop(0);
+
+			auto window2 = new SimpleWindow();
+			window2.eventLoop(0); // perfectly fine since mainEventLoop still alive
+			---
+
+			By adding a top-level reference to the event loop, it ensures the final cleanup
+			is not performed until it goes out of scope too, letting the individual window loops
+			work without trouble despite the bug.
+		)
 
 		History:
 			The overload without `pulseTimeout` was added on December 8, 2021.
@@ -5806,231 +5851,6 @@ void getClipboardImage()(SimpleWindow clipboardOwner, void delegate(MemoryImage)
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
 	} else static assert(0);
-}
-
-version(Windows)
-struct WCharzBuffer {
-	wchar[] buffer;
-	wchar[256] staticBuffer = void;
-
-	size_t length() {
-		return buffer.length;
-	}
-
-	wchar* ptr() {
-		return buffer.ptr;
-	}
-
-	wchar[] slice() {
-		return buffer;
-	}
-
-	void copyInto(R)(ref R r) {
-		static if(is(R == wchar[N], size_t N)) {
-			r[0 .. this.length] = slice[];
-			r[this.length] = 0;
-		} else static assert(0, "can only copy into wchar[n], not " ~ R.stringof);
-	}
-
-	/++
-		conversionFlags = [WindowsStringConversionFlags]
-	+/
-	this(in char[] data, int conversionFlags = 0) {
-		conversionFlags |= WindowsStringConversionFlags.zeroTerminate; // this ALWAYS zero terminates cuz of its name
-		auto sz = sizeOfConvertedWstring(data, conversionFlags);
-		if(sz > staticBuffer.length)
-			buffer = new wchar[](sz);
-		else
-			buffer = staticBuffer[];
-
-		buffer = makeWindowsString(data, buffer, conversionFlags);
-	}
-}
-
-version(Windows)
-int sizeOfConvertedWstring(in char[] s, int conversionFlags) {
-	int size = 0;
-
-	if(conversionFlags & WindowsStringConversionFlags.convertNewLines) {
-		// need to convert line endings, which means the length will get bigger.
-
-		// BTW I betcha this could be faster with some simd stuff.
-		char last;
-		foreach(char ch; s) {
-			if(ch == 10 && last != 13)
-				size++; // will add a 13 before it...
-			size++;
-			last = ch;
-		}
-	} else {
-		// no conversion necessary, just estimate based on length
-		/*
-			I don't think there's any string with a longer length
-			in code units when encoded in UTF-16 than it has in UTF-8.
-			This will probably over allocate, but that's OK.
-		*/
-		size = cast(int) s.length;
-	}
-
-	if(conversionFlags & WindowsStringConversionFlags.zeroTerminate)
-		size++;
-
-	return size;
-}
-
-version(Windows)
-enum WindowsStringConversionFlags : int {
-	zeroTerminate = 1,
-	convertNewLines = 2,
-}
-
-version(Windows)
-class WindowsApiException : Exception {
-	char[256] buffer;
-	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		assert(msg.length < 100);
-
-		auto error = GetLastError();
-		buffer[0 .. msg.length] = msg;
-		buffer[msg.length] = ' ';
-
-		int pos = cast(int) msg.length + 1;
-
-		if(error == 0)
-			buffer[pos++] = '0';
-		else {
-
-			auto ec = error;
-			auto init = pos;
-			while(ec) {
-				buffer[pos++] = (ec % 10) + '0';
-				ec /= 10;
-			}
-
-			buffer[pos++] = ' ';
-
-			size_t size = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, null, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), &(buffer[pos]), cast(DWORD) buffer.length - pos, null);
-
-			pos += size;
-		}
-
-
-		super(cast(string) buffer[0 .. pos], file, line, next);
-	}
-}
-
-class ErrnoApiException : Exception {
-	char[256] buffer;
-	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		assert(msg.length < 100);
-
-		import core.stdc.errno;
-		auto error = errno;
-		buffer[0 .. msg.length] = msg;
-		buffer[msg.length] = ' ';
-
-		int pos = cast(int) msg.length + 1;
-
-		if(error == 0)
-			buffer[pos++] = '0';
-		else {
-			auto init = pos;
-			while(error) {
-				buffer[pos++] = (error % 10) + '0';
-				error /= 10;
-			}
-			for(int i = 0; i < (pos - init) / 2; i++) {
-				char c = buffer[i + init];
-				buffer[i + init] = buffer[pos - (i + init) - 1];
-				buffer[pos - (i + init) - 1] = c;
-			}
-		}
-
-
-		super(cast(string) buffer[0 .. pos], file, line, next);
-	}
-
-}
-
-version(Windows)
-wchar[] makeWindowsString(in char[] str, wchar[] buffer, int conversionFlags = WindowsStringConversionFlags.zeroTerminate) {
-	if(str.length == 0)
-		return null;
-
-	int pos = 0;
-	dchar last;
-	foreach(dchar c; str) {
-		if(c <= 0xFFFF) {
-			if((conversionFlags & WindowsStringConversionFlags.convertNewLines) && c == 10 && last != 13)
-				buffer[pos++] = 13;
-			buffer[pos++] = cast(wchar) c;
-		} else if(c <= 0x10FFFF) {
-			buffer[pos++] = cast(wchar)((((c - 0x10000) >> 10) & 0x3FF) + 0xD800);
-			buffer[pos++] = cast(wchar)(((c - 0x10000) & 0x3FF) + 0xDC00);
-		}
-
-		last = c;
-	}
-
-	if(conversionFlags & WindowsStringConversionFlags.zeroTerminate) {
-		buffer[pos] = 0;
-	}
-
-	return buffer[0 .. pos];
-}
-
-version(Windows)
-char[] makeUtf8StringFromWindowsString(in wchar[] str, char[] buffer) {
-	if(str.length == 0)
-		return null;
-
-	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, buffer.ptr, cast(int) buffer.length, null, null);
-	if(got == 0) {
-		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-			throw new Exception("not enough buffer");
-		else
-			throw new Exception("conversion"); // FIXME: GetLastError
-	}
-	return buffer[0 .. got];
-}
-
-version(Windows)
-string makeUtf8StringFromWindowsString(in wchar[] str) {
-	char[] buffer;
-	auto got = WideCharToMultiByte(CP_UTF8, 0, str.ptr, cast(int) str.length, null, 0, null, null);
-	buffer.length = got;
-
-	// it is unique because we just allocated it above!
-	return cast(string) makeUtf8StringFromWindowsString(str, buffer);
-}
-
-version(Windows)
-string makeUtf8StringFromWindowsString(wchar* str) {
-	char[] buffer;
-	auto got = WideCharToMultiByte(CP_UTF8, 0, str, -1, null, 0, null, null);
-	buffer.length = got;
-
-	got = WideCharToMultiByte(CP_UTF8, 0, str, -1, buffer.ptr, cast(int) buffer.length, null, null);
-	if(got == 0) {
-		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-			throw new Exception("not enough buffer");
-		else
-			throw new Exception("conversion"); // FIXME: GetLastError
-	}
-	return cast(string) buffer[0 .. got];
-}
-
-int findIndexOfZero(in wchar[] str) {
-	foreach(idx, wchar ch; str)
-		if(ch == 0)
-			return cast(int) idx;
-	return cast(int) str.length;
-}
-int findIndexOfZero(in char[] str) {
-	foreach(idx, char ch; str)
-		if(ch == 0)
-			return cast(int) idx;
-	return cast(int) str.length;
 }
 
 /// Copies some text to the clipboard.
