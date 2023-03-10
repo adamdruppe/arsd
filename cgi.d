@@ -5521,8 +5521,25 @@ class ListeningConnectionManager {
 				return listener.accept();
 
 			return null;
-		} else
-			return listener.accept(); // FIXME: check the cancel flag!
+		} else {
+
+			Socket socket = listener;
+
+			auto check = new SocketSet();
+
+			keep_looping:
+			check.reset();
+			check.add(socket);
+
+			// just to check the stop flag on a kinda busy loop. i hate this FIXME
+			auto got = Socket.select(check, null, null, 3.seconds);
+			if(got > 0)
+				return listener.accept();
+			if(globalStopFlag)
+				return null;
+			else
+				goto keep_looping;
+		}
 	}
 
 	int defaultNumberOfThreads() {
