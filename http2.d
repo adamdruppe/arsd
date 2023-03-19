@@ -5073,8 +5073,17 @@ class WebSocket {
 
 					//import std.stdio; writeln("closed ", cast(string) m.data);
 					readyState_ = CLOSED;
-					if(onclose)
-						onclose();
+
+					int code;
+					const(char)[] reason;
+
+					if(m.data.length >= 2) {
+						code = (m.data[0] << 8) | m.data[1];
+						reason = (cast(char[]) m.data[2 .. $]);
+					}
+
+					if(onclose_)
+						onclose_(CloseEvent(code, reason));
 
 					unregisterActiveSocket(this);
 				break;
@@ -5108,8 +5117,42 @@ class WebSocket {
 		} while(lowLevelReceive());
 	}
 
+	/++
+		Arguments for the close event. The `code` and `reason` are provided from the close message on the websocket, if they are present. The spec says code 1000 indicates a normal, default reason close, but does not specify more. The `reason` should be user readable.
 
-	void delegate() onclose; ///
+		$(PITFALL
+			The `reason` argument references a temporary buffer and there's no guarantee it will remain valid once your callback returns. It may be freed and will very likely be overwritten. If you want to keep the reason beyond the callback, make sure you `.idup` it.
+		)
+
+		History:
+			Added March 19, 2023 (dub v11.0).
+	+/
+	static struct CloseEvent {
+		int code;
+		const(char)[] reason;
+	}
+
+	/++
+		The `CloseEvent` you get references a temporary buffer that may be overwritten after your handler returns. If you want to keep it or the `event.reason` member, remember to `.idup` it.
+
+		History:
+			The `CloseEvent` overload was added March 19, 2023 (dub v11.0). Before that, `onclose` was a public member of type `void delegate()`. This change keeps setting working, but the getter's type has changed.
+	+/
+	void onclose(void delegate(CloseEvent event) dg) {
+		onclose_ = dg;
+	}
+
+	/// ditto
+	void onclose(void delegate() dg) {
+		onclose_ = (CloseEvent ce) { dg(); };
+	}
+
+	/// ditto
+	void delegate(CloseEvent) onclose() {
+		return onclose_;
+	}
+
+	private void delegate(CloseEvent event) onclose_; ///
 	void delegate() onerror; ///
 	void delegate(in char[]) ontextmessage; ///
 	void delegate(in ubyte[]) onbinarymessage; ///
