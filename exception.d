@@ -1,4 +1,12 @@
-/// A draft of a better way to do exceptions
+/++
+	A draft of a better way to do exceptions
+
+	History:
+		Originally written in May 2015 as a demo, but I never used it inside arsd.
+
+		Deprecated in March 2023 (dub v11.0), with the successful parts moved to [arsd.core]. It is unlikely to get any future updates.
++/
+deprecated("This was just a proof of concept demo, the actual concepts are now implemented inside arsd.core")
 module arsd.exception;
 /*
 	Exceptions 2.0

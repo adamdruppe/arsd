@@ -1213,6 +1213,18 @@ struct Terminal {
 
 	version(TerminalDirectToEmulator)
 	/++
+		When using the embedded terminal emulator build, closing the terminal signals that the main thread should exit
+		by sending it a hang up event. If the main thread responds, no problem. But if it doesn't, it can keep a thing
+		running in the background with no visible window. This timeout gives it a chance to exit cleanly, but if it
+		doesn't by the end of the time, the program will be forcibly closed automatically.
+
+		History:
+			Added March 14, 2023 (dub v10.10)
+	+/
+	static __gshared int terminateTimeoutMsecs = 3500;
+
+	version(TerminalDirectToEmulator)
+	/++
 	+/
 	this(ConsoleOutputType type) {
 		_initialized = true;
@@ -1274,6 +1286,18 @@ struct Terminal {
 					});
 					tew = window.tew;
 					window.loop();
+
+					// if the other thread doesn't terminate in a reasonable amount of time
+					// after the window closes, we're gonna terminate it by force to avoid
+					// leaving behind a background process with no obvious ui
+					if(Terminal.terminateTimeoutMsecs >= 0) {
+						auto murderThread = new Thread(() {
+							Thread.sleep(terminateTimeoutMsecs.msecs);
+							terminateTerminalProcess(threadId);
+						});
+						murderThread.isDaemon = true;
+						murderThread.start();
+					}
 				} catch(Throwable t) {
 					guiAbortProcess(t.toString());
 				}
@@ -8425,6 +8449,24 @@ int approximate16Color(RGB color) {
 
 version(TerminalDirectToEmulator) {
 
+	void terminateTerminalProcess(T)(T threadId) {
+		version(Posix) {
+			pthread_kill(threadId, SIGQUIT); // or SIGKILL even?
+
+			assert(0);
+			//import core.sys.posix.pthread;
+			//pthread_cancel(widget.term.threadId);
+			//widget.term = null;
+		} else version(Windows) {
+			import core.sys.windows.windows;
+			auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
+			TerminateProcess(hnd, -1);
+			assert(0);
+		}
+	}
+
+
+
 	/++
 		Indicates the TerminalDirectToEmulator features
 		are present. You can check this with `static if`.
@@ -8747,6 +8789,7 @@ version(TerminalDirectToEmulator) {
 
 						_dup2(_fileno(stdout), _fileno(stderr));
 						setvbuf(stderr, null, _IOLBF, 128); // if I don't unbuffer this it can really confuse things
+						assert(0);
 					}
 
 					WindowsRead(0, 0, this.overlapped);
@@ -9369,18 +9412,9 @@ version(TerminalDirectToEmulator) {
 							widget.parentWindow.close(); // I'm gonna let it segfault if this is null cuz like that isn't supposed to happen
 							return;
 						}
-						pthread_kill(widget.term.threadId, SIGQUIT); // or SIGKILL even?
-
-						assert(0);
-						//import core.sys.posix.pthread;
-						//pthread_cancel(widget.term.threadId);
-						//widget.term = null;
-					} else version(Windows) {
-						import core.sys.windows.windows;
-						auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
-						TerminateProcess(hnd, -1);
-						assert(0);
 					}
+
+					terminateTerminalProcess(widget.term.threadId);
 				} else if(c == 3) {// && !ev.shiftKey) /* ctrl+c, interrupt. But NOT ctrl+shift+c as that's a user-defined keystroke and/or "copy", but ctrl+shift+c never gets sent here.... thanks to the skipNextChar above */ {
 					sendSigInt();
 				} else {

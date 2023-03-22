@@ -478,8 +478,15 @@ void main() {
 	cgi.d copyright 2008-2023, Adam D. Ruppe. Provided under the Boost Software License.
 
 	Yes, this file is old, and yes, it is still actively maintained and used.
+
+	History:
+		An import of `arsd.core` was added on March 21, 2023 (dub v11.0). Prior to this, the module's default configuration was completely stand-alone. You must now include the `core.d` file in your builds with `cgi.d`.
+
+		This change is primarily to integrate the event loops across the library, allowing you to more easily use cgi.d along with my other libraries like simpledisplay and http2.d. Previously, you'd have to run separate helper threads. Now, they can all automatically work together.
 +/
 module arsd.cgi;
+
+import arsd.core;
 
 // FIXME: Nullable!T can be a checkbox that enables/disables the T on the automatic form
 // and a SumType!(T, R) can be a radio box to pick between T and R to disclose the extra boxes on the automatic form
@@ -7118,18 +7125,6 @@ void closeLocalServerConnection(LocalServerConnectionHandle handle) {
 
 void runSessionServer()() {
 	runAddonServer("/tmp/arsd_session_server", new BasicDataServerImplementation());
-}
-
-version(Posix)
-private void makeNonBlocking(int fd) {
-	import core.sys.posix.fcntl;
-	auto flags = fcntl(fd, F_GETFL, 0);
-	if(flags == -1)
-		throw new Exception("fcntl get");
-	flags |= O_NONBLOCK;
-	auto s = fcntl(fd, F_SETFL, flags);
-	if(s == -1)
-		throw new Exception("fcntl set");
 }
 
 import core.stdc.errno;

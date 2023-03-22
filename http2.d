@@ -24,8 +24,20 @@
 		Automatic `100 Continue` handling was added on September 28, 2021. It doesn't
 		set the Expect header, so it isn't supposed to happen, but plenty of web servers
 		don't follow the standard anyway.
+
+		A dependency on [arsd.core] was added on March 19, 2023 (dub v11.0). Previously,
+		module was stand-alone. You will have add the `core.d` file from the arsd repo
+		to your build now if you are managing the files and builds yourself.
+
+		The benefits of this dependency include some simplified implementation code which
+		makes it easier for me to add more api conveniences, better exceptions with more
+		information, and better event loop integration with other arsd modules beyond
+		just the simpledisplay adapters available previously. The new integration can
+		also make things like heartbeat timers easier for you to code.
 +/
 module arsd.http2;
+
+import arsd.core;
 
 ///
 unittest {
@@ -4909,8 +4921,12 @@ class WebSocket {
 
 		readyState_ = CLOSING;
 
+		closeCalled = true;
+
 		llclose();
 	}
+
+	private bool closeCalled;
 
 	/++
 		Sends a ping message to the server. This is done automatically by the library if you set a non-zero [Config.pingFrequency], but you can also send extra pings explicitly as well with this function.
@@ -5072,9 +5088,8 @@ class WebSocket {
 				case WebSocketOpcode.close:
 
 					//import std.stdio; writeln("closed ", cast(string) m.data);
-					readyState_ = CLOSED;
 
-					int code;
+					ushort code = CloseEvent.StandardCloseCodes.noStatusCodePresent;
 					const(char)[] reason;
 
 					if(m.data.length >= 2) {
@@ -5082,8 +5097,14 @@ class WebSocket {
 						reason = (cast(char[]) m.data[2 .. $]);
 					}
 
-					if(onclose_)
-						onclose_(CloseEvent(code, reason));
+					if(onclose)
+						onclose(CloseEvent(code, reason, true));
+
+					// if we receive one and haven't sent one back we're supposed to echo it back and close.
+					if(!closeCalled)
+						close(code, reason.idup);
+
+					readyState_ = CLOSED;
 
 					unregisterActiveSocket(this);
 				break;
@@ -5118,7 +5139,7 @@ class WebSocket {
 	}
 
 	/++
-		Arguments for the close event. The `code` and `reason` are provided from the close message on the websocket, if they are present. The spec says code 1000 indicates a normal, default reason close, but does not specify more. The `reason` should be user readable.
+		Arguments for the close event. The `code` and `reason` are provided from the close message on the websocket, if they are present. The spec says code 1000 indicates a normal, default reason close, but reserves the code range from 3000-5000 for future definition; the 3000s can be registered with IANA and the 4000's are application private use. The `reason` should be user readable, but not displayed to the end user. `wasClean` is true if the server actually sent a close event, false if it just disconnected.
 
 		$(PITFALL
 			The `reason` argument references a temporary buffer and there's no guarantee it will remain valid once your callback returns. It may be freed and will very likely be overwritten. If you want to keep the reason beyond the callback, make sure you `.idup` it.
@@ -5128,31 +5149,39 @@ class WebSocket {
 			Added March 19, 2023 (dub v11.0).
 	+/
 	static struct CloseEvent {
-		int code;
+		ushort code;
 		const(char)[] reason;
+		bool wasClean;
+
+		/++
+			See https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1 for details.
+		+/
+		enum StandardCloseCodes {
+			purposeFulfilled = 1000,
+			goingAway = 1001,
+			protocolError = 1002,
+			unacceptableData = 1003, // e.g. got text message when you can only handle binary
+			Reserved = 1004,
+			noStatusCodePresent = 1005, // not set by endpoint.
+			abnormalClosure = 1006, // not set by endpoint. closed without a Close control. FIXME: maybe keep a copy of errno around for these
+			inconsistentData = 1007, // e.g. utf8 validation failed
+			genericPolicyViolation = 1008,
+			messageTooBig = 1009,
+			clientRequiredExtensionMissing = 1010, // only the client should send this
+			unnexpectedCondition = 1011,
+			unverifiedCertificate = 1015, // not set by client
+		}
 	}
 
 	/++
 		The `CloseEvent` you get references a temporary buffer that may be overwritten after your handler returns. If you want to keep it or the `event.reason` member, remember to `.idup` it.
 
 		History:
-			The `CloseEvent` overload was added March 19, 2023 (dub v11.0). Before that, `onclose` was a public member of type `void delegate()`. This change keeps setting working, but the getter's type has changed.
+			The `CloseEvent` was changed to a [arsd.core.FlexibleDelegate] on March 19, 2023 (dub v11.0). Before that, `onclose` was a public member of type `void delegate()`. This change means setters still work with or without the [CloseEvent] argument.
+
+			Your onclose method is now also called on abnormal terminations. Check the `wasClean` member of the `CloseEvent` to know if it came from a close frame or other cause.
 	+/
-	void onclose(void delegate(CloseEvent event) dg) {
-		onclose_ = dg;
-	}
-
-	/// ditto
-	void onclose(void delegate() dg) {
-		onclose_ = (CloseEvent ce) { dg(); };
-	}
-
-	/// ditto
-	void delegate(CloseEvent) onclose() {
-		return onclose_;
-	}
-
-	private void delegate(CloseEvent event) onclose_; ///
+	FlexibleDelegate!(void delegate(CloseEvent event)) onclose;
 	void delegate() onerror; ///
 	void delegate(in char[]) ontextmessage; ///
 	void delegate(in ubyte[]) onbinarymessage; ///
@@ -5223,6 +5252,9 @@ class WebSocket {
 						if(sock.onerror)
 							sock.onerror();
 
+						if(sock.onclose)
+							sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, int.max));
+
 						sock.socket.close();
 						sock.readyState_ = CLOSED;
 						unregisterActiveSocket(sock);
@@ -5266,6 +5298,13 @@ class WebSocket {
 							sock.timeoutFromInactivity = MonoTime.currTime + sock.config.timeoutFromInactivity;
 							if(!sock.lowLevelReceive()) {
 								sock.readyState_ = CLOSED;
+
+								if(sock.onerror)
+									sock.onerror();
+
+								if(sock.onclose)
+									sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection lost", false, lastSocketError()));
+
 								unregisterActiveSocket(sock);
 								continue outermost;
 							}

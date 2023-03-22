@@ -2531,29 +2531,6 @@ B0 40 00 # sustain pedal off
 	}
 }
 
-version(Posix) {
-	import core.sys.posix.signal;
-	private sigaction_t oldSigIntr;
-	void setSigIntHandler() {
-		sigaction_t n;
-		n.sa_handler = &interruptSignalHandlerSAudio;
-		n.sa_mask = cast(sigset_t) 0;
-		n.sa_flags = 0;
-		sigaction(SIGINT, &n, &oldSigIntr);
-	}
-	void restoreSigIntHandler() {
-		sigaction(SIGINT, &oldSigIntr, null);
-	}
-
-	__gshared bool interrupted;
-
-	private
-	extern(C)
-	void interruptSignalHandlerSAudio(int sigNumber) nothrow {
-		interrupted = true;
-	}
-}
-
 /// Gives MIDI output access.
 struct MidiOutput {
 	version(ALSA) {

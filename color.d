@@ -6,6 +6,8 @@
 +/
 module arsd.color;
 
+import arsd.core;
+
 @safe:
 
 // importing phobos explodes the size of this code 10x, so not doing it.
@@ -113,23 +115,6 @@ private {
 		}
 		if(previous != a.length)
 			dg(count++, a[previous .. $]);
-	}
-	nothrow @safe @nogc pure
-	inout(char)[] stripInternal(return inout(char)[] s) {
-		foreach(i, char c; s)
-			if(c != ' ' && c != '\t' && c != '\n') {
-				s = s[i .. $];
-				break;
-			}
-		for(int a = cast(int)(s.length - 1); a > 0; a--) {
-			char c = s[a];
-			if(c != ' ' && c != '\t' && c != '\n') {
-				s = s[0 .. a + 1];
-				break;
-			}
-		}
-
-		return s;
 	}
 }
 

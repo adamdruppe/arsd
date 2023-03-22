@@ -8898,7 +8898,7 @@ class TableView : Widget {
 				lvColumn.fmt = LVCFMT_LEFT;
 
 			if(SendMessage(hwnd, LVM_INSERTCOLUMN, cast(WPARAM) i, cast(LPARAM) &lvColumn) == -1)
-				throw new WindowsApiException("Insert Column Fail");
+				throw new WindowsApiException("Insert Column Fail", GetLastError());
 		}
 	}
 
@@ -14567,7 +14567,7 @@ class FilePicker : Dialog {
 			if(handle is INVALID_HANDLE_VALUE) {
 				if(GetLastError() == ERROR_FILE_NOT_FOUND)
 					return GetFilesResult.fileNotFound;
-				throw new WindowsApiException("FindFirstFileW");
+				throw new WindowsApiException("FindFirstFileW", GetLastError());
 			}
 
 			try_more:
@@ -14580,7 +14580,7 @@ class FilePicker : Dialog {
 			if(ret == 0) {
 				if(GetLastError() == ERROR_NO_MORE_FILES)
 					return GetFilesResult.success;
-				throw new WindowsApiException("FindNextFileW");
+				throw new WindowsApiException("FindNextFileW", GetLastError());
 			}
 
 			goto try_more;

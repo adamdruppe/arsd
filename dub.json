@@ -8,6 +8,16 @@
 	"license":"BSL-1.0",
 	"subPackages": [
 		{
+			"name":"core",
+			"description": "Shared components across other arsd modules",
+			"targetType": "library",
+			"importPaths": ["."],
+			"dflags-dmd": ["-mv=arsd.core=$PACKAGE_DIR/core.d"],
+			"dflags-ldc": ["--mv=arsd.core=$PACKAGE_DIR/core.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.core=$PACKAGE_DIR/core.d"],
+			"sourceFiles": ["core.d"]
+		},
+		{
 			"name": "simpledisplay",
 			"description": "Window creation and basic drawing",
 			"targetType": "library",
@@ -16,7 +26,10 @@
 			"dflags-ldc": ["--mv=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
 			"lflags-osx": ["-L/usr/X11/lib"],
-			"dependencies": {"arsd-official:color_base":"*"},
+			"dependencies": {
+				"arsd-official:core":"*",
+				"arsd-official:color_base":"*"
+			},
 			"configurations": [
 				{
 					"name": "normal",
@@ -519,6 +532,9 @@
 			"dflags-dmd": ["-mv=arsd.http2=$PACKAGE_DIR/http2.d"],
 			"dflags-ldc": ["--mv=arsd.http2=$PACKAGE_DIR/http2.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.http2=$PACKAGE_DIR/http2.d"],
+			"dependencies": {
+				"arsd-official:core":"*"
+			},
 			"configurations": [
 				{
 					"name": "with_openssl",

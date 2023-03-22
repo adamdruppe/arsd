@@ -4492,7 +4492,7 @@ struct EventLoopImpl {
 					while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) { // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
 						ret = GetMessage(&message, null, 0, 0);
 						if(ret == -1)
-							throw new Exception("GetMessage failed");
+							throw new WindowsApiException("GetMessage", GetLastError());
 						TranslateMessage(&message);
 						DispatchMessage(&message);
 
@@ -4511,7 +4511,7 @@ struct EventLoopImpl {
 					// timeout, should never happen since we aren't using it
 				} else if(waitResult == 0xFFFFFFFF) {
 						// failed
-						throw new Exception("MsgWaitForMultipleObjectsEx failed");
+						throw new WindowsApiException("MsgWaitForMultipleObjectsEx", GetLastError());
 				} else {
 					// idk....
 				}
@@ -5017,13 +5017,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				wc.lpfnWndProc = &WndProc;
 				wc.lpszClassName = "arsd_simpledisplay_notification_icon"w.ptr;
 				if(!RegisterClassExW(&wc))
-					throw new WindowsApiException("RegisterClass");
+					throw new WindowsApiException("RegisterClass", GetLastError());
 				registered = true;
 			}
 
 			this.hwnd = CreateWindowW("arsd_simpledisplay_notification_icon"w.ptr, "test"w.ptr /* name */, 0 /* dwStyle */, 0, 0, 0, 0, HWND_MESSAGE, null, hInstance, null);
 			if(hwnd is null)
-				throw new Exception("CreateWindow");
+				throw new WindowsApiException("CreateWindow", GetLastError());
 
 			data.cbSize = data.sizeof;
 			data.hWnd = hwnd;
@@ -5437,14 +5437,14 @@ class Timer {
 			/*
 			handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
 			if(handle == 0)
-				throw new Exception("SetTimer fail");
+				throw new WindowsApiException("SetTimer", GetLastError());
 			*/
 
 			// thanks to Archival 998 for the WaitableTimer blocks
 			handle = CreateWaitableTimer(null, false, null);
 			long initialTime = -intervalInMilliseconds;
 			if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
-				throw new Exception("SetWaitableTimer Failed");
+				throw new WindowsApiException("SetWaitableTimer", GetLastError());
 
 			mapping[handle] = this;
 
@@ -5548,7 +5548,7 @@ class Timer {
 				//handle = SetTimer(null, handle, intervalInMilliseconds, &timerCallback);
 				long initialTime = -intervalInMilliseconds;
 				if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
-					throw new Exception("couldn't change pulse timer");
+					throw new WindowsApiException("couldn't change pulse timer", GetLastError());
 			}
 		}
 	}
@@ -5785,7 +5785,7 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
 		if(OpenClipboard(hwndOwner) == 0)
-			throw new Exception("OpenClipboard");
+			throw new WindowsApiException("OpenClipboard", GetLastError());
 		scope(exit)
 			CloseClipboard();
 		// see: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getpriorityclipboardformat
@@ -5831,7 +5831,7 @@ void getClipboardImage()(SimpleWindow clipboardOwner, void delegate(MemoryImage)
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
 		if(OpenClipboard(hwndOwner) == 0)
-			throw new Exception("OpenClipboard");
+			throw new WindowsApiException("OpenClipboard", GetLastError());
 		scope(exit)
 			CloseClipboard();
 		if(auto dataHandle = GetClipboardData(CF_DIBV5)) {
@@ -5858,13 +5858,13 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 	assert(clipboardOwner !is null);
 	version(Windows) {
 		if(OpenClipboard(clipboardOwner.impl.hwnd) == 0)
-			throw new Exception("OpenClipboard");
+			throw new WindowsApiException("OpenClipboard", GetLastError());
 		scope(exit)
 			CloseClipboard();
 		EmptyClipboard();
 		auto sz = sizeOfConvertedWstring(text, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate);
 		auto handle = GlobalAlloc(GMEM_MOVEABLE, sz * 2); // zero terminated wchars
-		if(handle is null) throw new Exception("GlobalAlloc");
+		if(handle is null) throw new WindowsApiException("GlobalAlloc", GetLastError());
 		if(auto data = cast(wchar*) GlobalLock(handle)) {
 			auto slice = data[0 .. sz];
 			scope(failure)
@@ -5886,7 +5886,7 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 	assert(clipboardOwner !is null);
 	version(Windows) {
 		if(OpenClipboard(clipboardOwner.impl.hwnd) == 0)
-			throw new Exception("OpenClipboard");
+			throw new WindowsApiException("OpenClipboard", GetLastError());
 		scope(exit)
 			CloseClipboard();
 		EmptyClipboard();
@@ -5901,7 +5901,7 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 		writeBmpIndirect(img, &sink, false);
 
 		auto handle = GlobalAlloc(GMEM_MOVEABLE, mdata.length);
-		if(handle is null) throw new Exception("GlobalAlloc");
+		if(handle is null) throw new WindowsApiException("GlobalAlloc", GetLastError());
 		if(auto data = cast(ubyte*) GlobalLock(handle)) {
 			auto slice = data[0 .. mdata.length];
 			scope(failure)
@@ -6589,7 +6589,7 @@ version(Windows) {
 			}
 
 			if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 
 	}
@@ -6602,7 +6602,7 @@ version(Windows) {
 		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
-			throw new Exception("RegisterHotKey failed");
+			throw new Exception("RegisterHotKey");
 
 		__gshared void delegate()[WPARAM][HWND] handlers;
 
@@ -6639,7 +6639,7 @@ version(Windows) {
 	/// Platform-specific for Windows. Unregisters a key. The id is the value returned by [registerHotKey].
 	void unregisterHotKey(SimpleWindow window, int id) {
 		if(!UnregisterHotKey(window.impl.hwnd, id))
-			throw new Exception("UnregisterHotKey");
+			throw new WindowsApiException("UnregisterHotKey", GetLastError());
 	}
 }
 
@@ -6743,7 +6743,7 @@ struct SyntheticInput {
 			}
 
 			if(SendInput(cast(int) inputs.length, inputs.ptr, INPUT.sizeof) != inputs.length) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 		} else version(X11) {
 			int delay = 0;
@@ -6775,7 +6775,7 @@ struct SyntheticInput {
 			input.ki.dwExtraInfo = GetMessageExtraInfo();
 
 			if(SendInput(1, &input, INPUT.sizeof) != 1) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 		} else version(X11) {
 			XTestFakeKeyEvent(XDisplayConnection.get, XKeysymToKeycode(XDisplayConnection.get, key), pressed, delay + pressed ? 0 : 5);
@@ -6819,7 +6819,7 @@ struct SyntheticInput {
 			}
 
 			if(SendInput(1, &input, INPUT.sizeof) != 1) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 		} else version(X11) {
 			int btn;
@@ -6852,7 +6852,7 @@ struct SyntheticInput {
 			input.mi.dwFlags = MOUSEEVENTF_MOVE;
 
 			if(SendInput(1, &input, INPUT.sizeof) != 1) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 		} else version(X11) {
 			auto disp = XDisplayConnection.get();
@@ -6872,7 +6872,7 @@ struct SyntheticInput {
 			input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
 
 			if(SendInput(1, &input, INPUT.sizeof) != 1) {
-				throw new Exception("SendInput failed");
+				throw new WindowsApiException("SendInput", GetLastError());
 			}
 		} else version(X11) {
 			auto disp = XDisplayConnection.get();
@@ -9085,7 +9085,7 @@ struct ScreenPainter {
 			RECT uncovered;
 			HRGN hrgn;
 			if(!ScrollDC(impl.hdc, -dx, -dy, &scroll, &clip, hrgn, &uncovered))
-				throw new Exception("ScrollDC");
+				throw new WindowsApiException("ScrollDC", GetLastError());
 
 		} else version(X11) {
 			// FIXME: clip stuff outside this rectangle
@@ -9491,7 +9491,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 				0);
 
 			if(handle is null)
-				throw new Exception("couldn't create pixmap");
+				throw new WindowsApiException("couldn't create pixmap", GetLastError());
 		}
 	}
 
@@ -11002,7 +11002,7 @@ version(Windows) {
 
 			hIcon = CreateIconFromResourceEx(cast(ubyte*) &icon_win32, icon_len, true, 0x00030000, width, height, 0);
 
-			if(hIcon is null) throw new Exception("CreateIconFromResourceEx");
+			if(hIcon is null) throw new WindowsApiException("CreateIconFromResourceEx", GetLastError());
 		}
 
 		~this() {
@@ -11526,7 +11526,7 @@ version(Windows) {
 			rect.right = w + x;
 			rect.bottom = h + y;
 			if(!AdjustWindowRect(&rect, GetWindowLong(hwnd, GWL_STYLE), GetMenu(hwnd) !is null))
-				throw new Exception("AdjustWindowRect");
+				throw new WindowsApiException("AdjustWindowRect", GetLastError());
 
 			MoveWindow(hwnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, true);
 			updateOpenglViewportIfNeeded(w, h);
@@ -11568,7 +11568,7 @@ version(Windows) {
 				wc.hIconSm = null;
 				wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
 				if(!RegisterClassExW(&wc))
-					throw new WindowsApiException("RegisterClassExW");
+					throw new WindowsApiException("RegisterClassExW", GetLastError());
 				knownWinClasses[cnamec] = true;
 			}
 
@@ -11644,10 +11644,10 @@ version(Windows) {
 					auto pixelformat = ChoosePixelFormat(hdc, &pfd);
 
 					if (pixelformat == 0)
-						throw new WindowsApiException("ChoosePixelFormat");
+						throw new WindowsApiException("ChoosePixelFormat", GetLastError());
 
 					if (SetPixelFormat(hdc, pixelformat, &pfd) == 0)
-						throw new WindowsApiException("SetPixelFormat");
+						throw new WindowsApiException("SetPixelFormat", GetLastError());
 
 					if (sdpyOpenGLContextVersion && wglCreateContextAttribsARB is null) {
 						// windoze is idiotic: we have to have OpenGL context to get function addresses
@@ -11676,7 +11676,7 @@ version(Windows) {
 							ghRC = wglCreateContext(ghDC);
 						}
 						if (ghRC is null)
-							throw new WindowsApiException("wglCreateContextAttribsARB");
+							throw new WindowsApiException("wglCreateContextAttribsARB", GetLastError());
 					} else {
 						// try to do at least something
 						if (sdpyOpenGLContextAllowFallback || sdpyOpenGLContextVersion == 0) {
@@ -11684,7 +11684,7 @@ version(Windows) {
 							ghRC = wglCreateContext(ghDC);
 						}
 						if (ghRC is null)
-							throw new WindowsApiException("wglCreateContext");
+							throw new WindowsApiException("wglCreateContext", GetLastError());
 					}
 				}
 			}
@@ -11785,7 +11785,7 @@ version(Windows) {
 						rect.right = wind.minWidth + 100;
 						rect.bottom = wind.minHeight + 100;
 						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
-							throw new WindowsApiException("AdjustWindowRect");
+							throw new WindowsApiException("AdjustWindowRect", GetLastError());
 
 						mmi.ptMinTrackSize.x = rect.right - rect.left;
 						mmi.ptMinTrackSize.y = rect.bottom - rect.top;
@@ -11798,7 +11798,7 @@ version(Windows) {
 						rect.right = wind.maxWidth + 100;
 						rect.bottom = wind.maxHeight + 100;
 						if(!AdjustWindowRect(&rect, GetWindowLong(wind.hwnd, GWL_STYLE), GetMenu(wind.hwnd) !is null))
-							throw new WindowsApiException("AdjustWindowRect");
+							throw new WindowsApiException("AdjustWindowRect", GetLastError());
 
 						mmi.ptMaxTrackSize.x = rect.right - rect.left;
 						mmi.ptMaxTrackSize.y = rect.bottom - rect.top;
@@ -12351,7 +12351,7 @@ version(Windows) {
 				null,
 				0);
 			if(handle is null)
-				throw new WindowsApiException("create image failed");
+				throw new WindowsApiException("create image failed", GetLastError());
 
 		}
 
@@ -21181,7 +21181,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 
 					auto sz = handler.dataLength(format);
 					auto handle = GlobalAlloc(GMEM_MOVEABLE, sz);
-					if(handle is null) throw new Exception("GlobalAlloc");
+					if(handle is null) throw new WindowsApiException("GlobalAlloc", GetLastError());
 					if(auto data = cast(wchar*) GlobalLock(handle)) {
 						auto slice = data[0 .. sz];
 						scope(exit)
@@ -21395,7 +21395,7 @@ void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
 		GC.addRoot(cast(void*) dropTarget);
 
 		if(RegisterDragDrop(window.impl.hwnd, dropTarget) != S_OK)
-			throw new Exception("register");
+			throw new WindowsApiException("RegisterDragDrop", GetLastError());
 
 		window.dropHandler = handler;
 	} else throw new NotYetImplementedException();
