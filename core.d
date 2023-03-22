@@ -959,7 +959,7 @@ template ArsdException(alias Type, DataTuple...) {
 		}
 
 		override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
-			ArsdExceptionBase.getAdditionalPrintableInformation(sink); 
+			ArsdExceptionBase.getAdditionalPrintableInformation(sink);
 
 			foreach(idx, datum; data) {
 				enum int lol = cast(int) idx;
@@ -1967,7 +1967,7 @@ void main() {
 	version(none)
 	foreach(i; 0 .. 100)
 		CoreEventLoopImplementation.runInTaskRunnerQueue.enqueue(new CallbackHelper(&tester));
-	
+
 
 	foreach(ref thread; pool) {
 		thread.join();
