@@ -7219,7 +7219,7 @@ enum Resizability {
 		History:
 			Added November 11, 2022, but not yet implemented and may not be for some time.
 	+/
-	@future allowResizingMaintainingAspectRatio,
+	allowResizingMaintainingAspectRatio,
 	/++
 		If possible, your drawing buffer will remain the same size and simply be automatically scaled to the new window size, letterboxing if needed to keep the aspect ratio. If this is impossible, it will fallback to [fixedSize]. The simpledisplay library will always provide the illusion that your window is the same size you requested, even if it scales things for you, meaning [width] and [height] will never change.
 
