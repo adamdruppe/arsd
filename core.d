@@ -28,6 +28,8 @@ else version(BSD)
 	version=Arsd_core_kqueue;
 else version(Darwin)
 	version=Arsd_core_kqueue;
+else version(OSX)
+	version=Arsd_core_kqueue;
 
 
 /+
@@ -1450,6 +1452,9 @@ AsyncOperationRequest waitForFirstToComplete(AsyncOperationRequest[] requests...
 	return null;
 }
 
+/++
+	This meant to be used in a foreach loop.
++/
 int asTheyComplete(AsyncOperationRequest[] requests...) {
 	return 0;
 }
@@ -1466,61 +1471,6 @@ struct PendingOperation {
 	// and then i could even recycle completed Task objects similarly.
 }
 
-version(Windows)
-extern(Windows)
-void overlappedCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, LPOVERLAPPED lpOverlapped) {
-	// this will queue our CallbackHelper and that should be run at the end of the event loop after it is woken up by the APC run
-}
-
-/++
-	// this setup  needs no extra allocation
-	auto op = read(file, buffer);
-	op.oncomplete = &thisfiber.call;
-	op.start();
-	thisfiber.yield();
-	auto result = op.waitForCompletion(); // guaranteed to return instantly thanks to previous setup
-
-	can generically abstract that into:
-
-	auto result = thisTask.await(read(file, buffer));
-
-
-	You MUST NOT use buffer in any way - not read, modify, deallocate, reuse, anything - until the PendingOperation is complete.
-
-	Note that PendingOperation may just be a wrapper around an internally allocated object reference... but then if you do a waitForFirstToComplete what happens?
-
-	those could of course just take the value type things
-+/
-
-PendingOperation read(Object source, ubyte[] buffer) {
-	version(Windows) {
-		auto ret = ReadFileEx(source, buffer.ptr, buffer.length, &overlapped, &overlappedCompletionRoutine);
-		// need to check GetLastError
-
-		// ReadFileEx always queues, even if it completed synchronously. I *could* check the get overlapped result and sleepex here but i'm prolly better off just letting the event loop do its thing anyway.
-	} else version(Posix) {
-		// first try to just do it
-		auto ret = read(source, buffer.ptr, buffer.length);
-		// then if it doesn't complete synchronously, need to event loop register
-
-		// if we are inside a fiber task, it can simply yield and call the fiber in the callback
-		// when we return here, it tries to read again
-
-		// if not inside, we need to ensure the buffer remains valid and set a callback... and return.
-		// the callback must retry the read
-
-		// generally, the callback must satisfy the read somehow they set the callback to trigger the result object's completion handler
-	}
-	return PendingOperation(null);
-}
-
-/++
-	Once an operation is complete and you're sure you are done with it, you can issue a repeated read
-+/
-PendingOperation read(PendingOperation recyclable, Object source, ubyte[] buffer) {
-
-}
-
 /+
 	Tasks:
 		startTask()
@@ -1529,6 +1479,74 @@ PendingOperation read(PendingOperation recyclable, Object source, ubyte[] buffer
 +/
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
+
+	version(Arsd_core_kqueue) {
+		void runOnce() { }
+	}
+
+
+	version(Windows)
+	extern(Windows)
+	void overlappedCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, LPOVERLAPPED lpOverlapped) {
+		// this will queue our CallbackHelper and that should be run at the end of the event loop after it is woken up by the APC run
+	}
+
+	/++
+		// this setup  needs no extra allocation
+		auto op = read(file, buffer);
+		op.oncomplete = &thisfiber.call;
+		op.start();
+		thisfiber.yield();
+		auto result = op.waitForCompletion(); // guaranteed to return instantly thanks to previous setup
+
+		can generically abstract that into:
+
+		auto result = thisTask.await(read(file, buffer));
+
+
+		You MUST NOT use buffer in any way - not read, modify, deallocate, reuse, anything - until the PendingOperation is complete.
+
+		Note that PendingOperation may just be a wrapper around an internally allocated object reference... but then if you do a waitForFirstToComplete what happens?
+
+		those could of course just take the value type things
+	+/
+
+	Object a_read(Object source, ubyte[] buffer) {
+		version(Windows) {
+			//auto ret = ReadFileEx(source, buffer.ptr, buffer.length, &overlapped, &overlappedCompletionRoutine);
+			// need to check GetLastError
+
+			// ReadFileEx always queues, even if it completed synchronously. I *could* check the get overlapped result and sleepex here but i'm prolly better off just letting the event loop do its thing anyway.
+		} else version(Posix) {
+			// first try to just do it
+			//auto ret = read(source, buffer.ptr, buffer.length);
+			// then if it doesn't complete synchronously, need to event loop register
+
+			// if we are inside a fiber task, it can simply yield and call the fiber in the callback
+			// when we return here, it tries to read again
+
+			// if not inside, we need to ensure the buffer remains valid and set a callback... and return.
+			// the callback must retry the read
+
+			// generally, the callback must satisfy the read somehow they set the callback to trigger the result object's completion handler
+		}
+		return null;
+	}
+
+	/++
+		Once an operation is complete and you're sure you are done with it, you can issue a repeated read
+	+/
+	Object a_read(Object recyclable, Object source, ubyte[] buffer) {
+		return null;
+	}
+
+
+
+
+
+
+
+
 	version(Arsd_core_windows) {
 		// all event loops share the one iocp, Windows
 		// manages how to do it
@@ -2353,7 +2371,7 @@ unittest {
 +/
 class ExternalProcess {
 
-	private static version(Posix) {
+	private static version(Arsd_core_epoll) {
 		__gshared ExternalProcess[pid_t] activeChildren;
 
 		void recordChildCreated(pid_t pid, ExternalProcess proc) {
@@ -2390,7 +2408,7 @@ class ExternalProcess {
 	}
 
 	this(string[] args) {
-		version(Posix) {
+		version(Arsd_core_epoll) {
 			this.program = FilePath(args[0]);
 			this.args = args;
 		}
@@ -2401,7 +2419,7 @@ class ExternalProcess {
 		This is the native version for Posix.
 	+/
 	this(FilePath program, string[] args) {
-		version(Posix) {
+		version(Arsd_core_epoll) {
 			this.program = program;
 			this.args = args;
 		}
@@ -2412,7 +2430,7 @@ class ExternalProcess {
 	int stderrBufferSize = 8 * 1024;
 
 	void start() {
-		version(Posix) {
+		version(Arsd_core_epoll) {
 			int ret;
 
 			int[2] stdinPipes;
@@ -2581,7 +2599,7 @@ class ExternalProcess {
 		}
 	}
 
-	private version(Posix) {
+	private version(Arsd_core_epoll) {
 		import core.sys.posix.unistd;
 		import core.sys.posix.fcntl;
 
@@ -2633,7 +2651,7 @@ class ExternalProcess {
 		Write `null` as data to close the pipe. Once the pipe is closed, you must not try to write to it again.
 	+/
 	void writeToStdin(in void[] data) {
-		version(Posix) {
+		version(Arsd_core_epoll) {
 			if(data is null) {
 				close(stdinFd);
 				stdinFd = -1;

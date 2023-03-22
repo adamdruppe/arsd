@@ -5153,6 +5153,8 @@ class WebSocket {
 		const(char)[] reason;
 		bool wasClean;
 
+		string extendedErrorInformationUnstable;
+
 		/++
 			See https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1 for details.
 		+/
@@ -5253,7 +5255,7 @@ class WebSocket {
 							sock.onerror();
 
 						if(sock.onclose)
-							sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, int.max));
+							sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, null));
 
 						sock.socket.close();
 						sock.readyState_ = CLOSED;
