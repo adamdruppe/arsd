@@ -176,7 +176,8 @@ unittest {
 }
 
 
-ulong readVla(ref ubyte[] data) {
+// Advances data up to the end of the vla
+ulong readVla(ref const(ubyte)[] data) {
 	ulong n;
 
 	n = data[0] & 0x7f;
@@ -198,6 +199,51 @@ ulong readVla(ref ubyte[] data) {
 }
 
 /++
+	A lzma (.xz file) decoder/decompressor that works by passed functions. Can be used as a higher-level alternative to [XzDecoder].
+
+	Params:
+		chunkReceiver = a function that receives chunks of uncompressed data and processes them. Note that the chunk you receive will be overwritten once your function returns, so make sure you write it to a file or copy it to an outside array if you want to keep the data
+
+		bufferFiller = a function that fills the provided buffer as much as you can, then returns the slice of the buffer you actually filled.
+
+		chunkBuffer = an optional parameter providing memory that will be used to buffer uncompressed data chunks. If you pass `null`, it will allocate one for you. Any data in the buffer will be immediately overwritten.
+
+		inputBuffer = an optional parameter providing memory that will hold compressed input data. If you pass `null`, it will allocate one for you. You should NOT populate this buffer with any data; it will be immediately overwritten upon calling this function.
+
+	History:
+		Added March 23, 2023 (dub v11.0)
++/
+version(WithLzmaDecoder)
+void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null) {
+	if(chunkBuffer is null)
+		chunkBuffer = new ubyte[](1024 * 32);
+	if(inputBuffer is null)
+		inputBuffer = new ubyte[](1024 * 32);
+
+	const(ubyte)[] compressedData = bufferFiller(inputBuffer[]);
+
+	XzDecoder decoder = XzDecoder(compressedData);
+
+	compressedData = decoder.unprocessed;
+
+	while(!decoder.finished) {
+		chunkReceiver(decoder.processData(chunkBuffer, compressedData));
+
+		if(decoder.needsMoreData) {
+			import core.stdc.string;
+			memmove(inputBuffer.ptr, decoder.unprocessed.ptr, decoder.unprocessed.length);
+
+			auto newlyRead = bufferFiller(inputBuffer[decoder.unprocessed.length .. $]);
+			assert(newlyRead.ptr >= inputBuffer.ptr && newlyRead.ptr < inputBuffer.ptr + inputBuffer.length);
+
+			compressedData = inputBuffer[0 .. decoder.unprocessed.length + newlyRead.length];
+		} else {
+			compressedData = decoder.unprocessed;
+		}
+	}
+}
+
+/++
 	A simple .xz file decoder.
 
 	FIXME: it doesn't implement very many checks, instead
@@ -215,8 +261,13 @@ struct XzDecoder {
 		Start decoding by feeding it some initial data. You must
 		send it at least enough bytes for the header (> 16 bytes prolly);
 		try to send it a reasonably sized chunk.
+
+		It sets `this.unprocessed` to be a slice of the *tail* of the `initialData`
+		member, indicating leftover data after parsing the header. You will need to
+		pass this to [processData] at least once to start decoding the data left over
+		after the header. See [processData] for more information.
 	+/
-	this(ubyte[] initialData) {
+	this(const(ubyte)[] initialData) {
 
 		ubyte[6] magic;
 
@@ -308,13 +359,90 @@ struct XzDecoder {
 	}
 
 	/++
-		You tell it where you want the data.
+		Continues an in-progress decompression of the `src` data, putting it into the `dest` buffer.
+		The `src` data must be at least 20 bytes long, but I'd recommend making it at larger.
 
-		You must pass it the existing unprocessed data
+		Returns the slice of the head of the `dest` buffer actually filled, then updates the following
+		member variables of `XzDecoder`:
 
-		Returns slice of dest that is actually filled up so far.
+		$(LIST
+			* [finished] will be `true` if the compressed data has been completely decompressed.
+			* [needsMoreData] will be `true` if more src data was needed to fill the `dest` buffer. Note that you can also check this from the return value; if the return value's length is less than the destination buffer's length and the decoder is not finished, that means you needed more data to fill it.
+			* And very importantly, [unprocessed] will contain a slice of the $(I tail of the `src` buffer) holding thus-far unprocessed data from the source buffer. This will almost always be set unless `dest` was big enough to hold the entire remaining uncompressed data.
+		)
+
+		This function will not modify the `src` buffer in any way. This is why the [unprocessed] member holds a slice to its tail - it is your own responsibility to decide how to proceed.
+
+		If your `src` buffer contains the entire compressed file, you can pass `unprocessed` in a loop until finished:
+
+		---
+		static import std.file;
+		auto compressedData = cast(immutable(ubyte)[]) std.file.read("file.xz"); // load it all into memory at once
+		XzDecoder decoder = XzDecoder(compressedData);
+		auto buffer = new ubyte[](4096); // to hold chunks of uncompressed data
+		ubyte[] wholeUncompressedFile;
+		while(!decoder.finished) {
+			// it returns the slice of buffer with new data, so we can append that
+			// to reconstruct the whole file. and then it sets `decoded.unprocessed` to
+			// a slice of what is left out of the source file to continue processing in
+			// the next iteration of the loop.
+			wholeUncompressedFile ~= decoder.processData(buffer, decoder.unprocessed);
+		}
+		// wholeUncompressedFile is now fully populated
+		---
+
+		If you are reading from a file or some other streaming source, you may need to either move the unprocessed data back to the beginning of the buffer then load more into it, or copy it to a new, larger buffer and append more data then.
+
+		---
+		import std.stdio;
+		auto file = File("file.xz");
+		ubyte[] compressedDataBuffer = new ubyte[](1024 * 32);
+
+		// read the first chunk. all modifications will be done through `compressedDataBuffer`
+		// so we can make this part const for easier assignment to the slices `decoder.unprocessed` will hold
+		const(ubyte)[] compressedData = file.rawRead(compressedDataBuffer);
+
+		XzDecoder decoder = XzDecoder(compressedData);
+
+		// need to keep what was unprocessed after construction
+		compressedData = decoder.unprocessed;
+
+		auto buffer = new ubyte[](4096); // to hold chunks of uncompressed data
+		ubyte[] wholeUncompressedFile;
+		while(!decoder.finished) {
+			wholeUncompressedFile ~= decoder.processData(buffer, compressedData);
+
+			if(decoder.needsMoreData) {
+				// it needed more data to fill the buffer
+
+				// first, move the unprocessed data bask to the head
+				// you cannot necessarily use a D slice assign operator
+				// because the `unprocessed` is a slice of the `compressedDataBuffer`,
+				// meaning they might overlap. Instead, we'll use C's `memmove`
+				import core.stdc.string;
+				memmove(compressedDataBuffer.ptr, decoder.unprocessed.ptr, decoder.unprocessed.length);
+
+
+				// now we can read more data to fill in the tail of the buffer again
+				auto newlyRead = file.rawRead(compressedDataBuffer[decoder.unprocessed.length .. $]);
+
+				// the new compressed data ready to process is what we moved from before,
+				// now at the head of the buffer, plus what was just read, at the end of
+				// the same buffer
+				compressedData = compressedDataBuffer[0 .. decoder.unprocessed.length + newlyRead.length];
+			} else {
+				// otherwise, the output buffer was full, but there's probably
+				// still more unprocessed data. Set it to be used on the next
+				// loop iteration.
+				compressedData = decoder.unprocessed;
+			}
+		}
+		// wholeUncompressedFile is now fully populated
+		---
+
+
 	+/
-	ubyte[] processData(ubyte[] dest, ubyte[] src) {
+	ubyte[] processData(ubyte[] dest, const ubyte[] src) {
 
 		size_t destLen = dest.length;
 		size_t srcLen = src.length;
@@ -364,25 +492,39 @@ struct XzDecoder {
 		return dest[0 .. destLen];
 	}
 
-	///
+	/++
+		Returns true after [processData] has finished decoding the compressed data.
+	+/
 	bool finished() {
 		return finished_;
 	}
 
-	///
+	/++
+		After calling [processData], this will return `true` if more data is required to fill
+		the destination buffer.
+
+		Please note that `needsMoreData` can return `false` before decompression is completely
+		[finished]; this would simply mean it satisfied the request to fill that one buffer.
+
+		In this case, you will want to concatenate [unprocessed] with new data, then call [processData]
+		again. Remember that [unprocessed] is a slice of the tail of the source buffer you passed to
+		`processData`, so if you want to reuse the same buffer, you may want to `memmove` it to the
+		head, then fill he tail again.
+	+/
 	bool needsMoreData() {
 		return needsMoreData_;
 	}
 
-	bool finished_;
-	bool needsMoreData_;
+	private bool finished_;
+	private bool needsMoreData_;
 
 	CLzma2Dec lzmaDecoder;
 	int checkSize;
+
 	ulong compressedSize; ///
 	ulong uncompressedSize; ///
 
-	ubyte[] unprocessed; ///
+	const(ubyte)[] unprocessed; ///
 }
 
 ///
@@ -419,7 +561,7 @@ unittest {
 				bfr = file.rawRead(src[bfr.length - xzd.unprocessed.length .. $]);
 			} else {
 				// otherwise, you want to continue working with existing unprocessed data
-				bfr = xzd.unprocessed;
+				bfr = cast(ubyte[]) xzd.unprocessed;
 			}
 			//write(cast(string) xzd.processData(dest[], bfr));
 
@@ -3048,7 +3190,7 @@ static ELzma2State Lzma2Dec_UpdateState(CLzma2Dec *p, Byte b)
   }
 }
 
-static void LzmaDec_UpdateWithUncompressed(CLzmaDec *p, Byte *src, SizeT size)
+static void LzmaDec_UpdateWithUncompressed(CLzmaDec *p, const(Byte) *src, SizeT size)
 {
   import core.stdc.string;
   memcpy(p.dic + p.dicPos, src, size);
@@ -3059,7 +3201,7 @@ static void LzmaDec_UpdateWithUncompressed(CLzmaDec *p, Byte *src, SizeT size)
 }
 
 SRes Lzma2Dec_DecodeToDic(CLzma2Dec *p, SizeT dicLimit,
-    Byte *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status)
+    const(Byte) *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status)
 {
   SizeT inSize = *srcLen;
   *srcLen = 0;
@@ -3179,7 +3321,7 @@ SRes Lzma2Dec_DecodeToDic(CLzma2Dec *p, SizeT dicLimit,
   return SRes.OK;
 }
 
-SRes Lzma2Dec_DecodeToBuf(CLzma2Dec *p, Byte *dest, SizeT *destLen, Byte *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status)
+SRes Lzma2Dec_DecodeToBuf(CLzma2Dec *p, Byte *dest, SizeT *destLen, const(Byte) *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status)
 {
   import core.stdc.string;
   SizeT outSize = *destLen, inSize = *srcLen;
@@ -3219,7 +3361,7 @@ SRes Lzma2Dec_DecodeToBuf(CLzma2Dec *p, Byte *dest, SizeT *destLen, Byte *src, S
   }
 }
 
-SRes Lzma2Decode(Byte *dest, SizeT *destLen, Byte *src, SizeT *srcLen,
+SRes Lzma2Decode(Byte *dest, SizeT *destLen, const(Byte) *src, SizeT *srcLen,
     Byte prop, ELzmaFinishMode finishMode, ELzmaStatus *status)
 {
   CLzma2Dec decoder;
