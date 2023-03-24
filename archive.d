@@ -121,8 +121,8 @@ enum TarFileType {
 bool processTar(
 	TarFileHeader* header,
 	long* bytesRemainingOnCurrentFile,
-	ubyte[] dataBuffer,
-	scope void delegate(TarFileHeader* header, bool isNewFile, bool fileFinished, ubyte[] data) handleData
+	const(ubyte)[] dataBuffer,
+	scope void delegate(TarFileHeader* header, bool isNewFile, bool fileFinished, const(ubyte)[] data) handleData
 )
 {
 	assert(dataBuffer.length == 512);
@@ -227,7 +227,10 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 	compressedData = decoder.unprocessed;
 
 	while(!decoder.finished) {
-		chunkReceiver(decoder.processData(chunkBuffer, compressedData));
+		auto chunk = decoder.processData(chunkBuffer, compressedData);
+
+		if(chunk.length)
+			chunkReceiver(chunk);
 
 		if(decoder.needsMoreData) {
 			import core.stdc.string;
@@ -240,6 +243,33 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 		} else {
 			compressedData = decoder.unprocessed;
 		}
+	}
+}
+
+/// [decompressLzma] and [processTar] can be used together like this:
+unittest {
+	import arsd.archive;
+
+	void main() {
+		import std.stdio;
+		auto file = File("test.tar.xz");
+
+		TarFileHeader tfh;
+		long size;
+		ubyte[512] tarBuffer;
+
+		decompressLzma(
+			(in ubyte[] chunk) => cast(void) processTar(&tfh, &size, chunk,
+				(header, isNewFile, fileFinished, data) {
+					if(isNewFile)
+						writeln("**** " , header.filename, " ", header.size);
+					//write(cast(string) data);
+					if(fileFinished)
+						writeln("+++++++++++++++");
+				}),
+			(ubyte[] buffer) => file.rawRead(buffer),
+			tarBuffer[]
+		);
 	}
 }
 
