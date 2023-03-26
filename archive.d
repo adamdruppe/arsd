@@ -1,7 +1,7 @@
 /++
-	Provides LZMA (aka .xz) and .tar file read-only support.
-	Combine to read .tar.xz files, or use in conjunction with
-	other files to read other types of .tar files.
+	Provides LZMA (aka .xz), gzip (.gz) and .tar file read-only support.
+	Combine to read .tar.xz and .tar.gz files, or use in conjunction with
+	other libraries to read other kinds of files.
 
 	Also has a custom archive called arcz read and write support.
 	It is designed to efficiently pack and randomly access large
@@ -11,8 +11,23 @@
 	tar.gz files, it supports random access without decompressing
 	the whole archive to get an individual file. It is designed
 	for large numbers of small, similar files.
+
+	History:
+		tar code (and arsd module formed) originally written December 2019 to support my d_android library downloader. It was added to dub in March 2020 (dub v7.0).
+
+		The LZMA code is a D port of Igor Pavlov's LzmaDec.h, written in 2017 with contributions by Lasse Collin. It was ported to D by ketmar some time after that and included in the original version of `arsd.archive` in the first December 2019 release.
+
+		The arcz code was written by ketmar in 2016 and added to arsd.archive in March 2020.
+
+		A number of improvements were made with the help of Steven Schveighoffer on March 22, 2023.
+
+		`arsd.archive` was changed to require [arsd.core] on March 23, 2023 (dub v11.0). Previously, it was a standalone module. It uses arsd.core's exception helpers only at this time and you could turn them back into plain (though uninformative) D base `Exception` instances to remove the dependency if you wanted to keep the file independent.
 +/
 module arsd.archive;
+
+import arsd.core;
+
+// FIXME: add a comparable decompressGzip function 
 
 version(WithoutLzmaDecoder) {} else
 version=WithLzmaDecoder;
@@ -79,6 +94,16 @@ struct TarFileHeader {
 		return upToZero(fileName_[]);
 	}
 
+	/++
+		Returns the target of a symlink or hardlink. Remember, this returns a slice of the TarFileHeader structure, so once it goes out of scope, this slice will be dangling!
+
+		History:
+			Added March 24, 2023 (dub v11.0)
+	+/
+	const(char)[] linkFileName() {
+		return upToZero(linkFileName_[]);
+	}
+
 	///
 	ulong size() {
 		import core.stdc.stdlib;
@@ -91,6 +116,12 @@ struct TarFileHeader {
 			return TarFileType.normal;
 		else
 			return cast(TarFileType) (fileType_[0] - '0');
+	}
+
+	///
+	uint mode() {
+		import core.stdc.stdlib;
+		return cast(uint) strtoul(fileMode_.ptr, null, 8);
 	}
 }
 
@@ -117,6 +148,11 @@ enum TarFileType {
 	Each call must populate the dataBuffer with 512 bytes.
 
 	returns true if still work to do.
+
+	Please note that it currently only passes regular files, hard and soft links, and directories to your handler.
+
+	History:
+		[TarFileType.symLink] and [TarFileType.hardLink] used to be skipped by this function. On March 24, 2023, it was changed to send them to your `handleData` delegate too. The `data` argument to your handler will have the target of the link. Check `header.type` to know if it is a hard link, symbolic link, directory, normal file, or other special type (which are still currently skipped, but future proof yourself by either skipping or handling them now).
 +/
 bool processTar(
 	TarFileHeader* header,
@@ -144,6 +180,8 @@ bool processTar(
 		*bytesRemainingOnCurrentFile = s;
 		if(header.type() == TarFileType.directory)
 			handleData(header, true, false, null);
+		if(header.type() == TarFileType.hardLink || header.type() == TarFileType.symLink)
+			handleData(header, true, true, cast(ubyte[]) header.linkFileName());
 		if(s == 0 && header.type == TarFileType.normal)
 			return false;
 	}
@@ -153,6 +191,7 @@ bool processTar(
 
 ///
 unittest {
+/+
 	void main() {
 		TarFileHeader tfh;
 		long size;
@@ -173,6 +212,7 @@ unittest {
 	}
 
 	main();
++/
 }
 
 
@@ -199,7 +239,7 @@ ulong readVla(ref const(ubyte)[] data) {
 }
 
 /++
-	A lzma (.xz file) decoder/decompressor that works by passed functions. Can be used as a higher-level alternative to [XzDecoder].
+	decompressLzma lzma (.xz file) decoder/decompressor that works by passed functions. Can be used as a higher-level alternative to [XzDecoder]. decompressGzip is  gzip (.gz file) decoder/decompresser) that works by passed functions. Can be used as an alternative to [std.zip], while using the same underlying zlib library.
 
 	Params:
 		chunkReceiver = a function that receives chunks of uncompressed data and processes them. Note that the chunk you receive will be overwritten once your function returns, so make sure you write it to a file or copy it to an outside array if you want to keep the data
@@ -208,13 +248,15 @@ ulong readVla(ref const(ubyte)[] data) {
 
 		chunkBuffer = an optional parameter providing memory that will be used to buffer uncompressed data chunks. If you pass `null`, it will allocate one for you. Any data in the buffer will be immediately overwritten.
 
-		inputBuffer = an optional parameter providing memory that will hold compressed input data. If you pass `null`, it will allocate one for you. You should NOT populate this buffer with any data; it will be immediately overwritten upon calling this function.
+		inputBuffer = an optional parameter providing memory that will hold compressed input data. If you pass `null`, it will allocate one for you. You should NOT populate this buffer with any data; it will be immediately overwritten upon calling this function. The `inputBuffer` must be at least 32 bytes in size.
+
+		allowPartialChunks = can be set to true if you want `chunkReceiver` to be called as soon as possible, even if it is only partially full before the end of the input stream. The default is to fill the input buffer for every call to `chunkReceiver` except the last which has remainder data from the input stream.
 
 	History:
-		Added March 23, 2023 (dub v11.0)
+		Added March 24, 2023 (dub v11.0)
 +/
 version(WithLzmaDecoder)
-void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null) {
+void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) {
 	if(chunkBuffer is null)
 		chunkBuffer = new ubyte[](1024 * 32);
 	if(inputBuffer is null)
@@ -226,11 +268,20 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 
 	compressedData = decoder.unprocessed;
 
-	while(!decoder.finished) {
-		auto chunk = decoder.processData(chunkBuffer, compressedData);
+	auto usableChunkBuffer = chunkBuffer;
 
-		if(chunk.length)
+	while(!decoder.finished) {
+		auto newChunk = decoder.processData(usableChunkBuffer, compressedData);
+
+		auto chunk = chunkBuffer[0 .. (newChunk.ptr - chunkBuffer.ptr) + newChunk.length];
+
+		if(chunk.length && (decoder.finished || allowPartialChunks || chunk.length == chunkBuffer.length)) {
 			chunkReceiver(chunk);
+			usableChunkBuffer = chunkBuffer;
+		} else if(!decoder.finished) {
+			// if we're here we got a partial chunk
+			usableChunkBuffer = chunkBuffer[chunk.length .. $];
+		}
 
 		if(decoder.needsMoreData) {
 			import core.stdc.string;
@@ -246,8 +297,82 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 	}
 }
 
+/// ditto
+void decompressGzip(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) {
+
+	import etc.c.zlib;
+
+	if(chunkBuffer is null)
+		chunkBuffer = new ubyte[](1024 * 32);
+	if(inputBuffer is null)
+		inputBuffer = new ubyte[](1024 * 32);
+
+	const(ubyte)[] compressedData = bufferFiller(inputBuffer[]);
+
+	z_stream zs;
+
+	scope(exit)
+		inflateEnd(&zs); // can return Z_STREAM_ERROR if state inconsistent
+
+	int windowBits = 15 + 32; // determine header from data
+
+	int err = inflateInit2(&zs, 15 + 32); // determine header from data
+	if(err)
+		throw ArsdException!"zlib"(err, zs.msg[0 .. 80].upToZero.idup); // FIXME: the 80 limit is arbitrary
+	// zs.msg is also an error message string
+
+	zs.next_in = compressedData.ptr;
+	zs.avail_in = cast(uint) compressedData.length;
+
+	while(true) {
+		zs.next_out = chunkBuffer.ptr;
+		zs.avail_out = cast(uint) chunkBuffer.length;
+
+		fill_more_chunk:
+
+		err = inflate(&zs, Z_NO_FLUSH);
+
+		if(err == Z_OK || err == Z_STREAM_END || err == Z_BUF_ERROR) {
+			import core.stdc.string;
+
+			auto decompressed = chunkBuffer[0 .. chunkBuffer.length - zs.avail_out];
+
+			// if the buffer is full, we always send a chunk.
+			// partial chunks can be enabled, but we still will never send an empty chunk
+			// if we're at the end of a stream, we always send the final chunk
+			if(zs.avail_out == 0 || ((err == Z_STREAM_END || allowPartialChunks) && decompressed.length)) {
+				chunkReceiver(decompressed);
+			} else if(err != Z_STREAM_END) {
+				// need more data to fill the next chunk
+				if(zs.avail_in) {
+					memmove(inputBuffer.ptr, zs.next_in, zs.avail_in);
+				}
+				auto newlyRead = bufferFiller(inputBuffer[zs.avail_in .. $ - zs.avail_in]);
+
+				assert(newlyRead.ptr >= inputBuffer.ptr && newlyRead.ptr < inputBuffer.ptr + inputBuffer.length);
+
+				zs.next_in = inputBuffer.ptr;
+				zs.avail_in = cast(int) (zs.avail_in + newlyRead.length);
+
+				if(zs.avail_out)
+					goto fill_more_chunk;
+			} else {
+				assert(0, "progress impossible; your input buffer of compressed data might be too small");
+			}
+
+			if(err == Z_STREAM_END)
+				break;
+		} else {
+			throw ArsdException!"zlib"(err, zs.msg[0 .. 80].upToZero.idup); // FIXME: the 80 limit is arbitrary
+		}
+	}
+}
+
+
+
 /// [decompressLzma] and [processTar] can be used together like this:
 unittest {
+/+
 	import arsd.archive;
 
 	void main() {
@@ -271,19 +396,19 @@ unittest {
 			tarBuffer[]
 		);
 	}
++/
 }
 
 /++
 	A simple .xz file decoder.
 
+	See the constructor and [processData] docs for details.
+
+	You might prefer using [decompressLzma] for a higher-level api.
+
 	FIXME: it doesn't implement very many checks, instead
 	assuming things are what it expects. Don't use this without
 	assertions enabled!
-
-	Use it by feeding it xz file data chunks. It will give you
-	back decompressed data chunks;
-
-	BEWARE OF REUSED BUFFERS. See the example.
 +/
 version(WithLzmaDecoder)
 struct XzDecoder {
@@ -490,8 +615,7 @@ struct XzDecoder {
 		);
 
 		if(res != 0) {
-			import std.conv;
-			throw new Exception(to!string(res));
+			throw ArsdException!"Lzma2Dec_DecodeToBuf"(res);
 		}
 
 		/+
@@ -515,8 +639,7 @@ struct XzDecoder {
 			needsMoreData_ = false;
 		} else {
 			// wtf
-			import std.conv;
-			assert(0, to!string(status));
+			throw ArsdException!"Unhandled LZMA_STATUS"(status);
 		}
 
 		return dest[0 .. destLen];
@@ -558,6 +681,7 @@ struct XzDecoder {
 }
 
 ///
+/+
 version(WithLzmaDecoder)
 unittest {
 
@@ -631,6 +755,7 @@ unittest {
 
 	main();
 }
++/
 
 version(WithArczCode) {
 /* The code in this section was originally written by Ketmar Dark for his arcz.d module. I modified it afterward. */
@@ -1283,10 +1408,8 @@ public:
     if (res < 0) throw new Exception("seek error");
   }
 
-  private import std.traits : isMutable;
-
   //TODO: overflow check
-  T[] rawRead(T) (T[] buf) if (isMutable!T) {
+  T[] rawRead(T) (T[] buf) {
     if (!zlp) throw new Exception("can't read from closed file");
     if (buf.length > 0) {
       auto res = zl.read(buf.ptr, cast(int) (buf.length*T.sizeof));
@@ -1617,7 +1740,6 @@ private:
 
 public:
   this (const(char)[] fname, uint chunkSize=256*1024, Compressor acpr=Compressor.ZLib) {
-    import std.internal.cstring;
     assert(chunkSize > 0 && chunkSize < 32*1024*1024); // arbitrary limit
     static if (!arcz_has_balz) {
       if (acpr == Compressor.Balz || acpr == Compressor.BalzMax) throw new Exception("no Balz support was compiled in ArcZ");
@@ -1626,7 +1748,7 @@ public:
       //if (acpr == Compressor.Zopfli) throw new Exception("no Zopfli support was compiled in ArcZ");
     }
     cpr = acpr;
-    arcfl = fopen(fname.tempCString, "wb");
+    arcfl = fopen((fname ~ "\0").ptr, "wb");
     if (arcfl is null) throw new Exception("can't create output file '"~fname.idup~"'");
     cdpos = 0;
     chunkdata.length = chunkSize;
