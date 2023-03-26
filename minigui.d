@@ -1135,6 +1135,8 @@ class Widget : ReflectableProperties {
 
 			this.parent.widgetRemoved(idx, this);
 			//this.parent = null;
+
+			p.queueRecomputeChildLayout();
 		}
 		version(win32_widgets) {
 			removeAllChildren();
@@ -1174,6 +1176,8 @@ class Widget : ReflectableProperties {
 		this._children = null;
 		foreach(idx, w; orig)
 			this.widgetRemoved(idx, w);
+
+		queueRecomputeChildLayout();
 	}
 
 	/++
@@ -14587,11 +14591,12 @@ class FilePicker : Dialog {
 
 		} else version(Posix) {
 			import core.sys.posix.dirent;
+			import core.stdc.errno;
 			auto dir = opendir((cwd ~ "\0").ptr);
 			scope(exit)
 				if(dir) closedir(dir);
 			if(dir is null)
-				throw new ErrnoApiException("opendir [" ~ cwd ~ "]");
+				throw new ErrnoApiException("opendir [" ~ cwd ~ "]", errno);
 
 			auto dirent = readdir(dir);
 			if(dirent is null)
