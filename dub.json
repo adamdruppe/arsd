@@ -26,10 +26,7 @@
 			"dflags-ldc": ["--mv=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.simpledisplay=$PACKAGE_DIR/simpledisplay.d"],
 			"lflags-osx": ["-L/usr/X11/lib"],
-			"dependencies": {
-				"arsd-official:core":"*",
-				"arsd-official:color_base":"*"
-			},
+			"dependencies": { "arsd-official:color_base":"*" },
 			"configurations": [
 				{
 					"name": "normal",
@@ -432,6 +429,7 @@
 			"dflags-dmd": ["-mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
 			"dflags-ldc": ["--mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.cgi=$PACKAGE_DIR/cgi.d"],
+			"dependencies": { "arsd-official:core":"*" },
 			"configurations": [
 				{
 					"name": "embedded_httpd",
@@ -591,6 +589,7 @@
 			"dflags-dmd": ["-mv=arsd.terminal=$PACKAGE_DIR/terminal.d"],
 			"dflags-ldc": ["--mv=arsd.terminal=$PACKAGE_DIR/terminal.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.terminal=$PACKAGE_DIR/terminal.d"],
+			"dependencies": { "arsd-official:core":"*" },
 			"configurations": [
 				{
 					"name": "normal"
@@ -642,6 +641,7 @@
 			"dflags-dmd": ["-mv=arsd.color=$PACKAGE_DIR/color.d"],
 			"dflags-ldc": ["--mv=arsd.color=$PACKAGE_DIR/color.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.color=$PACKAGE_DIR/color.d"],
+			"dependencies": { "arsd-official:core":"*" },
 			"sourceFiles": ["color.d"]
 		},
 		{
@@ -668,7 +668,7 @@
 		},
 		{
 			"name": "eventloop",
-			"description": "My DEPRECATED event loop. Do NOT use in new programs, only offered here because I use it in a lot of old programs.",
+			"description": "My DEPRECATED event loop. Do NOT use in new programs, only offered here because I use it in a lot of old programs. The core package has a new unified event loop.",
 			"targetType": "sourceLibrary",
 			"versions": ["with_eventloop"],
 			"sourceFiles": ["eventloop.d"],

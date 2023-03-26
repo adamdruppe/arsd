@@ -27,7 +27,7 @@ module arsd.archive;
 
 import arsd.core;
 
-// FIXME: add a comparable decompressGzip function 
+// FIXME: add a comparable decompressGzip function
 
 version(WithoutLzmaDecoder) {} else
 version=WithLzmaDecoder;

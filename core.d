@@ -3,6 +3,8 @@
 
 	I'll probably move the url, websocket, and ssl stuff in here too as they are often shared.
 
+	If you use this directly outside the arsd library, you might consider using `static import` since names in here are likely to clash with Phobos if you use them together. `static import` will let you easily disambiguate and avoid name conflict errors if I add more here. Some names even clash deliberately to remind me to avoid some antipatterns inside the arsd modules!
+
 	History:
 		Added March 2023 (dub v11.0). Several functions were migrated in here at that time, noted individually. Members without a note were added with the module.
 +/
@@ -15,22 +17,39 @@ import core.volatile;
 import core.atomic;
 import core.time;
 
+import core.stdc.errno;
+
 import core.attribute;
 static if(!__traits(hasMember, core.attribute, "mustuse"))
 	enum mustuse;
 
+// FIXME: add an arena allocator? can do task local destruction maybe.
+
 // the three implementations are windows, epoll, and kqueue
-version(Windows)
+version(Windows) {
 	version=Arsd_core_windows;
-else version(linux)
+
+	import core.sys.windows.windows;
+	import core.sys.windows.windef;
+} else version(linux) {
 	version=Arsd_core_epoll;
-else version(BSD)
-	version=Arsd_core_kqueue;
-else version(Darwin)
-	version=Arsd_core_kqueue;
-else version(OSX)
+
+	version=Arsd_core_has_cloexec;
+} else version(FreeBSD) {
 	version=Arsd_core_kqueue;
 
+	import core.sys.freebsd.sys.event;
+} else version(OSX) {
+	version=Arsd_core_kqueue;
+
+	import core.sys.darwin.sys.event;
+}
+
+version(Posix) {
+	import core.sys.posix.signal;
+}
+
+// FIXME: the exceptions should actually give some explanatory text too (at least sometimes)
 
 /+
 	=========================
@@ -38,11 +57,42 @@ else version(OSX)
 	=========================
 +/
 
-/+
-enum stringz : const(char)* { init = null }
-void test(stringz s) {}
-test(cast(stringz) "foo");
+// enum stringz : const(char)* { init = null }
+
+/++
+	A wrapper around a `const(char)*` to indicate that it is a zero-terminated C string.
 +/
+struct stringz {
+	private const(char)* raw;
+
+	/++
+		Wraps the given pointer in the struct. Note that it retains a copy of the pointer.
+	+/
+	this(const(char)* raw) {
+		this.raw = raw;
+	}
+
+	/++
+		Returns the original raw pointer back out.
+	+/
+	const(char)* ptr() const {
+		return raw;
+	}
+
+	/++
+		Borrows a slice of the pointer up to the zero terminator.
+	+/
+	const(char)[] borrow() const {
+		if(raw is null)
+			return null;
+
+		const(char)* p = raw;
+		int length;
+		while(*p++) length++;
+
+		return raw[0 .. length];
+	}
+}
 
 /++
 	This is a dummy type to indicate the end of normal arguments and the beginning of the file/line inferred args.  It is meant to ensure you don't accidentally send a string that is interpreted as a filename when it was meant to be a normal argument to the function and trigger the wrong overload.
@@ -90,16 +140,61 @@ char[] mallocedStringz(in char[] original) {
 	return slice;
 }
 
+/++
+	Basically a `scope class` you can return from a function or embed in another aggregate.
++/
+struct OwnedClass(Class) {
+	ubyte[__traits(classInstanceSize, Class)] rawData;
+
+	static OwnedClass!Class defaultConstructed() {
+		OwnedClass!Class i = OwnedClass!Class.init;
+		i.initializeRawData();
+		return i;
+	}
+
+	private void initializeRawData() @trusted {
+		if(!this)
+			rawData[] = cast(ubyte[]) typeid(Class).initializer[];
+	}
+
+	this(T...)(T t) {
+		initializeRawData();
+		rawInstance.__ctor(t);
+	}
+
+	bool opCast(T : bool)() @trusted {
+		return !(*(cast(void**) rawData.ptr) is null);
+	}
+
+	@disable this();
+	@disable this(this);
+
+	Class rawInstance() return @trusted {
+		if(!this)
+			throw new Exception("null");
+		return cast(Class) rawData.ptr;
+	}
+
+	alias rawInstance this;
+
+	~this() @trusted {
+		if(this)
+			.destroy(rawInstance());
+	}
+}
+
+
+
 version(Posix)
 package(arsd) void makeNonBlocking(int fd) {
 	import core.sys.posix.fcntl;
 	auto flags = fcntl(fd, F_GETFL, 0);
 	if(flags == -1)
-		throw new ErrnoApiException("fcntl get");
+		throw new ErrnoApiException("fcntl get", errno);
 	flags |= O_NONBLOCK;
 	auto s = fcntl(fd, F_SETFL, flags);
 	if(s == -1)
-		throw new ErrnoApiException("fcntl set");
+		throw new ErrnoApiException("fcntl set", errno);
 }
 
 version(Posix)
@@ -107,11 +202,11 @@ package(arsd) void setCloExec(int fd) {
 	import core.sys.posix.fcntl;
 	auto flags = fcntl(fd, F_GETFD, 0);
 	if(flags == -1)
-		throw new ErrnoApiException("fcntl get");
+		throw new ErrnoApiException("fcntl get", errno);
 	flags |= FD_CLOEXEC;
 	auto s = fcntl(fd, F_SETFD, flags);
 	if(s == -1)
-		throw new ErrnoApiException("fcntl set");
+		throw new ErrnoApiException("fcntl set", errno);
 }
 
 
@@ -214,8 +309,8 @@ struct CharzBuffer {
 		else
 			buffer = staticBuffer[];
 
-		buffer[0 .. $-1] = data[];
-		buffer[$-1] = 0;
+		buffer[0 .. data.length] = data[];
+		buffer[data.length] = 0;
 	}
 }
 
@@ -566,7 +661,12 @@ template populateFromUdas(Struct, UDAs...) {
 		foreach(memberName; __traits(allMembers, Struct)) {
 			alias memberType = typeof(__traits(getMember, Struct, memberName));
 			foreach(uda; UDAs) {
-				static if(is(typeof(uda == memberType))) {
+				static if(is(memberType == PresenceOf!a, a)) {
+					static if(__traits(isSame, a, uda))
+						__traits(getMember, ret, memberName) = true;
+				}
+				else
+				static if(is(typeof(uda) : memberType)) {
 					__traits(getMember, ret, memberName) = uda;
 				}
 			}
@@ -589,6 +689,33 @@ Struct populateFromArgs(Struct, Args...)(Args args) {
 	}
 
 	return ret;
+}
+
+/// ditto
+struct PresenceOf(alias a) {
+	bool there;
+	alias there this;
+}
+
+///
+unittest {
+	enum a;
+	enum b;
+	struct Name { string name; }
+	struct Info {
+		Name n;
+		PresenceOf!a athere;
+		PresenceOf!b bthere;
+		int c;
+	}
+
+	void test() @a @Name("test") {}
+
+	auto info = populateFromUdas!(Info, __traits(getAttributes, test));
+	assert(info.n == Name("test")); // but present ones are in there
+	assert(info.athere == true); // non-values can be tested with PresenceOf!it, which works like a bool
+	assert(info.bthere == false);
+	assert(info.c == 0); // absent thing will keep the default value
 }
 
 /++
@@ -718,76 +845,6 @@ unittest {
 	If you want to catch someone else's Exception, use `catch(object.Exception e)`.
 +/
 //package deprecated struct Exception {}
-
-/++
-	History:
-		Moved from simpledisplay.d to core.d in March 2023 (dub v11.0).
-+/
-class ErrnoApiException : ArsdExceptionBase {
-	char[256] buffer;
-	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		import core.stdc.errno;
-		this(msg, errno, file, line, next);
-	}
-
-	this(string msg, int originalError, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		assert(msg.length < 100);
-
-		buffer[0 .. msg.length] = msg;
-		buffer[msg.length] = ' ';
-
-		int pos = cast(int) msg.length + 1;
-
-		char[32] numberBuffer;
-		auto numberString = intToString(originalError, numberBuffer[]);
-
-		foreach(ch; numberString)
-			buffer[pos++] = ch;
-
-		buffer[pos++] = ' ';
-		buffer[pos++] = '(';
-		import core.stdc.string;
-		auto strptr = strerror(originalError);
-		while(*strptr)
-			buffer[pos++] = *strptr++;
-		buffer[pos++] = ')';
-
-		super(cast(string) buffer[0 .. pos], file, line, next);
-	}
-
-}
-
-/++
-	Calls the C API function `fn`. If it returns an error value, it throws an [ErrnoApiException] (or subclass) after getting `errno`.
-+/
-template ErrnoEnforce(alias fn, alias errorValue = void) {
-	static if(is(typeof(fn) Return == return))
-	static if(is(typeof(fn) Params == __parameters)) {
-		static if(is(errorValue == void)) {
-			static if(is(typeof(null) : Return))
-				enum errorValueToUse = null;
-			else static if(is(Return : long))
-				enum errorValueToUse = -1;
-			else
-				static assert(0, "Please pass the error value");
-		} else {
-			enum errorValueToUse = errorValue;
-		}
-
-		Return ErrnoEnforce(Params params, ArgSentinel sentinel = ArgSentinel.init, string file = __FILE__, size_t line = __LINE__) {
-			import core.stdc.errno;
-
-			Return value = fn(params);
-
-			if(value == errorValueToUse) {
-				throw new ErrnoApiException(__traits(identifier, fn), errno, file, line);
-			}
-
-			return value;
-		}
-	}
-}
-
 
 
 /++
@@ -1023,68 +1080,176 @@ unittest {
 
 		// so catching those types would work too
 	}
-
 }
 
-version(Windows) {
-	import core.sys.windows.windows;
+/++
+	A tagged union that holds an error code from system apis, meaning one from Windows GetLastError() or C's errno.
 
-	import core.sys.windows.windef;
+	You construct it with `SystemErrorCode(thing)` and the overloaded constructor tags and stores it.
++/
+struct SystemErrorCode {
+	///
+	enum Type {
+		errno, ///
+		win32 ///
+	}
+
+	const Type type; ///
+	const int code; /// You should technically cast it back to DWORD if it is a win32 code
 
 	/++
-		The low level use of this would look like `throw new WindowsApiException("MsgWaitForMultipleObjectsEx", GetLastError())` but it is meant to be used from higher level things like [Win32Enforce].
+		C/unix error are typed as signed ints...
+		Windows' errors are typed DWORD, aka unsigned...
 
-		History:
-			Moved from simpledisplay.d to core.d in March 2023 (dub v11.0).
+		so just passing them straight up will pick the right overload here to set the tag.
 	+/
-	class WindowsApiException : ArsdExceptionBase {
-		this(string operation, DWORD errorCode, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-			import core.sys.windows.windows;
+	this(int errno) {
+		this.type = Type.errno;
+		this.code = errno;
+	}
 
-			_errorCode = errorCode;
+	/// ditto
+	this(uint win32) {
+		this.type = Type.win32;
+		this.code = win32;
+	}
 
-			super(operation, file, line, next);
-		}
+	/++
+		Constructs a string containing both the code and the explanation string.
+	+/
+	string toString() const {
+		return codeAsString ~ " " ~ errorString;
+	}
 
-		private DWORD _errorCode;
+	/++
+		The numeric code itself as a string.
 
-		override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
-			super.getAdditionalPrintableInformation(sink);
-			char[16] buffer;
-			buffer[0 .. 2] = "0x";
-			sink("Error code",
-				buffer[0 .. 2 + intToString(errorCode, buffer[2 .. $], IntToStringArgs().withRadix(16).withPadding(8)).length]
-				~ " "
-				~ errorString
-			);
-		}
-
-		/++
-			The code returned from `GetLastError()` and passed to the constructor.
-		+/
-		DWORD errorCode() const {
-			return _errorCode;
-		}
-
-		/++
-			The string associated with the error code.
-		+/
-		string errorString() const {
-			wchar[256] buffer;
-			auto size = FormatMessageW(
-				FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				null,
-				errorCode,
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-				buffer.ptr,
-				buffer.length,
-				null
-			);
-
-			return makeUtf8StringFromWindowsString(buffer[0 .. size]).stripInternal;
+		See [errorString] for a text explanation of the code.
+	+/
+	string codeAsString() const {
+		char[16] buffer;
+		final switch(type) {
+			case Type.errno:
+				return intToString(code, buffer[]).idup;
+			case Type.win32:
+				buffer[0 .. 2] = "0x";
+				return buffer[0 .. 2 + intToString(code, buffer[2 .. $], IntToStringArgs().withRadix(16).withPadding(8)).length].idup;
 		}
 	}
 
+	/++
+		A text explanation of the code. See [codeAsString] for a string representation of the numeric representation.
+	+/
+	string errorString() const {
+		final switch(type) {
+			case Type.errno:
+				import core.stdc.string;
+				auto strptr = strerror(code);
+				auto orig = strptr;
+				int len;
+				while(*strptr++) {
+					len++;
+				}
+
+				return orig[0 .. len].idup;
+			case Type.win32:
+				version(Windows) {
+					wchar[256] buffer;
+					auto size = FormatMessageW(
+						FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+						null,
+						code,
+						MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+						buffer.ptr,
+						buffer.length,
+						null
+					);
+
+					return makeUtf8StringFromWindowsString(buffer[0 .. size]).stripInternal;
+				} else {
+					return null;
+				}
+		}
+	}
+}
+
+/++
+
++/
+class SystemApiException : ArsdExceptionBase {
+	this(string msg, int originalErrorNo, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(msg, SystemErrorCode(originalErrorNo), file, line, next);
+	}
+
+	version(Windows)
+	this(string msg, DWORD windowsError, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(msg, SystemErrorCode(windowsError), file, line, next);
+	}
+
+	this(string msg, SystemErrorCode code, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.errorCode = code;
+
+		super(msg, file, line, next);
+	}
+
+	/++
+
+	+/
+	const SystemErrorCode errorCode;
+
+	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
+		super.getAdditionalPrintableInformation(sink);
+		sink("Error code", errorCode.toString());
+	}
+
+}
+
+/++
+	The low level use of this would look like `throw new WindowsApiException("MsgWaitForMultipleObjectsEx", GetLastError())` but it is meant to be used from higher level things like [Win32Enforce].
+
+	History:
+		Moved from simpledisplay.d to core.d in March 2023 (dub v11.0).
++/
+alias WindowsApiException = SystemApiException;
+
+/++
+	History:
+		Moved from simpledisplay.d to core.d in March 2023 (dub v11.0).
++/
+alias ErrnoApiException = SystemApiException;
+
+/++
+	Calls the C API function `fn`. If it returns an error value, it throws an [ErrnoApiException] (or subclass) after getting `errno`.
++/
+template ErrnoEnforce(alias fn, alias errorValue = void) {
+	static if(is(typeof(fn) Return == return))
+	static if(is(typeof(fn) Params == __parameters)) {
+		static if(is(errorValue == void)) {
+			static if(is(typeof(null) : Return))
+				enum errorValueToUse = null;
+			else static if(is(Return : long))
+				enum errorValueToUse = -1;
+			else
+				static assert(0, "Please pass the error value");
+		} else {
+			enum errorValueToUse = errorValue;
+		}
+
+		Return ErrnoEnforce(Params params, ArgSentinel sentinel = ArgSentinel.init, string file = __FILE__, size_t line = __LINE__) {
+			import core.stdc.errno;
+
+			Return value = fn(params);
+
+			if(value == errorValueToUse) {
+				throw new ErrnoApiException(__traits(identifier, fn), errno, file, line);
+			}
+
+			return value;
+		}
+	}
+}
+
+version(Windows) {
 	/++
 		Calls the Windows API function `fn`. If it returns an error value, it throws a [WindowsApiException] (or subclass) after calling `GetLastError()`.
 	+/
@@ -1333,6 +1498,16 @@ interface ICoreEventLoop {
 		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb);
 		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb);
 	}
+
+	version(Arsd_core_kqueue) {
+		// can be a do-nothing here since the event is one off
+		@mustuse
+		static struct UnregisterToken {
+			void unregister() {}
+		}
+
+		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb);
+	}
 }
 
 /++
@@ -1438,37 +1613,552 @@ struct FilePath {
 	string path;
 }
 
+/++
+	Represents a generic async, waitable request.
++/
 class AsyncOperationRequest {
-	void start();
-	AsyncOperationResponse waitForCompletion();
-	void repeat();
-}
+	/++
+		Actually issues the request, starting the operation.
+	+/
+	abstract void start();
+	/++
+		Cancels the request. This will cause `isComplete` to return true once the cancellation has been processed, but [AsyncOperationResponse.wasSuccessful] will return `false` (unless it completed before the cancellation was processed, in which case it is still allowed to finish successfully).
 
-class AsyncOperationResponse {
+		After cancelling a request, you should still wait for it to complete to ensure that the task has actually released its resources before doing anything else on it.
 
-}
+		Once a cancellation request has been sent, it cannot be undone.
+	+/
+	abstract void cancel();
 
-AsyncOperationRequest waitForFirstToComplete(AsyncOperationRequest[] requests...) {
-	return null;
+	/++
+		Returns `true` if the operation has been completed. It may be completed successfully, cancelled, or have errored out - to check this, call [waitForCompletion] and check the members on the response object.
+	+/
+	abstract bool isComplete();
+	/++
+		Waits until the request has completed - successfully or otherwise - and returns the response object. It will run an ad-hoc event loop that may call other callbacks while waiting.
+
+		The response object may be embedded in the request object - do not reuse the request until you are finished with the response and do not keep the response around longer than you keep the request.
+
+
+		Note to implementers: all subclasses should override this and return their specific response object. You can use the top-level `waitForFirstToCompleteByIndex` function with a single-element static array to help with the implementation.
+	+/
+	abstract AsyncOperationResponse waitForCompletion();
+
+	/++
+
+	+/
+	// abstract void repeat();
 }
 
 /++
-	This meant to be used in a foreach loop.
+
 +/
-int asTheyComplete(AsyncOperationRequest[] requests...) {
-	return 0;
+abstract class AsyncOperationResponse {
+	/++
+		Returns true if the request completed successfully, finishing what it was supposed to.
+
+		Should be set to `false` if the request was cancelled before completing or encountered an error.
+	+/
+	abstract bool wasSuccessful();
 }
 
-struct PendingOperation {
-	private Object actualThing;
+/++
+	It returns the $(I request) so you can identify it more easily. `request.waitForCompletion()` is guaranteed to return the response without any actual wait, since it is already complete when this function returns.
 
-	void waitForCompletion() {}
+	Please note that "completion" is not necessary successful completion; a request being cancelled or encountering an error also counts as it being completed.
 
-	// once it has completed, you can repeat the same thing with the same params
-	// by simply calling this. this avoids any extra allocation
-	void repeat() {}
+	The `waitForFirstToCompleteByIndex` version instead returns the index of the array entry that completed first.
 
-	// and then i could even recycle completed Task objects similarly.
+	It is your responsibility to remove the completed request from the array before calling the function again, since any request already completed will always be immediately returned.
+
+	You might prefer using [asTheyComplete], which will give each request as it completes and loop over until all of them are complete.
+
+	Returns:
+		`null` or `requests.length` if none completed before returning.
++/
+AsyncOperationRequest waitForFirstToComplete(AsyncOperationRequest[] requests...) {
+	auto idx = waitForFirstToCompleteByIndex(requests);
+	if(idx == requests.length)
+		return null;
+	return requests[idx];
+}
+/// ditto
+size_t waitForFirstToCompleteByIndex(AsyncOperationRequest[] requests...) {
+	size_t helper() {
+		foreach(idx, request; requests)
+			if(request.isComplete())
+				return idx;
+		return requests.length;
+	}
+
+	auto idx = helper();
+	// if one is already done, return it
+	if(idx != requests.length)
+		return idx;
+
+	// otherwise, run the ad-hoc event loop until one is
+	// FIXME: what if we are inside a fiber?
+	auto el = getThisThreadEventLoop();
+	el.run(() => (idx = helper()) != requests.length);
+
+	return idx;
+}
+
+/++
+	Waits for all the `requests` to complete, giving each one through the range interface as it completes.
+
+	This meant to be used in a foreach loop.
+
+	The `requests` array and its contents must remain valid for the lifetime of the returned range. Its contents may be shuffled as the requests complete (the implementation works through an unstable sort+remove).
++/
+AsTheyCompleteRange asTheyComplete(AsyncOperationRequest[] requests...) {
+	return AsTheyCompleteRange(requests);
+}
+/// ditto
+struct AsTheyCompleteRange {
+	AsyncOperationRequest[] requests;
+
+	this(AsyncOperationRequest[] requests) {
+		this.requests = requests;
+
+		if(requests.length == 0)
+			return;
+
+		// wait for first one to complete, then move it to the front of the array
+		moveFirstCompleteToFront();
+	}
+
+	private void moveFirstCompleteToFront() {
+		auto idx = waitForFirstToCompleteByIndex(requests);
+
+		auto tmp = requests[0];
+		requests[0] = requests[idx];
+		requests[idx] = tmp;
+	}
+
+	bool empty() {
+		return requests.length == 0;
+	}
+
+	void popFront() {
+		assert(!empty);
+		/+
+			this needs to
+			1) remove the front of the array as being already processed (unless it is the initial priming call)
+			2) wait for one of them to complete
+			3) move the complete one to the front of the array
+		+/
+
+		requests[0] = requests[$-1];
+		requests = requests[0 .. $-1];
+
+		if(requests.length)
+			moveFirstCompleteToFront();
+	}
+
+	AsyncOperationRequest front() {
+		return requests[0];
+	}
+}
+
+version(Windows) {
+	alias NativeFileHandle = HANDLE; ///
+	alias NativeSocketHandle = SOCKET; ///
+	alias NativePipeHandle = HANDLE; ///
+} else version(Posix) {
+	alias NativeFileHandle = int; ///
+	alias NativeSocketHandle = int; ///
+	alias NativePipeHandle = int; ///
+}
+
+/++
+
++/
+final class SyncFile {
+	private {
+		NativeFileHandle handle;
+	}
+
+	/++
+	+/
+	enum OpenMode {
+		readOnly, /// C's "r", the file is read
+		writeWithTruncation, /// C's "w", the file is blanked upon opening so it only holds what you write
+		appendOnly, /// C's "a", writes will always be appended to the file
+		readAndWrite /// C's "r+", writes will overwrite existing parts of the file based on where you seek (default is at the beginning)
+	}
+
+	/++
+	+/
+	enum RequirePreexisting {
+		no,
+		yes
+	}
+
+	/++
+
+	+/
+	ubyte[] read(scope ubyte[] buffer) {
+		return null;
+	}
+
+	/++
+
+	+/
+	void write(in void[] buffer) {
+	}
+
+	enum Seek {
+		current,
+		fromBeginning,
+		fromEnd
+	}
+
+	// Seeking/telling/sizing is not permitted when appending and some files don't support it
+	void seek(long where, Seek fromWhence) {}
+
+	long tell() { return 0; }
+
+	long size() { return 0; }
+
+	// note that there is no fsync thing, instead use the special flag.
+
+	/+
+	enum SpecialFlags {
+		randomAccessExpected, /// FILE_FLAG_SEQUENTIAL_SCAN is turned off
+		skipCache, /// O_DSYNC, FILE_FLAG_NO_BUFFERING and maybe WRITE_THROUGH. note that metadata still goes through the cache, FlushFileBuffers and fsync can still do those
+		temporary, /// FILE_ATTRIBUTE_TEMPORARY on Windows, idk how to specify on linux
+		deleteWhenClosed, /// Windows has a flag for this but idk if it is of any real use
+	}
+	+/
+
+	/++
+
+	+/
+	this(FilePath filename, OpenMode mode = OpenMode.readOnly, RequirePreexisting require = RequirePreexisting.no) {
+		version(Windows) {
+			DWORD access;
+			DWORD creation;
+
+			final switch(mode) {
+				case OpenMode.readOnly:
+					access = GENERIC_READ;
+					creation = OPEN_EXISTING;
+				break;
+				case OpenMode.writeWithTruncation:
+					access = GENERIC_WRITE;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							creation = CREATE_ALWAYS;
+						break;
+						case RequirePreexisting.yes:
+							creation = TRUNCATE_EXISTING;
+						break;
+					}
+				break;
+				case OpenMode.appendOnly:
+					access = FILE_APPEND_DATA;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							creation = CREATE_ALWAYS;
+						break;
+						case RequirePreexisting.yes:
+							creation = OPEN_EXISTING;
+						break;
+					}
+				break;
+				case OpenMode.readAndWrite:
+					access = GENERIC_READ | GENERIC_WRITE;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							creation = CREATE_NEW;
+						break;
+						case RequirePreexisting.yes:
+							creation = OPEN_EXISTING;
+						break;
+					}
+				break;
+			}
+
+			WCharzBuffer wname = WCharzBuffer(filename.path);
+
+			auto handle = CreateFileW(
+				wname.ptr,
+				access,
+				FILE_SHARE_READ,
+				null,
+				creation,
+				FILE_ATTRIBUTE_NORMAL,/* | FILE_FLAG_OVERLAPPED,*/
+				null
+			);
+
+			if(handle == INVALID_HANDLE_VALUE) {
+				// FIXME: throw the filename and other params here too
+				throw new WindowsApiException("CreateFileW", GetLastError());
+			}
+
+			this.handle = handle;
+		} else version(Posix) {
+			import core.sys.posix.unistd;
+			import core.sys.posix.fcntl;
+
+			CharzBuffer namez = CharzBuffer(filename.path);
+			int flags;
+
+			// FIXME does mac not have cloexec for real or is this just a druntime problem?????
+			version(Arsd_core_has_cloexec) {
+				flags = O_CLOEXEC;
+			} else {
+				scope(success)
+					setCloExec(this.handle);
+			}
+
+			final switch(mode) {
+				case OpenMode.readOnly:
+					flags |= O_RDONLY;
+				break;
+				case OpenMode.writeWithTruncation:
+					flags |= O_WRONLY | O_TRUNC;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							flags |= O_CREAT;
+						break;
+						case RequirePreexisting.yes:
+						break;
+					}
+				break;
+				case OpenMode.appendOnly:
+					flags |= O_APPEND;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							flags |= O_CREAT;
+						break;
+						case RequirePreexisting.yes:
+						break;
+					}
+				break;
+				case OpenMode.readAndWrite:
+					flags |= O_RDWR;
+
+					final switch(require) {
+						case RequirePreexisting.no:
+							flags |= O_CREAT;
+						break;
+						case RequirePreexisting.yes:
+						break;
+					}
+				break;
+			}
+
+			int fd = open(namez.ptr, flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+			if(fd == -1)
+				throw new ErrnoApiException("open", errno);
+
+			this.handle = fd;
+		}
+	}
+
+	/++
+
+	+/
+	this(NativeFileHandle handleToWrap) {
+		this.handle = handleToWrap;
+	}
+
+	/++
+
+	+/
+	void close() {
+		version(Windows) {
+			Win32Enforce!CloseHandle(handle);
+			handle = null;
+		} else version(Posix) {
+			import unix = core.sys.posix.unistd;
+			import core.sys.posix.fcntl;
+
+			ErrnoEnforce!(unix.close)(handle);
+			handle = -1;
+		}
+	}
+}
+
+version(none)
+void main() {
+	auto file = new AsyncFile(FilePath("test.txt"), AsyncFile.OpenMode.write, AsyncFile.PreserveContents.truncateIfWriting, AsyncFile.RequirePreexisting.yes);
+
+	auto buffer = cast(ubyte[]) "hello";
+	auto wr = new AsyncWriteRequest(file, buffer);
+	wr.start();
+
+	wr.waitForCompletion();
+
+	file.close();
+}
+
+mixin template OverlappedIoRequest(Response) {
+	private {
+		SyncFile file;
+		ubyte[] buffer;
+
+		OwnedClass!Response response;
+
+		version(Windows) {
+			OVERLAPPED overlapped;
+
+			extern(Windows)
+			static void overlappedCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, LPOVERLAPPED lpOverlapped) {
+				typeof(this) rr = cast(typeof(this)) (cast(void*) lpOverlapped - typeof(this).overlapped.offsetof);
+
+				// this will queue our CallbackHelper and that should be run at the end of the event loop after it is woken up by the APC run
+			}
+		}
+
+		bool started;
+	}
+
+	override void cancel() {
+		version(Windows) {
+			Win32Enforce!CancelIoEx(file.handle, &overlapped);
+		} else version(Posix) {
+			// FIXME
+		}
+	}
+
+	override bool isComplete() {
+		version(Windows) {
+			return HasOverlappedIoCompleted(&overlapped);
+		} else version(Posix) {
+			return true;
+
+		}
+	}
+
+	override Response waitForCompletion() {
+		if(!started)
+			start();
+
+		version(Windows) {
+			SleepEx(INFINITE, true);
+
+			//DWORD numberTransferred;
+			//Win32Enforce!GetOverlappedResult(file.handle, &overlapped, &numberTransferred, true);
+		} else version(Posix) {
+
+		}
+
+		return response;
+	}
+}
+
+/++
+	You can write to a file asynchronously by creating one of these.
++/
+final class AsyncWriteRequest : AsyncOperationRequest {
+	mixin OverlappedIoRequest!AsyncWriteResponse;
+
+	this() {
+		response = typeof(response).defaultConstructed;
+	}
+
+	override void start() {
+	}
+
+	/++
+
+	+/
+	void repeat() {
+		// FIXME
+	}
+}
+
+class AsyncWriteResponse : AsyncOperationResponse {
+	override bool wasSuccessful() {
+		return false;
+	}
+}
+
+
+final class AsyncReadRequest : AsyncOperationRequest {
+	mixin OverlappedIoRequest!AsyncReadResponse;
+
+	/++
+		The file must have the overlapped flag enabled on Windows and the nonblock flag set on Posix.
+
+		The buffer MUST NOT be touched by you - not used by another request, modified, read, or freed, including letting a static array going out of scope - until this request's `isComplete` returns `true`.
+
+		The offset pointer is shared between this and other requests.
+	+/
+	this(NativeFileHandle file, ubyte[] buffer, shared(long)* offset) {
+		response = typeof(response).defaultConstructed;
+	}
+
+	override void start() {
+		version(Windows) {
+			auto ret = ReadFileEx(file.handle, buffer.ptr, cast(DWORD) buffer.length, &overlapped, &overlappedCompletionRoutine);
+			// need to check GetLastError
+
+			// ReadFileEx always queues, even if it completed synchronously. I *could* check the get overlapped result and sleepex here but i'm prolly better off just letting the event loop do its thing anyway.
+		} else version(Posix) {
+			import core.sys.posix.unistd;
+
+			// first try to just do it
+			auto ret = read(file.handle, buffer.ptr, buffer.length);
+
+			// then if it doesn't complete synchronously, need to event loop register
+
+			// if we are inside a fiber task, it can simply yield and call the fiber in the callback
+			// when we return here, it tries to read again
+
+			// if not inside, we need to ensure the buffer remains valid and set a callback... and return.
+			// the callback must retry the read
+
+			// generally, the callback must satisfy the read somehow they set the callback to trigger the result object's completion handler
+		}
+	}
+	/++
+		Cancels the request. This will cause `isComplete` to return true once the cancellation has been processed, but [AsyncOperationResponse.wasSuccessful] will return `false` (unless it completed before the cancellation was processed, in which case it is still allowed to finish successfully).
+
+		After cancelling a request, you should still wait for it to complete to ensure that the task has actually released its resources before doing anything else on it.
+
+		Once a cancellation request has been sent, it cannot be undone.
+	+/
+	override void cancel() {
+
+	}
+
+	/++
+		Returns `true` if the operation has been completed. It may be completed successfully, cancelled, or have errored out - to check this, call [waitForCompletion] and check the members on the response object.
+	+/
+	override bool isComplete() {
+		return false;
+	}
+	/++
+		Waits until the request has completed - successfully or otherwise - and returns the response object.
+
+		The response object may be embedded in the request object - do not reuse the request until you are finished with the response and do not keep the response around longer than you keep the request.
+
+
+		Note to implementers: all subclasses should override this and return their specific response object. You can use the top-level `waitForFirstToCompleteByIndex` function with a single-element static array to help with the implementation.
+	+/
+	override AsyncOperationResponse waitForCompletion() {
+		return response;
+	}
+
+	/++
+
+	+/
+	// abstract void repeat();
+}
+
+class AsyncReadResponse : AsyncOperationResponse {
+	override bool wasSuccessful() {
+		return false;
+	}
 }
 
 /+
@@ -1481,17 +2171,90 @@ struct PendingOperation {
 private class CoreEventLoopImplementation : ICoreEventLoop {
 
 	version(Arsd_core_kqueue) {
-		void runOnce() { }
+		void runOnce() {
+			kevent_t[16] ev;
+			//timespec tout = timespec(1, 0);
+			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, null/*&tout*/);
+			if(nev == -1) {
+				// FIXME: EINTR
+				throw new SystemApiException("kevent", errno);
+			} else if(nev == 0) {
+				// timeout
+			} else {
+				foreach(event; ev[0 .. nev]) {
+					if(event.filter == EVFILT_SIGNAL) {
+						// FIXME: I could prolly do this better tbh
+						markSignalOccurred(cast(int) event.ident);
+						signalChecker();
+					} else {
+						// FIXME: event.filter more specific?
+						CallbackHelper cb = cast(CallbackHelper) event.udata;
+						cb.call();
+					}
+				}
+			}
+		}
+
+		// FIXME: idk how to make one event that multiple kqueues can listen to w/o being shared
+		// maybe a shared kqueue could work that the thread kqueue listen to (which i rejected for
+		// epoll cuz it caused thundering herd problems but maybe it'd work here)
+
+		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb) {
+			kevent_t ev;
+
+			EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ENABLE/* | EV_ONESHOT*/, 0, 0, cast(void*) cb);
+
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+
+			return UnregisterToken();
+		}
+
+		private void triggerGlobalEvent() {
+			ubyte a;
+			import core.sys.posix.unistd;
+			write(kqueueGlobalFd[1], &a, 1);
+		}
+
+		private this() {
+			kqueuefd = ErrnoEnforce!kqueue();
+			setCloExec(kqueuefd); // FIXME O_CLOEXEC
+
+			if(kqueueGlobalFd[0] == 0) {
+				import core.sys.posix.unistd;
+				pipe(kqueueGlobalFd);
+
+				signal(SIGINT, SIG_IGN); // FIXME
+			}
+
+			kevent_t ev;
+
+			EV_SET(&ev, SIGCHLD, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, null);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+			EV_SET(&ev, SIGINT, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, null);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+
+			globalEventSent = new CallbackHelper(&readGlobalEvent);
+			EV_SET(&ev, kqueueGlobalFd[0], EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, cast(void*) globalEventSent);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+		}
+
+		private int kqueuefd = -1;
+
+		private CallbackHelper globalEventSent;
+		void readGlobalEvent() {
+			kevent_t event;
+
+			import core.sys.posix.unistd;
+			ubyte a;
+			read(kqueueGlobalFd[0], &a, 1);
+
+			// FIXME: the thread is woken up, now we need to check the circualr buffer queue
+		}
+
+		private __gshared int[2] kqueueGlobalFd;
 	}
 
-
-	version(Windows)
-	extern(Windows)
-	void overlappedCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, LPOVERLAPPED lpOverlapped) {
-		// this will queue our CallbackHelper and that should be run at the end of the event loop after it is woken up by the APC run
-	}
-
-	/++
+	/+
 		// this setup  needs no extra allocation
 		auto op = read(file, buffer);
 		op.oncomplete = &thisfiber.call;
@@ -1510,41 +2273,6 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		those could of course just take the value type things
 	+/
-
-	Object a_read(Object source, ubyte[] buffer) {
-		version(Windows) {
-			//auto ret = ReadFileEx(source, buffer.ptr, buffer.length, &overlapped, &overlappedCompletionRoutine);
-			// need to check GetLastError
-
-			// ReadFileEx always queues, even if it completed synchronously. I *could* check the get overlapped result and sleepex here but i'm prolly better off just letting the event loop do its thing anyway.
-		} else version(Posix) {
-			// first try to just do it
-			//auto ret = read(source, buffer.ptr, buffer.length);
-			// then if it doesn't complete synchronously, need to event loop register
-
-			// if we are inside a fiber task, it can simply yield and call the fiber in the callback
-			// when we return here, it tries to read again
-
-			// if not inside, we need to ensure the buffer remains valid and set a callback... and return.
-			// the callback must retry the read
-
-			// generally, the callback must satisfy the read somehow they set the callback to trigger the result object's completion handler
-		}
-		return null;
-	}
-
-	/++
-		Once an operation is complete and you're sure you are done with it, you can issue a repeated read
-	+/
-	Object a_read(Object recyclable, Object source, ubyte[] buffer) {
-		return null;
-	}
-
-
-
-
-
-
 
 
 	version(Arsd_core_windows) {
@@ -1569,6 +2297,64 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 					// window messages
 					// also sleepex if needed
 				}
+			}
+		}
+	}
+
+	version(Posix) {
+		private __gshared uint sigChildHappened = 0;
+		private __gshared uint sigIntrHappened = 0;
+
+		static void signalChecker() {
+			if(cas(&sigChildHappened, 1, 0)) {
+				while(true) { // multiple children could have exited before we processed the notification
+
+					import core.sys.posix.sys.wait;
+
+					int status;
+					auto pid = waitpid(-1, &status, WNOHANG);
+					if(pid == -1) {
+						import core.stdc.errno;
+						auto errno = errno;
+						if(errno == ECHILD)
+							break; // also all done, there are no children left
+						// no need to check EINTR since we set WNOHANG
+						throw new ErrnoApiException("waitpid", errno);
+					}
+					if(pid == 0)
+						break; // all done, all children are still running
+
+					// look up the pid for one of our objects
+					// if it is found, inform it of its status
+					// and then inform its controlling thread
+					// to wake up so it can check its waitForCompletion,
+					// trigger its callbacks, etc.
+
+					ExternalProcess.recordChildTerminated(pid, status);
+				}
+
+			}
+			if(cas(&sigIntrHappened, 1, 0)) {
+				// FIXME
+				import core.stdc.stdlib;
+				exit(0);
+			}
+		}
+
+		/++
+			Informs the arsd.core system that the given signal happened. You can call this from inside a signal handler.
+		+/
+		public static void markSignalOccurred(int sigNumber) nothrow {
+			import core.sys.posix.unistd;
+
+			if(sigNumber == SIGCHLD)
+				volatileStore(&sigChildHappened, 1);
+			if(sigNumber == SIGINT)
+				volatileStore(&sigIntrHappened, 1);
+
+			version(Arsd_core_epoll) {
+				ulong writeValue = 1;
+				write(signalPipeFd, &writeValue, writeValue.sizeof);
 			}
 		}
 	}
@@ -1740,24 +2526,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		private __gshared sigaction_t oldSigPipe;
 
 		private __gshared int signalPipeFd = -1;
-		private __gshared uint sigChildHappened = 0;
-		private __gshared uint sigIntrHappened = 0;
 		// sigpipe not important, i handle errors on the writes
-
-		/++
-			Informs the arsd.core system that the given signal happened. You can call this from inside a signal handler.
-		+/
-		public static void markSignalOccurred(int sigNumber) nothrow {
-			import core.sys.posix.unistd;
-
-			if(sigNumber == SIGCHLD)
-				volatileStore(&sigChildHappened, 1);
-			if(sigNumber == SIGINT)
-				volatileStore(&sigIntrHappened, 1);
-
-			ulong writeValue = 1;
-			write(signalPipeFd, &writeValue, writeValue.sizeof);
-		}
 
 		public static void setSignalHandlers() {
 			static extern(C) void interruptHandler(int sigNumber) nothrow {
@@ -1798,39 +2567,8 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			import core.sys.posix.unistd;
 			ulong number;
 			read(signalPipeFd, &number, number.sizeof);
-			if(cas(&sigChildHappened, 1, 0)) {
-				while(true) { // multiple children could have exited before we processed the notification
 
-					import core.sys.posix.sys.wait;
-
-					int status;
-					auto pid = waitpid(-1, &status, WNOHANG);
-					if(pid == -1) {
-						import core.stdc.errno;
-						auto errno = errno;
-						if(errno == ECHILD)
-							break; // also all done, there are no children left
-						// no need to check EINTR since we set WNOHANG
-						throw new ErrnoApiException("waitpid", errno);
-					}
-					if(pid == 0)
-						break; // all done, all children are still running
-
-					// look up the pid for one of our objects
-					// if it is found, inform it of its status
-					// and then inform its controlling thread
-					// to wake up so it can check its waitForCompletion,
-					// trigger its callbacks, etc.
-
-					ExternalProcess.recordChildTerminated(pid, status);
-				}
-
-			}
-			if(cas(&sigIntrHappened, 1, 0)) {
-				// FIXME
-				import core.stdc.stdlib;
-				exit(0);
-			}
+			signalChecker();
 		}
 		// signal stuff done }
 
@@ -1845,7 +2583,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				if(errno == EINTR) {
 					return;
 				}
-				throw new ErrnoApiException("epoll_wait");
+				throw new ErrnoApiException("epoll_wait", errno);
 			} else if(ret == 0) {
 				// timeout
 			} else {
@@ -1869,7 +2607,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			event.data.ptr = cast(void*) cb;
 			event.events = EPOLLIN | EPOLLEXCLUSIVE;
 			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl");
+				throw new ErrnoApiException("epoll_ctl", errno);
 
 			return UnregisterToken(this, fd, cb);
 		}
@@ -1882,7 +2620,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			event.data.ptr = cast(void*) cb;
 			event.events = EPOLLIN | EPOLLONESHOT;
 			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl");
+				throw new ErrnoApiException("epoll_ctl", errno);
 
 			return RearmToken(this, fd, cb, EPOLLIN | EPOLLONESHOT);
 		}
@@ -1890,7 +2628,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		private void unregisterFd(int fd) {
 			epoll_event event;
 			if(epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl");
+				throw new ErrnoApiException("epoll_ctl", errno);
 		}
 
 		private void rearmFd(RearmToken token) {
@@ -1898,7 +2636,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			event.data.ptr = cast(void*) token.cb;
 			event.events = token.flags;
 			if(epoll_ctl(epollfd, EPOLL_CTL_MOD, token.fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl");
+				throw new ErrnoApiException("epoll_ctl", errno);
 		}
 
 		// Disk files will have to be sent as messages to a worker to do the read and report back a completion packet.
@@ -2371,7 +3109,7 @@ unittest {
 +/
 class ExternalProcess {
 
-	private static version(Arsd_core_epoll) {
+	private static version(Posix) {
 		__gshared ExternalProcess[pid_t] activeChildren;
 
 		void recordChildCreated(pid_t pid, ExternalProcess proc) {
@@ -2408,7 +3146,7 @@ class ExternalProcess {
 	}
 
 	this(string[] args) {
-		version(Arsd_core_epoll) {
+		version(Posix) {
 			this.program = FilePath(args[0]);
 			this.args = args;
 		}
@@ -2419,7 +3157,7 @@ class ExternalProcess {
 		This is the native version for Posix.
 	+/
 	this(FilePath program, string[] args) {
-		version(Arsd_core_epoll) {
+		version(Posix) {
 			this.program = program;
 			this.args = args;
 		}
@@ -2430,13 +3168,13 @@ class ExternalProcess {
 	int stderrBufferSize = 8 * 1024;
 
 	void start() {
-		version(Arsd_core_epoll) {
+		version(Posix) {
 			int ret;
 
 			int[2] stdinPipes;
 			ret = pipe(stdinPipes);
 			if(ret == -1)
-				throw new ErrnoApiException("stdin pipe");
+				throw new ErrnoApiException("stdin pipe", errno);
 
 			scope(failure) {
 				close(stdinPipes[0]);
@@ -2448,7 +3186,7 @@ class ExternalProcess {
 			int[2] stdoutPipes;
 			ret = pipe(stdoutPipes);
 			if(ret == -1)
-				throw new ErrnoApiException("stdout pipe");
+				throw new ErrnoApiException("stdout pipe", errno);
 
 			scope(failure) {
 				close(stdoutPipes[0]);
@@ -2460,7 +3198,7 @@ class ExternalProcess {
 			int[2] stderrPipes;
 			ret = pipe(stderrPipes);
 			if(ret == -1)
-				throw new ErrnoApiException("stderr pipe");
+				throw new ErrnoApiException("stderr pipe", errno);
 
 			scope(failure) {
 				close(stderrPipes[0]);
@@ -2473,7 +3211,7 @@ class ExternalProcess {
 			int[2] errorReportPipes;
 			ret = pipe(errorReportPipes);
 			if(ret == -1)
-				throw new ErrnoApiException("error reporting pipe");
+				throw new ErrnoApiException("error reporting pipe", errno);
 
 			scope(failure) {
 				close(errorReportPipes[0]);
@@ -2485,7 +3223,7 @@ class ExternalProcess {
 
 			auto forkRet = fork();
 			if(forkRet == -1)
-				throw new ErrnoApiException("fork");
+				throw new ErrnoApiException("fork", errno);
 
 			if(forkRet == 0) {
 				// child side
@@ -2566,7 +3304,7 @@ class ExternalProcess {
 				auto val = read(errorReportPipes[0], msg.ptr, msg.sizeof);
 
 				if(val == -1)
-					throw new ErrnoApiException("read error report");
+					throw new ErrnoApiException("read error report", errno);
 
 				if(val == msg.sizeof) {
 					// error happened
@@ -2599,7 +3337,7 @@ class ExternalProcess {
 		}
 	}
 
-	private version(Arsd_core_epoll) {
+	private version(Posix) {
 		import core.sys.posix.unistd;
 		import core.sys.posix.fcntl;
 
@@ -2620,7 +3358,7 @@ class ExternalProcess {
 			ubyte[1024] buffer;
 			auto ret = read(stdoutFd, buffer.ptr, buffer.length);
 			if(ret == -1)
-				throw new ErrnoApiException("read");
+				throw new ErrnoApiException("read", errno);
 			if(onStdoutAvailable) {
 				onStdoutAvailable(buffer[0 .. ret]);
 			}
@@ -2651,7 +3389,7 @@ class ExternalProcess {
 		Write `null` as data to close the pipe. Once the pipe is closed, you must not try to write to it again.
 	+/
 	void writeToStdin(in void[] data) {
-		version(Arsd_core_epoll) {
+		version(Posix) {
 			if(data is null) {
 				close(stdinFd);
 				stdinFd = -1;
@@ -2659,7 +3397,7 @@ class ExternalProcess {
 				// FIXME: check the return value again and queue async writes
 				auto ret = write(stdinFd, data.ptr, data.length);
 				if(ret == -1)
-					throw new ErrnoApiException("write");
+					throw new ErrnoApiException("write", errno);
 			}
 		}
 
@@ -2675,7 +3413,9 @@ class ExternalProcess {
 // FIXME: comment this out
 ///+
 unittest {
-	auto proc = new ExternalProcess(FilePath("/usr/bin/cat"), ["/usr/bin/cat"]);
+	auto proc = new ExternalProcess(FilePath("/bin/cat"), ["/bin/cat"]);
+
+	getThisThreadEventLoop(); // initialize it
 
 	int c = 0;
 	proc.onStdoutAvailable = delegate(ubyte[] got) {
@@ -2690,6 +3430,30 @@ unittest {
 	proc.start();
 
 	assert(proc.pid != -1);
+
+
+	import std.stdio;
+	Thread[4] pool;
+
+	bool shouldExit;
+
+	static int received;
+
+	static void tester() {
+		received++;
+		//writeln(cast(void*) Thread.getThis, " ", received);
+	}
+
+	foreach(ref thread; pool) {
+		thread = new Thread(() {
+			getThisThreadEventLoop().run(() {
+				return shouldExit;
+			});
+		});
+		thread.start();
+	}
+
+
 
 	proc.writeToStdin("hello!");
 	proc.writeToStdin(null); // closes the pipe
@@ -2736,6 +3500,20 @@ STDIO
 		It works correctly on Windows, using the correct functions to write unicode to the console.
 		even allocating a console if needed. If the output has been redirected to a file or pipe, it
 		writes UTF-8.
+
+
+so my writeln replacement:
+
+1) if the std output handle is null, alloc one
+2) if it is a character device, write out the proper Unicode text.
+3) otherwise write out UTF-8.... maybe with a BOM but maybe not. it is tricky to know what the other end of a pipe expects...
+[8:15 AM]
+im actually tempted to make the write binary to stdout functions throw an exception if it is a character console / interactive terminal instead of letting you spam it right out
+[8:16 AM]
+of course you can still cheat by casting binary data to string and using the write string function (and this might be appropriate sometimes) but there kinda is a legit difference between a text output and a binary output device
+
+Stdout can represent either
+
 	+/
 	void writeln(){} {
 
@@ -2750,6 +3528,12 @@ STDIO
 
 		It works correctly on Windows and is user friendly on Linux (using arsd.terminal.getline)
 		while also working if stdin has been redirected (where arsd.terminal itself would throw)
+
+
+so say you run a program on an interactive terminal. the program tries to open the stdin binary stream
+
+instead of throwing, the prompt could change to indicate the binary data is expected and you can feed it in either by typing it up,,,,  or running some command like maybe <file.bin to have the library do what the shell would have done and feed that to the rest of the program
+
 	+/
 	string readln()() {
 
@@ -3081,3 +3865,7 @@ so the end result is you keep the last ones. it wouldn't report errors if multip
 +/
 
 +/
+
+private version(Windows) extern(Windows) {
+	BOOL CancelIoEx(HANDLE, LPOVERLAPPED);
+}

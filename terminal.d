@@ -14,9 +14,11 @@
 
 	Creating an instance of these structs will perform console initialization. When the struct
 	goes out of scope, any changes in console settings will be automatically reverted and pending
-	output is flushed. Do not create a global Terminal, as this will skip the destructor. You should
-	create the object as a local, then pass borrowed pointers to it if needed somewhere else. This
-	ensures the construction and destruction is run in a timely manner.
+	output is flushed. Do not create a global Terminal, as this will skip the destructor. Also do
+	not create an instance inside a class or array, as again the destructor will be nondeterministic.
+	You should create the object as a local inside main (or wherever else will encapsulate its whole
+	usage lifetime), then pass borrowed pointers to it if needed somewhere else. This ensures the
+	construction and destruction is run in a timely manner.
 
 	$(PITFALL
 		Output is NOT flushed on \n! Output is buffered until:
@@ -155,6 +157,36 @@ unittest {
 	}
 
 	version(demos) main; // exclude from docs
+}
+
+/++
+	$(H3 Full screen)
+
+	This shows how to use the cellular (full screen) mode and pass terminal to functions.
++/
+unittest {
+	import arsd.terminal;
+
+	// passing terminals must be done by ref or by pointer
+	void helper(Terminal* terminal) {
+		terminal.moveTo(0, 1);
+		terminal.getline("Press enter to exit...");
+	}
+
+	void main() {
+		// ask for cellular mode, it will go full screen
+		auto terminal = Terminal(ConsoleOutputType.cellular);
+
+		// it is automatically cleared upon entry
+		terminal.write("Hello upper left corner");
+
+		// pass it by pointer to other functions
+		helper(&terminal);
+
+		// since at the end of main, Terminal's destructor
+		// resets the terminal to how it was before for the
+		// user
+	}
 }
 
 /*

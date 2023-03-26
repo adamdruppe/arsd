@@ -20,11 +20,11 @@ Please note that I DO consider changes to build process to be a breaking change,
 
 Future release, 2024 or later.
 
-I will probably drop the existing support for gdc 6.
+Nothing is planned for it at this time.
 
 ## 11.0
 
-Released: Planned for 2023
+Released: Planned for May 2023
 
 arsd.core was added, causing a general build system break for users who download individual files:
 
@@ -43,6 +43,8 @@ Also:
 	* dom.d's XmlDocument no longer treats `<script>` and `<style>` tags as CDATA; that was meant to be a html-specific behavior, not applicable to generic xml.
 	* game.d had significant changes, making the Game object be a manager of GameScreen objects, which use delta time interpolated renders and fixed time updates (before it was vice versa).
 	* database.d got its first overhaul in a decade.
+	* Support for Windows XP has been dropped (though it may still work in certain places, there's no promises since arsd.core uses some Windows Vista features without fallback.)
+	* Support for older compilers has been dropped (arsd.core uses some newer druntime features). The new minimum version is likely gdc 10, the tester now runs gdc version 12. gdc 9 might still sometimes work but I'm going to be removing some of those compatibility branches soon anyway.
 
 ## 10.0
 
