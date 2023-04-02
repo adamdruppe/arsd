@@ -486,7 +486,9 @@ void main() {
 +/
 module arsd.cgi;
 
-import arsd.core;
+static import arsd.core;
+version(Posix)
+import arsd.core : makeNonBlocking;
 
 // FIXME: Nullable!T can be a checkbox that enables/disables the T on the automatic form
 // and a SumType!(T, R) can be a radio box to pick between T and R to disclose the extra boxes on the automatic form
@@ -7407,7 +7409,7 @@ mixin template ImplementRpcClientInterface(T, string serverPath, string cmdArg) 
 
 	// derivedMembers on an interface seems to give exactly what I want: the virtual functions we need to implement. so I am just going to use it directly without more filtering.
 	static foreach(idx, member; __traits(derivedMembers, T)) {
-	static if(__traits(isVirtualFunction, __traits(getMember, T, member)))
+	static if(__traits(isVirtualMethod, __traits(getMember, T, member)))
 		mixin( q{
 		std.traits.ReturnType!(__traits(getMember, T, member))
 		} ~ member ~ q{(std.traits.Parameters!(__traits(getMember, T, member)) params)
@@ -7500,7 +7502,7 @@ void dispatchRpcServer(Interface, Class)(Class this_, ubyte[] data, int fd) if(i
 
 	sw: switch(calledIdx) {
 		foreach(idx, memberName; __traits(derivedMembers, Interface))
-		static if(__traits(isVirtualFunction, __traits(getMember, Interface, memberName))) {
+		static if(__traits(isVirtualMethod, __traits(getMember, Interface, memberName))) {
 			case idx:
 				assert(calledFunction == __traits(getMember, Interface, memberName).mangleof);
 
