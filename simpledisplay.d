@@ -1896,13 +1896,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 							);
 							+/
 						}
-					// import std.stdio; writeln("Here", MonitorInfo.info);
+					// writeln("Here", MonitorInfo.info);
 					}
 				}
 
 				if(XRandrLibrary.loadSuccessful) {
 					updateActualDpi(true);
-					//import std.stdio; writeln("updated");
+					// writeln("updated");
 
 					if(!requestedInput) {
 						// this is what requests live updates should the configuration change
@@ -1911,7 +1911,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 						// and reselecting input...
 						requestedInput = true;
 						XRRSelectInput(display, impl.window, RRScreenChangeNotifyMask);
-						//import std.stdio; writeln("requested input");
+						// writeln("requested input");
 					}
 				} else {
 					fallback:
@@ -1949,7 +1949,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				if(m.position.contains(Point(screenPositionX + this.width / 2, screenPositionY + this.height / 2))) {
 					bool changed = actualDpi_ && actualDpi_ != m.dpi;
 					actualDpi_ = m.dpi;
-					//import std.stdio; writeln("monitor ", idx);
+					// writeln("monitor ", idx);
 					if(changed && onDpiChanged)
 						onDpiChanged();
 					break;
@@ -3772,7 +3772,7 @@ private:
 
 		version(without_opengl) {} else
 		if(openglMode == OpenGlOptions.yes && resizability == Resizability.automaticallyScaleIfPossible) {
-		import std.stdio; writeln(width, " ", height);
+		// writeln(width, " ", height);
 			setAsCurrentOpenGlContextNT();
 			glViewport(0, 0, width, height);
 		}
@@ -4096,7 +4096,6 @@ struct EventLoopImpl {
 				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 				ev.events = ep.EPOLLIN;
 				ev.data.fd = display.fd;
-				//import std.conv;
 				if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
 					throw new Exception("add x fd");// ~ to!string(epollFd));
 				displayFd = display.fd;
@@ -4209,7 +4208,6 @@ struct EventLoopImpl {
 					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
 					ev.events = ep.EPOLLIN;
 					ev.data.fd = displayFd;
-					//import std.conv;
 					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, displayFd, &ev);
 					displayFd = -1;
 				}
@@ -4285,7 +4283,7 @@ struct EventLoopImpl {
 					}
 
 					SimpleWindow.processAllCustomEvents(); // anyway
-					//version(sdddd) { import std.stdio; writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
+					//version(sdddd) { writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
 					foreach(idx; 0 .. nfds) {
 						if(done) break;
 						auto fd = events[idx].data.fd;
@@ -4308,7 +4306,7 @@ struct EventLoopImpl {
 									}
 								}
 							} else if(fd == display.fd) {
-								version(sdddd) { import std.stdio; writeln("X EVENT PENDING!"); }
+								version(sdddd) { writeln("X EVENT PENDING!"); }
 								this.mtLock();
 								scope(exit) this.mtUnlock();
 								while(!done && XPending(display)) {
@@ -4338,7 +4336,7 @@ struct EventLoopImpl {
 								//SimpleWindow.processAllCustomEvents();
 							} else {
 								// some other timer
-								version(sdddd) { import std.stdio; writeln("unknown fd: ", fd); }
+								version(sdddd) { writeln("unknown fd: ", fd); }
 
 								if(Timer* t = fd in Timer.mapping)
 									(*t).trigger();
@@ -4592,7 +4590,6 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 					break;
 					case EventType.ClientMessage:
 						version(sddddd) {
-						import std.stdio;
 						writeln("\t", e.xclient.message_type == GetAtom!("_XEMBED")(XDisplayConnection.get));
 						writeln("\t", e.xclient.format);
 						writeln("\t", e.xclient.data.l);
@@ -4636,7 +4633,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 						auto event = e.xconfigure;
 						this.width = event.width;
 						this.height = event.height;
-						//import std.stdio; writeln(width, " x " , height, " @ ", event.x, " ", event.y);
+						// writeln(width, " x " , height, " @ ", event.x, " ", event.y);
 						redraw();
 					break;
 					default: return 1;
@@ -4771,7 +4768,6 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 					if(got !is null) {
 						if(returned == 1) {
 							v = got.visual;
-							import std.stdio;
 							writeln("using special visual ", *got);
 						}
 						XFree(got);
@@ -5115,7 +5111,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i);
 				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
-				//import std.stdio; writeln("using pixmap ", clippixmap);
+				// writeln("using pixmap ", clippixmap);
 				updateNetWmIcon();
 				redraw();
 			} else {
@@ -5698,7 +5694,7 @@ class PosixFdReader {
 			static import ep = core.sys.linux.epoll;
 			ep.epoll_event ev = void;
 			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-			//import std.stdio; writeln("enable ", fd, " ", captureReads, " ", captureWrites);
+			// writeln("enable ", fd, " ", captureReads, " ", captureWrites);
 			ev.data.fd = fd;
 			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
 		} else {
@@ -5717,7 +5713,7 @@ class PosixFdReader {
 			static import ep = core.sys.linux.epoll;
 			ep.epoll_event ev = void;
 			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-			//import std.stdio; writeln("disable ", fd, " ", captureReads, " ", captureWrites);
+			// writeln("disable ", fd, " ", captureReads, " ", captureWrites);
 			ev.data.fd = fd;
 			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
 		}
@@ -6125,7 +6121,7 @@ version(X11) {
 					//after();
 			} else {
 				debug(sdpy_clip) {
-					import std.stdio; writeln("Unsupported data ", getAtomName(event.target, display));
+					writeln("Unsupported data ", getAtomName(event.target, display));
 				}
 				selectionEvent.property = None; // I don't know how to handle this type...
 				XSendEvent(display, selectionEvent.requestor, false, EventMask.NoEventMask, cast(XEvent*) &selectionEvent);
@@ -8425,7 +8421,7 @@ class OperatingSystemFont : MeasurableFont {
 			xfontstr = "-*-"~name~"-"~weightstr~"-"~(italic ? "i" : "r")~"-*-*-"~sizestr~"-*-*-*-*-*-*-*\0";
 		}
 
-		//import std.stdio; writeln(xfontstr);
+		// writeln(xfontstr);
 
 		auto display = XDisplayConnection.get;
 
@@ -8624,7 +8620,7 @@ class OperatingSystemFont : MeasurableFont {
 					//return xftFont.max_advance_width;
 					XGlyphInfo extents;
 					XftTextExtentsUtf8(XDisplayConnection.get, xftFont, s.ptr, cast(int) s.length, &extents);
-					//import std.stdio; writeln(extents);
+					// writeln(extents);
 					return extents.xOff;
 				}
 			if(font is null)
@@ -8879,7 +8875,7 @@ struct ScreenPainter {
 			impl.referenceCount = 1;
 			impl.manualInvalidations = manualInvalidations;
 			window.activeScreenPainter = impl;
-			//import std.stdio; writeln("constructed");
+			// writeln("constructed");
 		}
 
 		copyActiveOriginals();
@@ -8936,10 +8932,10 @@ struct ScreenPainter {
 		impl.referenceCount--;
 		//writeln("refcount -- ", impl.referenceCount);
 		if(impl.referenceCount == 0) {
-			//import std.stdio; writeln("destructed");
+			// writeln("destructed");
 			impl.dispose();
 			*window.activeScreenPainter = ScreenPainterImplementation.init;
-			//import std.stdio; writeln("paint finished");
+			// writeln("paint finished");
 		} else {
 			// there is still an active reference, reset stuff so the
 			// next user doesn't get weirdness via the reference
@@ -12072,7 +12068,7 @@ version(Windows) {
 				break;
 				/+
 				case WM_SIZING:
-					import std.stdio; writeln("size");
+					writeln("size");
 				break;
 				+/
 				// I don't like the tearing I get when redrawing on WM_SIZE
@@ -14205,7 +14201,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 					_xshmAvailable = false; // don't try again in the future
 
-					//import std.stdio; writeln("fallingback");
+					// writeln("fallingback");
 
 					goto fallback;
 
@@ -14967,7 +14963,7 @@ version(X11) {
 
 		if(width != win.width || height != win.height) {
 
-		// import std.stdio; writeln("RESIZE: ", width, "x", height, " was ", win._width, "x", win._height, " window: ", win.windowType, "-", win.title, " ", win.window);
+		//  writeln("RESIZE: ", width, "x", height, " was ", win._width, "x", win._height, " window: ", win.windowType, "-", win.title, " ", win.window);
 			win._width = width;
 			win._height = height;
 
@@ -15035,7 +15031,6 @@ version(X11) {
 		XEvent e;
 		XNextEvent(display, &e);
 		version(sddddd) {
-			import std.stdio, std.conv : to;
 			if(auto win = e.xany.window in CapableOfHandlingNativeEvent.nativeHandleMapping) {
 				if(typeid(cast(Object) *win) == NotificationAreaIcon.classinfo)
 				writeln("event for: ", e.xany.window, "; type is ", to!string(cast(EventType)e.type));
@@ -15094,21 +15089,21 @@ version(X11) {
 		  case EventType.SelectionClear:
 		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping) {
 				// FIXME so it is supposed to finish any in progress transfers... but idk...
-				//import std.stdio; writeln("SelectionClear");
+				// writeln("SelectionClear");
 				SimpleWindow.impl.setSelectionHandlers.remove(e.xselectionclear.selection);
 			}
 		  break;
 		  case EventType.SelectionRequest:
 		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
 			if(auto ssh = e.xselectionrequest.selection in SimpleWindow.impl.setSelectionHandlers) {
-				// import std.stdio; printf("SelectionRequest %s\n", XGetAtomName(e.xselectionrequest.display, e.xselectionrequest.target));
+				// printf("SelectionRequest %s\n", XGetAtomName(e.xselectionrequest.display, e.xselectionrequest.target));
 				XUnlockDisplay(display);
 				scope(exit) XLockDisplay(display);
 				(*ssh).handleRequest(e);
 			}
 		  break;
 		  case EventType.PropertyNotify:
-			// import std.stdio; printf("PropertyNotify %s %d\n", XGetAtomName(e.xproperty.display, e.xproperty.atom), e.xproperty.state);
+			// printf("PropertyNotify %s %d\n", XGetAtomName(e.xproperty.display, e.xproperty.atom), e.xproperty.state);
 
 			foreach(ssh; SimpleWindow.impl.setSelectionHandlers) {
 				if(ssh.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyDelete)
@@ -15226,7 +15221,7 @@ version(X11) {
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
 				if(win.windowType == WindowTypes.minimallyWrapped)
 					break;
-					//version(sdddd) { import std.stdio; writeln(" w=", event.width, "; h=", event.height); }
+					//version(sdddd) { writeln(" w=", event.width, "; h=", event.height); }
 
 				/+
 					The ICCCM says window managers must send a synthetic event when the window
@@ -15287,8 +15282,8 @@ version(X11) {
 
 				void info(string detail) {
 					string s;
-					import std.conv;
-					import std.datetime;
+					// import std.conv;
+					// import std.datetime;
 					s ~= to!string(Clock.currTime);
 					s ~= " ";
 					s ~= e.type == EventType.FocusIn ? "in " : "out";
@@ -15374,7 +15369,7 @@ version(X11) {
 					}
 
 				} else if(e.xclient.data.l[0] == GetAtom!"WM_TAKE_FOCUS"(e.xany.display)) {
-					//import std.stdio; writeln("HAPPENED");
+					// writeln("HAPPENED");
 					// user clicked the close button on the window manager
 					if(auto win = e.xclient.window in SimpleWindow.nativeMapping) {
 						XUnlockDisplay(display);
@@ -15403,7 +15398,7 @@ version(X11) {
 					bool xDragWindow = true;
 					if(xDragWindow && e.xclient.message_type == GetAtom!"XdndStatus"(e.xany.display)) {
 						//XDefineCursor(display, xDragWindow.impl.window,
-							//import std.stdio; writeln("XdndStatus ", e.xclient.data.l);
+							//writeln("XdndStatus ", e.xclient.data.l);
 					}
 					if(auto dh = win.dropHandler) {
 
@@ -15467,7 +15462,7 @@ version(X11) {
 
 
 						} else if(e.xclient.message_type == GetAtom!"XdndLeave"(e.xany.display)) {
-							//import std.stdio; writeln("XdndLeave");
+							//writeln("XdndLeave");
 							// drop cancelled.
 							// data.l[0] is the source window
 							dh.dragLeave();
@@ -15475,7 +15470,7 @@ version(X11) {
 							resetXFormats();
 						} else if(e.xclient.message_type == GetAtom!"XdndDrop"(e.xany.display)) {
 							// drop happening, should fetch data, then send finished
-							//import std.stdio; writeln("XdndDrop");
+							// writeln("XdndDrop");
 
 							auto pkg = DropPackage(*win, e.xclient.data.l[0], e.xclient.data.l[2], xFormats);
 
@@ -15483,7 +15478,7 @@ version(X11) {
 
 							resetXFormats();
 						} else if(e.xclient.message_type == GetAtom!"XdndFinished"(e.xany.display)) {
-							// import std.stdio; writeln("XdndFinished");
+							// writeln("XdndFinished");
 
 							dh.finish();
 						}
@@ -15649,7 +15644,7 @@ version(X11) {
 
 			ke.modifierState = e.xkey.state;
 
-			// import std.stdio; writefln("%x", sym);
+			// writefln("%x", sym);
 			wchar_t[128] charbuf = void; // buffer for XwcLookupString; composed value can consist of many chars!
 			int charbuflen = 0; // return value of XwcLookupString
 			if (ke.pressed) {
@@ -17745,9 +17740,9 @@ version(OSXCocoa) {
 	// and it is about time I merged it in here. It is available with -version=OSXCocoa until someone tests it for me!
 	// Probably won't even fully compile right now
 
-    import std.math : PI;
-    import std.algorithm : map;
-    import std.array : array;
+    import std.math : PI; // OSX Only
+    import std.algorithm : map; // OSX Only
+    import std.array : array; // OSX Only
 
     alias SimpleWindow NativeWindowHandle;
     alias void delegate(id) NativeEventHandler;
@@ -18219,7 +18214,7 @@ extern(System) nothrow @nogc {
 					_glx_swapInterval_fn = cast(glXSwapIntervalEXT)1;
 					return;
 				}
-				version(sdddd) { import std.stdio; debug writeln("glXSwapIntervalEXT found!"); }
+				version(sdddd) { debug writeln("glXSwapIntervalEXT found!"); }
 			}
 
 			if(glXSwapIntervalMESA is null) {
@@ -19438,7 +19433,7 @@ class ExperimentalTextComponent2 {
 							}
 						}
 
-						// import std.stdio; writeln(iterations)
+						// writeln(iterations)
 					}
 
 
@@ -20715,7 +20710,7 @@ class GenericDropHandlerBase : DropHandler {
 	protected abstract FormatHandler[] formatHandlers();
 
 	DragAndDropAction dragEnter(DropPackage* pkg) {
-		debug(sdpy_dnd) { import std.stdio; foreach(fmt; pkg.availableFormats()) writeln(fmt, " ", DraggableData.getFormatName(fmt)); }
+		debug(sdpy_dnd) { foreach(fmt; pkg.availableFormats()) writeln(fmt, " ", DraggableData.getFormatName(fmt)); }
 		foreach(fmt; formatHandlers())
 		foreach(f; pkg.availableFormats())
 			if(f == fmt.format) {
@@ -20731,7 +20726,7 @@ class GenericDropHandlerBase : DropHandler {
 
 	void drop(scope DropPackage* dropPackage) {
 		if(!acceptedFormat || acceptedHandler is null) {
-			debug(sdpy_dnd) { import std.stdio; writeln("drop called w/ handler ", acceptedHandler, " and format ", acceptedFormat); }
+			debug(sdpy_dnd) { writeln("drop called w/ handler ", acceptedHandler, " and format ", acceptedFormat); }
 			return; // prolly shouldn't happen anyway...
 		}
 
@@ -21067,14 +21062,14 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 		}
 
 		HRESULT DAdvise(FORMATETC* pformatetc, DWORD advf, IAdviseSink pAdvSink, DWORD* pdwConnection) {
-			// import std.stdio; writeln("Advise");
+			//  writeln("Advise");
 			return E_NOTIMPL;
 		}
 		HRESULT DUnadvise(DWORD dwConnection) {
 			return E_NOTIMPL;
 		}
 		HRESULT EnumDAdvise(IEnumSTATDATA* ppenumAdvise) {
-			// import std.stdio; writeln("EnumDAdvise");
+			//  writeln("EnumDAdvise");
 			return OLE_E_ADVISENOTSUPPORTED;
 		}
 		// tell what formats it supports
@@ -21124,7 +21119,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 					}
 
 					HRESULT Clone(IEnumFORMATETC* ppenum) {
-						// import std.stdio; writeln("clone");
+						// writeln("clone");
 						return E_NOTIMPL; // FIXME
 					}
 
@@ -21142,7 +21137,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 						if(pceltFetched !is null)
 							*pceltFetched = 1;
 
-						// import std.stdio; writeln("ok celt ", celt);
+						// writeln("ok celt ", celt);
 						return S_OK;
 					}
 
@@ -21167,7 +21162,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 		// given a format, return the format you'd prefer to use cuz it is identical
 		HRESULT GetCanonicalFormatEtc(FORMATETC* pformatectIn, FORMATETC* pformatetcOut) {
 			// FIXME: prolly could be better but meh
-			// import std.stdio; writeln("gcf: ", *pformatectIn);
+			// writeln("gcf: ", *pformatectIn);
 			*pformatetcOut = *pformatectIn;
 			return S_OK;
 		}
@@ -21175,7 +21170,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 			foreach(ty; types) {
 				if(ty == *pformatetcIn) {
 					auto format = ty.cfFormat;
-					// import std.stdio; writeln("A: ", *pformatetcIn, "\nB: ", ty);
+					// writeln("A: ", *pformatetcIn, "\nB: ", ty);
 					STGMEDIUM medium;
 					medium.tymed = TYMED.TYMED_HGLOBAL;
 
@@ -21199,7 +21194,7 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 			return DV_E_FORMATETC;
 		}
 		HRESULT GetDataHere(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) {
-			// import std.stdio; writeln("GDH: ", *pformatetcIn);
+			// writeln("GDH: ", *pformatetcIn);
 			return E_NOTIMPL; // FIXME
 		}
 		HRESULT QueryGetData(FORMATETC* pformatetc) {
@@ -21207,16 +21202,16 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 			search.tymed &= TYMED.TYMED_HGLOBAL;
 			foreach(ty; types)
 				if(ty == search) {
-					// import std.stdio; writeln("QueryGetData ", search, " ", types[0]);
+					// writeln("QueryGetData ", search, " ", types[0]);
 					return S_OK;
 				}
 			if(pformatetc.cfFormat==CF_UNICODETEXT) {
-				//import std.stdio; writeln("QueryGetData FALSE ", search, " ", types[0]);
+				//writeln("QueryGetData FALSE ", search, " ", types[0]);
 			}
 			return S_FALSE;
 		}
 		HRESULT SetData(FORMATETC* pformatetc, STGMEDIUM* pmedium, BOOL fRelease) {
-			// import std.stdio; writeln("SetData: ");
+			//  writeln("SetData: ");
 			return E_NOTIMPL;
 		}
 	};
@@ -21270,7 +21265,6 @@ private int doDragDropWindows(SimpleWindow window, DraggableData handler, DragAn
 
 	auto ret = DoDragDrop(obj, src, de, &effect);
 	/+
-	import std.stdio;
 	if(ret == DRAGDROP_S_DROP)
 		writeln("drop ", effect);
 	else if(ret == DRAGDROP_S_CANCEL)

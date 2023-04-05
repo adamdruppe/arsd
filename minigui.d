@@ -749,7 +749,7 @@ class Widget : ReflectableProperties {
 				assert(sw !is null);
 				if(!sw.eventQueued!RecomputeEvent) {
 					sw.postEvent(rce);
-					// import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+					// writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
 				}
 			}
 
@@ -1848,7 +1848,7 @@ class Widget : ReflectableProperties {
 
 		const clip = containment.intersectionOf(Rectangle(Point(lox + paintX, loy + paintY), Size(width, height)));
 		if(clip == Rectangle.init) {
-			//import std.stdio; writeln(this, " clipped out");
+			// writeln(this, " clipped out");
 			return;
 		}
 
@@ -1912,7 +1912,7 @@ class Widget : ReflectableProperties {
 			assert(sw !is null);
 			if(!sw.eventQueued!RedrawEvent) {
 				sw.postEvent(re);
-				// import std.stdio; writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
+				//  writeln("redraw requested from ", file,":",line," ", this.parentWindow.win.impl.window);
 			}
 		}
 	}
@@ -3284,13 +3284,13 @@ version(win32_widgets) {
 						// I don't think those messages are ever actually sent normally by the widget itself,
 						// they are more used for the keyboard interface. methinks.
 						case SB_BOTTOM:
-							//import std.stdio; writeln("end");
+							// writeln("end");
 							auto event = new Event("scrolltoend", *widgetp);
 							event.dispatch();
 							//if(!event.defaultPrevented)
 						break;
 						case SB_TOP:
-							//import std.stdio; writeln("top");
+							// writeln("top");
 							auto event = new Event("scrolltobeginning", *widgetp);
 							event.dispatch();
 						break;
@@ -3397,7 +3397,7 @@ version(win32_widgets) {
 	// this is called by native child windows, whereas the other hook is done by simpledisplay windows
 	// but can i merge them?!
 	LRESULT HookedWndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) nothrow {
-		//import std.stdio; try { writeln(iMessage); } catch(Exception e) {};
+		// try { writeln(iMessage); } catch(Exception e) {};
 
 		if(auto te = hWnd in Widget.nativeMapping) {
 			try {
@@ -3426,7 +3426,7 @@ version(win32_widgets) {
 
 				auto pos = getChildPositionRelativeToParentOrigin(*te);
 				lastDefaultPrevented = false;
-				// try {import std.stdio; writeln(typeid(*te)); } catch(Exception e) {}
+				// try { writeln(typeid(*te)); } catch(Exception e) {}
 				if(SimpleWindow.triggerEvents(hWnd, iMessage, wParam, lParam, pos[0], pos[1], (*te).parentWindow.win) || !lastDefaultPrevented)
 					return CallWindowProcW((*te).originalWindowProcedure, hWnd, iMessage, wParam, lParam);
 				else {
@@ -3438,7 +3438,6 @@ version(win32_widgets) {
 			return 0;
 		}
 		assert(0, "shouldn't be receiving messages for this window....");
-		//import std.conv;
 		//assert(0, to!string(hWnd) ~ " :: " ~ to!string(TextEdit.nativeMapping)); // not supposed to happen
 	}
 
@@ -4446,7 +4445,7 @@ class NestedChildWindowWidget : Widget {
 					parentWindow.dispatchMouseEvent(e);
 				},
 				(KeyEvent e) {
-					//import std.stdio; writefln("%s %x   %s", cast(void*) win, cast(uint) e.key, e.key);
+					//writefln("%s %x   %s", cast(void*) win, cast(uint) e.key, e.key);
 					parentWindow.dispatchKeyEvent(e);
 				},
 				(dchar e) {
@@ -4472,7 +4471,7 @@ class NestedChildWindowWidget : Widget {
 	/// When an opengl widget is laid out, it will adjust the glViewport for you automatically.
 	/// Keep in mind that events like mouse coordinates are still relative to your size.
 	override void registerMovement() {
-		//import std.stdio; writefln("%d %d %d %d", x,y,width,height);
+		// writefln("%d %d %d %d", x,y,width,height);
 		version(win32_widgets)
 			auto pos = getChildPositionRelativeToParentHwnd(this);
 		else
@@ -5437,7 +5436,7 @@ class ScrollableContainerWidget : ContainerWidget {
 		if(hsb is null || vsb is null || container is null) return;
 
 		/+
-		import std.stdio; writeln(x, " ", y , " ", width, " ", height);
+		writeln(x, " ", y , " ", width, " ", height);
 		writeln(this.ContainerWidget.minWidth(), "x", this.ContainerWidget.minHeight());
 		+/
 
@@ -7340,7 +7339,7 @@ LRESULT CustomDrawWindowProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lPa
 			if(auto te = hWnd in Widget.nativeMapping) {
 				try {
 					//te.redraw();
-					import std.stdio; writeln(te, " drawing");
+					writeln(te, " drawing");
 				} catch(Exception) {}
 			}
 			return DefWindowProc(hWnd, iMessage, wParam, lParam);
@@ -7761,7 +7760,7 @@ class ScrollMessageWidget : Widget {
 	void scrollIntoView(Rectangle rect) {
 		Rectangle viewRectangle = Rectangle(position, Size(hsb.viewableArea_, vsb.viewableArea_));
 
-		// import std.stdio; writeln(viewRectangle, " ", rect, " ", viewRectangle.contains(rect.lowerRight));
+		// writeln(viewRectangle, " ", rect, " ", viewRectangle.contains(rect.lowerRight));
 
 		if(!viewRectangle.contains(rect.lowerRight))
 			setPosition(rect.upperLeft.tupleof);
@@ -8032,7 +8031,7 @@ class Window : Widget {
 
 		win.addEventListener((Widget.RedrawEvent) {
 			if(win.eventQueued!RecomputeEvent) {
-				// import std.stdio; writeln("skipping");
+				// writeln("skipping");
 				return; // let the recompute event do the actual redraw
 			}
 			this.actualRedraw();
@@ -8043,7 +8042,7 @@ class Window : Widget {
 			if(win.eventQueued!RedrawEvent)
 				return; // let the queued one do it
 			else {
-				// import std.stdio; writeln("drawing");
+				// writeln("drawing");
 				this.actualRedraw(); // if not queued, it needs to be done now anyway
 			}
 		});
@@ -8103,7 +8102,6 @@ class Window : Widget {
 				dispatchMouseEvent(e);
 			},
 			(KeyEvent e) {
-				//import std.stdio;
 				//writefln("%x   %s", cast(uint) e.key, e.key);
 				dispatchKeyEvent(e);
 			},
@@ -8242,7 +8240,7 @@ class Window : Widget {
 			}
 
 			if(recipient !is null) {
-				// import std.stdio; writeln(typeid(recipient));
+				//  writeln(typeid(recipient));
 				recipient.focus();
 
 				skipNextChar = true;
@@ -8286,7 +8284,7 @@ class Window : Widget {
 		auto inputProxy = XCreateSimpleWindow(display, win.window, -1, -1, 1, 1, 0, 0, 0);
 		XSelectInput(display, inputProxy, EventMask.KeyPressMask | EventMask.KeyReleaseMask | EventMask.FocusChangeMask);
 		XMapWindow(display, inputProxy);
-		//import std.stdio; writefln("input proxy: 0x%0x", inputProxy);
+		// writefln("input proxy: 0x%0x", inputProxy);
 		this.inputProxy = new SimpleWindow(inputProxy);
 
 		XEvent lastEvent;
@@ -8299,7 +8297,6 @@ class Window : Widget {
 				dispatchMouseEvent(e);
 			},
 			(KeyEvent e) {
-				//import std.stdio;
 				//writefln("%x   %s", cast(uint) e.key, e.key);
 				if(dispatchKeyEvent(e)) {
 					// FIXME: i should trap error
@@ -8307,7 +8304,7 @@ class Window : Widget {
 						auto thing = nw.focusableWindow();
 						if(thing && thing.window) {
 							lastEvent.xkey.window = thing.window;
-							// import std.stdio; writeln("sending event ", lastEvent.xkey);
+							// writeln("sending event ", lastEvent.xkey);
 							trapXErrors( {
 								XSendEvent(XDisplayConnection.get, thing.window, false, 0, &lastEvent);
 							});
@@ -9906,7 +9903,7 @@ private class ClientAreaWidget : Widget {
 		else {
 			sa.addChild(w, position);
 			sa.setContentSize(this.minWidth + 1, this.minHeight);
-			import std.stdio; writeln(sa.contentWidth, "x", sa.contentHeight);
+			writeln(sa.contentWidth, "x", sa.contentHeight);
 		}
 	}
 	*/
@@ -11900,7 +11897,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	protected void scrollForCaret() {
-		// import std.stdio; writeln(l.width, "x", l.height); writeln(this.width - this.paddingLeft - this.paddingRight, " ", this.height - this.paddingTop - this.paddingBottom);
+		// writeln(l.width, "x", l.height); writeln(this.width - this.paddingLeft - this.paddingRight, " ", this.height - this.paddingTop - this.paddingBottom);
 		smw.scrollIntoView(l.selection.focusBoundingBox());
 	}
 
@@ -12085,7 +12082,6 @@ class TextDisplayHelper : Widget {
 			} else if(ce.button == MouseButton.right) {
 				this.showContextMenu(ce.clientX, ce.clientY);
 			}
-			//import std.stdio;
 			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
 		});
 
@@ -12164,7 +12160,6 @@ class TextDisplayHelper : Widget {
 				stopAutoscrollTimer();
 				this.redraw();
 			}
-			//import std.stdio;
 			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
 		});
 
@@ -12180,7 +12175,7 @@ class TextDisplayHelper : Widget {
 			doStateCheckpoint();
 
 			char[4] buffer;
-			import std.utf;
+			import std.utf; // FIXME: i should remove this. compile time not significant but the logs get spammed with phobos' import web
 			auto stride = encode(buffer, ce.character);
 			l.selection.replaceContent(buffer[0 .. stride]);
 			l.selection.setUserXCoordinate();
@@ -12231,7 +12226,7 @@ class TextDisplayHelper : Widget {
 		scope(exit) painter.setClipRectangle(old);
 
 		l.getDrawableText(delegate bool(txt, style, info, carets...) {
-			//import std.stdio; writeln("Segment: ", txt);
+			//writeln("Segment: ", txt);
 			assert(style !is null);
 
 			auto myStyle = cast(MyTextStyle) style;
@@ -12261,9 +12256,8 @@ class TextDisplayHelper : Widget {
 				);
 			}
 
-			import std.string;
-			if(txt.strip.length)
-				drawTextSegment(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRight);
+			if(txt.stripInternal.length)
+				drawTextSegment(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRightInternal);
 
 			if(info.boundingBox.upperLeft.y - smw.position().y > this.height)
 				return false;
@@ -12323,7 +12317,6 @@ class TextWidget : Widget {
 			this.height - this.paddingTop - this.paddingBottom);
 
 		/+
-		import std.stdio;
 		writeln(l.width, "x", l.height);
 		+/
 	}
@@ -14166,7 +14159,7 @@ private:
 		ic.dwSize = cast(DWORD) ic.sizeof;
 		ic.dwICC = ICC_UPDOWN_CLASS | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_COOL_CLASSES | ICC_STANDARD_CLASSES | ICC_USEREX_CLASSES;
 		if(!InitCommonControlsEx(&ic)) {
-			//import std.stdio; writeln("ICC failed");
+			//writeln("ICC failed");
 		}
 	}
 
@@ -14557,64 +14550,6 @@ class FilePicker : Dialog {
 	void delegate(string) onOK;
 	void delegate() onCancel;
 	LineEdit lineEdit;
-
-	enum GetFilesResult {
-		success,
-		fileNotFound
-	}
-	static GetFilesResult getFiles(string cwd, scope void delegate(string name, bool isDirectory) dg) {
-		version(Windows) {
-			WIN32_FIND_DATA data;
-			WCharzBuffer search = WCharzBuffer(cwd ~ "/*");
-			auto handle = FindFirstFileW(search.ptr, &data);
-			scope(exit) if(handle !is INVALID_HANDLE_VALUE) FindClose(handle);
-			if(handle is INVALID_HANDLE_VALUE) {
-				if(GetLastError() == ERROR_FILE_NOT_FOUND)
-					return GetFilesResult.fileNotFound;
-				throw new WindowsApiException("FindFirstFileW", GetLastError());
-			}
-
-			try_more:
-
-			string name = makeUtf8StringFromWindowsString(data.cFileName[0 .. findIndexOfZero(data.cFileName[])]);
-
-			dg(name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? true : false);
-
-			auto ret = FindNextFileW(handle, &data);
-			if(ret == 0) {
-				if(GetLastError() == ERROR_NO_MORE_FILES)
-					return GetFilesResult.success;
-				throw new WindowsApiException("FindNextFileW", GetLastError());
-			}
-
-			goto try_more;
-
-		} else version(Posix) {
-			import core.sys.posix.dirent;
-			import core.stdc.errno;
-			auto dir = opendir((cwd ~ "\0").ptr);
-			scope(exit)
-				if(dir) closedir(dir);
-			if(dir is null)
-				throw new ErrnoApiException("opendir [" ~ cwd ~ "]", errno);
-
-			auto dirent = readdir(dir);
-			if(dirent is null)
-				return GetFilesResult.fileNotFound;
-
-			try_more:
-
-			string name = dirent.d_name[0 .. findIndexOfZero(dirent.d_name[])].idup;
-
-			dg(name, dirent.d_type == DT_DIR);
-
-			dirent = readdir(dir);
-			if(dirent is null)
-				return GetFilesResult.success;
-
-			goto try_more;
-		} else static assert(0);
-	}
 
 	// returns common prefix
 	string loadFiles(string cwd, string[] filters...) {

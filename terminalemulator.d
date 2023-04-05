@@ -3721,75 +3721,8 @@ version(Windows) {
 	/// startChild!something("plink.exe", "plink.exe user@server -i key.ppk \"/home/user/terminal-emulator/serverside\"");
 	void startChild(alias masterFunc)(string program, string commandLine) {
 		import core.sys.windows.windows;
-		// thanks for a random person on stack overflow for this function
-		static BOOL MyCreatePipeEx(
-			PHANDLE lpReadPipe,
-			PHANDLE lpWritePipe,
-			LPSECURITY_ATTRIBUTES lpPipeAttributes,
-			DWORD nSize,
-			DWORD dwReadMode,
-			DWORD dwWriteMode
-		)
-		{
-			HANDLE ReadPipeHandle, WritePipeHandle;
-			DWORD dwError;
-			CHAR[MAX_PATH] PipeNameBuffer;
 
-			if (nSize == 0) {
-				nSize = 4096;
-			}
-
-			static int PipeSerialNumber = 0;
-
-			import core.stdc.string;
-			import core.stdc.stdio;
-
-			sprintf(PipeNameBuffer.ptr,
-				"\\\\.\\Pipe\\TerminalEmulatorPipe.%08x.%08x".ptr,
-				GetCurrentProcessId(),
-				PipeSerialNumber++
-			);
-
-			ReadPipeHandle = CreateNamedPipeA(
-				PipeNameBuffer.ptr,
-				1/*PIPE_ACCESS_INBOUND*/ | dwReadMode,
-				0/*PIPE_TYPE_BYTE*/ | 0/*PIPE_WAIT*/,
-				1,             // Number of pipes
-				nSize,         // Out buffer size
-				nSize,         // In buffer size
-				120 * 1000,    // Timeout in ms
-				lpPipeAttributes
-			);
-
-			if (! ReadPipeHandle) {
-				return FALSE;
-			}
-
-			WritePipeHandle = CreateFileA(
-				PipeNameBuffer.ptr,
-				GENERIC_WRITE,
-				0,                         // No sharing
-				lpPipeAttributes,
-				OPEN_EXISTING,
-				FILE_ATTRIBUTE_NORMAL | dwWriteMode,
-				null                       // Template file
-			);
-
-			if (INVALID_HANDLE_VALUE == WritePipeHandle) {
-				dwError = GetLastError();
-				CloseHandle( ReadPipeHandle );
-				SetLastError(dwError);
-				return FALSE;
-			}
-
-			*lpReadPipe = ReadPipeHandle;
-			*lpWritePipe = WritePipeHandle;
-			return( TRUE );
-		}
-
-
-
-
+		import arsd.core : MyCreatePipeEx;
 
 		import std.conv;
 

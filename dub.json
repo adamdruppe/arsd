@@ -12,6 +12,7 @@
 			"description": "Shared components across other arsd modules",
 			"targetType": "library",
 			"importPaths": ["."],
+			"libs-windows": ["user32"],
 			"dflags-dmd": ["-mv=arsd.core=$PACKAGE_DIR/core.d"],
 			"dflags-ldc": ["--mv=arsd.core=$PACKAGE_DIR/core.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.core=$PACKAGE_DIR/core.d"],

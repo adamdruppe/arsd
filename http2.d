@@ -37,7 +37,7 @@
 +/
 module arsd.http2;
 
-import arsd.core;
+static import arsd.core;
 
 ///
 unittest {
@@ -5183,7 +5183,7 @@ class WebSocket {
 
 			Your onclose method is now also called on abnormal terminations. Check the `wasClean` member of the `CloseEvent` to know if it came from a close frame or other cause.
 	+/
-	FlexibleDelegate!(void delegate(CloseEvent event)) onclose;
+	arsd.core.FlexibleDelegate!(void delegate(CloseEvent event)) onclose;
 	void delegate() onerror; ///
 	void delegate(in char[]) ontextmessage; ///
 	void delegate(in ubyte[]) onbinarymessage; ///

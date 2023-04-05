@@ -221,7 +221,6 @@ struct Color {
 		if(g > 1) g = 1;
 		if(b > 1) b = 1;
 		/*
-		import std.conv;
 		assert(r >= 0.0 && r <= 1.0, to!string(r));
 		assert(g >= 0.0 && g <= 1.0, to!string(g));
 		assert(b >= 0.0 && b <= 1.0, to!string(b));
@@ -848,8 +847,14 @@ double srgbToLinearRgb(double u) {
 	if(u < 0.4045)
 		return u / 12.92;
 	else
-		return ((u + 0.055) / 1.055) ^^ 2.4;
+		return pow((u + 0.055) / 1.055, 2.4);
+		// return ((u + 0.055) / 1.055) ^^ 2.4;
 }
+
+// could use the ^^ operator but that drags in some phobos. In this case, the import is
+// actually insignificant, it doesn't really impact compile time, but it does complicate
+// the dmd -v | grep std check to confirm i didn't miss any.
+private extern(C) nothrow pure @safe @nogc double pow(double, double);
 
 /// Converts an RGB color into an HSL triplet. useWeightedLightness will try to get a better value for luminosity for the human eye, which is more sensitive to green than red and more to red than blue. If it is false, it just does average of the rgb.
 double[3] toHsl(Color c, bool useWeightedLightness = false) nothrow pure @trusted @nogc {
@@ -1116,7 +1121,6 @@ Color colorFromString(string s) {
 
 /*
 import browser.window;
-import std.conv;
 void main() {
 	import browser.document;
 	foreach(ele; document.querySelectorAll("input")) {
@@ -1518,7 +1522,7 @@ do {
 	struct ColorUse {
 		Color c;
 		int uses;
-		//string toString() { import std.conv; return c.toCssString() ~ " x " ~ to!string(uses); }
+		//string toString() { return c.toCssString() ~ " x " ~ to!string(uses); }
 		int opCmp(ref const ColorUse co) const {
 			return co.uses - uses;
 		}
@@ -1650,9 +1654,9 @@ struct P {
 }
 
 P range;
-import std.algorithm;
+import std.algorithm; // commented out
 
-import std.stdio;
+import std.stdio; // commented out
 writePngLazy(range, pngFromBytes(File("/home/me/nyesha.png").byChunk(4096)).byRgbaScanline.map!((line) {
 	foreach(ref pixel; line.pixels) {
 	continue;

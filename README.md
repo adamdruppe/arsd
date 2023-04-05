@@ -36,6 +36,8 @@ minigui.d now also depends on a new textlayouter.d, bringing its total dependenc
 
 Generally speaking, I am relaxing my dependency policy somewhat to permit a little more code sharing and interoperability throughout the modules. While I will make efforts to maintain some degree of stand-alone functionality, many new features and even some old features may be changed to use the new module. As such, I reserve to right to use core.d from any module from this point forward. You should be prepared to add it to your builds using any arsd component.
 
+Note that arsd.core may require user32.lib on Windows. This is added automatically in most cases, and is a core component so it will be there, but if you see a linker error, this might be why.
+
 I recommend you clone the repo and use `dmd -i` to let the compiler automatically included imported modules. It really is quite nice to use! But, of course, I don't require it and will call out other required cross-module dependencies in the future too.
 
 Also:
@@ -45,6 +47,21 @@ Also:
 	* database.d got its first overhaul in a decade.
 	* Support for Windows XP has been dropped (though it may still work in certain places, there's no promises since arsd.core uses some Windows Vista features without fallback.)
 	* Support for older compilers has been dropped (arsd.core uses some newer druntime features). The new minimum version is likely gdc 10, the tester now runs gdc version 12. gdc 9 might still sometimes work but I'm going to be removing some of those compatibility branches soon anyway.
+
+### Diagnostics
+
+lld-link: error: undefined symbol: _MsgWaitForMultipleObjectsEx@20
+>>> referenced by core.obj:(__D4arsd4core27CoreEventLoopImplementation7runOnceMFZv)
+
+Indicates a missing `user32.lib`.
+
+
+ACTUALLY WRONG: i need the right one
+lld-link: error: undefined symbol: _D4arsd4core21AsyncOperationRequest5startMFZv
+>> referenced by yourfile.obj:(_D4arsd4core21AsyncOperationRequest6__vtblZ)
+
+Indicates a missing `core.d` in the build.
+
 
 ## 10.0
 

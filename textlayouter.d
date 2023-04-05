@@ -535,7 +535,6 @@ public struct Selection {
 				However, the algorithm for default style in the new zone is a bit different: if at index 0 or right after a \n, it uses the next style. otherwise it uses the previous one.
 		+/
 
-		//import std.stdio;
 		//writeln(removeBegin, " ", removeEnd);
 		//foreach(st; layouter.styles) writeln("B: ", st.offset, "..", st.offset + st.length, " ", st.styleInformationIndex);
 
@@ -694,7 +693,7 @@ public struct Selection {
 
 					layouter.styles = layouter.styles[0 .. i + 1] ~ toInsert1 ~ toInsert2 ~ layouter.styles[i + 1 .. $];
 
-					// import std.stdio; writeln(*s); writeln(toInsert1); writeln(toInsert2);
+					// writeln(*s); writeln(toInsert1); writeln(toInsert2);
 
 					break; // no need to continue processing as the other offsets are unaffected
 				}
@@ -723,13 +722,12 @@ public struct Selection {
 				else {
 					// this should be impossible as i think i covered all the cases above
 					// as we iterate through
-					// import std.stdio; writeln(oldStyleBegin, "..", oldStyleEnd, " -- ", newStyleBegin, "..", newStyleEnd);
+					// writeln(oldStyleBegin, "..", oldStyleEnd, " -- ", newStyleBegin, "..", newStyleEnd);
 					assert(0);
 				}
 			}
 		}
 
-		// import std.stdio;
 		// foreach(st; layouter.styles) writeln("A: ", st.offset, "..", st.offset + st.length, " ", st.styleInformationIndex);
 	}
 
@@ -781,7 +779,7 @@ public struct Selection {
 		int bestHit = -1;
 		int bestHitDistance = int.max;
 
-		// import std.stdio; writeln(targetLineNumber, " ", segmentIndex, " ", layouter.segments.length);
+		// writeln(targetLineNumber, " ", segmentIndex, " ", layouter.segments.length);
 
 		segmentLoop: while(segmentIndex >= 0 && segmentIndex < layouter.segments.length) {
 			segment = layouter.segments[segmentIndex];
@@ -1347,7 +1345,7 @@ class TextLayouter {
 			int searchPoint = maximum / 2;
 
 			keepSearching:
-			//import std.stdio; writeln(searchPoint);
+			//writeln(searchPoint);
 			if(segments[searchPoint].upperLeft.y > box.top) {
 				// we're too far ahead to find the box
 				maximum = searchPoint;
@@ -1716,7 +1714,7 @@ class TextLayouter {
 		// basically it would keep going until a segment after the invalidated end area was in the state before and after.
 
 		debug(text_layouter_bench) {
-			import std.stdio; // writeln("relayouting");
+			// writeln("relayouting");
 			import core.time;
 			auto start = MonoTime.currTime;
 			scope(exit) {
@@ -1933,7 +1931,7 @@ class TextLayouter {
 				deltaLineNumber = 1;
 				previousOldSavedSegment.upperLeft.y += deltaY;
 				previousOldSavedSegment.displayLineNumber += deltaLineNumber;
-				import std.stdio; writeln("trying deltaY = ", deltaY);
+				writeln("trying deltaY = ", deltaY);
 				writeln(previousOldSavedSegment);
 				writeln(segments[$-1]);
 			}
@@ -1968,8 +1966,8 @@ class TextLayouter {
 
 					return true;
 				} else {
-					// import std.stdio; writeln("not matched");
-					// import std.stdio; writeln(previousOldSavedWidths != segmentsWidths[$-1]);
+					// writeln("not matched");
+					// writeln(previousOldSavedWidths != segmentsWidths[$-1]);
 				}
 			}
 
@@ -2102,7 +2100,7 @@ class TextLayouter {
 						if(lastWidthDistance == 1) {
 							auto width = font.stringWidth(text[previousIndex .. idx + stride(text[idx])]);
 							thisWidth = width - lastWidth;
-							// import std.stdio; writeln(text[previousIndex .. idx + stride(text[idx])], " ", width, "-", lastWidth);
+							// writeln(text[previousIndex .. idx + stride(text[idx])], " ", width, "-", lastWidth);
 						} else {
 							auto width = font.stringWidth(text[idx .. idx + stride(text[idx])]);
 							thisWidth = width;
@@ -2149,7 +2147,7 @@ class TextLayouter {
 
 		//return widths;
 
-		// import std.stdio; writefln("%(%s\n%)", segments[0 .. 10]);
+		// writefln("%(%s\n%)", segments[0 .. 10]);
 	}
 
 	private {
